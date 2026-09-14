@@ -33,7 +33,7 @@ type runFinishedPayload struct {
 // run that has just reached a terminal status. Every terminal path calls it
 // after the transition and before Commit, in the same transaction as the
 // status write, so the announcement and the row cannot disagree. The
-// candidate schema is always named: executor-controller drops it whatever
+// candidate schema is always named: execution-controller drops it whatever
 // the outcome, and a drop of a schema that no longer exists is a no-op.
 func enqueueRunFinished(ctx context.Context, u uow.UnitOfWork, r *pipeline.Run, now time.Time) error {
 	if !r.Status().IsTerminal() {

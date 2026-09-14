@@ -197,7 +197,7 @@ func (g *Gateway) nodeErrors(ctx context.Context, run runResponse) map[string]st
 
 // sentinelResult is the cross-language structured validation-result contract
 // (continuo_validation_contract/result.py on the python side, pkg/validationresult
-// in Go): the JSON k8s-controller extracts from a validation pod's sentinel-framed
+// in Go): the JSON execution-controller extracts from a validation pod's sentinel-framed
 // stdout block and uploads verbatim to run_results_uri.
 type sentinelResult struct {
 	Status  string `json:"status"`

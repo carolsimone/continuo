@@ -481,7 +481,7 @@ func TestRecordTaskStatus_DecrementsOnRetry(t *testing.T) {
 	if r.TerminalTaskCount() != 1 {
 		t.Fatalf("pre-retry terminal: got %d want 1", r.TerminalTaskCount())
 	}
-	// k8s-controller emits RUNNING on retry; FAILED→RUNNING must un-fill.
+	// execution-controller emits RUNNING on retry; FAILED→RUNNING must un-fill.
 	tc.statuses[id1] = run.TaskStatusFailed
 	_, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusRunning, 1, time.Now())
 	if err != nil {
@@ -492,10 +492,11 @@ func TestRecordTaskStatus_DecrementsOnRetry(t *testing.T) {
 	}
 }
 
-// TestRecordTaskStatus_IgnoresStaleRunningAfterSucceeded covers the cross-producer
-// reorder where the original attempt's RUNNING (executor) is processed after that
-// attempt's SUCCEEDED (k8s-controller). Both carry the same attempt number, so the
-// late RUNNING must be a no-op: no un-fill, no status regression, no finalize.
+// TestRecordTaskStatus_IgnoresStaleRunningAfterSucceeded covers the redelivery
+// case where the original attempt's RUNNING is processed after that attempt's
+// SUCCEEDED (both written by execution-controller's job-status handler). Both
+// carry the same attempt number, so the late RUNNING must be a no-op: no
+// un-fill, no status regression, no finalize.
 func TestRecordTaskStatus_IgnoresStaleRunningAfterSucceeded(t *testing.T) {
 	ctx := context.Background()
 	tc := newFakeTaskCollection()

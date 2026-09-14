@@ -15,7 +15,7 @@ import (
 )
 
 // newTestRedis starts an in-memory miniredis instance and returns a client
-// wired to it, mirroring the harness executor-controller's publisher tests
+// wired to it, mirroring the harness execution-controller's publisher tests
 // already use.
 func newTestRedis(t *testing.T) (*goredis.Client, func()) {
 	t.Helper()

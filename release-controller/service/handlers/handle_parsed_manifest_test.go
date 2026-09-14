@@ -577,7 +577,7 @@ func TestHandleParsedManifest_OK_BootstrapValidatesAllNodes(t *testing.T) {
 
 // A candidate whose nodes all match prod (same hashes, no new nodes) has nothing
 // to validate. The handler must promote directly — NOT emit an empty
-// validation.requested, which executor-controller rejects as a permanent parse
+// validation.requested, which execution-controller rejects as a permanent parse
 // error, leaving no validation.completed and blocking the queue forever.
 func TestHandleParsedManifest_OK_NothingToValidate_PromotesDirectly(t *testing.T) {
 	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})

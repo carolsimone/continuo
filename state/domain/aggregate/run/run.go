@@ -487,13 +487,15 @@ func (r *Run) Cancel(
 // Returns ErrTaskRowNotProjected when the task row is not yet present; the
 // adapter binding treats this as a transient error and the consumer redelivers.
 //
-// task.status.updated:v1 has two producers — executor-controller emits RUNNING,
-// k8s-controller emits the terminal status — so the two messages for one task
-// can be processed out of order. retry_count carries the attempt number and is
-// stamped identically on a RUNNING and the terminal of the same attempt; a
-// genuine retry is a strictly newer attempt. The aggregate uses that to honor a
-// real retry's un-fill while ignoring a stale RUNNING re-delivered after its own
-// terminal.
+// task.status.updated:v1 carries two messages per attempt: execution-controller's
+// job-status handler announces RUNNING once, then the terminal status once the
+// Job finishes. Both are written for the same task aggregate, so the
+// per-aggregate FIFO outbox publishes them in creation order, but they still
+// arrive here as separate consumer deliveries and a redelivery can repeat one
+// of them. retry_count carries the attempt number and is stamped identically
+// on a RUNNING and the terminal of the same attempt; a genuine retry is a
+// strictly newer attempt. The aggregate uses that to honor a real retry's
+// un-fill while ignoring a stale RUNNING re-delivered after its own terminal.
 func (r *Run) RecordTaskStatus(
 	ctx context.Context,
 	tasks TaskCollection,

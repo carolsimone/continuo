@@ -146,7 +146,7 @@ func TestStatus_FailedFallsBackToFailReasonAndDetail(t *testing.T) {
 }
 
 // TestStatus_FailedReadsSentinelJSONSurroundedByOutput pins that the object at
-// run_results_uri is not required to be pure JSON. k8s-controller uploads the
+// run_results_uri is not required to be pure JSON. execution-controller uploads the
 // raw text captured between the validation pod's sentinel markers, which
 // carries whatever the runner wrote around the structured record: a log
 // preamble before it — possibly with braces of its own — and further output

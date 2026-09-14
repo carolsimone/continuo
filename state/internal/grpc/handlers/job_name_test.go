@@ -127,11 +127,11 @@ func TestComputeJobName(t *testing.T) {
 		},
 		{
 			name:       "already compliant name",
-			service:    "executor-controller",
+			service:    "execution-controller",
 			schema:     "public",
 			table:      "metrics-v2",
 			scheduleID: scheduleID,
-			expected:   "executor-controller-public-metrics-v2-" + shortSuffix,
+			expected:   "execution-controller-public-metrics-v2-" + shortSuffix,
 		},
 	}
 

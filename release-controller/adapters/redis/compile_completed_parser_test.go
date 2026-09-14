@@ -8,7 +8,7 @@ import (
 
 // TestDecodeCompileCompletedPerNode verifies that the compile.completed:v1
 // "payload" field is decoded into compileResultDTO — including the per_node
-// array and the failed-container attribution executor-controller emits — and
+// array and the failed-container attribution execution-controller emits — and
 // that toInput carries every value onto the tag-free handler input.
 func TestDecodeCompileCompletedPerNode(t *testing.T) {
 	msg := goredis.XMessage{

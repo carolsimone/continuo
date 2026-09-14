@@ -250,7 +250,7 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 
 	// Nothing to validate: no candidate node is new or content-changed vs prod
 	// (e.g. a release that only bumps image tags, or removes a node). Emitting an
-	// empty validation.requested would be rejected by executor-controller as a
+	// empty validation.requested would be rejected by execution-controller as a
 	// permanent parse error, so no validation.completed would ever arrive and the
 	// release would block the queue indefinitely. Promote directly instead — an
 	// empty candidate diff trivially passes the gate.
@@ -439,7 +439,7 @@ func newChangedSeedIDs(topo release.Topology, validationIDs []string, rebuiltFro
 }
 
 // seedBuildNodesInOrder returns one map per seed node (sorted by seedIDs order)
-// carrying the fields executor-controller needs to build the seed into the
+// carrying the fields execution-controller needs to build the seed into the
 // candidate schema with the team image. No candidate_artifact_uri / validation_op:
 // seeds are built, not checked by the adapter; no upstreams: seeds are roots.
 func seedBuildNodesInOrder(topo release.Topology, seedIDs []string) []map[string]any {
@@ -562,7 +562,7 @@ func joinImageTags(topo release.Topology, imageTags map[string]string) release.T
 }
 
 // validationNodesInOrder returns one map per validation node in lexical
-// (sorted) order, carrying the per-node fields executor-controller needs to
+// (sorted) order, carrying the per-node fields execution-controller needs to
 // build a candidate dbt job. upstream_node_ids lists the in-set upstreams (intra-
 // AND cross-service) that must succeed before this node can run its candidate
 // schema build. Dispatch ordering is deterministic but NOT topological; per-node
