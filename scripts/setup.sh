@@ -92,16 +92,26 @@ _buildable=()
 while IFS= read -r _svc; do [ -n "$_svc" ] && _buildable+=("$_svc"); done < <(docker compose config --format json \
   | python3 -c "import sys,json; print('\n'.join(k for k,v in json.load(sys.stdin)['services'].items() if 'build' in v))")
 _batch=()
-_build_batch() { [ "${#_batch[@]}" -gt 0 ] && { echo "  building: ${_batch[*]}"; DOCKER_BUILDKIT=1 docker compose build "${_batch[@]}"; }; }
+_build_batch() {
+    [ "${#_batch[@]}" -eq 0 ] && return 0
+    echo "  building: ${_batch[*]}"
+    if ! DOCKER_BUILDKIT=1 docker compose build "${_batch[@]}"; then
+        echo "ERROR: 'docker compose build ${_batch[*]}' exited non-zero" >&2
+        return 1
+    fi
+    echo "  built OK: ${_batch[*]}"
+}
 for _svc in "${_buildable[@]}"; do
     _batch+=("$_svc")
     if [ "${#_batch[@]}" -ge "${BUILD_BATCH:-2}" ]; then _build_batch; _batch=(); fi
 done
 _build_batch
+echo "===== DIAG: all compose build batches complete ====="
 
 # Build dbt service images and load into KIND
 
 IMAGE_TAG="$(git rev-parse --short HEAD)-$(date +%s)"
+echo "===== DIAG: IMAGE_TAG=${IMAGE_TAG} ====="
 echo "Using IMAGE_TAG=${IMAGE_TAG} for dbt service images"
 
 DBT_SERVICES=(service-1 service-2 service-3)
