@@ -680,7 +680,7 @@ func (h *JobStatusHandler) handleUnknown(ctx context.Context, u uow.UnitOfWork, 
 		return fmt.Errorf("task_status_updated: %w", err)
 	}
 
-	h.logger.Error("Job status unknown — outbox entries created",
+	h.logger.Error("Job status unknown — recorded as failed",
 		"task_id", cmd.TaskID,
 		"job_name", cmd.JobName,
 		"error", errorMsg,
