@@ -9,16 +9,16 @@
 #
 # Env: POSTGRES_HOST, POSTGRES_PORT (5432), POSTGRES_USER, PGPASSWORD,
 #      REDIS_HOST, REDIS_PORT (6379), REDIS_PASSWORD (optional),
-#      K8S_NAMESPACE (default).
+#      K8S_NAMESPACE (required).
 set -euo pipefail
 
 : "${POSTGRES_HOST:?POSTGRES_HOST is required}"
 : "${POSTGRES_USER:?POSTGRES_USER is required}"
 : "${PGPASSWORD:?PGPASSWORD is required}"
 : "${REDIS_HOST:?REDIS_HOST is required}"
+: "${K8S_NAMESPACE:?K8S_NAMESPACE is required (the release namespace; without it active Jobs would be counted in the wrong namespace and read as 0)}"
 POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 REDIS_PORT="${REDIS_PORT:-6379}"
-K8S_NAMESPACE="${K8S_NAMESPACE:-default}"
 
 psql_count() { # $1 db, $2 sql
   psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$1" -tAc "$2" | tr -d '[:space:]'

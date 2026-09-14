@@ -19,6 +19,8 @@ EOS
 #!/usr/bin/env bash
 echo "$4"
 EOS
+  # BSD seq 1 0 prints "1\n0" (reversed), unlike GNU seq's empty output —
+  # guard so all-zero means no jobs.
   cat > "$stub/kubectl" <<EOS
 #!/usr/bin/env bash
 if [ "$5" -gt 0 ]; then
@@ -28,7 +30,7 @@ EOS
   chmod +x "$stub"/psql "$stub"/redis-cli "$stub"/kubectl
 }
 
-run() { PATH="$stub:$PATH" POSTGRES_HOST=h POSTGRES_USER=u PGPASSWORD=p REDIS_HOST=r bash "$here/preflight-execution-cutover.sh"; }
+run() { PATH="$stub:$PATH" POSTGRES_HOST=h POSTGRES_USER=u PGPASSWORD=p REDIS_HOST=r K8S_NAMESPACE=default bash "$here/preflight-execution-cutover.sh"; }
 
 make_stubs 0 0 0 0 0
 run >/dev/null || { echo "FAIL: all-zero must be GO"; exit 1; }
