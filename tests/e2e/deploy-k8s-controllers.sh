@@ -28,6 +28,18 @@ log_info "Applying k8s manifests..."
 
 cd "${K8S_DIR}"
 
+# Remove any obsolete executor-controller / k8s-controller resources left over
+# from a kind cluster provisioned before the merge. They share this service's
+# consumer groups, so a leftover controller could consume a candidate completion,
+# find no matching deployment, and ACK it without settling the new release.
+# --wait blocks until the old pods terminate; --ignore-not-found makes this a
+# no-op on a fresh cluster.
+log_info "Removing any obsolete executor-controller/k8s-controller resources..."
+for old in executor-controller k8s-controller; do
+    kubectl delete deployment,service,serviceaccount,role,rolebinding "${old}" \
+        -n default --ignore-not-found --wait --timeout=60s || true
+done
+
 # Apply execution-controller
 log_info "Deploying execution-controller..."
 envsubst < execution-controller-deployment.yaml | kubectl apply -f - || {
