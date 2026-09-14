@@ -12,7 +12,7 @@ import (
 //
 // NodeID carries the dbt unique_id of the node (the producer emits it under
 // the per-node "unique_id" key). It is the node's identity throughout the
-// executor: the K8s Job name, the executor_deployments.node_id column, and
+// executor: the K8s Job name, the deployments.node_id column, and
 // the (release_id, node_id) lookup key all derive from this value.
 //
 // UpstreamNodeIDs lists the dbt unique_ids of in-set nodes (intra- AND

@@ -3,8 +3,8 @@
 // (command, event) free of struct tags. It sits outside adapters/ so the
 // application layer (service/deployer, which writes outbox payloads) may map
 // through it without importing an adapter, and outside domain/ so the tags live
-// away from the domain types. The postgres repository (executor_deployments.job_params
-// JSONB), the dispatcher (executor_outbox payloads it writes), and the publisher
+// away from the domain types. The postgres repository (deployments.job_params
+// JSONB), the dispatcher (execution_outbox payloads it writes), and the publisher
 // (payloads it reads) all map through these DTOs, fixing the byte shapes here.
 package serialization
 
@@ -14,7 +14,7 @@ import (
 )
 
 // DeployTaskDTO is the JSON shape of command.DeployTask as stored in the
-// executor_deployments.job_params JSONB column for a production deployment.
+// deployments.job_params JSONB column for a production deployment.
 type DeployTaskDTO struct {
 	TaskID         string `json:"task_id"`
 	ScheduleID     string `json:"schedule_id"`
@@ -70,7 +70,7 @@ func (d DeployTaskDTO) ToDomain() command.DeployTask {
 }
 
 // ValidationDeployTaskDTO is the JSON shape of command.ValidationDeployTask as
-// stored in the executor_deployments.job_params JSONB column for a validation,
+// stored in the deployments.job_params JSONB column for a validation,
 // seed-build, or compile deployment.
 type ValidationDeployTaskDTO struct {
 	ReleaseID            string   `json:"release_id"`
@@ -139,7 +139,7 @@ func (d ValidationDeployTaskDTO) ToDomain() command.ValidationDeployTask {
 }
 
 // JobDeployedDTO is the JSON shape of event.JobDeployed as stored in an
-// executor_outbox row's payload (event_type node_deployed) and read back by the
+// execution_outbox row's payload (event_type node_deployed) and read back by the
 // publisher to build the node.deployed:v1 wire event.
 type JobDeployedDTO struct {
 	TaskID         string `json:"task_id"`
@@ -193,7 +193,7 @@ func (d JobDeployedDTO) ToDomain() event.JobDeployed {
 }
 
 // NodeUpdatedDTO is the JSON shape of event.NodeUpdated as stored in an
-// executor_outbox row's payload (event_type node_updated) and read back by the
+// execution_outbox row's payload (event_type node_updated) and read back by the
 // publisher to build the node.updated:v1 wire event.
 type NodeUpdatedDTO struct {
 	TaskID       string `json:"task_id"`

@@ -69,7 +69,7 @@ func (h *ValidationRequestedHandler) Handle(
 }
 
 // createValidationDeployment writes one validation Deployment aggregate to the
-// executor_deployments command queue through the UoW deployments repo.
+// deployments command queue through the UoW deployments repo.
 // hasUpstreams gates the initial status: true starts the deployment as blocked
 // (intra-service upstreams must complete first), false as pending (root node,
 // immediately dispatchable). msgProcID is stored for provenance; pass uuid.Nil

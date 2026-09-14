@@ -1,7 +1,7 @@
 // Package deployer holds the application service that drains the
-// executor_deployments command queue: it deploys K8s Jobs (capped by a live
+// deployments command queue: it deploys K8s Jobs (capped by a live
 // in-flight count) and, once a deploy resolves, writes the canonical
-// announcement rows to executor_outbox. It depends only on domain ports.
+// announcement rows to execution_outbox. It depends only on domain ports.
 package deployer
 
 import (
@@ -44,7 +44,7 @@ type DispatcherConfig struct {
 	BackoffCap  time.Duration // max retry delay; default 2m
 }
 
-// Dispatcher drains executor_deployments under a concurrency cap. The K8s
+// Dispatcher drains deployments under a concurrency cap. The K8s
 // deploy is a command effect kept off the outbox so every outbox Publisher
 // stays a uniform marshal-and-XADD.
 type Dispatcher struct {
@@ -159,7 +159,7 @@ func (d *Dispatcher) processOne(ctx context.Context) (bool, error) {
 
 	repo := d.newRepo(tx)
 	aggRepo := d.newAggRepo(tx)
-	outboxRepo := outbox.NewPostgresRepository(tx, "executor_outbox", d.logger)
+	outboxRepo := outbox.NewPostgresRepository(tx, "execution_outbox", d.logger)
 
 	due, err := repo.GetDueBatch(ctx, 1)
 	if err != nil {

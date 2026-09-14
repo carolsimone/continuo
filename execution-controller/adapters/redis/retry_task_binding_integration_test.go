@@ -55,13 +55,13 @@ func buildRetryBinding(db *sqlx.DB) (func(ctx context.Context, msg goredis.XMess
 	return executorredis.NewRetryTaskBinding(uowFactory, handler, logger), logger
 }
 
-// readDeployCommand scans the JSONB job_params from the single executor_deployments
+// readDeployCommand scans the JSONB job_params from the single deployments
 // row and maps its DTO to a DeployTask command for field assertions.
 func readDeployCommand(t *testing.T, db *sqlx.DB) command.DeployTask {
 	t.Helper()
 	var raw []byte
 	require.NoError(t, db.QueryRowContext(context.Background(),
-		`SELECT job_params FROM executor_deployments LIMIT 1`).Scan(&raw))
+		`SELECT job_params FROM deployments LIMIT 1`).Scan(&raw))
 	var c serialization.DeployTaskDTO
 	require.NoError(t, json.Unmarshal(raw, &c))
 	return c.ToDomain()
@@ -76,7 +76,7 @@ func TestRetryTaskBinding_SingleMessageHappyPath(t *testing.T) {
 
 	require.NoError(t, binding(context.Background(), msg))
 
-	assert.Equal(t, 1, countRows(t, db, `SELECT COUNT(*) FROM executor_deployments`))
+	assert.Equal(t, 1, countRows(t, db, `SELECT COUNT(*) FROM deployments`))
 	assert.Equal(t, 1, countRows(t, db,
 		`SELECT COUNT(*) FROM message_processing WHERE stream_name = $1`, streams.RetryTaskV1))
 
@@ -109,7 +109,7 @@ func TestRetryTaskBinding_ConcurrentDedup(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	assert.Equal(t, 1, countRows(t, db, `SELECT COUNT(*) FROM executor_deployments`),
+	assert.Equal(t, 1, countRows(t, db, `SELECT COUNT(*) FROM deployments`),
 		"exactly one deployment row even with %d concurrent handlers", goroutines)
 	assert.Equal(t, 1, countRows(t, db,
 		`SELECT COUNT(*) FROM message_processing WHERE message_id = $1 AND stream_name = $2`,
@@ -136,7 +136,7 @@ func TestRetryTaskBinding_CrossStreamIsolation(t *testing.T) {
 	require.NoError(t, retryBinding(context.Background(), retryMsg))
 
 	// Both streams must produce their own independent deployment row.
-	assert.Equal(t, 2, countRows(t, db, `SELECT COUNT(*) FROM executor_deployments`),
+	assert.Equal(t, 2, countRows(t, db, `SELECT COUNT(*) FROM deployments`),
 		"each stream produces its own deployment row; no false-dedup across streams")
 
 	// Each stream must produce exactly one dedup row keyed to its own stream_name.

@@ -9,7 +9,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/testmigrations"
 )
 
-// ApplyMigrations runs every Flyway migration in db/migration/executor/ against
+// ApplyMigrations runs every Flyway migration in db/migration/execution/ against
 // the provided *sql.DB, in ascending version order. Keeps integration and
 // e2e tests in lock-step with production schema; eliminates the recurring
 // drift-from-hardcoded-DDL bug.
@@ -19,21 +19,21 @@ import (
 // and on a developer machine running `go test ./execution-controller/test/...`
 // from the repo root.
 func ApplyMigrations(db *sql.DB) error {
-	dir, err := executorMigrationDir()
+	dir, err := migrationDir()
 	if err != nil {
 		return err
 	}
 	return testmigrations.Apply(db, dir)
 }
 
-// executorMigrationDir returns the absolute path to db/migration/executor/ as a
+// migrationDir returns the absolute path to db/migration/execution/ as a
 // sibling of execution-controller/ at the repo root.
-func executorMigrationDir() (string, error) {
+func migrationDir() (string, error) {
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
 		return "", fmt.Errorf("runtime.Caller failed — cannot locate execution-controller/test/migrations.go")
 	}
 	// thisFile = <repo>/execution-controller/test/migrations.go
 	repoRoot := filepath.Dir(filepath.Dir(filepath.Dir(thisFile)))
-	return filepath.Join(repoRoot, "db", "migration", "executor"), nil
+	return filepath.Join(repoRoot, "db", "migration", "execution"), nil
 }

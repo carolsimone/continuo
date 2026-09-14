@@ -230,7 +230,7 @@ func (h *JobStatusHandler) handleSucceeded(ctx context.Context, u uow.UnitOfWork
 // the mode=validation label. It writes a single validation_node_completed outbox row
 // (→ validation.node.completed:v1) instead of the three production task-status rows.
 // release_id and node_id are read from the Job annotations (raw, unsanitized) so
-// they match the dispatcher's executor_deployments key; outcome is derived from the
+// they match the dispatcher's deployments key; outcome is derived from the
 // terminal status. An Unknown status is not terminal — the handler re-polls via the
 // shared check.k8s:v1 ticket so a Job that is briefly Unknown (e.g. pods not yet
 // scheduled) is re-checked rather than emitting a premature failure. Running is
@@ -293,7 +293,7 @@ func (h *JobStatusHandler) handleValidationTerminal(
 // mode=seed_build label. It writes a single seed_build_node_completed outbox row
 // (→ seed.build.node.completed:v1) instead of the three production task-status rows.
 // release_id and node_id are read from the Job annotations (raw, unsanitized) so
-// they match the dispatcher's executor_deployments key; outcome is derived from the
+// they match the dispatcher's deployments key; outcome is derived from the
 // terminal status. Unknown status is not terminal — re-poll via the shared
 // check.k8s:v1 ticket. Running is handled before this function is reached.
 func (h *JobStatusHandler) handleSeedBuildTerminal(
@@ -354,7 +354,7 @@ func (h *JobStatusHandler) handleSeedBuildTerminal(
 // mode=compile label. It writes a single compile_node_completed outbox row
 // (→ compile.node.completed:v1) instead of the three production task-status rows.
 // release_id and node_id are read from the Job annotations (raw, unsanitized) so
-// they match the dispatcher's executor_deployments key; outcome is derived from the
+// they match the dispatcher's deployments key; outcome is derived from the
 // terminal status. Unknown status is not terminal — re-poll via the shared
 // check.k8s:v1 ticket. Running is handled before this function is reached.
 // Unlike validation, no stdout result block is parsed — the manifest went to S3

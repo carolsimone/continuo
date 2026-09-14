@@ -142,7 +142,7 @@ func TestQueryModelBinding_SingleMessageHappyPath(t *testing.T) {
 
 	require.NoError(t, binding(context.Background(), msg))
 
-	assert.Equal(t, 1, countRows(t, db, `SELECT COUNT(*) FROM executor_deployments`))
+	assert.Equal(t, 1, countRows(t, db, `SELECT COUNT(*) FROM deployments`))
 	assert.Equal(t, 1, countRows(t, db,
 		`SELECT COUNT(*) FROM message_processing WHERE stream_name = $1`, streams.QueryModelV1))
 }
@@ -170,7 +170,7 @@ func TestQueryModelBinding_ConcurrentDedup(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	assert.Equal(t, 1, countRows(t, db, `SELECT COUNT(*) FROM executor_deployments`),
+	assert.Equal(t, 1, countRows(t, db, `SELECT COUNT(*) FROM deployments`),
 		"exactly one deployment row even with %d concurrent handlers", goroutines)
 	assert.Equal(t, 1, countRows(t, db,
 		`SELECT COUNT(*) FROM message_processing WHERE message_id = $1 AND stream_name = $2`,
@@ -184,7 +184,7 @@ func TestQueryModelBinding_PublisherRetrySameOutboxEntryIDDedups(t *testing.T) {
 	// the two deliveries as distinct, but the partial unique index on
 	// message_processing.outbox_entry_id catches them as the same upstream event.
 	// The second delivery is deduped at the message_processing layer: only one
-	// executor_deployments row and one message_processing row are written.
+	// deployments row and one message_processing row are written.
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 
@@ -203,7 +203,7 @@ func TestQueryModelBinding_PublisherRetrySameOutboxEntryIDDedups(t *testing.T) {
 	msg2 := queryModelXMessageWithOutboxID(t, "11-0", taskID, scheduleID, outboxEntryID)
 	require.NoError(t, binding(context.Background(), msg2))
 
-	assert.Equal(t, 1, countRows(t, db, `SELECT COUNT(*) FROM executor_deployments`),
+	assert.Equal(t, 1, countRows(t, db, `SELECT COUNT(*) FROM deployments`),
 		"outbox_entry_id dedup prevents a second deployment row for the same upstream event")
 	assert.Equal(t, 1, countRows(t, db,
 		`SELECT COUNT(*) FROM message_processing WHERE stream_name = $1`, streams.QueryModelV1),
@@ -233,7 +233,7 @@ func TestQueryModelBinding_NoOutboxEntryIDStillDedupsByMessageID(t *testing.T) {
 	require.NoError(t, binding(context.Background(), msg))
 	require.NoError(t, binding(context.Background(), msg))
 
-	assert.Equal(t, 1, countRows(t, db, `SELECT COUNT(*) FROM executor_deployments`),
+	assert.Equal(t, 1, countRows(t, db, `SELECT COUNT(*) FROM deployments`),
 		"second delivery with same msg.ID is caught by shared dedup")
 	assert.Equal(t, 1, countRows(t, db,
 		`SELECT COUNT(*) FROM message_processing WHERE message_id = $1`, msg.ID))
@@ -253,7 +253,7 @@ func TestQueryModelBinding_CancelledScheduleDropsMessage(t *testing.T) {
 
 	require.NoError(t, binding(context.Background(), msg))
 
-	assert.Equal(t, 0, countRows(t, db, `SELECT COUNT(*) FROM executor_deployments`),
+	assert.Equal(t, 0, countRows(t, db, `SELECT COUNT(*) FROM deployments`),
 		"no deployment row written when schedule is cancelled")
 	assert.Equal(t, 1, countRows(t, db,
 		`SELECT COUNT(*) FROM message_processing WHERE message_id = $1`, msg.ID),

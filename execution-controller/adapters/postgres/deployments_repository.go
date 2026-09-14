@@ -17,7 +17,7 @@ import (
 )
 
 // deploymentsRepository is the Postgres adapter implementing
-// repository.DeploymentRepository over the executor_deployments table.
+// repository.DeploymentRepository over the deployments table.
 type deploymentsRepository struct {
 	exec   outbox.Executor
 	logger *slog.Logger
@@ -26,7 +26,7 @@ type deploymentsRepository struct {
 var _ repository.DeploymentRepository = (*deploymentsRepository)(nil)
 
 // NewDeploymentsRepository constructs a repository.DeploymentRepository over
-// executor_deployments. Pass *sqlx.DB for autocommit or *sqlx.Tx for
+// deployments. Pass *sqlx.DB for autocommit or *sqlx.Tx for
 // transactional use; outbox.Executor abstracts both.
 func NewDeploymentsRepository(exec outbox.Executor, logger *slog.Logger) repository.DeploymentRepository {
 	return &deploymentsRepository{exec: exec, logger: logger}
@@ -86,7 +86,7 @@ func (r *deploymentsRepository) Add(ctx context.Context, d *model.Deployment) er
 	}
 
 	const query = `
-		INSERT INTO executor_deployments (
+		INSERT INTO deployments (
 			id, message_processing_id, task_id, schedule_id, job_params,
 			status, retry_count, max_retries, next_attempt_at, created_at,
 			mode, release_id, node_id
@@ -96,7 +96,7 @@ func (r *deploymentsRepository) Add(ctx context.Context, d *model.Deployment) er
 		string(d.Status()), d.RetryCount(), d.MaxRetries(), d.NextAttemptAt(), d.CreatedAt(),
 		string(d.Mode()), releaseID, nodeID,
 	); err != nil {
-		return fmt.Errorf("insert executor_deployments row: %w", err)
+		return fmt.Errorf("insert deployments row: %w", err)
 	}
 	return nil
 }
@@ -107,7 +107,7 @@ func (r *deploymentsRepository) GetDueBatch(ctx context.Context, limit int) ([]*
 		       status, retry_count, max_retries, next_attempt_at,
 		       created_at, deployed_at, error_message,
 		       mode, release_id, node_id, outcome, dbt_log_uri, outcome_at, run_results_uri, failed_container
-		FROM executor_deployments
+		FROM deployments
 		WHERE status = 'pending' AND next_attempt_at <= NOW()
 		ORDER BY next_attempt_at ASC
 		LIMIT $1
@@ -125,7 +125,7 @@ func (r *deploymentsRepository) GetDueBatch(ctx context.Context, limit int) ([]*
 
 func (r *deploymentsRepository) Save(ctx context.Context, d *model.Deployment) error {
 	const query = `
-		UPDATE executor_deployments
+		UPDATE deployments
 		SET status = $2, retry_count = $3, next_attempt_at = $4, deployed_at = $5, error_message = $6,
 		    outcome = $7, dbt_log_uri = $8, outcome_at = $9, run_results_uri = $10, failed_container = $11
 		WHERE id = $1`
@@ -154,7 +154,7 @@ const validationSelectColumns = `
 func (r *deploymentsRepository) GetByReleaseNode(ctx context.Context, releaseID, nodeID string, mode model.Mode) (*model.Deployment, error) {
 	const query = `
 		SELECT` + validationSelectColumns + `
-		FROM executor_deployments
+		FROM deployments
 		WHERE mode = $3 AND release_id = $1 AND node_id = $2`
 	var row deploymentRow
 	if err := r.exec.QueryRowContext(ctx, query, releaseID, nodeID, string(mode)).Scan(
@@ -175,7 +175,7 @@ func (r *deploymentsRepository) GetByReleaseNode(ctx context.Context, releaseID,
 func (r *deploymentsRepository) PendingValidationCount(ctx context.Context, releaseID string, mode model.Mode) (int, error) {
 	const query = `
 		SELECT COUNT(*)
-		FROM executor_deployments
+		FROM deployments
 		WHERE mode = $2 AND release_id = $1
 		  AND status IN ('pending','blocked','deployed') AND outcome IS NULL`
 	var n int
@@ -188,7 +188,7 @@ func (r *deploymentsRepository) PendingValidationCount(ctx context.Context, rele
 func (r *deploymentsRepository) ListValidationResults(ctx context.Context, releaseID string, mode model.Mode) ([]*model.Deployment, error) {
 	const query = `
 		SELECT` + validationSelectColumns + `
-		FROM executor_deployments
+		FROM deployments
 		WHERE mode = $2 AND release_id = $1 AND outcome IS NOT NULL
 		ORDER BY outcome_at ASC`
 	var rows []*deploymentRow
@@ -205,7 +205,7 @@ func (r *deploymentsRepository) ListValidationResults(ctx context.Context, relea
 func (r *deploymentsRepository) ListValidationByRelease(ctx context.Context, releaseID string, mode model.Mode) ([]*model.Deployment, error) {
 	const query = `
 		SELECT` + validationSelectColumns + `
-		FROM executor_deployments
+		FROM deployments
 		WHERE mode = $2 AND release_id = $1
 		ORDER BY created_at ASC`
 	var rows []*deploymentRow

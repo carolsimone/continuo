@@ -106,10 +106,10 @@ func TestValidationRequestedBinding_HappyPath_EnqueuesAllNodes(t *testing.T) {
 	assert.Equal(t, []string{"_candidate_" + releaseID}, creator.ensured,
 		"candidate schema is pre-created exactly once before any node is enqueued")
 	assert.Equal(t, 3, countRows(t, db,
-		`SELECT COUNT(*) FROM executor_deployments WHERE mode = 'validation' AND release_id = $1`, releaseID),
+		`SELECT COUNT(*) FROM deployments WHERE mode = 'validation' AND release_id = $1`, releaseID),
 		"one validation deployment row per node")
 	assert.Equal(t, 1, countRows(t, db,
-		`SELECT COUNT(*) FROM executor_deployments WHERE mode = 'validation' AND release_id = $1 AND node_id = $2`,
+		`SELECT COUNT(*) FROM deployments WHERE mode = 'validation' AND release_id = $1 AND node_id = $2`,
 		releaseID, "model.shop.orders"))
 	assert.Equal(t, 1, countRows(t, db,
 		`SELECT COUNT(*) FROM message_processing WHERE stream_name = $1`, streams.ValidationRequestedV1))
@@ -140,7 +140,7 @@ func TestValidationRequestedBinding_RedeliveredMessageIsDedupedAndAcked(t *testi
 		"a redelivered (deduped) message must not re-run the candidate-schema pre-create")
 
 	assert.Equal(t, 2, countRows(t, db,
-		`SELECT COUNT(*) FROM executor_deployments WHERE mode = 'validation' AND release_id = $1`, releaseID),
+		`SELECT COUNT(*) FROM deployments WHERE mode = 'validation' AND release_id = $1`, releaseID),
 		"redelivered message must not re-enqueue the release's nodes")
 	assert.Equal(t, 1, countRows(t, db,
 		`SELECT COUNT(*) FROM message_processing WHERE stream_name = $1`, streams.ValidationRequestedV1),
@@ -163,7 +163,7 @@ func TestValidationRequestedBinding_ParseFailureReturnsPermanent(t *testing.T) {
 		"parse failure must wrap events.ErrPermanent so the consumer ACKs and drops")
 
 	assert.Equal(t, 0, countRows(t, db,
-		`SELECT COUNT(*) FROM executor_deployments`),
+		`SELECT COUNT(*) FROM deployments`),
 		"no rows written on parse failure")
 	assert.Equal(t, 0, countRows(t, db,
 		`SELECT COUNT(*) FROM message_processing`),

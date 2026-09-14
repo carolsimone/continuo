@@ -93,7 +93,7 @@ func seedDue(t *testing.T, db *sqlx.DB, nextAttempt time.Time) uuid.UUID {
 	t.Helper()
 	id := uuid.New()
 	_, err := db.Exec(
-		`INSERT INTO executor_deployments (id, task_id, schedule_id, job_params, next_attempt_at)
+		`INSERT INTO deployments (id, task_id, schedule_id, job_params, next_attempt_at)
 		 VALUES ($1, $2, $3, '{}'::jsonb, $4)`,
 		id, uuid.New(), uuid.New(), nextAttempt)
 	require.NoError(t, err)
@@ -118,7 +118,7 @@ func TestRepo_Add_PersistsPendingAggregate(t *testing.T) {
 		nextAt     time.Time
 	)
 	require.NoError(t, db.QueryRow(
-		`SELECT status, max_retries, task_id, job_params, next_attempt_at FROM executor_deployments WHERE id=$1`, dep.ID(),
+		`SELECT status, max_retries, task_id, job_params, next_attempt_at FROM deployments WHERE id=$1`, dep.ID(),
 	).Scan(&status, &maxRetries, &taskID, &jobParams, &nextAt))
 	assert.Equal(t, "pending", status)
 	assert.Equal(t, 3, maxRetries)
@@ -161,7 +161,7 @@ func TestRepo_Save_MarkDeployed(t *testing.T) {
 
 	var status string
 	var deployedAt *time.Time
-	require.NoError(t, db.QueryRow(`SELECT status, deployed_at FROM executor_deployments WHERE id=$1`, dep.ID()).Scan(&status, &deployedAt))
+	require.NoError(t, db.QueryRow(`SELECT status, deployed_at FROM deployments WHERE id=$1`, dep.ID()).Scan(&status, &deployedAt))
 	assert.Equal(t, "deployed", status)
 	assert.NotNil(t, deployedAt)
 }
@@ -184,7 +184,7 @@ func TestRepo_Save_RescheduleAndFail(t *testing.T) {
 	var rc int
 	var nextAt time.Time
 	require.NoError(t, db.QueryRow(
-		`SELECT status, retry_count, error_message, next_attempt_at FROM executor_deployments WHERE id=$1`, dep.ID()).
+		`SELECT status, retry_count, error_message, next_attempt_at FROM deployments WHERE id=$1`, dep.ID()).
 		Scan(&status, &rc, &errMsg, &nextAt))
 	assert.Equal(t, "pending", status)
 	assert.Equal(t, 1, rc)
@@ -194,7 +194,7 @@ func TestRepo_Save_RescheduleAndFail(t *testing.T) {
 	// Permanent failure → terminal.
 	require.True(t, dep.RegisterFailure(now, true, "fatal", backoff))
 	require.NoError(t, repo.Save(context.Background(), dep))
-	require.NoError(t, db.QueryRow(`SELECT status, error_message FROM executor_deployments WHERE id=$1`, dep.ID()).Scan(&status, &errMsg))
+	require.NoError(t, db.QueryRow(`SELECT status, error_message FROM deployments WHERE id=$1`, dep.ID()).Scan(&status, &errMsg))
 	assert.Equal(t, "failed", status)
 	assert.Equal(t, "fatal", errMsg)
 }
@@ -207,7 +207,7 @@ func TestRepo_GetDueBatch_CorruptJobParamsRecoversIdentity(t *testing.T) {
 	scheduleID := uuid.New()
 	// Valid JSONB but a JSON string — cannot unmarshal into DeployTask.
 	_, err := db.Exec(
-		`INSERT INTO executor_deployments (id, task_id, schedule_id, job_params, next_attempt_at)
+		`INSERT INTO deployments (id, task_id, schedule_id, job_params, next_attempt_at)
 		 VALUES ($1, $2, $3, '"corrupt"'::jsonb, NOW() - interval '1 minute')`,
 		uuid.New(), taskID, scheduleID)
 	require.NoError(t, err)
@@ -315,7 +315,7 @@ func TestAdd_ValidationRow_RoundTrip(t *testing.T) {
 	)
 	require.NoError(t, db.QueryRow(
 		`SELECT mode, release_id, node_id, task_id, schedule_id, job_params
-		 FROM executor_deployments WHERE id=$1`, dep.ID(),
+		 FROM deployments WHERE id=$1`, dep.ID(),
 	).Scan(&mode, &releaseID, &nodeID, &taskID, &schedule, &jobParams))
 	assert.Equal(t, "validation", mode)
 	assert.Equal(t, "rel-1", releaseID)
@@ -327,12 +327,12 @@ func TestAdd_ValidationRow_RoundTrip(t *testing.T) {
 
 	// Synthetic ids are deterministic across re-adds of the same (release,node).
 	dep2 := model.NewValidationDeployment(cmd, nil, now, false)
-	_, delErr := db.Exec(`DELETE FROM executor_deployments WHERE id=$1`, dep.ID())
+	_, delErr := db.Exec(`DELETE FROM deployments WHERE id=$1`, dep.ID())
 	require.NoError(t, delErr)
 	require.NoError(t, repo.Add(context.Background(), dep2))
 	var taskID2, schedule2 uuid.UUID
 	require.NoError(t, db.QueryRow(
-		`SELECT task_id, schedule_id FROM executor_deployments WHERE id=$1`, dep2.ID(),
+		`SELECT task_id, schedule_id FROM deployments WHERE id=$1`, dep2.ID(),
 	).Scan(&taskID2, &schedule2))
 	assert.Equal(t, taskID, taskID2, "synthetic task_id deterministic for same (release,node)")
 	assert.Equal(t, schedule, schedule2, "synthetic schedule_id deterministic for same (release,node)")
@@ -467,7 +467,7 @@ func seedDeployedValidationNode(t *testing.T, db *sqlx.DB, releaseID, nodeID str
 // runGateInTx mirrors a production call site: inside one transaction it records
 // the terminal outcome for (releaseID, nodeID) and runs the aggregate-emit gate
 // (LockRelease -> PendingValidationCount -> ClaimEmission -> emit) over the
-// executor_outbox. The caller decides when to commit so the test can hold one
+// execution_outbox. The caller decides when to commit so the test can hold one
 // tx's advisory lock open while a second tx blocks on it.
 func runGateInTx(t *testing.T, tx *sqlx.Tx, releaseID, nodeID string, now time.Time) error {
 	t.Helper()
@@ -481,7 +481,7 @@ func runGateInTx(t *testing.T, tx *sqlx.Tx, releaseID, nodeID string, now time.T
 	return validation.EmitValidationAggregateIfComplete(
 		context.Background(),
 		depRepo,
-		outbox.NewPostgresRepository(tx, "executor_outbox", logger),
+		outbox.NewPostgresRepository(tx, "execution_outbox", logger),
 		postgres.NewValidationAggregateRepository(tx),
 		validation.DedupNamespace,
 		releaseID,
@@ -500,7 +500,7 @@ func countValidationCompletedOutbox(t *testing.T, db *sqlx.DB, releaseID string)
 	t.Helper()
 	var n int
 	require.NoError(t, db.QueryRow(
-		`SELECT count(*) FROM executor_outbox WHERE stream_name = $1 AND payload::jsonb->>'release_id' = $2 AND payload::jsonb->>'kind' = 'complete'`,
+		`SELECT count(*) FROM execution_outbox WHERE stream_name = $1 AND payload::jsonb->>'release_id' = $2 AND payload::jsonb->>'kind' = 'complete'`,
 		streams.ValidationResultV1, releaseID,
 	).Scan(&n))
 	return n
@@ -585,7 +585,7 @@ func TestAdd_SeedBuildRow_RoundTrip(t *testing.T) {
 		jobParams []byte
 	)
 	require.NoError(t, db.QueryRow(
-		`SELECT mode, release_id, node_id, job_params FROM executor_deployments WHERE id=$1`, dep.ID(),
+		`SELECT mode, release_id, node_id, job_params FROM deployments WHERE id=$1`, dep.ID(),
 	).Scan(&mode, &releaseID, &nodeID, &jobParams))
 	assert.Equal(t, "seed_build", mode)
 	assert.Equal(t, "rel-seed-1", releaseID)
@@ -669,7 +669,7 @@ func countSeedBuildCompletedOutbox(t *testing.T, db *sqlx.DB, releaseID string) 
 	t.Helper()
 	var n int
 	require.NoError(t, db.QueryRow(
-		`SELECT count(*) FROM executor_outbox WHERE stream_name = $1 AND payload::jsonb->>'release_id' = $2`,
+		`SELECT count(*) FROM execution_outbox WHERE stream_name = $1 AND payload::jsonb->>'release_id' = $2`,
 		streams.SeedBuildCompletedV1, releaseID,
 	).Scan(&n))
 	return n
@@ -701,7 +701,7 @@ func TestSeedBuildAggregateGate_EmitsCompletion(t *testing.T) {
 	require.NoError(t, txRepo.Save(ctx, dep))
 	require.NoError(t, validation.SettleSeedBuildNodeTerminal(
 		ctx, txRepo,
-		outbox.NewPostgresRepository(tx, "executor_outbox", logger),
+		outbox.NewPostgresRepository(tx, "execution_outbox", logger),
 		postgres.NewValidationAggregateRepository(tx),
 		releaseID, "seed.fx", "ok", now,
 	))
@@ -762,7 +762,7 @@ func TestAggregateGate_ConcurrentLastNodes_EmitsExactlyOnce(t *testing.T) {
 
 // TestMigration_ExecutorDeploymentsHasFailedContainerColumn asserts flyway
 // migration V21 ran and created the failed_container column on
-// executor_deployments (the table the mode CHECK constraint targets).
+// deployments (the table the mode CHECK constraint targets).
 func TestMigration_ExecutorDeploymentsHasFailedContainerColumn(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
@@ -770,9 +770,9 @@ func TestMigration_ExecutorDeploymentsHasFailedContainerColumn(t *testing.T) {
 	var dataType string
 	err := db.QueryRow(
 		`SELECT data_type FROM information_schema.columns
-		 WHERE table_name = 'executor_deployments' AND column_name = 'failed_container'`,
+		 WHERE table_name = 'deployments' AND column_name = 'failed_container'`,
 	).Scan(&dataType)
-	require.NoError(t, err, "V21 must add executor_deployments.failed_container")
+	require.NoError(t, err, "V21 must add deployments.failed_container")
 	assert.Equal(t, "text", dataType)
 }
 
@@ -817,7 +817,7 @@ func TestAdd_CompileRow_FailedContainer_RoundTrip(t *testing.T) {
 	// not just in job_params.
 	var raw sql.NullString
 	require.NoError(t, db.QueryRow(
-		`SELECT failed_container FROM executor_deployments WHERE id=$1`, dep.ID(),
+		`SELECT failed_container FROM deployments WHERE id=$1`, dep.ID(),
 	).Scan(&raw))
 	require.True(t, raw.Valid)
 	assert.Equal(t, "parse-prod", raw.String)

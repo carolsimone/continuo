@@ -85,7 +85,7 @@ func TestValidationNodeCompletedBinding_RecordsOutcome(t *testing.T) {
 	require.NoError(t, binding(context.Background(), msg))
 
 	assert.Equal(t, 1, countRows(t, db,
-		`SELECT COUNT(*) FROM executor_deployments
+		`SELECT COUNT(*) FROM deployments
 		 WHERE mode='validation' AND release_id=$1 AND node_id=$2
 		   AND outcome='ok' AND outcome_at IS NOT NULL`, releaseID, nodeID),
 		"outcome recorded on the matching deployment row")
@@ -94,7 +94,7 @@ func TestValidationNodeCompletedBinding_RecordsOutcome(t *testing.T) {
 		streams.ValidationNodeCompletedV1))
 	// Single-node release: this terminal node triggers the aggregate emission.
 	assert.Equal(t, 1, countRows(t, db,
-		`SELECT COUNT(*) FROM executor_outbox WHERE stream_name = $1 AND payload->>'kind' = 'complete'`,
+		`SELECT COUNT(*) FROM execution_outbox WHERE stream_name = $1 AND payload->>'kind' = 'complete'`,
 		streams.ValidationResultV1),
 		"aggregate validation.result:v1 (kind=complete) emitted once the only node is terminal")
 	assert.Equal(t, 1, countRows(t, db,
@@ -122,7 +122,7 @@ func TestValidationNodeCompletedBinding_RedeliveryIsDeduped(t *testing.T) {
 		`SELECT COUNT(*) FROM message_processing WHERE message_id=$1 AND stream_name=$2`,
 		msg.ID, streams.ValidationNodeCompletedV1))
 	assert.Equal(t, 1, countRows(t, db,
-		`SELECT COUNT(*) FROM executor_outbox WHERE stream_name=$1 AND payload->>'kind' = 'complete'`,
+		`SELECT COUNT(*) FROM execution_outbox WHERE stream_name=$1 AND payload->>'kind' = 'complete'`,
 		streams.ValidationResultV1),
 		"redelivery must not emit a second aggregate")
 	assert.Equal(t, 1, countRows(t, db,

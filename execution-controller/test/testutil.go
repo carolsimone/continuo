@@ -13,7 +13,7 @@ import (
 )
 
 // setupPostgres starts a PostgreSQL testcontainer and runs migrations to create
-// the execution database's schema (executor_outbox, executor_deployments,
+// the execution database's schema (execution_outbox, deployments,
 // cancelled_schedules, message_processing) used by the standardized outbox
 // pattern.
 func setupPostgres(t *testing.T) (*sqlx.DB, func()) {
@@ -67,8 +67,8 @@ func setupPostgres(t *testing.T) (*sqlx.DB, func()) {
 	}
 	require.NoError(t, err, "Failed to connect to database after retries")
 
-	// Apply the real db/migration/executor/V*.sql migrations in version order,
-	// keeping the testcontainer schema (executor_outbox, executor_deployments,
+	// Apply the real db/migration/execution/V*.sql migrations in version order,
+	// keeping the testcontainer schema (execution_outbox, deployments,
 	// message_processing, and any later columns like
 	// message_processing.outbox_entry_id) in lock-step with production.
 	// Hand-rolled inline DDL drifts the first time a new migration adds a

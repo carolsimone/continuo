@@ -78,7 +78,7 @@ func seedJob(t *testing.T, db *sqlx.DB, maxRetries, retryCount int) uuid.UUID {
 	}))
 	require.NoError(t, err)
 	_, err = db.Exec(
-		`INSERT INTO executor_deployments (id, task_id, schedule_id, job_params, max_retries, retry_count, next_attempt_at)
+		`INSERT INTO deployments (id, task_id, schedule_id, job_params, max_retries, retry_count, next_attempt_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, NOW() - interval '1 minute')`,
 		id, uuid.New(), uuid.New(), payload, maxRetries, retryCount)
 	require.NoError(t, err)
@@ -88,7 +88,7 @@ func seedJob(t *testing.T, db *sqlx.DB, maxRetries, retryCount int) uuid.UUID {
 func outboxCountByType(t *testing.T, db *sqlx.DB, eventType string) int {
 	t.Helper()
 	var n int
-	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM executor_outbox WHERE event_type=$1`, eventType).Scan(&n))
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM execution_outbox WHERE event_type=$1`, eventType).Scan(&n))
 	return n
 }
 
@@ -102,7 +102,7 @@ func TestDispatcher_SuccessWritesDeployedOnly(t *testing.T) {
 
 	assert.Equal(t, 1, fk.deployCalls)
 	var status string
-	require.NoError(t, db.QueryRow(`SELECT status FROM executor_deployments WHERE id=$1`, id).Scan(&status))
+	require.NoError(t, db.QueryRow(`SELECT status FROM deployments WHERE id=$1`, id).Scan(&status))
 	assert.Equal(t, "deployed", status)
 	// k8s-controller now owns the RUNNING announcement; the deploy path emits only
 	// the node_deployed trigger that starts k8s polling.
@@ -122,7 +122,7 @@ func TestDispatcher_TransientErrorReschedules(t *testing.T) {
 	var status string
 	var rc int
 	var na time.Time
-	require.NoError(t, db.QueryRow(`SELECT status, retry_count, next_attempt_at FROM executor_deployments WHERE id=$1`, id).Scan(&status, &rc, &na))
+	require.NoError(t, db.QueryRow(`SELECT status, retry_count, next_attempt_at FROM deployments WHERE id=$1`, id).Scan(&status, &rc, &na))
 	assert.Equal(t, "pending", status)
 	assert.Equal(t, 1, rc)
 	assert.True(t, na.After(time.Now()), "next_attempt_at pushed into the future")
@@ -138,7 +138,7 @@ func TestDispatcher_BudgetExhaustedWritesFailed(t *testing.T) {
 	require.NoError(t, newTestDispatcher(db, fk, 50).ProcessBatch(context.Background()))
 
 	var status string
-	require.NoError(t, db.QueryRow(`SELECT status FROM executor_deployments WHERE id=$1`, id).Scan(&status))
+	require.NoError(t, db.QueryRow(`SELECT status FROM deployments WHERE id=$1`, id).Scan(&status))
 	assert.Equal(t, "failed", status)
 	assert.Equal(t, 1, outboxCountByType(t, db, "task_status_updated"))
 	assert.Equal(t, 1, outboxCountByType(t, db, "node_updated"))
@@ -154,7 +154,7 @@ func TestDispatcher_PermanentErrorWritesFailedImmediately(t *testing.T) {
 	require.NoError(t, newTestDispatcher(db, fk, 50).ProcessBatch(context.Background()))
 
 	var status string
-	require.NoError(t, db.QueryRow(`SELECT status FROM executor_deployments WHERE id=$1`, id).Scan(&status))
+	require.NoError(t, db.QueryRow(`SELECT status FROM deployments WHERE id=$1`, id).Scan(&status))
 	assert.Equal(t, "failed", status, "permanent error skips the retry budget")
 }
 
@@ -169,7 +169,7 @@ func TestDispatcher_CapZeroHeadroomDeploysNothing(t *testing.T) {
 	assert.Equal(t, 0, fk.deployCalls, "no deploys when cap reached")
 	var status string
 	var rc int
-	require.NoError(t, db.QueryRow(`SELECT status, retry_count FROM executor_deployments WHERE id=$1`, id).Scan(&status, &rc))
+	require.NoError(t, db.QueryRow(`SELECT status, retry_count FROM deployments WHERE id=$1`, id).Scan(&status, &rc))
 	assert.Equal(t, "pending", status, "throttled row stays pending")
 	assert.Equal(t, 0, rc, "throttle is not a retry — retry_count unchanged")
 }
@@ -186,7 +186,7 @@ func TestDispatcher_HeadroomLimitsBatch(t *testing.T) {
 
 	assert.Equal(t, 2, fk.deployCalls, "only headroom (cap-active) rows deployed")
 	var deployed int
-	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM executor_deployments WHERE status='deployed'`).Scan(&deployed))
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM deployments WHERE status='deployed'`).Scan(&deployed))
 	assert.Equal(t, 2, deployed)
 }
 
@@ -198,7 +198,7 @@ func TestDispatcher_CorruptedJobParamsMarksFailedWithRowIdentity(t *testing.T) {
 	scheduleID := uuid.New()
 	// Valid JSONB, but a JSON string — cannot unmarshal into DeployTask.
 	_, err := db.Exec(
-		`INSERT INTO executor_deployments (id, task_id, schedule_id, job_params, max_retries, retry_count, next_attempt_at)
+		`INSERT INTO deployments (id, task_id, schedule_id, job_params, max_retries, retry_count, next_attempt_at)
 		 VALUES ($1, $2, $3, '"corrupt"'::jsonb, 3, 0, NOW() - interval '1 minute')`,
 		uuid.New(), taskID, scheduleID)
 	require.NoError(t, err)
@@ -209,7 +209,7 @@ func TestDispatcher_CorruptedJobParamsMarksFailedWithRowIdentity(t *testing.T) {
 	assert.Equal(t, 0, fk.deployCalls, "deploy never attempted when payload is corrupt")
 
 	var status string
-	require.NoError(t, db.QueryRow(`SELECT status FROM executor_deployments WHERE id=$1`,
+	require.NoError(t, db.QueryRow(`SELECT status FROM deployments WHERE id=$1`,
 		// the row id differs from taskID; look it up by task_id
 		mustDeploymentID(t, db, taskID)).Scan(&status))
 	assert.Equal(t, "failed", status)
@@ -220,7 +220,7 @@ func TestDispatcher_CorruptedJobParamsMarksFailedWithRowIdentity(t *testing.T) {
 	// The FAILED announcement must carry the row's task_id (identity fallback).
 	var payload []byte
 	require.NoError(t, db.QueryRow(
-		`SELECT payload FROM executor_outbox WHERE event_type='task_status_updated' LIMIT 1`).Scan(&payload))
+		`SELECT payload FROM execution_outbox WHERE event_type='task_status_updated' LIMIT 1`).Scan(&payload))
 	var got struct {
 		TaskID     string `json:"task_id"`
 		ScheduleID string `json:"schedule_id"`
@@ -235,7 +235,7 @@ func TestDispatcher_CorruptedJobParamsMarksFailedWithRowIdentity(t *testing.T) {
 func mustDeploymentID(t *testing.T, db *sqlx.DB, taskID uuid.UUID) uuid.UUID {
 	t.Helper()
 	var id uuid.UUID
-	require.NoError(t, db.QueryRow(`SELECT id FROM executor_deployments WHERE task_id=$1`, taskID).Scan(&id))
+	require.NoError(t, db.QueryRow(`SELECT id FROM deployments WHERE task_id=$1`, taskID).Scan(&id))
 	return id
 }
 
@@ -251,7 +251,7 @@ func seedDeployableAt(t *testing.T, db *sqlx.DB, nextAttempt time.Time) uuid.UUI
 	}))
 	require.NoError(t, err)
 	_, err = db.Exec(
-		`INSERT INTO executor_deployments (id, task_id, schedule_id, job_params, max_retries, retry_count, next_attempt_at)
+		`INSERT INTO deployments (id, task_id, schedule_id, job_params, max_retries, retry_count, next_attempt_at)
 		 VALUES ($1, $2, $3, $4, 3, 0, $5)`,
 		id, uuid.New(), uuid.New(), payload, nextAttempt)
 	require.NoError(t, err)
@@ -302,8 +302,8 @@ func TestDispatcher_PerRowTransaction_FailureDoesNotRollBackOthers(t *testing.T)
 	require.Error(t, disp.ProcessBatch(context.Background()), "second row's Save error surfaces")
 
 	var olderStatus, newerStatus string
-	require.NoError(t, db.QueryRow(`SELECT status FROM executor_deployments WHERE id=$1`, older).Scan(&olderStatus))
-	require.NoError(t, db.QueryRow(`SELECT status FROM executor_deployments WHERE id=$1`, newer).Scan(&newerStatus))
+	require.NoError(t, db.QueryRow(`SELECT status FROM deployments WHERE id=$1`, older).Scan(&olderStatus))
+	require.NoError(t, db.QueryRow(`SELECT status FROM deployments WHERE id=$1`, newer).Scan(&newerStatus))
 	assert.Equal(t, "deployed", olderStatus, "first deployment committed in its own transaction")
 	assert.Equal(t, "pending", newerStatus, "second deployment's transaction rolled back — stays pending for retry")
 	assert.Equal(t, 2, fk.deployCalls)

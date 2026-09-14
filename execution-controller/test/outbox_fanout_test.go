@@ -186,12 +186,12 @@ func runInUoW(ctx context.Context, u uow.UnitOfWork, handler *handlers.JobStatus
 	return u.Commit()
 }
 
-// countOutboxRows returns the number of rows in executor_outbox for the given aggregate_id.
+// countOutboxRows returns the number of rows in execution_outbox for the given aggregate_id.
 func countOutboxRows(t testing.TB, db *sqlx.DB, aggregateID uuid.UUID) int {
 	t.Helper()
 	var count int
 	err := db.QueryRow(
-		"SELECT COUNT(*) FROM executor_outbox WHERE aggregate_id = $1",
+		"SELECT COUNT(*) FROM execution_outbox WHERE aggregate_id = $1",
 		aggregateID,
 	).Scan(&count)
 	if err != nil {
@@ -200,12 +200,12 @@ func countOutboxRows(t testing.TB, db *sqlx.DB, aggregateID uuid.UUID) int {
 	return count
 }
 
-// eventTypesForAggregate returns the event_type values committed to executor_outbox
+// eventTypesForAggregate returns the event_type values committed to execution_outbox
 // for the given aggregate_id, ordered by created_at.
 func eventTypesForAggregate(t testing.TB, db *sqlx.DB, aggregateID uuid.UUID) []string {
 	t.Helper()
 	rows, err := db.Query(
-		"SELECT event_type FROM executor_outbox WHERE aggregate_id = $1 ORDER BY created_at",
+		"SELECT event_type FROM execution_outbox WHERE aggregate_id = $1 ORDER BY created_at",
 		aggregateID,
 	)
 	if err != nil {
@@ -226,7 +226,7 @@ func eventTypesForAggregate(t testing.TB, db *sqlx.DB, aggregateID uuid.UUID) []
 
 // TestK8sFanout_HandleSucceeded_Commits3Rows is the D1 happy-path invariant:
 // driving handleSucceeded through a real Postgres transaction must commit exactly
-// 3 rows with the correct event_types in executor_outbox.
+// 3 rows with the correct event_types in execution_outbox.
 func TestK8sFanout_HandleSucceeded_Commits3Rows(t *testing.T) {
 	db, logger, cleanup := setupTestDB(t)
 	defer cleanup()
@@ -241,7 +241,7 @@ func TestK8sFanout_HandleSucceeded_Commits3Rows(t *testing.T) {
 
 	got := countOutboxRows(t, db, taskID)
 	if got != 3 {
-		t.Fatalf("D1 invariant violated: expected 3 rows in executor_outbox, got %d", got)
+		t.Fatalf("D1 invariant violated: expected 3 rows in execution_outbox, got %d", got)
 	}
 
 	types := eventTypesForAggregate(t, db, taskID)
@@ -258,7 +258,7 @@ func TestK8sFanout_HandleSucceeded_Commits3Rows(t *testing.T) {
 
 // TestK8sFanout_HandleSucceeded_AtomicRollback is the D1 rollback invariant:
 // when the 3rd outbox Create fails, the entire transaction must roll back and
-// leave 0 rows in executor_outbox.
+// leave 0 rows in execution_outbox.
 //
 // This guards against accidentally splitting the 3 writes across separate
 // transactions: if they were split, the first two rows would survive the

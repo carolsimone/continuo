@@ -12,7 +12,7 @@ import (
 )
 
 // QueryModelHandler processes query.model:v1 events by writing a pending row to
-// the executor_deployments command queue. The cancelled-schedule guard
+// the deployments command queue. The cancelled-schedule guard
 // runs through the UoW-bound CancelledSchedulesRepo so it shares the
 // same snapshot as the dedup row that the binding inserts immediately
 // before the handler runs.

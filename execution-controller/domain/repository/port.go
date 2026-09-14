@@ -11,7 +11,7 @@ import (
 )
 
 // DeploymentRepository persists and loads Deployment aggregates from the
-// executor_deployments command queue.
+// deployments command queue.
 //
 // GetDueBatch MUST be called inside a transaction the caller holds until the
 // per-aggregate Save completes, because the batch locks rows with

@@ -170,7 +170,7 @@ func nodeTerminalXMessage(t *testing.T, msgID, releaseID, nodeID, outcome string
 func countByStream(t *testing.T, db *sqlx.DB, stream string) int {
 	t.Helper()
 	var n int
-	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM executor_outbox WHERE stream_name=$1`, stream).Scan(&n))
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM execution_outbox WHERE stream_name=$1`, stream).Scan(&n))
 	return n
 }
 
@@ -181,7 +181,7 @@ func countByStream(t *testing.T, db *sqlx.DB, stream string) int {
 // kind rather than count every row on the stream.
 func countByStreamAndKind(t *testing.T, db *sqlx.DB, stream, kind string) int {
 	t.Helper()
-	rows, err := db.Query(`SELECT payload FROM executor_outbox WHERE stream_name=$1`, stream)
+	rows, err := db.Query(`SELECT payload FROM execution_outbox WHERE stream_name=$1`, stream)
 	require.NoError(t, err)
 	defer rows.Close()
 
@@ -220,7 +220,7 @@ func waitValidationRowsDue(t *testing.T, db *sqlx.DB, releaseID string) {
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		notYetDue := countDeployments(t, db,
-			`SELECT COUNT(*) FROM executor_deployments
+			`SELECT COUNT(*) FROM deployments
 			 WHERE release_id=$1 AND mode='validation' AND status='pending' AND next_attempt_at > NOW()`,
 			releaseID)
 		if notYetDue == 0 {
@@ -259,11 +259,11 @@ func TestValidationPipeline_EndToEnd(t *testing.T) {
 	require.NoError(t, requested(ctx, requestedXMessage(t, "100-0", releaseID, candidateSchema, nodes)))
 
 	assert.Equal(t, 3, countDeployments(t, db,
-		`SELECT COUNT(*) FROM executor_deployments WHERE mode='validation' AND release_id=$1`, releaseID),
+		`SELECT COUNT(*) FROM deployments WHERE mode='validation' AND release_id=$1`, releaseID),
 		"one validation deployment row per node")
 	for _, n := range nodes {
 		assert.Equal(t, 1, countDeployments(t, db,
-			`SELECT COUNT(*) FROM executor_deployments WHERE mode='validation' AND release_id=$1 AND node_id=$2 AND status='pending'`,
+			`SELECT COUNT(*) FROM deployments WHERE mode='validation' AND release_id=$1 AND node_id=$2 AND status='pending'`,
 			releaseID, n.UniqueID), "node %s enqueued pending", n.UniqueID)
 	}
 
@@ -302,7 +302,7 @@ func TestValidationPipeline_EndToEnd(t *testing.T) {
 	assert.Equal(t, 3, countByStream(t, db, streams.NodeDeployedV1),
 		"one node.deployed:v1 trigger per dispatched validation Job")
 	assert.Equal(t, 3, countDeployments(t, db,
-		`SELECT COUNT(*) FROM executor_deployments WHERE mode='validation' AND release_id=$1 AND status='deployed'`, releaseID),
+		`SELECT COUNT(*) FROM deployments WHERE mode='validation' AND release_id=$1 AND status='deployed'`, releaseID),
 		"all rows now deployed")
 	assert.Equal(t, 0, countByStreamAndKind(t, db, streams.ValidationResultV1, "complete"),
 		"no aggregate yet — every node still awaits its terminal")
@@ -313,7 +313,7 @@ func TestValidationPipeline_EndToEnd(t *testing.T) {
 	require.NoError(t, nodeCompleted(ctx, nodeTerminalXMessage(t, "401-0", releaseID, "model.shop.customers", "ok")))
 
 	assert.Equal(t, 2, countDeployments(t, db,
-		`SELECT COUNT(*) FROM executor_deployments WHERE mode='validation' AND release_id=$1 AND outcome='ok' AND outcome_at IS NOT NULL`, releaseID),
+		`SELECT COUNT(*) FROM deployments WHERE mode='validation' AND release_id=$1 AND outcome='ok' AND outcome_at IS NOT NULL`, releaseID),
 		"two nodes recorded their outcome")
 	assert.Equal(t, 0, countByStreamAndKind(t, db, streams.ValidationResultV1, "complete"),
 		"aggregate still gated — third node not yet terminal")
@@ -382,7 +382,7 @@ func assertAggregate(t *testing.T, db *sqlx.DB, releaseID, wantStatus string, wa
 	t.Helper()
 	var payload []byte
 	require.NoError(t, db.QueryRow(
-		`SELECT payload FROM executor_outbox WHERE stream_name=$1 AND payload->>'kind'='complete' LIMIT 1`,
+		`SELECT payload FROM execution_outbox WHERE stream_name=$1 AND payload->>'kind'='complete' LIMIT 1`,
 		streams.ValidationResultV1).Scan(&payload))
 
 	var got struct {

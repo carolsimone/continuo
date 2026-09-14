@@ -42,13 +42,13 @@ func (DeployTask) isCommand() {}
 // --empty job. Parallel to DeployTask: production fields stay on DeployTask;
 // validation-only fields (ReleaseID, NodeID, CandidateSchema, UpstreamNodeIDs)
 // live here. The dispatcher branches on which command sits behind the
-// executor_deployments row's mode column.
+// deployments row's mode column.
 //
 // UpstreamNodeIDs lists the dbt unique_ids of intra-service nodes that gate
 // dispatch of this node. It is persisted in job_params and read back by the
 // dispatcher to evaluate whether all upstreams have completed successfully.
 //
-// The whole struct is stored in the executor_deployments.job_params JSONB
+// The whole struct is stored in the deployments.job_params JSONB
 // column and read back on dispatch; the JSON shape lives on
 // serialization.ValidationDeployTaskDTO, which the postgres repository maps to
 // and from this type.

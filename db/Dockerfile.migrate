@@ -12,9 +12,8 @@ COPY migrate-all.sh /migrate-all.sh
 RUN chmod +x /migrate-all.sh
 
 COPY migration/state /flyway/sql/state
-COPY migration/executor /flyway/sql/executor
+COPY migration/execution /flyway/sql/execution
 COPY migration/orchestrator /flyway/sql/orchestrator
-COPY migration/k8s /flyway/sql/k8s
 COPY migration/release /flyway/sql/release
 COPY migration/agent_chat /flyway/sql/agent_chat
 COPY migration/remediation /flyway/sql/remediation

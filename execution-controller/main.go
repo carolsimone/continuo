@@ -122,7 +122,7 @@ func main() {
 	// INITIALIZE DEPENDENCIES
 	// ========================================================================
 
-	// 1. PostgreSQL (for executor_outbox table)
+	// 1. PostgreSQL (for execution_outbox table)
 	pgDB, err := postgres.NewPostgresClient(
 		cfg.Postgres.Host,
 		cfg.Postgres.Port,
@@ -338,7 +338,7 @@ func main() {
 	outboxPub := publisher.NewOutboxPublisher(redisClient, logger)
 	outboxProcessor := pkgoutbox.NewProcessor(
 		pgDB,
-		"executor_outbox",
+		"execution_outbox",
 		outboxPub,
 		nil, // terminal failures are ordinary outbox rows written by the dispatcher
 		logger,

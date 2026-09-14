@@ -25,11 +25,11 @@ services:
       - postgres
     tty: true
 
-  flyway-executor:
+  flyway-execution:
     image: flyway/flyway
-    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_executor -user=continuo_svc -password=continuo -connectRetries=30
+    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_execution -user=continuo_svc -password=continuo -connectRetries=30
     volumes:
-      - ./db/migration/executor:/flyway/sql
+      - ./db/migration/execution:/flyway/sql
     depends_on:
       - postgres
     tty: true
@@ -39,15 +39,6 @@ services:
     command: migrate -url=jdbc:postgresql://postgres:5432/continuo_orchestrator -user=continuo_svc -password=continuo -connectRetries=30
     volumes:
       - ./db/migration/orchestrator:/flyway/sql
-    depends_on:
-      - postgres
-    tty: true
-
-  flyway-k8s:
-    image: flyway/flyway
-    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_k8s -user=continuo_svc -password=continuo -connectRetries=30
-    volumes:
-      - ./db/migration/k8s:/flyway/sql
     depends_on:
       - postgres
     tty: true
@@ -195,7 +186,7 @@ services:
       # PostgreSQL
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
-      - POSTGRES_DB=continuo_executor
+      - POSTGRES_DB=continuo_execution
       - POSTGRES_USER=continuo_svc
       - POSTGRES_PASSWORD=continuo
       # Kubernetes
@@ -276,7 +267,7 @@ services:
       # PostgreSQL
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
-      - POSTGRES_DB=continuo_k8s
+      - POSTGRES_DB=continuo_execution
       - POSTGRES_USER=continuo_svc
       - POSTGRES_PASSWORD=continuo
       # State Service

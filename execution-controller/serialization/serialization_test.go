@@ -11,7 +11,7 @@ import (
 )
 
 // goldenDeployTask is the exact JSON a fully-populated command.DeployTask is
-// stored as in executor_deployments.job_params. Every tagged field is present.
+// stored as in deployments.job_params. Every tagged field is present.
 const goldenDeployTask = `{"task_id":"t","schedule_id":"s","schedule_name":"sn","service_name":"svc","schema_name":"sch","table_name":"tbl","job_name":"j","node_type":"dbt-model","image_tag":"v1","task_retry_count":1,"task_max_retries":3,"operation":"test","mode":"promote_seed"}`
 
 func TestDeployTaskDTORoundTrip(t *testing.T) {

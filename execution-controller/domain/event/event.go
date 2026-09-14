@@ -23,7 +23,7 @@ const (
 	EventTypeCompileNodeCompleted    = "compile_node_completed"
 )
 
-// JobDeployed is the payload of an executor_outbox row whose event_type is
+// JobDeployed is the payload of an execution_outbox row whose event_type is
 // "node_deployed". The dispatcher writes it after a deploy succeeds; the
 // publisher reads it to build the node.deployed:v1 typed wire event
 // (pkg/events.NodeDeployed). Stream: node.deployed:v1.
@@ -47,7 +47,7 @@ type JobDeployed struct {
 
 func (JobDeployed) isEvent() {}
 
-// NodeUpdated is the payload of an executor_outbox row whose event_type is
+// NodeUpdated is the payload of an execution_outbox row whose event_type is
 // "node_updated". The dispatcher writes it (status FAILED) when a deploy
 // exhausts its retry budget, so orchestrator's HandleNodeCompleted advances
 // the schedule. Stream: node.updated:v1.

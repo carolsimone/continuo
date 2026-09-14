@@ -124,7 +124,7 @@ e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start
 	@echo "Waiting for neo4j and redis to become healthy..."
 	@$(DOCKER_COMPOSE) up -d --wait --no-recreate neo4j redis
 	@echo "Waiting for flyway migrations to complete..."
-	@for svc in flyway-state flyway-executor flyway-orchestrator flyway-k8s flyway-release flyway-agent-chat flyway-remediation flyway-agent-remediation; do \
+	@for svc in flyway-state flyway-execution flyway-orchestrator flyway-release flyway-agent-chat flyway-remediation flyway-agent-remediation; do \
 		cid=$$($(DOCKER_COMPOSE) ps -q $$svc 2>/dev/null); \
 		if [ -n "$$cid" ]; then docker wait $$cid 2>/dev/null || true; fi; \
 	done
@@ -141,7 +141,7 @@ e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start
 # ── CI contract: SINGLE entrypoints used identically by local dev and CI jobs.
 GO_SERVICES := state orchestrator executor-controller k8s-controller \
                release-controller remediation agent-remediation agent-chat
-FLYWAY_JOBS := flyway-state flyway-executor flyway-orchestrator flyway-k8s flyway-release \
+FLYWAY_JOBS := flyway-state flyway-execution flyway-orchestrator flyway-release \
                flyway-agent-chat flyway-remediation flyway-agent-remediation
 
 # Data dependencies for Go tests: Postgres+Neo4j+Redis up and migrated. No service
@@ -180,7 +180,7 @@ test-go: test-deps-up
 	  extra=; \
 	  case $$s in \
 	    state) db=continuo_state;; orchestrator) db=continuo_orchestrator;; \
-	    executor-controller) db=continuo_executor;; k8s-controller) db=continuo_k8s;; \
+	    execution-controller) db=continuo_execution;; \
 	    release-controller) db=continuo_release; \
 	      extra="RELEASE_TEST_PG_DSN=postgres://continuo_svc:continuo@localhost:5432/continuo_release?sslmode=disable GOFLAGS=-p=1";; \
 	    remediation) db=continuo_remediation;; \

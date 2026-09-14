@@ -50,7 +50,7 @@ func validationDedupKey(releaseID string) uuid.UUID {
 // validationDedupKey) rather than the Redis message_id, so a redelivered
 // message for an already-processed release enqueues no extra nodes. Per-node
 // uniqueness is additionally enforced at the DB level by the partial unique
-// index uq_executor_deployments_validation_release_node.
+// index uq_deployments_validation_release_node.
 //
 // Before enqueuing nodes, the binding creates the release's candidate schema in
 // the dbt warehouse exactly once via schemaCreator. Doing it here — once per

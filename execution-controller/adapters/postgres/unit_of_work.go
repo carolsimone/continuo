@@ -31,9 +31,9 @@ func NewPostgresUnitOfWork(db *sqlx.DB, logger *slog.Logger) *PostgresUnitOfWork
 
 func (u *PostgresUnitOfWork) OutboxRepo() pkgoutbox.Repository {
 	if u.tx != nil {
-		return pkgoutbox.NewPostgresRepository(u.tx, "executor_outbox", u.logger)
+		return pkgoutbox.NewPostgresRepository(u.tx, "execution_outbox", u.logger)
 	}
-	return pkgoutbox.NewPostgresRepository(u.db, "executor_outbox", u.logger)
+	return pkgoutbox.NewPostgresRepository(u.db, "execution_outbox", u.logger)
 }
 
 func (u *PostgresUnitOfWork) DeploymentsRepo() repository.DeploymentRepository {
