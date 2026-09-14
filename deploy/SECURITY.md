@@ -16,7 +16,7 @@ in the chart README's [Security defaults](continuo/README.md#3-security-defaults
   `runAsNonRoot` with `seccompProfile: RuntimeDefault`,
   `allowPrivilegeEscalation: false`, `capabilities: drop: ["ALL"]`, and
   `readOnlyRootFilesystem` wherever the workload tolerates it. The runtime
-  Jobs that executor-controller creates (dbt, validation, seed-build)
+  Jobs that execution-controller creates (dbt, validation, seed-build)
   carry the same securityContext.
 - **Default-deny NetworkPolicies** (`networkPolicy.enabled: true` by
   default) with allow rules derived from the real service graph. On
@@ -30,10 +30,9 @@ in the chart README's [Security defaults](continuo/README.md#3-security-defaults
   must point at commits reachable from `main`, images are retagged (not
   rebuilt) from the exact commit's digests, and chart publish is gated on a
   passing kind install test in bundled and BYO modes.
-- **Least-privilege RBAC.** Only executor-controller and k8s-controller get
-  ServiceAccounts with (namespace-scoped, minimal) Kubernetes API access;
-  every other service runs under the default ServiceAccount bound to
-  nothing.
+- **Least-privilege RBAC.** Only execution-controller gets a ServiceAccount
+  with (namespace-scoped, minimal) Kubernetes API access; every other service
+  runs under the default ServiceAccount bound to nothing.
 
 ## What the operator owns
 

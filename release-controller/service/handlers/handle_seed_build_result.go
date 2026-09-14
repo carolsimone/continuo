@@ -17,7 +17,7 @@ import (
 )
 
 // HandleSeedBuildResultInput carries the aggregated candidate seed-build outcome
-// from executor-controller (seed.build.completed:v1).
+// from execution-controller (seed.build.completed:v1).
 type HandleSeedBuildResultInput struct {
 	ReleaseID   string
 	Status      string // "ok" | "failed"

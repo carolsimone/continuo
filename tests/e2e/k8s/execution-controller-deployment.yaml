@@ -1,0 +1,212 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dbt-commands
+  namespace: default
+data:
+  dbt-commands.yaml: |
+    default:
+      run:        ["dbt", "run", "--select", "{{ node }}"]
+      seed:       ["dbt", "seed", "--select", "{{ node }}"]
+      snapshot:   ["dbt", "snapshot", "--select", "{{ node }}"]
+      test:       ["dbt", "test", "--select", "{{ node }}"]
+      build:      ["dbt", "build", "--select", "{{ node }}"]
+      seed_build: ["dbt", "seed", "--select", "{{ node }}"]
+      parse:      ["dbt", "parse"]
+      compile:
+        command:       ["dbt", "compile", "--profiles-dir", "/project"]
+        manifest_path: "/project/target/manifest.json"
+    services:
+      service-1:
+        run:        ["wise-dbt", "run", "--select", "{{ node }}"]
+        seed:       ["wise-dbt", "seed", "--select", "{{ node }}"]
+        snapshot:   ["wise-dbt", "snapshot", "--select", "{{ node }}"]
+        test:       ["wise-dbt", "test", "--select", "{{ node }}"]
+        build:      ["wise-dbt", "build", "--select", "{{ node }}"]
+        # seed_build reuses seed: plain dbt has no schema flag, so the always-set
+        # DBT_TARGET_SCHEMA env var routes the candidate schema, not the argv.
+        seed_build: ["wise-dbt", "seed", "--select", "{{ node }}"]
+        parse:      ["wise-dbt", "parse"]
+        compile:
+          command:       ["wise-dbt", "compile", "--profiles-dir", "/project"]
+          manifest_path: "/project/target/manifest.json"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: execution-controller
+  namespace: default
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: execution-controller
+  namespace: default
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    # create: dispatches dbt/python/validation/compile Jobs. delete: the
+    # candidate-schema lifecycle removes its own one-shot schema-op Jobs
+    # (delete-on-success + clear-terminal-before-retry). get/list/watch: polls
+    # every Job it created to a terminal state.
+    verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    # Reads pod status for termination details and pod logs for the error
+    # message and the S3 log upload.
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: execution-controller
+  namespace: default
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: execution-controller
+subjects:
+  - kind: ServiceAccount
+    name: execution-controller
+    namespace: default
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: execution-controller
+  namespace: default
+  labels:
+    app: execution-controller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: execution-controller
+  template:
+    metadata:
+      labels:
+        app: execution-controller
+    spec:
+      serviceAccountName: execution-controller
+      # The binary needs no privileges: config comes from env, Kubernetes
+      # access from the ServiceAccount token. uid 65534 = nobody.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: execution-controller
+          image: continuo-execution-controller:latest
+          imagePullPolicy: IfNotPresent
+          command: ["/app/execution-controller/bin/execution-controller"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - containerPort: 8084
+              name: health
+          env:
+            - name: REDIS_HOST
+              value: "${DOCKER_BRIDGE_IP}"
+            - name: REDIS_PORT
+              value: "6379"
+            - name: REDIS_PASSWORD
+              value: "continuo"
+            - name: POSTGRES_HOST
+              value: "${DOCKER_BRIDGE_IP}"
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_DB
+              value: "continuo_execution"
+            - name: POSTGRES_USER
+              value: "continuo_svc"
+            - name: POSTGRES_PASSWORD
+              value: "continuo"
+            - name: K8S_NAMESPACE
+              value: "default"
+            - name: MAX_CONCURRENT_JOBS
+              value: "50"
+            - name: K8S_CHECK_DELAY_SECONDS
+              value: "5"
+            - name: DEFAULT_TASK_MAX_RETRIES
+              value: "2"
+            - name: LOG_TAIL_LINES
+              value: "50"
+            - name: ERROR_MESSAGE_MAX_LENGTH
+              value: "4096"
+            # provision-k8s-test-env.sh pulls the pinned validation image from
+            # ghcr.io and side-loads it into the kind node cache (kind load), so
+            # validation pods must use the cached image. PullAlways would fail
+            # with ErrImagePull here; production omits this and defaults to Always.
+            - name: VALIDATION_IMAGE_PULL_POLICY
+              value: "IfNotPresent"
+            - name: VALIDATION_IMAGE
+              value: "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.5.0"
+            # Names the Secret (created by provision-k8s-test-env.sh) whose keys the
+            # validation pod receives via envFrom as its warehouse connection.
+            - name: VALIDATION_WAREHOUSE_SECRET
+              value: "continuo-warehouse-validation"
+            - name: S3_SIDECAR_IMAGE
+              value: "s3-sidecar:latest"
+            - name: DBT_COMMANDS_CONFIG_PATH
+              value: "/etc/continuo/dbt-commands.yaml"
+            # S3 access forwarded into each validation/compile pod: the validation
+            # runner fetches the candidate SQL from CANDIDATE_SQL_URI, and the
+            # compile pod's s3-sidecar uploads the manifest. The endpoint points at
+            # MinIO via the docker bridge so an in-kind Job can reach it.
+            - name: S3_ENDPOINT_URL
+              value: "http://${DOCKER_BRIDGE_IP}:9000"
+            - name: S3_BUCKET
+              value: "continuo"
+            - name: AWS_ACCESS_KEY_ID
+              value: "minioadmin"
+            - name: AWS_SECRET_ACCESS_KEY
+              value: "minioadmin"
+            - name: AWS_DEFAULT_REGION
+              value: "us-east-1"
+            - name: CANCELLED_SCHEDULES_TTL_HOURS
+              value: "24"
+            - name: CANCELLED_SCHEDULES_SWEEP_INTERVAL_MINUTES
+              value: "60"
+            - name: HTTP_PORT
+              value: "8084"
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8084
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: 8084
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 3
+          volumeMounts:
+            - name: dbt-commands
+              mountPath: /etc/continuo
+              readOnly: true
+      volumes:
+        - name: dbt-commands
+          configMap:
+            name: dbt-commands
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: execution-controller
+  namespace: default
+spec:
+  selector:
+    app: execution-controller
+  ports:
+    - port: 8084
+      targetPort: 8084
+      name: health
+  type: ClusterIP

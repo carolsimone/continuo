@@ -1,7 +1,7 @@
 # Python image contract
 
 What a domain team's python image must provide to run under Continuo.
-executor-controller launches your image as a Kubernetes Job for scheduled runs
+execution-controller launches your image as a Kubernetes Job for scheduled runs
 of your `python-model` nodes; this page is Continuo's side of that contract.
 
 The normative specification of what the image must *do* with the environment

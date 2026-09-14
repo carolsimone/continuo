@@ -14,7 +14,7 @@ write_fixture() {
   local ref="ghcr.io/carolsimone/continuo-python-runtime-postgres:${tag}"
 
   mkdir -p "$dir/scripts" "$dir/tests/e2e" "$dir/tests/e2e/k8s" \
-    "$dir/executor-controller/adapters/k8s" \
+    "$dir/execution-controller/adapters/k8s" \
     "$dir/deploy/continuo/templates"
 
   printf 'validate:\n\t@docker pull %s\n' "$ref" > "$dir/Makefile"
@@ -26,20 +26,20 @@ write_fixture() {
     "$ref" "$ref" > "$dir/tests/e2e/provision-k8s-test-env.sh"
 
   printf -- '- name: VALIDATION_IMAGE\n  value: "%s"\n' "$ref" \
-    > "$dir/tests/e2e/k8s/executor-controller-deployment.yaml"
+    > "$dir/tests/e2e/k8s/execution-controller-deployment.yaml"
 
   mkdir -p "$dir/tests/e2e/fixtures/py-probe"
   printf 'FROM %s\nCOPY contracts/ /app/contracts/\n' "$ref" \
     > "$dir/tests/e2e/fixtures/py-probe/Dockerfile"
 
-  printf 'services:\n  executor-controller:\n    environment:\n      - VALIDATION_IMAGE=%s\n' "$ref" \
+  printf 'services:\n  execution-controller:\n    environment:\n      - VALIDATION_IMAGE=%s\n' "$ref" \
     > "$dir/docker-compose.yml"
 
   printf 'package k8s\n\nfunc TestX() { assertEqual("%s", c.Image) }\n' "$ref" \
-    > "$dir/executor-controller/adapters/k8s/candidate_schema_lifecycle_test.go"
+    > "$dir/execution-controller/adapters/k8s/candidate_schema_lifecycle_test.go"
 
   printf 'package k8s\n\nfunc TestMain() { os.Setenv("VALIDATION_IMAGE", "%s") }\n\nfunc TestY() { assertEqual("%s", main.Image) }\n' \
-    "$ref" "$ref" > "$dir/executor-controller/adapters/k8s/create_validation_job_test.go"
+    "$ref" "$ref" > "$dir/execution-controller/adapters/k8s/create_validation_job_test.go"
 
   cat > "$dir/deploy/continuo/Chart.yaml" <<'EOF'
 apiVersion: v2

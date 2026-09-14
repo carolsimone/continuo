@@ -1,11 +1,10 @@
 # Structure
 This is a monorepo with multiple microservices.
 
-## Go services (8)
+## Go services (7)
 * `state` — owns run lifecycle state (pending → running → finalized) and schedule records; the authoritative write-path for task and run transitions.
 * `orchestrator` — owns Neo4j topology and run projections, Postgres outbox/dedup. Consumes `node.updated:v1`, `scheduler.started:v1`, `release.promoted:v1`, `trigger.rerun:v1`, `trigger.rebase:v1`, `trigger.single_node_run:v1`, `trigger.promoted_seeds:v1`, `run.finalized:v1`, `schedule.cancelled:v1`, `remediation.requested:v2`, `remediation.pr_opened:v1`, `remediation.pr_closed:v1`. Produces `query.model:v1`, `schedules.loaded:v1`. Serves gRPC `OrchestratorQuery` for UI reads.
-* `executor-controller` — schedules dbt task execution; emits K8s Job specs and publishes execution events downstream.
-* `k8s-controller` — watches Kubernetes Jobs and surfaces their terminal status back into the run lifecycle.
+* `execution-controller` — schedules dbt/python task execution as Kubernetes Jobs, watches each Job to a terminal state, uploads its logs and results to S3, and surfaces the outcome into the run lifecycle (production tasks) or the release lifecycle (validation, seed-build and compile legs).
 * `release-controller` — manages blue/green candidate-release lifecycle; tracks the `current_prod` pointer and drives promotion/rejection.
 * `remediation` — failure classifier; triages a rejected release's failing nodes one by one, records every decision, and emits ONE `remediation.requested:v2` heal trigger per (release, remediation round) carrying every fixable failure.
 * `agent-remediation` — LLM fix-proposer; works a whole rejected release at a time. Receives one batched heal trigger, groups the failing set (same error signature + a shared changed ancestor become one cluster fixed at that ancestor), calls the LLM once per cluster, and reads source from GitHub (read-only) for compile/seed_build/duplicate_table failures and primarily from the release's code bundle in S3 for validation failures (falling back to GitHub only on a permanent bundle miss); also reads narrow graph context (source location, upstream diffs, current version, failure precedent) from orchestrator. Every fix is verified by a real verification run per edited service before it is offered, and one attempt yields one proposal and one fix PR for human approval.
@@ -22,7 +21,7 @@ This is a monorepo with multiple microservices.
 * `cli/` — the `continuo` CLI; a separate Go module (outside `go.work`) that talks to services exclusively via their public gRPC interfaces.
 * `tests/e2e/` — end-to-end test harness; spins up the full stack and exercises cross-service flows.
 * `migrations/` (`db/`) — Flyway SQL migrations for all service databases.
-* `dbt/base`, `dbt/services/*` — dbt base image and per-service dbt project images used by executor-controller K8s Jobs.
+* `dbt/base`, `dbt/services/*` — dbt base image and per-service dbt project images used by execution-controller K8s Jobs.
 
 # CLI (`cli/`)
 The `continuo` CLI is a standalone client of the system, intended primarily for the LLM chat to call. It is a separate Go module (`github.com/carolsimone/continuo/cli`), deliberately kept outside the parent `go.work`, and emits machine-readable JSON to stdout (human text to stderr).

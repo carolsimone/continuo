@@ -162,7 +162,7 @@ Both streams decode to the identical payload shape — `remediation.retry_reques
 2b. If run_results_uri is set: fetch + parse the structured validation result
     (schema_version/status/message/failures/unique_id) via `pkg/validationresult`,
     the shared Go implementation of this wire contract (also used by
-    k8s-controller). A candidate is accepted only when its schema_version
+    execution-controller). A candidate is accepted only when its schema_version
     matches the contract and its status is one of success | error | fail |
     skipped; anything else — no run_results, no matching JSON object, a wrong
     schema_version, or an unsupported status — is treated the same as a parse

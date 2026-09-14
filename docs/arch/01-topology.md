@@ -7,8 +7,7 @@ flowchart LR
   subgraph ControlPlane
     ST[state]
     OR[orchestrator]
-    EC[executor-controller]
-    KC[k8s-controller]
+    EC[execution-controller]
     MC[topology-controller]
     RC[release-controller]
     UI[ui]
@@ -21,8 +20,7 @@ flowchart LR
     STDB[(Postgres: state)]
     ORPG[(Postgres: orchestrator)]
     GRDB[(Neo4j: graph)]
-    ECPG[(Postgres: executor_deployments/executor_outbox/message_processing/cancelled_schedules)]
-    KCPG[(Postgres: k8s_outbox/message_processing)]
+    ECPG[(Postgres: deployments/execution_outbox/message_processing/cancelled_schedules/validation_aggregates)]
     AGPG[(Postgres: continuo_agent_chat)]
     REMPG[(Postgres: continuo_remediation)]
     REMAGPG[(Postgres: continuo_agent_remediation)]
@@ -37,7 +35,6 @@ flowchart LR
   OR --> GRDB
   OR --> ORPG
   EC --> ECPG
-  KC --> KCPG
   AR --> AGPG
   REM --> REMPG
   REMA --> REMAGPG
@@ -45,7 +42,6 @@ flowchart LR
   ST <--> R
   OR <--> R
   EC <--> R
-  KC <--> R
   MC <--> R
   RC <--> R
   UI --> R
@@ -54,7 +50,6 @@ flowchart LR
 
   OR --> ST
   EC --> ST
-  KC --> ST
   UI --> ST
   UI --> OR
   UI --> AR
@@ -62,8 +57,7 @@ flowchart LR
   UI --> GH
 
   EC --> K8S
-  KC --> K8S
-  KC --> S3
+  EC --> S3
   MC --> S3
   RC --> S3
   AR -.-> S3
@@ -133,17 +127,16 @@ flowchart TD
 
   OR --> QM
 
-  QM --> EC[executor-controller]
+  QM --> EC[execution-controller]
   TR --> EC
 
   EC --> ED
-  ED --> KC[k8s-controller]
-
-  KC --> KCV
-  KCV --> KC
-  KC --> TR
-  KC --> TF
-  KC --> UT
+  ED --> EC
+  EC --> KCV
+  KCV --> EC
+  EC --> TR
+  EC --> TF
+  EC --> UT
 
   UT --> OR
 
@@ -151,7 +144,6 @@ flowchart TD
   ST --> SC_EV
   SC_EV --> OR
   SC_EV --> EC
-  SC_EV --> KC
 ```
 
 ## Ownership Boundaries
@@ -163,9 +155,8 @@ flowchart TD
 | Node code-version history (what each node ran, and how it changed) | `orchestrator` | Neo4j (`NodeVersion`/`CodeUnitVersion` chains), sourced from S3 (`code-bundles/<release_id>/bundle.json`) |
 | Node completion, downstream unlock, run finalization | `orchestrator` | Postgres outbox + Neo4j |
 | Schedule/bootstrap dispatch intents | `orchestrator` | Postgres outbox |
-| Deployment intents / inbound dedup | `executor-controller` | Postgres (`executor_deployments`, `executor_outbox`, `message_processing`) |
-| Runtime status / retry orchestration | `k8s-controller` | Postgres (`k8s_outbox`, `message_processing`) |
-| Cancelled schedule guard (local copy) | `orchestrator`, `executor-controller`, `k8s-controller` | Postgres (`cancelled_schedules`) |
+| Deployment intents, Job dispatch/observation, runtime status and retry orchestration | `execution-controller` | Postgres (`deployments`, `execution_outbox`, `message_processing`, `validation_aggregates`) |
+| Cancelled schedule guard (local copy) | `orchestrator`, `execution-controller` | Postgres (`cancelled_schedules`) |
 | Candidate manifest/contract parsing, artifact rewrite, and S3 upload | `topology-controller` | Redis + S3 (`candidate-sql/<release_id>/candidate_<unique_id>.<sql\|json>` per node — `.sql` for a dbt model/snapshot, `.json` for a python node, skipped for a dbt seed; `code-bundles/<release_id>/bundle.json` per release) |
 | UI/API facade + login sessions | `ui` | Redis (plain `uisession:` keys, `AUTH_MODE=oidc`); gRPC reads/writes to `state` and `orchestrator` |
 | LLM agent conversations and tool execution | `agent-chat` | Postgres `continuo_agent_chat` (`threads`, `messages`, `pending_actions`) |
@@ -179,16 +170,16 @@ flowchart TD
 - `orchestrator` owns table topology (Neo4j) and run-time `EXECUTES` status projection; it also handles node completion events and downstream unlocking.
 - `release.promoted:v1` carries a full topology snapshot. `orchestrator` reconciles Neo4j against it by retiring missing `Table` nodes from the active graph while preserving historical `Run` snapshots.
 - `orchestrator` also records code-version history behind that topology, on a separate consumer group of the same event: it reads the release's code-bundle document from S3 and writes a `NodeVersion` wherever the bundle's `content_hash` differs from the node's current recorded version. Nothing on the run path reads that history, and the topology swap never waits on S3, so the version group is free to trail the swap and retry.
-- The dedicated Flyway migration image artifact runs the shared `db/migration/` trees sequentially for `continuo_state`, `continuo_executor`, `continuo_orchestrator`, and `continuo_k8s`.
+- The dedicated Flyway migration image artifact runs the shared `db/migration/` trees sequentially for `continuo_state`, `continuo_orchestrator`, and `continuo_execution` (`db/migration/execution`).
 - Redis carries orchestration events between services. Redis requires password authentication in all environments (local docker-compose: `--requirepass continuo`; production: injected via Kubernetes secret as `REDIS_PASSWORD`). All services must supply `REDIS_PASSWORD` or the process will refuse to start (see `pkg/config.Validator`).
 - The controller services use local Postgres outbox and dedup tables to make cross-service messaging reliable.
-- The repo ships one Helm chart, `deploy/continuo`: a self-contained OSS install chart. A single `helm install` brings up every backend service plus, optionally, bundled quickstart datastores (Postgres, Redis, Neo4j, MinIO, Dex) with auto-generated, lookup-guarded passwords — or points at external datastores via `external*`/`existingSecret` values instead. Its db-init step idempotently creates all 9 service databases, including `continuo_dbt` (the dbt warehouse, the one database no Flyway migration directory owns). Every chart-rendered workload runs hardened (non-root, dropped Linux capabilities, `seccompProfile: RuntimeDefault`, resource requests and limits) behind default-deny NetworkPolicies, with ingress class/annotations and storage class fully values-driven. On `v<major>.<minor>.<patch>` git tags the chart is published to `oci://ghcr.io/carolsimone/charts/continuo` (chart `version` = the tag without `v`, `appVersion` = the tag) after the published images are retagged from the release commit's `:<git-sha>` to the release tag and a kind-based install test (bundled + BYO modes) passes. Production (Hetzner) runs this same chart in BYO mode, pointing `external*`/`existingSecret` values at a manually-managed infrastructure stack (`Postgres`, `Redis`, `Neo4j`) provisioned from the private `continuo-infra` repo. Local docker-compose uses `POSTGRES_PASSWORD=continuo` (superuser) and `REDIS_PASSWORD=continuo`.
+- The repo ships one Helm chart, `deploy/continuo`: a self-contained OSS install chart. A single `helm install` brings up every backend service plus, optionally, bundled quickstart datastores (Postgres, Redis, Neo4j, MinIO, Dex) with auto-generated, lookup-guarded passwords — or points at external datastores via `external*`/`existingSecret` values instead. Its db-init step idempotently creates all 8 service databases, including `continuo_dbt` (the dbt warehouse, the one database no Flyway migration directory owns). Every chart-rendered workload runs hardened (non-root, dropped Linux capabilities, `seccompProfile: RuntimeDefault`, resource requests and limits) behind default-deny NetworkPolicies, with ingress class/annotations and storage class fully values-driven. On `v<major>.<minor>.<patch>` git tags the chart is published to `oci://ghcr.io/carolsimone/charts/continuo` (chart `version` = the tag without `v`, `appVersion` = the tag) after the published images are retagged from the release commit's `:<git-sha>` to the release tag and a kind-based install test (bundled + BYO modes) passes. Production (Hetzner) runs this same chart in BYO mode, pointing `external*`/`existingSecret` values at a manually-managed infrastructure stack (`Postgres`, `Redis`, `Neo4j`) provisioned from the private `continuo-infra` repo. Local docker-compose uses `POSTGRES_PASSWORD=continuo` (superuser) and `REDIS_PASSWORD=continuo`.
 - `topology-controller` parses each service's candidate dbt manifest or python contract (selected by that entry's `kind`), resolves cross-service dependencies, builds each node's candidate artifact — a dbt node's compiled SQL rewritten to the candidate schema, or a python node's declared reads rewritten the same way plus its output columns and config — and uploads it to S3 (`candidate-sql/<release_id>/candidate_<unique_id>.<sql|json>`), and uploads one code-bundle contract document per release (`code-bundles/<release_id>/bundle.json`) before emitting `manifest.loaded.candidate:v1` with the bundle's `code_bundle_uri`. An S3 upload failure — of a node's candidate artifact or of the code bundle — is fatal for that candidate load. It does not orchestrate execution.
 - `agent-chat` serves gRPC `AgentChat` (bidirectional streaming, port 50053) and health (port 8091). It is cluster-internal; browsers reach it only through `ui`'s `/ws/chat` WebSocket relay. It runs an LLM tool-use loop against an operator-configured provider (Anthropic, OpenAI, or any OpenAI-compatible endpoint) over HTTPS. Tools are derived from the bundled `continuo` CLI self-description and executed by spawning that binary via direct argv exec (no shell). The CLI subprocess reaches `state` and `orchestrator` exclusively through their public gRPC interfaces (ports 50051 / 50052); agent-chat never imports or connects to any service internals. Mutating tools are gated behind a human confirmation step before execution. Conversations are persisted in the `continuo_agent_chat` Postgres database and optionally archived to S3. Chat uses no Redis Streams; when `REDIS_ADDR` is set, agent-chat holds a single Redis connection used only for a shared per-user rate limiter (global across replicas). Per-instance load is also bounded by a concurrent-session cap.
 - `ui` relays browser chat over the `/ws/chat` WebSocket (operator-only, feature-flagged by `CHAT_BRIDGE_ENABLED`) onto a bidirectional gRPC `AgentChat.Chat` stream to `agent-chat`, forwarding the authenticated user identity. The browser-to-ui leg is WebSocket (JSON frames); the ui-to-agent-chat leg is gRPC bidi streaming.
 - Topology enters production exclusively through releases: `POST /releases` on `release-controller` emits `release.requested:v1`, `topology-controller` parses each candidate dbt manifest or python contract, uploads each node's candidate artifact to S3, builds and uploads one code-bundle document per release, and publishes `manifest.loaded.candidate:v1` with per-node `candidate_artifact_uri` references and a top-level `code_bundle_uri`; after validation `release-controller` promotes via `release.promoted:v1`, carrying the release's `code_bundle_uri` and a `bootstrap` flag forward. Candidate artifact objects and code-bundle documents are both retained for 30 days by native S3 lifecycle rules on their respective `candidate-sql/` and `code-bundles/` prefixes. `release-controller`'s retention job also deletes the `candidate-sql/<release_id>/` and `code-bundles/<release_id>/` prefixes when pruning expired releases, ahead of the lifecycle backstop.
 - `ui` is read-only apart from the run-trigger write endpoints (`TriggerRerun`, `TriggerRebase`, `TriggerSingleNodeRun`, `TriggerSchedule`), which it issues as gRPC calls to `state`. It is the system's only HTTP edge and authenticates users via OIDC (OpenID Connect); its only Redis use is the `uisession:` login-session keyspace (plain keys in `AUTH_MODE=oidc`) — it produces and consumes no Redis Streams.
-- `schedule.cancelled:v1` is published by `state` via the outbox processor and consumed independently by `orchestrator`, `executor-controller`, and `k8s-controller` (each with its own consumer group). The payload carries `cancelled_by` — the user who cancelled the schedule, or the `system` sentinel for a platform-initiated cancel (e.g. the dispatch watchdog). Each consumer maintains a local `cancelled_schedules` Postgres table populated from this stream and uses it as a hot-path guard to suppress further processing for cancelled runs. Rows are swept after a configurable TTL (default 24h).
+- `schedule.cancelled:v1` is published by `state` via the outbox processor and consumed independently by `orchestrator` and `execution-controller` (each with its own consumer group). The payload carries `cancelled_by` — the user who cancelled the schedule, or the `system` sentinel for a platform-initiated cancel (e.g. the dispatch watchdog). Each consumer maintains a local `cancelled_schedules` Postgres table populated from this stream and uses it as a hot-path guard to suppress further processing for cancelled runs. Rows are swept after a configurable TTL (default 24h).
 
 ## Topology Versioning
 
@@ -216,4 +207,4 @@ This guarantees that every K8s Pod in a run uses the exact image tag that was cu
 
 Image tags reach the topology through the release path. Each team's CI sends its own service's image tag in the single-service `POST /releases` request body; `release-controller` records it and, when the release activates, assembles the full per-service tag map from the changed service's tag plus every other service's `service_prod` pointer. `topology-controller` parses the candidate manifests and leaves `image_tag` empty; `release-controller` joins the assembled per-service tags onto the candidate topology before validation and carries them through `release.promoted:v1`. The orchestrator stamps those tags onto every `:Table` node and `EXECUTES` edge.
 
-`executor-controller` reads `image_tag` from `query.model:v1` stream fields and refuses to construct a K8s Pod if the tag is empty. There is no fallback to `"latest"`.
+`execution-controller` reads `image_tag` from `query.model:v1` stream fields and refuses to construct a K8s Pod if the tag is empty. There is no fallback to `"latest"`.

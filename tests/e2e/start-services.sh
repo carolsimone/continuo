@@ -19,18 +19,16 @@ docker network connect kind orchestrator 2>/dev/null || true
 
 start_service "orchestrator" "orchestrator" "orchestrator"
 
-# Note: executor-controller and k8s-controller will run in kind for E2E tests,
-# but we can start them in docker-compose too for development flexibility
-# Uncomment if you want to start them:
-# start_service "executor-controller" "executor-controller" "executor-controller"
-# start_service "k8s-controller" "k8s-controller" "k8s-controller"
+# Note: execution-controller runs in kind for E2E tests, but we can start it
+# in docker-compose too for development flexibility.
+# Uncomment if you want to start it:
+# start_service "execution-controller" "execution-controller" "execution-controller"
 
 # Check health of all started services
 check_health "orchestrator" 8087 || exit 1
 
-# Uncomment if you started executor/k8s controllers:
-# check_health "executor-controller" 8084 || exit 1
-# check_health "k8s-controller" 8085 || exit 1
+# Uncomment if you started execution-controller:
+# check_health "execution-controller" 8084 || exit 1
 
 # release-controller (blue/green release API + stream consumers) runs in
 # docker-compose alongside the other stream services. The e2e release-promote

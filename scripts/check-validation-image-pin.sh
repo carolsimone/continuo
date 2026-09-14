@@ -8,7 +8,7 @@
 # resolve for us. That string is hand-maintained in every location that
 # side-loads or references it: the Makefile, the local/e2e cluster bootstrap
 # scripts, the e2e static Deployment fixture, docker-compose, the
-# executor-controller Go test fixtures, the chart's own default (read by
+# execution-controller Go test fixtures, the chart's own default (read by
 # rendering the chart, not by grepping values.yaml as text, since the actual
 # ref is composed from registry/prefix/engine/tag at template time), and the
 # chart's *fallback* default in templates/_helpers.tpl (read by rendering the
@@ -116,8 +116,8 @@ read_refs "${REPO_ROOT}/tests/e2e/provision-k8s-test-env.sh" prov_refs
 record "tests/e2e/provision-k8s-test-env.sh (docker pull)" "${prov_refs[0]:-}"
 record "tests/e2e/provision-k8s-test-env.sh (kind load)" "${prov_refs[1]:-}"
 
-record "tests/e2e/k8s/executor-controller-deployment.yaml" \
-  "$(extract_all_refs "${REPO_ROOT}/tests/e2e/k8s/executor-controller-deployment.yaml" | head -1)"
+record "tests/e2e/k8s/execution-controller-deployment.yaml" \
+  "$(extract_all_refs "${REPO_ROOT}/tests/e2e/k8s/execution-controller-deployment.yaml" | head -1)"
 
 # The python-node e2e fixture builds FROM the same merged runtime image the
 # validation Jobs run — one image serves both roles. It is a hand-maintained
@@ -131,12 +131,12 @@ record "tests/e2e/fixtures/py-probe/Dockerfile (FROM)" \
 record "docker-compose.yml" \
   "$(extract_all_refs "${REPO_ROOT}/docker-compose.yml" | head -1)"
 
-record "executor-controller/adapters/k8s/candidate_schema_lifecycle_test.go" \
-  "$(extract_all_refs "${REPO_ROOT}/executor-controller/adapters/k8s/candidate_schema_lifecycle_test.go" | head -1)"
+record "execution-controller/adapters/k8s/candidate_schema_lifecycle_test.go" \
+  "$(extract_all_refs "${REPO_ROOT}/execution-controller/adapters/k8s/candidate_schema_lifecycle_test.go" | head -1)"
 
-read_refs "${REPO_ROOT}/executor-controller/adapters/k8s/create_validation_job_test.go" job_refs
-record "executor-controller/adapters/k8s/create_validation_job_test.go (setenv)" "${job_refs[0]:-}"
-record "executor-controller/adapters/k8s/create_validation_job_test.go (assert)" "${job_refs[1]:-}"
+read_refs "${REPO_ROOT}/execution-controller/adapters/k8s/create_validation_job_test.go" job_refs
+record "execution-controller/adapters/k8s/create_validation_job_test.go (setenv)" "${job_refs[0]:-}"
+record "execution-controller/adapters/k8s/create_validation_job_test.go (assert)" "${job_refs[1]:-}"
 
 # --- the chart's own default, read the only honest way: rendered ---------
 

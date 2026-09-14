@@ -6,7 +6,7 @@ kind: Deployment
 metadata:
   name: {{ $svc.name }}
   namespace: {{ $.Release.Namespace }}
-  {{- if eq $svc.name "executor-controller" }}
+  {{- if eq $svc.name "execution-controller" }}
   annotations:
     # VALIDATION_WAREHOUSE_SECRET holds the NAME of a Secret (a resource
     # reference), not a credential value; every real secret in this chart is
@@ -30,7 +30,7 @@ spec:
         # different REDIS_HOST, S3_BUCKET, LOG_LEVEL or WAREHOUSE_ENGINE renders
         # an identical Deployment, so nothing rolls and every pod keeps serving
         # the previous configuration indefinitely. The engine case is the one
-        # that corrupts output rather than merely going stale: executor-
+        # that corrupts output rather than merely going stale: execution-
         # controller rolls on an engine change because its validation image ref
         # changes, so topology-controller would keep uploading the old engine's
         # SQL to the new engine's validator.
@@ -313,7 +313,7 @@ spec:
           configMap:
             name: {{ default (include "continuo.serviceReposConfigMapName" $) $volume.configMap.name }}
         {{- end }}
-        {{- else if eq $svc.name "executor-controller" }}
+        {{- else if eq $svc.name "execution-controller" }}
         {{- range $volume := $svc.volumes }}
         - name: {{ $volume.name }}
           configMap:

@@ -185,7 +185,7 @@ func TestHandleValidationResult_FailedNodeInStore_Rejects(t *testing.T) {
 // result with status "skipped" (emitted for a node whose upstream failed
 // validation, so it never ran) is present in the store and counts as failing:
 // the release rejects and names the skipped node. This is the read-model side of
-// the executor-controller emitting a skip projection for every node its failure
+// the execution-controller emitting a skip projection for every node its failure
 // propagation skips, so the node is present rather than absent from the store.
 func TestHandleValidationResult_SkippedNodeInStore_Rejects(t *testing.T) {
 	deps, store := seedToValidating(t, "rA")
@@ -917,7 +917,7 @@ func TestHandleValidationResult_Promote_StripsTestsFromWireButKeepsInCurrentProd
 }
 
 // TestHandleValidationResult_Promote_CarriesCandidateSchema verifies that the
-// release.promoted:v1 payload includes candidate_schema so the executor-controller's
+// release.promoted:v1 payload includes candidate_schema so the execution-controller's
 // release.promoted teardown consumer can drop the schema when present (idempotent
 // no-op if validation.completed already cleaned it up).
 func TestHandleValidationResult_Promote_CarriesCandidateSchema(t *testing.T) {

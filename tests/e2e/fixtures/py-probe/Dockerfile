@@ -6,7 +6,7 @@ FROM ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.5.0
 COPY contracts/ /app/contracts/
 COPY scripts/ /app/scripts/
 # The runtime base already declares USER 65532:65532 — a frozen cross-repo
-# contract with executor-controller, which hard-codes that uid in its validation
+# contract with execution-controller, which hard-codes that uid in its validation
 # pod securityContext. Nothing to set here: the harness only reads its baked
 # contracts and scripts and writes solely to the warehouse, so no ownership
 # changes are needed on top of the base's default user.

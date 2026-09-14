@@ -19,12 +19,11 @@ import (
 // guarded (orchestrator); narrower entries are used where only specific
 // application packages exist under a service's tree.
 var handlerDirs = []string{
-	"k8s-controller/service/handlers",
 	"orchestrator/service",
 	"state/service/handlers",
-	"executor-controller/service/handlers",
-	"executor-controller/service/deployer",
-	"executor-controller/service/validation",
+	"execution-controller/service/handlers",
+	"execution-controller/service/deployer",
+	"execution-controller/service/validation",
 	"release-controller/service/handlers",
 	"agent-chat/service/chat",
 	"agent-chat/service/retention",
@@ -33,8 +32,7 @@ var handlerDirs = []string{
 	// Every service's Unit-of-Work port. The interface is application
 	// vocabulary; the concrete *UnitOfWork that satisfies it belongs in
 	// adapters/postgres, so this package must not reach back into an adapter.
-	"executor-controller/service/uow",
-	"k8s-controller/service/uow",
+	"execution-controller/service/uow",
 	"orchestrator/service/uow",
 	"release-controller/service/uow",
 	"remediation/service/uow",

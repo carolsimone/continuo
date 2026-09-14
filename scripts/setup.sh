@@ -92,16 +92,26 @@ _buildable=()
 while IFS= read -r _svc; do [ -n "$_svc" ] && _buildable+=("$_svc"); done < <(docker compose config --format json \
   | python3 -c "import sys,json; print('\n'.join(k for k,v in json.load(sys.stdin)['services'].items() if 'build' in v))")
 _batch=()
-_build_batch() { [ "${#_batch[@]}" -gt 0 ] && { echo "  building: ${_batch[*]}"; DOCKER_BUILDKIT=1 docker compose build "${_batch[@]}"; }; }
+_build_batch() {
+    [ "${#_batch[@]}" -eq 0 ] && return 0
+    echo "  building: ${_batch[*]}"
+    if ! DOCKER_BUILDKIT=1 docker compose build "${_batch[@]}"; then
+        echo "ERROR: 'docker compose build ${_batch[*]}' exited non-zero" >&2
+        return 1
+    fi
+    echo "  built OK: ${_batch[*]}"
+}
 for _svc in "${_buildable[@]}"; do
     _batch+=("$_svc")
     if [ "${#_batch[@]}" -ge "${BUILD_BATCH:-2}" ]; then _build_batch; _batch=(); fi
 done
 _build_batch
+echo "===== DIAG: all compose build batches complete ====="
 
 # Build dbt service images and load into KIND
 
 IMAGE_TAG="$(git rev-parse --short HEAD)-$(date +%s)"
+echo "===== DIAG: IMAGE_TAG=${IMAGE_TAG} ====="
 echo "Using IMAGE_TAG=${IMAGE_TAG} for dbt service images"
 
 DBT_SERVICES=(service-1 service-2 service-3)
@@ -128,8 +138,8 @@ echo "Exported IMAGE_TAG_PER_SERVICE=${IMAGE_TAG_PER_SERVICE}"
 printf '%s' "$PER_SERVICE" > tests/e2e/.image-tags
 echo "Wrote per-service image tags to tests/e2e/.image-tags"
 
-# continuo-executor-controller and continuo-k8s-controller are already built by
-# 'docker compose build' above with the correct tags, so no need to rebuild them here.
+# continuo-execution-controller is already built by 'docker compose build'
+# above with the correct tag, so no need to rebuild it here.
 
 # Wait for kind cluster to finish (if we started it above)
 if [ -n "$KIND_PID" ]; then
@@ -157,8 +167,7 @@ echo "Loading images into kind (sequential)..."
 for svc in "${DBT_SERVICES[@]}"; do
     kind load docker-image "${svc}:${IMAGE_TAG}" --name "${CLUSTER_NAME}"
 done
-kind load docker-image continuo-executor-controller:latest --name ${CLUSTER_NAME}
-kind load docker-image continuo-k8s-controller:latest --name ${CLUSTER_NAME}
+kind load docker-image continuo-execution-controller:latest --name ${CLUSTER_NAME}
 kind load docker-image dbt-base:latest --name ${CLUSTER_NAME}
 kind load docker-image s3-sidecar:latest --name ${CLUSTER_NAME}
 # Built locally from a pulled base, so a plain `kind load docker-image` works —
@@ -253,9 +262,9 @@ kubectl config view --raw > kubeconfig.yaml.tmp
 sed "s|server: https://[^:]*:[0-9]*|server: https://${KUBE_IP}:${KUBE_PORT}|g" \
     kubeconfig.yaml.tmp > kubeconfig/kubeconfig.yaml
 
-mkdir -p executor-controller/kubeconfig
-cp kubeconfig/kubeconfig.yaml executor-controller/kubeconfig/kubeconfig.yaml
-echo "✓ Copied kubeconfig to executor-controller/"
+mkdir -p execution-controller/kubeconfig
+cp kubeconfig/kubeconfig.yaml execution-controller/kubeconfig/kubeconfig.yaml
+echo "✓ Copied kubeconfig to execution-controller/"
 
 rm kubeconfig.yaml.tmp
 echo "Kubeconfig created at: kubeconfig/kubeconfig.yaml"

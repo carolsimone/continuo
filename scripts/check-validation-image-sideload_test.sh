@@ -49,7 +49,7 @@ assert "a script that stops loading the validation image at all fails" "[ $rc -n
 
 # --- other kind load docker-image lines (locally built images) are ignored --
 write_fixture "$tmp/other-images-ok" \
-  "kind load docker-image continuo-executor-controller:latest --name \"\${CLUSTER_NAME}\"\nkind_load_pulled_image ${REF} \"\${CLUSTER_NAME}\"" \
+  "kind load docker-image continuo-execution-controller:latest --name \"\${CLUSTER_NAME}\"\nkind_load_pulled_image ${REF} \"\${CLUSTER_NAME}\"" \
   "kind load docker-image dbt-base:latest --name continuo || exit 1\nkind_load_pulled_image ${REF} continuo || exit 1"
 out="$(bash "$G" "$tmp/other-images-ok" 2>&1)"; rc=$?
 assert "bare kind load of locally-built images is not flagged" "[ $rc -eq 0 ]"

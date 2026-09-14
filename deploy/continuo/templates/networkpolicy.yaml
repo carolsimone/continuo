@@ -38,13 +38,13 @@ spec:
             matchExpressions:
               - key: app.kubernetes.io/name
                 operator: In
-                values: [state, orchestrator, executor-controller, k8s-controller,
+                values: [state, orchestrator, execution-controller,
                          release-controller, remediation, agent-remediation,
                          agent-chat, db-init-migrate]
         - podSelector:
             matchLabels:
               app: dbt-job
-        # Candidate-schema lifecycle Jobs (executor-scheduled engine-image pods
+        # Candidate-schema lifecycle Jobs (execution-controller-scheduled engine-image pods
         # running ensure_schema/drop_schema) carry app=continuo-schema-op — never
         # app=dbt-job — and must reach the warehouse to run their DDL.
         - podSelector:
@@ -76,7 +76,7 @@ spec:
             matchExpressions:
               - key: app.kubernetes.io/name
                 operator: In
-                values: [state, orchestrator, executor-controller, k8s-controller,
+                values: [state, orchestrator, execution-controller,
                          release-controller, remediation, agent-remediation,
                          agent-chat, topology-controller, ui, stream-reaper]
       ports:
@@ -129,7 +129,7 @@ spec:
             matchExpressions:
               - key: app.kubernetes.io/name
                 operator: In
-                values: [executor-controller, k8s-controller, release-controller,
+                values: [execution-controller, release-controller,
                          remediation, agent-remediation, ui,
                          topology-controller, orchestrator, minio-bucket-init]
         - podSelector:
@@ -160,7 +160,7 @@ spec:
             matchExpressions:
               - key: app.kubernetes.io/name
                 operator: In
-                values: [orchestrator, k8s-controller, agent-chat, ui]
+                values: [orchestrator, agent-chat, ui]
       ports:
         - port: 50051
 ---

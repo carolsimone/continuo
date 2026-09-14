@@ -459,5 +459,5 @@ Beyond the session keyspace above, `ui` reaches backends through gRPC (`state`, 
 - S3 errors are surfaced as HTTP 502.
 - Auth fails closed: a session-store (Redis) error returns 503 `auth_unavailable`; a request is never passed through unauthenticated.
 - Kubernetes liveness/readiness probes target `GET /healthz`, which is public and bypasses auth; `GET /` serves the SPA shell.
-- `log_s3_key` is stored by `k8s-controller` on task execution records; the UI does not resolve or generate S3 keys itself.
+- `log_s3_key` is stored by `execution-controller` on task execution records; the UI does not resolve or generate S3 keys itself.
 - `ListAllSchedules` reads from `schedule_catalog`; a schedule not in the catalog (e.g. activated before the catalog was populated) will not appear in the dashboard until the catalog is updated.

@@ -13,9 +13,9 @@ import (
 // forbiddenEventTypeLiterals is the set of outbox event_type routing-key values
 // that must never appear as a bare string literal in a publisher switch or a
 // producer's outbox INSERT. Each value has a named per-service constant
-// (orchestrator/domain, executor-controller/domain/event, k8s-controller/domain/event);
-// the literal must be referenced through that constant so the emit site and the
-// publisher share one source of truth.
+// (orchestrator/domain, execution-controller/domain/event); the literal must
+// be referenced through that constant so the emit site and the publisher
+// share one source of truth.
 var forbiddenEventTypeLiterals = map[string]bool{
 	"node_ready_for_execution":    true,
 	"cascade_task_skipped":        true,
@@ -39,10 +39,9 @@ var forbiddenEventTypeLiterals = map[string]bool{
 var eventTypeScanDirs = []string{
 	"orchestrator/adapters/publisher",
 	"orchestrator/service/handlers",
-	"executor-controller/adapters/publisher",
-	"executor-controller/service/deployer",
-	"k8s-controller/adapters/publisher",
-	"k8s-controller/service/handlers",
+	"execution-controller/adapters/publisher",
+	"execution-controller/service/deployer",
+	"execution-controller/service/handlers",
 }
 
 // repoRootFromEventTypeTest walks up until it finds go.work.

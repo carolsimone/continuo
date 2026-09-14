@@ -7,7 +7,7 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../scripts/lib/common.s
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 K8S_DIR="${SCRIPT_DIR}/k8s"
 
-log_info "Starting K8s controllers setup for E2E tests..."
+log_info "Starting K8s controller setup for E2E tests..."
 
 # Step 1: Detect docker bridge IP
 log_info "Detecting docker bridge IP..."
@@ -28,24 +28,29 @@ log_info "Applying k8s manifests..."
 
 cd "${K8S_DIR}"
 
-# Apply executor-controller
-log_info "Deploying executor-controller..."
-envsubst < executor-controller-deployment.yaml | kubectl apply -f - || {
-    log_error "Failed to apply executor-controller manifest"
-    exit 1
-}
+# Remove any obsolete executor-controller / k8s-controller resources left over
+# from a kind cluster provisioned before the merge. They share this service's
+# consumer groups, so a leftover controller could consume a candidate completion,
+# find no matching deployment, and ACK it without settling the new release.
+# --wait blocks until the old pods terminate; --ignore-not-found makes this a
+# no-op on a fresh cluster.
+log_info "Removing any obsolete executor-controller/k8s-controller resources..."
+for old in executor-controller k8s-controller; do
+    kubectl delete deployment,service,serviceaccount,role,rolebinding "${old}" \
+        -n default --ignore-not-found --wait --timeout=60s || true
+done
 
-# Apply k8s-controller
-log_info "Deploying k8s-controller..."
-envsubst < k8s-controller-deployment.yaml | kubectl apply -f - || {
-    log_error "Failed to apply k8s-controller manifest"
+# Apply execution-controller
+log_info "Deploying execution-controller..."
+envsubst < execution-controller-deployment.yaml | kubectl apply -f - || {
+    log_error "Failed to apply execution-controller manifest"
     exit 1
 }
 
 # Step 4.5: Force rollout restart to use new images
-log_info "Restarting deployments to use new images..."
-kubectl rollout restart deployment/executor-controller deployment/k8s-controller -n default || {
-    log_error "Failed to restart deployments"
+log_info "Restarting deployment to use new image..."
+kubectl rollout restart deployment/execution-controller -n default || {
+    log_error "Failed to restart deployment"
     exit 1
 }
 
@@ -57,23 +62,16 @@ kubectl rollout restart deployment/executor-controller deployment/k8s-controller
 # unhealthy after port-forward" failure on the first test that runs.
 log_info "Waiting for rollout to complete (timeout: 120s)..."
 
-kubectl rollout status deployment/executor-controller -n default --timeout=120s || {
-    log_error "executor-controller rollout did not complete"
+kubectl rollout status deployment/execution-controller -n default --timeout=120s || {
+    log_error "execution-controller rollout did not complete"
     log_info "Pod logs:"
-    kubectl logs -l app=executor-controller -n default --tail=50 || true
+    kubectl logs -l app=execution-controller -n default --tail=50 || true
     exit 1
 }
 
-kubectl rollout status deployment/k8s-controller -n default --timeout=120s || {
-    log_error "k8s-controller rollout did not complete"
-    log_info "Pod logs:"
-    kubectl logs -l app=k8s-controller -n default --tail=50 || true
-    exit 1
-}
-
-log_info "Rollouts complete (no terminating pods, all new pods Ready)"
+log_info "Rollout complete (no terminating pods, all new pods Ready)"
 
 # rollout status passing implies the readinessProbe (which hits /ready, so
 # Postgres and Redis are reachable too) has succeeded for every new pod and
 # no old pods remain.
-log_info "Controllers verified healthy via readinessProbe (kubectl rollout status passed)"
+log_info "Controller verified healthy via readinessProbe (kubectl rollout status passed)"

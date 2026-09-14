@@ -13,8 +13,7 @@ COPY go.work go.work.sum* ./
 COPY state/go.mod state/go.sum ./state/
 COPY pkg/go.mod pkg/go.sum ./pkg/
 COPY orchestrator/go.mod orchestrator/go.sum ./orchestrator/
-COPY executor-controller/go.mod executor-controller/go.sum ./executor-controller/
-COPY k8s-controller/go.mod k8s-controller/go.sum ./k8s-controller/
+COPY execution-controller/go.mod execution-controller/go.sum ./execution-controller/
 COPY release-controller/go.mod release-controller/go.sum ./release-controller/
 COPY agent-chat/go.mod agent-chat/go.sum ./agent-chat/
 COPY remediation/go.mod remediation/go.sum ./remediation/

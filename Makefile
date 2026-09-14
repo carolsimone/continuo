@@ -37,8 +37,7 @@ build: build-dev
 .PHONY: build-prod
 build-prod: build-base
 	DOCKER_BUILDKIT=1 docker build -t continuo-state:prod -f state/Dockerfile.prod .
-	DOCKER_BUILDKIT=1 docker build -t continuo-executor-controller:prod -f executor-controller/Dockerfile.prod .
-	DOCKER_BUILDKIT=1 docker build -t continuo-k8s-controller:prod -f k8s-controller/Dockerfile.prod .
+	DOCKER_BUILDKIT=1 docker build -t continuo-execution-controller:prod -f execution-controller/Dockerfile.prod .
 	DOCKER_BUILDKIT=1 docker build -t continuo-orchestrator:prod -f orchestrator/Dockerfile.prod .
 	DOCKER_BUILDKIT=1 docker build -t continuo-release-controller:prod -f release-controller/Dockerfile.prod .
 	DOCKER_BUILDKIT=1 docker build -t continuo-agent-chat:prod -f agent-chat/Dockerfile.prod .
@@ -124,7 +123,7 @@ e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start
 	@echo "Waiting for neo4j and redis to become healthy..."
 	@$(DOCKER_COMPOSE) up -d --wait --no-recreate neo4j redis
 	@echo "Waiting for flyway migrations to complete..."
-	@for svc in flyway-state flyway-executor flyway-orchestrator flyway-k8s flyway-release flyway-agent-chat flyway-remediation flyway-agent-remediation; do \
+	@for svc in flyway-state flyway-execution flyway-orchestrator flyway-release flyway-agent-chat flyway-remediation flyway-agent-remediation; do \
 		cid=$$($(DOCKER_COMPOSE) ps -q $$svc 2>/dev/null); \
 		if [ -n "$$cid" ]; then docker wait $$cid 2>/dev/null || true; fi; \
 	done
@@ -139,9 +138,9 @@ e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start
 	@$(MAKE) e2e-cleanup
 
 # ── CI contract: SINGLE entrypoints used identically by local dev and CI jobs.
-GO_SERVICES := state orchestrator executor-controller k8s-controller \
-               release-controller remediation agent-remediation agent-chat
-FLYWAY_JOBS := flyway-state flyway-executor flyway-orchestrator flyway-k8s flyway-release \
+GO_SERVICES := state orchestrator execution-controller release-controller \
+               remediation agent-remediation agent-chat
+FLYWAY_JOBS := flyway-state flyway-execution flyway-orchestrator flyway-release \
                flyway-agent-chat flyway-remediation flyway-agent-remediation
 
 # Data dependencies for Go tests: Postgres+Neo4j+Redis up and migrated. No service
@@ -180,7 +179,7 @@ test-go: test-deps-up
 	  extra=; \
 	  case $$s in \
 	    state) db=continuo_state;; orchestrator) db=continuo_orchestrator;; \
-	    executor-controller) db=continuo_executor;; k8s-controller) db=continuo_k8s;; \
+	    execution-controller) db=continuo_execution;; \
 	    release-controller) db=continuo_release; \
 	      extra="RELEASE_TEST_PG_DSN=postgres://continuo_svc:continuo@localhost:5432/continuo_release?sslmode=disable GOFLAGS=-p=1";; \
 	    remediation) db=continuo_remediation;; \
@@ -224,7 +223,7 @@ test-topology:
 #   tag that has no release images behind it.
 # - check-validation-image-pin: the hand-maintained continuo-python-runtime
 #   image tag must not drift between the Makefile, setup/e2e scripts,
-#   docker-compose, the executor-controller Go test fixtures, and the chart's
+#   docker-compose, the execution-controller Go test fixtures, and the chart's
 #   rendered default.
 # - check-validation-image-sideload: the kind-provisioning scripts must not
 #   side-load the pulled validation image with a bare `kind load docker-image`,

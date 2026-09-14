@@ -13,27 +13,29 @@ package events
 const ModePromoteSeed = "promote_seed"
 
 // ModeCompile is the job mode for a release's compile leg (dbt compile +
-// manifest upload, plus the parse-export/rehearsal initContainers). executor
-// stamps it as a Job label; k8s-controller reads the label to route the
-// terminal status to the compile-specific handling path.
+// manifest upload, plus the parse-export/rehearsal initContainers). the
+// dispatcher stamps it as a Job label; the job-status handler reads it to
+// route the terminal status to the compile-specific handling path.
 const ModeCompile = "compile"
 
 // ModeValidation is the job mode for a release's per-node validation
-// (`dbt --empty`) Jobs. executor stamps it as a Job label; k8s-controller
-// reads the label to route the terminal status to the validation path and to
-// suppress production task-status announcements for these synthetic tasks.
+// (`dbt --empty`) Jobs. the dispatcher stamps it as a Job label; the
+// job-status handler reads it to route the terminal status to the validation
+// path and to suppress production task-status announcements for these
+// synthetic tasks.
 const ModeValidation = "validation"
 
 // ModeSeedBuild is the job mode for a release's seed-build Jobs (materializing
-// new/changed seeds into the candidate schema). executor stamps it as a Job
-// label; k8s-controller reads the label to route the terminal status to the
-// seed-build path and to suppress production task-status announcements for
-// these synthetic tasks.
+// new/changed seeds into the candidate schema). the dispatcher stamps it as a
+// Job label; the job-status handler reads it to route the terminal status to
+// the seed-build path and to suppress production task-status announcements
+// for these synthetic tasks.
 const ModeSeedBuild = "seed_build"
 
 // NodeDeployed — stream: node.deployed:v1
-// Published by: executor-controller (after a K8s Job create succeeds)
-// Consumed by: k8s-controller (to start watching the Job's status)
+// Published and consumed by: execution-controller (published after a K8s Job
+// create succeeds; consumed by the job-status handler to start watching the
+// Job's status)
 //
 // Carried as the JSON `payload` field of the Redis message; transport metadata
 // (outbox_entry_id) travels as a flat sibling field for consumer-side dedup.
@@ -59,7 +61,7 @@ type NodeDeployed struct {
 }
 
 // CheckK8s — stream: check.k8s:v1
-// Published and consumed by: k8s-controller (the delayed status-recheck)
+// Published and consumed by: execution-controller (the delayed status-recheck)
 //
 // This is the typed payload the promoter XADDs to check.k8s:v1 once a
 // delay-queue ticket becomes due. It travels in the `payload` field, alongside a
@@ -83,8 +85,8 @@ type CheckK8s struct {
 	Operation  string `json:"operation,omitempty"`
 	RetryCount int32  `json:"retry_count"`
 	MaxRetries int32  `json:"max_retries"`
-	// RunningAnnounced is true once k8s-controller has announced this attempt as
-	// RUNNING on task.status.updated:v1. It rides the delay-queue ticket /
+	// RunningAnnounced is true once the job-status handler has announced this
+	// attempt as RUNNING on task.status.updated:v1. It rides the delay-queue ticket /
 	// promoted stream message so RUNNING is emitted exactly once per attempt; a
 	// fresh node.deployed:v1 (a new attempt) carries no such field and so resets
 	// it to false.

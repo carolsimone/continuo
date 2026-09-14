@@ -48,8 +48,8 @@ streams:
 
   - name: task.status.updated:v1
     const: TaskStatusUpdatedV1
-    description: Per-task status transitions emitted by executor-controller.
-    producers: [executor-controller]
+    description: Per-task status transitions emitted by execution-controller.
+    producers: [execution-controller]
     consumers:
       - service: state
         group: state-task-status-updated
@@ -57,8 +57,8 @@ streams:
 
   - name: task.execution.recorded:v1
     const: TaskExecutionRecordedV1
-    description: Completed task executions emitted by k8s-controller's outbox processor.
-    producers: [k8s-controller]
+    description: Completed task executions emitted by execution-controller's outbox processor.
+    producers: [execution-controller]
     consumers:
       - service: state
         group: state-task-execution-recorded
@@ -69,7 +69,7 @@ streams:
   - name: node.updated:v1
     const: NodeUpdatedV1
     description: Node state transitions; orchestrator updates its projections.
-    producers: [executor-controller, k8s-controller]
+    producers: [execution-controller]
     consumers:
       - service: orchestrator
         group: orchestrator-node-updated
@@ -136,69 +136,64 @@ streams:
     description: Tasks dispatched by orchestrator for the executor pool.
     producers: [orchestrator]
     consumers:
-      - service: executor-controller
+      - service: execution-controller
         group: executor-query-model
         const: ExecutorQueryModel
 
-  # ---------------- executor-controller streams ----------------
+  # ---------------- execution-controller streams ----------------
 
   - name: retry.task:v1
     const: RetryTaskV1
-    description: Retry trigger for tasks; produced by k8s-controller, consumed by executor.
-    producers: [k8s-controller]
+    description: Retry trigger for tasks; produced and consumed by execution-controller.
+    producers: [execution-controller]
     consumers:
-      - service: executor-controller
+      - service: execution-controller
         group: executor-retry
         const: ExecutorRetry
 
   - name: node.deployed:v1
     const: NodeDeployedV1
-    description: Pod-deploy intent from executor; consumed by k8s-controller.
-    producers: [executor-controller]
+    description: Pod-deploy intent emitted after a Job is created; consumed by the job-status handler to start watching it.
+    producers: [execution-controller]
     consumers:
-      - service: k8s-controller
+      - service: execution-controller
         group: k8s-deployed
         const: K8sDeployed
-
-  # ---------------- k8s-controller streams ----------------
 
   - name: check.k8s:v1
     const: CheckK8sV1
     description: Delayed status-check tickets; a promoter moves due tickets from the delay queue into the stream.
-    producers: [k8s-controller]
+    producers: [execution-controller]
     consumers:
-      - service: k8s-controller
+      - service: execution-controller
         group: k8s-check-status
         const: K8sCheckStatus
 
   - name: task.failed:v1
     const: TaskFailedV1
-    description: Terminal task failure emitted by k8s-controller.
-    producers: [k8s-controller]
+    description: Terminal task failure emitted by execution-controller.
+    producers: [execution-controller]
     consumers: []
 
   - name: outbox.dead_letter:v1
     const: OutboxDeadLetterV1
     description: Terminal outbox publish failures (permanent payload errors, or transient errors that exhausted their backoff budget), emitted by every service's outbox processor. Operational DLQ, not a domain event.
-    producers: [state, orchestrator, executor-controller, k8s-controller, release-controller, remediation, agent-remediation]
+    producers: [state, orchestrator, execution-controller, release-controller, remediation, agent-remediation]
     consumers: []
 
   # ---------------- cross-service fanout ----------------
 
   - name: schedule.cancelled:v1
     const: ScheduleCancelledV1
-    description: Schedule cancellation broadcast; fanned out to orchestrator, executor, k8s.
+    description: Schedule cancellation broadcast; fanned out to orchestrator and execution-controller.
     producers: [state]
     consumers:
       - service: orchestrator
         group: orchestrator-schedule-cancelled
         const: OrchestratorScheduleCancelled
-      - service: executor-controller
+      - service: execution-controller
         group: executor-schedule-cancelled
         const: ExecutorScheduleCancelled
-      - service: k8s-controller
-        group: k8s-schedule-cancelled
-        const: K8sScheduleCancelled
 
   # ---------------- release-controller streams (dbt blue/green) ----------------
 
@@ -222,56 +217,56 @@ streams:
 
   - name: validation.requested:v1
     const: ValidationRequestedV1
-    description: dbt --empty validation run requested by release-controller; executor-controller dispatches per-node jobs.
+    description: dbt --empty validation run requested by release-controller; execution-controller dispatches per-node jobs.
     producers: [release-controller]
     consumers:
-      - service: executor-controller
+      - service: execution-controller
         group: executor-validation-requested
         const: ExecutorValidationRequested
 
   - name: validation.node.completed:v1
     const: ValidationNodeCompletedV1
-    description: Per-node validation Job terminal status from k8s-controller back to executor-controller; settled into the validation.result:v1 stream (per-node kind=node, plus the terminal kind=complete once all nodes settle).
-    producers: [k8s-controller]
+    description: Per-node validation Job terminal status from the job-status handler, settled into the validation.result:v1 stream (per-node kind=node, plus the terminal kind=complete once all nodes settle).
+    producers: [execution-controller]
     consumers:
-      - service: executor-controller
+      - service: execution-controller
         group: executor-validation-node-completed
         const: ExecutorValidationNodeCompleted
 
   - name: validation.result:v1
     const: ValidationResultV1
-    description: Unified validation-leg stream from executor-controller. Carries per-node results (kind=node, one per node as it settles) and the terminal decision (kind=complete, emitted last). release-controller projects nodes and decides on complete; the decision reads aggregate_status, so it does not depend on delivery order. executor-controller drops the candidate schema on complete.
-    producers: [executor-controller]
+    description: Unified validation-leg stream from execution-controller. Carries per-node results (kind=node, one per node as it settles) and the terminal decision (kind=complete, emitted last). release-controller projects nodes and decides on complete; the decision reads aggregate_status, so it does not depend on delivery order. execution-controller drops the candidate schema on complete.
+    producers: [execution-controller]
     consumers:
       - service: release-controller
         group: release-controller-validation-result
         const: ReleaseControllerValidationResult
-      - service: executor-controller
+      - service: execution-controller
         group: executor-validation-result-teardown
         const: ExecutorValidationResultTeardown
 
   - name: seed.build.requested:v1
     const: SeedBuildRequestedV1
-    description: release-controller requests candidate seed builds; executor dispatches per-seed team-image jobs.
+    description: release-controller requests candidate seed builds; execution-controller dispatches per-seed team-image jobs.
     producers: [release-controller]
     consumers:
-      - service: executor-controller
+      - service: execution-controller
         group: executor-seed-build-requested
         const: ExecutorSeedBuildRequested
 
   - name: seed.build.node.completed:v1
     const: SeedBuildNodeCompletedV1
-    description: per-seed build terminal status from k8s-controller back to executor-controller.
-    producers: [k8s-controller]
+    description: per-seed build terminal status from the job-status handler.
+    producers: [execution-controller]
     consumers:
-      - service: executor-controller
+      - service: execution-controller
         group: executor-seed-build-node-completed
         const: ExecutorSeedBuildNodeCompleted
 
   - name: seed.build.completed:v1
     const: SeedBuildCompletedV1
-    description: aggregated candidate seed-build result from executor-controller back to release-controller.
-    producers: [executor-controller]
+    description: aggregated candidate seed-build result from execution-controller back to release-controller.
+    producers: [execution-controller]
     consumers:
       - service: release-controller
         group: release-controller-seed-build-completed
@@ -279,26 +274,26 @@ streams:
 
   - name: compile.requested:v1
     const: CompileRequestedV1
-    description: release-controller requests the changed service's dbt compile; executor dispatches the compile Job.
+    description: release-controller requests the changed service's dbt compile; execution-controller dispatches the compile Job.
     producers: [release-controller]
     consumers:
-      - service: executor-controller
+      - service: execution-controller
         group: executor-compile-requested
         const: ExecutorCompileRequested
 
   - name: compile.node.completed:v1
     const: CompileNodeCompletedV1
-    description: compile Job terminal status from k8s-controller back to executor-controller.
-    producers: [k8s-controller]
+    description: compile Job terminal status from the job-status handler.
+    producers: [execution-controller]
     consumers:
-      - service: executor-controller
+      - service: execution-controller
         group: executor-compile-node-completed
         const: ExecutorCompileNodeCompleted
 
   - name: compile.completed:v1
     const: CompileCompletedV1
-    description: aggregated compile result from executor-controller back to release-controller.
-    producers: [executor-controller]
+    description: aggregated compile result from execution-controller back to release-controller.
+    producers: [execution-controller]
     consumers:
       - service: release-controller
         group: release-controller-compile-completed
@@ -315,7 +310,7 @@ streams:
       - service: orchestrator
         group: orchestrator-release-promoted-versions
         const: OrchestratorReleasePromotedVersions
-      - service: executor-controller
+      - service: execution-controller
         group: executor-release-promoted
         const: ExecutorReleasePromoted
 
@@ -327,16 +322,16 @@ streams:
       - service: remediation
         group: remediation-release-rejected
         const: RemediationReleaseRejected
-      - service: executor-controller
+      - service: execution-controller
         group: executor-release-rejected
         const: ExecutorReleaseRejected
 
   - name: pipeline.run.finished:v1
     const: PipelineRunFinishedV1
-    description: A pipeline run of either kind (a candidate release or a fix-verification run) reached a terminal status; carries the run's candidate schema so executor-controller can drop it whatever the outcome.
+    description: A pipeline run of either kind (a candidate release or a fix-verification run) reached a terminal status; carries the run's candidate schema so execution-controller can drop it whatever the outcome.
     producers: [release-controller]
     consumers:
-      - service: executor-controller
+      - service: execution-controller
         group: executor-pipeline-run-finished
         const: ExecutorPipelineRunFinished
 

@@ -13,14 +13,13 @@ WORKDIR /app
 # only the modules this image builds against (pkg, orchestrator, and
 # state/proto for the gRPC client stubs) get their source trees later.
 # Limiting the source-copy layers to the dirs this service actually
-# touches means a change to executor-controller or k8s-controller does
-# not invalidate this image's cache.
+# touches means a change to execution-controller does not invalidate
+# this image's cache.
 COPY go.work go.work.sum* ./
 COPY state/go.mod state/go.sum ./state/
 COPY pkg/go.mod pkg/go.sum ./pkg/
 COPY orchestrator/go.mod orchestrator/go.sum ./orchestrator/
-COPY executor-controller/go.mod executor-controller/go.sum ./executor-controller/
-COPY k8s-controller/go.mod k8s-controller/go.sum ./k8s-controller/
+COPY execution-controller/go.mod execution-controller/go.sum ./execution-controller/
 COPY release-controller/go.mod release-controller/go.sum ./release-controller/
 COPY tests/e2e/go.mod tests/e2e/go.sum ./tests/e2e/
 COPY remediation/go.mod remediation/go.sum ./remediation/
@@ -30,9 +29,8 @@ COPY agent-remediation/go.mod agent-remediation/go.sum ./agent-remediation/
 # other services' source trees to be present in this image. `./state`
 # stays because orchestrator imports state/proto/state/v1 (gRPC client
 # stubs); only state/proto/ source is copied below.
-RUN go work edit -dropuse=./executor-controller \
+RUN go work edit -dropuse=./execution-controller \
     && go work edit -dropuse=./agent-chat \
-    && go work edit -dropuse=./k8s-controller \
     && go work edit -dropuse=./release-controller \
     && go work edit -dropuse=./remediation \
     && go work edit -dropuse=./agent-remediation \

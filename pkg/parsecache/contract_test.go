@@ -11,18 +11,17 @@ import (
 // TestContractMatchesPythonFetcher guards the cross-language parse-cache
 // hydration contract. The hydrate-parse-cache initContainer (Python,
 // s3-sidecar/parse_cache_fetcher.py) writes its outcome to the
-// container's termination message; k8s-controller parses that message using
-// the constants in this package, and executor-controller names the
-// initContainer it builds with ContainerName. Nothing generates one side
-// from the other, so a drift would silently turn every execution's
-// parse_cache into unknown/absent with no error surfaced. This test reads
-// the Python source of truth and asserts the Go constants still match it,
-// failing CI the moment they diverge.
+// container's termination message; execution-controller parses that message
+// using the constants in this package, and also names the initContainer it
+// builds with ContainerName. Nothing generates one side from the other, so a
+// drift would silently turn every execution's parse_cache into
+// unknown/absent with no error surfaced. This test reads the Python source
+// of truth and asserts the Go constants still match it, failing CI the
+// moment they diverge.
 //
-// It lives in pkg (not k8s-controller or executor-controller) because the
-// per-service test containers hold only their own module — the s3-sidecar/
-// tree is present only in the full-repo checkout, where the pkg static-guard
-// suite runs.
+// It lives in pkg (not execution-controller) because the per-service test
+// containers hold only their own module — the s3-sidecar/ tree is present
+// only in the full-repo checkout, where the pkg static-guard suite runs.
 func TestContractMatchesPythonFetcher(t *testing.T) {
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {

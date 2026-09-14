@@ -25,11 +25,11 @@ services:
       - postgres
     tty: true
 
-  flyway-executor:
+  flyway-execution:
     image: flyway/flyway
-    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_executor -user=continuo_svc -password=continuo -connectRetries=30
+    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_execution -user=continuo_svc -password=continuo -connectRetries=30
     volumes:
-      - ./db/migration/executor:/flyway/sql
+      - ./db/migration/execution:/flyway/sql
     depends_on:
       - postgres
     tty: true
@@ -39,15 +39,6 @@ services:
     command: migrate -url=jdbc:postgresql://postgres:5432/continuo_orchestrator -user=continuo_svc -password=continuo -connectRetries=30
     volumes:
       - ./db/migration/orchestrator:/flyway/sql
-    depends_on:
-      - postgres
-    tty: true
-
-  flyway-k8s:
-    image: flyway/flyway
-    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_k8s -user=continuo_svc -password=continuo -connectRetries=30
-    volumes:
-      - ./db/migration/k8s:/flyway/sql
     depends_on:
       - postgres
     tty: true
@@ -156,8 +147,7 @@ services:
       - "50051:50051" # gRPC
     volumes:
       - ./state:/app/state
-      - ./executor-controller:/app/executor-controller
-      - ./k8s-controller:/app/k8s-controller
+      - ./execution-controller:/app/execution-controller
       - ./orchestrator:/app/orchestrator
       - ./pkg:/app/pkg
       - ./tests/e2e:/app/tests/e2e
@@ -170,18 +160,16 @@ services:
       - default
     tty: true
 
-  executor-controller:
+  execution-controller:
     build:
       context: .
-      dockerfile: executor-controller/Dockerfile.dev
-    image: continuo-executor-controller:latest
-    container_name: executor-controller
+      dockerfile: execution-controller/Dockerfile.dev
+    image: continuo-execution-controller:latest
+    container_name: execution-controller
     depends_on:
       postgres:
         condition: service_started
       redis:
-        condition: service_started
-      neo4j:
         condition: service_started
       minio-init:
         condition: service_completed_successfully
@@ -195,33 +183,30 @@ services:
       # PostgreSQL
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
-      - POSTGRES_DB=continuo_executor
+      - POSTGRES_DB=continuo_execution
       - POSTGRES_USER=continuo_svc
       - POSTGRES_PASSWORD=continuo
       # Kubernetes
       - KUBECONFIG=/app/kubeconfig/kubeconfig.yaml
       - K8S_NAMESPACE=default
       - MAX_CONCURRENT_JOBS=50
-      # The validation image is a published external image (continuo-python-runtime);
-      # scripts/setup.sh (dev) and tests/e2e/provision-k8s-test-env.sh (e2e) each
-      # pull it and side-load it into the local kind node cache, so validation pods
-      # must use the cached image. PullAlways would fail with ErrImagePull locally;
-      # production omits this and defaults to Always.
+      - K8S_CHECK_DELAY_SECONDS=10
+      - DEFAULT_TASK_MAX_RETRIES=2
+      - LOG_TAIL_LINES=50
+      - ERROR_MESSAGE_MAX_LENGTH=4096
+      # The validation image is a published external image; scripts/setup.sh
+      # side-loads it into the kind node cache, so validation pods must use the
+      # cached image. Production omits this and defaults to Always.
       - VALIDATION_IMAGE_PULL_POLICY=IfNotPresent
       - VALIDATION_IMAGE=ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.5.0
-      # Warehouse credentials for the validation pod come from this operator-owned
-      # Secret (envFrom). scripts/setup.sh creates it in the kind cluster.
+      # Warehouse credentials for validation pods come from this Secret (envFrom).
       - VALIDATION_WAREHOUSE_SECRET=continuo-warehouse-validation
       - S3_SIDECAR_IMAGE=s3-sidecar:latest
       # dbt command dialect (per-service command templates for K8s Jobs)
       - DBT_COMMANDS_CONFIG_PATH=/etc/continuo/dbt-commands.yaml
-      # S3 credentials forwarded into both the validation pod (which fetches
-      # CANDIDATE_SQL_URI itself) and the compile pod's s3-sidecar (manifest upload).
-      # Points at MinIO on the compose network. NOTE: like POSTGRES_HOST above,
-      # this is a compose-network DNS name — it serves this process's own use and
-      # is NOT resolvable from in-kind pods. The e2e dispatches via the kind deployment
-      # (tests/e2e/k8s/executor-controller-deployment.yaml), which supplies the
-      # docker-bridge-IP equivalents that in-kind pods can reach.
+      # S3: log/result uploads by this process, and credentials forwarded into
+      # validation and compile pods. Compose-network DNS; in-kind pods use the
+      # docker-bridge equivalents from tests/e2e/k8s/execution-controller-deployment.yaml.
       - S3_ENDPOINT_URL=http://minio:9000
       - S3_BUCKET=continuo
       - AWS_ACCESS_KEY_ID=minioadmin
@@ -229,14 +214,11 @@ services:
       - AWS_DEFAULT_REGION=us-east-1
       # Application
       - HTTP_PORT=8084
-      - ENV=local
-      - LOG_LEVEL=INFO
     ports:
       - "8084:8084"   # Health check HTTP
     volumes:
       - ./state:/app/state
-      - ./executor-controller:/app/executor-controller
-      - ./k8s-controller:/app/k8s-controller
+      - ./execution-controller:/app/execution-controller
       - ./orchestrator:/app/orchestrator
       - ./pkg:/app/pkg
       - ./tests/e2e:/app/tests/e2e
@@ -246,71 +228,6 @@ services:
       - ./kubeconfig:/app/kubeconfig
       - /var/run/docker.sock:/var/run/docker.sock  # For testcontainers
       - ./config/dbt-commands.yaml:/etc/continuo/dbt-commands.yaml:ro
-    networks:
-      - default
-      - kind
-    tty: true
-
-  k8s-controller:
-    build:
-      context: .
-      dockerfile: k8s-controller/Dockerfile.dev
-    image: continuo-k8s-controller:latest
-    container_name: k8s-controller
-    depends_on:
-      postgres:
-        condition: service_started
-      redis:
-        condition: service_started
-      state:
-        condition: service_started
-      minio-init:
-        condition: service_completed_successfully
-    environment:
-      # Redis
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - REDIS_PASSWORD=continuo
-      - CANCELLED_SCHEDULES_TTL_HOURS=24
-      - CANCELLED_SCHEDULES_SWEEP_INTERVAL_MINUTES=60
-      # PostgreSQL
-      - POSTGRES_HOST=postgres
-      - POSTGRES_PORT=5432
-      - POSTGRES_DB=continuo_k8s
-      - POSTGRES_USER=continuo_svc
-      - POSTGRES_PASSWORD=continuo
-      # State Service
-      - STATE_SERVICE_GRPC_ADDR=state:50051
-      # Kubernetes
-      - KUBECONFIG=/app/kubeconfig/kubeconfig.yaml
-      - K8S_NAMESPACE=default
-      # S3 / MinIO
-      - S3_ENDPOINT_URL=http://minio:9000
-      - S3_BUCKET=continuo
-      - AWS_ACCESS_KEY_ID=minioadmin
-      - AWS_SECRET_ACCESS_KEY=minioadmin
-      - AWS_DEFAULT_REGION=us-east-1
-      - LOG_TAIL_LINES=50
-      # Application
-      - K8S_CHECK_DELAY_SECONDS=10
-      - ERROR_MESSAGE_MAX_LENGTH=4096
-      - HTTP_PORT=8085
-      - ENV=local
-      - LOG_LEVEL=INFO
-    ports:
-      - "8085:8085"   # Health check HTTP
-    volumes:
-      - ./state:/app/state
-      - ./executor-controller:/app/executor-controller
-      - ./k8s-controller:/app/k8s-controller
-      - ./orchestrator:/app/orchestrator
-      - ./pkg:/app/pkg
-      - ./tests/e2e:/app/tests/e2e
-      - ./go.work:/app/go.work
-      - ./agent-chat:/app/agent-chat
-      - ./agent-remediation:/app/agent-remediation
-      - ./kubeconfig:/app/kubeconfig
-      - /var/run/docker.sock:/var/run/docker.sock  # For testcontainers
     networks:
       - default
       - kind
@@ -380,8 +297,7 @@ services:
       - "50052:50052" # gRPC
     volumes:
       - ./state:/app/state
-      - ./executor-controller:/app/executor-controller
-      - ./k8s-controller:/app/k8s-controller
+      - ./execution-controller:/app/execution-controller
       - ./pkg:/app/pkg
       - ./orchestrator:/app/orchestrator
       - ./tests/e2e:/app/tests/e2e
@@ -638,8 +554,7 @@ services:
       - ./tests/e2e:/app/tests/e2e
       - ./state:/app/state
       - ./orchestrator:/app/orchestrator
-      - ./executor-controller:/app/executor-controller
-      - ./k8s-controller:/app/k8s-controller
+      - ./execution-controller:/app/execution-controller
       - ./pkg:/app/pkg
       - ./go.work:/app/go.work
       - ./agent-chat:/app/agent-chat

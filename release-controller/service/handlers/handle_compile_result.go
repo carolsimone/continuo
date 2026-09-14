@@ -9,7 +9,7 @@ import (
 )
 
 // HandleCompileResultInput carries the aggregated compile outcome from
-// executor-controller (compile.completed:v1).
+// execution-controller (compile.completed:v1).
 type HandleCompileResultInput struct {
 	ReleaseID   string
 	Status      string // "ok" | "failed"

@@ -1,7 +1,7 @@
 # dbt image contract
 
 What a team's dbt image must provide to run under Continuo.
-executor-controller launches your image as Kubernetes Jobs for scheduled
+execution-controller launches your image as Kubernetes Jobs for scheduled
 runs, seed builds, and release-time compiles; this page is the contract
 those Jobs assume. The reference implementation is the
 [`continuo-demo`](https://github.com/carolsimone/continuo-demo)
@@ -12,7 +12,7 @@ see [`python-image-contract.md`](python-image-contract.md).
 
 ## Image resolution
 
-executor-controller composes your image reference as
+execution-controller composes your image reference as
 `<teamImagePrefix>/<service-name>:<IMAGE_TAG>` — e.g. Docker Hub user +
 repository named after the service. `global.teamImagePrefix` in the chart
 feeds the prefix; with an empty prefix the reference is the bare
@@ -29,7 +29,7 @@ non-standard dbt container runs under continuo without change.
 
 The contract is **fail-closed**: an override block must define all seven
 operations (`run`, `seed`, `snapshot`, `seed_build`, `test`, `build`,
-`compile`) or executor-controller refuses to boot. `{{ node }}` and
+`compile`) or execution-controller refuses to boot. `{{ node }}` and
 `{{ target_schema }}` placeholders are substituted at dispatch time.
 
 Your image must therefore contain a working dbt project (or a wrapper that

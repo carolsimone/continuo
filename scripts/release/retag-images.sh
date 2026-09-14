@@ -14,7 +14,7 @@ OWNER="${3:?usage: retag-images.sh <commit-sha> <release-tag> <registry-owner>}"
 # Keep in sync with the build-publish matrix in .github/workflows/deploy.yml —
 # the continuo-owned images every main push publishes as :<git-sha>.
 services=(
-  state orchestrator executor-controller k8s-controller ui
+  state orchestrator execution-controller ui
   topology-controller release-controller agent-chat remediation
   agent-remediation migrations s3-sidecar stream-reaper
 )

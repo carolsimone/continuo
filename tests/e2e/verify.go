@@ -45,7 +45,7 @@ func verifyExecutorDeployedJobs(
 		return containsAll(deployedTables, expectedTables), nil
 	}, fmt.Sprintf("Timeout waiting for executor to deploy %d jobs", len(expectedTables)))
 
-	t.Logf("✅ executor-controller deployed %d jobs", len(expectedTables))
+	t.Logf("✅ execution-controller deployed %d jobs", len(expectedTables))
 }
 
 // verifyJobsCompleted checks that all tasks have reached 'succeeded' status in
@@ -159,7 +159,7 @@ func verifyFullDAGExecution(
 // through the per-service command dialect configured via the dbt-commands
 // ConfigMap, rather than silently falling back to the built-in dialect. The
 // e2e cluster maps service-1 to the "wise-dbt" alias (tests/e2e/k8s/
-// executor-controller-deployment.yaml) while service-2/3 have no override and
+// execution-controller-deployment.yaml) while service-2/3 have no override and
 // use built-in plain dbt. Without this assertion, a broken env var, volume
 // mount, or ConfigMap wiring would silently fall back to the built-in dialect
 // for every service and the suite would stay green.

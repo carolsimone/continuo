@@ -111,7 +111,7 @@ app.kubernetes.io/name: {{ .service }}
 {{- end -}}
 {{- end -}}
 
-{{/* Name of the validation warehouse Secret the executor attaches via envFrom.
+{{/* Name of the validation warehouse Secret execution-controller attaches via envFrom.
      - createWarehouseSecret=true, bundled generated Postgres: the keys live on the
        bundled Postgres Secret itself (postgresql/secret.yaml), so the password is
        generated exactly once — name is that Secret.
@@ -287,7 +287,7 @@ that silently lacks the refs. Endpoint, bucket and region reach every pod throug
 the shared ConfigMap and need no per-service wiring.
 */}}
 {{- define "continuo.s3.credentialServices" -}}
-["orchestrator","topology-controller","k8s-controller","executor-controller","release-controller","remediation","agent-remediation","ui","agent-chat"]
+["orchestrator","topology-controller","execution-controller","release-controller","remediation","agent-remediation","ui","agent-chat"]
 {{- end -}}
 
 {{- define "continuo.auth.issuerUrl" -}}

@@ -54,7 +54,7 @@ Row carrier structs for Postgres (`SchedulerTracker`, `TaskTracker`, `TaskExecut
 
 | Column | Type | Purpose |
 |---|---|---|
-| `parse_cache` | `varchar(16)` NULL | Whether the executing Job's team container ran with the hydrated partial-parse cache: `hydrated` / `degraded` / `unknown`. NULL for executions that predate hydration or whose Job had no `hydrate-parse-cache` initContainer (e.g. `S3_BUCKET` unset). Persisted verbatim from the `parse_cache` field on `task.execution.recorded:v1`, which k8s-controller derives from that initContainer's termination message. Migration: V30. |
+| `parse_cache` | `varchar(16)` NULL | Whether the executing Job's team container ran with the hydrated partial-parse cache: `hydrated` / `degraded` / `unknown`. NULL for executions that predate hydration or whose Job had no `hydrate-parse-cache` initContainer (e.g. `S3_BUCKET` unset). Persisted verbatim from the `parse_cache` field on `task.execution.recorded:v1`, which execution-controller's job-status handler derives from that initContainer's termination message. Migration: V30. |
 | `parse_cache_reason` | `text` NULL | The degrade reason, set only when `parse_cache='degraded'` (e.g. an S3 fetch failure). NULL otherwise. Migration: V30. |
 
 ### Structured-result column on `task_execution`
@@ -422,7 +422,7 @@ If **every** dispatched task is in a terminal state (i.e. there is nothing to ex
 
 | Event | Stream | Consumer effect |
 |---|---|---|
-| `RunCancelled` | `schedule.cancelled:v1` | Orchestrator, executor, and k8s-controller record the cancelled schedule ID and suppress further work on that run |
+| `RunCancelled` | `schedule.cancelled:v1` | Orchestrator and execution-controller record the cancelled schedule ID and suppress further work on that run |
 | `RunFinalized{Outcome: cancelled}` | `run.finalized:v1` | Orchestrator projects `terminal_status='cancelled'` and `completed_at` onto the `:Run` node, removing the run from the active set |
 
 The two events are independent and commutative: the guard path keys on `schedule.cancelled:v1`; the projection path keys on `run.finalized:v1`. Both writes commit atomically with the `scheduler_tracker` mutation; neither can partially appear. A re-cancel returns `ErrAlreadyTerminal` and emits nothing.
@@ -522,7 +522,7 @@ Dedup against `message_processing` is performed by the binding before the handle
 
 ### Consumes: `task.status.updated:v1`
 
-Published by: `k8s-controller` (RUNNING + SUCCEEDED/FAILED — the pod lifecycle), `executor-controller` (FAILED only, on the never-deployed path), and `orchestrator` (SKIPPED on cascade-skip)
+Published by: `execution-controller` (RUNNING + SUCCEEDED/FAILED — the pod lifecycle, plus FAILED on the never-deployed path) and `orchestrator` (SKIPPED on cascade-skip)
 
 Effects:
 1. Update task status in `task_tracker`
@@ -533,7 +533,7 @@ Dedup against `message_processing` is performed by the binding before the handle
 
 ### Consumes: `task.execution.recorded:v1`
 
-Published by: `k8s-controller`
+Published by: `execution-controller`
 
 Effects:
 1. Insert row in `task_execution`, including `parse_cache`/`parse_cache_reason`/`run_results_uri` verbatim from the payload (NULL when the payload omits them)

@@ -10,7 +10,7 @@ import (
 // Result is the structured validation-result contract's JSON body, decoded
 // from between the sentinel markers. The validation pod and the python
 // production harness both emit it via
-// continuo_engine_contract/result.py's result_block(); k8s-controller
+// continuo_engine_contract/result.py's result_block(); execution-controller
 // uploads it as run_results_uri and prefers its message as a failed task's
 // error_message, and remediation reads it back to classify the failure.
 // status uses dbt's RunStatus vocabulary.

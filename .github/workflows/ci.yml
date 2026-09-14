@@ -187,7 +187,7 @@ jobs:
         # wait_for_container_running is defined in scripts/lib/common.sh.
         run: |
           source scripts/lib/common.sh
-          for c in state orchestrator executor-controller k8s-controller \
+          for c in state orchestrator execution-controller \
                    topology-controller release-controller remediation agent-remediation agent-chat; do
             wait_for_container_running "$c"
           done

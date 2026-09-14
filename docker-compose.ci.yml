@@ -9,12 +9,12 @@ services:
       cache_to:
         - "type=gha,scope=state,mode=max"
 
-  executor-controller:
+  execution-controller:
     build:
       cache_from:
-        - "type=gha,scope=executor-controller"
+        - "type=gha,scope=execution-controller"
       cache_to:
-        - "type=gha,scope=executor-controller,mode=max"
+        - "type=gha,scope=execution-controller,mode=max"
 
   orchestrator:
     build:
@@ -22,13 +22,6 @@ services:
         - "type=gha,scope=orchestrator"
       cache_to:
         - "type=gha,scope=orchestrator,mode=max"
-
-  k8s-controller:
-    build:
-      cache_from:
-        - "type=gha,scope=k8s-controller"
-      cache_to:
-        - "type=gha,scope=k8s-controller,mode=max"
 
   ui:
     build:

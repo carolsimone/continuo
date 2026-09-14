@@ -8,8 +8,7 @@ sequenceDiagram
   participant ST as state
   participant R as Redis
   participant OR as orchestrator
-  participant EC as executor-controller
-  participant KC as k8s-controller
+  participant EC as execution-controller
 
   Cron->>ST: CronScheduler.activateSchedule(name)
   Note over ST: ScheduleActivationService.ActivateSchedule (1 tx)<br/>scheduler_tracker INSERT — status=PENDING, init_status=in_progress, kind='cron'<br/>state_outbox INSERT for scheduler.started v1
@@ -31,11 +30,11 @@ sequenceDiagram
       Note over ST: RunEntriesDispatchedHandler.Handle (1 tx)<br/>row-lock scheduler_tracker (skip if cancelled)<br/>BulkCreate task_tracker rows — status=PENDING<br/>SetTotalTaskCount, init_status=completed, status=RUNNING
     and executor launches seed/root jobs
       R->>EC: consume query.model v1
-      Note over EC: write executor_deployments (pending)<br/>deployer.Dispatcher — CreateQueryJob (idempotent on JobName)<br/>write executor_outbox row (node_deployed)
+      Note over EC: write deployments (pending)<br/>deployer.Dispatcher — CreateQueryJob (idempotent on JobName)<br/>write execution_outbox row (node_deployed)
       EC->>R: publish node.deployed v1
-      R->>KC: consume node.deployed v1
-      Note over KC: start poll loop — CheckJobStatus + check.k8s v1 backoff<br/>first time the Job is observed running: announce RUNNING once per attempt
-      KC->>R: publish task.status.updated v1 (RUNNING)
+      R->>EC: consume node.deployed v1
+      Note over EC: start poll loop — CheckJobStatus + check.k8s v1 backoff<br/>first time the Job is observed running: announce RUNNING once per attempt
+      EC->>R: publish task.status.updated v1 (RUNNING)
       R->>ST: consume task.status.updated v1 (RUNNING)
       Note over ST: task_tracker.status = RUNNING
     end
@@ -56,18 +55,17 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
   participant R as Redis
-  participant KC as k8s-controller
   participant ST as state
   participant OR as orchestrator
-  participant EC as executor-controller
+  participant EC as execution-controller
 
-  R->>KC: node.deployed:v1
-  KC->>KC: GetJobStatus
-  KC->>ST: GetTask(task_id)
-  KC->>KC: write k8s_outbox(task_succeeded + node_status_updated)
-  KC->>ST: UpdateTask(status=succeeded)
-  KC->>ST: CreateTaskExecution(...)
-  KC->>R: publish node.updated:v1
+  R->>EC: node.deployed:v1
+  EC->>EC: GetJobStatus
+  EC->>ST: GetTask(task_id)
+  EC->>EC: write execution_outbox(task_succeeded + node_status_updated)
+  EC->>ST: UpdateTask(status=succeeded)
+  EC->>ST: CreateTaskExecution(...)
+  EC->>R: publish node.updated:v1
 
   R->>OR: consume node.updated:v1
   Note over OR: HandleNodeCompletedHandler.Handle (1 tx)<br/>dedup on message_processing, cancelled-schedule guard<br/>runs.Rehydrate(runID, ScopeNodeCompletion{Key, Status=SUCCEEDED})<br/>agg.CompleteNode(key, SUCCEEDED) → [NodeUnblocked …]<br/>runs.Save (retry on ErrVersionConflict, on ErrNodeAlreadyTerminal re-derives effects via agg.EffectsForTerminal)
@@ -75,52 +73,51 @@ sequenceDiagram
   OR->>R: publish query.model:v1
 
   R->>EC: consume query.model:v1
-  EC->>EC: write executor_outbox (node_deployed)
+  EC->>EC: write execution_outbox (node_deployed)
   EC->>R: publish node.deployed:v1
-  Note over KC: node.deployed:v1 → poll loop<br/>k8s announces RUNNING once when the Job is first observed running
+  Note over EC: node.deployed:v1 → poll loop<br/>k8s announces RUNNING once when the Job is first observed running
 ```
 
 ## 3. Retry and Terminal Failure Path
 
 > **Permanent dispatch errors fast-path.** Any error wrapping
 > `pkg/events.ErrPermanent` (e.g. `image_tag missing` from
-> `executor-controller/adapters/k8s/client.go`) takes the terminal-failure
+> `execution-controller/adapters/k8s/jobs_create.go`) takes the terminal-failure
 > branch on attempt 1 instead of consuming the retry budget. `deployer.Dispatcher`
 > calls `writeFailed`, which writes `task.status.updated:v1` (`Status="FAILED"`)
-> and `node.updated:v1` (`status="FAILED"`) as ordinary `executor_outbox` rows,
-> then marks the `executor_deployments` row `failed`. From the schedule's
+> and `node.updated:v1` (`status="FAILED"`) as ordinary `execution_outbox` rows,
+> then marks the `deployments` row `failed`. From the schedule's
 > perspective the outcome is identical to retries-exhausted —
 > only the latency differs (~1 tick vs. minutes).
 
 ```mermaid
 sequenceDiagram
   participant R as Redis
-  participant KC as k8s-controller
   participant ST as state
   participant S3 as S3
-  participant EC as executor-controller
+  participant EC as execution-controller
   participant OR as orchestrator
 
-  R->>KC: node.deployed:v1 or check.k8s:v1
-  KC->>KC: GetJobStatus -> FAILED
-  KC->>ST: GetTask(task_id)
+  R->>EC: node.deployed:v1 or check.k8s:v1
+  EC->>EC: GetJobStatus -> FAILED
+  EC->>ST: GetTask(task_id)
   alt retries remain
-    KC->>KC: write k8s_outbox(task_retry at retry_count+1)
-    KC->>ST: UpdateTask(status=failed, retry_count of the attempt that ran)
-    KC->>ST: CreateTaskExecution(...)
-    KC->>S3: upload pod logs
-    KC->>R: publish retry.task:v1
+    EC->>EC: write execution_outbox(task_retry at retry_count+1)
+    EC->>ST: UpdateTask(status=failed, retry_count of the attempt that ran)
+    EC->>ST: CreateTaskExecution(...)
+    EC->>S3: upload pod logs
+    EC->>R: publish retry.task:v1
     R->>EC: consume retry.task:v1
-    Note over EC: write executor_deployments (pending)<br/>deployer.Dispatcher — CreateQueryJob<br/>write executor_outbox row (node_deployed)
+    Note over EC: write deployments (pending)<br/>deployer.Dispatcher — CreateQueryJob<br/>write execution_outbox row (node_deployed)
     EC->>R: publish node.deployed:v1
-    Note over KC: node.deployed:v1 → poll loop<br/>k8s announces RUNNING once at the retry's attempt number
+    Note over EC: node.deployed:v1 → poll loop<br/>k8s announces RUNNING once at the retry's attempt number
   else retries exhausted
-    KC->>KC: write k8s_outbox(task_failed + node_status_updated)
-    KC->>ST: UpdateTask(status=failed)
-    KC->>ST: CreateTaskExecution(...)
-    KC->>S3: upload pod logs
-    KC->>R: publish task.failed:v1
-    KC->>R: publish node.updated:v1
+    EC->>EC: write execution_outbox(task_failed + node_status_updated)
+    EC->>ST: UpdateTask(status=failed)
+    EC->>ST: CreateTaskExecution(...)
+    EC->>S3: upload pod logs
+    EC->>R: publish task.failed:v1
+    EC->>R: publish node.updated:v1
     R->>OR: consume node.updated:v1
     Note over OR: HandleNodeCompletedHandler.Handle (1 tx)<br/>runs.Rehydrate(runID, ScopeNodeCompletion{Key, Status=FAILED})<br/>agg.CompleteNode(key, FAILED) → [NodeCascadeSkipped …, RunFinalized?]<br/>runs.Save writes per-node status, terminal_count, failed_count, version<br/>and on RunFinalized also :Run.terminal_status + completed_at (first-writer-wins)
     OR->>R: publish task.status.updated:v1 (cascade_task_skipped) per skipped node
@@ -190,8 +187,7 @@ sequenceDiagram
   participant ST as state
   participant R as Redis
   participant OR as orchestrator
-  participant EC as executor-controller
-  participant KC as k8s-controller
+  participant EC as execution-controller
 
   U->>UI: POST /api/schedules/:name/cancel
   UI->>ST: CancelSchedule(schedule_name, cancelled_by?, cancellation_reason?) gRPC
@@ -209,20 +205,17 @@ sequenceDiagram
   and
     R->>EC: consume schedule.cancelled:v1
     EC->>EC: INSERT cancelled_schedules(schedule_id)
-  and
-    R->>KC: consume schedule.cancelled:v1
-    KC->>KC: INSERT cancelled_schedules(schedule_id)
   end
 
-  note over R,KC: in-flight messages are now absorbed by local guards
+  note over R,EC: in-flight messages are now absorbed by local guards
 
   R->>EC: query.model:v1 (in-flight for cancelled schedule)
   EC->>EC: SELECT EXISTS cancelled_schedules → true → drop, ack
 
-  R->>KC: check.k8s:v1 (in-flight for cancelled schedule)
-  KC->>KC: SELECT EXISTS cancelled_schedules → true → stop polling, ack
+  R->>EC: check.k8s:v1 (in-flight for cancelled schedule)
+  EC->>EC: SELECT EXISTS cancelled_schedules → true → stop polling, ack
 
-  R->>OR: node.updated:v1 (job finished before guard reached KC)
+  R->>OR: node.updated:v1 (job finished before guard reached EC)
   OR->>OR: SELECT EXISTS cancelled_schedules → true → update Neo4j only, no cascade
 ```
 
@@ -273,7 +266,7 @@ sequenceDiagram
   participant W as orchestrator watchdog
   participant ST as state (gRPC)
   participant R as Redis
-  participant KC as k8s-controller
+  participant EC as execution-controller
 
   loop every ORCHESTRATOR_WATCHDOG_INTERVAL_SECONDS (under a per-tick deadline)
     W->>W: cutoff = now - NO_PROGRESS_MINUTES
@@ -283,7 +276,7 @@ sequenceDiagram
       W->>ST: CancelSchedule(schedule_name, cancelled_by="watchdog", reason="watchdog: ...")
       ST->>ST: write outbox row (schedule.cancelled:v1)
       ST->>R: publish schedule.cancelled:v1
-      Note over R,KC: cancelled_schedules guards (§6) absorb in-flight messages
+      Note over R,EC: cancelled_schedules guards (§6) absorb in-flight messages
     end
   end
 ```
@@ -315,7 +308,7 @@ sequenceDiagram
   participant ST as state (gRPC)
   participant R as Redis
   participant OR as orchestrator
-  participant EC as executor-controller
+  participant EC as execution-controller
 
   U->>UI: POST /api/nodes/{node}/run (out of scope for this flow)
   UI->>ST: TriggerSingleNodeRun(service_name, schema_name, table_name, metadata_source, source_run_id?, operation?)
@@ -342,7 +335,7 @@ sequenceDiagram
     Note over ST: RunEntriesDispatchedHandler.Handle (1 tx)<br/>BulkCreate task_tracker row (1 row)<br/>SetTotalTaskCount=1, init_status=completed, status=RUNNING
   and executor launches the job
     R->>EC: consume query.model:v1
-    Note over EC: identical to Flow 1 from here<br/>executor_deployments (pending) → deployer.Dispatcher → CreateQueryJob → executor_outbox row → node.deployed:v1 (k8s announces RUNNING on first observed run)
+    Note over EC: identical to Flow 1 from here<br/>deployments (pending) → deployer.Dispatcher → CreateQueryJob → execution_outbox row → node.deployed:v1 (k8s announces RUNNING on first observed run)
   end
 ```
 
@@ -370,7 +363,7 @@ sequenceDiagram
   participant R as Redis
   participant OR as orchestrator
   participant NEO as Neo4j
-  participant EC as executor-controller
+  participant EC as execution-controller
 
   U->>UI: POST /api/schedulers/{src_run_id}/rebase
   UI->>ST: TriggerRebase(source_run_id)
@@ -394,7 +387,7 @@ sequenceDiagram
     Note over ST: RunEntriesDispatchedHandler.Handle (1 tx)<br/>BulkCreate task_tracker — inherited rows land at SUCCEEDED with inherited_from_task_id<br/>rebased rows land at PENDING<br/>SetTotalTaskCount, init_status=completed<br/>auto-rollup if every task already terminal (defensive — no-op rebase)<br/>else status=RUNNING
   and executor launches rebased K8s Jobs
     R->>EC: consume query.model v1
-    Note over EC: identical to Flow 1 from here<br/>executor_deployments (pending) → deployer.Dispatcher → CreateQueryJob → executor_outbox row → node.deployed v1 (k8s announces RUNNING on first observed run)
+    Note over EC: identical to Flow 1 from here<br/>deployments (pending) → deployer.Dispatcher → CreateQueryJob → execution_outbox row → node.deployed v1 (k8s announces RUNNING on first observed run)
   end
 ```
 
@@ -404,7 +397,7 @@ sequenceDiagram
 
 A candidate dbt release targets a single dbt service: that team's CI posts a one-service candidate. `release-controller` runs the release through three legs in order — **compile** (dbt compile to produce the changed service's manifest), **seed_build** (build any new/changed dbt seeds into the candidate schema), and **validation** (self-contained empty-build of every changed model and its full transitive closure) — and swaps production only if all three pass. A failure on any leg emits a uniform `release.rejected:v1` event with a `stage` field and a `per_node` array; `remediation` consumes every rejection and builds a `FailureEvidence` appropriate to the stage. `release-controller` owns the lifecycle, holds `current_prod` (the live topology snapshot) and the `service_prod` pointer table (one row per service: its live manifest key + kind + image tag + release id). Releases run a FIFO queue: one release is active at a time, each terminal outcome advances the next, and each promotion refreshes the changed service's `service_prod` pointer.
 
-A candidate for a **python** service follows the same queue and Phases 2–6 below, but skips Phase 1b entirely: its CI compiles and uploads `contract.yaml` (not `manifest.json`) to the canonical key before `POST /releases`, so on activation `release-controller` transitions the release straight from Received to Parsing and emits `release.requested:v1` directly — there is no `compile.requested:v1`/`compile.completed:v1` round trip and no `compile` leg or `compile`-stage rejection for it. Phase 4 also differs per node kind: a changed-closure python node validates via `build_from_columns` (a JSON spec of declared reads + output columns) rather than `build_from_sql`. See `docs/arch/services/release-controller.md` (Processing Logic → `POST /releases`) and `docs/arch/services/executor-controller.md` (`CreateValidationJob`) for the full per-kind behavior.
+A candidate for a **python** service follows the same queue and Phases 2–6 below, but skips Phase 1b entirely: its CI compiles and uploads `contract.yaml` (not `manifest.json`) to the canonical key before `POST /releases`, so on activation `release-controller` transitions the release straight from Received to Parsing and emits `release.requested:v1` directly — there is no `compile.requested:v1`/`compile.completed:v1` round trip and no `compile` leg or `compile`-stage rejection for it. Phase 4 also differs per node kind: a changed-closure python node validates via `build_from_columns` (a JSON spec of declared reads + output columns) rather than `build_from_sql`. See `docs/arch/services/release-controller.md` (Processing Logic → `POST /releases`) and `docs/arch/services/execution-controller.md` (`CreateValidationJob`) for the full per-kind behavior.
 
 ```mermaid
 sequenceDiagram
@@ -413,8 +406,7 @@ sequenceDiagram
   participant RC as release-controller
   participant R as Redis
   participant MC as topology-controller
-  participant EC as executor-controller
-  participant KC as k8s-controller
+  participant EC as execution-controller
   participant OR as orchestrator
   participant ST as state
   participant RM as remediation
@@ -426,7 +418,7 @@ sequenceDiagram
 
   Note over EC,RC: Phase 1b — compile (changed service's manifest is compiled first)
   R->>EC: consume compile.requested:v1
-  Note over EC: CreateCompileJob: initContainer "compile" runs the resolved compile command,<br/>then two more team-image initContainers "parse-prod"/"parse-candidate" export + rehearse<br/>the service's partial-parse cache (the rehearsal gate — fails parse_rehearsal_failed<br/>if partial parsing is disabled or the project re-parses under run-pod conditions),<br/>then main container "upload" (s3-sidecar) publishes manifest.json + both parse-cache artifacts to S3<br/>emits compile.node.completed:v1 via k8s-controller → aggregate compile.completed:v1
+  Note over EC: CreateCompileJob: initContainer "compile" runs the resolved compile command,<br/>then two more team-image initContainers "parse-prod"/"parse-candidate" export + rehearse<br/>the service's partial-parse cache (the rehearsal gate — fails parse_rehearsal_failed<br/>if partial parsing is disabled or the project re-parses under run-pod conditions),<br/>then main container "upload" (s3-sidecar) publishes manifest.json + both parse-cache artifacts to S3<br/>the job-status handler emits compile.node.completed:v1 on terminal → aggregate compile.completed:v1
   EC->>R: publish compile.completed:v1 {release_id, status, per_node[{node_id, status, dbt_log_uri, failed_container?}]}
   R->>RC: consume compile.completed:v1
   alt compile failed
@@ -497,16 +489,16 @@ sequenceDiagram
     end
   end
 
-  Note over EC,KC: Phase 4 — self-contained validation (one empty-build Job per node, gated in dependency order)
+  Note over EC: Phase 4 — self-contained validation (one empty-build Job per node, gated in dependency order)
   R->>EC: consume validation.requested:v1
-  Note over EC: create _candidate_{id} schema once (advisory lock, before fan-out)<br/>per node → executor_deployments (mode=validation)<br/>roots → pending, nodes with upstreams → blocked<br/>(inbound dedup is per-release)
+  Note over EC: create _candidate_{id} schema once (advisory lock, before fan-out)<br/>per node → deployments (mode=validation)<br/>roots → pending, nodes with upstreams → blocked<br/>(inbound dedup is per-release)
   loop dispatch pending rows, unblocking downstream as upstreams settle ok
     Note over EC: build_from_sql (changed dbt node): single validation container fetches CANDIDATE_SQL_URI from S3 itself → CREATE TABLE {candidate}.{table} AS (SQL) WITH NO DATA<br/>build_from_columns (changed python node): fetches CANDIDATE_SPEC_URI (declared reads + output columns) from S3 → creates the empty typed table from the spec<br/>check_binds (changed dbt-test node): fetches CANDIDATE_SQL_URI like build_from_sql, but EXPLAINs it against the candidate schema and creates nothing<br/>clone_from_prod: single validation container, no S3 → clone prod table shape empty<br/>(seeds and unchanged upstreams of either kind use clone_from_prod)
     EC->>R: publish node.deployed:v1 (synthetic ids — routes by mode=validation label)
-    R->>KC: consume node.deployed:v1 / check.k8s:v1
-    Note over KC: poll Job, re-arm check.k8s:v1 until terminal
-    KC->>S3: upload runner/dbt pod log
-    KC->>R: publish validation.node.completed:v1 {release_id, node_id, outcome, dbt_log_uri}
+    R->>EC: consume node.deployed:v1 / check.k8s:v1
+    Note over EC: poll Job, re-arm check.k8s:v1 until terminal
+    EC->>S3: upload runner/dbt pod log
+    EC->>R: publish validation.node.completed:v1 {release_id, node_id, outcome, dbt_log_uri}
     R->>EC: consume validation.node.completed:v1
     Note over EC: RecordOutcome, then gating — ok unblocks ready downstream,<br/>non-ok skips all reachable downstream
     EC->>R: publish validation.result:v1 kind=node (per node, as it settles)<br/>{kind:"node", release_id, stage="validation", node_id, status, dbt_log_uri?, run_results_uri?}
@@ -541,7 +533,7 @@ sequenceDiagram
   R->>ST: consume schedules.loaded:v1
   Note over ST: ScheduleCatalogHandler — Reconcile schedule_catalog (empty-list guard)
   R->>EC: consume validation.result:v1 kind=complete (executor-validation-result-teardown group)
-  Note over EC: teardown — schedule a one-shot engine-image drop_schema Job<br/>(executor holds no warehouse connection) to drop _candidate_{release}
+  Note over EC: teardown — schedule a one-shot engine-image drop_schema Job<br/>(execution-controller holds no warehouse connection) to drop _candidate_{release}
 
   Note over EC: every pipeline.run.finished:v1 published above — at compile, parse,<br/>duplicate-table, unbuildable-upstream, seed-build, or validation rejection, or<br/>at promotion — is separately consumed (group executor-pipeline-run-finished)<br/>and drops the run's candidate_schema whatever the outcome; a schema the<br/>validation-result teardown already dropped is a no-op. A run rejected/failed<br/>before it ever reaches the validation leg (compile, parse, duplicate_table,<br/>unbuildable_cross_service_upstream, or seed_build) never publishes a<br/>validation.result:v1 kind=complete, so pipeline.run.finished:v1 is its only<br/>schema-drop trigger — this covers a fix-verification run (Flow 11a) exactly<br/>the same way it covers a candidate, since both kinds share these same legs.
 
@@ -559,9 +551,9 @@ sequenceDiagram
   Note over EC: dispatches each seed Job as an ordinary production task,<br/>so a failure retries on the task's budget, records an execution,<br/>and finalises the run
 ```
 
-**Self-contained validation (zero model edits).** The validation build set is the changed nodes, their downstream descendants, and their *full transitive upstream closure across service boundaries*. `topology-controller` builds each node's candidate artifact and uploads it to S3 at `candidate-sql/<release_id>/candidate_<unique_id>.<sql|json>` — a dbt node's compiled SQL rewritten to the candidate schema (via sqlglot) as `.sql`, or a python node's declared reads rewritten the same way plus its output columns and physical-layout config as `.json` — and emits a per-node `candidate_artifact_uri`, an `s3://` reference to that object. `executor-controller` builds every upstream as an empty table in `_candidate_<release>` in dependency order, then the changed node against them. Every validation Job is a single-container pod running the external `continuo-python-runtime-<engine>` image (PostgreSQL and Trino today), released from the `continuo-python-runtime` repository and pinned by the chart's `validation.imageTag` independently of `global.imageTag`/`appVersion`; the engine adapter, the runtime harness, and the validation-result contract are installed into the image from PyPI at pinned versions — no dbt, no sidecar. The image is dual-role — its default command runs the python-node harness — so the executor sets the command explicitly to `["continuo-runtime","validation-op"]` on every validation and schema-op pod. (The runtime, contract, and both engine adapters publish to PyPI from that same repository on the same `v*` tag that publishes the images; the image installs those published, versioned packages, and an outside adapter author consumes the same published `continuo-engine-contract`.) For `build_from_sql` nodes (models and snapshots that carry candidate SQL), the container fetches its compiled SQL directly from S3 at `CANDIDATE_SQL_URI` and runs `CREATE TABLE <candidate>.<table> AS (<sql>) WITH NO DATA`; its warehouse connection comes from the Secret attached via `envFrom` (named by `VALIDATION_WAREHOUSE_SECRET`), plus S3 credentials. For `build_from_columns` nodes (changed python models), the container fetches the JSON validation spec at `CANDIDATE_SPEC_URI` instead and creates the empty table directly from its declared output columns — same warehouse connection and S3 credentials, no compiled SQL involved. For `check_binds` nodes (changed dbt-test nodes), the container fetches the test's compiled assertion query from `CANDIDATE_SQL_URI` exactly as `build_from_sql` does, but EXPLAINs it against the candidate schema instead of creating a table — a test binds or fails to bind without ever writing to the warehouse. `clone_from_prod` nodes — including unchanged upstreams and seeds, of either kind — run as a single container with no S3 credentials; the runner clones the prod table's shape empty. The `s3-sidecar` is used only by the compile leg (manifest upload); `dbt-base` and the team image are run only for compile, seed-build, and scheduled runs. Because the SQL's refs already point at the candidate schema, a model whose source still reads `FROM analytics.table_a` validates against the candidate copy — teams never template their schema names. The candidate schema itself is created and dropped by the engine adapter, not the executor: the executor schedules a one-shot engine-image Job (harness `ensure_schema` before the fan-out, `drop_schema` after the aggregate result is consumed) and never connects to the warehouse. Because node validation is materialized by the engine directly and dbt runs only for seeds, a nodes-only release still gets its schema created by the explicit ensure Job. Nothing in production is touched during validation.
+**Self-contained validation (zero model edits).** The validation build set is the changed nodes, their downstream descendants, and their *full transitive upstream closure across service boundaries*. `topology-controller` builds each node's candidate artifact and uploads it to S3 at `candidate-sql/<release_id>/candidate_<unique_id>.<sql|json>` — a dbt node's compiled SQL rewritten to the candidate schema (via sqlglot) as `.sql`, or a python node's declared reads rewritten the same way plus its output columns and physical-layout config as `.json` — and emits a per-node `candidate_artifact_uri`, an `s3://` reference to that object. `execution-controller` builds every upstream as an empty table in `_candidate_<release>` in dependency order, then the changed node against them. Every validation Job is a single-container pod running the external `continuo-python-runtime-<engine>` image (PostgreSQL and Trino today), released from the `continuo-python-runtime` repository and pinned by the chart's `validation.imageTag` independently of `global.imageTag`/`appVersion`; the engine adapter, the runtime harness, and the validation-result contract are installed into the image from PyPI at pinned versions — no dbt, no sidecar. The image is dual-role — its default command runs the python-node harness — so the executor sets the command explicitly to `["continuo-runtime","validation-op"]` on every validation and schema-op pod. (The runtime, contract, and both engine adapters publish to PyPI from that same repository on the same `v*` tag that publishes the images; the image installs those published, versioned packages, and an outside adapter author consumes the same published `continuo-engine-contract`.) For `build_from_sql` nodes (models and snapshots that carry candidate SQL), the container fetches its compiled SQL directly from S3 at `CANDIDATE_SQL_URI` and runs `CREATE TABLE <candidate>.<table> AS (<sql>) WITH NO DATA`; its warehouse connection comes from the Secret attached via `envFrom` (named by `VALIDATION_WAREHOUSE_SECRET`), plus S3 credentials. For `build_from_columns` nodes (changed python models), the container fetches the JSON validation spec at `CANDIDATE_SPEC_URI` instead and creates the empty table directly from its declared output columns — same warehouse connection and S3 credentials, no compiled SQL involved. For `check_binds` nodes (changed dbt-test nodes), the container fetches the test's compiled assertion query from `CANDIDATE_SQL_URI` exactly as `build_from_sql` does, but EXPLAINs it against the candidate schema instead of creating a table — a test binds or fails to bind without ever writing to the warehouse. `clone_from_prod` nodes — including unchanged upstreams and seeds, of either kind — run as a single container with no S3 credentials; the runner clones the prod table's shape empty. The `s3-sidecar` is used only by the compile leg (manifest upload); `dbt-base` and the team image are run only for compile, seed-build, and scheduled runs. Because the SQL's refs already point at the candidate schema, a model whose source still reads `FROM analytics.table_a` validates against the candidate copy — teams never template their schema names. The candidate schema itself is created and dropped by the engine adapter, not the executor: the executor schedules a one-shot engine-image Job (harness `ensure_schema` before the fan-out, `drop_schema` after the aggregate result is consumed) and never connects to the warehouse. Because node validation is materialized by the engine directly and dbt runs only for seeds, a nodes-only release still gets its schema created by the explicit ensure Job. Nothing in production is touched during validation.
 
-**Gating and exactly-once aggregation.** Each node's `executor_deployments` row starts `blocked` if it has in-set upstreams; a node is dispatched only once all its upstreams have settled `ok` (their empty tables now exist). A non-`ok` terminal skips all reachable downstream nodes. When no node remains non-terminal, a per-release advisory lock plus an insert-once emission sentinel guarantee a single `validation.result:v1` `kind=complete` is produced even under redelivery or crash-retry. `aggregate_status` is `ok` iff every per-node status is `ok`.
+**Gating and exactly-once aggregation.** Each node's `deployments` row starts `blocked` if it has in-set upstreams; a node is dispatched only once all its upstreams have settled `ok` (their empty tables now exist). A non-`ok` terminal skips all reachable downstream nodes. When no node remains non-terminal, a per-release advisory lock plus an insert-once emission sentinel guarantee a single `validation.result:v1` `kind=complete` is produced even under redelivery or crash-retry. `aggregate_status` is `ok` iff every per-node status is `ok`.
 
 **Reject reasons.** A pipeline run's `fail_reason` takes one of twelve values. Eleven of them end a candidate release in `Rejected` and emit a uniform `release.rejected:v1`; the twelfth, `nothing_to_validate`, only ends a fix-verification run — never a candidate — as `Failed`, announced solely by `pipeline.run.finished:v1` (a fix-verification run's failure never rides `release.rejected:v1` at all, whatever reason it failed on, so a failed fix is never handed back to the remediation classifier as though it were a new failure someone had shipped). For the eleven that reach `release.rejected:v1`, the event always carries `release_id`, `reason`, and `error_detail`. Ten of the eleven additionally carry `repo`, `commit_sha`, `failing_nodes`, `per_node[]` (each entry: `node_id`, `status`, `dbt_log_uri`, optional `run_results_uri`), and a top-level `code_bundle_uri` (the release's code-bundle S3 URI) — `unbuildable_cross_service_upstream` is the sole exception, whose payload is the narrower `{release_id, reason, error_detail}` with none of those keys. `stage` travels on nine of those ten — every reason but `duplicate_table`, which is otherwise full-shaped. `code_bundle_uri` is non-empty for `duplicate_table`, `seed_build_failed`, and `validation_failed`, all of which follow a completed parse; it is present but empty for the reasons that come before a completed parse — `compile_failed`, `parse_rehearsal_failed`, `artifact_upload_failed` (the compile leg) and `invalid_sql`, `unqualified_reference`, `invalid_artifact`, `internal_error` (the parse leg itself, which never reaches a successful parse for this run). `stage` is `parse` for the four parse reasons, `compile` for `compile_failed`/`parse_rehearsal_failed`/`artifact_upload_failed`, `seed_build` for `seed_build_failed`, and `validation` for `validation_failed`; `duplicate_table` and `unbuildable_cross_service_upstream` carry no `stage` at all. The twelve reasons are: `invalid_sql` (a node's compiled SQL does not tokenize or parse under the configured dialect; `stage="parse"`; healable), `unqualified_reference` (a node references a relation without a schema qualifier; `stage="parse"`; healable), `invalid_artifact` (a malformed dbt manifest or python contract, an unrecognized manifest kind, or a manifest that is empty or names another service; `stage="parse"`; not healable), `internal_error` (a node's runtime has no candidate-artifact builder, or a candidate-artifact or code-bundle S3 upload failed — also the reason a build reports for any `failure_kind` its own contract does not declare; `stage="parse"`; not healable), `duplicate_table` (the assembled candidate topology has a relation collision — two or more nodes write the same `<schema>.<table>` — or an identity collision — two or more nodes share a `unique_id` without all resolving to the same relation; no explicit stage; `per_node[]` carries the rename target's `service`/`file_path`/`node_type`, the contested `relation_id`, and the competing `other_service`/`other_file_path` — but only for a relation collision with exactly two claimants; an identity collision, or a relation collision with three or more claimants, produces no `per_node` entry and therefore no heal trigger, though it still names every claimant in `failing_nodes`/`error_detail`), `unbuildable_cross_service_upstream` (an in-set node depends on an upstream absent from the candidate topology; no explicit stage), `compile_failed` (dbt compile job failed for a reason other than the two below; `stage="compile"`), `parse_rehearsal_failed` (the compile Job's `parse-prod` or `parse-candidate` initContainer failed — partial parsing is disabled for the project, or the project re-parses under run-pod conditions; `stage="compile"`), `artifact_upload_failed` (the compile Job's `upload` main container failed to publish an artifact to S3; `stage="compile"`), `seed_build_failed` (a candidate seed-build job failed; `stage="seed_build"`), `validation_failed` (one or more validation jobs failed; `stage="validation"`), and `nothing_to_validate` (a fix-verification run's candidate declares no node at all, so nothing was built or checked and the fix is unproven — ends the run `Failed` without ever emitting `release.rejected:v1`). For `invalid_sql` and `unqualified_reference`, each `per_node[]` entry carries `kind`, `detail`, `file_path`, `service`, and `node_type` in place of `dbt_log_uri`/`run_results_uri` — the parser's own error text is inline, since no Job ran and so no log exists; `invalid_artifact` and `internal_error` always publish an empty `failing_nodes`/`per_node[]`, since topology-controller fails those on the first manifest or upload problem it meets rather than collecting a per-node set the way it does for the two SQL reasons. For `validation_failed`, per-node entries additionally carry `candidate_artifact_uri` plus the candidate topology's `node_type`, `file_path`, and `service` for that node — the kind is what routes the failure to the right fixer in agent-remediation (a python node's contract fix, described in Flow 11a, rather than a dbt source fix — for the two healable parse reasons as well as for `validation_failed`), and the location is the path *this* candidate declares, which no promoted-topology lookup can supply for a release that was rejected. `parse_rehearsal_failed` and `artifact_upload_failed` are release-controller's `compileRejection` mapping of the compile Job's `failed_container` attribution (see Flow 11 above) onto a reject reason distinct from `compile_failed`, so a rehearsal-gate miss or an internal upload failure is never presented as a dbt SQL error. Remediation consumes every leg's rejection and discriminates by `stage` (falling back to `reason` when `stage` is absent) to build `FailureEvidence` with the appropriate source (`SourceParse`, `SourceCompile`, `SourceSeed`, `SourceValidation`, or `SourceDuplicateTable`) — except `parse_rehearsal_failed` and `artifact_upload_failed`, which it excludes entirely (no evidence built, no classification, no trigger) before source resolution, since neither is a model defect a heal proposal could fix. A parse rejection whose reason is `invalid_artifact` or `internal_error` carries no `per_node[]` entries at all, so it likewise produces no evidence and no trigger without needing an exclusion rule; the classifier's own drop path for a non-healable parse kind (`ClassifyParse`, reason `parse:not_healable`) exists to cover a producer newer than this build, not this normal case. For compile, the evidence-producing reasons extract `file_path` from the dbt log so the agent can read the real source file directly; `seed_build`, `validation`, `duplicate_table`, and `parse` need no extraction — release-controller already threads `file_path`/`service` (plus `node_type` for validation, duplicate_table, and the two healable parse reasons, and `kind`/`detail` for parse) onto each `per_node[]` entry.
 
@@ -588,7 +580,7 @@ sequenceDiagram
   participant RM as remediation (classifier)
   participant OR as orchestrator (case base)
   participant RA as agent-remediation
-  participant EC as executor-controller
+  participant EC as execution-controller
   participant GH as GitHub (read-only)
   participant LLM as LLM provider
   participant S3 as S3
@@ -652,7 +644,7 @@ sequenceDiagram
   end
 ```
 
-**How a dbt fix is verified.** A python service's fix packages a contract yaml, which *is* the release artifact, so the verification run simply reads it. A dbt service has no such artifact: the fix changes files inside a project that lives in a team image the release runs. So the agent packs the proposed files into a deterministic `source-overlay.tar.gz`, keyed by each file's path within that project, and release-controller threads its URI onto `compile.requested:v1`. Executor-controller then adds an `overlay` init container (the s3-sidecar's `overlay_fetcher.py`) ahead of every team-image container of the compile Job and prefixes each of their commands with a staging prologue that copies the team project into a writable `/work` emptyDir, lays the proposed files over the copy, and runs dbt from there — so the manifest, both parse artifacts, and the candidate SQL the run validates all describe the proposed source. The proposed files are never written into the image's own project directory, which means a team image needs no Dockerfile change to be verifiable: root-owned project files (what a plain `COPY` produces) work unchanged.
+**How a dbt fix is verified.** A python service's fix packages a contract yaml, which *is* the release artifact, so the verification run simply reads it. A dbt service has no such artifact: the fix changes files inside a project that lives in a team image the release runs. So the agent packs the proposed files into a deterministic `source-overlay.tar.gz`, keyed by each file's path within that project, and release-controller threads its URI onto `compile.requested:v1`. Execution-controller then adds an `overlay` init container (the s3-sidecar's `overlay_fetcher.py`) ahead of every team-image container of the compile Job and prefixes each of their commands with a staging prologue that copies the team project into a writable `/work` emptyDir, lays the proposed files over the copy, and runs dbt from there — so the manifest, both parse artifacts, and the candidate SQL the run validates all describe the proposed source. The proposed files are never written into the image's own project directory, which means a team image needs no Dockerfile change to be verifiable: root-owned project files (what a plain `COPY` produces) work unchanged.
 
 **One rejection, one pull request per owning service.** The attempt's row carries `resolved_node_ids` (every failing node it addresses), `node_outcomes` (how it ended for each of them — a cluster whose fixer skipped leaves its members skipped while the rest verify), `verifications` (one fix-verification run per edited service), and `file_edits` with each edit's `target_node_id`. The release page joins each proposal to every node in `resolved_node_ids` and reads that node's own outcome. The attempt's edits are bucketed by owning service (the same bucketing that drives one fix-verification run per service above); `pr_services` names the sorted service groups, `[""]` for a proposal whose edits all land in one service or attribute no owning service at all, and the Create PR route (Flow 12) opens one pull request per group — titled `fix N nodes` and suffixed with the service name for a split proposal, on a branch agent-remediation names for the attempt and that service (`remediation/<release_id>/attempt<n>/<service>`, or `remediation/<release_id>/attempt<n>` for the single unsplit group) — rather than one pull request for the whole attempt. Each per-service run assembles the OTHER edited services' nodes unchanged (their fixes ship on separate PRs), so release-controller splits the nodes that differ from `current_prod` into the run's own fix delta (scope) and the rejected release's validated-ok changes (context), and only the scope seeds the downstream validation closure (`release.VerificationBuildSets`): a sibling's still-unfixed failure is in the rejected release's `failing_nodes` and untouched, so it is cloned from production and measured by its own run; a shared changed ancestor the rejected release validated ok is rebuilt from the candidate wherever the scope closure needs it as an ancestor — so the fix is measured against the shape that release produced — but it never expands the closure down its other edges to that sibling; a node another release promoted since the rejection matches `current_prod` and is never a seed (see `services/release-controller.md`). Without the scope/context split each verification run would re-validate the other services' unfixed failures — directly, or dragged in through a shared rebuilt ancestor — and no multi-service proposal could pass; without the rebuild a fix would be measured against production's shape of an upstream the rejected release had already changed.
 

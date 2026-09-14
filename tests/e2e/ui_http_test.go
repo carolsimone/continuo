@@ -18,7 +18,7 @@ import (
 // verifyUIService asserts the ui HTTP API returns correct data for the
 // scheduler run created by the e2e test.  Status fields are polled because the
 // state service propagates job-completion events asynchronously after the k8s
-// jobs finish (k8s-controller → gRPC → state service → DB), so the scheduler
+// jobs finish (execution-controller → gRPC → state service → DB), so the scheduler
 // and task records may still show "pending"/"running" immediately after
 // verifyFullDAGExecution returns.
 //

@@ -109,7 +109,7 @@ func TestE2E_Remediation_ValidationRejectionEmitsTrigger(t *testing.T) {
 
 	// 6. Assert release.rejected:v1 carries run_results_uri for the failing node.
 	//    the validation runner emits a structured result block (status=error,
-	//    message "...does not exist") which k8s-controller uploads to S3; the URI
+	//    message "...does not exist") which execution-controller uploads to S3; the URI
 	//    threads through the validation.result:v1 terminal (kind=complete) →
 	//    release.rejected:v1. Its presence
 	//    is what makes the classifier take the structured branch below.

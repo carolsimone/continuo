@@ -54,8 +54,7 @@ jobs:
               - 'deploy/**'
               - 'state/**'
               - 'orchestrator/**'
-              - 'executor-controller/**'
-              - 'k8s-controller/**'
+              - 'execution-controller/**'
               - 'ui/**'
               - 'topology-controller/**'
               - 'release-controller/**'
@@ -76,18 +75,12 @@ jobs:
               - 'go.work.sum'
               - 'pkg/**'
               - 'orchestrator/**'
-            executor_controller:
+            execution_controller:
               - 'Dockerfile.base'
               - 'go.work'
               - 'go.work.sum'
               - 'pkg/**'
-              - 'executor-controller/**'
-            k8s_controller:
-              - 'Dockerfile.base'
-              - 'go.work'
-              - 'go.work.sum'
-              - 'pkg/**'
-              - 'k8s-controller/**'
+              - 'execution-controller/**'
             ui:
               - 'ui/**'
             topology_controller:
@@ -130,8 +123,7 @@ jobs:
         env:
           STATE_CHANGED: ${{ steps.filter.outputs.state }}
           ORCHESTRATOR_CHANGED: ${{ steps.filter.outputs.orchestrator }}
-          EXECUTOR_CHANGED: ${{ steps.filter.outputs.executor_controller }}
-          K8S_CHANGED: ${{ steps.filter.outputs.k8s_controller }}
+          EXECUTION_CONTROLLER_CHANGED: ${{ steps.filter.outputs.execution_controller }}
           UI_CHANGED: ${{ steps.filter.outputs.ui }}
           TOPOLOGY_CHANGED: ${{ steps.filter.outputs.topology_controller }}
           RELEASE_CONTROLLER_CHANGED: ${{ steps.filter.outputs.release_controller }}
@@ -146,8 +138,7 @@ jobs:
             jq -cn \
               --arg state "$STATE_CHANGED" \
               --arg orchestrator "$ORCHESTRATOR_CHANGED" \
-              --arg executor "$EXECUTOR_CHANGED" \
-              --arg k8s "$K8S_CHANGED" \
+              --arg execution_controller "$EXECUTION_CONTROLLER_CHANGED" \
               --arg ui "$UI_CHANGED" \
               --arg topology "$TOPOLOGY_CHANGED" \
               --arg release_controller "$RELEASE_CONTROLLER_CHANGED" \
@@ -161,8 +152,7 @@ jobs:
                 include: [
                   {service: "state", changed: $state, dockerfile: "state/Dockerfile.prod", context: "."},
                   {service: "orchestrator", changed: $orchestrator, dockerfile: "orchestrator/Dockerfile.prod", context: "."},
-                  {service: "executor-controller", changed: $executor, dockerfile: "executor-controller/Dockerfile.prod", context: "."},
-                  {service: "k8s-controller", changed: $k8s, dockerfile: "k8s-controller/Dockerfile.prod", context: "."},
+                  {service: "execution-controller", changed: $execution_controller, dockerfile: "execution-controller/Dockerfile.prod", context: "."},
                   {service: "ui", changed: $ui, dockerfile: "ui/Dockerfile", context: "ui"},
                   {service: "topology-controller", changed: $topology, dockerfile: "topology-controller/Dockerfile.prod", context: "topology-controller"},
                   {service: "release-controller", changed: $release_controller, dockerfile: "release-controller/Dockerfile.prod", context: "."},

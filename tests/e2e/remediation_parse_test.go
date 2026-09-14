@@ -24,7 +24,7 @@ const brokenCompiledSQL = "select c.id from e2e_schema.ftable_c c where"
 // is deliberately NOT the service holding the unparseable node: a release's
 // compile Job uploads its freshly compiled manifest to
 // <service>/<release_id>/manifest.json — the very key topology-controller then
-// reads (executor-controller/service/artifacts/parse_cache.go ManifestURI and
+// reads (execution-controller/service/artifacts/parse_cache.go ManifestURI and
 // s3-sidecar/compile_uploader.py) — so a manifest doctored under the changed
 // service's own key is overwritten before the parse leg ever sees it. Only the
 // changed service is compiled, so the broken node is staged in another
@@ -275,7 +275,7 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 // so the validation Job clones each straight from production instead
 // (VALIDATION_OP=clone_from_prod: "CREATE TABLE <candidate>.<table> AS SELECT
 // * FROM <prod_schema>.<table> WHERE 1=0" — see
-// docs/arch/services/executor-controller.md). A cold stack has never promoted
+// docs/arch/services/execution-controller.md). A cold stack has never promoted
 // a release, so the warehouse holds none of production's relations and the
 // clone fails with "relation ... does not exist".
 //

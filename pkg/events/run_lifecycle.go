@@ -1,11 +1,10 @@
 package events
 
 // DefaultTaskMaxRetries is the canonical retry budget that the orchestrator
-// stamps onto every DispatchedTask. It MUST match k8s-controller's
-// DefaultTaskMaxRetries (k8s-controller/config/config.go) and
-// executor-controller's deploy_handler default — otherwise state's
-// HasRetryableFailedTaskTx and the k8s retry loop drift apart and runs
-// finalize as failed mid-retry.
+// stamps onto every DispatchedTask. It MUST match execution-controller's
+// DefaultTaskMaxRetries default (execution-controller/config/config.go) —
+// otherwise state's HasRetryableFailedTaskTx and the retry loop drift apart
+// and runs finalize as failed mid-retry.
 const DefaultTaskMaxRetries int32 = 2
 
 // DispatchedTask is one row in RunEntriesDispatched.AllTasks.

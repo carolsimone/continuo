@@ -18,9 +18,9 @@ func cleanupTestData(t *testing.T, ctx context.Context, clients *testClients, sc
 	cleanupNeo4j(t, ctx, clients, scheduleName)
 
 	// Clean Redis streams before Postgres dedup tables: deleting message_processing
-	// while the k8s consumer still has pending node.deployed:v1 / check.k8s:v1
+	// while the check consumers still have pending node.deployed:v1 / check.k8s:v1
 	// messages re-enables those messages and can trigger replays that recreate
-	// k8s_outbox rows before the streams are gone.
+	// execution_outbox rows before the streams are gone.
 	cleanupRedis(t, ctx, clients)
 
 	// Clean PostgreSQL databases
@@ -74,25 +74,15 @@ func cleanupPostgres(t *testing.T, ctx context.Context, clients *testClients, sc
 		SELECT schedule_id FROM scheduler_tracker WHERE schedule_name = $1
 	`, scheduleName)
 
-	// Clean executor_outbox (renamed from deployment_outbox). The canonical
-	// schema stores domain fields in JSONB payload — no schedule_name column —
-	// so wipe the whole table. The e2e harness owns it for the duration of
-	// the suite; leaving stale pending rows would cause pkg/outbox.Processor
-	// to retry them forever, drowning Redis in noise that destabilises
-	// topology-controller's consumer group across subsequent tests.
-	_, _ = clients.executorDB.Exec("DELETE FROM executor_outbox")
-
-	// Clean executor_deployments (the deploy command queue) BEFORE
-	// message_processing: its message_processing_id FK references
-	// message_processing(id), so deleting message_processing first fails the
-	// FK and (errors being ignored here) would leave dedup/deployment rows
-	// behind for later runs.
-	_, _ = clients.executorDB.Exec("DELETE FROM executor_deployments")
-
-	// Clean per-service message_processing (canonical consumer-side dedup
-	// from #57). Must clear so re-runs aren't false-positive-deduped by
-	// the new outbox_entry_id secondary uniqueness key.
-	for _, db := range []*sqlx.DB{clients.stateDB, clients.orchestratorDB, clients.executorDB, clients.k8sDB} {
+	// Clean the execution database. Order matters: execution_outbox and
+	// deployments carry a FK to message_processing, so they go first. The
+	// harness owns these tables for the suite; leaving pending outbox rows
+	// would make pkg/outbox.Processor retry them forever.
+	_, _ = clients.executionDB.Exec("DELETE FROM execution_outbox")
+	_, _ = clients.executionDB.Exec("DELETE FROM deployments")
+	_, _ = clients.executionDB.Exec("DELETE FROM validation_aggregates")
+	_, _ = clients.executionDB.Exec("DELETE FROM cancelled_schedules")
+	for _, db := range []*sqlx.DB{clients.stateDB, clients.orchestratorDB, clients.executionDB} {
 		_, _ = db.Exec("DELETE FROM message_processing")
 	}
 
@@ -100,10 +90,6 @@ func cleanupPostgres(t *testing.T, ctx context.Context, clients *testClients, sc
 	if schedulerID != "" {
 		_, _ = clients.orchestratorDB.Exec("DELETE FROM orchestrator_outbox WHERE aggregate_id = $1", schedulerID)
 	}
-
-	// Clean k8s_outbox (renamed from k8s_status_outbox; schedule_name lives
-	// in the JSONB payload, not a column).
-	_, _ = clients.k8sDB.Exec("DELETE FROM k8s_outbox")
 
 	// Clean state_outbox (written by rerun handler)
 	if schedulerID != "" {
@@ -148,7 +134,7 @@ func cleanupRedis(t *testing.T, ctx context.Context, clients *testClients) {
 
 // cleanupK8s removes test jobs from Kubernetes
 func cleanupK8s(t *testing.T, ctx context.Context) {
-	// Use the schedule-id label to match what executor-controller actually creates
+	// Use the schedule-id label to match what execution-controller actually creates
 	cmd := exec.CommandContext(ctx, "kubectl", "delete", "jobs",
 		"-n", "default",
 		"-l", "app=dbt-job",

@@ -255,7 +255,7 @@ received → compiling → parsing → validating → promoted
 Those statuses are the whole pipeline, and each one is a different service:
 
 **`compiling`** — `release-controller` published a request that
-`executor-controller` turned into a Kubernetes Job running **your `core:v1`
+`execution-controller` turned into a Kubernetes Job running **your `core:v1`
 image**. That Job ran `dbt compile` against your project and uploaded the
 resulting `manifest.json` to the bundled MinIO. This is why the release body
 carries no manifest: continuo compiles your project itself, using the same image

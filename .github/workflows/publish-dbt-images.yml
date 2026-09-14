@@ -55,7 +55,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=dbt-base
 
       # One step per service. Image name = DOCKERHUB_USERNAME/service-N:latest,
-      # matching the dbt project name and params.ServiceName in executor-controller.
+      # matching the dbt project name and params.ServiceName in execution-controller.
       - name: Build and push service-1
         uses: docker/build-push-action@v7
         with:

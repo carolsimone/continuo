@@ -7,9 +7,8 @@ Migrations are organized by service ownership:
 ```
 db/migration/
 ├── state/         State service (scheduler_tracker, task_tracker, task_execution)
-├── executor/      Executor-controller (deployment_outbox, processed_events)
+├── execution/     Execution-controller (message_processing, execution_outbox, cancelled_schedules, deployments, validation_aggregates)
 ├── dependency/    Dependency-controller (outbox, message_processing, published_messages)
-└── k8s/           K8s-controller (k8s_status_outbox)
 ```
 
 ## Database Mapping
@@ -17,9 +16,8 @@ db/migration/
 | Service | Database | Tables |
 |---------|----------|--------|
 | State | continuo_state | scheduler_tracker, task_tracker, task_execution |
-| Executor-controller | continuo_executor | deployment_outbox, processed_events |
+| Execution-controller | continuo_execution | message_processing, execution_outbox, cancelled_schedules, deployments, validation_aggregates |
 | Dependency-controller | continuo_dependency | outbox, message_processing, published_messages |
-| K8s-controller | continuo_k8s | k8s_status_outbox |
 
 ## Running Migrations
 
@@ -34,9 +32,8 @@ The existing per-service Flyway examples remain available for the current `docke
 ```bash
 docker-compose up -d postgres          # Start Postgres
 docker-compose up flyway-state         # Run state migrations
-docker-compose up flyway-executor      # Run executor migrations
+docker-compose up flyway-execution     # Run execution migrations
 docker-compose up flyway-dependency    # Run dependency migrations
-docker-compose up flyway-k8s           # Run k8s migrations
 ```
 
 Or run all services:

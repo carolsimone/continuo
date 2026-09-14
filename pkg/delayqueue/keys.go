@@ -1,7 +1,8 @@
-// Package delayqueue holds the Redis key contract for k8s-controller's check.k8s
-// delay queue: a ZSET clock and a HASH of pending-check tickets. The keys live in
-// a shared package — not a service's internals — so both k8s-controller and the
-// end-to-end teardown that must purge them reference one definition.
+// Package delayqueue holds the Redis key contract for execution-controller's
+// check.k8s delay queue: a ZSET clock and a HASH of pending-check tickets. The
+// keys live in a shared package — not the service's internals — so both
+// execution-controller and the end-to-end teardown that must purge them
+// reference one definition.
 package delayqueue
 
 const (

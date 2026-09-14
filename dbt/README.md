@@ -10,7 +10,7 @@ and ship them as their own service image built on this base.
 ## Job, not a service
 
 The images built from `base/` and `services/*` are not long-running services
-(see the [top-level README](../README.md) for those) — `executor-controller`
+(see the [top-level README](../README.md) for those) — `execution-controller`
 dispatches each as a one-shot Kubernetes `Job` per scheduled run, setting the
 container's `Command` explicitly from
 [`deploy/continuo/files/dbt-commands.yaml`](../deploy/continuo/files/dbt-commands.yaml)

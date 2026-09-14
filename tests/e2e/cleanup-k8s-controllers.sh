@@ -20,28 +20,19 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
-log_info "Cleaning up K8s controllers..."
+log_info "Cleaning up K8s controller..."
 
-# Delete deployments and services
-log_info "Deleting executor-controller deployment and service..."
-kubectl delete deployment executor-controller -n default --ignore-not-found=true
+# Delete deployment and service
+log_info "Deleting execution-controller deployment and service..."
+kubectl delete deployment execution-controller -n default --ignore-not-found=true
 
-kubectl delete service executor-controller -n default --ignore-not-found=true
-
-log_info "Deleting k8s-controller deployment and service..."
-kubectl delete deployment k8s-controller -n default --ignore-not-found=true
-
-kubectl delete service k8s-controller -n default --ignore-not-found=true
+kubectl delete service execution-controller -n default --ignore-not-found=true
 
 # Delete RBAC resources
 log_info "Deleting RBAC resources..."
-kubectl delete serviceaccount executor-controller -n default --ignore-not-found=true
-kubectl delete role executor-controller -n default --ignore-not-found=true
-kubectl delete rolebinding executor-controller -n default --ignore-not-found=true
-
-kubectl delete serviceaccount k8s-controller -n default --ignore-not-found=true
-kubectl delete role k8s-controller -n default --ignore-not-found=true
-kubectl delete rolebinding k8s-controller -n default --ignore-not-found=true
+kubectl delete serviceaccount execution-controller -n default --ignore-not-found=true
+kubectl delete role execution-controller -n default --ignore-not-found=true
+kubectl delete rolebinding execution-controller -n default --ignore-not-found=true
 
 # Delete any test jobs (cleanup test data)
 log_info "Deleting test jobs..."
