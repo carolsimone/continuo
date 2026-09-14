@@ -1,4 +1,4 @@
-// executor-controller/service/handlers/compile_requested_handler.go
+// execution-controller/service/handlers/compile_requested_handler.go
 package handlers
 
 import (

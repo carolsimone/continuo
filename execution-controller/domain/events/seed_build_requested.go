@@ -1,4 +1,4 @@
-// executor-controller/domain/events/seed_build_requested.go
+// execution-controller/domain/events/seed_build_requested.go
 package events
 
 import (

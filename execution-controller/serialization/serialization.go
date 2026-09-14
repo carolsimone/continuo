@@ -1,5 +1,5 @@
 // Package serialization holds the wire- and persistence-facing DTOs for
-// executor-controller's json-tagged boundary types, keeping the domain packages
+// execution-controller's json-tagged boundary types, keeping the domain packages
 // (command, event) free of struct tags. It sits outside adapters/ so the
 // application layer (service/deployer, which writes outbox payloads) may map
 // through it without importing an adapter, and outside domain/ so the tags live

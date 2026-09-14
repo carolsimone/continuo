@@ -697,7 +697,7 @@ func continuoImageSecurityContext() *corev1.SecurityContext {
 }
 
 // s3CredEnvVars returns the four S3 credential environment variables forwarded
-// from the executor-controller environment. S3_BUCKET is intentionally omitted —
+// from the execution-controller environment. S3_BUCKET is intentionally omitted —
 // both the compile uploader and the validation runner parse the bucket from their
 // respective URI parameters and never read S3_BUCKET.
 func s3CredEnvVars() []corev1.EnvVar {
@@ -1229,7 +1229,7 @@ func (c *K8sClient) CreateCompileJob(ctx context.Context, params ValidationJobPa
 //     S3_SIDECAR_IMAGE env, else <DOCKERHUB_USERNAME>/s3-sidecar:latest)
 //     that runs `python /compile_uploader.py` with COMPILE_MANIFEST_PATH,
 //     MANIFEST_S3_URI, and the S3 credential envs forwarded from the
-//     executor-controller env, plus the four PARSE_* envs (local paths +
+//     execution-controller env, plus the four PARSE_* envs (local paths +
 //     S3 destinations) when the parse-export leg ran.
 func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPath string, parseArgv []string, partialParsePath string) (corev1.PodSpec, error) {
 	if p.ImageTag == "" {

@@ -1,4 +1,4 @@
-// executor-controller/adapters/redis/seed_build_node_completed_parser_test.go
+// execution-controller/adapters/redis/seed_build_node_completed_parser_test.go
 package redis
 
 import (

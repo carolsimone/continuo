@@ -1,4 +1,4 @@
-// executor-controller/domain/events/compile_node_completed.go
+// execution-controller/domain/events/compile_node_completed.go
 package events
 
 import "github.com/google/uuid"

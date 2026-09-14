@@ -1,4 +1,4 @@
-// Package command holds executor-controller's domain commands — instructions
+// Package command holds execution-controller's domain commands — instructions
 // to perform work, distinct from the events that announce work has happened.
 package command
 

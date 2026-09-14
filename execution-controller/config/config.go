@@ -11,7 +11,7 @@ import (
 // var is introduced; override with SHUTDOWN_GRACE (e.g. "30s").
 const defaultShutdownGrace = 15 * time.Second
 
-// Config holds all configuration for the executor-controller service.
+// Config holds all configuration for the execution-controller service.
 type Config struct {
 	Redis    pkgconfig.RedisConfig
 	Postgres pkgconfig.PostgresConfig

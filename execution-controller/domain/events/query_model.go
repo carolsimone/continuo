@@ -1,4 +1,4 @@
-// executor-controller/domain/events/query_model.go
+// execution-controller/domain/events/query_model.go
 package events
 
 import (

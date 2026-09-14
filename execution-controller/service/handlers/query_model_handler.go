@@ -1,4 +1,4 @@
-// executor-controller/service/handlers/query_model_handler.go
+// execution-controller/service/handlers/query_model_handler.go
 package handlers
 
 import (

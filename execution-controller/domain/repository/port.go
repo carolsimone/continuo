@@ -1,4 +1,4 @@
-// Package repository holds executor-controller's domain repository ports.
+// Package repository holds execution-controller's domain repository ports.
 // Implementations live in the adapter layer.
 package repository
 

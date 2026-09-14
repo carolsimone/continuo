@@ -1,4 +1,4 @@
-// executor-controller/service/handlers/schedule_cancelled_handler_test.go
+// execution-controller/service/handlers/schedule_cancelled_handler_test.go
 package handlers_test
 
 import (

@@ -1,5 +1,5 @@
-// executor-controller/service/uow/uow.go
-// Package uow declares the Unit-of-Work port executor-controller's handlers
+// execution-controller/service/uow/uow.go
+// Package uow declares the Unit-of-Work port execution-controller's handlers
 // orchestrate over, so they compose repository work into one transaction
 // without seeing sqlx or any concrete adapter. The Postgres implementation
 // lives in adapters/postgres. Matches state/service/uow's UnitOfWork shape so
@@ -15,7 +15,7 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-// UnitOfWork exposes the repos executor-controller's handlers need plus
+// UnitOfWork exposes the repos execution-controller's handlers need plus
 // tx lifecycle. MessageProcessingRepo() returns a fresh repo bound to the
 // current tx (or the autocommit DB if no tx is active), mirroring
 // state/service/uow's pattern.

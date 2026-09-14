@@ -1,4 +1,4 @@
-// executor-controller/adapters/redis/validation_node_completed_binding.go
+// execution-controller/adapters/redis/validation_node_completed_binding.go
 package redis
 
 import (

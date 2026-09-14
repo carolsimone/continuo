@@ -1,4 +1,4 @@
-// executor-controller/adapters/redis/schedule_cancelled_binding.go
+// execution-controller/adapters/redis/schedule_cancelled_binding.go
 package redis
 
 import (

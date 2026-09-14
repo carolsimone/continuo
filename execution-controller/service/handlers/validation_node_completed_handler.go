@@ -1,4 +1,4 @@
-// executor-controller/service/handlers/validation_node_completed_handler.go
+// execution-controller/service/handlers/validation_node_completed_handler.go
 package handlers
 
 import (

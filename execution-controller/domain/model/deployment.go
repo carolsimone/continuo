@@ -1,4 +1,4 @@
-// Package model holds executor-controller's domain aggregates.
+// Package model holds execution-controller's domain aggregates.
 package model
 
 import (

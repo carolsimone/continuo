@@ -1,4 +1,4 @@
-// executor-controller/service/handlers/seed_build_requested_handler.go
+// execution-controller/service/handlers/seed_build_requested_handler.go
 package handlers
 
 import (

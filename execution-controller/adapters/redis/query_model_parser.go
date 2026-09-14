@@ -1,4 +1,4 @@
-// executor-controller/adapters/redis/query_model_parser.go
+// execution-controller/adapters/redis/query_model_parser.go
 package redis
 
 import (

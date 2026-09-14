@@ -1,4 +1,4 @@
-// executor-controller/adapters/redis/validation_requested_parser_test.go
+// execution-controller/adapters/redis/validation_requested_parser_test.go
 package redis
 
 import (

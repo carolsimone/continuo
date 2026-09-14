@@ -15,7 +15,7 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// OutboxPublisher implements pkg/outbox.Publisher for executor-controller. Each
+// OutboxPublisher implements pkg/outbox.Publisher for execution-controller. Each
 // row publishes exactly one event to entry.StreamName; the typed payload depends
 // on entry.EventType. The K8s deploy is no longer a publish concern — it is a
 // command effect handled by deployer.Dispatcher, which writes these canonical

@@ -1,4 +1,4 @@
-// Package ports holds executor-controller's technical (non-domain) collaborator
+// Package ports holds execution-controller's technical (non-domain) collaborator
 // interfaces. Adapters implement them; the application depends on them.
 package ports
 

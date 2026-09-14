@@ -1,4 +1,4 @@
-// executor-controller/adapters/redis/retry_task_binding.go
+// execution-controller/adapters/redis/retry_task_binding.go
 package redis
 
 import (

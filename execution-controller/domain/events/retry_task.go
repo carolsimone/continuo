@@ -1,4 +1,4 @@
-// executor-controller/domain/events/retry_task.go
+// execution-controller/domain/events/retry_task.go
 package events
 
 // RetryTask is the parsed retry.task:v1 stream payload. Strict superset

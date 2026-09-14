@@ -1,4 +1,4 @@
-// executor-controller/adapters/redis/compile_node_completed_parser.go
+// execution-controller/adapters/redis/compile_node_completed_parser.go
 package redis
 
 import (

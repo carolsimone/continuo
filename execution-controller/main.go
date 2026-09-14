@@ -71,7 +71,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	logger.Info("Starting executor-controller service")
+	logger.Info("Starting execution-controller service")
 
 	// Create context with cancellation
 	ctx, cancel := context.WithCancel(context.Background())

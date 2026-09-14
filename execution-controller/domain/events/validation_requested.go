@@ -1,4 +1,4 @@
-// executor-controller/domain/events/validation_requested.go
+// execution-controller/domain/events/validation_requested.go
 package events
 
 import (
@@ -7,7 +7,7 @@ import (
 )
 
 // ValidationNode is one entry in a ValidationRequested.Nodes slice — the
-// flat, per-node spec executor-controller needs to enqueue one candidate
+// flat, per-node spec execution-controller needs to enqueue one candidate
 // validation deployment.
 //
 // NodeID carries the dbt unique_id of the node (the producer emits it under

@@ -1,4 +1,4 @@
-// executor-controller/adapters/redis/compile_requested_binding.go
+// execution-controller/adapters/redis/compile_requested_binding.go
 package redis
 
 import (
