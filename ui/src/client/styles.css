@@ -1739,16 +1739,6 @@ a.release-author:hover { text-decoration: underline; }
    and the active view (RunNodeTable or RunSwimlane). */
 .run-view { display: flex; flex-direction: column; }
 
-/* Topology tab: a spatial surface (the dependency graph) must fill the
-   viewport height rather than collapse to its content. DAGPanel emits a
-   search strip + a flex:1 viewport, so this wrapper is the height-anchored
-   flex column that gives that viewport a definite height. */
-.topology-viewport {
-  display: flex;
-  flex-direction: column;
-  position: relative;
-  min-height: calc(100vh - 220px);
-}
 .seg-toggle {
   display: inline-flex;
   border: 1px solid #e6e9ee;

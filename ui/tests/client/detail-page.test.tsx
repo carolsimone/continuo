@@ -524,7 +524,7 @@ function withRouterAt(initialPath: string) {
   );
 }
 
-describe('DetailPage — page tabs (Run / Topology / Past runs)', () => {
+describe('DetailPage — page tabs (Run / Past runs)', () => {
   beforeEach(() => { vi.stubGlobal('fetch', mockFetchSequence(freshRoutes())); });
   afterEach(() => { vi.unstubAllGlobals(); });
 
@@ -533,7 +533,7 @@ describe('DetailPage — page tabs (Run / Topology / Past runs)', () => {
     await waitFor(() => {
       expect(screen.getByRole('tab', { name: /^run$/i })).toHaveClass('tabs__tab--active');
     });
-    expect(screen.getByRole('tab', { name: /topology/i })).not.toHaveClass('tabs__tab--active');
+    expect(screen.queryByRole('tab', { name: /topology/i })).toBeNull(); // Topology is a homepage tab only
     expect(screen.getByRole('tab', { name: /past runs/i })).not.toHaveClass('tabs__tab--active');
   });
 
@@ -544,11 +544,12 @@ describe('DetailPage — page tabs (Run / Topology / Past runs)', () => {
     });
   });
 
-  it('selects the Topology tab when ?panel=topology is in the URL', async () => {
+  it('has no Topology tab and falls back to Run for the old ?panel=topology URL', async () => {
     render(withRouterAt(`/schedule/${SCHED}?panel=topology`));
     await waitFor(() => {
-      expect(screen.getByRole('tab', { name: /topology/i })).toHaveClass('tabs__tab--active');
+      expect(screen.getByRole('tab', { name: /^run$/i })).toHaveClass('tabs__tab--active');
     });
+    expect(screen.queryByRole('tab', { name: /topology/i })).toBeNull();
   });
 
   it('falls back to Run when ?panel is unknown', async () => {
@@ -911,10 +912,10 @@ describe('DetailPage — panel tabs keep loaded page state', () => {
   });
 });
 
-describe('DetailPage — Run / Topology / Past runs tabs', () => {
+describe('DetailPage — Run / Past runs tabs', () => {
   afterEach(() => { vi.unstubAllGlobals(); });
 
-  it('defaults to the Run tab with the List view, then switches to the swimlane Graph, and Topology shows the node graph', async () => {
+  it('defaults to the Run tab with the List view, then switches to the swimlane Graph', async () => {
     vi.stubGlobal('fetch', mockFetchSequence(failedRoutes()));
     const { container } = render(withRouter({ last_run_id: RUN_ID }));
 
@@ -928,10 +929,6 @@ describe('DetailPage — Run / Topology / Past runs tabs', () => {
     // Switching the Run view to Graph mounts the swimlane.
     fireEvent.click(screen.getByRole('button', { name: /^graph$/i }));
     await waitFor(() => expect(container.querySelector('.swim-node')).toBeTruthy());
-
-    // The Topology tab renders the node-level dependency graph.
-    fireEvent.click(screen.getByRole('tab', { name: /topology/i }));
-    await waitFor(() => expect(container.querySelector('.react-flow')).toBeTruthy());
   });
 
   it('shows the run-progress header on the Run tab', async () => {
