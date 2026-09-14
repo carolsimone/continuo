@@ -7,8 +7,7 @@ Comprehensive end-to-end test validating the complete Continuo orchestration pip
 The suite covers both the run-orchestration pipeline and the dbt blue/green release pipeline. The happy-path test exercises a 6-node `ftable_*` DAG through every service:
 - `state` - Creates scheduler, owns the run/task lifecycle
 - `orchestrator` - Snapshots topology, identifies root nodes, unlocks downstream dependencies, publishes to query.model:v1 (owns the responsibilities of the former `graph` and `dependency-controller` services)
-- `executor-controller` - Deploys k8s jobs
-- `k8s-controller` - Monitors job status
+- `execution-controller` - Deploys k8s jobs and monitors their status
 - `topology-controller` - Parses dbt manifests (candidate + legacy paths)
 - `release-controller` - Owns the blue/green candidate-release lifecycle and `current_prod`
 - `ui` - HTTP API verified to return correct scheduler/task/release data
@@ -71,7 +70,7 @@ When the kind cluster and all Docker images already exist:
 ```bash
 # Tear down stale containers — including any left over from the main project directory
 # (the main project uses bare container names like /state, /ui that conflict with this worktree)
-docker rm -f state orchestrator executor-controller k8s-controller ui 2>/dev/null || true
+docker rm -f state orchestrator execution-controller ui 2>/dev/null || true
 docker compose down
 
 # Start (or restart) all docker-compose services
@@ -138,7 +137,7 @@ covered by ui unit tests.
 | `tests/e2e/start-services.sh` | Starts Go service processes inside containers (`go run`), waits for HTTP health |
 | `tests/e2e/provision-k8s-test-env.sh` | Rebuilds controller + dbt images, loads them into kind, regenerates kubeconfig, deploys k8s manifests |
 | `tests/e2e/deploy-k8s-controllers.sh` | Deploys pre-built images already in kind (no rebuild); used by CI after `setup.sh` |
-| `tests/e2e/cleanup-k8s-controllers.sh` | Removes controller Deployments from the kind cluster |
+| `tests/e2e/cleanup-k8s-controllers.sh` | Removes the controller Deployment from the kind cluster |
 
 ### How CI runs it
 
@@ -179,11 +178,10 @@ The E2E test uses a hybrid setup:
 - state, orchestrator, topology-controller, release-controller (services)
 
 **In kind cluster (Kubernetes):**
-- executor-controller (Deployment)
-- k8s-controller (Deployment)
+- execution-controller (Deployment)
 - dbt service jobs (run as k8s Jobs, one per table)
 
-Controllers in kind connect to docker-compose services via docker bridge network (172.17.0.1).
+The controller in kind connects to docker-compose services via docker bridge network (172.17.0.1).
 
 ## Test Structure
 
@@ -205,19 +203,19 @@ Controllers in kind connect to docker-compose services via docker bridge network
 | `seed_topology_test.go` | `seedTopology` helper — publishes `release.promoted:v1` to establish the e2e DAG in Neo4j (the kept production path) |
 | `ui_http_test.go` | HTTP assertions against the ui (`verifyUIService`) |
 | `auth_oidc_test.go` | `TestAuthOIDC` — real OIDC login flow against Dex (auth-e2e profile); skipped unless `UI_AUTH_HTTP_BASE` is set |
-| `verify.go` | DAG-level assertions (executor jobs, k8s jobs, dependency unlocking, failure helpers) |
+| `verify.go` | DAG-level assertions (execution-controller's k8s Jobs, dependency unlocking, failure helpers) |
 | `clients.go` | gRPC, Redis, Postgres, Neo4j, S3, and release-controller client setup |
 | `helpers.go` | `pollUntil`, k8s job helpers, `containsAll` |
 | `cleanup.go` | Removes all test data from every data store |
 
 ## Blue/Green Release Tests
 
-`release_promote_test.go` drives the dbt blue/green release pipeline end-to-end via the production entry point — `POST /releases`, the exact request CI's `deploy.yml` issues. Validation runs **real `continuo-python-runtime-<engine>` K8s Jobs in kind** (no dbt in the validation path — see the executor-controller doc's `CreateValidationJob`), exercising the full event chain:
+`release_promote_test.go` drives the dbt blue/green release pipeline end-to-end via the production entry point — `POST /releases`, the exact request CI's `deploy.yml` issues. Validation runs **real `continuo-python-runtime-<engine>` K8s Jobs in kind** (no dbt in the validation path — see the execution-controller doc's `CreateValidationJob`), exercising the full event chain:
 
 ```
 POST /releases → release.requested:v1 → topology-controller candidate parse
 → manifest.loaded.candidate:v1 → release-controller derives the changed-node set
-→ validation.requested:v1 → executor/k8s run per-node validation jobs
+→ validation.requested:v1 → execution-controller runs per-node validation jobs
 → validation.node.completed:v1 → validation.result:v1 (kind=complete)
 → release-controller promotes → release.promoted:v1
 → orchestrator swaps the Neo4j topology
@@ -326,7 +324,7 @@ colima start --disk 100  # 100GB
 
 **Test fails at k8s controller health check:**
 - Check pod status: `kubectl get pods -n default | grep controller`
-- View pod logs: `kubectl logs -l app=executor-controller -n default`
+- View pod logs: `kubectl logs -l app=execution-controller -n default`
 - Re-run provisioning: `bash tests/e2e/provision-k8s-test-env.sh`
 
 **Test fails with "table does not exist":**
@@ -349,24 +347,23 @@ DOCKER_BUILDKIT=1 docker build -t continuo-base:latest -f Dockerfile.base .
 **Kubeconfig not accessible:**
 ```bash
 bash scripts/setup.sh
-docker exec executor-controller ls -la /root/.kube/
+docker exec execution-controller ls -la /root/.kube/
 ```
 
-**Controllers not starting:**
+**Controller not starting:**
 ```bash
 kubectl get pods -n default | grep controller
-kubectl logs -l app=executor-controller -n default
-kubectl logs -l app=k8s-controller -n default
+kubectl logs -l app=execution-controller -n default
 docker exec continuo-control-plane crictl images | grep continuo
 ```
 
 **Network connectivity issues:**
 ```bash
 # Test from controller pod to postgres
-kubectl exec deployment/executor-controller -- nc -zv 172.17.0.1 5432
+kubectl exec deployment/execution-controller -- nc -zv 172.17.0.1 5432
 
 # Test from controller pod to state service
-kubectl exec deployment/executor-controller -- nc -zv 172.17.0.1 50051
+kubectl exec deployment/execution-controller -- nc -zv 172.17.0.1 50051
 ```
 
 **Rebuild all k8s images and redeploy:**

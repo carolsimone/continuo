@@ -128,8 +128,8 @@ echo "Exported IMAGE_TAG_PER_SERVICE=${IMAGE_TAG_PER_SERVICE}"
 printf '%s' "$PER_SERVICE" > tests/e2e/.image-tags
 echo "Wrote per-service image tags to tests/e2e/.image-tags"
 
-# continuo-executor-controller and continuo-k8s-controller are already built by
-# 'docker compose build' above with the correct tags, so no need to rebuild them here.
+# continuo-execution-controller is already built by 'docker compose build'
+# above with the correct tag, so no need to rebuild it here.
 
 # Wait for kind cluster to finish (if we started it above)
 if [ -n "$KIND_PID" ]; then
@@ -157,8 +157,7 @@ echo "Loading images into kind (sequential)..."
 for svc in "${DBT_SERVICES[@]}"; do
     kind load docker-image "${svc}:${IMAGE_TAG}" --name "${CLUSTER_NAME}"
 done
-kind load docker-image continuo-executor-controller:latest --name ${CLUSTER_NAME}
-kind load docker-image continuo-k8s-controller:latest --name ${CLUSTER_NAME}
+kind load docker-image continuo-execution-controller:latest --name ${CLUSTER_NAME}
 kind load docker-image dbt-base:latest --name ${CLUSTER_NAME}
 kind load docker-image s3-sidecar:latest --name ${CLUSTER_NAME}
 # Built locally from a pulled base, so a plain `kind load docker-image` works —
@@ -253,9 +252,9 @@ kubectl config view --raw > kubeconfig.yaml.tmp
 sed "s|server: https://[^:]*:[0-9]*|server: https://${KUBE_IP}:${KUBE_PORT}|g" \
     kubeconfig.yaml.tmp > kubeconfig/kubeconfig.yaml
 
-mkdir -p executor-controller/kubeconfig
-cp kubeconfig/kubeconfig.yaml executor-controller/kubeconfig/kubeconfig.yaml
-echo "✓ Copied kubeconfig to executor-controller/"
+mkdir -p execution-controller/kubeconfig
+cp kubeconfig/kubeconfig.yaml execution-controller/kubeconfig/kubeconfig.yaml
+echo "✓ Copied kubeconfig to execution-controller/"
 
 rm kubeconfig.yaml.tmp
 echo "Kubeconfig created at: kubeconfig/kubeconfig.yaml"

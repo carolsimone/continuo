@@ -37,8 +37,7 @@ build: build-dev
 .PHONY: build-prod
 build-prod: build-base
 	DOCKER_BUILDKIT=1 docker build -t continuo-state:prod -f state/Dockerfile.prod .
-	DOCKER_BUILDKIT=1 docker build -t continuo-executor-controller:prod -f executor-controller/Dockerfile.prod .
-	DOCKER_BUILDKIT=1 docker build -t continuo-k8s-controller:prod -f k8s-controller/Dockerfile.prod .
+	DOCKER_BUILDKIT=1 docker build -t continuo-execution-controller:prod -f execution-controller/Dockerfile.prod .
 	DOCKER_BUILDKIT=1 docker build -t continuo-orchestrator:prod -f orchestrator/Dockerfile.prod .
 	DOCKER_BUILDKIT=1 docker build -t continuo-release-controller:prod -f release-controller/Dockerfile.prod .
 	DOCKER_BUILDKIT=1 docker build -t continuo-agent-chat:prod -f agent-chat/Dockerfile.prod .
@@ -139,8 +138,8 @@ e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start
 	@$(MAKE) e2e-cleanup
 
 # ── CI contract: SINGLE entrypoints used identically by local dev and CI jobs.
-GO_SERVICES := state orchestrator executor-controller k8s-controller \
-               release-controller remediation agent-remediation agent-chat
+GO_SERVICES := state orchestrator execution-controller release-controller \
+               remediation agent-remediation agent-chat
 FLYWAY_JOBS := flyway-state flyway-execution flyway-orchestrator flyway-release \
                flyway-agent-chat flyway-remediation flyway-agent-remediation
 
@@ -224,7 +223,7 @@ test-topology:
 #   tag that has no release images behind it.
 # - check-validation-image-pin: the hand-maintained continuo-python-runtime
 #   image tag must not drift between the Makefile, setup/e2e scripts,
-#   docker-compose, the executor-controller Go test fixtures, and the chart's
+#   docker-compose, the execution-controller Go test fixtures, and the chart's
 #   rendered default.
 # - check-validation-image-sideload: the kind-provisioning scripts must not
 #   side-load the pulled validation image with a bare `kind load docker-image`,

@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 K8S_DIR="${SCRIPT_DIR}/k8s"
 
-log_info "Starting K8s controllers setup for E2E tests..."
+log_info "Starting K8s controller setup for E2E tests..."
 
 # Step 1: Detect docker bridge IP
 log_info "Detecting docker bridge IP..."
@@ -24,19 +24,13 @@ log_info "Docker bridge IP: ${DOCKER_BRIDGE_IP}"
 # Export for envsubst
 export DOCKER_BRIDGE_IP
 
-log_info "Building controller images..."
+log_info "Building controller image..."
 
 cd "${REPO_ROOT}"
 
-log_info "Building executor-controller image"
-docker build -f executor-controller/Dockerfile.dev -t continuo-executor-controller:latest . || {
-  log_error "failed to build executor-controller image"
-  exit 1
-}
-
-log_info "Building k8s-controller image"
-docker build -f k8s-controller/Dockerfile.dev -t continuo-k8s-controller:latest . || {
-  log_error "failed to build k8s-controller image"
+log_info "Building execution-controller image"
+docker build -f execution-controller/Dockerfile.dev -t continuo-execution-controller:latest . || {
+  log_error "failed to build execution-controller image"
   exit 1
 }
 
@@ -48,13 +42,10 @@ log_info "Pulling continuo-python-runtime (postgres) image..."
 docker pull ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.5.0 \
   || { log_error "failed to pull continuo-python-runtime-postgres"; exit 1; }
 
-log_info "Loading controller images into kind..."
-kind load docker-image continuo-executor-controller:latest --name continuo || {
-  log_error "Failed to load executor-controller image into kind"
+log_info "Loading controller image into kind..."
+kind load docker-image continuo-execution-controller:latest --name continuo || {
+  log_error "Failed to load execution-controller image into kind"
   exit 1
-}
-kind load docker-image continuo-k8s-controller:latest --name continuo || {
-  log_error "Failed to load k8s-controller image into kind"
 }
 kind load docker-image dbt-base:latest --name continuo || { log_error "failed to load dbt-base into kind"; exit 1; }
 kind load docker-image s3-sidecar:latest --name continuo || { log_error "failed to load s3-sidecar into kind"; exit 1; }
@@ -64,7 +55,7 @@ kind load docker-image s3-sidecar:latest --name continuo || { log_error "failed 
 kind_load_pulled_image ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.5.0 continuo || exit 1
 
 # Build each dbt service image, tag it by its own content digest (never :latest),
-# and load that tag into kind. The executor composes the dbt job image as
+# and load that tag into kind. The controller composes the dbt job image as
 # service-<n>:<image_tag>, so the kind image must be loaded under exactly the tag
 # the e2e seeds into service_prod. The per-service tags are written to the
 # bind-mounted tests/e2e/.image-tags file (immutable setup metadata); the e2e
@@ -106,20 +97,18 @@ kubectl config view --raw \
     | sed "s|server: https://[^:]*:[0-9]*|server: https://${KUBE_IP}:${KUBE_PORT}|g" \
     > "${REPO_ROOT}/kubeconfig/kubeconfig.yaml"
 
-for svc in executor-controller; do
+for svc in execution-controller; do
     mkdir -p "${REPO_ROOT}/${svc}/kubeconfig"
     cp "${REPO_ROOT}/kubeconfig/kubeconfig.yaml" "${REPO_ROOT}/${svc}/kubeconfig/kubeconfig.yaml"
     log_info "Kubeconfig copied to ${svc}/"
 done
-
-log_info "Applying k8s manifests..."
 
 # Step 4: Apply K8s manifests with environment variable substitution
 log_info "Applying K8s manifests..."
 
 cd "${K8S_DIR}"
 
-# Apply the validation warehouse Secret before the executor so the validation
+# Apply the validation warehouse Secret before the controller so the validation
 # pods it launches can resolve their warehouse credentials via envFrom.
 log_info "Creating validation warehouse Secret..."
 envsubst < validation-warehouse-secret.yaml | kubectl apply -f - || {
@@ -127,49 +116,35 @@ envsubst < validation-warehouse-secret.yaml | kubectl apply -f - || {
     exit 1
 }
 
-# Apply executor-controller
-log_info "Deploying executor-controller..."
-envsubst < executor-controller-deployment.yaml | kubectl apply -f - || {
-    log_error "Failed to apply executor-controller manifest"
+# Apply execution-controller
+log_info "Deploying execution-controller..."
+envsubst < execution-controller-deployment.yaml | kubectl apply -f - || {
+    log_error "Failed to apply execution-controller manifest"
     exit 1
 }
 
-# Apply k8s-controller
-log_info "Deploying k8s-controller..."
-envsubst < k8s-controller-deployment.yaml | kubectl apply -f - || {
-    log_error "Failed to apply k8s-controller manifest"
+# Step 4.5: Force rollout restart to use the new image
+log_info "Restarting deployment to use new image..."
+kubectl rollout restart deployment/execution-controller -n default || {
+    log_error "Failed to restart deployment"
     exit 1
 }
 
-# Step 4.5: Force rollout restart to use new images
-log_info "Restarting deployments to use new images..."
-kubectl rollout restart deployment/executor-controller deployment/k8s-controller -n default || {
-    log_error "Failed to restart deployments"
-    exit 1
-}
+# Step 5: Wait for deployment to be ready
+log_info "Waiting for deployment to be ready (timeout: 120s)..."
 
-# Step 5: Wait for deployments to be ready
-log_info "Waiting for deployments to be ready (timeout: 120s)..."
-
-kubectl wait --for=condition=available --timeout=120s deployment/executor-controller -n default || {
-    log_error "executor-controller deployment did not become ready"
+kubectl wait --for=condition=available --timeout=120s deployment/execution-controller -n default || {
+    log_error "execution-controller deployment did not become ready"
     log_info "Pod logs:"
-    kubectl logs -l app=executor-controller -n default --tail=50 || true
+    kubectl logs -l app=execution-controller -n default --tail=50 || true
     exit 1
 }
 
-kubectl wait --for=condition=available --timeout=120s deployment/k8s-controller -n default || {
-    log_error "k8s-controller deployment did not become ready"
-    log_info "Pod logs:"
-    kubectl logs -l app=k8s-controller -n default --tail=50 || true
-    exit 1
-}
+log_info "Deployment is ready"
 
-log_info "Deployments are ready"
+log_info "Verifying controller health endpoint..."
 
-log_info "Verifying controller health endpoints..."
-
-# Function to check health for k8s-deployed services via kubectl port-forward
+# Function to check health for a k8s-deployed service via kubectl port-forward
 check_k8s_health() {
   local deployment=$1
   local port=$2
@@ -198,15 +173,9 @@ check_k8s_health() {
   fi
 }
 
-check_k8s_health "executor-controller" "8084" "executor-controller" || {
-    log_error "executor-controller health check failed"
-    kubectl logs -l app=executor-controller -n default --tail=50
-    exit 1
-}
-
-check_k8s_health "k8s-controller" "8085" "k8s-controller" || {
-    log_error "k8s-controller health check failed"
-    kubectl logs -l app=k8s-controller -n default --tail=50
+check_k8s_health "execution-controller" "8084" "execution-controller" || {
+    log_error "execution-controller health check failed"
+    kubectl logs -l app=execution-controller -n default --tail=50
     exit 1
 }
 

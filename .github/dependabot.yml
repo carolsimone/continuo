@@ -16,8 +16,7 @@ updates:
     directories:
       - /agent-chat
       - /cli
-      - /executor-controller
-      - /k8s-controller
+      - /execution-controller
       - /orchestrator
       - /pkg
       - /release-controller
@@ -45,7 +44,7 @@ updates:
       # against an API server within one minor version either way, and kind runs
       # kindest/node:v1.34.0, so v0.35.x is the ceiling that stays inside that
       # window. v0.36.0 also requires go 1.26.0, which would raise the go
-      # directive of executor-controller and k8s-controller above go.work's
+      # directive of execution-controller above go.work's
       # 1.25.12 — leaving the workspace unloadable, and moving the CI toolchain
       # with it, since CI resolves Go from go-version-file: go.work.
       # Raise this ceiling when the kind node image moves to 1.35 or later.

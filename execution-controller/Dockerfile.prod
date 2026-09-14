@@ -13,8 +13,7 @@ COPY go.work go.work.sum* ./
 COPY state/go.mod state/go.sum ./state/
 COPY pkg/go.mod pkg/go.sum ./pkg/
 COPY orchestrator/go.mod orchestrator/go.sum ./orchestrator/
-COPY executor-controller/go.mod executor-controller/go.sum ./executor-controller/
-COPY k8s-controller/go.mod k8s-controller/go.sum ./k8s-controller/
+COPY execution-controller/go.mod execution-controller/go.sum ./execution-controller/
 COPY release-controller/go.mod release-controller/go.sum ./release-controller/
 COPY tests/e2e/go.mod tests/e2e/go.sum ./tests/e2e/
 COPY agent-chat/go.mod agent-chat/go.sum ./agent-chat/
@@ -26,25 +25,25 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download
 
 # Copy source code
-COPY executor-controller/ ./executor-controller/
+COPY execution-controller/ ./execution-controller/
 COPY pkg/ ./pkg/
 COPY state/ ./state/
 
 # Build static binary
-WORKDIR /app/executor-controller
+WORKDIR /app/execution-controller
 RUN --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -a -installsuffix cgo -o /app/bin/executor-controller .
+    CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -a -installsuffix cgo -o /app/bin/execution-controller .
 
 # Runtime stage
 FROM alpine:latest
 
 RUN apk --no-cache add ca-certificates tzdata
 
-COPY --from=builder /app/bin/executor-controller /usr/local/bin/executor-controller
+COPY --from=builder /app/bin/execution-controller /usr/local/bin/execution-controller
 
 EXPOSE 8084
 
 # Static binary; no filesystem writes at runtime — run unprivileged.
 USER 65532:65532
 
-CMD ["executor-controller"]
+CMD ["execution-controller"]

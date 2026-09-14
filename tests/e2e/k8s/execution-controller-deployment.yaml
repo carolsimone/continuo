@@ -34,53 +34,60 @@ data:
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: executor-controller
+  name: execution-controller
   namespace: default
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: executor-controller
+  name: execution-controller
   namespace: default
 rules:
   - apiGroups: ["batch"]
     resources: ["jobs"]
-    # delete: the candidate-schema lifecycle removes its own one-shot schema-op
-    # Jobs (delete-on-success + clear-terminal-before-retry).
+    # create: dispatches dbt/python/validation/compile Jobs. delete: the
+    # candidate-schema lifecycle removes its own one-shot schema-op Jobs
+    # (delete-on-success + clear-terminal-before-retry). get/list/watch: polls
+    # every Job it created to a terminal state.
     verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    # Reads pod status for termination details and pod logs for the error
+    # message and the S3 log upload.
+    verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: executor-controller
+  name: execution-controller
   namespace: default
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: executor-controller
+  name: execution-controller
 subjects:
   - kind: ServiceAccount
-    name: executor-controller
+    name: execution-controller
     namespace: default
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: executor-controller
+  name: execution-controller
   namespace: default
   labels:
-    app: executor-controller
+    app: execution-controller
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: executor-controller
+      app: execution-controller
   template:
     metadata:
       labels:
-        app: executor-controller
+        app: execution-controller
     spec:
-      serviceAccountName: executor-controller
+      serviceAccountName: execution-controller
       # The binary needs no privileges: config comes from env, Kubernetes
       # access from the ServiceAccount token. uid 65534 = nobody.
       securityContext:
@@ -90,10 +97,10 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       containers:
-        - name: executor-controller
-          image: continuo-executor-controller:latest
+        - name: execution-controller
+          image: continuo-execution-controller:latest
           imagePullPolicy: IfNotPresent
-          command: ["/app/executor-controller/bin/executor-controller"]
+          command: ["/app/execution-controller/bin/execution-controller"]
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -114,13 +121,23 @@ spec:
             - name: POSTGRES_PORT
               value: "5432"
             - name: POSTGRES_DB
-              value: "continuo_executor"
+              value: "continuo_execution"
             - name: POSTGRES_USER
               value: "continuo_svc"
             - name: POSTGRES_PASSWORD
               value: "continuo"
             - name: K8S_NAMESPACE
               value: "default"
+            - name: MAX_CONCURRENT_JOBS
+              value: "50"
+            - name: K8S_CHECK_DELAY_SECONDS
+              value: "10"
+            - name: DEFAULT_TASK_MAX_RETRIES
+              value: "2"
+            - name: LOG_TAIL_LINES
+              value: "50"
+            - name: ERROR_MESSAGE_MAX_LENGTH
+              value: "4096"
             # provision-k8s-test-env.sh pulls the pinned validation image from
             # ghcr.io and side-loads it into the kind node cache (kind load), so
             # validation pods must use the cached image. PullAlways would fail
@@ -135,20 +152,12 @@ spec:
               value: "continuo-warehouse-validation"
             - name: S3_SIDECAR_IMAGE
               value: "s3-sidecar:latest"
-            - name: MAX_CONCURRENT_JOBS
-              value: "50"
-            - name: HTTP_PORT
-              value: "8084"
-            - name: ENV
-              value: "local"
-            - name: LOG_LEVEL
-              value: "INFO"
             - name: DBT_COMMANDS_CONFIG_PATH
               value: "/etc/continuo/dbt-commands.yaml"
-            # S3 access for the validation Job: the executor forwards these into
-            # each validation pod so the validation runner can fetch the candidate
-            # SQL from CANDIDATE_SQL_URI. The endpoint points at MinIO via the
-            # docker bridge so the in-kind Job can reach it.
+            # S3 access forwarded into each validation/compile pod: the validation
+            # runner fetches the candidate SQL from CANDIDATE_SQL_URI, and the
+            # compile pod's s3-sidecar uploads the manifest. The endpoint points at
+            # MinIO via the docker bridge so an in-kind Job can reach it.
             - name: S3_ENDPOINT_URL
               value: "http://${DOCKER_BRIDGE_IP}:9000"
             - name: S3_BUCKET
@@ -163,6 +172,8 @@ spec:
               value: "24"
             - name: CANCELLED_SCHEDULES_SWEEP_INTERVAL_MINUTES
               value: "60"
+            - name: HTTP_PORT
+              value: "8084"
           readinessProbe:
             httpGet:
               path: /ready
@@ -189,11 +200,11 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: executor-controller
+  name: execution-controller
   namespace: default
 spec:
   selector:
-    app: executor-controller
+    app: execution-controller
   ports:
     - port: 8084
       targetPort: 8084
