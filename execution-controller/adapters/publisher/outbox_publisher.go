@@ -114,31 +114,6 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 		}
 		return e.ToMap(), nil
 
-	case event.EventTypeNodeDeployed:
-		var dto serialization.JobDeployedDTO
-		if err := json.Unmarshal(entry.Payload, &dto); err != nil {
-			return nil, fmt.Errorf("%w: unmarshal node_deployed: %v", pkgevents.ErrPermanent, err)
-		}
-		e := dto.ToDomain()
-		taskRetryCount, err := num.Int32(e.TaskRetryCount, "task_retry_count")
-		if err != nil {
-			return nil, fmt.Errorf("%w: node.deployed payload: %v", pkgevents.ErrPermanent, err)
-		}
-		maxRetries, err := num.Int32(e.MaxRetries, "max_retries")
-		if err != nil {
-			return nil, fmt.Errorf("%w: node.deployed payload: %v", pkgevents.ErrPermanent, err)
-		}
-		payload, err := json.Marshal(pkgevents.NodeDeployed{
-			TaskID: e.TaskID, ScheduleID: e.ScheduleID, ScheduleName: e.ScheduleName,
-			ServiceName: e.ServiceName, SchemaName: e.SchemaName, TableName: e.TableName,
-			JobName: e.JobName, NodeType: e.NodeType, ImageTag: e.ImageTag, Operation: e.Operation,
-			TaskRetryCount: taskRetryCount, MaxRetries: maxRetries,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("marshal node.deployed payload: %w", err)
-		}
-		return map[string]interface{}{"payload": string(payload)}, nil
-
 	case event.EventTypeNodeUpdated:
 		var dto serialization.NodeUpdatedDTO
 		if err := json.Unmarshal(entry.Payload, &dto); err != nil {

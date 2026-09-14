@@ -10,7 +10,6 @@ type Event interface {
 const (
 	EventTypeTaskStatusUpdated     = "task_status_updated"
 	EventTypeTaskExecutionRecorded = "task_execution_recorded"
-	EventTypeNodeDeployed          = "node_deployed"
 	EventTypeNodeUpdated           = "node_updated"
 	EventTypeTaskRetry             = "task_retry"
 	EventTypeTaskFailed            = "task_failed"
@@ -22,30 +21,6 @@ const (
 	EventTypeSeedBuildNodeCompleted  = "seed_build_node_completed"
 	EventTypeCompileNodeCompleted    = "compile_node_completed"
 )
-
-// JobDeployed is the payload of an execution_outbox row whose event_type is
-// "node_deployed". The dispatcher writes it after a deploy succeeds; the
-// publisher reads it to build the node.deployed:v1 typed wire event
-// (pkg/events.NodeDeployed). Stream: node.deployed:v1.
-type JobDeployed struct {
-	TaskID       string
-	ScheduleID   string
-	ScheduleName string
-	ServiceName  string
-	SchemaName   string
-	TableName    string
-	JobName      string
-	NodeType     string
-	ImageTag     string
-	// Operation is the dbt verb this Job runs (e.g. "test"); empty for a normal
-	// production `dbt run`. It flows onto node.deployed:v1 so this service's
-	// job-status handler re-checks the Job with the same verb.
-	Operation      string
-	TaskRetryCount int // task-level retry count (not outbox delivery retries)
-	MaxRetries     int // maximum task retries allowed
-}
-
-func (JobDeployed) isEvent() {}
 
 // NodeUpdated is the payload of an execution_outbox row whose event_type is
 // "node_updated". The dispatcher writes it (status FAILED) when a deploy
@@ -149,9 +124,9 @@ type TaskRetry struct {
 	// Operation is the dbt verb the retried Job should run (e.g. "test").
 	// Empty for normal production `dbt run` retries — their wire format is
 	// unchanged. Sourced from the durable CheckJobStatus.Operation (which rides
-	// node.deployed:v1 / check.k8s:v1), never from the failed Job's labels: a
-	// TTL-reaped Job has no labels, so a retried `dbt test` Job stays `dbt test`
-	// instead of rebuilding as `dbt run`.
+	// check.k8s:v1), never from the failed Job's labels: a TTL-reaped Job has no
+	// labels, so a retried `dbt test` Job stays `dbt test` instead of rebuilding
+	// as `dbt run`.
 	Operation string
 }
 

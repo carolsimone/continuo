@@ -219,8 +219,6 @@ func main() {
 		redis.NewReleasePromotedTeardownBinding(candidateSchemaCleaner, logger), schemaOpReclaim)
 	releaseRejectedTeardownConsumer := newConsumer(streams.ReleaseRejectedV1, streams.ExecutorReleaseRejected,
 		redis.NewReleaseRejectedTeardownBinding(candidateSchemaCleaner, logger), schemaOpReclaim)
-	deployedConsumer := newConsumer(streams.NodeDeployedV1, streams.K8sDeployed,
-		redis.NewNodeDeployedBinding(uowFactory, jobStatusHandler, logger))
 	checkConsumer := newConsumer(streams.CheckK8sV1, streams.K8sCheckStatus,
 		redis.NewCheckK8sBinding(uowFactory, jobStatusHandler, logger))
 
@@ -241,7 +239,7 @@ func main() {
 			return postgres.NewValidationAggregateRepository(exec)
 		},
 		cfg.MaxConcurrentJobs, logger,
-		deployer.DispatcherConfig{Tick: 5 * time.Second, BatchSize: 50},
+		deployer.DispatcherConfig{Tick: 5 * time.Second, BatchSize: 50, CheckDelay: time.Duration(cfg.K8sCheckDelaySeconds) * time.Second},
 	)
 	runWorker("deploy_dispatcher", deployDispatcher.Run)
 
@@ -291,7 +289,6 @@ func main() {
 	runSchemaOpConsumer("pipeline_run_finished_teardown", pipelineRunFinishedTeardownConsumer)
 	runSchemaOpConsumer("release_promoted_teardown", releasePromotedTeardownConsumer)
 	runSchemaOpConsumer("release_rejected_teardown", releaseRejectedTeardownConsumer)
-	runConsumer("node_deployed", deployedConsumer)
 	runConsumer("check_k8s", checkConsumer)
 
 	<-lifecycleManager.Done()

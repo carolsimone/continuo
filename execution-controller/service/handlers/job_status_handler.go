@@ -122,7 +122,7 @@ func (h *JobStatusHandler) Handle(ctx context.Context, u uow.UnitOfWork, cmd com
 
 	// A still-running Job is mode-agnostic: re-poll it by writing a check.k8s:v1
 	// ticket. On the next check the Job's mode is re-read and routing recurs, so a
-	// validation Job (always Running on the first node.deployed-triggered check) is
+	// validation Job (always Running on the dispatcher's first check) is
 	// polled until terminal instead of being checked once and dropped. The Job
 	// metadata is only needed to route a terminal result, so it is fetched after
 	// this check — a Job spends most of its checks Running, and skipping the extra

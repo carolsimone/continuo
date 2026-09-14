@@ -11,30 +11,6 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// ParseNodeDeployed decodes a node.deployed:v1 message into a CheckJobStatus.
-// The typed event travels in the JSON `payload` field; its task-level retry
-// count is named task_retry_count.
-func ParseNodeDeployed(msg goredis.XMessage, defaultMaxRetries int) (command.CheckJobStatus, error) {
-	var wire pkgevents.NodeDeployed
-	if err := decodePayload(msg, &wire); err != nil {
-		return command.CheckJobStatus{}, err
-	}
-	return buildCheckJobStatus(checkJobFields{
-		taskID:       wire.TaskID,
-		scheduleID:   wire.ScheduleID,
-		scheduleName: wire.ScheduleName,
-		serviceName:  wire.ServiceName,
-		schemaName:   wire.SchemaName,
-		tableName:    wire.TableName,
-		jobName:      wire.JobName,
-		nodeType:     wire.NodeType,
-		imageTag:     wire.ImageTag,
-		operation:    wire.Operation,
-		retryCount:   wire.TaskRetryCount,
-		maxRetries:   wire.MaxRetries,
-	}, defaultMaxRetries)
-}
-
 // ParseCheckK8s decodes a check.k8s:v1 message into a CheckJobStatus. The typed
 // event travels in the JSON `payload` field; its task-level retry count is named
 // retry_count.

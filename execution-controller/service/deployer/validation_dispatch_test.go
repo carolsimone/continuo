@@ -153,10 +153,11 @@ var _ outbox.Repository = (*fakeOutboxRepo)(nil)
 
 func silentDispatcher(dep deploy.Deployer) *Dispatcher {
 	return &Dispatcher{
-		deployer: dep,
-		logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
-		backoff:  model.BackoffPolicy{Base: time.Second, Cap: time.Minute},
-		now:      time.Now,
+		deployer:   dep,
+		logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		backoff:    model.BackoffPolicy{Base: time.Second, Cap: time.Minute},
+		now:        time.Now,
+		checkDelay: 10 * time.Second,
 	}
 }
 
@@ -183,7 +184,7 @@ func TestDispatcher_DispatchOne_ValidationMode_CallsDeployValidation(t *testing.
 	assert.Equal(t, 0, fk.deployCalls, "production Deploy never invoked for a validation row")
 }
 
-func TestDispatcher_DispatchOne_ValidationMode_OnSuccess_WritesNodeDeployedTriggerOnly(t *testing.T) {
+func TestDispatcher_DispatchOne_ValidationMode_OnSuccess_WritesCheckDelayedTicketOnly(t *testing.T) {
 	fk := &fakeValidationDeployer{}
 	d := silentDispatcher(fk)
 	repo := &fakeDeploymentRepo{}
@@ -197,16 +198,16 @@ func TestDispatcher_DispatchOne_ValidationMode_OnSuccess_WritesNodeDeployedTrigg
 	assert.Equal(t, model.StatusDeployed, repo.saved[0].Status(), "success marks deployed")
 	assert.Equal(t, "", repo.saved[0].Outcome(), "no terminal outcome yet — it arrives via validation.node.completed:v1")
 
-	// Success writes EXACTLY ONE row: the node.deployed:v1 check trigger so the
+	// Success writes EXACTLY ONE row: the first check_delayed ticket so the
 	// job-status handler status-checks the validation Job. No task_status_updated
 	// / RUNNING announcement (that is production-only).
 	require.Len(t, outboxRepo.created, 1, "success writes exactly one outbox row")
 	e := outboxRepo.created[0]
-	assert.Equal(t, "node_deployed", e.EventType)
-	assert.Equal(t, streams.NodeDeployedV1, e.StreamName)
+	assert.Equal(t, "check_delayed", e.EventType)
+	assert.Equal(t, streams.CheckK8sV1, e.StreamName)
 	assert.Equal(t, "task", e.AggregateType)
 
-	// The trigger carries the validation job_name and the deterministic synthetic
+	// The ticket carries the validation job_name and the deterministic synthetic
 	// task/schedule UUIDs derived from (release_id, node_id).
 	wantTaskID, wantScheduleID := model.ValidationSyntheticIDs(vc.ReleaseID, vc.NodeID)
 	assert.Equal(t, wantTaskID, e.AggregateID, "outbox aggregate id is the synthetic task id")
@@ -577,7 +578,7 @@ func TestDispatcher_DispatchOne_SeedBuildMode_CallsDeploySeedBuild(t *testing.T)
 	assert.Equal(t, 0, fk.deployCalls, "production Deploy never invoked for a seed-build row")
 }
 
-func TestDispatcher_DispatchOne_SeedBuildMode_OnSuccess_MarksDeployedAndWritesNodeDeployedTrigger(t *testing.T) {
+func TestDispatcher_DispatchOne_SeedBuildMode_OnSuccess_MarksDeployedAndWritesCheckDelayedTicket(t *testing.T) {
 	fk := &fakeValidationDeployer{}
 	d := silentDispatcher(fk)
 	repo := &fakeDeploymentRepo{}
@@ -591,14 +592,14 @@ func TestDispatcher_DispatchOne_SeedBuildMode_OnSuccess_MarksDeployedAndWritesNo
 	assert.Equal(t, model.StatusDeployed, repo.saved[0].Status(), "success marks deployed")
 	assert.Equal(t, "", repo.saved[0].Outcome(), "no terminal outcome yet — arrives via seed.build.node.completed:v1")
 
-	// Success writes exactly one outbox row: the node.deployed:v1 trigger.
+	// Success writes exactly one outbox row: the first check_delayed ticket.
 	require.Len(t, outboxRepo.created, 1, "success writes exactly one outbox row")
 	e := outboxRepo.created[0]
-	assert.Equal(t, "node_deployed", e.EventType)
-	assert.Equal(t, streams.NodeDeployedV1, e.StreamName)
+	assert.Equal(t, "check_delayed", e.EventType)
+	assert.Equal(t, streams.CheckK8sV1, e.StreamName)
 	assert.Equal(t, "task", e.AggregateType)
 
-	// Trigger carries deterministic synthetic task/schedule UUIDs from (release_id, node_id).
+	// The ticket carries deterministic synthetic task/schedule UUIDs from (release_id, node_id).
 	wantTaskID, wantScheduleID := model.ValidationSyntheticIDs(vc.ReleaseID, vc.NodeID)
 	assert.Equal(t, wantTaskID, e.AggregateID, "outbox aggregate id is the synthetic task id")
 	var payload struct {
@@ -689,7 +690,7 @@ func TestDispatcher_DispatchOne_CompileMode_CallsDeployCompile(t *testing.T) {
 	assert.Equal(t, 0, fk.seedBuildCalls, "DeploySeedBuild never invoked for a compile row")
 }
 
-func TestDispatcher_DispatchOne_CompileMode_OnSuccess_MarksDeployedAndWritesNodeDeployedTrigger(t *testing.T) {
+func TestDispatcher_DispatchOne_CompileMode_OnSuccess_MarksDeployedAndWritesCheckDelayedTicket(t *testing.T) {
 	fk := &fakeValidationDeployer{}
 	d := silentDispatcher(fk)
 	repo := &fakeDeploymentRepo{}
@@ -703,11 +704,11 @@ func TestDispatcher_DispatchOne_CompileMode_OnSuccess_MarksDeployedAndWritesNode
 	assert.Equal(t, model.StatusDeployed, repo.saved[0].Status(), "success marks deployed")
 	assert.Equal(t, "", repo.saved[0].Outcome(), "no terminal outcome yet — arrives via compile.node.completed:v1")
 
-	// Success writes exactly one outbox row: the node.deployed:v1 trigger.
+	// Success writes exactly one outbox row: the first check_delayed ticket.
 	require.Len(t, outboxRepo.created, 1, "success writes exactly one outbox row")
 	e := outboxRepo.created[0]
-	assert.Equal(t, "node_deployed", e.EventType)
-	assert.Equal(t, streams.NodeDeployedV1, e.StreamName)
+	assert.Equal(t, "check_delayed", e.EventType)
+	assert.Equal(t, streams.CheckK8sV1, e.StreamName)
 }
 
 func TestDispatcher_DispatchOne_CompileMode_OnPermanentFailure_RecordsOutcomeFailedAndRunsGate(t *testing.T) {

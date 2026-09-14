@@ -34,8 +34,6 @@ const (
 	QueryModelV1 = "query.model:v1"
 	// RetryTaskV1 — Retry trigger for tasks; produced and consumed by execution-controller.
 	RetryTaskV1 = "retry.task:v1"
-	// NodeDeployedV1 — Pod-deploy intent emitted after a Job is created; consumed by the job-status handler to start watching it.
-	NodeDeployedV1 = "node.deployed:v1"
 	// CheckK8sV1 — Delayed status-check tickets; a promoter moves due tickets from the delay queue into the stream.
 	CheckK8sV1 = "check.k8s:v1"
 	// TaskFailedV1 — Terminal task failure emitted by execution-controller.
@@ -116,8 +114,6 @@ const (
 	ExecutorQueryModel = "executor-query-model"
 	// ExecutorRetry — execution-controller consumer group on retry.task:v1.
 	ExecutorRetry = "executor-retry"
-	// K8sDeployed — execution-controller consumer group on node.deployed:v1.
-	K8sDeployed = "k8s-deployed"
 	// K8sCheckStatus — execution-controller consumer group on check.k8s:v1.
 	K8sCheckStatus = "k8s-check-status"
 	// OrchestratorScheduleCancelled — orchestrator consumer group on schedule.cancelled:v1.
@@ -190,7 +186,6 @@ var All = []string{
 	RunFinalizedV1,
 	QueryModelV1,
 	RetryTaskV1,
-	NodeDeployedV1,
 	CheckK8sV1,
 	TaskFailedV1,
 	OutboxDeadLetterV1,

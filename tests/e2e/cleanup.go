@@ -18,9 +18,9 @@ func cleanupTestData(t *testing.T, ctx context.Context, clients *testClients, sc
 	cleanupNeo4j(t, ctx, clients, scheduleName)
 
 	// Clean Redis streams before Postgres dedup tables: deleting message_processing
-	// while the check consumers still have pending node.deployed:v1 / check.k8s:v1
-	// messages re-enables those messages and can trigger replays that recreate
-	// execution_outbox rows before the streams are gone.
+	// while the check consumer still has pending check.k8s:v1 messages re-enables
+	// those messages and can trigger replays that recreate execution_outbox rows
+	// before the streams are gone.
 	cleanupRedis(t, ctx, clients)
 
 	// Clean PostgreSQL databases
@@ -107,7 +107,6 @@ func cleanupRedis(t *testing.T, ctx context.Context, clients *testClients) {
 	streams := []string{
 		"scheduler.started:v1",
 		"query.model:v1",
-		"node.deployed:v1",
 		"check.k8s:v1",
 		"retry.task:v1",
 		"task.failed:v1",

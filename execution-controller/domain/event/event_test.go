@@ -28,7 +28,7 @@ func TestNodeUpdated_ToMap(t *testing.T) {
 
 func TestEventTypesAreDistinctAndComplete(t *testing.T) {
 	all := []string{
-		EventTypeTaskStatusUpdated, EventTypeTaskExecutionRecorded, EventTypeNodeDeployed,
+		EventTypeTaskStatusUpdated, EventTypeTaskExecutionRecorded,
 		EventTypeNodeUpdated, EventTypeTaskRetry, EventTypeTaskFailed, EventTypeCheckDelayed,
 		EventTypeValidationNodeCompleted, EventTypeSeedBuildNodeCompleted, EventTypeCompileNodeCompleted,
 	}

@@ -72,38 +72,6 @@ func TestPublisher_TaskStatusUpdated(t *testing.T) {
 	assert.Equal(t, id.String(), v["outbox_entry_id"])
 }
 
-func TestPublisher_NodeDeployed(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	r := newRedis(t)
-	pub := publisher.NewOutboxPublisher(r, logger)
-
-	payload, err := json.Marshal(serialization.JobDeployedFromDomain(event.JobDeployed{
-		TaskID: "t1", ScheduleID: "s1", JobName: "j", NodeType: "dbt-model",
-		ImageTag: "sha-abc", Operation: "test", TaskRetryCount: 2, MaxRetries: 5,
-	}))
-	require.NoError(t, err)
-
-	id := uuid.New()
-	require.NoError(t, pub.Publish(context.Background(), &outbox.Entry{
-		ID: id, EventType: "node_deployed", StreamName: streams.NodeDeployedV1, Payload: payload,
-	}))
-
-	v := lastEntryFields(t, r, streams.NodeDeployedV1)
-	// node.deployed:v1 carries a typed JSON payload; outbox_entry_id is a flat sibling.
-	assert.Equal(t, id.String(), v["outbox_entry_id"])
-	_, hasFlatJobName := v["job_name"]
-	assert.False(t, hasFlatJobName, "business fields move into the typed payload, not flat keys")
-
-	payloadStr, ok := v["payload"].(string)
-	require.True(t, ok, "expected a string payload field")
-	var nd pkgevents.NodeDeployed
-	require.NoError(t, json.Unmarshal([]byte(payloadStr), &nd))
-	assert.Equal(t, pkgevents.NodeDeployed{
-		TaskID: "t1", ScheduleID: "s1", JobName: "j", NodeType: "dbt-model",
-		ImageTag: "sha-abc", Operation: "test", TaskRetryCount: 2, MaxRetries: 5,
-	}, nd)
-}
-
 func TestPublisher_NodeUpdatedFailed(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	r := newRedis(t)
@@ -213,29 +181,6 @@ func TestPublisher_UnknownEventType_IsTransient(t *testing.T) {
 		"unknown event_type must be transient (plain error), not ErrPermanent")
 }
 
-// TestPublisher_NodeDeployed_OutOfRangeMaxRetries_IsPermanent guards Fix #5:
-// an out-of-range numeric field on a known, well-formed event_type is a
-// deterministic bad payload — retrying it can never succeed — so it must be
-// classified as pkgevents.ErrPermanent.
-func TestPublisher_NodeDeployed_OutOfRangeMaxRetries_IsPermanent(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	r := newRedis(t)
-	pub := publisher.NewOutboxPublisher(r, logger)
-
-	payload, err := json.Marshal(serialization.JobDeployedFromDomain(event.JobDeployed{
-		TaskID: "t1", ScheduleID: "s1", JobName: "j", NodeType: "dbt-model",
-		ImageTag: "sha-abc", MaxRetries: 1 << 40, // exceeds int32 range
-	}))
-	require.NoError(t, err)
-
-	pubErr := pub.Publish(context.Background(), &outbox.Entry{
-		ID: uuid.New(), EventType: "node_deployed", StreamName: streams.NodeDeployedV1, Payload: payload,
-	})
-	require.Error(t, pubErr)
-	assert.True(t, errors.Is(pubErr, pkgevents.ErrPermanent),
-		"out-of-range max_retries must be permanent (ErrPermanent), not retried forever")
-}
-
 // TestPublisher_ContractAllHandledEventTypes is a regression guard that asserts
 // every event_type this service's outbox rows carry — from the dispatcher, the
 // job-status handler, and every other emit site — does NOT return "unknown
@@ -263,11 +208,6 @@ func TestPublisher_ContractAllHandledEventTypes(t *testing.T) {
 			eventType:  event.EventTypeTaskExecutionRecorded,
 			streamName: streams.TaskExecutionRecordedV1,
 			payload:    mustMarshal(t, pkgevents.TaskExecutionRecorded{TaskID: "t1", JobName: "j1"}),
-		},
-		{
-			eventType:  "node_deployed",
-			streamName: streams.NodeDeployedV1,
-			payload:    mustMarshal(t, serialization.JobDeployedFromDomain(event.JobDeployed{TaskID: "t1", ScheduleID: "s1", JobName: "j1", NodeType: "dbt-model", ImageTag: "sha-abc"})),
 		},
 		{
 			eventType:  "node_updated",

@@ -23,7 +23,6 @@ var forbiddenEventTypeLiterals = map[string]bool{
 	"run_entries_dispatch_failed": true,
 	"release_promoted":            true,
 	"task_status_updated":         true,
-	"node_deployed":               true,
 	"node_updated":                true,
 	"task_execution_recorded":     true,
 	"task_retry":                  true,

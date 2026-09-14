@@ -151,15 +151,6 @@ streams:
         group: executor-retry
         const: ExecutorRetry
 
-  - name: node.deployed:v1
-    const: NodeDeployedV1
-    description: Pod-deploy intent emitted after a Job is created; consumed by the job-status handler to start watching it.
-    producers: [execution-controller]
-    consumers:
-      - service: execution-controller
-        group: k8s-deployed
-        const: K8sDeployed
-
   - name: check.k8s:v1
     const: CheckK8sV1
     description: Delayed status-check tickets; a promoter moves due tickets from the delay queue into the stream.

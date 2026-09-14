@@ -236,10 +236,10 @@ func waitValidationRowsDue(t *testing.T, db *sqlx.DB, releaseID string) {
 // TestValidationPipeline_EndToEnd drives the whole dispatch side of the
 // validation pipeline against testcontainer Postgres with a fake K8s deployer:
 // validation.requested:v1 → per-node deployments → dispatch (validation Jobs +
-// node.deployed:v1 triggers) → simulated per-node terminals → aggregate gating →
+// first check_delayed tickets) → simulated per-node terminals → aggregate gating →
 // exactly-once validation.result:v1 (kind=complete). The validation.node.completed:v1
 // terminals are SIMULATED here exactly as the job-status handler would emit them
-// after observing the node.deployed trigger; the routing itself is covered by
+// after observing the first check ticket; the routing itself is covered by
 // job_status_handler_test.go. This test owns the dispatch side.
 func TestValidationPipeline_EndToEnd(t *testing.T) {
 	db, cleanup := setupPostgres(t)
@@ -268,7 +268,7 @@ func TestValidationPipeline_EndToEnd(t *testing.T) {
 	}
 
 	// Step 3: dispatch the batch. Each row → a DeployValidation call + a
-	// node.deployed:v1 trigger; rows move to status=deployed; NO terminal yet.
+	// first check_delayed ticket; rows move to status=deployed; NO terminal yet.
 	// Wait for the rows to be due first: next_attempt_at is stamped with the Go
 	// process clock while GetDueBatch compares against the DB's NOW(), and on a
 	// VM-backed Docker host (colima) those can differ by tens of ms. Production
@@ -297,10 +297,10 @@ func TestValidationPipeline_EndToEnd(t *testing.T) {
 		assert.Equal(t, candidateSchema, s.CandidateSchema, "candidate schema threaded to the Job")
 	}
 
-	// node.deployed:v1 trigger: one per dispatched validation Job so the
+	// First check_delayed ticket: one per dispatched validation Job so the
 	// job-status handler status-checks each (it never polls).
-	assert.Equal(t, 3, countByStream(t, db, streams.NodeDeployedV1),
-		"one node.deployed:v1 trigger per dispatched validation Job")
+	assert.Equal(t, 3, countByStream(t, db, streams.CheckK8sV1),
+		"one check_delayed ticket per dispatched validation Job")
 	assert.Equal(t, 3, countDeployments(t, db,
 		`SELECT COUNT(*) FROM deployments WHERE mode='validation' AND release_id=$1 AND status='deployed'`, releaseID),
 		"all rows now deployed")

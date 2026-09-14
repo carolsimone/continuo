@@ -336,7 +336,7 @@ func TestHandleFailedWithRetry_OperationFromDurableCommand_VanishedJob(t *testin
 		TaskID:     uuid.New(),
 		ScheduleID: uuid.New(),
 		JobName:    "job-abc",
-		Operation:  "test", // durable, carried on node.deployed:v1 / check.k8s:v1
+		Operation:  "test", // durable, carried on check.k8s:v1
 		RetryCount: 0,
 		MaxRetries: 3,
 	}

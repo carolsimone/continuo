@@ -29,7 +29,7 @@ func TestPublisher_PublishesDeadLetterRow(t *testing.T) {
 		AggregateID:   uuid.New(),
 		EventType:     outbox.DeadLetterEventType,
 		StreamName:    streams.OutboxDeadLetterV1,
-		Payload:       []byte(`{"failure_kind":"permanent","original_event_type":"node_deployed"}`),
+		Payload:       []byte(`{"failure_kind":"permanent","original_event_type":"check_delayed"}`),
 	}
 	require.NoError(t, pub.Publish(context.Background(), entry))
 
