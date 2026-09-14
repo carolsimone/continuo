@@ -36,7 +36,7 @@ then apply to the host itself.
 | [AWS CLI](https://docs.aws.amazon.com/cli/) | Uploading the python service's artifacts to the bundled MinIO (chapter 4 of the [Run dbt and Python projects in continuo](run-projects-in-continuo.md) guide) | `brew install awscli` |
 
 **Room to run it.** continuo brings its own PostgreSQL, Redis, Neo4j, MinIO and
-identity provider in this mode, plus ten of its own services, and then runs your
+identity provider in this mode, plus nine of its own services, and then runs your
 nodes as Kubernetes Jobs alongside all of that. Give the container runtime
 **4 CPUs, 12 GiB of memory and a 60 GB disk** — 8 GiB of memory is the bare
 floor, and only if nothing else large is running. Close other heavy containers,
@@ -105,7 +105,7 @@ kubectl -n continuo get pods -w
 ```
 
 That single `helm install` brings up PostgreSQL, Redis, Neo4j, MinIO, an
-identity provider, and continuo's ten services. It is a quickstart layout meant
+identity provider, and continuo's nine services. It is a quickstart layout meant
 for evaluation — one static login, no backups, no high availability. Production
 installs bring their own datastores; see
 [deploy/README.md](../deploy/README.md).
