@@ -25,7 +25,7 @@ Domain purity has its own pair of guards. `TestDomainPackagesDoNotImportStreams`
 
 `topology-controller` (Python) follows the same rule: its application-layer ports live in `topology-controller/service/ports.py` (`ManifestSourcePort`, `CandidatePublisherPort`, `CodeBundleUploaderPort`, and the two candidate-artifact uploader ports), the `adapters/*` modules implement them structurally, and the parse handler depends only on the ports. An AST guard, `test_service_imports_no_adapters.py`, fails if any module under `service/` imports an `adapters.*` module, and `test_adapters_conform_to_ports.py` checks each concrete adapter still satisfies its `runtime_checkable` port — together the Python equivalent of the Go guard, since this service has no static type checker in CI.
 
-Every `*UnitOfWork` shares the same transaction lifecycle contract, so an instance can be reused safely across messages: `Commit` and `Rollback` clear the in-flight transaction state unconditionally, even when the underlying operation fails. `database/sql` marks a transaction done even when its `Commit` returns an error, so a handler's deferred `Rollback` that follows a failed `Commit` sees `sql.ErrTxDone`; `Rollback` treats that as a successful no-op. The result is that a single failed commit can never leave a `UnitOfWork` stuck in "transaction already in progress" — the next `Begin` always starts cleanly, whether the service reuses one long-lived instance per consumer (orchestrator) or constructs one per message (state, k8s-controller, executor-controller, release-controller).
+Every `*UnitOfWork` shares the same transaction lifecycle contract, so an instance can be reused safely across messages: `Commit` and `Rollback` clear the in-flight transaction state unconditionally, even when the underlying operation fails. `database/sql` marks a transaction done even when its `Commit` returns an error, so a handler's deferred `Rollback` that follows a failed `Commit` sees `sql.ErrTxDone`; `Rollback` treats that as a successful no-op. The result is that a single failed commit can never leave a `UnitOfWork` stuck in "transaction already in progress" — the next `Begin` always starts cleanly, whether the service reuses one long-lived instance per consumer (orchestrator) or constructs one per message (state, execution-controller, release-controller).
 
 ## Startup Environment Validation
 
@@ -53,7 +53,7 @@ The process exits before any connection is attempted, so missing-config failures
 
 ## Graceful Shutdown Convention
 
-`state`, `orchestrator`, `executor-controller`, `k8s-controller`, and `agent-chat` drive process shutdown through the shared `pkg/lifecycle.ApplicationLifecycle`. `release-controller`, `remediation`, and `agent-remediation` are not on it; each installs `signal.Notify` directly in its own `main` instead.
+`state`, `orchestrator`, `execution-controller`, and `agent-chat` drive process shutdown through the shared `pkg/lifecycle.ApplicationLifecycle`. `release-controller`, `remediation`, and `agent-remediation` are not on it; each installs `signal.Notify` directly in its own `main` instead.
 
 On SIGTERM/SIGINT, `ApplicationLifecycle` runs an ordered sequence whose total duration is bounded by `SHUTDOWN_GRACE` (default 15s; `agent-chat` defaults to 10s) for handlers that honor their context — a `Close()`-style handler that ignores `ctx` is not itself bounded by it:
 
@@ -72,7 +72,7 @@ Three properties of this sequence matter beyond the mechanics:
 
 ## Bootstrap Migration Image
 
-The dedicated Flyway image artifact runs as the `pre-upgrade` Helm hook for `continuo-app` and both provisions and migrates the per-service Postgres databases. For each service in `{state, executor, orchestrator, k8s, release}` it idempotently creates `continuo_<service>` if it does not already exist, then applies the SQL files under `db/migration/<service>` against that database. `db/migrate-all.sh` holds this database list as a single source of truth driving both the create step and the migrate step, so they cannot drift.
+The dedicated Flyway image artifact runs as the `pre-upgrade` Helm hook for `continuo-app` and both provisions and migrates the per-service Postgres databases. For each service in `{state, execution, orchestrator, release, agent_chat, remediation, agent_remediation}` it idempotently creates `continuo_<service>` if it does not already exist, then applies the SQL files under `db/migration/<service>` against that database. `db/migrate-all.sh` holds this database list as a single source of truth driving both the create step and the migrate step, so they cannot drift.
 
 Provisioning databases inside the job — rather than relying solely on the Postgres `initdb` scripts, which run only when the data directory is first initialised — keeps provisioning correct on long-lived volumes: adding a new database never requires a manual `CREATE DATABASE` on an existing cluster. The migration user owns the databases it creates, so no additional grants are required. The image owns no runtime state; it is only the packaging and entrypoint for those migrations.
 
@@ -113,38 +113,30 @@ Provisioning databases inside the job — rather than relying solely on the Post
   established `state.CancelSchedule` cancellation pathway — no new
   terminal state introduced. See sequence flow §8.
 
-## `executor-controller`
+## `execution-controller`
 
 | Category | Owned / used surface |
 |---|---|
-| Durable state | `executor_deployments`, `executor_outbox`, `message_processing`, `cancelled_schedules`, `validation_aggregates` |
+| Durable state | `deployments`, `execution_outbox`, `message_processing`, `cancelled_schedules`, `validation_aggregates` |
 | gRPC server methods owned | none |
-| Redis consumes | `query.model:v1`, `retry.task:v1`, `schedule.cancelled:v1`, `validation.requested:v1`, `validation.node.completed:v1`, `validation.result:v1` (kind=complete, for candidate schema teardown) |
-| Redis produces | `node.deployed:v1`, `task.status.updated:v1` (FAILED only, on the never-deployed terminal dispatch failure — k8s-controller owns RUNNING and the pod terminal), `node.updated:v1` (FAILED on terminal dispatch failure only), `validation.result:v1` (unified validation leg: `kind=node` per-node projections as each node settles, then a trailing `kind=complete` per-release decision) |
-| External DB writes | None directly. Candidate-schema create/drop run as one-shot engine-image K8s Jobs (`CandidateSchemaCreator`/`CandidateSchemaCleaner` schedule them), so the executor holds no warehouse connection. The dbt job pods it creates for compile/seed-build/run receive the warehouse connection by `envFrom` of the operator-owned Secret named by `VALIDATION_WAREHOUSE_SECRET`; team dbt profiles read the Secret's engine-native keys. |
+| Redis consumes | `query.model:v1`, `retry.task:v1`, `schedule.cancelled:v1`, `validation.requested:v1`, `validation.node.completed:v1`, `validation.result:v1` (kind=complete, for candidate schema teardown), `seed.build.requested:v1`, `seed.build.node.completed:v1`, `compile.requested:v1`, `compile.node.completed:v1`, `pipeline.run.finished:v1`, `release.promoted:v1`, `release.rejected:v1`, `node.deployed:v1`, `check.k8s:v1` |
+| Redis produces | `node.deployed:v1`, `check.k8s:v1` (via the delay queue), `task.status.updated:v1` (RUNNING + SUCCEEDED/FAILED from the job-status handler, plus FAILED on the never-deployed terminal dispatch failure), `task.execution.recorded:v1`, `node.updated:v1`, `retry.task:v1`, `task.failed:v1`, `validation.node.completed:v1`, `seed.build.node.completed:v1`, `compile.node.completed:v1`, `validation.result:v1` (unified validation leg: `kind=node` per-node projections as each node settles, then a trailing `kind=complete` per-release decision), `seed.build.completed:v1`, `compile.completed:v1` |
+| External DB writes | None directly. Candidate-schema create/drop run as one-shot engine-image K8s Jobs (`CandidateSchemaCreator`/`CandidateSchemaCleaner` schedule them), so execution-controller holds no warehouse connection. The dbt job pods it creates for compile/seed-build/run receive the warehouse connection by `envFrom` of the operator-owned Secret named by `VALIDATION_WAREHOUSE_SECRET`; team dbt profiles read the Secret's engine-native keys. |
+| S3 | write — pod logs and structured results to `logs/task-executions/` and `run-results/task-executions/`, the compile leg's manifest and parse-cache artifacts; read — the parse-cache artifacts on production-run and seed-build Jobs |
 | Outbound gRPC calls | none |
 
 ### Invariants
 
-- **Inbound handlers write only to `executor_deployments`.** `QueryModelHandler` and `RetryTaskHandler` commit a `pending` row inside their Unit-of-Work transaction. No Kubernetes I/O occurs during inbound message handling.
+- **Inbound handlers write only to `deployments`.** `QueryModelHandler` and `RetryTaskHandler` commit a `pending` row inside their Unit-of-Work transaction. No Kubernetes I/O occurs during inbound message handling.
 - **Concurrency is capped by live K8s Jobs.** `deployer.Dispatcher` counts Jobs with label `app=dbt-job` and `.status.active > 0` on every tick. It processes at most `max(0, MAX_CONCURRENT_JOBS - active)` rows per cycle; rows beyond the cap remain `pending`.
-- **Validation rows start `blocked` or `pending`.** Each per-node `executor_deployments` row written by `ValidationRequestedHandler` starts `pending` (no in-set upstreams) or `blocked` (has in-set upstreams — intra- or cross-service — that are not yet `ok`). The dispatcher only dispatches `pending` rows.
+- **Validation rows start `blocked` or `pending`.** Each per-node `deployments` row written by `ValidationRequestedHandler` starts `pending` (no in-set upstreams) or `blocked` (has in-set upstreams — intra- or cross-service — that are not yet `ok`). The dispatcher only dispatches `pending` rows.
 - **Topological unblock/skip on node completion.** `ValidationNodeCompletedHandler` transitions `blocked` downstreams whose every in-set upstream is now `ok` to `pending` (ready for dispatch); on a node failure it marks transitively `blocked` downstreams `skipped` (terminal non-`ok`). `blocked` is non-terminal; `skipped` fails the release.
-- **Permanent dispatch failures bypass the retry budget.** `dispatchRow` classifies `CreateQueryJob` errors via `errors.Is(err, events.ErrPermanent)`. On match, `writeFailed` is called immediately regardless of remaining retries, writing `task.status.updated:v1` FAILED + `node.updated:v1` FAILED outbox rows and marking the deployment `failed`.
-- **Retry-exhaustion uses the same propagation.** When `retry_count + 1 >= max_retries` on a transient error, `writeFailed` is called, so transient errors that exhaust the retry budget also reach orchestrator's `HandleNodeCompleted` (via `node.updated:v1`) and state's `TaskStatusUpdatedHandler` (via `task.status.updated:v1`).
-- **Uniform outbox publisher.** The executor `OutboxPublisher` is a marshal-and-XADD; it has no `TerminalFailureHook` and carries no K8s logic. All failure signalling is performed upstream by the dispatcher.
+- **Permanent dispatch failures bypass the retry budget.** `dispatchOne` classifies `CreateQueryJob` errors via `errors.Is(err, events.ErrPermanent)`. On match, the terminal-failure path is taken immediately regardless of remaining retries, writing `task.status.updated:v1` FAILED + `node.updated:v1` FAILED outbox rows and marking the deployment `failed`.
+- **Retry-exhaustion uses the same propagation.** When `retry_count >= max_retries` on a production Job's terminal failure, the job-status handler writes the same FAILED rows, so transient errors that exhaust the retry budget also reach orchestrator's `HandleNodeCompleted` (via `node.updated:v1`) and state's `TaskStatusUpdatedHandler` (via `task.status.updated:v1`).
+- **Uniform outbox publisher.** `OutboxPublisher` is a marshal-and-XADD (or a delay-queue enqueue for `check_delayed`); it has no `TerminalFailureHook` and carries no Job-creation or Job-observation logic. All failure signalling is performed upstream by the dispatcher or the job-status handler.
 - **Candidate schema is created once, by the engine.** The `validation.requested:v1` binding calls `CandidateSchemaCreator.EnsureCandidateSchema` before enqueuing any node, which schedules a one-shot engine-image `ensure_schema` Job (warehouse Secret via `envFrom`) and blocks on it; the engine adapter owns idempotency (the postgres adapter takes a session advisory lock and tolerates a duplicate schema). The schema must be created explicitly because node validation is materialized by the engine directly — dbt runs only for seeds — so a nodes-only release never invokes dbt to create it. A failure aborts the message before any deployment row is written, and the message is retried.
 - **Candidate schema teardown.** A dedicated consumer on `validation.result:v1` (group `executor-validation-result-teardown`) reacts to the `kind=complete` message and calls `CandidateSchemaCleaner.DropCandidateSchema`, which schedules a one-shot engine-image `drop_schema` Job; this drops the shared `_candidate_<release>` schema regardless of pass/fail outcome. A teardown failure is logged and ACKed so a leftover schema never blocks release finalization.
-
-## `k8s-controller`
-
-| Category | Owned / used surface |
-|---|---|
-| Durable state | `k8s_outbox`, `message_processing` |
-| gRPC server methods owned | none |
-| Redis consumes | `node.deployed:v1`, `check.k8s:v1`, `schedule.cancelled:v1` |
-| Redis produces | `check.k8s:v1`, `retry.task:v1`, `task.failed:v1`, `task.status.updated:v1` (RUNNING + SUCCEEDED/FAILED — the full pod lifecycle), `task.execution.recorded:v1`, `node.updated:v1` |
-| Outbound gRPC calls | none |
+- **The job-status handler is the sole producer of the running/terminal pod lifecycle.** It announces `task.status.updated:v1` RUNNING the first time it observes a Job running, and the pod's terminal SUCCEEDED/FAILED; the dispatcher announces FAILED only on the never-deployed path, before any pod exists.
 
 ## `topology-controller`
 

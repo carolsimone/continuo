@@ -190,8 +190,7 @@ Service dossiers:
 
 - [state.md](docs/arch/services/state.md)
 - [orchestrator.md](docs/arch/services/orchestrator.md)
-- [executor-controller.md](docs/arch/services/executor-controller.md)
-- [k8s-controller.md](docs/arch/services/k8s-controller.md)
+- [execution-controller.md](docs/arch/services/execution-controller.md)
 - [release-controller.md](docs/arch/services/release-controller.md)
 - [remediation.md](docs/arch/services/remediation.md)
 - [agent-remediation.md](docs/arch/services/agent-remediation.md)
@@ -202,7 +201,7 @@ Service dossiers:
 
 The list above is every long-running service in the system — each owns a
 process, and typically a datastore and/or a gRPC/HTTP surface. Everything
-below is a **Job image**: a container `executor-controller` runs to
+below is a **Job image**: a container `execution-controller` runs to
 completion as a one-shot Kubernetes `Job` and then discards. Job images have
 no owned datastore, no gRPC/HTTP surface, and a small, fixed set of behaviors,
 so they change far less often than the services above:

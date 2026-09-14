@@ -192,7 +192,7 @@ additionally carry `candidate_artifact_uri` plus the candidate topology's
 Consumers must not assume `stage` is always `validation`
 — every leg reuses this single stream. The remediation classifier
 (group `remediation-release-rejected`) triages the failing set;
-executor-controller (group `executor-release-rejected`) consumes it too, as an
+execution-controller (group `executor-release-rejected`) consumes it too, as an
 idempotent candidate-schema teardown backstop, dropping `candidate_schema` when
 the payload carries one and it is not already reclaimed by the
 `pipeline.run.finished:v1` or `validation.result:v1` path.
@@ -207,11 +207,11 @@ is `{run_id, run_kind, outcome, service, candidate_schema, verifies_release_id,
 attempt, finished_at}`; every field is always present regardless of kind — a
 candidate carries an empty `verifies_release_id` and a zero `attempt` rather than
 omitting the keys, so one consumer decodes the same shape whichever kind ended.
-`candidate_schema` is always named, so the sole consumer — executor-controller
+`candidate_schema` is always named, so the sole consumer — execution-controller
 (group `executor-pipeline-run-finished`) — can drop that schema on receipt
 whatever the outcome; a drop of a schema already gone (the `validation.result:v1`
 teardown got there first) is a no-op. See `docs/arch/services/release-controller.md`
-and `docs/arch/services/executor-controller.md` for the full behavior.
+and `docs/arch/services/execution-controller.md` for the full behavior.
 
 **`remediation.retry_requested:v1`** — emitted by release-controller when a
 human asks a rejected release to "try again" (`POST
@@ -273,7 +273,7 @@ absent one falls back to the orchestrator's `GetNodeLocation` RPC. See
 **`outbox.dead_letter:v1`** — emitted by every outbox-owning service's
 `pkg/outbox.Processor` for a terminal outbox row: a permanent payload error,
 or a transient error whose retry budget was exhausted. Producers: `state`,
-`orchestrator`, `executor-controller`, `k8s-controller`, `release-controller`,
+`orchestrator`, `execution-controller`, `release-controller`,
 `remediation`, `agent-remediation`. The payload carries
 `original_event_type`, `original_stream`, `original_aggregate_id`,
 `failure_kind` (`permanent` | `transient_exhausted`), `error`, `attempts`,

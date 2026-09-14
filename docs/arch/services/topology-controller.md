@@ -12,7 +12,7 @@ The service runs a single Redis consumer.
 
 None. Does not own Postgres or Neo4j.
 
-Writes each node's candidate artifact to S3 under the key prefix `candidate-sql/<release_id>/candidate_<unique_id>.<sql|json>` — `.sql` for a dbt node's rewritten compiled SQL, `.json` for a python node's validation spec — plus one code-bundle contract document per release at `code-bundles/<release_id>/bundle.json`. Does not own the bucket; the S3 bucket is shared with `k8s-controller` (logs) and `release-controller` (prune-time delete of both prefixes). S3 writes are the only durable side-effect of the candidate parse; the in-memory cross-service registry is rebuilt from scratch for each `release.requested:v1` message and persisted nowhere.
+Writes each node's candidate artifact to S3 under the key prefix `candidate-sql/<release_id>/candidate_<unique_id>.<sql|json>` — `.sql` for a dbt node's rewritten compiled SQL, `.json` for a python node's validation spec — plus one code-bundle contract document per release at `code-bundles/<release_id>/bundle.json`. Does not own the bucket; the S3 bucket is shared with `execution-controller` (logs) and `release-controller` (prune-time delete of both prefixes). S3 writes are the only durable side-effect of the candidate parse; the in-memory cross-service registry is rebuilt from scratch for each `release.requested:v1` message and persisted nowhere.
 
 ## Inbound Interfaces
 
