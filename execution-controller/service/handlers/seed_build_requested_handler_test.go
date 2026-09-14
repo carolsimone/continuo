@@ -7,7 +7,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/domain/events"
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	"github.com/carolsimone/continuo/execution-controller/service/handlers"
-	"github.com/carolsimone/continuo/execution-controller/service/uow"
+	"github.com/carolsimone/continuo/execution-controller/test/fakes"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -16,7 +16,7 @@ import (
 
 func TestSeedBuildRequestedHandler_EnqueuesOneSeedBuildDeploymentPerSeed(t *testing.T) {
 	depl := &stubDeploymentsRepo{}
-	u := &uow.FakeUnitOfWork{Deployments: depl}
+	u := &fakes.FakeUnitOfWork{Deployments: depl}
 
 	evt := events.SeedBuildRequested{
 		ReleaseID:       "rel-seed-2026",
@@ -68,7 +68,7 @@ func TestSeedBuildRequestedHandler_EnqueuesOneSeedBuildDeploymentPerSeed(t *test
 
 func TestSeedBuildRequestedHandler_MultipleSeeds(t *testing.T) {
 	depl := &stubDeploymentsRepo{}
-	u := &uow.FakeUnitOfWork{Deployments: depl}
+	u := &fakes.FakeUnitOfWork{Deployments: depl}
 
 	evt := events.SeedBuildRequested{
 		ReleaseID:       "rel-multi",
@@ -101,7 +101,7 @@ func TestSeedBuildRequestedHandler_MultipleSeeds(t *testing.T) {
 
 func TestSeedBuildRequestedHandler_MsgProcIDNilAllowed(t *testing.T) {
 	depl := &stubDeploymentsRepo{}
-	u := &uow.FakeUnitOfWork{Deployments: depl}
+	u := &fakes.FakeUnitOfWork{Deployments: depl}
 
 	evt := events.SeedBuildRequested{
 		ReleaseID:       "rel-nil",
@@ -124,7 +124,7 @@ func TestSeedBuildRequestedHandler_MsgProcIDNilAllowed(t *testing.T) {
 // task, which is what carries it onto the seed Job's pod spec.
 func TestSeedBuildRequestedHandler_ThreadsSourceOverlayURI(t *testing.T) {
 	depl := &stubDeploymentsRepo{}
-	u := &uow.FakeUnitOfWork{Deployments: depl}
+	u := &fakes.FakeUnitOfWork{Deployments: depl}
 
 	evt := events.SeedBuildRequested{
 		ReleaseID:       "verify-rel-seed-1-shop-a1",

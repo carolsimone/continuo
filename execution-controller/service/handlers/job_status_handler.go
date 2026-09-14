@@ -8,13 +8,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/carolsimone/continuo/k8s-controller/domain/command"
-	"github.com/carolsimone/continuo/k8s-controller/domain/event"
-	"github.com/carolsimone/continuo/k8s-controller/domain/model"
-	"github.com/carolsimone/continuo/k8s-controller/domain/repository"
-	"github.com/carolsimone/continuo/k8s-controller/serialization"
-	"github.com/carolsimone/continuo/k8s-controller/service/ports"
-	"github.com/carolsimone/continuo/k8s-controller/service/uow"
+	"github.com/carolsimone/continuo/execution-controller/domain/command"
+	"github.com/carolsimone/continuo/execution-controller/domain/event"
+	"github.com/carolsimone/continuo/execution-controller/domain/model"
+	"github.com/carolsimone/continuo/execution-controller/domain/repository"
+	"github.com/carolsimone/continuo/execution-controller/serialization"
+	"github.com/carolsimone/continuo/execution-controller/service/ports"
+	"github.com/carolsimone/continuo/execution-controller/service/uow"
 	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/num"
@@ -43,26 +43,15 @@ var seedBuildLabelNamespace = uuid.MustParse("c7a3e1d9-5f2b-4e6c-8d0a-1b4f7c2e9a
 // between compile, seed-build, and validation events for the same release.
 var compileLabelNamespace = uuid.MustParse("e2b8d4f6-1a3c-5e7f-9b0d-2c4e6a8f0b2d")
 
-// K8sStatusChecker defines interface for checking K8s job status
-type K8sStatusChecker interface {
-	GetJobStatus(ctx context.Context, namespace, jobName string) (*model.K8sPodResult, error)
-	GetPodLogs(ctx context.Context, namespace, jobName string, tailLines int64) (fullLog, tail string, err error)
-	// GetJobMeta returns the Job's labels and annotations. The `mode` label routes
-	// validation vs production; the raw release/node identity for a validation Job
-	// is read from the annotations (labels are sanitized and would desync the
-	// executor's outcome lookup).
-	GetJobMeta(ctx context.Context, namespace, jobName string) (labels, annotations map[string]string, err error)
-}
-
 // DefaultLogIOTimeout bounds the best-effort pod-log fetch and its S3 uploads
-// when HandlerConfig leaves LogIOTimeout unset. It must stay comfortably below
+// when JobStatusConfig leaves LogIOTimeout unset. It must stay comfortably below
 // the consumer's per-handler deadline: the log I/O runs before the terminal
 // outbox writes and shares their context, so whatever it spends is taken from
 // the budget those writes need to persist a task's outcome.
 const DefaultLogIOTimeout = 20 * time.Second
 
-// HandlerConfig contains handler configuration
-type HandlerConfig struct {
+// JobStatusConfig contains handler configuration
+type JobStatusConfig struct {
 	K8sNamespace          string
 	CheckDelaySeconds     int
 	ErrorMessageMaxLen    int
@@ -73,24 +62,24 @@ type HandlerConfig struct {
 	LogIOTimeout time.Duration
 }
 
-// CheckStatusHandler handles CheckJobStatus commands
-type CheckStatusHandler struct {
-	k8sClient          K8sStatusChecker
+// JobStatusHandler handles CheckJobStatus commands
+type JobStatusHandler struct {
+	k8sClient          ports.JobObserver
 	logUploader        ports.LogUploader
-	config             *HandlerConfig
+	config             *JobStatusConfig
 	cancelledSchedules repository.CancelledSchedulesRepository
 	logger             *slog.Logger
 }
 
-// NewCheckStatusHandler creates a new CheckStatusHandler
-func NewCheckStatusHandler(
-	k8sClient K8sStatusChecker,
+// NewJobStatusHandler creates a new JobStatusHandler
+func NewJobStatusHandler(
+	k8sClient ports.JobObserver,
 	logUploader ports.LogUploader,
-	config *HandlerConfig,
+	config *JobStatusConfig,
 	cancelledSchedules repository.CancelledSchedulesRepository,
 	logger *slog.Logger,
-) *CheckStatusHandler {
-	return &CheckStatusHandler{
+) *JobStatusHandler {
+	return &JobStatusHandler{
 		k8sClient:          k8sClient,
 		logUploader:        logUploader,
 		config:             config,
@@ -103,7 +92,7 @@ func NewCheckStatusHandler(
 // the transaction-scoped repositories on u. The binding owns the transaction
 // lifecycle and has already run dedup; msgProcID is accepted for signature
 // parity with the standardized handler shape and is currently unused.
-func (h *CheckStatusHandler) Handle(ctx context.Context, u uow.UnitOfWork, cmd command.CheckJobStatus, msgProcID uuid.UUID) error {
+func (h *JobStatusHandler) Handle(ctx context.Context, u uow.UnitOfWork, cmd command.CheckJobStatus, msgProcID uuid.UUID) error {
 	h.logger.Info("Checking K8s job status", "task_id", cmd.TaskID, "job_name", cmd.JobName)
 
 	result, err := h.k8sClient.GetJobStatus(ctx, h.config.K8sNamespace, cmd.JobName)
@@ -198,8 +187,8 @@ func (h *CheckStatusHandler) Handle(ctx context.Context, u uow.UnitOfWork, cmd c
 // Writes 3 canonical outbox rows in the transaction:
 //   - task_status_updated (SUCCEEDED)
 //   - task_execution_recorded
-//   - node_status_updated (→ node.updated:v1)
-func (h *CheckStatusHandler) handleSucceeded(ctx context.Context, u uow.UnitOfWork, cmd command.CheckJobStatus, result *model.K8sPodResult) error {
+//   - node_updated (→ node.updated:v1)
+func (h *JobStatusHandler) handleSucceeded(ctx context.Context, u uow.UnitOfWork, cmd command.CheckJobStatus, result *model.JobResult) error {
 	repo := u.OutboxRepo()
 
 	// A successful run's pod output is uploaded exactly as a failed one's is:
@@ -223,9 +212,9 @@ func (h *CheckStatusHandler) handleSucceeded(ctx context.Context, u uow.UnitOfWo
 		return fmt.Errorf("task_execution_recorded: %w", err)
 	}
 
-	// Row 3: node_status_updated → node.updated:v1
-	if err := h.writeNodeStatusUpdated(ctx, repo, cmd, "SUCCEEDED"); err != nil {
-		return fmt.Errorf("node_status_updated: %w", err)
+	// Row 3: node_updated → node.updated:v1
+	if err := h.writeNodeUpdated(ctx, repo, cmd, "SUCCEEDED"); err != nil {
+		return fmt.Errorf("node_updated: %w", err)
 	}
 
 	h.logger.Info("Job succeeded — outbox entries created",
@@ -241,16 +230,16 @@ func (h *CheckStatusHandler) handleSucceeded(ctx context.Context, u uow.UnitOfWo
 // the mode=validation label. It writes a single validation_node_completed outbox row
 // (→ validation.node.completed:v1) instead of the three production task-status rows.
 // release_id and node_id are read from the Job annotations (raw, unsanitized) so
-// they match the executor's executor_deployments key; outcome is derived from the
+// they match the dispatcher's executor_deployments key; outcome is derived from the
 // terminal status. An Unknown status is not terminal — the handler re-polls via the
 // shared check.k8s:v1 ticket so a Job that is briefly Unknown (e.g. pods not yet
 // scheduled) is re-checked rather than emitting a premature failure. Running is
 // handled by the shared re-poll before this function is reached.
-func (h *CheckStatusHandler) handleValidationTerminal(
+func (h *JobStatusHandler) handleValidationTerminal(
 	ctx context.Context,
 	u uow.UnitOfWork,
 	cmd command.CheckJobStatus,
-	result *model.K8sPodResult,
+	result *model.JobResult,
 	annotations map[string]string,
 ) error {
 	if result.Status == model.JobStatusUnknown {
@@ -304,14 +293,14 @@ func (h *CheckStatusHandler) handleValidationTerminal(
 // mode=seed_build label. It writes a single seed_build_node_completed outbox row
 // (→ seed.build.node.completed:v1) instead of the three production task-status rows.
 // release_id and node_id are read from the Job annotations (raw, unsanitized) so
-// they match the executor's executor_deployments key; outcome is derived from the
+// they match the dispatcher's executor_deployments key; outcome is derived from the
 // terminal status. Unknown status is not terminal — re-poll via the shared
 // check.k8s:v1 ticket. Running is handled before this function is reached.
-func (h *CheckStatusHandler) handleSeedBuildTerminal(
+func (h *JobStatusHandler) handleSeedBuildTerminal(
 	ctx context.Context,
 	u uow.UnitOfWork,
 	cmd command.CheckJobStatus,
-	result *model.K8sPodResult,
+	result *model.JobResult,
 	annotations map[string]string,
 ) error {
 	if result.Status == model.JobStatusUnknown {
@@ -365,17 +354,17 @@ func (h *CheckStatusHandler) handleSeedBuildTerminal(
 // mode=compile label. It writes a single compile_node_completed outbox row
 // (→ compile.node.completed:v1) instead of the three production task-status rows.
 // release_id and node_id are read from the Job annotations (raw, unsanitized) so
-// they match the executor's executor_deployments key; outcome is derived from the
+// they match the dispatcher's executor_deployments key; outcome is derived from the
 // terminal status. Unknown status is not terminal — re-poll via the shared
 // check.k8s:v1 ticket. Running is handled before this function is reached.
 // Unlike validation, no stdout result block is parsed — the manifest went to S3
 // via the compile Job's upload container, so outcome is purely the Job's success/failure.
 // dbt_log_uri and run_results_uri may be empty.
-func (h *CheckStatusHandler) handleCompileTerminal(
+func (h *JobStatusHandler) handleCompileTerminal(
 	ctx context.Context,
 	u uow.UnitOfWork,
 	cmd command.CheckJobStatus,
-	result *model.K8sPodResult,
+	result *model.JobResult,
 	annotations map[string]string,
 ) error {
 	if result.Status == model.JobStatusUnknown {
@@ -466,7 +455,7 @@ func compileArtifactPath(cmd command.CheckJobStatus) string {
 
 // artifactPath identifies which Job produced a log or run-results object; see
 // nodeArtifactPath and compileArtifactPath for the two shapes it takes.
-func (h *CheckStatusHandler) fetchAndUploadLogs(
+func (h *JobStatusHandler) fetchAndUploadLogs(
 	ctx context.Context,
 	cmd command.CheckJobStatus,
 	artifactPath string,
@@ -555,8 +544,8 @@ func (h *CheckStatusHandler) fetchAndUploadLogs(
 // Writes 3 canonical outbox rows in the transaction:
 //   - task_status_updated (FAILED)
 //   - task_execution_recorded
-//   - node_status_updated (→ node.updated:v1)
-func (h *CheckStatusHandler) handleFailedPermanent(ctx context.Context, u uow.UnitOfWork, cmd command.CheckJobStatus, result *model.K8sPodResult, retryCount int32) error {
+//   - node_updated (→ node.updated:v1)
+func (h *JobStatusHandler) handleFailedPermanent(ctx context.Context, u uow.UnitOfWork, cmd command.CheckJobStatus, result *model.JobResult, retryCount int32) error {
 	repo := u.OutboxRepo()
 	newRetryCount := retryCount
 
@@ -573,9 +562,9 @@ func (h *CheckStatusHandler) handleFailedPermanent(ctx context.Context, u uow.Un
 		return fmt.Errorf("task_execution_recorded: %w", err)
 	}
 
-	// Row 3: node_status_updated → node.updated:v1
-	if err := h.writeNodeStatusUpdated(ctx, repo, cmd, "FAILED"); err != nil {
-		return fmt.Errorf("node_status_updated: %w", err)
+	// Row 3: node_updated → node.updated:v1
+	if err := h.writeNodeUpdated(ctx, repo, cmd, "FAILED"); err != nil {
+		return fmt.Errorf("node_updated: %w", err)
 	}
 
 	h.logger.Warn("Job failed permanently — outbox entries created",
@@ -604,7 +593,7 @@ func retryJobName(baseJobName string, retryCount int32) string {
 //   - task_status_updated (FAILED)
 //   - task_execution_recorded
 //   - task_retry (→ retry.task:v1)
-func (h *CheckStatusHandler) handleFailedWithRetry(ctx context.Context, u uow.UnitOfWork, cmd command.CheckJobStatus, result *model.K8sPodResult, retryCount, maxRetries int32) error {
+func (h *JobStatusHandler) handleFailedWithRetry(ctx context.Context, u uow.UnitOfWork, cmd command.CheckJobStatus, result *model.JobResult, retryCount, maxRetries int32) error {
 	repo := u.OutboxRepo()
 	newRetryCount := retryCount + 1
 
@@ -667,15 +656,15 @@ func (h *CheckStatusHandler) handleFailedWithRetry(ctx context.Context, u uow.Un
 
 // handleRunning handles a still-running Job. The first time an attempt is observed
 // running (RunningAnnounced == false) it announces the task as RUNNING — making
-// k8s-controller the sole producer of the task's running/terminal pod lifecycle —
-// then re-enqueues a check_delayed ticket. The announcement is mode-aware:
+// the job-status handler the sole producer of the task's running/terminal pod
+// lifecycle — then re-enqueues a check_delayed ticket. The announcement is mode-aware:
 // mode=validation Jobs use synthetic task IDs and carry no real task status, so
 // their RUNNING is suppressed; the forward ticket still sets running_announced so
 // metadata is not re-read on every poll. RUNNING is stamped with cmd.RetryCount so
 // it shares the attempt number of that attempt's terminal, which state's
 // attempt-monotonic guard relies on. The announcement and the forward ticket are
 // written in the same transaction, so the flag and the announcement never diverge.
-func (h *CheckStatusHandler) handleRunning(ctx context.Context, u uow.UnitOfWork, cmd command.CheckJobStatus) error {
+func (h *JobStatusHandler) handleRunning(ctx context.Context, u uow.UnitOfWork, cmd command.CheckJobStatus) error {
 	repo := u.OutboxRepo()
 
 	if !cmd.RunningAnnounced {
@@ -748,7 +737,7 @@ func (h *CheckStatusHandler) handleRunning(ctx context.Context, u uow.UnitOfWork
 // Writes 2 canonical outbox rows in the transaction:
 //   - task_status_updated (FAILED)
 //   - task_failed (→ task.failed:v1)
-func (h *CheckStatusHandler) handleUnknown(ctx context.Context, u uow.UnitOfWork, cmd command.CheckJobStatus, result *model.K8sPodResult) error {
+func (h *JobStatusHandler) handleUnknown(ctx context.Context, u uow.UnitOfWork, cmd command.CheckJobStatus, result *model.JobResult) error {
 	repo := u.OutboxRepo()
 	errorMsg := h.truncateErrorMessage(result.TerminationMsg)
 	if errorMsg == "" {
@@ -797,7 +786,7 @@ func (h *CheckStatusHandler) handleUnknown(ctx context.Context, u uow.UnitOfWork
 }
 
 // writeTaskStatusUpdated writes a task_status_updated canonical outbox row.
-func (h *CheckStatusHandler) writeTaskStatusUpdated(
+func (h *JobStatusHandler) writeTaskStatusUpdated(
 	ctx context.Context,
 	repo pkgoutbox.Repository,
 	taskID, scheduleID uuid.UUID,
@@ -825,7 +814,7 @@ func (h *CheckStatusHandler) writeTaskStatusUpdated(
 // parseCacheFromResult derives the parse_cache observability fields from the
 // hydrate-parse-cache initContainer's termination message. Absent container
 // (pre-feature Jobs, validation Jobs) -> ("",""): the fields are omitted.
-func parseCacheFromResult(result *model.K8sPodResult) (state, reason string) {
+func parseCacheFromResult(result *model.JobResult) (state, reason string) {
 	msg, ok := result.InitTerminationMessages[parsecache.ContainerName]
 	if !ok {
 		return "", ""
@@ -844,12 +833,12 @@ func parseCacheFromResult(result *model.K8sPodResult) (state, reason string) {
 // row. logS3Key and runResultsURI name the S3 objects the pod's output was
 // uploaded to: the text log, and the structured result block when the pod
 // printed one. Either is empty when its upload failed or did not apply.
-func (h *CheckStatusHandler) writeTaskExecutionRecorded(
+func (h *JobStatusHandler) writeTaskExecutionRecorded(
 	ctx context.Context,
 	repo pkgoutbox.Repository,
 	cmd command.CheckJobStatus,
 	executionID uuid.UUID,
-	result *model.K8sPodResult,
+	result *model.JobResult,
 	errorMsg string,
 	logS3Key string,
 	runResultsURI string,
@@ -884,14 +873,14 @@ func (h *CheckStatusHandler) writeTaskExecutionRecorded(
 	})
 }
 
-// writeNodeStatusUpdated writes a node_status_updated canonical outbox row (→ node.updated:v1).
-func (h *CheckStatusHandler) writeNodeStatusUpdated(
+// writeNodeUpdated writes a node_updated canonical outbox row (→ node.updated:v1).
+func (h *JobStatusHandler) writeNodeUpdated(
 	ctx context.Context,
 	repo pkgoutbox.Repository,
 	cmd command.CheckJobStatus,
 	status string,
 ) error {
-	payload, err := json.Marshal(serialization.NodeStatusUpdatedFromDomain(event.NodeStatusUpdated{
+	payload, err := json.Marshal(serialization.NodeUpdatedFromDomain(event.NodeUpdated{
 		TaskID:       cmd.TaskID.String(),
 		ScheduleID:   cmd.ScheduleID.String(),
 		ScheduleName: cmd.ScheduleName,
@@ -906,7 +895,7 @@ func (h *CheckStatusHandler) writeNodeStatusUpdated(
 	return repo.Create(ctx, &pkgoutbox.Entry{
 		AggregateType: "task",
 		AggregateID:   cmd.TaskID,
-		EventType:     event.EventTypeNodeStatusUpdated,
+		EventType:     event.EventTypeNodeUpdated,
 		Payload:       payload,
 		StreamName:    streams.NodeUpdatedV1,
 	})
@@ -918,7 +907,7 @@ func (h *CheckStatusHandler) writeNodeStatusUpdated(
 // log tail, else the pod's K8s termination message. Each candidate is run
 // through truncateErrorMessage first, so the fallthrough decision is made on
 // the truncated form.
-func (h *CheckStatusHandler) resolveErrorMessage(sentinelErrMsg, tail, terminationMsg string) string {
+func (h *JobStatusHandler) resolveErrorMessage(sentinelErrMsg, tail, terminationMsg string) string {
 	errorMsg := h.truncateErrorMessage(sentinelErrMsg)
 	if errorMsg == "" {
 		errorMsg = h.truncateErrorMessage(tail)
@@ -930,7 +919,7 @@ func (h *CheckStatusHandler) resolveErrorMessage(sentinelErrMsg, tail, terminati
 }
 
 // truncateErrorMessage truncates error messages to configured max length
-func (h *CheckStatusHandler) truncateErrorMessage(msg string) string {
+func (h *JobStatusHandler) truncateErrorMessage(msg string) string {
 	if len(msg) > h.config.ErrorMessageMaxLen {
 		return msg[:h.config.ErrorMessageMaxLen] + "...[truncated]"
 	}

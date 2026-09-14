@@ -10,11 +10,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/carolsimone/continuo/k8s-controller/domain/command"
-	"github.com/carolsimone/continuo/k8s-controller/domain/model"
-	"github.com/carolsimone/continuo/k8s-controller/domain/repository"
-	"github.com/carolsimone/continuo/k8s-controller/service/handlers"
-	"github.com/carolsimone/continuo/k8s-controller/service/uow"
+	"github.com/carolsimone/continuo/execution-controller/domain/command"
+	"github.com/carolsimone/continuo/execution-controller/domain/model"
+	"github.com/carolsimone/continuo/execution-controller/domain/repository"
+	"github.com/carolsimone/continuo/execution-controller/service/handlers"
+	"github.com/carolsimone/continuo/execution-controller/service/ports"
+	"github.com/carolsimone/continuo/execution-controller/test/fakes"
 	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
@@ -27,7 +28,7 @@ import (
 // --- fakes ---
 
 type fakeK8sClient struct {
-	status      *model.K8sPodResult
+	status      *model.JobResult
 	err         error
 	labels      map[string]string
 	annotations map[string]string
@@ -43,7 +44,7 @@ type fakeK8sClient struct {
 	blockPodLogs bool
 }
 
-func (f *fakeK8sClient) GetJobStatus(_ context.Context, _, _ string) (*model.K8sPodResult, error) {
+func (f *fakeK8sClient) GetJobStatus(_ context.Context, _, _ string) (*model.JobResult, error) {
 	return f.status, f.err
 }
 
@@ -76,27 +77,29 @@ func (f *fakeLogUploader) UploadLog(_ context.Context, key, content string) erro
 	return nil
 }
 
-// fakeOutboxRepo records Create calls using canonical pkgoutbox.Entry.
-type fakeOutboxRepo struct {
+// jobStatusFakeOutboxRepo records Create calls using canonical pkgoutbox.Entry.
+type jobStatusFakeOutboxRepo struct {
 	entries []*pkgoutbox.Entry
 }
 
-func (r *fakeOutboxRepo) Create(_ context.Context, e *pkgoutbox.Entry) error {
+func (r *jobStatusFakeOutboxRepo) Create(_ context.Context, e *pkgoutbox.Entry) error {
 	r.entries = append(r.entries, e)
 	return nil
 }
-func (r *fakeOutboxRepo) GetPendingBatch(_ context.Context, _ int) ([]*pkgoutbox.Entry, error) {
+func (r *jobStatusFakeOutboxRepo) GetPendingBatch(_ context.Context, _ int) ([]*pkgoutbox.Entry, error) {
 	return nil, nil
 }
-func (r *fakeOutboxRepo) MarkProcessed(_ context.Context, _ uuid.UUID) error        { return nil }
-func (r *fakeOutboxRepo) MarkProcessedBatch(_ context.Context, _ []uuid.UUID) error { return nil }
-func (r *fakeOutboxRepo) MarkFailed(_ context.Context, _ uuid.UUID, _ string) error {
+func (r *jobStatusFakeOutboxRepo) MarkProcessed(_ context.Context, _ uuid.UUID) error { return nil }
+func (r *jobStatusFakeOutboxRepo) MarkProcessedBatch(_ context.Context, _ []uuid.UUID) error {
 	return nil
 }
-func (r *fakeOutboxRepo) IncrementRetry(_ context.Context, _ uuid.UUID) error { return nil }
+func (r *jobStatusFakeOutboxRepo) MarkFailed(_ context.Context, _ uuid.UUID, _ string) error {
+	return nil
+}
+func (r *jobStatusFakeOutboxRepo) IncrementRetry(_ context.Context, _ uuid.UUID) error { return nil }
 
 // Verify at compile time.
-var _ pkgoutbox.Repository = (*fakeOutboxRepo)(nil)
+var _ pkgoutbox.Repository = (*jobStatusFakeOutboxRepo)(nil)
 
 type threadSafeFakeOutboxRepo struct {
 	mu      sync.Mutex
@@ -195,28 +198,15 @@ func (r *fakeMessageProcessingRepo) DeleteTerminalOlderThan(_ context.Context, _
 
 var _ messageprocessing.Repository = (*fakeMessageProcessingRepo)(nil)
 
-type fakeUnitOfWork struct {
-	outboxRepo pkgoutbox.Repository
-	mpRepo     messageprocessing.Repository
-}
-
-func (u *fakeUnitOfWork) OutboxRepo() pkgoutbox.Repository                    { return u.outboxRepo }
-func (u *fakeUnitOfWork) MessageProcessingRepo() messageprocessing.Repository { return u.mpRepo }
-func (u *fakeUnitOfWork) Begin(_ context.Context) error                       { return nil }
-func (u *fakeUnitOfWork) Commit() error                                       { return nil }
-func (u *fakeUnitOfWork) Rollback() error                                     { return nil }
-
-var _ uow.UnitOfWork = (*fakeUnitOfWork)(nil)
-
-func newFakeUoW(outbox pkgoutbox.Repository) *fakeUnitOfWork {
-	return &fakeUnitOfWork{outboxRepo: outbox, mpRepo: &fakeMessageProcessingRepo{}}
+func newJobStatusFakeUoW(outbox pkgoutbox.Repository) *fakes.FakeUnitOfWork {
+	return &fakes.FakeUnitOfWork{Outbox: outbox, MessageProcessing: &fakeMessageProcessingRepo{}}
 }
 
 // --- helpers ---
 
-func failedResult() *model.K8sPodResult {
+func failedResult() *model.JobResult {
 	now := time.Now()
-	return &model.K8sPodResult{
+	return &model.JobResult{
 		Status:           model.JobStatusFailed,
 		TerminationMsg:   "OOMKilled",
 		StartedAt:        &now,
@@ -225,13 +215,13 @@ func failedResult() *model.K8sPodResult {
 	}
 }
 
-func newHandler(k8s handlers.K8sStatusChecker, cancelledSchedules repository.CancelledSchedulesRepository, defaultMaxRetries int) *handlers.CheckStatusHandler {
+func newHandler(k8s ports.JobObserver, cancelledSchedules repository.CancelledSchedulesRepository, defaultMaxRetries int) *handlers.JobStatusHandler {
 	h, _ := newHandlerWithUploader(k8s, cancelledSchedules, defaultMaxRetries)
 	return h
 }
 
-func newHandlerWithUploader(k8s handlers.K8sStatusChecker, cancelledSchedules repository.CancelledSchedulesRepository, defaultMaxRetries int) (*handlers.CheckStatusHandler, *fakeLogUploader) {
-	cfg := &handlers.HandlerConfig{
+func newHandlerWithUploader(k8s ports.JobObserver, cancelledSchedules repository.CancelledSchedulesRepository, defaultMaxRetries int) (*handlers.JobStatusHandler, *fakeLogUploader) {
+	cfg := &handlers.JobStatusConfig{
 		K8sNamespace:          "default",
 		CheckDelaySeconds:     30,
 		ErrorMessageMaxLen:    4096,
@@ -239,7 +229,7 @@ func newHandlerWithUploader(k8s handlers.K8sStatusChecker, cancelledSchedules re
 		DefaultTaskMaxRetries: defaultMaxRetries,
 	}
 	up := &fakeLogUploader{}
-	return handlers.NewCheckStatusHandler(k8s, up, cfg, cancelledSchedules, slog.Default()), up
+	return handlers.NewJobStatusHandler(k8s, up, cfg, cancelledSchedules, slog.Default()), up
 }
 
 // eventTypeOf returns the event_type of the i-th outbox entry.
@@ -265,7 +255,7 @@ func findEntryByEventType(entries []*pkgoutbox.Entry, eventType string) *pkgoutb
 // TestHandleFailedWithRetry verifies that a failed job whose retryCount < maxRetries
 // produces 3 canonical outbox rows: task_status_updated, task_execution_recorded, task_retry.
 func TestHandleFailedWithRetry(t *testing.T) {
-	outbox := &fakeOutboxRepo{}
+	outbox := &jobStatusFakeOutboxRepo{}
 	handler := newHandler(&fakeK8sClient{status: failedResult()}, noopCancelledRepo(), 3)
 
 	cmd := command.CheckJobStatus{
@@ -276,7 +266,7 @@ func TestHandleFailedWithRetry(t *testing.T) {
 		MaxRetries: 3,
 	}
 
-	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
@@ -336,7 +326,7 @@ func TestHandleFailedWithRetry(t *testing.T) {
 // client returns empty labels (vanished Job) yet cmd.Operation=="test", and the
 // task_retry payload must stay "test".
 func TestHandleFailedWithRetry_OperationFromDurableCommand_VanishedJob(t *testing.T) {
-	outbox := &fakeOutboxRepo{}
+	outbox := &jobStatusFakeOutboxRepo{}
 	handler := newHandler(&fakeK8sClient{
 		status: failedResult(),
 		labels: map[string]string{}, // vanished Job: GetJobMeta returns empty labels
@@ -351,7 +341,7 @@ func TestHandleFailedWithRetry_OperationFromDurableCommand_VanishedJob(t *testin
 		MaxRetries: 3,
 	}
 
-	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
@@ -373,7 +363,7 @@ func TestHandleFailedWithRetry_OperationFromDurableCommand_VanishedJob(t *testin
 // payload with an empty/absent operation so the wire format is unchanged for
 // production runs.
 func TestHandleFailedWithRetry_NoOperationStaysEmpty(t *testing.T) {
-	outbox := &fakeOutboxRepo{}
+	outbox := &jobStatusFakeOutboxRepo{}
 	handler := newHandler(&fakeK8sClient{
 		status: failedResult(),
 		labels: map[string]string{},
@@ -387,7 +377,7 @@ func TestHandleFailedWithRetry_NoOperationStaysEmpty(t *testing.T) {
 		MaxRetries: 3,
 	}
 
-	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
@@ -409,9 +399,9 @@ func TestHandleFailedWithRetry_NoOperationStaysEmpty(t *testing.T) {
 // (cmd.RetryCount) so a late stale RUNNING for the same attempt is recognized as
 // not-newer by state's attempt-monotonic guard and ignored.
 func TestHandleSucceededStampsAttemptRetryCount(t *testing.T) {
-	outbox := &fakeOutboxRepo{}
+	outbox := &jobStatusFakeOutboxRepo{}
 	handler := newHandler(
-		&fakeK8sClient{status: &model.K8sPodResult{Status: model.JobStatusSucceeded}},
+		&fakeK8sClient{status: &model.JobResult{Status: model.JobStatusSucceeded}},
 		noopCancelledRepo(), 3,
 	)
 
@@ -423,7 +413,7 @@ func TestHandleSucceededStampsAttemptRetryCount(t *testing.T) {
 		MaxRetries: 3,
 	}
 
-	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
@@ -453,7 +443,7 @@ func TestCheckStatusHandler_Handle_AllowsConcurrentCalls(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			u := &fakeUnitOfWork{outboxRepo: repo, mpRepo: &fakeMessageProcessingRepo{}}
+			u := &fakes.FakeUnitOfWork{Outbox: repo, MessageProcessing: &fakeMessageProcessingRepo{}}
 			errs <- handler.Handle(context.Background(), u, command.CheckJobStatus{
 				TaskID:     uuid.New(),
 				ScheduleID: uuid.New(),
@@ -476,9 +466,9 @@ func TestCheckStatusHandler_Handle_AllowsConcurrentCalls(t *testing.T) {
 }
 
 // TestHandleFailedPermanent verifies that a permanently failed job produces
-// 3 canonical outbox rows: task_status_updated, task_execution_recorded, node_status_updated.
+// 3 canonical outbox rows: task_status_updated, task_execution_recorded, node_updated.
 func TestHandleFailedPermanent(t *testing.T) {
-	outbox := &fakeOutboxRepo{}
+	outbox := &jobStatusFakeOutboxRepo{}
 	handler := newHandler(&fakeK8sClient{status: failedResult()}, noopCancelledRepo(), 3)
 
 	cmd := command.CheckJobStatus{
@@ -489,13 +479,13 @@ func TestHandleFailedPermanent(t *testing.T) {
 		MaxRetries: 3,
 	}
 
-	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
 	entries := outbox.entries
 	if len(entries) != 3 {
-		t.Fatalf("expected 3 outbox entries (task_status_updated + task_execution_recorded + node_status_updated), got %d", len(entries))
+		t.Fatalf("expected 3 outbox entries (task_status_updated + task_execution_recorded + node_updated), got %d", len(entries))
 	}
 
 	if got := eventTypeOf(entries, 0); got != "task_status_updated" {
@@ -504,8 +494,8 @@ func TestHandleFailedPermanent(t *testing.T) {
 	if got := eventTypeOf(entries, 1); got != "task_execution_recorded" {
 		t.Errorf("entries[1]: expected task_execution_recorded, got %q", got)
 	}
-	if got := eventTypeOf(entries, 2); got != "node_status_updated" {
-		t.Errorf("entries[2]: expected node_status_updated, got %q", got)
+	if got := eventTypeOf(entries, 2); got != "node_updated" {
+		t.Errorf("entries[2]: expected node_updated, got %q", got)
 	}
 }
 
@@ -513,9 +503,9 @@ func TestHandleFailedPermanent(t *testing.T) {
 // job (RunningAnnounced=true) writes only the check_delayed re-poll and carries
 // RetryCount and MaxRetries forward in its payload.
 func TestHandleRunningCarriesRetryInfo(t *testing.T) {
-	outbox := &fakeOutboxRepo{}
+	outbox := &jobStatusFakeOutboxRepo{}
 	handler := newHandler(
-		&fakeK8sClient{status: &model.K8sPodResult{Status: model.JobStatusRunning}},
+		&fakeK8sClient{status: &model.JobResult{Status: model.JobStatusRunning}},
 		noopCancelledRepo(), 3,
 	)
 
@@ -528,7 +518,7 @@ func TestHandleRunningCarriesRetryInfo(t *testing.T) {
 		RunningAnnounced: true,
 	}
 
-	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
@@ -560,9 +550,9 @@ func TestHandleRunningCarriesRetryInfo(t *testing.T) {
 // re-check that lands after the Job is TTL-reaped would lose the verb and a later
 // retry would rebuild `dbt run` — the vanished-Job regression, one hop upstream.
 func TestHandleRunning_RecirculatesOperation(t *testing.T) {
-	outbox := &fakeOutboxRepo{}
+	outbox := &jobStatusFakeOutboxRepo{}
 	handler := newHandler(
-		&fakeK8sClient{status: &model.K8sPodResult{Status: model.JobStatusRunning}},
+		&fakeK8sClient{status: &model.JobResult{Status: model.JobStatusRunning}},
 		noopCancelledRepo(), 3,
 	)
 
@@ -576,7 +566,7 @@ func TestHandleRunning_RecirculatesOperation(t *testing.T) {
 		RunningAnnounced: true,
 	}
 
-	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
@@ -601,10 +591,10 @@ func TestHandleRunning_RecirculatesOperation(t *testing.T) {
 // (cmd.RetryCount), plus the check_delayed re-poll ticket carrying
 // running_announced=true so the next poll does not re-announce.
 func TestHandleRunning_FirstObservation_AnnouncesRunningOncePerAttempt(t *testing.T) {
-	outbox := &fakeOutboxRepo{}
+	outbox := &jobStatusFakeOutboxRepo{}
 	handler := newHandler(
 		&fakeK8sClient{
-			status: &model.K8sPodResult{Status: model.JobStatusRunning},
+			status: &model.JobResult{Status: model.JobStatusRunning},
 			labels: map[string]string{"mode": "production"},
 		},
 		noopCancelledRepo(), 3,
@@ -619,7 +609,7 @@ func TestHandleRunning_FirstObservation_AnnouncesRunningOncePerAttempt(t *testin
 		RunningAnnounced: false,
 	}
 
-	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
@@ -660,9 +650,9 @@ func TestHandleRunning_FirstObservation_AnnouncesRunningOncePerAttempt(t *testin
 // (RunningAnnounced=true) writes only the check_delayed re-poll — RUNNING is
 // emitted exactly once per attempt.
 func TestHandleRunning_AlreadyAnnounced_DoesNotReannounce(t *testing.T) {
-	outbox := &fakeOutboxRepo{}
+	outbox := &jobStatusFakeOutboxRepo{}
 	handler := newHandler(
-		&fakeK8sClient{status: &model.K8sPodResult{Status: model.JobStatusRunning}},
+		&fakeK8sClient{status: &model.JobResult{Status: model.JobStatusRunning}},
 		noopCancelledRepo(), 3,
 	)
 
@@ -675,7 +665,7 @@ func TestHandleRunning_AlreadyAnnounced_DoesNotReannounce(t *testing.T) {
 		RunningAnnounced: true,
 	}
 
-	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
@@ -696,10 +686,10 @@ func TestHandleRunning_AlreadyAnnounced_DoesNotReannounce(t *testing.T) {
 // check_delayed re-poll and never a task_status_updated row (validation Jobs use
 // synthetic task IDs and carry no real task status).
 func TestHandleRunning_ValidationJob_SuppressesRunningAnnouncement(t *testing.T) {
-	outbox := &fakeOutboxRepo{}
+	outbox := &jobStatusFakeOutboxRepo{}
 	handler := newHandler(
 		&fakeK8sClient{
-			status: &model.K8sPodResult{Status: model.JobStatusRunning},
+			status: &model.JobResult{Status: model.JobStatusRunning},
 			labels: map[string]string{"mode": "validation"},
 		},
 		noopCancelledRepo(), 3,
@@ -713,7 +703,7 @@ func TestHandleRunning_ValidationJob_SuppressesRunningAnnouncement(t *testing.T)
 		RunningAnnounced: false,
 	}
 
-	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
@@ -727,10 +717,10 @@ func TestHandleRunning_ValidationJob_SuppressesRunningAnnouncement(t *testing.T)
 }
 
 // TestDefaultMaxRetriesAppliedWhenZero verifies backward-compat: when cmd.MaxRetries==0
-// (old executor-controller message with no max_retries field), the handler falls back to
+// (a dispatcher message with no max_retries field), the handler falls back to
 // config.DefaultTaskMaxRetries.  With RetryCount=0 and default=3 the job should be retried.
 func TestDefaultMaxRetriesAppliedWhenZero(t *testing.T) {
-	outbox := &fakeOutboxRepo{}
+	outbox := &jobStatusFakeOutboxRepo{}
 	handler := newHandler(&fakeK8sClient{status: failedResult()}, noopCancelledRepo(), 3)
 
 	cmd := command.CheckJobStatus{
@@ -741,7 +731,7 @@ func TestDefaultMaxRetriesAppliedWhenZero(t *testing.T) {
 		MaxRetries: 0, // absent from message
 	}
 
-	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
@@ -759,7 +749,7 @@ func TestDefaultMaxRetriesAppliedWhenZero(t *testing.T) {
 // TestCheckStatusHandler_FailsPermanentlyAfter3TotalAttempts documents the invariant:
 // retryCount=2 (3rd attempt) with maxRetries=2 must produce a permanent failure.
 func TestCheckStatusHandler_FailsPermanentlyAfter3TotalAttempts(t *testing.T) {
-	outbox := &fakeOutboxRepo{}
+	outbox := &jobStatusFakeOutboxRepo{}
 	handler := newHandler(&fakeK8sClient{status: failedResult()}, noopCancelledRepo(), 2)
 
 	cmd := command.CheckJobStatus{
@@ -770,7 +760,7 @@ func TestCheckStatusHandler_FailsPermanentlyAfter3TotalAttempts(t *testing.T) {
 		MaxRetries: 2,
 	}
 
-	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
@@ -778,25 +768,25 @@ func TestCheckStatusHandler_FailsPermanentlyAfter3TotalAttempts(t *testing.T) {
 	if len(entries) == 0 {
 		t.Fatal("expected outbox entries, got none")
 	}
-	// Permanent fail path produces: task_status_updated + task_execution_recorded + node_status_updated
+	// Permanent fail path produces: task_status_updated + task_execution_recorded + node_updated
 	hasNodeUpdated := false
 	for _, e := range entries {
-		if e.EventType == "node_status_updated" {
+		if e.EventType == "node_updated" {
 			hasNodeUpdated = true
 		}
 	}
 	if !hasNodeUpdated {
-		t.Error("expected node_status_updated entry for permanent failure")
+		t.Error("expected node_updated entry for permanent failure")
 	}
 }
 
 func TestCheckStatusHandler_DropsOutboxWhenScheduleCancelled(t *testing.T) {
 	scheduleID := uuid.New()
 	cancelledRepo := &fakeCancelledSchedulesRepo{ids: map[uuid.UUID]bool{scheduleID: true}}
-	outbox := &fakeOutboxRepo{}
+	outbox := &jobStatusFakeOutboxRepo{}
 
 	handler := newHandler(
-		&fakeK8sClient{status: &model.K8sPodResult{Status: model.JobStatusSucceeded}},
+		&fakeK8sClient{status: &model.JobResult{Status: model.JobStatusSucceeded}},
 		cancelledRepo,
 		3,
 	)
@@ -808,7 +798,7 @@ func TestCheckStatusHandler_DropsOutboxWhenScheduleCancelled(t *testing.T) {
 		MaxRetries: 3,
 	}
 
-	err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil)
+	err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil)
 	if err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
@@ -821,12 +811,12 @@ func TestCheckStatusHandler_DropsOutboxWhenScheduleCancelled(t *testing.T) {
 // (now JobStatusFailed), with retryCount < maxRetries, the handler creates a task_retry
 // outbox entry — not a permanent failure — so the job gets re-created and re-checked.
 func TestNotFoundRetry(t *testing.T) {
-	notFoundResult := &model.K8sPodResult{
+	notFoundResult := &model.JobResult{
 		Status:         model.JobStatusFailed,
 		TerminationMsg: "Job not found in Kubernetes",
 	}
 
-	outbox := &fakeOutboxRepo{}
+	outbox := &jobStatusFakeOutboxRepo{}
 	handler := newHandler(&fakeK8sClient{status: notFoundResult}, noopCancelledRepo(), 3)
 
 	cmd := command.CheckJobStatus{
@@ -837,7 +827,7 @@ func TestNotFoundRetry(t *testing.T) {
 		MaxRetries: 3,
 	}
 
-	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
@@ -854,14 +844,14 @@ func TestNotFoundRetry(t *testing.T) {
 
 // TestNotFoundPermanentFailureNotifiesOrchestrator verifies that when "Job not found" retries
 // are exhausted, handleFailedPermanent is called — which writes task_status_updated,
-// task_execution_recorded, and node_status_updated entries, so the orchestrator cascades failure.
+// task_execution_recorded, and node_updated entries, so the orchestrator cascades failure.
 func TestNotFoundPermanentFailureNotifiesOrchestrator(t *testing.T) {
-	notFoundResult := &model.K8sPodResult{
+	notFoundResult := &model.JobResult{
 		Status:         model.JobStatusFailed,
 		TerminationMsg: "Job not found in Kubernetes",
 	}
 
-	outbox := &fakeOutboxRepo{}
+	outbox := &jobStatusFakeOutboxRepo{}
 	handler := newHandler(&fakeK8sClient{status: notFoundResult}, noopCancelledRepo(), 3)
 
 	cmd := command.CheckJobStatus{
@@ -872,7 +862,7 @@ func TestNotFoundPermanentFailureNotifiesOrchestrator(t *testing.T) {
 		MaxRetries: 3,
 	}
 
-	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
@@ -887,34 +877,34 @@ func TestNotFoundPermanentFailureNotifiesOrchestrator(t *testing.T) {
 	}
 
 	hasTaskStatusUpdated := findEntryByEventType(entries, "task_status_updated") != nil
-	hasNodeUpdated := findEntryByEventType(entries, "node_status_updated") != nil
+	hasNodeUpdated := findEntryByEventType(entries, "node_updated") != nil
 
 	if !hasTaskStatusUpdated {
 		t.Errorf("expected task_status_updated entry, got event_types: %v", eventTypes)
 	}
 	if !hasNodeUpdated {
-		t.Errorf("expected node_status_updated entry, got event_types: %v", eventTypes)
+		t.Errorf("expected node_updated entry, got event_types: %v", eventTypes)
 	}
 
-	// Verify the node_status_updated stream is correct
-	nodeEntry := findEntryByEventType(entries, "node_status_updated")
+	// Verify the node_updated stream is correct
+	nodeEntry := findEntryByEventType(entries, "node_updated")
 	if nodeEntry != nil && nodeEntry.StreamName != streams.NodeUpdatedV1 {
-		t.Errorf("node_status_updated stream: expected %s, got %q", streams.NodeUpdatedV1, nodeEntry.StreamName)
+		t.Errorf("node_updated stream: expected %s, got %q", streams.NodeUpdatedV1, nodeEntry.StreamName)
 	}
 }
 
 // TestHandleSucceeded verifies that a succeeded job produces 3 canonical rows:
-// task_status_updated (SUCCEEDED), task_execution_recorded, node_status_updated.
+// task_status_updated (SUCCEEDED), task_execution_recorded, node_updated.
 func TestHandleSucceeded(t *testing.T) {
 	now := time.Now()
-	succeededResult := &model.K8sPodResult{
+	succeededResult := &model.JobResult{
 		Status:           model.JobStatusSucceeded,
 		StartedAt:        &now,
 		CompletedAt:      &now,
 		ExecutionSeconds: 5.0,
 	}
 
-	outbox := &fakeOutboxRepo{}
+	outbox := &jobStatusFakeOutboxRepo{}
 	handler := newHandler(&fakeK8sClient{status: succeededResult}, noopCancelledRepo(), 3)
 
 	cmd := command.CheckJobStatus{
@@ -925,7 +915,7 @@ func TestHandleSucceeded(t *testing.T) {
 		MaxRetries: 3,
 	}
 
-	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
@@ -934,15 +924,15 @@ func TestHandleSucceeded(t *testing.T) {
 		t.Fatalf("expected 3 outbox entries for succeeded job, got %d", len(entries))
 	}
 
-	// Row order: task_status_updated, task_execution_recorded, node_status_updated
+	// Row order: task_status_updated, task_execution_recorded, node_updated
 	if got := eventTypeOf(entries, 0); got != "task_status_updated" {
 		t.Errorf("entries[0]: expected task_status_updated, got %q", got)
 	}
 	if got := eventTypeOf(entries, 1); got != "task_execution_recorded" {
 		t.Errorf("entries[1]: expected task_execution_recorded, got %q", got)
 	}
-	if got := eventTypeOf(entries, 2); got != "node_status_updated" {
-		t.Errorf("entries[2]: expected node_status_updated, got %q", got)
+	if got := eventTypeOf(entries, 2); got != "node_updated" {
+		t.Errorf("entries[2]: expected node_updated, got %q", got)
 	}
 
 	// Verify task_status_updated payload has SUCCEEDED
@@ -1008,8 +998,8 @@ func TestHandleSucceeded_ParseCache(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			outbox := &fakeOutboxRepo{}
-			result := &model.K8sPodResult{
+			outbox := &jobStatusFakeOutboxRepo{}
+			result := &model.JobResult{
 				Status:                  model.JobStatusSucceeded,
 				InitTerminationMessages: tc.initMessages,
 				ExecutionSeconds:        1.0,
@@ -1023,7 +1013,7 @@ func TestHandleSucceeded_ParseCache(t *testing.T) {
 				MaxRetries: 3,
 			}
 
-			if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+			if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 				t.Fatalf("Handle: %v", err)
 			}
 
@@ -1066,10 +1056,10 @@ func TestHandleSucceeded_ParseCache(t *testing.T) {
 // validation_node_completed row (outcome=ok, release_id/node_id from labels) and
 // none of the three production task-status rows.
 func TestHandle_ValidationModeLabel_WritesValidationNodeCompletedOutboxRowOnly(t *testing.T) {
-	outbox := &fakeOutboxRepo{}
+	outbox := &jobStatusFakeOutboxRepo{}
 	handler := newHandler(
 		&fakeK8sClient{
-			status: &model.K8sPodResult{Status: model.JobStatusSucceeded},
+			status: &model.JobResult{Status: model.JobStatusSucceeded},
 			labels: map[string]string{"mode": "validation"},
 			annotations: map[string]string{
 				pkgmodel.AnnotationReleaseID: "rel-123",
@@ -1086,7 +1076,7 @@ func TestHandle_ValidationModeLabel_WritesValidationNodeCompletedOutboxRowOnly(t
 		MaxRetries: 3,
 	}
 
-	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
@@ -1108,7 +1098,7 @@ func TestHandle_ValidationModeLabel_WritesValidationNodeCompletedOutboxRowOnly(t
 	// Ensure no production rows leaked in.
 	for _, e := range entries {
 		switch e.EventType {
-		case "task_status_updated", "task_execution_recorded", "node_status_updated", "task_retry", "task_failed":
+		case "task_status_updated", "task_execution_recorded", "node_updated", "task_retry", "task_failed":
 			t.Errorf("unexpected production outbox row %q for validation Job", e.EventType)
 		}
 	}
@@ -1131,7 +1121,7 @@ func TestHandle_ValidationModeLabel_WritesValidationNodeCompletedOutboxRowOnly(t
 // TestHandle_ValidationModeLabel_FailedStatus_OutcomeFailed verifies a failed
 // validation Job emits a single row with outcome=failed.
 func TestHandle_ValidationModeLabel_FailedStatus_OutcomeFailed(t *testing.T) {
-	outbox := &fakeOutboxRepo{}
+	outbox := &jobStatusFakeOutboxRepo{}
 	handler := newHandler(
 		&fakeK8sClient{
 			status: failedResult(),
@@ -1151,7 +1141,7 @@ func TestHandle_ValidationModeLabel_FailedStatus_OutcomeFailed(t *testing.T) {
 		MaxRetries: 3,
 	}
 
-	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
@@ -1174,10 +1164,10 @@ func TestHandle_ValidationModeLabel_FailedStatus_OutcomeFailed(t *testing.T) {
 // hanging the release.
 func TestHandle_ValidationModeLabel_RunningStatus_WritesCheckK8sRepoll(t *testing.T) {
 	for _, status := range []model.JobStatus{model.JobStatusRunning, model.JobStatusUnknown} {
-		outbox := &fakeOutboxRepo{}
+		outbox := &jobStatusFakeOutboxRepo{}
 		handler := newHandler(
 			&fakeK8sClient{
-				status: &model.K8sPodResult{Status: status},
+				status: &model.JobResult{Status: status},
 				labels: map[string]string{"mode": "validation"},
 				annotations: map[string]string{
 					pkgmodel.AnnotationReleaseID: "rel-1",
@@ -1194,7 +1184,7 @@ func TestHandle_ValidationModeLabel_RunningStatus_WritesCheckK8sRepoll(t *testin
 			MaxRetries: 3,
 		}
 
-		if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 			t.Fatalf("Handle (%s): %v", status, err)
 		}
 		entries := outbox.entries
@@ -1209,7 +1199,7 @@ func TestHandle_ValidationModeLabel_RunningStatus_WritesCheckK8sRepoll(t *testin
 		}
 		for _, e := range entries {
 			switch e.EventType {
-			case "validation_node_completed", "task_status_updated", "task_execution_recorded", "node_status_updated", "task_retry", "task_failed":
+			case "validation_node_completed", "task_status_updated", "task_execution_recorded", "node_updated", "task_retry", "task_failed":
 				t.Errorf("status %s: unexpected non-repoll row %q for running validation Job", status, e.EventType)
 			}
 		}
@@ -1234,12 +1224,12 @@ func TestHandle_ValidationModeLabel_RunningThenSucceeded_EmitsNodeCompletedOnlyO
 	}
 
 	// First check: Running → one re-poll, nothing terminal.
-	runningOutbox := &fakeOutboxRepo{}
+	runningOutbox := &jobStatusFakeOutboxRepo{}
 	runningHandler := newHandler(
-		&fakeK8sClient{status: &model.K8sPodResult{Status: model.JobStatusRunning}, labels: labels, annotations: annotations},
+		&fakeK8sClient{status: &model.JobResult{Status: model.JobStatusRunning}, labels: labels, annotations: annotations},
 		noopCancelledRepo(), 3,
 	)
-	if err := runningHandler.Handle(context.Background(), newFakeUoW(runningOutbox), cmd, uuid.Nil); err != nil {
+	if err := runningHandler.Handle(context.Background(), newJobStatusFakeUoW(runningOutbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle (running): %v", err)
 	}
 	if len(runningOutbox.entries) != 1 || runningOutbox.entries[0].EventType != "check_delayed" {
@@ -1247,12 +1237,12 @@ func TestHandle_ValidationModeLabel_RunningThenSucceeded_EmitsNodeCompletedOnlyO
 	}
 
 	// Re-check: Succeeded → one validation_node_completed.
-	doneOutbox := &fakeOutboxRepo{}
+	doneOutbox := &jobStatusFakeOutboxRepo{}
 	doneHandler := newHandler(
-		&fakeK8sClient{status: &model.K8sPodResult{Status: model.JobStatusSucceeded}, labels: labels, annotations: annotations},
+		&fakeK8sClient{status: &model.JobResult{Status: model.JobStatusSucceeded}, labels: labels, annotations: annotations},
 		noopCancelledRepo(), 3,
 	)
-	if err := doneHandler.Handle(context.Background(), newFakeUoW(doneOutbox), cmd, uuid.Nil); err != nil {
+	if err := doneHandler.Handle(context.Background(), newJobStatusFakeUoW(doneOutbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle (succeeded): %v", err)
 	}
 	if len(doneOutbox.entries) != 1 || doneOutbox.entries[0].EventType != "validation_node_completed" {
@@ -1263,17 +1253,17 @@ func TestHandle_ValidationModeLabel_RunningThenSucceeded_EmitsNodeCompletedOnlyO
 // TestHandle_ValidationModeLabel_RawIDsRoundTripViaAnnotations verifies the I2 fix:
 // a node_id that sanitizeK8sLabel WOULD alter (out-of-charset chars and >63 chars)
 // is carried losslessly via Job annotations into the validation.node.completed
-// payload, so the executor's raw-keyed outcome lookup matches.
+// payload, so the dispatcher's raw-keyed outcome lookup matches.
 func TestHandle_ValidationModeLabel_RawIDsRoundTripViaAnnotations(t *testing.T) {
 	// Out-of-charset chars (: / +) AND >63 chars: sanitizeK8sLabel would both
 	// replace and truncate this, so a label round-trip would desync the lookup.
 	rawNodeID := "service-1.analytics.my_model:with/colon+" + repeatStr("x", 60)
 	rawReleaseID := "release/2026-05-29T12:00:00+00:00"
 
-	outbox := &fakeOutboxRepo{}
+	outbox := &jobStatusFakeOutboxRepo{}
 	handler := newHandler(
 		&fakeK8sClient{
-			status: &model.K8sPodResult{Status: model.JobStatusSucceeded},
+			status: &model.JobResult{Status: model.JobStatusSucceeded},
 			labels: map[string]string{"mode": "validation"},
 			annotations: map[string]string{
 				pkgmodel.AnnotationReleaseID: rawReleaseID,
@@ -1290,7 +1280,7 @@ func TestHandle_ValidationModeLabel_RawIDsRoundTripViaAnnotations(t *testing.T) 
 		MaxRetries: 3,
 	}
 
-	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 	if len(outbox.entries) != 1 {
@@ -1319,7 +1309,7 @@ func TestValidationTerminal_UploadsRunResultsAndSetsURI(t *testing.T) {
 		"===CONTINUO_VALIDATION_RESULT_END===\n"
 
 	k8s := &fakeK8sClient{
-		status: &model.K8sPodResult{Status: model.JobStatusFailed},
+		status: &model.JobResult{Status: model.JobStatusFailed},
 		labels: map[string]string{"mode": "validation"},
 		annotations: map[string]string{
 			pkgmodel.AnnotationReleaseID: "rel-1",
@@ -1336,8 +1326,8 @@ func TestValidationTerminal_UploadsRunResultsAndSetsURI(t *testing.T) {
 		MaxRetries: 3,
 	}
 
-	outbox := &fakeOutboxRepo{}
-	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	outbox := &jobStatusFakeOutboxRepo{}
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
@@ -1414,10 +1404,10 @@ func TestHandle_ProductionModeLabel_WritesThreeProdOutboxRows_NoChange(t *testin
 		{"mode": "production"},
 		nil,
 	} {
-		outbox := &fakeOutboxRepo{}
+		outbox := &jobStatusFakeOutboxRepo{}
 		handler := newHandler(
 			&fakeK8sClient{
-				status: &model.K8sPodResult{
+				status: &model.JobResult{
 					Status:           model.JobStatusSucceeded,
 					StartedAt:        &now,
 					CompletedAt:      &now,
@@ -1435,7 +1425,7 @@ func TestHandle_ProductionModeLabel_WritesThreeProdOutboxRows_NoChange(t *testin
 			MaxRetries: 3,
 		}
 
-		if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 			t.Fatalf("Handle (labels=%v): %v", labels, err)
 		}
 
@@ -1449,8 +1439,8 @@ func TestHandle_ProductionModeLabel_WritesThreeProdOutboxRows_NoChange(t *testin
 		if got := eventTypeOf(entries, 1); got != "task_execution_recorded" {
 			t.Errorf("labels=%v: entries[1]: expected task_execution_recorded, got %q", labels, got)
 		}
-		if got := eventTypeOf(entries, 2); got != "node_status_updated" {
-			t.Errorf("labels=%v: entries[2]: expected node_status_updated, got %q", labels, got)
+		if got := eventTypeOf(entries, 2); got != "node_updated" {
+			t.Errorf("labels=%v: entries[2]: expected node_updated, got %q", labels, got)
 		}
 		if findEntryByEventType(entries, "validation_node_completed") != nil {
 			t.Errorf("labels=%v: unexpected validation_node_completed row on production path", labels)
@@ -1473,10 +1463,10 @@ func TestHandle_SeedBuildModeLabel_WritesSeedBuildNodeCompletedOutboxRowOnly(t *
 		{"failed", model.JobStatusFailed, "failed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			outbox := &fakeOutboxRepo{}
+			outbox := &jobStatusFakeOutboxRepo{}
 			handler := newHandler(
 				&fakeK8sClient{
-					status: &model.K8sPodResult{Status: tc.status},
+					status: &model.JobResult{Status: tc.status},
 					labels: map[string]string{"mode": "seed_build"},
 					annotations: map[string]string{
 						pkgmodel.AnnotationReleaseID: "rel-sb-1",
@@ -1493,7 +1483,7 @@ func TestHandle_SeedBuildModeLabel_WritesSeedBuildNodeCompletedOutboxRowOnly(t *
 				MaxRetries: 3,
 			}
 
-			if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+			if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 				t.Fatalf("Handle: %v", err)
 			}
 
@@ -1515,7 +1505,7 @@ func TestHandle_SeedBuildModeLabel_WritesSeedBuildNodeCompletedOutboxRowOnly(t *
 			// Ensure no production rows leaked in.
 			for _, e := range entries {
 				switch e.EventType {
-				case "task_status_updated", "task_execution_recorded", "node_status_updated", "task_retry", "task_failed":
+				case "task_status_updated", "task_execution_recorded", "node_updated", "task_retry", "task_failed":
 					t.Errorf("unexpected production outbox row %q for seed_build Job", e.EventType)
 				}
 			}
@@ -1542,10 +1532,10 @@ func TestHandle_SeedBuildModeLabel_WritesSeedBuildNodeCompletedOutboxRowOnly(t *
 // check_delayed re-poll and never a task_status_updated row (seed_build Jobs
 // use synthetic task IDs and carry no real task status, same as validation).
 func TestHandle_SeedBuildModeLabel_SuppressesRunningAnnouncement(t *testing.T) {
-	outbox := &fakeOutboxRepo{}
+	outbox := &jobStatusFakeOutboxRepo{}
 	handler := newHandler(
 		&fakeK8sClient{
-			status: &model.K8sPodResult{Status: model.JobStatusRunning},
+			status: &model.JobResult{Status: model.JobStatusRunning},
 			labels: map[string]string{"mode": "seed_build"},
 		},
 		noopCancelledRepo(), 3,
@@ -1559,7 +1549,7 @@ func TestHandle_SeedBuildModeLabel_SuppressesRunningAnnouncement(t *testing.T) {
 		RunningAnnounced: false,
 	}
 
-	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
@@ -1587,10 +1577,10 @@ func TestHandle_CompileModeLabel_WritesCompileNodeCompletedOutboxRowOnly(t *test
 		{"failed", model.JobStatusFailed, "failed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			outbox := &fakeOutboxRepo{}
+			outbox := &jobStatusFakeOutboxRepo{}
 			handler := newHandler(
 				&fakeK8sClient{
-					status: &model.K8sPodResult{Status: tc.status},
+					status: &model.JobResult{Status: tc.status},
 					labels: map[string]string{"mode": "compile"},
 					annotations: map[string]string{
 						pkgmodel.AnnotationReleaseID: "rel-compile-1",
@@ -1607,7 +1597,7 @@ func TestHandle_CompileModeLabel_WritesCompileNodeCompletedOutboxRowOnly(t *test
 				MaxRetries: 3,
 			}
 
-			if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+			if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 				t.Fatalf("Handle: %v", err)
 			}
 
@@ -1629,7 +1619,7 @@ func TestHandle_CompileModeLabel_WritesCompileNodeCompletedOutboxRowOnly(t *test
 			// Ensure no production rows leaked in.
 			for _, e := range entries {
 				switch e.EventType {
-				case "task_status_updated", "task_execution_recorded", "node_status_updated", "task_retry", "task_failed":
+				case "task_status_updated", "task_execution_recorded", "node_updated", "task_retry", "task_failed":
 					t.Errorf("unexpected production outbox row %q for compile Job", e.EventType)
 				}
 			}
@@ -1653,14 +1643,14 @@ func TestHandle_CompileModeLabel_WritesCompileNodeCompletedOutboxRowOnly(t *test
 
 // TestHandle_CompileModeLabel_PayloadIncludesFailedContainerWhenSet verifies that
 // handleCompileTerminal adds a failed_container key to the compile_node_completed
-// payload when K8sPodResult.FailedContainer is set — downstream consumers use it to
+// payload when JobResult.FailedContainer is set — downstream consumers use it to
 // map compile-leg containers (compile/parse-prod/parse-candidate/upload) to distinct
 // release-reject reasons.
 func TestHandle_CompileModeLabel_PayloadIncludesFailedContainerWhenSet(t *testing.T) {
-	outbox := &fakeOutboxRepo{}
+	outbox := &jobStatusFakeOutboxRepo{}
 	handler := newHandler(
 		&fakeK8sClient{
-			status: &model.K8sPodResult{Status: model.JobStatusFailed, FailedContainer: "parse-prod"},
+			status: &model.JobResult{Status: model.JobStatusFailed, FailedContainer: "parse-prod"},
 			labels: map[string]string{"mode": "compile"},
 			annotations: map[string]string{
 				pkgmodel.AnnotationReleaseID: "rel-compile-2",
@@ -1677,7 +1667,7 @@ func TestHandle_CompileModeLabel_PayloadIncludesFailedContainerWhenSet(t *testin
 		MaxRetries: 3,
 	}
 
-	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
@@ -1697,12 +1687,12 @@ func TestHandle_CompileModeLabel_PayloadIncludesFailedContainerWhenSet(t *testin
 
 // TestHandle_CompileModeLabel_PayloadOmitsFailedContainerWhenEmpty verifies that
 // handleCompileTerminal omits the failed_container key entirely when
-// K8sPodResult.FailedContainer is empty (e.g. a succeeded compile Job).
+// JobResult.FailedContainer is empty (e.g. a succeeded compile Job).
 func TestHandle_CompileModeLabel_PayloadOmitsFailedContainerWhenEmpty(t *testing.T) {
-	outbox := &fakeOutboxRepo{}
+	outbox := &jobStatusFakeOutboxRepo{}
 	handler := newHandler(
 		&fakeK8sClient{
-			status: &model.K8sPodResult{Status: model.JobStatusSucceeded},
+			status: &model.JobResult{Status: model.JobStatusSucceeded},
 			labels: map[string]string{"mode": "compile"},
 			annotations: map[string]string{
 				pkgmodel.AnnotationReleaseID: "rel-compile-3",
@@ -1719,7 +1709,7 @@ func TestHandle_CompileModeLabel_PayloadOmitsFailedContainerWhenEmpty(t *testing
 		MaxRetries: 3,
 	}
 
-	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
@@ -1742,10 +1732,10 @@ func TestHandle_CompileModeLabel_PayloadOmitsFailedContainerWhenEmpty(t *testing
 // check_delayed re-poll and never a task_status_updated row (compile Jobs
 // use synthetic task IDs and carry no real task status, same as validation/seed_build).
 func TestHandle_CompileModeLabel_SuppressesRunningAnnouncement(t *testing.T) {
-	outbox := &fakeOutboxRepo{}
+	outbox := &jobStatusFakeOutboxRepo{}
 	handler := newHandler(
 		&fakeK8sClient{
-			status: &model.K8sPodResult{Status: model.JobStatusRunning},
+			status: &model.JobResult{Status: model.JobStatusRunning},
 			labels: map[string]string{"mode": "compile"},
 		},
 		noopCancelledRepo(), 3,
@@ -1759,7 +1749,7 @@ func TestHandle_CompileModeLabel_SuppressesRunningAnnouncement(t *testing.T) {
 		RunningAnnounced: false,
 	}
 
-	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
@@ -1778,10 +1768,10 @@ func TestHandle_CompileModeLabel_SuppressesRunningAnnouncement(t *testing.T) {
 // or production rows.
 func TestHandle_CompileModeLabel_RunningStatus_WritesCheckK8sRepoll(t *testing.T) {
 	for _, status := range []model.JobStatus{model.JobStatusRunning, model.JobStatusUnknown} {
-		outbox := &fakeOutboxRepo{}
+		outbox := &jobStatusFakeOutboxRepo{}
 		handler := newHandler(
 			&fakeK8sClient{
-				status: &model.K8sPodResult{Status: status},
+				status: &model.JobResult{Status: status},
 				labels: map[string]string{"mode": "compile"},
 				annotations: map[string]string{
 					pkgmodel.AnnotationReleaseID: "rel-c-1",
@@ -1798,7 +1788,7 @@ func TestHandle_CompileModeLabel_RunningStatus_WritesCheckK8sRepoll(t *testing.T
 			MaxRetries: 3,
 		}
 
-		if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 			t.Fatalf("Handle (%s): %v", status, err)
 		}
 		entries := outbox.entries
@@ -1813,7 +1803,7 @@ func TestHandle_CompileModeLabel_RunningStatus_WritesCheckK8sRepoll(t *testing.T
 		}
 		for _, e := range entries {
 			switch e.EventType {
-			case "compile_node_completed", "task_status_updated", "task_execution_recorded", "node_status_updated", "task_retry", "task_failed":
+			case "compile_node_completed", "task_status_updated", "task_execution_recorded", "node_updated", "task_retry", "task_failed":
 				t.Errorf("status %s: unexpected non-repoll row %q for running compile Job", status, e.EventType)
 			}
 		}
@@ -1855,7 +1845,7 @@ func decodeExecutionPayload(t *testing.T, entries []*pkgoutbox.Entry) pkgevents.
 // the division of labour between the two uploads: the text log has the block
 // stripped, and the block's own JSON carries the error class.
 func TestHandleFailedPermanent_RunResultsURI(t *testing.T) {
-	outbox := &fakeOutboxRepo{}
+	outbox := &jobStatusFakeOutboxRepo{}
 	k8s := &fakeK8sClient{
 		status: failedResult(),
 		podLog: pythonResultBlockLog("error", "ConformError: column 'id' cannot be safely cast to INTEGER"),
@@ -1867,7 +1857,7 @@ func TestHandleFailedPermanent_RunResultsURI(t *testing.T) {
 		ServiceName: "svc-py", SchemaName: "analytics", TableName: "orders",
 		RetryCount: 0, MaxRetries: 0,
 	}
-	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
@@ -1890,7 +1880,7 @@ func TestHandleFailedPermanent_RunResultsURI(t *testing.T) {
 // key too — a node that will be retried is exactly the one whose first failure
 // an operator wants to read.
 func TestHandleFailedWithRetry_RunResultsURI(t *testing.T) {
-	outbox := &fakeOutboxRepo{}
+	outbox := &jobStatusFakeOutboxRepo{}
 	k8s := &fakeK8sClient{
 		status: failedResult(),
 		podLog: pythonResultBlockLog("error", "ReadError: unknown read 'orders'"),
@@ -1902,7 +1892,7 @@ func TestHandleFailedWithRetry_RunResultsURI(t *testing.T) {
 		ServiceName: "svc-py", SchemaName: "analytics", TableName: "orders",
 		RetryCount: 0, MaxRetries: 3,
 	}
-	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
@@ -1915,7 +1905,7 @@ func TestHandleFailedWithRetry_RunResultsURI(t *testing.T) {
 // a pod log with no sentinel block produces a payload with no run_results_uri
 // at all, so dbt wire payloads are unchanged.
 func TestHandleFailedPermanent_NoResultBlockOmitsRunResultsURI(t *testing.T) {
-	outbox := &fakeOutboxRepo{}
+	outbox := &jobStatusFakeOutboxRepo{}
 	k8s := &fakeK8sClient{status: failedResult(), podLog: "Database Error in model orders\n"}
 	handler := newHandler(k8s, noopCancelledRepo(), 0)
 
@@ -1924,7 +1914,7 @@ func TestHandleFailedPermanent_NoResultBlockOmitsRunResultsURI(t *testing.T) {
 		ServiceName: "service-1", SchemaName: "analytics", TableName: "orders",
 		RetryCount: 0, MaxRetries: 0,
 	}
-	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
@@ -1942,7 +1932,7 @@ func TestHandleFailedPermanent_NoResultBlockOmitsRunResultsURI(t *testing.T) {
 // not the noisy log tail around it — the real cause ("ConformError: ...") wins
 // over marker text and truncated stack chatter.
 func TestHandleFailedPermanent_SentinelMessageAsErrorMessage(t *testing.T) {
-	outbox := &fakeOutboxRepo{}
+	outbox := &jobStatusFakeOutboxRepo{}
 	k8s := &fakeK8sClient{
 		status: failedResult(),
 		podLog: pythonResultBlockLog("error", "ConformError: column 'id' cannot be safely cast to INTEGER"),
@@ -1954,7 +1944,7 @@ func TestHandleFailedPermanent_SentinelMessageAsErrorMessage(t *testing.T) {
 		ServiceName: "svc-py", SchemaName: "analytics", TableName: "orders",
 		RetryCount: 0, MaxRetries: 0,
 	}
-	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
@@ -1969,7 +1959,7 @@ func TestHandleFailedPermanent_SentinelMessageAsErrorMessage(t *testing.T) {
 // case: a pod log with no sentinel block must keep reporting the raw log tail
 // byte-for-byte, unaffected by the new sentinel-message precedence.
 func TestHandleFailedPermanent_NoSentinelBlock_ErrorMessageIsRawTail(t *testing.T) {
-	outbox := &fakeOutboxRepo{}
+	outbox := &jobStatusFakeOutboxRepo{}
 	k8s := &fakeK8sClient{status: failedResult(), podLog: "Database Error in model orders\n"}
 	handler := newHandler(k8s, noopCancelledRepo(), 0)
 
@@ -1978,7 +1968,7 @@ func TestHandleFailedPermanent_NoSentinelBlock_ErrorMessageIsRawTail(t *testing.
 		ServiceName: "service-1", SchemaName: "analytics", TableName: "orders",
 		RetryCount: 0, MaxRetries: 0,
 	}
-	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
@@ -1995,7 +1985,7 @@ func TestHandleFailedPermanent_NoSentinelBlock_ErrorMessageIsRawTail(t *testing.
 // that block's message must never become the error_message — a post-success
 // crash must not surface "rows=42" as its cause.
 func TestHandleFailedPermanent_SuccessBlockDoesNotOverrideTail(t *testing.T) {
-	outbox := &fakeOutboxRepo{}
+	outbox := &jobStatusFakeOutboxRepo{}
 	rawLog := pythonResultBlockLog("success", "rows=42")
 	k8s := &fakeK8sClient{status: failedResult(), podLog: rawLog}
 	handler := newHandler(k8s, noopCancelledRepo(), 0)
@@ -2005,7 +1995,7 @@ func TestHandleFailedPermanent_SuccessBlockDoesNotOverrideTail(t *testing.T) {
 		ServiceName: "svc-py", SchemaName: "analytics", TableName: "orders",
 		RetryCount: 0, MaxRetries: 0,
 	}
-	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
@@ -2028,7 +2018,7 @@ func TestHandleFailedPermanent_SuccessBlockDoesNotOverrideTail(t *testing.T) {
 // on exactly the real logs it exists to fix. The block's message must still
 // win.
 func TestHandleFailedPermanent_SentinelMessageWithStderrPreamble(t *testing.T) {
-	outbox := &fakeOutboxRepo{}
+	outbox := &jobStatusFakeOutboxRepo{}
 	podLog := "running node analytics.orders -> analytics.orders\n" +
 		validationresult.SentinelBegin + "\n" +
 		"Traceback (most recent call last):\n" +
@@ -2044,7 +2034,7 @@ func TestHandleFailedPermanent_SentinelMessageWithStderrPreamble(t *testing.T) {
 		ServiceName: "svc-py", SchemaName: "analytics", TableName: "orders",
 		RetryCount: 0, MaxRetries: 0,
 	}
-	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
@@ -2059,10 +2049,10 @@ func TestHandleFailedPermanent_SentinelMessageWithStderrPreamble(t *testing.T) {
 // retry-path copy of the error_message precedence — the one that actually
 // runs on a retryable first failure (max_retries > 0) — also prefers the
 // sentinel block's message. Pins resolveErrorMessage's behavior at the
-// handleFailedWithRetry call site specifically, since it previously had no
-// coverage of its own (only the permanent-failure copy was tested).
+// handleFailedWithRetry call site specifically, since only the
+// permanent-failure copy is covered elsewhere.
 func TestHandleFailedWithRetry_SentinelMessageAsErrorMessage(t *testing.T) {
-	outbox := &fakeOutboxRepo{}
+	outbox := &jobStatusFakeOutboxRepo{}
 	k8s := &fakeK8sClient{
 		status: failedResult(),
 		podLog: pythonResultBlockLog("error", "ReadError: unknown read 'orders'"),
@@ -2074,7 +2064,7 @@ func TestHandleFailedWithRetry_SentinelMessageAsErrorMessage(t *testing.T) {
 		ServiceName: "svc-py", SchemaName: "analytics", TableName: "orders",
 		RetryCount: 0, MaxRetries: 3,
 	}
-	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
@@ -2092,7 +2082,7 @@ func TestHandleFailedWithRetry_SentinelMessageAsErrorMessage(t *testing.T) {
 // diagnostic with no schema_version field) must not be mistaken for the
 // contract's result block. The real block's message must win.
 func TestHandleFailedPermanent_DecoyStatusBearingPreambleIgnored(t *testing.T) {
-	outbox := &fakeOutboxRepo{}
+	outbox := &jobStatusFakeOutboxRepo{}
 	podLog := "running node analytics.orders -> analytics.orders\n" +
 		validationresult.SentinelBegin + "\n" +
 		`{"status":"error","message":"sidecar: connection reset"}` + "\n" +
@@ -2106,7 +2096,7 @@ func TestHandleFailedPermanent_DecoyStatusBearingPreambleIgnored(t *testing.T) {
 		ServiceName: "svc-py", SchemaName: "analytics", TableName: "orders",
 		RetryCount: 0, MaxRetries: 0,
 	}
-	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
@@ -2122,7 +2112,7 @@ func TestHandleFailedPermanent_DecoyStatusBearingPreambleIgnored(t *testing.T) {
 // mere field presence: a decoy carrying a well-formed but wrong schema_version
 // must still be skipped in favor of the real (schema_version:1) block.
 func TestHandleFailedPermanent_DecoyWrongSchemaVersionIgnored(t *testing.T) {
-	outbox := &fakeOutboxRepo{}
+	outbox := &jobStatusFakeOutboxRepo{}
 	podLog := "running node analytics.orders -> analytics.orders\n" +
 		validationresult.SentinelBegin + "\n" +
 		`{"schema_version":2,"status":"error","message":"decoy: wrong schema version"}` + "\n" +
@@ -2136,7 +2126,7 @@ func TestHandleFailedPermanent_DecoyWrongSchemaVersionIgnored(t *testing.T) {
 		ServiceName: "svc-py", SchemaName: "analytics", TableName: "orders",
 		RetryCount: 0, MaxRetries: 0,
 	}
-	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
@@ -2155,7 +2145,7 @@ func TestHandleFailedPermanent_DecoyWrongSchemaVersionIgnored(t *testing.T) {
 // fall back to parsing the tail in that case rather than reporting the empty
 // (or marker-bearing) tail as-is.
 func TestHandleFailedPermanent_EmptyFullLog_SentinelMessageFromTail(t *testing.T) {
-	outbox := &fakeOutboxRepo{}
+	outbox := &jobStatusFakeOutboxRepo{}
 	k8s := &fakeK8sClient{
 		status:  failedResult(),
 		podLog:  "", // full log fetch soft-failed
@@ -2168,7 +2158,7 @@ func TestHandleFailedPermanent_EmptyFullLog_SentinelMessageFromTail(t *testing.T
 		ServiceName: "svc-py", SchemaName: "analytics", TableName: "orders",
 		RetryCount: 0, MaxRetries: 0,
 	}
-	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
@@ -2180,9 +2170,9 @@ func TestHandleFailedPermanent_EmptyFullLog_SentinelMessageFromTail(t *testing.T
 }
 
 // succeededResult returns a terminal Succeeded pod result.
-func succeededResult() *model.K8sPodResult {
+func succeededResult() *model.JobResult {
 	now := time.Now()
-	return &model.K8sPodResult{
+	return &model.JobResult{
 		Status:           model.JobStatusSucceeded,
 		StartedAt:        &now,
 		CompletedAt:      &now,
@@ -2195,7 +2185,7 @@ func succeededResult() *model.K8sPodResult {
 // once the Job's TTL reaps the pod, leaving a finished run with timings and no
 // evidence of what it did.
 func TestHandleSucceeded_UploadsLog(t *testing.T) {
-	outbox := &fakeOutboxRepo{}
+	outbox := &jobStatusFakeOutboxRepo{}
 	k8s := &fakeK8sClient{
 		status: succeededResult(),
 		podLog: "1 of 1 OK created sql table model analytics.orders\n",
@@ -2207,7 +2197,7 @@ func TestHandleSucceeded_UploadsLog(t *testing.T) {
 		ServiceName: "service-1", SchemaName: "analytics", TableName: "orders",
 		MaxRetries: 3,
 	}
-	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
@@ -2229,7 +2219,7 @@ func TestHandleSucceeded_UploadsLog(t *testing.T) {
 // TestHandleSucceeded_UploadsRunResults verifies a successful python-model Job's
 // result block is captured too, and stripped from the text log.
 func TestHandleSucceeded_UploadsRunResults(t *testing.T) {
-	outbox := &fakeOutboxRepo{}
+	outbox := &jobStatusFakeOutboxRepo{}
 	k8s := &fakeK8sClient{
 		status: succeededResult(),
 		podLog: pythonResultBlockLog("success", "rows=42"),
@@ -2241,7 +2231,7 @@ func TestHandleSucceeded_UploadsRunResults(t *testing.T) {
 		ServiceName: "svc-py", SchemaName: "analytics", TableName: "orders",
 		MaxRetries: 3,
 	}
-	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
@@ -2261,7 +2251,7 @@ func TestHandleSucceeded_UploadsRunResults(t *testing.T) {
 // guarantee: adding an S3 dependency to the success path must never be able to
 // turn a successful run into a failed one.
 func TestHandleSucceeded_LogFetchFailureStillSucceeds(t *testing.T) {
-	outbox := &fakeOutboxRepo{}
+	outbox := &jobStatusFakeOutboxRepo{}
 	k8s := &fakeK8sClient{status: succeededResult(), podLogsErr: errors.New("pod gone")}
 	handler := newHandler(k8s, noopCancelledRepo(), 3)
 
@@ -2270,7 +2260,7 @@ func TestHandleSucceeded_LogFetchFailureStillSucceeds(t *testing.T) {
 		ServiceName: "service-1", SchemaName: "analytics", TableName: "orders",
 		MaxRetries: 3,
 	}
-	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("a failed log fetch must not fail the handler: %v", err)
 	}
 
@@ -2297,10 +2287,10 @@ func TestHandleSucceeded_LogFetchFailureStillSucceeds(t *testing.T) {
 // The fake blocks until its own context expires, which the handler's own
 // LogIOTimeout must cut short well inside the parent budget.
 func TestHandleSucceeded_LogIOTimeoutStillPersistsOutcome(t *testing.T) {
-	outbox := &fakeOutboxRepo{}
+	outbox := &jobStatusFakeOutboxRepo{}
 	k8s := &fakeK8sClient{status: succeededResult(), blockPodLogs: true}
 
-	cfg := &handlers.HandlerConfig{
+	cfg := &handlers.JobStatusConfig{
 		K8sNamespace:          "default",
 		CheckDelaySeconds:     30,
 		ErrorMessageMaxLen:    4096,
@@ -2308,7 +2298,7 @@ func TestHandleSucceeded_LogIOTimeoutStillPersistsOutcome(t *testing.T) {
 		DefaultTaskMaxRetries: 3,
 		LogIOTimeout:          50 * time.Millisecond,
 	}
-	handler := handlers.NewCheckStatusHandler(k8s, &fakeLogUploader{}, cfg, noopCancelledRepo(), slog.Default())
+	handler := handlers.NewJobStatusHandler(k8s, &fakeLogUploader{}, cfg, noopCancelledRepo(), slog.Default())
 
 	// A parent budget far larger than the I/O cap: the terminal writes must
 	// still have almost all of it left once the log fetch is abandoned.
@@ -2320,7 +2310,7 @@ func TestHandleSucceeded_LogIOTimeoutStillPersistsOutcome(t *testing.T) {
 		ServiceName: "service-1", SchemaName: "analytics", TableName: "orders",
 		MaxRetries: 3,
 	}
-	if err := handler.Handle(ctx, newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(ctx, newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("a stalled log fetch must not fail the handler: %v", err)
 	}
 	if err := ctx.Err(); err != nil {
@@ -2334,7 +2324,7 @@ func TestHandleSucceeded_LogIOTimeoutStillPersistsOutcome(t *testing.T) {
 	if findEntryByEventType(outbox.entries, "task_execution_recorded") == nil {
 		t.Fatal("the execution row must still be written")
 	}
-	if findEntryByEventType(outbox.entries, "node_status_updated") == nil {
+	if findEntryByEventType(outbox.entries, "node_updated") == nil {
 		t.Fatal("the node status row must still be written")
 	}
 }
@@ -2375,7 +2365,7 @@ func TestUploadedArtifactKeysHaveNoEmptySegments(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			handler, uploader := newHandlerWithUploader(
 				&fakeK8sClient{
-					status: &model.K8sPodResult{Status: model.JobStatusSucceeded},
+					status: &model.JobResult{Status: model.JobStatusSucceeded},
 					labels: tc.labels,
 					annotations: map[string]string{
 						pkgmodel.AnnotationReleaseID: "rel-1",
@@ -2391,7 +2381,7 @@ func TestUploadedArtifactKeysHaveNoEmptySegments(t *testing.T) {
 			cmd.ScheduleID = uuid.New()
 			cmd.MaxRetries = 3
 
-			if err := handler.Handle(context.Background(), newFakeUoW(&fakeOutboxRepo{}), cmd, uuid.Nil); err != nil {
+			if err := handler.Handle(context.Background(), newJobStatusFakeUoW(&jobStatusFakeOutboxRepo{}), cmd, uuid.Nil); err != nil {
 				t.Fatalf("Handle: %v", err)
 			}
 
@@ -2420,10 +2410,10 @@ func TestUploadedArtifactKeysHaveNoEmptySegments(t *testing.T) {
 func TestHandle_LegacyPromoteSeedMode_EmitsNoLifecycleRows(t *testing.T) {
 	for _, status := range []model.JobStatus{model.JobStatusSucceeded, model.JobStatusFailed} {
 		t.Run(string(status), func(t *testing.T) {
-			outbox := &fakeOutboxRepo{}
+			outbox := &jobStatusFakeOutboxRepo{}
 			handler := newHandler(
 				&fakeK8sClient{
-					status: &model.K8sPodResult{Status: status},
+					status: &model.JobResult{Status: status},
 					labels: map[string]string{"mode": pkgevents.ModePromoteSeed},
 				},
 				noopCancelledRepo(), 3,
@@ -2436,7 +2426,7 @@ func TestHandle_LegacyPromoteSeedMode_EmitsNoLifecycleRows(t *testing.T) {
 				MaxRetries: 3,
 			}
 
-			if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+			if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 				t.Fatalf("Handle: %v", err)
 			}
 			if len(outbox.entries) != 0 {
@@ -2449,10 +2439,10 @@ func TestHandle_LegacyPromoteSeedMode_EmitsNoLifecycleRows(t *testing.T) {
 // A Job with no mode label is current promoted-seed (or ordinary) work and MUST
 // go through the production lifecycle — that is the whole point of the change.
 func TestHandle_NoModeLabel_UsesTheProductionLifecycle(t *testing.T) {
-	outbox := &fakeOutboxRepo{}
+	outbox := &jobStatusFakeOutboxRepo{}
 	handler := newHandler(
 		&fakeK8sClient{
-			status: &model.K8sPodResult{Status: model.JobStatusSucceeded},
+			status: &model.JobResult{Status: model.JobStatusSucceeded},
 			labels: map[string]string{},
 			podLog: "dbt seed output",
 		},
@@ -2464,7 +2454,7 @@ func TestHandle_NoModeLabel_UsesTheProductionLifecycle(t *testing.T) {
 		ServiceName: "core", SchemaName: "analytics", TableName: "seed_users",
 		JobName: "core-analytics-seed-users-abc", MaxRetries: 3,
 	}
-	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 	if findEntryByEventType(outbox.entries, "task_status_updated") == nil {

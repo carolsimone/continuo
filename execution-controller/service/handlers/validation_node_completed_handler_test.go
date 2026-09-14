@@ -10,7 +10,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/domain/events"
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	"github.com/carolsimone/continuo/execution-controller/service/handlers"
-	"github.com/carolsimone/continuo/execution-controller/service/uow"
+	"github.com/carolsimone/continuo/execution-controller/test/fakes"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
@@ -154,7 +154,7 @@ func newFakeUoWWithChain(t *testing.T, releaseID string, chain []chainNode) *fak
 		}
 		repo.nodes[cn.node] = d
 	}
-	base := &uow.FakeUnitOfWork{
+	base := &fakes.FakeUnitOfWork{
 		Deployments:         repo,
 		Outbox:              &fakeOutboxRepo{},
 		ValidationAggregate: &fakeAggRepo{won: false},
@@ -164,7 +164,7 @@ func newFakeUoWWithChain(t *testing.T, releaseID string, chain []chainNode) *fak
 
 // fakeChainUoW wraps FakeUnitOfWork and exposes StatusOf for gating assertions.
 type fakeChainUoW struct {
-	*uow.FakeUnitOfWork
+	*fakes.FakeUnitOfWork
 	repo *chainedDeploymentsRepo
 }
 
@@ -229,7 +229,7 @@ func TestValidationNodeCompletedHandler_RecordsOutcomeAndTriggersAggregate(t *te
 	}
 	agg := &fakeAggRepo{won: true}
 	outboxRepo := &fakeOutboxRepo{}
-	u := &uow.FakeUnitOfWork{Deployments: depl, Outbox: outboxRepo, ValidationAggregate: agg}
+	u := &fakes.FakeUnitOfWork{Deployments: depl, Outbox: outboxRepo, ValidationAggregate: agg}
 
 	evt := events.ValidationNodeCompleted{
 		ReleaseID: "rel-1", NodeID: "model.shop.orders",
@@ -260,7 +260,7 @@ func TestValidationNodeCompletedHandler_NoOpAggregateWhileNodesPending(t *testin
 	}
 	agg := &fakeAggRepo{won: true}
 	outboxRepo := &fakeOutboxRepo{}
-	u := &uow.FakeUnitOfWork{Deployments: depl, Outbox: outboxRepo, ValidationAggregate: agg}
+	u := &fakes.FakeUnitOfWork{Deployments: depl, Outbox: outboxRepo, ValidationAggregate: agg}
 
 	evt := events.ValidationNodeCompleted{ReleaseID: "rel-1", NodeID: "model.shop.orders", Outcome: "ok"}
 
@@ -279,7 +279,7 @@ func TestValidationNodeCompletedHandler_UnknownReleaseNodeIsAcked(t *testing.T) 
 	depl := &nodeCompletedDeploymentsRepo{byReleaseNode: nil} // GetByReleaseNode -> sql.ErrNoRows
 	agg := &fakeAggRepo{won: true}
 	outboxRepo := &fakeOutboxRepo{}
-	u := &uow.FakeUnitOfWork{Deployments: depl, Outbox: outboxRepo, ValidationAggregate: agg}
+	u := &fakes.FakeUnitOfWork{Deployments: depl, Outbox: outboxRepo, ValidationAggregate: agg}
 
 	evt := events.ValidationNodeCompleted{ReleaseID: "rel-unknown", NodeID: "model.x.y", Outcome: "ok"}
 
@@ -306,7 +306,7 @@ func TestValidationNodeCompletedHandler_RedeliveryIsNoOp(t *testing.T) {
 	}
 	agg := &fakeAggRepo{won: true}
 	outboxRepo := &fakeOutboxRepo{}
-	u := &uow.FakeUnitOfWork{Deployments: depl, Outbox: outboxRepo, ValidationAggregate: agg}
+	u := &fakes.FakeUnitOfWork{Deployments: depl, Outbox: outboxRepo, ValidationAggregate: agg}
 
 	evt := events.ValidationNodeCompleted{
 		ReleaseID: "rel-1", NodeID: "model.shop.orders", Outcome: "ok", DBTLogURI: "s3://logs/orders",

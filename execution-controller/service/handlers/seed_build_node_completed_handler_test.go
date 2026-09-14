@@ -9,7 +9,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/domain/events"
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	"github.com/carolsimone/continuo/execution-controller/service/handlers"
-	"github.com/carolsimone/continuo/execution-controller/service/uow"
+	"github.com/carolsimone/continuo/execution-controller/test/fakes"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -40,7 +40,7 @@ func TestSeedBuildNodeCompletedHandler_RecordsOutcomeAndTriggersAggregate(t *tes
 	}
 	agg := &fakeAggRepo{won: true}
 	outboxRepo := &fakeOutboxRepo{}
-	u := &uow.FakeUnitOfWork{Deployments: depl, Outbox: outboxRepo, ValidationAggregate: agg}
+	u := &fakes.FakeUnitOfWork{Deployments: depl, Outbox: outboxRepo, ValidationAggregate: agg}
 
 	evt := events.SeedBuildNodeCompleted{
 		ReleaseID: "rel-1", NodeID: "seed.shop.fx",
@@ -67,7 +67,7 @@ func TestSeedBuildNodeCompletedHandler_NoOpWhileSeedsPending(t *testing.T) {
 	}
 	agg := &fakeAggRepo{won: true}
 	outboxRepo := &fakeOutboxRepo{}
-	u := &uow.FakeUnitOfWork{Deployments: depl, Outbox: outboxRepo, ValidationAggregate: agg}
+	u := &fakes.FakeUnitOfWork{Deployments: depl, Outbox: outboxRepo, ValidationAggregate: agg}
 
 	evt := events.SeedBuildNodeCompleted{ReleaseID: "rel-1", NodeID: "seed.shop.fx", Outcome: "ok"}
 
@@ -83,7 +83,7 @@ func TestSeedBuildNodeCompletedHandler_UnknownReleaseNodeIsAcked(t *testing.T) {
 	depl := &nodeCompletedDeploymentsRepo{byReleaseNode: nil} // GetByReleaseNode -> sql.ErrNoRows
 	agg := &fakeAggRepo{won: true}
 	outboxRepo := &fakeOutboxRepo{}
-	u := &uow.FakeUnitOfWork{Deployments: depl, Outbox: outboxRepo, ValidationAggregate: agg}
+	u := &fakes.FakeUnitOfWork{Deployments: depl, Outbox: outboxRepo, ValidationAggregate: agg}
 
 	evt := events.SeedBuildNodeCompleted{ReleaseID: "rel-unknown", NodeID: "seed.x", Outcome: "ok"}
 
@@ -108,7 +108,7 @@ func TestSeedBuildNodeCompletedHandler_RedeliveryIsNoOp(t *testing.T) {
 	}
 	agg := &fakeAggRepo{won: true}
 	outboxRepo := &fakeOutboxRepo{}
-	u := &uow.FakeUnitOfWork{Deployments: depl, Outbox: outboxRepo, ValidationAggregate: agg}
+	u := &fakes.FakeUnitOfWork{Deployments: depl, Outbox: outboxRepo, ValidationAggregate: agg}
 
 	evt := events.SeedBuildNodeCompleted{
 		ReleaseID: "rel-1", NodeID: "seed.shop.fx", Outcome: "ok", DBTLogURI: "s3://logs/fx",

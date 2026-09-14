@@ -2,57 +2,76 @@ package fakes
 
 import (
 	"context"
+	"errors"
 	"time"
 
-	"github.com/carolsimone/continuo/k8s-controller/service/uow"
+	"github.com/carolsimone/continuo/execution-controller/domain/repository"
+	"github.com/carolsimone/continuo/execution-controller/service/uow"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/google/uuid"
 )
 
-// FakeUnitOfWork is a fake implementation of uow.UnitOfWork for testing. It
-// exposes injectable fake repositories and records Begin/Commit/Rollback calls.
+// FakeUnitOfWork is an in-memory UnitOfWork for handler unit tests.
+// Construct it with fake repo implementations satisfying the
+// pkgoutbox.Repository and messageprocessing.* interfaces.
 type FakeUnitOfWork struct {
-	OutboxRepoFunc            pkgoutbox.Repository
-	MessageProcessingRepoFunc messageprocessing.Repository
+	Outbox              pkgoutbox.Repository
+	Deployments         repository.DeploymentRepository
+	ValidationAggregate repository.ValidationAggregateRepository
+	Cancelled           repository.CancelledSchedulesRepository
+	MessageProcessing   messageprocessing.Repository
 
-	BeginCallCount    int
-	CommitCallCount   int
-	RollbackCallCount int
+	BeginCalled    int
+	CommitCalled   int
+	RollbackCalled int
+
+	inTx bool
 }
 
-func (f *FakeUnitOfWork) OutboxRepo() pkgoutbox.Repository {
-	if f.OutboxRepoFunc != nil {
-		return f.OutboxRepoFunc
-	}
-	return &FakeOutboxRepository{}
+func (f *FakeUnitOfWork) OutboxRepo() pkgoutbox.Repository                 { return f.Outbox }
+func (f *FakeUnitOfWork) DeploymentsRepo() repository.DeploymentRepository { return f.Deployments }
+func (f *FakeUnitOfWork) ValidationAggregateRepo() repository.ValidationAggregateRepository {
+	return f.ValidationAggregate
 }
-
+func (f *FakeUnitOfWork) CancelledSchedulesRepo() repository.CancelledSchedulesRepository {
+	return f.Cancelled
+}
 func (f *FakeUnitOfWork) MessageProcessingRepo() messageprocessing.Repository {
-	if f.MessageProcessingRepoFunc != nil {
-		return f.MessageProcessingRepoFunc
-	}
-	return &FakeMessageProcessingRepository{}
+	return f.MessageProcessing
 }
 
-func (f *FakeUnitOfWork) Begin(context.Context) error {
-	f.BeginCallCount++
+func (f *FakeUnitOfWork) Begin(_ context.Context) error {
+	if f.inTx {
+		return errors.New("transaction already in progress")
+	}
+	f.inTx = true
+	f.BeginCalled++
 	return nil
 }
 
 func (f *FakeUnitOfWork) Commit() error {
-	f.CommitCallCount++
+	if !f.inTx {
+		return errors.New("no transaction in progress")
+	}
+	f.inTx = false
+	f.CommitCalled++
 	return nil
 }
 
 func (f *FakeUnitOfWork) Rollback() error {
-	f.RollbackCallCount++
+	if !f.inTx {
+		return nil
+	}
+	f.inTx = false
+	f.RollbackCalled++
 	return nil
 }
 
+// Compile-time assertion.
 var _ uow.UnitOfWork = (*FakeUnitOfWork)(nil)
 
-// FakeOutboxRepository is a fake implementation of pkgoutbox.Repository for testing
+// FakeOutboxRepository is a fake implementation of pkgoutbox.Repository for testing.
 type FakeOutboxRepository struct {
 	CreateFunc          func(ctx context.Context, entry *pkgoutbox.Entry) error
 	GetPendingBatchFunc func(ctx context.Context, limit int) ([]*pkgoutbox.Entry, error)

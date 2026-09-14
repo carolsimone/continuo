@@ -10,7 +10,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/domain/events"
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	"github.com/carolsimone/continuo/execution-controller/service/handlers"
-	"github.com/carolsimone/continuo/execution-controller/service/uow"
+	"github.com/carolsimone/continuo/execution-controller/test/fakes"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -23,7 +23,7 @@ func discardLogger() *slog.Logger {
 
 func TestValidationRequestedHandler_EnqueuesOneRowPerNode(t *testing.T) {
 	depl := &stubDeploymentsRepo{}
-	u := &uow.FakeUnitOfWork{Deployments: depl}
+	u := &fakes.FakeUnitOfWork{Deployments: depl}
 
 	evt := events.ValidationRequested{
 		ReleaseID:       "rel-2026-05-29",
@@ -78,7 +78,7 @@ func TestValidationRequestedHandler_EnqueuesOneRowPerNode(t *testing.T) {
 
 func TestValidationRequestedHandler_RootNodeEnqueuesPending(t *testing.T) {
 	depl := &stubDeploymentsRepo{}
-	u := &uow.FakeUnitOfWork{Deployments: depl}
+	u := &fakes.FakeUnitOfWork{Deployments: depl}
 
 	evt := events.ValidationRequested{
 		ReleaseID:       "rel-1",
@@ -102,7 +102,7 @@ func TestValidationRequestedHandler_RootNodeEnqueuesPending(t *testing.T) {
 // and determines whether dispatch is immediate (pending) or held (blocked).
 func TestValidationRequestedHandler_BlocksGatedNodes(t *testing.T) {
 	depl := &stubDeploymentsRepo{}
-	u := &uow.FakeUnitOfWork{Deployments: depl}
+	u := &fakes.FakeUnitOfWork{Deployments: depl}
 
 	h := handlers.NewValidationRequestedHandler(discardLogger())
 	evt := events.ValidationRequested{
@@ -141,7 +141,7 @@ func TestValidationRequestedHandler_BlocksGatedNodes(t *testing.T) {
 
 func TestValidationRequestedHandler_ThreadsOp(t *testing.T) {
 	depl := &stubDeploymentsRepo{}
-	u := &uow.FakeUnitOfWork{Deployments: depl}
+	u := &fakes.FakeUnitOfWork{Deployments: depl}
 
 	evt := events.ValidationRequested{
 		ReleaseID:       "rel",

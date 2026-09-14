@@ -26,8 +26,8 @@ import (
 // --- fakes -----------------------------------------------------------------
 
 type fakeValidationDeployer struct {
-	deployErr      error
-	deployCalls    int
+	deployErr       error
+	deployCalls     int
 	validationCalls int
 	seedBuildCalls  int
 	compileCalls    int
@@ -77,6 +77,7 @@ func (r *fakeDeploymentRepo) Save(_ context.Context, d *model.Deployment) error 
 	r.saved = append(r.saved, d)
 	return nil
 }
+
 // GetByReleaseNode returns the most recently Saved row matching nodeID,
 // mirroring production's within-transaction read-after-write (SettleNodeTerminal
 // fetches the just-settled node right after the dispatcher Saves its terminal

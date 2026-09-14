@@ -12,7 +12,6 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/domain/repository"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
-	"github.com/jmoiron/sqlx"
 )
 
 // UnitOfWork exposes the repos execution-controller's handlers need plus
@@ -25,9 +24,6 @@ type UnitOfWork interface {
 	ValidationAggregateRepo() repository.ValidationAggregateRepository
 	CancelledSchedulesRepo() repository.CancelledSchedulesRepository
 	MessageProcessingRepo() messageprocessing.Repository
-
-	// Tx returns the underlying *sqlx.Tx during a transaction, or nil otherwise.
-	Tx() *sqlx.Tx
 
 	Begin(ctx context.Context) error
 	Commit() error

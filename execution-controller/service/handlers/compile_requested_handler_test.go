@@ -8,7 +8,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	"github.com/carolsimone/continuo/execution-controller/service/artifacts"
 	"github.com/carolsimone/continuo/execution-controller/service/handlers"
-	"github.com/carolsimone/continuo/execution-controller/service/uow"
+	"github.com/carolsimone/continuo/execution-controller/test/fakes"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -16,7 +16,7 @@ import (
 
 func TestCompileRequestedHandler_EnqueuesOneCompileDeployment(t *testing.T) {
 	depl := &stubDeploymentsRepo{}
-	u := &uow.FakeUnitOfWork{Deployments: depl}
+	u := &fakes.FakeUnitOfWork{Deployments: depl}
 
 	evt := events.CompileRequested{
 		ReleaseID: "rel-compile-2026",
@@ -55,7 +55,7 @@ func TestCompileRequestedHandler_EnqueuesOneCompileDeployment(t *testing.T) {
 
 func TestCompileRequestedHandler_MsgProcIDNilAllowed(t *testing.T) {
 	depl := &stubDeploymentsRepo{}
-	u := &uow.FakeUnitOfWork{Deployments: depl}
+	u := &fakes.FakeUnitOfWork{Deployments: depl}
 
 	evt := events.CompileRequested{
 		ReleaseID: "rel-nil",
@@ -73,7 +73,7 @@ func TestCompileRequestedHandler_MsgProcIDNilAllowed(t *testing.T) {
 
 func TestCompileRequestedHandler_JobNameDeterministic(t *testing.T) {
 	depl := &stubDeploymentsRepo{}
-	u := &uow.FakeUnitOfWork{Deployments: depl}
+	u := &fakes.FakeUnitOfWork{Deployments: depl}
 
 	evt := events.CompileRequested{
 		ReleaseID: "rel-abc",
@@ -93,7 +93,7 @@ func TestCompileRequestedHandler_JobNameDeterministic(t *testing.T) {
 
 func TestCompileRequestedHandler_ThreadsCandidateSchemaAndParseCacheURIs(t *testing.T) {
 	depl := &stubDeploymentsRepo{}
-	u := &uow.FakeUnitOfWork{Deployments: depl}
+	u := &fakes.FakeUnitOfWork{Deployments: depl}
 
 	evt := events.CompileRequested{
 		ReleaseID:       "rel-parse-1",
@@ -121,7 +121,7 @@ func TestCompileRequestedHandler_ThreadsCandidateSchemaAndParseCacheURIs(t *test
 
 func TestCompileRequestedHandler_EmptyCandidateSchemaDisablesParseCacheLeg(t *testing.T) {
 	depl := &stubDeploymentsRepo{}
-	u := &uow.FakeUnitOfWork{Deployments: depl}
+	u := &fakes.FakeUnitOfWork{Deployments: depl}
 
 	evt := events.CompileRequested{
 		ReleaseID: "rel-parse-2",
@@ -143,7 +143,7 @@ func TestCompileRequestedHandler_EmptyCandidateSchemaDisablesParseCacheLeg(t *te
 
 func TestCompileRequestedHandler_ThreadsSourceOverlayURI(t *testing.T) {
 	depl := &stubDeploymentsRepo{}
-	u := &uow.FakeUnitOfWork{Deployments: depl}
+	u := &fakes.FakeUnitOfWork{Deployments: depl}
 
 	evt := events.CompileRequested{
 		ReleaseID:        "verify-rel-1-svc-a1",

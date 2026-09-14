@@ -64,8 +64,6 @@ func (u *PostgresUnitOfWork) MessageProcessingRepo() messageprocessing.Repositor
 	return messageprocessing.NewPostgresRepository(u.db, u.logger)
 }
 
-func (u *PostgresUnitOfWork) Tx() *sqlx.Tx { return u.tx }
-
 func (u *PostgresUnitOfWork) Begin(ctx context.Context) error {
 	if u.tx != nil {
 		return fmt.Errorf("transaction already in progress")

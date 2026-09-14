@@ -11,7 +11,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	"github.com/carolsimone/continuo/execution-controller/domain/repository"
 	"github.com/carolsimone/continuo/execution-controller/service/handlers"
-	"github.com/carolsimone/continuo/execution-controller/service/uow"
+	"github.com/carolsimone/continuo/execution-controller/test/fakes"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -31,8 +31,8 @@ func (r *stubCancelledRepo) DeleteExpired(_ context.Context, _ time.Duration) (i
 	return 0, nil
 }
 
-func newFakeUoW(depl repository.DeploymentRepository, cancelled repository.CancelledSchedulesRepository) *uow.FakeUnitOfWork {
-	return &uow.FakeUnitOfWork{Deployments: depl, Cancelled: cancelled}
+func newFakeUoW(depl repository.DeploymentRepository, cancelled repository.CancelledSchedulesRepository) *fakes.FakeUnitOfWork {
+	return &fakes.FakeUnitOfWork{Deployments: depl, Cancelled: cancelled}
 }
 
 func TestQueryModelHandler_EnqueuesDeployment(t *testing.T) {

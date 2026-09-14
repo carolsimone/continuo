@@ -1,7 +1,8 @@
 package test
 
-// D1 invariant tests: a k8s handler that emits multi-effect business decisions
-// must produce exactly N canonical outbox rows in a single atomic transaction.
+// D1 invariant tests: the job-status handler emits multi-effect business
+// decisions that must produce exactly N canonical outbox rows in a single
+// atomic transaction.
 //
 // These tests use a real PostgreSQL instance (via testcontainers) to verify
 // that the D1 design guarantee holds at the storage layer — not just in memory:
@@ -16,21 +17,29 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"os"
 	"testing"
 	"time"
 
-	"github.com/carolsimone/continuo/k8s-controller/adapters/postgres"
-	"github.com/carolsimone/continuo/k8s-controller/domain/command"
-	"github.com/carolsimone/continuo/k8s-controller/domain/repository"
-	"github.com/carolsimone/continuo/k8s-controller/domain/model"
-	"github.com/carolsimone/continuo/k8s-controller/service/handlers"
-	"github.com/carolsimone/continuo/k8s-controller/service/uow"
-	"github.com/carolsimone/continuo/k8s-controller/test/fakes"
+	"github.com/carolsimone/continuo/execution-controller/adapters/postgres"
+	"github.com/carolsimone/continuo/execution-controller/domain/command"
+	"github.com/carolsimone/continuo/execution-controller/domain/model"
+	"github.com/carolsimone/continuo/execution-controller/domain/repository"
+	"github.com/carolsimone/continuo/execution-controller/service/handlers"
+	"github.com/carolsimone/continuo/execution-controller/service/uow"
+	"github.com/carolsimone/continuo/execution-controller/test/fakes"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 )
+
+// setupTestDB wraps setupPostgres and adds a logger.
+func setupTestDB(t *testing.T) (*sqlx.DB, *slog.Logger, func()) {
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	db, cleanup := setupPostgres(t)
+	return db, logger, cleanup
+}
 
 // errInjected is the sentinel error returned by the injected failing outbox repo.
 var errInjected = errors.New("injected Create failure")
@@ -84,6 +93,18 @@ func (u *injectingUnitOfWork) OutboxRepo() pkgoutbox.Repository {
 	return u.wrapOutbox(u.real.OutboxRepo())
 }
 
+func (u *injectingUnitOfWork) DeploymentsRepo() repository.DeploymentRepository {
+	return u.real.DeploymentsRepo()
+}
+
+func (u *injectingUnitOfWork) ValidationAggregateRepo() repository.ValidationAggregateRepository {
+	return u.real.ValidationAggregateRepo()
+}
+
+func (u *injectingUnitOfWork) CancelledSchedulesRepo() repository.CancelledSchedulesRepository {
+	return u.real.CancelledSchedulesRepo()
+}
+
 func (u *injectingUnitOfWork) MessageProcessingRepo() messageprocessing.Repository {
 	return u.real.MessageProcessingRepo()
 }
@@ -109,13 +130,13 @@ func (f *fakeCancelledSchedulesRepoFanout) DeleteExpired(_ context.Context, _ ti
 
 var _ repository.CancelledSchedulesRepository = (*fakeCancelledSchedulesRepoFanout)(nil)
 
-// newSucceededHandler builds a CheckStatusHandler wired to a K8s stub that
+// newSucceededHandler builds a JobStatusHandler wired to a K8s stub that
 // always returns JobStatusSucceeded.
-func newSucceededHandler(logger *slog.Logger) *handlers.CheckStatusHandler {
+func newSucceededHandler(logger *slog.Logger) *handlers.JobStatusHandler {
 	now := time.Now()
 	k8sClient := &fakes.FakeK8sClient{
-		GetJobStatusFunc: func(_ context.Context, _, _ string) (*model.K8sPodResult, error) {
-			return &model.K8sPodResult{
+		GetJobStatusFunc: func(_ context.Context, _, _ string) (*model.JobResult, error) {
+			return &model.JobResult{
 				Status:           model.JobStatusSucceeded,
 				StartedAt:        &now,
 				CompletedAt:      &now,
@@ -124,7 +145,7 @@ func newSucceededHandler(logger *slog.Logger) *handlers.CheckStatusHandler {
 		},
 	}
 
-	cfg := &handlers.HandlerConfig{
+	cfg := &handlers.JobStatusConfig{
 		K8sNamespace:          "default",
 		CheckDelaySeconds:     30,
 		ErrorMessageMaxLen:    4096,
@@ -132,7 +153,7 @@ func newSucceededHandler(logger *slog.Logger) *handlers.CheckStatusHandler {
 		DefaultTaskMaxRetries: 3,
 	}
 
-	return handlers.NewCheckStatusHandler(
+	return handlers.NewJobStatusHandler(
 		k8sClient,
 		&fakes.FakeLogUploader{},
 		cfg,
@@ -154,7 +175,7 @@ func newSucceededCmd(taskID uuid.UUID) command.CheckJobStatus {
 
 // runInUoW drives handler.Handle inside a fresh transaction on u, mirroring the
 // commit/rollback discipline the production bindings apply.
-func runInUoW(ctx context.Context, u uow.UnitOfWork, handler *handlers.CheckStatusHandler, cmd command.CheckJobStatus) error {
+func runInUoW(ctx context.Context, u uow.UnitOfWork, handler *handlers.JobStatusHandler, cmd command.CheckJobStatus) error {
 	if err := u.Begin(ctx); err != nil {
 		return err
 	}
@@ -165,12 +186,12 @@ func runInUoW(ctx context.Context, u uow.UnitOfWork, handler *handlers.CheckStat
 	return u.Commit()
 }
 
-// countOutboxRows returns the number of rows in k8s_outbox for the given aggregate_id.
+// countOutboxRows returns the number of rows in executor_outbox for the given aggregate_id.
 func countOutboxRows(t testing.TB, db *sqlx.DB, aggregateID uuid.UUID) int {
 	t.Helper()
 	var count int
 	err := db.QueryRow(
-		"SELECT COUNT(*) FROM k8s_outbox WHERE aggregate_id = $1",
+		"SELECT COUNT(*) FROM executor_outbox WHERE aggregate_id = $1",
 		aggregateID,
 	).Scan(&count)
 	if err != nil {
@@ -179,12 +200,12 @@ func countOutboxRows(t testing.TB, db *sqlx.DB, aggregateID uuid.UUID) int {
 	return count
 }
 
-// eventTypesForAggregate returns the event_type values committed to k8s_outbox
+// eventTypesForAggregate returns the event_type values committed to executor_outbox
 // for the given aggregate_id, ordered by created_at.
 func eventTypesForAggregate(t testing.TB, db *sqlx.DB, aggregateID uuid.UUID) []string {
 	t.Helper()
 	rows, err := db.Query(
-		"SELECT event_type FROM k8s_outbox WHERE aggregate_id = $1 ORDER BY created_at",
+		"SELECT event_type FROM executor_outbox WHERE aggregate_id = $1 ORDER BY created_at",
 		aggregateID,
 	)
 	if err != nil {
@@ -205,7 +226,7 @@ func eventTypesForAggregate(t testing.TB, db *sqlx.DB, aggregateID uuid.UUID) []
 
 // TestK8sFanout_HandleSucceeded_Commits3Rows is the D1 happy-path invariant:
 // driving handleSucceeded through a real Postgres transaction must commit exactly
-// 3 rows with the correct event_types in k8s_outbox.
+// 3 rows with the correct event_types in executor_outbox.
 func TestK8sFanout_HandleSucceeded_Commits3Rows(t *testing.T) {
 	db, logger, cleanup := setupTestDB(t)
 	defer cleanup()
@@ -220,11 +241,11 @@ func TestK8sFanout_HandleSucceeded_Commits3Rows(t *testing.T) {
 
 	got := countOutboxRows(t, db, taskID)
 	if got != 3 {
-		t.Fatalf("D1 invariant violated: expected 3 rows in k8s_outbox, got %d", got)
+		t.Fatalf("D1 invariant violated: expected 3 rows in executor_outbox, got %d", got)
 	}
 
 	types := eventTypesForAggregate(t, db, taskID)
-	want := []string{"task_status_updated", "task_execution_recorded", "node_status_updated"}
+	want := []string{"task_status_updated", "task_execution_recorded", "node_updated"}
 	if len(types) != len(want) {
 		t.Fatalf("event_types mismatch: want %v got %v", want, types)
 	}
@@ -237,7 +258,7 @@ func TestK8sFanout_HandleSucceeded_Commits3Rows(t *testing.T) {
 
 // TestK8sFanout_HandleSucceeded_AtomicRollback is the D1 rollback invariant:
 // when the 3rd outbox Create fails, the entire transaction must roll back and
-// leave 0 rows in k8s_outbox.
+// leave 0 rows in executor_outbox.
 //
 // This guards against accidentally splitting the 3 writes across separate
 // transactions: if they were split, the first two rows would survive the
@@ -248,7 +269,7 @@ func TestK8sFanout_HandleSucceeded_AtomicRollback(t *testing.T) {
 
 	handler := newSucceededHandler(logger)
 
-	// Inject a failure on the 3rd Create call (node_status_updated). The counting
+	// Inject a failure on the 3rd Create call (node_updated). The counting
 	// repo is created once and reused across OutboxRepo() calls so failOnN counts
 	// every Create within the single transaction.
 	counting := &countingOutboxRepo{failOnN: 3}
