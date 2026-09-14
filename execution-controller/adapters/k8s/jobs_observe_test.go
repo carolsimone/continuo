@@ -19,7 +19,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
 
-	"github.com/carolsimone/continuo/k8s-controller/domain/model"
+	"github.com/carolsimone/continuo/execution-controller/domain/model"
 )
 
 func TestGetJobStatus_StartedAt_FromJobWhenPodsGone(t *testing.T) {

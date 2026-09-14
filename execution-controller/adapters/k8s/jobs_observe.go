@@ -5,62 +5,21 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log/slog"
-	"os"
 	"strings"
 
-	"github.com/carolsimone/continuo/k8s-controller/domain/model"
+	"github.com/carolsimone/continuo/execution-controller/domain/model"
+	"github.com/carolsimone/continuo/execution-controller/service/ports"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
 )
 
-// K8sClient provides methods to interact with Kubernetes
-type K8sClient struct {
-	clientset kubernetes.Interface
-	logger    *slog.Logger
-}
-
-// NewK8sClient creates a new K8sClient.
-// Uses KUBECONFIG when set (local/docker-compose), otherwise falls back to
-// in-cluster config (K8s pod with a ServiceAccount).
-func NewK8sClient(logger *slog.Logger) (*K8sClient, error) {
-	var config *rest.Config
-	var err error
-
-	if kubeconfigPath := os.Getenv("KUBECONFIG"); kubeconfigPath != "" {
-		config, err = clientcmd.BuildConfigFromFlags("", kubeconfigPath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to build config from kubeconfig: %w", err)
-		}
-	} else {
-		config, err = rest.InClusterConfig()
-		if err != nil {
-			return nil, fmt.Errorf("failed to build in-cluster config: %w", err)
-		}
-	}
-
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		logger.Error("Failed to create K8s clientset", "error", err)
-		return nil, fmt.Errorf("failed to create k8s clientset: %w", err)
-	}
-
-	logger.Info("K8s client initialized successfully")
-
-	return &K8sClient{
-		clientset: clientset,
-		logger:    logger,
-	}, nil
-}
+var _ ports.JobObserver = (*K8sClient)(nil)
 
 // GetJobStatus queries K8s API for job/pod status and returns detailed status information
-func (c *K8sClient) GetJobStatus(ctx context.Context, namespace, jobName string) (*model.K8sPodResult, error) {
+func (c *K8sClient) GetJobStatus(ctx context.Context, namespace, jobName string) (*model.JobResult, error) {
 	// Step 1: Get Job
 	job, err := c.clientset.BatchV1().Jobs(namespace).Get(ctx, jobName, metav1.GetOptions{})
 	if err != nil {
@@ -69,7 +28,7 @@ func (c *K8sClient) GetJobStatus(ctx context.Context, namespace, jobName string)
 				"namespace", namespace,
 				"job_name", jobName,
 			)
-			return &model.K8sPodResult{
+			return &model.JobResult{
 				Status:         model.JobStatusFailed,
 				TerminationMsg: "Job not found in Kubernetes",
 			}, nil
@@ -83,7 +42,7 @@ func (c *K8sClient) GetJobStatus(ctx context.Context, namespace, jobName string)
 	}
 
 	// Step 2: Determine job status from job.Status
-	result := &model.K8sPodResult{}
+	result := &model.JobResult{}
 
 	if job.Status.Succeeded > 0 {
 		// dbt exits 0 when no models match the selector ("Nothing to do").

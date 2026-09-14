@@ -15,7 +15,7 @@ func TestCountActiveJobs_CountsOnlyActivePods(t *testing.T) {
 	cs := fake.NewSimpleClientset(
 		jobWithActive("running-1", "default", map[string]string{"app": "dbt-job"}, 1),
 		jobWithActive("running-2", "default", map[string]string{"app": "dbt-job"}, 1),
-		jobWithActive("completed", "default", map[string]string{"app": "dbt-job"}, 0), // not active
+		jobWithActive("completed", "default", map[string]string{"app": "dbt-job"}, 0),   // not active
 		jobWithActive("other-app", "default", map[string]string{"app": "something"}, 1), // wrong label
 	)
 	c := &K8sClient{logger: slog.New(slog.NewTextHandler(os.Stderr, nil))}
