@@ -38,8 +38,8 @@ type JobDeployed struct {
 	NodeType     string
 	ImageTag     string
 	// Operation is the dbt verb this Job runs (e.g. "test"); empty for a normal
-	// production `dbt run`. It flows onto node.deployed:v1 so k8s-controller
-	// carries it through the durable check/retry chain.
+	// production `dbt run`. It flows onto node.deployed:v1 so this service's
+	// job-status handler re-checks the Job with the same verb.
 	Operation      string
 	TaskRetryCount int // task-level retry count (not outbox delivery retries)
 	MaxRetries     int // maximum task retries allowed
@@ -158,7 +158,7 @@ type TaskRetry struct {
 func (TaskRetry) isEvent() {}
 
 // ToMap converts TaskRetry event to a map for Redis publishing.
-// Uses task_retry_count (not retry_count) to match executor-controller's consumer key.
+// Uses task_retry_count (not retry_count) to match the retry-task consumer's key.
 func (e TaskRetry) ToMap() map[string]interface{} {
 	m := map[string]interface{}{
 		"task_id":          e.TaskID,
