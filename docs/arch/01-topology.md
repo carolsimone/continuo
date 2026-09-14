@@ -88,7 +88,6 @@ flowchart TD
   TRB[trigger.rebase:v1]
   TSN[trigger.single_node_run:v1]
   QM[query.model:v1]
-  ED[node.deployed:v1]
   KCV[check.k8s:v1]
   UT[node.updated:v1]
 
@@ -127,8 +126,6 @@ flowchart TD
 
   QM --> EC[execution-controller]
 
-  EC --> ED
-  ED --> EC
   EC --> KCV
   KCV --> EC
   EC --> UT

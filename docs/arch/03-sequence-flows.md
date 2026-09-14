@@ -30,9 +30,9 @@ sequenceDiagram
       Note over ST: RunEntriesDispatchedHandler.Handle (1 tx)<br/>row-lock scheduler_tracker (skip if cancelled)<br/>BulkCreate task_tracker rows — status=PENDING<br/>SetTotalTaskCount, init_status=completed, status=RUNNING
     and executor launches seed/root jobs
       R->>EC: consume query.model v1
-      Note over EC: write deployments (pending)<br/>deployer.Dispatcher — CreateQueryJob (idempotent on JobName)<br/>write execution_outbox row (node_deployed)
-      EC->>R: publish node.deployed v1
-      R->>EC: consume node.deployed v1
+      Note over EC: write deployments (pending)<br/>deployer.Dispatcher — CreateQueryJob (idempotent on JobName)<br/>write execution_outbox row (check_delayed), same transaction
+      EC->>R: publish check.k8s v1 (via the delay queue)
+      R->>EC: consume check.k8s v1
       Note over EC: start poll loop — CheckJobStatus + check.k8s v1 backoff<br/>first time the Job is observed running: announce RUNNING once per attempt
       EC->>R: publish task.status.updated v1 (RUNNING)
       R->>ST: consume task.status.updated v1 (RUNNING)
@@ -59,7 +59,7 @@ sequenceDiagram
   participant OR as orchestrator
   participant EC as execution-controller
 
-  R->>EC: node.deployed:v1
+  R->>EC: check.k8s:v1
   EC->>EC: GetJobStatus
   EC->>ST: GetTask(task_id)
   EC->>EC: write execution_outbox(task_succeeded + node_status_updated)
@@ -73,9 +73,9 @@ sequenceDiagram
   OR->>R: publish query.model:v1
 
   R->>EC: consume query.model:v1
-  EC->>EC: write execution_outbox (node_deployed)
-  EC->>R: publish node.deployed:v1
-  Note over EC: node.deployed:v1 → poll loop<br/>k8s announces RUNNING once when the Job is first observed running
+  EC->>EC: write execution_outbox (check_delayed)
+  EC->>R: publish check.k8s:v1 (via the delay queue)
+  Note over EC: check.k8s:v1 → poll loop<br/>k8s announces RUNNING once when the Job is first observed running
 ```
 
 ## 3. Retry and Terminal Failure Path
@@ -339,7 +339,7 @@ sequenceDiagram
     Note over ST: RunEntriesDispatchedHandler.Handle (1 tx)<br/>BulkCreate task_tracker row (1 row)<br/>SetTotalTaskCount=1, init_status=completed, status=RUNNING
   and executor launches the job
     R->>EC: consume query.model:v1
-    Note over EC: identical to Flow 1 from here<br/>deployments (pending) → deployer.Dispatcher → CreateQueryJob → execution_outbox row → node.deployed:v1 (k8s announces RUNNING on first observed run)
+    Note over EC: identical to Flow 1 from here<br/>deployments (pending) → deployer.Dispatcher → CreateQueryJob → execution_outbox row (check_delayed) → check.k8s:v1 via the delay queue (k8s announces RUNNING on first observed run)
   end
 ```
 
@@ -391,7 +391,7 @@ sequenceDiagram
     Note over ST: RunEntriesDispatchedHandler.Handle (1 tx)<br/>BulkCreate task_tracker — inherited rows land at SUCCEEDED with inherited_from_task_id<br/>rebased rows land at PENDING<br/>SetTotalTaskCount, init_status=completed<br/>auto-rollup if every task already terminal (defensive — no-op rebase)<br/>else status=RUNNING
   and executor launches rebased K8s Jobs
     R->>EC: consume query.model v1
-    Note over EC: identical to Flow 1 from here<br/>deployments (pending) → deployer.Dispatcher → CreateQueryJob → execution_outbox row → node.deployed v1 (k8s announces RUNNING on first observed run)
+    Note over EC: identical to Flow 1 from here<br/>deployments (pending) → deployer.Dispatcher → CreateQueryJob → execution_outbox row (check_delayed) → check.k8s v1 via the delay queue (k8s announces RUNNING on first observed run)
   end
 ```
 
@@ -498,8 +498,9 @@ sequenceDiagram
   Note over EC: create _candidate_{id} schema once (advisory lock, before fan-out)<br/>per node → deployments (mode=validation)<br/>roots → pending, nodes with upstreams → blocked<br/>(inbound dedup is per-release)
   loop dispatch pending rows, unblocking downstream as upstreams settle ok
     Note over EC: build_from_sql (changed dbt node): single validation container fetches CANDIDATE_SQL_URI from S3 itself → CREATE TABLE {candidate}.{table} AS (SQL) WITH NO DATA<br/>build_from_columns (changed python node): fetches CANDIDATE_SPEC_URI (declared reads + output columns) from S3 → creates the empty typed table from the spec<br/>check_binds (changed dbt-test node): fetches CANDIDATE_SQL_URI like build_from_sql, but EXPLAINs it against the candidate schema and creates nothing<br/>clone_from_prod: single validation container, no S3 → clone prod table shape empty<br/>(seeds and unchanged upstreams of either kind use clone_from_prod)
-    EC->>R: publish node.deployed:v1 (synthetic ids — routes by mode=validation label)
-    R->>EC: consume node.deployed:v1 / check.k8s:v1
+    Note over EC: write execution_outbox row (check_delayed, synthetic ids — routes by mode=validation label)
+    EC->>R: publish check.k8s:v1 (via the delay queue)
+    R->>EC: consume check.k8s:v1
     Note over EC: poll Job, re-arm check.k8s:v1 until terminal
     EC->>S3: upload runner/dbt pod log
     Note over EC: outcomes.Recorder.Record (same tx as the terminal observation):<br/>RecordOutcome, then gating — ok unblocks ready downstream,<br/>non-ok skips all reachable downstream

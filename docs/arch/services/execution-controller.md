@@ -73,10 +73,9 @@ Every stream is consumed via `pkg/redis.StreamConsumer` with a per-stream parser
 | `pipeline.run.finished:v1` | `executor-pipeline-run-finished` | None — idempotent teardown | Emitted by `release-controller` for every terminal decision of every pipeline run — a candidate release or a fix-verification run alike. Drops the run's `candidate_schema` via `CandidateSchemaCleaner`; best-effort, since a leftover candidate schema must never block a run's terminal decision |
 | `release.promoted:v1` | `executor-release-promoted` | None — idempotent teardown backstop | Idempotent backstop for the same `candidate_schema` teardown when the payload carries one |
 | `release.rejected:v1` | `executor-release-rejected` | None — idempotent teardown backstop | Idempotent backstop for the same `candidate_schema` teardown when the payload carries one |
-| `node.deployed:v1` | `k8s-deployed` | Outbox-entry-carried (`DedupWithOutboxEntryID`) | Pod-deploy intent emitted after a Job is created; consumed by the job-status handler to start watching it |
-| `check.k8s:v1` | `k8s-check-status` | Outbox-entry-carried | Delayed status-check tickets; the promoter moves due tickets from the delay queue into this stream. Every message is already due — the promoter only XADDs due tickets — so the binding processes each message immediately |
+| `check.k8s:v1` | `k8s-check-status` | Outbox-entry-carried | Delayed status-check tickets; the promoter moves due tickets from the delay queue into this stream. Every message is already due — the promoter only XADDs due tickets — so the binding processes each message immediately. The dispatcher writes the first ticket for a Job directly after creating it; the job-status handler writes every later ticket while the Job is still running — both routes go through the same delay queue and land on this one stream, so the job-status handler observes a fresh Job and a re-polled one identically |
 
-`query.model:v1` carries `task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `job_name`, `node_type`, `operation` (the dbt verb to run — `""` default `run`, `test`, or `build`; selects the argv `CommandResolver.NodeCommand` builds for the node, independently of `node_type`). A retryable production failure queues the same shape of `deployments` row in-process — the job-status handler calls `createDeployment` directly, in the same transaction as the FAILED announcement it writes for the exhausted attempt, rather than round-tripping through Redis — so `operation` and the other fields reach the `-rN` retry row unchanged. `node.deployed:v1` and `check.k8s:v1` carry the same event shape decoded into `pkg/events.NodeDeployed`/`CheckK8s` (`task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `job_name`, `node_type`, `image_tag`, plus retry/max-retries; the task-level retry count is named `task_retry_count` on `node.deployed:v1` and `retry_count` on `check.k8s:v1`). `check.k8s:v1` additionally carries `running_announced` — false on a fresh `node.deployed:v1` (a new attempt), set true once RUNNING has been announced, so the self-poll loop announces RUNNING exactly once per attempt without persistent state.
+`query.model:v1` carries `task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `job_name`, `node_type`, `operation` (the dbt verb to run — `""` default `run`, `test`, or `build`; selects the argv `CommandResolver.NodeCommand` builds for the node, independently of `node_type`). A retryable production failure queues the same shape of `deployments` row in-process — the job-status handler calls `createDeployment` directly, in the same transaction as the FAILED announcement it writes for the exhausted attempt, rather than round-tripping through Redis — so `operation` and the other fields reach the `-rN` retry row unchanged. `check.k8s:v1` carries `pkg/events.CheckK8s` (`task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `job_name`, `node_type`, `image_tag`, `operation`, `retry_count`, `max_retries`, plus `running_announced` — false on the dispatcher's first ticket for a fresh attempt, set true once RUNNING has been announced, so the self-poll loop announces RUNNING exactly once per attempt without persistent state).
 
 The cancelled-schedule guard runs inside `QueryModelHandler` via `uow.CancelledSchedulesRepo().Exists`, and again inside the job-status handler (across every Job-status branch, including the retry branch that would otherwise queue a new `deployments` row) before it acts on any Job result; a cancelled match commits the dedup row (so the message is ACKed and never reprocessed) and returns without writing to `deployments` or emitting any outbox row.
 
@@ -115,8 +114,7 @@ Every business decision writes one or more `execution_outbox` rows inside the sa
 
 | Stream | Trigger |
 |---|---|
-| `node.deployed:v1` | Emitted by the dispatcher after K8s job creation succeeds (production and every candidate mode); consumed by the job-status handler to start watching the Job. For candidate rows the `task_id`/`schedule_id` are the deterministic synthetic UUIDs derived from `(release_id, node_id)` — inert carriers, since the job-status handler routes the Job's status by its `mode` label, not by these IDs |
-| `check.k8s:v1` (via the delay queue) | Job still running; the job-status handler writes a `check_delayed` outbox row, which the publisher routes to the delay queue as a ticket rather than an XADD; the promoter moves it onto this stream once due |
+| `check.k8s:v1` (via the delay queue) | The dispatcher writes the first `check_delayed` outbox row immediately after K8s job creation succeeds (production and every candidate mode), in the same transaction as marking the deployment deployed; the job-status handler writes every later one while the Job is still running. Either way the publisher routes the row to the delay queue as a ticket rather than an XADD, and the promoter moves it onto this stream once due. For candidate rows the `task_id`/`schedule_id` are the deterministic synthetic UUIDs derived from `(release_id, node_id)` — inert carriers, since the job-status handler routes the Job's status by its `mode` label, not by these IDs |
 | `task.status.updated:v1` | Published with `status=FAILED` on the never-deployed terminal dispatch failure (permanent error or retry-budget exhaustion before a pod exists), with `RUNNING` the first time the job-status handler observes an attempt's Job running (suppressed for every candidate mode, which carries no real task/schedule), and with the pod's terminal `SUCCEEDED`/`FAILED` |
 | `task.execution.recorded:v1` | Published by the job-status handler on every production Job terminal (succeeded, permanently failed, or failed-with-retry); consumed by `state` to persist the execution record |
 | `node.updated:v1` | Published on a never-deployed terminal dispatch failure, and on a production Job's terminal (`SUCCEEDED`/`FAILED`); consumed by `orchestrator` for topology projection |
@@ -126,7 +124,7 @@ Every business decision writes one or more `execution_outbox` rows inside the sa
 | `compile.completed:v1` | Compile aggregate; emitted exactly once when the compile node settles. Payload: `release_id`, `status` (`ok`/`failed`), `per_node` (each entry: `node_id`, `status`, optional `dbt_log_uri`, optional `run_results_uri`, optional `failed_container`), `candidate_schema` |
 | `outbox.dead_letter:v1` | Written by `pkg/outbox.Processor` when a row exhausts `max_retries`; an operational dead-letter queue, not a domain event |
 
-`operation` (the dbt verb the Job runs, e.g. `test`, `build`) is sourced from durable check/retry data, not from Job metadata: it arrives on `node.deployed:v1`, is held on the check command, rides the delay-queue ticket onto every `check.k8s:v1` self-poll, and is carried into the `-rN` retry deployment the job-status handler queues in-process from the durable `CheckJobStatus.Operation`. Sourcing it from the Job's labels would be unsafe because a TTL-reaped ("vanished") Job returns empty labels, which would silently rebuild a `dbt test`/`dbt build` Job as `dbt run`; carrying it in the durable payload keeps a retried `dbt test` or `dbt build` Job the same verb. Normal production runs have an empty `operation`, so the field is omitted and the wire format is unchanged for them.
+`operation` (the dbt verb the Job runs, e.g. `test`, `build`) is sourced from durable check/retry data, not from Job metadata: the dispatcher stamps it on the first `check.k8s:v1` ticket it writes for a Job, that value rides the delay-queue ticket onto every subsequent `check.k8s:v1` self-poll, and it is carried into the `-rN` retry deployment the job-status handler queues in-process from the durable `CheckJobStatus.Operation`. Sourcing it from the Job's labels would be unsafe because a TTL-reaped ("vanished") Job returns empty labels, which would silently rebuild a `dbt test`/`dbt build` Job as `dbt run`; carrying it in the durable payload keeps a retried `dbt test` or `dbt build` Job the same verb. Normal production runs have an empty `operation`, so the field is omitted and the wire format is unchanged for them.
 
 ### Command resolution (`dbt-commands.yaml`)
 
@@ -223,10 +221,11 @@ Uploads run for every terminal Job, succeeded as well as failed: the pod is garb
       - validation: CreateValidationJob
       - seed_build: CreateSeedBuildJob
       - compile: CreateCompileJob
-   c. On success: MarkDeployed, write the node_deployed announcement (production also
-      leaves the running/terminal announcement to the job-status handler; candidate
-      modes emit only the node.deployed:v1 trigger, since they carry no real
-      task/schedule)
+   c. On success: MarkDeployed, write the first check_delayed outbox row (→
+      check.k8s:v1 via the delay queue) that starts the job-status handler's
+      polling loop (production also leaves the running/terminal announcement to
+      the job-status handler; candidate modes emit only this first check
+      ticket, since they carry no real task/schedule)
    d. On transient error with retry budget remaining: reschedule with exponential
       backoff (base 5s, cap 2m) via next_attempt_at
    e. On permanent error (errors.Is ErrPermanent) or retry-budget exhaustion:
@@ -242,7 +241,7 @@ A candidate row is dispatched only once `pending` (unblocked); `blocked` rows (w
 
 ### Job-status handler
 
-The job-status handler (`service/handlers/job_status_handler.go`) processes `node.deployed:v1` and `check.k8s:v1` identically:
+The job-status handler (`service/handlers/job_status_handler.go`) processes every `check.k8s:v1` ticket identically, whether it is the dispatcher's first check written right after Job creation or a later re-poll of a still-running Job:
 
 ```
 1. GetJobStatus (K8s) — query current pod status; started_at uses a three-tier
