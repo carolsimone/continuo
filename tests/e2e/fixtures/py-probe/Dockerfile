@@ -7,6 +7,9 @@ COPY contracts/ /app/contracts/
 COPY scripts/ /app/scripts/
 # The runtime base already declares USER 65532:65532 — a frozen cross-repo
 # contract with execution-controller, which hard-codes that uid in its validation
-# pod securityContext. Nothing to set here: the harness only reads its baked
-# contracts and scripts and writes solely to the warehouse, so no ownership
-# changes are needed on top of the base's default user.
+# pod securityContext. The harness only reads its baked contracts and scripts
+# and writes solely to the warehouse, so no ownership changes are needed on
+# top of the base's default user. Restating it here is redundant at runtime
+# (the base's own USER already applies) but makes it visible to Dockerfile
+# scanners that only read this file's text and can't resolve the base image.
+USER 65532:65532
