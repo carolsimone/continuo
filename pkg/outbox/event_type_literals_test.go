@@ -25,8 +25,6 @@ var forbiddenEventTypeLiterals = map[string]bool{
 	"task_status_updated":         true,
 	"node_updated":                true,
 	"task_execution_recorded":     true,
-	"task_retry":                  true,
-	"task_failed":                 true,
 	"node_status_updated":         true,
 	"check_delayed":               true,
 }

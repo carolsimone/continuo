@@ -142,15 +142,6 @@ streams:
 
   # ---------------- execution-controller streams ----------------
 
-  - name: retry.task:v1
-    const: RetryTaskV1
-    description: Retry trigger for tasks; produced and consumed by execution-controller.
-    producers: [execution-controller]
-    consumers:
-      - service: execution-controller
-        group: executor-retry
-        const: ExecutorRetry
-
   - name: check.k8s:v1
     const: CheckK8sV1
     description: Delayed status-check tickets; a promoter moves due tickets from the delay queue into the stream.
@@ -159,12 +150,6 @@ streams:
       - service: execution-controller
         group: k8s-check-status
         const: K8sCheckStatus
-
-  - name: task.failed:v1
-    const: TaskFailedV1
-    description: Terminal task failure emitted by execution-controller.
-    producers: [execution-controller]
-    consumers: []
 
   - name: outbox.dead_letter:v1
     const: OutboxDeadLetterV1

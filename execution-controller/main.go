@@ -168,7 +168,6 @@ func main() {
 	// ---- handlers and bindings ----
 
 	queryHandler := handlers.NewQueryModelHandler(logger)
-	retryHandler := handlers.NewRetryTaskHandler(logger)
 	scheduleCancelledHandler := handlers.NewScheduleCancelledHandler(logger)
 	validationReqHandler := handlers.NewValidationRequestedHandler(logger)
 	seedBuildReqHandler := handlers.NewSeedBuildRequestedHandler(logger)
@@ -193,8 +192,6 @@ func main() {
 
 	queryConsumer := newConsumer(streams.QueryModelV1, streams.ExecutorQueryModel,
 		redis.NewQueryModelBinding(uowFactory, queryHandler, logger))
-	retryConsumer := newConsumer(streams.RetryTaskV1, streams.ExecutorRetry,
-		redis.NewRetryTaskBinding(uowFactory, retryHandler, logger))
 	scheduleCancelledConsumer := newConsumer(streams.ScheduleCancelledV1, streams.ExecutorScheduleCancelled,
 		redis.NewScheduleCancelledBinding(uowFactory, scheduleCancelledHandler, logger))
 	validationReqConsumer := newConsumer(streams.ValidationRequestedV1, streams.ExecutorValidationRequested,
@@ -269,7 +266,6 @@ func main() {
 	// ---- consumers ----
 
 	runConsumer("query_model", queryConsumer)
-	runConsumer("retry_task", retryConsumer)
 	runConsumer("schedule_cancelled", scheduleCancelledConsumer)
 	runSchemaOpConsumer("validation_requested", validationReqConsumer)
 	runSchemaOpConsumer("seed_build_requested", seedBuildReqConsumer)

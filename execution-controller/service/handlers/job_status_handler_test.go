@@ -25,6 +25,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/pkg/validationresult"
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
 )
 
 // --- fakes ---
@@ -201,7 +202,14 @@ func (r *fakeMessageProcessingRepo) DeleteTerminalOlderThan(_ context.Context, _
 var _ messageprocessing.Repository = (*fakeMessageProcessingRepo)(nil)
 
 func newJobStatusFakeUoW(outbox pkgoutbox.Repository) *fakes.FakeUnitOfWork {
-	return &fakes.FakeUnitOfWork{Outbox: outbox, MessageProcessing: &fakeMessageProcessingRepo{}}
+	return newJobStatusFakeUoWWithDeployments(outbox, &stubDeploymentsRepo{})
+}
+
+// newJobStatusFakeUoWWithDeployments builds a fake UoW backed by a caller-supplied
+// deployments repo, for tests asserting on the retry deployment the job-status
+// handler's retry branch queues via createDeployment.
+func newJobStatusFakeUoWWithDeployments(outbox pkgoutbox.Repository, depl repository.DeploymentRepository) *fakes.FakeUnitOfWork {
+	return &fakes.FakeUnitOfWork{Outbox: outbox, MessageProcessing: &fakeMessageProcessingRepo{}, Deployments: depl}
 }
 
 // candidateDeploymentsRepo is a configurable in-memory DeploymentRepository for
@@ -353,9 +361,12 @@ func findEntryByEventType(entries []*pkgoutbox.Entry, eventType string) *pkgoutb
 // --- tests ---
 
 // TestHandleFailedWithRetry verifies that a failed job whose retryCount < maxRetries
-// produces 3 canonical outbox rows: task_status_updated, task_execution_recorded, task_retry.
+// produces 2 canonical outbox rows (task_status_updated, task_execution_recorded)
+// and re-queues the task as a new pending deployment — the -rN retry Job — in the
+// SAME unit of work as the FAILED announcement, so the two cannot diverge.
 func TestHandleFailedWithRetry(t *testing.T) {
 	outbox := &jobStatusFakeOutboxRepo{}
+	deployments := &stubDeploymentsRepo{}
 	handler := newHandler(&fakeK8sClient{status: failedResult()}, noopCancelledRepo(), 3)
 
 	cmd := command.CheckJobStatus{
@@ -366,14 +377,12 @@ func TestHandleFailedWithRetry(t *testing.T) {
 		MaxRetries: 3,
 	}
 
-	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoWWithDeployments(outbox, deployments), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
 	entries := outbox.entries
-	if len(entries) != 3 {
-		t.Fatalf("expected 3 outbox entries (task_status_updated + task_execution_recorded + task_retry), got %d", len(entries))
-	}
+	require.Len(t, entries, 2, "expected task_status_updated + task_execution_recorded")
 
 	// Check event types
 	if got := eventTypeOf(entries, 0); got != "task_status_updated" {
@@ -381,9 +390,6 @@ func TestHandleFailedWithRetry(t *testing.T) {
 	}
 	if got := eventTypeOf(entries, 1); got != "task_execution_recorded" {
 		t.Errorf("entries[1]: expected task_execution_recorded, got %q", got)
-	}
-	if got := eventTypeOf(entries, 2); got != "task_retry" {
-		t.Errorf("entries[2]: expected task_retry, got %q", got)
 	}
 
 	// Verify task_status_updated payload
@@ -405,17 +411,13 @@ func TestHandleFailedWithRetry(t *testing.T) {
 	if statusPayload.RetryCount != cmd.RetryCount {
 		t.Errorf("FAILED retry_count: expected %d (attempt that ran), got %d", cmd.RetryCount, statusPayload.RetryCount)
 	}
-	retryEntry := findEntryByEventType(entries, "task_retry")
-	if retryEntry == nil {
-		t.Fatal("missing task_retry entry")
-	}
-	var retryPayload map[string]interface{}
-	if err := json.Unmarshal(retryEntry.Payload, &retryPayload); err != nil {
-		t.Fatalf("unmarshal task_retry: %v", err)
-	}
-	if got := int32(retryPayload["retry_count"].(float64)); got != cmd.RetryCount+1 {
-		t.Errorf("task_retry retry_count: expected %d (next attempt), got %d", cmd.RetryCount+1, got)
-	}
+
+	// The retry deployment carries the next attempt's job name and retry budget.
+	added := deployments.added
+	require.Len(t, added, 1)
+	require.Equal(t, "job-abc-r1", added[0].Command().JobName)
+	require.Equal(t, int(cmd.RetryCount)+1, added[0].Command().TaskRetryCount)
+	require.Equal(t, int(cmd.MaxRetries), added[0].Command().TaskMaxRetries)
 }
 
 // TestHandleFailedWithRetry_OperationFromDurableCommand_VanishedJob guards against
@@ -424,9 +426,10 @@ func TestHandleFailedWithRetry(t *testing.T) {
 // failed Job's labels: a TTL-reaped ("vanished") Job returns EMPTY labels from
 // GetJobMeta, so a label-sourced read would silently emit `dbt run`. Here the fake
 // client returns empty labels (vanished Job) yet cmd.Operation=="test", and the
-// task_retry payload must stay "test".
+// retry deployment's command must stay "test".
 func TestHandleFailedWithRetry_OperationFromDurableCommand_VanishedJob(t *testing.T) {
 	outbox := &jobStatusFakeOutboxRepo{}
+	deployments := &stubDeploymentsRepo{}
 	handler := newHandler(&fakeK8sClient{
 		status: failedResult(),
 		labels: map[string]string{}, // vanished Job: GetJobMeta returns empty labels
@@ -441,29 +444,23 @@ func TestHandleFailedWithRetry_OperationFromDurableCommand_VanishedJob(t *testin
 		MaxRetries: 3,
 	}
 
-	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoWWithDeployments(outbox, deployments), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
-	retryEntry := findEntryByEventType(outbox.entries, "task_retry")
-	if retryEntry == nil {
-		t.Fatal("missing task_retry entry")
-	}
-	var retryPayload map[string]interface{}
-	if err := json.Unmarshal(retryEntry.Payload, &retryPayload); err != nil {
-		t.Fatalf("unmarshal task_retry: %v", err)
-	}
-	if got, _ := retryPayload["operation"].(string); got != "test" {
-		t.Errorf("task_retry operation: expected %q, got %q (payload=%v)", "test", got, retryPayload)
+	require.Len(t, deployments.added, 1)
+	if got := deployments.added[0].Command().Operation; got != "test" {
+		t.Errorf("retry deployment operation: expected %q, got %q", "test", got)
 	}
 }
 
 // TestHandleFailedWithRetry_NoOperationStaysEmpty guards the normal `dbt run`
-// path: a command with no Operation (the common case) must produce a task_retry
-// payload with an empty/absent operation so the wire format is unchanged for
+// path: a command with no Operation (the common case) must produce a retry
+// deployment with an empty operation so the wire format is unchanged for
 // production runs.
 func TestHandleFailedWithRetry_NoOperationStaysEmpty(t *testing.T) {
 	outbox := &jobStatusFakeOutboxRepo{}
+	deployments := &stubDeploymentsRepo{}
 	handler := newHandler(&fakeK8sClient{
 		status: failedResult(),
 		labels: map[string]string{},
@@ -477,20 +474,13 @@ func TestHandleFailedWithRetry_NoOperationStaysEmpty(t *testing.T) {
 		MaxRetries: 3,
 	}
 
-	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoWWithDeployments(outbox, deployments), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
-	retryEntry := findEntryByEventType(outbox.entries, "task_retry")
-	if retryEntry == nil {
-		t.Fatal("missing task_retry entry")
-	}
-	var retryPayload map[string]interface{}
-	if err := json.Unmarshal(retryEntry.Payload, &retryPayload); err != nil {
-		t.Fatalf("unmarshal task_retry: %v", err)
-	}
-	if got, _ := retryPayload["operation"].(string); got != "" {
-		t.Errorf("task_retry operation: expected empty, got %q", got)
+	require.Len(t, deployments.added, 1)
+	if got := deployments.added[0].Command().Operation; got != "" {
+		t.Errorf("retry deployment operation: expected empty, got %q", got)
 	}
 }
 
@@ -543,7 +533,7 @@ func TestCheckStatusHandler_Handle_AllowsConcurrentCalls(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			u := &fakes.FakeUnitOfWork{Outbox: repo, MessageProcessing: &fakeMessageProcessingRepo{}}
+			u := &fakes.FakeUnitOfWork{Outbox: repo, MessageProcessing: &fakeMessageProcessingRepo{}, Deployments: &stubDeploymentsRepo{}}
 			errs <- handler.Handle(context.Background(), u, command.CheckJobStatus{
 				TaskID:     uuid.New(),
 				ScheduleID: uuid.New(),
@@ -560,8 +550,8 @@ func TestCheckStatusHandler_Handle_AllowsConcurrentCalls(t *testing.T) {
 			t.Fatalf("Handle: %v", err)
 		}
 	}
-	if got := len(repo.entriesSnapshot()); got != 6 {
-		t.Fatalf("expected 6 outbox entries (2 calls × 3 rows), got %d", got)
+	if got := len(repo.entriesSnapshot()); got != 4 {
+		t.Fatalf("expected 4 outbox entries (2 calls × 2 rows; the retry is a queued deployment, not a 3rd row), got %d", got)
 	}
 }
 
@@ -596,6 +586,44 @@ func TestHandleFailedPermanent(t *testing.T) {
 	}
 	if got := eventTypeOf(entries, 2); got != "node_updated" {
 		t.Errorf("entries[2]: expected node_updated, got %q", got)
+	}
+}
+
+// TestHandleUnknownStatus_WritesOnlyTaskStatusUpdated verifies that a production
+// task (no mode label) whose Job status is Unknown writes exactly one outbox
+// row — task_status_updated (FAILED) — with no task_execution_recorded and no
+// node_updated row, since no terminal Job outcome was actually observed.
+func TestHandleUnknownStatus_WritesOnlyTaskStatusUpdated(t *testing.T) {
+	outbox := &jobStatusFakeOutboxRepo{}
+	handler := newHandler(&fakeK8sClient{
+		status: &model.JobResult{Status: model.JobStatusUnknown, TerminationMsg: "pod evicted"},
+		labels: map[string]string{},
+	}, noopCancelledRepo(), 3)
+
+	cmd := command.CheckJobStatus{
+		TaskID:     uuid.New(),
+		ScheduleID: uuid.New(),
+		JobName:    "job-unknown",
+		RetryCount: 0,
+		MaxRetries: 3,
+	}
+
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	entries := outbox.entries
+	require.Len(t, entries, 1, "expected only task_status_updated")
+	if got := eventTypeOf(entries, 0); got != "task_status_updated" {
+		t.Errorf("entries[0]: expected task_status_updated, got %q", got)
+	}
+
+	var statusPayload pkgevents.TaskStatusUpdated
+	if err := json.Unmarshal(entries[0].Payload, &statusPayload); err != nil {
+		t.Fatalf("unmarshal task_status_updated: %v", err)
+	}
+	if statusPayload.Status != "FAILED" {
+		t.Errorf("task_status_updated status: expected FAILED, got %q", statusPayload.Status)
 	}
 }
 
@@ -821,6 +849,7 @@ func TestHandleRunning_ValidationJob_SuppressesRunningAnnouncement(t *testing.T)
 // config.DefaultTaskMaxRetries.  With RetryCount=0 and default=3 the job should be retried.
 func TestDefaultMaxRetriesAppliedWhenZero(t *testing.T) {
 	outbox := &jobStatusFakeOutboxRepo{}
+	deployments := &stubDeploymentsRepo{}
 	handler := newHandler(&fakeK8sClient{status: failedResult()}, noopCancelledRepo(), 3)
 
 	cmd := command.CheckJobStatus{
@@ -831,19 +860,14 @@ func TestDefaultMaxRetriesAppliedWhenZero(t *testing.T) {
 		MaxRetries: 0, // absent from message
 	}
 
-	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoWWithDeployments(outbox, deployments), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
-	entries := outbox.entries
-	if len(entries) == 0 {
-		t.Fatal("expected outbox entries, got none")
-	}
-	// RetryCount(0) < defaultMaxRetries(3) → retry path → last row is task_retry
-	lastEntry := entries[len(entries)-1]
-	if lastEntry.EventType != "task_retry" {
-		t.Errorf("expected last event_type=task_retry (default max_retries applied), got %q", lastEntry.EventType)
-	}
+	// RetryCount(0) < defaultMaxRetries(3) → retry path: 2 outbox rows, and the
+	// task is re-queued as a new pending deployment.
+	require.Len(t, outbox.entries, 2)
+	require.Len(t, deployments.added, 1, "default max_retries applied on the retry path")
 }
 
 // TestCheckStatusHandler_FailsPermanentlyAfter3TotalAttempts documents the invariant:
@@ -908,8 +932,9 @@ func TestCheckStatusHandler_DropsOutboxWhenScheduleCancelled(t *testing.T) {
 }
 
 // TestNotFoundRetry verifies that when GetJobStatus returns "Job not found in Kubernetes"
-// (now JobStatusFailed), with retryCount < maxRetries, the handler creates a task_retry
-// outbox entry — not a permanent failure — so the job gets re-created and re-checked.
+// (now JobStatusFailed), with retryCount < maxRetries, the handler re-queues the
+// task as a new pending deployment — not a permanent failure — so the job gets
+// re-created and re-checked.
 func TestNotFoundRetry(t *testing.T) {
 	notFoundResult := &model.JobResult{
 		Status:         model.JobStatusFailed,
@@ -917,6 +942,7 @@ func TestNotFoundRetry(t *testing.T) {
 	}
 
 	outbox := &jobStatusFakeOutboxRepo{}
+	deployments := &stubDeploymentsRepo{}
 	handler := newHandler(&fakeK8sClient{status: notFoundResult}, noopCancelledRepo(), 3)
 
 	cmd := command.CheckJobStatus{
@@ -927,19 +953,12 @@ func TestNotFoundRetry(t *testing.T) {
 		MaxRetries: 3,
 	}
 
-	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoWWithDeployments(outbox, deployments), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
-	entries := outbox.entries
-	if len(entries) == 0 {
-		t.Fatal("expected outbox entries, got none")
-	}
-	// Retry path → last entry is task_retry
-	lastEntry := entries[len(entries)-1]
-	if lastEntry.EventType != "task_retry" {
-		t.Errorf("expected last event_type=task_retry (not_found retried), got %q", lastEntry.EventType)
-	}
+	require.Len(t, outbox.entries, 2, "expected task_status_updated + task_execution_recorded")
+	require.Len(t, deployments.added, 1, "not_found retried as a new pending deployment")
 }
 
 // TestNotFoundPermanentFailureNotifiesOrchestrator verifies that when "Job not found" retries
@@ -1206,7 +1225,7 @@ func TestHandle_ValidationModeLabel_RecordsOutcomeAndEmitsPerNodeResult(t *testi
 	// Ensure no production rows leaked in.
 	for _, e := range entries {
 		switch e.EventType {
-		case "task_status_updated", "task_execution_recorded", "node_updated", "task_retry", "task_failed":
+		case "task_status_updated", "task_execution_recorded", "node_updated":
 			t.Errorf("unexpected production outbox row %q for validation Job", e.EventType)
 		}
 	}
@@ -1316,7 +1335,7 @@ func TestHandle_ValidationModeLabel_RunningStatus_WritesCheckK8sRepoll(t *testin
 		}
 		for _, e := range entries {
 			switch e.EventType {
-			case "task_status_updated", "task_execution_recorded", "node_updated", "task_retry", "task_failed":
+			case "task_status_updated", "task_execution_recorded", "node_updated":
 				t.Errorf("status %s: unexpected non-repoll row %q for running validation Job", status, e.EventType)
 			}
 			if e.StreamName == streams.ValidationResultV1 {
@@ -1637,7 +1656,7 @@ func TestHandle_SeedBuildModeLabel_RecordsOutcomeAndEmitsAggregateWhenComplete(t
 			// Ensure no production rows leaked in.
 			for _, e := range entries {
 				switch e.EventType {
-				case "task_status_updated", "task_execution_recorded", "node_updated", "task_retry", "task_failed":
+				case "task_status_updated", "task_execution_recorded", "node_updated":
 					t.Errorf("unexpected production outbox row %q for seed_build Job", e.EventType)
 				}
 			}
@@ -1756,7 +1775,7 @@ func TestHandle_CompileModeLabel_RecordsOutcomeAndEmitsAggregateWhenComplete(t *
 			// Ensure no production rows leaked in.
 			for _, e := range entries {
 				switch e.EventType {
-				case "task_status_updated", "task_execution_recorded", "node_updated", "task_retry", "task_failed":
+				case "task_status_updated", "task_execution_recorded", "node_updated":
 					t.Errorf("unexpected production outbox row %q for compile Job", e.EventType)
 				}
 			}
@@ -1952,7 +1971,7 @@ func TestHandle_CompileModeLabel_RunningStatus_WritesCheckK8sRepoll(t *testing.T
 		}
 		for _, e := range entries {
 			switch e.EventType {
-			case "task_status_updated", "task_execution_recorded", "node_updated", "task_retry", "task_failed":
+			case "task_status_updated", "task_execution_recorded", "node_updated":
 				t.Errorf("status %s: unexpected non-repoll row %q for running compile Job", status, e.EventType)
 			}
 			if e.StreamName == streams.CompileCompletedV1 {

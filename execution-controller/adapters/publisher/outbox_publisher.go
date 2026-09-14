@@ -121,20 +121,6 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 		}
 		return dto.ToDomain().ToMap(), nil
 
-	case event.EventTypeTaskRetry:
-		var dto serialization.TaskRetryDTO
-		if err := json.Unmarshal(entry.Payload, &dto); err != nil {
-			return nil, fmt.Errorf("%w: unmarshal task_retry: %v", pkgevents.ErrPermanent, err)
-		}
-		return dto.ToDomain().ToMap(), nil
-
-	case event.EventTypeTaskFailed:
-		var dto serialization.TaskFailedDTO
-		if err := json.Unmarshal(entry.Payload, &dto); err != nil {
-			return nil, fmt.Errorf("%w: unmarshal task_failed: %v", pkgevents.ErrPermanent, err)
-		}
-		return dto.ToDomain().ToMap(), nil
-
 	case validation.EventTypeValidationCompleted, validation.EventTypeSeedBuildCompleted, validation.EventTypeCompileCompleted,
 		validation.EventTypeValidationNodeResult:
 		// Candidate-leg events carry their body as a single JSON "payload" field;

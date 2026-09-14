@@ -52,8 +52,6 @@ Legend:
 | `query.model:v1` | `orchestrator` | `execution-controller` | Dispatch executable nodes; carries image_tag, manifest_version, and operation (`""`/`test`/`build`) as stream fields, on every dispatch path (initial frontier, downstream unblock, derived-run frontier) |
 | `node.deployed:v1` | `execution-controller` | `execution-controller` | Pod-deploy intent emitted after a Job is created; consumed by the job-status handler to begin runtime monitoring |
 | `check.k8s:v1` | `execution-controller` | `execution-controller` | Delayed re-check queue |
-| `retry.task:v1` | `execution-controller` | `execution-controller` | Re-dispatch retry deployment |
-| `task.failed:v1` | `execution-controller` | not consumed | Terminal failure event (external observability) |
 | `task.status.updated:v1` | `execution-controller` (RUNNING + SUCCEEDED/FAILED — the pod lifecycle — plus FAILED on the never-deployed path: permanent dispatch error or retry-exhaustion before a pod exists), `orchestrator` (SKIPPED on cascade-skip) | `state` | Task status update; drives finalization state machine in state. Each producer owns a non-overlapping slice; all serialize via the shared `pkg/events.TaskStatusUpdated.ToMap`. |
 | `task.execution.recorded:v1` | `execution-controller` | `state` | Persist task execution record with timing and S3 log key |
 | `node.updated:v1` | `execution-controller` (pod terminal, and on permanent dispatch error or retry-exhaustion) | `orchestrator` | Node terminal status projection; orchestrator unlocks downstream nodes |

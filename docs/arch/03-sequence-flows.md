@@ -93,35 +93,39 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
   participant R as Redis
-  participant ST as state
   participant S3 as S3
   participant EC as execution-controller
+  participant ST as state
   participant OR as orchestrator
 
-  R->>EC: node.deployed:v1 or check.k8s:v1
-  EC->>EC: GetJobStatus -> FAILED
-  EC->>ST: GetTask(task_id)
-  alt retries remain
-    EC->>EC: write execution_outbox(task_retry at retry_count+1)
-    EC->>ST: UpdateTask(status=failed, retry_count of the attempt that ran)
-    EC->>ST: CreateTaskExecution(...)
+  R->>EC: check.k8s:v1
+  EC->>EC: GetJobStatus -> Failed or Unknown
+
+  alt Failed, retries remain (retry_count < max_retries)
     EC->>S3: upload pod logs
-    EC->>R: publish retry.task:v1
-    R->>EC: consume retry.task:v1
-    Note over EC: write deployments (pending)<br/>deployer.Dispatcher — CreateQueryJob<br/>write execution_outbox row (node_deployed)
-    EC->>R: publish node.deployed:v1
-    Note over EC: node.deployed:v1 → poll loop<br/>k8s announces RUNNING once at the retry's attempt number
-  else retries exhausted
-    EC->>EC: write execution_outbox(task_failed + node_status_updated)
-    EC->>ST: UpdateTask(status=failed)
-    EC->>ST: CreateTaskExecution(...)
+    Note over EC: same transaction:<br/>write execution_outbox(task_status_updated FAILED, attempt that ran)<br/>write execution_outbox(task_execution_recorded)<br/>createDeployment — new pending deployments row, job name "<base>-r<N>"
+    EC->>R: publish task.status.updated:v1 (FAILED)
+    EC->>R: publish task.execution.recorded:v1
+    R->>ST: consume task.status.updated:v1, task.execution.recorded:v1
+    Note over EC: deployer.Dispatcher later picks up the pending retry row<br/>CreateQueryJob (idempotent on JobName) + write execution_outbox row (check_delayed)
+    EC->>R: publish check.k8s:v1 (via the delay queue)
+    R->>EC: consume check.k8s:v1
+    Note over EC: poll loop resumes; k8s announces RUNNING once for the retry's attempt
+  else Failed, retries exhausted (retry_count >= max_retries)
     EC->>S3: upload pod logs
-    EC->>R: publish task.failed:v1
+    Note over EC: same transaction:<br/>write execution_outbox(task_status_updated FAILED)<br/>write execution_outbox(task_execution_recorded)<br/>write execution_outbox(node_updated FAILED)
+    EC->>R: publish task.status.updated:v1 (FAILED)
+    EC->>R: publish task.execution.recorded:v1
     EC->>R: publish node.updated:v1
+    R->>ST: consume task.status.updated:v1, task.execution.recorded:v1
     R->>OR: consume node.updated:v1
     Note over OR: HandleNodeCompletedHandler.Handle (1 tx)<br/>runs.Rehydrate(runID, ScopeNodeCompletion{Key, Status=FAILED})<br/>agg.CompleteNode(key, FAILED) → [NodeCascadeSkipped …, RunFinalized?]<br/>runs.Save writes per-node status, terminal_count, failed_count, version<br/>and on RunFinalized also :Run.terminal_status + completed_at (first-writer-wins)
     OR->>R: publish task.status.updated:v1 (cascade_task_skipped) per skipped node
     Note over ST: TaskStatusUpdatedHandler increments terminal_task_count<br/>when terminal_task_count == total_task_count it finalizes scheduler_tracker<br/>and emits run.finalized:v1 via state_outbox
+  else status Unknown (no terminal Job outcome observed)
+    Note over EC: write execution_outbox(task_status_updated FAILED) only —<br/>no execution record and no node projection
+    EC->>R: publish task.status.updated:v1 (FAILED)
+    R->>ST: consume task.status.updated:v1
   end
 ```
 

@@ -90,8 +90,6 @@ flowchart TD
   QM[query.model:v1]
   ED[node.deployed:v1]
   KCV[check.k8s:v1]
-  TR[retry.task:v1]
-  TF[task.failed:v1]
   UT[node.updated:v1]
 
   RC[release-controller] --> RR
@@ -128,14 +126,11 @@ flowchart TD
   OR --> QM
 
   QM --> EC[execution-controller]
-  TR --> EC
 
   EC --> ED
   ED --> EC
   EC --> KCV
   KCV --> EC
-  EC --> TR
-  EC --> TF
   EC --> UT
 
   UT --> OR

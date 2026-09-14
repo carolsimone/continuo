@@ -24,8 +24,10 @@ const (
 const defaultMaxRetries = 3
 
 // Mode is the dispatch path that produced this Deployment. Production deploys
-// originate from query.model:v1 / retry.task:v1; validation deploys originate
-// from the candidate-release flow and carry a per-node terminal outcome.
+// originate from query.model:v1 or from the job-status handler's retry branch
+// (which queues a failed task's -rN retry in-process, in the same unit of work
+// as its FAILED announcement); validation deploys originate from the
+// candidate-release flow and carry a per-node terminal outcome.
 type Mode string
 
 const (

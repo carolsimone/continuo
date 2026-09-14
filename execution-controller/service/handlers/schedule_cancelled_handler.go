@@ -11,9 +11,10 @@ import (
 )
 
 // ScheduleCancelledHandler inserts a row into cancelled_schedules so the
-// deploy bindings can drop subsequent query.model / retry.task messages
-// whose schedule_id matches. Operation is idempotent (UPSERT semantics),
-// so the binding does not need messageprocessing dedup.
+// deploy bindings can drop subsequent query.model messages, and the
+// job-status handler can absorb subsequent Job results, whose schedule_id
+// matches. Operation is idempotent (UPSERT semantics), so the binding does
+// not need messageprocessing dedup.
 type ScheduleCancelledHandler struct {
 	logger *slog.Logger
 }

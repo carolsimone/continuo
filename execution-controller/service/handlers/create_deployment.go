@@ -13,9 +13,11 @@ import (
 )
 
 // createDeployment enqueues a new pending Deployment aggregate from a
-// QueryModel-shaped event plus task-retry overrides. Both QueryModelHandler and
-// RetryTaskHandler call this helper; the only difference is which task retry
-// values get passed in.
+// QueryModel-shaped event plus task-retry overrides. QueryModelHandler and the
+// job-status handler's retry branch (handleFailedWithRetry, which re-queues a
+// failed task's retry Job in the same unit of work as its FAILED announcement)
+// both call this helper; the only difference is which task retry values get
+// passed in.
 //
 // msgProcID is the binding-layer dedup row's UUID (from message_processing);
 // it is stored for provenance. Pass uuid.Nil when no inbound trigger applies.

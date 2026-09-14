@@ -215,23 +215,6 @@ func TestPublisher_ContractAllHandledEventTypes(t *testing.T) {
 			payload:    mustMarshal(t, serialization.NodeUpdatedFromDomain(event.NodeUpdated{TaskID: "t1", ScheduleID: "s1", ScheduleName: "daily", ServiceName: "svc", SchemaName: "public", TableName: "tbl", Status: "SUCCEEDED"})),
 		},
 		{
-			eventType:  event.EventTypeTaskRetry,
-			streamName: streams.RetryTaskV1,
-			payload: mustMarshal(t, serialization.TaskRetryFromDomain(event.TaskRetry{
-				TaskID: "t1", ScheduleID: "s1", ScheduleName: "daily", ServiceName: "svc",
-				SchemaName: "pub", TableName: "tbl", JobName: "j1", ImageTag: "sha",
-				RetryCount: 1, MaxRetries: 3, NodeType: "dbt-model",
-			})),
-		},
-		{
-			eventType:  event.EventTypeTaskFailed,
-			streamName: streams.TaskFailedV1,
-			payload: mustMarshal(t, serialization.TaskFailedFromDomain(event.TaskFailed{
-				TaskID: "t1", ScheduleID: "s1", ScheduleName: "daily", ServiceName: "svc",
-				SchemaName: "pub", TableName: "tbl", JobName: "j1", ErrorMessage: "err", RetryCount: 0,
-			})),
-		},
-		{
 			eventType:  event.EventTypeCheckDelayed,
 			streamName: streams.CheckK8sV1,
 			payload: mustMarshal(t, serialization.JobCheckRequestFromDomain(event.JobCheckRequest{

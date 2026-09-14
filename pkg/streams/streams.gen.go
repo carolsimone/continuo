@@ -32,12 +32,8 @@ const (
 	RunFinalizedV1 = "run.finalized:v1"
 	// QueryModelV1 — Tasks dispatched by orchestrator for the executor pool.
 	QueryModelV1 = "query.model:v1"
-	// RetryTaskV1 — Retry trigger for tasks; produced and consumed by execution-controller.
-	RetryTaskV1 = "retry.task:v1"
 	// CheckK8sV1 — Delayed status-check tickets; a promoter moves due tickets from the delay queue into the stream.
 	CheckK8sV1 = "check.k8s:v1"
-	// TaskFailedV1 — Terminal task failure emitted by execution-controller.
-	TaskFailedV1 = "task.failed:v1"
 	// OutboxDeadLetterV1 — Terminal outbox publish failures (permanent payload errors, or transient errors that exhausted their backoff budget), emitted by every service's outbox processor. Operational DLQ, not a domain event.
 	OutboxDeadLetterV1 = "outbox.dead_letter:v1"
 	// ScheduleCancelledV1 — Schedule cancellation broadcast; fanned out to orchestrator and execution-controller.
@@ -106,8 +102,6 @@ const (
 	OrchestratorRunFinalized = "orchestrator-run-finalized"
 	// ExecutorQueryModel — execution-controller consumer group on query.model:v1.
 	ExecutorQueryModel = "executor-query-model"
-	// ExecutorRetry — execution-controller consumer group on retry.task:v1.
-	ExecutorRetry = "executor-retry"
 	// K8sCheckStatus — execution-controller consumer group on check.k8s:v1.
 	K8sCheckStatus = "k8s-check-status"
 	// OrchestratorScheduleCancelled — orchestrator consumer group on schedule.cancelled:v1.
@@ -173,9 +167,7 @@ var All = []string{
 	TriggerPromotedSeedsV1,
 	RunFinalizedV1,
 	QueryModelV1,
-	RetryTaskV1,
 	CheckK8sV1,
-	TaskFailedV1,
 	OutboxDeadLetterV1,
 	ScheduleCancelledV1,
 	ReleaseRequestedV1,

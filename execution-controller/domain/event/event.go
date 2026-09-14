@@ -11,8 +11,6 @@ const (
 	EventTypeTaskStatusUpdated     = "task_status_updated"
 	EventTypeTaskExecutionRecorded = "task_execution_recorded"
 	EventTypeNodeUpdated           = "node_updated"
-	EventTypeTaskRetry             = "task_retry"
-	EventTypeTaskFailed            = "task_failed"
 	// EventTypeCheckDelayed rows are not XADDed: the publisher writes them to
 	// the delay queue, and the promoter moves them onto check.k8s:v1 when due.
 	EventTypeCheckDelayed = "check_delayed"
@@ -73,81 +71,3 @@ type JobCheckRequest struct {
 }
 
 func (JobCheckRequest) isEvent() {}
-
-// TaskFailed represents an event that a task has permanently failed
-type TaskFailed struct {
-	TaskID       string
-	ScheduleID   string
-	ScheduleName string
-	ServiceName  string
-	SchemaName   string
-	TableName    string
-	JobName      string
-	ErrorMessage string
-	RetryCount   int
-}
-
-func (TaskFailed) isEvent() {}
-
-// ToMap converts TaskFailed event to a map for Redis publishing
-func (e TaskFailed) ToMap() map[string]interface{} {
-	return map[string]interface{}{
-		"task_id":       e.TaskID,
-		"schedule_id":   e.ScheduleID,
-		"schedule_name": e.ScheduleName,
-		"service_name":  e.ServiceName,
-		"schema_name":   e.SchemaName,
-		"table_name":    e.TableName,
-		"job_name":      e.JobName,
-		"error_message": e.ErrorMessage,
-		"retry_count":   e.RetryCount,
-	}
-}
-
-// TaskRetry represents an event that a task should be retried
-type TaskRetry struct {
-	TaskID       string
-	ScheduleID   string
-	ScheduleName string
-	ServiceName  string
-	SchemaName   string
-	TableName    string
-	JobName      string
-	ImageTag     string
-	RetryCount   int
-	MaxRetries   int
-	NodeType     string
-	// Operation is the dbt verb the retried Job should run (e.g. "test").
-	// Empty for normal production `dbt run` retries — their wire format is
-	// unchanged. Sourced from the durable CheckJobStatus.Operation (which rides
-	// check.k8s:v1), never from the failed Job's labels: a TTL-reaped Job has no
-	// labels, so a retried `dbt test` Job stays `dbt test` instead of rebuilding
-	// as `dbt run`.
-	Operation string
-}
-
-func (TaskRetry) isEvent() {}
-
-// ToMap converts TaskRetry event to a map for Redis publishing.
-// Uses task_retry_count (not retry_count) to match the retry-task consumer's key.
-func (e TaskRetry) ToMap() map[string]interface{} {
-	m := map[string]interface{}{
-		"task_id":          e.TaskID,
-		"schedule_id":      e.ScheduleID,
-		"schedule_name":    e.ScheduleName,
-		"service_name":     e.ServiceName,
-		"schema_name":      e.SchemaName,
-		"table_name":       e.TableName,
-		"job_name":         e.JobName,
-		"image_tag":        e.ImageTag,
-		"task_retry_count": e.RetryCount,
-		"max_retries":      e.MaxRetries,
-		"node_type":        e.NodeType,
-	}
-	// Only stamp operation when non-empty so normal `dbt run` retries stay
-	// wire-identical to before this field existed.
-	if e.Operation != "" {
-		m["operation"] = e.Operation
-	}
-	return m
-}

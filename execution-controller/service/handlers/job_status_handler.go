@@ -10,6 +10,7 @@ import (
 
 	"github.com/carolsimone/continuo/execution-controller/domain/command"
 	"github.com/carolsimone/continuo/execution-controller/domain/event"
+	"github.com/carolsimone/continuo/execution-controller/domain/events"
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	"github.com/carolsimone/continuo/execution-controller/domain/repository"
 	"github.com/carolsimone/continuo/execution-controller/serialization"
@@ -532,10 +533,13 @@ func retryJobName(baseJobName string, retryCount int32) string {
 }
 
 // handleFailedWithRetry handles failed jobs that can be retried.
-// Writes 3 canonical outbox rows in the transaction:
+// Writes 2 canonical outbox rows in the transaction:
 //   - task_status_updated (FAILED)
 //   - task_execution_recorded
-//   - task_retry (→ retry.task:v1)
+//
+// and re-queues the task as a new pending deployment — the -rN retry Job — via
+// createDeployment, in the SAME unit of work as the two rows above, so the
+// retry and the FAILED announcement cannot diverge.
 func (h *JobStatusHandler) handleFailedWithRetry(ctx context.Context, u uow.UnitOfWork, cmd command.CheckJobStatus, result *model.JobResult, retryCount, maxRetries int32) error {
 	repo := u.OutboxRepo()
 	newRetryCount := retryCount + 1
@@ -549,7 +553,7 @@ func (h *JobStatusHandler) handleFailedWithRetry(ctx context.Context, u uow.Unit
 	// retry_count as that attempt's RUNNING so state's attempt-monotonic guard
 	// treats the upcoming retry's RUNNING (newRetryCount = retryCount+1) as a
 	// strictly newer attempt and un-fills the slot. The retry itself is
-	// dispatched at newRetryCount via the task_retry row below.
+	// dispatched at newRetryCount via the pending deployment queued below.
 	if err := h.writeTaskStatusUpdated(ctx, repo, cmd.TaskID, cmd.ScheduleID, "FAILED", retryCount); err != nil {
 		return fmt.Errorf("task_status_updated: %w", err)
 	}
@@ -559,32 +563,16 @@ func (h *JobStatusHandler) handleFailedWithRetry(ctx context.Context, u uow.Unit
 		return fmt.Errorf("task_execution_recorded: %w", err)
 	}
 
-	// Row 3: task_retry → retry.task:v1
-	retryPayload, err := json.Marshal(serialization.TaskRetryFromDomain(event.TaskRetry{
-		TaskID:       cmd.TaskID.String(),
-		ScheduleID:   cmd.ScheduleID.String(),
-		ScheduleName: cmd.ScheduleName,
-		ServiceName:  cmd.ServiceName,
-		SchemaName:   cmd.SchemaName,
-		TableName:    cmd.TableName,
-		JobName:      newJobName,
-		ImageTag:     cmd.ImageTag,
-		RetryCount:   int(newRetryCount),
-		MaxRetries:   int(maxRetries),
-		NodeType:     cmd.NodeType,
-		Operation:    cmd.Operation,
-	}))
-	if err != nil {
-		return fmt.Errorf("marshal task_retry: %w", err)
-	}
-	if err := repo.Create(ctx, &pkgoutbox.Entry{
-		AggregateType: "task",
-		AggregateID:   cmd.TaskID,
-		EventType:     event.EventTypeTaskRetry,
-		Payload:       retryPayload,
-		StreamName:    streams.RetryTaskV1,
-	}); err != nil {
-		return fmt.Errorf("create task_retry row: %w", err)
+	// The retry is a new pending deployment for the same task: the dispatcher
+	// creates the -rN Job, and its own first check ticket follows. Same unit of
+	// work as the FAILED announcement, so the two cannot diverge.
+	if err := createDeployment(ctx, u, events.QueryModel{
+		TaskID: cmd.TaskID, ScheduleID: cmd.ScheduleID, ScheduleName: cmd.ScheduleName,
+		ServiceName: cmd.ServiceName, SchemaName: cmd.SchemaName, TableName: cmd.TableName,
+		JobName: newJobName, NodeType: pkgmodel.NodeType(cmd.NodeType), ImageTag: cmd.ImageTag,
+		Operation: pkgmodel.Operation(cmd.Operation),
+	}, uuid.Nil, int(newRetryCount), int(maxRetries)); err != nil {
+		return fmt.Errorf("queue retry deployment: %w", err)
 	}
 
 	h.logger.Warn("Job failed, scheduling retry — outbox entries created",
@@ -677,9 +665,7 @@ func (h *JobStatusHandler) handleRunning(ctx context.Context, u uow.UnitOfWork, 
 }
 
 // handleUnknown handles unknown job statuses (treated as permanent failure).
-// Writes 2 canonical outbox rows in the transaction:
-//   - task_status_updated (FAILED)
-//   - task_failed (→ task.failed:v1)
+// Writes 1 canonical outbox row in the transaction: task_status_updated (FAILED).
 func (h *JobStatusHandler) handleUnknown(ctx context.Context, u uow.UnitOfWork, cmd command.CheckJobStatus, result *model.JobResult) error {
 	repo := u.OutboxRepo()
 	errorMsg := h.truncateErrorMessage(result.TerminationMsg)
@@ -692,31 +678,6 @@ func (h *JobStatusHandler) handleUnknown(ctx context.Context, u uow.UnitOfWork, 
 	// Row 1: task_status_updated (FAILED)
 	if err := h.writeTaskStatusUpdated(ctx, repo, cmd.TaskID, cmd.ScheduleID, "FAILED", newRetryCount); err != nil {
 		return fmt.Errorf("task_status_updated: %w", err)
-	}
-
-	// Row 2: task_failed → task.failed:v1
-	failedPayload, err := json.Marshal(serialization.TaskFailedFromDomain(event.TaskFailed{
-		TaskID:       cmd.TaskID.String(),
-		ScheduleID:   cmd.ScheduleID.String(),
-		ScheduleName: cmd.ScheduleName,
-		ServiceName:  cmd.ServiceName,
-		SchemaName:   cmd.SchemaName,
-		TableName:    cmd.TableName,
-		JobName:      cmd.JobName,
-		ErrorMessage: errorMsg,
-		RetryCount:   int(newRetryCount),
-	}))
-	if err != nil {
-		return fmt.Errorf("marshal task_failed: %w", err)
-	}
-	if err := repo.Create(ctx, &pkgoutbox.Entry{
-		AggregateType: "task",
-		AggregateID:   cmd.TaskID,
-		EventType:     event.EventTypeTaskFailed,
-		Payload:       failedPayload,
-		StreamName:    streams.TaskFailedV1,
-	}); err != nil {
-		return fmt.Errorf("create task_failed row: %w", err)
 	}
 
 	h.logger.Error("Job status unknown — outbox entries created",
