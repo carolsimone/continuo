@@ -227,6 +227,14 @@ scan_deps() {
 
 # ── trivy: misconfiguration ──────────────────────────────────────────────────
 # Advisory. Covers Dockerfiles and the Helm/K8s manifests under deploy/.
+#
+# --ignorefile points at .trivyignore.yaml, which excludes AVD-DS-0002
+# (non-root USER) for a short, explicit list of dev/base/CI-only Dockerfiles
+# that run as root by necessity (docker-compose host bind-mounts,
+# /var/run/docker.sock, build caches) rather than oversight — see the
+# comments in that file for the reasoning per path. Every image that actually
+# ships (the *.prod Dockerfiles) stays fully scanned and already runs
+# non-root, so this narrows the advisory signal without weakening it.
 scan_config() {
   have_docker || return 1
 
@@ -243,6 +251,7 @@ scan_config() {
     "${TRIVY_IMAGE}" \
     config /repo \
     ${sarif_args[@]+"${sarif_args[@]}"} \
+    --ignorefile /repo/.trivyignore.yaml \
     --severity HIGH,CRITICAL \
     "${TRIVY_SKIP[@]}" \
     --exit-code 0 \

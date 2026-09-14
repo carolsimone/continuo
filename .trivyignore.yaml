@@ -1,0 +1,40 @@
+# Scoped Trivy misconfiguration exclusions.
+#
+# Every entry below is pinned to a rule ID AND an exact file path — never a
+# bare rule ID, which would silence it repo-wide. Nothing here touches a
+# Dockerfile that ships to production; every *.prod Dockerfile already sets a
+# non-root USER and stays fully scanned.
+#
+# The paths ignored here are dev/base/CI-only images that run as root by
+# necessity, not oversight:
+#   - docker-compose mounts host source directories into them
+#     (`./<service>:/app/<service>`), and a non-root container UID cannot
+#     write into a directory owned by the host user without extra UID
+#     mapping the local dev flow does not do.
+#   - Several of them bind-mount /var/run/docker.sock (testcontainers) or a
+#     kubeconfig file, both of which typically require root inside the
+#     container to use without additional group/ACL setup.
+#   - Their Go/uv build caches (`--mount=type=cache`) are written as whatever
+#     user runs the RUN step; switching that user mid-chain would need a
+#     matching chown of every cache and bind-mounted directory across every
+#     service that extends continuo-base, which is out of scope here and
+#     risks breaking local dev and the e2e suite that currently passes as
+#     root.
+misconfigurations:
+  - id: AVD-DS-0002 # DS002: image USER should not be 'root'
+    paths:
+      # Builder base every Go service's Dockerfile.dev extends via
+      # `FROM continuo-base:latest`. It is never run directly — only used as
+      # a layer cache for `apt-get`/`go install` steps that need root, and a
+      # final USER here would flow into every downstream dev image's
+      # COPY/RUN steps (see above), not just the two below.
+      - "Dockerfile.base"
+      # Dev image for agent-chat: docker-compose bind-mounts the working
+      # tree into /app and reads the Go module cache; see the note above.
+      - "agent-chat/Dockerfile.dev"
+      # Dev image for agent-remediation: same bind-mount/cache pattern, plus
+      # a mounted kubeconfig and /var/run/docker.sock for testcontainers.
+      - "agent-remediation/Dockerfile.dev"
+      # Dev image for topology-controller: docker-compose bind-mounts the
+      # working tree and the uv-managed virtualenv/cache into /app.
+      - "topology-controller/Dockerfile.dev"
