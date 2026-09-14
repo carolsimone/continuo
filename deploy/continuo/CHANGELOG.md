@@ -12,6 +12,25 @@ shipped in those.
 
 ## [Unreleased]
 
+### Breaking
+- `executor-controller` and `k8s-controller` are replaced by one service,
+  `execution-controller` (port 8084), with one database `continuo_execution`
+  and one outbox. The migrate job creates and migrates `continuo_execution`
+  and no longer touches `continuo_executor` or `continuo_k8s`; those are left
+  in place for the operator to drop. Nothing in flight is carried over: run
+  `scripts/preflight-execution-cutover.sh` and upgrade on GO only. A values
+  file that overrides either old `services[]` entry must replace both with one
+  `execution-controller` entry. RBAC is the union of the two old Roles. The
+  `k8s-controller` allow on the state gRPC NetworkPolicy is gone (never used).
+  MAJOR.
+
+### Removed
+- `RESOLVER_CHECK_INTERVAL_SECONDS`, `RESOLVER_STUCK_THRESHOLD_SECONDS`,
+  `RESOLVER_BATCH_SIZE`, `RESOLVER_MAX_ATTEMPTS`: the stuck-entry resolver is
+  gone. Its condition (`pending` with `retry_count >= max_retries`) cannot
+  occur because the outbox processor marks such rows failed and dead-letters
+  them.
+
 ### Fixed
 - Pull the bundled MinIO server and client images from Quay
   (`quay.io/minio/minio`, `quay.io/minio/mc`) instead of Docker Hub, which no

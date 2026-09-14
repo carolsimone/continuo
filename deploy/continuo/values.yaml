@@ -21,9 +21,9 @@ global:
   env: production
   logLevel: INFO
 
-  # Registry/namespace prefix for per-team dbt images (executor-controller
+  # Registry/namespace prefix for per-team dbt images (execution-controller
   # composes "<prefix>/<service>:<tag>" for compile/seed/scheduled Jobs).
-  # Empty renders DOCKERHUB_USERNAME="", which executor-controller treats as
+  # Empty renders DOCKERHUB_USERNAME="", which execution-controller treats as
   # unset, so team images resolve to bare unprefixed names (side-loaded).
   teamImagePrefix: ""
 
@@ -264,12 +264,12 @@ validation:
   # │     engine's dbt adapter — that is your dbt setup, not a value here.         │
   # └────────────────────────────────────────────────────────────────────────────┘
   #
-  # `engine` resolves to the continuo-python-runtime-<engine> image the executor
-  # runs; `postgres` and `trino` are published today. The candidate-schema
-  # create/teardown is NOT postgres-specific — it runs inside the engine image via the
-  # adapter — so the only barrier to a new engine is publishing its library/image and
-  # giving it (points 2–4) its own connection. See the fail message in _helpers.tpl
-  # `continuo.validation.image`.
+  # `engine` resolves to the continuo-python-runtime-<engine> image
+  # execution-controller runs; `postgres` and `trino` are published today. The
+  # candidate-schema create/teardown is NOT postgres-specific — it runs inside
+  # the engine image via the adapter — so the only barrier to a new engine is
+  # publishing its library/image and giving it (points 2–4) its own
+  # connection. See the fail message in _helpers.tpl `continuo.validation.image`.
   #
   # `engine` also reaches the control plane: it is published to every service as
   # WAREHOUSE_ENGINE on the shared ConfigMap, and topology-controller uses it to
@@ -301,7 +301,7 @@ validation:
   # externalDatabase.existingSecret holds the password (the chart cannot inline a password
   # it does not itself hold).
   createWarehouseSecret: true
-  # Name of the warehouse Secret the executor attaches to each validation/schema-op pod
+  # Name of the warehouse Secret execution-controller attaches to each validation/schema-op pod
   # via envFrom. Empty = chart-derived (<release>-warehouse-validation, postgres keys).
   # REQUIRED when createWarehouseSecret=false — this is where a non-postgres operator
   # points at their own Secret carrying that engine's connection env.
@@ -427,7 +427,7 @@ services:
       LLM_MODEL: __LLM_MODEL__
       CHAT_MAX_CONCURRENT_SESSIONS: "100"
 
-  - name: executor-controller
+  - name: execution-controller
     enabled: true
     replicas: 1
     httpPort: 8084
@@ -441,7 +441,8 @@ services:
     secretEnv:
       - {name: POSTGRES_PASSWORD, ref: postgres}
       - {name: REDIS_PASSWORD, ref: redis}
-      # Forwarded into validation/compile Job containers (boto3 + s3-sidecar).
+      # Used by this process to upload Job logs and results, and forwarded into
+      # validation/compile Job containers (boto3 + s3-sidecar).
       - {name: AWS_ACCESS_KEY_ID, ref: s3AccessKeyId}
       - {name: AWS_SECRET_ACCESS_KEY, ref: s3SecretAccessKey}
     rbac:
@@ -449,16 +450,22 @@ services:
       rules:
         - apiGroups: ["batch"]
           resources: ["jobs"]
-          # delete: the candidate-schema lifecycle removes its own one-shot
-          # schema-op Jobs (delete-on-success + clear-terminal-before-retry).
+          # create: dispatches dbt/python/validation/compile Jobs. delete: the
+          # candidate-schema lifecycle removes its own one-shot schema-op Jobs.
+          # get/list/watch: polls every Job it created to a terminal state.
           verbs: ["create", "get", "list", "watch", "delete"]
         - apiGroups: [""]
-          resources: ["pods"]
+          resources: ["pods", "pods/log"]
+          # Reads pod status for termination details and pod logs for the
+          # error message and the S3 log upload.
           verbs: ["get", "list", "watch"]
     env:
-      POSTGRES_DB: continuo_executor
+      POSTGRES_DB: continuo_execution
       K8S_NAMESPACE: __RELEASE_NAMESPACE__
       MAX_CONCURRENT_JOBS: "50"
+      K8S_CHECK_DELAY_SECONDS: "10"
+      LOG_TAIL_LINES: "50"
+      ERROR_MESSAGE_MAX_LENGTH: "4096"
       VALIDATION_IMAGE_PULL_POLICY: Always
       VALIDATION_IMAGE: __VALIDATION_IMAGE__
       VALIDATION_WAREHOUSE_SECRET: __VALIDATION_WAREHOUSE_SECRET__
@@ -473,39 +480,6 @@ services:
     volumes:
       - name: dbt-commands
         configMap: {name: ""}
-
-  - name: k8s-controller
-    enabled: true
-    replicas: 1
-    httpPort: 8085
-    # Readiness and liveness point at DIFFERENT paths with different semantics
-    # (see adapters/http/health.go): /ready = workers + heartbeats + dependency
-    # probes (a Redis/Postgres outage stops traffic); /livez = workers +
-    # heartbeats ONLY (a dependency outage must NOT restart a pod whose consumers
-    # are already retrying, but a dead/wedged consumer must).
-    readinessPath: /ready
-    livenessPath: /livez
-    secretEnv:
-      - {name: POSTGRES_PASSWORD, ref: postgres}
-      - {name: AWS_ACCESS_KEY_ID, ref: s3AccessKeyId}
-      - {name: AWS_SECRET_ACCESS_KEY, ref: s3SecretAccessKey}
-      - {name: REDIS_PASSWORD, ref: redis}
-    rbac:
-      enabled: true
-      rules:
-        - apiGroups: ["batch"]
-          resources: ["jobs"]
-          verbs: ["get", "list", "watch"]
-        - apiGroups: [""]
-          resources: ["pods", "pods/log"]
-          verbs: ["get", "list", "watch"]
-    env:
-      POSTGRES_DB: continuo_k8s
-      K8S_NAMESPACE: __RELEASE_NAMESPACE__
-      LOG_TAIL_LINES: "50"
-      K8S_CHECK_DELAY_SECONDS: "10"
-      ERROR_MESSAGE_MAX_LENGTH: "4096"
-      HTTP_PORT: "8085"
 
   - name: ui
     enabled: true
