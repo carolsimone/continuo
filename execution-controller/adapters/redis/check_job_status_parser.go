@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/carolsimone/continuo/k8s-controller/domain/command"
+	"github.com/carolsimone/continuo/execution-controller/domain/command"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/num"
 	"github.com/google/uuid"

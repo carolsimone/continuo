@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/carolsimone/continuo/k8s-controller/domain/command"
-	"github.com/carolsimone/continuo/k8s-controller/service/handlers"
-	"github.com/carolsimone/continuo/k8s-controller/service/uow"
+	"github.com/carolsimone/continuo/execution-controller/domain/command"
+	"github.com/carolsimone/continuo/execution-controller/service/handlers"
+	"github.com/carolsimone/continuo/execution-controller/service/uow"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
@@ -19,12 +19,12 @@ import (
 )
 
 // NewNodeDeployedBinding returns a pkg/redis.MessageHandler for node.deployed:v1.
-// It parses the message, runs dedup, and invokes CheckStatusHandler inside one
+// It parses the message, runs dedup, and invokes JobStatusHandler inside one
 // UnitOfWork transaction. Parse failures are permanent (ACK + drop); handler and
 // repository failures propagate so the message stays pending for retry.
 func NewNodeDeployedBinding(
 	uowFactory func() uow.UnitOfWork,
-	handler *handlers.CheckStatusHandler,
+	handler *handlers.JobStatusHandler,
 	logger *slog.Logger,
 ) pkgredis.MessageHandler {
 	return func(ctx context.Context, msg goredis.XMessage) error {
@@ -42,7 +42,7 @@ func NewNodeDeployedBinding(
 func runCheckJobBinding(
 	ctx context.Context,
 	uowFactory func() uow.UnitOfWork,
-	handler *handlers.CheckStatusHandler,
+	handler *handlers.JobStatusHandler,
 	logger *slog.Logger,
 	msg goredis.XMessage,
 	cmd command.CheckJobStatus,

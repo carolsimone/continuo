@@ -11,8 +11,8 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/service/uow"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
-	goredis "github.com/redis/go-redis/v9"
 	"github.com/google/uuid"
+	goredis "github.com/redis/go-redis/v9"
 )
 
 // NewScheduleCancelledBinding wires ParseScheduleCancelled into the

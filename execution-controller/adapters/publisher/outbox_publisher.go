@@ -6,43 +6,52 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/carolsimone/continuo/execution-controller/adapters/delayqueue"
 	"github.com/carolsimone/continuo/execution-controller/domain/event"
 	"github.com/carolsimone/continuo/execution-controller/serialization"
 	"github.com/carolsimone/continuo/execution-controller/service/validation"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/num"
 	"github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// OutboxPublisher implements pkg/outbox.Publisher for execution-controller. Each
-// row publishes exactly one event to entry.StreamName; the typed payload depends
-// on entry.EventType. The K8s deploy is no longer a publish concern — it is a
-// command effect handled by deployer.Dispatcher, which writes these canonical
-// rows only after a deploy resolves. This makes executor's publisher identical
-// in shape to state, orchestrator, and k8s-controller.
+// OutboxPublisher implements pkg/outbox.Publisher. Each execution_outbox row
+// publishes exactly one event to entry.StreamName; the typed payload depends on
+// entry.EventType. Multi-effect operations are modelled as several rows written
+// in one transaction at the call site, never as fan-out here.
 type OutboxPublisher struct {
 	redis  *goredis.Client
 	logger *slog.Logger
 }
+
+var _ outbox.Publisher = (*OutboxPublisher)(nil)
 
 // NewOutboxPublisher creates an OutboxPublisher wired to the given Redis client.
 func NewOutboxPublisher(r *goredis.Client, l *slog.Logger) *OutboxPublisher {
 	return &OutboxPublisher{redis: r, logger: l}
 }
 
-// Publish unmarshals entry.Payload into the typed event struct for
-// entry.EventType and XADDs the resulting field map to entry.StreamName.
+// Publish routes an outbox row to Redis. Every event type XADDs a field map to
+// entry.StreamName, capped at streams.StreamMaxLen with approximate trimming,
+// except check_delayed: that row is written to the delay queue (ticket + due
+// time) so a not-yet-due check waits off the stream until the promoter moves it.
 func (p *OutboxPublisher) Publish(ctx context.Context, entry *outbox.Entry) error {
+	if entry.EventType == event.EventTypeCheckDelayed {
+		return p.scheduleDelayedCheck(ctx, entry)
+	}
 	values, err := p.toValues(entry)
 	if err != nil {
 		return err
 	}
-	// outbox_entry_id is injected on every XADD so consumer-side
-	// DedupWithOutboxEntryID can catch Processor-crash redeliveries.
+	// outbox_entry_id rides every XADD so consumer-side DedupWithOutboxEntryID
+	// catches a row republished with a fresh Redis message id.
 	values["outbox_entry_id"] = entry.ID.String()
 	if _, err := p.redis.XAdd(ctx, &goredis.XAddArgs{
 		Stream: entry.StreamName,
+		MaxLen: streams.StreamMaxLen,
+		Approx: true,
 		Values: values,
 	}).Result(); err != nil {
 		return fmt.Errorf("xadd to %s: %w", entry.StreamName, err)
@@ -50,17 +59,43 @@ func (p *OutboxPublisher) Publish(ctx context.Context, entry *outbox.Entry) erro
 	return nil
 }
 
-// toValues routes entry.EventType to the matching typed struct, unmarshals
-// entry.Payload, and returns the field map for XADD.
+// scheduleDelayedCheck converts a check_delayed row into the typed CheckK8s
+// payload and enqueues it in the delay queue keyed by job name.
+func (p *OutboxPublisher) scheduleDelayedCheck(ctx context.Context, entry *outbox.Entry) error {
+	var dto serialization.JobCheckRequestDTO
+	if err := json.Unmarshal(entry.Payload, &dto); err != nil {
+		return fmt.Errorf("%w: unmarshal check_delayed: %v", pkgevents.ErrPermanent, err)
+	}
+	e := dto.ToDomain()
+	retryCount, err := num.Int32(e.RetryCount, "retry_count")
+	if err != nil {
+		return fmt.Errorf("%w: check.k8s payload: %v", pkgevents.ErrPermanent, err)
+	}
+	maxRetries, err := num.Int32(e.MaxRetries, "max_retries")
+	if err != nil {
+		return fmt.Errorf("%w: check.k8s payload: %v", pkgevents.ErrPermanent, err)
+	}
+	payload, err := json.Marshal(pkgevents.CheckK8s{
+		TaskID: e.TaskID, ScheduleID: e.ScheduleID, ScheduleName: e.ScheduleName,
+		ServiceName: e.ServiceName, SchemaName: e.SchemaName, TableName: e.TableName,
+		JobName: e.JobName, NodeType: e.NodeType, ImageTag: e.ImageTag, Operation: e.Operation,
+		RetryCount: retryCount, MaxRetries: maxRetries, RunningAnnounced: e.RunningAnnounced,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal check.k8s payload: %w", err)
+	}
+	return delayqueue.Schedule(ctx, p.redis, e.JobName, entry.ID.String(), string(payload), e.CheckAfter)
+}
+
+// toValues routes entry.EventType to its typed struct and returns the field map
+// for XADD. An unknown event type is a retryable error, not a dead-letter:
+// during a rolling upgrade an older replica can dequeue a row a newer replica
+// will publish once it cycles back.
 func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{}, error) {
 	switch entry.EventType {
 	case outbox.DeadLetterEventType:
-		// Dead-letter rows publish generically: their payload is already a flat
-		// scalar map (outbox.DeadLetterPayload), expanded via DeadLetterValues
-		// rather than going through a typed case below.
 		values, err := outbox.DeadLetterValues(entry)
 		if err != nil {
-			// Our own payload; a decode failure here is deterministic, never transient.
 			return nil, fmt.Errorf("%w: dead-letter values: %v", pkgevents.ErrPermanent, err)
 		}
 		return values, nil
@@ -72,18 +107,21 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 		}
 		return e.ToMap(), nil
 
+	case event.EventTypeTaskExecutionRecorded:
+		var e pkgevents.TaskExecutionRecorded
+		if err := json.Unmarshal(entry.Payload, &e); err != nil {
+			return nil, fmt.Errorf("%w: unmarshal task_execution_recorded: %v", pkgevents.ErrPermanent, err)
+		}
+		return e.ToMap(), nil
+
 	case event.EventTypeNodeDeployed:
 		var dto serialization.JobDeployedDTO
 		if err := json.Unmarshal(entry.Payload, &dto); err != nil {
 			return nil, fmt.Errorf("%w: unmarshal node_deployed: %v", pkgevents.ErrPermanent, err)
 		}
 		e := dto.ToDomain()
-		// node.deployed:v1 carries a typed JSON payload (pkg/events.NodeDeployed);
-		// outbox_entry_id is added as a flat sibling by Publish for dedup.
 		taskRetryCount, err := num.Int32(e.TaskRetryCount, "task_retry_count")
 		if err != nil {
-			// An out-of-range numeric field on a known event type is a
-			// deterministic bad payload, never fixed by retrying.
 			return nil, fmt.Errorf("%w: node.deployed payload: %v", pkgevents.ErrPermanent, err)
 		}
 		maxRetries, err := num.Int32(e.MaxRetries, "max_retries")
@@ -91,18 +129,10 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 			return nil, fmt.Errorf("%w: node.deployed payload: %v", pkgevents.ErrPermanent, err)
 		}
 		payload, err := json.Marshal(pkgevents.NodeDeployed{
-			TaskID:         e.TaskID,
-			ScheduleID:     e.ScheduleID,
-			ScheduleName:   e.ScheduleName,
-			ServiceName:    e.ServiceName,
-			SchemaName:     e.SchemaName,
-			TableName:      e.TableName,
-			JobName:        e.JobName,
-			NodeType:       e.NodeType,
-			ImageTag:       e.ImageTag,
-			Operation:      e.Operation,
-			TaskRetryCount: taskRetryCount,
-			MaxRetries:     maxRetries,
+			TaskID: e.TaskID, ScheduleID: e.ScheduleID, ScheduleName: e.ScheduleName,
+			ServiceName: e.ServiceName, SchemaName: e.SchemaName, TableName: e.TableName,
+			JobName: e.JobName, NodeType: e.NodeType, ImageTag: e.ImageTag, Operation: e.Operation,
+			TaskRetryCount: taskRetryCount, MaxRetries: maxRetries,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("marshal node.deployed payload: %w", err)
@@ -116,26 +146,28 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 		}
 		return dto.ToDomain().ToMap(), nil
 
-	case validation.EventTypeValidationCompleted, validation.EventTypeSeedBuildCompleted, validation.EventTypeCompileCompleted:
-		// The three candidate-leg aggregate-completion events
-		// (validation.result:v1 kind=complete / seed.build.completed:v1 / compile.completed:v1)
-		// each carry the aggregate as a single JSON "payload" field that
-		// release-controller's HandleValidationResult / HandleSeedBuildResult /
-		// HandleCompileResult decodes. The stored payload is already that body;
-		// re-emit it verbatim.
-		return map[string]interface{}{"payload": string(entry.Payload)}, nil
+	case event.EventTypeTaskRetry:
+		var dto serialization.TaskRetryDTO
+		if err := json.Unmarshal(entry.Payload, &dto); err != nil {
+			return nil, fmt.Errorf("%w: unmarshal task_retry: %v", pkgevents.ErrPermanent, err)
+		}
+		return dto.ToDomain().ToMap(), nil
 
-	case validation.EventTypeValidationNodeResult:
-		// validation.result:v1 (kind=node) carries the per-node projection as a
-		// single JSON "payload" field, same shape convention as the aggregate
-		// events. Re-emit the stored payload verbatim.
+	case event.EventTypeTaskFailed:
+		var dto serialization.TaskFailedDTO
+		if err := json.Unmarshal(entry.Payload, &dto); err != nil {
+			return nil, fmt.Errorf("%w: unmarshal task_failed: %v", pkgevents.ErrPermanent, err)
+		}
+		return dto.ToDomain().ToMap(), nil
+
+	case event.EventTypeValidationNodeCompleted, event.EventTypeSeedBuildNodeCompleted, event.EventTypeCompileNodeCompleted,
+		validation.EventTypeValidationCompleted, validation.EventTypeSeedBuildCompleted, validation.EventTypeCompileCompleted,
+		validation.EventTypeValidationNodeResult:
+		// Candidate-leg events carry their body as a single JSON "payload" field;
+		// the stored payload is already that body.
 		return map[string]interface{}{"payload": string(entry.Payload)}, nil
 
 	default:
-		// Unknown event_type is retried, not dead-lettered: during a rolling
-		// deployment an old replica can dequeue a row for a newly-introduced
-		// event_type that a newer replica (already deployed) will publish
-		// moments later once this row cycles back to it.
-		return nil, fmt.Errorf("executor publisher: unknown event_type %q (retryable — a newer replica may handle it during a rolling upgrade)", entry.EventType)
+		return nil, fmt.Errorf("execution publisher: unknown event_type %q (retryable: a newer replica may handle it during a rolling upgrade)", entry.EventType)
 	}
 }
