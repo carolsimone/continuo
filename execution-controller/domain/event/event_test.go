@@ -1,14 +1,13 @@
-package event_test
+package event
 
 import (
 	"testing"
 
-	"github.com/carolsimone/continuo/execution-controller/domain/event"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestNodeUpdated_ToMap(t *testing.T) {
-	e := event.NodeUpdated{
+	e := NodeUpdated{
 		TaskID:       "t1",
 		ScheduleID:   "s1",
 		ScheduleName: "daily",
@@ -25,4 +24,22 @@ func TestNodeUpdated_ToMap(t *testing.T) {
 	assert.Equal(t, "public", m["schema_name"])
 	assert.Equal(t, "orders", m["table_name"])
 	assert.Equal(t, "FAILED", m["status"])
+}
+
+func TestEventTypesAreDistinctAndComplete(t *testing.T) {
+	all := []string{
+		EventTypeTaskStatusUpdated, EventTypeTaskExecutionRecorded, EventTypeNodeDeployed,
+		EventTypeNodeUpdated, EventTypeTaskRetry, EventTypeTaskFailed, EventTypeCheckDelayed,
+		EventTypeValidationNodeCompleted, EventTypeSeedBuildNodeCompleted, EventTypeCompileNodeCompleted,
+	}
+	seen := map[string]bool{}
+	for _, v := range all {
+		if v == "" || seen[v] {
+			t.Fatalf("event type %q is empty or duplicated", v)
+		}
+		seen[v] = true
+	}
+	if EventTypeNodeUpdated != "node_updated" {
+		t.Fatalf("node.updated:v1 rows must carry event_type node_updated, got %q", EventTypeNodeUpdated)
+	}
 }

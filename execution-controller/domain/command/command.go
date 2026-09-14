@@ -2,7 +2,10 @@
 // to perform work, distinct from the events that announce work has happened.
 package command
 
-import "github.com/carolsimone/continuo/execution-controller/domain/deploy"
+import (
+	"github.com/carolsimone/continuo/execution-controller/domain/deploy"
+	"github.com/google/uuid"
+)
 
 // Command is a marker interface for all commands.
 type Command interface {
@@ -123,3 +126,28 @@ func (c ValidationDeployTask) ToValidationJobSpec() deploy.ValidationJobSpec {
 		SourceOverlayURI:     c.SourceOverlayURI,
 	}
 }
+
+// CheckJobStatus asks the job-status handler to observe one Kubernetes Job and
+// act on what it finds: re-schedule a check while it runs, or settle it once
+// terminal. It carries everything a retry needs to rebuild the same Job, so a
+// check that lands after the Job is gone can still act.
+type CheckJobStatus struct {
+	TaskID       uuid.UUID
+	ScheduleID   uuid.UUID
+	ScheduleName string
+	ServiceName  string
+	SchemaName   string
+	TableName    string
+	JobName      string
+	NodeType     string
+	ImageTag     string
+	Operation    string
+	// RetryCount is the task-level attempt number of the Job being checked.
+	RetryCount int32
+	// MaxRetries is the task-level retry budget; zero means "use the service default".
+	MaxRetries int32
+	// RunningAnnounced is true once this attempt has been announced RUNNING.
+	RunningAnnounced bool
+}
+
+func (CheckJobStatus) isCommand() {}
