@@ -48,20 +48,14 @@ const (
 	ManifestLoadedCandidateV1 = "manifest.loaded.candidate:v1"
 	// ValidationRequestedV1 — dbt --empty validation run requested by release-controller; execution-controller dispatches per-node jobs.
 	ValidationRequestedV1 = "validation.requested:v1"
-	// ValidationNodeCompletedV1 — Per-node validation Job terminal status from the job-status handler, settled into the validation.result:v1 stream (per-node kind=node, plus the terminal kind=complete once all nodes settle).
-	ValidationNodeCompletedV1 = "validation.node.completed:v1"
 	// ValidationResultV1 — Unified validation-leg stream from execution-controller. Carries per-node results (kind=node, one per node as it settles) and the terminal decision (kind=complete, emitted last). release-controller projects nodes and decides on complete; the decision reads aggregate_status, so it does not depend on delivery order. execution-controller drops the candidate schema on complete.
 	ValidationResultV1 = "validation.result:v1"
 	// SeedBuildRequestedV1 — release-controller requests candidate seed builds; execution-controller dispatches per-seed team-image jobs.
 	SeedBuildRequestedV1 = "seed.build.requested:v1"
-	// SeedBuildNodeCompletedV1 — per-seed build terminal status from the job-status handler.
-	SeedBuildNodeCompletedV1 = "seed.build.node.completed:v1"
 	// SeedBuildCompletedV1 — aggregated candidate seed-build result from execution-controller back to release-controller.
 	SeedBuildCompletedV1 = "seed.build.completed:v1"
 	// CompileRequestedV1 — release-controller requests the changed service's dbt compile; execution-controller dispatches the compile Job.
 	CompileRequestedV1 = "compile.requested:v1"
-	// CompileNodeCompletedV1 — compile Job terminal status from the job-status handler.
-	CompileNodeCompletedV1 = "compile.node.completed:v1"
 	// CompileCompletedV1 — aggregated compile result from execution-controller back to release-controller.
 	CompileCompletedV1 = "compile.completed:v1"
 	// ReleasePromotedV1 — Release promoted to production; orchestrator atomically replaces its Neo4j topology.
@@ -126,22 +120,16 @@ const (
 	ReleaseControllerManifestLoadedCandidate = "release-controller-manifest-loaded-candidate"
 	// ExecutorValidationRequested — execution-controller consumer group on validation.requested:v1.
 	ExecutorValidationRequested = "executor-validation-requested"
-	// ExecutorValidationNodeCompleted — execution-controller consumer group on validation.node.completed:v1.
-	ExecutorValidationNodeCompleted = "executor-validation-node-completed"
 	// ReleaseControllerValidationResult — release-controller consumer group on validation.result:v1.
 	ReleaseControllerValidationResult = "release-controller-validation-result"
 	// ExecutorValidationResultTeardown — execution-controller consumer group on validation.result:v1.
 	ExecutorValidationResultTeardown = "executor-validation-result-teardown"
 	// ExecutorSeedBuildRequested — execution-controller consumer group on seed.build.requested:v1.
 	ExecutorSeedBuildRequested = "executor-seed-build-requested"
-	// ExecutorSeedBuildNodeCompleted — execution-controller consumer group on seed.build.node.completed:v1.
-	ExecutorSeedBuildNodeCompleted = "executor-seed-build-node-completed"
 	// ReleaseControllerSeedBuildCompleted — release-controller consumer group on seed.build.completed:v1.
 	ReleaseControllerSeedBuildCompleted = "release-controller-seed-build-completed"
 	// ExecutorCompileRequested — execution-controller consumer group on compile.requested:v1.
 	ExecutorCompileRequested = "executor-compile-requested"
-	// ExecutorCompileNodeCompleted — execution-controller consumer group on compile.node.completed:v1.
-	ExecutorCompileNodeCompleted = "executor-compile-node-completed"
 	// ReleaseControllerCompileCompleted — release-controller consumer group on compile.completed:v1.
 	ReleaseControllerCompileCompleted = "release-controller-compile-completed"
 	// OrchestratorReleasePromoted — orchestrator consumer group on release.promoted:v1.
@@ -193,13 +181,10 @@ var All = []string{
 	ReleaseRequestedV1,
 	ManifestLoadedCandidateV1,
 	ValidationRequestedV1,
-	ValidationNodeCompletedV1,
 	ValidationResultV1,
 	SeedBuildRequestedV1,
-	SeedBuildNodeCompletedV1,
 	SeedBuildCompletedV1,
 	CompileRequestedV1,
-	CompileNodeCompletedV1,
 	CompileCompletedV1,
 	ReleasePromotedV1,
 	ReleaseRejectedV1,

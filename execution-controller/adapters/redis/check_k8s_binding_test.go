@@ -8,6 +8,7 @@ import (
 
 	"github.com/carolsimone/continuo/execution-controller/domain/repository"
 	"github.com/carolsimone/continuo/execution-controller/service/handlers"
+	"github.com/carolsimone/continuo/execution-controller/service/outcomes"
 	"github.com/carolsimone/continuo/execution-controller/service/uow"
 	"github.com/carolsimone/continuo/execution-controller/test/fakes"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
@@ -38,7 +39,7 @@ var _ repository.CancelledSchedulesRepository = (*noopCancelledSchedulesRepo)(ni
 func TestCheckK8sBinding_DuplicateSkipsHandler(t *testing.T) {
 	k8s := fakes.NewFakeK8sClient()
 	cfg := &handlers.JobStatusConfig{K8sNamespace: "default", DefaultTaskMaxRetries: 3, ErrorMessageMaxLen: 4096, LogTailLines: 50}
-	handler := handlers.NewJobStatusHandler(k8s, nil, cfg, noopCancelledSchedulesRepo{}, slog.Default())
+	handler := handlers.NewJobStatusHandler(k8s, nil, cfg, noopCancelledSchedulesRepo{}, outcomes.NewRecorder(slog.Default()), slog.Default())
 
 	u := &fakes.FakeUnitOfWork{
 		MessageProcessing: &fakes.FakeMessageProcessingRepository{

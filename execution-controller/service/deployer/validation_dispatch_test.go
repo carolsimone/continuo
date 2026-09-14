@@ -196,7 +196,7 @@ func TestDispatcher_DispatchOne_ValidationMode_OnSuccess_WritesCheckDelayedTicke
 
 	require.Len(t, repo.saved, 1)
 	assert.Equal(t, model.StatusDeployed, repo.saved[0].Status(), "success marks deployed")
-	assert.Equal(t, "", repo.saved[0].Outcome(), "no terminal outcome yet — it arrives via validation.node.completed:v1")
+	assert.Equal(t, "", repo.saved[0].Outcome(), "no terminal outcome yet — it arrives when the job-status handler observes the terminal Job and records it via outcomes.Recorder")
 
 	// Success writes EXACTLY ONE row: the first check_delayed ticket so the
 	// job-status handler status-checks the validation Job. No task_status_updated
@@ -253,7 +253,7 @@ func TestDispatcher_DispatchOne_ValidationMode_NotDeployable_SavesFailedBeforeGa
 	// Regression: a validation node that fails before a Job is created must
 	// persist outcome='failed' BEFORE the aggregate gate reads
 	// PendingValidationCount, or the gate counts it as still pending and never
-	// emits — stranding the release (no later validation.node.completed re-runs
+	// emits — stranding the release (no later terminal observation ever re-runs
 	// the gate for a node that was never deployed).
 	d := silentDispatcher(&fakeValidationDeployer{})
 	// pending=0 models the DB state once this last node's outcome is persisted.
@@ -590,7 +590,7 @@ func TestDispatcher_DispatchOne_SeedBuildMode_OnSuccess_MarksDeployedAndWritesCh
 
 	require.Len(t, repo.saved, 1)
 	assert.Equal(t, model.StatusDeployed, repo.saved[0].Status(), "success marks deployed")
-	assert.Equal(t, "", repo.saved[0].Outcome(), "no terminal outcome yet — arrives via seed.build.node.completed:v1")
+	assert.Equal(t, "", repo.saved[0].Outcome(), "no terminal outcome yet — arrives when the job-status handler observes the terminal Job and records it via outcomes.Recorder")
 
 	// Success writes exactly one outbox row: the first check_delayed ticket.
 	require.Len(t, outboxRepo.created, 1, "success writes exactly one outbox row")
@@ -702,7 +702,7 @@ func TestDispatcher_DispatchOne_CompileMode_OnSuccess_MarksDeployedAndWritesChec
 
 	require.Len(t, repo.saved, 1)
 	assert.Equal(t, model.StatusDeployed, repo.saved[0].Status(), "success marks deployed")
-	assert.Equal(t, "", repo.saved[0].Outcome(), "no terminal outcome yet — arrives via compile.node.completed:v1")
+	assert.Equal(t, "", repo.saved[0].Outcome(), "no terminal outcome yet — arrives when the job-status handler observes the terminal Job and records it via outcomes.Recorder")
 
 	// Success writes exactly one outbox row: the first check_delayed ticket.
 	require.Len(t, outboxRepo.created, 1, "success writes exactly one outbox row")

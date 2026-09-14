@@ -2,8 +2,8 @@
 // per-release validation.result:v1 (kind=complete) aggregate once every
 // mode=validation node for a release has reached a terminal outcome. It is
 // used by two call sites:
-// the deploy dispatcher (when a node fails AT dispatch) and the
-// validation.node.completed:v1 handler (when a node terminates after dispatch).
+// the deploy dispatcher (when a node fails AT dispatch) and outcomes.Recorder
+// (when a node terminates after dispatch, via the job-status handler).
 // Both must run identical logic and share one immutable dedup namespace, so the
 // gate lives here, depending only on domain ports and pkg primitives — never on
 // any adapters/* package.
@@ -130,11 +130,11 @@ func EmitValidationAggregateIfComplete(
 	cfg.namespace = namespace // caller threads the single immutable source explicitly
 	// Serialize the whole count -> claim -> emit sequence per (release, leg).
 	// Without this lock, two overlapping last-node terminals (e.g. the
-	// dispatcher's FailValidation-at-dispatch path racing the
-	// validation.node.completed handler, or two replicas) can each read the other
-	// node as still pending under READ COMMITTED and both no-op, leaving the
-	// release hung in "validating" with no aggregate emitted. The advisory lock
-	// is transaction-scoped: the second caller blocks here until the first
+	// dispatcher's FailValidation-at-dispatch path racing outcomes.Recorder's
+	// settle, or two replicas) can each read the other node as still pending
+	// under READ COMMITTED and both no-op, leaving the release hung in
+	// "validating" with no aggregate emitted. The advisory lock is
+	// transaction-scoped: the second caller blocks here until the first
 	// commits, then sees pending==0 and either wins the sentinel or loses cleanly.
 	if err := aggRepo.LockRelease(ctx, releaseID, cfg.mode); err != nil {
 		return fmt.Errorf("lock release for aggregate gate: %w", err)

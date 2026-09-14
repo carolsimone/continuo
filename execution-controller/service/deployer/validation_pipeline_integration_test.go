@@ -14,9 +14,11 @@ import (
 	executorpg "github.com/carolsimone/continuo/execution-controller/adapters/postgres"
 	executorredis "github.com/carolsimone/continuo/execution-controller/adapters/redis"
 	"github.com/carolsimone/continuo/execution-controller/domain/deploy"
+	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	"github.com/carolsimone/continuo/execution-controller/domain/repository"
 	"github.com/carolsimone/continuo/execution-controller/service/deployer"
 	"github.com/carolsimone/continuo/execution-controller/service/handlers"
+	"github.com/carolsimone/continuo/execution-controller/service/outcomes"
 	"github.com/carolsimone/continuo/execution-controller/service/uow"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -91,13 +93,26 @@ func newValidationRequestedBinding(db *sqlx.DB) func(context.Context, goredis.XM
 		uowFactory, handlers.NewValidationRequestedHandler(logger), noopSchemaCreator{}, logger)
 }
 
-// newNodeCompletedBinding builds the production validation.node.completed:v1
-// binding over the live *sqlx.DB.
-func newNodeCompletedBinding(db *sqlx.DB) func(context.Context, goredis.XMessage) error {
+// recordNodeOutcome simulates the job-status handler's terminal settle: it
+// opens a transaction on the live *sqlx.DB and calls outcomes.Recorder.Record
+// exactly as JobStatusHandler.handleValidationTerminal does — recording the
+// outcome and settling the leg (gating propagation, per-node projection, and
+// the aggregate once every node is terminal) all in that one transaction.
+func recordNodeOutcome(t *testing.T, db *sqlx.DB, releaseID, nodeID, outcome string) {
+	t.Helper()
 	logger := pipelineLogger()
-	uowFactory := func() uow.UnitOfWork { return executorpg.NewPostgresUnitOfWork(db, logger) }
-	return executorredis.NewValidationNodeCompletedBinding(
-		uowFactory, handlers.NewValidationNodeCompletedHandler(logger), logger)
+	u := executorpg.NewPostgresUnitOfWork(db, logger)
+	ctx := context.Background()
+	require.NoError(t, u.Begin(ctx))
+	err := outcomes.NewRecorder(logger).Record(ctx, u, outcomes.NodeOutcome{
+		Mode: model.ModeValidation, ReleaseID: releaseID, NodeID: nodeID,
+		Outcome: outcome, DBTLogURI: "s3://logs/" + releaseID + "/" + nodeID,
+	})
+	if err != nil {
+		_ = u.Rollback()
+		t.Fatalf("record node outcome: %v", err)
+	}
+	require.NoError(t, u.Commit())
 }
 
 // newCapturingDispatcher wires a Dispatcher exactly as production does — real
@@ -146,21 +161,6 @@ func requestedXMessage(t *testing.T, msgID, releaseID, candidateSchema string, n
 		"image_tags":        imageTags,
 		"candidate_schema":  candidateSchema,
 		"dbt_flags":         []string{"--empty"},
-	}
-	raw, err := json.Marshal(body)
-	require.NoError(t, err)
-	return goredis.XMessage{ID: msgID, Values: map[string]any{"payload": string(raw)}}
-}
-
-// nodeTerminalXMessage assembles a validation.node.completed:v1 XMessage — the
-// per-node terminal the job-status handler emits after status-checking the Job.
-func nodeTerminalXMessage(t *testing.T, msgID, releaseID, nodeID, outcome string) goredis.XMessage {
-	t.Helper()
-	body := map[string]any{
-		"release_id":  releaseID,
-		"node_id":     nodeID,
-		"outcome":     outcome,
-		"dbt_log_uri": "s3://logs/" + releaseID + "/" + nodeID,
 	}
 	raw, err := json.Marshal(body)
 	require.NoError(t, err)
@@ -236,11 +236,13 @@ func waitValidationRowsDue(t *testing.T, db *sqlx.DB, releaseID string) {
 // TestValidationPipeline_EndToEnd drives the whole dispatch side of the
 // validation pipeline against testcontainer Postgres with a fake K8s deployer:
 // validation.requested:v1 → per-node deployments → dispatch (validation Jobs +
-// first check_delayed tickets) → simulated per-node terminals → aggregate gating →
-// exactly-once validation.result:v1 (kind=complete). The validation.node.completed:v1
-// terminals are SIMULATED here exactly as the job-status handler would emit them
-// after observing the first check ticket; the routing itself is covered by
-// job_status_handler_test.go. This test owns the dispatch side.
+// first check_delayed tickets) → simulated per-node terminal settles → aggregate
+// gating → exactly-once validation.result:v1 (kind=complete). The per-node
+// terminal settle is SIMULATED here by calling outcomes.Recorder.Record directly
+// against a transaction on the live DB, exactly as the job-status handler does
+// once it observes a terminal candidate Job; the routing itself (labels →
+// NodeOutcome) is covered by job_status_handler_test.go. This test owns the
+// dispatch side.
 func TestValidationPipeline_EndToEnd(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
@@ -307,10 +309,10 @@ func TestValidationPipeline_EndToEnd(t *testing.T) {
 	assert.Equal(t, 0, countByStreamAndKind(t, db, streams.ValidationResultV1, "complete"),
 		"no aggregate yet — every node still awaits its terminal")
 
-	// Step 4: simulate job-status handler terminals for 2 of 3 nodes (outcome=ok).
-	nodeCompleted := newNodeCompletedBinding(db)
-	require.NoError(t, nodeCompleted(ctx, nodeTerminalXMessage(t, "400-0", releaseID, "model.shop.orders", "ok")))
-	require.NoError(t, nodeCompleted(ctx, nodeTerminalXMessage(t, "401-0", releaseID, "model.shop.customers", "ok")))
+	// Step 4: simulate the job-status handler settling terminals for 2 of 3 nodes
+	// (outcome=ok).
+	recordNodeOutcome(t, db, releaseID, "model.shop.orders", "ok")
+	recordNodeOutcome(t, db, releaseID, "model.shop.customers", "ok")
 
 	assert.Equal(t, 2, countDeployments(t, db,
 		`SELECT COUNT(*) FROM deployments WHERE mode='validation' AND release_id=$1 AND outcome='ok' AND outcome_at IS NOT NULL`, releaseID),
@@ -319,7 +321,7 @@ func TestValidationPipeline_EndToEnd(t *testing.T) {
 		"aggregate still gated — third node not yet terminal")
 
 	// Step 5: the third node terminates ok → aggregate fires exactly once.
-	require.NoError(t, nodeCompleted(ctx, nodeTerminalXMessage(t, "402-0", releaseID, "model.shop.line_items", "ok")))
+	recordNodeOutcome(t, db, releaseID, "model.shop.line_items", "ok")
 
 	assert.Equal(t, 1, countByStreamAndKind(t, db, streams.ValidationResultV1, "complete"),
 		"validation.result:v1 (kind=complete) emitted exactly once when the last node terminates")
@@ -327,11 +329,13 @@ func TestValidationPipeline_EndToEnd(t *testing.T) {
 		"model.shop.orders", "model.shop.customers", "model.shop.line_items",
 	})
 
-	// Step 6: redelivery of the third node's terminal (fresh message_id). The
-	// sentinel was already claimed, so no second aggregate; the binding dedups/ACKs.
-	require.NoError(t, nodeCompleted(ctx, nodeTerminalXMessage(t, "403-0", releaseID, "model.shop.line_items", "ok")))
+	// Step 6: the third node's terminal is re-observed (e.g. a re-delivered
+	// check.k8s:v1 ticket). Its outcome is already recorded, so
+	// outcomes.Recorder's own idempotency check makes this a no-op — no second
+	// aggregate.
+	recordNodeOutcome(t, db, releaseID, "model.shop.line_items", "ok")
 	assert.Equal(t, 1, countByStreamAndKind(t, db, streams.ValidationResultV1, "complete"),
-		"redelivery must not emit a second aggregate")
+		"a re-observed terminal must not emit a second aggregate")
 }
 
 // TestValidationPipeline_FailurePath drives the same pipeline on a fresh release
@@ -358,13 +362,12 @@ func TestValidationPipeline_FailurePath(t *testing.T) {
 	require.NoError(t, newCapturingDispatcher(db, dep).ProcessBatch(ctx))
 	require.Len(t, dep.specs(), 3)
 
-	nodeCompleted := newNodeCompletedBinding(db)
-	require.NoError(t, nodeCompleted(ctx, nodeTerminalXMessage(t, "600-0", releaseID, "model.shop.orders", "ok")))
-	require.NoError(t, nodeCompleted(ctx, nodeTerminalXMessage(t, "601-0", releaseID, "model.shop.customers", "failed")))
+	recordNodeOutcome(t, db, releaseID, "model.shop.orders", "ok")
+	recordNodeOutcome(t, db, releaseID, "model.shop.customers", "failed")
 	assert.Equal(t, 0, countByStreamAndKind(t, db, streams.ValidationResultV1, "complete"),
 		"still gated until every node is terminal")
 
-	require.NoError(t, nodeCompleted(ctx, nodeTerminalXMessage(t, "602-0", releaseID, "model.shop.line_items", "ok")))
+	recordNodeOutcome(t, db, releaseID, "model.shop.line_items", "ok")
 
 	assert.Equal(t, 1, countByStreamAndKind(t, db, streams.ValidationResultV1, "complete"))
 	assertAggregate(t, db, releaseID, "failed", []string{

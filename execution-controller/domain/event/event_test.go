@@ -30,7 +30,6 @@ func TestEventTypesAreDistinctAndComplete(t *testing.T) {
 	all := []string{
 		EventTypeTaskStatusUpdated, EventTypeTaskExecutionRecorded,
 		EventTypeNodeUpdated, EventTypeTaskRetry, EventTypeTaskFailed, EventTypeCheckDelayed,
-		EventTypeValidationNodeCompleted, EventTypeSeedBuildNodeCompleted, EventTypeCompileNodeCompleted,
 	}
 	seen := map[string]bool{}
 	for _, v := range all {

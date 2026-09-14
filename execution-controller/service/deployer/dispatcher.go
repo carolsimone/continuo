@@ -255,8 +255,9 @@ func (d *Dispatcher) dispatchOne(ctx context.Context, repo repository.Deployment
 // deployed and writes the first check_delayed ticket so the job-status handler
 // status-checks the validation Job (it never polls); it skips the production-only
 // task_status_updated announcement. The per-node terminal outcome ("ok"/"failed")
-// arrives later via validation.node.completed:v1 and is attached by the outcome
-// handler, which then triggers the aggregate emit. A validation row that cannot be dispatched
+// arrives later when the job-status handler observes the terminal Job and records
+// it via outcomes.Recorder, which then triggers the aggregate emit. A validation
+// row that cannot be dispatched
 // (not deployable, or a permanent pre-deploy deployer error) is failed terminally
 // here via FailValidation — which sets a "failed" outcome from pending without
 // requiring StatusDeployed — and we then settle the node: its blocked descendants
@@ -274,7 +275,7 @@ func (d *Dispatcher) dispatchValidation(ctx context.Context, repo repository.Dep
 		// PendingValidationCount and must see this node as terminal (its own
 		// uncommitted write is visible within this transaction); otherwise it
 		// counts the row as still pending, skips the emission, and no later
-		// validation.node.completed event will re-run the gate for this release.
+		// terminal observation will re-run the gate for this release.
 		if err := repo.Save(ctx, dep); err != nil {
 			return err
 		}
@@ -315,9 +316,10 @@ func (d *Dispatcher) dispatchValidation(ctx context.Context, repo repository.Dep
 // runs the shared per-release gating-propagation + aggregate-emit gate under the
 // per-release advisory lock so the failed node's blocked descendants are skipped
 // and the aggregate can fire. The logic lives in service/validation so the
-// validation.node.completed:v1 handler runs the identical gate under its own
-// Unit-of-Work. The failed node's own outcome is already persisted before this
-// call; "failed" drives the transitive skip of its blocked downstreams.
+// job-status handler's outcomes.Recorder runs the identical gate under its own
+// Unit-of-Work when it settles a node after dispatch. The failed node's own
+// outcome is already persisted before this call; "failed" drives the transitive
+// skip of its blocked downstreams.
 func (d *Dispatcher) settleFailedValidation(ctx context.Context, repo repository.DeploymentRepository, outboxRepo outbox.Repository, aggRepo repository.ValidationAggregateRepository, dep *model.Deployment, now time.Time) error {
 	return validation.SettleNodeTerminal(
 		ctx, repo, outboxRepo, aggRepo, validation.DedupNamespace,
@@ -342,7 +344,7 @@ func (d *Dispatcher) dispatchSeedBuild(ctx context.Context, repo repository.Depl
 		// PendingValidationCount and must see this node as terminal (its own
 		// uncommitted write is visible within this transaction); otherwise it
 		// counts the row as still pending, skips the emission, and no later
-		// seed.build.node.completed event will re-run the gate for this release.
+		// terminal observation will re-run the gate for this release.
 		if err := repo.Save(ctx, dep); err != nil {
 			return err
 		}
@@ -410,7 +412,7 @@ func (d *Dispatcher) dispatchCompile(ctx context.Context, repo repository.Deploy
 		// PendingValidationCount and must see this node as terminal (its own
 		// uncommitted write is visible within this transaction); otherwise it
 		// counts the row as still pending, skips the emission, and no later
-		// compile.node.completed event will re-run the gate for this release.
+		// terminal observation will re-run the gate for this release.
 		if err := repo.Save(ctx, dep); err != nil {
 			return err
 		}

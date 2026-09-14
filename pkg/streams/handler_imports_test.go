@@ -23,6 +23,7 @@ var handlerDirs = []string{
 	"state/service/handlers",
 	"execution-controller/service/handlers",
 	"execution-controller/service/deployer",
+	"execution-controller/service/outcomes",
 	"execution-controller/service/validation",
 	"release-controller/service/handlers",
 	"agent-chat/service/chat",

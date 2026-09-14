@@ -37,7 +37,7 @@ import (
 //	POST /releases (COMPILE_FIXTURE_SERVICE, malformed-Jinja model baked in image)
 //	→ release.requested → AdvanceQueue: Received → Compiling → compile.requested:v1
 //	→ executor/k8s run `dbt compile` in the fixture image → dbt parse aborts
-//	→ compile.node.completed:v1 (outcome=failed, dbt_log_uri) → compile.completed:v1 (status=failed)
+//	→ execution-controller records the outcome in-process (outcome=failed, dbt_log_uri) → compile.completed:v1 (status=failed)
 //	→ release-controller TransitionToRejected("compile_failed"), RecordStageResults("compile")
 //	→ release.rejected:v1 {stage:"compile", per_node:[{node_id:<service>, status:"failed", dbt_log_uri}]}
 //	→ remediation classifier maps stage→SourceCompile, ExtractDbtFilePath(log)→file_path,

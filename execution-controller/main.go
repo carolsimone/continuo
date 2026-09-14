@@ -20,6 +20,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/domain/repository"
 	"github.com/carolsimone/continuo/execution-controller/service/deployer"
 	"github.com/carolsimone/continuo/execution-controller/service/handlers"
+	"github.com/carolsimone/continuo/execution-controller/service/outcomes"
 	"github.com/carolsimone/continuo/execution-controller/service/uow"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	"github.com/carolsimone/continuo/pkg/lifecycle"
@@ -170,18 +171,15 @@ func main() {
 	retryHandler := handlers.NewRetryTaskHandler(logger)
 	scheduleCancelledHandler := handlers.NewScheduleCancelledHandler(logger)
 	validationReqHandler := handlers.NewValidationRequestedHandler(logger)
-	validationNodeHandler := handlers.NewValidationNodeCompletedHandler(logger)
 	seedBuildReqHandler := handlers.NewSeedBuildRequestedHandler(logger)
-	seedBuildNodeHandler := handlers.NewSeedBuildNodeCompletedHandler(logger)
 	compileReqHandler := handlers.NewCompileRequestedHandler(logger)
-	compileNodeHandler := handlers.NewCompileNodeCompletedHandler(logger)
 	jobStatusHandler := handlers.NewJobStatusHandler(k8sClient, logUploader, &handlers.JobStatusConfig{
 		K8sNamespace:          cfg.K8sNamespace,
 		CheckDelaySeconds:     cfg.K8sCheckDelaySeconds,
 		ErrorMessageMaxLen:    cfg.ErrorMessageMaxLength,
 		LogTailLines:          int64(cfg.LogTailLines),
 		DefaultTaskMaxRetries: cfg.DefaultTaskMaxRetries,
-	}, cancelledSchedulesRepo, logger)
+	}, cancelledSchedulesRepo, outcomes.NewRecorder(logger), logger)
 
 	newConsumer := func(stream, group string, binding pkgredis.MessageHandler, opts ...pkgredis.ConsumerOption) *pkgredis.StreamConsumer {
 		c := pkgredis.NewStreamConsumer(redisClient, stream, group, binding, logger, opts...)
@@ -201,16 +199,10 @@ func main() {
 		redis.NewScheduleCancelledBinding(uowFactory, scheduleCancelledHandler, logger))
 	validationReqConsumer := newConsumer(streams.ValidationRequestedV1, streams.ExecutorValidationRequested,
 		redis.NewValidationRequestedBinding(uowFactory, validationReqHandler, candidateSchemaCreator, logger), schemaOpReclaim)
-	validationNodeConsumer := newConsumer(streams.ValidationNodeCompletedV1, streams.ExecutorValidationNodeCompleted,
-		redis.NewValidationNodeCompletedBinding(uowFactory, validationNodeHandler, logger))
 	seedBuildReqConsumer := newConsumer(streams.SeedBuildRequestedV1, streams.ExecutorSeedBuildRequested,
 		redis.NewSeedBuildRequestedBinding(uowFactory, seedBuildReqHandler, candidateSchemaCreator, logger), schemaOpReclaim)
-	seedBuildNodeConsumer := newConsumer(streams.SeedBuildNodeCompletedV1, streams.ExecutorSeedBuildNodeCompleted,
-		redis.NewSeedBuildNodeCompletedBinding(uowFactory, seedBuildNodeHandler, logger))
 	compileReqConsumer := newConsumer(streams.CompileRequestedV1, streams.ExecutorCompileRequested,
 		redis.NewCompileRequestedBinding(uowFactory, compileReqHandler, logger))
-	compileNodeConsumer := newConsumer(streams.CompileNodeCompletedV1, streams.ExecutorCompileNodeCompleted,
-		redis.NewCompileNodeCompletedBinding(uowFactory, compileNodeHandler, logger))
 	validationResultTeardownConsumer := newConsumer(streams.ValidationResultV1, streams.ExecutorValidationResultTeardown,
 		redis.NewValidationResultTeardownBinding(candidateSchemaCleaner, logger), schemaOpReclaim)
 	pipelineRunFinishedTeardownConsumer := newConsumer(streams.PipelineRunFinishedV1, streams.ExecutorPipelineRunFinished,
@@ -280,11 +272,8 @@ func main() {
 	runConsumer("retry_task", retryConsumer)
 	runConsumer("schedule_cancelled", scheduleCancelledConsumer)
 	runSchemaOpConsumer("validation_requested", validationReqConsumer)
-	runConsumer("validation_node_completed", validationNodeConsumer)
 	runSchemaOpConsumer("seed_build_requested", seedBuildReqConsumer)
-	runConsumer("seed_build_node_completed", seedBuildNodeConsumer)
 	runConsumer("compile_requested", compileReqConsumer)
-	runConsumer("compile_node_completed", compileNodeConsumer)
 	runSchemaOpConsumer("validation_result_teardown", validationResultTeardownConsumer)
 	runSchemaOpConsumer("pipeline_run_finished_teardown", pipelineRunFinishedTeardownConsumer)
 	runSchemaOpConsumer("release_promoted_teardown", releasePromotedTeardownConsumer)

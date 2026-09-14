@@ -418,7 +418,7 @@ sequenceDiagram
 
   Note over EC,RC: Phase 1b — compile (changed service's manifest is compiled first)
   R->>EC: consume compile.requested:v1
-  Note over EC: CreateCompileJob: initContainer "compile" runs the resolved compile command,<br/>then two more team-image initContainers "parse-prod"/"parse-candidate" export + rehearse<br/>the service's partial-parse cache (the rehearsal gate — fails parse_rehearsal_failed<br/>if partial parsing is disabled or the project re-parses under run-pod conditions),<br/>then main container "upload" (s3-sidecar) publishes manifest.json + both parse-cache artifacts to S3<br/>the job-status handler emits compile.node.completed:v1 on terminal → aggregate compile.completed:v1
+  Note over EC: CreateCompileJob: initContainer "compile" runs the resolved compile command,<br/>then two more team-image initContainers "parse-prod"/"parse-candidate" export + rehearse<br/>the service's partial-parse cache (the rehearsal gate — fails parse_rehearsal_failed<br/>if partial parsing is disabled or the project re-parses under run-pod conditions),<br/>then main container "upload" (s3-sidecar) publishes manifest.json + both parse-cache artifacts to S3<br/>the job-status handler records the outcome in-process on terminal → aggregate compile.completed:v1
   EC->>R: publish compile.completed:v1 {release_id, status, per_node[{node_id, status, dbt_log_uri, failed_container?}]}
   R->>RC: consume compile.completed:v1
   alt compile failed
@@ -498,9 +498,7 @@ sequenceDiagram
     R->>EC: consume node.deployed:v1 / check.k8s:v1
     Note over EC: poll Job, re-arm check.k8s:v1 until terminal
     EC->>S3: upload runner/dbt pod log
-    EC->>R: publish validation.node.completed:v1 {release_id, node_id, outcome, dbt_log_uri}
-    R->>EC: consume validation.node.completed:v1
-    Note over EC: RecordOutcome, then gating — ok unblocks ready downstream,<br/>non-ok skips all reachable downstream
+    Note over EC: outcomes.Recorder.Record (same tx as the terminal observation):<br/>RecordOutcome, then gating — ok unblocks ready downstream,<br/>non-ok skips all reachable downstream
     EC->>R: publish validation.result:v1 kind=node (per node, as it settles)<br/>{kind:"node", release_id, stage="validation", node_id, status, dbt_log_uri?, run_results_uri?}
     R->>RC: consume kind=node → upsert per_node_results (read model)
   end

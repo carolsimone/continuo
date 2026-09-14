@@ -135,8 +135,7 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 		}
 		return dto.ToDomain().ToMap(), nil
 
-	case event.EventTypeValidationNodeCompleted, event.EventTypeSeedBuildNodeCompleted, event.EventTypeCompileNodeCompleted,
-		validation.EventTypeValidationCompleted, validation.EventTypeSeedBuildCompleted, validation.EventTypeCompileCompleted,
+	case validation.EventTypeValidationCompleted, validation.EventTypeSeedBuildCompleted, validation.EventTypeCompileCompleted,
 		validation.EventTypeValidationNodeResult:
 		// Candidate-leg events carry their body as a single JSON "payload" field;
 		// the stored payload is already that body.

@@ -215,15 +215,6 @@ streams:
         group: executor-validation-requested
         const: ExecutorValidationRequested
 
-  - name: validation.node.completed:v1
-    const: ValidationNodeCompletedV1
-    description: Per-node validation Job terminal status from the job-status handler, settled into the validation.result:v1 stream (per-node kind=node, plus the terminal kind=complete once all nodes settle).
-    producers: [execution-controller]
-    consumers:
-      - service: execution-controller
-        group: executor-validation-node-completed
-        const: ExecutorValidationNodeCompleted
-
   - name: validation.result:v1
     const: ValidationResultV1
     description: Unified validation-leg stream from execution-controller. Carries per-node results (kind=node, one per node as it settles) and the terminal decision (kind=complete, emitted last). release-controller projects nodes and decides on complete; the decision reads aggregate_status, so it does not depend on delivery order. execution-controller drops the candidate schema on complete.
@@ -245,15 +236,6 @@ streams:
         group: executor-seed-build-requested
         const: ExecutorSeedBuildRequested
 
-  - name: seed.build.node.completed:v1
-    const: SeedBuildNodeCompletedV1
-    description: per-seed build terminal status from the job-status handler.
-    producers: [execution-controller]
-    consumers:
-      - service: execution-controller
-        group: executor-seed-build-node-completed
-        const: ExecutorSeedBuildNodeCompleted
-
   - name: seed.build.completed:v1
     const: SeedBuildCompletedV1
     description: aggregated candidate seed-build result from execution-controller back to release-controller.
@@ -271,15 +253,6 @@ streams:
       - service: execution-controller
         group: executor-compile-requested
         const: ExecutorCompileRequested
-
-  - name: compile.node.completed:v1
-    const: CompileNodeCompletedV1
-    description: compile Job terminal status from the job-status handler.
-    producers: [execution-controller]
-    consumers:
-      - service: execution-controller
-        group: executor-compile-node-completed
-        const: ExecutorCompileNodeCompleted
 
   - name: compile.completed:v1
     const: CompileCompletedV1

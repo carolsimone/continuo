@@ -16,10 +16,6 @@ const (
 	// EventTypeCheckDelayed rows are not XADDed: the publisher writes them to
 	// the delay queue, and the promoter moves them onto check.k8s:v1 when due.
 	EventTypeCheckDelayed = "check_delayed"
-	// Per-node terminal results of the three candidate legs.
-	EventTypeValidationNodeCompleted = "validation_node_completed"
-	EventTypeSeedBuildNodeCompleted  = "seed_build_node_completed"
-	EventTypeCompileNodeCompleted    = "compile_node_completed"
 )
 
 // NodeUpdated is the payload of an execution_outbox row whose event_type is

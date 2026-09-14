@@ -13,6 +13,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	"github.com/carolsimone/continuo/execution-controller/domain/repository"
 	"github.com/carolsimone/continuo/execution-controller/serialization"
+	"github.com/carolsimone/continuo/execution-controller/service/outcomes"
 	"github.com/carolsimone/continuo/execution-controller/service/ports"
 	"github.com/carolsimone/continuo/execution-controller/service/uow"
 	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
@@ -24,24 +25,6 @@ import (
 	"github.com/carolsimone/continuo/pkg/validationresult"
 	"github.com/google/uuid"
 )
-
-// validationLabelNamespace is the immutable UUIDv5 namespace used to derive the
-// validation_node_completed outbox row's AggregateID from the release-id label.
-// It must never change: deriving the aggregate ID deterministically lets a
-// re-observed terminal Job map to the same aggregate for downstream dedup.
-var validationLabelNamespace = uuid.MustParse("a4f1c2e6-8b3d-4f7a-9c1e-2d6b5a0f3e8c")
-
-// seedBuildLabelNamespace is the immutable UUIDv5 namespace used to derive the
-// seed_build_node_completed outbox row's AggregateID from the release-id annotation.
-// Must never change — same dedup guarantee as validationLabelNamespace.
-var seedBuildLabelNamespace = uuid.MustParse("c7a3e1d9-5f2b-4e6c-8d0a-1b4f7c2e9a3b")
-
-// compileLabelNamespace is the immutable UUIDv5 namespace used to derive the
-// compile_node_completed outbox row's AggregateID from the release-id annotation.
-// Must never change — same dedup guarantee as validationLabelNamespace and
-// seedBuildLabelNamespace. Distinct from both to avoid aggregate-ID collisions
-// between compile, seed-build, and validation events for the same release.
-var compileLabelNamespace = uuid.MustParse("e2b8d4f6-1a3c-5e7f-9b0d-2c4e6a8f0b2d")
 
 // DefaultLogIOTimeout bounds the best-effort pod-log fetch and its S3 uploads
 // when JobStatusConfig leaves LogIOTimeout unset. It must stay comfortably below
@@ -68,6 +51,7 @@ type JobStatusHandler struct {
 	logUploader        ports.LogUploader
 	config             *JobStatusConfig
 	cancelledSchedules repository.CancelledSchedulesRepository
+	outcomes           *outcomes.Recorder
 	logger             *slog.Logger
 }
 
@@ -77,6 +61,7 @@ func NewJobStatusHandler(
 	logUploader ports.LogUploader,
 	config *JobStatusConfig,
 	cancelledSchedules repository.CancelledSchedulesRepository,
+	recorder *outcomes.Recorder,
 	logger *slog.Logger,
 ) *JobStatusHandler {
 	return &JobStatusHandler{
@@ -84,6 +69,7 @@ func NewJobStatusHandler(
 		logUploader:        logUploader,
 		config:             config,
 		cancelledSchedules: cancelledSchedules,
+		outcomes:           recorder,
 		logger:             logger,
 	}
 }
@@ -226,9 +212,11 @@ func (h *JobStatusHandler) handleSucceeded(ctx context.Context, u uow.UnitOfWork
 	return nil
 }
 
-// handleValidationTerminal emits the per-node validation result for a Job carrying
-// the mode=validation label. It writes a single validation_node_completed outbox row
-// (→ validation.node.completed:v1) instead of the three production task-status rows.
+// handleValidationTerminal records the terminal result for a Job carrying the
+// mode=validation label directly onto its deployments row and settles the
+// release's validation leg — unblocking or skipping downstream nodes and
+// emitting the per-node projection plus, once every node has settled, the
+// terminal aggregate — all in the same transaction as this observation.
 // release_id and node_id are read from the Job annotations (raw, unsanitized) so
 // they match the dispatcher's deployments key; outcome is derived from the
 // terminal status. An Unknown status is not terminal — the handler re-polls via the
@@ -247,44 +235,25 @@ func (h *JobStatusHandler) handleValidationTerminal(
 	}
 
 	_, logS3Key, runResultsURI, _, _ := h.fetchAndUploadLogs(ctx, cmd, nodeArtifactPath(cmd))
-
 	outcome := "failed"
 	if result.Status == model.JobStatusSucceeded {
 		outcome = "ok"
 	}
-
 	releaseID := annotations[pkgmodel.AnnotationReleaseID]
 	nodeID := annotations[pkgmodel.AnnotationNodeID]
-	payloadMap := map[string]any{
-		"release_id":  releaseID,
-		"node_id":     nodeID,
-		"outcome":     outcome,
-		"dbt_log_uri": logS3Key,
-	}
-	if runResultsURI != "" {
-		payloadMap["run_results_uri"] = runResultsURI
-	}
-	payload, err := json.Marshal(payloadMap)
-	if err != nil {
-		return fmt.Errorf("marshal validation_node_completed payload: %w", err)
-	}
 
-	if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
-		AggregateType: "release",
-		// Per-(release, node) aggregate id: node completions are independent, so a
-		// distinct id per node puts each in its own per-aggregate-FIFO lane and a
-		// release's nodes drain in parallel. A per-release id would serialize them
-		// to one publish per outbox tick.
-		AggregateID: uuid.NewSHA1(validationLabelNamespace, []byte("release:"+releaseID+":node:"+nodeID)),
-		EventType:   event.EventTypeValidationNodeCompleted,
-		Payload:       payload,
-		StreamName:    streams.ValidationNodeCompletedV1,
-		MaxRetries:    pkgoutbox.DefaultMaxRetries,
+	if err := h.outcomes.Record(ctx, u, outcomes.NodeOutcome{
+		Mode:          model.ModeValidation,
+		ReleaseID:     releaseID,
+		NodeID:        nodeID,
+		Outcome:       outcome,
+		DBTLogURI:     logS3Key,
+		RunResultsURI: runResultsURI,
 	}); err != nil {
-		return fmt.Errorf("create validation_node_completed row: %w", err)
+		return fmt.Errorf("record validation outcome: %w", err)
 	}
 
-	h.logger.Info("Validation Job terminal — validation_node_completed outbox entry created",
+	h.logger.Info("Validation Job terminal, outcome recorded",
 		"job_name", cmd.JobName,
 		"release_id", releaseID,
 		"node_id", nodeID,
@@ -293,13 +262,14 @@ func (h *JobStatusHandler) handleValidationTerminal(
 	return nil
 }
 
-// handleSeedBuildTerminal emits the per-seed build result for a Job carrying the
-// mode=seed_build label. It writes a single seed_build_node_completed outbox row
-// (→ seed.build.node.completed:v1) instead of the three production task-status rows.
-// release_id and node_id are read from the Job annotations (raw, unsanitized) so
-// they match the dispatcher's deployments key; outcome is derived from the
-// terminal status. Unknown status is not terminal — re-poll via the shared
-// check.k8s:v1 ticket. Running is handled before this function is reached.
+// handleSeedBuildTerminal records the terminal result for a Job carrying the
+// mode=seed_build label directly onto its deployments row and settles the
+// release's seed-build leg — emitting the terminal aggregate once every seed has
+// settled — all in the same transaction as this observation. release_id and
+// node_id are read from the Job annotations (raw, unsanitized) so they match the
+// dispatcher's deployments key; outcome is derived from the terminal status.
+// Unknown status is not terminal — re-poll via the shared check.k8s:v1 ticket.
+// Running is handled before this function is reached.
 func (h *JobStatusHandler) handleSeedBuildTerminal(
 	ctx context.Context,
 	u uow.UnitOfWork,
@@ -312,44 +282,25 @@ func (h *JobStatusHandler) handleSeedBuildTerminal(
 	}
 
 	_, logS3Key, runResultsURI, _, _ := h.fetchAndUploadLogs(ctx, cmd, nodeArtifactPath(cmd))
-
 	outcome := "failed"
 	if result.Status == model.JobStatusSucceeded {
 		outcome = "ok"
 	}
-
 	releaseID := annotations[pkgmodel.AnnotationReleaseID]
 	nodeID := annotations[pkgmodel.AnnotationNodeID]
-	payloadMap := map[string]any{
-		"release_id":  releaseID,
-		"node_id":     nodeID,
-		"outcome":     outcome,
-		"dbt_log_uri": logS3Key,
-	}
-	if runResultsURI != "" {
-		payloadMap["run_results_uri"] = runResultsURI
-	}
-	payload, err := json.Marshal(payloadMap)
-	if err != nil {
-		return fmt.Errorf("marshal seed_build_node_completed payload: %w", err)
-	}
 
-	if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
-		AggregateType: "release",
-		// Per-(release, node) aggregate id: node completions are independent, so a
-		// distinct id per node puts each in its own per-aggregate-FIFO lane and a
-		// release's nodes drain in parallel. A per-release id would serialize them
-		// to one publish per outbox tick.
-		AggregateID: uuid.NewSHA1(seedBuildLabelNamespace, []byte("release:"+releaseID+":node:"+nodeID)),
-		EventType:   event.EventTypeSeedBuildNodeCompleted,
-		Payload:       payload,
-		StreamName:    streams.SeedBuildNodeCompletedV1,
-		MaxRetries:    pkgoutbox.DefaultMaxRetries,
+	if err := h.outcomes.Record(ctx, u, outcomes.NodeOutcome{
+		Mode:          model.ModeSeedBuild,
+		ReleaseID:     releaseID,
+		NodeID:        nodeID,
+		Outcome:       outcome,
+		DBTLogURI:     logS3Key,
+		RunResultsURI: runResultsURI,
 	}); err != nil {
-		return fmt.Errorf("create seed_build_node_completed row: %w", err)
+		return fmt.Errorf("record seed-build outcome: %w", err)
 	}
 
-	h.logger.Info("Seed-build Job terminal — seed_build_node_completed outbox entry created",
+	h.logger.Info("Seed-build Job terminal, outcome recorded",
 		"job_name", cmd.JobName,
 		"release_id", releaseID,
 		"node_id", nodeID,
@@ -358,16 +309,17 @@ func (h *JobStatusHandler) handleSeedBuildTerminal(
 	return nil
 }
 
-// handleCompileTerminal emits the per-compile result for a Job carrying the
-// mode=compile label. It writes a single compile_node_completed outbox row
-// (→ compile.node.completed:v1) instead of the three production task-status rows.
-// release_id and node_id are read from the Job annotations (raw, unsanitized) so
-// they match the dispatcher's deployments key; outcome is derived from the
-// terminal status. Unknown status is not terminal — re-poll via the shared
-// check.k8s:v1 ticket. Running is handled before this function is reached.
-// Unlike validation, no stdout result block is parsed — the manifest went to S3
-// via the compile Job's upload container, so outcome is purely the Job's success/failure.
-// dbt_log_uri and run_results_uri may be empty.
+// handleCompileTerminal records the terminal result for a Job carrying the
+// mode=compile label directly onto its deployments row and settles the
+// release's compile leg — emitting the terminal aggregate once the compile node
+// has settled — all in the same transaction as this observation. release_id and
+// node_id are read from the Job annotations (raw, unsanitized) so they match the
+// dispatcher's deployments key; outcome is derived from the terminal status.
+// Unknown status is not terminal — re-poll via the shared check.k8s:v1 ticket.
+// Running is handled before this function is reached. Unlike validation, no
+// stdout result block is parsed — the manifest went to S3 via the compile Job's
+// upload container, so outcome is purely the Job's success/failure. dbt_log_uri
+// and run_results_uri may be empty.
 func (h *JobStatusHandler) handleCompileTerminal(
 	ctx context.Context,
 	u uow.UnitOfWork,
@@ -380,47 +332,26 @@ func (h *JobStatusHandler) handleCompileTerminal(
 	}
 
 	_, logS3Key, runResultsURI, _, _ := h.fetchAndUploadLogs(ctx, cmd, compileArtifactPath(cmd))
-
 	outcome := "failed"
 	if result.Status == model.JobStatusSucceeded {
 		outcome = "ok"
 	}
-
 	releaseID := annotations[pkgmodel.AnnotationReleaseID]
 	nodeID := annotations[pkgmodel.AnnotationNodeID]
-	payloadMap := map[string]any{
-		"release_id":  releaseID,
-		"node_id":     nodeID,
-		"outcome":     outcome,
-		"dbt_log_uri": logS3Key,
-	}
-	if runResultsURI != "" {
-		payloadMap["run_results_uri"] = runResultsURI
-	}
-	if result.FailedContainer != "" {
-		payloadMap["failed_container"] = result.FailedContainer
-	}
-	payload, err := json.Marshal(payloadMap)
-	if err != nil {
-		return fmt.Errorf("marshal compile_node_completed payload: %w", err)
-	}
 
-	if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
-		AggregateType: "release",
-		// Per-(release, node) aggregate id: node completions are independent, so a
-		// distinct id per node puts each in its own per-aggregate-FIFO lane and a
-		// release's nodes drain in parallel. A per-release id would serialize them
-		// to one publish per outbox tick.
-		AggregateID: uuid.NewSHA1(compileLabelNamespace, []byte("release:"+releaseID+":node:"+nodeID)),
-		EventType:   event.EventTypeCompileNodeCompleted,
-		Payload:       payload,
-		StreamName:    streams.CompileNodeCompletedV1,
-		MaxRetries:    pkgoutbox.DefaultMaxRetries,
+	if err := h.outcomes.Record(ctx, u, outcomes.NodeOutcome{
+		Mode:            model.ModeCompile,
+		ReleaseID:       releaseID,
+		NodeID:          nodeID,
+		Outcome:         outcome,
+		DBTLogURI:       logS3Key,
+		RunResultsURI:   runResultsURI,
+		FailedContainer: result.FailedContainer,
 	}); err != nil {
-		return fmt.Errorf("create compile_node_completed row: %w", err)
+		return fmt.Errorf("record compile outcome: %w", err)
 	}
 
-	h.logger.Info("Compile Job terminal — compile_node_completed outbox entry created",
+	h.logger.Info("Compile Job terminal, outcome recorded",
 		"job_name", cmd.JobName,
 		"release_id", releaseID,
 		"node_id", nodeID,

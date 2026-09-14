@@ -184,10 +184,10 @@ func TestPublisher_UnknownEventType_IsTransient(t *testing.T) {
 // TestPublisher_ContractAllHandledEventTypes is a regression guard that asserts
 // every event_type this service's outbox rows carry — from the dispatcher, the
 // job-status handler, and every other emit site — does NOT return "unknown
-// event_type". This prevents a recurrence of the class of bug where an emit site
-// uses a string that has no matching case in the publisher switch (e.g.
-// compile_node_completed was emitted but unmapped → events never published). The
-// event_type constants are the single source of truth shared by every producer.
+// event_type". An emit site whose event_type has no matching case in the
+// publisher switch strands its row unpublished with no visible error until an
+// operator notices the missing downstream event. The event_type constants are
+// the single source of truth shared by every producer.
 func TestPublisher_ContractAllHandledEventTypes(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
@@ -261,21 +261,6 @@ func TestPublisher_ContractAllHandledEventTypes(t *testing.T) {
 			streamName: streams.ValidationResultV1,
 			payload:    []byte(`{"release_id":"rel1","stage":"validation","node_id":"node.a","status":"ok"}`),
 		},
-		{
-			eventType:  event.EventTypeValidationNodeCompleted,
-			streamName: streams.ValidationNodeCompletedV1,
-			payload:    []byte(`{"release_id":"rel1","node_id":"public.orders","outcome":"ok"}`),
-		},
-		{
-			eventType:  event.EventTypeSeedBuildNodeCompleted,
-			streamName: streams.SeedBuildNodeCompletedV1,
-			payload:    []byte(`{"release_id":"rel1","node_id":"public.seed_x","outcome":"ok"}`),
-		},
-		{
-			eventType:  event.EventTypeCompileNodeCompleted,
-			streamName: streams.CompileNodeCompletedV1,
-			payload:    []byte(`{"release_id":"rel1","node_id":"service-1","outcome":"ok"}`),
-		},
 	}
 
 	for _, tc := range cases {
@@ -339,68 +324,6 @@ func TestPublish_TaskExecutionRecordedUsesTypedMap(t *testing.T) {
 	require.Len(t, msgs, 1)
 	require.Equal(t, "job-a", msgs[0].Values["job_name"])
 	require.Equal(t, entry.ID.String(), msgs[0].Values["outbox_entry_id"])
-}
-
-// TestPublisher_ValidationNodeCompleted verifies the per-node validation result
-// emitted by the job-status handler is re-emitted verbatim on the "payload"
-// field so this service's own ParseValidationNodeCompleted can decode it.
-func TestPublisher_ValidationNodeCompleted(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	r := newRedis(t)
-	pub := publisher.NewOutboxPublisher(r, logger)
-
-	body := []byte(`{"release_id":"rel_1","node_id":"public.orders","outcome":"ok","dbt_log_uri":"s3://logs/x"}`)
-	id := uuid.New()
-	require.NoError(t, pub.Publish(context.Background(), &outbox.Entry{
-		ID: id, EventType: event.EventTypeValidationNodeCompleted, StreamName: streams.ValidationNodeCompletedV1, Payload: body,
-	}))
-
-	v := lastEntryFields(t, r, streams.ValidationNodeCompletedV1)
-	assert.Equal(t, id.String(), v["outbox_entry_id"])
-	payloadStr, ok := v["payload"].(string)
-	require.True(t, ok, "expected a string payload field")
-	assert.JSONEq(t, string(body), payloadStr, "stored per-node result re-emitted verbatim")
-}
-
-// TestPublisher_SeedBuildNodeCompleted verifies the per-seed build terminal
-// status is re-emitted verbatim on the "payload" field.
-func TestPublisher_SeedBuildNodeCompleted(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	r := newRedis(t)
-	pub := publisher.NewOutboxPublisher(r, logger)
-
-	body := []byte(`{"release_id":"rel_1","node_id":"public.seed_x","outcome":"ok"}`)
-	id := uuid.New()
-	require.NoError(t, pub.Publish(context.Background(), &outbox.Entry{
-		ID: id, EventType: event.EventTypeSeedBuildNodeCompleted, StreamName: streams.SeedBuildNodeCompletedV1, Payload: body,
-	}))
-
-	v := lastEntryFields(t, r, streams.SeedBuildNodeCompletedV1)
-	assert.Equal(t, id.String(), v["outbox_entry_id"])
-	payloadStr, ok := v["payload"].(string)
-	require.True(t, ok, "expected a string payload field")
-	assert.JSONEq(t, string(body), payloadStr, "stored per-node result re-emitted verbatim")
-}
-
-// TestPublisher_CompileNodeCompleted verifies the compile leg's terminal-status
-// event is publishable — a missing switch case stranded releases in
-// `compiling` (no compile.node.completed:v1).
-func TestPublisher_CompileNodeCompleted(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	r := newRedis(t)
-	pub := publisher.NewOutboxPublisher(r, logger)
-
-	body := []byte(`{"release_id":"rel_1","node_id":"service-1","outcome":"ok"}`)
-	id := uuid.New()
-	require.NoError(t, pub.Publish(context.Background(), &outbox.Entry{
-		ID: id, EventType: event.EventTypeCompileNodeCompleted, StreamName: streams.CompileNodeCompletedV1, Payload: body,
-	}))
-
-	v := lastEntryFields(t, r, streams.CompileNodeCompletedV1)
-	assert.Equal(t, id.String(), v["outbox_entry_id"])
-	payloadStr, ok := v["payload"].(string)
-	require.True(t, ok, "expected a string payload field")
-	assert.JSONEq(t, string(body), payloadStr, "stored per-node result re-emitted verbatim")
 }
 
 // TestPublisher_BadPayloadReturnsError verifies a malformed payload for a known
