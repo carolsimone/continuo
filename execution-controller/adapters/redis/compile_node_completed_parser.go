@@ -10,7 +10,7 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// compileNodeCompletedDTO mirrors the flat JSON body k8s-controller emits in
+// compileNodeCompletedDTO mirrors the flat JSON body this service emits in
 // the "payload" field of a compile.node.completed:v1 message. It is identical
 // to the seed.build.node.completed:v1 body — both legs report a per-node
 // terminal outcome the same way.
@@ -53,7 +53,7 @@ func ParseCompileNodeCompleted(msg goredis.XMessage) (events.CompileNodeComplete
 			fmt.Errorf("invalid outcome %q (want \"ok\" or \"failed\")", dto.Outcome)
 	}
 
-	// outbox_entry_id is the k8s-controller outbox row ID, carried as provenance.
+	// outbox_entry_id is the upstream outbox row id, carried as provenance.
 	// Absent or empty → uuid.Nil (dedup falls back to (msg.ID, stream_name)).
 	// Present-but-malformed → permanent error.
 	var outboxEntryID uuid.UUID

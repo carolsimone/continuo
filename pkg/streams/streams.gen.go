@@ -12,9 +12,9 @@ const (
 	RunEntriesDispatchedV1 = "run.entries.dispatched:v1"
 	// RunEntriesDispatchFailedV1 — Run entries orchestrator failed to dispatch.
 	RunEntriesDispatchFailedV1 = "run.entries.dispatch_failed:v1"
-	// TaskStatusUpdatedV1 — Per-task status transitions emitted by executor-controller.
+	// TaskStatusUpdatedV1 — Per-task status transitions emitted by execution-controller.
 	TaskStatusUpdatedV1 = "task.status.updated:v1"
-	// TaskExecutionRecordedV1 — Completed task executions emitted by k8s-controller's outbox processor.
+	// TaskExecutionRecordedV1 — Completed task executions emitted by execution-controller's outbox processor.
 	TaskExecutionRecordedV1 = "task.execution.recorded:v1"
 	// NodeUpdatedV1 — Node state transitions; orchestrator updates its projections.
 	NodeUpdatedV1 = "node.updated:v1"
@@ -32,45 +32,45 @@ const (
 	RunFinalizedV1 = "run.finalized:v1"
 	// QueryModelV1 — Tasks dispatched by orchestrator for the executor pool.
 	QueryModelV1 = "query.model:v1"
-	// RetryTaskV1 — Retry trigger for tasks; produced by k8s-controller, consumed by executor.
+	// RetryTaskV1 — Retry trigger for tasks; produced and consumed by execution-controller.
 	RetryTaskV1 = "retry.task:v1"
-	// NodeDeployedV1 — Pod-deploy intent from executor; consumed by k8s-controller.
+	// NodeDeployedV1 — Pod-deploy intent emitted after a Job is created; consumed by the job-status handler to start watching it.
 	NodeDeployedV1 = "node.deployed:v1"
 	// CheckK8sV1 — Delayed status-check tickets; a promoter moves due tickets from the delay queue into the stream.
 	CheckK8sV1 = "check.k8s:v1"
-	// TaskFailedV1 — Terminal task failure emitted by k8s-controller.
+	// TaskFailedV1 — Terminal task failure emitted by execution-controller.
 	TaskFailedV1 = "task.failed:v1"
 	// OutboxDeadLetterV1 — Terminal outbox publish failures (permanent payload errors, or transient errors that exhausted their backoff budget), emitted by every service's outbox processor. Operational DLQ, not a domain event.
 	OutboxDeadLetterV1 = "outbox.dead_letter:v1"
-	// ScheduleCancelledV1 — Schedule cancellation broadcast; fanned out to orchestrator, executor, k8s.
+	// ScheduleCancelledV1 — Schedule cancellation broadcast; fanned out to orchestrator and execution-controller.
 	ScheduleCancelledV1 = "schedule.cancelled:v1"
 	// ReleaseRequestedV1 — Candidate release accepted by release-controller; triggers manifest load for validation.
 	ReleaseRequestedV1 = "release.requested:v1"
 	// ManifestLoadedCandidateV1 — Resolved candidate topology from topology-controller back to release-controller.
 	ManifestLoadedCandidateV1 = "manifest.loaded.candidate:v1"
-	// ValidationRequestedV1 — dbt --empty validation run requested by release-controller; executor-controller dispatches per-node jobs.
+	// ValidationRequestedV1 — dbt --empty validation run requested by release-controller; execution-controller dispatches per-node jobs.
 	ValidationRequestedV1 = "validation.requested:v1"
-	// ValidationNodeCompletedV1 — Per-node validation Job terminal status from k8s-controller back to executor-controller; settled into the validation.result:v1 stream (per-node kind=node, plus the terminal kind=complete once all nodes settle).
+	// ValidationNodeCompletedV1 — Per-node validation Job terminal status from the job-status handler, settled into the validation.result:v1 stream (per-node kind=node, plus the terminal kind=complete once all nodes settle).
 	ValidationNodeCompletedV1 = "validation.node.completed:v1"
-	// ValidationResultV1 — Unified validation-leg stream from executor-controller. Carries per-node results (kind=node, one per node as it settles) and the terminal decision (kind=complete, emitted last). release-controller projects nodes and decides on complete; the decision reads aggregate_status, so it does not depend on delivery order. executor-controller drops the candidate schema on complete.
+	// ValidationResultV1 — Unified validation-leg stream from execution-controller. Carries per-node results (kind=node, one per node as it settles) and the terminal decision (kind=complete, emitted last). release-controller projects nodes and decides on complete; the decision reads aggregate_status, so it does not depend on delivery order. execution-controller drops the candidate schema on complete.
 	ValidationResultV1 = "validation.result:v1"
-	// SeedBuildRequestedV1 — release-controller requests candidate seed builds; executor dispatches per-seed team-image jobs.
+	// SeedBuildRequestedV1 — release-controller requests candidate seed builds; execution-controller dispatches per-seed team-image jobs.
 	SeedBuildRequestedV1 = "seed.build.requested:v1"
-	// SeedBuildNodeCompletedV1 — per-seed build terminal status from k8s-controller back to executor-controller.
+	// SeedBuildNodeCompletedV1 — per-seed build terminal status from the job-status handler.
 	SeedBuildNodeCompletedV1 = "seed.build.node.completed:v1"
-	// SeedBuildCompletedV1 — aggregated candidate seed-build result from executor-controller back to release-controller.
+	// SeedBuildCompletedV1 — aggregated candidate seed-build result from execution-controller back to release-controller.
 	SeedBuildCompletedV1 = "seed.build.completed:v1"
-	// CompileRequestedV1 — release-controller requests the changed service's dbt compile; executor dispatches the compile Job.
+	// CompileRequestedV1 — release-controller requests the changed service's dbt compile; execution-controller dispatches the compile Job.
 	CompileRequestedV1 = "compile.requested:v1"
-	// CompileNodeCompletedV1 — compile Job terminal status from k8s-controller back to executor-controller.
+	// CompileNodeCompletedV1 — compile Job terminal status from the job-status handler.
 	CompileNodeCompletedV1 = "compile.node.completed:v1"
-	// CompileCompletedV1 — aggregated compile result from executor-controller back to release-controller.
+	// CompileCompletedV1 — aggregated compile result from execution-controller back to release-controller.
 	CompileCompletedV1 = "compile.completed:v1"
 	// ReleasePromotedV1 — Release promoted to production; orchestrator atomically replaces its Neo4j topology.
 	ReleasePromotedV1 = "release.promoted:v1"
 	// ReleaseRejectedV1 — Candidate release rejected (compile, parse, seed-build, or validation failure); consumed by the remediation classifier. A verification run's failure never rides this stream.
 	ReleaseRejectedV1 = "release.rejected:v1"
-	// PipelineRunFinishedV1 — A pipeline run of either kind (a candidate release or a fix-verification run) reached a terminal status; carries the run's candidate schema so executor-controller can drop it whatever the outcome.
+	// PipelineRunFinishedV1 — A pipeline run of either kind (a candidate release or a fix-verification run) reached a terminal status; carries the run's candidate schema so execution-controller can drop it whatever the outcome.
 	PipelineRunFinishedV1 = "pipeline.run.finished:v1"
 	// RemediationRetryRequestedV1 — A human asked for another remediation round on a rejected release; release-controller replays the release's stored rejection payload plus remediation_round, and the remediation classifier re-classifies it as a fresh round.
 	RemediationRetryRequestedV1 = "remediation.retry_requested:v1"
@@ -112,41 +112,39 @@ const (
 	OrchestratorPromotedSeeds = "orchestrator-promoted-seeds"
 	// OrchestratorRunFinalized — orchestrator consumer group on run.finalized:v1.
 	OrchestratorRunFinalized = "orchestrator-run-finalized"
-	// ExecutorQueryModel — executor-controller consumer group on query.model:v1.
+	// ExecutorQueryModel — execution-controller consumer group on query.model:v1.
 	ExecutorQueryModel = "executor-query-model"
-	// ExecutorRetry — executor-controller consumer group on retry.task:v1.
+	// ExecutorRetry — execution-controller consumer group on retry.task:v1.
 	ExecutorRetry = "executor-retry"
-	// K8sDeployed — k8s-controller consumer group on node.deployed:v1.
+	// K8sDeployed — execution-controller consumer group on node.deployed:v1.
 	K8sDeployed = "k8s-deployed"
-	// K8sCheckStatus — k8s-controller consumer group on check.k8s:v1.
+	// K8sCheckStatus — execution-controller consumer group on check.k8s:v1.
 	K8sCheckStatus = "k8s-check-status"
 	// OrchestratorScheduleCancelled — orchestrator consumer group on schedule.cancelled:v1.
 	OrchestratorScheduleCancelled = "orchestrator-schedule-cancelled"
-	// ExecutorScheduleCancelled — executor-controller consumer group on schedule.cancelled:v1.
+	// ExecutorScheduleCancelled — execution-controller consumer group on schedule.cancelled:v1.
 	ExecutorScheduleCancelled = "executor-schedule-cancelled"
-	// K8sScheduleCancelled — k8s-controller consumer group on schedule.cancelled:v1.
-	K8sScheduleCancelled = "k8s-schedule-cancelled"
 	// TopologyControllerReleaseRequested — topology-controller consumer group on release.requested:v1.
 	TopologyControllerReleaseRequested = "topology-controller-release-requested"
 	// ReleaseControllerManifestLoadedCandidate — release-controller consumer group on manifest.loaded.candidate:v1.
 	ReleaseControllerManifestLoadedCandidate = "release-controller-manifest-loaded-candidate"
-	// ExecutorValidationRequested — executor-controller consumer group on validation.requested:v1.
+	// ExecutorValidationRequested — execution-controller consumer group on validation.requested:v1.
 	ExecutorValidationRequested = "executor-validation-requested"
-	// ExecutorValidationNodeCompleted — executor-controller consumer group on validation.node.completed:v1.
+	// ExecutorValidationNodeCompleted — execution-controller consumer group on validation.node.completed:v1.
 	ExecutorValidationNodeCompleted = "executor-validation-node-completed"
 	// ReleaseControllerValidationResult — release-controller consumer group on validation.result:v1.
 	ReleaseControllerValidationResult = "release-controller-validation-result"
-	// ExecutorValidationResultTeardown — executor-controller consumer group on validation.result:v1.
+	// ExecutorValidationResultTeardown — execution-controller consumer group on validation.result:v1.
 	ExecutorValidationResultTeardown = "executor-validation-result-teardown"
-	// ExecutorSeedBuildRequested — executor-controller consumer group on seed.build.requested:v1.
+	// ExecutorSeedBuildRequested — execution-controller consumer group on seed.build.requested:v1.
 	ExecutorSeedBuildRequested = "executor-seed-build-requested"
-	// ExecutorSeedBuildNodeCompleted — executor-controller consumer group on seed.build.node.completed:v1.
+	// ExecutorSeedBuildNodeCompleted — execution-controller consumer group on seed.build.node.completed:v1.
 	ExecutorSeedBuildNodeCompleted = "executor-seed-build-node-completed"
 	// ReleaseControllerSeedBuildCompleted — release-controller consumer group on seed.build.completed:v1.
 	ReleaseControllerSeedBuildCompleted = "release-controller-seed-build-completed"
-	// ExecutorCompileRequested — executor-controller consumer group on compile.requested:v1.
+	// ExecutorCompileRequested — execution-controller consumer group on compile.requested:v1.
 	ExecutorCompileRequested = "executor-compile-requested"
-	// ExecutorCompileNodeCompleted — executor-controller consumer group on compile.node.completed:v1.
+	// ExecutorCompileNodeCompleted — execution-controller consumer group on compile.node.completed:v1.
 	ExecutorCompileNodeCompleted = "executor-compile-node-completed"
 	// ReleaseControllerCompileCompleted — release-controller consumer group on compile.completed:v1.
 	ReleaseControllerCompileCompleted = "release-controller-compile-completed"
@@ -154,13 +152,13 @@ const (
 	OrchestratorReleasePromoted = "orchestrator-release-promoted"
 	// OrchestratorReleasePromotedVersions — orchestrator consumer group on release.promoted:v1.
 	OrchestratorReleasePromotedVersions = "orchestrator-release-promoted-versions"
-	// ExecutorReleasePromoted — executor-controller consumer group on release.promoted:v1.
+	// ExecutorReleasePromoted — execution-controller consumer group on release.promoted:v1.
 	ExecutorReleasePromoted = "executor-release-promoted"
 	// RemediationReleaseRejected — remediation consumer group on release.rejected:v1.
 	RemediationReleaseRejected = "remediation-release-rejected"
-	// ExecutorReleaseRejected — executor-controller consumer group on release.rejected:v1.
+	// ExecutorReleaseRejected — execution-controller consumer group on release.rejected:v1.
 	ExecutorReleaseRejected = "executor-release-rejected"
-	// ExecutorPipelineRunFinished — executor-controller consumer group on pipeline.run.finished:v1.
+	// ExecutorPipelineRunFinished — execution-controller consumer group on pipeline.run.finished:v1.
 	ExecutorPipelineRunFinished = "executor-pipeline-run-finished"
 	// RemediationRetryRequested — remediation consumer group on remediation.retry_requested:v1.
 	RemediationRetryRequested = "remediation-retry-requested"

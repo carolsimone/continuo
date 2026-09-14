@@ -197,9 +197,9 @@ func TestDispatcher_DispatchOne_ValidationMode_OnSuccess_WritesNodeDeployedTrigg
 	assert.Equal(t, model.StatusDeployed, repo.saved[0].Status(), "success marks deployed")
 	assert.Equal(t, "", repo.saved[0].Outcome(), "no terminal outcome yet — it arrives via validation.node.completed:v1")
 
-	// Success writes EXACTLY ONE row: the node.deployed:v1 check trigger so
-	// k8s-controller status-checks the validation Job. No task_status_updated /
-	// RUNNING announcement (that is production-only).
+	// Success writes EXACTLY ONE row: the node.deployed:v1 check trigger so the
+	// job-status handler status-checks the validation Job. No task_status_updated
+	// / RUNNING announcement (that is production-only).
 	require.Len(t, outboxRepo.created, 1, "success writes exactly one outbox row")
 	e := outboxRepo.created[0]
 	assert.Equal(t, "node_deployed", e.EventType)

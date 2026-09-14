@@ -23,8 +23,8 @@ type JobSpec struct {
 	// `dbt test --select <node>`.
 	Operation string
 	// Mode carries the legacy promote-seed dispatch mode for queued work; the
-	// k8s adapter stamps it as a Job label so k8s-controller keeps suppressing
-	// that work's lifecycle events. Empty for everything current.
+	// k8s adapter stamps it as a Job label so the job-status handler keeps
+	// suppressing that work's lifecycle events. Empty for everything current.
 	Mode string
 }
 

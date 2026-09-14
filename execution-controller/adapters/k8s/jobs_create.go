@@ -37,7 +37,7 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 	// the domain repository's own image under the runtime harness's
 	// environment; every other node type runs the team's dbt image under a
 	// resolved dbt command. The Job metadata below is shared, so both kinds
-	// route through k8s-controller's production lifecycle identically.
+	// route through the production lifecycle identically.
 	var podSpec corev1.PodSpec
 	if params.NodeType.IsPython() {
 		podSpec, err = buildPythonPodSpec(params)
@@ -139,10 +139,10 @@ type ValidationJobParams struct {
 
 // CreateValidationJob builds and creates a mode=validation K8s Job
 // (idempotent by job name). The Job carries app=dbt-job so existing watchers
-// stay correct, plus the mode=validation label so k8s-controller routes its
-// terminal status to validation.node.completed:v1. release-id/node-id are stored
-// twice: as sanitized labels (for selection/observability) and as raw
-// annotations (the authoritative identity k8s-controller echoes into the payload).
+// stay correct, plus the mode=validation label so the job-status handler
+// routes its terminal status to validation.node.completed:v1. release-id/node-id
+// are stored twice: as sanitized labels (for selection/observability) and as raw
+// annotations (the authoritative identity echoed into the payload).
 func (c *K8sClient) CreateValidationJob(ctx context.Context, params ValidationJobParams) error {
 	exists, err := c.JobExists(ctx, params.Namespace, params.JobName)
 	if err != nil {
@@ -321,8 +321,8 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 // by job name). The Job uses the team image (same as production) and runs
 // `dbt seed --select <TableName>`, materializing into the candidate schema via
 // DBT_TARGET_SCHEMA so the generate_schema_name macro routes the output there.
-// The mode=seed_build label lets k8s-controller route its terminal status to
-// seed.build.node.completed:v1.
+// The mode=seed_build label lets the job-status handler route its terminal
+// status to seed.build.node.completed:v1.
 func (c *K8sClient) CreateSeedBuildJob(ctx context.Context, params ValidationJobParams) error {
 	exists, err := c.JobExists(ctx, params.Namespace, params.JobName)
 	if err != nil {
@@ -501,8 +501,8 @@ func buildSeedBuildPodSpec(p ValidationJobParams, command []string, partialParse
 //     MANIFEST_S3_URI + the S3 credential envs, plus the four PARSE_* envs
 //     when the parse-export leg ran.
 //
-// The mode=compile label lets k8s-controller route its terminal status to
-// compile.node.completed:v1. release-id/node-id annotations carry the
+// The mode=compile label lets the job-status handler route its terminal status
+// to compile.node.completed:v1. release-id/node-id annotations carry the
 // authoritative identity. ImageTag must be non-empty — the team image must be
 // explicitly versioned.
 func (c *K8sClient) CreateCompileJob(ctx context.Context, params ValidationJobParams) error {

@@ -278,9 +278,9 @@ func TestBuildPythonPodSpec_ModelStillGetsNoS3Credentials(t *testing.T) {
 
 // TestCreateQueryJob_PythonModel_UsesPythonPodSpec verifies the dispatch branch
 // reaches the Kubernetes API: the created Job carries the shared production
-// labels (so k8s-controller routes it through the production lifecycle and the
-// concurrency cap counts it), plus the runtime label, and its pod is the python
-// one.
+// labels (so the job-status handler routes it through the production lifecycle
+// and the concurrency cap counts it), plus the runtime label, and its pod is the
+// python one.
 func TestCreateQueryJob_PythonModel_UsesPythonPodSpec(t *testing.T) {
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "warehouse-conn")
 	client := newValidationTestClient()

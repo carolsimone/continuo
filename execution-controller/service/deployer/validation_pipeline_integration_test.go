@@ -153,7 +153,7 @@ func requestedXMessage(t *testing.T, msgID, releaseID, candidateSchema string, n
 }
 
 // nodeTerminalXMessage assembles a validation.node.completed:v1 XMessage — the
-// per-node terminal a real k8s-controller emits after status-checking the Job.
+// per-node terminal the job-status handler emits after status-checking the Job.
 func nodeTerminalXMessage(t *testing.T, msgID, releaseID, nodeID, outcome string) goredis.XMessage {
 	t.Helper()
 	body := map[string]any{
@@ -233,14 +233,14 @@ func waitValidationRowsDue(t *testing.T, db *sqlx.DB, releaseID string) {
 	}
 }
 
-// TestValidationPipeline_EndToEnd drives the whole executor side of the
+// TestValidationPipeline_EndToEnd drives the whole dispatch side of the
 // validation pipeline against testcontainer Postgres with a fake K8s deployer:
 // validation.requested:v1 → per-node deployments → dispatch (validation Jobs +
 // node.deployed:v1 triggers) → simulated per-node terminals → aggregate gating →
 // exactly-once validation.result:v1 (kind=complete). The validation.node.completed:v1
-// terminals are SIMULATED here exactly as a real k8s-controller would emit them
+// terminals are SIMULATED here exactly as the job-status handler would emit them
 // after observing the node.deployed trigger; the routing itself is covered by
-// the k8s-controller's own tests. This test owns the executor side.
+// job_status_handler_test.go. This test owns the dispatch side.
 func TestValidationPipeline_EndToEnd(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
@@ -297,8 +297,8 @@ func TestValidationPipeline_EndToEnd(t *testing.T) {
 		assert.Equal(t, candidateSchema, s.CandidateSchema, "candidate schema threaded to the Job")
 	}
 
-	// node.deployed:v1 trigger: one per dispatched validation Job so k8s-controller
-	// status-checks each (it never polls).
+	// node.deployed:v1 trigger: one per dispatched validation Job so the
+	// job-status handler status-checks each (it never polls).
 	assert.Equal(t, 3, countByStream(t, db, streams.NodeDeployedV1),
 		"one node.deployed:v1 trigger per dispatched validation Job")
 	assert.Equal(t, 3, countDeployments(t, db,
@@ -307,7 +307,7 @@ func TestValidationPipeline_EndToEnd(t *testing.T) {
 	assert.Equal(t, 0, countByStreamAndKind(t, db, streams.ValidationResultV1, "complete"),
 		"no aggregate yet — every node still awaits its terminal")
 
-	// Step 4: simulate k8s-controller terminals for 2 of 3 nodes (outcome=ok).
+	// Step 4: simulate job-status handler terminals for 2 of 3 nodes (outcome=ok).
 	nodeCompleted := newNodeCompletedBinding(db)
 	require.NoError(t, nodeCompleted(ctx, nodeTerminalXMessage(t, "400-0", releaseID, "model.shop.orders", "ok")))
 	require.NoError(t, nodeCompleted(ctx, nodeTerminalXMessage(t, "401-0", releaseID, "model.shop.customers", "ok")))

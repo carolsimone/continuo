@@ -18,8 +18,7 @@ import (
 var domainModules = []string{
 	"state",
 	"orchestrator",
-	"executor-controller",
-	"k8s-controller",
+	"execution-controller",
 	"release-controller",
 	"remediation",
 	"agent-remediation",

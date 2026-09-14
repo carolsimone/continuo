@@ -17,8 +17,7 @@ import (
 var servicesWithMainGo = []string{
 	"state/main.go",
 	"orchestrator/main.go",
-	"executor-controller/main.go",
-	"k8s-controller/main.go",
+	"execution-controller/main.go",
 	"release-controller/main.go",
 	"remediation/main.go",
 	"agent-remediation/main.go",
@@ -83,7 +82,7 @@ func TestNoStreamOrGroupLiteralsInMains(t *testing.T) {
 }
 
 func looksLikeServicePrefixedGroup(s string) bool {
-	for _, p := range []string{"state-", "orchestrator-", "executor-", "k8s-", "topology-", "agent-remediation-", "remediation-"} {
+	for _, p := range []string{"state-", "orchestrator-", "execution-", "executor-", "k8s-", "topology-", "agent-remediation-", "remediation-"} {
 		if strings.HasPrefix(s, p) {
 			return true
 		}
@@ -102,10 +101,8 @@ var streamLiteralScanDirs = []string{
 	"state/internal/grpc/handlers",
 	"orchestrator/adapters/redis",
 	"orchestrator/service/handlers",
-	"executor-controller/adapters/redis",
-	"executor-controller/service/handlers",
-	"k8s-controller/adapters/redis",
-	"k8s-controller/service/handlers",
+	"execution-controller/adapters/redis",
+	"execution-controller/service/handlers",
 	"release-controller/adapters/redis",
 	"release-controller/service/handlers",
 }

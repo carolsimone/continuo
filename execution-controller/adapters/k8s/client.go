@@ -21,11 +21,11 @@ import (
 
 // jobTTLSecondsAfterFinished bounds how long a terminal (Succeeded or Failed) dbt
 // Job — and its pod — stays on the cluster before Kubernetes garbage-collects it.
-// k8s-controller reads and uploads a Job's pod logs to S3 synchronously the moment it
-// observes the Job go terminal, so this window only needs to cover ad-hoc
-// kubectl-level debugging of a still-present pod, not log retention: the S3 copy is
-// durable long before this elapses. 24h matches the other Job TTL backstops in this
-// repo (db-init-migrate-job.yaml, minio/bucket-init-job.yaml).
+// The job-status handler reads and uploads a Job's pod logs to S3 synchronously
+// the moment it observes the Job go terminal, so this window only needs to cover
+// ad-hoc kubectl-level debugging of a still-present pod, not log retention: the S3
+// copy is durable long before this elapses. 24h matches the other Job TTL
+// backstops in this repo (db-init-migrate-job.yaml, minio/bucket-init-job.yaml).
 const jobTTLSecondsAfterFinished = int32(86400)
 
 // JobParams represents the parameters needed to create a K8s Job
@@ -45,8 +45,9 @@ type JobParams struct {
 	// NodeType. pkg_model.OperationTest runs `dbt test --select <node>`.
 	Operation pkg_model.Operation
 	// Mode is the legacy promote-seed dispatch mode carried by queued work only;
-	// when non-empty it is stamped as a "mode" label so k8s-controller routes the
-	// Job away from the production lifecycle. Empty for everything current.
+	// when non-empty it is stamped as a "mode" label so the job-status handler
+	// routes the Job away from the production lifecycle. Empty for everything
+	// current.
 	Mode string
 }
 

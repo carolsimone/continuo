@@ -56,7 +56,7 @@ func seedDeployedValidationNode(t *testing.T, db *sqlx.DB, releaseID, nodeID str
 
 // nodeCompletedXMessage builds a goredis.XMessage fixture for
 // validation.node.completed:v1. The wire format is a single "payload" field
-// with the flat JSON body, matching the k8s-controller outbox publisher.
+// with the flat JSON body, matching this service's outbox publisher.
 func nodeCompletedXMessage(t *testing.T, msgID, releaseID, nodeID, outcome string) goredis.XMessage {
 	t.Helper()
 	body := map[string]interface{}{

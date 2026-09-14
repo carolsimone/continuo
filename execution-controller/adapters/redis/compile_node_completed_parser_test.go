@@ -42,8 +42,8 @@ func TestParseCompileNodeCompleted_RunResultsURIOptional(t *testing.T) {
 }
 
 // TestParseCompileNodeCompleted_FailedContainer verifies the optional
-// failed_container field (added by k8s-controller for compile-leg failure
-// attribution) is read into the event when present.
+// failed_container field (stamped for compile-leg failure attribution) is
+// read into the event when present.
 func TestParseCompileNodeCompleted_FailedContainer(t *testing.T) {
 	p := nodeCompletedPayload()
 	p["outcome"] = "failed"

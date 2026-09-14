@@ -15,8 +15,8 @@ var validationSyntheticIDNamespace = uuid.MustParse("8f8d2b7a-2f1e-4c6a-9d3b-6a7
 // validation deployment from (releaseID, nodeID). task_id/schedule_id are NOT
 // NULL in deployments; validation rows have no real task/schedule, so
 // these synthetic IDs satisfy the columns and key the node.deployed trigger the
-// dispatcher emits so k8s-controller status-checks the validation Job. The NUL
-// separator keeps the two business keys unambiguous across boundaries.
+// dispatcher emits so the job-status handler status-checks the validation Job.
+// The NUL separator keeps the two business keys unambiguous across boundaries.
 func ValidationSyntheticIDs(releaseID, nodeID string) (taskID, scheduleID uuid.UUID) {
 	taskID = uuid.NewSHA1(validationSyntheticIDNamespace, []byte("task:"+releaseID+"\x00"+nodeID))
 	scheduleID = uuid.NewSHA1(validationSyntheticIDNamespace, []byte("schedule:"+releaseID+"\x00"+nodeID))

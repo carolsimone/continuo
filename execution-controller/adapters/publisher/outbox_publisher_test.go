@@ -237,13 +237,12 @@ func TestPublisher_NodeDeployed_OutOfRangeMaxRetries_IsPermanent(t *testing.T) {
 }
 
 // TestPublisher_ContractAllHandledEventTypes is a regression guard that asserts
-// every event_type the merged execution-controller publisher is expected to
-// handle — both the executor-originated types and the k8s-controller-originated
-// types it absorbed — does NOT return "unknown event_type". This prevents a
-// recurrence of the class of bug where an emit site uses a string that has no
-// matching case in the publisher switch (e.g. compile_node_completed was
-// emitted but unmapped → events never published). The event_type constants are
-// the single source of truth shared by every producer.
+// every event_type this service's outbox rows carry — from the dispatcher, the
+// job-status handler, and every other emit site — does NOT return "unknown
+// event_type". This prevents a recurrence of the class of bug where an emit site
+// uses a string that has no matching case in the publisher switch (e.g.
+// compile_node_completed was emitted but unmapped → events never published). The
+// event_type constants are the single source of truth shared by every producer.
 func TestPublisher_ContractAllHandledEventTypes(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
@@ -385,9 +384,9 @@ func TestPublish_CheckDelayedGoesToDelayQueueNotStream(t *testing.T) {
 	require.True(t, mr.Exists(delayqueue.TicketsKey))
 }
 
-// TestPublish_TaskExecutionRecordedUsesTypedMap proves task_execution_recorded
-// (a k8s-controller-originated event type the merged publisher now also
-// handles) is XADDed via its typed ToMap(), not dropped as unknown.
+// TestPublish_TaskExecutionRecordedUsesTypedMap proves task_execution_recorded,
+// emitted by the job-status handler, is XADDed via its typed ToMap(), not
+// dropped as unknown.
 func TestPublish_TaskExecutionRecordedUsesTypedMap(t *testing.T) {
 	mr, client := newTestRedis(t)
 	defer mr.Close()
@@ -402,9 +401,9 @@ func TestPublish_TaskExecutionRecordedUsesTypedMap(t *testing.T) {
 	require.Equal(t, entry.ID.String(), msgs[0].Values["outbox_entry_id"])
 }
 
-// TestPublisher_ValidationNodeCompleted verifies the k8s-controller-originated
-// per-node validation result is re-emitted verbatim on the "payload" field so
-// the executor's own ParseValidationNodeCompleted can decode it.
+// TestPublisher_ValidationNodeCompleted verifies the per-node validation result
+// emitted by the job-status handler is re-emitted verbatim on the "payload"
+// field so this service's own ParseValidationNodeCompleted can decode it.
 func TestPublisher_ValidationNodeCompleted(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	r := newRedis(t)

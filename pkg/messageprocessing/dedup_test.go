@@ -152,7 +152,7 @@ func TestDedup_InsertErrorPropagates(t *testing.T) {
 }
 
 // TestDedup_SameMessageIDDifferentStreamBothInsertSuccessfully is the
-// regression guard for the bug where k8s-controller's outbox-processor
+// regression guard for the bug where execution-controller's outbox-processor
 // publishes task.status.updated:v1 and task.execution.recorded:v1 in the
 // same millisecond, producing identical Redis message IDs across the two
 // streams. With a per-message-only UNIQUE constraint, the second insert

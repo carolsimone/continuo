@@ -244,7 +244,7 @@ func (d *Dispatcher) dispatchOne(ctx context.Context, repo repository.Deployment
 }
 
 // dispatchValidation handles a mode=validation row. On success it marks the row
-// deployed and emits a node.deployed:v1 trigger so k8s-controller status-checks
+// deployed and emits a node.deployed:v1 trigger so the job-status handler status-checks
 // the validation Job (it never polls); it skips the production-only
 // task_status_updated announcement. The per-node terminal outcome ("ok"/"failed")
 // arrives later via validation.node.completed:v1 and is attached by the outcome
@@ -318,7 +318,7 @@ func (d *Dispatcher) settleFailedValidation(ctx context.Context, repo repository
 
 // dispatchSeedBuild handles a mode=seed_build row. It is structurally identical
 // to dispatchValidation: on success it marks the row deployed and emits a
-// node.deployed:v1 trigger so k8s-controller status-checks the seed-build Job;
+// node.deployed:v1 trigger so the job-status handler status-checks the seed-build Job;
 // on terminal failure it fails the row and settles the per-release seed-build
 // aggregate. Seeds are flat roots with no blocked downstreams so
 // SettleSeedBuildNodeTerminal's propagateGating call is a no-op — but the
@@ -385,7 +385,7 @@ func (d *Dispatcher) settleFailedSeedBuild(ctx context.Context, repo repository.
 
 // dispatchCompile handles a mode=compile row. It is structurally identical to
 // dispatchSeedBuild: on success it marks the row deployed and emits a
-// node.deployed:v1 trigger so k8s-controller status-checks the compile Job; on
+// node.deployed:v1 trigger so the job-status handler status-checks the compile Job; on
 // terminal failure it fails the row and settles the per-release compile
 // aggregate via SettleCompileNodeTerminal. Compile is a single root node (no
 // in-leg upstreams) so the gating propagation in SettleCompileNodeTerminal is a
@@ -454,8 +454,8 @@ func (d *Dispatcher) settleFailedCompile(ctx context.Context, repo repository.De
 func (d *Dispatcher) writeDeployedAnnouncements(ctx context.Context, outboxRepo outbox.Repository, dep *model.Deployment) error {
 	cmd := dep.Command()
 	// The deploy path emits only the node_deployed trigger that starts k8s polling.
-	// k8s-controller is the sole producer of the running/terminal pod lifecycle and
-	// announces RUNNING the first time it observes the Job running.
+	// The job-status handler is the sole producer of the running/terminal pod
+	// lifecycle and announces RUNNING the first time it observes the Job running.
 	deployed := event.JobDeployed{
 		TaskID: cmd.TaskID, ScheduleID: cmd.ScheduleID, ScheduleName: cmd.ScheduleName,
 		ServiceName: cmd.ServiceName, SchemaName: cmd.SchemaName, TableName: cmd.TableName,
@@ -470,7 +470,7 @@ func (d *Dispatcher) writeDeployedAnnouncements(ctx context.Context, outboxRepo 
 }
 
 // writeValidationDeployedTrigger emits the node.deployed:v1 trigger after a
-// validation, seed-build, or compile Job is created. k8s-controller is
+// validation, seed-build, or compile Job is created. The job-status handler is
 // event-driven and never polls, so without this row the Job would never be
 // status-checked and the release would hang. This is NOT the production success
 // path: it writes only the node_deployed check trigger and skips the
@@ -480,7 +480,7 @@ func (d *Dispatcher) writeDeployedAnnouncements(ctx context.Context, outboxRepo 
 // node.completed:v1 event.
 //
 // The trigger carries the deterministic synthetic task/schedule UUIDs derived
-// from (release_id, node_id). They are inert carriers: k8s-controller routes
+// from (release_id, node_id). They are inert carriers: the job-status handler routes
 // the resulting check by the Job's own mode label (mode=validation,
 // mode=seed_build, or mode=compile), not by these IDs — they only need to be
 // valid UUIDs so ParseNodeDeployed accepts the message, and to satisfy the

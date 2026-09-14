@@ -5,10 +5,9 @@
 remediation
 cli
 release-controller
-executor-controller
+execution-controller
 agent-chat
 agent-remediation
-k8s-controller
 pkg
 orchestrator
 tests/e2e

@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// nodeCompletedPayload mirrors the flat JSON body k8s-controller emits in the
+// nodeCompletedPayload mirrors the flat JSON body this service emits in the
 // "payload" field of a validation.node.completed:v1 message.
 func nodeCompletedPayload() map[string]any {
 	return map[string]any{

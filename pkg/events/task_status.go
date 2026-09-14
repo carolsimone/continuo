@@ -2,8 +2,8 @@ package events
 
 // TaskStatusUpdated — stream: task.status.updated:v1
 // Published by:
-//   - executor-controller (RUNNING on deploy, FAILED on deploy failure)
-//   - k8s-controller (SUCCEEDED/FAILED from observed job status)
+//   - execution-controller (RUNNING on deploy, FAILED on deploy failure,
+//     SUCCEEDED/FAILED from observed job status)
 //   - orchestrator (SKIPPED when a node is cascade-skipped after an upstream failure)
 //
 // Consumed by: state. ToMap is the single serializer for this stream — every
@@ -26,7 +26,7 @@ func (e TaskStatusUpdated) ToMap() map[string]interface{} {
 }
 
 // TaskExecutionRecorded — stream: task.execution.recorded:v1
-// Published by: k8s-controller
+// Published by: execution-controller
 // Consumed by: state
 type TaskExecutionRecorded struct {
 	ExecutionID      string  `json:"execution_id"`

@@ -23,7 +23,7 @@ import (
 // transaction. The wire-stable stream name is sourced from pkg/streams
 // (streams.SeedBuildNodeCompletedV1); no stream literal lives in this file.
 //
-// This stream carries a normal upstream outbox_entry_id from k8s-controller, so
+// This stream carries a normal upstream outbox_entry_id, so
 // dedup is the STANDARD (msg.ID, stream_name) layer with an outbox_entry_id
 // fallback — identical to the validation.node.completed:v1 binding.
 //
