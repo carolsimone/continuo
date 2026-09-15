@@ -134,7 +134,7 @@ Confirm the pod is healthy (not crashlooping):
 ```bash
 kubectl -n continuo get pods -l app=ui
 kubectl -n continuo logs -l app=ui | tail
-#   -> "Continuo UI running on http://localhost:8090 (auth mode: oidc)"
+#   -> "continuo UI running on http://localhost:8090 (auth mode: oidc)"
 ```
 
 ### Step 4 — Reach it and log in

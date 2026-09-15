@@ -39,7 +39,7 @@ Examples of unacceptable behavior include:
 
 ## Enforcement Responsibilities
 
-Continuo is currently maintained by one person, who is responsible for
+continuo is currently maintained by one person, who is responsible for
 clarifying and enforcing our standards of acceptable behavior and will take
 appropriate and fair corrective action in response to any behavior that they
 deem inappropriate, threatening, offensive, or harmful.
@@ -60,7 +60,7 @@ an appointed representative at an online or offline event.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the maintainer at carolini.simone@gmail.com. All complaints will
+reported to the maintainer at simone@continuo-data.com. All complaints will
 be reviewed and investigated promptly and fairly.
 
 The maintainer is obligated to respect the privacy and security of the

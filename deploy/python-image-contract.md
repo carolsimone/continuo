@@ -1,8 +1,8 @@
 # Python image contract
 
-What a domain team's python image must provide to run under Continuo.
+What a domain team's python image must provide to run under continuo.
 execution-controller launches your image as a Kubernetes Job for scheduled runs
-of your `python-model` nodes; this page is Continuo's side of that contract.
+of your `python-model` nodes; this page is continuo's side of that contract.
 
 The normative specification of what the image must *do* with the environment
 below — the harness, the baked contract files, output conformance, the result
@@ -94,11 +94,11 @@ declares no tests, so `build` — materialize and test in one step — reduces t
 the same work as `run`, exactly as `dbt build` does on a model with no tests. A
 `test` run skips python nodes entirely and never starts a pod.
 
-## What Continuo does with your output
+## What continuo does with your output
 
 Your container's stdout must end with exactly one sentinel-framed result block
 (the harness emits it); every other diagnostic goes to stderr. On a terminal
-Job, Continuo strips that block from the text log, uploads the log and the
+Job, continuo strips that block from the text log, uploads the log and the
 block's JSON to S3 — on success as well as failure — and records both keys on
 the run's execution row. A non-zero exit fails the node, and the block's error
 class (`ContractError`, `ReadError`, `ScriptError`, `ConformError`, `LoadError`)

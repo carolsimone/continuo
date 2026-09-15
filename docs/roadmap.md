@@ -40,6 +40,17 @@ runtime. One contract format across the whole graph replaces the per-runtime
 metadata we derive today and gives the control plane and the remediation agents
 a single, portable contract to enforce and reason about.
 
+### Data-quality gate in the deployment pipeline
+**Target date:** TODO
+
+Today a candidate release is gated by compilation, manifest parsing, and schema
+validation before it can be promoted. The next gate is **data quality**: once a
+node materializes in the candidate release, run its data-quality expectations —
+row-level tests, freshness, and drift against the current production baseline —
+and block promotion on a breach. This catches data drift and quality
+regressions that compile and schema-validate cleanly but would still ship bad
+data.
+
 ### One control plane for streaming and batch
 **Target date:** TODO
 
