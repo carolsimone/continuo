@@ -38,10 +38,14 @@ redis_cli() { # $@ command...
   fi
 }
 
-# selfLoopUndrained sums, across one intra-service self-loop stream, every
-# consumer group's undelivered (lag) + delivered-unacked (pending) messages.
-# These streams are produced and consumed by the same merged service, so an
-# unconsumed message is lost when the new service starts on an empty database.
+# selfLoopUndrained sums, across one self-loop stream of the deployment being
+# upgraded from, every consumer group's undelivered (lag) + delivered-unacked
+# (pending) messages. The upgrade replaces the two old controllers with a service
+# that consumes only check.k8s:v1; it has no consumer for the retired self-loop
+# streams (node.deployed:v1, the three *.node.completed:v1, retry.task:v1), so any
+# message still queued on one of them at cutover is lost — a published-but-
+# unconsumed retry.task:v1, for instance, leaves a terminal failed Job with no
+# retry Job ever created.
 # XINFO GROUPS errors with "no such key" when the stream was never created; Redis
 # reachability is verified separately (PING) before this runs, so an error here
 # means an absent stream (nothing enqueued), counted as 0. The `lag` field needs
@@ -71,7 +75,23 @@ redis_cli PING >/dev/null 2>&1 || {
   exit 1
 }
 tickets="$(redis_cli HLEN checkk8s:tickets | tr -d '[:space:]')"
-undrained_selfloop="$(selfLoopUndrained "check.k8s:v1")"
+# Every self-loop stream the old two-controller deployment used must be drained,
+# not only the one the new service keeps. The retired streams have no consumer
+# after cutover, so a message left on any of them is lost work. Do NOT reduce this
+# list to check.k8s:v1: that would report GO while, for example, a retry.task:v1
+# message sits unconsumed and its retry is dropped. task.failed:v1 is absent on
+# purpose — it never had a consumer, so a message there is already inert.
+undrained_selfloop=0
+for stream in \
+  "node.deployed:v1" \
+  "check.k8s:v1" \
+  "validation.node.completed:v1" \
+  "seed.build.node.completed:v1" \
+  "compile.node.completed:v1" \
+  "retry.task:v1"; do
+  n="$(selfLoopUndrained "$stream")"
+  undrained_selfloop=$((undrained_selfloop + n))
+done
 
 # ---- Kubernetes: non-terminal Jobs ----
 # A Job is terminal once it has a Complete or Failed condition; the field selector

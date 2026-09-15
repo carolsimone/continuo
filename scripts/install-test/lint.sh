@@ -89,4 +89,22 @@ loglevel_changed="$(mc_checksum --set global.logLevel=DEBUG)"
 echo "--- bash -n (release scripts)"
 bash -n scripts/release/retag-images.sh
 
+echo "--- cutover preflight drains every old self-loop stream"
+bash -n scripts/preflight-execution-cutover.sh
+# The cutover preflight runs against the OLD two-controller deployment. Its retired
+# self-loop streams have no consumer after the upgrade, so a message left on any of
+# them is lost work and each must still gate GO. Reducing the drained set (e.g. to
+# only check.k8s:v1) silently reintroduces cutover data loss, so assert every one is
+# still present.
+for s in \
+  "node.deployed:v1" \
+  "check.k8s:v1" \
+  "validation.node.completed:v1" \
+  "seed.build.node.completed:v1" \
+  "compile.node.completed:v1" \
+  "retry.task:v1"; do
+  grep -qF "\"$s\"" scripts/preflight-execution-cutover.sh \
+    || { echo "FAIL: cutover preflight no longer drains $s — a message stranded on it would be lost at upgrade"; exit 1; }
+done
+
 echo "Chart lint OK across ${#renders[@]} topologies."
