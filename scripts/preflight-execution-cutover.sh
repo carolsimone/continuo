@@ -71,17 +71,7 @@ redis_cli PING >/dev/null 2>&1 || {
   exit 1
 }
 tickets="$(redis_cli HLEN checkk8s:tickets | tr -d '[:space:]')"
-undrained_selfloop=0
-for stream in \
-  "node.deployed:v1" \
-  "check.k8s:v1" \
-  "validation.node.completed:v1" \
-  "seed.build.node.completed:v1" \
-  "compile.node.completed:v1" \
-  "retry.task:v1"; do
-  n="$(selfLoopUndrained "$stream")"
-  undrained_selfloop=$((undrained_selfloop + n))
-done
+undrained_selfloop="$(selfLoopUndrained "check.k8s:v1")"
 
 # ---- Kubernetes: non-terminal Jobs ----
 # A Job is terminal once it has a Complete or Failed condition; the field selector

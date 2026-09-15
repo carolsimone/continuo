@@ -90,44 +90,6 @@ func TestValidationDeployTaskOmitemptyShape(t *testing.T) {
 	}
 }
 
-// goldenJobDeployed is the exact JSON an event.JobDeployed is stored as in the
-// node_deployed outbox payload. operation is omitempty; every other field is present.
-const goldenJobDeployed = `{"task_id":"t","schedule_id":"s","schedule_name":"sn","service_name":"svc","schema_name":"sch","table_name":"tbl","job_name":"j","node_type":"dbt-model","image_tag":"v1","operation":"test","task_retry_count":1,"max_retries":3}`
-
-func TestJobDeployedDTORoundTrip(t *testing.T) {
-	var dto JobDeployedDTO
-	if err := json.Unmarshal([]byte(goldenJobDeployed), &dto); err != nil {
-		t.Fatalf("unmarshal golden: %v", err)
-	}
-	got := dto.ToDomain()
-	want := event.JobDeployed{
-		TaskID: "t", ScheduleID: "s", ScheduleName: "sn", ServiceName: "svc",
-		SchemaName: "sch", TableName: "tbl", JobName: "j", NodeType: "dbt-model",
-		ImageTag: "v1", Operation: "test", TaskRetryCount: 1, MaxRetries: 3,
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("toDomain:\n got %+v\nwant %+v", got, want)
-	}
-	out, err := json.Marshal(JobDeployedFromDomain(got))
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	if string(out) != goldenJobDeployed {
-		t.Fatalf("bytes changed:\n got %s\nwant %s", out, goldenJobDeployed)
-	}
-}
-
-func TestJobDeployedOperationOmitempty(t *testing.T) {
-	out, err := json.Marshal(JobDeployedFromDomain(event.JobDeployed{TaskID: "t"}))
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	const want = `{"task_id":"t","schedule_id":"","schedule_name":"","service_name":"","schema_name":"","table_name":"","job_name":"","node_type":"","image_tag":"","task_retry_count":0,"max_retries":0}`
-	if string(out) != want {
-		t.Fatalf("operation omitempty not preserved:\n got %s\nwant %s", out, want)
-	}
-}
-
 // goldenNodeUpdated is the exact JSON an event.NodeUpdated is stored as in the
 // node_updated outbox payload. No field is omitempty.
 const goldenNodeUpdated = `{"task_id":"t","schedule_id":"s","schedule_name":"sn","service_name":"svc","schema_name":"sch","table_name":"tbl","status":"FAILED"}`
@@ -182,65 +144,6 @@ func TestJobCheckRequestDTORoundTrip(t *testing.T) {
 
 func TestJobCheckRequestOperationOmitempty(t *testing.T) {
 	out, err := json.Marshal(JobCheckRequestFromDomain(event.JobCheckRequest{TaskID: "t"}))
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	if strings.Contains(string(out), `"operation"`) {
-		t.Fatalf("operation must be omitted when empty: %s", out)
-	}
-}
-
-const goldenTaskFailed = `{"task_id":"t","schedule_id":"s","schedule_name":"sn","service_name":"svc","schema_name":"sch","table_name":"tbl","job_name":"j","error_message":"boom","retry_count":2}`
-
-func TestTaskFailedDTORoundTrip(t *testing.T) {
-	var dto TaskFailedDTO
-	if err := json.Unmarshal([]byte(goldenTaskFailed), &dto); err != nil {
-		t.Fatalf("unmarshal golden: %v", err)
-	}
-	got := dto.ToDomain()
-	want := event.TaskFailed{
-		TaskID: "t", ScheduleID: "s", ScheduleName: "sn", ServiceName: "svc",
-		SchemaName: "sch", TableName: "tbl", JobName: "j", ErrorMessage: "boom", RetryCount: 2,
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("toDomain:\n got %+v\nwant %+v", got, want)
-	}
-	out, err := json.Marshal(TaskFailedFromDomain(got))
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	if string(out) != goldenTaskFailed {
-		t.Fatalf("bytes changed:\n got %s\nwant %s", out, goldenTaskFailed)
-	}
-}
-
-const goldenTaskRetry = `{"task_id":"t","schedule_id":"s","schedule_name":"sn","service_name":"svc","schema_name":"sch","table_name":"tbl","job_name":"j","image_tag":"v1","retry_count":1,"max_retries":3,"node_type":"dbt-model","operation":"test"}`
-
-func TestTaskRetryDTORoundTrip(t *testing.T) {
-	var dto TaskRetryDTO
-	if err := json.Unmarshal([]byte(goldenTaskRetry), &dto); err != nil {
-		t.Fatalf("unmarshal golden: %v", err)
-	}
-	got := dto.ToDomain()
-	want := event.TaskRetry{
-		TaskID: "t", ScheduleID: "s", ScheduleName: "sn", ServiceName: "svc",
-		SchemaName: "sch", TableName: "tbl", JobName: "j", ImageTag: "v1",
-		RetryCount: 1, MaxRetries: 3, NodeType: "dbt-model", Operation: "test",
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("toDomain:\n got %+v\nwant %+v", got, want)
-	}
-	out, err := json.Marshal(TaskRetryFromDomain(got))
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	if string(out) != goldenTaskRetry {
-		t.Fatalf("bytes changed:\n got %s\nwant %s", out, goldenTaskRetry)
-	}
-}
-
-func TestTaskRetryOperationOmitempty(t *testing.T) {
-	out, err := json.Marshal(TaskRetryFromDomain(event.TaskRetry{TaskID: "t"}))
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}

@@ -24,42 +24,6 @@ func payloadMsg(t *testing.T, evt interface{}) goredis.XMessage {
 	return msgWith(map[string]interface{}{"payload": string(b)})
 }
 
-func TestParseNodeDeployed_DecodesPayloadAndTaskRetryCount(t *testing.T) {
-	taskID := uuid.New()
-	schedID := uuid.New()
-	cmd, err := ParseNodeDeployed(payloadMsg(t, pkgevents.NodeDeployed{
-		TaskID:         taskID.String(),
-		ScheduleID:     schedID.String(),
-		ScheduleName:   "daily",
-		ServiceName:    "svc",
-		SchemaName:     "public",
-		TableName:      "orders",
-		JobName:        "job-1",
-		NodeType:       "model",
-		ImageTag:       "sha-abc",
-		TaskRetryCount: 2,
-		MaxRetries:     5,
-	}), 3)
-	if err != nil {
-		t.Fatalf("ParseNodeDeployed: %v", err)
-	}
-	if cmd.TaskID != taskID || cmd.ScheduleID != schedID {
-		t.Fatalf("ids not mapped: %+v", cmd)
-	}
-	if cmd.JobName != "job-1" || cmd.ImageTag != "sha-abc" || cmd.NodeType != "model" {
-		t.Fatalf("string fields not mapped: %+v", cmd)
-	}
-	if cmd.RetryCount != 2 {
-		t.Fatalf("expected retry_count from task_retry_count=2, got %d", cmd.RetryCount)
-	}
-	if cmd.MaxRetries != 5 {
-		t.Fatalf("expected max_retries 5, got %d", cmd.MaxRetries)
-	}
-	if cmd.ScheduleName != "daily" || cmd.ServiceName != "svc" || cmd.SchemaName != "public" || cmd.TableName != "orders" {
-		t.Fatalf("name/service/schema/table fields not mapped: %+v", cmd)
-	}
-}
-
 func TestParseCheckK8s_DecodesPayloadAndRetryCount(t *testing.T) {
 	cmd, err := ParseCheckK8s(payloadMsg(t, pkgevents.CheckK8s{
 		TaskID:     uuid.New().String(),
@@ -92,22 +56,6 @@ func TestParseCheckK8s_CarriesRunningAnnounced(t *testing.T) {
 	}
 }
 
-// TestParseNodeDeployed_RunningAnnouncedDefaultsFalse verifies a fresh attempt
-// (the node.deployed:v1 that starts an attempt) has not yet announced RUNNING.
-func TestParseNodeDeployed_RunningAnnouncedDefaultsFalse(t *testing.T) {
-	cmd, err := ParseNodeDeployed(payloadMsg(t, pkgevents.NodeDeployed{
-		TaskID:     uuid.New().String(),
-		ScheduleID: uuid.New().String(),
-		JobName:    "job-fresh",
-	}), 3)
-	if err != nil {
-		t.Fatalf("ParseNodeDeployed: %v", err)
-	}
-	if cmd.RunningAnnounced {
-		t.Fatal("expected RunningAnnounced=false for a fresh node.deployed attempt")
-	}
-}
-
 func TestParseCheckK8s_DefaultMaxRetriesWhenAbsent(t *testing.T) {
 	cmd, err := ParseCheckK8s(payloadMsg(t, pkgevents.CheckK8s{
 		TaskID:     uuid.New().String(),
@@ -122,44 +70,10 @@ func TestParseCheckK8s_DefaultMaxRetriesWhenAbsent(t *testing.T) {
 	}
 }
 
-func TestParseNodeDeployed_InvalidTaskIDErrors(t *testing.T) {
-	_, err := ParseNodeDeployed(payloadMsg(t, pkgevents.NodeDeployed{
-		TaskID:     "not-a-uuid",
-		ScheduleID: uuid.New().String(),
-	}), 3)
-	if err == nil {
-		t.Fatal("expected error for invalid task_id")
-	}
-}
-
-func TestParseNodeDeployed_MissingPayloadErrors(t *testing.T) {
-	_, err := ParseNodeDeployed(msgWith(map[string]interface{}{}), 3)
-	if err == nil {
-		t.Fatal("expected error when payload field is absent")
-	}
-}
-
 func TestParseCheckK8s_InvalidJSONErrors(t *testing.T) {
 	_, err := ParseCheckK8s(msgWith(map[string]interface{}{"payload": "{not json"}), 3)
 	if err == nil {
 		t.Fatal("expected error for malformed payload JSON")
-	}
-}
-
-// TestParseNodeDeployed_CarriesOperation verifies the dbt verb rides the durable
-// node.deployed:v1 payload into CheckJobStatus, so it never depends on Job labels.
-func TestParseNodeDeployed_CarriesOperation(t *testing.T) {
-	cmd, err := ParseNodeDeployed(payloadMsg(t, pkgevents.NodeDeployed{
-		TaskID:     uuid.New().String(),
-		ScheduleID: uuid.New().String(),
-		JobName:    "job-op",
-		Operation:  "test",
-	}), 3)
-	if err != nil {
-		t.Fatalf("ParseNodeDeployed: %v", err)
-	}
-	if cmd.Operation != "test" {
-		t.Fatalf("expected Operation=test from node.deployed payload, got %q", cmd.Operation)
 	}
 }
 

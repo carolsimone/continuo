@@ -14,7 +14,8 @@ type Command interface {
 
 // DeployTask is the command to deploy one task's dbt job. It is the payload of
 // a queued deployment and carries everything needed both to perform the deploy
-// and to build the RUNNING / node_deployed / FAILED announcements afterwards.
+// and to build the RUNNING announcement, the first status-check ticket, and the
+// FAILED announcement afterwards.
 type DeployTask struct {
 	TaskID         string
 	ScheduleID     string

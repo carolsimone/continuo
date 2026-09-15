@@ -93,32 +93,6 @@ func TestDispatchedTask_RoundtripWithNewFields(t *testing.T) {
 	assert.Equal(t, "00000000-0000-0000-0000-000000000001", got.InheritedFromTaskID)
 }
 
-func TestNodeDeployed_RoundTrip(t *testing.T) {
-	in := events.NodeDeployed{
-		TaskID:         uuid.New().String(),
-		ScheduleID:     uuid.New().String(),
-		ScheduleName:   "daily",
-		ServiceName:    "svc",
-		SchemaName:     "public",
-		TableName:      "orders",
-		JobName:        "job-1",
-		NodeType:       "dbt-model",
-		ImageTag:       "sha-abc",
-		Operation:      "test",
-		TaskRetryCount: 2,
-		MaxRetries:     5,
-	}
-	b, err := json.Marshal(in)
-	require.NoError(t, err)
-	// node.deployed:v1 carries the task-level retry count under task_retry_count.
-	assert.Contains(t, string(b), `"task_retry_count":2`)
-	// Operation rides the durable payload so a retry keeps the dbt verb.
-	assert.Contains(t, string(b), `"operation":"test"`)
-	var out events.NodeDeployed
-	require.NoError(t, json.Unmarshal(b, &out))
-	assert.Equal(t, in, out)
-}
-
 func TestCheckK8s_RoundTrip(t *testing.T) {
 	in := events.CheckK8s{
 		TaskID:       uuid.New().String(),
@@ -213,14 +187,6 @@ func TestTaskExecutionRecordedToMap_ParseCache_OmitsZeroValues(t *testing.T) {
 	m := in.ToMap()
 	require.NotContains(t, m, "parse_cache")
 	require.NotContains(t, m, "parse_cache_reason")
-}
-
-// TestNodeDeployed_OmitsEmptyOperation verifies a normal `dbt run` (empty
-// Operation) stays wire-identical: no operation key is emitted.
-func TestNodeDeployed_OmitsEmptyOperation(t *testing.T) {
-	b, err := json.Marshal(events.NodeDeployed{TaskID: uuid.New().String()})
-	require.NoError(t, err)
-	assert.NotContains(t, string(b), "operation")
 }
 
 // TestCheckK8s_OmitsEmptyOperation verifies the check.k8s:v1 self-poll payload

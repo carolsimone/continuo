@@ -37,7 +37,7 @@ type SourceFQN struct {
 
 // Annotation keys carrying the RAW (unsanitized) release/node identity on a
 // validation Job. The dispatcher stamps them, and the job-status handler reads
-// them into validation.node.completed:v1. Labels are sanitized for K8s
+// them into the outcomes.NodeOutcome it records. Labels are sanitized for K8s
 // (charset + 63-char limit) and serve only routing/selection; these
 // annotations preserve the exact values so the outcome lookup matches the
 // unmodified deployments key.

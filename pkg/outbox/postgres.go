@@ -64,8 +64,8 @@ type Option func(*postgresRepository)
 // order — a later row is withheld until the earlier one is processed. Rows for
 // different aggregates are unaffected and still drain in parallel. Use this for
 // producers that write multiple ordered events for the same aggregate and need
-// the consumer to observe them in order (e.g. executor's RUNNING before
-// node_deployed).
+// the consumer to observe them in order (e.g. execution-controller's RUNNING
+// announcement before its first check_delayed ticket).
 func WithPerAggregateOrdering() Option {
 	return func(r *postgresRepository) { r.perAggregateFIFO = true }
 }

@@ -13,7 +13,10 @@ func TestExecutionSchemaMatchesContract(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 
-	type col struct{ Name, Type, Nullable string; Default *string }
+	type col struct {
+		Name, Type, Nullable string
+		Default              *string
+	}
 	columns := func(table string) map[string]col {
 		rows, err := db.Query(`SELECT column_name, data_type, is_nullable, column_default
 			FROM information_schema.columns WHERE table_schema='public' AND table_name=$1`, table)

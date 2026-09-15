@@ -27,8 +27,8 @@ type DeploymentRepository interface {
 	// GetByReleaseNode returns the (mode, release_id, node_id) Deployment, or
 	// sql.ErrNoRows when none exists. mode scopes the lookup so the validation
 	// and seed-build legs of one release (which share release_id) never read each
-	// other's rows: the validation.node.completed handler passes ModeValidation,
-	// the seed.build.node.completed handler passes ModeSeedBuild.
+	// other's rows: outcomes.Recorder passes the terminal Job's mode (ModeValidation,
+	// ModeSeedBuild, or ModeCompile).
 	GetByReleaseNode(ctx context.Context, releaseID, nodeID string, mode model.Mode) (*model.Deployment, error)
 	// PendingValidationCount counts rows of the given mode for releaseID that
 	// are not yet terminal — i.e. status IN ('pending','blocked','deployed') AND
@@ -44,8 +44,8 @@ type DeploymentRepository interface {
 	ListValidationResults(ctx context.Context, releaseID string, mode model.Mode) ([]*model.Deployment, error)
 	// ListValidationByRelease returns every row of the given mode for releaseID
 	// as reconstituted aggregates (status, outcome, and UpstreamNodeIDs from
-	// job_params). The node.completed handlers use it to compute downstream
-	// readiness and to skip transitive downstreams on failure.
+	// job_params). service/validation's propagateGating uses it to compute
+	// downstream readiness and to skip transitive downstreams on failure.
 	ListValidationByRelease(ctx context.Context, releaseID string, mode model.Mode) ([]*model.Deployment, error)
 }
 

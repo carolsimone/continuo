@@ -176,10 +176,11 @@ func (c *K8sClient) GetJobStatus(ctx context.Context, namespace, jobName string)
 
 // GetJobMeta returns the labels and annotations stamped on a Job in one API call.
 // The terminal-status handler reads the `mode` label to decide whether a Job is a
-// validation Job (emitting a single validation_node_completed row) or a production
-// task Job (emitting the three production task-status rows). For validation Jobs it
-// reads the RAW release/node identity from the annotations — labels are sanitized
-// (charset + 63-char limit) and would desync the executor's outcome lookup.
+// candidate Job (whose terminal outcome is recorded in-process via
+// outcomes.Recorder) or a production task Job (emitting the three production
+// task-status rows). For candidate Jobs it reads the RAW release/node identity
+// from the annotations — labels are sanitized (charset + 63-char limit) and
+// would desync the deployments lookup.
 func (c *K8sClient) GetJobMeta(ctx context.Context, namespace, jobName string) (labels, annotations map[string]string, err error) {
 	job, err := c.clientset.BatchV1().Jobs(namespace).Get(ctx, jobName, metav1.GetOptions{})
 	if err != nil {

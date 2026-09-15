@@ -26,6 +26,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	"github.com/carolsimone/continuo/execution-controller/domain/repository"
 	"github.com/carolsimone/continuo/execution-controller/service/handlers"
+	"github.com/carolsimone/continuo/execution-controller/service/outcomes"
 	"github.com/carolsimone/continuo/execution-controller/service/uow"
 	"github.com/carolsimone/continuo/execution-controller/test/fakes"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
@@ -158,6 +159,7 @@ func newSucceededHandler(logger *slog.Logger) *handlers.JobStatusHandler {
 		&fakes.FakeLogUploader{},
 		cfg,
 		&fakeCancelledSchedulesRepoFanout{},
+		outcomes.NewRecorder(logger),
 		logger,
 	)
 }

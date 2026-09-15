@@ -51,7 +51,7 @@ Rules:
 - An interface declared in an adapter package and consumed *only by other adapters* (e.g. a gRPC/Neo4j client seam) is adapter-internal and may stay there; the rule targets application→adapter inversion, not adapter-to-adapter wiring.
 
 # Stream and consumer-group names
-Every Redis stream and consumer group is declared in `pkg/streams/contract.yaml`. A Go generator emits `pkg/streams/streams.gen.go` (`streams.QueryModelV1`, `streams.RetryTaskV1`, `streams.ExecutorRetry`, etc.) and `topology-controller/streams_contract.py` for Python.
+Every Redis stream and consumer group is declared in `pkg/streams/contract.yaml`. A Go generator emits `pkg/streams/streams.gen.go` (`streams.QueryModelV1`, `streams.CheckK8sV1`, `streams.K8sCheckStatus`, etc.) and `topology-controller/streams_contract.py` for Python.
 
 The same file's `vocabularies:` block declares the closed value sets several services agree on (`parse_failure_kind`, `reject_reason`). The same generator run emits those into the **shared domain packages**, not the transport ones: `pkg/domain/model/vocabulary.gen.go` (`model.ParseFailureKind`, `model.RejectReason`, each with `IsValid()`/`Healable()`) and `topology-controller/domain/contract_vocabulary.py`. Domain, application and adapter code names a contract value from there.
 

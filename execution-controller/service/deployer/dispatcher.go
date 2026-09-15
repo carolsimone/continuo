@@ -42,6 +42,9 @@ type DispatcherConfig struct {
 	BatchSize   int           // max rows per batch (also clamped by headroom); default 50
 	BackoffBase time.Duration // first retry delay; default 5s
 	BackoffCap  time.Duration // max retry delay; default 2m
+	// CheckDelay is how long after a Job is created its first status check is
+	// due; default 10s.
+	CheckDelay time.Duration
 }
 
 // Dispatcher drains deployments under a concurrency cap. The K8s
@@ -58,6 +61,7 @@ type Dispatcher struct {
 	batchSize     int
 	backoff       model.BackoffPolicy
 	now           func() time.Time
+	checkDelay    time.Duration
 }
 
 func NewDispatcher(
@@ -81,6 +85,9 @@ func NewDispatcher(
 	if cfg.BackoffCap == 0 {
 		cfg.BackoffCap = 2 * time.Minute
 	}
+	if cfg.CheckDelay == 0 {
+		cfg.CheckDelay = 10 * time.Second
+	}
 	return &Dispatcher{
 		db:            db,
 		deployer:      deployer,
@@ -92,6 +99,7 @@ func NewDispatcher(
 		batchSize:     cfg.BatchSize,
 		backoff:       model.BackoffPolicy{Base: cfg.BackoffBase, Cap: cfg.BackoffCap},
 		now:           time.Now,
+		checkDelay:    cfg.CheckDelay,
 	}
 }
 
@@ -218,7 +226,7 @@ func (d *Dispatcher) dispatchOne(ctx context.Context, repo repository.Deployment
 	deployErr := d.deployer.Deploy(ctx, dep.Command().ToJobSpec())
 	if deployErr == nil {
 		if !isLegacyPromoteSeed {
-			if err := d.writeDeployedAnnouncements(ctx, outboxRepo, dep); err != nil {
+			if err := d.writeFirstCheck(ctx, outboxRepo, dep); err != nil {
 				return err
 			}
 		}
@@ -244,11 +252,12 @@ func (d *Dispatcher) dispatchOne(ctx context.Context, repo repository.Deployment
 }
 
 // dispatchValidation handles a mode=validation row. On success it marks the row
-// deployed and emits a node.deployed:v1 trigger so the job-status handler status-checks
-// the validation Job (it never polls); it skips the production-only
+// deployed and writes the first check_delayed ticket so the job-status handler
+// status-checks the validation Job (it never polls); it skips the production-only
 // task_status_updated announcement. The per-node terminal outcome ("ok"/"failed")
-// arrives later via validation.node.completed:v1 and is attached by the outcome
-// handler, which then triggers the aggregate emit. A validation row that cannot be dispatched
+// arrives later when the job-status handler observes the terminal Job and records
+// it via outcomes.Recorder, which then triggers the aggregate emit. A validation
+// row that cannot be dispatched
 // (not deployable, or a permanent pre-deploy deployer error) is failed terminally
 // here via FailValidation — which sets a "failed" outcome from pending without
 // requiring StatusDeployed — and we then settle the node: its blocked descendants
@@ -266,7 +275,7 @@ func (d *Dispatcher) dispatchValidation(ctx context.Context, repo repository.Dep
 		// PendingValidationCount and must see this node as terminal (its own
 		// uncommitted write is visible within this transaction); otherwise it
 		// counts the row as still pending, skips the emission, and no later
-		// validation.node.completed event will re-run the gate for this release.
+		// terminal observation will re-run the gate for this release.
 		if err := repo.Save(ctx, dep); err != nil {
 			return err
 		}
@@ -278,7 +287,7 @@ func (d *Dispatcher) dispatchValidation(ctx context.Context, repo repository.Dep
 		if err := dep.MarkDeployed(now); err != nil {
 			return err
 		}
-		if err := d.writeValidationDeployedTrigger(ctx, outboxRepo, dep); err != nil {
+		if err := d.writeFirstCheck(ctx, outboxRepo, dep); err != nil {
 			return err
 		}
 		return repo.Save(ctx, dep)
@@ -307,9 +316,10 @@ func (d *Dispatcher) dispatchValidation(ctx context.Context, repo repository.Dep
 // runs the shared per-release gating-propagation + aggregate-emit gate under the
 // per-release advisory lock so the failed node's blocked descendants are skipped
 // and the aggregate can fire. The logic lives in service/validation so the
-// validation.node.completed:v1 handler runs the identical gate under its own
-// Unit-of-Work. The failed node's own outcome is already persisted before this
-// call; "failed" drives the transitive skip of its blocked downstreams.
+// job-status handler's outcomes.Recorder runs the identical gate under its own
+// Unit-of-Work when it settles a node after dispatch. The failed node's own
+// outcome is already persisted before this call; "failed" drives the transitive
+// skip of its blocked downstreams.
 func (d *Dispatcher) settleFailedValidation(ctx context.Context, repo repository.DeploymentRepository, outboxRepo outbox.Repository, aggRepo repository.ValidationAggregateRepository, dep *model.Deployment, now time.Time) error {
 	return validation.SettleNodeTerminal(
 		ctx, repo, outboxRepo, aggRepo, validation.DedupNamespace,
@@ -317,9 +327,9 @@ func (d *Dispatcher) settleFailedValidation(ctx context.Context, repo repository
 }
 
 // dispatchSeedBuild handles a mode=seed_build row. It is structurally identical
-// to dispatchValidation: on success it marks the row deployed and emits a
-// node.deployed:v1 trigger so the job-status handler status-checks the seed-build Job;
-// on terminal failure it fails the row and settles the per-release seed-build
+// to dispatchValidation: on success it marks the row deployed and writes the
+// first check_delayed ticket so the job-status handler status-checks the
+// seed-build Job; on terminal failure it fails the row and settles the per-release seed-build
 // aggregate. Seeds are flat roots with no blocked downstreams so
 // SettleSeedBuildNodeTerminal's propagateGating call is a no-op — but the
 // aggregate gate still fires to emit seed.build.completed:v1.
@@ -334,7 +344,7 @@ func (d *Dispatcher) dispatchSeedBuild(ctx context.Context, repo repository.Depl
 		// PendingValidationCount and must see this node as terminal (its own
 		// uncommitted write is visible within this transaction); otherwise it
 		// counts the row as still pending, skips the emission, and no later
-		// seed.build.node.completed event will re-run the gate for this release.
+		// terminal observation will re-run the gate for this release.
 		if err := repo.Save(ctx, dep); err != nil {
 			return err
 		}
@@ -346,7 +356,7 @@ func (d *Dispatcher) dispatchSeedBuild(ctx context.Context, repo repository.Depl
 		if err := dep.MarkDeployed(now); err != nil {
 			return err
 		}
-		if err := d.writeValidationDeployedTrigger(ctx, outboxRepo, dep); err != nil {
+		if err := d.writeFirstCheck(ctx, outboxRepo, dep); err != nil {
 			return err
 		}
 		return repo.Save(ctx, dep)
@@ -384,8 +394,8 @@ func (d *Dispatcher) settleFailedSeedBuild(ctx context.Context, repo repository.
 }
 
 // dispatchCompile handles a mode=compile row. It is structurally identical to
-// dispatchSeedBuild: on success it marks the row deployed and emits a
-// node.deployed:v1 trigger so the job-status handler status-checks the compile Job; on
+// dispatchSeedBuild: on success it marks the row deployed and writes the first
+// check_delayed ticket so the job-status handler status-checks the compile Job; on
 // terminal failure it fails the row and settles the per-release compile
 // aggregate via SettleCompileNodeTerminal. Compile is a single root node (no
 // in-leg upstreams) so the gating propagation in SettleCompileNodeTerminal is a
@@ -402,7 +412,7 @@ func (d *Dispatcher) dispatchCompile(ctx context.Context, repo repository.Deploy
 		// PendingValidationCount and must see this node as terminal (its own
 		// uncommitted write is visible within this transaction); otherwise it
 		// counts the row as still pending, skips the emission, and no later
-		// compile.node.completed event will re-run the gate for this release.
+		// terminal observation will re-run the gate for this release.
 		if err := repo.Save(ctx, dep); err != nil {
 			return err
 		}
@@ -414,7 +424,7 @@ func (d *Dispatcher) dispatchCompile(ctx context.Context, repo repository.Deploy
 		if err := dep.MarkDeployed(now); err != nil {
 			return err
 		}
-		if err := d.writeValidationDeployedTrigger(ctx, outboxRepo, dep); err != nil {
+		if err := d.writeFirstCheck(ctx, outboxRepo, dep); err != nil {
 			return err
 		}
 		return repo.Save(ctx, dep)
@@ -451,70 +461,55 @@ func (d *Dispatcher) settleFailedCompile(ctx context.Context, repo repository.De
 		dep.ReleaseID(), dep.NodeID(), "failed", now)
 }
 
-func (d *Dispatcher) writeDeployedAnnouncements(ctx context.Context, outboxRepo outbox.Repository, dep *model.Deployment) error {
-	cmd := dep.Command()
-	// The deploy path emits only the node_deployed trigger that starts k8s polling.
-	// The job-status handler is the sole producer of the running/terminal pod
-	// lifecycle and announces RUNNING the first time it observes the Job running.
-	deployed := event.JobDeployed{
-		TaskID: cmd.TaskID, ScheduleID: cmd.ScheduleID, ScheduleName: cmd.ScheduleName,
-		ServiceName: cmd.ServiceName, SchemaName: cmd.SchemaName, TableName: cmd.TableName,
-		JobName: cmd.JobName, NodeType: cmd.NodeType, ImageTag: cmd.ImageTag,
-		Operation:      cmd.Operation,
-		TaskRetryCount: cmd.TaskRetryCount, MaxRetries: cmd.TaskMaxRetries,
-	}
-	if err := d.createOutbox(ctx, outboxRepo, dep, event.EventTypeNodeDeployed, streams.NodeDeployedV1, serialization.JobDeployedFromDomain(deployed)); err != nil {
-		return fmt.Errorf("write node_deployed announcement: %w", err)
-	}
-	return nil
-}
-
-// writeValidationDeployedTrigger emits the node.deployed:v1 trigger after a
-// validation, seed-build, or compile Job is created. The job-status handler is
-// event-driven and never polls, so without this row the Job would never be
-// status-checked and the release would hang. This is NOT the production success
-// path: it writes only the node_deployed check trigger and skips the
-// production-only task_status_updated / RUNNING announcement (these rows have
-// no real task/schedule, so there is no UI task status to advance). The
-// per-node terminal outcome still arrives later via the mode-specific
-// node.completed:v1 event.
+// writeFirstCheck schedules the first status check of a Job the dispatcher has
+// just created. The row is a check_delayed ticket: the publisher parks it in
+// the delay queue and the promoter moves it onto check.k8s:v1 once due. The
+// job-status handler then polls the Job to a terminal state. running_announced
+// is false so the handler announces RUNNING once for a production task.
 //
-// The trigger carries the deterministic synthetic task/schedule UUIDs derived
-// from (release_id, node_id). They are inert carriers: the job-status handler routes
-// the resulting check by the Job's own mode label (mode=validation,
-// mode=seed_build, or mode=compile), not by these IDs — they only need to be
-// valid UUIDs so ParseNodeDeployed accepts the message, and to satisfy the
-// outbox AggregateID.
-func (d *Dispatcher) writeValidationDeployedTrigger(ctx context.Context, outboxRepo outbox.Repository, dep *model.Deployment) error {
-	vc := dep.ValidationCommand()
-	taskID, scheduleID := model.ValidationSyntheticIDs(dep.ReleaseID(), dep.NodeID())
-	deployed := event.JobDeployed{
-		TaskID:         taskID.String(),
-		ScheduleID:     scheduleID.String(),
-		ScheduleName:   "", // validation has no schedule
-		ServiceName:    vc.ServiceName,
-		SchemaName:     vc.SchemaName,
-		TableName:      vc.TableName,
-		JobName:        vc.JobName,
-		NodeType:       vc.NodeType,
-		ImageTag:       vc.ImageTag,
-		TaskRetryCount: 0,
-		MaxRetries:     0,
+// A candidate Job (validation, seed-build, compile) carries the deterministic
+// synthetic task and schedule UUIDs derived from (release_id, node_id): the
+// handler routes its result by the Job's mode label, not by these ids, which
+// only need to be valid UUIDs and to satisfy the outbox aggregate id.
+func (d *Dispatcher) writeFirstCheck(ctx context.Context, outboxRepo outbox.Repository, dep *model.Deployment) error {
+	var req event.JobCheckRequest
+	var aggregateID uuid.UUID
+	if dep.Mode() == model.ModeProduction {
+		cmd := dep.Command()
+		aggregateID, _ = uuid.Parse(cmd.TaskID)
+		req = event.JobCheckRequest{
+			TaskID: cmd.TaskID, ScheduleID: cmd.ScheduleID, ScheduleName: cmd.ScheduleName,
+			ServiceName: cmd.ServiceName, SchemaName: cmd.SchemaName, TableName: cmd.TableName,
+			JobName: cmd.JobName, NodeType: cmd.NodeType, ImageTag: cmd.ImageTag, Operation: cmd.Operation,
+			RetryCount: cmd.TaskRetryCount, MaxRetries: cmd.TaskMaxRetries,
+		}
+	} else {
+		vc := dep.ValidationCommand()
+		taskID, scheduleID := model.ValidationSyntheticIDs(dep.ReleaseID(), dep.NodeID())
+		aggregateID = taskID
+		req = event.JobCheckRequest{
+			TaskID: taskID.String(), ScheduleID: scheduleID.String(),
+			ServiceName: vc.ServiceName, SchemaName: vc.SchemaName, TableName: vc.TableName,
+			JobName: vc.JobName, NodeType: vc.NodeType, ImageTag: vc.ImageTag,
+		}
 	}
-	body, err := json.Marshal(serialization.JobDeployedFromDomain(deployed))
+	req.CheckAfter = d.now().Add(d.checkDelay).Unix()
+	req.RunningAnnounced = false
+
+	body, err := json.Marshal(serialization.JobCheckRequestFromDomain(req))
 	if err != nil {
-		return fmt.Errorf("marshal validation node_deployed payload: %w", err)
+		return fmt.Errorf("marshal first check ticket: %w", err)
 	}
 	if err := outboxRepo.Create(ctx, &outbox.Entry{
 		MessageProcessingID: dep.MessageProcessingID(),
 		AggregateType:       "task",
-		AggregateID:         taskID,
-		EventType:           event.EventTypeNodeDeployed,
+		AggregateID:         aggregateID,
+		EventType:           event.EventTypeCheckDelayed,
 		Payload:             body,
-		StreamName:          streams.NodeDeployedV1,
+		StreamName:          streams.CheckK8sV1,
 		MaxRetries:          outbox.DefaultMaxRetries,
 	}); err != nil {
-		return fmt.Errorf("write validation node_deployed trigger: %w", err)
+		return fmt.Errorf("write first check ticket: %w", err)
 	}
 	return nil
 }

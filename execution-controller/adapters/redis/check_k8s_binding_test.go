@@ -8,6 +8,7 @@ import (
 
 	"github.com/carolsimone/continuo/execution-controller/domain/repository"
 	"github.com/carolsimone/continuo/execution-controller/service/handlers"
+	"github.com/carolsimone/continuo/execution-controller/service/outcomes"
 	"github.com/carolsimone/continuo/execution-controller/service/uow"
 	"github.com/carolsimone/continuo/execution-controller/test/fakes"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
@@ -29,14 +30,16 @@ func (noopCancelledSchedulesRepo) DeleteExpired(context.Context, time.Duration) 
 
 var _ repository.CancelledSchedulesRepository = (*noopCancelledSchedulesRepo)(nil)
 
-// TestNodeDeployedBinding_DuplicateSkipsHandler proves a duplicate message is
-// ACKed (binding returns nil) without invoking the K8s client: dedup short-
-// circuits the handler before any business work runs. The duplicate path still
-// commits the open transaction (it does not roll back).
-func TestNodeDeployedBinding_DuplicateSkipsHandler(t *testing.T) {
+// TestCheckK8sBinding_DuplicateSkipsHandler proves a duplicate message is ACKed
+// (binding returns nil) without invoking the K8s client: dedup short-circuits
+// the handler before any business work runs. The duplicate path still commits
+// the open transaction (it does not roll back). check.k8s:v1 is now the sole
+// check-job consumer — this is the binding that carries every production
+// Job-status check, including the dispatcher's own first check ticket.
+func TestCheckK8sBinding_DuplicateSkipsHandler(t *testing.T) {
 	k8s := fakes.NewFakeK8sClient()
 	cfg := &handlers.JobStatusConfig{K8sNamespace: "default", DefaultTaskMaxRetries: 3, ErrorMessageMaxLen: 4096, LogTailLines: 50}
-	handler := handlers.NewJobStatusHandler(k8s, nil, cfg, noopCancelledSchedulesRepo{}, slog.Default())
+	handler := handlers.NewJobStatusHandler(k8s, nil, cfg, noopCancelledSchedulesRepo{}, outcomes.NewRecorder(slog.Default()), slog.Default())
 
 	u := &fakes.FakeUnitOfWork{
 		MessageProcessing: &fakes.FakeMessageProcessingRepository{
@@ -45,9 +48,9 @@ func TestNodeDeployedBinding_DuplicateSkipsHandler(t *testing.T) {
 			},
 		},
 	}
-	binding := NewNodeDeployedBinding(func() uow.UnitOfWork { return u }, handler, slog.Default())
+	binding := NewCheckK8sBinding(func() uow.UnitOfWork { return u }, handler, slog.Default())
 
-	err := binding(context.Background(), payloadMsg(t, pkgevents.NodeDeployed{
+	err := binding(context.Background(), payloadMsg(t, pkgevents.CheckK8s{
 		TaskID:     uuid.New().String(),
 		ScheduleID: uuid.New().String(),
 		JobName:    "job-x",

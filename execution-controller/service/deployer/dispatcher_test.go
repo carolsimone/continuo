@@ -12,12 +12,14 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/execution-controller/domain/command"
 	"github.com/carolsimone/continuo/execution-controller/domain/deploy"
+	"github.com/carolsimone/continuo/execution-controller/domain/event"
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	"github.com/carolsimone/continuo/execution-controller/domain/repository"
 	"github.com/carolsimone/continuo/execution-controller/serialization"
 	"github.com/carolsimone/continuo/execution-controller/service/deployer"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
@@ -104,11 +106,52 @@ func TestDispatcher_SuccessWritesDeployedOnly(t *testing.T) {
 	var status string
 	require.NoError(t, db.QueryRow(`SELECT status FROM deployments WHERE id=$1`, id).Scan(&status))
 	assert.Equal(t, "deployed", status)
-	// The job-status handler owns the RUNNING announcement; the deploy path emits
-	// only the node_deployed trigger that starts k8s polling.
+	// The job-status handler owns the RUNNING announcement; the deploy path writes
+	// only the first check_delayed ticket that starts k8s polling.
 	assert.Equal(t, 0, outboxCountByType(t, db, "task_status_updated"), "deploy path no longer announces RUNNING")
-	assert.Equal(t, 1, outboxCountByType(t, db, "node_deployed"))
+	assert.Equal(t, 1, outboxCountByType(t, db, "check_delayed"))
 	assert.Equal(t, 0, outboxCountByType(t, db, "node_updated"))
+}
+
+// TestDispatch_WritesCheckDelayedTicketOnDeploySuccess proves a successful
+// production deploy writes exactly one check_delayed outbox row — the first
+// self-scheduled status check — rather than a separate per-Job-create trigger.
+func TestDispatch_WritesCheckDelayedTicketOnDeploySuccess(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+
+	taskID := uuid.New()
+	payload, err := json.Marshal(serialization.DeployTaskFromDomain(command.DeployTask{
+		TaskID: taskID.String(), ScheduleID: uuid.New().String(),
+		ScheduleName: "daily", ServiceName: "dbt", SchemaName: "public",
+		TableName: "orders", JobName: "job-check-ticket", NodeType: "dbt-model",
+		ImageTag: "sha-abc", TaskRetryCount: 0, TaskMaxRetries: 2,
+	}))
+	require.NoError(t, err)
+	_, err = db.Exec(
+		`INSERT INTO deployments (id, task_id, schedule_id, job_params, max_retries, retry_count, next_attempt_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, NOW() - interval '1 minute')`,
+		uuid.New(), taskID, uuid.New(), payload, 3, 0)
+	require.NoError(t, err)
+
+	fk := &fakeDeployer{active: 0}
+	require.NoError(t, newTestDispatcher(db, fk, 50).ProcessBatch(context.Background()))
+
+	var rows []struct {
+		EventType  string          `db:"event_type"`
+		StreamName string          `db:"stream_name"`
+		Payload    json.RawMessage `db:"payload"`
+	}
+	require.NoError(t, db.Select(&rows, `SELECT event_type, stream_name, payload FROM execution_outbox WHERE aggregate_id = $1`, taskID))
+	require.Len(t, rows, 1)
+	require.Equal(t, event.EventTypeCheckDelayed, rows[0].EventType)
+	require.Equal(t, streams.CheckK8sV1, rows[0].StreamName)
+
+	var dto serialization.JobCheckRequestDTO
+	require.NoError(t, json.Unmarshal(rows[0].Payload, &dto))
+	require.Equal(t, "job-check-ticket", dto.JobName)
+	require.False(t, dto.RunningAnnounced)
+	require.InDelta(t, time.Now().Add(10*time.Second).Unix(), dto.CheckAfter, 3)
 }
 
 func TestDispatcher_TransientErrorReschedules(t *testing.T) {
@@ -142,7 +185,7 @@ func TestDispatcher_BudgetExhaustedWritesFailed(t *testing.T) {
 	assert.Equal(t, "failed", status)
 	assert.Equal(t, 1, outboxCountByType(t, db, "task_status_updated"))
 	assert.Equal(t, 1, outboxCountByType(t, db, "node_updated"))
-	assert.Equal(t, 0, outboxCountByType(t, db, "node_deployed"))
+	assert.Equal(t, 0, outboxCountByType(t, db, "check_delayed"))
 }
 
 func TestDispatcher_PermanentErrorWritesFailedImmediately(t *testing.T) {
@@ -215,7 +258,7 @@ func TestDispatcher_CorruptedJobParamsMarksFailedWithRowIdentity(t *testing.T) {
 	assert.Equal(t, "failed", status)
 	assert.Equal(t, 1, outboxCountByType(t, db, "task_status_updated"))
 	assert.Equal(t, 1, outboxCountByType(t, db, "node_updated"))
-	assert.Equal(t, 0, outboxCountByType(t, db, "node_deployed"))
+	assert.Equal(t, 0, outboxCountByType(t, db, "check_delayed"))
 
 	// The FAILED announcement must carry the row's task_id (identity fallback).
 	var payload []byte

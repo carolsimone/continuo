@@ -11,13 +11,13 @@ import (
 // history (up to StreamMaxLen entries) against an empty dedup table. These
 // strings therefore never change, whatever the owning service is called.
 var frozenGroups = []string{
-	"executor-query-model", "executor-retry", "executor-schedule-cancelled",
-	"executor-validation-requested", "executor-validation-node-completed",
-	"executor-seed-build-requested", "executor-seed-build-node-completed",
-	"executor-compile-requested", "executor-compile-node-completed",
+	"executor-query-model", "executor-schedule-cancelled",
+	"executor-validation-requested",
+	"executor-seed-build-requested",
+	"executor-compile-requested",
 	"executor-validation-result-teardown", "executor-pipeline-run-finished",
 	"executor-release-promoted", "executor-release-rejected",
-	"k8s-deployed", "k8s-check-status",
+	"k8s-check-status",
 }
 
 func TestFrozenConsumerGroupsStillDeclared(t *testing.T) {

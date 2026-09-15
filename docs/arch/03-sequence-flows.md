@@ -30,9 +30,9 @@ sequenceDiagram
       Note over ST: RunEntriesDispatchedHandler.Handle (1 tx)<br/>row-lock scheduler_tracker (skip if cancelled)<br/>BulkCreate task_tracker rows — status=PENDING<br/>SetTotalTaskCount, init_status=completed, status=RUNNING
     and executor launches seed/root jobs
       R->>EC: consume query.model v1
-      Note over EC: write deployments (pending)<br/>deployer.Dispatcher — CreateQueryJob (idempotent on JobName)<br/>write execution_outbox row (node_deployed)
-      EC->>R: publish node.deployed v1
-      R->>EC: consume node.deployed v1
+      Note over EC: write deployments (pending)<br/>deployer.Dispatcher — CreateQueryJob (idempotent on JobName)<br/>write execution_outbox row (check_delayed), same transaction
+      EC->>R: publish check.k8s v1 (via the delay queue)
+      R->>EC: consume check.k8s v1
       Note over EC: start poll loop — CheckJobStatus + check.k8s v1 backoff<br/>first time the Job is observed running: announce RUNNING once per attempt
       EC->>R: publish task.status.updated v1 (RUNNING)
       R->>ST: consume task.status.updated v1 (RUNNING)
@@ -59,7 +59,7 @@ sequenceDiagram
   participant OR as orchestrator
   participant EC as execution-controller
 
-  R->>EC: node.deployed:v1
+  R->>EC: check.k8s:v1
   EC->>EC: GetJobStatus
   EC->>ST: GetTask(task_id)
   EC->>EC: write execution_outbox(task_succeeded + node_status_updated)
@@ -73,9 +73,9 @@ sequenceDiagram
   OR->>R: publish query.model:v1
 
   R->>EC: consume query.model:v1
-  EC->>EC: write execution_outbox (node_deployed)
-  EC->>R: publish node.deployed:v1
-  Note over EC: node.deployed:v1 → poll loop<br/>k8s announces RUNNING once when the Job is first observed running
+  EC->>EC: write execution_outbox (check_delayed)
+  EC->>R: publish check.k8s:v1 (via the delay queue)
+  Note over EC: check.k8s:v1 → poll loop<br/>k8s announces RUNNING once when the Job is first observed running
 ```
 
 ## 3. Retry and Terminal Failure Path
@@ -93,35 +93,39 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
   participant R as Redis
-  participant ST as state
   participant S3 as S3
   participant EC as execution-controller
+  participant ST as state
   participant OR as orchestrator
 
-  R->>EC: node.deployed:v1 or check.k8s:v1
-  EC->>EC: GetJobStatus -> FAILED
-  EC->>ST: GetTask(task_id)
-  alt retries remain
-    EC->>EC: write execution_outbox(task_retry at retry_count+1)
-    EC->>ST: UpdateTask(status=failed, retry_count of the attempt that ran)
-    EC->>ST: CreateTaskExecution(...)
+  R->>EC: check.k8s:v1
+  EC->>EC: GetJobStatus -> Failed or Unknown
+
+  alt Failed, retries remain (retry_count < max_retries)
     EC->>S3: upload pod logs
-    EC->>R: publish retry.task:v1
-    R->>EC: consume retry.task:v1
-    Note over EC: write deployments (pending)<br/>deployer.Dispatcher — CreateQueryJob<br/>write execution_outbox row (node_deployed)
-    EC->>R: publish node.deployed:v1
-    Note over EC: node.deployed:v1 → poll loop<br/>k8s announces RUNNING once at the retry's attempt number
-  else retries exhausted
-    EC->>EC: write execution_outbox(task_failed + node_status_updated)
-    EC->>ST: UpdateTask(status=failed)
-    EC->>ST: CreateTaskExecution(...)
+    Note over EC: same transaction:<br/>write execution_outbox(task_status_updated FAILED, attempt that ran)<br/>write execution_outbox(task_execution_recorded)<br/>createDeployment — new pending deployments row, job name "<base>-r<N>"
+    EC->>R: publish task.status.updated:v1 (FAILED)
+    EC->>R: publish task.execution.recorded:v1
+    R->>ST: consume task.status.updated:v1, task.execution.recorded:v1
+    Note over EC: deployer.Dispatcher later picks up the pending retry row<br/>CreateQueryJob (idempotent on JobName) + write execution_outbox row (check_delayed)
+    EC->>R: publish check.k8s:v1 (via the delay queue)
+    R->>EC: consume check.k8s:v1
+    Note over EC: poll loop resumes; k8s announces RUNNING once for the retry's attempt
+  else Failed, retries exhausted (retry_count >= max_retries)
     EC->>S3: upload pod logs
-    EC->>R: publish task.failed:v1
+    Note over EC: same transaction:<br/>write execution_outbox(task_status_updated FAILED)<br/>write execution_outbox(task_execution_recorded)<br/>write execution_outbox(node_updated FAILED)
+    EC->>R: publish task.status.updated:v1 (FAILED)
+    EC->>R: publish task.execution.recorded:v1
     EC->>R: publish node.updated:v1
+    R->>ST: consume task.status.updated:v1, task.execution.recorded:v1
     R->>OR: consume node.updated:v1
     Note over OR: HandleNodeCompletedHandler.Handle (1 tx)<br/>runs.Rehydrate(runID, ScopeNodeCompletion{Key, Status=FAILED})<br/>agg.CompleteNode(key, FAILED) → [NodeCascadeSkipped …, RunFinalized?]<br/>runs.Save writes per-node status, terminal_count, failed_count, version<br/>and on RunFinalized also :Run.terminal_status + completed_at (first-writer-wins)
     OR->>R: publish task.status.updated:v1 (cascade_task_skipped) per skipped node
     Note over ST: TaskStatusUpdatedHandler increments terminal_task_count<br/>when terminal_task_count == total_task_count it finalizes scheduler_tracker<br/>and emits run.finalized:v1 via state_outbox
+  else status Unknown (no terminal Job outcome observed)
+    Note over EC: write execution_outbox(task_status_updated FAILED) only —<br/>no execution record and no node projection
+    EC->>R: publish task.status.updated:v1 (FAILED)
+    R->>ST: consume task.status.updated:v1
   end
 ```
 
@@ -335,7 +339,7 @@ sequenceDiagram
     Note over ST: RunEntriesDispatchedHandler.Handle (1 tx)<br/>BulkCreate task_tracker row (1 row)<br/>SetTotalTaskCount=1, init_status=completed, status=RUNNING
   and executor launches the job
     R->>EC: consume query.model:v1
-    Note over EC: identical to Flow 1 from here<br/>deployments (pending) → deployer.Dispatcher → CreateQueryJob → execution_outbox row → node.deployed:v1 (k8s announces RUNNING on first observed run)
+    Note over EC: identical to Flow 1 from here<br/>deployments (pending) → deployer.Dispatcher → CreateQueryJob → execution_outbox row (check_delayed) → check.k8s:v1 via the delay queue (k8s announces RUNNING on first observed run)
   end
 ```
 
@@ -387,7 +391,7 @@ sequenceDiagram
     Note over ST: RunEntriesDispatchedHandler.Handle (1 tx)<br/>BulkCreate task_tracker — inherited rows land at SUCCEEDED with inherited_from_task_id<br/>rebased rows land at PENDING<br/>SetTotalTaskCount, init_status=completed<br/>auto-rollup if every task already terminal (defensive — no-op rebase)<br/>else status=RUNNING
   and executor launches rebased K8s Jobs
     R->>EC: consume query.model v1
-    Note over EC: identical to Flow 1 from here<br/>deployments (pending) → deployer.Dispatcher → CreateQueryJob → execution_outbox row → node.deployed v1 (k8s announces RUNNING on first observed run)
+    Note over EC: identical to Flow 1 from here<br/>deployments (pending) → deployer.Dispatcher → CreateQueryJob → execution_outbox row (check_delayed) → check.k8s v1 via the delay queue (k8s announces RUNNING on first observed run)
   end
 ```
 
@@ -418,7 +422,7 @@ sequenceDiagram
 
   Note over EC,RC: Phase 1b — compile (changed service's manifest is compiled first)
   R->>EC: consume compile.requested:v1
-  Note over EC: CreateCompileJob: initContainer "compile" runs the resolved compile command,<br/>then two more team-image initContainers "parse-prod"/"parse-candidate" export + rehearse<br/>the service's partial-parse cache (the rehearsal gate — fails parse_rehearsal_failed<br/>if partial parsing is disabled or the project re-parses under run-pod conditions),<br/>then main container "upload" (s3-sidecar) publishes manifest.json + both parse-cache artifacts to S3<br/>the job-status handler emits compile.node.completed:v1 on terminal → aggregate compile.completed:v1
+  Note over EC: CreateCompileJob: initContainer "compile" runs the resolved compile command,<br/>then two more team-image initContainers "parse-prod"/"parse-candidate" export + rehearse<br/>the service's partial-parse cache (the rehearsal gate — fails parse_rehearsal_failed<br/>if partial parsing is disabled or the project re-parses under run-pod conditions),<br/>then main container "upload" (s3-sidecar) publishes manifest.json + both parse-cache artifacts to S3<br/>the job-status handler records the outcome in-process on terminal → aggregate compile.completed:v1
   EC->>R: publish compile.completed:v1 {release_id, status, per_node[{node_id, status, dbt_log_uri, failed_container?}]}
   R->>RC: consume compile.completed:v1
   alt compile failed
@@ -494,13 +498,12 @@ sequenceDiagram
   Note over EC: create _candidate_{id} schema once (advisory lock, before fan-out)<br/>per node → deployments (mode=validation)<br/>roots → pending, nodes with upstreams → blocked<br/>(inbound dedup is per-release)
   loop dispatch pending rows, unblocking downstream as upstreams settle ok
     Note over EC: build_from_sql (changed dbt node): single validation container fetches CANDIDATE_SQL_URI from S3 itself → CREATE TABLE {candidate}.{table} AS (SQL) WITH NO DATA<br/>build_from_columns (changed python node): fetches CANDIDATE_SPEC_URI (declared reads + output columns) from S3 → creates the empty typed table from the spec<br/>check_binds (changed dbt-test node): fetches CANDIDATE_SQL_URI like build_from_sql, but EXPLAINs it against the candidate schema and creates nothing<br/>clone_from_prod: single validation container, no S3 → clone prod table shape empty<br/>(seeds and unchanged upstreams of either kind use clone_from_prod)
-    EC->>R: publish node.deployed:v1 (synthetic ids — routes by mode=validation label)
-    R->>EC: consume node.deployed:v1 / check.k8s:v1
+    Note over EC: write execution_outbox row (check_delayed, synthetic ids — routes by mode=validation label)
+    EC->>R: publish check.k8s:v1 (via the delay queue)
+    R->>EC: consume check.k8s:v1
     Note over EC: poll Job, re-arm check.k8s:v1 until terminal
     EC->>S3: upload runner/dbt pod log
-    EC->>R: publish validation.node.completed:v1 {release_id, node_id, outcome, dbt_log_uri}
-    R->>EC: consume validation.node.completed:v1
-    Note over EC: RecordOutcome, then gating — ok unblocks ready downstream,<br/>non-ok skips all reachable downstream
+    Note over EC: outcomes.Recorder.Record (same tx as the terminal observation):<br/>RecordOutcome, then gating — ok unblocks ready downstream,<br/>non-ok skips all reachable downstream
     EC->>R: publish validation.result:v1 kind=node (per node, as it settles)<br/>{kind:"node", release_id, stage="validation", node_id, status, dbt_log_uri?, run_results_uri?}
     R->>RC: consume kind=node → upsert per_node_results (read model)
   end

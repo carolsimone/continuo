@@ -20,6 +20,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/domain/repository"
 	"github.com/carolsimone/continuo/execution-controller/service/deployer"
 	"github.com/carolsimone/continuo/execution-controller/service/handlers"
+	"github.com/carolsimone/continuo/execution-controller/service/outcomes"
 	"github.com/carolsimone/continuo/execution-controller/service/uow"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	"github.com/carolsimone/continuo/pkg/lifecycle"
@@ -167,21 +168,17 @@ func main() {
 	// ---- handlers and bindings ----
 
 	queryHandler := handlers.NewQueryModelHandler(logger)
-	retryHandler := handlers.NewRetryTaskHandler(logger)
 	scheduleCancelledHandler := handlers.NewScheduleCancelledHandler(logger)
 	validationReqHandler := handlers.NewValidationRequestedHandler(logger)
-	validationNodeHandler := handlers.NewValidationNodeCompletedHandler(logger)
 	seedBuildReqHandler := handlers.NewSeedBuildRequestedHandler(logger)
-	seedBuildNodeHandler := handlers.NewSeedBuildNodeCompletedHandler(logger)
 	compileReqHandler := handlers.NewCompileRequestedHandler(logger)
-	compileNodeHandler := handlers.NewCompileNodeCompletedHandler(logger)
 	jobStatusHandler := handlers.NewJobStatusHandler(k8sClient, logUploader, &handlers.JobStatusConfig{
 		K8sNamespace:          cfg.K8sNamespace,
 		CheckDelaySeconds:     cfg.K8sCheckDelaySeconds,
 		ErrorMessageMaxLen:    cfg.ErrorMessageMaxLength,
 		LogTailLines:          int64(cfg.LogTailLines),
 		DefaultTaskMaxRetries: cfg.DefaultTaskMaxRetries,
-	}, cancelledSchedulesRepo, logger)
+	}, cancelledSchedulesRepo, outcomes.NewRecorder(logger), logger)
 
 	newConsumer := func(stream, group string, binding pkgredis.MessageHandler, opts ...pkgredis.ConsumerOption) *pkgredis.StreamConsumer {
 		c := pkgredis.NewStreamConsumer(redisClient, stream, group, binding, logger, opts...)
@@ -195,22 +192,14 @@ func main() {
 
 	queryConsumer := newConsumer(streams.QueryModelV1, streams.ExecutorQueryModel,
 		redis.NewQueryModelBinding(uowFactory, queryHandler, logger))
-	retryConsumer := newConsumer(streams.RetryTaskV1, streams.ExecutorRetry,
-		redis.NewRetryTaskBinding(uowFactory, retryHandler, logger))
 	scheduleCancelledConsumer := newConsumer(streams.ScheduleCancelledV1, streams.ExecutorScheduleCancelled,
 		redis.NewScheduleCancelledBinding(uowFactory, scheduleCancelledHandler, logger))
 	validationReqConsumer := newConsumer(streams.ValidationRequestedV1, streams.ExecutorValidationRequested,
 		redis.NewValidationRequestedBinding(uowFactory, validationReqHandler, candidateSchemaCreator, logger), schemaOpReclaim)
-	validationNodeConsumer := newConsumer(streams.ValidationNodeCompletedV1, streams.ExecutorValidationNodeCompleted,
-		redis.NewValidationNodeCompletedBinding(uowFactory, validationNodeHandler, logger))
 	seedBuildReqConsumer := newConsumer(streams.SeedBuildRequestedV1, streams.ExecutorSeedBuildRequested,
 		redis.NewSeedBuildRequestedBinding(uowFactory, seedBuildReqHandler, candidateSchemaCreator, logger), schemaOpReclaim)
-	seedBuildNodeConsumer := newConsumer(streams.SeedBuildNodeCompletedV1, streams.ExecutorSeedBuildNodeCompleted,
-		redis.NewSeedBuildNodeCompletedBinding(uowFactory, seedBuildNodeHandler, logger))
 	compileReqConsumer := newConsumer(streams.CompileRequestedV1, streams.ExecutorCompileRequested,
 		redis.NewCompileRequestedBinding(uowFactory, compileReqHandler, logger))
-	compileNodeConsumer := newConsumer(streams.CompileNodeCompletedV1, streams.ExecutorCompileNodeCompleted,
-		redis.NewCompileNodeCompletedBinding(uowFactory, compileNodeHandler, logger))
 	validationResultTeardownConsumer := newConsumer(streams.ValidationResultV1, streams.ExecutorValidationResultTeardown,
 		redis.NewValidationResultTeardownBinding(candidateSchemaCleaner, logger), schemaOpReclaim)
 	pipelineRunFinishedTeardownConsumer := newConsumer(streams.PipelineRunFinishedV1, streams.ExecutorPipelineRunFinished,
@@ -219,8 +208,6 @@ func main() {
 		redis.NewReleasePromotedTeardownBinding(candidateSchemaCleaner, logger), schemaOpReclaim)
 	releaseRejectedTeardownConsumer := newConsumer(streams.ReleaseRejectedV1, streams.ExecutorReleaseRejected,
 		redis.NewReleaseRejectedTeardownBinding(candidateSchemaCleaner, logger), schemaOpReclaim)
-	deployedConsumer := newConsumer(streams.NodeDeployedV1, streams.K8sDeployed,
-		redis.NewNodeDeployedBinding(uowFactory, jobStatusHandler, logger))
 	checkConsumer := newConsumer(streams.CheckK8sV1, streams.K8sCheckStatus,
 		redis.NewCheckK8sBinding(uowFactory, jobStatusHandler, logger))
 
@@ -241,7 +228,7 @@ func main() {
 			return postgres.NewValidationAggregateRepository(exec)
 		},
 		cfg.MaxConcurrentJobs, logger,
-		deployer.DispatcherConfig{Tick: 5 * time.Second, BatchSize: 50},
+		deployer.DispatcherConfig{Tick: 5 * time.Second, BatchSize: 50, CheckDelay: time.Duration(cfg.K8sCheckDelaySeconds) * time.Second},
 	)
 	runWorker("deploy_dispatcher", deployDispatcher.Run)
 
@@ -279,19 +266,14 @@ func main() {
 	// ---- consumers ----
 
 	runConsumer("query_model", queryConsumer)
-	runConsumer("retry_task", retryConsumer)
 	runConsumer("schedule_cancelled", scheduleCancelledConsumer)
 	runSchemaOpConsumer("validation_requested", validationReqConsumer)
-	runConsumer("validation_node_completed", validationNodeConsumer)
 	runSchemaOpConsumer("seed_build_requested", seedBuildReqConsumer)
-	runConsumer("seed_build_node_completed", seedBuildNodeConsumer)
 	runConsumer("compile_requested", compileReqConsumer)
-	runConsumer("compile_node_completed", compileNodeConsumer)
 	runSchemaOpConsumer("validation_result_teardown", validationResultTeardownConsumer)
 	runSchemaOpConsumer("pipeline_run_finished_teardown", pipelineRunFinishedTeardownConsumer)
 	runSchemaOpConsumer("release_promoted_teardown", releasePromotedTeardownConsumer)
 	runSchemaOpConsumer("release_rejected_teardown", releaseRejectedTeardownConsumer)
-	runConsumer("node_deployed", deployedConsumer)
 	runConsumer("check_k8s", checkConsumer)
 
 	<-lifecycleManager.Done()

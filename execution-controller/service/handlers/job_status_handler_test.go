@@ -2,6 +2,7 @@ package handlers_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -14,6 +15,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	"github.com/carolsimone/continuo/execution-controller/domain/repository"
 	"github.com/carolsimone/continuo/execution-controller/service/handlers"
+	"github.com/carolsimone/continuo/execution-controller/service/outcomes"
 	"github.com/carolsimone/continuo/execution-controller/service/ports"
 	"github.com/carolsimone/continuo/execution-controller/test/fakes"
 	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
@@ -23,6 +25,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/pkg/validationresult"
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
 )
 
 // --- fakes ---
@@ -199,7 +202,112 @@ func (r *fakeMessageProcessingRepo) DeleteTerminalOlderThan(_ context.Context, _
 var _ messageprocessing.Repository = (*fakeMessageProcessingRepo)(nil)
 
 func newJobStatusFakeUoW(outbox pkgoutbox.Repository) *fakes.FakeUnitOfWork {
-	return &fakes.FakeUnitOfWork{Outbox: outbox, MessageProcessing: &fakeMessageProcessingRepo{}}
+	return newJobStatusFakeUoWWithDeployments(outbox, &stubDeploymentsRepo{})
+}
+
+// newJobStatusFakeUoWWithDeployments builds a fake UoW backed by a caller-supplied
+// deployments repo, for tests asserting on the retry deployment the job-status
+// handler's retry branch queues via createDeployment.
+func newJobStatusFakeUoWWithDeployments(outbox pkgoutbox.Repository, depl repository.DeploymentRepository) *fakes.FakeUnitOfWork {
+	return &fakes.FakeUnitOfWork{Outbox: outbox, MessageProcessing: &fakeMessageProcessingRepo{}, Deployments: depl}
+}
+
+// candidateDeploymentsRepo is a configurable in-memory DeploymentRepository for
+// the job-status handler's candidate-leg (validation/seed-build/compile)
+// terminal tests. It returns byReleaseNode from GetByReleaseNode (or
+// sql.ErrNoRows when nil), records Save calls, and serves pending/results to
+// the aggregate-emit gate that outcomes.Recorder runs after recording the
+// outcome.
+type candidateDeploymentsRepo struct {
+	byReleaseNode *model.Deployment
+	pending       int
+	results       []*model.Deployment
+	saved         []*model.Deployment
+}
+
+func (r *candidateDeploymentsRepo) Add(context.Context, *model.Deployment) error { return nil }
+func (r *candidateDeploymentsRepo) GetDueBatch(context.Context, int) ([]*model.Deployment, error) {
+	return nil, nil
+}
+func (r *candidateDeploymentsRepo) Save(_ context.Context, d *model.Deployment) error {
+	r.saved = append(r.saved, d)
+	return nil
+}
+func (r *candidateDeploymentsRepo) GetByReleaseNode(context.Context, string, string, model.Mode) (*model.Deployment, error) {
+	if r.byReleaseNode == nil {
+		return nil, sql.ErrNoRows
+	}
+	return r.byReleaseNode, nil
+}
+func (r *candidateDeploymentsRepo) PendingValidationCount(context.Context, string, model.Mode) (int, error) {
+	return r.pending, nil
+}
+func (r *candidateDeploymentsRepo) ListValidationResults(context.Context, string, model.Mode) ([]*model.Deployment, error) {
+	return r.results, nil
+}
+func (r *candidateDeploymentsRepo) ListValidationByRelease(context.Context, string, model.Mode) ([]*model.Deployment, error) {
+	return nil, nil
+}
+
+// candidateAggRepo always wins the emission claim, so the settle gate fires
+// whenever candidateDeploymentsRepo reports zero pending siblings.
+type candidateAggRepo struct {
+	lockCalls  int
+	claimCalls int
+}
+
+func (r *candidateAggRepo) LockRelease(context.Context, string, model.Mode) error {
+	r.lockCalls++
+	return nil
+}
+func (r *candidateAggRepo) ClaimEmission(context.Context, string, model.Mode, time.Time) (bool, error) {
+	r.claimCalls++
+	return true, nil
+}
+
+// deployedCandidateDeployment builds a deployment of the given candidate mode
+// in status=deployed (ready to receive an outcome) for (releaseID, nodeID).
+func deployedCandidateDeployment(t *testing.T, mode model.Mode, releaseID, nodeID string) *model.Deployment {
+	t.Helper()
+	cmd := command.ValidationDeployTask{
+		ReleaseID: releaseID, NodeID: nodeID, ServiceName: "dbt",
+		SchemaName: "public", TableName: nodeID, NodeType: "dbt-model",
+		ImageTag: "sha-test", JobName: "job-" + nodeID,
+	}
+	now := time.Now()
+	var d *model.Deployment
+	switch mode {
+	case model.ModeValidation:
+		d = model.NewValidationDeployment(cmd, nil, now, false)
+	case model.ModeSeedBuild:
+		d = model.NewSeedBuildDeployment(cmd, nil, now)
+	case model.ModeCompile:
+		d = model.NewCompileDeployment(cmd, nil, now)
+	default:
+		t.Fatalf("deployedCandidateDeployment: unsupported mode %q", mode)
+	}
+	if err := d.MarkDeployed(now); err != nil {
+		t.Fatalf("MarkDeployed: %v", err)
+	}
+	return d
+}
+
+// candidateUoW builds a job-status fake UoW whose Deployments/ValidationAggregate
+// repos back outcomes.Recorder's settle: dep is the deployed row the terminal
+// Job's outcome is recorded onto (nil to simulate an unknown (release,node) row
+// -> sql.ErrNoRows), and pending is the sibling-node count fed to the
+// aggregate-emit gate (0 lets the gate fire; >0 keeps it gated).
+func candidateUoW(outbox pkgoutbox.Repository, dep *model.Deployment, pending int) *fakes.FakeUnitOfWork {
+	var results []*model.Deployment
+	if dep != nil {
+		results = []*model.Deployment{dep}
+	}
+	return &fakes.FakeUnitOfWork{
+		Outbox:              outbox,
+		MessageProcessing:   &fakeMessageProcessingRepo{},
+		Deployments:         &candidateDeploymentsRepo{byReleaseNode: dep, pending: pending, results: results},
+		ValidationAggregate: &candidateAggRepo{},
+	}
 }
 
 // --- helpers ---
@@ -229,7 +337,7 @@ func newHandlerWithUploader(k8s ports.JobObserver, cancelledSchedules repository
 		DefaultTaskMaxRetries: defaultMaxRetries,
 	}
 	up := &fakeLogUploader{}
-	return handlers.NewJobStatusHandler(k8s, up, cfg, cancelledSchedules, slog.Default()), up
+	return handlers.NewJobStatusHandler(k8s, up, cfg, cancelledSchedules, outcomes.NewRecorder(slog.Default()), slog.Default()), up
 }
 
 // eventTypeOf returns the event_type of the i-th outbox entry.
@@ -253,9 +361,12 @@ func findEntryByEventType(entries []*pkgoutbox.Entry, eventType string) *pkgoutb
 // --- tests ---
 
 // TestHandleFailedWithRetry verifies that a failed job whose retryCount < maxRetries
-// produces 3 canonical outbox rows: task_status_updated, task_execution_recorded, task_retry.
+// produces 2 canonical outbox rows (task_status_updated, task_execution_recorded)
+// and re-queues the task as a new pending deployment — the -rN retry Job — in the
+// SAME unit of work as the FAILED announcement, so the two cannot diverge.
 func TestHandleFailedWithRetry(t *testing.T) {
 	outbox := &jobStatusFakeOutboxRepo{}
+	deployments := &stubDeploymentsRepo{}
 	handler := newHandler(&fakeK8sClient{status: failedResult()}, noopCancelledRepo(), 3)
 
 	cmd := command.CheckJobStatus{
@@ -266,14 +377,12 @@ func TestHandleFailedWithRetry(t *testing.T) {
 		MaxRetries: 3,
 	}
 
-	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoWWithDeployments(outbox, deployments), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
 	entries := outbox.entries
-	if len(entries) != 3 {
-		t.Fatalf("expected 3 outbox entries (task_status_updated + task_execution_recorded + task_retry), got %d", len(entries))
-	}
+	require.Len(t, entries, 2, "expected task_status_updated + task_execution_recorded")
 
 	// Check event types
 	if got := eventTypeOf(entries, 0); got != "task_status_updated" {
@@ -281,9 +390,6 @@ func TestHandleFailedWithRetry(t *testing.T) {
 	}
 	if got := eventTypeOf(entries, 1); got != "task_execution_recorded" {
 		t.Errorf("entries[1]: expected task_execution_recorded, got %q", got)
-	}
-	if got := eventTypeOf(entries, 2); got != "task_retry" {
-		t.Errorf("entries[2]: expected task_retry, got %q", got)
 	}
 
 	// Verify task_status_updated payload
@@ -305,17 +411,13 @@ func TestHandleFailedWithRetry(t *testing.T) {
 	if statusPayload.RetryCount != cmd.RetryCount {
 		t.Errorf("FAILED retry_count: expected %d (attempt that ran), got %d", cmd.RetryCount, statusPayload.RetryCount)
 	}
-	retryEntry := findEntryByEventType(entries, "task_retry")
-	if retryEntry == nil {
-		t.Fatal("missing task_retry entry")
-	}
-	var retryPayload map[string]interface{}
-	if err := json.Unmarshal(retryEntry.Payload, &retryPayload); err != nil {
-		t.Fatalf("unmarshal task_retry: %v", err)
-	}
-	if got := int32(retryPayload["retry_count"].(float64)); got != cmd.RetryCount+1 {
-		t.Errorf("task_retry retry_count: expected %d (next attempt), got %d", cmd.RetryCount+1, got)
-	}
+
+	// The retry deployment carries the next attempt's job name and retry budget.
+	added := deployments.added
+	require.Len(t, added, 1)
+	require.Equal(t, "job-abc-r1", added[0].Command().JobName)
+	require.Equal(t, int(cmd.RetryCount)+1, added[0].Command().TaskRetryCount)
+	require.Equal(t, int(cmd.MaxRetries), added[0].Command().TaskMaxRetries)
 }
 
 // TestHandleFailedWithRetry_OperationFromDurableCommand_VanishedJob guards against
@@ -324,9 +426,10 @@ func TestHandleFailedWithRetry(t *testing.T) {
 // failed Job's labels: a TTL-reaped ("vanished") Job returns EMPTY labels from
 // GetJobMeta, so a label-sourced read would silently emit `dbt run`. Here the fake
 // client returns empty labels (vanished Job) yet cmd.Operation=="test", and the
-// task_retry payload must stay "test".
+// retry deployment's command must stay "test".
 func TestHandleFailedWithRetry_OperationFromDurableCommand_VanishedJob(t *testing.T) {
 	outbox := &jobStatusFakeOutboxRepo{}
+	deployments := &stubDeploymentsRepo{}
 	handler := newHandler(&fakeK8sClient{
 		status: failedResult(),
 		labels: map[string]string{}, // vanished Job: GetJobMeta returns empty labels
@@ -336,34 +439,28 @@ func TestHandleFailedWithRetry_OperationFromDurableCommand_VanishedJob(t *testin
 		TaskID:     uuid.New(),
 		ScheduleID: uuid.New(),
 		JobName:    "job-abc",
-		Operation:  "test", // durable, carried on node.deployed:v1 / check.k8s:v1
+		Operation:  "test", // durable, carried on check.k8s:v1
 		RetryCount: 0,
 		MaxRetries: 3,
 	}
 
-	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoWWithDeployments(outbox, deployments), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
-	retryEntry := findEntryByEventType(outbox.entries, "task_retry")
-	if retryEntry == nil {
-		t.Fatal("missing task_retry entry")
-	}
-	var retryPayload map[string]interface{}
-	if err := json.Unmarshal(retryEntry.Payload, &retryPayload); err != nil {
-		t.Fatalf("unmarshal task_retry: %v", err)
-	}
-	if got, _ := retryPayload["operation"].(string); got != "test" {
-		t.Errorf("task_retry operation: expected %q, got %q (payload=%v)", "test", got, retryPayload)
+	require.Len(t, deployments.added, 1)
+	if got := deployments.added[0].Command().Operation; got != "test" {
+		t.Errorf("retry deployment operation: expected %q, got %q", "test", got)
 	}
 }
 
 // TestHandleFailedWithRetry_NoOperationStaysEmpty guards the normal `dbt run`
-// path: a command with no Operation (the common case) must produce a task_retry
-// payload with an empty/absent operation so the wire format is unchanged for
+// path: a command with no Operation (the common case) must produce a retry
+// deployment with an empty operation so the wire format is unchanged for
 // production runs.
 func TestHandleFailedWithRetry_NoOperationStaysEmpty(t *testing.T) {
 	outbox := &jobStatusFakeOutboxRepo{}
+	deployments := &stubDeploymentsRepo{}
 	handler := newHandler(&fakeK8sClient{
 		status: failedResult(),
 		labels: map[string]string{},
@@ -377,20 +474,13 @@ func TestHandleFailedWithRetry_NoOperationStaysEmpty(t *testing.T) {
 		MaxRetries: 3,
 	}
 
-	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoWWithDeployments(outbox, deployments), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
-	retryEntry := findEntryByEventType(outbox.entries, "task_retry")
-	if retryEntry == nil {
-		t.Fatal("missing task_retry entry")
-	}
-	var retryPayload map[string]interface{}
-	if err := json.Unmarshal(retryEntry.Payload, &retryPayload); err != nil {
-		t.Fatalf("unmarshal task_retry: %v", err)
-	}
-	if got, _ := retryPayload["operation"].(string); got != "" {
-		t.Errorf("task_retry operation: expected empty, got %q", got)
+	require.Len(t, deployments.added, 1)
+	if got := deployments.added[0].Command().Operation; got != "" {
+		t.Errorf("retry deployment operation: expected empty, got %q", got)
 	}
 }
 
@@ -443,7 +533,7 @@ func TestCheckStatusHandler_Handle_AllowsConcurrentCalls(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			u := &fakes.FakeUnitOfWork{Outbox: repo, MessageProcessing: &fakeMessageProcessingRepo{}}
+			u := &fakes.FakeUnitOfWork{Outbox: repo, MessageProcessing: &fakeMessageProcessingRepo{}, Deployments: &stubDeploymentsRepo{}}
 			errs <- handler.Handle(context.Background(), u, command.CheckJobStatus{
 				TaskID:     uuid.New(),
 				ScheduleID: uuid.New(),
@@ -460,8 +550,8 @@ func TestCheckStatusHandler_Handle_AllowsConcurrentCalls(t *testing.T) {
 			t.Fatalf("Handle: %v", err)
 		}
 	}
-	if got := len(repo.entriesSnapshot()); got != 6 {
-		t.Fatalf("expected 6 outbox entries (2 calls × 3 rows), got %d", got)
+	if got := len(repo.entriesSnapshot()); got != 4 {
+		t.Fatalf("expected 4 outbox entries (2 calls × 2 rows; the retry is a queued deployment, not a 3rd row), got %d", got)
 	}
 }
 
@@ -496,6 +586,44 @@ func TestHandleFailedPermanent(t *testing.T) {
 	}
 	if got := eventTypeOf(entries, 2); got != "node_updated" {
 		t.Errorf("entries[2]: expected node_updated, got %q", got)
+	}
+}
+
+// TestHandleUnknownStatus_WritesOnlyTaskStatusUpdated verifies that a production
+// task (no mode label) whose Job status is Unknown writes exactly one outbox
+// row — task_status_updated (FAILED) — with no task_execution_recorded and no
+// node_updated row, since no terminal Job outcome was actually observed.
+func TestHandleUnknownStatus_WritesOnlyTaskStatusUpdated(t *testing.T) {
+	outbox := &jobStatusFakeOutboxRepo{}
+	handler := newHandler(&fakeK8sClient{
+		status: &model.JobResult{Status: model.JobStatusUnknown, TerminationMsg: "pod evicted"},
+		labels: map[string]string{},
+	}, noopCancelledRepo(), 3)
+
+	cmd := command.CheckJobStatus{
+		TaskID:     uuid.New(),
+		ScheduleID: uuid.New(),
+		JobName:    "job-unknown",
+		RetryCount: 0,
+		MaxRetries: 3,
+	}
+
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	entries := outbox.entries
+	require.Len(t, entries, 1, "expected only task_status_updated")
+	if got := eventTypeOf(entries, 0); got != "task_status_updated" {
+		t.Errorf("entries[0]: expected task_status_updated, got %q", got)
+	}
+
+	var statusPayload pkgevents.TaskStatusUpdated
+	if err := json.Unmarshal(entries[0].Payload, &statusPayload); err != nil {
+		t.Fatalf("unmarshal task_status_updated: %v", err)
+	}
+	if statusPayload.Status != "FAILED" {
+		t.Errorf("task_status_updated status: expected FAILED, got %q", statusPayload.Status)
 	}
 }
 
@@ -721,6 +849,7 @@ func TestHandleRunning_ValidationJob_SuppressesRunningAnnouncement(t *testing.T)
 // config.DefaultTaskMaxRetries.  With RetryCount=0 and default=3 the job should be retried.
 func TestDefaultMaxRetriesAppliedWhenZero(t *testing.T) {
 	outbox := &jobStatusFakeOutboxRepo{}
+	deployments := &stubDeploymentsRepo{}
 	handler := newHandler(&fakeK8sClient{status: failedResult()}, noopCancelledRepo(), 3)
 
 	cmd := command.CheckJobStatus{
@@ -731,19 +860,14 @@ func TestDefaultMaxRetriesAppliedWhenZero(t *testing.T) {
 		MaxRetries: 0, // absent from message
 	}
 
-	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoWWithDeployments(outbox, deployments), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
-	entries := outbox.entries
-	if len(entries) == 0 {
-		t.Fatal("expected outbox entries, got none")
-	}
-	// RetryCount(0) < defaultMaxRetries(3) → retry path → last row is task_retry
-	lastEntry := entries[len(entries)-1]
-	if lastEntry.EventType != "task_retry" {
-		t.Errorf("expected last event_type=task_retry (default max_retries applied), got %q", lastEntry.EventType)
-	}
+	// RetryCount(0) < defaultMaxRetries(3) → retry path: 2 outbox rows, and the
+	// task is re-queued as a new pending deployment.
+	require.Len(t, outbox.entries, 2)
+	require.Len(t, deployments.added, 1, "default max_retries applied on the retry path")
 }
 
 // TestCheckStatusHandler_FailsPermanentlyAfter3TotalAttempts documents the invariant:
@@ -808,8 +932,9 @@ func TestCheckStatusHandler_DropsOutboxWhenScheduleCancelled(t *testing.T) {
 }
 
 // TestNotFoundRetry verifies that when GetJobStatus returns "Job not found in Kubernetes"
-// (now JobStatusFailed), with retryCount < maxRetries, the handler creates a task_retry
-// outbox entry — not a permanent failure — so the job gets re-created and re-checked.
+// (now JobStatusFailed), with retryCount < maxRetries, the handler re-queues the
+// task as a new pending deployment — not a permanent failure — so the job gets
+// re-created and re-checked.
 func TestNotFoundRetry(t *testing.T) {
 	notFoundResult := &model.JobResult{
 		Status:         model.JobStatusFailed,
@@ -817,6 +942,7 @@ func TestNotFoundRetry(t *testing.T) {
 	}
 
 	outbox := &jobStatusFakeOutboxRepo{}
+	deployments := &stubDeploymentsRepo{}
 	handler := newHandler(&fakeK8sClient{status: notFoundResult}, noopCancelledRepo(), 3)
 
 	cmd := command.CheckJobStatus{
@@ -827,19 +953,12 @@ func TestNotFoundRetry(t *testing.T) {
 		MaxRetries: 3,
 	}
 
-	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoWWithDeployments(outbox, deployments), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
-	entries := outbox.entries
-	if len(entries) == 0 {
-		t.Fatal("expected outbox entries, got none")
-	}
-	// Retry path → last entry is task_retry
-	lastEntry := entries[len(entries)-1]
-	if lastEntry.EventType != "task_retry" {
-		t.Errorf("expected last event_type=task_retry (not_found retried), got %q", lastEntry.EventType)
-	}
+	require.Len(t, outbox.entries, 2, "expected task_status_updated + task_execution_recorded")
+	require.Len(t, deployments.added, 1, "not_found retried as a new pending deployment")
 }
 
 // TestNotFoundPermanentFailureNotifiesOrchestrator verifies that when "Job not found" retries
@@ -1051,11 +1170,13 @@ func TestHandleSucceeded_ParseCache(t *testing.T) {
 	}
 }
 
-// TestHandle_ValidationModeLabel_WritesValidationNodeCompletedOutboxRowOnly verifies
-// that a succeeded Job carrying mode=validation emits exactly one
-// validation_node_completed row (outcome=ok, release_id/node_id from labels) and
-// none of the three production task-status rows.
-func TestHandle_ValidationModeLabel_WritesValidationNodeCompletedOutboxRowOnly(t *testing.T) {
+// TestHandle_ValidationModeLabel_RecordsOutcomeAndEmitsPerNodeResult verifies
+// that a succeeded Job carrying mode=validation records the outcome onto the
+// deployments row and emits exactly one validation.result:v1 (kind=node) row
+// (release_id/node_id from annotations) and none of the three production
+// task-status rows. pending=1 (a sibling node still outstanding) keeps the
+// aggregate gate from also firing, so the per-node row stands alone.
+func TestHandle_ValidationModeLabel_RecordsOutcomeAndEmitsPerNodeResult(t *testing.T) {
 	outbox := &jobStatusFakeOutboxRepo{}
 	handler := newHandler(
 		&fakeK8sClient{
@@ -1076,20 +1197,26 @@ func TestHandle_ValidationModeLabel_WritesValidationNodeCompletedOutboxRowOnly(t
 		MaxRetries: 3,
 	}
 
-	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	dep := deployedCandidateDeployment(t, model.ModeValidation, "rel-123", "node-abc")
+	u := candidateUoW(outbox, dep, 1)
+	if err := handler.Handle(context.Background(), u, cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
+	}
+
+	if dep.OutcomeAt() == nil {
+		t.Fatal("expected the deployment's outcome to be recorded")
+	}
+	if got := dep.Outcome(); got != "ok" {
+		t.Errorf("expected deployment outcome=ok, got %q", got)
 	}
 
 	entries := outbox.entries
 	if len(entries) != 1 {
-		t.Fatalf("expected exactly 1 outbox entry (validation_node_completed), got %d", len(entries))
+		t.Fatalf("expected exactly 1 outbox entry (validation.result kind=node), got %d", len(entries))
 	}
 	entry := entries[0]
-	if entry.EventType != "validation_node_completed" {
-		t.Errorf("expected event_type=validation_node_completed, got %q", entry.EventType)
-	}
-	if entry.StreamName != streams.ValidationNodeCompletedV1 {
-		t.Errorf("expected stream=%s, got %q", streams.ValidationNodeCompletedV1, entry.StreamName)
+	if entry.StreamName != streams.ValidationResultV1 {
+		t.Errorf("expected stream=%s, got %q", streams.ValidationResultV1, entry.StreamName)
 	}
 	if entry.AggregateType != "release" {
 		t.Errorf("expected aggregate_type=release, got %q", entry.AggregateType)
@@ -1098,14 +1225,17 @@ func TestHandle_ValidationModeLabel_WritesValidationNodeCompletedOutboxRowOnly(t
 	// Ensure no production rows leaked in.
 	for _, e := range entries {
 		switch e.EventType {
-		case "task_status_updated", "task_execution_recorded", "node_updated", "task_retry", "task_failed":
+		case "task_status_updated", "task_execution_recorded", "node_updated":
 			t.Errorf("unexpected production outbox row %q for validation Job", e.EventType)
 		}
 	}
 
 	var payload map[string]any
 	if err := json.Unmarshal(entry.Payload, &payload); err != nil {
-		t.Fatalf("unmarshal validation_node_completed: %v", err)
+		t.Fatalf("unmarshal validation.result payload: %v", err)
+	}
+	if payload["kind"] != "node" {
+		t.Errorf("expected kind=node, got %v", payload["kind"])
 	}
 	if payload["release_id"] != "rel-123" {
 		t.Errorf("expected release_id=rel-123, got %v", payload["release_id"])
@@ -1113,62 +1243,14 @@ func TestHandle_ValidationModeLabel_WritesValidationNodeCompletedOutboxRowOnly(t
 	if payload["node_id"] != "node-abc" {
 		t.Errorf("expected node_id=node-abc, got %v", payload["node_id"])
 	}
-	if payload["outcome"] != "ok" {
-		t.Errorf("expected outcome=ok, got %v", payload["outcome"])
-	}
-}
-
-// TestCandidateNodeCompleted_DistinctAggregateLanePerNode guards against a
-// throughput regression: the merged outbox runs with PerAggregateFIFO, so all
-// rows sharing an aggregate id publish one-per-tick. Candidate node completions
-// are independent, so two nodes of the SAME release must land on DIFFERENT
-// aggregate ids (own FIFO lanes) and drain in parallel; the same node must be
-// stable. A per-release aggregate id would serialize a large release's nodes to
-// one completion per outbox tick.
-func TestCandidateNodeCompleted_DistinctAggregateLanePerNode(t *testing.T) {
-	aggIDFor := func(t *testing.T, nodeID string) uuid.UUID {
-		t.Helper()
-		outbox := &jobStatusFakeOutboxRepo{}
-		handler := newHandler(
-			&fakeK8sClient{
-				status: &model.JobResult{Status: model.JobStatusSucceeded},
-				labels: map[string]string{"mode": "validation"},
-				annotations: map[string]string{
-					pkgmodel.AnnotationReleaseID: "rel-shared",
-					pkgmodel.AnnotationNodeID:    nodeID,
-				},
-			},
-			noopCancelledRepo(), 3,
-		)
-		cmd := command.CheckJobStatus{
-			TaskID:     uuid.New(),
-			ScheduleID: uuid.New(),
-			JobName:    "validate-" + nodeID,
-			MaxRetries: 3,
-		}
-		if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
-			t.Fatalf("Handle: %v", err)
-		}
-		if len(outbox.entries) != 1 {
-			t.Fatalf("expected 1 outbox entry, got %d", len(outbox.entries))
-		}
-		return outbox.entries[0].AggregateID
-	}
-
-	nodeA1 := aggIDFor(t, "node-a")
-	nodeA2 := aggIDFor(t, "node-a")
-	nodeB := aggIDFor(t, "node-b")
-
-	if nodeA1 != nodeA2 {
-		t.Errorf("same (release, node) must yield a stable aggregate id: %s != %s", nodeA1, nodeA2)
-	}
-	if nodeA1 == nodeB {
-		t.Errorf("different nodes of the same release must get different aggregate lanes, both got %s", nodeA1)
+	if payload["status"] != "ok" {
+		t.Errorf("expected status=ok, got %v", payload["status"])
 	}
 }
 
 // TestHandle_ValidationModeLabel_FailedStatus_OutcomeFailed verifies a failed
-// validation Job emits a single row with outcome=failed.
+// validation Job records outcome=failed onto the deployments row and emits a
+// validation.result:v1 (kind=node) row with status=failed.
 func TestHandle_ValidationModeLabel_FailedStatus_OutcomeFailed(t *testing.T) {
 	outbox := &jobStatusFakeOutboxRepo{}
 	handler := newHandler(
@@ -1190,10 +1272,15 @@ func TestHandle_ValidationModeLabel_FailedStatus_OutcomeFailed(t *testing.T) {
 		MaxRetries: 3,
 	}
 
-	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	dep := deployedCandidateDeployment(t, model.ModeValidation, "rel-9", "node-z")
+	u := candidateUoW(outbox, dep, 1)
+	if err := handler.Handle(context.Background(), u, cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
+	if got := dep.Outcome(); got != "failed" {
+		t.Errorf("expected deployment outcome=failed, got %q", got)
+	}
 	if len(outbox.entries) != 1 {
 		t.Fatalf("expected exactly 1 outbox entry, got %d", len(outbox.entries))
 	}
@@ -1201,15 +1288,15 @@ func TestHandle_ValidationModeLabel_FailedStatus_OutcomeFailed(t *testing.T) {
 	if err := json.Unmarshal(outbox.entries[0].Payload, &payload); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if payload["outcome"] != "failed" {
-		t.Errorf("expected outcome=failed, got %v", payload["outcome"])
+	if payload["status"] != "failed" {
+		t.Errorf("expected status=failed, got %v", payload["status"])
 	}
 }
 
 // TestHandle_ValidationModeLabel_RunningStatus_WritesCheckK8sRepoll verifies a
 // still-running (or briefly Unknown) validation Job is re-polled: the handler
-// writes exactly one check.k8s:v1 re-poll ticket and no validation.node.completed
-// or production rows. Without this the Job would be checked once and dropped,
+// writes exactly one check.k8s:v1 re-poll ticket and no outcome-settle or
+// production rows. Without this the Job would be checked once and dropped,
 // hanging the release.
 func TestHandle_ValidationModeLabel_RunningStatus_WritesCheckK8sRepoll(t *testing.T) {
 	for _, status := range []model.JobStatus{model.JobStatusRunning, model.JobStatusUnknown} {
@@ -1248,18 +1335,21 @@ func TestHandle_ValidationModeLabel_RunningStatus_WritesCheckK8sRepoll(t *testin
 		}
 		for _, e := range entries {
 			switch e.EventType {
-			case "validation_node_completed", "task_status_updated", "task_execution_recorded", "node_updated", "task_retry", "task_failed":
+			case "task_status_updated", "task_execution_recorded", "node_updated":
 				t.Errorf("status %s: unexpected non-repoll row %q for running validation Job", status, e.EventType)
+			}
+			if e.StreamName == streams.ValidationResultV1 {
+				t.Errorf("status %s: unexpected validation.result:v1 row for a still-running validation Job", status)
 			}
 		}
 	}
 }
 
-// TestHandle_ValidationModeLabel_RunningThenSucceeded_EmitsNodeCompletedOnlyOnTerminal
+// TestHandle_ValidationModeLabel_RunningThenSucceeded_RecordsOutcomeOnlyOnTerminal
 // drives the re-poll lifecycle at the unit level: the first check (Running) writes
-// a single check.k8s:v1 re-poll and emits nothing terminal; the second check
-// (Succeeded) emits exactly one validation_node_completed.
-func TestHandle_ValidationModeLabel_RunningThenSucceeded_EmitsNodeCompletedOnlyOnTerminal(t *testing.T) {
+// a single check.k8s:v1 re-poll and records nothing; the second check (Succeeded)
+// records the outcome and emits exactly one validation.result:v1 row.
+func TestHandle_ValidationModeLabel_RunningThenSucceeded_RecordsOutcomeOnlyOnTerminal(t *testing.T) {
 	labels := map[string]string{"mode": "validation"}
 	annotations := map[string]string{
 		pkgmodel.AnnotationReleaseID: "rel-7",
@@ -1272,7 +1362,7 @@ func TestHandle_ValidationModeLabel_RunningThenSucceeded_EmitsNodeCompletedOnlyO
 		MaxRetries: 3,
 	}
 
-	// First check: Running → one re-poll, nothing terminal.
+	// First check: Running → one re-poll, nothing recorded.
 	runningOutbox := &jobStatusFakeOutboxRepo{}
 	runningHandler := newHandler(
 		&fakeK8sClient{status: &model.JobResult{Status: model.JobStatusRunning}, labels: labels, annotations: annotations},
@@ -1285,24 +1375,29 @@ func TestHandle_ValidationModeLabel_RunningThenSucceeded_EmitsNodeCompletedOnlyO
 		t.Fatalf("running check: expected 1 check_delayed re-poll, got %v", eventTypesOf(runningOutbox.entries))
 	}
 
-	// Re-check: Succeeded → one validation_node_completed.
+	// Re-check: Succeeded → outcome recorded, one validation.result:v1 row.
 	doneOutbox := &jobStatusFakeOutboxRepo{}
+	dep := deployedCandidateDeployment(t, model.ModeValidation, "rel-7", "node-7")
 	doneHandler := newHandler(
 		&fakeK8sClient{status: &model.JobResult{Status: model.JobStatusSucceeded}, labels: labels, annotations: annotations},
 		noopCancelledRepo(), 3,
 	)
-	if err := doneHandler.Handle(context.Background(), newJobStatusFakeUoW(doneOutbox), cmd, uuid.Nil); err != nil {
+	if err := doneHandler.Handle(context.Background(), candidateUoW(doneOutbox, dep, 1), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle (succeeded): %v", err)
 	}
-	if len(doneOutbox.entries) != 1 || doneOutbox.entries[0].EventType != "validation_node_completed" {
-		t.Fatalf("terminal check: expected 1 validation_node_completed, got %v", eventTypesOf(doneOutbox.entries))
+	if dep.OutcomeAt() == nil {
+		t.Fatal("terminal check: expected the outcome to be recorded")
+	}
+	if len(doneOutbox.entries) != 1 || doneOutbox.entries[0].StreamName != streams.ValidationResultV1 {
+		t.Fatalf("terminal check: expected 1 validation.result:v1 row, got %v", eventTypesOf(doneOutbox.entries))
 	}
 }
 
 // TestHandle_ValidationModeLabel_RawIDsRoundTripViaAnnotations verifies the I2 fix:
 // a node_id that sanitizeK8sLabel WOULD alter (out-of-charset chars and >63 chars)
-// is carried losslessly via Job annotations into the validation.node.completed
-// payload, so the dispatcher's raw-keyed outcome lookup matches.
+// is carried losslessly via Job annotations into the outcomes.NodeOutcome the
+// handler records, so the dispatcher's raw-keyed deployments lookup matches and
+// the emitted validation.result:v1 payload carries the raw ids.
 func TestHandle_ValidationModeLabel_RawIDsRoundTripViaAnnotations(t *testing.T) {
 	// Out-of-charset chars (: / +) AND >63 chars: sanitizeK8sLabel would both
 	// replace and truncate this, so a label round-trip would desync the lookup.
@@ -1329,11 +1424,12 @@ func TestHandle_ValidationModeLabel_RawIDsRoundTripViaAnnotations(t *testing.T) 
 		MaxRetries: 3,
 	}
 
-	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	dep := deployedCandidateDeployment(t, model.ModeValidation, rawReleaseID, rawNodeID)
+	if err := handler.Handle(context.Background(), candidateUoW(outbox, dep, 1), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 	if len(outbox.entries) != 1 {
-		t.Fatalf("expected 1 validation_node_completed row, got %d", len(outbox.entries))
+		t.Fatalf("expected 1 validation.result row, got %d", len(outbox.entries))
 	}
 	var payload map[string]any
 	if err := json.Unmarshal(outbox.entries[0].Payload, &payload); err != nil {
@@ -1350,7 +1446,7 @@ func TestHandle_ValidationModeLabel_RawIDsRoundTripViaAnnotations(t *testing.T) 
 // TestValidationTerminal_UploadsRunResultsAndSetsURI verifies that a validation
 // Job whose pod log carries the structured-result sentinel block uploads that JSON
 // to a run-results/ key, strips it from the text log, and surfaces run_results_uri
-// on the validation_node_completed payload.
+// on the validation.result:v1 (kind=node) payload.
 func TestValidationTerminal_UploadsRunResultsAndSetsURI(t *testing.T) {
 	podLog := "build failed\n" +
 		"===CONTINUO_VALIDATION_RESULT_BEGIN===\n" +
@@ -1376,7 +1472,8 @@ func TestValidationTerminal_UploadsRunResultsAndSetsURI(t *testing.T) {
 	}
 
 	outbox := &jobStatusFakeOutboxRepo{}
-	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	dep := deployedCandidateDeployment(t, model.ModeValidation, "rel-1", "svc.schema.x")
+	if err := handler.Handle(context.Background(), candidateUoW(outbox, dep, 1), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
@@ -1404,9 +1501,9 @@ func TestValidationTerminal_UploadsRunResultsAndSetsURI(t *testing.T) {
 		}
 	}
 
-	// 3. The validation_node_completed payload carries run_results_uri == rrKey.
-	if len(outbox.entries) != 1 || outbox.entries[0].EventType != "validation_node_completed" {
-		t.Fatalf("expected 1 validation_node_completed, got %v", eventTypesOf(outbox.entries))
+	// 3. The validation.result:v1 (kind=node) payload carries run_results_uri == rrKey.
+	if len(outbox.entries) != 1 || outbox.entries[0].StreamName != streams.ValidationResultV1 {
+		t.Fatalf("expected 1 validation.result row, got %v", eventTypesOf(outbox.entries))
 	}
 	var payload map[string]any
 	if err := json.Unmarshal(outbox.entries[0].Payload, &payload); err != nil {
@@ -1491,18 +1588,16 @@ func TestHandle_ProductionModeLabel_WritesThreeProdOutboxRows_NoChange(t *testin
 		if got := eventTypeOf(entries, 2); got != "node_updated" {
 			t.Errorf("labels=%v: entries[2]: expected node_updated, got %q", labels, got)
 		}
-		if findEntryByEventType(entries, "validation_node_completed") != nil {
-			t.Errorf("labels=%v: unexpected validation_node_completed row on production path", labels)
-		}
 	}
 }
 
-// TestHandle_SeedBuildModeLabel_WritesSeedBuildNodeCompletedOutboxRowOnly verifies
-// that a terminal Job carrying mode=seed_build emits exactly one
-// seed_build_node_completed row (stream=seed.build.node.completed:v1, outcome=ok
-// on Succeeded / outcome=failed on Failed, release_id/node_id from annotations)
-// and none of the three production task-status rows.
-func TestHandle_SeedBuildModeLabel_WritesSeedBuildNodeCompletedOutboxRowOnly(t *testing.T) {
+// TestHandle_SeedBuildModeLabel_RecordsOutcomeAndEmitsAggregateWhenComplete
+// verifies that a terminal Job carrying mode=seed_build records the outcome
+// (ok on Succeeded / failed on Failed, release_id/node_id from annotations) onto
+// its deployments row and, this being the release's last seed, emits exactly
+// one seed_build_completed aggregate row (stream=seed.build.completed:v1) and
+// none of the three production task-status rows.
+func TestHandle_SeedBuildModeLabel_RecordsOutcomeAndEmitsAggregateWhenComplete(t *testing.T) {
 	for _, tc := range []struct {
 		name            string
 		status          model.JobStatus
@@ -1532,20 +1627,27 @@ func TestHandle_SeedBuildModeLabel_WritesSeedBuildNodeCompletedOutboxRowOnly(t *
 				MaxRetries: 3,
 			}
 
-			if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+			dep := deployedCandidateDeployment(t, model.ModeSeedBuild, "rel-sb-1", "seed-node-abc")
+			// pending=0: this is the release's only (and therefore last) seed, so the
+			// aggregate-emit gate fires once the outcome is recorded.
+			if err := handler.Handle(context.Background(), candidateUoW(outbox, dep, 0), cmd, uuid.Nil); err != nil {
 				t.Fatalf("Handle: %v", err)
+			}
+
+			if got := dep.Outcome(); got != tc.expectedOutcome {
+				t.Errorf("expected deployment outcome=%s, got %q", tc.expectedOutcome, got)
 			}
 
 			entries := outbox.entries
 			if len(entries) != 1 {
-				t.Fatalf("expected exactly 1 outbox entry (seed_build_node_completed), got %d: %v", len(entries), eventTypesOf(entries))
+				t.Fatalf("expected exactly 1 outbox entry (seed_build_completed), got %d: %v", len(entries), eventTypesOf(entries))
 			}
 			entry := entries[0]
-			if entry.EventType != "seed_build_node_completed" {
-				t.Errorf("expected event_type=seed_build_node_completed, got %q", entry.EventType)
+			if entry.EventType != "seed_build_completed" {
+				t.Errorf("expected event_type=seed_build_completed, got %q", entry.EventType)
 			}
-			if entry.StreamName != streams.SeedBuildNodeCompletedV1 {
-				t.Errorf("expected stream=%s, got %q", streams.SeedBuildNodeCompletedV1, entry.StreamName)
+			if entry.StreamName != streams.SeedBuildCompletedV1 {
+				t.Errorf("expected stream=%s, got %q", streams.SeedBuildCompletedV1, entry.StreamName)
 			}
 			if entry.AggregateType != "release" {
 				t.Errorf("expected aggregate_type=release, got %q", entry.AggregateType)
@@ -1554,23 +1656,20 @@ func TestHandle_SeedBuildModeLabel_WritesSeedBuildNodeCompletedOutboxRowOnly(t *
 			// Ensure no production rows leaked in.
 			for _, e := range entries {
 				switch e.EventType {
-				case "task_status_updated", "task_execution_recorded", "node_updated", "task_retry", "task_failed":
+				case "task_status_updated", "task_execution_recorded", "node_updated":
 					t.Errorf("unexpected production outbox row %q for seed_build Job", e.EventType)
 				}
 			}
 
 			var payload map[string]any
 			if err := json.Unmarshal(entry.Payload, &payload); err != nil {
-				t.Fatalf("unmarshal seed_build_node_completed: %v", err)
+				t.Fatalf("unmarshal seed_build_completed: %v", err)
 			}
 			if payload["release_id"] != "rel-sb-1" {
 				t.Errorf("expected release_id=rel-sb-1, got %v", payload["release_id"])
 			}
-			if payload["node_id"] != "seed-node-abc" {
-				t.Errorf("expected node_id=seed-node-abc, got %v", payload["node_id"])
-			}
-			if payload["outcome"] != tc.expectedOutcome {
-				t.Errorf("expected outcome=%s, got %v", tc.expectedOutcome, payload["outcome"])
+			if payload["status"] != tc.expectedOutcome {
+				t.Errorf("expected status=%s, got %v", tc.expectedOutcome, payload["status"])
 			}
 		})
 	}
@@ -1611,12 +1710,13 @@ func TestHandle_SeedBuildModeLabel_SuppressesRunningAnnouncement(t *testing.T) {
 	}
 }
 
-// TestHandle_CompileModeLabel_WritesCompileNodeCompletedOutboxRowOnly verifies
-// that a terminal Job carrying mode=compile emits exactly one
-// compile_node_completed row (stream=compile.node.completed:v1, outcome=ok on
-// Succeeded / outcome=failed on Failed, release_id/node_id from annotations)
-// and none of the three production task-status rows.
-func TestHandle_CompileModeLabel_WritesCompileNodeCompletedOutboxRowOnly(t *testing.T) {
+// TestHandle_CompileModeLabel_RecordsOutcomeAndEmitsAggregateWhenComplete
+// verifies that a terminal Job carrying mode=compile records the outcome (ok on
+// Succeeded / failed on Failed, release_id/node_id from annotations) onto its
+// deployments row and, compile being a single root node, emits exactly one
+// compile_completed aggregate row (stream=compile.completed:v1) and none of the
+// three production task-status rows.
+func TestHandle_CompileModeLabel_RecordsOutcomeAndEmitsAggregateWhenComplete(t *testing.T) {
 	for _, tc := range []struct {
 		name            string
 		status          model.JobStatus
@@ -1646,20 +1746,27 @@ func TestHandle_CompileModeLabel_WritesCompileNodeCompletedOutboxRowOnly(t *test
 				MaxRetries: 3,
 			}
 
-			if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+			dep := deployedCandidateDeployment(t, model.ModeCompile, "rel-compile-1", "compile-node-abc")
+			// pending=0: compile is a single root node, so the aggregate-emit gate
+			// fires as soon as this one outcome is recorded.
+			if err := handler.Handle(context.Background(), candidateUoW(outbox, dep, 0), cmd, uuid.Nil); err != nil {
 				t.Fatalf("Handle: %v", err)
+			}
+
+			if got := dep.Outcome(); got != tc.expectedOutcome {
+				t.Errorf("expected deployment outcome=%s, got %q", tc.expectedOutcome, got)
 			}
 
 			entries := outbox.entries
 			if len(entries) != 1 {
-				t.Fatalf("expected exactly 1 outbox entry (compile_node_completed), got %d: %v", len(entries), eventTypesOf(entries))
+				t.Fatalf("expected exactly 1 outbox entry (compile_completed), got %d: %v", len(entries), eventTypesOf(entries))
 			}
 			entry := entries[0]
-			if entry.EventType != "compile_node_completed" {
-				t.Errorf("expected event_type=compile_node_completed, got %q", entry.EventType)
+			if entry.EventType != "compile_completed" {
+				t.Errorf("expected event_type=compile_completed, got %q", entry.EventType)
 			}
-			if entry.StreamName != streams.CompileNodeCompletedV1 {
-				t.Errorf("expected stream=%s, got %q", streams.CompileNodeCompletedV1, entry.StreamName)
+			if entry.StreamName != streams.CompileCompletedV1 {
+				t.Errorf("expected stream=%s, got %q", streams.CompileCompletedV1, entry.StreamName)
 			}
 			if entry.AggregateType != "release" {
 				t.Errorf("expected aggregate_type=release, got %q", entry.AggregateType)
@@ -1668,34 +1775,30 @@ func TestHandle_CompileModeLabel_WritesCompileNodeCompletedOutboxRowOnly(t *test
 			// Ensure no production rows leaked in.
 			for _, e := range entries {
 				switch e.EventType {
-				case "task_status_updated", "task_execution_recorded", "node_updated", "task_retry", "task_failed":
+				case "task_status_updated", "task_execution_recorded", "node_updated":
 					t.Errorf("unexpected production outbox row %q for compile Job", e.EventType)
 				}
 			}
 
 			var payload map[string]any
 			if err := json.Unmarshal(entry.Payload, &payload); err != nil {
-				t.Fatalf("unmarshal compile_node_completed: %v", err)
+				t.Fatalf("unmarshal compile_completed: %v", err)
 			}
 			if payload["release_id"] != "rel-compile-1" {
 				t.Errorf("expected release_id=rel-compile-1, got %v", payload["release_id"])
 			}
-			if payload["node_id"] != "compile-node-abc" {
-				t.Errorf("expected node_id=compile-node-abc, got %v", payload["node_id"])
-			}
-			if payload["outcome"] != tc.expectedOutcome {
-				t.Errorf("expected outcome=%s, got %v", tc.expectedOutcome, payload["outcome"])
+			if payload["status"] != tc.expectedOutcome {
+				t.Errorf("expected status=%s, got %v", tc.expectedOutcome, payload["status"])
 			}
 		})
 	}
 }
 
-// TestHandle_CompileModeLabel_PayloadIncludesFailedContainerWhenSet verifies that
-// handleCompileTerminal adds a failed_container key to the compile_node_completed
-// payload when JobResult.FailedContainer is set — downstream consumers use it to
-// map compile-leg containers (compile/parse-prod/parse-candidate/upload) to distinct
-// release-reject reasons.
-func TestHandle_CompileModeLabel_PayloadIncludesFailedContainerWhenSet(t *testing.T) {
+// TestHandle_CompileModeLabel_RecordsFailedContainerWhenSet verifies the
+// handler threads result.FailedContainer into the outcomes.NodeOutcome it
+// records, so the saved deployment (and, via the aggregate gate, the emitted
+// compile_completed per-node entry) carries the failing container's name.
+func TestHandle_CompileModeLabel_RecordsFailedContainerWhenSet(t *testing.T) {
 	outbox := &jobStatusFakeOutboxRepo{}
 	handler := newHandler(
 		&fakeK8sClient{
@@ -1716,28 +1819,35 @@ func TestHandle_CompileModeLabel_PayloadIncludesFailedContainerWhenSet(t *testin
 		MaxRetries: 3,
 	}
 
-	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	dep := deployedCandidateDeployment(t, model.ModeCompile, "rel-compile-2", "compile-node-def")
+	if err := handler.Handle(context.Background(), candidateUoW(outbox, dep, 0), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
+	}
+
+	if got := dep.FailedContainer(); got != "parse-prod" {
+		t.Errorf("expected deployment failed_container=parse-prod, got %q", got)
 	}
 
 	entries := outbox.entries
 	if len(entries) != 1 {
 		t.Fatalf("expected exactly 1 outbox entry, got %d: %v", len(entries), eventTypesOf(entries))
 	}
-
-	var payload map[string]any
-	if err := json.Unmarshal(entries[0].Payload, &payload); err != nil {
-		t.Fatalf("unmarshal compile_node_completed: %v", err)
+	var payload struct {
+		PerNode []map[string]any `json:"per_node"`
 	}
-	if payload["failed_container"] != "parse-prod" {
-		t.Errorf("expected failed_container=parse-prod, got %v", payload["failed_container"])
+	if err := json.Unmarshal(entries[0].Payload, &payload); err != nil {
+		t.Fatalf("unmarshal compile_completed: %v", err)
+	}
+	if len(payload.PerNode) != 1 || payload.PerNode[0]["failed_container"] != "parse-prod" {
+		t.Errorf("expected per_node[0].failed_container=parse-prod, got %v", payload.PerNode)
 	}
 }
 
-// TestHandle_CompileModeLabel_PayloadOmitsFailedContainerWhenEmpty verifies that
-// handleCompileTerminal omits the failed_container key entirely when
-// JobResult.FailedContainer is empty (e.g. a succeeded compile Job).
-func TestHandle_CompileModeLabel_PayloadOmitsFailedContainerWhenEmpty(t *testing.T) {
+// TestHandle_CompileModeLabel_OmitsFailedContainerWhenEmpty verifies that a
+// succeeded compile Job (JobResult.FailedContainer empty) records no
+// failed_container on the deployment, so the aggregate's per_node entry omits
+// the key entirely.
+func TestHandle_CompileModeLabel_OmitsFailedContainerWhenEmpty(t *testing.T) {
 	outbox := &jobStatusFakeOutboxRepo{}
 	handler := newHandler(
 		&fakeK8sClient{
@@ -1758,21 +1868,30 @@ func TestHandle_CompileModeLabel_PayloadOmitsFailedContainerWhenEmpty(t *testing
 		MaxRetries: 3,
 	}
 
-	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+	dep := deployedCandidateDeployment(t, model.ModeCompile, "rel-compile-3", "compile-node-ghi")
+	if err := handler.Handle(context.Background(), candidateUoW(outbox, dep, 0), cmd, uuid.Nil); err != nil {
 		t.Fatalf("Handle: %v", err)
+	}
+
+	if got := dep.FailedContainer(); got != "" {
+		t.Errorf("expected deployment failed_container to stay empty, got %q", got)
 	}
 
 	entries := outbox.entries
 	if len(entries) != 1 {
 		t.Fatalf("expected exactly 1 outbox entry, got %d: %v", len(entries), eventTypesOf(entries))
 	}
-
-	var payload map[string]any
-	if err := json.Unmarshal(entries[0].Payload, &payload); err != nil {
-		t.Fatalf("unmarshal compile_node_completed: %v", err)
+	var payload struct {
+		PerNode []map[string]any `json:"per_node"`
 	}
-	if _, present := payload["failed_container"]; present {
-		t.Errorf("expected failed_container key to be omitted, got %v", payload["failed_container"])
+	if err := json.Unmarshal(entries[0].Payload, &payload); err != nil {
+		t.Fatalf("unmarshal compile_completed: %v", err)
+	}
+	if len(payload.PerNode) != 1 {
+		t.Fatalf("expected 1 per_node entry, got %v", payload.PerNode)
+	}
+	if _, present := payload.PerNode[0]["failed_container"]; present {
+		t.Errorf("expected failed_container key to be omitted, got %v", payload.PerNode[0]["failed_container"])
 	}
 }
 
@@ -1813,8 +1932,8 @@ func TestHandle_CompileModeLabel_SuppressesRunningAnnouncement(t *testing.T) {
 
 // TestHandle_CompileModeLabel_RunningStatus_WritesCheckK8sRepoll verifies a
 // still-running (or briefly Unknown) compile Job is re-polled: the handler
-// writes exactly one check.k8s:v1 re-poll ticket and no compile_node_completed
-// or production rows.
+// writes exactly one check.k8s:v1 re-poll ticket and no outcome-settle or
+// production rows.
 func TestHandle_CompileModeLabel_RunningStatus_WritesCheckK8sRepoll(t *testing.T) {
 	for _, status := range []model.JobStatus{model.JobStatusRunning, model.JobStatusUnknown} {
 		outbox := &jobStatusFakeOutboxRepo{}
@@ -1852,8 +1971,11 @@ func TestHandle_CompileModeLabel_RunningStatus_WritesCheckK8sRepoll(t *testing.T
 		}
 		for _, e := range entries {
 			switch e.EventType {
-			case "compile_node_completed", "task_status_updated", "task_execution_recorded", "node_updated", "task_retry", "task_failed":
+			case "task_status_updated", "task_execution_recorded", "node_updated":
 				t.Errorf("status %s: unexpected non-repoll row %q for running compile Job", status, e.EventType)
+			}
+			if e.StreamName == streams.CompileCompletedV1 {
+				t.Errorf("status %s: unexpected compile.completed:v1 row for a still-running compile Job", status)
 			}
 		}
 	}
@@ -2347,7 +2469,7 @@ func TestHandleSucceeded_LogIOTimeoutStillPersistsOutcome(t *testing.T) {
 		DefaultTaskMaxRetries: 3,
 		LogIOTimeout:          50 * time.Millisecond,
 	}
-	handler := handlers.NewJobStatusHandler(k8s, &fakeLogUploader{}, cfg, noopCancelledRepo(), slog.Default())
+	handler := handlers.NewJobStatusHandler(k8s, &fakeLogUploader{}, cfg, noopCancelledRepo(), outcomes.NewRecorder(slog.Default()), slog.Default())
 
 	// A parent budget far larger than the I/O cap: the terminal writes must
 	// still have almost all of it left once the log fetch is abandoned.
@@ -2430,7 +2552,12 @@ func TestUploadedArtifactKeysHaveNoEmptySegments(t *testing.T) {
 			cmd.ScheduleID = uuid.New()
 			cmd.MaxRetries = 3
 
-			if err := handler.Handle(context.Background(), newJobStatusFakeUoW(&jobStatusFakeOutboxRepo{}), cmd, uuid.Nil); err != nil {
+			// Only the "compile Job" case reaches outcomes.Recorder (mode=compile);
+			// the mode-less "node Job" case takes the production path and never
+			// touches Deployments. A deployed compile dep is supplied unconditionally
+			// since it is harmless for the production case.
+			dep := deployedCandidateDeployment(t, model.ModeCompile, "rel-1", "node-1")
+			if err := handler.Handle(context.Background(), candidateUoW(&jobStatusFakeOutboxRepo{}, dep, 1), cmd, uuid.Nil); err != nil {
 				t.Fatalf("Handle: %v", err)
 			}
 
