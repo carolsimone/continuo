@@ -78,13 +78,10 @@ manifest-controller-release-requested.
 BREAKING: "executor-controller" and "k8s-controller" are now one service,
 "execution-controller", with its own database continuo_execution (created and
 migrated by this upgrade). Nothing is copied from continuo_executor or
-continuo_k8s, so upgrade only when nothing is in flight. Before upgrading run
-
-  bash scripts/preflight-execution-cutover.sh
-
-against the OLD release (it reads the two old databases and Redis) and proceed
-only on "GO". After the new pod is Ready and a run has completed, drop the old
-databases yourself: DROP DATABASE continuo_executor; DROP DATABASE continuo_k8s;
+continuo_k8s, so upgrade only when nothing is in flight: stop the old services
+and let every run, release and queued retry finish first. After the new pod is
+Ready and a run has completed, drop the old databases yourself: DROP DATABASE
+continuo_executor; DROP DATABASE continuo_k8s;
 This chart never drops a database. If your values override services[].name
 entries for either old service, replace them with one execution-controller
 entry (see values.yaml). Consumer-group names are unchanged; do not delete any.
