@@ -96,7 +96,7 @@ async function main() {
     console.log('Chat bridge enabled at /ws/chat (operator-only)');
   }
   server.listen(PORT, () => {
-    console.log(`Continuo UI running on http://localhost:${PORT} (auth mode: ${authConfig.mode})`);
+    console.log(`continuo UI running on http://localhost:${PORT} (auth mode: ${authConfig.mode})`);
   });
 }
 

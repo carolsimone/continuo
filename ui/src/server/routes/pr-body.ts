@@ -30,7 +30,7 @@ export function buildPullRequestBody(input: PullRequestBodyInput): string {
     `---`,
     `*Proposed by the automated remediation agent — review before merge.*`,
     ``,
-    `[View in Continuo UI](/?tab=remediation)`,
+    `[View in continuo UI](/?tab=remediation)`,
   ];
   return lines.filter((line): line is string => line !== null).join('\n').trim();
 }

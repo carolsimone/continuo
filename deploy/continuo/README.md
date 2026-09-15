@@ -39,15 +39,24 @@ echo "127.0.0.1 continuo-dex" | sudo tee -a /etc/hosts
 open http://localhost:8090   # demo login: admin@example.com / password
 ```
 
-Why the `/etc/hosts` line: ui authenticates through OIDC (OpenID Connect),
-which needs one issuer URL that both the browser (it drives the login redirect)
-and ui (it validates the token server-side) can resolve. ui reaches Dex over
-in-cluster DNS at `http://continuo-dex:5556/dex`, but your browser cannot
-resolve that name. Port-forwarding `continuo-dex` to `localhost:5556` routes
-the browser to the same pod — but only if it asks for the hostname the issuer
-claims. The one `/etc/hosts` line maps `continuo-dex` to `127.0.0.1` to make
-that match. To verify the port-forward without touching `/etc/hosts`:
-`curl --resolve continuo-dex:5556:127.0.0.1
+The bundled datastores and the Dex demo user (`admin@example.com` /
+`password`) are for evaluation only: passwords are generated on first install
+and stay stable across upgrades (see Security defaults below), but there are no
+backups, no HA, and one static login. None of this is meant to hold real data
+or face real users.
+
+<details>
+<summary>Why the <code>/etc/hosts</code> line — and how to skip it</summary>
+
+ui authenticates through OIDC (OpenID Connect), which needs one issuer URL that
+both the browser (it drives the login redirect) and ui (it validates the token
+server-side) can resolve. ui reaches Dex over in-cluster DNS at
+`http://continuo-dex:5556/dex`, but your browser cannot resolve that name.
+Port-forwarding `continuo-dex` to `localhost:5556` routes the browser to the
+same pod — but only if it asks for the hostname the issuer claims. The one
+`/etc/hosts` line maps `continuo-dex` to `127.0.0.1` to make that match. To
+verify the port-forward without touching `/etc/hosts`: `curl --resolve
+continuo-dex:5556:127.0.0.1
 http://continuo-dex:5556/dex/.well-known/openid-configuration` (bundled Dex
 serves plain HTTP, not HTTPS).
 
@@ -57,7 +66,7 @@ controlling terminal (`/dev/tty`), not from standard input unless you pass
 non-login shell — it does not prompt at all and exits with `sudo: a terminal is
 required to read the password`. The pipe into `tee` does not change this: sudo
 ignores standard input either way. The password it wants is your local account
-password, not the Dex demo login below.
+password, not the Dex demo login.
 
 To avoid `/etc/hosts` entirely, point the browser's own resolver at the
 loopback port-forward instead of the system hosts file. This needs no root —
@@ -71,23 +80,22 @@ open -na "Google Chrome" --args \
   http://localhost:8090
 ```
 
-The bundled datastores and the Dex demo user (`admin@example.com` /
-`password`, a bcrypt hash taken verbatim from Dex's example config) are for
-evaluation only. Bundled-datastore passwords are generated on first install and
-stay stable across upgrades (see Security defaults below). None of this is meant
-to hold real data or face real users: no backups, no HA, one static login.
+</details>
 
-**Reinstalling on top of old data.** `helm uninstall` deletes the release's
-generated Secrets, but the bundled datastores' `volumeClaimTemplates` PVCs
-(Persistent Volume Claims) survive it — the release does not own them. A plain
-reinstall then generates new random passwords while the old PVCs' data
-directories still hold the previous ones, so every bundled datastore crashloops
-on auth. For a full reset, delete the release's PVCs before reinstalling
-(`kubectl -n <namespace> delete pvc -l app.kubernetes.io/instance=<release>`).
+<details>
+<summary>Reinstalling on top of existing data</summary>
+
+`helm uninstall` deletes the release's generated Secrets, but the bundled
+datastores' `volumeClaimTemplates` PVCs (Persistent Volume Claims) survive it —
+the release does not own them. A plain reinstall then generates new random
+passwords while the old PVCs' data directories still hold the previous ones, so
+every bundled datastore crashloops on auth. For a full reset, delete the
+release's PVCs before reinstalling (`kubectl -n <namespace> delete pvc -l
+app.kubernetes.io/instance=<release>`).
 
 To reinstall while keeping existing data, pre-create a Secret with the old
-password(s) for every bundled datastore still enabled and point the chart at
-it before reinstalling:
+password(s) for every bundled datastore still enabled and point the chart at it
+before reinstalling:
 
 | Datastore | Values field | Secret key(s) |
 |---|---|---|
@@ -101,6 +109,8 @@ Helm accepts any of these fields even while the matching `*.enabled` stays
 missing a key fails at Pod start (`CreateContainer ConfigError`), not at `helm
 install` time. Double-check the Secret's keys against the table above before
 reinstalling.
+
+</details>
 
 ## 2. Production (bring your own datastores)
 
@@ -208,6 +218,12 @@ Every container in this chart, bundled or not, gets:
 
 ## 5. Release flow and CI gates
 
+How this chart is tested and published — reference for maintainers, not
+something you need to install it.
+
+<details>
+<summary>CI gates on every PR, and the release-tag flow</summary>
+
 Every PR that touches this chart (or the install-test harness under
 `scripts/install-test/`) runs `install-test.yml`: `helm lint` +
 `helm template` + kube-linter across four values topologies (defaults,
@@ -245,3 +261,5 @@ ghcr OCI tags are mutable: re-pushing an existing `vX.Y.Z` git tag re-runs this
 whole flow and silently overwrites both the retagged images and the published
 chart version. Treat release tags as immutable by convention — never
 force-push or reuse one.
+
+</details>

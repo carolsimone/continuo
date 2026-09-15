@@ -1,6 +1,6 @@
 # dbt image contract
 
-What a team's dbt image must provide to run under Continuo.
+What a team's dbt image must provide to run under continuo.
 execution-controller launches your image as Kubernetes Jobs for scheduled
 runs, seed builds, and release-time compiles; this page is the contract
 those Jobs assume. The reference implementation is the
@@ -61,7 +61,7 @@ Release legs (seed-build) receive `SERVICE_NAME`, `SCHEMA`, `TABLE_NAME`,
 blue/green validation).
 
 Your image never receives S3 credentials. Compile-time manifest upload is
-performed by a Continuo-owned sidecar container in the same Job (it reads
+performed by a continuo-owned sidecar container in the same Job (it reads
 the `manifest.json` your compile command produces and uploads it to
 `s3://<bucket>/<service>/<release-id>/manifest.json`); your only obligation
 is that the `compile` command writes the manifest to the path declared as
@@ -71,7 +71,7 @@ is that the `compile` command writes the manifest to the path declared as
 
 Your dbt project MUST route schema resolution through a `generate_schema_name`
 that honours `DBT_TARGET_SCHEMA`. dbt has no `--target-schema` flag, so
-Continuo's blue/green release validation passes the candidate schema through
+continuo's blue/green release validation passes the candidate schema through
 that variable; the macro must materialize into it when it is set. Without this,
 validation runs would write into production schemas.
 

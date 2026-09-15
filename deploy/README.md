@@ -1,6 +1,6 @@
-# Deploying Continuo
+# Deploying continuo
 
-Continuo ships as a single Helm chart, [`deploy/continuo`](continuo/), that
+continuo ships as a single Helm chart, [`deploy/continuo`](continuo/), that
 installs every backend service plus optional bundled quickstart datastores
 (PostgreSQL, Redis, Neo4j, MinIO, Dex). This page is the entry point; the
 chart's own [README](continuo/README.md) is the authoritative install
@@ -10,7 +10,7 @@ reference.
 
 | I want to… | Go to |
 |---|---|
-| Try Continuo on any cluster with zero external accounts | [Quickstart](continuo/README.md#1-quickstart-bundled-everything) — one `helm install`, bundled datastores, demo login |
+| Try continuo on any cluster with zero external accounts | [Quickstart](continuo/README.md#1-quickstart-bundled-everything) — one `helm install`, bundled datastores, demo login |
 | Install from the published chart without cloning this repo | [OCI install](continuo/README.md#continuo-helm-chart) — `helm install continuo oci://ghcr.io/carolsimone/charts/continuo --version <X.Y.Z>` |
 | Run it in production with my own Postgres/Redis/Neo4j/S3/OIDC | [Production (BYO datastores)](continuo/README.md#2-production-bring-your-own-datastores) + [`values-byo.yaml.example`](continuo/values-byo.yaml.example) |
 | Understand the security posture before adopting | [SECURITY.md](SECURITY.md) and the chart's [Security defaults](continuo/README.md#3-security-defaults) |
@@ -29,7 +29,7 @@ reachable Postgres 15+, Redis 7+, and Neo4j 5.x work the same way.
 
 ## Licensing of the bundled datastores
 
-Continuo itself is Apache-2.0. The chart's optional quickstart mode
+continuo itself is Apache-2.0. The chart's optional quickstart mode
 (`postgresql.enabled`, `redis.enabled`, `neo4j.enabled`, `minio.enabled`) pulls
 upstream container images that carry their own licenses:
 
@@ -41,9 +41,9 @@ upstream container images that carry their own licenses:
 | MinIO | `minio/minio` | AGPLv3 |
 | Dex | `dexidp/dex:v2.41.1` | Apache-2.0 |
 
-These images are pulled and run as separate processes. Continuo does not link
+These images are pulled and run as separate processes. continuo does not link
 against, embed, modify, or redistribute their code, so their licenses do not
-extend to Continuo or to your use of it.
+extend to continuo or to your use of it.
 
 If your organisation's policy prohibits running copyleft-licensed datastores,
 use the external datastore mode (`external*` / `existingSecret` values) and
