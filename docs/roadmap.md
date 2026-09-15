@@ -81,3 +81,16 @@ UI offers, so the chat agent can do anything an operator can do from the
 dashboard. Mutating commands carry the `mutating` annotation in `describe`, so
 the chat's human-confirmation gate applies to each new action without changes
 to `agent-chat`.
+
+### Validate single sign-on against a real Okta tenant
+**Target date:** TODO · **Tracking:** [#564](https://github.com/carolsimone/continuo/issues/564)
+
+The UI signs users in through standard OpenID Connect (OIDC) discovery, so any
+provider that serves `/.well-known/openid-configuration` plugs in with an issuer
+URL, a client id and a client secret, and roles come from the provider's groups
+claim. That flow is exercised in CI against the bundled Dex only. The next step
+is a manual validation against an Okta Integrator Free Plan org: discovery over
+https, operator and viewer group mapping, denied login for an unmapped user,
+logout, and both the org and custom authorization-server issuer forms. What
+works becomes an Okta section in the deploy README; anything that does not
+becomes a fix with a regression test.
