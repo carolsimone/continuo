@@ -228,6 +228,10 @@ test-topology:
 # - check-validation-image-sideload: the kind-provisioning scripts must not
 #   side-load the pulled validation image with a bare `kind load docker-image`,
 #   which fails on a containerd-backed image store.
+# - check-dev-dockerfile-nonroot: every Dockerfile.base / *.dev image that runs
+#   as root must be excluded under AVD-DS-0002 in .trivyignore.yaml (or set its
+#   own non-root USER), so a new or renamed dev image cannot silently resurface
+#   the Trivy DS002 advisory that list silences.
 #
 # The tests cover the two Go modules no other test target reaches: pkg (the
 # cross-cutting static guards) and tests/e2e/stub-llm (the canned model the
@@ -250,6 +254,7 @@ guards:
 	bash scripts/check-release-tag-trigger.sh
 	bash scripts/check-validation-image-pin.sh
 	bash scripts/check-validation-image-sideload.sh
+	bash scripts/check-dev-dockerfile-nonroot.sh
 	cd pkg && go test ./...
 	cd pkg && go test -race ./lifecycle/...
 	cd tests/e2e/stub-llm && GOWORK=off go test ./...
