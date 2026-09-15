@@ -6,7 +6,7 @@ package events
 // lifecycle that owns retries, task executions, and status.
 //
 // It is retained only to drain work queued by a previous version during a
-// rolling upgrade — in-flight query.model:v1 messages and executor_deployments
+// rolling upgrade — in-flight query.model:v1 messages and deployments
 // rows whose job_params still carry it. Those tasks have synthetic IDs with no
 // matching row in state, so announcing their lifecycle would wedge state's
 // consumer on a run it cannot load. Remove this once no such work can remain.

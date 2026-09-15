@@ -232,6 +232,11 @@ test-topology:
 #   as root must be excluded under AVD-DS-0002 in .trivyignore.yaml (or set its
 #   own non-root USER), so a new or renamed dev image cannot silently resurface
 #   the Trivy DS002 advisory that list silences.
+# - check-standalone-modules: a Go module that a production image builds
+#   outside go.work (pkg, for stream-reaper) must build in module mode with a
+#   read-only go.sum. Inside the workspace go.work.sum papers over a stale
+#   module go.sum, so the gap otherwise surfaces only as a failed image build
+#   in the deploy workflow on main, which skips the deploy job.
 #
 # The tests cover the two Go modules no other test target reaches: pkg (the
 # cross-cutting static guards) and tests/e2e/stub-llm (the canned model the
@@ -255,6 +260,7 @@ guards:
 	bash scripts/check-validation-image-pin.sh
 	bash scripts/check-validation-image-sideload.sh
 	bash scripts/check-dev-dockerfile-nonroot.sh
+	bash scripts/check-standalone-modules.sh
 	cd pkg && go test ./...
 	cd pkg && go test -race ./lifecycle/...
 	cd tests/e2e/stub-llm && GOWORK=off go test ./...

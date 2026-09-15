@@ -12,6 +12,8 @@ shipped in those.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-15
+
 ### Breaking
 - `executor-controller` and `k8s-controller` are replaced by one service,
   `execution-controller` (port 8084), with one database `continuo_execution`

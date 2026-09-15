@@ -1,6 +1,6 @@
 """Integration tests that pin the compile-pod parse-rehearsal markers against a
 REAL dbt (not mocks). These tests exist to empirically prove the assumptions
-that executor-controller's buildParseExportCommand (adapters/k8s/client.go)
+that execution-controller's buildParseExportCommand (adapters/k8s/jobs_create.go)
 hard-codes as shell logic for the rehearsal initContainer. The rehearsal (run
 2) is invoked as `DBT_LOG_LEVEL=debug <parse argv> > rehearse.log 2>&1`, and
 the gate greps rehearse.log for two independent markers:
