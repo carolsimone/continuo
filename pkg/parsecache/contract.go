@@ -15,7 +15,7 @@ package parsecache
 const (
 	// ContainerName is the initContainer name execution-controller assigns to
 	// the parse-cache hydration step, and the key it looks up in
-	// K8sPodResult.InitTerminationMessages to find its outcome.
+	// JobResult.InitTerminationMessages to find its outcome.
 	ContainerName = "hydrate-parse-cache"
 
 	// Hydrated is the termination message the fetcher writes on success (the
