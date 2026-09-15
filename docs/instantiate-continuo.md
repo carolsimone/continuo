@@ -79,8 +79,16 @@ are created in your own GitHub account settings (chapter 8 of the
 [Run dbt and Python projects in continuo](run-projects-in-continuo.md) guide
 walks through the App).
 
+**Where they go.** All three are Helm chart values, not local environment
+variables — the chart stores them in a Kubernetes Secret and injects them as
+env vars into the services that use them. Set them the way section 3 sets
+`llm.apiKey`: `helm upgrade ... --reuse-values --set github.token=...` (plus
+`github.installationId` and `github.appPrivateKey` for the App), then
+`kubectl -n continuo rollout restart` the affected deployment so it picks up
+the new value. Chapter 8 walks through the GitHub ones in full.
+
 Set none of these and you still get the whole platform and the whole walkthrough
-bar the assistant and chapter 8 — a complete story without them.
+except the assistant and chapter 8 — a complete story without them.
 
 **Time.** Budget ten to fifteen minutes end to end, nearly all of it waiting for
 image pulls on the first install.
