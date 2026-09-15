@@ -20,6 +20,11 @@
 #     service that extends continuo-base, which is out of scope here and
 #     risks breaking local dev and the e2e suite that currently passes as
 #     root.
+#
+# scripts/check-dev-dockerfile-nonroot.sh (run by `make guards`) fails the
+# build if any `Dockerfile.base` or `*/Dockerfile.dev` runs as root without
+# appearing below, or if a path below no longer exists — so a new or renamed
+# dev image cannot silently reintroduce the DS002 advisory this list silences.
 misconfigurations:
   - id: AVD-DS-0002 # DS002: image USER should not be 'root'
     paths:
@@ -27,14 +32,22 @@ misconfigurations:
       # `FROM continuo-base:latest`. It is never run directly — only used as
       # a layer cache for `apt-get`/`go install` steps that need root, and a
       # final USER here would flow into every downstream dev image's
-      # COPY/RUN steps (see above), not just the two below.
+      # COPY/RUN steps (see the file header), not just set the base's own user.
       - "Dockerfile.base"
-      # Dev image for agent-chat: docker-compose bind-mounts the working
-      # tree into /app and reads the Go module cache; see the note above.
+      # Go-service dev images: each is `FROM continuo-base:latest`,
+      # docker-compose bind-mounts its working tree into /app and reuses the
+      # root-owned Go module/build cache; several of them additionally mount a
+      # kubeconfig and /var/run/docker.sock for the testcontainers-backed
+      # in-container tests. See the file header for why a non-root USER cannot
+      # be set without breaking the local dev flow and the e2e suite.
       - "agent-chat/Dockerfile.dev"
-      # Dev image for agent-remediation: same bind-mount/cache pattern, plus
-      # a mounted kubeconfig and /var/run/docker.sock for testcontainers.
       - "agent-remediation/Dockerfile.dev"
-      # Dev image for topology-controller: docker-compose bind-mounts the
-      # working tree and the uv-managed virtualenv/cache into /app.
+      - "execution-controller/Dockerfile.dev"
+      - "orchestrator/Dockerfile.dev"
+      - "release-controller/Dockerfile.dev"
+      - "remediation/Dockerfile.dev"
+      - "state/Dockerfile.dev"
+      # Python service (topology-controller) dev image: docker-compose
+      # bind-mounts the working tree and the uv-managed virtualenv/cache into
+      # /app; runs as root for the same host-ownership reason.
       - "topology-controller/Dockerfile.dev"
