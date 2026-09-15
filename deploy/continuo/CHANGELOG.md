@@ -17,8 +17,9 @@ shipped in those.
   `execution-controller` (port 8084), with one database `continuo_execution`
   and one outbox. The migrate job creates and migrates `continuo_execution`
   and no longer touches `continuo_executor` or `continuo_k8s`; those are left
-  in place for the operator to drop. Nothing in flight is carried over: run
-  `scripts/preflight-execution-cutover.sh` and upgrade on GO only. A values
+  in place for the operator to drop. Nothing in flight is carried over, so
+  upgrade only when nothing is in flight: stop the old services and let every
+  run, release and queued retry finish first. A values
   file that overrides either old `services[]` entry must replace both with one
   `execution-controller` entry. RBAC is the union of the two old Roles. The
   `k8s-controller` allow on the state gRPC NetworkPolicy is gone (never used).
