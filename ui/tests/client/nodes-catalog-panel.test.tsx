@@ -9,10 +9,10 @@ const page = {
   nodes: [
     { service_name: 'service-1', schema_name: 'an', table_name: 'fct_orders',
       run_count: 51, success_rate_pct: 82, avg_duration_sec: 34, p95_duration_sec: 69,
-      flaky_rate_pct: 18, last_status: 'failed', last_run_at: '2026-06-08T11:48:00Z' },
+      last_status: 'failed', last_run_at: '2026-06-08T11:48:00Z' },
     { service_name: 'service-2', schema_name: 'an', table_name: 'dim_products',
       run_count: 40, success_rate_pct: 91, avg_duration_sec: 11, p95_duration_sec: 28,
-      flaky_rate_pct: 7, last_status: 'succeeded', last_run_at: '2026-06-08T09:00:00Z' },
+      last_status: 'succeeded', last_run_at: '2026-06-08T09:00:00Z' },
   ],
 };
 
@@ -98,11 +98,11 @@ describe('NodesCatalogPanel', () => {
     const pageNew = { total_count: 1, nodes: [
       { service_name: 'svc', schema_name: 'an', table_name: 'NEW_NODE',
         run_count: 1, success_rate_pct: 100, avg_duration_sec: 1, p95_duration_sec: 1,
-        flaky_rate_pct: 0, last_status: 'succeeded', last_run_at: '2026-06-08T11:00:00Z' } ] };
+        last_status: 'succeeded', last_run_at: '2026-06-08T11:00:00Z' } ] };
     const pageStale = { total_count: 99, nodes: [
       { service_name: 'svc', schema_name: 'an', table_name: 'STALE_NODE',
         run_count: 1, success_rate_pct: 0, avg_duration_sec: 1, p95_duration_sec: 1,
-        flaky_rate_pct: 0, last_status: 'failed', last_run_at: '2026-06-08T10:00:00Z' } ] };
+        last_status: 'failed', last_run_at: '2026-06-08T10:00:00Z' } ] };
     let catalogCall = 0;
     fetchMock.mockReset();
     fetchMock.mockImplementation((url: any) => {

@@ -97,9 +97,11 @@ export default function SchedulerCard({ schedule }: Props) {
   const pct = getScheduleProgressPercent(tasks);
 
   const driftState = drift ? getDriftState(drift.run, drift.latest) : 'fresh';
-  const showDriftStrip = driftState !== 'fresh';
+  // Only a stale run (pinned to an older topology than the latest) warrants a
+  // strip. The 'unknown' state (a run predating topology tracking) is silent.
+  const showDriftStrip = driftState === 'stale';
   const driftBadge = showDriftStrip && drift
-    ? getDriftBadge(driftState as 'stale' | 'unknown', drift.run, drift.latest)
+    ? getDriftBadge('stale', drift.run, drift.latest)
     : null;
 
   const handleClick = () =>
@@ -219,10 +221,10 @@ export default function SchedulerCard({ schedule }: Props) {
         </div>
         {showDriftStrip && driftBadge && (
           <div
-            className={`info-strip ${driftState === 'unknown' ? 'info-strip--neutral' : 'info-strip--warning'}`}
+            className="info-strip info-strip--warning"
             onClick={e => e.stopPropagation()}
           >
-            <span aria-hidden="true">{driftState === 'unknown' ? '?' : '⚠'}</span>
+            <span aria-hidden="true">⚠</span>
             <span>{driftBadge}</span>
           </div>
         )}

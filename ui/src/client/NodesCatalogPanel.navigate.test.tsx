@@ -14,7 +14,6 @@ function node(over: Partial<NodeSummary> = {}): NodeSummary {
     success_rate_pct: 100,
     avg_duration_sec: 5,
     p95_duration_sec: 9,
-    flaky_rate_pct: 0,
     last_status: 'succeeded',
     last_run_at: '2026-05-10T10:00:00Z',
     operation: 'run',

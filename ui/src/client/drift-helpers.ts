@@ -28,13 +28,13 @@ export function getDriftState(
 /**
  * Render the badge label shown next to the Rerun button when the run is
  * pinned to an older topology generation than the latest. Callers invoke
- * this only when state !== 'fresh'.
+ * this only when state === 'stale'; the 'unknown' state (a run that
+ * pre-dates topology tracking) is never surfaced in the UI.
  */
 export function getDriftBadge(
-  state: 'stale' | 'unknown',
+  state: 'stale',
   runGen: number,
   latestGen: number,
 ): string {
-  if (state === 'unknown') return 'topology version unknown';
   return `source ${latestGen - runGen} gen behind latest`;
 }

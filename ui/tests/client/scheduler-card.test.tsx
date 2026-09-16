@@ -170,11 +170,14 @@ describe('SchedulerCard — drift strip', () => {
     expect(strip.closest('.info-strip--warning')).toBeInTheDocument();
   });
 
-  it('renders the neutral unknown strip when run_topology_generation is 0', async () => {
-    installFetch({ graph: { run_topology_generation: 0, latest_topology_generation: 7 } });
+  it('does NOT render a strip when run_topology_generation is 0 (unknown, pre-tracking run)', async () => {
+    const handler = installFetch({ graph: { run_topology_generation: 0, latest_topology_generation: 7 } });
     renderCard(baseSchedule({ is_running: true, last_run_id: 'run-1' }));
-    const strip = await screen.findByText('topology version unknown');
-    expect(strip.closest('.info-strip--neutral')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(handler).toHaveBeenCalled();
+    });
+    expect(screen.queryByText(/topology version unknown/i)).toBeNull();
+    expect(screen.queryByText(/gen behind latest/i)).toBeNull();
   });
 
   it('does NOT render the strip when drift is fresh', async () => {

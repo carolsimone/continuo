@@ -48,7 +48,6 @@ export function createNodesRouter(stateClient: GrpcClient, graphClient: GrpcGrap
           success_rate_pct: nullIfNeg(r.success_rate_pct),
           avg_duration_sec: nullIfNeg(r.avg_duration_sec),
           p95_duration_sec: nullIfNeg(r.p95_duration_sec),
-          flaky_rate_pct:   Number(r.flaky_rate_pct ?? 0),
           last_status:      r.last_status || null,
           last_run_at:      r.last_run_at || null,
           operation:        r.operation ?? 'run',

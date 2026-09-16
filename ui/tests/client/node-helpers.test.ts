@@ -34,7 +34,7 @@ describe('computeNodeStats', () => {
   it('returns 0/null stats when given an empty array', () => {
     expect(computeNodeStats([])).toEqual({
       total: 0, successRatePct: null, avgDurationSec: null,
-      p95DurationSec: null, flakyRatePct: 0, lastStatus: null, lastRunAt: null,
+      p95DurationSec: null, lastStatus: null, lastRunAt: null,
     });
   });
 
@@ -100,7 +100,7 @@ describe('computeNodeStats — extended fields', () => {
     started_at: '2026-06-08T11:00:00Z', completed_at: '2026-06-08T11:00:10Z',
     error_message: null, log_s3_key: null, ...over,
   });
-  it('computes p95, flaky rate, last status/run', () => {
+  it('computes p95, last status/run', () => {
     const runs = [
       mkRunExt({ task_status: 'failed', retry_count: 2, created_at: '2026-06-08T11:30:00Z',
               started_at: '2026-06-08T11:30:00Z', completed_at: '2026-06-08T11:30:30Z' }),
@@ -110,7 +110,6 @@ describe('computeNodeStats — extended fields', () => {
     expect(s.total).toBe(2);
     expect(s.successRatePct).toBe(50);
     expect(s.p95DurationSec).toBe(29); // PERCENTILE_CONT interpolation: 10 + 0.95*20 = 29
-    expect(s.flakyRatePct).toBe(50);
     expect(s.lastStatus).toBe('failed');             // most recent by created_at
     expect(s.lastRunAt).toBe('2026-06-08T11:30:00Z');
   });
@@ -119,7 +118,6 @@ describe('computeNodeStats — extended fields', () => {
     expect(s.total).toBe(0);
     expect(s.successRatePct).toBeNull();
     expect(s.p95DurationSec).toBeNull();
-    expect(s.flakyRatePct).toBe(0);
     expect(s.lastStatus).toBeNull();
   });
   it('counts skipped as a terminal non-success (matches server)', () => {

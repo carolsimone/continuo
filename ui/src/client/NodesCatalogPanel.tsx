@@ -134,7 +134,7 @@ export default function NodesCatalogPanel() {
               <thead>
                 <tr>
                   <th>Node</th><th>Last run</th><th>Success</th>
-                  <th>Runs</th><th>Avg / p95</th><th>Flaky</th>
+                  <th>Runs</th><th>Avg / p95</th>
                 </tr>
               </thead>
               <tbody>
@@ -155,7 +155,6 @@ export default function NodesCatalogPanel() {
                       <td>{pct(n.success_rate_pct)}</td>
                       <td>{n.run_count}</td>
                       <td><code>{durPair(n.avg_duration_sec, n.p95_duration_sec)}</code></td>
-                      <td>{n.flaky_rate_pct}%</td>
                     </tr>
                   );
                 })}

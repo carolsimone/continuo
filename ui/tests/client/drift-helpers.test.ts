@@ -47,8 +47,4 @@ describe('getDriftBadge', () => {
   it('singular when delta is 1', () => {
     expect(getDriftBadge('stale', 7, 8)).toBe('source 1 gen behind latest');
   });
-
-  it('unknown returns generic copy', () => {
-    expect(getDriftBadge('unknown', 0, 8)).toBe('topology version unknown');
-  });
 });
