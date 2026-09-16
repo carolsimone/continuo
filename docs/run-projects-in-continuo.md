@@ -14,10 +14,10 @@ no step needs a cloud account until the optional remediation chapter.
 ## 1. Fork the example projects and read them
 
 ```bash
-# Fork https://github.com/carolsimone/continuo-demo on GitHub first,
+# Fork https://github.com/carolsimone/continuo-demo-docs on GitHub first,
 # then clone your fork:
-git clone https://github.com/<your-username>/continuo-demo.git
-cd continuo-demo
+git clone https://github.com/<your-username>/continuo-demo-docs.git
+cd continuo-demo-docs
 ```
 
 **Fork rather than clone the original, because the code you release has to be
@@ -106,7 +106,7 @@ carries, is in
 
 ### If your project already has its own `generate_schema_name`
 
-The four demo projects each ship continuo's `generate_schema_name` verbatim, so
+The four demo projects each ship continuo's `generate_schema_name` unchanged, so
 you never meet this problem here. A real project often already defines its own —
 a custom schema layout is one of the most common dbt overrides. dbt uses **the
 project's** macro over any packaged one, so dropping continuo's file in next to
@@ -129,8 +129,8 @@ leave your existing logic untouched below it:
 
 `DBT_TARGET_SCHEMA` is set only on continuo's validation leg. On your production
 runs it is unset, control falls straight through to your logic, and your output
-is byte-identical to today — you are only teaching the macro one new rule: *when
-this variable is set, honour it.*
+is exactly the same as today — you are only teaching the macro one new rule:
+*when this variable is set, honour it.*
 
 💡 The one thing to check: if you already use an env var named
 `DBT_TARGET_SCHEMA` for your own purposes, rename one of them so the two don't
@@ -168,8 +168,9 @@ docker.io/library/service-py                           v1                       
 **Why a bare `core:v1` works.** The chart value `global.teamImagePrefix` is empty
 by default, which tells continuo's executor to resolve dbt job images as an
 unprefixed `<service>:<image_tag>`, and it launches them with
-`imagePullPolicy: IfNotPresent`. So an image side-loaded onto the node is found
-and used, and nothing is ever pulled from a registry. Set `teamImagePrefix` to
+`imagePullPolicy: IfNotPresent`. So the image you already loaded onto the node
+with `kind load` is the one it runs, and nothing is ever pulled from a registry.
+Set `teamImagePrefix` to
 your Docker Hub or registry namespace when you move to a real cluster, and the
 same mechanism resolves `yourteam/core:v1` instead.
 
@@ -226,7 +227,7 @@ curl -s -X POST http://localhost:8088/releases \
     "service": "core",
     "image_tag": "v1",
     "bootstrap": true,
-    "repo": "<your-username>/continuo-demo",
+    "repo": "<your-username>/continuo-demo-docs",
     "commit_sha": "'"$(git rev-parse HEAD)"'"
   }' | jq
 ```
@@ -329,7 +330,7 @@ curl -s -X POST http://localhost:8088/releases \
     "service": "marketing",
     "image_tag": "v1",
     "bootstrap": true,
-    "repo": "<your-username>/continuo-demo",
+    "repo": "<your-username>/continuo-demo-docs",
     "commit_sha": "'"$(git rev-parse HEAD)"'"
   }' | jq
 ```
@@ -345,7 +346,7 @@ curl -s -X POST http://localhost:8088/releases \
     "service": "finance",
     "image_tag": "v1",
     "bootstrap": true,
-    "repo": "<your-username>/continuo-demo",
+    "repo": "<your-username>/continuo-demo-docs",
     "commit_sha": "'"$(git rev-parse HEAD)"'"
   }' | jq
 ```
@@ -461,7 +462,7 @@ curl -s -X POST http://localhost:8088/releases \
     "image_tag": "service-py:v1",
     "bootstrap": true,
     "kind": "python",
-    "repo": "<your-username>/continuo-demo",
+    "repo": "<your-username>/continuo-demo-docs",
     "commit_sha": "'"$(git rev-parse HEAD)"'"
   }' | jq
 ```
@@ -492,6 +493,8 @@ the other. continuo derived the ordering from the SQL and the contract.
 ## 5. Run it
 
 Open the UI, pick the `daily` schedule, and press **▶ Trigger run**.
+
+![The daily schedule run in the continuo UI: every node green across all four services after a successful run](img/daily-run-view.png)
 
 You will see nodes move through the graph as continuo dispatches each one as its
 own Kubernetes Job, in dependency order, across all four services — including the
@@ -578,13 +581,13 @@ curl -s -X POST http://localhost:8088/releases \
     "service": "marketing",
     "image_tag": "v2",
     "bootstrap": false,
-    "repo": "<your-username>/continuo-demo",
+    "repo": "<your-username>/continuo-demo-docs",
     "commit_sha": "'"$(git rev-parse HEAD)"'"
   }' | jq
 ```
 
 The stages are the same ones every release walks — but this time `validating`
-is not an instant no-op. It runs for a minute or two, and this is the
+is not instant. It runs for a minute or two, and this is the
 blue/green mechanism at work: continuo created a temporary candidate schema,
 built the release's seeds into it, **cloned the unchanged upstream tables the
 change reads from production** — this is why chapter 4 had to bootstrap —
@@ -633,6 +636,8 @@ production image. In the UI, the graph now shows `channel_roi` downstream of
 finance's `ltv_per_user` — a node that exists but has never run, which chapter 9
 fixes.
 
+![The happy path: `rel-marketing-v2` walks compiling → parsing → validating → promoted, validation passing against production before promotion](img/happy-path-release.png)
+
 ---
 
 ## 7. Break it on purpose
@@ -669,7 +674,7 @@ kind load docker-image finance:v2 --name continuo
 curl -s -X POST http://localhost:8088/releases \
   -H 'content-type: application/json' \
   -d '{"release_id":"rel-finance-v2","service":"finance","image_tag":"v2",
-       "bootstrap":false,"repo":"<your-username>/continuo-demo",
+       "bootstrap":false,"repo":"<your-username>/continuo-demo-docs",
        "commit_sha":"'"$(git rev-parse HEAD)"'"}' | jq
 ```
 
@@ -693,6 +698,8 @@ curl -s http://localhost:8088/releases/rel-finance-v2 | jq '{status, reject_reas
   ]
 }
 ```
+
+![`rel-finance-v2` rejected with `validation_failed`: production is untouched and the failing nodes are flagged across all four projects](img/validation-rejected.png)
 
 💡 The release was rejected, and look at where the damage landed: models in
 **core**, the `channel_roi` you added to **marketing** in the previous
@@ -735,6 +742,8 @@ A rejected release tells you something broke. continuo can also try to fix it.
 reads the failing model's source, asks an LLM for a fix, and surfaces
 the proposal for a human to approve. It never writes to your repository on its
 own — the output is a diff you review, and a pull request you choose to open.
+
+![The rejected release's detail view with no LLM credentials configured: the failure is classified but no fix proposal is offered](img/validation-rejected-details-remediation-absent.png)
 
 There are **two credential tiers**, and they unlock two different things:
 
@@ -786,6 +795,8 @@ rejected earlier, at the parse stage as `invalid_sql`, and healed by the parse
 lane instead (this is the comma trap from chapter 7). When it is rejected this
 time, the proposed fix appears in the UI against the failed release.
 
+![The agent's proposed fix on the rejected release: a diff verified by a real validation run, ready for a human to review and open as a PR](img/llm-remediation-succesful-and-validated.png)
+
 ### Open the PR (GitHub App)
 
 Seeing the proposal needs only the read PAT above. **Creating** the PR from the UI
@@ -805,7 +816,7 @@ Set one up once:
 3. **Generate a private key.** Same page → **Private keys → Generate a private
    key**. A `.pem` file downloads — that file is your `github.appPrivateKey`.
 4. **Install the App on your fork.** App page → **Install App** → install on your
-   account → **Only select repositories → your `continuo-demo` fork**.
+   account → **Only select repositories → your `continuo-demo-docs` fork**.
 5. **Copy the Installation ID.** After installing, the browser URL ends in
    `/installations/<number>` — that number is your `github.installationId`.
 
@@ -879,7 +890,7 @@ kind delete cluster --name continuo
 ```
 
 That removes everything: the cluster, all continuo services, both databases, and
-every image you side-loaded. The only thing left on your machine is the images in
+every image you loaded onto the node. The only thing left on your machine is the images in
 your local Docker daemon, which `docker image rm core:v1 finance:v1 finance:v2
 marketing:v1 marketing:v2 service-py:v1` clears.
 
@@ -908,8 +919,8 @@ curl -s http://localhost:8088/releases | jq '.releases[] | {release_id, status}'
 
 **A python node fails at run time with `carries no explicit tag or digest`,
 and the run never finishes.** The python release was posted with a bare
-`image_tag` like `"v1"`. A python release's `image_tag` is used verbatim as
-the full image reference (`service-py:v1`); with a bare tag the executor
+`image_tag` like `"v1"`. A python release's `image_tag` is used exactly as
+written as the full image reference (`service-py:v1`); with a bare tag the executor
 cannot build the pod spec and the node fails without ever creating a Job.
 Cancel the run, re-release the python service with the full reference (a new
 `release_id`, and re-upload its contract under that id), and run again.
