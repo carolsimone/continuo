@@ -613,6 +613,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
         )}
       </PageHeader>
 
+      <main className="page-content">
       {(name || showRerunFailed) && (
         <div className="page-action-row">
           {name && (
@@ -781,7 +782,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
           </div>
         </div>
       ) : (
-        <>
+        <div className="detail-run">
           <Tabs variant="page" param="panel" defaultSlug="run" tabs={pageTabSpecs} />
           {activePage === 'run' && (
             <div className="run-view">
@@ -834,8 +835,9 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
               onSelectRun={handleSelectRun}
             />
           )}
-        </>
+        </div>
       )}
+      </main>
     </div>
   );
 }
