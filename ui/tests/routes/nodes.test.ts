@@ -169,7 +169,7 @@ describe('nodes router', () => {
     expect(res.body.nodes[0].success_rate_pct).toBeNull(); // -1 -> null
     expect(res.body.nodes[0].avg_duration_sec).toBeNull();
     expect(res.body.nodes[0].p95_duration_sec).toBe(21);
-    expect(res.body.nodes[0].flaky_rate_pct).toBe(4);
+    expect(res.body.nodes[0].flaky_rate_pct).toBeUndefined(); // route no longer forwards it
     expect(res.body.nodes[0].operation).toBe('run');
     expect(res.body.nodes[1].last_status).toBeNull();      // '' -> null
     expect(res.body.nodes[1].last_run_at).toBeNull();

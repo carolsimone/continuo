@@ -534,7 +534,9 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
   const driftLabel: string | null = (() => {
     if (!liveRunGraph) return null;
     const state = getDriftState(liveRunGraph.run_topology_generation, liveRunGraph.latest_topology_generation);
-    if (state === 'fresh') return null;
+    // Only a stale run gets a label; 'unknown' (a run predating topology
+    // tracking) and 'fresh' are silent.
+    if (state !== 'stale') return null;
     return getDriftBadge(
       state,
       Number(liveRunGraph.run_topology_generation ?? 0),
@@ -611,6 +613,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
         )}
       </PageHeader>
 
+      <main className="page-content">
       {(name || showRerunFailed) && (
         <div className="page-action-row">
           {name && (
@@ -779,7 +782,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
           </div>
         </div>
       ) : (
-        <>
+        <div className="detail-run">
           <Tabs variant="page" param="panel" defaultSlug="run" tabs={pageTabSpecs} />
           {activePage === 'run' && (
             <div className="run-view">
@@ -832,8 +835,9 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
               onSelectRun={handleSelectRun}
             />
           )}
-        </>
+        </div>
       )}
+      </main>
     </div>
   );
 }

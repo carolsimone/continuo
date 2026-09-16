@@ -622,10 +622,12 @@ cache, so run status is always fresh.
 ### Drift contract
 
 Per-run `topology_generation = 0` means **drift unknown** (the run was created
-before topology tracking, or the property is unset). Consumers MUST render
-this distinctly from "no drift" — typically as "topology version unknown for
-this run". `:Run` nodes with the property set carry a value `>= 1`; the latest
-is monotonically incremented before any `:Table` stamping, so the invariant is
+before topology tracking, or the property is unset), a state distinct from a
+known generation. The UI surfaces drift only for a *stale* run — one whose
+generation is below `latest_topology_generation` — as a `source N gen behind
+latest` strip; the unknown and up-to-date cases render no strip. `:Run` nodes
+with the property set carry a value `>= 1`; the latest is monotonically
+incremented before any `:Table` stamping, so the invariant is
 `run.topology_generation <= latest_topology_generation`. Inversions are logged
 as warnings by `RunQueryService` but otherwise pass through unmodified.
 

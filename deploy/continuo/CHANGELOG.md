@@ -12,6 +12,31 @@ shipped in those.
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-09-16
+
+Pre-go-live polish of the operator dashboard. Ships an updated `ui` image
+that removes cosmetic rough edges from the Runs and Nodes tabs and the
+schedule detail page; no values-contract change, so an unmodified existing
+values file upgrades unchanged. PATCH.
+
+### Fixed
+- UI: a run predating topology tracking no longer renders a grey "topology
+  version unknown" strip on the Runs dashboard cards or the schedule/node
+  detail headers. That strip read like an error on the home page. Only a run
+  pinned to an older topology than the latest still shows a strip — the amber
+  "source N gen behind latest" warning, which remains a real drift signal.
+- UI: the schedule detail page no longer stretches its Run list and Past runs
+  across the whole monitor. The run-mode tabs and content sit in a centered,
+  width-capped column, and a past-run row shows its status pill next to the
+  timestamp instead of at the far edge, so neither surface reads as a sea of
+  empty space on a wide screen.
+
+### Removed
+- UI: the `Flaky` column on the node catalog and the "% flaky" stat on the
+  node detail header, dropped as a redundant metric. The state gRPC contract
+  is unchanged (`NodeSummary.flaky_rate_pct` still returned); the UI simply
+  stops surfacing it.
+
 ## [0.6.0] - 2026-09-15
 
 ### Breaking

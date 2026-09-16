@@ -216,7 +216,6 @@ export interface NodeSummary {
   success_rate_pct: number | null;
   avg_duration_sec: number | null;
   p95_duration_sec: number | null;
-  flaky_rate_pct: number;
   last_status: string | null;
   last_run_at: string | null;
   operation: string;        // run | test | build

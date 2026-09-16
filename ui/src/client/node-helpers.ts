@@ -16,7 +16,6 @@ export interface NodeStats {
   successRatePct: number | null;
   avgDurationSec: number | null;
   p95DurationSec: number | null;
-  flakyRatePct: number;
   lastStatus: string | null;
   lastRunAt: string | null;
 }
@@ -46,7 +45,7 @@ function percentileCont(sortedAsc: number[], p: number): number {
 export function computeNodeStats(runs: NodeRun[]): NodeStats {
   if (runs.length === 0) {
     return { total: 0, successRatePct: null, avgDurationSec: null,
-             p95DurationSec: null, flakyRatePct: 0, lastStatus: null, lastRunAt: null };
+             p95DurationSec: null, lastStatus: null, lastRunAt: null };
   }
 
   const byRecent = [...runs].sort(
@@ -62,10 +61,8 @@ export function computeNodeStats(runs: NodeRun[]): NodeStats {
   const avgDurationSec = durs.length === 0 ? null : Math.round(durs.reduce((a, b) => a + b, 0) / durs.length);
   const p95DurationSec = durs.length === 0 ? null : Math.round(percentileCont(durs, 0.95));
 
-  const flakyRatePct = Math.round(runs.filter(r => r.retry_count > 0).length / runs.length * 100);
-
   return {
-    total: runs.length, successRatePct, avgDurationSec, p95DurationSec, flakyRatePct,
+    total: runs.length, successRatePct, avgDurationSec, p95DurationSec,
     lastStatus: last.task_status || null, lastRunAt: last.created_at,
   };
 }

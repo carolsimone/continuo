@@ -290,7 +290,6 @@ export default function NodeDetailPage() {
               {stats.successRatePct !== null ? `${stats.successRatePct}% succeeded` : 'no terminal runs'}
               {' · '}avg {formatDuration(stats.avgDurationSec)}
               {' · '}p95 {formatDuration(stats.p95DurationSec)}
-              {' · '}{stats.flakyRatePct}% flaky
               {stats.lastRunAt && <> {' · '}last {formatRelative(stats.lastRunAt)}</>}
             </div>
           </div>
