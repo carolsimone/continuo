@@ -3,10 +3,9 @@
 What continuo does **today** is in the [README](../README.md#-what-it-delivers).
 This page is what comes **next**.
 
-Nothing here is a commitment to a date. Each item carries a **Target date** —
-our best current estimate of when it ships. `TODO` means it is on the list but
-not yet scheduled. Where an item has a tracking issue, it is linked next to the
-date.
+Each item carries a **Target date** — our best current estimate of when it ships. 
+`TODO` means it is on the list but not yet scheduled. Where an item has a tracking 
+issue, it is linked next to the date.
 
 ## Planned
 
@@ -22,13 +21,22 @@ The dbt materialization leg moves to the selected engine too, so a
 Spark/BigQuery/Snowflake install is a full deployment, not a half-Postgres one.
 
 ### Agentic remediation for production run failures
-**Target date:** TODO
+**Target date:** 2026-10-04
 
 The remediation agent already proposes a fix when a *release* is rejected at
 validation. The next step is the same path for a **scheduled run that fails in
 production**: the failure is classified as an event, a fixable one gets an
 LLM-proposed diff, and a human reviews and merges it. Merging stays a human
 decision by design.
+
+### Automatic detection of performance regressions with maintenance agent remediation
+**Target date:** TODO
+
+The graph database already stores every diff and the code of each node, and the
+`state` database has the run history — each node's ancestry and history are
+queryable. The missing piece is using that to flag a node whose run time is
+getting worse and to point at the change that caused it. A "maintenance" agent harness 
+with the right skills propose a solution the data team will have to edit or merge.
 
 ### Standardize every node on the Open Data Contract Standard (ODCS)
 **Target date:** TODO
@@ -60,15 +68,6 @@ streaming producer sees the downstream impact on batch models and the teams that
 own them. The goal is for agents to propose the downstream changes
 automatically, reusing the `agent-remediation` service and the diffs, data
 types, historical diffs, and documentation already stored in the graph database.
-
-### Automatic detection of performance regressions
-**Target date:** TODO
-
-The graph database already stores every diff and the code of each node, and the
-`state` database has the run history — each node's ancestry and history are
-queryable. The missing piece is using that to flag a node whose run time is
-getting worse and to point at the change that caused it.
-
 
 ### Test suite for circular dependencies
 **Target date:** TODO

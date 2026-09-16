@@ -57,6 +57,7 @@ dbt/services-fixed/*/target/
 ui/.superpowers*
 docs/superpowers/*
 docs/future-dev/*
+docs/arch/*
 
 # CLAUDE
 .claude/settings.json
