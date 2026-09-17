@@ -51,6 +51,7 @@ func TestLoad_UnionOfDispatchAndObserveSettings(t *testing.T) {
 	require.Equal(t, 8084, cfg.HTTPPort)
 	require.Equal(t, 50, cfg.MaxConcurrentJobs)
 	require.Equal(t, 10, cfg.K8sCheckDelaySeconds)
+	require.Equal(t, 1, cfg.K8sFirstCheckDelaySeconds)
 	require.Equal(t, 2, cfg.DefaultTaskMaxRetries)
 	require.Equal(t, 50, cfg.LogTailLines)
 	require.Equal(t, 4096, cfg.ErrorMessageMaxLength)

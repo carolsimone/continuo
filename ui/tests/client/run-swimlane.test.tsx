@@ -92,4 +92,41 @@ describe('RunSwimlane', () => {
     expect(startX).toBeGreaterThanOrEqual(cellLeft + 14 - 1);
     expect(startX).toBeLessThanOrEqual(cellLeft + 14 + 1);
   });
+
+  it('starts the node columns after the widest lane label instead of under it', () => {
+    const g = { nodes: [node('core.a.x'), node('a-very-long-service-name.a.y')], edges: [] as GraphEdge[] };
+    const shortOnly = render(
+      <RunSwimlane graph={{ nodes: [node('core.a.x')], edges: [] }} tasks={[]} serviceOrder={['core']} collapsed={new Set()} onLaneToggle={vi.fn()} />,
+    );
+    const shortLeft = parseFloat(shortOnly.container.querySelector<HTMLElement>('.swim-node')!.style.left);
+    shortOnly.unmount();
+    const { container } = render(
+      <RunSwimlane graph={g} tasks={[]} serviceOrder={['core', 'a-very-long-service-name']} collapsed={new Set()} onLaneToggle={vi.fn()} />,
+    );
+    const lefts = Array.from(container.querySelectorAll<HTMLElement>('.swim-node')).map((el) => parseFloat(el.style.left));
+    for (const left of lefts) expect(left).toBeGreaterThan(shortLeft);
+  });
+
+  it('paints status on the node itself and leaves the service colour to the lane label', () => {
+    const { container } = render(
+      <RunSwimlane graph={graph} tasks={tasks} serviceOrder={['core', 'finance']} collapsed={new Set()} onLaneToggle={vi.fn()} />,
+    );
+    expect(container.querySelectorAll('.swim-node.ok').length).toBe(2);
+    expect(container.querySelectorAll('.swim-node.fail').length).toBe(1);
+    for (const el of Array.from(container.querySelectorAll<HTMLElement>('.swim-node'))) {
+      expect(el.style.borderColor).toBe('');
+    }
+    expect(container.querySelectorAll('.swim-lab .swim-dot').length).toBe(2);
+  });
+
+  it('shows a legend that names every status the header counts', () => {
+    const { container } = render(
+      <RunSwimlane graph={graph} tasks={tasks} serviceOrder={['core', 'finance']} collapsed={new Set()} onLaneToggle={vi.fn()} />,
+    );
+    const legend = container.querySelector('.swim-legend')!;
+    expect(legend).toBeTruthy();
+    for (const label of ['succeeded', 'running', 'failed', 'skipped', 'cancelled', 'pending']) {
+      expect(legend.textContent).toContain(label);
+    }
+  });
 });

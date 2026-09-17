@@ -41,6 +41,27 @@ export function intraServiceOrder(
   );
 }
 
+// Width in px of the lane-label column, sized to the widest label so the first
+// node column never starts under a long service name. A label is a chevron, a
+// service-colour dot, the service name and a done/total roll-up pill; widths
+// are estimated from the label's font metrics (12.5px semibold name, 11px
+// pill) since the layout is computed before anything is rendered. Never
+// narrower than the 104px default so short names keep today's proportions.
+export interface LaneLabel { service: string; done: number; total: number; }
+const LABEL_LEFT = 8, CHEVRON_W = 10, DOT_W = 8, LABEL_GAP = 6, LABEL_RIGHT_MARGIN = 16;
+const NAME_CHAR_W = 7.4, PILL_CHAR_W = 6.6, PILL_PAD = 14;
+export const MIN_LANE_LEFT = 104;
+export function laneLabelColumnWidth(labels: LaneLabel[]): number {
+  let widest = 0;
+  for (const l of labels) {
+    const name = l.service.length * NAME_CHAR_W;
+    const pill = `${l.done}/${l.total}`.length * PILL_CHAR_W + PILL_PAD;
+    const w = LABEL_LEFT + CHEVRON_W + LABEL_GAP + DOT_W + LABEL_GAP + name + LABEL_GAP + pill + LABEL_RIGHT_MARGIN;
+    if (w > widest) widest = w;
+  }
+  return Math.max(MIN_LANE_LEFT, Math.ceil(widest));
+}
+
 export interface LaneNode { nodeId: string; service: string; depth: number; x: number; y: number; }
 export interface LaneBand { service: string; top: number; height: number; }
 export interface SwimlaneLayout { nodes: LaneNode[]; bands: LaneBand[]; width: number; height: number; maxDepth: number; }
@@ -52,7 +73,7 @@ export function buildSwimlaneLayout(
   collapsed: Set<string>,
   dims: { col?: number; laneLeft?: number; nodeH?: number; row?: number; top?: number } = {},
 ): SwimlaneLayout {
-  const COL = dims.col ?? 158, LEFT = dims.laneLeft ?? 104, ROW = dims.row ?? 38, TOP = dims.top ?? 32;
+  const COL = dims.col ?? 158, LEFT = dims.laneLeft ?? MIN_LANE_LEFT, ROW = dims.row ?? 38, TOP = dims.top ?? 32;
   const depth = computeDepth(nodeIds, edges);
   const maxDepth = nodeIds.reduce((m, id) => Math.max(m, depth[id] ?? 0), 0);
 

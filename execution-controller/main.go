@@ -228,7 +228,11 @@ func main() {
 			return postgres.NewValidationAggregateRepository(exec)
 		},
 		cfg.MaxConcurrentJobs, logger,
-		deployer.DispatcherConfig{Tick: 5 * time.Second, BatchSize: 50, CheckDelay: time.Duration(cfg.K8sCheckDelaySeconds) * time.Second},
+		deployer.DispatcherConfig{
+			Tick: 5 * time.Second, BatchSize: 50,
+			CheckDelay:      time.Duration(cfg.K8sCheckDelaySeconds) * time.Second,
+			FirstCheckDelay: time.Duration(cfg.K8sFirstCheckDelaySeconds) * time.Second,
+		},
 	)
 	runWorker("deploy_dispatcher", deployDispatcher.Run)
 

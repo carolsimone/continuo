@@ -12,6 +12,21 @@ shipped in those.
 
 ## [Unreleased]
 
+### Added
+- `executionController.env.K8S_FIRST_CHECK_DELAY_SECONDS` (default `"1"`):
+  how long after a Kubernetes Job is created its first status check runs.
+  The first check is what marks a task `running`, so with only the 10s
+  `K8S_CHECK_DELAY_SECONDS` re-check cadence a Job finishing in a few seconds
+  went straight from `pending` to `succeeded` and never showed as running in
+  the UI. New value with a safe default; an unmodified existing values file
+  upgrades unchanged. MINOR.
+
+### Changed
+- UI: the Run tab graph colours each node by its status (tinted fill and
+  border, dashed while pending, struck through when skipped) instead of by
+  service, adds a status legend, and sizes the lane-label column to the
+  longest service name so labels no longer sit under the first node column.
+
 ## [0.6.1] - 2026-09-16
 
 Pre-go-live polish of the operator dashboard. Ships an updated `ui` image

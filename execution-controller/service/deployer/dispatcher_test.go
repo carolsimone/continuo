@@ -151,7 +151,53 @@ func TestDispatch_WritesCheckDelayedTicketOnDeploySuccess(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rows[0].Payload, &dto))
 	require.Equal(t, "job-check-ticket", dto.JobName)
 	require.False(t, dto.RunningAnnounced)
-	require.InDelta(t, time.Now().Add(10*time.Second).Unix(), dto.CheckAfter, 3)
+	// The first check is due after the short first-check delay (default 1s),
+	// not the 10s re-check cadence, so a fast Job is still observed running.
+	require.InDelta(t, time.Now().Add(1*time.Second).Unix(), dto.CheckAfter, 3)
+}
+
+// TestDispatch_FirstCheckUsesFirstCheckDelay proves the dispatcher schedules
+// the first status check with FirstCheckDelay while CheckDelay (the cadence
+// between re-checks of a still-running Job) stays untouched. With a single
+// 10s delay a Job that finishes in a few seconds is never observed running,
+// so the task jumps from pending straight to its terminal status and the UI
+// never shows it as running.
+func TestDispatch_FirstCheckUsesFirstCheckDelay(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+
+	taskID := uuid.New()
+	payload, err := json.Marshal(serialization.DeployTaskFromDomain(command.DeployTask{
+		TaskID: taskID.String(), ScheduleID: uuid.New().String(),
+		ScheduleName: "daily", ServiceName: "dbt", SchemaName: "public",
+		TableName: "orders", JobName: "job-first-check", NodeType: "dbt-model",
+		ImageTag: "sha-abc", TaskRetryCount: 0, TaskMaxRetries: 2,
+	}))
+	require.NoError(t, err)
+	_, err = db.Exec(
+		`INSERT INTO deployments (id, task_id, schedule_id, job_params, max_retries, retry_count, next_attempt_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, NOW() - interval '1 minute')`,
+		uuid.New(), taskID, uuid.New(), payload, 3, 0)
+	require.NoError(t, err)
+
+	d := deployer.NewDispatcher(
+		db, &fakeDeployer{},
+		func(exec outbox.Executor) repository.DeploymentRepository {
+			return postgres.NewDeploymentsRepository(exec, testLogger())
+		},
+		func(exec outbox.Executor) repository.ValidationAggregateRepository {
+			return postgres.NewValidationAggregateRepository(exec)
+		},
+		50, testLogger(),
+		deployer.DispatcherConfig{CheckDelay: 60 * time.Second, FirstCheckDelay: 3 * time.Second},
+	)
+	require.NoError(t, d.ProcessBatch(context.Background()))
+
+	var raw json.RawMessage
+	require.NoError(t, db.Get(&raw, `SELECT payload FROM execution_outbox WHERE aggregate_id = $1`, taskID))
+	var dto serialization.JobCheckRequestDTO
+	require.NoError(t, json.Unmarshal(raw, &dto))
+	require.InDelta(t, time.Now().Add(3*time.Second).Unix(), dto.CheckAfter, 2)
 }
 
 func TestDispatcher_TransientErrorReschedules(t *testing.T) {
