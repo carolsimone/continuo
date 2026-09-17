@@ -113,7 +113,7 @@ kubectl -n continuo get pods -w
 ```
 
 That single `helm install` brings up PostgreSQL, Redis, Neo4j, MinIO, an
-identity provider, and continuo's nine services. It is a quickstart layout meant
+identity provider, and continuo's services. It is a quickstart layout meant
 for evaluation — one static login, no backups, no high availability. Production
 installs bring their own datastores; see
 [deploy/README.md](../deploy/README.md).
@@ -144,16 +144,16 @@ resolve that name at all. One loopback line bridges the two. If you cannot use
 `sudo`, [the chart's README](../deploy/continuo/README.md) shows how to do it
 with a browser resolver rule instead.
 
-You are now looking at an empty continuo. Everything that follows fills it.
+You are now looking at an empty continuo. If you want to run data pipelines into it, 
+follow the [next guide](run-projects-in-continuo.md).
 
 ---
 
 ## 3. Optional: enable the assistant
 
 The panel on the right of the UI is continuo's assistant — ask it about your
-platform in plain language (it has more to say once you load real projects with
-the [Run dbt and Python projects in continuo](run-projects-in-continuo.md)
-guide). It needs an LLM API key; until one is set the panel answers with a
+platform in plain language (it has more to say once you load real projects into it). 
+It needs an LLM API key; until one is set the panel answers with a
 provider error (`x-api-key header is required`).
 
 Set the key and restart the chat service:
