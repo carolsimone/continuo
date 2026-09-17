@@ -45,4 +45,19 @@ describe('GET /api/runs/:run_id/graph', () => {
     expect(res.body.run_topology_generation).toBe(0);
     expect(res.body.latest_topology_generation).toBe(0);
   });
+
+  it('emits edges upstream -> consumer, reversing the DEPENDS_ON edge from the orchestrator', async () => {
+    mockGetRunGraph.mockImplementation((_req: any, cb: any) =>
+      cb(null, {
+        nodes: [],
+        // orders DEPENDS_ON seed_orders
+        edges: [{ from_node_id: 'svc.sales.orders', to_node_id: 'svc.raw.seed_orders' }],
+      })
+    );
+
+    const res = await request(app).get('/api/runs/run-1/graph');
+
+    expect(res.status).toBe(200);
+    expect(res.body.edges).toEqual([{ from_node_id: 'svc.raw.seed_orders', to_node_id: 'svc.sales.orders' }]);
+  });
 });
