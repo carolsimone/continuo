@@ -19,7 +19,7 @@ describe('detail page graph helpers', () => {
           status: 'running',
         },
       ],
-      edges: [{ from_node_id: 'svc.analytics.orders', to_node_id: 'svc.raw.seed_orders' }],
+      edges: [{ from_node_id: 'svc.raw.seed_orders', to_node_id: 'svc.analytics.orders' }],
     };
 
     expect(toScheduleGraph(runGraph)).toEqual({
@@ -31,7 +31,7 @@ describe('detail page graph helpers', () => {
           status: 'running',
         },
       ],
-      edges: [{ from_node_id: 'svc.analytics.orders', to_node_id: 'svc.raw.seed_orders' }],
+      edges: [{ from_node_id: 'svc.raw.seed_orders', to_node_id: 'svc.analytics.orders' }],
     });
   });
 

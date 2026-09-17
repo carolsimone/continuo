@@ -27,6 +27,11 @@ an unmodified existing values file upgrades unchanged. MINOR.
   the UI.
 
 ### Changed
+- UI: dependency graphs on the Run tab (List order, Graph swimlane) and the
+  Topology tab flow in execution order — seeds in the leftmost column,
+  arrows pointing from a table to the tables that read it, and a selected
+  node's highlighted upstreams are the tables it depends on. The UI server
+  reverses the orchestrator's DEPENDS_ON edges once at the API boundary.
 - UI: the Run tab graph colours each node by its status (tinted fill and
   border, dashed while pending, struck through when skipped) instead of by
   service, adds a status legend, and sizes the lane-label column to the

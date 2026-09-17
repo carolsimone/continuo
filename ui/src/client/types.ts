@@ -43,6 +43,10 @@ export interface GraphNode {
   status?: string | null;
 }
 
+// A dependency edge in execution order: `from` runs first, `to` reads its
+// output. The server reverses the orchestrator's DEPENDS_ON edge into this
+// orientation, so depth, column, arrowhead and upstream/downstream all follow
+// from it directly.
 export interface GraphEdge {
   from_node_id: string;
   to_node_id: string;

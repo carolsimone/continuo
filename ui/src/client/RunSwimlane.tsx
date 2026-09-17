@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import type { GraphNode, GraphEdge, Task } from './types';
 import { buildSwimlaneLayout, laneLabelColumnWidth } from './run-graph-helpers';
 import { serviceOfNode, buildServiceColors, rollupStatus } from './service-helpers';
@@ -35,25 +36,30 @@ export default function RunSwimlane({
   collapsed: Set<string>;
   onLaneToggle: (service: string) => void;
 }) {
-  const nodeIds = graph.nodes.map((n) => n.node_id);
   const colors = buildServiceColors(serviceOrder);
-  const statusById = new Map(graph.nodes.map((n) => [n.node_id, resolveNodeStatus(n, tasks)]));
-
-  const laneRollup = (service: string) => {
-    const statuses = graph.nodes
-      .filter((n) => serviceOfNode(n.node_id) === service)
-      .map((n) => statusById.get(n.node_id)!);
-    const done = statuses.filter(
-      (s) => s === 'succeeded' || s === 'failed' || s === 'skipped' || s === 'cancelled',
-    ).length;
-    return { done, total: statuses.length, roll: rollupStatus(statuses) };
-  };
-  const rollups = new Map(serviceOrder.map((s) => [s, laneRollup(s)]));
-  const laneLeft = laneLabelColumnWidth(
-    serviceOrder.map((s) => ({ service: s, done: rollups.get(s)!.done, total: rollups.get(s)!.total })),
-  );
-  const layout = buildSwimlaneLayout(nodeIds, graph.edges, serviceOrder, collapsed, { laneLeft });
-  const pos = new Map(layout.nodes.map((n) => [n.nodeId, n]));
+  // Status, lane roll-ups and the whole layout depend only on the graph, the
+  // tasks, the service order and the collapse state; they are memoised so a
+  // large DAG is laid out once per poll rather than on every render.
+  const { statusById, rollups, layout, pos } = useMemo(() => {
+    const statusById = new Map(graph.nodes.map((n) => [n.node_id, resolveNodeStatus(n, tasks)]));
+    const laneRollup = (service: string) => {
+      const statuses = graph.nodes
+        .filter((n) => serviceOfNode(n.node_id) === service)
+        .map((n) => statusById.get(n.node_id)!);
+      const done = statuses.filter(
+        (s) => s === 'succeeded' || s === 'failed' || s === 'skipped' || s === 'cancelled',
+      ).length;
+      return { done, total: statuses.length, roll: rollupStatus(statuses) };
+    };
+    const rollups = new Map(serviceOrder.map((s) => [s, laneRollup(s)]));
+    const laneLeft = laneLabelColumnWidth(
+      serviceOrder.map((s) => ({ service: s, done: rollups.get(s)!.done, total: rollups.get(s)!.total })),
+    );
+    const nodeIds = graph.nodes.map((n) => n.node_id);
+    const layout = buildSwimlaneLayout(nodeIds, graph.edges, serviceOrder, collapsed, { laneLeft });
+    const pos = new Map(layout.nodes.map((n) => [n.nodeId, n]));
+    return { statusById, rollups, layout, pos };
+  }, [graph, tasks, serviceOrder, collapsed]);
 
   return (
     <>

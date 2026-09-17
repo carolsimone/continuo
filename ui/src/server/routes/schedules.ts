@@ -15,6 +15,19 @@ function toISO(ts: ProtoTimestamp | null | undefined): string | null {
   return new Date(ms).toISOString();
 }
 
+// The orchestrator returns each graph edge as the Neo4j DEPENDS_ON relationship
+// it is stored as: `from` is the consumer, `to` is the table it reads. Every
+// client view (dependency depth, swimlane columns, arrowheads, the selected
+// node's upstream/downstream sets, the topology layout) reads an edge as
+// "`from` runs before `to`", so the edge is reversed exactly once here, at the
+// boundary, into execution order.
+function executionOrderEdges(edges: any[] | undefined) {
+  return (edges || []).map((e: any) => ({
+    from_node_id: e.to_node_id,
+    to_node_id: e.from_node_id,
+  }));
+}
+
 export function createSchedulesRouter(stateClient: GrpcClient, graphClient: GrpcGraphClient) {
   const router = Router();
 
@@ -53,10 +66,7 @@ export function createSchedulesRouter(stateClient: GrpcClient, graphClient: Grpc
         node_type: n.node_type,
         schedule_name: n.schedule_name,
       }));
-      const edges = (graphResp.edges || []).map((e: any) => ({
-        from_node_id: e.from_node_id,
-        to_node_id: e.to_node_id,
-      }));
+      const edges = executionOrderEdges(graphResp.edges);
       const topology_generation = Number(graphResp.topology_generation ?? 0);
       res.json({ nodes, edges, topology_generation });
     });
@@ -130,10 +140,7 @@ export function createRunsRouter(graphClient: GrpcGraphClient) {
         schedule_name: n.schedule_name,
         status: typeof n.status === 'string' ? n.status.toLowerCase() : null,
       }));
-      const edges = (resp.edges || []).map((e: any) => ({
-        from_node_id: e.from_node_id,
-        to_node_id: e.to_node_id,
-      }));
+      const edges = executionOrderEdges(resp.edges);
       res.json({
         nodes,
         edges,
