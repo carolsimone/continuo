@@ -153,11 +153,12 @@ var _ outbox.Repository = (*fakeOutboxRepo)(nil)
 
 func silentDispatcher(dep deploy.Deployer) *Dispatcher {
 	return &Dispatcher{
-		deployer:   dep,
-		logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
-		backoff:    model.BackoffPolicy{Base: time.Second, Cap: time.Minute},
-		now:        time.Now,
-		checkDelay: 10 * time.Second,
+		deployer:        dep,
+		logger:          slog.New(slog.NewTextHandler(io.Discard, nil)),
+		backoff:         model.BackoffPolicy{Base: time.Second, Cap: time.Minute},
+		now:             time.Now,
+		checkDelay:      10 * time.Second,
+		firstCheckDelay: time.Second,
 	}
 }
 

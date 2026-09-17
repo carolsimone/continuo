@@ -29,6 +29,11 @@ type Config struct {
 	MaxConcurrentJobs int
 	// K8sCheckDelaySeconds is the delay between two status checks of a running Job.
 	K8sCheckDelaySeconds int
+	// K8sFirstCheckDelaySeconds is how long after a Job is created its first
+	// status check is due. It is deliberately short: the first check is what
+	// announces the task as RUNNING, and a Job that finishes before it is
+	// never observed running at all.
+	K8sFirstCheckDelaySeconds int
 	// DefaultTaskMaxRetries applies when a dispatch carries no retry budget.
 	DefaultTaskMaxRetries int
 	// LogTailLines is how many trailing log lines feed the error message.
@@ -57,13 +62,14 @@ func Load(v *pkgconfig.Validator) Config {
 		CancelledSchedulesTTLHours:         envInt("CANCELLED_SCHEDULES_TTL_HOURS", 24),
 		CancelledSchedulesSweepIntervalMin: envInt("CANCELLED_SCHEDULES_SWEEP_INTERVAL_MINUTES", 60),
 
-		HTTPPort:              envInt("HTTP_PORT", 8084),
-		K8sNamespace:          v.Require("K8S_NAMESPACE"),
-		MaxConcurrentJobs:     envInt("MAX_CONCURRENT_JOBS", 50),
-		K8sCheckDelaySeconds:  envInt("K8S_CHECK_DELAY_SECONDS", 10),
-		DefaultTaskMaxRetries: envInt("DEFAULT_TASK_MAX_RETRIES", 2),
-		LogTailLines:          envInt("LOG_TAIL_LINES", 50),
-		ErrorMessageMaxLength: envInt("ERROR_MESSAGE_MAX_LENGTH", 4096),
+		HTTPPort:                  envInt("HTTP_PORT", 8084),
+		K8sNamespace:              v.Require("K8S_NAMESPACE"),
+		MaxConcurrentJobs:         envInt("MAX_CONCURRENT_JOBS", 50),
+		K8sCheckDelaySeconds:      envInt("K8S_CHECK_DELAY_SECONDS", 10),
+		K8sFirstCheckDelaySeconds: envInt("K8S_FIRST_CHECK_DELAY_SECONDS", 1),
+		DefaultTaskMaxRetries:     envInt("DEFAULT_TASK_MAX_RETRIES", 2),
+		LogTailLines:              envInt("LOG_TAIL_LINES", 50),
+		ErrorMessageMaxLength:     envInt("ERROR_MESSAGE_MAX_LENGTH", 4096),
 
 		ShutdownGrace: pkgconfig.EnvDurationOrDefault("SHUTDOWN_GRACE", defaultShutdownGrace),
 	}

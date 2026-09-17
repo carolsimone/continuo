@@ -42,26 +42,33 @@ type DispatcherConfig struct {
 	BatchSize   int           // max rows per batch (also clamped by headroom); default 50
 	BackoffBase time.Duration // first retry delay; default 5s
 	BackoffCap  time.Duration // max retry delay; default 2m
-	// CheckDelay is how long after a Job is created its first status check is
-	// due; default 10s.
+	// CheckDelay is the cadence between two status checks of a Job that is
+	// still running; default 10s. The job-status handler owns the re-checks,
+	// the dispatcher only carries the value so both sides read one setting.
 	CheckDelay time.Duration
+	// FirstCheckDelay is how long after a Job is created its first status
+	// check is due; default 1s. The first check is what announces RUNNING, so
+	// it must land before a fast Job completes or the task is never seen
+	// running.
+	FirstCheckDelay time.Duration
 }
 
 // Dispatcher drains deployments under a concurrency cap. The K8s
 // deploy is a command effect kept off the outbox so every outbox Publisher
 // stays a uniform marshal-and-XADD.
 type Dispatcher struct {
-	db            *sqlx.DB
-	deployer      deploy.Deployer
-	newRepo       RepoFactory
-	newAggRepo    ValidationAggRepoFactory
-	maxConcurrent int
-	logger        *slog.Logger
-	tick          time.Duration
-	batchSize     int
-	backoff       model.BackoffPolicy
-	now           func() time.Time
-	checkDelay    time.Duration
+	db              *sqlx.DB
+	deployer        deploy.Deployer
+	newRepo         RepoFactory
+	newAggRepo      ValidationAggRepoFactory
+	maxConcurrent   int
+	logger          *slog.Logger
+	tick            time.Duration
+	batchSize       int
+	backoff         model.BackoffPolicy
+	now             func() time.Time
+	checkDelay      time.Duration
+	firstCheckDelay time.Duration
 }
 
 func NewDispatcher(
@@ -88,18 +95,22 @@ func NewDispatcher(
 	if cfg.CheckDelay == 0 {
 		cfg.CheckDelay = 10 * time.Second
 	}
+	if cfg.FirstCheckDelay == 0 {
+		cfg.FirstCheckDelay = 1 * time.Second
+	}
 	return &Dispatcher{
-		db:            db,
-		deployer:      deployer,
-		newRepo:       newRepo,
-		newAggRepo:    newAggRepo,
-		maxConcurrent: maxConcurrent,
-		logger:        logger,
-		tick:          cfg.Tick,
-		batchSize:     cfg.BatchSize,
-		backoff:       model.BackoffPolicy{Base: cfg.BackoffBase, Cap: cfg.BackoffCap},
-		now:           time.Now,
-		checkDelay:    cfg.CheckDelay,
+		db:              db,
+		deployer:        deployer,
+		newRepo:         newRepo,
+		newAggRepo:      newAggRepo,
+		maxConcurrent:   maxConcurrent,
+		logger:          logger,
+		tick:            cfg.Tick,
+		batchSize:       cfg.BatchSize,
+		backoff:         model.BackoffPolicy{Base: cfg.BackoffBase, Cap: cfg.BackoffCap},
+		now:             time.Now,
+		checkDelay:      cfg.CheckDelay,
+		firstCheckDelay: cfg.FirstCheckDelay,
 	}
 }
 
@@ -465,7 +476,10 @@ func (d *Dispatcher) settleFailedCompile(ctx context.Context, repo repository.De
 // just created. The row is a check_delayed ticket: the publisher parks it in
 // the delay queue and the promoter moves it onto check.k8s:v1 once due. The
 // job-status handler then polls the Job to a terminal state. running_announced
-// is false so the handler announces RUNNING once for a production task.
+// is false so the handler announces RUNNING once for a production task. The
+// ticket is due after firstCheckDelay (short) rather than checkDelay (the
+// re-check cadence) so that even a Job lasting a couple of seconds is observed
+// running before it completes.
 //
 // A candidate Job (validation, seed-build, compile) carries the deterministic
 // synthetic task and schedule UUIDs derived from (release_id, node_id): the
@@ -493,7 +507,7 @@ func (d *Dispatcher) writeFirstCheck(ctx context.Context, outboxRepo outbox.Repo
 			JobName: vc.JobName, NodeType: vc.NodeType, ImageTag: vc.ImageTag,
 		}
 	}
-	req.CheckAfter = d.now().Add(d.checkDelay).Unix()
+	req.CheckAfter = d.now().Add(d.firstCheckDelay).Unix()
 	req.RunningAnnounced = false
 
 	body, err := json.Marshal(serialization.JobCheckRequestFromDomain(req))

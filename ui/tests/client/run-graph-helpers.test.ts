@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeDepth, intraServiceOrder, buildSwimlaneLayout } from '../../src/client/run-graph-helpers';
+import { computeDepth, intraServiceOrder, buildSwimlaneLayout, laneLabelColumnWidth } from '../../src/client/run-graph-helpers';
 import type { GraphEdge } from '../../src/client/types';
 
 const e = (from: string, to: string): GraphEdge => ({ from_node_id: from, to_node_id: to });
@@ -96,5 +96,26 @@ describe('buildSwimlaneLayout', () => {
     const coreNodes = L.nodes.filter((n) => n.service === 'core');
     expect(new Set(coreNodes.map((n) => n.y)).size).toBe(1); // collapsed → single row
     expect(new Set(coreNodes.map((n) => n.x)).size).toBe(2); // but distinct x, not stacked at one point
+  });
+});
+
+describe('laneLabelColumnWidth', () => {
+  it('grows with the longest service name so nodes never start under a label', () => {
+    const short = laneLabelColumnWidth([{ service: 'core', done: 8, total: 8 }]);
+    const long = laneLabelColumnWidth([{ service: 'service-py', done: 2, total: 2 }]);
+    expect(long).toBeGreaterThan(short);
+  });
+
+  it('never shrinks below the default lane-left offset', () => {
+    expect(laneLabelColumnWidth([{ service: 'a', done: 0, total: 1 }])).toBeGreaterThanOrEqual(104);
+    expect(laneLabelColumnWidth([])).toBeGreaterThanOrEqual(104);
+  });
+
+  it('is driven by the widest label, not the first', () => {
+    const w = laneLabelColumnWidth([
+      { service: 'core', done: 8, total: 8 },
+      { service: 'a-much-longer-service-name', done: 10, total: 12 },
+    ]);
+    expect(w).toBe(laneLabelColumnWidth([{ service: 'a-much-longer-service-name', done: 10, total: 12 }]));
   });
 });
