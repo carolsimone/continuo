@@ -679,25 +679,6 @@ curl -s -X POST http://localhost:8088/releases \
 
 This time it ends differently:
 
-```bash
-curl -s http://localhost:8088/releases/rel-finance-v2 | jq '{status, reject_reason, failing_nodes}'
-```
-
-```json
-{
-  "status": "rejected",
-  "reject_reason": "validation_failed",
-  "failing_nodes": [
-    "analytics.channel_roi",
-    "analytics.daily_transactions",
-    "analytics.dbt_daily_kpis",
-    "analytics.ltv_per_user",
-    "analytics.py_daily_kpis",
-    "analytics.revenue_per_user"
-  ]
-}
-```
-
 ![`rel-finance-v2` rejected with `validation_failed`: production is untouched and the failing nodes are flagged across all four projects](img/validation-rejected.png)
 
 💡 The release was rejected, and look at where the damage landed: models in
@@ -794,9 +775,9 @@ OpenAI, add `--set llm.provider=openai --set llm.model=<model>`.
 `--reuse-values` preserves anything you set at install; if you installed on pure
 defaults you can drop it.
 
-Then restart the agent so it picks the credentials up — the upgrade changes only
+**Then restart the agent so it picks the credentials up — the upgrade changes only
 the Secret, and a Secret change alone does not restart the pod that reads it at
-startup:
+startup**:
 
 ```bash
 kubectl -n continuo rollout restart deploy/agent-remediation
