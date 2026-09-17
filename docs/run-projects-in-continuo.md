@@ -633,8 +633,7 @@ against it. Nobody declared those relationships anywhere.
 
 Only because all of that passed did `marketing:v2` become marketing's
 production image. In the UI, the graph now shows `channel_roi` downstream of
-finance's `ltv_per_user` — a node that exists but has never run, which chapter 9
-fixes.
+finance's `ltv_per_user` — a node that exists but has never run.
 
 ![The happy path: `rel-marketing-v2` walks compiling → parsing → validating → promoted, validation passing against production before promotion](img/happy-path-release.png)
 
@@ -764,7 +763,23 @@ to exist there. Commit and push your change to your fork, and use that commit:
 git add services/finance && git commit -m "break amount_eur" && git push
 ```
 
-Then set the LLM key and the read-only PAT, and upgrade:
+**Create the read-only PAT.** `github.token` is a GitHub fine-grained personal
+access token; `agent-remediation` uses it to read your fork's source over the
+GitHub API at `repo@commit_sha`. Create one once:
+
+1. **Open the token page.** GitHub → your avatar → **Settings → Developer
+   settings → Personal access tokens → Fine-grained tokens → Generate new
+   token**.
+2. **Name and scope it.** Give it any name, set an expiration, and under
+   **Repository access** choose **Only select repositories → your
+   `continuo-demo-docs` fork**.
+3. **Grant read-only contents.** Under **Repository permissions**, set
+   **Contents: Read-only**. Leave every other permission at **No access** —
+   that is all continuo needs.
+4. **Generate and copy it.** Click **Generate token** and copy the value; GitHub
+   shows it once. That string is your `github.token`.
+
+Then set the LLM key and this PAT, and upgrade:
 
 ```bash
 helm upgrade continuo oci://ghcr.io/carolsimone/charts/continuo \
@@ -774,8 +789,7 @@ helm upgrade continuo oci://ghcr.io/carolsimone/charts/continuo \
 ```
 
 `llm.provider` defaults to `anthropic` and `llm.model` to `claude-haiku-4-5`. For
-OpenAI, add `--set llm.provider=openai --set llm.model=<model>`. The PAT is a
-fine-grained token that needs only **read** access to your fork's contents.
+OpenAI, add `--set llm.provider=openai --set llm.model=<model>`.
 
 `--reuse-values` preserves anything you set at install; if you installed on pure
 defaults you can drop it.
