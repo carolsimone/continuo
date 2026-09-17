@@ -24,8 +24,7 @@ an unmodified existing values file upgrades unchanged. MINOR.
   The first check is what marks a task `running`, so with only the 10s
   `K8S_CHECK_DELAY_SECONDS` re-check cadence a Job finishing in a few seconds
   went straight from `pending` to `succeeded` and never showed as running in
-  the UI. New value with a safe default; an unmodified existing values file
-  upgrades unchanged. MINOR.
+  the UI.
 
 ### Changed
 - UI: the Run tab graph colours each node by its status (tinted fill and
