@@ -12,6 +12,12 @@ shipped in those.
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-09-17
+
+Fast tasks are now observed `running`, and the Run tab graph reads status
+at a glance. Adds one execution-controller env value with a safe default;
+an unmodified existing values file upgrades unchanged. MINOR.
+
 ### Added
 - `executionController.env.K8S_FIRST_CHECK_DELAY_SECONDS` (default `"1"`):
   how long after a Kubernetes Job is created its first status check runs.

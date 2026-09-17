@@ -768,7 +768,7 @@ Then set the LLM key and the read-only PAT, and upgrade:
 
 ```bash
 helm upgrade continuo oci://ghcr.io/carolsimone/charts/continuo \
-  --version 0.6.1 -n continuo --reuse-values \
+  --version 0.6.2 -n continuo --reuse-values \
   --set llm.apiKey='<your-api-key>' \
   --set github.token='<your-read-only-PAT>'
 ```
@@ -825,7 +825,7 @@ has newlines that `--set` mangles), so pass it with `--set-file`:
 
 ```bash
 helm upgrade continuo oci://ghcr.io/carolsimone/charts/continuo \
-  --version 0.6.1 -n continuo --reuse-values \
+  --version 0.6.2 -n continuo --reuse-values \
   --set github.appId='<app-id>' \
   --set github.installationId='<installation-id>' \
   --set-file github.appPrivateKey=/path/to/downloaded-key.pem
