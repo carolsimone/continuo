@@ -25,7 +25,7 @@ code you can change — and, in chapter 8, push.**
 
 The repository holds seven services under `services/`. Three of them —
 `service-1`, `service-2`, `service-3` — are test scaffolding lifted from
-continuo's own end-to-end suite, full of deliberate failure nodes. Ignore those.
+continuo's own end-to-end suite.
 
 Four matter here. `core`, `finance`, and `marketing` are ordinary,
 self-contained dbt projects: each with its own `dbt_project.yml`,
