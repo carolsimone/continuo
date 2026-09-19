@@ -61,6 +61,9 @@ func (f *fakeStateStatus) CancelSchedule(_ context.Context, _, _, _ string) (*st
 func (f *fakeStateStatus) ListNodeRuns(_ context.Context, _, _, _, _ string, _ int32) (*statev1.ListNodeRunsResponse, error) {
 	panic("ListNodeRuns should not be called in schedule tests")
 }
+func (f *fakeStateStatus) ListNodes(_ context.Context, _, _, _ string, _, _ int32) (*statev1.ListNodesResponse, error) {
+	panic("ListNodes should not be called in schedule tests")
+}
 
 func (f *fakeStateStatus) TriggerNodeRun(_ context.Context, _, _, _, _ string) (*statev1.TriggerSingleNodeRunResponse, error) {
 	panic("TriggerNodeRun should not be called in schedule tests")

@@ -47,6 +47,19 @@ type fakeNodeState struct {
 	gotBuildSvc    string
 	gotBuildSchema string
 	gotBuildTable  string
+
+	listResp         *statev1.ListNodesResponse
+	listErr          error
+	gotListSearch    string
+	gotListService   string
+	gotListOperation string
+	gotListLimit     int32
+	gotListOffset    int32
+}
+
+func (f *fakeNodeState) ListNodes(_ context.Context, search, service, operation string, limit, offset int32) (*statev1.ListNodesResponse, error) {
+	f.gotListSearch, f.gotListService, f.gotListOperation, f.gotListLimit, f.gotListOffset = search, service, operation, limit, offset
+	return f.listResp, f.listErr
 }
 
 func (f *fakeNodeState) ListNodeRuns(_ context.Context, service, schema, table, operation string, limit int32) (*statev1.ListNodeRunsResponse, error) {

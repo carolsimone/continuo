@@ -27,6 +27,7 @@ func NewCommand(cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 		Use:   "node",
 		Short: "Operate on individual dbt model nodes",
 	}
+	cmd.AddCommand(NewListCommand(defaultFactory, cfg, stdout, stderr))
 	cmd.AddCommand(NewHistoryCommand(defaultFactory, defaultOrchestratorFactory, cfg, stdout, stderr))
 	cmd.AddCommand(NewTriggerCommand(defaultFactory, cfg, stdout, stderr))
 	cmd.AddCommand(NewTestCommand(defaultFactory, cfg, stdout, stderr))
