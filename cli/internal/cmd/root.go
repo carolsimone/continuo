@@ -59,6 +59,22 @@ func executeWith(args []string, stdout, stderr io.Writer) int {
 		return nil
 	}
 
+	// A value pflag cannot parse (a non-numeric or overflowing --limit) or a
+	// flag the command does not define fails before any command's Args
+	// validator runs, so it is mapped to the usage envelope here, once for
+	// every command. Parsing stopped at the bad flag, so --human is honoured
+	// only when it appeared before it; otherwise the JSON envelope is emitted.
+	root.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
+		e := output.NewUsageError(err.Error())
+		human, _ := cmd.Flags().GetBool("human")
+		if human {
+			_ = output.HumanError(stderr, e)
+		} else {
+			_ = output.EmitError(stdout, e)
+		}
+		return e
+	})
+
 	root.AddCommand(schedule.NewCommand(cfg, stdout, stderr))
 	root.AddCommand(node.NewCommand(cfg, stdout, stderr))
 	root.AddCommand(precedents.NewCommand(cfg, stdout, stderr))
