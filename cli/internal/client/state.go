@@ -20,6 +20,7 @@ type StateClient interface {
 	ListTasks(ctx context.Context, scheduleID string, status statev1.TaskStatus, pageSize, pageOffset int32) (*statev1.ListTasksResponse, error)
 	CancelSchedule(ctx context.Context, scheduleName, reason, by string) (*statev1.CancelScheduleResponse, error)
 	ListNodeRuns(ctx context.Context, service, schema, table, operation string, limit int32) (*statev1.ListNodeRunsResponse, error)
+	ListNodes(ctx context.Context, search, service, operation string, limit, offset int32) (*statev1.ListNodesResponse, error)
 	TriggerNodeRun(ctx context.Context, service, schema, table, actor string) (*statev1.TriggerSingleNodeRunResponse, error)
 	TriggerNodeTest(ctx context.Context, service, schema, table, actor string) (*statev1.TriggerSingleNodeRunResponse, error)
 	TriggerNodeBuild(ctx context.Context, service, schema, table, actor string) (*statev1.TriggerSingleNodeRunResponse, error)
@@ -89,6 +90,16 @@ func (c *stateGRPCClient) CancelSchedule(ctx context.Context, scheduleName, reas
 // pkg/identity.MetadataKey, which the CLI cannot import (public-gRPC-only rule),
 // so the literal is duplicated here deliberately.
 const userIDMetadataKey = "x-continuo-user-id"
+
+func (c *stateGRPCClient) ListNodes(ctx context.Context, search, service, operation string, limit, offset int32) (*statev1.ListNodesResponse, error) {
+	return c.api.ListNodes(ctx, &statev1.ListNodesRequest{
+		Search:      search,
+		ServiceName: service,
+		Operation:   operation,
+		Limit:       limit,
+		Offset:      offset,
+	})
+}
 
 func (c *stateGRPCClient) ListNodeRuns(ctx context.Context, service, schema, table, operation string, limit int32) (*statev1.ListNodeRunsResponse, error) {
 	return c.api.ListNodeRuns(ctx, &statev1.ListNodeRunsRequest{

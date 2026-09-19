@@ -11,6 +11,7 @@ Multiple commands implemented:
 continuo schedule trigger <schedule-name>
 continuo schedule list
 continuo schedule graph <schedule-name>
+continuo node list [--search <table>] [--service <name>] [--operation run|test|build] [--limit N] [--offset N]
 ```
 
 More verbs (status, cancel, logs) will follow the same output and
@@ -94,6 +95,30 @@ Success prints a JSON object to stdout:
 ```
 
 Requires `--orchestrator-endpoint` or `CONTINUO_ORCHESTRATOR_ADDR` to be set correctly.
+
+### `node list`
+
+Lists the node catalog with per-node run statistics, one page at a time.
+Calls StateService.ListNodes. This is the command that turns a bare table
+name into the `<service> <schema> <table>` triple every other `node`
+subcommand takes. Success prints a JSON object to stdout:
+
+```json
+{"total_count":7,"nodes":[{"service_name":"finance","schema_name":"analytics","table_name":"orders","run_count":12,"success_rate_pct":92,"avg_duration_sec":34,"p95_duration_sec":80,"flaky_rate_pct":8,"last_status":"succeeded","last_run_at":"2026-09-18T10:00:00Z","operation":"run"}]}
+```
+
+| Flag          | Default | Meaning                                                                 |
+|---------------|---------|-------------------------------------------------------------------------|
+| `--search`    | `""`    | Table name; case-insensitive **exact** match, not a substring           |
+| `--service`   | `""`    | Exact service name filter                                               |
+| `--operation` | `run`   | Which operation's runs feed the statistics: `run`, `test`, `build`      |
+| `--limit`     | `50`    | Page size, 1..200; outside that range is a usage error (exit 2)         |
+| `--offset`    | `0`     | Rows to skip; `total_count` tells the caller when another page exists   |
+
+`success_rate_pct`, `avg_duration_sec` and `p95_duration_sec` are omitted
+when the state service has nothing to measure for that node; `last_run_at`
+is omitted for a node that never ran. With `--human`, stderr gets one line
+per node and a trailing `showing <first>-<last> of <total>` line.
 
 ## Exit codes
 

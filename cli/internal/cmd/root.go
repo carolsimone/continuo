@@ -59,6 +59,22 @@ func executeWith(args []string, stdout, stderr io.Writer) int {
 		return nil
 	}
 
+	// A value pflag cannot parse (a non-numeric or overflowing --limit) or a
+	// flag the command does not define fails before any command's Args
+	// validator runs, so it is mapped to the usage envelope here, once for
+	// every command. Parsing stopped at the bad flag, so --human is honoured
+	// only when it appeared before it; otherwise the JSON envelope is emitted.
+	root.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
+		e := output.NewUsageError(err.Error())
+		human, _ := cmd.Flags().GetBool("human")
+		if human {
+			_ = output.HumanError(stderr, e)
+		} else {
+			_ = output.EmitError(stdout, e)
+		}
+		return e
+	})
+
 	root.AddCommand(schedule.NewCommand(cfg, stdout, stderr))
 	root.AddCommand(node.NewCommand(cfg, stdout, stderr))
 	root.AddCommand(precedents.NewCommand(cfg, stdout, stderr))
@@ -75,5 +91,25 @@ func executeWith(args []string, stdout, stderr io.Writer) int {
 	if errors.As(err, &cliErr) {
 		return cliErr.ExitCode()
 	}
-	return 1
+	// Every command and the flag-error handler return a CLIError, so anything
+	// else comes from cobra's own dispatch: a command name it cannot resolve.
+	// That is rejected before any flag is parsed, so --human is read from the
+	// raw arguments rather than from the flag set.
+	e := output.NewUsageError(err.Error())
+	if rawHumanFlag(args) {
+		_ = output.HumanError(stderr, e)
+	} else {
+		_ = output.EmitError(stdout, e)
+	}
+	return e.ExitCode()
+}
+
+// rawHumanFlag reports whether --human appears among the unparsed arguments.
+func rawHumanFlag(args []string) bool {
+	for _, a := range args {
+		if a == "--human" || a == "--human=true" {
+			return true
+		}
+	}
+	return false
 }
