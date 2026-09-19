@@ -105,7 +105,10 @@ func collectCommands(root *cobra.Command) []describeCmd {
 		if c.Name() == "help" || c.Name() == "completion" || c.Hidden {
 			return
 		}
-		if c.Runnable() {
+		// A group command (schedule, node) is runnable only so that an unknown
+		// subcommand name is reported through the usage envelope; it is not a
+		// command an LLM invokes, so it is walked for its children and not listed.
+		if c.Runnable() && !c.HasSubCommands() {
 			out = append(out, toDescribeCmd(root, c))
 		}
 		for _, child := range c.Commands() {

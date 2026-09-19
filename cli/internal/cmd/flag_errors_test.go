@@ -54,3 +54,40 @@ func TestFlagParseFailure_HumanModeWritesErrorToStderr(t *testing.T) {
 	assert.Contains(t, errBuf.String(), "Error [usage]")
 	assert.Contains(t, errBuf.String(), "limit")
 }
+
+// A command name cobra cannot resolve is rejected before any RunE, and must
+// reach the caller as the same usage envelope rather than a bare exit 1.
+func TestUnknownCommand_EmitsUsageEnvelopeExits2(t *testing.T) {
+	cases := map[string][]string{
+		"unknown top-level":  {"nope"},
+		"unknown subcommand": {"node", "nope"},
+	}
+	for name, args := range cases {
+		t.Run(name, func(t *testing.T) {
+			var out, errBuf bytes.Buffer
+			exit := executeWith(args, &out, &errBuf)
+
+			assert.Equal(t, 2, exit)
+			assert.Empty(t, errBuf.String())
+			var env struct {
+				Error struct {
+					Code    string `json:"code"`
+					Message string `json:"message"`
+				} `json:"error"`
+			}
+			require.NoError(t, json.Unmarshal(out.Bytes(), &env), "stdout: %q", out.String())
+			assert.Equal(t, "usage", env.Error.Code)
+			assert.Contains(t, env.Error.Message, "nope")
+		})
+	}
+}
+
+func TestUnknownCommand_HumanModeWritesErrorToStderr(t *testing.T) {
+	var out, errBuf bytes.Buffer
+	exit := executeWith([]string{"--human", "nope"}, &out, &errBuf)
+
+	assert.Equal(t, 2, exit)
+	assert.Empty(t, out.String())
+	assert.Contains(t, errBuf.String(), "Error [usage]")
+	assert.Contains(t, errBuf.String(), "nope")
+}

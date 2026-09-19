@@ -3,6 +3,7 @@ package node
 
 import (
 	"context"
+	"fmt"
 	"io"
 
 	"github.com/carolsimone/continuo/cli/internal/client"
@@ -26,6 +27,15 @@ func NewCommand(cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "node",
 		Short: "Operate on individual dbt model nodes",
+		// A group command does no work itself: bare, it prints its help; with an
+		// argument that is not one of its subcommands it reports an unknown
+		// command through the usage envelope instead of this help text.
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 0 {
+				return emit(stdout, stderr, humanOutput(cmd), output.NewUsageError(fmt.Sprintf("unknown command %q for %q", args[0], cmd.CommandPath())))
+			}
+			return cmd.Help()
+		},
 	}
 	cmd.AddCommand(NewListCommand(defaultFactory, cfg, stdout, stderr))
 	cmd.AddCommand(NewHistoryCommand(defaultFactory, defaultOrchestratorFactory, cfg, stdout, stderr))

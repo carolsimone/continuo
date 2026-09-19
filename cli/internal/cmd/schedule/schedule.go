@@ -3,10 +3,12 @@ package schedule
 
 import (
 	"context"
+	"fmt"
 	"io"
 
 	"github.com/carolsimone/continuo/cli/internal/client"
 	"github.com/carolsimone/continuo/cli/internal/config"
+	"github.com/carolsimone/continuo/cli/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -26,6 +28,15 @@ func NewCommand(cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "schedule",
 		Short: "Operate on Continuo schedules",
+		// A group command does no work itself: bare, it prints its help; with an
+		// argument that is not one of its subcommands it reports an unknown
+		// command through the usage envelope instead of this help text.
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 0 {
+				return emit(stdout, stderr, humanOutput(cmd), output.NewUsageError(fmt.Sprintf("unknown command %q for %q", args[0], cmd.CommandPath())))
+			}
+			return cmd.Help()
+		},
 	}
 	cmd.AddCommand(NewTriggerCommand(defaultFactory, cfg, stdout, stderr))
 	cmd.AddCommand(NewTestCommand(defaultFactory, cfg, stdout, stderr))

@@ -91,5 +91,25 @@ func executeWith(args []string, stdout, stderr io.Writer) int {
 	if errors.As(err, &cliErr) {
 		return cliErr.ExitCode()
 	}
-	return 1
+	// Every command and the flag-error handler return a CLIError, so anything
+	// else comes from cobra's own dispatch: a command name it cannot resolve.
+	// That is rejected before any flag is parsed, so --human is read from the
+	// raw arguments rather than from the flag set.
+	e := output.NewUsageError(err.Error())
+	if rawHumanFlag(args) {
+		_ = output.HumanError(stderr, e)
+	} else {
+		_ = output.EmitError(stdout, e)
+	}
+	return e.ExitCode()
+}
+
+// rawHumanFlag reports whether --human appears among the unparsed arguments.
+func rawHumanFlag(args []string) bool {
+	for _, a := range args {
+		if a == "--human" || a == "--human=true" {
+			return true
+		}
+	}
+	return false
 }
