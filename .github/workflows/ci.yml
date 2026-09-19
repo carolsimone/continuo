@@ -120,6 +120,15 @@ jobs:
         # lives in scripts/lint-go.sh to keep CI and local dev on one primitive.
         run: bash scripts/lint-go.sh --ci
 
+      - name: Test continuo CLI
+        # cli/ is a Go module outside go.work (so service images need not copy
+        # it in), which keeps it out of make test-go's GO_SERVICES loop; its own
+        # Makefile exports GOWORK=off so these targets run from the repo root on
+        # the bare runner. Needs only the Go toolchain, so it runs here, before
+        # the slow infra setup, and fails fast. test-integration starts an
+        # in-process gRPC stub and exercises the built binary end to end.
+        run: make -C cli test test-integration
+
       - name: Detect Dockerfile.base changes
         id: basefilter
         uses: dorny/paths-filter@v4
