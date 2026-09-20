@@ -19,16 +19,22 @@ import (
 // is overridden.
 type capturingServer struct {
 	statev1.UnimplementedStateServiceServer
-	gotUserID string
+	gotUserID     string
+	gotSingleNode *statev1.TriggerSingleNodeRunRequest
 }
 
 func (s *capturingServer) TriggerSchedule(ctx context.Context, _ *statev1.TriggerScheduleRequest) (*statev1.TriggerScheduleResponse, error) {
+	s.recordUserID(ctx)
+	return &statev1.TriggerScheduleResponse{ScheduleId: "s1"}, nil
+}
+
+// recordUserID stores the x-continuo-user-id header of the incoming call, if any.
+func (s *capturingServer) recordUserID(ctx context.Context) {
 	if md, ok := metadata.FromIncomingContext(ctx); ok {
 		if v := md.Get("x-continuo-user-id"); len(v) > 0 {
 			s.gotUserID = v[0]
 		}
 	}
-	return &statev1.TriggerScheduleResponse{ScheduleId: "s1"}, nil
 }
 
 func dialCapturing(t *testing.T) (*stateGRPCClient, *capturingServer) {

@@ -65,15 +65,15 @@ func (f *fakeStateStatus) ListNodes(_ context.Context, _, _, _ string, _, _ int3
 	panic("ListNodes should not be called in schedule tests")
 }
 
-func (f *fakeStateStatus) TriggerNodeRun(_ context.Context, _, _, _, _ string) (*statev1.TriggerSingleNodeRunResponse, error) {
+func (f *fakeStateStatus) TriggerNodeRun(_ context.Context, _, _, _, _, _ string) (*statev1.TriggerSingleNodeRunResponse, error) {
 	panic("TriggerNodeRun should not be called in schedule tests")
 }
 
-func (f *fakeStateStatus) TriggerNodeTest(_ context.Context, _, _, _, _ string) (*statev1.TriggerSingleNodeRunResponse, error) {
+func (f *fakeStateStatus) TriggerNodeTest(_ context.Context, _, _, _, _, _ string) (*statev1.TriggerSingleNodeRunResponse, error) {
 	panic("TriggerNodeTest should not be called in schedule tests")
 }
 
-func (f *fakeStateStatus) TriggerNodeBuild(_ context.Context, _, _, _, _ string) (*statev1.TriggerSingleNodeRunResponse, error) {
+func (f *fakeStateStatus) TriggerNodeBuild(_ context.Context, _, _, _, _, _ string) (*statev1.TriggerSingleNodeRunResponse, error) {
 	panic("TriggerNodeBuild should not be called in schedule tests")
 }
 
