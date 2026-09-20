@@ -166,3 +166,21 @@ func TestBuildNode_SourceRunNotTerminalExits4(t *testing.T) {
 
 	assert.Equal(t, 4, exit)
 }
+
+// An explicitly empty fourth argument (a shell variable that was never set)
+// is a usage error, not a silent fall-back to latest metadata: the caller
+// asked for a snapshot and must not get a run against current code instead.
+func TestBuildNode_EmptySourceRunArgExits2WithoutCalling(t *testing.T) {
+	for _, empty := range []string{"", "   "} {
+		fake := &fakeNodeState{}
+		cfg := &config.Config{Timeout: 2 * time.Second}
+
+		stdout, _, exit := runBuild(t, fake, cfg, []string{"finance", "analytics", "orders", empty})
+
+		assert.Equal(t, 2, exit, "arg %q", empty)
+		var env map[string]output.CLIError
+		require.NoError(t, json.Unmarshal([]byte(stdout), &env))
+		assert.Equal(t, output.CodeUsage, env["error"].Code)
+		assert.Equal(t, "", fake.gotBuildSvc, "the state service must not be called")
+	}
+}
