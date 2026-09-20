@@ -115,3 +115,72 @@ func TestBuildNode_HumanModeUsesStderr(t *testing.T) {
 	assert.Contains(t, stderr, "run_9")
 	assert.Contains(t, stderr, "finance.analytics.orders")
 }
+
+func TestBuildNode_ThreeArgsSelectLatestMetadata(t *testing.T) {
+	fake := &fakeNodeState{buildResp: &statev1.TriggerSingleNodeRunResponse{RunId: "run_9"}}
+	cfg := &config.Config{Timeout: 2 * time.Second}
+
+	_, _, exit := runBuild(t, fake, cfg, []string{"finance", "analytics", "orders"})
+
+	assert.Equal(t, 0, exit)
+	assert.Equal(t, "", fake.gotBuildSourceRun)
+}
+
+func TestBuildNode_FourthArgIsTheSnapshotSourceRun(t *testing.T) {
+	fake := &fakeNodeState{buildResp: &statev1.TriggerSingleNodeRunResponse{RunId: "run_9"}}
+	cfg := &config.Config{Timeout: 2 * time.Second}
+
+	_, _, exit := runBuild(t, fake, cfg, []string{"finance", "analytics", "orders", snapshotSourceRun})
+
+	assert.Equal(t, 0, exit)
+	assert.Equal(t, snapshotSourceRun, fake.gotBuildSourceRun)
+}
+
+func TestBuildNode_FiveArgsExits2(t *testing.T) {
+	fake := &fakeNodeState{}
+	cfg := &config.Config{Timeout: 2 * time.Second}
+
+	stdout, _, exit := runBuild(t, fake, cfg, []string{"finance", "analytics", "orders", snapshotSourceRun, "extra"})
+
+	assert.Equal(t, 2, exit)
+	var env map[string]output.CLIError
+	require.NoError(t, json.Unmarshal([]byte(stdout), &env))
+	assert.Equal(t, output.CodeUsage, env["error"].Code)
+	assert.Equal(t, "", fake.gotBuildSourceRun)
+}
+
+func TestBuildNode_SourceRunNotFoundExits3(t *testing.T) {
+	fake := &fakeNodeState{buildErr: status.Error(codes.NotFound, "source run not found")}
+	cfg := &config.Config{Timeout: 2 * time.Second}
+
+	_, _, exit := runBuild(t, fake, cfg, []string{"finance", "analytics", "orders", snapshotSourceRun})
+
+	assert.Equal(t, 3, exit)
+}
+
+func TestBuildNode_SourceRunNotTerminalExits4(t *testing.T) {
+	fake := &fakeNodeState{buildErr: status.Error(codes.FailedPrecondition, "source run is not terminal")}
+	cfg := &config.Config{Timeout: 2 * time.Second}
+
+	_, _, exit := runBuild(t, fake, cfg, []string{"finance", "analytics", "orders", snapshotSourceRun})
+
+	assert.Equal(t, 4, exit)
+}
+
+// An explicitly empty fourth argument (a shell variable that was never set)
+// is a usage error, not a silent fall-back to latest metadata: the caller
+// asked for a snapshot and must not get a run against current code instead.
+func TestBuildNode_EmptySourceRunArgExits2WithoutCalling(t *testing.T) {
+	for _, empty := range []string{"", "   "} {
+		fake := &fakeNodeState{}
+		cfg := &config.Config{Timeout: 2 * time.Second}
+
+		stdout, _, exit := runBuild(t, fake, cfg, []string{"finance", "analytics", "orders", empty})
+
+		assert.Equal(t, 2, exit, "arg %q", empty)
+		var env map[string]output.CLIError
+		require.NoError(t, json.Unmarshal([]byte(stdout), &env))
+		assert.Equal(t, output.CodeUsage, env["error"].Code)
+		assert.Equal(t, "", fake.gotBuildSvc, "the state service must not be called")
+	}
+}

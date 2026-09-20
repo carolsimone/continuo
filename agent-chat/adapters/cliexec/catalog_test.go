@@ -63,3 +63,23 @@ func TestCatalog_UnknownToolDoesNotExist(t *testing.T) {
 	_, ok := c.Lookup("rm_rf")
 	assert.False(t, ok)
 }
+
+// A bracketed positional in the CLI's Use string ("[source-run-id]") is the
+// only way an optional value reaches the chat: the catalog exposes no flags.
+// This pins that node trigger's fourth positional is offered to the model as
+// an optional parameter, ordered after the identity triple.
+func TestCatalog_BracketedPositionalIsOptional(t *testing.T) {
+	c := loadCatalog(t)
+
+	trigger, ok := c.Lookup("node_trigger")
+	require.True(t, ok)
+	assert.Equal(t, []string{"node", "trigger"}, trigger.CLIPath)
+	assert.True(t, trigger.Mutating)
+	require.Len(t, trigger.Params, 4)
+	for _, p := range trigger.Params[:3] {
+		assert.True(t, p.Required, "identity triple param %q must be required", p.Name)
+	}
+	assert.Equal(t, "source-run-id", trigger.Params[3].Name)
+	assert.False(t, trigger.Params[3].Required)
+	assert.Equal(t, []string{"service", "schema", "table", "source-run-id"}, trigger.ParamOrder)
+}

@@ -21,9 +21,9 @@ type StateClient interface {
 	CancelSchedule(ctx context.Context, scheduleName, reason, by string) (*statev1.CancelScheduleResponse, error)
 	ListNodeRuns(ctx context.Context, service, schema, table, operation string, limit int32) (*statev1.ListNodeRunsResponse, error)
 	ListNodes(ctx context.Context, search, service, operation string, limit, offset int32) (*statev1.ListNodesResponse, error)
-	TriggerNodeRun(ctx context.Context, service, schema, table, actor string) (*statev1.TriggerSingleNodeRunResponse, error)
-	TriggerNodeTest(ctx context.Context, service, schema, table, actor string) (*statev1.TriggerSingleNodeRunResponse, error)
-	TriggerNodeBuild(ctx context.Context, service, schema, table, actor string) (*statev1.TriggerSingleNodeRunResponse, error)
+	TriggerNodeRun(ctx context.Context, service, schema, table, sourceRunID, actor string) (*statev1.TriggerSingleNodeRunResponse, error)
+	TriggerNodeTest(ctx context.Context, service, schema, table, sourceRunID, actor string) (*statev1.TriggerSingleNodeRunResponse, error)
+	TriggerNodeBuild(ctx context.Context, service, schema, table, sourceRunID, actor string) (*statev1.TriggerSingleNodeRunResponse, error)
 	TriggerScheduleBuild(ctx context.Context, scheduleName, actor string) (*statev1.TriggerScheduleResponse, error)
 	Close() error
 }
@@ -111,45 +111,50 @@ func (c *stateGRPCClient) ListNodeRuns(ctx context.Context, service, schema, tab
 	})
 }
 
-func (c *stateGRPCClient) TriggerNodeRun(ctx context.Context, service, schema, table, actor string) (*statev1.TriggerSingleNodeRunResponse, error) {
-	if actor != "" {
-		ctx = metadata.AppendToOutgoingContext(ctx, userIDMetadataKey, actor)
-	}
-	return c.api.TriggerSingleNodeRun(ctx, &statev1.TriggerSingleNodeRunRequest{
+// singleNodeRequest builds a TriggerSingleNodeRun request. An empty
+// sourceRunID selects the "latest" metadata mode; a non-empty one selects
+// "snapshot_of_run", pinning the run to the metadata the given past run used.
+// The state service rejects any other combination, so the CLI never sends one.
+func singleNodeRequest(service, schema, table, sourceRunID, operation string) *statev1.TriggerSingleNodeRunRequest {
+	req := &statev1.TriggerSingleNodeRunRequest{
 		ServiceName:    service,
 		SchemaName:     schema,
 		TableName:      table,
-		MetadataSource: "latest",
-		SourceRunId:    "",
-	})
+		MetadataSource: metadataSourceLatest,
+		Operation:      operation,
+	}
+	if sourceRunID != "" {
+		req.MetadataSource = metadataSourceSnapshotOfRun
+		req.SourceRunId = sourceRunID
+	}
+	return req
 }
 
-func (c *stateGRPCClient) TriggerNodeTest(ctx context.Context, service, schema, table, actor string) (*statev1.TriggerSingleNodeRunResponse, error) {
+// metadata_source values accepted by TriggerSingleNodeRun. They mirror the
+// state service's run.MetadataSource* constants, which the CLI cannot import
+// (public-gRPC-only rule), so the literals are duplicated here deliberately.
+const (
+	metadataSourceLatest        = "latest"
+	metadataSourceSnapshotOfRun = "snapshot_of_run"
+)
+
+func (c *stateGRPCClient) triggerSingleNode(ctx context.Context, req *statev1.TriggerSingleNodeRunRequest, actor string) (*statev1.TriggerSingleNodeRunResponse, error) {
 	if actor != "" {
 		ctx = metadata.AppendToOutgoingContext(ctx, userIDMetadataKey, actor)
 	}
-	return c.api.TriggerSingleNodeRun(ctx, &statev1.TriggerSingleNodeRunRequest{
-		ServiceName:    service,
-		SchemaName:     schema,
-		TableName:      table,
-		MetadataSource: "latest",
-		SourceRunId:    "",
-		Operation:      "test",
-	})
+	return c.api.TriggerSingleNodeRun(ctx, req)
 }
 
-func (c *stateGRPCClient) TriggerNodeBuild(ctx context.Context, service, schema, table, actor string) (*statev1.TriggerSingleNodeRunResponse, error) {
-	if actor != "" {
-		ctx = metadata.AppendToOutgoingContext(ctx, userIDMetadataKey, actor)
-	}
-	return c.api.TriggerSingleNodeRun(ctx, &statev1.TriggerSingleNodeRunRequest{
-		ServiceName:    service,
-		SchemaName:     schema,
-		TableName:      table,
-		MetadataSource: "latest",
-		SourceRunId:    "",
-		Operation:      "build",
-	})
+func (c *stateGRPCClient) TriggerNodeRun(ctx context.Context, service, schema, table, sourceRunID, actor string) (*statev1.TriggerSingleNodeRunResponse, error) {
+	return c.triggerSingleNode(ctx, singleNodeRequest(service, schema, table, sourceRunID, ""), actor)
+}
+
+func (c *stateGRPCClient) TriggerNodeTest(ctx context.Context, service, schema, table, sourceRunID, actor string) (*statev1.TriggerSingleNodeRunResponse, error) {
+	return c.triggerSingleNode(ctx, singleNodeRequest(service, schema, table, sourceRunID, "test"), actor)
+}
+
+func (c *stateGRPCClient) TriggerNodeBuild(ctx context.Context, service, schema, table, sourceRunID, actor string) (*statev1.TriggerSingleNodeRunResponse, error) {
+	return c.triggerSingleNode(ctx, singleNodeRequest(service, schema, table, sourceRunID, "build"), actor)
 }
 
 func (c *stateGRPCClient) Close() error { return c.conn.Close() }

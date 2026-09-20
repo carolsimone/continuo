@@ -29,24 +29,27 @@ type fakeNodeState struct {
 	gotOperation string
 	gotLimit     int32
 
-	trigResp   *statev1.TriggerSingleNodeRunResponse
-	trigErr    error
-	gotActor   string
-	gotTrigSvc string
+	trigResp         *statev1.TriggerSingleNodeRunResponse
+	trigErr          error
+	gotActor         string
+	gotTrigSvc       string
+	gotTrigSourceRun string
 
-	testResp      *statev1.TriggerSingleNodeRunResponse
-	testErr       error
-	gotTestActor  string
-	gotTestSvc    string
-	gotTestSchema string
-	gotTestTable  string
+	testResp         *statev1.TriggerSingleNodeRunResponse
+	testErr          error
+	gotTestActor     string
+	gotTestSvc       string
+	gotTestSchema    string
+	gotTestTable     string
+	gotTestSourceRun string
 
-	buildResp      *statev1.TriggerSingleNodeRunResponse
-	buildErr       error
-	gotBuildActor  string
-	gotBuildSvc    string
-	gotBuildSchema string
-	gotBuildTable  string
+	buildResp         *statev1.TriggerSingleNodeRunResponse
+	buildErr          error
+	gotBuildActor     string
+	gotBuildSvc       string
+	gotBuildSchema    string
+	gotBuildTable     string
+	gotBuildSourceRun string
 
 	listResp         *statev1.ListNodesResponse
 	listErr          error
@@ -67,18 +70,18 @@ func (f *fakeNodeState) ListNodeRuns(_ context.Context, service, schema, table, 
 	return f.runsResp, f.runsErr
 }
 
-func (f *fakeNodeState) TriggerNodeRun(_ context.Context, service, _, _, actor string) (*statev1.TriggerSingleNodeRunResponse, error) {
-	f.gotTrigSvc, f.gotActor = service, actor
+func (f *fakeNodeState) TriggerNodeRun(_ context.Context, service, _, _, sourceRunID, actor string) (*statev1.TriggerSingleNodeRunResponse, error) {
+	f.gotTrigSvc, f.gotTrigSourceRun, f.gotActor = service, sourceRunID, actor
 	return f.trigResp, f.trigErr
 }
 
-func (f *fakeNodeState) TriggerNodeTest(_ context.Context, service, schema, table, actor string) (*statev1.TriggerSingleNodeRunResponse, error) {
-	f.gotTestSvc, f.gotTestSchema, f.gotTestTable, f.gotTestActor = service, schema, table, actor
+func (f *fakeNodeState) TriggerNodeTest(_ context.Context, service, schema, table, sourceRunID, actor string) (*statev1.TriggerSingleNodeRunResponse, error) {
+	f.gotTestSvc, f.gotTestSchema, f.gotTestTable, f.gotTestSourceRun, f.gotTestActor = service, schema, table, sourceRunID, actor
 	return f.testResp, f.testErr
 }
 
-func (f *fakeNodeState) TriggerNodeBuild(_ context.Context, service, schema, table, actor string) (*statev1.TriggerSingleNodeRunResponse, error) {
-	f.gotBuildSvc, f.gotBuildSchema, f.gotBuildTable, f.gotBuildActor = service, schema, table, actor
+func (f *fakeNodeState) TriggerNodeBuild(_ context.Context, service, schema, table, sourceRunID, actor string) (*statev1.TriggerSingleNodeRunResponse, error) {
+	f.gotBuildSvc, f.gotBuildSchema, f.gotBuildTable, f.gotBuildSourceRun, f.gotBuildActor = service, schema, table, sourceRunID, actor
 	return f.buildResp, f.buildErr
 }
 
