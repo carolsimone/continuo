@@ -263,7 +263,7 @@
     "serviceRepos": {
       "type": "object",
       "additionalProperties": {"type": "string"},
-      "description": "service_name -> project root within that service's repo, merged over the chart's default map (files/service_repos.yaml) to render the agent-remediation ConfigMap. Add entries for service names not in the shipped default (e.g. a monorepo's continuo-core: services/continuo-core). Optional and not in 'required': a --reuse-values upgrade from before this key omits it, and only the default map applies."
+      "description": "service_name -> project root within that service's repo, for agent-remediation source resolution. When non-empty it REPLACES the chart's shipped demo map (files/service_repos.yaml) so a production install maps only the services it runs; empty/unset uses the demo map. An explicit empty-string value maps a service whose dbt project is the repository root. Optional and not in 'required': a --reuse-values upgrade from before this key omits it, and the demo map applies."
     },
 
     "validation": {

@@ -235,14 +235,17 @@ github:
 
 # service_name -> project root within that service's repo, read by
 # agent-remediation to locate a changed model's source before it proposes a fix.
-# The chart ships a default map (files/service_repos.yaml) covering the platform's
-# own demo services; entries here are merged over it, so you can map your own
-# service names — override a default or add a new one — without editing the chart.
-# A service with no entry has its fix recorded as unverifiable and its proposal
-# skipped. Example (a monorepo shipping both services from one repo):
+# Leave empty to use the chart's shipped demo map (files/service_repos.yaml),
+# which covers continuo's own tutorial services so the walkthroughs work out of
+# the box. Set this to your own services and it REPLACES that demo map entirely —
+# a production install maps only the services it runs, so a demo entry can never
+# linger to mis-own a path. A service with no entry has its fix recorded as
+# unverifiable and its proposal skipped; an explicit empty value ("") maps a
+# service whose dbt project is the repository root. Restart agent-remediation
+# after changing this. Example:
 #   serviceRepos:
-#     continuo-core: services/continuo-core
-#     continuo-finance: services/continuo-finance
+#     analytics: analytics          # dbt project at the repo root
+#     ingest: services/ingest
 serviceRepos: {}
 
 validation:

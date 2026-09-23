@@ -8,12 +8,11 @@
 #
 # ⚠️  EXAMPLE DATA — NOT FOR PRODUCTION. Every entry below maps one of continuo's
 #     own demo services (the continuo-demo-docs and continuo-core-finance-demo
-#     walkthroughs). They ship only so those tutorials work out of the box. They
-#     are inert for a real deployment — nothing references a service name you do
-#     not run — but a name that collides with a service you DO run would pick up
-#     the demo path. A production install should map its own services instead:
-#     add them under the `serviceRepos` Helm value (a value entry adds a service
-#     or overrides a same-named default here), then restart agent-remediation.
+#     walkthroughs). They ship only so those tutorials work out of the box. Do
+#     NOT rely on this map in a real deployment: set the `serviceRepos` Helm
+#     value to your own service→project-root map, which REPLACES everything here
+#     (so a demo entry can never linger to mis-own a path), then restart
+#     agent-remediation.
 services:
   # continuo-demo-docs — docs/run-projects-in-continuo.md
   core: services/core

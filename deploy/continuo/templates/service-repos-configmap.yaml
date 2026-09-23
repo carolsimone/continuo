@@ -1,3 +1,17 @@
+{{- /*
+  agent-remediation's service_name -> project-root map. .Values.serviceRepos,
+  when non-empty, REPLACES the shipped demo map (files/service_repos.yaml) so a
+  production install maps only the services it runs — a demo entry can never
+  linger to mis-own a path. Empty/unset keeps the demo file verbatim (comments
+  and all) so the tutorials work out of the box. Building the override map with
+  `dict`/`toYaml` (not `merge`) preserves an explicit empty value, which maps a
+  service whose dbt project is the repository root.
+*/ -}}
+{{- $override := default (dict) .Values.serviceRepos -}}
+{{- $rendered := .Files.Get "files/service_repos.yaml" -}}
+{{- if gt (len $override) 0 -}}
+{{-   $rendered = dict "services" $override | toYaml -}}
+{{- end -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -6,13 +20,5 @@ metadata:
   labels:
     {{- include "continuo.labels" . | nindent 4 }}
 data:
-  # The shipped files/service_repos.yaml is the default map; .Values.serviceRepos
-  # is merged over it (a value entry adds a service or overrides a default one),
-  # so an operator can map their own service names — e.g. a monorepo's
-  # continuo-core: services/continuo-core — without editing the chart. Comments in
-  # the default file are not carried into the rendered map; the file stays their
-  # documented home.
   service_repos.yaml: |
-    {{- $file := .Files.Get "files/service_repos.yaml" | fromYaml -}}
-    {{- $services := merge (deepCopy (default (dict) .Values.serviceRepos)) (default (dict) $file.services) -}}
-    {{- dict "services" $services | toYaml | nindent 4 }}
+    {{- $rendered | nindent 4 }}
