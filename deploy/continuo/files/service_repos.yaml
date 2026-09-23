@@ -1,13 +1,20 @@
 # config/service_repos.yaml
-# Maps a service name (orchestrator topology service_name; dbt or python) to
-# its project root within that service's own repository. Each team ships from
-# its own repo — the single shared layout below is a dev/e2e convenience, not
-# the deployed shape — so the remediation agent only ever resolves a claimant
-# belonging to the release's changed service, whose repo comes from the
-# remediation trigger. The agent joins <repo_path> with the offending file's
-# path to read the model source from GitHub. Edit this when adding a service
-# or changing a repo's layout, then restart agent-remediation.
+# Maps a service name (orchestrator topology service_name; dbt or python) to its
+# project root within that service's own repository. agent-remediation joins
+# <repo_path> with an offending file's path to read the model's source from
+# GitHub — the repo itself comes from the release/remediation trigger — so it can
+# propose a fix. A service with no entry has its fix recorded as unverifiable and
+# its compile/seed/duplicate-table proposals skipped.
+#
+# ⚠️  EXAMPLE DATA — NOT FOR PRODUCTION. Every entry below maps one of continuo's
+#     own demo services (the continuo-demo-docs and continuo-core-finance-demo
+#     walkthroughs). They ship only so those tutorials work out of the box. Do
+#     NOT rely on this map in a real deployment: set the `serviceRepos` Helm
+#     value to your own service→project-root map, which REPLACES everything here
+#     (so a demo entry can never linger to mis-own a path), then restart
+#     agent-remediation.
 services:
+  # continuo-demo-docs — docs/run-projects-in-continuo.md
   core: services/core
   finance: services/finance
   marketing: services/marketing
@@ -15,3 +22,6 @@ services:
   service-1: services/service-1
   service-2: services/service-2
   service-3: services/service-3
+  # continuo-core-finance-demo — the airflow-to-continuo migration article
+  continuo-core: services/continuo-core
+  continuo-finance: services/continuo-finance

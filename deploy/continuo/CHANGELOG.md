@@ -12,6 +12,23 @@ shipped in those.
 
 ## [Unreleased]
 
+Operators can map their own service names for agent-remediation without forking
+the chart, and the shipped map is labelled demo-only. New value with a safe
+default; an unmodified existing values file upgrades unchanged. MINOR.
+
+### Added
+- `serviceRepos` (default `{}`): a `service_name → project-root` map for
+  agent-remediation source resolution. When non-empty it **replaces** the shipped
+  demo map (`files/service_repos.yaml`) entirely, so a production install maps
+  only the services it runs and a demo entry can never mis-own a path;
+  empty/unset keeps the demo map. Explicit empty-string values (a dbt project at
+  the repository root) are preserved.
+
+### Changed
+- `files/service_repos.yaml` now also maps the `continuo-core-finance-demo`
+  services (`continuo-core`, `continuo-finance`), and is labelled EXAMPLE DATA —
+  NOT FOR PRODUCTION.
+
 ## [0.6.2] - 2026-09-17
 
 Fast tasks are now observed `running`, and the Run tab graph reads status

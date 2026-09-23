@@ -233,6 +233,21 @@ github:
   existingSecretTokenKey: token
   existingSecretAppPrivateKeyKey: app-private-key
 
+# service_name -> project root within that service's repo, read by
+# agent-remediation to locate a changed model's source before it proposes a fix.
+# Leave empty to use the chart's shipped demo map (files/service_repos.yaml),
+# which covers continuo's own tutorial services so the walkthroughs work out of
+# the box. Set this to your own services and it REPLACES that demo map entirely —
+# a production install maps only the services it runs, so a demo entry can never
+# linger to mis-own a path. A service with no entry has its fix recorded as
+# unverifiable and its proposal skipped; an explicit empty value ("") maps a
+# service whose dbt project is the repository root. Restart agent-remediation
+# after changing this. Example:
+#   serviceRepos:
+#     analytics: analytics          # dbt project at the repo root
+#     ingest: services/ingest
+serviceRepos: {}
+
 validation:
   # ┌────────────────────────────────────────────────────────────────────────────┐
   # │  READ THIS BEFORE PRODUCTION — EVERYTHING BELOW IS POSTGRESQL-SPECIFIC.       │

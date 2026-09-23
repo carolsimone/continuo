@@ -1,3 +1,17 @@
+{{- /*
+  agent-remediation's service_name -> project-root map. .Values.serviceRepos,
+  when non-empty, REPLACES the shipped demo map (files/service_repos.yaml) so a
+  production install maps only the services it runs — a demo entry can never
+  linger to mis-own a path. Empty/unset keeps the demo file verbatim (comments
+  and all) so the tutorials work out of the box. Building the override map with
+  `dict`/`toYaml` (not `merge`) preserves an explicit empty value, which maps a
+  service whose dbt project is the repository root.
+*/ -}}
+{{- $override := default (dict) .Values.serviceRepos -}}
+{{- $rendered := .Files.Get "files/service_repos.yaml" -}}
+{{- if gt (len $override) 0 -}}
+{{-   $rendered = dict "services" $override | toYaml -}}
+{{- end -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -7,4 +21,4 @@ metadata:
     {{- include "continuo.labels" . | nindent 4 }}
 data:
   service_repos.yaml: |
-    {{- .Files.Get "files/service_repos.yaml" | nindent 4 }}
+    {{- $rendered | nindent 4 }}
