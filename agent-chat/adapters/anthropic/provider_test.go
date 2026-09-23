@@ -65,7 +65,8 @@ func TestStreamTurn_TextAndToolCall(t *testing.T) {
 	assert.Equal(t, 42, res.Usage.InputTokens)
 	assert.Equal(t, 17, res.Usage.OutputTokens)
 
-	assert.Equal(t, "sys", gotBody["system"])
+	system := gotBody["system"].([]any)
+	assert.Equal(t, "sys", system[0].(map[string]any)["text"])
 	assert.Equal(t, true, gotBody["stream"])
 	tools := gotBody["tools"].([]any)
 	tool := tools[0].(map[string]any)

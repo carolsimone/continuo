@@ -289,6 +289,17 @@ func (s *Session) driveTurn() {
 	var tokenSpend int
 
 	for iter := 0; iter < s.deps.Cfg.MaxIterations; iter++ {
+		// The budget bounds how many provider calls a turn may make, not what
+		// the last call produced: it is checked before starting a call, so the
+		// tool calls of the iteration that crossed it have already run and a
+		// final answer that crossed it has already been delivered. Dropping a
+		// tool call the model produced would leave persisted text describing
+		// an action that never happened.
+		if tokenSpend > s.deps.Cfg.MaxTurnTokens {
+			s.sink.Error("token_budget", "turn exceeded token budget")
+			return
+		}
+
 		// Load and window the conversation history.
 		allMsgs, err := s.deps.Repo.ListMessages(ctx, s.threadID)
 		if err != nil {
@@ -354,11 +365,22 @@ func (s *Session) driveTurn() {
 			return
 		}
 
-		tokenSpend += result.Usage.InputTokens + result.Usage.OutputTokens
-		if tokenSpend > s.deps.Cfg.MaxTurnTokens {
-			s.sink.Error("token_budget", "turn exceeded token budget")
-			return
-		}
+		// Spend is what the provider processed afresh: uncached input, tokens it
+		// wrote into its prompt cache, and output. Tokens served from cache were
+		// paid for by the iteration that wrote them and cost almost nothing to
+		// re-read, so the growing thread does not exhaust the budget on every
+		// later turn.
+		tokenSpend += result.Usage.InputTokens + result.Usage.CacheCreationInputTokens + result.Usage.OutputTokens
+		s.deps.Logger.Info("provider turn",
+			"thread_id", s.threadID.String(),
+			"iteration", iter,
+			"input_tokens", result.Usage.InputTokens,
+			"cache_creation_input_tokens", result.Usage.CacheCreationInputTokens,
+			"cache_read_input_tokens", result.Usage.CacheReadInputTokens,
+			"output_tokens", result.Usage.OutputTokens,
+			"turn_spend", tokenSpend,
+			"tool_calls", len(result.ToolCalls),
+		)
 
 		// Persist assistant text when the model produced any.
 		if result.Text != "" {

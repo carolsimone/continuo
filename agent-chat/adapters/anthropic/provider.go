@@ -42,12 +42,12 @@ func NewProvider(baseURL, apiKey, model string, client *http.Client) *Provider {
 
 // requestBody is the JSON body sent to POST /v1/messages.
 type requestBody struct {
-	Model     string        `json:"model"`
-	MaxTokens int           `json:"max_tokens"`
-	Stream    bool          `json:"stream"`
-	System    string        `json:"system,omitempty"`
-	Messages  []wireMessage `json:"messages"`
-	Tools     []wireTool    `json:"tools,omitempty"`
+	Model     string            `json:"model"`
+	MaxTokens int               `json:"max_tokens"`
+	Stream    bool              `json:"stream"`
+	System    []wireSystemBlock `json:"system,omitempty"`
+	Messages  []wireMessage     `json:"messages"`
+	Tools     []wireTool        `json:"tools,omitempty"`
 }
 
 // StreamTurn sends the request to Anthropic, streams the SSE response, calls onDelta for
@@ -57,12 +57,13 @@ func (p *Provider) StreamTurn(ctx context.Context, req ports.TurnRequest, onDelt
 	if err != nil {
 		return nil, fmt.Errorf("anthropic: mapping messages: %w", err)
 	}
+	markConversationBreakpoint(wireMsgs)
 
 	body := requestBody{
 		Model:     p.model,
 		MaxTokens: req.MaxTokens,
 		Stream:    true,
-		System:    req.System,
+		System:    toWireSystem(req.System),
 		Messages:  wireMsgs,
 		Tools:     toWireTools(req.Tools),
 	}
@@ -98,13 +99,13 @@ func (p *Provider) StreamTurn(ctx context.Context, req ports.TurnRequest, onDelt
 
 // sseEvent is one parsed event from the stream.
 type sseEvent struct {
-	Type  string          `json:"type"`
+	Type string `json:"type"`
 	// message_start fields
 	Message *struct {
 		Usage *tokenUsage `json:"usage"`
 	} `json:"message,omitempty"`
 	// content_block_start fields
-	Index        int          `json:"index"`
+	Index        int           `json:"index"`
 	ContentBlock *contentBlock `json:"content_block,omitempty"`
 	// content_block_delta fields
 	Delta *delta `json:"delta,omitempty"`
@@ -113,8 +114,10 @@ type sseEvent struct {
 }
 
 type tokenUsage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
+	InputTokens              int `json:"input_tokens"`
+	OutputTokens             int `json:"output_tokens"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 }
 
 type contentBlock struct {
@@ -143,9 +146,9 @@ func (p *Provider) parseStream(r io.Reader, onDelta func(text string)) (*ports.T
 	scanner.Buffer(make([]byte, scannerBufSize), scannerBufSize)
 
 	var (
-		result   ports.TurnResult
-		textBuf  strings.Builder
-		tools    = make(map[int]*toolState) // keyed by content block index
+		result  ports.TurnResult
+		textBuf strings.Builder
+		tools   = make(map[int]*toolState) // keyed by content block index
 	)
 
 	for scanner.Scan() {
@@ -169,6 +172,8 @@ func (p *Provider) parseStream(r io.Reader, onDelta func(text string)) (*ports.T
 		case "message_start":
 			if ev.Message != nil && ev.Message.Usage != nil {
 				result.Usage.InputTokens = ev.Message.Usage.InputTokens
+				result.Usage.CacheReadInputTokens = ev.Message.Usage.CacheReadInputTokens
+				result.Usage.CacheCreationInputTokens = ev.Message.Usage.CacheCreationInputTokens
 				// output_tokens in message_start is typically 1 (prefill); the
 				// authoritative count comes from message_delta.
 			}
