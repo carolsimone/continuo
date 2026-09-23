@@ -53,8 +53,17 @@ type ToolExecutor interface {
 
 // Usage is the provider-reported token spend of one StreamTurn call.
 type Usage struct {
+	// InputTokens counts prompt tokens processed afresh on this call; tokens
+	// served from or written to the provider's prompt cache are reported in
+	// the two cache fields instead and are not included here.
 	InputTokens  int
 	OutputTokens int
+	// CacheReadInputTokens is the part of the prompt the provider served from
+	// its cache instead of reprocessing.
+	CacheReadInputTokens int
+	// CacheCreationInputTokens is the part of the prompt the provider
+	// processed and wrote into its cache on this call.
+	CacheCreationInputTokens int
 }
 
 // TurnRequest is one provider invocation: history window + tool menu.
