@@ -12,6 +12,8 @@ shipped in those.
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-09-24
+
 ### Fixed
 - Bundled MinIO quickstart images are now served from the chart's own
   `ghcr.io/carolsimone/continuo-minio` and `continuo-mc` repositories, mirrored
