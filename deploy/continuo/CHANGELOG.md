@@ -12,6 +12,8 @@ shipped in those.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-24
+
 Operators can map their own service names for agent-remediation without forking
 the chart, and the shipped map is labelled demo-only. New value with a safe
 default; an unmodified existing values file upgrades unchanged. MINOR.
