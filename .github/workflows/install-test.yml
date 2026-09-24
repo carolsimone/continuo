@@ -80,6 +80,24 @@ jobs:
       - name: Lint chart across values topologies
         run: bash scripts/install-test/lint.sh
 
+  datastore-images-anon-pullable:
+    # A datastore image the bundled chart or docker-compose pulls without
+    # credentials must be anonymously reachable — MinIO gated its registry
+    # under a static pin once, and this catches that class before the 20-minute
+    # install job. GitHub-hosted and anonymous, matching this file's no-secrets
+    # design; helm and docker buildx are both preinstalled on the runner.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Log out so the check is truly anonymous
+        run: docker logout ghcr.io || true
+
+      - name: Check datastore images are anonymously pullable
+        run: bash scripts/install-test/check-datastore-images-anon-pullable.sh
+
   install:
     runs-on: ubuntu-latest
     timeout-minutes: 40
