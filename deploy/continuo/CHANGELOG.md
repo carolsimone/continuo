@@ -18,10 +18,10 @@ shipped in those.
   from an anonymously-pullable MinIO build. Upstream MinIO gated its `quay.io`
   images behind authentication, which broke `helm install` for the bundled
   object store (`ImagePullBackOff`). The bundled MinIO now runs env-driven with
-  its data under `/bitnami/minio/data` as uid 1001, and keeps the same S3 API,
-  bucket (`continuo`), and 30-day lifecycle rules. No registry credentials are
-  required to install. Existing overrides are unaffected; `minio.enabled=false`
-  installs never used these images. PATCH.
+  its data under `/bitnami/minio/data` as uid 1001, and keeps the same S3 API
+  and bucket (`continuo`). No registry credentials are required to install.
+  Existing overrides are unaffected; `minio.enabled=false` installs never used
+  these images. PATCH.
 
 ## [0.7.0] - 2026-09-24
 
