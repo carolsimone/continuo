@@ -92,8 +92,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Log out so the check is truly anonymous
-        run: docker logout ghcr.io || true
+      - name: Isolate Docker client state
+        # Required by scripts/check-docker-state-isolation.sh: any job using
+        # Docker gets a private, empty DOCKER_CONFIG so it neither reads nor
+        # clobbers a sibling job's registry credentials on the shared runner.
+        # An empty config also makes the imagetools inspects below anonymous,
+        # which is exactly what this check needs.
+        uses: ./.github/actions/isolate-docker-state
 
       - name: Check datastore images are anonymously pullable
         run: bash scripts/install-test/check-datastore-images-anon-pullable.sh
