@@ -6,8 +6,8 @@ dependencies = [
     "sqlglot>=30.18.0",
     "redis>=8.1.0",
     "grpcio>=1.84.0",
-    "protobuf>=7.36.1",
-    "boto3>=1.43.93",
+    "protobuf>=7.36.2",
+    "boto3>=1.43.98",
     "PyYAML>=6.0",
 ]
 
