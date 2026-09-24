@@ -12,6 +12,17 @@ shipped in those.
 
 ## [Unreleased]
 
+### Fixed
+- Bundled MinIO quickstart images are now served from the chart's own
+  `ghcr.io/carolsimone/continuo-minio` and `continuo-mc` repositories, mirrored
+  from an anonymously-pullable MinIO build. Upstream MinIO gated its `quay.io`
+  images behind authentication, which broke `helm install` for the bundled
+  object store (`ImagePullBackOff`). The bundled MinIO now runs env-driven with
+  its data under `/bitnami/minio/data` as uid 1001, and keeps the same S3 API,
+  bucket (`continuo`), and 30-day lifecycle rules. No registry credentials are
+  required to install. Existing overrides are unaffected; `minio.enabled=false`
+  installs never used these images. PATCH.
+
 ## [0.7.0] - 2026-09-24
 
 Operators can map their own service names for agent-remediation without forking

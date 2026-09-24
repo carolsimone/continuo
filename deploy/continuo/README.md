@@ -45,6 +45,11 @@ and stay stable across upgrades (see Security defaults below), but there are no
 backups, no HA, and one static login. None of this is meant to hold real data
 or face real users.
 
+The bundled MinIO server and `mc` client are served from the chart's own
+`ghcr.io/carolsimone/continuo-minio` and `continuo-mc` repositories, so the
+quickstart pulls its object store anonymously like every other image and needs
+no MinIO or quay.io account.
+
 <details>
 <summary>Why the <code>/etc/hosts</code> line — and how to skip it</summary>
 
