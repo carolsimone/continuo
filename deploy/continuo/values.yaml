@@ -140,12 +140,17 @@ minio:
   # accounts. Disable and fill s3.* for any real S3-compatible endpoint.
   enabled: true
   image:
-    # Quay, because MinIO no longer serves the community images on Docker Hub.
-    repository: quay.io/minio/minio
-    tag: "RELEASE.2025-09-07T16-13-09Z"
+    # Mirrored into this chart's own ghcr namespace from an anonymously-pullable
+    # MinIO build; upstream MinIO gates its quay.io images behind authentication.
+    # This packaging runs env-driven (no "server /data" args), stores data under
+    # /bitnami/minio/data, and runs as uid 1001 — see minio/statefulset.yaml.
+    # Re-mirror on a bump with the mirror-quickstart-images workflow, then bump
+    # this tag (and mcImage.tag) to the new source tags.
+    repository: ghcr.io/carolsimone/continuo-minio
+    tag: "2025.7.23"
   mcImage:
-    repository: quay.io/minio/mc
-    tag: "RELEASE.2025-08-13T08-35-41Z"
+    repository: ghcr.io/carolsimone/continuo-mc
+    tag: "2025.7.21"
   auth:
     # Optional pre-created Secret holding the bundled instance's root user AND
     # password — BOTH keys below must be present in it, unlike the other

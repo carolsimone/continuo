@@ -10,6 +10,8 @@ metadata:
   labels:
     {{- include "continuo.labels" . | nindent 4 }}
     app.kubernetes.io/name: minio
+  annotations:
+    ignore-check.kube-linter.io/no-read-only-root-fs: "minio entrypoint writes a pidfile and runtime config at startup"
 spec:
   serviceName: {{ include "continuo.minio.fullname" . }}
   replicas: 1
@@ -23,16 +25,20 @@ spec:
     spec:
       securityContext:
         {{- include "continuo.podSecurityContext" . | nindent 8 }}
-        runAsUser: 1000
-        runAsGroup: 1000
-        fsGroup: 1000
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
       containers:
         - name: minio
           image: "{{ .Values.minio.image.repository }}:{{ .Values.minio.image.tag }}"
           imagePullPolicy: IfNotPresent
+          # This image runs env-driven (no "server /data" args); its entrypoint
+          # writes a pidfile and runtime config under the root filesystem, so —
+          # like neo4j — it keeps the other hardening but not readOnlyRootFilesystem.
           securityContext:
-            {{- include "continuo.containerSecurityContext" . | nindent 12 }}
-          args: ["server", "/data"]
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           env:
             - name: MINIO_ROOT_USER
               valueFrom:
@@ -63,7 +69,7 @@ spec:
             {{- toYaml .Values.minio.resources | nindent 12 }}
           volumeMounts:
             - name: data
-              mountPath: /data
+              mountPath: /bitnami/minio/data
   volumeClaimTemplates:
     - metadata:
         name: data
