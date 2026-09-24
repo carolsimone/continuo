@@ -1,0 +1,52 @@
+name: mirror-quickstart-images
+
+# Manual: run when bumping the bundled-MinIO version pins in values.yaml /
+# docker-compose.yml. NOT tag-triggered — the release flow retags our own
+# service images by sha; a vendor image is mirrored on a version bump, not per
+# release. The source is anonymous, so the only credential is the ghcr push
+# token.
+on:
+  workflow_dispatch:
+    inputs:
+      minio_src:
+        description: "Source minio SERVER image ref (registry/repo:tag)"
+        required: true
+        type: string
+      mc_src:
+        description: "Source mc CLIENT image ref (registry/repo:tag)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  mirror:
+    runs-on: self-hosted
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Isolate Docker client state
+        uses: ./.github/actions/isolate-docker-state
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Mirror
+        env:
+          MINIO_SRC: ${{ inputs.minio_src }}
+          MC_SRC: ${{ inputs.mc_src }}
+          OWNER: ${{ github.repository_owner }}
+        run: bash scripts/release/mirror-quickstart-images.sh "$OWNER"

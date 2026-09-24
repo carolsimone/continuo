@@ -659,13 +659,19 @@ services:
     networks:
       - default
 
-  # Same MinIO server/client releases the Helm chart bundles
+  # Same MinIO server/client images the Helm chart bundles
   # (deploy/continuo/values.yaml minio.image / minio.mcImage), so the local
-  # stack exercises the object store a real install runs. Pulled from Quay
-  # because MinIO no longer serves the community images on Docker Hub.
+  # stack exercises the object store a real install runs. Served from this
+  # project's own ghcr mirror because upstream MinIO gates its quay.io images
+  # behind authentication. The entrypoint runs the `minio` binary directly
+  # (bypassing the image's own wrapper) with the :9001 console, like upstream.
+  # Data goes under /bitnami/minio/data — the one path this image pre-creates
+  # writable for its non-root default user; compose has no fsGroup to make an
+  # arbitrary path writable (the chart mounts a PVC at /data and uses fsGroup).
   minio:
-    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
-    command: ["server", "/data", "--console-address", ":9001"]
+    image: ghcr.io/carolsimone/continuo-minio:2025.7.23
+    entrypoint: ["minio"]
+    command: ["server", "/bitnami/minio/data", "--console-address", ":9001"]
     ports:
       - "9000:9000"
       - "9001:9001"
@@ -683,7 +689,7 @@ services:
   # so re-running the service is idempotent. Services that read or write S3 at
   # startup depend on this completing, not merely on minio being healthy.
   minio-init:
-    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
+    image: ghcr.io/carolsimone/continuo-mc:2025.7.21
     depends_on:
       minio:
         condition: service_healthy

@@ -32,6 +32,12 @@ spec:
           imagePullPolicy: IfNotPresent
           securityContext:
             {{- include "continuo.containerSecurityContext" . | nindent 12 }}
+          # Run the minio binary directly rather than through the image's own
+          # wrapper entrypoint, so it behaves like the upstream image: it writes
+          # only under /data (the mounted volume) and needs no writable root
+          # filesystem. This also keeps a custom minio.image override working —
+          # any MinIO image ships the `minio` binary on PATH.
+          command: ["minio"]
           args: ["server", "/data"]
           env:
             - name: MINIO_ROOT_USER

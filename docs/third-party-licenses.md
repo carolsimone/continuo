@@ -93,7 +93,7 @@ use of it.
 | PostgreSQL | `postgres:18.3` | PostgreSQL License (permissive) |
 | Redis | `redis:8.6.4` | AGPLv3 / RSALv2 / SSPLv1 (tri-licensed) |
 | Neo4j | `neo4j:5.26.28-community` | GPLv3 |
-| MinIO | `minio/minio` | AGPLv3 |
+| MinIO | `ghcr.io/carolsimone/continuo-minio` (Bitnami packaging of MinIO, mirrored) | AGPLv3 (MinIO) + Apache-2.0 (Bitnami packaging) |
 | Dex | `dexidp/dex:v2.41.1` | Apache-2.0 |
 
 Three of these are copyleft. If your organisation's policy prohibits running them, use
