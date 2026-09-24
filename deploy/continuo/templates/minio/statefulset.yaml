@@ -10,8 +10,6 @@ metadata:
   labels:
     {{- include "continuo.labels" . | nindent 4 }}
     app.kubernetes.io/name: minio
-  annotations:
-    ignore-check.kube-linter.io/no-read-only-root-fs: "minio entrypoint writes a pidfile and runtime config at startup"
 spec:
   serviceName: {{ include "continuo.minio.fullname" . }}
   replicas: 1
@@ -25,20 +23,22 @@ spec:
     spec:
       securityContext:
         {{- include "continuo.podSecurityContext" . | nindent 8 }}
-        runAsUser: 1001
-        runAsGroup: 1001
-        fsGroup: 1001
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
       containers:
         - name: minio
           image: "{{ .Values.minio.image.repository }}:{{ .Values.minio.image.tag }}"
           imagePullPolicy: IfNotPresent
-          # This image runs env-driven (no "server /data" args); its entrypoint
-          # writes a pidfile and runtime config under the root filesystem, so —
-          # like neo4j — it keeps the other hardening but not readOnlyRootFilesystem.
           securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
+            {{- include "continuo.containerSecurityContext" . | nindent 12 }}
+          # Run the minio binary directly rather than through the image's own
+          # wrapper entrypoint, so it behaves like the upstream image: it writes
+          # only under /data (the mounted volume) and needs no writable root
+          # filesystem. This also keeps a custom minio.image override working —
+          # any MinIO image ships the `minio` binary on PATH.
+          command: ["minio"]
+          args: ["server", "/data"]
           env:
             - name: MINIO_ROOT_USER
               valueFrom:
@@ -69,7 +69,7 @@ spec:
             {{- toYaml .Values.minio.resources | nindent 12 }}
           volumeMounts:
             - name: data
-              mountPath: /bitnami/minio/data
+              mountPath: /data
   volumeClaimTemplates:
     - metadata:
         name: data

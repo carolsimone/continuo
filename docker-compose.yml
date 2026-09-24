@@ -663,10 +663,13 @@ services:
   # (deploy/continuo/values.yaml minio.image / minio.mcImage), so the local
   # stack exercises the object store a real install runs. Served from this
   # project's own ghcr mirror because upstream MinIO gates its quay.io images
-  # behind authentication. This packaging runs env-driven (no "server /data"
-  # command); its console is on 9001 by default.
+  # behind authentication. The entrypoint runs the `minio` binary directly
+  # (bypassing the image's own wrapper), so `server /data` and the :9001 console
+  # behave exactly like the upstream image did.
   minio:
     image: ghcr.io/carolsimone/continuo-minio:2025.7.23
+    entrypoint: ["minio"]
+    command: ["server", "/data", "--console-address", ":9001"]
     ports:
       - "9000:9000"
       - "9001:9001"
