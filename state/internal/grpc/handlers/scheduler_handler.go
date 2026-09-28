@@ -417,6 +417,9 @@ func (h *SchedulerHandler) TriggerSchedule(
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid operation: %v", err)
 	}
+	if operation.IsSingleNodeOnly() {
+		return nil, status.Errorf(codes.InvalidArgument, "operation %q targets a single node; use TriggerSingleNodeRun", operation)
+	}
 	u := h.uowFactory()
 	id, outcome, err := h.activate.Handle(ctx, u, req.ScheduleName, run.KindTrigger, nil, identity.FromContext(ctx), operation)
 	if err != nil {

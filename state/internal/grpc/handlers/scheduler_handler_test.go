@@ -418,6 +418,27 @@ func TestTriggerSchedule_InvalidOperation(t *testing.T) {
 	assert.Empty(t, outbox.appended, "no run should be created on invalid operation")
 }
 
+// TestTriggerSchedule_FullRefreshRejected verifies full_refresh — a single-node
+// operation — is refused on a whole-schedule trigger before any run is created.
+func TestTriggerSchedule_FullRefreshRejected(t *testing.T) {
+	catalogRepo := &stubCatalogRepo{existsActive: map[string]bool{"daily": true}}
+	runRepo := &activateFakeRunRepo{hasActive: false}
+	outbox := &activateFakeOutbox{}
+	_, factory := newActivateUoWFactory(catalogRepo, runRepo, outbox)
+
+	activate := svchandlers.NewActivateScheduleHandler(newTestLogger())
+	h := NewSchedulerHandler(nil, activate, nil, nil, factory, newTestLogger())
+
+	_, err := h.TriggerSchedule(context.Background(), &statev1.TriggerScheduleRequest{
+		ScheduleName: "daily",
+		Operation:    "full_refresh",
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	assert.Contains(t, status.Convert(err).Message(), "single node")
+	assert.Empty(t, outbox.appended, "no run should be created for a schedule-level full refresh")
+}
+
 func TestTriggerSchedule_AlreadyRunning(t *testing.T) {
 	catalogRepo := &stubCatalogRepo{existsActive: map[string]bool{"daily": true}}
 	runRepo := &activateFakeRunRepo{hasActive: true}
