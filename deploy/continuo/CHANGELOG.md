@@ -13,15 +13,8 @@ shipped in those.
 ## [Unreleased]
 
 ### Changed
-- `validation.imageTag` default bumped `v0.5.0` → `v0.6.0`. The
-  `continuo-python-runtime-<engine>` image renames its python contract kind
-  from `python-model` to `python-node` (aligned with the `pkg/streams`
-  `node_type` vocabulary); the image name, entrypoint, `run`/`validation-op`
-  commands, uid `65532`, and warehouse-adapter discovery are unchanged, so it
-  is a drop-in. An unmodified existing values file that keeps
-  `imageTag: "v0.5.0"` still installs and runs, and a stored production
-  contract written under the older name keeps resolving via
-  topology-controller's compatibility alias. PATCH.
+- Default `validation.imageTag` is `v0.6.0` (continuo-python-runtime 0.6.0).
+- The python script node kind is `python-node`. Contracts written by continuo-python-runtime < 0.6.0 (kind `python-model`) keep working; stored node types are rewritten on upgrade by the release DB migration and orchestrator's startup data migration. Domain repos that upgrade to continuo-python-runtime 0.6.0 see every python node re-validated once on their next release (the node kind is part of its content hash).
 
 ## [0.7.1] - 2026-09-24
 
