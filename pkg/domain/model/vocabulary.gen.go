@@ -159,3 +159,104 @@ func (v RejectReason) Healable() bool {
 	}
 	return false
 }
+
+// NodeRuntime — The toolchain that builds a graph node.
+// Values come from the vocabulary "node_runtime" in contract.yaml, in
+// declaration order.
+type NodeRuntime string
+
+const (
+	// NodeRuntimeDbt — built by the dbt CLI inside the team's dbt image.
+	NodeRuntimeDbt NodeRuntime = "dbt"
+	// NodeRuntimePython — built by continuo-python-runtime inside the node's own image.
+	NodeRuntimePython NodeRuntime = "python"
+)
+
+// NodeRuntimes returns every value in contract.yaml declaration order.
+func NodeRuntimes() []NodeRuntime {
+	return []NodeRuntime{
+		NodeRuntimeDbt,
+		NodeRuntimePython,
+	}
+}
+
+// IsValid reports whether v is a value declared in contract.yaml.
+func (v NodeRuntime) IsValid() bool {
+	switch v {
+	case NodeRuntimeDbt:
+		return true
+	case NodeRuntimePython:
+		return true
+	}
+	return false
+}
+
+// NodeType — The kind of a graph node. Decides which toolchain builds it (runtime) and which contract rules and validation path apply.
+// Values come from the vocabulary "node_type" in contract.yaml, in
+// declaration order.
+type NodeType string
+
+const (
+	// NodeTypeDbtModel — a dbt model; built with dbt run.
+	NodeTypeDbtModel NodeType = "dbt-model"
+	// NodeTypeDbtSeed — a dbt seed; built with dbt seed.
+	NodeTypeDbtSeed NodeType = "dbt-seed"
+	// NodeTypeDbtSnapshot — a dbt snapshot; built with dbt snapshot.
+	NodeTypeDbtSnapshot NodeType = "dbt-snapshot"
+	// NodeTypePythonNode — a python script node declared in a service contract; its script's run(ctx) returns the table.
+	NodeTypePythonNode NodeType = "python-node"
+	// NodeTypePythonCsv — a contract-only python node that loads its table from one csv uri; it has no script.
+	NodeTypePythonCsv NodeType = "python-csv"
+	// NodeTypeDbtTest — a dbt data test; exists only in candidate and current_prod topologies, where validation bind-checks its compiled SQL; never promoted to the orchestrator's graph and never scheduled.
+	NodeTypeDbtTest NodeType = "dbt-test"
+)
+
+// NodeTypes returns every value in contract.yaml declaration order.
+func NodeTypes() []NodeType {
+	return []NodeType{
+		NodeTypeDbtModel,
+		NodeTypeDbtSeed,
+		NodeTypeDbtSnapshot,
+		NodeTypePythonNode,
+		NodeTypePythonCsv,
+		NodeTypeDbtTest,
+	}
+}
+
+// IsValid reports whether v is a value declared in contract.yaml.
+func (v NodeType) IsValid() bool {
+	switch v {
+	case NodeTypeDbtModel:
+		return true
+	case NodeTypeDbtSeed:
+		return true
+	case NodeTypeDbtSnapshot:
+		return true
+	case NodeTypePythonNode:
+		return true
+	case NodeTypePythonCsv:
+		return true
+	case NodeTypeDbtTest:
+		return true
+	}
+	return false
+}
+
+// Runtime reports which toolchain builds a node of this type.
+func (v NodeType) Runtime() NodeRuntime {
+	switch v {
+	case NodeTypeDbtModel:
+		return NodeRuntimeDbt
+	case NodeTypeDbtSeed:
+		return NodeRuntimeDbt
+	case NodeTypeDbtSnapshot:
+		return NodeRuntimeDbt
+	case NodeTypePythonNode:
+		return NodeRuntimePython
+	case NodeTypePythonCsv:
+		return NodeRuntimePython
+	case NodeTypeDbtTest:
+		return NodeRuntimeDbt
+	}
+	return ""
+}

@@ -418,3 +418,45 @@ vocabularies:
         const: ValidationFailed
         healable: true
         description: at least one node failed the candidate's dbt --empty validation run.
+
+  - name: node_runtime
+    const: NodeRuntime
+    description: The toolchain that builds a graph node.
+    values:
+      - value: dbt
+        const: Dbt
+        description: built by the dbt CLI inside the team's dbt image.
+      - value: python
+        const: Python
+        description: built by continuo-python-runtime inside the node's own image.
+
+  - name: node_type
+    const: NodeType
+    description: >-
+      The kind of a graph node. Decides which toolchain builds it (runtime) and
+      which contract rules and validation path apply.
+    values:
+      - value: dbt-model
+        const: DbtModel
+        runtime: dbt
+        description: a dbt model; built with dbt run.
+      - value: dbt-seed
+        const: DbtSeed
+        runtime: dbt
+        description: a dbt seed; built with dbt seed.
+      - value: dbt-snapshot
+        const: DbtSnapshot
+        runtime: dbt
+        description: a dbt snapshot; built with dbt snapshot.
+      - value: python-node
+        const: PythonNode
+        runtime: python
+        description: a python script node declared in a service contract; its script's run(ctx) returns the table.
+      - value: python-csv
+        const: PythonCsv
+        runtime: python
+        description: a contract-only python node that loads its table from one csv uri; it has no script.
+      - value: dbt-test
+        const: DbtTest
+        runtime: dbt
+        description: a dbt data test; exists only in candidate and current_prod topologies, where validation bind-checks its compiled SQL; never promoted to the orchestrator's graph and never scheduled.

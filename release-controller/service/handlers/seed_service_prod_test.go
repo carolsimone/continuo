@@ -134,7 +134,7 @@ func TestSeedServiceProd_DerivesManifestKindPerService(t *testing.T) {
 	// service-1 is a dbt service; service-2 is a python service.
 	cp := buildCurrentProd("rel-1",
 		release.Node{UniqueID: "n1", ServiceName: "service-1", ImageTag: "t1", NodeType: "dbt-model"},
-		release.Node{UniqueID: "n2", ServiceName: "service-2", ImageTag: "t2", NodeType: "python-model"},
+		release.Node{UniqueID: "n2", ServiceName: "service-2", ImageTag: "t2", NodeType: "python-node"},
 	)
 	existingKeys := map[string]string{
 		"service-1": "s3://bucket/service-1/manifest.json",
@@ -163,7 +163,7 @@ func TestSeedServiceProd_CsvServiceClassifiedPython(t *testing.T) {
 	now := time.Unix(1_000_000, 0).UTC()
 
 	// service-1 has only python-csv nodes: it must classify as python, same
-	// as a service made only of python-model nodes.
+	// as a service made only of python-nodes.
 	cp := buildCurrentProd("rel-1",
 		release.Node{UniqueID: "n1", ServiceName: "service-1", ImageTag: "t1", NodeType: "python-csv"},
 	)
@@ -191,7 +191,7 @@ func TestSeedServiceProd_MixedKindServiceErrorsAndWritesNothing(t *testing.T) {
 	// before anything is written, including the clean service-2 pointer.
 	cp := buildCurrentProd("rel-1",
 		release.Node{UniqueID: "n1", ServiceName: "service-1", ImageTag: "t1", NodeType: "dbt-model"},
-		release.Node{UniqueID: "n2", ServiceName: "service-1", ImageTag: "t1", NodeType: "python-model"},
+		release.Node{UniqueID: "n2", ServiceName: "service-1", ImageTag: "t1", NodeType: "python-node"},
 		release.Node{UniqueID: "n3", ServiceName: "service-2", ImageTag: "t2", NodeType: "dbt-model"},
 	)
 	existingKeys := map[string]string{

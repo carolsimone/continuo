@@ -365,7 +365,7 @@ func (h *JobStatusHandler) handleCompileTerminal(
 // any structured-result sentinel block stripped) is uploaded under logs/...; when
 // the pod emitted a structured block, that JSON is uploaded separately under
 // run-results/... and its key returned as runResultsURI. Validation pods and
-// python-family production containers (python-model, python-csv) emit one;
+// python-family production containers (python-node, python-csv) emit one;
 // dbt containers do not.
 // Returns the log tail and the sentinel block's message (for error_message —
 // empty when no block is present, the block fails to decode, or its status is

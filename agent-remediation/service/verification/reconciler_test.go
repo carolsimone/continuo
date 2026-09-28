@@ -76,7 +76,7 @@ func requestedPayload() []byte {
 		"category":        "validation",
 		"error_signature": "sig-1",
 		"reason":          "contract_mismatch",
-		"node_type":       "python-model",
+		"node_type":       "python-node",
 		"service":         "svc",
 	}})
 }
@@ -91,7 +91,7 @@ func batchPayload(nodeIDs ...string) []byte {
 			"category":        "validation",
 			"error_signature": "sig-" + id,
 			"reason":          "contract_mismatch",
-			"node_type":       "python-model",
+			"node_type":       "python-node",
 			"service":         "svc",
 		})
 	}
@@ -637,7 +637,7 @@ func TestReconcileOnce_FailedVerificationFailsTheAttemptAndRetries(t *testing.T)
 	require.Len(t, next.Nodes, 1)
 	assert.Equal(t, "analytics.orders", next.Nodes[0].NodeID)
 	assert.Equal(t, "sig-1", next.Nodes[0].ErrorSignature)
-	assert.Equal(t, "python-model", next.Nodes[0].NodeType)
+	assert.Equal(t, "python-node", next.Nodes[0].NodeType)
 }
 
 // TestReconcileOnce_FailedVerificationNamesEveryFailingNodeWhenTheFixedOnePassed

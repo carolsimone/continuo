@@ -1,21 +1,36 @@
 package model_test
 
 import (
-	"go/ast"
-	"go/parser"
-	"go/token"
+	"strings"
 	"testing"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
-func TestParseNodeType_PythonCsv(t *testing.T) {
-	got, err := model.ParseNodeType("python-csv")
-	if err != nil {
-		t.Fatalf("ParseNodeType(python-csv): %v", err)
+func TestParseNodeType_EveryDeclaredValueParses(t *testing.T) {
+	for _, nt := range model.NodeTypes() {
+		got, err := model.ParseNodeType(string(nt))
+		if err != nil || got != nt {
+			t.Errorf("ParseNodeType(%q) = %q, %v", nt, got, err)
+		}
 	}
-	if got != model.NodeTypePythonCsv {
-		t.Fatalf("got %q", got)
+}
+
+func TestParseNodeType_RetiredPythonModelIsRejectedWithValidList(t *testing.T) {
+	_, err := model.ParseNodeType("python-model")
+	if err == nil {
+		t.Fatal("python-model must not parse")
+	}
+	for _, want := range []string{`"python-model"`, "python-node", "python-csv"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q must mention %s", err, want)
+		}
+	}
+}
+
+func TestParseNodeType_EmptyIsRejected(t *testing.T) {
+	if _, err := model.ParseNodeType(""); err == nil {
+		t.Fatal("empty node_type must not parse")
 	}
 }
 
@@ -24,8 +39,12 @@ func TestIsPython(t *testing.T) {
 		model.NodeTypeDbtModel:    false,
 		model.NodeTypeDbtSeed:     false,
 		model.NodeTypeDbtSnapshot: false,
-		model.NodeTypePythonModel: true,
+		model.NodeTypeDbtTest:     false,
+		model.NodeTypePythonNode:  true,
 		model.NodeTypePythonCsv:   true,
+	}
+	if len(cases) != len(model.NodeTypes()) {
+		t.Fatalf("this table covers %d node types, the catalog declares %d — add the new one", len(cases), len(model.NodeTypes()))
 	}
 	for nt, want := range cases {
 		if nt.IsPython() != want {
@@ -34,18 +53,12 @@ func TestIsPython(t *testing.T) {
 	}
 }
 
-// TestEveryNodeTypeIsClassified is the guard the spec requires: adding a
-// NodeType constant without deciding its family must fail here, so the four
-// call sites that branch on family cannot be silently wrong for a new kind.
-// Every NodeType falls into exactly one family: a relation-producing dbt kind
-// (model/seed/snapshot), a python kind (IsPython()), or a validation-only
-// test kind (dbt-test) that is neither.
+// TestEveryNodeTypeIsClassified: every NodeType falls into exactly one family —
+// a relation-producing dbt kind, a python kind, or the validation-only dbt-test.
 func TestEveryNodeTypeIsClassified(t *testing.T) {
-	for _, nt := range model.AllNodeTypes {
-		isDbtRelation := nt == model.NodeTypeDbtModel || nt == model.NodeTypeDbtSeed ||
-			nt == model.NodeTypeDbtSnapshot
+	for _, nt := range model.NodeTypes() {
+		isDbtRelation := nt.Runtime() == model.NodeRuntimeDbt && nt != model.NodeTypeDbtTest
 		isTest := nt == model.NodeTypeDbtTest
-
 		families := 0
 		for _, in := range []bool{isDbtRelation, nt.IsPython(), isTest} {
 			if in {
@@ -55,46 +68,5 @@ func TestEveryNodeTypeIsClassified(t *testing.T) {
 		if families != 1 {
 			t.Errorf("NodeType %q is in %d families, want exactly 1", nt, families)
 		}
-	}
-	if len(model.AllNodeTypes) != 6 {
-		t.Errorf("AllNodeTypes has %d entries; update it AND the family "+
-			"classification when adding a NodeType", len(model.AllNodeTypes))
-	}
-}
-
-// TestAllNodeTypesMatchesDeclaredConstants parses model.go and counts the
-// const specs whose declared type is NodeType, then asserts that count
-// equals len(AllNodeTypes). This catches "declared a NodeType constant but
-// forgot to add it to AllNodeTypes" at compile-test time, rather than
-// leaving a silently unclassified node type to surface at runtime.
-func TestAllNodeTypesMatchesDeclaredConstants(t *testing.T) {
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "model.go", nil, 0)
-	if err != nil {
-		t.Fatalf("parse model.go: %v", err)
-	}
-
-	count := 0
-	for _, decl := range f.Decls {
-		genDecl, ok := decl.(*ast.GenDecl)
-		if !ok || genDecl.Tok != token.CONST {
-			continue
-		}
-		for _, spec := range genDecl.Specs {
-			valueSpec, ok := spec.(*ast.ValueSpec)
-			if !ok || valueSpec.Type == nil {
-				continue
-			}
-			ident, ok := valueSpec.Type.(*ast.Ident)
-			if !ok || ident.Name != "NodeType" {
-				continue
-			}
-			count += len(valueSpec.Names)
-		}
-	}
-
-	if count != len(model.AllNodeTypes) {
-		t.Errorf("model.go declares %d NodeType constants but AllNodeTypes has %d entries; "+
-			"keep them in sync", count, len(model.AllNodeTypes))
 	}
 }

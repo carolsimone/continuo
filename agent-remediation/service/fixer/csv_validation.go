@@ -11,7 +11,7 @@ import (
 // csvReadKey is the name a python-csv node's contract entry gives its one
 // read: the "reads: {csv: <uri>}" key the runtime loads the file from. It is
 // the single read a python-csv node is allowed to have, and the only one this
-// lane's guard is concerned with — unlike a python-model node, whose script
+// lane's guard is concerned with — unlike a python-node, whose script
 // may declare any number of reads under any names.
 const csvReadKey = "csv"
 
@@ -23,7 +23,7 @@ const csvReadKey = "csv"
 // the file's header line and rejects the release when a declared output
 // column is missing from it.
 //
-// That is a different failure shape from a python-model node's (whose script
+// That is a different failure shape from a python-node's (whose script
 // the runtime actually executes, and whose fix must therefore preserve
 // whatever reads that script performs), which is why this is its own lane
 // rather than a case inside pythonValidationFixer: the fix here corrects the
@@ -35,7 +35,7 @@ const csvReadKey = "csv"
 // Locating the failing node's contract file, verifying no sibling in the same
 // directory also failed (so the verification run the driver later submits
 // can actually pass), and everything from the model call through packaging the
-// merged contract is not merely similar in shape to the python-model lane's —
+// merged contract is not merely similar in shape to the python-node lane's —
 // it is the same code, shared through locateContractForFix and
 // contractFix. This type differs from pythonValidationFixer
 // only in the two seams passed into contractFix: what
@@ -80,7 +80,7 @@ func buildCsvProposeRequest(ctx context.Context, svc Services, in Input, located
 // csvDeclarationBreach is the post-apply guard for a python-csv fix. Every
 // node the answer's own files declared before the edit must still be
 // declared, under an unchanged identity — the same rule declarationBreach
-// enforces for a python-model fix, because it holds regardless of what a fix
+// enforces for a python-node fix, because it holds regardless of what a fix
 // is otherwise allowed to touch.
 //
 // What differs from declarationBreach is the extra, csv-specific message
@@ -97,7 +97,7 @@ func buildCsvProposeRequest(ctx context.Context, svc Services, in Input, located
 // check. For the failing python-csv node itself, which declares exactly one
 // read, the two checks catch the identical breach; the csv-specific message
 // only gets to say so first. The blanket rule is what protects any sibling in
-// the same contract directory — most commonly a python-model node, whose
+// the same contract directory — most commonly a python-node, whose
 // script this fix never touches and whose reads it therefore may never
 // subtract.
 func csvDeclarationBreach(svc Services, files []ports.ProposedFile, originals map[string]string) string {

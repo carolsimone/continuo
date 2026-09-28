@@ -197,15 +197,15 @@ func (l *Locator) Declarations(yamlText string) ([]ports.NodeDeclaration, error)
 	}
 	out := make([]ports.NodeDeclaration, 0, len(doc.Nodes))
 	for _, n := range doc.Nodes {
-		// Absent kind means python-model — the same default every parser of this
+		// Absent kind means python-node — the same default every parser of this
 		// wire format applies (topology-controller's python_contract_parser.py,
 		// e.g.). Every legacy contract omits "kind:", so without this default an
 		// answer that writes it explicitly (a plausible, correct normalization)
-		// would read as an identity change ("" -> "python-model") rather than as
+		// would read as an identity change ("" -> "python-node") rather than as
 		// the no-op it actually is.
 		kind := n.Kind
 		if kind == "" {
-			kind = "python-model"
+			kind = "python-node"
 		}
 		out = append(out, ports.NodeDeclaration{
 			Identity: ports.NodeIdentity{

@@ -33,7 +33,7 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 		return nil
 	}
 
-	// Step 2: Build Job spec. Python-family nodes (python-model, python-csv) run
+	// Step 2: Build Job spec. Python-family nodes (python-node, python-csv) run
 	// the domain repository's own image under the runtime harness's
 	// environment; every other node type runs the team's dbt image under a
 	// resolved dbt command. The Job metadata below is shared, so both kinds
@@ -214,7 +214,7 @@ func (c *K8sClient) CreateValidationJob(ctx context.Context, params ValidationJo
 // single main container; the runner fetches the compiled SQL from S3 itself. There
 // is no init container and no shared emptyDir for this path. clone_from_prod nodes
 // have no candidate SQL and never touch S3, so they remain single-container with no
-// emptyDir and no S3 credentials. build_from_columns (python-model nodes) receive
+// emptyDir and no S3 credentials. build_from_columns (python-nodes) receive
 // CANDIDATE_SPEC_URI + S3 credentials instead: the runner fetches the published
 // JSON validation spec (declared reads + output columns), not compiled SQL.
 func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
@@ -789,7 +789,7 @@ func buildPodSpec(params JobParams, command []string, partialParsePath string) (
 	return spec, nil
 }
 
-// buildPythonPodSpec constructs the PodSpec for a python-model run Job.
+// buildPythonPodSpec constructs the PodSpec for a python-node run Job.
 //
 // The pod is a single container running the node's own image verbatim: the
 // release's image_tag is a complete registry reference, built by the domain

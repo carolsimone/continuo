@@ -373,7 +373,7 @@ func droppedReadBreach(node string, was, now ports.NodeDeclaration) string {
 // buildDeclarationMaps parses every contract yaml file in an answer, before
 // and after the edit, into declarations keyed by identityKey. It is the part
 // every contract-fix lane's post-apply guard shares, whatever it then checks
-// those declarations for: the python-model guard follows it with the
+// those declarations for: the python-node guard follows it with the
 // blanket-read check above, and the python-csv guard follows it with a
 // narrower one scoped to the single "csv" read.
 //
@@ -412,7 +412,7 @@ func buildDeclarationMaps(svc Services, files []ports.ProposedFile, originals ma
 // criticality). Both are refused regardless of what a lane's fix is otherwise
 // allowed to touch: a fix corrects what a node declares, never which node is
 // declared — and never what KIND of node it is; a python-csv node quietly
-// flipped to kind: python-model (or the reverse) would validate under a
+// flipped to kind: python-node (or the reverse) would validate under a
 // completely different set of rules than the ones the fix was judged against.
 //
 // Every caller runs this check BEFORE its own read-preservation rule (the
@@ -594,9 +594,9 @@ func siblingFailure(ctx context.Context, svc Services, in Input, located ports.L
 
 // skipPython records a skipped attempt whose reason is kept as the proposal's
 // rationale, so the operator reading the release sees why no fix was attempted
-// rather than an unexplained absence. Shared by both the python-model and the
+// rather than an unexplained absence. Shared by both the python-node and the
 // python-csv lane — node_type on the logged event is what tells a skipped
-// python-csv attempt apart from a skipped python-model one in the logs, since
+// python-csv attempt apart from a skipped python-node one in the logs, since
 // both lanes route through this one function.
 func skipPython(svc Services, in Input, reason string) (Result, error) {
 	svc.Logger.Info("python contract fix skipped", "node", in.NodeID, "node_type", in.NodeType, "reason", reason)

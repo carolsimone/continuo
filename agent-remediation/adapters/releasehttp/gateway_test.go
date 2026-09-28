@@ -264,7 +264,7 @@ func TestFailingNodes_NodeWithNoPerNodeResultFallsBackByID(t *testing.T) {
 func TestStatus_FailedParseStageCarriesInlineDetail(t *testing.T) {
 	const detail = "unqualified table reference `orders`. Line 1, Col: 16."
 	body := `{"run_id":"verify-x","status":"failed","fail_reason":"unqualified_reference","fail_detail":"1 node failed to parse",
-		  "per_node_results":[{"stage":"parse","node_id":"analytics.py_daily_kpis","status":"failed","node_type":"python-model","file_path":"contracts/x.yml","detail":` +
+		  "per_node_results":[{"stage":"parse","node_id":"analytics.py_daily_kpis","status":"failed","node_type":"python-node","file_path":"contracts/x.yml","detail":` +
 		strconv.Quote(detail) + `}]}`
 	srv := releaseServer(t, "/verification-runs/verify-x", http.StatusOK, body)
 	defer srv.Close()

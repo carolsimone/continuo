@@ -1115,15 +1115,15 @@ func TestHandleParsedManifest_Bootstrap_PromotesWithoutValidation(t *testing.T) 
 }
 
 // TestHandleParsedManifest_AssignsPerNodeValidationOp asserts the six
-// dbt/python-model/python-csv x changed/unchanged quadrants:
+// dbt/python-node/python-csv x changed/unchanged quadrants:
 //   - a changed dbt-model gets build_from_sql (prod_schema empty);
-//   - a changed python-model gets build_from_columns (prod_schema empty) —
+//   - a changed python-node gets build_from_columns (prod_schema empty) —
 //     it has no compiled SQL to rewrite, only a JSON validation spec of
 //     declared reads + output columns;
 //   - a changed python-csv gets build_from_columns too — it is part of the
 //     python family (IsPython), so it is classified the same as
-//     python-model here;
-//   - an unchanged upstream, dbt, python-model, or python-csv, is never
+//     python-node here;
+//   - an unchanged upstream, dbt, python-node, or python-csv, is never
 //     built from a candidate artifact: it gets clone_from_prod with
 //     prod_schema = its schema_name.
 func TestHandleParsedManifest_AssignsPerNodeValidationOp(t *testing.T) {
@@ -1135,7 +1135,7 @@ func TestHandleParsedManifest_AssignsPerNodeValidationOp(t *testing.T) {
 	// depending on its respective upstream.
 	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", release.Topology{
 		{UniqueID: "model.core.dim", ServiceName: "shop", NodeType: "dbt-model", SchemaName: "analytics", TableName: "dim", ContentHash: "hash-dim-OLD"},
-		{UniqueID: "python.core.stats", ServiceName: "shop", NodeType: "python-model", SchemaName: "analytics", TableName: "stats", ContentHash: "hash-stats-OLD"},
+		{UniqueID: "python.core.stats", ServiceName: "shop", NodeType: "python-node", SchemaName: "analytics", TableName: "stats", ContentHash: "hash-stats-OLD"},
 		{UniqueID: "csv.core.rates", ServiceName: "shop", NodeType: "python-csv", SchemaName: "analytics", TableName: "rates", ContentHash: "hash-rates-OLD"},
 	}, time.Unix(50, 0).UTC()))
 
@@ -1143,8 +1143,8 @@ func TestHandleParsedManifest_AssignsPerNodeValidationOp(t *testing.T) {
 		{UniqueID: "model.core.dim", ServiceName: "shop", NodeType: "dbt-model", SchemaName: "analytics", TableName: "dim", ContentHash: "hash-dim-OLD"},
 		{UniqueID: "model.shop.orders", ServiceName: "shop", NodeType: "dbt-model", SchemaName: "shop", TableName: "orders", ContentHash: "hash-orders-NEW",
 			UpstreamUniqueIDs: []string{"model.core.dim"}},
-		{UniqueID: "python.core.stats", ServiceName: "shop", NodeType: "python-model", SchemaName: "analytics", TableName: "stats", ContentHash: "hash-stats-OLD"},
-		{UniqueID: "python.shop.enrich", ServiceName: "shop", NodeType: "python-model", SchemaName: "shop", TableName: "enrich", ContentHash: "hash-enrich-NEW",
+		{UniqueID: "python.core.stats", ServiceName: "shop", NodeType: "python-node", SchemaName: "analytics", TableName: "stats", ContentHash: "hash-stats-OLD"},
+		{UniqueID: "python.shop.enrich", ServiceName: "shop", NodeType: "python-node", SchemaName: "shop", TableName: "enrich", ContentHash: "hash-enrich-NEW",
 			UpstreamUniqueIDs: []string{"python.core.stats"}},
 		{UniqueID: "csv.core.rates", ServiceName: "shop", NodeType: "python-csv", SchemaName: "analytics", TableName: "rates", ContentHash: "hash-rates-OLD"},
 		{UniqueID: "csv.shop.fx", ServiceName: "shop", NodeType: "python-csv", SchemaName: "shop", TableName: "fx", ContentHash: "hash-fx-NEW",
@@ -1167,11 +1167,11 @@ func TestHandleParsedManifest_AssignsPerNodeValidationOp(t *testing.T) {
 	assert.Equal(t, "clone_from_prod", byID["model.core.dim"]["validation_op"])
 	assert.Equal(t, "analytics", byID["model.core.dim"]["prod_schema"])
 
-	// python-model changed.
+	// python-node changed.
 	assert.Equal(t, "build_from_columns", byID["python.shop.enrich"]["validation_op"])
 	assert.Equal(t, "", byID["python.shop.enrich"]["prod_schema"])
 
-	// python-model unchanged.
+	// python-node unchanged.
 	assert.Equal(t, "clone_from_prod", byID["python.core.stats"]["validation_op"])
 	assert.Equal(t, "analytics", byID["python.core.stats"]["prod_schema"])
 
@@ -1458,7 +1458,7 @@ func TestHandleParsedManifest_DuplicateTablePayloadNamesTargetAndOther(t *testin
 		Status:    "ok",
 		Topology: release.Topology{
 			{UniqueID: "analytics.orders", ServiceName: "finance", OriginalFilePath: "models/orders.sql", NodeType: "dbt-model"},
-			{UniqueID: "analytics.orders", ServiceName: "marketing", OriginalFilePath: "models/orders.sql", NodeType: "python-model"},
+			{UniqueID: "analytics.orders", ServiceName: "marketing", OriginalFilePath: "models/orders.sql", NodeType: "python-node"},
 		},
 	}))
 
@@ -1473,7 +1473,7 @@ func TestHandleParsedManifest_DuplicateTablePayloadNamesTargetAndOther(t *testin
 	assert.Equal(t, "failed", node["status"])
 	assert.Equal(t, "marketing", node["service"], "the changed service is the rename target")
 	assert.Equal(t, "models/orders.sql", node["file_path"])
-	assert.Equal(t, "python-model", node["node_type"], "the target claimant's kind, so remediation can skip an unfixable python target")
+	assert.Equal(t, "python-node", node["node_type"], "the target claimant's kind, so remediation can skip an unfixable python target")
 	assert.Equal(t, "finance", node["other_service"])
 	assert.Equal(t, "models/orders.sql", node["other_file_path"])
 }

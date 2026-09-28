@@ -221,7 +221,7 @@ func envMap(env []corev1.EnvVar) map[string]string {
 	return m
 }
 
-// TestBuildValidationPodSpec_BuildFromColumns_SetsSpecURI verifies python-model
+// TestBuildValidationPodSpec_BuildFromColumns_SetsSpecURI verifies python-node
 // validation nodes (VALIDATION_OP=build_from_columns) get CANDIDATE_SPEC_URI +
 // S3 credentials on the main container — the runner's env contract for
 // fetching the published JSON validation spec — and never CANDIDATE_SQL_URI,
@@ -233,7 +233,7 @@ func TestBuildValidationPodSpec_BuildFromColumns_SetsSpecURI(t *testing.T) {
 	p := ValidationJobParams{
 		JobName: "vj", ReleaseID: "r1", NodeID: "e2e_schema.py_probe",
 		ServiceName: "svc-py", SchemaName: "e2e_schema", TableName: "py_probe",
-		NodeType: pkg_model.NodeTypePythonModel, ImageTag: "img",
+		NodeType: pkg_model.NodeTypePythonNode, ImageTag: "img",
 		CandidateSchema: "cand_r1", ValidationOp: "build_from_columns",
 		CandidateArtifactURI: "s3://b/candidate-sql/r1/candidate_e2e_schema.py_probe.json",
 		Namespace:            "ns",
@@ -255,7 +255,7 @@ func TestBuildValidationPodSpec_BuildFromColumns_SetsSpecURI(t *testing.T) {
 func TestBuildValidationPodSpec_BuildFromColumns_EmptyURIFailsPermanently(t *testing.T) {
 	t.Setenv("VALIDATION_IMAGE", "ghcr.io/x/continuo-python-runtime-postgres:test")
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh-secret")
-	p := ValidationJobParams{JobName: "vj", NodeID: "n1", NodeType: pkg_model.NodeTypePythonModel,
+	p := ValidationJobParams{JobName: "vj", NodeID: "n1", NodeType: pkg_model.NodeTypePythonNode,
 		ValidationOp: "build_from_columns", Namespace: "ns"}
 	_, err := buildValidationPodSpec(p)
 	require.Error(t, err)

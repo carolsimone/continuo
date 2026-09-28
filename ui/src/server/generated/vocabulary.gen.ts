@@ -9,3 +9,10 @@ export const PARSE_FAILURE_KINDS: readonly ParseFailureKind[] = ['invalid_sql', 
 
 export type RejectReason = 'compile_failed' | 'parse_rehearsal_failed' | 'artifact_upload_failed' | 'invalid_sql' | 'unqualified_reference' | 'invalid_artifact' | 'internal_error' | 'duplicate_table' | 'unbuildable_cross_service_upstream' | 'nothing_to_validate' | 'seed_build_failed' | 'validation_failed';
 export const REJECT_REASONS: readonly RejectReason[] = ['compile_failed', 'parse_rehearsal_failed', 'artifact_upload_failed', 'invalid_sql', 'unqualified_reference', 'invalid_artifact', 'internal_error', 'duplicate_table', 'unbuildable_cross_service_upstream', 'nothing_to_validate', 'seed_build_failed', 'validation_failed'];
+
+export type NodeRuntime = 'dbt' | 'python';
+export const NODE_RUNTIMES: readonly NodeRuntime[] = ['dbt', 'python'];
+
+export type NodeType = 'dbt-model' | 'dbt-seed' | 'dbt-snapshot' | 'python-node' | 'python-csv' | 'dbt-test';
+export const NODE_TYPES: readonly NodeType[] = ['dbt-model', 'dbt-seed', 'dbt-snapshot', 'python-node', 'python-csv', 'dbt-test'];
+export const NODE_TYPE_RUNTIME: Readonly<Record<NodeType, NodeRuntime>> = { 'dbt-model': 'dbt', 'dbt-seed': 'dbt', 'dbt-snapshot': 'dbt', 'python-node': 'python', 'python-csv': 'python', 'dbt-test': 'dbt' };

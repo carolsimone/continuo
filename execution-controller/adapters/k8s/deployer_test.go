@@ -11,7 +11,7 @@ import (
 )
 
 // TestDeploy_PythonModel_CreatesTheJob verifies the run path dispatches a
-// python-model node: Deploy reaches CreateQueryJob and builds the pod that runs
+// python-node: Deploy reaches CreateQueryJob and builds the pod that runs
 // the node's own image with the harness's environment.
 func TestDeploy_PythonModel_CreatesTheJob(t *testing.T) {
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "warehouse-conn")
@@ -24,7 +24,7 @@ func TestDeploy_PythonModel_CreatesTheJob(t *testing.T) {
 		ServiceName: "svc-py",
 		SchemaName:  "analytics",
 		TableName:   "py_probe",
-		NodeType:    string(pkg_model.NodeTypePythonModel),
+		NodeType:    string(pkg_model.NodeTypePythonNode),
 		ImageTag:    "ghcr.io/acme/marketing-py:12-abc1234",
 	})
 	require.NoError(t, err)
@@ -36,7 +36,7 @@ func TestDeploy_PythonModel_CreatesTheJob(t *testing.T) {
 
 // TestDeployValidation_PythonModel_BuildsTheValidationPod proves the run and
 // validation paths build different pods for the same node type: validation
-// routes a python-model node through the build_from_columns runner with its
+// routes a python-node through the build_from_columns runner with its
 // spec URI, not through the runtime image the run path dispatches. It exercises
 // DeployValidation itself (through a fake-clientset K8sClient) rather than just
 // ParseNodeType, so a change that let the run path's pod leak into validation
@@ -52,7 +52,7 @@ func TestDeployValidation_PythonModel_BuildsTheValidationPod(t *testing.T) {
 		ServiceName:          "svc-py",
 		SchemaName:           "analytics",
 		TableName:            "py_probe",
-		NodeType:             string(pkg_model.NodeTypePythonModel),
+		NodeType:             string(pkg_model.NodeTypePythonNode),
 		ImageTag:             "img",
 		CandidateSchema:      "candidate_rel123",
 		CandidateArtifactURI: "s3://continuo-artifacts/candidate-sql/rel123/svc-py.py_probe.json",
@@ -60,12 +60,12 @@ func TestDeployValidation_PythonModel_BuildsTheValidationPod(t *testing.T) {
 	}
 
 	err := d.DeployValidation(context.Background(), spec)
-	require.NoError(t, err, "python-model must build a validation Job on the validation path")
+	require.NoError(t, err, "python-node must build a validation Job on the validation path")
 
 	job := fetchJob(t, client, "default", "validate-py-rel123")
 	podSpec := job.Spec.Template.Spec
 	assert.Equal(t, "s3://continuo-artifacts/candidate-sql/rel123/svc-py.py_probe.json", envByName(podSpec, "CANDIDATE_SPEC_URI"),
-		"the Job actually built for a python-model validation node, not a stub")
+		"the Job actually built for a python-node validation node, not a stub")
 	assert.Equal(t, "build_from_columns", envByName(podSpec, "VALIDATION_OP"))
 }
 

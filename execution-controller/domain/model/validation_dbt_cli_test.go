@@ -39,7 +39,7 @@ func TestValidationCommand_Seed(t *testing.T) {
 // TestValidationCommand_PythonModel verifies that python nodes run the same
 // validation entrypoint; VALIDATION_OP selects build_from_columns for them.
 func TestValidationCommand_PythonModel(t *testing.T) {
-	got := model.ValidationCommand(pkg_model.NodeTypePythonModel, "features")
+	got := model.ValidationCommand(pkg_model.NodeTypePythonNode, "features")
 	want := []string{"continuo-runtime", "validation-op"}
 	require.Equal(t, want, got)
 }
@@ -52,7 +52,7 @@ func TestValidationCommand_IsExplicitNotTheImageDefault(t *testing.T) {
 		pkg_model.NodeTypeDbtModel,
 		pkg_model.NodeTypeDbtSeed,
 		pkg_model.NodeTypeDbtSnapshot,
-		pkg_model.NodeTypePythonModel,
+		pkg_model.NodeTypePythonNode,
 	} {
 		got := model.ValidationCommand(nt, "orders")
 		require.NotEmpty(t, got, "node type %s must carry an explicit command", nt)

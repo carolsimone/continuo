@@ -62,12 +62,12 @@ func pythonDeps(t *testing.T, u *fakeUoW, llm *fakeLLM, art *fakeArtifacts, gw *
 // pythonTrigger is a validation rejection of one python node in service "svc".
 func pythonTrigger() Trigger {
 	tr := baseTrigger()
-	tr.RawPayload = []byte(`{"release_id":"r1","nodes":[{"node_id":"analytics.py_daily_kpis","node_type":"python-model"}]}`)
+	tr.RawPayload = []byte(`{"release_id":"r1","nodes":[{"node_id":"analytics.py_daily_kpis","node_type":"python-node"}]}`)
 	tr.Nodes = []TriggerNode{{
 		NodeID:         "analytics.py_daily_kpis",
 		ErrorSignature: "sig",
 		Category:       "logic",
-		NodeType:       "python-model",
+		NodeType:       "python-node",
 		Service:        "svc",
 		DBTLogURI:      "s3://b/log",
 	}}
