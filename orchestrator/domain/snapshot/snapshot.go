@@ -51,6 +51,13 @@ var ErrNoTests = errors.New("snapshot: node has no tests")
 // "rerun_of_test_unsupported".
 var ErrRerunOfTestUnsupported = errors.New("snapshot: rerun/rebase of a test run is not supported")
 
+// ErrFullRefreshUnsupported is returned by the SingleNode selector when
+// Operation is "full_refresh" and the target is neither a dbt model nor a dbt
+// seed. dbt snapshots have no full-refresh semantics, dbt tests materialize
+// nothing, and python nodes are not dbt. Handlers map this to
+// run.entries.dispatch_failed:v1 with reason "full_refresh_unsupported".
+var ErrFullRefreshUnsupported = errors.New("snapshot: full refresh supports only dbt models and seeds")
+
 // Params is the input to a snapshot.
 type Params struct {
 	RunID        string

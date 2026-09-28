@@ -37,6 +37,9 @@ func (s SingleNode) SelectTasks(ctx context.Context, r TopologyReader, p Params)
 		if p.Operation == string(pkgModel.OperationTest) && (!row.TestCountKnown || row.TestCount <= 0) {
 			return nil, ErrNoTests
 		}
+		if err := checkFullRefreshTarget(p.Operation, row.NodeType); err != nil {
+			return nil, err
+		}
 		return []TaskProjection{toSingleNodeProjection(fqn, row)}, nil
 	case "snapshot_of_run":
 		if p.SourceRunID == nil {
@@ -52,9 +55,26 @@ func (s SingleNode) SelectTasks(ctx context.Context, r TopologyReader, p Params)
 		if p.Operation == string(pkgModel.OperationTest) && (!row.TestCountKnown || row.TestCount <= 0) {
 			return nil, ErrNoTests
 		}
+		if err := checkFullRefreshTarget(p.Operation, row.NodeType); err != nil {
+			return nil, err
+		}
 		return []TaskProjection{toSingleNodeProjection(fqn, row)}, nil
 	default:
 		return nil, fmt.Errorf("SingleNode: invalid MetadataSource %q (want 'latest' or 'snapshot_of_run')", s.MetadataSource)
+	}
+}
+
+// checkFullRefreshTarget rejects a full refresh of any node type other than a
+// dbt model or seed.
+func checkFullRefreshTarget(operation, nodeType string) error {
+	if operation != string(pkgModel.OperationFullRefresh) {
+		return nil
+	}
+	switch pkgModel.NodeType(nodeType) {
+	case pkgModel.NodeTypeDbtModel, pkgModel.NodeTypeDbtSeed:
+		return nil
+	default:
+		return fmt.Errorf("%w: node type %q", ErrFullRefreshUnsupported, nodeType)
 	}
 }
 

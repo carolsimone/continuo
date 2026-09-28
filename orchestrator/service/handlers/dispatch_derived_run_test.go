@@ -155,6 +155,27 @@ func TestDispatchDerivedRun_OnlyDispatchesReadyFrontier(t *testing.T) {
 	assert.Equal(t, "e", qevt.TableName, "only the frontier node dispatches; f waits")
 }
 
+// A rerun of a failed full-refresh run inherits full_refresh, so its frontier
+// query.model rebuilds the node from scratch again.
+func TestDispatchDerivedRun_FullRefreshOperationPropagates(t *testing.T) {
+	ctx := context.Background()
+	uow := newFakeUnitOfWork()
+	projection := []snapshot.TaskProjection{
+		{TaskID: uuid.New(), ServiceName: "svc", SchemaName: "s", TableName: "tgt",
+			ScheduleName: "single-node-run-abcd1234", NodeType: "dbt-model", InitialStatus: "PENDING",
+			ReadyToDispatch: true, ImageTag: "v1", ManifestVersion: "m1", MaxRetries: pkgEvents.DefaultTaskMaxRetries},
+	}
+	require.NoError(t, handlers.DispatchDerivedRun(ctx, uow, newTestLogger(), handlers.DerivedRunDispatch{
+		RunID: "00000000-0000-0000-0000-000000000002", ScheduleName: "single-node-run-abcd1234",
+		Kind: "rerun", MessageProcessingID: uuid.New(), Projection: projection, Operation: "full_refresh",
+	}))
+	entries := uow.outboxRepo.CreatedEntries
+	require.Len(t, entries, 2)
+	var qevt serialization.NodeReadyForExecutionDTO
+	require.NoError(t, json.Unmarshal(entries[1].Payload, &qevt))
+	assert.Equal(t, "full_refresh", qevt.Operation)
+}
+
 // sanity: returns a meaningful error if RunID is invalid.
 func TestDispatchDerivedRun_InvalidRunID_Errors(t *testing.T) {
 	ctx := context.Background()

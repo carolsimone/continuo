@@ -87,6 +87,7 @@ func EmitDispatchFailed(
 //   - snapshot.ErrEmptyProjection        -> DispatchFailedReasonEmptyProjection
 //   - snapshot.ErrNoTests                -> DispatchFailedReasonNoTests
 //   - snapshot.ErrRerunOfTestUnsupported -> DispatchFailedReasonRerunOfTestUnsupported
+//   - snapshot.ErrFullRefreshUnsupported -> DispatchFailedReasonFullRefreshUnsupported
 //
 // Returns ("", false) for every other error. When false is returned the
 // caller MUST propagate err unchanged (typically wrapped with
@@ -107,6 +108,8 @@ func dispatchFailedReason(err error) (pkgEvents.DispatchFailedReason, bool) {
 		return pkgEvents.DispatchFailedReasonNoTests, true
 	case errors.Is(err, snapshot.ErrRerunOfTestUnsupported):
 		return pkgEvents.DispatchFailedReasonRerunOfTestUnsupported, true
+	case errors.Is(err, snapshot.ErrFullRefreshUnsupported):
+		return pkgEvents.DispatchFailedReasonFullRefreshUnsupported, true
 	default:
 		return "", false
 	}
