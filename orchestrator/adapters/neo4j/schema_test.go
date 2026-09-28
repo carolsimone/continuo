@@ -237,3 +237,47 @@ func TestInitSchema_DeletesLegacyPreviousChainEdges(t *testing.T) {
 
 	require.NoError(t, neo4jinfra.InitSchema(ctx, client, logger), "second apply must be a no-op")
 }
+
+// TestDataMigration_RenamesPythonModelNodeType verifies the data migration
+// rewrites a :Table's legacy node_type value 'python-model' to 'python-node',
+// leaves every other node_type untouched, and stays idempotent on a second
+// InitSchema application.
+func TestDataMigration_RenamesPythonModelNodeType(t *testing.T) {
+	client := newTestClient(t)
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	ctx := context.Background()
+
+	oldID, keepID := t.Name()+"-old", t.Name()+"-keep"
+	cleanup := func() {
+		s := client.NewSession(ctx, neo4j.AccessModeWrite)
+		defer s.Close(ctx)
+		_, _ = s.Run(ctx, "MATCH (t:Table) WHERE t.unique_id IN [$a, $b] DETACH DELETE t",
+			map[string]any{"a": oldID, "b": keepID})
+	}
+	cleanup()
+	defer cleanup()
+
+	session := client.NewSession(ctx, neo4j.AccessModeWrite)
+	_, err := session.Run(ctx, `
+		CREATE (:Table {unique_id: $old, node_type: 'python-model'})
+		CREATE (:Table {unique_id: $keep, node_type: 'python-csv'})`,
+		map[string]any{"old": oldID, "keep": keepID})
+	require.NoError(t, err)
+	session.Close(ctx)
+
+	nodeType := func(id string) string {
+		s := client.NewSession(ctx, neo4j.AccessModeRead)
+		defer s.Close(ctx)
+		res, err := s.Run(ctx, "MATCH (t:Table {unique_id: $u}) RETURN t.node_type AS nt", map[string]any{"u": id})
+		require.NoError(t, err)
+		require.True(t, res.Next(ctx))
+		v, _ := res.Record().Get("nt")
+		return v.(string)
+	}
+
+	for i := 0; i < 2; i++ {
+		require.NoError(t, neo4jinfra.InitSchema(ctx, client, logger))
+		require.Equal(t, "python-node", nodeType(oldID))
+		require.Equal(t, "python-csv", nodeType(keepID))
+	}
+}
