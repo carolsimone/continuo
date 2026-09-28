@@ -32,6 +32,19 @@ operations (`run`, `seed`, `snapshot`, `seed_build`, `test`, `build`,
 `compile`) or execution-controller refuses to boot. `{{ node }}` and
 `{{ target_schema }}` placeholders are substituted at dispatch time.
 
+Your `seed` command must rebuild the table — `dbt seed --full-refresh`, not a
+plain `dbt seed` — so a production seed load always replaces the table
+definition instead of truncating into the old one; a seed whose columns
+changed would otherwise fail to load into it.
+
+Your image should also provide a `full_refresh` command: a model-rebuild verb
+(e.g. `dbt run --full-refresh --select <node>`) that execution-controller
+resolves a node's `full_refresh` operation to. Unlike the seven operations
+above, `full_refresh` is optional — a block that omits it still boots — but a
+service without it cannot serve full-refresh requests for its models:
+execution-controller fails those requests permanently rather than falling
+back to another block's command.
+
 Your image must therefore contain a working dbt project (or a wrapper that
 behaves like one) at the path your commands assume, with a `profiles.yml`
 that connects using the environment below.
