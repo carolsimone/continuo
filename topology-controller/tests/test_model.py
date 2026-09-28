@@ -96,8 +96,8 @@ def test_upstream_dep():
 
 
 def test_node_type_and_runtime_enums_serialize_as_plain_strings():
-    assert json.dumps({"node_type": NodeType.PYTHON_MODEL, "runtime": Runtime.DBT}) == (
-        '{"node_type": "python-model", "runtime": "dbt"}'
+    assert json.dumps({"node_type": NodeType.PYTHON_NODE, "runtime": Runtime.DBT}) == (
+        '{"node_type": "python-node", "runtime": "dbt"}'
     )
     assert NodeType.DBT_MODEL == "dbt-model"
     assert Runtime.PYTHON == "python"

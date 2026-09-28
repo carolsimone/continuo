@@ -877,7 +877,7 @@ def test_an_empty_kind_fails_the_release_rather_than_parsing_as_dbt():
     assert publisher.publish_failed.call_args.kwargs["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
 
 
-def test_a_python_kind_entry_is_published_as_a_python_model(tmp_path):
+def test_a_python_kind_entry_is_published_as_a_python_node(tmp_path):
     publisher = MagicMock()
     source = _source_of(ManifestFile(
         path=_python_contract(tmp_path, _python_entry()), version="v1",
@@ -887,10 +887,38 @@ def test_a_python_kind_entry_is_published_as_a_python_model(tmp_path):
     _python_handler(source, publisher).handle(release_id="rel-1")
 
     topology = publisher.publish_ok.call_args.kwargs["topology"]
-    assert [n["node_type"] for n in topology] == ["python-model"]
+    assert [n["node_type"] for n in topology] == ["python-node"]
     assert topology[0]["unique_id"] == "test_schema.py_metrics"
     assert topology[0]["candidate_artifact_uri"].endswith(".json")
     assert topology[0]["original_file_path"] == "scripts/py_metrics.py"
+
+
+def test_a_release_mixing_old_and_new_python_contracts_publishes_python_node(tmp_path):
+    """Every release re-parses every service's stored production contract, so a
+    contract written by an older runtime (kind python-model) sits beside a new
+    one (kind python-node) in the same release. Both resolve to python-node."""
+    publisher = MagicMock()
+    old = ManifestFile(
+        path=_python_contract(
+            tmp_path, _python_entry(table="py_old", kind="python-model"),
+            service="service-old", name="old.yaml"),
+        version="v1", declared_service="service-old", kind=ManifestKind.PYTHON,
+    )
+    new = ManifestFile(
+        path=_python_contract(
+            tmp_path, _python_entry(table="py_new", kind="python-node"),
+            service="service-new", name="new.yaml"),
+        version="v1", declared_service="service-new", kind=ManifestKind.PYTHON,
+    )
+
+    _python_handler(_source_of(old, new), publisher).handle(release_id="rel-1")
+
+    publisher.publish_failed.assert_not_called()
+    topology = publisher.publish_ok.call_args.kwargs["topology"]
+    assert sorted((n["unique_id"], n["node_type"]) for n in topology) == [
+        ("test_schema.py_new", "python-node"),
+        ("test_schema.py_old", "python-node"),
+    ]
 
 
 # ---------------------------------------------------------------------------

@@ -3,20 +3,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 from domain.contract_vocabulary import ParseFailureKind
-
-
-class NodeType(StrEnum):
-    DBT_MODEL = "dbt-model"
-    DBT_SEED = "dbt-seed"
-    DBT_SNAPSHOT = "dbt-snapshot"
-    PYTHON_MODEL = "python-model"
-    PYTHON_CSV = "python-csv"
-    DBT_TEST = "dbt-test"
-
-
-class Runtime(StrEnum):
-    DBT = "dbt"
-    PYTHON = "python"
+from domain.contract_vocabulary import NodeRuntime as Runtime
+from domain.contract_vocabulary import NodeType
 
 
 class ManifestKind(StrEnum):

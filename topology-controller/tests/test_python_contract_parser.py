@@ -122,7 +122,7 @@ def test_happy_path_maps_every_manifest_node_field(tmp_path):
     assert node.owner == "marketing"
     assert node.schedule_name == "daily"
     assert node.criticality == "SECONDARY"
-    assert node.node_type == "python-model"
+    assert node.node_type == "python-node"
     assert node.runtime == "python"
     assert node.candidate_sql == ""
     # dependency_sqls follow SORTED read names ("ids" < "joined") for determinism
@@ -162,9 +162,15 @@ def test_raw_code_is_deterministic_pretty_json_without_hash_fields(tmp_path):
     assert nodes[0].raw_code == json.dumps(raw, sort_keys=True, indent=2)
 
 
-def test_empty_reads_yield_no_dependency_sqls(tmp_path):
-    nodes, _ = parse_python_contract(write_contract(tmp_path, make_entry(reads={})), "v1")
-    assert nodes[0].dependency_sqls == []
+def test_empty_reads_are_rejected(tmp_path):
+    with pytest.raises(MalformedContractError, match="reads must be a non-empty mapping"):
+        parse_python_contract(write_contract(tmp_path, make_entry(reads={})), "v1")
+
+
+def test_stored_python_model_contract_parses_as_python_node(tmp_path):
+    nodes, _ = parse_python_contract(write_contract(tmp_path, make_entry(kind="python-model")), "v1")
+    assert nodes[0].node_type == NodeType.PYTHON_NODE
+    assert json.loads(nodes[0].raw_code)["kind"] == "python-node"
 
 
 def test_empty_nodes_list_yields_no_nodes(tmp_path):
@@ -426,16 +432,19 @@ def test_non_string_kind_rejected_cleanly(tmp_path):
         parse_python_contract(write_contract(tmp_path, entry), "v1")
 
 
-def test_model_entry_without_kind_unchanged(tmp_path):
+def test_entry_without_kind_defaults_to_python_node(tmp_path):
     nodes, _ = parse_python_contract(write_contract(tmp_path, make_entry()), "v1")
     (node,) = nodes
-    assert node.node_type == NodeType.PYTHON_MODEL
+    assert node.node_type == NodeType.PYTHON_NODE
     assert node.csv_source == ""
 
 
-def test_model_entry_with_explicit_kind_parses_and_hash_verifies(tmp_path):
+def test_stored_python_model_kind_parses_and_hash_verifies(tmp_path):
+    """A contract written by continuo-python-runtime < 0.6.0 declares this
+    kind as "python-model"; STORED_KIND_ALIASES resolves it to python-node so
+    the stored contract keeps parsing."""
     entry = make_entry(kind="python-model")
     nodes, _ = parse_python_contract(write_contract(tmp_path, entry), "v1")
     (node,) = nodes
-    assert node.node_type == NodeType.PYTHON_MODEL
+    assert node.node_type == NodeType.PYTHON_NODE
     assert node.content_hash == content_hash_fold("aaa111", "bbb222", "ccc333")
