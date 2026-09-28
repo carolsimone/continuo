@@ -36,9 +36,9 @@ func TestValidationCommand_Seed(t *testing.T) {
 	require.Equal(t, want, got)
 }
 
-// TestValidationCommand_PythonModel verifies that python nodes run the same
+// TestValidationCommand_PythonNode verifies that python nodes run the same
 // validation entrypoint; VALIDATION_OP selects build_from_columns for them.
-func TestValidationCommand_PythonModel(t *testing.T) {
+func TestValidationCommand_PythonNode(t *testing.T) {
 	got := model.ValidationCommand(pkg_model.NodeTypePythonNode, "features")
 	want := []string{"continuo-runtime", "validation-op"}
 	require.Equal(t, want, got)

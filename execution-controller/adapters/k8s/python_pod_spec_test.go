@@ -276,12 +276,12 @@ func TestBuildPythonPodSpec_ModelStillGetsNoS3Credentials(t *testing.T) {
 	}
 }
 
-// TestCreateQueryJob_PythonModel_UsesPythonPodSpec verifies the dispatch branch
+// TestCreateQueryJob_PythonNode_UsesPythonPodSpec verifies the dispatch branch
 // reaches the Kubernetes API: the created Job carries the shared production
 // labels (so the job-status handler routes it through the production lifecycle
 // and the concurrency cap counts it), plus the runtime label, and its pod is the
 // python one.
-func TestCreateQueryJob_PythonModel_UsesPythonPodSpec(t *testing.T) {
+func TestCreateQueryJob_PythonNode_UsesPythonPodSpec(t *testing.T) {
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "warehouse-conn")
 	client := newValidationTestClient()
 
@@ -334,9 +334,9 @@ func TestCreateQueryJob_PythonCsv_UsesPythonPodSpec(t *testing.T) {
 	assert.Equal(t, "csv-access-key", env["AWS_ACCESS_KEY_ID"], "csv Jobs get S3 credentials")
 }
 
-// TestCreateQueryJob_PythonModel_IsIdempotent verifies a redelivered command
+// TestCreateQueryJob_PythonNode_IsIdempotent verifies a redelivered command
 // does not duplicate the Job.
-func TestCreateQueryJob_PythonModel_IsIdempotent(t *testing.T) {
+func TestCreateQueryJob_PythonNode_IsIdempotent(t *testing.T) {
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "warehouse-conn")
 	client := newValidationTestClient()
 

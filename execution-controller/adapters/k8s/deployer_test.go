@@ -10,10 +10,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestDeploy_PythonModel_CreatesTheJob verifies the run path dispatches a
+// TestDeploy_PythonNode_CreatesTheJob verifies the run path dispatches a
 // python-node: Deploy reaches CreateQueryJob and builds the pod that runs
 // the node's own image with the harness's environment.
-func TestDeploy_PythonModel_CreatesTheJob(t *testing.T) {
+func TestDeploy_PythonNode_CreatesTheJob(t *testing.T) {
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "warehouse-conn")
 	client := newValidationTestClient()
 	d := NewDeployer(client, "default")
@@ -34,14 +34,14 @@ func TestDeploy_PythonModel_CreatesTheJob(t *testing.T) {
 	assert.Equal(t, "analytics.py_probe", envByName(podSpec, "NODE_ID"))
 }
 
-// TestDeployValidation_PythonModel_BuildsTheValidationPod proves the run and
+// TestDeployValidation_PythonNode_BuildsTheValidationPod proves the run and
 // validation paths build different pods for the same node type: validation
 // routes a python-node through the build_from_columns runner with its
 // spec URI, not through the runtime image the run path dispatches. It exercises
 // DeployValidation itself (through a fake-clientset K8sClient) rather than just
 // ParseNodeType, so a change that let the run path's pod leak into validation
 // would fail here.
-func TestDeployValidation_PythonModel_BuildsTheValidationPod(t *testing.T) {
+func TestDeployValidation_PythonNode_BuildsTheValidationPod(t *testing.T) {
 	client := newValidationTestClient()
 	d := NewDeployer(client, "default")
 

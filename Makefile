@@ -6,7 +6,7 @@ DOCKER_COMPOSE := $(shell docker compose version > /dev/null 2>&1 && echo "docke
 # scripts/check-validation-image-pin.sh reads the literal off this assignment
 # and asserts it agrees with every other pinned location, so keep the complete
 # ghcr ref on this line (a bare version string would be invisible to it).
-VALIDATION_IMAGE_POSTGRES := ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.5.0
+VALIDATION_IMAGE_POSTGRES := ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.6.0
 
 # Build base image (run once or when base changes)
 .PHONY: build-base
@@ -258,6 +258,8 @@ guards:
 	bash scripts/check-kubeconfig-export.sh
 	bash scripts/check-release-tag-trigger.sh
 	bash scripts/check-validation-image-pin.sh
+	bash scripts/check-python-kind-parity.sh
+	bash scripts/check-retired-node-kind.sh
 	bash scripts/check-validation-image-sideload.sh
 	bash scripts/check-dev-dockerfile-nonroot.sh
 	bash scripts/check-standalone-modules.sh
