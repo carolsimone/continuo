@@ -38,7 +38,7 @@ export interface Task {
 
 export interface GraphNode {
   node_id: string;     // "{service}.{schema}.{table}"
-  node_type: string;   // "dbt-model" | "dbt-seed" | "dbt-snapshot" | "python-model" | "python-csv"
+  node_type: string;   // a NodeType from src/server/generated/vocabulary.gen.ts, or "" when unknown
   schedule_name: string;
   status?: string | null;
 }
