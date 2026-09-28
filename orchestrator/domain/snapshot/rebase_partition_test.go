@@ -157,3 +157,41 @@ func TestRebasePartition_NoScheduleName_Errors(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+// TestRebasePartition_SingleNodeRunSource_NeverFansOut pins the invariant that
+// stands in for a node-type guard on the rebase path. RebasePartition has no
+// checkFullRefreshTarget-equivalent check of its own, but a single-node run's
+// :Run carries the synthetic schedule_name TriggerSingleNodeRun mints
+// ("single-node-run-<id>") — never a real catalog schedule tag, so no :Table
+// in the topology is ever written with it. LoadLatestSourceDAG therefore
+// always returns an empty DAG for a single-node-run source, so RebasePartition
+// can never rebase the target — let alone fan out to its descendants — before
+// a node-type check would even matter; it fails closed with
+// ErrEmptyProjection. This holds regardless of the source's operation,
+// including full_refresh against a node type full_refresh does not support
+// (python-model here).
+func TestRebasePartition_SingleNodeRunSource_NeverFansOut(t *testing.T) {
+	srcID := uuid.New()
+	syntheticSchedule := "single-node-run-abc12345"
+	target := snapshot.FQN{Service: "svc", Schema: "sch", Table: "target", ScheduleName: syntheticSchedule}
+	r := &fakeTopologyReader{
+		SourceTasks: map[string]map[snapshot.FQN]snapshot.SourceTaskRow{
+			srcID.String(): {
+				target: {TaskID: uuid.New(), Status: "FAILED", ScheduleName: syntheticSchedule, NodeType: "python-model"},
+			},
+		},
+		// Models production reality: real :Table rows carry the catalog
+		// schedule they belong to, never a single-node run's synthetic one, so
+		// nothing matches when RebasePartition looks up the "latest" DAG by it.
+		LatestDAG:              map[snapshot.FQN]snapshot.LatestTableRow{},
+		SourceRunOperationByID: map[string]string{srcID.String(): "full_refresh"},
+	}
+	_, err := snapshot.RebasePartition{}.SelectTasks(context.Background(), r, snapshot.Params{
+		SourceRunID:  &srcID,
+		ScheduleName: syntheticSchedule,
+		Operation:    "full_refresh",
+	})
+	if !errors.Is(err, snapshot.ErrEmptyProjection) {
+		t.Fatalf("want ErrEmptyProjection (rebase of a single-node-run source can never fan out), got %v", err)
+	}
+}

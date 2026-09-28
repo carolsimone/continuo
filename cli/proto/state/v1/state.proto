@@ -368,7 +368,7 @@ message NodeRun {
   string completed_at     = 12; // RFC3339, "" if not finished
   string error_message    = 13; // "" when none
   string log_s3_key       = 14; // "" when none
-  string operation        = 15; // run | test | build
+  string operation        = 15; // run | test | build | full_refresh
   string run_results_uri  = 16; // "" when none
 }
 

@@ -65,7 +65,7 @@ type Params struct {
 	Kind         string     // "cron" | "trigger" | "rerun" | "single_node_run" | "rebase" | "promote_seed"
 	SourceRunID  *uuid.UUID // nil for cron/trigger and latest-mode single-node-run
 	InitiatedBy  string     // user who initiated the run, or "system"; stamped on the :Run node
-	Operation    string     // "" | "run" | "test" | "build"; consumed by SingleNode to gate zero-test TEST runs
+	Operation    string     // "" | "run" | "test" | "build" | "full_refresh"; consumed by SingleNode to gate zero-test TEST runs and to reject full_refresh against an unsupported node type (checkFullRefreshTarget)
 	Selector     Selector
 	Cancelled    bool // schedule was already cancelled at snapshot time → writer stamps the :Run terminal on create
 }

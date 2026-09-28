@@ -19,16 +19,16 @@ data:
         manifest_path: "/project/target/manifest.json"
     services:
       service-1:
-        run:        ["customname-dbt", "run", "--select", "{{ node }}"]
-        seed:       ["customname-dbt", "seed", "--full-refresh", "--select", "{{ node }}"]
-        snapshot:   ["customname-dbt", "snapshot", "--select", "{{ node }}"]
-        test:       ["customname-dbt", "test", "--select", "{{ node }}"]
-        build:      ["customname-dbt", "build", "--select", "{{ node }}"]
+        run:          ["customname-dbt", "run", "--select", "{{ node }}"]
+        seed:         ["customname-dbt", "seed", "--full-refresh", "--select", "{{ node }}"]
+        snapshot:     ["customname-dbt", "snapshot", "--select", "{{ node }}"]
+        test:         ["customname-dbt", "test", "--select", "{{ node }}"]
+        build:        ["customname-dbt", "build", "--select", "{{ node }}"]
         # seed_build reuses seed: plain dbt has no schema flag, so the always-set
         # DBT_TARGET_SCHEMA env var routes the candidate schema, not the argv.
         seed_build:   ["customname-dbt", "seed", "--select", "{{ node }}"]
         full_refresh: ["customname-dbt", "run", "--full-refresh", "--select", "{{ node }}"]
-        parse:      ["customname-dbt", "parse"]
+        parse:        ["customname-dbt", "parse"]
         compile:
           command:       ["customname-dbt", "compile", "--profiles-dir", "/project"]
           manifest_path: "/project/target/manifest.json"

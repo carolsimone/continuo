@@ -27,9 +27,9 @@ is plain dbt — e.g. `dbt run --select <node>`. You can also override these
 commands with your own — say, a CLI that wraps dbt inside an internal tool — so a
 non-standard dbt container runs under continuo without change.
 
-The contract is **fail-closed**: an override block must define all seven
+The contract is **fail-closed**: an override block must define all eight
 operations (`run`, `seed`, `snapshot`, `seed_build`, `test`, `build`,
-`compile`) or execution-controller refuses to boot. `{{ node }}` and
+`compile`, `parse`) or execution-controller refuses to boot. `{{ node }}` and
 `{{ target_schema }}` placeholders are substituted at dispatch time.
 
 Your `seed` command must rebuild the table — `dbt seed --full-refresh`, not a
@@ -39,7 +39,7 @@ changed would otherwise fail to load into it.
 
 Your image should also provide a `full_refresh` command: a model-rebuild verb
 (e.g. `dbt run --full-refresh --select <node>`) that execution-controller
-resolves a node's `full_refresh` operation to. Unlike the seven operations
+resolves a node's `full_refresh` operation to. Unlike the required operations
 above, `full_refresh` is optional — a block that omits it still boots — but a
 service without it cannot serve full-refresh requests for its models:
 execution-controller fails those requests permanently rather than falling
