@@ -32,9 +32,9 @@ func newDialectTestClient(t *testing.T, yaml string) *K8sClient {
 	return c
 }
 
-// wiseDialectYAML is a complete dialect config: a complete plain-dbt default
-// plus a complete "wise" override whose run/seed_build/compile the tests assert.
-const wiseDialectYAML = `
+// customNameDialectYAML is a complete dialect config: a complete plain-dbt default
+// plus a complete "customname" override whose run/seed_build/compile the tests assert.
+const customNameDialectYAML = `
 default:
   run:        ["dbt", "run", "--select", "{{ node }}"]
   seed:       ["dbt", "seed", "--select", "{{ node }}"]
@@ -47,34 +47,34 @@ default:
     command:       ["dbt", "compile", "--profiles-dir", "/project"]
     manifest_path: "/project/target/manifest.json"
 services:
-  wise:
-    run:        ["wise-dbt", "run", "--select", "{{ node }}"]
-    seed:       ["wise-dbt", "seed", "--select", "{{ node }}"]
-    snapshot:   ["wise-dbt", "snapshot", "--select", "{{ node }}"]
-    test:       ["wise-dbt", "test", "--select", "{{ node }}"]
-    build:      ["wise-dbt", "build", "--select", "{{ node }}"]
-    seed_build: ["wise-dbt", "seed", "--select", "{{ node }}", "--schema", "{{ target_schema }}"]
-    parse:      ["wise-dbt", "parse"]
+  customname:
+    run:        ["customname-dbt", "run", "--select", "{{ node }}"]
+    seed:       ["customname-dbt", "seed", "--select", "{{ node }}"]
+    snapshot:   ["customname-dbt", "snapshot", "--select", "{{ node }}"]
+    test:       ["customname-dbt", "test", "--select", "{{ node }}"]
+    build:      ["customname-dbt", "build", "--select", "{{ node }}"]
+    seed_build: ["customname-dbt", "seed", "--select", "{{ node }}", "--schema", "{{ target_schema }}"]
+    parse:      ["customname-dbt", "parse"]
     compile:
-      command: ["wise-dbt", "compile", "--profiles-dir", "/project"]
+      command: ["customname-dbt", "compile", "--profiles-dir", "/project"]
       manifest_path: "/project/out dir/manifest.json"
 `
 
 func TestCreateQueryJob_UsesServiceDialect(t *testing.T) {
 	t.Setenv("DOCKERHUB_USERNAME", "")
-	c := newDialectTestClient(t, wiseDialectYAML)
+	c := newDialectTestClient(t, customNameDialectYAML)
 	require.NoError(t, c.CreateQueryJob(context.Background(), JobParams{
-		JobName: "j1", ServiceName: "wise", TableName: "orders",
+		JobName: "j1", ServiceName: "customname", TableName: "orders",
 		NodeType: pkg_model.NodeTypeDbtModel, ImageTag: "v1", Namespace: "default",
 	}))
 	job := fetchJob(t, c, "default", "j1")
-	assert.Equal(t, []string{"wise-dbt", "run", "--select", "orders"},
+	assert.Equal(t, []string{"customname-dbt", "run", "--select", "orders"},
 		job.Spec.Template.Spec.Containers[0].Command)
 }
 
 func TestCreateQueryJob_UnknownServiceUsesBuiltin(t *testing.T) {
 	t.Setenv("DOCKERHUB_USERNAME", "")
-	c := newDialectTestClient(t, wiseDialectYAML)
+	c := newDialectTestClient(t, customNameDialectYAML)
 	require.NoError(t, c.CreateQueryJob(context.Background(), JobParams{
 		JobName: "j2", ServiceName: "service-1", TableName: "orders",
 		NodeType: pkg_model.NodeTypeDbtModel, ImageTag: "v1", Namespace: "default",
@@ -86,16 +86,16 @@ func TestCreateQueryJob_UnknownServiceUsesBuiltin(t *testing.T) {
 
 func TestCreateSeedBuildJob_UsesSeedBuildTemplate_AndKeepsEnv(t *testing.T) {
 	t.Setenv("DOCKERHUB_USERNAME", "")
-	c := newDialectTestClient(t, wiseDialectYAML)
+	c := newDialectTestClient(t, customNameDialectYAML)
 	require.NoError(t, c.CreateSeedBuildJob(context.Background(), ValidationJobParams{
-		JobName: "j3", ReleaseID: "rel1", NodeID: "wise.fx", ServiceName: "wise",
+		JobName: "j3", ReleaseID: "rel1", NodeID: "customname.fx", ServiceName: "customname",
 		TableName: "fx", NodeType: pkg_model.NodeTypeDbtSeed, ImageTag: "v1",
 		CandidateSchema: "_candidate_rel1", Namespace: "default",
 	}))
 	job := fetchJob(t, c, "default", "j3")
 	spec := job.Spec.Template.Spec
 	assert.Equal(t,
-		[]string{"wise-dbt", "seed", "--select", "fx", "--schema", "_candidate_rel1"},
+		[]string{"customname-dbt", "seed", "--select", "fx", "--schema", "_candidate_rel1"},
 		spec.Containers[0].Command)
 	assert.Equal(t, "_candidate_rel1", envByName(spec, "DBT_TARGET_SCHEMA"),
 		"DBT_TARGET_SCHEMA stays injected even with a seed_build template")
@@ -103,15 +103,15 @@ func TestCreateSeedBuildJob_UsesSeedBuildTemplate_AndKeepsEnv(t *testing.T) {
 
 func TestCreateCompileJob_UsesDialectAndQuotesManifestPath(t *testing.T) {
 	t.Setenv("DOCKERHUB_USERNAME", "")
-	c := newDialectTestClient(t, wiseDialectYAML)
+	c := newDialectTestClient(t, customNameDialectYAML)
 	require.NoError(t, c.CreateCompileJob(context.Background(), ValidationJobParams{
-		JobName: "j4", ReleaseID: "rel1", NodeID: "wise", ServiceName: "wise",
+		JobName: "j4", ReleaseID: "rel1", NodeID: "customname", ServiceName: "customname",
 		ImageTag: "v1", ManifestS3URI: "s3://b/k", Namespace: "default",
 	}))
 	job := fetchJob(t, c, "default", "j4")
 	line := job.Spec.Template.Spec.InitContainers[0].Command[2]
 	assert.Equal(t,
-		"wise-dbt compile --profiles-dir /project && cp '/project/out dir/manifest.json' /shared/manifest.json && chmod 644 /shared/manifest.json",
+		"customname-dbt compile --profiles-dir /project && cp '/project/out dir/manifest.json' /shared/manifest.json && chmod 644 /shared/manifest.json",
 		line, "manifest path with a space must be shell-quoted")
 }
 

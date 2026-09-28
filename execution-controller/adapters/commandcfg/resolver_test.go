@@ -74,7 +74,7 @@ func loadTestConfig(t *testing.T, content string) *Resolver {
 }
 
 // precedenceYAML is a complete config: a complete default plus a complete
-// "wise" override, so it satisfies the completeness contract.
+// "customname" override, so it satisfies the completeness contract.
 const precedenceYAML = `
 default:
   run:        ["default-dbt", "run", "--select", "{{ node }}"]
@@ -88,23 +88,23 @@ default:
     command:       ["default-dbt", "compile", "--profiles-dir", "/project"]
     manifest_path: "/project/target/manifest.json"
 services:
-  wise:
-    run:        ["wise-dbt", "run", "--select", "{{ node }}"]
-    seed:       ["wise-dbt", "seed", "--select", "{{ node }}"]
-    snapshot:   ["wise-dbt", "snapshot", "--select", "{{ node }}"]
-    test:       ["wise-dbt", "test", "--select", "{{ node }}"]
-    build:      ["wise-dbt", "build", "--select", "{{ node }}"]
-    seed_build: ["wise-dbt", "seed", "--select", "{{ node }}", "--schema", "{{ target_schema }}"]
-    parse:      ["wise-dbt", "parse"]
+  customname:
+    run:        ["customname-dbt", "run", "--select", "{{ node }}"]
+    seed:       ["customname-dbt", "seed", "--select", "{{ node }}"]
+    snapshot:   ["customname-dbt", "snapshot", "--select", "{{ node }}"]
+    test:       ["customname-dbt", "test", "--select", "{{ node }}"]
+    build:      ["customname-dbt", "build", "--select", "{{ node }}"]
+    seed_build: ["customname-dbt", "seed", "--select", "{{ node }}", "--schema", "{{ target_schema }}"]
+    parse:      ["customname-dbt", "parse"]
     compile:
-      command:       ["wise-dbt", "compile", "--profiles-dir", "/project"]
+      command:       ["customname-dbt", "compile", "--profiles-dir", "/project"]
       manifest_path: "/project/out/manifest.json"
 `
 
 func TestResolver_ServiceOverrideBeatsDefault(t *testing.T) {
 	r := loadTestConfig(t, precedenceYAML)
-	assert.Equal(t, []string{"wise-dbt", "run", "--select", "orders"},
-		r.NodeCommand("wise", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "orders"))
+	assert.Equal(t, []string{"customname-dbt", "run", "--select", "orders"},
+		r.NodeCommand("customname", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "orders"))
 	assert.Equal(t, []string{"default-dbt", "run", "--select", "orders"},
 		r.NodeCommand("other-service", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "orders"),
 		"service not in services: falls to default")
@@ -112,18 +112,18 @@ func TestResolver_ServiceOverrideBeatsDefault(t *testing.T) {
 
 func TestResolver_ServiceUsesOwnSeedAndTest(t *testing.T) {
 	r := loadTestConfig(t, precedenceYAML)
-	assert.Equal(t, []string{"wise-dbt", "seed", "--select", "fx"},
-		r.NodeCommand("wise", pkg_model.OperationRun, pkg_model.NodeTypeDbtSeed, "fx"),
+	assert.Equal(t, []string{"customname-dbt", "seed", "--select", "fx"},
+		r.NodeCommand("customname", pkg_model.OperationRun, pkg_model.NodeTypeDbtSeed, "fx"),
 		"a complete override uses its own seed, never a fallthrough")
-	assert.Equal(t, []string{"wise-dbt", "test", "--select", "fx"},
-		r.NodeCommand("wise", pkg_model.OperationTest, pkg_model.NodeTypeDbtModel, "fx"))
+	assert.Equal(t, []string{"customname-dbt", "test", "--select", "fx"},
+		r.NodeCommand("customname", pkg_model.OperationTest, pkg_model.NodeTypeDbtModel, "fx"))
 }
 
 func TestResolver_SeedBuildTemplate_SubstitutesTargetSchema(t *testing.T) {
 	r := loadTestConfig(t, precedenceYAML)
 	assert.Equal(t,
-		[]string{"wise-dbt", "seed", "--select", "fx", "--schema", "_candidate_rel1"},
-		r.SeedBuildCommand("wise", "fx", "_candidate_rel1"))
+		[]string{"customname-dbt", "seed", "--select", "fx", "--schema", "_candidate_rel1"},
+		r.SeedBuildCommand("customname", "fx", "_candidate_rel1"))
 }
 
 func TestResolver_SeedBuildFromDefault(t *testing.T) {
@@ -135,8 +135,8 @@ func TestResolver_SeedBuildFromDefault(t *testing.T) {
 
 func TestResolver_Compile(t *testing.T) {
 	r := loadTestConfig(t, precedenceYAML)
-	argv, mp := r.CompileCommand("wise")
-	assert.Equal(t, []string{"wise-dbt", "compile", "--profiles-dir", "/project"}, argv)
+	argv, mp := r.CompileCommand("customname")
+	assert.Equal(t, []string{"customname-dbt", "compile", "--profiles-dir", "/project"}, argv)
 	assert.Equal(t, "/project/out/manifest.json", mp)
 
 	argv, mp = r.CompileCommand("other-service")
@@ -148,27 +148,27 @@ func TestResolver_Compile(t *testing.T) {
 func TestResolver_SubstitutionInsideElementAndRepeated(t *testing.T) {
 	r := loadTestConfig(t, `
 default:
-  run:        ["wise-dbt", "run", "--select", "model:{{node}}", "--log-prefix", "{{ node }}-{{ node }}"]
-  seed:       ["wise-dbt", "seed", "--select", "{{ node }}"]
-  snapshot:   ["wise-dbt", "snapshot", "--select", "{{ node }}"]
-  test:       ["wise-dbt", "test", "--select", "{{ node }}"]
-  build:      ["wise-dbt", "build", "--select", "{{ node }}"]
-  seed_build: ["wise-dbt", "seed", "--select", "{{ node }}"]
-  parse:      ["wise-dbt", "parse"]
+  run:        ["customname-dbt", "run", "--select", "model:{{node}}", "--log-prefix", "{{ node }}-{{ node }}"]
+  seed:       ["customname-dbt", "seed", "--select", "{{ node }}"]
+  snapshot:   ["customname-dbt", "snapshot", "--select", "{{ node }}"]
+  test:       ["customname-dbt", "test", "--select", "{{ node }}"]
+  build:      ["customname-dbt", "build", "--select", "{{ node }}"]
+  seed_build: ["customname-dbt", "seed", "--select", "{{ node }}"]
+  parse:      ["customname-dbt", "parse"]
   compile:
-    command:       ["wise-dbt", "compile"]
+    command:       ["customname-dbt", "compile"]
     manifest_path: "/p/m.json"
 `)
 	assert.Equal(t,
-		[]string{"wise-dbt", "run", "--select", "model:orders", "--log-prefix", "orders-orders"},
+		[]string{"customname-dbt", "run", "--select", "model:orders", "--log-prefix", "orders-orders"},
 		r.NodeCommand("svc", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "orders"),
 		"tokens inside elements, without inner spaces, and repeated all substitute")
 }
 
 func TestResolver_TemplateNotMutatedAcrossCalls(t *testing.T) {
 	r := loadTestConfig(t, precedenceYAML)
-	first := r.NodeCommand("wise", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "orders")
-	second := r.NodeCommand("wise", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "users")
-	assert.Equal(t, []string{"wise-dbt", "run", "--select", "orders"}, first)
-	assert.Equal(t, []string{"wise-dbt", "run", "--select", "users"}, second)
+	first := r.NodeCommand("customname", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "orders")
+	second := r.NodeCommand("customname", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "users")
+	assert.Equal(t, []string{"customname-dbt", "run", "--select", "orders"}, first)
+	assert.Equal(t, []string{"customname-dbt", "run", "--select", "users"}, second)
 }

@@ -8,7 +8,7 @@ import (
 )
 
 // The shipped Helm config is the source of truth for the Hetzner ConfigMap.
-// This pins that it always loads and that finance resolves to the wise-dbt
+// This pins that it always loads and that finance resolves to the customname-dbt
 // dialect for every operation while other services fall back to the default.
 func TestDeployedConfigResolvesFinanceDialect(t *testing.T) {
 	path := filepath.Join("..", "..", "..", "deploy", "continuo", "files", "dbt-commands.yaml")
@@ -19,22 +19,22 @@ func TestDeployedConfigResolvesFinanceDialect(t *testing.T) {
 	}
 
 	gotRun := r.NodeCommand("finance", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "fx_transactions_eur")
-	assertArgv(t, "finance run", gotRun, []string{"wise-dbt", "run-model", "fx_transactions_eur"})
+	assertArgv(t, "finance run", gotRun, []string{"customname-dbt", "run-model", "fx_transactions_eur"})
 
 	gotSnap := r.NodeCommand("finance", pkg_model.OperationRun, pkg_model.NodeTypeDbtSnapshot, "fx_snap")
-	assertArgv(t, "finance snapshot", gotSnap, []string{"wise-dbt", "capture-snapshot", "fx_snap"})
+	assertArgv(t, "finance snapshot", gotSnap, []string{"customname-dbt", "capture-snapshot", "fx_snap"})
 
 	gotTest := r.NodeCommand("finance", pkg_model.OperationTest, pkg_model.NodeTypeDbtModel, "fx_transactions_eur")
-	assertArgv(t, "finance test", gotTest, []string{"wise-dbt", "test-model", "fx_transactions_eur"})
+	assertArgv(t, "finance test", gotTest, []string{"customname-dbt", "test-model", "fx_transactions_eur"})
 
 	gotBuild := r.NodeCommand("finance", pkg_model.OperationBuild, pkg_model.NodeTypeDbtModel, "fx_transactions_eur")
-	assertArgv(t, "finance build", gotBuild, []string{"wise-dbt", "build-model", "fx_transactions_eur"})
+	assertArgv(t, "finance build", gotBuild, []string{"customname-dbt", "build-model", "fx_transactions_eur"})
 
 	gotSeedBuild := r.SeedBuildCommand("finance", "seed_fx_rates_eur", "cand_schema")
-	assertArgv(t, "finance seed_build", gotSeedBuild, []string{"wise-dbt", "load-seed", "seed_fx_rates_eur"})
+	assertArgv(t, "finance seed_build", gotSeedBuild, []string{"customname-dbt", "load-seed", "seed_fx_rates_eur"})
 
 	gotCompile, manifest := r.CompileCommand("finance")
-	assertArgv(t, "finance compile", gotCompile, []string{"wise-dbt", "compile-project"})
+	assertArgv(t, "finance compile", gotCompile, []string{"customname-dbt", "compile-project"})
 	if manifest != "/project/target/manifest.json" {
 		t.Fatalf("finance compile manifest_path = %q, want /project/target/manifest.json", manifest)
 	}

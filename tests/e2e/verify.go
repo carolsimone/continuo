@@ -158,7 +158,7 @@ func verifyFullDAGExecution(
 // verifyDialectRouting asserts that production dbt Jobs are actually routed
 // through the per-service command dialect configured via the dbt-commands
 // ConfigMap, rather than silently falling back to the built-in dialect. The
-// e2e cluster maps service-1 to the "wise-dbt" alias (tests/e2e/k8s/
+// e2e cluster maps service-1 to the "customname-dbt" alias (tests/e2e/k8s/
 // execution-controller-deployment.yaml) while service-2/3 have no override and
 // use built-in plain dbt. Without this assertion, a broken env var, volume
 // mount, or ConfigMap wiring would silently fall back to the built-in dialect
@@ -176,8 +176,8 @@ func verifyDialectRouting(t *testing.T, ctx context.Context) {
 		require.NotEmpty(t, job.Spec.Template.Spec.Containers, "service-1 job %s has no containers", job.Metadata.Name)
 		command := job.Spec.Template.Spec.Containers[0].Command
 		require.NotEmpty(t, command, "service-1 job %s has an empty container command", job.Metadata.Name)
-		assert.Equal(t, "wise-dbt", command[0],
-			"service-1 jobs must run through the wise-dbt dialect (dbt-commands ConfigMap wiring) — job %s ran %v instead",
+		assert.Equal(t, "customname-dbt", command[0],
+			"service-1 jobs must run through the customname-dbt dialect (dbt-commands ConfigMap wiring) — job %s ran %v instead",
 			job.Metadata.Name, command)
 	}
 
@@ -193,7 +193,7 @@ func verifyDialectRouting(t *testing.T, ctx context.Context) {
 			job.Metadata.Name, command)
 	}
 
-	t.Log("✅ dialect routing verified: service-1 jobs run wise-dbt, service-2/3 jobs run built-in dbt")
+	t.Log("✅ dialect routing verified: service-1 jobs run customname-dbt, service-2/3 jobs run built-in dbt")
 }
 
 // verifyOrchestratorPublishedRootNodes verifies that the orchestrator published

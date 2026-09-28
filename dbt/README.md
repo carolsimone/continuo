@@ -15,7 +15,7 @@ dispatches each as a one-shot Kubernetes `Job` per scheduled run, setting the
 container's `Command` explicitly from
 [`deploy/continuo/files/dbt-commands.yaml`](../deploy/continuo/files/dbt-commands.yaml)
 (via the executor's `CommandResolver` — the default dialect, or a per-team
-override such as `wise-dbt run-model`). That `Command` replaces the image's
+override such as `customname-dbt run-model`). That `Command` replaces the image's
 own `base/entrypoint.sh` ENTRYPOINT entirely for every dispatched Job — the
 resolved verb depends on the run's Operation and node type (`run`/`seed`/
 `snapshot`/`test`/`build`), not always a plain `dbt run`. The base image

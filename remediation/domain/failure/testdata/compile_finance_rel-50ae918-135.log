@@ -1,4 +1,4 @@
-WISE-DBT WRAPPER v1 -> dbt compile --profiles-dir /project
+CUSTOMNAME-DBT WRAPPER v1 -> dbt compile --profiles-dir /project
 [0m13:28:03  Running with dbt=1.12.0-b1
 [0m13:28:03  Registered adapter: postgres=1.10.0
 [0m13:28:04  Unable to do partial parsing because saved manifest not found. Starting full parse.

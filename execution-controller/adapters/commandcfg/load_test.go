@@ -63,36 +63,36 @@ func TestLoad_MissingFileUsesDefaults(t *testing.T) {
 func TestLoad_ValidCompleteFile(t *testing.T) {
 	path := writeConfig(t, completeDefault+`
 services:
-  wise:
-    run:        ["wise-dbt", "run", "--select", "{{ node }}"]
-    seed:       ["wise-dbt", "seed", "--select", "{{ node }}"]
-    snapshot:   ["wise-dbt", "snapshot", "--select", "{{ node }}"]
-    test:       ["wise-dbt", "test", "--select", "{{ node }}"]
-    build:      ["wise-dbt", "build", "--select", "{{ node }}"]
-    seed_build: ["wise-dbt", "seed", "--select", "{{ node }}"]
-    parse:      ["wise-dbt", "parse"]
+  customname:
+    run:        ["customname-dbt", "run", "--select", "{{ node }}"]
+    seed:       ["customname-dbt", "seed", "--select", "{{ node }}"]
+    snapshot:   ["customname-dbt", "snapshot", "--select", "{{ node }}"]
+    test:       ["customname-dbt", "test", "--select", "{{ node }}"]
+    build:      ["customname-dbt", "build", "--select", "{{ node }}"]
+    seed_build: ["customname-dbt", "seed", "--select", "{{ node }}"]
+    parse:      ["customname-dbt", "parse"]
     compile:
-      command:       ["wise-dbt", "compile", "--profiles-dir", "/project"]
+      command:       ["customname-dbt", "compile", "--profiles-dir", "/project"]
       manifest_path: "/project/target/manifest.json"
 `)
 	r, err := Load(path, testLogger())
 	require.NoError(t, err)
-	assert.Equal(t, []string{"wise-dbt", "test", "--select", "x"},
-		r.NodeCommand("wise", pkg_model.OperationTest, pkg_model.NodeTypeDbtModel, "x"))
+	assert.Equal(t, []string{"customname-dbt", "test", "--select", "x"},
+		r.NodeCommand("customname", pkg_model.OperationTest, pkg_model.NodeTypeDbtModel, "x"))
 }
 
 func TestLoad_FileWithoutDefaultIsError(t *testing.T) {
 	path := writeConfig(t, `
 services:
-  wise:
-    run:        ["wise-dbt", "run", "--select", "{{ node }}"]
-    seed:       ["wise-dbt", "seed", "--select", "{{ node }}"]
-    snapshot:   ["wise-dbt", "snapshot", "--select", "{{ node }}"]
-    test:       ["wise-dbt", "test", "--select", "{{ node }}"]
-    build:      ["wise-dbt", "build", "--select", "{{ node }}"]
-    seed_build: ["wise-dbt", "seed", "--select", "{{ node }}"]
+  customname:
+    run:        ["customname-dbt", "run", "--select", "{{ node }}"]
+    seed:       ["customname-dbt", "seed", "--select", "{{ node }}"]
+    snapshot:   ["customname-dbt", "snapshot", "--select", "{{ node }}"]
+    test:       ["customname-dbt", "test", "--select", "{{ node }}"]
+    build:      ["customname-dbt", "build", "--select", "{{ node }}"]
+    seed_build: ["customname-dbt", "seed", "--select", "{{ node }}"]
     compile:
-      command:       ["wise-dbt", "compile"]
+      command:       ["customname-dbt", "compile"]
       manifest_path: "/p/m.json"
 `)
 	_, err := Load(path, testLogger())
@@ -114,13 +114,13 @@ default:
 func TestLoad_PartialServiceOverrideIsError(t *testing.T) {
 	path := writeConfig(t, completeDefault+`
 services:
-  wise:
-    run:  ["wise-dbt", "run", "--select", "{{ node }}"]
-    seed: ["wise-dbt", "seed", "--select", "{{ node }}"]
+  customname:
+    run:  ["customname-dbt", "run", "--select", "{{ node }}"]
+    seed: ["customname-dbt", "seed", "--select", "{{ node }}"]
 `)
 	_, err := Load(path, testLogger())
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "services.wise: incomplete command set, missing")
+	assert.Contains(t, err.Error(), "services.customname: incomplete command set, missing")
 	assert.Contains(t, err.Error(), "test")
 	assert.Contains(t, err.Error(), "build")
 	assert.Contains(t, err.Error(), "compile")
@@ -300,8 +300,8 @@ func TestLoad_ValidationErrors(t *testing.T) {
 		},
 		{
 			name:    "empty service is incomplete",
-			yaml:    completeDefault + "services:\n  wise: {}",
-			wantErr: "services.wise: incomplete command set, missing",
+			yaml:    completeDefault + "services:\n  customname: {}",
+			wantErr: "services.customname: incomplete command set, missing",
 		},
 	}
 	for _, tt := range tests {
