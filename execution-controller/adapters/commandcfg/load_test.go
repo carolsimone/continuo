@@ -50,14 +50,14 @@ func TestLoad_EmptyPathUsesDefaults(t *testing.T) {
 	r, err := Load("", testLogger())
 	require.NoError(t, err)
 	assert.Equal(t, []string{"dbt", "run", "--select", "t"},
-		r.NodeCommand("svc", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "t"))
+		mustNodeCommand(t, r, "svc", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "t"))
 }
 
 func TestLoad_MissingFileUsesDefaults(t *testing.T) {
 	r, err := Load(filepath.Join(t.TempDir(), "does-not-exist.yaml"), testLogger())
 	require.NoError(t, err)
 	assert.Equal(t, []string{"dbt", "seed", "--full-refresh", "--select", "t"},
-		r.NodeCommand("svc", pkg_model.OperationRun, pkg_model.NodeTypeDbtSeed, "t"))
+		mustNodeCommand(t, r, "svc", pkg_model.OperationRun, pkg_model.NodeTypeDbtSeed, "t"))
 }
 
 func TestLoad_ValidCompleteFile(t *testing.T) {
@@ -78,7 +78,7 @@ services:
 	r, err := Load(path, testLogger())
 	require.NoError(t, err)
 	assert.Equal(t, []string{"customname-dbt", "test", "--select", "x"},
-		r.NodeCommand("customname", pkg_model.OperationTest, pkg_model.NodeTypeDbtModel, "x"))
+		mustNodeCommand(t, r, "customname", pkg_model.OperationTest, pkg_model.NodeTypeDbtModel, "x"))
 }
 
 func TestLoad_FileWithoutDefaultIsError(t *testing.T) {
@@ -438,7 +438,7 @@ default:
 	require.NoError(t, err)
 	require.NotNil(t, r)
 	assert.Equal(t, []string{"dbt", "run", "--select", "orders"},
-		r.NodeCommand("any-service", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "orders"))
+		mustNodeCommand(t, r, "any-service", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "orders"))
 	assert.Contains(t, buf.String(), "future_key", "warning must name the unknown field")
 }
 
@@ -447,4 +447,31 @@ func TestLoad_MalformedYAMLStillFatalEvenWithUnknownFieldTolerance(t *testing.T)
 	_, err := Load(path, testLogger())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "parse dbt commands config")
+}
+
+// A block written before full_refresh existed has every required key but no
+// full_refresh; it must still load so an operator's own ConfigMap boots.
+func TestLoad_BlockWithoutFullRefreshLoads(t *testing.T) {
+	r := loadYAML(t, fullRefreshYAML)
+	assert.Equal(t, []string{"legacy-dbt", "run", "orders"},
+		mustNodeCommand(t, r, "legacy", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "orders"))
+}
+
+func TestLoad_FullRefreshTemplateIsValidated(t *testing.T) {
+	cases := map[string]string{
+		"missing node placeholder": `full_refresh: ["dbt", "run", "--full-refresh"]`,
+		"unknown placeholder":      `full_refresh: ["dbt", "run", "--select", "{{ node }}", "{{ target_schema }}"]`,
+		"empty":                    `full_refresh: []`,
+		"parse-context mismatch":   `full_refresh: ["dbt", "run", "--full-refresh", "--target", "x", "--select", "{{ node }}"]`,
+	}
+	for name, line := range cases {
+		t.Run(name, func(t *testing.T) {
+			body := completeDefault + "  " + line + "\n"
+			p := filepath.Join(t.TempDir(), "c.yaml")
+			require.NoError(t, os.WriteFile(p, []byte(body), 0o600))
+			_, err := Load(p, testLogger())
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "default.full_refresh")
+		})
+	}
 }

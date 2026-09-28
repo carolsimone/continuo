@@ -7,9 +7,30 @@ import (
 	"testing"
 
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// mustNodeCommand resolves a node command that the test expects to succeed.
+func mustNodeCommand(t *testing.T, r *Resolver, svc string, op pkg_model.Operation, nt pkg_model.NodeType, node string) []string {
+	t.Helper()
+	argv, err := r.NodeCommand(svc, op, nt, node)
+	if err != nil {
+		t.Fatalf("NodeCommand(%s, %q, %s, %s): %v", svc, op, nt, node, err)
+	}
+	return argv
+}
+
+// loadYAML loads a Resolver from inline YAML via a temp file.
+func loadYAML(t *testing.T, body string) *Resolver {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "dbt-commands.yaml")
+	require.NoError(t, os.WriteFile(p, []byte(body), 0o600))
+	r, err := Load(p, testLogger())
+	require.NoError(t, err)
+	return r
+}
 
 func TestBuiltinDefault_IsComplete(t *testing.T) {
 	d := builtinDefault()
@@ -22,7 +43,7 @@ func TestDefaults_NodeCommand_MatchesPkgNodeType(t *testing.T) {
 	for _, nt := range []pkg_model.NodeType{
 		pkg_model.NodeTypeDbtModel, pkg_model.NodeTypeDbtSeed, pkg_model.NodeTypeDbtSnapshot,
 	} {
-		assert.Equal(t, nt.Command("orders"), r.NodeCommand("any-service", pkg_model.OperationRun, nt, "orders"),
+		assert.Equal(t, nt.Command("orders"), mustNodeCommand(t, r, "any-service", pkg_model.OperationRun, nt, "orders"),
 			"built-in default for %s must delegate to pkg NodeType.Command", nt)
 	}
 }
@@ -30,9 +51,9 @@ func TestDefaults_NodeCommand_MatchesPkgNodeType(t *testing.T) {
 func TestDefaults_TestAndBuildOperations(t *testing.T) {
 	r := Defaults()
 	assert.Equal(t, []string{"dbt", "test", "--select", "orders"},
-		r.NodeCommand("svc_a", pkg_model.OperationTest, pkg_model.NodeTypeDbtModel, "orders"))
+		mustNodeCommand(t, r, "svc_a", pkg_model.OperationTest, pkg_model.NodeTypeDbtModel, "orders"))
 	assert.Equal(t, []string{"dbt", "build", "--select", "orders"},
-		r.NodeCommand("svc_a", pkg_model.OperationBuild, pkg_model.NodeTypeDbtSeed, "orders"),
+		mustNodeCommand(t, r, "svc_a", pkg_model.OperationBuild, pkg_model.NodeTypeDbtSeed, "orders"),
 		"build is node-agnostic")
 }
 
@@ -104,19 +125,19 @@ services:
 func TestResolver_ServiceOverrideBeatsDefault(t *testing.T) {
 	r := loadTestConfig(t, precedenceYAML)
 	assert.Equal(t, []string{"customname-dbt", "run", "--select", "orders"},
-		r.NodeCommand("customname", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "orders"))
+		mustNodeCommand(t, r, "customname", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "orders"))
 	assert.Equal(t, []string{"default-dbt", "run", "--select", "orders"},
-		r.NodeCommand("other-service", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "orders"),
+		mustNodeCommand(t, r, "other-service", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "orders"),
 		"service not in services: falls to default")
 }
 
 func TestResolver_ServiceUsesOwnSeedAndTest(t *testing.T) {
 	r := loadTestConfig(t, precedenceYAML)
 	assert.Equal(t, []string{"customname-dbt", "seed", "--select", "fx"},
-		r.NodeCommand("customname", pkg_model.OperationRun, pkg_model.NodeTypeDbtSeed, "fx"),
+		mustNodeCommand(t, r, "customname", pkg_model.OperationRun, pkg_model.NodeTypeDbtSeed, "fx"),
 		"a complete override uses its own seed, never a fallthrough")
 	assert.Equal(t, []string{"customname-dbt", "test", "--select", "fx"},
-		r.NodeCommand("customname", pkg_model.OperationTest, pkg_model.NodeTypeDbtModel, "fx"))
+		mustNodeCommand(t, r, "customname", pkg_model.OperationTest, pkg_model.NodeTypeDbtModel, "fx"))
 }
 
 func TestResolver_SeedBuildTemplate_SubstitutesTargetSchema(t *testing.T) {
@@ -161,14 +182,94 @@ default:
 `)
 	assert.Equal(t,
 		[]string{"customname-dbt", "run", "--select", "model:orders", "--log-prefix", "orders-orders"},
-		r.NodeCommand("svc", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "orders"),
+		mustNodeCommand(t, r, "svc", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "orders"),
 		"tokens inside elements, without inner spaces, and repeated all substitute")
 }
 
 func TestResolver_TemplateNotMutatedAcrossCalls(t *testing.T) {
 	r := loadTestConfig(t, precedenceYAML)
-	first := r.NodeCommand("customname", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "orders")
-	second := r.NodeCommand("customname", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "users")
+	first := mustNodeCommand(t, r, "customname", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "orders")
+	second := mustNodeCommand(t, r, "customname", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "users")
 	assert.Equal(t, []string{"customname-dbt", "run", "--select", "orders"}, first)
 	assert.Equal(t, []string{"customname-dbt", "run", "--select", "users"}, second)
+}
+
+const fullRefreshYAML = `
+default:
+  run:          ["dbt", "run", "--select", "{{ node }}"]
+  seed:         ["dbt", "seed", "--full-refresh", "--select", "{{ node }}"]
+  snapshot:     ["dbt", "snapshot", "--select", "{{ node }}"]
+  test:         ["dbt", "test", "--select", "{{ node }}"]
+  build:        ["dbt", "build", "--select", "{{ node }}"]
+  seed_build:   ["dbt", "seed", "--select", "{{ node }}"]
+  full_refresh: ["dbt", "run", "--full-refresh", "--select", "{{ node }}"]
+  parse:        ["dbt", "parse"]
+  compile:
+    command:       ["dbt", "compile"]
+    manifest_path: "/project/target/manifest.json"
+services:
+  customname:
+    run:          ["customname-dbt", "run-model", "{{ node }}"]
+    seed:         ["customname-dbt", "reload-seed", "{{ node }}"]
+    snapshot:     ["customname-dbt", "capture-snapshot", "{{ node }}"]
+    test:         ["customname-dbt", "test-model", "{{ node }}"]
+    build:        ["customname-dbt", "build-model", "{{ node }}"]
+    seed_build:   ["customname-dbt", "load-seed", "{{ node }}"]
+    full_refresh: ["customname-dbt", "rebuild-model", "{{ node }}"]
+    parse:        ["customname-dbt", "parse-project"]
+    compile:
+      command:       ["customname-dbt", "compile-project"]
+      manifest_path: "/project/target/manifest.json"
+  legacy:
+    run:        ["legacy-dbt", "run", "{{ node }}"]
+    seed:       ["legacy-dbt", "seed", "{{ node }}"]
+    snapshot:   ["legacy-dbt", "snapshot", "{{ node }}"]
+    test:       ["legacy-dbt", "test", "{{ node }}"]
+    build:      ["legacy-dbt", "build", "{{ node }}"]
+    seed_build: ["legacy-dbt", "seed", "{{ node }}"]
+    parse:      ["legacy-dbt", "parse"]
+    compile:
+      command:       ["legacy-dbt", "compile"]
+      manifest_path: "/project/target/manifest.json"
+`
+
+func TestNodeCommand_FullRefresh(t *testing.T) {
+	r := loadYAML(t, fullRefreshYAML)
+
+	assert.Equal(t, []string{"dbt", "run", "--full-refresh", "--select", "orders"},
+		mustNodeCommand(t, r, "svc", pkg_model.OperationFullRefresh, pkg_model.NodeTypeDbtModel, "orders"),
+		"a service without an override uses the default full_refresh")
+	assert.Equal(t, []string{"customname-dbt", "rebuild-model", "orders"},
+		mustNodeCommand(t, r, "customname", pkg_model.OperationFullRefresh, pkg_model.NodeTypeDbtModel, "orders"))
+	assert.Equal(t, []string{"customname-dbt", "reload-seed", "fx"},
+		mustNodeCommand(t, r, "customname", pkg_model.OperationFullRefresh, pkg_model.NodeTypeDbtSeed, "fx"),
+		"a seed full refresh resolves to the seed template")
+	assert.Equal(t, []string{"legacy-dbt", "seed", "fx"},
+		mustNodeCommand(t, r, "legacy", pkg_model.OperationFullRefresh, pkg_model.NodeTypeDbtSeed, "fx"),
+		"a seed full refresh needs no full_refresh key")
+}
+
+func TestNodeCommand_FullRefresh_ServiceBlockWithoutKeyIsPermanent(t *testing.T) {
+	r := loadYAML(t, fullRefreshYAML)
+	_, err := r.NodeCommand("legacy", pkg_model.OperationFullRefresh, pkg_model.NodeTypeDbtModel, "orders")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, pkgevents.ErrPermanent)
+	assert.Contains(t, err.Error(), "services.legacy defines no full_refresh command",
+		"must not fall through to the default block's plain dbt")
+}
+
+func TestNodeCommand_FullRefresh_UnsupportedNodeTypeIsPermanent(t *testing.T) {
+	r := Defaults()
+	for _, nt := range []pkg_model.NodeType{pkg_model.NodeTypeDbtSnapshot, pkg_model.NodeTypeDbtTest, pkg_model.NodeTypePythonModel} {
+		_, err := r.NodeCommand("svc", pkg_model.OperationFullRefresh, nt, "x")
+		assert.ErrorIs(t, err, pkgevents.ErrPermanent, "node type %s", nt)
+	}
+}
+
+func TestBuiltinDefault_FullRefreshAndSeed(t *testing.T) {
+	r := Defaults()
+	assert.Equal(t, []string{"dbt", "run", "--full-refresh", "--select", "orders"},
+		mustNodeCommand(t, r, "svc", pkg_model.OperationFullRefresh, pkg_model.NodeTypeDbtModel, "orders"))
+	assert.Equal(t, []string{"dbt", "seed", "--full-refresh", "--select", "fx"},
+		mustNodeCommand(t, r, "svc", pkg_model.OperationRun, pkg_model.NodeTypeDbtSeed, "fx"))
 }

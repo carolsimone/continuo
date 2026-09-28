@@ -61,7 +61,28 @@ func Load(path string, logger *slog.Logger) (*Resolver, error) {
 	if err := validate(&cfg); err != nil {
 		return nil, fmt.Errorf("dbt commands config %s: %w", path, err)
 	}
+	if blocks := blocksWithoutFullRefresh(&cfg); len(blocks) > 0 {
+		logger.Warn("dbt commands config: these command blocks define no full_refresh, so full refresh of dbt models is unavailable for the services they cover",
+			"path", path, "blocks", blocks)
+	}
 	return &Resolver{cfg: &cfg}, nil
+}
+
+// blocksWithoutFullRefresh names the command blocks that define no
+// full_refresh template, sorted, "default" first when it is one of them.
+func blocksWithoutFullRefresh(cfg *fileConfig) []string {
+	var blocks []string
+	if cfg.Default.FullRefresh == nil {
+		blocks = append(blocks, "default")
+	}
+	var services []string
+	for name, ops := range cfg.Services {
+		if ops.FullRefresh == nil {
+			services = append(services, "services."+name)
+		}
+	}
+	sort.Strings(services)
+	return append(blocks, services...)
 }
 
 // unknownFieldRe matches one yaml.v3 KnownFields TypeError line, e.g. "line 3:
@@ -137,7 +158,7 @@ func validateOpSet(path string, ops *opSet) error {
 		argv []string
 	}{
 		{"run", ops.Run}, {"seed", ops.Seed}, {"snapshot", ops.Snapshot},
-		{"test", ops.Test}, {"build", ops.Build},
+		{"test", ops.Test}, {"build", ops.Build}, {"full_refresh", ops.FullRefresh},
 	}
 	for _, op := range nodeOps {
 		if op.argv == nil {
@@ -274,8 +295,8 @@ func firstDivergentFlag(a, b map[string]string) string {
 }
 
 // validateParseContext requires that every node-dispatch op (run, seed,
-// snapshot, test, build, seed_build) in ops carries the exact same
-// parse-affecting flags (--vars, --target, --profile, --profiles-dir,
+// snapshot, test, build, seed_build, full_refresh) in ops carries the exact
+// same parse-affecting flags (--vars, --target, --profile, --profiles-dir,
 // --project-dir, --no-partial-parse) as ops.Parse. dbt folds these into its
 // partial-parse validity check; if a runtime op's set differs from the parse
 // argv the compile-time rehearsal exercised, the rehearsal can pass while
@@ -289,6 +310,7 @@ func validateParseContext(path string, ops *opSet) error {
 	}{
 		{"run", ops.Run}, {"seed", ops.Seed}, {"snapshot", ops.Snapshot},
 		{"test", ops.Test}, {"build", ops.Build}, {"seed_build", ops.SeedBuild},
+		{"full_refresh", ops.FullRefresh},
 	}
 	for _, op := range nodeOps {
 		if op.argv == nil {

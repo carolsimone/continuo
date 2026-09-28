@@ -18,16 +18,16 @@ func TestDeployedConfigResolvesFinanceDialect(t *testing.T) {
 		t.Fatalf("shipped deploy/continuo/files/dbt-commands.yaml must load: %v", err)
 	}
 
-	gotRun := r.NodeCommand("finance", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "fx_transactions_eur")
+	gotRun := mustNodeCommand(t, r, "finance", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "fx_transactions_eur")
 	assertArgv(t, "finance run", gotRun, []string{"customname-dbt", "run-model", "fx_transactions_eur"})
 
-	gotSnap := r.NodeCommand("finance", pkg_model.OperationRun, pkg_model.NodeTypeDbtSnapshot, "fx_snap")
+	gotSnap := mustNodeCommand(t, r, "finance", pkg_model.OperationRun, pkg_model.NodeTypeDbtSnapshot, "fx_snap")
 	assertArgv(t, "finance snapshot", gotSnap, []string{"customname-dbt", "capture-snapshot", "fx_snap"})
 
-	gotTest := r.NodeCommand("finance", pkg_model.OperationTest, pkg_model.NodeTypeDbtModel, "fx_transactions_eur")
+	gotTest := mustNodeCommand(t, r, "finance", pkg_model.OperationTest, pkg_model.NodeTypeDbtModel, "fx_transactions_eur")
 	assertArgv(t, "finance test", gotTest, []string{"customname-dbt", "test-model", "fx_transactions_eur"})
 
-	gotBuild := r.NodeCommand("finance", pkg_model.OperationBuild, pkg_model.NodeTypeDbtModel, "fx_transactions_eur")
+	gotBuild := mustNodeCommand(t, r, "finance", pkg_model.OperationBuild, pkg_model.NodeTypeDbtModel, "fx_transactions_eur")
 	assertArgv(t, "finance build", gotBuild, []string{"customname-dbt", "build-model", "fx_transactions_eur"})
 
 	gotSeedBuild := r.SeedBuildCommand("finance", "seed_fx_rates_eur", "cand_schema")
@@ -40,7 +40,7 @@ func TestDeployedConfigResolvesFinanceDialect(t *testing.T) {
 	}
 
 	// A service with no override falls back to the default block (plain dbt).
-	gotOther := r.NodeCommand("service-3", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "some_model")
+	gotOther := mustNodeCommand(t, r, "service-3", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "some_model")
 	assertArgv(t, "service-3 run fallback", gotOther, []string{"dbt", "run", "--select", "some_model"})
 }
 

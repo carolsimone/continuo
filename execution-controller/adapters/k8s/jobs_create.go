@@ -42,9 +42,11 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 	if params.NodeType.IsPython() {
 		podSpec, err = buildPythonPodSpec(params)
 	} else {
-		podSpec, err = buildPodSpec(params,
-			c.commands.NodeCommand(params.ServiceName, params.Operation, params.NodeType, params.TableName),
-			c.commands.PartialParsePath(params.ServiceName))
+		var argv []string
+		argv, err = c.commands.NodeCommand(params.ServiceName, params.Operation, params.NodeType, params.TableName)
+		if err == nil {
+			podSpec, err = buildPodSpec(params, argv, c.commands.PartialParsePath(params.ServiceName))
+		}
 	}
 	if err != nil {
 		return fmt.Errorf("failed to build pod spec: %w", err)

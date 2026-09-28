@@ -9,6 +9,7 @@ import (
 
 	"github.com/carolsimone/continuo/execution-controller/adapters/commandcfg"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"k8s.io/client-go/kubernetes/fake"
@@ -140,4 +141,32 @@ func TestCreateCompileJob_DefaultLineByteIdentical(t *testing.T) {
 		"dbt compile --profiles-dir /project && cp /project/target/manifest.json /shared/manifest.json && chmod 644 /shared/manifest.json",
 		job.Spec.Template.Spec.InitContainers[0].Command[2],
 		"no config: compile line must be byte-identical to the plain-dbt form")
+}
+
+func TestCreateQueryJob_FullRefresh_UsesServiceTemplate(t *testing.T) {
+	t.Setenv("DOCKERHUB_USERNAME", "")
+	c := newDialectTestClient(t, "")
+	require.NoError(t, c.CreateQueryJob(context.Background(), JobParams{
+		JobName: "j7", ServiceName: "service-1", TableName: "orders",
+		NodeType: pkg_model.NodeTypeDbtModel, ImageTag: "t1", Namespace: "default",
+		Operation: pkg_model.OperationFullRefresh,
+	}))
+	job := fetchJob(t, c, "default", "j7")
+	assert.Equal(t, []string{"dbt", "run", "--full-refresh", "--select", "orders"},
+		job.Spec.Template.Spec.Containers[0].Command)
+}
+
+func TestCreateQueryJob_FullRefresh_MissingKeyIsPermanentAndCreatesNoJob(t *testing.T) {
+	t.Setenv("DOCKERHUB_USERNAME", "")
+	c := newDialectTestClient(t, customNameDialectYAML) // its customname block has no full_refresh
+	err := c.CreateQueryJob(context.Background(), JobParams{
+		JobName: "j8", ServiceName: "customname", TableName: "orders",
+		NodeType: pkg_model.NodeTypeDbtModel, ImageTag: "t1", Namespace: "default",
+		Operation: pkg_model.OperationFullRefresh,
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, events.ErrPermanent)
+	exists, existsErr := c.JobExists(context.Background(), "default", "j8")
+	require.NoError(t, existsErr)
+	assert.False(t, exists)
 }

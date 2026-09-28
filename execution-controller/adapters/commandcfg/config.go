@@ -37,6 +37,10 @@ type opSet struct {
 	Build     []string     `yaml:"build"`
 	Compile   *compileSpec `yaml:"compile"`
 	Parse     []string     `yaml:"parse"`
+	// FullRefresh rebuilds one dbt model from scratch. Optional in every block:
+	// a block without it cannot full-refresh models, and every other operation
+	// is unaffected. Seeds full-refresh through Seed, which always rebuilds.
+	FullRefresh []string `yaml:"full_refresh"`
 }
 
 // fileConfig is the root dbt-commands.yaml document.
@@ -52,7 +56,8 @@ var placeholderRe = regexp.MustCompile(`\{\{\s*([a-zA-Z_]+)\s*\}\}`)
 // missingKeys returns the required command keys this opSet does not define.
 // An empty result means the opSet is complete. Every configured block (the
 // default and each service override) must be complete so no dispatched job can
-// fall through to a command the team's image cannot run.
+// fall through to a command the team's image cannot run. full_refresh is
+// optional and never reported.
 func (o *opSet) missingKeys() []string {
 	var missing []string
 	if o.Run == nil {
