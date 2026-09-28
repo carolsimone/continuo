@@ -56,7 +56,7 @@ func TestLoad_EmptyPathUsesDefaults(t *testing.T) {
 func TestLoad_MissingFileUsesDefaults(t *testing.T) {
 	r, err := Load(filepath.Join(t.TempDir(), "does-not-exist.yaml"), testLogger())
 	require.NoError(t, err)
-	assert.Equal(t, []string{"dbt", "seed", "--select", "t"},
+	assert.Equal(t, []string{"dbt", "seed", "--full-refresh", "--select", "t"},
 		r.NodeCommand("svc", pkg_model.OperationRun, pkg_model.NodeTypeDbtSeed, "t"))
 }
 
