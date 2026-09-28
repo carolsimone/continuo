@@ -210,8 +210,8 @@ type Fixer interface {
 func For(source, nodeType string) (Fixer, error) {
 	switch source {
 	case sourceParse:
-		if nodeType == string(pkg_model.NodeTypePythonNode) {
-			return pythonParseFixer{}, nil
+		if f, ok := pythonParseLanes[pkg_model.NodeType(nodeType)]; ok {
+			return f, nil
 		}
 		return parseFixer{}, nil
 	case sourceCompile:
@@ -219,19 +219,29 @@ func For(source, nodeType string) (Fixer, error) {
 	case sourceSeed:
 		return seedFixer{}, nil
 	case sourceValidation:
-		switch nodeType {
-		case string(pkg_model.NodeTypePythonCsv):
-			return csvValidationFixer{}, nil
-		case string(pkg_model.NodeTypePythonNode):
-			return pythonValidationFixer{}, nil
-		default:
-			return validationFixer{}, nil
+		if f, ok := pythonValidationLanes[pkg_model.NodeType(nodeType)]; ok {
+			return f, nil
 		}
+		return validationFixer{}, nil
 	case sourceDuplicateTable:
 		return duplicateTableFixer{}, nil
 	default:
 		return nil, fmt.Errorf("fixer: unknown source %q", source)
 	}
+}
+
+// pythonParseLanes and pythonValidationLanes name the fixer for each python
+// node type per source. Every python NodeType has an entry in both (pinned by
+// TestFixerLanes_CoverEveryPythonNodeType), so a new python kind never falls
+// through to a dbt lane by omission.
+var pythonParseLanes = map[pkg_model.NodeType]Fixer{
+	pkg_model.NodeTypePythonNode: pythonParseFixer{},
+	pkg_model.NodeTypePythonCsv:  parseFixer{},
+}
+
+var pythonValidationLanes = map[pkg_model.NodeType]Fixer{
+	pkg_model.NodeTypePythonNode: pythonValidationFixer{},
+	pkg_model.NodeTypePythonCsv:  csvValidationFixer{},
 }
 
 // Source discriminators carried on remediation.requested:v2.

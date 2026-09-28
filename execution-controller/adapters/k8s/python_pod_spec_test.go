@@ -344,6 +344,33 @@ func TestCreateQueryJob_PythonModel_IsIdempotent(t *testing.T) {
 	require.NoError(t, client.CreateQueryJob(context.Background(), pythonParams()))
 }
 
+// TestPythonKindEnv_CoversEveryPythonNodeType pins that a new python kind
+// cannot silently fall through: every python NodeType must have an entry in
+// pythonKindEnv, so buildPythonPodSpec can never reach the unknown-kind error
+// for a kind the domain already knows about.
+func TestPythonKindEnv_CoversEveryPythonNodeType(t *testing.T) {
+	for _, nt := range pkg_model.NodeTypes() {
+		if !nt.IsPython() {
+			continue
+		}
+		if _, ok := pythonKindEnv[nt]; !ok {
+			t.Errorf("python node type %q has no pod env entry in pythonKindEnv", nt)
+		}
+	}
+}
+
+// TestPythonKindEnv_OnlyCsvGetsS3Credentials pins the boundary rule: a
+// python-node pod never receives S3 credentials, while a python-csv pod
+// receives exactly the S3 credential env.
+func TestPythonKindEnv_OnlyCsvGetsS3Credentials(t *testing.T) {
+	if got := pythonKindEnv[pkg_model.NodeTypePythonNode](); len(got) != 0 {
+		t.Errorf("python-node pod must not receive S3 credentials, got %v", got)
+	}
+	if got := pythonKindEnv[pkg_model.NodeTypePythonCsv](); len(got) != len(s3CredEnvVars()) {
+		t.Errorf("python-csv pod must receive the S3 credential env, got %v", got)
+	}
+}
+
 // TestCreateQueryJob_DbtModel_PodSpecUnchanged pins the branch as inert for
 // dbt: a dbt run Job's pod spec must equal what buildPodSpec produces directly,
 // including the parse-cache initContainer S3_BUCKET triggers.
