@@ -52,6 +52,14 @@ func TestTriggerNodeBuild_SourceRunSelectsSnapshotAndKeepsOperation(t *testing.T
 	assert.Equal(t, "build", cap.gotSingleNode.GetOperation())
 }
 
+func TestTriggerNodeFullRefresh_SendsFullRefreshOperation(t *testing.T) {
+	c, cap := dialCapturing(t)
+	_, err := c.TriggerNodeFullRefresh(context.Background(), "finance", "analytics", "orders", "", "")
+	require.NoError(t, err)
+	assert.Equal(t, "latest", cap.gotSingleNode.GetMetadataSource())
+	assert.Equal(t, "full_refresh", cap.gotSingleNode.GetOperation())
+}
+
 func TestTriggerNodeRun_ForwardsActorMetadata(t *testing.T) {
 	c, cap := dialCapturing(t)
 	_, err := c.TriggerNodeRun(context.Background(), "finance", "analytics", "orders", "", "okta.example.com|alice")

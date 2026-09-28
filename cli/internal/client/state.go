@@ -24,6 +24,7 @@ type StateClient interface {
 	TriggerNodeRun(ctx context.Context, service, schema, table, sourceRunID, actor string) (*statev1.TriggerSingleNodeRunResponse, error)
 	TriggerNodeTest(ctx context.Context, service, schema, table, sourceRunID, actor string) (*statev1.TriggerSingleNodeRunResponse, error)
 	TriggerNodeBuild(ctx context.Context, service, schema, table, sourceRunID, actor string) (*statev1.TriggerSingleNodeRunResponse, error)
+	TriggerNodeFullRefresh(ctx context.Context, service, schema, table, sourceRunID, actor string) (*statev1.TriggerSingleNodeRunResponse, error)
 	TriggerScheduleBuild(ctx context.Context, scheduleName, actor string) (*statev1.TriggerScheduleResponse, error)
 	Close() error
 }
@@ -155,6 +156,10 @@ func (c *stateGRPCClient) TriggerNodeTest(ctx context.Context, service, schema, 
 
 func (c *stateGRPCClient) TriggerNodeBuild(ctx context.Context, service, schema, table, sourceRunID, actor string) (*statev1.TriggerSingleNodeRunResponse, error) {
 	return c.triggerSingleNode(ctx, singleNodeRequest(service, schema, table, sourceRunID, "build"), actor)
+}
+
+func (c *stateGRPCClient) TriggerNodeFullRefresh(ctx context.Context, service, schema, table, sourceRunID, actor string) (*statev1.TriggerSingleNodeRunResponse, error) {
+	return c.triggerSingleNode(ctx, singleNodeRequest(service, schema, table, sourceRunID, "full_refresh"), actor)
 }
 
 func (c *stateGRPCClient) Close() error { return c.conn.Close() }
