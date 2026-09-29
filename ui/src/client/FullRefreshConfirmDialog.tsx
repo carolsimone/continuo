@@ -31,8 +31,8 @@ export default function FullRefreshConfirmDialog({ fqn, onConfirm, onClose }: Pr
           run again.
         </p>
         <div className="dialog-actions">
-          <button type="button" className="btn btn--secondary" onClick={onClose}>Cancel</button>
-          <button type="button" className="btn btn--danger" onClick={onConfirm} autoFocus>Full refresh</button>
+          <button type="button" className="btn btn--secondary" onClick={onClose} autoFocus>Cancel</button>
+          <button type="button" className="btn btn--danger" onClick={onConfirm}>Full refresh</button>
         </div>
       </div>
     </div>

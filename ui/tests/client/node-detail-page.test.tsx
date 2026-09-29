@@ -548,6 +548,7 @@ describe('NodeDetailPage full refresh', () => {
 
     const dialog = await screen.findByRole('dialog');
     expect(dialog).toHaveTextContent(/dropped and rebuilt/i);
+    expect(screen.getByRole('button', { name: /cancel/i })).toHaveFocus();
     const posts = () => (mockFetch.mock.calls as unknown as [string, RequestInit?][])
       .filter(c => String(c[0]).endsWith('/run') && c[1]?.method === 'POST');
     expect(posts()).toHaveLength(0);
@@ -573,10 +574,15 @@ describe('NodeDetailPage full refresh', () => {
     mockFetch.mockImplementation(metaAndRuns('dbt-model', [mkRun({ task_id: 'fr1', kind: 'single_node_run' }) , { ...mkRun({ task_id: 'fr2' }), operation: 'full_refresh' }]));
     renderPage();
     await waitFor(() => screen.getByRole('option', { name: /full refresh/i }));
+    const runsFetchesBefore = (mockFetch.mock.calls as unknown as [string][])
+      .filter(c => String(c[0]).includes('/runs?')).length;
+    expect(runsFetchesBefore).toBeGreaterThan(0);
     await userEvent.selectOptions(screen.getByLabelText(/operation/i), 'full_refresh');
     const urls = (mockFetch.mock.calls as unknown as [string][]).map(c => String(c[0]));
     expect(urls.some(u => u.includes('/runs?operation=full_refresh'))).toBe(false);
-    expect(urls.filter(u => u.includes('/runs?operation=run')).length).toBeGreaterThan(0);
+    // Full refresh keeps the history on the run dimension, so selecting it
+    // triggers no further history fetch.
+    expect(urls.filter(u => u.includes('/runs?')).slice(runsFetchesBefore).length).toBe(0);
     expect(await screen.findByText(/^full refresh$/i, { selector: '.pill-sm' })).toBeInTheDocument();
   });
 
@@ -586,5 +592,56 @@ describe('NodeDetailPage full refresh', () => {
     await screen.findByText('dbt-snapshot');
     await waitFor(() => expect((screen.getByLabelText(/operation/i) as HTMLSelectElement).value).toBe('run'));
     expect(screen.getByRole('button', { name: /run this node/i })).toBeInTheDocument();
+  });
+
+  const runPosts = () => (mockFetch.mock.calls as unknown as [string, RequestInit?][])
+    .filter(c => String(c[0]).endsWith('/run') && c[1]?.method === 'POST');
+
+  it('confirms a full refresh of an old snapshot before POSTing source_run_id', async () => {
+    mockFetch.mockImplementation(metaAndRuns('dbt-model', [mkRun({ run_id: 'pick-me' })]));
+    renderPage();
+    await waitFor(() => screen.getByRole('option', { name: /full refresh/i }));
+    await userEvent.selectOptions(screen.getByLabelText(/operation/i), 'full_refresh');
+    await userEvent.click(screen.getByRole('button', { name: /run with old snapshot/i }));
+    await userEvent.click(await screen.findByRole('button', { name: /v1 snapshot/i }));
+
+    expect(await screen.findByRole('dialog')).toHaveTextContent(/full refresh svc\.schema\.tbl\?/i);
+    expect(runPosts()).toHaveLength(0);
+
+    await userEvent.click(screen.getByRole('button', { name: /^full refresh$/i }));
+    await waitFor(() => expect(runPosts()).toHaveLength(1));
+    expect(JSON.parse(String(runPosts()[0][1]!.body))).toEqual({ source_run_id: 'pick-me', operation: 'full_refresh' });
+  });
+
+  it('POSTs full_refresh even if the operation select changes while the dialog is open', async () => {
+    mockFetch.mockImplementation(metaAndRuns('dbt-model'));
+    renderPage();
+    await waitFor(() => screen.getByRole('option', { name: /full refresh/i }));
+    await userEvent.selectOptions(screen.getByLabelText(/operation/i), 'full_refresh');
+    await userEvent.click(screen.getByRole('button', { name: /full refresh this node/i }));
+    await screen.findByRole('dialog');
+
+    fireEvent.change(screen.getByLabelText(/operation/i), { target: { value: 'run' } });
+    await userEvent.click(screen.getByRole('button', { name: /^full refresh$/i }));
+    await waitFor(() => expect(runPosts()).toHaveLength(1));
+    expect(JSON.parse(String(runPosts()[0][1]!.body))).toEqual({ operation: 'full_refresh' });
+  });
+
+  it.each([
+    ['meta never resolves', () => new Promise<Response>(() => {})],
+    ['meta fails', () => jsonResp({ error: 'boom' }, 500)],
+  ])('disables both triggers for a navigated-in full_refresh while the node type is unknown (%s)', async (_n, metaResp) => {
+    mockFetch.mockImplementation((input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.endsWith('/meta')) return metaResp();
+      return jsonResp({ runs: [] });
+    });
+    renderPage(undefined, 'full_refresh');
+    const trigger = await screen.findByRole('button', { name: /full refresh this node/i });
+    expect(trigger).toBeDisabled();
+    expect(screen.getByRole('button', { name: /run with old snapshot/i })).toBeDisabled();
+    fireEvent.click(trigger);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(runPosts()).toHaveLength(0);
   });
 });

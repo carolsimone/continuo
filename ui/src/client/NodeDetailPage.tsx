@@ -176,11 +176,14 @@ export default function NodeDetailPage() {
   // matching the orchestrator's single-node gate.
   const latestHasNoTests = testCount !== null && !(testCount.known && testCount.count > 0);
 
-  const postRun = useCallback(async (body: object) => {
+  // opOverride pins the operation for a caller that must send exactly what it
+  // confirmed, independent of the select's current value.
+  const postRun = useCallback(async (body: object, opOverride?: NodeOperation) => {
     setRunState('loading');
     setRunError(null);
     try {
-      const withOp = { ...body, operation: operation === 'run' ? '' : operation };
+      const op = opOverride ?? operation;
+      const withOp = { ...body, operation: op === 'run' ? '' : op };
       const res = await fetch(
         `/api/nodes/${encodeURIComponent(service)}/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/run`,
         { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(withOp) },
@@ -212,7 +215,7 @@ export default function NodeDetailPage() {
   }, [postRun, operation]);
   const handleConfirmFullRefresh = useCallback(() => {
     setConfirmOpen(false);
-    postRun(pendingSource ? { source_run_id: pendingSource } : {});
+    postRun(pendingSource ? { source_run_id: pendingSource } : {}, 'full_refresh');
   }, [postRun, pendingSource]);
 
   const stats = computeNodeStats(runs);
@@ -228,6 +231,10 @@ export default function NodeDetailPage() {
   // The latest-mode test trigger is the only one gated by latest metadata; the
   // old-snapshot trigger is never blocked here (see latestHasNoTests).
   const latestTestBlocked = operation === 'test' && latestHasNoTests;
+
+  // Until the node's type is known a full refresh cannot be validated, so both
+  // triggers stay disabled while it is selected.
+  const fullRefreshUnavailable = operation === 'full_refresh' && !canFullRefresh;
 
   return (
     <div className="page">
@@ -282,7 +289,7 @@ export default function NodeDetailPage() {
         <button
           type="button"
           className={runLatestClass}
-          disabled={runState === 'loading' || runState === 'success' || latestTestBlocked}
+          disabled={runState === 'loading' || runState === 'success' || latestTestBlocked || fullRefreshUnavailable}
           onClick={handleRunLatest}
           title={latestTestBlocked
             ? 'The latest version of this node has no tests'
@@ -293,7 +300,7 @@ export default function NodeDetailPage() {
         <button
           type="button"
           className="btn btn--secondary"
-          disabled={runState === 'loading'}
+          disabled={runState === 'loading' || fullRefreshUnavailable}
           onClick={() => setPickerOpen(true)}
           title="Run this node with the (image_tag, manifest_version) pair from a past run"
         >

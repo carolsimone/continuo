@@ -3,7 +3,7 @@ import { GrpcClient, userMetadata } from '../grpc-client';
 import { GrpcGraphClient } from '../grpc-graph-client';
 import { grpcToHttpStatus } from './grpc-status';
 import { parseLimit, parseOffset } from './paging';
-import { parseOperation, parseNodeOperation, parseNodeRunOperation } from './operation';
+import { parseNodeOperation, parseNodeRunOperation } from './operation';
 import { type NodeType } from '../generated/vocabulary.gen';
 
 const PYTHON_CSV: NodeType = 'python-csv';
