@@ -21,11 +21,11 @@ func TestRebasePartition_RebasesNonSucceededAndDescendants_InheritsSucceeded(t *
 			srcID.String(): {
 				a: {TaskID: uuid.New(), Status: "FAILED", ScheduleName: "x", NodeType: "dbt-model"},
 				b: {TaskID: uuid.New(), Status: "SUCCEEDED", ScheduleName: "x", NodeType: "dbt-model"},
-				c: {TaskID: rootC, Status: "SUCCEEDED", ScheduleName: "x", NodeType: "dbt-model"},
+				c: {TaskID: rootC, Status: "SUCCEEDED", ScheduleName: "x", NodeType: "python-api", SecretRef: "continuo-api-old"}, //nolint:gosec // G101: secret_ref names a Kubernetes Secret, not a credential
 			},
 		},
 		LatestDAG: map[snapshot.FQN]snapshot.LatestTableRow{
-			a: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v2", ManifestVersion: "m2"},
+			a: {ScheduleName: "x", NodeType: "python-api", ImageTag: "v2", ManifestVersion: "m2", SecretRef: "continuo-api-fx"}, //nolint:gosec // G101: secret_ref names a Kubernetes Secret, not a credential
 			b: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v2", ManifestVersion: "m2"},
 			c: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v2", ManifestVersion: "m2"},
 		},
@@ -53,6 +53,13 @@ func TestRebasePartition_RebasesNonSucceededAndDescendants_InheritsSucceeded(t *
 	// Rebased rows pinned to LATEST metadata.
 	if by[a].ImageTag != "v2" {
 		t.Errorf("a should pin to latest, got %q", by[a].ImageTag)
+	}
+	if by[a].SecretRef != "continuo-api-fx" {
+		t.Errorf("a should pin the latest secret_ref, got %q", by[a].SecretRef)
+	}
+	// Inherited rows keep the source run's pinned metadata.
+	if by[c].SecretRef != "continuo-api-old" {
+		t.Errorf("c should keep the source run's secret_ref, got %q", by[c].SecretRef)
 	}
 	// Dispatch frontier: a (its upstreams inherited) dispatches now; b waits
 	// behind its immediate rebased upstream a.

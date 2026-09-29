@@ -102,16 +102,17 @@ func TestHandleSchedulerStarted_ValidNodeType_Dispatches(t *testing.T) {
 
 	snap := &fakeSnapshotService{
 		projection: []snapshot.TaskProjection{
-			{
+			{ //nolint:gosec // G101: secret_ref names a Kubernetes Secret, not a credential
 				TaskID:          uuid.New(),
 				ServiceName:     "svc",
 				SchemaName:      "p",
 				TableName:       "t",
 				ScheduleName:    "daily",
-				NodeType:        "dbt-model",
+				NodeType:        "python-api",
 				InitialStatus:   "PENDING",
 				ReadyToDispatch: true,
 				MaxRetries:      2,
+				SecretRef:       "continuo-api-fx",
 			},
 		},
 	}
@@ -131,6 +132,10 @@ func TestHandleSchedulerStarted_ValidNodeType_Dispatches(t *testing.T) {
 			dispatched++
 		case streams.QueryModelV1:
 			queryModel++
+			var payload serialization.NodeReadyForExecutionDTO
+			require.NoError(t, json.Unmarshal(e.Payload, &payload))
+			assert.Equal(t, "continuo-api-fx", payload.ToDomain().SecretRef,
+				"the dispatch must carry the task's pinned secret_ref")
 		case streams.RunEntriesDispatchFailedV1:
 			dispatchFailed++
 		}

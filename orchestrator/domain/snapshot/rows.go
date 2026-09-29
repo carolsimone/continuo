@@ -11,6 +11,9 @@ type SourceTaskRow struct {
 	Status            string // uppercase: "PENDING" | "SUCCEEDED" | "FAILED" | "SKIPPED"
 	ImageTag          string
 	ManifestVersion   string
+	// SecretRef is the continuo-api-* Secret the source run pinned on its
+	// :EXECUTES edge; a derived run reuses it alongside ImageTag.
+	SecretRef         string
 	// ContentHash is the code fingerprint the SOURCE run actually executed, read
 	// off its :EXECUTES edge. A derived run reuses it alongside ImageTag so the
 	// new run records the code it repeats, not whatever the topology holds now.
@@ -23,9 +26,9 @@ type SourceTaskRow struct {
 // TopologyReader.LoadSingleLatestTable.
 //
 // LoadSingleTableFromSourceRun reuses this shape for a snapshot_of_run task, and
-// fills ImageTag/ManifestVersion/ContentHash from the source run's :EXECUTES
-// edge rather than from the :Table, so a stale-mode run repeats exactly what the
-// source executed.
+// fills ImageTag/ManifestVersion/ContentHash/SecretRef from the source run's
+// :EXECUTES edge rather than from the :Table, so a stale-mode run repeats exactly
+// what the source executed.
 type LatestTableRow struct {
 	ScheduleName    string
 	NodeType        string
@@ -34,4 +37,5 @@ type LatestTableRow struct {
 	ImageTag        string
 	ManifestVersion string
 	ContentHash     string
+	SecretRef       string
 }

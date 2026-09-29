@@ -28,15 +28,20 @@ func newSnapshotWriter(tx neo4j.ManagedTransaction) *snapshotWriter {
 //	created_at, source_run_id?, topology_generation, service_metadata,
 //	total_nodes, terminal_count, version
 //
-// :EXECUTES edge:  task_id, status, image_tag, manifest_version, test_count?,
+// :EXECUTES edge:  task_id, status, image_tag, secret_ref?, manifest_version,
 //
-//	inherited_from_task_id?, content_hash
+//	test_count?, inherited_from_task_id?, content_hash
 //
 // content_hash comes from the projection, pinning which code version this run
 // executed even after a later release changes the node. It is deliberately NOT
 // read from the matched :Table here: a rerun, a rebase-inherited row, and a
 // snapshot_of_run task all reuse the SOURCE run's image and manifest, so reading
 // the live table would record code that the run never executed.
+//
+// secret_ref is pinned the same way as image_tag: every run derived from this
+// one reads it back from the edge, never from the live :Table. It is set only
+// when the projection entry carries a non-empty SecretRef, so a node without
+// API credentials leaves the property absent rather than storing "".
 //
 // test_count is set only when the projection entry's TestCountKnown is true
 // (assigning a nil parameter to a Cypher SET removes/leaves the property
@@ -68,6 +73,10 @@ func (w *snapshotWriter) WriteRunAndExecutesEdges(ctx context.Context, p snapsho
 		if t.TestCountKnown {
 			testCount = t.TestCount
 		}
+		var secretRef interface{}
+		if t.SecretRef != "" {
+			secretRef = t.SecretRef
+		}
 		tasks[i] = map[string]interface{}{
 			"task_id":                t.TaskID.String(),
 			"service_name":           t.ServiceName,
@@ -76,6 +85,7 @@ func (w *snapshotWriter) WriteRunAndExecutesEdges(ctx context.Context, p snapsho
 			"schedule_name":          t.ScheduleName,
 			"initial_status":         t.InitialStatus,
 			"image_tag":              t.ImageTag,
+			"secret_ref":             secretRef,
 			"manifest_version":       t.ManifestVersion,
 			"content_hash":           t.ContentHash,
 			"test_count":             testCount,
@@ -123,6 +133,7 @@ func (w *snapshotWriter) WriteRunAndExecutesEdges(ctx context.Context, p snapsho
 		ON CREATE SET e.status           = t.initial_status,
 		              e.task_id          = t.task_id,
 		              e.image_tag        = t.image_tag,
+		              e.secret_ref       = t.secret_ref,
 		              e.manifest_version = t.manifest_version,
 		              e.test_count       = t.test_count,
 		              e.content_hash     = t.content_hash

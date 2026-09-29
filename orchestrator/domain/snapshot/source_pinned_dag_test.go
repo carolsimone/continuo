@@ -18,8 +18,8 @@ func TestSourcePinnedDAG_SingleFailedTask_NoDescendants_RebasesOnlyThat(t *testi
 	r := &fakeTopologyReader{
 		SourceTasks: map[string]map[snapshot.FQN]snapshot.SourceTaskRow{
 			srcID.String(): {
-				failed: {TaskID: uuid.New(), Status: "FAILED", ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1"},
-				succA:  {TaskID: rootA, Status: "SUCCEEDED", ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1"},
+				failed: {TaskID: uuid.New(), Status: "FAILED", ScheduleName: "x", NodeType: "python-api", ImageTag: "v1", ManifestVersion: "m1", SecretRef: "continuo-api-fx"}, //nolint:gosec // G101: secret_ref names a Kubernetes Secret, not a credential
+				succA:  {TaskID: rootA, Status: "SUCCEEDED", ScheduleName: "x", NodeType: "python-api", ImageTag: "v1", ManifestVersion: "m1", SecretRef: "continuo-api-a"},    //nolint:gosec // G101: secret_ref names a Kubernetes Secret, not a credential
 			},
 		},
 		DescendantsSource: map[string]map[snapshot.FQN][]snapshot.FQN{srcID.String(): {failed: nil}},
@@ -34,6 +34,12 @@ func TestSourcePinnedDAG_SingleFailedTask_NoDescendants_RebasesOnlyThat(t *testi
 	}
 	if by[succA].InitialStatus != "SUCCEEDED" || by[succA].InheritedFromTaskID == nil || *by[succA].InheritedFromTaskID != rootA {
 		t.Errorf("succA: want SUCCEEDED inherit pointing at rootA, got %+v", by[succA])
+	}
+	if by[failed].SecretRef != "continuo-api-fx" {
+		t.Errorf("failed: SecretRef=%q, want the source run's continuo-api-fx", by[failed].SecretRef)
+	}
+	if by[succA].SecretRef != "continuo-api-a" {
+		t.Errorf("succA: SecretRef=%q, want the source run's continuo-api-a", by[succA].SecretRef)
 	}
 }
 

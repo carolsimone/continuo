@@ -187,6 +187,7 @@ func (h *HandleSchedulerStartedHandler) Handle(ctx context.Context, evt domain.S
 			NodeType:        string(nodeType),
 			ManifestVersion: task.ManifestVersion,
 			ImageTag:        task.ImageTag,
+			SecretRef:       task.SecretRef,
 			Operation:       evt.Operation,
 		}
 

@@ -120,6 +120,7 @@ func (h *HandleSingleNodeRunHandler) Handle(ctx context.Context, cmd domainModel
 	sole := projection[0]
 	taskID := sole.TaskID.String()
 	imageTag := sole.ImageTag
+	secretRef := sole.SecretRef
 	manifestVersion := sole.ManifestVersion
 	nodeType := sole.NodeType
 
@@ -185,6 +186,7 @@ func (h *HandleSingleNodeRunHandler) Handle(ctx context.Context, cmd domainModel
 		NodeType:        nodeType,
 		ManifestVersion: manifestVersion,
 		ImageTag:        imageTag,
+		SecretRef:       secretRef,
 		Operation:       cmd.Operation,
 	}
 	queryPayload, err := json.Marshal(serialization.NodeReadyForExecutionFromDomain(queryEvt))

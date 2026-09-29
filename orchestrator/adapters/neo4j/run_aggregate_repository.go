@@ -56,6 +56,7 @@ func (r *RunAggregateRepository) rehydrateFull(ctx context.Context, runID string
             COALESCE(e.status, 'PENDING')      AS status,
             COALESCE(e.manifest_version, '')   AS manifest_version,
             COALESCE(e.image_tag, '')          AS image_tag,
+            COALESCE(e.secret_ref, '')         AS secret_ref,
             t.table_name                       AS table_name,
             t.schema_name                      AS schema_name,
             t.service_name                     AS service_name,
@@ -111,6 +112,7 @@ func (r *RunAggregateRepository) rehydrateForCompletion(ctx context.Context, run
                 COALESCE(e.status, 'PENDING')      AS status,
                 COALESCE(e.manifest_version, '')   AS manifest_version,
                 COALESCE(e.image_tag, '')          AS image_tag,
+                COALESCE(e.secret_ref, '')         AS secret_ref,
                 t.table_name                       AS table_name,
                 t.schema_name                      AS schema_name,
                 t.service_name                     AS service_name,
@@ -151,6 +153,7 @@ func (r *RunAggregateRepository) rehydrateForCompletion(ctx context.Context, run
                 COALESCE(e.status, 'PENDING')      AS status,
                 COALESCE(e.manifest_version, '')   AS manifest_version,
                 COALESCE(e.image_tag, '')          AS image_tag,
+                COALESCE(e.secret_ref, '')         AS secret_ref,
                 t.table_name                       AS table_name,
                 t.schema_name                      AS schema_name,
                 t.service_name                     AS service_name,
@@ -372,6 +375,7 @@ func (r *RunAggregateRepository) collectRunFromFlatRows(
 		schedTVal, _ := rec.Get("schedule_name_t")
 		mvVal, _ := rec.Get("manifest_version")
 		itVal, _ := rec.Get("image_tag")
+		srVal, _ := rec.Get("secret_ref")
 		upsRaw, _ := rec.Get("upstreams")
 		downsRaw, _ := rec.Get("downstreams")
 
@@ -399,6 +403,7 @@ func (r *RunAggregateRepository) collectRunFromFlatRows(
 			NodeType:        safeString(ntypeVal),
 			ManifestVersion: safeString(mvVal),
 			ImageTag:        safeString(itVal),
+			SecretRef:       safeString(srVal),
 			Upstreams:       ups,
 			Downstreams:     downs,
 		})

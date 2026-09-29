@@ -40,6 +40,7 @@ func (r *topologyReader) LoadLatestSourceDAG(ctx context.Context, scheduleName s
 		           COALESCE(t.node_type, 'dbt-model')      AS node_type,
 		           t.test_count                             AS test_count,
 		           COALESCE(t.image_tag, '')                AS image_tag,
+		           COALESCE(t.secret_ref, '')               AS secret_ref,
 		           COALESCE(t.manifest_version, '')         AS manifest_version,
 		           COALESCE(t.content_hash, '')             AS content_hash
 
@@ -56,11 +57,12 @@ func (r *topologyReader) LoadLatestSourceDAG(ctx context.Context, scheduleName s
 		           s.node_type     AS node_type,
 		           s.test_count                     AS test_count,
 		           COALESCE(s.image_tag, '')        AS image_tag,
+		           COALESCE(s.secret_ref, '')       AS secret_ref,
 		           COALESCE(s.manifest_version, '') AS manifest_version,
 		           COALESCE(s.content_hash, '')     AS content_hash
 		}
 		RETURN DISTINCT schema_name, table_name, service_name, schedule_name,
-		                node_type, test_count, image_tag, manifest_version, content_hash
+		                node_type, test_count, image_tag, secret_ref, manifest_version, content_hash
 	`
 	result, err := r.tx.Run(ctx, q, map[string]interface{}{"schedule_name": scheduleName})
 	if err != nil {
@@ -83,6 +85,7 @@ func (r *topologyReader) LoadLatestSourceDAG(ctx context.Context, scheduleName s
 			TestCount:       tc,
 			TestCountKnown:  tcKnown,
 			ImageTag:        stringField(rec, "image_tag"),
+			SecretRef:       stringField(rec, "secret_ref"),
 			ManifestVersion: stringField(rec, "manifest_version"),
 			ContentHash:     stringField(rec, "content_hash"),
 		}
@@ -104,6 +107,7 @@ func (r *topologyReader) LoadSourceTasks(ctx context.Context, sourceRunID string
 		       COALESCE(st.node_type, 'dbt-model') AS node_type,
 		       COALESCE(se.status, 'PENDING')      AS status,
 		       COALESCE(se.image_tag, '')          AS image_tag,
+		       COALESCE(se.secret_ref, '')         AS secret_ref,
 		       COALESCE(se.manifest_version, '')   AS manifest_version,
 		       COALESCE(se.content_hash, '')       AS content_hash,
 		       se.inherited_from_task_id           AS inherited_from
@@ -129,6 +133,7 @@ func (r *topologyReader) LoadSourceTasks(ctx context.Context, sourceRunID string
 			NodeType:        stringField(rec, "node_type"),
 			Status:          stringField(rec, "status"),
 			ImageTag:        stringField(rec, "image_tag"),
+			SecretRef:       stringField(rec, "secret_ref"),
 			ManifestVersion: stringField(rec, "manifest_version"),
 			ContentHash:     stringField(rec, "content_hash"),
 		}
@@ -320,6 +325,7 @@ func (r *topologyReader) LoadSingleLatestTable(ctx context.Context, fqn snapshot
 		       COALESCE(tbl.node_type, 'dbt-model') AS node_type,
 		       tbl.test_count                       AS test_count,
 		       COALESCE(tbl.image_tag, '')          AS image_tag,
+		       COALESCE(tbl.secret_ref, '')         AS secret_ref,
 		       COALESCE(tbl.manifest_version, '')   AS manifest_version,
 		       COALESCE(tbl.content_hash, '')       AS content_hash
 		LIMIT 1
@@ -345,6 +351,7 @@ func (r *topologyReader) LoadSingleLatestTable(ctx context.Context, fqn snapshot
 		TestCount:       tc,
 		TestCountKnown:  tcKnown,
 		ImageTag:        stringField(rec, "image_tag"),
+		SecretRef:       stringField(rec, "secret_ref"),
 		ManifestVersion: stringField(rec, "manifest_version"),
 		ContentHash:     stringField(rec, "content_hash"),
 	}, true, nil
@@ -360,6 +367,7 @@ func (r *topologyReader) LoadSingleTableFromSourceRun(ctx context.Context, sourc
 		       COALESCE(tbl.node_type, 'dbt-model') AS node_type,
 		       srcEdge.test_count                     AS test_count,
 		       COALESCE(srcEdge.image_tag, '')        AS image_tag,
+		       COALESCE(srcEdge.secret_ref, '')       AS secret_ref,
 		       COALESCE(srcEdge.manifest_version, '') AS manifest_version,
 		       COALESCE(srcEdge.content_hash, '')     AS content_hash
 		LIMIT 1
@@ -386,6 +394,7 @@ func (r *topologyReader) LoadSingleTableFromSourceRun(ctx context.Context, sourc
 		TestCount:       tc,
 		TestCountKnown:  tcKnown,
 		ImageTag:        stringField(rec, "image_tag"),
+		SecretRef:       stringField(rec, "secret_ref"),
 		ManifestVersion: stringField(rec, "manifest_version"),
 		ContentHash:     stringField(rec, "content_hash"),
 	}, true, nil

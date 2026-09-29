@@ -530,6 +530,45 @@ func TestReleasePromotionRepository_SetsOriginalFilePathUnconditionally(t *testi
 	assert.Equal(t, "models/a.sql", fp)
 }
 
+// TestReleasePromotionRepository_SetsAndClearsSecretRef pins :Table.secret_ref:
+// a node promoted with a secret_ref stores it, and a later release that drops
+// it clears the property to null rather than storing an empty string or keeping
+// the stale ref.
+func TestReleasePromotionRepository_SetsAndClearsSecretRef(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t) // skips if Neo4j unreachable
+	wipeReleaseFixtures(t, client)
+	t.Cleanup(func() { wipeReleaseFixtures(t, client) })
+
+	readSecretRef := func() any {
+		t.Helper()
+		s := client.NewSession(ctx, neo4j.AccessModeRead)
+		defer s.Close(ctx)
+		res, err := s.Run(ctx, `MATCH (t:Table {unique_id: 'analytics.fx'}) RETURN t.secret_ref AS s`, nil)
+		require.NoError(t, err)
+		require.True(t, res.Next(ctx))
+		v, _ := res.Record().Get("s")
+		return v
+	}
+
+	repo := newReleaseRepo(client)
+	withRef := []topology.ReleasePromotedTopologyNode{
+		{UniqueID: "analytics.fx", SchemaName: "analytics", TableName: "fx", ServiceName: "svc", //nolint:gosec // G101: secret_ref names a Kubernetes Secret, not a credential
+			NodeType: "python-api", ImageTag: "x", Schedule: "d", SecretRef: "continuo-api-fx"},
+	}
+	_, err := repo.PromoteRelease(ctx, "rel-1", withRef, time.Now().UTC())
+	require.NoError(t, err)
+	assert.Equal(t, "continuo-api-fx", readSecretRef())
+
+	withoutRef := []topology.ReleasePromotedTopologyNode{
+		{UniqueID: "analytics.fx", SchemaName: "analytics", TableName: "fx", ServiceName: "svc",
+			NodeType: "python-api", ImageTag: "x", Schedule: "d", SecretRef: ""},
+	}
+	_, err = repo.PromoteRelease(ctx, "rel-2", withoutRef, time.Now().UTC())
+	require.NoError(t, err)
+	assert.Nil(t, readSecretRef(), "an empty secret_ref must clear the property to null")
+}
+
 // TestReleasePromotionRepository_StoresContentHashOnTable pins the property the
 // version-ingestion path reads: :Table.content_hash must equal the hash the
 // promoted event carried, on every node, changed or not.

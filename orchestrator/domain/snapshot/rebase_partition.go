@@ -111,6 +111,7 @@ func (RebasePartition) SelectTasks(ctx context.Context, r TopologyReader, p Para
 				NodeType:        lt.NodeType,
 				InitialStatus:   "PENDING",
 				ImageTag:        lt.ImageTag,
+				SecretRef:       lt.SecretRef,
 				ManifestVersion: lt.ManifestVersion,
 				ContentHash:     lt.ContentHash,
 				TestCount:       lt.TestCount,
@@ -134,6 +135,7 @@ func (RebasePartition) SelectTasks(ctx context.Context, r TopologyReader, p Para
 				NodeType:            st.NodeType,
 				InitialStatus:       "SUCCEEDED",
 				ImageTag:            st.ImageTag,
+				SecretRef:           st.SecretRef,
 				ManifestVersion:     st.ManifestVersion,
 				ContentHash:         st.ContentHash,
 				TestCountKnown:      false, // SourceTaskRow carries no test_count; inherited rows never gate on it

@@ -68,6 +68,16 @@ func txMergeTable(ctx context.Context, tx neo4j.ManagedTransaction, sched, svc, 
 	return err
 }
 
+// txSetTableSecretRef stamps secret_ref on an existing :Table, as a promotion of
+// a python-api node does.
+func txSetTableSecretRef(ctx context.Context, tx neo4j.ManagedTransaction, sched, schema, tbl, ref string) error {
+	_, err := tx.Run(ctx, `
+		MATCH (t:Table {schedule_name: $sched, schema_name: $schema, table_name: $tbl})
+		SET t.secret_ref = $ref`,
+		map[string]interface{}{"sched": sched, "schema": schema, "tbl": tbl, "ref": ref})
+	return err
+}
+
 func txAddDependency(ctx context.Context, tx neo4j.ManagedTransaction, fromSched, fromSchema, fromTable, toSched, toSchema, toTable string) error {
 	_, err := tx.Run(ctx, `
 		MATCH (a:Table {schedule_name: $fs, schema_name: $fSchema, table_name: $fTable})
@@ -99,6 +109,7 @@ type txEdge struct {
 	InheritedFromTaskID string // empty = not inherited
 	Sched               string // override schedule; empty = use outer sched
 	TestCount           *int   // nil = property left absent (pre-capture edge); non-nil = pinned value
+	SecretRef           string // empty = property left absent
 }
 
 func txSeedExecEdges(ctx context.Context, tx neo4j.ManagedTransaction, runID, defaultSched string, edges []txEdge) error {
@@ -115,6 +126,10 @@ func txSeedExecEdges(ctx context.Context, tx neo4j.ManagedTransaction, runID, de
 		if e.TestCount != nil {
 			testCount = *e.TestCount
 		}
+		var secretRef interface{}
+		if e.SecretRef != "" {
+			secretRef = e.SecretRef
+		}
 		_, err := tx.Run(ctx, `
 			MATCH (r:Run {run_id: $run_id})
 			MATCH (t:Table {service_name: $svc, schema_name: $schema, table_name: $tbl, schedule_name: $sched})
@@ -126,12 +141,15 @@ func txSeedExecEdges(ctx context.Context, tx neo4j.ManagedTransaction, runID, de
 			)
 			FOREACH (_ IN CASE WHEN $test_count IS NULL THEN [] ELSE [1] END |
 			    SET ex.test_count = $test_count
+			)
+			FOREACH (_ IN CASE WHEN $secret_ref IS NULL THEN [] ELSE [1] END |
+			    SET ex.secret_ref = $secret_ref
 			)`,
 			map[string]interface{}{
 				"run_id": runID, "svc": e.Svc, "schema": e.Schema, "tbl": e.Tbl,
 				"sched": sched, "status": e.Status, "task_id": e.TaskID,
 				"img": e.Img, "mv": e.Mv, "inherited_from": inheritedFrom,
-				"test_count": testCount,
+				"test_count": testCount, "secret_ref": secretRef,
 			})
 		if err != nil {
 			return err
@@ -151,6 +169,9 @@ func TestTopologyReader_LoadLatestSourceDAG(t *testing.T) {
 				return err
 			}
 			if err := txMergeTable(ctx, tx, sched, "svc", "s", "b", "img:2", "v2", true); err != nil {
+				return err
+			}
+			if err := txSetTableSecretRef(ctx, tx, sched, "s", "a", "continuo-api-fx"); err != nil {
 				return err
 			}
 			return txAddDependency(ctx, tx, sched, "s", "a", sched, "s", "b")
@@ -175,8 +196,10 @@ func TestTopologyReader_LoadLatestSourceDAG(t *testing.T) {
 			assert.Equal(t, "v1", rowA.ManifestVersion)
 			assert.Equal(t, sched, rowA.ScheduleName)
 			assert.Equal(t, "dbt-model", rowA.NodeType)
-			_, ok = got[fqnB]
+			assert.Equal(t, "continuo-api-fx", rowA.SecretRef)
+			rowB, ok := got[fqnB]
 			assert.True(t, ok, "missing row for table b")
+			assert.Equal(t, "", rowB.SecretRef, "a :Table without secret_ref reads as empty")
 			return nil
 		},
 	)
@@ -316,8 +339,8 @@ func TestTopologyReader_LoadSourceTasks_RoundTripsInheritedFromTaskID(t *testing
 				return err
 			}
 			return txSeedExecEdges(ctx, tx, runID, sched, []txEdge{
-				{Svc: "svc", Schema: "s", Tbl: "a", Status: "SUCCEEDED", TaskID: taskA,
-					Img: "img:1", Mv: "v1", InheritedFromTaskID: rootA},
+				{Svc: "svc", Schema: "s", Tbl: "a", Status: "SUCCEEDED", TaskID: taskA, //nolint:gosec // G101: secret_ref names a Kubernetes Secret, not a credential
+					Img: "img:1", Mv: "v1", InheritedFromTaskID: rootA, SecretRef: "continuo-api-fx"},
 				{Svc: "svc", Schema: "s", Tbl: "b", Status: "FAILED", TaskID: taskB,
 					Img: "img:2", Mv: "v2"},
 			})
@@ -332,6 +355,7 @@ func TestTopologyReader_LoadSourceTasks_RoundTripsInheritedFromTaskID(t *testing
 			require.True(t, ok, "missing row for a")
 			assert.Equal(t, "SUCCEEDED", rowA.Status)
 			assert.Equal(t, "img:1", rowA.ImageTag)
+			assert.Equal(t, "continuo-api-fx", rowA.SecretRef)
 			require.NotNil(t, rowA.InheritedFromRoot, "inherited_from_task_id must be populated")
 			assert.Equal(t, rootA, rowA.InheritedFromRoot.String())
 
@@ -340,6 +364,7 @@ func TestTopologyReader_LoadSourceTasks_RoundTripsInheritedFromTaskID(t *testing
 			require.True(t, ok, "missing row for b")
 			assert.Equal(t, "FAILED", rowB.Status)
 			assert.Nil(t, rowB.InheritedFromRoot, "b has no inherited_from")
+			assert.Equal(t, "", rowB.SecretRef, "an edge without secret_ref reads as empty")
 			return nil
 		},
 	)
@@ -508,7 +533,10 @@ func TestTopologyReader_LoadSingleLatestTable_HitAndMiss(t *testing.T) {
 
 	withTopologyReader(t,
 		func(ctx context.Context, tx neo4j.ManagedTransaction) error {
-			return txMergeTable(ctx, tx, sched, "svc", "s", "x", "img:7", "v7", true)
+			if err := txMergeTable(ctx, tx, sched, "svc", "s", "x", "img:7", "v7", true); err != nil {
+				return err
+			}
+			return txSetTableSecretRef(ctx, tx, sched, "s", "x", "continuo-api-fx")
 		},
 		func(ctx context.Context, r snapshot.TopologyReader) error {
 			// Hit
@@ -517,6 +545,7 @@ func TestTopologyReader_LoadSingleLatestTable_HitAndMiss(t *testing.T) {
 			require.True(t, found, "existing active table must be found")
 			assert.Equal(t, "img:7", row.ImageTag)
 			assert.Equal(t, "v7", row.ManifestVersion)
+			assert.Equal(t, "continuo-api-fx", row.SecretRef)
 			assert.Equal(t, sched, row.ScheduleName)
 			assert.Equal(t, "dbt-model", row.NodeType)
 
@@ -599,13 +628,16 @@ func TestTopologyReader_LoadSingleTableFromSourceRun_HitAndMiss(t *testing.T) {
 			if err := txMergeTable(ctx, tx, sched, "svc", "s", "z", "img:NEW", "vNEW", true); err != nil {
 				return err
 			}
+			if err := txSetTableSecretRef(ctx, tx, sched, "s", "z", "continuo-api-new"); err != nil {
+				return err
+			}
 			if err := txSeedRun(ctx, tx, runID, sched); err != nil {
 				return err
 			}
 			// Source edge pins OLD metadata (different from latest table).
 			return txSeedExecEdges(ctx, tx, runID, sched, []txEdge{
-				{Svc: "svc", Schema: "s", Tbl: "z", Status: "SUCCEEDED", TaskID: taskID,
-					Img: "img:OLD", Mv: "vOLD"},
+				{Svc: "svc", Schema: "s", Tbl: "z", Status: "SUCCEEDED", TaskID: taskID, //nolint:gosec // G101: secret_ref names a Kubernetes Secret, not a credential
+					Img: "img:OLD", Mv: "vOLD", SecretRef: "continuo-api-old"},
 			})
 		},
 		func(ctx context.Context, r snapshot.TopologyReader) error {
@@ -615,6 +647,7 @@ func TestTopologyReader_LoadSingleTableFromSourceRun_HitAndMiss(t *testing.T) {
 			require.True(t, found, "table in source run must be found")
 			assert.Equal(t, "img:OLD", row.ImageTag, "must read from source :EXECUTES edge, not latest table")
 			assert.Equal(t, "vOLD", row.ManifestVersion)
+			assert.Equal(t, "continuo-api-old", row.SecretRef, "must read the pinned edge secret_ref, not the latest table")
 			assert.Equal(t, sched, row.ScheduleName)
 
 			// Miss — table not in source run.

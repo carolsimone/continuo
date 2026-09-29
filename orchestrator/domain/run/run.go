@@ -183,6 +183,7 @@ func (r *Run) checkUnblocked(from NodeKey) []DomainEvent {
 				NodeType:        downstream.NodeType,
 				ManifestVersion: downstream.ManifestVersion,
 				ImageTag:        downstream.ImageTag,
+				SecretRef:       downstream.SecretRef,
 				Operation:       r.Operation,
 			})
 		}

@@ -28,6 +28,7 @@ type NodeReadyForExecutionDTO struct {
 	NodeType        string `json:"node_type"`
 	ManifestVersion string `json:"manifest_version"`
 	ImageTag        string `json:"image_tag"`
+	SecretRef       string `json:"secret_ref,omitempty"`
 	Operation       string `json:"operation,omitempty"`
 }
 
@@ -44,6 +45,7 @@ func NodeReadyForExecutionFromDomain(e domain.NodeReadyForExecution) NodeReadyFo
 		NodeType:        e.NodeType,
 		ManifestVersion: e.ManifestVersion,
 		ImageTag:        e.ImageTag,
+		SecretRef:       e.SecretRef,
 		Operation:       e.Operation,
 	}
 }
@@ -61,6 +63,7 @@ func (d NodeReadyForExecutionDTO) ToDomain() domain.NodeReadyForExecution {
 		NodeType:        d.NodeType,
 		ManifestVersion: d.ManifestVersion,
 		ImageTag:        d.ImageTag,
+		SecretRef:       d.SecretRef,
 		Operation:       d.Operation,
 	}
 }
@@ -76,6 +79,7 @@ type ReleasePromotedNodeDTO struct {
 	ContentHash       string   `json:"content_hash"`
 	TestCount         int      `json:"test_count"`
 	ImageTag          string   `json:"image_tag"`
+	SecretRef         string   `json:"secret_ref"`
 	Schedule          string   `json:"schedule"`
 	UpstreamUniqueIDs []string `json:"upstream_unique_ids"`
 	Changed           bool     `json:"changed"`
@@ -109,6 +113,7 @@ func (d ReleasePromotedDTO) ToDomain() event.ReleasePromoted {
 				ContentHash:       n.ContentHash,
 				TestCount:         n.TestCount,
 				ImageTag:          n.ImageTag,
+				SecretRef:         n.SecretRef,
 				Schedule:          n.Schedule,
 				UpstreamUniqueIDs: n.UpstreamUniqueIDs,
 				Changed:           n.Changed,
