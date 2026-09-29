@@ -16,8 +16,9 @@ import logging
 import yaml
 
 from domain.exceptions import MalformedContractError
-from domain.model import ManifestNode, NodeType, Runtime
+from domain.model import ManifestNode, Runtime
 from service.content_hash import content_hash_fold
+from service.python_kind_rules import RULES, resolve_kind
 
 logger = logging.getLogger(__name__)
 
@@ -34,56 +35,16 @@ _REQUIRED_ENTRY_KEYS = {
 _OPTIONAL_ENTRY_KEYS = {"description", "extra_columns", "config", "kind"}
 _COLUMN_REQUIRED_KEYS = {"name", "type"}
 _COLUMN_ALLOWED_KEYS = {"name", "type", "nullable"}
-KINDS = {"python-model", "python-csv"}
 
 
 def _fail(detail: str) -> None:
     raise MalformedContractError(detail)
 
 
-def _validate_csv_uri(uri: str, label: str) -> None:
-    """Mirrors continuo_python_runtime.csv_source.parse_csv_uri's grammar
-    exactly, so a contract this loader accepts is one the pinned runner's
-    validation header-fetch can actually parse. A prefix-only check would
-    accept shapes the runner rejects (a bucket-less ``s3://bucket`` with no
-    object key, a host-less ``https://``), letting topology-controller wave
-    a malformed csv contract through a release that only fails once the
-    validation Job actually runs. Accepts exactly ``s3://bucket/key`` (both
-    non-empty) or ``https://<non-empty-host>[/...]``; every other shape —
-    including ``http://`` — is rejected here, at parse time.
-    """
-    if uri.startswith("s3://"):
-        bucket, _, key = uri[len("s3://"):].partition("/")
-        if bucket and key:
-            return
-        _fail(f"{label}: invalid s3 csv uri (missing bucket or key): {uri!r}")
-    elif uri.startswith("https://"):
-        host, _, _ = uri[len("https://"):].partition("/")
-        if host:
-            return
-        _fail(f"{label}: invalid https csv uri (missing host): {uri!r}")
-    else:
-        _fail(
-            f"{label}: reads['csv'] must be an s3://bucket/key or"
-            f" https://<host>/... uri, got {uri!r}"
-        )
-
-
 def _non_empty_str(value, label: str) -> str:
     if not isinstance(value, str) or not value.strip():
         _fail(f"{label} must be a non-empty string, got {value!r}")
     return value
-
-
-def _parse_reads(raw, label: str) -> dict[str, str]:
-    if not isinstance(raw, dict):
-        _fail(f"{label}: reads must be a mapping of read name -> SQL")
-    reads: dict[str, str] = {}
-    for name, sql in raw.items():
-        _non_empty_str(name, f"{label}: read name")
-        _non_empty_str(sql, f"{label}: reads[{name!r}]")
-        reads[name] = sql
-    return reads
 
 
 def _parse_columns(raw, label: str) -> list[dict]:
@@ -128,16 +89,15 @@ def _parse_entry(
             " — incompatible schema changes require a contract_version bump"
         )
 
-    kind = entry.get("kind", "python-model")
-    if not isinstance(kind, str) or kind not in KINDS:
-        _fail(f"{label}: kind must be one of {sorted(KINDS)}, got {kind!r}")
+    node_type = resolve_kind(entry.get("kind"), label)
+    rules = RULES[node_type]
 
-    if kind == "python-csv":
-        if entry.get("script"):
-            _fail(f"{label}: 'script' is forbidden for kind python-csv")
-        required = _REQUIRED_ENTRY_KEYS - {"script"}
-    else:
+    if rules.script_required:
         required = _REQUIRED_ENTRY_KEYS
+    else:
+        if entry.get("script"):
+            _fail(f"{label}: 'script' is forbidden for kind {node_type}")
+        required = _REQUIRED_ENTRY_KEYS - {"script"}
     missing = required - set(entry)
     if missing:
         _fail(f"{label}: missing required fields {sorted(missing)}")
@@ -146,7 +106,7 @@ def _parse_entry(
     table = _non_empty_str(entry["table"], f"{label}: table")
     owner = _non_empty_str(entry["owner"], f"{label}: owner")
     schedule = _non_empty_str(entry["schedule"], f"{label}: schedule")
-    script = _non_empty_str(entry["script"], f"{label}: script") if kind != "python-csv" else ""
+    script = _non_empty_str(entry["script"], f"{label}: script") if rules.script_required else ""
 
     criticality = entry["criticality"]
     if not isinstance(criticality, str) or criticality not in CRITICALITIES:
@@ -170,14 +130,7 @@ def _parse_entry(
     if not isinstance(description, str):
         _fail(f"{label}: description must be a string")
 
-    reads = _parse_reads(entry["reads"], label)
-    if kind == "python-csv":
-        if set(reads) != {"csv"}:
-            _fail(f"{label}: a python-csv node's reads must be exactly {{csv: <uri>}}")
-        csv_source = reads["csv"]
-        _validate_csv_uri(csv_source, label)
-    else:
-        csv_source = ""
+    parsed = rules.reads.parse(entry["reads"], label)
     columns = _parse_columns(entry["output_columns"], label)
 
     source_hash = _non_empty_str(entry["source_hash"], f"{label}: source_hash")
@@ -206,23 +159,20 @@ def _parse_entry(
         "owner": owner,
         "schedule": schedule,
         "criticality": criticality,
-        "kind": kind,
+        "kind": str(node_type),
         "description": description,
         "extra_columns": extra_columns,
-        "reads": dict(reads),
+        "reads": dict(parsed.reads),
         "output_columns": columns,
         "config": config,
     }
-    if kind != "python-csv":
+    if rules.script_required:
         raw_entry["script"] = script
 
     try:
         raw_code = json.dumps(raw_entry, sort_keys=True, indent=2)
     except (TypeError, ValueError):
         _fail(f"{label}: config is not JSON-serializable")
-
-    node_type = NodeType.PYTHON_CSV if kind == "python-csv" else NodeType.PYTHON_MODEL
-    dependency_sqls = [] if kind == "python-csv" else [reads[name] for name in sorted(reads)]
 
     return ManifestNode(
         table_name=table,
@@ -234,7 +184,7 @@ def _parse_entry(
         owner=owner,
         schedule_name=schedule,
         criticality=criticality,
-        dependency_sqls=dependency_sqls,
+        dependency_sqls=parsed.dependency_sqls,
         candidate_sql="",
         node_type=node_type,
         content_hash=content_hash,
@@ -249,7 +199,7 @@ def _parse_entry(
         code_unit_ids=[],
         output_columns=columns,
         runtime=Runtime.PYTHON,
-        csv_source=csv_source,
+        csv_source=parsed.csv_source,
     )
 
 

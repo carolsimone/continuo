@@ -10,8 +10,8 @@ describe('nodeTypeFamily', () => {
     expect(nodeTypeFamily('dbt-snapshot')).toBe('dbt');
   });
 
-  it('maps python-model to python and python-csv to python-csv', () => {
-    expect(nodeTypeFamily('python-model')).toBe('python');
+  it('maps python-node to python and python-csv to python-csv', () => {
+    expect(nodeTypeFamily('python-node')).toBe('python');
     expect(nodeTypeFamily('python-csv')).toBe('python-csv');
   });
 
@@ -29,8 +29,8 @@ describe('NodeTypeIcon', () => {
     expect(icon!.querySelector('path')).not.toBeNull();
   });
 
-  it('renders the python mark for python-model', () => {
-    const { container } = render(<NodeTypeIcon nodeType="python-model" />);
+  it('renders the python mark for python-node', () => {
+    const { container } = render(<NodeTypeIcon nodeType="python-node" />);
     expect(container.querySelector('[data-node-type-icon="python"]')).not.toBeNull();
   });
 

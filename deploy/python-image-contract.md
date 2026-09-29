@@ -2,7 +2,7 @@
 
 What a domain team's python image must provide to run under continuo.
 execution-controller launches your image as a Kubernetes Job for scheduled runs
-of your `python-model` nodes; this page is continuo's side of that contract.
+of your `python-node` nodes; this page is continuo's side of that contract.
 
 The normative specification of what the image must *do* with the environment
 below — the harness, the baked contract files, output conformance, the result

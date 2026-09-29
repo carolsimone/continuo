@@ -7,7 +7,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 )
 
-// pythonParseFixer handles a python-model node whose read SQL the release's
+// pythonParseFixer handles a python-node whose read SQL the release's
 // parser rejected before any Job ran. The trigger's file path names the
 // node's script, which the parser never reads; the rejected SQL is one of the
 // node's `reads` entries in the contract yaml that declares it. So the fix is

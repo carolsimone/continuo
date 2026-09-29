@@ -12,7 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation"
 )
 
-// pythonParams returns JobParams for a python-model run task.
+// pythonParams returns JobParams for a python-node run task.
 func pythonParams() JobParams {
 	return JobParams{
 		JobName:     "run-py-probe",
@@ -22,7 +22,7 @@ func pythonParams() JobParams {
 		SchemaName:  "analytics",
 		TableName:   "py_probe",
 		Namespace:   "default",
-		NodeType:    pkg_model.NodeTypePythonModel,
+		NodeType:    pkg_model.NodeTypePythonNode,
 		ImageTag:    "ghcr.io/acme/marketing-py:12-abc1234",
 	}
 }
@@ -256,7 +256,7 @@ func TestBuildPythonPodSpec_CsvGetsS3Credentials(t *testing.T) {
 }
 
 // TestBuildPythonPodSpec_ModelStillGetsNoS3Credentials pins the negative half
-// of the csv exception: a python-model pod must never carry S3 credentials,
+// of the csv exception: a python-node pod must never carry S3 credentials,
 // since its contract files travel inside the image itself.
 func TestBuildPythonPodSpec_ModelStillGetsNoS3Credentials(t *testing.T) {
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "warehouse-conn")
@@ -272,16 +272,16 @@ func TestBuildPythonPodSpec_ModelStillGetsNoS3Credentials(t *testing.T) {
 	for _, name := range []string{
 		"S3_ENDPOINT_URL", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_DEFAULT_REGION",
 	} {
-		assert.NotContains(t, env, name, "%s must not reach a python-model pod", name)
+		assert.NotContains(t, env, name, "%s must not reach a python-node pod", name)
 	}
 }
 
-// TestCreateQueryJob_PythonModel_UsesPythonPodSpec verifies the dispatch branch
+// TestCreateQueryJob_PythonNode_UsesPythonPodSpec verifies the dispatch branch
 // reaches the Kubernetes API: the created Job carries the shared production
 // labels (so the job-status handler routes it through the production lifecycle
 // and the concurrency cap counts it), plus the runtime label, and its pod is the
 // python one.
-func TestCreateQueryJob_PythonModel_UsesPythonPodSpec(t *testing.T) {
+func TestCreateQueryJob_PythonNode_UsesPythonPodSpec(t *testing.T) {
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "warehouse-conn")
 	client := newValidationTestClient()
 
@@ -304,7 +304,7 @@ func TestCreateQueryJob_PythonModel_UsesPythonPodSpec(t *testing.T) {
 }
 
 // TestCreateQueryJob_PythonCsv_UsesPythonPodSpec verifies python-csv nodes take
-// the same python pod dispatch as python-model (both are IsPython), carry the
+// the same python pod dispatch as python-node (both are IsPython), carry the
 // runtime=python label, and additionally get S3 credentials on the container.
 func TestCreateQueryJob_PythonCsv_UsesPythonPodSpec(t *testing.T) {
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "warehouse-conn")
@@ -334,14 +334,41 @@ func TestCreateQueryJob_PythonCsv_UsesPythonPodSpec(t *testing.T) {
 	assert.Equal(t, "csv-access-key", env["AWS_ACCESS_KEY_ID"], "csv Jobs get S3 credentials")
 }
 
-// TestCreateQueryJob_PythonModel_IsIdempotent verifies a redelivered command
+// TestCreateQueryJob_PythonNode_IsIdempotent verifies a redelivered command
 // does not duplicate the Job.
-func TestCreateQueryJob_PythonModel_IsIdempotent(t *testing.T) {
+func TestCreateQueryJob_PythonNode_IsIdempotent(t *testing.T) {
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "warehouse-conn")
 	client := newValidationTestClient()
 
 	require.NoError(t, client.CreateQueryJob(context.Background(), pythonParams()))
 	require.NoError(t, client.CreateQueryJob(context.Background(), pythonParams()))
+}
+
+// TestPythonKindEnv_CoversEveryPythonNodeType pins that a new python kind
+// cannot silently fall through: every python NodeType must have an entry in
+// pythonKindEnv, so buildPythonPodSpec can never reach the unknown-kind error
+// for a kind the domain already knows about.
+func TestPythonKindEnv_CoversEveryPythonNodeType(t *testing.T) {
+	for _, nt := range pkg_model.NodeTypes() {
+		if !nt.IsPython() {
+			continue
+		}
+		if _, ok := pythonKindEnv[nt]; !ok {
+			t.Errorf("python node type %q has no pod env entry in pythonKindEnv", nt)
+		}
+	}
+}
+
+// TestPythonKindEnv_OnlyCsvGetsS3Credentials pins the boundary rule: a
+// python-node pod never receives S3 credentials, while a python-csv pod
+// receives exactly the S3 credential env.
+func TestPythonKindEnv_OnlyCsvGetsS3Credentials(t *testing.T) {
+	if got := pythonKindEnv[pkg_model.NodeTypePythonNode](); len(got) != 0 {
+		t.Errorf("python-node pod must not receive S3 credentials, got %v", got)
+	}
+	if got := pythonKindEnv[pkg_model.NodeTypePythonCsv](); len(got) != len(s3CredEnvVars()) {
+		t.Errorf("python-csv pod must receive the S3 credential env, got %v", got)
+	}
 }
 
 // TestCreateQueryJob_DbtModel_PodSpecUnchanged pins the branch as inert for

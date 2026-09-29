@@ -221,7 +221,7 @@ func TestSingleNode_FullRefresh_SupportedNodeTypes(t *testing.T) {
 }
 
 func TestSingleNode_FullRefresh_UnsupportedNodeTypes(t *testing.T) {
-	for _, nt := range []string{"dbt-snapshot", "dbt-test", "python-model", "python-csv"} {
+	for _, nt := range []string{"dbt-snapshot", "dbt-test", "python-node", "python-csv"} {
 		fqn := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a"}
 		srcID := uuid.New()
 		row := snapshot.LatestTableRow{ScheduleName: "x", NodeType: nt, ImageTag: "v1", ManifestVersion: "m1"}

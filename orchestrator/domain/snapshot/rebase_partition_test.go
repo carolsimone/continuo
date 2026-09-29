@@ -169,7 +169,7 @@ func TestRebasePartition_NoScheduleName_Errors(t *testing.T) {
 // a node-type check would even matter; it fails closed with
 // ErrEmptyProjection. This holds regardless of the source's operation,
 // including full_refresh against a node type full_refresh does not support
-// (python-model here).
+// (python-node here).
 func TestRebasePartition_SingleNodeRunSource_NeverFansOut(t *testing.T) {
 	srcID := uuid.New()
 	syntheticSchedule := "single-node-run-abc12345"
@@ -177,7 +177,7 @@ func TestRebasePartition_SingleNodeRunSource_NeverFansOut(t *testing.T) {
 	r := &fakeTopologyReader{
 		SourceTasks: map[string]map[snapshot.FQN]snapshot.SourceTaskRow{
 			srcID.String(): {
-				target: {TaskID: uuid.New(), Status: "FAILED", ScheduleName: syntheticSchedule, NodeType: "python-model"},
+				target: {TaskID: uuid.New(), Status: "FAILED", ScheduleName: syntheticSchedule, NodeType: "python-node"},
 			},
 		},
 		// Models production reality: real :Table rows carry the catalog

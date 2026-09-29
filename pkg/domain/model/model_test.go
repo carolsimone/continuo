@@ -102,13 +102,13 @@ func TestOperation_IsSingleNodeOnly(t *testing.T) {
 	}
 }
 
-func TestParseNodeType_PythonModel(t *testing.T) {
-	got, err := model.ParseNodeType("python-model")
+func TestParseNodeType_PythonNode(t *testing.T) {
+	got, err := model.ParseNodeType("python-node")
 	if err != nil {
-		t.Fatalf("ParseNodeType(python-model): %v", err)
+		t.Fatalf("ParseNodeType(python-node): %v", err)
 	}
-	if got != model.NodeTypePythonModel {
-		t.Fatalf("got %q, want %q", got, model.NodeTypePythonModel)
+	if got != model.NodeTypePythonNode {
+		t.Fatalf("got %q, want %q", got, model.NodeTypePythonNode)
 	}
 }
 

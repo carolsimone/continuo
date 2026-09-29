@@ -15,7 +15,7 @@ import (
 // rather than the node id, and shows the model the parser's error text in
 // place of a dbt log, since no Job ran.
 //
-// A python-model node never reaches this type: For routes it to
+// A python-node never reaches this type: For routes it to
 // pythonParseFixer, because its rejected SQL is a read in its contract yaml.
 // A python-csv node does reach it and is refused with a recorded reason: its
 // only read is an S3 URI, never SQL, so the parser has nothing to reject in

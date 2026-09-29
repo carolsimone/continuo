@@ -82,7 +82,7 @@ func TestDuplicateTable_PythonTarget_NeverCallsLLMOrPrecedents(t *testing.T) {
 	in := Input{
 		Source: "duplicate_table", ReleaseID: "rel-1", NodeID: "analytics.orders",
 		Repo: "owner/repo", CommitSHA: "abc123", Service: "marketing", FilePath: "models/orders.py",
-		NodeType: "python-model", OtherService: "finance", Attempt: 1,
+		NodeType: "python-node", OtherService: "finance", Attempt: 1,
 	}
 	r, err := duplicateTableFixer{}.Propose(context.Background(), svc, in)
 	if err != nil {

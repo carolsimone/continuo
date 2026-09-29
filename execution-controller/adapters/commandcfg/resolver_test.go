@@ -277,7 +277,7 @@ func TestNodeCommand_SeedFullRefresh_LegacyBlockWithoutKeyIsPermanent(t *testing
 
 func TestNodeCommand_FullRefresh_UnsupportedNodeTypeIsPermanent(t *testing.T) {
 	r := Defaults()
-	for _, nt := range []pkg_model.NodeType{pkg_model.NodeTypeDbtSnapshot, pkg_model.NodeTypeDbtTest, pkg_model.NodeTypePythonModel} {
+	for _, nt := range []pkg_model.NodeType{pkg_model.NodeTypeDbtSnapshot, pkg_model.NodeTypeDbtTest, pkg_model.NodeTypePythonNode} {
 		_, err := r.NodeCommand("svc", pkg_model.OperationFullRefresh, nt, "x")
 		assert.ErrorIs(t, err, pkgevents.ErrPermanent, "node type %s", nt)
 	}

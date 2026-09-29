@@ -551,7 +551,7 @@ only accepts style objects.
 ### Node type icons
 
 Every topology node belongs to one of three families — dbt
-(`dbt-model` / `dbt-seed` / `dbt-snapshot`), `python-model`, `python-csv` —
+(`dbt-model` / `dbt-seed` / `dbt-snapshot`), `python-node`, `python-csv` —
 and surfaces that render a single node mark it with the family's icon via
 the `NodeTypeIcon` component (`ui/src/client/NodeTypeIcon.tsx`):
 

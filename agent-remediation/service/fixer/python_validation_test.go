@@ -171,7 +171,7 @@ func writeRepoFile(t *testing.T, root, rel, content string) {
 func pythonInput() Input {
 	return Input{
 		Source: "validation", ReleaseID: "rel-1", NodeID: "analytics.py_daily_kpis",
-		NodeType: "python-model", Service: "svc-py", Repo: "o/demo", CommitSHA: "deadbeef",
+		NodeType: "python-node", Service: "svc-py", Repo: "o/demo", CommitSHA: "deadbeef",
 		ErrorExcerpt: "column revenue_total missing", ErrorSignature: "sig-1",
 		DBTLogURI: "s3://log", CodeBundleURI: "s3://bundle", Attempt: 1,
 	}
@@ -478,12 +478,12 @@ func TestWriteEditArtifacts_TwoEditsOfOneAttemptDoNotCollide(t *testing.T) {
 	require.Equal(t, "contracts/b.yml", second.Path)
 }
 
-// TestFor_ValidationDispatchesOnNodeType verifies that a python-model node's
+// TestFor_ValidationDispatchesOnNodeType verifies that a python-node's
 // validation failure reaches the python lane, a python-csv node's reaches its
 // own dedicated lane, and every dbt shape — including a trigger carrying no
 // node type at all — keeps reaching today's validation fixer.
 func TestFor_ValidationDispatchesOnNodeType(t *testing.T) {
-	py, err := For("validation", "python-model")
+	py, err := For("validation", "python-node")
 	require.NoError(t, err)
 	require.IsType(t, pythonValidationFixer{}, py)
 
@@ -502,15 +502,15 @@ func TestFor_ValidationDispatchesOnNodeType(t *testing.T) {
 // selects a lane for validation failures: a python node reaching any other
 // error class keeps the fixer that class already refuses it in.
 func TestFor_NonValidationSourcesIgnoreNodeType(t *testing.T) {
-	compile, err := For("compile", "python-model")
+	compile, err := For("compile", "python-node")
 	require.NoError(t, err)
 	require.IsType(t, compileFixer{}, compile)
 
-	seed, err := For("seed_build", "python-model")
+	seed, err := For("seed_build", "python-node")
 	require.NoError(t, err)
 	require.IsType(t, seedFixer{}, seed)
 
-	dup, err := For("duplicate_table", "python-model")
+	dup, err := For("duplicate_table", "python-node")
 	require.NoError(t, err)
 	require.IsType(t, duplicateTableFixer{}, dup)
 }
@@ -709,18 +709,18 @@ func TestPythonValidation_AnswerThatChangesNodeIdentity_Fails(t *testing.T) {
 // TestPythonValidation_AnswerAddsExplicitDefaultKind_Verifies covers the
 // companion case to the kind-flip check above: declaringYAML, like every
 // legacy contract, omits "kind:" entirely, and both the runtime parsers and
-// this locator default an absent kind to "python-model". An answer that
+// this locator default an absent kind to "python-node". An answer that
 // writes that default explicitly is a no-op normalization, not an identity
 // change, and must reach verification exactly like any other accepted fix —
 // the locator defaulting absent Kind is what keeps this from reading as
-// kind "" -> "python-model" and being refused by identityBreach.
+// kind "" -> "python-node" and being refused by identityBreach.
 func TestPythonValidation_AnswerAddsExplicitDefaultKind_Verifies(t *testing.T) {
 	root := pythonRepoTree(t)
 	svc, _, pkgr, _, _ := pythonSvc(t, root)
 	const answerWithExplicitKind = `nodes:
   - schema: analytics
     table: py_daily_kpis
-    kind: python-model
+    kind: python-node
     script: scripts/py_daily_kpis.py
     reads:
       orders: select id from analytics.orders

@@ -120,7 +120,7 @@ func TestAssembleCsvContractFix_ToolSchema(t *testing.T) {
 
 // TestAssembleCsvContractFix_SystemPromptScopesTheEdit pins the rules that
 // keep a csv contract fix from breaking the release it is meant to repair,
-// and that keep it a genuinely different prompt from the python-model lane's:
+// and that keep it a genuinely different prompt from the python-node lane's:
 // the model must be told what a fix may touch (output_columns, the csv uri),
 // that the "csv" read may never be deleted or renamed, and that the node's
 // kind is identity it may never change.

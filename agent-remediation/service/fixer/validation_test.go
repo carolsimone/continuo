@@ -686,7 +686,7 @@ func TestValidation_PythonNode_SkipsBeforeAnyRead(t *testing.T) {
 		Upstream: up, Versions: vs, Precedents: pr, Logger: testLogger(),
 	}
 	in := validationInput()
-	in.NodeType = "python-model"
+	in.NodeType = "python-node"
 	in.FilePath, in.Service = "python/report.py", "svc"
 	in.CandidateArtifactURI = "s3://continuo/candidate-sql/r/candidate_n.json"
 
@@ -715,7 +715,7 @@ func TestValidation_PythonNode_SkipsBeforeAnyRead(t *testing.T) {
 // TestValidation_PythonCsvNode_SkipsBeforeAnyRead mirrors
 // TestValidation_PythonNode_SkipsBeforeAnyRead for the python-csv node kind: a
 // csv node is part of the python family (IsPython), so it must be skipped by
-// this defensive fallback the same way a python-model node is.
+// this defensive fallback the same way a python-node is.
 func TestValidation_PythonCsvNode_SkipsBeforeAnyRead(t *testing.T) {
 	ev := &countingEvidence{}
 	cs := &fakeCandidateSource{src: ports.CandidateSource{

@@ -91,6 +91,10 @@ var schemaStatements = []string{
 //     from every :Table. Version provenance lives on :NodeVersion; nothing
 //     reads these properties, and leaving them would serve stale commits to
 //     any future reader. Idempotent: REMOVE on an absent property is a no-op.
+//   - python_node_type: stores the python script node kind as 'python-node',
+//     the value every reader parses; a :Table carrying 'python-model' would
+//     fail ParseNodeType on every scheduled run. Idempotent: once no :Table
+//     carries 'python-model' it matches nothing.
 var dataMigrations = []string{
 	"MATCH (r:Run) WHERE r.terminal_status IN ['SUCCEEDED', 'FAILED'] SET r.terminal_status = toLower(r.terminal_status)",
 	"MATCH ()-[p:PREVIOUS]->() DELETE p",
@@ -98,6 +102,7 @@ var dataMigrations = []string{
 	 WHERE t.last_commit_sha IS NOT NULL OR t.last_repo IS NOT NULL
 	    OR t.last_changed_at IS NOT NULL OR t.last_release_id IS NOT NULL
 	 REMOVE t.last_commit_sha, t.last_repo, t.last_changed_at, t.last_release_id`,
+	"MATCH (t:Table {node_type: 'python-model'}) SET t.node_type = 'python-node'",
 }
 
 // awaitIndexTimeoutSeconds bounds how long InitSchema waits for the freshly

@@ -1488,7 +1488,7 @@ const (
 )
 
 // pythonContractRepoTree writes a minimal repository checkout holding one
-// python-model node's declaring contract file alongside a second file in the
+// python-node's declaring contract file alongside a second file in the
 // same contract directory, and returns the checkout root.
 func pythonContractRepoTree(t *testing.T) string {
 	t.Helper()
@@ -1544,7 +1544,7 @@ func TestProposeFix_EditsFromOnePythonClusterAreIndependentlyCopied(t *testing.T
 	tr := baseTrigger()
 	tr.Nodes = []TriggerNode{{
 		NodeID: "analytics.pynode", ErrorSignature: "sig-py", Category: "logic",
-		NodeType: "python-model", Service: "svc", DBTLogURI: "s3://b/log",
+		NodeType: "python-node", Service: "svc", DBTLogURI: "s3://b/log",
 	}}
 
 	require.NoError(t, ProposeFix(context.Background(), d, tr))
@@ -1687,7 +1687,7 @@ func TestSubmitVerifications_PythonLaneIgnoresTheTriggersServiceField(t *testing
 	d.Releases = gw
 	tr := baseTrigger()
 	tr.Nodes = []TriggerNode{{NodeID: "analytics.py_daily_kpis", ErrorSignature: "sig",
-		NodeType: "python-model", Service: ""}}
+		NodeType: "python-node", Service: ""}}
 	edits := []proposal.FileEdit{{
 		Path: "services/svc/contracts/kpis.yml", ContentURI: "s3://art/edit", TargetNodeID: "analytics.py_daily_kpis",
 	}}

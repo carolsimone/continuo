@@ -38,3 +38,23 @@ class RejectReason(StrEnum):
 
 REJECT_REASON_HEALABLE = frozenset({RejectReason.COMPILE_FAILED, RejectReason.INVALID_SQL, RejectReason.UNQUALIFIED_REFERENCE, RejectReason.DUPLICATE_TABLE, RejectReason.SEED_BUILD_FAILED, RejectReason.VALIDATION_FAILED})
 """Values of RejectReason a remediation attempt can fix by changing the user's source."""
+
+
+class NodeRuntime(StrEnum):
+    """The toolchain that builds a graph node."""
+    DBT = "dbt"
+    PYTHON = "python"
+
+
+class NodeType(StrEnum):
+    """The kind of a graph node. Decides which toolchain builds it (runtime) and which contract rules and validation path apply."""
+    DBT_MODEL = "dbt-model"
+    DBT_SEED = "dbt-seed"
+    DBT_SNAPSHOT = "dbt-snapshot"
+    PYTHON_NODE = "python-node"
+    PYTHON_CSV = "python-csv"
+    DBT_TEST = "dbt-test"
+
+
+NODE_TYPE_RUNTIME: dict[NodeType, NodeRuntime] = {NodeType.DBT_MODEL: NodeRuntime.DBT, NodeType.DBT_SEED: NodeRuntime.DBT, NodeType.DBT_SNAPSHOT: NodeRuntime.DBT, NodeType.PYTHON_NODE: NodeRuntime.PYTHON, NodeType.PYTHON_CSV: NodeRuntime.PYTHON, NodeType.DBT_TEST: NodeRuntime.DBT}
+"""Which toolchain builds each NodeType."""
