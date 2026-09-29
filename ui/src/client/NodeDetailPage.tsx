@@ -6,9 +6,15 @@ import type { NodeRun, NodeRunsResponse, NodeDetailFrom } from './types';
 import { kindLabel, computeNodeStats, formatDuration, formatRelative } from './node-helpers';
 import NodeTypeIcon from './NodeTypeIcon';
 import RunSourcePickerDialog from './RunSourcePickerDialog';
+import FullRefreshConfirmDialog from './FullRefreshConfirmDialog';
 import { type NodeType } from '../server/generated/vocabulary.gen';
 
 const PYTHON_CSV: NodeType = 'python-csv';
+
+export type NodeOperation = 'run' | 'test' | 'build' | 'full_refresh';
+
+// Node types a full refresh can rebuild: dbt models and seeds.
+const FULL_REFRESH_NODE_TYPES: ReadonlySet<string> = new Set<NodeType>(['dbt-model', 'dbt-seed']);
 
 interface NodeMetaResponse {
   node_type?: string;
@@ -40,6 +46,7 @@ function NodeRunRow({ run: r }: { run: NodeRun }) {
       <td>{kindLabel(r.kind)}</td>
       <td>
         <span className={`pill-sm pill-sm--${r.task_status}`}>{r.task_status || '—'}</span>
+        {r.operation === 'full_refresh' && <span className="pill-sm pill-sm--muted">Full refresh</span>}
         {r.error_message && (
           <div className="nodes-error-text">
             <span
@@ -83,9 +90,10 @@ export default function NodeDetailPage() {
   const navState = location.state as { from?: NodeDetailFrom; operation?: string } | null;
   const from = navState?.from;
   const navOperation = navState?.operation;
-  const initialOperation = navOperation === 'test' || navOperation === 'build' || navOperation === 'run'
-    ? navOperation
-    : 'run';
+  const initialOperation: NodeOperation =
+    navOperation === 'test' || navOperation === 'build' || navOperation === 'run' || navOperation === 'full_refresh'
+      ? navOperation
+      : 'run';
 
   let backLabel = '← Back to Nodes';
   let backPath = '/?tab=nodes';
@@ -97,7 +105,9 @@ export default function NodeDetailPage() {
   const [runState, setRunState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [runError, setRunError] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [operation, setOperation] = useState<'run' | 'test' | 'build'>(initialOperation);
+  const [operation, setOperation] = useState<NodeOperation>(initialOperation);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [pendingSource, setPendingSource] = useState<string | null>(null);
   const [testCount, setTestCount] = useState<{ count: number; known: boolean } | null>(null);
   const [nodeType, setNodeType] = useState('');
   const [sourceUri, setSourceUri] = useState('');
@@ -108,10 +118,14 @@ export default function NodeDetailPage() {
   const schema  = parts[1] ?? '';
   const table   = parts.slice(2).join('.');
 
+  // The history route filters on run | test | build; a full refresh is a run
+  // of the node, so its history is queried on the run dimension.
+  const historyOperation = operation === 'full_refresh' ? 'run' : operation;
+
   const fetchRuns = useCallback(() => {
     if (!service || !schema || !table) return;
     const myGen = ++genRef.current;
-    fetch(`/api/nodes/${encodeURIComponent(service)}/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/runs?operation=${encodeURIComponent(operation)}`)
+    fetch(`/api/nodes/${encodeURIComponent(service)}/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/runs?operation=${encodeURIComponent(historyOperation)}`)
       .then(r => r.json())
       .then((data: NodeRunsResponse) => {
         if (myGen !== genRef.current) return;
@@ -121,7 +135,7 @@ export default function NodeDetailPage() {
         if (myGen !== genRef.current) return;
         setRuns([]);
       });
-  }, [service, schema, table, operation]);
+  }, [service, schema, table, historyOperation]);
 
   useEffect(() => { fetchRuns(); }, [fetchRuns]);
 
@@ -142,6 +156,14 @@ export default function NodeDetailPage() {
         setSourceUri('');
       });
   }, [service, schema, table]);
+
+  const canFullRefresh = FULL_REFRESH_NODE_TYPES.has(nodeType);
+
+  // A full refresh selected via navigation state falls back to Run once the
+  // node's type is known and does not support it.
+  useEffect(() => {
+    if (operation === 'full_refresh' && nodeType !== '' && !canFullRefresh) setOperation('run');
+  }, [operation, nodeType, canFullRefresh]);
 
   // latestHasNoTests reflects the LATEST topology's test_count only. It gates the
   // latest-mode trigger (which the backend evaluates against latest metadata) but
@@ -178,11 +200,20 @@ export default function NodeDetailPage() {
     }
   }, [service, schema, table, fetchRuns, operation]);
 
-  const handleRunLatest  = useCallback(() => postRun({}), [postRun]);
+  // A full refresh drops the node's table, so it is only posted once confirmed.
+  const handleRunLatest = useCallback(() => {
+    if (operation === 'full_refresh') { setPendingSource(null); setConfirmOpen(true); return; }
+    postRun({});
+  }, [postRun, operation]);
   const handlePickSource = useCallback((runId: string) => {
     setPickerOpen(false);
+    if (operation === 'full_refresh') { setPendingSource(runId); setConfirmOpen(true); return; }
     postRun({ source_run_id: runId });
-  }, [postRun]);
+  }, [postRun, operation]);
+  const handleConfirmFullRefresh = useCallback(() => {
+    setConfirmOpen(false);
+    postRun(pendingSource ? { source_run_id: pendingSource } : {});
+  }, [postRun, pendingSource]);
 
   const stats = computeNodeStats(runs);
 
@@ -191,6 +222,7 @@ export default function NodeDetailPage() {
   const runVerb =
     operation === 'test' ? '🧪 Test this node'
     : operation === 'build' ? '🔨 Build this node'
+    : operation === 'full_refresh' ? '♻ Full refresh this node'
     : '▶ Run this node';
 
   // The latest-mode test trigger is the only one gated by latest metadata; the
@@ -206,6 +238,11 @@ export default function NodeDetailPage() {
           onPick={handlePickSource}
           onClose={() => setPickerOpen(false)}
         />,
+        document.body,
+      )}
+
+      {confirmOpen && createPortal(
+        <FullRefreshConfirmDialog fqn={fqn ?? ''} onConfirm={handleConfirmFullRefresh} onClose={() => setConfirmOpen(false)} />,
         document.body,
       )}
 
@@ -234,11 +271,12 @@ export default function NodeDetailPage() {
             id="node-operation"
             value={operation}
             disabled={runState === 'loading'}
-            onChange={e => setOperation(e.target.value as 'run' | 'test' | 'build')}
+            onChange={e => setOperation(e.target.value as NodeOperation)}
           >
             <option value="run">Run</option>
             <option value="test">Test</option>
             <option value="build">Build</option>
+            {canFullRefresh && <option value="full_refresh">Full refresh</option>}
           </select>
         </div>
         <button
@@ -275,6 +313,14 @@ export default function NodeDetailPage() {
           Build runs <code>dbt build</code> — it materializes each model and runs its
           attached tests together in a single execution (one pod), in dependency
           order. These stats combine model + tests, not either on its own.
+        </div>
+      )}
+
+      {operation === 'full_refresh' && (
+        <div className="info-strip info-strip--info">
+          <span className="info-strip__icon">ℹ</span>
+          Full refresh runs this node alone with <code>--full-refresh</code>: its table is dropped
+          and rebuilt from scratch. History below shows this node's runs, full refreshes included.
         </div>
       )}
 

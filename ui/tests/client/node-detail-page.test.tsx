@@ -513,3 +513,78 @@ describe('NodeDetailPage — brand header', () => {
     expect(brand!.compareDocumentPosition(back) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });
+
+function metaAndRuns(nodeType: string, runs: unknown[] = []) {
+  return (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input.toString();
+    if (url.endsWith('/meta')) return jsonResp({ node_type: nodeType, test_count: 1, test_count_known: true });
+    if (url.endsWith('/run') && init?.method === 'POST') return jsonResp({ run_id: 'fr', schedule_name: 'single-node-run-00ff00ff' });
+    return jsonResp({ runs });
+  };
+}
+
+describe('NodeDetailPage full refresh', () => {
+  it.each(['dbt-model', 'dbt-seed'])('offers Full refresh for %s', async (nt) => {
+    mockFetch.mockImplementation(metaAndRuns(nt));
+    renderPage();
+    const select = await screen.findByLabelText(/operation/i);
+    await waitFor(() => expect(screen.getByRole('option', { name: /full refresh/i })).toBeInTheDocument());
+    expect(select).toBeInTheDocument();
+  });
+
+  it.each(['dbt-snapshot', 'python-node', 'python-csv', 'dbt-test'])('hides Full refresh for %s', async (nt) => {
+    mockFetch.mockImplementation(metaAndRuns(nt));
+    renderPage();
+    await screen.findByText(nt);
+    expect(screen.queryByRole('option', { name: /full refresh/i })).toBeNull();
+  });
+
+  it('asks for confirmation and only POSTs full_refresh after confirming', async () => {
+    mockFetch.mockImplementation(metaAndRuns('dbt-model'));
+    renderPage();
+    await waitFor(() => screen.getByRole('option', { name: /full refresh/i }));
+    await userEvent.selectOptions(screen.getByLabelText(/operation/i), 'full_refresh');
+    await userEvent.click(screen.getByRole('button', { name: /full refresh this node/i }));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveTextContent(/dropped and rebuilt/i);
+    const posts = () => (mockFetch.mock.calls as unknown as [string, RequestInit?][])
+      .filter(c => String(c[0]).endsWith('/run') && c[1]?.method === 'POST');
+    expect(posts()).toHaveLength(0);
+
+    await userEvent.click(screen.getByRole('button', { name: /^full refresh$/i }));
+    await waitFor(() => expect(posts()).toHaveLength(1));
+    expect(posts()[0][1]).toMatchObject({ body: JSON.stringify({ operation: 'full_refresh' }) });
+  });
+
+  it('cancelling the dialog sends nothing', async () => {
+    mockFetch.mockImplementation(metaAndRuns('dbt-seed'));
+    renderPage();
+    await waitFor(() => screen.getByRole('option', { name: /full refresh/i }));
+    await userEvent.selectOptions(screen.getByLabelText(/operation/i), 'full_refresh');
+    await userEvent.click(screen.getByRole('button', { name: /full refresh this node/i }));
+    await userEvent.click(await screen.findByRole('button', { name: /cancel/i }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    const posted = (mockFetch.mock.calls as unknown as [string, RequestInit?][]).some(c => c[1]?.method === 'POST');
+    expect(posted).toBe(false);
+  });
+
+  it('fetches run history while Full refresh is selected and badges full-refresh rows', async () => {
+    mockFetch.mockImplementation(metaAndRuns('dbt-model', [mkRun({ task_id: 'fr1', kind: 'single_node_run' }) , { ...mkRun({ task_id: 'fr2' }), operation: 'full_refresh' }]));
+    renderPage();
+    await waitFor(() => screen.getByRole('option', { name: /full refresh/i }));
+    await userEvent.selectOptions(screen.getByLabelText(/operation/i), 'full_refresh');
+    const urls = (mockFetch.mock.calls as unknown as [string][]).map(c => String(c[0]));
+    expect(urls.some(u => u.includes('/runs?operation=full_refresh'))).toBe(false);
+    expect(urls.filter(u => u.includes('/runs?operation=run')).length).toBeGreaterThan(0);
+    expect(await screen.findByText(/^full refresh$/i, { selector: '.pill-sm' })).toBeInTheDocument();
+  });
+
+  it('resets to Run when navigated in with full_refresh onto an unsupported node', async () => {
+    mockFetch.mockImplementation(metaAndRuns('dbt-snapshot'));
+    renderPage(undefined, 'full_refresh');
+    await screen.findByText('dbt-snapshot');
+    await waitFor(() => expect((screen.getByLabelText(/operation/i) as HTMLSelectElement).value).toBe('run'));
+    expect(screen.getByRole('button', { name: /run this node/i })).toBeInTheDocument();
+  });
+});

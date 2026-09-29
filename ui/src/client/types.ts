@@ -103,7 +103,7 @@ export interface NodeRun {
   retry_count: number;
   image_tag: string;
   manifest_version: string;
-  operation: string;        // run | test | build
+  operation: string;        // run | test | build | full_refresh
   created_at: string | null;
   started_at: string | null;
   completed_at: string | null;
