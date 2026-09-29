@@ -402,6 +402,18 @@ describe('nodes router', () => {
     );
   });
 
+  it('POST /run forwards operation=full_refresh', async () => {
+    mockTriggerSingleNodeRun.mockImplementation((_req, _md, cb) =>
+      cb(null, { run_id: 'r', schedule_name: 'single-node-run-x' }),
+    );
+    await request(makeApp()).post('/api/nodes/svc/schema/tbl/run').send({ operation: 'full_refresh' });
+    expect(mockTriggerSingleNodeRun).toHaveBeenCalledWith(
+      expect.objectContaining({ operation: 'full_refresh', metadata_source: 'latest' }),
+      expect.any(Object),
+      expect.any(Function),
+    );
+  });
+
   it('POST /run rejects a bad operation with 400', async () => {
     const res = await request(makeApp()).post('/api/nodes/svc/schema/tbl/run').send({ operation: 'nope' });
     expect(res.status).toBe(400);

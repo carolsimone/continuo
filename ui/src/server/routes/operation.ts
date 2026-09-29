@@ -22,3 +22,11 @@ export function parseNodeOperation(raw: unknown): 'run' | 'test' | 'build' | nul
   if (typeof raw !== 'string' || !NODE_OPS.has(raw)) return null;
   return raw as 'run' | 'test' | 'build';
 }
+
+// parseNodeRunOperation normalises the single-node run body field. It accepts
+// every parseOperation value plus "full_refresh", which rebuilds one dbt model
+// or seed from scratch and exists only for single-node runs.
+export function parseNodeRunOperation(raw: unknown): string | null {
+  if (raw === 'full_refresh') return 'full_refresh';
+  return parseOperation(raw);
+}

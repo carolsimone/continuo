@@ -3,7 +3,7 @@ import { GrpcClient, userMetadata } from '../grpc-client';
 import { GrpcGraphClient } from '../grpc-graph-client';
 import { grpcToHttpStatus } from './grpc-status';
 import { parseLimit, parseOffset } from './paging';
-import { parseOperation, parseNodeOperation } from './operation';
+import { parseOperation, parseNodeOperation, parseNodeRunOperation } from './operation';
 import { type NodeType } from '../generated/vocabulary.gen';
 
 const PYTHON_CSV: NodeType = 'python-csv';
@@ -118,9 +118,9 @@ export function createNodesRouter(stateClient: GrpcClient, graphClient: GrpcGrap
   // POST /api/nodes/:service/:schema/:table/run
   // Body: {} → latest mode; { source_run_id } → snapshot_of_run mode.
   router.post('/:service/:schema/:table/run', (req, res) => {
-    const operation = parseOperation(req.body?.operation);
+    const operation = parseNodeRunOperation(req.body?.operation);
     if (operation === null) {
-      return res.status(400).json({ error: 'operation must be one of "", run, test, build' });
+      return res.status(400).json({ error: 'operation must be one of "", run, test, build, full_refresh' });
     }
     const sourceRunID: string = (req.body?.source_run_id ?? '').trim();
     const metadataSource = sourceRunID === '' ? 'latest' : 'snapshot_of_run';

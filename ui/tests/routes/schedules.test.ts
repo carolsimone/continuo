@@ -171,6 +171,12 @@ describe('POST /api/schedules/:name/trigger', () => {
     expect(res.status).toBe(400);
     expect(mockTriggerSchedule).not.toHaveBeenCalled();
   });
+
+  it('rejects full_refresh with 400 and no gRPC call', async () => {
+    const res = await request(app).post('/api/schedules/daily/trigger').send({ operation: 'full_refresh' });
+    expect(res.status).toBe(400);
+    expect(mockTriggerSchedule).not.toHaveBeenCalled();
+  });
 });
 
 describe('POST /api/schedules/:name/cancel', () => {
