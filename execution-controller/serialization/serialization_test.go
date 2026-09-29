@@ -189,3 +189,28 @@ func TestDeployTaskDTO_StoredJobParamsWithoutSecretRefDecodeEmpty(t *testing.T) 
 		t.Fatalf("SecretRef = %q, want empty", got)
 	}
 }
+
+func TestJobCheckRequestDTO_SecretRefRoundTripsAndIsOmittedWhenEmpty(t *testing.T) {
+	raw, err := json.Marshal(JobCheckRequestFromDomain(event.JobCheckRequest{TaskID: "t", SecretRef: "continuo-api-fx"}))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(raw), `"secret_ref":"continuo-api-fx"`) {
+		t.Fatalf("secret_ref missing from %s", raw)
+	}
+	var back JobCheckRequestDTO
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got := back.ToDomain().SecretRef; got != "continuo-api-fx" {
+		t.Fatalf("SecretRef = %q after round trip", got)
+	}
+
+	raw, err = json.Marshal(JobCheckRequestFromDomain(event.JobCheckRequest{TaskID: "t"}))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(raw), "secret_ref") {
+		t.Fatalf("empty secret_ref must be omitted, got %s", raw)
+	}
+}

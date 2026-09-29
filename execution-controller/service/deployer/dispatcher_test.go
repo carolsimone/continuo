@@ -156,6 +156,36 @@ func TestDispatch_WritesCheckDelayedTicketOnDeploySuccess(t *testing.T) {
 	require.InDelta(t, time.Now().Add(1*time.Second).Unix(), dto.CheckAfter, 3)
 }
 
+// TestDispatch_FirstCheckCarriesSecretRef proves the first check ticket of a
+// production deploy keeps the task's Secret name, so a retry rebuilt from the
+// ticket still mounts it.
+func TestDispatch_FirstCheckCarriesSecretRef(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+
+	taskID := uuid.New()
+	payload, err := json.Marshal(serialization.DeployTaskFromDomain(command.DeployTask{
+		TaskID: taskID.String(), ScheduleID: uuid.New().String(),
+		ScheduleName: "daily", ServiceName: "dbt", SchemaName: "public",
+		TableName: "orders", JobName: "job-secret-ref", NodeType: "dbt-model",
+		ImageTag: "sha-abc", SecretRef: "continuo-api-fx", TaskRetryCount: 0, TaskMaxRetries: 2,
+	}))
+	require.NoError(t, err)
+	_, err = db.Exec(
+		`INSERT INTO deployments (id, task_id, schedule_id, job_params, max_retries, retry_count, next_attempt_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, NOW() - interval '1 minute')`,
+		uuid.New(), taskID, uuid.New(), payload, 3, 0)
+	require.NoError(t, err)
+
+	require.NoError(t, newTestDispatcher(db, &fakeDeployer{active: 0}, 50).ProcessBatch(context.Background()))
+
+	var raw json.RawMessage
+	require.NoError(t, db.Get(&raw, `SELECT payload FROM execution_outbox WHERE aggregate_id = $1`, taskID))
+	var dto serialization.JobCheckRequestDTO
+	require.NoError(t, json.Unmarshal(raw, &dto))
+	require.Equal(t, "continuo-api-fx", dto.SecretRef)
+}
+
 // TestDispatch_FirstCheckUsesFirstCheckDelay proves the dispatcher schedules
 // the first status check with FirstCheckDelay while CheckDelay (the cadence
 // between re-checks of a still-running Job) stays untouched. With a single

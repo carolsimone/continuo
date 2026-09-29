@@ -146,7 +146,11 @@ type CheckJobStatus struct {
 	JobName      string
 	NodeType     string
 	ImageTag     string
-	Operation    string
+	// SecretRef names the continuo-api-* Secret a python-api node's pod
+	// loads its environment from; empty for every other node kind. It rides
+	// every check ticket so a retry rebuilt from the ticket keeps the Secret.
+	SecretRef string
+	Operation string
 	// RetryCount is the task-level attempt number of the Job being checked.
 	RetryCount int32
 	// MaxRetries is the task-level retry budget; zero means "use the service default".

@@ -494,7 +494,7 @@ func (d *Dispatcher) writeFirstCheck(ctx context.Context, outboxRepo outbox.Repo
 		req = event.JobCheckRequest{
 			TaskID: cmd.TaskID, ScheduleID: cmd.ScheduleID, ScheduleName: cmd.ScheduleName,
 			ServiceName: cmd.ServiceName, SchemaName: cmd.SchemaName, TableName: cmd.TableName,
-			JobName: cmd.JobName, NodeType: cmd.NodeType, ImageTag: cmd.ImageTag, Operation: cmd.Operation,
+			JobName: cmd.JobName, NodeType: cmd.NodeType, ImageTag: cmd.ImageTag, SecretRef: cmd.SecretRef, Operation: cmd.Operation,
 			RetryCount: cmd.TaskRetryCount, MaxRetries: cmd.TaskMaxRetries,
 		}
 	} else {

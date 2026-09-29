@@ -193,6 +193,7 @@ type JobCheckRequestDTO struct {
 	CheckAfter       int64  `json:"check_after"`
 	NodeType         string `json:"node_type"`
 	ImageTag         string `json:"image_tag"`
+	SecretRef        string `json:"secret_ref,omitempty"`
 	Operation        string `json:"operation,omitempty"`
 	RetryCount       int    `json:"retry_count"`
 	MaxRetries       int    `json:"max_retries"`
@@ -212,6 +213,7 @@ func JobCheckRequestFromDomain(e event.JobCheckRequest) JobCheckRequestDTO {
 		CheckAfter:       e.CheckAfter,
 		NodeType:         e.NodeType,
 		ImageTag:         e.ImageTag,
+		SecretRef:        e.SecretRef,
 		Operation:        e.Operation,
 		RetryCount:       e.RetryCount,
 		MaxRetries:       e.MaxRetries,
@@ -232,6 +234,7 @@ func (d JobCheckRequestDTO) ToDomain() event.JobCheckRequest {
 		CheckAfter:       d.CheckAfter,
 		NodeType:         d.NodeType,
 		ImageTag:         d.ImageTag,
+		SecretRef:        d.SecretRef,
 		Operation:        d.Operation,
 		RetryCount:       d.RetryCount,
 		MaxRetries:       d.MaxRetries,

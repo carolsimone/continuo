@@ -570,6 +570,7 @@ func (h *JobStatusHandler) handleFailedWithRetry(ctx context.Context, u uow.Unit
 		TaskID: cmd.TaskID, ScheduleID: cmd.ScheduleID, ScheduleName: cmd.ScheduleName,
 		ServiceName: cmd.ServiceName, SchemaName: cmd.SchemaName, TableName: cmd.TableName,
 		JobName: newJobName, NodeType: pkgmodel.NodeType(cmd.NodeType), ImageTag: cmd.ImageTag,
+		SecretRef: cmd.SecretRef,
 		Operation: pkgmodel.Operation(cmd.Operation),
 	}, uuid.Nil, int(newRetryCount), int(maxRetries)); err != nil {
 		return fmt.Errorf("queue retry deployment: %w", err)
@@ -636,6 +637,7 @@ func (h *JobStatusHandler) handleRunning(ctx context.Context, u uow.UnitOfWork, 
 		CheckAfter:       checkAfter.Unix(),
 		NodeType:         cmd.NodeType,
 		ImageTag:         cmd.ImageTag,
+		SecretRef:        cmd.SecretRef,
 		Operation:        cmd.Operation,
 		RetryCount:       int(cmd.RetryCount),
 		MaxRetries:       int(maxRetries),

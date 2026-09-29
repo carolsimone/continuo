@@ -2640,3 +2640,69 @@ func TestHandle_NoModeLabel_UsesTheProductionLifecycle(t *testing.T) {
 		t.Error("a mode-less Job must record its execution")
 	}
 }
+
+// TestHandleFailedWithRetry_KeepsSecretRef guards a python-api retry: the new
+// deployment is rebuilt from the durable check ticket, so its DeployTask must
+// carry the Secret name from CheckJobStatus.
+func TestHandleFailedWithRetry_KeepsSecretRef(t *testing.T) {
+	outbox := &jobStatusFakeOutboxRepo{}
+	deployments := &stubDeploymentsRepo{}
+	handler := newHandler(&fakeK8sClient{
+		status: failedResult(),
+		labels: map[string]string{},
+	}, noopCancelledRepo(), 3)
+
+	cmd := command.CheckJobStatus{ //nolint:gosec // G101: continuo-api-* is a Secret name, not a value
+		TaskID:     uuid.New(),
+		ScheduleID: uuid.New(),
+		JobName:    "job-api",
+		SecretRef:  "continuo-api-fx",
+		RetryCount: 0,
+		MaxRetries: 3,
+	}
+
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoWWithDeployments(outbox, deployments), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	require.Len(t, deployments.added, 1)
+	if got := deployments.added[0].Command().SecretRef; got != "continuo-api-fx" {
+		t.Errorf("retry deployment secret_ref: expected %q, got %q", "continuo-api-fx", got)
+	}
+}
+
+// TestHandleRunning_RecirculatesSecretRef verifies the Secret name rides the
+// check.k8s:v1 self-poll loop for a still-running Job.
+func TestHandleRunning_RecirculatesSecretRef(t *testing.T) {
+	outbox := &jobStatusFakeOutboxRepo{}
+	handler := newHandler(
+		&fakeK8sClient{status: &model.JobResult{Status: model.JobStatusRunning}},
+		noopCancelledRepo(), 3,
+	)
+
+	cmd := command.CheckJobStatus{ //nolint:gosec // G101: continuo-api-* is a Secret name, not a value
+		TaskID:           uuid.New(),
+		ScheduleID:       uuid.New(),
+		JobName:          "job-running-api",
+		SecretRef:        "continuo-api-fx",
+		RetryCount:       1,
+		MaxRetries:       5,
+		RunningAnnounced: true,
+	}
+
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	entry := findEntryByEventType(outbox.entries, "check_delayed")
+	if entry == nil {
+		t.Fatal("missing check_delayed entry")
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal(entry.Payload, &payload); err != nil {
+		t.Fatalf("unmarshal check_delayed: %v", err)
+	}
+	if got, _ := payload["secret_ref"].(string); got != "continuo-api-fx" {
+		t.Fatalf("check.k8s ticket dropped secret_ref: got %q (payload=%v)", got, payload)
+	}
+}

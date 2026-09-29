@@ -78,7 +78,7 @@ func (p *OutboxPublisher) scheduleDelayedCheck(ctx context.Context, entry *outbo
 	payload, err := json.Marshal(pkgevents.CheckK8s{
 		TaskID: e.TaskID, ScheduleID: e.ScheduleID, ScheduleName: e.ScheduleName,
 		ServiceName: e.ServiceName, SchemaName: e.SchemaName, TableName: e.TableName,
-		JobName: e.JobName, NodeType: e.NodeType, ImageTag: e.ImageTag, Operation: e.Operation,
+		JobName: e.JobName, NodeType: e.NodeType, ImageTag: e.ImageTag, SecretRef: e.SecretRef, Operation: e.Operation,
 		RetryCount: retryCount, MaxRetries: maxRetries, RunningAnnounced: e.RunningAnnounced,
 	})
 	if err != nil {

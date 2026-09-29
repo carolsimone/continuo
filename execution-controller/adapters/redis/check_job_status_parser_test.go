@@ -94,3 +94,35 @@ func TestParseCheckK8s_CarriesOperation(t *testing.T) {
 		t.Fatalf("expected Operation=test carried from check.k8s payload, got %q", cmd.Operation)
 	}
 }
+
+// TestParseCheckK8s_CarriesSecretRef verifies the re-poll loop preserves a
+// python-api node's Secret name across check.k8s:v1 hops, so a retry rebuilt
+// from the ticket still mounts the Secret.
+func TestParseCheckK8s_CarriesSecretRef(t *testing.T) {
+	cmd, err := ParseCheckK8s(payloadMsg(t, pkgevents.CheckK8s{ //nolint:gosec // G101: continuo-api-* is a Secret name, not a value
+		TaskID:     uuid.New().String(),
+		ScheduleID: uuid.New().String(),
+		JobName:    "job-secret",
+		SecretRef:  "continuo-api-fx",
+	}), 3)
+	if err != nil {
+		t.Fatalf("ParseCheckK8s: %v", err)
+	}
+	if cmd.SecretRef != "continuo-api-fx" {
+		t.Fatalf("expected SecretRef carried from check.k8s payload, got %q", cmd.SecretRef)
+	}
+}
+
+func TestParseCheckK8s_WithoutSecretRefIsEmpty(t *testing.T) {
+	cmd, err := ParseCheckK8s(payloadMsg(t, pkgevents.CheckK8s{
+		TaskID:     uuid.New().String(),
+		ScheduleID: uuid.New().String(),
+		JobName:    "job-no-secret",
+	}), 3)
+	if err != nil {
+		t.Fatalf("ParseCheckK8s: %v", err)
+	}
+	if cmd.SecretRef != "" {
+		t.Fatalf("expected empty SecretRef, got %q", cmd.SecretRef)
+	}
+}
