@@ -145,10 +145,20 @@ func TestAssemblePythonContractFix_NoReadsNodeSaysItFetchesItsOwnData(t *testing
 
 	require.Contains(t, all, "declares no reads")
 	require.NotContains(t, all, "the upstream relations it reads")
+	require.NotContains(t, req.System, "declared reads")
+	require.NotContains(t, req.System, "adding a read is allowed")
+	require.NotContains(t, req.System, "Keep every read")
+	require.Contains(t, req.System, "Never add a read")
+	require.Contains(t, req.System, "the script that produces it, and the output_columns")
+	require.NotEqual(t, pythonContractFixSystemPrompt, noReadsSystemPrompt(pythonContractFixSystemPrompt),
+		"the rewrite must change the base prompt")
 
 	withReads := AssemblePythonContractFix(pythonEvidence())
 	require.Contains(t, withReads.System, "the upstream relations it reads")
 	require.NotContains(t, withReads.System, "declares no reads")
+	require.Contains(t, withReads.System, "declared reads")
+	require.Contains(t, withReads.System, "adding a read is allowed")
+	require.Contains(t, withReads.System, "Keep every read")
 
 	for name, sys := range map[string]string{
 		"validation":           withReads.System,

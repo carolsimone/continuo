@@ -218,13 +218,38 @@ func renderPriorAttempts(b *strings.Builder, as []PriorAttempt) {
 	b.WriteString("\n")
 }
 
-// noReadsSystemPrompt rewrites a python contract-fix system prompt for a node
-// that declares no reads: the sentence describing the reads it performs is
-// replaced by one saying the script fetches its own data, and the only things
-// left to change are the output columns and config.
+// noReadsSystemPrompt rewrites the python validation system prompt for a node
+// that declares no reads: the clause describing the reads it performs goes, the
+// description says the script fetches its own data, the edit scope shrinks to
+// output_columns and config, and the keep-every-read rule becomes a rule
+// against adding one. Each substitution must find its text, so a wording change
+// in the base prompt fails loudly (a panic on first use, pinned by a test)
+// instead of silently leaving the reads wording behind.
 func noReadsSystemPrompt(system string) string {
-	const readsClause = "the upstream relations it reads (each with the SQL that selects them), and "
-	const noReads = " This node declares no reads: its script fetches its own data (for example from an HTTP API). Only output_columns and config may change."
-	system = strings.Replace(system, readsClause, "", 1)
-	return strings.Replace(system, "the output_columns it promises to produce.", "the output_columns it promises to produce."+noReads, 1)
+	const (
+		readsClause = "the script that produces it, the upstream relations it reads (each with the SQL that selects them), and the output_columns it promises to produce."
+		noReadsDesc = "the script that produces it, and the output_columns it promises to produce. This node declares no reads: its script fetches its own data (for example from an HTTP API)."
+		scopeBefore = "the node's declared reads (including their SQL), its output_columns, and its config."
+		scopeAfter  = "its output_columns and its config."
+	)
+	system = mustReplace(system, readsClause, noReadsDesc)
+	system = mustReplace(system, scopeBefore, scopeAfter)
+
+	lines := strings.Split(system, "\n")
+	for i, l := range lines {
+		if strings.HasPrefix(l, "- Keep every read the node declares.") {
+			lines[i] = "- Never add a read: this node declares none, and its script fetches its own data. Only output_columns and config may change."
+			return strings.Join(lines, "\n")
+		}
+	}
+	panic("prompt: python system prompt has no keep-every-read rule to rewrite")
+}
+
+// mustReplace substitutes old with new exactly once and panics when old is
+// absent, so a drifted base prompt cannot turn the rewrite into a no-op.
+func mustReplace(s, old, replacement string) string {
+	if !strings.Contains(s, old) {
+		panic("prompt: python system prompt no longer contains " + old)
+	}
+	return strings.Replace(s, old, replacement, 1)
 }
