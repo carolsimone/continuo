@@ -18,9 +18,13 @@ type stubNodeReader struct {
 	ScheduleAndRunListReader // embed so unused methods are nil; only GetNode is called
 	meta                     *domain.NodeMeta
 	err                      error
+	gotInactive              *bool
 }
 
-func (s stubNodeReader) GetNode(_ context.Context, _, _, _ string) (*domain.NodeMeta, error) {
+func (s stubNodeReader) GetNode(_ context.Context, _, _, _ string, includeInactive bool) (*domain.NodeMeta, error) {
+	if s.gotInactive != nil {
+		*s.gotInactive = includeInactive
+	}
 	return s.meta, s.err
 }
 
@@ -30,8 +34,32 @@ func TestGetNode_MapsMeta(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if resp.NodeType != "dbt-model" || resp.TestCount != 0 || !resp.TestCountKnown {
+	if resp.NodeType != "dbt-model" || resp.TestCount != 0 || !resp.TestCountKnown || resp.Inactive {
 		t.Fatalf("unexpected resp: %+v", resp)
+	}
+}
+
+func TestGetNode_IncludeInactivePassedToReader(t *testing.T) {
+	for _, want := range []bool{true, false} {
+		var got bool
+		h := NewQueryHandler(stubNodeReader{meta: &domain.NodeMeta{NodeType: "dbt-model"}, gotInactive: &got}, nil, nil, nil, testLogger())
+		if _, err := h.GetNode(context.Background(), &orchestratorv1.GetNodeRequest{ServiceName: "svc", SchemaName: "an", TableName: "fct", IncludeInactive: want}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != want {
+			t.Fatalf("include_inactive=%v reached the reader as %v", want, got)
+		}
+	}
+}
+
+func TestGetNode_MapsInactive(t *testing.T) {
+	h := NewQueryHandler(stubNodeReader{meta: &domain.NodeMeta{NodeType: "dbt-seed", Inactive: true}}, nil, nil, nil, testLogger())
+	resp, err := h.GetNode(context.Background(), &orchestratorv1.GetNodeRequest{ServiceName: "svc", SchemaName: "an", TableName: "seed", IncludeInactive: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.NodeType != "dbt-seed" || !resp.Inactive {
+		t.Fatalf("an inactive node must report inactive=true with its node_type: %+v", resp)
 	}
 }
 

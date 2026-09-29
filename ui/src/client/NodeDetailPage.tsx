@@ -22,6 +22,8 @@ interface NodeMetaResponse {
   test_count_known?: boolean;
   // The CSV file a python-csv node loads; absent on every other node type.
   source_uri?: string;
+  // True when the node is no longer active in the latest topology.
+  inactive?: boolean;
 }
 
 function formatTime(iso: string | null): string {
@@ -111,6 +113,7 @@ export default function NodeDetailPage() {
   const [testCount, setTestCount] = useState<{ count: number; known: boolean } | null>(null);
   const [nodeType, setNodeType] = useState('');
   const [sourceUri, setSourceUri] = useState('');
+  const [inactive, setInactive] = useState(false);
   const genRef = useRef(0);
 
   const parts = (fqn ?? '').split('.');
@@ -149,11 +152,13 @@ export default function NodeDetailPage() {
           : null);
         setNodeType(m?.node_type ?? '');
         setSourceUri(m?.source_uri ?? '');
+        setInactive(Boolean(m?.inactive));
       })
       .catch(() => {
         setTestCount(null);
         setNodeType('');
         setSourceUri('');
+        setInactive(false);
       });
   }, [service, schema, table]);
 
@@ -236,6 +241,11 @@ export default function NodeDetailPage() {
   // triggers stay disabled while it is selected.
   const fullRefreshUnavailable = operation === 'full_refresh' && !canFullRefresh;
 
+  // A node no longer active in the latest topology has no latest version to
+  // rebuild, so its full refresh is only offered from an old snapshot: the
+  // latest trigger is disabled and the old-snapshot trigger stays available.
+  const latestFullRefreshBlocked = operation === 'full_refresh' && inactive;
+
   return (
     <div className="page">
       {pickerOpen && createPortal(
@@ -289,11 +299,13 @@ export default function NodeDetailPage() {
         <button
           type="button"
           className={runLatestClass}
-          disabled={runState === 'loading' || runState === 'success' || latestTestBlocked || fullRefreshUnavailable}
+          disabled={runState === 'loading' || runState === 'success' || latestTestBlocked || fullRefreshUnavailable || latestFullRefreshBlocked}
           onClick={handleRunLatest}
           title={latestTestBlocked
             ? 'The latest version of this node has no tests'
-            : 'Run only this node against the latest topology'}
+            : latestFullRefreshBlocked
+              ? 'This node is no longer active in the topology'
+              : 'Run only this node against the latest topology'}
         >
           {runState === 'loading' ? 'Triggering…' : runState === 'success' ? 'Triggered' : runVerb}
         </button>
@@ -311,6 +323,13 @@ export default function NodeDetailPage() {
       {latestTestBlocked && (
         <div className="info-strip info-strip--info">
           The latest version of this node has no tests. Run with an old snapshot to test a version that did, or choose another operation.
+        </div>
+      )}
+
+      {latestFullRefreshBlocked && (
+        <div className="info-strip info-strip--info">
+          This node is no longer active in the topology, so a full refresh needs an old snapshot.
+          Use “Run with old snapshot…” to pick the run whose version to rebuild.
         </div>
       )}
 

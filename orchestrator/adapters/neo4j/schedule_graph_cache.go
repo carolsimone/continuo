@@ -25,7 +25,7 @@ type ScheduleGraphProvider interface {
 	GetScheduleGraph(ctx context.Context, scheduleName string) (*domain.ScheduleGraph, error)
 	ListRuns(ctx context.Context, scheduleName string, limit, offset int) ([]*domain.RunSummary, int, error)
 	ListScheduleTopologies(ctx context.Context) ([]*domain.ScheduleTopologySummary, error)
-	GetNode(ctx context.Context, service, schema, table string) (*domain.NodeMeta, error)
+	GetNode(ctx context.Context, service, schema, table string, includeInactive bool) (*domain.NodeMeta, error)
 	GetNodeLocation(ctx context.Context, uniqueID string) (*domain.NodeLocation, error)
 }
 
@@ -124,8 +124,8 @@ func (c *CachingScheduleGraphReader) ListScheduleTopologies(ctx context.Context)
 // GetNode passes through to the underlying reader; node metadata is not cached
 // (test_count can change on the next promotion, and the read is a single-row
 // lookup).
-func (c *CachingScheduleGraphReader) GetNode(ctx context.Context, service, schema, table string) (*domain.NodeMeta, error) {
-	return c.inner.GetNode(ctx, service, schema, table)
+func (c *CachingScheduleGraphReader) GetNode(ctx context.Context, service, schema, table string, includeInactive bool) (*domain.NodeMeta, error) {
+	return c.inner.GetNode(ctx, service, schema, table, includeInactive)
 }
 
 // GetNodeLocation passes straight through: a single-node property read is not

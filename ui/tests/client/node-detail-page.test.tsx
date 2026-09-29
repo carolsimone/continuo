@@ -514,10 +514,10 @@ describe('NodeDetailPage — brand header', () => {
   });
 });
 
-function metaAndRuns(nodeType: string, runs: unknown[] = []) {
+function metaAndRuns(nodeType: string, runs: unknown[] = [], meta: { inactive?: boolean } = {}) {
   return (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input.toString();
-    if (url.endsWith('/meta')) return jsonResp({ node_type: nodeType, test_count: 1, test_count_known: true });
+    if (url.endsWith('/meta')) return jsonResp({ node_type: nodeType, test_count: 1, test_count_known: true, ...meta });
     if (url.endsWith('/run') && init?.method === 'POST') return jsonResp({ run_id: 'fr', schedule_name: 'single-node-run-00ff00ff' });
     return jsonResp({ runs });
   };
@@ -643,5 +643,45 @@ describe('NodeDetailPage full refresh', () => {
     fireEvent.click(trigger);
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(runPosts()).toHaveLength(0);
+  });
+  it('offers a full refresh of an inactive node from an old snapshot only', async () => {
+    mockFetch.mockImplementation(metaAndRuns('dbt-model', [mkRun({ run_id: 'old-run' })], { inactive: true }));
+    renderPage();
+    await waitFor(() => screen.getByRole('option', { name: /full refresh/i }));
+    await userEvent.selectOptions(screen.getByLabelText(/operation/i), 'full_refresh');
+
+    const latest = screen.getByRole('button', { name: /full refresh this node/i });
+    expect(latest).toBeDisabled();
+    expect(screen.getByText(/no longer active in the topology/i)).toBeInTheDocument();
+    fireEvent.click(latest);
+    expect(screen.queryByRole('dialog')).toBeNull();
+
+    const oldSnapshot = screen.getByRole('button', { name: /run with old snapshot/i });
+    expect(oldSnapshot).toBeEnabled();
+    await userEvent.click(oldSnapshot);
+    await userEvent.click(await screen.findByRole('button', { name: /v1 snapshot/i }));
+    expect(await screen.findByRole('dialog')).toHaveTextContent(/full refresh svc\.schema\.tbl\?/i);
+    expect(runPosts()).toHaveLength(0);
+
+    await userEvent.click(screen.getByRole('button', { name: /^full refresh$/i }));
+    await waitFor(() => expect(runPosts()).toHaveLength(1));
+    expect(JSON.parse(String(runPosts()[0][1]!.body))).toEqual({ source_run_id: 'old-run', operation: 'full_refresh' });
+  });
+
+  it('keeps Run, Test and Build on the latest trigger for an inactive node', async () => {
+    mockFetch.mockImplementation(metaAndRuns('dbt-model', [], { inactive: true }));
+    renderPage();
+    await waitFor(() => screen.getByRole('option', { name: /full refresh/i }));
+    expect(screen.getByRole('button', { name: /run this node/i })).toBeEnabled();
+    expect(screen.queryByText(/no longer active in the topology/i)).toBeNull();
+  });
+
+  it('keeps the latest full refresh trigger enabled for an active node', async () => {
+    mockFetch.mockImplementation(metaAndRuns('dbt-seed', [], { inactive: false }));
+    renderPage();
+    await waitFor(() => screen.getByRole('option', { name: /full refresh/i }));
+    await userEvent.selectOptions(screen.getByLabelText(/operation/i), 'full_refresh');
+    expect(screen.getByRole('button', { name: /full refresh this node/i })).toBeEnabled();
+    expect(screen.queryByText(/no longer active in the topology/i)).toBeNull();
   });
 });

@@ -191,15 +191,21 @@ func (x *TableNode) GetStatus() string {
 }
 
 // GetNode returns per-node topology metadata for a single :Table, addressed by
-// its (service, schema, table) identity. Used by the UI to decide whether a
-// single-node "test" operation is meaningful before submitting it.
+// its (service, schema, table) identity. Used by the UI to decide which
+// single-node operations are meaningful before submitting them. By default only
+// an active node matches and an inactive one is NOT_FOUND.
 type GetNodeRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ServiceName   string                 `protobuf:"bytes,1,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"`
-	SchemaName    string                 `protobuf:"bytes,2,opt,name=schema_name,json=schemaName,proto3" json:"schema_name,omitempty"`
-	TableName     string                 `protobuf:"bytes,3,opt,name=table_name,json=tableName,proto3" json:"table_name,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	ServiceName string                 `protobuf:"bytes,1,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"`
+	SchemaName  string                 `protobuf:"bytes,2,opt,name=schema_name,json=schemaName,proto3" json:"schema_name,omitempty"`
+	TableName   string                 `protobuf:"bytes,3,opt,name=table_name,json=tableName,proto3" json:"table_name,omitempty"`
+	// include_inactive, when true, also returns a node whose :Table is no longer
+	// active in the topology; an active match is preferred over an inactive one.
+	// When false (the default), only an active node matches and an inactive one
+	// is NOT_FOUND.
+	IncludeInactive bool `protobuf:"varint,4,opt,name=include_inactive,json=includeInactive,proto3" json:"include_inactive,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *GetNodeRequest) Reset() {
@@ -253,6 +259,13 @@ func (x *GetNodeRequest) GetTableName() string {
 	return ""
 }
 
+func (x *GetNodeRequest) GetIncludeInactive() bool {
+	if x != nil {
+		return x.IncludeInactive
+	}
+	return false
+}
+
 // test_count_known is false when the :Table predates test_count capture (the
 // property is unset). Consumers MUST treat unknown as "don't gate", not "zero".
 type GetNodeResponse struct {
@@ -260,8 +273,11 @@ type GetNodeResponse struct {
 	NodeType       string                 `protobuf:"bytes,1,opt,name=node_type,json=nodeType,proto3" json:"node_type,omitempty"`
 	TestCount      int32                  `protobuf:"varint,2,opt,name=test_count,json=testCount,proto3" json:"test_count,omitempty"`
 	TestCountKnown bool                   `protobuf:"varint,3,opt,name=test_count_known,json=testCountKnown,proto3" json:"test_count_known,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// inactive is true when the matched node is no longer active in the
+	// topology, which is only possible when the request set include_inactive.
+	Inactive      bool `protobuf:"varint,4,opt,name=inactive,proto3" json:"inactive,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *GetNodeResponse) Reset() {
@@ -311,6 +327,13 @@ func (x *GetNodeResponse) GetTestCount() int32 {
 func (x *GetNodeResponse) GetTestCountKnown() bool {
 	if x != nil {
 		return x.TestCountKnown
+	}
+	return false
+}
+
+func (x *GetNodeResponse) GetInactive() bool {
+	if x != nil {
+		return x.Inactive
 	}
 	return false
 }
@@ -2764,18 +2787,20 @@ const file_proto_orchestrator_v1_orchestrator_proto_rawDesc = "" +
 	"created_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x12\x1b\n" +
 	"\tnode_type\x18\t \x01(\tR\bnodeType\x12\x16\n" +
 	"\x06status\x18\n" +
-	" \x01(\tR\x06status\"s\n" +
+	" \x01(\tR\x06status\"\x9e\x01\n" +
 	"\x0eGetNodeRequest\x12!\n" +
 	"\fservice_name\x18\x01 \x01(\tR\vserviceName\x12\x1f\n" +
 	"\vschema_name\x18\x02 \x01(\tR\n" +
 	"schemaName\x12\x1d\n" +
 	"\n" +
-	"table_name\x18\x03 \x01(\tR\ttableName\"w\n" +
+	"table_name\x18\x03 \x01(\tR\ttableName\x12)\n" +
+	"\x10include_inactive\x18\x04 \x01(\bR\x0fincludeInactive\"\x93\x01\n" +
 	"\x0fGetNodeResponse\x12\x1b\n" +
 	"\tnode_type\x18\x01 \x01(\tR\bnodeType\x12\x1d\n" +
 	"\n" +
 	"test_count\x18\x02 \x01(\x05R\ttestCount\x12(\n" +
-	"\x10test_count_known\x18\x03 \x01(\bR\x0etestCountKnown\"5\n" +
+	"\x10test_count_known\x18\x03 \x01(\bR\x0etestCountKnown\x12\x1a\n" +
+	"\binactive\x18\x04 \x01(\bR\binactive\"5\n" +
 	"\x16GetNodeLocationRequest\x12\x1b\n" +
 	"\tunique_id\x18\x01 \x01(\tR\buniqueId\"Y\n" +
 	"\x17GetNodeLocationResponse\x12\x1b\n" +
