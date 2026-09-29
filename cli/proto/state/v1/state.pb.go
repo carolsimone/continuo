@@ -1447,7 +1447,7 @@ func (x *ListAllSchedulesResponse) GetSchedules() []*ScheduleSummary {
 type TriggerScheduleRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ScheduleName  string                 `protobuf:"bytes,1,opt,name=schedule_name,json=scheduleName,proto3" json:"schedule_name,omitempty"`
-	Operation     string                 `protobuf:"bytes,2,opt,name=operation,proto3" json:"operation,omitempty"` // Optional: "" | "run" | "test" | "build"
+	Operation     string                 `protobuf:"bytes,2,opt,name=operation,proto3" json:"operation,omitempty"` // Optional: "" | "run" | "test" | "build". "full_refresh" is single-node only and rejected here (INVALID_ARGUMENT).
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1881,7 +1881,7 @@ type TriggerSingleNodeRunRequest struct {
 	TableName      string                 `protobuf:"bytes,3,opt,name=table_name,json=tableName,proto3" json:"table_name,omitempty"`                // Required
 	MetadataSource string                 `protobuf:"bytes,4,opt,name=metadata_source,json=metadataSource,proto3" json:"metadata_source,omitempty"` // Required: "latest" | "snapshot_of_run"
 	SourceRunId    string                 `protobuf:"bytes,5,opt,name=source_run_id,json=sourceRunId,proto3" json:"source_run_id,omitempty"`        // Required iff metadata_source == "snapshot_of_run"
-	Operation      string                 `protobuf:"bytes,6,opt,name=operation,proto3" json:"operation,omitempty"`                                 // Optional: "" | "run" | "test" | "build" (default run)
+	Operation      string                 `protobuf:"bytes,6,opt,name=operation,proto3" json:"operation,omitempty"`                                 // Optional: "" | "run" | "test" | "build" | "full_refresh" (default run). full_refresh rebuilds a dbt model or seed from scratch.
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -2242,7 +2242,7 @@ type NodeRun struct {
 	CompletedAt     string                 `protobuf:"bytes,12,opt,name=completed_at,json=completedAt,proto3" json:"completed_at,omitempty"`         // RFC3339, "" if not finished
 	ErrorMessage    string                 `protobuf:"bytes,13,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`      // "" when none
 	LogS3Key        string                 `protobuf:"bytes,14,opt,name=log_s3_key,json=logS3Key,proto3" json:"log_s3_key,omitempty"`                // "" when none
-	Operation       string                 `protobuf:"bytes,15,opt,name=operation,proto3" json:"operation,omitempty"`                                // run | test | build
+	Operation       string                 `protobuf:"bytes,15,opt,name=operation,proto3" json:"operation,omitempty"`                                // run | test | build | full_refresh
 	RunResultsUri   string                 `protobuf:"bytes,16,opt,name=run_results_uri,json=runResultsUri,proto3" json:"run_results_uri,omitempty"` // "" when none
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache

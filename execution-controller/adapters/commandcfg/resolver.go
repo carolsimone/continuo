@@ -1,10 +1,12 @@
 package commandcfg
 
 import (
+	"fmt"
 	"path"
 
 	"github.com/carolsimone/continuo/execution-controller/service/ports"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/events"
 )
 
 // Resolver resolves argv templates with precedence: a services.<name>
@@ -39,16 +41,22 @@ func (r *Resolver) template(serviceName string, pick func(*opSet) []string) []st
 }
 
 // NodeCommand resolves the argv for op against node. OperationRun dispatches on
-// nt (model/seed/snapshot); OperationTest and OperationBuild resolve a fixed key
-// regardless of nt. The default block is always complete (built-in when no file,
-// validated at load when a file exists), so template never returns nil.
-func (r *Resolver) NodeCommand(serviceName string, op pkg_model.Operation, nt pkg_model.NodeType, node string) []string {
+// nt (model/seed/snapshot) — a seed resolves to the block's plain,
+// non-destructive Seed template, never SeedFullRefresh; OperationTest and
+// OperationBuild resolve a fixed key regardless of nt; OperationFullRefresh is
+// resolved by fullRefreshCommand, which resolves a model to FullRefresh and a
+// seed to SeedFullRefresh. The default block is always complete (built-in when
+// no file, validated at load when a file exists), so the run/test/build
+// templates are never nil.
+func (r *Resolver) NodeCommand(serviceName string, op pkg_model.Operation, nt pkg_model.NodeType, node string) ([]string, error) {
 	var pick func(*opSet) []string
 	switch op {
 	case pkg_model.OperationTest:
 		pick = func(o *opSet) []string { return o.Test }
 	case pkg_model.OperationBuild:
 		pick = func(o *opSet) []string { return o.Build }
+	case pkg_model.OperationFullRefresh:
+		return r.fullRefreshCommand(serviceName, nt, node)
 	default: // OperationRun
 		pick = func(o *opSet) []string {
 			switch nt {
@@ -61,7 +69,39 @@ func (r *Resolver) NodeCommand(serviceName string, op pkg_model.Operation, nt pk
 			}
 		}
 	}
-	return substitute(r.template(serviceName, pick), map[string]string{"node": node})
+	return substitute(r.template(serviceName, pick), map[string]string{"node": node}), nil
+}
+
+// fullRefreshCommand resolves a full refresh: a model to its FullRefresh
+// template, a seed to its SeedFullRefresh template — never to the plain Run/Seed
+// template, which is the non-destructive command an automatic load uses. Either
+// template is resolved from the block that governs the service — its override
+// when it has one, else the default — and this never falls through from an
+// override to the default, whose binary the team's image may not carry. Every
+// failure wraps events.ErrPermanent: no retry can supply a missing command.
+func (r *Resolver) fullRefreshCommand(serviceName string, nt pkg_model.NodeType, node string) ([]string, error) {
+	vals := map[string]string{"node": node}
+	var pick func(*opSet) []string
+	var key string
+	switch nt {
+	case pkg_model.NodeTypeDbtModel:
+		pick = func(o *opSet) []string { return o.FullRefresh }
+		key = "full_refresh"
+	case pkg_model.NodeTypeDbtSeed:
+		pick = func(o *opSet) []string { return o.SeedFullRefresh }
+		key = "seed_full_refresh"
+	default:
+		return nil, fmt.Errorf("%w: full refresh is not supported for node type %q", events.ErrPermanent, nt)
+	}
+	block, name := r.cfg.Default, "default"
+	if ops := r.cfg.Services[serviceName]; ops != nil {
+		block, name = ops, "services."+serviceName
+	}
+	tpl := pick(block)
+	if tpl == nil {
+		return nil, fmt.Errorf("%w: dbt-commands %s defines no %s command", events.ErrPermanent, name, key)
+	}
+	return substitute(tpl, vals), nil
 }
 
 // SeedBuildCommand resolves the argv for building a seed into targetSchema.

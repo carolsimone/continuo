@@ -205,3 +205,37 @@ func TestSingleNode_SnapshotOfRunMode_TestOperation_WithTests_ReturnsProjection(
 		t.Errorf("TestCount=%d TestCountKnown=%v, want 2/true (pinned from source row)", got[0].TestCount, got[0].TestCountKnown)
 	}
 }
+
+func TestSingleNode_FullRefresh_SupportedNodeTypes(t *testing.T) {
+	for _, nt := range []string{"dbt-model", "dbt-seed"} {
+		fqn := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a"}
+		r := &fakeTopologyReader{SingleLatest: map[snapshot.FQN]snapshot.LatestTableRow{
+			fqn: {ScheduleName: "x", NodeType: nt, ImageTag: "v1", ManifestVersion: "m1"},
+		}}
+		sel := snapshot.SingleNode{ServiceName: "svc", SchemaName: "sch", TableName: "a", MetadataSource: "latest"}
+		got, err := sel.SelectTasks(context.Background(), r, snapshot.Params{Operation: "full_refresh"})
+		if err != nil || len(got) != 1 {
+			t.Fatalf("%s: got %v, %v — want one projection", nt, got, err)
+		}
+	}
+}
+
+func TestSingleNode_FullRefresh_UnsupportedNodeTypes(t *testing.T) {
+	for _, nt := range []string{"dbt-snapshot", "dbt-test", "python-node", "python-csv"} {
+		fqn := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a"}
+		srcID := uuid.New()
+		row := snapshot.LatestTableRow{ScheduleName: "x", NodeType: nt, ImageTag: "v1", ManifestVersion: "m1"}
+		r := &fakeTopologyReader{
+			SingleLatest:        map[snapshot.FQN]snapshot.LatestTableRow{fqn: row},
+			SingleFromSourceRun: map[string]map[snapshot.FQN]snapshot.LatestTableRow{srcID.String(): {fqn: row}},
+		}
+		latest := snapshot.SingleNode{ServiceName: "svc", SchemaName: "sch", TableName: "a", MetadataSource: "latest"}
+		if _, err := latest.SelectTasks(context.Background(), r, snapshot.Params{Operation: "full_refresh"}); !errors.Is(err, snapshot.ErrFullRefreshUnsupported) {
+			t.Fatalf("latest %s: got %v, want ErrFullRefreshUnsupported", nt, err)
+		}
+		pinned := snapshot.SingleNode{ServiceName: "svc", SchemaName: "sch", TableName: "a", MetadataSource: "snapshot_of_run"}
+		if _, err := pinned.SelectTasks(context.Background(), r, snapshot.Params{SourceRunID: &srcID, Operation: "full_refresh"}); !errors.Is(err, snapshot.ErrFullRefreshUnsupported) {
+			t.Fatalf("snapshot_of_run %s: got %v, want ErrFullRefreshUnsupported", nt, err)
+		}
+	}
+}

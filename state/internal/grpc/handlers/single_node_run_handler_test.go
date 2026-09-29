@@ -194,6 +194,37 @@ func TestSingleNodeRunHandler_Operation_Build(t *testing.T) {
 	})
 }
 
+func TestSingleNodeRunHandler_Operation_FullRefresh(t *testing.T) {
+	fx := setupSingleNodeRunFixture(t)
+
+	resp, err := fx.Handler.TriggerSingleNodeRun(context.Background(), &statev1.TriggerSingleNodeRunRequest{
+		ServiceName:    "svcA",
+		SchemaName:     "public",
+		TableName:      "users",
+		MetadataSource: "latest",
+		Operation:      "full_refresh",
+	})
+	require.NoError(t, err)
+
+	scheduleID := uuid.MustParse(resp.RunId)
+	found := getOutboxByAggregate(t, fx.DB, scheduleID)
+	require.NotNil(t, found, "expected outbox entry for schedule %s", scheduleID)
+
+	var payload map[string]string
+	require.NoError(t, json.Unmarshal(found.Payload, &payload))
+	require.Equal(t, string(model.OperationFullRefresh), payload["operation"])
+
+	var stored string
+	require.NoError(t, fx.DB.QueryRowContext(context.Background(),
+		`SELECT operation FROM scheduler_tracker WHERE schedule_id = $1`, scheduleID).Scan(&stored))
+	require.Equal(t, "full_refresh", stored)
+
+	t.Cleanup(func() {
+		fx.DB.ExecContext(context.Background(), `DELETE FROM state_outbox WHERE aggregate_id = $1`, scheduleID)
+		fx.DB.ExecContext(context.Background(), `DELETE FROM scheduler_tracker WHERE schedule_id = $1`, scheduleID)
+	})
+}
+
 func TestSingleNodeRunHandler_Stale_HappyPath(t *testing.T) {
 	fx := setupSingleNodeRunFixture(t)
 

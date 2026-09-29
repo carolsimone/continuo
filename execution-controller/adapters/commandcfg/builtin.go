@@ -6,27 +6,32 @@ import pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 // dbt-commands.yaml file is configured. run/seed/snapshot delegate to the pkg
 // model NodeType.Command (the single source for those verbs) with the
 // {{ node }} placeholder as the table name; test/build/seed_build/compile are
-// the executor's own plain-dbt commands. It is always complete —
-// TestBuiltinDefault_IsComplete pins that it passes the same checks applied to
-// file-provided blocks.
+// the executor's own plain-dbt commands. Seed is a normal, non-destructive
+// `dbt seed`. full_refresh and seed_full_refresh are the executor's plain-dbt
+// model and seed rebuilds, used only by the explicit single-node full-refresh
+// operation. The block is always complete — TestBuiltinDefault_IsComplete pins
+// that it passes the same checks applied to file-provided blocks.
 func builtinDefault() *opSet {
 	node := "{{ node }}"
 	return &opSet{
-		Run:       pkg_model.NodeTypeDbtModel.Command(node),
-		Seed:      pkg_model.NodeTypeDbtSeed.Command(node),
-		Snapshot:  pkg_model.NodeTypeDbtSnapshot.Command(node),
-		Test:      []string{"dbt", "test", "--select", node},
-		Build:     []string{"dbt", "build", "--select", node},
-		SeedBuild: []string{"dbt", "seed", "--select", node},
+		Run:             pkg_model.NodeTypeDbtModel.Command(node),
+		Seed:            pkg_model.NodeTypeDbtSeed.Command(node),
+		Snapshot:        pkg_model.NodeTypeDbtSnapshot.Command(node),
+		Test:            []string{"dbt", "test", "--select", node},
+		Build:           []string{"dbt", "build", "--select", node},
+		SeedBuild:       []string{"dbt", "seed", "--select", node},
+		FullRefresh:     []string{"dbt", "run", "--full-refresh", "--select", node},
+		SeedFullRefresh: []string{"dbt", "seed", "--full-refresh", "--select", node},
 		Compile: &compileSpec{
 			Command:      []string{"dbt", "compile", "--profiles-dir", "/project"},
 			ManifestPath: "/project/target/manifest.json",
 		},
-		// No --profiles-dir here: run/seed/snapshot/test/build/seed_build above
-		// don't carry it either (dbt falls back to the CWD, /project, via the
-		// image's WORKDIR), and parse must carry the exact same parse-affecting
-		// flags as those six ops or the compile rehearsal validates a context
-		// the runtime dispatch never reproduces (see validateParseContext).
+		// No --profiles-dir here: run/seed/snapshot/test/build/seed_build/
+		// full_refresh/seed_full_refresh above don't carry it either (dbt falls
+		// back to the CWD, /project, via the image's WORKDIR), and parse must
+		// carry the exact same parse-affecting flags as those eight ops or the
+		// compile rehearsal validates a context the runtime dispatch never
+		// reproduces (see validateParseContext).
 		Parse: []string{"dbt", "parse"},
 	}
 }

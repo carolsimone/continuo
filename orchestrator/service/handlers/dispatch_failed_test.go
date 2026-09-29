@@ -67,6 +67,12 @@ func TestDispatchFailedReason(t *testing.T) {
 			wantOK:     true,
 		},
 		{
+			name:       "full refresh unsupported",
+			err:        fmt.Errorf("wrap: %w", snapshot.ErrFullRefreshUnsupported),
+			wantReason: pkgEvents.DispatchFailedReasonFullRefreshUnsupported,
+			wantOK:     true,
+		},
+		{
 			name:       "unknown error returns false",
 			err:        errors.New("boom"),
 			wantReason: "",

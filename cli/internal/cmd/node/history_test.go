@@ -51,6 +51,14 @@ type fakeNodeState struct {
 	gotBuildTable     string
 	gotBuildSourceRun string
 
+	fullRefreshResp         *statev1.TriggerSingleNodeRunResponse
+	fullRefreshErr          error
+	gotFullRefreshActor     string
+	gotFullRefreshSvc       string
+	gotFullRefreshSchema    string
+	gotFullRefreshTable     string
+	gotFullRefreshSourceRun string
+
 	listResp         *statev1.ListNodesResponse
 	listErr          error
 	gotListSearch    string
@@ -83,6 +91,11 @@ func (f *fakeNodeState) TriggerNodeTest(_ context.Context, service, schema, tabl
 func (f *fakeNodeState) TriggerNodeBuild(_ context.Context, service, schema, table, sourceRunID, actor string) (*statev1.TriggerSingleNodeRunResponse, error) {
 	f.gotBuildSvc, f.gotBuildSchema, f.gotBuildTable, f.gotBuildSourceRun, f.gotBuildActor = service, schema, table, sourceRunID, actor
 	return f.buildResp, f.buildErr
+}
+
+func (f *fakeNodeState) TriggerNodeFullRefresh(_ context.Context, service, schema, table, sourceRunID, actor string) (*statev1.TriggerSingleNodeRunResponse, error) {
+	f.gotFullRefreshSvc, f.gotFullRefreshSchema, f.gotFullRefreshTable, f.gotFullRefreshSourceRun, f.gotFullRefreshActor = service, schema, table, sourceRunID, actor
+	return f.fullRefreshResp, f.fullRefreshErr
 }
 
 func (f *fakeNodeState) TriggerSchedule(context.Context, string, string) (*statev1.TriggerScheduleResponse, error) {

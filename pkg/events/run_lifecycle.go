@@ -55,6 +55,10 @@ const (
 	// operation, so it cannot safely reissue a `dbt test` run; the caller
 	// must trigger a fresh `node test` / `schedule test` instead.
 	DispatchFailedReasonRerunOfTestUnsupported DispatchFailedReason = "rerun_of_test_unsupported"
+	// DispatchFailedReasonFullRefreshUnsupported is emitted when a
+	// full_refresh run targets a node that is neither a dbt model nor a dbt
+	// seed (a snapshot, a dbt test, or a python node).
+	DispatchFailedReasonFullRefreshUnsupported DispatchFailedReason = "full_refresh_unsupported"
 )
 
 // RunEntriesDispatchFailed — stream: run.entries.dispatch_failed:v1

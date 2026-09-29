@@ -12,6 +12,9 @@ shipped in those.
 
 ## [Unreleased]
 
+### Added
+- `dbt-commands.yaml` accepts two optional keys per block, both backing the new single-node full-refresh operation: `full_refresh` (rebuilds one dbt model from scratch) and `seed_full_refresh` (rebuilds one dbt seed from scratch). A block without one of them keeps loading; full refresh of that node kind is then unavailable for the services it covers. Production, scheduled and promoted-release seed loads are unaffected — they remain a normal, non-destructive `dbt seed`.
+
 ### Changed
 - Default `validation.imageTag` is `v0.6.0` (continuo-python-runtime 0.6.0).
 - The python script node kind is `python-node`. Contracts written by continuo-python-runtime < 0.6.0 (kind `python-model`) keep working; stored node types are rewritten on upgrade by the release DB migration and orchestrator's startup data migration. Domain repos that upgrade to continuo-python-runtime 0.6.0 see every python node re-validated once on their next release (the node kind is part of its content hash).

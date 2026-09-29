@@ -1,7 +1,7 @@
 # dbt command dialect for executor-created Kubernetes Jobs (deployed via Helm
 # ConfigMap). Every configured block must be COMPLETE: `default` is required and
-# defines all eight keys; every `services.<name>` override defines all eight too.
-# No per-key fallback — an incomplete block is a fatal boot error.
+# defines all eight required keys; every `services.<name>` override defines all
+# eight too. No per-key fallback — an incomplete block is a fatal boot error.
 #
 # Keys: run / seed / snapshot (by node_type for operation=run), test / build
 # (node-agnostic), seed_build (candidate-schema seed leg; schema via the
@@ -11,33 +11,52 @@
 # the same directory as manifest_path, since the executor mounts the
 # parse-cache volume at that directory in the team container), parse
 # (parse-export/rehearsal leg; no placeholders).
+#
+# seed is a NORMAL, non-destructive production load: it inserts new/changed
+# rows without dropping the table. It runs on every automatic, scheduled or
+# promoted-release seed load.
+#
+# full_refresh (optional) rebuilds one dbt model from scratch, and
+# seed_full_refresh (optional) rebuilds one dbt seed from scratch. Both back
+# only the explicit, operator-initiated single-node full-refresh operation —
+# never an automatic load. A block without one of them cannot full-refresh
+# that node kind: such a request fails permanently and never falls back to
+# another block's command. Rebuilding a relation can CASCADE-drop views that
+# select from it on a schema-bound engine (Postgres), which the promotion flow
+# never recreates — that cost is why full refresh is explicit, not automatic.
 default:
-  run:        ["dbt", "run", "--select", "{{ node }}"]
-  seed:       ["dbt", "seed", "--select", "{{ node }}"]
-  snapshot:   ["dbt", "snapshot", "--select", "{{ node }}"]
-  test:       ["dbt", "test", "--select", "{{ node }}"]
-  build:      ["dbt", "build", "--select", "{{ node }}"]
-  seed_build: ["dbt", "seed", "--select", "{{ node }}"]
-  parse:      ["dbt", "parse"]
+  run:               ["dbt", "run", "--select", "{{ node }}"]
+  seed:              ["dbt", "seed", "--select", "{{ node }}"]
+  snapshot:          ["dbt", "snapshot", "--select", "{{ node }}"]
+  test:              ["dbt", "test", "--select", "{{ node }}"]
+  build:             ["dbt", "build", "--select", "{{ node }}"]
+  seed_build:        ["dbt", "seed", "--select", "{{ node }}"]
+  full_refresh:      ["dbt", "run", "--full-refresh", "--select", "{{ node }}"]
+  seed_full_refresh: ["dbt", "seed", "--full-refresh", "--select", "{{ node }}"]
+  parse:             ["dbt", "parse"]
   compile:
     command:       ["dbt", "compile", "--profiles-dir", "/project"]
     manifest_path: "/project/target/manifest.json"
 
 services:
-  # Team "wise" runs finance through its own dbt CLI, wise-dbt, baked into the
-  # finance image at /usr/local/bin/wise-dbt (continuo-demo services/finance).
-  # Every key routes through the wrapper; seed_build reuses load-seed (schema via
-  # DBT_TARGET_SCHEMA). Verb map: run-model->run, load-seed->seed,
-  # capture-snapshot->snapshot, test-model->test, build-model->build,
-  # compile-project->compile, parse-project->parse.
+  # Team "CustomName" runs finance through its own dbt CLI, customname-dbt,
+  # baked into the finance image at /usr/local/bin/customname-dbt (continuo-demo
+  # services/finance). Every key routes through the wrapper; seed_build reuses
+  # load-seed (schema via DBT_TARGET_SCHEMA; the candidate schema is always
+  # fresh). Verb map: run-model->run, rebuild-model->run --full-refresh,
+  # load-seed->seed, reload-seed->seed --full-refresh, capture-snapshot->snapshot,
+  # test-model->test, build-model->build, compile-project->compile,
+  # parse-project->parse.
   finance:
-    run:        ["wise-dbt", "run-model", "{{ node }}"]
-    seed:       ["wise-dbt", "load-seed", "{{ node }}"]
-    snapshot:   ["wise-dbt", "capture-snapshot", "{{ node }}"]
-    test:       ["wise-dbt", "test-model", "{{ node }}"]
-    build:      ["wise-dbt", "build-model", "{{ node }}"]
-    seed_build: ["wise-dbt", "load-seed", "{{ node }}"]
-    parse:      ["wise-dbt", "parse-project"]
+    run:               ["customname-dbt", "run-model", "{{ node }}"]
+    seed:              ["customname-dbt", "load-seed", "{{ node }}"]
+    snapshot:          ["customname-dbt", "capture-snapshot", "{{ node }}"]
+    test:              ["customname-dbt", "test-model", "{{ node }}"]
+    build:             ["customname-dbt", "build-model", "{{ node }}"]
+    seed_build:        ["customname-dbt", "load-seed", "{{ node }}"]
+    full_refresh:      ["customname-dbt", "rebuild-model", "{{ node }}"]
+    seed_full_refresh: ["customname-dbt", "reload-seed", "{{ node }}"]
+    parse:             ["customname-dbt", "parse-project"]
     compile:
-      command:       ["wise-dbt", "compile-project"]
+      command:       ["customname-dbt", "compile-project"]
       manifest_path: "/project/target/manifest.json"

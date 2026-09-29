@@ -152,3 +152,29 @@ func TestHandleSingleNodeRun_RunOperation_QueryModelOmitsOperation(t *testing.T)
 	_, hasOperation := raw["operation"]
 	assert.False(t, hasOperation, "plain run traffic must stay wire-identical (no operation key)")
 }
+
+// TestHandleSingleNodeRun_FullRefreshUnsupported_EmitsDispatchFailed covers a
+// full refresh aimed at a node type that cannot be rebuilt: the handler emits
+// run.entries.dispatch_failed:v1 with reason full_refresh_unsupported and no
+// query.model.
+func TestHandleSingleNodeRun_FullRefreshUnsupported_EmitsDispatchFailed(t *testing.T) {
+	ctx := context.Background()
+	uow := newFakeUnitOfWork()
+	snap := &fakeSnapshotService{err: snapshot.ErrFullRefreshUnsupported}
+	h := handlers.NewHandleSingleNodeRunHandler(uow, snap, newTestLogger())
+
+	cmd := domainModel.SingleNodeRunInput{
+		RunID: uuid.New().String(), ScheduleName: "daily", ServiceName: "svc",
+		SchemaName: "s", TableName: "snap", MetadataSource: "latest",
+		Operation: "full_refresh", InitiatedBy: "system",
+	}
+	require.NoError(t, h.Handle(ctx, cmd, "msg-fr", nil))
+
+	entries := uow.outboxRepo.CreatedEntries
+	require.Len(t, entries, 1)
+	require.Equal(t, streams.RunEntriesDispatchFailedV1, entries[0].StreamName)
+	var failed pkgEvents.RunEntriesDispatchFailed
+	require.NoError(t, json.Unmarshal(entries[0].Payload, &failed))
+	assert.Equal(t, pkgEvents.DispatchFailedReasonFullRefreshUnsupported, failed.Reason)
+	assert.True(t, uow.CommittedTx)
+}

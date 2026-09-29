@@ -12,17 +12,27 @@
 # compile (validation-pipeline leg: command + absolute manifest_path, plus optional
 # partial_parse_path — must live in the same directory as manifest_path, since the
 # executor mounts the parse-cache volume at that directory in the team container),
-# parse (parse-export/rehearsal leg; no placeholders).
-# Placeholders: {{ node }} (required in run/seed/snapshot/test/build/seed_build),
-# {{ target_schema }} (seed_build only).
+# parse (parse-export/rehearsal leg; no placeholders). full_refresh (optional)
+# rebuilds one dbt model from scratch, and seed_full_refresh (optional) rebuilds
+# one dbt seed from scratch; a block without one of them cannot full-refresh that
+# node kind. Both back only the explicit, operator-initiated single-node
+# full-refresh operation, never an automatic load.
+# Placeholders: {{ node }} (required in run/seed/snapshot/test/build/seed_build/
+# full_refresh/seed_full_refresh), {{ target_schema }} (seed_build only).
+#
+# seed is a NORMAL, non-destructive production load: it inserts new/changed
+# rows without dropping the table. It runs on every automatic, scheduled or
+# promoted-release seed load.
 default:
-  run:        ["dbt", "run", "--select", "{{ node }}"]
-  seed:       ["dbt", "seed", "--select", "{{ node }}"]
-  snapshot:   ["dbt", "snapshot", "--select", "{{ node }}"]
-  test:       ["dbt", "test", "--select", "{{ node }}"]
-  build:      ["dbt", "build", "--select", "{{ node }}"]
-  seed_build: ["dbt", "seed", "--select", "{{ node }}"]
-  parse:      ["dbt", "parse"]
+  run:               ["dbt", "run", "--select", "{{ node }}"]
+  seed:              ["dbt", "seed", "--select", "{{ node }}"]
+  snapshot:          ["dbt", "snapshot", "--select", "{{ node }}"]
+  test:              ["dbt", "test", "--select", "{{ node }}"]
+  build:             ["dbt", "build", "--select", "{{ node }}"]
+  seed_build:        ["dbt", "seed", "--select", "{{ node }}"]
+  full_refresh:      ["dbt", "run", "--full-refresh", "--select", "{{ node }}"]
+  seed_full_refresh: ["dbt", "seed", "--full-refresh", "--select", "{{ node }}"]
+  parse:             ["dbt", "parse"]
   compile:
     command:       ["dbt", "compile", "--profiles-dir", "/project"]
     manifest_path: "/project/target/manifest.json"

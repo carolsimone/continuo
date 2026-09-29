@@ -28,7 +28,7 @@ type Run struct {
 	// sentinel for cron / platform-initiated runs. Stamped at creation and
 	// immutable thereafter.
 	initiatedBy string
-	// operation is the dbt verb this run applies to its nodes (run/test/build).
+	// operation is the dbt verb this run applies to its nodes (run/test/build/full_refresh).
 	// Stamped at construction; stays with the run so its child tasks can be
 	// stamped identically at dispatch.
 	operation          model.Operation

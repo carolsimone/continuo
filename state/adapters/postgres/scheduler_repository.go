@@ -582,7 +582,7 @@ func kindWithDefault(kind string) string {
 
 // operationWithDefault returns 'run' for the empty model.OperationRun value,
 // else the operation as-is — the scheduler_tracker.operation column is a
-// non-empty 3-value domain.
+// non-empty 4-value domain.
 func operationWithDefault(op string) string {
 	if op == "" {
 		return "run"

@@ -8,7 +8,6 @@ seed-paths: ["seeds"]
 
 seeds:
   service_1:
-    +full_refresh: false
     +meta:
       owner: "test"
       criticality: "CORE"

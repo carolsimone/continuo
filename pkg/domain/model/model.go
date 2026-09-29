@@ -67,7 +67,11 @@ func ParseNodeType(s string) (NodeType, error) {
 }
 
 // Command returns the container command slice for this NodeType.
-// This is the single source of truth for the dbt CLI mapping.
+// This is the single source of truth for the dbt CLI mapping. A production
+// seed load is a normal, non-destructive `dbt seed`: it inserts new/changed
+// rows without dropping the table. It is NOT a full refresh — rebuilding a
+// seed from scratch (`dbt seed --full-refresh`) is a separate, explicit
+// operation, never issued by an automatic or scheduled load.
 func (t NodeType) Command(tableName string) []string {
 	switch t {
 	case NodeTypeDbtSeed:
@@ -84,9 +88,10 @@ func (t NodeType) Command(tableName string) []string {
 type Operation string
 
 const (
-	OperationRun   Operation = ""      // default: dbt run/seed/snapshot by NodeType
-	OperationTest  Operation = "test"  // dbt test --select <node>
-	OperationBuild Operation = "build" // dbt build --select <node>: materializes and tests the node in one invocation
+	OperationRun         Operation = ""             // default: dbt run/seed/snapshot by NodeType
+	OperationTest        Operation = "test"         // dbt test --select <node>
+	OperationBuild       Operation = "build"        // dbt build --select <node>: materializes and tests the node in one invocation
+	OperationFullRefresh Operation = "full_refresh" // rebuilds one model or seed from scratch (dbt --full-refresh)
 )
 
 // ParseOperation normalizes a raw operation string. Empty ⇒ run.
@@ -98,7 +103,15 @@ func ParseOperation(s string) (Operation, error) {
 		return OperationTest, nil
 	case OperationBuild:
 		return OperationBuild, nil
+	case OperationFullRefresh:
+		return OperationFullRefresh, nil
 	default:
 		return "", fmt.Errorf("unknown operation %q", s)
 	}
+}
+
+// IsSingleNodeOnly reports whether o may only target one node. A full refresh
+// drops and rebuilds a table, so it is never fanned out across a schedule.
+func (o Operation) IsSingleNodeOnly() bool {
+	return o == OperationFullRefresh
 }

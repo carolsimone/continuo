@@ -67,12 +67,18 @@ func assertSliceEqual(t *testing.T, want, got []string) {
 }
 
 func TestParseOperation(t *testing.T) {
-	cases := map[string]struct{ want model.Operation; wantErr bool }{
-		"":      {model.OperationRun, false},
-		"run":   {model.OperationRun, false},
-		"test":  {model.OperationTest, false},
-		"build": {model.OperationBuild, false},
-		"bogus": {"", true},
+	cases := map[string]struct {
+		want    model.Operation
+		wantErr bool
+	}{
+		"":             {model.OperationRun, false},
+		"run":          {model.OperationRun, false},
+		"test":         {model.OperationTest, false},
+		"build":        {model.OperationBuild, false},
+		"full_refresh": {model.OperationFullRefresh, false},
+		"FULL_REFRESH": {"", true},
+		"full-refresh": {"", true},
+		"bogus":        {"", true},
 	}
 	for in, c := range cases {
 		got, err := model.ParseOperation(in)
@@ -82,6 +88,17 @@ func TestParseOperation(t *testing.T) {
 		if err == nil && got != c.want {
 			t.Fatalf("ParseOperation(%q)=%q want %q", in, got, c.want)
 		}
+	}
+}
+
+func TestOperation_IsSingleNodeOnly(t *testing.T) {
+	for _, op := range []model.Operation{model.OperationRun, model.OperationTest, model.OperationBuild} {
+		if op.IsSingleNodeOnly() {
+			t.Fatalf("%q must be allowed on a whole schedule", op)
+		}
+	}
+	if !model.OperationFullRefresh.IsSingleNodeOnly() {
+		t.Fatal("full_refresh must be single-node only")
 	}
 }
 

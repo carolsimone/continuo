@@ -61,7 +61,33 @@ func Load(path string, logger *slog.Logger) (*Resolver, error) {
 	if err := validate(&cfg); err != nil {
 		return nil, fmt.Errorf("dbt commands config %s: %w", path, err)
 	}
+	if blocks := blocksMissingCapability(&cfg, func(o *opSet) []string { return o.FullRefresh }); len(blocks) > 0 {
+		logger.Warn("dbt commands config: these command blocks define no full_refresh, so full refresh of dbt models is unavailable for the services they cover",
+			"path", path, "blocks", blocks)
+	}
+	if blocks := blocksMissingCapability(&cfg, func(o *opSet) []string { return o.SeedFullRefresh }); len(blocks) > 0 {
+		logger.Warn("dbt commands config: these command blocks define no seed_full_refresh, so full refresh of dbt seeds is unavailable for the services they cover",
+			"path", path, "blocks", blocks)
+	}
 	return &Resolver{cfg: &cfg}, nil
+}
+
+// blocksMissingCapability names the command blocks whose pick(block) is nil —
+// i.e. that define no template for one optional full-refresh key — sorted,
+// "default" first when it is one of them.
+func blocksMissingCapability(cfg *fileConfig, pick func(*opSet) []string) []string {
+	var blocks []string
+	if pick(cfg.Default) == nil {
+		blocks = append(blocks, "default")
+	}
+	var services []string
+	for name, ops := range cfg.Services {
+		if pick(ops) == nil {
+			services = append(services, "services."+name)
+		}
+	}
+	sort.Strings(services)
+	return append(blocks, services...)
 }
 
 // unknownFieldRe matches one yaml.v3 KnownFields TypeError line, e.g. "line 3:
@@ -137,7 +163,8 @@ func validateOpSet(path string, ops *opSet) error {
 		argv []string
 	}{
 		{"run", ops.Run}, {"seed", ops.Seed}, {"snapshot", ops.Snapshot},
-		{"test", ops.Test}, {"build", ops.Build},
+		{"test", ops.Test}, {"build", ops.Build}, {"full_refresh", ops.FullRefresh},
+		{"seed_full_refresh", ops.SeedFullRefresh},
 	}
 	for _, op := range nodeOps {
 		if op.argv == nil {
@@ -274,13 +301,14 @@ func firstDivergentFlag(a, b map[string]string) string {
 }
 
 // validateParseContext requires that every node-dispatch op (run, seed,
-// snapshot, test, build, seed_build) in ops carries the exact same
-// parse-affecting flags (--vars, --target, --profile, --profiles-dir,
-// --project-dir, --no-partial-parse) as ops.Parse. dbt folds these into its
-// partial-parse validity check; if a runtime op's set differs from the parse
-// argv the compile-time rehearsal exercised, the rehearsal can pass while
-// every runtime pod re-parses from scratch (and parse_cache_reason is still
-// recorded as hydrated, since the executor never re-checks at dispatch time).
+// snapshot, test, build, seed_build, full_refresh, seed_full_refresh) in ops
+// carries the exact same parse-affecting flags (--vars, --target, --profile,
+// --profiles-dir, --project-dir, --no-partial-parse) as ops.Parse. dbt folds
+// these into its partial-parse validity check; if a runtime op's set differs
+// from the parse argv the compile-time rehearsal exercised, the rehearsal can
+// pass while every runtime pod re-parses from scratch (and parse_cache_reason
+// is still recorded as hydrated, since the executor never re-checks at
+// dispatch time).
 func validateParseContext(path string, ops *opSet) error {
 	parseFlags := parseContextFlags(ops.Parse)
 	nodeOps := []struct {
@@ -289,6 +317,7 @@ func validateParseContext(path string, ops *opSet) error {
 	}{
 		{"run", ops.Run}, {"seed", ops.Seed}, {"snapshot", ops.Snapshot},
 		{"test", ops.Test}, {"build", ops.Build}, {"seed_build", ops.SeedBuild},
+		{"full_refresh", ops.FullRefresh}, {"seed_full_refresh", ops.SeedFullRefresh},
 	}
 	for _, op := range nodeOps {
 		if op.argv == nil {

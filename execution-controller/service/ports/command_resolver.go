@@ -12,9 +12,14 @@ import (
 type CommandResolver interface {
 	// NodeCommand returns the argv for op against node, for the given
 	// service. For OperationRun, nt (model, seed, or snapshot) selects the
-	// verb; OperationTest and OperationBuild resolve to a fixed dbt verb
-	// regardless of nt.
-	NodeCommand(serviceName string, op pkg_model.Operation, nt pkg_model.NodeType, node string) []string
+	// verb — a seed resolves to its plain, non-destructive seed command;
+	// OperationTest and OperationBuild resolve to a fixed dbt verb regardless
+	// of nt. OperationFullRefresh resolves a model to the service's
+	// full_refresh command and a seed to its seed_full_refresh command. The
+	// error wraps events.ErrPermanent when the node type cannot be
+	// full-refreshed or the service's command block defines no full_refresh
+	// (model) or seed_full_refresh (seed) command.
+	NodeCommand(serviceName string, op pkg_model.Operation, nt pkg_model.NodeType, node string) ([]string, error)
 	// SeedBuildCommand returns the argv for building a seed into the
 	// release's candidate schema. When the service has no seed_build
 	// template it falls back to the seed command; schema routing then relies

@@ -42,6 +42,7 @@ func NewCommand(cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd.AddCommand(NewTriggerCommand(defaultFactory, cfg, stdout, stderr))
 	cmd.AddCommand(NewTestCommand(defaultFactory, cfg, stdout, stderr))
 	cmd.AddCommand(NewBuildCommand(defaultFactory, cfg, stdout, stderr))
+	cmd.AddCommand(NewFullRefreshCommand(defaultFactory, cfg, stdout, stderr))
 	cmd.AddCommand(NewVersionsCommand(defaultOrchestratorFactory, cfg, stdout, stderr))
 	cmd.AddCommand(NewDiffCommand(defaultOrchestratorFactory, cfg, stdout, stderr))
 	cmd.AddCommand(NewUpstreamChangesCommand(defaultOrchestratorFactory, cfg, stdout, stderr))

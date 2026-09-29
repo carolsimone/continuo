@@ -388,9 +388,9 @@ func TestCreateQueryJob_DbtModel_PodSpecUnchanged(t *testing.T) {
 
 	require.NoError(t, client.CreateQueryJob(context.Background(), params))
 
-	want, err := buildPodSpec(params,
-		client.commands.NodeCommand(params.ServiceName, params.Operation, params.NodeType, params.TableName),
-		client.commands.PartialParsePath(params.ServiceName))
+	argv, err := client.commands.NodeCommand(params.ServiceName, params.Operation, params.NodeType, params.TableName)
+	require.NoError(t, err)
+	want, err := buildPodSpec(params, argv, client.commands.PartialParsePath(params.ServiceName))
 	require.NoError(t, err)
 
 	job := fetchJob(t, client, "default", "run-dbt-orders")

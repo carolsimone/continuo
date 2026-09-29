@@ -58,7 +58,9 @@ func NewNodeRunRepository(db *sqlx.DB, logger *slog.Logger) NodeRunRepository {
 //
 // Tasks with no execution row yield rows with nil timings.
 // limit is clamped to (0, 50]; non-positive or oversized values default to 50.
-// operation defaults to "run" when empty.
+// operation defaults to "run" when empty; the run dimension includes
+// full_refresh tasks, since a full refresh materializes the node just as a
+// run does.
 func (r *nodeRunRepository) List(
 	ctx context.Context,
 	serviceName, schemaName, tableName, operation string,
@@ -79,7 +81,7 @@ func (r *nodeRunRepository) List(
 			WHERE t.service_name = $1
 			  AND t.schema_name  = $2
 			  AND t.table_name   = $3
-			  AND t.operation    = $4
+			  AND (t.operation = $4 OR ($4 = 'run' AND t.operation = 'full_refresh'))
 		),
 		latest_exec AS (
 			SELECT DISTINCT ON (te.task_id)
@@ -191,12 +193,12 @@ type nodeSummaryRow struct {
 // ListNodes returns the node catalog: one summary per node that has run, with
 // stats aggregated over each node's most recent 50 runs. Filters by exact
 // service (when non-empty), a case-insensitive exact match on the table name
-// (when non-empty), and the run/test/build operation dimension (operation
-// defaults to "run" when empty), ordered by last_run_at DESC with (service,
-// schema, table) identity tiebreakers for deterministic paging, and paged by
-// limit/offset. The second return value is the total match count before
-// paging, computed independently of the page so an empty page still reports
-// the true total.
+// (when non-empty), and the run/test/build operation dimension (run includes
+// full_refresh) (operation defaults to "run" when empty), ordered by
+// last_run_at DESC with (service, schema, table) identity tiebreakers for
+// deterministic paging, and paged by limit/offset. The second return value is
+// the total match count before paging, computed independently of the page so
+// an empty page still reports the true total.
 func (r *nodeRunRepository) ListNodes(
 	ctx context.Context,
 	search, serviceName, operation string,
@@ -220,14 +222,17 @@ func (r *nodeRunRepository) ListNodes(
 	// searching "table_2" returns only "table_2", never "ftable_2" or
 	// "table_2_v2". Service is filtered via $2, and the run/test/build
 	// dimension via $3 (an exact match — always non-empty, since the caller
-	// defaults it to "run"). The window-function scan over task_tracker ⋈
-	// scheduler_tracker runs ONCE: the page query layers the per-node
-	// aggregation and a COUNT(*) OVER () total on top of this single scan, so
-	// the match count no longer requires a second pass.
+	// defaults it to "run"). The run dimension includes full_refresh tasks and
+	// reports them as operation 'run', so a node keeps one catalog row per
+	// dimension. The window-function scan over task_tracker ⋈ scheduler_tracker
+	// runs ONCE: the page query layers the per-node aggregation and a
+	// COUNT(*) OVER () total on top of this single scan, so the match count no
+	// longer requires a second pass.
 	const rankedWindowedCTE = `
 		WITH ranked AS (
 			SELECT t.task_id, t.service_name, t.schema_name, t.table_name,
-			       t.retry_count, t.status AS run_status, s.created_at, t.operation,
+			       t.retry_count, t.status AS run_status, s.created_at,
+			       CASE WHEN t.operation = 'full_refresh' THEN 'run' ELSE t.operation END AS operation,
 			       ROW_NUMBER() OVER (
 			         PARTITION BY t.service_name, t.schema_name, t.table_name
 			         ORDER BY s.created_at DESC
@@ -236,7 +241,7 @@ func (r *nodeRunRepository) ListNodes(
 			JOIN scheduler_tracker s ON s.schedule_id = t.schedule_id
 			WHERE ($1 = '' OR lower(t.table_name) = lower($1))
 			  AND ($2 = '' OR t.service_name = $2)
-			  AND t.operation = $3
+			  AND (t.operation = $3 OR ($3 = 'run' AND t.operation = 'full_refresh'))
 		),
 		windowed AS ( SELECT * FROM ranked WHERE rn <= 50 )`
 

@@ -8,8 +8,11 @@ import (
 )
 
 // The shipped Helm config is the source of truth for the Hetzner ConfigMap.
-// This pins that it always loads and that finance resolves to the wise-dbt
-// dialect for every operation while other services fall back to the default.
+// This pins that it always loads and that finance resolves to the customname-dbt
+// dialect for every operation while other services fall back to the default; it
+// also pins that both the default and finance blocks load a seed as a plain,
+// non-destructive dbt seed and define full_refresh (model) and
+// seed_full_refresh (seed) for the explicit single-node full-refresh operation.
 func TestDeployedConfigResolvesFinanceDialect(t *testing.T) {
 	path := filepath.Join("..", "..", "..", "deploy", "continuo", "files", "dbt-commands.yaml")
 
@@ -18,30 +21,48 @@ func TestDeployedConfigResolvesFinanceDialect(t *testing.T) {
 		t.Fatalf("shipped deploy/continuo/files/dbt-commands.yaml must load: %v", err)
 	}
 
-	gotRun := r.NodeCommand("finance", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "fx_transactions_eur")
-	assertArgv(t, "finance run", gotRun, []string{"wise-dbt", "run-model", "fx_transactions_eur"})
+	gotRun := mustNodeCommand(t, r, "finance", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "fx_transactions_eur")
+	assertArgv(t, "finance run", gotRun, []string{"customname-dbt", "run-model", "fx_transactions_eur"})
 
-	gotSnap := r.NodeCommand("finance", pkg_model.OperationRun, pkg_model.NodeTypeDbtSnapshot, "fx_snap")
-	assertArgv(t, "finance snapshot", gotSnap, []string{"wise-dbt", "capture-snapshot", "fx_snap"})
+	gotSnap := mustNodeCommand(t, r, "finance", pkg_model.OperationRun, pkg_model.NodeTypeDbtSnapshot, "fx_snap")
+	assertArgv(t, "finance snapshot", gotSnap, []string{"customname-dbt", "capture-snapshot", "fx_snap"})
 
-	gotTest := r.NodeCommand("finance", pkg_model.OperationTest, pkg_model.NodeTypeDbtModel, "fx_transactions_eur")
-	assertArgv(t, "finance test", gotTest, []string{"wise-dbt", "test-model", "fx_transactions_eur"})
+	gotTest := mustNodeCommand(t, r, "finance", pkg_model.OperationTest, pkg_model.NodeTypeDbtModel, "fx_transactions_eur")
+	assertArgv(t, "finance test", gotTest, []string{"customname-dbt", "test-model", "fx_transactions_eur"})
 
-	gotBuild := r.NodeCommand("finance", pkg_model.OperationBuild, pkg_model.NodeTypeDbtModel, "fx_transactions_eur")
-	assertArgv(t, "finance build", gotBuild, []string{"wise-dbt", "build-model", "fx_transactions_eur"})
+	gotBuild := mustNodeCommand(t, r, "finance", pkg_model.OperationBuild, pkg_model.NodeTypeDbtModel, "fx_transactions_eur")
+	assertArgv(t, "finance build", gotBuild, []string{"customname-dbt", "build-model", "fx_transactions_eur"})
 
 	gotSeedBuild := r.SeedBuildCommand("finance", "seed_fx_rates_eur", "cand_schema")
-	assertArgv(t, "finance seed_build", gotSeedBuild, []string{"wise-dbt", "load-seed", "seed_fx_rates_eur"})
+	assertArgv(t, "finance seed_build", gotSeedBuild, []string{"customname-dbt", "load-seed", "seed_fx_rates_eur"})
 
 	gotCompile, manifest := r.CompileCommand("finance")
-	assertArgv(t, "finance compile", gotCompile, []string{"wise-dbt", "compile-project"})
+	assertArgv(t, "finance compile", gotCompile, []string{"customname-dbt", "compile-project"})
 	if manifest != "/project/target/manifest.json" {
 		t.Fatalf("finance compile manifest_path = %q, want /project/target/manifest.json", manifest)
 	}
 
+	gotSeed := mustNodeCommand(t, r, "finance", pkg_model.OperationRun, pkg_model.NodeTypeDbtSeed, "seed_fx_rates_eur")
+	assertArgv(t, "finance seed", gotSeed, []string{"customname-dbt", "load-seed", "seed_fx_rates_eur"})
+
+	gotSeedFR := mustNodeCommand(t, r, "finance", pkg_model.OperationFullRefresh, pkg_model.NodeTypeDbtSeed, "seed_fx_rates_eur")
+	assertArgv(t, "finance seed full_refresh", gotSeedFR, []string{"customname-dbt", "reload-seed", "seed_fx_rates_eur"})
+
+	gotFR := mustNodeCommand(t, r, "finance", pkg_model.OperationFullRefresh, pkg_model.NodeTypeDbtModel, "fx_transactions_eur")
+	assertArgv(t, "finance full_refresh", gotFR, []string{"customname-dbt", "rebuild-model", "fx_transactions_eur"})
+
 	// A service with no override falls back to the default block (plain dbt).
-	gotOther := r.NodeCommand("service-3", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "some_model")
+	gotOther := mustNodeCommand(t, r, "service-3", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "some_model")
 	assertArgv(t, "service-3 run fallback", gotOther, []string{"dbt", "run", "--select", "some_model"})
+
+	gotOtherSeed := mustNodeCommand(t, r, "service-3", pkg_model.OperationRun, pkg_model.NodeTypeDbtSeed, "s")
+	assertArgv(t, "service-3 seed", gotOtherSeed, []string{"dbt", "seed", "--select", "s"})
+
+	gotOtherSeedFR := mustNodeCommand(t, r, "service-3", pkg_model.OperationFullRefresh, pkg_model.NodeTypeDbtSeed, "s")
+	assertArgv(t, "service-3 seed full_refresh", gotOtherSeedFR, []string{"dbt", "seed", "--full-refresh", "--select", "s"})
+
+	gotOtherFR := mustNodeCommand(t, r, "service-3", pkg_model.OperationFullRefresh, pkg_model.NodeTypeDbtModel, "m")
+	assertArgv(t, "service-3 full_refresh", gotOtherFR, []string{"dbt", "run", "--full-refresh", "--select", "m"})
 }
 
 func assertArgv(t *testing.T, label string, got, want []string) {

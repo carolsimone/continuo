@@ -213,8 +213,9 @@ func hydrateRun(tr *SchedulerTracker) (*run.Run, error) {
 	), nil
 }
 
-// operationFromColumn maps the non-empty stored operation ('run'|'test'|'build')
-// back to the domain model.Operation (empty string for run).
+// operationFromColumn maps the non-empty stored operation
+// ('run'|'test'|'build'|'full_refresh') back to the domain model.Operation
+// (empty string for run).
 func operationFromColumn(s string) model.Operation {
 	if s == "run" || s == "" {
 		return model.OperationRun

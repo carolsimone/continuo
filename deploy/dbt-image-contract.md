@@ -27,10 +27,25 @@ is plain dbt — e.g. `dbt run --select <node>`. You can also override these
 commands with your own — say, a CLI that wraps dbt inside an internal tool — so a
 non-standard dbt container runs under continuo without change.
 
-The contract is **fail-closed**: an override block must define all seven
+The contract is **fail-closed**: an override block must define all eight
 operations (`run`, `seed`, `snapshot`, `seed_build`, `test`, `build`,
-`compile`) or execution-controller refuses to boot. `{{ node }}` and
+`compile`, `parse`) or execution-controller refuses to boot. `{{ node }}` and
 `{{ target_schema }}` placeholders are substituted at dispatch time.
+
+Your `seed` command is a NORMAL, non-destructive load — plain `dbt seed`, not
+`--full-refresh`. It inserts new/changed rows without dropping the table, and
+it is what execution-controller runs for every automatic, scheduled or
+promoted-release seed load.
+
+Your image should also provide a model-rebuild verb (backs the `full_refresh`
+command, e.g. `dbt run --full-refresh --select <node>`) and a seed-rebuild verb
+(backs the `seed_full_refresh` command, e.g. `dbt seed --full-refresh --select
+<node>`). Unlike the required operations above, `full_refresh` and
+`seed_full_refresh` are both optional — a block that omits either still boots —
+but they are used only by the explicit, operator-initiated single-node
+full-refresh operation, and are required per-service only for that operation
+to succeed: a service missing the one its node kind needs fails those requests
+permanently, with no fallback to another block's command.
 
 Your image must therefore contain a working dbt project (or a wrapper that
 behaves like one) at the path your commands assume, with a `profiles.yml`

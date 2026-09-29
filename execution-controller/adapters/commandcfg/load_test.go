@@ -50,49 +50,49 @@ func TestLoad_EmptyPathUsesDefaults(t *testing.T) {
 	r, err := Load("", testLogger())
 	require.NoError(t, err)
 	assert.Equal(t, []string{"dbt", "run", "--select", "t"},
-		r.NodeCommand("svc", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "t"))
+		mustNodeCommand(t, r, "svc", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "t"))
 }
 
 func TestLoad_MissingFileUsesDefaults(t *testing.T) {
 	r, err := Load(filepath.Join(t.TempDir(), "does-not-exist.yaml"), testLogger())
 	require.NoError(t, err)
 	assert.Equal(t, []string{"dbt", "seed", "--select", "t"},
-		r.NodeCommand("svc", pkg_model.OperationRun, pkg_model.NodeTypeDbtSeed, "t"))
+		mustNodeCommand(t, r, "svc", pkg_model.OperationRun, pkg_model.NodeTypeDbtSeed, "t"))
 }
 
 func TestLoad_ValidCompleteFile(t *testing.T) {
 	path := writeConfig(t, completeDefault+`
 services:
-  wise:
-    run:        ["wise-dbt", "run", "--select", "{{ node }}"]
-    seed:       ["wise-dbt", "seed", "--select", "{{ node }}"]
-    snapshot:   ["wise-dbt", "snapshot", "--select", "{{ node }}"]
-    test:       ["wise-dbt", "test", "--select", "{{ node }}"]
-    build:      ["wise-dbt", "build", "--select", "{{ node }}"]
-    seed_build: ["wise-dbt", "seed", "--select", "{{ node }}"]
-    parse:      ["wise-dbt", "parse"]
+  customname:
+    run:        ["customname-dbt", "run", "--select", "{{ node }}"]
+    seed:       ["customname-dbt", "seed", "--select", "{{ node }}"]
+    snapshot:   ["customname-dbt", "snapshot", "--select", "{{ node }}"]
+    test:       ["customname-dbt", "test", "--select", "{{ node }}"]
+    build:      ["customname-dbt", "build", "--select", "{{ node }}"]
+    seed_build: ["customname-dbt", "seed", "--select", "{{ node }}"]
+    parse:      ["customname-dbt", "parse"]
     compile:
-      command:       ["wise-dbt", "compile", "--profiles-dir", "/project"]
+      command:       ["customname-dbt", "compile", "--profiles-dir", "/project"]
       manifest_path: "/project/target/manifest.json"
 `)
 	r, err := Load(path, testLogger())
 	require.NoError(t, err)
-	assert.Equal(t, []string{"wise-dbt", "test", "--select", "x"},
-		r.NodeCommand("wise", pkg_model.OperationTest, pkg_model.NodeTypeDbtModel, "x"))
+	assert.Equal(t, []string{"customname-dbt", "test", "--select", "x"},
+		mustNodeCommand(t, r, "customname", pkg_model.OperationTest, pkg_model.NodeTypeDbtModel, "x"))
 }
 
 func TestLoad_FileWithoutDefaultIsError(t *testing.T) {
 	path := writeConfig(t, `
 services:
-  wise:
-    run:        ["wise-dbt", "run", "--select", "{{ node }}"]
-    seed:       ["wise-dbt", "seed", "--select", "{{ node }}"]
-    snapshot:   ["wise-dbt", "snapshot", "--select", "{{ node }}"]
-    test:       ["wise-dbt", "test", "--select", "{{ node }}"]
-    build:      ["wise-dbt", "build", "--select", "{{ node }}"]
-    seed_build: ["wise-dbt", "seed", "--select", "{{ node }}"]
+  customname:
+    run:        ["customname-dbt", "run", "--select", "{{ node }}"]
+    seed:       ["customname-dbt", "seed", "--select", "{{ node }}"]
+    snapshot:   ["customname-dbt", "snapshot", "--select", "{{ node }}"]
+    test:       ["customname-dbt", "test", "--select", "{{ node }}"]
+    build:      ["customname-dbt", "build", "--select", "{{ node }}"]
+    seed_build: ["customname-dbt", "seed", "--select", "{{ node }}"]
     compile:
-      command:       ["wise-dbt", "compile"]
+      command:       ["customname-dbt", "compile"]
       manifest_path: "/p/m.json"
 `)
 	_, err := Load(path, testLogger())
@@ -114,13 +114,13 @@ default:
 func TestLoad_PartialServiceOverrideIsError(t *testing.T) {
 	path := writeConfig(t, completeDefault+`
 services:
-  wise:
-    run:  ["wise-dbt", "run", "--select", "{{ node }}"]
-    seed: ["wise-dbt", "seed", "--select", "{{ node }}"]
+  customname:
+    run:  ["customname-dbt", "run", "--select", "{{ node }}"]
+    seed: ["customname-dbt", "seed", "--select", "{{ node }}"]
 `)
 	_, err := Load(path, testLogger())
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "services.wise: incomplete command set, missing")
+	assert.Contains(t, err.Error(), "services.customname: incomplete command set, missing")
 	assert.Contains(t, err.Error(), "test")
 	assert.Contains(t, err.Error(), "build")
 	assert.Contains(t, err.Error(), "compile")
@@ -300,8 +300,8 @@ func TestLoad_ValidationErrors(t *testing.T) {
 		},
 		{
 			name:    "empty service is incomplete",
-			yaml:    completeDefault + "services:\n  wise: {}",
-			wantErr: "services.wise: incomplete command set, missing",
+			yaml:    completeDefault + "services:\n  customname: {}",
+			wantErr: "services.customname: incomplete command set, missing",
 		},
 	}
 	for _, tt := range tests {
@@ -438,7 +438,7 @@ default:
 	require.NoError(t, err)
 	require.NotNil(t, r)
 	assert.Equal(t, []string{"dbt", "run", "--select", "orders"},
-		r.NodeCommand("any-service", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "orders"))
+		mustNodeCommand(t, r, "any-service", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "orders"))
 	assert.Contains(t, buf.String(), "future_key", "warning must name the unknown field")
 }
 
@@ -447,4 +447,54 @@ func TestLoad_MalformedYAMLStillFatalEvenWithUnknownFieldTolerance(t *testing.T)
 	_, err := Load(path, testLogger())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "parse dbt commands config")
+}
+
+// A block written before full_refresh existed has every required key but no
+// full_refresh; it must still load so an operator's own ConfigMap boots.
+func TestLoad_BlockWithoutFullRefreshLoads(t *testing.T) {
+	r := loadYAML(t, fullRefreshYAML)
+	assert.Equal(t, []string{"legacy-dbt", "run", "orders"},
+		mustNodeCommand(t, r, "legacy", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "orders"))
+}
+
+func TestLoad_FullRefreshTemplateIsValidated(t *testing.T) {
+	cases := map[string]string{
+		"missing node placeholder": `full_refresh: ["dbt", "run", "--full-refresh"]`,
+		"unknown placeholder":      `full_refresh: ["dbt", "run", "--select", "{{ node }}", "{{ target_schema }}"]`,
+		"empty":                    `full_refresh: []`,
+		"parse-context mismatch":   `full_refresh: ["dbt", "run", "--full-refresh", "--target", "x", "--select", "{{ node }}"]`,
+	}
+	for name, line := range cases {
+		t.Run(name, func(t *testing.T) {
+			body := completeDefault + "  " + line + "\n"
+			p := filepath.Join(t.TempDir(), "c.yaml")
+			require.NoError(t, os.WriteFile(p, []byte(body), 0o600))
+			_, err := Load(p, testLogger())
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "default.full_refresh")
+		})
+	}
+}
+
+// TestLoad_SeedFullRefreshTemplateIsValidated mirrors
+// TestLoad_FullRefreshTemplateIsValidated for the seed_full_refresh key: it is
+// optional, but a present template still passes the same per-template checks
+// (non-empty argv, required/allowed placeholders, parse-context match).
+func TestLoad_SeedFullRefreshTemplateIsValidated(t *testing.T) {
+	cases := map[string]string{
+		"missing node placeholder": `seed_full_refresh: ["dbt", "seed", "--full-refresh"]`,
+		"unknown placeholder":      `seed_full_refresh: ["dbt", "seed", "--select", "{{ node }}", "{{ target_schema }}"]`,
+		"empty":                    `seed_full_refresh: []`,
+		"parse-context mismatch":   `seed_full_refresh: ["dbt", "seed", "--full-refresh", "--target", "x", "--select", "{{ node }}"]`,
+	}
+	for name, line := range cases {
+		t.Run(name, func(t *testing.T) {
+			body := completeDefault + "  " + line + "\n"
+			p := filepath.Join(t.TempDir(), "c.yaml")
+			require.NoError(t, os.WriteFile(p, []byte(body), 0o600))
+			_, err := Load(p, testLogger())
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "default.seed_full_refresh")
+		})
+	}
 }
