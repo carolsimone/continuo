@@ -13,7 +13,7 @@ func TestLatestFullDAG_BuildsProjectionFromLatestRows(t *testing.T) {
 	s := snapshot.FQN{Service: "svc", Schema: "sch", Table: "s", ScheduleName: "seed"}
 	r := &fakeTopologyReader{
 		LatestDAG: map[snapshot.FQN]snapshot.LatestTableRow{
-			a: {ScheduleName: "x", NodeType: "python-api", ImageTag: "v1", ManifestVersion: "m1", SecretRef: "continuo-api-fx"}, //nolint:gosec // G101: secret_ref names a Kubernetes Secret, not a credential
+			a: {ScheduleName: "x", NodeType: "python-api", ImageTag: "v1", ManifestVersion: "m1", SecretRef: "continuo-api-fx"},
 			s: {ScheduleName: "seed", NodeType: "dbt-seed", ImageTag: "v2", ManifestVersion: "m2"},
 		},
 	}

@@ -13,7 +13,7 @@ func TestSingleNode_LatestMode_Hit(t *testing.T) {
 	fqn := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a"}
 	r := &fakeTopologyReader{
 		SingleLatest: map[snapshot.FQN]snapshot.LatestTableRow{
-			fqn: {ScheduleName: "x", NodeType: "python-api", ImageTag: "v1", ManifestVersion: "m1", SecretRef: "continuo-api-fx"}, //nolint:gosec // G101: secret_ref names a Kubernetes Secret, not a credential
+			fqn: {ScheduleName: "x", NodeType: "python-api", ImageTag: "v1", ManifestVersion: "m1", SecretRef: "continuo-api-fx"},
 		},
 	}
 	sel := snapshot.SingleNode{ServiceName: "svc", SchemaName: "sch", TableName: "a", MetadataSource: "latest"}
@@ -46,7 +46,7 @@ func TestSingleNode_SnapshotOfRunMode_Hit(t *testing.T) {
 	srcID := uuid.New()
 	r := &fakeTopologyReader{
 		SingleFromSourceRun: map[string]map[snapshot.FQN]snapshot.LatestTableRow{
-			srcID.String(): {fqn: {ScheduleName: "x", NodeType: "python-api", ImageTag: "old", ManifestVersion: "om", SecretRef: "continuo-api-old"}}, //nolint:gosec // G101: secret_ref names a Kubernetes Secret, not a credential
+			srcID.String(): {fqn: {ScheduleName: "x", NodeType: "python-api", ImageTag: "old", ManifestVersion: "om", SecretRef: "continuo-api-old"}},
 		},
 	}
 	sel := snapshot.SingleNode{ServiceName: "svc", SchemaName: "sch", TableName: "a", MetadataSource: "snapshot_of_run"}

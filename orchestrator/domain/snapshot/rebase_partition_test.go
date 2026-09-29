@@ -21,11 +21,11 @@ func TestRebasePartition_RebasesNonSucceededAndDescendants_InheritsSucceeded(t *
 			srcID.String(): {
 				a: {TaskID: uuid.New(), Status: "FAILED", ScheduleName: "x", NodeType: "dbt-model"},
 				b: {TaskID: uuid.New(), Status: "SUCCEEDED", ScheduleName: "x", NodeType: "dbt-model"},
-				c: {TaskID: rootC, Status: "SUCCEEDED", ScheduleName: "x", NodeType: "python-api", SecretRef: "continuo-api-old"}, //nolint:gosec // G101: secret_ref names a Kubernetes Secret, not a credential
+				c: {TaskID: rootC, Status: "SUCCEEDED", ScheduleName: "x", NodeType: "python-api", SecretRef: "continuo-api-old"},
 			},
 		},
 		LatestDAG: map[snapshot.FQN]snapshot.LatestTableRow{
-			a: {ScheduleName: "x", NodeType: "python-api", ImageTag: "v2", ManifestVersion: "m2", SecretRef: "continuo-api-fx"}, //nolint:gosec // G101: secret_ref names a Kubernetes Secret, not a credential
+			a: {ScheduleName: "x", NodeType: "python-api", ImageTag: "v2", ManifestVersion: "m2", SecretRef: "continuo-api-fx"},
 			b: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v2", ManifestVersion: "m2"},
 			c: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v2", ManifestVersion: "m2"},
 		},
