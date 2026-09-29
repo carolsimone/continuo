@@ -211,3 +211,24 @@ func TestDeploySeedBuild_ThreadsSourceOverlayURI(t *testing.T) {
 	assert.Equal(t, "s3://continuo/core/verify-rel-1-core-a1/source-overlay.tar.gz",
 		envOf(spec.InitContainers[0], "SOURCE_OVERLAY_URI"))
 }
+
+// TestJobParamsFromSpec_CarriesSecretRef verifies the run path threads the
+// python-api Secret name from the JobSpec onto the job params.
+func TestJobParamsFromSpec_CarriesSecretRef(t *testing.T) {
+	spec := deploy.JobSpec{ //nolint:gosec // G101: secret_ref names a Kubernetes Secret, not a credential
+		JobName:     "run-fx",
+		ServiceName: "svc-py",
+		SchemaName:  "analytics",
+		TableName:   "fx",
+		NodeType:    string(pkg_model.NodeTypePythonApi),
+		ImageTag:    "ghcr.io/acme/py:1",
+		SecretRef:   "continuo-api-fx",
+	}
+
+	params := jobParamsFromSpec(spec, pkg_model.NodeTypePythonApi, "default")
+
+	assert.Equal(t, "continuo-api-fx", params.SecretRef)
+	assert.Equal(t, "ghcr.io/acme/py:1", params.ImageTag)
+	assert.Equal(t, "default", params.Namespace)
+	assert.Empty(t, jobParamsFromSpec(deploy.JobSpec{}, pkg_model.NodeTypeDbtModel, "default").SecretRef)
+}

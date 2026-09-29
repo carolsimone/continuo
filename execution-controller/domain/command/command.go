@@ -17,15 +17,18 @@ type Command interface {
 // and to build the RUNNING announcement, the first status-check ticket, and the
 // FAILED announcement afterwards.
 type DeployTask struct {
-	TaskID         string
-	ScheduleID     string
-	ScheduleName   string
-	ServiceName    string
-	SchemaName     string
-	TableName      string
-	JobName        string
-	NodeType       string
-	ImageTag       string
+	TaskID       string
+	ScheduleID   string
+	ScheduleName string
+	ServiceName  string
+	SchemaName   string
+	TableName    string
+	JobName      string
+	NodeType     string
+	ImageTag     string
+	// SecretRef names the continuo-api-* Secret a python-api node's pod
+	// receives as env vars; empty for every other node.
+	SecretRef      string
 	TaskRetryCount int
 	TaskMaxRetries int
 	// Operation selects the dbt verb the executor runs for this node. Empty
@@ -97,6 +100,7 @@ func (c DeployTask) ToJobSpec() deploy.JobSpec {
 		TableName:    c.TableName,
 		NodeType:     c.NodeType,
 		ImageTag:     c.ImageTag,
+		SecretRef:    c.SecretRef,
 		Operation:    c.Operation,
 		Mode:         c.Mode,
 	}

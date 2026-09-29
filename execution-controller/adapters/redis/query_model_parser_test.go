@@ -118,3 +118,29 @@ func TestParseQueryModel_InvalidOperationIsPermanentError(t *testing.T) {
 	}})
 	require.Error(t, err)
 }
+
+func TestParseQueryModel_SecretRef(t *testing.T) {
+	base := map[string]interface{}{
+		"outbox_entry_id": uuid.New().String(),
+		"task_id":         uuid.New().String(),
+		"schedule_id":     uuid.New().String(),
+		"schedule_name":   "daily",
+		"service_name":    "svc",
+		"schema_name":     "analytics",
+		"table_name":      "fx",
+		"job_name":        "j",
+		"node_type":       "python-api",
+		"image_tag":       "ghcr.io/acme/py:1",
+	}
+	withRef := map[string]interface{}{"secret_ref": "continuo-api-fx"}
+	for k, v := range base {
+		withRef[k] = v
+	}
+	evt, err := ParseQueryModel(goredis.XMessage{ID: "1-0", Values: withRef})
+	require.NoError(t, err)
+	assert.Equal(t, "continuo-api-fx", evt.SecretRef)
+
+	evt, err = ParseQueryModel(goredis.XMessage{ID: "1-0", Values: base})
+	require.NoError(t, err)
+	assert.Equal(t, "", evt.SecretRef)
+}

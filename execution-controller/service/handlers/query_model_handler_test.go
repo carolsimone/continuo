@@ -43,10 +43,11 @@ func TestQueryModelHandler_EnqueuesDeployment(t *testing.T) {
 
 	taskID := uuid.New()
 	scheduleID := uuid.New()
-	evt := events.QueryModel{
+	evt := events.QueryModel{ //nolint:gosec // G101: secret_ref names a Kubernetes Secret, not a credential
 		TaskID: taskID, ScheduleID: scheduleID, ScheduleName: "daily",
 		ServiceName: "dbt", SchemaName: "public", TableName: "orders",
 		JobName: "dbt-public-orders", NodeType: pkg_model.NodeTypeDbtModel, ImageTag: "sha-abc",
+		SecretRef: "continuo-api-orders",
 	}
 
 	h := handlers.NewQueryModelHandler(logger)
@@ -60,6 +61,7 @@ func TestQueryModelHandler_EnqueuesDeployment(t *testing.T) {
 	assert.Equal(t, taskID.String(), cmd.TaskID)
 	assert.Equal(t, scheduleID.String(), cmd.ScheduleID)
 	assert.Equal(t, "dbt-public-orders", cmd.JobName)
+	assert.Equal(t, "continuo-api-orders", cmd.SecretRef)
 	assert.Equal(t, 0, cmd.TaskRetryCount)
 	assert.Equal(t, 2, cmd.TaskMaxRetries, "default task max retries off the retry stream")
 	assert.True(t, dep.IsDeployable())

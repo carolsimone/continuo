@@ -25,6 +25,7 @@ type DeployTaskDTO struct {
 	JobName        string `json:"job_name"`
 	NodeType       string `json:"node_type"`
 	ImageTag       string `json:"image_tag"`
+	SecretRef      string `json:"secret_ref,omitempty"`
 	TaskRetryCount int    `json:"task_retry_count"`
 	TaskMaxRetries int    `json:"task_max_retries"`
 	Operation      string `json:"operation"`
@@ -43,6 +44,7 @@ func DeployTaskFromDomain(c command.DeployTask) DeployTaskDTO {
 		JobName:        c.JobName,
 		NodeType:       c.NodeType,
 		ImageTag:       c.ImageTag,
+		SecretRef:      c.SecretRef,
 		TaskRetryCount: c.TaskRetryCount,
 		TaskMaxRetries: c.TaskMaxRetries,
 		Operation:      c.Operation,
@@ -62,6 +64,7 @@ func (d DeployTaskDTO) ToDomain() command.DeployTask {
 		JobName:        d.JobName,
 		NodeType:       d.NodeType,
 		ImageTag:       d.ImageTag,
+		SecretRef:      d.SecretRef,
 		TaskRetryCount: d.TaskRetryCount,
 		TaskMaxRetries: d.TaskMaxRetries,
 		Operation:      d.Operation,
