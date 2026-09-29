@@ -50,6 +50,49 @@ func TestV22_RewritesOnlyExactNodeTypeValues(t *testing.T) {
 		snapshot)
 }
 
+// TestV22_PreservesArrayOrder proves the array rebuild keeps element order:
+// the migration uses WITH ORDINALITY + jsonb_agg(... ORDER BY ord), and a
+// silently reordered topology would be a regression. A three-node snapshot
+// with the python-model node in the MIDDLE must come back in the same order,
+// asserted both by an order-sensitive JSONEq and by the per-position unique_id.
+func TestV22_PreservesArrayOrder(t *testing.T) {
+	db := openTestDB(t)
+	_, err := db.Exec(`INSERT INTO current_prod (id, release_id, topology_snapshot, updated_at)
+		VALUES (1, 'r-order', '[
+			{"unique_id":"n.first","node_type":"dbt-model"},
+			{"unique_id":"n.middle","node_type":"python-model"},
+			{"unique_id":"n.last","node_type":"dbt-seed"}
+		]'::jsonb, now())`)
+	require.NoError(t, err)
+
+	sql := v22SQL(t)
+	for i := 0; i < 2; i++ { // second run must be a no-op
+		_, err = db.Exec(sql)
+		require.NoError(t, err)
+	}
+
+	var snapshot string
+	require.NoError(t, db.Get(&snapshot, `SELECT topology_snapshot::text FROM current_prod WHERE id = 1`))
+	// require.JSONEq compares parsed JSON; array element order is significant,
+	// so this fails if the rebuild reordered the nodes.
+	require.JSONEq(t,
+		`[
+			{"unique_id":"n.first","node_type":"dbt-model"},
+			{"unique_id":"n.middle","node_type":"python-node"},
+			{"unique_id":"n.last","node_type":"dbt-seed"}
+		]`,
+		snapshot)
+
+	// Belt-and-braces: assert the unique_id at each position directly.
+	var ids []string
+	require.NoError(t, db.Select(&ids,
+		`SELECT elem->>'unique_id'
+		   FROM jsonb_array_elements((SELECT topology_snapshot FROM current_prod WHERE id = 1))
+		        WITH ORDINALITY AS x(elem, ord)
+		  ORDER BY ord`))
+	require.Equal(t, []string{"n.first", "n.middle", "n.last"}, ids)
+}
+
 // TestV22_RewritesCandidateTopologyAndPerNodeButNotSiblingStrings covers the
 // release_pipeline_runs columns: candidate_topology (an array of node objects)
 // and per_node_results (an array of per-node result objects). It proves the
