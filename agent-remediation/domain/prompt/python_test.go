@@ -133,6 +133,32 @@ func TestAssemblePythonContractFix_SystemPromptScopesTheEdit(t *testing.T) {
 	require.Contains(t, lower, "complete", "the prompt must demand each file's full new content")
 }
 
+// TestAssemblePythonContractFix_NoReadsNodeSaysItFetchesItsOwnData pins that a
+// node declaring no reads is not described as reading upstream relations, and
+// that every python prompt lists secret_ref among the fields a fix never
+// touches.
+func TestAssemblePythonContractFix_NoReadsNodeSaysItFetchesItsOwnData(t *testing.T) {
+	ev := pythonEvidence()
+	ev.NoReads = true
+	req := AssemblePythonContractFix(ev)
+	all := req.System + req.User
+
+	require.Contains(t, all, "declares no reads")
+	require.NotContains(t, all, "the upstream relations it reads")
+
+	withReads := AssemblePythonContractFix(pythonEvidence())
+	require.Contains(t, withReads.System, "the upstream relations it reads")
+	require.NotContains(t, withReads.System, "declares no reads")
+
+	for name, sys := range map[string]string{
+		"validation":           withReads.System,
+		"validation, no reads": req.System,
+		"parse":                AssemblePythonParseFix(pythonEvidence()).System,
+	} {
+		require.Contains(t, sys, "secret_ref", "%s prompt must forbid touching secret_ref", name)
+	}
+}
+
 // TestAssemblePythonParseFix_ShowsTheParserError verifies the parse-stage
 // request: the parser's error stands where the validation error would, no
 // runner-log section can appear (no Job ran), the declaring yaml is shown, and

@@ -100,6 +100,34 @@ func TestParse_PythonCsvTarget_SkipsWithReason(t *testing.T) {
 	require.Zero(t, precedents.calls, "want no precedent lookup for a python-csv target")
 }
 
+// TestParse_PythonApiTarget_SkipsWithReason proves the source-file parse lane
+// refuses a python-api node before any read: it declares no reads, so there is
+// no SQL for the parser to reject.
+func TestParse_PythonApiTarget_SkipsWithReason(t *testing.T) {
+	fs := &fakeSourceMap{files: map[string]string{"services/svc/scripts/fx.py": "print('hello')"}}
+	llm := &fakeLLM{}
+	precedents := &fakePrecedents{}
+	svc := Services{
+		Source: fs, LLM: llm, Evidence: fakeEvidence{}, Sanitizer: fakeSanitizer{},
+		Artifacts: &fakeArtifacts{}, Logger: testLogger(),
+		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
+		Precedents:       precedents,
+	}
+	in := parseInput()
+	in.NodeType = "python-api"
+	in.FilePath = "scripts/fx.py"
+
+	r, err := parseFixer{}.Propose(context.Background(), svc, in)
+	require.NoError(t, err)
+	require.Equal(t, proposal.StatusSkipped, r.Proposal.Status)
+	require.Contains(t, r.Proposal.Rationale, "python-api has no reads")
+	require.Contains(t, r.Proposal.Rationale, "by hand")
+	require.Nil(t, r.VerificationContract)
+	require.Empty(t, fs.readPaths(), "want no source read for a python-api target")
+	require.Zero(t, llm.calls, "want no LLM call for a python-api target")
+	require.Zero(t, precedents.calls, "want no precedent lookup for a python-api target")
+}
+
 // TestParse_SkipRecordsReason pins that every skip the source-file parse lane
 // takes before reading anything carries its reason on the proposal, so a
 // skipped row in the release view is never unexplained.

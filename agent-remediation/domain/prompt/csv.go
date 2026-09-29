@@ -37,6 +37,9 @@ type CsvEvidence struct {
 	// PriorAttempts are the earlier attempts at this same failure, oldest
 	// first.
 	PriorAttempts []PriorAttempt
+	// NoReads is carried so the struct converts to and from PythonEvidence; a
+	// python-csv node always declares its one csv read, so it is never set.
+	NoReads bool
 }
 
 const csvContractFixSystemPrompt = `You are a data-engineering assistant that fixes a Continuo python-csv node whose contract failed blue/green validation.

@@ -487,6 +487,10 @@ func TestFor_ValidationDispatchesOnNodeType(t *testing.T) {
 	require.NoError(t, err)
 	require.IsType(t, pythonValidationFixer{}, py)
 
+	api, err := For("validation", "python-api")
+	require.NoError(t, err)
+	require.IsType(t, pythonValidationFixer{}, api)
+
 	csv, err := For("validation", "python-csv")
 	require.NoError(t, err)
 	require.IsType(t, csvValidationFixer{}, csv)
@@ -647,10 +651,57 @@ func TestPythonValidation_AnswerThatChangesNodeIdentity_Fails(t *testing.T) {
 	const target = "services/service-py/contracts/py_daily_kpis.yml"
 	const sibling = "services/service-py/contracts/other.yml"
 
+	// apiNodeYAML is the failing node's contract as a python-api author wrote
+	// it: naming the Secret it runs with.
+	const apiNodeYAML = `nodes:
+  - schema: analytics
+    table: py_daily_kpis
+    script: scripts/py_daily_kpis.py
+    secret_ref: continuo-api-x
+    output_columns:
+      - name: revenue
+`
 	cases := map[string]struct {
-		files []ports.ProposedFile
-		want  string
+		original string // when set, replaces the target file on disk before the fix
+		files    []ports.ProposedFile
+		want     string
 	}{
+		"a secret_ref is added to the failing node": {
+			files: []ports.ProposedFile{{Path: target, Content: `nodes:
+  - schema: analytics
+    table: py_daily_kpis
+    script: scripts/py_daily_kpis.py
+    secret_ref: continuo-api-x
+    reads:
+      orders: select id from analytics.orders
+    output_columns:
+      - name: revenue_total
+`}},
+			want: "secret_ref",
+		},
+		"the secret_ref is re-pointed": {
+			original: apiNodeYAML,
+			files: []ports.ProposedFile{{Path: target, Content: `nodes:
+  - schema: analytics
+    table: py_daily_kpis
+    script: scripts/py_daily_kpis.py
+    secret_ref: continuo-api-y
+    output_columns:
+      - name: revenue_total
+`}},
+			want: "secret_ref",
+		},
+		"the secret_ref is removed": {
+			original: apiNodeYAML,
+			files: []ports.ProposedFile{{Path: target, Content: `nodes:
+  - schema: analytics
+    table: py_daily_kpis
+    script: scripts/py_daily_kpis.py
+    output_columns:
+      - name: revenue_total
+`}},
+			want: "secret_ref",
+		},
 		"the failing node is deleted": {
 			files: []ports.ProposedFile{{Path: target, Content: "nodes: []\n"}},
 			want:  "analytics.py_daily_kpis",
@@ -691,6 +742,9 @@ func TestPythonValidation_AnswerThatChangesNodeIdentity_Fails(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			root := pythonRepoTree(t)
+			if tc.original != "" {
+				writeRepoFile(t, root, target, tc.original)
+			}
 			svc, _, pkgr, _, arts := pythonSvc(t, root)
 			svc.LLM = &fakeLLM{queue: []ports.ProposeResult{{Files: tc.files, Confidence: "high"}}}
 
@@ -704,6 +758,28 @@ func TestPythonValidation_AnswerThatChangesNodeIdentity_Fails(t *testing.T) {
 			require.Empty(t, arts.written, "a refused answer writes no artifacts")
 		})
 	}
+}
+
+// TestPythonValidation_AnswerThatAddsANodeWithASecretRef_Fails pins that a fix
+// may add a node but never one that names a Secret: granting credentials is
+// not a repair of the failing node.
+func TestPythonValidation_AnswerThatAddsANodeWithASecretRef_Fails(t *testing.T) {
+	const target = "services/service-py/contracts/py_daily_kpis.yml"
+	root := pythonRepoTree(t)
+	svc, _, pkgr, _, arts := pythonSvc(t, root)
+	svc.LLM = &fakeLLM{queue: []ports.ProposeResult{{Files: []ports.ProposedFile{{Path: target, Content: correctedYAML + `  - schema: analytics
+    table: py_new_api
+    kind: python-api
+    script: scripts/py_new_api.py
+    secret_ref: continuo-api-new
+`}}, Confidence: "high"}}}
+
+	r, err := pythonValidationFixer{}.Propose(context.Background(), svc, pythonInput())
+	require.NoError(t, err)
+	require.Equal(t, proposal.StatusFailed, r.Proposal.Status)
+	require.Contains(t, r.Proposal.Rationale, "secret_ref")
+	require.Empty(t, pkgr.calls, "a refused answer must never be packaged")
+	require.Empty(t, arts.written, "a refused answer writes no artifacts")
 }
 
 // TestPythonValidation_AnswerAddsExplicitDefaultKind_Verifies covers the

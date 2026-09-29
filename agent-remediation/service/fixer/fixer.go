@@ -197,12 +197,17 @@ type Fixer interface {
 //     whatever reads its script performs; a python-csv node has no script at
 //     all, so its fix corrects the contract to match the csv file that is its
 //     source of truth — a narrower set of rules and a narrower post-apply
-//     guard than a python-node's, hence its own lane.
+//     guard than a python-node's, hence its own lane. A python-api node
+//     declares no reads and fetches its own data, so it takes the python-node
+//     contract-fix lane, which corrects only what validation checks
+//     (output_columns and config) and never its secret_ref.
 //   - parse: a dbt model is corrected in its SQL file; a python-node's
 //     rejected SQL is one of its reads in the contract yaml, so it takes the
 //     contract-fix lane. A python-csv node's only read is an S3 URI, never
 //     SQL, so the parser has nothing to reject in it; it keeps the
-//     source-file lane, which records why it cannot help.
+//     source-file lane, which records why it cannot help. A python-api node
+//     declares no reads at all, so it takes that same lane and is skipped
+//     with a recorded reason.
 //
 // Every other source ignores nodeType: the seed, duplicate-relation and
 // compile lanes each refuse a python node with a recorded reason, having no
@@ -237,11 +242,13 @@ func For(source, nodeType string) (Fixer, error) {
 var pythonParseLanes = map[pkg_model.NodeType]Fixer{
 	pkg_model.NodeTypePythonNode: pythonParseFixer{},
 	pkg_model.NodeTypePythonCsv:  parseFixer{},
+	pkg_model.NodeTypePythonApi:  parseFixer{},
 }
 
 var pythonValidationLanes = map[pkg_model.NodeType]Fixer{
 	pkg_model.NodeTypePythonNode: pythonValidationFixer{},
 	pkg_model.NodeTypePythonCsv:  csvValidationFixer{},
+	pkg_model.NodeTypePythonApi:  pythonValidationFixer{},
 }
 
 // Source discriminators carried on remediation.requested:v2.

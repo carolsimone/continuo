@@ -59,6 +59,7 @@ type contractNode struct {
 	Owner       string `yaml:"owner"`
 	Schedule    string `yaml:"schedule"`
 	Criticality string `yaml:"criticality"`
+	SecretRef   string `yaml:"secret_ref"`
 	// Reads is the entry's "reads:" mapping kept as a raw node, because only its
 	// keys are needed and its values are whatever the author wrote. Decoding it
 	// into a typed map would make one entry with an unexpected value shape fail
@@ -217,6 +218,7 @@ func (l *Locator) Declarations(yamlText string) ([]ports.NodeDeclaration, error)
 				Owner:       n.Owner,
 				Schedule:    n.Schedule,
 				Criticality: n.Criticality,
+				SecretRef:   n.SecretRef,
 			},
 			ReadKeys: readKeys(n.Reads),
 		})
