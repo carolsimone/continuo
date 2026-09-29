@@ -46,7 +46,8 @@ system identity.
 
 This command reports acceptance, not completion. On success the new run and its
 event are durably recorded; if the node is not in the topology, is not a dbt
-model or seed, or its service defines no full_refresh command, the failure is
+model or seed, or its service's governing command block defines no
+full_refresh (model) or seed_full_refresh (seed) command, the failure is
 surfaced asynchronously downstream, not by this command. Check the outcome
 with "node history".
 

@@ -32,18 +32,20 @@ operations (`run`, `seed`, `snapshot`, `seed_build`, `test`, `build`,
 `compile`, `parse`) or execution-controller refuses to boot. `{{ node }}` and
 `{{ target_schema }}` placeholders are substituted at dispatch time.
 
-Your `seed` command must rebuild the table — `dbt seed --full-refresh`, not a
-plain `dbt seed` — so a production seed load always replaces the table
-definition instead of truncating into the old one; a seed whose columns
-changed would otherwise fail to load into it.
+Your `seed` command is a NORMAL, non-destructive load — plain `dbt seed`, not
+`--full-refresh`. It inserts new/changed rows without dropping the table, and
+it is what execution-controller runs for every automatic, scheduled or
+promoted-release seed load.
 
-Your image should also provide a `full_refresh` command: a model-rebuild verb
-(e.g. `dbt run --full-refresh --select <node>`) that execution-controller
-resolves a node's `full_refresh` operation to. Unlike the required operations
-above, `full_refresh` is optional — a block that omits it still boots — but a
-service without it cannot serve full-refresh requests for its models:
-execution-controller fails those requests permanently rather than falling
-back to another block's command.
+Your image should also provide a model-rebuild verb (backs the `full_refresh`
+command, e.g. `dbt run --full-refresh --select <node>`) and a seed-rebuild verb
+(backs the `seed_full_refresh` command, e.g. `dbt seed --full-refresh --select
+<node>`). Unlike the required operations above, `full_refresh` and
+`seed_full_refresh` are both optional — a block that omits either still boots —
+but they are used only by the explicit, operator-initiated single-node
+full-refresh operation, and are required per-service only for that operation
+to succeed: a service missing the one its node kind needs fails those requests
+permanently, with no fallback to another block's command.
 
 Your image must therefore contain a working dbt project (or a wrapper that
 behaves like one) at the path your commands assume, with a `profiles.yml`

@@ -56,7 +56,7 @@ func TestLoad_EmptyPathUsesDefaults(t *testing.T) {
 func TestLoad_MissingFileUsesDefaults(t *testing.T) {
 	r, err := Load(filepath.Join(t.TempDir(), "does-not-exist.yaml"), testLogger())
 	require.NoError(t, err)
-	assert.Equal(t, []string{"dbt", "seed", "--full-refresh", "--select", "t"},
+	assert.Equal(t, []string{"dbt", "seed", "--select", "t"},
 		mustNodeCommand(t, r, "svc", pkg_model.OperationRun, pkg_model.NodeTypeDbtSeed, "t"))
 }
 
@@ -472,6 +472,29 @@ func TestLoad_FullRefreshTemplateIsValidated(t *testing.T) {
 			_, err := Load(p, testLogger())
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "default.full_refresh")
+		})
+	}
+}
+
+// TestLoad_SeedFullRefreshTemplateIsValidated mirrors
+// TestLoad_FullRefreshTemplateIsValidated for the seed_full_refresh key: it is
+// optional, but a present template still passes the same per-template checks
+// (non-empty argv, required/allowed placeholders, parse-context match).
+func TestLoad_SeedFullRefreshTemplateIsValidated(t *testing.T) {
+	cases := map[string]string{
+		"missing node placeholder": `seed_full_refresh: ["dbt", "seed", "--full-refresh"]`,
+		"unknown placeholder":      `seed_full_refresh: ["dbt", "seed", "--select", "{{ node }}", "{{ target_schema }}"]`,
+		"empty":                    `seed_full_refresh: []`,
+		"parse-context mismatch":   `seed_full_refresh: ["dbt", "seed", "--full-refresh", "--target", "x", "--select", "{{ node }}"]`,
+	}
+	for name, line := range cases {
+		t.Run(name, func(t *testing.T) {
+			body := completeDefault + "  " + line + "\n"
+			p := filepath.Join(t.TempDir(), "c.yaml")
+			require.NoError(t, os.WriteFile(p, []byte(body), 0o600))
+			_, err := Load(p, testLogger())
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "default.seed_full_refresh")
 		})
 	}
 }

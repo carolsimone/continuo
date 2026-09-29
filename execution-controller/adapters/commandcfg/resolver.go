@@ -41,10 +41,13 @@ func (r *Resolver) template(serviceName string, pick func(*opSet) []string) []st
 }
 
 // NodeCommand resolves the argv for op against node. OperationRun dispatches on
-// nt (model/seed/snapshot); OperationTest and OperationBuild resolve a fixed key
-// regardless of nt; OperationFullRefresh is resolved by fullRefreshCommand. The
-// default block is always complete (built-in when no file, validated at load
-// when a file exists), so the run/test/build templates are never nil.
+// nt (model/seed/snapshot) — a seed resolves to the block's plain,
+// non-destructive Seed template, never SeedFullRefresh; OperationTest and
+// OperationBuild resolve a fixed key regardless of nt; OperationFullRefresh is
+// resolved by fullRefreshCommand, which resolves a model to FullRefresh and a
+// seed to SeedFullRefresh. The default block is always complete (built-in when
+// no file, validated at load when a file exists), so the run/test/build
+// templates are never nil.
 func (r *Resolver) NodeCommand(serviceName string, op pkg_model.Operation, nt pkg_model.NodeType, node string) ([]string, error) {
 	var pick func(*opSet) []string
 	switch op {
@@ -69,18 +72,24 @@ func (r *Resolver) NodeCommand(serviceName string, op pkg_model.Operation, nt pk
 	return substitute(r.template(serviceName, pick), map[string]string{"node": node}), nil
 }
 
-// fullRefreshCommand resolves a full refresh. A seed uses the seed template,
-// which rebuilds the table on every production load. A model uses the
-// full_refresh template of the block that governs the service — its override
-// when it has one, else the default — and never falls through from an override
-// to the default, whose binary the team's image may not carry. Every failure
-// wraps events.ErrPermanent: no retry can supply a missing command.
+// fullRefreshCommand resolves a full refresh: a model to its FullRefresh
+// template, a seed to its SeedFullRefresh template — never to the plain Run/Seed
+// template, which is the non-destructive command an automatic load uses. Either
+// template is resolved from the block that governs the service — its override
+// when it has one, else the default — and this never falls through from an
+// override to the default, whose binary the team's image may not carry. Every
+// failure wraps events.ErrPermanent: no retry can supply a missing command.
 func (r *Resolver) fullRefreshCommand(serviceName string, nt pkg_model.NodeType, node string) ([]string, error) {
 	vals := map[string]string{"node": node}
+	var pick func(*opSet) []string
+	var key string
 	switch nt {
-	case pkg_model.NodeTypeDbtSeed:
-		return substitute(r.template(serviceName, func(o *opSet) []string { return o.Seed }), vals), nil
 	case pkg_model.NodeTypeDbtModel:
+		pick = func(o *opSet) []string { return o.FullRefresh }
+		key = "full_refresh"
+	case pkg_model.NodeTypeDbtSeed:
+		pick = func(o *opSet) []string { return o.SeedFullRefresh }
+		key = "seed_full_refresh"
 	default:
 		return nil, fmt.Errorf("%w: full refresh is not supported for node type %q", events.ErrPermanent, nt)
 	}
@@ -88,10 +97,11 @@ func (r *Resolver) fullRefreshCommand(serviceName string, nt pkg_model.NodeType,
 	if ops := r.cfg.Services[serviceName]; ops != nil {
 		block, name = ops, "services."+serviceName
 	}
-	if block.FullRefresh == nil {
-		return nil, fmt.Errorf("%w: dbt-commands %s defines no full_refresh command", events.ErrPermanent, name)
+	tpl := pick(block)
+	if tpl == nil {
+		return nil, fmt.Errorf("%w: dbt-commands %s defines no %s command", events.ErrPermanent, name, key)
 	}
-	return substitute(block.FullRefresh, vals), nil
+	return substitute(tpl, vals), nil
 }
 
 // SeedBuildCommand resolves the argv for building a seed into targetSchema.

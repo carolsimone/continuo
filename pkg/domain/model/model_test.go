@@ -44,7 +44,7 @@ func TestNodeType_Command_DbtModel(t *testing.T) {
 
 func TestNodeType_Command_DbtSeed(t *testing.T) {
 	got := model.NodeTypeDbtSeed.Command("my_seed")
-	want := []string{"dbt", "seed", "--full-refresh", "--select", "my_seed"}
+	want := []string{"dbt", "seed", "--select", "my_seed"}
 	assertSliceEqual(t, want, got)
 }
 

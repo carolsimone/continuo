@@ -156,16 +156,23 @@ func TestCreateQueryJob_FullRefresh_UsesServiceTemplate(t *testing.T) {
 		job.Spec.Template.Spec.Containers[0].Command)
 }
 
+// TestCreateQueryJob_FullRefresh_MissingKeyIsPermanentAndCreatesNoJob is the
+// P2 regression: a seed full-refresh against a block that has no
+// seed_full_refresh — customNameDialectYAML's customname override defines
+// every required key but neither full_refresh nor seed_full_refresh — fails
+// permanently and dispatches no Job. It never silently falls back to the
+// block's plain seed command.
 func TestCreateQueryJob_FullRefresh_MissingKeyIsPermanentAndCreatesNoJob(t *testing.T) {
 	t.Setenv("DOCKERHUB_USERNAME", "")
-	c := newDialectTestClient(t, customNameDialectYAML) // its customname block has no full_refresh
+	c := newDialectTestClient(t, customNameDialectYAML) // its customname block has no seed_full_refresh
 	err := c.CreateQueryJob(context.Background(), JobParams{
-		JobName: "j8", ServiceName: "customname", TableName: "orders",
-		NodeType: pkg_model.NodeTypeDbtModel, ImageTag: "t1", Namespace: "default",
+		JobName: "j8", ServiceName: "customname", TableName: "fx",
+		NodeType: pkg_model.NodeTypeDbtSeed, ImageTag: "t1", Namespace: "default",
 		Operation: pkg_model.OperationFullRefresh,
 	})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, events.ErrPermanent)
+	assert.Contains(t, err.Error(), "services.customname defines no seed_full_refresh command")
 	exists, existsErr := c.JobExists(context.Background(), "default", "j8")
 	require.NoError(t, existsErr)
 	assert.False(t, exists)

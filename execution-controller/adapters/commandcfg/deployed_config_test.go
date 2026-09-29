@@ -10,8 +10,9 @@ import (
 // The shipped Helm config is the source of truth for the Hetzner ConfigMap.
 // This pins that it always loads and that finance resolves to the customname-dbt
 // dialect for every operation while other services fall back to the default; it
-// also pins that both the default and finance blocks always full-refresh a
-// seed load and define full_refresh for models.
+// also pins that both the default and finance blocks load a seed as a plain,
+// non-destructive dbt seed and define full_refresh (model) and
+// seed_full_refresh (seed) for the explicit single-node full-refresh operation.
 func TestDeployedConfigResolvesFinanceDialect(t *testing.T) {
 	path := filepath.Join("..", "..", "..", "deploy", "continuo", "files", "dbt-commands.yaml")
 
@@ -42,7 +43,10 @@ func TestDeployedConfigResolvesFinanceDialect(t *testing.T) {
 	}
 
 	gotSeed := mustNodeCommand(t, r, "finance", pkg_model.OperationRun, pkg_model.NodeTypeDbtSeed, "seed_fx_rates_eur")
-	assertArgv(t, "finance seed", gotSeed, []string{"customname-dbt", "reload-seed", "seed_fx_rates_eur"})
+	assertArgv(t, "finance seed", gotSeed, []string{"customname-dbt", "load-seed", "seed_fx_rates_eur"})
+
+	gotSeedFR := mustNodeCommand(t, r, "finance", pkg_model.OperationFullRefresh, pkg_model.NodeTypeDbtSeed, "seed_fx_rates_eur")
+	assertArgv(t, "finance seed full_refresh", gotSeedFR, []string{"customname-dbt", "reload-seed", "seed_fx_rates_eur"})
 
 	gotFR := mustNodeCommand(t, r, "finance", pkg_model.OperationFullRefresh, pkg_model.NodeTypeDbtModel, "fx_transactions_eur")
 	assertArgv(t, "finance full_refresh", gotFR, []string{"customname-dbt", "rebuild-model", "fx_transactions_eur"})
@@ -52,7 +56,10 @@ func TestDeployedConfigResolvesFinanceDialect(t *testing.T) {
 	assertArgv(t, "service-3 run fallback", gotOther, []string{"dbt", "run", "--select", "some_model"})
 
 	gotOtherSeed := mustNodeCommand(t, r, "service-3", pkg_model.OperationRun, pkg_model.NodeTypeDbtSeed, "s")
-	assertArgv(t, "service-3 seed", gotOtherSeed, []string{"dbt", "seed", "--full-refresh", "--select", "s"})
+	assertArgv(t, "service-3 seed", gotOtherSeed, []string{"dbt", "seed", "--select", "s"})
+
+	gotOtherSeedFR := mustNodeCommand(t, r, "service-3", pkg_model.OperationFullRefresh, pkg_model.NodeTypeDbtSeed, "s")
+	assertArgv(t, "service-3 seed full_refresh", gotOtherSeedFR, []string{"dbt", "seed", "--full-refresh", "--select", "s"})
 
 	gotOtherFR := mustNodeCommand(t, r, "service-3", pkg_model.OperationFullRefresh, pkg_model.NodeTypeDbtModel, "m")
 	assertArgv(t, "service-3 full_refresh", gotOtherFR, []string{"dbt", "run", "--full-refresh", "--select", "m"})

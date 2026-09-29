@@ -99,13 +99,15 @@ func ParseNodeType(s string) (NodeType, error) {
 }
 
 // Command returns the container command slice for this NodeType.
-// This is the single source of truth for the dbt CLI mapping. A seed always
-// loads with --full-refresh so the production table is rebuilt from the CSV,
-// picking up column changes instead of truncating into the old definition.
+// This is the single source of truth for the dbt CLI mapping. A production
+// seed load is a normal, non-destructive `dbt seed`: it inserts new/changed
+// rows without dropping the table. It is NOT a full refresh — rebuilding a
+// seed from scratch (`dbt seed --full-refresh`) is a separate, explicit
+// operation, never issued by an automatic or scheduled load.
 func (t NodeType) Command(tableName string) []string {
 	switch t {
 	case NodeTypeDbtSeed:
-		return []string{"dbt", "seed", "--full-refresh", "--select", tableName}
+		return []string{"dbt", "seed", "--select", tableName}
 	case NodeTypeDbtSnapshot:
 		return []string{"dbt", "snapshot", "--select", tableName}
 	default: // NodeTypeDbtModel

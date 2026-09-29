@@ -196,27 +196,29 @@ func TestResolver_TemplateNotMutatedAcrossCalls(t *testing.T) {
 
 const fullRefreshYAML = `
 default:
-  run:          ["dbt", "run", "--select", "{{ node }}"]
-  seed:         ["dbt", "seed", "--full-refresh", "--select", "{{ node }}"]
-  snapshot:     ["dbt", "snapshot", "--select", "{{ node }}"]
-  test:         ["dbt", "test", "--select", "{{ node }}"]
-  build:        ["dbt", "build", "--select", "{{ node }}"]
-  seed_build:   ["dbt", "seed", "--select", "{{ node }}"]
-  full_refresh: ["dbt", "run", "--full-refresh", "--select", "{{ node }}"]
-  parse:        ["dbt", "parse"]
+  run:               ["dbt", "run", "--select", "{{ node }}"]
+  seed:              ["dbt", "seed", "--select", "{{ node }}"]
+  snapshot:          ["dbt", "snapshot", "--select", "{{ node }}"]
+  test:              ["dbt", "test", "--select", "{{ node }}"]
+  build:             ["dbt", "build", "--select", "{{ node }}"]
+  seed_build:        ["dbt", "seed", "--select", "{{ node }}"]
+  full_refresh:      ["dbt", "run", "--full-refresh", "--select", "{{ node }}"]
+  seed_full_refresh: ["dbt", "seed", "--full-refresh", "--select", "{{ node }}"]
+  parse:             ["dbt", "parse"]
   compile:
     command:       ["dbt", "compile"]
     manifest_path: "/project/target/manifest.json"
 services:
   customname:
-    run:          ["customname-dbt", "run-model", "{{ node }}"]
-    seed:         ["customname-dbt", "reload-seed", "{{ node }}"]
-    snapshot:     ["customname-dbt", "capture-snapshot", "{{ node }}"]
-    test:         ["customname-dbt", "test-model", "{{ node }}"]
-    build:        ["customname-dbt", "build-model", "{{ node }}"]
-    seed_build:   ["customname-dbt", "load-seed", "{{ node }}"]
-    full_refresh: ["customname-dbt", "rebuild-model", "{{ node }}"]
-    parse:        ["customname-dbt", "parse-project"]
+    run:               ["customname-dbt", "run-model", "{{ node }}"]
+    seed:              ["customname-dbt", "load-seed", "{{ node }}"]
+    snapshot:          ["customname-dbt", "capture-snapshot", "{{ node }}"]
+    test:              ["customname-dbt", "test-model", "{{ node }}"]
+    build:             ["customname-dbt", "build-model", "{{ node }}"]
+    seed_build:        ["customname-dbt", "load-seed", "{{ node }}"]
+    full_refresh:      ["customname-dbt", "rebuild-model", "{{ node }}"]
+    seed_full_refresh: ["customname-dbt", "reload-seed", "{{ node }}"]
+    parse:             ["customname-dbt", "parse-project"]
     compile:
       command:       ["customname-dbt", "compile-project"]
       manifest_path: "/project/target/manifest.json"
@@ -243,10 +245,10 @@ func TestNodeCommand_FullRefresh(t *testing.T) {
 		mustNodeCommand(t, r, "customname", pkg_model.OperationFullRefresh, pkg_model.NodeTypeDbtModel, "orders"))
 	assert.Equal(t, []string{"customname-dbt", "reload-seed", "fx"},
 		mustNodeCommand(t, r, "customname", pkg_model.OperationFullRefresh, pkg_model.NodeTypeDbtSeed, "fx"),
-		"a seed full refresh resolves to the seed template")
-	assert.Equal(t, []string{"legacy-dbt", "seed", "fx"},
-		mustNodeCommand(t, r, "legacy", pkg_model.OperationFullRefresh, pkg_model.NodeTypeDbtSeed, "fx"),
-		"a seed full refresh needs no full_refresh key")
+		"a seed full refresh resolves to the customname block's own seed_full_refresh, not its seed")
+	assert.Equal(t, []string{"customname-dbt", "load-seed", "fx"},
+		mustNodeCommand(t, r, "customname", pkg_model.OperationRun, pkg_model.NodeTypeDbtSeed, "fx"),
+		"an ordinary seed run resolves to the plain seed command")
 }
 
 func TestNodeCommand_FullRefresh_ServiceBlockWithoutKeyIsPermanent(t *testing.T) {
@@ -256,6 +258,21 @@ func TestNodeCommand_FullRefresh_ServiceBlockWithoutKeyIsPermanent(t *testing.T)
 	assert.ErrorIs(t, err, pkgevents.ErrPermanent)
 	assert.Contains(t, err.Error(), "services.legacy defines no full_refresh command",
 		"must not fall through to the default block's plain dbt")
+}
+
+// TestNodeCommand_SeedFullRefresh_LegacyBlockWithoutKeyIsPermanent is the P2
+// regression test: a legacy operator block with every required key but no
+// seed_full_refresh must fail a seed full-refresh with ErrPermanent naming the
+// block and the missing key — never silently reuse the plain seed command
+// (which would record a full_refresh operation while only doing a plain
+// reload).
+func TestNodeCommand_SeedFullRefresh_LegacyBlockWithoutKeyIsPermanent(t *testing.T) {
+	r := loadYAML(t, fullRefreshYAML)
+	_, err := r.NodeCommand("legacy", pkg_model.OperationFullRefresh, pkg_model.NodeTypeDbtSeed, "fx")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, pkgevents.ErrPermanent)
+	assert.Contains(t, err.Error(), "services.legacy defines no seed_full_refresh command",
+		"must not fall back to the legacy block's plain seed command, and must not fall through to the default block")
 }
 
 func TestNodeCommand_FullRefresh_UnsupportedNodeTypeIsPermanent(t *testing.T) {
@@ -270,6 +287,10 @@ func TestBuiltinDefault_FullRefreshAndSeed(t *testing.T) {
 	r := Defaults()
 	assert.Equal(t, []string{"dbt", "run", "--full-refresh", "--select", "orders"},
 		mustNodeCommand(t, r, "svc", pkg_model.OperationFullRefresh, pkg_model.NodeTypeDbtModel, "orders"))
+	assert.Equal(t, []string{"dbt", "seed", "--select", "fx"},
+		mustNodeCommand(t, r, "svc", pkg_model.OperationRun, pkg_model.NodeTypeDbtSeed, "fx"),
+		"an ordinary seed run stays plain, non-destructive")
 	assert.Equal(t, []string{"dbt", "seed", "--full-refresh", "--select", "fx"},
-		mustNodeCommand(t, r, "svc", pkg_model.OperationRun, pkg_model.NodeTypeDbtSeed, "fx"))
+		mustNodeCommand(t, r, "svc", pkg_model.OperationFullRefresh, pkg_model.NodeTypeDbtSeed, "fx"),
+		"an explicit seed full refresh resolves to seed_full_refresh")
 }

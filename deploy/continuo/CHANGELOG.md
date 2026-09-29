@@ -13,10 +13,7 @@ shipped in those.
 ## [Unreleased]
 
 ### Added
-- `dbt-commands.yaml` accepts an optional `full_refresh` key per block: the command that rebuilds one dbt model from scratch, used by the new single-node full refresh. A block without it keeps loading; full refresh of models is then unavailable for the services it covers.
-
-### Changed
-- The shipped `dbt-commands.yaml` loads production seeds with `dbt seed --full-refresh`, so a seed whose columns changed is rebuilt instead of failing its promotion run. Operators with their own dbt-commands ConfigMap should add `--full-refresh` (or their wrapper's equivalent) to `seed` and define `full_refresh`.
+- `dbt-commands.yaml` accepts two optional keys per block, both backing the new single-node full-refresh operation: `full_refresh` (rebuilds one dbt model from scratch) and `seed_full_refresh` (rebuilds one dbt seed from scratch). A block without one of them keeps loading; full refresh of that node kind is then unavailable for the services it covers. Production, scheduled and promoted-release seed loads are unaffected — they remain a normal, non-destructive `dbt seed`.
 
 ## [0.7.1] - 2026-09-24
 

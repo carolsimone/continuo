@@ -6,29 +6,31 @@ metadata:
 data:
   dbt-commands.yaml: |
     default:
-      run:          ["dbt", "run", "--select", "{{ node }}"]
-      seed:         ["dbt", "seed", "--full-refresh", "--select", "{{ node }}"]
-      snapshot:     ["dbt", "snapshot", "--select", "{{ node }}"]
-      test:         ["dbt", "test", "--select", "{{ node }}"]
-      build:        ["dbt", "build", "--select", "{{ node }}"]
-      seed_build:   ["dbt", "seed", "--select", "{{ node }}"]
-      full_refresh: ["dbt", "run", "--full-refresh", "--select", "{{ node }}"]
-      parse:        ["dbt", "parse"]
+      run:               ["dbt", "run", "--select", "{{ node }}"]
+      seed:              ["dbt", "seed", "--select", "{{ node }}"]
+      snapshot:          ["dbt", "snapshot", "--select", "{{ node }}"]
+      test:              ["dbt", "test", "--select", "{{ node }}"]
+      build:             ["dbt", "build", "--select", "{{ node }}"]
+      seed_build:        ["dbt", "seed", "--select", "{{ node }}"]
+      full_refresh:      ["dbt", "run", "--full-refresh", "--select", "{{ node }}"]
+      seed_full_refresh: ["dbt", "seed", "--full-refresh", "--select", "{{ node }}"]
+      parse:             ["dbt", "parse"]
       compile:
         command:       ["dbt", "compile", "--profiles-dir", "/project"]
         manifest_path: "/project/target/manifest.json"
     services:
       service-1:
-        run:          ["customname-dbt", "run", "--select", "{{ node }}"]
-        seed:         ["customname-dbt", "seed", "--full-refresh", "--select", "{{ node }}"]
-        snapshot:     ["customname-dbt", "snapshot", "--select", "{{ node }}"]
-        test:         ["customname-dbt", "test", "--select", "{{ node }}"]
-        build:        ["customname-dbt", "build", "--select", "{{ node }}"]
+        run:               ["customname-dbt", "run", "--select", "{{ node }}"]
+        seed:              ["customname-dbt", "seed", "--select", "{{ node }}"]
+        snapshot:          ["customname-dbt", "snapshot", "--select", "{{ node }}"]
+        test:              ["customname-dbt", "test", "--select", "{{ node }}"]
+        build:             ["customname-dbt", "build", "--select", "{{ node }}"]
         # seed_build reuses seed: plain dbt has no schema flag, so the always-set
         # DBT_TARGET_SCHEMA env var routes the candidate schema, not the argv.
-        seed_build:   ["customname-dbt", "seed", "--select", "{{ node }}"]
-        full_refresh: ["customname-dbt", "run", "--full-refresh", "--select", "{{ node }}"]
-        parse:        ["customname-dbt", "parse"]
+        seed_build:        ["customname-dbt", "seed", "--select", "{{ node }}"]
+        full_refresh:      ["customname-dbt", "run", "--full-refresh", "--select", "{{ node }}"]
+        seed_full_refresh: ["customname-dbt", "seed", "--full-refresh", "--select", "{{ node }}"]
+        parse:             ["customname-dbt", "parse"]
         compile:
           command:       ["customname-dbt", "compile", "--profiles-dir", "/project"]
           manifest_path: "/project/target/manifest.json"

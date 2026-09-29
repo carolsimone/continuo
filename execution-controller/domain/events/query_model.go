@@ -26,9 +26,10 @@ type QueryModel struct {
 	ImageTag      string
 	// Operation selects the dbt verb the executor runs for this node.
 	// pkg_model.OperationRun (empty) is the default: dbt run/seed/snapshot by
-	// NodeType. pkg_model.OperationTest runs `dbt test --select <node>`.
+	// NodeType — a seed load is plain, non-destructive `dbt seed`.
+	// pkg_model.OperationTest runs `dbt test --select <node>`.
 	// pkg_model.OperationFullRefresh rebuilds a model (full_refresh command)
-	// or seed (seed command) from scratch.
+	// or seed (seed_full_refresh command) from scratch.
 	Operation pkg_model.Operation
 	// Mode carries the legacy promote-seed dispatch mode from a query.model:v1
 	// message produced by an older orchestrator. Empty for everything current.

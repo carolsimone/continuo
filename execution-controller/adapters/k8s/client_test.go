@@ -23,7 +23,7 @@ func TestBuildPodSpec_CommandPerNodeType(t *testing.T) {
 		wantCommand []string
 	}{
 		{pkg_model.NodeTypeDbtModel, "orders", []string{"dbt", "run", "--select", "orders"}},
-		{pkg_model.NodeTypeDbtSeed, "my_seed", []string{"dbt", "seed", "--full-refresh", "--select", "my_seed"}},
+		{pkg_model.NodeTypeDbtSeed, "my_seed", []string{"dbt", "seed", "--select", "my_seed"}},
 		{pkg_model.NodeTypeDbtSnapshot, "my_snap", []string{"dbt", "snapshot", "--select", "my_snap"}},
 	}
 
