@@ -102,7 +102,7 @@ func TestE2E_DuplicateTable_RejectsBeforePromotion(t *testing.T) {
 			"owner":            "data-team",
 			"schedule":         "daily",
 			"criticality":      "SECONDARY",
-			"reads":            map[string]string{},
+			"reads":            map[string]string{"upstream": "select 1"}, // non-empty: a python node must declare a read; "select 1" has no FROM, so it introduces no cross-service upstream
 			"output_columns":   []map[string]any{{"name": "id", "type": "integer", "nullable": false}},
 			"source_hash":      sourceHash,
 			"shared_code_hash": sharedHash,
