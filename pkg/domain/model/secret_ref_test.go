@@ -40,10 +40,17 @@ func TestValidateApiSecretRef_SharedCases(t *testing.T) {
 	}
 }
 
-func TestValidateApiSecretRef_LengthCaseIsOverTheLimit(t *testing.T) {
+func TestValidateApiSecretRef_LengthBoundaries(t *testing.T) {
 	c := loadSecretRefCases(t)
-	long := c.Invalid[len(c.Invalid)-1]
-	if len(long) != 254 {
-		t.Fatalf("the length case must be 254 chars, is %d", len(long))
+	if len(c.Valid) == 0 || len(c.Invalid) == 0 {
+		t.Fatalf("fixture must carry both lists, has %d valid and %d invalid", len(c.Valid), len(c.Invalid))
+	}
+	atLimit := c.Valid[len(c.Valid)-1]
+	if len(atLimit) != 253 {
+		t.Fatalf("the last valid case must be the 253-char limit, is %d", len(atLimit))
+	}
+	overLimit := c.Invalid[len(c.Invalid)-1]
+	if len(overLimit) != 254 {
+		t.Fatalf("the last invalid case must be 254 chars, is %d", len(overLimit))
 	}
 }

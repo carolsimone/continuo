@@ -271,7 +271,7 @@ class CandidateManifestHandler:
                 )
                 return
 
-            topology.append({
+            entry = {
                 "unique_id":           node.unique_id,
                 "schema_name":         node.schema_name,
                 "table_name":          node.table_name,
@@ -287,7 +287,10 @@ class CandidateManifestHandler:
                 ],
                 "schedule":            node.schedule_name,
                 **artifact_keys,
-            })
+            }
+            if node.secret_ref:
+                entry["secret_ref"] = node.secret_ref
+            topology.append(entry)
 
         bundle = build_code_bundle(
             release_id,

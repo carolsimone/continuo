@@ -893,6 +893,30 @@ def test_a_python_kind_entry_is_published_as_a_python_node(tmp_path):
     assert topology[0]["original_file_path"] == "scripts/py_metrics.py"
 
 
+def _published_python_topology(tmp_path, entry):
+    publisher = MagicMock()
+    source = _source_of(ManifestFile(
+        path=_python_contract(tmp_path, entry), version="v1",
+        declared_service="service-py", kind=ManifestKind.PYTHON,
+    ))
+    _python_handler(source, publisher).handle(release_id="rel-1")
+    return publisher.publish_ok.call_args.kwargs["topology"]
+
+
+def test_a_python_api_secret_ref_is_published_on_its_topology_entry(tmp_path):
+    entry = _python_entry(kind="python-api", reads={}, secret_ref="continuo-api-fx")
+    (node,) = _published_python_topology(tmp_path, entry)
+    assert node["node_type"] == "python-api"
+    assert node["secret_ref"] == "continuo-api-fx"
+    assert node["upstream_unique_ids"] == []
+
+
+def test_a_node_without_a_secret_ref_publishes_no_secret_ref_key(tmp_path):
+    entry = _python_entry(kind="python-api", reads={})
+    (node,) = _published_python_topology(tmp_path, entry)
+    assert "secret_ref" not in node
+
+
 def test_a_release_mixing_old_and_new_python_contracts_publishes_python_node(tmp_path):
     """Every release re-parses every service's stored production contract, so a
     contract written by an older runtime (kind python-model) sits beside a new

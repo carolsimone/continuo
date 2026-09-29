@@ -2,7 +2,7 @@ import pytest
 
 from domain.contract_vocabulary import NODE_TYPE_RUNTIME, NodeRuntime, NodeType
 from domain.exceptions import MalformedContractError
-from service.python_kind_rules import RULES, STORED_KIND_ALIASES, CsvRead, SqlReads, resolve_kind
+from service.python_kind_rules import RULES, STORED_KIND_ALIASES, CsvRead, NoReads, SqlReads, resolve_kind
 
 
 def test_every_python_node_type_has_rules():
@@ -44,3 +44,25 @@ def test_csv_read_has_no_dependency_sqls_and_carries_the_uri():
     parsed = CsvRead().parse({"csv": "s3://b/k.csv"}, "L")
     assert parsed.dependency_sqls == []
     assert parsed.csv_source == "s3://b/k.csv"
+
+
+def test_python_api_rules():
+    rules = RULES[NodeType.PYTHON_API]
+    assert rules.script_required is True
+    assert isinstance(rules.reads, NoReads)
+    assert rules.secret_allowed is True
+
+
+def test_only_python_api_may_name_a_secret():
+    assert {t for t, r in RULES.items() if r.secret_allowed} == {NodeType.PYTHON_API}
+
+
+def test_no_reads_accepts_empty_and_yields_no_dependencies():
+    parsed = NoReads().parse({}, "L")
+    assert parsed.reads == {} and parsed.dependency_sqls == [] and parsed.csv_source == ""
+
+
+@pytest.mark.parametrize("raw", [{"x": "select 1"}, None, [], "select 1"])
+def test_no_reads_rejects_anything_but_an_empty_mapping(raw):
+    with pytest.raises(MalformedContractError, match="python-api node declares no reads"):
+        NoReads().parse(raw, "L")

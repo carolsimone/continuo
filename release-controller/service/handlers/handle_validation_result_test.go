@@ -786,6 +786,7 @@ type promotedNodeWire struct {
 	Schedule          string   `json:"schedule"`
 	Changed           bool     `json:"changed"`
 	OriginalFilePath  string   `json:"original_file_path"`
+	SecretRef         string   `json:"secret_ref"`
 }
 
 // promotedPayload is the JSON shape released into release.promoted:v1.
@@ -974,6 +975,45 @@ func TestHandleValidationResult_Promote_EmitsOriginalFilePath(t *testing.T) {
 	require.NoError(t, json.Unmarshal(last.Payload, &p))
 	require.Len(t, p.Topology, 1)
 	assert.Equal(t, "models/a.sql", p.Topology[0].OriginalFilePath)
+}
+
+// TestHandleValidationResult_Promote_EmitsSecretRef verifies that promotion
+// carries a python-api node's secret_ref through to release.promoted:v1 and
+// omits the key for a node that names none.
+func TestHandleValidationResult_Promote_EmitsSecretRef(t *testing.T) {
+	deps, store := newDeps(time.Unix(100, 0).UTC())
+	deps.Bucket = "continuo"
+
+	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
+		Service: "svc-a", ReleaseID: "rA", ImageTag: "sha-a", Repo: "acme/demo", CommitSHA: "deadbeef",
+	}))
+	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
+	require.NoError(t, handlers.HandleCompileResult(context.Background(), deps, handlers.HandleCompileResultInput{
+		ReleaseID: "rA", Status: "ok",
+	}))
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rA", Status: "ok",
+		Topology: release.Topology{
+			{UniqueID: "a", ServiceName: "svc-a", NodeType: "python-api", SecretRef: "continuo-api-fx", UpstreamUniqueIDs: []string{}},
+			{UniqueID: "b", ServiceName: "svc-a", NodeType: "python-node", UpstreamUniqueIDs: []string{"a"}},
+		},
+	}))
+	seedValidationNodes(t, deps, "rA", []handlers.NodeResult{{NodeID: "a", Status: "ok"}, {NodeID: "b", Status: "ok"}})
+	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
+		ReleaseID: "rA", AggregateStatus: "ok",
+	}))
+
+	last := findEntry(t, store, streams.ReleasePromotedV1)
+	var p promotedPayload
+	require.NoError(t, json.Unmarshal(last.Payload, &p))
+	require.Len(t, p.Topology, 2)
+	byID := map[string]promotedNodeWire{}
+	for _, n := range p.Topology {
+		byID[n.UniqueID] = n
+	}
+	assert.Equal(t, "continuo-api-fx", byID["a"].SecretRef)
+	assert.Equal(t, "", byID["b"].SecretRef)
+	assert.Equal(t, 1, strings.Count(string(last.Payload), "secret_ref"), "an empty ref is omitted from the wire")
 }
 
 // TestHandleValidationResult_Promote_EmitsTestCount verifies that promotion
