@@ -369,6 +369,9 @@ func TestPythonKindEnv_OnlyCsvGetsS3Credentials(t *testing.T) {
 	if got := pythonKindEnv[pkg_model.NodeTypePythonCsv](); len(got) != len(s3CredEnvVars()) {
 		t.Errorf("python-csv pod must receive the S3 credential env, got %v", got)
 	}
+	if got := pythonKindEnv[pkg_model.NodeTypePythonApi](); len(got) != 0 {
+		t.Errorf("python-api pod must not receive S3 credentials, got %v", got)
+	}
 }
 
 // TestCreateQueryJob_DbtModel_PodSpecUnchanged pins the branch as inert for
@@ -398,4 +401,70 @@ func TestCreateQueryJob_DbtModel_PodSpecUnchanged(t *testing.T) {
 	assert.Len(t, job.Spec.Template.Spec.InitContainers, 1,
 		"the dbt parse-cache initContainer must still be attached")
 	assert.NotContains(t, job.Labels, "runtime", "dbt Jobs carry no runtime label")
+}
+
+func apiParams() JobParams {
+	p := pythonParams()
+	p.NodeType = pkg_model.NodeTypePythonApi
+	p.TableName = "fx"
+	return p
+}
+
+func TestBuildPythonPodSpec_PythonApiWithoutSecretGetsOnlyTheWarehouse(t *testing.T) {
+	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "warehouse-conn")
+	spec, err := buildPythonPodSpec(apiParams())
+	require.NoError(t, err)
+	require.Len(t, spec.Containers[0].EnvFrom, 1)
+	assert.Equal(t, "warehouse-conn", spec.Containers[0].EnvFrom[0].SecretRef.Name)
+}
+
+func TestBuildPythonPodSpec_PythonApiSecretComesBeforeTheWarehouse(t *testing.T) {
+	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "warehouse-conn")
+	p := apiParams()
+	p.SecretRef = "continuo-api-fx"
+	spec, err := buildPythonPodSpec(p)
+	require.NoError(t, err)
+	from := spec.Containers[0].EnvFrom
+	require.Len(t, from, 2)
+	// Kubernetes takes the LAST envFrom source on a duplicate key, so the
+	// warehouse Secret must come last to win over an API Secret's keys.
+	assert.Equal(t, "continuo-api-fx", from[0].SecretRef.Name)
+	assert.Equal(t, "warehouse-conn", from[1].SecretRef.Name)
+	assert.Nil(t, from[0].SecretRef.Optional, "a missing API Secret must fail the pod start, not be skipped")
+	env := envMap(spec.Containers[0].Env)
+	assert.Equal(t, "analytics.fx", env["NODE_ID"], "explicit env still set")
+}
+
+func TestBuildPythonPodSpec_SecretRefOnAnotherKindIsPermanent(t *testing.T) {
+	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "warehouse-conn")
+	p := pythonParams()
+	p.SecretRef = "continuo-api-fx"
+	_, err := buildPythonPodSpec(p)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, pkgevents.ErrPermanent)
+}
+
+func TestBuildPythonPodSpec_InvalidSecretRefIsPermanent(t *testing.T) {
+	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "warehouse-conn")
+	for _, ref := range []string{"continuo-app-credentials", "warehouse-conn", "continuo-api-FX"} {
+		p := apiParams()
+		p.SecretRef = ref
+		_, err := buildPythonPodSpec(p)
+		require.Error(t, err, ref)
+		assert.ErrorIs(t, err, pkgevents.ErrPermanent, ref)
+	}
+}
+
+func TestCreateQueryJob_PythonApi_AttachesTheSecret(t *testing.T) {
+	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "warehouse-conn")
+	client := newValidationTestClient()
+	p := apiParams()
+	p.SecretRef = "continuo-api-fx"
+
+	require.NoError(t, client.CreateQueryJob(context.Background(), p))
+
+	job := fetchJob(t, client, "default", "run-py-probe")
+	from := job.Spec.Template.Spec.Containers[0].EnvFrom
+	require.Len(t, from, 2)
+	assert.Equal(t, "continuo-api-fx", from[0].SecretRef.Name)
 }
