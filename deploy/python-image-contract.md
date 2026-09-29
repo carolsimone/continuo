@@ -59,6 +59,12 @@ runtime adapter baked into your image reads the deployment engine's native keys
 (`POSTGRES_HOST` / `POSTGRES_DB` / `POSTGRES_USER` / …, or that engine's
 equivalents). A missing one fails the node with a `LoadError`.
 
+A `python-api` node may also name a `continuo-api-*` Secret (`secret_ref` in its
+contract). That Secret is attached through `envFrom` as well, listed before the
+warehouse Secret, so its keys reach your container as env vars and a warehouse
+key of the same name wins. An explicitly set variable (`NODE_ID`, `TABLE_NAME`,
+`TARGET_SCHEMA`) beats both.
+
 `CONTRACT_DIR` and `APP_ROOT` are **not** set by the executor — the runtime base
 image declares them, because the image owns its own layout.
 
