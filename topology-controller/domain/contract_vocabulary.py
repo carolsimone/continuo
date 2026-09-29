@@ -53,6 +53,7 @@ class NodeType(StrEnum):
     DBT_SNAPSHOT = "dbt-snapshot"
     PYTHON_NODE = "python-node"
     PYTHON_CSV = "python-csv"
+    PYTHON_API = "python-api"
     DBT_TEST = "dbt-test"
 
 
@@ -60,5 +61,5 @@ NODE_TYPES_SUPPORTING_FULL_REFRESH = frozenset({NodeType.DBT_MODEL, NodeType.DBT
 """Values of NodeType a single-node full refresh can rebuild from scratch."""
 
 
-NODE_TYPE_RUNTIME: dict[NodeType, NodeRuntime] = {NodeType.DBT_MODEL: NodeRuntime.DBT, NodeType.DBT_SEED: NodeRuntime.DBT, NodeType.DBT_SNAPSHOT: NodeRuntime.DBT, NodeType.PYTHON_NODE: NodeRuntime.PYTHON, NodeType.PYTHON_CSV: NodeRuntime.PYTHON, NodeType.DBT_TEST: NodeRuntime.DBT}
+NODE_TYPE_RUNTIME: dict[NodeType, NodeRuntime] = {NodeType.DBT_MODEL: NodeRuntime.DBT, NodeType.DBT_SEED: NodeRuntime.DBT, NodeType.DBT_SNAPSHOT: NodeRuntime.DBT, NodeType.PYTHON_NODE: NodeRuntime.PYTHON, NodeType.PYTHON_CSV: NodeRuntime.PYTHON, NodeType.PYTHON_API: NodeRuntime.PYTHON, NodeType.DBT_TEST: NodeRuntime.DBT}
 """Which toolchain builds each NodeType."""

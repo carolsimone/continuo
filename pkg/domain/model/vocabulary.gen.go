@@ -207,6 +207,8 @@ const (
 	NodeTypePythonNode NodeType = "python-node"
 	// NodeTypePythonCsv — a contract-only python node that loads its table from one csv uri; it has no script.
 	NodeTypePythonCsv NodeType = "python-csv"
+	// NodeTypePythonApi — a python script node with no declared reads; its script fetches its own data and may receive one continuo-api-* Secret as env vars.
+	NodeTypePythonApi NodeType = "python-api"
 	// NodeTypeDbtTest — a dbt data test; exists only in candidate and current_prod topologies, where validation bind-checks its compiled SQL; never promoted to the orchestrator's graph and never scheduled.
 	NodeTypeDbtTest NodeType = "dbt-test"
 )
@@ -219,6 +221,7 @@ func NodeTypes() []NodeType {
 		NodeTypeDbtSnapshot,
 		NodeTypePythonNode,
 		NodeTypePythonCsv,
+		NodeTypePythonApi,
 		NodeTypeDbtTest,
 	}
 }
@@ -235,6 +238,8 @@ func (v NodeType) IsValid() bool {
 	case NodeTypePythonNode:
 		return true
 	case NodeTypePythonCsv:
+		return true
+	case NodeTypePythonApi:
 		return true
 	case NodeTypeDbtTest:
 		return true
@@ -266,6 +271,8 @@ func (v NodeType) Runtime() NodeRuntime {
 	case NodeTypePythonNode:
 		return NodeRuntimePython
 	case NodeTypePythonCsv:
+		return NodeRuntimePython
+	case NodeTypePythonApi:
 		return NodeRuntimePython
 	case NodeTypeDbtTest:
 		return NodeRuntimeDbt
