@@ -14,6 +14,9 @@
 //     constants for topology-controller.
 //   - topology-controller/domain/contract_vocabulary.py — Python vocabulary
 //     enums, the domain-layer counterpart of vocabulary.gen.go.
+//   - ui/src/server/generated/vocabulary.gen.ts — TypeScript unions and value
+//     lists for the ui's server and client, the counterpart of the Go and
+//     Python vocabulary files.
 package main
 
 import (
@@ -62,8 +65,12 @@ type VocabularyValue struct {
 	Value       string `yaml:"value"`
 	Const       string `yaml:"const"`
 	Healable    bool   `yaml:"healable"`
+	Runtime     string `yaml:"runtime"`
 	Description string `yaml:"description"`
 }
+
+// nodeRuntimeVocabulary names the vocabulary whose values a "runtime:" attribute may take.
+const nodeRuntimeVocabulary = "node_runtime"
 
 func main() {
 	if err := run(); err != nil {
@@ -147,7 +154,20 @@ func run() error {
 		return fmt.Errorf("write python vocabulary: %w", err)
 	}
 
-	for _, out := range []string{goOut, accessOut, vocabOut, vocabAccessOut, pyOut, pyVocabOut} {
+	tsVocabSrc, err := emitTSVocabulary(c)
+	if err != nil {
+		return fmt.Errorf("emit ts vocabulary: %w", err)
+	}
+	tsVocabDir := filepath.Join(root, "ui", "src", "server", "generated")
+	if err := os.MkdirAll(tsVocabDir, 0o750); err != nil {
+		return fmt.Errorf("make ts vocabulary dir: %w", err)
+	}
+	tsVocabOut := filepath.Join(tsVocabDir, "vocabulary.gen.ts")
+	if err := os.WriteFile(tsVocabOut, []byte(tsVocabSrc), 0o600); err != nil {
+		return fmt.Errorf("write ts vocabulary: %w", err)
+	}
+
+	for _, out := range []string{goOut, accessOut, vocabOut, vocabAccessOut, pyOut, pyVocabOut, tsVocabOut} {
 		fmt.Fprintln(os.Stderr, "gen-streams: wrote", out)
 	}
 	return nil
@@ -250,31 +270,76 @@ var All = []string{
 	return buf.String(), nil
 }
 
+// runtimeVocabulary returns the node_runtime vocabulary, or nil when the
+// contract declares none.
+func runtimeVocabulary(c *Contract) *Vocabulary {
+	for i := range c.Vocabularies {
+		if c.Vocabularies[i].Name == nodeRuntimeVocabulary {
+			return &c.Vocabularies[i]
+		}
+	}
+	return nil
+}
+
+func constForValue(v *Vocabulary, value string) string {
+	for _, val := range v.Values {
+		if val.Value == value {
+			return val.Const
+		}
+	}
+	return ""
+}
+
+func hasHealable(v Vocabulary) bool {
+	for _, val := range v.Values {
+		if val.Healable {
+			return true
+		}
+	}
+	return false
+}
+
+func usesRuntime(v Vocabulary) bool { return len(v.Values) > 0 && v.Values[0].Runtime != "" }
+
+// pyMember is the Python enum member name for a vocabulary value.
+func pyMember(value string) string { return strings.ToUpper(strings.ReplaceAll(value, "-", "_")) }
+
 // goVocabRow is one contract vocabulary shaped for the Go templates. Type is
 // repeated on every value row because a nested {{ range }} cannot reach the
 // enclosing vocabulary's fields.
 type goVocabRow struct {
 	Const, Name, Description string
+	HasHealable              bool
+	RuntimeType              string
 	Values                   []goVocabValueRow
 }
 
 type goVocabValueRow struct {
 	Const, Type, Value, Description string
 	Healable                        bool
+	RuntimeConst                    string
 }
 
 func goVocabRows(c *Contract) []goVocabRow {
+	rv := runtimeVocabulary(c)
 	var rows []goVocabRow
 	for _, v := range c.Vocabularies {
-		row := goVocabRow{Const: v.Const, Name: v.Name, Description: v.Description}
+		row := goVocabRow{Const: v.Const, Name: v.Name, Description: v.Description, HasHealable: hasHealable(v)}
+		if usesRuntime(v) && rv != nil {
+			row.RuntimeType = rv.Const
+		}
 		for _, val := range v.Values {
-			row.Values = append(row.Values, goVocabValueRow{
+			vr := goVocabValueRow{
 				Const:       v.Const + val.Const,
 				Type:        v.Const,
 				Value:       val.Value,
 				Description: val.Description,
 				Healable:    val.Healable,
-			})
+			}
+			if usesRuntime(v) && rv != nil {
+				vr.RuntimeConst = rv.Const + constForValue(rv, val.Runtime)
+			}
+			row.Values = append(row.Values, vr)
 		}
 		rows = append(rows, row)
 	}
@@ -326,6 +391,8 @@ func (v {{ .Const }}) IsValid() bool {
 	return false
 }
 
+{{- if .HasHealable }}
+
 // Healable reports whether the contract marks v as fixable by a change to the
 // user's source, and therefore worth a remediation attempt.
 func (v {{ .Const }}) Healable() bool {
@@ -339,6 +406,20 @@ func (v {{ .Const }}) Healable() bool {
 	}
 	return false
 }
+{{- end }}
+{{- if .RuntimeType }}
+
+// Runtime reports which toolchain builds a node of this type.
+func (v {{ .Const }}) Runtime() {{ .RuntimeType }} {
+	switch v {
+{{- range .Values }}
+	case {{ .Const }}:
+		return {{ .RuntimeConst }}
+{{- end }}
+	}
+	return ""
+}
+{{- end }}
 {{- end }}
 `
 	t, err := template.New("govocab").Parse(tmpl)
@@ -433,15 +514,32 @@ func emitPythonVocabulary(c *Contract) (string, error) {
 		Values             []pyValueRow
 		Healable           []string // "ParseFailureKind.INVALID_SQL", ...
 		HealableConst      string   // "PARSE_FAILURE_KIND_HEALABLE"
+		HasHealable        bool
+		RuntimeConst       string   // "NODE_TYPE_RUNTIME"
+		RuntimeType        string   // "NodeRuntime"
+		RuntimeEntries     []string // "NodeType.DBT_MODEL: NodeRuntime.DBT", ...
 	}
+	rv := runtimeVocabulary(c)
 	var vocabs []pyVocabRow
 	for _, v := range c.Vocabularies {
-		row := pyVocabRow{Const: v.Const, Description: v.Description, HealableConst: toScreamingSnake(v.Const) + "_HEALABLE"}
+		row := pyVocabRow{
+			Const:         v.Const,
+			Description:   v.Description,
+			HealableConst: toScreamingSnake(v.Const) + "_HEALABLE",
+			HasHealable:   hasHealable(v),
+		}
+		if usesRuntime(v) && rv != nil {
+			row.RuntimeConst = toScreamingSnake(v.Const) + "_RUNTIME"
+			row.RuntimeType = rv.Const
+		}
 		for _, val := range v.Values {
-			member := strings.ToUpper(val.Value)
+			member := pyMember(val.Value)
 			row.Values = append(row.Values, pyValueRow{Const: member, Value: val.Value})
 			if val.Healable {
 				row.Healable = append(row.Healable, v.Const+"."+member)
+			}
+			if usesRuntime(v) && rv != nil {
+				row.RuntimeEntries = append(row.RuntimeEntries, v.Const+"."+member+": "+rv.Const+"."+pyMember(val.Runtime))
 			}
 		}
 		vocabs = append(vocabs, row)
@@ -461,11 +559,15 @@ class {{ .Const }}(StrEnum):
     """{{ .Description }}"""
 {{ range .Values }}    {{ .Const }} = "{{ .Value }}"
 {{ end }}
-
+{{ if .HasHealable }}
 {{ .HealableConst }} = frozenset({ {{- range $i, $h := .Healable }}{{ if $i }}, {{ end }}{{ $h }}{{ end -}} })
 """Values of {{ .Const }} a remediation attempt can fix by changing the user's source."""
 
-{{ end }}`
+{{ end }}{{ if .RuntimeType }}
+{{ .RuntimeConst }}: dict[{{ .Const }}, {{ .RuntimeType }}] = { {{- range $i, $e := .RuntimeEntries }}{{ if $i }}, {{ end }}{{ $e }}{{ end -}} }
+"""Which toolchain builds each {{ .Const }}."""
+
+{{ end }}{{ end }}`
 
 	t, err := template.New("pyvocab").Parse(tmpl)
 	if err != nil {
@@ -473,6 +575,60 @@ class {{ .Const }}(StrEnum):
 	}
 	var buf strings.Builder
 	if err := t.Execute(&buf, struct{ Vocabularies []pyVocabRow }{vocabs}); err != nil {
+		return "", err
+	}
+	return strings.TrimRight(buf.String(), "\n") + "\n", nil
+}
+
+// emitTSVocabulary renders the contract vocabularies as TypeScript unions and
+// value lists for the ui, which imports them from both its server and client.
+func emitTSVocabulary(c *Contract) (string, error) {
+	type tsRow struct {
+		Const, ListConst, Union, List         string
+		RuntimeConst, RuntimeType, RuntimeMap string
+	}
+	rv := runtimeVocabulary(c)
+	var rows []tsRow
+	for _, v := range c.Vocabularies {
+		quoted := make([]string, 0, len(v.Values))
+		for _, val := range v.Values {
+			quoted = append(quoted, "'"+val.Value+"'")
+		}
+		row := tsRow{
+			Const:     v.Const,
+			ListConst: toScreamingSnake(v.Const) + "S",
+			Union:     strings.Join(quoted, " | "),
+			List:      strings.Join(quoted, ", "),
+		}
+		if usesRuntime(v) && rv != nil {
+			pairs := make([]string, 0, len(v.Values))
+			for _, val := range v.Values {
+				pairs = append(pairs, "'"+val.Value+"': '"+val.Runtime+"'")
+			}
+			row.RuntimeConst = toScreamingSnake(v.Const) + "_RUNTIME"
+			row.RuntimeType = rv.Const
+			row.RuntimeMap = strings.Join(pairs, ", ")
+		}
+		rows = append(rows, row)
+	}
+	tmpl := `// Code generated by gen-streams. DO NOT EDIT.
+// Source: pkg/streams/contract.yaml
+//
+// Closed value sets the backend services agree on, for the ui's server and
+// client alike.
+{{ range . }}
+export type {{ .Const }} = {{ .Union }};
+export const {{ .ListConst }}: readonly {{ .Const }}[] = [{{ .List }}];
+{{- if .RuntimeConst }}
+export const {{ .RuntimeConst }}: Readonly<Record<{{ .Const }}, {{ .RuntimeType }}>> = { {{ .RuntimeMap }} };
+{{- end }}
+{{ end }}`
+	t, err := template.New("tsvocab").Parse(tmpl)
+	if err != nil {
+		return "", err
+	}
+	var buf strings.Builder
+	if err := t.Execute(&buf, rows); err != nil {
 		return "", err
 	}
 	return strings.TrimRight(buf.String(), "\n") + "\n", nil
@@ -631,7 +787,7 @@ func validate(c *Contract) error {
 		}
 	}
 
-	valueRe := regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+	valueRe := regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
 	vocabNames := map[string]struct{}{}
 	vocabConsts := map[string]struct{}{}
 	for _, v := range c.Vocabularies {
@@ -666,6 +822,38 @@ func validate(c *Contract) error {
 				return fmt.Errorf("vocabulary %q: duplicate const %q", v.Name, val.Const)
 			}
 			consts[val.Const] = struct{}{}
+		}
+	}
+
+	runtimeValues := map[string]struct{}{}
+	runtimeDeclared := false
+	for _, v := range c.Vocabularies {
+		if v.Name == nodeRuntimeVocabulary {
+			runtimeDeclared = true
+			for _, val := range v.Values {
+				runtimeValues[val.Value] = struct{}{}
+			}
+			continue
+		}
+		withRuntime := 0
+		for _, val := range v.Values {
+			if val.Runtime != "" {
+				withRuntime++
+			}
+		}
+		if withRuntime == 0 {
+			continue
+		}
+		if withRuntime != len(v.Values) {
+			return fmt.Errorf("vocabulary %q: runtime must be set on every value or none", v.Name)
+		}
+		if !runtimeDeclared {
+			return fmt.Errorf("vocabulary %q uses runtime, so vocabulary %q must be declared before it", v.Name, nodeRuntimeVocabulary)
+		}
+		for i, val := range v.Values {
+			if _, ok := runtimeValues[val.Runtime]; !ok {
+				return fmt.Errorf("vocabulary %q value[%d]: runtime %q is not a value of %q", v.Name, i, val.Runtime, nodeRuntimeVocabulary)
+			}
 		}
 	}
 	return nil

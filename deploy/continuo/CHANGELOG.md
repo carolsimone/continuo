@@ -12,6 +12,10 @@ shipped in those.
 
 ## [Unreleased]
 
+### Changed
+- Default `validation.imageTag` is `v0.6.0` (continuo-python-runtime 0.6.0).
+- The python script node kind is `python-node`. Contracts written by continuo-python-runtime < 0.6.0 (kind `python-model`) keep working; stored node types are rewritten on upgrade by the release DB migration and orchestrator's startup data migration. Domain repos that upgrade to continuo-python-runtime 0.6.0 see every python node re-validated once on their next release (the node kind is part of its content hash).
+
 ## [0.7.1] - 2026-09-24
 
 ### Fixed

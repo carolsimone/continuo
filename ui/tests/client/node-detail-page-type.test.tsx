@@ -55,7 +55,7 @@ describe('NodeDetailPage node-type header', () => {
   });
 
   it('shows no source line for a non-csv node', async () => {
-    withMeta({ node_type: 'python-model', test_count: 0, test_count_known: true });
+    withMeta({ node_type: 'python-node', test_count: 0, test_count_known: true });
     const { container } = renderPage();
     await waitFor(() => {
       expect(container.querySelector('[data-node-type-icon="python"]')).not.toBeNull();

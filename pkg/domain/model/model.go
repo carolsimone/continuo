@@ -46,56 +46,24 @@ const (
 	AnnotationNodeID    = "continuo.dev/node-id"
 )
 
-// NodeType represents the resource type for a graph node (dbt-model/seed/snapshot,
-// or python-model/python-csv).
-type NodeType string
-
-const (
-	NodeTypeDbtModel    NodeType = "dbt-model"
-	NodeTypeDbtSeed     NodeType = "dbt-seed"
-	NodeTypeDbtSnapshot NodeType = "dbt-snapshot"
-	// NodeTypePythonModel is a Continuo-native python node (contract.yaml +
-	// user image). Validation routes it to build_from_columns; the executor
-	// runs the node's own image (built FROM continuo-python-runtime-<engine>)
-	// via buildPythonPodSpec.
-	NodeTypePythonModel NodeType = "python-model"
-	// NodeTypePythonCsv is a contract-only python node: no script — the
-	// runtime's csv loader materializes the declared table from the csv uri
-	// in the contract. Validation routes it to build_from_columns with a
-	// header check; the executor runs it like python-model plus S3
-	// credentials for the source fetch.
-	NodeTypePythonCsv NodeType = "python-csv"
-	// NodeTypeDbtTest is a dbt data test (generic or singular). It exists only
-	// in candidate and current_prod topologies, where validation bind-checks
-	// its compiled SQL; it is never promoted to the orchestrator's graph and
-	// never scheduled.
-	NodeTypeDbtTest NodeType = "dbt-test"
-)
-
-// AllNodeTypes enumerates every declared NodeType. The exhaustiveness guard
-// test pins its length; family-branching call sites use IsPython, never a
-// direct equality against one python kind.
-var AllNodeTypes = []NodeType{
-	NodeTypeDbtModel, NodeTypeDbtSeed, NodeTypeDbtSnapshot,
-	NodeTypePythonModel, NodeTypePythonCsv, NodeTypeDbtTest,
-}
+// NodeType, its values, NodeTypes(), IsValid() and Runtime() are generated from
+// the node_type vocabulary in pkg/streams/contract.yaml (vocabulary.gen.go).
 
 // IsPython reports whether this node type runs on the python runtime image
-// rather than the dbt toolchain — python-model and python-csv, the
-// contract-declared nodes.
+// rather than the dbt toolchain. Family-branching call sites use it, never a
+// direct equality against one python kind.
 func (t NodeType) IsPython() bool {
-	return t == NodeTypePythonModel || t == NodeTypePythonCsv
+	return t.Runtime() == NodeRuntimePython
 }
 
-// ParseNodeType converts a raw string to NodeType.
-// Returns an error for empty or unrecognised values.
+// ParseNodeType converts a raw string to NodeType. It returns an error naming
+// the value and every valid node type for an empty or undeclared value.
 func ParseNodeType(s string) (NodeType, error) {
-	switch NodeType(s) {
-	case NodeTypeDbtModel, NodeTypeDbtSeed, NodeTypeDbtSnapshot, NodeTypePythonModel, NodeTypePythonCsv, NodeTypeDbtTest:
-		return NodeType(s), nil
-	default:
-		return "", fmt.Errorf("unknown node_type %q", s)
+	t := NodeType(s)
+	if !t.IsValid() {
+		return "", fmt.Errorf("unknown node_type %q (valid: %v)", s, NodeTypes())
 	}
+	return t, nil
 }
 
 // Command returns the container command slice for this NodeType.

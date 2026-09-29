@@ -199,7 +199,7 @@ services:
       # side-loads it into the kind node cache, so validation pods must use the
       # cached image. Production omits this and defaults to Always.
       - VALIDATION_IMAGE_PULL_POLICY=IfNotPresent
-      - VALIDATION_IMAGE=ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.5.0
+      - VALIDATION_IMAGE=ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.6.0
       # Warehouse credentials for validation pods come from this Secret (envFrom).
       - VALIDATION_WAREHOUSE_SECRET=continuo-warehouse-validation
       - S3_SIDECAR_IMAGE=s3-sidecar:latest

@@ -38,7 +38,7 @@ type TaskExecutionRecorded struct {
 	ErrorMessage     string  `json:"error_message,omitempty"`
 	LogS3Key         string  `json:"log_s3_key,omitempty"`
 	// RunResultsURI is the S3 object key of the structured result block the
-	// pod printed on stdout, when it printed one. Python-model containers
+	// pod printed on stdout, when it printed one. Python-node containers
 	// always emit one; dbt containers never do, so the field is absent from
 	// their payloads.
 	RunResultsURI string `json:"run_results_uri,omitempty"`

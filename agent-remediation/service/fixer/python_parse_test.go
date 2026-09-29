@@ -34,13 +34,13 @@ const parseCorrectedYAML = `nodes:
       - name: revenue
 `
 
-// pythonParseInput is the trigger a python-model node's parse rejection
+// pythonParseInput is the trigger a python-node's parse rejection
 // produces: the parser's own text as the excerpt, the script as the file
 // path, and no log or bundle — the parse leg precedes both.
 func pythonParseInput() Input {
 	return Input{
 		Source: "parse", ReleaseID: "rel-1", NodeID: "analytics.py_daily_kpis",
-		NodeType: "python-model", Service: "svc-py", Repo: "o/demo", CommitSHA: "deadbeef",
+		NodeType: "python-node", Service: "svc-py", Repo: "o/demo", CommitSHA: "deadbeef",
 		FilePath:       "scripts/py_daily_kpis.py",
 		ErrorExcerpt:   "unqualified table reference `orders` in read `orders`. Line 1, Col: 16.",
 		ErrorSignature: "sig-parse-1", Attempt: 1,
@@ -48,11 +48,11 @@ func pythonParseInput() Input {
 }
 
 // TestFor_ParseDispatchesOnNodeType pins the parse lane's routing: a
-// python-model node's rejected SQL lives in its contract yaml, so it takes
+// python-node's rejected SQL lives in its contract yaml, so it takes
 // the contract-fix lane; every other node kind, python-csv included, keeps
 // the source-file lane.
 func TestFor_ParseDispatchesOnNodeType(t *testing.T) {
-	py, err := For("parse", "python-model")
+	py, err := For("parse", "python-node")
 	require.NoError(t, err)
 	require.IsType(t, pythonParseFixer{}, py)
 

@@ -44,14 +44,14 @@ const csvCorrectedYAML = `nodes:
 `
 
 // csvSiblingYAML is the second node declared in the same contract directory:
-// a python-model node, not the csv node under repair, but packaged and
+// a python-node, not the csv node under repair, but packaged and
 // re-validated alongside it. It carries kind and script explicitly so a test
 // that edits it while preserving its identity can do so without those fields
 // appearing to change from their zero value.
 const csvSiblingYAML = `nodes:
   - schema: analytics
     table: other
-    kind: python-model
+    kind: python-node
     script: scripts/other.py
     reads:
       customers: select id from analytics.customers
@@ -122,7 +122,7 @@ func csvSvc(t *testing.T, root string) (Services, *fakeArchive, *fakePackager, *
 // contract directory into the merged contract returned as
 // Result.VerificationContract for the driver to submit — and the LLM request it
 // was built from carries the csv-specific system prompt and tool name, not
-// the python-model ones.
+// the python-node ones.
 func TestCsvValidation_HappyPath(t *testing.T) {
 	root := csvRepoTree(t)
 	svc, arch, pkgr, _, arts := csvSvc(t, root)
@@ -157,12 +157,12 @@ func TestCsvValidation_HappyPath(t *testing.T) {
 	}
 
 	// The prompt sent to the model is the csv lane's own: its rules, not the
-	// python-model script rules, and its own tool name.
+	// python-node script rules, and its own tool name.
 	require.Len(t, llm.requests, 1)
 	require.Contains(t, llm.requests[0].System, "python-csv")
 	require.NotContains(t, llm.requests[0].System, "propose_python_fix")
 	require.NotContains(t, llm.requests[0].System, "the script still performs that read",
-		"a python-csv node has no script, so the python-model lane's read-preservation rationale must not leak into this prompt")
+		"a python-csv node has no script, so the python-node lane's read-preservation rationale must not leak into this prompt")
 	require.Equal(t, "propose_csv_fix", llm.requests[0].ToolName)
 }
 
@@ -247,12 +247,12 @@ func TestCsvValidation_AnswerDeletesTheCsvRead_Fails(t *testing.T) {
 }
 
 // TestCsvValidation_SiblingReadDropped_Fails covers what the csv lane's
-// relaxed read rule must NOT protect: a python-model SIBLING declared in the
+// relaxed read rule must NOT protect: a python-node SIBLING declared in the
 // same contract directory whose read the answer deletes. The csv lane only
-// relaxes the rule for the failing node's own "csv" key — a python-model
+// relaxes the rule for the failing node's own "csv" key — a python-node
 // sibling's script is never edited by this fix, so its reads are still held
 // to the blanket "no read may be dropped" rule declarationBreach applies for
-// the python-model lane. The guard's per-node loop must examine every node in
+// the python-node lane. The guard's per-node loop must examine every node in
 // the answer, not only the ones carrying a "csv" key, or a sibling's dropped
 // read would go unnoticed.
 func TestCsvValidation_SiblingReadDropped_Fails(t *testing.T) {
@@ -267,7 +267,7 @@ func TestCsvValidation_SiblingReadDropped_Fails(t *testing.T) {
 			{Path: sibling, Content: `nodes:
   - schema: analytics
     table: other
-    kind: python-model
+    kind: python-node
     script: scripts/other.py
 `},
 		},
@@ -286,11 +286,11 @@ func TestCsvValidation_SiblingReadDropped_Fails(t *testing.T) {
 
 // TestCsvValidation_AnswerChangesKind_Fails verifies that an answer which
 // flips the failing node's declared kind — the field that says which set of
-// fix rules govern it, script-preserving for python-model or
+// fix rules govern it, script-preserving for python-node or
 // csv-read-preserving for python-csv — is refused as an identity change, the
 // same as renaming its table would be. Kind is compared as part of
-// NodeIdentity (ports.NodeIdentity), so this also protects the python-model
-// lane from the opposite flip: an answer that quietly turns a python-model
+// NodeIdentity (ports.NodeIdentity), so this also protects the python-node
+// lane from the opposite flip: an answer that quietly turns a python-node
 // node into a python-csv one.
 func TestCsvValidation_AnswerChangesKind_Fails(t *testing.T) {
 	root := csvRepoTree(t)
@@ -300,7 +300,7 @@ func TestCsvValidation_AnswerChangesKind_Fails(t *testing.T) {
 		Files: []ports.ProposedFile{{Path: target, Content: `nodes:
   - schema: analytics
     table: py_csv_orders
-    kind: python-model
+    kind: python-node
     reads:
       csv: s3://exports/orders/orders.csv
     output_columns:
@@ -323,7 +323,7 @@ func TestCsvValidation_AnswerChangesKind_Fails(t *testing.T) {
 // TestCsvValidation_AnswerThatChangesNodeIdentity_Fails verifies that an
 // answer which re-identifies the failing node — here by renaming its table —
 // is refused before any verification run is spent proving it, the same
-// identity guard the python-model lane already enforces.
+// identity guard the python-node lane already enforces.
 func TestCsvValidation_AnswerThatChangesNodeIdentity_Fails(t *testing.T) {
 	root := csvRepoTree(t)
 	svc, _, pkgr, _, arts := csvSvc(t, root)
@@ -389,7 +389,7 @@ func TestCsvValidation_NodeNotDeclared_Skips(t *testing.T) {
 	require.Equal(t, 1, arch.cleanups)
 }
 
-// TestCsvValidation_UnusableTrigger_Skips mirrors the python-model lane's
+// TestCsvValidation_UnusableTrigger_Skips mirrors the python-node lane's
 // equivalent (TestPythonValidation_UnusableTrigger_Skips): a trigger this
 // lane can never act on stops with the reason recorded instead of being
 // redelivered forever. Both cases exercise locateContractForFix, the helper
@@ -422,7 +422,7 @@ func TestCsvValidation_UnusableTrigger_Skips(t *testing.T) {
 // TestCsvValidation_SiblingFailureInSameDirectory_Skips verifies that a
 // second node failing validation in the same contract directory as the
 // failing csv node stops the attempt before any model call — the same
-// unverifiable-fix guard the python-model lane already enforces
+// unverifiable-fix guard the python-node lane already enforces
 // (TestPythonValidation_SiblingFailureInSameDirectory_Skips), now reached
 // through the shared locateContractForFix helper.
 func TestCsvValidation_SiblingFailureInSameDirectory_Skips(t *testing.T) {

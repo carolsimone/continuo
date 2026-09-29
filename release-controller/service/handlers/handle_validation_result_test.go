@@ -601,7 +601,7 @@ func seedToValidatingWithURIs(t *testing.T, releaseID string) (*handlers.Deps, *
 			NodeType: "dbt-model", OriginalFilePath: "models/a.sql",
 			CandidateArtifactURI: "s3://continuo/svc-a/" + releaseID + "/candidate_a.sql"},
 		{UniqueID: "b", ServiceName: "svc-a", UpstreamUniqueIDs: []string{"a"},
-			NodeType: "python-model", OriginalFilePath: "python/b.py",
+			NodeType: "python-node", OriginalFilePath: "python/b.py",
 			CandidateArtifactURI: "s3://continuo/svc-a/" + releaseID + "/candidate_b.json"},
 	}
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
@@ -729,7 +729,7 @@ func TestHandleValidationResult_Rejected_CarriesCandidateNodeTypeAndLocation(t *
 	assert.Equal(t, "dbt-model", byID["a"].nodeType)
 	assert.Equal(t, "models/a.sql", byID["a"].filePath)
 	assert.Equal(t, "svc-a", byID["a"].service)
-	assert.Equal(t, "python-model", byID["b"].nodeType,
+	assert.Equal(t, "python-node", byID["b"].nodeType,
 		"a python node's rejection must name its kind so the agent can skip it")
 	assert.Equal(t, "python/b.py", byID["b"].filePath)
 	assert.Equal(t, "svc-a", byID["b"].service)

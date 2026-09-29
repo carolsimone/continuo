@@ -1984,7 +1984,7 @@ func TestHandle_CompileModeLabel_RunningStatus_WritesCheckK8sRepoll(t *testing.T
 // TestHandle_PromoteSeedMode_TerminalJob_NoOutboxRows verifies that a terminal Job
 // carrying mode=promote_seed produces NO outbox rows (neither production
 // task.status.updated / task.execution.recorded, nor any candidate-mode event).
-// pythonResultBlockLog returns a pod log shaped like a python-model container's
+// pythonResultBlockLog returns a pod log shaped like a python-node container's
 // output: diagnostics first, terminated by exactly one sentinel-framed result
 // block as the last line.
 func pythonResultBlockLog(status, message string) string {
@@ -2387,7 +2387,7 @@ func TestHandleSucceeded_UploadsLog(t *testing.T) {
 	}
 }
 
-// TestHandleSucceeded_UploadsRunResults verifies a successful python-model Job's
+// TestHandleSucceeded_UploadsRunResults verifies a successful python-node Job's
 // result block is captured too, and stripped from the text log.
 func TestHandleSucceeded_UploadsRunResults(t *testing.T) {
 	outbox := &jobStatusFakeOutboxRepo{}

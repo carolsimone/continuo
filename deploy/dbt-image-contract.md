@@ -7,7 +7,7 @@ those Jobs assume. The reference implementation is the
 [`continuo-demo`](https://github.com/carolsimone/continuo-demo)
 repository.
 
-For `python-model` nodes, whose images are resolved and configured differently,
+For `python-node` nodes, whose images are resolved and configured differently,
 see [`python-image-contract.md`](python-image-contract.md).
 
 ## Image resolution

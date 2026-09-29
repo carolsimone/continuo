@@ -6,6 +6,9 @@ import type { NodeRun, NodeRunsResponse, NodeDetailFrom } from './types';
 import { kindLabel, computeNodeStats, formatDuration, formatRelative } from './node-helpers';
 import NodeTypeIcon from './NodeTypeIcon';
 import RunSourcePickerDialog from './RunSourcePickerDialog';
+import { type NodeType } from '../server/generated/vocabulary.gen';
+
+const PYTHON_CSV: NodeType = 'python-csv';
 
 interface NodeMetaResponse {
   node_type?: string;
@@ -218,7 +221,7 @@ export default function NodeDetailPage() {
               <span className="info-strip info-strip--neutral info-strip--inline">{nodeType}</span>
             )}
           </div>
-          {nodeType === 'python-csv' && sourceUri && (
+          {nodeType === PYTHON_CSV && sourceUri && (
             <div className="detail-node-source">source: {sourceUri}</div>
           )}
         </div>

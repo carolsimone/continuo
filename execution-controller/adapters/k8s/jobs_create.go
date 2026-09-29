@@ -33,7 +33,7 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 		return nil
 	}
 
-	// Step 2: Build Job spec. Python-family nodes (python-model, python-csv) run
+	// Step 2: Build Job spec. Python-family nodes (python-node, python-csv) run
 	// the domain repository's own image under the runtime harness's
 	// environment; every other node type runs the team's dbt image under a
 	// resolved dbt command. The Job metadata below is shared, so both kinds
@@ -214,7 +214,7 @@ func (c *K8sClient) CreateValidationJob(ctx context.Context, params ValidationJo
 // single main container; the runner fetches the compiled SQL from S3 itself. There
 // is no init container and no shared emptyDir for this path. clone_from_prod nodes
 // have no candidate SQL and never touch S3, so they remain single-container with no
-// emptyDir and no S3 credentials. build_from_columns (python-model nodes) receive
+// emptyDir and no S3 credentials. build_from_columns (python-nodes) receive
 // CANDIDATE_SPEC_URI + S3 credentials instead: the runner fetches the published
 // JSON validation spec (declared reads + output columns), not compiled SQL.
 func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
@@ -789,7 +789,16 @@ func buildPodSpec(params JobParams, command []string, partialParsePath string) (
 	return spec, nil
 }
 
-// buildPythonPodSpec constructs the PodSpec for a python-model run Job.
+// pythonKindEnv is the env each python node type adds to its run pod on top of
+// NODE_ID, TABLE_NAME and TARGET_SCHEMA. A python-csv harness fetches its own
+// source, so it receives the S3 credential env regardless of the uri scheme;
+// the executor knows only the node type and never parses the contract's uri.
+var pythonKindEnv = map[pkg_model.NodeType]func() []corev1.EnvVar{
+	pkg_model.NodeTypePythonNode: func() []corev1.EnvVar { return nil },
+	pkg_model.NodeTypePythonCsv:  s3CredEnvVars,
+}
+
+// buildPythonPodSpec constructs the PodSpec for a python-node run Job.
 //
 // The pod is a single container running the node's own image verbatim: the
 // release's image_tag is a complete registry reference, built by the domain
@@ -811,7 +820,9 @@ func buildPodSpec(params JobParams, command []string, partialParsePath string) (
 // initContainer and no shared volume. A domain image never receives S3
 // credentials — its contract files travel inside the image itself — except a
 // python-csv node, whose harness fetches its own source and so gets the same
-// four S3 credential env vars the validation pods use.
+// four S3 credential env vars the validation pods use. Which env each python
+// kind gets on top of the three normative variables is declared in
+// pythonKindEnv.
 func buildPythonPodSpec(p JobParams) (corev1.PodSpec, error) {
 	switch p.Operation {
 	case pkg_model.OperationRun, pkg_model.OperationBuild:
@@ -849,15 +860,12 @@ func buildPythonPodSpec(p JobParams) (corev1.PodSpec, error) {
 		{Name: "TABLE_NAME", Value: p.TableName},
 		{Name: "TARGET_SCHEMA", Value: p.SchemaName},
 	}
-	// A csv node's harness fetches its source itself, so — a narrow,
-	// deliberate exception to "a domain image never receives S3
-	// credentials" — the S3 Secret env is attached for every python-csv
-	// node regardless of the uri scheme: the executor knows only the node
-	// type, and parsing the contract's uri here would leak contract
-	// knowledge across the boundary.
-	if p.NodeType == pkg_model.NodeTypePythonCsv {
-		env = append(env, s3CredEnvVars()...)
+	kindEnv, ok := pythonKindEnv[p.NodeType]
+	if !ok {
+		return corev1.PodSpec{}, fmt.Errorf("%w: no pod env declared for python node type %q (%s.%s)",
+			events.ErrPermanent, p.NodeType, p.SchemaName, p.TableName)
 	}
+	env = append(env, kindEnv()...)
 
 	return corev1.PodSpec{
 		RestartPolicy:   corev1.RestartPolicyNever,

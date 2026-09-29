@@ -56,9 +56,9 @@ type Input struct {
 	FilePath     string
 	Service      string
 	// NodeType is the failing node's kind (dbt-model, dbt-seed, dbt-snapshot,
-	// python-model, or python-csv), set on validation, duplicate-relation and
+	// python-node, or python-csv), set on validation, duplicate-relation and
 	// parse failures. It selects which Fixer runs for a validation or parse
-	// failure (see For): a python-model node's fix is made in the contract
+	// failure (see For): a python-node's fix is made in the contract
 	// yaml declaring it, not in the file FilePath names. Every Fixer a python
 	// node can still reach checks it before reading anything and records why
 	// it cannot help: the duplicate-table Fixer's target relation is declared
@@ -192,13 +192,13 @@ type Fixer interface {
 // somewhere other than the file the trigger names — its contract yaml — and
 // is proven by a verification run rather than read back:
 //
-//   - validation: a dbt model is corrected in its SQL file; a python-model
-//     node is corrected in the contract yaml that declares it, preserving
+//   - validation: a dbt model is corrected in its SQL file; a python-node
+//     is corrected in the contract yaml that declares it, preserving
 //     whatever reads its script performs; a python-csv node has no script at
 //     all, so its fix corrects the contract to match the csv file that is its
 //     source of truth — a narrower set of rules and a narrower post-apply
-//     guard than a python-model node's, hence its own lane.
-//   - parse: a dbt model is corrected in its SQL file; a python-model node's
+//     guard than a python-node's, hence its own lane.
+//   - parse: a dbt model is corrected in its SQL file; a python-node's
 //     rejected SQL is one of its reads in the contract yaml, so it takes the
 //     contract-fix lane. A python-csv node's only read is an S3 URI, never
 //     SQL, so the parser has nothing to reject in it; it keeps the
@@ -210,8 +210,8 @@ type Fixer interface {
 func For(source, nodeType string) (Fixer, error) {
 	switch source {
 	case sourceParse:
-		if nodeType == string(pkg_model.NodeTypePythonModel) {
-			return pythonParseFixer{}, nil
+		if f, ok := pythonParseLanes[pkg_model.NodeType(nodeType)]; ok {
+			return f, nil
 		}
 		return parseFixer{}, nil
 	case sourceCompile:
@@ -219,19 +219,29 @@ func For(source, nodeType string) (Fixer, error) {
 	case sourceSeed:
 		return seedFixer{}, nil
 	case sourceValidation:
-		switch nodeType {
-		case string(pkg_model.NodeTypePythonCsv):
-			return csvValidationFixer{}, nil
-		case string(pkg_model.NodeTypePythonModel):
-			return pythonValidationFixer{}, nil
-		default:
-			return validationFixer{}, nil
+		if f, ok := pythonValidationLanes[pkg_model.NodeType(nodeType)]; ok {
+			return f, nil
 		}
+		return validationFixer{}, nil
 	case sourceDuplicateTable:
 		return duplicateTableFixer{}, nil
 	default:
 		return nil, fmt.Errorf("fixer: unknown source %q", source)
 	}
+}
+
+// pythonParseLanes and pythonValidationLanes name the fixer for each python
+// node type per source. Every python NodeType has an entry in both (pinned by
+// TestFixerLanes_CoverEveryPythonNodeType), so a new python kind never falls
+// through to a dbt lane by omission.
+var pythonParseLanes = map[pkg_model.NodeType]Fixer{
+	pkg_model.NodeTypePythonNode: pythonParseFixer{},
+	pkg_model.NodeTypePythonCsv:  parseFixer{},
+}
+
+var pythonValidationLanes = map[pkg_model.NodeType]Fixer{
+	pkg_model.NodeTypePythonNode: pythonValidationFixer{},
+	pkg_model.NodeTypePythonCsv:  csvValidationFixer{},
 }
 
 // Source discriminators carried on remediation.requested:v2.

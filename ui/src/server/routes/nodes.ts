@@ -4,6 +4,9 @@ import { GrpcGraphClient } from '../grpc-graph-client';
 import { grpcToHttpStatus } from './grpc-status';
 import { parseLimit, parseOffset } from './paging';
 import { parseOperation, parseNodeOperation } from './operation';
+import { type NodeType } from '../generated/vocabulary.gen';
+
+const PYTHON_CSV: NodeType = 'python-csv';
 
 // A python-csv version's raw_code is the node's normalized contract entry
 // serialized as JSON (the node has no script); the CSV location is its
@@ -158,7 +161,7 @@ export function createNodesRouter(stateClient: GrpcClient, graphClient: GrpcGrap
           test_count:       Number(response.test_count ?? 0),
           test_count_known: Boolean(response.test_count_known),
         };
-        if (meta.node_type !== 'python-csv') return res.json(meta);
+        if (meta.node_type !== PYTHON_CSV) return res.json(meta);
 
         graphClient.getNodeVersions(
           {

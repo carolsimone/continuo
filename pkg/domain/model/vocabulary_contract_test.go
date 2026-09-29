@@ -25,6 +25,7 @@ type yamlVocabularies struct {
 		Values []struct {
 			Value    string `yaml:"value"`
 			Healable bool   `yaml:"healable"`
+			Runtime  string `yaml:"runtime"`
 		} `yaml:"values"`
 	} `yaml:"vocabularies"`
 }
@@ -118,6 +119,18 @@ func TestVocabularyHealableFlagsMatchContract(t *testing.T) {
 		"RejectReason":     func(v string) bool { return model.RejectReason(v).Healable() },
 	}
 	for _, v := range c.Vocabularies {
+		anyHealable := false
+		for _, val := range v.Values {
+			if val.Healable {
+				anyHealable = true
+				break
+			}
+		}
+		if !anyHealable {
+			// A vocabulary with no healable value gets no Healable() method
+			// generated, so there is nothing to pin here.
+			continue
+		}
 		healable, ok := healableByType[v.Const]
 		if !ok {
 			t.Errorf("vocabulary %s has no Healable() probe in this test — add one", v.Const)
@@ -162,5 +175,26 @@ func TestRejectReason_HealableSet(t *testing.T) {
 	}
 	if model.RejectReason("nonsense").IsValid() || model.RejectReason("").Healable() {
 		t.Error("an undeclared reason is neither valid nor healable")
+	}
+}
+
+// TestNodeTypeRuntimeMatchesContract pins every generated Runtime() answer to
+// the runtime: the YAML declares for that node type.
+func TestNodeTypeRuntimeMatchesContract(t *testing.T) {
+	c := loadVocabularies(t)
+	checked := 0
+	for _, v := range c.Vocabularies {
+		if v.Const != "NodeType" {
+			continue
+		}
+		for _, val := range v.Values {
+			if got := model.NodeType(val.Value).Runtime(); string(got) != val.Runtime {
+				t.Errorf("NodeType(%q).Runtime() = %q, yaml says %q", val.Value, got, val.Runtime)
+			}
+			checked++
+		}
+	}
+	if checked == 0 {
+		t.Fatal("contract.yaml declares no node_type values")
 	}
 }

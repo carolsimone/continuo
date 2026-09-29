@@ -122,7 +122,7 @@ const (
 //
 //	POST /releases (kind=python, one node whose declared read cannot bind)
 //	→ the validation Job's bind check fails → release rejected
-//	→ classifier emits remediation.requested:v2 (one node, node_type=python-model)
+//	→ classifier emits remediation.requested:v2 (one node, node_type=python-node)
 //	→ agent-remediation routes it to the python contract fixer: fetches the
 //	  repository tarball at the failing commit from stub-github, finds the yaml
 //	  declaring the node, has the model correct it, packages the directory with
@@ -755,9 +755,9 @@ func assertNoNodeVersionsFor(t *testing.T, ctx context.Context, clients *testCli
 //	→ topology-controller's SQL parser rejects the node (unqualified_reference)
 //	→ release-controller: Fail(unqualified_reference), RecordStageResults("parse")
 //	→ release.rejected:v1 {stage: parse, per_node: [{kind, detail, file_path,
-//	  service, node_type=python-model}]} — the parser's own text is inline;
+//	  service, node_type=python-node}]} — the parser's own text is inline;
 //	  there is no dbt log because nothing ran
-//	→ classifier emits remediation.requested:v2 (source=parse, node_type=python-model)
+//	→ classifier emits remediation.requested:v2 (source=parse, node_type=python-node)
 //	→ agent-remediation routes it to the python parse fixer: the trigger's
 //	  file_path names the script, which the parser never reads, so the fixer
 //	  finds the contract yaml from the node id alone, has the model qualify the
@@ -850,7 +850,7 @@ func TestE2E_PythonParseFailure_VerifiedFix(t *testing.T) {
 // release.rejected:v1 and pins the shape the python parse lane depends on:
 // stage parse, reason unqualified_reference, one per-node entry carrying the
 // parser's detail inline, the script as file_path, the service, and
-// node_type=python-model.
+// node_type=python-node.
 func assertRejectedPythonParseStage(t *testing.T, ctx context.Context, clients *testClients, releaseID string) {
 	t.Helper()
 	pollUntil(t, ctx, pyRecordVisibleBudget, 2*time.Second, func() (bool, error) {
@@ -892,7 +892,7 @@ func assertRejectedPythonParseStage(t *testing.T, ctx context.Context, clients *
 			require.Equal(t, "scripts/py_unqualified_read.py", p.PerNode[0].FilePath,
 				"a python node's parse failure is reported against its script, which is why the fixer must not edit the named file")
 			require.Equal(t, pyParseService, p.PerNode[0].Service)
-			require.Equal(t, "python-model", p.PerNode[0].NodeType)
+			require.Equal(t, "python-node", p.PerNode[0].NodeType)
 			return true, nil
 		}
 		return false, nil

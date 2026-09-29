@@ -82,7 +82,7 @@ def test_python_builder_uploads_rewritten_reads_columns_and_config():
         candidate_sql="",
         output_columns=[{"name": "id", "type": "INTEGER", "nullable": False}],
         config={"indexes": [{"columns": ["id"], "unique": True}]},
-        node_type=NodeType.PYTHON_MODEL, runtime=Runtime.PYTHON,
+        node_type=NodeType.PYTHON_NODE, runtime=Runtime.PYTHON,
     )
 
     keys = PythonSpecArtifactBuilder(uploader).build(node, _ctx())
@@ -113,7 +113,7 @@ def test_python_builder_preserves_read_order():
         owner="team-py", schedule_name="daily", criticality="SECONDARY",
         dependency_sqls=["select 1 as a", "select 2 as b", "select 3 as c"],
         output_columns=[{"name": "a", "type": "INTEGER", "nullable": True}],
-        node_type=NodeType.PYTHON_MODEL, runtime=Runtime.PYTHON,
+        node_type=NodeType.PYTHON_NODE, runtime=Runtime.PYTHON,
     )
 
     PythonSpecArtifactBuilder(uploader).build(node, _ctx())
@@ -153,7 +153,7 @@ def test_python_builder_omits_csv_source_for_model_nodes():
         owner="team-py", schedule_name="daily", criticality="SECONDARY",
         dependency_sqls=["select 1"],
         output_columns=[{"name": "a", "type": "INTEGER", "nullable": True}],
-        node_type=NodeType.PYTHON_MODEL, runtime=Runtime.PYTHON,
+        node_type=NodeType.PYTHON_NODE, runtime=Runtime.PYTHON,
     )
 
     PythonSpecArtifactBuilder(uploader).build(node, _ctx())
@@ -179,7 +179,7 @@ def test_python_builder_leaves_a_self_reference_on_the_production_schema():
         owner="team-py", schedule_name="daily", criticality="SECONDARY",
         dependency_sqls=["select id from test_schema.py_metrics"],
         output_columns=[{"name": "id", "type": "INTEGER", "nullable": True}],
-        node_type=NodeType.PYTHON_MODEL, runtime=Runtime.PYTHON,
+        node_type=NodeType.PYTHON_NODE, runtime=Runtime.PYTHON,
     )
 
     PythonSpecArtifactBuilder(uploader).build(node, _ctx(registry=registry))

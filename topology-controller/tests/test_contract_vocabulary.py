@@ -49,11 +49,20 @@ def test_every_vocabulary_is_generated_in_declaration_order():
         enum = getattr(contract_vocabulary, vocab["const"], None)
         assert enum is not None, f"contract_vocabulary missing {vocab['const']}"
         assert [m.value for m in enum] == [v["value"] for v in vocab["values"]]
-        assert [m.name for m in enum] == [v["value"].upper() for v in vocab["values"]]
+        # The generator's pyMember uppercases the value and turns "-" into "_"
+        # (a Python identifier cannot contain a hyphen), so a hyphenated value
+        # like "dbt-model" becomes the member name "DBT_MODEL".
+        assert [m.name for m in enum] == [
+            v["value"].upper().replace("-", "_") for v in vocab["values"]
+        ]
 
 
 def test_healable_frozensets_match_the_contract_flags():
     for vocab in _vocabularies():
+        # A vocabulary with no healable value gets no `_HEALABLE` frozenset
+        # generated, so there is nothing to pin for it here.
+        if not any(v.get("healable") for v in vocab["values"]):
+            continue
         enum = getattr(contract_vocabulary, vocab["const"])
         healable = getattr(contract_vocabulary, _screaming(vocab["const"]) + "_HEALABLE")
         expected = {enum(v["value"]) for v in vocab["values"] if v.get("healable")}

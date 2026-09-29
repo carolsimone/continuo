@@ -7,7 +7,7 @@ import type { GraphNode, GraphEdge } from '../../src/client/types';
 
 const TYPED_NODES: GraphNode[] = [
   { node_id: 's.sch.a', node_type: 'dbt-model', schedule_name: 's' },
-  { node_id: 's.sch.b', node_type: 'python-model', schedule_name: 's' },
+  { node_id: 's.sch.b', node_type: 'python-node', schedule_name: 's' },
   { node_id: 's.sch.c', node_type: 'python-csv', schedule_name: 's' },
   { node_id: 's.sch.d', node_type: '', schedule_name: 's' },
 ];
