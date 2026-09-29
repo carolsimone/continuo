@@ -1,20 +1,53 @@
 -- The python script node kind is stored as "python-node". Rewrite every stored
--- "python-model" value in the JSONB columns that hold node lists or per-node
--- results. The match includes the surrounding double quotes, so only an exact
--- JSON string value changes; free text that mentions the old name inside a
--- longer string (a failure detail) is left as written. Re-running is a no-op.
+-- "python-model" node_type in the JSONB columns that hold node lists,
+-- per-node results, and a rejection body. Only the node_type field of each
+-- element is rewritten: a sibling string that merely equals "python-model"
+-- (a service_name, a free-text detail) is left as written, so a service named
+-- python-model keeps its name. Each statement is guarded by a containment
+-- match on node_type, so re-running it is a no-op.
+
+-- current_prod.topology_snapshot and release_pipeline_runs.candidate_topology
+-- are JSON arrays of node objects. Rebuild the array, rewriting node_type only
+-- on the elements that carry the retired value.
 UPDATE current_prod
-   SET topology_snapshot = replace(topology_snapshot::text, '"python-model"', '"python-node"')::jsonb
- WHERE topology_snapshot::text LIKE '%"python-model"%';
+   SET topology_snapshot = (
+     SELECT jsonb_agg(
+              CASE WHEN elem->>'node_type' = 'python-model'
+                   THEN jsonb_set(elem, '{node_type}', '"python-node"')
+                   ELSE elem END)
+     FROM jsonb_array_elements(topology_snapshot) elem)
+ WHERE topology_snapshot @> '[{"node_type":"python-model"}]';
 
 UPDATE release_pipeline_runs
-   SET candidate_topology = replace(candidate_topology::text, '"python-model"', '"python-node"')::jsonb
- WHERE candidate_topology::text LIKE '%"python-model"%';
+   SET candidate_topology = (
+     SELECT jsonb_agg(
+              CASE WHEN elem->>'node_type' = 'python-model'
+                   THEN jsonb_set(elem, '{node_type}', '"python-node"')
+                   ELSE elem END)
+     FROM jsonb_array_elements(candidate_topology) elem)
+ WHERE candidate_topology @> '[{"node_type":"python-model"}]';
 
+-- release_pipeline_runs.per_node_results is a JSON array of per-node result
+-- objects, each optionally carrying node_type.
 UPDATE release_pipeline_runs
-   SET per_node_results = replace(per_node_results::text, '"python-model"', '"python-node"')::jsonb
- WHERE per_node_results::text LIKE '%"python-model"%';
+   SET per_node_results = (
+     SELECT jsonb_agg(
+              CASE WHEN elem->>'node_type' = 'python-model'
+                   THEN jsonb_set(elem, '{node_type}', '"python-node"')
+                   ELSE elem END)
+     FROM jsonb_array_elements(per_node_results) elem)
+ WHERE per_node_results @> '[{"node_type":"python-model"}]';
 
+-- release_pipeline_runs.rejection_payload is a single release.rejected:v1 body
+-- object whose per_node array holds the failing nodes; some rejection shapes
+-- carry node_type on each per_node element. Rewrite node_type only within that
+-- nested array, leaving the rest of the body untouched.
 UPDATE release_pipeline_runs
-   SET rejection_payload = replace(rejection_payload::text, '"python-model"', '"python-node"')::jsonb
- WHERE rejection_payload::text LIKE '%"python-model"%';
+   SET rejection_payload = jsonb_set(
+     rejection_payload, '{per_node}', (
+       SELECT jsonb_agg(
+                CASE WHEN elem->>'node_type' = 'python-model'
+                     THEN jsonb_set(elem, '{node_type}', '"python-node"')
+                     ELSE elem END)
+       FROM jsonb_array_elements(rejection_payload->'per_node') elem))
+ WHERE rejection_payload @> '{"per_node":[{"node_type":"python-model"}]}';

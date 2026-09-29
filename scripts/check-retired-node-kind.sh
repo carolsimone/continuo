@@ -13,6 +13,7 @@ if git grep -n "python-model" -- \
     ':!topology-controller/tests/test_candidate_manifest_handler.py' \
     ':!orchestrator/adapters/neo4j/schema.go' ':!orchestrator/adapters/neo4j/schema_test.go' \
     ':!release-controller/adapters/postgres/node_type_migration_test.go' \
+    ':!execution-controller/adapters/postgres/node_type_migration_test.go' \
     ':!pkg/domain/model/nodetype_guard_test.go' \
     ':!ui/tests/client/node-type-icon-family.test.ts'; then
   echo "ERROR: retired node kind 'python-model' found (see matches above)" >&2
