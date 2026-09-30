@@ -14,9 +14,10 @@ shipped in those.
 
 ### Added
 - `dbt-commands.yaml` accepts two optional keys per block, both backing the new single-node full-refresh operation: `full_refresh` (rebuilds one dbt model from scratch) and `seed_full_refresh` (rebuilds one dbt seed from scratch). A block without one of them keeps loading; full refresh of that node kind is then unavailable for the services it covers. Production, scheduled and promoted-release seed loads are unaffected — they remain a normal, non-destructive `dbt seed`.
+- `python-api` node kind: a python script node with no declared reads. Its contract may name one Secret with `secret_ref` (must start with `continuo-api-`); execution-controller attaches it to the node's pod with `envFrom`, before the warehouse Secret. Create the Secret in the release namespace (kubectl, External Secrets Operator or Vault Secrets Operator; see docs/run-projects-in-continuo.md).
 
 ### Changed
-- Default `validation.imageTag` is `v0.6.0` (continuo-python-runtime 0.6.0).
+- Default `validation.imageTag` is `v0.7.0` (continuo-python-runtime 0.7.0).
 - The python script node kind is `python-node`. Contracts written by continuo-python-runtime < 0.6.0 (kind `python-model`) keep working; stored node types are rewritten on upgrade by the release DB migration and orchestrator's startup data migration. Domain repos that upgrade to continuo-python-runtime 0.6.0 see every python node re-validated once on their next release (the node kind is part of its content hash).
 
 ## [0.7.1] - 2026-09-24

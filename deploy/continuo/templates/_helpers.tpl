@@ -102,7 +102,7 @@ app.kubernetes.io/name: {{ .service }}
 {{- fail (printf "validation.imageTag=%q predates check_binds (dbt-test bind checks, added in v0.5.0): topology-controller already emits \"kind: check_binds\" nodes for a changed dbt test, but this runner does not run them and would report success without checking that the test binds, so a release with a changed test would promote its bind unvalidated. Re-pin validation.imageTag to \"v0.5.0\" or later, or drop the override to track the chart's default." $tag) -}}
 {{- end -}}
 {{- else -}}
-{{- $tag = "v0.6.0" -}}{{/* CONTINUO_VALIDATION_DEFAULT_TAG — must equal values.yaml's validation.imageTag default */}}
+{{- $tag = "v0.7.0" -}}{{/* CONTINUO_VALIDATION_DEFAULT_TAG — must equal values.yaml's validation.imageTag default */}}
 {{- end -}}
 {{- if .Values.global.imageRegistry -}}
 {{- printf "%s/%s/continuo-python-runtime-%s:%s" .Values.global.imageRegistry .Values.global.imageRepositoryPrefix $eng $tag -}}
