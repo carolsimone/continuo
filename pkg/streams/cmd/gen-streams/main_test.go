@@ -679,7 +679,7 @@ func TestEmitVocabulary_NoFullRefreshWithoutTheAttribute(t *testing.T) {
 	}
 }
 
-const secretRefYAML = `
+const apiKindYAML = `
 streams: []
 vocabularies:
   - name: node_runtime
@@ -696,7 +696,7 @@ vocabularies:
 `
 
 func TestParseContract_SecretRef(t *testing.T) {
-	c, err := loadAndValidate(strings.NewReader(secretRefYAML))
+	c, err := loadAndValidate(strings.NewReader(apiKindYAML))
 	if err != nil {
 		t.Fatalf("loadAndValidate: %v", err)
 	}
@@ -707,7 +707,7 @@ func TestParseContract_SecretRef(t *testing.T) {
 }
 
 func TestEmitGoVocabulary_SecretRef(t *testing.T) {
-	c, err := loadAndValidate(strings.NewReader(secretRefYAML))
+	c, err := loadAndValidate(strings.NewReader(apiKindYAML))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -725,7 +725,7 @@ func TestEmitGoVocabulary_SecretRef(t *testing.T) {
 }
 
 func TestEmitPythonVocabulary_SecretRef(t *testing.T) {
-	c, err := loadAndValidate(strings.NewReader(secretRefYAML))
+	c, err := loadAndValidate(strings.NewReader(apiKindYAML))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -743,7 +743,7 @@ func TestEmitPythonVocabulary_SecretRef(t *testing.T) {
 }
 
 func TestEmitTSVocabulary_SecretRef(t *testing.T) {
-	c, err := loadAndValidate(strings.NewReader(secretRefYAML))
+	c, err := loadAndValidate(strings.NewReader(apiKindYAML))
 	if err != nil {
 		t.Fatal(err)
 	}
