@@ -169,6 +169,17 @@ func TestAssemblePythonContractFix_NoReadsNodeSaysItFetchesItsOwnData(t *testing
 	}
 }
 
+// TestAssemblePythonParseFix_NoReadsLeavesTheParsePromptUnchanged pins that the
+// no-reads rewrite only applies to the validation prompt: the parse prompt does
+// not contain the reads wording, so it must be sent as is and never panic.
+func TestAssemblePythonParseFix_NoReadsLeavesTheParsePromptUnchanged(t *testing.T) {
+	ev := pythonEvidence()
+	ev.NoReads = true
+	var req ProposeRequest
+	require.NotPanics(t, func() { req = AssemblePythonParseFix(ev) })
+	require.Equal(t, pythonParseFixSystemPrompt, req.System)
+}
+
 // TestAssemblePythonParseFix_ShowsTheParserError verifies the parse-stage
 // request: the parser's error stands where the validation error would, no
 // runner-log section can appear (no Job ran), the declaring yaml is shown, and

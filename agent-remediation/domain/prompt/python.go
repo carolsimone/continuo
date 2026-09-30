@@ -81,13 +81,22 @@ Rules:
 - When past precedents are shown, weigh how the same error was resolved before; follow a precedent's approach only where it fits the contract you are shown.
 - Always respond by calling the propose_python_fix tool.`
 
+// pythonNoReadsContractFixSystemPrompt is the validation prompt for a node that
+// declares no reads. It is built once at package initialisation, so a drifted
+// base prompt panics at startup rather than while handling a message.
+var pythonNoReadsContractFixSystemPrompt = noReadsSystemPrompt(pythonContractFixSystemPrompt)
+
 // AssemblePythonContractFix builds the request that asks the model to correct
 // the contract yaml declaring a python node that failed validation. The answer
 // is a list of complete files rather than one file's content, because a fix
 // can legitimately span the declaring file and a sibling it shares definitions
 // with.
 func AssemblePythonContractFix(ev PythonEvidence) ProposeRequest {
-	return pythonContractRequest(pythonContractFixSystemPrompt, "Validation error", ev)
+	system := pythonContractFixSystemPrompt
+	if ev.NoReads {
+		system = pythonNoReadsContractFixSystemPrompt
+	}
+	return pythonContractRequest(system, "Validation error", ev)
 }
 
 // AssemblePythonParseFix builds the request that asks the model to correct a
@@ -104,9 +113,6 @@ func AssemblePythonParseFix(ev PythonEvidence) ProposeRequest {
 // fix uses: the failure under errorLabel, then each evidence section that has
 // something to say, then the tool that returns complete files.
 func pythonContractRequest(system, errorLabel string, ev PythonEvidence) ProposeRequest {
-	if ev.NoReads {
-		system = noReadsSystemPrompt(system)
-	}
 	var u strings.Builder
 	fmt.Fprintf(&u, "Failed python node: %s\n\n", ev.NodeID)
 
@@ -223,7 +229,7 @@ func renderPriorAttempts(b *strings.Builder, as []PriorAttempt) {
 // description says the script fetches its own data, the edit scope shrinks to
 // output_columns and config, and the keep-every-read rule becomes a rule
 // against adding one. Each substitution must find its text, so a wording change
-// in the base prompt fails loudly (a panic on first use, pinned by a test)
+// in the base prompt fails loudly (a panic at package initialisation)
 // instead of silently leaving the reads wording behind.
 func noReadsSystemPrompt(system string) string {
 	const (
