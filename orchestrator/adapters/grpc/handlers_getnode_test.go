@@ -18,12 +18,12 @@ type stubNodeReader struct {
 	ScheduleAndRunListReader // embed so unused methods are nil; only GetNode is called
 	meta                     *domain.NodeMeta
 	err                      error
-	gotInactive              *bool
+	gotScope                 *domain.NodeScope
 }
 
-func (s stubNodeReader) GetNode(_ context.Context, _, _, _ string, includeInactive bool) (*domain.NodeMeta, error) {
-	if s.gotInactive != nil {
-		*s.gotInactive = includeInactive
+func (s stubNodeReader) GetNode(_ context.Context, _, _, _ string, scope domain.NodeScope) (*domain.NodeMeta, error) {
+	if s.gotScope != nil {
+		*s.gotScope = scope
 	}
 	return s.meta, s.err
 }
@@ -39,15 +39,18 @@ func TestGetNode_MapsMeta(t *testing.T) {
 	}
 }
 
-func TestGetNode_IncludeInactivePassedToReader(t *testing.T) {
-	for _, want := range []bool{true, false} {
-		var got bool
-		h := NewQueryHandler(stubNodeReader{meta: &domain.NodeMeta{NodeType: "dbt-model"}, gotInactive: &got}, nil, nil, nil, testLogger())
-		if _, err := h.GetNode(context.Background(), &orchestratorv1.GetNodeRequest{ServiceName: "svc", SchemaName: "an", TableName: "fct", IncludeInactive: want}); err != nil {
+func TestGetNode_IncludeInactiveMapsToScope(t *testing.T) {
+	for includeInactive, want := range map[bool]domain.NodeScope{
+		false: domain.ActiveNodesOnly,
+		true:  domain.IncludeInactiveNodes,
+	} {
+		got := domain.NodeScope(-1)
+		h := NewQueryHandler(stubNodeReader{meta: &domain.NodeMeta{NodeType: "dbt-model"}, gotScope: &got}, nil, nil, nil, testLogger())
+		if _, err := h.GetNode(context.Background(), &orchestratorv1.GetNodeRequest{ServiceName: "svc", SchemaName: "an", TableName: "fct", IncludeInactive: includeInactive}); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if got != want {
-			t.Fatalf("include_inactive=%v reached the reader as %v", want, got)
+			t.Fatalf("include_inactive=%v reached the reader as scope %v, want %v", includeInactive, got, want)
 		}
 	}
 }

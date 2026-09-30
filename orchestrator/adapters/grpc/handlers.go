@@ -25,7 +25,7 @@ type ScheduleAndRunListReader interface {
 	GetScheduleGraph(ctx context.Context, scheduleName string) (*domain.ScheduleGraph, error)
 	ListRuns(ctx context.Context, scheduleName string, limit, offset int) ([]*domain.RunSummary, int, error)
 	ListScheduleTopologies(ctx context.Context) ([]*domain.ScheduleTopologySummary, error)
-	GetNode(ctx context.Context, service, schema, table string, includeInactive bool) (*domain.NodeMeta, error)
+	GetNode(ctx context.Context, service, schema, table string, scope domain.NodeScope) (*domain.NodeMeta, error)
 	GetNodeLocation(ctx context.Context, uniqueID string) (*domain.NodeLocation, error)
 }
 
@@ -228,7 +228,11 @@ func (h *QueryHandler) GetNode(ctx context.Context, req *orchestratorv1.GetNodeR
 	if req.ServiceName == "" || req.SchemaName == "" || req.TableName == "" {
 		return nil, status.Error(codes.InvalidArgument, "service_name, schema_name and table_name are required")
 	}
-	meta, err := h.scheduleAndRunLists.GetNode(ctx, req.ServiceName, req.SchemaName, req.TableName, req.GetIncludeInactive())
+	scope := domain.ActiveNodesOnly
+	if req.GetIncludeInactive() {
+		scope = domain.IncludeInactiveNodes
+	}
+	meta, err := h.scheduleAndRunLists.GetNode(ctx, req.ServiceName, req.SchemaName, req.TableName, scope)
 	if err != nil {
 		if errors.Is(err, domain.ErrNodeNotFound) {
 			return nil, status.Errorf(codes.NotFound, "node %s.%s.%s not found", req.ServiceName, req.SchemaName, req.TableName)

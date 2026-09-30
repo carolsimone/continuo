@@ -21,7 +21,7 @@ type spyScheduleGraphProvider struct {
 	graphCalls      int
 	graphBySchedule map[string]*domain.ScheduleGraph
 	nodeMeta        *domain.NodeMeta
-	gotInactive     []bool
+	gotScopes       []domain.NodeScope
 }
 
 func (s *spyScheduleGraphProvider) GetScheduleGraph(_ context.Context, scheduleName string) (*domain.ScheduleGraph, error) {
@@ -41,10 +41,10 @@ func (s *spyScheduleGraphProvider) ListRuns(_ context.Context, _ string, _, _ in
 func (s *spyScheduleGraphProvider) ListScheduleTopologies(_ context.Context) ([]*domain.ScheduleTopologySummary, error) {
 	return nil, nil
 }
-func (s *spyScheduleGraphProvider) GetNode(_ context.Context, _, _, _ string, includeInactive bool) (*domain.NodeMeta, error) {
+func (s *spyScheduleGraphProvider) GetNode(_ context.Context, _, _, _ string, scope domain.NodeScope) (*domain.NodeMeta, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.gotInactive = append(s.gotInactive, includeInactive)
+	s.gotScopes = append(s.gotScopes, scope)
 	return s.nodeMeta, nil
 }
 func (s *spyScheduleGraphProvider) GetNodeLocation(_ context.Context, _ string) (*domain.NodeLocation, error) {
@@ -166,15 +166,15 @@ func TestScheduleGraphCache_EvictsBeyondMaxSize(t *testing.T) {
 	assert.Equal(t, 4, spy.graphCalls, "evicted entry refetches")
 }
 
-func TestScheduleGraphCache_GetNode_PassesIncludeInactiveThrough(t *testing.T) {
+func TestScheduleGraphCache_GetNode_PassesScopeThrough(t *testing.T) {
 	spy := &spyScheduleGraphProvider{nodeMeta: &domain.NodeMeta{NodeType: "dbt-model", Inactive: true}}
 	cache := newTestCache(spy, &stubGeneration{gen: 1})
 	ctx := context.Background()
 
-	got, err := cache.GetNode(ctx, "svc", "an", "fct", true)
+	got, err := cache.GetNode(ctx, "svc", "an", "fct", domain.IncludeInactiveNodes)
 	require.NoError(t, err)
 	assert.True(t, got.Inactive)
-	_, err = cache.GetNode(ctx, "svc", "an", "fct", false)
+	_, err = cache.GetNode(ctx, "svc", "an", "fct", domain.ActiveNodesOnly)
 	require.NoError(t, err)
-	assert.Equal(t, []bool{true, false}, spy.gotInactive, "includeInactive must reach the inner reader unchanged on every call")
+	assert.Equal(t, []domain.NodeScope{domain.IncludeInactiveNodes, domain.ActiveNodesOnly}, spy.gotScopes, "the scope must reach the inner reader unchanged on every call")
 }

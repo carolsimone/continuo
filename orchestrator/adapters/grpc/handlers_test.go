@@ -66,7 +66,7 @@ func (f *fakeScheduleAndRunLists) ListRuns(_ context.Context, _ string, limit, o
 func (fakeScheduleAndRunLists) ListScheduleTopologies(context.Context) ([]*domain.ScheduleTopologySummary, error) {
 	return nil, nil
 }
-func (fakeScheduleAndRunLists) GetNode(context.Context, string, string, string, bool) (*domain.NodeMeta, error) {
+func (fakeScheduleAndRunLists) GetNode(context.Context, string, string, string, domain.NodeScope) (*domain.NodeMeta, error) {
 	return nil, nil
 }
 func (f *fakeScheduleAndRunLists) GetNodeLocation(context.Context, string) (*domain.NodeLocation, error) {

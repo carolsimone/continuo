@@ -74,7 +74,7 @@ func TestOrchestratorQueryRepository_GetNode_KnownTestCount(t *testing.T) {
 			map[string]any{"service": service, "schema": schema, "table": table})
 	})
 
-	got, err := repo.GetNode(ctx, service, schema, table, false)
+	got, err := repo.GetNode(ctx, service, schema, table, domain.ActiveNodesOnly)
 	require.NoError(t, err)
 	assert.Equal(t, "dbt-model", got.NodeType)
 	assert.Equal(t, 3, got.TestCount)
@@ -100,7 +100,7 @@ func TestOrchestratorQueryRepository_GetNode_UnknownTestCount(t *testing.T) {
 			map[string]any{"service": service, "schema": schema, "table": table})
 	})
 
-	got, err := repo.GetNode(ctx, service, schema, table, false)
+	got, err := repo.GetNode(ctx, service, schema, table, domain.ActiveNodesOnly)
 	require.NoError(t, err)
 	assert.Equal(t, 0, got.TestCount)
 	assert.False(t, got.TestCountKnown, "test_count property unset must report TestCountKnown=false, not a misleading zero")
@@ -114,7 +114,7 @@ func TestOrchestratorQueryRepository_GetNode_NotFound(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
-	_, err := repo.GetNode(ctx, fmt.Sprintf("svc-%s-absent", t.Name()), "an", "does_not_exist", true)
+	_, err := repo.GetNode(ctx, fmt.Sprintf("svc-%s-absent", t.Name()), "an", "does_not_exist", domain.IncludeInactiveNodes)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, domain.ErrNodeNotFound))
 }
@@ -132,9 +132,9 @@ func TestOrchestratorQueryRepository_GetNode_InactiveIsNotFoundByDefault(t *test
 	seedGetNodeTable(t, ctx, client, service, schema, table, "dbt-model", nil, false)
 	cleanupGetNodeTables(t, ctx, client, service, schema, table)
 
-	_, err := repo.GetNode(ctx, service, schema, table, false)
+	_, err := repo.GetNode(ctx, service, schema, table, domain.ActiveNodesOnly)
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, domain.ErrNodeNotFound), "an inactive node must not match without includeInactive")
+	assert.True(t, errors.Is(err, domain.ErrNodeNotFound), "an inactive node must not match with ActiveNodesOnly")
 }
 
 func TestOrchestratorQueryRepository_GetNode_IncludeInactiveReturnsInactiveNode(t *testing.T) {
@@ -151,7 +151,7 @@ func TestOrchestratorQueryRepository_GetNode_IncludeInactiveReturnsInactiveNode(
 	seedGetNodeTable(t, ctx, client, service, schema, table, "dbt-seed", &tc, false)
 	cleanupGetNodeTables(t, ctx, client, service, schema, table)
 
-	got, err := repo.GetNode(ctx, service, schema, table, true)
+	got, err := repo.GetNode(ctx, service, schema, table, domain.IncludeInactiveNodes)
 	require.NoError(t, err)
 	assert.Equal(t, "dbt-seed", got.NodeType)
 	assert.True(t, got.Inactive)
@@ -172,7 +172,7 @@ func TestOrchestratorQueryRepository_GetNode_IncludeInactiveReportsActiveNodeAsA
 	seedGetNodeFixture(t, ctx, client, service, schema, table, "dbt-model", nil)
 	cleanupGetNodeTables(t, ctx, client, service, schema, table)
 
-	got, err := repo.GetNode(ctx, service, schema, table, true)
+	got, err := repo.GetNode(ctx, service, schema, table, domain.IncludeInactiveNodes)
 	require.NoError(t, err)
 	assert.Equal(t, "dbt-model", got.NodeType)
 	assert.False(t, got.Inactive)
@@ -192,7 +192,7 @@ func TestOrchestratorQueryRepository_GetNode_IncludeInactivePrefersActiveMatch(t
 	seedGetNodeTable(t, ctx, client, service, schema, table, "dbt-model", nil, true)
 	cleanupGetNodeTables(t, ctx, client, service, schema, table)
 
-	got, err := repo.GetNode(ctx, service, schema, table, true)
+	got, err := repo.GetNode(ctx, service, schema, table, domain.IncludeInactiveNodes)
 	require.NoError(t, err)
 	assert.Equal(t, "dbt-model", got.NodeType, "the active :Table must win over an inactive one with the same identity")
 	assert.False(t, got.Inactive)

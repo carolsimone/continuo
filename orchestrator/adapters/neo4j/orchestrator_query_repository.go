@@ -408,13 +408,14 @@ func (r *OrchestratorQueryRepository) parseNeo4jTimestamp(field, value string) t
 }
 
 // GetNode returns per-node topology metadata for a single :Table, addressed by
-// its (service, schema, table) identity. Without includeInactive only an active
-// node matches; with it, a node no longer active in the topology also matches
-// (reported with Inactive = true) and an active match is preferred when both
-// exist. Returns domain.ErrNodeNotFound when no eligible node matches.
+// its (service, schema, table) identity. With domain.ActiveNodesOnly only an
+// active :Table matches; with domain.IncludeInactiveNodes a :Table no longer
+// active in the topology also matches (reported with Inactive = true) and an
+// active match is preferred when both exist. Returns domain.ErrNodeNotFound
+// when no eligible node matches.
 // test_count is read via intFieldPresent so a node predating test_count
 // capture reports TestCountKnown = false rather than a misleading zero.
-func (r *OrchestratorQueryRepository) GetNode(ctx context.Context, service, schema, table string, includeInactive bool) (*domain.NodeMeta, error) {
+func (r *OrchestratorQueryRepository) GetNode(ctx context.Context, service, schema, table string, scope domain.NodeScope) (*domain.NodeMeta, error) {
 	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
 	defer func() { _ = session.Close(ctx) }()
 
@@ -430,7 +431,7 @@ func (r *OrchestratorQueryRepository) GetNode(ctx context.Context, service, sche
 		"service":          service,
 		"schema":           schema,
 		"table":            table,
-		"include_inactive": includeInactive,
+		"include_inactive": scope == domain.IncludeInactiveNodes,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("GetNode query failed: %w", err)
