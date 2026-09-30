@@ -379,7 +379,6 @@ func (r *Run) AcceptDispatch(
 			JobName:             jobName,
 			Status:              p.Status,
 			MaxRetries:          int(p.MaxRetries),
-			ManifestVersion:     p.ManifestVersion,
 			ImageTag:            p.ImageTag,
 			InheritedFromTaskID: p.InheritedFromTaskID,
 			Operation:           r.operation,

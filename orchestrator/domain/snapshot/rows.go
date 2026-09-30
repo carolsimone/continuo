@@ -5,15 +5,14 @@ import "github.com/google/uuid"
 // SourceTaskRow captures the per-task data the selectors need from a source
 // :Run's :EXECUTES set. Loaded by TopologyReader.LoadSourceTasks.
 type SourceTaskRow struct {
-	TaskID            uuid.UUID
-	ScheduleName      string
-	NodeType          string
-	Status            string // uppercase: "PENDING" | "SUCCEEDED" | "FAILED" | "SKIPPED"
-	ImageTag          string
-	ManifestVersion   string
+	TaskID       uuid.UUID
+	ScheduleName string
+	NodeType     string
+	Status       string // uppercase: "PENDING" | "SUCCEEDED" | "FAILED" | "SKIPPED"
+	ImageTag     string
 	// SecretRef is the continuo-api-* Secret the source run pinned on its
 	// :EXECUTES edge; a derived run reuses it alongside ImageTag.
-	SecretRef         string
+	SecretRef string
 	// ContentHash is the code fingerprint the SOURCE run actually executed, read
 	// off its :EXECUTES edge. A derived run reuses it alongside ImageTag so the
 	// new run records the code it repeats, not whatever the topology holds now.
@@ -26,16 +25,15 @@ type SourceTaskRow struct {
 // TopologyReader.LoadSingleLatestTable.
 //
 // LoadSingleTableFromSourceRun reuses this shape for a snapshot_of_run task, and
-// fills ImageTag/ManifestVersion/ContentHash/SecretRef from the source run's
+// fills ImageTag/ContentHash/SecretRef from the source run's
 // :EXECUTES edge rather than from the :Table, so a stale-mode run repeats exactly
 // what the source executed.
 type LatestTableRow struct {
-	ScheduleName    string
-	NodeType        string
-	TestCount       int
-	TestCountKnown  bool // true iff the :Table had a test_count property (false for pre-capture topology)
-	ImageTag        string
-	ManifestVersion string
-	ContentHash     string
-	SecretRef       string
+	ScheduleName   string
+	NodeType       string
+	TestCount      int
+	TestCountKnown bool // true iff the :Table had a test_count property (false for pre-capture topology)
+	ImageTag       string
+	ContentHash    string
+	SecretRef      string
 }

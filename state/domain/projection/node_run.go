@@ -19,20 +19,19 @@ import (
 // with no execution yet carry nil timings and empty ErrorMessage / LogS3Key /
 // RunResultsURI.
 type NodeRun struct {
-	ScheduleID      uuid.UUID
-	ScheduleName    string
-	Kind            string
-	TerminalStatus  string
-	TaskID          uuid.UUID
-	TaskStatus      run.TaskStatus
-	RetryCount      int
-	ImageTag        string
-	ManifestVersion string
-	CreatedAt       time.Time
-	StartedAt       *time.Time
-	CompletedAt     *time.Time
-	ErrorMessage    *string
-	LogS3Key        *string
-	RunResultsURI   *string
-	Operation       string
+	ScheduleID     uuid.UUID
+	ScheduleName   string
+	Kind           string
+	TerminalStatus string
+	TaskID         uuid.UUID
+	TaskStatus     run.TaskStatus
+	RetryCount     int
+	ImageTag       string
+	CreatedAt      time.Time
+	StartedAt      *time.Time
+	CompletedAt    *time.Time
+	ErrorMessage   *string
+	LogS3Key       *string
+	RunResultsURI  *string
+	Operation      string
 }

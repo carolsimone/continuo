@@ -39,16 +39,15 @@ func TestRunEntriesDispatched_RoundTrip(t *testing.T) {
 	assert.Equal(t, in, out)
 }
 
-func TestDispatchedTask_RoundTripWithManifestVersionAndImageTag(t *testing.T) {
+func TestDispatchedTask_RoundTripWithImageTag(t *testing.T) {
 	in := events.DispatchedTask{
-		TaskID:          uuid.New().String(),
-		ServiceName:     "svc-a",
-		SchemaName:      "public",
-		TableName:       "users",
-		NodeType:        "dbt-model",
-		MaxRetries:      3,
-		ManifestVersion: "v7",
-		ImageTag:        "abcd123-1714300000",
+		TaskID:      uuid.New().String(),
+		ServiceName: "svc-a",
+		SchemaName:  "public",
+		TableName:   "users",
+		NodeType:    "dbt-model",
+		MaxRetries:  3,
+		ImageTag:    "abcd123-1714300000",
 	}
 	raw, err := json.Marshal(in)
 	require.NoError(t, err)
@@ -56,14 +55,14 @@ func TestDispatchedTask_RoundTripWithManifestVersionAndImageTag(t *testing.T) {
 	var out events.DispatchedTask
 	require.NoError(t, json.Unmarshal(raw, &out))
 	assert.Equal(t, in, out)
-	assert.Contains(t, string(raw), `"manifest_version":"v7"`)
+	assert.NotContains(t, string(raw), "manifest_version")
 	assert.Contains(t, string(raw), `"image_tag":"abcd123-1714300000"`)
 }
 
 func TestDispatchedTask_BackwardCompatDefaults(t *testing.T) {
 	// Pre-PR2 producers omit Status and InheritedFromTaskID; consumers must
 	// see "" / "" and treat as PENDING / no-inherit.
-	raw := `{"task_id":"t1","service_name":"svc","schema_name":"s","table_name":"x","node_type":"dbt-model","max_retries":2,"manifest_version":"v1","image_tag":"img:1"}`
+	raw := `{"task_id":"t1","service_name":"svc","schema_name":"s","table_name":"x","node_type":"dbt-model","max_retries":2,"image_tag":"img:1"}`
 	var dt events.DispatchedTask
 	err := json.Unmarshal([]byte(raw), &dt)
 	require.NoError(t, err)
@@ -79,7 +78,6 @@ func TestDispatchedTask_RoundtripWithNewFields(t *testing.T) {
 		TableName:           "x",
 		NodeType:            "dbt-model",
 		MaxRetries:          2,
-		ManifestVersion:     "v1",
 		ImageTag:            "img:1",
 		Status:              "succeeded",
 		InheritedFromTaskID: "00000000-0000-0000-0000-000000000001",
@@ -222,8 +220,8 @@ func TestTaskExecutionRecorded_OmitsEmptyRunResultsURI(t *testing.T) {
 func TestTaskExecutionRecorded_CarriesRunResultsURI(t *testing.T) {
 	const key = "run-results/task-executions/svc/sc/tbl/exec-1.json"
 	in := events.TaskExecutionRecorded{
-		ExecutionID:     uuid.New().String(),
-		TaskID:          uuid.New().String(),
+		ExecutionID:   uuid.New().String(),
+		TaskID:        uuid.New().String(),
 		RunResultsURI: key,
 	}
 

@@ -81,10 +81,7 @@ func TestE2E_HappyPath_FullDAGExecution(t *testing.T) {
 	trackerKind := queryPostgresTrackerKind(t, clients.stateDB, schedulerID)
 	assert.Equal(t, "cron", trackerKind, "scheduler_tracker.kind must be cron after fresh activation")
 
-	// manifest_version is a legacy manifest-ingest field; release-sourced topology
-	// (release.promoted) does not carry it — provenance is the release_id — so it
-	// is empty here by design and is not asserted. image_tag still flows through.
-	_, imageTag := queryFirstTaskTrackerMetadata(t, clients.stateDB, schedulerID)
+	imageTag := queryFirstTaskTrackerImageTag(t, clients.stateDB, schedulerID)
 	assert.NotEmpty(t, imageTag, "task_tracker.image_tag must be populated")
 
 	t.Log("✅ PR0 audit assertions passed")

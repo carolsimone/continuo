@@ -129,10 +129,7 @@ func TestTopologyVersioning_MidRunIsolation(t *testing.T) {
 	verifySchedulerSucceeded(t, ctx, clients, s1)
 	t.Log("Run 1 completed successfully")
 
-	// manifest_version is a legacy manifest-ingest field and is empty for
-	// release-sourced topology, so it is not asserted here (see system_test.go /
-	// single_node_run_test.go). Run 1's success above already proves its
-	// task_tracker rows landed.
+	// Run 1's success above already proves its task_tracker rows landed.
 
 	// Step 13: Clean up Run 1 data before triggering Run 2.
 	t.Log("=== Step 13: cleaning up Run 1 data ===")
@@ -191,9 +188,7 @@ func TestTopologyVersioning_MidRunIsolation(t *testing.T) {
 	verifySchedulerSucceeded(t, ctx, clients, s2)
 	t.Log("Run 2 completed successfully")
 
-	// manifest_version is empty for release-sourced topology (legacy ingest
-	// field); not asserted. Run 2's success above proves its task_tracker rows
-	// landed.
+	// Run 2's success above proves its task_tracker rows landed.
 
 	t.Log("TestTopologyVersioning_MidRunIsolation PASSED")
 }

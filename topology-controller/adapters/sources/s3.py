@@ -34,7 +34,7 @@ class S3Source:
             local_path = os.path.join(self._tmpdir.name, request.key.replace("/", "_"))
             self._s3.download_file(self._bucket, request.key, local_path)
             result.append(ManifestFile(
-                path=local_path, version="", image_tag="",
+                path=local_path, image_tag="",
                 declared_service=request.service, kind=request.kind,
             ))
         return result

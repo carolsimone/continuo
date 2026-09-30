@@ -15,7 +15,6 @@ type DispatchedTask struct {
 	TableName           string `json:"table_name"`
 	NodeType            string `json:"node_type"`
 	MaxRetries          int32  `json:"max_retries"`
-	ManifestVersion     string `json:"manifest_version"`
 	ImageTag            string `json:"image_tag"`
 	Status              string `json:"status,omitempty"`                 // "pending" (default) | "succeeded" (inherited)
 	InheritedFromTaskID string `json:"inherited_from_task_id,omitempty"` // empty for rebased; root task_id (uuid) for inherited

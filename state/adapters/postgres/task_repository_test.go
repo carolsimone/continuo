@@ -191,25 +191,23 @@ func TestTaskTrackerRepository_CreateAndGet_RoundTripsImageTag(t *testing.T) {
 	defer db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", parent.ScheduleID)
 
 	task := &postgres.TaskTracker{
-		TaskID:          uuid.New(),
-		ScheduleID:      parent.ScheduleID,
-		CreatedAt:       time.Now(),
-		ServiceName:     "service-1",
-		SchemaName:      "analytics",
-		TableName:       "daily_metrics",
-		JobName:         "job-x",
-		Status:          run.TaskStatusPending,
-		RetryCount:      0,
-		MaxRetries:      3,
-		ManifestVersion: "v5",
-		ImageTag:        "registry/img:abcdef",
+		TaskID:      uuid.New(),
+		ScheduleID:  parent.ScheduleID,
+		CreatedAt:   time.Now(),
+		ServiceName: "service-1",
+		SchemaName:  "analytics",
+		TableName:   "daily_metrics",
+		JobName:     "job-x",
+		Status:      run.TaskStatusPending,
+		RetryCount:  0,
+		MaxRetries:  3,
+		ImageTag:    "registry/img:abcdef",
 	}
 	require.NoError(t, repo.Create(ctx, task))
 	defer db.ExecContext(ctx, "DELETE FROM task_tracker WHERE task_id = $1", task.TaskID)
 
 	got, err := repo.GetByID(ctx, task.TaskID)
 	require.NoError(t, err)
-	assert.Equal(t, "v5", got.ManifestVersion)
 	assert.Equal(t, "registry/img:abcdef", got.ImageTag)
 }
 
@@ -243,7 +241,6 @@ func TestTaskTrackerRepository_CreateAndGet_RoundTripsInheritedFromTaskID(t *tes
 		Status:              run.TaskStatusSucceeded,
 		RetryCount:          0,
 		MaxRetries:          0,
-		ManifestVersion:     "vOLD",
 		ImageTag:            "img:OLD",
 		InheritedFromTaskID: &rootTaskID,
 	}
@@ -257,18 +254,17 @@ func TestTaskTrackerRepository_CreateAndGet_RoundTripsInheritedFromTaskID(t *tes
 
 	// Real-execution row: NULL pointer should round-trip as nil.
 	real := &postgres.TaskTracker{
-		TaskID:          uuid.New(),
-		ScheduleID:      parent.ScheduleID,
-		CreatedAt:       time.Now(),
-		ServiceName:     "svc",
-		SchemaName:      "s",
-		TableName:       "real_table",
-		JobName:         "job-r",
-		Status:          run.TaskStatusPending,
-		RetryCount:      0,
-		MaxRetries:      3,
-		ManifestVersion: "vNEW",
-		ImageTag:        "img:NEW",
+		TaskID:      uuid.New(),
+		ScheduleID:  parent.ScheduleID,
+		CreatedAt:   time.Now(),
+		ServiceName: "svc",
+		SchemaName:  "s",
+		TableName:   "real_table",
+		JobName:     "job-r",
+		Status:      run.TaskStatusPending,
+		RetryCount:  0,
+		MaxRetries:  3,
+		ImageTag:    "img:NEW",
 		// InheritedFromTaskID intentionally nil
 	}
 	require.NoError(t, repo.Create(ctx, real))

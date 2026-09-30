@@ -45,18 +45,11 @@ class ManifestRequest:
 @dataclass
 class ManifestFile:
     path: str
-    version: str
     image_tag: str = ""
     declared_service: str = ""
     # The raw wire value, not narrowed to ManifestKind: an unrecognized kind is
     # a permanent failure the handler reports, not an exception at decode time.
     kind: str = ManifestKind.DBT
-
-
-@dataclass
-class ServiceMetadata:
-    manifest_version: str
-    image_tag: str
 
 
 @dataclass
@@ -91,7 +84,6 @@ class ManifestNode:
     # output shape ({name, type, nullable}); empty for dbt nodes
     node_type: NodeType = NodeType.DBT_MODEL
     content_hash: str = ""  # sha256:-prefixed fold of source_hash|shared_code_hash|config_hash
-    manifest_version: str = ""
     image_tag: str = ""
     original_file_path: str = ""  # dbt original_file_path (project-relative)
     test_count: int = 0  # number of dbt tests attached to this node

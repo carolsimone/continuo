@@ -112,7 +112,7 @@ func TestHandleNodeCompleted_UnblockedNodeCarriesPinnedSecretRef(t *testing.T) {
 		{Key: kA, TaskID: uuid.New(), Status: "RUNNING", ScheduleName: "daily",
 			NodeType: "dbt-model", Downstreams: []run.NodeKey{kC}},
 		{Key: kC, TaskID: uuid.New(), Status: "PENDING", ScheduleName: "daily", //nolint:gosec // G101: secret_ref names a Kubernetes Secret, not a credential
-			NodeType: "python-api", ImageTag: "it1", ManifestVersion: "m1",
+			NodeType: "python-api", ImageTag: "it1",
 			SecretRef: "continuo-api-fx", Upstreams: []run.NodeKey{kA}},
 	})
 

@@ -388,7 +388,8 @@ message NodeRun {
   string task_status      = 6;  // pending | running | succeeded | failed | cancelled
   int32  retry_count      = 7;
   string image_tag        = 8;
-  string manifest_version = 9;
+  reserved 9;
+  reserved "manifest_version";
   string created_at       = 10; // RFC3339
   string started_at       = 11; // RFC3339, "" if no execution yet
   string completed_at     = 12; // RFC3339, "" if not finished

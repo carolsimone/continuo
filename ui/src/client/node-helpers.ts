@@ -67,11 +67,10 @@ export function computeNodeStats(runs: NodeRun[]): NodeStats {
   };
 }
 
-// One distinct past snapshot the node can be re-run against — an
-// (image_tag, manifest_version) pair, plus the runs that used it.
+// One distinct past snapshot the node can be re-run against — an image_tag,
+// plus the runs that used it.
 export interface SnapshotGroup {
   imageTag: string;
-  manifestVersion: string;
   runCount: number;             // eligible runs sharing this snapshot
   representativeRunId: string;  // the run the trigger executes against
   status: string;               // task_status of the representative run
@@ -88,7 +87,7 @@ export function isSnapshotSourceEligible(r: NodeRun): boolean {
 }
 
 // Collapse a node's runs into the distinct snapshots it can be re-run against.
-// Runs that share an (image_tag, manifest_version) pair are one snapshot; the
+// Runs that share an image_tag are one snapshot; the
 // snapshot's representative is its most-recent terminal run, which is the run the
 // stale-mode trigger executes against. Groups come back newest-snapshot-first.
 export function groupRunsBySnapshot(runs: NodeRun[]): SnapshotGroup[] {
@@ -98,8 +97,7 @@ export function groupRunsBySnapshot(runs: NodeRun[]): SnapshotGroup[] {
 
   const groups = new Map<string, SnapshotGroup>();
   for (const r of byRecent) {
-    // A JSON tuple keys the map so distinct (tag, version) pairs never collide.
-    const key = JSON.stringify([r.image_tag, r.manifest_version]);
+    const key = r.image_tag;
     const existing = groups.get(key);
     if (existing) {
       existing.runCount += 1;
@@ -108,7 +106,6 @@ export function groupRunsBySnapshot(runs: NodeRun[]): SnapshotGroup[] {
     // byRecent is newest-first, so the first run seen for a key is its representative.
     groups.set(key, {
       imageTag: r.image_tag,
-      manifestVersion: r.manifest_version,
       runCount: 1,
       representativeRunId: r.run_id,
       status: r.task_status,

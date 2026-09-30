@@ -17,7 +17,7 @@ import (
 func TestNewPendingRun_RecordsRunStarted(t *testing.T) {
 	now := time.Date(2026, 5, 16, 10, 0, 0, 0, time.UTC)
 	meta := map[string]run.ServiceMetadata{
-		"orders": {ManifestVersion: "v1", ImageTag: "abc"},
+		"orders": {ImageTag: "abc"},
 	}
 
 	r, evt, err := run.NewPendingRun("daily_orders", run.KindCron, nil, identity.SystemUserID, meta, model.OperationRun, now)

@@ -2227,25 +2227,24 @@ func (x *ListNodeRunsResponse) GetRuns() []*NodeRun {
 }
 
 type NodeRun struct {
-	state           protoimpl.MessageState `protogen:"open.v1"`
-	RunId           string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
-	ScheduleName    string                 `protobuf:"bytes,2,opt,name=schedule_name,json=scheduleName,proto3" json:"schedule_name,omitempty"`
-	Kind            string                 `protobuf:"bytes,3,opt,name=kind,proto3" json:"kind,omitempty"`                                           // cron | trigger | rerun | rebase | single_node_run
-	TerminalStatus  string                 `protobuf:"bytes,4,opt,name=terminal_status,json=terminalStatus,proto3" json:"terminal_status,omitempty"` // "" while in flight
-	TaskId          string                 `protobuf:"bytes,5,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
-	TaskStatus      string                 `protobuf:"bytes,6,opt,name=task_status,json=taskStatus,proto3" json:"task_status,omitempty"` // pending | running | succeeded | failed | cancelled
-	RetryCount      int32                  `protobuf:"varint,7,opt,name=retry_count,json=retryCount,proto3" json:"retry_count,omitempty"`
-	ImageTag        string                 `protobuf:"bytes,8,opt,name=image_tag,json=imageTag,proto3" json:"image_tag,omitempty"`
-	ManifestVersion string                 `protobuf:"bytes,9,opt,name=manifest_version,json=manifestVersion,proto3" json:"manifest_version,omitempty"`
-	CreatedAt       string                 `protobuf:"bytes,10,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`               // RFC3339
-	StartedAt       string                 `protobuf:"bytes,11,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`               // RFC3339, "" if no execution yet
-	CompletedAt     string                 `protobuf:"bytes,12,opt,name=completed_at,json=completedAt,proto3" json:"completed_at,omitempty"`         // RFC3339, "" if not finished
-	ErrorMessage    string                 `protobuf:"bytes,13,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`      // "" when none
-	LogS3Key        string                 `protobuf:"bytes,14,opt,name=log_s3_key,json=logS3Key,proto3" json:"log_s3_key,omitempty"`                // "" when none
-	Operation       string                 `protobuf:"bytes,15,opt,name=operation,proto3" json:"operation,omitempty"`                                // run | test | build | full_refresh
-	RunResultsUri   string                 `protobuf:"bytes,16,opt,name=run_results_uri,json=runResultsUri,proto3" json:"run_results_uri,omitempty"` // "" when none
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	RunId          string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	ScheduleName   string                 `protobuf:"bytes,2,opt,name=schedule_name,json=scheduleName,proto3" json:"schedule_name,omitempty"`
+	Kind           string                 `protobuf:"bytes,3,opt,name=kind,proto3" json:"kind,omitempty"`                                           // cron | trigger | rerun | rebase | single_node_run
+	TerminalStatus string                 `protobuf:"bytes,4,opt,name=terminal_status,json=terminalStatus,proto3" json:"terminal_status,omitempty"` // "" while in flight
+	TaskId         string                 `protobuf:"bytes,5,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	TaskStatus     string                 `protobuf:"bytes,6,opt,name=task_status,json=taskStatus,proto3" json:"task_status,omitempty"` // pending | running | succeeded | failed | cancelled
+	RetryCount     int32                  `protobuf:"varint,7,opt,name=retry_count,json=retryCount,proto3" json:"retry_count,omitempty"`
+	ImageTag       string                 `protobuf:"bytes,8,opt,name=image_tag,json=imageTag,proto3" json:"image_tag,omitempty"`
+	CreatedAt      string                 `protobuf:"bytes,10,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`               // RFC3339
+	StartedAt      string                 `protobuf:"bytes,11,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`               // RFC3339, "" if no execution yet
+	CompletedAt    string                 `protobuf:"bytes,12,opt,name=completed_at,json=completedAt,proto3" json:"completed_at,omitempty"`         // RFC3339, "" if not finished
+	ErrorMessage   string                 `protobuf:"bytes,13,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`      // "" when none
+	LogS3Key       string                 `protobuf:"bytes,14,opt,name=log_s3_key,json=logS3Key,proto3" json:"log_s3_key,omitempty"`                // "" when none
+	Operation      string                 `protobuf:"bytes,15,opt,name=operation,proto3" json:"operation,omitempty"`                                // run | test | build | full_refresh
+	RunResultsUri  string                 `protobuf:"bytes,16,opt,name=run_results_uri,json=runResultsUri,proto3" json:"run_results_uri,omitempty"` // "" when none
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *NodeRun) Reset() {
@@ -2330,13 +2329,6 @@ func (x *NodeRun) GetRetryCount() int32 {
 func (x *NodeRun) GetImageTag() string {
 	if x != nil {
 		return x.ImageTag
-	}
-	return ""
-}
-
-func (x *NodeRun) GetManifestVersion() string {
-	if x != nil {
-		return x.ManifestVersion
 	}
 	return ""
 }
@@ -2908,7 +2900,7 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"\x05limit\x18\x04 \x01(\x05R\x05limit\x12\x1c\n" +
 	"\toperation\x18\x05 \x01(\tR\toperation\"=\n" +
 	"\x14ListNodeRunsResponse\x12%\n" +
-	"\x04runs\x18\x01 \x03(\v2\x11.state.v1.NodeRunR\x04runs\"\x8f\x04\n" +
+	"\x04runs\x18\x01 \x03(\v2\x11.state.v1.NodeRunR\x04runs\"\xfc\x03\n" +
 	"\aNodeRun\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12#\n" +
 	"\rschedule_name\x18\x02 \x01(\tR\fscheduleName\x12\x12\n" +
@@ -2919,8 +2911,7 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"taskStatus\x12\x1f\n" +
 	"\vretry_count\x18\a \x01(\x05R\n" +
 	"retryCount\x12\x1b\n" +
-	"\timage_tag\x18\b \x01(\tR\bimageTag\x12)\n" +
-	"\x10manifest_version\x18\t \x01(\tR\x0fmanifestVersion\x12\x1d\n" +
+	"\timage_tag\x18\b \x01(\tR\bimageTag\x12\x1d\n" +
 	"\n" +
 	"created_at\x18\n" +
 	" \x01(\tR\tcreatedAt\x12\x1d\n" +
@@ -2931,7 +2922,8 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"\n" +
 	"log_s3_key\x18\x0e \x01(\tR\blogS3Key\x12\x1c\n" +
 	"\toperation\x18\x0f \x01(\tR\toperation\x12&\n" +
-	"\x0frun_results_uri\x18\x10 \x01(\tR\rrunResultsUri\"\x99\x01\n" +
+	"\x0frun_results_uri\x18\x10 \x01(\tR\rrunResultsUriJ\x04\b\t\x10\n" +
+	"R\x10manifest_version\"\x99\x01\n" +
 	"\x10ListNodesRequest\x12\x16\n" +
 	"\x06search\x18\x01 \x01(\tR\x06search\x12!\n" +
 	"\fservice_name\x18\x02 \x01(\tR\vserviceName\x12\x14\n" +

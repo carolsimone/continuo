@@ -177,18 +177,17 @@ func (h *HandleSchedulerStartedHandler) Handle(ctx context.Context, evt domain.S
 		}
 
 		nodeEvt := domain.NodeReadyForExecution{
-			ScheduleID:      evt.ScheduleID.String(),
-			ScheduleName:    task.ScheduleName,
-			ServiceName:     task.ServiceName,
-			SchemaName:      task.SchemaName,
-			TableName:       task.TableName,
-			TaskID:          task.TaskID.String(),
-			JobName:         jobName,
-			NodeType:        string(nodeType),
-			ManifestVersion: task.ManifestVersion,
-			ImageTag:        task.ImageTag,
-			SecretRef:       task.SecretRef,
-			Operation:       evt.Operation,
+			ScheduleID:   evt.ScheduleID.String(),
+			ScheduleName: task.ScheduleName,
+			ServiceName:  task.ServiceName,
+			SchemaName:   task.SchemaName,
+			TableName:    task.TableName,
+			TaskID:       task.TaskID.String(),
+			JobName:      jobName,
+			NodeType:     string(nodeType),
+			ImageTag:     task.ImageTag,
+			SecretRef:    task.SecretRef,
+			Operation:    evt.Operation,
 		}
 
 		evtPayload, err := json.Marshal(serialization.NodeReadyForExecutionFromDomain(nodeEvt))
@@ -265,14 +264,13 @@ func (h *HandleSchedulerStartedHandler) buildRunEntriesDispatchedPayload(
 	allTasks := make([]pkgevents.DispatchedTask, 0, len(projection))
 	for _, t := range projection {
 		allTasks = append(allTasks, pkgevents.DispatchedTask{
-			TaskID:          t.TaskID.String(),
-			ServiceName:     t.ServiceName,
-			SchemaName:      t.SchemaName,
-			TableName:       t.TableName,
-			NodeType:        t.NodeType,
-			MaxRetries:      t.MaxRetries,
-			ManifestVersion: t.ManifestVersion,
-			ImageTag:        t.ImageTag,
+			TaskID:      t.TaskID.String(),
+			ServiceName: t.ServiceName,
+			SchemaName:  t.SchemaName,
+			TableName:   t.TableName,
+			NodeType:    t.NodeType,
+			MaxRetries:  t.MaxRetries,
+			ImageTag:    t.ImageTag,
 		})
 	}
 

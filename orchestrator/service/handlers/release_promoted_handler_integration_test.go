@@ -170,7 +170,6 @@ func TestReleasePromotedConsumer_HappyPath_E2E(t *testing.T) {
 	sm, ok := outboxGot["service_metadata"].(map[string]interface{})
 	require.True(t, ok, "service_metadata must be a JSON object")
 	smA := sm["service-a"].(map[string]interface{})
-	assert.Equal(t, releaseID, smA["manifest_version"])
 	assert.Equal(t, "tag-a", smA["image_tag"])
 
 	// ── Postgres dedup assertions ─────────────────────────────────────────────

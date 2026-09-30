@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/carolsimone/continuo/orchestrator/serialization"
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
+	"github.com/carolsimone/continuo/orchestrator/serialization"
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	pkgEvents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -36,16 +36,15 @@ func seedProjection(tables ...string) []snapshot.TaskProjection {
 	out := make([]snapshot.TaskProjection, 0, len(tables))
 	for _, tbl := range tables {
 		out = append(out, snapshot.TaskProjection{
-			TaskID:          uuid.New(),
-			ServiceName:     "core",
-			SchemaName:      "analytics",
-			TableName:       tbl,
-			ScheduleName:    "seed",
-			NodeType:        "dbt-seed",
-			InitialStatus:   "PENDING",
-			ImageTag:        "v1",
-			ManifestVersion: "rel-1",
-			MaxRetries:      pkgEvents.DefaultTaskMaxRetries,
+			TaskID:        uuid.New(),
+			ServiceName:   "core",
+			SchemaName:    "analytics",
+			TableName:     tbl,
+			ScheduleName:  "seed",
+			NodeType:      "dbt-seed",
+			InitialStatus: "PENDING",
+			ImageTag:      "v1",
+			MaxRetries:    pkgEvents.DefaultTaskMaxRetries,
 		})
 	}
 	return out

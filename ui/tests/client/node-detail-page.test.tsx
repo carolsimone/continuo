@@ -34,7 +34,7 @@ const mkRun = (over: Partial<{ run_id: string; task_id: string; kind: string; ta
   run_id: 'r1', schedule_name: 'daily', kind: 'cron',
   terminal_status: 'succeeded', task_id: 't1',
   task_status: 'succeeded', retry_count: 0,
-  image_tag: 'v1', manifest_version: 'm1',
+  image_tag: 'v1',
   created_at: '2026-05-10T10:00:00Z',
   started_at: '2026-05-10T10:00:05Z',
   completed_at: '2026-05-10T10:01:00Z',
@@ -47,6 +47,13 @@ describe('NodeDetailPage', () => {
     mockFetch.mockImplementation(() => jsonResp({ runs: [] }));
     renderPage();
     expect(await screen.findByText(/svc\.schema\.tbl/)).toBeInTheDocument();
+  });
+
+  it('shows the image tag column and no manifest column in the run history', async () => {
+    mockFetch.mockImplementation(() => jsonResp({ runs: [mkRun({})] }));
+    renderPage();
+    expect(await screen.findByRole('columnheader', { name: 'Image tag' })).toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: /manifest/i })).not.toBeInTheDocument();
   });
 
   it('renders Run-this-node and Run-with-old-snapshot buttons', async () => {
@@ -614,7 +621,7 @@ describe('NodeDetailPage full refresh', () => {
   });
 
   it('names the picked snapshot in the full refresh confirmation', async () => {
-    const picked = { ...mkRun({ run_id: 'pick-me', created_at: '2026-04-02T08:30:00Z' }), image_tag: 'v7', manifest_version: 'm7' };
+    const picked = { ...mkRun({ run_id: 'pick-me', created_at: '2026-04-02T08:30:00Z' }), image_tag: 'v7' };
     mockFetch.mockImplementation(metaAndRuns('dbt-model', [picked]));
     renderPage();
     await waitFor(() => screen.getByRole('option', { name: /full refresh/i }));
@@ -624,7 +631,7 @@ describe('NodeDetailPage full refresh', () => {
 
     const dialog = await screen.findByRole('dialog');
     const when = new Date('2026-04-02T08:30:00Z').toLocaleString();
-    expect(dialog).toHaveTextContent(`Rebuilds from the snapshot of the run on ${when} (image v7, manifest m7).`);
+    expect(dialog).toHaveTextContent(`Rebuilds from the snapshot of the run on ${when} (image v7).`);
     expect(screen.getByRole('button', { name: /^cancel$/i })).toHaveFocus();
   });
 

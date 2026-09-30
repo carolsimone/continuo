@@ -86,7 +86,7 @@ func (a *CatalogRepositoryAdapter) SaveCatalog(ctx context.Context, c *catalog.S
 			present = append(present, name)
 			inner := make(map[string]run.ServiceMetadata, len(e.ServiceMetadata))
 			for svc, m := range e.ServiceMetadata {
-				inner[svc] = run.ServiceMetadata{ManifestVersion: m.ManifestVersion, ImageTag: m.ImageTag}
+				inner[svc] = run.ServiceMetadata{ImageTag: m.ImageTag}
 			}
 			perScheduleMeta[name] = inner
 		}
@@ -120,7 +120,7 @@ func (a *CatalogRepositoryAdapter) GetServiceMetadata(ctx context.Context, name 
 	}
 	out := make(map[string]run.ServiceMetadata, len(raw))
 	for svc, m := range raw {
-		out[svc] = run.ServiceMetadata{ManifestVersion: m.ManifestVersion, ImageTag: m.ImageTag}
+		out[svc] = run.ServiceMetadata{ImageTag: m.ImageTag}
 	}
 	return out, nil
 }
@@ -132,7 +132,7 @@ func hydrateCatalog(rows []ScheduleCatalogRow) *catalog.ScheduleCatalog {
 	for _, r := range rows {
 		meta := make(map[string]run.ServiceMetadata, len(r.ServiceMetadata))
 		for svc, sm := range r.ServiceMetadata {
-			meta[svc] = run.ServiceMetadata{ManifestVersion: sm.ManifestVersion, ImageTag: sm.ImageTag}
+			meta[svc] = run.ServiceMetadata{ImageTag: sm.ImageTag}
 		}
 		entries[r.ScheduleName] = catalog.Entry{
 			ScheduleName:    r.ScheduleName,

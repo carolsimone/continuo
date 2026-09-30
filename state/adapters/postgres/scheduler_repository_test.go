@@ -76,7 +76,7 @@ func TestSchedulerRepository_CreateTx_InsertsTracker(t *testing.T) {
 		Status:               run.SchedulerStatusPending,
 		CreatedAt:            time.Now(),
 		InitializationStatus: "pending",
-		ServiceMetadataRaw:   []byte(`{"svc-a":{"manifest_version":"v3","image_tag":""}}`),
+		ServiceMetadataRaw:   []byte(`{"svc-a":{"image_tag":""}}`),
 	}
 	defer db.ExecContext(context.Background(), "DELETE FROM scheduler_tracker WHERE schedule_id = $1", scheduleID)
 
@@ -94,7 +94,7 @@ func TestSchedulerRepository_CreateTx_InsertsTracker(t *testing.T) {
 	assert.Equal(t, "pending", got.InitializationStatus)
 	gotMeta, metaErr := got.GetServiceMetadata()
 	require.NoError(t, metaErr)
-	assert.Equal(t, map[string]run.ServiceMetadata{"svc-a": {ManifestVersion: "v3", ImageTag: ""}}, gotMeta)
+	assert.Equal(t, map[string]run.ServiceMetadata{"svc-a": {ImageTag: ""}}, gotMeta)
 }
 
 func TestSchedulerRepository_SetTotalTaskCountTx(t *testing.T) {

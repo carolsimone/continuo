@@ -17,8 +17,7 @@ import (
 //
 //  1. Calls TriggerSingleNodeRun (gRPC) for a known seed node.
 //  2. Waits for the synthesised run to reach 'succeeded' in scheduler_tracker.
-//  3. Asserts exactly ONE task_tracker row exists with non-empty image_tag and
-//     manifest_version.
+//  3. Asserts exactly ONE task_tracker row exists with non-empty image_tag.
 //  4. Asserts the Neo4j :Run node has kind = "single_node_run" and no
 //     source_run_id property.
 func TestSingleNodeRunLatest(t *testing.T) {
@@ -84,12 +83,10 @@ func TestSingleNodeRunLatest(t *testing.T) {
 	require.NoError(t, err, "failed to count task_tracker rows")
 	require.Equal(t, 1, taskCount, "expected exactly 1 task for a single-node run")
 
-	// Assert image_tag is populated. manifest_version is a legacy manifest-ingest
-	// field absent from release-sourced topology (provenance is release_id), so it
-	// is empty here by design and is not asserted.
-	manifestVersion, imageTag := queryFirstTaskTrackerMetadata(t, clients.stateDB, runID)
+	// Assert image_tag is populated.
+	imageTag := queryFirstTaskTrackerImageTag(t, clients.stateDB, runID)
 	assert.NotEmpty(t, imageTag, "task_tracker.image_tag must be non-empty")
-	t.Logf("task_tracker metadata: manifest_version=%s image_tag=%s", manifestVersion, imageTag)
+	t.Logf("task_tracker image_tag=%s", imageTag)
 
 	// Assert Neo4j :Run.kind = "single_node_run".
 	runKind := queryNeo4jRunKind(t, clients, runID)
@@ -100,7 +97,7 @@ func TestSingleNodeRunLatest(t *testing.T) {
 	assert.False(t, hasSourceRunID, ":Run.source_run_id must not be present for a latest-mode single-node run")
 
 	// Assert the new state.ListNodeRuns RPC returns this run as the most recent
-	// row for the target node, with the right kind, image_tag, manifest_version,
+	// row for the target node, with the right kind, image_tag,
 	// and non-nil timings.
 	//
 	// task.status.updated:v1 and task.execution.recorded:v1 are delivered on
@@ -138,7 +135,6 @@ func TestSingleNodeRunLatest(t *testing.T) {
 	assert.Equal(t, runID.String(), top.RunId, "ListNodeRuns[0].run_id must match the run we just triggered")
 	assert.Equal(t, "single_node_run", top.Kind, "ListNodeRuns[0].kind must be 'single_node_run'")
 	assert.NotEmpty(t, top.ImageTag, "ListNodeRuns[0].image_tag must be populated")
-	// manifest_version is empty for release-sourced topology (see above); not asserted.
 	assert.Equal(t, "succeeded", top.TaskStatus, "ListNodeRuns[0].task_status must be 'succeeded'")
 
 	t.Log("TestSingleNodeRunLatest passed")
@@ -148,15 +144,15 @@ func TestSingleNodeRunLatest(t *testing.T) {
 // (stale) metadata mode:
 //
 //  1. Triggers a normal cron-style run on the "seed" schedule so that a real
-//     source run exists with stamped image_tag / manifest_version.
+//     source run exists with stamped image_tag.
 //  2. Waits for that source run to reach SUCCEEDED.
 //  3. Reads the source run's task_tracker row for the target node to capture
-//     the "old" image_tag and manifest_version pair.
+//     the "old" image_tag.
 //  4. Calls TriggerSingleNodeRun with metadata_source="snapshot_of_run" and
 //     source_run_id = the source schedule_id.
 //  5. Waits for the new single-node run to reach SUCCEEDED.
-//  6. Asserts that the new run inherits the source's image_tag and
-//     manifest_version, and that :Run.source_run_id in Neo4j equals the source
+//  6. Asserts that the new run inherits the source's image_tag,
+//     and that :Run.source_run_id in Neo4j equals the source
 //     schedule_id.
 func TestSingleNodeRunStale(t *testing.T) {
 	if testing.Short() {
@@ -170,10 +166,10 @@ func TestSingleNodeRunStale(t *testing.T) {
 	defer clients.close(ctx)
 
 	const (
-		targetService  = "service-1"
-		targetSchema   = "e2e_schema"
-		targetTable    = "seed_table_1"
-		srcSchedule    = "seed"
+		targetService = "service-1"
+		targetSchema  = "e2e_schema"
+		targetTable   = "seed_table_1"
+		srcSchedule   = "seed"
 	)
 
 	// Verify infrastructure is up before proceeding.
@@ -202,13 +198,11 @@ func TestSingleNodeRunStale(t *testing.T) {
 	verifySchedulerSucceeded(t, ctx, clients, srcID)
 	t.Log("Source run reached 'succeeded'")
 
-	// ── Step 3: Read source's image_tag + manifest_version for the target ─────
+	// ── Step 3: Read source's image_tag for the target ────────────────────────
 	t.Log("=== Step 3: Reading source task metadata ===")
-	srcImage, srcManifest := readTaskMetadata(t, ctx, clients, srcID, targetService, targetSchema, targetTable)
+	srcImage := readTaskImageTag(t, clients, srcID, targetService, targetSchema, targetTable)
 	require.NotEmpty(t, srcImage, "source task_tracker.image_tag must be non-empty")
-	// manifest_version is empty for release-sourced topology (legacy ingest field);
-	// stale-mode inheritance is still asserted below (Step 6) as src == new.
-	t.Logf("Source metadata: image_tag=%s manifest_version=%s", srcImage, srcManifest)
+	t.Logf("Source metadata: image_tag=%s", srcImage)
 
 	// ── Step 4: Trigger single-node run in stale mode ─────────────────────────
 	t.Log("=== Step 4: Triggering single-node run in stale (snapshot_of_run) mode ===")
@@ -239,12 +233,10 @@ func TestSingleNodeRunStale(t *testing.T) {
 
 	// ── Step 6: Assert new run inherited source metadata ─────────────────────
 	t.Log("=== Step 6: Asserting stale metadata inheritance ===")
-	newImage, newManifest := readTaskMetadata(t, ctx, clients, runID, targetService, targetSchema, targetTable)
+	newImage := readTaskImageTag(t, clients, runID, targetService, targetSchema, targetTable)
 	require.Equal(t, srcImage, newImage,
 		"stale mode must inherit source's image_tag: got %q, want %q", newImage, srcImage)
-	require.Equal(t, srcManifest, newManifest,
-		"stale mode must inherit source's manifest_version: got %q, want %q", newManifest, srcManifest)
-	t.Logf("New run metadata matches source: image_tag=%s manifest_version=%s", newImage, newManifest)
+	t.Logf("New run metadata matches source: image_tag=%s", newImage)
 
 	// Assert :Run.source_run_id in Neo4j equals the source schedule_id string.
 	sourceRunID := readNeo4jRunSourceRunID(t, ctx, clients, runID)
@@ -384,23 +376,19 @@ func cleanupSingleNodeRun(t *testing.T, ctx context.Context, clients *testClient
 	t.Log("Single-node run cleanup complete")
 }
 
-// readTaskMetadata returns the image_tag and manifest_version from the
-// task_tracker row that matches the given schedule_id and target identity
-// (service_name, schema_name, table_name). Fails the test if no row is found.
-func readTaskMetadata(
+// readTaskImageTag returns the image_tag from the task_tracker row that matches
+// the given schedule_id and target identity (service_name, schema_name,
+// table_name). Fails the test if no row is found.
+func readTaskImageTag(
 	t *testing.T,
-	_ context.Context,
 	clients *testClients,
 	scheduleID uuid.UUID,
 	serviceName, schemaName, tableName string,
-) (imageTag, manifestVersion string) {
+) string {
 	t.Helper()
-	var row struct {
-		ImageTag        string `db:"image_tag"`
-		ManifestVersion string `db:"manifest_version"`
-	}
-	err := clients.stateDB.GetContext(context.Background(), &row,
-		`SELECT image_tag, manifest_version
+	var imageTag string
+	err := clients.stateDB.GetContext(context.Background(), &imageTag,
+		`SELECT image_tag
 		   FROM task_tracker
 		  WHERE schedule_id   = $1
 		    AND service_name  = $2
@@ -410,10 +398,10 @@ func readTaskMetadata(
 		scheduleID, serviceName, schemaName, tableName,
 	)
 	require.NoError(t, err,
-		"readTaskMetadata: no task_tracker row for schedule_id=%s service=%s schema=%s table=%s",
+		"readTaskImageTag: no task_tracker row for schedule_id=%s service=%s schema=%s table=%s",
 		scheduleID, serviceName, schemaName, tableName,
 	)
-	return row.ImageTag, row.ManifestVersion
+	return imageTag
 }
 
 // readNeo4jRunSourceRunID returns the value of :Run.source_run_id for the

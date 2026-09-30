@@ -150,8 +150,8 @@ func TestReleasePromoted_HappyPath_PromotesAndEmitsSchedulesLoaded(t *testing.T)
 	smCall := topoRepo.setServiceMetadataCalls[0]
 	assert.Equal(t, int64(5), smCall.TopologyGeneration)
 	assert.Equal(t, map[string]map[string]string{
-		"service-a": {"manifest_version": "rA", "image_tag": "tag-a"},
-		"service-b": {"manifest_version": "rA", "image_tag": "tag-b"},
+		"service-a": {"image_tag": "tag-a"},
+		"service-b": {"image_tag": "tag-b"},
 	}, smCall.ServiceMetadata)
 
 	// One outbox entry on schedules.loaded:v1.
@@ -162,7 +162,7 @@ func TestReleasePromoted_HappyPath_PromotesAndEmitsSchedulesLoaded(t *testing.T)
 	assert.Equal(t, "orchestrator", entry.AggregateType)
 
 	// Payload shape: deterministic event_id, sorted schedule_names,
-	// service_metadata with manifest_version=release_id and correct image_tags,
+	// service_metadata with the correct image_tags,
 	// and topology_generation present.
 	var payload struct {
 		EventID            string                       `json:"event_id"`
@@ -174,8 +174,8 @@ func TestReleasePromoted_HappyPath_PromotesAndEmitsSchedulesLoaded(t *testing.T)
 	assert.Equal(t, expectedEventID("rA"), payload.EventID, "event_id must be deterministic")
 	assert.Equal(t, []string{"daily", "hourly"}, payload.ScheduleNames)
 	assert.Equal(t, map[string]map[string]string{
-		"service-a": {"manifest_version": "rA", "image_tag": "tag-a"},
-		"service-b": {"manifest_version": "rA", "image_tag": "tag-b"},
+		"service-a": {"image_tag": "tag-a"},
+		"service-b": {"image_tag": "tag-b"},
 	}, payload.ServiceMetadata)
 	assert.Equal(t, int64(5), payload.TopologyGeneration)
 
@@ -417,8 +417,8 @@ func TestReleasePromoted_TopologyRootUpdatedAfterPromotion(t *testing.T) {
 	smCall := topoRepo.setServiceMetadataCalls[0]
 	assert.Equal(t, int64(42), smCall.TopologyGeneration)
 	assert.Equal(t, map[string]map[string]string{
-		"service-a": {"manifest_version": "rA", "image_tag": "tag-a"},
-		"service-b": {"manifest_version": "rA", "image_tag": "tag-b"},
+		"service-a": {"image_tag": "tag-a"},
+		"service-b": {"image_tag": "tag-b"},
 	}, smCall.ServiceMetadata)
 
 	// Outbox payload carries topology_generation=42.

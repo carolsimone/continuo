@@ -177,14 +177,13 @@ func (r *Run) checkUnblocked(from NodeKey) []DomainEvent {
 		}
 		if allTerminal {
 			events = append(events, NodeUnblocked{
-				Key:             dk,
-				TaskID:          downstream.TaskID,
-				ScheduleName:    downstream.ScheduleName,
-				NodeType:        downstream.NodeType,
-				ManifestVersion: downstream.ManifestVersion,
-				ImageTag:        downstream.ImageTag,
-				SecretRef:       downstream.SecretRef,
-				Operation:       r.Operation,
+				Key:          dk,
+				TaskID:       downstream.TaskID,
+				ScheduleName: downstream.ScheduleName,
+				NodeType:     downstream.NodeType,
+				ImageTag:     downstream.ImageTag,
+				SecretRef:    downstream.SecretRef,
+				Operation:    r.Operation,
 			})
 		}
 	}

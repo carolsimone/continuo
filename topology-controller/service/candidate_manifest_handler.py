@@ -120,7 +120,7 @@ class CandidateManifestHandler:
                 return
 
             try:
-                nodes, mf_shared = parser.parse(mf.path, mf.version, mf.image_tag)
+                nodes, mf_shared = parser.parse(mf.path, mf.image_tag)
             except parser.permanent_errors as exc:
                 # Invalid JSON or yaml, a missing required key, or a malformed
                 # node are all permanent — re-delivery cannot fix them, so

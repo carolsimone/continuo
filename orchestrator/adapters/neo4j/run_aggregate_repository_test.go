@@ -108,7 +108,6 @@ func seedRun(
 			CREATE (run)-[:EXECUTES {
 				task_id:          $task_id,
 				status:           $status,
-				manifest_version: 'mv1',
 				image_tag:        'it1',
 				secret_ref:       'continuo-api-fx'
 			}]->(t)

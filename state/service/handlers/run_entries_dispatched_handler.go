@@ -77,7 +77,6 @@ func toDispatchedTasks(evt events.RunEntriesDispatched) []run.DispatchedTask {
 			TableName:           t.TableName,
 			Status:              t.Status,
 			MaxRetries:          t.MaxRetries,
-			ManifestVersion:     t.ManifestVersion,
 			ImageTag:            t.ImageTag,
 			InheritedFromTaskID: t.InheritedFromTaskID,
 		})

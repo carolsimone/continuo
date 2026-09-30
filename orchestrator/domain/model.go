@@ -41,19 +41,18 @@ type RunSummary struct {
 }
 
 type TableNode struct {
-	TableName       string
-	SchemaName      string
-	ServiceName     string
-	Owner           string
-	ScheduleName    string
-	Criticality     Criticality
-	LastUpdatedAt   time.Time
-	CreatedAt       time.Time
-	NodeType        string
-	Status          string
-	TaskID          string
-	ManifestVersion string
-	ImageTag        string
+	TableName     string
+	SchemaName    string
+	ServiceName   string
+	Owner         string
+	ScheduleName  string
+	Criticality   Criticality
+	LastUpdatedAt time.Time
+	CreatedAt     time.Time
+	NodeType      string
+	Status        string
+	TaskID        string
+	ImageTag      string
 }
 
 type ScheduleGraph struct {
@@ -85,16 +84,15 @@ type CascadeTaskSkipped struct {
 
 // NodeReadyForExecution is the event payload written to query.model:v1 outbox entries
 type NodeReadyForExecution struct {
-	ScheduleID      string
-	ScheduleName    string
-	ServiceName     string
-	SchemaName      string
-	TableName       string
-	TaskID          string
-	JobName         string
-	NodeType        string
-	ManifestVersion string
-	ImageTag        string
+	ScheduleID   string
+	ScheduleName string
+	ServiceName  string
+	SchemaName   string
+	TableName    string
+	TaskID       string
+	JobName      string
+	NodeType     string
+	ImageTag     string
 	// SecretRef names the continuo-api-* Secret a python-api node's pod
 	// receives; empty for every node that takes no API credentials.
 	SecretRef string

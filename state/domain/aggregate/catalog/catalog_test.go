@@ -23,7 +23,7 @@ func TestReconcile_RejectsEmptyList(t *testing.T) {
 func TestReconcile_AddsNewName(t *testing.T) {
 	c := loadedCatalog(nil)
 	meta := map[string]map[string]run.ServiceMetadata{
-		"orders": {"users": {ManifestVersion: "v1", ImageTag: "abc"}},
+		"orders": {"users": {ImageTag: "abc"}},
 	}
 	err := c.Reconcile([]string{"orders"}, meta, time.Now())
 	if err != nil {

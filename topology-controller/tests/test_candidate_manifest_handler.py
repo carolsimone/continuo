@@ -20,8 +20,8 @@ FIXTURES = Path(__file__).parent / "fixtures"
 def _make_source(*entries):
     source = create_autospec(ManifestSourcePort)
     source.list_manifests.return_value = [
-        ManifestFile(path=str(FIXTURES / name), version=version, image_tag="")
-        for name, version in entries
+        ManifestFile(path=str(FIXTURES / name), image_tag="")
+        for name in entries
     ]
     return source
 
@@ -100,8 +100,8 @@ def _python_handler(source, publisher, spec_uploader=None, dialect="postgres"):
 @pytest.fixture
 def resolved_topology():
     source = _make_source(
-        ("manifest_service1.json", "v1"),
-        ("manifest_service2.json", "v2"),
+        "manifest_service1.json",
+        "manifest_service2.json",
     )
     publisher = MagicMock()
     uploader = _make_uploader()
@@ -118,8 +118,8 @@ def handler_with_mocks():
     test_schema.users) — this cross-service reference is what gives the
     candidate-schema rewrite something real to do."""
     source = _make_source(
-        ("manifest_service1.json", "v1"),
-        ("manifest_service2.json", "v2"),
+        "manifest_service1.json",
+        "manifest_service2.json",
     )
     publisher = MagicMock()
     uploader = _make_uploader()
@@ -195,7 +195,7 @@ def _source_with_nodes(tmp_path, *nodes):
     manifest.write_text(json.dumps({"nodes": {n["unique_id"]: n for n in nodes}}))
     source = create_autospec(ManifestSourcePort)
     source.list_manifests.return_value = [
-        ManifestFile(path=str(manifest), version="v1", image_tag="")
+        ManifestFile(path=str(manifest), image_tag="")
     ]
     return source
 
@@ -272,7 +272,7 @@ def test_one_broken_node_still_reports_the_healthy_ones_as_fine(monkeypatch):
         return real(node, lookup, dialect=dialect)
 
     monkeypatch.setattr("service.candidate_manifest_handler.resolve_upstream_deps", _raise_once)
-    source = _make_source(("manifest_service1.json", "v1"))
+    source = _make_source("manifest_service1.json")
     publisher = MagicMock()
 
     _handler(source, publisher, _make_uploader()).handle(release_id="rel-fail")
@@ -288,7 +288,7 @@ def test_handle_publishes_failed_on_malformed_manifest(tmp_path):
 
     source = create_autospec(ManifestSourcePort)
     source.list_manifests.return_value = [
-        ManifestFile(path=str(bad), version="v1", image_tag="")
+        ManifestFile(path=str(bad), image_tag="")
     ]
     publisher = MagicMock()
 
@@ -309,7 +309,7 @@ def test_handle_publishes_failed_on_missing_nodes_key(tmp_path):
 
     source = create_autospec(ManifestSourcePort)
     source.list_manifests.return_value = [
-        ManifestFile(path=str(bad), version="v1", image_tag="")
+        ManifestFile(path=str(bad), image_tag="")
     ]
     publisher = MagicMock()
 
@@ -341,7 +341,7 @@ def test_handle_publishes_failed_on_node_with_empty_fqn(tmp_path):
 
     source = create_autospec(ManifestSourcePort)
     source.list_manifests.return_value = [
-        ManifestFile(path=str(bad), version="v1", image_tag="")
+        ManifestFile(path=str(bad), image_tag="")
     ]
     publisher = MagicMock()
 
@@ -354,7 +354,7 @@ def test_handle_publishes_failed_on_node_with_empty_fqn(tmp_path):
 
 
 def test_handle_propagates_transient_redis_error():
-    source = _make_source(("manifest_service1.json", "v1"))
+    source = _make_source("manifest_service1.json")
     publisher = MagicMock()
     publisher.publish_ok.side_effect = ConnectionError("redis down")
 
@@ -364,7 +364,7 @@ def test_handle_propagates_transient_redis_error():
 
 
 def test_handle_calls_source_cleanup_after_publish():
-    source = _make_source(("manifest_service1.json", "v1"))
+    source = _make_source("manifest_service1.json")
     publisher = MagicMock()
 
     handler = _handler(source, publisher, _make_uploader())
@@ -381,7 +381,7 @@ def test_handle_calls_source_cleanup_even_on_publish_failed(monkeypatch):
         "service.candidate_manifest_handler.resolve_upstream_deps", _raise
     )
 
-    source = _make_source(("manifest_service1.json", "v1"))
+    source = _make_source("manifest_service1.json")
     publisher = MagicMock()
 
     handler = _handler(source, publisher, _make_uploader())
@@ -397,12 +397,12 @@ def test_handle_calls_source_cleanup_even_on_publish_failed(monkeypatch):
 def _make_source_with_declared(entries):
     """Build a fake manifest source returning ManifestFiles with declared_service set.
 
-    entries is a list of (fixture_name, version, declared_service) triples.
+    entries is a list of (fixture_name, declared_service) pairs.
     """
     source = create_autospec(ManifestSourcePort)
     source.list_manifests.return_value = [
-        ManifestFile(path=str(FIXTURES / name), version=version, image_tag="", declared_service=declared)
-        for name, version, declared in entries
+        ManifestFile(path=str(FIXTURES / name), image_tag="", declared_service=declared)
+        for name, declared in entries
     ]
     return source
 
@@ -415,7 +415,7 @@ def test_handle_publishes_failed_empty_manifest_for_declared_service(tmp_path):
 
     source = create_autospec(ManifestSourcePort)
     source.list_manifests.return_value = [
-        ManifestFile(path=str(empty), version="v1", image_tag="", declared_service="service-1")
+        ManifestFile(path=str(empty), image_tag="", declared_service="service-1")
     ]
     publisher = MagicMock()
 
@@ -451,7 +451,7 @@ def test_handle_publishes_failed_service_mismatch(tmp_path):
 
     source = create_autospec(ManifestSourcePort)
     source.list_manifests.return_value = [
-        ManifestFile(path=str(mismatch), version="v1", image_tag="", declared_service="service-1")
+        ManifestFile(path=str(mismatch), image_tag="", declared_service="service-1")
     ]
     publisher = MagicMock()
 
@@ -469,8 +469,8 @@ def test_handle_publishes_failed_service_mismatch(tmp_path):
 def test_handle_publishes_ok_matching_declared_service():
     """A non-empty manifest whose nodes all match the declared service succeeds."""
     source = _make_source_with_declared([
-        ("manifest_service1.json", "v1", "service-1"),
-        ("manifest_service2.json", "v2", "service-2"),
+        ("manifest_service1.json", "service-1"),
+        ("manifest_service2.json", "service-2"),
     ])
     publisher = MagicMock()
 
@@ -495,7 +495,7 @@ def test_handle_skips_declared_service_checks_when_declared_service_empty(tmp_pa
     source = create_autospec(ManifestSourcePort)
     # declared_service="" — same file that triggers EmptyManifest when non-empty
     source.list_manifests.return_value = [
-        ManifestFile(path=str(empty), version="v1", image_tag="", declared_service="")
+        ManifestFile(path=str(empty), image_tag="", declared_service="")
     ]
     publisher = MagicMock()
 
@@ -560,8 +560,8 @@ def test_configured_dialect_reaches_the_resolver_and_the_rewriter(monkeypatch):
     monkeypatch.setattr(candidate_artifacts, "rewrite_to_candidate_schema", spy_rewrite)
 
     source = _make_source(
-        ("manifest_service1.json", "v1"),
-        ("manifest_service2.json", "v2"),
+        "manifest_service1.json",
+        "manifest_service2.json",
     )
     _handler(source, MagicMock(), _make_uploader(), dialect="trino").handle(release_id="rel-1")
 
@@ -584,7 +584,7 @@ def test_upload_failure_is_fatal(handler_with_mocks):
 
 def test_handle_calls_source_cleanup_even_on_upload_failure():
     """source.cleanup() must run even when an upload fails mid-flight."""
-    source = _make_source(("manifest_service1.json", "v1"))
+    source = _make_source("manifest_service1.json")
     publisher = MagicMock()
     uploader = _make_uploader()
     uploader.upload.side_effect = RuntimeError("s3 down")
@@ -603,8 +603,8 @@ def test_bundle_uploaded_once_per_release():
     """One code bundle is built and uploaded per release, covering every
     published node; publish_ok receives the uploader's returned URI."""
     source = _make_source(
-        ("manifest_service1.json", "v1"),
-        ("manifest_service2.json", "v2"),
+        "manifest_service1.json",
+        "manifest_service2.json",
     )
     publisher = MagicMock()
     bundle_uploader = FakeBundleUploader(uri="s3://continuo/code-bundles/rel-1/bundle.json")
@@ -624,7 +624,7 @@ def test_bundle_uploaded_once_per_release():
 def test_bundle_upload_failure_publishes_failed():
     """A bundle-upload error is fatal — publish_failed is called with
     CodeBundleUploadFailed and publish_ok is never called."""
-    source = _make_source(("manifest_service1.json", "v1"))
+    source = _make_source("manifest_service1.json")
     publisher = MagicMock()
     bundle_uploader = FakeBundleUploader(fail=RuntimeError("s3 down"))
 
@@ -691,8 +691,8 @@ def test_shared_code_namespaced_by_service_for_colliding_unit_ids(tmp_path, capl
 
     source = create_autospec(ManifestSourcePort)
     source.list_manifests.return_value = [
-        ManifestFile(path=str(first), version="v1", image_tag="", declared_service="service-a"),
-        ManifestFile(path=str(second), version="v1", image_tag="", declared_service="service-b"),
+        ManifestFile(path=str(first), image_tag="", declared_service="service-a"),
+        ManifestFile(path=str(second), image_tag="", declared_service="service-b"),
     ]
     publisher = MagicMock()
     bundle_uploader = FakeBundleUploader()
@@ -738,8 +738,8 @@ def test_shared_code_depends_on_entries_namespaced_consistently_with_keys(tmp_pa
 
     source = create_autospec(ManifestSourcePort)
     source.list_manifests.return_value = [
-        ManifestFile(path=str(first), version="v1", image_tag=""),
-        ManifestFile(path=str(second), version="v1", image_tag=""),
+        ManifestFile(path=str(first), image_tag=""),
+        ManifestFile(path=str(second), image_tag=""),
     ]
     publisher = MagicMock()
     bundle_uploader = FakeBundleUploader()
@@ -805,7 +805,7 @@ def test_a_malformed_python_contract_fails_the_whole_release(tmp_path):
     publisher = MagicMock()
     source = _source_of(ManifestFile(
         path=_python_contract(tmp_path, _python_entry(criticality="URGENT")),
-        version="v1", declared_service="service-py", kind=ManifestKind.PYTHON,
+        declared_service="service-py", kind=ManifestKind.PYTHON,
     ))
 
     _dispatch_handler(source, publisher).handle(release_id="rel-1")
@@ -820,8 +820,7 @@ def test_an_empty_python_contract_fails_the_release(tmp_path):
     guard and the same failure_kind."""
     publisher = MagicMock()
     source = _source_of(ManifestFile(
-        path=_python_contract(tmp_path), version="v1",
-        declared_service="service-py", kind=ManifestKind.PYTHON,
+        path=_python_contract(tmp_path), declared_service="service-py", kind=ManifestKind.PYTHON,
     ))
 
     _dispatch_handler(source, publisher).handle(release_id="rel-1")
@@ -835,7 +834,7 @@ def test_a_python_contract_for_another_service_fails_the_release(tmp_path):
     publisher = MagicMock()
     source = _source_of(ManifestFile(
         path=_python_contract(tmp_path, _python_entry(), service="someone-else"),
-        version="v1", declared_service="service-py", kind=ManifestKind.PYTHON,
+        declared_service="service-py", kind=ManifestKind.PYTHON,
     ))
 
     _dispatch_handler(source, publisher).handle(release_id="rel-1")
@@ -848,8 +847,7 @@ def test_an_unknown_kind_fails_the_release_permanently():
     the operator sees a rejected release, rather than retrying forever."""
     publisher = MagicMock()
     source = _source_of(ManifestFile(
-        path="/nonexistent", version="v1",
-        declared_service="service-x", kind="spark",
+        path="/nonexistent", declared_service="service-x", kind="spark",
     ))
 
     _dispatch_handler(source, publisher).handle(release_id="rel-1")
@@ -867,8 +865,7 @@ def test_an_empty_kind_fails_the_release_rather_than_parsing_as_dbt():
     looking at the wrong artifact entirely."""
     publisher = MagicMock()
     source = _source_of(ManifestFile(
-        path="/nonexistent", version="v1",
-        declared_service="service-x", kind="",
+        path="/nonexistent", declared_service="service-x", kind="",
     ))
 
     _dispatch_handler(source, publisher).handle(release_id="rel-1")
@@ -880,8 +877,7 @@ def test_an_empty_kind_fails_the_release_rather_than_parsing_as_dbt():
 def test_a_python_kind_entry_is_published_as_a_python_node(tmp_path):
     publisher = MagicMock()
     source = _source_of(ManifestFile(
-        path=_python_contract(tmp_path, _python_entry()), version="v1",
-        declared_service="service-py", kind=ManifestKind.PYTHON,
+        path=_python_contract(tmp_path, _python_entry()), declared_service="service-py", kind=ManifestKind.PYTHON,
     ))
 
     _python_handler(source, publisher).handle(release_id="rel-1")
@@ -926,13 +922,13 @@ def test_a_release_mixing_old_and_new_python_contracts_publishes_python_node(tmp
         path=_python_contract(
             tmp_path, _python_entry(table="py_old", kind="python-model"),
             service="service-old", name="old.yaml"),
-        version="v1", declared_service="service-old", kind=ManifestKind.PYTHON,
+        declared_service="service-old", kind=ManifestKind.PYTHON,
     )
     new = ManifestFile(
         path=_python_contract(
             tmp_path, _python_entry(table="py_new", kind="python-node"),
             service="service-new", name="new.yaml"),
-        version="v1", declared_service="service-new", kind=ManifestKind.PYTHON,
+        declared_service="service-new", kind=ManifestKind.PYTHON,
     )
 
     _python_handler(_source_of(old, new), publisher).handle(release_id="rel-1")
@@ -955,7 +951,7 @@ def test_dbt_test_is_published_but_not_registered_or_bundled():
     writes no relation (empty resolved_relation_id) and is excluded from both
     the node registry (nothing can reference it) and the code bundle (it is
     never a fix target and never read as source)."""
-    source = _make_source(("manifest_with_test.json", "v1"))
+    source = _make_source("manifest_with_test.json")
     publisher = MagicMock()
     uploader = _make_uploader("s3://c/candidate.sql")
     bundle_uploader = FakeBundleUploader()
@@ -1022,12 +1018,9 @@ def test_a_release_mixes_dbt_and_python_and_resolves_edges_in_both_directions(tm
     spec_uploader = MagicMock()
     spec_uploader.upload.return_value = "s3://continuo/candidate-sql/rel-1/candidate_test_schema.py_metrics.json"
     source = _source_of(
-        ManifestFile(path=str(FIXTURES / "manifest_service2.json"), version="v2",
-                     declared_service="service-2"),
-        ManifestFile(path=_python_contract(tmp_path, _python_entry()), version="v1",
-                     declared_service="service-py", kind=ManifestKind.PYTHON),
-        ManifestFile(path=str(FIXTURES / "manifest_service4.json"), version="v4",
-                     declared_service="service-4"),
+        ManifestFile(path=str(FIXTURES / "manifest_service2.json"), declared_service="service-2"),
+        ManifestFile(path=_python_contract(tmp_path, _python_entry()), declared_service="service-py", kind=ManifestKind.PYTHON),
+        ManifestFile(path=str(FIXTURES / "manifest_service4.json"), declared_service="service-4"),
     )
 
     # _python_handler's default dbt uploader (via _make_uploader()) returns "",
@@ -1070,8 +1063,7 @@ def test_a_python_node_rides_the_code_bundle_with_its_runtime_marker(tmp_path):
     publisher = MagicMock()
     bundle_uploader = FakeBundleUploader()
     source = _source_of(ManifestFile(
-        path=_python_contract(tmp_path, _python_entry()), version="v1",
-        declared_service="service-py", kind=ManifestKind.PYTHON,
+        path=_python_contract(tmp_path, _python_entry()), declared_service="service-py", kind=ManifestKind.PYTHON,
     ))
     handler = CandidateManifestHandler(
         source=source, publisher=publisher, bundle_uploader=bundle_uploader,
@@ -1135,7 +1127,7 @@ def test_upstream_unique_ids_match_node_unique_id_exactly_with_mixed_case(tmp_pa
 
     source = create_autospec(ManifestSourcePort)
     source.list_manifests.return_value = [
-        ManifestFile(path=str(manifest_mixed_case), version="v1", image_tag="")
+        ManifestFile(path=str(manifest_mixed_case), image_tag="")
     ]
     publisher = MagicMock()
     uploader = _make_uploader()

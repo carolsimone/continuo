@@ -108,7 +108,7 @@ def test_happy_path_maps_every_manifest_node_field(tmp_path):
         description="test data",
         extra_columns="warn",
     )
-    nodes, shared = parse_python_contract(write_contract(tmp_path, entry), "v1", "img:1")
+    nodes, shared = parse_python_contract(write_contract(tmp_path, entry), "img:1")
 
     assert shared == {}
     (node,) = nodes
@@ -136,7 +136,6 @@ def test_happy_path_maps_every_manifest_node_field(tmp_path):
     ]
     assert node.config == {"indexes": [{"columns": ["id"], "unique": True}]}
     assert node.original_file_path == "scripts/table_test.py"
-    assert node.manifest_version == "v1"
     assert node.image_tag == "img:1"
     assert node.test_count == 0
     assert node.code_unit_ids == []
@@ -148,7 +147,7 @@ def test_happy_path_maps_every_manifest_node_field(tmp_path):
 
 
 def test_raw_code_is_deterministic_pretty_json_without_hash_fields(tmp_path):
-    nodes, _ = parse_python_contract(write_contract(tmp_path, make_entry()), "v1")
+    nodes, _ = parse_python_contract(write_contract(tmp_path, make_entry()))
     raw = json.loads(nodes[0].raw_code)
     assert raw["reads"] == make_entry()["reads"]
     assert raw["output_columns"] == [
@@ -164,23 +163,23 @@ def test_raw_code_is_deterministic_pretty_json_without_hash_fields(tmp_path):
 
 def test_empty_reads_are_rejected(tmp_path):
     with pytest.raises(MalformedContractError, match="reads must be a non-empty mapping"):
-        parse_python_contract(write_contract(tmp_path, make_entry(reads={})), "v1")
+        parse_python_contract(write_contract(tmp_path, make_entry(reads={})))
 
 
 def test_stored_python_model_contract_parses_as_python_node(tmp_path):
-    nodes, _ = parse_python_contract(write_contract(tmp_path, make_entry(kind="python-model")), "v1")
+    nodes, _ = parse_python_contract(write_contract(tmp_path, make_entry(kind="python-model")))
     assert nodes[0].node_type == NodeType.PYTHON_NODE
     assert json.loads(nodes[0].raw_code)["kind"] == "python-node"
 
 
 def test_empty_nodes_list_yields_no_nodes(tmp_path):
-    nodes, shared = parse_python_contract(write_contract(tmp_path), "v1")
+    nodes, shared = parse_python_contract(write_contract(tmp_path))
     assert nodes == []
     assert shared == {}
 
 
 def test_image_tag_defaults_to_empty(tmp_path):
-    nodes, _ = parse_python_contract(write_contract(tmp_path, make_entry()), "v1")
+    nodes, _ = parse_python_contract(write_contract(tmp_path, make_entry()))
     assert nodes[0].image_tag == ""
 
 
@@ -208,7 +207,7 @@ def test_image_tag_defaults_to_empty(tmp_path):
 def test_malformed_entries_fail_the_whole_artifact(tmp_path, mutation, match):
     entry = make_entry(**mutation)
     with pytest.raises(MalformedContractError, match=match):
-        parse_python_contract(write_contract(tmp_path, entry), "v1")
+        parse_python_contract(write_contract(tmp_path, entry))
 
 
 @pytest.mark.parametrize(
@@ -222,82 +221,82 @@ def test_malformed_entries_fail_the_whole_artifact(tmp_path, mutation, match):
 def test_missing_required_field_fails(tmp_path, field):
     entry = make_entry(remove=(field,))
     with pytest.raises(MalformedContractError, match="missing"):
-        parse_python_contract(write_contract(tmp_path, entry), "v1")
+        parse_python_contract(write_contract(tmp_path, entry))
 
 
 def test_wrong_contract_version_fails(tmp_path):
     path = write_contract(tmp_path, make_entry(), contract_version=2)
     with pytest.raises(MalformedContractError, match="contract_version"):
-        parse_python_contract(path, "v1")
+        parse_python_contract(path)
 
 
 def test_unknown_top_level_field_fails(tmp_path):
     path = write_contract(tmp_path, make_entry(), compiled_at="2026-08-07")
     with pytest.raises(MalformedContractError, match="unknown top-level"):
-        parse_python_contract(path, "v1")
+        parse_python_contract(path)
 
 
 def test_empty_service_fails(tmp_path):
     path = write_contract(tmp_path, make_entry(), service="")
     with pytest.raises(MalformedContractError, match="service"):
-        parse_python_contract(path, "v1")
+        parse_python_contract(path)
 
 
 def test_nodes_not_a_list_fails(tmp_path):
     path = write_contract(tmp_path, nodes="nope")
     with pytest.raises(MalformedContractError, match="nodes"):
-        parse_python_contract(path, "v1")
+        parse_python_contract(path)
 
 
 def test_non_mapping_document_fails(tmp_path):
     path = tmp_path / "contract.yaml"
     path.write_text("- just\n- a\n- list\n")
     with pytest.raises(MalformedContractError, match="mapping"):
-        parse_python_contract(str(path), "v1")
+        parse_python_contract(str(path))
 
 
 def test_duplicate_relation_fails(tmp_path):
     first = make_entry()
     second = make_entry(owner="finance")
     with pytest.raises(MalformedContractError, match="duplicate"):
-        parse_python_contract(write_contract(tmp_path, first, second), "v1")
+        parse_python_contract(write_contract(tmp_path, first, second))
 
 
 def test_invalid_yaml_fails_as_malformed_contract(tmp_path):
     path = tmp_path / "contract.yaml"
     path.write_text("nodes: [unclosed")
     with pytest.raises(MalformedContractError, match="yaml"):
-        parse_python_contract(str(path), "v1")
+        parse_python_contract(str(path))
 
 
 def test_non_serializable_config_value_fails(tmp_path):
     entry = make_entry(config={"refresh_after": datetime.date(2026, 8, 7)})
     with pytest.raises(MalformedContractError, match="JSON-serializable"):
-        parse_python_contract(write_contract(tmp_path, entry), "v1")
+        parse_python_contract(write_contract(tmp_path, entry))
 
 
 def test_boolean_contract_version_fails(tmp_path):
     path = write_contract(tmp_path, make_entry(), contract_version=True)
     with pytest.raises(MalformedContractError, match="contract_version"):
-        parse_python_contract(path, "v1")
+        parse_python_contract(path)
 
 
 def test_future_version_with_new_top_level_field_reports_the_version(tmp_path):
     path = write_contract(tmp_path, make_entry(), contract_version=2, compiled_at="x")
     with pytest.raises(MalformedContractError, match="contract_version"):
-        parse_python_contract(path, "v1")
+        parse_python_contract(path)
 
 
 def test_non_mapping_node_entry_fails(tmp_path):
     path = write_contract(tmp_path, "oops")
     with pytest.raises(MalformedContractError, match="mapping"):
-        parse_python_contract(path, "v1")
+        parse_python_contract(path)
 
 
 def test_non_mapping_column_fails(tmp_path):
     entry = make_entry(output_columns=["id"])
     with pytest.raises(MalformedContractError, match="mapping"):
-        parse_python_contract(write_contract(tmp_path, entry), "v1")
+        parse_python_contract(write_contract(tmp_path, entry))
 
 
 def test_duplicate_column_name_fails(tmp_path):
@@ -306,19 +305,19 @@ def test_duplicate_column_name_fails(tmp_path):
         {"name": "ID", "type": "TEXT"},
     ])
     with pytest.raises(MalformedContractError, match="duplicate column"):
-        parse_python_contract(write_contract(tmp_path, entry), "v1")
+        parse_python_contract(write_contract(tmp_path, entry))
 
 
 def test_composite_criticality_fails_as_contract_error(tmp_path):
     entry = make_entry(criticality=[])
     with pytest.raises(MalformedContractError, match="criticality"):
-        parse_python_contract(write_contract(tmp_path, entry), "v1")
+        parse_python_contract(write_contract(tmp_path, entry))
 
 
 def test_composite_extra_columns_fails_as_contract_error(tmp_path):
     entry = make_entry(extra_columns={})
     with pytest.raises(MalformedContractError, match="extra_columns"):
-        parse_python_contract(write_contract(tmp_path, entry), "v1")
+        parse_python_contract(write_contract(tmp_path, entry))
 
 
 def test_mixed_type_unknown_entry_keys_fail_as_contract_error(tmp_path):
@@ -326,11 +325,11 @@ def test_mixed_type_unknown_entry_keys_fail_as_contract_error(tmp_path):
     entry[1] = "x"
     entry["surprise"] = 2
     with pytest.raises(MalformedContractError, match="unknown fields"):
-        parse_python_contract(write_contract(tmp_path, entry), "v1")
+        parse_python_contract(write_contract(tmp_path, entry))
 
 
 def test_csv_entry_parses(tmp_path):
-    nodes, _ = parse_python_contract(write_contract(tmp_path, make_csv_entry()), "v1")
+    nodes, _ = parse_python_contract(write_contract(tmp_path, make_csv_entry()))
     (node,) = nodes
     assert node.node_type == NodeType.PYTHON_CSV
     assert node.runtime == Runtime.PYTHON
@@ -342,7 +341,7 @@ def test_csv_entry_parses(tmp_path):
 def test_csv_entry_hash_fields_verify(tmp_path):
     uri = "s3://drops/orders.csv"
     entry = make_csv_entry()
-    nodes, _ = parse_python_contract(write_contract(tmp_path, entry), "v1")
+    nodes, _ = parse_python_contract(write_contract(tmp_path, entry))
     (node,) = nodes
     assert node.source_hash == hashlib.sha256(uri.encode()).hexdigest()
     assert node.shared_code_hash == ""
@@ -354,19 +353,19 @@ def test_csv_entry_hash_fields_verify(tmp_path):
 def test_csv_entry_with_script_rejected(tmp_path):
     entry = make_csv_entry(script="scripts/x.py")
     with pytest.raises(MalformedContractError, match="script"):
-        parse_python_contract(write_contract(tmp_path, entry), "v1")
+        parse_python_contract(write_contract(tmp_path, entry))
 
 
 def test_csv_entry_reads_must_be_csv_only(tmp_path):
     entry = make_csv_entry(reads={"csv": "s3://b/k", "o": "select 1"})
     with pytest.raises(MalformedContractError, match="exactly"):
-        parse_python_contract(write_contract(tmp_path, entry), "v1")
+        parse_python_contract(write_contract(tmp_path, entry))
 
 
 def test_csv_entry_reads_value_must_be_a_valid_uri(tmp_path):
     entry = make_csv_entry(reads={"csv": "ftp://bad"})
     with pytest.raises(MalformedContractError, match="csv"):
-        parse_python_contract(write_contract(tmp_path, entry), "v1")
+        parse_python_contract(write_contract(tmp_path, entry))
 
 
 def test_csv_uri_http_scheme_rejected(tmp_path):
@@ -374,7 +373,7 @@ def test_csv_uri_http_scheme_rejected(tmp_path):
     parse_csv_uri only ever recognizes s3:// and https://."""
     entry = make_csv_entry(reads={"csv": "http://example.com/orders.csv"})
     with pytest.raises(MalformedContractError, match="csv"):
-        parse_python_contract(write_contract(tmp_path, entry), "v1")
+        parse_python_contract(write_contract(tmp_path, entry))
 
 
 def test_csv_uri_s3_without_key_rejected(tmp_path):
@@ -384,7 +383,7 @@ def test_csv_uri_s3_without_key_rejected(tmp_path):
     surfacing once the validation Job actually runs."""
     entry = make_csv_entry(reads={"csv": "s3://bucket"})
     with pytest.raises(MalformedContractError, match="bucket or key"):
-        parse_python_contract(write_contract(tmp_path, entry), "v1")
+        parse_python_contract(write_contract(tmp_path, entry))
 
 
 def test_csv_uri_s3_without_bucket_rejected(tmp_path):
@@ -392,7 +391,7 @@ def test_csv_uri_s3_without_bucket_rejected(tmp_path):
     partition — bucket is empty even though a key is present."""
     entry = make_csv_entry(reads={"csv": "s3:///key"})
     with pytest.raises(MalformedContractError, match="bucket or key"):
-        parse_python_contract(write_contract(tmp_path, entry), "v1")
+        parse_python_contract(write_contract(tmp_path, entry))
 
 
 def test_csv_uri_https_without_host_rejected(tmp_path):
@@ -400,14 +399,14 @@ def test_csv_uri_https_without_host_rejected(tmp_path):
     partitions on the first "/" and rejects an empty host."""
     entry = make_csv_entry(reads={"csv": "https://"})
     with pytest.raises(MalformedContractError, match="host"):
-        parse_python_contract(write_contract(tmp_path, entry), "v1")
+        parse_python_contract(write_contract(tmp_path, entry))
 
 
 def test_csv_uri_https_with_host_and_no_path_accepted(tmp_path):
     """https://<host> with no trailing path is a valid uri — only an empty
     host is rejected, not an absent path."""
     entry = make_csv_entry(reads={"csv": "https://example.com"})
-    nodes, _ = parse_python_contract(write_contract(tmp_path, entry), "v1")
+    nodes, _ = parse_python_contract(write_contract(tmp_path, entry))
     (node,) = nodes
     assert node.csv_source == "https://example.com"
 
@@ -415,7 +414,7 @@ def test_csv_uri_https_with_host_and_no_path_accepted(tmp_path):
 def test_csv_uri_s3_with_bucket_and_key_accepted(tmp_path):
     """The valid shape this whole grammar exists to keep accepting."""
     entry = make_csv_entry(reads={"csv": "s3://bucket/path/to/orders.csv"})
-    nodes, _ = parse_python_contract(write_contract(tmp_path, entry), "v1")
+    nodes, _ = parse_python_contract(write_contract(tmp_path, entry))
     (node,) = nodes
     assert node.csv_source == "s3://bucket/path/to/orders.csv"
 
@@ -423,17 +422,17 @@ def test_csv_uri_s3_with_bucket_and_key_accepted(tmp_path):
 def test_unknown_kind_rejected(tmp_path):
     entry = make_csv_entry(kind="python-parquet")
     with pytest.raises(MalformedContractError, match="kind"):
-        parse_python_contract(write_contract(tmp_path, entry), "v1")
+        parse_python_contract(write_contract(tmp_path, entry))
 
 
 def test_non_string_kind_rejected_cleanly(tmp_path):
     entry = make_csv_entry(kind=["python-csv"])
     with pytest.raises(MalformedContractError, match="kind"):
-        parse_python_contract(write_contract(tmp_path, entry), "v1")
+        parse_python_contract(write_contract(tmp_path, entry))
 
 
 def test_entry_without_kind_defaults_to_python_node(tmp_path):
-    nodes, _ = parse_python_contract(write_contract(tmp_path, make_entry()), "v1")
+    nodes, _ = parse_python_contract(write_contract(tmp_path, make_entry()))
     (node,) = nodes
     assert node.node_type == NodeType.PYTHON_NODE
     assert node.csv_source == ""
@@ -444,7 +443,7 @@ def test_stored_python_model_kind_parses_and_hash_verifies(tmp_path):
     kind as "python-model"; STORED_KIND_ALIASES resolves it to python-node so
     the stored contract keeps parsing."""
     entry = make_entry(kind="python-model")
-    nodes, _ = parse_python_contract(write_contract(tmp_path, entry), "v1")
+    nodes, _ = parse_python_contract(write_contract(tmp_path, entry))
     (node,) = nodes
     assert node.node_type == NodeType.PYTHON_NODE
     assert node.content_hash == content_hash_fold("aaa111", "bbb222", "ccc333")

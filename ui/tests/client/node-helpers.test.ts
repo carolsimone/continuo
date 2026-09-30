@@ -6,7 +6,7 @@ const mkRun = (over: Partial<NodeRun>): NodeRun => ({
   run_id: 'r', schedule_name: 's', kind: 'cron',
   terminal_status: 'succeeded', task_id: 't',
   task_status: 'succeeded', retry_count: 0,
-  image_tag: 'v1', manifest_version: 'm1', operation: 'run',
+  image_tag: 'v1', operation: 'run',
   created_at: '2026-05-10T10:00:00Z',
   started_at: '2026-05-10T10:00:05Z',
   completed_at: '2026-05-10T10:01:00Z',
@@ -96,7 +96,7 @@ describe('computeNodeStats — extended fields', () => {
   const mkRunExt = (over: Partial<NodeRun>): NodeRun => ({
     run_id: 'r', schedule_name: 's', kind: 'cron', terminal_status: '',
     task_id: Math.random().toString(), task_status: 'succeeded', retry_count: 0,
-    image_tag: '', manifest_version: '', operation: 'run', created_at: '2026-06-08T11:00:00Z',
+    image_tag: '', operation: 'run', created_at: '2026-06-08T11:00:00Z',
     started_at: '2026-06-08T11:00:00Z', completed_at: '2026-06-08T11:00:10Z',
     error_message: null, log_s3_key: null, ...over,
   });
@@ -132,23 +132,23 @@ describe('computeNodeStats — extended fields', () => {
 });
 
 describe('groupRunsBySnapshot', () => {
-  it('collapses runs sharing an (image_tag, manifest_version) pair into one group', () => {
+  it('collapses runs sharing an image_tag into one group', () => {
     const runs = [
-      mkRun({ run_id: 'a1', image_tag: 'img-a', manifest_version: 'm1', created_at: '2026-05-10T10:00:00Z' }),
-      mkRun({ run_id: 'a2', image_tag: 'img-a', manifest_version: 'm1', created_at: '2026-05-09T10:00:00Z' }),
-      mkRun({ run_id: 'b1', image_tag: 'img-b', manifest_version: 'm1', created_at: '2026-05-08T10:00:00Z' }),
+      mkRun({ run_id: 'a1', image_tag: 'img-a', created_at: '2026-05-10T10:00:00Z' }),
+      mkRun({ run_id: 'a2', image_tag: 'img-a', created_at: '2026-05-09T10:00:00Z' }),
+      mkRun({ run_id: 'b1', image_tag: 'img-b', created_at: '2026-05-08T10:00:00Z' }),
     ];
     const groups = groupRunsBySnapshot(runs);
     expect(groups).toHaveLength(2);
-    expect(groups[0]).toMatchObject({ imageTag: 'img-a', manifestVersion: 'm1', runCount: 2 });
-    expect(groups[1]).toMatchObject({ imageTag: 'img-b', manifestVersion: 'm1', runCount: 1 });
+    expect(groups[0]).toMatchObject({ imageTag: 'img-a', runCount: 2 });
+    expect(groups[1]).toMatchObject({ imageTag: 'img-b', runCount: 1 });
   });
 
   it('represents each group by its most recent terminal run', () => {
     const runs = [
-      mkRun({ run_id: 'older', image_tag: 'img', manifest_version: 'm',
+      mkRun({ run_id: 'older', image_tag: 'img',
               created_at: '2026-05-09T10:00:00Z', task_status: 'failed' }),
-      mkRun({ run_id: 'newest', image_tag: 'img', manifest_version: 'm',
+      mkRun({ run_id: 'newest', image_tag: 'img',
               created_at: '2026-05-10T10:00:00Z', task_status: 'succeeded' }),
     ];
     const [g] = groupRunsBySnapshot(runs);
@@ -159,7 +159,7 @@ describe('groupRunsBySnapshot', () => {
 
   it('excludes runs whose source scheduler is not terminal', () => {
     const runs = [
-      mkRun({ run_id: 'inflight', terminal_status: '', image_tag: 'img', manifest_version: 'm' }),
+      mkRun({ run_id: 'inflight', terminal_status: '', image_tag: 'img' }),
     ];
     expect(groupRunsBySnapshot(runs)).toEqual([]);
   });
@@ -167,7 +167,7 @@ describe('groupRunsBySnapshot', () => {
   it('includes a run whose source scheduler failed even if this node stayed pending', () => {
     const runs = [
       mkRun({ run_id: 'src-failed', terminal_status: 'failed', task_status: 'pending',
-              image_tag: 'img', manifest_version: 'm' }),
+              image_tag: 'img' }),
     ];
     const groups = groupRunsBySnapshot(runs);
     expect(groups).toHaveLength(1);
@@ -175,18 +175,11 @@ describe('groupRunsBySnapshot', () => {
     expect(groups[0].status).toBe('pending');
   });
 
-  it('groups a blank manifest_version distinctly from a set one', () => {
-    const runs = [
-      mkRun({ run_id: 'blank', image_tag: 'img', manifest_version: '', created_at: '2026-05-10T10:00:00Z' }),
-      mkRun({ run_id: 'set', image_tag: 'img', manifest_version: 'm', created_at: '2026-05-09T10:00:00Z' }),
-    ];
-    expect(groupRunsBySnapshot(runs)).toHaveLength(2);
-  });
 
   it('orders groups by most recent run first', () => {
     const runs = [
-      mkRun({ run_id: 'old', image_tag: 'old-img', manifest_version: 'm', created_at: '2026-01-01T00:00:00Z' }),
-      mkRun({ run_id: 'new', image_tag: 'new-img', manifest_version: 'm', created_at: '2026-09-01T00:00:00Z' }),
+      mkRun({ run_id: 'old', image_tag: 'old-img', created_at: '2026-01-01T00:00:00Z' }),
+      mkRun({ run_id: 'new', image_tag: 'new-img', created_at: '2026-09-01T00:00:00Z' }),
     ];
     expect(groupRunsBySnapshot(runs).map(g => g.imageTag)).toEqual(['new-img', 'old-img']);
   });

@@ -265,7 +265,7 @@ it commits the choice and closes), so the footer carries only `Cancel` —
 there is no confirming verb. The snapshot picker (`RunSourcePickerDialog`,
 opened by `Run with old snapshot`) is the reference: it collapses a node's
 runs into the distinct snapshots it can be re-run against — one row per
-`(image_tag, manifest_version)` pair — and picking one runs the node
+`image_tag` — and picking one runs the node
 against that snapshot's most-recent terminal run.
 
 ```jsx
@@ -284,7 +284,6 @@ against that snapshot's most-recent terminal run.
         <span className="pill-sm pill-sm--succeeded">succeeded</span>
       </span>
       <span className="pick-row__meta">
-        <span>manifest v14</span><span className="pick-row__sep">·</span>
         <span>2 runs</span><span className="pick-row__sep">·</span>
         <span>last 11 Sep 2026</span>
       </span>
@@ -318,8 +317,8 @@ Rules:
   identifier (`.pick-row__id`) with the rolled-up status `pill-sm`; a
   muted `.pick-row__meta` line follows, its facts separated by
   `.pick-row__sep` (`·`), never punctuation inside the text. A meta fact
-  that is only sometimes known (a blank `manifest_version`) is simply
-  absent, never an empty label.
+  that is only sometimes known (e.g. a completion time on an in-flight
+  run) is simply absent, never an empty label.
 - Empty state is an `.info-strip--neutral`, not a bare paragraph.
 
 ## Section headers

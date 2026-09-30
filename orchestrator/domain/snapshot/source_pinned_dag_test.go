@@ -18,8 +18,8 @@ func TestSourcePinnedDAG_SingleFailedTask_NoDescendants_RebasesOnlyThat(t *testi
 	r := &fakeTopologyReader{
 		SourceTasks: map[string]map[snapshot.FQN]snapshot.SourceTaskRow{
 			srcID.String(): {
-				failed: {TaskID: uuid.New(), Status: "FAILED", ScheduleName: "x", NodeType: "python-api", ImageTag: "v1", ManifestVersion: "m1", SecretRef: "continuo-api-fx"},
-				succA:  {TaskID: rootA, Status: "SUCCEEDED", ScheduleName: "x", NodeType: "python-api", ImageTag: "v1", ManifestVersion: "m1", SecretRef: "continuo-api-a"},
+				failed: {TaskID: uuid.New(), Status: "FAILED", ScheduleName: "x", NodeType: "python-api", ImageTag: "v1", SecretRef: "continuo-api-fx"},
+				succA:  {TaskID: rootA, Status: "SUCCEEDED", ScheduleName: "x", NodeType: "python-api", ImageTag: "v1", SecretRef: "continuo-api-a"},
 			},
 		},
 		DescendantsSource: map[string]map[snapshot.FQN][]snapshot.FQN{srcID.String(): {failed: nil}},

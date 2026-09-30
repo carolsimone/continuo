@@ -112,7 +112,7 @@ _RESOURCE_TYPE_DEFAULT_SCHEDULE: dict[str, str | None] = {
 
 
 def parse_manifest(
-    manifest_path: str, manifest_version: str, image_tag: str = ""
+    manifest_path: str, image_tag: str = ""
 ) -> tuple[list[ManifestNode], dict]:
     with open(manifest_path) as f:
         manifest = json.load(f)
@@ -167,7 +167,6 @@ def parse_manifest(
             candidate_sql=node.get("compiled_code", ""),
             node_type=_RESOURCE_TYPE_TO_NODE_TYPE[resource_type],
             content_hash=content_hash_fold(source_hash, shared_hash, config_hash),
-            manifest_version=manifest_version,
             image_tag=image_tag,
             original_file_path=node.get("original_file_path", ""),
             raw_code=node.get("raw_code", ""),
@@ -221,7 +220,6 @@ def parse_manifest(
             candidate_sql=compiled,
             node_type=NodeType.DBT_TEST,
             content_hash=content_hash_fold(source_hash, shared_hash, config_hash),
-            manifest_version=manifest_version,
             image_tag=image_tag,
             original_file_path=node.get("original_file_path", ""),
             raw_code=node.get("raw_code", ""),

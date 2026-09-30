@@ -56,7 +56,6 @@ func ParseRunEntriesDispatched(msg goredis.XMessage) (events.RunEntriesDispatche
 			TableName:           t.TableName,
 			Status:              status,
 			MaxRetries:          t.MaxRetries,
-			ManifestVersion:     t.ManifestVersion,
 			ImageTag:            t.ImageTag,
 			InheritedFromTaskID: inherited,
 		})

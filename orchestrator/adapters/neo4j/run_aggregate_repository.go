@@ -54,7 +54,6 @@ func (r *RunAggregateRepository) rehydrateFull(ctx context.Context, runID string
             COALESCE(run.version,        0)    AS version,
             e.task_id                          AS task_id,
             COALESCE(e.status, 'PENDING')      AS status,
-            COALESCE(e.manifest_version, '')   AS manifest_version,
             COALESCE(e.image_tag, '')          AS image_tag,
             COALESCE(e.secret_ref, '')         AS secret_ref,
             t.table_name                       AS table_name,
@@ -110,7 +109,6 @@ func (r *RunAggregateRepository) rehydrateForCompletion(ctx context.Context, run
                 COALESCE(run.version,        0)    AS version,
                 e.task_id                          AS task_id,
                 COALESCE(e.status, 'PENDING')      AS status,
-                COALESCE(e.manifest_version, '')   AS manifest_version,
                 COALESCE(e.image_tag, '')          AS image_tag,
                 COALESCE(e.secret_ref, '')         AS secret_ref,
                 t.table_name                       AS table_name,
@@ -151,7 +149,6 @@ func (r *RunAggregateRepository) rehydrateForCompletion(ctx context.Context, run
                 COALESCE(run.version,        0)    AS version,
                 e.task_id                          AS task_id,
                 COALESCE(e.status, 'PENDING')      AS status,
-                COALESCE(e.manifest_version, '')   AS manifest_version,
                 COALESCE(e.image_tag, '')          AS image_tag,
                 COALESCE(e.secret_ref, '')         AS secret_ref,
                 t.table_name                       AS table_name,
@@ -373,7 +370,6 @@ func (r *RunAggregateRepository) collectRunFromFlatRows(
 		svcVal, _ := rec.Get("service_name")
 		ntypeVal, _ := rec.Get("node_type")
 		schedTVal, _ := rec.Get("schedule_name_t")
-		mvVal, _ := rec.Get("manifest_version")
 		itVal, _ := rec.Get("image_tag")
 		srVal, _ := rec.Get("secret_ref")
 		upsRaw, _ := rec.Get("upstreams")
@@ -396,16 +392,15 @@ func (r *RunAggregateRepository) collectRunFromFlatRows(
 		}
 
 		nodes = append(nodes, &domainRun.RunNode{
-			Key:             nodeKey,
-			TaskID:          taskUUID,
-			Status:          safeString(statusVal),
-			ScheduleName:    safeString(schedTVal),
-			NodeType:        safeString(ntypeVal),
-			ManifestVersion: safeString(mvVal),
-			ImageTag:        safeString(itVal),
-			SecretRef:       safeString(srVal),
-			Upstreams:       ups,
-			Downstreams:     downs,
+			Key:          nodeKey,
+			TaskID:       taskUUID,
+			Status:       safeString(statusVal),
+			ScheduleName: safeString(schedTVal),
+			NodeType:     safeString(ntypeVal),
+			ImageTag:     safeString(itVal),
+			SecretRef:    safeString(srVal),
+			Upstreams:    ups,
+			Downstreams:  downs,
 		})
 	}
 	if err := result.Err(); err != nil {

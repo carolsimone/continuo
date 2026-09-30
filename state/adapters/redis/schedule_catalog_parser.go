@@ -38,8 +38,7 @@ func ParseScheduleCatalogLoaded(msg goredis.XMessage) (events.ScheduleCatalogLoa
 	meta := make(map[string]run.ServiceMetadata, len(p.ServiceMetadata))
 	for svc, m := range p.ServiceMetadata {
 		meta[svc] = run.ServiceMetadata{
-			ManifestVersion: m["manifest_version"],
-			ImageTag:        m["image_tag"],
+			ImageTag: m["image_tag"],
 		}
 	}
 	return events.ScheduleCatalogLoaded{

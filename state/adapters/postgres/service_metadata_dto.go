@@ -13,8 +13,7 @@ import (
 // scheduler_tracker.service_metadata and schedule_catalog.service_metadata
 // JSONB columns.
 type serviceMetadataDTO struct {
-	ManifestVersion string `json:"manifest_version"`
-	ImageTag        string `json:"image_tag"`
+	ImageTag string `json:"image_tag"`
 }
 
 // toServiceMetadataDTOs converts a domain service-metadata map into the
@@ -25,7 +24,7 @@ type serviceMetadataDTO struct {
 func toServiceMetadataDTOs(meta map[string]run.ServiceMetadata) map[string]serviceMetadataDTO {
 	dtos := make(map[string]serviceMetadataDTO, len(meta))
 	for svc, m := range meta {
-		dtos[svc] = serviceMetadataDTO{ManifestVersion: m.ManifestVersion, ImageTag: m.ImageTag}
+		dtos[svc] = serviceMetadataDTO{ImageTag: m.ImageTag}
 	}
 	return dtos
 }
@@ -48,7 +47,7 @@ func unmarshalServiceMetadata(raw []byte) (map[string]run.ServiceMetadata, error
 	}
 	out := make(map[string]run.ServiceMetadata, len(dtos))
 	for svc, d := range dtos {
-		out[svc] = run.ServiceMetadata{ManifestVersion: d.ManifestVersion, ImageTag: d.ImageTag}
+		out[svc] = run.ServiceMetadata{ImageTag: d.ImageTag}
 	}
 	return out, nil
 }

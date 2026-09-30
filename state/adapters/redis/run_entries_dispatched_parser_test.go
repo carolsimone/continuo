@@ -23,8 +23,7 @@ func TestParseRunEntriesDispatched_HappyPath(t *testing.T) {
 			"table_name": "t",
 			"status": "pending",
 			"max_retries": 3,
-			"manifest_version": "m1",
-			"image_tag": "v1"
+						"image_tag": "v1"
 		}]
 	}`
 	msg := goredis.XMessage{ID: "1-0", Values: map[string]interface{}{"payload": payload}}

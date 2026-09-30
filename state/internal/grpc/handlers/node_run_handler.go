@@ -49,22 +49,21 @@ func (h *NodeRunHandler) ListNodeRuns(
 	out := make([]*statev1.NodeRun, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, &statev1.NodeRun{
-			RunId:           r.ScheduleID.String(),
-			ScheduleName:    r.ScheduleName,
-			Kind:            r.Kind,
-			TerminalStatus:  string(r.TerminalStatus),
-			TaskId:          r.TaskID.String(),
-			TaskStatus:      string(r.TaskStatus),
-			RetryCount:      num.ClampInt32(r.RetryCount),
-			ImageTag:        r.ImageTag,
-			ManifestVersion: r.ManifestVersion,
-			CreatedAt:       r.CreatedAt.UTC().Format(time.RFC3339),
-			StartedAt:       timePtrToRFC(r.StartedAt),
-			CompletedAt:     timePtrToRFC(r.CompletedAt),
-			ErrorMessage:    stringPtrOrEmpty(r.ErrorMessage),
-			LogS3Key:        stringPtrOrEmpty(r.LogS3Key),
-			Operation:       r.Operation,
-			RunResultsUri:   stringPtrOrEmpty(r.RunResultsURI),
+			RunId:          r.ScheduleID.String(),
+			ScheduleName:   r.ScheduleName,
+			Kind:           r.Kind,
+			TerminalStatus: string(r.TerminalStatus),
+			TaskId:         r.TaskID.String(),
+			TaskStatus:     string(r.TaskStatus),
+			RetryCount:     num.ClampInt32(r.RetryCount),
+			ImageTag:       r.ImageTag,
+			CreatedAt:      r.CreatedAt.UTC().Format(time.RFC3339),
+			StartedAt:      timePtrToRFC(r.StartedAt),
+			CompletedAt:    timePtrToRFC(r.CompletedAt),
+			ErrorMessage:   stringPtrOrEmpty(r.ErrorMessage),
+			LogS3Key:       stringPtrOrEmpty(r.LogS3Key),
+			Operation:      r.Operation,
+			RunResultsUri:  stringPtrOrEmpty(r.RunResultsURI),
 		})
 	}
 	return &statev1.ListNodeRunsResponse{Runs: out}, nil

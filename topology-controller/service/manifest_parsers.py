@@ -14,7 +14,7 @@ from domain.model import ManifestKind, ManifestNode
 from service.parser import parse_manifest
 from service.python_contract_parser import parse_python_contract
 
-ParseFn = Callable[[str, str, str], tuple[list[ManifestNode], dict]]
+ParseFn = Callable[[str, str], tuple[list[ManifestNode], dict]]
 
 
 @dataclass(frozen=True)

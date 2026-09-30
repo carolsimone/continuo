@@ -37,16 +37,15 @@ func (s RunStatus) IsTerminal() bool {
 // RunNode is an entity within the Run aggregate, representing one table's
 // execution slot in this run.
 type RunNode struct {
-	Key             NodeKey
-	TaskID          uuid.UUID
-	Status          string // domain.NodeStatus values: PENDING, RUNNING, SUCCEEDED, FAILED, SKIPPED
-	ScheduleName    string
-	NodeType        string
-	ManifestVersion string
-	ImageTag        string
-	SecretRef       string
-	Upstreams       []NodeKey // used to check if all upstreams are terminal (unblocking)
-	Downstreams     []NodeKey // immediate downstream keys (cascade skip traversal)
+	Key          NodeKey
+	TaskID       uuid.UUID
+	Status       string // domain.NodeStatus values: PENDING, RUNNING, SUCCEEDED, FAILED, SKIPPED
+	ScheduleName string
+	NodeType     string
+	ImageTag     string
+	SecretRef    string
+	Upstreams    []NodeKey // used to check if all upstreams are terminal (unblocking)
+	Downstreams  []NodeKey // immediate downstream keys (cascade skip traversal)
 }
 
 func (n *RunNode) isTerminal() bool {

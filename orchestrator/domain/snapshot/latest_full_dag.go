@@ -11,8 +11,7 @@ import (
 
 // LatestFullDAG is the cron / trigger selector. It returns every active :Table
 // in the schedule plus their upstream dependencies (typically dbt-seeds in
-// other schedules). All projected tasks are PENDING and pinned to (image_tag,
-// manifest_version) from the latest :Table topology at snapshot time.
+// other schedules). All projected tasks are PENDING and pinned to the image_tag from the latest :Table topology at snapshot time.
 //
 // It also classifies the dispatch frontier on each task's ReadyToDispatch flag:
 // a node is ready when it has no in-DAG upstream (nothing in the DAG depends on
@@ -50,7 +49,6 @@ func (LatestFullDAG) SelectTasks(ctx context.Context, r TopologyReader, p Params
 				InitialStatus:   "PENDING",
 				ImageTag:        row.ImageTag,
 				SecretRef:       row.SecretRef,
-				ManifestVersion: row.ManifestVersion,
 				ContentHash:     row.ContentHash,
 				TestCount:       row.TestCount,
 				TestCountKnown:  row.TestCountKnown,
@@ -104,7 +102,6 @@ func (LatestFullDAG) SelectTasks(ctx context.Context, r TopologyReader, p Params
 			InitialStatus:   "PENDING",
 			ImageTag:        row.ImageTag,
 			SecretRef:       row.SecretRef,
-			ManifestVersion: row.ManifestVersion,
 			ContentHash:     row.ContentHash,
 			TestCount:       row.TestCount,
 			TestCountKnown:  row.TestCountKnown,

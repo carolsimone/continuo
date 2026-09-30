@@ -41,7 +41,7 @@ export default function RunSourcePickerDialog({ runs, operation, onPick, onClose
       >
         <h2 id="run-source-picker-title" className="dialog-title">Run with an old snapshot</h2>
         <p className="dialog-subtitle">
-          {`Pick a snapshot to ${opWord} this node against — it runs with that snapshot's image and manifest version.`}
+          {`Pick a snapshot to ${opWord} this node against — it runs with that snapshot's image.`}
         </p>
 
         {snapshots.length === 0 ? (
@@ -62,12 +62,8 @@ export default function RunSourcePickerDialog({ runs, operation, onPick, onClose
             </div>
             <ul className="pick-list">
               {snapshots.map(s => {
-                // The accessible name carries the full (image_tag, manifest_version)
-                // identity: two snapshots sharing an image tag but differing only in
-                // manifest must not be announced identically to a screen reader.
                 const ariaLabel = [
                   `${s.imageTag || 'unknown image'} snapshot`,
-                  s.manifestVersion ? `manifest ${s.manifestVersion}` : null,
                   `${s.runCount} run${s.runCount === 1 ? '' : 's'}`,
                   `last run ${s.status}`,
                 ].filter(Boolean).join(', ');
@@ -84,12 +80,6 @@ export default function RunSourcePickerDialog({ runs, operation, onPick, onClose
                       <span className={`pill-sm pill-sm--${s.status}`}>{s.status}</span>
                     </span>
                     <span className="pick-row__meta">
-                      {s.manifestVersion && (
-                        <>
-                          <span>manifest {s.manifestVersion}</span>
-                          <span className="pick-row__sep">·</span>
-                        </>
-                      )}
                       <span>{s.runCount} run{s.runCount === 1 ? '' : 's'}</span>
                       <span className="pick-row__sep">·</span>
                       <span>last {formatWhen(s.lastRunAt)}</span>

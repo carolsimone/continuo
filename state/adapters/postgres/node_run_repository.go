@@ -52,7 +52,7 @@ func NewNodeRunRepository(db *sqlx.DB, logger *slog.Logger) NodeRunRepository {
 //
 // Each row carries:
 //   - run-level: run_id, schedule_name, kind, terminal_status
-//   - task-level: task_status, retry_count, image_tag, manifest_version
+//   - task-level: task_status, retry_count, image_tag
 //   - exec-level (latest execution per task): started_at, completed_at,
 //     error_message, log_s3_key, run_results_uri
 //
@@ -76,7 +76,7 @@ func (r *nodeRunRepository) List(
 	const query = `
 		WITH target_tasks AS (
 			SELECT t.task_id, t.schedule_id, t.status AS task_status,
-			       t.retry_count, t.image_tag, t.manifest_version, t.operation
+			       t.retry_count, t.image_tag, t.operation
 			FROM task_tracker t
 			WHERE t.service_name = $1
 			  AND t.schema_name  = $2
@@ -99,7 +99,6 @@ func (r *nodeRunRepository) List(
 		       tt.task_status       AS task_status,
 		       tt.retry_count       AS retry_count,
 		       tt.image_tag         AS image_tag,
-		       tt.manifest_version  AS manifest_version,
 		       s.created_at         AS created_at,
 		       le.started_at        AS started_at,
 		       le.completed_at      AS completed_at,
@@ -133,42 +132,40 @@ func (r *nodeRunRepository) List(
 // query. The db column tags live here, keeping projection.NodeRun free of
 // storage concerns.
 type nodeRunRow struct {
-	ScheduleID      uuid.UUID      `db:"run_id"`
-	ScheduleName    string         `db:"schedule_name"`
-	Kind            string         `db:"kind"`
-	TerminalStatus  string         `db:"terminal_status"`
-	TaskID          uuid.UUID      `db:"task_id"`
-	TaskStatus      run.TaskStatus `db:"task_status"`
-	RetryCount      int            `db:"retry_count"`
-	ImageTag        string         `db:"image_tag"`
-	ManifestVersion string         `db:"manifest_version"`
-	CreatedAt       time.Time      `db:"created_at"`
-	StartedAt       *time.Time     `db:"started_at"`
-	CompletedAt     *time.Time     `db:"completed_at"`
-	ErrorMessage    *string        `db:"error_message"`
-	LogS3Key        *string        `db:"log_s3_key"`
-	RunResultsURI   *string        `db:"run_results_uri"`
-	Operation       string         `db:"operation"`
+	ScheduleID     uuid.UUID      `db:"run_id"`
+	ScheduleName   string         `db:"schedule_name"`
+	Kind           string         `db:"kind"`
+	TerminalStatus string         `db:"terminal_status"`
+	TaskID         uuid.UUID      `db:"task_id"`
+	TaskStatus     run.TaskStatus `db:"task_status"`
+	RetryCount     int            `db:"retry_count"`
+	ImageTag       string         `db:"image_tag"`
+	CreatedAt      time.Time      `db:"created_at"`
+	StartedAt      *time.Time     `db:"started_at"`
+	CompletedAt    *time.Time     `db:"completed_at"`
+	ErrorMessage   *string        `db:"error_message"`
+	LogS3Key       *string        `db:"log_s3_key"`
+	RunResultsURI  *string        `db:"run_results_uri"`
+	Operation      string         `db:"operation"`
 }
 
 func toNodeRun(row nodeRunRow) *projection.NodeRun {
 	return &projection.NodeRun{
-		ScheduleID:      row.ScheduleID,
-		ScheduleName:    row.ScheduleName,
-		Kind:            row.Kind,
-		TerminalStatus:  row.TerminalStatus,
-		TaskID:          row.TaskID,
-		TaskStatus:      row.TaskStatus,
-		RetryCount:      row.RetryCount,
-		ImageTag:        row.ImageTag,
-		ManifestVersion: row.ManifestVersion,
-		CreatedAt:       row.CreatedAt,
-		StartedAt:       row.StartedAt,
-		CompletedAt:     row.CompletedAt,
-		ErrorMessage:    row.ErrorMessage,
-		LogS3Key:        row.LogS3Key,
-		RunResultsURI:   row.RunResultsURI,
-		Operation:       row.Operation,
+		ScheduleID:     row.ScheduleID,
+		ScheduleName:   row.ScheduleName,
+		Kind:           row.Kind,
+		TerminalStatus: row.TerminalStatus,
+		TaskID:         row.TaskID,
+		TaskStatus:     row.TaskStatus,
+		RetryCount:     row.RetryCount,
+		ImageTag:       row.ImageTag,
+		CreatedAt:      row.CreatedAt,
+		StartedAt:      row.StartedAt,
+		CompletedAt:    row.CompletedAt,
+		ErrorMessage:   row.ErrorMessage,
+		LogS3Key:       row.LogS3Key,
+		RunResultsURI:  row.RunResultsURI,
+		Operation:      row.Operation,
 	}
 }
 

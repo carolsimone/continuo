@@ -155,8 +155,7 @@ func TestHistory_SuccessMapsAllFields(t *testing.T) {
 	fake := &fakeNodeState{runsResp: &statev1.ListNodeRunsResponse{Runs: []*statev1.NodeRun{{
 		RunId: "run_1", ScheduleName: "single-node-run-abcd1234", Kind: "single_node_run",
 		TerminalStatus: "succeeded", TaskId: "task_1", TaskStatus: "succeeded",
-		RetryCount: 0, ImageTag: "img:v9", ManifestVersion: "m42",
-		CreatedAt: "2026-07-10T10:00:00Z", CompletedAt: "2026-07-10T10:05:00Z",
+		RetryCount: 0, ImageTag: "img:v9", CreatedAt: "2026-07-10T10:00:00Z", CompletedAt: "2026-07-10T10:05:00Z",
 		RunResultsUri: "run-results/task-executions/finance/analytics/orders/e1.json",
 	}}}}
 
@@ -180,7 +179,7 @@ func TestHistory_SuccessMapsAllFields(t *testing.T) {
 	assert.Equal(t, "single_node_run", r["kind"])
 	assert.Equal(t, "succeeded", r["terminal_status"])
 	assert.Equal(t, "img:v9", r["image_tag"])
-	assert.Equal(t, "m42", r["manifest_version"])
+	assert.NotContains(t, r, "manifest_version")
 	// The structured result key must reach the CLI payload: it is vendored
 	// through this module.s own proto copy, so a state-side addition is invisible
 	// here until that copy is regenerated.

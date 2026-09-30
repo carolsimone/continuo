@@ -17,13 +17,12 @@ func (NodeCascadeSkipped) domainEvent() {}
 // NodeUnblocked is emitted when all upstreams of a node are terminal and the
 // node transitions from blocked to ready for execution.
 type NodeUnblocked struct {
-	Key             NodeKey
-	TaskID          uuid.UUID
-	ScheduleName    string
-	NodeType        string
-	ManifestVersion string
-	ImageTag        string
-	SecretRef       string
+	Key          NodeKey
+	TaskID       uuid.UUID
+	ScheduleName string
+	NodeType     string
+	ImageTag     string
+	SecretRef    string
 	// Operation is the run's operation ("" | "test" | "build"), carried so the
 	// downstream unblock dispatch runs the same dbt verb as the frontier.
 	Operation string

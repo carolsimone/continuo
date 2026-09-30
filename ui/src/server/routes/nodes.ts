@@ -102,7 +102,6 @@ export function createNodesRouter(stateClient: GrpcClient, graphClient: GrpcGrap
           task_status:      (r.task_status || '').toLowerCase(),
           retry_count:      Number(r.retry_count ?? 0),
           image_tag:        r.image_tag,
-          manifest_version: r.manifest_version,
           created_at:       r.created_at   || null,
           started_at:       r.started_at   || null,
           completed_at:     r.completed_at || null,
