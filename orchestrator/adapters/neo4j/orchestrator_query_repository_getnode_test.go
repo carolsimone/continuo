@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	neo4jinfra "github.com/carolsimone/continuo/orchestrator/adapters/neo4j"
 	"github.com/carolsimone/continuo/orchestrator/domain"
@@ -196,4 +197,64 @@ func TestOrchestratorQueryRepository_GetNode_IncludeInactivePrefersActiveMatch(t
 	require.NoError(t, err)
 	assert.Equal(t, "dbt-model", got.NodeType, "the active :Table must win over an inactive one with the same identity")
 	assert.False(t, got.Inactive)
+}
+
+// seedRetiredGetNodeTable creates an inactive :Table row with an explicit
+// unique_id and retired_at, so several retired rows can share one identity.
+func seedRetiredGetNodeTable(t *testing.T, ctx context.Context, client neo4jinfra.Neo4jClient, service, schema, table, uniqueID, nodeType string, retiredAt time.Time) {
+	t.Helper()
+	session := client.NewSession(ctx, neo4j.AccessModeWrite)
+	defer session.Close(ctx)
+	_, err := session.Run(ctx, `CREATE (:Table {service_name: $service, schema_name: $schema, table_name: $table,
+		unique_id: $uid, active: false, node_type: $nodeType, retired_at: $retiredAt})`,
+		map[string]any{"service": service, "schema": schema, "table": table, "uid": uniqueID, "nodeType": nodeType, "retiredAt": retiredAt.UTC()})
+	require.NoError(t, err)
+}
+
+func TestOrchestratorQueryRepository_GetNode_MostRecentlyRetiredWinsAmongInactive(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires Neo4j")
+	}
+	repo, client, cleanup := newTestQueryRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	service := fmt.Sprintf("svc-%s", t.Name())
+	schema, table := "an", "fct_moved"
+	cleanupGetNodeTables(t, ctx, client, service, schema, table)
+	now := time.Now()
+	// The older row is created last and has the smaller unique_id, so neither
+	// creation order nor unique_id order alone can pick the newer row.
+	seedRetiredGetNodeTable(t, ctx, client, service, schema, table, "seed.a", "dbt-seed", now.Add(-time.Hour))
+	seedRetiredGetNodeTable(t, ctx, client, service, schema, table, "model.z", "dbt-model", now)
+	seedRetiredGetNodeTable(t, ctx, client, service, schema, table, "seed.b", "dbt-seed", now.Add(-2*time.Hour))
+
+	for i := 0; i < 5; i++ {
+		got, err := repo.GetNode(ctx, service, schema, table, domain.IncludeInactiveNodes)
+		require.NoError(t, err)
+		assert.Equal(t, "dbt-model", got.NodeType, "call %d: the most recently retired row must win", i)
+		assert.True(t, got.Inactive)
+	}
+}
+
+func TestOrchestratorQueryRepository_GetNode_EqualRetirementFallsBackToUniqueID(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires Neo4j")
+	}
+	repo, client, cleanup := newTestQueryRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	service := fmt.Sprintf("svc-%s", t.Name())
+	schema, table := "an", "fct_tie"
+	cleanupGetNodeTables(t, ctx, client, service, schema, table)
+	at := time.Now()
+	seedRetiredGetNodeTable(t, ctx, client, service, schema, table, "b.model", "dbt-model", at)
+	seedRetiredGetNodeTable(t, ctx, client, service, schema, table, "a.seed", "dbt-seed", at)
+
+	for i := 0; i < 5; i++ {
+		got, err := repo.GetNode(ctx, service, schema, table, domain.IncludeInactiveNodes)
+		require.NoError(t, err)
+		assert.Equal(t, "dbt-seed", got.NodeType, "call %d: ties break on the smallest unique_id", i)
+	}
 }

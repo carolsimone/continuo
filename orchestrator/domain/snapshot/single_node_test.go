@@ -239,3 +239,19 @@ func TestSingleNode_FullRefresh_UnsupportedNodeTypes(t *testing.T) {
 		}
 	}
 }
+
+func TestSingleNode_FullRefresh_UnsupportedErrorNamesTypeOnce(t *testing.T) {
+	fqn := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a"}
+	r := &fakeTopologyReader{SingleLatest: map[snapshot.FQN]snapshot.LatestTableRow{
+		fqn: {ScheduleName: "x", NodeType: "dbt-snapshot", ImageTag: "v1", ManifestVersion: "m1"},
+	}}
+	sel := snapshot.SingleNode{ServiceName: "svc", SchemaName: "sch", TableName: "a", MetadataSource: "latest"}
+	_, err := sel.SelectTasks(context.Background(), r, snapshot.Params{Operation: "full_refresh"})
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	const want = `snapshot: node type does not support full refresh: "dbt-snapshot"`
+	if err.Error() != want {
+		t.Fatalf("got %q, want %q", err.Error(), want)
+	}
+}

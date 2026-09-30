@@ -596,3 +596,45 @@ func TestReleasePromotionRepository_ContentHashRefreshesOnUnchangedNode(t *testi
 	ch, _ := res.Record().Get("ch")
 	assert.Equal(t, "sha256:v2", ch)
 }
+
+// A retired :Table keeps the retired_at of the release that retired it; later
+// promotions must not re-stamp it, or GetNode cannot tell which of several
+// retired rows for one identity was retired last.
+func TestReleasePromotionRepository_KeepsRetiredAtOfAlreadyRetiredTables(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+	wipeReleaseFixtures(t, client)
+	t.Cleanup(func() { wipeReleaseFixtures(t, client) })
+
+	repo := newReleaseRepo(client)
+	node := func(id string) []topology.ReleasePromotedTopologyNode {
+		return []topology.ReleasePromotedTopologyNode{
+			{UniqueID: id, SchemaName: "p", TableName: "t" + id, ServiceName: "s", ImageTag: "x", Schedule: "daily", UpstreamUniqueIDs: []string{}},
+		}
+	}
+	base := time.Now().UTC().Truncate(time.Second)
+	_, err := repo.PromoteRelease(ctx, "r1", node("a"), base)
+	require.NoError(t, err)
+
+	// A run reference keeps the retired node from being deleted as an orphan.
+	w := client.NewSession(ctx, neo4j.AccessModeWrite)
+	_, err = w.Run(ctx, `MATCH (t:Table {unique_id: 'a'}) CREATE (:Run {run_id: 'keep'})-[:EXECUTES]->(t)`, nil)
+	require.NoError(t, err)
+	w.Close(ctx)
+
+	retiredAt := base.Add(time.Hour)
+	_, err = repo.PromoteRelease(ctx, "r2", node("b"), retiredAt)
+	require.NoError(t, err)
+	_, err = repo.PromoteRelease(ctx, "r3", node("c"), retiredAt.Add(time.Hour))
+	require.NoError(t, err)
+
+	r := client.NewSession(ctx, neo4j.AccessModeRead)
+	defer r.Close(ctx)
+	res, err := r.Run(ctx, `MATCH (t:Table {unique_id: 'a'}) RETURN t.retired_at AS r`, nil)
+	require.NoError(t, err)
+	require.True(t, res.Next(ctx))
+	got, _ := res.Record().Get("r")
+	gotTime, ok := got.(time.Time)
+	require.True(t, ok, "retired_at must be a datetime, got %T", got)
+	assert.True(t, retiredAt.Equal(gotTime), "retired_at must stay at first retirement %v, got %v", retiredAt, gotTime)
+}

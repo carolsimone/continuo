@@ -1,4 +1,4 @@
-import type { NodeOperation, RunOperation } from '../server/shared/operation';
+import type { WireOperation } from '../server/shared/operation';
 
 export interface ScheduleSummary {
   schedule_name: string;
@@ -105,7 +105,7 @@ export interface NodeRun {
   retry_count: number;
   image_tag: string;
   manifest_version: string;
-  operation: NodeOperation;
+  operation: WireOperation;
   created_at: string | null;
   started_at: string | null;
   completed_at: string | null;
@@ -224,7 +224,7 @@ export interface NodeSummary {
   p95_duration_sec: number | null;
   last_status: string | null;
   last_run_at: string | null;
-  operation: RunOperation;
+  operation: WireOperation;
 }
 
 export interface NodesResponse {

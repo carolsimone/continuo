@@ -71,7 +71,7 @@ func checkFullRefreshTarget(operation, nodeType string) error {
 		return nil
 	}
 	if !pkgModel.NodeType(nodeType).SupportsFullRefresh() {
-		return fmt.Errorf("%w: node type %q", ErrFullRefreshUnsupported, nodeType)
+		return fmt.Errorf("%w: %q", ErrFullRefreshUnsupported, nodeType)
 	}
 	return nil
 }

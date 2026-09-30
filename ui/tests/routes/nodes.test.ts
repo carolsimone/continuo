@@ -92,6 +92,18 @@ describe('nodes router', () => {
     );
   });
 
+  it.each([
+    ['an empty wire value', '', 'run'],
+    ['full_refresh', 'full_refresh', 'full_refresh'],
+    ['an unknown value from a newer backend', 'vacuum', 'vacuum'],
+  ])('GET /:svc/:schema/:table/runs maps %s', async (_label, wire, want) => {
+    mockListNodeRuns.mockImplementation((_req, cb) =>
+      cb(null, { runs: [{ run_id: 'r3', schedule_name: 'x', kind: 'cron', operation: wire }] }),
+    );
+    const res = await request(makeApp()).get('/api/nodes/svc/schema/tbl/runs');
+    expect(res.body.runs[0].operation).toBe(want);
+  });
+
   it('GET /:svc/:schema/:table/runs defaults a run missing operation to "run"', async () => {
     mockListNodeRuns.mockImplementation((_req, cb) =>
       cb(null, { runs: [{ run_id: 'r2', schedule_name: 'x', kind: 'cron' }] }),
@@ -189,6 +201,19 @@ describe('nodes router', () => {
       { search: '', service_name: '', operation: 'run', limit: 50, offset: 0 },
       expect.any(Function),
     );
+  });
+
+  it.each([
+    ['an empty wire value', '', 'run'],
+    ['an absent wire value', undefined, 'run'],
+    ['test', 'test', 'test'],
+    ['an unknown value from a newer backend', 'vacuum', 'vacuum'],
+  ])('GET / maps %s to the catalog operation', async (_label, wire, want) => {
+    mockListNodes.mockImplementation((_req, cb) =>
+      cb(null, { total_count: 1, nodes: [{ service_name: 'svc', schema_name: 'an', table_name: 'fct', operation: wire }] }),
+    );
+    const res = await request(makeApp()).get('/api/nodes');
+    expect(res.body.nodes[0].operation).toBe(want);
   });
 
   it('GET / rejects an unknown operation with 400', async () => {

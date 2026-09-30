@@ -411,7 +411,8 @@ func (r *OrchestratorQueryRepository) parseNeo4jTimestamp(field, value string) t
 // its (service, schema, table) identity. With domain.ActiveNodesOnly only an
 // active :Table matches; with domain.IncludeInactiveNodes a :Table no longer
 // active in the topology also matches (reported with Inactive = true) and an
-// active match is preferred when both exist. Returns domain.ErrNodeNotFound
+// active match is preferred when both exist; among several inactive matches the
+// most recently retired wins, ties broken by the smallest unique_id. Returns domain.ErrNodeNotFound
 // when no eligible node matches.
 // test_count is read via intFieldPresent so a node predating test_count
 // capture reports TestCountKnown = false rather than a misleading zero.
@@ -424,7 +425,7 @@ func (r *OrchestratorQueryRepository) GetNode(ctx context.Context, service, sche
 		WHERE $include_inactive OR COALESCE(t.active, true)
 		WITH t, NOT COALESCE(t.active, true) AS inactive
 		RETURN t.node_type AS node_type, t.test_count AS test_count, inactive
-		ORDER BY inactive ASC
+		ORDER BY inactive ASC, t.retired_at DESC, t.unique_id ASC
 		LIMIT 1
 	`
 	result, err := session.Run(ctx, query, map[string]interface{}{

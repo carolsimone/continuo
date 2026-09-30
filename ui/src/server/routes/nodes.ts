@@ -3,6 +3,7 @@ import { GrpcClient, userMetadata } from '../grpc-client';
 import { GrpcGraphClient } from '../grpc-graph-client';
 import { grpcToHttpStatus } from './grpc-status';
 import { parseLimit, parseOffset } from './paging';
+import { operationFromWire } from '../shared/operation';
 import { parseNodeOperation, parseNodeRunOperation } from './operation';
 import { type NodeType } from '../generated/vocabulary.gen';
 
@@ -53,7 +54,7 @@ export function createNodesRouter(stateClient: GrpcClient, graphClient: GrpcGrap
           p95_duration_sec: nullIfNeg(r.p95_duration_sec),
           last_status:      r.last_status || null,
           last_run_at:      r.last_run_at || null,
-          operation:        r.operation ?? 'run',
+          operation:        operationFromWire(r.operation),
         })),
       });
     });
@@ -108,7 +109,7 @@ export function createNodesRouter(stateClient: GrpcClient, graphClient: GrpcGrap
           error_message:    r.error_message || null,
           log_s3_key:       r.log_s3_key   || null,
           run_results_uri:  r.run_results_uri || null,
-          operation:        r.operation ?? 'run',
+          operation:        operationFromWire(r.operation),
         }));
         res.json({ runs });
       },

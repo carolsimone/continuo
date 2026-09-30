@@ -132,7 +132,8 @@ func (r *ReleasePromotionRepository) PromoteRelease(
 	retireRes, err := tx.Run(ctx, `
 		MATCH (t:Table)
 		WHERE t.unique_id IS NULL OR NOT t.unique_id IN $new_unique_ids
-		SET t.active = false, t.retired_at = $now
+		SET t.retired_at = CASE WHEN COALESCE(t.active, true) THEN $now ELSE t.retired_at END,
+		    t.active = false
 	`, map[string]interface{}{
 		"new_unique_ids": newUniqueIDs,
 		"now":            now.UTC(),
