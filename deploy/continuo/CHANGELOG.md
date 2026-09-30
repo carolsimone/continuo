@@ -18,8 +18,10 @@ shipped in those.
 
 ### Changed
 - Default `validation.imageTag` is `v0.7.0` (continuo-python-runtime 0.7.0).
-- The chart refuses a release name / `fullnameOverride` / Secret name inside the reserved `continuo-api-` prefix. Every Secret the chart creates is named `<fullname>-<suffix>`, and a `python-api` contract may name any `continuo-api-*` Secret, so rendering fails when the chart fullname equals `continuo-api` or starts with `continuo-api-`, or when a `*.existingSecret`, `validation.warehouseSecret` or `ingress.tls.secretName` value starts with `continuo-api-`. Installs outside the prefix are unaffected.
 - The python script node kind is `python-node`. Contracts written by continuo-python-runtime < 0.6.0 (kind `python-model`) keep working; stored node types are rewritten on upgrade by the release DB migration and orchestrator's startup data migration. Domain repos that upgrade to continuo-python-runtime 0.6.0 see every python node re-validated once on their next release (the node kind is part of its content hash).
+
+### Breaking
+- The chart refuses a release name / `fullnameOverride` / Secret name inside the reserved `continuo-api-` prefix, which is kept for the operator-created Secrets a `python-api` contract may name. Affected: an install whose release name or `fullnameOverride` is `continuo-api` or starts with `continuo-api-`, or whose `*.existingSecret`, `validation.warehouseSecret` or `ingress.tls.secretName` value starts with `continuo-api-`; `helm upgrade` fails to render for it. Before upgrading, rename any such Secret and point its values key at the new name; for a release name or `fullnameOverride` inside the prefix, move to a release name or `fullnameOverride` outside it (either renames every chart object, including the bundled datastores' volumes, so migrate their data first). Installs outside the prefix are unaffected. MAJOR.
 
 ## [0.7.1] - 2026-09-24
 
