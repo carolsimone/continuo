@@ -56,9 +56,13 @@ For the full dependency inventory across Go, npm, and Python, see
 
 A `python-api` node can name a Secret in its contract (`secret_ref`) to receive
 an API key. The Secret is called `continuo-api-<name>`, lives in the namespace
-continuo is installed in, and is created by the operator: `kubectl create
+execution-controller runs Jobs in (its `K8S_NAMESPACE`, which the chart sets to
+the release namespace), and is created by the operator: `kubectl create
 secret`, an External Secrets Operator `ExternalSecret`, or a Vault Secrets
 Operator `VaultStaticSecret`. The chart neither creates nor reads these Secrets.
+The `continuo-api-` prefix is reserved for them: the chart refuses to render
+when the release name, `fullnameOverride` or any Secret name in values falls
+inside it.
 See [python-api nodes](../docs/run-projects-in-continuo.md#python-api-nodes).
 
 ## Requirements at a glance
