@@ -219,6 +219,11 @@ export default function NodeDetailPage() {
     postRun(pendingSource ? { source_run_id: pendingSource } : {}, 'full_refresh');
   }, [postRun, pendingSource]);
 
+  const pendingRun = pendingSource ? runs.find(r => r.run_id === pendingSource) : undefined;
+  const snapshotLine = pendingRun
+    ? `Rebuilds from the snapshot of the run on ${formatTime(pendingRun.created_at)} (image ${pendingRun.image_tag}, manifest ${pendingRun.manifest_version}).`
+    : undefined;
+
   const stats = computeNodeStats(runs);
 
   const runLatestClass = ['btn', 'btn--secondary', runState === 'loading' ? 'is-loading' : '', runState === 'success' ? 'is-success' : ''].filter(Boolean).join(' ');
@@ -256,7 +261,7 @@ export default function NodeDetailPage() {
       )}
 
       {confirmOpen && createPortal(
-        <FullRefreshConfirmDialog fqn={fqn ?? ''} onConfirm={handleConfirmFullRefresh} onClose={() => setConfirmOpen(false)} />,
+        <FullRefreshConfirmDialog fqn={fqn ?? ''} snapshot={snapshotLine} onConfirm={handleConfirmFullRefresh} onClose={() => setConfirmOpen(false)} />,
         document.body,
       )}
 

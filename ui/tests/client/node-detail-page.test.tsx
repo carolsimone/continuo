@@ -613,6 +613,33 @@ describe('NodeDetailPage full refresh', () => {
     expect(JSON.parse(String(runPosts()[0][1]!.body))).toEqual({ source_run_id: 'pick-me', operation: 'full_refresh' });
   });
 
+  it('names the picked snapshot in the full refresh confirmation', async () => {
+    const picked = { ...mkRun({ run_id: 'pick-me', created_at: '2026-04-02T08:30:00Z' }), image_tag: 'v7', manifest_version: 'm7' };
+    mockFetch.mockImplementation(metaAndRuns('dbt-model', [picked]));
+    renderPage();
+    await waitFor(() => screen.getByRole('option', { name: /full refresh/i }));
+    await userEvent.selectOptions(screen.getByLabelText(/operation/i), 'full_refresh');
+    await userEvent.click(screen.getByRole('button', { name: /run with old snapshot/i }));
+    await userEvent.click(await screen.findByRole('button', { name: /v7 snapshot/i }));
+
+    const dialog = await screen.findByRole('dialog');
+    const when = new Date('2026-04-02T08:30:00Z').toLocaleString();
+    expect(dialog).toHaveTextContent(`Rebuilds from the snapshot of the run on ${when} (image v7, manifest m7).`);
+    expect(screen.getByRole('button', { name: /^cancel$/i })).toHaveFocus();
+  });
+
+  it('shows no snapshot line when the full refresh runs the latest version', async () => {
+    mockFetch.mockImplementation(metaAndRuns('dbt-model', [mkRun({ run_id: 'pick-me' })]));
+    renderPage();
+    await waitFor(() => screen.getByRole('option', { name: /full refresh/i }));
+    await userEvent.selectOptions(screen.getByLabelText(/operation/i), 'full_refresh');
+    await userEvent.click(screen.getByRole('button', { name: /full refresh this node/i }));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveTextContent(/full refresh svc\.schema\.tbl\?/i);
+    expect(dialog).not.toHaveTextContent(/rebuilds from the snapshot/i);
+  });
+
   it('POSTs full_refresh even if the operation select changes while the dialog is open', async () => {
     mockFetch.mockImplementation(metaAndRuns('dbt-model'));
     renderPage();
