@@ -495,9 +495,10 @@ nodes:
 If the API needs a key, name a Secret with `secret_ref`. The name must start
 with `continuo-api-`. Every key in that Secret reaches the script as an env var
 (`os.environ["FX_API_KEY"]`). The contract holds only the Secret's name, never
-a value. The Secret lives in the namespace continuo is installed in:
+a value. The Secret lives in the namespace execution-controller runs Jobs in
+(its `K8S_NAMESPACE`, which the chart sets to the release namespace):
 
-- kubectl: `kubectl create secret generic continuo-api-fx --from-literal=FX_API_KEY=<key> -n <continuo-namespace>`
+- kubectl: `kubectl create secret generic continuo-api-fx --from-literal=FX_API_KEY=<key> -n <job-namespace>`
 - External Secrets Operator: an `ExternalSecret` whose `spec.target.name` is `continuo-api-fx`.
 - Vault Secrets Operator: a `VaultStaticSecret` whose `spec.destination.name` is `continuo-api-fx`.
 
