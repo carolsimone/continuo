@@ -498,6 +498,7 @@ func (d *Dispatcher) writeFirstCheck(ctx context.Context, outboxRepo outbox.Repo
 			RetryCount: cmd.TaskRetryCount, MaxRetries: cmd.TaskMaxRetries,
 		}
 	} else {
+		// SecretRef is omitted: validation Jobs never mount an API Secret.
 		vc := dep.ValidationCommand()
 		taskID, scheduleID := model.ValidationSyntheticIDs(dep.ReleaseID(), dep.NodeID())
 		aggregateID = taskID

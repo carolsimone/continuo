@@ -16,7 +16,7 @@ import (
 // in the snapshot but absent from existingKeys is an error (we cannot point at
 // a manifest we do not know). image_tag is the first non-empty tag among the
 // service's nodes. manifest_kind is derived from the service's own nodes: any
-// node whose NodeType.IsPython() is true (python-node or python-csv) makes
+// node whose NodeType.IsPython() is true (python-node, python-csv or python-api) makes
 // the service ManifestKindPython, otherwise ManifestKindDbt; a service whose
 // nodes mix python and non-python types is an error (a service is either a
 // dbt project or a python service, never both). Idempotent: re-running

@@ -38,11 +38,12 @@ func newSnapshotWriter(tx neo4j.ManagedTransaction) *snapshotWriter {
 // snapshot_of_run task all reuse the SOURCE run's image and manifest, so reading
 // the live table would record code that the run never executed.
 //
-// secret_ref is pinned the same way as image_tag: a rerun, a rebase-inherited
-// row and a snapshot_of_run task reuse the source run's pinned secret_ref, while
-// a rebased row takes the latest topology's together with its image_tag. It is set only
-// when the projection entry carries a non-empty SecretRef, so a node without
-// API credentials leaves the property absent rather than storing "".
+// secret_ref is pinned the same way as image_tag: a rerun, a
+// rebase-inherited row and a snapshot_of_run task reuse the source run's
+// pinned secret_ref, while a rebased row takes the latest topology's
+// together with its image_tag. It is set only when the projection entry
+// carries a non-empty SecretRef, so a node without API credentials leaves
+// the property absent rather than storing "".
 //
 // test_count is set only when the projection entry's TestCountKnown is true
 // (assigning a nil parameter to a Cypher SET removes/leaves the property

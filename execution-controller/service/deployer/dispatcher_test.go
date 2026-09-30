@@ -17,6 +17,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/domain/repository"
 	"github.com/carolsimone/continuo/execution-controller/serialization"
 	"github.com/carolsimone/continuo/execution-controller/service/deployer"
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -167,7 +168,7 @@ func TestDispatch_FirstCheckCarriesSecretRef(t *testing.T) {
 	payload, err := json.Marshal(serialization.DeployTaskFromDomain(command.DeployTask{
 		TaskID: taskID.String(), ScheduleID: uuid.New().String(),
 		ScheduleName: "daily", ServiceName: "dbt", SchemaName: "public",
-		TableName: "orders", JobName: "job-secret-ref", NodeType: "dbt-model",
+		TableName: "orders", JobName: "job-secret-ref", NodeType: string(pkg_model.NodeTypePythonApi),
 		ImageTag: "sha-abc", SecretRef: "continuo-api-fx", TaskRetryCount: 0, TaskMaxRetries: 2,
 	}))
 	require.NoError(t, err)
