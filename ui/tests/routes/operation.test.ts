@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { parseOperation, parseNodeOperation, parseNodeRunOperation } from '../../src/server/routes/operation';
+import { NODE_RUN_OPERATIONS, RUN_OPERATIONS, isNodeOperation } from '../../src/server/shared/operation';
 
 describe('parseOperation', () => {
   it('maps missing / run to empty', () => {
@@ -50,5 +51,16 @@ describe('parseNodeRunOperation', () => {
 describe('parseOperation keeps full_refresh out of schedule triggers', () => {
   it('rejects full_refresh', () => {
     expect(parseOperation('full_refresh')).toBeNull();
+  });
+});
+
+describe('shared operation lists', () => {
+  it('declares the run operations and the single-node operations once', () => {
+    expect(RUN_OPERATIONS).toEqual(['run', 'test', 'build']);
+    expect(NODE_RUN_OPERATIONS).toEqual(['run', 'test', 'build', 'full_refresh']);
+  });
+  it('isNodeOperation accepts exactly the single-node operations', () => {
+    for (const op of NODE_RUN_OPERATIONS) expect(isNodeOperation(op)).toBe(true);
+    for (const bad of ['', 'FULL_REFRESH', 'drop', undefined, null, 7]) expect(isNodeOperation(bad)).toBe(false);
   });
 });

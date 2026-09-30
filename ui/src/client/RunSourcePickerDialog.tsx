@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import type { NodeRun } from './types';
-import type { NodeOperation } from './NodeDetailPage';
+import type { NodeOperation } from '../server/shared/operation';
 import { groupRunsBySnapshot } from './node-helpers';
 
 interface Props {

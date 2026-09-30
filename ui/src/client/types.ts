@@ -1,3 +1,5 @@
+import type { NodeOperation, RunOperation } from '../server/shared/operation';
+
 export interface ScheduleSummary {
   schedule_name: string;
   cron_expression: string;
@@ -103,7 +105,7 @@ export interface NodeRun {
   retry_count: number;
   image_tag: string;
   manifest_version: string;
-  operation: string;        // run | test | build | full_refresh
+  operation: NodeOperation;
   created_at: string | null;
   started_at: string | null;
   completed_at: string | null;
@@ -222,7 +224,7 @@ export interface NodeSummary {
   p95_duration_sec: number | null;
   last_status: string | null;
   last_run_at: string | null;
-  operation: string;        // run | test | build
+  operation: RunOperation;
 }
 
 export interface NodesResponse {
