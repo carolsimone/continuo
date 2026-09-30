@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"github.com/carolsimone/continuo/pkg/testdeps"
 	"strings"
 	"testing"
 	"time"
@@ -60,7 +61,7 @@ func setupSingleNodeRunFixture(t *testing.T) *singleNodeRunFixture {
 	t.Helper()
 	db, err := database.NewConnection(pkgconfig.LoadPostgres(&pkgconfig.Validator{}))
 	if err != nil {
-		t.Skip("no test DB available:", err)
+		testdeps.Unavailable(t, "no test DB available: %v", err)
 	}
 
 	logger := newTestLogger()

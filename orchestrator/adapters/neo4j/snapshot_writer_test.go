@@ -2,6 +2,7 @@ package neo4jinfra_test
 
 import (
 	"context"
+	"github.com/carolsimone/continuo/pkg/testdeps"
 	"strings"
 	"testing"
 
@@ -17,10 +18,10 @@ func newDriver(t *testing.T) neo4j.DriverWithContext {
 	t.Helper()
 	driver, err := neo4j.NewDriverWithContext(neo4jURI(), neo4j.BasicAuth(neo4jUser(), neo4jPassword(), ""))
 	if err != nil {
-		t.Skipf("neo4j driver: %v", err)
+		testdeps.Unavailable(t, "neo4j driver: %v", err)
 	}
 	if err := driver.VerifyConnectivity(context.Background()); err != nil {
-		t.Skipf("neo4j unreachable: %v", err)
+		testdeps.Unavailable(t, "neo4j unreachable: %v", err)
 	}
 	t.Cleanup(func() { _ = driver.Close(context.Background()) })
 	return driver

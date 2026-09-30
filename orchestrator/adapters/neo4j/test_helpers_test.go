@@ -2,6 +2,7 @@ package neo4jinfra_test
 
 import (
 	"context"
+	"github.com/carolsimone/continuo/pkg/testdeps"
 	"log/slog"
 	"os"
 	"testing"
@@ -42,7 +43,7 @@ func newTestClient(t *testing.T) neo4jinfra.Neo4jClient {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	client, err := neo4jinfra.NewNeo4jClient(neo4jURI(), neo4jUser(), neo4jPassword(), logger)
 	if err != nil {
-		t.Skipf("Neo4j unavailable, skipping integration test: %v", err)
+		testdeps.Unavailable(t, "Neo4j unavailable, skipping integration test: %v", err)
 	}
 	t.Cleanup(func() { _ = client.Close(context.Background()) })
 	return client

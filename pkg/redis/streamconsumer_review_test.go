@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/carolsimone/continuo/pkg/testdeps"
 	"io"
 	"log/slog"
 	"os"
@@ -20,7 +21,7 @@ func internalRedisClient(t *testing.T) *goredis.Client {
 	t.Helper()
 	addr := os.Getenv("REDIS_ADDR")
 	if addr == "" {
-		t.Skip("REDIS_ADDR not set — skipping Redis integration test")
+		testdeps.Unavailable(t, "REDIS_ADDR not set — skipping Redis integration test")
 	}
 	c := goredis.NewClient(&goredis.Options{
 		Addr:     addr,

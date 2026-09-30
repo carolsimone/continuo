@@ -173,12 +173,21 @@ test-deps-down:
 # integration_test packages both TRUNCATE the same shared live-DB tables, so
 # running them as parallel package binaries (the default `go test ./...`
 # behaviour) races between one package's TRUNCATE and another's assertions.
+# orchestrator pins the same flag for the same reason: adapters/neo4j and
+# service/handlers both wipe and rebuild the one shared Neo4j graph.
+#
+# The runner is outside the compose network, so Neo4j is addressed by its
+# published port (NEO4J_URI), never by the `neo4j` service name the tests
+# default to. REQUIRE_TEST_DEPS=1 turns a test that cannot reach its
+# dependency into a failure instead of a skip (pkg/testdeps); without it a
+# misaddressed dependency skips whole suites and the run still exits 0.
 .PHONY: test-go
 test-go: test-deps-up
 	@rc=0; for s in $(or $(SERVICE),$(GO_SERVICES)); do \
 	  extra=; \
 	  case $$s in \
-	    state) db=continuo_state;; orchestrator) db=continuo_orchestrator;; \
+	    state) db=continuo_state;; \
+	    orchestrator) db=continuo_orchestrator; extra="GOFLAGS=-p=1";; \
 	    execution-controller) db=continuo_execution;; \
 	    release-controller) db=continuo_release; \
 	      extra="RELEASE_TEST_PG_DSN=postgres://continuo_svc:continuo@localhost:5432/continuo_release?sslmode=disable GOFLAGS=-p=1";; \
@@ -189,7 +198,8 @@ test-go: test-deps-up
 	  echo "== go test $$s (db=$$db) =="; \
 	  (cd $$s && env POSTGRES_HOST=localhost POSTGRES_PORT=5432 POSTGRES_DB=$$db \
 	     POSTGRES_USER=continuo_svc POSTGRES_PASSWORD=continuo DB_SSLMODE=disable \
-	     NEO4J_HOST=localhost $$extra \
+	     NEO4J_HOST=localhost NEO4J_URI=bolt://localhost:7687 NEO4J_USER=neo4j \
+	     NEO4J_PASSWORD=atlas_password REQUIRE_TEST_DEPS=1 $$extra \
 	     go test -tags integration -count=1 ./... -timeout 20m) || rc=1; \
 	done; exit $$rc
 

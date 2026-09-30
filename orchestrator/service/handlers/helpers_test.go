@@ -3,6 +3,7 @@ package handlers_test
 import (
 	"context"
 	"fmt"
+	"github.com/carolsimone/continuo/pkg/testdeps"
 	"log/slog"
 	"os"
 	"testing"
@@ -206,7 +207,7 @@ func commandTestNeo4jPassword() string {
 	if p := os.Getenv("NEO4J_PASSWORD"); p != "" {
 		return p
 	}
-	return "neo4j"
+	return "atlas_password"
 }
 
 // newCommandTestNeo4jClient creates a Neo4j client for integration tests,
@@ -220,7 +221,7 @@ func newCommandTestNeo4jClient(t *testing.T) neo4jinfra.Neo4jClient {
 		newTestLogger(),
 	)
 	if err != nil {
-		t.Skipf("Neo4j unavailable, skipping integration test: %v", err)
+		testdeps.Unavailable(t, "Neo4j unavailable, skipping integration test: %v", err)
 	}
 	t.Cleanup(func() { _ = client.Close(context.Background()) })
 	return client
@@ -243,7 +244,7 @@ func newCommandTestDB(t *testing.T) *sqlx.DB {
 		host, port,
 	))
 	if err != nil {
-		t.Skipf("Postgres unavailable: %v", err)
+		testdeps.Unavailable(t, "Postgres unavailable: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
 	return db
