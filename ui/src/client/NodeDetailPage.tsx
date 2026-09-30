@@ -229,18 +229,19 @@ export default function NodeDetailPage() {
     : operation === 'full_refresh' ? '♻ Full refresh this node'
     : '▶ Run this node';
 
-  // The latest-mode test trigger is the only one gated by latest metadata; the
-  // old-snapshot trigger is never blocked here (see latestHasNoTests).
-  const latestTestBlocked = operation === 'test' && latestHasNoTests;
+  // A node no longer active in the latest topology has no latest version to
+  // run, so every latest-mode operation is unavailable for it; only the
+  // old-snapshot trigger remains.
+  const latestUnavailable = inactive;
+
+  // The latest-mode test trigger is also gated by latest test metadata; the
+  // old-snapshot trigger is never blocked here (see latestHasNoTests). For an
+  // inactive node the inactive strip already explains why latest is unavailable.
+  const latestTestBlocked = operation === 'test' && latestHasNoTests && !inactive;
 
   // Until the node's type is known a full refresh cannot be validated, so both
   // triggers stay disabled while it is selected.
   const fullRefreshUnavailable = operation === 'full_refresh' && !canFullRefresh;
-
-  // A node no longer active in the latest topology has no latest version to
-  // rebuild, so its full refresh is only offered from an old snapshot: the
-  // latest trigger is disabled and the old-snapshot trigger stays available.
-  const latestFullRefreshBlocked = operation === 'full_refresh' && inactive;
 
   return (
     <div className="page">
@@ -295,11 +296,11 @@ export default function NodeDetailPage() {
         <button
           type="button"
           className={runLatestClass}
-          disabled={runState === 'loading' || runState === 'success' || latestTestBlocked || fullRefreshUnavailable || latestFullRefreshBlocked}
+          disabled={runState === 'loading' || runState === 'success' || latestTestBlocked || fullRefreshUnavailable || latestUnavailable}
           onClick={handleRunLatest}
           title={latestTestBlocked
             ? 'The latest version of this node has no tests'
-            : latestFullRefreshBlocked
+            : latestUnavailable
               ? 'This node is no longer active in the topology'
               : 'Run only this node against the latest topology'}
         >
@@ -322,10 +323,11 @@ export default function NodeDetailPage() {
         </div>
       )}
 
-      {latestFullRefreshBlocked && (
+      {latestUnavailable && (
         <div className="info-strip info-strip--info">
-          This node is no longer active in the topology, so a full refresh needs an old snapshot.
-          Use “Run with old snapshot…” to pick the run whose version to rebuild.
+          <span className="info-strip__icon">ℹ</span>
+          This node is no longer active in the topology, so it cannot run from its latest version.
+          Use “Run with old snapshot…” to run a version it had.
         </div>
       )}
 

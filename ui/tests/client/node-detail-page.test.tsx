@@ -514,7 +514,7 @@ describe('NodeDetailPage — brand header', () => {
   });
 });
 
-function metaAndRuns(nodeType: string, runs: unknown[] = [], meta: { inactive?: boolean } = {}) {
+function metaAndRuns(nodeType: string, runs: unknown[] = [], meta: { inactive?: boolean; test_count?: number; test_count_known?: boolean } = {}) {
   return (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input.toString();
     if (url.endsWith('/meta')) return jsonResp({ node_type: nodeType, test_count: 1, test_count_known: true, ...meta });
@@ -668,12 +668,31 @@ describe('NodeDetailPage full refresh', () => {
     expect(JSON.parse(String(runPosts()[0][1]!.body))).toEqual({ source_run_id: 'old-run', operation: 'full_refresh' });
   });
 
-  it('keeps Run, Test and Build on the latest trigger for an inactive node', async () => {
-    mockFetch.mockImplementation(metaAndRuns('dbt-model', [], { inactive: true }));
+  it.each([
+    ['run', /run this node/i],
+    ['test', /test this node/i],
+    ['build', /build this node/i],
+    ['full_refresh', /full refresh this node/i],
+  ])('disables the latest %s action for an inactive node and keeps the old-snapshot trigger', async (op, name) => {
+    mockFetch.mockImplementation(metaAndRuns('dbt-model', [mkRun({ run_id: 'old-run' })], { inactive: true }));
     renderPage();
     await waitFor(() => screen.getByRole('option', { name: /full refresh/i }));
-    expect(screen.getByRole('button', { name: /run this node/i })).toBeEnabled();
-    expect(screen.queryByText(/no longer active in the topology/i)).toBeNull();
+    await userEvent.selectOptions(screen.getByLabelText(/operation/i), op);
+
+    expect(screen.getByRole('button', { name })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /run with old snapshot/i })).toBeEnabled();
+    expect(screen.getAllByText(/no longer active in the topology/i)).toHaveLength(1);
+  });
+
+  it('shows only the inactive strip, not the no-tests strip, for an inactive node with no tests', async () => {
+    mockFetch.mockImplementation(metaAndRuns('dbt-model', [], { inactive: true, test_count: 0, test_count_known: true }));
+    renderPage();
+    await waitFor(() => screen.getByRole('option', { name: /full refresh/i }));
+    await userEvent.selectOptions(screen.getByLabelText(/operation/i), 'test');
+
+    expect(screen.getByRole('button', { name: /test this node/i })).toBeDisabled();
+    expect(screen.queryByText(/has no tests/i)).toBeNull();
+    expect(screen.getAllByText(/no longer active in the topology/i)).toHaveLength(1);
   });
 
   it('keeps the latest full refresh trigger enabled for an active node', async () => {

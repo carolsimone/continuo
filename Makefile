@@ -273,6 +273,7 @@ guards:
 	cd tests/e2e/stub-llm && GOWORK=off go test ./...
 	diff state/proto/state/v1/state.proto ui/proto/state.proto
 	diff agent-remediation/proto/remediation/v1/remediation.proto ui/proto/remediation/v1/remediation.proto
+	diff orchestrator/proto/orchestrator/v1/orchestrator.proto ui/proto/orchestrator/v1/orchestrator.proto
 
 .PHONY: stack-up
 stack-up:
