@@ -83,12 +83,18 @@ message TableNode {
 }
 
 // GetNode returns per-node topology metadata for a single :Table, addressed by
-// its (service, schema, table) identity. Used by the UI to decide whether a
-// single-node "test" operation is meaningful before submitting it.
+// its (service, schema, table) identity. Used by the UI to decide which
+// single-node operations are meaningful before submitting them. By default only
+// an active node matches and an inactive one is NOT_FOUND.
 message GetNodeRequest {
   string service_name = 1;
   string schema_name  = 2;
   string table_name   = 3;
+  // include_inactive, when true, also returns a node whose :Table is no longer
+  // active in the topology; an active match is preferred over an inactive one.
+  // When false (the default), only an active node matches and an inactive one
+  // is NOT_FOUND.
+  bool include_inactive = 4;
 }
 
 // test_count_known is false when the :Table predates test_count capture (the
@@ -97,6 +103,9 @@ message GetNodeResponse {
   string node_type        = 1;
   int32  test_count       = 2;
   bool   test_count_known = 3;
+  // inactive is true when the matched node is no longer active in the
+  // topology, which is only possible when the request set include_inactive.
+  bool   inactive         = 4;
 }
 
 message GetNodeLocationRequest  { string unique_id = 1; }

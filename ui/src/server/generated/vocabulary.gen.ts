@@ -15,4 +15,5 @@ export const NODE_RUNTIMES: readonly NodeRuntime[] = ['dbt', 'python'];
 
 export type NodeType = 'dbt-model' | 'dbt-seed' | 'dbt-snapshot' | 'python-node' | 'python-csv' | 'dbt-test';
 export const NODE_TYPES: readonly NodeType[] = ['dbt-model', 'dbt-seed', 'dbt-snapshot', 'python-node', 'python-csv', 'dbt-test'];
+export const NODE_TYPES_SUPPORTING_FULL_REFRESH: readonly NodeType[] = ['dbt-model', 'dbt-seed'];
 export const NODE_TYPE_RUNTIME: Readonly<Record<NodeType, NodeRuntime>> = { 'dbt-model': 'dbt', 'dbt-seed': 'dbt', 'dbt-snapshot': 'dbt', 'python-node': 'python', 'python-csv': 'python', 'dbt-test': 'dbt' };

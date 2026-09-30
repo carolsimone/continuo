@@ -275,11 +275,31 @@ describe('nodes router', () => {
     );
     const res = await request(makeApp()).get('/api/nodes/svc/schema/tbl/meta');
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ node_type: 'dbt-model', test_count: 0, test_count_known: true });
+    expect(res.body).toEqual({ node_type: 'dbt-model', test_count: 0, test_count_known: true, inactive: false });
     expect(mockGetNode).toHaveBeenCalledWith(
-      { service_name: 'svc', schema_name: 'schema', table_name: 'tbl' },
+      { service_name: 'svc', schema_name: 'schema', table_name: 'tbl', include_inactive: true },
       expect.any(Function),
     );
+  });
+
+  it('GET /meta reports a node a later release deactivated as inactive', async () => {
+    // include_inactive keeps a deactivated node's type visible, so the page
+    // can still offer a full refresh from one of its old snapshots.
+    mockGetNode.mockImplementation((_req, cb) =>
+      cb(null, { node_type: 'dbt-seed', test_count: 0, test_count_known: true, inactive: true }),
+    );
+    const res = await request(makeApp()).get('/api/nodes/svc/schema/tbl/meta');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ node_type: 'dbt-seed', test_count: 0, test_count_known: true, inactive: true });
+  });
+
+  it('GET /meta reports inactive=false when the response carries inactive=false', async () => {
+    mockGetNode.mockImplementation((_req, cb) =>
+      cb(null, { node_type: 'dbt-model', test_count: 1, test_count_known: true, inactive: false }),
+    );
+    const res = await request(makeApp()).get('/api/nodes/svc/schema/tbl/meta');
+    expect(res.status).toBe(200);
+    expect(res.body.inactive).toBe(false);
   });
 
   it('GET /meta does not look up versions for a non-csv node', async () => {
@@ -397,6 +417,18 @@ describe('nodes router', () => {
     await request(makeApp()).post('/api/nodes/svc/schema/tbl/run').send({ operation: 'build' });
     expect(mockTriggerSingleNodeRun).toHaveBeenCalledWith(
       expect.objectContaining({ operation: 'build', metadata_source: 'latest' }),
+      expect.any(Object),
+      expect.any(Function),
+    );
+  });
+
+  it('POST /run forwards operation=full_refresh', async () => {
+    mockTriggerSingleNodeRun.mockImplementation((_req, _md, cb) =>
+      cb(null, { run_id: 'r', schedule_name: 'single-node-run-x' }),
+    );
+    await request(makeApp()).post('/api/nodes/svc/schema/tbl/run').send({ operation: 'full_refresh' });
+    expect(mockTriggerSingleNodeRun).toHaveBeenCalledWith(
+      expect.objectContaining({ operation: 'full_refresh', metadata_source: 'latest' }),
       expect.any(Object),
       expect.any(Function),
     );

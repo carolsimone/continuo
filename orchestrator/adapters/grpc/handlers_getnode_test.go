@@ -18,9 +18,13 @@ type stubNodeReader struct {
 	ScheduleAndRunListReader // embed so unused methods are nil; only GetNode is called
 	meta                     *domain.NodeMeta
 	err                      error
+	gotScope                 *domain.NodeScope
 }
 
-func (s stubNodeReader) GetNode(_ context.Context, _, _, _ string) (*domain.NodeMeta, error) {
+func (s stubNodeReader) GetNode(_ context.Context, _, _, _ string, scope domain.NodeScope) (*domain.NodeMeta, error) {
+	if s.gotScope != nil {
+		*s.gotScope = scope
+	}
 	return s.meta, s.err
 }
 
@@ -30,8 +34,35 @@ func TestGetNode_MapsMeta(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if resp.NodeType != "dbt-model" || resp.TestCount != 0 || !resp.TestCountKnown {
+	if resp.NodeType != "dbt-model" || resp.TestCount != 0 || !resp.TestCountKnown || resp.Inactive {
 		t.Fatalf("unexpected resp: %+v", resp)
+	}
+}
+
+func TestGetNode_IncludeInactiveMapsToScope(t *testing.T) {
+	for includeInactive, want := range map[bool]domain.NodeScope{
+		false: domain.ActiveNodesOnly,
+		true:  domain.IncludeInactiveNodes,
+	} {
+		got := domain.NodeScope(-1)
+		h := NewQueryHandler(stubNodeReader{meta: &domain.NodeMeta{NodeType: "dbt-model"}, gotScope: &got}, nil, nil, nil, testLogger())
+		if _, err := h.GetNode(context.Background(), &orchestratorv1.GetNodeRequest{ServiceName: "svc", SchemaName: "an", TableName: "fct", IncludeInactive: includeInactive}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != want {
+			t.Fatalf("include_inactive=%v reached the reader as scope %v, want %v", includeInactive, got, want)
+		}
+	}
+}
+
+func TestGetNode_MapsInactive(t *testing.T) {
+	h := NewQueryHandler(stubNodeReader{meta: &domain.NodeMeta{NodeType: "dbt-seed", Inactive: true}}, nil, nil, nil, testLogger())
+	resp, err := h.GetNode(context.Background(), &orchestratorv1.GetNodeRequest{ServiceName: "svc", SchemaName: "an", TableName: "seed", IncludeInactive: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.NodeType != "dbt-seed" || !resp.Inactive {
+		t.Fatalf("an inactive node must report inactive=true with its node_type: %+v", resp)
 	}
 }
 

@@ -3,7 +3,7 @@ import { GrpcClient, userMetadata } from '../grpc-client';
 import { GrpcGraphClient } from '../grpc-graph-client';
 import { grpcToHttpStatus } from './grpc-status';
 import { parseLimit, parseOffset } from './paging';
-import { parseOperation, parseNodeOperation } from './operation';
+import { parseNodeOperation, parseNodeRunOperation } from './operation';
 import { type NodeType } from '../generated/vocabulary.gen';
 
 const PYTHON_CSV: NodeType = 'python-csv';
@@ -118,9 +118,9 @@ export function createNodesRouter(stateClient: GrpcClient, graphClient: GrpcGrap
   // POST /api/nodes/:service/:schema/:table/run
   // Body: {} → latest mode; { source_run_id } → snapshot_of_run mode.
   router.post('/:service/:schema/:table/run', (req, res) => {
-    const operation = parseOperation(req.body?.operation);
+    const operation = parseNodeRunOperation(req.body?.operation);
     if (operation === null) {
-      return res.status(400).json({ error: 'operation must be one of "", run, test, build' });
+      return res.status(400).json({ error: 'operation must be one of "", run, test, build, full_refresh' });
     }
     const sourceRunID: string = (req.body?.source_run_id ?? '').trim();
     const metadataSource = sourceRunID === '' ? 'latest' : 'snapshot_of_run';
@@ -141,18 +141,23 @@ export function createNodesRouter(stateClient: GrpcClient, graphClient: GrpcGrap
     );
   });
 
-  // GET /:service/:schema/:table/meta — per-node topology metadata (test_count)
-  // used by the UI to gate single-node "test" on a zero-test node. For a
-  // python-csv node the response also carries source_uri: the CSV file the
-  // node loads, recorded as the current version's raw_code (a csv node has no
-  // script). The lookup is best-effort — the test gate must keep working even
-  // when the version query fails — so errors degrade to an empty source_uri.
+  // GET /:service/:schema/:table/meta — per-node topology metadata (node_type,
+  // test_count) used by the UI to gate single-node operations: "test" on a
+  // zero-test node, and "full refresh" on a node type that cannot be rebuilt.
+  // The lookup includes nodes no longer active in the topology (reported with
+  // inactive: true), because a full refresh from one of their old snapshots
+  // is still valid. For a python-csv node the response also carries
+  // source_uri: the CSV file the node loads, recorded as the current version's
+  // raw_code (a csv node has no script). The lookup is best-effort — the test
+  // gate must keep working even when the version query fails — so errors
+  // degrade to an empty source_uri.
   router.get('/:service/:schema/:table/meta', (req, res) => {
     graphClient.getNode(
       {
-        service_name: req.params.service,
-        schema_name:  req.params.schema,
-        table_name:   req.params.table,
+        service_name:     req.params.service,
+        schema_name:      req.params.schema,
+        table_name:       req.params.table,
+        include_inactive: true,
       },
       (err: any, response: any) => {
         if (err) return res.status(grpcToHttpStatus(err.code)).json({ error: err.message });
@@ -160,6 +165,7 @@ export function createNodesRouter(stateClient: GrpcClient, graphClient: GrpcGrap
           node_type:        response.node_type || '',
           test_count:       Number(response.test_count ?? 0),
           test_count_known: Boolean(response.test_count_known),
+          inactive:         Boolean(response.inactive),
         };
         if (meta.node_type !== PYTHON_CSV) return res.json(meta);
 

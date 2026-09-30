@@ -130,7 +130,7 @@ func (stubScheduleAndRunLists) ListRuns(context.Context, string, int, int) ([]*d
 func (stubScheduleAndRunLists) ListScheduleTopologies(context.Context) ([]*domain.ScheduleTopologySummary, error) {
 	return nil, nil
 }
-func (stubScheduleAndRunLists) GetNode(context.Context, string, string, string) (*domain.NodeMeta, error) {
+func (stubScheduleAndRunLists) GetNode(context.Context, string, string, string, domain.NodeScope) (*domain.NodeMeta, error) {
 	return nil, nil
 }
 func (stubScheduleAndRunLists) GetNodeLocation(context.Context, string) (*domain.NodeLocation, error) {

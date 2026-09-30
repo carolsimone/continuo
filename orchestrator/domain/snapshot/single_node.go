@@ -64,18 +64,16 @@ func (s SingleNode) SelectTasks(ctx context.Context, r TopologyReader, p Params)
 	}
 }
 
-// checkFullRefreshTarget rejects a full refresh of any node type other than a
-// dbt model or seed.
+// checkFullRefreshTarget rejects a full refresh of a node whose type the
+// contract does not mark as supporting one.
 func checkFullRefreshTarget(operation, nodeType string) error {
 	if operation != string(pkgModel.OperationFullRefresh) {
 		return nil
 	}
-	switch pkgModel.NodeType(nodeType) {
-	case pkgModel.NodeTypeDbtModel, pkgModel.NodeTypeDbtSeed:
-		return nil
-	default:
+	if !pkgModel.NodeType(nodeType).SupportsFullRefresh() {
 		return fmt.Errorf("%w: node type %q", ErrFullRefreshUnsupported, nodeType)
 	}
+	return nil
 }
 
 func toSingleNodeProjection(fqn FQN, row LatestTableRow) TaskProjection {

@@ -23,9 +23,10 @@ type yamlVocabularies struct {
 	Vocabularies []struct {
 		Const  string `yaml:"const"`
 		Values []struct {
-			Value    string `yaml:"value"`
-			Healable bool   `yaml:"healable"`
-			Runtime  string `yaml:"runtime"`
+			Value       string `yaml:"value"`
+			Healable    bool   `yaml:"healable"`
+			FullRefresh bool   `yaml:"full_refresh"`
+			Runtime     string `yaml:"runtime"`
 		} `yaml:"values"`
 	} `yaml:"vocabularies"`
 }
@@ -196,5 +197,45 @@ func TestNodeTypeRuntimeMatchesContract(t *testing.T) {
 	}
 	if checked == 0 {
 		t.Fatal("contract.yaml declares no node_type values")
+	}
+}
+
+// TestNodeTypeFullRefreshMatchesContract pins every generated
+// SupportsFullRefresh() answer to the full_refresh: flag the YAML declares for
+// that node type.
+func TestNodeTypeFullRefreshMatchesContract(t *testing.T) {
+	c := loadVocabularies(t)
+	checked := 0
+	for _, v := range c.Vocabularies {
+		if v.Const != "NodeType" {
+			continue
+		}
+		for _, val := range v.Values {
+			if got := model.NodeType(val.Value).SupportsFullRefresh(); got != val.FullRefresh {
+				t.Errorf("NodeType(%q).SupportsFullRefresh() = %v, yaml says %v", val.Value, got, val.FullRefresh)
+			}
+			checked++
+		}
+	}
+	if checked == 0 {
+		t.Fatal("contract.yaml declares no node_type values")
+	}
+}
+
+// TestNodeType_FullRefreshSet pins which node types a single-node full refresh
+// can rebuild: dbt models and seeds only. Changing the contract's full_refresh
+// flags is a deliberate change to this test.
+func TestNodeType_FullRefreshSet(t *testing.T) {
+	want := map[model.NodeType]bool{
+		model.NodeTypeDbtModel: true,
+		model.NodeTypeDbtSeed:  true,
+	}
+	for _, nt := range model.NodeTypes() {
+		if got := nt.SupportsFullRefresh(); got != want[nt] {
+			t.Errorf("NodeType(%q).SupportsFullRefresh() = %v, want %v", nt, got, want[nt])
+		}
+	}
+	if model.NodeType("nonsense").SupportsFullRefresh() || model.NodeType("").SupportsFullRefresh() {
+		t.Error("an undeclared node type does not support a full refresh")
 	}
 }

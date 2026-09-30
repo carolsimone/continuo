@@ -1,10 +1,11 @@
 import { useEffect } from 'react';
 import type { NodeRun } from './types';
+import type { NodeOperation } from '../server/shared/operation';
 import { groupRunsBySnapshot } from './node-helpers';
 
 interface Props {
   runs: NodeRun[];
-  operation: 'run' | 'test' | 'build';
+  operation: NodeOperation;
   onPick: (runId: string) => void;
   onClose: () => void;
 }
@@ -26,7 +27,7 @@ export default function RunSourcePickerDialog({ runs, operation, onPick, onClose
   }, [onClose]);
 
   const snapshots = groupRunsBySnapshot(runs);
-  const opWord = operation === 'test' ? 'test' : operation === 'build' ? 'build' : 'run';
+  const opWord = operation === 'test' ? 'test' : operation === 'build' ? 'build' : operation === 'full_refresh' ? 'fully refresh' : 'run';
   const totalRuns = snapshots.reduce((n, s) => n + s.runCount, 0);
 
   return (

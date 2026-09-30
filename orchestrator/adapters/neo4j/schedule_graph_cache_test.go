@@ -20,6 +20,8 @@ type spyScheduleGraphProvider struct {
 	mu              sync.Mutex
 	graphCalls      int
 	graphBySchedule map[string]*domain.ScheduleGraph
+	nodeMeta        *domain.NodeMeta
+	gotScopes       []domain.NodeScope
 }
 
 func (s *spyScheduleGraphProvider) GetScheduleGraph(_ context.Context, scheduleName string) (*domain.ScheduleGraph, error) {
@@ -39,8 +41,11 @@ func (s *spyScheduleGraphProvider) ListRuns(_ context.Context, _ string, _, _ in
 func (s *spyScheduleGraphProvider) ListScheduleTopologies(_ context.Context) ([]*domain.ScheduleTopologySummary, error) {
 	return nil, nil
 }
-func (s *spyScheduleGraphProvider) GetNode(_ context.Context, _, _, _ string) (*domain.NodeMeta, error) {
-	return nil, nil
+func (s *spyScheduleGraphProvider) GetNode(_ context.Context, _, _, _ string, scope domain.NodeScope) (*domain.NodeMeta, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.gotScopes = append(s.gotScopes, scope)
+	return s.nodeMeta, nil
 }
 func (s *spyScheduleGraphProvider) GetNodeLocation(_ context.Context, _ string) (*domain.NodeLocation, error) {
 	return nil, nil
@@ -159,4 +164,17 @@ func TestScheduleGraphCache_EvictsBeyondMaxSize(t *testing.T) {
 	// a was evicted, so it refetches.
 	_, _ = cache.GetScheduleGraph(ctx, "a")
 	assert.Equal(t, 4, spy.graphCalls, "evicted entry refetches")
+}
+
+func TestScheduleGraphCache_GetNode_PassesScopeThrough(t *testing.T) {
+	spy := &spyScheduleGraphProvider{nodeMeta: &domain.NodeMeta{NodeType: "dbt-model", Inactive: true}}
+	cache := newTestCache(spy, &stubGeneration{gen: 1})
+	ctx := context.Background()
+
+	got, err := cache.GetNode(ctx, "svc", "an", "fct", domain.IncludeInactiveNodes)
+	require.NoError(t, err)
+	assert.True(t, got.Inactive)
+	_, err = cache.GetNode(ctx, "svc", "an", "fct", domain.ActiveNodesOnly)
+	require.NoError(t, err)
+	assert.Equal(t, []domain.NodeScope{domain.IncludeInactiveNodes, domain.ActiveNodesOnly}, spy.gotScopes, "the scope must reach the inner reader unchanged on every call")
 }

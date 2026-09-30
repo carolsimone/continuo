@@ -72,14 +72,18 @@ func (r *Resolver) NodeCommand(serviceName string, op pkg_model.Operation, nt pk
 	return substitute(r.template(serviceName, pick), map[string]string{"node": node}), nil
 }
 
-// fullRefreshCommand resolves a full refresh: a model to its FullRefresh
-// template, a seed to its SeedFullRefresh template — never to the plain Run/Seed
-// template, which is the non-destructive command an automatic load uses. Either
-// template is resolved from the block that governs the service — its override
-// when it has one, else the default — and this never falls through from an
-// override to the default, whose binary the team's image may not carry. Every
-// failure wraps events.ErrPermanent: no retry can supply a missing command.
+// fullRefreshCommand resolves a full refresh of a node type the contract marks
+// as supporting one: a model to its FullRefresh template, a seed to its
+// SeedFullRefresh template — never to the plain Run/Seed template, which is the
+// non-destructive command an automatic load uses. Either template is resolved
+// from the block that governs the service — its override when it has one, else
+// the default — and this never falls through from an override to the default,
+// whose binary the team's image may not carry. Every failure wraps
+// events.ErrPermanent: no retry can supply a missing command.
 func (r *Resolver) fullRefreshCommand(serviceName string, nt pkg_model.NodeType, node string) ([]string, error) {
+	if !nt.SupportsFullRefresh() {
+		return nil, fmt.Errorf("%w: full refresh is not supported for node type %q", events.ErrPermanent, nt)
+	}
 	vals := map[string]string{"node": node}
 	var pick func(*opSet) []string
 	var key string
@@ -91,7 +95,7 @@ func (r *Resolver) fullRefreshCommand(serviceName string, nt pkg_model.NodeType,
 		pick = func(o *opSet) []string { return o.SeedFullRefresh }
 		key = "seed_full_refresh"
 	default:
-		return nil, fmt.Errorf("%w: full refresh is not supported for node type %q", events.ErrPermanent, nt)
+		return nil, fmt.Errorf("%w: no full-refresh command key is mapped for node type %q", events.ErrPermanent, nt)
 	}
 	block, name := r.cfg.Default, "default"
 	if ops := r.cfg.Services[serviceName]; ops != nil {

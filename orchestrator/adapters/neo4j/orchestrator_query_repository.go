@@ -407,24 +407,31 @@ func (r *OrchestratorQueryRepository) parseNeo4jTimestamp(field, value string) t
 	return ts
 }
 
-// GetNode returns per-node topology metadata for a single active :Table,
-// addressed by its (service, schema, table) identity. Returns
-// domain.ErrNodeNotFound when no active node matches. test_count is read via
-// intFieldPresent so a node predating test_count capture reports TestCountKnown
-// = false rather than a misleading zero.
-func (r *OrchestratorQueryRepository) GetNode(ctx context.Context, service, schema, table string) (*domain.NodeMeta, error) {
+// GetNode returns per-node topology metadata for a single :Table, addressed by
+// its (service, schema, table) identity. With domain.ActiveNodesOnly only an
+// active :Table matches; with domain.IncludeInactiveNodes a :Table no longer
+// active in the topology also matches (reported with Inactive = true) and an
+// active match is preferred when both exist. Returns domain.ErrNodeNotFound
+// when no eligible node matches.
+// test_count is read via intFieldPresent so a node predating test_count
+// capture reports TestCountKnown = false rather than a misleading zero.
+func (r *OrchestratorQueryRepository) GetNode(ctx context.Context, service, schema, table string, scope domain.NodeScope) (*domain.NodeMeta, error) {
 	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
 	defer func() { _ = session.Close(ctx) }()
 
 	query := `
 		MATCH (t:Table {service_name: $service, schema_name: $schema, table_name: $table})
-		WHERE COALESCE(t.active, true)
-		RETURN t.node_type AS node_type, t.test_count AS test_count
+		WHERE $include_inactive OR COALESCE(t.active, true)
+		WITH t, NOT COALESCE(t.active, true) AS inactive
+		RETURN t.node_type AS node_type, t.test_count AS test_count, inactive
+		ORDER BY inactive ASC
+		LIMIT 1
 	`
 	result, err := session.Run(ctx, query, map[string]interface{}{
-		"service": service,
-		"schema":  schema,
-		"table":   table,
+		"service":          service,
+		"schema":           schema,
+		"table":            table,
+		"include_inactive": scope == domain.IncludeInactiveNodes,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("GetNode query failed: %w", err)
@@ -437,12 +444,15 @@ func (r *OrchestratorQueryRepository) GetNode(ctx context.Context, service, sche
 	}
 	rec := result.Record()
 	nodeType, _ := rec.Get("node_type")
+	inactiveVal, _ := rec.Get("inactive")
 	tc, tcKnown := intFieldPresent(rec, "test_count")
 	nt, _ := nodeType.(string)
+	inactive, _ := inactiveVal.(bool)
 	return &domain.NodeMeta{
 		NodeType:       nt,
 		TestCount:      tc,
 		TestCountKnown: tcKnown,
+		Inactive:       inactive,
 	}, nil
 }
 

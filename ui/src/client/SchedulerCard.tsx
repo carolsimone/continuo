@@ -7,6 +7,7 @@ import {
 } from './scheduler-card-helpers';
 import { getDriftState, getDriftBadge } from './drift-helpers';
 import { ScheduleSummary, Task } from './types';
+import type { RunOperation } from '../server/shared/operation';
 import CancelDialog from './CancelDialog';
 import { fetchAllPages } from './fetch-all-pages';
 
@@ -33,7 +34,7 @@ export default function SchedulerCard({ schedule }: Props) {
   const [triggerLoading, setTriggerLoading] = useState(false);
   const [triggerStatus, setTriggerStatus] = useState<'idle' | 'success'>('idle');
   const [triggerError, setTriggerError] = useState<string | null>(null);
-  const [operation, setOperation] = useState<'run' | 'test' | 'build'>('run');
+  const [operation, setOperation] = useState<RunOperation>('run');
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
 
   useEffect(() => {
@@ -187,7 +188,7 @@ export default function SchedulerCard({ schedule }: Props) {
               id={`op-${schedule.schedule_name}`}
               value={operation}
               disabled={schedule.is_running || triggerLoading}
-              onChange={e => setOperation(e.target.value as 'run' | 'test' | 'build')}
+              onChange={e => setOperation(e.target.value as RunOperation)}
             >
               <option value="run">Run</option>
               <option value="test">Test</option>

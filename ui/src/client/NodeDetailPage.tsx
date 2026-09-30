@@ -6,9 +6,14 @@ import type { NodeRun, NodeRunsResponse, NodeDetailFrom } from './types';
 import { kindLabel, computeNodeStats, formatDuration, formatRelative } from './node-helpers';
 import NodeTypeIcon from './NodeTypeIcon';
 import RunSourcePickerDialog from './RunSourcePickerDialog';
-import { type NodeType } from '../server/generated/vocabulary.gen';
+import FullRefreshConfirmDialog from './FullRefreshConfirmDialog';
+import { type NodeType, NODE_TYPES_SUPPORTING_FULL_REFRESH } from '../server/generated/vocabulary.gen';
+import { isNodeOperation, type NodeOperation } from '../server/shared/operation';
 
 const PYTHON_CSV: NodeType = 'python-csv';
+
+// Node types a full refresh can rebuild, as the contract declares them.
+const FULL_REFRESH_NODE_TYPES: ReadonlySet<string> = new Set<string>(NODE_TYPES_SUPPORTING_FULL_REFRESH);
 
 interface NodeMetaResponse {
   node_type?: string;
@@ -16,6 +21,8 @@ interface NodeMetaResponse {
   test_count_known?: boolean;
   // The CSV file a python-csv node loads; absent on every other node type.
   source_uri?: string;
+  // True when the node is no longer active in the latest topology.
+  inactive?: boolean;
 }
 
 function formatTime(iso: string | null): string {
@@ -40,6 +47,7 @@ function NodeRunRow({ run: r }: { run: NodeRun }) {
       <td>{kindLabel(r.kind)}</td>
       <td>
         <span className={`pill-sm pill-sm--${r.task_status}`}>{r.task_status || '—'}</span>
+        {r.operation === 'full_refresh' && <span className="pill-sm pill-sm--muted">Full refresh</span>}
         {r.error_message && (
           <div className="nodes-error-text">
             <span
@@ -83,9 +91,7 @@ export default function NodeDetailPage() {
   const navState = location.state as { from?: NodeDetailFrom; operation?: string } | null;
   const from = navState?.from;
   const navOperation = navState?.operation;
-  const initialOperation = navOperation === 'test' || navOperation === 'build' || navOperation === 'run'
-    ? navOperation
-    : 'run';
+  const initialOperation: NodeOperation = isNodeOperation(navOperation) ? navOperation : 'run';
 
   let backLabel = '← Back to Nodes';
   let backPath = '/?tab=nodes';
@@ -97,10 +103,13 @@ export default function NodeDetailPage() {
   const [runState, setRunState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [runError, setRunError] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [operation, setOperation] = useState<'run' | 'test' | 'build'>(initialOperation);
+  const [operation, setOperation] = useState<NodeOperation>(initialOperation);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [pendingSource, setPendingSource] = useState<string | null>(null);
   const [testCount, setTestCount] = useState<{ count: number; known: boolean } | null>(null);
   const [nodeType, setNodeType] = useState('');
   const [sourceUri, setSourceUri] = useState('');
+  const [inactive, setInactive] = useState(false);
   const genRef = useRef(0);
 
   const parts = (fqn ?? '').split('.');
@@ -108,10 +117,14 @@ export default function NodeDetailPage() {
   const schema  = parts[1] ?? '';
   const table   = parts.slice(2).join('.');
 
+  // The history route filters on run | test | build; a full refresh is a run
+  // of the node, so its history is queried on the run dimension.
+  const historyOperation = operation === 'full_refresh' ? 'run' : operation;
+
   const fetchRuns = useCallback(() => {
     if (!service || !schema || !table) return;
     const myGen = ++genRef.current;
-    fetch(`/api/nodes/${encodeURIComponent(service)}/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/runs?operation=${encodeURIComponent(operation)}`)
+    fetch(`/api/nodes/${encodeURIComponent(service)}/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/runs?operation=${encodeURIComponent(historyOperation)}`)
       .then(r => r.json())
       .then((data: NodeRunsResponse) => {
         if (myGen !== genRef.current) return;
@@ -121,7 +134,7 @@ export default function NodeDetailPage() {
         if (myGen !== genRef.current) return;
         setRuns([]);
       });
-  }, [service, schema, table, operation]);
+  }, [service, schema, table, historyOperation]);
 
   useEffect(() => { fetchRuns(); }, [fetchRuns]);
 
@@ -135,13 +148,23 @@ export default function NodeDetailPage() {
           : null);
         setNodeType(m?.node_type ?? '');
         setSourceUri(m?.source_uri ?? '');
+        setInactive(Boolean(m?.inactive));
       })
       .catch(() => {
         setTestCount(null);
         setNodeType('');
         setSourceUri('');
+        setInactive(false);
       });
   }, [service, schema, table]);
+
+  const canFullRefresh = FULL_REFRESH_NODE_TYPES.has(nodeType);
+
+  // A full refresh selected via navigation state falls back to Run once the
+  // node's type is known and does not support it.
+  useEffect(() => {
+    if (operation === 'full_refresh' && nodeType !== '' && !canFullRefresh) setOperation('run');
+  }, [operation, nodeType, canFullRefresh]);
 
   // latestHasNoTests reflects the LATEST topology's test_count only. It gates the
   // latest-mode trigger (which the backend evaluates against latest metadata) but
@@ -154,11 +177,14 @@ export default function NodeDetailPage() {
   // matching the orchestrator's single-node gate.
   const latestHasNoTests = testCount !== null && !(testCount.known && testCount.count > 0);
 
-  const postRun = useCallback(async (body: object) => {
+  // opOverride pins the operation for a caller that must send exactly what it
+  // confirmed, independent of the select's current value.
+  const postRun = useCallback(async (body: object, opOverride?: NodeOperation) => {
     setRunState('loading');
     setRunError(null);
     try {
-      const withOp = { ...body, operation: operation === 'run' ? '' : operation };
+      const op = opOverride ?? operation;
+      const withOp = { ...body, operation: op === 'run' ? '' : op };
       const res = await fetch(
         `/api/nodes/${encodeURIComponent(service)}/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/run`,
         { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(withOp) },
@@ -178,11 +204,20 @@ export default function NodeDetailPage() {
     }
   }, [service, schema, table, fetchRuns, operation]);
 
-  const handleRunLatest  = useCallback(() => postRun({}), [postRun]);
+  // A full refresh drops the node's table, so it is only posted once confirmed.
+  const handleRunLatest = useCallback(() => {
+    if (operation === 'full_refresh') { setPendingSource(null); setConfirmOpen(true); return; }
+    postRun({});
+  }, [postRun, operation]);
   const handlePickSource = useCallback((runId: string) => {
     setPickerOpen(false);
+    if (operation === 'full_refresh') { setPendingSource(runId); setConfirmOpen(true); return; }
     postRun({ source_run_id: runId });
-  }, [postRun]);
+  }, [postRun, operation]);
+  const handleConfirmFullRefresh = useCallback(() => {
+    setConfirmOpen(false);
+    postRun(pendingSource ? { source_run_id: pendingSource } : {}, 'full_refresh');
+  }, [postRun, pendingSource]);
 
   const stats = computeNodeStats(runs);
 
@@ -191,11 +226,22 @@ export default function NodeDetailPage() {
   const runVerb =
     operation === 'test' ? '🧪 Test this node'
     : operation === 'build' ? '🔨 Build this node'
+    : operation === 'full_refresh' ? '♻ Full refresh this node'
     : '▶ Run this node';
 
-  // The latest-mode test trigger is the only one gated by latest metadata; the
-  // old-snapshot trigger is never blocked here (see latestHasNoTests).
-  const latestTestBlocked = operation === 'test' && latestHasNoTests;
+  // A node no longer active in the latest topology has no latest version to
+  // run, so every latest-mode operation is unavailable for it; only the
+  // old-snapshot trigger remains.
+  const latestUnavailable = inactive;
+
+  // The latest-mode test trigger is also gated by latest test metadata; the
+  // old-snapshot trigger is never blocked here (see latestHasNoTests). For an
+  // inactive node the inactive strip already explains why latest is unavailable.
+  const latestTestBlocked = operation === 'test' && latestHasNoTests && !inactive;
+
+  // Until the node's type is known a full refresh cannot be validated, so both
+  // triggers stay disabled while it is selected.
+  const fullRefreshUnavailable = operation === 'full_refresh' && !canFullRefresh;
 
   return (
     <div className="page">
@@ -206,6 +252,11 @@ export default function NodeDetailPage() {
           onPick={handlePickSource}
           onClose={() => setPickerOpen(false)}
         />,
+        document.body,
+      )}
+
+      {confirmOpen && createPortal(
+        <FullRefreshConfirmDialog fqn={fqn ?? ''} onConfirm={handleConfirmFullRefresh} onClose={() => setConfirmOpen(false)} />,
         document.body,
       )}
 
@@ -234,28 +285,31 @@ export default function NodeDetailPage() {
             id="node-operation"
             value={operation}
             disabled={runState === 'loading'}
-            onChange={e => setOperation(e.target.value as 'run' | 'test' | 'build')}
+            onChange={e => setOperation(e.target.value as NodeOperation)}
           >
             <option value="run">Run</option>
             <option value="test">Test</option>
             <option value="build">Build</option>
+            {canFullRefresh && <option value="full_refresh">Full refresh</option>}
           </select>
         </div>
         <button
           type="button"
           className={runLatestClass}
-          disabled={runState === 'loading' || runState === 'success' || latestTestBlocked}
+          disabled={runState === 'loading' || runState === 'success' || latestTestBlocked || fullRefreshUnavailable || latestUnavailable}
           onClick={handleRunLatest}
           title={latestTestBlocked
             ? 'The latest version of this node has no tests'
-            : 'Run only this node against the latest topology'}
+            : latestUnavailable
+              ? 'This node is no longer active in the topology'
+              : 'Run only this node against the latest topology'}
         >
           {runState === 'loading' ? 'Triggering…' : runState === 'success' ? 'Triggered' : runVerb}
         </button>
         <button
           type="button"
           className="btn btn--secondary"
-          disabled={runState === 'loading'}
+          disabled={runState === 'loading' || fullRefreshUnavailable}
           onClick={() => setPickerOpen(true)}
           title="Run this node with the (image_tag, manifest_version) pair from a past run"
         >
@@ -269,12 +323,28 @@ export default function NodeDetailPage() {
         </div>
       )}
 
+      {latestUnavailable && (
+        <div className="info-strip info-strip--info">
+          <span className="info-strip__icon">ℹ</span>
+          This node is no longer active in the topology, so it cannot run from its latest version.
+          Use “Run with old snapshot…” to run a version it had.
+        </div>
+      )}
+
       {operation === 'build' && (
         <div className="info-strip info-strip--info">
           <span className="info-strip__icon">ℹ</span>
           Build runs <code>dbt build</code> — it materializes each model and runs its
           attached tests together in a single execution (one pod), in dependency
           order. These stats combine model + tests, not either on its own.
+        </div>
+      )}
+
+      {operation === 'full_refresh' && (
+        <div className="info-strip info-strip--info">
+          <span className="info-strip__icon">ℹ</span>
+          Full refresh runs this node alone with <code>--full-refresh</code>: its table is dropped
+          and rebuilt from scratch. History below shows this node's runs, full refreshes included.
         </div>
       )}
 
