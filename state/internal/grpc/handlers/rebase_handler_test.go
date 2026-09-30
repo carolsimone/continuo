@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"github.com/carolsimone/continuo/pkg/testdeps"
 	"testing"
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
@@ -32,7 +33,7 @@ func setupRebaseFixture(t *testing.T) *rebaseFixture {
 	t.Helper()
 	db, err := database.NewConnection(pkgconfig.LoadPostgres(&pkgconfig.Validator{}))
 	if err != nil {
-		t.Skip("no test DB available:", err)
+		testdeps.Unavailable(t, "no test DB available: %v", err)
 	}
 	logger := newTestLogger()
 	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)

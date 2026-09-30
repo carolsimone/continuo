@@ -5,6 +5,7 @@ package postgres_test
 import (
 	"context"
 	"errors"
+	"github.com/carolsimone/continuo/pkg/testdeps"
 	"os"
 	"sort"
 	"sync"
@@ -50,7 +51,7 @@ func openTestDB(t *testing.T) *sqlx.DB {
 	t.Helper()
 	dsn := os.Getenv("RELEASE_TEST_PG_DSN")
 	if dsn == "" {
-		t.Skip("RELEASE_TEST_PG_DSN not set")
+		testdeps.Unavailable(t, "RELEASE_TEST_PG_DSN not set")
 	}
 	db, err := sqlx.Connect("postgres", dsn)
 	require.NoError(t, err)

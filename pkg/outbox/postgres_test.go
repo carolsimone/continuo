@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/carolsimone/continuo/pkg/testdeps"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -52,7 +53,7 @@ func dbForTest(t *testing.T) *sqlx.DB {
 	t.Helper()
 	dsn := os.Getenv("OUTBOX_TEST_DSN")
 	if dsn == "" {
-		t.Skip("OUTBOX_TEST_DSN not set; skipping Postgres integration test")
+		testdeps.Unavailable(t, "OUTBOX_TEST_DSN not set; skipping Postgres integration test")
 	}
 	db, err := sqlx.Connect("postgres", dsn)
 	require.NoError(t, err)
