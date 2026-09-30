@@ -66,6 +66,7 @@ type VocabularyValue struct {
 	Const       string `yaml:"const"`
 	Healable    bool   `yaml:"healable"`
 	FullRefresh bool   `yaml:"full_refresh"`
+	SecretRef   bool   `yaml:"secret_ref"`
 	Runtime     string `yaml:"runtime"`
 	Description string `yaml:"description"`
 }
@@ -309,11 +310,26 @@ func hasFullRefresh(v Vocabulary) bool {
 	return false
 }
 
+func hasSecretRef(v Vocabulary) bool {
+	for _, val := range v.Values {
+		if val.SecretRef {
+			return true
+		}
+	}
+	return false
+}
+
 // fullRefreshListConst names the list of values that support a single-node
 // full refresh, e.g. NODE_TYPES_SUPPORTING_FULL_REFRESH. Python and TypeScript
 // share the name.
 func fullRefreshListConst(v Vocabulary) string {
 	return toScreamingSnake(v.Const) + "S_SUPPORTING_FULL_REFRESH"
+}
+
+// secretRefListConst names the list of values whose contract may name a
+// Secret, e.g. NODE_TYPES_WITH_SECRET_REF. Python and TypeScript share the name.
+func secretRefListConst(v Vocabulary) string {
+	return toScreamingSnake(v.Const) + "S_WITH_SECRET_REF"
 }
 
 func usesRuntime(v Vocabulary) bool { return len(v.Values) > 0 && v.Values[0].Runtime != "" }
@@ -328,21 +344,22 @@ type goVocabRow struct {
 	Const, Name, Description string
 	HasHealable              bool
 	HasFullRefresh           bool
+	HasSecretRef             bool
 	RuntimeType              string
 	Values                   []goVocabValueRow
 }
 
 type goVocabValueRow struct {
-	Const, Type, Value, Description string
-	Healable, FullRefresh           bool
-	RuntimeConst                    string
+	Const, Type, Value, Description  string
+	Healable, FullRefresh, SecretRef bool
+	RuntimeConst                     string
 }
 
 func goVocabRows(c *Contract) []goVocabRow {
 	rv := runtimeVocabulary(c)
 	var rows []goVocabRow
 	for _, v := range c.Vocabularies {
-		row := goVocabRow{Const: v.Const, Name: v.Name, Description: v.Description, HasHealable: hasHealable(v), HasFullRefresh: hasFullRefresh(v)}
+		row := goVocabRow{Const: v.Const, Name: v.Name, Description: v.Description, HasHealable: hasHealable(v), HasFullRefresh: hasFullRefresh(v), HasSecretRef: hasSecretRef(v)}
 		if usesRuntime(v) && rv != nil {
 			row.RuntimeType = rv.Const
 		}
@@ -354,6 +371,7 @@ func goVocabRows(c *Contract) []goVocabRow {
 				Description: val.Description,
 				Healable:    val.Healable,
 				FullRefresh: val.FullRefresh,
+				SecretRef:   val.SecretRef,
 			}
 			if usesRuntime(v) && rv != nil {
 				vr.RuntimeConst = rv.Const + constForValue(rv, val.Runtime)
@@ -434,6 +452,22 @@ func (v {{ .Const }}) SupportsFullRefresh() bool {
 	switch v {
 {{- range .Values }}
 {{- if .FullRefresh }}
+	case {{ .Const }}:
+		return true
+{{- end }}
+{{- end }}
+	}
+	return false
+}
+{{- end }}
+{{- if .HasSecretRef }}
+
+// AllowsSecretRef reports whether the contract of a node of this type may name
+// one Secret whose keys the node's pod receives as environment variables.
+func (v {{ .Const }}) AllowsSecretRef() bool {
+	switch v {
+{{- range .Values }}
+{{- if .SecretRef }}
 	case {{ .Const }}:
 		return true
 {{- end }}
@@ -552,6 +586,8 @@ func emitPythonVocabulary(c *Contract) (string, error) {
 		HasHealable        bool
 		FullRefresh        []string // "NodeType.DBT_MODEL", ...
 		FullRefreshConst   string   // "NODE_TYPES_SUPPORTING_FULL_REFRESH"
+		SecretRef          []string // "NodeType.PYTHON_API", ...
+		SecretRefConst     string   // "NODE_TYPES_WITH_SECRET_REF"
 		RuntimeConst       string   // "NODE_TYPE_RUNTIME"
 		RuntimeType        string   // "NodeRuntime"
 		RuntimeEntries     []string // "NodeType.DBT_MODEL: NodeRuntime.DBT", ...
@@ -568,6 +604,9 @@ func emitPythonVocabulary(c *Contract) (string, error) {
 		if hasFullRefresh(v) {
 			row.FullRefreshConst = fullRefreshListConst(v)
 		}
+		if hasSecretRef(v) {
+			row.SecretRefConst = secretRefListConst(v)
+		}
 		if usesRuntime(v) && rv != nil {
 			row.RuntimeConst = toScreamingSnake(v.Const) + "_RUNTIME"
 			row.RuntimeType = rv.Const
@@ -580,6 +619,9 @@ func emitPythonVocabulary(c *Contract) (string, error) {
 			}
 			if val.FullRefresh {
 				row.FullRefresh = append(row.FullRefresh, v.Const+"."+member)
+			}
+			if val.SecretRef {
+				row.SecretRef = append(row.SecretRef, v.Const+"."+member)
 			}
 			if usesRuntime(v) && rv != nil {
 				row.RuntimeEntries = append(row.RuntimeEntries, v.Const+"."+member+": "+rv.Const+"."+pyMember(val.Runtime))
@@ -610,6 +652,10 @@ class {{ .Const }}(StrEnum):
 {{ .FullRefreshConst }} = frozenset({ {{- range $i, $f := .FullRefresh }}{{ if $i }}, {{ end }}{{ $f }}{{ end -}} })
 """Values of {{ .Const }} a single-node full refresh can rebuild from scratch."""
 
+{{ end }}{{ if .SecretRefConst }}
+{{ .SecretRefConst }} = frozenset({ {{- range $i, $f := .SecretRef }}{{ if $i }}, {{ end }}{{ $f }}{{ end -}} })
+"""Values of {{ .Const }} whose contract may name one Secret for the node's pod."""
+
 {{ end }}{{ if .RuntimeType }}
 {{ .RuntimeConst }}: dict[{{ .Const }}, {{ .RuntimeType }}] = { {{- range $i, $e := .RuntimeEntries }}{{ if $i }}, {{ end }}{{ $e }}{{ end -}} }
 """Which toolchain builds each {{ .Const }}."""
@@ -633,6 +679,7 @@ func emitTSVocabulary(c *Contract) (string, error) {
 	type tsRow struct {
 		Const, ListConst, Union, List         string
 		FullRefreshConst, FullRefreshList     string
+		SecretRefConst, SecretRefList         string
 		RuntimeConst, RuntimeType, RuntimeMap string
 	}
 	rv := runtimeVocabulary(c)
@@ -658,6 +705,16 @@ func emitTSVocabulary(c *Contract) (string, error) {
 			row.FullRefreshConst = fullRefreshListConst(v)
 			row.FullRefreshList = strings.Join(fr, ", ")
 		}
+		if hasSecretRef(v) {
+			var sr []string
+			for _, val := range v.Values {
+				if val.SecretRef {
+					sr = append(sr, "'"+val.Value+"'")
+				}
+			}
+			row.SecretRefConst = secretRefListConst(v)
+			row.SecretRefList = strings.Join(sr, ", ")
+		}
 		if usesRuntime(v) && rv != nil {
 			pairs := make([]string, 0, len(v.Values))
 			for _, val := range v.Values {
@@ -679,6 +736,9 @@ export type {{ .Const }} = {{ .Union }};
 export const {{ .ListConst }}: readonly {{ .Const }}[] = [{{ .List }}];
 {{- if .FullRefreshConst }}
 export const {{ .FullRefreshConst }}: readonly {{ .Const }}[] = [{{ .FullRefreshList }}];
+{{- end }}
+{{- if .SecretRefConst }}
+export const {{ .SecretRefConst }}: readonly {{ .Const }}[] = [{{ .SecretRefList }}];
 {{- end }}
 {{- if .RuntimeConst }}
 export const {{ .RuntimeConst }}: Readonly<Record<{{ .Const }}, {{ .RuntimeType }}>> = { {{ .RuntimeMap }} };

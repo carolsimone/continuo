@@ -191,7 +191,7 @@ func (v NodeRuntime) IsValid() bool {
 	return false
 }
 
-// NodeType — The kind of a graph node. Decides which toolchain builds it (runtime), which contract rules and validation path apply, and whether a single-node full refresh can rebuild it from scratch (full_refresh).
+// NodeType — The kind of a graph node. Decides which toolchain builds it (runtime), which contract rules and validation path apply, whether a single-node full refresh can rebuild it from scratch (full_refresh), and whether its contract may name a Secret (secret_ref).
 // Values come from the vocabulary "node_type" in contract.yaml, in
 // declaration order.
 type NodeType string
@@ -254,6 +254,16 @@ func (v NodeType) SupportsFullRefresh() bool {
 	case NodeTypeDbtModel:
 		return true
 	case NodeTypeDbtSeed:
+		return true
+	}
+	return false
+}
+
+// AllowsSecretRef reports whether the contract of a node of this type may name
+// one Secret whose keys the node's pod receives as environment variables.
+func (v NodeType) AllowsSecretRef() bool {
+	switch v {
+	case NodeTypePythonApi:
 		return true
 	}
 	return false

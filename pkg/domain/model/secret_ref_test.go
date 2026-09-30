@@ -3,6 +3,7 @@ package model_test
 import (
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
@@ -52,5 +53,51 @@ func TestValidateApiSecretRef_LengthBoundaries(t *testing.T) {
 	overLimit := c.Invalid[len(c.Invalid)-1]
 	if len(overLimit) != 254 {
 		t.Fatalf("the last invalid case must be 254 chars, is %d", len(overLimit))
+	}
+}
+
+func TestValidateNodeSecretRef(t *testing.T) {
+	cases := []struct {
+		name     string
+		nodeType model.NodeType
+		ref      string
+		wantErr  string
+	}{
+		{name: "empty ref on a type that allows one", nodeType: model.NodeTypePythonApi, ref: ""},
+		{name: "empty ref on a type that allows none", nodeType: model.NodeTypePythonNode, ref: ""},
+		{name: "valid ref on a type that allows one", nodeType: model.NodeTypePythonApi, ref: "continuo-api-fx"},
+		{name: "ref on python-node", nodeType: model.NodeTypePythonNode, ref: "continuo-api-fx", wantErr: `"python-node"`},
+		{name: "ref on dbt-model", nodeType: model.NodeTypeDbtModel, ref: "continuo-api-fx", wantErr: `"dbt-model"`},
+		{name: "ref outside the prefix", nodeType: model.NodeTypePythonApi, ref: "continuo-app-credentials", wantErr: model.ApiSecretRefPrefix},
+		{name: "uppercase ref", nodeType: model.NodeTypePythonApi, ref: "continuo-api-FX", wantErr: model.ApiSecretRefPrefix},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := model.ValidateNodeSecretRef(tc.nodeType, tc.ref)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("ValidateNodeSecretRef(%q, %q) = %v, want nil", tc.nodeType, tc.ref, err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("ValidateNodeSecretRef(%q, %q) = nil, want an error", tc.nodeType, tc.ref)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("error %q does not name %s", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestValidateNodeSecretRef_OnlyAllowingTypesAccept pins the kind rule to the
+// generated AllowsSecretRef: every type the vocabulary allows accepts a valid
+// ref, every other type rejects it.
+func TestValidateNodeSecretRef_OnlyAllowingTypesAccept(t *testing.T) {
+	for _, nt := range model.NodeTypes() {
+		err := model.ValidateNodeSecretRef(nt, "continuo-api-fx")
+		if nt.AllowsSecretRef() != (err == nil) {
+			t.Errorf("%s: AllowsSecretRef()=%v but ValidateNodeSecretRef err=%v", nt, nt.AllowsSecretRef(), err)
+		}
 	}
 }

@@ -1,6 +1,6 @@
 import pytest
 
-from domain.contract_vocabulary import NODE_TYPE_RUNTIME, NodeRuntime, NodeType
+from domain.contract_vocabulary import NODE_TYPE_RUNTIME, NODE_TYPES_WITH_SECRET_REF, NodeRuntime, NodeType
 from domain.exceptions import MalformedContractError
 from service.python_kind_rules import RULES, STORED_KIND_ALIASES, CsvRead, NoReads, SqlReads, resolve_kind
 
@@ -8,6 +8,13 @@ from service.python_kind_rules import RULES, STORED_KIND_ALIASES, CsvRead, NoRea
 def test_every_python_node_type_has_rules():
     python_types = {t for t, r in NODE_TYPE_RUNTIME.items() if r is NodeRuntime.PYTHON}
     assert set(RULES) == python_types
+
+
+def test_secret_allowed_kinds_match_the_contract_vocabulary():
+    """The kinds whose contract may name a Secret are declared once, in
+    pkg/streams/contract.yaml (secret_ref: true); execution-controller enforces
+    the same generated set at Job creation."""
+    assert {t for t, r in RULES.items() if r.secret_allowed} == NODE_TYPES_WITH_SECRET_REF
 
 
 def test_aliases_point_at_declared_kinds_only():

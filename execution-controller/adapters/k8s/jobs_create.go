@@ -897,15 +897,11 @@ func buildPythonPodSpec(p JobParams) (corev1.PodSpec, error) {
 // The reference is not optional: a missing Secret leaves the pod in
 // CreateContainerConfigError, which checkUnrecoverableStartError fails.
 func withAPISecret(p JobParams, warehouse []corev1.EnvFromSource) ([]corev1.EnvFromSource, error) {
+	if err := pkg_model.ValidateNodeSecretRef(p.NodeType, p.SecretRef); err != nil {
+		return nil, fmt.Errorf("%w: %s.%s: %v", events.ErrPermanent, p.SchemaName, p.TableName, err)
+	}
 	if p.SecretRef == "" {
 		return warehouse, nil
-	}
-	if p.NodeType != pkg_model.NodeTypePythonApi {
-		return nil, fmt.Errorf("%w: secret_ref is only allowed on %s nodes, %s.%s is %s",
-			events.ErrPermanent, pkg_model.NodeTypePythonApi, p.SchemaName, p.TableName, p.NodeType)
-	}
-	if err := pkg_model.ValidateApiSecretRef(p.SecretRef); err != nil {
-		return nil, fmt.Errorf("%w: %s.%s: %v", events.ErrPermanent, p.SchemaName, p.TableName, err)
 	}
 	api := corev1.EnvFromSource{SecretRef: &corev1.SecretEnvSource{
 		LocalObjectReference: corev1.LocalObjectReference{Name: p.SecretRef},
