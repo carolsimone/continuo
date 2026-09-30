@@ -47,12 +47,13 @@ class NodeRuntime(StrEnum):
 
 
 class NodeType(StrEnum):
-    """The kind of a graph node. Decides which toolchain builds it (runtime), which contract rules and validation path apply, and whether a single-node full refresh can rebuild it from scratch (full_refresh)."""
+    """The kind of a graph node. Decides which toolchain builds it (runtime), which contract rules and validation path apply, whether a single-node full refresh can rebuild it from scratch (full_refresh), and whether its contract may name a Secret (secret_ref)."""
     DBT_MODEL = "dbt-model"
     DBT_SEED = "dbt-seed"
     DBT_SNAPSHOT = "dbt-snapshot"
     PYTHON_NODE = "python-node"
     PYTHON_CSV = "python-csv"
+    PYTHON_API = "python-api"
     DBT_TEST = "dbt-test"
 
 
@@ -60,5 +61,9 @@ NODE_TYPES_SUPPORTING_FULL_REFRESH = frozenset({NodeType.DBT_MODEL, NodeType.DBT
 """Values of NodeType a single-node full refresh can rebuild from scratch."""
 
 
-NODE_TYPE_RUNTIME: dict[NodeType, NodeRuntime] = {NodeType.DBT_MODEL: NodeRuntime.DBT, NodeType.DBT_SEED: NodeRuntime.DBT, NodeType.DBT_SNAPSHOT: NodeRuntime.DBT, NodeType.PYTHON_NODE: NodeRuntime.PYTHON, NodeType.PYTHON_CSV: NodeRuntime.PYTHON, NodeType.DBT_TEST: NodeRuntime.DBT}
+NODE_TYPES_WITH_SECRET_REF = frozenset({NodeType.PYTHON_API})
+"""Values of NodeType whose contract may name one Secret for the node's pod."""
+
+
+NODE_TYPE_RUNTIME: dict[NodeType, NodeRuntime] = {NodeType.DBT_MODEL: NodeRuntime.DBT, NodeType.DBT_SEED: NodeRuntime.DBT, NodeType.DBT_SNAPSHOT: NodeRuntime.DBT, NodeType.PYTHON_NODE: NodeRuntime.PYTHON, NodeType.PYTHON_CSV: NodeRuntime.PYTHON, NodeType.PYTHON_API: NodeRuntime.PYTHON, NodeType.DBT_TEST: NodeRuntime.DBT}
 """Which toolchain builds each NodeType."""

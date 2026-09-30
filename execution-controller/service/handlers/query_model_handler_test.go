@@ -60,9 +60,29 @@ func TestQueryModelHandler_EnqueuesDeployment(t *testing.T) {
 	assert.Equal(t, taskID.String(), cmd.TaskID)
 	assert.Equal(t, scheduleID.String(), cmd.ScheduleID)
 	assert.Equal(t, "dbt-public-orders", cmd.JobName)
+	assert.Empty(t, cmd.SecretRef)
 	assert.Equal(t, 0, cmd.TaskRetryCount)
 	assert.Equal(t, 2, cmd.TaskMaxRetries, "default task max retries off the retry stream")
 	assert.True(t, dep.IsDeployable())
+}
+
+// TestQueryModelHandler_CarriesSecretRefOfAPythonApiNode proves the Secret name
+// a python-api node declares rides the queued deployment command.
+func TestQueryModelHandler_CarriesSecretRefOfAPythonApiNode(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	depl := &stubDeploymentsRepo{}
+	u := newFakeUoW(depl, &stubCancelledRepo{ids: map[uuid.UUID]bool{}})
+
+	evt := events.QueryModel{ //nolint:gosec // G101: secret_ref names a Kubernetes Secret, not a credential
+		TaskID: uuid.New(), ScheduleID: uuid.New(), ScheduleName: "daily",
+		ServiceName: "fx", SchemaName: "public", TableName: "rates",
+		JobName: "fx-public-rates", NodeType: pkg_model.NodeTypePythonApi, ImageTag: "sha-abc",
+		SecretRef: "continuo-api-orders",
+	}
+
+	require.NoError(t, handlers.NewQueryModelHandler(logger).Handle(context.Background(), u, evt, uuid.New()))
+	require.Len(t, depl.added, 1)
+	assert.Equal(t, "continuo-api-orders", depl.added[0].Command().SecretRef)
 }
 
 func TestQueryModelHandler_DropsWhenScheduleCancelled(t *testing.T) {

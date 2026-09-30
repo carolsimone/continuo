@@ -181,3 +181,38 @@ func TestNodeValidationResultsNilRoundTripsAsNull(t *testing.T) {
 		t.Fatal("nil DTO slice must map to nil domain slice")
 	}
 }
+
+func TestNodeDTO_SecretRefRoundTripsAndIsOmittedWhenEmpty(t *testing.T) {
+	in := release.Topology{
+		{UniqueID: "analytics.fx", NodeType: "python-api", SecretRef: "continuo-api-fx"},
+		{UniqueID: "analytics.a", NodeType: "dbt-model"},
+	}
+	raw, err := json.Marshal(TopologyFromDomain(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"secret_ref":"continuo-api-fx"`) {
+		t.Fatalf("secret_ref missing from %s", raw)
+	}
+	if n := strings.Count(string(raw), "secret_ref"); n != 1 {
+		t.Fatalf("an empty ref must be omitted; secret_ref appears %d times in %s", n, raw)
+	}
+
+	var back TopologyDTO
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatal(err)
+	}
+	if got := back.ToDomain()[0].SecretRef; got != in[0].SecretRef {
+		t.Fatalf("SecretRef = %q, want %q", got, in[0].SecretRef)
+	}
+}
+
+func TestNodeDTO_StoredTopologyWithoutSecretRefDecodesEmpty(t *testing.T) {
+	var back TopologyDTO
+	if err := json.Unmarshal([]byte(`[{"unique_id":"analytics.fx","node_type":"python-api"}]`), &back); err != nil {
+		t.Fatal(err)
+	}
+	if got := back.ToDomain()[0].SecretRef; got != "" {
+		t.Fatalf("SecretRef = %q, want empty", got)
+	}
+}

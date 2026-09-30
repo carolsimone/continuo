@@ -34,7 +34,12 @@ func (d *Deployer) Deploy(ctx context.Context, spec deploy.JobSpec) error {
 	if err != nil {
 		return fmt.Errorf("invalid node type %q: %w", spec.NodeType, errors.Join(err, pkgevents.ErrPermanent))
 	}
-	return d.client.CreateQueryJob(ctx, JobParams{
+	return d.client.CreateQueryJob(ctx, jobParamsFromSpec(spec, nodeType, d.namespace))
+}
+
+// jobParamsFromSpec maps the domain JobSpec onto the K8s query-job params.
+func jobParamsFromSpec(spec deploy.JobSpec, nodeType pkg_model.NodeType, namespace string) JobParams {
+	return JobParams{
 		JobName:      spec.JobName,
 		TaskID:       spec.TaskID,
 		ScheduleID:   spec.ScheduleID,
@@ -42,12 +47,13 @@ func (d *Deployer) Deploy(ctx context.Context, spec deploy.JobSpec) error {
 		ServiceName:  spec.ServiceName,
 		SchemaName:   spec.SchemaName,
 		TableName:    spec.TableName,
-		Namespace:    d.namespace,
+		Namespace:    namespace,
 		NodeType:     nodeType,
 		ImageTag:     spec.ImageTag,
+		SecretRef:    spec.SecretRef,
 		Operation:    pkg_model.Operation(spec.Operation),
 		Mode:         spec.Mode,
-	})
+	}
 }
 
 // DeployValidation maps the domain ValidationJobSpec to K8s validation job

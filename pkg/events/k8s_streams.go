@@ -52,6 +52,10 @@ type CheckK8s struct {
 	JobName      string `json:"job_name"`
 	NodeType     string `json:"node_type"`
 	ImageTag     string `json:"image_tag"`
+	// SecretRef names the continuo-api-* Secret a python-api node's pod
+	// loads its environment from; empty for every other node kind. It rides
+	// every check ticket so a retry rebuilt from the ticket keeps the Secret.
+	SecretRef string `json:"secret_ref,omitempty"`
 	// Operation is the dbt verb this Job runs (e.g. "test"); empty for a normal
 	// production `dbt run`. It travels in the durable payload (delay-queue
 	// ticket → promoted stream message) so a check that lands after the Job is

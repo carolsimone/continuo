@@ -434,10 +434,13 @@ vocabularies:
     const: NodeType
     description: >-
       The kind of a graph node. Decides which toolchain builds it (runtime),
-      which contract rules and validation path apply, and whether a
-      single-node full refresh can rebuild it from scratch (full_refresh).
+      which contract rules and validation path apply, whether a
+      single-node full refresh can rebuild it from scratch (full_refresh), and
+      whether its contract may name a Secret (secret_ref).
     # full_refresh: true marks a type a single-node full refresh can rebuild;
     # a value without it does not support a full refresh.
+    # secret_ref: true marks a type whose contract may name one continuo-api-*
+    # Secret for the node's pod; a value without it may name none.
     values:
       - value: dbt-model
         const: DbtModel
@@ -461,6 +464,11 @@ vocabularies:
         const: PythonCsv
         runtime: python
         description: a contract-only python node that loads its table from one csv uri; it has no script.
+      - value: python-api
+        const: PythonApi
+        runtime: python
+        secret_ref: true
+        description: a python script node with no declared reads; its script fetches its own data and may receive one continuo-api-* Secret as env vars.
       - value: dbt-test
         const: DbtTest
         runtime: dbt

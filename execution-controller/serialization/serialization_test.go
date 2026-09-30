@@ -151,3 +151,66 @@ func TestJobCheckRequestOperationOmitempty(t *testing.T) {
 		t.Fatalf("operation must be omitted when empty: %s", out)
 	}
 }
+
+func TestDeployTaskDTO_SecretRefRoundTripsAndIsOmittedWhenEmpty(t *testing.T) {
+	cmd := command.DeployTask{TaskID: "t", SecretRef: "continuo-api-fx"}
+	raw, err := json.Marshal(DeployTaskFromDomain(cmd))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(raw), `"secret_ref":"continuo-api-fx"`) {
+		t.Fatalf("secret_ref missing from %s", raw)
+	}
+	var back DeployTaskDTO
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got := back.ToDomain().SecretRef; got != "continuo-api-fx" {
+		t.Fatalf("SecretRef = %q after round trip", got)
+	}
+
+	raw, err = json.Marshal(DeployTaskFromDomain(command.DeployTask{TaskID: "t"}))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(raw), "secret_ref") {
+		t.Fatalf("empty secret_ref must be omitted, got %s", raw)
+	}
+}
+
+// TestDeployTaskDTO_StoredJobParamsWithoutSecretRefDecodeEmpty covers rows
+// persisted before a node carried a secret_ref: they decode to an empty ref.
+func TestDeployTaskDTO_StoredJobParamsWithoutSecretRefDecodeEmpty(t *testing.T) {
+	var back DeployTaskDTO
+	if err := json.Unmarshal([]byte(goldenDeployTask), &back); err != nil {
+		t.Fatalf("unmarshal golden: %v", err)
+	}
+	if got := back.ToDomain().SecretRef; got != "" {
+		t.Fatalf("SecretRef = %q, want empty", got)
+	}
+}
+
+func TestJobCheckRequestDTO_SecretRefRoundTripsAndIsOmittedWhenEmpty(t *testing.T) {
+	raw, err := json.Marshal(JobCheckRequestFromDomain(event.JobCheckRequest{TaskID: "t", SecretRef: "continuo-api-fx"}))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(raw), `"secret_ref":"continuo-api-fx"`) {
+		t.Fatalf("secret_ref missing from %s", raw)
+	}
+	var back JobCheckRequestDTO
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got := back.ToDomain().SecretRef; got != "continuo-api-fx" {
+		t.Fatalf("SecretRef = %q after round trip", got)
+	}
+
+	raw, err = json.Marshal(JobCheckRequestFromDomain(event.JobCheckRequest{TaskID: "t"}))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(raw), "secret_ref") {
+		t.Fatalf("empty secret_ref must be omitted, got %s", raw)
+	}
+}

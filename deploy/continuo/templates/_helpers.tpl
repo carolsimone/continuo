@@ -2,13 +2,52 @@
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
+{{/* The chart's base name. Every name the chart gives an object, including
+     every Secret it creates (<fullname>-credentials, <fullname>-postgresql,
+     ...), starts with it, and every template names something, so the
+     reserved-prefix checks below run here on every render. */}}
 {{- define "continuo.fullname" -}}
+{{- $name := "" -}}
 {{- if .Values.fullnameOverride -}}
-{{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" -}}
+{{- $name = .Values.fullnameOverride | trunc 63 | trimSuffix "-" -}}
 {{- else if contains .Chart.Name .Release.Name -}}
-{{- .Release.Name | trunc 63 | trimSuffix "-" -}}
+{{- $name = .Release.Name | trunc 63 | trimSuffix "-" -}}
 {{- else -}}
-{{- printf "%s-%s" .Release.Name .Chart.Name | trunc 63 | trimSuffix "-" -}}
+{{- $name = printf "%s-%s" .Release.Name .Chart.Name | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+{{- if or (eq $name "continuo-api") (hasPrefix "continuo-api-" $name) -}}
+{{- fail (printf "the chart fullname %q (the release name, or fullnameOverride) is inside the reserved \"continuo-api-\" prefix: every Secret the chart creates is named <fullname>-<suffix>, and a python-api node contract may name any Secret starting with \"continuo-api-\", so it could receive the chart's datastore and platform credentials. Choose a release name or fullnameOverride that neither equals \"continuo-api\" nor starts with \"continuo-api-\"." $name) -}}
+{{- end -}}
+{{- include "continuo.assertSecretValuesOutsideApiPrefix" . -}}
+{{- $name -}}
+{{- end -}}
+
+{{/* A python-api node contract may name one Secret whose name starts with
+     "continuo-api-" (secret_ref); execution-controller attaches it to the
+     node's pod as environment variables. The prefix is reserved for those
+     operator-created API Secrets, so a Secret the chart is told to use for
+     its own credentials must not carry it. */}}
+{{- define "continuo.assertSecretValuesOutsideApiPrefix" -}}
+{{- $v := .Values -}}
+{{- $names := dict
+      "postgresql.auth.existingSecret" $v.postgresql.auth.existingSecret
+      "externalDatabase.existingSecret" $v.externalDatabase.existingSecret
+      "redis.auth.existingSecret" $v.redis.auth.existingSecret
+      "externalRedis.existingSecret" $v.externalRedis.existingSecret
+      "neo4j.auth.existingSecret" $v.neo4j.auth.existingSecret
+      "externalNeo4j.existingSecret" $v.externalNeo4j.existingSecret
+      "minio.auth.existingSecret" $v.minio.auth.existingSecret
+      "s3.existingSecret" $v.s3.existingSecret
+      "auth.existingSecret" $v.auth.existingSecret
+      "llm.existingSecret" $v.llm.existingSecret
+      "github.existingSecret" $v.github.existingSecret
+      "validation.warehouseSecret" $v.validation.warehouseSecret
+      "ingress.tls.secretName" $v.ingress.tls.secretName -}}
+{{- range $key := keys $names | sortAlpha -}}
+{{- $name := get $names $key | default "" | toString -}}
+{{- if hasPrefix "continuo-api-" $name -}}
+{{- fail (printf "%s=%q is inside the reserved \"continuo-api-\" prefix: a python-api node contract may name any Secret starting with \"continuo-api-\", so it could receive these credentials. Rename the Secret outside that prefix." $key $name) -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 
@@ -102,7 +141,7 @@ app.kubernetes.io/name: {{ .service }}
 {{- fail (printf "validation.imageTag=%q predates check_binds (dbt-test bind checks, added in v0.5.0): topology-controller already emits \"kind: check_binds\" nodes for a changed dbt test, but this runner does not run them and would report success without checking that the test binds, so a release with a changed test would promote its bind unvalidated. Re-pin validation.imageTag to \"v0.5.0\" or later, or drop the override to track the chart's default." $tag) -}}
 {{- end -}}
 {{- else -}}
-{{- $tag = "v0.6.0" -}}{{/* CONTINUO_VALIDATION_DEFAULT_TAG — must equal values.yaml's validation.imageTag default */}}
+{{- $tag = "v0.7.0" -}}{{/* CONTINUO_VALIDATION_DEFAULT_TAG — must equal values.yaml's validation.imageTag default */}}
 {{- end -}}
 {{- if .Values.global.imageRegistry -}}
 {{- printf "%s/%s/continuo-python-runtime-%s:%s" .Values.global.imageRegistry .Values.global.imageRepositoryPrefix $eng $tag -}}

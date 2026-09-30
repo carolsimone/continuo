@@ -118,6 +118,7 @@ func DispatchDerivedRun(ctx context.Context, u uow.UnitOfWork, logger *slog.Logg
 			NodeType:        t.NodeType,
 			ManifestVersion: t.ManifestVersion,
 			ImageTag:        t.ImageTag,
+			SecretRef:       t.SecretRef,
 			Operation:       d.Operation,
 		}
 		queryPayload, err := json.Marshal(serialization.NodeReadyForExecutionFromDomain(queryEvt))

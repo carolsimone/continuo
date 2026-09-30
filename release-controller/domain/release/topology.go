@@ -27,6 +27,9 @@ type Node struct {
 	UpstreamUniqueIDs  []string
 	Schedule           string
 	OriginalFilePath   string
+	// SecretRef is the continuo-api-* Secret a python-api node's pod receives
+	// as env vars; empty for every other node.
+	SecretRef string
 	// CandidateArtifactURI is an S3 URI pointing to the object the node's
 	// validation Job must fetch to build the node as an empty table in the
 	// candidate schema: for a dbt node the compiled SQL with schema-qualified

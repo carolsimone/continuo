@@ -42,6 +42,7 @@ func TestIsPython(t *testing.T) {
 		model.NodeTypeDbtTest:     false,
 		model.NodeTypePythonNode:  true,
 		model.NodeTypePythonCsv:   true,
+		model.NodeTypePythonApi:   true,
 	}
 	if len(cases) != len(model.NodeTypes()) {
 		t.Fatalf("this table covers %d node types, the catalog declares %d — add the new one", len(cases), len(model.NodeTypes()))

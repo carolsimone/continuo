@@ -44,6 +44,7 @@ type RunNode struct {
 	NodeType        string
 	ManifestVersion string
 	ImageTag        string
+	SecretRef       string
 	Upstreams       []NodeKey // used to check if all upstreams are terminal (unblocking)
 	Downstreams     []NodeKey // immediate downstream keys (cascade skip traversal)
 }

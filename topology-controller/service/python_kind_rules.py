@@ -64,6 +64,16 @@ class CsvRead(ReadsRule):
         return ParsedReads(reads={"csv": uri}, dependency_sqls=[], csv_source=uri)
 
 
+class NoReads(ReadsRule):
+    """An empty mapping: the node's script fetches its own data, so it has no
+    upstream query and is a DAG root."""
+
+    def parse(self, raw, label: str) -> ParsedReads:
+        if not isinstance(raw, dict) or raw:
+            _fail(f"{label}: a python-api node declares no reads; its wire entry carries reads: {{}}")
+        return ParsedReads(reads={}, dependency_sqls=[], csv_source="")
+
+
 def _validate_csv_uri(uri: str, label: str) -> None:
     """Mirrors continuo_python_runtime.csv_source.parse_csv_uri's grammar
     exactly, so a contract this loader accepts is one the pinned runner's
@@ -96,11 +106,13 @@ def _validate_csv_uri(uri: str, label: str) -> None:
 class KindRules:
     script_required: bool
     reads: ReadsRule
+    secret_allowed: bool = False
 
 
 RULES: dict[NodeType, KindRules] = {
     NodeType.PYTHON_NODE: KindRules(script_required=True, reads=SqlReads()),
     NodeType.PYTHON_CSV: KindRules(script_required=False, reads=CsvRead()),
+    NodeType.PYTHON_API: KindRules(script_required=True, reads=NoReads(), secret_allowed=True),
 }
 
 # Contracts produced by continuo-python-runtime < 0.6.0 declare python-node as

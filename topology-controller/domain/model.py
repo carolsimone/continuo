@@ -109,6 +109,8 @@ class ManifestNode:
     # its parser sets this to its declared table_name directly.
     csv_source: str = ""  # the csv uri for python-csv nodes; empty otherwise —
     # NOT schema-rewritten, it is a file location, not a warehouse reference.
+    secret_ref: str = ""  # the continuo-api-* Secret a python-api node's pod
+    # receives as env vars; empty when the node names none.
     identity: str = ""  # explicit unique_id for a node that is not a relation
     # (a dbt test): dbt's own manifest unique_id. Empty for every relation
     # node, whose identity is "<schema>.<table>".

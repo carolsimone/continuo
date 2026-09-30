@@ -224,6 +224,7 @@ func TestDeclarations_ReadsEveryDeclaredNodesIdentityAndReads(t *testing.T) {
     schedule: daily
     criticality: SECONDARY
     script: scripts/py_daily_kpis.py
+    secret_ref: continuo-api-fx
     reads:
       orders: select id from analytics.orders
       customers: select id from analytics.customers
@@ -239,9 +240,10 @@ func TestDeclarations_ReadsEveryDeclaredNodesIdentityAndReads(t *testing.T) {
 	}
 	want := []ports.NodeDeclaration{
 		{
-			Identity: ports.NodeIdentity{
+			Identity: ports.NodeIdentity{ //nolint:gosec // G101: continuo-api-* is a Secret name, not a value
 				Schema: "analytics", Table: "py_daily_kpis", Script: "scripts/py_daily_kpis.py",
 				Kind: "python-node", Owner: "data-platform", Schedule: "daily", Criticality: "SECONDARY",
+				SecretRef: "continuo-api-fx",
 			},
 			ReadKeys: []string{"orders", "customers"},
 		},

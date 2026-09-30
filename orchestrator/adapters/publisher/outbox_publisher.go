@@ -138,6 +138,11 @@ func (p *OutboxPublisher) payloadToValues(entry *outbox.Entry) (map[string]inter
 		if evt.Operation != "" {
 			values["operation"] = evt.Operation
 		}
+		// SecretRef names the continuo-api-* Secret a python-api pod receives.
+		// Omitted for every node without API credentials.
+		if evt.SecretRef != "" {
+			values["secret_ref"] = evt.SecretRef
+		}
 		return values, nil
 
 	case domain.EventTypeCascadeTaskSkipped:

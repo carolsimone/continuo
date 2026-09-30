@@ -82,6 +82,22 @@ func TestOutboxPublisher_NodeReadyForExecution(t *testing.T) {
 	// Plain run-operation dispatches carry no operation field (wire shape unchanged).
 	_, hasOperation := vals["operation"]
 	assert.False(t, hasOperation, "run-operation node_ready_for_execution must not carry an operation field")
+	// A node with no API credentials carries no secret_ref field.
+	_, hasSecretRef := vals["secret_ref"]
+	assert.False(t, hasSecretRef, "node_ready_for_execution without a secret_ref must not carry a secret_ref field")
+}
+
+func TestOutboxPublisher_NodeReadyForExecution_CarriesSecretRef(t *testing.T) {
+	// A python-api node's pod mounts the named continuo-api-* Secret, so the
+	// executor needs the ref on the wire.
+	evt := domain.NodeReadyForExecution{ //nolint:gosec // G101: secret_ref names a Kubernetes Secret, not a credential
+		ScheduleID: "sched-1", ScheduleName: "daily", ServiceName: "svc",
+		SchemaName: "public", TableName: "fx", TaskID: "task-1", JobName: "job-1",
+		NodeType: "python-api", ImageTag: "v1", SecretRef: "continuo-api-fx",
+	}
+	entry := makeEntry("node_ready_for_execution", mustMarshal(t, serialization.NodeReadyForExecutionFromDomain(evt)))
+	vals := payloadToValuesFor(t, entry)
+	assert.Equal(t, "continuo-api-fx", vals["secret_ref"])
 }
 
 func TestOutboxPublisher_NodeReadyForExecution_CarriesTestOperation(t *testing.T) {

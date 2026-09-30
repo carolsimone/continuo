@@ -14,6 +14,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 // pythonValidationFixer handles a python node's validation rejection. A python
@@ -244,6 +245,9 @@ func contractFix(
 	if reason := checkDeclarations(svc, res.Files, originals); reason != "" {
 		return failPython(svc, in, reason)
 	}
+	if reason := newNodeSecretBreach(svc, res.Files, originals); reason != "" {
+		return failPython(svc, in, reason)
+	}
 	// The before/after comparison above sees only the files the answer returned.
 	// Re-running the search over the patched checkout covers what it cannot: the
 	// node must still be declared, exactly once, and still inside the directory
@@ -406,6 +410,22 @@ func buildDeclarationMaps(svc Services, files []ports.ProposedFile, originals ma
 	return before, after, ""
 }
 
+// newNodeSecretBreach refuses an answer that adds a node naming a Secret: a
+// fix may add nodes, but never grants a node credentials. A node that already
+// existed is covered by identityBreach, which compares its secret_ref.
+func newNodeSecretBreach(svc Services, files []ports.ProposedFile, originals map[string]string) string {
+	before, after, breach := buildDeclarationMaps(svc, files, originals)
+	if breach != "" {
+		return breach
+	}
+	for _, key := range sortedDeclarationKeys(after) {
+		if _, existed := before[key]; !existed && after[key].Identity.SecretRef != "" {
+			return fmt.Sprintf("the answer adds node %s with a secret_ref; a fix may not grant credentials", key)
+		}
+	}
+	return ""
+}
+
 // identityBreach reports whether any node the answer's own files declared
 // before the edit is no longer declared afterwards, or is declared under a
 // changed identity (schema, table, script, kind, owner, schedule, or
@@ -507,6 +527,7 @@ func identityDelta(was, now ports.NodeIdentity) string {
 		{"owner", was.Owner, now.Owner},
 		{"schedule", was.Schedule, now.Schedule},
 		{"criticality", was.Criticality, now.Criticality},
+		{"secret_ref", was.SecretRef, now.SecretRef},
 	}
 	changed := make([]string, 0, len(fields))
 	for _, f := range fields {
@@ -721,6 +742,7 @@ func pythonEvidence(ctx context.Context, svc Services, in Input, located ports.L
 
 	return prompt.PythonEvidence{
 		NodeID:          in.NodeID,
+		NoReads:         in.NodeType == string(pkg_model.NodeTypePythonApi),
 		ErrorExcerpt:    svc.Sanitizer.Sanitize(in.ErrorExcerpt),
 		RunnerLog:       runnerLog,
 		ContractEntry:   contractEntry,

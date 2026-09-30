@@ -472,6 +472,41 @@ there: the parse is retrying against a 404 for an object that does not exist.
 
 Open the platform UI and the new `service-py` node now appears in the topology.
 
+### python-api nodes
+
+A `python-api` node's script fetches its own data, usually over HTTP. It
+declares no `reads:`, so it has no upstream edges and runs first in its DAG.
+
+```yaml
+nodes:
+  - schema: analytics
+    table: fx_eur_usd_rates
+    kind: python-api
+    owner: data-team
+    schedule: daily
+    criticality: SECONDARY
+    script: scripts/fx_eur_usd_rates.py
+    secret_ref: continuo-api-fx      # optional
+    output_columns:
+      - {name: rate_date, type: DATE, nullable: false}
+      - {name: rate, type: DOUBLE PRECISION, nullable: false}
+```
+
+If the API needs a key, name a Secret with `secret_ref`. The name must start
+with `continuo-api-`. Every key in that Secret reaches the script as an env var
+(`os.environ["FX_API_KEY"]`). The contract holds only the Secret's name, never
+a value. The Secret lives in the namespace execution-controller runs Jobs in
+(its `K8S_NAMESPACE`, which the chart sets to the release namespace):
+
+- kubectl: `kubectl create secret generic continuo-api-fx --from-literal=FX_API_KEY=<key> -n <job-namespace>`
+- External Secrets Operator: an `ExternalSecret` whose `spec.target.name` is `continuo-api-fx`.
+- Vault Secrets Operator: a `VaultStaticSecret` whose `spec.destination.name` is `continuo-api-fx`.
+
+If the Secret is missing when the node runs, the run fails at pod start with
+`CreateContainerConfigError`. Validation never runs the script and never needs
+the Secret. Warehouse credentials always win over a key of the same name in an
+API Secret.
+
 ### The graph you have built
 
 Four services, stitched into one graph, from four API calls that each named a

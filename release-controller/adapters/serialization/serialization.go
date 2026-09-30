@@ -128,6 +128,7 @@ type NodeDTO struct {
 	UpstreamUniqueIDs    []string `json:"upstream_unique_ids"`
 	Schedule             string   `json:"schedule"`
 	OriginalFilePath     string   `json:"original_file_path"`
+	SecretRef            string   `json:"secret_ref,omitempty"`
 	CandidateArtifactURI string   `json:"candidate_artifact_uri,omitempty"`
 }
 
@@ -155,6 +156,7 @@ func TopologyFromDomain(in release.Topology) TopologyDTO {
 			UpstreamUniqueIDs:    n.UpstreamUniqueIDs,
 			Schedule:             n.Schedule,
 			OriginalFilePath:     n.OriginalFilePath,
+			SecretRef:            n.SecretRef,
 			CandidateArtifactURI: n.CandidateArtifactURI,
 		}
 	}
@@ -181,6 +183,7 @@ func (t TopologyDTO) ToDomain() release.Topology {
 			UpstreamUniqueIDs:    d.UpstreamUniqueIDs,
 			Schedule:             d.Schedule,
 			OriginalFilePath:     d.OriginalFilePath,
+			SecretRef:            d.SecretRef,
 			CandidateArtifactURI: d.CandidateArtifactURI,
 		}
 	}

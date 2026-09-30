@@ -171,6 +171,7 @@ func (h *HandlePromotedSeedsRunHandler) Handle(ctx context.Context, cmd domainMo
 			NodeType:        task.NodeType,
 			ManifestVersion: task.ManifestVersion,
 			ImageTag:        task.ImageTag,
+			SecretRef:       task.SecretRef,
 		}))
 		if err != nil {
 			return fmt.Errorf("marshal query.model for %s.%s: %w", task.SchemaName, task.TableName, err)

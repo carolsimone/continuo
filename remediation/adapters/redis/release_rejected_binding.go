@@ -58,7 +58,7 @@ type rejectedPayload struct {
 		FilePath string `json:"file_path"`
 		Service  string `json:"service"`
 		// NodeType is the failing node's kind (dbt-model, dbt-seed,
-		// dbt-snapshot, python-node, or python-csv), set by
+		// dbt-snapshot, python-node, python-csv, or python-api), set by
 		// release-controller on validation and duplicate-relation
 		// rejections. It travels onto the remediation trigger, where it
 		// tells a python target apart from a dbt one without a topology

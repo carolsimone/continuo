@@ -76,7 +76,7 @@ type TriggerNode struct {
 	// discriminator.
 	Service string
 	// NodeType is the failing node's kind (dbt-model, dbt-seed,
-	// dbt-snapshot, python-node, or python-csv), set on validation,
+	// dbt-snapshot, python-node, python-csv, or python-api), set on validation,
 	// duplicate-relation and parse failures. It selects the Fixer for a
 	// validation or parse failure — a python-node, whose source is not
 	// a single readable file, is fixed in the contract yaml declaring it —

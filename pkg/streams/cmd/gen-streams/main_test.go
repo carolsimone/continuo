@@ -678,3 +678,110 @@ func TestEmitVocabulary_NoFullRefreshWithoutTheAttribute(t *testing.T) {
 		}
 	}
 }
+
+const apiKindYAML = `
+streams: []
+vocabularies:
+  - name: node_runtime
+    const: NodeRuntime
+    description: Toolchain.
+    values:
+      - {value: python, const: Python, description: py.}
+  - name: node_type
+    const: NodeType
+    description: Kind.
+    values:
+      - {value: python-node, const: PythonNode, runtime: python, description: n.}
+      - {value: python-api, const: PythonApi, runtime: python, secret_ref: true, description: a.}
+`
+
+func TestParseContract_SecretRef(t *testing.T) {
+	c, err := loadAndValidate(strings.NewReader(apiKindYAML))
+	if err != nil {
+		t.Fatalf("loadAndValidate: %v", err)
+	}
+	vals := c.Vocabularies[1].Values
+	if vals[0].SecretRef || !vals[1].SecretRef {
+		t.Fatalf("secret_ref flags: %+v", vals)
+	}
+}
+
+func TestEmitGoVocabulary_SecretRef(t *testing.T) {
+	c, err := loadAndValidate(strings.NewReader(apiKindYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, err := emitGoVocabulary(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "func (v NodeType) AllowsSecretRef() bool {\n\tswitch v {\n\tcase NodeTypePythonApi:\n\t\treturn true\n\t}\n\treturn false\n}"
+	if !strings.Contains(src, want) {
+		t.Errorf("missing %q\n%s", want, src)
+	}
+	if strings.Contains(src, "func (v NodeRuntime) AllowsSecretRef()") {
+		t.Errorf("a vocabulary with no secret_ref value must get no AllowsSecretRef()\n%s", src)
+	}
+}
+
+func TestEmitPythonVocabulary_SecretRef(t *testing.T) {
+	c, err := loadAndValidate(strings.NewReader(apiKindYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, err := emitPythonVocabulary(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "NODE_TYPES_WITH_SECRET_REF = frozenset({NodeType.PYTHON_API})"
+	if !strings.Contains(src, want) {
+		t.Errorf("missing %q\n%s", want, src)
+	}
+	if strings.Contains(src, "NODE_RUNTIMES_WITH_SECRET_REF") {
+		t.Errorf("a vocabulary with no secret_ref value must get no set\n%s", src)
+	}
+}
+
+func TestEmitTSVocabulary_SecretRef(t *testing.T) {
+	c, err := loadAndValidate(strings.NewReader(apiKindYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, err := emitTSVocabulary(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "export const NODE_TYPES_WITH_SECRET_REF: readonly NodeType[] = ['python-api'];"
+	if !strings.Contains(src, want) {
+		t.Errorf("missing %q\n%s", want, src)
+	}
+	if strings.Contains(src, "NODE_RUNTIMES_WITH_SECRET_REF") {
+		t.Errorf("a vocabulary with no secret_ref value must get no list\n%s", src)
+	}
+}
+
+// TestEmitVocabulary_NoSecretRefWithoutTheAttribute: a contract that marks no
+// value secret_ref emits no secret-ref surface in any language.
+func TestEmitVocabulary_NoSecretRefWithoutTheAttribute(t *testing.T) {
+	c, err := loadAndValidate(strings.NewReader(fullRefreshYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	goSrc, err := emitGoVocabulary(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pySrc, err := emitPythonVocabulary(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tsSrc, err := emitTSVocabulary(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for lang, src := range map[string]string{"go": goSrc, "python": pySrc, "ts": tsSrc} {
+		if strings.Contains(src, "AllowsSecretRef") || strings.Contains(src, "WITH_SECRET_REF") {
+			t.Errorf("%s: unexpected secret-ref surface\n%s", lang, src)
+		}
+	}
+}

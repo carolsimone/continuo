@@ -8,6 +8,7 @@ import (
 
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
+	"github.com/carolsimone/continuo/orchestrator/serialization"
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	pkgEvents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -95,4 +96,51 @@ func TestHandleNodeCompleted_UnblockedInvalidNodeType_FailsRun(t *testing.T) {
 	require.NotNil(t, failedPayload)
 	assert.Equal(t, pkgEvents.DispatchFailedReasonInvalidNodeType, failedPayload.Reason)
 	assert.True(t, u.CommittedTx, "tx must commit so dispatch_failed is published")
+}
+
+// TestHandleNodeCompleted_UnblockedNodeCarriesPinnedSecretRef verifies that a
+// downstream node unblocked by a completion is dispatched with the secret_ref
+// pinned on its run node, so a python-api pod mounts the Secret its run pinned.
+func TestHandleNodeCompleted_UnblockedNodeCarriesPinnedSecretRef(t *testing.T) {
+	ctx := context.Background()
+	u := newFakeUnitOfWork()
+
+	kA := run.NodeKey{ServiceName: "svc", SchemaName: "p", TableName: "a"}
+	kC := run.NodeKey{ServiceName: "svc", SchemaName: "p", TableName: "fx"}
+
+	agg := run.NewRun("run-1", "daily", []*run.RunNode{
+		{Key: kA, TaskID: uuid.New(), Status: "RUNNING", ScheduleName: "daily",
+			NodeType: "dbt-model", Downstreams: []run.NodeKey{kC}},
+		{Key: kC, TaskID: uuid.New(), Status: "PENDING", ScheduleName: "daily", //nolint:gosec // G101: secret_ref names a Kubernetes Secret, not a credential
+			NodeType: "python-api", ImageTag: "it1", ManifestVersion: "m1",
+			SecretRef: "continuo-api-fx", Upstreams: []run.NodeKey{kA}},
+	})
+
+	runs := &fakeAggregateRepository{agg: agg}
+	h := handlers.NewHandleNodeCompletedHandler(u, runs, fakeCancelledSchedules{}, newTestLogger())
+
+	err := h.Handle(ctx, domainModel.NodeCompletedInput{
+		TaskID:       uuid.New(),
+		ScheduleID:   uuid.New(),
+		ScheduleName: "daily",
+		ServiceName:  "svc",
+		SchemaName:   "p",
+		TableName:    "a",
+		Status:       "SUCCEEDED",
+	}, "msg-1", nil)
+	require.NoError(t, err)
+
+	var dispatched []serialization.NodeReadyForExecutionDTO
+	for _, e := range u.outboxRepo.CreatedEntries {
+		if e.StreamName != streams.QueryModelV1 {
+			continue
+		}
+		var dto serialization.NodeReadyForExecutionDTO
+		require.NoError(t, json.Unmarshal(e.Payload, &dto))
+		dispatched = append(dispatched, dto)
+	}
+	require.Len(t, dispatched, 1, "the unblocked node is dispatched once")
+	got := dispatched[0].ToDomain()
+	assert.Equal(t, "fx", got.TableName)
+	assert.Equal(t, "continuo-api-fx", got.SecretRef)
 }

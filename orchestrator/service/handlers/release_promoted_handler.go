@@ -279,6 +279,7 @@ func toDomainNodes(wire []domainEvent.ReleasePromotedNode) []topology.ReleasePro
 			ContentHash:       n.ContentHash,
 			TestCount:         n.TestCount,
 			ImageTag:          n.ImageTag,
+			SecretRef:         n.SecretRef,
 			Schedule:          n.Schedule,
 			UpstreamUniqueIDs: append([]string(nil), n.UpstreamUniqueIDs...),
 			OriginalFilePath:  n.OriginalFilePath,

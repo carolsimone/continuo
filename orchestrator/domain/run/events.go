@@ -23,6 +23,7 @@ type NodeUnblocked struct {
 	NodeType        string
 	ManifestVersion string
 	ImageTag        string
+	SecretRef       string
 	// Operation is the run's operation ("" | "test" | "build"), carried so the
 	// downstream unblock dispatch runs the same dbt verb as the frontier.
 	Operation string

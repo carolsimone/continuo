@@ -463,3 +463,91 @@ func TestSnapshotWriter_DerivedRunPinsTheSourceHashNotTheTable(t *testing.T) {
 	require.Equal(t, "sha256:old", got,
 		"the edge must record the code the source run executed, not the table's current code")
 }
+
+// seedTableSecretRef stamps secret_ref on a seeded :Table, as a promotion of a
+// python-api node does.
+func seedTableSecretRef(t *testing.T, driver neo4j.DriverWithContext, scheduleName, service, schema, table, ref string) {
+	t.Helper()
+	session := driver.NewSession(context.Background(), neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+	defer session.Close(context.Background())
+	_, err := session.ExecuteWrite(context.Background(), func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		_, err := tx.Run(context.Background(), `
+			MATCH (t:Table {service_name: $svc, schema_name: $schema, table_name: $tbl, schedule_name: $sched})
+			SET t.secret_ref = $ref`,
+			map[string]interface{}{"svc": service, "schema": schema, "tbl": table, "sched": scheduleName, "ref": ref})
+		return nil, err
+	})
+	require.NoError(t, err)
+}
+
+// A run pins the secret_ref its :Table carried at snapshot time on the
+// :EXECUTES edge, exactly like image_tag: a later release that points the node
+// at a different Secret changes what the next fresh run reads, while every run
+// derived from the earlier one keeps reading the ref that run pinned. A node
+// without a secret_ref leaves the edge property absent.
+func TestSnapshotWriter_PinsSecretRefOnTheEdge(t *testing.T) {
+	driver := newDriver(t)
+	scheduleName := "test-mat-" + uuid.New().String()[:8]
+
+	seedTable(t, driver, scheduleName, "svc", "s", "fx", "img:1", "v1")
+	seedTableSecretRef(t, driver, scheduleName, "svc", "s", "fx", "continuo-api-old")
+	seedTable(t, driver, scheduleName, "svc", "s", "plain", "img:1", "v1")
+
+	runID := uuid.New().String()
+	t.Cleanup(func() { cleanupRunAndTables(t, driver, runID, "test-mat-") })
+	params := snapshot.Params{RunID: runID, ScheduleName: scheduleName, Kind: "cron"}
+
+	ctx := context.Background()
+	session := driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+	defer session.Close(ctx)
+	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		projection, err := snapshot.LatestFullDAG{}.SelectTasks(ctx, neo4jinfra.NewTopologyReaderForTest(tx), params)
+		if err != nil {
+			return nil, err
+		}
+		return nil, neo4jinfra.NewSnapshotWriterForTest(tx).WriteRunAndExecutesEdges(ctx, params, projection)
+	})
+	require.NoError(t, err)
+
+	// A later release points the node at a different Secret.
+	seedTableSecretRef(t, driver, scheduleName, "svc", "s", "fx", "continuo-api-new")
+
+	fx := snapshot.FQN{Service: "svc", Schema: "s", Table: "fx", ScheduleName: scheduleName}
+	plain := snapshot.FQN{Service: "svc", Schema: "s", Table: "plain", ScheduleName: scheduleName}
+	read := driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
+	defer read.Close(ctx)
+	_, err = read.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		reader := neo4jinfra.NewTopologyReaderForTest(tx)
+
+		source, err := reader.LoadSourceTasks(ctx, runID)
+		if err != nil {
+			return nil, err
+		}
+		require.Contains(t, source, fx)
+		require.Equal(t, "continuo-api-old", source[fx].SecretRef,
+			"a derived run must read the secret_ref the source run pinned, not the table's current one")
+		require.Contains(t, source, plain)
+		require.Equal(t, "", source[plain].SecretRef)
+
+		latest, err := reader.LoadLatestSourceDAG(ctx, scheduleName)
+		if err != nil {
+			return nil, err
+		}
+		require.Contains(t, latest, fx)
+		require.Equal(t, "continuo-api-new", latest[fx].SecretRef,
+			"a fresh run must read the table's current secret_ref")
+
+		r, err := tx.Run(ctx, `
+			MATCH (:Run {run_id: $run_id})-[e:EXECUTES]->(:Table {schedule_name: $sched, table_name: 'plain'})
+			RETURN e.secret_ref IS NULL AS absent`,
+			map[string]interface{}{"run_id": runID, "sched": scheduleName})
+		if err != nil {
+			return nil, err
+		}
+		require.True(t, r.Next(ctx))
+		absent, _ := r.Record().Get("absent")
+		require.Equal(t, true, absent, "a node without a secret_ref must not get an empty-string edge property")
+		return nil, r.Err()
+	})
+	require.NoError(t, err)
+}

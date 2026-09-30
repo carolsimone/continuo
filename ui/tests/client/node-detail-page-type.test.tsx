@@ -63,6 +63,15 @@ describe('NodeDetailPage node-type header', () => {
     expect(screen.queryByText(/source:/i)).toBeNull();
   });
 
+  it('shows the python icon and python-api type chip for a python-api node', async () => {
+    withMeta({ node_type: 'python-api', test_count: 0, test_count_known: true });
+    const { container } = renderPage();
+    await waitFor(() => {
+      expect(container.querySelector('[data-node-type-icon="python"]')).not.toBeNull();
+    });
+    expect(screen.getByText('python-api')).toBeInTheDocument();
+  });
+
   it('shows no dangling source label when a csv node has no recorded URI', async () => {
     withMeta({ node_type: 'python-csv', test_count: 0, test_count_known: true, source_uri: '' });
     const { container } = renderPage();

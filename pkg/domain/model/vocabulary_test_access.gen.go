@@ -11,6 +11,6 @@ func VocabularyValuesForTest() map[string][]string {
 		"ParseFailureKind": {"invalid_sql", "unqualified_reference", "invalid_artifact", "internal"},
 		"RejectReason": {"compile_failed", "parse_rehearsal_failed", "artifact_upload_failed", "invalid_sql", "unqualified_reference", "invalid_artifact", "internal_error", "duplicate_table", "unbuildable_cross_service_upstream", "nothing_to_validate", "seed_build_failed", "validation_failed"},
 		"NodeRuntime": {"dbt", "python"},
-		"NodeType": {"dbt-model", "dbt-seed", "dbt-snapshot", "python-node", "python-csv", "dbt-test"},
+		"NodeType": {"dbt-model", "dbt-seed", "dbt-snapshot", "python-node", "python-csv", "python-api", "dbt-test"},
 	}
 }

@@ -29,6 +29,9 @@ type NodeIdentity struct {
 	Owner       string
 	Schedule    string
 	Criticality string
+	// SecretRef is the continuo-api-* Secret the node names; a fix may never
+	// change it.
+	SecretRef string
 }
 
 // NodeDeclaration is one entry of a contract document's "nodes:" list: which

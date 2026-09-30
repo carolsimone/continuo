@@ -33,9 +33,11 @@ func TestFor_PicksTheDeclaredLanes(t *testing.T) {
 	}{
 		{sourceParse, string(pkg_model.NodeTypePythonNode), pythonParseFixer{}},
 		{sourceParse, string(pkg_model.NodeTypePythonCsv), parseFixer{}},
+		{sourceParse, string(pkg_model.NodeTypePythonApi), parseFixer{}},
 		{sourceParse, string(pkg_model.NodeTypeDbtModel), parseFixer{}},
 		{sourceValidation, string(pkg_model.NodeTypePythonNode), pythonValidationFixer{}},
 		{sourceValidation, string(pkg_model.NodeTypePythonCsv), csvValidationFixer{}},
+		{sourceValidation, string(pkg_model.NodeTypePythonApi), pythonValidationFixer{}},
 		{sourceValidation, string(pkg_model.NodeTypeDbtModel), validationFixer{}},
 	}
 	for _, c := range cases {

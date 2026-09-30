@@ -798,6 +798,7 @@ func buildPodSpec(params JobParams, command []string, partialParsePath string) (
 var pythonKindEnv = map[pkg_model.NodeType]func() []corev1.EnvVar{
 	pkg_model.NodeTypePythonNode: func() []corev1.EnvVar { return nil },
 	pkg_model.NodeTypePythonCsv:  s3CredEnvVars,
+	pkg_model.NodeTypePythonApi:  func() []corev1.EnvVar { return nil },
 }
 
 // buildPythonPodSpec constructs the PodSpec for a python-node run Job.
@@ -848,6 +849,10 @@ func buildPythonPodSpec(p JobParams) (corev1.PodSpec, error) {
 	if err != nil {
 		return corev1.PodSpec{}, err
 	}
+	envFrom, err := withAPISecret(p, whFrom)
+	if err != nil {
+		return corev1.PodSpec{}, err
+	}
 
 	env := []corev1.EnvVar{
 		// NODE_ID is built from SchemaName/TableName, not p.NodeID (the
@@ -878,11 +883,30 @@ func buildPythonPodSpec(p JobParams) (corev1.PodSpec, error) {
 				Image:           p.ImageTag,
 				ImagePullPolicy: corev1.PullIfNotPresent,
 				Env:             env,
-				EnvFrom:         whFrom,
+				EnvFrom:         envFrom,
 				SecurityContext: baseContainerSecurityContext(),
 			},
 		},
 	}, nil
+}
+
+// withAPISecret prepends the node's continuo-api-* Secret to the warehouse
+// envFrom. Kubernetes resolves a key present in several envFrom sources to the
+// LAST one, so listing the warehouse Secret last keeps an API Secret from
+// overriding warehouse credentials; explicit Env (NODE_ID, ...) beats both.
+// The reference is not optional: a missing Secret leaves the pod in
+// CreateContainerConfigError, which checkUnrecoverableStartError fails.
+func withAPISecret(p JobParams, warehouse []corev1.EnvFromSource) ([]corev1.EnvFromSource, error) {
+	if err := pkg_model.ValidateNodeSecretRef(p.NodeType, p.SecretRef); err != nil {
+		return nil, fmt.Errorf("%w: %s.%s: %v", events.ErrPermanent, p.SchemaName, p.TableName, err)
+	}
+	if p.SecretRef == "" {
+		return warehouse, nil
+	}
+	api := corev1.EnvFromSource{SecretRef: &corev1.SecretEnvSource{
+		LocalObjectReference: corev1.LocalObjectReference{Name: p.SecretRef},
+	}}
+	return append([]corev1.EnvFromSource{api}, warehouse...), nil
 }
 
 // pythonImageHasExplicitTag reports whether ref names an explicit tag or

@@ -95,6 +95,9 @@ type NodeReadyForExecution struct {
 	NodeType        string
 	ManifestVersion string
 	ImageTag        string
+	// SecretRef names the continuo-api-* Secret a python-api node's pod
+	// receives; empty for every node that takes no API credentials.
+	SecretRef string
 	// Operation selects the dbt verb. Its DTO field is omitempty so normal
 	// (dbt run/seed/snapshot) messages are wire-identical; set to "test" for
 	// single-node TEST runs so the executor runs `dbt test` instead of the

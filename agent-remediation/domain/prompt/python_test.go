@@ -133,6 +133,53 @@ func TestAssemblePythonContractFix_SystemPromptScopesTheEdit(t *testing.T) {
 	require.Contains(t, lower, "complete", "the prompt must demand each file's full new content")
 }
 
+// TestAssemblePythonContractFix_NoReadsNodeSaysItFetchesItsOwnData pins that a
+// node declaring no reads is not described as reading upstream relations, and
+// that every python prompt lists secret_ref among the fields a fix never
+// touches.
+func TestAssemblePythonContractFix_NoReadsNodeSaysItFetchesItsOwnData(t *testing.T) {
+	ev := pythonEvidence()
+	ev.NoReads = true
+	req := AssemblePythonContractFix(ev)
+	all := req.System + req.User
+
+	require.Contains(t, all, "declares no reads")
+	require.NotContains(t, all, "the upstream relations it reads")
+	require.NotContains(t, req.System, "declared reads")
+	require.NotContains(t, req.System, "adding a read is allowed")
+	require.NotContains(t, req.System, "Keep every read")
+	require.Contains(t, req.System, "Never add a read")
+	require.Contains(t, req.System, "the script that produces it, and the output_columns")
+	require.NotEqual(t, pythonContractFixSystemPrompt, noReadsSystemPrompt(pythonContractFixSystemPrompt),
+		"the rewrite must change the base prompt")
+
+	withReads := AssemblePythonContractFix(pythonEvidence())
+	require.Contains(t, withReads.System, "the upstream relations it reads")
+	require.NotContains(t, withReads.System, "declares no reads")
+	require.Contains(t, withReads.System, "declared reads")
+	require.Contains(t, withReads.System, "adding a read is allowed")
+	require.Contains(t, withReads.System, "Keep every read")
+
+	for name, sys := range map[string]string{
+		"validation":           withReads.System,
+		"validation, no reads": req.System,
+		"parse":                AssemblePythonParseFix(pythonEvidence()).System,
+	} {
+		require.Contains(t, sys, "secret_ref", "%s prompt must forbid touching secret_ref", name)
+	}
+}
+
+// TestAssemblePythonParseFix_NoReadsLeavesTheParsePromptUnchanged pins that the
+// no-reads rewrite only applies to the validation prompt: the parse prompt does
+// not contain the reads wording, so it must be sent as is and never panic.
+func TestAssemblePythonParseFix_NoReadsLeavesTheParsePromptUnchanged(t *testing.T) {
+	ev := pythonEvidence()
+	ev.NoReads = true
+	var req ProposeRequest
+	require.NotPanics(t, func() { req = AssemblePythonParseFix(ev) })
+	require.Equal(t, pythonParseFixSystemPrompt, req.System)
+}
+
 // TestAssemblePythonParseFix_ShowsTheParserError verifies the parse-stage
 // request: the parser's error stands where the validation error would, no
 // runner-log section can appear (no Job ran), the declaring yaml is shown, and

@@ -191,7 +191,7 @@ func (v NodeRuntime) IsValid() bool {
 	return false
 }
 
-// NodeType — The kind of a graph node. Decides which toolchain builds it (runtime), which contract rules and validation path apply, and whether a single-node full refresh can rebuild it from scratch (full_refresh).
+// NodeType — The kind of a graph node. Decides which toolchain builds it (runtime), which contract rules and validation path apply, whether a single-node full refresh can rebuild it from scratch (full_refresh), and whether its contract may name a Secret (secret_ref).
 // Values come from the vocabulary "node_type" in contract.yaml, in
 // declaration order.
 type NodeType string
@@ -207,6 +207,8 @@ const (
 	NodeTypePythonNode NodeType = "python-node"
 	// NodeTypePythonCsv — a contract-only python node that loads its table from one csv uri; it has no script.
 	NodeTypePythonCsv NodeType = "python-csv"
+	// NodeTypePythonApi — a python script node with no declared reads; its script fetches its own data and may receive one continuo-api-* Secret as env vars.
+	NodeTypePythonApi NodeType = "python-api"
 	// NodeTypeDbtTest — a dbt data test; exists only in candidate and current_prod topologies, where validation bind-checks its compiled SQL; never promoted to the orchestrator's graph and never scheduled.
 	NodeTypeDbtTest NodeType = "dbt-test"
 )
@@ -219,6 +221,7 @@ func NodeTypes() []NodeType {
 		NodeTypeDbtSnapshot,
 		NodeTypePythonNode,
 		NodeTypePythonCsv,
+		NodeTypePythonApi,
 		NodeTypeDbtTest,
 	}
 }
@@ -235,6 +238,8 @@ func (v NodeType) IsValid() bool {
 	case NodeTypePythonNode:
 		return true
 	case NodeTypePythonCsv:
+		return true
+	case NodeTypePythonApi:
 		return true
 	case NodeTypeDbtTest:
 		return true
@@ -254,6 +259,16 @@ func (v NodeType) SupportsFullRefresh() bool {
 	return false
 }
 
+// AllowsSecretRef reports whether the contract of a node of this type may name
+// one Secret whose keys the node's pod receives as environment variables.
+func (v NodeType) AllowsSecretRef() bool {
+	switch v {
+	case NodeTypePythonApi:
+		return true
+	}
+	return false
+}
+
 // Runtime reports which toolchain builds a node of this type.
 func (v NodeType) Runtime() NodeRuntime {
 	switch v {
@@ -266,6 +281,8 @@ func (v NodeType) Runtime() NodeRuntime {
 	case NodeTypePythonNode:
 		return NodeRuntimePython
 	case NodeTypePythonCsv:
+		return NodeRuntimePython
+	case NodeTypePythonApi:
 		return NodeRuntimePython
 	case NodeTypeDbtTest:
 		return NodeRuntimeDbt

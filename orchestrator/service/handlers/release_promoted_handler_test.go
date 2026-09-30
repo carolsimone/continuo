@@ -79,12 +79,13 @@ func twoNodeInput() domainModel.PromoteReleaseInput {
 				Schedule:          "daily",
 				UpstreamUniqueIDs: []string{},
 			},
-			{
+			{ //nolint:gosec // G101: secret_ref names a Kubernetes Secret, not a credential
 				UniqueID:          "svc-b.public.table_b",
 				SchemaName:        "public",
 				TableName:         "table_b",
 				ServiceName:       "service-b",
 				ImageTag:          "tag-b",
+				SecretRef:         "continuo-api-b",
 				Schedule:          "hourly",
 				UpstreamUniqueIDs: []string{"svc-a.public.table_a"},
 			},
@@ -134,6 +135,8 @@ func TestReleasePromoted_HappyPath_PromotesAndEmitsSchedulesLoaded(t *testing.T)
 	require.Len(t, call.Nodes, 2, "two domain nodes expected")
 	assert.Equal(t, "svc-a.public.table_a", call.Nodes[0].UniqueID)
 	assert.Equal(t, "svc-b.public.table_b", call.Nodes[1].UniqueID)
+	assert.Equal(t, "", call.Nodes[0].SecretRef)
+	assert.Equal(t, "continuo-api-b", call.Nodes[1].SecretRef, "secret_ref reaches the promotion repository")
 
 	// Transaction committed.
 	assert.True(t, uow.CommittedTx, "transaction should be committed")

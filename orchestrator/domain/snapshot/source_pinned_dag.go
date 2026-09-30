@@ -113,6 +113,7 @@ func (SourcePinnedDAG) SelectTasks(ctx context.Context, r TopologyReader, p Para
 				NodeType:        st.NodeType,
 				InitialStatus:   "PENDING",
 				ImageTag:        st.ImageTag,
+				SecretRef:       st.SecretRef,
 				ManifestVersion: st.ManifestVersion,
 				ContentHash:     st.ContentHash,
 				TestCountKnown:  false, // SourceTaskRow carries no test_count; rebased rows never gate on it
@@ -134,6 +135,7 @@ func (SourcePinnedDAG) SelectTasks(ctx context.Context, r TopologyReader, p Para
 			NodeType:            st.NodeType,
 			InitialStatus:       st.Status,
 			ImageTag:            st.ImageTag,
+			SecretRef:           st.SecretRef,
 			ManifestVersion:     st.ManifestVersion,
 			ContentHash:         st.ContentHash,
 			TestCountKnown:      false, // SourceTaskRow carries no test_count; inherited rows never gate on it

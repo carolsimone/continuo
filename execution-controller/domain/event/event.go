@@ -59,6 +59,10 @@ type JobCheckRequest struct {
 	CheckAfter   int64 // Unix timestamp for delayed processing
 	NodeType     string
 	ImageTag     string
+	// SecretRef names the continuo-api-* Secret a python-api node's pod
+	// loads its environment from; empty for every other node kind. It rides
+	// every check ticket so a retry rebuilt from the ticket keeps the Secret.
+	SecretRef string
 	// Operation is the dbt verb the Job runs (e.g. "test"); empty for a normal
 	// production `dbt run`. It travels in the durable payload (delay-queue
 	// ticket → promoted stream message) so a check that lands after the Job is

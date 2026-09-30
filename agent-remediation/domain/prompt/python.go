@@ -49,6 +49,8 @@ type PythonEvidence struct {
 	// PriorAttempts are the earlier attempts at this same failure, oldest
 	// first.
 	PriorAttempts []PriorAttempt
+	// NoReads is set when the node declares no reads and fetches its own data.
+	NoReads bool
 }
 
 const pythonContractFixSystemPrompt = `You are a data-engineering assistant that fixes a Continuo python node whose contract failed blue/green validation.
@@ -56,7 +58,7 @@ const pythonContractFixSystemPrompt = `You are a data-engineering assistant that
 A python node is declared in a contract yaml file: an entry under "nodes:" naming its schema and table, the script that produces it, the upstream relations it reads (each with the SQL that selects them), and the output_columns it promises to produce. Validation runs the node's script against the candidate schema and checks that what it produced matches what the contract declares. It does NOT run the script's python source, which you are not shown and cannot change.
 
 Rules:
-- Change ONLY what validation checks: the node's declared reads (including their SQL), its output_columns, and its config. Never touch its schema, table, script path, owner, schedule, or criticality — those identify the node, and changing one makes it a different node rather than a fixed one.
+- Change ONLY what validation checks: the node's declared reads (including their SQL), its output_columns, and its config. Never touch its schema, table, script path, owner, schedule, criticality, or secret_ref — those identify the node (or name the credentials it runs with), and changing one makes it a different node rather than a fixed one.
 - Keep every read the node declares. Correcting a read's SQL is a fix, and adding a read is allowed, but deleting a read or renaming its key is not: the script still performs that read, and you cannot change the script. A contract that no longer declares it passes validation while the node stays broken.
 - A contract file may declare several nodes. Leave every node other than the failing one byte-for-byte unchanged.
 - Return the COMPLETE new content of every file you change, never a diff and never a fragment. A file you do not change must not appear in your answer at all.
@@ -70,7 +72,7 @@ const pythonParseFixSystemPrompt = `You are a data-engineering assistant that fi
 A python node is declared in a contract yaml file: an entry under "nodes:" naming its schema and table, the script that produces it, the upstream relations it reads (each with the SQL that selects them), and the output_columns it promises to produce. Before a release runs anything, every read's SQL is parsed and every relation it names must be schema-qualified so the release can resolve it to an upstream node. The parser rejected one of this node's reads, and its error names the line and column where parsing stopped. The script's python source is not parsed, is not shown to you, and cannot be changed.
 
 Rules:
-- Change ONLY the SQL of the node's declared reads, so that every read parses and every relation it references is schema-qualified. Never touch the node's schema, table, script path, owner, schedule, criticality, or output_columns — those identify the node or are checked later by validation, not by the parser.
+- Change ONLY the SQL of the node's declared reads, so that every read parses and every relation it references is schema-qualified. Never touch the node's schema, table, script path, owner, schedule, criticality, secret_ref, or output_columns — those identify the node (or name the credentials it runs with) or are checked later by validation, not by the parser.
 - Keep every read the node declares. Correcting a read's SQL is the fix; deleting a read or renaming its key is not: the script still performs that read, and you cannot change the script. A contract that no longer declares it parses while the node stays broken.
 - Qualify a relation with the schema the evidence shows it lives in; do not invent a schema, and do not rewrite what the read selects beyond what parsing requires.
 - A contract file may declare several nodes. Leave every node other than the failing one byte-for-byte unchanged.
@@ -79,13 +81,22 @@ Rules:
 - When past precedents are shown, weigh how the same error was resolved before; follow a precedent's approach only where it fits the contract you are shown.
 - Always respond by calling the propose_python_fix tool.`
 
+// pythonNoReadsContractFixSystemPrompt is the validation prompt for a node that
+// declares no reads. It is built once at package initialisation, so a drifted
+// base prompt panics at startup rather than while handling a message.
+var pythonNoReadsContractFixSystemPrompt = noReadsSystemPrompt(pythonContractFixSystemPrompt)
+
 // AssemblePythonContractFix builds the request that asks the model to correct
 // the contract yaml declaring a python node that failed validation. The answer
 // is a list of complete files rather than one file's content, because a fix
 // can legitimately span the declaring file and a sibling it shares definitions
 // with.
 func AssemblePythonContractFix(ev PythonEvidence) ProposeRequest {
-	return pythonContractRequest(pythonContractFixSystemPrompt, "Validation error", ev)
+	system := pythonContractFixSystemPrompt
+	if ev.NoReads {
+		system = pythonNoReadsContractFixSystemPrompt
+	}
+	return pythonContractRequest(system, "Validation error", ev)
 }
 
 // AssemblePythonParseFix builds the request that asks the model to correct a
@@ -211,4 +222,40 @@ func renderPriorAttempts(b *strings.Builder, as []PriorAttempt) {
 		}
 	}
 	b.WriteString("\n")
+}
+
+// noReadsSystemPrompt rewrites the python validation system prompt for a node
+// that declares no reads: the clause describing the reads it performs goes, the
+// description says the script fetches its own data, the edit scope shrinks to
+// output_columns and config, and the keep-every-read rule becomes a rule
+// against adding one. Each substitution must find its text, so a wording change
+// in the base prompt fails loudly (a panic at package initialisation)
+// instead of silently leaving the reads wording behind.
+func noReadsSystemPrompt(system string) string {
+	const (
+		readsClause = "the script that produces it, the upstream relations it reads (each with the SQL that selects them), and the output_columns it promises to produce."
+		noReadsDesc = "the script that produces it, and the output_columns it promises to produce. This node declares no reads: its script fetches its own data (for example from an HTTP API)."
+		scopeBefore = "the node's declared reads (including their SQL), its output_columns, and its config."
+		scopeAfter  = "its output_columns and its config."
+	)
+	system = mustReplace(system, readsClause, noReadsDesc)
+	system = mustReplace(system, scopeBefore, scopeAfter)
+
+	lines := strings.Split(system, "\n")
+	for i, l := range lines {
+		if strings.HasPrefix(l, "- Keep every read the node declares.") {
+			lines[i] = "- Never add a read: this node declares none, and its script fetches its own data. Only output_columns and config may change."
+			return strings.Join(lines, "\n")
+		}
+	}
+	panic("prompt: python system prompt has no keep-every-read rule to rewrite")
+}
+
+// mustReplace substitutes old with new exactly once and panics when old is
+// absent, so a drifted base prompt cannot turn the rewrite into a no-op.
+func mustReplace(s, old, replacement string) string {
+	if !strings.Contains(s, old) {
+		panic("prompt: python system prompt no longer contains " + old)
+	}
+	return strings.Replace(s, old, replacement, 1)
 }

@@ -17,15 +17,18 @@ type Command interface {
 // and to build the RUNNING announcement, the first status-check ticket, and the
 // FAILED announcement afterwards.
 type DeployTask struct {
-	TaskID         string
-	ScheduleID     string
-	ScheduleName   string
-	ServiceName    string
-	SchemaName     string
-	TableName      string
-	JobName        string
-	NodeType       string
-	ImageTag       string
+	TaskID       string
+	ScheduleID   string
+	ScheduleName string
+	ServiceName  string
+	SchemaName   string
+	TableName    string
+	JobName      string
+	NodeType     string
+	ImageTag     string
+	// SecretRef names the continuo-api-* Secret a python-api node's pod
+	// receives as env vars; empty for every other node.
+	SecretRef      string
 	TaskRetryCount int
 	TaskMaxRetries int
 	// Operation selects the dbt verb the executor runs for this node. Empty
@@ -97,6 +100,7 @@ func (c DeployTask) ToJobSpec() deploy.JobSpec {
 		TableName:    c.TableName,
 		NodeType:     c.NodeType,
 		ImageTag:     c.ImageTag,
+		SecretRef:    c.SecretRef,
 		Operation:    c.Operation,
 		Mode:         c.Mode,
 	}
@@ -142,7 +146,11 @@ type CheckJobStatus struct {
 	JobName      string
 	NodeType     string
 	ImageTag     string
-	Operation    string
+	// SecretRef names the continuo-api-* Secret a python-api node's pod
+	// loads its environment from; empty for every other node kind. It rides
+	// every check ticket so a retry rebuilt from the ticket keeps the Secret.
+	SecretRef string
+	Operation string
 	// RetryCount is the task-level attempt number of the Job being checked.
 	RetryCount int32
 	// MaxRetries is the task-level retry budget; zero means "use the service default".

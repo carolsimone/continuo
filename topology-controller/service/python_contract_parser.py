@@ -17,6 +17,7 @@ import yaml
 
 from domain.exceptions import MalformedContractError
 from domain.model import ManifestNode, Runtime
+from domain.secret_ref import validate_secret_ref
 from service.content_hash import content_hash_fold
 from service.python_kind_rules import RULES, resolve_kind
 
@@ -32,7 +33,7 @@ _REQUIRED_ENTRY_KEYS = {
     "reads", "output_columns",
     "source_hash", "shared_code_hash", "config_hash", "content_hash",
 }
-_OPTIONAL_ENTRY_KEYS = {"description", "extra_columns", "config", "kind"}
+_OPTIONAL_ENTRY_KEYS = {"description", "extra_columns", "config", "kind", "secret_ref"}
 _COLUMN_REQUIRED_KEYS = {"name", "type"}
 _COLUMN_ALLOWED_KEYS = {"name", "type", "nullable"}
 
@@ -130,6 +131,12 @@ def _parse_entry(
     if not isinstance(description, str):
         _fail(f"{label}: description must be a string")
 
+    secret_ref = ""
+    if "secret_ref" in entry:
+        if not rules.secret_allowed:
+            _fail(f"{label}: secret_ref is not allowed for kind {node_type}")
+        secret_ref = validate_secret_ref(entry["secret_ref"], label)
+
     parsed = rules.reads.parse(entry["reads"], label)
     columns = _parse_columns(entry["output_columns"], label)
 
@@ -168,6 +175,8 @@ def _parse_entry(
     }
     if rules.script_required:
         raw_entry["script"] = script
+    if secret_ref:
+        raw_entry["secret_ref"] = secret_ref
 
     try:
         raw_code = json.dumps(raw_entry, sort_keys=True, indent=2)
@@ -200,6 +209,7 @@ def _parse_entry(
         output_columns=columns,
         runtime=Runtime.PYTHON,
         csv_source=parsed.csv_source,
+        secret_ref=secret_ref,
     )
 
 

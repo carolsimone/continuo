@@ -24,6 +24,12 @@ linters:
       - path: _test\.go$
         linters:
           - errcheck
+      # G101 matches "secret"-like identifiers next to string literals. The
+      # continuo-api-* literals are Kubernetes Secret names, never secret values.
+      - linters:
+          - gosec
+        text: G101
+        source: continuo-api-
 
 issues:
   # Report every finding. golangci-lint defaults (max-same-issues: 3,

@@ -52,6 +52,19 @@ bring your own — that is the supported production configuration anyway.
 For the full dependency inventory across Go, npm, and Python, see
 [docs/third-party-licenses.md](../docs/third-party-licenses.md).
 
+## API credentials for python-api nodes
+
+A `python-api` node can name a Secret in its contract (`secret_ref`) to receive
+an API key. The Secret is called `continuo-api-<name>`, lives in the namespace
+execution-controller runs Jobs in (its `K8S_NAMESPACE`, which the chart sets to
+the release namespace), and is created by the operator: `kubectl create
+secret`, an External Secrets Operator `ExternalSecret`, or a Vault Secrets
+Operator `VaultStaticSecret`. The chart neither creates nor reads these Secrets.
+The `continuo-api-` prefix is reserved for them: the chart refuses to render
+when the release name, `fullnameOverride` or any Secret name in values falls
+inside it.
+See [python-api nodes](../docs/run-projects-in-continuo.md#python-api-nodes).
+
 ## Requirements at a glance
 
 - Kubernetes `>=1.27`, Helm 3.14+.

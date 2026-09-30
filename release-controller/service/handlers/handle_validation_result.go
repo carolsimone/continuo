@@ -203,6 +203,7 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipe
 		Schedule          string   `json:"schedule"`
 		Changed           bool     `json:"changed"`
 		OriginalFilePath  string   `json:"original_file_path"`
+		SecretRef         string   `json:"secret_ref,omitempty"`
 	}
 	// Tests are validation-only: current_prod keeps them so an unchanged test
 	// is not re-checked next release, but the promoted topology the
@@ -223,6 +224,7 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipe
 			Schedule:          n.Schedule,
 			Changed:           changedSet[n.UniqueID],
 			OriginalFilePath:  n.OriginalFilePath,
+			SecretRef:         n.SecretRef,
 		}
 	}
 	payload, err := json.Marshal(map[string]any{

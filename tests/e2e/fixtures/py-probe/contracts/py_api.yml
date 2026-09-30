@@ -1,0 +1,15 @@
+nodes:
+  # python-api node: no reads. Its pod receives Secret continuo-api-probe as
+  # env vars; the script reports whether PROBE_API_KEY arrived, never its value.
+  - schema: e2e_schema
+    table: py_api
+    owner: e2e
+    schedule: daily
+    criticality: SECONDARY
+    kind: python-api
+    script: scripts/py_api.py
+    secret_ref: continuo-api-probe
+    description: "python-api node for the e2e credentials path"
+    output_columns:
+      - {name: id, type: INTEGER, nullable: false}
+      - {name: key_present, type: INTEGER, nullable: false}

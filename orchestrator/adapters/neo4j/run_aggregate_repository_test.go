@@ -109,7 +109,8 @@ func seedRun(
 				task_id:          $task_id,
 				status:           $status,
 				manifest_version: 'mv1',
-				image_tag:        'it1'
+				image_tag:        'it1',
+				secret_ref:       'continuo-api-fx'
 			}]->(t)
 		`, map[string]any{
 			"run_id":       runID,
@@ -197,6 +198,44 @@ func TestRunAggregateRepository_RehydrateScopeFull_ReturnsAllNodes(t *testing.T)
 	require.NotNil(t, nB, "node B must be loaded")
 	assert.Contains(t, nA.Downstreams, kB, "A.Downstreams must contain B")
 	assert.Contains(t, nB.Upstreams, kA, "B.Upstreams must contain A")
+	assert.Equal(t, "it1", nA.ImageTag)
+	assert.Equal(t, "continuo-api-fx", nA.SecretRef, "the run node carries the secret_ref pinned on its :EXECUTES edge")
+	assert.Equal(t, "continuo-api-fx", nB.SecretRef)
+}
+
+// TestRunAggregateRepository_RehydrateScopeNodeCompletion_CarriesSecretRef
+// covers both completion-scope queries: the node an unblock dispatches must
+// carry the secret_ref its run pinned, whichever completion loaded it.
+func TestRunAggregateRepository_RehydrateScopeNodeCompletion_CarriesSecretRef(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires Neo4j")
+	}
+	for _, status := range []string{"SUCCEEDED", "FAILED"} {
+		t.Run(status, func(t *testing.T) {
+			repo, client, cleanup := newTestAggRepo(t)
+			defer cleanup()
+
+			ctx := context.Background()
+			runID := fmt.Sprintf("run-%s", t.Name())
+			seedRun(t, ctx, client, runID, 2, 0, 0,
+				[]seededNode{
+					{"public", "a", "svc-1", "RUNNING"},
+					{"public", "b", "svc-1", "PENDING"},
+				},
+				[]seededEdge{
+					{childSchema: "public", childTable: "b", parentSchema: "public", parentTable: "a"},
+				},
+			)
+
+			kA := domainRun.NodeKey{ServiceName: "svc-1", SchemaName: "public", TableName: "a"}
+			agg, err := repo.Rehydrate(ctx, runID, domainRun.ScopeNodeCompletion{Key: kA, Status: status})
+			require.NoError(t, err)
+			require.Len(t, agg.Nodes(), 2, "target and its downstream are loaded")
+			for _, n := range agg.Nodes() {
+				assert.Equal(t, "continuo-api-fx", n.SecretRef, "node %v", n.Key)
+			}
+		})
+	}
 }
 
 // TestRunAggregateRepository_RehydrateScopeFull_TestOperation_NodesAreEdgeless

@@ -86,6 +86,29 @@ engine_changed="$(mc_checksum --set validation.engine=trino --set validation.cre
 loglevel_changed="$(mc_checksum --set global.logLevel=DEBUG)"
 [ "$loglevel_changed" != "$base" ] || { echo "FAIL: changing a shared ConfigMap value leaves the pod template identical"; exit 1; }
 
+# The "continuo-api-" Secret-name prefix is reserved for the operator-created
+# Secrets a python-api node contract may name. A chart fullname inside it would
+# name every chart-created Secret inside it, and so would a user-supplied
+# Secret name; either would let a contract receive platform credentials. The
+# render must fail with the reserved-prefix message, and a name that merely
+# shares the letters ("continuo-apis") must still render.
+echo "--- reserved continuo-api- Secret prefix is refused"
+refuse_reserved() {
+  local release="$1"; shift
+  if helm template "$release" "$CHART" --kube-version "$KUBE_VERSION" "$@" > /dev/null 2> "${tmp}/reserved.err"; then
+    echo "FAIL: rendering release ${release} $* succeeded; a name inside the reserved continuo-api- prefix must fail the render"; exit 1
+  fi
+  grep -qF 'reserved "continuo-api-" prefix' "${tmp}/reserved.err" \
+    || { echo "FAIL: release ${release} $* failed for another reason:"; cat "${tmp}/reserved.err"; exit 1; }
+}
+refuse_reserved continuo-api
+refuse_reserved continuo-api-prod
+refuse_reserved continuo --set fullnameOverride=continuo-api
+refuse_reserved continuo --set s3.existingSecret=continuo-api-s3
+refuse_reserved continuo --set validation.createWarehouseSecret=false --set validation.warehouseSecret=continuo-api-warehouse
+helm template continuo-apis "$CHART" --kube-version "$KUBE_VERSION" > /dev/null \
+  || { echo "FAIL: release continuo-apis is outside the reserved prefix and must render"; exit 1; }
+
 echo "--- bash -n (release scripts)"
 bash -n scripts/release/retag-images.sh
 

@@ -31,6 +31,10 @@ func parseGather(ctx context.Context, svc Services, in Input) (Gathered, string,
 		return Gathered{}, fmt.Sprintf("%s is a python-csv node: its only read is an S3 URI, not SQL the parser can reject, "+
 			"so remediation has no fix to offer; correct the contract by hand", in.NodeID), nil
 	}
+	if in.NodeType == string(pkg_model.NodeTypePythonApi) {
+		return Gathered{}, fmt.Sprintf("%s is a python-api node: python-api has no reads, so there is no SQL "+
+			"the parser can reject and remediation has no fix to offer; correct the contract by hand", in.NodeID), nil
+	}
 	if pkg_model.NodeType(in.NodeType).IsPython() {
 		return Gathered{}, fmt.Sprintf("%s is a %s node: its reads are declared in its service's contract.yaml, "+
 			"which this lane does not edit; correct the contract by hand", in.NodeID, in.NodeType), nil

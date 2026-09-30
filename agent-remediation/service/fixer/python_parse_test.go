@@ -56,7 +56,7 @@ func TestFor_ParseDispatchesOnNodeType(t *testing.T) {
 	require.NoError(t, err)
 	require.IsType(t, pythonParseFixer{}, py)
 
-	for _, nodeType := range []string{"dbt-model", "dbt-seed", "dbt-snapshot", "python-csv", ""} {
+	for _, nodeType := range []string{"dbt-model", "dbt-seed", "dbt-snapshot", "python-csv", "python-api", ""} {
 		f, ferr := For("parse", nodeType)
 		require.NoError(t, ferr)
 		require.IsType(t, parseFixer{}, f, "node type %q must keep the source-file parse fixer", nodeType)

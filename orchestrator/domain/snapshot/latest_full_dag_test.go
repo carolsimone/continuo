@@ -13,7 +13,7 @@ func TestLatestFullDAG_BuildsProjectionFromLatestRows(t *testing.T) {
 	s := snapshot.FQN{Service: "svc", Schema: "sch", Table: "s", ScheduleName: "seed"}
 	r := &fakeTopologyReader{
 		LatestDAG: map[snapshot.FQN]snapshot.LatestTableRow{
-			a: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1"},
+			a: {ScheduleName: "x", NodeType: "python-api", ImageTag: "v1", ManifestVersion: "m1", SecretRef: "continuo-api-fx"},
 			s: {ScheduleName: "seed", NodeType: "dbt-seed", ImageTag: "v2", ManifestVersion: "m2"},
 		},
 	}
@@ -37,8 +37,12 @@ func TestLatestFullDAG_BuildsProjectionFromLatestRows(t *testing.T) {
 		fqn := snapshot.FQN{Service: p.ServiceName, Schema: p.SchemaName, Table: p.TableName, ScheduleName: p.ScheduleName}
 		want := r.LatestDAG[fqn]
 		if p.ScheduleName != want.ScheduleName || p.NodeType != want.NodeType ||
-			p.ImageTag != want.ImageTag || p.ManifestVersion != want.ManifestVersion {
+			p.ImageTag != want.ImageTag || p.ManifestVersion != want.ManifestVersion ||
+			p.SecretRef != want.SecretRef {
 			t.Errorf("row mismatch for %+v: got %+v want %+v", fqn, p, want)
+		}
+		if fqn == a && p.SecretRef != "continuo-api-fx" {
+			t.Errorf("a: SecretRef=%q, want continuo-api-fx", p.SecretRef)
 		}
 	}
 }

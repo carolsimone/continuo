@@ -448,3 +448,43 @@ def test_stored_python_model_kind_parses_and_hash_verifies(tmp_path):
     (node,) = nodes
     assert node.node_type == NodeType.PYTHON_NODE
     assert node.content_hash == content_hash_fold("aaa111", "bbb222", "ccc333")
+
+
+def make_api_entry(remove=(), **overrides):
+    return make_entry(remove=remove, **{"kind": "python-api", "reads": {}, **overrides})
+
+
+def _parse_one(tmp_path, entry):
+    nodes, _ = parse_python_contract(write_contract(tmp_path, entry), "v1", "img:1")
+    (node,) = nodes
+    return node
+
+
+def test_python_api_entry_parses_as_a_root(tmp_path):
+    node = _parse_one(tmp_path, make_api_entry())
+    assert node.node_type is NodeType.PYTHON_API
+    assert node.dependency_sqls == []
+    assert node.secret_ref == ""
+    assert json.loads(node.raw_code)["reads"] == {}
+    assert "secret_ref" not in json.loads(node.raw_code)
+
+
+def test_python_api_secret_ref_reaches_the_node_and_raw_code(tmp_path):
+    node = _parse_one(tmp_path, make_api_entry(secret_ref="continuo-api-fx"))
+    assert node.secret_ref == "continuo-api-fx"
+    assert json.loads(node.raw_code)["secret_ref"] == "continuo-api-fx"
+
+
+def test_secret_ref_on_python_node_rejects_the_artifact(tmp_path):
+    with pytest.raises(MalformedContractError, match="secret_ref is not allowed for kind python-node"):
+        _parse_one(tmp_path, make_entry(secret_ref="continuo-api-fx"))
+
+
+def test_bad_secret_ref_rejects_the_artifact(tmp_path):
+    with pytest.raises(MalformedContractError, match="secret_ref"):
+        _parse_one(tmp_path, make_api_entry(secret_ref="continuo-app-credentials"))
+
+
+def test_python_api_with_reads_rejects_the_artifact(tmp_path):
+    with pytest.raises(MalformedContractError, match="declares no reads"):
+        _parse_one(tmp_path, make_api_entry(reads={"x": "select 1 from analytics.a"}))

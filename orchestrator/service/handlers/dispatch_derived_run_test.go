@@ -29,10 +29,11 @@ func TestDispatchDerivedRun_EmitsDispatchedAndQueryModel(t *testing.T) {
 	inheritedID := uuid.New()
 
 	projection := []snapshot.TaskProjection{
-		{TaskID: pendingID, ServiceName: "svc", SchemaName: "s", TableName: "tgt",
-			ScheduleName: "daily", NodeType: "dbt-model", InitialStatus: "PENDING",
+		{TaskID: pendingID, ServiceName: "svc", SchemaName: "s", TableName: "tgt", //nolint:gosec // G101: secret_ref names a Kubernetes Secret, not a credential
+			ScheduleName: "daily", NodeType: "python-api", InitialStatus: "PENDING",
 			ReadyToDispatch: true,
-			ImageTag:        "v1", ManifestVersion: "m1", MaxRetries: pkgEvents.DefaultTaskMaxRetries},
+			ImageTag:        "v1", ManifestVersion: "m1", MaxRetries: pkgEvents.DefaultTaskMaxRetries,
+			SecretRef:       "continuo-api-fx"},
 		{TaskID: inheritedID, ServiceName: "svc", SchemaName: "s", TableName: "ok",
 			ScheduleName: "daily", NodeType: "dbt-model", InitialStatus: "SUCCEEDED",
 			ImageTag: "v1", ManifestVersion: "m1", InheritedFromTaskID: &inheritedRoot},
@@ -70,6 +71,7 @@ func TestDispatchDerivedRun_EmitsDispatchedAndQueryModel(t *testing.T) {
 	require.NoError(t, json.Unmarshal(entries[1].Payload, &qevt))
 	assert.Equal(t, "tgt", qevt.TableName)
 	assert.Equal(t, "build", qevt.Operation, "frontier query.model carries the derived run's operation")
+	assert.Equal(t, "continuo-api-fx", qevt.ToDomain().SecretRef, "frontier query.model carries the task's pinned secret_ref")
 }
 
 func TestDispatchDerivedRun_PreservesTerminalInherits(t *testing.T) {

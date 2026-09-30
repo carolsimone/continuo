@@ -151,6 +151,55 @@ func TestHandleSingleNodeRun_RunOperation_QueryModelOmitsOperation(t *testing.T)
 	require.NoError(t, json.Unmarshal(entries[1].Payload, &raw))
 	_, hasOperation := raw["operation"]
 	assert.False(t, hasOperation, "plain run traffic must stay wire-identical (no operation key)")
+	_, hasSecretRef := raw["secret_ref"]
+	assert.False(t, hasSecretRef, "a node without API credentials carries no secret_ref key")
+}
+
+// TestHandleSingleNodeRun_CarriesPinnedSecretRef verifies that the single
+// target's pinned secret_ref reaches its query.model:v1 dispatch, so a
+// python-api pod mounts the continuo-api-* Secret the projection pinned.
+func TestHandleSingleNodeRun_CarriesPinnedSecretRef(t *testing.T) {
+	ctx := context.Background()
+	uow := newFakeUnitOfWork()
+	snap := &fakeSnapshotService{
+		projection: []snapshot.TaskProjection{
+			{ //nolint:gosec // G101: secret_ref names a Kubernetes Secret, not a credential
+				TaskID:          uuid.New(),
+				ServiceName:     "svc",
+				SchemaName:      "s",
+				TableName:       "fx",
+				ScheduleName:    "daily",
+				NodeType:        "python-api",
+				InitialStatus:   "PENDING",
+				ImageTag:        "v1",
+				ManifestVersion: "m1",
+				SecretRef:       "continuo-api-fx",
+				MaxRetries:      pkgEvents.DefaultTaskMaxRetries,
+			},
+		},
+	}
+	h := handlers.NewHandleSingleNodeRunHandler(uow, snap, newTestLogger())
+
+	cmd := domainModel.SingleNodeRunInput{
+		RunID:          uuid.New().String(),
+		ScheduleName:   "daily",
+		ServiceName:    "svc",
+		SchemaName:     "s",
+		TableName:      "fx",
+		MetadataSource: "latest",
+		InitiatedBy:    "system",
+	}
+
+	err := h.Handle(ctx, cmd, "msg-1", nil)
+	require.NoError(t, err)
+
+	entries := uow.outboxRepo.CreatedEntries
+	require.Len(t, entries, 2, "1 dispatched + 1 query.model")
+	require.Equal(t, streams.QueryModelV1, entries[1].StreamName)
+
+	var qevt serialization.NodeReadyForExecutionDTO
+	require.NoError(t, json.Unmarshal(entries[1].Payload, &qevt))
+	assert.Equal(t, "continuo-api-fx", qevt.ToDomain().SecretRef)
 }
 
 // TestHandleSingleNodeRun_FullRefreshUnsupported_EmitsDispatchFailed covers a

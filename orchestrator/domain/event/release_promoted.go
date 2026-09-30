@@ -18,6 +18,7 @@ type ReleasePromotedNode struct {
 	ContentHash       string
 	TestCount         int
 	ImageTag          string
+	SecretRef         string
 	Schedule          string
 	UpstreamUniqueIDs []string
 	Changed           bool

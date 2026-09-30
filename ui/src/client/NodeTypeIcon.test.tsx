@@ -15,6 +15,10 @@ describe('nodeTypeFamily', () => {
     expect(nodeTypeFamily('python-csv')).toBe('python-csv');
   });
 
+  it('maps python-api to the python family', () => {
+    expect(nodeTypeFamily('python-api')).toBe('python');
+  });
+
   it('maps empty and unknown types to null', () => {
     expect(nodeTypeFamily('')).toBeNull();
     expect(nodeTypeFamily('something-else')).toBeNull();

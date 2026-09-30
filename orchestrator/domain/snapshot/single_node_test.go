@@ -13,7 +13,7 @@ func TestSingleNode_LatestMode_Hit(t *testing.T) {
 	fqn := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a"}
 	r := &fakeTopologyReader{
 		SingleLatest: map[snapshot.FQN]snapshot.LatestTableRow{
-			fqn: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1"},
+			fqn: {ScheduleName: "x", NodeType: "python-api", ImageTag: "v1", ManifestVersion: "m1", SecretRef: "continuo-api-fx"},
 		},
 	}
 	sel := snapshot.SingleNode{ServiceName: "svc", SchemaName: "sch", TableName: "a", MetadataSource: "latest"}
@@ -26,6 +26,9 @@ func TestSingleNode_LatestMode_Hit(t *testing.T) {
 	}
 	if got[0].ImageTag != "v1" || got[0].InitialStatus != "PENDING" {
 		t.Errorf("%+v", got[0])
+	}
+	if got[0].SecretRef != "continuo-api-fx" {
+		t.Errorf("SecretRef=%q, want continuo-api-fx", got[0].SecretRef)
 	}
 }
 
@@ -43,7 +46,7 @@ func TestSingleNode_SnapshotOfRunMode_Hit(t *testing.T) {
 	srcID := uuid.New()
 	r := &fakeTopologyReader{
 		SingleFromSourceRun: map[string]map[snapshot.FQN]snapshot.LatestTableRow{
-			srcID.String(): {fqn: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "old", ManifestVersion: "om"}},
+			srcID.String(): {fqn: {ScheduleName: "x", NodeType: "python-api", ImageTag: "old", ManifestVersion: "om", SecretRef: "continuo-api-old"}},
 		},
 	}
 	sel := snapshot.SingleNode{ServiceName: "svc", SchemaName: "sch", TableName: "a", MetadataSource: "snapshot_of_run"}
@@ -53,6 +56,9 @@ func TestSingleNode_SnapshotOfRunMode_Hit(t *testing.T) {
 	}
 	if got[0].ImageTag != "old" {
 		t.Errorf("ImageTag=%q", got[0].ImageTag)
+	}
+	if got[0].SecretRef != "continuo-api-old" {
+		t.Errorf("SecretRef=%q, want the source run's continuo-api-old", got[0].SecretRef)
 	}
 }
 

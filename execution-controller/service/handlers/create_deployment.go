@@ -46,6 +46,7 @@ func createDeployment(
 		JobName:        base.JobName,
 		NodeType:       string(base.NodeType),
 		ImageTag:       base.ImageTag,
+		SecretRef:      base.SecretRef,
 		TaskRetryCount: taskRetryCount,
 		TaskMaxRetries: taskMaxRetries,
 		Operation:      string(base.Operation),
