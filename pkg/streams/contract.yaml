@@ -433,16 +433,21 @@ vocabularies:
   - name: node_type
     const: NodeType
     description: >-
-      The kind of a graph node. Decides which toolchain builds it (runtime) and
-      which contract rules and validation path apply.
+      The kind of a graph node. Decides which toolchain builds it (runtime),
+      which contract rules and validation path apply, and whether a
+      single-node full refresh can rebuild it from scratch (full_refresh).
+    # full_refresh: true marks a type a single-node full refresh can rebuild;
+    # a value without it does not support a full refresh.
     values:
       - value: dbt-model
         const: DbtModel
         runtime: dbt
+        full_refresh: true
         description: a dbt model; built with dbt run.
       - value: dbt-seed
         const: DbtSeed
         runtime: dbt
+        full_refresh: true
         description: a dbt seed; built with dbt seed.
       - value: dbt-snapshot
         const: DbtSnapshot

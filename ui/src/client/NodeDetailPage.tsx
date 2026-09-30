@@ -7,14 +7,13 @@ import { kindLabel, computeNodeStats, formatDuration, formatRelative } from './n
 import NodeTypeIcon from './NodeTypeIcon';
 import RunSourcePickerDialog from './RunSourcePickerDialog';
 import FullRefreshConfirmDialog from './FullRefreshConfirmDialog';
-import { type NodeType } from '../server/generated/vocabulary.gen';
+import { type NodeType, NODE_TYPES_SUPPORTING_FULL_REFRESH } from '../server/generated/vocabulary.gen';
+import { isNodeOperation, type NodeOperation } from '../server/shared/operation';
 
 const PYTHON_CSV: NodeType = 'python-csv';
 
-export type NodeOperation = 'run' | 'test' | 'build' | 'full_refresh';
-
-// Node types a full refresh can rebuild: dbt models and seeds.
-const FULL_REFRESH_NODE_TYPES: ReadonlySet<string> = new Set<NodeType>(['dbt-model', 'dbt-seed']);
+// Node types a full refresh can rebuild, as the contract declares them.
+const FULL_REFRESH_NODE_TYPES: ReadonlySet<string> = new Set<string>(NODE_TYPES_SUPPORTING_FULL_REFRESH);
 
 interface NodeMetaResponse {
   node_type?: string;
@@ -92,10 +91,7 @@ export default function NodeDetailPage() {
   const navState = location.state as { from?: NodeDetailFrom; operation?: string } | null;
   const from = navState?.from;
   const navOperation = navState?.operation;
-  const initialOperation: NodeOperation =
-    navOperation === 'test' || navOperation === 'build' || navOperation === 'run' || navOperation === 'full_refresh'
-      ? navOperation
-      : 'run';
+  const initialOperation: NodeOperation = isNodeOperation(navOperation) ? navOperation : 'run';
 
   let backLabel = '← Back to Nodes';
   let backPath = '/?tab=nodes';

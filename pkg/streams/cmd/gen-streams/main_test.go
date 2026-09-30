@@ -570,3 +570,111 @@ func TestEmitTSVocabulary(t *testing.T) {
 		}
 	}
 }
+
+const fullRefreshYAML = `
+streams: []
+vocabularies:
+  - name: node_runtime
+    const: NodeRuntime
+    description: Toolchain.
+    values:
+      - {value: dbt, const: Dbt, description: dbt.}
+  - name: node_type
+    const: NodeType
+    description: Kind.
+    values:
+      - {value: dbt-model, const: DbtModel, runtime: dbt, full_refresh: true, description: m.}
+      - {value: dbt-seed, const: DbtSeed, runtime: dbt, full_refresh: true, description: s.}
+      - {value: dbt-snapshot, const: DbtSnapshot, runtime: dbt, description: sn.}
+`
+
+func TestParseContract_FullRefresh(t *testing.T) {
+	c, err := loadAndValidate(strings.NewReader(fullRefreshYAML))
+	if err != nil {
+		t.Fatalf("loadAndValidate: %v", err)
+	}
+	vals := c.Vocabularies[1].Values
+	if !vals[0].FullRefresh || !vals[1].FullRefresh || vals[2].FullRefresh {
+		t.Fatalf("full_refresh flags: %+v", vals)
+	}
+}
+
+func TestEmitGoVocabulary_FullRefresh(t *testing.T) {
+	c, err := loadAndValidate(strings.NewReader(fullRefreshYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, err := emitGoVocabulary(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "func (v NodeType) SupportsFullRefresh() bool {\n\tswitch v {\n\tcase NodeTypeDbtModel:\n\t\treturn true\n\tcase NodeTypeDbtSeed:\n\t\treturn true\n\t}\n\treturn false\n}"
+	if !strings.Contains(src, want) {
+		t.Errorf("missing %q\n%s", want, src)
+	}
+	if strings.Contains(src, "func (v NodeRuntime) SupportsFullRefresh()") {
+		t.Errorf("a vocabulary with no full_refresh value must get no SupportsFullRefresh()\n%s", src)
+	}
+}
+
+func TestEmitPythonVocabulary_FullRefresh(t *testing.T) {
+	c, err := loadAndValidate(strings.NewReader(fullRefreshYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, err := emitPythonVocabulary(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "NODE_TYPES_SUPPORTING_FULL_REFRESH = frozenset({NodeType.DBT_MODEL, NodeType.DBT_SEED})"
+	if !strings.Contains(src, want) {
+		t.Errorf("missing %q\n%s", want, src)
+	}
+	if strings.Contains(src, "NODE_RUNTIMES_SUPPORTING_FULL_REFRESH") {
+		t.Errorf("a vocabulary with no full_refresh value must get no set\n%s", src)
+	}
+}
+
+func TestEmitTSVocabulary_FullRefresh(t *testing.T) {
+	c, err := loadAndValidate(strings.NewReader(fullRefreshYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, err := emitTSVocabulary(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "export const NODE_TYPES_SUPPORTING_FULL_REFRESH: readonly NodeType[] = ['dbt-model', 'dbt-seed'];"
+	if !strings.Contains(src, want) {
+		t.Errorf("missing %q\n%s", want, src)
+	}
+	if strings.Contains(src, "NODE_RUNTIMES_SUPPORTING_FULL_REFRESH") {
+		t.Errorf("a vocabulary with no full_refresh value must get no list\n%s", src)
+	}
+}
+
+// TestEmitVocabulary_NoFullRefreshWithoutTheAttribute: a contract that marks no
+// value full_refresh emits no full-refresh surface in any language.
+func TestEmitVocabulary_NoFullRefreshWithoutTheAttribute(t *testing.T) {
+	c, err := loadAndValidate(strings.NewReader(nodeTypeYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	goSrc, err := emitGoVocabulary(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pySrc, err := emitPythonVocabulary(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tsSrc, err := emitTSVocabulary(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for lang, src := range map[string]string{"go": goSrc, "python": pySrc, "ts": tsSrc} {
+		if strings.Contains(src, "SupportsFullRefresh") || strings.Contains(src, "SUPPORTING_FULL_REFRESH") {
+			t.Errorf("%s: unexpected full-refresh surface\n%s", lang, src)
+		}
+	}
+}

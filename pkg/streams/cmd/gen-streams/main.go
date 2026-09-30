@@ -65,6 +65,7 @@ type VocabularyValue struct {
 	Value       string `yaml:"value"`
 	Const       string `yaml:"const"`
 	Healable    bool   `yaml:"healable"`
+	FullRefresh bool   `yaml:"full_refresh"`
 	Runtime     string `yaml:"runtime"`
 	Description string `yaml:"description"`
 }
@@ -299,6 +300,22 @@ func hasHealable(v Vocabulary) bool {
 	return false
 }
 
+func hasFullRefresh(v Vocabulary) bool {
+	for _, val := range v.Values {
+		if val.FullRefresh {
+			return true
+		}
+	}
+	return false
+}
+
+// fullRefreshListConst names the list of values that support a single-node
+// full refresh, e.g. NODE_TYPES_SUPPORTING_FULL_REFRESH. Python and TypeScript
+// share the name.
+func fullRefreshListConst(v Vocabulary) string {
+	return toScreamingSnake(v.Const) + "S_SUPPORTING_FULL_REFRESH"
+}
+
 func usesRuntime(v Vocabulary) bool { return len(v.Values) > 0 && v.Values[0].Runtime != "" }
 
 // pyMember is the Python enum member name for a vocabulary value.
@@ -310,13 +327,14 @@ func pyMember(value string) string { return strings.ToUpper(strings.ReplaceAll(v
 type goVocabRow struct {
 	Const, Name, Description string
 	HasHealable              bool
+	HasFullRefresh           bool
 	RuntimeType              string
 	Values                   []goVocabValueRow
 }
 
 type goVocabValueRow struct {
 	Const, Type, Value, Description string
-	Healable                        bool
+	Healable, FullRefresh           bool
 	RuntimeConst                    string
 }
 
@@ -324,7 +342,7 @@ func goVocabRows(c *Contract) []goVocabRow {
 	rv := runtimeVocabulary(c)
 	var rows []goVocabRow
 	for _, v := range c.Vocabularies {
-		row := goVocabRow{Const: v.Const, Name: v.Name, Description: v.Description, HasHealable: hasHealable(v)}
+		row := goVocabRow{Const: v.Const, Name: v.Name, Description: v.Description, HasHealable: hasHealable(v), HasFullRefresh: hasFullRefresh(v)}
 		if usesRuntime(v) && rv != nil {
 			row.RuntimeType = rv.Const
 		}
@@ -335,6 +353,7 @@ func goVocabRows(c *Contract) []goVocabRow {
 				Value:       val.Value,
 				Description: val.Description,
 				Healable:    val.Healable,
+				FullRefresh: val.FullRefresh,
 			}
 			if usesRuntime(v) && rv != nil {
 				vr.RuntimeConst = rv.Const + constForValue(rv, val.Runtime)
@@ -399,6 +418,22 @@ func (v {{ .Const }}) Healable() bool {
 	switch v {
 {{- range .Values }}
 {{- if .Healable }}
+	case {{ .Const }}:
+		return true
+{{- end }}
+{{- end }}
+	}
+	return false
+}
+{{- end }}
+{{- if .HasFullRefresh }}
+
+// SupportsFullRefresh reports whether a single-node full refresh can rebuild a
+// node of this type from scratch.
+func (v {{ .Const }}) SupportsFullRefresh() bool {
+	switch v {
+{{- range .Values }}
+{{- if .FullRefresh }}
 	case {{ .Const }}:
 		return true
 {{- end }}
@@ -515,6 +550,8 @@ func emitPythonVocabulary(c *Contract) (string, error) {
 		Healable           []string // "ParseFailureKind.INVALID_SQL", ...
 		HealableConst      string   // "PARSE_FAILURE_KIND_HEALABLE"
 		HasHealable        bool
+		FullRefresh        []string // "NodeType.DBT_MODEL", ...
+		FullRefreshConst   string   // "NODE_TYPES_SUPPORTING_FULL_REFRESH"
 		RuntimeConst       string   // "NODE_TYPE_RUNTIME"
 		RuntimeType        string   // "NodeRuntime"
 		RuntimeEntries     []string // "NodeType.DBT_MODEL: NodeRuntime.DBT", ...
@@ -528,6 +565,9 @@ func emitPythonVocabulary(c *Contract) (string, error) {
 			HealableConst: toScreamingSnake(v.Const) + "_HEALABLE",
 			HasHealable:   hasHealable(v),
 		}
+		if hasFullRefresh(v) {
+			row.FullRefreshConst = fullRefreshListConst(v)
+		}
 		if usesRuntime(v) && rv != nil {
 			row.RuntimeConst = toScreamingSnake(v.Const) + "_RUNTIME"
 			row.RuntimeType = rv.Const
@@ -537,6 +577,9 @@ func emitPythonVocabulary(c *Contract) (string, error) {
 			row.Values = append(row.Values, pyValueRow{Const: member, Value: val.Value})
 			if val.Healable {
 				row.Healable = append(row.Healable, v.Const+"."+member)
+			}
+			if val.FullRefresh {
+				row.FullRefresh = append(row.FullRefresh, v.Const+"."+member)
 			}
 			if usesRuntime(v) && rv != nil {
 				row.RuntimeEntries = append(row.RuntimeEntries, v.Const+"."+member+": "+rv.Const+"."+pyMember(val.Runtime))
@@ -563,6 +606,10 @@ class {{ .Const }}(StrEnum):
 {{ .HealableConst }} = frozenset({ {{- range $i, $h := .Healable }}{{ if $i }}, {{ end }}{{ $h }}{{ end -}} })
 """Values of {{ .Const }} a remediation attempt can fix by changing the user's source."""
 
+{{ end }}{{ if .FullRefreshConst }}
+{{ .FullRefreshConst }} = frozenset({ {{- range $i, $f := .FullRefresh }}{{ if $i }}, {{ end }}{{ $f }}{{ end -}} })
+"""Values of {{ .Const }} a single-node full refresh can rebuild from scratch."""
+
 {{ end }}{{ if .RuntimeType }}
 {{ .RuntimeConst }}: dict[{{ .Const }}, {{ .RuntimeType }}] = { {{- range $i, $e := .RuntimeEntries }}{{ if $i }}, {{ end }}{{ $e }}{{ end -}} }
 """Which toolchain builds each {{ .Const }}."""
@@ -585,6 +632,7 @@ class {{ .Const }}(StrEnum):
 func emitTSVocabulary(c *Contract) (string, error) {
 	type tsRow struct {
 		Const, ListConst, Union, List         string
+		FullRefreshConst, FullRefreshList     string
 		RuntimeConst, RuntimeType, RuntimeMap string
 	}
 	rv := runtimeVocabulary(c)
@@ -599,6 +647,16 @@ func emitTSVocabulary(c *Contract) (string, error) {
 			ListConst: toScreamingSnake(v.Const) + "S",
 			Union:     strings.Join(quoted, " | "),
 			List:      strings.Join(quoted, ", "),
+		}
+		if hasFullRefresh(v) {
+			var fr []string
+			for _, val := range v.Values {
+				if val.FullRefresh {
+					fr = append(fr, "'"+val.Value+"'")
+				}
+			}
+			row.FullRefreshConst = fullRefreshListConst(v)
+			row.FullRefreshList = strings.Join(fr, ", ")
 		}
 		if usesRuntime(v) && rv != nil {
 			pairs := make([]string, 0, len(v.Values))
@@ -619,6 +677,9 @@ func emitTSVocabulary(c *Contract) (string, error) {
 {{ range . }}
 export type {{ .Const }} = {{ .Union }};
 export const {{ .ListConst }}: readonly {{ .Const }}[] = [{{ .List }}];
+{{- if .FullRefreshConst }}
+export const {{ .FullRefreshConst }}: readonly {{ .Const }}[] = [{{ .FullRefreshList }}];
+{{- end }}
 {{- if .RuntimeConst }}
 export const {{ .RuntimeConst }}: Readonly<Record<{{ .Const }}, {{ .RuntimeType }}>> = { {{ .RuntimeMap }} };
 {{- end }}

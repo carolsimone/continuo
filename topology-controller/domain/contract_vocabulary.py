@@ -47,13 +47,17 @@ class NodeRuntime(StrEnum):
 
 
 class NodeType(StrEnum):
-    """The kind of a graph node. Decides which toolchain builds it (runtime) and which contract rules and validation path apply."""
+    """The kind of a graph node. Decides which toolchain builds it (runtime), which contract rules and validation path apply, and whether a single-node full refresh can rebuild it from scratch (full_refresh)."""
     DBT_MODEL = "dbt-model"
     DBT_SEED = "dbt-seed"
     DBT_SNAPSHOT = "dbt-snapshot"
     PYTHON_NODE = "python-node"
     PYTHON_CSV = "python-csv"
     DBT_TEST = "dbt-test"
+
+
+NODE_TYPES_SUPPORTING_FULL_REFRESH = frozenset({NodeType.DBT_MODEL, NodeType.DBT_SEED})
+"""Values of NodeType a single-node full refresh can rebuild from scratch."""
 
 
 NODE_TYPE_RUNTIME: dict[NodeType, NodeRuntime] = {NodeType.DBT_MODEL: NodeRuntime.DBT, NodeType.DBT_SEED: NodeRuntime.DBT, NodeType.DBT_SNAPSHOT: NodeRuntime.DBT, NodeType.PYTHON_NODE: NodeRuntime.PYTHON, NodeType.PYTHON_CSV: NodeRuntime.PYTHON, NodeType.DBT_TEST: NodeRuntime.DBT}

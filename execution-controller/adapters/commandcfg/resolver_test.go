@@ -283,6 +283,24 @@ func TestNodeCommand_FullRefresh_UnsupportedNodeTypeIsPermanent(t *testing.T) {
 	}
 }
 
+// TestNodeCommand_FullRefresh_CoversExactlyTheContractSet pins the resolver to
+// the contract's full_refresh flags: every node type that supports a full
+// refresh resolves to a command in the built-in block, and every other type is
+// rejected permanently.
+func TestNodeCommand_FullRefresh_CoversExactlyTheContractSet(t *testing.T) {
+	r := Defaults()
+	for _, nt := range pkg_model.NodeTypes() {
+		argv, err := r.NodeCommand("svc", pkg_model.OperationFullRefresh, nt, "x")
+		if nt.SupportsFullRefresh() {
+			require.NoError(t, err, "node type %s supports a full refresh but has no command", nt)
+			assert.NotEmpty(t, argv, "node type %s", nt)
+			continue
+		}
+		assert.ErrorIs(t, err, pkgevents.ErrPermanent, "node type %s", nt)
+		assert.Contains(t, err.Error(), "full refresh is not supported", "node type %s", nt)
+	}
+}
+
 func TestBuiltinDefault_FullRefreshAndSeed(t *testing.T) {
 	r := Defaults()
 	assert.Equal(t, []string{"dbt", "run", "--full-refresh", "--select", "orders"},
