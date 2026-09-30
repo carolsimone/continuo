@@ -892,7 +892,7 @@ def test_a_python_kind_entry_is_published_as_a_python_node(tmp_path):
 def _published_python_topology(tmp_path, entry):
     publisher = MagicMock()
     source = _source_of(ManifestFile(
-        path=_python_contract(tmp_path, entry), version="v1",
+        path=_python_contract(tmp_path, entry),
         declared_service="service-py", kind=ManifestKind.PYTHON,
     ))
     _python_handler(source, publisher).handle(release_id="rel-1")

@@ -454,7 +454,7 @@ def make_api_entry(remove=(), **overrides):
 
 
 def _parse_one(tmp_path, entry):
-    nodes, _ = parse_python_contract(write_contract(tmp_path, entry), "v1", "img:1")
+    nodes, _ = parse_python_contract(write_contract(tmp_path, entry), "img:1")
     (node,) = nodes
     return node
 
