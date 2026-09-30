@@ -1,6 +1,6 @@
 # The e2e fixture domain image, built exactly the way the runtime repository's
 # template prescribes: the engine-matched runtime base plus this service's
-# contracts and scripts. One image serves both of the service's nodes — the
+# contracts and scripts. One image serves every one of the service's nodes — the
 # harness selects between them from NODE_ID at run time.
 FROM ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.7.0
 COPY contracts/ /app/contracts/

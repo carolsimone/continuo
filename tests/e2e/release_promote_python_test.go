@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"os/exec"
 	"path"
 	"strings"
 	"testing"
@@ -29,6 +30,12 @@ const (
 	pyProbeUniqueID    = "e2e_schema.py_probe"
 	pyBadShapeUniqueID = "e2e_schema.py_bad_shape"
 	pyCsvUniqueID      = "e2e_schema.py_csv"
+	pyAPIUniqueID      = "e2e_schema.py_api"
+
+	// pyAPISecret is the continuo-api-* Secret the py_api node's contract
+	// names in secret_ref. The run subtests create and delete it themselves in
+	// the namespace the e2e Jobs run in, so its presence is under test control.
+	pyAPISecret = "continuo-api-probe"
 
 	// pyFixtureImage is the domain image scripts/setup.sh builds and side-loads
 	// into kind. The release posts it as image_tag and the executor runs it
@@ -54,6 +61,9 @@ var pyFixtureContract []byte
 //go:embed fixtures/py-probe/contracts/py_csv.yml
 var pyCsvFixtureContract []byte
 
+//go:embed fixtures/py-probe/contracts/py_api.yml
+var pyAPIFixtureContract []byte
+
 //go:embed fixtures/py-probe/scripts
 var pyFixtureScripts embed.FS
 
@@ -74,7 +84,10 @@ var pyCsvFixtureData []byte
 // could validate one contract while the pod executed another.
 //
 // A scripted node's source_hash is the real sha256 of its script file, so
-// editing a script genuinely re-fingerprints its node. A python-csv node runs
+// editing a script genuinely re-fingerprints its node. A scripted node that
+// declares no reads (the python-api node) gets "reads": {}, because the
+// shipped merge tool's node_entry() emits node.reads unconditionally and a
+// node without reads carries an empty map there. A python-csv node runs
 // no script, but the shipped merge tool's node_entry() still emits
 // "script": node.script unconditionally, so its wire entry carries an empty
 // string rather than an absent key — mirroring what a domain repository's CI
@@ -88,7 +101,7 @@ func pythonContractYAML(t *testing.T) string {
 	t.Helper()
 
 	var nodes []map[string]any
-	for _, raw := range [][]byte{pyFixtureContract, pyCsvFixtureContract} {
+	for _, raw := range [][]byte{pyFixtureContract, pyCsvFixtureContract, pyAPIFixtureContract} {
 		var doc struct {
 			Nodes []map[string]any `yaml:"nodes"`
 		}
@@ -103,6 +116,9 @@ func pythonContractYAML(t *testing.T) string {
 			script, err := fs.ReadFile(pyFixtureScripts, path.Join("fixtures/py-probe", scriptPath))
 			require.NoError(t, err, "read fixture script %s", scriptPath)
 			sourceHash = sha256Hex(string(script))
+			if _, ok := node["reads"]; !ok {
+				node["reads"] = map[string]any{}
+			}
 		} else {
 			reads, _ := node["reads"].(map[string]any)
 			csvURI, _ := reads["csv"].(string)
@@ -167,6 +183,7 @@ func TestE2E_ReleasePromote_PythonContractSkipsCompileAndPromotes(t *testing.T) 
 	// already proved.
 	assertValidationNodeOp(t, ctx, clients, releaseID, pyProbeUniqueID, "build_from_columns", ".json")
 	assertValidationNodeOp(t, ctx, clients, releaseID, pyCsvUniqueID, "build_from_columns", ".json")
+	assertValidationNodeOp(t, ctx, clients, releaseID, pyAPIUniqueID, "build_from_columns", ".json")
 	assertNoCompileRequested(t, ctx, clients, releaseID)
 
 	// The promoted pointer records the python kind and the contract artifact.
@@ -199,7 +216,7 @@ func promotePythonFixtureRelease(t *testing.T, ctx context.Context, clients *tes
 	releaseID := "e2e-py-" + uuid.NewString()[:8]
 
 	// Baseline: every dbt service keeps its live pointer; the python service is
-	// brand new, so both of its nodes are changed nodes.
+	// brand new, so every one of its nodes is a changed node.
 	allServices := baselineServices(t, ctx, clients)
 	require.NotEmpty(t, allServices)
 	var prodNodes []map[string]string
@@ -232,7 +249,7 @@ func promotePythonFixtureRelease(t *testing.T, ctx context.Context, clients *tes
 	postPythonRelease(t, clients, pyE2EService, releaseID, pyFixtureImage)
 
 	assertValidationRequestedNodes(t, ctx, clients, releaseID,
-		[]string{pyProbeUniqueID, pyBadShapeUniqueID, pyCsvUniqueID})
+		[]string{pyProbeUniqueID, pyBadShapeUniqueID, pyCsvUniqueID, pyAPIUniqueID})
 
 	// Real build_from_columns Jobs run in kind against the published runner
 	// image; on success the release promotes and the topology swaps.
@@ -250,6 +267,9 @@ func promotePythonFixtureRelease(t *testing.T, ctx context.Context, clients *tes
 // structured JSON rather than scraped text, and the python-csv node — a
 // scriptless node in the same mixed DAG — fetches its declared S3 source
 // itself and materializes the csv's rows with the declared column types.
+// Finally the python-api node runs twice: with its continuo-api-* Secret
+// present the script sees the Secret's key as an env var, and with the Secret
+// deleted the pod cannot start and the run fails rather than hanging.
 func TestE2E_PythonNodeRun_MaterializesAndReportsFailures(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -359,6 +379,49 @@ func TestE2E_PythonNodeRun_MaterializesAndReportsFailures(t *testing.T) {
 
 		t.Log("✅ python-csv node fetched its S3 source and materialized the csv's rows in the warehouse")
 	})
+
+	t.Run("python-api node receives its Secret as env vars", func(t *testing.T) {
+		createAPISecret(t, ctx)
+		defer deleteAPISecret(t, ctx)
+		runID, scheduleName := triggerPythonNodeRun(t, ctx, clients, "py_api")
+		defer cleanupSingleNodeRun(t, ctx, clients, runID, scheduleName)
+
+		verifySchedulerSucceeded(t, ctx, clients, runID)
+
+		var present int
+		require.NoError(t, clients.dbtDB.QueryRowContext(ctx,
+			`SELECT key_present FROM e2e_schema.py_api WHERE id = 1`).Scan(&present))
+		assert.Equal(t, 1, present, "PROBE_API_KEY from continuo-api-probe must reach the script")
+		t.Log("✅ python-api node ran with its continuo-api-* Secret attached")
+	})
+
+	t.Run("python-api node fails when its Secret is missing", func(t *testing.T) {
+		deleteAPISecret(t, ctx)
+		runID, scheduleName := triggerPythonNodeRun(t, ctx, clients, "py_api")
+		defer cleanupSingleNodeRun(t, ctx, clients, runID, scheduleName)
+
+		verifySchedulerFailed(t, ctx, clients, runID)
+		t.Log("✅ a missing continuo-api-* Secret fails the run instead of hanging it")
+	})
+}
+
+// createAPISecret (re)creates the py_api node's continuo-api-* Secret in the
+// namespace the e2e Jobs run in, holding a dummy PROBE_API_KEY.
+func createAPISecret(t *testing.T, ctx context.Context) {
+	t.Helper()
+	_ = exec.CommandContext(ctx, "kubectl", "delete", "secret", pyAPISecret, "-n", "default", "--ignore-not-found").Run()
+	out, err := exec.CommandContext(ctx, "kubectl", "create", "secret", "generic", pyAPISecret,
+		"-n", "default", "--from-literal=PROBE_API_KEY=e2e-dummy").CombinedOutput()
+	require.NoError(t, err, "create %s: %s", pyAPISecret, out)
+}
+
+// deleteAPISecret removes the py_api node's continuo-api-* Secret; deleting an
+// absent Secret is not an error.
+func deleteAPISecret(t *testing.T, ctx context.Context) {
+	t.Helper()
+	out, err := exec.CommandContext(ctx, "kubectl", "delete", "secret", pyAPISecret,
+		"-n", "default", "--ignore-not-found").CombinedOutput()
+	require.NoError(t, err, "delete %s: %s", pyAPISecret, out)
 }
 
 // triggerPythonNodeRun starts a single-node run of the named python fixture
