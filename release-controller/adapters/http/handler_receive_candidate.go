@@ -23,7 +23,14 @@ func (s *Server) handleReceiveCandidate(w http.ResponseWriter, r *http.Request) 
 			http.Error(w, err.Error(), http.StatusConflict)
 			return
 		}
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		if errors.Is(err, handlers.ErrInvalidCandidate) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		// A storage or timeout failure is not the caller's fault and its text
+		// names internals, so it is logged here and answered generically.
+		s.log.Error("receive candidate", "release_id", in.ReleaseID, "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 	// Attempt to advance the queue immediately. This is a safe no-op when a

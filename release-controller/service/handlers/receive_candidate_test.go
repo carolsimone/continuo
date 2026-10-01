@@ -156,3 +156,15 @@ func TestReceiveCandidate_ConflictsWithAVerification(t *testing.T) {
 	})
 	assert.ErrorIs(t, err, handlers.ErrRunKindConflict)
 }
+
+func TestReceiveCandidate_ValidationErrorsWrapErrInvalidCandidate(t *testing.T) {
+	deps, _ := newDeps(time.Unix(100, 0).UTC())
+	input := handlers.ReceiveCandidateInput{Service: "core", ReleaseID: "rel-1", Repo: "o/r", CommitSHA: "sha"}
+	err := handlers.ReceiveCandidate(context.Background(), deps, input)
+	require.ErrorIs(t, err, handlers.ErrInvalidCandidate)
+	require.ErrorContains(t, err, "image_tag is required")
+
+	input.ImageTag = "img"
+	input.Kind = "yaml"
+	require.ErrorIs(t, handlers.ReceiveCandidate(context.Background(), deps, input), handlers.ErrInvalidCandidate)
+}

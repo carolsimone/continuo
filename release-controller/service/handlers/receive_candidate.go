@@ -9,6 +9,11 @@ import (
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 )
 
+// ErrInvalidCandidate marks a submission the caller got wrong (a missing or
+// unsupported field), as opposed to an infrastructure failure while storing it.
+// Callers answer it as a client error and everything else as a server error.
+var ErrInvalidCandidate = errors.New("invalid candidate")
+
 // ReceiveCandidateInput carries the fields required to register a new release
 // candidate. Service, ReleaseID, ImageTag, Repo, and CommitSHA are mandatory;
 // Bootstrap is optional (defaults false) and, when true, promotes the release
@@ -73,15 +78,17 @@ func (i ReceiveCandidateInput) manifestKind() (release.ManifestKind, error) {
 }
 
 // ReceiveCandidate persists a new Release row in StatusReceived, idempotent on
-// the release_id PK. The caller (HTTP handler) is responsible for returning
-// 202 Accepted to CI.
+// the release_id PK. A bad submission returns an error wrapping
+// ErrInvalidCandidate; a run-id kind clash wraps ErrRunKindConflict; any other
+// error is a storage failure. The caller (HTTP handler) is responsible for
+// returning 202 Accepted to CI.
 func ReceiveCandidate(ctx context.Context, d *Deps, in ReceiveCandidateInput) error {
 	if err := in.validate(); err != nil {
-		return err
+		return fmt.Errorf("%w: %v", ErrInvalidCandidate, err)
 	}
 	kind, err := in.manifestKind()
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %v", ErrInvalidCandidate, err)
 	}
 	u := d.NewUoW()
 	if err := u.Begin(ctx); err != nil {
