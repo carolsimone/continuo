@@ -58,4 +58,18 @@ describe('release-client', () => {
     expect(fetchMock.mock.calls[1][0]).toBe('http://rc:8088/verification-runs?verifies=rel-1');
     expect(fetchMock.mock.calls[2][0]).toBe('http://rc:8088/pipeline');
   });
+
+  it('submitRelease POSTs JSON to /releases and returns status and raw text, even on 4xx', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response('{"release_id":"r1","status":"received"}', { status: 202 }))
+      .mockResolvedValueOnce(new Response('image_tag required\n', { status: 400 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const client = createReleaseClient('http://rc:8088/');
+    const input = { release_id: 'r1', service: 'core', image_tag: 'abc' };
+    expect(await client.submitRelease(input)).toEqual({ status: 202, text: '{"release_id":"r1","status":"received"}' });
+    expect(await client.submitRelease(input)).toEqual({ status: 400, text: 'image_tag required\n' });
+    const [calledUrl, init] = fetchMock.mock.calls[0];
+    expect(calledUrl).toBe('http://rc:8088/releases');
+    expect(init).toEqual({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) });
+  });
 });

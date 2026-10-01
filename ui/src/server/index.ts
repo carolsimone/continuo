@@ -67,7 +67,7 @@ async function main() {
   // sign, in which case the Author column simply stays empty.
   const commitAuthorResolver = resolveGithubAppCommitAuthorResolver(githubAppCfg);
 
-  const app = createApp(client, graphClient, auth.app, CONFIG_FILE, RELEASE_CONTROLLER_URL, CHAT_BRIDGE_ENABLED, remediationClient, prCreator, commitAuthorResolver, githubWebBaseUrl(GITHUB_API_BASE_URL));
+  const app = createApp(client, graphClient, auth.app, CONFIG_FILE, RELEASE_CONTROLLER_URL, CHAT_BRIDGE_ENABLED, remediationClient, prCreator, commitAuthorResolver, githubWebBaseUrl(GITHUB_API_BASE_URL), process.env.AUTH_PUBLIC_URL ? process.env.AUTH_PUBLIC_URL.replace(/\/+$/, '') : undefined);
 
   if (process.env.NODE_ENV === 'production') {
     const staticDir = path.join(__dirname, '../dist');
