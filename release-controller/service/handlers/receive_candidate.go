@@ -14,6 +14,12 @@ import (
 // Callers answer it as a client error and everything else as a server error.
 var ErrInvalidCandidate = errors.New("invalid candidate")
 
+// ErrReleaseIDConflict marks a submission whose release id already names a
+// candidate with a different service, image tag, manifest kind, bootstrap
+// flag or source change. Callers answer it as a conflict, as they do
+// ErrRunKindConflict.
+var ErrReleaseIDConflict = errors.New("release id already names a different candidate")
+
 // ReceiveCandidateInput carries the fields required to register a new release
 // candidate. Service, ReleaseID, ImageTag, Repo, and CommitSHA are mandatory;
 // Bootstrap is optional (defaults false) and, when true, promotes the release
@@ -78,10 +84,12 @@ func (i ReceiveCandidateInput) manifestKind() (release.ManifestKind, error) {
 }
 
 // ReceiveCandidate persists a new Release row in StatusReceived, idempotent on
-// the release_id PK. A bad submission returns an error wrapping
-// ErrInvalidCandidate; a run-id kind clash wraps ErrRunKindConflict; any other
-// error is a storage failure. The caller (HTTP handler) is responsible for
-// returning 202 Accepted to CI.
+// the release_id PK: submitting a release id again with the same facts is a
+// no-op, whatever status the stored candidate has reached. A bad submission
+// returns an error wrapping ErrInvalidCandidate; a run-id kind clash wraps
+// ErrRunKindConflict; a release id that names a candidate with different facts
+// wraps ErrReleaseIDConflict; any other error is a storage failure. The caller
+// (HTTP handler) is responsible for returning 202 Accepted to CI.
 func ReceiveCandidate(ctx context.Context, d *Deps, in ReceiveCandidateInput) error {
 	if err := in.validate(); err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalidCandidate, err)
@@ -103,6 +111,14 @@ func ReceiveCandidate(ctx context.Context, d *Deps, in ReceiveCandidateInput) er
 	if existing != nil {
 		if existing.Kind() != pipeline.KindCandidate {
 			return fmt.Errorf("%w: %s is a %s", ErrRunKindConflict, in.ReleaseID, existing.Kind())
+		}
+		submitted := pipeline.CandidateSubmission{
+			Service: in.Service, ImageTag: in.ImageTag, Kind: kind,
+			Bootstrap: in.Bootstrap, Repo: in.Repo, CommitSHA: in.CommitSHA,
+		}
+		if !existing.MatchesSubmission(submitted) {
+			return fmt.Errorf("%w: release id %q already exists with a different service, image tag, kind, bootstrap flag or source change",
+				ErrReleaseIDConflict, in.ReleaseID)
 		}
 		return u.Commit()
 	}

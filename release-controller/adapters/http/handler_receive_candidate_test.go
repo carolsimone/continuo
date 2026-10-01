@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/liveness"
+	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
+	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/carolsimone/continuo/release-controller/service/uow"
 	"github.com/stretchr/testify/assert"
@@ -85,4 +87,44 @@ func TestHandleReceiveCandidate_StorageFailureIs500WithoutInternalText(t *testin
 	assert.Equal(t, "internal error\n", rec.Body.String())
 	assert.NotContains(t, rec.Body.String(), "10.1.2.3")
 	assert.Contains(t, logged.String(), "connection refused")
+}
+
+// A release id resubmitted with the same facts is accepted again.
+func TestHandleReceiveCandidate_IdenticalResubmitIs202(t *testing.T) {
+	deps, _ := newRetryRemediationDeps(time.Unix(100, 0).UTC())
+	srv := newTestServer(deps)
+
+	require.Equal(t, http.StatusAccepted, postCandidate(srv, validCandidateInput()).Code)
+	require.Equal(t, http.StatusAccepted, postCandidate(srv, validCandidateInput()).Code)
+}
+
+// A release id that already names a candidate with different facts is a
+// conflict, answered with the reason, and leaves the stored candidate as it was.
+func TestHandleReceiveCandidate_ConflictingResubmitIs409(t *testing.T) {
+	deps, releases := newRetryRemediationDeps(time.Unix(100, 0).UTC())
+	srv := newTestServer(deps)
+	require.Equal(t, http.StatusAccepted, postCandidate(srv, validCandidateInput()).Code)
+
+	in := validCandidateInput()
+	in.ImageTag = "img:2"
+	rec := postCandidate(srv, in)
+
+	require.Equal(t, http.StatusConflict, rec.Code)
+	assert.Contains(t, rec.Body.String(), `release id "rel-1" already exists`)
+	assert.Equal(t, "img:1", releases.releases["rel-1"].ImageTags()["core"])
+}
+
+// A candidate that has already left the queue still answers an identical
+// resubmit with 202.
+func TestHandleReceiveCandidate_IdenticalResubmitOfAnAdvancedCandidateIs202(t *testing.T) {
+	now := time.Unix(100, 0).UTC()
+	deps, releases := newRetryRemediationDeps(now)
+	r := pipeline.NewCandidate("rel-1", "core", "img:1", false, "org/r", "sha", release.ManifestKindDbt, now)
+	r.SetAssembledImageTags(map[string]string{"core": "img:1", "billing": "img:9"})
+	require.NoError(t, r.TransitionToParsing(now))
+	releases.releases["rel-1"] = r
+
+	rec := postCandidate(newTestServer(deps), validCandidateInput())
+
+	require.Equal(t, http.StatusAccepted, rec.Code)
 }

@@ -138,3 +138,44 @@ func TestRehydrate_BuildsTheRightKind(t *testing.T) {
 	require.NotNil(t, c.Candidate())
 	assert.Equal(t, 1, c.RemediationRound(), "a stored round below 1 reads as round 1")
 }
+
+func candidateSubmission() pipeline.CandidateSubmission {
+	return pipeline.CandidateSubmission{
+		Service: "core", ImageTag: "img:1", Kind: release.ManifestKindDbt,
+		Bootstrap: false, Repo: "org/repo", CommitSHA: "abc123",
+	}
+}
+
+func TestMatchesSubmission_SameFactsMatch(t *testing.T) {
+	assert.True(t, candidate(t).MatchesSubmission(candidateSubmission()))
+}
+
+func TestMatchesSubmission_AnyDifferingFactDoesNotMatch(t *testing.T) {
+	for name, mutate := range map[string]func(*pipeline.CandidateSubmission){
+		"service":    func(s *pipeline.CandidateSubmission) { s.Service = "other" },
+		"image tag":  func(s *pipeline.CandidateSubmission) { s.ImageTag = "img:2" },
+		"kind":       func(s *pipeline.CandidateSubmission) { s.Kind = release.ManifestKindPython },
+		"bootstrap":  func(s *pipeline.CandidateSubmission) { s.Bootstrap = true },
+		"repo":       func(s *pipeline.CandidateSubmission) { s.Repo = "org/fork" },
+		"commit sha": func(s *pipeline.CandidateSubmission) { s.CommitSHA = "def456" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := candidateSubmission()
+			mutate(&s)
+			assert.False(t, candidate(t).MatchesSubmission(s))
+		})
+	}
+}
+
+// Activation replaces the image-tag map with every service's tag; the
+// candidate still matches on the tag it holds for its own service.
+func TestMatchesSubmission_HoldsAfterActivationAssemblesImageTags(t *testing.T) {
+	r := candidate(t)
+	r.SetAssembledImageTags(map[string]string{"core": "img:1", "billing": "img:9"})
+	require.NoError(t, r.TransitionToParsing(t0))
+	assert.True(t, r.MatchesSubmission(candidateSubmission()))
+}
+
+func TestMatchesSubmission_AVerificationMatchesNoSubmission(t *testing.T) {
+	assert.False(t, verification(t).MatchesSubmission(candidateSubmission()))
+}
