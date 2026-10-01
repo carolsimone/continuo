@@ -86,6 +86,34 @@ engine_changed="$(mc_checksum --set validation.engine=trino --set validation.cre
 loglevel_changed="$(mc_checksum --set global.logLevel=DEBUG)"
 [ "$loglevel_changed" != "$base" ] || { echo "FAIL: changing a shared ConfigMap value leaves the pod template identical"; exit 1; }
 
+# ciAuth.bindings.*.repositoryId must be a quoted digit string: GitHub's
+# repository_id claim is a string, so an unquoted YAML number would render a
+# binding the ui can never match. The schema refuses it at render time. A valid
+# binding must reach the ui's ci-auth.json and roll the ui pod, and an empty
+# audience must resolve to the origin of auth.publicUrl.
+echo "--- ciAuth: unquoted repositoryId is refused by the schema"
+if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+     --set 'ciAuth.bindings.core[0].repositoryId=812345678' > /dev/null 2> "${tmp}/ciauth.err"; then
+  echo "FAIL: an unquoted (numeric) repositoryId rendered; the ui would never match it"; exit 1
+fi
+grep -q 'repositoryId' "${tmp}/ciauth.err" || { echo "FAIL: unexpected error:"; cat "${tmp}/ciauth.err"; exit 1; }
+
+echo "--- ciAuth: bindings render into ci-auth.json and roll the ui"
+ui_ciauth_checksum() {
+  helm template continuo "$CHART" --kube-version "$KUBE_VERSION" "$@" > "${tmp}/ciauth-probe.yaml"
+  awk '/^kind: Deployment$/{d=1; f=0}
+       d && /app.kubernetes.io\/name: ui$/{f=1}
+       f && /checksum\/ci-auth:/ && !printed {print $2; printed=1}' "${tmp}/ciauth-probe.yaml"
+}
+ci_base="$(ui_ciauth_checksum)"
+[ -n "$ci_base" ] || { echo "FAIL: no checksum/ci-auth on the ui pod template"; exit 1; }
+ci_bound="$(ui_ciauth_checksum --set-string 'ciAuth.bindings.core[0].repositoryId=812345678')"
+[ "$ci_bound" != "$ci_base" ] || { echo "FAIL: changing ciAuth.bindings leaves the ui pod template identical"; exit 1; }
+# The probe now holds the bound render; ci-auth.json is a quoted JSON string, so
+# its inner quotes appear escaped.
+grep -q '\\"repositoryId\\":\\"812345678\\"' "${tmp}/ciauth-probe.yaml" || { echo "FAIL: binding missing from ci-auth.json"; exit 1; }
+grep -q '\\"audience\\":\\"http://localhost:8090\\"' "${tmp}/ciauth-probe.yaml" || { echo "FAIL: audience did not default to the origin of auth.publicUrl"; exit 1; }
+
 # The "continuo-api-" Secret-name prefix is reserved for the operator-created
 # Secrets a python-api node contract may name. A chart fullname inside it would
 # name every chart-created Secret inside it, and so would a user-supplied

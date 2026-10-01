@@ -202,6 +202,20 @@ app.kubernetes.io/name: {{ .service }}
 {{- printf "%s-service-repos" (include "continuo.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
+{{- define "continuo.ciAuthConfigMapName" -}}
+{{- printf "%s-ci-auth" (include "continuo.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- /* The CI-auth file the ui reads; also hashed into the ui pod template. */ -}}
+{{- define "continuo.ciAuth.json" -}}
+{{- $audience := .Values.ciAuth.audience -}}
+{{- if not $audience -}}
+{{-   $u := urlParse .Values.auth.publicUrl -}}
+{{-   $audience = printf "%s://%s" $u.scheme $u.host -}}
+{{- end -}}
+{{- dict "issuer" (.Values.ciAuth.issuer | trimSuffix "/") "audience" $audience "bindings" (default (dict) .Values.ciAuth.bindings) | toJson -}}
+{{- end -}}
+
 {{/* Job/Secret name carrying a fixed discriminator (what the object IS, e.g.
      "-db-init-migrate") and, optionally, a "-r<N>" revision suffix. Builds
      the FULL suffix (discriminator, or discriminator+revision) FIRST and
@@ -474,4 +488,37 @@ capabilities:
 {{- else -}}
 {{- fail (printf "unknown secretEnv ref %q" .ref) -}}
 {{- end -}}
+{{- end -}}
+
+{{- /* Dex's full config. Takes the client secret as a parameter so the
+       deployment can hash the config with a placeholder (the generated
+       secret differs between renders). */ -}}
+{{- define "continuo.dex.config" -}}
+{{- $root := .root -}}
+issuer: {{ include "continuo.auth.issuerUrl" $root }}
+storage:
+  type: memory
+web:
+  http: 0.0.0.0:5556
+oauth2:
+  skipApprovalScreen: true
+  # Lets a user exchange the demo password for an ID token with one curl
+  # (grant_type=password), used as an API bearer token by the tutorial.
+  passwordConnector: local
+expiry:
+  # The ui keeps its own server-side session, so this bounds only how long an
+  # ID token used as an API bearer stays valid.
+  idTokens: 1h
+staticClients:
+  - id: continuo-ui
+    name: Continuo UI
+    redirectURIs:
+      - {{ printf "%s/auth/callback" ($root.Values.auth.publicUrl | trimSuffix "/") | quote }}
+    secret: {{ .clientSecret | quote }}
+enablePasswordDB: true
+staticPasswords:
+  - email: {{ $root.Values.dex.demoUser.email | quote }}
+    hash: {{ $root.Values.dex.demoUser.passwordHash | quote }}
+    username: {{ $root.Values.dex.demoUser.username | quote }}
+    userID: {{ $root.Values.dex.demoUser.userID | quote }}
 {{- end -}}

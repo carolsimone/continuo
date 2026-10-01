@@ -218,6 +218,30 @@ auth:
   viewerEmails: ""
   roleMapping: ""
 
+# Lets CD pipelines release through the public API (POST <publicUrl>/api/v1/releases)
+# with their GitHub Actions OIDC token instead of a stored secret. The ui verifies
+# the token against `issuer` and lets it release only the services bound to its
+# repository below. Humans are not configured here: their access follows the
+# auth role settings (an operator may release any service).
+ciAuth:
+  # GitHub Actions OIDC issuer. GitHub Enterprise Server: https://<host>/_services/token
+  issuer: https://token.actions.githubusercontent.com
+  # Audience the workflow must request (core.getIDToken(<audience>) or
+  # ACTIONS_ID_TOKEN_REQUEST_URL&audience=<audience>). Empty = the origin of
+  # auth.publicUrl, so a token minted for one install is useless at another.
+  audience: ""
+  # service -> GitHub identities allowed to release it. Empty = no CI access.
+  # repositoryId is required and must be QUOTED digits (`gh api repos/OWNER/REPO --jq .id`);
+  # names are never trusted. Optional, all must match: ref, refProtected,
+  # environment, workflowRef. allowBootstrap (default false) permits
+  # `bootstrap: true`, which promotes without validation. Example:
+  #   bindings:
+  #     core:
+  #       - repositoryId: "812345678"
+  #         ref: [refs/heads/main]
+  #         allowBootstrap: false
+  bindings: {}
+
 llm:
   # Optional. Empty apiKey: agent-chat/agent-remediation boot and serve, but
   # LLM calls fail until it is set.
@@ -535,10 +559,14 @@ services:
       GITHUB_APP_ID: __GITHUB_APP_ID__
       GITHUB_APP_INSTALLATION_ID: __GITHUB_APP_INSTALLATION_ID__
       GITHUB_API_BASE_URL: https://api.github.com
+      CI_AUTH_CONFIG_PATH: /app/ci-auth/ci-auth.json
     volumeMounts:
       - {name: cancel-config, mountPath: /app/config, readOnly: true}
+      - {name: ci-auth, mountPath: /app/ci-auth, readOnly: true}
     volumes:
       - name: cancel-config
+        configMap: {name: ""}
+      - name: ci-auth
         configMap: {name: ""}
 
   - name: topology-controller

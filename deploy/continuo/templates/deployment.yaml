@@ -40,6 +40,10 @@ spec:
         # stable across upgrades that change nothing, and an unchanged install
         # does not roll.
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") $ | sha256sum }}
+        {{- if eq $svc.name "ui" }}
+        # The ui reads its CI bindings once at boot; a changed binding must roll it.
+        checksum/ci-auth: {{ include "continuo.ciAuth.json" $ | sha256sum }}
+        {{- end }}
       labels:
         {{- include "continuo.selectorLabels" (dict "root" $ "service" $svc.name) | nindent 8 }}
     spec:
@@ -305,7 +309,11 @@ spec:
         {{- range $volume := $svc.volumes }}
         - name: {{ $volume.name }}
           configMap:
+            {{- if eq $volume.name "ci-auth" }}
+            name: {{ default (include "continuo.ciAuthConfigMapName" $) $volume.configMap.name }}
+            {{- else }}
             name: {{ default (include "continuo.cancelConfigMapName" $) $volume.configMap.name }}
+            {{- end }}
         {{- end }}
         {{- else if eq $svc.name "agent-remediation" }}
         {{- range $volume := $svc.volumes }}

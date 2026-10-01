@@ -12,6 +12,11 @@ shipped in those.
 
 ## [Unreleased]
 
+### Added
+- `ciAuth` values: CD pipelines release through `POST <publicUrl>/api/v1/releases` with their GitHub Actions OIDC token. `ciAuth.bindings` maps each service to the GitHub `repositoryId` (plus optional `ref`, `refProtected`, `environment`, `workflowRef`, `allowBootstrap`) allowed to release it. Empty bindings (the default) grant no CI access.
+- The ui serves `GET /api/v1/releases/{id}` and `GET /api/v1/current-prod` for pipelines polling a release.
+- Bundled Dex enables the password grant and issues ID tokens valid for 1 hour, so an operator can obtain an API bearer token with one `curl`.
+
 ## [0.8.1] - 2026-10-01
 
 ### Fixed
