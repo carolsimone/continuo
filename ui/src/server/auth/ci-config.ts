@@ -77,6 +77,8 @@ export function parseCiAuthConfig(raw: unknown, opts: { allowInsecureIssuer: boo
     if (service === '' || !Array.isArray(list)) throw new Error(`ciAuth.bindings.${service}: expected a list of bindings`);
     bindings.set(service, list.map((b, i) => parseBinding(service, i, b)));
   }
+  // Trailing slashes are dropped because GitHub Actions' iss never ends in "/",
+  // so an issuer value written with one would otherwise match no token.
   return { issuer: raw.issuer.replace(/\/+$/, ''), audience: raw.audience, bindings };
 }
 
