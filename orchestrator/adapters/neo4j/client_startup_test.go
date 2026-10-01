@@ -68,12 +68,38 @@ func TestWaitForConnectivity_GivesUpAtTimeoutWithTheLastError(t *testing.T) {
 	if !errors.As(err, &ce) {
 		t.Fatalf("the last connectivity error must stay inspectable, got %v", err)
 	}
-	var total time.Duration
-	for _, d := range rec.delays {
-		total += d
+	want := []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}
+	if len(rec.delays) != len(want) {
+		t.Fatalf("delays = %v, want %v: it must retry until the next pause would overrun the budget", rec.delays, want)
 	}
-	if total > policy.Timeout {
-		t.Fatalf("waited %s, more than the %s budget", total, policy.Timeout)
+	for i := range want {
+		if rec.delays[i] != want[i] {
+			t.Fatalf("delays = %v, want %v", rec.delays, want)
+		}
+	}
+}
+
+// A verify call that blocks (the driver can wait out its own acquisition timeout)
+// must not outlive the policy budget: the timeout is wall-clock, not a sum of
+// backoff pauses.
+func TestWaitForConnectivity_TimeoutBoundsABlockingVerify(t *testing.T) {
+	policy := StartupPolicy{Timeout: 150 * time.Millisecond, InitialDelay: 10 * time.Millisecond, MaxDelay: 10 * time.Millisecond}
+	verify := func(ctx context.Context) error {
+		<-ctx.Done()
+		return connErr()
+	}
+	start := time.Now()
+
+	err := waitForConnectivity(context.Background(), verify, policy, sleepCtx, quietLogger())
+
+	if err == nil {
+		t.Fatal("expected an error once the budget ran out")
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("waited %s: a blocking verify outlived the %s budget", elapsed, policy.Timeout)
+	}
+	if errors.Is(err, context.Canceled) {
+		t.Fatalf("a budget timeout must not read as a caller cancel: %v", err)
 	}
 }
 

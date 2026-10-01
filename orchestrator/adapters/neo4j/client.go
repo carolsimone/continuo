@@ -26,9 +26,12 @@ type neo4jClient struct {
 // at boot. The wait covers a Neo4j that is still starting, or whose Service name
 // or endpoint has not propagated yet, which is the normal state when a Deployment
 // rolls out next to a StatefulSet. A value the driver cannot honour (bad
-// credentials, malformed URI) is not retried: it fails at once.
+// credentials, malformed URI) is not retried: it fails at once. TLS handshake
+// failures are the exception: the driver reports them as connectivity errors, so
+// they are retried until the budget is spent.
 type StartupPolicy struct {
-	// Timeout is the total time to wait before giving up with the last error.
+	// Timeout is the wall-clock budget for the whole wait, attempts included,
+	// before giving up with the last error.
 	Timeout time.Duration
 	// InitialDelay is the pause after the first failed attempt; it doubles per
 	// attempt up to MaxDelay.
@@ -38,10 +41,12 @@ type StartupPolicy struct {
 
 // DefaultStartupPolicy covers a cold bundled Neo4j (a JVM that takes a couple of
 // minutes to open its Bolt port) without hiding a real outage for long.
-var DefaultStartupPolicy = StartupPolicy{
-	Timeout:      5 * time.Minute,
-	InitialDelay: time.Second,
-	MaxDelay:     10 * time.Second,
+func DefaultStartupPolicy() StartupPolicy {
+	return StartupPolicy{
+		Timeout:      5 * time.Minute,
+		InitialDelay: time.Second,
+		MaxDelay:     10 * time.Second,
+	}
 }
 
 // NewNeo4jClient connects to Neo4j and fails if it is not reachable right now.
@@ -92,8 +97,10 @@ func newDriverClient(uri, user, password string, logger *slog.Logger) (*neo4jCli
 }
 
 // waitForConnectivity calls verify until it succeeds, the policy timeout elapses,
-// ctx is cancelled, or verify returns an error that waiting cannot fix. sleep is
-// injected so the backoff is testable without real time.
+// ctx is cancelled, or verify returns an error that waiting cannot fix. The
+// timeout bounds the whole wait, including a verify call that blocks, so the
+// budget is wall-clock time. sleep is injected so the backoff is testable
+// without real time.
 func waitForConnectivity(
 	ctx context.Context,
 	verify func(context.Context) error,
@@ -101,6 +108,10 @@ func waitForConnectivity(
 	sleep func(context.Context, time.Duration) error,
 	logger *slog.Logger,
 ) error {
+	parent := ctx
+	ctx, cancel := context.WithTimeout(ctx, policy.Timeout)
+	defer cancel()
+
 	var waited time.Duration
 	delay := policy.InitialDelay
 	for attempt := 1; ; attempt++ {
@@ -111,17 +122,36 @@ func waitForConnectivity(
 		if !isStartupRetryable(err) {
 			return err
 		}
+		if stopped := waitStopped(parent, ctx, err, waited, attempt); stopped != nil {
+			return stopped
+		}
 		if waited+delay > policy.Timeout {
 			return fmt.Errorf("neo4j still unreachable after %s (%d attempts): %w", waited, attempt, err)
 		}
 		logger.Warn("Neo4j not reachable yet, retrying",
 			"attempt", attempt, "retry_in", delay.String(), "error", err)
 		if serr := sleep(ctx, delay); serr != nil {
+			if stopped := waitStopped(parent, ctx, err, waited, attempt); stopped != nil {
+				return stopped
+			}
 			return fmt.Errorf("waiting for neo4j interrupted: %w (last error: %v)", serr, err)
 		}
 		waited += delay
 		delay = min(delay*2, policy.MaxDelay)
 	}
+}
+
+// waitStopped explains why the wait ended when its context is done: the caller
+// cancelled it (shutdown) or the policy budget ran out. It returns nil while
+// the wait is still live.
+func waitStopped(parent, ctx context.Context, last error, waited time.Duration, attempt int) error {
+	if ctx.Err() == nil {
+		return nil
+	}
+	if parent.Err() != nil {
+		return fmt.Errorf("waiting for neo4j interrupted: %w (last error: %v)", parent.Err(), last)
+	}
+	return fmt.Errorf("neo4j still unreachable after %s (%d attempts): %w", waited, attempt, last)
 }
 
 // isStartupRetryable reports whether err means "Neo4j is not up yet" (an

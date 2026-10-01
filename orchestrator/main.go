@@ -128,8 +128,13 @@ func main() {
 		cfg.Neo4j.User,
 		cfg.Neo4j.Password,
 		logger,
-		neo4jinfra.DefaultStartupPolicy,
+		neo4jinfra.DefaultStartupPolicy(),
 	)
+	if errors.Is(err, context.Canceled) {
+		// A shutdown signal arrived while waiting for Neo4j; nothing was started.
+		logger.Info("Shutdown requested while waiting for Neo4j")
+		os.Exit(0)
+	}
 	if err != nil {
 		logger.Error("Failed to create Neo4j client", "error", err)
 		os.Exit(1)
@@ -279,12 +284,6 @@ func main() {
 		logger,
 	)
 	go retentionSweeper.Run(ctx)
-
-	// ========================================================================
-	// MARK STARTUP COMPLETE (the health server itself started before Neo4j init)
-	// ========================================================================
-
-	started.Store(true)
 
 	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
 		return healthServer.Shutdown(ctx)
@@ -480,6 +479,10 @@ func main() {
 			logger.Error("gRPC server error", "error", err)
 		}
 	}()
+
+	// Everything is initialised and serving: readiness (held false by the
+	// "startup" probe since the health server came up) may now turn true.
+	started.Store(true)
 
 	// Block until the graceful-shutdown sequence has fully completed: stop
 	// intake, drain in-flight goroutines, then close infra. No fixed sleep.
