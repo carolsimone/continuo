@@ -121,6 +121,9 @@ All should be added to the `docker-compose.yml` file at the root of the project.
 **Running the e2e test:**
 Please read: `tests/e2e/README.md`.
 
+**Database schema in integration tests:**
+Integration tests run against the schema the Flyway migrations in `db/migration/` built (`make test-deps-up` applies them). A test never issues DDL, never replays migrations, and never creates test-only tables or databases; it cleans up by `TRUNCATE` or `DELETE` of the rows it owns. A test-only schema drifts from production, and a `DROP` on a shared database breaks every other suite that uses it. A test whose tables are missing fails with a message to run the migrations, rather than rebuilding them.
+
 # Deployment
 Continuo deploys as a Helm chart; see `deploy/README.md` for install modes and values.
 Provisioning the infrastructure a production install runs against, and obtaining cluster
