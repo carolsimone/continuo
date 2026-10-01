@@ -17,6 +17,9 @@ shipped in those.
 - The ui serves `GET /api/v1/releases/{id}` and `GET /api/v1/current-prod` for pipelines polling a release.
 - Bundled Dex enables the password grant and issues ID tokens valid for 1 hour, so an operator can obtain an API bearer token with one `curl`.
 
+### Fixed
+- release-controller and remediation receive their HTTP port under the variable they read (`RELEASE_CONTROLLER_HTTP_PORT`, `REMEDIATION_HTTP_PORT`); agent-remediation no longer receives an unused `HTTP_PORT`.
+
 ## [0.8.1] - 2026-10-01
 
 ### Fixed
@@ -25,9 +28,6 @@ shipped in those.
 
 ### Changed
 - The state database migration drops the unused `task_tracker.manifest_version` column that 0.8.0 kept for rollout safety. **Upgrade through 0.8.0 first.** An install going straight from a release before 0.8.0 to this one runs the drop while the old state pods still read and write the column, and they fail until replaced. Installs already on 0.8.0 are unaffected.
-
-### Fixed
-- release-controller and remediation receive their HTTP port under the variable they read (`RELEASE_CONTROLLER_HTTP_PORT`, `REMEDIATION_HTTP_PORT`); agent-remediation no longer receives an unused `HTTP_PORT`.
 
 ## [0.8.0] - 2026-10-01
 
