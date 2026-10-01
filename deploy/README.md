@@ -107,8 +107,10 @@ field you set must match the token; `repositoryId` is the only required one.
 | `allowBootstrap` | none | Permits `"bootstrap": true` (default `false`). |
 
 A service may list several bindings; a token that matches any one of them may
-release it. With no bindings (the default) no pipeline can release through CI
-tokens. The other `ciAuth` keys are `issuer` (default
+release it. With no bindings (the default) no pipeline can use the API: `ui`
+does not trust the GitHub issuer at all, so every CI token is a `401`. A token
+whose repository matches no binding is refused on every route, including
+`GET /api/v1/current-prod`. The other `ciAuth` keys are `issuer` (default
 `https://token.actions.githubusercontent.com`; GitHub Enterprise Server uses
 `https://<host>/_services/token`) and `audience`, which defaults to the origin of
 `auth.publicUrl` (scheme, host and port, no path). Changing `ciAuth` rolls the
@@ -117,9 +119,13 @@ tokens. The other `ciAuth` keys are `issuer` (default
 ### 3. Call the API from the workflow
 
 The workflow requests a token whose audience is the same origin continuo expects,
-then submits the release and polls it to a terminal status. `bootstrap`, `kind`
-and the other submit fields are described below; this example releases a dbt
-service, so it sends only the three required fields.
+then submits the release and polls it to a terminal status. This example
+releases a dbt service, so it sends only the three required fields. `kind`
+names how continuo reads the service's artifact: `dbt` (the default when absent)
+or `python`. The first release of a service has no production version to
+validate against, so it is sent with `"bootstrap": true`, which needs a binding
+with `allowBootstrap: true`. These and the other submit fields are described
+below.
 
 ```yaml
 permissions:
@@ -128,8 +134,10 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     env:
-      CONTINUO_URL: https://continuo.example.com   # exactly auth.publicUrl, no trailing slash
+      # The origin of auth.publicUrl: scheme://host[:port], no path, no trailing slash.
+      CONTINUO_URL: https://continuo.example.com
     steps:
       - name: Submit release to continuo
         run: |
@@ -142,9 +150,12 @@ jobs:
             -H "Authorization: Bearer $(token)" -H 'content-type: application/json' \
             -d "$(jq -n --arg id "$RELEASE_ID" --arg tag "${GITHUB_SHA::7}" \
                   '{release_id:$id, service:"core", image_tag:$tag}')"
-          until s=$(curl -sS -H "Authorization: Bearer $(token)" \
-                      "$CONTINUO_URL/api/v1/releases/$RELEASE_ID") && \
-                [ "$(jq -r .terminal <<<"$s")" = true ]; do sleep 10; done
+          for _ in $(seq 1 300); do              # 300 polls x 10 s = 50 minutes
+            s=$(curl -sS -H "Authorization: Bearer $(token)" \
+                  "$CONTINUO_URL/api/v1/releases/$RELEASE_ID") || s='{}'
+            [ "$(jq -r .terminal <<<"$s")" = true ] && break
+            sleep 10
+          done
           jq . <<<"$s"; [ "$(jq -r .status <<<"$s")" = promoted ]
 ```
 
@@ -163,8 +174,11 @@ All three routes live under `/api/v1` on the `ui`. Each takes
 | `GET /api/v1/current-prod` | Which release production is serving: `{current_prod_release_id, node_count, updated_at}`. An empty `current_prod_release_id` means production has never been seeded. |
 
 **Submit body.** `release_id`, `service` and `image_tag` are required;
-`bootstrap` (a JSON boolean), `kind`, `repo` and `commit_sha` are optional. Any
-other field is a `400`. With a CI token, `repo` and `commit_sha` are taken from
+`bootstrap` (a JSON boolean), `kind` (`dbt`, the default, or `python`), `repo`
+and `commit_sha` are optional. Any other field is a `400`. `release_id` must
+match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`: it starts with a letter or digit and
+continues with letters, digits, `.`, `_` or `-`, at most 128 characters in all;
+anything else is a `400`. With a CI token, `repo` and `commit_sha` are taken from
 the token (`repository` and `sha`): leave them out, or send values equal to the
 token's, because a different value is a `403` `claim_mismatch`. A person calling
 with their own token (see [AUTH.md](AUTH.md#bearer-tokens)) must send `repo` and
@@ -172,25 +186,26 @@ with their own token (see [AUTH.md](AUTH.md#bearer-tokens)) must send `repo` and
 for the first release of a service; a CI token may send it only when its
 binding sets `allowBootstrap`. Submitting the same `release_id` again with the
 same body is idempotent and answers `202`; the same `release_id` with a
-different service, bootstrap flag, `repo` or `commit_sha` is a `409`
-`release_kind_conflict`, so use a fresh id for a new release.
+different service, `image_tag`, `kind`, bootstrap flag, `repo` or `commit_sha`
+is a `409` `release_kind_conflict`, so use a fresh id for a new release.
 
 **Release read.** The answer carries `release_id`, `service`, `status`,
 `terminal` (`true` once the status is `promoted`, `rejected` or `superseded`),
 `bootstrap`, `repo`, `commit_sha`, `reject_reason`, `reject_detail`, and `ui_url`,
 the release's page in the dashboard. A CI token can read only releases of the
-services its bindings grant.
+services its bindings grant; a release of any other service answers `404`
+`not_found`, exactly as a release that does not exist.
 
 **Errors.** Every failure is JSON, `{"error": "<message>", "code": "<code>"}`.
 
 | Status | `code` | Meaning |
 |---|---|---|
-| 400 | `bad_request` | Malformed JSON, an unknown or mistyped field, or a missing required field. |
+| 400 | `bad_request` | Malformed JSON, an unknown or mistyped field, a missing required field, or a `release_id` outside the pattern above. |
 | 401 | `invalid_token` | The bearer token is malformed, expired, for the wrong audience, from an untrusted issuer, signed with an algorithm other than RS256, or valid for longer than one hour. The response carries `WWW-Authenticate: Bearer error="invalid_token"`. A request with no credential at all answers `401` with code `unauthenticated`. |
-| 403 | `forbidden` | The identity may not do this: a repository not bound to the service, a viewer submitting, or a CI token calling any other route. |
+| 403 | `forbidden` | The identity may not do this: a repository not bound to the service it submits, a repository bound to no service at all (on every route), a viewer submitting, or a CI token calling any other route. |
 | 403 | `claim_mismatch` | The body's `repo` or `commit_sha` differs from the token's. |
 | 403 | `bootstrap_not_allowed` | `"bootstrap": true` from a binding without `allowBootstrap`. |
-| 404 | `not_found` | No such release. |
+| 404 | `not_found` | No such release, a release of a service the CI token's repository is not bound to, or an id outside the `release_id` pattern. |
 | 409 | `release_kind_conflict` | The `release_id` already exists with different content. |
 | 429 | `rate_limited` | More than 30 submits in a minute from one principal (a repository for CI, a user for a person), counted per `ui` pod. |
 | 503 | `auth_unavailable` | The token's issuer could not be reached; the dashboard keeps working. Retry. |
@@ -207,6 +222,13 @@ services its bindings grant.
   by default; a cluster-wide egress policy or a forced proxy must allow it. While
   the issuer is unreachable, bearer calls answer `503` `auth_unavailable` and
   the browser login is unaffected.
+- Where egress must go through a proxy, add `HTTPS_PROXY` together with
+  `NODE_USE_ENV_PROXY=1` to the `ui` entry's `env` in `services`, plus
+  `NO_PROXY` covering the in-cluster service names the `ui` calls
+  (`release-controller`, `state`, `orchestrator`, `agent-remediation`, and your
+  IdP when it is in-cluster). The `ui` runs on Node.js 26, whose built-in
+  `fetch` honours the proxy variables only when `NODE_USE_ENV_PROXY=1` is set;
+  without it the key fetch ignores `HTTPS_PROXY` and tries the issuer directly.
 
 ## Requirements at a glance
 

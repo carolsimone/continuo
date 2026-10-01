@@ -205,19 +205,30 @@ Resolution order at login (first match wins, strongest role wins on ties):
 Besides the browser session, `ui` accepts an OIDC ID token in an
 `Authorization: Bearer <token>` header. This is how a person scripts against the
 API and how a CD pipeline calls the [public release API](README.md#releasing-from-ci-github-actions).
-`ui` trusts tokens from exactly two issuers; the token's `iss` selects which:
+`ui` trusts tokens from at most two issuers; the token's `iss` selects which:
 
 | Issuer | Audience (`aud`) | Identity | What it may do |
 | --- | --- | --- | --- |
 | The login issuer: the IdP configured by `auth.issuerUrl` (bundled Dex, or your own) | The `ui`'s OIDC client id | A person. The role comes from the same rules as a login (see [Role assignment reference](#role-assignment-reference)), resolved from the token's claims on every request. | Whatever the role allows: a viewer reads, an operator reads and changes. A token whose identity has no role is `403`. |
-| `ciAuth.issuer` (GitHub Actions) | `ciAuth.audience`, by default the origin of `auth.publicUrl` | A repository, matched against `ciAuth.bindings` | Only the three `/api/v1` release routes, and only for the services bound to its repository. |
+| `ciAuth.issuer` (GitHub Actions), trusted only while `ciAuth.bindings` holds at least one binding | `ciAuth.audience`, by default the origin of `auth.publicUrl` | A repository, matched against `ciAuth.bindings` | Only the three `/api/v1` release routes, and only for the services bound to its repository. A repository that matches no binding may call none of them, `GET /api/v1/current-prod` included. |
+
+With no bindings (the default), `ui` does not trust the CI issuer at all: a
+GitHub token is a `401` (`untrusted issuer`), and the startup log says that CI
+auth is configured but has no bindings.
 
 Rules that apply to every bearer:
 
-- **The header is the only credential considered.** A request that carries
-  `Authorization` is authenticated by it alone; a token that fails verification
-  is a `401`, never a fallback to a session cookie. A request with no
-  `Authorization` header uses the session cookie as usual.
+- **On `/api`, the header is the only credential considered.** An `/api`
+  request that carries `Authorization` is authenticated by it alone; a header
+  that is not `Bearer <token>`, or a token that fails verification, is a `401`
+  (audited as `bearer_rejected`), never a fallback to a session cookie. An `/api`
+  request with no `Authorization` header uses the session cookie as usual.
+- **Outside `/api` the header is ignored.** The dashboard and the `/auth/*`
+  routes authenticate by session cookie only, so an ingress basic-auth or an
+  auth proxy (oauth2-proxy) that forwards its own `Authorization` header does
+  not lock anyone out of the sign-in page or the dashboard shell. On `/api` that
+  forwarded header is still the credential and answers `401`, so such a proxy
+  must not pass its `Authorization` header through to `ui`.
 - **Signed with RS256.** Tokens using any other algorithm, including `none` and
   HMAC, are rejected, as is a token whose `iss` is not one of the two issuers above.
 - **Valid for at most one hour.** A token whose `exp` is more than 3600 seconds

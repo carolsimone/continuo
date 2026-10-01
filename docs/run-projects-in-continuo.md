@@ -200,6 +200,9 @@ TOKEN=$(curl -s -u "continuo-ui:${CLIENT_SECRET}" http://localhost:5556/dex/toke
 export API=http://localhost:8090/api/v1
 ```
 
+If `echo $TOKEN` prints `null`, the login failed: check that the Dex
+port-forward is running and that the password is right.
+
 That token is your own, as an operator, and it is valid for one hour: when a
 call answers `401`, run the `TOKEN=...` command again. A CD pipeline does not
 log in as a person; it presents its GitHub Actions token instead, as
@@ -970,6 +973,10 @@ docker exec continuo-control-plane crictl images | grep <service>
 
 Remember that `kind load` copies the image at that moment — rebuilding an image
 does not update what the node has, so rebuild *and* reload.
+
+**An API call answers `401` with `"code": "invalid_token"`.** Your `TOKEN` is
+older than one hour and has expired. Run the `TOKEN=...` command from chapter 3
+again.
 
 **A release sits in `received` and never moves.** Releases run a FIFO queue —
 one release is active at a time, and each terminal outcome advances the next. A
