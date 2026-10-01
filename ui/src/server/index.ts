@@ -13,7 +13,7 @@ import { githubWebBaseUrl } from './github/web-base';
 import { createApp } from './app';
 import { assertS3Config } from './s3';
 import { attachChatWebSocket } from './ws/chat';
-import { loadAuthConfig } from './auth/config';
+import { loadAuthConfig, loadPublicUrl } from './auth/config';
 import { buildAuth } from './auth';
 import { loadCiAuthConfig } from './auth/ci-config';
 
@@ -66,7 +66,7 @@ async function main() {
   // sign, in which case the Author column simply stays empty.
   const commitAuthorResolver = resolveGithubAppCommitAuthorResolver(githubAppCfg);
 
-  const app = createApp(client, graphClient, auth.app, CONFIG_FILE, RELEASE_CONTROLLER_URL, CHAT_BRIDGE_ENABLED, remediationClient, prCreator, commitAuthorResolver, githubWebBaseUrl(GITHUB_API_BASE_URL), process.env.AUTH_PUBLIC_URL ? process.env.AUTH_PUBLIC_URL.replace(/\/+$/, '') : undefined);
+  const app = createApp(client, graphClient, auth.app, CONFIG_FILE, RELEASE_CONTROLLER_URL, CHAT_BRIDGE_ENABLED, remediationClient, prCreator, commitAuthorResolver, githubWebBaseUrl(GITHUB_API_BASE_URL), loadPublicUrl(process.env));
 
   if (process.env.NODE_ENV === 'production') {
     const staticDir = path.join(__dirname, '../dist');

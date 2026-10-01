@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { loadAuthConfig, parseDuration } from '../../src/server/auth/config';
+import { loadAuthConfig, loadPublicUrl, parseDuration } from '../../src/server/auth/config';
 
 const oidcEnv = {
   AUTH_MODE: 'oidc',
@@ -63,5 +63,25 @@ describe('parseDuration', () => {
     expect(parseDuration('10m', 'X')).toBe(600);
     expect(parseDuration('8h', 'X')).toBe(8 * 3600);
     expect(() => parseDuration('1d', 'X')).toThrow(/X/);
+  });
+});
+
+describe('loadPublicUrl', () => {
+  it('strips trailing slashes', () => {
+    expect(loadPublicUrl({ AUTH_PUBLIC_URL: 'https://continuo.example.com//' })).toBe('https://continuo.example.com');
+    expect(loadPublicUrl({ AUTH_PUBLIC_URL: 'https://continuo.example.com/ui' })).toBe('https://continuo.example.com/ui');
+  });
+
+  it('is undefined when unset or blank', () => {
+    expect(loadPublicUrl({})).toBeUndefined();
+    expect(loadPublicUrl({ AUTH_PUBLIC_URL: '  ' })).toBeUndefined();
+    expect(loadPublicUrl({ AUTH_PUBLIC_URL: '/' })).toBeUndefined();
+  });
+
+  it('is the value loadAuthConfig uses, and oidc mode still requires it', () => {
+    const cfg = loadAuthConfig(oidcEnv);
+    expect(cfg.mode === 'oidc' && cfg.publicUrl).toBe(loadPublicUrl(oidcEnv));
+    const { AUTH_PUBLIC_URL: _omitted, ...partial } = oidcEnv;
+    expect(() => loadAuthConfig(partial)).toThrow(/AUTH_PUBLIC_URL is required/);
   });
 });
