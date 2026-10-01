@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	grpcinfra "github.com/carolsimone/continuo/orchestrator/adapters/grpc"
@@ -100,12 +101,34 @@ func main() {
 	// INITIALIZE INFRASTRUCTURE
 	// ========================================================================
 
-	// 1. Neo4j client
-	neo4jClient, err := neo4jinfra.NewNeo4jClient(
+	// The health server comes up before any dependency is reachable so the
+	// liveness probe keeps answering while Neo4j is still starting; otherwise a
+	// wait longer than the probe's failure window would restart the pod anyway.
+	// Readiness stays false until startup completes (see the "startup" probe).
+	var started atomic.Bool
+	liveReg.AddDependencyProbe("startup", time.Second, func(context.Context) error {
+		if !started.Load() {
+			return errors.New("startup in progress")
+		}
+		return nil
+	})
+	healthServer := httpinfra.NewHealthServer(cfg.HTTPPort, liveReg, logger)
+	go func() {
+		if err := healthServer.Start(); err != nil {
+			logger.Error("Health server error", "error", err)
+		}
+	}()
+
+	// 1. Neo4j client. Neo4j is a separate workload that may still be starting
+	// (or its Service not yet resolvable) when this pod boots, so wait for it
+	// with backoff instead of exiting and relying on a pod restart.
+	neo4jClient, err := neo4jinfra.NewNeo4jClientWithRetry(
+		ctx,
 		cfg.Neo4j.URI,
 		cfg.Neo4j.User,
 		cfg.Neo4j.Password,
 		logger,
+		neo4jinfra.DefaultStartupPolicy,
 	)
 	if err != nil {
 		logger.Error("Failed to create Neo4j client", "error", err)
@@ -258,16 +281,10 @@ func main() {
 	go retentionSweeper.Run(ctx)
 
 	// ========================================================================
-	// START HTTP HEALTH CHECK SERVER
+	// MARK STARTUP COMPLETE (the health server itself started before Neo4j init)
 	// ========================================================================
 
-	healthServer := httpinfra.NewHealthServer(cfg.HTTPPort, liveReg, logger)
-
-	go func() {
-		if err := healthServer.Start(); err != nil {
-			logger.Error("Health server error", "error", err)
-		}
-	}()
+	started.Store(true)
 
 	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
 		return healthServer.Shutdown(ctx)
