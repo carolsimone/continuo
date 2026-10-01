@@ -168,8 +168,9 @@ export function auditMutations(): RequestHandler {
   return (req, res, next) => {
     if (!MUTATING.has(req.method)) return next();
     res.on('finish', () => {
+      const p = principalOf(req);
       audit('api_mutation', {
-        user_id: req.user?.userId, email: req.user?.email, role: req.user?.role,
+        ...(p ? principalAuditFields(p) : {}),
         method: req.method, path: req.originalUrl, outcome: res.statusCode,
       });
     });

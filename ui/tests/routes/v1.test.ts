@@ -14,13 +14,30 @@ const ci = (grants: Record<string, boolean> = { core: false }): Principal => ({
   grants: new Map(Object.entries(grants).map(([s, b]) => [s, { allowBootstrap: b }])),
 });
 
+// Like release-controller, the fake keeps the first submission of a release_id
+// and answers 202 to later ones; getRelease returns what was stored.
 function fakeClient(over: Partial<ReleaseClient> = {}): ReleaseClient {
+  const stored = new Map<string, Record<string, unknown>>();
   return {
-    listReleases: vi.fn(), getRelease: vi.fn(), getCurrentProd: vi.fn(), retryRemediation: vi.fn(),
+    listReleases: vi.fn(), getCurrentProd: vi.fn(), retryRemediation: vi.fn(),
     getVerificationRun: vi.fn(), listVerificationRuns: vi.fn(), getPipeline: vi.fn(),
-    submitRelease: vi.fn(async (b) => ({ status: 202, text: JSON.stringify({ release_id: b.release_id, status: 'received' }) })),
+    submitRelease: vi.fn(async (b) => {
+      if (!stored.has(String(b.release_id))) stored.set(String(b.release_id), { ...b, changed_service: b.service });
+      return { status: 202, text: JSON.stringify({ release_id: b.release_id, status: 'received' }) };
+    }),
+    getRelease: vi.fn(async (id: string) => {
+      const r = stored.get(id);
+      if (!r) throw new HttpError(404, 'not found');
+      return r;
+    }),
     ...over,
   } as ReleaseClient;
+}
+
+function auditLines(spy: ReturnType<typeof vi.spyOn>): Record<string, unknown>[] {
+  return spy.mock.calls
+    .map((c) => { try { return JSON.parse(String(c[0])); } catch { return null; } })
+    .filter((l): l is Record<string, unknown> => l !== null && l.audit === true && l.event === 'release_submit');
 }
 
 function appAs(p: Principal, client: ReleaseClient, publicUrl = 'https://continuo.example.com') {
@@ -94,6 +111,43 @@ describe('POST /api/v1/releases', () => {
     expect((await request(appAs(operator, down)).post('/api/v1/releases').send(body)).status).toBe(503);
   });
 
+  it('an id already held for another service or commit is a conflict, not a 202', async () => {
+    const client = fakeClient();
+    const preclaim = { ...body, service: 'marketing', release_id: 'taken' };
+    expect((await request(appAs(operator, client)).post('/api/v1/releases').send({ ...preclaim, repo: 'o/r', commit_sha: 'c0' })).status).toBe(202);
+
+    const app = appAs(ci({ core: false }), client);
+    const otherService = await request(app).post('/api/v1/releases').send({ ...body, release_id: 'taken' });
+    expect(otherService.status).toBe(409);
+    expect(otherService.body).toEqual({ error: 'release id "taken" already exists with a different service or provenance', code: 'release_kind_conflict' });
+
+    // Same service, but the stored commit differs from this token's sha.
+    await request(appAs(operator, client)).post('/api/v1/releases').send({ ...body, release_id: 'same-svc', repo: 'carolsimone/continuo-demo', commit_sha: 'other-sha' });
+    const otherCommit = await request(app).post('/api/v1/releases').send({ ...body, release_id: 'same-svc' });
+    expect(otherCommit.status).toBe(409);
+    expect(otherCommit.body.code).toBe('release_kind_conflict');
+  });
+
+  it('a stored bootstrap flag that differs from the submission is a conflict', async () => {
+    const client = fakeClient();
+    await request(appAs(operator, client)).post('/api/v1/releases').send({ ...body, release_id: 'b1', bootstrap: true, repo: 'carolsimone/continuo-demo', commit_sha: 'abc1234def' });
+    const res = await request(appAs(ci(), client)).post('/api/v1/releases').send({ ...body, release_id: 'b1' });
+    expect(res.status).toBe(409);
+  });
+
+  it('an identical resubmit stays 202', async () => {
+    const app = appAs(ci(), fakeClient());
+    expect((await request(app).post('/api/v1/releases').send(body)).status).toBe(202);
+    expect((await request(app).post('/api/v1/releases').send(body)).status).toBe(202);
+  });
+
+  it('503 when the read-back after a 202 fails', async () => {
+    const client = fakeClient({ getRelease: vi.fn(async () => { throw new TypeError('fetch failed'); }) });
+    const res = await request(appAs(ci(), client)).post('/api/v1/releases').send(body);
+    expect(res.status).toBe(503);
+    expect(res.body.code).toBe('upstream_unavailable');
+  });
+
   it('rate-limits submissions per principal', async () => {
     const app = appAs(ci(), fakeClient());
     for (let i = 0; i < SUBMIT_RATE_LIMIT_PER_MINUTE; i++) {
@@ -102,6 +156,55 @@ describe('POST /api/v1/releases', () => {
     const res = await request(app).post('/api/v1/releases').send(body);
     expect(res.status).toBe(429);
     expect(res.body.code).toBe('rate_limited');
+  });
+});
+
+describe('release_submit audit', () => {
+  it('audits a 202 CI submit with the repository identity, service and bootstrap', async () => {
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await request(appAs(ci(), fakeClient())).post('/api/v1/releases').send(body);
+      const lines = auditLines(spy);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toMatchObject({
+        principal: 'ci', repository: 'carolsimone/continuo-demo', repository_id: expect.any(String),
+        service: 'core', release_id: 'rel-1', bootstrap: false, outcome: 202,
+      });
+    } finally { spy.mockRestore(); }
+  });
+
+  it('audits a 400 submit, recording only string service and release_id', async () => {
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await request(appAs(operator, fakeClient())).post('/api/v1/releases').send({ ...body, service: 'core', release_id: 7, bootstrap: 'true' });
+      const lines = auditLines(spy);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toMatchObject({ principal: 'human', user_id: 'i|o', service: 'core', bootstrap: false, outcome: 400 });
+      expect(lines[0].release_id).toBeUndefined();
+    } finally { spy.mockRestore(); }
+  });
+
+  it('audits a rate-limited submit with the principal and outcome 429', async () => {
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const app = appAs(ci(), fakeClient());
+      for (let i = 0; i < SUBMIT_RATE_LIMIT_PER_MINUTE; i++) {
+        await request(app).post('/api/v1/releases').send({ ...body, release_id: `r${i}` });
+      }
+      await request(app).post('/api/v1/releases').send(body);
+      const lines = auditLines(spy);
+      expect(lines).toHaveLength(SUBMIT_RATE_LIMIT_PER_MINUTE + 1);
+      expect(lines[lines.length - 1]).toMatchObject({ principal: 'ci', repository: 'carolsimone/continuo-demo', service: 'core', outcome: 429 });
+    } finally { spy.mockRestore(); }
+  });
+
+  it('audits a 409 conflict outcome', async () => {
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const client = fakeClient({ getRelease: vi.fn(async () => ({ changed_service: 'marketing' })) });
+      await request(appAs(ci(), client)).post('/api/v1/releases').send(body);
+      expect(auditLines(spy).map((l) => l.outcome)).toEqual([409]);
+    } finally { spy.mockRestore(); }
   });
 });
 

@@ -58,14 +58,28 @@ export function projectRelease(rel: Record<string, unknown>, publicUrl?: string)
   };
 }
 
-function auditSubmit(p: Principal, body: Partial<SubmitBody>, outcome: number): void {
+// The audit line for a submit. The body may not have passed validation yet, so
+// only values that are strings (and a literal true for bootstrap) are recorded.
+function auditSubmit(p: Principal, raw: unknown, outcome: number): void {
+  const o = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {};
   audit('release_submit', {
     ...principalAuditFields(p),
-    service: body.service,
-    release_id: body.release_id,
-    bootstrap: body.bootstrap === true,
+    service: typeof o.service === 'string' ? o.service : undefined,
+    release_id: typeof o.release_id === 'string' ? o.release_id : undefined,
+    bootstrap: o.bootstrap === true,
     outcome,
   });
+}
+
+// release-controller accepts a release_id it already holds without comparing
+// it to the submission, so a 202 only means this submission was recorded when
+// the stored release is the one that was sent.
+function matchesStored(body: SubmitBody, stored: Record<string, unknown>): boolean {
+  if (stored.changed_service !== body.service) return false;
+  if ((stored.bootstrap === true) !== (body.bootstrap === true)) return false;
+  if (body.repo !== undefined && stored.repo !== body.repo) return false;
+  if (body.commit_sha !== undefined && stored.commit_sha !== body.commit_sha) return false;
+  return true;
 }
 
 export function createV1Router(releases: ReleaseClient, publicUrl?: string): Router {
@@ -81,13 +95,19 @@ export function createV1Router(releases: ReleaseClient, publicUrl?: string): Rou
     standardHeaders: true,
     legacyHeaders: false,
     keyGenerator: (req) => principalKey(principalOf(req)!),
-    handler: (_req, res) => fail(res, 429, 'rate_limited', 'too many release submissions; retry in a minute'),
+    handler: (req, res) => {
+      auditSubmit(principalOf(req)!, req.body, 429);
+      fail(res, 429, 'rate_limited', 'too many release submissions; retry in a minute');
+    },
   });
 
   router.post('/releases', submitLimiter, async (req, res) => {
     const p = principalOf(req)!;
     const parsed = parseSubmit(req.body);
-    if ('error' in parsed) return fail(res, 400, 'bad_request', parsed.error);
+    if ('error' in parsed) {
+      auditSubmit(p, req.body, 400);
+      return fail(res, 400, 'bad_request', parsed.error);
+    }
     const body = parsed.body;
 
     const decision = authorize(p, { kind: 'release.submit', service: body.service, bootstrap: body.bootstrap === true });
@@ -114,8 +134,20 @@ export function createV1Router(releases: ReleaseClient, publicUrl?: string): Rou
       auditSubmit(p, body, 503);
       return fail(res, 503, 'upstream_unavailable', 'release service unavailable');
     }
-    auditSubmit(p, body, upstream.status);
     if (upstream.status === 202) {
+      let stored: Record<string, unknown>;
+      try {
+        stored = await releases.getRelease(body.release_id);
+      } catch {
+        // The submit is idempotent on release_id, so the caller can retry.
+        auditSubmit(p, body, 503);
+        return fail(res, 503, 'upstream_unavailable', 'release service unavailable');
+      }
+      if (!matchesStored(body, stored)) {
+        auditSubmit(p, body, 409);
+        return fail(res, 409, 'release_kind_conflict', `release id "${body.release_id}" already exists with a different service or provenance`);
+      }
+      auditSubmit(p, body, 202);
       let parsedResp: { release_id?: string; status?: string } = {};
       try {
         parsedResp = JSON.parse(upstream.text);
@@ -124,6 +156,7 @@ export function createV1Router(releases: ReleaseClient, publicUrl?: string): Rou
       }
       return res.status(202).json({ release_id: parsedResp.release_id ?? body.release_id, status: parsedResp.status ?? 'received' });
     }
+    auditSubmit(p, body, upstream.status);
     if (upstream.status === 409) return fail(res, 409, 'release_kind_conflict', upstream.text.trim());
     if (upstream.status === 400) return fail(res, 400, 'bad_request', upstream.text.trim());
     return fail(res, 503, 'upstream_unavailable', 'release service unavailable');
