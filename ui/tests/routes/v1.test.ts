@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import type { Server } from 'node:http';
-import { createV1Router, projectRelease, READ_RATE_LIMIT_PER_MINUTE, SUBMIT_RATE_LIMIT_PER_MINUTE } from '../../src/server/routes/v1';
+import { createV1Router, projectCurrentProd, projectRelease, READ_RATE_LIMIT_PER_MINUTE, SUBMIT_RATE_LIMIT_PER_MINUTE } from '../../src/server/routes/v1';
 import { HttpError, type ReleaseClient } from '../../src/server/release-client';
 import type { Principal } from '../../src/server/auth/principal';
 import { githubClaimsFrom } from '../../src/server/auth/bearer';
@@ -59,6 +59,23 @@ describe('POST /api/v1/releases', () => {
     expect(res.status).toBe(202);
     expect(res.body).toEqual({ release_id: 'rel-1', status: 'received' });
     expect(client.submitRelease).toHaveBeenCalledWith({ ...body, repo: 'carolsimone/continuo-demo', commit_sha: 'abc1234def' });
+  });
+
+  it.each([
+    ['not JSON', 'accepted'],
+    ['a JSON array', '[]'],
+    ['wrong-typed fields', JSON.stringify({ release_id: 1, status: null })],
+  ])('a 202 whose body is %s answers the submitted id and "received"', async (_n, text) => {
+    const client = fakeClient({ submitRelease: vi.fn(async () => ({ status: 202, text })) });
+    const res = await request(appAs(ci(), client)).post('/api/v1/releases').send(body);
+    expect(res.status).toBe(202);
+    expect(res.body).toEqual({ release_id: 'rel-1', status: 'received' });
+  });
+
+  it('forwards only the submission fields that were sent', async () => {
+    const client = fakeClient();
+    await request(appAs(operator, client)).post('/api/v1/releases').send(body);
+    expect(Object.keys((client.submitRelease as ReturnType<typeof vi.fn>).mock.calls[0][0]).sort()).toEqual(['image_tag', 'release_id', 'service']);
   });
 
   it('claim_mismatch when the body contradicts the token', async () => {
@@ -253,6 +270,20 @@ describe('GET /api/v1/releases/:id', () => {
   it('projectRelease: non-terminal status and no publicUrl gives ui_url null', () => {
     expect(projectRelease({ ...rel, status: 'validating' })).toMatchObject({ terminal: false, ui_url: null });
   });
+
+  it('projectRelease: a field of the wrong type becomes its empty value, never a different shape', () => {
+    const odd = { release_id: 7, status: null, changed_service: ['core'], bootstrap: 'true', repo: 1, commit_sha: {}, reject_reason: false, reject_detail: { msg: 'x' } };
+    expect(projectRelease(odd)).toEqual({
+      release_id: '', service: '', status: '', terminal: false, bootstrap: false,
+      repo: '', commit_sha: '', reject_reason: '', reject_detail: '', ui_url: null,
+    });
+  });
+
+  it('503 when release-controller answers a body that is not a JSON object', async () => {
+    const client = fakeClient({ getRelease: vi.fn(async () => null) });
+    const res = await request(appAs(operator, client)).get('/api/v1/releases/x');
+    expect([res.status, res.body.code]).toEqual([503, 'upstream_unavailable']);
+  });
 });
 
 describe('GET /api/v1/current-prod', () => {
@@ -264,6 +295,16 @@ describe('GET /api/v1/current-prod', () => {
       expect(res.status).toBe(200);
       expect(res.body).toEqual({ current_prod_release_id: 'r', node_count: 3, updated_at: 't' });
     }
+  });
+
+  it('a field of the wrong type becomes its empty value', () => {
+    expect(projectCurrentProd({ current_prod_release_id: null, node_count: '3', updated_at: 17 })).toEqual({ current_prod_release_id: '', node_count: 0, updated_at: '' });
+  });
+
+  it('503 when release-controller answers a body that is not a JSON object', async () => {
+    const client = fakeClient({ getCurrentProd: vi.fn(async () => 'oops') });
+    const res = await request(appAs(viewer, client)).get('/api/v1/current-prod');
+    expect([res.status, res.body.code]).toEqual([503, 'upstream_unavailable']);
   });
 
   it('a CI identity bound to no service is forbidden', async () => {

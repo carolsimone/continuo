@@ -1,6 +1,6 @@
 import { Router, type Response } from 'express';
 import { rateLimit } from 'express-rate-limit';
-import { HttpError, type ReleaseClient } from '../release-client';
+import { HttpError, type ReleaseClient, type ReleaseSubmission } from '../release-client';
 import { authorize } from '../auth/authorize';
 import { principalAuditFields, principalKey, type Principal } from '../auth/principal';
 import { principalOf } from '../auth/request-principal';
@@ -20,21 +20,44 @@ const TERMINAL = new Set(['promoted', 'rejected', 'superseded']);
 // downstream, so the public API admits only this shape.
 export const RELEASE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
-type SubmitBody = {
+// A release as GET /api/v1/releases/:id answers it.
+export interface PublicRelease {
   release_id: string;
   service: string;
-  image_tag: string;
-  bootstrap?: boolean;
-  kind?: string;
-  repo?: string;
-  commit_sha?: string;
-};
+  status: string;
+  terminal: boolean;
+  bootstrap: boolean;
+  repo: string;
+  commit_sha: string;
+  reject_reason: string;
+  reject_detail: string;
+  ui_url: string | null;
+}
+
+// The production pointer as GET /api/v1/current-prod answers it.
+export interface PublicCurrentProd {
+  current_prod_release_id: string;
+  node_count: number;
+  updated_at: string;
+}
+
+// The accepted-submission body of POST /api/v1/releases.
+interface PublicSubmitAccepted {
+  release_id: string;
+  status: string;
+}
+
+// release-controller's JSON crosses into the public contract field by field:
+// a value of the wrong type becomes the field's empty value rather than
+// changing the shape a pipeline reads.
+const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
 function fail(res: Response, status: number, code: string, error: string): void {
   res.status(status).json({ error, code });
 }
 
-function parseSubmit(raw: unknown): { body: SubmitBody } | { error: string } {
+function parseSubmit(raw: unknown): { body: ReleaseSubmission } | { error: string } {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return { error: 'body must be a JSON object' };
   const o = raw as Record<string, unknown>;
   const unknown = Object.keys(o).filter((k) => !SUBMIT_FIELDS.has(k));
@@ -49,23 +72,51 @@ function parseSubmit(raw: unknown): { body: SubmitBody } | { error: string } {
   for (const k of ['kind', 'repo', 'commit_sha']) {
     if (o[k] !== undefined && typeof o[k] !== 'string') return { error: `${k} must be a string` };
   }
-  return { body: { ...o } as SubmitBody };
+  const body: ReleaseSubmission = { release_id: o.release_id as string, service: o.service as string, image_tag: o.image_tag as string };
+  if (o.bootstrap !== undefined) body.bootstrap = o.bootstrap as boolean;
+  for (const k of ['kind', 'repo', 'commit_sha'] as const) {
+    if (o[k] !== undefined) body[k] = o[k] as string;
+  }
+  return { body };
 }
 
-export function projectRelease(rel: Record<string, unknown>, publicUrl?: string): Record<string, unknown> {
-  const id = String(rel.release_id ?? '');
+export function projectRelease(rel: Record<string, unknown>, publicUrl?: string): PublicRelease {
+  const id = str(rel.release_id);
+  const status = str(rel.status);
   return {
     release_id: id,
-    service: rel.changed_service ?? '',
-    status: rel.status ?? '',
-    terminal: TERMINAL.has(String(rel.status)),
+    service: str(rel.changed_service),
+    status,
+    terminal: TERMINAL.has(status),
     bootstrap: rel.bootstrap === true,
-    repo: rel.repo ?? '',
-    commit_sha: rel.commit_sha ?? '',
-    reject_reason: rel.reject_reason ?? '',
-    reject_detail: rel.reject_detail ?? '',
+    repo: str(rel.repo),
+    commit_sha: str(rel.commit_sha),
+    reject_reason: str(rel.reject_reason),
+    reject_detail: str(rel.reject_detail),
     ui_url: publicUrl ? `${publicUrl}/releases/${encodeURIComponent(id)}` : null,
   };
+}
+
+export function projectCurrentProd(cp: Record<string, unknown>): PublicCurrentProd {
+  return {
+    current_prod_release_id: str(cp.current_prod_release_id),
+    node_count: typeof cp.node_count === 'number' ? cp.node_count : 0,
+    updated_at: str(cp.updated_at),
+  };
+}
+
+// The 202 body for an accepted submission. release-controller answers 202
+// with {release_id, status}; a body that is not that JSON falls back to the
+// submitted id and "received".
+function acceptedBody(text: string, releaseId: string): PublicSubmitAccepted {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    parsed = undefined;
+  }
+  const o = isObject(parsed) ? parsed : {};
+  return { release_id: str(o.release_id) || releaseId, status: str(o.status) || 'received' };
 }
 
 // The audit line for a submit. The body may not have passed validation yet, so
@@ -147,13 +198,7 @@ export function createV1Router(releases: ReleaseClient, publicUrl?: string): Rou
     }
     if (upstream.status === 202) {
       auditSubmit(p, body, 202);
-      let parsedResp: { release_id?: string; status?: string } = {};
-      try {
-        parsedResp = JSON.parse(upstream.text);
-      } catch {
-        // release-controller always answers 202 with JSON; fall back to the request id.
-      }
-      return res.status(202).json({ release_id: parsedResp.release_id ?? body.release_id, status: parsedResp.status ?? 'received' });
+      return res.status(202).json(acceptedBody(upstream.text, body.release_id));
     }
     auditSubmit(p, body, upstream.status);
     // release-controller answers 409 when the release id already names a run
@@ -170,14 +215,15 @@ export function createV1Router(releases: ReleaseClient, publicUrl?: string): Rou
   router.get('/releases/:id', readLimiter, async (req, res) => {
     const p = principalOf(req)!;
     if (!RELEASE_ID_PATTERN.test(req.params.id)) return fail(res, 404, 'not_found', 'release not found');
-    let rel: Record<string, unknown>;
+    let rel: unknown;
     try {
       rel = await releases.getRelease(req.params.id);
     } catch (err) {
       if (err instanceof HttpError && err.status === 404) return fail(res, 404, 'not_found', 'release not found');
       return fail(res, 503, 'upstream_unavailable', 'release service unavailable');
     }
-    const d = authorize(p, { kind: 'release.read', service: String(rel.changed_service ?? '') });
+    if (!isObject(rel)) return fail(res, 503, 'upstream_unavailable', 'release service unavailable');
+    const d = authorize(p, { kind: 'release.read', service: str(rel.changed_service) });
     if (!d.allow) {
       if (p.kind === 'ci') return fail(res, 404, 'not_found', 'release not found');
       return fail(res, 403, d.code, d.reason);
@@ -188,12 +234,14 @@ export function createV1Router(releases: ReleaseClient, publicUrl?: string): Rou
   router.get('/current-prod', readLimiter, async (req, res) => {
     const d = authorize(principalOf(req)!, { kind: 'prod.read' });
     if (!d.allow) return fail(res, 403, d.code, d.reason);
+    let cp: unknown;
     try {
-      const cp = await releases.getCurrentProd();
-      res.json({ current_prod_release_id: cp.current_prod_release_id, node_count: cp.node_count, updated_at: cp.updated_at });
+      cp = await releases.getCurrentProd();
     } catch {
-      fail(res, 503, 'upstream_unavailable', 'release service unavailable');
+      return fail(res, 503, 'upstream_unavailable', 'release service unavailable');
     }
+    if (!isObject(cp)) return fail(res, 503, 'upstream_unavailable', 'release service unavailable');
+    res.json(projectCurrentProd(cp));
   });
 
   router.use((_req, res) => fail(res, 404, 'not_found', 'no such /api/v1 route'));

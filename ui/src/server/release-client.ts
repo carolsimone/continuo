@@ -1,3 +1,14 @@
+// The body release-controller's POST /releases takes for a candidate release.
+export interface ReleaseSubmission {
+  release_id: string;
+  service: string;
+  image_tag: string;
+  bootstrap?: boolean;
+  kind?: string;
+  repo?: string;
+  commit_sha?: string;
+}
+
 export interface ReleaseClient {
   listReleases(query: Record<string, string>): Promise<any>;
   getRelease(id: string): Promise<any>;
@@ -6,7 +17,7 @@ export interface ReleaseClient {
   getVerificationRun(id: string): Promise<any>;
   listVerificationRuns(releaseId: string): Promise<any>;
   getPipeline(): Promise<any>;
-  submitRelease(body: Record<string, unknown>): Promise<{ status: number; text: string }>;
+  submitRelease(body: ReleaseSubmission): Promise<{ status: number; text: string }>;
 }
 
 export class HttpError extends Error {
