@@ -83,12 +83,16 @@ describe('binding match', () => {
 });
 
 // The policy modules import types only, so authorize() and the binding rules
-// never load the token verifier (jose) or Express.
+// never load the token verifier (jose) or Express. Every import or re-export
+// that names a module must be type-only, and nothing may load one at runtime.
 describe('policy module imports', () => {
   it.each(['principal.ts', 'authorize.ts'])('%s has only type imports', (file) => {
     const src = readFileSync(join(__dirname, '../../src/server/auth', file), 'utf8');
-    const imports = src.split('\n').filter((l) => /^import\s/.test(l));
-    expect(imports.length).toBeGreaterThan(0);
-    for (const line of imports) expect(line).toMatch(/^import type\s/);
+    const fromStatements = src.match(/(^|\n)\s*(import|export)\b[^;]*?\bfrom\s*['"][^'"]+['"]/g) ?? [];
+    expect(src).toMatch(/\bimport type\b/);
+    for (const stmt of fromStatements) expect(stmt.trim()).toMatch(/^(import|export) type\s/);
+    expect(src).not.toMatch(/(^|\n)\s*import\s*['"]/);
+    expect(src).not.toMatch(/\brequire\s*\(/);
+    expect(src).not.toMatch(/\bimport\s*\(/);
   });
 });

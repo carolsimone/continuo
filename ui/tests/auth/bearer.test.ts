@@ -178,6 +178,17 @@ describe('issuer identifier ending in a slash', () => {
     expect(stub.requestedPaths().some((p) => p.startsWith('//'))).toBe(false);
   });
 
+  it('compares iss to the identifier exactly, with or without the trailing slash', async () => {
+    stub = await startStubIssuer(AUD, { trailingSlash: true });
+    const withSlash = createBearerVerifier([{ issuer: stub.issuer, audience: AUD }], { cooldownMs: 0 });
+    const bare = stub.issuer.replace(/\/$/, '');
+    await expect(withSlash.verify(await stub.sign(githubClaims(), { issuer: bare }))).rejects.toThrow(InvalidTokenError);
+
+    const noSlash = createBearerVerifier([{ issuer: bare, audience: AUD }], { cooldownMs: 0 });
+    await expect(noSlash.verify(await stub.sign(githubClaims()))).rejects.toThrow(InvalidTokenError);
+    await expect(noSlash.verify(await stub.sign(githubClaims()))).rejects.toThrow(/untrusted issuer/);
+  });
+
   it('builds the discovery URL without a double slash', () => {
     expect(discoveryUrl('https://idp.example.com/')).toBe('https://idp.example.com/.well-known/openid-configuration');
     expect(discoveryUrl('https://idp.example.com/tenant/')).toBe('https://idp.example.com/tenant/.well-known/openid-configuration');
