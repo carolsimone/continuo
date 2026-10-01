@@ -161,7 +161,12 @@ export function createV1Router(releases: ReleaseClient, publicUrl?: string): Rou
     standardHeaders: true,
     legacyHeaders: false,
     keyGenerator: (req) => principalKey(principalOf(req)!),
-    handler: (_req, res) => fail(res, 429, 'rate_limited', 'too many reads; retry in a minute'),
+    handler: (req, res) => {
+      audit('release_read_limited', {
+        ...principalAuditFields(principalOf(req)!), method: req.method, path: req.originalUrl, outcome: 429,
+      });
+      fail(res, 429, 'rate_limited', 'too many reads; retry in a minute');
+    },
   });
 
   router.post('/releases', submitLimiter, async (req, res) => {

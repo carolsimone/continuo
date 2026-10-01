@@ -328,6 +328,25 @@ describe('GET /api/v1/current-prod', () => {
 });
 
 describe('read rate limit', () => {
+  it('audits a rate-limited read with the principal, path and outcome 429', async () => {
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const c = fakeClient({ getCurrentProd: vi.fn(async () => ({ current_prod_release_id: 'r', node_count: 1, updated_at: 't' })) });
+      await withServer(appAs(ci(), c), async (server) => {
+        for (let i = 0; i < READ_RATE_LIMIT_PER_MINUTE; i++) await request(server).get('/api/v1/current-prod');
+        expect((await request(server).get('/api/v1/current-prod')).status).toBe(429);
+      });
+      const lines = spy.mock.calls
+        .map((call) => { try { return JSON.parse(String(call[0])); } catch { return null; } })
+        .filter((l) => l !== null && l.audit === true && l.event === 'release_read_limited');
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toMatchObject({
+        principal: 'ci', repository: 'carolsimone/continuo-demo', method: 'GET', path: '/api/v1/current-prod', outcome: 429,
+      });
+    } finally { spy.mockRestore(); }
+  });
+
+
   it('caps release and current-prod reads per principal, on a counter separate from submissions', async () => {
     const c = fakeClient({
       getRelease: vi.fn(async () => ({ release_id: 'r1', status: 'validating', changed_service: 'core' })),
