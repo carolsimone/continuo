@@ -567,6 +567,47 @@ func TestNodeRunRepository_ListNodeServices(t *testing.T) {
 	assert.Equal(t, 1, seen[svcB])
 }
 
+// TestNodeRunRepository_ListNodeServices_ByteOrderRegardlessOfLocale verifies
+// the service list is sorted by byte value, not by the database's collation.
+// A locale collation such as en_US ignores '-', so it would put "svca…" before
+// "svc-z…"; byte order puts '-' (0x2d) before 'a' (0x61).
+func TestNodeRunRepository_ListNodeServices_ByteOrderRegardlessOfLocale(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	schedRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
+	repo := postgres.NewNodeRunRepository(db, discardLogger())
+
+	suffix := uuid.New().String()[:8]
+	hyphenated := "svc-z" + suffix
+	plain := "svca" + suffix
+	for _, svc := range []string{plain, hyphenated} {
+		sid := uuid.New()
+		require.NoError(t, schedRepo.Create(ctx, &postgres.SchedulerTracker{
+			ScheduleID: sid, ScheduleName: "s", Status: run.SchedulerStatusSucceeded, Kind: "cron",
+			CreatedAt: time.Now().Add(-time.Minute), InitializationStatus: "completed",
+		}))
+		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", sid) })
+		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskTracker{
+			TaskID: uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: "an", TableName: "t",
+			JobName: "j", Status: run.TaskStatusSucceeded, MaxRetries: 3, ImageTag: "v",
+			CreatedAt: time.Now().Add(-time.Minute),
+		}))
+	}
+
+	services, err := repo.ListNodeServices(ctx)
+	require.NoError(t, err)
+
+	idx := map[string]int{}
+	for i, s := range services {
+		idx[s] = i
+	}
+	require.Contains(t, idx, hyphenated)
+	require.Contains(t, idx, plain)
+	assert.Less(t, idx[hyphenated], idx[plain], "byte order puts %q before %q", hyphenated, plain)
+	assert.IsIncreasing(t, services)
+}
+
 // TestNodeRunRepository_ListNodes_EmptyPageKeepsTotal verifies an empty page
 // (offset beyond the end) still returns the true total_count.
 func TestNodeRunRepository_ListNodes_EmptyPageKeepsTotal(t *testing.T) {

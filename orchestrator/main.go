@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	grpcinfra "github.com/carolsimone/continuo/orchestrator/adapters/grpc"
@@ -100,13 +101,40 @@ func main() {
 	// INITIALIZE INFRASTRUCTURE
 	// ========================================================================
 
-	// 1. Neo4j client
-	neo4jClient, err := neo4jinfra.NewNeo4jClient(
+	// The health server comes up before any dependency is reachable so the
+	// liveness probe keeps answering while Neo4j is still starting; otherwise a
+	// wait longer than the probe's failure window would restart the pod anyway.
+	// Readiness stays false until startup completes (see the "startup" probe).
+	var started atomic.Bool
+	liveReg.AddDependencyProbe("startup", time.Second, func(context.Context) error {
+		if !started.Load() {
+			return errors.New("startup in progress")
+		}
+		return nil
+	})
+	healthServer := httpinfra.NewHealthServer(cfg.HTTPPort, liveReg, logger)
+	go func() {
+		if err := healthServer.Start(); err != nil {
+			logger.Error("Health server error", "error", err)
+		}
+	}()
+
+	// 1. Neo4j client. Neo4j is a separate workload that may still be starting
+	// (or its Service not yet resolvable) when this pod boots, so wait for it
+	// with backoff instead of exiting and relying on a pod restart.
+	neo4jClient, err := neo4jinfra.NewNeo4jClientWithRetry(
+		ctx,
 		cfg.Neo4j.URI,
 		cfg.Neo4j.User,
 		cfg.Neo4j.Password,
 		logger,
+		neo4jinfra.DefaultStartupPolicy(),
 	)
+	if errors.Is(err, context.Canceled) {
+		// A shutdown signal arrived while waiting for Neo4j; nothing was started.
+		logger.Info("Shutdown requested while waiting for Neo4j")
+		os.Exit(0)
+	}
 	if err != nil {
 		logger.Error("Failed to create Neo4j client", "error", err)
 		os.Exit(1)
@@ -256,18 +284,6 @@ func main() {
 		logger,
 	)
 	go retentionSweeper.Run(ctx)
-
-	// ========================================================================
-	// START HTTP HEALTH CHECK SERVER
-	// ========================================================================
-
-	healthServer := httpinfra.NewHealthServer(cfg.HTTPPort, liveReg, logger)
-
-	go func() {
-		if err := healthServer.Start(); err != nil {
-			logger.Error("Health server error", "error", err)
-		}
-	}()
 
 	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
 		return healthServer.Shutdown(ctx)
@@ -463,6 +479,10 @@ func main() {
 			logger.Error("gRPC server error", "error", err)
 		}
 	}()
+
+	// Everything is initialised and serving: readiness (held false by the
+	// "startup" probe since the health server came up) may now turn true.
+	started.Store(true)
 
 	// Block until the graceful-shutdown sequence has fully completed: stop
 	// intake, drain in-flight goroutines, then close infra. No fixed sleep.
