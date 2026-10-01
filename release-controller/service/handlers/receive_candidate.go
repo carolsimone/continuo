@@ -104,9 +104,9 @@ func ReceiveCandidate(ctx context.Context, d *Deps, in ReceiveCandidateInput) er
 	}
 	defer u.Rollback() //nolint:errcheck
 
-	existing, err := u.RunRepo().Get(ctx, in.ReleaseID)
+	existing, err := u.RunRepo().Load(ctx, in.ReleaseID)
 	if err != nil {
-		return fmt.Errorf("get run: %w", err)
+		return fmt.Errorf("load run: %w", err)
 	}
 	if existing != nil {
 		if existing.Kind() != pipeline.KindCandidate {
