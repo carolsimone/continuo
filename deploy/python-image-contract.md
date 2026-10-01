@@ -16,7 +16,7 @@ For dbt nodes, whose images are resolved and configured differently, see
 ## Image resolution
 
 Unlike dbt images, a python node's image is **not** composed from the service
-name. The `image_tag` you send on `POST /releases` is a complete registry
+name. The `image_tag` you send on `POST /api/v1/releases` is a complete registry
 reference (`<registry>/<image>:<tag>`), and the executor runs it verbatim: no
 prefix is prepended, and the service name is not used. `global.teamImagePrefix`
 does not apply.

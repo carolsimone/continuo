@@ -49,7 +49,9 @@ into one dependency graph, and it heals broken pipelines by having an LLM
   your confirmation first.
 - **Fully event-driven.** No polling, horizontally scalable, and the same
   events are yours to build on — alerting, dead-letter queues, custom tooling.
-- **Two-step onboarding.** Publish an image and POST to `/releases`. Continuo
+- **Two-step onboarding.** Publish an image and `POST /api/v1/releases` with
+  your pipeline's GitHub Actions token
+  ([how](deploy/README.md#releasing-from-ci-github-actions)). continuo
   compiles the project and derives the rest.
 - **Also:** dbt, Python scripts, and contract-only CSV loads on one contract;
   bring your own dbt image; schedules in one YAML file; each node runs as its
@@ -67,8 +69,9 @@ those are already written down in your SQL. Continuo reads the schema and
 table names each model reads and writes and stitches every project into one
 graph — dbt models and Python nodes ordered together — so no project has to
 know about any other. Onboarding is two steps at CD (Continuous Deployment)
-time: publish an image and POST to `/releases`. Continuo compiles the project
-itself and derives the rest. (A Python service uploads its contract to object
+time: publish an image and `POST /api/v1/releases`
+([how](deploy/README.md#releasing-from-ci-github-actions)). continuo compiles
+the project itself and derives the rest. (A Python service uploads its contract to object
 storage first — one extra `aws s3 cp` in your CD.)
 
 Every release is then validated the way blue/green validates a software

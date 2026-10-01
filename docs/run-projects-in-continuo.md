@@ -31,7 +31,7 @@ Four matter here. `core`, `finance`, and `marketing` are ordinary,
 self-contained dbt projects: each with its own `dbt_project.yml`,
 `profiles.yml`, models, seeds, and `Dockerfile`. `service-py` is different — it
 is a **python-node service**, declaring `contracts/*.yml` and `scripts/*.py`
-instead of dbt models. It onboards through the same `POST /releases` call but a
+instead of dbt models. It onboards through the same `POST /api/v1/releases` call but a
 different artifact, which chapter 4 covers.
 
 You need all four. A dbt model in `core` reads a table `service-py` produces, so
@@ -183,12 +183,28 @@ chapter 4 explains why.)
 
 ## 3. Release first dbt project to platform: bootstrap
 
-continuo's release API is a ClusterIP service, reachable only from inside the
-cluster. Port-forward it:
+continuo's release API is public: it is served by the `ui` at `/api/v1`, behind
+the same login as the dashboard, so a pipeline needs nothing but the URL and a
+token. Forward the `ui` and the identity provider (skip this if the port-forwards
+from the install guide are still running), then ask the identity provider for
+an ID token with the demo account's password:
 
 ```bash
-kubectl -n continuo port-forward svc/release-controller 8088:8088 &
+kubectl -n continuo port-forward svc/ui 8090:8090 &
+kubectl -n continuo port-forward svc/continuo-dex 5556:5556 &
+
+CLIENT_SECRET=$(kubectl -n continuo get secret continuo-dex -o jsonpath='{.data.client-secret}' | base64 -d)
+TOKEN=$(curl -s -u "continuo-ui:${CLIENT_SECRET}" http://localhost:5556/dex/token \
+  -d grant_type=password -d scope="openid email profile" \
+  -d username=admin@example.com -d password=password | jq -r .id_token)
+export API=http://localhost:8090/api/v1
 ```
+
+That token is your own, as an operator, and it is valid for one hour: when a
+call answers `401`, run the `TOKEN=...` command again. A CD pipeline does not
+log in as a person; it presents its GitHub Actions token instead, as
+[Releasing from CI](../deploy/README.md#releasing-from-ci-github-actions)
+describes.
 
 One word before the first call. **Production**, here and everywhere in this
 guide, is continuo's term for the promoted side of its blue/green release
@@ -202,7 +218,7 @@ here.
 Ask production what it is currently running:
 
 ```bash
-curl -s http://localhost:8088/current-prod | jq
+curl -s -H "Authorization: Bearer $TOKEN" $API/current-prod | jq
 ```
 
 ```json
@@ -220,7 +236,8 @@ like a new one, so normal validation would reject everything. Real CD detects
 this the same way, by reading this endpoint.
 
 ```bash
-curl -s -X POST http://localhost:8088/releases \
+curl -s -X POST $API/releases \
+  -H "Authorization: Bearer $TOKEN" \
   -H 'content-type: application/json' \
   -d '{
     "release_id": "rel-core-v1",
@@ -237,15 +254,20 @@ curl -s -X POST http://localhost:8088/releases \
 ```
 
 💡 Note what you did *not* send: no manifest, no list of models, no DAG, no S3
-upload. One service, one image tag. continuo derives the rest.
+upload. One service, one image tag. continuo derives the rest. The `repo` and
+`commit_sha` fields say where the release came from; with your own token you
+supply them, while a GitHub Actions token carries them itself.
 
 Watch it:
 
 ```bash
-curl -s http://localhost:8088/releases/rel-core-v1 | jq '{status, transitions}'
+curl -s -H "Authorization: Bearer $TOKEN" $API/releases/rel-core-v1 | jq '{status, terminal}'
 ```
 
-Within about half a minute it reaches `promoted`, having walked:
+The answer carries the release's current `status` and a `terminal` flag that
+turns `true` once the release is `promoted`, `rejected`, or `superseded`; a
+pipeline polls until it does. Within about half a minute this release reaches
+`promoted`, having walked:
 
 ```
 received → compiling → parsing → validating → promoted
@@ -323,7 +345,8 @@ outcome advances the next. Post them one at a time and wait for each to reach
 `marketing` first:
 
 ```bash
-curl -s -X POST http://localhost:8088/releases \
+curl -s -X POST $API/releases \
+  -H "Authorization: Bearer $TOKEN" \
   -H 'content-type: application/json' \
   -d '{
     "release_id": "rel-marketing-v1",
@@ -339,7 +362,8 @@ Like core's, it promotes in about half a minute. Release `finance` the same
 way:
 
 ```bash
-curl -s -X POST http://localhost:8088/releases \
+curl -s -X POST $API/releases \
+  -H "Authorization: Bearer $TOKEN" \
   -H 'content-type: application/json' \
   -d '{
     "release_id": "rel-finance-v1",
@@ -454,7 +478,8 @@ nothing.** So pass `service-py:v1`, not `v1`, or the node cannot be dispatched a
 run time:
 
 ```bash
-curl -s -X POST http://localhost:8088/releases \
+curl -s -X POST $API/releases \
+  -H "Authorization: Bearer $TOKEN" \
   -H 'content-type: application/json' \
   -d '{
     "release_id": "rel-py-v1",
@@ -609,7 +634,8 @@ Build it, load it, release it — from here on, `bootstrap` is `false`:
 docker build -t marketing:v2 services/marketing
 kind load docker-image marketing:v2 --name continuo
 
-curl -s -X POST http://localhost:8088/releases \
+curl -s -X POST $API/releases \
+  -H "Authorization: Bearer $TOKEN" \
   -H 'content-type: application/json' \
   -d '{
     "release_id": "rel-marketing-v2",
@@ -631,10 +657,13 @@ production, and ran them there. Production was untouched throughout, and the
 candidate schema was torn down afterwards. No data is copied — only
 schema-level structure.
 
-Look at what was in scope:
+Look at what was in scope. The public API reports a release's outcome, not its
+internals, so read it from the dashboard's own release route, which accepts the
+same token:
 
 ```bash
-curl -s http://localhost:8088/releases/rel-marketing-v2 | jq '.validation_node_ids'
+curl -s -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8090/api/releases/rel-marketing-v2 | jq '.validation_node_ids'
 ```
 
 ```json
@@ -705,7 +734,8 @@ Build and release it:
 docker build -t finance:v2 services/finance
 kind load docker-image finance:v2 --name continuo
 
-curl -s -X POST http://localhost:8088/releases \
+curl -s -X POST $API/releases \
+  -H "Authorization: Bearer $TOKEN" \
   -H 'content-type: application/json' \
   -d '{"release_id":"rel-finance-v2","service":"finance","image_tag":"v2",
        "bootstrap":false,"repo":"<your-username>/continuo-demo-docs",
@@ -725,7 +755,7 @@ both runtimes. You touched one file in finance.
 Now check production:
 
 ```bash
-curl -s http://localhost:8088/current-prod | jq '.current_prod_release_id'
+curl -s -H "Authorization: Bearer $TOKEN" $API/current-prod | jq '.current_prod_release_id'
 ```
 
 Still `rel-marketing-v2`, the release chapter 6 promoted. Production never saw
@@ -944,11 +974,8 @@ does not update what the node has, so rebuild *and* reload.
 **A release sits in `received` and never moves.** Releases run a FIFO queue —
 one release is active at a time, and each terminal outcome advances the next. A
 release stuck earlier in the queue therefore blocks every release behind it.
-Check the one in front of it:
-
-```bash
-curl -s http://localhost:8088/releases | jq '.releases[] | {release_id, status}'
-```
+Open the **Releases** page in the UI: it lists every release with its status, and
+the oldest one that is not terminal is the one holding the queue.
 
 **A python node fails at run time with `carries no explicit tag or digest`,
 and the run never finishes.** The python release was posted with a bare
@@ -985,7 +1012,7 @@ existed — usually a cold install where a service was released with
 ## Where to go next
 
 You now have the whole model in your hands: a project is onboarded by publishing
-an image and calling `POST /releases`, and everything after that — the graph, the
+an image and calling `POST /api/v1/releases`, and everything after that — the graph, the
 ordering, the validation, the rejection — is derived.
 
 Running it for real changes only two things. Your images come from a registry

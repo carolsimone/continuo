@@ -211,7 +211,7 @@ The controller in kind connects to docker-compose services via docker bridge net
 
 ## Blue/Green Release Tests
 
-`release_promote_test.go` drives the dbt blue/green release pipeline end-to-end via the production entry point — `POST /api/v1/releases` on the ui, authenticated with a GitHub Actions-shaped OIDC token minted by `stub-github` (`ci_token.go`). Validation runs **real `continuo-python-runtime-<engine>` K8s Jobs in kind** (no dbt in the validation path — see the execution-controller doc's `CreateValidationJob`), exercising the full event chain:
+`release_promote_test.go` drives the dbt blue/green release pipeline end-to-end through the ui's public API — `POST /api/v1/releases`, authenticated with a GitHub Actions-shaped OIDC token minted by `stub-github` (`ci_token.go`) — the same request a CD pipeline issues. Validation runs **real `continuo-python-runtime-<engine>` K8s Jobs in kind** (no dbt in the validation path — see the execution-controller doc's `CreateValidationJob`), exercising the full event chain:
 
 ```
 POST /api/v1/releases → release.requested:v1 → topology-controller candidate parse

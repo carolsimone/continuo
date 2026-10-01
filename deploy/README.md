@@ -15,6 +15,7 @@ reference.
 | Run it in production with my own Postgres/Redis/Neo4j/S3/OIDC | [Production (BYO datastores)](continuo/README.md#2-production-bring-your-own-datastores) + [`values-byo.yaml.example`](continuo/values-byo.yaml.example) |
 | Understand the security posture before adopting | [SECURITY.md](SECURITY.md) and the chart's [Security defaults](continuo/README.md#3-security-defaults) |
 | Configure real OIDC authentication | [AUTH.md](AUTH.md) |
+| Release a service from my CD pipeline | [Releasing from CI](#releasing-from-ci-github-actions) — the public `/api/v1` API with a GitHub Actions token |
 | Build a dbt image for my team's models | [dbt-image-contract.md](dbt-image-contract.md) |
 | Understand how releases are cut and verified | [Release flow and CI gates](continuo/README.md#5-release-flow-and-ci-gates) |
 
@@ -64,6 +65,148 @@ The `continuo-api-` prefix is reserved for them: the chart refuses to render
 when the release name, `fullnameOverride` or any Secret name in values falls
 inside it.
 See [python-api nodes](../docs/run-projects-in-continuo.md#python-api-nodes).
+
+## Releasing from CI (GitHub Actions)
+
+A CD pipeline releases a service with one authenticated HTTPS call to the
+`ui`, at `https://<continuo-host>/api/v1/releases`. It needs no kubeconfig, no
+SSH access and no stored secret: the workflow proves which repository it runs
+in with its GitHub Actions OIDC token, and the chart's `ciAuth` values say which
+repository may release which service.
+
+### 1. Find the repository id
+
+continuo trusts the numeric repository id, never the repository name (a name can
+be taken over by a new owner after a rename; the id cannot).
+
+```bash
+gh api repos/OWNER/REPO --jq .id
+```
+
+### 2. Bind the repository to a service
+
+```yaml
+ciAuth:
+  bindings:
+    core:                              # the service name the release carries
+      - repositoryId: "812345678"      # quoted: a bare number fails the chart's schema
+        ref: [refs/heads/main]
+        allowBootstrap: true           # first release only; set false afterwards
+```
+
+A binding grants one GitHub identity the right to release one service. Every
+field you set must match the token; `repositoryId` is the only required one.
+
+| Field | Matched against | Meaning |
+|---|---|---|
+| `repositoryId` | `repository_id` | Exact digits (required). |
+| `ref` | `ref` | The token's ref is one of the listed values. |
+| `refProtected` | `ref_protected` | `true` allows only protected refs. |
+| `environment` | `environment` | The job's environment is one of the listed values. |
+| `workflowRef` | `workflow_ref` | The workflow file and ref is one of the listed values. |
+| `allowBootstrap` | none | Permits `"bootstrap": true` (default `false`). |
+
+A service may list several bindings; a token that matches any one of them may
+release it. With no bindings (the default) no pipeline can release through CI
+tokens. The other `ciAuth` keys are `issuer` (default
+`https://token.actions.githubusercontent.com`; GitHub Enterprise Server uses
+`https://<host>/_services/token`) and `audience`, which defaults to the origin of
+`auth.publicUrl` (scheme, host and port, no path). Changing `ciAuth` rolls the
+`ui` on `helm upgrade`.
+
+### 3. Call the API from the workflow
+
+The workflow requests a token whose audience is the same origin continuo expects,
+then submits the release and polls it to a terminal status. `bootstrap`, `kind`
+and the other submit fields are described below; this example releases a dbt
+service, so it sends only the three required fields.
+
+```yaml
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      CONTINUO_URL: https://continuo.example.com   # exactly auth.publicUrl, no trailing slash
+    steps:
+      - name: Submit release to continuo
+        run: |
+          token() {
+            curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+              "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$CONTINUO_URL" | jq -r .value
+          }
+          RELEASE_ID="rel-${GITHUB_SHA::7}-${GITHUB_RUN_NUMBER}"
+          curl --fail-with-body -sS -X POST "$CONTINUO_URL/api/v1/releases" \
+            -H "Authorization: Bearer $(token)" -H 'content-type: application/json' \
+            -d "$(jq -n --arg id "$RELEASE_ID" --arg tag "${GITHUB_SHA::7}" \
+                  '{release_id:$id, service:"core", image_tag:$tag}')"
+          until s=$(curl -sS -H "Authorization: Bearer $(token)" \
+                      "$CONTINUO_URL/api/v1/releases/$RELEASE_ID") && \
+                [ "$(jq -r .terminal <<<"$s")" = true ]; do sleep 10; done
+          jq . <<<"$s"; [ "$(jq -r .status <<<"$s")" = promoted ]
+```
+
+GitHub Actions tokens expire within minutes, so the example asks for a fresh
+one on every call instead of reusing the first.
+
+### The API
+
+All three routes live under `/api/v1` on the `ui`. Each takes
+`Authorization: Bearer <token>`; the scheme name is case-insensitive.
+
+| Route | Purpose |
+|---|---|
+| `POST /api/v1/releases` | Submit a release. Answers `202` with `{release_id, status}`. |
+| `GET /api/v1/releases/{id}` | Read a release (below). |
+| `GET /api/v1/current-prod` | Which release production is serving: `{current_prod_release_id, node_count, updated_at}`. An empty `current_prod_release_id` means production has never been seeded. |
+
+**Submit body.** `release_id`, `service` and `image_tag` are required;
+`bootstrap` (a JSON boolean), `kind`, `repo` and `commit_sha` are optional. Any
+other field is a `400`. With a CI token, `repo` and `commit_sha` are taken from
+the token (`repository` and `sha`): leave them out, or send values equal to the
+token's, because a different value is a `403` `claim_mismatch`. A person calling
+with their own token (see [AUTH.md](AUTH.md#bearer-tokens)) must send `repo` and
+`commit_sha` in the body. `"bootstrap": true` promotes without validation and is
+for the first release of a service; a CI token may send it only when its
+binding sets `allowBootstrap`. Submitting the same `release_id` again with the
+same body is idempotent and answers `202`; the same `release_id` with a
+different service, bootstrap flag, `repo` or `commit_sha` is a `409`
+`release_kind_conflict`, so use a fresh id for a new release.
+
+**Release read.** The answer carries `release_id`, `service`, `status`,
+`terminal` (`true` once the status is `promoted`, `rejected` or `superseded`),
+`bootstrap`, `repo`, `commit_sha`, `reject_reason`, `reject_detail`, and `ui_url`,
+the release's page in the dashboard. A CI token can read only releases of the
+services its bindings grant.
+
+**Errors.** Every failure is JSON, `{"error": "<message>", "code": "<code>"}`.
+
+| Status | `code` | Meaning |
+|---|---|---|
+| 400 | `bad_request` | Malformed JSON, an unknown or mistyped field, or a missing required field. |
+| 401 | `invalid_token` | The bearer token is malformed, expired, for the wrong audience, from an untrusted issuer, signed with an algorithm other than RS256, or valid for longer than one hour. The response carries `WWW-Authenticate: Bearer error="invalid_token"`. A request with no credential at all answers `401` with code `unauthenticated`. |
+| 403 | `forbidden` | The identity may not do this: a repository not bound to the service, a viewer submitting, or a CI token calling any other route. |
+| 403 | `claim_mismatch` | The body's `repo` or `commit_sha` differs from the token's. |
+| 403 | `bootstrap_not_allowed` | `"bootstrap": true` from a binding without `allowBootstrap`. |
+| 404 | `not_found` | No such release. |
+| 409 | `release_kind_conflict` | The `release_id` already exists with different content. |
+| 429 | `rate_limited` | More than 30 submits in a minute from one principal (a repository for CI, a user for a person), counted per `ui` pod. |
+| 503 | `auth_unavailable` | The token's issuer could not be reached; the dashboard keeps working. Retry. |
+| 503 | `upstream_unavailable` | The release service is unreachable or failed. Retry; a submit is idempotent. |
+
+### Networking
+
+- The ingress host (`ingress.host`) must be reachable from GitHub-hosted
+  runners. A cluster behind a firewall needs self-hosted runners that can reach
+  it.
+- The `ui` pod fetches the issuer's signing keys over HTTPS, so it must reach
+  `token.actions.githubusercontent.com` (or your GitHub Enterprise Server host)
+  on port 443. The chart's NetworkPolicies restrict ingress only, so this works
+  by default; a cluster-wide egress policy or a forced proxy must allow it. While
+  the issuer is unreachable, bearer calls answer `503` `auth_unavailable` and
+  the browser login is unaffected.
 
 ## Requirements at a glance
 
