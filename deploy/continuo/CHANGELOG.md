@@ -12,6 +12,12 @@ shipped in those.
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-10-01
+
+### Fixed
+- `orchestrator` waits for Neo4j at startup (capped backoff, 5 minutes in total) instead of exiting on the first connection error and relying on a pod restart. On a fresh bundled install it no longer shows one or two restarts while Neo4j's Service name starts resolving. Its health endpoint now answers while it waits, with `/ready` returning 503 until startup completes.
+- The state service lists node services in byte order, independent of the database's locale, so the order no longer varies between installs.
+
 ### Changed
 - The state database migration drops the unused `task_tracker.manifest_version` column that 0.8.0 kept for rollout safety. **Upgrade through 0.8.0 first.** An install going straight from a release before 0.8.0 to this one runs the drop while the old state pods still read and write the column, and they fail until replaced. Installs already on 0.8.0 are unaffected.
 
