@@ -16,13 +16,15 @@ const deny = (reason: string, code: 'forbidden' | 'bootstrap_not_allowed' = 'for
 
 // Every permission decision for /api. Humans are governed by role: viewers
 // read, operators do everything. A CI identity reaches only the v1 release
-// actions, and only for the services its bindings grant.
+// actions, and only for the services its bindings grant; one whose repository
+// matches no binding may do nothing at all.
 export function authorize(p: Principal, a: Action): Decision {
   if (p.kind === 'human') {
     if (p.user.role === 'operator') return ALLOW;
     if (a.kind === 'api.read' || a.kind === 'release.read' || a.kind === 'prod.read') return ALLOW;
     return deny('operator role required');
   }
+  if (p.grants.size === 0) return deny(`repository ${p.claims.repository} is not bound to any service`);
   switch (a.kind) {
     case 'api.read':
     case 'api.mutate':

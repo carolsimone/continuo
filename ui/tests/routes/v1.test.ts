@@ -22,7 +22,11 @@ function fakeClient(over: Partial<ReleaseClient> = {}): ReleaseClient {
     listReleases: vi.fn(), getCurrentProd: vi.fn(), retryRemediation: vi.fn(),
     getVerificationRun: vi.fn(), listVerificationRuns: vi.fn(), getPipeline: vi.fn(),
     submitRelease: vi.fn(async (b) => {
-      if (!stored.has(String(b.release_id))) stored.set(String(b.release_id), { ...b, changed_service: b.service });
+      if (!stored.has(String(b.release_id))) {
+        stored.set(String(b.release_id), {
+          ...b, changed_service: b.service, image_tags: { [String(b.service)]: b.image_tag }, manifest_kind: b.kind || 'dbt',
+        });
+      }
       return { status: 202, text: JSON.stringify({ release_id: b.release_id, status: 'received' }) };
     }),
     getRelease: vi.fn(async (id: string) => {
@@ -76,6 +80,9 @@ describe('POST /api/v1/releases', () => {
     const app = appAs(ci({ core: false }), fakeClient());
     expect((await request(app).post('/api/v1/releases').send({ ...body, service: 'marketing' })).body.code).toBe('forbidden');
     expect((await request(app).post('/api/v1/releases').send({ ...body, bootstrap: true })).body.code).toBe('bootstrap_not_allowed');
+    // A repository that matches no binding at all.
+    const none = await request(appAs(ci({}), fakeClient())).post('/api/v1/releases').send(body);
+    expect([none.status, none.body.code]).toEqual([403, 'forbidden']);
   });
 
   it('humans keep their body provenance; viewers cannot submit', async () => {
@@ -119,7 +126,7 @@ describe('POST /api/v1/releases', () => {
     const app = appAs(ci({ core: false }), client);
     const otherService = await request(app).post('/api/v1/releases').send({ ...body, release_id: 'taken' });
     expect(otherService.status).toBe(409);
-    expect(otherService.body).toEqual({ error: 'release id "taken" already exists with a different service or provenance', code: 'release_kind_conflict' });
+    expect(otherService.body).toEqual({ error: 'release id "taken" already exists with a different service, image, kind or provenance', code: 'release_kind_conflict' });
 
     // Same service, but the stored commit differs from this token's sha.
     await request(appAs(operator, client)).post('/api/v1/releases').send({ ...body, release_id: 'same-svc', repo: 'carolsimone/continuo-demo', commit_sha: 'other-sha' });
@@ -133,6 +140,54 @@ describe('POST /api/v1/releases', () => {
     await request(appAs(operator, client)).post('/api/v1/releases').send({ ...body, release_id: 'b1', bootstrap: true, repo: 'carolsimone/continuo-demo', commit_sha: 'abc1234def' });
     const res = await request(appAs(ci(), client)).post('/api/v1/releases').send({ ...body, release_id: 'b1' });
     expect(res.status).toBe(409);
+  });
+
+  it('a stored image tag that differs from the submission is a conflict', async () => {
+    const client = fakeClient();
+    const app = appAs(ci(), client);
+    expect((await request(app).post('/api/v1/releases').send(body)).status).toBe(202);
+    const res = await request(app).post('/api/v1/releases').send({ ...body, image_tag: 'other' });
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('release_kind_conflict');
+  });
+
+  it('a stored kind that differs from the submission is a conflict; an absent kind is dbt', async () => {
+    const client = fakeClient();
+    const app = appAs(ci(), client);
+    expect((await request(app).post('/api/v1/releases').send({ ...body, release_id: 'k1', kind: 'python' })).status).toBe(202);
+    expect((await request(app).post('/api/v1/releases').send({ ...body, release_id: 'k1', kind: 'python' })).status).toBe(202);
+    expect((await request(app).post('/api/v1/releases').send({ ...body, release_id: 'k1' })).status).toBe(409);
+    expect((await request(app).post('/api/v1/releases').send({ ...body, release_id: 'k2' })).status).toBe(202);
+    expect((await request(app).post('/api/v1/releases').send({ ...body, release_id: 'k2', kind: 'dbt' })).status).toBe(202);
+    expect((await request(app).post('/api/v1/releases').send({ ...body, release_id: 'k2', kind: 'python' })).status).toBe(409);
+  });
+
+  it('a stored release with no image tag for the service is a conflict', async () => {
+    const client = fakeClient({ getRelease: vi.fn(async () => ({ changed_service: 'core', bootstrap: false, repo: 'carolsimone/continuo-demo', commit_sha: 'abc1234def', manifest_kind: 'dbt' })) });
+    expect((await request(appAs(ci(), client)).post('/api/v1/releases').send(body)).status).toBe(409);
+  });
+
+  it.each([
+    ['a dot-segment id', '..'],
+    ['a slash', 'rel/1'],
+    ['a leading dot', '.rel'],
+    ['a leading dash', '-rel'],
+    ['a space', 'rel 1'],
+    ['a 129-character id', `a${'b'.repeat(128)}`],
+  ])('400 on a release_id with %s', async (_n, id) => {
+    const client = fakeClient();
+    const res = await request(appAs(operator, client)).post('/api/v1/releases').send({ ...body, release_id: id });
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('bad_request');
+    expect(res.body.error).toMatch(/release_id/);
+    expect(client.submitRelease).not.toHaveBeenCalled();
+  });
+
+  it('accepts release ids of letters, digits, dot, dash and underscore up to 128 characters', async () => {
+    const app = appAs(operator, fakeClient());
+    for (const id of ['rel-abc1234-17', 'e2e-rel-1a2b3c4d', 'auth-e2e-submit', 'v1.2.3_build', `a${'b'.repeat(127)}`, '0']) {
+      expect((await request(app).post('/api/v1/releases').send({ ...body, release_id: id, repo: 'o/r', commit_sha: 'c' })).status).toBe(202);
+    }
   });
 
   it('an identical resubmit stays 202', async () => {
@@ -209,23 +264,39 @@ describe('release_submit audit', () => {
 });
 
 describe('GET /api/v1/releases/:id', () => {
-  const rel = { release_id: 'r/1', status: 'rejected', changed_service: 'core', bootstrap: false, repo: 'carolsimone/continuo-demo', commit_sha: 'abc', reject_reason: 'validation_failed', reject_detail: 'x', per_node_results: [{}], failing_nodes: ['a'] };
+  const rel = { release_id: 'r.1', status: 'rejected', changed_service: 'core', bootstrap: false, repo: 'carolsimone/continuo-demo', commit_sha: 'abc', reject_reason: 'validation_failed', reject_detail: 'x', per_node_results: [{}], failing_nodes: ['a'] };
 
   it('returns the v1 projection only, with terminal and ui_url', async () => {
     const client = fakeClient({ getRelease: vi.fn(async () => rel) });
-    const res = await request(appAs(ci(), client)).get('/api/v1/releases/r%2F1');
+    const res = await request(appAs(ci(), client)).get('/api/v1/releases/r.1');
     expect(res.status).toBe(200);
-    expect(client.getRelease).toHaveBeenCalledWith('r/1');
+    expect(client.getRelease).toHaveBeenCalledWith('r.1');
     expect(res.body).toEqual({
-      release_id: 'r/1', service: 'core', status: 'rejected', terminal: true, bootstrap: false,
+      release_id: 'r.1', service: 'core', status: 'rejected', terminal: true, bootstrap: false,
       repo: 'carolsimone/continuo-demo', commit_sha: 'abc', reject_reason: 'validation_failed', reject_detail: 'x',
-      ui_url: 'https://continuo.example.com/releases/r%2F1',
+      ui_url: 'https://continuo.example.com/releases/r.1',
     });
   });
 
-  it('CI cannot read a release of an unbound service; 404 and 503 map through', async () => {
+  it('a release of a service the CI identity is not bound to reads as not found, without naming the service', async () => {
     const other = fakeClient({ getRelease: vi.fn(async () => ({ ...rel, changed_service: 'marketing' })) });
-    expect((await request(appAs(ci(), other)).get('/api/v1/releases/x')).status).toBe(403);
+    const res = await request(appAs(ci(), other)).get('/api/v1/releases/x');
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: 'release not found', code: 'not_found' });
+    // A person reads every release.
+    expect((await request(appAs(viewer, other)).get('/api/v1/releases/x')).status).toBe(200);
+  });
+
+  it('an id outside the release_id pattern is 404 without asking release-controller', async () => {
+    const client = fakeClient();
+    for (const id of ['r%2F1', '..%2Fcurrent-prod', '.hidden', `a${'b'.repeat(128)}`]) {
+      const res = await request(appAs(operator, client)).get(`/api/v1/releases/${id}`);
+      expect([id, res.status, res.body.code]).toEqual([id, 404, 'not_found']);
+    }
+    expect(client.getRelease).not.toHaveBeenCalled();
+  });
+
+  it('404 and 503 map through', async () => {
     const missing = fakeClient({ getRelease: vi.fn(async () => { throw new HttpError(404, 'nf'); }) });
     expect((await request(appAs(operator, missing)).get('/api/v1/releases/x')).body.code).toBe('not_found');
     const down = fakeClient({ getRelease: vi.fn(async () => { throw new TypeError('fetch failed'); }) });
@@ -238,10 +309,21 @@ describe('GET /api/v1/releases/:id', () => {
 });
 
 describe('GET /api/v1/current-prod', () => {
-  it('any principal reads exactly the three fields', async () => {
-    const client = fakeClient({ getCurrentProd: vi.fn(async () => ({ current_prod_release_id: 'r', node_count: 3, updated_at: 't', extra: 1 })) });
+  const cp = () => fakeClient({ getCurrentProd: vi.fn(async () => ({ current_prod_release_id: 'r', node_count: 3, updated_at: 't', extra: 1 })) });
+
+  it('a bound CI identity and a viewer read exactly the three fields', async () => {
+    for (const p of [ci(), viewer]) {
+      const res = await request(appAs(p, cp())).get('/api/v1/current-prod');
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ current_prod_release_id: 'r', node_count: 3, updated_at: 't' });
+    }
+  });
+
+  it('a CI identity bound to no service is forbidden', async () => {
+    const client = cp();
     const res = await request(appAs(ci({}), client)).get('/api/v1/current-prod');
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual({ current_prod_release_id: 'r', node_count: 3, updated_at: 't' });
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('forbidden');
+    expect(client.getCurrentProd).not.toHaveBeenCalled();
   });
 });

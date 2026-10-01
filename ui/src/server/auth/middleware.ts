@@ -1,4 +1,4 @@
-import type { ErrorRequestHandler, RequestHandler } from 'express';
+import type { ErrorRequestHandler, Request, RequestHandler } from 'express';
 import { parse as parseCookies } from 'cookie';
 import { toAuthUser, type SessionStore } from './session';
 import { audit } from './audit';
@@ -12,11 +12,20 @@ import type { OidcAuthConfig } from './config';
 
 const MUTATING = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
+// The Authorization header is a credential only for the API. Elsewhere (the
+// SPA, /auth/*) it is ignored, so a header an ingress basic-auth or an auth
+// proxy forwards never locks a signed-in user out of the dashboard. Matched
+// case-insensitively, as Express routes /API/... to the /api mount.
+const API_PATH = /^\/api(?:\/|$)/i;
+function bearerApplies(req: Request): boolean {
+  return req.headers.authorization !== undefined && API_PATH.test(req.path);
+}
+
 // AUTH_MODE=dev: every request carries the fixed development identity.
 export function devIdentity(): RequestHandler {
   return (req, _res, next) => {
-    // A request carrying Authorization is authenticated by bearerAuth alone.
-    if (req.headers.authorization !== undefined) return next();
+    // An /api request carrying Authorization is authenticated by bearerAuth alone.
+    if (bearerApplies(req)) return next();
     req.user = DEV_USER;
     next();
   };
@@ -26,8 +35,8 @@ export function devIdentity(): RequestHandler {
 // A store failure goes to the error handler — never an unauthenticated pass.
 export function sessionAuth(sessions: SessionStore): RequestHandler {
   return (req, _res, next) => {
-    // A request carrying Authorization is authenticated by bearerAuth alone.
-    if (req.headers.authorization !== undefined) return next();
+    // An /api request carrying Authorization is authenticated by bearerAuth alone.
+    if (bearerApplies(req)) return next();
     const cookies = parseCookies(req.headers.cookie ?? '');
     const id = cookies[SESSION_COOKIE];
     if (!id) return next();
@@ -58,11 +67,12 @@ function rejectToken(res: Parameters<RequestHandler>[1], detail: string): void {
   res.status(401).json({ error: `invalid bearer token: ${detail}`, code: 'invalid_token' });
 }
 
-// Authenticates a request that carries an Authorization header. When the header
-// is present it is the only credential considered: a token that fails here is
-// a 401, never a fallback to the session cookie or the dev identity. A token
-// from the CI issuer becomes a ci principal; one from the ui's login issuer
-// becomes a human with the role resolveRole assigns.
+// Authenticates an /api request that carries an Authorization header. When the
+// header is present it is the only credential considered: a token that fails
+// here is a 401, never a fallback to the session cookie or the dev identity,
+// and every such 401 is audited as bearer_rejected. A token from the CI issuer
+// becomes a ci principal; one from the ui's login issuer becomes a human with
+// the role resolveRole assigns. Outside /api the header is ignored.
 export function bearerAuth(deps: BearerDeps): RequestHandler {
   async function resolve(token: string): Promise<Principal> {
     const { issuer, payload } = await deps.verifier.verify(token);
@@ -83,10 +93,10 @@ export function bearerAuth(deps: BearerDeps): RequestHandler {
   }
 
   return (req, res, next) => {
-    const header = req.headers.authorization;
-    if (header === undefined) return next();
-    const m = BEARER.exec(header);
+    if (!bearerApplies(req)) return next();
+    const m = BEARER.exec(req.headers.authorization!);
     if (!m) {
+      audit('bearer_rejected', { method: req.method, path: req.originalUrl, reason: 'malformed authorization header', outcome: 'unauthorized' });
       rejectToken(res, 'expected "Authorization: Bearer <token>"');
       return;
     }
@@ -124,9 +134,9 @@ const PER_ACTION_ROUTES: ReadonlyArray<{ method: string; path: RegExp }> = [
 ];
 
 // Gate for everything mounted under /api. Apart from the routes in
-// PER_ACTION_ROUTES, every route is a method-based read/mutate decision, so new
-// endpoints (including new /api/v1 ones) are safe by default and closed to CI
-// tokens.
+// PER_ACTION_ROUTES, every route is a method-based read/mutate decision, so any
+// other endpoint (including any other /api/v1 one) is safe by default and
+// closed to CI tokens.
 export function requireApiAuth(): RequestHandler {
   return (req, res, next) => {
     const p = principalOf(req);

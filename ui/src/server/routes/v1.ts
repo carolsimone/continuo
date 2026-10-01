@@ -12,6 +12,9 @@ import { audit } from '../auth/audit';
 export const SUBMIT_RATE_LIMIT_PER_MINUTE = 30;
 const SUBMIT_FIELDS = new Set(['release_id', 'service', 'image_tag', 'bootstrap', 'kind', 'repo', 'commit_sha']);
 const TERMINAL = new Set(['promoted', 'rejected', 'superseded']);
+// A release id is a single URL path segment and an object-key component
+// downstream, so the public API admits only this shape.
+export const RELEASE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 type SubmitBody = {
   release_id: string;
@@ -34,6 +37,9 @@ function parseSubmit(raw: unknown): { body: SubmitBody } | { error: string } {
   if (unknown.length > 0) return { error: `unknown field(s): ${unknown.join(', ')}` };
   for (const k of ['release_id', 'service', 'image_tag']) {
     if (typeof o[k] !== 'string' || o[k] === '') return { error: `${k} is required and must be a non-empty string` };
+  }
+  if (!RELEASE_ID_PATTERN.test(o.release_id as string)) {
+    return { error: `release_id must match ${RELEASE_ID_PATTERN.source}` };
   }
   if (o.bootstrap !== undefined && typeof o.bootstrap !== 'boolean') return { error: 'bootstrap must be a boolean' };
   for (const k of ['kind', 'repo', 'commit_sha']) {
@@ -73,9 +79,13 @@ function auditSubmit(p: Principal, raw: unknown, outcome: number): void {
 
 // release-controller accepts a release_id it already holds without comparing
 // it to the submission, so a 202 only means this submission was recorded when
-// the stored release is the one that was sent.
+// the stored release is the one that was sent: same service, image tag for that
+// service, manifest kind (absent = dbt), bootstrap flag and provenance.
 function matchesStored(body: SubmitBody, stored: Record<string, unknown>): boolean {
   if (stored.changed_service !== body.service) return false;
+  const tags = stored.image_tags;
+  if (typeof tags !== 'object' || tags === null || (tags as Record<string, unknown>)[body.service] !== body.image_tag) return false;
+  if ((stored.manifest_kind || 'dbt') !== (body.kind || 'dbt')) return false;
   if ((stored.bootstrap === true) !== (body.bootstrap === true)) return false;
   if (body.repo !== undefined && stored.repo !== body.repo) return false;
   if (body.commit_sha !== undefined && stored.commit_sha !== body.commit_sha) return false;
@@ -145,7 +155,7 @@ export function createV1Router(releases: ReleaseClient, publicUrl?: string): Rou
       }
       if (!matchesStored(body, stored)) {
         auditSubmit(p, body, 409);
-        return fail(res, 409, 'release_kind_conflict', `release id "${body.release_id}" already exists with a different service or provenance`);
+        return fail(res, 409, 'release_kind_conflict', `release id "${body.release_id}" already exists with a different service, image, kind or provenance`);
       }
       auditSubmit(p, body, 202);
       let parsedResp: { release_id?: string; status?: string } = {};
@@ -162,8 +172,12 @@ export function createV1Router(releases: ReleaseClient, publicUrl?: string): Rou
     return fail(res, 503, 'upstream_unavailable', 'release service unavailable');
   });
 
+  // A CI identity reading a release of a service it is not bound to gets the
+  // same 404 as a missing release, so the route never confirms that a release
+  // id exists or names the service it belongs to.
   router.get('/releases/:id', async (req, res) => {
     const p = principalOf(req)!;
+    if (!RELEASE_ID_PATTERN.test(req.params.id)) return fail(res, 404, 'not_found', 'release not found');
     let rel: Record<string, unknown>;
     try {
       rel = await releases.getRelease(req.params.id);
@@ -172,7 +186,10 @@ export function createV1Router(releases: ReleaseClient, publicUrl?: string): Rou
       return fail(res, 503, 'upstream_unavailable', 'release service unavailable');
     }
     const d = authorize(p, { kind: 'release.read', service: String(rel.changed_service ?? '') });
-    if (!d.allow) return fail(res, 403, d.code, d.reason);
+    if (!d.allow) {
+      if (p.kind === 'ci') return fail(res, 404, 'not_found', 'release not found');
+      return fail(res, 403, d.code, d.reason);
+    }
     res.json(projectRelease(rel, publicUrl));
   });
 

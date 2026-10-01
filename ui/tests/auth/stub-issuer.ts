@@ -11,6 +11,7 @@ export interface StubIssuer {
   sign(claims: Record<string, unknown>, opts?: { audience?: string; lifetimeSeconds?: number; iatOffsetSeconds?: number }): Promise<string>;
   rotateKey(): Promise<void>;
   jwksFetches(): number;
+  discoveryFetches(): number;
   failJwks(fail: boolean): void;
   // Makes the discovery document answer 200 with a body that is not a usable JSON object.
   failDiscovery(mode: DiscoveryFailure): void;
@@ -37,6 +38,7 @@ export async function startStubIssuer(defaultAudience: string): Promise<StubIssu
   let kid = 'k1';
   let jwk: JWK = { ...(await exportJWK(keys.publicKey)), kid, alg: 'RS256', use: 'sig' };
   let fetches = 0;
+  let discoveries = 0;
   let failing = false;
   let discoveryFailure: DiscoveryFailure = 'none';
   let issuer = '';
@@ -44,6 +46,7 @@ export async function startStubIssuer(defaultAudience: string): Promise<StubIssu
   const server: Server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', issuer);
     if (url.pathname === '/.well-known/openid-configuration') {
+      discoveries++;
       if (discoveryFailure !== 'none') {
         res.setHeader('content-type', 'application/json');
         res.end(discoveryFailure === 'not-json' ? '<html>bad gateway</html>' : 'null');
@@ -88,6 +91,7 @@ export async function startStubIssuer(defaultAudience: string): Promise<StubIssu
       jwk = { ...(await exportJWK(keys.publicKey)), kid, alg: 'RS256', use: 'sig' };
     },
     jwksFetches: () => fetches,
+    discoveryFetches: () => discoveries,
     failJwks: (f) => { failing = f; },
     failDiscovery: (m) => { discoveryFailure = m; },
     close: () => new Promise<void>((resolve) => server.close(() => resolve())),

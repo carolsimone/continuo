@@ -12,6 +12,8 @@ const ci: Principal = {
   kind: 'ci', subject: 'repo:x', claims,
   grants: new Map([['core', { allowBootstrap: false }], ['finance', { allowBootstrap: true }]]),
 };
+// A verified GitHub token whose repository matches no binding.
+const unboundCi: Principal = { kind: 'ci', subject: 'repo:y', claims, grants: new Map() };
 
 const allow = { allow: true };
 const cases: Array<[string, Principal, Action, boolean, string?]> = [
@@ -31,6 +33,10 @@ const cases: Array<[string, Principal, Action, boolean, string?]> = [
   ['ci submit unbound', ci, { kind: 'release.submit', service: 'marketing', bootstrap: false }, false, 'forbidden'],
   ['ci bootstrap without flag', ci, { kind: 'release.submit', service: 'core', bootstrap: true }, false, 'bootstrap_not_allowed'],
   ['ci bootstrap with flag', ci, { kind: 'release.submit', service: 'finance', bootstrap: true }, true],
+  ['zero-grant ci prod.read', unboundCi, { kind: 'prod.read' }, false, 'forbidden'],
+  ['zero-grant ci release.read', unboundCi, { kind: 'release.read', service: 'core' }, false, 'forbidden'],
+  ['zero-grant ci submit', unboundCi, { kind: 'release.submit', service: 'core', bootstrap: false }, false, 'forbidden'],
+  ['zero-grant ci api.read', unboundCi, { kind: 'api.read' }, false, 'forbidden'],
 ];
 
 describe('authorize', () => {

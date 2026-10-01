@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import { bearerAuth, requireApiAuth, sessionAuth, devIdentity, authErrorHandler } from '../../src/server/auth/middleware';
@@ -33,6 +33,8 @@ async function oidcApp() {
   app.get('/api/v1/releases/:id', (_req, res) => res.json({ ok: true }));
   app.get('/api/features', (_req, res) => res.json({ ok: true }));
   app.post('/api/things', (_req, res) => res.json({ ok: true }));
+  app.get('/auth/me', (req, res) => (req.user ? res.json(req.user) : res.status(401).json({ code: 'unauthenticated' })));
+  app.get('/', (req, res) => res.json({ user: req.user ?? null }));
   app.use(authErrorHandler());
   const operatorSid = await store.create({ userId: 'i|o', email: 'op@corp.com', name: 'O', role: 'operator' });
   return { app, operatorSid };
@@ -80,9 +82,37 @@ describe('bearer authentication', () => {
     expect(res.headers['www-authenticate']).toMatch(/^Bearer error="invalid_token"/);
   });
 
-  it('a non-Bearer Authorization header is 401', async () => {
+  it('a non-Bearer Authorization header on /api is 401 and audited as bearer_rejected', async () => {
     const { app } = await oidcApp();
-    expect((await request(app).get('/api/features').set('Authorization', 'Basic dXNlcjpwdw==')).status).toBe(401);
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, 'log').mockImplementation((msg: string) => { lines.push(msg); });
+    try {
+      const res = await request(app).get('/api/features').set('Authorization', 'Basic dXNlcjpwdw==');
+      expect(res.status).toBe(401);
+      expect(res.body.code).toBe('invalid_token');
+    } finally { spy.mockRestore(); }
+    const audited = lines.map((l) => JSON.parse(l)).filter((l) => l.event === 'bearer_rejected');
+    expect(audited).toEqual([expect.objectContaining({ path: '/api/features', reason: 'malformed authorization header', outcome: 'unauthorized' })]);
+  });
+
+  it('outside /api the Authorization header is not a credential: the session cookie applies', async () => {
+    const { app, operatorSid } = await oidcApp();
+    // e.g. an ingress basic-auth or oauth2-proxy header reaching the ui
+    const me = await request(app).get('/auth/me').set('Authorization', 'Basic dXNlcjpwdw==').set('Cookie', `${SESSION_COOKIE}=${operatorSid}`);
+    expect(me.status).toBe(200);
+    expect(me.body).toMatchObject({ email: 'op@corp.com', role: 'operator' });
+    const spa = await request(app).get('/').set('Authorization', 'Bearer garbage').set('Cookie', `${SESSION_COOKIE}=${operatorSid}`);
+    expect(spa.status).toBe(200);
+    expect(spa.body.user).toMatchObject({ email: 'op@corp.com' });
+    // The same header on /api is the only credential considered.
+    const api = await request(app).get('/api/features').set('Authorization', 'Basic dXNlcjpwdw==').set('Cookie', `${SESSION_COOKIE}=${operatorSid}`);
+    expect(api.status).toBe(401);
+  });
+
+  it('a valid bearer outside /api does not authenticate the request', async () => {
+    const { app } = await oidcApp();
+    const op = await loginIssuer!.sign({ sub: 'u1', email: 'op@corp.com', email_verified: true });
+    expect((await request(app).get('/auth/me').set('Authorization', `Bearer ${op}`)).status).toBe(401);
   });
 
   it('a login-issuer token resolves role via resolveRole', async () => {
@@ -121,7 +151,7 @@ describe('bearer authentication', () => {
 describe('dev mode with CI config', () => {
   it('no Authorization header keeps the dev operator; a CI bearer is verified; a bad bearer is 401', async () => {
     ciIssuer = await startStubIssuer(AUD);
-    const ci = parseCiAuthConfig({ issuer: ciIssuer.issuer, audience: AUD, bindings: {} }, { allowInsecureIssuer: true });
+    const ci = parseCiAuthConfig({ issuer: ciIssuer.issuer, audience: AUD, bindings: { core: [{ repositoryId: '812345678' }] } }, { allowInsecureIssuer: true });
     const auth = await buildAuth({ mode: 'dev' }, ci);
     const app = express();
     app.use(...(auth.app.authn as [express.RequestHandler]));
@@ -134,11 +164,35 @@ describe('dev mode with CI config', () => {
     expect((await request(app).get('/api/v1/current-prod').set('Authorization', 'Bearer nope')).status).toBe(401);
   });
 
-  it('devIdentity leaves a request carrying Authorization to bearerAuth', async () => {
+  it('devIdentity leaves an /api request carrying Authorization to bearerAuth', async () => {
     const app = express();
     app.use(devIdentity());
+    app.get('/api/x', (req, res) => res.json({ user: req.user ?? null }));
     app.get('/x', (req, res) => res.json({ user: req.user ?? null }));
-    expect((await request(app).get('/x').set('Authorization', 'Bearer t')).body.user).toBeNull();
+    expect((await request(app).get('/api/x').set('Authorization', 'Bearer t')).body.user).toBeNull();
+    expect((await request(app).get('/x').set('Authorization', 'Basic dXNlcjpwdw==')).body.user).toMatchObject({ role: 'operator' });
+  });
+
+  it('a CI config with no bindings does not trust the CI issuer', async () => {
+    ciIssuer = await startStubIssuer(AUD);
+    const ci = parseCiAuthConfig({ issuer: ciIssuer.issuer, audience: AUD, bindings: {} }, { allowInsecureIssuer: true });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    let auth: Awaited<ReturnType<typeof buildAuth>>;
+    try {
+      auth = await buildAuth({ mode: 'dev' }, ci);
+      expect(log.mock.calls.map((c) => String(c[0]))).toContainEqual(expect.stringMatching(/CI auth is configured but has no bindings/));
+    } finally { warn.mockRestore(); log.mockRestore(); }
+    const app = express();
+    app.use(...(auth.app.authn as [express.RequestHandler]));
+    app.use('/api', ...auth.app.apiGuards);
+    app.get('/api/v1/current-prod', (req, res) => res.json(principalOf(req)));
+    app.use(auth.app.errorHandler);
+    const t = await ciIssuer.sign(githubClaims());
+    const res = await request(app).get('/api/v1/current-prod').set('Authorization', `Bearer ${t}`);
+    expect(res.status).toBe(401);
+    expect(res.body).toEqual({ error: 'invalid bearer token: untrusted issuer', code: 'invalid_token' });
+    expect(ciIssuer.discoveryFetches()).toBe(0);
   });
 });
 

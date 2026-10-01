@@ -39,7 +39,6 @@ async function main() {
   const authConfig = loadAuthConfig(process.env);
   const ciAuth = loadCiAuthConfig(process.env, authConfig.mode);
   const auth = await buildAuth(authConfig, ciAuth);
-  if (ciAuth) console.log(`CI auth: issuer ${ciAuth.issuer}, ${ciAuth.bindings.size} bound service(s)`);
 
   // Fail fast on missing S3 credentials too: without this the first log fetch
   // would fail mid-request instead of the misconfiguration surfacing at boot.
