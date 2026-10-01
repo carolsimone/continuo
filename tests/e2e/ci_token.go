@@ -41,7 +41,7 @@ func mintCIToken(t *testing.T, repositoryID, repository, sha string) string {
 	base := getEnv("STUB_GITHUB_BASE", "http://stub-github:9200")
 	resp, err := http.Post(base+"/_test/oidc/token", "application/json", strings.NewReader(string(reqBody)))
 	require.NoError(t, err, "mint CI token")
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var out struct{ Value string }
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
@@ -60,7 +60,7 @@ func submitPublicRelease(t *testing.T, clients *testClients, token string, body 
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err, "POST /api/v1/releases")
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	data, _ := io.ReadAll(resp.Body)
 	out := map[string]any{}
 	_ = json.Unmarshal(data, &out)
