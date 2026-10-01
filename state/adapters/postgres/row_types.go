@@ -69,7 +69,6 @@ type TaskTracker struct {
 	MaxRetries          int            `json:"max_retries" db:"max_retries"`
 	CancelledAt         *time.Time     `json:"cancelled_at,omitempty" db:"cancelled_at"`
 	CancelledBy         *string        `json:"cancelled_by,omitempty" db:"cancelled_by"`
-	ManifestVersion     string         `json:"manifest_version" db:"manifest_version"`
 	ImageTag            string         `json:"image_tag" db:"image_tag"`
 	InheritedFromTaskID *uuid.UUID     `json:"inherited_from_task_id,omitempty" db:"inherited_from_task_id"`
 	Operation           string         `json:"operation" db:"operation"`

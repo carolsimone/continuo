@@ -345,16 +345,13 @@ func queryPostgresTrackerKind(t *testing.T, db *sqlx.DB, scheduleID uuid.UUID) s
 	return kind
 }
 
-// queryFirstTaskTrackerMetadata returns the manifest_version and image_tag of
-// any task_tracker row for the given schedule_id. Used by PR0 audit assertions to
-// verify per-task metadata is populated after a successful run.
-func queryFirstTaskTrackerMetadata(t *testing.T, db *sqlx.DB, scheduleID uuid.UUID) (manifestVersion, imageTag string) {
+// queryFirstTaskTrackerImageTag returns the image_tag of any task_tracker row
+// for the given schedule_id, so assertions can verify the per-task image is
+// populated after a successful run.
+func queryFirstTaskTrackerImageTag(t *testing.T, db *sqlx.DB, scheduleID uuid.UUID) string {
 	t.Helper()
-	var sample struct {
-		ManifestVersion string `db:"manifest_version"`
-		ImageTag        string `db:"image_tag"`
-	}
-	require.NoError(t, db.GetContext(context.Background(), &sample,
-		`SELECT manifest_version, image_tag FROM task_tracker WHERE schedule_id = $1 LIMIT 1`, scheduleID))
-	return sample.ManifestVersion, sample.ImageTag
+	var imageTag string
+	require.NoError(t, db.GetContext(context.Background(), &imageTag,
+		`SELECT image_tag FROM task_tracker WHERE schedule_id = $1 LIMIT 1`, scheduleID))
+	return imageTag
 }

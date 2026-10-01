@@ -18,53 +18,50 @@ import (
 
 // NodeReadyForExecutionDTO is the JSON shape of the query.model:v1 payload.
 type NodeReadyForExecutionDTO struct {
-	ScheduleID      string `json:"schedule_id"`
-	ScheduleName    string `json:"schedule_name"`
-	ServiceName     string `json:"service_name"`
-	SchemaName      string `json:"schema_name"`
-	TableName       string `json:"table_name"`
-	TaskID          string `json:"task_id"`
-	JobName         string `json:"job_name"`
-	NodeType        string `json:"node_type"`
-	ManifestVersion string `json:"manifest_version"`
-	ImageTag        string `json:"image_tag"`
-	SecretRef       string `json:"secret_ref,omitempty"`
-	Operation       string `json:"operation,omitempty"`
+	ScheduleID   string `json:"schedule_id"`
+	ScheduleName string `json:"schedule_name"`
+	ServiceName  string `json:"service_name"`
+	SchemaName   string `json:"schema_name"`
+	TableName    string `json:"table_name"`
+	TaskID       string `json:"task_id"`
+	JobName      string `json:"job_name"`
+	NodeType     string `json:"node_type"`
+	ImageTag     string `json:"image_tag"`
+	SecretRef    string `json:"secret_ref,omitempty"`
+	Operation    string `json:"operation,omitempty"`
 }
 
 // NodeReadyForExecutionFromDomain maps a domain event to its DTO.
 func NodeReadyForExecutionFromDomain(e domain.NodeReadyForExecution) NodeReadyForExecutionDTO {
 	return NodeReadyForExecutionDTO{
-		ScheduleID:      e.ScheduleID,
-		ScheduleName:    e.ScheduleName,
-		ServiceName:     e.ServiceName,
-		SchemaName:      e.SchemaName,
-		TableName:       e.TableName,
-		TaskID:          e.TaskID,
-		JobName:         e.JobName,
-		NodeType:        e.NodeType,
-		ManifestVersion: e.ManifestVersion,
-		ImageTag:        e.ImageTag,
-		SecretRef:       e.SecretRef,
-		Operation:       e.Operation,
+		ScheduleID:   e.ScheduleID,
+		ScheduleName: e.ScheduleName,
+		ServiceName:  e.ServiceName,
+		SchemaName:   e.SchemaName,
+		TableName:    e.TableName,
+		TaskID:       e.TaskID,
+		JobName:      e.JobName,
+		NodeType:     e.NodeType,
+		ImageTag:     e.ImageTag,
+		SecretRef:    e.SecretRef,
+		Operation:    e.Operation,
 	}
 }
 
 // ToDomain maps a decoded DTO back to the domain event.
 func (d NodeReadyForExecutionDTO) ToDomain() domain.NodeReadyForExecution {
 	return domain.NodeReadyForExecution{
-		ScheduleID:      d.ScheduleID,
-		ScheduleName:    d.ScheduleName,
-		ServiceName:     d.ServiceName,
-		SchemaName:      d.SchemaName,
-		TableName:       d.TableName,
-		TaskID:          d.TaskID,
-		JobName:         d.JobName,
-		NodeType:        d.NodeType,
-		ManifestVersion: d.ManifestVersion,
-		ImageTag:        d.ImageTag,
-		SecretRef:       d.SecretRef,
-		Operation:       d.Operation,
+		ScheduleID:   d.ScheduleID,
+		ScheduleName: d.ScheduleName,
+		ServiceName:  d.ServiceName,
+		SchemaName:   d.SchemaName,
+		TableName:    d.TableName,
+		TaskID:       d.TaskID,
+		JobName:      d.JobName,
+		NodeType:     d.NodeType,
+		ImageTag:     d.ImageTag,
+		SecretRef:    d.SecretRef,
+		Operation:    d.Operation,
 	}
 }
 

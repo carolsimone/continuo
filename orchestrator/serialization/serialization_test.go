@@ -11,7 +11,7 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/domain/event"
 )
 
-const goldenNodeReady = `{"schedule_id":"s","schedule_name":"sn","service_name":"svc","schema_name":"sch","table_name":"tbl","task_id":"t","job_name":"j","node_type":"dbt-model","manifest_version":"v1","image_tag":"img","secret_ref":"continuo-api-fx","operation":"test"}`
+const goldenNodeReady = `{"schedule_id":"s","schedule_name":"sn","service_name":"svc","schema_name":"sch","table_name":"tbl","task_id":"t","job_name":"j","node_type":"dbt-model","image_tag":"img","secret_ref":"continuo-api-fx","operation":"test"}`
 
 func TestNodeReadyForExecutionRoundTrip(t *testing.T) {
 	var dto NodeReadyForExecutionDTO
@@ -22,7 +22,7 @@ func TestNodeReadyForExecutionRoundTrip(t *testing.T) {
 	want := domain.NodeReadyForExecution{ //nolint:gosec // G101: secret_ref names a Kubernetes Secret, not a credential
 		ScheduleID: "s", ScheduleName: "sn", ServiceName: "svc", SchemaName: "sch",
 		TableName: "tbl", TaskID: "t", JobName: "j", NodeType: "dbt-model",
-		ManifestVersion: "v1", ImageTag: "img", SecretRef: "continuo-api-fx", Operation: "test",
+		ImageTag: "img", SecretRef: "continuo-api-fx", Operation: "test",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("toDomain:\n got %+v\nwant %+v", got, want)

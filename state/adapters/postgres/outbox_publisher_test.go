@@ -69,7 +69,7 @@ func TestOutboxPublisher_RunFinalized(t *testing.T) {
 
 // TestOutboxPublisher_RunStarted_ServiceMetadataKeysAreSnakeCase pins the
 // scheduler.started:v1 wire contract: the per-service metadata block is keyed
-// manifest_version / image_tag, not the Go field names. The domain value object
+// image_tag, not the Go field names. The domain value object
 // carries no JSON tags, so the publisher must route it through the adapter DTO.
 func TestOutboxPublisher_RunStarted_ServiceMetadataKeysAreSnakeCase(t *testing.T) {
 	ctx := context.Background()
@@ -88,7 +88,7 @@ func TestOutboxPublisher_RunStarted_ServiceMetadataKeysAreSnakeCase(t *testing.T
 			Name: "daily",
 			K:    run.KindCron,
 			ServiceMetadata: map[string]run.ServiceMetadata{
-				"service-1": {ManifestVersion: "v42", ImageTag: "sha-abc"},
+				"service-1": {ImageTag: "sha-abc"},
 			},
 		},
 	}, uuid.Nil)
@@ -109,10 +109,11 @@ func TestOutboxPublisher_RunStarted_ServiceMetadataKeysAreSnakeCase(t *testing.T
 
 	svc, ok := decoded.ServiceMetadata["service-1"]
 	require.True(t, ok, "service-1 metadata must be present")
-	assert.Equal(t, "v42", svc["manifest_version"], "snake_case manifest_version key")
 	assert.Equal(t, "sha-abc", svc["image_tag"], "snake_case image_tag key")
-	_, hasPascal := svc["ManifestVersion"]
-	assert.False(t, hasPascal, "must not leak Go field name ManifestVersion onto the wire")
+	_, hasPascal := svc["ImageTag"]
+	assert.False(t, hasPascal, "must not leak Go field name ImageTag onto the wire")
+	_, hasManifest := svc["manifest_version"]
+	assert.False(t, hasManifest, "manifest_version is not part of the service metadata")
 }
 
 // TestOutboxPublisher_RunStarted_CarriesOperation pins the scheduler.started:v1

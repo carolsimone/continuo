@@ -14,15 +14,15 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	statepublisher "github.com/carolsimone/continuo/state/adapters/publisher"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
+	statepublisher "github.com/carolsimone/continuo/state/adapters/publisher"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/internal/scheduler"
-	ports "github.com/carolsimone/continuo/state/service/ports"
-	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
+	ports "github.com/carolsimone/continuo/state/service/ports"
 	"github.com/carolsimone/continuo/state/service/uow"
-	"github.com/carolsimone/continuo/pkg/streams"
 )
 
 // schedulerStartedEvent holds the fields read back from the Redis stream.
@@ -289,4 +289,3 @@ func findEventByName(events []schedulerStartedEvent, name string) *schedulerStar
 	}
 	return nil
 }
-

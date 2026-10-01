@@ -23,10 +23,10 @@ import (
 // SaveCatalog records the aggregate that was passed in and returns saveErr.
 // All other methods are inert stubs.
 type fakeCatalogPortRepo struct {
-	initial  map[string]catalog.Entry
-	saved    *catalog.ScheduleCatalog
-	saveErr  error
-	loadErr  error
+	initial map[string]catalog.Entry
+	saved   *catalog.ScheduleCatalog
+	saveErr error
+	loadErr error
 }
 
 func (f *fakeCatalogPortRepo) LoadCatalogForUpdate(_ context.Context) (*catalog.ScheduleCatalog, error) {
@@ -75,7 +75,7 @@ func TestScheduleCatalogHandler_HappyReconcile(t *testing.T) {
 		EventID:       uuid.New(),
 		ScheduleNames: []string{"orders", "users"},
 		ServiceMetadata: map[string]run.ServiceMetadata{
-			"svc-a": {ManifestVersion: "v3", ImageTag: "sha256:aaa"},
+			"svc-a": {ImageTag: "sha256:aaa"},
 		},
 	}
 	err := h.Handle(context.Background(), u, evt, uuid.New())
@@ -87,7 +87,6 @@ func TestScheduleCatalogHandler_HappyReconcile(t *testing.T) {
 	e, ok := saved.Entry("orders")
 	require.True(t, ok)
 	assert.True(t, e.IsActive())
-	assert.Equal(t, "v3", e.ServiceMetadata["svc-a"].ManifestVersion)
 }
 
 // TestScheduleCatalogHandler_EmptyListReturnsErrEmptyReconciliation verifies

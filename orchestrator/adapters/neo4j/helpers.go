@@ -31,20 +31,18 @@ func recordToTableNode(record *neo4j.Record) (*domain.TableNode, error) {
 	createdAt, _ := record.Get("created_at")
 	nodeType, _ := record.Get("node_type")
 	taskID, _ := record.Get("task_id")
-	manifestVersion, _ := record.Get("manifest_version")
 	imageTag, _ := record.Get("image_tag")
 
 	node := &domain.TableNode{
-		TableName:       safeString(tableName),
-		SchemaName:      safeString(schemaName),
-		ServiceName:     safeString(serviceName),
-		Owner:           safeString(owner),
-		ScheduleName:    safeString(scheduleName),
-		Criticality:     domain.Criticality(safeString(criticality)),
-		NodeType:        safeString(nodeType),
-		TaskID:          safeString(taskID),
-		ManifestVersion: safeString(manifestVersion),
-		ImageTag:        safeString(imageTag),
+		TableName:    safeString(tableName),
+		SchemaName:   safeString(schemaName),
+		ServiceName:  safeString(serviceName),
+		Owner:        safeString(owner),
+		ScheduleName: safeString(scheduleName),
+		Criticality:  domain.Criticality(safeString(criticality)),
+		NodeType:     safeString(nodeType),
+		TaskID:       safeString(taskID),
+		ImageTag:     safeString(imageTag),
 	}
 
 	if lastUpdatedAtNeo, ok := lastUpdatedAt.(neo4j.LocalDateTime); ok {

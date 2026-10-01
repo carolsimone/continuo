@@ -28,7 +28,7 @@ func newSnapshotWriter(tx neo4j.ManagedTransaction) *snapshotWriter {
 //	created_at, source_run_id?, topology_generation, service_metadata,
 //	total_nodes, terminal_count, version
 //
-// :EXECUTES edge:  task_id, status, image_tag, secret_ref?, manifest_version,
+// :EXECUTES edge:  task_id, status, image_tag, secret_ref?,
 //
 //	test_count?, inherited_from_task_id?, content_hash
 //
@@ -88,7 +88,6 @@ func (w *snapshotWriter) WriteRunAndExecutesEdges(ctx context.Context, p snapsho
 			"initial_status":         t.InitialStatus,
 			"image_tag":              t.ImageTag,
 			"secret_ref":             secretRef,
-			"manifest_version":       t.ManifestVersion,
 			"content_hash":           t.ContentHash,
 			"test_count":             testCount,
 			"inherited_from_task_id": inheritedFrom,
@@ -136,7 +135,6 @@ func (w *snapshotWriter) WriteRunAndExecutesEdges(ctx context.Context, p snapsho
 		              e.task_id          = t.task_id,
 		              e.image_tag        = t.image_tag,
 		              e.secret_ref       = t.secret_ref,
-		              e.manifest_version = t.manifest_version,
 		              e.test_count       = t.test_count,
 		              e.content_hash     = t.content_hash
 		FOREACH (_ IN CASE WHEN t.inherited_from_task_id IS NULL THEN [] ELSE [1] END |

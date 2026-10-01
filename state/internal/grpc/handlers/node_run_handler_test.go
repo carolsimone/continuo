@@ -72,8 +72,7 @@ func TestNodeRunHandler_ListNodeRuns_HappyPath(t *testing.T) {
 				ScheduleID: uuid.New(), ScheduleName: "daily", Kind: "cron",
 				TerminalStatus: "succeeded",
 				TaskID:         uuid.New(), TaskStatus: run.TaskStatusSucceeded,
-				RetryCount: 0, ImageTag: "v1", ManifestVersion: "m1",
-				CreatedAt: now,
+				RetryCount: 0, ImageTag: "v1", CreatedAt: now,
 			},
 		},
 	}

@@ -18,7 +18,7 @@ import (
 //   - Every descendant of a seeded task (in the source's pinned :EXECUTES set)
 //     joins the rebase set, regardless of its source status.
 //   - Rebase-set rows → PENDING, fresh task_id, source's pinned
-//     (image_tag, manifest_version), InheritedFromTaskID = nil.
+//     image_tag, InheritedFromTaskID = nil.
 //   - Every other source task → InitialStatus = source's stored status,
 //     source's pinned metadata, InheritedFromTaskID = root-resolved source
 //     task_id (forwards when the source row was itself inherited).
@@ -114,7 +114,6 @@ func (SourcePinnedDAG) SelectTasks(ctx context.Context, r TopologyReader, p Para
 				InitialStatus:   "PENDING",
 				ImageTag:        st.ImageTag,
 				SecretRef:       st.SecretRef,
-				ManifestVersion: st.ManifestVersion,
 				ContentHash:     st.ContentHash,
 				TestCountKnown:  false, // SourceTaskRow carries no test_count; rebased rows never gate on it
 				MaxRetries:      pkgEvents.DefaultTaskMaxRetries,
@@ -136,7 +135,6 @@ func (SourcePinnedDAG) SelectTasks(ctx context.Context, r TopologyReader, p Para
 			InitialStatus:       st.Status,
 			ImageTag:            st.ImageTag,
 			SecretRef:           st.SecretRef,
-			ManifestVersion:     st.ManifestVersion,
 			ContentHash:         st.ContentHash,
 			TestCountKnown:      false, // SourceTaskRow carries no test_count; inherited rows never gate on it
 			InheritedFromTaskID: &root,

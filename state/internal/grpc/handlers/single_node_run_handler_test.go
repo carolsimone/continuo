@@ -243,15 +243,14 @@ func TestSingleNodeRunHandler_Stale_HappyPath(t *testing.T) {
 
 	taskID := uuid.New()
 	srcTask := &postgres.TaskTracker{
-		TaskID:          taskID,
-		ScheduleID:      srcID,
-		ServiceName:     "svcA",
-		SchemaName:      "public",
-		TableName:       "users",
-		Status:          run.TaskStatusSucceeded,
-		ManifestVersion: "m1",
-		ImageTag:        "v1",
-		CreatedAt:       time.Now().Add(-time.Hour),
+		TaskID:      taskID,
+		ScheduleID:  srcID,
+		ServiceName: "svcA",
+		SchemaName:  "public",
+		TableName:   "users",
+		Status:      run.TaskStatusSucceeded,
+		ImageTag:    "v1",
+		CreatedAt:   time.Now().Add(-time.Hour),
 	}
 	require.NoError(t, fx.TaskRepo.Create(context.Background(), srcTask))
 

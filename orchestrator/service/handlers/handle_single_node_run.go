@@ -121,7 +121,6 @@ func (h *HandleSingleNodeRunHandler) Handle(ctx context.Context, cmd domainModel
 	taskID := sole.TaskID.String()
 	imageTag := sole.ImageTag
 	secretRef := sole.SecretRef
-	manifestVersion := sole.ManifestVersion
 	nodeType := sole.NodeType
 
 	scheduleUUID, err := uuid.Parse(cmd.RunID)
@@ -131,7 +130,7 @@ func (h *HandleSingleNodeRunHandler) Handle(ctx context.Context, cmd domainModel
 
 	// Outbox 1: run.entries.dispatched:v1 — reuses the existing state consumer
 	// RunEntriesDispatchedHandler which:
-	//   1. creates the task_tracker row (with manifest_version + image_tag)
+	//   1. creates the task_tracker row (with image_tag)
 	//   2. sets total_task_count = 1
 	//   3. sets initialization_status = "completed"
 	// This is required for the finalization guard (initCompleted) to pass.
@@ -140,14 +139,13 @@ func (h *HandleSingleNodeRunHandler) Handle(ctx context.Context, cmd domainModel
 		ScheduleName: cmd.ScheduleName,
 		AllTasks: []pkgEvents.DispatchedTask{
 			{
-				TaskID:          taskID,
-				ServiceName:     cmd.ServiceName,
-				SchemaName:      cmd.SchemaName,
-				TableName:       cmd.TableName,
-				NodeType:        nodeType,
-				MaxRetries:      pkgEvents.DefaultTaskMaxRetries,
-				ManifestVersion: manifestVersion,
-				ImageTag:        imageTag,
+				TaskID:      taskID,
+				ServiceName: cmd.ServiceName,
+				SchemaName:  cmd.SchemaName,
+				TableName:   cmd.TableName,
+				NodeType:    nodeType,
+				MaxRetries:  pkgEvents.DefaultTaskMaxRetries,
+				ImageTag:    imageTag,
 			},
 		},
 		TotalTaskCount: 1,
@@ -176,18 +174,17 @@ func (h *HandleSingleNodeRunHandler) Handle(ctx context.Context, cmd domainModel
 		return fmt.Errorf("compute job name: %w", err)
 	}
 	queryEvt := domain.NodeReadyForExecution{
-		ScheduleID:      cmd.RunID,
-		ScheduleName:    cmd.ScheduleName,
-		ServiceName:     cmd.ServiceName,
-		SchemaName:      cmd.SchemaName,
-		TableName:       cmd.TableName,
-		TaskID:          taskID,
-		JobName:         jobName,
-		NodeType:        nodeType,
-		ManifestVersion: manifestVersion,
-		ImageTag:        imageTag,
-		SecretRef:       secretRef,
-		Operation:       cmd.Operation,
+		ScheduleID:   cmd.RunID,
+		ScheduleName: cmd.ScheduleName,
+		ServiceName:  cmd.ServiceName,
+		SchemaName:   cmd.SchemaName,
+		TableName:    cmd.TableName,
+		TaskID:       taskID,
+		JobName:      jobName,
+		NodeType:     nodeType,
+		ImageTag:     imageTag,
+		SecretRef:    secretRef,
+		Operation:    cmd.Operation,
 	}
 	queryPayload, err := json.Marshal(serialization.NodeReadyForExecutionFromDomain(queryEvt))
 	if err != nil {

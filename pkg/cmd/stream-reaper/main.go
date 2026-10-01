@@ -7,9 +7,10 @@
 // session keys, which are plain strings, not streams — are never touched.
 //
 // Intended to run as a periodic (daily) Kubernetes CronJob. Config via env:
-//   REDIS_URL          required; e.g. redis://:pass@host:6379
-//   STREAM_RETENTION   optional Go duration (default 72h); entries older than
-//                      this are removed.
+//
+//	REDIS_URL          required; e.g. redis://:pass@host:6379
+//	STREAM_RETENTION   optional Go duration (default 72h); entries older than
+//	                   this are removed.
 package main
 
 import (

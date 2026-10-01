@@ -23,7 +23,6 @@ type Task struct {
 	MaxRetries          int
 	CancelledAt         *time.Time
 	CancelledBy         *string
-	ManifestVersion     string
 	ImageTag            string
 	InheritedFromTaskID *uuid.UUID
 	Operation           model.Operation
@@ -45,7 +44,6 @@ type DispatchedTask struct {
 	TableName           string
 	Status              TaskStatus
 	MaxRetries          int32
-	ManifestVersion     string
 	ImageTag            string
 	InheritedFromTaskID *uuid.UUID
 }

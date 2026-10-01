@@ -56,14 +56,14 @@ func withTopologyReader(
 
 // ── helpers used by fixtures ──────────────────────────────────────────────────
 
-func txMergeTable(ctx context.Context, tx neo4j.ManagedTransaction, sched, svc, schema, tbl, img, mv string, active bool) error {
+func txMergeTable(ctx context.Context, tx neo4j.ManagedTransaction, sched, svc, schema, tbl, img string, active bool) error {
 	_, err := tx.Run(ctx, `
 		MERGE (t:Table {service_name: $svc, schema_name: $schema, table_name: $tbl, schedule_name: $sched})
-		ON CREATE SET t.active = $active, t.image_tag = $img, t.manifest_version = $mv, t.node_type = 'dbt-model'
-		ON MATCH  SET t.active = $active, t.image_tag = $img, t.manifest_version = $mv`,
+		ON CREATE SET t.active = $active, t.image_tag = $img, t.node_type = 'dbt-model'
+		ON MATCH  SET t.active = $active, t.image_tag = $img`,
 		map[string]interface{}{
 			"svc": svc, "schema": schema, "tbl": tbl, "sched": sched,
-			"img": img, "mv": mv, "active": active,
+			"img": img, "active": active,
 		})
 	return err
 }
@@ -105,7 +105,7 @@ func txSeedRun(ctx context.Context, tx neo4j.ManagedTransaction, runID, sched st
 type txEdge struct {
 	Svc, Schema, Tbl    string
 	Status, TaskID      string
-	Img, Mv             string
+	Img                 string
 	InheritedFromTaskID string // empty = not inherited
 	Sched               string // override schedule; empty = use outer sched
 	TestCount           *int   // nil = property left absent (pre-capture edge); non-nil = pinned value
@@ -135,7 +135,7 @@ func txSeedExecEdges(ctx context.Context, tx neo4j.ManagedTransaction, runID, de
 			MATCH (t:Table {service_name: $svc, schema_name: $schema, table_name: $tbl, schedule_name: $sched})
 			MERGE (r)-[ex:EXECUTES]->(t)
 			ON CREATE SET ex.status = $status, ex.task_id = $task_id,
-			              ex.image_tag = $img, ex.manifest_version = $mv
+			              ex.image_tag = $img
 			FOREACH (_ IN CASE WHEN $inherited_from IS NULL THEN [] ELSE [1] END |
 			    SET ex.inherited_from_task_id = $inherited_from
 			)
@@ -148,7 +148,7 @@ func txSeedExecEdges(ctx context.Context, tx neo4j.ManagedTransaction, runID, de
 			map[string]interface{}{
 				"run_id": runID, "svc": e.Svc, "schema": e.Schema, "tbl": e.Tbl,
 				"sched": sched, "status": e.Status, "task_id": e.TaskID,
-				"img": e.Img, "mv": e.Mv, "inherited_from": inheritedFrom,
+				"img": e.Img, "inherited_from": inheritedFrom,
 				"test_count": testCount, "secret_ref": secretRef,
 			})
 		if err != nil {
@@ -165,10 +165,10 @@ func TestTopologyReader_LoadLatestSourceDAG(t *testing.T) {
 
 	withTopologyReader(t,
 		func(ctx context.Context, tx neo4j.ManagedTransaction) error {
-			if err := txMergeTable(ctx, tx, sched, "svc", "s", "a", "img:1", "v1", true); err != nil {
+			if err := txMergeTable(ctx, tx, sched, "svc", "s", "a", "img:1", true); err != nil {
 				return err
 			}
-			if err := txMergeTable(ctx, tx, sched, "svc", "s", "b", "img:2", "v2", true); err != nil {
+			if err := txMergeTable(ctx, tx, sched, "svc", "s", "b", "img:2", true); err != nil {
 				return err
 			}
 			if err := txSetTableSecretRef(ctx, tx, sched, "s", "a", "continuo-api-fx"); err != nil {
@@ -193,7 +193,6 @@ func TestTopologyReader_LoadLatestSourceDAG(t *testing.T) {
 				return nil
 			}
 			assert.Equal(t, "img:1", rowA.ImageTag)
-			assert.Equal(t, "v1", rowA.ManifestVersion)
 			assert.Equal(t, sched, rowA.ScheduleName)
 			assert.Equal(t, "dbt-model", rowA.NodeType)
 			assert.Equal(t, "continuo-api-fx", rowA.SecretRef)
@@ -225,11 +224,11 @@ func TestTopologyReader_LoadLatestSourceDAG_InactiveTablesExcluded(t *testing.T)
 	withTopologyReader(t,
 		func(ctx context.Context, tx neo4j.ManagedTransaction) error {
 			// active table
-			if err := txMergeTable(ctx, tx, sched, "svc", "s", "active", "img:1", "v1", true); err != nil {
+			if err := txMergeTable(ctx, tx, sched, "svc", "s", "active", "img:1", true); err != nil {
 				return err
 			}
 			// inactive table — should be excluded
-			return txMergeTable(ctx, tx, sched, "svc", "s", "inactive", "img:2", "v2", false)
+			return txMergeTable(ctx, tx, sched, "svc", "s", "inactive", "img:2", false)
 		},
 		func(ctx context.Context, r snapshot.TopologyReader) error {
 			got, err := r.LoadLatestSourceDAG(ctx, sched)
@@ -254,7 +253,7 @@ func TestTopologyReader_LoadLatestSourceDAG_TestCountAbsent(t *testing.T) {
 
 	withTopologyReader(t,
 		func(ctx context.Context, tx neo4j.ManagedTransaction) error {
-			return txMergeTable(ctx, tx, sched, "svc", "s", "a", "img:1", "v1", true)
+			return txMergeTable(ctx, tx, sched, "svc", "s", "a", "img:1", true)
 		},
 		func(ctx context.Context, r snapshot.TopologyReader) error {
 			got, err := r.LoadLatestSourceDAG(ctx, sched)
@@ -280,11 +279,11 @@ func TestTopologyReader_LoadLatestSourceDAG_NonSeedCrossScheduleUpstreamExcluded
 	withTopologyReader(t,
 		func(ctx context.Context, tx neo4j.ManagedTransaction) error {
 			// Table A in schedule x (the schedule under test).
-			if err := txMergeTable(ctx, tx, schedX, "svc", "s", "a", "img:1", "v1", true); err != nil {
+			if err := txMergeTable(ctx, tx, schedX, "svc", "s", "a", "img:1", true); err != nil {
 				return err
 			}
 			// Table U in schedule y — a dbt-model (NOT a seed) that A depends on.
-			if err := txMergeTable(ctx, tx, schedY, "svc", "s", "u", "img:2", "v2", true); err != nil {
+			if err := txMergeTable(ctx, tx, schedY, "svc", "s", "u", "img:2", true); err != nil {
 				return err
 			}
 			// Update U's node_type to ensure it is explicitly a non-seed model.
@@ -329,10 +328,10 @@ func TestTopologyReader_LoadSourceTasks_RoundTripsInheritedFromTaskID(t *testing
 
 	withTopologyReader(t,
 		func(ctx context.Context, tx neo4j.ManagedTransaction) error {
-			if err := txMergeTable(ctx, tx, sched, "svc", "s", "a", "img:1", "v1", true); err != nil {
+			if err := txMergeTable(ctx, tx, sched, "svc", "s", "a", "img:1", true); err != nil {
 				return err
 			}
-			if err := txMergeTable(ctx, tx, sched, "svc", "s", "b", "img:2", "v2", true); err != nil {
+			if err := txMergeTable(ctx, tx, sched, "svc", "s", "b", "img:2", true); err != nil {
 				return err
 			}
 			if err := txSeedRun(ctx, tx, runID, sched); err != nil {
@@ -340,9 +339,9 @@ func TestTopologyReader_LoadSourceTasks_RoundTripsInheritedFromTaskID(t *testing
 			}
 			return txSeedExecEdges(ctx, tx, runID, sched, []txEdge{
 				{Svc: "svc", Schema: "s", Tbl: "a", Status: "SUCCEEDED", TaskID: taskA, //nolint:gosec // G101: secret_ref names a Kubernetes Secret, not a credential
-					Img: "img:1", Mv: "v1", InheritedFromTaskID: rootA, SecretRef: "continuo-api-fx"},
+					Img: "img:1", InheritedFromTaskID: rootA, SecretRef: "continuo-api-fx"},
 				{Svc: "svc", Schema: "s", Tbl: "b", Status: "FAILED", TaskID: taskB,
-					Img: "img:2", Mv: "v2"},
+					Img: "img:2"},
 			})
 		},
 		func(ctx context.Context, r snapshot.TopologyReader) error {
@@ -433,17 +432,17 @@ func TestTopologyReader_DescendantsInLatestTopologyBatch_ActiveFilter(t *testing
 
 	withTopologyReader(t,
 		func(ctx context.Context, tx neo4j.ManagedTransaction) error {
-			if err := txMergeTable(ctx, tx, sched, "svc", "s", "a", "img:1", "v1", true); err != nil {
+			if err := txMergeTable(ctx, tx, sched, "svc", "s", "a", "img:1", true); err != nil {
 				return err
 			}
-			if err := txMergeTable(ctx, tx, sched, "svc", "s", "b", "img:1", "v1", true); err != nil {
+			if err := txMergeTable(ctx, tx, sched, "svc", "s", "b", "img:1", true); err != nil {
 				return err
 			}
-			if err := txMergeTable(ctx, tx, sched, "svc", "s", "c", "img:1", "v1", true); err != nil {
+			if err := txMergeTable(ctx, tx, sched, "svc", "s", "c", "img:1", true); err != nil {
 				return err
 			}
 			// inactive descendant
-			if err := txMergeTable(ctx, tx, sched, "svc", "s", "d", "img:1", "v1", false); err != nil {
+			if err := txMergeTable(ctx, tx, sched, "svc", "s", "d", "img:1", false); err != nil {
 				return err
 			}
 			if err := txAddDependency(ctx, tx, sched, "s", "b", sched, "s", "a"); err != nil {
@@ -484,13 +483,13 @@ func TestTopologyReader_DescendantsInSourceRunBatch_FilteredToSourceExecutes(t *
 
 	withTopologyReader(t,
 		func(ctx context.Context, tx neo4j.ManagedTransaction) error {
-			if err := txMergeTable(ctx, tx, sched, "svc", "s", "a", "img:1", "v1", true); err != nil {
+			if err := txMergeTable(ctx, tx, sched, "svc", "s", "a", "img:1", true); err != nil {
 				return err
 			}
-			if err := txMergeTable(ctx, tx, sched, "svc", "s", "b", "img:1", "v1", true); err != nil {
+			if err := txMergeTable(ctx, tx, sched, "svc", "s", "b", "img:1", true); err != nil {
 				return err
 			}
-			if err := txMergeTable(ctx, tx, sched, "svc", "s", "c", "img:1", "v1", true); err != nil {
+			if err := txMergeTable(ctx, tx, sched, "svc", "s", "c", "img:1", true); err != nil {
 				return err
 			}
 			if err := txAddDependency(ctx, tx, sched, "s", "b", sched, "s", "a"); err != nil {
@@ -504,8 +503,8 @@ func TestTopologyReader_DescendantsInSourceRunBatch_FilteredToSourceExecutes(t *
 			}
 			// Source run only covers a and b; c is NOT in the source run.
 			return txSeedExecEdges(ctx, tx, runID, sched, []txEdge{
-				{Svc: "svc", Schema: "s", Tbl: "a", Status: "FAILED", TaskID: uuid.New().String(), Img: "img:1", Mv: "v1"},
-				{Svc: "svc", Schema: "s", Tbl: "b", Status: "PENDING", TaskID: uuid.New().String(), Img: "img:1", Mv: "v1"},
+				{Svc: "svc", Schema: "s", Tbl: "a", Status: "FAILED", TaskID: uuid.New().String(), Img: "img:1"},
+				{Svc: "svc", Schema: "s", Tbl: "b", Status: "PENDING", TaskID: uuid.New().String(), Img: "img:1"},
 			})
 		},
 		func(ctx context.Context, r snapshot.TopologyReader) error {
@@ -533,7 +532,7 @@ func TestTopologyReader_LoadSingleLatestTable_HitAndMiss(t *testing.T) {
 
 	withTopologyReader(t,
 		func(ctx context.Context, tx neo4j.ManagedTransaction) error {
-			if err := txMergeTable(ctx, tx, sched, "svc", "s", "x", "img:7", "v7", true); err != nil {
+			if err := txMergeTable(ctx, tx, sched, "svc", "s", "x", "img:7", true); err != nil {
 				return err
 			}
 			return txSetTableSecretRef(ctx, tx, sched, "s", "x", "continuo-api-fx")
@@ -544,7 +543,6 @@ func TestTopologyReader_LoadSingleLatestTable_HitAndMiss(t *testing.T) {
 			require.NoError(t, err)
 			require.True(t, found, "existing active table must be found")
 			assert.Equal(t, "img:7", row.ImageTag)
-			assert.Equal(t, "v7", row.ManifestVersion)
 			assert.Equal(t, "continuo-api-fx", row.SecretRef)
 			assert.Equal(t, sched, row.ScheduleName)
 			assert.Equal(t, "dbt-model", row.NodeType)
@@ -570,11 +568,11 @@ func TestTopologyReader_LoadSingleLatestTable_TestCountAbsent_vs_ExplicitZero(t 
 	withTopologyReader(t,
 		func(ctx context.Context, tx neo4j.ManagedTransaction) error {
 			// Pre-capture style: MERGE without ever setting test_count.
-			if err := txMergeTable(ctx, tx, sched, "svc", "s", "absent", "img:1", "v1", true); err != nil {
+			if err := txMergeTable(ctx, tx, sched, "svc", "s", "absent", "img:1", true); err != nil {
 				return err
 			}
 			// Explicit zero: test_count set to 0.
-			if err := txMergeTable(ctx, tx, sched, "svc", "s", "known-zero", "img:2", "v2", true); err != nil {
+			if err := txMergeTable(ctx, tx, sched, "svc", "s", "known-zero", "img:2", true); err != nil {
 				return err
 			}
 			_, err := tx.Run(ctx, `
@@ -605,7 +603,7 @@ func TestTopologyReader_LoadSingleLatestTable_InactiveExcluded(t *testing.T) {
 
 	withTopologyReader(t,
 		func(ctx context.Context, tx neo4j.ManagedTransaction) error {
-			return txMergeTable(ctx, tx, sched, "svc", "s", "y", "img:1", "v1", false)
+			return txMergeTable(ctx, tx, sched, "svc", "s", "y", "img:1", false)
 		},
 		func(ctx context.Context, r snapshot.TopologyReader) error {
 			_, found, err := r.LoadSingleLatestTable(ctx, snapshot.FQN{Service: "svc", Schema: "s", Table: "y"})
@@ -625,7 +623,7 @@ func TestTopologyReader_LoadSingleTableFromSourceRun_HitAndMiss(t *testing.T) {
 
 	withTopologyReader(t,
 		func(ctx context.Context, tx neo4j.ManagedTransaction) error {
-			if err := txMergeTable(ctx, tx, sched, "svc", "s", "z", "img:NEW", "vNEW", true); err != nil {
+			if err := txMergeTable(ctx, tx, sched, "svc", "s", "z", "img:NEW", true); err != nil {
 				return err
 			}
 			if err := txSetTableSecretRef(ctx, tx, sched, "s", "z", "continuo-api-new"); err != nil {
@@ -637,7 +635,7 @@ func TestTopologyReader_LoadSingleTableFromSourceRun_HitAndMiss(t *testing.T) {
 			// Source edge pins OLD metadata (different from latest table).
 			return txSeedExecEdges(ctx, tx, runID, sched, []txEdge{
 				{Svc: "svc", Schema: "s", Tbl: "z", Status: "SUCCEEDED", TaskID: taskID, //nolint:gosec // G101: secret_ref names a Kubernetes Secret, not a credential
-					Img: "img:OLD", Mv: "vOLD", SecretRef: "continuo-api-old"},
+					Img: "img:OLD", SecretRef: "continuo-api-old"},
 			})
 		},
 		func(ctx context.Context, r snapshot.TopologyReader) error {
@@ -646,7 +644,6 @@ func TestTopologyReader_LoadSingleTableFromSourceRun_HitAndMiss(t *testing.T) {
 			require.NoError(t, err)
 			require.True(t, found, "table in source run must be found")
 			assert.Equal(t, "img:OLD", row.ImageTag, "must read from source :EXECUTES edge, not latest table")
-			assert.Equal(t, "vOLD", row.ManifestVersion)
 			assert.Equal(t, "continuo-api-old", row.SecretRef, "must read the pinned edge secret_ref, not the latest table")
 			assert.Equal(t, sched, row.ScheduleName)
 
@@ -674,7 +671,7 @@ func TestTopologyReader_LoadSingleTableFromSourceRun_ReadsPinnedTestCountNotCurr
 
 	withTopologyReader(t,
 		func(ctx context.Context, tx neo4j.ManagedTransaction) error {
-			if err := txMergeTable(ctx, tx, sched, "svc", "s", "z", "img:1", "v1", true); err != nil {
+			if err := txMergeTable(ctx, tx, sched, "svc", "s", "z", "img:1", true); err != nil {
 				return err
 			}
 			// Table had test_count = 0 at snapshot time.
@@ -690,7 +687,7 @@ func TestTopologyReader_LoadSingleTableFromSourceRun_ReadsPinnedTestCountNotCurr
 			// Source edge pins test_count = 0, mirroring the table at snapshot time.
 			if err := txSeedExecEdges(ctx, tx, runID, sched, []txEdge{
 				{Svc: "svc", Schema: "s", Tbl: "z", Status: "SUCCEEDED", TaskID: taskID,
-					Img: "img:1", Mv: "v1", TestCount: &pinned},
+					Img: "img:1", TestCount: &pinned},
 			}); err != nil {
 				return err
 			}
@@ -724,7 +721,7 @@ func TestTopologyReader_LoadSingleTableFromSourceRun_TestCountAbsentOnEdge(t *te
 
 	withTopologyReader(t,
 		func(ctx context.Context, tx neo4j.ManagedTransaction) error {
-			if err := txMergeTable(ctx, tx, sched, "svc", "s", "z", "img:1", "v1", true); err != nil {
+			if err := txMergeTable(ctx, tx, sched, "svc", "s", "z", "img:1", true); err != nil {
 				return err
 			}
 			if err := txSeedRun(ctx, tx, runID, sched); err != nil {
@@ -733,7 +730,7 @@ func TestTopologyReader_LoadSingleTableFromSourceRun_TestCountAbsentOnEdge(t *te
 			// Pre-capture source edge: no test_count property at all.
 			return txSeedExecEdges(ctx, tx, runID, sched, []txEdge{
 				{Svc: "svc", Schema: "s", Tbl: "z", Status: "SUCCEEDED", TaskID: taskID,
-					Img: "img:1", Mv: "v1"},
+					Img: "img:1"},
 			})
 		},
 		func(ctx context.Context, r snapshot.TopologyReader) error {

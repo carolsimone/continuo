@@ -15,7 +15,7 @@ func TestParseScheduleCatalogLoaded_HappyPath(t *testing.T) {
 		"event_id": "` + eventID.String() + `",
 		"schedule_names": ["s1", "s2"],
 		"service_metadata": {
-			"svcA": {"manifest_version": "m1", "image_tag": "v1"}
+			"svcA": {"image_tag": "v1"}
 		}
 	}`
 	msg := goredis.XMessage{
@@ -26,7 +26,6 @@ func TestParseScheduleCatalogLoaded_HappyPath(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, eventID, evt.EventID)
 	assert.Equal(t, []string{"s1", "s2"}, evt.ScheduleNames)
-	assert.Equal(t, "m1", evt.ServiceMetadata["svcA"].ManifestVersion)
 	assert.Equal(t, "v1", evt.ServiceMetadata["svcA"].ImageTag)
 }
 

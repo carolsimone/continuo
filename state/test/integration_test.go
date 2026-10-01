@@ -11,9 +11,9 @@ import (
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	grpcserver "github.com/carolsimone/continuo/state/internal/grpc"
 	"github.com/carolsimone/continuo/state/internal/grpc/handlers"
-	ports "github.com/carolsimone/continuo/state/service/ports"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
+	ports "github.com/carolsimone/continuo/state/service/ports"
 	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
@@ -253,4 +253,3 @@ func schedulerKind(t *testing.T, scheduleID string) string {
 	require.NoError(t, err)
 	return kind
 }
-

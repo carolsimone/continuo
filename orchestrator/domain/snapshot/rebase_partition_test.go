@@ -25,9 +25,9 @@ func TestRebasePartition_RebasesNonSucceededAndDescendants_InheritsSucceeded(t *
 			},
 		},
 		LatestDAG: map[snapshot.FQN]snapshot.LatestTableRow{
-			a: {ScheduleName: "x", NodeType: "python-api", ImageTag: "v2", ManifestVersion: "m2", SecretRef: "continuo-api-fx"},
-			b: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v2", ManifestVersion: "m2"},
-			c: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v2", ManifestVersion: "m2"},
+			a: {ScheduleName: "x", NodeType: "python-api", ImageTag: "v2", SecretRef: "continuo-api-fx"},
+			b: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v2"},
+			c: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v2"},
 		},
 		DescendantsLatest:    map[snapshot.FQN][]snapshot.FQN{a: {b}},
 		ImmDescendantsLatest: map[snapshot.FQN][]snapshot.FQN{a: {b}},

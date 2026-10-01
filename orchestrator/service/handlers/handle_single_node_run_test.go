@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/carolsimone/continuo/orchestrator/serialization"
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
+	"github.com/carolsimone/continuo/orchestrator/serialization"
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	pkgEvents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -65,16 +65,15 @@ func TestHandleSingleNodeRun_TestOperation_StampsOperationOnQueryModel(t *testin
 	snap := &fakeSnapshotService{
 		projection: []snapshot.TaskProjection{
 			{
-				TaskID:          taskID,
-				ServiceName:     "svc",
-				SchemaName:      "s",
-				TableName:       "t",
-				ScheduleName:    "daily",
-				NodeType:        "dbt-model",
-				InitialStatus:   "PENDING",
-				ImageTag:        "v1",
-				ManifestVersion: "m1",
-				MaxRetries:      pkgEvents.DefaultTaskMaxRetries,
+				TaskID:        taskID,
+				ServiceName:   "svc",
+				SchemaName:    "s",
+				TableName:     "t",
+				ScheduleName:  "daily",
+				NodeType:      "dbt-model",
+				InitialStatus: "PENDING",
+				ImageTag:      "v1",
+				MaxRetries:    pkgEvents.DefaultTaskMaxRetries,
 			},
 		},
 	}
@@ -114,16 +113,15 @@ func TestHandleSingleNodeRun_RunOperation_QueryModelOmitsOperation(t *testing.T)
 	snap := &fakeSnapshotService{
 		projection: []snapshot.TaskProjection{
 			{
-				TaskID:          taskID,
-				ServiceName:     "svc",
-				SchemaName:      "s",
-				TableName:       "t",
-				ScheduleName:    "daily",
-				NodeType:        "dbt-model",
-				InitialStatus:   "PENDING",
-				ImageTag:        "v1",
-				ManifestVersion: "m1",
-				MaxRetries:      pkgEvents.DefaultTaskMaxRetries,
+				TaskID:        taskID,
+				ServiceName:   "svc",
+				SchemaName:    "s",
+				TableName:     "t",
+				ScheduleName:  "daily",
+				NodeType:      "dbt-model",
+				InitialStatus: "PENDING",
+				ImageTag:      "v1",
+				MaxRetries:    pkgEvents.DefaultTaskMaxRetries,
 			},
 		},
 	}
@@ -172,7 +170,6 @@ func TestHandleSingleNodeRun_CarriesPinnedSecretRef(t *testing.T) {
 				NodeType:        "python-api",
 				InitialStatus:   "PENDING",
 				ImageTag:        "v1",
-				ManifestVersion: "m1",
 				SecretRef:       "continuo-api-fx",
 				MaxRetries:      pkgEvents.DefaultTaskMaxRetries,
 			},

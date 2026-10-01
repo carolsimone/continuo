@@ -13,7 +13,7 @@ func TestSingleNode_LatestMode_Hit(t *testing.T) {
 	fqn := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a"}
 	r := &fakeTopologyReader{
 		SingleLatest: map[snapshot.FQN]snapshot.LatestTableRow{
-			fqn: {ScheduleName: "x", NodeType: "python-api", ImageTag: "v1", ManifestVersion: "m1", SecretRef: "continuo-api-fx"},
+			fqn: {ScheduleName: "x", NodeType: "python-api", ImageTag: "v1", SecretRef: "continuo-api-fx"},
 		},
 	}
 	sel := snapshot.SingleNode{ServiceName: "svc", SchemaName: "sch", TableName: "a", MetadataSource: "latest"}
@@ -46,7 +46,7 @@ func TestSingleNode_SnapshotOfRunMode_Hit(t *testing.T) {
 	srcID := uuid.New()
 	r := &fakeTopologyReader{
 		SingleFromSourceRun: map[string]map[snapshot.FQN]snapshot.LatestTableRow{
-			srcID.String(): {fqn: {ScheduleName: "x", NodeType: "python-api", ImageTag: "old", ManifestVersion: "om", SecretRef: "continuo-api-old"}},
+			srcID.String(): {fqn: {ScheduleName: "x", NodeType: "python-api", ImageTag: "old", SecretRef: "continuo-api-old"}},
 		},
 	}
 	sel := snapshot.SingleNode{ServiceName: "svc", SchemaName: "sch", TableName: "a", MetadataSource: "snapshot_of_run"}
@@ -93,7 +93,7 @@ func TestSingleNode_LatestMode_TestOperation_ZeroTests_ReturnsErrNoTests(t *test
 	fqn := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a"}
 	r := &fakeTopologyReader{
 		SingleLatest: map[snapshot.FQN]snapshot.LatestTableRow{
-			fqn: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1", TestCount: 0, TestCountKnown: true},
+			fqn: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", TestCount: 0, TestCountKnown: true},
 		},
 	}
 	sel := snapshot.SingleNode{ServiceName: "svc", SchemaName: "sch", TableName: "a", MetadataSource: "latest"}
@@ -111,7 +111,7 @@ func TestSingleNode_LatestMode_TestOperation_TestCountAbsent_ReturnsErrNoTests(t
 	fqn := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a"}
 	r := &fakeTopologyReader{
 		SingleLatest: map[snapshot.FQN]snapshot.LatestTableRow{
-			fqn: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1", TestCount: 0, TestCountKnown: false},
+			fqn: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", TestCount: 0, TestCountKnown: false},
 		},
 	}
 	sel := snapshot.SingleNode{ServiceName: "svc", SchemaName: "sch", TableName: "a", MetadataSource: "latest"}
@@ -125,7 +125,7 @@ func TestSingleNode_LatestMode_TestOperation_WithTests_ReturnsProjection(t *test
 	fqn := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a"}
 	r := &fakeTopologyReader{
 		SingleLatest: map[snapshot.FQN]snapshot.LatestTableRow{
-			fqn: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1", TestCount: 3, TestCountKnown: true},
+			fqn: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", TestCount: 3, TestCountKnown: true},
 		},
 	}
 	sel := snapshot.SingleNode{ServiceName: "svc", SchemaName: "sch", TableName: "a", MetadataSource: "latest"}
@@ -142,7 +142,7 @@ func TestSingleNode_LatestMode_RunOperation_ZeroTests_DoesNotGate(t *testing.T) 
 	fqn := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a"}
 	r := &fakeTopologyReader{
 		SingleLatest: map[snapshot.FQN]snapshot.LatestTableRow{
-			fqn: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1", TestCount: 0},
+			fqn: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", TestCount: 0},
 		},
 	}
 	sel := snapshot.SingleNode{ServiceName: "svc", SchemaName: "sch", TableName: "a", MetadataSource: "latest"}
@@ -160,7 +160,7 @@ func TestSingleNode_SnapshotOfRunMode_TestOperation_ZeroTests_ReturnsErrNoTests(
 	srcID := uuid.New()
 	r := &fakeTopologyReader{
 		SingleFromSourceRun: map[string]map[snapshot.FQN]snapshot.LatestTableRow{
-			srcID.String(): {fqn: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "old", ManifestVersion: "om", TestCount: 0, TestCountKnown: true}},
+			srcID.String(): {fqn: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "old", TestCount: 0, TestCountKnown: true}},
 		},
 	}
 	sel := snapshot.SingleNode{ServiceName: "svc", SchemaName: "sch", TableName: "a", MetadataSource: "snapshot_of_run"}
@@ -178,7 +178,7 @@ func TestSingleNode_SnapshotOfRunMode_TestOperation_TestCountAbsent_ReturnsErrNo
 	srcID := uuid.New()
 	r := &fakeTopologyReader{
 		SingleFromSourceRun: map[string]map[snapshot.FQN]snapshot.LatestTableRow{
-			srcID.String(): {fqn: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "old", ManifestVersion: "om", TestCount: 0, TestCountKnown: false}},
+			srcID.String(): {fqn: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "old", TestCount: 0, TestCountKnown: false}},
 		},
 	}
 	sel := snapshot.SingleNode{ServiceName: "svc", SchemaName: "sch", TableName: "a", MetadataSource: "snapshot_of_run"}
@@ -193,7 +193,7 @@ func TestSingleNode_SnapshotOfRunMode_TestOperation_WithTests_ReturnsProjection(
 	srcID := uuid.New()
 	r := &fakeTopologyReader{
 		SingleFromSourceRun: map[string]map[snapshot.FQN]snapshot.LatestTableRow{
-			srcID.String(): {fqn: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "old", ManifestVersion: "om", TestCount: 2, TestCountKnown: true}},
+			srcID.String(): {fqn: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "old", TestCount: 2, TestCountKnown: true}},
 		},
 	}
 	sel := snapshot.SingleNode{ServiceName: "svc", SchemaName: "sch", TableName: "a", MetadataSource: "snapshot_of_run"}
@@ -216,7 +216,7 @@ func TestSingleNode_FullRefresh_SupportedNodeTypes(t *testing.T) {
 	for _, nt := range []string{"dbt-model", "dbt-seed"} {
 		fqn := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a"}
 		r := &fakeTopologyReader{SingleLatest: map[snapshot.FQN]snapshot.LatestTableRow{
-			fqn: {ScheduleName: "x", NodeType: nt, ImageTag: "v1", ManifestVersion: "m1"},
+			fqn: {ScheduleName: "x", NodeType: nt, ImageTag: "v1"},
 		}}
 		sel := snapshot.SingleNode{ServiceName: "svc", SchemaName: "sch", TableName: "a", MetadataSource: "latest"}
 		got, err := sel.SelectTasks(context.Background(), r, snapshot.Params{Operation: "full_refresh"})
@@ -230,7 +230,7 @@ func TestSingleNode_FullRefresh_UnsupportedNodeTypes(t *testing.T) {
 	for _, nt := range []string{"dbt-snapshot", "dbt-test", "python-node", "python-csv"} {
 		fqn := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a"}
 		srcID := uuid.New()
-		row := snapshot.LatestTableRow{ScheduleName: "x", NodeType: nt, ImageTag: "v1", ManifestVersion: "m1"}
+		row := snapshot.LatestTableRow{ScheduleName: "x", NodeType: nt, ImageTag: "v1"}
 		r := &fakeTopologyReader{
 			SingleLatest:        map[snapshot.FQN]snapshot.LatestTableRow{fqn: row},
 			SingleFromSourceRun: map[string]map[snapshot.FQN]snapshot.LatestTableRow{srcID.String(): {fqn: row}},
@@ -249,7 +249,7 @@ func TestSingleNode_FullRefresh_UnsupportedNodeTypes(t *testing.T) {
 func TestSingleNode_FullRefresh_UnsupportedErrorNamesTypeOnce(t *testing.T) {
 	fqn := snapshot.FQN{Service: "svc", Schema: "sch", Table: "a"}
 	r := &fakeTopologyReader{SingleLatest: map[snapshot.FQN]snapshot.LatestTableRow{
-		fqn: {ScheduleName: "x", NodeType: "dbt-snapshot", ImageTag: "v1", ManifestVersion: "m1"},
+		fqn: {ScheduleName: "x", NodeType: "dbt-snapshot", ImageTag: "v1"},
 	}}
 	sel := snapshot.SingleNode{ServiceName: "svc", SchemaName: "sch", TableName: "a", MetadataSource: "latest"}
 	_, err := sel.SelectTasks(context.Background(), r, snapshot.Params{Operation: "full_refresh"})

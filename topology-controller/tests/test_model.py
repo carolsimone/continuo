@@ -13,23 +13,8 @@ from domain.exceptions import UnqualifiedTableReferenceError
 
 
 def test_manifest_file_attributes():
-    mf = ManifestFile(path="/manifests/service_a/manifest_v3.json", version="v3")
+    mf = ManifestFile(path="/manifests/service_a/manifest_v3.json")
     assert mf.path == "/manifests/service_a/manifest_v3.json"
-    assert mf.version == "v3"
-
-
-def test_manifest_node_manifest_version_defaults_to_empty():
-    node = ManifestNode(
-        table_name="orders",
-        schema_name="public",
-        service_name="service-1",
-        owner="data-platform",
-        schedule_name="daily",
-        criticality="SECONDARY",
-        dependency_sqls=["SELECT 1"],
-        candidate_sql="SELECT 1",
-    )
-    assert node.manifest_version == ""
 
 
 def test_unqualified_table_reference_error_attributes():

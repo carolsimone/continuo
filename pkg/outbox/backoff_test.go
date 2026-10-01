@@ -19,9 +19,9 @@ func TestBackoff_CappedExponential(t *testing.T) {
 		{4, 40 * time.Second},
 		{5, 80 * time.Second},
 		{6, 160 * time.Second},
-		{7, 5 * time.Minute},   // 320s capped to 300s
-		{8, 5 * time.Minute},   // capped
-		{50, 5 * time.Minute},  // large attempt never overflows past the cap
+		{7, 5 * time.Minute},  // 320s capped to 300s
+		{8, 5 * time.Minute},  // capped
+		{50, 5 * time.Minute}, // large attempt never overflows past the cap
 	}
 	for _, c := range cases {
 		if got := backoff(c.attempt, base, max); got != c.want {

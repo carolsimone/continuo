@@ -16,8 +16,8 @@ func TestNodeSet_ResolvesEveryNodeInOrder(t *testing.T) {
 	b := snapshot.FQN{Service: "core", Schema: "analytics", Table: "seed_fx_transactions"}
 	r := &fakeTopologyReader{
 		SingleLatest: map[snapshot.FQN]snapshot.LatestTableRow{
-			a: {ScheduleName: "seed", NodeType: "dbt-seed", ImageTag: "v1", ManifestVersion: "rel-1"},
-			b: {ScheduleName: "seed", NodeType: "dbt-seed", ImageTag: "v1", ManifestVersion: "rel-1"},
+			a: {ScheduleName: "seed", NodeType: "dbt-seed", ImageTag: "v1"},
+			b: {ScheduleName: "seed", NodeType: "dbt-seed", ImageTag: "v1"},
 		},
 	}
 
@@ -90,7 +90,7 @@ func TestNodeSet_PinnedMetadataOverridesTheTopologyRow(t *testing.T) {
 	r := &fakeTopologyReader{
 		SingleLatest: map[snapshot.FQN]snapshot.LatestTableRow{
 			// The topology has already moved on to a newer release's image.
-			fqn: {ScheduleName: "seed", NodeType: "dbt-seed", ImageTag: "newer-release", ManifestVersion: "rel-2"},
+			fqn: {ScheduleName: "seed", NodeType: "dbt-seed", ImageTag: "newer-release"},
 		},
 	}
 

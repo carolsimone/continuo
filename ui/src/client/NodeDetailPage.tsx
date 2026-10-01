@@ -72,7 +72,6 @@ function NodeRunRow({ run: r }: { run: NodeRun }) {
       <td>{r.retry_count + 1}</td>
       <td>{formatDuration(durationSec(r))}</td>
       <td><code>{r.image_tag || '—'}</code></td>
-      <td><code>{r.manifest_version || '—'}</code></td>
       <td>
         {r.log_s3_key
           ? <a
@@ -221,7 +220,7 @@ export default function NodeDetailPage() {
 
   const pendingRun = pendingSource ? runs.find(r => r.run_id === pendingSource) : undefined;
   const snapshotLine = pendingRun
-    ? `Rebuilds from the snapshot of the run on ${formatTime(pendingRun.created_at)} (image ${pendingRun.image_tag}, manifest ${pendingRun.manifest_version}).`
+    ? `Rebuilds from the snapshot of the run on ${formatTime(pendingRun.created_at)} (image ${pendingRun.image_tag}).`
     : undefined;
 
   const stats = computeNodeStats(runs);
@@ -316,7 +315,7 @@ export default function NodeDetailPage() {
           className="btn btn--secondary"
           disabled={runState === 'loading' || fullRefreshUnavailable}
           onClick={() => setPickerOpen(true)}
-          title="Run this node with the (image_tag, manifest_version) pair from a past run"
+          title="Run this node with the image_tag from a past run"
         >
           ⏱ Run with old snapshot…
         </button>
@@ -383,7 +382,6 @@ export default function NodeDetailPage() {
                   <th>Attempt</th>
                   <th>Duration</th>
                   <th>Image tag</th>
-                  <th>Manifest</th>
                   <th>Logs</th>
                 </tr>
               </thead>

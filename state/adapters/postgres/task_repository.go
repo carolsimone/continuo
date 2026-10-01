@@ -69,11 +69,11 @@ func (r *taskTrackerRepository) Create(ctx context.Context, task *TaskTracker) e
 		INSERT INTO task_tracker (
 			task_id, schedule_id, created_at, service_name, schema_name,
 			table_name, job_name, status, retry_count, max_retries, cancelled_at, cancelled_by,
-			manifest_version, image_tag, inherited_from_task_id, operation
+			image_tag, inherited_from_task_id, operation
 		) VALUES (
 			:task_id, :schedule_id, :created_at, :service_name, :schema_name,
 			:table_name, :job_name, :status, :retry_count, :max_retries, :cancelled_at, :cancelled_by,
-			:manifest_version, :image_tag, :inherited_from_task_id, :operation
+			:image_tag, :inherited_from_task_id, :operation
 		)
 	`
 
@@ -108,7 +108,7 @@ func (r *taskTrackerRepository) GetByID(ctx context.Context, taskID uuid.UUID) (
 	query := `
 		SELECT task_id, schedule_id, created_at, service_name, schema_name,
 		       table_name, job_name, status, retry_count, max_retries, cancelled_at, cancelled_by,
-		       manifest_version, image_tag, inherited_from_task_id, operation
+		       image_tag, inherited_from_task_id, operation
 		FROM task_tracker
 		WHERE task_id = $1
 	`
@@ -142,7 +142,7 @@ func (r *taskTrackerRepository) GetByScheduleAndNode(ctx context.Context, schedu
 	query := `
 		SELECT task_id, schedule_id, created_at, service_name, schema_name,
 		       table_name, job_name, status, retry_count, max_retries, cancelled_at, cancelled_by,
-		       manifest_version, image_tag, inherited_from_task_id, operation
+		       image_tag, inherited_from_task_id, operation
 		FROM task_tracker
 		WHERE schedule_id = $1
 		  AND service_name = $2
@@ -214,7 +214,7 @@ func (r *taskTrackerRepository) ListByScheduleID(ctx context.Context, scheduleID
 	query := fmt.Sprintf(`
 		SELECT task_id, schedule_id, created_at, service_name, schema_name,
 		       table_name, job_name, status, retry_count, max_retries, cancelled_at, cancelled_by,
-		       manifest_version, image_tag, inherited_from_task_id
+		       image_tag, inherited_from_task_id
 		FROM task_tracker
 		WHERE %s
 		ORDER BY created_at DESC
@@ -260,10 +260,10 @@ func (r *taskTrackerRepository) BulkCreateTx(ctx context.Context, tx *sqlx.Tx, t
 	query := `
 		INSERT INTO task_tracker (
 			task_id, schedule_id, created_at, service_name, schema_name,
-			table_name, job_name, status, retry_count, max_retries, manifest_version, image_tag, inherited_from_task_id, operation
+			table_name, job_name, status, retry_count, max_retries, image_tag, inherited_from_task_id, operation
 		) VALUES (
 			:task_id, :schedule_id, :created_at, :service_name, :schema_name,
-			:table_name, :job_name, :status, :retry_count, :max_retries, :manifest_version, :image_tag, :inherited_from_task_id, :operation
+			:table_name, :job_name, :status, :retry_count, :max_retries, :image_tag, :inherited_from_task_id, :operation
 		)
 		ON CONFLICT (task_id) DO NOTHING
 	`

@@ -162,12 +162,12 @@ func TestMigrateAllProvisionsEveryDatabaseItMigrates(t *testing.T) {
 	// existence check so re-runs are idempotent. The create statement and the
 	// existence probe are templated over the loop variable.
 	if !strings.Contains(script, "CREATE DATABASE continuo_${db}") {
-		t.Errorf("db/migrate-all.sh must idempotently create each database it "+
-			"migrates (expected a templated `CREATE DATABASE continuo_${db}`); "+
+		t.Errorf("db/migrate-all.sh must idempotently create each database it " +
+			"migrates (expected a templated `CREATE DATABASE continuo_${db}`); " +
 			"relying on Postgres initdb scripts breaks on existing volumes")
 	}
 	if !strings.Contains(script, "pg_database") {
-		t.Errorf("db/migrate-all.sh must guard CREATE DATABASE with an existence "+
+		t.Errorf("db/migrate-all.sh must guard CREATE DATABASE with an existence " +
 			"check against pg_database so the step is idempotent")
 	}
 

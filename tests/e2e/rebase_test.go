@@ -324,15 +324,14 @@ func TestRebaseAllInheritedFinalizes(t *testing.T) {
 
 // dumpRebaseRowsForDebug logs every task_tracker row attached to a rebase
 // run so an unexpected row count on CI surfaces the offending row's identity
-// (table_name + service + schema + image_tag + manifest_version). Called only
+// (table_name + service + schema + image_tag). Called only
 // on assertion mismatch — no-op when counts match.
 func dumpRebaseRowsForDebug(t *testing.T, ctx context.Context, clients *testClients, runID uuid.UUID) {
 	t.Helper()
 	rows, err := clients.stateDB.QueryContext(ctx, `
 		SELECT table_name, service_name, schema_name, status,
 		       inherited_from_task_id IS NULL AS is_real,
-		       COALESCE(image_tag, '') AS image_tag,
-		       COALESCE(manifest_version, '') AS manifest_version
+		       COALESCE(image_tag, '') AS image_tag
 		  FROM task_tracker
 		 WHERE schedule_id = $1
 		 ORDER BY table_name, service_name`, runID)
@@ -344,15 +343,15 @@ func dumpRebaseRowsForDebug(t *testing.T, ctx context.Context, clients *testClie
 
 	var n int
 	for rows.Next() {
-		var tn, svc, sch, status, img, ver string
+		var tn, svc, sch, status, img string
 		var isReal bool
-		if scanErr := rows.Scan(&tn, &svc, &sch, &status, &isReal, &img, &ver); scanErr != nil {
+		if scanErr := rows.Scan(&tn, &svc, &sch, &status, &isReal, &img); scanErr != nil {
 			t.Logf("dumpRebaseRowsForDebug: scan failed: %v", scanErr)
 			return
 		}
 		n++
-		t.Logf("rebase row %d: table=%s svc=%s sch=%s status=%s real=%v img=%q ver=%q",
-			n, tn, svc, sch, status, isReal, img, ver)
+		t.Logf("rebase row %d: table=%s svc=%s sch=%s status=%s real=%v img=%q",
+			n, tn, svc, sch, status, isReal, img)
 	}
 	if rowsErr := rows.Err(); rowsErr != nil {
 		t.Logf("dumpRebaseRowsForDebug: rows.Err: %v", rowsErr)

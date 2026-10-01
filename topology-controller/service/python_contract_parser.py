@@ -77,7 +77,7 @@ def _parse_columns(raw, label: str) -> list[dict]:
 
 
 def _parse_entry(
-    entry, service: str, manifest_version: str, image_tag: str
+    entry, service: str, image_tag: str
 ) -> ManifestNode:
     if not isinstance(entry, dict):
         _fail(f"node entry must be a mapping, got {type(entry).__name__}")
@@ -197,7 +197,6 @@ def _parse_entry(
         candidate_sql="",
         node_type=node_type,
         content_hash=content_hash,
-        manifest_version=manifest_version,
         image_tag=image_tag,
         original_file_path=script,
         raw_code=raw_code,
@@ -214,7 +213,7 @@ def _parse_entry(
 
 
 def parse_python_contract(
-    contract_path: str, manifest_version: str, image_tag: str = ""
+    contract_path: str, image_tag: str = ""
 ) -> tuple[list[ManifestNode], dict]:
     with open(contract_path) as f:
         try:
@@ -245,7 +244,7 @@ def parse_python_contract(
     nodes: list[ManifestNode] = []
     seen: set[tuple[str, str]] = set()
     for entry in doc["nodes"]:
-        node = _parse_entry(entry, service, manifest_version, image_tag)
+        node = _parse_entry(entry, service, image_tag)
         key = (node.schema_name.lower(), node.table_name.lower())
         if key in seen:
             _fail(f"duplicate node {node.schema_name}.{node.table_name}")

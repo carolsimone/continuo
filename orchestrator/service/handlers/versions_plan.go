@@ -7,9 +7,9 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/carolsimone/continuo/pkg/codebundle"
 	"github.com/carolsimone/continuo/orchestrator/domain/codeversion"
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
+	"github.com/carolsimone/continuo/pkg/codebundle"
 	"github.com/carolsimone/continuo/pkg/sanitize"
 )
 

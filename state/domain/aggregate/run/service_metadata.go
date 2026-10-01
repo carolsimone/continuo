@@ -5,6 +5,5 @@ package run
 // on scheduler_tracker.service_metadata; the JSON field names live on the
 // adapter-side carrier, keeping this value object free of serialization tags.
 type ServiceMetadata struct {
-	ManifestVersion string
-	ImageTag        string
+	ImageTag string
 }

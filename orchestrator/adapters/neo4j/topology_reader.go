@@ -41,7 +41,6 @@ func (r *topologyReader) LoadLatestSourceDAG(ctx context.Context, scheduleName s
 		           t.test_count                             AS test_count,
 		           COALESCE(t.image_tag, '')                AS image_tag,
 		           COALESCE(t.secret_ref, '')               AS secret_ref,
-		           COALESCE(t.manifest_version, '')         AS manifest_version,
 		           COALESCE(t.content_hash, '')             AS content_hash
 
 		    UNION
@@ -58,11 +57,10 @@ func (r *topologyReader) LoadLatestSourceDAG(ctx context.Context, scheduleName s
 		           s.test_count                     AS test_count,
 		           COALESCE(s.image_tag, '')        AS image_tag,
 		           COALESCE(s.secret_ref, '')       AS secret_ref,
-		           COALESCE(s.manifest_version, '') AS manifest_version,
 		           COALESCE(s.content_hash, '')     AS content_hash
 		}
 		RETURN DISTINCT schema_name, table_name, service_name, schedule_name,
-		                node_type, test_count, image_tag, secret_ref, manifest_version, content_hash
+		                node_type, test_count, image_tag, secret_ref, content_hash
 	`
 	result, err := r.tx.Run(ctx, q, map[string]interface{}{"schedule_name": scheduleName})
 	if err != nil {
@@ -80,14 +78,13 @@ func (r *topologyReader) LoadLatestSourceDAG(ctx context.Context, scheduleName s
 		}
 		tc, tcKnown := intFieldPresent(rec, "test_count")
 		out[f] = snapshot.LatestTableRow{
-			ScheduleName:    schedName,
-			NodeType:        stringField(rec, "node_type"),
-			TestCount:       tc,
-			TestCountKnown:  tcKnown,
-			ImageTag:        stringField(rec, "image_tag"),
-			SecretRef:       stringField(rec, "secret_ref"),
-			ManifestVersion: stringField(rec, "manifest_version"),
-			ContentHash:     stringField(rec, "content_hash"),
+			ScheduleName:   schedName,
+			NodeType:       stringField(rec, "node_type"),
+			TestCount:      tc,
+			TestCountKnown: tcKnown,
+			ImageTag:       stringField(rec, "image_tag"),
+			SecretRef:      stringField(rec, "secret_ref"),
+			ContentHash:    stringField(rec, "content_hash"),
 		}
 	}
 	if err := result.Err(); err != nil {
@@ -108,7 +105,6 @@ func (r *topologyReader) LoadSourceTasks(ctx context.Context, sourceRunID string
 		       COALESCE(se.status, 'PENDING')      AS status,
 		       COALESCE(se.image_tag, '')          AS image_tag,
 		       COALESCE(se.secret_ref, '')         AS secret_ref,
-		       COALESCE(se.manifest_version, '')   AS manifest_version,
 		       COALESCE(se.content_hash, '')       AS content_hash,
 		       se.inherited_from_task_id           AS inherited_from
 	`
@@ -128,14 +124,13 @@ func (r *topologyReader) LoadSourceTasks(ctx context.Context, sourceRunID string
 			ScheduleName: stringField(rec, "schedule_name"),
 		}
 		st := snapshot.SourceTaskRow{
-			TaskID:          taskID,
-			ScheduleName:    stringField(rec, "schedule_name"),
-			NodeType:        stringField(rec, "node_type"),
-			Status:          stringField(rec, "status"),
-			ImageTag:        stringField(rec, "image_tag"),
-			SecretRef:       stringField(rec, "secret_ref"),
-			ManifestVersion: stringField(rec, "manifest_version"),
-			ContentHash:     stringField(rec, "content_hash"),
+			TaskID:       taskID,
+			ScheduleName: stringField(rec, "schedule_name"),
+			NodeType:     stringField(rec, "node_type"),
+			Status:       stringField(rec, "status"),
+			ImageTag:     stringField(rec, "image_tag"),
+			SecretRef:    stringField(rec, "secret_ref"),
+			ContentHash:  stringField(rec, "content_hash"),
 		}
 		if v, _ := rec.Get("inherited_from"); v != nil {
 			if s, ok := v.(string); ok && s != "" {
@@ -326,7 +321,6 @@ func (r *topologyReader) LoadSingleLatestTable(ctx context.Context, fqn snapshot
 		       tbl.test_count                       AS test_count,
 		       COALESCE(tbl.image_tag, '')          AS image_tag,
 		       COALESCE(tbl.secret_ref, '')         AS secret_ref,
-		       COALESCE(tbl.manifest_version, '')   AS manifest_version,
 		       COALESCE(tbl.content_hash, '')       AS content_hash
 		LIMIT 1
 	`
@@ -346,14 +340,13 @@ func (r *topologyReader) LoadSingleLatestTable(ctx context.Context, fqn snapshot
 	rec := result.Record()
 	tc, tcKnown := intFieldPresent(rec, "test_count")
 	return snapshot.LatestTableRow{
-		ScheduleName:    stringField(rec, "schedule_name"),
-		NodeType:        stringField(rec, "node_type"),
-		TestCount:       tc,
-		TestCountKnown:  tcKnown,
-		ImageTag:        stringField(rec, "image_tag"),
-		SecretRef:       stringField(rec, "secret_ref"),
-		ManifestVersion: stringField(rec, "manifest_version"),
-		ContentHash:     stringField(rec, "content_hash"),
+		ScheduleName:   stringField(rec, "schedule_name"),
+		NodeType:       stringField(rec, "node_type"),
+		TestCount:      tc,
+		TestCountKnown: tcKnown,
+		ImageTag:       stringField(rec, "image_tag"),
+		SecretRef:      stringField(rec, "secret_ref"),
+		ContentHash:    stringField(rec, "content_hash"),
 	}, true, nil
 }
 
@@ -368,7 +361,6 @@ func (r *topologyReader) LoadSingleTableFromSourceRun(ctx context.Context, sourc
 		       srcEdge.test_count                     AS test_count,
 		       COALESCE(srcEdge.image_tag, '')        AS image_tag,
 		       COALESCE(srcEdge.secret_ref, '')       AS secret_ref,
-		       COALESCE(srcEdge.manifest_version, '') AS manifest_version,
 		       COALESCE(srcEdge.content_hash, '')     AS content_hash
 		LIMIT 1
 	`
@@ -389,14 +381,13 @@ func (r *topologyReader) LoadSingleTableFromSourceRun(ctx context.Context, sourc
 	rec := result.Record()
 	tc, tcKnown := intFieldPresent(rec, "test_count")
 	return snapshot.LatestTableRow{
-		ScheduleName:    stringField(rec, "schedule_name"),
-		NodeType:        stringField(rec, "node_type"),
-		TestCount:       tc,
-		TestCountKnown:  tcKnown,
-		ImageTag:        stringField(rec, "image_tag"),
-		SecretRef:       stringField(rec, "secret_ref"),
-		ManifestVersion: stringField(rec, "manifest_version"),
-		ContentHash:     stringField(rec, "content_hash"),
+		ScheduleName:   stringField(rec, "schedule_name"),
+		NodeType:       stringField(rec, "node_type"),
+		TestCount:      tc,
+		TestCountKnown: tcKnown,
+		ImageTag:       stringField(rec, "image_tag"),
+		SecretRef:      stringField(rec, "secret_ref"),
+		ContentHash:    stringField(rec, "content_hash"),
 	}, true, nil
 }
 

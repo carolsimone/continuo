@@ -6,8 +6,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/carolsimone/continuo/orchestrator/serialization"
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
+	"github.com/carolsimone/continuo/orchestrator/serialization"
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	pkgEvents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -32,11 +32,11 @@ func TestDispatchDerivedRun_EmitsDispatchedAndQueryModel(t *testing.T) {
 		{TaskID: pendingID, ServiceName: "svc", SchemaName: "s", TableName: "tgt", //nolint:gosec // G101: secret_ref names a Kubernetes Secret, not a credential
 			ScheduleName: "daily", NodeType: "python-api", InitialStatus: "PENDING",
 			ReadyToDispatch: true,
-			ImageTag:        "v1", ManifestVersion: "m1", MaxRetries: pkgEvents.DefaultTaskMaxRetries,
-			SecretRef:       "continuo-api-fx"},
+			ImageTag:        "v1", MaxRetries: pkgEvents.DefaultTaskMaxRetries,
+			SecretRef: "continuo-api-fx"},
 		{TaskID: inheritedID, ServiceName: "svc", SchemaName: "s", TableName: "ok",
 			ScheduleName: "daily", NodeType: "dbt-model", InitialStatus: "SUCCEEDED",
-			ImageTag: "v1", ManifestVersion: "m1", InheritedFromTaskID: &inheritedRoot},
+			ImageTag: "v1", InheritedFromTaskID: &inheritedRoot},
 	}
 
 	msgProcID := uuid.New()
@@ -165,7 +165,7 @@ func TestDispatchDerivedRun_FullRefreshOperationPropagates(t *testing.T) {
 	projection := []snapshot.TaskProjection{
 		{TaskID: uuid.New(), ServiceName: "svc", SchemaName: "s", TableName: "tgt",
 			ScheduleName: "single-node-run-abcd1234", NodeType: "dbt-model", InitialStatus: "PENDING",
-			ReadyToDispatch: true, ImageTag: "v1", ManifestVersion: "m1", MaxRetries: pkgEvents.DefaultTaskMaxRetries},
+			ReadyToDispatch: true, ImageTag: "v1", MaxRetries: pkgEvents.DefaultTaskMaxRetries},
 	}
 	require.NoError(t, handlers.DispatchDerivedRun(ctx, uow, newTestLogger(), handlers.DerivedRunDispatch{
 		RunID: "00000000-0000-0000-0000-000000000002", ScheduleName: "single-node-run-abcd1234",

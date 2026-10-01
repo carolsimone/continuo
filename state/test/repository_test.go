@@ -266,7 +266,7 @@ func seedCatalog(t *testing.T, db *sqlx.DB, repo postgres.ScheduleCatalogReposit
 	ctx := context.Background()
 	meta := make(map[string]map[string]run.ServiceMetadata, len(names))
 	for _, n := range names {
-		meta[n] = map[string]run.ServiceMetadata{"svc-a": {ManifestVersion: "v1", ImageTag: ""}}
+		meta[n] = map[string]run.ServiceMetadata{"svc-a": {ImageTag: ""}}
 	}
 	tx, err := db.BeginTxx(ctx, nil)
 	require.NoError(t, err)

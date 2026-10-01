@@ -141,13 +141,12 @@ func (h *ReleasePromotedHandler) Handle(
 	}
 
 	// Derive sorted-unique schedule names and per-service metadata from the
-	// promoted topology. The release_id IS the manifest identity on the candidate
-	// path, so it is passed as manifest_version for every service. image_tag comes
-	// from the per-node field (first-seen wins for duplicate service entries).
+	// promoted topology. image_tag comes from the per-node field (first-seen wins for
+	// duplicate service entries).
 	scheduleNames, serviceMetadata := scheduleAndMetadataFromNodes(
 		in.Topology,
-		func(n domainEvent.ReleasePromotedNode) (schedule, service, imageTag, manifestVersion string) {
-			return n.Schedule, n.ServiceName, n.ImageTag, in.ReleaseID
+		func(n domainEvent.ReleasePromotedNode) (schedule, service, imageTag string) {
+			return n.Schedule, n.ServiceName, n.ImageTag
 		},
 	)
 

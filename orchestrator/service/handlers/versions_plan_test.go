@@ -8,9 +8,9 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/carolsimone/continuo/pkg/codebundle"
 	domainEvent "github.com/carolsimone/continuo/orchestrator/domain/event"
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
+	"github.com/carolsimone/continuo/pkg/codebundle"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -24,8 +24,8 @@ func bundleFixture() codebundle.Bundle {
 		Nodes: map[string]codebundle.Node{
 			"analytics.revenue": {
 				Runtime: "dbt", RawCode: "select 1", CompiledCode: "select 1 compiled",
-				Config:      map[string]any{"materialized": "table"},
-				SourceHash:  "s1", SharedCodeHash: "m1", ConfigHash: "c1",
+				Config:     map[string]any{"materialized": "table"},
+				SourceHash: "s1", SharedCodeHash: "m1", ConfigHash: "c1",
 				ContentHash: "sha256:abc",
 				CodeUnitIDs: []string{"svc:m1"},
 			},

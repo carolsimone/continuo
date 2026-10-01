@@ -21,7 +21,6 @@ type RunEntriesDispatchedTask struct {
 	TableName           string
 	Status              run.TaskStatus
 	MaxRetries          int32
-	ManifestVersion     string
 	ImageTag            string
 	InheritedFromTaskID *uuid.UUID
 }

@@ -74,19 +74,18 @@ type Params struct {
 // TaskProjection is one task's place in a run's projection. Each entry becomes
 // one :EXECUTES edge from the new :Run to its :Table.
 type TaskProjection struct {
-	TaskID              uuid.UUID
-	ServiceName         string
-	SchemaName          string
-	TableName           string
-	ScheduleName        string // schedule_name on the :Table node we MATCH against
-	NodeType            string
-	InitialStatus       string // "PENDING" | "SUCCEEDED"
-	ImageTag            string
-	ManifestVersion     string
+	TaskID        uuid.UUID
+	ServiceName   string
+	SchemaName    string
+	TableName     string
+	ScheduleName  string // schedule_name on the :Table node we MATCH against
+	NodeType      string
+	InitialStatus string // "PENDING" | "SUCCEEDED"
+	ImageTag      string
 	// SecretRef is the continuo-api-* Secret stamped on this task's :EXECUTES
 	// edge, pinned from the same source as ImageTag; empty when the node takes
 	// no API credentials.
-	SecretRef           string
+	SecretRef string
 	// ContentHash is the code fingerprint stamped on this task's :EXECUTES edge:
 	// the latest topology's hash for a fresh run, or the source run's pinned hash
 	// for a rerun, rebase-inherited, or snapshot-of-run task.

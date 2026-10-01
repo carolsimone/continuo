@@ -21,12 +21,12 @@ var (
 // Format: {service}-{schema}-{table}-{scheduleID[:8]} (lowercase, sanitized)
 //
 // The function performs the following transformations:
-// 1. Sanitizes the {service}-{schema}-{table} prefix (lowercase, invalid chars → hyphens,
-//    consecutive hyphens collapsed, leading/trailing hyphens stripped)
-// 2. Clamps the prefix to 63 - 1 - len(idSuffix) characters so the suffix always fits
-// 3. Trims any trailing hyphen created by mid-hyphen truncation
-// 4. Assembles {prefix}-{idSuffix} (falls back to suffix-only if prefix is empty)
-// 5. Validates the result is non-empty
+//  1. Sanitizes the {service}-{schema}-{table} prefix (lowercase, invalid chars → hyphens,
+//     consecutive hyphens collapsed, leading/trailing hyphens stripped)
+//  2. Clamps the prefix to 63 - 1 - len(idSuffix) characters so the suffix always fits
+//  3. Trims any trailing hyphen created by mid-hyphen truncation
+//  4. Assembles {prefix}-{idSuffix} (falls back to suffix-only if prefix is empty)
+//  5. Validates the result is non-empty
 //
 // Returns an error if the computed name is empty after sanitization.
 func ComputeJobName(serviceName, schemaName, tableName, scheduleID string) (string, error) {

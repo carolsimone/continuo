@@ -78,19 +78,18 @@ func checkFullRefreshTarget(operation, nodeType string) error {
 
 func toSingleNodeProjection(fqn FQN, row LatestTableRow) TaskProjection {
 	return TaskProjection{
-		TaskID:          uuid.New(),
-		ServiceName:     fqn.Service,
-		SchemaName:      fqn.Schema,
-		TableName:       fqn.Table,
-		ScheduleName:    row.ScheduleName,
-		NodeType:        row.NodeType,
-		InitialStatus:   "PENDING",
-		ImageTag:        row.ImageTag,
-		SecretRef:       row.SecretRef,
-		ManifestVersion: row.ManifestVersion,
-		ContentHash:     row.ContentHash,
-		TestCount:       row.TestCount,
-		TestCountKnown:  row.TestCountKnown,
-		MaxRetries:      pkgEvents.DefaultTaskMaxRetries,
+		TaskID:         uuid.New(),
+		ServiceName:    fqn.Service,
+		SchemaName:     fqn.Schema,
+		TableName:      fqn.Table,
+		ScheduleName:   row.ScheduleName,
+		NodeType:       row.NodeType,
+		InitialStatus:  "PENDING",
+		ImageTag:       row.ImageTag,
+		SecretRef:      row.SecretRef,
+		ContentHash:    row.ContentHash,
+		TestCount:      row.TestCount,
+		TestCountKnown: row.TestCountKnown,
+		MaxRetries:     pkgEvents.DefaultTaskMaxRetries,
 	}
 }

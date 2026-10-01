@@ -221,18 +221,17 @@ func (h *HandleNodeCompletedHandler) writeNodeUnblockedEntry(
 	}
 
 	evt := domain.NodeReadyForExecution{
-		ScheduleID:      cmd.ScheduleID.String(),
-		ScheduleName:    e.ScheduleName,
-		ServiceName:     e.Key.ServiceName,
-		SchemaName:      e.Key.SchemaName,
-		TableName:       e.Key.TableName,
-		TaskID:          e.TaskID.String(),
-		JobName:         jobName,
-		NodeType:        string(nodeType),
-		ManifestVersion: e.ManifestVersion,
-		ImageTag:        e.ImageTag,
-		SecretRef:       e.SecretRef,
-		Operation:       e.Operation,
+		ScheduleID:   cmd.ScheduleID.String(),
+		ScheduleName: e.ScheduleName,
+		ServiceName:  e.Key.ServiceName,
+		SchemaName:   e.Key.SchemaName,
+		TableName:    e.Key.TableName,
+		TaskID:       e.TaskID.String(),
+		JobName:      jobName,
+		NodeType:     string(nodeType),
+		ImageTag:     e.ImageTag,
+		SecretRef:    e.SecretRef,
+		Operation:    e.Operation,
 	}
 	evtPayload, err := json.Marshal(serialization.NodeReadyForExecutionFromDomain(evt))
 	if err != nil {

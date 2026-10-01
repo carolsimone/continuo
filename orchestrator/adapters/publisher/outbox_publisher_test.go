@@ -51,16 +51,15 @@ func payloadToValuesFor(t *testing.T, entry *outbox.Entry) map[string]interface{
 
 func TestOutboxPublisher_NodeReadyForExecution(t *testing.T) {
 	evt := domain.NodeReadyForExecution{
-		ScheduleID:      "sched-1",
-		ScheduleName:    "daily",
-		ServiceName:     "svc",
-		SchemaName:      "public",
-		TableName:       "orders",
-		TaskID:          "task-1",
-		JobName:         "job-1",
-		NodeType:        "dbt-model",
-		ImageTag:        "v1",
-		ManifestVersion: "m1",
+		ScheduleID:   "sched-1",
+		ScheduleName: "daily",
+		ServiceName:  "svc",
+		SchemaName:   "public",
+		TableName:    "orders",
+		TaskID:       "task-1",
+		JobName:      "job-1",
+		NodeType:     "dbt-model",
+		ImageTag:     "v1",
 	}
 	entry := makeEntry("node_ready_for_execution", mustMarshal(t, serialization.NodeReadyForExecutionFromDomain(evt)))
 	vals := payloadToValuesFor(t, entry)
@@ -75,7 +74,6 @@ func TestOutboxPublisher_NodeReadyForExecution(t *testing.T) {
 	assert.Equal(t, "job-1", vals["job_name"])
 	assert.Equal(t, "dbt-model", vals["node_type"])
 	assert.Equal(t, "v1", vals["image_tag"])
-	assert.Equal(t, "m1", vals["manifest_version"])
 	// Production dispatches carry no mode (wire shape unchanged).
 	_, hasMode := vals["mode"]
 	assert.False(t, hasMode, "production node_ready_for_execution must not carry a mode field")

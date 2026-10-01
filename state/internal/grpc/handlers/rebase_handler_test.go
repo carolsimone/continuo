@@ -66,8 +66,8 @@ func seedTerminalRunWithFailedTask(t *testing.T, fx *rebaseFixture, scheduleName
 	require.NoError(t, err)
 
 	_, err = fx.DB.ExecContext(context.Background(), `
-		INSERT INTO task_tracker (task_id, schedule_id, created_at, service_name, schema_name, table_name, job_name, status, retry_count, max_retries, manifest_version, image_tag)
-		VALUES ($1, $2, NOW(), 'svc', 's', 't', 'job', 'failed', 0, 2, 'v1', 'img:1')`,
+		INSERT INTO task_tracker (task_id, schedule_id, created_at, service_name, schema_name, table_name, job_name, status, retry_count, max_retries, image_tag)
+		VALUES ($1, $2, NOW(), 'svc', 's', 't', 'job', 'failed', 0, 2, 'img:1')`,
 		uuid.New(), id,
 	)
 	require.NoError(t, err)
@@ -163,8 +163,8 @@ func seedRunWithTaskStatus(t *testing.T, fx *rebaseFixture, scheduleName string,
 	require.NoError(t, err)
 
 	_, err = fx.DB.ExecContext(context.Background(), `
-		INSERT INTO task_tracker (task_id, schedule_id, created_at, service_name, schema_name, table_name, job_name, status, retry_count, max_retries, manifest_version, image_tag)
-		VALUES ($1, $2, NOW(), 'svc', 's', 't', 'job', $3, 0, 2, 'v1', 'img:1')`,
+		INSERT INTO task_tracker (task_id, schedule_id, created_at, service_name, schema_name, table_name, job_name, status, retry_count, max_retries, image_tag)
+		VALUES ($1, $2, NOW(), 'svc', 's', 't', 'job', $3, 0, 2, 'img:1')`,
 		uuid.New(), id, string(taskStatus),
 	)
 	require.NoError(t, err)

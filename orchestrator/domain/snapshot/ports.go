@@ -50,7 +50,7 @@ type TopologyReader interface {
 	// is false (with no error) when the table doesn't exist or is inactive.
 	LoadSingleLatestTable(ctx context.Context, fqn FQN) (LatestTableRow, bool, error)
 
-	// LoadSingleTableFromSourceRun returns the (image_tag, manifest_version,
+	// LoadSingleTableFromSourceRun returns the (image_tag,
 	// test_count) for the FQN as pinned in the source :Run's :EXECUTES edge,
 	// plus the :Table's schedule_name and node_type. test_count is read from the
 	// pinned edge, not the current :Table, so a later promotion that changes the

@@ -121,14 +121,13 @@ func (h *HandlePromotedSeedsRunHandler) Handle(ctx context.Context, cmd domainMo
 	allTasks := make([]pkgEvents.DispatchedTask, 0, len(projection))
 	for _, task := range projection {
 		allTasks = append(allTasks, pkgEvents.DispatchedTask{
-			TaskID:          task.TaskID.String(),
-			ServiceName:     task.ServiceName,
-			SchemaName:      task.SchemaName,
-			TableName:       task.TableName,
-			NodeType:        task.NodeType,
-			MaxRetries:      task.MaxRetries,
-			ManifestVersion: task.ManifestVersion,
-			ImageTag:        task.ImageTag,
+			TaskID:      task.TaskID.String(),
+			ServiceName: task.ServiceName,
+			SchemaName:  task.SchemaName,
+			TableName:   task.TableName,
+			NodeType:    task.NodeType,
+			MaxRetries:  task.MaxRetries,
+			ImageTag:    task.ImageTag,
 		})
 	}
 	dispatchedPayload, err := json.Marshal(pkgEvents.RunEntriesDispatched{
@@ -161,17 +160,16 @@ func (h *HandlePromotedSeedsRunHandler) Handle(ctx context.Context, cmd domainMo
 			return fmt.Errorf("compute job name for %s.%s: %w", task.SchemaName, task.TableName, err)
 		}
 		queryPayload, err := json.Marshal(serialization.NodeReadyForExecutionFromDomain(domain.NodeReadyForExecution{
-			ScheduleID:      cmd.RunID,
-			ScheduleName:    cmd.ScheduleName,
-			ServiceName:     task.ServiceName,
-			SchemaName:      task.SchemaName,
-			TableName:       task.TableName,
-			TaskID:          task.TaskID.String(),
-			JobName:         jobName,
-			NodeType:        task.NodeType,
-			ManifestVersion: task.ManifestVersion,
-			ImageTag:        task.ImageTag,
-			SecretRef:       task.SecretRef,
+			ScheduleID:   cmd.RunID,
+			ScheduleName: cmd.ScheduleName,
+			ServiceName:  task.ServiceName,
+			SchemaName:   task.SchemaName,
+			TableName:    task.TableName,
+			TaskID:       task.TaskID.String(),
+			JobName:      jobName,
+			NodeType:     task.NodeType,
+			ImageTag:     task.ImageTag,
+			SecretRef:    task.SecretRef,
 		}))
 		if err != nil {
 			return fmt.Errorf("marshal query.model for %s.%s: %w", task.SchemaName, task.TableName, err)

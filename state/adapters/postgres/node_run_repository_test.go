@@ -46,18 +46,17 @@ func TestNodeRunRepository_List(t *testing.T) {
 	// task1: on the target node
 	task1ID := uuid.New()
 	task1 := &postgres.TaskTracker{
-		TaskID:          task1ID,
-		ScheduleID:      sched1ID,
-		ServiceName:     svc,
-		SchemaName:      sch,
-		TableName:       tbl,
-		JobName:         "job-1",
-		Status:          run.TaskStatusSucceeded,
-		RetryCount:      0,
-		MaxRetries:      3,
-		ManifestVersion: "m1",
-		ImageTag:        "v1",
-		CreatedAt:       time.Now().Add(-2 * time.Minute),
+		TaskID:      task1ID,
+		ScheduleID:  sched1ID,
+		ServiceName: svc,
+		SchemaName:  sch,
+		TableName:   tbl,
+		JobName:     "job-1",
+		Status:      run.TaskStatusSucceeded,
+		RetryCount:  0,
+		MaxRetries:  3,
+		ImageTag:    "v1",
+		CreatedAt:   time.Now().Add(-2 * time.Minute),
 	}
 	require.NoError(t, taskRepo.Create(ctx, task1))
 	defer db.ExecContext(ctx, "DELETE FROM task_tracker WHERE task_id = $1", task1ID)
@@ -76,18 +75,17 @@ func TestNodeRunRepository_List(t *testing.T) {
 	// extra task on (svc, sch, other) — must NOT appear in results
 	taskExtraID := uuid.New()
 	taskExtra := &postgres.TaskTracker{
-		TaskID:          taskExtraID,
-		ScheduleID:      sched1ID,
-		ServiceName:     svc,
-		SchemaName:      sch,
-		TableName:       other,
-		JobName:         "job-extra",
-		Status:          run.TaskStatusSucceeded,
-		RetryCount:      0,
-		MaxRetries:      3,
-		ManifestVersion: "mx",
-		ImageTag:        "vx",
-		CreatedAt:       time.Now().Add(-2 * time.Minute),
+		TaskID:      taskExtraID,
+		ScheduleID:  sched1ID,
+		ServiceName: svc,
+		SchemaName:  sch,
+		TableName:   other,
+		JobName:     "job-extra",
+		Status:      run.TaskStatusSucceeded,
+		RetryCount:  0,
+		MaxRetries:  3,
+		ImageTag:    "vx",
+		CreatedAt:   time.Now().Add(-2 * time.Minute),
 	}
 	require.NoError(t, taskRepo.Create(ctx, taskExtra))
 	defer db.ExecContext(ctx, "DELETE FROM task_tracker WHERE task_id = $1", taskExtraID)
@@ -110,18 +108,17 @@ func TestNodeRunRepository_List(t *testing.T) {
 	task2ID := uuid.New()
 	errMsg := "boom"
 	task2 := &postgres.TaskTracker{
-		TaskID:          task2ID,
-		ScheduleID:      sched2ID,
-		ServiceName:     svc,
-		SchemaName:      sch,
-		TableName:       tbl,
-		JobName:         "job-2",
-		Status:          run.TaskStatusFailed,
-		RetryCount:      1,
-		MaxRetries:      3,
-		ManifestVersion: "m2",
-		ImageTag:        "v2",
-		CreatedAt:       time.Now().Add(-1 * time.Minute),
+		TaskID:      task2ID,
+		ScheduleID:  sched2ID,
+		ServiceName: svc,
+		SchemaName:  sch,
+		TableName:   tbl,
+		JobName:     "job-2",
+		Status:      run.TaskStatusFailed,
+		RetryCount:  1,
+		MaxRetries:  3,
+		ImageTag:    "v2",
+		CreatedAt:   time.Now().Add(-1 * time.Minute),
 	}
 	require.NoError(t, taskRepo.Create(ctx, task2))
 	defer db.ExecContext(ctx, "DELETE FROM task_tracker WHERE task_id = $1", task2ID)
@@ -147,7 +144,6 @@ func TestNodeRunRepository_List(t *testing.T) {
 	assert.Equal(t, sched2ID, rows[0].ScheduleID)
 	assert.Equal(t, "rerun", rows[0].Kind)
 	assert.Equal(t, "v2", rows[0].ImageTag)
-	assert.Equal(t, "m2", rows[0].ManifestVersion)
 	assert.NotNil(t, rows[0].StartedAt)
 	assert.NotNil(t, rows[0].CompletedAt)
 	require.NotNil(t, rows[0].ErrorMessage)
@@ -186,18 +182,17 @@ func TestNodeRunRepository_List_TaskWithoutExecution(t *testing.T) {
 
 	taskID := uuid.New()
 	task := &postgres.TaskTracker{
-		TaskID:          taskID,
-		ScheduleID:      schedID,
-		ServiceName:     svc,
-		SchemaName:      sch,
-		TableName:       tbl,
-		JobName:         "job-pending",
-		Status:          run.TaskStatusPending,
-		RetryCount:      0,
-		MaxRetries:      3,
-		ManifestVersion: "m1",
-		ImageTag:        "v1",
-		CreatedAt:       time.Now(),
+		TaskID:      taskID,
+		ScheduleID:  schedID,
+		ServiceName: svc,
+		SchemaName:  sch,
+		TableName:   tbl,
+		JobName:     "job-pending",
+		Status:      run.TaskStatusPending,
+		RetryCount:  0,
+		MaxRetries:  3,
+		ImageTag:    "v1",
+		CreatedAt:   time.Now(),
 	}
 	require.NoError(t, taskRepo.Create(ctx, task))
 	defer db.ExecContext(ctx, "DELETE FROM task_tracker WHERE task_id = $1", taskID)
@@ -255,7 +250,7 @@ func TestNodeRunRepository_ListNodes_AggregatesAndFilters(t *testing.T) {
 		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskTracker{
 			TaskID: tid, ScheduleID: sid, ServiceName: svc, SchemaName: sch, TableName: table,
 			JobName: "j", Status: taskStatus, RetryCount: retry, MaxRetries: 3,
-			ManifestVersion: "m1", ImageTag: "v1",
+			ImageTag:  "v1",
 			CreatedAt: time.Now().Add(-time.Duration(ageMin) * time.Minute),
 		}))
 		start := time.Now().Add(-time.Duration(ageMin) * time.Minute)
@@ -318,7 +313,7 @@ func TestNodeRunRepository_ListNodes_PerNodeStatusIsolation(t *testing.T) {
 	t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", sid) })
 	require.NoError(t, taskRepo.Create(ctx, &postgres.TaskTracker{
 		TaskID: uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: "an", TableName: "ok_node",
-		JobName: "j", Status: run.TaskStatusSucceeded, MaxRetries: 3, ManifestVersion: "m", ImageTag: "v",
+		JobName: "j", Status: run.TaskStatusSucceeded, MaxRetries: 3, ImageTag: "v",
 		CreatedAt: time.Now().Add(-time.Minute),
 	}))
 
@@ -349,7 +344,7 @@ func TestNodeRunRepository_ListNodes_Paging(t *testing.T) {
 		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskTracker{
 			TaskID: uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: "an",
 			TableName: "t" + uuid.New().String()[:4], JobName: "j", Status: run.TaskStatusSucceeded,
-			MaxRetries: 3, ManifestVersion: "m", ImageTag: "v",
+			MaxRetries: 3, ImageTag: "v",
 			CreatedAt: time.Now().Add(-time.Duration(i) * time.Minute),
 		}))
 	}
@@ -392,7 +387,7 @@ func TestNodeRunRepository_ListNodes_StablePagingOnTiedLastRun(t *testing.T) {
 		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskTracker{
 			TaskID: uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: "an",
 			TableName: "t" + uuid.New().String()[:6], JobName: "j", Status: run.TaskStatusSucceeded,
-			MaxRetries: 3, ManifestVersion: "m", ImageTag: "v", CreatedAt: time.Now().Add(-time.Minute),
+			MaxRetries: 3, ImageTag: "v", CreatedAt: time.Now().Add(-time.Minute),
 		}))
 	}
 	seen := map[string]int{}
@@ -428,7 +423,7 @@ func TestNodeRunRepository_ListNodes_SkippedCountsTerminal(t *testing.T) {
 		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", sid) })
 		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskTracker{
 			TaskID: uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: "an", TableName: "n",
-			JobName: "j", Status: taskStatus, MaxRetries: 3, ManifestVersion: "m", ImageTag: "v",
+			JobName: "j", Status: taskStatus, MaxRetries: 3, ImageTag: "v",
 			CreatedAt: time.Now().Add(-time.Duration(ageMin) * time.Minute),
 		}))
 	}
@@ -460,7 +455,7 @@ func TestNodeRunRepository_ListNodes_ExactTableMatch(t *testing.T) {
 		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", sid) })
 		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskTracker{
 			TaskID: uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: "an", TableName: table,
-			JobName: "j", Status: run.TaskStatusSucceeded, MaxRetries: 3, ManifestVersion: "m", ImageTag: "v",
+			JobName: "j", Status: run.TaskStatusSucceeded, MaxRetries: 3, ImageTag: "v",
 			CreatedAt: time.Now().Add(-time.Minute),
 		}))
 	}
@@ -502,7 +497,7 @@ func TestNodeRunRepository_ListNodeNames(t *testing.T) {
 		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", sid) })
 		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskTracker{
 			TaskID: uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: schema, TableName: table,
-			JobName: "j", Status: run.TaskStatusSucceeded, MaxRetries: 3, ManifestVersion: "m", ImageTag: "v",
+			JobName: "j", Status: run.TaskStatusSucceeded, MaxRetries: 3, ImageTag: "v",
 			CreatedAt: time.Now().Add(-time.Minute),
 		}))
 	}
@@ -546,7 +541,7 @@ func TestNodeRunRepository_ListNodeServices(t *testing.T) {
 		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", sid) })
 		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskTracker{
 			TaskID: uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: schema, TableName: table,
-			JobName: "j", Status: run.TaskStatusSucceeded, MaxRetries: 3, ManifestVersion: "m", ImageTag: "v",
+			JobName: "j", Status: run.TaskStatusSucceeded, MaxRetries: 3, ImageTag: "v",
 			CreatedAt: time.Now().Add(-time.Minute),
 		}))
 	}
@@ -591,7 +586,7 @@ func TestNodeRunRepository_ListNodes_EmptyPageKeepsTotal(t *testing.T) {
 		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskTracker{
 			TaskID: uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: "an",
 			TableName: "t" + uuid.New().String()[:6], JobName: "j", Status: run.TaskStatusSucceeded,
-			MaxRetries: 3, ManifestVersion: "m", ImageTag: "v", CreatedAt: time.Now().Add(-time.Duration(i) * time.Minute),
+			MaxRetries: 3, ImageTag: "v", CreatedAt: time.Now().Add(-time.Duration(i) * time.Minute),
 		}))
 	}
 	page, total, err := repo.ListNodes(ctx, "", svc, "", 2, 5) // offset past the 3 rows

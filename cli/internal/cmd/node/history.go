@@ -14,22 +14,21 @@ import (
 // nodeRun is the JSON-serialisable representation of one run. Fields the state
 // service leaves empty while a run is in flight or on success are omitted.
 type nodeRun struct {
-	RunID           string `json:"run_id"`
-	ScheduleName    string `json:"schedule_name"`
-	Kind            string `json:"kind"`
-	TerminalStatus  string `json:"terminal_status,omitempty"`
-	TaskID          string `json:"task_id"`
-	TaskStatus      string `json:"task_status"`
-	RetryCount      int32  `json:"retry_count"`
-	ImageTag        string `json:"image_tag"`
-	ManifestVersion string `json:"manifest_version"`
-	CreatedAt       string `json:"created_at"`
-	StartedAt       string `json:"started_at,omitempty"`
-	CompletedAt     string `json:"completed_at,omitempty"`
-	ErrorMessage    string `json:"error_message,omitempty"`
-	LogS3Key        string `json:"log_s3_key,omitempty"`
-	RunResultsURI   string `json:"run_results_uri,omitempty"`
-	Operation       string `json:"operation"`
+	RunID          string `json:"run_id"`
+	ScheduleName   string `json:"schedule_name"`
+	Kind           string `json:"kind"`
+	TerminalStatus string `json:"terminal_status,omitempty"`
+	TaskID         string `json:"task_id"`
+	TaskStatus     string `json:"task_status"`
+	RetryCount     int32  `json:"retry_count"`
+	ImageTag       string `json:"image_tag"`
+	CreatedAt      string `json:"created_at"`
+	StartedAt      string `json:"started_at,omitempty"`
+	CompletedAt    string `json:"completed_at,omitempty"`
+	ErrorMessage   string `json:"error_message,omitempty"`
+	LogS3Key       string `json:"log_s3_key,omitempty"`
+	RunResultsURI  string `json:"run_results_uri,omitempty"`
+	Operation      string `json:"operation"`
 	// ContentHash is the code this run executed, joined client-side from the
 	// orchestrator's run history by run id. Empty for runs that predate the
 	// stamp, and for every run when the orchestrator join itself could not be
@@ -73,7 +72,7 @@ Flags:
 Output (stdout, JSON): up to 50 runs, newest first.
   {"runs":[{"run_id":string,"schedule_name":string,"kind":string,
    "terminal_status":string,"task_id":string,"task_status":string,
-   "retry_count":number,"image_tag":string,"manifest_version":string,
+   "retry_count":number,"image_tag":string,
    "created_at":string,"started_at":string,"completed_at":string,
    "error_message":string,"log_s3_key":string,"operation":string,
    "run_results_uri":string,"content_hash":string}]}
@@ -184,23 +183,22 @@ func toHistoryPayload(runs []*statev1.NodeRun, contentHashByRunID map[string]str
 	out := make([]nodeRun, 0, len(runs))
 	for _, r := range runs {
 		out = append(out, nodeRun{
-			RunID:           r.GetRunId(),
-			ScheduleName:    r.GetScheduleName(),
-			Kind:            r.GetKind(),
-			TerminalStatus:  r.GetTerminalStatus(),
-			TaskID:          r.GetTaskId(),
-			TaskStatus:      r.GetTaskStatus(),
-			RetryCount:      r.GetRetryCount(),
-			ImageTag:        r.GetImageTag(),
-			ManifestVersion: r.GetManifestVersion(),
-			CreatedAt:       r.GetCreatedAt(),
-			StartedAt:       r.GetStartedAt(),
-			CompletedAt:     r.GetCompletedAt(),
-			ErrorMessage:    r.GetErrorMessage(),
-			LogS3Key:        r.GetLogS3Key(),
-			RunResultsURI:   r.GetRunResultsUri(),
-			Operation:       r.GetOperation(),
-			ContentHash:     contentHashByRunID[r.GetRunId()],
+			RunID:          r.GetRunId(),
+			ScheduleName:   r.GetScheduleName(),
+			Kind:           r.GetKind(),
+			TerminalStatus: r.GetTerminalStatus(),
+			TaskID:         r.GetTaskId(),
+			TaskStatus:     r.GetTaskStatus(),
+			RetryCount:     r.GetRetryCount(),
+			ImageTag:       r.GetImageTag(),
+			CreatedAt:      r.GetCreatedAt(),
+			StartedAt:      r.GetStartedAt(),
+			CompletedAt:    r.GetCompletedAt(),
+			ErrorMessage:   r.GetErrorMessage(),
+			LogS3Key:       r.GetLogS3Key(),
+			RunResultsURI:  r.GetRunResultsUri(),
+			Operation:      r.GetOperation(),
+			ContentHash:    contentHashByRunID[r.GetRunId()],
 		})
 	}
 	return historyPayload{Runs: out}

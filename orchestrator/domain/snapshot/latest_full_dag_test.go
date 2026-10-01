@@ -13,8 +13,8 @@ func TestLatestFullDAG_BuildsProjectionFromLatestRows(t *testing.T) {
 	s := snapshot.FQN{Service: "svc", Schema: "sch", Table: "s", ScheduleName: "seed"}
 	r := &fakeTopologyReader{
 		LatestDAG: map[snapshot.FQN]snapshot.LatestTableRow{
-			a: {ScheduleName: "x", NodeType: "python-api", ImageTag: "v1", ManifestVersion: "m1", SecretRef: "continuo-api-fx"},
-			s: {ScheduleName: "seed", NodeType: "dbt-seed", ImageTag: "v2", ManifestVersion: "m2"},
+			a: {ScheduleName: "x", NodeType: "python-api", ImageTag: "v1", SecretRef: "continuo-api-fx"},
+			s: {ScheduleName: "seed", NodeType: "dbt-seed", ImageTag: "v2"},
 		},
 	}
 	got, err := snapshot.LatestFullDAG{}.SelectTasks(context.Background(), r, snapshot.Params{ScheduleName: "x"})
@@ -37,7 +37,7 @@ func TestLatestFullDAG_BuildsProjectionFromLatestRows(t *testing.T) {
 		fqn := snapshot.FQN{Service: p.ServiceName, Schema: p.SchemaName, Table: p.TableName, ScheduleName: p.ScheduleName}
 		want := r.LatestDAG[fqn]
 		if p.ScheduleName != want.ScheduleName || p.NodeType != want.NodeType ||
-			p.ImageTag != want.ImageTag || p.ManifestVersion != want.ManifestVersion ||
+			p.ImageTag != want.ImageTag ||
 			p.SecretRef != want.SecretRef {
 			t.Errorf("row mismatch for %+v: got %+v want %+v", fqn, p, want)
 		}
@@ -76,9 +76,9 @@ func TestLatestFullDAG_TestOperation_FiltersZeroTestsAndAllReady(t *testing.T) {
 	noTests := snapshot.FQN{Service: "svc", Schema: "sch", Table: "no_tests", ScheduleName: "x"}
 	r := &fakeTopologyReader{
 		LatestDAG: map[snapshot.FQN]snapshot.LatestTableRow{
-			root:       {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1", TestCount: 2, TestCountKnown: true},
-			downstream: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1", TestCount: 1, TestCountKnown: true},
-			noTests:    {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1", TestCount: 0, TestCountKnown: true},
+			root:       {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", TestCount: 2, TestCountKnown: true},
+			downstream: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", TestCount: 1, TestCountKnown: true},
+			noTests:    {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", TestCount: 0, TestCountKnown: true},
 		},
 		// downstream is the immediate descendant of root, so in a normal run it
 		// would be blocked (ReadyToDispatch == false).
@@ -119,9 +119,9 @@ func TestLatestFullDAG_TestOperation_OnlyKnownPositiveProjected(t *testing.T) {
 	absent := snapshot.FQN{Service: "svc", Schema: "sch", Table: "absent", ScheduleName: "x"}
 	r := &fakeTopologyReader{
 		LatestDAG: map[snapshot.FQN]snapshot.LatestTableRow{
-			positive:  {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1", TestCount: 3, TestCountKnown: true},
-			knownZero: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1", TestCount: 0, TestCountKnown: true},
-			absent:    {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1", TestCount: 0, TestCountKnown: false},
+			positive:  {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", TestCount: 3, TestCountKnown: true},
+			knownZero: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", TestCount: 0, TestCountKnown: true},
+			absent:    {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", TestCount: 0, TestCountKnown: false},
 		},
 	}
 	got, err := snapshot.LatestFullDAG{}.SelectTasks(context.Background(), r, snapshot.Params{Operation: "test", ScheduleName: "x"})
@@ -143,8 +143,8 @@ func TestLatestFullDAG_RunOperation_FrontierUnchanged(t *testing.T) {
 	downstream := snapshot.FQN{Service: "svc", Schema: "sch", Table: "downstream", ScheduleName: "x"}
 	r := &fakeTopologyReader{
 		LatestDAG: map[snapshot.FQN]snapshot.LatestTableRow{
-			root:       {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1"},
-			downstream: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1"},
+			root:       {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1"},
+			downstream: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1"},
 		},
 		ImmDescendantsLatest: map[snapshot.FQN][]snapshot.FQN{
 			root: {downstream},
@@ -180,8 +180,8 @@ func TestLatestFullDAG_CrossScheduleDuplicates_AreDistinct(t *testing.T) {
 	fqnY := snapshot.FQN{Service: "svc", Schema: "sch", Table: "shared", ScheduleName: "y"}
 	r := &fakeTopologyReader{
 		LatestDAG: map[snapshot.FQN]snapshot.LatestTableRow{
-			fqnX: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1"},
-			fqnY: {ScheduleName: "y", NodeType: "dbt-model", ImageTag: "v2", ManifestVersion: "m2"},
+			fqnX: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1"},
+			fqnY: {ScheduleName: "y", NodeType: "dbt-model", ImageTag: "v2"},
 		},
 	}
 	got, err := snapshot.LatestFullDAG{}.SelectTasks(context.Background(), r, snapshot.Params{ScheduleName: "x"})
@@ -209,8 +209,8 @@ func TestLatestFullDAG_TestOperation_AllGated_ReturnsErrNoTests(t *testing.T) {
 	absent := snapshot.FQN{Service: "svc", Schema: "sch", Table: "absent", ScheduleName: "x"}
 	r := &fakeTopologyReader{
 		LatestDAG: map[snapshot.FQN]snapshot.LatestTableRow{
-			knownZero: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1", TestCount: 0, TestCountKnown: true},
-			absent:    {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1", TestCount: 0, TestCountKnown: false},
+			knownZero: {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", TestCount: 0, TestCountKnown: true},
+			absent:    {ScheduleName: "x", NodeType: "dbt-model", ImageTag: "v1", TestCount: 0, TestCountKnown: false},
 		},
 	}
 	got, err := snapshot.LatestFullDAG{}.SelectTasks(context.Background(), r, snapshot.Params{Operation: "test", ScheduleName: "x"})

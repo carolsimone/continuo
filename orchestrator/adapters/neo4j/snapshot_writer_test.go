@@ -28,18 +28,18 @@ func newDriver(t *testing.T) neo4j.DriverWithContext {
 }
 
 // seedTable creates a :Table node with active=true and the given metadata.
-func seedTable(t *testing.T, driver neo4j.DriverWithContext, scheduleName, service, schema, table, image, manifest string) {
+func seedTable(t *testing.T, driver neo4j.DriverWithContext, scheduleName, service, schema, table, image string) {
 	t.Helper()
 	session := driver.NewSession(context.Background(), neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
 	defer session.Close(context.Background())
 	_, err := session.ExecuteWrite(context.Background(), func(tx neo4j.ManagedTransaction) (interface{}, error) {
 		_, err := tx.Run(context.Background(), `
 			MERGE (t:Table {service_name: $svc, schema_name: $schema, table_name: $tbl, schedule_name: $sched})
-			ON CREATE SET t.active = true, t.image_tag = $img, t.manifest_version = $mv, t.node_type = 'dbt-model'
-			ON MATCH  SET t.active = true, t.image_tag = $img, t.manifest_version = $mv`,
+			ON CREATE SET t.active = true, t.image_tag = $img, t.node_type = 'dbt-model'
+			ON MATCH  SET t.active = true, t.image_tag = $img`,
 			map[string]interface{}{
 				"svc": service, "schema": schema, "tbl": table, "sched": scheduleName,
-				"img": image, "mv": manifest,
+				"img": image,
 			})
 		return nil, err
 	})
@@ -62,8 +62,8 @@ func TestSnapshotWriter_CreatesRunAndEdges(t *testing.T) {
 	driver := newDriver(t)
 	scheduleName := "test-mat-" + uuid.New().String()[:8]
 
-	seedTable(t, driver, scheduleName, "svc", "s", "a", "img:1", "v1")
-	seedTable(t, driver, scheduleName, "svc", "s", "b", "img:0", "v0")
+	seedTable(t, driver, scheduleName, "svc", "s", "a", "img:1")
+	seedTable(t, driver, scheduleName, "svc", "s", "b", "img:0")
 
 	runID := uuid.New().String()
 	taskA := uuid.New()
@@ -75,18 +75,17 @@ func TestSnapshotWriter_CreatesRunAndEdges(t *testing.T) {
 
 	projection := []snapshot.TaskProjection{
 		{
-			TaskID:          taskA,
-			ServiceName:     "svc",
-			SchemaName:      "s",
-			TableName:       "a",
-			ScheduleName:    scheduleName,
-			NodeType:        "dbt-model",
-			InitialStatus:   "PENDING",
-			ImageTag:        "img:1",
-			ManifestVersion: "v1",
-			TestCount:       3,
-			TestCountKnown:  true,
-			MaxRetries:      2,
+			TaskID:         taskA,
+			ServiceName:    "svc",
+			SchemaName:     "s",
+			TableName:      "a",
+			ScheduleName:   scheduleName,
+			NodeType:       "dbt-model",
+			InitialStatus:  "PENDING",
+			ImageTag:       "img:1",
+			TestCount:      3,
+			TestCountKnown: true,
+			MaxRetries:     2,
 		},
 		{
 			TaskID:              taskB,
@@ -97,7 +96,6 @@ func TestSnapshotWriter_CreatesRunAndEdges(t *testing.T) {
 			NodeType:            "dbt-model",
 			InitialStatus:       "SUCCEEDED",
 			ImageTag:            "img:0",
-			ManifestVersion:     "v0",
 			InheritedFromTaskID: &rootB,
 		},
 	}
@@ -144,7 +142,7 @@ func TestSnapshotWriter_CreatesRunAndEdges(t *testing.T) {
 			MATCH (run:Run {run_id: $run_id})-[e:EXECUTES]->(t:Table)
 			WHERE t.schedule_name = $sched
 			RETURN t.table_name AS tbl, e.status AS status, e.image_tag AS img,
-			       e.manifest_version AS mv, e.task_id AS tid, e.inherited_from_task_id AS inh,
+			       e.task_id AS tid, e.inherited_from_task_id AS inh,
 			       e.test_count AS test_count
 			ORDER BY tbl`,
 			map[string]interface{}{"run_id": runID, "sched": scheduleName})
@@ -170,7 +168,6 @@ func TestSnapshotWriter_CreatesRunAndEdges(t *testing.T) {
 	require.Equal(t, "a", rows[0]["tbl"])
 	require.Equal(t, "PENDING", rows[0]["status"])
 	require.Equal(t, "img:1", rows[0]["img"])
-	require.Equal(t, "v1", rows[0]["mv"])
 	require.Equal(t, taskA.String(), rows[0]["tid"])
 	require.Nil(t, rows[0]["inh"])
 	require.Equal(t, int64(3), rows[0]["test_count"], "TestCountKnown=true must stamp e.test_count")
@@ -180,7 +177,6 @@ func TestSnapshotWriter_CreatesRunAndEdges(t *testing.T) {
 	require.Equal(t, "b", rows[1]["tbl"])
 	require.Equal(t, "SUCCEEDED", rows[1]["status"])
 	require.Equal(t, "img:0", rows[1]["img"])
-	require.Equal(t, "v0", rows[1]["mv"])
 	require.Equal(t, taskB.String(), rows[1]["tid"])
 	require.Equal(t, rootB.String(), rows[1]["inh"])
 	require.Nil(t, rows[1]["test_count"], "TestCountKnown=false must not stamp e.test_count")
@@ -208,23 +204,22 @@ func TestSnapshotWriter_CancelledStampsTerminalOnCreate(t *testing.T) {
 	driver := newDriver(t)
 	scheduleName := "test-mat-" + uuid.New().String()[:8]
 
-	seedTable(t, driver, scheduleName, "svc", "s", "a", "img:1", "v1")
+	seedTable(t, driver, scheduleName, "svc", "s", "a", "img:1")
 
 	runID := uuid.New().String()
 	t.Cleanup(func() { cleanupRunAndTables(t, driver, runID, "test-mat-") })
 
 	projection := []snapshot.TaskProjection{
 		{
-			TaskID:          uuid.New(),
-			ServiceName:     "svc",
-			SchemaName:      "s",
-			TableName:       "a",
-			ScheduleName:    scheduleName,
-			NodeType:        "dbt-model",
-			InitialStatus:   "PENDING",
-			ImageTag:        "img:1",
-			ManifestVersion: "v1",
-			MaxRetries:      2,
+			TaskID:        uuid.New(),
+			ServiceName:   "svc",
+			SchemaName:    "s",
+			TableName:     "a",
+			ScheduleName:  scheduleName,
+			NodeType:      "dbt-model",
+			InitialStatus: "PENDING",
+			ImageTag:      "img:1",
+			MaxRetries:    2,
 		},
 	}
 	params := snapshot.Params{RunID: runID, ScheduleName: scheduleName, Kind: "trigger", Cancelled: true}
@@ -270,7 +265,7 @@ func TestSnapshotWriter_CancelledStampsTerminalOnCreate(t *testing.T) {
 func TestSnapshotWriter_BackfillsInitiatedByOnMatch(t *testing.T) {
 	driver := newDriver(t)
 	scheduleName := "test-mat-" + uuid.New().String()[:8]
-	seedTable(t, driver, scheduleName, "svc", "s", "a", "img:1", "v1")
+	seedTable(t, driver, scheduleName, "svc", "s", "a", "img:1")
 
 	runID := uuid.New().String()
 	t.Cleanup(func() { cleanupRunAndTables(t, driver, runID, "test-mat-") })
@@ -290,7 +285,7 @@ func TestSnapshotWriter_BackfillsInitiatedByOnMatch(t *testing.T) {
 	projection := []snapshot.TaskProjection{{
 		TaskID: uuid.New(), ServiceName: "svc", SchemaName: "s", TableName: "a",
 		ScheduleName: scheduleName, NodeType: "dbt-model", InitialStatus: "PENDING",
-		ImageTag: "img:1", ManifestVersion: "v1", MaxRetries: 2,
+		ImageTag: "img:1", MaxRetries: 2,
 	}}
 	params := snapshot.Params{RunID: runID, ScheduleName: scheduleName, Kind: "rerun", InitiatedBy: "okta|carol"}
 
@@ -343,23 +338,22 @@ func TestSnapshotWriter_StampsContentHashOnExecutes(t *testing.T) {
 	driver := newDriver(t)
 	scheduleName := "test-mat-" + uuid.New().String()[:8]
 
-	seedTable(t, driver, scheduleName, "svc", "s", "hashed", "img:1", "v1")
+	seedTable(t, driver, scheduleName, "svc", "s", "hashed", "img:1")
 	seedTableContentHash(t, driver, scheduleName, "svc", "s", "hashed", "sha256:exec")
 
 	runID := uuid.New().String()
 	t.Cleanup(func() { cleanupRunAndTables(t, driver, runID, "test-mat-") })
 
 	projection := []snapshot.TaskProjection{{
-		TaskID:          uuid.New(),
-		ServiceName:     "svc",
-		SchemaName:      "s",
-		TableName:       "hashed",
-		ScheduleName:    scheduleName,
-		NodeType:        "dbt-model",
-		InitialStatus:   "PENDING",
-		ImageTag:        "img:1",
-		ManifestVersion: "v1",
-		ContentHash:     "sha256:exec",
+		TaskID:        uuid.New(),
+		ServiceName:   "svc",
+		SchemaName:    "s",
+		TableName:     "hashed",
+		ScheduleName:  scheduleName,
+		NodeType:      "dbt-model",
+		InitialStatus: "PENDING",
+		ImageTag:      "img:1",
+		ContentHash:   "sha256:exec",
 	}}
 	params := snapshot.Params{RunID: runID, ScheduleName: scheduleName, Kind: "scheduled"}
 
@@ -407,7 +401,7 @@ func seedTableContentHash(t *testing.T, driver neo4j.DriverWithContext, schedule
 }
 
 // A derived run — rerun, rebase-inherited row, or snapshot_of_run — reuses the
-// SOURCE run's image and manifest so it repeats exactly what ran. Its recorded
+// SOURCE run's image so it repeats exactly what ran. Its recorded
 // code fingerprint must be pinned the same way: reading the live :Table would
 // claim the run executed code a later release introduced, which is precisely
 // what this field exists to rule out.
@@ -415,7 +409,7 @@ func TestSnapshotWriter_DerivedRunPinsTheSourceHashNotTheTable(t *testing.T) {
 	driver := newDriver(t)
 	scheduleName := "test-mat-" + uuid.New().String()[:8]
 
-	seedTable(t, driver, scheduleName, "svc", "s", "drifted", "img:new", "v-new")
+	seedTable(t, driver, scheduleName, "svc", "s", "drifted", "img:new")
 	// The topology has moved on since the source run executed.
 	seedTableContentHash(t, driver, scheduleName, "svc", "s", "drifted", "sha256:new")
 
@@ -424,16 +418,15 @@ func TestSnapshotWriter_DerivedRunPinsTheSourceHashNotTheTable(t *testing.T) {
 
 	srcRun := uuid.New()
 	projection := []snapshot.TaskProjection{{
-		TaskID:          uuid.New(),
-		ServiceName:     "svc",
-		SchemaName:      "s",
-		TableName:       "drifted",
-		ScheduleName:    scheduleName,
-		NodeType:        "dbt-model",
-		InitialStatus:   "PENDING",
-		ImageTag:        "img:old",    // pinned from the source run
-		ManifestVersion: "v-old",      // pinned from the source run
-		ContentHash:     "sha256:old", // must be pinned the same way
+		TaskID:        uuid.New(),
+		ServiceName:   "svc",
+		SchemaName:    "s",
+		TableName:     "drifted",
+		ScheduleName:  scheduleName,
+		NodeType:      "dbt-model",
+		InitialStatus: "PENDING",
+		ImageTag:      "img:old",    // pinned from the source run
+		ContentHash:   "sha256:old", // must be pinned the same way
 	}}
 	params := snapshot.Params{RunID: runID, ScheduleName: scheduleName, Kind: "rerun", SourceRunID: &srcRun}
 
@@ -490,9 +483,9 @@ func TestSnapshotWriter_PinsSecretRefOnTheEdge(t *testing.T) {
 	driver := newDriver(t)
 	scheduleName := "test-mat-" + uuid.New().String()[:8]
 
-	seedTable(t, driver, scheduleName, "svc", "s", "fx", "img:1", "v1")
+	seedTable(t, driver, scheduleName, "svc", "s", "fx", "img:1")
 	seedTableSecretRef(t, driver, scheduleName, "svc", "s", "fx", "continuo-api-old")
-	seedTable(t, driver, scheduleName, "svc", "s", "plain", "img:1", "v1")
+	seedTable(t, driver, scheduleName, "svc", "s", "plain", "img:1")
 
 	runID := uuid.New().String()
 	t.Cleanup(func() { cleanupRunAndTables(t, driver, runID, "test-mat-") })

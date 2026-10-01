@@ -104,7 +104,6 @@ export interface NodeRun {
   task_status: string;      // pending | running | succeeded | failed | cancelled
   retry_count: number;
   image_tag: string;
-  manifest_version: string;
   operation: WireOperation;
   created_at: string | null;
   started_at: string | null;

@@ -53,7 +53,7 @@ def test_candidate_topology_carries_test_count(tmp_path):
 
     source = create_autospec(ManifestSourcePort)
     source.list_manifests.return_value = [
-        ManifestFile(path=_write(tmp_path, manifest), version="v1", image_tag="")
+        ManifestFile(path=_write(tmp_path, manifest), image_tag="")
     ]
     publisher = MagicMock()
     uploader = MagicMock()
