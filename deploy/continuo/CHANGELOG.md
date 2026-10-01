@@ -12,6 +12,9 @@ shipped in those.
 
 ## [Unreleased]
 
+### Changed
+- The state database migration drops the unused `task_tracker.manifest_version` column that 0.8.0 kept for rollout safety. **Upgrade through 0.8.0 first.** An install going straight from a release before 0.8.0 to this one runs the drop while the old state pods still read and write the column, and they fail until replaced. Installs already on 0.8.0 are unaffected.
+
 ## [0.8.0] - 2026-10-01
 
 ### Added

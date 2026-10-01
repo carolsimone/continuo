@@ -211,49 +211,16 @@ func TestTaskTrackerRepository_CreateAndGet_RoundTripsImageTag(t *testing.T) {
 	assert.Equal(t, "registry/img:abcdef", got.ImageTag)
 }
 
-// The previous release's state replicas keep serving while the migration hook
-// runs, and their task inserts and reads still name task_tracker.manifest_version.
-// The column must therefore stay, defaulted, so those statements keep working and
-// the current binary (which never writes it) leaves it empty.
-func TestTaskTracker_RetiredManifestVersionColumnStaysCompatible(t *testing.T) {
+// task_tracker.manifest_version is gone: nothing writes or reads it, and the
+// schema no longer carries it.
+func TestTaskTracker_ManifestVersionColumnIsDropped(t *testing.T) {
 	db := newTestDB(t)
-	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
-	repo := postgres.NewTaskTrackerRepository(db, discardLogger())
 
-	ctx := context.Background()
-	parent := &postgres.SchedulerTracker{
-		ScheduleID:           uuid.New(),
-		ScheduleName:         "tt-compat-" + uuid.New().String()[:8],
-		Status:               run.SchedulerStatusPending,
-		CreatedAt:            time.Now(),
-		InitializationStatus: "pending",
-		Kind:                 "cron",
-	}
-	require.NoError(t, schedulerRepo.Create(ctx, parent))
-	defer db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", parent.ScheduleID)
-
-	// Insert in the previous release's shape, naming the retired column.
-	oldTaskID := uuid.New()
-	_, err := db.ExecContext(ctx, `
-		INSERT INTO task_tracker (task_id, schedule_id, created_at, service_name, schema_name, table_name, job_name, status, retry_count, max_retries, manifest_version, image_tag)
-		VALUES ($1, $2, NOW(), 'svc', 's', 't-old', 'job-old', 'pending', 0, 2, '', 'img:1')`,
-		oldTaskID, parent.ScheduleID)
-	require.NoError(t, err, "a previous-release insert naming manifest_version must still succeed")
-	defer db.ExecContext(ctx, "DELETE FROM task_tracker WHERE task_id = $1", oldTaskID)
-
-	// The current binary's insert omits the column; the default fills it.
-	task := &postgres.TaskTracker{
-		TaskID: uuid.New(), ScheduleID: parent.ScheduleID, CreatedAt: time.Now(),
-		ServiceName: "svc", SchemaName: "s", TableName: "t-new", JobName: "job-new",
-		Status: run.TaskStatusPending, MaxRetries: 2, ImageTag: "img:2",
-	}
-	require.NoError(t, repo.Create(ctx, task))
-	defer db.ExecContext(ctx, "DELETE FROM task_tracker WHERE task_id = $1", task.TaskID)
-
-	var stored string
-	require.NoError(t, db.GetContext(ctx, &stored,
-		`SELECT manifest_version FROM task_tracker WHERE task_id = $1`, task.TaskID))
-	assert.Equal(t, "", stored, "the retired column defaults to empty for the current binary")
+	var count int
+	require.NoError(t, db.GetContext(context.Background(), &count, `
+		SELECT COUNT(*) FROM information_schema.columns
+		 WHERE table_name = 'task_tracker' AND column_name = 'manifest_version'`))
+	assert.Equal(t, 0, count, "task_tracker.manifest_version must not exist")
 }
 
 func TestTaskTrackerRepository_CreateAndGet_RoundTripsInheritedFromTaskID(t *testing.T) {
