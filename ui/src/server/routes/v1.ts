@@ -10,6 +10,9 @@ import { audit } from '../auth/audit';
 // so internal fields can change without breaking a pipeline.
 
 export const SUBMIT_RATE_LIMIT_PER_MINUTE = 30;
+// Sized for a pipeline polling its release to a terminal status: one read
+// every few seconds per job, with headroom for parallel jobs of one repository.
+export const READ_RATE_LIMIT_PER_MINUTE = 300;
 const SUBMIT_FIELDS = new Set(['release_id', 'service', 'image_tag', 'bootstrap', 'kind', 'repo', 'commit_sha']);
 const TERMINAL = new Set(['promoted', 'rejected', 'superseded']);
 // A release id is a single URL path segment and an object-key component
@@ -111,6 +114,18 @@ export function createV1Router(releases: ReleaseClient, publicUrl?: string): Rou
     },
   });
 
+  // Each read costs a release-controller call, so a polling loop that never
+  // stops or a leaked token is capped per principal too, on a counter separate
+  // from the submit limit so polling never uses up a pipeline's submissions.
+  const readLimiter = rateLimit({
+    windowMs: 60_000,
+    limit: READ_RATE_LIMIT_PER_MINUTE,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => principalKey(principalOf(req)!),
+    handler: (_req, res) => fail(res, 429, 'rate_limited', 'too many reads; retry in a minute'),
+  });
+
   router.post('/releases', submitLimiter, async (req, res) => {
     const p = principalOf(req)!;
     const parsed = parseSubmit(req.body);
@@ -175,7 +190,7 @@ export function createV1Router(releases: ReleaseClient, publicUrl?: string): Rou
   // A CI identity reading a release of a service it is not bound to gets the
   // same 404 as a missing release, so the route never confirms that a release
   // id exists or names the service it belongs to.
-  router.get('/releases/:id', async (req, res) => {
+  router.get('/releases/:id', readLimiter, async (req, res) => {
     const p = principalOf(req)!;
     if (!RELEASE_ID_PATTERN.test(req.params.id)) return fail(res, 404, 'not_found', 'release not found');
     let rel: Record<string, unknown>;
@@ -193,7 +208,7 @@ export function createV1Router(releases: ReleaseClient, publicUrl?: string): Rou
     res.json(projectRelease(rel, publicUrl));
   });
 
-  router.get('/current-prod', async (req, res) => {
+  router.get('/current-prod', readLimiter, async (req, res) => {
     const d = authorize(principalOf(req)!, { kind: 'prod.read' });
     if (!d.allow) return fail(res, 403, d.code, d.reason);
     try {

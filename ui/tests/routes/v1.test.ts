@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
-import { createV1Router, projectRelease, SUBMIT_RATE_LIMIT_PER_MINUTE } from '../../src/server/routes/v1';
+import { createV1Router, projectRelease, READ_RATE_LIMIT_PER_MINUTE, SUBMIT_RATE_LIMIT_PER_MINUTE } from '../../src/server/routes/v1';
 import { HttpError, type ReleaseClient } from '../../src/server/release-client';
 import type { Principal } from '../../src/server/auth/principal';
 import { githubClaimsFrom } from '../../src/server/auth/principal';
@@ -325,5 +325,44 @@ describe('GET /api/v1/current-prod', () => {
     expect(res.status).toBe(403);
     expect(res.body.code).toBe('forbidden');
     expect(client.getCurrentProd).not.toHaveBeenCalled();
+  });
+});
+
+describe('read rate limit', () => {
+  const rel = { release_id: 'r1', status: 'validating', changed_service: 'core' };
+  const client = () => fakeClient({
+    getRelease: vi.fn(async () => rel),
+    getCurrentProd: vi.fn(async () => ({ current_prod_release_id: 'r', node_count: 1, updated_at: 't' })),
+  });
+
+  it('caps release and current-prod reads per principal, on a counter separate from submissions', async () => {
+    const c = client();
+    const app = appAs(ci(), c);
+    for (let i = 0; i < READ_RATE_LIMIT_PER_MINUTE; i++) {
+      const path = i % 2 === 0 ? '/api/v1/releases/r1' : '/api/v1/current-prod';
+      expect((await request(app).get(path)).status).toBe(200);
+    }
+    for (const path of ['/api/v1/releases/r1', '/api/v1/current-prod']) {
+      const res = await request(app).get(path);
+      expect(res.status).toBe(429);
+      expect(res.body.code).toBe('rate_limited');
+    }
+    expect(c.getRelease).toHaveBeenCalledTimes(READ_RATE_LIMIT_PER_MINUTE / 2);
+    // Submissions keep their own budget.
+    expect((await request(app).post('/api/v1/releases').send(body)).status).not.toBe(429);
+    expect(c.submitRelease).toHaveBeenCalledTimes(1);
+  });
+
+  it('counts each principal separately', async () => {
+    const c = client();
+    const app = express();
+    app.use(express.json());
+    let who: Principal = ci();
+    app.use((req, _res, next) => { req.principal = who; next(); });
+    app.use('/api/v1', createV1Router(c));
+    for (let i = 0; i < READ_RATE_LIMIT_PER_MINUTE; i++) await request(app).get('/api/v1/current-prod');
+    expect((await request(app).get('/api/v1/current-prod')).status).toBe(429);
+    who = operator;
+    expect((await request(app).get('/api/v1/current-prod')).status).toBe(200);
   });
 });
