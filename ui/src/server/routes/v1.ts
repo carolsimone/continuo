@@ -14,6 +14,7 @@ export const SUBMIT_RATE_LIMIT_PER_MINUTE = 30;
 // Sized for a pipeline polling its release to a terminal status: one read
 // every few seconds per job, with headroom for parallel jobs of one repository.
 export const READ_RATE_LIMIT_PER_MINUTE = 300;
+const CI_CONFLICT_MESSAGE = 'release id already exists with different content';
 const SUBMIT_FIELDS = new Set(['release_id', 'service', 'image_tag', 'bootstrap', 'kind', 'repo', 'commit_sha']);
 const TERMINAL = new Set(['promoted', 'rejected', 'superseded']);
 // A release id is a single URL path segment and an object-key component
@@ -203,8 +204,13 @@ export function createV1Router(releases: ReleaseClient, publicUrl?: string): Rou
     auditSubmit(p, body, upstream.status);
     // release-controller answers 409 when the release id already names a run
     // of another kind or a candidate with a different service, image tag,
-    // kind, bootstrap flag or source change; its message is passed through.
-    if (upstream.status === 409) return fail(res, 409, 'release_kind_conflict', upstream.text.trim());
+    // kind, bootstrap flag or source change. A person gets its message; a CI
+    // identity gets a generic one, because the id may belong to a release of a
+    // service its repository is not bound to, and the message names the run's
+    // kind.
+    if (upstream.status === 409) {
+      return fail(res, 409, 'release_kind_conflict', p.kind === 'ci' ? CI_CONFLICT_MESSAGE : upstream.text.trim());
+    }
     if (upstream.status === 400) return fail(res, 400, 'bad_request', upstream.text.trim());
     return fail(res, 503, 'upstream_unavailable', 'release service unavailable');
   });

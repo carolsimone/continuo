@@ -133,13 +133,22 @@ describe('POST /api/v1/releases', () => {
     expect((await request(appAs(operator, down)).post('/api/v1/releases').send(body)).status).toBe(503);
   });
 
-  it("passes release-controller's 409 through with its message, and asks it nothing else", async () => {
-    const msg = 'release id already names a different candidate: release id "rel-1" already exists with a different service, image tag, kind, bootstrap flag or source change\n';
+  it("passes release-controller's 409 through with its message to a person, and asks it nothing else", async () => {
+    const msg = 'release id already names a different candidate: "rel-1" has a different service, image tag, kind, bootstrap flag or source change\n';
     const client = fakeClient({ submitRelease: vi.fn(async () => ({ status: 409, text: msg })) });
-    const res = await request(appAs(ci(), client)).post('/api/v1/releases').send(body);
+    const res = await request(appAs(operator, client)).post('/api/v1/releases').send(body);
     expect(res.status).toBe(409);
     expect(res.body).toEqual({ error: msg.trim(), code: 'release_kind_conflict' });
     expect(client.getRelease).not.toHaveBeenCalled();
+  });
+
+  it('answers a CI identity 409 with a generic message that names no other release or run kind', async () => {
+    for (const msg of ['run id already names a run of another kind: rel-1 is a verification\n', 'release id already names a different candidate: "rel-1" has a different service\n']) {
+      const client = fakeClient({ submitRelease: vi.fn(async () => ({ status: 409, text: msg })) });
+      const res = await request(appAs(ci(), client)).post('/api/v1/releases').send(body);
+      expect(res.status).toBe(409);
+      expect(res.body).toEqual({ error: 'release id already exists with different content', code: 'release_kind_conflict' });
+    }
   });
 
   it.each([
