@@ -130,7 +130,7 @@ func TestHandleReceiveCandidate_ConflictingResubmitIs409(t *testing.T) {
 	rec := postCandidate(srv, in)
 
 	require.Equal(t, http.StatusConflict, rec.Code)
-	assert.Contains(t, rec.Body.String(), `release id "rel-1" already exists`)
+	assert.Equal(t, "release id already names a different candidate: \"rel-1\" has a different service, image tag, kind, bootstrap flag or source change\n", rec.Body.String())
 	assert.Equal(t, "img:1", releases.releases["rel-1"].ImageTags()["core"])
 }
 

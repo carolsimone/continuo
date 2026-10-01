@@ -95,7 +95,7 @@ func resubmitOutcome(existing *pipeline.Run, in ReceiveCandidateInput, kind rele
 		Bootstrap: in.Bootstrap, Repo: in.Repo, CommitSHA: in.CommitSHA,
 	}
 	if !existing.MatchesSubmission(submitted) {
-		return fmt.Errorf("%w: release id %q already exists with a different service, image tag, kind, bootstrap flag or source change",
+		return fmt.Errorf("%w: %q has a different service, image tag, kind, bootstrap flag or source change",
 			ErrReleaseIDConflict, in.ReleaseID)
 	}
 	return nil
