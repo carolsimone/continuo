@@ -235,9 +235,12 @@ Rules that apply to every bearer:
   after its `iat` is rejected, and so is one whose `iat` lies more than 60
   seconds in the future. `exp` and `nbf` are checked with 60 seconds of clock
   tolerance.
-- **The issuer must be reachable.** `ui` fetches the issuer's signing keys the
-  first time a token from it arrives. While the issuer cannot be reached, bearer
-  requests answer `503` `auth_unavailable` and browser sessions keep working.
+- **The issuer must be reachable.** `ui` fetches the issuer's discovery
+  document (at `<issuer>/.well-known/openid-configuration`, with any trailing
+  `/` of the issuer dropped) and signing keys the first time a token from it
+  arrives. While the issuer cannot be reached, or answers with a key set `ui`
+  cannot read, bearer requests answer `503` `auth_unavailable` and browser
+  sessions keep working.
 - **A person's email counts only when verified.** The same
   `email_verified: true` requirement as at login applies to the
   `AUTH_OPERATOR_EMAILS` / `AUTH_VIEWER_EMAILS` lists.

@@ -194,7 +194,9 @@ is a `409` `release_kind_conflict`, so use a fresh id for a new release.
 `bootstrap`, `repo`, `commit_sha`, `reject_reason`, `reject_detail`, and `ui_url`,
 the release's page in the dashboard. A CI token can read only releases of the
 services its bindings grant; a release of any other service answers `404`
-`not_found`, exactly as a release that does not exist.
+`not_found`, exactly as a release that does not exist. A pipeline polling for
+`terminal` stays well inside the read limit (300 a minute per principal) with
+one read every few seconds.
 
 **Errors.** Every failure is JSON, `{"error": "<message>", "code": "<code>"}`.
 
@@ -206,9 +208,9 @@ services its bindings grant; a release of any other service answers `404`
 | 403 | `claim_mismatch` | The body's `repo` or `commit_sha` differs from the token's. |
 | 403 | `bootstrap_not_allowed` | `"bootstrap": true` from a binding without `allowBootstrap`. |
 | 404 | `not_found` | No such release, a release of a service the CI token's repository is not bound to, or an id outside the `release_id` pattern. |
-| 409 | `release_kind_conflict` | The `release_id` already exists with different content. |
-| 429 | `rate_limited` | More than 30 submits in a minute from one principal (a repository for CI, a user for a person), counted per `ui` pod. |
-| 503 | `auth_unavailable` | The token's issuer could not be reached; the dashboard keeps working. Retry. |
+| 409 | `release_kind_conflict` | The `release_id` already names a release with a different service, `image_tag`, `kind`, bootstrap flag, `repo` or `commit_sha`. The release service makes this check; `error` carries its message. |
+| 429 | `rate_limited` | More than 30 submits, or more than 300 reads (`GET /api/v1/releases/{id}` and `GET /api/v1/current-prod` together), in a minute from one principal (a repository for CI, a user for a person), counted per `ui` pod. Submits and reads have separate budgets. |
+| 503 | `auth_unavailable` | The token's issuer could not be reached, or its discovery document or signing keys could not be read; the dashboard keeps working. Retry. |
 | 503 | `upstream_unavailable` | The release service is unreachable or failed. Retry; a submit is idempotent. |
 
 ### Networking

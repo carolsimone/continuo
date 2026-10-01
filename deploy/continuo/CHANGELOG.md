@@ -14,7 +14,7 @@ shipped in those.
 
 ### Added
 - `ciAuth` values (optional, as is each key): CD pipelines release through `POST <publicUrl>/api/v1/releases` with their GitHub Actions OIDC token. `ciAuth.bindings` maps each service to the GitHub `repositoryId` (plus optional `ref`, `refProtected`, `environment`, `workflowRef`, `allowBootstrap`) allowed to release it; a token can release, and read releases of, only its bound services. Empty bindings (the default) grant no CI access: the ui does not trust the CI issuer at all. An install upgraded with `helm upgrade --reuse-values` (no `ciAuth` in its stored values) renders the defaults — the GitHub Actions issuer, the origin of `auth.publicUrl` as audience, no bindings. The ui's CI-auth file, its mount and `CI_AUTH_CONFIG_PATH` are injected by the Deployment template, so an overridden `services` list keeps them.
-- The ui serves `GET /api/v1/releases/{id}` and `GET /api/v1/current-prod` for pipelines polling a release.
+- The ui serves `GET /api/v1/releases/{id}` and `GET /api/v1/current-prod` for pipelines polling a release, limited to 300 reads a minute per principal.
 - Bundled Dex enables the password grant and issues ID tokens valid for 1 hour, so an operator can obtain an API bearer token with one `curl`.
 
 ### Fixed
