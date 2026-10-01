@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"context"
+	"encoding/json"
 	"html"
 	"io"
 	"net/http"
@@ -66,6 +67,59 @@ func TestAuthOIDC(t *testing.T) {
 		}
 		if st := statusOf(t, client, "GET", base+"/auth/me"); st != http.StatusUnauthorized {
 			t.Fatalf("norole /auth/me = %d, want 401", st)
+		}
+	})
+
+	dexToken := func(t *testing.T, email string) string {
+		t.Helper()
+		form := url.Values{"grant_type": {"password"}, "scope": {"openid email profile"}, "username": {email}, "password": {"password"}}
+		req, _ := http.NewRequest(http.MethodPost, getEnv("DEX_BASE", "http://dex:5556/dex")+"/token", strings.NewReader(form.Encode()))
+		req.SetBasicAuth("continuo-ui", "e2e-secret")
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("dex password grant: %v", err)
+		}
+		defer resp.Body.Close()
+		var out struct {
+			IDToken string `json:"id_token"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil || out.IDToken == "" {
+			t.Fatalf("dex password grant: status %d, no id_token", resp.StatusCode)
+		}
+		return out.IDToken
+	}
+	bearer := func(t *testing.T, method, path, token, body string) int {
+		t.Helper()
+		req, _ := http.NewRequest(method, base+path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("%s %s: %v", method, path, err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	t.Run("operator Dex bearer clears the submit gates", func(t *testing.T) {
+		tok := dexToken(t, "operator@example.com")
+		if st := bearer(t, "GET", "/api/v1/current-prod", tok, ""); st != http.StatusOK {
+			t.Fatalf("operator GET current-prod = %d, want 200", st)
+		}
+		// image_tag is empty: the auth gates pass and the body validation
+		// refuses it, so no release is created.
+		if st := bearer(t, "POST", "/api/v1/releases", tok, `{"release_id":"auth-e2e","service":"service-1","image_tag":""}`); st != http.StatusBadRequest {
+			t.Fatalf("operator POST = %d, want 400 from body validation", st)
+		}
+	})
+
+	t.Run("viewer Dex bearer cannot submit; no-role bearer is refused", func(t *testing.T) {
+		if st := bearer(t, "POST", "/api/v1/releases", dexToken(t, "viewer@example.com"), `{"release_id":"r","service":"service-1","image_tag":"t"}`); st != http.StatusForbidden {
+			t.Fatalf("viewer POST = %d, want 403", st)
+		}
+		if st := bearer(t, "GET", "/api/v1/current-prod", dexToken(t, "norole@example.com"), ""); st != http.StatusForbidden {
+			t.Fatalf("norole GET = %d, want 403", st)
 		}
 	})
 

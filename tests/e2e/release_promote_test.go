@@ -885,28 +885,20 @@ func seedServiceProdExcept(t *testing.T, ctx context.Context, clients *testClien
 	require.NoError(t, err, "clear service_prod row for changed service %s", changedService)
 }
 
-// postRelease issues the per-service POST /releases request. When bootstrap is
-// true the release promotes without validation, covering the first-ever deploy
-// scenario.
+// postRelease submits a dbt release through the public API as the CI pipeline
+// of the dbt fixture repository. When bootstrap is true the release promotes
+// without validation, covering the first-ever deploy scenario.
 func postRelease(t *testing.T, clients *testClients, service, releaseID, imageTag string, bootstrap bool) {
 	t.Helper()
-	body, err := json.Marshal(map[string]any{
+	token := mintCIToken(t, e2eDbtRepositoryID, "carolsimone/continuo-demo", imageTag)
+	status, body := submitPublicRelease(t, clients, token, map[string]any{
 		"service":    service,
 		"release_id": releaseID,
 		"image_tag":  imageTag,
 		"bootstrap":  bootstrap,
-		"repo":       "carolsimone/continuo-demo",
-		"commit_sha": imageTag,
 	})
-	require.NoError(t, err)
-
-	resp, err := http.Post(clients.releaseBase+"/releases", "application/json", strings.NewReader(string(body)))
-	require.NoError(t, err, "POST /releases")
-	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
-	require.Equal(t, http.StatusAccepted, resp.StatusCode,
-		"POST /releases: expected 202, got %d: %s", resp.StatusCode, string(respBody))
-	t.Logf("POST /releases accepted: %s", string(respBody))
+	require.Equal(t, http.StatusAccepted, status, "POST /api/v1/releases: expected 202, got %d: %v", status, body)
+	t.Logf("POST /api/v1/releases accepted: %v", body)
 }
 
 // assertValidationRequestedNodes waits for the validation.requested:v1 message

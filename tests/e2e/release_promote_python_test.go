@@ -6,7 +6,6 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
-	"io"
 	"io/fs"
 	"net/http"
 	"os/exec"
@@ -442,25 +441,18 @@ func triggerPythonNodeRun(t *testing.T, ctx context.Context, clients *testClient
 	return runID, resp.ScheduleName
 }
 
-// postPythonRelease issues POST /releases with kind=python. Kept separate from
-// postRelease so the many existing dbt callers stay untouched.
+// postPythonRelease submits a kind=python release through the public API as
+// the CI pipeline of the python fixture repository.
 func postPythonRelease(t *testing.T, clients *testClients, service, releaseID, imageTag string) {
 	t.Helper()
-	body, err := json.Marshal(map[string]any{
+	token := mintCIToken(t, e2ePyRepositoryID, "carolsimone/continuo-py-demo", releaseID)
+	status, body := submitPublicRelease(t, clients, token, map[string]any{
 		"service":    service,
 		"release_id": releaseID,
 		"image_tag":  imageTag,
-		"repo":       "carolsimone/continuo-py-demo",
-		"commit_sha": releaseID,
 		"kind":       "python",
 	})
-	require.NoError(t, err)
-	resp, err := http.Post(clients.releaseBase+"/releases", "application/json", strings.NewReader(string(body)))
-	require.NoError(t, err, "POST /releases (python)")
-	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
-	require.Equal(t, http.StatusAccepted, resp.StatusCode,
-		"POST /releases: expected 202, got %d: %s", resp.StatusCode, string(respBody))
+	require.Equal(t, http.StatusAccepted, status, "POST /api/v1/releases: expected 202, got %d: %v", status, body)
 }
 
 // putS3Object uploads an object into the e2e bucket.

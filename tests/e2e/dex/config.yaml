@@ -5,6 +5,9 @@ web:
   http: 0.0.0.0:5556
 oauth2:
   skipApprovalScreen: true
+  passwordConnector: local
+expiry:
+  idTokens: 1h
 staticClients:
   - id: continuo-ui
     redirectURIs:

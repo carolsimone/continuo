@@ -601,10 +601,12 @@ services:
       - GITHUB_APP_PRIVATE_KEY=${GITHUB_APP_PRIVATE_KEY:-}
       - GITHUB_APP_INSTALLATION_ID=1
       - GITHUB_API_BASE_URL=http://stub-github:9200
+      - CI_AUTH_CONFIG_PATH=/app/ci-auth/ci-auth.json
     ports:
       - "8090:8090"
     volumes:
       - ./ui/config:/app/config:ro
+      - ./tests/e2e/ci-auth.json:/app/ci-auth/ci-auth.json:ro
     networks:
       - default
 
@@ -635,6 +637,8 @@ services:
         condition: service_completed_successfully
       release-controller:
         condition: service_started
+      stub-github:
+        condition: service_started
     environment:
       - STATE_GRPC_ADDR=state:50051
       - ORCHESTRATOR_GRPC_ADDR=orchestrator:50052
@@ -654,8 +658,11 @@ services:
       - AUTH_OPERATOR_EMAILS=operator@example.com
       - AUTH_VIEWER_EMAILS=viewer@example.com
       - REDIS_URL=redis://:continuo@redis:6379
+      - CI_AUTH_CONFIG_PATH=/app/ci-auth/ci-auth.json
+      - CI_AUTH_ALLOW_INSECURE_ISSUER=true
     volumes:
       - ./ui/config:/app/config:ro
+      - ./tests/e2e/ci-auth.json:/app/ci-auth/ci-auth.json:ro
     networks:
       - default
 

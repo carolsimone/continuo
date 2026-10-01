@@ -1,0 +1,14 @@
+{
+  "issuer": "http://stub-github:9200",
+  "audience": "http://ui:8090",
+  "bindings": {
+    "service-1": [{ "repositoryId": "100000001", "allowBootstrap": true }],
+    "service-2": [{ "repositoryId": "100000001", "allowBootstrap": true }],
+    "service-3": [{ "repositoryId": "100000001", "allowBootstrap": true }],
+    "svc-py-e2e": [{ "repositoryId": "100000002", "allowBootstrap": true }],
+    "svc-py-e2e-loop": [{ "repositoryId": "100000002", "allowBootstrap": true }],
+    "svc-py-e2e-parse": [{ "repositoryId": "100000002", "allowBootstrap": true }],
+    "e2e-dup-collider": [{ "repositoryId": "100000002", "allowBootstrap": true }],
+    "e2e-ci-no-bootstrap": [{ "repositoryId": "100000003" }]
+  }
+}

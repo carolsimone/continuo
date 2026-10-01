@@ -202,7 +202,8 @@ The controller in kind connects to docker-compose services via docker bridge net
 | `remediation_python_test.go` | `TestE2E_PythonValidationFailure_VerifiedFix`, `TestE2E_PythonValidationFailure_VerificationErrorFeedsNextAttempt`, `TestE2E_PythonParseFailure_VerifiedFix` — a rejected python node is repaired in the contract yaml, verified by a real verification run that stops at `passed`, and proposed for review; the second test proves a failed verification run's error feeds the next attempt and reaches no classifier at all; the third drives the same lane from a parse-stage rejection (a read whose relation is not schema-qualified), where the rejection carries the parser's text inline and no log. Uses the fixture repository under `fixtures/py-remediation-repo`, which `stub-github` serves as a tarball |
 | `seed_topology_test.go` | `seedTopology` helper — publishes `release.promoted:v1` to establish the e2e DAG in Neo4j (the kept production path) |
 | `ui_http_test.go` | HTTP assertions against the ui (`verifyUIService`) |
-| `auth_oidc_test.go` | `TestAuthOIDC` — real OIDC login flow against Dex (auth-e2e profile); skipped unless `UI_AUTH_HTTP_BASE` is set |
+| `public_api_test.go`, `ci_token.go` | `TestPublicAPI_Authorization` — the public `/api/v1` release API's refusals (unbound repository, bootstrap without `allowBootstrap`, body/token repository mismatch, garbage token) and a CI token reading `current-prod`. `ci_token.go` mints GitHub Actions-shaped tokens from `stub-github`, which the ui trusts as its CI issuer through `tests/e2e/ci-auth.json`; every release the suite submits goes through `/api/v1/releases` with such a token |
+| `auth_oidc_test.go` | `TestAuthOIDC` — real OIDC login flow against Dex (auth-e2e profile), plus Dex password-grant bearers against `/api/v1`; skipped unless `UI_AUTH_HTTP_BASE` is set |
 | `verify.go` | DAG-level assertions (execution-controller's k8s Jobs, dependency unlocking, failure helpers) |
 | `clients.go` | gRPC, Redis, Postgres, Neo4j, S3, and release-controller client setup |
 | `helpers.go` | `pollUntil`, k8s job helpers, `containsAll` |
@@ -210,10 +211,10 @@ The controller in kind connects to docker-compose services via docker bridge net
 
 ## Blue/Green Release Tests
 
-`release_promote_test.go` drives the dbt blue/green release pipeline end-to-end via the production entry point — `POST /releases`, the exact request CI's `deploy.yml` issues. Validation runs **real `continuo-python-runtime-<engine>` K8s Jobs in kind** (no dbt in the validation path — see the execution-controller doc's `CreateValidationJob`), exercising the full event chain:
+`release_promote_test.go` drives the dbt blue/green release pipeline end-to-end via the production entry point — `POST /api/v1/releases` on the ui, authenticated with a GitHub Actions-shaped OIDC token minted by `stub-github` (`ci_token.go`). Validation runs **real `continuo-python-runtime-<engine>` K8s Jobs in kind** (no dbt in the validation path — see the execution-controller doc's `CreateValidationJob`), exercising the full event chain:
 
 ```
-POST /releases → release.requested:v1 → topology-controller candidate parse
+POST /api/v1/releases → release.requested:v1 → topology-controller candidate parse
 → manifest.loaded.candidate:v1 → release-controller derives the changed-node set
 → validation.requested:v1 → execution-controller runs per-node validation jobs,
 settling each terminal outcome in-process (job-status handler → service/outcomes.Recorder,
