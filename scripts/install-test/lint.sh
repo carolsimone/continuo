@@ -122,6 +122,21 @@ ci_bound="$(ui_ciauth_checksum --set-string 'ciAuth.bindings.core[0].repositoryI
 grep -q '\\"repositoryId\\":\\"812345678\\"' "${tmp}/ciauth-probe.yaml" || { echo "FAIL: binding missing from ci-auth.json"; exit 1; }
 grep -q '\\"audience\\":\\"http://localhost:8090\\"' "${tmp}/ciauth-probe.yaml" || { echo "FAIL: audience did not default to the origin of auth.publicUrl"; exit 1; }
 
+# The ui's CI-auth env, mount and volume come from the template, not from its
+# `services` entry: Helm replaces lists wholesale, so an operator's own
+# `services` list must not silently disable CI auth. ciAuth itself is optional,
+# so `helm upgrade --reuse-values` from a chart without it still renders, with
+# the GitHub issuer and no bindings (no CI access).
+echo "--- ciAuth: the ui gets CI auth from the template"
+python3 scripts/install-test/assert-ui-ci-auth.py "${tmp}/defaults.yaml" continuo
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  -f scripts/install-test/values-ui-minimal-services.yaml > "${tmp}/ui-minimal-services.yaml"
+python3 scripts/install-test/assert-ui-ci-auth.py "${tmp}/ui-minimal-services.yaml" continuo
+echo "--- ciAuth: a release without ciAuth values renders the defaults"
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set ciAuth=null > "${tmp}/ciauth-null.yaml" \
+  || { echo "FAIL: rendering with ciAuth=null failed; helm upgrade --reuse-values from a chart without ciAuth would fail"; exit 1; }
+python3 scripts/install-test/assert-ui-ci-auth.py "${tmp}/ciauth-null.yaml" continuo --default-ci-auth
+
 # The "continuo-api-" Secret-name prefix is reserved for the operator-created
 # Secrets a python-api node contract may name. A chart fullname inside it would
 # name every chart-created Secret inside it, and so would a user-supplied

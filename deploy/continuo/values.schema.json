@@ -6,7 +6,7 @@
   "additionalProperties": false,
   "required": [
     "global", "postgresql", "externalDatabase", "redis", "externalRedis",
-    "neo4j", "externalNeo4j", "minio", "s3", "dex", "auth", "ciAuth", "llm", "github",
+    "neo4j", "externalNeo4j", "minio", "s3", "dex", "auth", "llm", "github",
     "validation", "databaseInit", "streamReaper", "networkPolicy", "ingress",
     "defaultResources", "services"
   ],
@@ -237,8 +237,7 @@
     "ciAuth": {
       "type": "object",
       "additionalProperties": false,
-      "description": "GitHub Actions OIDC access to the public release API. See values.yaml.",
-      "required": ["issuer", "audience", "bindings"],
+      "description": "GitHub Actions OIDC access to the public release API. See values.yaml. Optional, as is each key, so a `helm upgrade --reuse-values` from a chart without it still renders; templates/_helpers.tpl's continuo.ciAuth.json supplies the defaults.",
       "properties": {
         "issuer": {"type": "string", "pattern": "^https://"},
         "audience": {"type": "string"},

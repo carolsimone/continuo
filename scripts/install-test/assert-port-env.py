@@ -73,6 +73,8 @@ def main() -> int:
             if PORT_NAME_RE.match(key) and key != want:
                 failures.append(f"{name}: chart sets {key}, which the service never reads (it reads {want})")
         checked.append(f"{name}={want}")
+    if not checked and not failures:
+        failures.append("no Deployment exposing an http port with a service directory in the repo was checked")
     for f in failures:
         logger.error("FAIL: %s", f)
     if not failures:

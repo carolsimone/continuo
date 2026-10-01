@@ -206,14 +206,21 @@ app.kubernetes.io/name: {{ .service }}
 {{- printf "%s-ci-auth" (include "continuo.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
-{{- /* The CI-auth file the ui reads; also hashed into the ui pod template. */ -}}
+{{- /* The CI-auth file the ui reads; also hashed into the ui pod template.
+       ciAuth and each of its keys are optional in the schema, so a release
+       upgraded with `helm upgrade --reuse-values` from a chart without ciAuth
+       (or a `ciAuth: null` override) still renders: issuer defaults to GitHub
+       Actions, audience to the origin of auth.publicUrl, bindings to none,
+       which the ui treats as no CI access. */ -}}
 {{- define "continuo.ciAuth.json" -}}
-{{- $audience := .Values.ciAuth.audience -}}
+{{- $ci := .Values.ciAuth | default dict -}}
+{{- $audience := $ci.audience -}}
 {{- if not $audience -}}
 {{-   $u := urlParse .Values.auth.publicUrl -}}
 {{-   $audience = printf "%s://%s" $u.scheme $u.host -}}
 {{- end -}}
-{{- dict "issuer" (.Values.ciAuth.issuer | trimSuffix "/") "audience" $audience "bindings" (default (dict) .Values.ciAuth.bindings) | toJson -}}
+{{- $issuer := default "https://token.actions.githubusercontent.com" $ci.issuer | trimSuffix "/" -}}
+{{- dict "issuer" $issuer "audience" $audience "bindings" (default (dict) $ci.bindings) | toJson -}}
 {{- end -}}
 
 {{/* Job/Secret name carrying a fixed discriminator (what the object IS, e.g.

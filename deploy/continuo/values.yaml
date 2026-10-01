@@ -220,9 +220,10 @@ auth:
 
 # Lets CD pipelines release through the public API (POST <publicUrl>/api/v1/releases)
 # with their GitHub Actions OIDC token instead of a stored secret. The ui verifies
-# the token against `issuer` and lets it release only the services bound to its
-# repository below. Humans are not configured here: their access follows the
-# auth role settings (an operator may release any service).
+# the token against `issuer` and lets it release, and read releases of, only the
+# services bound to its repository below. Humans are not configured here: their
+# access follows the auth role settings (an operator may release any service).
+# The whole block is optional; an absent key takes the default shown.
 ciAuth:
   # GitHub Actions OIDC issuer. GitHub Enterprise Server: https://<host>/_services/token
   issuer: https://token.actions.githubusercontent.com
@@ -230,7 +231,9 @@ ciAuth:
   # ACTIONS_ID_TOKEN_REQUEST_URL&audience=<audience>). Empty = the origin of
   # auth.publicUrl, so a token minted for one install is useless at another.
   audience: ""
-  # service -> GitHub identities allowed to release it. Empty = no CI access.
+  # service -> GitHub identities allowed to release it. Empty = no CI access:
+  # the ui then does not trust `issuer` at all, so every CI token is a 401, and
+  # a token whose repository matches no binding is refused on every route.
   # repositoryId is required and must be QUOTED digits (`gh api repos/OWNER/REPO --jq .id`);
   # names are never trusted. Optional, all must match: ref, refProtected,
   # environment, workflowRef. allowBootstrap (default false) permits
@@ -559,14 +562,12 @@ services:
       GITHUB_APP_ID: __GITHUB_APP_ID__
       GITHUB_APP_INSTALLATION_ID: __GITHUB_APP_INSTALLATION_ID__
       GITHUB_API_BASE_URL: https://api.github.com
-      CI_AUTH_CONFIG_PATH: /app/ci-auth/ci-auth.json
+      # CI_AUTH_CONFIG_PATH and the ci-auth volume (rendered from ciAuth) are
+      # injected by templates/deployment.yaml, independent of this list.
     volumeMounts:
       - {name: cancel-config, mountPath: /app/config, readOnly: true}
-      - {name: ci-auth, mountPath: /app/ci-auth, readOnly: true}
     volumes:
       - name: cancel-config
-        configMap: {name: ""}
-      - name: ci-auth
         configMap: {name: ""}
 
   - name: topology-controller
