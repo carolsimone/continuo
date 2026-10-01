@@ -52,6 +52,14 @@ done
 echo "--- network policy reachability (defaults)"
 python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/defaults.yaml" continuo
 
+# A service reads its HTTP port under one specific env name. The chart sets a
+# differently named variable that works only while the default happens to equal
+# the Deployment's containerPort, and changing httpPort then moves the probes
+# and Service but not the listener. Assert each service gets its port under
+# the name its own code reads.
+echo "--- http port env names match what each service reads (defaults)"
+python3 scripts/install-test/assert-port-env.py "${tmp}/defaults.yaml" .
+
 # Services read the shared ConfigMap through envFrom, and Kubernetes never
 # refreshes environment variables in a running pod when that ConfigMap changes.
 # The pod template therefore carries a checksum of it, so `helm upgrade` rolls

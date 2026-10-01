@@ -606,7 +606,7 @@ services:
       - {name: AWS_SECRET_ACCESS_KEY, ref: s3SecretAccessKey}
     env:
       POSTGRES_DB: continuo_release
-      HTTP_PORT: "8088"
+      RELEASE_CONTROLLER_HTTP_PORT: "8088"
 
   - name: remediation
     enabled: true
@@ -624,7 +624,7 @@ services:
       - {name: AWS_SECRET_ACCESS_KEY, ref: s3SecretAccessKey}
     env:
       POSTGRES_DB: continuo_remediation
-      HTTP_PORT: "8090"
+      REMEDIATION_HTTP_PORT: "8090"
 
   - name: agent-remediation
     enabled: true
@@ -645,7 +645,6 @@ services:
       - {name: GITHUB_TOKEN, ref: githubToken}
     env:
       POSTGRES_DB: continuo_agent_remediation
-      HTTP_PORT: "8092"
       AGENT_REMEDIATION_HTTP_PORT: "8092"
       AGENT_REMEDIATION_GRPC_PORT: "50054"
       CONTINUO_ORCHESTRATOR_ADDR: orchestrator:50052
