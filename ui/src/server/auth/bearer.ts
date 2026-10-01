@@ -47,11 +47,29 @@ export interface BearerVerifier {
   verify(token: string): Promise<VerifiedToken>;
 }
 
-// jose reports a non-200 JWKS response as a generic JOSEError; network
-// failures surface as the fetch TypeError.
-function isKeyFetchFailure(err: unknown): boolean {
-  if (err instanceof errors.JWKSTimeout || err instanceof TypeError) return true;
-  return err instanceof errors.JOSEError && /Expected 200 OK/i.test(err.message);
+// Errors the key resolver raises because of the token rather than the key
+// set: no key matches its kid, several do, or its alg has no JWK form.
+function isTokenKeySelectionError(err: unknown): boolean {
+  return err instanceof errors.JWKSNoMatchingKey
+    || err instanceof errors.JWKSMultipleMatchingKeys
+    || err instanceof errors.JOSENotSupported;
+}
+
+// Wraps the remote key set so an error is classified by where it came from.
+// Anything the resolver throws while fetching, reading or parsing the key set
+// (a timeout, a refused connection, a non-200, a body that is not a JWK set)
+// is an issuer outage; only a key-selection failure caused by the token stays
+// a token error. jwtVerify's own signature and claim checks run outside this
+// wrapper and are always token errors.
+function classifyingKeyResolver(remote: JWTVerifyGetKey, issuer: string): JWTVerifyGetKey {
+  return async (header, token) => {
+    try {
+      return await remote(header, token);
+    } catch (err) {
+      if (isTokenKeySelectionError(err)) throw err;
+      throw new IssuerUnavailableError(`signing keys for ${issuer} unavailable: ${String(err)}`);
+    }
+  };
 }
 
 // The discovery document lives at <issuer>/.well-known/openid-configuration.
@@ -88,10 +106,11 @@ export function createBearerVerifier(
     }
     // createRemoteJWKSet caches keys and refetches once, rate-limited by the
     // cooldown, when a token names a kid it has not seen (key rotation).
-    return createRemoteJWKSet(new URL(meta.jwks_uri), {
+    const remote = createRemoteJWKSet(new URL(meta.jwks_uri), {
       cooldownDuration: opts.cooldownMs ?? 30_000,
       timeoutDuration: timeoutMs,
     });
+    return classifyingKeyResolver(remote, issuer);
   }
 
   // Discovery runs on the first bearer for an issuer, so an unreachable issuer
@@ -127,7 +146,7 @@ export function createBearerVerifier(
           requiredClaims: ['exp', 'iat'],
         }));
       } catch (err) {
-        if (isKeyFetchFailure(err)) throw new IssuerUnavailableError(`signing keys for ${spec.issuer} unavailable: ${String(err)}`);
+        if (err instanceof IssuerUnavailableError) throw err;
         throw new InvalidTokenError(err instanceof Error ? err.message : 'invalid token');
       }
       // jwtVerify does not bound iat, and a far-future iat would stretch the

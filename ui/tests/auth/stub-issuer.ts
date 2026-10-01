@@ -3,16 +3,20 @@ import type { AddressInfo } from 'net';
 import { SignJWT, exportJWK, generateKeyPair, type JWK } from 'jose';
 
 export type DiscoveryFailure = 'none' | 'not-json' | 'null-body';
+// How the JWKS endpoint answers: normally, 500, 200 with a fixed body, or 200
+// headers followed by a body that never finishes.
+export type JwksMode = { kind: 'ok' } | { kind: 'error' } | { kind: 'body'; body: string } | { kind: 'stall' };
 
 type KeyPair = Awaited<ReturnType<typeof generateKeyPair>>;
 
 export interface StubIssuer {
   issuer: string;
-  sign(claims: Record<string, unknown>, opts?: { audience?: string; lifetimeSeconds?: number; iatOffsetSeconds?: number }): Promise<string>;
+  sign(claims: Record<string, unknown>, opts?: { audience?: string; lifetimeSeconds?: number; iatOffsetSeconds?: number; kid?: string }): Promise<string>;
   rotateKey(): Promise<void>;
   jwksFetches(): number;
   discoveryFetches(): number;
   failJwks(fail: boolean): void;
+  serveJwks(mode: JwksMode): void;
   // Makes the discovery document answer 200 with a body that is not a usable JSON object.
   failDiscovery(mode: DiscoveryFailure): void;
   // The raw request paths the issuer has received, in order.
@@ -47,7 +51,7 @@ export async function startStubIssuer(defaultAudience: string, opts: StubIssuerO
   let jwk: JWK = { ...(await exportJWK(keys.publicKey)), kid, alg: 'RS256', use: 'sig' };
   let fetches = 0;
   let discoveries = 0;
-  let failing = false;
+  let jwksMode: JwksMode = { kind: 'ok' };
   let discoveryFailure: DiscoveryFailure = 'none';
   let issuer = '';
   let origin = '';
@@ -69,9 +73,19 @@ export async function startStubIssuer(defaultAudience: string, opts: StubIssuerO
     }
     if (url.pathname === '/.well-known/jwks') {
       fetches++;
-      if (failing) {
+      if (jwksMode.kind === 'error') {
         res.statusCode = 500;
         res.end();
+        return;
+      }
+      if (jwksMode.kind === 'body') {
+        res.setHeader('content-type', 'application/json');
+        res.end(jwksMode.body);
+        return;
+      }
+      if (jwksMode.kind === 'stall') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.write('{"keys":');
         return;
       }
       res.setHeader('content-type', 'application/json');
@@ -90,7 +104,7 @@ export async function startStubIssuer(defaultAudience: string, opts: StubIssuerO
     async sign(claims, opts = {}) {
       const iat = Math.floor(Date.now() / 1000) + (opts.iatOffsetSeconds ?? 0);
       return new SignJWT({ ...claims })
-        .setProtectedHeader({ alg: 'RS256', kid })
+        .setProtectedHeader({ alg: 'RS256', kid: opts.kid ?? kid })
         .setIssuer(issuer)
         .setAudience(opts.audience ?? defaultAudience)
         .setIssuedAt(iat)
@@ -104,9 +118,14 @@ export async function startStubIssuer(defaultAudience: string, opts: StubIssuerO
     },
     jwksFetches: () => fetches,
     discoveryFetches: () => discoveries,
-    failJwks: (f) => { failing = f; },
+    failJwks: (f) => { jwksMode = f ? { kind: 'error' } : { kind: 'ok' }; },
+    serveJwks: (m) => { jwksMode = m; },
     failDiscovery: (m) => { discoveryFailure = m; },
     requestedPaths: () => [...paths],
-    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    close: () => new Promise<void>((resolve) => {
+      server.close(() => resolve());
+      // A stalled JWKS response holds its connection open.
+      server.closeAllConnections();
+    }),
   };
 }

@@ -86,6 +86,30 @@ describe('createBearerVerifier', () => {
     await expect(v.verify(await stub!.sign(githubClaims()))).rejects.toThrow(IssuerUnavailableError);
   });
 
+  it.each([
+    ['HTML', '<html>bad gateway</html>'],
+    ['a malformed key set', '{"keys": "nope"}'],
+  ])('reports a 200 JWKS response carrying %s as unavailable', async (_n, body) => {
+    const v = await setup();
+    stub!.serveJwks({ kind: 'body', body });
+    await expect(v.verify(await stub!.sign(githubClaims()))).rejects.toThrow(IssuerUnavailableError);
+  });
+
+  it('reports a JWKS body that stops arriving after the headers as unavailable', async () => {
+    const v = await setup({ timeoutMs: 300 });
+    const token = await stub!.sign(githubClaims());
+    // Discovery succeeds; only the key set stalls.
+    stub!.serveJwks({ kind: 'stall' });
+    await expect(v.verify(token)).rejects.toThrow(IssuerUnavailableError);
+  });
+
+  it('rejects a token whose kid the issuer does not publish, after one refetch', async () => {
+    const v = await setup();
+    await v.verify(await stub!.sign(githubClaims()));
+    await expect(v.verify(await stub!.sign(githubClaims(), { kid: 'unknown-kid' }))).rejects.toThrow(InvalidTokenError);
+    expect(stub!.jwksFetches()).toBe(2);
+  });
+
   it('rejects a token issued more than 60s in the future, however short its lifetime', async () => {
     const v = await setup();
     await expect(v.verify(await stub!.sign(githubClaims(), { iatOffsetSeconds: 600 }))).rejects.toThrow(InvalidTokenError);
