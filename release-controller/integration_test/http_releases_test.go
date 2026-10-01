@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	httpinfra "github.com/carolsimone/continuo/release-controller/adapters/http"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/stretchr/testify/assert"
@@ -119,7 +120,7 @@ func TestIntegration_PostReleases_UnknownKind_Returns400(t *testing.T) {
 	srv, deps, db := setup(t)
 	defer db.Close()
 
-	body, _ := json.Marshal(handlers.ReceiveCandidateInput{
+	body, _ := json.Marshal(httpinfra.ReceiveCandidateRequest{
 		Service:   "svc-bad",
 		ReleaseID: "rBadKind",
 		ImageTag:  "t",

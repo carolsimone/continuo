@@ -29,25 +29,25 @@ var ErrReleaseIDConflict = errors.New("release id already names a different cand
 // other services happen later in AdvanceQueue, not here, so that we always read
 // the live service_prod pointers at the moment this release becomes active.
 type ReceiveCandidateInput struct {
-	Service   string `json:"service"`
-	ReleaseID string `json:"release_id"`
-	ImageTag  string `json:"image_tag"`
-	Bootstrap bool   `json:"bootstrap"`
-	Repo      string `json:"repo"`
-	CommitSHA string `json:"commit_sha"`
+	Service   string
+	ReleaseID string
+	ImageTag  string
+	Bootstrap bool
+	Repo      string
+	CommitSHA string
 	// Kind selects how this service's artifact is parsed: "dbt"
 	// (manifest.json — the default when absent, so existing CI callers are
 	// untouched) or "python" (contract.yaml, uploaded by the domain repo's CI
 	// before this POST). Anything else is rejected (HTTP 400).
-	Kind string `json:"kind"`
+	Kind string
 	// Shadow, SourceOverlayURI, and VerifiesReleaseID are fix-verification
 	// concepts and are refused here (HTTP 400): a fix-verification run is
 	// submitted to POST /verification-runs instead. The three fields stay on
 	// this struct so a stale caller still posting them is answered with a
 	// clear error rather than having the values silently ignored.
-	Shadow            bool   `json:"shadow"`
-	SourceOverlayURI  string `json:"source_overlay_uri"`
-	VerifiesReleaseID string `json:"verifies_release_id"`
+	Shadow            bool
+	SourceOverlayURI  string
+	VerifiesReleaseID string
 }
 
 func (i ReceiveCandidateInput) validate() error {

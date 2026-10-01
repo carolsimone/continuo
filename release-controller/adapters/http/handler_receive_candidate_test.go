@@ -14,21 +14,20 @@ import (
 	"github.com/carolsimone/continuo/pkg/liveness"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
-	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/carolsimone/continuo/release-controller/service/uow"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func postCandidate(srv *Server, in handlers.ReceiveCandidateInput) *httptest.ResponseRecorder {
+func postCandidate(srv *Server, in ReceiveCandidateRequest) *httptest.ResponseRecorder {
 	body, _ := json.Marshal(in)
 	rec := httptest.NewRecorder()
 	srv.Routes().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/releases", bytes.NewReader(body)))
 	return rec
 }
 
-func validCandidateInput() handlers.ReceiveCandidateInput {
-	return handlers.ReceiveCandidateInput{Service: "core", ReleaseID: "rel-1", ImageTag: "img:1", Repo: "org/r", CommitSHA: "sha"}
+func validCandidateInput() ReceiveCandidateRequest {
+	return ReceiveCandidateRequest{Service: "core", ReleaseID: "rel-1", ImageTag: "img:1", Repo: "org/r", CommitSHA: "sha"}
 }
 
 func TestHandleReceiveCandidate_Accepted(t *testing.T) {
@@ -43,12 +42,12 @@ func TestHandleReceiveCandidate_Accepted(t *testing.T) {
 // A submission the caller got wrong is a client error naming the field.
 func TestHandleReceiveCandidate_ValidationFailureIs400(t *testing.T) {
 	for name, tc := range map[string]struct {
-		mutate func(*handlers.ReceiveCandidateInput)
+		mutate func(*ReceiveCandidateRequest)
 		want   string
 	}{
-		"missing image_tag": {func(in *handlers.ReceiveCandidateInput) { in.ImageTag = "" }, "image_tag is required"},
-		"missing service":   {func(in *handlers.ReceiveCandidateInput) { in.Service = "" }, "service is required"},
-		"unknown kind":      {func(in *handlers.ReceiveCandidateInput) { in.Kind = "yaml" }, ""},
+		"missing image_tag": {func(in *ReceiveCandidateRequest) { in.ImageTag = "" }, "image_tag is required"},
+		"missing service":   {func(in *ReceiveCandidateRequest) { in.Service = "" }, "service is required"},
+		"unknown kind":      {func(in *ReceiveCandidateRequest) { in.Kind = "yaml" }, ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			deps, releases := newRetryRemediationDeps(time.Unix(100, 0).UTC())
@@ -87,6 +86,27 @@ func TestHandleReceiveCandidate_StorageFailureIs500WithoutInternalText(t *testin
 	assert.Equal(t, "internal error\n", rec.Body.String())
 	assert.NotContains(t, rec.Body.String(), "10.1.2.3")
 	assert.Contains(t, logged.String(), "connection refused")
+}
+
+// The request DTO decodes the same wire field names the application input is
+// built from, so the POST /releases body format is pinned here.
+func TestReceiveCandidateRequest_DecodesEveryWireField(t *testing.T) {
+	raw := `{"service":"core","release_id":"rel-1","image_tag":"img:1","bootstrap":true,` +
+		`"repo":"org/r","commit_sha":"sha","kind":"python","shadow":true,` +
+		`"source_overlay_uri":"s3://x","verifies_release_id":"rel-0"}`
+	var body ReceiveCandidateRequest
+	require.NoError(t, json.Unmarshal([]byte(raw), &body))
+	in := body.toInput()
+	assert.Equal(t, "core", in.Service)
+	assert.Equal(t, "rel-1", in.ReleaseID)
+	assert.Equal(t, "img:1", in.ImageTag)
+	assert.True(t, in.Bootstrap)
+	assert.Equal(t, "org/r", in.Repo)
+	assert.Equal(t, "sha", in.CommitSHA)
+	assert.Equal(t, "python", in.Kind)
+	assert.True(t, in.Shadow)
+	assert.Equal(t, "s3://x", in.SourceOverlayURI)
+	assert.Equal(t, "rel-0", in.VerifiesReleaseID)
 }
 
 // A release id resubmitted with the same facts is accepted again.
