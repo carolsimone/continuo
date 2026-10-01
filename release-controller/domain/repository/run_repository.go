@@ -40,6 +40,11 @@ type RunRepository interface {
 	// serialize on the same row. Must be called inside a transaction.
 	Load(ctx context.Context, id string) (*pipeline.Run, error)
 	Save(ctx context.Context, r *pipeline.Run) error
+	// Create inserts r only when no run has its id, and reports whether it
+	// did. It never changes an existing row, so two submissions racing on one
+	// new id cannot both write: the loser gets false and reads the winner's
+	// run instead.
+	Create(ctx context.Context, r *pipeline.Run) (bool, error)
 	// NextQueued is the oldest received run of either kind; nil if none.
 	NextQueued(ctx context.Context) (*pipeline.Run, error)
 	// Active is the single run of either kind currently compiling, parsing,

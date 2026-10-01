@@ -227,3 +227,41 @@ func TestReceiveCandidate_ExplicitDbtKindMatchesAnAbsentKind(t *testing.T) {
 	in.Kind = "dbt"
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, in))
 }
+
+// Two first submissions of one id race: this one's Load finds no row, then a
+// concurrent submission commits its run before this one's Create. The insert
+// is refused, and the submission is judged against the winner's run instead of
+// overwriting it.
+func TestReceiveCandidate_LosingARaceToADifferentCandidateIsAConflict(t *testing.T) {
+	now := time.Unix(100, 0).UTC()
+	deps, store := newDeps(now)
+	store.RaceRelease(pipeline.NewCandidate("rel-1", "core", "img:winner", false, "acme/demo", "deadbeef", release.ManifestKindDbt, now))
+
+	in := conflictBase()
+	in.ImageTag = "img:loser"
+	err := handlers.ReceiveCandidate(context.Background(), deps, in)
+
+	require.ErrorIs(t, err, handlers.ErrReleaseIDConflict)
+	r, gerr := store.GetRelease("rel-1")
+	require.NoError(t, gerr)
+	assert.Equal(t, "img:winner", r.ImageTags()["core"])
+}
+
+func TestReceiveCandidate_LosingARaceToTheSameCandidateIsANoOp(t *testing.T) {
+	now := time.Unix(100, 0).UTC()
+	deps, store := newDeps(now)
+	winner := pipeline.NewCandidate("rel-1", "core", "img:1", false, "acme/demo", "deadbeef", release.ManifestKindDbt, now)
+	store.RaceRelease(winner)
+
+	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, conflictBase()))
+	r, err := store.GetRelease("rel-1")
+	require.NoError(t, err)
+	assert.Same(t, winner, r)
+}
+
+func TestReceiveCandidate_LosingARaceToAVerificationIsAKindConflict(t *testing.T) {
+	now := time.Unix(100, 0).UTC()
+	deps, store := newDeps(now)
+	store.RaceRelease(pipeline.NewVerification("rel-1", "core", "img:1", "rel-0", 1, "", release.ManifestKindDbt, now))
+	assert.ErrorIs(t, handlers.ReceiveCandidate(context.Background(), deps, conflictBase()), handlers.ErrRunKindConflict)
+}

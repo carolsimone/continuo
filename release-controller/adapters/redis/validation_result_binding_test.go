@@ -172,6 +172,9 @@ func (r *fakeReleaseRepo) Load(ctx context.Context, id string) (*pipeline.Run, e
 func (r *fakeReleaseRepo) Save(ctx context.Context, rel *pipeline.Run) error {
 	panic("not implemented")
 }
+func (r *fakeReleaseRepo) Create(ctx context.Context, rel *pipeline.Run) (bool, error) {
+	panic("not implemented")
+}
 func (r *fakeReleaseRepo) NextQueued(ctx context.Context) (*pipeline.Run, error) {
 	return nil, nil
 }

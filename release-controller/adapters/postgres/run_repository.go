@@ -130,27 +130,9 @@ func (r *RunRepository) Active(ctx context.Context) (*pipeline.Run, error) {
 // on INSERT; the ON CONFLICT clause updates the mutable ones. image_tags is
 // mutable because SetAssembledImageTags overwrites it at activation.
 func (r *RunRepository) Save(ctx context.Context, run *pipeline.Run) error {
-	imageTagsJSON, err := json.Marshal(run.ImageTags())
+	args, err := encodeRun(run)
 	if err != nil {
-		return fmt.Errorf("marshal image_tags: %w", err)
-	}
-	topoJSON, err := json.Marshal(serialization.TopologyFromDomain(run.CandidateTopology()))
-	if err != nil {
-		return fmt.Errorf("marshal topology: %w", err)
-	}
-	transitionsJSON, err := json.Marshal(serialization.TransitionsFromDomain(run.Transitions()))
-	if err != nil {
-		return fmt.Errorf("marshal transitions: %w", err)
-	}
-	perNodeJSON, err := json.Marshal(serialization.NodeValidationResultsFromDomain(run.PerNodeResults()))
-	if err != nil {
-		return fmt.Errorf("marshal per_node_results: %w", err)
-	}
-	failReason := sql.NullString{String: run.FailReason(), Valid: run.FailReason() != ""}
-	// A nil payload must round-trip as SQL NULL, not an empty jsonb value.
-	var rejectionPayload []byte
-	if p := run.RejectionPayload(); len(p) > 0 {
-		rejectionPayload = p
+		return err
 	}
 	// The WHERE on the upsert refuses a cross-kind collision atomically: an id
 	// that already names a run of the other kind matches on run_id but fails the
@@ -174,11 +156,7 @@ func (r *RunRepository) Save(ctx context.Context, run *pipeline.Run) error {
 		   remediation_round = EXCLUDED.remediation_round,
 		   rejection_payload = EXCLUDED.rejection_payload
 		 WHERE release_pipeline_runs.run_kind = EXCLUDED.run_kind`,
-		run.ID(), string(run.Kind()), string(run.Status()), imageTagsJSON, run.ChangedService(),
-		topoJSON, pq.StringArray(run.ValidationNodeIDs()), failReason, run.FailDetail(), pq.StringArray(run.FailingNodes()),
-		perNodeJSON, run.CreatedAt(), transitionsJSON, run.CodeBundleURI(), string(run.ManifestKind()),
-		run.IsBootstrap(), run.Repo(), run.CommitSHA(), max(run.RemediationRound(), 1), rejectionPayload,
-		run.VerifiesReleaseID(), run.Attempt(), run.SourceOverlayURI())
+		args...)
 	if err != nil {
 		return fmt.Errorf("upsert run: %w", err)
 	}
@@ -186,6 +164,64 @@ func (r *RunRepository) Save(ctx context.Context, run *pipeline.Run) error {
 		return fmt.Errorf("save run %s: %w", run.ID(), repository.ErrRunKindConflict)
 	}
 	return nil
+}
+
+// Create inserts the run only when run_id is free. ON CONFLICT DO NOTHING
+// leaves an existing row untouched; when another transaction holds an
+// uncommitted insert of the same id, this statement waits for it, so a racing
+// loser sees zero rows affected only once the winner's row is committed and
+// readable.
+func (r *RunRepository) Create(ctx context.Context, run *pipeline.Run) (bool, error) {
+	args, err := encodeRun(run)
+	if err != nil {
+		return false, err
+	}
+	res, err := r.q.ExecContext(ctx,
+		`INSERT INTO release_pipeline_runs (`+runColumns+`)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
+		 ON CONFLICT (run_id) DO NOTHING`,
+		args...)
+	if err != nil {
+		return false, fmt.Errorf("insert run: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("insert run rows affected: %w", err)
+	}
+	return n == 1, nil
+}
+
+// encodeRun serializes run into the positional arguments of runColumns.
+func encodeRun(run *pipeline.Run) ([]any, error) {
+	imageTagsJSON, err := json.Marshal(run.ImageTags())
+	if err != nil {
+		return nil, fmt.Errorf("marshal image_tags: %w", err)
+	}
+	topoJSON, err := json.Marshal(serialization.TopologyFromDomain(run.CandidateTopology()))
+	if err != nil {
+		return nil, fmt.Errorf("marshal topology: %w", err)
+	}
+	transitionsJSON, err := json.Marshal(serialization.TransitionsFromDomain(run.Transitions()))
+	if err != nil {
+		return nil, fmt.Errorf("marshal transitions: %w", err)
+	}
+	perNodeJSON, err := json.Marshal(serialization.NodeValidationResultsFromDomain(run.PerNodeResults()))
+	if err != nil {
+		return nil, fmt.Errorf("marshal per_node_results: %w", err)
+	}
+	failReason := sql.NullString{String: run.FailReason(), Valid: run.FailReason() != ""}
+	// A nil payload must round-trip as SQL NULL, not an empty jsonb value.
+	var rejectionPayload []byte
+	if p := run.RejectionPayload(); len(p) > 0 {
+		rejectionPayload = p
+	}
+	return []any{
+		run.ID(), string(run.Kind()), string(run.Status()), imageTagsJSON, run.ChangedService(),
+		topoJSON, pq.StringArray(run.ValidationNodeIDs()), failReason, run.FailDetail(), pq.StringArray(run.FailingNodes()),
+		perNodeJSON, run.CreatedAt(), transitionsJSON, run.CodeBundleURI(), string(run.ManifestKind()),
+		run.IsBootstrap(), run.Repo(), run.CommitSHA(), max(run.RemediationRound(), 1), rejectionPayload,
+		run.VerifiesReleaseID(), run.Attempt(), run.SourceOverlayURI(),
+	}, nil
 }
 
 func rowToRun(row runRow) (*pipeline.Run, error) {

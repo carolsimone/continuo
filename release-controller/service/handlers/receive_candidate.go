@@ -83,6 +83,24 @@ func (i ReceiveCandidateInput) manifestKind() (release.ManifestKind, error) {
 	return release.ParseManifestKind(i.Kind)
 }
 
+// resubmitOutcome decides a submission whose release id already names a run:
+// nil when it is the same candidate, ErrRunKindConflict when the id names a
+// verification run, ErrReleaseIDConflict when it names a different candidate.
+func resubmitOutcome(existing *pipeline.Run, in ReceiveCandidateInput, kind release.ManifestKind) error {
+	if existing.Kind() != pipeline.KindCandidate {
+		return fmt.Errorf("%w: %s is a %s", ErrRunKindConflict, in.ReleaseID, existing.Kind())
+	}
+	submitted := pipeline.CandidateSubmission{
+		Service: in.Service, ImageTag: in.ImageTag, Kind: kind,
+		Bootstrap: in.Bootstrap, Repo: in.Repo, CommitSHA: in.CommitSHA,
+	}
+	if !existing.MatchesSubmission(submitted) {
+		return fmt.Errorf("%w: release id %q already exists with a different service, image tag, kind, bootstrap flag or source change",
+			ErrReleaseIDConflict, in.ReleaseID)
+	}
+	return nil
+}
+
 // ReceiveCandidate persists a new Release row in StatusReceived, idempotent on
 // the release_id PK: submitting a release id again with the same facts is a
 // no-op, whatever status the stored candidate has reached. A bad submission
@@ -108,28 +126,30 @@ func ReceiveCandidate(ctx context.Context, d *Deps, in ReceiveCandidateInput) er
 	if err != nil {
 		return fmt.Errorf("load run: %w", err)
 	}
-	if existing != nil {
-		if existing.Kind() != pipeline.KindCandidate {
-			return fmt.Errorf("%w: %s is a %s", ErrRunKindConflict, in.ReleaseID, existing.Kind())
+	if existing == nil {
+		r := pipeline.NewCandidate(in.ReleaseID, in.Service, in.ImageTag, in.Bootstrap, in.Repo, in.CommitSHA, kind, d.Clock.Now())
+		inserted, err := u.RunRepo().Create(ctx, r)
+		if err != nil {
+			return fmt.Errorf("create release: %w", err)
 		}
-		submitted := pipeline.CandidateSubmission{
-			Service: in.Service, ImageTag: in.ImageTag, Kind: kind,
-			Bootstrap: in.Bootstrap, Repo: in.Repo, CommitSHA: in.CommitSHA,
+		if inserted {
+			if err := u.Commit(); err != nil {
+				return fmt.Errorf("commit: %w", err)
+			}
+			d.Telemetry.ReleaseReceived(ctx, in.ReleaseID)
+			return nil
 		}
-		if !existing.MatchesSubmission(submitted) {
-			return fmt.Errorf("%w: release id %q already exists with a different service, image tag, kind, bootstrap flag or source change",
-				ErrReleaseIDConflict, in.ReleaseID)
+		// A concurrent submission of this id committed its run after the Load
+		// above found none, so this submission is a resubmit of that run.
+		if existing, err = u.RunRepo().Load(ctx, in.ReleaseID); err != nil {
+			return fmt.Errorf("load run: %w", err)
 		}
-		return u.Commit()
+		if existing == nil {
+			return fmt.Errorf("release %s was neither inserted nor found", in.ReleaseID)
+		}
 	}
-
-	r := pipeline.NewCandidate(in.ReleaseID, in.Service, in.ImageTag, in.Bootstrap, in.Repo, in.CommitSHA, kind, d.Clock.Now())
-	if err := u.RunRepo().Save(ctx, r); err != nil {
-		return fmt.Errorf("save release: %w", err)
+	if err := resubmitOutcome(existing, in, kind); err != nil {
+		return err
 	}
-	if err := u.Commit(); err != nil {
-		return fmt.Errorf("commit: %w", err)
-	}
-	d.Telemetry.ReleaseReceived(ctx, in.ReleaseID)
-	return nil
+	return u.Commit()
 }
