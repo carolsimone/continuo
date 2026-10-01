@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { SignJWT, base64url } from 'jose';
+import { SignJWT, base64url, exportJWK, generateKeyPair } from 'jose';
+import { generateKeyPairSync, sign as rsaSign } from 'node:crypto';
 import { createBearerVerifier, discoveryUrl, githubClaimsFrom, InvalidTokenError, IssuerUnavailableError } from '../../src/server/auth/bearer';
 import { startStubIssuer, githubClaims, type StubIssuer } from './stub-issuer';
 
@@ -108,6 +109,41 @@ describe('createBearerVerifier', () => {
     await v.verify(await stub!.sign(githubClaims()));
     await expect(v.verify(await stub!.sign(githubClaims(), { kid: 'unknown-kid' }))).rejects.toThrow(InvalidTokenError);
     expect(stub!.jwksFetches()).toBe(2);
+  });
+
+  it.each([
+    ['an empty key set', async () => ({ keys: [] })],
+    ['a key set with only an encryption key', async () => ({ keys: [{ ...(await exportJWK((await generateKeyPair('RS256')).publicKey)), kid: 'k1', use: 'enc' }] })],
+    ['a key set with no RSA key', async () => ({ keys: [{ ...(await exportJWK((await generateKeyPair('ES256')).publicKey)), kid: 'k1' }] })],
+  ])('reports %s as unavailable, not as an unknown kid', async (_n, set) => {
+    const v = await setup();
+    stub!.serveJwks({ kind: 'body', body: JSON.stringify(await set()) });
+    await expect(v.verify(await stub!.sign(githubClaims()))).rejects.toThrow(IssuerUnavailableError);
+  });
+
+  it('reports a kid the issuer publishes twice as unavailable', async () => {
+    const v = await setup();
+    const twin = async () => ({ ...(await exportJWK((await generateKeyPair('RS256')).publicKey)), kid: 'k1', alg: 'RS256', use: 'sig' });
+    stub!.serveJwks({ kind: 'body', body: JSON.stringify({ keys: [await twin(), await twin()] }) });
+    await expect(v.verify(await stub!.sign(githubClaims()))).rejects.toThrow(IssuerUnavailableError);
+  });
+
+  it('rejects a token without a kid when the issuer publishes several keys', async () => {
+    const v = await setup();
+    const key = async (kid: string) => ({ ...(await exportJWK((await generateKeyPair('RS256')).publicKey)), kid, alg: 'RS256', use: 'sig' });
+    stub!.serveJwks({ kind: 'body', body: JSON.stringify({ keys: [await key('a'), await key('b')] }) });
+    await expect(v.verify(await stub!.sign(githubClaims(), { noKid: true }))).rejects.toThrow(InvalidTokenError);
+  });
+
+  it('reports a signing key shorter than 2048 bits as unavailable', async () => {
+    const v = await setup();
+    const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 1024 });
+    stub!.serveJwks({ kind: 'body', body: JSON.stringify({ keys: [{ ...publicKey.export({ format: 'jwk' }), kid: 'weak', alg: 'RS256', use: 'sig' }] }) });
+    const now = Math.floor(Date.now() / 1000);
+    const header = base64url.encode(JSON.stringify({ alg: 'RS256', kid: 'weak' }));
+    const body = base64url.encode(JSON.stringify({ ...githubClaims(), iss: stub!.issuer, aud: AUD, iat: now, exp: now + 300 }));
+    const signature = base64url.encode(rsaSign('sha256', Buffer.from(`${header}.${body}`), privateKey));
+    await expect(v.verify(`${header}.${body}.${signature}`)).rejects.toThrow(IssuerUnavailableError);
   });
 
   it('rejects a token issued more than 60s in the future, however short its lifetime', async () => {

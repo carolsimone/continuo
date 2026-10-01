@@ -1,4 +1,4 @@
-import { createRemoteJWKSet, decodeJwt, errors, jwtVerify, type JWTPayload, type JWTVerifyGetKey } from 'jose';
+import { createRemoteJWKSet, decodeJwt, errors, jwtVerify, type JSONWebKeySet, type JWTPayload, type JWTVerifyGetKey, type RemoteJWKSet } from 'jose';
 import type { GithubClaims } from './principal';
 
 export const MAX_TOKEN_LIFETIME_SECONDS = 3600;
@@ -47,28 +47,58 @@ export interface BearerVerifier {
   verify(token: string): Promise<VerifiedToken>;
 }
 
-// Errors the key resolver raises because of the token rather than the key
-// set: no key matches its kid, several do, or its alg has no JWK form.
-function isTokenKeySelectionError(err: unknown): boolean {
-  return err instanceof errors.JWKSNoMatchingKey
-    || err instanceof errors.JWKSMultipleMatchingKeys
-    || err instanceof errors.JOSENotSupported;
+// Whether the issuer's key set holds at least one key that could verify an
+// RS256 signature: an RSA key not restricted to another use, operation or
+// algorithm.
+function hasUsableRs256Key(set: JSONWebKeySet | undefined): boolean {
+  return (set?.keys ?? []).some((k) =>
+    k.kty === 'RSA'
+    && (k.use === undefined || k.use === 'sig')
+    && (k.alg === undefined || k.alg === 'RS256')
+    && (k.key_ops === undefined || k.key_ops.includes('verify')));
+}
+
+// Whether a key-selection error is the token's fault rather than the issuer's.
+// No matching key is the token's fault only when the issuer publishes a usable
+// RS256 key (the token names a kid the issuer does not have); several matching
+// keys are the token's fault only when it names no kid, since a kid that
+// matches several keys is a duplicate in the issuer's own set. An alg with no
+// JWK form is the token's.
+function isTokenKeySelectionError(err: unknown, remote: RemoteJWKSet, kid: unknown): boolean {
+  if (err instanceof errors.JWKSNoMatchingKey) return hasUsableRs256Key(remote.jwks());
+  if (err instanceof errors.JWKSMultipleMatchingKeys) return kid === undefined;
+  return err instanceof errors.JOSENotSupported;
+}
+
+// jose refuses an RSA key under 2048 bits during verification; the key is the
+// issuer's, so it is checked here, where it is still attributable to the issuer.
+const MIN_RSA_MODULUS_BITS = 2048;
+function isWeakRsaKey(key: unknown): boolean {
+  const alg = (key as { algorithm?: { name?: unknown; modulusLength?: unknown } })?.algorithm;
+  return typeof alg?.name === 'string' && alg.name.startsWith('RSA')
+    && (typeof alg.modulusLength !== 'number' || alg.modulusLength < MIN_RSA_MODULUS_BITS);
 }
 
 // Wraps the remote key set so an error is classified by where it came from.
 // Anything the resolver throws while fetching, reading or parsing the key set
-// (a timeout, a refused connection, a non-200, a body that is not a JWK set)
-// is an issuer outage; only a key-selection failure caused by the token stays
-// a token error. jwtVerify's own signature and claim checks run outside this
-// wrapper and are always token errors.
-function classifyingKeyResolver(remote: JWTVerifyGetKey, issuer: string): JWTVerifyGetKey {
+// (a timeout, a refused connection, a non-200, a body that is not a JWK set),
+// a key set with no usable RS256 key, a kid the issuer publishes twice, and a
+// selected key too weak to verify with are issuer outages; only a key-selection
+// failure caused by the token stays a token error. jwtVerify's own signature
+// and claim checks run outside this wrapper and are always token errors.
+function classifyingKeyResolver(remote: RemoteJWKSet, issuer: string): JWTVerifyGetKey {
   return async (header, token) => {
+    let key: Awaited<ReturnType<RemoteJWKSet>>;
     try {
-      return await remote(header, token);
+      key = await remote(header, token);
     } catch (err) {
-      if (isTokenKeySelectionError(err)) throw err;
+      if (isTokenKeySelectionError(err, remote, header?.kid)) throw err;
       throw new IssuerUnavailableError(`signing keys for ${issuer} unavailable: ${String(err)}`);
     }
+    if (isWeakRsaKey(key)) {
+      throw new IssuerUnavailableError(`signing key for ${issuer} is shorter than ${MIN_RSA_MODULUS_BITS} bits`);
+    }
+    return key;
   };
 }
 

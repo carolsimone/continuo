@@ -11,7 +11,7 @@ type KeyPair = Awaited<ReturnType<typeof generateKeyPair>>;
 
 export interface StubIssuer {
   issuer: string;
-  sign(claims: Record<string, unknown>, opts?: { audience?: string; lifetimeSeconds?: number; iatOffsetSeconds?: number; kid?: string }): Promise<string>;
+  sign(claims: Record<string, unknown>, opts?: { audience?: string; lifetimeSeconds?: number; iatOffsetSeconds?: number; kid?: string; noKid?: boolean }): Promise<string>;
   rotateKey(): Promise<void>;
   jwksFetches(): number;
   discoveryFetches(): number;
@@ -104,7 +104,7 @@ export async function startStubIssuer(defaultAudience: string, opts: StubIssuerO
     async sign(claims, opts = {}) {
       const iat = Math.floor(Date.now() / 1000) + (opts.iatOffsetSeconds ?? 0);
       return new SignJWT({ ...claims })
-        .setProtectedHeader({ alg: 'RS256', kid: opts.kid ?? kid })
+        .setProtectedHeader(opts.noKid ? { alg: 'RS256' } : { alg: 'RS256', kid: opts.kid ?? kid })
         .setIssuer(issuer)
         .setAudience(opts.audience ?? defaultAudience)
         .setIssuedAt(iat)
