@@ -425,7 +425,7 @@ Now build the contract from the service's `contracts/` directory, using the
 runtime CLI the release gate uses:
 
 ```bash
-uv tool install continuo-python-runtime==0.4.0
+uv tool install continuo-python-runtime==0.7.0
 
 continuo-runtime validate services/service-py/contracts --dialect postgres
 
@@ -850,14 +850,17 @@ Set one up once:
 5. **Copy the Installation ID.** After installing, the browser URL ends in
    `/installations/<number>` — that number is your `github.installationId`.
 
-Then upgrade with all three. The private key is a file, not a flag value (a PEM
-has newlines that `--set` mangles), so pass it with `--set-file`:
+Then upgrade with all three. The App ID and installation ID are numbers, but the
+chart takes them as strings, so pass them with `--set-string` (plain `--set` turns
+them into numbers and the upgrade fails schema validation). The private key is a
+file, not a flag value (a PEM has newlines that `--set` mangles), so pass it with
+`--set-file`:
 
 ```bash
 helm upgrade continuo oci://ghcr.io/carolsimone/charts/continuo \
   --version 0.8.0 -n continuo --reuse-values \
-  --set github.appId='<app-id>' \
-  --set github.installationId='<installation-id>' \
+  --set-string github.appId='<app-id>' \
+  --set-string github.installationId='<installation-id>' \
   --set-file github.appPrivateKey=/path/to/downloaded-key.pem
 ```
 

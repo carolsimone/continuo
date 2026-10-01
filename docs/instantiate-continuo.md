@@ -176,12 +176,14 @@ uses, so setting it here covers both.
 
 ## Troubleshooting
 
-**A pod is in `CrashLoopBackOff` during install.** Not expected: services gate
-on init containers (`wait-for-migrations`, `wait-for-redis`) and start in
-dependency order, so a healthy install comes up with zero restarts. A pod
-stuck in `Init:0/1` is still waiting on its gate — look at the datastore pods
-and the `db-init-migrate` job first. A pod that is actually crash-looping is a
-real signal: read its logs.
+**A pod is in `CrashLoopBackOff` during install.** Services gate on init
+containers (`wait-for-migrations`, `wait-for-redis`) and start in dependency
+order, so most pods come up with zero restarts. The exception is `orchestrator`:
+it can restart once or twice while Neo4j's service name is still unresolvable,
+then settles — that is expected. A pod stuck in `Init:0/1` is still waiting on
+its gate — look at the datastore pods and the `db-init-migrate` job first. A pod
+that keeps crash-looping after the datastores are ready is a real signal: read
+its logs.
 
 **`sudo: a terminal is required to read the password`** on the `/etc/hosts`
 line. `sudo` reads its password from the controlling terminal, so it cannot
