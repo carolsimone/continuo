@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import type { Server } from 'node:http';
+import { once } from 'node:events';
 import { createV1Router, projectCurrentProd, projectRelease, READ_RATE_LIMIT_PER_MINUTE, SUBMIT_RATE_LIMIT_PER_MINUTE } from '../../src/server/routes/v1';
 import { HttpError, type ReleaseClient } from '../../src/server/release-client';
 import type { Principal } from '../../src/server/auth/principal';
@@ -45,6 +46,7 @@ const body = { release_id: 'rel-1', service: 'core', image_tag: 'abc' };
 // requests opens one listener rather than one per request.
 async function withServer(app: express.Express, fn: (server: Server) => Promise<void>): Promise<void> {
   const server = app.listen(0);
+  await once(server, 'listening');
   try {
     await fn(server);
   } finally {
