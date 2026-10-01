@@ -239,8 +239,10 @@ Rules that apply to every bearer:
   document (at `<issuer>/.well-known/openid-configuration`, with any trailing
   `/` of the issuer dropped) and signing keys the first time a token from it
   arrives. While the issuer cannot be reached, or answers with a key set `ui`
-  cannot read, bearer requests answer `503` `auth_unavailable` and browser
-  sessions keep working.
+  cannot use (unreadable, no RS256 signing key, the same `kid` twice, or an RSA
+  key shorter than 2048 bits), bearer requests answer `503` `auth_unavailable`
+  and browser sessions keep working. A token naming a `kid` the issuer does not
+  publish is a `401`.
 - **A person's email counts only when verified.** The same
   `email_verified: true` requirement as at login applies to the
   `AUTH_OPERATOR_EMAILS` / `AUTH_VIEWER_EMAILS` lists.

@@ -208,9 +208,9 @@ one read every few seconds.
 | 403 | `claim_mismatch` | The body's `repo` or `commit_sha` differs from the token's. |
 | 403 | `bootstrap_not_allowed` | `"bootstrap": true` from a binding without `allowBootstrap`. |
 | 404 | `not_found` | No such release, a release of a service the CI token's repository is not bound to, or an id outside the `release_id` pattern. |
-| 409 | `release_kind_conflict` | The `release_id` already names a release with a different service, `image_tag`, `kind`, bootstrap flag, `repo` or `commit_sha`. The release service makes this check; `error` carries its message. |
+| 409 | `release_kind_conflict` | The `release_id` already names a release with a different service, `image_tag`, `kind`, bootstrap flag, `repo` or `commit_sha`. The release service makes this check. A person's `error` carries its message; a CI token gets `release id already exists with different content`, which names no other release. |
 | 429 | `rate_limited` | More than 30 submits, or more than 300 reads (`GET /api/v1/releases/{id}` and `GET /api/v1/current-prod` together), in a minute from one principal (a repository for CI, a user for a person), counted per `ui` pod. Submits and reads have separate budgets. |
-| 503 | `auth_unavailable` | The token's issuer could not be reached, or its discovery document or signing keys could not be read; the dashboard keeps working. Retry. |
+| 503 | `auth_unavailable` | The token's issuer could not be reached, its discovery document or signing keys could not be read, or its key set has no usable RS256 key, publishes a `kid` twice, or holds an RSA key shorter than 2048 bits; the dashboard keeps working. Retry. |
 | 503 | `upstream_unavailable` | The release service is unreachable or failed. Retry; a submit is idempotent. |
 
 ### Networking
