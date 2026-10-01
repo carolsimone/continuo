@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
+import type { Server } from 'node:http';
 import { createV1Router, projectRelease, READ_RATE_LIMIT_PER_MINUTE, SUBMIT_RATE_LIMIT_PER_MINUTE } from '../../src/server/routes/v1';
 import { HttpError, type ReleaseClient } from '../../src/server/release-client';
 import type { Principal } from '../../src/server/auth/principal';
@@ -14,26 +15,12 @@ const ci = (grants: Record<string, boolean> = { core: false }): Principal => ({
   grants: new Map(Object.entries(grants).map(([s, b]) => [s, { allowBootstrap: b }])),
 });
 
-// Like release-controller, the fake keeps the first submission of a release_id
-// and answers 202 to later ones; getRelease returns what was stored.
 function fakeClient(over: Partial<ReleaseClient> = {}): ReleaseClient {
-  const stored = new Map<string, Record<string, unknown>>();
   return {
     listReleases: vi.fn(), getCurrentProd: vi.fn(), retryRemediation: vi.fn(),
     getVerificationRun: vi.fn(), listVerificationRuns: vi.fn(), getPipeline: vi.fn(),
-    submitRelease: vi.fn(async (b) => {
-      if (!stored.has(String(b.release_id))) {
-        stored.set(String(b.release_id), {
-          ...b, changed_service: b.service, image_tags: { [String(b.service)]: b.image_tag }, manifest_kind: b.kind || 'dbt',
-        });
-      }
-      return { status: 202, text: JSON.stringify({ release_id: b.release_id, status: 'received' }) };
-    }),
-    getRelease: vi.fn(async (id: string) => {
-      const r = stored.get(id);
-      if (!r) throw new HttpError(404, 'not found');
-      return r;
-    }),
+    submitRelease: vi.fn(async (b) => ({ status: 202, text: JSON.stringify({ release_id: b.release_id, status: 'received' }) })),
+    getRelease: vi.fn(async () => { throw new HttpError(404, 'not found'); }),
     ...over,
   } as ReleaseClient;
 }
@@ -53,6 +40,17 @@ function appAs(p: Principal, client: ReleaseClient, publicUrl = 'https://continu
 }
 
 const body = { release_id: 'rel-1', service: 'core', image_tag: 'abc' };
+
+// Runs fn against one listening server, so a test that sends hundreds of
+// requests opens one listener rather than one per request.
+async function withServer(app: express.Express, fn: (server: Server) => Promise<void>): Promise<void> {
+  const server = app.listen(0);
+  try {
+    await fn(server);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
 
 describe('POST /api/v1/releases', () => {
   it('a bound CI identity submits; repo and commit_sha are filled from the token', async () => {
@@ -118,53 +116,13 @@ describe('POST /api/v1/releases', () => {
     expect((await request(appAs(operator, down)).post('/api/v1/releases').send(body)).status).toBe(503);
   });
 
-  it('an id already held for another service or commit is a conflict, not a 202', async () => {
-    const client = fakeClient();
-    const preclaim = { ...body, service: 'marketing', release_id: 'taken' };
-    expect((await request(appAs(operator, client)).post('/api/v1/releases').send({ ...preclaim, repo: 'o/r', commit_sha: 'c0' })).status).toBe(202);
-
-    const app = appAs(ci({ core: false }), client);
-    const otherService = await request(app).post('/api/v1/releases').send({ ...body, release_id: 'taken' });
-    expect(otherService.status).toBe(409);
-    expect(otherService.body).toEqual({ error: 'release id "taken" already exists with a different service, image, kind or provenance', code: 'release_kind_conflict' });
-
-    // Same service, but the stored commit differs from this token's sha.
-    await request(appAs(operator, client)).post('/api/v1/releases').send({ ...body, release_id: 'same-svc', repo: 'carolsimone/continuo-demo', commit_sha: 'other-sha' });
-    const otherCommit = await request(app).post('/api/v1/releases').send({ ...body, release_id: 'same-svc' });
-    expect(otherCommit.status).toBe(409);
-    expect(otherCommit.body.code).toBe('release_kind_conflict');
-  });
-
-  it('a stored bootstrap flag that differs from the submission is a conflict', async () => {
-    const client = fakeClient();
-    await request(appAs(operator, client)).post('/api/v1/releases').send({ ...body, release_id: 'b1', bootstrap: true, repo: 'carolsimone/continuo-demo', commit_sha: 'abc1234def' });
-    const res = await request(appAs(ci(), client)).post('/api/v1/releases').send({ ...body, release_id: 'b1' });
+  it("passes release-controller's 409 through with its message, and asks it nothing else", async () => {
+    const msg = 'release id already names a different candidate: release id "rel-1" already exists with a different service, image tag, kind, bootstrap flag or source change\n';
+    const client = fakeClient({ submitRelease: vi.fn(async () => ({ status: 409, text: msg })) });
+    const res = await request(appAs(ci(), client)).post('/api/v1/releases').send(body);
     expect(res.status).toBe(409);
-  });
-
-  it('a stored image tag that differs from the submission is a conflict', async () => {
-    const client = fakeClient();
-    const app = appAs(ci(), client);
-    expect((await request(app).post('/api/v1/releases').send(body)).status).toBe(202);
-    const res = await request(app).post('/api/v1/releases').send({ ...body, image_tag: 'other' });
-    expect(res.status).toBe(409);
-    expect(res.body.code).toBe('release_kind_conflict');
-  });
-
-  it('a stored kind that differs from the submission is a conflict; an absent kind is dbt', async () => {
-    const client = fakeClient();
-    const app = appAs(ci(), client);
-    expect((await request(app).post('/api/v1/releases').send({ ...body, release_id: 'k1', kind: 'python' })).status).toBe(202);
-    expect((await request(app).post('/api/v1/releases').send({ ...body, release_id: 'k1', kind: 'python' })).status).toBe(202);
-    expect((await request(app).post('/api/v1/releases').send({ ...body, release_id: 'k1' })).status).toBe(409);
-    expect((await request(app).post('/api/v1/releases').send({ ...body, release_id: 'k2' })).status).toBe(202);
-    expect((await request(app).post('/api/v1/releases').send({ ...body, release_id: 'k2', kind: 'dbt' })).status).toBe(202);
-    expect((await request(app).post('/api/v1/releases').send({ ...body, release_id: 'k2', kind: 'python' })).status).toBe(409);
-  });
-
-  it('a stored release with no image tag for the service is a conflict', async () => {
-    const client = fakeClient({ getRelease: vi.fn(async () => ({ changed_service: 'core', bootstrap: false, repo: 'carolsimone/continuo-demo', commit_sha: 'abc1234def', manifest_kind: 'dbt' })) });
-    expect((await request(appAs(ci(), client)).post('/api/v1/releases').send(body)).status).toBe(409);
+    expect(res.body).toEqual({ error: msg.trim(), code: 'release_kind_conflict' });
+    expect(client.getRelease).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -190,27 +148,15 @@ describe('POST /api/v1/releases', () => {
     }
   });
 
-  it('an identical resubmit stays 202', async () => {
-    const app = appAs(ci(), fakeClient());
-    expect((await request(app).post('/api/v1/releases').send(body)).status).toBe(202);
-    expect((await request(app).post('/api/v1/releases').send(body)).status).toBe(202);
-  });
-
-  it('503 when the read-back after a 202 fails', async () => {
-    const client = fakeClient({ getRelease: vi.fn(async () => { throw new TypeError('fetch failed'); }) });
-    const res = await request(appAs(ci(), client)).post('/api/v1/releases').send(body);
-    expect(res.status).toBe(503);
-    expect(res.body.code).toBe('upstream_unavailable');
-  });
-
   it('rate-limits submissions per principal', async () => {
-    const app = appAs(ci(), fakeClient());
-    for (let i = 0; i < SUBMIT_RATE_LIMIT_PER_MINUTE; i++) {
-      expect((await request(app).post('/api/v1/releases').send({ ...body, release_id: `r${i}` })).status).toBe(202);
-    }
-    const res = await request(app).post('/api/v1/releases').send(body);
-    expect(res.status).toBe(429);
-    expect(res.body.code).toBe('rate_limited');
+    await withServer(appAs(ci(), fakeClient()), async (server) => {
+      for (let i = 0; i < SUBMIT_RATE_LIMIT_PER_MINUTE; i++) {
+        expect((await request(server).post('/api/v1/releases').send({ ...body, release_id: `r${i}` })).status).toBe(202);
+      }
+      const res = await request(server).post('/api/v1/releases').send(body);
+      expect(res.status).toBe(429);
+      expect(res.body.code).toBe('rate_limited');
+    });
   });
 });
 
@@ -242,11 +188,12 @@ describe('release_submit audit', () => {
   it('audits a rate-limited submit with the principal and outcome 429', async () => {
     const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
-      const app = appAs(ci(), fakeClient());
-      for (let i = 0; i < SUBMIT_RATE_LIMIT_PER_MINUTE; i++) {
-        await request(app).post('/api/v1/releases').send({ ...body, release_id: `r${i}` });
-      }
-      await request(app).post('/api/v1/releases').send(body);
+      await withServer(appAs(ci(), fakeClient()), async (server) => {
+        for (let i = 0; i < SUBMIT_RATE_LIMIT_PER_MINUTE; i++) {
+          await request(server).post('/api/v1/releases').send({ ...body, release_id: `r${i}` });
+        }
+        await request(server).post('/api/v1/releases').send(body);
+      });
       const lines = auditLines(spy);
       expect(lines).toHaveLength(SUBMIT_RATE_LIMIT_PER_MINUTE + 1);
       expect(lines[lines.length - 1]).toMatchObject({ principal: 'ci', repository: 'carolsimone/continuo-demo', service: 'core', outcome: 429 });
@@ -256,7 +203,7 @@ describe('release_submit audit', () => {
   it('audits a 409 conflict outcome', async () => {
     const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
-      const client = fakeClient({ getRelease: vi.fn(async () => ({ changed_service: 'marketing' })) });
+      const client = fakeClient({ submitRelease: vi.fn(async () => ({ status: 409, text: 'conflict' })) });
       await request(appAs(ci(), client)).post('/api/v1/releases').send(body);
       expect(auditLines(spy).map((l) => l.outcome)).toEqual([409]);
     } finally { spy.mockRestore(); }
@@ -329,40 +276,33 @@ describe('GET /api/v1/current-prod', () => {
 });
 
 describe('read rate limit', () => {
-  const rel = { release_id: 'r1', status: 'validating', changed_service: 'core' };
-  const client = () => fakeClient({
-    getRelease: vi.fn(async () => rel),
-    getCurrentProd: vi.fn(async () => ({ current_prod_release_id: 'r', node_count: 1, updated_at: 't' })),
-  });
-
   it('caps release and current-prod reads per principal, on a counter separate from submissions', async () => {
-    const c = client();
-    const app = appAs(ci(), c);
-    for (let i = 0; i < READ_RATE_LIMIT_PER_MINUTE; i++) {
-      const path = i % 2 === 0 ? '/api/v1/releases/r1' : '/api/v1/current-prod';
-      expect((await request(app).get(path)).status).toBe(200);
-    }
-    for (const path of ['/api/v1/releases/r1', '/api/v1/current-prod']) {
-      const res = await request(app).get(path);
-      expect(res.status).toBe(429);
-      expect(res.body.code).toBe('rate_limited');
-    }
-    expect(c.getRelease).toHaveBeenCalledTimes(READ_RATE_LIMIT_PER_MINUTE / 2);
-    // Submissions keep their own budget.
-    expect((await request(app).post('/api/v1/releases').send(body)).status).not.toBe(429);
-    expect(c.submitRelease).toHaveBeenCalledTimes(1);
-  });
-
-  it('counts each principal separately', async () => {
-    const c = client();
+    const c = fakeClient({
+      getRelease: vi.fn(async () => ({ release_id: 'r1', status: 'validating', changed_service: 'core' })),
+      getCurrentProd: vi.fn(async () => ({ current_prod_release_id: 'r', node_count: 1, updated_at: 't' })),
+    });
     const app = express();
     app.use(express.json());
     let who: Principal = ci();
     app.use((req, _res, next) => { req.principal = who; next(); });
     app.use('/api/v1', createV1Router(c));
-    for (let i = 0; i < READ_RATE_LIMIT_PER_MINUTE; i++) await request(app).get('/api/v1/current-prod');
-    expect((await request(app).get('/api/v1/current-prod')).status).toBe(429);
-    who = operator;
-    expect((await request(app).get('/api/v1/current-prod')).status).toBe(200);
+
+    await withServer(app, async (server) => {
+      for (let i = 0; i < READ_RATE_LIMIT_PER_MINUTE; i++) {
+        const path = i % 2 === 0 ? '/api/v1/releases/r1' : '/api/v1/current-prod';
+        expect((await request(server).get(path)).status).toBe(200);
+      }
+      for (const path of ['/api/v1/releases/r1', '/api/v1/current-prod']) {
+        const res = await request(server).get(path);
+        expect(res.status).toBe(429);
+        expect(res.body).toEqual({ error: 'too many reads; retry in a minute', code: 'rate_limited' });
+      }
+      expect(c.getRelease).toHaveBeenCalledTimes(READ_RATE_LIMIT_PER_MINUTE / 2);
+      // Submissions keep their own budget.
+      expect((await request(server).post('/api/v1/releases').send(body)).status).toBe(202);
+      // Another principal has its own read budget.
+      who = operator;
+      expect((await request(server).get('/api/v1/current-prod')).status).toBe(200);
+    });
   });
 });

@@ -80,21 +80,6 @@ function auditSubmit(p: Principal, raw: unknown, outcome: number): void {
   });
 }
 
-// release-controller accepts a release_id it already holds without comparing
-// it to the submission, so a 202 only means this submission was recorded when
-// the stored release is the one that was sent: same service, image tag for that
-// service, manifest kind (absent = dbt), bootstrap flag and provenance.
-function matchesStored(body: SubmitBody, stored: Record<string, unknown>): boolean {
-  if (stored.changed_service !== body.service) return false;
-  const tags = stored.image_tags;
-  if (typeof tags !== 'object' || tags === null || (tags as Record<string, unknown>)[body.service] !== body.image_tag) return false;
-  if ((stored.manifest_kind || 'dbt') !== (body.kind || 'dbt')) return false;
-  if ((stored.bootstrap === true) !== (body.bootstrap === true)) return false;
-  if (body.repo !== undefined && stored.repo !== body.repo) return false;
-  if (body.commit_sha !== undefined && stored.commit_sha !== body.commit_sha) return false;
-  return true;
-}
-
 export function createV1Router(releases: ReleaseClient, publicUrl?: string): Router {
   const router = Router();
 
@@ -160,18 +145,6 @@ export function createV1Router(releases: ReleaseClient, publicUrl?: string): Rou
       return fail(res, 503, 'upstream_unavailable', 'release service unavailable');
     }
     if (upstream.status === 202) {
-      let stored: Record<string, unknown>;
-      try {
-        stored = await releases.getRelease(body.release_id);
-      } catch {
-        // The submit is idempotent on release_id, so the caller can retry.
-        auditSubmit(p, body, 503);
-        return fail(res, 503, 'upstream_unavailable', 'release service unavailable');
-      }
-      if (!matchesStored(body, stored)) {
-        auditSubmit(p, body, 409);
-        return fail(res, 409, 'release_kind_conflict', `release id "${body.release_id}" already exists with a different service, image, kind or provenance`);
-      }
       auditSubmit(p, body, 202);
       let parsedResp: { release_id?: string; status?: string } = {};
       try {
@@ -182,6 +155,9 @@ export function createV1Router(releases: ReleaseClient, publicUrl?: string): Rou
       return res.status(202).json({ release_id: parsedResp.release_id ?? body.release_id, status: parsedResp.status ?? 'received' });
     }
     auditSubmit(p, body, upstream.status);
+    // release-controller answers 409 when the release id already names a run
+    // of another kind or a candidate with a different service, image tag,
+    // kind, bootstrap flag or source change; its message is passed through.
     if (upstream.status === 409) return fail(res, 409, 'release_kind_conflict', upstream.text.trim());
     if (upstream.status === 400) return fail(res, 400, 'bad_request', upstream.text.trim());
     return fail(res, 503, 'upstream_unavailable', 'release service unavailable');
