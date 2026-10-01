@@ -114,10 +114,19 @@ export function bearerAuth(deps: BearerDeps): RequestHandler {
   };
 }
 
-// Gate for everything mounted under /api. Routes under /api/v1 authorize per
-// action against the resource they touch, so this gate only requires a
-// principal there. Every other route is a method-based read/mutate decision,
-// so new endpoints are safe by default (and closed to CI tokens).
+// The public release routes (paths relative to the /api mount). They authorize
+// per action against the resource they touch in routes/v1.ts, so this gate only
+// requires a principal for them.
+const PER_ACTION_ROUTES: ReadonlyArray<{ method: string; path: RegExp }> = [
+  { method: 'POST', path: /^\/v1\/releases\/?$/ },
+  { method: 'GET', path: /^\/v1\/releases\/[^/]+\/?$/ },
+  { method: 'GET', path: /^\/v1\/current-prod\/?$/ },
+];
+
+// Gate for everything mounted under /api. Apart from the routes in
+// PER_ACTION_ROUTES, every route is a method-based read/mutate decision, so new
+// endpoints (including new /api/v1 ones) are safe by default and closed to CI
+// tokens.
 export function requireApiAuth(): RequestHandler {
   return (req, res, next) => {
     const p = principalOf(req);
@@ -125,7 +134,7 @@ export function requireApiAuth(): RequestHandler {
       res.status(401).json({ error: 'sign in required', code: 'unauthenticated' });
       return;
     }
-    if (req.path === '/v1' || req.path.startsWith('/v1/')) return next();
+    if (PER_ACTION_ROUTES.some((r) => r.method === req.method && r.path.test(req.path))) return next();
     const d = authorize(p, { kind: MUTATING.has(req.method) ? 'api.mutate' : 'api.read' });
     if (!d.allow) {
       audit('role_denied', { ...principalAuditFields(p), method: req.method, path: req.originalUrl, outcome: 'forbidden' });
