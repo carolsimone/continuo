@@ -3,18 +3,18 @@ name = "topology-controller"
 version = "0.1.0"
 requires-python = ">=3.14"
 dependencies = [
-    "sqlglot>=30.18.0",
+    "sqlglot>=30.20.0",
     "redis>=8.1.0",
     "grpcio>=1.84.0",
     "protobuf>=7.36.2",
-    "boto3>=1.43.98",
+    "boto3>=1.43.103",
     "PyYAML>=6.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=9.1.1",
-    "pytest-mock>=3.12.0",
+    "pytest-mock>=3.16.0",
     "grpcio-tools>=1.84.0",
 ]
 
