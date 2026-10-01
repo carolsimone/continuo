@@ -3,9 +3,12 @@ import type { IncomingMessage } from 'http';
 import { parse as parseCookies } from 'cookie';
 import type { AuthConfig } from './config';
 import { discoverOidc } from './oidc';
+import { createBearerVerifier } from './bearer';
+import type { CiAuthConfig } from './ci-config';
 import {
   authErrorHandler,
   auditMutations,
+  bearerAuth,
   csrfOriginCheck,
   devIdentity,
   requireApiAuth,
@@ -25,12 +28,13 @@ export interface BuiltAuth {
   publicOrigin?: string;
 }
 
-export async function buildAuth(cfg: AuthConfig): Promise<BuiltAuth> {
+export async function buildAuth(cfg: AuthConfig, ci: CiAuthConfig | null = null): Promise<BuiltAuth> {
   if (cfg.mode === 'dev') {
     console.warn('AUTH_MODE=dev — development-only placeholder identity; NEVER use in production');
+    const verifier = createBearerVerifier(ci ? [{ issuer: ci.issuer, audience: ci.audience }] : []);
     return {
       app: {
-        authn: [devIdentity()],
+        authn: [bearerAuth({ verifier, ci, login: null }), devIdentity()],
         apiGuards: [requireApiAuth(), auditMutations()],
         router: createDevAuthRouter(),
         errorHandler: authErrorHandler(),
@@ -40,6 +44,13 @@ export async function buildAuth(cfg: AuthConfig): Promise<BuiltAuth> {
     };
   }
 
+  if (ci && ci.issuer === cfg.issuerUrl.replace(/\/+$/, '')) {
+    throw new Error('ciAuth.issuer must differ from the login issuer (AUTH_OIDC_ISSUER_URL)');
+  }
+  const verifier = createBearerVerifier([
+    ...(ci ? [{ issuer: ci.issuer, audience: ci.audience }] : []),
+    { issuer: cfg.issuerUrl, audience: cfg.clientId },
+  ]);
   const redis = new Redis(cfg.redisUrl);
   const sessions = new SessionStore(redis, cfg.sessionIdleTtlSeconds, cfg.sessionMaxTtlSeconds);
   const flow = await discoverOidc(cfg);
@@ -47,7 +58,7 @@ export async function buildAuth(cfg: AuthConfig): Promise<BuiltAuth> {
 
   return {
     app: {
-      authn: [sessionAuth(sessions)],
+      authn: [bearerAuth({ verifier, ci, login: { issuer: cfg.issuerUrl, roles: cfg } }), sessionAuth(sessions)],
       apiGuards: [csrfOriginCheck(origin), requireApiAuth(), auditMutations()],
       router: createAuthRouter({ flow, sessions, cfg }),
       errorHandler: authErrorHandler(),

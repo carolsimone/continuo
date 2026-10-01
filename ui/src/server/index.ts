@@ -15,6 +15,7 @@ import { assertS3Config } from './s3';
 import { attachChatWebSocket } from './ws/chat';
 import { loadAuthConfig } from './auth/config';
 import { buildAuth } from './auth';
+import { loadCiAuthConfig } from './auth/ci-config';
 
 const PORT = parseInt(process.env.PORT || '8090', 10);
 const STATE_GRPC_ADDR = process.env.STATE_GRPC_ADDR || 'localhost:50051';
@@ -36,7 +37,9 @@ const GITHUB_API_BASE_URL = process.env.GITHUB_API_BASE_URL || undefined;
 async function main() {
   // Fail fast: missing/invalid auth configuration must never boot an open UI.
   const authConfig = loadAuthConfig(process.env);
-  const auth = await buildAuth(authConfig);
+  const ciAuth = loadCiAuthConfig(process.env, authConfig.mode);
+  const auth = await buildAuth(authConfig, ciAuth);
+  if (ciAuth) console.log(`CI auth: issuer ${ciAuth.issuer}, ${ciAuth.bindings.size} bound service(s)`);
 
   // Fail fast on missing S3 credentials too: without this the first log fetch
   // would fail mid-request instead of the misconfiguration surfacing at boot.
