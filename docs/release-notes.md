@@ -17,6 +17,15 @@ app changes can still be a `PATCH`.
 
 ---
 
+## 0.8.0 · 2026-10-01 · `MAJOR`
+
+- Full refresh of a single dbt node from the node page: its table is dropped and rebuilt from scratch. Seeds always full-refresh. `dbt-commands.yaml` gains two optional keys, `full_refresh` and `seed_full_refresh`.
+- New `python-api` node kind: a python script node that can read an operator-created Secret named in its contract (`secret_ref`). The chart now reserves the `continuo-api-` prefix, so a release name, `fullnameOverride` or Secret name inside it fails `helm upgrade`; read the changelog before upgrading.
+- The python script node kind is `python-node`; contracts written for `python-model` keep working.
+- The node run history no longer shows a Manifest column, and `continuo node history` no longer returns `manifest_version`; it was always empty. Use `image_tag`.
+
+[Changelog](https://github.com/carolsimone/continuo/blob/main/deploy/continuo/CHANGELOG.md#080---2026-10-01) · [Release](https://github.com/carolsimone/continuo/releases/tag/v0.8.0)
+
 ## 0.7.0 · 2026-09-24 · `MINOR`
 
 - Remediation can target your own repositories. The new `serviceRepos` value maps each service to its project root; set it and it replaces the shipped demo map, now marked example-only.
