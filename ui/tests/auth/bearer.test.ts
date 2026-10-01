@@ -85,4 +85,24 @@ describe('createBearerVerifier', () => {
     stub!.failJwks(true);
     await expect(v.verify(await stub!.sign(githubClaims()))).rejects.toThrow(IssuerUnavailableError);
   });
+
+  it('rejects a token issued more than 60s in the future, however short its lifetime', async () => {
+    const v = await setup();
+    await expect(v.verify(await stub!.sign(githubClaims(), { iatOffsetSeconds: 600 }))).rejects.toThrow(InvalidTokenError);
+    await expect(v.verify(await stub!.sign(githubClaims(), { iatOffsetSeconds: 24 * 3600, lifetimeSeconds: 3600 }))).rejects.toThrow(InvalidTokenError);
+  });
+
+  it('accepts a token issued within the 60s clock tolerance', async () => {
+    const v = await setup();
+    await expect(v.verify(await stub!.sign(githubClaims(), { iatOffsetSeconds: 30 }))).resolves.toBeDefined();
+  });
+
+  it.each(['not-json', 'null-body'] as const)('reports a %s discovery body as unavailable and retries discovery afterwards', async (mode) => {
+    const v = await setup();
+    const token = await stub!.sign(githubClaims());
+    stub!.failDiscovery(mode);
+    await expect(v.verify(token)).rejects.toThrow(IssuerUnavailableError);
+    stub!.failDiscovery('none');
+    await expect(v.verify(token)).resolves.toBeDefined();
+  });
 });

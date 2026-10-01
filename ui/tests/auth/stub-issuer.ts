@@ -2,6 +2,8 @@ import { createServer, type Server } from 'http';
 import type { AddressInfo } from 'net';
 import { SignJWT, exportJWK, generateKeyPair, type JWK } from 'jose';
 
+export type DiscoveryFailure = 'none' | 'not-json' | 'null-body';
+
 type KeyPair = Awaited<ReturnType<typeof generateKeyPair>>;
 
 export interface StubIssuer {
@@ -10,6 +12,8 @@ export interface StubIssuer {
   rotateKey(): Promise<void>;
   jwksFetches(): number;
   failJwks(fail: boolean): void;
+  // Makes the discovery document answer 200 with a body that is not a usable JSON object.
+  failDiscovery(mode: DiscoveryFailure): void;
   close(): Promise<void>;
 }
 
@@ -34,11 +38,17 @@ export async function startStubIssuer(defaultAudience: string): Promise<StubIssu
   let jwk: JWK = { ...(await exportJWK(keys.publicKey)), kid, alg: 'RS256', use: 'sig' };
   let fetches = 0;
   let failing = false;
+  let discoveryFailure: DiscoveryFailure = 'none';
   let issuer = '';
 
   const server: Server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', issuer);
     if (url.pathname === '/.well-known/openid-configuration') {
+      if (discoveryFailure !== 'none') {
+        res.setHeader('content-type', 'application/json');
+        res.end(discoveryFailure === 'not-json' ? '<html>bad gateway</html>' : 'null');
+        return;
+      }
       res.setHeader('content-type', 'application/json');
       res.end(JSON.stringify({ issuer, jwks_uri: `${issuer}/.well-known/jwks` }));
       return;
@@ -79,6 +89,7 @@ export async function startStubIssuer(defaultAudience: string): Promise<StubIssu
     },
     jwksFetches: () => fetches,
     failJwks: (f) => { failing = f; },
+    failDiscovery: (m) => { discoveryFailure = m; },
     close: () => new Promise<void>((resolve) => server.close(() => resolve())),
   };
 }

@@ -41,15 +41,19 @@ export function createBearerVerifier(
   const keySets = new Map<string, Promise<JWTVerifyGetKey>>();
 
   async function discoverKeys(issuer: string): Promise<JWTVerifyGetKey> {
-    let resp: Response;
+    // The request, the body read (which carries its own timeout) and the shape
+    // check all classify as an issuer outage: a proxy answering 200 with HTML
+    // or `null` is an unavailable issuer, not a bad token.
+    let meta: { issuer?: unknown; jwks_uri?: unknown } | null;
     try {
-      resp = await fetch(`${issuer}/.well-known/openid-configuration`, { signal: AbortSignal.timeout(timeoutMs) });
+      const resp = await fetch(`${issuer}/.well-known/openid-configuration`, { signal: AbortSignal.timeout(timeoutMs) });
+      if (!resp.ok) throw new IssuerUnavailableError(`discovery for ${issuer} returned ${resp.status}`);
+      meta = (await resp.json()) as { issuer?: unknown; jwks_uri?: unknown } | null;
     } catch (err) {
+      if (err instanceof IssuerUnavailableError) throw err;
       throw new IssuerUnavailableError(`discovery for ${issuer} failed: ${String(err)}`);
     }
-    if (!resp.ok) throw new IssuerUnavailableError(`discovery for ${issuer} returned ${resp.status}`);
-    const meta = (await resp.json()) as { issuer?: unknown; jwks_uri?: unknown };
-    if (meta.issuer !== issuer || typeof meta.jwks_uri !== 'string') {
+    if (meta?.issuer !== issuer || typeof meta.jwks_uri !== 'string') {
       throw new IssuerUnavailableError(`discovery for ${issuer} returned a different issuer or no jwks_uri`);
     }
     // createRemoteJWKSet caches keys and refetches once, rate-limited by the
@@ -95,6 +99,11 @@ export function createBearerVerifier(
       } catch (err) {
         if (isKeyFetchFailure(err)) throw new IssuerUnavailableError(`signing keys for ${spec.issuer} unavailable: ${String(err)}`);
         throw new InvalidTokenError(err instanceof Error ? err.message : 'invalid token');
+      }
+      // jwtVerify does not bound iat, and a far-future iat would stretch the
+      // one-hour cap into a long-lived token.
+      if ((payload.iat as number) > Math.floor(Date.now() / 1000) + CLOCK_TOLERANCE_SECONDS) {
+        throw new InvalidTokenError('token issued in the future');
       }
       if ((payload.exp as number) - (payload.iat as number) > MAX_TOKEN_LIFETIME_SECONDS) {
         throw new InvalidTokenError('token lifetime exceeds 1 hour');
