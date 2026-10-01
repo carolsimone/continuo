@@ -5,8 +5,9 @@ import { audit } from './audit';
 import { DEV_USER, SESSION_COOKIE } from './types';
 import { resolveRole } from './roles';
 import { authorize } from './authorize';
-import { githubClaimsFrom, principalAuditFields, principalOf, resolveGrants, type Principal } from './principal';
-import { InvalidTokenError, IssuerUnavailableError, type BearerVerifier } from './bearer';
+import { principalAuditFields, resolveGrants, type Principal } from './principal';
+import { principalOf } from './request-principal';
+import { githubClaimsFrom, InvalidTokenError, IssuerUnavailableError, type BearerVerifier } from './bearer';
 import type { CiAuthConfig } from './ci-config';
 import type { OidcAuthConfig } from './config';
 

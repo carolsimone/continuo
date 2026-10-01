@@ -11,7 +11,8 @@ import {
 } from '../../src/server/auth/middleware';
 import { SessionStore } from '../../src/server/auth/session';
 import { FakeRedis } from './fake-redis';
-import { githubClaimsFrom, type Principal } from '../../src/server/auth/principal';
+import type { Principal } from '../../src/server/auth/principal';
+import { githubClaimsFrom } from '../../src/server/auth/bearer';
 import { githubClaims } from './stub-issuer';
 import { SESSION_COOKIE, type AuthUser } from '../../src/server/auth/types';
 

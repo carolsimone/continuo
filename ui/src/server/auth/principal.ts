@@ -1,7 +1,9 @@
-import type { Request } from 'express';
 import type { AuthUser } from './types';
 import type { CiBinding } from './ci-config';
-import { InvalidTokenError } from './bearer';
+
+// Who is calling /api, and what a CI identity may do. This module is policy
+// vocabulary only: it imports types alone, so authorize.ts and its tests never
+// load the token verifier or Express.
 
 // The GitHub Actions OIDC claims continuo reads. Optional claims GitHub omits
 // (environment outside a deployment job) are empty strings.
@@ -24,24 +26,6 @@ export type Principal =
   | { kind: 'human'; user: AuthUser }
   | { kind: 'ci'; subject: string; claims: GithubClaims; grants: Map<string, CiGrant> };
 
-export function githubClaimsFrom(payload: Record<string, unknown>): GithubClaims {
-  const str = (k: string) => (typeof payload[k] === 'string' ? (payload[k] as string) : '');
-  const claims: GithubClaims = {
-    repositoryId: str('repository_id'),
-    repository: str('repository'),
-    sha: str('sha'),
-    ref: str('ref'),
-    refProtected: str('ref_protected'),
-    environment: str('environment'),
-    workflowRef: str('workflow_ref'),
-    runId: str('run_id'),
-  };
-  if (!/^[0-9]+$/.test(claims.repositoryId) || !claims.repository || !claims.sha) {
-    throw new InvalidTokenError('GitHub token lacks repository_id, repository or sha');
-  }
-  return claims;
-}
-
 export function bindingMatches(b: CiBinding, c: GithubClaims): boolean {
   if (b.repositoryId !== c.repositoryId) return false;
   if (b.ref && !b.ref.includes(c.ref)) return false;
@@ -60,11 +44,6 @@ export function resolveGrants(c: GithubClaims, bindings: Map<string, CiBinding[]
     if (matching.length > 0) grants.set(service, { allowBootstrap: matching.some((b) => b.allowBootstrap) });
   }
   return grants;
-}
-
-export function principalOf(req: Request): Principal | undefined {
-  if (req.principal) return req.principal;
-  return req.user ? { kind: 'human', user: req.user } : undefined;
 }
 
 export function principalKey(p: Principal): string {

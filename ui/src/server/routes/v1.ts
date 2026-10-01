@@ -2,7 +2,8 @@ import { Router, type Response } from 'express';
 import { rateLimit } from 'express-rate-limit';
 import { HttpError, type ReleaseClient } from '../release-client';
 import { authorize } from '../auth/authorize';
-import { principalAuditFields, principalKey, principalOf, type Principal } from '../auth/principal';
+import { principalAuditFields, principalKey, type Principal } from '../auth/principal';
+import { principalOf } from '../auth/request-principal';
 import { audit } from '../auth/audit';
 
 // The public, versioned release API that CD pipelines call. Its request and

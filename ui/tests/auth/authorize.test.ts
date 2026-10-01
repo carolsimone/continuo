@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { authorize, type Action } from '../../src/server/auth/authorize';
-import { bindingMatches, githubClaimsFrom, resolveGrants, principalKey, type Principal } from '../../src/server/auth/principal';
-import { InvalidTokenError } from '../../src/server/auth/bearer';
+import { bindingMatches, resolveGrants, principalKey, type Principal } from '../../src/server/auth/principal';
+import { githubClaimsFrom } from '../../src/server/auth/bearer';
 import type { CiBinding } from '../../src/server/auth/ci-config';
 import { githubClaims } from './stub-issuer';
 
@@ -47,18 +49,6 @@ describe('authorize', () => {
   });
 });
 
-describe('githubClaimsFrom', () => {
-  it('extracts the GitHub claims', () => {
-    expect(claims).toMatchObject({ repositoryId: '812345678', repository: 'carolsimone/continuo-demo', sha: 'abc1234def', ref: 'refs/heads/main', refProtected: 'true', environment: '' });
-  });
-  it.each(['repository_id', 'repository', 'sha'])('rejects a token without %s', (k) => {
-    expect(() => githubClaimsFrom(githubClaims({ [k]: undefined }))).toThrow(InvalidTokenError);
-  });
-  it('rejects a non-digit repository_id', () => {
-    expect(() => githubClaimsFrom(githubClaims({ repository_id: 'abc' }))).toThrow(InvalidTokenError);
-  });
-});
-
 describe('binding match', () => {
   const b = (o: Partial<CiBinding>): CiBinding => ({ repositoryId: '812345678', allowBootstrap: false, ...o });
   it('matches on repositoryId alone', () => expect(bindingMatches(b({}), claims)).toBe(true));
@@ -89,5 +79,16 @@ describe('binding match', () => {
   it('principalKey separates ci and humans', () => {
     expect(principalKey(ci)).toBe('ci:812345678');
     expect(principalKey(operator)).toBe('human:i|o');
+  });
+});
+
+// The policy modules import types only, so authorize() and the binding rules
+// never load the token verifier (jose) or Express.
+describe('policy module imports', () => {
+  it.each(['principal.ts', 'authorize.ts'])('%s has only type imports', (file) => {
+    const src = readFileSync(join(__dirname, '../../src/server/auth', file), 'utf8');
+    const imports = src.split('\n').filter((l) => /^import\s/.test(l));
+    expect(imports.length).toBeGreaterThan(0);
+    for (const line of imports) expect(line).toMatch(/^import type\s/);
   });
 });

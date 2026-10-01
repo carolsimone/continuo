@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { SignJWT, base64url } from 'jose';
-import { createBearerVerifier, InvalidTokenError, IssuerUnavailableError } from '../../src/server/auth/bearer';
+import { createBearerVerifier, githubClaimsFrom, InvalidTokenError, IssuerUnavailableError } from '../../src/server/auth/bearer';
 import { startStubIssuer, githubClaims, type StubIssuer } from './stub-issuer';
 
 const AUD = 'https://continuo.example.com';
@@ -104,5 +104,17 @@ describe('createBearerVerifier', () => {
     await expect(v.verify(token)).rejects.toThrow(IssuerUnavailableError);
     stub!.failDiscovery('none');
     await expect(v.verify(token)).resolves.toBeDefined();
+  });
+});
+
+describe('githubClaimsFrom', () => {
+  it('extracts the GitHub claims', () => {
+    expect(githubClaimsFrom(githubClaims())).toMatchObject({ repositoryId: '812345678', repository: 'carolsimone/continuo-demo', sha: 'abc1234def', ref: 'refs/heads/main', refProtected: 'true', environment: '' });
+  });
+  it.each(['repository_id', 'repository', 'sha'])('rejects a token without %s', (k) => {
+    expect(() => githubClaimsFrom(githubClaims({ [k]: undefined }))).toThrow(InvalidTokenError);
+  });
+  it('rejects a non-digit repository_id', () => {
+    expect(() => githubClaimsFrom(githubClaims({ repository_id: 'abc' }))).toThrow(InvalidTokenError);
   });
 });

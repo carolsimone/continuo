@@ -1,4 +1,5 @@
 import { createRemoteJWKSet, decodeJwt, errors, jwtVerify, type JWTPayload, type JWTVerifyGetKey } from 'jose';
+import type { GithubClaims } from './principal';
 
 export const MAX_TOKEN_LIFETIME_SECONDS = 3600;
 const CLOCK_TOLERANCE_SECONDS = 60;
@@ -20,6 +21,27 @@ export class InvalidTokenError extends Error {}
 // The issuer's discovery document or signing keys cannot be fetched. Answered
 // with 503: an outage at the issuer never becomes a pass or a 401.
 export class IssuerUnavailableError extends Error {}
+
+// Reads the GitHub Actions claims continuo uses from a verified token's
+// payload. A token without a numeric repository_id, a repository or a sha
+// cannot be bound to a service, so it is an invalid token.
+export function githubClaimsFrom(payload: Record<string, unknown>): GithubClaims {
+  const str = (k: string) => (typeof payload[k] === 'string' ? (payload[k] as string) : '');
+  const claims: GithubClaims = {
+    repositoryId: str('repository_id'),
+    repository: str('repository'),
+    sha: str('sha'),
+    ref: str('ref'),
+    refProtected: str('ref_protected'),
+    environment: str('environment'),
+    workflowRef: str('workflow_ref'),
+    runId: str('run_id'),
+  };
+  if (!/^[0-9]+$/.test(claims.repositoryId) || !claims.repository || !claims.sha) {
+    throw new InvalidTokenError('GitHub token lacks repository_id, repository or sha');
+  }
+  return claims;
+}
 
 export interface BearerVerifier {
   verify(token: string): Promise<VerifiedToken>;

@@ -5,7 +5,7 @@ import type { Server } from 'node:http';
 import { createV1Router, projectRelease, READ_RATE_LIMIT_PER_MINUTE, SUBMIT_RATE_LIMIT_PER_MINUTE } from '../../src/server/routes/v1';
 import { HttpError, type ReleaseClient } from '../../src/server/release-client';
 import type { Principal } from '../../src/server/auth/principal';
-import { githubClaimsFrom } from '../../src/server/auth/principal';
+import { githubClaimsFrom } from '../../src/server/auth/bearer';
 import { githubClaims } from '../auth/stub-issuer';
 
 const operator: Principal = { kind: 'human', user: { userId: 'i|o', email: 'o@c.com', name: 'O', role: 'operator' } };

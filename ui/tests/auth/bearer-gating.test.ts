@@ -7,7 +7,7 @@ import { buildAuth } from '../../src/server/auth';
 import { SessionStore } from '../../src/server/auth/session';
 import { SESSION_COOKIE } from '../../src/server/auth/types';
 import { parseCiAuthConfig } from '../../src/server/auth/ci-config';
-import { principalOf } from '../../src/server/auth/principal';
+import { principalOf } from '../../src/server/auth/request-principal';
 import { FakeRedis } from './fake-redis';
 import { startStubIssuer, githubClaims, type StubIssuer } from './stub-issuer';
 
