@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { SignJWT, base64url } from 'jose';
-import { createBearerVerifier, githubClaimsFrom, InvalidTokenError, IssuerUnavailableError } from '../../src/server/auth/bearer';
+import { createBearerVerifier, discoveryUrl, githubClaimsFrom, InvalidTokenError, IssuerUnavailableError } from '../../src/server/auth/bearer';
 import { startStubIssuer, githubClaims, type StubIssuer } from './stub-issuer';
 
 const AUD = 'https://continuo.example.com';
@@ -104,6 +104,24 @@ describe('createBearerVerifier', () => {
     await expect(v.verify(token)).rejects.toThrow(IssuerUnavailableError);
     stub!.failDiscovery('none');
     await expect(v.verify(token)).resolves.toBeDefined();
+  });
+});
+
+describe('issuer identifier ending in a slash', () => {
+  it('discovers at the single-slash path and verifies against the exact identifier', async () => {
+    stub = await startStubIssuer(AUD, { trailingSlash: true });
+    expect(stub.issuer.endsWith('/')).toBe(true);
+    const v = createBearerVerifier([{ issuer: stub.issuer, audience: AUD }], { cooldownMs: 0 });
+    const out = await v.verify(await stub.sign(githubClaims()));
+    expect(out.issuer).toBe(stub.issuer);
+    expect(stub.requestedPaths()[0]).toBe('/.well-known/openid-configuration');
+    expect(stub.requestedPaths().some((p) => p.startsWith('//'))).toBe(false);
+  });
+
+  it('builds the discovery URL without a double slash', () => {
+    expect(discoveryUrl('https://idp.example.com/')).toBe('https://idp.example.com/.well-known/openid-configuration');
+    expect(discoveryUrl('https://idp.example.com/tenant/')).toBe('https://idp.example.com/tenant/.well-known/openid-configuration');
+    expect(discoveryUrl('https://token.actions.githubusercontent.com')).toBe('https://token.actions.githubusercontent.com/.well-known/openid-configuration');
   });
 });
 

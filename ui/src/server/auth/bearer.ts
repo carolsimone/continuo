@@ -54,6 +54,14 @@ function isKeyFetchFailure(err: unknown): boolean {
   return err instanceof errors.JOSEError && /Expected 200 OK/i.test(err.message);
 }
 
+// The discovery document lives at <issuer>/.well-known/openid-configuration.
+// An issuer identifier may end in "/" (OIDC allows it), so trailing slashes
+// are dropped here, and only here: the identifier itself is compared to the
+// token's iss and to the discovery document's issuer exactly as configured.
+export function discoveryUrl(issuer: string): string {
+  return `${issuer.replace(/\/+$/, '')}/.well-known/openid-configuration`;
+}
+
 export function createBearerVerifier(
   trusted: TrustedIssuer[],
   opts: { cooldownMs?: number; timeoutMs?: number } = {},
@@ -68,7 +76,7 @@ export function createBearerVerifier(
     // or `null` is an unavailable issuer, not a bad token.
     let meta: { issuer?: unknown; jwks_uri?: unknown } | null;
     try {
-      const resp = await fetch(`${issuer}/.well-known/openid-configuration`, { signal: AbortSignal.timeout(timeoutMs) });
+      const resp = await fetch(discoveryUrl(issuer), { signal: AbortSignal.timeout(timeoutMs) });
       if (!resp.ok) throw new IssuerUnavailableError(`discovery for ${issuer} returned ${resp.status}`);
       meta = (await resp.json()) as { issuer?: unknown; jwks_uri?: unknown } | null;
     } catch (err) {

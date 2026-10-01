@@ -15,7 +15,15 @@ export interface StubIssuer {
   failJwks(fail: boolean): void;
   // Makes the discovery document answer 200 with a body that is not a usable JSON object.
   failDiscovery(mode: DiscoveryFailure): void;
+  // The raw request paths the issuer has received, in order.
+  requestedPaths(): string[];
   close(): Promise<void>;
+}
+
+export interface StubIssuerOptions {
+  // Ends the issuer identifier with "/", as some identity providers do. The
+  // endpoints stay at the single-slash paths under the origin.
+  trailingSlash?: boolean;
 }
 
 // GitHub Actions-shaped claims for a push to main of repository 812345678.
@@ -33,7 +41,7 @@ export function githubClaims(overrides: Record<string, unknown> = {}): Record<st
   };
 }
 
-export async function startStubIssuer(defaultAudience: string): Promise<StubIssuer> {
+export async function startStubIssuer(defaultAudience: string, opts: StubIssuerOptions = {}): Promise<StubIssuer> {
   let keys: KeyPair = await generateKeyPair('RS256');
   let kid = 'k1';
   let jwk: JWK = { ...(await exportJWK(keys.publicKey)), kid, alg: 'RS256', use: 'sig' };
@@ -42,9 +50,12 @@ export async function startStubIssuer(defaultAudience: string): Promise<StubIssu
   let failing = false;
   let discoveryFailure: DiscoveryFailure = 'none';
   let issuer = '';
+  let origin = '';
+  const paths: string[] = [];
 
   const server: Server = createServer((req, res) => {
-    const url = new URL(req.url ?? '/', issuer);
+    paths.push(req.url ?? '');
+    const url = new URL(req.url ?? '/', origin);
     if (url.pathname === '/.well-known/openid-configuration') {
       discoveries++;
       if (discoveryFailure !== 'none') {
@@ -53,7 +64,7 @@ export async function startStubIssuer(defaultAudience: string): Promise<StubIssu
         return;
       }
       res.setHeader('content-type', 'application/json');
-      res.end(JSON.stringify({ issuer, jwks_uri: `${issuer}/.well-known/jwks` }));
+      res.end(JSON.stringify({ issuer, jwks_uri: `${origin}/.well-known/jwks` }));
       return;
     }
     if (url.pathname === '/.well-known/jwks') {
@@ -71,7 +82,8 @@ export async function startStubIssuer(defaultAudience: string): Promise<StubIssu
     res.end();
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  issuer = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  issuer = opts.trailingSlash ? `${origin}/` : origin;
 
   return {
     issuer,
@@ -94,6 +106,7 @@ export async function startStubIssuer(defaultAudience: string): Promise<StubIssu
     discoveryFetches: () => discoveries,
     failJwks: (f) => { failing = f; },
     failDiscovery: (m) => { discoveryFailure = m; },
+    requestedPaths: () => [...paths],
     close: () => new Promise<void>((resolve) => server.close(() => resolve())),
   };
 }
