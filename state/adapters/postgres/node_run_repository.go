@@ -329,9 +329,12 @@ func (r *nodeRunRepository) ListNodeNames(ctx context.Context, serviceName strin
 	return names, nil
 }
 
+// ListNodeServices returns every service name in byte order. COLLATE "C" keeps
+// the order independent of the database's locale (en_US, for one, ignores '-'),
+// so every install lists services the same way.
 func (r *nodeRunRepository) ListNodeServices(ctx context.Context) ([]string, error) {
 	const query = `
-		SELECT DISTINCT service_name
+		SELECT DISTINCT service_name COLLATE "C" AS service_name
 		FROM task_tracker
 		ORDER BY service_name`
 	services := []string{}

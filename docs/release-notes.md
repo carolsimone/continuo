@@ -17,6 +17,14 @@ app changes can still be a `PATCH`.
 
 ---
 
+## 0.8.1 · 2026-10-01 · `PATCH`
+
+- A fresh install no longer restarts `orchestrator` while Neo4j is still starting: it waits for Neo4j instead of exiting and relying on a pod restart.
+- The state database drops the unused `task_tracker.manifest_version` column. Upgrade through 0.8.0 first; an install already on 0.8.0 is unaffected.
+- Node services are listed in a stable order regardless of the database's locale.
+
+[Changelog](https://github.com/carolsimone/continuo/blob/main/deploy/continuo/CHANGELOG.md#081---2026-10-01) · [Release](https://github.com/carolsimone/continuo/releases/tag/v0.8.1)
+
 ## 0.8.0 · 2026-10-01 · `MAJOR`
 
 - Full refresh of a single dbt node from the node page: its table is dropped and rebuilt from scratch. Seeds always full-refresh. `dbt-commands.yaml` gains two optional keys, `full_refresh` and `seed_full_refresh`.
