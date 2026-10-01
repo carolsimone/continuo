@@ -89,7 +89,9 @@ func TestAuthOIDC(t *testing.T) {
 		}
 		return out.IDToken
 	}
-	bearer := func(t *testing.T, method, path, token, body string) int {
+	// bearer sends a request with a bearer token and returns the status and the
+	// decoded JSON body (empty when the body is not JSON).
+	bearer := func(t *testing.T, method, path, token, body string) (int, map[string]any) {
 		t.Helper()
 		req, _ := http.NewRequest(method, base+path, strings.NewReader(body))
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -98,27 +100,39 @@ func TestAuthOIDC(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s %s: %v", method, path, err)
 		}
-		resp.Body.Close()
-		return resp.StatusCode
+		defer resp.Body.Close()
+		out := map[string]any{}
+		_ = json.NewDecoder(resp.Body).Decode(&out)
+		return resp.StatusCode, out
 	}
+	// A body that passes the ui's own validation, so the only things that can
+	// refuse it are the submit authorization and release-controller. Its kind
+	// is unknown, so release-controller rejects it before anything is stored:
+	// a principal allowed to submit gets release-controller's 400 naming the
+	// kind, and one that is not allowed gets the ui's 403 first. A human
+	// principal carries no token provenance, so repo and commit_sha are in the
+	// body.
+	submitBody := `{"release_id":"auth-e2e-submit","service":"service-1","image_tag":"t","kind":"bogus","repo":"carolsimone/continuo-demo","commit_sha":"abc"}`
 
-	t.Run("operator Dex bearer clears the submit gates", func(t *testing.T) {
+	t.Run("operator Dex bearer is authorized to submit", func(t *testing.T) {
 		tok := dexToken(t, "operator@example.com")
-		if st := bearer(t, "GET", "/api/v1/current-prod", tok, ""); st != http.StatusOK {
+		if st, _ := bearer(t, "GET", "/api/v1/current-prod", tok, ""); st != http.StatusOK {
 			t.Fatalf("operator GET current-prod = %d, want 200", st)
 		}
-		// image_tag is empty: the auth gates pass and the body validation
-		// refuses it, so no release is created.
-		if st := bearer(t, "POST", "/api/v1/releases", tok, `{"release_id":"auth-e2e","service":"service-1","image_tag":""}`); st != http.StatusBadRequest {
-			t.Fatalf("operator POST = %d, want 400 from body validation", st)
+		st, out := bearer(t, "POST", "/api/v1/releases", tok, submitBody)
+		if st != http.StatusBadRequest {
+			t.Fatalf("operator POST = %d (%v), want 400 from release-controller", st, out)
+		}
+		if msg, _ := out["error"].(string); !strings.Contains(msg, "unknown manifest kind") {
+			t.Fatalf("operator POST error = %q, want release-controller's unknown manifest kind refusal", msg)
 		}
 	})
 
 	t.Run("viewer Dex bearer cannot submit; no-role bearer is refused", func(t *testing.T) {
-		if st := bearer(t, "POST", "/api/v1/releases", dexToken(t, "viewer@example.com"), `{"release_id":"r","service":"service-1","image_tag":"t"}`); st != http.StatusForbidden {
-			t.Fatalf("viewer POST = %d, want 403", st)
+		if st, out := bearer(t, "POST", "/api/v1/releases", dexToken(t, "viewer@example.com"), submitBody); st != http.StatusForbidden {
+			t.Fatalf("viewer POST = %d (%v), want 403", st, out)
 		}
-		if st := bearer(t, "GET", "/api/v1/current-prod", dexToken(t, "norole@example.com"), ""); st != http.StatusForbidden {
+		if st, _ := bearer(t, "GET", "/api/v1/current-prod", dexToken(t, "norole@example.com"), ""); st != http.StatusForbidden {
 			t.Fatalf("norole GET = %d, want 403", st)
 		}
 	})
