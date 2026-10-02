@@ -12,6 +12,8 @@ shipped in those.
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-10-02
+
 Template and service startup fixes; no values change. An unmodified values file upgrades unchanged. **PATCH.**
 
 ### Fixed

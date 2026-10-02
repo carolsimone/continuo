@@ -17,6 +17,14 @@ app changes can still be a `PATCH`.
 
 ---
 
+## 0.9.1 · 2026-10-02 · `PATCH`
+
+- A fresh install comes up in dependency order with no restarts: every service that uses Redis waits for it, in an init container with the bundled Redis and in code everywhere else (BYO, docker-compose). Before, the Go services waited only for their database migrations and could crash-loop if Redis started later.
+- Each Go service answers its liveness probe while it waits for Redis and stays unready until startup completes.
+- The datastore gates no longer fill the Postgres and MinIO bucket-init logs with errors while they wait.
+
+[Changelog](https://github.com/carolsimone/continuo/blob/main/deploy/continuo/CHANGELOG.md#091---2026-10-02) · [Release](https://github.com/carolsimone/continuo/releases/tag/v0.9.1)
+
 ## 0.9.0 · 2026-10-02 · `MINOR`
 
 - CD pipelines release through continuo's public URL: `POST /api/v1/releases` on the ui, authenticated with the workflow's own GitHub Actions OIDC token. Bind each service to its repository in `ciAuth.bindings`. A pipeline needs no kubeconfig, SSH key or stored secret, and polls `GET /api/v1/releases/{id}` until the release is final. See [Releasing from CI](../deploy/README.md#releasing-from-ci-github-actions).
