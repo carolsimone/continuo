@@ -206,3 +206,9 @@ container runtime more memory (chapter 1) and close other large workloads.
 
 You now have an empty continuo running. Fill it with real data projects:
 [Run dbt and Python projects in continuo](run-projects-in-continuo.md).
+
+Projects reach continuo through its release API at
+`http://localhost:8090/api/v1`, and every call needs a bearer token. On this
+install you get one from the bundled Dex with the demo account; the guide shows
+the command. A CD pipeline uses its GitHub Actions token instead
+([Releasing from CI](../deploy/README.md#releasing-from-ci-github-actions)).

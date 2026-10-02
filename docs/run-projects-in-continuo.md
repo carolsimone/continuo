@@ -9,6 +9,11 @@ alone, validate a change against production before promoting it, and refuse a
 change that would break another team's model. Everything runs on your machine;
 no step needs a cloud account until the optional remediation chapter.
 
+You release a project by calling continuo's release API, `/api/v1` on the `ui`.
+Every call carries a bearer token: here, an ID token you get from the bundled
+Dex with the demo account (chapter 3 shows the one command); in a CD pipeline,
+the pipeline's GitHub Actions token.
+
 ---
 
 ## 1. Fork the example projects and read them
@@ -392,37 +397,20 @@ contract and upload it to object storage before you post the release.
 
 Here you do that by hand. It is the same sequence your own CD will run.
 
-**One edit first.** `service-py` declares two nodes. `py_daily_kpis` runs a
+**One file first.** `service-py` declares two nodes. `py_daily_kpis` runs a
 Python script against the warehouse. `demo_orders_csv` is a *python-csv* node:
 no script at all — the runtime loads a CSV file straight from object storage
-and writes it through as a table. A csv node's contract points at that CSV file
-by its object-store URL — and as shipped, that URL is one in the demo author's
-bucket, not yours:
+and writes it through as a table. Its contract points at that file by its
+object-store URL, in your install's own bucket:
 
 ```yaml
 # services/service-py/contracts/demo_orders_csv.yml
     reads:
-      csv: s3://continuo-dev/static-files/demo/orders.csv
-```
-
-Your install has no `continuo-dev` bucket. Point it at your own — this is your
-fork, and the file is meant to be yours:
-
-```yaml
-    reads:
       csv: s3://continuo/static-files/demo/orders.csv
 ```
 
-The contract ships *inside* the image (`COPY contracts/` in the service's
-Dockerfile), and the runtime reads that baked copy when the node runs — so
-rebuild and reload the image you built in chapter 2:
-
-```bash
-docker build -t service-py:v1 services/service-py
-kind load docker-image service-py:v1 --name continuo
-```
-
-Then put a file where the contract now points. Your install's object store is
+`continuo` is the bucket the bundled MinIO creates, so the URL is right as
+shipped; only the file is missing. Put one there. Your install's object store is
 the bundled MinIO, which speaks the S3 API — so the standard AWS CLI drives it.
 Install the CLI if you don't have it (`brew install awscli` on macOS, or the
 [AWS CLI install guide](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)),
