@@ -248,9 +248,12 @@ Rules that apply to every bearer:
   `email_verified: true` requirement as at login applies to the
   `AUTH_OPERATOR_EMAILS` / `AUTH_VIEWER_EMAILS` lists.
 
+### Get a token from the bundled Dex
+
 With the bundled Dex, the demo account can trade its password for an ID token
 directly (the Dex password grant is enabled, and ID tokens last one hour). Forward
-Dex with `kubectl -n continuo port-forward svc/continuo-dex 5556:5556`, then:
+the `ui` with `kubectl -n continuo port-forward svc/ui 8090:8090` and Dex with
+`kubectl -n continuo port-forward svc/continuo-dex 5556:5556`, then:
 
 ```bash
 CLIENT_SECRET=$(kubectl -n continuo get secret continuo-dex -o jsonpath='{.data.client-secret}' | base64 -d)
