@@ -17,6 +17,15 @@ app changes can still be a `PATCH`.
 
 ---
 
+## 0.9.0 · 2026-10-02 · `MINOR`
+
+- CD pipelines release through continuo's public URL: `POST /api/v1/releases` on the ui, authenticated with the workflow's own GitHub Actions OIDC token. Bind each service to its repository in `ciAuth.bindings`. A pipeline needs no kubeconfig, SSH key or stored secret, and polls `GET /api/v1/releases/{id}` until the release is final. See [Releasing from CI](../deploy/README.md#releasing-from-ci-github-actions).
+- An operator can call the same API with a 1-hour token from the bundled Dex; the tutorial no longer port-forwards to release-controller.
+- Re-submitting a release id with different content is refused with `409` instead of being silently ignored.
+- release-controller and remediation receive their HTTP port under the variable they read.
+
+[Changelog](https://github.com/carolsimone/continuo/blob/main/deploy/continuo/CHANGELOG.md#090---2026-10-02) · [Release](https://github.com/carolsimone/continuo/releases/tag/v0.9.0)
+
 ## 0.8.1 · 2026-10-01 · `PATCH`
 
 - A fresh install no longer restarts `orchestrator` while Neo4j is still starting: it waits for Neo4j instead of exiting and relying on a pod restart.
