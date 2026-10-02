@@ -34,7 +34,7 @@ kubectl -n continuo port-forward svc/ui 8090:8090 &
 kubectl -n continuo port-forward svc/continuo-dex 5556:5556 &
 
 # one-time: let the browser resolve the in-cluster issuer hostname
-echo "127.0.0.1 continuo-dex" | sudo tee -a /etc/hosts
+grep -q "continuo-dex" /etc/hosts || echo "127.0.0.1 continuo-dex" | sudo tee -a /etc/hosts
 
 open http://localhost:8090   # demo login: admin@example.com / password
 ```

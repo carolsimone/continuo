@@ -38,12 +38,11 @@ then apply to the host itself.
 **Room to run it.** continuo brings its own PostgreSQL, Redis, Neo4j, MinIO and
 identity provider in this mode, plus nine of its own services, and then runs your
 nodes as Kubernetes Jobs alongside all of that. Give the container runtime
-**4 CPUs, 12 GiB of memory and a 60 GB disk** — 8 GiB of memory is the bare
-floor, and only if nothing else large is running. Close other heavy containers,
+**6 CPUs, 16 GiB of memory and a 60 GB disk**. Close other heavy containers,
 and a second local cluster especially, before you start. On colima that is:
 
 ```bash
-colima start --cpu 4 --memory 12 --disk 60
+colima start --cpu 6 --memory 16 --disk 60
 ```
 
 A memory-starved runtime does not fail with a clear message: the cluster's API
@@ -54,20 +53,19 @@ runtime more memory (or stop other containers), then reinstall.
 **A GitHub account.** You will fork the example projects so that the code
 you release is yours — which matters in chapter 8 of the
 [Run dbt and Python projects in continuo](run-projects-in-continuo.md) guide,
-where continuo reads your source to explain (and then propose a fix for) a
-failure.
+where continuo proposes a fix for a failure as a pull request against your
+fork.
 
 **Credentials: none to install.** The install itself needs no secrets, and so
 does every step of the walkthrough except the LLM-backed extras below. An LLM API
 key unlocks two optional things: the in-UI **assistant** (section 3) and
 **chapter 8 of the [Run dbt and Python projects in continuo](run-projects-in-continuo.md)
-guide**, where an LLM proposes a fix for a model you broke. That chapter 8
-additionally needs GitHub access.
+guide**, where an LLM proposes a fix for a model you broke.
 
 | For the LLM extras | What it is |
 |---|---|
 | An LLM API key | Anthropic (the default) or OpenAI — powers the assistant (section 3) and chapter 8 |
-| A GitHub personal access token | *Chapter 8 only.* Read-only, fine-grained, `Contents: Read` on your fork — the agent reads the failing model's source through it |
+| *(optional)* A GitHub personal access token | *Chapter 8 only, and only for a private fork.* Read-only, fine-grained, `Contents: Read` on your fork — the agent reads source through the GitHub API for failures it cannot fix from the release alone |
 | *(optional)* A GitHub App | *Chapter 8 only.* Needed if you want the UI's "Create PR" button to actually open the pull request rather than just show you the proposed diff |
 
 Where to get them: create an Anthropic key in the
@@ -106,7 +104,7 @@ kind create cluster --name continuo
 
 # continuo itself, from the published chart
 helm install continuo oci://ghcr.io/carolsimone/charts/continuo \
-  --version 0.9.0 -n continuo --create-namespace
+  --version 0.9.1 -n continuo --create-namespace
 
 # Wait for everything to come up (5-10 minutes on a first install)
 kubectl -n continuo get pods -w
@@ -118,9 +116,10 @@ for evaluation — one static login, no backups, no high availability. Productio
 installs bring their own datastores; see
 [deploy/README.md](../deploy/README.md).
 
-While you wait, most service pods sit in `Init:0/1`: each one gates on an init
-container that waits for the datastores to answer and the database migrations
-to finish, so services start in dependency order rather than crash-looping.
+While you wait, most service pods sit in `Init:0/2` or `Init:0/1`: each one
+gates on init containers that wait for Redis to answer and for its database
+migrations to finish, so services start in dependency order rather than
+crash-looping.
 The wait is image pulls plus that gate — on a first install expect several
 quiet minutes with no restarts. Wait until every pod is `Running` or
 `Completed` before moving on.
@@ -130,7 +129,7 @@ Then open it:
 ```bash
 kubectl -n continuo port-forward svc/ui 8090:8090 &
 kubectl -n continuo port-forward svc/continuo-dex 5556:5556 &
-echo "127.0.0.1 continuo-dex" | sudo tee -a /etc/hosts
+grep -q "continuo-dex" /etc/hosts || echo "127.0.0.1 continuo-dex" | sudo tee -a /etc/hosts
 
 open http://localhost:8090
 ```
@@ -160,7 +159,7 @@ Set the key and restart the chat service:
 
 ```bash
 helm upgrade continuo oci://ghcr.io/carolsimone/charts/continuo \
-  --version 0.9.0 -n continuo --reuse-values \
+  --version 0.9.1 -n continuo --reuse-values \
   --set llm.apiKey='<your-api-key>'
 
 kubectl -n continuo rollout restart deploy/agent-chat
@@ -177,10 +176,10 @@ uses, so setting it here covers both.
 ## Troubleshooting
 
 **A pod is in `CrashLoopBackOff` during install.** Not expected: services gate
-on init containers (`wait-for-migrations`, `wait-for-redis`) and start in
+on init containers (`wait-for-redis`, `wait-for-migrations`) and start in
 dependency order, so a healthy install comes up with zero restarts. A pod
-stuck in `Init:0/1` is still waiting on its gate — look at the datastore pods
-and the `db-init-migrate` job first. A pod that is actually crash-looping is a
+stuck in `Init:` (for example `Init:0/2`) is still waiting on its gates — look
+at the datastore pods and the `db-init-migrate` job first. A pod that is actually crash-looping is a
 real signal: read its logs.
 
 **`sudo: a terminal is required to read the password`** on the `/etc/hosts`
