@@ -227,10 +227,11 @@ one read every few seconds.
 - Where egress must go through a proxy, add `HTTPS_PROXY` together with
   `NODE_USE_ENV_PROXY=1` to the `ui` entry's `env` in `services`, plus
   `NO_PROXY` covering the in-cluster service names the `ui` calls
-  (`release-controller`, `state`, `orchestrator`, `agent-remediation`, and your
-  IdP when it is in-cluster). The `ui` runs on Node.js 26, whose built-in
-  `fetch` honours the proxy variables only when `NODE_USE_ENV_PROXY=1` is set;
-  without it the key fetch ignores `HTTPS_PROXY` and tries the issuer directly.
+  (`release-controller`, `state`, `orchestrator`, `agent-chat`,
+  `agent-remediation`, and your IdP when it is in-cluster). The `ui` runs on
+  Node.js 26, whose built-in `fetch` honours the proxy variables only when
+  `NODE_USE_ENV_PROXY=1` is set; without it the key fetch ignores `HTTPS_PROXY`
+  and tries the issuer directly.
 
 ## Requirements at a glance
 
