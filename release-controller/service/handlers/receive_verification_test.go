@@ -85,3 +85,36 @@ func TestReceiveCandidate_RefusesVerificationFields(t *testing.T) {
 		})
 	}
 }
+
+// Two first submissions of one run id race: this one's Load finds no row, then
+// a concurrent submission commits its run before this one's Create. The
+// insert-only Create leaves the winner's row untouched.
+func TestReceiveVerification_LosingARaceToAVerificationIsANoOp(t *testing.T) {
+	now := time.Unix(100, 0).UTC()
+	deps, store := newDeps(now)
+	in := validVerification()
+	winner := pipeline.NewVerification(in.RunID, in.Service, "img:winner", in.VerifiesReleaseID, in.Attempt, in.SourceOverlayURI, release.ManifestKindDbt, now)
+	store.RaceRelease(winner)
+
+	require.NoError(t, handlers.ReceiveVerification(context.Background(), deps, in))
+
+	got, err := store.GetRelease(in.RunID)
+	require.NoError(t, err)
+	assert.Same(t, winner, got, "the loser must not overwrite the winner's run")
+	assert.Equal(t, "img:winner", got.ImageTags()[in.Service])
+}
+
+func TestReceiveVerification_LosingARaceToACandidateIsAKindConflict(t *testing.T) {
+	now := time.Unix(100, 0).UTC()
+	deps, store := newDeps(now)
+	in := validVerification()
+	winner := pipeline.NewCandidate(in.RunID, "core", "img:1", false, "org/r", "sha", release.ManifestKindDbt, now)
+	store.RaceRelease(winner)
+
+	err := handlers.ReceiveVerification(context.Background(), deps, in)
+
+	assert.ErrorIs(t, err, handlers.ErrRunKindConflict)
+	got, gerr := store.GetRelease(in.RunID)
+	require.NoError(t, gerr)
+	assert.Same(t, winner, got)
+}
