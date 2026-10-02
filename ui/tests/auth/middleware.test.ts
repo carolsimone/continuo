@@ -11,6 +11,9 @@ import {
 } from '../../src/server/auth/middleware';
 import { SessionStore } from '../../src/server/auth/session';
 import { FakeRedis } from './fake-redis';
+import type { Principal } from '../../src/server/auth/principal';
+import { githubClaimsFrom } from '../../src/server/auth/bearer';
+import { githubClaims } from './stub-issuer';
 import { SESSION_COOKIE, type AuthUser } from '../../src/server/auth/types';
 
 const viewer: AuthUser = { userId: 'idp|v', email: 'v@b.com', name: 'V', role: 'viewer' };
@@ -157,5 +160,24 @@ describe('auditMutations', () => {
       path: '/api/thing',
       outcome: 202,
     });
+  });
+  it('records a CI principal by repository, not as a missing user', async () => {
+    const ciPrincipal: Principal = {
+      kind: 'ci', subject: 's', claims: githubClaimsFrom(githubClaims()), grants: new Map(),
+    };
+    const app = express();
+    app.use((req, _res, next) => { req.principal = ciPrincipal; next(); });
+    app.use('/api', auditMutations());
+    app.post('/api/v1/releases', (_req, res) => res.status(202).json({ ok: true }));
+
+    await request(app).post('/api/v1/releases');
+
+    const audits = lines.map((l) => JSON.parse(l)).filter((l) => l.audit);
+    expect(audits).toHaveLength(1);
+    expect(audits[0]).toMatchObject({
+      event: 'api_mutation', principal: 'ci', repository: 'carolsimone/continuo-demo',
+      method: 'POST', path: '/api/v1/releases', outcome: 202,
+    });
+    expect(audits[0].user_id).toBeUndefined();
   });
 });

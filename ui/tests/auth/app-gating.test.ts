@@ -64,4 +64,10 @@ describe('createApp gating', () => {
     const passed = await request(app).post('/api/anything').set('Cookie', `${SESSION_COOKIE}=${operatorSid}`);
     expect(passed.status).toBe(404);
   });
+
+  it('mounts /api/v1 behind the guard', async () => {
+    const store = new SessionStore(new FakeRedis(), 3600, 7200);
+    const app = createApp(fakeGrpc, fakeGraph, oidcModeAuth(store));
+    expect((await request(app).get('/api/v1/current-prod')).status).toBe(401);
+  });
 });

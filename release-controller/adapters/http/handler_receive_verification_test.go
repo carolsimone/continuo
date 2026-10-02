@@ -82,7 +82,7 @@ func TestHandleReceiveCandidate_VerificationIDConflictIs409(t *testing.T) {
 	deps, releases := newRetryRemediationDeps(now)
 	releases.releases["run-9"] = pipeline.NewVerification("run-9", "core", "img", "rel-0", 1, "", release.ManifestKindDbt, now)
 
-	body, _ := json.Marshal(handlers.ReceiveCandidateInput{
+	body, _ := json.Marshal(ReceiveCandidateRequest{
 		Service: "core", ReleaseID: "run-9", ImageTag: "img", Repo: "org/r", CommitSHA: "sha",
 	})
 	rec := httptest.NewRecorder()
@@ -97,11 +97,11 @@ func TestHandleReceiveCandidate_VerificationIDConflictIs409(t *testing.T) {
 // fix-verification-only fields, rather than persisting a misrouted run.
 func TestHandleReceiveCandidate_RefusesVerificationFieldsWith400(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
-	base := handlers.ReceiveCandidateInput{Service: "core", ReleaseID: "rel-1", ImageTag: "img", Repo: "org/r", CommitSHA: "sha"}
-	for name, mutate := range map[string]func(*handlers.ReceiveCandidateInput){
-		"shadow":              func(in *handlers.ReceiveCandidateInput) { in.Shadow = true },
-		"source_overlay_uri":  func(in *handlers.ReceiveCandidateInput) { in.SourceOverlayURI = "s3://x" },
-		"verifies_release_id": func(in *handlers.ReceiveCandidateInput) { in.VerifiesReleaseID = "rel-0" },
+	base := ReceiveCandidateRequest{Service: "core", ReleaseID: "rel-1", ImageTag: "img", Repo: "org/r", CommitSHA: "sha"}
+	for name, mutate := range map[string]func(*ReceiveCandidateRequest){
+		"shadow":              func(in *ReceiveCandidateRequest) { in.Shadow = true },
+		"source_overlay_uri":  func(in *ReceiveCandidateRequest) { in.SourceOverlayURI = "s3://x" },
+		"verifies_release_id": func(in *ReceiveCandidateRequest) { in.VerifiesReleaseID = "rel-0" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			deps, _ := newRetryRemediationDeps(now)

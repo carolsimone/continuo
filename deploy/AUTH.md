@@ -200,6 +200,70 @@ Resolution order at login (first match wins, strongest role wins on ties):
    ignored, to prevent escalation via unverified aliases.
 3. **Default** — `AUTH_DEFAULT_ROLE` (default `none` = denied).
 
+## Bearer tokens
+
+Besides the browser session, `ui` accepts an OIDC ID token in an
+`Authorization: Bearer <token>` header. This is how a person scripts against the
+API and how a CD pipeline calls the [public release API](README.md#releasing-from-ci-github-actions).
+`ui` trusts tokens from at most two issuers; the token's `iss` selects which:
+
+| Issuer | Audience (`aud`) | Identity | What it may do |
+| --- | --- | --- | --- |
+| The login issuer: the IdP configured by `auth.issuerUrl` (bundled Dex, or your own) | The `ui`'s OIDC client id | A person. The role comes from the same rules as a login (see [Role assignment reference](#role-assignment-reference)), resolved from the token's claims on every request. | Whatever the role allows: a viewer reads, an operator reads and changes. A token whose identity has no role is `403`. |
+| `ciAuth.issuer` (GitHub Actions), trusted only while `ciAuth.bindings` holds at least one binding | `ciAuth.audience`, by default the origin of `auth.publicUrl` | A repository, matched against `ciAuth.bindings` | Only the three `/api/v1` release routes, and only for the services bound to its repository. A repository that matches no binding may call none of them, `GET /api/v1/current-prod` included. |
+
+With no bindings (the default), `ui` does not trust the CI issuer at all: a
+GitHub token is a `401` (`untrusted issuer`), and the startup log says that CI
+auth is configured but has no bindings.
+
+Rules that apply to every bearer:
+
+- **On `/api`, the header is the only credential considered.** An `/api`
+  request that carries `Authorization` is authenticated by it alone; a header
+  that is not `Bearer <token>`, or a token that fails verification, is a `401`
+  (audited as `bearer_rejected`), never a fallback to a session cookie. An `/api`
+  request with no `Authorization` header uses the session cookie as usual.
+- **Outside `/api` the header is ignored.** The dashboard and the `/auth/*`
+  routes authenticate by session cookie only, so an ingress basic-auth or an
+  auth proxy (oauth2-proxy) that forwards its own `Authorization` header does
+  not lock anyone out of the sign-in page or the dashboard shell. On `/api` that
+  forwarded header is still the credential and answers `401`, so such a proxy
+  must not pass its `Authorization` header through to `ui`.
+- **Signed with RS256.** Tokens using any other algorithm, including `none` and
+  HMAC, are rejected, as is a token whose `iss` is not one of the two issuers above.
+- **Valid for at most one hour.** A token whose `exp` is more than 3600 seconds
+  after its `iat` is rejected, and so is one whose `iat` lies more than 60
+  seconds in the future. `exp` and `nbf` are checked with 60 seconds of clock
+  tolerance.
+- **The issuer must be reachable.** `ui` fetches the issuer's discovery
+  document (at `<issuer>/.well-known/openid-configuration`, with any trailing
+  `/` of the issuer dropped) and signing keys the first time a token from it
+  arrives. While the issuer cannot be reached, or answers with a key set `ui`
+  cannot use (unreadable, no RS256 signing key, the same `kid` twice, or an RSA
+  key shorter than 2048 bits), bearer requests answer `503` `auth_unavailable`
+  and browser sessions keep working. A token naming a `kid` the issuer does not
+  publish is a `401`.
+- **A person's email counts only when verified.** The same
+  `email_verified: true` requirement as at login applies to the
+  `AUTH_OPERATOR_EMAILS` / `AUTH_VIEWER_EMAILS` lists.
+
+With the bundled Dex, the demo account can trade its password for an ID token
+directly (the Dex password grant is enabled, and ID tokens last one hour). Forward
+Dex with `kubectl -n continuo port-forward svc/continuo-dex 5556:5556`, then:
+
+```bash
+CLIENT_SECRET=$(kubectl -n continuo get secret continuo-dex -o jsonpath='{.data.client-secret}' | base64 -d)
+TOKEN=$(curl -s -u "continuo-ui:${CLIENT_SECRET}" http://localhost:5556/dex/token \
+  -d grant_type=password -d scope="openid email profile" \
+  -d username=admin@example.com -d password=password | jq -r .id_token)
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8090/api/v1/current-prod
+```
+
+With your own IdP, a person's bearer token is an ID token your IdP issues for
+the `ui`'s client id, with a lifetime of at most one hour; how a script obtains
+it depends on the IdP. The CI side has no secret to manage: GitHub issues the
+token to the workflow run.
+
 ## Troubleshooting
 
 | Symptom | Cause / fix |

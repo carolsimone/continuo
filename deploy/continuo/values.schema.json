@@ -234,6 +234,36 @@
       }
     },
 
+    "ciAuth": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "GitHub Actions OIDC access to the public release API. See values.yaml. Optional, as is each key, so a `helm upgrade --reuse-values` from a chart without it still renders; templates/_helpers.tpl's continuo.ciAuth.json supplies the defaults.",
+      "properties": {
+        "issuer": {"type": "string", "pattern": "^https://"},
+        "audience": {"type": "string"},
+        "bindings": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["repositoryId"],
+              "properties": {
+                "repositoryId": {"type": "string", "pattern": "^[0-9]+$"},
+                "ref": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+                "refProtected": {"type": "boolean"},
+                "environment": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+                "workflowRef": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+                "allowBootstrap": {"type": "boolean"}
+              }
+            }
+          }
+        }
+      }
+    },
+
     "llm": {
       "type": "object",
       "additionalProperties": false,

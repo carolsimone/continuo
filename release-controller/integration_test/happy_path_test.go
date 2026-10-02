@@ -57,7 +57,7 @@ func TestIntegration_HappyPath(t *testing.T) {
 	defer db.Close()
 
 	// 1. POST /releases
-	body, _ := json.Marshal(handlers.ReceiveCandidateInput{
+	body, _ := json.Marshal(httpinfra.ReceiveCandidateRequest{
 		Service:   "service-1",
 		ReleaseID: "rA",
 		ImageTag:  "sha-rA",

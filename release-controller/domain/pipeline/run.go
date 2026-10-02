@@ -251,6 +251,36 @@ func (r *Run) SourceOverlayURI() string {
 	return r.verification.SourceOverlayURI
 }
 
+// CandidateSubmission is what a team's CI states when it submits a candidate
+// release: the changed service, its image tag, how its artifact is parsed,
+// whether it bootstraps production, and the source change it was built from.
+type CandidateSubmission struct {
+	Service   string
+	ImageTag  string
+	Kind      release.ManifestKind
+	Bootstrap bool
+	Repo      string
+	CommitSHA string
+}
+
+// MatchesSubmission reports whether s describes this candidate, so that a
+// release id submitted again names the same release rather than a different
+// one. The image tag compared is the one this run holds for its own changed
+// service, which activation keeps when it fills in every other service's tag;
+// the answer therefore does not depend on how far the run has advanced. A
+// verification run matches no candidate submission.
+func (r *Run) MatchesSubmission(s CandidateSubmission) bool {
+	if r.kind != KindCandidate {
+		return false
+	}
+	return r.changedService == s.Service &&
+		r.imageTags[r.changedService] == s.ImageTag &&
+		r.manifestKind == s.Kind &&
+		r.candidate.Bootstrap == s.Bootstrap &&
+		r.candidate.Repo == s.Repo &&
+		r.candidate.CommitSHA == s.CommitSHA
+}
+
 // ActivatedAt is when the run left the queue: the time of its first
 // transition into any status other than received. ok is false while the run
 // has only ever been received.

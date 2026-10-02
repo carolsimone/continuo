@@ -10,6 +10,7 @@ import { createConfigRouter } from './routes/config';
 import { createFeaturesRouter } from './routes/features';
 import { createTopologyRouter } from './routes/topology';
 import { createReleasesRouter } from './routes/releases';
+import { createV1Router } from './routes/v1';
 import { createVerificationsRouter } from './routes/verifications';
 import { createPipelineRouter } from './routes/pipeline';
 import { createRemediationRouter } from './routes/remediation';
@@ -31,6 +32,7 @@ export function createApp(
   prCreator?: PullRequestCreator,
   commitAuthorResolver?: CommitAuthorResolver,
   githubWebBaseUrl?: string,
+  publicUrl?: string,
 ) {
   const app = express();
   app.use(express.json());
@@ -55,6 +57,8 @@ export function createApp(
   app.use('/api/config', createConfigRouter(configFilePath));
   app.use('/api/features', createFeaturesRouter(chatBridgeEnabled));
   const releaseClient = createReleaseClient(releaseControllerUrl);
+  // Public, versioned API for CD pipelines; authorizes per action (see authorize.ts).
+  app.use('/api/v1', createV1Router(releaseClient, publicUrl));
   app.use('/api/releases', createReleasesRouter(releaseClient, getLogObject, commitAuthorResolver, githubWebBaseUrl));
   app.use('/api/verifications', createVerificationsRouter(releaseClient));
   app.use('/api/pipeline', createPipelineRouter(releaseClient));
