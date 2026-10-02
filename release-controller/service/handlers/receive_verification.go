@@ -15,9 +15,10 @@ import (
 var ErrInvalidInput = errors.New("invalid input")
 
 // ErrRunKindConflict marks a submission whose id already names a run of the
-// other kind; the HTTP layer answers 409. It aliases the repository sentinel so
-// the same error covers both the kind check here and the atomic backstop
-// RunRepository.Save raises when two ids race.
+// other kind; the HTTP layer answers 409. It aliases the repository sentinel.
+// Both receive paths raise it after loading the run that holds the id, whether
+// that run was committed before the submission or by a concurrent submission
+// whose insert won.
 var ErrRunKindConflict = repository.ErrRunKindConflict
 
 // ReceiveVerificationInput is the POST /verification-runs body: a

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -114,4 +115,26 @@ func TestHandleReceiveCandidate_RefusesVerificationFieldsWith400(t *testing.T) {
 			assert.Contains(t, rec.Body.String(), "POST /verification-runs")
 		})
 	}
+}
+
+// POST /verification-runs reads the wire field names below; a mistyped tag on
+// the request DTO would drop a field silently, so the stored run is checked
+// against a raw JSON body.
+func TestHandleReceiveVerification_StoresEveryWireFieldAsSent(t *testing.T) {
+	deps, releases := newRetryRemediationDeps(time.Unix(100, 0).UTC())
+	raw := `{"run_id":"verify-rel-7-core-a3","service":"core","image_tag":"img:7","kind":"dbt",` +
+		`"verifies_release_id":"rel-7","attempt":3,"source_overlay_uri":"s3://b/core/overlay.tar.gz"}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/verification-runs", strings.NewReader(raw))
+	newTestServer(deps).Routes().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusAccepted, rec.Code)
+	stored := releases.releases["verify-rel-7-core-a3"]
+	require.NotNil(t, stored)
+	assert.Equal(t, pipeline.KindVerification, stored.Kind())
+	assert.Equal(t, "rel-7", stored.VerifiesReleaseID())
+	assert.Equal(t, 3, stored.Attempt())
+	assert.Equal(t, "s3://b/core/overlay.tar.gz", stored.SourceOverlayURI())
+	assert.Equal(t, "img:7", stored.ImageTags()["core"])
+	assert.Equal(t, release.ManifestKindDbt, stored.ManifestKind())
 }
