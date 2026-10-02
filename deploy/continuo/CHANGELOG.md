@@ -12,13 +12,24 @@ shipped in those.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-02
+
+CD pipelines release through continuo's public URL with their GitHub Actions OIDC token, and release-controller is reached only inside the cluster. New values with safe defaults; an unmodified values file upgrades unchanged, including with `--reuse-values`. **MINOR.**
+
 ### Added
 - `ciAuth` values (optional, as is each key): CD pipelines release through `POST <publicUrl>/api/v1/releases` with their GitHub Actions OIDC token. `ciAuth.bindings` maps each service to the GitHub `repositoryId` (plus optional `ref`, `refProtected`, `environment`, `workflowRef`, `allowBootstrap`) allowed to release it; a token can release, and read releases of, only its bound services. Empty bindings (the default) grant no CI access: the ui does not trust the CI issuer at all. An install upgraded with `helm upgrade --reuse-values` (no `ciAuth` in its stored values) renders the defaults — the GitHub Actions issuer, the origin of `auth.publicUrl` as audience, no bindings. The ui's CI-auth file, its mount and `CI_AUTH_CONFIG_PATH` are injected by the Deployment template, so an overridden `services` list keeps them.
 - The ui serves `GET /api/v1/releases/{id}` and `GET /api/v1/current-prod` for pipelines polling a release, limited to 300 reads a minute per principal.
 - Bundled Dex enables the password grant and issues ID tokens valid for 1 hour, so an operator can obtain an API bearer token with one `curl`.
 
+### Changed
+- release-controller's internal `POST /releases` answers 409 when the release id already exists with a different service, image tag, kind, bootstrap flag, repo or commit sha, instead of silently keeping the first submission; resubmitting identical content still answers 202. Two simultaneous first submissions of the same id can no longer both be accepted. Only invalid input answers 400; a storage failure answers 500, which the public API reports as 503 `upstream_unavailable`.
+- The bundled Dex config change (password grant, 1-hour ID tokens) restarts the Dex pod on upgrade.
+
 ### Fixed
 - release-controller and remediation receive their HTTP port under the variable they read (`RELEASE_CONTROLLER_HTTP_PORT`, `REMEDIATION_HTTP_PORT`); agent-remediation no longer receives an unused `HTTP_PORT`.
+
+### Security
+- Dependency updates: `undici` 7.30.0 and `ip-address` 10.7.2 in the ui, `urllib3` 2.8.0 in topology-controller and the dbt images.
 
 ## [0.8.1] - 2026-10-01
 
