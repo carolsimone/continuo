@@ -9,6 +9,17 @@ import (
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 )
 
+// ErrInvalidCandidate marks a submission the caller got wrong (a missing or
+// unsupported field), as opposed to an infrastructure failure while storing it.
+// Callers answer it as a client error and everything else as a server error.
+var ErrInvalidCandidate = errors.New("invalid candidate")
+
+// ErrReleaseIDConflict marks a submission whose release id already names a
+// candidate with a different service, image tag, manifest kind, bootstrap
+// flag or source change. Callers answer it as a conflict, as they do
+// ErrRunKindConflict.
+var ErrReleaseIDConflict = errors.New("release id already names a different candidate")
+
 // ReceiveCandidateInput carries the fields required to register a new release
 // candidate. Service, ReleaseID, ImageTag, Repo, and CommitSHA are mandatory;
 // Bootstrap is optional (defaults false) and, when true, promotes the release
@@ -18,25 +29,25 @@ import (
 // other services happen later in AdvanceQueue, not here, so that we always read
 // the live service_prod pointers at the moment this release becomes active.
 type ReceiveCandidateInput struct {
-	Service   string `json:"service"`
-	ReleaseID string `json:"release_id"`
-	ImageTag  string `json:"image_tag"`
-	Bootstrap bool   `json:"bootstrap"`
-	Repo      string `json:"repo"`
-	CommitSHA string `json:"commit_sha"`
+	Service   string
+	ReleaseID string
+	ImageTag  string
+	Bootstrap bool
+	Repo      string
+	CommitSHA string
 	// Kind selects how this service's artifact is parsed: "dbt"
 	// (manifest.json — the default when absent, so existing CI callers are
 	// untouched) or "python" (contract.yaml, uploaded by the domain repo's CI
 	// before this POST). Anything else is rejected (HTTP 400).
-	Kind string `json:"kind"`
+	Kind string
 	// Shadow, SourceOverlayURI, and VerifiesReleaseID are fix-verification
 	// concepts and are refused here (HTTP 400): a fix-verification run is
 	// submitted to POST /verification-runs instead. The three fields stay on
 	// this struct so a stale caller still posting them is answered with a
 	// clear error rather than having the values silently ignored.
-	Shadow            bool   `json:"shadow"`
-	SourceOverlayURI  string `json:"source_overlay_uri"`
-	VerifiesReleaseID string `json:"verifies_release_id"`
+	Shadow            bool
+	SourceOverlayURI  string
+	VerifiesReleaseID string
 }
 
 func (i ReceiveCandidateInput) validate() error {
@@ -72,16 +83,38 @@ func (i ReceiveCandidateInput) manifestKind() (release.ManifestKind, error) {
 	return release.ParseManifestKind(i.Kind)
 }
 
+// resubmitOutcome decides a submission whose release id already names a run:
+// nil when it is the same candidate, ErrRunKindConflict when the id names a
+// verification run, ErrReleaseIDConflict when it names a different candidate.
+func resubmitOutcome(existing *pipeline.Run, in ReceiveCandidateInput, kind release.ManifestKind) error {
+	if existing.Kind() != pipeline.KindCandidate {
+		return fmt.Errorf("%w: %s is a %s", ErrRunKindConflict, in.ReleaseID, existing.Kind())
+	}
+	submitted := pipeline.CandidateSubmission{
+		Service: in.Service, ImageTag: in.ImageTag, Kind: kind,
+		Bootstrap: in.Bootstrap, Repo: in.Repo, CommitSHA: in.CommitSHA,
+	}
+	if !existing.MatchesSubmission(submitted) {
+		return fmt.Errorf("%w: %q has a different service, image tag, kind, bootstrap flag or source change",
+			ErrReleaseIDConflict, in.ReleaseID)
+	}
+	return nil
+}
+
 // ReceiveCandidate persists a new Release row in StatusReceived, idempotent on
-// the release_id PK. The caller (HTTP handler) is responsible for returning
-// 202 Accepted to CI.
+// the release_id PK: submitting a release id again with the same facts is a
+// no-op, whatever status the stored candidate has reached. A bad submission
+// returns an error wrapping ErrInvalidCandidate; a run-id kind clash wraps
+// ErrRunKindConflict; a release id that names a candidate with different facts
+// wraps ErrReleaseIDConflict; any other error is a storage failure. The caller
+// (HTTP handler) is responsible for returning 202 Accepted to CI.
 func ReceiveCandidate(ctx context.Context, d *Deps, in ReceiveCandidateInput) error {
 	if err := in.validate(); err != nil {
-		return err
+		return fmt.Errorf("%w: %v", ErrInvalidCandidate, err)
 	}
 	kind, err := in.manifestKind()
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %v", ErrInvalidCandidate, err)
 	}
 	u := d.NewUoW()
 	if err := u.Begin(ctx); err != nil {
@@ -89,24 +122,34 @@ func ReceiveCandidate(ctx context.Context, d *Deps, in ReceiveCandidateInput) er
 	}
 	defer u.Rollback() //nolint:errcheck
 
-	existing, err := u.RunRepo().Get(ctx, in.ReleaseID)
+	existing, err := u.RunRepo().Load(ctx, in.ReleaseID)
 	if err != nil {
-		return fmt.Errorf("get run: %w", err)
+		return fmt.Errorf("load run: %w", err)
 	}
-	if existing != nil {
-		if existing.Kind() != pipeline.KindCandidate {
-			return fmt.Errorf("%w: %s is a %s", ErrRunKindConflict, in.ReleaseID, existing.Kind())
+	if existing == nil {
+		r := pipeline.NewCandidate(in.ReleaseID, in.Service, in.ImageTag, in.Bootstrap, in.Repo, in.CommitSHA, kind, d.Clock.Now())
+		inserted, err := u.RunRepo().Create(ctx, r)
+		if err != nil {
+			return fmt.Errorf("create release: %w", err)
 		}
-		return u.Commit()
+		if inserted {
+			if err := u.Commit(); err != nil {
+				return fmt.Errorf("commit: %w", err)
+			}
+			d.Telemetry.ReleaseReceived(ctx, in.ReleaseID)
+			return nil
+		}
+		// A concurrent submission of this id committed its run after the Load
+		// above found none, so this submission is a resubmit of that run.
+		if existing, err = u.RunRepo().Load(ctx, in.ReleaseID); err != nil {
+			return fmt.Errorf("load run: %w", err)
+		}
+		if existing == nil {
+			return fmt.Errorf("release %s was neither inserted nor found", in.ReleaseID)
+		}
 	}
-
-	r := pipeline.NewCandidate(in.ReleaseID, in.Service, in.ImageTag, in.Bootstrap, in.Repo, in.CommitSHA, kind, d.Clock.Now())
-	if err := u.RunRepo().Save(ctx, r); err != nil {
-		return fmt.Errorf("save release: %w", err)
+	if err := resubmitOutcome(existing, in, kind); err != nil {
+		return err
 	}
-	if err := u.Commit(); err != nil {
-		return fmt.Errorf("commit: %w", err)
-	}
-	d.Telemetry.ReleaseReceived(ctx, in.ReleaseID)
-	return nil
+	return u.Commit()
 }

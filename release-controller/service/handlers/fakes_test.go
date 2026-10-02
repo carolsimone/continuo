@@ -66,6 +66,10 @@ type fakeStore struct {
 	cpUpsertCalls int
 	serviceProd   map[string]*release.ServiceProd
 	entries       []*pkgoutbox.Entry
+	// racing holds runs another submission commits between a transaction's
+	// Load and its Create: invisible to Load, they land in releases the
+	// moment a Create for their id runs, as a concurrent winner's insert does.
+	racing map[string]*pipeline.Run
 }
 
 func newFakeStore() *fakeStore {
@@ -154,6 +158,17 @@ func (s *fakeStore) OutboxEntries() []*pkgoutbox.Entry {
 	return out
 }
 
+// RaceRelease makes r the run a concurrent submission commits after this
+// submission's Load has found no row but before its Create.
+func (s *fakeStore) RaceRelease(r *pipeline.Run) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.racing == nil {
+		s.racing = map[string]*pipeline.Run{}
+	}
+	s.racing[r.ID()] = r
+}
+
 // --- fakeRunRepo ---
 
 type fakeRunRepo struct {
@@ -188,6 +203,24 @@ func (f *fakeRunRepo) Save(_ context.Context, r *pipeline.Run) error {
 	}
 	f.store.releases[r.ID()] = r
 	return nil
+}
+
+// Create mirrors the Postgres insert-only contract: it writes r only when no
+// run has its id, and reports whether it did.
+func (f *fakeRunRepo) Create(_ context.Context, r *pipeline.Run) (bool, error) {
+	f.store.mu.Lock()
+	defer f.store.mu.Unlock()
+	if w, ok := f.store.racing[r.ID()]; ok {
+		delete(f.store.racing, r.ID())
+		f.store.releases[w.ID()] = w
+		f.store.order = append(f.store.order, w.ID())
+	}
+	if _, exists := f.store.releases[r.ID()]; exists {
+		return false, nil
+	}
+	f.store.order = append(f.store.order, r.ID())
+	f.store.releases[r.ID()] = r
+	return true, nil
 }
 
 // NextQueued returns the oldest run in StatusReceived, or nil.

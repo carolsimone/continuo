@@ -72,7 +72,9 @@ func TestE2E_Remediation_CompileFailureProposesFix(t *testing.T) {
 	if fixtureService == "" {
 		t.Skip("COMPILE_FIXTURE_SERVICE not set — compile-failure fixture not provisioned " +
 			"in this harness; see .superpowers/sdd/task-7.1-report.md for the cold-stack " +
-			"enablement recipe (fixture dbt image + kind load + service_repos.yaml mapping)")
+			"enablement recipe (fixture dbt image + kind load + service_repos.yaml mapping); " +
+			"the fixture service must also be bound in tests/e2e/ci-auth.json under repository id " +
+			e2eDbtRepositoryID + " so postRelease can submit it through the public API")
 	}
 	fixtureImageTag := os.Getenv("COMPILE_FIXTURE_IMAGE_TAG")
 	require.NotEmpty(t, fixtureImageTag,

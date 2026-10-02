@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"context"
+	"encoding/json"
 	"html"
 	"io"
 	"net/http"
@@ -66,6 +67,73 @@ func TestAuthOIDC(t *testing.T) {
 		}
 		if st := statusOf(t, client, "GET", base+"/auth/me"); st != http.StatusUnauthorized {
 			t.Fatalf("norole /auth/me = %d, want 401", st)
+		}
+	})
+
+	dexToken := func(t *testing.T, email string) string {
+		t.Helper()
+		form := url.Values{"grant_type": {"password"}, "scope": {"openid email profile"}, "username": {email}, "password": {"password"}}
+		req, _ := http.NewRequest(http.MethodPost, getEnv("DEX_BASE", "http://dex:5556/dex")+"/token", strings.NewReader(form.Encode()))
+		req.SetBasicAuth("continuo-ui", "e2e-secret")
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("dex password grant: %v", err)
+		}
+		defer resp.Body.Close()
+		var out struct {
+			IDToken string `json:"id_token"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil || out.IDToken == "" {
+			t.Fatalf("dex password grant: status %d, no id_token", resp.StatusCode)
+		}
+		return out.IDToken
+	}
+	// bearer sends a request with a bearer token and returns the status and the
+	// decoded JSON body (empty when the body is not JSON).
+	bearer := func(t *testing.T, method, path, token, body string) (int, map[string]any) {
+		t.Helper()
+		req, _ := http.NewRequest(method, base+path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("%s %s: %v", method, path, err)
+		}
+		defer resp.Body.Close()
+		out := map[string]any{}
+		_ = json.NewDecoder(resp.Body).Decode(&out)
+		return resp.StatusCode, out
+	}
+	// A body that passes the ui's own validation, so the only things that can
+	// refuse it are the submit authorization and release-controller. Its kind
+	// is unknown, so release-controller rejects it before anything is stored:
+	// a principal allowed to submit gets release-controller's 400 naming the
+	// kind, and one that is not allowed gets the ui's 403 first. A human
+	// principal carries no token provenance, so repo and commit_sha are in the
+	// body.
+	submitBody := `{"release_id":"auth-e2e-submit","service":"service-1","image_tag":"t","kind":"bogus","repo":"carolsimone/continuo-demo","commit_sha":"abc"}`
+
+	t.Run("operator Dex bearer is authorized to submit", func(t *testing.T) {
+		tok := dexToken(t, "operator@example.com")
+		if st, _ := bearer(t, "GET", "/api/v1/current-prod", tok, ""); st != http.StatusOK {
+			t.Fatalf("operator GET current-prod = %d, want 200", st)
+		}
+		st, out := bearer(t, "POST", "/api/v1/releases", tok, submitBody)
+		if st != http.StatusBadRequest {
+			t.Fatalf("operator POST = %d (%v), want 400 from release-controller", st, out)
+		}
+		if msg, _ := out["error"].(string); !strings.Contains(msg, "unknown manifest kind") {
+			t.Fatalf("operator POST error = %q, want release-controller's unknown manifest kind refusal", msg)
+		}
+	})
+
+	t.Run("viewer Dex bearer cannot submit; no-role bearer is refused", func(t *testing.T) {
+		if st, out := bearer(t, "POST", "/api/v1/releases", dexToken(t, "viewer@example.com"), submitBody); st != http.StatusForbidden {
+			t.Fatalf("viewer POST = %d (%v), want 403", st, out)
+		}
+		if st, _ := bearer(t, "GET", "/api/v1/current-prod", dexToken(t, "norole@example.com"), ""); st != http.StatusForbidden {
+			t.Fatalf("norole GET = %d, want 403", st)
 		}
 	})
 

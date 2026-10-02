@@ -238,15 +238,14 @@ docker exec \
 canonical S3 key `s3://<bucket>/<service>/<release_id>/manifest.json`. Uploading
 the manifest is one step of shipping a change into continuo's blue/green
 pipeline; it does not, by itself, promote anything. To register the change,
-build and push the service image, upload the manifest, then `POST /releases` on
-the release-controller HTTP API. Only one object is uploaded per release — the
+build and push the service image, upload the manifest, then `POST /api/v1/releases`
+on continuo's public API. Only one object is uploaded per release — the
 filtered `manifest.json`. There is no `service_metadata.json` sidecar, and the
 image tag travels in the HTTP request body, not in object storage.
 
-The full producer contract — image naming, the canonical manifest key, the
-release-controller HTTP API (`GET /current-prod`, `POST /releases`,
-`GET /releases/{id}`, `GET /releases`), bootstrap detection, and polling to a
-terminal status — is documented in
-[`docs/loading-releases.md`](../docs/loading-releases.md).
+The public release API (`GET /api/v1/current-prod`, `POST /api/v1/releases`,
+`GET /api/v1/releases/{id}`), its authentication, bootstrap, and polling to a
+terminal status are documented in
+[Releasing from CI](../deploy/README.md#releasing-from-ci-github-actions).
 A runnable reference producer lives at
 <https://github.com/carolsimone/continuo-demo>.
