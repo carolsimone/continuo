@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"os"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	grpcinfra "github.com/carolsimone/continuo/orchestrator/adapters/grpc"
@@ -102,16 +101,11 @@ func main() {
 	// ========================================================================
 
 	// The health server comes up before any dependency is reachable so the
-	// liveness probe keeps answering while Neo4j is still starting; otherwise a
-	// wait longer than the probe's failure window would restart the pod anyway.
-	// Readiness stays false until startup completes (see the "startup" probe).
-	var started atomic.Bool
-	liveReg.AddDependencyProbe("startup", time.Second, func(context.Context) error {
-		if !started.Load() {
-			return errors.New("startup in progress")
-		}
-		return nil
-	})
+	// liveness probe keeps answering while Neo4j or Redis is still starting;
+	// otherwise a wait longer than the probe's failure window would restart the
+	// pod anyway.
+	// Readiness stays false until startup completes (see the startup gate).
+	startup := liveReg.AddStartupGate()
 	healthServer := httpinfra.NewHealthServer(cfg.HTTPPort, liveReg, logger)
 	go func() {
 		if err := healthServer.Start(); err != nil {
@@ -183,8 +177,15 @@ func main() {
 		DB:       0,
 	})
 
-	if err := redisClient.Ping(ctx).Err(); err != nil {
-		logger.Error("Failed to connect to Redis", "error", err)
+	// Redis is a separate workload too: wait for it with backoff rather than
+	// exiting on the first refused dial.
+	err = pkgredis.WaitForRedis(ctx, redisClient, pkgredis.DefaultStartupPolicy(), logger)
+	if errors.Is(err, context.Canceled) {
+		logger.Info("Shutdown requested while waiting for Redis")
+		os.Exit(0)
+	}
+	if err != nil {
+		logger.Error("Failed to connect to Redis", "addr", cfg.Redis.Addr(), "error", err)
 		os.Exit(1)
 	}
 	logger.Info("Redis connection established")
@@ -481,8 +482,8 @@ func main() {
 	}()
 
 	// Everything is initialised and serving: readiness (held false by the
-	// "startup" probe since the health server came up) may now turn true.
-	started.Store(true)
+	// startup gate since the health server came up) may now turn true.
+	startup.Done()
 
 	// Block until the graceful-shutdown sequence has fully completed: stop
 	// intake, drain in-flight goroutines, then close infra. No fixed sleep.

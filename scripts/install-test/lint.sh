@@ -60,6 +60,14 @@ python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/defaults.yaml
 echo "--- http port env names match what each service reads (defaults)"
 python3 scripts/install-test/assert-port-env.py "${tmp}/defaults.yaml" .
 
+# A bundled Redis is a StatefulSet with no ordering guarantee against the
+# Deployments, so every service whose code connects to Redis must wait for it
+# in bundled mode, and none may wait in BYO mode, where Redis is already up.
+# Which services connect to Redis is read from their source.
+echo "--- wait-for-redis gates every Redis-using service (defaults) and none (byo)"
+python3 scripts/install-test/assert-redis-gate.py . "${tmp}/defaults.yaml" \
+  "${tmp}/byo-example.yaml" "${tmp}/byo-inline.yaml" "${tmp}/byo-secret.yaml"
+
 # Services read the shared ConfigMap through envFrom, and Kubernetes never
 # refreshes environment variables in a running pod when that ConfigMap changes.
 # The pod template therefore carries a checksum of it, so `helm upgrade` rolls

@@ -91,6 +91,21 @@ func main() {
 		})
 	}
 
+	// Start HTTP health server before any dependency is reachable. /health is a
+	// plain process-up probe; /ready and /livez are both backed by the liveness
+	// registry but answer different questions — /ready also fails on a
+	// dependency outage (stops traffic), /livez fails only on a dead or wedged
+	// consumer (restarts the pod). Serving /livez from the start keeps the
+	// liveness probe answering while the boot waits for Redis; the startup gate
+	// holds /ready false until every consumer and server below is running.
+	startup := liveReg.AddStartupGate()
+	healthServer := http.NewServer(cfg.HealthPort, liveReg, logger)
+	go func() {
+		if err := healthServer.Start(); err != nil {
+			logger.Error("Health server error", "error", err)
+		}
+	}()
+
 	// Initialize PostgreSQL connection
 	db, err := database.NewConnection(cfg.Postgres)
 	if err != nil {
@@ -118,11 +133,16 @@ func main() {
 		Password: cfg.Redis.Password,
 	})
 
-	// Test Redis connection
-	pingCtx, pingCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer pingCancel()
-	if err := redisClient.Ping(pingCtx).Err(); err != nil {
-		logger.Error("Failed to connect to Redis", "error", err)
+	// Redis is a separate workload that may still be starting (or its Service
+	// not yet resolvable) when this process boots, so wait for it with backoff
+	// instead of exiting on the first refused dial.
+	err = pkgredis.WaitForRedis(ctx, redisClient, pkgredis.DefaultStartupPolicy(), logger)
+	if errors.Is(err, context.Canceled) {
+		logger.Info("Shutdown requested while waiting for Redis")
+		os.Exit(0)
+	}
+	if err != nil {
+		logger.Error("Failed to connect to Redis", "addr", cfg.Redis.Addr(), "error", err)
 		os.Exit(1)
 	}
 	logger.Info("Redis connection established")
@@ -320,22 +340,13 @@ func main() {
 		}
 	}()
 
-	// Start HTTP health server. /health is a plain process-up probe; /ready and
-	// /livez are both backed by the liveness registry but answer different
-	// questions — /ready also fails on a dependency outage (stops traffic),
-	// /livez fails only on a dead or wedged consumer (restarts the pod).
-	healthServer := http.NewServer(cfg.HealthPort, liveReg, logger)
-
 	// Register health server cleanup
 	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
 		return healthServer.Shutdown(ctx)
 	})
 
-	go func() {
-		if err := healthServer.Start(); err != nil {
-			logger.Error("Health server error", "error", err)
-		}
-	}()
+	// Everything is initialised and serving: readiness may now turn true.
+	startup.Done()
 
 	logger.Info("State service started successfully",
 		"grpc_port", cfg.GRPCPort,

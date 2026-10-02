@@ -12,6 +12,16 @@ shipped in those.
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-10-02
+
+Template and service startup fixes; no values change. An unmodified values file upgrades unchanged. **PATCH.**
+
+### Fixed
+- With the bundled Redis (`redis.enabled=true`), every service that connects to Redis — state, orchestrator, agent-chat, execution-controller, release-controller, remediation, agent-remediation, ui and topology-controller — waits for it in a `wait-for-redis` init container. Only ui and topology-controller waited before, so on a fresh install the Go services could start before Redis was resolvable and crash-loop. BYO installs render no Redis gate.
+- The seven Go services wait for Redis at startup in code too (capped backoff, 5 minutes in total), so BYO installs and docker-compose ride out a Redis that is still starting instead of exiting on the first refused connection; a wrong Redis password still fails at once. Each serves its liveness endpoint while it waits and holds readiness at 503 until startup completes.
+- `wait-for-migrations` checks for the service's database through the `postgres` maintenance database and for `flyway_schema_history` with `to_regclass`, so waiting on a database or table that does not exist yet no longer logs a `FATAL`/`ERROR` on Postgres every few seconds.
+- The MinIO bucket-init Job prints one `waiting for minio (N)...` line per attempt instead of an `mc` error, gives up after 10 minutes, and then prints `mc`'s last error.
+
 ## [0.9.0] - 2026-10-02
 
 CD pipelines release through continuo's public URL with their GitHub Actions OIDC token, and release-controller is reached only inside the cluster. New values with safe defaults; an unmodified values file upgrades unchanged, including with `--reuse-values`. **MINOR.**

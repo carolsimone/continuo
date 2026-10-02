@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -109,20 +110,6 @@ func main() {
 		return db.PingContext(ctx)
 	})
 
-	rc, err := redisadapter.NewClient(ctx, redisadapter.Config{
-		Host:     cfg.Redis.Host,
-		Port:     cfg.Redis.Port,
-		Password: cfg.Redis.Password,
-	})
-	if err != nil {
-		logger.Error("redis connect", "error", err)
-		os.Exit(1)
-	}
-	defer func() { _ = rc.Close() }()
-	liveReg.AddProbe("redis", 5*time.Second, func(ctx context.Context) error {
-		return rc.Ping(ctx).Err()
-	})
-
 	// S3 client for pruning candidate-SQL objects when releases are deleted.
 	s3Client := s3adapter.NewS3Client(
 		cfg.S3.EndpointURL,
@@ -153,6 +140,45 @@ func main() {
 
 		Rejections: serialization.ReleaseRejectedJSON{},
 	}
+
+	// The HTTP server (API plus /healthz and /livez) comes up before Redis is
+	// reachable so /livez keeps answering while the boot waits for it; the
+	// startup gate holds /healthz false, keeping the pod out of its Service
+	// until the outbox publisher and consumers below are running. The API
+	// needs only Postgres and S3: a request accepted before then records its
+	// events in the outbox, which the publisher drains once it starts. The
+	// server blocks until ctx is cancelled (graceful 5-second shutdown).
+	startup := liveReg.AddStartupGate()
+	srv := httpinfra.NewServer(deps, liveReg, cfg.HTTPPort, logger)
+	srvDone := make(chan struct{})
+	go func() {
+		defer close(srvDone)
+		if err := srv.Start(ctx); err != nil {
+			logger.Error("http server error", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	// Redis is a separate workload that may still be starting (or its Service
+	// not yet resolvable) when this process boots, so wait for it with backoff
+	// instead of exiting on the first refused dial.
+	rc, err := redisadapter.NewClient(ctx, redisadapter.Config{
+		Host:     cfg.Redis.Host,
+		Port:     cfg.Redis.Port,
+		Password: cfg.Redis.Password,
+	}, pkgredis.DefaultStartupPolicy(), logger)
+	if errors.Is(err, context.Canceled) {
+		logger.Info("shutdown requested while waiting for redis")
+		os.Exit(0)
+	}
+	if err != nil {
+		logger.Error("redis connect", "error", err)
+		os.Exit(1)
+	}
+	defer func() { _ = rc.Close() }()
+	liveReg.AddProbe("redis", 5*time.Second, func(ctx context.Context) error {
+		return rc.Ping(ctx).Err()
+	})
 
 	// Start outbox publisher — spawns its own goroutine internally and runs until
 	// ctx is cancelled.
@@ -196,10 +222,8 @@ func main() {
 		}
 	}()
 
-	// HTTP server blocks until ctx is cancelled (graceful 5-second shutdown).
-	srv := httpinfra.NewServer(deps, liveReg, cfg.HTTPPort, logger)
-	if err := srv.Start(ctx); err != nil {
-		logger.Error("http server error", "error", err)
-		os.Exit(1)
-	}
+	// Everything is initialised and running: readiness may now turn true.
+	startup.Done()
+
+	<-srvDone
 }

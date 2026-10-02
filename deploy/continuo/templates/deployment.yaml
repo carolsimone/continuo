@@ -66,16 +66,17 @@ spec:
         runAsGroup: 65532
         {{- end }}
       {{- $needsMigrations := and $.Values.postgresql.enabled $svc.env $svc.env.POSTGRES_DB }}
-      {{- $needsRedis := and $.Values.redis.enabled $svc.env $svc.env.REDIS_URL }}
+      {{- $needsRedis := and $.Values.redis.enabled (has $svc.name (include "continuo.redis.clientServices" $ | fromJsonArray)) }}
       {{- if or $needsMigrations $needsRedis }}
       initContainers:
         {{- if $needsRedis }}
         # Bundled mode: Redis is a StatefulSet with no ordering guarantee against
-        # these Deployments, so a Redis-backed service that starts first crashes
-        # on connect. CrashLoopBackOff then backs off exponentially (10s, 20s,
-        # 40s, 80s...), so the pod stays down long after Redis is actually ready
-        # — the restart loop costs more than the wait it replaces. Gate instead.
-        # BYO installs point at Redis that is already running and render nothing.
+        # these Deployments, so every service that connects to Redis waits here
+        # until it answers PING (continuo.redis.clientServices names them). The
+        # services also wait for Redis in code, which covers BYO installs and
+        # docker-compose; this gate keeps a cold bundled install from logging a
+        # retry per service while Redis is still being scheduled. BYO installs
+        # point at Redis that is already running and render nothing.
         - name: wait-for-redis
           image: "{{ $.Values.redis.image.repository }}:{{ $.Values.redis.image.tag }}"
           imagePullPolicy: {{ $.Values.global.imagePullPolicy }}
@@ -139,7 +140,16 @@ spec:
             - |
               set -eu
               tries=0
-              until psql -tc "SELECT 1 FROM flyway_schema_history LIMIT 1" >/dev/null 2>&1; do
+              # Probe through the always-present maintenance database, then
+              # the service's own, using queries that cannot fail server-side:
+              # selecting from a database or table that does not exist yet
+              # would log a FATAL/ERROR on Postgres for every iteration.
+              migrated() {
+                [ "$(PGDATABASE=postgres psql -XAtqc "SELECT 1 FROM pg_database WHERE datname = '${PGDATABASE}'" 2>/dev/null)" = "1" ] || return 1
+                [ "$(psql -XAtqc "SELECT to_regclass('public.flyway_schema_history') IS NOT NULL" 2>/dev/null)" = "t" ] || return 1
+                [ "$(psql -XAtqc "SELECT 1 FROM public.flyway_schema_history LIMIT 1" 2>/dev/null)" = "1" ]
+              }
+              until migrated; do
                 tries=$((tries+1))
                 if [ "$tries" -gt 200 ]; then
                   echo "FATAL: migrations never completed for ${PGDATABASE} after $((200*3))s — check the db-init-migrate Job" >&2

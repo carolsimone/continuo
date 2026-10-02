@@ -46,9 +46,19 @@ spec:
             - /bin/sh
             - -c
             - |
-              set -e
-              until mc alias set local "http://{{ include "continuo.minio.fullname" . }}:9000" "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"; do
-                echo "waiting for minio..."; sleep 3
+              set -eu
+              # mc prints an error per failed attempt while MinIO is still
+              # starting; keep it out of the log and print only the last one,
+              # when the wait gives up.
+              tries=0
+              until mc alias set local "http://{{ include "continuo.minio.fullname" . }}:9000" "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/tmp/mc-alias.log 2>&1; do
+                tries=$((tries+1))
+                if [ "$tries" -gt 200 ]; then
+                  echo "FATAL: MinIO never accepted the alias after $((200*3))s:" >&2
+                  cat /tmp/mc-alias.log >&2
+                  exit 1
+                fi
+                echo "waiting for minio ($tries)..."; sleep 3
               done
               mc mb --ignore-existing "local/{{ .Values.minio.bucket }}"
           volumeMounts:
