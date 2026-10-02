@@ -156,10 +156,10 @@ Notes that matter before you commit to this path:
   hasn't created yet. That path runs the migration as a regular,
   revision-suffixed resource, with Postgres-backed services gating on it via an
   init container. In bundled mode, expect new pods to briefly crashloop on an
-  upgrade: the `wait-for-migrations` init container only checks that
-  `flyway_schema_history` exists in the target database, not that the upgrade's
-  specific migration has been applied, so a pod can start before the migration
-  Job finishes.
+  upgrade: the `wait-for-migrations` init container only checks that the
+  target database has a non-empty `flyway_schema_history`, not that the
+  upgrade's specific migration has been applied, so a pod can start before the
+  migration Job finishes.
 
 ## 3. Security defaults
 

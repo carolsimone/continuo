@@ -116,6 +116,17 @@ func main() {
 		})
 	}
 
+	// The health server comes up before any dependency is reachable so /livez
+	// keeps answering while the boot waits for Redis; the startup gate holds
+	// /ready false until every consumer below is running.
+	startup := liveReg.AddStartupGate()
+	healthServer := http.NewHealthServer(cfg.HTTPPort, liveReg, logger)
+	go func() {
+		if err := healthServer.Start(); err != nil {
+			logger.Error("Health server error", "error", err)
+		}
+	}()
+
 	// ---- infrastructure ----
 
 	pgDB, err := postgres.NewPostgresClient(cfg.Postgres, logger)
@@ -129,9 +140,17 @@ func main() {
 	})
 	liveReg.AddProbe("postgres", 5*time.Second, func(ctx context.Context) error { return pgDB.PingContext(ctx) })
 
+	// Redis is a separate workload that may still be starting (or its Service
+	// not yet resolvable) when this process boots, so wait for it with backoff
+	// instead of exiting on the first refused dial.
 	redisClient := goredis.NewClient(&goredis.Options{Addr: cfg.Redis.Addr(), Password: cfg.Redis.Password})
-	if err := redisClient.Ping(ctx).Err(); err != nil {
-		logger.Error("Failed to connect to Redis", "error", err)
+	err = pkgredis.WaitForRedis(ctx, redisClient, pkgredis.DefaultStartupPolicy(), logger)
+	if errors.Is(err, context.Canceled) {
+		logger.Info("Shutdown requested while waiting for Redis")
+		os.Exit(0)
+	}
+	if err != nil {
+		logger.Error("Failed to connect to Redis", "addr", cfg.Redis.Addr(), "error", err)
 		os.Exit(1)
 	}
 	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
@@ -259,12 +278,6 @@ func main() {
 		}
 	})
 
-	healthServer := http.NewHealthServer(cfg.HTTPPort, liveReg, logger)
-	go func() {
-		if err := healthServer.Start(); err != nil {
-			logger.Error("Health server error", "error", err)
-		}
-	}()
 	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error { return healthServer.Shutdown(ctx) })
 
 	// ---- consumers ----
@@ -279,6 +292,9 @@ func main() {
 	runSchemaOpConsumer("release_promoted_teardown", releasePromotedTeardownConsumer)
 	runSchemaOpConsumer("release_rejected_teardown", releaseRejectedTeardownConsumer)
 	runConsumer("check_k8s", checkConsumer)
+
+	// Everything is initialised and running: readiness may now turn true.
+	startup.Done()
 
 	<-lifecycleManager.Done()
 	logger.Info("execution-controller service stopped")

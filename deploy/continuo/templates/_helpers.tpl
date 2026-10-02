@@ -346,6 +346,19 @@ upgrading with their own copy of values.yaml would otherwise carry an older entr
 that silently lacks the refs. Endpoint, bucket and region reach every pod through
 the shared ConfigMap and need no per-service wiring.
 */}}
+{{- /*
+Services whose code connects to Redis at boot: the seven Go services read
+REDIS_HOST/REDIS_PORT or REDIS_ADDR from the shared ConfigMap, while ui and
+topology-controller read the REDIS_URL their `services` entry carries. In
+bundled mode each of them is gated on Redis answering PING. Listed here rather
+than inferred from a service's `env`, which only names the URL-reading half and
+lives in the replaceable `services` list. scripts/install-test/assert-redis-gate.py
+pins this list to the services whose source imports a Redis client.
+*/ -}}
+{{- define "continuo.redis.clientServices" -}}
+["state","orchestrator","agent-chat","execution-controller","ui","topology-controller","release-controller","remediation","agent-remediation"]
+{{- end -}}
+
 {{- define "continuo.s3.credentialServices" -}}
 ["orchestrator","topology-controller","execution-controller","release-controller","remediation","agent-remediation","ui","agent-chat"]
 {{- end -}}

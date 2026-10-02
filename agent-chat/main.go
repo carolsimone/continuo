@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -27,6 +28,7 @@ import (
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	"github.com/carolsimone/continuo/pkg/lifecycle"
 	"github.com/carolsimone/continuo/pkg/liveness"
+	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	goredis "github.com/redis/go-redis/v9"
@@ -62,6 +64,20 @@ func main() {
 	lifecycleManager.SetupSignalHandlers(cancel, cfg.ShutdownGrace)
 
 	liveReg := liveness.NewRegistry()
+
+	// HTTP health server: /health is a plain process-up probe. /ready is backed
+	// by the liveness registry so traffic stops when Postgres is unreachable;
+	// /livez is the liveness probe and has no workers or heartbeats registered
+	// here, so it stays 200. It comes up before any dependency is reachable so
+	// /livez keeps answering while the boot waits for Redis; the startup gate
+	// holds /ready false until the gRPC server is serving.
+	startup := liveReg.AddStartupGate()
+	healthServer := agenthttp.NewServer(cfg.HealthPort, liveReg, logger)
+	go func() {
+		if err := healthServer.Start(); err != nil {
+			logger.Error("health server error", "error", err)
+		}
+	}()
 
 	// Postgres connection.
 	db, err := sqlx.Connect("postgres", cfg.Postgres.DSN())
@@ -140,7 +156,15 @@ func main() {
 			Password: cfg.RedisPassword,
 			DB:       0,
 		})
-		if err := redisClient.Ping(ctx).Err(); err != nil {
+		// Redis is a separate workload that may still be starting (or its
+		// Service not yet resolvable) when this process boots, so wait for it
+		// with backoff instead of exiting on the first refused dial.
+		err := pkgredis.WaitForRedis(ctx, redisClient, pkgredis.DefaultStartupPolicy(), logger)
+		if errors.Is(err, context.Canceled) {
+			logger.Info("Shutdown requested while waiting for Redis")
+			os.Exit(0)
+		}
+		if err != nil {
 			logger.Error("failed to connect to Redis for rate limiting", "addr", cfg.RedisAddr, "error", err)
 			os.Exit(1)
 		}
@@ -235,21 +259,12 @@ func main() {
 		}
 	}()
 
-	// HTTP health server: /health is a plain process-up probe. /ready is backed
-	// by the liveness registry so traffic stops when Postgres is unreachable;
-	// /livez is the liveness probe and has no workers or heartbeats registered
-	// here, so it stays 200.
-	healthServer := agenthttp.NewServer(cfg.HealthPort, liveReg, logger)
-
 	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
 		return healthServer.Shutdown(ctx)
 	})
 
-	go func() {
-		if err := healthServer.Start(); err != nil {
-			logger.Error("health server error", "error", err)
-		}
-	}()
+	// Everything is initialised and serving: readiness may now turn true.
+	startup.Done()
 
 	logger.Info("agent-chat started",
 		"grpc_port", cfg.GRPCPort,

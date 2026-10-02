@@ -179,8 +179,8 @@ uses, so setting it here covers both.
 **A pod is in `CrashLoopBackOff` during install.** Not expected: services gate
 on init containers (`wait-for-migrations`, `wait-for-redis`) and start in
 dependency order, so a healthy install comes up with zero restarts. A pod
-stuck in `Init:0/1` is still waiting on its gate — look at the datastore pods
-and the `db-init-migrate` job first. A pod that is actually crash-looping is a
+stuck in `Init:` (for example `Init:0/2`) is still waiting on its gates — look
+at the datastore pods and the `db-init-migrate` job first. A pod that is actually crash-looping is a
 real signal: read its logs.
 
 **`sudo: a terminal is required to read the password`** on the `/etc/hosts`

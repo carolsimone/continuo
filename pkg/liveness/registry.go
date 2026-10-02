@@ -17,7 +17,9 @@ package liveness
 
 import (
 	"context"
+	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -180,3 +182,33 @@ func (r *Registry) Ready(ctx context.Context) bool {
 func (r *Registry) Live(ctx context.Context) bool {
 	return len(r.LivenessCheck(ctx)) == 0
 }
+
+// StartupGate holds readiness false while a service is still starting. It lets
+// a service bring its health server up before its dependencies are reachable:
+// liveness keeps answering through a long dependency wait at boot, so the
+// kubelet does not restart the pod mid-wait, while readiness stays false so no
+// traffic is routed to a pod that is not serving yet.
+type StartupGate struct{ done atomic.Bool }
+
+// startupProbeName names the readiness failure a StartupGate reports.
+const startupProbeName = "startup"
+
+// errStartupInProgress is the readiness failure reported until Done is called.
+var errStartupInProgress = errors.New("startup in progress")
+
+// AddStartupGate registers a dependency probe named "startup" that fails until
+// the returned gate's Done is called. Like every dependency probe it feeds
+// readiness only, never liveness.
+func (r *Registry) AddStartupGate() *StartupGate {
+	g := &StartupGate{}
+	r.AddDependencyProbe(startupProbeName, 0, func(context.Context) error {
+		if !g.done.Load() {
+			return errStartupInProgress
+		}
+		return nil
+	})
+	return g
+}
+
+// Done marks startup complete; readiness then reflects the remaining checks.
+func (g *StartupGate) Done() { g.done.Store(true) }

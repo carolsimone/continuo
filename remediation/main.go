@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
@@ -86,6 +87,23 @@ func main() {
 		}()
 	}
 
+	mux := http.NewServeMux()
+	// Two health paths with different semantics, both registry-backed. Deploy
+	// config points the Kubernetes readinessProbe at /healthz and the
+	// livenessProbe at /livez (see deploy/continuo/values.yaml): /healthz
+	// (readiness) reflects workers + heartbeats + dependency probes, so a Redis/
+	// Postgres outage pulls the pod from Service endpoints; /livez (liveness)
+	// reflects workers + heartbeats ONLY, so a dependency outage does NOT restart
+	// a pod whose consumer is already retrying, while a dead/wedged consumer does.
+	// The server comes up before any dependency is reachable so /livez keeps
+	// answering while the boot waits for Redis; the startup gate holds /healthz
+	// false until the consumers are running.
+	startup := liveReg.AddStartupGate()
+	mux.HandleFunc("/healthz", liveness.Handler("readiness", liveReg.Check, logger))
+	mux.HandleFunc("/livez", liveness.Handler("liveness", liveReg.LivenessCheck, logger))
+	srv := &http.Server{Addr: ":" + cfg.HTTPPort, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	go func() { _ = srv.ListenAndServe() }()
+
 	db, err := postgres.NewDB(postgres.Config{
 		Host:     cfg.Postgres.Host,
 		Port:     cfg.Postgres.Port,
@@ -102,11 +120,18 @@ func main() {
 		return db.PingContext(ctx)
 	})
 
+	// Redis is a separate workload that may still be starting (or its Service
+	// not yet resolvable) when this process boots, so wait for it with backoff
+	// instead of exiting on the first refused dial.
 	rc, err := rredis.NewClient(ctx, rredis.Config{
 		Host:     cfg.Redis.Host,
 		Port:     cfg.Redis.Port,
 		Password: cfg.Redis.Password,
-	})
+	}, pkgredis.DefaultStartupPolicy(), logger)
+	if errors.Is(err, context.Canceled) {
+		logger.Info("shutdown requested while waiting for redis")
+		os.Exit(0)
+	}
 	if err != nil {
 		logger.Error("redis connect", "error", err)
 		os.Exit(1)
@@ -143,18 +168,8 @@ func main() {
 	// until ctx is cancelled.
 	runConsumer("remediation_retry", rredis.NewRemediationRetryConsumer(rc, deps, logger))
 
-	mux := http.NewServeMux()
-	// Two health paths with different semantics, both registry-backed. Deploy
-	// config points the Kubernetes readinessProbe at /healthz and the
-	// livenessProbe at /livez (see deploy/continuo/values.yaml): /healthz
-	// (readiness) reflects workers + heartbeats + dependency probes, so a Redis/
-	// Postgres outage pulls the pod from Service endpoints; /livez (liveness)
-	// reflects workers + heartbeats ONLY, so a dependency outage does NOT restart
-	// a pod whose consumer is already retrying, while a dead/wedged consumer does.
-	mux.HandleFunc("/healthz", liveness.Handler("readiness", liveReg.Check, logger))
-	mux.HandleFunc("/livez", liveness.Handler("liveness", liveReg.LivenessCheck, logger))
-	srv := &http.Server{Addr: ":" + cfg.HTTPPort, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
-	go func() { _ = srv.ListenAndServe() }()
+	// Everything is initialised and running: readiness may now turn true.
+	startup.Done()
 
 	logger.Info("remediation service started", "http_port", cfg.HTTPPort)
 	<-ctx.Done()
