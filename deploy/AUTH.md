@@ -230,7 +230,8 @@ Rules that apply to every bearer:
   forwarded header is still the credential and answers `401`, so such a proxy
   must not pass its `Authorization` header through to `ui`.
 - **Signed with RS256.** Tokens using any other algorithm, including `none` and
-  HMAC, are rejected, as is a token whose `iss` is not one of the two issuers above.
+  HMAC, are rejected, as is a token whose `iss` is not a trusted issuer: the login
+  issuer, or the CI issuer while `ciAuth.bindings` holds at least one binding.
 - **Valid for at most one hour.** A token whose `exp` is more than 3600 seconds
   after its `iat` is rejected, and so is one whose `iat` lies more than 60
   seconds in the future. `exp` and `nbf` are checked with 60 seconds of clock
