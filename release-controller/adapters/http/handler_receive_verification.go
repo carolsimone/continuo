@@ -10,12 +10,38 @@ import (
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 )
 
+// ReceiveVerificationRequest is the JSON body of POST /verification-runs. It
+// maps one to one onto handlers.ReceiveVerificationInput; the application
+// layer never sees the wire field names.
+type ReceiveVerificationRequest struct {
+	RunID             string `json:"run_id"`
+	Service           string `json:"service"`
+	ImageTag          string `json:"image_tag"`
+	Kind              string `json:"kind"`
+	VerifiesReleaseID string `json:"verifies_release_id"`
+	Attempt           int    `json:"attempt"`
+	SourceOverlayURI  string `json:"source_overlay_uri"`
+}
+
+func (b ReceiveVerificationRequest) toInput() handlers.ReceiveVerificationInput {
+	return handlers.ReceiveVerificationInput{
+		RunID:             b.RunID,
+		Service:           b.Service,
+		ImageTag:          b.ImageTag,
+		Kind:              b.Kind,
+		VerifiesReleaseID: b.VerifiesReleaseID,
+		Attempt:           b.Attempt,
+		SourceOverlayURI:  b.SourceOverlayURI,
+	}
+}
+
 func (s *Server) handleReceiveVerification(w http.ResponseWriter, r *http.Request) {
-	var in handlers.ReceiveVerificationInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+	var body ReceiveVerificationRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	in := body.toInput()
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	if err := handlers.ReceiveVerification(ctx, s.deps, in); err != nil {

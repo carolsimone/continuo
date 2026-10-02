@@ -10,19 +10,18 @@ import (
 
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
-	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func validVerificationInput() handlers.ReceiveVerificationInput {
-	return handlers.ReceiveVerificationInput{
+func validVerificationInput() ReceiveVerificationRequest {
+	return ReceiveVerificationRequest{
 		RunID: "verify-rel-1-core-a1", Service: "core", ImageTag: "img:1", Kind: "dbt",
 		VerifiesReleaseID: "rel-1", Attempt: 1, SourceOverlayURI: "s3://b/core/verify-rel-1-core-a1/source-overlay.tar.gz",
 	}
 }
 
-func postVerificationRun(srv *Server, in handlers.ReceiveVerificationInput) *httptest.ResponseRecorder {
+func postVerificationRun(srv *Server, in ReceiveVerificationRequest) *httptest.ResponseRecorder {
 	body, _ := json.Marshal(in)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/verification-runs", bytes.NewReader(body))
@@ -50,11 +49,11 @@ func TestHandleReceiveVerification_Accepted(t *testing.T) {
 func TestHandleReceiveVerification_ValidationIs400(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	deps, _ := newRetryRemediationDeps(now)
-	for name, mutate := range map[string]func(*handlers.ReceiveVerificationInput){
-		"missing run_id":         func(in *handlers.ReceiveVerificationInput) { in.RunID = "" },
-		"bad kind":               func(in *handlers.ReceiveVerificationInput) { in.Kind = "yaml" },
-		"attempt below one":      func(in *handlers.ReceiveVerificationInput) { in.Attempt = 0 },
-		"overlay on python kind": func(in *handlers.ReceiveVerificationInput) { in.Kind = "python" },
+	for name, mutate := range map[string]func(*ReceiveVerificationRequest){
+		"missing run_id":         func(in *ReceiveVerificationRequest) { in.RunID = "" },
+		"bad kind":               func(in *ReceiveVerificationRequest) { in.Kind = "yaml" },
+		"attempt below one":      func(in *ReceiveVerificationRequest) { in.Attempt = 0 },
+		"overlay on python kind": func(in *ReceiveVerificationRequest) { in.Kind = "python" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			in := validVerificationInput()
