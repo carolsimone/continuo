@@ -1,0 +1,10 @@
+# An operator-supplied `services` list whose ui entry carries none of the
+# CI-auth wiring. Helm replaces lists wholesale, so this is what the ui gets;
+# lint.sh asserts the template still injects CI auth into it.
+services:
+  - name: ui
+    enabled: true
+    httpPort: 8090
+    probePath: /healthz
+    env:
+      PORT: "8090"

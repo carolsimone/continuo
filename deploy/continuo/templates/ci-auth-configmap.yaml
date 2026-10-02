@@ -1,0 +1,14 @@
+{{- /*
+  The ui's CI-auth file: trusted GitHub issuer, resolved audience, and the
+  service -> GitHub identity bindings from .Values.ciAuth. Rendered as JSON so
+  the ui needs no YAML parser.
+*/ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "continuo.ciAuthConfigMapName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "continuo.labels" . | nindent 4 }}
+data:
+  ci-auth.json: {{ include "continuo.ciAuth.json" . | quote }}

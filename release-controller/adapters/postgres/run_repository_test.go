@@ -96,6 +96,40 @@ func TestRunRepository_SaveRejectsCrossKindIDCollision(t *testing.T) {
 	require.Equal(t, pipeline.KindCandidate, got.Kind())
 }
 
+// TestRunRepository_CreateInsertsOnlyAFreeID proves Create is insert-only: it
+// writes a run whose id is free, and for a taken id of either kind it reports
+// false and leaves the stored row exactly as it was.
+func TestRunRepository_CreateInsertsOnlyAFreeID(t *testing.T) {
+	db := openTestDB(t)
+	repo := postgres.NewRunRepository(db, nil)
+	ctx := context.Background()
+
+	first := pipeline.NewCandidate("rCreate", "svc", "img:1", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
+	inserted, err := repo.Create(ctx, first)
+	require.NoError(t, err)
+	require.True(t, inserted)
+
+	second := pipeline.NewCandidate("rCreate", "svc", "img:2", true, "acme/fork", "cafebabe", release.ManifestKindPython, time.Unix(200, 0).UTC())
+	inserted, err = repo.Create(ctx, second)
+	require.NoError(t, err)
+	require.False(t, inserted)
+
+	verify := pipeline.NewVerification("rCreate", "svc", "img:3", "rOrig", 1, "", release.ManifestKindDbt, time.Unix(300, 0).UTC())
+	inserted, err = repo.Create(ctx, verify)
+	require.NoError(t, err)
+	require.False(t, inserted)
+
+	got, err := repo.Get(ctx, "rCreate")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, pipeline.KindCandidate, got.Kind())
+	assert.Equal(t, "img:1", got.ImageTags()["svc"])
+	assert.False(t, got.IsBootstrap())
+	assert.Equal(t, "acme/demo", got.Repo())
+	assert.Equal(t, release.ManifestKindDbt, got.ManifestKind())
+	assert.Equal(t, time.Unix(100, 0).UTC(), got.CreatedAt().UTC())
+}
+
 // TestRunRepository_ManifestKindRoundTrips verifies that the manifest kind a
 // run was constructed with (dbt or python) survives a Save/Get round trip
 // through the manifest_kind column, which is immutable after insert.

@@ -40,6 +40,10 @@ spec:
         # stable across upgrades that change nothing, and an unchanged install
         # does not roll.
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") $ | sha256sum }}
+        {{- if eq $svc.name "ui" }}
+        # The ui reads its CI bindings once at boot; a changed binding must roll it.
+        checksum/ci-auth: {{ include "continuo.ciAuth.json" $ | sha256sum }}
+        {{- end }}
       labels:
         {{- include "continuo.selectorLabels" (dict "root" $ "service" $svc.name) | nindent 8 }}
     spec:
@@ -158,7 +162,7 @@ spec:
             - configMapRef:
                 name: {{ include "continuo.configMapName" $ }}
           {{- $needsS3 := has $svc.name (include "continuo.s3.credentialServices" $ | fromJsonArray) }}
-          {{- if or $svc.secretEnv $svc.env $needsS3 }}
+          {{- if or $svc.secretEnv $svc.env $needsS3 (eq $svc.name "ui") }}
           env:
             {{- /*
               Services that read or write object storage get their S3 credentials
@@ -180,6 +184,13 @@ spec:
                 secretKeyRef:
                   name: {{ include "continuo.secretName" (dict "root" $ "ref" "s3SecretAccessKey") | quote }}
                   key: {{ include "continuo.secretKey" (dict "root" $ "ref" "s3SecretAccessKey") | quote }}
+            {{- end }}
+            {{- if eq $svc.name "ui" }}
+            {{- /* Injected here rather than through the ui's `services` entry so
+                   an overridden or reused `services` list cannot drop CI auth;
+                   the file is the ci-auth ConfigMap mounted below. */}}
+            - name: CI_AUTH_CONFIG_PATH
+              value: /app/ci-auth/ci-auth.json
             {{- end }}
             {{- range $secret := ($svc.secretEnv | default (list)) }}
             {{- if not (and $needsS3 (or (eq $secret.name "AWS_ACCESS_KEY_ID") (eq $secret.name "AWS_SECRET_ACCESS_KEY"))) }}
@@ -291,9 +302,19 @@ spec:
           {{- with $svc.volumeMounts }}
             {{- toYaml . | nindent 12 }}
           {{- end }}
+          {{- if eq $svc.name "ui" }}
+            - name: ci-auth
+              mountPath: /app/ci-auth
+              readOnly: true
+          {{- end }}
       volumes:
         - name: tmp
           emptyDir: {}
+      {{- if eq $svc.name "ui" }}
+        - name: ci-auth
+          configMap:
+            name: {{ include "continuo.ciAuthConfigMapName" $ }}
+      {{- end }}
       {{- if $svc.volumes }}
         {{- if eq $svc.name "state" }}
         {{- range $volume := $svc.volumes }}

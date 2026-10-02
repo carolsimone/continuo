@@ -55,6 +55,16 @@ function required(env: NodeJS.ProcessEnv, name: string): string {
   return v;
 }
 
+// The ui's public base URL from AUTH_PUBLIC_URL, without trailing slashes, or
+// undefined when it is unset or blank. It is the single parse of the setting:
+// the login redirect, the CSRF origin and the cookie Secure flag (through
+// loadAuthConfig) and the public API's ui_url links all read it from here.
+export function loadPublicUrl(env: NodeJS.ProcessEnv): string | undefined {
+  const v = env.AUTH_PUBLIC_URL;
+  if (v === undefined || v.trim() === '') return undefined;
+  return v.replace(/\/+$/, '') || undefined;
+}
+
 export function loadAuthConfig(env: NodeJS.ProcessEnv): AuthConfig {
   const mode = env.AUTH_MODE;
   if (mode === 'dev') return { mode: 'dev' };
@@ -65,12 +75,14 @@ export function loadAuthConfig(env: NodeJS.ProcessEnv): AuthConfig {
   if (defaultRole !== 'none' && !ROLES.has(defaultRole as Role)) {
     throw new Error(`AUTH_DEFAULT_ROLE must be none, viewer or operator, got "${defaultRole}"`);
   }
+  const publicUrl = loadPublicUrl(env);
+  if (!publicUrl) throw new Error('AUTH_PUBLIC_URL is required when AUTH_MODE=oidc');
   return {
     mode: 'oidc',
     issuerUrl: required(env, 'AUTH_OIDC_ISSUER_URL'),
     clientId: required(env, 'AUTH_OIDC_CLIENT_ID'),
     clientSecret: required(env, 'AUTH_OIDC_CLIENT_SECRET'),
-    publicUrl: required(env, 'AUTH_PUBLIC_URL').replace(/\/+$/, ''),
+    publicUrl,
     scopes: env.AUTH_OIDC_SCOPES ?? 'openid email profile',
     groupsClaim: env.AUTH_GROUPS_CLAIM ?? 'groups',
     roleMapping: parseRoleMapping(env.AUTH_ROLE_MAPPING ?? ''),

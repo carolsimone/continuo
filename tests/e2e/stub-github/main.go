@@ -298,6 +298,9 @@ func commitTreeBlob(sha, path string) (content string, knownCommit, found bool) 
 func main() {
 	http.HandleFunc("/app/", handleApp)
 	http.HandleFunc("/repos/", handleRepos)
+	http.HandleFunc("/.well-known/openid-configuration", handleOIDCDiscovery)
+	http.HandleFunc("/.well-known/jwks", handleOIDCJWKS)
+	http.HandleFunc("/_test/oidc/token", handleMintToken)
 	log.Println("stub-github: listening on :9200")
 	if err := http.ListenAndServe(":9200", nil); err != nil {
 		log.Fatalf("stub-github: %v", err)

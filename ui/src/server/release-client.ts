@@ -1,3 +1,14 @@
+// The body release-controller's POST /releases takes for a candidate release.
+export interface ReleaseSubmission {
+  release_id: string;
+  service: string;
+  image_tag: string;
+  bootstrap?: boolean;
+  kind?: string;
+  repo?: string;
+  commit_sha?: string;
+}
+
 export interface ReleaseClient {
   listReleases(query: Record<string, string>): Promise<any>;
   getRelease(id: string): Promise<any>;
@@ -6,9 +17,10 @@ export interface ReleaseClient {
   getVerificationRun(id: string): Promise<any>;
   listVerificationRuns(releaseId: string): Promise<any>;
   getPipeline(): Promise<any>;
+  submitRelease(body: ReleaseSubmission): Promise<{ status: number; text: string }>;
 }
 
-class HttpError extends Error {
+export class HttpError extends Error {
   constructor(public status: number, message: string) {
     super(message);
   }
@@ -45,6 +57,16 @@ export function createReleaseClient(baseUrl: string): ReleaseClient {
     getPipeline() {
       return getJson('/pipeline');
     },
+    // Forwards a release submission. release-controller answers 202 with JSON,
+    // or a plain-text error body for 400/409; the caller maps both.
+    async submitRelease(body) {
+      const resp = await fetch(`${base}/releases`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      return { status: resp.status, text: await resp.text() };
+    },
     async retryRemediation(id) {
       const resp = await fetch(`${base}/releases/${encodeURIComponent(id)}/retry-remediation`, { method: 'POST' });
       const text = await resp.text();
@@ -58,5 +80,3 @@ export function createReleaseClient(baseUrl: string): ReleaseClient {
     },
   };
 }
-
-export { HttpError };

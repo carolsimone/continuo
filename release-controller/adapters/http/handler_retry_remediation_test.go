@@ -52,6 +52,14 @@ func (f *fakeReleaseRepo) Save(_ context.Context, r *pipeline.Run) error {
 	return nil
 }
 
+func (f *fakeReleaseRepo) Create(_ context.Context, r *pipeline.Run) (bool, error) {
+	if _, exists := f.releases[r.ID()]; exists {
+		return false, nil
+	}
+	f.releases[r.ID()] = r
+	return true, nil
+}
+
 func (f *fakeReleaseRepo) NextQueued(context.Context) (*pipeline.Run, error) {
 	return nil, nil
 }

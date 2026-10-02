@@ -218,6 +218,33 @@ auth:
   viewerEmails: ""
   roleMapping: ""
 
+# Lets CD pipelines release through the public API (POST <publicUrl>/api/v1/releases)
+# with their GitHub Actions OIDC token instead of a stored secret. The ui verifies
+# the token against `issuer` and lets it release, and read releases of, only the
+# services bound to its repository below. Humans are not configured here: their
+# access follows the auth role settings (an operator may release any service).
+# The whole block is optional; an absent key takes the default shown.
+ciAuth:
+  # GitHub Actions OIDC issuer. GitHub Enterprise Server: https://<host>/_services/token
+  issuer: https://token.actions.githubusercontent.com
+  # Audience the workflow must request (core.getIDToken(<audience>) or
+  # ACTIONS_ID_TOKEN_REQUEST_URL&audience=<audience>). Empty = the origin of
+  # auth.publicUrl, so a token minted for one install is useless at another.
+  audience: ""
+  # service -> GitHub identities allowed to release it. Empty = no CI access:
+  # the ui then does not trust `issuer` at all, so every CI token is a 401, and
+  # a token whose repository matches no binding is refused on every route.
+  # repositoryId is required and must be QUOTED digits (`gh api repos/OWNER/REPO --jq .id`);
+  # names are never trusted. Optional, all must match: ref, refProtected,
+  # environment, workflowRef. allowBootstrap (default false) permits
+  # `bootstrap: true`, which promotes without validation. Example:
+  #   bindings:
+  #     core:
+  #       - repositoryId: "812345678"
+  #         ref: [refs/heads/main]
+  #         allowBootstrap: false
+  bindings: {}
+
 llm:
   # Optional. Empty apiKey: agent-chat/agent-remediation boot and serve, but
   # LLM calls fail until it is set.
@@ -535,6 +562,8 @@ services:
       GITHUB_APP_ID: __GITHUB_APP_ID__
       GITHUB_APP_INSTALLATION_ID: __GITHUB_APP_INSTALLATION_ID__
       GITHUB_API_BASE_URL: https://api.github.com
+      # CI_AUTH_CONFIG_PATH and the ci-auth volume (rendered from ciAuth) are
+      # injected by templates/deployment.yaml, independent of this list.
     volumeMounts:
       - {name: cancel-config, mountPath: /app/config, readOnly: true}
     volumes:
@@ -578,7 +607,7 @@ services:
       - {name: AWS_SECRET_ACCESS_KEY, ref: s3SecretAccessKey}
     env:
       POSTGRES_DB: continuo_release
-      HTTP_PORT: "8088"
+      RELEASE_CONTROLLER_HTTP_PORT: "8088"
 
   - name: remediation
     enabled: true
@@ -596,7 +625,7 @@ services:
       - {name: AWS_SECRET_ACCESS_KEY, ref: s3SecretAccessKey}
     env:
       POSTGRES_DB: continuo_remediation
-      HTTP_PORT: "8090"
+      REMEDIATION_HTTP_PORT: "8090"
 
   - name: agent-remediation
     enabled: true
@@ -617,7 +646,6 @@ services:
       - {name: GITHUB_TOKEN, ref: githubToken}
     env:
       POSTGRES_DB: continuo_agent_remediation
-      HTTP_PORT: "8092"
       AGENT_REMEDIATION_HTTP_PORT: "8092"
       AGENT_REMEDIATION_GRPC_PORT: "50054"
       CONTINUO_ORCHESTRATOR_ADDR: orchestrator:50052

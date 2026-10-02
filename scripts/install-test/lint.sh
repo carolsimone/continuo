@@ -52,6 +52,14 @@ done
 echo "--- network policy reachability (defaults)"
 python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/defaults.yaml" continuo
 
+# A service reads its HTTP port under one specific env name. The chart sets a
+# differently named variable that works only while the default happens to equal
+# the Deployment's containerPort, and changing httpPort then moves the probes
+# and Service but not the listener. Assert each service gets its port under
+# the name its own code reads.
+echo "--- http port env names match what each service reads (defaults)"
+python3 scripts/install-test/assert-port-env.py "${tmp}/defaults.yaml" .
+
 # Services read the shared ConfigMap through envFrom, and Kubernetes never
 # refreshes environment variables in a running pod when that ConfigMap changes.
 # The pod template therefore carries a checksum of it, so `helm upgrade` rolls
@@ -85,6 +93,49 @@ engine_changed="$(mc_checksum --set validation.engine=trino --set validation.cre
 [ "$engine_changed" != "$base" ] || { echo "FAIL: changing validation.engine leaves the topology-controller pod template identical — an engine change would not roll it, so it would keep the dialect it resolved at boot"; exit 1; }
 loglevel_changed="$(mc_checksum --set global.logLevel=DEBUG)"
 [ "$loglevel_changed" != "$base" ] || { echo "FAIL: changing a shared ConfigMap value leaves the pod template identical"; exit 1; }
+
+# ciAuth.bindings.*.repositoryId must be a quoted digit string: GitHub's
+# repository_id claim is a string, so an unquoted YAML number would render a
+# binding the ui can never match. The schema refuses it at render time. A valid
+# binding must reach the ui's ci-auth.json and roll the ui pod, and an empty
+# audience must resolve to the origin of auth.publicUrl.
+echo "--- ciAuth: unquoted repositoryId is refused by the schema"
+if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+     --set 'ciAuth.bindings.core[0].repositoryId=812345678' > /dev/null 2> "${tmp}/ciauth.err"; then
+  echo "FAIL: an unquoted (numeric) repositoryId rendered; the ui would never match it"; exit 1
+fi
+grep -q 'repositoryId' "${tmp}/ciauth.err" || { echo "FAIL: unexpected error:"; cat "${tmp}/ciauth.err"; exit 1; }
+
+echo "--- ciAuth: bindings render into ci-auth.json and roll the ui"
+ui_ciauth_checksum() {
+  helm template continuo "$CHART" --kube-version "$KUBE_VERSION" "$@" > "${tmp}/ciauth-probe.yaml"
+  awk '/^kind: Deployment$/{d=1; f=0}
+       d && /app.kubernetes.io\/name: ui$/{f=1}
+       f && /checksum\/ci-auth:/ && !printed {print $2; printed=1}' "${tmp}/ciauth-probe.yaml"
+}
+ci_base="$(ui_ciauth_checksum)"
+[ -n "$ci_base" ] || { echo "FAIL: no checksum/ci-auth on the ui pod template"; exit 1; }
+ci_bound="$(ui_ciauth_checksum --set-string 'ciAuth.bindings.core[0].repositoryId=812345678')"
+[ "$ci_bound" != "$ci_base" ] || { echo "FAIL: changing ciAuth.bindings leaves the ui pod template identical"; exit 1; }
+# The probe now holds the bound render; ci-auth.json is a quoted JSON string, so
+# its inner quotes appear escaped.
+grep -q '\\"repositoryId\\":\\"812345678\\"' "${tmp}/ciauth-probe.yaml" || { echo "FAIL: binding missing from ci-auth.json"; exit 1; }
+grep -q '\\"audience\\":\\"http://localhost:8090\\"' "${tmp}/ciauth-probe.yaml" || { echo "FAIL: audience did not default to the origin of auth.publicUrl"; exit 1; }
+
+# The ui's CI-auth env, mount and volume come from the template, not from its
+# `services` entry: Helm replaces lists wholesale, so an operator's own
+# `services` list must not silently disable CI auth. ciAuth itself is optional,
+# so `helm upgrade --reuse-values` from a chart without it still renders, with
+# the GitHub issuer and no bindings (no CI access).
+echo "--- ciAuth: the ui gets CI auth from the template"
+python3 scripts/install-test/assert-ui-ci-auth.py "${tmp}/defaults.yaml" continuo
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  -f scripts/install-test/values-ui-minimal-services.yaml > "${tmp}/ui-minimal-services.yaml"
+python3 scripts/install-test/assert-ui-ci-auth.py "${tmp}/ui-minimal-services.yaml" continuo
+echo "--- ciAuth: a release without ciAuth values renders the defaults"
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set ciAuth=null > "${tmp}/ciauth-null.yaml" \
+  || { echo "FAIL: rendering with ciAuth=null failed; helm upgrade --reuse-values from a chart without ciAuth would fail"; exit 1; }
+python3 scripts/install-test/assert-ui-ci-auth.py "${tmp}/ciauth-null.yaml" continuo --default-ci-auth
 
 # The "continuo-api-" Secret-name prefix is reserved for the operator-created
 # Secrets a python-api node contract may name. A chart fullname inside it would

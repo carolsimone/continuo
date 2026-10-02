@@ -32,5 +32,8 @@ export interface AppAuth {
 declare module 'express-serve-static-core' {
   interface Request {
     user?: AuthUser;
+    // Set by bearerAuth for a verified bearer token; absent for cookie/dev
+    // requests, whose principal is derived from req.user by principalOf.
+    principal?: import('./principal').Principal;
   }
 }
