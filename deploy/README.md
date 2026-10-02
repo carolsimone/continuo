@@ -16,6 +16,7 @@ reference.
 | Understand the security posture before adopting | [SECURITY.md](SECURITY.md) and the chart's [Security defaults](continuo/README.md#3-security-defaults) |
 | Configure real OIDC authentication | [AUTH.md](AUTH.md) |
 | Release a service from my CD pipeline | [Releasing from CI](#releasing-from-ci-github-actions) — the public `/api/v1` API with a GitHub Actions token |
+| Release by hand, or try the API on a local install | [Releasing with your own token](#releasing-with-your-own-token) — mint an ID token and call `/api/v1` with it |
 | Build a dbt image for my team's models | [dbt-image-contract.md](dbt-image-contract.md) |
 | Understand how releases are cut and verified | [Release flow and CI gates](continuo/README.md#5-release-flow-and-ci-gates) |
 
@@ -232,6 +233,43 @@ one read every few seconds.
   Node.js 26, whose built-in `fetch` honours the proxy variables only when
   `NODE_USE_ENV_PROXY=1` is set; without it the key fetch ignores `HTTPS_PROXY`
   and tries the issuer directly.
+
+## Releasing with your own token
+
+A person calls the same `/api/v1` routes with their own bearer token: an ID
+token from the `ui`'s login provider, for an identity with the operator role
+(see [AUTH.md](AUTH.md#bearer-tokens)). It is valid for at most one hour; mint a
+new one when a call answers `401`.
+
+On a local install with the bundled Dex, forward the `ui` (the API) and Dex
+(the token issuer), then trade the demo operator account's password for a
+token:
+
+```bash
+kubectl -n continuo port-forward svc/ui 8090:8090 &
+kubectl -n continuo port-forward svc/continuo-dex 5556:5556 &
+
+CLIENT_SECRET=$(kubectl -n continuo get secret continuo-dex -o jsonpath='{.data.client-secret}' | base64 -d)
+TOKEN=$(curl -s -u "continuo-ui:${CLIENT_SECRET}" http://localhost:5556/dex/token \
+  -d grant_type=password -d scope="openid email profile" \
+  -d username=admin@example.com -d password=password | jq -r .id_token)
+
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8090/api/v1/current-prod
+```
+
+If `echo $TOKEN` prints `null`, the login failed: check the Dex port-forward
+and the password. A release posted with a person's token must carry `repo` and
+`commit_sha` in its body, since there is no CI token to supply them:
+
+```bash
+curl -s -X POST http://localhost:8090/api/v1/releases \
+  -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"release_id":"rel-core-v1","service":"core","image_tag":"v1","repo":"<owner>/<repo>","commit_sha":"<sha>"}'
+```
+
+With your own IdP, the token is an ID token it issues for the `ui`'s client id;
+how a script obtains one depends on the IdP. An operator token may also
+bootstrap a service (`"bootstrap": true`).
 
 ## Requirements at a glance
 

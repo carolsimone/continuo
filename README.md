@@ -51,9 +51,10 @@ into one dependency graph, and it heals broken pipelines by having an LLM
   events are yours to build on — alerting, dead-letter queues, custom tooling.
 - **Two-step onboarding.** Publish an image and `POST /api/v1/releases` with a
   bearer token: your pipeline's GitHub Actions token
-  ([how](deploy/README.md#releasing-from-ci-github-actions)), or an operator's
-  own ID token from the login provider. continuo compiles the project and
-  derives the rest.
+  ([how](deploy/README.md#releasing-from-ci-github-actions)), or your own ID
+  token, minted from the login provider
+  ([how](deploy/README.md#releasing-with-your-own-token)). continuo compiles
+  the project and derives the rest.
 - **Also:** dbt, Python scripts, and contract-only CSV loads on one contract;
   bring your own dbt image; schedules in one YAML file; each node runs as its
   own Kubernetes Job in dependency order; circular dependencies fail at CD;
@@ -70,8 +71,11 @@ those are already written down in your SQL. Continuo reads the schema and
 table names each model reads and writes and stitches every project into one
 graph — dbt models and Python nodes ordered together — so no project has to
 know about any other. Onboarding is two steps at CD (Continuous Deployment)
-time: publish an image and `POST /api/v1/releases` with a bearer token
-([how](deploy/README.md#releasing-from-ci-github-actions)). continuo compiles
+time: publish an image and `POST /api/v1/releases` with a bearer token: in CD
+the pipeline's GitHub Actions token
+([how](deploy/README.md#releasing-from-ci-github-actions)), locally your own ID
+token from the bundled Dex
+([how](deploy/README.md#releasing-with-your-own-token)). continuo compiles
 the project itself and derives the rest. (A Python service uploads its contract to object
 storage first — one extra `aws s3 cp` in your CD.)
 

@@ -10,9 +10,9 @@ change that would break another team's model. Everything runs on your machine;
 no step needs a cloud account until the optional remediation chapter.
 
 You release a project by calling continuo's release API, `/api/v1` on the `ui`.
-Every call carries a bearer token: here, an ID token you get from the bundled
-Dex with the demo account (chapter 3 shows the one command); in a CD pipeline,
-the pipeline's GitHub Actions token.
+Every call carries a bearer token: here, an ID token you mint from the bundled
+Dex with the demo account ([Get a bearer token](#get-a-bearer-token), one
+command); in a CD pipeline, the pipeline's GitHub Actions token.
 
 ---
 
@@ -188,6 +188,8 @@ chapter 4 explains why.)
 
 ## 3. Release first dbt project to platform: bootstrap
 
+### Get a bearer token
+
 continuo's release API is public: it is served by the `ui` at `/api/v1`, behind
 the same login as the dashboard, so a pipeline needs nothing but the URL and a
 token. Forward the `ui` and the identity provider (skip this if the port-forwards
@@ -213,6 +215,8 @@ call answers `401`, run the `TOKEN=...` command again. A CD pipeline does not
 log in as a person; it presents its GitHub Actions token instead, as
 [Releasing from CI](../deploy/README.md#releasing-from-ci-github-actions)
 describes.
+
+### Bootstrap the first project
 
 One word before the first call. **Production**, here and everywhere in this
 guide, is continuo's term for the promoted side of its blue/green release
