@@ -23,3 +23,8 @@ def test_render_flags_reps_with_a_sampling_pause():
     markdown = report.render({"dag-500": reps})
     assert "Reps with a sampling pause over 60 s (host asleep or overloaded; exclude them): [2]" in markdown
     assert "sampling pause" not in report.render({"dag-500": reps[:1]})
+
+
+def test_render_shows_dropped_messages_for_outage_scenarios():
+    reps = [{"rep": 1, "wall_s": 1.0, "nodes_executed": 1, "usage_run": {}, "messages_dropped": "3"}]
+    assert "| messages_dropped | 3.00 | 3.00 | 1 |" in report.render({"outage-postgres": reps})

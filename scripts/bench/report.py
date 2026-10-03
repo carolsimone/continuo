@@ -14,7 +14,7 @@ MAX_SAMPLE_PAUSE_S = 60.0  # the sampler ticks every 5 s; a longer gap means the
 
 SCALARS = ["wall_s", "busy_s", "idle_s", "first_start_s", "finalize_s", "observed_done_s",
            "handoff_p50_s", "handoff_p95_s", "messages_per_task", "attempts", "failed_attempts",
-           "jobs_active_at_cancel", "overlap_s"]
+           "jobs_active_at_cancel", "overlap_s", "messages_dropped"]
 
 
 def aggregate(reps: list) -> dict:
