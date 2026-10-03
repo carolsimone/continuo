@@ -74,35 +74,63 @@ def main() -> None:
     logger.info("topology-controller SQL dialect: %s", dialect)
 
     def handle_release_requested(fields: dict) -> None:
-        payload_raw = _decode_field(fields, "payload")
+        try:
+            payload_raw = _decode_field(fields, "payload")
+        except UnicodeDecodeError as exc:
+            raise PermanentMessageError(f"release.requested:v1 payload is not valid UTF-8: {exc}") from exc
         if not payload_raw:
             raise PermanentMessageError("release.requested:v1 message missing payload")
         try:
             payload = json.loads(payload_raw)
         except json.JSONDecodeError as exc:
             raise PermanentMessageError(f"release.requested:v1 payload not valid JSON: {exc}") from exc
+        if not isinstance(payload, dict):
+            raise PermanentMessageError(
+                f"release.requested:v1 payload must be a JSON object, got {type(payload).__name__}",
+            )
         release_id = payload.get("release_id")
         manifest_keys_raw = payload.get("manifest_keys")
         if not release_id or manifest_keys_raw is None:
             raise PermanentMessageError(
                 "release.requested:v1 payload missing release_id or manifest_keys",
             )
+        if not isinstance(release_id, str):
+            raise PermanentMessageError(
+                f"release.requested:v1 release_id must be a string, got {type(release_id).__name__}",
+            )
+        if not isinstance(manifest_keys_raw, list):
+            raise PermanentMessageError(
+                f"release.requested:v1 manifest_keys must be a list, got {type(manifest_keys_raw).__name__}",
+            )
         # All entries must share a single bucket; derive it from the first URI and
         # assert the rest agree so misrouted multi-bucket payloads are caught early.
-        # Each entry must carry a non-empty "service" field; a missing or empty
-        # service is treated as a permanent malformed-payload error (not ACKed) so
-        # the service-mismatch/empty-manifest validation in the handler cannot be
-        # silently bypassed.
+        # Each entry must be an object carrying a non-empty string "service" and
+        # a string "s3_uri". Any other shape is a permanent malformed-payload
+        # error (the consumer dead-letters it) so the service-mismatch/
+        # empty-manifest validation in the handler cannot be silently bypassed.
         buckets = []
         requests: list[ManifestRequest] = []
         for entry in manifest_keys_raw:
-            svc = entry.get("service") if isinstance(entry, dict) else None
+            if not isinstance(entry, dict):
+                raise PermanentMessageError(
+                    f"release.requested:v1 manifest_keys entry must be an object, got {type(entry).__name__}"
+                )
+            svc = entry.get("service")
             if not svc:
                 raise PermanentMessageError(
                     "release.requested:v1 manifest_keys entry missing or empty 'service' field"
                 )
+            if not isinstance(svc, str):
+                raise PermanentMessageError(
+                    f"release.requested:v1 manifest_keys entry 'service' must be a string, got {type(svc).__name__}"
+                )
+            s3_uri = entry.get("s3_uri")
+            if not isinstance(s3_uri, str):
+                raise PermanentMessageError(
+                    "release.requested:v1 manifest_keys entry missing 's3_uri' or it is not a string"
+                )
             try:
-                bucket, key = parse_s3_uri(entry["s3_uri"])
+                bucket, key = parse_s3_uri(s3_uri)
             except ValueError as exc:
                 raise PermanentMessageError(
                     f"release.requested:v1 manifest_keys entry has an invalid s3_uri: {exc}"

@@ -494,8 +494,21 @@ def test_infrastructure_error_pauses_without_counting(monkeypatch):
             raise outcome
 
     c = _dl_consumer(handler, r)
+    delays = []
+    pause = c._pause
+
+    def spy(msg_id, seconds):
+        delays.append(seconds)
+        pause(msg_id, seconds)
+
+    c._pause = spy
     c._dispatch(b"1-0", {})
-    assert not r.xpending_range.called, "an outage never reads the delivery count"
+    assert delays == [1.0, 2.0], "each consecutive outage waits twice as long"
+    delivery_count_reads = [
+        call for call in r.xpending_range.call_args_list
+        if call.kwargs.get("min") == call.kwargs.get("max") == b"1-0"
+    ]
+    assert not delivery_count_reads, "an outage never reads the delivery count"
     assert r.xclaim.call_args.kwargs["justid"] is True
     assert r.xack.call_count == 1 and not r.xadd.called
 
@@ -608,3 +621,87 @@ def test_infrastructure_pause_survives_a_failing_idle_refresh(monkeypatch):
     r = MagicMock()
     r.xclaim.side_effect = redis_exceptions.ConnectionError("down")
     _dl_consumer(lambda f: None, r)._pause(b"1-0", 1.0)
+
+
+def test_failed_ack_after_a_handled_message_leaves_it_pending_and_continues_the_batch():
+    r = MagicMock()
+    r.xgroup_create.return_value = True
+    r.xreadgroup.return_value = [(_STREAM.encode(), [(b"1-0", {b"payload": b"a"}), (b"2-0", {b"payload": b"b"})])]
+    r.xack.side_effect = [redis_exceptions.ConnectionError("down"), 1]
+    seen = []
+    c = Consumer(r, _STREAM, _GROUP, seen.append, service_name=_SERVICE_NAME)
+    c._consume_once()  # must not raise
+    assert seen == [{b"payload": b"a"}, {b"payload": b"b"}], "the second message is still handled"
+    assert [call.args[2] for call in r.xack.call_args_list] == [b"1-0", b"2-0"]
+
+
+def test_failed_ack_after_a_dead_letter_write_leaves_it_pending_and_continues_the_batch(monkeypatch, caplog):
+    _defang_sleep(monkeypatch)
+    r = MagicMock()
+    r.xgroup_create.return_value = True
+    r.xpending_range.return_value = [{"times_delivered": 1}]
+    r.xreadgroup.return_value = [(_STREAM.encode(), [(b"1-0", {b"payload": b"a"}), (b"2-0", {b"payload": b"b"})])]
+    r.xack.side_effect = [redis_exceptions.ConnectionError("down"), 1]
+    c = Consumer(r, _STREAM, _GROUP, _raising(PermanentMessageError("bad")), service_name=_SERVICE_NAME)
+    with caplog.at_level(logging.ERROR):
+        c._consume_once()  # must not raise
+    assert r.xadd.call_count == 2, "both messages are dead-lettered"
+    assert r.xack.call_count == 2
+    assert "Could not ACK message 1-0" in caplog.text
+
+
+def test_failed_ack_is_logged(caplog):
+    r = MagicMock()
+    r.xack.side_effect = redis_exceptions.ConnectionError("down")
+    c = _dl_consumer(lambda f: None, r)
+    with caplog.at_level(logging.ERROR):
+        c._dispatch(b"1-0", {})
+    assert "Could not ACK message 1-0" in caplog.text
+    assert "Message ACKed" not in caplog.text
+
+
+def test_pause_holds_every_entry_this_consumer_has_pending(monkeypatch):
+    """A pause on one message re-claims, with JUSTID, the paused id and the
+    batch siblings this consumer still holds, so a peer's reclaim sweep takes
+    none of them during a long outage."""
+    _defang_sleep(monkeypatch)
+    r = MagicMock()
+    r.xpending_range.return_value = [
+        {"message_id": b"1-0", "times_delivered": 1},
+        {"message_id": b"2-0", "times_delivered": 1},
+        {"message_id": b"3-0", "times_delivered": 1},
+    ]
+    c = _dl_consumer(lambda f: None, r)
+    c._pause(b"2-0", 1.0)
+    listing = r.xpending_range.call_args
+    assert listing.kwargs["consumername"] == c._name
+    assert listing.kwargs["count"] == 200
+    claim = r.xclaim.call_args
+    assert claim.kwargs["justid"] is True and claim.kwargs["min_idle_time"] == 0
+    assert claim.args[2] == c._name
+    assert claim.kwargs["message_ids"] == [b"2-0", b"1-0", b"3-0"], "the paused id once, then its siblings"
+
+
+def test_pause_still_holds_the_paused_message_when_listing_pending_fails(monkeypatch):
+    _defang_sleep(monkeypatch)
+    r = MagicMock()
+    r.xpending_range.side_effect = redis_exceptions.ConnectionError("down")
+    _dl_consumer(lambda f: None, r)._pause(b"2-0", 1.0)
+    assert r.xclaim.call_args.kwargs["message_ids"] == [b"2-0"]
+
+
+def test_infrastructure_backoff_never_overflows_on_a_long_outage():
+    assert Consumer._backoff(2000) == 60.0
+    assert Consumer._backoff(10**6) == 60.0
+
+
+def test_dead_letter_error_keeps_the_exception_type(monkeypatch, caplog):
+    """str(KeyError("s3_uri")) is just "'s3_uri'"; the dead letter and its log
+    line name the exception type as well."""
+    _defang_sleep(monkeypatch)
+    r = MagicMock()
+    r.xpending_range.return_value = [{"times_delivered": 5}]
+    with caplog.at_level(logging.ERROR):
+        _dl_consumer(_raising(KeyError("s3_uri")), r)._dispatch(b"1-0", {})
+    assert json.loads(r.xadd.call_args[0][1]["payload"])["error"] == "KeyError: 's3_uri'"
+    assert "error=KeyError: 's3_uri'" in caplog.text

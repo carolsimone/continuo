@@ -372,6 +372,35 @@ _MALFORMED_PAYLOADS = {
         "release_id": "x",
         "manifest_keys": [{"service": "s1", "s3_uri": "http://continuo/s1/x/manifest.json"}],
     }).encode()},
+    "entry without s3_uri": {b"payload": json.dumps({
+        "release_id": "x",
+        "manifest_keys": [{"service": "s1"}],
+    }).encode()},
+    "entry with a non-string s3_uri": {b"payload": json.dumps({
+        "release_id": "x",
+        "manifest_keys": [{"service": "s1", "s3_uri": 42}],
+    }).encode()},
+    "entry with a non-string service": {b"payload": json.dumps({
+        "release_id": "x",
+        "manifest_keys": [{"service": ["s1"], "s3_uri": "s3://continuo/s1/x/manifest.json"}],
+    }).encode()},
+    "entry that is not an object": {b"payload": json.dumps({
+        "release_id": "x",
+        "manifest_keys": ["s3://continuo/s1/x/manifest.json"],
+    }).encode()},
+    "payload that is a JSON array": {b"payload": b"[1, 2]"},
+    "payload that is a JSON string": {b"payload": b'"release"'},
+    "payload that is JSON null": {b"payload": b"null"},
+    "manifest_keys that is not iterable": {b"payload": json.dumps({
+        "release_id": "x", "manifest_keys": 5,
+    }).encode()},
+    "manifest_keys that is an object": {b"payload": json.dumps({
+        "release_id": "x", "manifest_keys": {"service": "s1"},
+    }).encode()},
+    "release_id that is not a string": {b"payload": json.dumps({
+        "release_id": 7, "manifest_keys": [],
+    }).encode()},
+    "payload that is not UTF-8": {b"payload": b"\xff\xfe{}"},
     "entries spanning buckets": {b"payload": json.dumps({
         "release_id": "x",
         "manifest_keys": [
