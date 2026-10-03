@@ -12,7 +12,13 @@ shipped in those.
 
 ## [Unreleased]
 
-Template fix; no values change. An unmodified values file upgrades unchanged. **PATCH.**
+Template fix and service behavior changes: stream consumers dead-letter the messages they cannot process, pause through dependency outages and bound every handler's run time, and `helm upgrade` rolls services whose mounted ConfigMap changed. No values change; an unmodified values file upgrades unchanged, including with `--reuse-values`. **PATCH.**
+
+### Changed
+- Stream consumers no longer drop messages they cannot process. A message whose handler reports a permanent error, or still fails on its fifth delivery, is first written to the new `consumer.dead_letter:v1` stream (with its original stream, group, id, fields, error and delivery count) and acknowledged only once that write succeeded. This covers every Go service and topology-controller; release-controller, remediation and agent-remediation dead-letter malformed payloads they used to discard.
+- A dependency outage (Postgres, Neo4j, S3 or Redis unreachable) no longer counts toward a message's delivery limit: the consumer retries the same message after 1 s, doubling to 60 s, and resumes when the dependency answers.
+- Every message handler has a time limit. The default is 30 s; orchestrator's whole-DAG and whole-release consumers allow 5 minutes. A message that runs out its limit on every delivery is dead-lettered after its fifth.
+- stream-reaper no longer trims `outbox.dead_letter:v1` or `consumer.dead_letter:v1`: no consumer stores their entries elsewhere, so the streams hold the only copy of every dead letter and grow until an operator removes entries.
 
 ### Fixed
 - `helm upgrade` rolls state, execution-controller and agent-remediation when the chart-managed ConfigMap each one mounts changes: the schedules (`files/schedules.yaml`), the dbt commands (`files/dbt-commands.yaml`) and the service repos (`serviceRepos`, or `files/service_repos.yaml` when that is empty). Each service reads that file only at startup, and its pod template carried no digest of it, so an upgrade that changed only the file updated the ConfigMap and left the service on the previous crons, dbt commands or repo map with no error. Their pod templates now carry `checksum/schedules`, `checksum/dbt-commands` and `checksum/service-repos`, so each rolls once on the upgrade to this release. A volume that names an operator-owned ConfigMap (`volumes[].configMap.name` set) carries no digest; after editing such a ConfigMap, run `kubectl rollout restart` on the service. The ui needs neither: it re-reads `cancel-config.json` on every request.

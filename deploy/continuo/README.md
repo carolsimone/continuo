@@ -218,7 +218,7 @@ Every container in this chart, bundled or not, gets:
 | `auth.operatorEmails` / `auth.viewerEmails` / `auth.roleMapping` | Role assignment for authenticated users. With `dex.enabled: true`, `operatorEmails` defaults to the Dex demo user's email. |
 | `llm.provider` / `llm.model` / `llm.apiKey` (or `llm.existingSecret`) | Optional. Empty `apiKey`: agent-chat and agent-remediation still boot and serve, but LLM (Large Language Model) calls fail until it is set. |
 | `github.token` / `github.appId` / `github.installationId` / `github.appPrivateKey` (or `github.existingSecret`) | Optional. `token` is a read-only PAT (Personal Access Token) agent-remediation uses to fetch source; the `app*` fields are a GitHub App ui uses to open fix PRs (Pull Requests) — Create-PR returns `503` until they're set. |
-| `streamReaper.enabled` / `streamReaper.schedule` / `streamReaper.retention` | CronJob that trims old Redis Stream entries. |
+| `streamReaper.enabled` / `streamReaper.schedule` / `streamReaper.retention` | CronJob that trims old Redis Stream entries. It never trims `outbox.dead_letter:v1` or `consumer.dead_letter:v1`: they hold the only copy of every dead letter, so an operator removes entries from them once handled. |
 | `services[].resources` / `defaultResources` | Per-service CPU/memory requests and limits; any service without its own `resources` block falls back to `defaultResources`. |
 
 ## 5. Release flow and CI gates

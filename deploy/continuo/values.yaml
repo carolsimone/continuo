@@ -365,6 +365,9 @@ databaseInit:
   # connecting user then no longer needs CREATEDB.
   enabled: true
 
+# CronJob that trims Redis Stream entries older than `retention`. It never trims
+# outbox.dead_letter:v1 or consumer.dead_letter:v1: they hold the only copy of
+# every dead letter, so an operator removes entries from them once handled.
 streamReaper:
   enabled: true
   schedule: "0 3 * * *"
