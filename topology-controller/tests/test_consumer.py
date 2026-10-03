@@ -1,7 +1,9 @@
 import json
 import logging
+import re
 import threading
 import time
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -201,9 +203,9 @@ def test_reclaim_does_not_ack_when_handler_still_failing():
     redis_mock.xack.assert_not_called()
 
 
-def test_reclaim_uses_min_idle_so_it_never_steals_in_flight_work():
-    """Reclaim must pass a non-trivial min-idle so a live peer's in-flight
-    message is not stolen mid-processing."""
+def test_reclaim_only_claims_messages_idle_for_at_least_a_minute():
+    """Reclaim passes a min-idle window of at least a minute, so a message a
+    peer is still processing is not claimed before a normal handler finishes."""
     redis_mock = MagicMock()
     redis_mock.xautoclaim.return_value = (b"0-0", [], [])
     c = _consumer(redis_mock, lambda _f: None)
@@ -454,6 +456,50 @@ def test_permanent_error_dead_letters_then_acks(monkeypatch, caplog):
     assert fields["producer"] == "topology-controller"
     assert json.loads(fields["payload"])["failure_kind"] == "permanent"
     assert caplog.text.count(LOG_DEAD_LETTERED) == 1
+
+
+def test_permanent_dead_letter_records_at_least_one_delivery_when_xpending_fails(monkeypatch):
+    _defang_sleep(monkeypatch)
+    for outcome in (redis_exceptions.ConnectionError("down"), []):
+        r = MagicMock()
+        if isinstance(outcome, Exception):
+            r.xpending_range.side_effect = outcome
+        else:
+            r.xpending_range.return_value = outcome
+        c = _dl_consumer(_raising(PermanentMessageError("bad")), r)
+        c._dispatch(b"1-0", {})
+        payload = json.loads(r.xadd.call_args[0][1]["payload"])
+        assert payload["failure_kind"] == "permanent"
+        assert payload["delivery_count"] == 1
+        assert r.xack.called
+
+
+def _bench_outage_script() -> Path:
+    """Walk up from this file to scripts/bench/outage.sh. The topology-controller
+    container mounts only pkg/, so there the script is absent and the test skips."""
+    start = Path(__file__).resolve()
+    for parent in start.parents:
+        candidate = parent / "scripts" / "bench" / "outage.sh"
+        if candidate.exists():
+            return candidate
+    pytest.skip("scripts/bench/outage.sh is not reachable from this checkout")
+
+
+def test_dead_letter_log_line_matches_the_bench_outage_counter():
+    """scripts/bench/outage.sh counts the messages consumers abandon by grepping
+    service logs. This consumer must log exactly one line that pattern matches,
+    and that line is the one written once per dead letter."""
+    script = _bench_outage_script().read_text()
+    found = re.search(r"grep -cE '([^']+)'", script)
+    assert found, "outage.sh no longer counts abandoned messages with grep -cE '<pattern>'"
+    pattern = re.compile(found.group(1))
+
+    assert LOG_DEAD_LETTERED == "Message dead-lettered — ACKing to drop from PEL"
+    assert pattern.search(LOG_DEAD_LETTERED)
+
+    sources = sorted(Path(consumer_mod.__file__).parent.glob("*.py"))
+    matches = sum(len(pattern.findall(src.read_text())) for src in sources)
+    assert matches == 1, "only the LOG_DEAD_LETTERED constant may match the bench counter"
 
 
 def test_dead_letter_write_failure_keeps_message_pending(monkeypatch, caplog):

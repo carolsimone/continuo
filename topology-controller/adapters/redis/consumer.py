@@ -17,7 +17,9 @@ logger = logging.getLogger(__name__)
 
 # Only reclaim messages that have been pending longer than this. A live peer
 # may legitimately hold a message for the duration of an S3 download + sqlglot
-# resolve, so the window is wide enough that reclaim never steals in-flight work.
+# resolve, which the window comfortably covers. A Python handler has no
+# deadline, so with several replicas a handler that outlives the window can have
+# its message reclaimed and run a second time by another replica.
 _RECLAIM_MIN_IDLE_MS = 60_000
 
 # How long the initial consumer-group creation keeps waiting for a Redis it
@@ -145,7 +147,10 @@ class Consumer:
                     continue
                 deliveries = self._deliveries(msg_id)
                 if cls is ErrorClass.PERMANENT:
-                    self._dead_letter_and_ack(msg_id, msg_fields, DeadLetterKind.PERMANENT, exc, deliveries)
+                    # The message has been delivered at least once, so a count
+                    # of 0 (Redis could not tell) is recorded as 1.
+                    self._dead_letter_and_ack(msg_id, msg_fields, DeadLetterKind.PERMANENT, exc,
+                                              max(deliveries, 1))
                 elif deliveries >= _MAX_DELIVERIES:
                     self._dead_letter_and_ack(
                         msg_id, msg_fields, DeadLetterKind.TRANSIENT_EXHAUSTED, exc, deliveries,
