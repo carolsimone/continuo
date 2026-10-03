@@ -25,11 +25,11 @@ type MessageHandler func(ctx context.Context, msg goredis.XMessage) error
 // that persisted to its last delivery. It fires once a dead-lettered message is
 // acknowledged, carrying the message and the cause, so the owning service can
 // finalize any in-flight state it committed for that message (which the
-// consumer leaves dangling, since it records no state of its own). The ctx it
-// receives is detached from the service's shutdown cancellation and bounded by
-// the consumer's handler timeout, so a shutdown that begins after the dead
-// letter was written does not cancel the notification, and a slow handler
-// cannot delay shutdown beyond that bound. It is best-effort housekeeping,
+// consumer leaves dangling, since dead-lettering leaves the service's own store
+// untouched). The ctx it receives is detached from the service's shutdown
+// cancellation and bounded by the consumer's handler timeout, so a shutdown
+// that begins after the dead letter was written does not cancel the
+// notification, and a slow handler cannot delay shutdown beyond that bound. It is best-effort housekeeping,
 // never on the message-processing critical path: it is invoked with panic
 // recovery and its outcome does not affect the ACK.
 type DropHandler func(ctx context.Context, msg goredis.XMessage, cause error)

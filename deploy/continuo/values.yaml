@@ -367,7 +367,9 @@ databaseInit:
 
 # CronJob that trims Redis Stream entries older than `retention`. It never trims
 # outbox.dead_letter:v1 or consumer.dead_letter:v1: they hold the only copy of
-# every dead letter, so an operator removes entries from them once handled.
+# every dead letter. consumer.dead_letter:v1 is written without a length cap, so
+# an operator removes handled entries from it; outbox.dead_letter:v1 keeps the
+# roughly 10,000-entry cap its publishers apply when they append.
 streamReaper:
   enabled: true
   schedule: "0 3 * * *"

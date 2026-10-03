@@ -278,8 +278,8 @@ func TestReleasePromoted_DedupHit_ShortCircuits(t *testing.T) {
 }
 
 // 4. Neo4j error from PromoteRelease propagates as retryable (not ErrPermanent).
-// The handler returns a non-nil error so the binding NACKs and the message
-// replays. In a real Postgres transaction the dedup INSERT is rolled back;
+// The handler returns a non-nil error so the binding leaves the message pending
+// and it replays. In a real Postgres transaction the dedup INSERT is rolled back;
 // the fake UoW is not transaction-aware so we verify rollback was called and
 // no commit occurred, which is the observable contract for replay eligibility.
 func TestReleasePromoted_Neo4jError_PropagatesAsRetryable(t *testing.T) {
@@ -297,7 +297,7 @@ func TestReleasePromoted_Neo4jError_PropagatesAsRetryable(t *testing.T) {
 
 	err := h.Handle(ctx, "msg-rp-neo4j-err", nil, twoNodeInput())
 	require.Error(t, err)
-	// Must NOT be a permanent error — the binding must NACK so the message replays.
+	// Must NOT be a permanent error — the binding must leave the message pending so it replays.
 	assert.False(t, errors.Is(err, events.ErrPermanent), "neo4j error should be retryable, not permanent")
 
 	// Transaction must NOT be committed — in the real system the Postgres tx

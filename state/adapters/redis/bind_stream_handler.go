@@ -68,9 +68,8 @@ func valuesPayload(msg goredis.XMessage) []byte {
 // Errors are surfaced to the StreamConsumer so it can pick the right ACK
 // policy: parse failures are wrapped with events.ErrPermanent (the consumer
 // dead-letters the message), while handler/repository failures propagate as-is
-// (NACK and leave the message pending for retry). On a duplicate the
-// transaction is committed (empty txn) and nil is returned so the consumer
-// ACKs.
+// (the message is left pending for retry). On a duplicate the transaction is
+// committed (empty txn) and nil is returned so the consumer ACKs.
 func bindStreamHandler[E any](
 	uowFactory func() uow.UnitOfWork,
 	logger *slog.Logger,

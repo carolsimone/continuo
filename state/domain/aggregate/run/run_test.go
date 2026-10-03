@@ -917,8 +917,8 @@ func TestHasTaskAt_ReturnsFalseWhenMissing(t *testing.T) {
 // ComputeJobName returns an error when a projected task's identity sanitizes to
 // an empty job name. AcceptDispatch calls ComputeJobName directly and wraps any
 // error in ErrInvalidDispatchedTask; the application handler maps that sentinel
-// to pkg/events.ErrPermanent so the consumer binding ACKs-and-drops the poison
-// message instead of NACK-retrying it forever.
+// to pkg/events.ErrPermanent so the consumer binding dead-letters the poison
+// message instead of retrying it until its delivery limit.
 //
 // Every constructible Run has a non-empty schedule_id whose String() always
 // contributes a non-empty suffix, so the empty-name branch can only be reached
