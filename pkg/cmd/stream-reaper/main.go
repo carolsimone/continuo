@@ -26,6 +26,24 @@ import (
 
 const defaultRetention = 72 * time.Hour
 
+// untrimmed lists the streams the reaper never trims: no consumer stores dead
+// letters durably, so the stream is their only copy.
+var untrimmed = map[string]bool{
+	streams.OutboxDeadLetterV1:   true,
+	streams.ConsumerDeadLetterV1: true,
+}
+
+// trimTargets returns the contract streams the reaper trims, in contract order.
+func trimTargets(all []string) []string {
+	out := make([]string, 0, len(all))
+	for _, s := range all {
+		if !untrimmed[s] {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	if err := run(logger); err != nil {
@@ -71,14 +89,15 @@ func run(logger *slog.Logger) error {
 	// a smaller id, i.e. everything created before the cutoff.
 	minID := fmt.Sprintf("%d-0", cutoff.UnixMilli())
 
+	targets := trimTargets(streams.All)
 	logger.Info("stream-reaper start",
 		"retention", retention.String(),
 		"cutoff", cutoff.UTC().Format(time.RFC3339),
-		"streams", len(streams.All))
+		"streams", len(targets))
 
 	var totalRemoved int64
 	var failures int
-	for _, s := range streams.All {
+	for _, s := range targets {
 		// Approximate trim (~) is cheaper than exact and is fine for age-based
 		// cleanup; a few extra retained entries per stream are harmless.
 		removed, err := rdb.XTrimMinIDApprox(ctx, s, minID, 0).Result()
@@ -96,7 +115,7 @@ func run(logger *slog.Logger) error {
 	logger.Info("stream-reaper done",
 		"total_removed", totalRemoved,
 		"failures", failures,
-		"streams", len(streams.All))
+		"streams", len(targets))
 
 	if failures > 0 {
 		return fmt.Errorf("%d stream(s) failed to trim", failures)
