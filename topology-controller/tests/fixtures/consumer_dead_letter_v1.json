@@ -1,0 +1,38 @@
+{
+  "input": {
+    "tenant_id": "default",
+    "producer": "state",
+    "occurred_at": "2026-10-03T12:34:56.789012Z",
+    "original_stream": "task.status.updated:v1",
+    "original_group": "state-task-status-updated",
+    "original_message_id": "1759494896789-0",
+    "fields": {
+      "outbox_entry_id": "6e1d0a4c-6b0e-4d55-8c55-3f7d1f2e9a10",
+      "status": "BOGUS",
+      "task_id": "not-a-uuid"
+    },
+    "failure_kind": "permanent",
+    "error": "permanent: retry will not help: task_id \"not-a-uuid\" is not a UUID",
+    "delivery_count": 1
+  },
+  "fields": {
+    "event_id": "91749346-8e07-51d4-b3e4-e1fabcd4536a",
+    "tenant_id": "default",
+    "occurred_at": "2026-10-03T12:34:56.789012Z",
+    "producer": "state",
+    "schema_version": "1",
+    "payload": {
+      "original_stream": "task.status.updated:v1",
+      "original_group": "state-task-status-updated",
+      "original_message_id": "1759494896789-0",
+      "fields": {
+        "outbox_entry_id": "6e1d0a4c-6b0e-4d55-8c55-3f7d1f2e9a10",
+        "status": "BOGUS",
+        "task_id": "not-a-uuid"
+      },
+      "failure_kind": "permanent",
+      "error": "permanent: retry will not help: task_id \"not-a-uuid\" is not a UUID",
+      "delivery_count": 1
+    }
+  }
+}
