@@ -17,9 +17,16 @@ mkdir -p "${p}"
 "${here}/export_topology.sh" "${out}"
 "${here}/preflight.sh" "${out}"
 
+# Every exit after the first injection, including a signal or a failed step,
+# stops the running scenario and its live bench run, then re-announces the live
+# topology.
 injected=0
+child=""
+current_schedule=""
 restore_on_exit() {
   local rc=$?
+  trap - INT TERM HUP
+  bench_stop_scenario "${child}" "${current_schedule}"
   if [ "${injected}" = "1" ]; then
     if ! "${here}/restore.sh" "${out}"; then
       echo "run_baseline_dev.sh: RESTORE FAILED — run: BENCH_TARGET=k8s BENCH_KUBECONFIG=${BENCH_KUBECONFIG} ${here}/restore.sh ${out}" >&2
@@ -29,6 +36,8 @@ restore_on_exit() {
   exit "${rc}"
 }
 trap restore_on_exit EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM HUP
 
 "${here}/build_image.sh"
 
@@ -47,12 +56,20 @@ bench dag-2000 bench-dag-2000 --nodes 2000 --levels 20 --fan-in 2
 bench cascade-2000 bench-cascade-2000 --nodes 2000 --levels 20 --fan-in 2 --fail-root
 bench cancel-500 bench-cancel-500 --nodes 500 --levels 10 --fan-in 2 --image-tag slow30
 
+# scenario NAME FILE SCHEDULE ARGS... : refuses to publish when a release was
+# promoted since the export, then publishes the union and runs the scenario as a
+# child process that the exit handler can stop.
 scenario() {
   local name="$1" file="$2" schedule="$3"
   shift 3
+  bench_check_release "${out}"
   injected=1
+  current_schedule="${schedule}"
   "${here}/inject.sh" "${p}/${file}" "${schedule}"
-  "${here}/run_scenario.sh" "${name}" "${p}/${file}" "${schedule}" "$@"
+  "${here}/run_scenario.sh" "${name}" "${p}/${file}" "${schedule}" "$@" &
+  child=$!
+  wait "${child}"
+  child=""
 }
 
 BENCH_IDLE_S=900 scenario smoke smoke.json bench-smoke run 1 "${out}/smoke"

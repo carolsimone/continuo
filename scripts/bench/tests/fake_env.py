@@ -48,16 +48,20 @@ else:
 '''
 
 FAKE_KUBECTL = r'''#!/usr/bin/env python3
-import os, sys
+import json, os, sys
 args = " ".join(sys.argv[1:])
 if " exec " in f" {args} ":
-    import json
     fake = os.environ["FAKE_DIR"]
     with open(os.path.join(fake, "exec-calls.jsonl"), "a") as calls:
         calls.write(json.dumps({"argv": sys.argv[1:], "stdin": sys.stdin.read()}) + "\n")
     output = os.path.join(fake, "exec-output")
     if os.path.exists(output):
         sys.stdout.write(open(output).read())
+    sys.exit(0)
+if "get deploy" in args:
+    env = [{"name": name, "value": "fake-" + name.lower()}
+           for name in ("POSTGRES_USER", "POSTGRES_DB", "POSTGRES_PASSWORD", "REDIS_PASSWORD")]
+    print(json.dumps({"spec": {"template": {"spec": {"containers": [{"name": "svc", "env": env}]}}}}))
     sys.exit(0)
 if "delete jobs" in args:
     sys.exit(0)
@@ -82,6 +86,8 @@ elif args[0] == "network":
 elif args[0] == "ps":
     print("cid")
 elif args[0] == "stats":
+    if os.environ.get("FAKE_DOCKER_STATS_FAIL"):
+        sys.exit("Error response from daemon: fake stats failure")
     print("state\t1.00%\t10MiB / 1GiB")
 elif args[0] == "exec":
     rest = [a for a in args[1:] if a not in ("-i", "-e", "REDISCLI_AUTH")]

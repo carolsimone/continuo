@@ -81,3 +81,11 @@ def test_usage_sums_replicas_at_one_instant_and_integrates_cpu():
 
 def test_messages_delta_counts_new_streams_from_zero():
     assert m.messages_delta({"a": 5}, {"a": 9, "b": 2}) == {"a": 4, "b": 2}
+
+
+def test_sampling_that_starts_late_or_stops_early_counts_as_a_gap():
+    def samples(seconds):
+        return m.read_samples([f"{iso(s)}\tstate\t1m\t1Mi\n" for s in seconds])
+    assert m.max_sample_gap(samples(range(0, 61, 5)), at(0), at(600)) == 540
+    assert m.max_sample_gap(samples(range(100, 601, 5)), at(0), at(600)) == 100
+    assert m.max_sample_gap([], at(0), at(600)) is None

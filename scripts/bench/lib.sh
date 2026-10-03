@@ -164,6 +164,43 @@ bench_finish_run() {
   echo "${status}"
 }
 
+# Stops a scenario that is still running: ends its runner CHILD (a process this
+# shell started; empty when none), then cancels SCHEDULE's run if it is live and
+# waits up to 300 s for it to stop, so nothing the benchmark started keeps running.
+bench_stop_scenario() {
+  local child="$1" schedule="$2" run_id running
+  if [ -n "${child}" ]; then
+    kill "${child}" 2>/dev/null || true
+    wait "${child}" 2>/dev/null || true
+  fi
+  [ -n "${schedule}" ] || return 0
+  if read -r run_id running _ < <(bench_cli_run schedule status "${schedule}" 2>/dev/null \
+       | python3 "$(bench_here)/cli_json.py" run-state) && [ "${running}" = "true" ]; then
+    bench_cli_run schedule cancel "${schedule}" "benchmark interrupted" >/dev/null || true
+    bench_wait_run "${schedule}" "${run_id}" 300 >/dev/null
+  fi
+}
+
+# k8s only: release-controller's current production release id.
+bench_current_release() {
+  bench_psql "${BENCH_PG_POD:?BENCH_PG_POD is required (discover.sh lists candidates)}" \
+    "$(bench_env_value release-controller POSTGRES_USER)" "$(bench_env_value release-controller POSTGRES_DB)" \
+    "$(bench_env_value release-controller POSTGRES_PASSWORD)" "SELECT release_id FROM current_prod WHERE id = 1"
+}
+
+# k8s only: succeeds when current_prod still names the release exported to
+# OUT_DIR/restore.json. A release promoted since then makes the export stale:
+# re-announcing it would revert the live topology.
+bench_check_release() {
+  local out="$1" exported live
+  exported="$(python3 "$(bench_here)/cli_json.py" field release_id < "${out}/restore.json")"
+  live="$(bench_current_release)"
+  if [ "${live}" != "${exported}" ]; then
+    echo "bench: current_prod is ${live}, but ${out}/restore.json holds ${exported}" >&2
+    return 1
+  fi
+}
+
 # True when HHMM (UTC) falls inside one of the quiet windows: the install's own
 # scheduled runs. BENCH_QUIET_WINDOWS_UTC lists them as comma-separated
 # HHMM-HHMM ranges, end exclusive; a range may cross midnight. The default,
