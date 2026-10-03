@@ -41,10 +41,13 @@ Environment knobs:
 
 Publishing a topology to `release.promoted:v1` swaps the orchestrator's whole topology: nodes missing from the payload are retired, and retired nodes that no run used in the last seven days are deleted with their code-version and failure-history links. The harness therefore never publishes a payload that omits a live node:
 
-1. `export_topology.sh` reads release-controller's `current_prod` and writes `restore.json`, the payload that re-announces the live release unchanged (every node marked unchanged, `secret_ref` kept only when set).
-2. `preflight.sh` refuses to continue unless the export's node set equals the nodes of the live schedule graphs, and records the schedule list.
+1. `export_topology.sh` reads release-controller's `current_prod` and writes `restore.json`, the payload that re-announces the live release unchanged: every node marked unchanged, `secret_ref` kept only when set, and dbt test nodes left out, as a promotion leaves them out (`current_prod` keeps them for validation only).
+2. `preflight.sh` records the schedule list and refuses to continue unless every scheduled export node is in the live schedule graphs, every node of those graphs is in the export, and the export carries no test node.
 3. Every bench payload is `topology_io.py union` of `restore.json` and the bench DAG; the union refuses a bench node or schedule that a live node already uses.
-4. `run_baseline_dev.sh` runs `restore.sh` on every exit after the first injection. `restore.sh` re-announces `restore.json`, waits until the schedule list equals the recorded one, and compares the live graphs with the export again.
+4. Before each injection, `run_baseline_dev.sh` checks that `current_prod` still names the exported release and stops otherwise.
+5. On every exit after the first injection, a signal or a failed step included, `run_baseline_dev.sh` stops the running scenario, cancels its live bench run and runs `restore.sh`. `restore.sh` re-announces `restore.json`, waits until the schedule list equals the recorded one, and compares the live graphs with the export again; when a release was promoted meanwhile, it re-exports and re-announces that release and compares the graphs only.
+
+If the machine running the harness dies mid-run, no exit handler runs. Recover by cancelling the live bench run (`continuo schedule cancel <bench schedule> <reason>`) and running `restore.sh OUT_DIR` with the same environment. Start long runs with `nohup` or in `tmux` so a closed terminal does not end them.
 
 No scenario rep starts inside a quiet window around the install's own scheduled runs: `BENCH_QUIET_WINDOWS_UTC`, comma-separated `HHMM-HHMM` ranges in UTC (default `2215-2345`, around a 23:00 UTC daily run). The dependency-outage scenarios cut a datastore off the network and run only on the local compose stack.
 
