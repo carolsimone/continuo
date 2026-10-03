@@ -51,3 +51,16 @@ def test_data_value_decodes_secrets_and_rejects_missing_keys():
     assert k8s_json.data_value({"data": {"u": "continuo"}}, "u", encoded=False) == "continuo"
     with pytest.raises(KeyError):
         k8s_json.data_value(secret, "missing", encoded=True)
+
+
+def test_slim_jobs_keeps_what_the_metrics_read_and_drops_every_other_env():
+    import metrics
+    from helpers import at, job
+    full = job("r1", "n00_0000", 0, 5)
+    full["spec"]["template"]["spec"]["initContainers"] = [
+        {"name": "hydrate-parse-cache", "env": [{"name": "AWS_SECRET_ACCESS_KEY", "value": "s3cret"}]}]
+    full["spec"]["template"]["spec"]["containers"][0]["env"].append({"name": "AWS_SECRET_ACCESS_KEY", "value": "s3cret"})
+    slim = k8s_json.slim_jobs({"items": [full]})
+    assert "s3cret" not in str(slim)
+    assert metrics.attempts_for_run(slim, "r1") == metrics.attempts_for_run({"items": [full]}, "r1")
+    assert at(5) == metrics.attempts_for_run(slim, "r1")[0].finished

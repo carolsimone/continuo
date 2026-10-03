@@ -3,6 +3,7 @@
 The fakes keep their state in FAKE_DIR:
   state, current, n  the schedule's latest run (continuo)
   calls              one line per `schedule cancel` (continuo) and per `docker network ...` call
+  exec-calls.jsonl   argv and stdin of every `kubectl exec`; exec-output is what it prints
   jobs.json          what `kubectl get jobs` prints
   logs/<svc>.log     the service logs that `docker exec <svc> ... /tmp/<svc>.log` reads
   on-trigger/<svc>.log  lines a trigger appends to logs/<svc>.log, standing for what services log during the run
@@ -49,6 +50,15 @@ else:
 FAKE_KUBECTL = r'''#!/usr/bin/env python3
 import os, sys
 args = " ".join(sys.argv[1:])
+if " exec " in f" {args} ":
+    import json
+    fake = os.environ["FAKE_DIR"]
+    with open(os.path.join(fake, "exec-calls.jsonl"), "a") as calls:
+        calls.write(json.dumps({"argv": sys.argv[1:], "stdin": sys.stdin.read()}) + "\n")
+    output = os.path.join(fake, "exec-output")
+    if os.path.exists(output):
+        sys.stdout.write(open(output).read())
+    sys.exit(0)
 if "delete jobs" in args:
     sys.exit(0)
 if "get jobs" in args:
@@ -76,7 +86,8 @@ elif args[0] == "stats":
 elif args[0] == "exec":
     rest = [a for a in args[1:] if a not in ("-i", "-e", "REDISCLI_AUTH")]
     command = [part.replace("/tmp/", logs) for part in rest[1:]]
-    if command[:1] == ["redis-cli"]:
+    if "redis-cli" in command:
+        sys.stdin.read()
         if "SCAN" in command:
             print("0")
     else:

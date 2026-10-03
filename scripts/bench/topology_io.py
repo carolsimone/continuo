@@ -2,7 +2,10 @@
 
 On a shared install the benchmark never publishes a topology that omits a live
 node: a promotion retires missing nodes and deletes those no recent run used,
-cutting their code-version and failure-history links.
+cutting their code-version and failure-history links. It also never publishes
+a dbt test node: release-controller's current_prod keeps tests for validation,
+but a promotion strips them, and the orchestrator would otherwise add them to
+its graph as tables.
 """
 from __future__ import annotations
 
@@ -12,7 +15,11 @@ import logging
 import sys
 from pathlib import Path
 
+import contract
+
 log = logging.getLogger(__name__)
+
+TEST_NODE_TYPE = contract.vocabulary_value("node_type", "DbtTest")
 
 STRING_FIELDS = ("unique_id", "schema_name", "table_name", "service_name", "node_type",
                  "content_hash", "image_tag", "schedule", "original_file_path")
@@ -42,7 +49,10 @@ def restore_payload(current: dict) -> dict:
     """The payload that re-announces the exported release unchanged."""
     if not current.get("release_id") or not isinstance(current.get("topology"), list):
         raise ValueError("the current_prod export needs a release_id and a topology list")
-    nodes = [snapshot_to_wire(node) for node in current["topology"]]
+    nodes = [snapshot_to_wire(node) for node in current["topology"] if node.get("node_type") != TEST_NODE_TYPE]
+    dropped = len(current["topology"]) - len(nodes)
+    if dropped:
+        log.info("restore payload leaves out %d %s nodes, as a promotion does", dropped, TEST_NODE_TYPE)
     return {"release_id": current["release_id"], "topology": nodes, "image_tags": image_tags(nodes)}
 
 
@@ -73,6 +83,9 @@ def compare(payload: dict, graphs: list) -> list:
     for graph in graphs:
         live |= graph_ids(graph)
     problems = []
+    tests = sorted(node["unique_id"] for node in payload["topology"] if node.get("node_type") == TEST_NODE_TYPE)
+    if tests:
+        problems.append(f"payload carries {len(tests)} {TEST_NODE_TYPE} nodes, which a promotion never publishes: {tests[:5]}")
     missing_live = sorted(scheduled - live)
     if missing_live:
         problems.append(f"{len(missing_live)} scheduled export nodes missing from the live graphs: {missing_live[:5]}")

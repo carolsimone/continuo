@@ -87,7 +87,7 @@ for rep in $(seq 1 "${reps}"); do
   sleep "${settle_s}"
   python3 "${here}/redis_streams.py" snapshot > "${out}/streams-after-rep${rep}.json"
   stop_sampler
-  bench_kubectl get jobs -l "schedule=${schedule}" -o json > "${out}/jobs-rep${rep}.json"
+  bench_kubectl get jobs -l "schedule=${schedule}" -o json | python3 "${here}/k8s_json.py" slim-jobs > "${out}/jobs-rep${rep}.json"
   python3 "${here}/collect.py" --scenario "${name}" --rep "${rep}" --operation "${op}" --run-id "${run_id}" \
     --payload "${payload}" --jobs "${out}/jobs-rep${rep}.json" --trigger-ts "${trigger_ts}" --done-ts "${done_ts}" \
     --samples "${samples}" --idle-start "${idle_start}" --idle-end "${idle_end}" \

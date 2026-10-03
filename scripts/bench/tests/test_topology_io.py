@@ -65,3 +65,17 @@ def test_compare_reports_both_directions():
     problems = t.compare(payload, graphs)
     assert len(problems) == 2
     assert "a.c" in problems[0] and "a.extra" in problems[1]
+
+
+def test_restore_payload_drops_test_nodes_a_promotion_never_publishes():
+    payload = t.restore_payload({"release_id": "r", "topology": [
+        snap("a.x"), snap("a.not_null_x", schedule="", node_type="dbt-test", ups=["a.x"])]})
+    assert [n["unique_id"] for n in payload["topology"]] == ["a.x"]
+
+
+def test_compare_rejects_a_payload_that_carries_test_nodes():
+    payload = {"topology": [t.snapshot_to_wire(snap("a.x")),
+                            t.snapshot_to_wire(snap("a.t", schedule="", node_type="dbt-test"))]}
+    graphs = [{"nodes": [{"schema_name": "a", "table_name": "x"}]}]
+    problems = t.compare(payload, graphs)
+    assert len(problems) == 1 and "dbt-test" in problems[0]

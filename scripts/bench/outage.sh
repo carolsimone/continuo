@@ -76,7 +76,7 @@ for c in "${consumers[@]}"; do
   i=$(( i + 1 ))
 done
 python3 "${here}/redis_streams.py" snapshot > "${out}/streams-after-rep1.json"
-bench_kubectl get jobs -l "schedule=${schedule}" -o json > "${out}/jobs-rep1.json"
+bench_kubectl get jobs -l "schedule=${schedule}" -o json | python3 "${here}/k8s_json.py" slim-jobs > "${out}/jobs-rep1.json"
 python3 "${here}/collect.py" --scenario "outage-${service}" --rep 1 --operation run --run-id "${run_id}" \
   --payload "${payload}" --jobs "${out}/jobs-rep1.json" --trigger-ts "${trigger_ts}" --done-ts "${done_ts}" \
   --streams-before "${out}/streams-before-rep1.json" --streams-after "${out}/streams-after-rep1.json" \

@@ -1,4 +1,5 @@
-"""Read kubectl JSON (stdin) for the benchmark: env-var sources, legacy Jobs, Secret and ConfigMap values.
+"""Read kubectl JSON (stdin) for the benchmark: env-var sources, legacy Jobs, Secret and ConfigMap values,
+and Job lists slimmed to what the metrics read.
 
 secret-key prints a decoded Secret value on stdout for a shell variable to
 capture; nothing in this module logs a value.
@@ -57,6 +58,27 @@ def legacy_jobs(jobs_doc: dict) -> list:
     return sorted(names)
 
 
+def slim_jobs(jobs_doc: dict) -> dict:
+    """A Job list with only what the metrics read: name, creation time, labels, status and TABLE_NAME.
+
+    A task Job's pod spec carries literal credentials (the parse-cache init
+    container's S3 keys); none of it is kept, so a saved Job list holds no secret.
+    """
+    items = []
+    for job in jobs_doc.get("items", []):
+        metadata = job.get("metadata", {})
+        containers = job.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [])
+        items.append({
+            "metadata": {key: metadata[key] for key in ("name", "creationTimestamp", "labels") if key in metadata},
+            "spec": {"template": {"spec": {"containers": [
+                {"name": container.get("name"),
+                 "env": [env for env in container.get("env") or [] if env.get("name") == "TABLE_NAME"]}
+                for container in containers]}}},
+            "status": job.get("status") or {},
+        })
+    return {"items": items}
+
+
 def data_value(doc: dict, key: str, encoded: bool) -> str:
     value = (doc.get("data") or {}).get(key)
     if value is None:
@@ -67,13 +89,17 @@ def data_value(doc: dict, key: str, encoded: bool) -> str:
 def main(argv: list) -> int:
     logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="%(levelname)s %(message)s")
     if not argv:
-        log.error("usage: k8s_json.py env-source VAR | legacy-jobs | secret-key KEY | configmap-key KEY")
+        log.error("usage: k8s_json.py env-source VAR | legacy-jobs | slim-jobs | secret-key KEY | configmap-key KEY")
         return 2
     doc = json.load(sys.stdin)
     command = argv[0]
     if command == "env-source" and len(argv) == 2:
         for source in env_sources(doc, argv[1]):
             print("\t".join(source))
+        return 0
+    if command == "slim-jobs" and len(argv) == 1:
+        json.dump(slim_jobs(doc), sys.stdout)
+        sys.stdout.write("\n")
         return 0
     if command == "legacy-jobs" and len(argv) == 1:
         for name in legacy_jobs(doc):

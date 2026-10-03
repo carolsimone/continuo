@@ -12,8 +12,7 @@ mkdir -p "${out}"
 user="$(bench_env_value release-controller POSTGRES_USER)"
 db="$(bench_env_value release-controller POSTGRES_DB)"
 pw="$(bench_env_value release-controller POSTGRES_PASSWORD)"
-bench_kubectl exec -i "${BENCH_PG_POD:?BENCH_PG_POD is required (discover.sh lists candidates)}" -- \
-  env "PGPASSWORD=${pw}" psql -X -q -h 127.0.0.1 -U "${user}" -d "${db}" -At \
-  -c "SELECT json_build_object('release_id', release_id, 'topology', topology_snapshot)::text FROM current_prod WHERE id = 1" \
+bench_psql "${BENCH_PG_POD:?BENCH_PG_POD is required (discover.sh lists candidates)}" "${user}" "${db}" "${pw}" \
+  "SELECT json_build_object('release_id', release_id, 'topology', topology_snapshot)::text FROM current_prod WHERE id = 1" \
   > "${out}/current.json"
 python3 "${here}/topology_io.py" restore-payload < "${out}/current.json" > "${out}/restore.json"
