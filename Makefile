@@ -219,7 +219,7 @@ bench-test:  ## Unit tests and shellcheck for the run-lifecycle benchmark harnes
 	  ghcr.io/astral-sh/uv:python3.12-bookworm-slim \
 	  sh -c "uv run --no-project --with pytest pytest -q -p no:cacheprovider tests/"
 	docker run --rm -v "$(CURDIR):/repo:ro" -w /repo koalaman/shellcheck:v0.10.0 -x \
-	  scripts/bench/lib.sh scripts/bench/build_image.sh scripts/bench/image/dbt
+	  scripts/bench/*.sh scripts/bench/image/dbt
 
 # Fast, infra-free gates. CI runs this target verbatim (a single `make guards`
 # step), so a gate added here reaches CI automatically; check-ci-alignment.sh
