@@ -157,6 +157,12 @@ streams:
     producers: [state, orchestrator, execution-controller, release-controller, remediation, agent-remediation]
     consumers: []
 
+  - name: consumer.dead_letter:v1
+    const: ConsumerDeadLetterV1
+    description: Messages a stream consumer gave up on (a permanent error, or a transient error on its fifth delivery), written before the original is acknowledged. Operational DLQ, not a domain event.
+    producers: [state, orchestrator, execution-controller, release-controller, remediation, agent-remediation, topology-controller]
+    consumers: []
+
   # ---------------- cross-service fanout ----------------
 
   - name: schedule.cancelled:v1
@@ -418,6 +424,17 @@ vocabularies:
         const: ValidationFailed
         healable: true
         description: at least one node failed the candidate's dbt --empty validation run.
+
+  - name: dead_letter_kind
+    const: DeadLetterKind
+    description: Why a stream message or an outbox row was dead-lettered.
+    values:
+      - value: permanent
+        const: Permanent
+        description: the handler or publisher reported an error no retry can fix.
+      - value: transient_exhausted
+        const: TransientExhausted
+        description: a retryable error persisted through the delivery or retry limit.
 
   - name: node_runtime
     const: NodeRuntime

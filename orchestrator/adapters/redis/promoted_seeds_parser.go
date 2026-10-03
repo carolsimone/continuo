@@ -17,8 +17,9 @@ import (
 // non-scalar outbox payload value as JSON before XADD, since a Redis stream
 // field holds only a scalar.
 //
-// Every violation is an events.ErrPermanent-wrapped error so the consumer ACKs
-// the poison message instead of retrying a payload that can never parse.
+// Every violation is an events.ErrPermanent-wrapped error so the consumer
+// dead-letters the poison message instead of retrying a payload that can never
+// parse.
 func ParsePromotedSeedsRun(msg goredis.XMessage) (model.PromotedSeedsRunInput, error) {
 	scheduleID, err := requireUUIDField(msg, "schedule_id")
 	if err != nil {

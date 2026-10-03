@@ -160,6 +160,37 @@ func (v RejectReason) Healable() bool {
 	return false
 }
 
+// DeadLetterKind — Why a stream message or an outbox row was dead-lettered.
+// Values come from the vocabulary "dead_letter_kind" in contract.yaml, in
+// declaration order.
+type DeadLetterKind string
+
+const (
+	// DeadLetterKindPermanent — the handler or publisher reported an error no retry can fix.
+	DeadLetterKindPermanent DeadLetterKind = "permanent"
+	// DeadLetterKindTransientExhausted — a retryable error persisted through the delivery or retry limit.
+	DeadLetterKindTransientExhausted DeadLetterKind = "transient_exhausted"
+)
+
+// DeadLetterKinds returns every value in contract.yaml declaration order.
+func DeadLetterKinds() []DeadLetterKind {
+	return []DeadLetterKind{
+		DeadLetterKindPermanent,
+		DeadLetterKindTransientExhausted,
+	}
+}
+
+// IsValid reports whether v is a value declared in contract.yaml.
+func (v DeadLetterKind) IsValid() bool {
+	switch v {
+	case DeadLetterKindPermanent:
+		return true
+	case DeadLetterKindTransientExhausted:
+		return true
+	}
+	return false
+}
+
 // NodeRuntime — The toolchain that builds a graph node.
 // Values come from the vocabulary "node_runtime" in contract.yaml, in
 // declaration order.

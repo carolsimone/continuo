@@ -9,6 +9,7 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/remediation/domain/failure"
@@ -224,23 +225,27 @@ func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 // handler serves both consumers. The consumer group is created idempotently
 // by StreamConsumer.Start; call Start(ctx) in a goroutine to begin consuming.
 func classifyRejectionMessages(rc *goredis.Client, stream, group string, deps handlers.Deps, logger *slog.Logger) *pkgredis.StreamConsumer {
-	handler := func(ctx context.Context, msg goredis.XMessage) error {
+	return pkgredis.NewStreamConsumer(rc, stream, group, newRejectionHandler(stream, deps, logger), logger)
+}
+
+// newRejectionHandler returns the MessageHandler that classifies the failed
+// nodes of one release.rejected:v1-shaped message from the named stream. A
+// message with no payload field, or one whose payload cannot be decoded, is a
+// permanent failure: the handler returns events.ErrPermanent, so the consumer
+// dead-letters it. Any error from classification is returned as is, so the
+// consumer redelivers it.
+func newRejectionHandler(stream string, deps handlers.Deps, logger *slog.Logger) pkgredis.MessageHandler {
+	return func(ctx context.Context, msg goredis.XMessage) error {
 		raw, ok := msg.Values["payload"].(string)
 		if !ok {
-			logger.Error(stream+" missing payload — discarding", "message_id", msg.ID)
-			return nil // permanent: ACK by returning nil so the message is not left in the PEL
+			return fmt.Errorf("%w: %s message has no payload field", pkgevents.ErrPermanent, stream)
 		}
 		evs, err := evidenceFromRejected([]byte(raw))
 		if err != nil {
-			logger.Error(stream+" decode failure — discarding", "message_id", msg.ID, "error", err)
-			return nil // permanent: malformed payload cannot be retried
+			return fmt.Errorf("%w: %s decode: %v", pkgevents.ErrPermanent, stream, err)
 		}
-		if err := handlers.ClassifyRejection(ctx, deps, evs); err != nil {
-			return err // transient: do not ACK; allow redelivery via PEL sweep
-		}
-		return nil
+		return handlers.ClassifyRejection(ctx, deps, evs)
 	}
-	return pkgredis.NewStreamConsumer(rc, stream, group, handler, logger)
 }
 
 // NewReleaseRejectedConsumer constructs a StreamConsumer that reads

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/release-controller/adapters/serialization"
@@ -90,14 +91,13 @@ func NewManifestLoadedCandidateConsumer(
 // Advancing after a failed parse is essential: no kind:"complete" terminal
 // message on validation.result:v1 will arrive for a rejected release, so
 // without this call every queued candidate would stay in StatusReceived
-// indefinitely.
+// indefinitely. A payload that cannot be decoded is a permanent failure: the
+// handler returns events.ErrPermanent, so the consumer dead-letters it.
 func newManifestLoadedCandidateHandler(deps *handlers.Deps, logger *slog.Logger) pkgredis.MessageHandler {
 	return func(ctx context.Context, msg goredis.XMessage) error {
 		var dto parsedManifestDTO
 		if err := decodePayload(msg, &dto); err != nil {
-			logger.Error("manifest.loaded.candidate:v1 decode failure — discarding",
-				"message_id", msg.ID, "error", err)
-			return nil // permanent: ACK by returning nil so it is not left in the PEL
+			return fmt.Errorf("%w: %s decode: %v", pkgevents.ErrPermanent, streams.ManifestLoadedCandidateV1, err)
 		}
 		if err := handlers.HandleParsedManifest(ctx, deps, dto.toInput(logger)); err != nil {
 			return err

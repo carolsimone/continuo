@@ -6,6 +6,10 @@ import (
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 )
 
+// ServiceName names this service as the producer of the events and dead
+// letters it writes.
+const ServiceName = "execution-controller"
+
 // defaultShutdownGrace bounds the graceful-shutdown sequence: the in-flight
 // drain plus the infra-close handlers. Override with SHUTDOWN_GRACE (e.g. "30s").
 const defaultShutdownGrace = 15 * time.Second

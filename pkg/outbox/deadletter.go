@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 )
@@ -16,10 +17,11 @@ const (
 	DeadLetterAggregateType = "outbox_dead_letter"
 )
 
-// Failure kinds recorded on a terminal row's dead-letter.
+// Failure kinds recorded on a terminal row's dead-letter: the dead_letter_kind
+// vocabulary of the stream contract.
 const (
-	FailureKindPermanent          = "permanent"
-	FailureKindTransientExhausted = "transient_exhausted"
+	FailureKindPermanent          = string(model.DeadLetterKindPermanent)
+	FailureKindTransientExhausted = string(model.DeadLetterKindTransientExhausted)
 )
 
 // DeadLetterPayload is the JSON body published to streams.OutboxDeadLetterV1 and

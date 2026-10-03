@@ -7,6 +7,10 @@ import (
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 )
 
+// ServiceName names this service as the producer of the events and dead
+// letters it writes.
+const ServiceName = "orchestrator"
+
 // defaultShutdownGrace bounds the graceful-shutdown sequence: the in-flight
 // drain plus the infra-close handlers. It is a safe default so no required env
 // var is introduced; override with SHUTDOWN_GRACE (e.g. "30s").

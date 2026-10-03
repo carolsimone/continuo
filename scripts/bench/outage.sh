@@ -65,8 +65,9 @@ wait $!
 reconnect
 status="$(bench_finish_run "${schedule}" "${run_id}" "${BENCH_RUN_TIMEOUT_S:-2700}" "benchmark outage cleanup")"
 done_ts="$(date -u +%FT%TZ)"
-# pkg/redis logs one of these two lines for every message a consumer drops:
-# a poison message past its delivery limit, or a permanent handler error.
+# Every consumer, Go (pkg/redis) and Python (topology-controller), logs one
+# "Message dead-lettered — ACKing to drop from PEL" line per dead letter,
+# whether the message was permanently failing or past its delivery limit.
 dropped=0
 i=0
 for c in "${consumers[@]}"; do

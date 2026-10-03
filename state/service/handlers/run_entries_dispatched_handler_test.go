@@ -401,8 +401,8 @@ func TestRunEntriesDispatched_AppendErrorPropagates(t *testing.T) {
 // TestRunEntriesDispatched_InvalidTaskName_MapsSentinelToPermanent asserts the
 // handler's failure-classification contract: an AcceptDispatch error wrapping
 // run.ErrInvalidDispatchedTask is re-wrapped to also match pkg/events.
-// ErrPermanent, so the Redis binding ACKs-and-drops the poison payload instead
-// of NACK-retrying it forever.
+// ErrPermanent, so the Redis binding dead-letters the poison payload instead
+// of retrying it until its delivery limit.
 //
 // The poison condition originates in pkg/domain.ComputeJobName, which only
 // rejects an identity that sanitizes to an empty job name; every constructible
@@ -418,6 +418,6 @@ func TestRunEntriesDispatched_InvalidTaskName_MapsSentinelToPermanent(t *testing
 		t.Errorf("mapped error must still match run.ErrInvalidDispatchedTask")
 	}
 	if !errors.Is(mapped, pkgevents.ErrPermanent) {
-		t.Errorf("mapped error must match pkgevents.ErrPermanent so the binding ACKs-and-drops")
+		t.Errorf("mapped error must match pkgevents.ErrPermanent so the binding dead-letters the message")
 	}
 }

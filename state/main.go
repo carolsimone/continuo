@@ -30,14 +30,6 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// consumerHeartbeatStale is the liveness heartbeat budget: how long a
-// consumer's read loop may go without completing an iteration before /livez
-// reports it wedged. These consumers set no handler timeout, so nothing
-// enforces this budget against the slowest handler — it is an empirical
-// margin, not an enforced relationship, and must stay comfortably above the
-// slowest handler invocation observed in practice.
-const consumerHeartbeatStale = 3 * time.Minute
-
 // outboxHeartbeatStale is the liveness budget for the outbox processor's Run
 // loop. The poll tick is 500ms, so 60s is comfortably above it: a wedged (not
 // exited) processor trips within a minute, while an idle-but-live one never
@@ -78,9 +70,10 @@ func main() {
 	// pod is restarted; a worker heartbeat probe also catches a consumer whose
 	// read loop has gone wedged without exiting.
 	runConsumer := func(name string, consumer *pkgredis.StreamConsumer) {
+		consumer.SetService(config.ServiceName)
 		liveReg.RegisterWorker(name)
 		liveReg.AddWorkerProbe(name+"_heartbeat", 10*time.Second, func(context.Context) error {
-			return consumer.Healthy(consumerHeartbeatStale)
+			return consumer.Healthy(consumer.HeartbeatBudget())
 		})
 		lifecycleManager.Go(func() {
 			err := consumer.Start(ctx)

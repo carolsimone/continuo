@@ -5,6 +5,7 @@ import redis
 from config.config import (
     REDIS_URL,
     HTTP_PORT,
+    SERVICE_NAME,
     S3_ENDPOINT_URL, S3_BUCKET, S3_ENV,
     AWS_DEFAULT_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
     RELEASE_REQUESTED_STREAM, RELEASE_REQUESTED_GROUP,
@@ -18,6 +19,7 @@ from adapters.code_bundle_uploader import CodeBundleUploader
 from adapters.health.server import start_health_server
 from adapters.redis.candidate_publisher import CandidateManifestPublisher
 from adapters.redis.consumer import Consumer
+from adapters.redis.error_class import PermanentMessageError
 from adapters.sources.s3 import S3Source
 from adapters.sources.s3_uri import parse_s3_uri
 from domain.model import ManifestKind, ManifestRequest, Runtime
@@ -72,34 +74,67 @@ def main() -> None:
     logger.info("topology-controller SQL dialect: %s", dialect)
 
     def handle_release_requested(fields: dict) -> None:
-        payload_raw = _decode_field(fields, "payload")
+        try:
+            payload_raw = _decode_field(fields, "payload")
+        except UnicodeDecodeError as exc:
+            raise PermanentMessageError(f"release.requested:v1 payload is not valid UTF-8: {exc}") from exc
         if not payload_raw:
-            raise ValueError("release.requested:v1 message missing payload")
+            raise PermanentMessageError("release.requested:v1 message missing payload")
         try:
             payload = json.loads(payload_raw)
         except json.JSONDecodeError as exc:
-            raise ValueError(f"release.requested:v1 payload not valid JSON: {exc}") from exc
+            raise PermanentMessageError(f"release.requested:v1 payload not valid JSON: {exc}") from exc
+        if not isinstance(payload, dict):
+            raise PermanentMessageError(
+                f"release.requested:v1 payload must be a JSON object, got {type(payload).__name__}",
+            )
         release_id = payload.get("release_id")
         manifest_keys_raw = payload.get("manifest_keys")
         if not release_id or manifest_keys_raw is None:
-            raise ValueError(
+            raise PermanentMessageError(
                 "release.requested:v1 payload missing release_id or manifest_keys",
+            )
+        if not isinstance(release_id, str):
+            raise PermanentMessageError(
+                f"release.requested:v1 release_id must be a string, got {type(release_id).__name__}",
+            )
+        if not isinstance(manifest_keys_raw, list):
+            raise PermanentMessageError(
+                f"release.requested:v1 manifest_keys must be a list, got {type(manifest_keys_raw).__name__}",
             )
         # All entries must share a single bucket; derive it from the first URI and
         # assert the rest agree so misrouted multi-bucket payloads are caught early.
-        # Each entry must carry a non-empty "service" field; a missing or empty
-        # service is treated as a permanent malformed-payload error (not ACKed) so
-        # the service-mismatch/empty-manifest validation in the handler cannot be
-        # silently bypassed.
+        # Each entry must be an object carrying a non-empty string "service" and
+        # a string "s3_uri". Any other shape is a permanent malformed-payload
+        # error (the consumer dead-letters it) so the service-mismatch/
+        # empty-manifest validation in the handler cannot be silently bypassed.
         buckets = []
         requests: list[ManifestRequest] = []
         for entry in manifest_keys_raw:
-            svc = entry.get("service") if isinstance(entry, dict) else None
+            if not isinstance(entry, dict):
+                raise PermanentMessageError(
+                    f"release.requested:v1 manifest_keys entry must be an object, got {type(entry).__name__}"
+                )
+            svc = entry.get("service")
             if not svc:
-                raise ValueError(
+                raise PermanentMessageError(
                     "release.requested:v1 manifest_keys entry missing or empty 'service' field"
                 )
-            bucket, key = parse_s3_uri(entry["s3_uri"])
+            if not isinstance(svc, str):
+                raise PermanentMessageError(
+                    f"release.requested:v1 manifest_keys entry 'service' must be a string, got {type(svc).__name__}"
+                )
+            s3_uri = entry.get("s3_uri")
+            if not isinstance(s3_uri, str):
+                raise PermanentMessageError(
+                    "release.requested:v1 manifest_keys entry missing 's3_uri' or it is not a string"
+                )
+            try:
+                bucket, key = parse_s3_uri(s3_uri)
+            except ValueError as exc:
+                raise PermanentMessageError(
+                    f"release.requested:v1 manifest_keys entry has an invalid s3_uri: {exc}"
+                ) from exc
             buckets.append(bucket)
             # parse_s3_uri appends a trailing slash to all non-empty paths; strip it
             # because object keys never end with "/" in S3.
@@ -117,7 +152,7 @@ def main() -> None:
                 kind=entry.get("kind", ManifestKind.DBT),
             ))
         if len(set(buckets)) > 1:
-            raise ValueError(
+            raise PermanentMessageError(
                 f"release.requested:v1 manifest_keys span multiple buckets: {set(buckets)}"
             )
         shared_bucket = buckets[0] if buckets else S3_BUCKET
@@ -139,6 +174,7 @@ def main() -> None:
         stream_name=RELEASE_REQUESTED_STREAM,
         group_name=RELEASE_REQUESTED_GROUP,
         message_handler=handle_release_requested,
+        service_name=SERVICE_NAME,
     )
 
     candidate_thread = threading.Thread(

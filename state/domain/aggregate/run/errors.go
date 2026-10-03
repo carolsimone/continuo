@@ -68,6 +68,7 @@ var (
 	// task's identity fields (service/schema/table) cannot be turned into a
 	// valid k8s job-name by pkg/domain.ComputeJobName. The payload is
 	// defective and cannot succeed on retry; the application handler maps
-	// this to pkg/events.ErrPermanent so the Redis binding ACKs-and-drops.
+	// this to pkg/events.ErrPermanent so the Redis binding dead-letters the message
+	// before acknowledging it.
 	ErrInvalidDispatchedTask = errors.New("dispatched task has invalid identity fields")
 )

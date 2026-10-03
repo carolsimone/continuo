@@ -5,8 +5,10 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestBuildDeadLetterEntry_CarriesOriginContext(t *testing.T) {
@@ -62,4 +64,10 @@ func TestDeadLetterValues_AreScalars(t *testing.T) {
 	if values["outbox_entry_id"] != dl.ID.String() {
 		t.Fatalf("outbox_entry_id must be injected for consumer dedup")
 	}
+}
+
+func TestFailureKinds_AreTheContractVocabulary(t *testing.T) {
+	assert.Equal(t, string(model.DeadLetterKindPermanent), FailureKindPermanent)
+	assert.Equal(t, string(model.DeadLetterKindTransientExhausted), FailureKindTransientExhausted)
+	assert.Contains(t, streams.All, streams.ConsumerDeadLetterV1)
 }

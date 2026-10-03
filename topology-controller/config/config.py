@@ -8,6 +8,10 @@ from streams_contract import (
 
 REDIS_URL       = os.environ.get("REDIS_URL", "")
 
+# Names this service as the producer of the entries it writes to Redis, such as
+# the dead letters of release.requested messages it cannot process.
+SERVICE_NAME    = "topology-controller"
+
 # Serves /health and /ready for the k8s liveness/readiness probes (see
 # deploy/continuo/templates/deployment.yaml and values.yaml's
 # topology-controller.httpPort). Not in _REQUIRED: an operational default is

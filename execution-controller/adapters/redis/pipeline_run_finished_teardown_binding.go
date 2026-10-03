@@ -23,7 +23,9 @@ import (
 //
 // Teardown is best-effort: a parse or cleaner failure is logged and the
 // message ACKed (returns nil), because a leftover candidate schema must never
-// block a run's terminal decision.
+// block a run's terminal decision. A cleaner failure that arrives with a done
+// ctx (shutdown, or the handler deadline) is returned instead, so the drop is
+// retried rather than acknowledged unfinished.
 func NewPipelineRunFinishedTeardownBinding(cleaner ports.CandidateSchemaCleaner, logger *slog.Logger) pkgredis.MessageHandler {
 	return func(ctx context.Context, msg goredis.XMessage) error {
 		raw := stringField(msg.Values, "payload")
@@ -46,6 +48,9 @@ func NewPipelineRunFinishedTeardownBinding(cleaner ports.CandidateSchemaCleaner,
 			return nil
 		}
 		if err := cleaner.DropCandidateSchema(ctx, dto.CandidateSchema); err != nil {
+			if ctx.Err() != nil {
+				return err
+			}
 			logger.Error("pipeline run teardown: drop failed (best-effort)",
 				"run_id", dto.RunID, "run_kind", dto.RunKind, "outcome", dto.Outcome,
 				"candidate_schema", dto.CandidateSchema, "error", err)

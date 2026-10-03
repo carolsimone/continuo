@@ -151,9 +151,9 @@ func (h *RemediationRequestedRejectionsHandler) releaseBundle(
 		// The URI resolved to a bundle for a different release. Recording its
 		// RawCode/ContentHash would stamp another release's code onto these
 		// rejections' failing precedent. Unlike the versions handler (which
-		// drops the message — writing the wrong code would corrupt the version
-		// graph), losing the code here must not lose the precedent: record every
-		// node in the batch without it.
+		// fails the message permanently — writing the wrong code would corrupt
+		// the version graph), losing the code here must not lose the precedent:
+		// record every node in the batch without it.
 		h.logger.Error("code bundle belongs to a different release — recording rejections without code",
 			"release_id", in.ReleaseID, "bundle_release_id", bundle.ReleaseID, "uri", in.CodeBundleURI)
 		return nil, nil

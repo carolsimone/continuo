@@ -11,7 +11,7 @@ import (
 
 // ParseScheduleCancelled translates a schedule.cancelled:v1 XMessage into a
 // typed domain event. Parse failures are events.ErrPermanent — the consumer
-// ACKs + drops the poison message on these.
+// dead-letters the poison message on these.
 func ParseScheduleCancelled(msg goredis.XMessage) (domain.ScheduleCancelled, error) {
 	idStr, _ := msg.Values["schedule_id"].(string)
 	if idStr == "" {

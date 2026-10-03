@@ -30,7 +30,7 @@ type streamBinding[E any] struct {
 	streamName string
 	// parse turns a raw Redis message into the typed event. A parse failure is
 	// permanent: bindStreamHandler wraps it with events.ErrPermanent so the
-	// consumer ACKs and drops the poison message.
+	// consumer dead-letters the poison message.
 	parse func(msg goredis.XMessage) (E, error)
 	// payload derives the bytes stored in the dedup row's payload column. Two
 	// shapes exist: the explicit "payload" stream field, and a JSON encoding of
@@ -66,10 +66,10 @@ func valuesPayload(msg goredis.XMessage) []byte {
 // bindStreamHandler builds the pkg/redis.MessageHandler for a streamBinding.
 //
 // Errors are surfaced to the StreamConsumer so it can pick the right ACK
-// policy: parse failures are wrapped with events.ErrPermanent (NACK and drop),
-// while handler/repository failures propagate as-is (NACK and leave the message
-// pending for retry). On a duplicate the transaction is committed (empty txn)
-// and nil is returned so the consumer ACKs.
+// policy: parse failures are wrapped with events.ErrPermanent (the consumer
+// dead-letters the message), while handler/repository failures propagate as-is
+// (the message is left pending for retry). On a duplicate the transaction is
+// committed (empty txn) and nil is returned so the consumer ACKs.
 func bindStreamHandler[E any](
 	uowFactory func() uow.UnitOfWork,
 	logger *slog.Logger,

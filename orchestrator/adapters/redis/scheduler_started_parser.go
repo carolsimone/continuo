@@ -12,7 +12,7 @@ import (
 // ParseSchedulerStartedEvent extracts a domain.SchedulerStarted event from a
 // Redis stream message's Values map. Missing kind defaults to "cron"; missing
 // or empty source_run_id yields nil. Parse failures are events.ErrPermanent so
-// the consumer ACKs the poison message instead of retrying it.
+// the consumer dead-letters the poison message instead of retrying it.
 //
 // Unit tests live in scheduler_started_parser_test.go.
 func ParseSchedulerStartedEvent(values map[string]interface{}) (domain.SchedulerStarted, error) {

@@ -9,10 +9,11 @@ import (
 
 	goredis "github.com/redis/go-redis/v9"
 
+	"github.com/carolsimone/continuo/agent-remediation/service/handlers"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
-	"github.com/carolsimone/continuo/agent-remediation/service/handlers"
 )
 
 // failInFlightTimeout bounds the single-row recovery UPDATE the drop handler
@@ -56,27 +57,11 @@ func triggerFromRequested(msg goredis.XMessage, raw []byte) (handlers.Trigger, e
 // via handlers.ProposeFix. The consumer group is created idempotently by
 // StreamConsumer.Start; call Start(ctx) in a goroutine to begin consuming.
 func NewRemediationRequestedConsumer(rc *goredis.Client, deps handlers.Deps, logger *slog.Logger) *pkgredis.StreamConsumer {
-	handler := func(ctx context.Context, msg goredis.XMessage) error {
-		raw, ok := msg.Values["payload"].(string)
-		if !ok {
-			logger.Error(streams.RemediationRequestedV2+" missing payload — discarding", "message_id", msg.ID)
-			return nil // permanent: ACK by returning nil so the message is not left in the PEL
-		}
-		trigger, err := triggerFromRequested(msg, []byte(raw))
-		if err != nil {
-			logger.Error(streams.RemediationRequestedV2+" decode failure — discarding", "message_id", msg.ID, "error", err)
-			return nil // permanent: malformed payload cannot be retried
-		}
-		if err := handlers.ProposeFix(ctx, deps, trigger); err != nil {
-			return err // transient: do not ACK; allow redelivery via PEL sweep
-		}
-		return nil
-	}
 	return pkgredis.NewStreamConsumer(
 		rc,
 		streams.RemediationRequestedV2,
 		streams.AgentRemediationRemediationRequested,
-		handler,
+		newRemediationRequestedHandler(deps, logger),
 		logger,
 		pkgredis.WithOnDrop(failInFlightOnDrop(logger, func(ctx context.Context, releaseID, reason string) (int, error) {
 			ctx, cancel := context.WithTimeout(ctx, failInFlightTimeout)
@@ -86,12 +71,33 @@ func NewRemediationRequestedConsumer(rc *goredis.Client, deps handlers.Deps, log
 	)
 }
 
+// newRemediationRequestedHandler returns the MessageHandler that proposes one
+// fix attempt for each remediation.requested:v2 message. A message with no
+// payload field, or one whose payload cannot be decoded, is a permanent
+// failure: the handler returns events.ErrPermanent, so the consumer
+// dead-letters it. Any error from handlers.ProposeFix is returned as is, so
+// the consumer redelivers it.
+func newRemediationRequestedHandler(deps handlers.Deps, logger *slog.Logger) pkgredis.MessageHandler {
+	return func(ctx context.Context, msg goredis.XMessage) error {
+		raw, ok := msg.Values["payload"].(string)
+		if !ok {
+			return fmt.Errorf("%w: %s message has no payload field", pkgevents.ErrPermanent, streams.RemediationRequestedV2)
+		}
+		trigger, err := triggerFromRequested(msg, []byte(raw))
+		if err != nil {
+			return fmt.Errorf("%w: %s decode: %v", pkgevents.ErrPermanent, streams.RemediationRequestedV2, err)
+		}
+		return handlers.ProposeFix(ctx, deps, trigger)
+	}
+}
+
 // failInFlightOnDrop builds the drop handler that closes out a remediation
 // attempt the stream consumer abandoned. markGenerating commits an in-flight
 // 'generating' row before the model is called; if the trigger then fails on
-// every redelivery and is poison-dropped, that row is left reporting a fix as
-// forever generating — and the release's "Try again" stays blocked behind it.
-// This decodes the dropped trigger's release id and fails that row via fail.
+// every redelivery and is dead-lettered on its fifth delivery, that row is left
+// reporting a fix as forever generating — and the release's "Try again" stays
+// blocked behind it. This decodes the dead-lettered trigger's release id and
+// fails that row via fail.
 //
 // A message with no payload, or one whose payload cannot be decoded, named no
 // release and never created a row (markGenerating runs only after a successful
@@ -106,15 +112,15 @@ func failInFlightOnDrop(logger *slog.Logger, fail func(ctx context.Context, rele
 		if err != nil || t.ReleaseID == "" {
 			return
 		}
-		reason := fmt.Sprintf("remediation trigger dropped after exhausting redelivery: %v", cause)
+		reason := fmt.Sprintf("remediation trigger dead-lettered: %v", cause)
 		n, ferr := fail(ctx, t.ReleaseID, reason)
 		if ferr != nil {
-			logger.Error("could not fail in-flight remediation row after its trigger was dropped",
+			logger.Error("could not fail in-flight remediation row after its trigger was dead-lettered",
 				"stream", streams.RemediationRequestedV2, "message_id", msg.ID, "release", t.ReleaseID, "error", ferr)
 			return
 		}
 		if n > 0 {
-			logger.Warn("failed in-flight remediation row after its trigger was dropped",
+			logger.Warn("failed in-flight remediation row after its trigger was dead-lettered",
 				"stream", streams.RemediationRequestedV2, "message_id", msg.ID, "release", t.ReleaseID, "cause", cause)
 		}
 	}

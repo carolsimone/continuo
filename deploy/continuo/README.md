@@ -218,8 +218,18 @@ Every container in this chart, bundled or not, gets:
 | `auth.operatorEmails` / `auth.viewerEmails` / `auth.roleMapping` | Role assignment for authenticated users. With `dex.enabled: true`, `operatorEmails` defaults to the Dex demo user's email. |
 | `llm.provider` / `llm.model` / `llm.apiKey` (or `llm.existingSecret`) | Optional. Empty `apiKey`: agent-chat and agent-remediation still boot and serve, but LLM (Large Language Model) calls fail until it is set. |
 | `github.token` / `github.appId` / `github.installationId` / `github.appPrivateKey` (or `github.existingSecret`) | Optional. `token` is a read-only PAT (Personal Access Token) agent-remediation uses to fetch source; the `app*` fields are a GitHub App ui uses to open fix PRs (Pull Requests) — Create-PR returns `503` until they're set. |
-| `streamReaper.enabled` / `streamReaper.schedule` / `streamReaper.retention` | CronJob that trims old Redis Stream entries. |
+| `streamReaper.enabled` / `streamReaper.schedule` / `streamReaper.retention` | CronJob that trims old Redis Stream entries. It never trims `outbox.dead_letter:v1` or `consumer.dead_letter:v1`: they hold the only copy of every dead letter. `consumer.dead_letter:v1` is written without a length cap, so an operator removes handled entries; `outbox.dead_letter:v1` keeps the roughly 10,000-entry cap its publishers apply. See the note below the table for the `redis-cli` commands. |
 | `services[].resources` / `defaultResources` | Per-service CPU/memory requests and limits; any service without its own `resources` block falls back to `defaultResources`. |
+
+Inspect and trim the dead-letter streams with `redis-cli` in the Redis pod (the bundled one is `continuo-redis-0` in a release named `continuo`; with BYO Redis, point `redis-cli` at it instead):
+
+```bash
+kubectl -n continuo exec continuo-redis-0 -- sh -c 'redis-cli -a "$REDIS_PASSWORD" XLEN consumer.dead_letter:v1'
+kubectl -n continuo exec continuo-redis-0 -- sh -c 'redis-cli -a "$REDIS_PASSWORD" XRANGE consumer.dead_letter:v1 - + COUNT 10'
+kubectl -n continuo exec continuo-redis-0 -- sh -c 'redis-cli -a "$REDIS_PASSWORD" XTRIM consumer.dead_letter:v1 MINID <id>'   # drops entries older than <id>
+```
+
+The same three commands work on `outbox.dead_letter:v1`.
 
 ## 5. Release flow and CI gates
 

@@ -3,8 +3,10 @@ package redis
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
@@ -41,41 +43,34 @@ func NewValidationResultConsumer(rc *goredis.Client, deps *handlers.Deps, logger
 //     on success so the next queued release moves forward immediately.
 //
 // A message whose payload cannot be decoded or carries an unknown kind is a
-// permanent failure: the handler logs and returns nil so the consumer ACKs and
-// drops it rather than redelivering forever.
+// permanent failure: the handler returns events.ErrPermanent, so the consumer
+// dead-letters it.
 func newValidationResultHandler(deps *handlers.Deps, logger *slog.Logger) pkgredis.MessageHandler {
 	return func(ctx context.Context, msg goredis.XMessage) error {
 		raw, ok := msg.Values["payload"].(string)
 		if !ok {
-			logger.Error("validation.result:v1 missing or non-string payload — discarding", "message_id", msg.ID)
-			return nil
+			return fmt.Errorf("%w: %s message has no payload field", pkgevents.ErrPermanent, streams.ValidationResultV1)
 		}
 
 		var envelope struct {
 			Kind string `json:"kind"`
 		}
 		if err := json.Unmarshal([]byte(raw), &envelope); err != nil {
-			logger.Error("validation.result:v1 envelope decode failure — discarding",
-				"message_id", msg.ID, "error", err)
-			return nil
+			return fmt.Errorf("%w: %s envelope decode: %v", pkgevents.ErrPermanent, streams.ValidationResultV1, err)
 		}
 
 		switch envelope.Kind {
 		case "node":
 			var in handlers.NodeValidationResultInput
 			if err := json.Unmarshal([]byte(raw), &in); err != nil {
-				logger.Error("validation.result:v1 node decode failure — discarding",
-					"message_id", msg.ID, "error", err)
-				return nil
+				return fmt.Errorf("%w: %s node decode: %v", pkgevents.ErrPermanent, streams.ValidationResultV1, err)
 			}
 			return handlers.HandleNodeValidationResult(ctx, deps, in)
 
 		case "complete":
 			var in handlers.HandleValidationResultInput
 			if err := json.Unmarshal([]byte(raw), &in); err != nil {
-				logger.Error("validation.result:v1 complete decode failure — discarding",
-					"message_id", msg.ID, "error", err)
-				return nil
+				return fmt.Errorf("%w: %s complete decode: %v", pkgevents.ErrPermanent, streams.ValidationResultV1, err)
 			}
 			if err := handlers.HandleValidationResult(ctx, deps, in); err != nil {
 				return err
@@ -90,9 +85,7 @@ func newValidationResultHandler(deps *handlers.Deps, logger *slog.Logger) pkgred
 			return nil
 
 		default:
-			logger.Error("validation.result:v1 unknown kind — discarding",
-				"message_id", msg.ID, "kind", envelope.Kind)
-			return nil
+			return fmt.Errorf("%w: %s unknown kind %q", pkgevents.ErrPermanent, streams.ValidationResultV1, envelope.Kind)
 		}
 	}
 }

@@ -13,7 +13,7 @@ import (
 // strings. The metadata_source/source_run_id pair carries a cross-field rule:
 // "latest" forbids a source_run_id, "snapshot_of_run" requires one, and any
 // other value is rejected. Every violation is an events.ErrPermanent-wrapped
-// error so the consumer ACKs the poison message instead of retrying it.
+// error so the consumer dead-letters the poison message instead of retrying it.
 func ParseSingleNodeRun(msg goredis.XMessage) (model.SingleNodeRunInput, error) {
 	scheduleID, err := requireUUIDField(msg, "schedule_id")
 	if err != nil {

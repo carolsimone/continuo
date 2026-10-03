@@ -7,9 +7,10 @@ import (
 
 // ParseRebase translates a trigger.rebase:v1 XMessage into a RebaseInput. All
 // three identifiers are required, non-empty strings; a missing one yields an
-// events.ErrPermanent-wrapped error so the consumer ACKs the poison message.
-// RunID is the new run's schedule_id; SourceRunID is the failed/cancelled
-// source run whose :EXECUTES set the RebasePartition selector reads.
+// events.ErrPermanent-wrapped error so the consumer dead-letters the poison
+// message. RunID is the new run's schedule_id; SourceRunID is the
+// failed/cancelled source run whose :EXECUTES set the RebasePartition selector
+// reads.
 func ParseRebase(msg goredis.XMessage) (model.RebaseInput, error) {
 	scheduleID, err := requireUUIDField(msg, "schedule_id")
 	if err != nil {

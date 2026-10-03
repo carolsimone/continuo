@@ -40,6 +40,12 @@ REJECT_REASON_HEALABLE = frozenset({RejectReason.COMPILE_FAILED, RejectReason.IN
 """Values of RejectReason a remediation attempt can fix by changing the user's source."""
 
 
+class DeadLetterKind(StrEnum):
+    """Why a stream message or an outbox row was dead-lettered."""
+    PERMANENT = "permanent"
+    TRANSIENT_EXHAUSTED = "transient_exhausted"
+
+
 class NodeRuntime(StrEnum):
     """The toolchain that builds a graph node."""
     DBT = "dbt"

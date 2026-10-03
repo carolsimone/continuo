@@ -2,6 +2,7 @@ package redis_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/carolsimone/continuo/pkg/testdeps"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/events"
 	redis "github.com/carolsimone/continuo/pkg/redis"
 	goredis "github.com/redis/go-redis/v9"
@@ -18,18 +20,36 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// redisClientForTest creates a Redis client for integration tests.
-// Tests are skipped if REDIS_ADDR is not set.
+// redisClientForTest creates a Redis client for integration tests. When
+// REDIS_ADDR is not set, testdeps.Unavailable skips the test, or fails it when
+// REQUIRE_TEST_DEPS is set. The client is closed after every cleanup the test
+// registers later, so those cleanups can still reach Redis.
 func redisClientForTest(t *testing.T) *goredis.Client {
 	t.Helper()
 	addr := os.Getenv("REDIS_ADDR")
 	if addr == "" {
 		testdeps.Unavailable(t, "REDIS_ADDR not set — skipping Redis integration test")
 	}
-	return goredis.NewClient(&goredis.Options{
+	c := goredis.NewClient(&goredis.Options{
 		Addr:     addr,
 		Password: os.Getenv("REDIS_PASSWORD"),
 	})
+	t.Cleanup(func() { c.Close() })
+	return c
+}
+
+// requireOneDeadLetter asserts that exactly one consumer dead letter exists
+// for stream, written by this suite's consumers, with the given kind and
+// delivery count.
+func requireOneDeadLetter(t *testing.T, rc *goredis.Client, stream string, kind model.DeadLetterKind, deliveries int64) {
+	t.Helper()
+	dl := redis.DeadLettersFor(t, rc, stream)
+	require.Len(t, dl, 1, "exactly one dead letter for the abandoned message")
+	assert.Equal(t, "pkg-redis-test", dl[0].Values["producer"])
+	var p events.ConsumerDeadLetter
+	require.NoError(t, json.Unmarshal([]byte(dl[0].Values["payload"].(string)), &p))
+	assert.Equal(t, kind, p.FailureKind)
+	assert.Equal(t, deliveries, p.DeliveryCount)
 }
 
 // TestStreamConsumer_FailedHandlerMessageStaysInPEL verifies the pre-condition for
@@ -38,7 +58,6 @@ func redisClientForTest(t *testing.T) *goredis.Client {
 func TestStreamConsumer_FailedHandlerMessageStaysInPEL(t *testing.T) {
 	rc := redisClientForTest(t)
 	ctx := context.Background()
-	defer rc.Close()
 
 	stream := fmt.Sprintf("test-stream-%d", time.Now().UnixNano())
 	group := "test-group"
@@ -59,6 +78,7 @@ func TestStreamConsumer_FailedHandlerMessageStaysInPEL(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	consumer := redis.NewStreamConsumer(rc, stream, group, failingHandler, logger)
+	consumer.SetService("pkg-redis-test")
 
 	// Ensure the consumer group exists so we can call readAndProcess-equivalent.
 	require.NoError(t, rc.XGroupCreateMkStream(ctx, stream, group, "0").Err())
@@ -103,7 +123,6 @@ func TestStreamConsumer_FailedHandlerMessageStaysInPEL(t *testing.T) {
 func TestStreamConsumer_ReclaimPendingRecoversStuckMessage(t *testing.T) {
 	rc := redisClientForTest(t)
 	ctx := context.Background()
-	defer rc.Close()
 
 	stream := fmt.Sprintf("test-stream-reclaim-%d", time.Now().UnixNano())
 	group := "test-group"
@@ -126,6 +145,7 @@ func TestStreamConsumer_ReclaimPendingRecoversStuckMessage(t *testing.T) {
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	failing := redis.NewStreamConsumer(rc, stream, group, failingHandler, logger)
+	failing.SetService("pkg-redis-test")
 
 	failCtx, failCancel := context.WithTimeout(ctx, 2*time.Second)
 	defer failCancel()
@@ -148,6 +168,7 @@ func TestStreamConsumer_ReclaimPendingRecoversStuckMessage(t *testing.T) {
 	}
 	succeeding := redis.NewStreamConsumer(rc, stream, group, succeedingHandler, logger,
 		redis.WithReclaimMinIdle(0))
+	succeeding.SetService("pkg-redis-test")
 
 	recoverCtx, recoverCancel := context.WithTimeout(ctx, 3*time.Second)
 	defer recoverCancel()
@@ -166,16 +187,15 @@ func TestStreamConsumer_ReclaimPendingRecoversStuckMessage(t *testing.T) {
 
 // ── ErrPermanent classification ─────────────────────────────────────────────
 //
-// Permanent handler errors (errors.Is(err, events.ErrPermanent)) MUST be ACKed
-// so the message exits the Redis pending entry list (PEL). Transient handler
-// errors MUST keep the existing no-ACK + retry behaviour so the system
-// self-heals on the next reclaim cycle. Both invariants apply to BOTH the
-// read path (readAndProcess) and the reclaim path (reclaimPending).
+// Permanent handler errors (errors.Is(err, events.ErrPermanent)) MUST be
+// dead-lettered and then ACKed so the message exits the Redis pending entry
+// list (PEL). Transient handler errors MUST stay un-ACKed and be retried so
+// the system self-heals on the next reclaim cycle. Both invariants apply to
+// BOTH the read path (readAndProcess) and the reclaim path (reclaimPending).
 
 func TestStreamConsumer_ReadPath_PermanentError_ACKsAndExitsPEL(t *testing.T) {
 	rc := redisClientForTest(t)
 	ctx := context.Background()
-	defer rc.Close()
 
 	stream := fmt.Sprintf("test-stream-perm-read-%d", time.Now().UnixNano())
 	group := "test-group"
@@ -197,6 +217,7 @@ func TestStreamConsumer_ReadPath_PermanentError_ACKsAndExitsPEL(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	consumer := redis.NewStreamConsumer(rc, stream, group, permHandler, logger)
+	consumer.SetService("pkg-redis-test")
 
 	runCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
@@ -210,12 +231,12 @@ func TestStreamConsumer_ReadPath_PermanentError_ACKsAndExitsPEL(t *testing.T) {
 	}).Result()
 	require.NoError(t, err)
 	assert.Empty(t, pending, "permanent error must have been ACKed → no entries in PEL")
+	requireOneDeadLetter(t, rc, stream, model.DeadLetterKindPermanent, 1)
 }
 
 func TestStreamConsumer_ReadPath_TransientError_StaysInPEL(t *testing.T) {
 	rc := redisClientForTest(t)
 	ctx := context.Background()
-	defer rc.Close()
 
 	stream := fmt.Sprintf("test-stream-trans-read-%d", time.Now().UnixNano())
 	group := "test-group"
@@ -235,6 +256,7 @@ func TestStreamConsumer_ReadPath_TransientError_StaysInPEL(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	consumer := redis.NewStreamConsumer(rc, stream, group, transHandler, logger)
+	consumer.SetService("pkg-redis-test")
 
 	runCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
@@ -259,7 +281,6 @@ func TestStreamConsumer_ReadPath_TransientError_StaysInPEL(t *testing.T) {
 func TestStreamConsumer_ReclaimPath_PermanentError_ACKsAndExitsPEL(t *testing.T) {
 	rc := redisClientForTest(t)
 	ctx := context.Background()
-	defer rc.Close()
 
 	stream := fmt.Sprintf("test-stream-perm-reclaim-%d", time.Now().UnixNano())
 	group := "test-group"
@@ -280,6 +301,7 @@ func TestStreamConsumer_ReclaimPath_PermanentError_ACKsAndExitsPEL(t *testing.T)
 		return errors.New("transient blip")
 	}
 	failing := redis.NewStreamConsumer(rc, stream, group, transHandler, logger)
+	failing.SetService("pkg-redis-test")
 	failCtx, failCancel := context.WithTimeout(ctx, 2*time.Second)
 	defer failCancel()
 	go failing.Start(failCtx) //nolint:errcheck
@@ -297,6 +319,7 @@ func TestStreamConsumer_ReclaimPath_PermanentError_ACKsAndExitsPEL(t *testing.T)
 	}
 	reclaiming := redis.NewStreamConsumer(rc, stream, group, permHandler, logger,
 		redis.WithReclaimMinIdle(0))
+	reclaiming.SetService("pkg-redis-test")
 	recoverCtx, recoverCancel := context.WithTimeout(ctx, 3*time.Second)
 	defer recoverCancel()
 	go reclaiming.Start(recoverCtx) //nolint:errcheck
@@ -307,6 +330,8 @@ func TestStreamConsumer_ReclaimPath_PermanentError_ACKsAndExitsPEL(t *testing.T)
 	}).Result()
 	require.NoError(t, err)
 	assert.Empty(t, pending, "permanent error during reclaim must ACK → PEL empty")
+	// Delivery 1 was phase 1's read; the reclaim counted delivery 2.
+	requireOneDeadLetter(t, rc, stream, model.DeadLetterKindPermanent, 2)
 }
 
 // ── In-process retry on transient errors (issue #63) ───────────────────────
@@ -325,7 +350,6 @@ func TestStreamConsumer_ReclaimPath_PermanentError_ACKsAndExitsPEL(t *testing.T)
 func TestStreamConsumer_Reclaim_RespectsMinIdle(t *testing.T) {
 	rc := redisClientForTest(t)
 	ctx := context.Background()
-	defer rc.Close()
 
 	stream := fmt.Sprintf("test-stream-minidle-%d", time.Now().UnixNano())
 	group := "test-group"
@@ -348,6 +372,7 @@ func TestStreamConsumer_Reclaim_RespectsMinIdle(t *testing.T) {
 	}
 	a := redis.NewStreamConsumer(rc, stream, group, failingHandler, logger,
 		redis.WithReclaimMinIdle(0))
+	a.SetService("pkg-redis-test")
 	aCtx, aCancel := context.WithTimeout(ctx, 4*time.Second)
 	defer aCancel()
 	go a.Start(aCtx)            //nolint:errcheck
@@ -369,6 +394,7 @@ func TestStreamConsumer_Reclaim_RespectsMinIdle(t *testing.T) {
 	}
 	b := redis.NewStreamConsumer(rc, stream, group, bHandler, logger,
 		redis.WithReclaimMinIdle(1*time.Hour))
+	b.SetService("pkg-redis-test")
 	bCtx, bCancel := context.WithTimeout(ctx, 2*time.Second)
 	defer bCancel()
 	go b.Start(bCtx) //nolint:errcheck
@@ -399,7 +425,6 @@ func TestStreamConsumer_Reclaim_RespectsMinIdle(t *testing.T) {
 func TestStreamConsumer_TransientError_RecoversWithinBudget_ThenACKed(t *testing.T) {
 	rc := redisClientForTest(t)
 	ctx := context.Background()
-	defer rc.Close()
 
 	stream := fmt.Sprintf("test-stream-retry-success-%d", time.Now().UnixNano())
 	group := "test-group"
@@ -423,6 +448,7 @@ func TestStreamConsumer_TransientError_RecoversWithinBudget_ThenACKed(t *testing
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	consumer := redis.NewStreamConsumer(rc, stream, group, handler, logger)
+	consumer.SetService("pkg-redis-test")
 
 	// Budget: 0 + 100ms — one quick in-process retry. A transient blip that
 	// clears on the retry is ACKed before the consumer moves on; failures that
@@ -447,7 +473,6 @@ func TestStreamConsumer_TransientError_RecoversWithinBudget_ThenACKed(t *testing
 func TestStreamConsumer_PermanentError_NotRetried(t *testing.T) {
 	rc := redisClientForTest(t)
 	ctx := context.Background()
-	defer rc.Close()
 
 	stream := fmt.Sprintf("test-stream-perm-noretry-%d", time.Now().UnixNano())
 	group := "test-group"
@@ -469,6 +494,7 @@ func TestStreamConsumer_PermanentError_NotRetried(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	consumer := redis.NewStreamConsumer(rc, stream, group, handler, logger)
+	consumer.SetService("pkg-redis-test")
 
 	runCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
@@ -483,6 +509,7 @@ func TestStreamConsumer_PermanentError_NotRetried(t *testing.T) {
 	}).Result()
 	require.NoError(t, err)
 	assert.Empty(t, pending, "permanent error must still ACK → PEL empty")
+	requireOneDeadLetter(t, rc, stream, model.DeadLetterKindPermanent, 1)
 }
 
 // TestStreamConsumer_TransientError_ExhaustedRetries_StaysInPEL: handler keeps
@@ -492,7 +519,6 @@ func TestStreamConsumer_PermanentError_NotRetried(t *testing.T) {
 func TestStreamConsumer_TransientError_ExhaustedRetries_StaysInPEL(t *testing.T) {
 	rc := redisClientForTest(t)
 	ctx := context.Background()
-	defer rc.Close()
 
 	stream := fmt.Sprintf("test-stream-retry-exhaust-%d", time.Now().UnixNano())
 	group := "test-group"
@@ -514,6 +540,7 @@ func TestStreamConsumer_TransientError_ExhaustedRetries_StaysInPEL(t *testing.T)
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	consumer := redis.NewStreamConsumer(rc, stream, group, handler, logger)
+	consumer.SetService("pkg-redis-test")
 
 	// Long enough for the full in-process retry budget (~100ms) but short
 	// enough not to pick up a second cycle from periodic reclaim (2 min).
@@ -545,7 +572,6 @@ func TestStreamConsumer_TransientError_ExhaustedRetries_StaysInPEL(t *testing.T)
 func TestStreamConsumer_ReclaimPath_TransientError_StaysInPEL(t *testing.T) {
 	rc := redisClientForTest(t)
 	ctx := context.Background()
-	defer rc.Close()
 
 	stream := fmt.Sprintf("test-stream-trans-reclaim-%d", time.Now().UnixNano())
 	group := "test-group"
@@ -565,6 +591,7 @@ func TestStreamConsumer_ReclaimPath_TransientError_StaysInPEL(t *testing.T) {
 	first := redis.NewStreamConsumer(rc, stream, group, func(_ context.Context, _ goredis.XMessage) error {
 		return errors.New("first failure")
 	}, logger)
+	first.SetService("pkg-redis-test")
 	failCtx, failCancel := context.WithTimeout(ctx, 2*time.Second)
 	defer failCancel()
 	go first.Start(failCtx) //nolint:errcheck
@@ -574,6 +601,7 @@ func TestStreamConsumer_ReclaimPath_TransientError_StaysInPEL(t *testing.T) {
 	second := redis.NewStreamConsumer(rc, stream, group, func(_ context.Context, _ goredis.XMessage) error {
 		return errors.New("second failure")
 	}, logger, redis.WithReclaimMinIdle(0))
+	second.SetService("pkg-redis-test")
 	recoverCtx, recoverCancel := context.WithTimeout(ctx, 3*time.Second)
 	defer recoverCancel()
 	go second.Start(recoverCtx) //nolint:errcheck
@@ -597,7 +625,6 @@ func TestStreamConsumer_ReclaimPath_TransientError_StaysInPEL(t *testing.T) {
 func TestStreamConsumer_ReclaimPath_TransientError_IsSingleShot(t *testing.T) {
 	rc := redisClientForTest(t)
 	ctx := context.Background()
-	defer rc.Close()
 
 	stream := fmt.Sprintf("test-stream-trans-reclaim-single-shot-%d", time.Now().UnixNano())
 	group := "test-group"
@@ -627,6 +654,7 @@ func TestStreamConsumer_ReclaimPath_TransientError_IsSingleShot(t *testing.T) {
 		called.Add(1)
 		return errors.New("still transient")
 	}, logger, redis.WithReclaimMinIdle(0))
+	reclaiming.SetService("pkg-redis-test")
 
 	recoverCtx, recoverCancel := context.WithTimeout(ctx, time.Second)
 	defer recoverCancel()
