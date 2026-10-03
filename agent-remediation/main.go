@@ -87,9 +87,9 @@ func main() {
 	// runConsumer starts a tracked stream consumer: a bounded handler deadline
 	// so a hung handler (e.g. a stuck LLM request) eventually returns;
 	// RegisterWorker before launch so a missing worker is observable;
-	// WorkerExited when Start returns (which now happens on a permanent
-	// bootstrap error too, not only clean shutdown); and a worker heartbeat
-	// probe so a wedged-but-not-exited loop is caught.
+	// WorkerExited when Start returns (on a permanent consumer-group bootstrap
+	// error as well as on a clean shutdown); and a worker heartbeat probe so a
+	// wedged-but-not-exited loop is caught.
 	runConsumer := func(name string, consumer *pkgredis.StreamConsumer) {
 		consumer.SetService(config.ServiceName)
 		consumer.SetHandlerTimeout(consumerHandlerTimeout)

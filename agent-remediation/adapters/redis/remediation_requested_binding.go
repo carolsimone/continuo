@@ -112,15 +112,15 @@ func failInFlightOnDrop(logger *slog.Logger, fail func(ctx context.Context, rele
 		if err != nil || t.ReleaseID == "" {
 			return
 		}
-		reason := fmt.Sprintf("remediation trigger dropped after exhausting redelivery: %v", cause)
+		reason := fmt.Sprintf("remediation trigger dead-lettered: %v", cause)
 		n, ferr := fail(ctx, t.ReleaseID, reason)
 		if ferr != nil {
-			logger.Error("could not fail in-flight remediation row after its trigger was dropped",
+			logger.Error("could not fail in-flight remediation row after its trigger was dead-lettered",
 				"stream", streams.RemediationRequestedV2, "message_id", msg.ID, "release", t.ReleaseID, "error", ferr)
 			return
 		}
 		if n > 0 {
-			logger.Warn("failed in-flight remediation row after its trigger was dropped",
+			logger.Warn("failed in-flight remediation row after its trigger was dead-lettered",
 				"stream", streams.RemediationRequestedV2, "message_id", msg.ID, "release", t.ReleaseID, "cause", cause)
 		}
 	}
