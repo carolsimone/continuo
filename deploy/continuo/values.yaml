@@ -416,6 +416,11 @@ services:
       SCHEDULES_CONFIG_PATH: /etc/continuo/schedules.yaml
     volumeMounts:
       - {name: schedules, mountPath: /etc/continuo, readOnly: true}
+    # state reads schedules.yaml only at startup. An empty configMap.name mounts
+    # the chart's schedules ConfigMap (files/schedules.yaml), whose digest is on
+    # the pod template, so `helm upgrade` rolls state when it changes. Helm cannot
+    # hash a ConfigMap of your own named here: after editing it, run
+    # `kubectl rollout restart deployment/state`.
     volumes:
       - name: schedules
         configMap: {name: ""}
@@ -525,6 +530,12 @@ services:
       DBT_COMMANDS_CONFIG_PATH: /etc/continuo/dbt-commands.yaml
     volumeMounts:
       - {name: dbt-commands, mountPath: /etc/continuo, readOnly: true}
+    # execution-controller reads dbt-commands.yaml only at startup. An empty
+    # configMap.name mounts the chart's dbt-commands ConfigMap
+    # (files/dbt-commands.yaml), whose digest is on the pod template, so
+    # `helm upgrade` rolls execution-controller when it changes. Helm cannot hash
+    # a ConfigMap of your own named here: after editing it, run
+    # `kubectl rollout restart deployment/execution-controller`.
     volumes:
       - name: dbt-commands
         configMap: {name: ""}
@@ -566,6 +577,11 @@ services:
       # injected by templates/deployment.yaml, independent of this list.
     volumeMounts:
       - {name: cancel-config, mountPath: /app/config, readOnly: true}
+    # The ui re-reads cancel-config.json on every request, and the kubelet
+    # refreshes this directory mount in place, so an edit to the chart's
+    # cancel-config ConfigMap (files/cancel-config.json) or to one of your own
+    # named here reaches the ui within the kubelet's ConfigMap sync period,
+    # without a restart.
     volumes:
       - name: cancel-config
         configMap: {name: ""}
@@ -663,6 +679,12 @@ services:
       VERIFICATION_POLL_INTERVAL: "15s"
     volumeMounts:
       - {name: service-repos, mountPath: /etc/continuo, readOnly: true}
+    # agent-remediation reads service_repos.yaml only at startup. An empty
+    # configMap.name mounts the chart's service-repos ConfigMap (serviceRepos, or
+    # files/service_repos.yaml when that is empty), whose digest is on the pod
+    # template, so `helm upgrade` rolls agent-remediation when it changes. Helm
+    # cannot hash a ConfigMap of your own named here: after editing it, run
+    # `kubectl rollout restart deployment/agent-remediation`.
     volumes:
       - name: service-repos
         configMap: {name: ""}

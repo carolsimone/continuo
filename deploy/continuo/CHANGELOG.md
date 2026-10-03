@@ -12,6 +12,11 @@ shipped in those.
 
 ## [Unreleased]
 
+Template fix; no values change. An unmodified values file upgrades unchanged. **PATCH.**
+
+### Fixed
+- `helm upgrade` rolls state, execution-controller and agent-remediation when the chart-managed ConfigMap each one mounts changes: the schedules (`files/schedules.yaml`), the dbt commands (`files/dbt-commands.yaml`) and the service repos (`serviceRepos`, or `files/service_repos.yaml` when that is empty). Each service reads that file only at startup, and its pod template carried no digest of it, so an upgrade that changed only the file updated the ConfigMap and left the service on the previous crons, dbt commands or repo map with no error. Their pod templates now carry `checksum/schedules`, `checksum/dbt-commands` and `checksum/service-repos`, so each rolls once on the upgrade to this release. A volume that names an operator-owned ConfigMap (`volumes[].configMap.name` set) carries no digest; after editing such a ConfigMap, run `kubectl rollout restart` on the service. The ui needs neither: it re-reads `cancel-config.json` on every request.
+
 ## [0.9.1] - 2026-10-02
 
 Template and service startup fixes; no values change. An unmodified values file upgrades unchanged. **PATCH.**
