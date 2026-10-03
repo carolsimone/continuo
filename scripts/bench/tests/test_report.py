@@ -15,3 +15,11 @@ def test_render_has_a_section_per_scenario():
     markdown = report.render({"dag-500": [{"wall_s": 1.0, "nodes_executed": 1, "usage_run": {}}]})
     assert "## dag-500" in markdown
     assert "| wall_s |" in markdown
+
+
+def test_render_flags_reps_with_a_sampling_pause():
+    reps = [{"rep": n, "wall_s": 1.0, "nodes_executed": 1, "usage_run": {}, "max_sample_gap_s": gap}
+            for n, gap in ((1, 5.0), (2, 400.0), (3, None))]
+    markdown = report.render({"dag-500": reps})
+    assert "Reps with a sampling pause over 60 s (host asleep or overloaded; exclude them): [2]" in markdown
+    assert "sampling pause" not in report.render({"dag-500": reps[:1]})

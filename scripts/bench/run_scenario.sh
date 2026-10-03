@@ -34,24 +34,20 @@ start_sampler() {
   echo $!
 }
 
-# Prints the final status once the schedule's latest run is RUN_ID and is no longer running.
-wait_done() {
-  local run_id="$1" deadline rid running status
-  deadline=$(( $(date +%s) + timeout_s ))
-  while true; do
-    if read -r rid running status < <(bench_cli_run schedule status "${schedule}" 2>/dev/null \
-         | python3 "${here}/cli_json.py" run-state) \
-       && [ "${rid}" = "${run_id}" ] && [ "${running}" = "false" ]; then
-      echo "${status}"
-      return 0
-    fi
-    if [ "$(date +%s)" -ge "${deadline}" ]; then
-      echo "timeout"
-      return 0
-    fi
-    sleep 1
-  done
+# The run's final status; a run past BENCH_RUN_TIMEOUT_S is cancelled first.
+finish_run() {
+  bench_finish_run "${schedule}" "$1" "${timeout_s}" "benchmark timeout"
 }
+
+# The sampler runs detached; it is stopped on every exit, including a failed rep.
+sampler=""
+stop_sampler() {
+  if [ -n "${sampler}" ]; then
+    kill "${sampler}" 2>/dev/null || true
+    sampler=""
+  fi
+}
+trap stop_sampler EXIT
 
 for rep in $(seq 1 "${reps}"); do
   bench_wait_outside_window
@@ -77,21 +73,20 @@ for rep in $(seq 1 "${reps}"); do
   if [ -n "${cancel_after}" ]; then
     sleep "${cancel_after}"
     cancel_ts="$(bench_cli_run schedule cancel "${schedule}" "benchmark cancel" | field cancelled_at)"
-    first_status="$(wait_done "${run_id}")"
+    first_status="$(finish_run "${run_id}")"
     next_id="$(bench_cli_run schedule "${sub}" "${schedule}" | field schedule_id)"
     sleep "${second_run_s}"
     bench_cli_run schedule cancel "${schedule}" "benchmark cancel (second run)" >/dev/null || true
-    second_status="$(wait_done "${next_id}")"
+    second_status="$(finish_run "${next_id}")"
     extra=(--extra "final_status=${first_status}" --extra "second_status=${second_status}")
     cancel_args=(--cancel-ts "${cancel_ts}" --next-run-id "${next_id}")
   else
-    extra=(--extra "final_status=$(wait_done "${run_id}")")
+    extra=(--extra "final_status=$(finish_run "${run_id}")")
   fi
   done_ts="$(now)"
   sleep "${settle_s}"
   python3 "${here}/redis_streams.py" snapshot > "${out}/streams-after-rep${rep}.json"
-  kill "${sampler}" 2>/dev/null || true
-  wait "${sampler}" 2>/dev/null || true
+  stop_sampler
   bench_kubectl get jobs -l "schedule=${schedule}" -o json > "${out}/jobs-rep${rep}.json"
   python3 "${here}/collect.py" --scenario "${name}" --rep "${rep}" --operation "${op}" --run-id "${run_id}" \
     --payload "${payload}" --jobs "${out}/jobs-rep${rep}.json" --trigger-ts "${trigger_ts}" --done-ts "${done_ts}" \

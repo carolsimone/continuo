@@ -65,6 +65,7 @@ def build_result(*, scenario: str, rep: int, operation: str, run_id: str, payloa
         "messages_per_task": total / max(len(starts), 1),
         "messages_by_stream": deltas,
         "usage_run": m.usage(samples, trigger_ts, done_ts),
+        "max_sample_gap_s": m.max_sample_gap(samples, trigger_ts, done_ts),
         "usage_idle": m.usage(samples, idle_window[0], idle_window[1]) if idle_window else {},
     }
     if cancel_ts is not None:

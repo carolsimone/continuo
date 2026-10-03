@@ -112,6 +112,39 @@ bench_redis_cli() {
   python3 -c 'import json, os, subprocess, sys; sys.exit(subprocess.call(json.loads(os.environ["BENCH_REDIS_CMD"]) + sys.argv[1:]))' "$@"
 }
 
+# Prints the final status once SCHEDULE's latest run is RUN_ID and is no
+# longer running, or "timeout" after LIMIT_S seconds. Polls every second.
+bench_wait_run() {
+  local schedule="$1" run_id="$2" limit_s="$3" deadline rid running status
+  deadline=$(( $(date +%s) + limit_s ))
+  while true; do
+    if read -r rid running status < <(bench_cli_run schedule status "${schedule}" 2>/dev/null \
+         | python3 "$(bench_here)/cli_json.py" run-state) \
+       && [ "${rid}" = "${run_id}" ] && [ "${running}" = "false" ]; then
+      echo "${status}"
+      return 0
+    fi
+    if [ "$(date +%s)" -ge "${deadline}" ]; then
+      echo "timeout"
+      return 0
+    fi
+    sleep 1
+  done
+}
+
+# Prints the run's final status, or "timeout". A run still live after LIMIT_S
+# seconds is cancelled with REASON and waited for (up to 300 s), so nothing that
+# follows starts beside it or deletes the Jobs of a live run.
+bench_finish_run() {
+  local schedule="$1" run_id="$2" limit_s="$3" reason="$4" status
+  status="$(bench_wait_run "${schedule}" "${run_id}" "${limit_s}")"
+  if [ "${status}" = "timeout" ]; then
+    bench_cli_run schedule cancel "${schedule}" "${reason}" >/dev/null || true
+    bench_wait_run "${schedule}" "${run_id}" 300 >/dev/null
+  fi
+  echo "${status}"
+}
+
 # k8s only: waits while the UTC clock is inside 22:15-23:45, so no rep overlaps
 # the install's 23:00 UTC daily run.
 bench_wait_outside_window() {

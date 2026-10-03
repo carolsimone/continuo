@@ -10,6 +10,8 @@ import metrics as m
 
 log = logging.getLogger(__name__)
 
+MAX_SAMPLE_PAUSE_S = 60.0  # the sampler ticks every 5 s; a longer gap means the host slept or stalled
+
 SCALARS = ["wall_s", "busy_s", "idle_s", "first_start_s", "finalize_s", "observed_done_s",
            "handoff_p50_s", "handoff_p95_s", "messages_per_task", "attempts", "failed_attempts",
            "jobs_active_at_cancel", "overlap_s"]
@@ -42,8 +44,12 @@ def render(scenarios: dict) -> str:
     lines = ["# Benchmark report", ""]
     for name in sorted(scenarios):
         agg = aggregate(scenarios[name])
-        lines += [f"## {name}", "", f"Reps: {len(scenarios[name])}; final statuses: {agg['final_status']}", "",
-                  "| metric | p50 | p95 | n |", "|---|---|---|---|"]
+        lines += [f"## {name}", "", f"Reps: {len(scenarios[name])}; final statuses: {agg['final_status']}", ""]
+        paused = [r.get("rep") for r in scenarios[name] if (r.get("max_sample_gap_s") or 0) > MAX_SAMPLE_PAUSE_S]
+        if paused:
+            lines += [f"Reps with a sampling pause over {MAX_SAMPLE_PAUSE_S:.0f} s "
+                      f"(host asleep or overloaded; exclude them): {paused}", ""]
+        lines += ["| metric | p50 | p95 | n |", "|---|---|---|---|"]
         for key in SCALARS:
             if key in agg:
                 lines.append(f"| {key} | {agg[key]['p50']:.2f} | {agg[key]['p95']:.2f} | {agg[key]['n']} |")

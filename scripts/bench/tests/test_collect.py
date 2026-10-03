@@ -1,5 +1,6 @@
 import collect
-from helpers import at, job
+import metrics as m
+from helpers import at, iso, job
 
 PAYLOAD = {"topology": [
     {"unique_id": "bench.n00_0000", "table_name": "n00_0000", "upstream_unique_ids": []},
@@ -39,3 +40,13 @@ def test_cancel_overlap_counts_old_jobs_still_running():
     assert out["jobs_active_at_cancel"] == 2
     assert out["jobs_never_finished"] == 1
     assert out["overlap_s"] == 60
+
+
+def test_a_pause_in_sampling_during_the_run_is_recorded():
+    lines = [f"{iso(s)}\tstate-aaaaaaaaaa-bbbbb\t1m\t1Mi\n" for s in (0, 5, 400, 405)]
+    jobs = {"items": [job("r1", "n00_0000", 2, 6)]}
+    result = collect.build_result(
+        scenario="s", rep=1, operation="run", run_id="r1", payload=PAYLOAD, jobs_doc=jobs,
+        trigger_ts=at(0), done_ts=at(405), samples=m.read_samples(lines), idle_window=None,
+        streams_before={}, streams_after={})
+    assert result["max_sample_gap_s"] == 395

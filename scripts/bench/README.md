@@ -31,7 +31,7 @@ Environment knobs:
 | `CONTINUO_CLI` | `cli/bin/continuo` | CLI binary (`compose`); on `k8s` the harness runs the CLI inside `deploy/agent-chat` |
 | `BENCH_IDLE_S` | `300` | Idle window before rep 1 of a scenario |
 | `BENCH_SETTLE_S` | `15` | Pause before each later rep and after each run |
-| `BENCH_RUN_TIMEOUT_S` | `3600` | Longest wait for one run |
+| `BENCH_RUN_TIMEOUT_S` | `3600` (`2700` in `outage.sh`) | Longest wait for one run; a run still live then is cancelled and waited for before anything else starts |
 | `BENCH_SECOND_RUN_S` | `90` | How long the cancel scenario's second run lives before it is cancelled |
 
 `discover.sh` prints what the harness reads from a `k8s` install and lists the candidate datastore pods; secrets are reported only as resolved or missing.
@@ -50,6 +50,9 @@ No scenario rep starts between 22:15 and 23:45 UTC, the window around the instal
 A benchmark leaves these traces on a shared install: its runs stay in state's run history; its retired bench nodes stay in Neo4j until the seven-day run sweep and disappear at a later promotion; its Job logs stay in the logs bucket under service `bench`.
 
 ## Prerequisites
+
+The machine that runs the harness stays awake for the whole run: a sleeping host pauses the local stack and the sampler, and on a `k8s` install it pauses the polling and the tunnel. Wrap long runs in `caffeinate -is` on macOS and keep the lid open.
+
 
 - Both targets: `python3` 3.9 or newer, `kubectl`, Docker with BuildKit.
 - `compose`: the stack from `bash scripts/setup.sh` (in a fresh worktree, `bash scripts/ensure-dev-env.sh` first) and the CLI from `make -C cli build`. `run_baseline_kind.sh` starts state, orchestrator and execution-controller itself through `start_local_services.sh`; execution-controller runs in compose and reaches MinIO through the Docker bridge, which the task pods in kind can also reach.
@@ -102,6 +105,7 @@ scripts/bench/cleanup_legacy_jobs.sh --apply
 | CPU-seconds per 1,000 tasks | CPU integrated over the run (5 s samples) ÷ executed tasks × 1,000 |
 | peak memory | Highest per-service memory during the run, replicas summed per instant |
 | idle footprint | Mean CPU and memory over the smoke scenario's idle window |
+| max sample gap | Longest interval between two sampling instants during the run; the report lists reps whose gap exceeds 60 s, since their timings span a host sleep or stall |
 
 A retried node counts from its first Job's creation to its last Job's finish. A failed Job ends at its `Failed` condition's transition time.
 

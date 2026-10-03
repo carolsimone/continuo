@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Starts the run-lifecycle services of the local compose stack for a benchmark:
 # state, orchestrator and execution-controller, each as a fresh `go run` inside
-# its container (any running instance is stopped first). execution-controller
+# its container (any running instance is stopped first), logging to
+# /tmp/<service>.log in that container, which outage.sh reads. execution-controller
 # runs in compose and reaches MinIO through the Docker bridge, an address that
 # both its own uploads and the task pods in kind resolve; compose DNS names such
 # as `minio` do not resolve inside kind, which would leave every task pod's
@@ -15,6 +16,15 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib/common.sh
 . "$(bench_root)/scripts/lib/common.sh"
 
+# start SERVICE [DOCKER_EXEC_ARGS...]: go run in /app/SERVICE, output to /tmp/SERVICE.log.
+start() {
+  local svc="$1"
+  shift
+  log_info "Starting ${svc} (go run, logs in ${svc}:/tmp/${svc}.log)..."
+  docker exec -d "$@" "${svc}" bash -c "cd /app/${svc} && exec go run main.go > /tmp/${svc}.log 2>&1"
+  sleep 25
+}
+
 bridge="$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}')"
 [ -n "${bridge}" ] || { echo "start_local_services.sh: no Docker bridge gateway" >&2; exit 1; }
 
@@ -24,12 +34,10 @@ for svc in state orchestrator execution-controller; do
 done
 sleep 3
 
-start_go_service state state 25
+start state
 check_container_health state 8082
-start_go_service orchestrator orchestrator 25
+start orchestrator
 check_container_health orchestrator 8087
-log_info "Starting execution-controller with S3 at http://${bridge}:9000 ..."
-docker exec -d -e "S3_ENDPOINT_URL=http://${bridge}:9000" execution-controller \
-  bash -c "cd /app/execution-controller && go run main.go"
-sleep 25
+log_info "execution-controller reaches S3 at http://${bridge}:9000"
+start execution-controller -e "S3_ENDPOINT_URL=http://${bridge}:9000"
 check_container_health execution-controller 8084

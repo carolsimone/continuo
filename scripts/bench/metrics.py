@@ -217,6 +217,18 @@ def usage(samples: list, start: datetime, end: datetime) -> dict:
     return result
 
 
+def max_sample_gap(samples: list, start: datetime, end: datetime) -> Optional[float]:
+    """Longest interval between consecutive sampling instants within [start, end], in seconds.
+
+    The sampler ticks every few seconds; a much longer gap means the host slept or
+    stalled, and the rep's timings span that pause.
+    """
+    instants = sorted({sample.ts for sample in samples if start <= sample.ts <= end})
+    if len(instants) < 2:
+        return None
+    return max((b - a).total_seconds() for a, b in zip(instants, instants[1:]))
+
+
 def messages_delta(before: dict, after: dict) -> dict:
     return {stream: count - before.get(stream, 0) for stream, count in after.items()
             if count - before.get(stream, 0) > 0}
