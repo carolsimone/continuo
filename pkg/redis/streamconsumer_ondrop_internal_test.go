@@ -2,6 +2,7 @@ package redis
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync/atomic"
@@ -12,30 +13,40 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/events"
 )
 
 // TestProcessOne_NotifiesDropOnlyAfterAckSucceeds pins the ordering: the read
-// path must notify a permanent drop only once the message is actually ACKed. A
-// failed XACK leaves the message in the PEL to be reprocessed, so finalizing its
-// in-flight state then would abandon a message that was never dropped — in
+// path writes the dead letter first, ACKs the message only after that, and
+// notifies the drop only once the message is actually ACKed. A failed XACK
+// leaves the message in the PEL to be reprocessed, so finalizing its in-flight
+// state then would abandon a message that was never dropped — in
 // agent-remediation the newly-terminal row lets the same trigger spend another
 // attempt.
 func TestProcessOne_NotifiesDropOnlyAfterAckSucceeds(t *testing.T) {
 	permHandler := func(context.Context, goredis.XMessage) error {
 		return fmt.Errorf("unprocessable: %w", events.ErrPermanent)
 	}
-	var drops atomic.Int32
+	var calls []string
 	c := NewStreamConsumer(nil, "s", "g", permHandler, discardLog(),
-		WithOnDrop(func(context.Context, goredis.XMessage, error) { drops.Add(1) }))
+		WithOnDrop(func(context.Context, goredis.XMessage, error) { calls = append(calls, "drop") }))
+	c.SetService("pkg-redis-test")
+	c.deadLetterFn = func(context.Context, map[string]any) error { calls = append(calls, "dead-letter"); return nil }
 
-	c.ackFn = func(context.Context, string) error { return errors.New("XACK failed") }
+	c.ackFn = func(context.Context, string) error {
+		calls = append(calls, "ack-failed")
+		return errors.New("XACK failed")
+	}
 	c.processOne(context.Background(), goredis.XMessage{ID: "1-0"})
-	require.Zero(t, drops.Load(), "a failed ACK leaves the message pending — the drop must not be notified")
+	require.Equal(t, []string{"dead-letter", "ack-failed"}, calls,
+		"the dead letter precedes the ACK; a failed ACK leaves the message pending — the drop must not be notified")
 
-	c.ackFn = func(context.Context, string) error { return nil }
+	calls = nil
+	c.ackFn = func(context.Context, string) error { calls = append(calls, "ack"); return nil }
 	c.processOne(context.Background(), goredis.XMessage{ID: "1-0"})
-	require.Equal(t, int32(1), drops.Load(), "a confirmed ACK notifies the drop exactly once")
+	require.Equal(t, []string{"dead-letter", "ack", "drop"}, calls,
+		"a confirmed ACK after the dead letter notifies the drop exactly once")
 }
 
 // TestOnDropped_FiresRegisteredCallback verifies the drop seam: when a message
@@ -86,10 +97,11 @@ func TestOnDropped_RecoversPanickingCallback(t *testing.T) {
 }
 
 // TestStreamConsumer_ReclaimPath_PoisonDrop_InvokesOnDrop is the regression for
-// the orphaned-in-flight-row bug: when a poison message is quarantined at the
-// reclaim path, the registered DropHandler must fire with that message so the
-// owning service can finalize the in-flight state the drop leaves behind. Redis-
-// gated, mirroring the poison-quarantine test's setup.
+// the orphaned-in-flight-row bug: when a message that keeps failing is
+// dead-lettered on its fifth delivery at the reclaim path, the registered
+// DropHandler must fire with that message — after its dead letter exists — so
+// the owning service can finalize the in-flight state the message leaves
+// behind. Redis-gated, mirroring the poison-dead-letter test's setup.
 func TestStreamConsumer_ReclaimPath_PoisonDrop_InvokesOnDrop(t *testing.T) {
 	rc := internalRedisClient(t)
 	ctx := context.Background()
@@ -112,14 +124,17 @@ func TestStreamConsumer_ReclaimPath_PoisonDrop_InvokesOnDrop(t *testing.T) {
 		return errors.New("transient handler failure that never clears")
 	}
 	var drops atomic.Int32
+	var deadLettersAtDrop atomic.Int64
 	var droppedID atomic.Value
 	c := NewStreamConsumer(rc, stream, group, poison, discardLog(),
 		WithReclaimMinIdle(0),
 		WithOnDrop(func(_ context.Context, msg goredis.XMessage, cause error) {
 			drops.Add(1)
 			droppedID.Store(msg.ID)
+			deadLettersAtDrop.Store(int64(len(deadLettersFor(t, rc, stream))))
 			require.Error(t, cause)
 		}))
+	c.SetService("pkg-redis-test")
 
 	pendingCount := func() int64 {
 		res, perr := rc.XPending(ctx, stream, group).Result()
@@ -129,8 +144,17 @@ func TestStreamConsumer_ReclaimPath_PoisonDrop_InvokesOnDrop(t *testing.T) {
 	require.Eventually(t, func() bool {
 		require.NoError(t, c.reclaimPending(ctx))
 		return pendingCount() == 0
-	}, 10*time.Second, 50*time.Millisecond, "poison message must be ACK-dropped once it exceeds maxDeliveries")
+	}, 10*time.Second, 50*time.Millisecond, "poison message must be dead-lettered and acknowledged on its fifth delivery")
 
-	require.Equal(t, int32(1), drops.Load(), "onDrop must fire exactly once when the poison message is quarantined")
+	require.Equal(t, int32(1), drops.Load(), "onDrop must fire exactly once when the poison message is dead-lettered")
 	assert.Equal(t, msgID, droppedID.Load(), "onDrop must carry the dropped message so its in-flight state can be found")
+	assert.Equal(t, int64(1), deadLettersAtDrop.Load(), "onDrop fires only after the dead letter exists")
+
+	dl := deadLettersFor(t, rc, stream)
+	require.Len(t, dl, 1)
+	var p events.ConsumerDeadLetter
+	require.NoError(t, json.Unmarshal([]byte(dl[0].Values["payload"].(string)), &p))
+	assert.Equal(t, msgID, p.OriginalMessageID)
+	assert.Equal(t, model.DeadLetterKindTransientExhausted, p.FailureKind)
+	assert.Equal(t, int64(maxDeliveries), p.DeliveryCount, "dead-lettered on the fifth delivery")
 }
