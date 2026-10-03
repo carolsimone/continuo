@@ -2,7 +2,9 @@
 # Shared helpers for the benchmark scripts. Source it; do not execute it.
 # BENCH_TARGET selects the environment: compose (local compose stack + kind,
 # the default) or k8s (an install reached through BENCH_KUBECONFIG whose
-# services run in BENCH_K8S_NAMESPACE).
+# services run in BENCH_K8S_NAMESPACE). On k8s, BENCH_REDIS_POD and BENCH_PG_POD
+# name the install's Redis and Postgres pods (discover.sh lists candidates), and
+# build_image.sh imports the images over ssh to BENCH_SSH_HOST, a k3s node.
 
 # Both run in a subshell so the caller's working directory never changes.
 bench_here() (
@@ -95,7 +97,7 @@ bench_setup_redis() {
     pw="$(bench_env_value state REDIS_PASSWORD)"
     BENCH_REDIS_CMD="$(python3 -c 'import json, sys; print(json.dumps(sys.argv[1:]))' \
       kubectl --kubeconfig "${BENCH_KUBECONFIG}" -n "${BENCH_K8S_NAMESPACE:-continuo}" exec -i \
-      "${BENCH_REDIS_POD:-continuo-infra-redis-master-0}" -c "${BENCH_REDIS_CONTAINER_NAME:-redis}" -- \
+      "${BENCH_REDIS_POD:?BENCH_REDIS_POD is required on k8s (discover.sh lists candidates)}" -c "${BENCH_REDIS_CONTAINER_NAME:-redis}" -- \
       env "REDISCLI_AUTH=${pw}" redis-cli)"
   else
     bench_load_env

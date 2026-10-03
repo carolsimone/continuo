@@ -150,7 +150,8 @@ def parse_mem_mib(value: str) -> float:
     return float(match.group(1)) * _MEM_UNITS[unit]
 
 
-_INFRA_POD = re.compile(r"^continuo-infra-(?P<svc>neo4j|postgresql|redis)(-master)?-\d+$")
+# StatefulSet pods of a datastore Helm release: <release>-redis-master-0, <release>-postgresql-0, ...
+_INFRA_POD = re.compile(r"^.+-(?P<svc>neo4j|postgresql|redis)(-master)?-\d+$")
 _COMPOSE_REPLICA = re.compile(r"^.+-(?P<svc>postgres|redis|neo4j|minio)-\d+$")
 _DEPLOYMENT_POD = re.compile(r"^(?P<svc>.+)-[0-9a-f]{8,10}-[a-z0-9]{5}$")
 

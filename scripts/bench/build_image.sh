@@ -25,7 +25,8 @@ for spec in "v1 0" "slow30 30"; do
 done
 if [ "$(bench_target)" = "k8s" ]; then
   docker save "${prefix}bench:v1" "${prefix}bench:slow30" \
-    | ssh "${BENCH_SSH_HOST:-continuo-server}" k3s ctr -n k8s.io images import -
+    | ssh "${BENCH_SSH_HOST:?BENCH_SSH_HOST is required on k8s: an ssh destination on the k3s node that runs the Jobs}" \
+      k3s ctr -n k8s.io images import -
 else
   kind load docker-image "${prefix}bench:v1" "${prefix}bench:slow30" --name "${BENCH_KIND_CLUSTER:-continuo}"
 fi

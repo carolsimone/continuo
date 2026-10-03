@@ -59,8 +59,8 @@ def test_parse_mem_units():
 
 def test_service_of_normalises_pod_and_container_names():
     assert m.service_of("execution-controller-677d8fc4c7-r829s") == "execution-controller"
-    assert m.service_of("continuo-infra-redis-master-0") == "redis"
-    assert m.service_of("continuo-infra-postgresql-0") == "postgres"
+    assert m.service_of("infra-redis-master-0") == "redis"
+    assert m.service_of("data-postgresql-0") == "postgres"
     assert m.service_of("continuo-postgres-1") == "postgres"
     assert m.service_of("state") == "state"
     assert m.service_of("NODE") == "NODE"
