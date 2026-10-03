@@ -1,0 +1,20 @@
+#!/bin/sh
+# Benchmark stand-in for dbt. execution-controller runs it as
+# `dbt <verb> --select <node>` with TABLE_NAME set. It prints one line (an empty
+# log skips the log upload), never prints "Nothing to do" (which the executor
+# reads as a no-op failure), optionally sleeps, and fails for tables named fail_*.
+set -eu
+verb="${1:-run}"
+node="${TABLE_NAME:-unknown}"
+sleep_s="${BENCH_SLEEP_SECONDS:-0}"
+echo "bench dbt ${verb} table=${node} sleep=${sleep_s}s"
+if [ "${sleep_s}" != "0" ]; then
+  sleep "${sleep_s}"
+fi
+case "${node}" in
+  fail_*)
+    echo "bench: ${node} fails on purpose" >&2
+    exit 1
+    ;;
+esac
+echo "bench: ${node} completed"
