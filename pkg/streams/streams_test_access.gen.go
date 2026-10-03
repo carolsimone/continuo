@@ -23,6 +23,7 @@ func PkgConstantsForTest() map[string]string {
 		"QueryModelV1": QueryModelV1,
 		"CheckK8sV1": CheckK8sV1,
 		"OutboxDeadLetterV1": OutboxDeadLetterV1,
+		"ConsumerDeadLetterV1": ConsumerDeadLetterV1,
 		"ScheduleCancelledV1": ScheduleCancelledV1,
 		"ReleaseRequestedV1": ReleaseRequestedV1,
 		"ManifestLoadedCandidateV1": ManifestLoadedCandidateV1,
