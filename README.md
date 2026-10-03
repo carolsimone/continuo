@@ -114,7 +114,7 @@ so this takes minutes, not a full local build.
 
 **Prerequisites**
 
-- Docker Desktop, or [colima](https://github.com/abiosoft/colima) (`colima start`)
+- Docker Desktop, or [colima](https://github.com/abiosoft/colima) (`colima start --cpu 6 --memory 16 --disk 60`), with 6 CPUs and 16 GiB of memory
 - [kind](https://kind.sigs.k8s.io/) — `brew install kind`
 - [kubectl](https://kubernetes.io/docs/tasks/tools/) — `brew install kubectl`
 - [Helm](https://helm.sh/) 3.14+ — `brew install helm`
@@ -127,7 +127,7 @@ kind create cluster --name continuo
 
 # 2. Install Continuo from the published Helm chart (pre-built images, no clone needed)
 helm install continuo oci://ghcr.io/carolsimone/charts/continuo \
-  --version 0.6.2 -n continuo --create-namespace
+  --version 0.9.1 -n continuo --create-namespace
 
 # 3. Wait for everything to come up
 kubectl -n continuo get pods -w
@@ -139,7 +139,7 @@ kubectl -n continuo port-forward svc/continuo-dex 5556:5556 &
 # 5. One-time: let your browser resolve the in-cluster login issuer.
 #    sudo prompts on the terminal, so run this in a real terminal window
 #    (not an IDE/agent shell). No sudo? See deploy/continuo/README.md.
-echo "127.0.0.1 continuo-dex" | sudo tee -a /etc/hosts
+grep -q "continuo-dex" /etc/hosts || echo "127.0.0.1 continuo-dex" | sudo tee -a /etc/hosts
 
 # 6. Open it
 open http://localhost:8090

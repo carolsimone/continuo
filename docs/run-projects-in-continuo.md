@@ -159,15 +159,15 @@ done
 Confirm the node can see all four:
 
 ```bash
-docker exec continuo-control-plane crictl images | grep -E "core|finance|marketing|service-py"
+docker exec continuo-control-plane crictl images | grep -E "library/(core|finance|marketing|service-py)"
 ```
 
 ```bash
-❯ docker exec continuo-control-plane crictl images | grep -E "core|finance|marketing|service-py"
-docker.io/library/core                                 v1                             ae73b76c2e14a       87.8MB
-docker.io/library/finance                              v1                             99a30ebc2f02a       87.6MB
-docker.io/library/marketing                            v1                             095716494cd52       87.6MB
-docker.io/library/service-py                           v1                             8a6374a115b71       122MB
+❯ docker exec continuo-control-plane crictl images | grep -E "library/(core|finance|marketing|service-py)"
+docker.io/library/core                              v1                   a2bd307ad3117       91.6MB
+docker.io/library/finance                           v1                   1ec4742c92b1f       91.3MB
+docker.io/library/marketing                         v1                   862b724af6a23       91.3MB
+docker.io/library/service-py                        v1                   cca6848b33e87       124MB
 ```
 
 **Why a bare `core:v1` works.** The chart value `global.teamImagePrefix` is empty
@@ -308,13 +308,17 @@ are the same instant. Chapter 6 is where validation happens for real.
 
 Then, on promotion, continuo materialises the release's seeds into production.
 
-Check the result in the UI: `core` now has four nodes — three seeds and
-`daily_transactions` — with one edge between `daily_transactions` and
-`seed_card_transactions`.
+Check the result in the UI: `core` now has eight nodes — three seeds and five
+models — joined by four edges. Three of them are `{{ ref() }}` calls
+(`seed_card_transactions` → `daily_transactions` → `revenue_per_user`, and
+`seed_users` → `revenue_per_user`); the fourth, `read_order` → `read_order_v2`,
+is a raw `FROM analytics.read_order`, which is rule 1 at work: inside a project
+continuo reads the edge from the SQL whether or not you use `ref()`.
 
-That edge is the `{{ ref() }}` one, resolved inside a single project. The
-cross-project half of the chain is not there yet, because `finance` doesn't
-exist yet. Nothing is broken; the graph simply reflects what has been released.
+Every edge is inside `core`. The cross-project half of the chain is not there
+yet, because `finance` doesn't exist yet, and `dbt_daily_kpis` and `read_order`
+read tables from services you have not released. Nothing is broken; the graph
+simply reflects what has been released.
 
 ---
 
@@ -683,7 +687,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 ```
 
 💡 **Read that list again.** You added one model to marketing. continuo put
-sixteen of the graph's nineteen nodes in scope: your new node and its entire
+sixteen of the graph's twenty-two nodes in scope: your new node and its entire
 upstream lineage — `ltv_per_user` from finance, `revenue_per_user` and
 `daily_transactions` from core, and the seeds under all of them. You changed
 marketing; continuo worked out from the SQL that proving the change requires
@@ -769,13 +773,6 @@ reached production, in another team's model they had never heard of.
 
 *This chapter needs credentials chapters 1–7 did not.*
 
-⚠️ **Prerequisite: your fork must be a real repository on github.com.** Chapters
-1–7 run fine against a purely local clone — a release only stores `repo` and
-`commit_sha` as strings, and nothing reads them until now. This chapter does not:
-`agent-remediation` reads the failing model's source through the GitHub API at
-`repo@commit_sha`, and the PR is opened as a GitHub object against your fork. If
-you only cloned locally, create the fork on GitHub and push to it before going on.
-
 A rejected release tells you something broke. continuo can also try to fix it.
 
 💡 `remediation` classifies the rejection, and for a fixable one `agent-remediation`
@@ -785,11 +782,19 @@ own — the output is a diff you review, and a pull request you choose to open.
 
 ![The rejected release's detail view with no LLM credentials configured: the failure is classified but no fix proposal is offered](img/validation-rejected-details-remediation-absent.png)
 
+**Where the agent reads your source.** For a dbt model that failed validation —
+this chapter's case — it reads the code continuo captured when it compiled the
+release, so nothing has to be on GitHub to get a proposal. For failures caught
+before validation (compile errors, seeds, duplicate tables) and for python
+nodes, it reads your fork through the GitHub API at `repo@commit_sha`. That read
+works without a token on a public fork; a read-only token is what lets it read
+a private one.
+
 There are **two credential tiers**, and they unlock two different things:
 
 | You provide | You get | Value keys |
 |---|---|---|
-| LLM API key + read-only GitHub PAT | **See** the proposed fix in the UI | `llm.apiKey`, `github.token` |
+| LLM API key (plus a read-only GitHub PAT for a private fork) | **See** the proposed fix in the UI | `llm.apiKey`, `github.token` |
 | GitHub App (id, installation id, private key) | **Open the PR** from the UI | `github.appId`, `github.installationId`, `github.appPrivateKey` |
 
 Do the first tier now. The second is its own section below, and you can stop
@@ -797,16 +802,17 @@ after the first if you only want to see the proposal.
 
 ### See the proposal
 
-The proposal is anchored to a commit in your repository, so the broken code needs
-to exist there. Commit and push your change to your fork, and use that commit:
+The proposal is anchored to a commit in your repository, and the pull request in
+the next section is opened against it, so commit and push your broken change to
+your fork:
 
 ```bash
 git add services/finance && git commit -m "break amount_eur" && git push
 ```
 
-**Create the read-only PAT.** `github.token` is a GitHub fine-grained personal
-access token; `agent-remediation` uses it to read your fork's source over the
-GitHub API at `repo@commit_sha`. Create one once:
+**Optional: create a read-only PAT.** Skip this on a public fork. `github.token`
+is a GitHub fine-grained personal access token that `agent-remediation` uses for
+the GitHub reads above. Create one once:
 
 1. **Open the token page.** GitHub → your avatar → **Settings → Developer
    settings → Personal access tokens → Fine-grained tokens → Generate new
@@ -820,13 +826,13 @@ GitHub API at `repo@commit_sha`. Create one once:
 4. **Generate and copy it.** Click **Generate token** and copy the value; GitHub
    shows it once. That string is your `github.token`.
 
-Then set the LLM key and this PAT, and upgrade:
+Then set the LLM key (and the PAT, if you made one), and upgrade:
 
 ```bash
 helm upgrade continuo oci://ghcr.io/carolsimone/charts/continuo \
-  --version 0.9.0 -n continuo --reuse-values \
+  --version 0.9.1 -n continuo --reuse-values \
   --set llm.apiKey='<your-api-key>' \
-  --set github.token='<your-read-only-PAT>'
+  --set github.token='<your-read-only-PAT>'   # drop this line without a PAT
 ```
 
 `llm.provider` defaults to `anthropic` and `llm.model` to `claude-haiku-4-5`. For
@@ -843,12 +849,26 @@ startup**:
 kubectl -n continuo rollout restart deploy/agent-remediation
 ```
 
-Re-release the broken finance with a new `release_id` and the pushed `commit_sha`.
+Re-release the broken finance under a new `release_id`, carrying the commit you
+just pushed:
+
+```bash
+curl -s -X POST $API/releases \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"release_id":"rel-finance-v3","service":"finance","image_tag":"v2",
+       "bootstrap":false,"repo":"<your-username>/continuo-demo-docs",
+       "commit_sha":"'"$(git rev-parse HEAD)"'"}' | jq
+```
+
 The release must fail on **valid** SQL to exercise the *validation* classifier —
 the one this chapter is about. Invalid SQL never reaches validation: it is
 rejected earlier, at the parse stage as `invalid_sql`, and healed by the parse
-lane instead (this is the comma trap from chapter 7). When it is rejected this
-time, the proposed fix appears in the UI against the failed release.
+lane instead (this is the comma trap from chapter 7). About a minute after
+`rel-finance-v3` is rejected, the proposed fix appears in the UI against it: a
+diff that restores `amount_eur`, already proven by a real verification run.
+`rel-finance-v2` from chapter 7 gets a proposal too — its rejection was waiting
+for the agent to have a key.
 
 ![The agent's proposed fix on the rejected release: a diff verified by a real validation run, ready for a human to review and open as a PR](img/llm-remediation-succesful-and-validated.png)
 
@@ -883,7 +903,7 @@ file, not a flag value (a PEM has newlines that `--set` mangles), so pass it wit
 
 ```bash
 helm upgrade continuo oci://ghcr.io/carolsimone/charts/continuo \
-  --version 0.9.0 -n continuo --reuse-values \
+  --version 0.9.1 -n continuo --reuse-values \
   --set-string github.appId='<app-id>' \
   --set-string github.installationId='<installation-id>' \
   --set-file github.appPrivateKey=/path/to/downloaded-key.pem
