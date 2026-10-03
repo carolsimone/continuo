@@ -449,8 +449,8 @@ func main() {
 		if c.timeout > pkgredis.DefaultHandlerTimeout {
 			// A peer replica's reclaim sweep takes a pending message once it has
 			// been idle for the gate. The gate sits a minute above the handler
-			// timeout, so the sweep never takes a message whose handler is
-			// still running.
+			// timeout, so the gate outlasts a single handler invocation and a
+			// peer's sweep does not take a message during one.
 			opts = append(opts, pkgredis.WithReclaimMinIdle(c.timeout+time.Minute))
 		}
 		runConsumer(c.name, pkgredis.NewStreamConsumer(redisClient, c.stream, c.group, c.binding, logger, opts...))

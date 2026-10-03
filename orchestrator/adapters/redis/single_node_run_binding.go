@@ -13,7 +13,7 @@ import (
 // NewSingleNodeRunBinding wires ParseSingleNodeRun into the
 // HandleSingleNodeRunHandler. Parse failures (including metadata_source
 // cross-field violations) are permanent (events.ErrPermanent): the binding logs
-// and returns the error so the consumer ACKs and drops the poison message.
+// and returns the error so the consumer dead-letters the poison message.
 func NewSingleNodeRunBinding(
 	handler *handlers.HandleSingleNodeRunHandler,
 	logger *slog.Logger,
@@ -21,7 +21,7 @@ func NewSingleNodeRunBinding(
 	return func(ctx context.Context, msg goredis.XMessage) error {
 		cmd, err := ParseSingleNodeRun(msg)
 		if err != nil {
-			logger.Error("trigger.single_node_run: parse failure — discarding",
+			logger.Error("trigger.single_node_run: parse failure — dead-lettering",
 				"message_id", msg.ID, "error", err)
 			return err
 		}

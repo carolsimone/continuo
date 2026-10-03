@@ -94,9 +94,10 @@ func newRemediationRequestedHandler(deps handlers.Deps, logger *slog.Logger) pkg
 // failInFlightOnDrop builds the drop handler that closes out a remediation
 // attempt the stream consumer abandoned. markGenerating commits an in-flight
 // 'generating' row before the model is called; if the trigger then fails on
-// every redelivery and is poison-dropped, that row is left reporting a fix as
-// forever generating — and the release's "Try again" stays blocked behind it.
-// This decodes the dropped trigger's release id and fails that row via fail.
+// every redelivery and is dead-lettered on its fifth delivery, that row is left
+// reporting a fix as forever generating — and the release's "Try again" stays
+// blocked behind it. This decodes the dead-lettered trigger's release id and
+// fails that row via fail.
 //
 // A message with no payload, or one whose payload cannot be decoded, named no
 // release and never created a row (markGenerating runs only after a successful

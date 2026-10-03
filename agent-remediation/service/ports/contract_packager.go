@@ -12,9 +12,9 @@ import (
 // It could not. The tool is deterministic on its input, and the input is
 // rebuilt identically on a redelivery — the model's answer is served from the
 // trigger-keyed idempotency cache, so the same refused contract is reassembled
-// every time. Treating the refusal as transient therefore loops the trigger
-// until the stream's poison limit drops it, leaving the attempt in flight with
-// nothing that will ever finish it. A caller records a terminal failure
+// every time. Treating the refusal as transient therefore repeats the refusal
+// on every redelivery until the fifth dead-letters the trigger, leaving the
+// attempt in flight with nothing that will ever finish it. A caller records a terminal failure
 // instead, keeping the tool's own complaint as the evidence.
 //
 // Everything else a packaging call can fail on — a missing binary, a context

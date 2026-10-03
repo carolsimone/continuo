@@ -13,7 +13,7 @@ import (
 
 // NewRebaseBinding wires ParseRebase into the shared DerivedRunHandler. Parse
 // failures are permanent (events.ErrPermanent): the binding logs and returns
-// the error so the consumer ACKs and drops the poison message.
+// the error so the consumer dead-letters the poison message.
 func NewRebaseBinding(
 	handler *handlers.DerivedRunHandler,
 	logger *slog.Logger,
@@ -21,7 +21,7 @@ func NewRebaseBinding(
 	return func(ctx context.Context, msg goredis.XMessage) error {
 		cmd, err := ParseRebase(msg)
 		if err != nil {
-			logger.Error("trigger.rebase: parse failure — discarding",
+			logger.Error("trigger.rebase: parse failure — dead-lettering",
 				"message_id", msg.ID, "error", err)
 			return err
 		}

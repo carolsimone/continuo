@@ -25,9 +25,13 @@ type MessageHandler func(ctx context.Context, msg goredis.XMessage) error
 // that persisted to its last delivery. It fires once a dead-lettered message is
 // acknowledged, carrying the message and the cause, so the owning service can
 // finalize any in-flight state it committed for that message (which the
-// consumer leaves dangling, since it records no state of its own). It is
-// best-effort housekeeping, never on the message-processing critical path: it is
-// invoked with panic recovery and its outcome does not affect the ACK.
+// consumer leaves dangling, since it records no state of its own). The ctx it
+// receives is detached from the service's shutdown cancellation and bounded by
+// the consumer's handler timeout, so a shutdown that begins after the dead
+// letter was written does not cancel the notification, and a slow handler
+// cannot delay shutdown beyond that bound. It is best-effort housekeeping,
+// never on the message-processing critical path: it is invoked with panic
+// recovery and its outcome does not affect the ACK.
 type DropHandler func(ctx context.Context, msg goredis.XMessage, cause error)
 
 // StreamConsumer is a generic Redis Streams consumer that delegates message
@@ -42,7 +46,7 @@ type StreamConsumer struct {
 	reclaimMinIdle time.Duration
 
 	// workerCount is the number of parallel processing lanes. The default is 1,
-	// which preserves strictly-serial per-stream processing (today's behaviour).
+	// which processes each stream strictly serially.
 	// When >1, messages are sharded across workerCount lanes by a hash of their
 	// aggregate key so messages for one aggregate stay strictly ordered while
 	// distinct aggregates process in parallel.
@@ -113,13 +117,15 @@ type StreamConsumer struct {
 type ConsumerOption func(*StreamConsumer)
 
 // defaultReclaimMinIdle is the MinIdle gate applied to the periodic PEL sweep.
-// At 30s it is large enough that a healthy peer replica's in-flight message —
-// including its in-process retry budget — will never be stolen by another
-// replica's sweep, and small enough that a crashed consumer's PEL entry is
-// recovered well within the 2-minute reclaim cadence. A message paused on an
-// infrastructure error stays in flight longer than that; every pauseSlice,
-// pause re-claims it and everything else this consumer has pending, so their
-// idle times stay below the gate.
+// At 30s it matches DefaultHandlerTimeout, so another replica's sweep does not
+// take a message from a handler that is still within its deadline, and it is
+// small enough that a crashed consumer's PEL entry is recovered well within the
+// 2-minute reclaim cadence. A message that fails transiently is retried once
+// inline, so one whose two attempts both run to the deadline can stay in flight
+// past the gate; a service whose handlers run longer sets a higher gate
+// (SetReclaimMinIdle). A message paused on an infrastructure error stays in
+// flight longer than that; every pauseSlice, pause re-claims it and everything
+// else this consumer has pending, so their idle times stay below the gate.
 const defaultReclaimMinIdle = 30 * time.Second
 
 // WithReclaimMinIdle overrides the minimum idle time a pending entry must have
@@ -136,8 +142,8 @@ func WithReclaimMinIdle(d time.Duration) ConsumerOption {
 // given aggregate remain strictly ordered (same key → same lane → FIFO) while
 // distinct aggregates process concurrently. n is the number of lanes and
 // aggregateKeyField is the message Values field that names the aggregate (for
-// example "schedule_id"). n <= 1 is the default and keeps today's exact
-// strictly-serial behaviour, so a binding opts into parallelism deliberately.
+// example "schedule_id"). n <= 1 is the default and processes strictly serially,
+// so a binding opts into parallelism deliberately.
 //
 // Per-aggregate serialization in the write store (e.g. SELECT … FOR UPDATE on a
 // run) means n>1 only buys throughput across aggregates — which is exactly the
@@ -188,8 +194,9 @@ func (c *StreamConsumer) SetHandlerTimeout(d time.Duration) {
 // SetReclaimMinIdle sets the reclaim sweep's idle gate before Start, exactly as
 // WithReclaimMinIdle does, for callers that receive an already-constructed
 // consumer. A service whose handlers may legitimately run longer than the
-// default gate sets it above its handler timeout, so a peer replica's sweep
-// never takes a message whose handler is still running.
+// default gate sets it above its handler timeout, so the gate outlasts a single
+// handler invocation and a peer replica's sweep does not take a message during
+// one.
 func (c *StreamConsumer) SetReclaimMinIdle(d time.Duration) { c.reclaimMinIdle = d }
 
 // SetService names the service this consumer runs in. It must be called
@@ -206,8 +213,7 @@ func (c *StreamConsumer) HeartbeatBudget() time.Duration { return c.handlerTimeo
 // orphaned entry every restart; the restarted process re-attaches to its own
 // PEL instead of leaking a dead consumer whose pending entries only the reclaim
 // sweep would recover. The hostname is the pod identity under Kubernetes; if it
-// is unavailable we fall back to a time-seeded name (the pre-existing
-// behaviour) so the consumer still starts.
+// is unavailable the name is time-seeded instead, so the consumer still starts.
 func consumerName(consumerGroup string) string {
 	host, err := os.Hostname()
 	if err != nil || host == "" {
@@ -261,8 +267,10 @@ func NewStreamConsumer(
 // reclaimInterval is how often the consumer re-scans the PEL for messages
 // abandoned by other consumer instances (crash recovery) and for messages whose
 // handler failed transiently. The read path retries a transient error once
-// in-process (readPathSchedule) before leaving the message for this sweep, so
-// the interval is the retry cadence of a message that keeps failing.
+// in-process (readPathSchedule) before leaving the message for this sweep. A
+// message that keeps failing is retried at the larger of this interval and the
+// consumer's reclaim min idle, since a sweep takes only entries idle at least
+// that long.
 const reclaimInterval = 2 * time.Minute
 
 // staleConsumerIdle is how long a zero-pending consumer must have been idle
@@ -300,7 +308,8 @@ const maxDeliveries = 5
 
 // readPathSchedule retries a transient error once, quickly, on first delivery;
 // after that the message waits for the reclaim sweep. reclaimSchedule runs a
-// reclaimed message once per sweep: the sweep interval is its retry cadence.
+// reclaimed message once per sweep, so a failing message is retried at the
+// larger of reclaimInterval and the consumer's reclaim min idle.
 var (
 	readPathSchedule = []time.Duration{0, 100 * time.Millisecond}
 	reclaimSchedule  = []time.Duration{0}
@@ -742,17 +751,18 @@ func (c *StreamConsumer) ensureConsumerGroup(ctx context.Context) error {
 // path's retry schedule inside the sweep would (a) head-of-line-block the read
 // loop, and (b) duplicate work for the common case where a single attempt under
 // the new owner already succeeds. If the single attempt fails, the entry stays
-// in the PEL and the next sweep (≤ reclaimInterval) becomes the retry cadence,
-// until its delivery count reaches maxDeliveries and it is dead-lettered. A
+// in the PEL until a later sweep finds it idle for at least reclaimMinIdle, so
+// the retry cadence is the larger of reclaimInterval and reclaimMinIdle, until
+// its delivery count reaches maxDeliveries and it is dead-lettered. A
 // permanent error is dead-lettered at once; an infrastructure error pauses the
 // sweep on that message until the dependency answers. Every message is
 // acknowledged as soon as it is settled — a handled one at once, a
 // dead-lettered one after its dead letter is written — so a pause on one
 // message never holds finished work in the PEL.
 //
-// Implementation note: XAUTOCLAIM (Redis 6.2+) replaces the older XPENDING +
-// per-ID XCLAIM loop, collapsing 1+N round-trips into a single cursor-paged
-// command per page of up to 100 entries.
+// Implementation note: XAUTOCLAIM (Redis 6.2+) claims a whole page of up to 100
+// entries in one cursor-paged command, rather than one XPENDING plus an XCLAIM
+// per entry.
 func (c *StreamConsumer) reclaimPending(ctx context.Context) error {
 	cursor := "0-0"
 	for {
@@ -924,7 +934,7 @@ func (c *StreamConsumer) readAndProcess(ctx context.Context) error {
 
 // processSerial runs the handler over the batch one message at a time in stream
 // order, ACKing each message the moment it resolves. This is the workerCount==1
-// path and is behaviourally identical to the original strictly-serial loop.
+// path.
 func (c *StreamConsumer) processSerial(ctx context.Context, msgs []goredis.XMessage) {
 	for _, msg := range msgs {
 		c.processOne(ctx, msg)

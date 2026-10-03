@@ -10,10 +10,10 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// ParseReleasePromoted decodes a release.promoted:v1 XMessage's `payload`
-// field into an event.ReleasePromoted DTO. Returns events.ErrPermanent errors
-// for a missing payload field, malformed JSON, empty release_id, or nil
-// topology — the consumer ACKs + drops the poison message on these.
+// ParseReleasePromoted decodes a release.promoted:v1 XMessage's `payload` field
+// into an event.ReleasePromoted DTO. Returns events.ErrPermanent errors for a
+// missing payload field, malformed JSON, empty release_id, or nil topology —
+// the consumer dead-letters the poison message on these.
 func ParseReleasePromoted(msg goredis.XMessage) (event.ReleasePromoted, error) {
 	raw, ok := msg.Values["payload"].(string)
 	if !ok || raw == "" {

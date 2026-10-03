@@ -18,12 +18,12 @@ import (
 )
 
 // NewCheckK8sBinding returns a pkg/redis.MessageHandler for check.k8s:v1. Every
-// message it receives is genuinely due — the delay-queue promoter only XADDs due
-// tickets — so there is no not-due/recirculation gate. Parse failures are
-// permanent (ACK + drop); dedup, handler and repository work all run inside one
-// UnitOfWork transaction, so a duplicate message is ACKed without invoking the
-// handler and a handler/repository failure propagates so the message stays
-// pending for retry.
+// message it receives is genuinely due — the delay-queue promoter only XADDs
+// due tickets — so there is no not-due/recirculation gate. Parse failures are
+// permanent (the consumer dead-letters the message); dedup, handler and
+// repository work all run inside one UnitOfWork transaction, so a duplicate
+// message is ACKed without invoking the handler and a handler/repository
+// failure propagates so the message stays pending for retry.
 func NewCheckK8sBinding(
 	uowFactory func() uow.UnitOfWork,
 	handler *handlers.JobStatusHandler,

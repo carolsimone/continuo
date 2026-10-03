@@ -17,7 +17,7 @@ import (
 
 // ParseRemediationRequested decodes a remediation.requested:v2 XMessage's
 // payload into the case-base DTO. Structural errors are events.ErrPermanent —
-// the consumer ACKs and drops the poison message.
+// the consumer dead-letters the poison message.
 func ParseRemediationRequested(msg goredis.XMessage) (event.RemediationRequested, error) {
 	raw, ok := msg.Values["payload"].(string)
 	if !ok || raw == "" {
@@ -39,7 +39,7 @@ func NewRemediationRequestedBinding(
 	return func(ctx context.Context, msg goredis.XMessage) error {
 		evt, err := ParseRemediationRequested(msg)
 		if err != nil {
-			logger.Error("remediation.requested (rejections): parse failure — discarding",
+			logger.Error("remediation.requested (rejections): parse failure — dead-lettering",
 				"message_id", msg.ID, "error", err)
 			return err
 		}

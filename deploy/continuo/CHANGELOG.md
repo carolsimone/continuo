@@ -17,7 +17,7 @@ Template fix and service behavior changes: stream consumers dead-letter the mess
 ### Changed
 - Stream consumers no longer drop messages they cannot process. A message whose handler reports a permanent error, or still fails on its fifth delivery, is first written to the new `consumer.dead_letter:v1` stream (with its original stream, group, id, fields, error and delivery count) and acknowledged only once that write succeeded. This covers every Go service and topology-controller; release-controller, remediation and agent-remediation dead-letter malformed payloads they used to discard.
 - A dependency outage (Postgres, Neo4j, S3 or Redis unreachable) no longer counts toward a message's delivery limit: the consumer retries the same message after 1 s, doubling to 60 s, and resumes when the dependency answers.
-- Every message handler has a time limit. The default is 30 s; orchestrator's whole-DAG and whole-release consumers allow 5 minutes. A message that runs out its limit on every delivery is dead-lettered after its fifth.
+- Every message handler has a time limit. The limit is 30 s by default (state, and orchestrator's other consumers); orchestrator's whole-DAG and whole-release consumers allow 5 minutes; execution-controller allows 60 s, and 6 minutes for its schema-operation consumers; release-controller and remediation allow 60 s; agent-remediation allows 5 minutes. A message that runs out its limit on every delivery is dead-lettered after its fifth.
 - stream-reaper no longer trims `outbox.dead_letter:v1` or `consumer.dead_letter:v1`: no consumer stores their entries elsewhere, so the streams hold the only copy of every dead letter and grow until an operator removes entries.
 
 ### Fixed

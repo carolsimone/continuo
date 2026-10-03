@@ -377,8 +377,8 @@ func (h *JobStatusHandler) handleCompileTerminal(
 // terminal outbox writes, and those writes share the caller's context with the
 // transaction they run in: a slow pod-log read or an unreachable S3 that
 // consumed the whole handler budget here would leave no budget to persist the
-// task's outcome, so a finished task would be retried and eventually poison-ACKed
-// while still recorded as RUNNING. Capping the I/O keeps the outcome writable
+// task's outcome, so a finished task would be retried and eventually
+// dead-lettered while still recorded as RUNNING. Capping the I/O keeps the outcome writable
 // even when the log never arrives. Cancellation still propagates from the parent,
 // so a shutting-down consumer is not held open by an upload.
 // nodeArtifactPath files a Job's log and run-results under the node the Job ran.

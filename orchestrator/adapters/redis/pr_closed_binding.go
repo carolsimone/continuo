@@ -16,8 +16,8 @@ import (
 )
 
 // ParsePRClosed decodes a remediation.pr_closed:v1 XMessage's payload into the
-// case-base DTO. Structural errors are events.ErrPermanent — the consumer ACKs
-// and drops the poison message.
+// case-base DTO. Structural errors are events.ErrPermanent — the consumer
+// dead-letters the poison message.
 func ParsePRClosed(msg goredis.XMessage) (event.PRClosed, error) {
 	raw, ok := msg.Values["payload"].(string)
 	if !ok || raw == "" {
@@ -39,7 +39,7 @@ func NewPrClosedBinding(
 	return func(ctx context.Context, msg goredis.XMessage) error {
 		evt, err := ParsePRClosed(msg)
 		if err != nil {
-			logger.Error("remediation.pr_closed (provenance): parse failure — discarding",
+			logger.Error("remediation.pr_closed (provenance): parse failure — dead-lettering",
 				"message_id", msg.ID, "error", err)
 			return err
 		}

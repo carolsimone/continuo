@@ -197,9 +197,9 @@ func main() {
 	}
 
 	// consumerReclaim and schemaOpReclaim keep the PEL sweep from stealing a
-	// message whose handler is still running: each gate sits a minute above the
-	// handler timeout of its consumers. A schema-op handler may be legitimately
-	// blocked on a schema-op Job for that whole timeout.
+	// message during a single handler invocation: each gate sits a minute above
+	// the handler timeout of its consumers. A schema-op handler may be
+	// legitimately blocked on a schema-op Job for that whole timeout.
 	consumerReclaim := pkgredis.WithReclaimMinIdle(consumerHandlerTimeout + time.Minute)
 	schemaOpReclaim := pkgredis.WithReclaimMinIdle(schemaOpHandlerTimeout + time.Minute)
 
