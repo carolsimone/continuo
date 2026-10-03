@@ -2,9 +2,16 @@ import logging
 import time
 import uuid
 from collections.abc import Callable
+from datetime import datetime, timezone
+
 from redis import Redis
 from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import TimeoutError as RedisTimeoutError
+
+from adapters.redis.dead_letter import as_text, build_fields, tenant_of
+from adapters.redis.error_class import ErrorClass, classify
+from domain.contract_vocabulary import DeadLetterKind
+from streams_contract import CONSUMER_DEAD_LETTER_V1
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +37,18 @@ _RECLAIM_MIN_IDLE_MS = 60_000
 _STARTUP_CONNECT_TIMEOUT_S = 60.0
 _STARTUP_CONNECT_BACKOFF_S = 3.0
 
+# A message whose handler still fails transiently on this delivery is
+# dead-lettered. The count is the pending entry's delivery counter.
+_MAX_DELIVERIES = 5
+# After an infrastructure error the consumer waits 1s, doubling to 60s, and
+# refreshes its heartbeat and the message's idle time every 5s while it waits.
+_INFRA_BACKOFF_BASE_S = 1.0
+_INFRA_BACKOFF_CAP_S = 60.0
+_PAUSE_SLICE_S = 5.0
+# Logged once per abandoned message, after its dead letter is written.
+# scripts/bench/outage.sh counts abandoned messages by this text.
+LOG_DEAD_LETTERED = "Message dead-lettered — ACKing to drop from PEL"
+
 
 class Consumer:
     def __init__(
@@ -38,12 +57,18 @@ class Consumer:
         stream_name: str,
         group_name: str,
         message_handler: Callable[[dict], None],
+        *,
+        service_name: str,
+        clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     ) -> None:
         self._redis = redis_client
         self._stream = stream_name
         self._group = group_name
         self._name = f"consumer-{uuid.uuid4().hex[:8]}"
         self._message_handler = message_handler
+        # Names this service as the producer of the dead letters it writes.
+        self._service = service_name
+        self._now = clock
         # Stamped at the end of every start() loop pass (success or handled
         # failure) so a health check can tell "retrying through a Redis
         # outage" (heartbeat keeps advancing) apart from "the loop stopped
@@ -94,19 +119,103 @@ class Consumer:
         self._message_handler(fields)
 
     def _dispatch(self, msg_id, msg_fields: dict) -> None:
-        try:
-            self._process_message(msg_id, msg_fields)
+        """Run the handler for one message and settle it. On success it is
+        ACKed. On a permanent error, or a transient error on its
+        _MAX_DELIVERIES-th delivery, it is dead-lettered and then ACKed.
+        Otherwise it stays pending for the next sweep. An infrastructure error
+        is retried in place, without counting a delivery (see _pause)."""
+        text_id = as_text(msg_id)
+        pauses = 0
+        while True:
+            try:
+                self._process_message(msg_id, msg_fields)
+            except Exception as exc:
+                cls = classify(exc)
+                if cls is ErrorClass.INFRASTRUCTURE:
+                    pauses += 1
+                    delay = self._backoff(pauses)
+                    logger.warning(
+                        "Infrastructure error — pausing consumer: message_id=%s pause=%d retry_in=%.0fs: %s",
+                        text_id, pauses, delay, exc,
+                    )
+                    self._pause(msg_id, delay)
+                    continue
+                deliveries = self._deliveries(msg_id)
+                if cls is ErrorClass.PERMANENT:
+                    self._dead_letter_and_ack(msg_id, msg_fields, DeadLetterKind.PERMANENT, exc, deliveries)
+                elif deliveries >= _MAX_DELIVERIES:
+                    self._dead_letter_and_ack(
+                        msg_id, msg_fields, DeadLetterKind.TRANSIENT_EXHAUSTED, exc, deliveries,
+                    )
+                else:
+                    # Render the cause into the message (and attach the
+                    # traceback via exc_info) rather than only into `extra`:
+                    # the process log format is plain `%(message)s`, so an
+                    # `extra`-only detail is invisible and a fatal misconfig
+                    # (e.g. an S3 SignatureDoesNotMatch) reads as an opaque,
+                    # infinitely-retrying failure.
+                    logger.exception(
+                        "Failed to process message %s, not ACKing (delivery %d of %d): %s",
+                        text_id, deliveries, _MAX_DELIVERIES, exc,
+                    )
+                return
             self._redis.xack(self._stream, self._group, msg_id)
-            logger.info("Message ACKed", extra={"msg_id": msg_id})
-        except Exception as e:
-            # Render the cause into the message (and attach the traceback via
-            # exc_info) rather than only into `extra`: the process log format is
-            # plain `%(message)s`, so an `extra`-only detail is invisible and a
-            # fatal misconfig (e.g. an S3 SignatureDoesNotMatch) reads as an
-            # opaque, infinitely-retrying failure.
-            logger.exception(
-                "Failed to process message %s, not ACKing: %s", msg_id, e,
-            )
+            logger.info("Message ACKed", extra={"msg_id": text_id})
+            return
+
+    @staticmethod
+    def _backoff(attempt: int) -> float:
+        return min(_INFRA_BACKOFF_BASE_S * 2 ** (attempt - 1), _INFRA_BACKOFF_CAP_S)
+
+    def _deliveries(self, msg_id) -> int:
+        """Times msg_id was delivered to this group. 0 when Redis cannot tell,
+        which never dead-letters a transient failure."""
+        try:
+            entries = self._redis.xpending_range(self._stream, self._group, min=msg_id, max=msg_id, count=1)
+        except Exception as exc:
+            logger.warning("Could not read the delivery count of %s: %s", as_text(msg_id), exc)
+            return 0
+        return int(entries[0]["times_delivered"]) if entries else 0
+
+    def _pause(self, msg_id, seconds: float) -> None:
+        """Wait out an infrastructure error. Every _PAUSE_SLICE_S it refreshes
+        the heartbeat and re-claims the message with XCLAIM JUSTID, which resets
+        its idle time without counting a delivery, so a peer never takes it."""
+        remaining = seconds
+        while remaining > 0:
+            self.last_heartbeat = time.monotonic()
+            try:
+                self._redis.xclaim(self._stream, self._group, self._name, min_idle_time=0,
+                                   message_ids=[msg_id], justid=True)
+            except Exception as exc:
+                logger.warning("Could not refresh the idle time of %s: %s", as_text(msg_id), exc)
+            step = min(remaining, _PAUSE_SLICE_S)
+            time.sleep(step)
+            remaining -= step
+
+    def _dead_letter_and_ack(self, msg_id, msg_fields: dict, kind: DeadLetterKind, exc: Exception,
+                             deliveries: int) -> None:
+        """Write the dead letter, then ACK. While the write fails the message
+        stays pending and the consumer pauses, retrying the write, never the
+        handler."""
+        text_id = as_text(msg_id)
+        fields = build_fields(tenant_id=tenant_of(msg_fields), producer=self._service, occurred_at=self._now(),
+                              stream=self._stream, group=self._group, message_id=text_id, fields=msg_fields,
+                              failure_kind=kind, error=str(exc), delivery_count=deliveries)
+        writes = 0
+        while True:
+            try:
+                self._redis.xadd(CONSUMER_DEAD_LETTER_V1, fields)
+                break
+            except Exception as write_exc:
+                writes += 1
+                delay = self._backoff(writes)
+                logger.error("Dead-letter write failed — message stays pending: message_id=%s retry_in=%.0fs: %s",
+                             text_id, delay, write_exc)
+                self._pause(msg_id, delay)
+        logger.error("%s: stream=%s group=%s message_id=%s failure_kind=%s deliveries=%d dead_letter_event_id=%s error=%s",
+                     LOG_DEAD_LETTERED, self._stream, self._group, text_id, kind, deliveries, fields["event_id"], exc)
+        self._redis.xack(self._stream, self._group, msg_id)
 
     def _consume_once(self) -> None:
         messages = self._redis.xreadgroup(

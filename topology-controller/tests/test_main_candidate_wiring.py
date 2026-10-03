@@ -1,7 +1,12 @@
 import json
 import sys
 from types import SimpleNamespace
+
+import pytest
+
 import main
+from adapters.redis.error_class import ErrorClass, PermanentMessageError, classify
+from config.config import SERVICE_NAME
 from domain.model import ManifestRequest
 from streams_contract import (
     RELEASE_REQUESTED_V1,
@@ -13,8 +18,9 @@ from streams_contract import (
 class _RecordingConsumer:
     instances = []
 
-    def __init__(self, redis_client, stream_name, group_name, message_handler):
+    def __init__(self, redis_client, stream_name, group_name, message_handler, service_name):
         self.stream_name = stream_name
+        self.service_name = service_name
         self.group_name = group_name
         self.message_handler = message_handler
         _RecordingConsumer.instances.append(self)
@@ -344,3 +350,47 @@ def test_both_runtimes_have_an_artifact_builder(monkeypatch):
     }).encode()})
 
     assert set(captured["builders"]) == {"dbt", "python"}
+
+
+def test_main_names_the_service_on_the_consumer(monkeypatch):
+    """The consumer stamps SERVICE_NAME as the producer of its dead letters."""
+    _common_monkeypatches(monkeypatch)
+    main.main()
+    assert _RecordingConsumer.instances[0].service_name == SERVICE_NAME == "topology-controller"
+
+
+_MALFORMED_PAYLOADS = {
+    "missing payload": {},
+    "invalid json": {b"payload": b"not json {{{"},
+    "missing release_id": {b"payload": json.dumps({"manifest_keys": []}).encode()},
+    "missing manifest_keys": {b"payload": json.dumps({"release_id": "x"}).encode()},
+    "entry without service": {b"payload": json.dumps({
+        "release_id": "x",
+        "manifest_keys": [{"s3_uri": "s3://continuo/s1/x/manifest.json"}],
+    }).encode()},
+    "entry with an invalid s3_uri": {b"payload": json.dumps({
+        "release_id": "x",
+        "manifest_keys": [{"service": "s1", "s3_uri": "http://continuo/s1/x/manifest.json"}],
+    }).encode()},
+    "entries spanning buckets": {b"payload": json.dumps({
+        "release_id": "x",
+        "manifest_keys": [
+            {"service": "s1", "s3_uri": "s3://bucket-a/s1/x/manifest.json"},
+            {"service": "s2", "s3_uri": "s3://bucket-b/s2/x/manifest.json"},
+        ],
+    }).encode()},
+}
+
+
+@pytest.mark.parametrize("fields", _MALFORMED_PAYLOADS.values(), ids=_MALFORMED_PAYLOADS.keys())
+def test_malformed_release_requested_is_a_permanent_error(monkeypatch, fields):
+    """No redelivery can repair a malformed payload, so the handler raises the
+    error the consumer dead-letters at once."""
+    _common_monkeypatches(monkeypatch)
+    monkeypatch.setattr(main, "CandidateManifestHandler", lambda **kw: SimpleNamespace(handle=lambda release_id: None))
+    monkeypatch.setattr(main, "S3Source", lambda **kw: SimpleNamespace(cleanup=lambda: None))
+    main.main()
+    handler = _RecordingConsumer.instances[0].message_handler
+    with pytest.raises(PermanentMessageError) as raised:
+        handler(fields)
+    assert classify(raised.value) is ErrorClass.PERMANENT
