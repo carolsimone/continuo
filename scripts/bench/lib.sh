@@ -37,17 +37,14 @@ bench_cli_run() {
   fi
 }
 
-# Compose only: REDIS_PASSWORD from the repo's .env when not already set.
+# Compose only: REDIS_PASSWORD as the running state container received it, when
+# not already set. The stack's .env is compose syntax, not shell, so it is
+# never sourced.
 bench_load_env() {
-  local root
-  root="$(bench_root)"
-  if [ -z "${REDIS_PASSWORD:-}" ] && [ -f "${root}/.env" ]; then
-    set -a
-    # shellcheck disable=SC1091
-    . "${root}/.env"
-    set +a
+  if [ -z "${REDIS_PASSWORD:-}" ]; then
+    REDIS_PASSWORD="$(docker exec state printenv REDIS_PASSWORD 2>/dev/null || true)"
   fi
-  : "${REDIS_PASSWORD:?REDIS_PASSWORD is not set and not in .env}"
+  : "${REDIS_PASSWORD:?REDIS_PASSWORD is not set and the state container does not carry it}"
 }
 
 # Compose only: project of the running stack, read from the state container's

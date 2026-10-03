@@ -37,8 +37,20 @@ def _redis(args: list) -> list:
     return subprocess.run(redis_command(args), check=True, capture_output=True, text=True).stdout.splitlines()
 
 
+def stream_names() -> list:
+    """Every stream key, by following the SCAN cursor (SCAN ... TYPE needs Redis 6.0)."""
+    names = set()
+    cursor = "0"
+    while True:
+        lines = [line.strip() for line in _redis(["SCAN", cursor, "TYPE", "stream", "COUNT", "1000"])]
+        cursor = lines[0]
+        names.update(line for line in lines[1:] if line)
+        if cursor == "0":
+            return sorted(names)
+
+
 def snapshot() -> dict:
-    streams = sorted(line.strip() for line in _redis(["--scan", "--type", "stream"]) if line.strip())
+    streams = stream_names()
     counts = {}
     inexact = 0
     for stream in streams:
