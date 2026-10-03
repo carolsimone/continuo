@@ -1,5 +1,7 @@
 import json
+import signal
 import subprocess
+import time
 from pathlib import Path
 
 import fake_env
@@ -56,4 +58,46 @@ def test_outage_cancels_a_run_that_outlives_its_timeout(tmp_path):
 
     assert result.returncode == 0, result.stderr
     assert json.loads((out / "rep1.json").read_text())["final_status"] == "timeout"
-    assert (fake / "calls").read_text().splitlines() == ["cancel benchmark outage cleanup"]
+    cancels = [line for line in (fake / "calls").read_text().splitlines() if line.startswith("cancel ")]
+    assert cancels == ["cancel benchmark outage cleanup"]
+
+
+def docker_calls(env):
+    calls = Path(env["FAKE_DIR"]) / "calls"
+    return [line for line in calls.read_text().splitlines() if line.startswith("docker ")] if calls.exists() else []
+
+
+def with_service_logs(env):
+    for service in ("state", "orchestrator", "execution-controller"):
+        (Path(env["FAKE_DIR"]) / "logs" / f"{service}.log").write_text("")
+    return env
+
+
+def test_outage_disconnects_the_datastore_and_reconnects_it_with_its_aliases(tmp_path):
+    env = with_service_logs(fake_env.make(tmp_path, ["run-1"]))
+    env["FAKE_RUN_RESULT"] = "succeeded"
+
+    result, _ = run_outage(tmp_path, env)
+
+    assert result.returncode == 0, result.stderr
+    assert docker_calls(env) == [
+        "docker network disconnect proj_default cid",
+        "docker network connect --alias proj-postgres-1 --alias postgres proj_default cid",
+    ]
+
+
+def test_outage_reconnects_the_datastore_when_interrupted(tmp_path):
+    env = with_service_logs(fake_env.make(tmp_path, ["run-1"]))
+    env["FAKE_RUN_RESULT"] = "succeeded"
+    proc = subprocess.Popen(["bash", str(BENCH / "outage.sh"), "postgres", str(fake_env.write_payload(tmp_path)),
+                             "bench-s", str(tmp_path / "out"), "0", "60"], env=env,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    deadline = time.time() + 30
+    while not docker_calls(env) and time.time() < deadline:
+        time.sleep(0.2)
+    assert docker_calls(env) == ["docker network disconnect proj_default cid"]
+
+    proc.send_signal(signal.SIGTERM)
+    proc.wait(timeout=30)
+
+    assert docker_calls(env)[-1] == "docker network connect --alias proj-postgres-1 --alias postgres proj_default cid"

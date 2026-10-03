@@ -2,7 +2,7 @@
 
 The fakes keep their state in FAKE_DIR:
   state, current, n  the schedule's latest run (continuo)
-  calls              one line per `schedule cancel` (continuo)
+  calls              one line per `schedule cancel` (continuo) and per `docker network ...` call
   jobs.json          what `kubectl get jobs` prints
   logs/<svc>.log     the service logs that `docker exec <svc> ... /tmp/<svc>.log` reads
   on-trigger/<svc>.log  lines a trigger appends to logs/<svc>.log, standing for what services log during the run
@@ -58,17 +58,21 @@ sys.exit(f"unexpected kubectl call: {args}")
 '''
 
 FAKE_DOCKER = r'''#!/usr/bin/env python3
-import os, subprocess, sys
-logs = os.path.join(os.environ["FAKE_DIR"], "logs") + "/"
+import json, os, subprocess, sys
+fake = os.environ["FAKE_DIR"]
+logs = os.path.join(fake, "logs") + "/"
 args = sys.argv[1:]
-if args[0] == "inspect":
+if args[0] == "inspect" and "--format" in args:
     print("proj")
+elif args[0] == "inspect":
+    print(json.dumps([{"NetworkSettings": {"Networks": {"proj_default": {"Aliases": ["proj-postgres-1", "postgres"]}}}}]))
+elif args[0] == "network":
+    with open(os.path.join(fake, "calls"), "a") as calls:
+        calls.write("docker " + " ".join(args) + "\n")
 elif args[0] == "ps":
     print("cid")
 elif args[0] == "stats":
     print("state\t1.00%\t10MiB / 1GiB")
-elif args[0] in ("stop", "start"):
-    print(args[-1])
 elif args[0] == "exec":
     rest = [a for a in args[1:] if a not in ("-i", "-e", "REDISCLI_AUTH")]
     command = [part.replace("/tmp/", logs) for part in rest[1:]]

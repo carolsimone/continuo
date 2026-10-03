@@ -45,7 +45,7 @@ Publishing a topology to `release.promoted:v1` swaps the orchestrator's whole to
 3. Every bench payload is `topology_io.py union` of `restore.json` and the bench DAG; the union refuses a bench node or schedule that a live node already uses.
 4. `run_baseline_dev.sh` runs `restore.sh` on every exit after the first injection. `restore.sh` re-announces `restore.json`, waits until the schedule list equals the recorded one, and compares the live graphs with the export again.
 
-No scenario rep starts between 22:15 and 23:45 UTC, the window around the install's 23:00 UTC daily run. The dependency-outage scenarios stop datastores and run only on the local compose stack.
+No scenario rep starts between 22:15 and 23:45 UTC, the window around the install's 23:00 UTC daily run. The dependency-outage scenarios cut a datastore off the network and run only on the local compose stack.
 
 A benchmark leaves these traces on a shared install: its runs stay in state's run history; its retired bench nodes stay in Neo4j until the seven-day run sweep and disappear at a later promotion; its Job logs stay in the logs bucket under service `bench`.
 
@@ -89,7 +89,7 @@ scripts/bench/cleanup_legacy_jobs.sh --apply
 | `test-2000` | `dag-2000` run as a whole-DAG test | Flat fan-out and admission |
 | `cascade-2000` | `dag-2000` under a single failing root | Retries of the root, then 1,999 skips |
 | `cancel-500` | `dag-500` with 30 s nodes | Cancel after 60 s, immediate re-trigger, second run cancelled after 90 s; overlap of the two runs' Jobs |
-| `outage-postgres`, `outage-neo4j` | `dag-500` | A 10-minute datastore stop during a run (local stack only); final status and dropped messages |
+| `outage-postgres`, `outage-neo4j` | `dag-500` | The datastore container is disconnected from its networks for 10 minutes during a run and reconnected with its aliases, so its data survives (local stack only); final status and dropped messages |
 
 ## Metric definitions
 

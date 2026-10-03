@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Dependency-outage scenario on the local compose stack only: triggers a run,
-# stops SERVICE (postgres or neo4j) START_AFTER_S seconds later for OUTAGE_S
-# seconds, waits for the run, and records its final status and how many
-# messages consumers dropped. The drop count reads the service logs that
+# cuts SERVICE (postgres or neo4j) off the network START_AFTER_S seconds later
+# for OUTAGE_S seconds, waits for the run, and records its final status and how
+# many messages consumers dropped. The drop count reads the service logs that
 # start_local_services.sh writes to /tmp/<service>.log in each container.
 #   outage.sh SERVICE PAYLOAD SCHEDULE OUT_DIR [START_AFTER_S=30] [OUTAGE_S=600]
 # Env: BENCH_RUN_TIMEOUT_S (2700), after which the run is cancelled.
@@ -21,6 +21,29 @@ for c in "${consumers[@]}"; do
     || { echo "outage.sh: no /tmp/${c}.log in ${c}; start the services with start_local_services.sh" >&2; exit 2; }
 done
 mkdir -p "${out}"
+
+# The outage disconnects the datastore container from every network it is on and
+# reconnects it with the same aliases: its clients see an unreachable host, and
+# its data survives (the stack keeps Postgres data on tmpfs, which stopping the
+# container would wipe). Any exit during the outage reconnects it.
+links="$(docker inspect "${target}" | python3 "${here}/docker_json.py" network-aliases)"
+disconnected=0
+reconnect() {
+  local net alias_list alias args
+  [ "${disconnected}" = "1" ] || return 0
+  while IFS=$'\t' read -r net alias_list; do
+    args=()
+    # shellcheck disable=SC2086 # alias_list is a tab-separated list to split
+    for alias in ${alias_list}; do
+      args+=(--alias "${alias}")
+    done
+    docker network connect ${args[@]+"${args[@]}"} "${net}" "${target}" >/dev/null
+  done <<< "${links}"
+  disconnected=0
+}
+trap reconnect EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM HUP
 bench_kubectl delete jobs -l "schedule=${schedule}" --ignore-not-found --wait=true >/dev/null
 python3 "${here}/redis_streams.py" snapshot > "${out}/streams-before-rep1.json"
 # Log length per consumer before the trigger: only lines written after it count.
@@ -32,9 +55,14 @@ trig="$(bench_cli_run schedule trigger "${schedule}")"
 run_id="$(printf '%s' "${trig}" | python3 "${here}/cli_json.py" field schedule_id)"
 trigger_ts="$(printf '%s' "${trig}" | python3 "${here}/cli_json.py" field triggered_at)"
 sleep "${start_after}"
-docker stop "${target}" >/dev/null
-sleep "${outage_s}"
-docker start "${target}" >/dev/null
+disconnected=1
+while IFS=$'\t' read -r net _; do
+  docker network disconnect "${net}" "${target}" >/dev/null
+done <<< "${links}"
+# A background sleep and wait, so a signal ends the outage at once.
+sleep "${outage_s}" &
+wait $!
+reconnect
 status="$(bench_finish_run "${schedule}" "${run_id}" "${BENCH_RUN_TIMEOUT_S:-2700}" "benchmark outage cleanup")"
 done_ts="$(date -u +%FT%TZ)"
 # pkg/redis logs one of these two lines for every message a consumer drops:
