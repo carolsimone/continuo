@@ -22,7 +22,9 @@ import (
 // published stream is a single, path-independent trigger that runs outside any
 // write transaction. Teardown is best-effort: a parse or cleaner failure is
 // logged and the message is ACKed (returns nil), because a leftover candidate
-// schema must never block a release decision.
+// schema must never block a release decision. A cleaner failure that arrives
+// with a done ctx (shutdown, or the handler deadline) is returned instead, so
+// the drop is retried rather than acknowledged unfinished.
 func NewValidationResultTeardownBinding(cleaner ports.CandidateSchemaCleaner, logger *slog.Logger) pkgredis.MessageHandler {
 	return func(ctx context.Context, msg goredis.XMessage) error {
 		raw := stringField(msg.Values, "payload")
@@ -55,6 +57,9 @@ func NewValidationResultTeardownBinding(cleaner ports.CandidateSchemaCleaner, lo
 			return nil
 		}
 		if err := cleaner.DropCandidateSchema(ctx, dto.CandidateSchema); err != nil {
+			if ctx.Err() != nil {
+				return err
+			}
 			logger.Error("validation.result teardown: drop failed (best-effort)",
 				"release_id", dto.ReleaseID, "candidate_schema", dto.CandidateSchema, "error", err)
 			return nil
