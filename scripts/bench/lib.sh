@@ -145,17 +145,32 @@ bench_finish_run() {
   echo "${status}"
 }
 
-# k8s only: waits while the UTC clock is inside 22:15-23:45, so no rep overlaps
-# the install's 23:00 UTC daily run.
-bench_wait_outside_window() {
-  local now
-  [ "$(bench_target)" = "k8s" ] || return 0
-  while true; do
-    now="$(date -u +%H%M)"
-    if [ "${now}" -lt 2215 ] || [ "${now}" -ge 2345 ]; then
+# True when HHMM (UTC) falls inside one of the quiet windows: the install's own
+# scheduled runs. BENCH_QUIET_WINDOWS_UTC lists them as comma-separated
+# HHMM-HHMM ranges, end exclusive; a range may cross midnight. The default,
+# 2215-2345, surrounds a 23:00 UTC daily run.
+bench_in_quiet_window() {
+  local now="$1" window start end
+  for window in $(printf '%s' "${BENCH_QUIET_WINDOWS_UTC:-2215-2345}" | tr ',' ' '); do
+    start="${window%-*}"
+    end="${window#*-}"
+    if [ "${start}" -le "${end}" ]; then
+      if [ "${now}" -ge "${start}" ] && [ "${now}" -lt "${end}" ]; then
+        return 0
+      fi
+    elif [ "${now}" -ge "${start}" ] || [ "${now}" -lt "${end}" ]; then
       return 0
     fi
-    echo "bench: inside the daily-run window (22:15-23:45 UTC); waiting" >&2
+  done
+  return 1
+}
+
+# k8s only: waits while the UTC clock is inside a quiet window, so no rep
+# starts during the install's own scheduled runs.
+bench_wait_outside_window() {
+  [ "$(bench_target)" = "k8s" ] || return 0
+  while bench_in_quiet_window "$(date -u +%H%M)"; do
+    echo "bench: inside a quiet window (${BENCH_QUIET_WINDOWS_UTC:-2215-2345} UTC); waiting" >&2
     sleep 300
   done
 }

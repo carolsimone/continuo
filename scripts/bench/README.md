@@ -29,6 +29,7 @@ Environment knobs:
 | `BENCH_PG_POD` | — | Postgres pod that holds release-controller's database (`k8s`, required by the export) |
 | `BENCH_SSH_HOST` | — | ssh destination on the k3s node; `build_image.sh` imports the images into its containerd (`k8s`, required) |
 | `CONTINUO_CLI` | `cli/bin/continuo` | CLI binary (`compose`); on `k8s` the harness runs the CLI inside `deploy/agent-chat` |
+| `BENCH_QUIET_WINDOWS_UTC` | `2215-2345` | UTC ranges in which no rep starts on `k8s` (the install's scheduled runs); a range may cross midnight |
 | `BENCH_IDLE_S` | `300` | Idle window before rep 1 of a scenario |
 | `BENCH_SETTLE_S` | `15` | Pause before each later rep and after each run |
 | `BENCH_RUN_TIMEOUT_S` | `3600` (`2700` in `outage.sh`) | Longest wait for one run; a run still live then is cancelled and waited for before anything else starts |
@@ -45,7 +46,7 @@ Publishing a topology to `release.promoted:v1` swaps the orchestrator's whole to
 3. Every bench payload is `topology_io.py union` of `restore.json` and the bench DAG; the union refuses a bench node or schedule that a live node already uses.
 4. `run_baseline_dev.sh` runs `restore.sh` on every exit after the first injection. `restore.sh` re-announces `restore.json`, waits until the schedule list equals the recorded one, and compares the live graphs with the export again.
 
-No scenario rep starts between 22:15 and 23:45 UTC, the window around the install's 23:00 UTC daily run. The dependency-outage scenarios cut a datastore off the network and run only on the local compose stack.
+No scenario rep starts inside a quiet window around the install's own scheduled runs: `BENCH_QUIET_WINDOWS_UTC`, comma-separated `HHMM-HHMM` ranges in UTC (default `2215-2345`, around a 23:00 UTC daily run). The dependency-outage scenarios cut a datastore off the network and run only on the local compose stack.
 
 A benchmark leaves these traces on a shared install: its runs stay in state's run history; its retired bench nodes stay in Neo4j until the seven-day run sweep and disappear at a later promotion; its Job logs stay in the logs bucket under service `bench`.
 
