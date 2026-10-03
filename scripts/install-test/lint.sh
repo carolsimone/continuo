@@ -102,6 +102,15 @@ engine_changed="$(mc_checksum --set validation.engine=trino --set validation.cre
 loglevel_changed="$(mc_checksum --set global.logLevel=DEBUG)"
 [ "$loglevel_changed" != "$base" ] || { echo "FAIL: changing a shared ConfigMap value leaves the pod template identical"; exit 1; }
 
+# state, execution-controller and agent-remediation read their mounted chart
+# ConfigMap (schedules, dbt commands, service repos) only at startup, so each
+# pod template carries a digest of it. For every chart-managed ConfigMap, a
+# change must roll exactly the workloads that read it at startup and no others;
+# with the volume pointed at an operator-owned ConfigMap it must roll nothing;
+# and every chart ConfigMap a workload consumes must have a case in the script.
+echo "--- chart ConfigMap changes roll exactly the pods that read them at startup"
+python3 scripts/install-test/assert-config-rollout.py "$CHART" "$KUBE_VERSION"
+
 # ciAuth.bindings.*.repositoryId must be a quoted digit string: GitHub's
 # repository_id claim is a string, so an unquoted YAML number would render a
 # binding the ui can never match. The schema refuses it at render time. A valid

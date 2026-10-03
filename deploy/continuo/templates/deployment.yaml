@@ -1,5 +1,22 @@
+{{- /*
+  The chart-managed ConfigMap each service mounts through its `volumes`
+  entries, keyed by service name. A volume whose configMap.name is empty
+  mounts the ConfigMap the `name` helper names. The services that read the
+  mounted file only at startup also set `checksum` and `template`: their pod
+  template carries `checksum/<checksum>`, the digest of the ConfigMap that
+  `template` renders, so `helm upgrade` rolls them when the file changes. The
+  ui re-reads cancel-config.json on every request from a directory mount the
+  kubelet keeps current, so it carries no digest and an edit reaches it without
+  a restart.
+*/ -}}
+{{- $mountedConfigMaps := dict
+      "state" (dict "name" "continuo.schedulesConfigMapName" "checksum" "schedules" "template" "schedules-configmap.yaml")
+      "execution-controller" (dict "name" "continuo.dbtCommandsConfigMapName" "checksum" "dbt-commands" "template" "dbt-commands-configmap.yaml")
+      "agent-remediation" (dict "name" "continuo.serviceReposConfigMapName" "checksum" "service-repos" "template" "service-repos-configmap.yaml")
+      "ui" (dict "name" "continuo.cancelConfigMapName") }}
 {{- range $svc := .Values.services }}
 {{- if ($svc.enabled | default true) }}
+{{- $mounted := default (dict) (get $mountedConfigMaps $svc.name) }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -43,6 +60,19 @@ spec:
         {{- if eq $svc.name "ui" }}
         # The ui reads its CI bindings once at boot; a changed binding must roll it.
         checksum/ci-auth: {{ include "continuo.ciAuth.json" $ | sha256sum }}
+        {{- end }}
+        {{- if $mounted.template }}
+        {{- $chartManaged := false }}
+        {{- range $volume := $svc.volumes }}
+        {{- if not (dig "configMap" "name" "" $volume) }}{{ $chartManaged = true }}{{ end }}
+        {{- end }}
+        {{- if $chartManaged }}
+        # The service reads its mounted file only at startup; a changed file
+        # must roll it. A volume naming an operator-owned ConfigMap is not
+        # hashed: Helm cannot read it, so an edit to it needs
+        # `kubectl rollout restart`.
+        checksum/{{ $mounted.checksum }}: {{ include (print $.Template.BasePath "/" $mounted.template) $ | sha256sum }}
+        {{- end }}
         {{- end }}
       labels:
         {{- include "continuo.selectorLabels" (dict "root" $ "service" $svc.name) | nindent 8 }}
@@ -326,29 +356,11 @@ spec:
             name: {{ include "continuo.ciAuthConfigMapName" $ }}
       {{- end }}
       {{- if $svc.volumes }}
-        {{- if eq $svc.name "state" }}
+        {{- if $mounted.name }}
         {{- range $volume := $svc.volumes }}
         - name: {{ $volume.name }}
           configMap:
-            name: {{ default (include "continuo.schedulesConfigMapName" $) $volume.configMap.name }}
-        {{- end }}
-        {{- else if eq $svc.name "ui" }}
-        {{- range $volume := $svc.volumes }}
-        - name: {{ $volume.name }}
-          configMap:
-            name: {{ default (include "continuo.cancelConfigMapName" $) $volume.configMap.name }}
-        {{- end }}
-        {{- else if eq $svc.name "agent-remediation" }}
-        {{- range $volume := $svc.volumes }}
-        - name: {{ $volume.name }}
-          configMap:
-            name: {{ default (include "continuo.serviceReposConfigMapName" $) $volume.configMap.name }}
-        {{- end }}
-        {{- else if eq $svc.name "execution-controller" }}
-        {{- range $volume := $svc.volumes }}
-        - name: {{ $volume.name }}
-          configMap:
-            name: {{ default (include "continuo.dbtCommandsConfigMapName" $) $volume.configMap.name }}
+            name: {{ default (include $mounted.name $) $volume.configMap.name }}
         {{- end }}
         {{- else }}
         {{- toYaml $svc.volumes | nindent 8 }}
