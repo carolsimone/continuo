@@ -109,3 +109,6 @@ sarif/
 # every real package tree lives in its service directory.
 node_modules/
 docs/arch/
+
+# Benchmark results and kubeconfigs written by scripts/bench; never committed.
+.bench/

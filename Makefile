@@ -213,6 +213,14 @@ test-topology:
 	$(DOCKER_COMPOSE) up -d topology-controller
 	docker exec topology-controller uv run pytest -v
 
+.PHONY: bench-test
+bench-test:  ## Unit tests and shellcheck for the run-lifecycle benchmark harness
+	docker run --rm -e PYTHONDONTWRITEBYTECODE=1 -v "$(CURDIR):/repo:ro" -w /repo/scripts/bench \
+	  ghcr.io/astral-sh/uv:python3.12-bookworm-slim \
+	  sh -c "uv run --no-project --with pytest pytest -q -p no:cacheprovider tests/"
+	docker run --rm -v "$(CURDIR):/repo:ro" -w /repo koalaman/shellcheck:v0.10.0 -x \
+	  scripts/bench/*.sh scripts/bench/image/dbt
+
 # Fast, infra-free gates. CI runs this target verbatim (a single `make guards`
 # step), so a gate added here reaches CI automatically; check-ci-alignment.sh
 # fails CI if the workflow ever re-inlines one of these lines instead.
@@ -265,7 +273,7 @@ test-topology:
 # @grpc/proto-loader reads those copies at boot, so drift silently drops
 # fields on the wire instead of failing any build.
 .PHONY: guards
-guards:
+guards: bench-test
 	bash scripts/check-service-names.sh
 	bash scripts/check-ci-alignment.sh
 	bash scripts/check-docker-state-isolation.sh
