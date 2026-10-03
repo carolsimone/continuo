@@ -10,6 +10,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -200,20 +201,132 @@ func TestSettleReclaimed_DeadLettersOnTheFifthDelivery(t *testing.T) {
 
 	rec := &recorder{deliveries: 4}
 	c, _ := reliabilityConsumer(t, failing, rec)
-	assert.False(t, c.settleReclaimed(context.Background(), msg("1-0")))
-	assert.NotContains(t, rec.calls, "xadd", "the 4th delivery stays pending")
+	c.settleReclaimed(context.Background(), msg("1-0"))
+	assert.Equal(t, []string{"deliveries"}, rec.calls, "the 4th delivery stays pending: no dead letter, no ACK")
 
 	rec = &recorder{deliveries: 5}
 	c, _ = reliabilityConsumer(t, failing, rec)
-	assert.False(t, c.settleReclaimed(context.Background(), msg("1-0")), "dead-lettered messages are acked by deadLetterAndAck, not the batch")
+	c.settleReclaimed(context.Background(), msg("1-0"))
+	assert.Equal(t, []string{"deliveries", "xadd", "ack:1-0"}, rec.calls, "the 5th delivery is dead-lettered, then acknowledged")
 	require.Len(t, rec.deadLetters, 1)
 	p := payloadOf(t, rec.deadLetters[0])
 	assert.Equal(t, model.DeadLetterKindTransientExhausted, p.FailureKind)
 	assert.Equal(t, int64(5), p.DeliveryCount)
+}
 
-	rec = &recorder{}
-	c, _ = reliabilityConsumer(t, func(context.Context, goredis.XMessage) error { return nil }, rec)
-	assert.True(t, c.settleReclaimed(context.Background(), msg("1-0")), "a handled message joins the sweep's batch ACK")
+func TestSettleReclaimed_AcksAHandledMessageAtOnce(t *testing.T) {
+	rec := &recorder{}
+	c, _ := reliabilityConsumer(t, func(context.Context, goredis.XMessage) error { return nil }, rec)
+	c.settleReclaimed(context.Background(), msg("1-0"))
+	assert.Equal(t, []string{"ack:1-0"}, rec.calls,
+		"a handled reclaimed message is acknowledged at once, never held back for the rest of its page")
+}
+
+func TestSettleReclaimed_PermanentDeadLetterCountsAtLeastOneDelivery(t *testing.T) {
+	rec := &recorder{deliveries: 0} // the delivery counter could not be read
+	c, _ := reliabilityConsumer(t, func(context.Context, goredis.XMessage) error { return events.ErrPermanent }, rec)
+	c.settleReclaimed(context.Background(), msg("1-0"))
+	require.Len(t, rec.deadLetters, 1)
+	assert.Equal(t, int64(1), payloadOf(t, rec.deadLetters[0]).DeliveryCount)
+}
+
+// liveAck records "ack:<id>" when the ACK runs with a live context and
+// "ack-cancelled:<id>" when its context has already ended.
+func liveAck(rec *recorder) func(context.Context, string) error {
+	return func(ctx context.Context, id string) error {
+		if ctx.Err() != nil {
+			rec.record("ack-cancelled:" + id)
+			return ctx.Err()
+		}
+		rec.record("ack:" + id)
+		return nil
+	}
+}
+
+func TestHandledMessage_AckedEvenWhenShutdownBeganDuringTheHandler(t *testing.T) {
+	paths := map[string]func(*StreamConsumer, context.Context, goredis.XMessage){
+		"read path":    (*StreamConsumer).processOne,
+		"reclaim path": func(c *StreamConsumer, ctx context.Context, m goredis.XMessage) { c.settleReclaimed(ctx, m) },
+	}
+	for name, settle := range paths {
+		t.Run(name, func(t *testing.T) {
+			rec := &recorder{}
+			ctx, cancel := context.WithCancel(context.Background())
+			c, _ := reliabilityConsumer(t, func(context.Context, goredis.XMessage) error { cancel(); return nil }, rec)
+			c.ackFn = liveAck(rec)
+			settle(c, ctx, msg("1-0"))
+			assert.Equal(t, []string{"ack:1-0"}, rec.calls, "a handled message is acknowledged although shutdown began")
+		})
+	}
+}
+
+func TestDeadLetterAndAck_AcksWhenShutdownFollowsTheWrite(t *testing.T) {
+	rec := &recorder{}
+	ctx, cancel := context.WithCancel(context.Background())
+	c, logs := reliabilityConsumer(t, func(context.Context, goredis.XMessage) error { return events.ErrPermanent }, rec)
+	c.deadLetterFn = func(context.Context, map[string]any) error { rec.record("xadd"); cancel(); return nil }
+	c.ackFn = liveAck(rec)
+	var dropCtxErr error
+	WithOnDrop(func(dctx context.Context, _ goredis.XMessage, _ error) {
+		dropCtxErr = dctx.Err()
+		rec.record("drop")
+	})(c)
+
+	c.processOne(ctx, msg("1-0"))
+
+	assert.Equal(t, []string{"xadd", "ack:1-0", "drop"}, rec.calls,
+		"once the dead letter is written, a shutdown no longer stops its ACK, so no second dead letter follows")
+	assert.NoError(t, dropCtxErr, "the drop handler runs with a live context")
+	assert.Equal(t, 1, strings.Count(logs.String(), logDeadLettered))
+}
+
+func TestPauseAndBackoff_NonPositiveSettingsNeverSpin(t *testing.T) {
+	c, _ := reliabilityConsumer(t, nil, &recorder{})
+	c.pauseSlice, c.infraBackoffBase, c.infraBackoffCap = 0, 0, -time.Second
+	assert.Equal(t, defaultInfraBackoffBase, c.infraBackoff(1))
+	assert.Equal(t, defaultInfraBackoffCap, c.infraBackoff(10))
+
+	var sleeps []time.Duration
+	c.sleepFn = func(_ context.Context, d time.Duration) bool {
+		sleeps = append(sleeps, d)
+		return len(sleeps) < 100 // ends a pause that never advances
+	}
+	require.True(t, c.pause(context.Background(), "9-0", 12*time.Second))
+	assert.Equal(t, []time.Duration{5 * time.Second, 5 * time.Second, 2 * time.Second}, sleeps)
+}
+
+func TestProcessOne_PermanentErrorAtTheDeadlineIsDeadLetteredAsPermanent(t *testing.T) {
+	rec := &recorder{}
+	c, _ := reliabilityConsumer(t, func(ctx context.Context, _ goredis.XMessage) error {
+		<-ctx.Done()
+		return fmt.Errorf("%w: gave up at the deadline: %w", events.ErrPermanent, ctx.Err())
+	}, rec)
+	c.SetHandlerTimeout(20 * time.Millisecond)
+	c.processOne(context.Background(), msg("1-0"))
+	assert.Equal(t, []string{"xadd", "ack:1-0"}, rec.calls)
+	require.Len(t, rec.deadLetters, 1)
+	assert.Equal(t, model.DeadLetterKindPermanent, payloadOf(t, rec.deadLetters[0]).FailureKind)
+}
+
+func TestWithInfraClassifier_ServiceOutagePausesTheConsumer(t *testing.T) {
+	errGraphDown := errors.New("graph database unavailable")
+	rec := &recorder{}
+	calls := 0
+	c, logs := reliabilityConsumer(t, func(context.Context, goredis.XMessage) error {
+		calls++
+		if calls == 1 {
+			return fmt.Errorf("load topology: %w", errGraphDown)
+		}
+		return nil
+	}, rec)
+	WithInfraClassifier(func(err error) bool { return errors.Is(err, errGraphDown) })(c)
+
+	c.processOne(context.Background(), msg("1-0"))
+
+	assert.Equal(t, 2, calls)
+	assert.Equal(t, []string{"hold:1-0", "ack:1-0"}, rec.calls, "paused, never dead-lettered, acknowledged once handled")
+	assert.Equal(t, []time.Duration{time.Second}, rec.sleeps)
+	assert.Equal(t, 1, strings.Count(logs.String(), logInfraPause))
 }
 
 func TestDeadLetter_CarriesTheMessageTenant(t *testing.T) {
@@ -224,13 +337,13 @@ func TestDeadLetter_CarriesTheMessageTenant(t *testing.T) {
 	assert.Equal(t, map[string]string{"tenant_id": "acme", "n": "7"}, payloadOf(t, rec.deadLetters[0]).Fields)
 }
 
-// deadLettersFor returns the consumer.dead_letter:v1 entries for one test
-// stream and deletes them when the test ends.
-func deadLettersFor(t *testing.T, rc *goredis.Client, stream string) []goredis.XMessage {
-	t.Helper()
-	ctx := context.Background()
+// deadLettersIn returns the consumer.dead_letter:v1 entries for one test
+// stream. It never fails the test, so it is safe off the test goroutine.
+func deadLettersIn(ctx context.Context, rc *goredis.Client, stream string) ([]goredis.XMessage, error) {
 	all, err := rc.XRange(ctx, streams.ConsumerDeadLetterV1, "-", "+").Result()
-	require.NoError(t, err)
+	if err != nil {
+		return nil, err
+	}
 	var mine []goredis.XMessage
 	for _, e := range all {
 		var p events.ConsumerDeadLetter
@@ -238,6 +351,16 @@ func deadLettersFor(t *testing.T, rc *goredis.Client, stream string) []goredis.X
 			mine = append(mine, e)
 		}
 	}
+	return mine, nil
+}
+
+// deadLettersFor returns the consumer.dead_letter:v1 entries for one test
+// stream and deletes them when the test ends.
+func deadLettersFor(t *testing.T, rc *goredis.Client, stream string) []goredis.XMessage {
+	t.Helper()
+	ctx := context.Background()
+	mine, err := deadLettersIn(ctx, rc, stream)
+	require.NoError(t, err)
 	t.Cleanup(func() {
 		for _, e := range mine {
 			rc.XDel(ctx, streams.ConsumerDeadLetterV1, e.ID)
@@ -273,26 +396,134 @@ func TestStreamConsumer_InfraPause_PeerSweepDoesNotTakeMessage(t *testing.T) {
 	a.SetService("pkg-redis-test")
 	a.infraBackoffBase, a.pauseSlice = 400*time.Millisecond, 100*time.Millisecond
 
-	peerCalls := 0
-	b := NewStreamConsumer(rc, stream, group, func(context.Context, goredis.XMessage) error { peerCalls++; return nil },
+	peerCalls, peerDone := sweepingPeer(ctx, rc, stream, group)
+
+	require.NoError(t, a.readAndProcess(ctx))
+	cancel()
+	<-peerDone
+	assert.Equal(t, 4, attempts)
+	assert.Equal(t, []int64{1, 1, 1, 1}, seenDeliveries, "pauses never add a delivery")
+	assert.Zero(t, peerCalls.Load(), "the peer never took the paused message")
+	pending, err := rc.XPending(context.Background(), stream, group).Result()
+	require.NoError(t, err)
+	assert.Zero(t, pending.Count)
+	assert.Empty(t, deadLettersFor(t, rc, stream))
+}
+
+// sweepingPeer runs a peer replica's reclaim sweep (min idle 300 ms) every
+// 150 ms until ctx ends. It returns how many messages the peer handled and a
+// channel closed once the sweeping goroutine has returned.
+func sweepingPeer(ctx context.Context, rc *goredis.Client, stream, group string) (*atomic.Int32, <-chan struct{}) {
+	var calls atomic.Int32
+	b := NewStreamConsumer(rc, stream, group, func(context.Context, goredis.XMessage) error { calls.Add(1); return nil },
 		discardLog(), WithReclaimMinIdle(300*time.Millisecond))
 	b.SetService("pkg-redis-test")
 	b.consumerName = "peer"
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		for ctx.Err() == nil {
 			_ = b.reclaimPending(ctx)
 			time.Sleep(150 * time.Millisecond)
 		}
 	}()
+	return &calls, done
+}
+
+// infraRefused is a connection-level failure: Classify reads it as an outage.
+func infraRefused() error { return &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED} }
+
+func TestStreamConsumer_InfraPause_PeerSweepDoesNotTakeBatchSibling(t *testing.T) {
+	rc := internalRedisClient(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream := fmt.Sprintf("test-infra-pause-sibling-%d", time.Now().UnixNano())
+	group := "test-group"
+	t.Cleanup(func() { rc.Del(context.Background(), stream) })
+	require.NoError(t, rc.XGroupCreateMkStream(ctx, stream, group, "0").Err())
+	first, err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, Values: map[string]any{"k": "first"}}).Result()
+	require.NoError(t, err)
+	require.NoError(t, rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, Values: map[string]any{"k": "second"}}).Err())
+
+	// Both messages arrive in one read batch. The first pauses on an outage
+	// for 400+800+1600 ms, far past the peer's 300 ms reclaim gate, while the
+	// second waits its turn in the same batch.
+	var a *StreamConsumer
+	firstAttempts := 0
+	var secondDeliveries []int64
+	a = NewStreamConsumer(rc, stream, group, func(hctx context.Context, m goredis.XMessage) error {
+		if m.ID == first {
+			firstAttempts++
+			if firstAttempts <= 3 {
+				return infraRefused()
+			}
+			return nil
+		}
+		secondDeliveries = append(secondDeliveries, a.deliveryCount(hctx, m.ID))
+		return nil
+	}, discardLog())
+	a.SetService("pkg-redis-test")
+	a.infraBackoffBase, a.pauseSlice = 400*time.Millisecond, 100*time.Millisecond
+
+	peerCalls, peerDone := sweepingPeer(ctx, rc, stream, group)
 
 	require.NoError(t, a.readAndProcess(ctx))
-	assert.Equal(t, 4, attempts)
-	assert.Equal(t, []int64{1, 1, 1, 1}, seenDeliveries, "pauses never add a delivery")
-	assert.Zero(t, peerCalls, "the peer never took the paused message")
-	pending, err := rc.XPending(ctx, stream, group).Result()
+	cancel()
+	<-peerDone
+	assert.Equal(t, 4, firstAttempts)
+	assert.Equal(t, []int64{1}, secondDeliveries, "the sibling is still on its first delivery when its turn comes")
+	assert.Zero(t, peerCalls.Load(), "the peer never took the sibling while the first message paused")
+	pending, err := rc.XPending(context.Background(), stream, group).Result()
 	require.NoError(t, err)
 	assert.Zero(t, pending.Count)
 	assert.Empty(t, deadLettersFor(t, rc, stream))
+}
+
+func TestStreamConsumer_ReclaimPath_HandledMessageAckedWhileALaterOnePauses(t *testing.T) {
+	rc := internalRedisClient(t)
+	ctx := context.Background()
+	stream := fmt.Sprintf("test-reclaim-ack-at-once-%d", time.Now().UnixNano())
+	group := "test-group"
+	t.Cleanup(func() { rc.Del(ctx, stream) })
+	require.NoError(t, rc.XGroupCreateMkStream(ctx, stream, group, "0").Err())
+	handled, err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, Values: map[string]any{"k": "handled"}}).Result()
+	require.NoError(t, err)
+	require.NoError(t, rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, Values: map[string]any{"k": "paused"}}).Err())
+	// Both messages are left pending by a consumer that is gone.
+	_, err = rc.XReadGroup(ctx, &goredis.XReadGroupArgs{
+		Group: group, Consumer: "abandoned-consumer", Streams: []string{stream, ">"}, Count: 10,
+	}).Result()
+	require.NoError(t, err)
+
+	// One reclaim page holds both: the first is handled, the second pauses
+	// twice on an outage. Each attempt on the second records whether the
+	// first is still pending.
+	var handledStillPending []bool
+	attempts := 0
+	c := NewStreamConsumer(rc, stream, group, func(hctx context.Context, m goredis.XMessage) error {
+		if m.ID == handled {
+			return nil
+		}
+		attempts++
+		p, perr := rc.XPendingExt(hctx, &goredis.XPendingExtArgs{
+			Stream: stream, Group: group, Start: handled, End: handled, Count: 1,
+		}).Result()
+		require.NoError(t, perr)
+		handledStillPending = append(handledStillPending, len(p) == 1)
+		if attempts <= 2 {
+			return infraRefused()
+		}
+		return nil
+	}, discardLog(), WithReclaimMinIdle(0))
+	c.SetService("pkg-redis-test")
+	c.infraBackoffBase, c.pauseSlice = 50*time.Millisecond, 50*time.Millisecond
+
+	require.NoError(t, c.reclaimPending(ctx))
+	assert.Equal(t, []bool{false, false, false}, handledStillPending,
+		"the handled message left the PEL before the outage on its page-mate ended")
+	pending, err := rc.XPending(ctx, stream, group).Result()
+	require.NoError(t, err)
+	assert.Zero(t, pending.Count)
 }
 
 func TestStreamConsumer_PermanentError_WritesDeadLetterBeforeAck(t *testing.T) {

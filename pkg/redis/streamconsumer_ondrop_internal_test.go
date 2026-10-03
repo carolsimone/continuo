@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sync/atomic"
+	"sync"
 	"testing"
 	"time"
 
@@ -123,16 +123,24 @@ func TestStreamConsumer_ReclaimPath_PoisonDrop_InvokesOnDrop(t *testing.T) {
 	poison := func(context.Context, goredis.XMessage) error {
 		return errors.New("transient handler failure that never clears")
 	}
-	var drops atomic.Int32
-	var deadLettersAtDrop atomic.Int64
-	var droppedID atomic.Value
+	// The drop handler runs off the test goroutine, so it only records what it
+	// saw; the test goroutine asserts on it afterwards.
+	var atDrop struct {
+		sync.Mutex
+		calls       int
+		id          string
+		cause       error
+		deadLetters int
+		readErr     error
+	}
 	c := NewStreamConsumer(rc, stream, group, poison, discardLog(),
 		WithReclaimMinIdle(0),
 		WithOnDrop(func(_ context.Context, msg goredis.XMessage, cause error) {
-			drops.Add(1)
-			droppedID.Store(msg.ID)
-			deadLettersAtDrop.Store(int64(len(deadLettersFor(t, rc, stream))))
-			require.Error(t, cause)
+			dl, err := deadLettersIn(context.Background(), rc, stream)
+			atDrop.Lock()
+			defer atDrop.Unlock()
+			atDrop.calls++
+			atDrop.id, atDrop.cause, atDrop.deadLetters, atDrop.readErr = msg.ID, cause, len(dl), err
 		}))
 	c.SetService("pkg-redis-test")
 
@@ -146,9 +154,13 @@ func TestStreamConsumer_ReclaimPath_PoisonDrop_InvokesOnDrop(t *testing.T) {
 		return pendingCount() == 0
 	}, 10*time.Second, 50*time.Millisecond, "poison message must be dead-lettered and acknowledged on its fifth delivery")
 
-	require.Equal(t, int32(1), drops.Load(), "onDrop must fire exactly once when the poison message is dead-lettered")
-	assert.Equal(t, msgID, droppedID.Load(), "onDrop must carry the dropped message so its in-flight state can be found")
-	assert.Equal(t, int64(1), deadLettersAtDrop.Load(), "onDrop fires only after the dead letter exists")
+	atDrop.Lock()
+	defer atDrop.Unlock()
+	require.Equal(t, 1, atDrop.calls, "onDrop must fire exactly once when the poison message is dead-lettered")
+	assert.Equal(t, msgID, atDrop.id, "onDrop must carry the dropped message so its in-flight state can be found")
+	assert.Error(t, atDrop.cause)
+	require.NoError(t, atDrop.readErr)
+	assert.Equal(t, 1, atDrop.deadLetters, "onDrop fires only after the dead letter exists")
 
 	dl := deadLettersFor(t, rc, stream)
 	require.Len(t, dl, 1)

@@ -117,8 +117,9 @@ type ConsumerOption func(*StreamConsumer)
 // including its in-process retry budget — will never be stolen by another
 // replica's sweep, and small enough that a crashed consumer's PEL entry is
 // recovered well within the 2-minute reclaim cadence. A message paused on an
-// infrastructure error stays in flight longer than that; pause re-claims it
-// every pauseSlice, so its idle time stays below the gate.
+// infrastructure error stays in flight longer than that; every pauseSlice,
+// pause re-claims it and everything else this consumer has pending, so their
+// idle times stay below the gate.
 const defaultReclaimMinIdle = 30 * time.Second
 
 // WithReclaimMinIdle overrides the minimum idle time a pending entry must have
@@ -272,11 +273,17 @@ const DefaultHandlerTimeout = 30 * time.Second
 // heartbeatMargin is added to the handler timeout to form HeartbeatBudget.
 const heartbeatMargin = 2 * time.Minute
 
+// The infrastructure-pause defaults. infraBackoff and pause also fall back to
+// them when a consumer carries a non-positive value, so a pause always ends.
 const (
 	defaultInfraBackoffBase = time.Second
 	defaultInfraBackoffCap  = 60 * time.Second
 	defaultPauseSlice       = 5 * time.Second
 )
+
+// holdBatch bounds how many of this consumer's pending entries one hold
+// re-claims.
+const holdBatch = 200
 
 // maxDeliveries is the delivery on which a message whose handler still fails
 // transiently is dead-lettered. The count is the pending entry's delivery
@@ -404,25 +411,37 @@ func (c *StreamConsumer) run(ctx context.Context, msg goredis.XMessage, schedule
 }
 
 // infraBackoff is the n-th pause after an infrastructure error:
-// infraBackoffBase doubled n-1 times, capped at infraBackoffCap.
+// infraBackoffBase doubled n-1 times, capped at infraBackoffCap. A
+// non-positive base or cap counts as its default, so the result is always
+// positive.
 func (c *StreamConsumer) infraBackoff(n int) time.Duration {
-	d := c.infraBackoffBase
-	for i := 1; i < n && d < c.infraBackoffCap; i++ {
+	base, ceiling := c.infraBackoffBase, c.infraBackoffCap
+	if base <= 0 {
+		base = defaultInfraBackoffBase
+	}
+	if ceiling <= 0 {
+		ceiling = defaultInfraBackoffCap
+	}
+	d := base
+	for i := 1; i < n && d < ceiling; i++ {
 		d *= 2
 	}
-	return min(d, c.infraBackoffCap)
+	return min(d, ceiling)
 }
 
-// pause waits d. Every pauseSlice it advances the heartbeat, so liveness never
-// mistakes the wait for a wedge, and re-claims the message for this consumer
-// with XCLAIM JUSTID, which resets its idle time without counting a delivery,
-// so a peer's reclaim sweep never takes it over mid-pause. It returns false
-// once ctx ends.
+// pause waits d. Every pauseSlice (defaultPauseSlice when non-positive) it
+// advances the heartbeat, so liveness never mistakes the wait for a wedge, and
+// holds this consumer's pending messages (see hold), so a peer's reclaim sweep
+// takes none of them over mid-pause. It returns false once ctx ends.
 func (c *StreamConsumer) pause(ctx context.Context, id string, d time.Duration) bool {
+	slice := c.pauseSlice
+	if slice <= 0 {
+		slice = defaultPauseSlice
+	}
 	for remaining := d; remaining > 0; {
 		c.lastActivity.Store(time.Now().UnixNano())
 		c.holdFn(ctx, id)
-		step := min(remaining, c.pauseSlice)
+		step := min(remaining, slice)
 		if !c.sleepFn(ctx, step) {
 			return false
 		}
@@ -431,15 +450,47 @@ func (c *StreamConsumer) pause(ctx context.Context, id string, d time.Duration) 
 	return true
 }
 
-// hold re-claims a pending message for this consumer without counting a
-// delivery. A failure only shortens the protection, so it is logged.
+// hold re-claims for this consumer, with XCLAIM … JUSTID, the paused message
+// id and every other entry this consumer has pending (up to holdBatch). JUSTID
+// resets each entry's idle time without counting a delivery, so while one
+// message pauses, neither it nor the rest of its read batch, worker lanes or
+// reclaim page grows idle enough for a peer's reclaim sweep to take it. XCLAIM
+// skips an id that is no longer pending. Failures only shorten the
+// protection, so they are logged.
 func (c *StreamConsumer) hold(ctx context.Context, id string) {
-	err := c.client.XClaimJustID(ctx, &goredis.XClaimArgs{
-		Stream: c.streamName, Group: c.consumerGroup, Consumer: c.consumerName, MinIdle: 0, Messages: []string{id},
+	ids := []string{id}
+	pending, err := c.client.XPendingExt(ctx, &goredis.XPendingExtArgs{
+		Stream: c.streamName, Group: c.consumerGroup, Consumer: c.consumerName, Start: "-", End: "+", Count: holdBatch,
+	}).Result()
+	if err != nil {
+		c.logger.Warn("Could not list this consumer's pending messages — holding only the paused one",
+			"stream", c.streamName, "message_id", id, "error", err)
+	}
+	for _, p := range pending {
+		if p.ID != id {
+			ids = append(ids, p.ID)
+		}
+	}
+	err = c.client.XClaimJustID(ctx, &goredis.XClaimArgs{
+		Stream: c.streamName, Group: c.consumerGroup, Consumer: c.consumerName, MinIdle: 0, Messages: ids,
 	}).Err()
 	if err != nil {
-		c.logger.Warn("Could not refresh a paused message's idle time", "stream", c.streamName, "message_id", id, "error", err)
+		c.logger.Warn("Could not refresh the idle time of this consumer's pending messages",
+			"stream", c.streamName, "message_id", id, "count", len(ids), "error", err)
 	}
+}
+
+// settleContext detaches ctx from shutdown for the steps that follow a decided
+// outcome — the ACK of a handled or dead-lettered message and the drop
+// notification — so a shutdown that begins after the decision cannot leave the
+// message pending, to be handled or dead-lettered a second time. The handler
+// timeout bounds those steps, so shutdown still completes.
+func (c *StreamConsumer) settleContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	d := c.handlerTimeout
+	if d <= 0 {
+		d = DefaultHandlerTimeout
+	}
+	return context.WithTimeout(context.WithoutCancel(ctx), d)
 }
 
 // xaddDeadLetter appends one entry to consumer.dead_letter:v1, untrimmed.
@@ -451,7 +502,9 @@ func (c *StreamConsumer) xaddDeadLetter(ctx context.Context, values map[string]a
 // only after that write succeeded. While the write fails the message stays
 // pending and the consumer pauses, retrying the write (never the handler).
 // logDeadLettered is logged once the write succeeded; the drop handler fires
-// once the acknowledgement succeeded.
+// once the acknowledgement succeeded. Both the acknowledgement and the drop
+// handler run on settleContext, so a shutdown after the write neither leaves
+// the message pending to be dead-lettered again nor skips the notification.
 func (c *StreamConsumer) deadLetterAndAck(ctx context.Context, msg goredis.XMessage, kind model.DeadLetterKind, cause error, deliveries int64) {
 	values, err := events.ConsumerDeadLetterFields(events.DeadLetteredMessage{
 		TenantID: tenantOf(msg), Producer: c.service, OccurredAt: c.nowFn(),
@@ -479,10 +532,12 @@ func (c *StreamConsumer) deadLetterAndAck(ctx context.Context, msg goredis.XMess
 	}
 	c.logger.Error(logDeadLettered, "stream", c.streamName, "group", c.consumerGroup, "message_id", msg.ID,
 		"failure_kind", string(kind), "deliveries", deliveries, "dead_letter_event_id", values["event_id"], "error", cause)
-	if err := c.ackFn(ctx, msg.ID); err != nil {
+	sctx, cancel := c.settleContext(ctx)
+	defer cancel()
+	if err := c.ackFn(sctx, msg.ID); err != nil {
 		return
 	}
-	c.onDropped(ctx, msg, cause)
+	c.onDropped(sctx, msg, cause)
 }
 
 // tenantOf returns the tenant_id a message carries, or the default tenant.
@@ -683,9 +738,10 @@ func (c *StreamConsumer) ensureConsumerGroup(ctx context.Context) error {
 // in the PEL and the next sweep (≤ reclaimInterval) becomes the retry cadence,
 // until its delivery count reaches maxDeliveries and it is dead-lettered. A
 // permanent error is dead-lettered at once; an infrastructure error pauses the
-// sweep on that message until the dependency answers. Handled messages are
-// acknowledged in one batch per page; dead-lettered ones are acknowledged
-// individually, after their dead letter is written.
+// sweep on that message until the dependency answers. Every message is
+// acknowledged as soon as it is settled — a handled one at once, a
+// dead-lettered one after its dead letter is written — so a pause on one
+// message never holds finished work in the PEL.
 //
 // Implementation note: XAUTOCLAIM (Redis 6.2+) replaces the older XPENDING +
 // per-ID XCLAIM loop, collapsing 1+N round-trips into a single cursor-paged
@@ -713,17 +769,12 @@ func (c *StreamConsumer) reclaimPending(ctx context.Context) error {
 			)
 		}
 
-		var ackIDs []string
 		for _, msg := range msgs {
 			if ctx.Err() != nil {
-				break
+				return nil
 			}
-			if c.settleReclaimed(ctx, msg) {
-				ackIDs = append(ackIDs, msg.ID)
-			}
+			c.settleReclaimed(ctx, msg)
 		}
-		// Handled messages are acknowledged even when shutdown began mid-page.
-		_ = c.ackBatch(context.WithoutCancel(ctx), ackIDs)
 		if ctx.Err() != nil {
 			return nil
 		}
@@ -736,30 +787,41 @@ func (c *StreamConsumer) reclaimPending(ctx context.Context) error {
 }
 
 // settleReclaimed runs the handler for one reclaimed message — once, or for as
-// long as an infrastructure error lasts — and reports whether the message
-// belongs in the sweep's batch acknowledgement. A permanent failure, or a
-// transient one on delivery maxDeliveries or later, is dead-lettered and
-// acknowledged by deadLetterAndAck; any other failure stays pending for the
-// next sweep.
-func (c *StreamConsumer) settleReclaimed(ctx context.Context, msg goredis.XMessage) bool {
+// long as an infrastructure error lasts — and settles it: acknowledged at once
+// on success, even when shutdown began during the handler; dead-lettered then
+// acknowledged on a permanent failure, or on a transient one on delivery
+// maxDeliveries or later; otherwise left pending for the next sweep. A
+// message whose handling is cut short by shutdown stays pending.
+func (c *StreamConsumer) settleReclaimed(ctx context.Context, msg goredis.XMessage) {
 	class, err := c.run(ctx, msg, reclaimSchedule)
 	switch {
 	case err == nil:
-		return true
+		c.ackHandled(ctx, msg.ID)
+		return
 	case ctx.Err() != nil:
-		return false
+		return
 	case class == ClassPermanent:
-		c.deadLetterAndAck(ctx, msg, model.DeadLetterKindPermanent, err, c.deliveriesFn(ctx, msg.ID))
-		return false
+		// An unreadable delivery counter reads 0; the message was delivered at
+		// least once.
+		c.deadLetterAndAck(ctx, msg, model.DeadLetterKindPermanent, err, max(c.deliveriesFn(ctx, msg.ID), 1))
+		return
 	}
 	n := c.deliveriesFn(ctx, msg.ID)
 	if n >= maxDeliveries {
 		c.deadLetterAndAck(ctx, msg, model.DeadLetterKindTransientExhausted, err, n)
-		return false
+		return
 	}
 	c.logger.Error("Reclaimed message still failing — leaving in PEL for next sweep",
 		"stream", c.streamName, "message_id", msg.ID, "deliveries", n, "max_deliveries", maxDeliveries, "error", err)
-	return false
+}
+
+// ackHandled acknowledges a message whose handler succeeded, on settleContext,
+// so a shutdown that began during the handler does not leave it pending to be
+// handled again.
+func (c *StreamConsumer) ackHandled(ctx context.Context, id string) {
+	sctx, cancel := c.settleContext(ctx)
+	defer cancel()
+	_ = c.ackFn(sctx, id)
 }
 
 // deliveryCount returns the PEL delivery counter for a single message — how many
@@ -926,9 +988,9 @@ func boundedWorkerCount(n int) int {
 }
 
 // processOne handles one newly read message and settles it: acknowledged on
-// success; dead-lettered then acknowledged on a permanent error; otherwise
-// left pending for the reclaim sweep. A message whose handling is cut short by
-// shutdown stays pending.
+// success, even when shutdown began during the handler; dead-lettered then
+// acknowledged on a permanent error; otherwise left pending for the reclaim
+// sweep. A message whose handling is cut short by shutdown stays pending.
 //
 // Acknowledging per message (rather than once per batch) preserves
 // ack-after-success under the worker pool: a completed message leaves the PEL
@@ -939,7 +1001,7 @@ func (c *StreamConsumer) processOne(ctx context.Context, msg goredis.XMessage) {
 	class, err := c.run(ctx, msg, readPathSchedule)
 	switch {
 	case err == nil:
-		_ = c.ackFn(ctx, msg.ID)
+		c.ackHandled(ctx, msg.ID)
 	case ctx.Err() != nil:
 		// Stopping: the message stays pending and is redelivered after restart.
 	case class == ClassPermanent:
@@ -959,28 +1021,6 @@ func (c *StreamConsumer) ackOne(ctx context.Context, id string) error {
 		c.logger.Error("Failed to ACK message",
 			"stream", c.streamName,
 			"message_id", id,
-			"error", err,
-		)
-		return err
-	}
-	return nil
-}
-
-// ackBatch acknowledges a page of reclaimed message IDs in a single round
-// trip, returning the error when the XACK failed. Only IDs the handler
-// processed successfully are passed in: a transiently-failed reclaimed message
-// stays pending, and a dead-lettered one is acknowledged by deadLetterAndAck.
-// The read path acks per message (processOne); reclaimed entries are already
-// past their idle gate and processed single-shot within one sweep, so a
-// per-page ack carries none of the read path's hold-finished-work-in-PEL risk.
-func (c *StreamConsumer) ackBatch(ctx context.Context, ids []string) error {
-	if len(ids) == 0 {
-		return nil
-	}
-	if err := c.client.XAck(ctx, c.streamName, c.consumerGroup, ids...).Err(); err != nil {
-		c.logger.Error("Failed to ACK message batch",
-			"stream", c.streamName,
-			"count", len(ids),
 			"error", err,
 		)
 		return err
