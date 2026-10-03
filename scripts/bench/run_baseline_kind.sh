@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Local-stack baseline: builds the benchmark images, checks the harness on a
-# 3-node DAG, runs dag-500 and the two dependency-outage scenarios, and writes
-# OUT_DIR/report.md. The synthetic scale scenarios run on the dev install
-# (run_baseline_dev.sh). Replaces the stack's topology; the e2e suite re-seeds.
+# Local-stack baseline: starts the run-lifecycle services, builds the benchmark
+# images, checks the harness on a 3-node DAG, runs dag-500 and the two
+# dependency-outage scenarios, and writes OUT_DIR/report.md. The synthetic
+# scale scenarios run on a k8s install (run_baseline_dev.sh). Replaces the
+# stack's topology; the e2e suite re-seeds.
 #   run_baseline_kind.sh [OUT_DIR]
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -13,6 +14,7 @@ root="$(bench_root)"
 out="${1:-${root}/.bench/baseline-kind-$(date -u +%Y%m%dT%H%M)}"
 p="${out}/payloads"
 mkdir -p "${p}"
+"${here}/start_local_services.sh"
 "${here}/build_image.sh"
 python3 "${here}/gen_topology.py" --nodes 3 --levels 3 --fan-in 1 --schedule bench-smoke > "${p}/smoke.json"
 python3 "${here}/gen_topology.py" --nodes 500 --levels 10 --fan-in 2 --schedule bench-dag-500 > "${p}/dag-500.json"

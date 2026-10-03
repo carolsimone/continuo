@@ -52,7 +52,7 @@ A benchmark leaves these traces on a shared install: its runs stay in state's ru
 ## Prerequisites
 
 - Both targets: `python3` 3.9 or newer, `kubectl`, Docker with BuildKit.
-- `compose`: the stack from `bash scripts/setup.sh` (in a fresh worktree, `bash scripts/ensure-dev-env.sh` first) and the CLI from `make -C cli build`.
+- `compose`: the stack from `bash scripts/setup.sh` (in a fresh worktree, `bash scripts/ensure-dev-env.sh` first) and the CLI from `make -C cli build`. `run_baseline_kind.sh` starts state, orchestrator and execution-controller itself through `start_local_services.sh`; execution-controller runs in compose and reaches MinIO through the Docker bridge, which the task pods in kind can also reach.
 - `k8s`: a kubeconfig for the install, ssh access to its k3s node for the image import, and `docker buildx` for the `linux/amd64` build. Obtaining cluster credentials is managed outside this repository.
 
 ## Usage
