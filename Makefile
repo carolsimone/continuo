@@ -175,6 +175,9 @@ test-deps-down:
 # behaviour) races between one package's TRUNCATE and another's assertions.
 # orchestrator pins the same flag for the same reason: adapters/neo4j and
 # service/handlers both wipe and rebuild the one shared Neo4j graph.
+# pkg runs its Redis-backed tests (REDIS_ADDR) against the compose Redis; its
+# other packages run under `make guards`. pkg's tests share one Redis and run
+# one package at a time (-p=1).
 #
 # The runner is outside the compose network, so Neo4j is addressed by its
 # published port (NEO4J_URI), never by the `neo4j` service name the tests
@@ -183,8 +186,8 @@ test-deps-down:
 # misaddressed dependency skips whole suites and the run still exits 0.
 .PHONY: test-go
 test-go: test-deps-up
-	@rc=0; for s in $(or $(SERVICE),$(GO_SERVICES)); do \
-	  extra=; \
+	@rc=0; for s in $(or $(SERVICE),$(GO_SERVICES) pkg); do \
+	  extra=; pkgs=./...; \
 	  case $$s in \
 	    state) db=continuo_state;; \
 	    orchestrator) db=continuo_orchestrator; extra="GOFLAGS=-p=1";; \
@@ -193,6 +196,8 @@ test-go: test-deps-up
 	      extra="RELEASE_TEST_PG_DSN=postgres://continuo_svc:continuo@localhost:5432/continuo_release?sslmode=disable GOFLAGS=-p=1";; \
 	    remediation) db=continuo_remediation;; \
 	    agent-remediation) db=continuo_agent_remediation;; agent-chat) db=continuo_agent_chat;; \
+	    pkg) db=continuo_execution; pkgs=./redis/...; \
+	      extra="REDIS_ADDR=localhost:6379 REDIS_PASSWORD=continuo GOFLAGS=-p=1";; \
 	    *) echo "unknown service $$s" >&2; exit 2;; \
 	  esac; \
 	  echo "== go test $$s (db=$$db) =="; \
@@ -200,7 +205,7 @@ test-go: test-deps-up
 	     POSTGRES_USER=continuo_svc POSTGRES_PASSWORD=continuo DB_SSLMODE=disable \
 	     NEO4J_HOST=localhost NEO4J_URI=bolt://localhost:7687 NEO4J_USER=neo4j \
 	     NEO4J_PASSWORD=atlas_password REQUIRE_TEST_DEPS=1 $$extra \
-	     go test -tags integration -count=1 ./... -timeout 20m) || rc=1; \
+	     go test -tags integration -count=1 $$pkgs -timeout 20m) || rc=1; \
 	done; exit $$rc
 
 .PHONY: test-ui
