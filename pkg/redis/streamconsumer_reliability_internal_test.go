@@ -87,6 +87,15 @@ func TestNewStreamConsumer_DefaultsAndBudget(t *testing.T) {
 	assert.Equal(t, 7*time.Minute, c.HeartbeatBudget())
 }
 
+func TestSetReclaimMinIdle(t *testing.T) {
+	c := NewStreamConsumer(nil, "s", "g", func(context.Context, goredis.XMessage) error { return nil }, discardLog())
+	assert.Equal(t, defaultReclaimMinIdle, c.reclaimMinIdle)
+	c.SetReclaimMinIdle(6 * time.Minute)
+	assert.Equal(t, 6*time.Minute, c.reclaimMinIdle)
+	c.SetReclaimMinIdle(0)
+	assert.Equal(t, time.Duration(0), c.reclaimMinIdle, "zero disables the gate, as WithReclaimMinIdle(0) does")
+}
+
 func TestStart_RefusesWithoutService(t *testing.T) {
 	c := NewStreamConsumer(nil, "s", "g", func(context.Context, goredis.XMessage) error { return nil }, discardLog())
 	err := c.Start(context.Background())

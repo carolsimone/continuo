@@ -35,13 +35,9 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-// consumerHeartbeatStale is the liveness heartbeat budget: how long a
-// consumer's read loop may go without completing an iteration before /livez
-// reports it wedged. These consumers set no handler timeout, so nothing
-// enforces this budget against the slowest handler — it is an empirical
-// margin, not an enforced relationship, and must stay comfortably above the
-// slowest handler invocation observed in practice.
-const consumerHeartbeatStale = 3 * time.Minute
+// topologyHandlerTimeout bounds the consumers whose one message covers a whole
+// DAG or release, which they write to Neo4j in one handler.
+const topologyHandlerTimeout = 5 * time.Minute
 
 // outboxHeartbeatStale is the liveness budget for the outbox processor's Run
 // loop. The poll tick is 1s, so 60s is comfortably above it: a wedged (not
@@ -83,9 +79,10 @@ func main() {
 	// pod is restarted; a worker heartbeat probe also catches a consumer whose
 	// read loop has gone wedged without exiting.
 	runConsumer := func(name string, consumer *pkgredis.StreamConsumer) {
+		consumer.SetService(config.ServiceName)
 		liveReg.RegisterWorker(name)
 		liveReg.AddWorkerProbe(name+"_heartbeat", 10*time.Second, func(context.Context) error {
-			return consumer.Healthy(consumerHeartbeatStale)
+			return consumer.Healthy(consumer.HeartbeatBudget())
 		})
 		lifecycleManager.Go(func() {
 			err := consumer.Start(ctx)
@@ -346,6 +343,7 @@ func main() {
 		streams.OrchestratorScheduleCancelled,
 		scheduleCancelledBinding,
 		logger,
+		pkgredis.WithInfraClassifier(neo4jinfra.IsUnavailable),
 	)
 	runConsumer("schedule_cancelled", scheduleCancelledConsumer)
 
@@ -421,28 +419,41 @@ func main() {
 	// Every orchestrator consumer is the same shape: a domain handler wrapped
 	// by a redis binding, driven by a StreamConsumer on its (stream, group).
 	// They are declared in one table and started uniformly via runConsumer;
-	// stream/group names always come from pkg/streams constants.
+	// stream/group names always come from pkg/streams constants. timeout is the
+	// handler deadline; 0 keeps pkgredis.DefaultHandlerTimeout.
 	consumers := []struct {
 		name    string
 		stream  string
 		group   string
 		binding pkgredis.MessageHandler
+		timeout time.Duration
 	}{
-		{"node_updated", streams.NodeUpdatedV1, streams.OrchestratorNodeUpdated, redis.NewNodeCompletedBinding(handleNodeCompletedHandler, logger)},
-		{"scheduler_started", streams.SchedulerStartedV1, streams.OrchestratorSchedulerStarted, redis.NewSchedulerStartedBinding(handleSchedulerStartedHandler, logger)},
-		{"rerun", streams.TriggerRerunV1, streams.OrchestratorRerun, redis.NewRerunBinding(handleRerunHandler, logger)},
-		{"rebase", streams.TriggerRebaseV1, streams.OrchestratorRebase, redis.NewRebaseBinding(handleRebaseHandler, logger)},
-		{"single_node_run", streams.TriggerSingleNodeRunV1, streams.OrchestratorSingleNodeRun, redis.NewSingleNodeRunBinding(handleSingleNodeRunHandler, logger)},
-		{"run_finalized", streams.RunFinalizedV1, streams.OrchestratorRunFinalized, redis.NewRunFinalizedBinding(runFinalizedHandler, logger)},
-		{"release_promoted", streams.ReleasePromotedV1, streams.OrchestratorReleasePromoted, redis.NewReleasePromotedBinding(releasePromotedHandler, logger)},
-		{"release_promoted_versions", streams.ReleasePromotedV1, streams.OrchestratorReleasePromotedVersions, redis.NewReleasePromotedVersionsBinding(releasePromotedVersionsHandler, logger)},
-		{"promoted_seeds", streams.TriggerPromotedSeedsV1, streams.OrchestratorPromotedSeeds, redis.NewPromotedSeedsBinding(handlePromotedSeedsHandler, logger)},
-		{"remediation_requested_rejections", streams.RemediationRequestedV2, streams.OrchestratorRemediationRequestedRejections, redis.NewRemediationRequestedBinding(rejectionsHandler, logger)},
-		{"remediation_pr_opened_proposals", streams.RemediationPrOpenedV1, streams.OrchestratorRemediationPrOpenedProposals, redis.NewPrOpenedBinding(proposalsHandler, logger)},
-		{"remediation_pr_closed_provenance", streams.RemediationPrClosedV1, streams.OrchestratorRemediationPrClosedProvenance, redis.NewPrClosedBinding(provenanceHandler, logger)},
+		{"node_updated", streams.NodeUpdatedV1, streams.OrchestratorNodeUpdated, redis.NewNodeCompletedBinding(handleNodeCompletedHandler, logger), 0},
+		{"scheduler_started", streams.SchedulerStartedV1, streams.OrchestratorSchedulerStarted, redis.NewSchedulerStartedBinding(handleSchedulerStartedHandler, logger), topologyHandlerTimeout},
+		{"rerun", streams.TriggerRerunV1, streams.OrchestratorRerun, redis.NewRerunBinding(handleRerunHandler, logger), topologyHandlerTimeout},
+		{"rebase", streams.TriggerRebaseV1, streams.OrchestratorRebase, redis.NewRebaseBinding(handleRebaseHandler, logger), topologyHandlerTimeout},
+		{"single_node_run", streams.TriggerSingleNodeRunV1, streams.OrchestratorSingleNodeRun, redis.NewSingleNodeRunBinding(handleSingleNodeRunHandler, logger), topologyHandlerTimeout},
+		{"run_finalized", streams.RunFinalizedV1, streams.OrchestratorRunFinalized, redis.NewRunFinalizedBinding(runFinalizedHandler, logger), 0},
+		{"release_promoted", streams.ReleasePromotedV1, streams.OrchestratorReleasePromoted, redis.NewReleasePromotedBinding(releasePromotedHandler, logger), topologyHandlerTimeout},
+		{"release_promoted_versions", streams.ReleasePromotedV1, streams.OrchestratorReleasePromotedVersions, redis.NewReleasePromotedVersionsBinding(releasePromotedVersionsHandler, logger), topologyHandlerTimeout},
+		{"promoted_seeds", streams.TriggerPromotedSeedsV1, streams.OrchestratorPromotedSeeds, redis.NewPromotedSeedsBinding(handlePromotedSeedsHandler, logger), topologyHandlerTimeout},
+		{"remediation_requested_rejections", streams.RemediationRequestedV2, streams.OrchestratorRemediationRequestedRejections, redis.NewRemediationRequestedBinding(rejectionsHandler, logger), 0},
+		{"remediation_pr_opened_proposals", streams.RemediationPrOpenedV1, streams.OrchestratorRemediationPrOpenedProposals, redis.NewPrOpenedBinding(proposalsHandler, logger), 0},
+		{"remediation_pr_closed_provenance", streams.RemediationPrClosedV1, streams.OrchestratorRemediationPrClosedProvenance, redis.NewPrClosedBinding(provenanceHandler, logger), 0},
 	}
 	for _, c := range consumers {
-		runConsumer(c.name, pkgredis.NewStreamConsumer(redisClient, c.stream, c.group, c.binding, logger))
+		opts := []pkgredis.ConsumerOption{
+			pkgredis.WithHandlerTimeout(c.timeout),
+			pkgredis.WithInfraClassifier(neo4jinfra.IsUnavailable),
+		}
+		if c.timeout > pkgredis.DefaultHandlerTimeout {
+			// A peer replica's reclaim sweep takes a pending message once it has
+			// been idle for the gate. The gate sits a minute above the handler
+			// timeout, so the sweep never takes a message whose handler is
+			// still running.
+			opts = append(opts, pkgredis.WithReclaimMinIdle(c.timeout+time.Minute))
+		}
+		runConsumer(c.name, pkgredis.NewStreamConsumer(redisClient, c.stream, c.group, c.binding, logger, opts...))
 	}
 
 	// ========================================================================

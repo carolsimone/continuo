@@ -2,6 +2,10 @@ package config
 
 import pkgconfig "github.com/carolsimone/continuo/pkg/config"
 
+// ServiceName names this service as the producer of the events and dead
+// letters it writes.
+const ServiceName = "remediation"
+
 // Postgres holds connection parameters for the remediation service Postgres instance.
 type Postgres struct {
 	Host, Port, User, Password, DB string

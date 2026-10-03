@@ -185,6 +185,13 @@ func (c *StreamConsumer) SetHandlerTimeout(d time.Duration) {
 	}
 }
 
+// SetReclaimMinIdle sets the reclaim sweep's idle gate before Start, exactly as
+// WithReclaimMinIdle does, for callers that receive an already-constructed
+// consumer. A service whose handlers may legitimately run longer than the
+// default gate sets it above its handler timeout, so a peer replica's sweep
+// never takes a message whose handler is still running.
+func (c *StreamConsumer) SetReclaimMinIdle(d time.Duration) { c.reclaimMinIdle = d }
+
 // SetService names the service this consumer runs in. It must be called
 // before Start: the name is the producer of every dead letter it writes.
 func (c *StreamConsumer) SetService(name string) { c.service = name }

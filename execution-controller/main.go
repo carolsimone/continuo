@@ -43,16 +43,6 @@ const consumerHandlerTimeout = 60 * time.Second
 // sit above that wait.
 const schemaOpHandlerTimeout = k8s.SchemaOpJobTimeout + time.Minute
 
-// schemaOpHeartbeatStale mirrors consumerHeartbeatStale for the schema-op
-// consumers: it exceeds schemaOpHandlerTimeout plus a margin so a handler
-// legitimately waiting on a Job never trips liveness.
-const schemaOpHeartbeatStale = schemaOpHandlerTimeout + 2*time.Minute
-
-// consumerHeartbeatStale is how long a consumer's read loop may make no
-// progress before the liveness probe restarts the pod. It exceeds
-// consumerHandlerTimeout plus a margin so an in-flight handler never trips it.
-const consumerHeartbeatStale = 3 * time.Minute
-
 // outboxTick is the outbox processor cadence. Check tickets and terminal
 // announcements flow through this outbox, so the tick bounds the latency of
 // every status transition.
@@ -80,11 +70,12 @@ func main() {
 	// restarting a pod whose consumers are already retrying.
 	liveReg := liveness.NewRegistry()
 
-	startConsumer := func(name string, consumer *pkgredis.StreamConsumer, handlerTimeout, heartbeatStale time.Duration) {
+	startConsumer := func(name string, consumer *pkgredis.StreamConsumer, handlerTimeout time.Duration) {
+		consumer.SetService(config.ServiceName)
 		consumer.SetHandlerTimeout(handlerTimeout)
 		liveReg.RegisterWorker(name)
 		liveReg.AddWorkerProbe(name+"_heartbeat", 10*time.Second, func(context.Context) error {
-			return consumer.Healthy(heartbeatStale)
+			return consumer.Healthy(consumer.HeartbeatBudget())
 		})
 		lifecycleManager.Go(func() {
 			err := consumer.Start(ctx)
@@ -95,10 +86,10 @@ func main() {
 		})
 	}
 	runConsumer := func(name string, consumer *pkgredis.StreamConsumer) {
-		startConsumer(name, consumer, consumerHandlerTimeout, consumerHeartbeatStale)
+		startConsumer(name, consumer, consumerHandlerTimeout)
 	}
 	runSchemaOpConsumer := func(name string, consumer *pkgredis.StreamConsumer) {
-		startConsumer(name, consumer, schemaOpHandlerTimeout, schemaOpHeartbeatStale)
+		startConsumer(name, consumer, schemaOpHandlerTimeout)
 	}
 	// runWorker runs a background loop as a tracked goroutine registered with
 	// the liveness registry; a clean shutdown is not an error.
@@ -205,20 +196,23 @@ func main() {
 		return c
 	}
 
-	// schemaOpReclaim keeps the PEL sweep from stealing a message whose handler is
-	// legitimately blocked on a schema-op Job.
+	// consumerReclaim and schemaOpReclaim keep the PEL sweep from stealing a
+	// message whose handler is still running: each gate sits a minute above the
+	// handler timeout of its consumers. A schema-op handler may be legitimately
+	// blocked on a schema-op Job for that whole timeout.
+	consumerReclaim := pkgredis.WithReclaimMinIdle(consumerHandlerTimeout + time.Minute)
 	schemaOpReclaim := pkgredis.WithReclaimMinIdle(schemaOpHandlerTimeout + time.Minute)
 
 	queryConsumer := newConsumer(streams.QueryModelV1, streams.ExecutorQueryModel,
-		redis.NewQueryModelBinding(uowFactory, queryHandler, logger))
+		redis.NewQueryModelBinding(uowFactory, queryHandler, logger), consumerReclaim)
 	scheduleCancelledConsumer := newConsumer(streams.ScheduleCancelledV1, streams.ExecutorScheduleCancelled,
-		redis.NewScheduleCancelledBinding(uowFactory, scheduleCancelledHandler, logger))
+		redis.NewScheduleCancelledBinding(uowFactory, scheduleCancelledHandler, logger), consumerReclaim)
 	validationReqConsumer := newConsumer(streams.ValidationRequestedV1, streams.ExecutorValidationRequested,
 		redis.NewValidationRequestedBinding(uowFactory, validationReqHandler, candidateSchemaCreator, logger), schemaOpReclaim)
 	seedBuildReqConsumer := newConsumer(streams.SeedBuildRequestedV1, streams.ExecutorSeedBuildRequested,
 		redis.NewSeedBuildRequestedBinding(uowFactory, seedBuildReqHandler, candidateSchemaCreator, logger), schemaOpReclaim)
 	compileReqConsumer := newConsumer(streams.CompileRequestedV1, streams.ExecutorCompileRequested,
-		redis.NewCompileRequestedBinding(uowFactory, compileReqHandler, logger))
+		redis.NewCompileRequestedBinding(uowFactory, compileReqHandler, logger), consumerReclaim)
 	validationResultTeardownConsumer := newConsumer(streams.ValidationResultV1, streams.ExecutorValidationResultTeardown,
 		redis.NewValidationResultTeardownBinding(candidateSchemaCleaner, logger), schemaOpReclaim)
 	pipelineRunFinishedTeardownConsumer := newConsumer(streams.PipelineRunFinishedV1, streams.ExecutorPipelineRunFinished,
@@ -228,7 +222,7 @@ func main() {
 	releaseRejectedTeardownConsumer := newConsumer(streams.ReleaseRejectedV1, streams.ExecutorReleaseRejected,
 		redis.NewReleaseRejectedTeardownBinding(candidateSchemaCleaner, logger), schemaOpReclaim)
 	checkConsumer := newConsumer(streams.CheckK8sV1, streams.K8sCheckStatus,
-		redis.NewCheckK8sBinding(uowFactory, jobStatusHandler, logger))
+		redis.NewCheckK8sBinding(uowFactory, jobStatusHandler, logger), consumerReclaim)
 
 	// ---- background workers ----
 
