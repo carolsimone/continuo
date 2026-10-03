@@ -1,0 +1,17 @@
+import report
+
+
+def test_aggregate_reports_p50_p95_and_cost_per_thousand_tasks():
+    reps = [{"wall_s": v, "nodes_executed": 1000,
+             "usage_run": {"state": {"cpu_seconds": 2.0, "mem_max_mib": 20.0}}} for v in (10.0, 20.0, 30.0)]
+    agg = report.aggregate(reps)
+    assert agg["wall_s"]["p50"] == 20
+    assert agg["wall_s"]["n"] == 3
+    assert agg["usage"]["state"]["cpu_s_per_1k_tasks_p50"] == 2.0
+    assert agg["usage"]["state"]["mem_peak_mib_p50"] == 20.0
+
+
+def test_render_has_a_section_per_scenario():
+    markdown = report.render({"dag-500": [{"wall_s": 1.0, "nodes_executed": 1, "usage_run": {}}]})
+    assert "## dag-500" in markdown
+    assert "| wall_s |" in markdown
