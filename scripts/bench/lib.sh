@@ -29,9 +29,11 @@ bench_kubectl() {
 }
 
 # The continuo CLI: the local binary on compose, the copy inside agent-chat on k8s.
+# kubectl exec runs without -i: no CLI command reads stdin, and -i would swallow
+# the stdin of a caller's `while read` loop.
 bench_cli_run() {
   if [ "$(bench_target)" = "k8s" ]; then
-    bench_kubectl exec -i deploy/agent-chat -- continuo "$@"
+    bench_kubectl exec deploy/agent-chat -- continuo "$@"
   else
     "${CONTINUO_CLI:-$(bench_root)/cli/bin/continuo}" "$@"
   fi
