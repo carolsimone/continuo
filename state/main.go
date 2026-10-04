@@ -34,13 +34,8 @@ import (
 // trigger notifies the channel of the same name.
 const outboxTable = "state_outbox"
 
-// outboxFallbackTick is how often the outbox relay polls without a
-// notification: it publishes rows whose retry came due and recovers a
-// notification lost while the listener reconnected.
-const outboxFallbackTick = 5 * time.Second
-
 // outboxHeartbeatStale is the liveness budget for the outbox processor's Run
-// loop. An idle loop turns at least once per outboxFallbackTick (5s), so 60s
+// loop. An idle loop turns at least once per pkgoutbox.FallbackTick (5s), so 60s
 // is comfortably above it: a wedged (not exited) processor trips within a
 // minute, while an idle-but-live one never does.
 const outboxHeartbeatStale = 60 * time.Second
@@ -188,7 +183,7 @@ func main() {
 		outboxPub,
 		nil, // no terminal-failure hook for state
 		logger,
-		pkgoutbox.ProcessorConfig{Tick: outboxFallbackTick, BatchSize: 100, Waker: outboxWaker},
+		pkgoutbox.ProcessorConfig{Tick: pkgoutbox.FallbackTick, BatchSize: 100, Waker: outboxWaker},
 	)
 	liveReg.RegisterWorker("outbox_processor")
 	liveReg.AddWorkerProbe("outbox_processor_heartbeat", 10*time.Second, func(context.Context) error {

@@ -46,11 +46,17 @@ type BatchPublisher interface {
 // dispatch-exhaustion cases.
 type TerminalFailureHook func(ctx context.Context, entry *Entry, cause error) error
 
+// FallbackTick is the poll interval of a relay with a Waker. Between wakes the
+// relay drains on this tick, which publishes rows whose retry came due (an
+// UPDATE, which sends no notification) and rows whose notification was lost
+// while the listener reconnected. A relay without a Waker polls on
+// ProcessorConfig's default Tick instead.
+const FallbackTick = 5 * time.Second
+
 // ProcessorConfig groups the optional knobs.
 type ProcessorConfig struct {
-	// Tick is the poll interval; default 1s. With a Waker it is the fallback
-	// poll that publishes rows whose retry came due and rows whose
-	// notification was lost while the listener reconnected.
+	// Tick is the poll interval; default 1s. A relay with a Waker sets it to
+	// FallbackTick.
 	Tick      time.Duration
 	BatchSize int // max rows per batch; default 100
 	// RetryBaseDelay is the first-retry delay for a transient failure; each

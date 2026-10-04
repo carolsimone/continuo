@@ -66,20 +66,15 @@ func (p *remediationOutboxPublisher) Publish(ctx context.Context, entry *pkgoutb
 // trigger notifies the channel of the same name.
 const OutboxTable = "remediation_outbox"
 
-// outboxFallbackTick is how often the outbox relay polls without a
-// notification: it publishes rows whose retry came due and recovers a
-// notification lost while the listener reconnected.
-const outboxFallbackTick = 5 * time.Second
-
 // outboxHeartbeatStale is the liveness budget for the outbox processor's Run
-// loop. An idle loop turns at least once per outboxFallbackTick (5s), so 60s
+// loop. An idle loop turns at least once per pkgoutbox.FallbackTick (5s), so 60s
 // is comfortably above it: a wedged (not exited) processor trips within a
 // minute, while an idle-but-live one never does.
 const outboxHeartbeatStale = 60 * time.Second
 
 // StartOutboxPublisher constructs a pkgoutbox.Processor backed by OutboxTable,
 // starts its relay loop in a goroutine and returns the processor. The loop
-// drains the table on each signal from waker and every outboxFallbackTick,
+// drains the table on each signal from waker and every pkgoutbox.FallbackTick,
 // until ctx is cancelled. It is registered with liveReg both as a worker
 // (RegisterWorker/WorkerExited detects a full goroutine EXIT) and with a
 // heartbeat probe (processor.Healthy detects a wedged-but-not-exited loop).
@@ -92,7 +87,7 @@ func StartOutboxPublisher(ctx context.Context, db *sqlx.DB, rc *goredis.Client, 
 		nil, // no terminal-failure hook needed for simple event publishing
 		logger,
 		pkgoutbox.ProcessorConfig{
-			Tick:      outboxFallbackTick,
+			Tick:      pkgoutbox.FallbackTick,
 			BatchSize: 64,
 			Waker:     waker,
 		},

@@ -48,11 +48,6 @@ const schemaOpHandlerTimeout = k8s.SchemaOpJobTimeout + time.Minute
 // trigger notifies the channel of the same name.
 const outboxTable = "execution_outbox"
 
-// outboxFallbackTick is how often the outbox relay polls without a
-// notification: it publishes rows whose retry came due and recovers a
-// notification lost while the listener reconnected.
-const outboxFallbackTick = 5 * time.Second
-
 // dbPool bounds the Postgres pool when DB_MAX_OPEN_CONNS / DB_MAX_IDLE_CONNS
 // are unset: two connections per stream consumer (a handler's transaction and
 // a read outside it), plus the outbox relay, background loops and request
@@ -240,7 +235,7 @@ func main() {
 	}
 	lifecycleManager.RegisterShutdownHandler(func(context.Context) error { return outboxWaker.Close() })
 	outboxProcessor := pkgoutbox.NewProcessor(pgDB, outboxTable, publisher.NewOutboxPublisher(redisClient, logger), nil, logger,
-		pkgoutbox.ProcessorConfig{Tick: outboxFallbackTick, BatchSize: 100, Waker: outboxWaker})
+		pkgoutbox.ProcessorConfig{Tick: pkgoutbox.FallbackTick, BatchSize: 100, Waker: outboxWaker})
 	runWorker("outbox_processor", outboxProcessor.Run)
 
 	deployDispatcher := deployer.NewDispatcher(
