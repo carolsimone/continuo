@@ -119,6 +119,29 @@ func (r *postgresRepository) Create(ctx context.Context, entry *Entry) error {
 // created_at bound. FOR UPDATE OF c locks only the claimed rows, never the
 // older rows the probe reads.
 func claimQuery(table string) string {
+	return claimQueryWhere(table, "")
+}
+
+// refillClaimQuery is claimQuery for a later claim in the same transaction. It
+// also leaves out the rows the transaction already claimed ($2): SKIP LOCKED
+// skips only rows other transactions lock, so without this the claim would
+// return them again. And it leaves out every aggregate the transaction withheld
+// ($3 aggregate types and $4 aggregate ids, pairwise), so that aggregate's
+// younger rows are neither returned nor locked. Postgres evaluates both as
+// filters on the claim's index scan, the NOT IN as a hashed subplan rather
+// than a join, so the claim still reads idx_<table>_claimable in order without
+// a sort. aggregate_type and aggregate_id are NOT NULL, so NOT IN has no NULL
+// case.
+func refillClaimQuery(table string) string {
+	return claimQueryWhere(table, `
+		  AND c.id <> ALL($2)
+		  AND (c.aggregate_type, c.aggregate_id) NOT IN (
+		      SELECT w.aggregate_type, w.aggregate_id
+		      FROM unnest($3::text[], $4::uuid[]) AS w(aggregate_type, aggregate_id))`)
+}
+
+// claimQueryWhere builds the claim with extra appended to its WHERE clause.
+func claimQueryWhere(table, extra string) string {
 	return fmt.Sprintf(`
 		SELECT c.id, c.message_processing_id, c.aggregate_type, c.aggregate_id,
 		       c.event_type, c.payload, c.stream_name,
@@ -134,43 +157,96 @@ func claimQuery(table string) string {
 		        AND older.status = 'scheduled'
 		        AND older.next_attempt_at > clock_timestamp()
 		        AND older.created_at <= c.created_at
-		        AND (older.created_at, older.id) < (c.created_at, c.id))
+		        AND (older.created_at, older.id) < (c.created_at, c.id))%[2]s
 		ORDER BY c.created_at ASC, c.id ASC
 		LIMIT $1
-		FOR UPDATE OF c SKIP LOCKED`, table)
+		FOR UPDATE OF c SKIP LOCKED`, table, extra)
 }
 
+// maxClaimRounds bounds how many claims one GetPendingBatch runs, so a table
+// whose claimable rows are almost all withheld cannot keep a batch claiming.
+const maxClaimRounds = 10
+
 // GetPendingBatch claims up to limit due rows and returns those it may publish
-// now, in creation order, so the rows of one aggregate publish in the order
-// they were created. The claim already leaves out rows queued behind an older
-// row of their aggregate that waits out a retry. A second query in the same
-// transaction finds each claimed row whose aggregate still has an older open
-// row (pending or scheduled) outside the batch — because another relay holds
+// now, so the rows of one aggregate publish in the order they were created.
+// The claim already leaves out rows queued behind an older row of their
+// aggregate that waits out a retry. A second query in the same transaction
+// finds each claimed row whose aggregate still has an older open row (pending
+// or scheduled) outside the rows claimed so far — because another relay holds
 // it, or because its retry fell due after the claim read it — and withholds
 // that row together with every younger row of its aggregate in the batch.
 // Withheld rows are left untouched; the transaction's end releases them.
+//
+// When a claim fills its page but withholding leaves the batch short of limit,
+// GetPendingBatch claims again for the remaining room, past the rows it already
+// holds and every aggregate it withheld, so rows that are held up elsewhere
+// cannot fill the batch and keep it from rows it may publish. It claims at most
+// maxClaimRounds times. Each claim's kept rows are appended in claim order. A
+// later claim returns no row older than a row of its aggregate an earlier
+// claim kept: such a row was then either held by another relay, which withheld
+// its aggregate, or waiting out a retry, which kept its younger rows out of the
+// claim. So the rows of one aggregate stay in (created_at, id) order, within
+// the commit-order limit Repository describes.
 func (r *postgresRepository) GetPendingBatch(ctx context.Context, limit int) ([]*Entry, error) {
+	batch := []*Entry{}
+	var claimedIDs []uuid.UUID
+	withheld := map[aggregateKey]bool{}
+	for round := 0; round < maxClaimRounds; round++ {
+		room := limit - len(batch)
+		claimed, err := r.claim(ctx, room, claimedIDs, withheld)
+		if err != nil {
+			return nil, err
+		}
+		if len(claimed) == 0 {
+			break
+		}
+		for _, e := range claimed {
+			claimedIDs = append(claimedIDs, e.ID)
+		}
+		blocked, err := r.blockedByOlderSiblings(ctx, claimed, claimedIDs)
+		if err != nil {
+			return nil, err
+		}
+		batch = append(batch, withholdBlocked(claimed, blocked, withheld)...)
+		if len(claimed) < room || len(batch) == limit {
+			break
+		}
+	}
+	return batch, nil
+}
+
+// claim runs one claim of up to limit rows. The first claim of a transaction
+// (no rows claimed yet) uses claimQuery; later ones use refillClaimQuery to
+// leave out claimedIDs and the withheld aggregates.
+func (r *postgresRepository) claim(ctx context.Context, limit int, claimedIDs []uuid.UUID, withheld map[aggregateKey]bool) ([]*Entry, error) {
 	var rows []*outboxRow
-	if err := r.exec.SelectContext(ctx, &rows, claimQuery(r.tableName), limit); err != nil && err != sql.ErrNoRows {
+	var err error
+	if len(claimedIDs) == 0 {
+		err = r.exec.SelectContext(ctx, &rows, claimQuery(r.tableName), limit)
+	} else {
+		types := make([]string, 0, len(withheld))
+		aggregateIDs := make([]uuid.UUID, 0, len(withheld))
+		for k := range withheld {
+			types = append(types, k.aggregateType)
+			aggregateIDs = append(aggregateIDs, k.aggregateID)
+		}
+		err = r.exec.SelectContext(ctx, &rows, refillClaimQuery(r.tableName), limit,
+			pq.Array(claimedIDs), pq.Array(types), pq.Array(aggregateIDs))
+	}
+	if err != nil && err != sql.ErrNoRows {
 		return nil, fmt.Errorf("get pending batch from %s: %w", r.tableName, err)
 	}
 	entries := make([]*Entry, len(rows))
 	for i, row := range rows {
 		entries[i] = entryFromRow(row)
 	}
-	if len(entries) == 0 {
-		return entries, nil
-	}
-	blocked, err := r.blockedByOlderSiblings(ctx, entries)
-	if err != nil {
-		return nil, err
-	}
-	return withholdBlocked(entries, blocked), nil
+	return entries, nil
 }
 
-// blockedByOlderSiblings returns the claimed rows that have an older open row
-// of their aggregate outside the claimed set, older in (created_at, id) order.
-func (r *postgresRepository) blockedByOlderSiblings(ctx context.Context, entries []*Entry) (map[uuid.UUID]bool, error) {
+// blockedByOlderSiblings returns the entries that have an open row of their
+// aggregate that is older in (created_at, id) order and is not in claimed.
+// claimed holds every row the transaction has claimed, entries included.
+func (r *postgresRepository) blockedByOlderSiblings(ctx context.Context, entries []*Entry, claimed []uuid.UUID) (map[uuid.UUID]bool, error) {
 	ids := make([]uuid.UUID, len(entries))
 	for i, e := range entries {
 		ids[i] = e.ID
@@ -185,9 +261,9 @@ func (r *postgresRepository) blockedByOlderSiblings(ctx context.Context, entries
 		        AND older.status IN ('pending', 'scheduled')
 		        AND older.created_at <= c.created_at
 		        AND (older.created_at, older.id) < (c.created_at, c.id)
-		        AND NOT (older.id = ANY($1)))`, r.tableName)
+		        AND NOT (older.id = ANY($2)))`, r.tableName)
 	var blockedIDs []uuid.UUID
-	if err := r.exec.SelectContext(ctx, &blockedIDs, query, pq.Array(ids)); err != nil {
+	if err := r.exec.SelectContext(ctx, &blockedIDs, query, pq.Array(ids), pq.Array(claimed)); err != nil {
 		return nil, fmt.Errorf("find withheld rows in %s: %w", r.tableName, err)
 	}
 	blocked := make(map[uuid.UUID]bool, len(blockedIDs))
@@ -203,14 +279,14 @@ type aggregateKey struct {
 }
 
 // withholdBlocked keeps claim order and drops every blocked row, and every
-// later row of a dropped row's aggregate.
-func withholdBlocked(entries []*Entry, blocked map[uuid.UUID]bool) []*Entry {
-	held := map[aggregateKey]bool{}
+// later row of a dropped row's aggregate. It records each dropped row's
+// aggregate in withheld, and also drops the rows of aggregates withheld already.
+func withholdBlocked(entries []*Entry, blocked map[uuid.UUID]bool, withheld map[aggregateKey]bool) []*Entry {
 	out := make([]*Entry, 0, len(entries))
 	for _, e := range entries {
 		k := aggregateKey{e.AggregateType, e.AggregateID}
-		if held[k] || blocked[e.ID] {
-			held[k] = true
+		if withheld[k] || blocked[e.ID] {
+			withheld[k] = true
 			continue
 		}
 		out = append(out, e)

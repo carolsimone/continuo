@@ -16,5 +16,9 @@ func NewPostgresRepositoryForTest(exec Executor, tableName string, logger *slog.
 // ClaimQueryForTest exposes the relay's claim query so tests can check its plan.
 func ClaimQueryForTest(table string) string { return claimQuery(table) }
 
+// RefillClaimQueryForTest exposes the relay's later claim within one batch so
+// tests can check its plan.
+func RefillClaimQueryForTest(table string) string { return refillClaimQuery(table) }
+
 // DrainForTest runs one drain of the processor, as Run does on each wake.
 func (p *Processor) DrainForTest(ctx context.Context) { p.drain(ctx) }

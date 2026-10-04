@@ -13,7 +13,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/testdeps"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -266,6 +266,21 @@ func TestScheduleRetry_SetsNextAttemptAndMovesToScheduled(t *testing.T) {
 // check does not depend on the table's statistics: on a table last analyzed
 // while empty the planner otherwise prefers a bitmap scan and an explicit sort.
 func TestClaimQueryUsesTheClaimIndex(t *testing.T) {
+	assertClaimPlanReadsTheClaimIndex(t, outbox.ClaimQueryForTest(testOutboxTable), 100)
+}
+
+// The later claims of a batch read the same index in the same order: the rows
+// already claimed and the withheld aggregates are left out by filters, not by
+// a join that would need a sort.
+func TestRefillClaimQueryUsesTheClaimIndex(t *testing.T) {
+	assertClaimPlanReadsTheClaimIndex(t, outbox.RefillClaimQueryForTest(testOutboxTable), 100,
+		pq.Array([]uuid.UUID{uuid.New(), uuid.New()}),
+		pq.Array([]string{"run", "task"}),
+		pq.Array([]uuid.UUID{uuid.New(), uuid.New()}))
+}
+
+func assertClaimPlanReadsTheClaimIndex(t *testing.T, query string, args ...any) {
+	t.Helper()
 	db := dbForTest(t)
 	tx, err := db.Beginx()
 	require.NoError(t, err)
@@ -275,7 +290,7 @@ func TestClaimQueryUsesTheClaimIndex(t *testing.T) {
 	_, err = tx.Exec(`SET LOCAL enable_sort = off`)
 	require.NoError(t, err)
 	var plan string
-	require.NoError(t, tx.Get(&plan, `EXPLAIN (FORMAT JSON) `+outbox.ClaimQueryForTest(testOutboxTable), 100))
+	require.NoError(t, tx.Get(&plan, `EXPLAIN (FORMAT JSON) `+query, args...))
 	assert.Contains(t, plan, `"Index Name": "idx_execution_outbox_claimable"`)
 	assert.NotContains(t, plan, `"Node Type": "Sort"`)
 }

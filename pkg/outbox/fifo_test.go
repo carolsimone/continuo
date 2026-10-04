@@ -13,6 +13,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -114,6 +115,62 @@ func TestFIFO_OlderSiblingLockedByAnotherRelayWithholdsYounger(t *testing.T) {
 	require.NoError(t, peer.Rollback())
 	require.NoError(t, p.ProcessBatch(context.Background()))
 	assert.Equal(t, append(other, ids...), pub.ids)
+}
+
+// While another relay holds the oldest row of an aggregate, the younger rows
+// of that aggregate can fill a whole claim. The batch then claims again past
+// them, so a row of another aggregate created after them publishes in the same
+// batch instead of waiting for the other relay.
+func TestFIFO_ClaimReachesPastAnAggregateWithheldBehindAnotherRelay(t *testing.T) {
+	db := dbForTest(t)
+	held := createRows(t, db, uuid.New(), 3)
+	other := createRows(t, db, uuid.New(), 1)
+
+	peer := db.MustBegin()
+	defer func() { _ = peer.Rollback() }()
+	_, err := peer.Exec(`SELECT id FROM `+testOutboxTable+` WHERE id = $1 FOR UPDATE`, held[0])
+	require.NoError(t, err)
+
+	pub := &orderPublisher{}
+	p := outbox.NewProcessor(db, testOutboxTable, pub, nil, newTestLogger(), outbox.ProcessorConfig{BatchSize: 2})
+	require.NoError(t, p.ProcessBatch(context.Background()))
+	assert.Equal(t, other, pub.ids, "the other aggregate's row publishes while the held aggregate waits")
+
+	require.NoError(t, peer.Rollback())
+	require.NoError(t, p.ProcessBatch(context.Background()))
+	assert.Equal(t, append(append([]uuid.UUID{}, other...), held[:2]...), pub.ids)
+	require.NoError(t, p.ProcessBatch(context.Background()))
+	assert.Equal(t, append(append([]uuid.UUID{}, other...), held...), pub.ids, "the held aggregate's rows publish in creation order")
+}
+
+// A later claim of the same batch leaves out the rows the batch already holds
+// and every aggregate it withheld: it neither returns nor locks the withheld
+// aggregate's younger rows, and it does not return a kept row twice.
+func TestGetPendingBatch_RefillSkipsClaimedRowsAndWithheldAggregates(t *testing.T) {
+	db := dbForTest(t)
+	kept := createRows(t, db, uuid.New(), 1)
+	held := createRows(t, db, uuid.New(), 5)
+	other := createRows(t, db, uuid.New(), 1)
+
+	peer := db.MustBegin()
+	defer func() { _ = peer.Rollback() }()
+	_, err := peer.Exec(`SELECT id FROM `+testOutboxTable+` WHERE id = $1 FOR UPDATE`, held[0])
+	require.NoError(t, err)
+
+	tx := db.MustBegin()
+	defer func() { _ = tx.Rollback() }()
+	batch, err := outbox.NewPostgresRepository(tx, testOutboxTable, newTestLogger()).GetPendingBatch(context.Background(), 3)
+	require.NoError(t, err)
+	got := make([]uuid.UUID, len(batch))
+	for i, e := range batch {
+		got[i] = e.ID
+	}
+	assert.Equal(t, []uuid.UUID{kept[0], other[0]}, got)
+
+	var unlocked []uuid.UUID
+	require.NoError(t, db.Select(&unlocked, `SELECT id FROM `+testOutboxTable+`
+		WHERE id = ANY($1) ORDER BY created_at, id FOR UPDATE SKIP LOCKED`, pq.Array(held[3:])))
+	assert.Equal(t, held[3:], unlocked, "the withheld aggregate's unclaimed rows stay unlocked")
 }
 
 func TestFIFO_OlderSiblingWaitingOutARetryWithholdsYounger(t *testing.T) {

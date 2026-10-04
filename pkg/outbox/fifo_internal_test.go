@@ -30,8 +30,22 @@ func TestWithholdBlocked_DropsBlockedRowsAndTheirYoungerSiblings(t *testing.T) {
 		{ID: uuid.New(), AggregateType: "run", AggregateID: a},
 		{ID: uuid.New(), AggregateType: "run", AggregateID: b},
 	}
-	got := withholdBlocked(rows, map[uuid.UUID]bool{rows[1].ID: true})
+	withheld := map[aggregateKey]bool{}
+	got := withholdBlocked(rows, map[uuid.UUID]bool{rows[1].ID: true}, withheld)
 	assert.Equal(t, []*Entry{rows[0], rows[2]}, got, "b's first row is blocked, so b's later row waits too")
+	assert.Equal(t, map[aggregateKey]bool{{"run", b}: true}, withheld)
+}
+
+// A row of an aggregate an earlier claim withheld is dropped too.
+func TestWithholdBlocked_DropsRowsOfAggregatesWithheldEarlier(t *testing.T) {
+	a, b := uuid.New(), uuid.New()
+	rows := []*Entry{
+		{ID: uuid.New(), AggregateType: "run", AggregateID: a},
+		{ID: uuid.New(), AggregateType: "run", AggregateID: b},
+	}
+	withheld := map[aggregateKey]bool{{"run", a}: true}
+	got := withholdBlocked(rows, map[uuid.UUID]bool{}, withheld)
+	assert.Equal(t, []*Entry{rows[1]}, got)
 }
 
 // On the one-row publish path a row that fails stops the younger rows of its

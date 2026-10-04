@@ -86,8 +86,10 @@ type ProcessorConfig struct {
 //     their aggregate that waits out a retry. A second query in the same
 //     transaction withholds each claimed row whose aggregate has an older open
 //     row outside the batch (another relay holds it), together with the
-//     younger rows of that aggregate in the batch. The rows of one aggregate
-//     inside the batch publish together, in order.
+//     younger rows of that aggregate in the batch. When that leaves a full
+//     claim short of BatchSize, it claims again for the remaining room, past
+//     the rows already claimed and the withheld aggregates. The rows of one
+//     aggregate inside the batch publish together, in order.
 //  2. The batch is published: in one pipelined round trip when the publisher
 //     implements BatchPublisher, otherwise one row at a time. On the one-row
 //     path a row that fails stops the younger rows of its aggregate in the

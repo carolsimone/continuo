@@ -26,16 +26,16 @@ type Executor interface {
 //	error_message (text nullable), next_attempt_at (timestamptz nullable).
 //
 // Create writes MaxAttempts into max_retries; no operation reads the column.
-// Create stamps created_at, and GetPendingBatch returns rows in (created_at,
-// id) order, never a row ahead of an older open row of its aggregate that it
-// can see. That publishes the rows of one aggregate in the order they were
-// created, within three limits: created_at comes from the clock of the process
-// that wrote the row, so rows written by two processes are ordered only as
-// closely as their clocks agree; a row becomes visible when its transaction
-// commits, so a row whose transaction commits after a younger row was
-// published publishes after it; and on the pipelined publish path
-// (BatchPublisher) a younger row sent in the same pipeline as an older row
-// that failed can reach its stream before the older row's retry.
+// Create stamps created_at, and GetPendingBatch returns the rows of each
+// aggregate in (created_at, id) order, never a row ahead of an older open row
+// of its aggregate that it can see. That publishes the rows of one aggregate
+// in the order they were created, within three limits: created_at comes from
+// the clock of the process that wrote the row, so rows written by two
+// processes are ordered only as closely as their clocks agree; a row becomes
+// visible when its transaction commits, so a row whose transaction commits
+// after a younger row was published publishes after it; and on the pipelined
+// publish path (BatchPublisher) a younger row sent in the same pipeline as an
+// older row that failed can reach its stream before the older row's retry.
 //
 // GetPendingBatch MUST be called inside a transaction held by the caller until
 // the follow-up write that resolves each claimed row — marking it processed,
