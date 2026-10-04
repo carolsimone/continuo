@@ -8,11 +8,6 @@ import (
 // stream consumers write.
 const ServiceName = "release-controller"
 
-// Postgres holds connection parameters for the release-controller Postgres instance.
-type Postgres struct {
-	Host, Port, User, Password, DB string
-}
-
 // Redis holds connection parameters for the Redis instance.
 type Redis struct {
 	Host, Port, Password string
@@ -20,7 +15,7 @@ type Redis struct {
 
 // Config holds all configuration for the release-controller service.
 type Config struct {
-	Postgres              Postgres
+	Postgres              pkgconfig.PostgresConfig
 	Redis                 Redis
 	S3                    pkgconfig.S3Config
 	HTTPPort              string
@@ -40,13 +35,7 @@ type Config struct {
 // v accumulates missing required vars; check v.Missing() after calling.
 func Load(v *pkgconfig.Validator) Config {
 	return Config{
-		Postgres: Postgres{
-			Host:     v.Require("POSTGRES_HOST"),
-			Port:     pkgconfig.EnvOrDefault("POSTGRES_PORT", "5432"),
-			User:     v.Require("POSTGRES_USER"),
-			Password: v.Require("POSTGRES_PASSWORD"),
-			DB:       pkgconfig.EnvOrDefault("POSTGRES_DB", "continuo_release"),
-		},
+		Postgres: pkgconfig.LoadPostgresWithDefaultDB(v, "continuo_release"),
 		Redis: Redis{
 			Host:     v.Require("REDIS_HOST"),
 			Port:     pkgconfig.EnvOrDefault("REDIS_PORT", "6379"),

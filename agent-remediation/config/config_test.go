@@ -316,3 +316,27 @@ func TestLoad_UnsetDurationIsNotAMisconfiguration(t *testing.T) {
 	assert.Equal(t, 20*time.Minute, cfg.VerificationTimeout)
 	assert.Equal(t, 15*time.Second, cfg.VerificationPollInterval)
 }
+
+func TestLoad_HonoursSSLModeAndPool(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("POSTGRES_DB", "continuo_x")
+	t.Setenv("DB_SSLMODE", "require")
+	t.Setenv("DB_MAX_OPEN_CONNS", "9")
+
+	v := &pkgconfig.Validator{}
+	cfg := Load(v)
+
+	require.Empty(t, v.Missing())
+	assert.Contains(t, cfg.Postgres.DSN(), "sslmode=require")
+	assert.Equal(t, 9, cfg.Postgres.Pool.MaxOpenConns)
+}
+
+func TestLoad_DefaultsTheDatabaseName(t *testing.T) {
+	setBaseEnv(t)
+
+	v := &pkgconfig.Validator{}
+	cfg := Load(v)
+
+	require.Empty(t, v.Missing())
+	assert.Equal(t, "continuo_agent_remediation", cfg.Postgres.DB)
+}

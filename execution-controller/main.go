@@ -23,6 +23,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/service/outcomes"
 	"github.com/carolsimone/continuo/execution-controller/service/uow"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	pkgdb "github.com/carolsimone/continuo/pkg/db"
 	"github.com/carolsimone/continuo/pkg/lifecycle"
 	"github.com/carolsimone/continuo/pkg/liveness"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
@@ -47,6 +48,12 @@ const schemaOpHandlerTimeout = k8s.SchemaOpJobTimeout + time.Minute
 // announcements flow through this outbox, so the tick bounds the latency of
 // every status transition.
 const outboxTick = time.Second
+
+// dbPool bounds the Postgres pool when DB_MAX_OPEN_CONNS / DB_MAX_IDLE_CONNS
+// are unset: two connections per stream consumer (a handler's transaction and
+// a read outside it), plus the outbox relay, background loops and request
+// handlers.
+var dbPool = pkgconfig.PoolConfig{MaxOpenConns: 30, MaxIdleConns: 5}
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -120,9 +127,9 @@ func main() {
 
 	// ---- infrastructure ----
 
-	pgDB, err := postgres.NewPostgresClient(cfg.Postgres, logger)
+	pgDB, err := pkgdb.Open(ctx, cfg.Postgres, dbPool)
 	if err != nil {
-		logger.Error("Failed to create PostgreSQL client", "error", err)
+		logger.Error("Failed to connect to PostgreSQL", "error", err)
 		os.Exit(1)
 	}
 	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {

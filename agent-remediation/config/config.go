@@ -180,14 +180,7 @@ func resolveSQLDialect(v *pkgconfig.Validator) string {
 // author's default.
 func Load(v *pkgconfig.Validator) Config {
 	cfg := Config{
-		Postgres: pkgconfig.PostgresConfig{
-			Host:     v.Require("POSTGRES_HOST"),
-			Port:     pkgconfig.EnvIntOrDefault("POSTGRES_PORT", 5432),
-			DB:       pkgconfig.EnvOrDefault("POSTGRES_DB", "continuo_agent_remediation"),
-			User:     v.Require("POSTGRES_USER"),
-			Password: v.Require("POSTGRES_PASSWORD"),
-			SSLMode:  pkgconfig.EnvOrDefault("DB_SSLMODE", "disable"),
-		},
+		Postgres:             pkgconfig.LoadPostgresWithDefaultDB(v, "continuo_agent_remediation"),
 		Redis:                pkgconfig.LoadRedis(v),
 		S3:                   pkgconfig.LoadS3(v),
 		LLMProvider:          v.Require("LLM_PROVIDER"),

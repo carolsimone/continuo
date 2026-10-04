@@ -21,6 +21,8 @@ import (
 	"os"
 	"time"
 
+	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	pkgdb "github.com/carolsimone/continuo/pkg/db"
 	"github.com/carolsimone/continuo/release-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 )
@@ -43,20 +45,22 @@ func main() {
 		os.Exit(1)
 	}
 
-	db, err := postgres.NewDB(postgres.Config{
+	ctx := context.Background()
+
+	pgCfg := pkgconfig.PostgresConfig{
 		Host:     requireEnv("POSTGRES_HOST"),
-		Port:     envOrDefault("POSTGRES_PORT", "5432"),
+		Port:     pkgconfig.EnvIntOrDefault("POSTGRES_PORT", 5432),
 		User:     requireEnv("POSTGRES_USER"),
 		Password: requireEnv("POSTGRES_PASSWORD"),
 		DB:       envOrDefault("POSTGRES_DB", "continuo_release"),
-	})
+		SSLMode:  envOrDefault("DB_SSLMODE", "disable"),
+	}
+	db, err := pkgdb.Open(ctx, pgCfg, pkgconfig.PoolConfig{MaxOpenConns: 2, MaxIdleConns: 1})
 	if err != nil {
-		logger.Error("postgres connect", "error", err)
+		logger.Error("Failed to connect to PostgreSQL", "error", err)
 		os.Exit(1)
 	}
 	defer func() { _ = db.Close() }()
-
-	ctx := context.Background()
 
 	cpRepo := postgres.NewCurrentProdRepository(db)
 	cp, err := cpRepo.Get(ctx)

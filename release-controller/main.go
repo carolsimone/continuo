@@ -16,6 +16,7 @@ import (
 
 	remediationv1 "github.com/carolsimone/continuo/agent-remediation/api/remediation/v1"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	pkgdb "github.com/carolsimone/continuo/pkg/db"
 	"github.com/carolsimone/continuo/pkg/liveness"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	rcgrpc "github.com/carolsimone/continuo/release-controller/adapters/grpc"
@@ -35,6 +36,12 @@ import (
 // loop. These handlers do short DB writes and S3 object work, so 60s far
 // exceeds any legitimate invocation while still bounding a wedge.
 const consumerHandlerTimeout = 60 * time.Second
+
+// dbPool bounds the Postgres pool when DB_MAX_OPEN_CONNS / DB_MAX_IDLE_CONNS
+// are unset: two connections per stream consumer (a handler's transaction and
+// a read outside it), plus the outbox relay, background loops and request
+// handlers.
+var dbPool = pkgconfig.PoolConfig{MaxOpenConns: 15, MaxIdleConns: 5}
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -87,15 +94,9 @@ func main() {
 		}()
 	}
 
-	db, err := postgres.NewDB(postgres.Config{
-		Host:     cfg.Postgres.Host,
-		Port:     cfg.Postgres.Port,
-		User:     cfg.Postgres.User,
-		Password: cfg.Postgres.Password,
-		DB:       cfg.Postgres.DB,
-	})
+	db, err := pkgdb.Open(ctx, cfg.Postgres, dbPool)
 	if err != nil {
-		logger.Error("postgres connect", "error", err)
+		logger.Error("Failed to connect to PostgreSQL", "error", err)
 		os.Exit(1)
 	}
 	defer func() { _ = db.Close() }()

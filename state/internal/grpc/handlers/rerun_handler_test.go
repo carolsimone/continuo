@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	pkgdb "github.com/carolsimone/continuo/pkg/db"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
-	"github.com/carolsimone/continuo/state/database"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
@@ -30,7 +30,7 @@ type rerunFixture struct {
 
 func setupRerunFixture(t *testing.T) *rerunFixture {
 	t.Helper()
-	db, err := database.NewConnection(pkgconfig.LoadPostgres(&pkgconfig.Validator{}))
+	db, err := pkgdb.Open(context.Background(), pkgconfig.LoadPostgres(&pkgconfig.Validator{}), pkgconfig.PoolConfig{MaxOpenConns: 10, MaxIdleConns: 2})
 	if err != nil {
 		testdeps.Unavailable(t, "no test DB available: %v", err)
 	}

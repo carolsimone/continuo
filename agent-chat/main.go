@@ -26,16 +26,19 @@ import (
 	"github.com/carolsimone/continuo/agent-chat/service/ports"
 	"github.com/carolsimone/continuo/agent-chat/service/retention"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	pkgdb "github.com/carolsimone/continuo/pkg/db"
 	"github.com/carolsimone/continuo/pkg/lifecycle"
 	"github.com/carolsimone/continuo/pkg/liveness"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
-	"github.com/jmoiron/sqlx"
-	_ "github.com/lib/pq"
 	goredis "github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+// dbPool bounds the Postgres pool when DB_MAX_OPEN_CONNS / DB_MAX_IDLE_CONNS
+// are unset: the gRPC sessions' queries.
+var dbPool = pkgconfig.PoolConfig{MaxOpenConns: 20, MaxIdleConns: 5}
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -80,9 +83,9 @@ func main() {
 	}()
 
 	// Postgres connection.
-	db, err := sqlx.Connect("postgres", cfg.Postgres.DSN())
+	db, err := pkgdb.Open(ctx, cfg.Postgres, dbPool)
 	if err != nil {
-		logger.Error("failed to connect to postgres", "error", err)
+		logger.Error("Failed to connect to PostgreSQL", "error", err)
 		os.Exit(1)
 	}
 	logger.Info("postgres connection established")

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	pkgdb "github.com/carolsimone/continuo/pkg/db"
 	"github.com/carolsimone/continuo/pkg/lifecycle"
 	"github.com/carolsimone/continuo/pkg/liveness"
 	pkgmessageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
@@ -20,7 +21,6 @@ import (
 	statepublisher "github.com/carolsimone/continuo/state/adapters/publisher"
 	"github.com/carolsimone/continuo/state/adapters/redis"
 	"github.com/carolsimone/continuo/state/config"
-	"github.com/carolsimone/continuo/state/database"
 	grpcserver "github.com/carolsimone/continuo/state/internal/grpc"
 	"github.com/carolsimone/continuo/state/internal/grpc/handlers"
 	"github.com/carolsimone/continuo/state/internal/scheduler"
@@ -35,6 +35,12 @@ import (
 // exited) processor trips within a minute, while an idle-but-live one never
 // does.
 const outboxHeartbeatStale = 60 * time.Second
+
+// dbPool bounds the Postgres pool when DB_MAX_OPEN_CONNS / DB_MAX_IDLE_CONNS
+// are unset: two connections per stream consumer (a handler's transaction and
+// a read outside it), plus the outbox relay, background loops and request
+// handlers.
+var dbPool = pkgconfig.PoolConfig{MaxOpenConns: 20, MaxIdleConns: 10}
 
 func main() {
 	// Setup structured logger
@@ -100,7 +106,7 @@ func main() {
 	}()
 
 	// Initialize PostgreSQL connection
-	db, err := database.NewConnection(cfg.Postgres)
+	db, err := pkgdb.Open(ctx, cfg.Postgres, dbPool)
 	if err != nil {
 		logger.Error("Failed to connect to PostgreSQL", "error", err)
 		os.Exit(1)

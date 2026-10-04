@@ -23,6 +23,7 @@ import (
 	snapshotsvc "github.com/carolsimone/continuo/orchestrator/service/snapshotsvc"
 	"github.com/carolsimone/continuo/orchestrator/service/watchdog"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	pkgdb "github.com/carolsimone/continuo/pkg/db"
 	"github.com/carolsimone/continuo/pkg/lifecycle"
 	"github.com/carolsimone/continuo/pkg/liveness"
 	pkgmessageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
@@ -44,6 +45,12 @@ const topologyHandlerTimeout = 5 * time.Minute
 // exited) processor trips within a minute, while an idle-but-live one never
 // does.
 const outboxHeartbeatStale = 60 * time.Second
+
+// dbPool bounds the Postgres pool when DB_MAX_OPEN_CONNS / DB_MAX_IDLE_CONNS
+// are unset: two connections per stream consumer (a handler's transaction and
+// a read outside it), plus the outbox relay, background loops and request
+// handlers.
+var dbPool = pkgconfig.PoolConfig{MaxOpenConns: 35, MaxIdleConns: 5}
 
 func main() {
 	// Setup structured logger
@@ -148,16 +155,9 @@ func main() {
 	logger.Info("Neo4j schema initialized")
 
 	// 2. PostgreSQL client (for outbox / message processing)
-	pgDB, err := postgres.NewPostgresClient(
-		cfg.Postgres.Host,
-		cfg.Postgres.Port,
-		cfg.Postgres.DB,
-		cfg.Postgres.User,
-		cfg.Postgres.Password,
-		logger,
-	)
+	pgDB, err := pkgdb.Open(ctx, cfg.Postgres, dbPool)
 	if err != nil {
-		logger.Error("Failed to create PostgreSQL client", "error", err)
+		logger.Error("Failed to connect to PostgreSQL", "error", err)
 		os.Exit(1)
 	}
 	logger.Info("PostgreSQL client initialized")
