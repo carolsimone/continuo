@@ -134,6 +134,14 @@ Notes that matter before you commit to this path:
   assumes Postgres. Another engine (MySQL is the only one planned) needs its
   own migration and query-compatibility work first — do not point
   `externalDatabase.host` at anything else yet.
+- **The Postgres connection must be session-mode.** Each outbox relay (state,
+  orchestrator, execution-controller, release-controller, remediation,
+  agent-remediation) wakes on a Postgres `LISTEN`/`NOTIFY` notification sent
+  when a row is committed, over one dedicated connection per pod. `LISTEN`
+  needs a session-mode connection: behind a transaction-mode pooler (for
+  example PgBouncer in transaction mode) it does not work, and delivery
+  continues on each relay's 5 s poll instead of immediately. Point
+  `externalDatabase.host` at Postgres directly or at a session-mode pooler.
 - **In-cluster encryption is your responsibility.** The chart does not
   configure mTLS (mutual TLS) between pods; service-to-service traffic inside
   the cluster is plaintext unless you run a service mesh (Istio, Linkerd) or
@@ -213,7 +221,7 @@ Every container in this chart, bundled or not, gets:
 | `externalDatabase.*` / `externalRedis.*` / `externalNeo4j.*` / `s3.*` / `auth.*` (issuer/client fields) | Connection details used when the matching `*.enabled` above is `false`. |
 | `externalDatabase.existingSecret` (+ `existingSecretPasswordKey`) | Pre-created Secret holding the Postgres password, instead of `externalDatabase.password` inline. Same pattern for `externalRedis.existingSecret`, `externalNeo4j.existingSecret` (all key `password` by default), `s3.existingSecret` (keys `access-key-id` / `secret-access-key`), and `auth.existingSecret` (key `client-secret`). |
 | `databaseInit.enabled` | Idempotently creates all 9 databases (the 8 Flyway-migrated service databases plus `continuo_dbt`) before migrations run. Requires the connecting user to have `CREATEDB`; disable when a DBA pre-creates them. |
-| `database.pool.maxOpenConns`, `database.pool.maxIdleConns` | Postgres pool limits for every Go service (`DB_MAX_OPEN_CONNS`/`DB_MAX_IDLE_CONNS`). 0 keeps each service's own default. Set the two together; `maxIdleConns` may not exceed `maxOpenConns`. Each limit applies per Go service pod, so the connection ceiling is the open limit (or each service's own default when unset) times the Go service pods (seven services, times their replicas); keep it below your Postgres `max_connections`. |
+| `database.pool.maxOpenConns`, `database.pool.maxIdleConns` | Postgres pool limits for every Go service (`DB_MAX_OPEN_CONNS`/`DB_MAX_IDLE_CONNS`). 0 keeps each service's own default. Set the two together; `maxIdleConns` may not exceed `maxOpenConns`. Each limit applies per Go service pod, so the connection ceiling is the open limit (or each service's own default when unset) times the Go service pods (seven services, times their replicas), plus one `LISTEN` connection per pod of the six services that run an outbox relay (every Go service except agent-chat), which sits outside the pool; keep it below your Postgres `max_connections`. |
 | `networkPolicy.enabled` | Default-deny ingress within the release plus allow rules derived from the service graph. |
 | `ingress.enabled` / `ingress.className` / `ingress.host` / `ingress.annotations` / `ingress.tls.*` | Front door for `ui` only. Fully values-driven — no ingress class or cert-manager/ACME assumptions are baked in; set them yourself (see `values-byo.yaml.example`). With `networkPolicy.enabled` it also renders an allow rule for cert-manager's HTTP-01 solver pods (matched by their `acme.cert-manager.io/http01-solver` label, port 8089) so ACME challenges pass the default-deny; the rule selects nothing on installs without cert-manager. |
 | `auth.operatorEmails` / `auth.viewerEmails` / `auth.roleMapping` | Role assignment for authenticated users. With `dex.enabled: true`, `operatorEmails` defaults to the Dex demo user's email. |

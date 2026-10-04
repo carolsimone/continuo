@@ -373,13 +373,18 @@ database:
   # release-controller 15/5, remediation 10/5, agent-remediation 10/5,
   # agent-chat 20/5). Each limit applies per Go service pod, so the connection
   # ceiling is the open limit (or each service's own default when unset) times
-  # the Go service pods (seven services, times their replicas). Set them when
-  # your Postgres max_connections is below that ceiling. Set the two together: maxIdleConns may not exceed
-  # maxOpenConns, and the render fails when maxIdleConns is set without
-  # maxOpenConns (an idle limit above a service's own open limit would stop
-  # that service from starting). A service's own services[].env entry overrides
-  # both for that service. docker-compose.yml and the e2e kind manifest leave
-  # both unset, so every service runs its own default.
+  # the Go service pods (seven services, times their replicas), plus one LISTEN
+  # connection per pod of the six services that run an outbox relay (every Go
+  # service except agent-chat), which sits outside the pool. That connection
+  # needs a session-mode path to Postgres: behind a transaction-mode pooler the
+  # relays publish on their 5 s poll instead of on commit. Set them when your
+  # Postgres max_connections is below that ceiling. Set the two together:
+  # maxIdleConns may not exceed maxOpenConns, and the render fails when
+  # maxIdleConns is set without maxOpenConns (an idle limit above a service's
+  # own open limit would stop that service from starting). A service's own
+  # services[].env entry overrides both for that service. docker-compose.yml
+  # and the e2e kind manifest leave both unset, so every service runs its own
+  # default.
   pool:
     maxOpenConns: 0
     maxIdleConns: 0
