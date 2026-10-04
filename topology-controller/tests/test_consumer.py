@@ -560,6 +560,7 @@ def test_infrastructure_error_pauses_without_counting(monkeypatch):
         pause(msg_id, seconds)
 
     c._pause = spy
+    _in_hand(c, b"1-0")
     c._dispatch(b"1-0", {})
     assert delays == [1.0, 2.0], "each consecutive outage waits twice as long"
     delivery_count_reads = [
@@ -593,10 +594,10 @@ def test_dead_letter_write_failure_refreshes_the_pending_entry_while_waiting(mon
     """While the dead-letter write fails the message is re-claimed with JUSTID,
     so a peer's reclaim sweep never takes it."""
     _defang_sleep(monkeypatch)
-    r = MagicMock()
-    r.xpending_range.return_value = [{"times_delivered": 1}]
+    r = _redis_with_pel()
     r.xadd.side_effect = [redis_exceptions.ConnectionError("down"), b"9-0"]
-    _dl_consumer(_raising(PermanentMessageError("bad")), r)._dispatch(b"1-0", {})
+    _serve_batch(r, _A)
+    _dl_consumer(_raising(PermanentMessageError("bad")), r)._consume_once()
     assert r.xclaim.call_args.kwargs["justid"] is True
     assert r.xclaim.call_args.kwargs["message_ids"] == [b"1-0"]
     assert _names(r).index("xclaim") < _names(r).index("xack")
@@ -667,6 +668,7 @@ def test_infrastructure_pause_refreshes_heartbeat_and_idle_time_every_slice(monk
     )
     r = MagicMock()
     c = _dl_consumer(lambda f: None, r)
+    _in_hand(c, b"1-0")
     before = c.last_heartbeat
     c._pause(b"1-0", 12.0)
     assert sleeps == [5.0, 5.0, 2.0]
@@ -678,7 +680,10 @@ def test_infrastructure_pause_survives_a_failing_idle_refresh(monkeypatch):
     _defang_sleep(monkeypatch)
     r = MagicMock()
     r.xclaim.side_effect = redis_exceptions.ConnectionError("down")
-    _dl_consumer(lambda f: None, r)._pause(b"1-0", 1.0)
+    c = _dl_consumer(lambda f: None, r)
+    _in_hand(c, b"1-0")
+    c._pause(b"1-0", 1.0)
+    assert r.xclaim.called
 
 
 def test_failed_ack_after_a_handled_message_leaves_it_pending_and_continues_the_batch():
@@ -718,34 +723,218 @@ def test_failed_ack_is_logged(caplog):
     assert "Message ACKed" not in caplog.text
 
 
-def test_pause_holds_every_entry_this_consumer_has_pending(monkeypatch):
-    """A pause on one message re-claims, with JUSTID, the paused id and the
-    batch siblings this consumer still holds, so a peer's reclaim sweep takes
-    none of them during a long outage."""
-    _defang_sleep(monkeypatch)
+# --- the pause holds the messages in hand ----------------------------------
+#
+# A pause re-claims exactly the messages this consumer has in hand: those of the
+# batch it read, or the page it claimed, that have not settled. A message that
+# settled by being left pending for a retry is not in hand; it keeps aging so a
+# peer's reclaim sweep takes it, however often later messages pause.
+
+_A, _B, _C = (b"1-0", b"A"), (b"2-0", b"B"), (b"3-0", b"C")
+_OUTAGE = redis_exceptions.ConnectionError("down")
+
+
+class _Abort(BaseException):
+    """Escapes every `except Exception`, like an interrupt."""
+
+
+def _redis_with_pel(times_delivered=1):
+    """A mocked Redis that keeps this consumer's pending entry list: a message
+    read or claimed enters it and XACK removes it, so XPENDING answers as a real
+    server would."""
     r = MagicMock()
-    r.xpending_range.return_value = [
-        {"message_id": b"1-0", "times_delivered": 1},
-        {"message_id": b"2-0", "times_delivered": 1},
-        {"message_id": b"3-0", "times_delivered": 1},
-    ]
-    c = _dl_consumer(lambda f: None, r)
-    c._pause(b"2-0", 1.0)
-    listing = r.xpending_range.call_args
-    assert listing.kwargs["consumername"] == c._name
-    assert listing.kwargs["count"] == 200
+    r.xgroup_create.return_value = True
+    r.pending = []
+
+    def xpending_range(stream, group, min="-", max="+", count=None, consumername=None):
+        ids = [i for i in r.pending if min in ("-", i)]
+        return [{"message_id": i, "times_delivered": times_delivered} for i in ids][:count]
+
+    def xack(stream, group, msg_id):
+        if msg_id in r.pending:
+            r.pending.remove(msg_id)
+        return 1
+
+    r.xpending_range.side_effect = xpending_range
+    r.xack.side_effect = xack
+    return r
+
+
+def _serve_batch(r, *messages):
+    """The next XREADGROUP returns messages, (id, payload) pairs, as one batch."""
+    r.pending.extend(i for i, _ in messages)
+    r.xreadgroup.return_value = [(_STREAM.encode(), [(i, {b"payload": p}) for i, p in messages])]
+
+
+def _serve_pages(r, *pages):
+    """Each XAUTOCLAIM returns the next page, a (next cursor, messages) pair, and
+    the page's messages enter the pending list."""
+    remaining = list(pages)
+
+    def xautoclaim(*_args, **_kwargs):
+        cursor, messages = remaining.pop(0)
+        r.pending.extend(i for i, _ in messages)
+        return cursor, [(i, {b"payload": p}) for i, p in messages], []
+
+    r.xautoclaim.side_effect = xautoclaim
+
+
+def _handler_raising(**by_payload):
+    """A handler that, for each payload, raises the listed exceptions one call at
+    a time and then succeeds."""
+    queues = {payload.encode(): list(excs) for payload, excs in by_payload.items()}
+
+    def handler(fields):
+        queue = queues.get(fields[b"payload"], [])
+        if queue:
+            raise queue.pop(0)
+
+    return handler
+
+
+def _held(r):
+    """The message ids of every XCLAIM the consumer issued."""
+    return [call.kwargs["message_ids"] for call in r.xclaim.call_args_list]
+
+
+def _in_hand(c, *ids):
+    c._in_hand = {i.decode(): i for i in ids}
+
+
+def test_pause_holds_the_paused_message_and_the_batch_siblings_not_yet_handled(monkeypatch):
+    _defang_sleep(monkeypatch)
+    r = _redis_with_pel()
+    _serve_batch(r, _B, _C)
+    c = _dl_consumer(_handler_raising(B=[_OUTAGE]), r)
+    c._consume_once()
+    assert _held(r) == [[b"2-0", b"3-0"]]
     claim = r.xclaim.call_args
     assert claim.kwargs["justid"] is True and claim.kwargs["min_idle_time"] == 0
     assert claim.args[2] == c._name
-    assert claim.kwargs["message_ids"] == [b"2-0", b"1-0", b"3-0"], "the paused id once, then its siblings"
 
 
-def test_pause_still_holds_the_paused_message_when_listing_pending_fails(monkeypatch):
+@pytest.mark.parametrize("first, ack_fails, left_pending", [
+    ({"A": []}, False, False),
+    ({"A": [PermanentMessageError("bad")]}, False, False),
+    ({"A": [RuntimeError("flaky")]}, False, True),
+    ({"A": []}, True, True),
+], ids=["acked", "dead-lettered", "left-pending-after-transient-failure", "ack-failed"])
+def test_pause_never_holds_a_sibling_that_has_settled(monkeypatch, first, ack_fails, left_pending):
+    """The first message of the batch settled before the second one paused,
+    whether it was ACKed, dead-lettered and ACKed, left pending after a transient
+    failure, or left pending because its ACK failed. It is not held: a message
+    left pending keeps aging, so a peer's reclaim sweep takes it."""
     _defang_sleep(monkeypatch)
-    r = MagicMock()
-    r.xpending_range.side_effect = redis_exceptions.ConnectionError("down")
-    _dl_consumer(lambda f: None, r)._pause(b"2-0", 1.0)
-    assert r.xclaim.call_args.kwargs["message_ids"] == [b"2-0"]
+    r = _redis_with_pel()
+    ack = r.xack.side_effect
+
+    def xack(stream, group, msg_id):
+        if ack_fails and msg_id == b"1-0":
+            raise redis_exceptions.ConnectionError("down")
+        return ack(stream, group, msg_id)
+
+    r.xack.side_effect = xack
+    _serve_batch(r, _A, _B, _C)
+    c = _dl_consumer(_handler_raising(B=[_OUTAGE], **first), r)
+    c._consume_once()
+    assert (b"1-0" in r.pending) is left_pending
+    assert _held(r) == [[b"2-0", b"3-0"]]
+
+
+def test_pause_does_not_list_the_pending_entries(monkeypatch):
+    _defang_sleep(monkeypatch)
+    r = _redis_with_pel()
+    _serve_batch(r, _A, _B)
+    c = _dl_consumer(_handler_raising(A=[RuntimeError("flaky")], B=[_OUTAGE]), r)
+    c._consume_once()
+    listings = [call for call in r.xpending_range.call_args_list if call.kwargs.get("consumername")]
+    assert not listings
+
+
+def test_repeated_pauses_leave_a_message_pending_after_a_transient_failure_alone(monkeypatch):
+    """Message A failed transiently and is left pending. Pauses on later messages,
+    in this batch and in the next, never re-claim it, so its idle time keeps
+    growing toward the reclaim window."""
+    _defang_sleep(monkeypatch)
+    r = _redis_with_pel()
+    c = _dl_consumer(_handler_raising(A=[RuntimeError("flaky")], B=[_OUTAGE, _OUTAGE], D=[_OUTAGE]), r)
+    _serve_batch(r, _A, _B, _C)
+    c._consume_once()
+    _serve_batch(r, (b"4-0", b"D"))
+    c._consume_once()
+    assert _held(r) == [[b"2-0", b"3-0"], [b"2-0", b"3-0"], [b"4-0"]]
+    assert b"1-0" in r.pending, "message A is still pending"
+
+
+def test_dead_letter_write_failure_holds_the_message_and_the_batch_siblings_in_hand(monkeypatch):
+    _defang_sleep(monkeypatch)
+    r = _redis_with_pel()
+    r.xadd.side_effect = [redis_exceptions.ConnectionError("down"), b"9-0"]
+    _serve_batch(r, _A, _B, _C)
+    c = _dl_consumer(_handler_raising(A=[RuntimeError("flaky")], B=[PermanentMessageError("bad")]), r)
+    c._consume_once()
+    assert _held(r) == [[b"2-0", b"3-0"]]
+    assert _names(r).index("xclaim") < _names(r).index("xack")
+
+
+def test_nothing_is_in_hand_once_the_batch_is_done(monkeypatch):
+    _defang_sleep(monkeypatch)
+    r = _redis_with_pel()
+    _serve_batch(r, _A, _B, _C)
+    seen = []
+    c = _dl_consumer(lambda fields: seen.append(sorted(c._in_hand)), r)
+    c._consume_once()
+    assert seen == [["1-0", "2-0", "3-0"], ["2-0", "3-0"], ["3-0"]], "a message leaves the set as it settles"
+    assert c._in_hand == {}
+
+
+def test_nothing_is_in_hand_after_a_batch_that_raised():
+    r = _redis_with_pel()
+    _serve_batch(r, _A, _B, _C)
+    c = _dl_consumer(_handler_raising(B=[_Abort()]), r)
+    with pytest.raises(_Abort):
+        c._consume_once()
+    assert c._in_hand == {}
+
+
+def test_a_reclaimed_page_is_held_like_a_batch(monkeypatch):
+    _defang_sleep(monkeypatch)
+    r = _redis_with_pel()
+    _serve_pages(r, (b"0-0", [_A, _B, _C]))
+    c = _dl_consumer(_handler_raising(A=[RuntimeError("flaky")], B=[_OUTAGE]), r)
+    c._reclaim_stale_pending()
+    assert _held(r) == [[b"2-0", b"3-0"]]
+    assert b"1-0" in r.pending, "message A is still pending"
+    assert c._in_hand == {}
+
+
+def test_a_reclaimed_page_holds_only_its_own_messages(monkeypatch):
+    """The first page's messages settled, one of them left pending; the second
+    page's pause names only the second page."""
+    _defang_sleep(monkeypatch)
+    r = _redis_with_pel()
+    _serve_pages(r, (b"9-0", [_A, _B]), (b"0-0", [_C, (b"4-0", b"D")]))
+    seen = []
+    handle = _handler_raising(A=[RuntimeError("flaky")], C=[_OUTAGE])
+
+    def handler(fields):
+        seen.append(sorted(c._in_hand))
+        handle(fields)
+
+    c = _dl_consumer(handler, r)
+    c._reclaim_stale_pending()
+    assert seen == [["1-0", "2-0"], ["2-0"], ["3-0", "4-0"], ["3-0", "4-0"], ["4-0"]]
+    assert _held(r) == [[b"3-0", b"4-0"]]
+    assert c._in_hand == {}
+
+
+def test_nothing_is_in_hand_after_a_reclaimed_page_that_raised():
+    r = _redis_with_pel()
+    _serve_pages(r, (b"0-0", [_A, _B]))
+    c = _dl_consumer(_handler_raising(A=[_Abort()]), r)
+    with pytest.raises(_Abort):
+        c._reclaim_stale_pending()
+    assert c._in_hand == {}
 
 
 def test_infrastructure_backoff_never_overflows_on_a_long_outage():

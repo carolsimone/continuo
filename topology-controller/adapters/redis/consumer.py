@@ -43,12 +43,11 @@ _STARTUP_CONNECT_BACKOFF_S = 3.0
 # dead-lettered. The count is the pending entry's delivery counter.
 _MAX_DELIVERIES = 5
 # After an infrastructure error the consumer waits 1s, doubling to 60s, and
-# refreshes its heartbeat and the message's idle time every 5s while it waits.
+# refreshes its heartbeat and the idle time of the messages it has in hand every
+# 5s while it waits.
 _INFRA_BACKOFF_BASE_S = 1.0
 _INFRA_BACKOFF_CAP_S = 60.0
 _PAUSE_SLICE_S = 5.0
-# How many of this consumer's pending entries one pause slice re-claims.
-_HOLD_BATCH = 200
 # Logged once per abandoned message, after its dead letter is written.
 # scripts/bench/outage.sh counts abandoned messages by this text.
 LOG_DEAD_LETTERED = "Message dead-lettered — ACKing to drop from PEL"
@@ -80,6 +79,11 @@ class Consumer:
         # Names this service as the producer of the dead letters it writes.
         self._service = service_name
         self._now = clock
+        # The messages of the batch being read or the page being claimed that
+        # have not settled yet, by text id, in delivery order. Settling means
+        # being ACKed, dead-lettered and ACKed, or left pending for a retry. A
+        # pause holds exactly these (see _hold).
+        self._in_hand: dict[str, object] = {}
         # Stamped at the end of every start() loop pass (success or handled
         # failure) so a health check can tell "retrying through a Redis
         # outage" (heartbeat keeps advancing) apart from "the loop stopped
@@ -129,7 +133,28 @@ class Consumer:
     def _process_message(self, msg_id: str, fields: dict) -> None:
         self._message_handler(fields)
 
+    def _dispatch_in_hand(self, batch: list[tuple]) -> None:
+        """Dispatch each (id, fields) of a batch this consumer has just read or a
+        page it has just claimed. Every message is in hand from now until it
+        settles, so a pause on one of them holds the ones still waiting behind it
+        and none that already settled. The set is empty again when the batch
+        ends, also when it ends on an exception."""
+        self._in_hand = {as_text(msg_id): msg_id for msg_id, _ in batch}
+        try:
+            for msg_id, msg_fields in batch:
+                self._dispatch(msg_id, msg_fields)
+        finally:
+            self._in_hand.clear()
+
     def _dispatch(self, msg_id, msg_fields: dict) -> None:
+        """Handle one message and settle it (see _settle). Whatever the outcome,
+        the message is out of the in-hand set when this returns."""
+        try:
+            self._settle(msg_id, msg_fields)
+        finally:
+            self._in_hand.pop(as_text(msg_id), None)
+
+    def _settle(self, msg_id, msg_fields: dict) -> None:
         """Run the handler for one message and settle it. On success it is
         ACKed. On a permanent error, or a transient error on its
         _MAX_DELIVERIES-th delivery, it is dead-lettered and then ACKed.
@@ -213,9 +238,10 @@ class Consumer:
         return int(entries[0]["times_delivered"]) if entries else 0
 
     def _pause(self, msg_id, seconds: float) -> None:
-        """Wait out an infrastructure error. Every _PAUSE_SLICE_S it refreshes
-        the heartbeat and holds this consumer's pending messages (see _hold),
-        so a peer's reclaim sweep takes none of them mid-wait."""
+        """Wait out an infrastructure error, or a failing dead-letter write, on
+        msg_id. Every _PAUSE_SLICE_S it refreshes the heartbeat and holds the
+        messages in hand (see _hold), so a peer's reclaim sweep takes none of
+        them mid-wait."""
         remaining = seconds
         while remaining > 0:
             self.last_heartbeat = time.monotonic()
@@ -224,33 +250,24 @@ class Consumer:
             time.sleep(step)
             remaining -= step
 
-    def _hold(self, msg_id) -> None:
-        """Re-claim for this consumer, with XCLAIM JUSTID, msg_id and every
-        other entry this consumer has pending (up to _HOLD_BATCH). JUSTID resets
-        each entry's idle time without counting a delivery, so while one message
-        waits, neither it nor the rest of its read batch grows idle enough for a
-        peer's reclaim sweep to take it. XCLAIM skips an id that is no longer
-        pending. Failures only shorten the protection, so they are logged."""
-        ids = [msg_id]
-        seen = {as_text(msg_id)}
-        try:
-            pending = self._redis.xpending_range(
-                self._stream, self._group, min="-", max="+", count=_HOLD_BATCH, consumername=self._name,
-            )
-            for entry in pending:
-                sibling = entry.get("message_id")
-                if sibling is not None and as_text(sibling) not in seen:
-                    seen.add(as_text(sibling))
-                    ids.append(sibling)
-        except Exception as exc:
-            logger.warning("Could not list this consumer's pending messages — holding only %s: %s",
-                           as_text(msg_id), exc)
+    def _hold(self, paused_id) -> None:
+        """Re-claim the messages in hand for this consumer with one XCLAIM
+        JUSTID: the message paused on and the batch or page siblings still
+        waiting for their turn. JUSTID resets each entry's idle time without
+        counting a delivery, so none of them grows idle enough for a peer's
+        reclaim sweep to take it. A message that already settled is not in hand:
+        one left pending for a retry keeps aging until the sweep takes it, however
+        often later messages pause. XCLAIM skips an id that is no longer pending.
+        A failure only shortens the protection, so it is logged."""
+        ids = list(self._in_hand.values())
+        if not ids:
+            return
         try:
             self._redis.xclaim(self._stream, self._group, self._name, min_idle_time=0,
                                message_ids=ids, justid=True)
         except Exception as exc:
-            logger.warning("Could not refresh the idle time of %d pending messages (paused on %s): %s",
-                           len(ids), as_text(msg_id), exc)
+            logger.warning("Could not refresh the idle time of %d messages in hand (paused on %s): %s",
+                           len(ids), as_text(paused_id), exc)
 
     def _dead_letter_and_ack(self, msg_id, msg_fields: dict, kind: DeadLetterKind, exc: Exception,
                              deliveries: int) -> None:
@@ -289,9 +306,7 @@ class Consumer:
         )
         if not messages:
             return
-        for _stream, msgs in messages:
-            for msg_id, msg_fields in msgs:
-                self._dispatch(msg_id, msg_fields)
+        self._dispatch_in_hand([(msg_id, msg_fields) for _stream, msgs in messages for msg_id, msg_fields in msgs])
 
     def _reclaim_stale_pending(self) -> None:
         """Claim messages left pending by a previous failure or a dead consumer
@@ -315,8 +330,7 @@ class Consumer:
                 count=10,
             )
             cursor, claimed = result[0], result[1]
-            for msg_id, msg_fields in claimed:
-                self._dispatch(msg_id, msg_fields)
+            self._dispatch_in_hand(claimed)
             if cursor in (b"0-0", "0-0"):
                 break
 
