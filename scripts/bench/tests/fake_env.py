@@ -50,6 +50,8 @@ else:
 FAKE_KUBECTL = r'''#!/usr/bin/env python3
 import json, os, sys
 args = " ".join(sys.argv[1:])
+if " exec " in f" {args} " and os.environ.get("FAKE_EXEC_FAIL"):
+    sys.exit("Unable to connect to the server: net/http: TLS handshake timeout")
 if " exec " in f" {args} ":
     fake = os.environ["FAKE_DIR"]
     with open(os.path.join(fake, "exec-calls.jsonl"), "a") as calls:

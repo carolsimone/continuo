@@ -18,11 +18,20 @@ fi
 # topology to return to is then the new current_prod, whose schedules may differ
 # from the ones recorded before the benchmark.
 moved=0
-if ! bench_check_release "${out}"; then
-  echo "restore.sh: re-exporting the release promoted during the benchmark" >&2
-  "${here}/export_topology.sh" "${out}"
-  moved=1
-fi
+release_state=0
+bench_check_release "${out}" || release_state=$?
+case "${release_state}" in
+  0) ;;
+  1)
+    echo "restore.sh: re-exporting the release promoted during the benchmark" >&2
+    "${here}/export_topology.sh" "${out}"
+    moved=1
+    ;;
+  *)
+    echo "restore.sh: cannot read current_prod; nothing was published. Run restore.sh again once the install answers." >&2
+    exit 1
+    ;;
+esac
 "${here}/inject.sh" "${out}/restore.json" < /dev/null
 deadline=$(( $(date +%s) + 300 ))
 if [ "${moved}" = "0" ]; then

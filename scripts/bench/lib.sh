@@ -188,17 +188,31 @@ bench_current_release() {
     "$(bench_env_value release-controller POSTGRES_PASSWORD)" "SELECT release_id FROM current_prod WHERE id = 1"
 }
 
-# k8s only: succeeds when current_prod still names the release exported to
-# OUT_DIR/restore.json. A release promoted since then makes the export stale:
-# re-announcing it would revert the live topology.
+# k8s only: returns 0 when current_prod still names the release exported to
+# OUT_DIR/restore.json; 1 when a release was promoted since, which makes the
+# export stale (re-announcing it would revert the live topology); and 2 when
+# current_prod cannot be read, so nothing can be decided.
 bench_check_release() {
   local out="$1" exported live
   exported="$(python3 "$(bench_here)/cli_json.py" field release_id < "${out}/restore.json")"
-  live="$(bench_current_release)"
+  if ! live="$(bench_current_release)" || [ -z "${live}" ]; then
+    echo "bench: cannot read current_prod; the install may be unreachable" >&2
+    return 2
+  fi
   if [ "${live}" != "${exported}" ]; then
     echo "bench: current_prod is ${live}, but ${out}/restore.json holds ${exported}" >&2
     return 1
   fi
+}
+
+# True when scenario NAME is selected: BENCH_SCENARIOS lists the scenarios to
+# run, comma- or space-separated; empty or unset selects every scenario.
+bench_wanted() {
+  [ -z "${BENCH_SCENARIOS:-}" ] && return 0
+  case " $(printf '%s' "${BENCH_SCENARIOS}" | tr ',' ' ') " in
+    *" $1 "*) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 # True when HHMM (UTC) falls inside one of the quiet windows: the install's own
