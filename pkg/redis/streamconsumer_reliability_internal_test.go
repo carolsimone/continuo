@@ -55,6 +55,7 @@ func reliabilityConsumer(t *testing.T, handler MessageHandler, rec *recorder) (*
 		return nil
 	}
 	c.holdFn = func(_ context.Context, id string) { rec.record("hold:" + id) }
+	c.holdOneFn = func(_ context.Context, id string) { rec.record("hold-one:" + id) }
 	c.deliveriesFn = func(context.Context, string) int64 { rec.record("deliveries"); return rec.deliveries }
 	c.sleepFn = func(ctx context.Context, d time.Duration) bool {
 		rec.mu.Lock()
@@ -125,8 +126,8 @@ func TestAttempt_HoldsTheMessageBeforeTheInlineRetry(t *testing.T) {
 	c, _ := reliabilityConsumer(t, failingOnce(rec), rec)
 	_, err := c.attempt(context.Background(), msg("1-0"), readPathSchedule)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"handler:1", "hold:1-0", "handler:2"}, rec.calls,
-		"the inline retry runs on a freshly held message; the first attempt needs no hold")
+	assert.Equal(t, []string{"handler:1", "hold-one:1-0", "handler:2"}, rec.calls,
+		"only the retried message is held before the inline retry; the first attempt needs no hold")
 
 	rec = &recorder{}
 	c, _ = reliabilityConsumer(t, func(context.Context, goredis.XMessage) error { rec.record("handler"); return nil }, rec)
@@ -139,6 +140,24 @@ func TestAttempt_HoldsTheMessageBeforeTheInlineRetry(t *testing.T) {
 	_, err = c.attempt(context.Background(), msg("3-0"), reclaimSchedule)
 	require.Error(t, err)
 	assert.Equal(t, []string{"handler:1"}, rec.calls, "the reclaim path runs once, on the claim that just delivered it")
+}
+
+func TestProcessOne_PauseHoldsEveryPendingEntryAndTheRetryOnlyItsMessage(t *testing.T) {
+	rec := &recorder{}
+	calls := 0
+	c, _ := reliabilityConsumer(t, func(context.Context, goredis.XMessage) error {
+		calls++
+		switch calls {
+		case 1:
+			return infraRefused()
+		case 2:
+			return errors.New("transient")
+		}
+		return nil
+	}, rec)
+	c.processOne(context.Background(), msg("1-0"))
+	assert.Equal(t, []string{"hold:1-0", "hold-one:1-0", "ack:1-0"}, rec.calls,
+		"the pause holds every pending entry (hold); the inline retry holds only its message (hold-one)")
 }
 
 func TestStart_RefusesWithoutService(t *testing.T) {
@@ -236,7 +255,7 @@ func TestProcessOne_HandlerDeadlineCountsAsTransient(t *testing.T) {
 	c.processOne(context.Background(), msg("1-0"))
 	assert.Equal(t, readPathSchedule[1:], rec.sleeps, "a handler overrun never pauses the consumer, it is retried inline")
 	assert.Zero(t, strings.Count(logs.String(), logInfraPause))
-	assert.Equal(t, []string{"hold:1-0"}, rec.calls,
+	assert.Equal(t, []string{"hold-one:1-0"}, rec.calls,
 		"held once, before the inline retry; the read path leaves an overrun for the reclaim sweep: no dead letter, no ACK")
 }
 
@@ -524,6 +543,60 @@ func TestStreamConsumer_InlineRetry_PeerSweepDoesNotTakeMessage(t *testing.T) {
 	assert.Equal(t, 2, attempts)
 	assert.Zero(t, peerCalls.Load(), "the peer never took the message during its inline retry")
 	pending, err := rc.XPending(context.Background(), stream, group).Result()
+	require.NoError(t, err)
+	assert.Zero(t, pending.Count)
+	assert.Empty(t, deadLettersFor(t, rc, stream))
+}
+
+func TestStreamConsumer_InlineRetry_LeftPendingSiblingStillReachesTheSweep(t *testing.T) {
+	rc := internalRedisClient(t)
+	ctx := context.Background()
+	stream := fmt.Sprintf("test-inline-retry-sibling-%d", time.Now().UnixNano())
+	group := "test-group"
+	const gate = 600 * time.Millisecond
+	t.Cleanup(func() { rc.Del(ctx, stream) })
+	require.NoError(t, rc.XGroupCreateMkStream(ctx, stream, group, "0").Err())
+
+	// "left" fails both read-path attempts and succeeds once reclaimed; every
+	// "retried" message fails its first attempt and succeeds on the inline retry.
+	attempts := map[string]int{}
+	c := NewStreamConsumer(rc, stream, group, func(_ context.Context, m goredis.XMessage) error {
+		attempts[m.ID]++
+		if m.Values["k"] == "left" && attempts[m.ID] <= 2 {
+			return errors.New("transient")
+		}
+		if m.Values["k"] == "retried" && attempts[m.ID] == 1 {
+			return errors.New("transient")
+		}
+		return nil
+	}, discardLog(), WithReclaimMinIdle(gate))
+	c.SetService("pkg-redis-test")
+
+	left, err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, Values: map[string]any{"k": "left"}}).Result()
+	require.NoError(t, err)
+	require.NoError(t, c.readAndProcess(ctx))
+	require.Equal(t, 2, attempts[left], "left pending for the reclaim sweep after its inline retry")
+	leftSettled := time.Now()
+
+	// Other messages keep retrying inline, more often than the gate, for
+	// longer than the gate.
+	retries := 0
+	for time.Since(leftSettled) < gate+300*time.Millisecond {
+		require.NoError(t, rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, Values: map[string]any{"k": "retried"}}).Err())
+		require.NoError(t, c.readAndProcess(ctx))
+		retries++
+	}
+	require.Greater(t, retries, 3)
+
+	p, err := rc.XPendingExt(ctx, &goredis.XPendingExtArgs{Stream: stream, Group: group, Start: left, End: left, Count: 1}).Result()
+	require.NoError(t, err)
+	require.Len(t, p, 1)
+	assert.GreaterOrEqual(t, p[0].Idle, time.Since(leftSettled)-100*time.Millisecond,
+		"the left-pending message keeps aging while other messages retry inline")
+
+	require.NoError(t, c.reclaimPending(ctx))
+	assert.Equal(t, 3, attempts[left], "the reclaim sweep claims the left-pending message once it has been idle for the gate")
+	pending, err := rc.XPending(ctx, stream, group).Result()
 	require.NoError(t, err)
 	assert.Zero(t, pending.Count)
 	assert.Empty(t, deadLettersFor(t, rc, stream))

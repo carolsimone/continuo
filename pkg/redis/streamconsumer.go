@@ -114,6 +114,7 @@ type StreamConsumer struct {
 	// Seams over Redis and the clock; NewStreamConsumer wires the real ones.
 	deadLetterFn func(ctx context.Context, values map[string]any) error
 	holdFn       func(ctx context.Context, id string)
+	holdOneFn    func(ctx context.Context, id string)
 	deliveriesFn func(ctx context.Context, id string) int64
 	sleepFn      func(ctx context.Context, d time.Duration) bool
 	nowFn        func() time.Time
@@ -125,11 +126,12 @@ type ConsumerOption func(*StreamConsumer)
 // reclaimMargin is how far the derived reclaim gate (see reclaimGate) sits
 // above the handler timeout, so a peer's reclaim sweep does not take a message
 // during a single handler invocation. The read or claim that delivers a
-// message restarts its idle time, and so does the hold before an inline retry;
-// an invocation that starts there ends within the handler timeout, a margin
-// short of the gate. A message paused on an infrastructure error stays in
-// flight longer; every pauseSlice, pause holds it and everything else this
-// consumer has pending, so their idle times stay below the gate.
+// message restarts its idle time, and so does the hold of that message before
+// an inline retry (holdOne); an invocation that starts there ends within the
+// handler timeout, a margin short of the gate. A message paused on an
+// infrastructure error stays in flight longer; every pauseSlice, pause holds it
+// and everything else this consumer has pending, so their idle times stay
+// below the gate.
 const reclaimMargin = time.Minute
 
 // WithReclaimMinIdle sets the reclaim gate explicitly: the minimum idle time a
@@ -258,6 +260,7 @@ func NewStreamConsumer(
 	c.ackFn = c.ackOne
 	c.deadLetterFn = c.xaddDeadLetter
 	c.holdFn = c.hold
+	c.holdOneFn = c.holdOne
 	c.deliveriesFn = c.deliveryCount
 	c.sleepFn = func(ctx context.Context, d time.Duration) bool { return sleepCtx(ctx, d) == nil }
 	c.nowFn = time.Now
@@ -388,10 +391,10 @@ func (c *StreamConsumer) classify(err error, deadlineHit bool) ErrorClass {
 
 // attempt runs the handler once per schedule entry and stops at the first
 // success or the first error that is not transient. Before a delayed retry it
-// holds the message (see hold), so the retry starts with the message's idle
-// time restarted, as the first attempt does on the read or claim that
-// delivered it. When ctx ends it returns ctx's error and the caller leaves the
-// message pending.
+// holds that message alone (see holdOne), so the retry starts with the
+// message's idle time restarted, as the first attempt does on the read or
+// claim that delivered it. When ctx ends it returns ctx's error and the caller
+// leaves the message pending.
 func (c *StreamConsumer) attempt(ctx context.Context, msg goredis.XMessage, schedule []time.Duration) (ErrorClass, error) {
 	class, err := ClassTransient, error(nil)
 	for i, delay := range schedule {
@@ -399,7 +402,7 @@ func (c *StreamConsumer) attempt(ctx context.Context, msg goredis.XMessage, sche
 			if !c.sleepFn(ctx, delay) {
 				return ClassTransient, ctx.Err()
 			}
-			c.holdFn(ctx, msg.ID)
+			c.holdOneFn(ctx, msg.ID)
 			c.logger.Warn("Retrying transient handler error",
 				"stream", c.streamName, "message_id", msg.ID, "attempt", i+1, "previous_error", err)
 		}
@@ -482,22 +485,21 @@ func (c *StreamConsumer) pause(ctx context.Context, id string, d time.Duration) 
 	return true
 }
 
-// hold re-claims for this consumer, with XCLAIM … JUSTID, the message id it is
-// given and every other entry this consumer has pending (up to holdBatch).
-// JUSTID resets each entry's idle time without counting a delivery. It runs
-// before each inline retry of a transient error and every pauseSlice of an
-// infrastructure pause, so neither the retried or paused message nor the rest
-// of its read batch, worker lanes or reclaim page grows idle enough for a
-// peer's reclaim sweep to take it meanwhile. XCLAIM skips an id that is no
-// longer pending. It is best-effort: failures only shorten the protection, so
-// they are logged.
+// hold re-claims for this consumer, with XCLAIM … JUSTID, the paused message
+// id and every other entry this consumer has pending (up to holdBatch). JUSTID
+// resets each entry's idle time without counting a delivery, so while one
+// message pauses, neither it nor the rest of its read batch, worker lanes or
+// reclaim page grows idle enough for a peer's reclaim sweep to take it. This
+// consumer's own sweep runs between reads, never during a pause, so the hold
+// delays none of its own retries. XCLAIM skips an id that is no longer
+// pending. Failures only shorten the protection, so they are logged.
 func (c *StreamConsumer) hold(ctx context.Context, id string) {
 	ids := []string{id}
 	pending, err := c.client.XPendingExt(ctx, &goredis.XPendingExtArgs{
 		Stream: c.streamName, Group: c.consumerGroup, Consumer: c.consumerName, Start: "-", End: "+", Count: holdBatch,
 	}).Result()
 	if err != nil {
-		c.logger.Warn("Could not list this consumer's pending messages — holding only this message",
+		c.logger.Warn("Could not list this consumer's pending messages — holding only the paused one",
 			"stream", c.streamName, "message_id", id, "error", err)
 	}
 	for _, p := range pending {
@@ -511,6 +513,23 @@ func (c *StreamConsumer) hold(ctx context.Context, id string) {
 	if err != nil {
 		c.logger.Warn("Could not refresh the idle time of this consumer's pending messages",
 			"stream", c.streamName, "message_id", id, "count", len(ids), "error", err)
+	}
+}
+
+// holdOne re-claims the one message id for this consumer with XCLAIM … JUSTID,
+// restarting its idle time without counting a delivery. It runs before an
+// inline retry, so the retry starts on a freshly held message. It holds nothing
+// else: a message this consumer left pending after a transient failure keeps
+// aging, so it reaches the reclaim gate and is retried by the sweep however
+// often other messages retry inline. XCLAIM skips an id that is no longer
+// pending. A failure only shortens the protection, so it is logged.
+func (c *StreamConsumer) holdOne(ctx context.Context, id string) {
+	err := c.client.XClaimJustID(ctx, &goredis.XClaimArgs{
+		Stream: c.streamName, Group: c.consumerGroup, Consumer: c.consumerName, MinIdle: 0, Messages: []string{id},
+	}).Err()
+	if err != nil {
+		c.logger.Warn("Could not refresh the idle time of the message before its retry",
+			"stream", c.streamName, "message_id", id, "error", err)
 	}
 }
 
