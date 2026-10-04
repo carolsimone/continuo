@@ -5,6 +5,7 @@ import (
 	"go/parser"
 	"go/token"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -15,7 +16,9 @@ import (
 // refuses to start without a service name (it is the producer of every dead
 // letter the consumer writes), so a missing call would only surface when the
 // pod boots. Passing the config.ServiceName constant, rather than a literal,
-// keeps one spelling of the name per service.
+// keeps one spelling of the name per service. The services whose main.go runs
+// consumers must be exactly those that declare a ServiceName, so the guard
+// fails rather than passes when it stops recognising consumer wiring.
 func TestMainsThatRunConsumersNameTheirService(t *testing.T) {
 	root := repoRootFromTest(t)
 	mains, err := filepath.Glob(filepath.Join(root, "*", "main.go"))
@@ -27,14 +30,29 @@ func TestMainsThatRunConsumersNameTheirService(t *testing.T) {
 	}
 
 	fset := token.NewFileSet()
+	var running []string
 	for _, path := range mains {
 		f, err := parser.ParseFile(fset, path, nil, parser.AllErrors)
 		if err != nil {
 			t.Fatalf("parse %s: %v", path, err)
 		}
-		if runsConsumersWithoutServiceName(f) {
+		runsConsumers, namesService := consumerWiring(f)
+		if runsConsumers {
+			running = append(running, filepath.Base(filepath.Dir(path)))
+		}
+		if runsConsumers && !namesService {
 			t.Errorf("%s runs stream consumers but never calls SetService(config.ServiceName)", path)
 		}
+	}
+
+	var declaring []string
+	for rel := range goServiceNames(t, root) {
+		declaring = append(declaring, strings.Split(filepath.ToSlash(rel), "/")[0])
+	}
+	slices.Sort(running)
+	slices.Sort(declaring)
+	if !slices.Equal(running, declaring) {
+		t.Errorf("mains detected running stream consumers %v, want the services that declare a ServiceName %v", running, declaring)
 	}
 }
 
@@ -105,11 +123,18 @@ func importedName(f *ast.File, path string) string {
 // name the file imports pkg/redis as, without ever calling
 // SetService(config.ServiceName).
 func runsConsumersWithoutServiceName(f *ast.File) bool {
+	runsConsumers, namesService := consumerWiring(f)
+	return runsConsumers && !namesService
+}
+
+// consumerWiring reports whether the file refers to the pkg/redis
+// StreamConsumer by its type or its constructor, and whether it calls
+// SetService(config.ServiceName).
+func consumerWiring(f *ast.File) (runsConsumers, namesService bool) {
 	redisPkg := importedName(f, pkgRedisImportPath)
 	if redisPkg == "" || redisPkg == "_" {
-		return false
+		return false, false
 	}
-	runsConsumers, namesService := false, false
 	ast.Inspect(f, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.SelectorExpr:
@@ -130,5 +155,5 @@ func runsConsumersWithoutServiceName(f *ast.File) bool {
 		}
 		return true
 	})
-	return runsConsumers && !namesService
+	return runsConsumers, namesService
 }

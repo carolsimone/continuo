@@ -116,7 +116,11 @@ var streamLiteralScanDirs = []string{
 // TestNoStreamLiteralsInProductionGoFiles walks every production (non-test) Go
 // file under the binding/handler directories and asserts that no string literal
 // matches the versioned-stream regex. This is the repo-wide guard that catches
-// inlined names like "node.updated:v1" outside service main.go files.
+// inlined names like "node.updated:v1" outside service main.go files. The
+// regex matches a literal that is a stream name as a whole; a name inside a
+// longer literal, such as a log message, is not matched. A listed directory
+// that is missing or holds no production Go file fails the test, so a rename
+// cannot switch its coverage off.
 //
 // Test files (*_test.go) are out of scope: a contract test legitimately asserts
 // that a constant resolves to its exact wire value (e.g. that
@@ -129,10 +133,11 @@ func TestNoStreamLiteralsInProductionGoFiles(t *testing.T) {
 
 	for _, rel := range streamLiteralScanDirs {
 		dir := filepath.Join(root, rel)
-		if _, err := os.Stat(dir); os.IsNotExist(err) {
-			// Not every service has every directory; skip absent ones.
+		if _, err := os.Stat(dir); err != nil {
+			t.Errorf("scan dir %s: %v — a renamed or removed directory must be updated in streamLiteralScanDirs", rel, err)
 			continue
 		}
+		scanned := 0
 		walkErr := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 			if err != nil {
 				return err
@@ -147,6 +152,7 @@ func TestNoStreamLiteralsInProductionGoFiles(t *testing.T) {
 			if perr != nil {
 				t.Fatalf("parse %s: %v", path, perr)
 			}
+			scanned++
 			ast.Inspect(f, func(n ast.Node) bool {
 				bl, ok := n.(*ast.BasicLit)
 				if !ok || bl.Kind != token.STRING {
@@ -163,6 +169,9 @@ func TestNoStreamLiteralsInProductionGoFiles(t *testing.T) {
 		})
 		if walkErr != nil {
 			t.Fatalf("walk %s: %v", dir, walkErr)
+		}
+		if scanned == 0 {
+			t.Errorf("scan dir %s holds no production Go file, so the guard checks nothing there", rel)
 		}
 	}
 }

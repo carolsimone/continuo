@@ -1,4 +1,6 @@
-"""Failure markers the application layer raises and the transport adapters read."""
+"""Marks a message no redelivery can process. The release.requested binding
+raises it for a malformed message; the consumer's error classifier reads it and
+dead-letters the message at once."""
 
 
 class PermanentMessageError(ValueError):
