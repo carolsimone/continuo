@@ -40,10 +40,19 @@ import (
 // DAG or release, which they write to Neo4j in one handler.
 const topologyHandlerTimeout = 5 * time.Minute
 
+// outboxTable is the outbox table the relay publishes from; its insert
+// trigger notifies the channel of the same name.
+const outboxTable = "orchestrator_outbox"
+
+// outboxFallbackTick is how often the outbox relay polls without a
+// notification: it publishes rows whose retry came due and recovers a
+// notification lost while the listener reconnected.
+const outboxFallbackTick = 5 * time.Second
+
 // outboxHeartbeatStale is the liveness budget for the outbox processor's Run
-// loop. The poll tick is 1s, so 60s is comfortably above it: a wedged (not
-// exited) processor trips within a minute, while an idle-but-live one never
-// does.
+// loop. An idle loop turns at least once per outboxFallbackTick (5s), so 60s
+// is comfortably above it: a wedged (not exited) processor trips within a
+// minute, while an idle-but-live one never does.
 const outboxHeartbeatStale = 60 * time.Second
 
 // dbPool bounds the Postgres pool when DB_MAX_OPEN_CONNS / DB_MAX_IDLE_CONNS
@@ -233,14 +242,21 @@ func main() {
 	// INITIALIZE OUTBOX PROCESSOR
 	// ========================================================================
 
+	// The relay wakes on the notification a committed insert sends.
+	outboxWaker, err := pkgoutbox.NewPostgresWaker(cfg.Postgres.DSN(), outboxTable, logger)
+	if err != nil {
+		logger.Error("Failed to listen for outbox notifications", "error", err)
+		os.Exit(1)
+	}
+	lifecycleManager.RegisterShutdownHandler(func(context.Context) error { return outboxWaker.Close() })
 	outboxPub := orchpublisher.NewOutboxPublisher(redisClient, logger)
 	outboxProc := pkgoutbox.NewProcessor(
 		pgDB,
-		"orchestrator_outbox",
+		outboxTable,
 		outboxPub,
 		nil, // no terminal-failure hook for orchestrator
 		logger,
-		pkgoutbox.ProcessorConfig{Tick: time.Second, BatchSize: 100},
+		pkgoutbox.ProcessorConfig{Tick: outboxFallbackTick, BatchSize: 100, Waker: outboxWaker},
 	)
 	liveReg.RegisterWorker("outbox_processor")
 	liveReg.AddWorkerProbe("outbox_processor_heartbeat", 10*time.Second, func(context.Context) error {
@@ -266,10 +282,10 @@ func main() {
 	// latter retains a full payload per consumed message). Both are pruned past
 	// the retention window on the same timer using DB-clock cutoffs.
 
-	mpPruner := pkgmessageprocessing.NewPruner(pgDB, "orchestrator_outbox", logger)
+	mpPruner := pkgmessageprocessing.NewPruner(pgDB, outboxTable, logger)
 	retentionSweeper := pkgoutbox.NewRetentionSweeper(
 		[]pkgoutbox.RetentionTarget{
-			pkgoutbox.OutboxRetentionTarget(pgDB, "orchestrator_outbox", logger),
+			pkgoutbox.OutboxRetentionTarget(pgDB, outboxTable, logger),
 			{
 				Name:  "message_processing",
 				Prune: mpPruner.DeleteTerminalOlderThan,

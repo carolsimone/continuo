@@ -37,6 +37,7 @@ import (
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	pkgdb "github.com/carolsimone/continuo/pkg/db"
 	"github.com/carolsimone/continuo/pkg/liveness"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 )
 
@@ -266,9 +267,18 @@ func main() {
 		SQLDialect:        cfg.SQLDialect,
 	}
 
+	// The outbox relay wakes on the notification a committed insert into its
+	// table sends.
+	outboxWaker, err := pkgoutbox.NewPostgresWaker(cfg.Postgres.DSN(), rredis.OutboxTable, logger)
+	if err != nil {
+		logger.Error("Failed to listen for outbox notifications", "error", err)
+		os.Exit(1)
+	}
+	defer func() { _ = outboxWaker.Close() }()
+
 	// Start the outbox publisher; spawns its own goroutine internally and runs
 	// until ctx is cancelled.
-	rredis.StartOutboxPublisher(ctx, db, rc, liveReg, logger)
+	rredis.StartOutboxPublisher(ctx, db, rc, outboxWaker, liveReg, logger)
 
 	// Start the remediation.requested consumer in a goroutine; blocks until ctx
 	// is cancelled.

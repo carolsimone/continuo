@@ -44,10 +44,14 @@ const consumerHandlerTimeout = 60 * time.Second
 // sit above that wait.
 const schemaOpHandlerTimeout = k8s.SchemaOpJobTimeout + time.Minute
 
-// outboxTick is the outbox processor cadence. Check tickets and terminal
-// announcements flow through this outbox, so the tick bounds the latency of
-// every status transition.
-const outboxTick = time.Second
+// outboxTable is the outbox table the relay publishes from; its insert
+// trigger notifies the channel of the same name.
+const outboxTable = "execution_outbox"
+
+// outboxFallbackTick is how often the outbox relay polls without a
+// notification: it publishes rows whose retry came due and recovers a
+// notification lost while the listener reconnected.
+const outboxFallbackTick = 5 * time.Second
 
 // dbPool bounds the Postgres pool when DB_MAX_OPEN_CONNS / DB_MAX_IDLE_CONNS
 // are unset: two connections per stream consumer (a handler's transaction and
@@ -226,8 +230,17 @@ func main() {
 
 	// ---- background workers ----
 
-	outboxProcessor := pkgoutbox.NewProcessor(pgDB, "execution_outbox", publisher.NewOutboxPublisher(redisClient, logger), nil, logger,
-		pkgoutbox.ProcessorConfig{Tick: outboxTick, BatchSize: 100})
+	// Check tickets and terminal announcements flow through this outbox; the
+	// relay wakes on the notification a committed insert sends, so a status
+	// transition reaches its stream without waiting for a poll.
+	outboxWaker, err := pkgoutbox.NewPostgresWaker(cfg.Postgres.DSN(), outboxTable, logger)
+	if err != nil {
+		logger.Error("Failed to listen for outbox notifications", "error", err)
+		os.Exit(1)
+	}
+	lifecycleManager.RegisterShutdownHandler(func(context.Context) error { return outboxWaker.Close() })
+	outboxProcessor := pkgoutbox.NewProcessor(pgDB, outboxTable, publisher.NewOutboxPublisher(redisClient, logger), nil, logger,
+		pkgoutbox.ProcessorConfig{Tick: outboxFallbackTick, BatchSize: 100, Waker: outboxWaker})
 	runWorker("outbox_processor", outboxProcessor.Run)
 
 	deployDispatcher := deployer.NewDispatcher(

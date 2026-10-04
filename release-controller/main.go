@@ -18,6 +18,7 @@ import (
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	pkgdb "github.com/carolsimone/continuo/pkg/db"
 	"github.com/carolsimone/continuo/pkg/liveness"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	rcgrpc "github.com/carolsimone/continuo/release-controller/adapters/grpc"
 	httpinfra "github.com/carolsimone/continuo/release-controller/adapters/http"
@@ -174,9 +175,18 @@ func main() {
 		return rc.Ping(ctx).Err()
 	})
 
+	// The outbox relay wakes on the notification a committed insert into its
+	// table sends.
+	outboxWaker, err := pkgoutbox.NewPostgresWaker(cfg.Postgres.DSN(), redisadapter.OutboxTable, logger)
+	if err != nil {
+		logger.Error("Failed to listen for outbox notifications", "error", err)
+		os.Exit(1)
+	}
+	defer func() { _ = outboxWaker.Close() }()
+
 	// Start outbox publisher — spawns its own goroutine internally and runs until
 	// ctx is cancelled.
-	redisadapter.StartOutboxPublisher(ctx, db, rc, liveReg, logger)
+	redisadapter.StartOutboxPublisher(ctx, db, rc, outboxWaker, liveReg, logger)
 
 	// Start stream consumers in goroutines; each blocks until ctx is cancelled.
 	runConsumer("manifest_loaded_candidate", redisadapter.NewManifestLoadedCandidateConsumer(rc, deps, logger))

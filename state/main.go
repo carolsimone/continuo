@@ -30,10 +30,19 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
+// outboxTable is the outbox table the relay publishes from; its insert
+// trigger notifies the channel of the same name.
+const outboxTable = "state_outbox"
+
+// outboxFallbackTick is how often the outbox relay polls without a
+// notification: it publishes rows whose retry came due and recovers a
+// notification lost while the listener reconnected.
+const outboxFallbackTick = 5 * time.Second
+
 // outboxHeartbeatStale is the liveness budget for the outbox processor's Run
-// loop. The poll tick is 500ms, so 60s is comfortably above it: a wedged (not
-// exited) processor trips within a minute, while an idle-but-live one never
-// does.
+// loop. An idle loop turns at least once per outboxFallbackTick (5s), so 60s
+// is comfortably above it: a wedged (not exited) processor trips within a
+// minute, while an idle-but-live one never does.
 const outboxHeartbeatStale = 60 * time.Second
 
 // dbPool bounds the Postgres pool when DB_MAX_OPEN_CONNS / DB_MAX_IDLE_CONNS
@@ -164,15 +173,22 @@ func main() {
 
 	// Start outbox processor backed by pkg/outbox. The publisher XADDs each
 	// entry's JSONB payload to its stream. Nested non-scalar fields are
-	// re-encoded to JSON strings so Redis receives only plain scalars.
+	// re-encoded to JSON strings so Redis receives only plain scalars. The
+	// relay wakes on the notification a committed insert sends.
+	outboxWaker, err := pkgoutbox.NewPostgresWaker(cfg.Postgres.DSN(), outboxTable, logger)
+	if err != nil {
+		logger.Error("Failed to listen for outbox notifications", "error", err)
+		os.Exit(1)
+	}
+	lifecycleManager.RegisterShutdownHandler(func(context.Context) error { return outboxWaker.Close() })
 	outboxPub := statepublisher.NewOutboxPublisher(redisClient, logger)
 	outboxProc := pkgoutbox.NewProcessor(
 		db,
-		"state_outbox",
+		outboxTable,
 		outboxPub,
 		nil, // no terminal-failure hook for state
 		logger,
-		pkgoutbox.ProcessorConfig{Tick: 500 * time.Millisecond, BatchSize: 100},
+		pkgoutbox.ProcessorConfig{Tick: outboxFallbackTick, BatchSize: 100, Waker: outboxWaker},
 	)
 	liveReg.RegisterWorker("outbox_processor")
 	liveReg.AddWorkerProbe("outbox_processor_heartbeat", 10*time.Second, func(context.Context) error {
@@ -193,10 +209,10 @@ func main() {
 	// processed state_outbox rows and terminal message_processing dedup rows
 	// (the latter retains a full payload per consumed message). Both are pruned
 	// past the retention window on the same timer using DB-clock cutoffs.
-	mpPruner := pkgmessageprocessing.NewPruner(db, "state_outbox", logger)
+	mpPruner := pkgmessageprocessing.NewPruner(db, outboxTable, logger)
 	retentionSweeper := pkgoutbox.NewRetentionSweeper(
 		[]pkgoutbox.RetentionTarget{
-			pkgoutbox.OutboxRetentionTarget(db, "state_outbox", logger),
+			pkgoutbox.OutboxRetentionTarget(db, outboxTable, logger),
 			{
 				Name:  "message_processing",
 				Prune: mpPruner.DeleteTerminalOlderThan,

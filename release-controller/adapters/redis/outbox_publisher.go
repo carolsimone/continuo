@@ -61,29 +61,40 @@ func (p *releaseOutboxPublisher) Publish(ctx context.Context, entry *pkgoutbox.E
 	return nil
 }
 
+// OutboxTable is the outbox table StartOutboxPublisher relays; its insert
+// trigger notifies the channel of the same name.
+const OutboxTable = "release_controller_outbox"
+
+// outboxFallbackTick is how often the outbox relay polls without a
+// notification: it publishes rows whose retry came due and recovers a
+// notification lost while the listener reconnected.
+const outboxFallbackTick = 5 * time.Second
+
 // outboxHeartbeatStale is the liveness budget for the outbox processor's Run
-// loop. The poll tick is 1s, so 60s is comfortably above it: a wedged (not
-// exited) processor trips within a minute, while an idle-but-live one never
-// does.
+// loop. An idle loop turns at least once per outboxFallbackTick (5s), so 60s
+// is comfortably above it: a wedged (not exited) processor trips within a
+// minute, while an idle-but-live one never does.
 const outboxHeartbeatStale = 60 * time.Second
 
-// StartOutboxPublisher constructs a pkgoutbox.Processor backed by
-// release_controller_outbox and starts its poll loop in a goroutine. The loop
-// runs until ctx is cancelled. It is registered with liveReg both as a worker
+// StartOutboxPublisher constructs a pkgoutbox.Processor backed by OutboxTable,
+// starts its relay loop in a goroutine and returns the processor. The loop
+// drains the table on each signal from waker and every outboxFallbackTick,
+// until ctx is cancelled. It is registered with liveReg both as a worker
 // (RegisterWorker/WorkerExited detects a full goroutine EXIT) and with a
-// heartbeat probe (processor.Healthy detects a wedged-but-not-exited loop) — the
-// outbox analogue of a consumer's liveness backstop.
-func StartOutboxPublisher(ctx context.Context, db *sqlx.DB, rc *goredis.Client, liveReg *liveness.Registry, logger *slog.Logger) {
+// heartbeat probe (processor.Healthy detects a wedged-but-not-exited loop) —
+// the outbox analogue of a consumer's liveness backstop.
+func StartOutboxPublisher(ctx context.Context, db *sqlx.DB, rc *goredis.Client, waker pkgoutbox.Waker, liveReg *liveness.Registry, logger *slog.Logger) *pkgoutbox.Processor {
 	publisher := &releaseOutboxPublisher{redis: rc, logger: logger}
 	processor := pkgoutbox.NewProcessor(
 		db,
-		"release_controller_outbox",
+		OutboxTable,
 		publisher,
 		nil, // no terminal-failure hook needed for simple event publishing
 		logger,
 		pkgoutbox.ProcessorConfig{
-			Tick:      0, // default 1s poll interval
+			Tick:      outboxFallbackTick,
 			BatchSize: 64,
+			Waker:     waker,
 		},
 	)
 	liveReg.RegisterWorker("outbox_publisher")
@@ -105,4 +116,5 @@ func StartOutboxPublisher(ctx context.Context, db *sqlx.DB, rc *goredis.Client, 
 			logger.Error("outbox publisher stopped unexpectedly", "error", err)
 		}
 	}()
+	return processor
 }

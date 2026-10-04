@@ -48,8 +48,11 @@ type TerminalFailureHook func(ctx context.Context, entry *Entry, cause error) er
 
 // ProcessorConfig groups the optional knobs.
 type ProcessorConfig struct {
-	Tick      time.Duration // poll interval; default 1s
-	BatchSize int           // max rows per batch; default 100
+	// Tick is the poll interval; default 1s. With a Waker it is the fallback
+	// poll that publishes rows whose retry came due and rows whose
+	// notification was lost while the listener reconnected.
+	Tick      time.Duration
+	BatchSize int // max rows per batch; default 100
 	// RetryBaseDelay is the first-retry delay for a transient failure; each
 	// subsequent retry doubles it up to RetryMaxDelay. Default 1s — small so a
 	// brief blip recovers within about a poll tick (a scheduled row withholds
@@ -59,12 +62,17 @@ type ProcessorConfig struct {
 	// RetryMaxDelay caps the per-retry backoff so an outage retries at a steady
 	// interval rather than growing unbounded. Default 5m.
 	RetryMaxDelay time.Duration
+	// Waker wakes the relay when rows are committed; Tick is then the fallback
+	// poll for retries coming due and notifications lost during a reconnect.
+	// Without a Waker the relay drains only on Tick.
+	Waker Waker
 }
 
 // Processor relays the rows of one outbox table to their streams. Every table
 // publishes the rows of one aggregate (aggregate_type, aggregate_id) in creation
-// order. Each poll tick drains the table batch by batch, and each batch runs in
-// one transaction:
+// order. Run drains the table when it starts, on each signal from the Waker
+// (rows were committed), and on each Tick (the fallback poll). A drain runs
+// batch after batch, and each batch runs in one transaction:
 //  1. GetPendingBatch claims up to BatchSize due rows in created_at order with
 //     FOR UPDATE SKIP LOCKED, leaving out rows queued behind an older row of
 //     their aggregate that waits out a retry. A second query in the same
@@ -98,10 +106,12 @@ type Processor struct {
 	batchSize         int
 	retryBase         time.Duration
 	retryMax          time.Duration
+	waker             Waker
 
 	// lastActivity is the unix-nano timestamp of the most recent unit of Run
-	// progress (a poll tick, and each drained batch), stored via atomic.Int64 so
-	// Healthy can be polled from a health-probe goroutine without racing Run.
+	// progress (each turn of the loop, and each drained batch), stored via
+	// atomic.Int64 so Healthy can be polled from a health-probe goroutine
+	// without racing Run.
 	// It backs the liveness heartbeat that catches a wedged-but-not-exited
 	// processor — the outbox analogue of StreamConsumer's heartbeat — which
 	// RegisterWorker/WorkerExited alone (goroutine-exit only) cannot see.
@@ -142,6 +152,7 @@ func NewProcessor(
 		batchSize:         batchSize,
 		retryBase:         retryBase,
 		retryMax:          retryMax,
+		waker:             cfg.Waker,
 	}
 	// Seed the heartbeat at construction so a probe firing before Run is
 	// scheduled sees "just started," not "stalled since the epoch."
@@ -149,13 +160,23 @@ func NewProcessor(
 	return p
 }
 
+// Run relays rows until ctx is cancelled. It drains once at start, for rows
+// committed while no relay was listening, then on every wake and every tick.
+// A wake that arrives during a drain stays pending and starts the next drain.
 func (p *Processor) Run(ctx context.Context) error {
 	ticker := time.NewTicker(p.tick)
 	defer ticker.Stop()
-	p.logger.Info("Starting outbox processor", "table", p.tableName, "tick", p.tick)
+	// A nil channel never fires: without a waker only the ticker drains.
+	var wake <-chan struct{}
+	if p.waker != nil {
+		wake = p.waker.Wake()
+	}
+	p.logger.Info("Starting outbox processor", "table", p.tableName, "tick", p.tick, "notify", p.waker != nil)
+	p.drain(ctx)
 	for {
-		// Advance the heartbeat once per poll tick, so an idle-but-live loop
-		// stays healthy; drain advances it again per batch under load.
+		// Advance the heartbeat on every turn of the loop, so an idle-but-live
+		// loop stays healthy at least once per tick; drain advances it again
+		// per batch under load.
 		p.lastActivity.Store(time.Now().UnixNano())
 		select {
 		case <-ctx.Done():
@@ -163,16 +184,19 @@ func (p *Processor) Run(ctx context.Context) error {
 			return ctx.Err()
 		case <-ticker.C:
 			p.drain(ctx)
+		case <-wake:
+			p.drain(ctx)
 		}
 	}
 }
 
 // Healthy reports whether Run has made progress within maxStale. It returns nil
-// while the loop is ticking (idle or draining); a non-nil error means the Run
+// while the loop is turning (idle or draining); a non-nil error means the Run
 // goroutine has stopped making progress — wedged in a call that never returns,
 // the outbox analogue of a dead consumer. Wire it into a liveness probe (see
 // pkg/liveness AddWorkerProbe). maxStale MUST be comfortably above the poll
-// tick so an idle processor is never flagged.
+// tick, the longest an idle loop goes between turns, so an idle processor is
+// never flagged.
 func (p *Processor) Healthy(maxStale time.Duration) error {
 	lastAt := time.Unix(0, p.lastActivity.Load())
 	if age := time.Since(lastAt); age > maxStale {
@@ -201,7 +225,7 @@ func (p *Processor) drain(ctx context.Context) {
 	for {
 		// Advance the heartbeat per batch so a large multi-batch drain (which
 		// can run well beyond one tick) keeps liveness fresh instead of
-		// freezing it at the tick timestamp for the whole drain.
+		// freezing it at the loop's last turn for the whole drain.
 		p.lastActivity.Store(time.Now().UnixNano())
 		published, err := p.processBatchOnce(ctx)
 		if err != nil {
@@ -283,9 +307,9 @@ func (p *Processor) processBatchOnce(ctx context.Context) (int, error) {
 		}
 		if err := p.terminate(ctx, repo, entry, kind, pubErr); err != nil {
 			// A terminal write failed (dead-letter INSERT or MarkFailed). Abort
-			// the whole batch so it rolls back and retries next tick, rather than
-			// committing a row marked failed with no dead-letter — the mandatory
-			// signal must never be silently dropped.
+			// the whole batch so it rolls back and retries on the next drain,
+			// rather than committing a row marked failed with no dead-letter —
+			// the mandatory signal must never be silently dropped.
 			return 0, fmt.Errorf("terminate entry %s: %w", entry.ID, err)
 		}
 	}
