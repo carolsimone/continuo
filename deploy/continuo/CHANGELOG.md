@@ -30,7 +30,7 @@ Stream consumers dead-letter the messages they cannot process and pause while a 
 - stream-reaper no longer trims `outbox.dead_letter:v1` or `consumer.dead_letter:v1`: no consumer stores their entries elsewhere, so the streams hold the only copy of every dead letter. `consumer.dead_letter:v1` is written without a length cap and grows until an operator removes entries; `outbox.dead_letter:v1` keeps the roughly 10,000-entry cap its publishers apply when they append.
 
 ### Removed
-- `DB_POOL_SIZE` and `DB_MAX_OVERFLOW` from state's default `env`. State's own defaults equal the values they set (20 open, 10 idle). An overridden `services` list that still sets them keeps working: state ignores them; use `DB_MAX_OPEN_CONNS` / `DB_MAX_IDLE_CONNS` instead.
+- `DB_POOL_SIZE` and `DB_MAX_OVERFLOW` from state's default `env`. State's own defaults equal the values they set (20 open, 10 idle). An overridden `services` list that still sets them keeps working: state ignores them and logs a warning at startup naming `DB_MAX_OPEN_CONNS` / `DB_MAX_IDLE_CONNS`, the keys it reads; use those instead.
 
 ### Fixed
 - orchestrator, release-controller and remediation honour `externalDatabase.sslMode` (`DB_SSLMODE`); they always connected with `sslmode=disable`.

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"time"
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
@@ -37,6 +38,11 @@ type Config struct {
 
 	// ShutdownGrace bounds the graceful-shutdown drain + infra teardown.
 	ShutdownGrace time.Duration
+
+	// IgnoredPoolKeys names DB_POOL_SIZE and DB_MAX_OVERFLOW when they are set.
+	// state does not read them: its pool limits come from DB_MAX_OPEN_CONNS
+	// and DB_MAX_IDLE_CONNS.
+	IgnoredPoolKeys []string
 }
 
 // Load reads configuration from environment variables.
@@ -54,7 +60,20 @@ func Load(v *pkgconfig.Validator) Config {
 		RetentionSweepIntervalMin: envInt("RETENTION_SWEEP_INTERVAL_MINUTES", 60),
 
 		ShutdownGrace: pkgconfig.EnvDurationOrDefault("SHUTDOWN_GRACE", defaultShutdownGrace),
+
+		IgnoredPoolKeys: setKeys("DB_POOL_SIZE", "DB_MAX_OVERFLOW"),
 	}
+}
+
+// setKeys returns the keys among keys that are set to a non-empty value.
+func setKeys(keys ...string) []string {
+	var set []string
+	for _, key := range keys {
+		if os.Getenv(key) != "" {
+			set = append(set, key)
+		}
+	}
+	return set
 }
 
 func env(key, fallback string) string     { return pkgconfig.EnvOrDefault(key, fallback) }

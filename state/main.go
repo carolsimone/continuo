@@ -56,6 +56,10 @@ func main() {
 	}
 
 	logger.Info("Starting state service")
+	if len(cfg.IgnoredPoolKeys) > 0 {
+		logger.Warn("Ignoring Postgres pool settings state does not read; set DB_MAX_OPEN_CONNS and DB_MAX_IDLE_CONNS instead",
+			"ignored", strings.Join(cfg.IgnoredPoolKeys, ", "))
+	}
 
 	// Create context with cancellation
 	ctx, cancel := context.WithCancel(context.Background())
