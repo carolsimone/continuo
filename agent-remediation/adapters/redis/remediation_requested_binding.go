@@ -61,7 +61,7 @@ func NewRemediationRequestedConsumer(rc *goredis.Client, deps handlers.Deps, log
 		rc,
 		streams.RemediationRequestedV2,
 		streams.AgentRemediationRemediationRequested,
-		newRemediationRequestedHandler(deps, logger),
+		newRemediationRequestedHandler(deps),
 		logger,
 		pkgredis.WithOnDrop(failInFlightOnDrop(logger, func(ctx context.Context, releaseID, reason string) (int, error) {
 			ctx, cancel := context.WithTimeout(ctx, failInFlightTimeout)
@@ -77,7 +77,7 @@ func NewRemediationRequestedConsumer(rc *goredis.Client, deps handlers.Deps, log
 // failure: the handler returns events.ErrPermanent, so the consumer
 // dead-letters it. Any error from handlers.ProposeFix is returned as is, so
 // the consumer redelivers it.
-func newRemediationRequestedHandler(deps handlers.Deps, logger *slog.Logger) pkgredis.MessageHandler {
+func newRemediationRequestedHandler(deps handlers.Deps) pkgredis.MessageHandler {
 	return func(ctx context.Context, msg goredis.XMessage) error {
 		raw, ok := msg.Values["payload"].(string)
 		if !ok {

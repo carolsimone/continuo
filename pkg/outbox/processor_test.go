@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -331,7 +332,7 @@ func TestProcessor_PermanentErrorDeadLettersImmediately(t *testing.T) {
 	require.NoError(t, db.QueryRow(
 		`SELECT payload->>'failure_kind' FROM orchestrator_outbox WHERE event_type=$1`, outbox.DeadLetterEventType,
 	).Scan(&kind))
-	assert.Equal(t, outbox.FailureKindPermanent, kind)
+	assert.Equal(t, string(model.DeadLetterKindPermanent), kind)
 }
 
 // Transient budget exhaustion: after MaxRetries, terminal with a
@@ -352,7 +353,7 @@ func TestProcessor_TransientExhaustionDeadLetters(t *testing.T) {
 	require.NoError(t, db.QueryRow(
 		`SELECT payload->>'failure_kind' FROM orchestrator_outbox WHERE event_type=$1`, outbox.DeadLetterEventType,
 	).Scan(&kind))
-	assert.Equal(t, outbox.FailureKindTransientExhausted, kind)
+	assert.Equal(t, string(model.DeadLetterKindTransientExhausted), kind)
 }
 
 // Loop guard: a dead-letter row that itself fails to publish must NOT spawn a

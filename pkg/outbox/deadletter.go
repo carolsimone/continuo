@@ -17,24 +17,18 @@ const (
 	DeadLetterAggregateType = "outbox_dead_letter"
 )
 
-// Failure kinds recorded on a terminal row's dead-letter: the dead_letter_kind
-// vocabulary of the stream contract.
-const (
-	FailureKindPermanent          = string(model.DeadLetterKindPermanent)
-	FailureKindTransientExhausted = string(model.DeadLetterKindTransientExhausted)
-)
-
 // DeadLetterPayload is the JSON body published to streams.OutboxDeadLetterV1 and
 // stored in the dead-letter outbox row. Every field is a scalar so it maps
-// directly to Redis stream fields.
+// directly to Redis stream fields. FailureKind is a value of the contract's
+// dead_letter_kind vocabulary: permanent, or transient_exhausted.
 type DeadLetterPayload struct {
-	OriginalEventType   string `json:"original_event_type"`
-	OriginalStream      string `json:"original_stream"`
-	OriginalAggregateID string `json:"original_aggregate_id"`
-	FailureKind         string `json:"failure_kind"`
-	Error               string `json:"error"`
-	Attempts            int    `json:"attempts"`
-	FailedOutboxID      string `json:"failed_outbox_id"`
+	OriginalEventType   string               `json:"original_event_type"`
+	OriginalStream      string               `json:"original_stream"`
+	OriginalAggregateID string               `json:"original_aggregate_id"`
+	FailureKind         model.DeadLetterKind `json:"failure_kind"`
+	Error               string               `json:"error"`
+	Attempts            int                  `json:"attempts"`
+	FailedOutboxID      string               `json:"failed_outbox_id"`
 }
 
 // buildDeadLetterEntry constructs the outbox row that signals a terminal failure
@@ -42,7 +36,7 @@ type DeadLetterPayload struct {
 // failed, so the signal is durable and publishes via the normal machinery —
 // immediately if Redis is up, or once it heals. The row is transient-classified
 // (a plain XADD); the loop guard (aggregate_type sentinel) prevents recursion.
-func buildDeadLetterEntry(failed *Entry, kind string, cause error, attempts int) *Entry {
+func buildDeadLetterEntry(failed *Entry, kind model.DeadLetterKind, cause error, attempts int) *Entry {
 	payload := DeadLetterPayload{
 		OriginalEventType:   failed.EventType,
 		OriginalStream:      failed.StreamName,

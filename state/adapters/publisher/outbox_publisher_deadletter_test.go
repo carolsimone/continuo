@@ -2,11 +2,13 @@ package publisher
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"os"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
@@ -32,6 +34,14 @@ func newTestLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 }
 
+// deadLetterPayload renders the payload of a dead-letter outbox row.
+func deadLetterPayload(t *testing.T, kind model.DeadLetterKind, originalEventType string) []byte {
+	t.Helper()
+	body, err := json.Marshal(outbox.DeadLetterPayload{FailureKind: kind, OriginalEventType: originalEventType})
+	require.NoError(t, err)
+	return body
+}
+
 // TestOutboxPublisher_PublishesDeadLetterRow asserts a DeadLetterEventType row
 // publishes generically to entry.StreamName via outbox.DeadLetterValues, with
 // its scalar fields (e.g. failure_kind) expanded onto the stream entry.
@@ -46,14 +56,14 @@ func TestOutboxPublisher_PublishesDeadLetterRow(t *testing.T) {
 		AggregateID:   uuid.New(),
 		EventType:     outbox.DeadLetterEventType,
 		StreamName:    streams.OutboxDeadLetterV1,
-		Payload:       []byte(`{"failure_kind":"permanent","original_event_type":"compile_requested"}`),
+		Payload:       deadLetterPayload(t, model.DeadLetterKindPermanent, "compile_requested"),
 	}
 	require.NoError(t, p.Publish(context.Background(), entry))
 
 	res, err := rdb.XRange(context.Background(), streams.OutboxDeadLetterV1, "-", "+").Result()
 	require.NoError(t, err)
 	require.Len(t, res, 1)
-	require.Equal(t, "permanent", res[0].Values["failure_kind"])
+	require.Equal(t, string(model.DeadLetterKindPermanent), res[0].Values["failure_kind"])
 	require.Equal(t, entry.ID.String(), res[0].Values["outbox_entry_id"])
 }
 
@@ -79,7 +89,7 @@ func TestOutboxPublisher_PublishBatch_PublishesDeadLetterRow(t *testing.T) {
 		AggregateID:   uuid.New(),
 		EventType:     outbox.DeadLetterEventType,
 		StreamName:    streams.OutboxDeadLetterV1,
-		Payload:       []byte(`{"failure_kind":"transient_exhausted","original_event_type":"node_updated"}`),
+		Payload:       deadLetterPayload(t, model.DeadLetterKindTransientExhausted, "node_updated"),
 	}
 
 	errs := p.PublishBatch(context.Background(), []*outbox.Entry{normal, deadLetter})
@@ -90,6 +100,6 @@ func TestOutboxPublisher_PublishBatch_PublishesDeadLetterRow(t *testing.T) {
 	res, err := rdb.XRange(context.Background(), streams.OutboxDeadLetterV1, "-", "+").Result()
 	require.NoError(t, err)
 	require.Len(t, res, 1)
-	require.Equal(t, "transient_exhausted", res[0].Values["failure_kind"])
+	require.Equal(t, string(model.DeadLetterKindTransientExhausted), res[0].Values["failure_kind"])
 	require.Equal(t, deadLetter.ID.String(), res[0].Values["outbox_entry_id"])
 }

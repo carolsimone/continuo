@@ -2,11 +2,13 @@ package publisher_test
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"os"
 	"testing"
 
 	"github.com/carolsimone/continuo/execution-controller/adapters/publisher"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
@@ -22,6 +24,8 @@ func TestPublisher_PublishesDeadLetterRow(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	r := newRedis(t)
 	pub := publisher.NewOutboxPublisher(r, logger)
+	payload, err := json.Marshal(outbox.DeadLetterPayload{FailureKind: model.DeadLetterKindPermanent, OriginalEventType: "check_delayed"})
+	require.NoError(t, err)
 
 	entry := &outbox.Entry{
 		ID:            uuid.New(),
@@ -29,11 +33,11 @@ func TestPublisher_PublishesDeadLetterRow(t *testing.T) {
 		AggregateID:   uuid.New(),
 		EventType:     outbox.DeadLetterEventType,
 		StreamName:    streams.OutboxDeadLetterV1,
-		Payload:       []byte(`{"failure_kind":"permanent","original_event_type":"check_delayed"}`),
+		Payload:       payload,
 	}
 	require.NoError(t, pub.Publish(context.Background(), entry))
 
 	v := lastEntryFields(t, r, streams.OutboxDeadLetterV1)
-	assert.Equal(t, "permanent", v["failure_kind"])
+	assert.Equal(t, string(model.DeadLetterKindPermanent), v["failure_kind"])
 	assert.Equal(t, entry.ID.String(), v["outbox_entry_id"])
 }

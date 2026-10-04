@@ -225,7 +225,7 @@ func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 // handler serves both consumers. The consumer group is created idempotently
 // by StreamConsumer.Start; call Start(ctx) in a goroutine to begin consuming.
 func classifyRejectionMessages(rc *goredis.Client, stream, group string, deps handlers.Deps, logger *slog.Logger) *pkgredis.StreamConsumer {
-	return pkgredis.NewStreamConsumer(rc, stream, group, newRejectionHandler(stream, deps, logger), logger)
+	return pkgredis.NewStreamConsumer(rc, stream, group, newRejectionHandler(stream, deps), logger)
 }
 
 // newRejectionHandler returns the MessageHandler that classifies the failed
@@ -234,7 +234,7 @@ func classifyRejectionMessages(rc *goredis.Client, stream, group string, deps ha
 // permanent failure: the handler returns events.ErrPermanent, so the consumer
 // dead-letters it. Any error from classification is returned as is, so the
 // consumer redelivers it.
-func newRejectionHandler(stream string, deps handlers.Deps, logger *slog.Logger) pkgredis.MessageHandler {
+func newRejectionHandler(stream string, deps handlers.Deps) pkgredis.MessageHandler {
 	return func(ctx context.Context, msg goredis.XMessage) error {
 		raw, ok := msg.Values["payload"].(string)
 		if !ok {
