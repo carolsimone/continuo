@@ -109,10 +109,13 @@ func (r *postgresRepository) Create(ctx context.Context, entry *Entry) error {
 // still ahead), so a long queue behind one retrying row cannot fill the batch
 // and hold up every other aggregate in the table. Fresh 'pending' rows have
 // next_attempt_at NULL and are always due. clock_timestamp() is the statement's
-// own wall clock, not the transaction start. The ORDER BY matches the partial
-// index idx_<table>_claimable (created_at, id), and idx_<table>_open_by_aggregate
-// serves the NOT EXISTS probe. FOR UPDATE OF c locks only the claimed rows,
-// never the older rows the probe reads.
+// own wall clock, not the transaction start. A row is older than another when
+// it comes first in (created_at, id) order, the order the claim reads rows in,
+// so of two rows with the same created_at the lower id is the older. The ORDER
+// BY matches the partial index idx_<table>_claimable (created_at, id), and
+// idx_<table>_open_by_aggregate serves the NOT EXISTS probe through its
+// created_at bound. FOR UPDATE OF c locks only the claimed rows, never the
+// older rows the probe reads.
 func claimQuery(table string) string {
 	return fmt.Sprintf(`
 		SELECT c.id, c.message_processing_id, c.aggregate_type, c.aggregate_id,
@@ -128,7 +131,8 @@ func claimQuery(table string) string {
 		        AND older.aggregate_id   = c.aggregate_id
 		        AND older.status = 'scheduled'
 		        AND older.next_attempt_at > clock_timestamp()
-		        AND older.created_at < c.created_at)
+		        AND older.created_at <= c.created_at
+		        AND (older.created_at, older.id) < (c.created_at, c.id))
 		ORDER BY c.created_at ASC, c.id ASC
 		LIMIT $1
 		FOR UPDATE OF c SKIP LOCKED`, table)
@@ -163,7 +167,7 @@ func (r *postgresRepository) GetPendingBatch(ctx context.Context, limit int) ([]
 }
 
 // blockedByOlderSiblings returns the claimed rows that have an older open row
-// of their aggregate outside the claimed set.
+// of their aggregate outside the claimed set, older in (created_at, id) order.
 func (r *postgresRepository) blockedByOlderSiblings(ctx context.Context, entries []*Entry) (map[uuid.UUID]bool, error) {
 	ids := make([]uuid.UUID, len(entries))
 	for i, e := range entries {
@@ -177,7 +181,8 @@ func (r *postgresRepository) blockedByOlderSiblings(ctx context.Context, entries
 		      WHERE older.aggregate_type = c.aggregate_type
 		        AND older.aggregate_id   = c.aggregate_id
 		        AND older.status IN ('pending', 'scheduled')
-		        AND older.created_at < c.created_at
+		        AND older.created_at <= c.created_at
+		        AND (older.created_at, older.id) < (c.created_at, c.id)
 		        AND NOT (older.id = ANY($1)))`, r.tableName)
 	var blockedIDs []uuid.UUID
 	if err := r.exec.SelectContext(ctx, &blockedIDs, query, pq.Array(ids)); err != nil {

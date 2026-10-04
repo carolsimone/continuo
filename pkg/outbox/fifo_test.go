@@ -1,6 +1,7 @@
 package outbox_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -226,4 +227,79 @@ func TestFIFO_DrainKeepsGoingWhileBatchesPublish(t *testing.T) {
 	var deadLetter uuid.UUID
 	require.NoError(t, db.Get(&deadLetter, `SELECT id FROM `+testOutboxTable+` WHERE event_type = $1`, outbox.DeadLetterEventType))
 	assert.Equal(t, []uuid.UUID{other[0], ids[1], deadLetter}, pub.ids)
+}
+
+// insertTiedRows inserts two pending rows of one aggregate that share one
+// created_at, the higher id first, and returns their ids in (created_at, id)
+// order. Rows written by two processes can tie this way.
+func insertTiedRows(t *testing.T, db *sqlx.DB, aggregate uuid.UUID) (lower, higher uuid.UUID) {
+	t.Helper()
+	lower, higher = uuid.New(), uuid.New()
+	if bytes.Compare(lower[:], higher[:]) > 0 {
+		lower, higher = higher, lower
+	}
+	createdAt := time.Now().Add(-time.Minute).UTC().Truncate(time.Microsecond)
+	for _, id := range []uuid.UUID{higher, lower} {
+		_, err := db.Exec(`INSERT INTO `+testOutboxTable+`
+			(id, aggregate_type, aggregate_id, event_type, payload, stream_name, created_at)
+			VALUES ($1, 'pkg-outbox-test', $2, 'e', '{}', 's', $3)`, id, aggregate, createdAt)
+		require.NoError(t, err)
+	}
+	return lower, higher
+}
+
+// Rows of one aggregate with the same created_at publish in id order, the
+// order the claim reads them in.
+func TestFIFO_TiedCreatedAtPublishesInIDOrder(t *testing.T) {
+	db := dbForTest(t)
+	lower, higher := insertTiedRows(t, db, uuid.New())
+	pub := &orderPublisher{}
+	p := outbox.NewProcessor(db, testOutboxTable, pub, nil, newTestLogger(), outbox.ProcessorConfig{})
+	require.NoError(t, p.ProcessBatch(context.Background()))
+	assert.Equal(t, []uuid.UUID{lower, higher}, pub.ids)
+}
+
+// A tied row with the higher id is the younger one: while the lower-id row
+// waits out a retry, the claim leaves the higher-id row out, so it does not
+// reach its stream before its elder's retry.
+func TestFIFO_TiedCreatedAtYoungerWaitsForItsElderRetry(t *testing.T) {
+	db := dbForTest(t)
+	lower, higher := insertTiedRows(t, db, uuid.New())
+	pub := &sequentialPublisher{failOnce: map[uuid.UUID]error{lower: errors.New("xadd: connection refused")}}
+	p := outbox.NewProcessor(db, testOutboxTable, pub, nil, newTestLogger(),
+		outbox.ProcessorConfig{RetryBaseDelay: time.Hour, RetryMaxDelay: time.Hour})
+
+	require.NoError(t, p.ProcessBatch(context.Background()))
+	require.Empty(t, pub.ids, "the failed elder holds back its tied younger row in the batch")
+	status, _ := rowState(t, db, lower)
+	require.Equal(t, "scheduled", status)
+
+	require.NoError(t, p.ProcessBatch(context.Background()))
+	assert.Empty(t, pub.ids, "the next claim leaves the younger row out while its elder's retry is ahead")
+
+	_, err := db.Exec(`UPDATE `+testOutboxTable+` SET next_attempt_at = now() - interval '1 second' WHERE id = $1`, lower)
+	require.NoError(t, err)
+	require.NoError(t, p.ProcessBatch(context.Background()))
+	assert.Equal(t, []uuid.UUID{lower, higher}, pub.ids)
+}
+
+// While another relay holds the lower-id row of a tie, the higher-id row is
+// withheld.
+func TestFIFO_TiedCreatedAtElderLockedByAnotherRelayWithholdsYounger(t *testing.T) {
+	db := dbForTest(t)
+	lower, higher := insertTiedRows(t, db, uuid.New())
+	other := createRows(t, db, uuid.New(), 1)
+
+	peer := db.MustBegin()
+	_, err := peer.Exec(`SELECT id FROM `+testOutboxTable+` WHERE id = $1 FOR UPDATE`, lower)
+	require.NoError(t, err)
+
+	pub := &orderPublisher{}
+	p := outbox.NewProcessor(db, testOutboxTable, pub, nil, newTestLogger(), outbox.ProcessorConfig{})
+	require.NoError(t, p.ProcessBatch(context.Background()))
+	assert.Equal(t, other, pub.ids, "the younger tied row waits while its elder is held elsewhere")
+
+	require.NoError(t, peer.Rollback())
+	require.NoError(t, p.ProcessBatch(context.Background()))
+	assert.Equal(t, append(append([]uuid.UUID{}, other...), lower, higher), pub.ids)
 }
