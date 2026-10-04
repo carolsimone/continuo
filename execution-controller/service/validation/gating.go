@@ -69,15 +69,16 @@ func SettleNodeTerminal(
 // distinct AggregateID (uuid.New()) rather than sharing the terminal
 // "kind":"complete" row's deterministic id. The outbox publishes the rows of
 // one (aggregate_type, aggregate_id) lane in creation order, and a row that
-// fails to publish holds back every younger row of its lane until its retry
-// succeeds; a distinct id per emit keeps one per-node row waiting out a retry
-// from delaying the other per-node rows or the terminal. Strict ordering ahead
-// of the terminal is not required because (a) release-controller's
-// promote/reject decision reads only aggregate_status, which is
-// order-independent, and (b) in the normal case the per-node rows and the
-// terminal are all still pending together and flush in one created_at-ordered
-// outbox batch anyway. The projection itself is an idempotent last-write upsert
-// keyed by node_id, so out-of-order per-node delivery is harmless on its own.
+// fails to publish holds back every younger row of its lane until it publishes
+// on a retry or is dead-lettered; a distinct id per emit keeps one per-node row
+// waiting out a retry from delaying the other per-node rows or the terminal.
+// Strict ordering ahead of the terminal is not required because (a)
+// release-controller's promote/reject decision reads only aggregate_status,
+// which is order-independent, and (b) in the normal case the per-node rows and
+// the terminal are all still pending together and flush in one
+// created_at-ordered outbox batch anyway. The projection itself is an
+// idempotent last-write upsert keyed by node_id, so out-of-order per-node
+// delivery is harmless on its own.
 //
 // Residual: only a transient XADD failure of one per-node row that happens to
 // race a rejection could omit that node from the reject audit trail — the

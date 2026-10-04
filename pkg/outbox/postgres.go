@@ -72,7 +72,9 @@ func NewPostgresRepository(exec Executor, tableName string, logger *slog.Logger)
 
 // Create inserts entry. The outbox owns the ordering key: Create always stamps
 // CreatedAt from nextCreatedAt, replacing any value the caller set, so the rows
-// a process writes publish in the order it wrote them.
+// a process writes are ordered by when it wrote them. Repository describes how
+// far publication follows that order across processes, commit order and the
+// pipelined publish path.
 func (r *postgresRepository) Create(ctx context.Context, entry *Entry) error {
 	if entry.ID == uuid.Nil {
 		entry.ID = uuid.New()

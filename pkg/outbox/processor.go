@@ -61,9 +61,11 @@ type ProcessorConfig struct {
 	BatchSize int // max rows per batch; default 100
 	// RetryBaseDelay is the first-retry delay for a transient failure; each
 	// subsequent retry doubles it up to RetryMaxDelay. Default 1s — small so a
-	// brief blip recovers within about a poll tick (a scheduled row withholds
-	// the younger rows of its aggregate until it publishes), while the
-	// exponential growth still spaces out attempts during a sustained outage.
+	// brief blip is retried soon (a scheduled row withholds the younger rows of
+	// its aggregate until it publishes), while the exponential growth still
+	// spaces out attempts during a sustained outage. A retry is an UPDATE,
+	// which sends no notification, so a row whose retry came due publishes at
+	// the next wake or the next Tick.
 	RetryBaseDelay time.Duration
 	// RetryMaxDelay caps the per-retry backoff so an outage retries at a steady
 	// interval rather than growing unbounded. Default 5m.
@@ -89,10 +91,11 @@ type ProcessorConfig struct {
 //  2. The batch is published: in one pipelined round trip when the publisher
 //     implements BatchPublisher, otherwise one row at a time. On the one-row
 //     path a row that fails stops the younger rows of its aggregate in the
-//     batch: they are not sent, stay pending and untouched, and publish after
-//     the failed row's retry. A pipeline cannot be stopped part way, so on the
-//     pipelined path a younger row sent in the same pipeline as an older row
-//     that failed may reach its stream before the older row's retry.
+//     batch: they are not sent, stay pending and untouched, and publish once
+//     the failed row publishes on a retry or is dead-lettered. A pipeline
+//     cannot be stopped part way, so on the pipelined path a younger row sent
+//     in the same pipeline as an older row that failed may reach its stream
+//     before the older row's retry.
 //  3. The published rows are marked processed in one UPDATE. A permanent
 //     failure (events.ErrPermanent) or a transient failure that has used up
 //     MaxAttempts is terminal: write a durable dead-letter row (skipped if the
@@ -321,7 +324,7 @@ func (p *Processor) processBatchOnce(ctx context.Context) (int, error) {
 	}
 
 	if err := repo.MarkProcessedBatch(ctx, processedIDs); err != nil {
-		return 0, fmt.Errorf("mark processed batch in %s: %w", p.tableName, err)
+		return 0, err
 	}
 
 	err = tx.Commit()
