@@ -221,9 +221,11 @@ bench-test:  ## Unit tests and shellcheck for the run-lifecycle benchmark harnes
 	docker run --rm -v "$(CURDIR):/repo:ro" -w /repo koalaman/shellcheck:v0.10.0 -x \
 	  scripts/bench/*.sh scripts/bench/image/dbt
 
-# Fast, infra-free gates. CI runs this target verbatim (a single `make guards`
-# step), so a gate added here reaches CI automatically; check-ci-alignment.sh
-# fails CI if the workflow ever re-inlines one of these lines instead.
+# Fast gates that need no running stack. CI runs this target verbatim (a single
+# `make guards` step), so a gate added here reaches CI automatically;
+# check-ci-alignment.sh fails CI if the workflow ever re-inlines one of these
+# lines instead. The bench-test prerequisite runs the benchmark harness's
+# pytest suite and shellcheck in containers, so it needs Docker.
 #
 # The check scripts:
 # - check-ci-alignment: ci.yml must call shared scripts / Make targets, never

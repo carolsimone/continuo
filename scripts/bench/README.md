@@ -79,9 +79,6 @@ BENCH_SCENARIOS=cascade-2000,cancel-500 BENCH_TARGET=k8s ... scripts/bench/run_b
 # One scenario on a topology that is already published
 scripts/bench/run_scenario.sh NAME PAYLOAD SCHEDULE run|test REPS OUT_DIR [CANCEL_AFTER_S]
 
-# Finished dbt Jobs without a TTL: list (dry run), then delete
-scripts/bench/cleanup_legacy_jobs.sh
-scripts/bench/cleanup_legacy_jobs.sh --apply
 ```
 
 `make bench-test` runs the unit tests and shellcheck; `make guards` includes it.
