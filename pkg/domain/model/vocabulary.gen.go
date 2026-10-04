@@ -160,7 +160,7 @@ func (v RejectReason) Healable() bool {
 	return false
 }
 
-// DeadLetterKind — Why a stream message or an outbox row was dead-lettered.
+// DeadLetterKind — Why a stream message or an outbox row was dead-lettered. An operational vocabulary — delivery outcomes of the transport, used by pkg/redis, pkg/outbox and the dead-letter streams — that the generator emits into the shared domain packages with the other vocabularies.
 // Values come from the vocabulary "dead_letter_kind" in contract.yaml, in
 // declaration order.
 type DeadLetterKind string

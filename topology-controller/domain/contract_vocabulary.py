@@ -41,7 +41,7 @@ REJECT_REASON_HEALABLE = frozenset({RejectReason.COMPILE_FAILED, RejectReason.IN
 
 
 class DeadLetterKind(StrEnum):
-    """Why a stream message or an outbox row was dead-lettered."""
+    """Why a stream message or an outbox row was dead-lettered. An operational vocabulary — delivery outcomes of the transport, used by pkg/redis, pkg/outbox and the dead-letter streams — that the generator emits into the shared domain packages with the other vocabularies."""
     PERMANENT = "permanent"
     TRANSIENT_EXHAUSTED = "transient_exhausted"
 
