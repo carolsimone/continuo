@@ -299,6 +299,12 @@ func (p *Processor) processBatchOnce(ctx context.Context) (int, error) {
 	return claimed, nil
 }
 
+// terminalWriter is the part of the repository terminate writes through.
+type terminalWriter interface {
+	Create(ctx context.Context, entry *Entry) error
+	MarkFailed(ctx context.Context, id uuid.UUID, errorMessage string) error
+}
+
 // terminate handles a row that has reached a terminal state. It writes a durable
 // dead-letter outbox row (in the caller's transaction, via repo) so the failure
 // is signalled to outbox.dead_letter:v1 the moment Redis is reachable, then marks
@@ -310,7 +316,7 @@ func (p *Processor) processBatchOnce(ctx context.Context) (int, error) {
 // MarkFailed) fails, so the caller can roll the whole batch back: marking a row
 // failed without its dead-letter would silently drop the mandatory failure
 // signal, so the two writes must commit together or not at all.
-func (p *Processor) terminate(ctx context.Context, repo *postgresRepository, entry *Entry, kind model.DeadLetterKind, cause error) error {
+func (p *Processor) terminate(ctx context.Context, repo terminalWriter, entry *Entry, kind model.DeadLetterKind, cause error) error {
 	attempts := entry.RetryCount + 1
 	if entry.AggregateType != DeadLetterAggregateType {
 		dl := buildDeadLetterEntry(entry, kind, cause, attempts)

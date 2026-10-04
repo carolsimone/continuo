@@ -3,17 +3,14 @@ package outbox_test
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"github.com/carolsimone/continuo/pkg/testdeps"
 	"log/slog"
 	"os"
-	"path/filepath"
-	"runtime"
 	"testing"
 	"time"
 
+	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	"github.com/carolsimone/continuo/pkg/outbox"
-	"github.com/carolsimone/continuo/pkg/testmigrations"
+	"github.com/carolsimone/continuo/pkg/testdeps"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
@@ -21,66 +18,55 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// testOutboxTable is the canonical outbox table the pkg/outbox repository
-// tests run against. We apply orchestrator's full Flyway migration set to
-// stand it up, so this test schema stays in lock-step with production and
-// can never silently drift.
-const testOutboxTable = "orchestrator_outbox"
+// testOutboxTable is the canonical outbox table these tests run against: the
+// one `make test-deps-up` migrated into continuo_execution.
+const testOutboxTable = "execution_outbox"
+
+// testDatabase is the database whose Flyway schema holds the canonical
+// execution_outbox and message_processing tables.
+const testDatabase = "continuo_execution"
+
+// testStreamPrefix starts the stream_name of every message_processing row
+// these tests insert, so cleanup removes exactly those rows.
+const testStreamPrefix = "pkg-outbox-test"
 
 func newTestLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 }
 
-// orchestratorMigrationDir resolves <repo>/db/migration/orchestrator/ from
-// this source file's location, so tests work both inside the service
-// container (source mounted at /src) and on a developer machine running
-// `go test ./pkg/outbox/...` from the repo root.
-func orchestratorMigrationDir() (string, error) {
-	_, thisFile, _, ok := runtime.Caller(0)
-	if !ok {
-		return "", fmt.Errorf("runtime.Caller failed — cannot locate pkg/outbox/postgres_test.go")
-	}
-	// thisFile = <repo>/pkg/outbox/postgres_test.go
-	repoRoot := filepath.Dir(filepath.Dir(filepath.Dir(thisFile)))
-	return filepath.Join(repoRoot, "db", "migration", "orchestrator"), nil
+// testPostgresConfig is the POSTGRES_* connection config with the database
+// pinned to testDatabase, whatever POSTGRES_DB says.
+func testPostgresConfig() pkgconfig.PostgresConfig {
+	cfg := pkgconfig.LoadPostgres(&pkgconfig.Validator{})
+	cfg.DB = testDatabase
+	return cfg
 }
 
-// dbForTest reads OUTBOX_TEST_DSN; skips the test if unset, so unit-only
-// runs pass. Each test drops every orchestrator-owned table, reapplies the
-// real migration set from db/migration/orchestrator/, and truncates the
-// outbox table between tests for isolation.
+// dbForTest connects to testDatabase with the POSTGRES_* host and credentials
+// `make test-go SERVICE=pkg` sets, and never changes its schema. The processor
+// under test claims every row in the table, so the suite empties execution_outbox
+// before and after each test; make test-go runs one suite at a time, and no
+// outbox relay (for example an execution-controller) may run against
+// continuo_execution while the suite runs.
 func dbForTest(t *testing.T) *sqlx.DB {
 	t.Helper()
-	dsn := os.Getenv("OUTBOX_TEST_DSN")
-	if dsn == "" {
-		testdeps.Unavailable(t, "OUTBOX_TEST_DSN not set; skipping Postgres integration test")
+	cfg := testPostgresConfig()
+	if cfg.Host == "" {
+		testdeps.Unavailable(t, "POSTGRES_HOST not set; run `make test-go SERVICE=pkg`")
 	}
-	db, err := sqlx.Connect("postgres", dsn)
-	require.NoError(t, err)
-
-	// Drop orchestrator artefacts so the migration set sees a clean slate.
-	// Order matters because of FK dependencies into message_processing.
-	for _, stmt := range []string{
-		`DROP TABLE IF EXISTS orchestrator_outbox CASCADE`,
-		`DROP TABLE IF EXISTS outbox CASCADE`,
-		`DROP TABLE IF EXISTS published_messages CASCADE`,
-		`DROP TABLE IF EXISTS rejected_topology_messages CASCADE`,
-		`DROP TABLE IF EXISTS topology_state CASCADE`,
-		`DROP TABLE IF EXISTS cancelled_schedules CASCADE`,
-		`DROP TABLE IF EXISTS message_processing CASCADE`,
-	} {
-		_, err = db.Exec(stmt)
-		require.NoError(t, err, "drop: %s", stmt)
+	db, err := sqlx.Connect("postgres", cfg.DSN())
+	if err != nil {
+		testdeps.Unavailable(t, "postgres unreachable: %v", err)
 	}
-
-	dir, err := orchestratorMigrationDir()
-	require.NoError(t, err)
-	require.NoError(t, testmigrations.Apply(db.DB, dir))
-
-	t.Cleanup(func() {
-		_, _ = db.Exec(`TRUNCATE ` + testOutboxTable)
-		db.Close()
-	})
+	var present bool
+	require.NoError(t, db.Get(&present, `SELECT to_regclass('`+testOutboxTable+`') IS NOT NULL`))
+	require.True(t, present, "%s is missing: run `make test-deps-up` to apply the Flyway migrations", testOutboxTable)
+	clean := func() {
+		_, _ = db.Exec(`DELETE FROM ` + testOutboxTable)
+		_, _ = db.Exec(`DELETE FROM message_processing WHERE stream_name LIKE $1`, testStreamPrefix+"%")
+	}
+	clean()
+	t.Cleanup(func() { clean(); db.Close() })
 	return db
 }
 
@@ -126,7 +112,7 @@ func TestPostgresRepository_MarkProcessed(t *testing.T) {
 
 	var status string
 	var processedAt *string
-	require.NoError(t, db.QueryRow(`SELECT status, processed_at::text FROM orchestrator_outbox WHERE id=$1`, entry.ID).Scan(&status, &processedAt))
+	require.NoError(t, db.QueryRow(`SELECT status, processed_at::text FROM `+testOutboxTable+` WHERE id=$1`, entry.ID).Scan(&status, &processedAt))
 	assert.Equal(t, "processed", status)
 	require.NotNil(t, processedAt)
 }
@@ -142,7 +128,7 @@ func TestPostgresRepository_MarkFailed(t *testing.T) {
 	require.NoError(t, repo.MarkFailed(context.Background(), entry.ID, "boom"))
 
 	var status, errMsg string
-	require.NoError(t, db.QueryRow(`SELECT status, error_message FROM orchestrator_outbox WHERE id=$1`, entry.ID).Scan(&status, &errMsg))
+	require.NoError(t, db.QueryRow(`SELECT status, error_message FROM `+testOutboxTable+` WHERE id=$1`, entry.ID).Scan(&status, &errMsg))
 	assert.Equal(t, "failed", status)
 	assert.Equal(t, "boom", errMsg)
 }
@@ -159,7 +145,7 @@ func TestPostgresRepository_IncrementRetryDoesNotChangeStatus(t *testing.T) {
 
 	var status string
 	var rc int
-	require.NoError(t, db.QueryRow(`SELECT status, retry_count FROM orchestrator_outbox WHERE id=$1`, entry.ID).Scan(&status, &rc))
+	require.NoError(t, db.QueryRow(`SELECT status, retry_count FROM `+testOutboxTable+` WHERE id=$1`, entry.ID).Scan(&status, &rc))
 	assert.Equal(t, "pending", status)
 	assert.Equal(t, 1, rc)
 }
@@ -244,7 +230,7 @@ func TestPostgresRepository_SkipLockedIsolatesConcurrentBatches(t *testing.T) {
 // seedRowReturningEntry seeds a fresh 'pending' row with next_attempt_at left
 // NULL (due now) and returns its id.
 func seedRowReturningEntry(t *testing.T, db *sqlx.DB) uuid.UUID {
-	return seedRow(t, db, 10)
+	return seedRow(t, db, 0)
 }
 
 // seedScheduledRow seeds a row already in the 'scheduled' state (as
@@ -252,7 +238,7 @@ func seedRowReturningEntry(t *testing.T, db *sqlx.DB) uuid.UUID {
 // to now+delta, and returns its id. A negative delta yields a due row.
 func seedScheduledRow(t *testing.T, db *sqlx.DB, delta time.Duration) uuid.UUID {
 	t.Helper()
-	id := seedRow(t, db, 10)
+	id := seedRow(t, db, 0)
 	_, err := db.Exec(
 		`UPDATE `+testOutboxTable+` SET status = 'scheduled', next_attempt_at = clock_timestamp() + make_interval(secs => $1) WHERE id = $2`,
 		delta.Seconds(), id,

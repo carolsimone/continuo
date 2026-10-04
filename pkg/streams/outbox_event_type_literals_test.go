@@ -1,4 +1,4 @@
-package outbox_test
+package streams_test
 
 import (
 	"go/ast"
@@ -41,26 +41,6 @@ var eventTypeScanDirs = []string{
 	"execution-controller/service/handlers",
 }
 
-// repoRootFromEventTypeTest walks up until it finds go.work.
-func repoRootFromEventTypeTest(t *testing.T) string {
-	t.Helper()
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	dir := wd
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.work")); err == nil {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			t.Fatalf("repo root not found from %s", wd)
-		}
-		dir = parent
-	}
-}
-
 // TestOutboxEventTypesUseConstants fails if any scanned production file contains
 // a string literal equal to a known outbox event_type value. Such a literal must
 // be replaced with its per-service EventType* constant so the emit site and the
@@ -70,7 +50,7 @@ func repoRootFromEventTypeTest(t *testing.T) string {
 // asserts that a constant resolves to its exact wire value, and such an assertion
 // needs the literal — the same exemption pkg/streams/wiring_test.go makes.
 func TestOutboxEventTypesUseConstants(t *testing.T) {
-	root := repoRootFromEventTypeTest(t)
+	root := repoRootFromTest(t)
 	fset := token.NewFileSet()
 
 	for _, rel := range eventTypeScanDirs {

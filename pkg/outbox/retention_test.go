@@ -18,7 +18,7 @@ func seedProcessedRow(t *testing.T, db *sqlx.DB, processedAt time.Time) uuid.UUI
 	t.Helper()
 	id := uuid.New()
 	_, err := db.Exec(
-		`INSERT INTO orchestrator_outbox
+		`INSERT INTO `+testOutboxTable+`
 		   (id, aggregate_type, aggregate_id, event_type, payload, stream_name, status, processed_at)
 		 VALUES ($1, 'task', $2, 'x', '{}'::jsonb, 'x:v1', 'processed', $3)`,
 		id, uuid.New(), processedAt,
@@ -30,7 +30,7 @@ func seedProcessedRow(t *testing.T, db *sqlx.DB, processedAt time.Time) uuid.UUI
 func rowExists(t *testing.T, db *sqlx.DB, id uuid.UUID) bool {
 	t.Helper()
 	var n int
-	require.NoError(t, db.QueryRow(`SELECT count(*) FROM orchestrator_outbox WHERE id=$1`, id).Scan(&n))
+	require.NoError(t, db.QueryRow(`SELECT count(*) FROM `+testOutboxTable+` WHERE id=$1`, id).Scan(&n))
 	return n > 0
 }
 
@@ -43,7 +43,7 @@ func TestDeleteProcessedOlderThan_PurgesOldKeepsRecentAndPending(t *testing.T) {
 
 	old := seedProcessedRow(t, db, time.Now().Add(-10*24*time.Hour)) // outside a 7-day window
 	recent := seedProcessedRow(t, db, time.Now().Add(-1*time.Hour))  // inside the window
-	pendingID := seedRow(t, db, 3)                                   // never processed
+	pendingID := seedRow(t, db, 0)                                   // never processed
 
 	n, err := prune(context.Background(), 7*24*time.Hour, 100)
 	require.NoError(t, err)
@@ -69,6 +69,6 @@ func TestDeleteProcessedOlderThan_RespectsLimit(t *testing.T) {
 	assert.Equal(t, int64(2), n, "delete is capped at the limit")
 
 	var remaining int
-	require.NoError(t, db.QueryRow(`SELECT count(*) FROM orchestrator_outbox WHERE status='processed'`).Scan(&remaining))
+	require.NoError(t, db.QueryRow(`SELECT count(*) FROM `+testOutboxTable+` WHERE status='processed'`).Scan(&remaining))
 	assert.Equal(t, 3, remaining, "remaining aged rows await the next bounded pass")
 }

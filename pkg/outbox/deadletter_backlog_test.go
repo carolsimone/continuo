@@ -14,7 +14,7 @@ func TestDeadLetterBacklog_CountsFailedRows(t *testing.T) {
 	// Two permanent failures => two 'failed' rows (plus their dead-letter rows,
 	// which are 'pending', not counted).
 	for i := 0; i < 2; i++ {
-		seedRow(t, db, 10)
+		seedRow(t, db, 0)
 	}
 	pub := &permanentFailingPublisher{}
 	p := outbox.NewProcessor(db, testOutboxTable, pub, nil, newTestLogger(), outbox.ProcessorConfig{})

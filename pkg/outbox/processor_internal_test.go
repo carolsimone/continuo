@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/liveness"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -176,4 +177,29 @@ func TestProcessor_HeartbeatTripsHealthWhenStalled(t *testing.T) {
 	p.lastActivity.Store(time.Now().UnixNano())
 	require.NoError(t, p.Healthy(30*time.Second))
 	assert.True(t, reg.Live(ctx), "a fresh tick must clear the unhealthy state")
+}
+
+// rejectingDeadLetterWriter fails every dead-letter write and records whether
+// the original row was marked failed.
+type rejectingDeadLetterWriter struct{ markFailedCalled bool }
+
+func (w *rejectingDeadLetterWriter) Create(context.Context, *Entry) error {
+	return errors.New("dead-letter insert rejected")
+}
+
+func (w *rejectingDeadLetterWriter) MarkFailed(context.Context, uuid.UUID, string) error {
+	w.markFailedCalled = true
+	return nil
+}
+
+// A failed dead-letter write must fail terminate before the row is marked
+// failed, so processBatchOnce returns the error and its transaction rolls back
+// with the row still pending.
+func TestTerminate_DeadLetterWriteFailureLeavesTheRowUnmarked(t *testing.T) {
+	p := &Processor{logger: internalTestLogger()}
+	w := &rejectingDeadLetterWriter{}
+	err := p.terminate(context.Background(), w, &Entry{ID: uuid.New(), AggregateType: "a", AggregateID: uuid.New(),
+		EventType: "e", StreamName: "s"}, model.DeadLetterKindPermanent, errors.New("boom"))
+	require.Error(t, err)
+	assert.False(t, w.markFailedCalled)
 }
