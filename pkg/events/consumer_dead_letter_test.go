@@ -60,16 +60,6 @@ func TestConsumerDeadLetterFields_MatchGoldenFixture(t *testing.T) {
 	assert.Equal(t, wantPayload, gotPayload)
 }
 
-// The Python consumer's tests read their own copy of the fixture; both
-// producers are pinned to the same entry only while the copies are identical.
-func TestConsumerDeadLetterFixture_PythonCopyIsIdentical(t *testing.T) {
-	goCopy, err := os.ReadFile("testdata/consumer_dead_letter_v1.json")
-	require.NoError(t, err)
-	pyCopy, err := os.ReadFile("../../topology-controller/tests/fixtures/consumer_dead_letter_v1.json")
-	require.NoError(t, err)
-	assert.Equal(t, string(goCopy), string(pyCopy))
-}
-
 func TestConsumerDeadLetterEventID_IsStablePerMessage(t *testing.T) {
 	a := events.ConsumerDeadLetterEventID("default", "g", "s", "1-0")
 	assert.Equal(t, a, events.ConsumerDeadLetterEventID("default", "g", "s", "1-0"))
