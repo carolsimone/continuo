@@ -16,6 +16,11 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
+// OutboxTable is the outbox table this service writes its events to and its
+// relay publishes from. Its insert trigger notifies the Postgres channel of the
+// same name, on which the relay's waker listens.
+const OutboxTable = "state_outbox"
+
 // OutboxPublisher translates run.DomainEvent values to pkg/outbox.Entry rows
 // and writes them inside the bound transaction.
 // RunDispatchTerminal events are informational and produce no outbox row.
@@ -38,7 +43,7 @@ func (p *OutboxPublisher) Append(ctx context.Context, events []run.DomainEvent, 
 	if p.tx == nil {
 		return fmt.Errorf("Append requires an active transaction")
 	}
-	repo := pkgoutbox.NewPostgresRepository(p.tx, "state_outbox", p.logger)
+	repo := pkgoutbox.NewPostgresRepository(p.tx, OutboxTable, p.logger)
 	for _, evt := range events {
 		entry, skip, err := translateRunEvent(evt, msgProcID)
 		if err != nil {

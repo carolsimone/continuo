@@ -153,7 +153,7 @@ func main() {
 
 	// The outbox relay wakes on the notification a committed insert into its
 	// table sends.
-	outboxWaker, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN(), rredis.OutboxTable, logger)
+	outboxWaker, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN(), postgres.OutboxTable, logger)
 	if errors.Is(err, context.Canceled) {
 		logger.Info("shutdown requested while waiting for the outbox listener")
 		os.Exit(0)

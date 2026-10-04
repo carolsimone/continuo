@@ -59,14 +59,19 @@ func (u *UnitOfWork) ServiceProdRepo() repository.ServiceProdRepository {
 	return NewServiceProdRepository(u.queryer())
 }
 
+// OutboxTable is the outbox table this service writes its events to and its
+// relay publishes from. Its insert trigger notifies the Postgres channel of the
+// same name, on which the relay's waker listens.
+const OutboxTable = "release_controller_outbox"
+
 // OutboxRepo returns the outbox repository for the release_controller_outbox
 // table. When a transaction is active the repository operates inside it, so
 // outbox writes are atomic with the rest of the handler's changes.
 func (u *UnitOfWork) OutboxRepo() pkgoutbox.Repository {
 	if u.tx != nil {
-		return pkgoutbox.NewPostgresRepository(u.tx, "release_controller_outbox", u.logger)
+		return pkgoutbox.NewPostgresRepository(u.tx, OutboxTable, u.logger)
 	}
-	return pkgoutbox.NewPostgresRepository(u.db, "release_controller_outbox", u.logger)
+	return pkgoutbox.NewPostgresRepository(u.db, OutboxTable, u.logger)
 }
 
 // MessageProcessingRepo returns the message-processing repository. When a

@@ -44,10 +44,6 @@ const consumerHandlerTimeout = 60 * time.Second
 // sit above that wait.
 const schemaOpHandlerTimeout = k8s.SchemaOpJobTimeout + time.Minute
 
-// outboxTable is the outbox table the relay publishes from; its insert
-// trigger notifies the channel of the same name.
-const outboxTable = "execution_outbox"
-
 // dbPool bounds the Postgres pool when DB_MAX_OPEN_CONNS / DB_MAX_IDLE_CONNS
 // are unset: two connections per stream consumer (a handler's transaction and
 // a read outside it), plus the outbox relay, background loops and request
@@ -228,7 +224,7 @@ func main() {
 	// Check tickets and terminal announcements flow through this outbox; the
 	// relay wakes on the notification a committed insert sends, so a status
 	// transition reaches its stream without waiting for a poll.
-	outboxWaker, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN(), outboxTable, logger)
+	outboxWaker, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN(), postgres.OutboxTable, logger)
 	if errors.Is(err, context.Canceled) {
 		logger.Info("Shutdown requested while waiting for the outbox listener")
 		os.Exit(0)
@@ -240,7 +236,7 @@ func main() {
 	// Closing the listener can wait on a connection attempt in progress, so
 	// the handler stops waiting at the shutdown deadline.
 	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error { return outboxWaker.CloseContext(ctx) })
-	outboxProcessor := pkgoutbox.NewProcessor(pgDB, outboxTable, publisher.NewOutboxPublisher(redisClient, logger), nil, logger,
+	outboxProcessor := pkgoutbox.NewProcessor(pgDB, postgres.OutboxTable, publisher.NewOutboxPublisher(redisClient, logger), nil, logger,
 		pkgoutbox.ProcessorConfig{Tick: pkgoutbox.FallbackTick, BatchSize: 100, Waker: outboxWaker})
 	runWorker("outbox_processor", outboxProcessor.Run)
 

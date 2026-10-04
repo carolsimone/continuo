@@ -40,10 +40,6 @@ import (
 // DAG or release, which they write to Neo4j in one handler.
 const topologyHandlerTimeout = 5 * time.Minute
 
-// outboxTable is the outbox table the relay publishes from; its insert
-// trigger notifies the channel of the same name.
-const outboxTable = "orchestrator_outbox"
-
 // outboxHeartbeatStale is the liveness budget for the outbox processor's Run
 // loop. An idle loop turns at least once per pkgoutbox.FallbackTick (5s), so 60s
 // is comfortably above it: a wedged (not exited) processor trips within a
@@ -238,7 +234,7 @@ func main() {
 	// ========================================================================
 
 	// The relay wakes on the notification a committed insert sends.
-	outboxWaker, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN(), outboxTable, logger)
+	outboxWaker, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN(), postgres.OutboxTable, logger)
 	if errors.Is(err, context.Canceled) {
 		logger.Info("Shutdown requested while waiting for the outbox listener")
 		os.Exit(0)
@@ -253,7 +249,7 @@ func main() {
 	outboxPub := orchpublisher.NewOutboxPublisher(redisClient, logger)
 	outboxProc := pkgoutbox.NewProcessor(
 		pgDB,
-		outboxTable,
+		postgres.OutboxTable,
 		outboxPub,
 		nil, // no terminal-failure hook for orchestrator
 		logger,
@@ -283,10 +279,10 @@ func main() {
 	// latter retains a full payload per consumed message). Both are pruned past
 	// the retention window on the same timer using DB-clock cutoffs.
 
-	mpPruner := pkgmessageprocessing.NewPruner(pgDB, outboxTable, logger)
+	mpPruner := pkgmessageprocessing.NewPruner(pgDB, postgres.OutboxTable, logger)
 	retentionSweeper := pkgoutbox.NewRetentionSweeper(
 		[]pkgoutbox.RetentionTarget{
-			pkgoutbox.OutboxRetentionTarget(pgDB, outboxTable, logger),
+			pkgoutbox.OutboxRetentionTarget(pgDB, postgres.OutboxTable, logger),
 			{
 				Name:  "message_processing",
 				Prune: mpPruner.DeleteTerminalOlderThan,

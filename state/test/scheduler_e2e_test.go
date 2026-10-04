@@ -134,7 +134,7 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 	redisPub := statepublisher.NewOutboxPublisher(redisClient, logger)
 	outboxProcessor := pkgoutbox.NewProcessor(
 		db,
-		"state_outbox",
+		postgres.OutboxTable,
 		redisPub,
 		nil,
 		logger,

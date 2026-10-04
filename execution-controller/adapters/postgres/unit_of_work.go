@@ -29,11 +29,16 @@ func NewPostgresUnitOfWork(db *sqlx.DB, logger *slog.Logger) *PostgresUnitOfWork
 	return &PostgresUnitOfWork{db: db, logger: logger}
 }
 
+// OutboxTable is the outbox table this service writes its events to and its
+// relay publishes from. Its insert trigger notifies the Postgres channel of the
+// same name, on which the relay's waker listens.
+const OutboxTable = "execution_outbox"
+
 func (u *PostgresUnitOfWork) OutboxRepo() pkgoutbox.Repository {
 	if u.tx != nil {
-		return pkgoutbox.NewPostgresRepository(u.tx, "execution_outbox", u.logger)
+		return pkgoutbox.NewPostgresRepository(u.tx, OutboxTable, u.logger)
 	}
-	return pkgoutbox.NewPostgresRepository(u.db, "execution_outbox", u.logger)
+	return pkgoutbox.NewPostgresRepository(u.db, OutboxTable, u.logger)
 }
 
 func (u *PostgresUnitOfWork) DeploymentsRepo() repository.DeploymentRepository {

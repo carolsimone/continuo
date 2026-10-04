@@ -30,10 +30,6 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// outboxTable is the outbox table the relay publishes from; its insert
-// trigger notifies the channel of the same name.
-const outboxTable = "state_outbox"
-
 // outboxHeartbeatStale is the liveness budget for the outbox processor's Run
 // loop. An idle loop turns at least once per pkgoutbox.FallbackTick (5s), so 60s
 // is comfortably above it: a wedged (not exited) processor trips within a
@@ -170,7 +166,7 @@ func main() {
 	// entry's JSONB payload to its stream. Nested non-scalar fields are
 	// re-encoded to JSON strings so Redis receives only plain scalars. The
 	// relay wakes on the notification a committed insert sends.
-	outboxWaker, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN(), outboxTable, logger)
+	outboxWaker, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN(), postgres.OutboxTable, logger)
 	if errors.Is(err, context.Canceled) {
 		logger.Info("Shutdown requested while waiting for the outbox listener")
 		os.Exit(0)
@@ -185,7 +181,7 @@ func main() {
 	outboxPub := statepublisher.NewOutboxPublisher(redisClient, logger)
 	outboxProc := pkgoutbox.NewProcessor(
 		db,
-		outboxTable,
+		postgres.OutboxTable,
 		outboxPub,
 		nil, // no terminal-failure hook for state
 		logger,
@@ -210,10 +206,10 @@ func main() {
 	// processed state_outbox rows and terminal message_processing dedup rows
 	// (the latter retains a full payload per consumed message). Both are pruned
 	// past the retention window on the same timer using DB-clock cutoffs.
-	mpPruner := pkgmessageprocessing.NewPruner(db, outboxTable, logger)
+	mpPruner := pkgmessageprocessing.NewPruner(db, postgres.OutboxTable, logger)
 	retentionSweeper := pkgoutbox.NewRetentionSweeper(
 		[]pkgoutbox.RetentionTarget{
-			pkgoutbox.OutboxRetentionTarget(db, outboxTable, logger),
+			pkgoutbox.OutboxRetentionTarget(db, postgres.OutboxTable, logger),
 			{
 				Name:  "message_processing",
 				Prune: mpPruner.DeleteTerminalOlderThan,
