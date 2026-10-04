@@ -127,6 +127,10 @@ type Processor struct {
 	// processor — the outbox analogue of StreamConsumer's heartbeat — which
 	// RegisterWorker/WorkerExited alone (goroutine-exit only) cannot see.
 	lastActivity atomic.Int64
+
+	// afterDrain, when set, runs each time drain returns. It is nil unless a
+	// test sets it through SetAfterDrainHookForTest to learn when a drain ended.
+	afterDrain func()
 }
 
 func NewProcessor(
@@ -238,6 +242,9 @@ func (p *Processor) DeadLetterBacklog(ctx context.Context) (int, error) {
 // row sends no notification. A batch that settles nothing, such as one that
 // claims nothing or withholds every row it claims, ends the drain.
 func (p *Processor) drain(ctx context.Context) {
+	if p.afterDrain != nil {
+		defer p.afterDrain()
+	}
 	for {
 		// Advance the heartbeat per batch so a large multi-batch drain (which
 		// can run well beyond one tick) keeps liveness fresh instead of

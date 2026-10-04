@@ -22,3 +22,7 @@ func RefillClaimQueryForTest(table string) string { return refillClaimQuery(tabl
 
 // DrainForTest runs one drain of the processor, as Run does on each wake.
 func (p *Processor) DrainForTest(ctx context.Context) { p.drain(ctx) }
+
+// SetAfterDrainHookForTest makes the processor call f each time a drain ends.
+// Call it before Run.
+func (p *Processor) SetAfterDrainHookForTest(f func()) { p.afterDrain = f }
