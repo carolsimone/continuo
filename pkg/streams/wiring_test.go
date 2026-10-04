@@ -94,9 +94,11 @@ func looksLikeServicePrefixedGroup(s string) bool {
 // pkg/streams constants for stream names rather than inline literals. These are
 // the seams where a versioned-stream string is most likely to be hand-written:
 // Redis stream bindings (the message_processing.stream_name dedup value), the
-// message handlers (the dedup message_type argument), and the shared consumer,
-// event and outbox packages that name the dead-letter streams.
+// message handlers (the dedup message_type argument), state's outbox writer
+// (each row's stream_name and event_type), and the shared consumer, event and
+// outbox packages that name the dead-letter streams.
 var streamLiteralScanDirs = []string{
+	"state/adapters/postgres",
 	"state/adapters/redis",
 	"state/service/handlers",
 	"state/internal/grpc/handlers",

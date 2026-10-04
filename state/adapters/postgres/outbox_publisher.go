@@ -95,7 +95,9 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Ent
 		if err != nil {
 			return nil, false, err
 		}
-		return buildEntry(e.ID, "scheduler_tracker", "run.finalized:v1", streams.RunFinalizedV1, payload, msgProcPtr), false, nil
+		// The row's event_type is the stream name; the publisher routes every
+		// row by stream_name and reads event_type only to spot dead letters.
+		return buildEntry(e.ID, "scheduler_tracker", streams.RunFinalizedV1, streams.RunFinalizedV1, payload, msgProcPtr), false, nil
 
 	case run.RunCancelled:
 		payload, err := json.Marshal(map[string]string{
