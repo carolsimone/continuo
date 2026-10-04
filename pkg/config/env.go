@@ -137,3 +137,20 @@ func EnvDurationOrDefault(key string, fallback time.Duration) time.Duration {
 	}
 	return fallback
 }
+
+// PositiveIntOrZero reads an OPTIONAL whole-number env var that must be at
+// least 1 when set. Unset or empty returns 0. Any other value is recorded as a
+// validation failure naming the key, so start-up fails rather than running a
+// value the operator did not ask for.
+func (v *Validator) PositiveIntOrZero(key string) int {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 {
+		v.Add(fmt.Sprintf("%s (invalid value %q: expected a whole number of at least 1)", key, raw))
+		return 0
+	}
+	return n
+}
