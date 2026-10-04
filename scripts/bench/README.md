@@ -12,7 +12,7 @@ Every node of a synthetic DAG is a real Kubernetes Job with the production dbt p
 
 | Target | Environment | Used for |
 |---|---|---|
-| `compose` (default) | The local compose stack with its kind cluster | Harness smoke, `dag-500`, the dependency-outage scenarios |
+| `compose` (default) | The local compose stack with its kind cluster | Harness smoke, `dag-500`, the dependency-outage scenarios, the whole-DAG test fan-out (`test-2000`) |
 | `k8s` | A Helm install reached through `BENCH_KUBECONFIG` | The synthetic scale scenarios |
 
 Environment knobs:
@@ -29,6 +29,7 @@ Environment knobs:
 | `BENCH_PG_POD` | — | Postgres pod that holds release-controller's database (`k8s`, required by the export) |
 | `BENCH_SSH_HOST` | — | ssh destination on the k3s node; `build_image.sh` imports the images into its containerd (`k8s`, required) |
 | `CONTINUO_CLI` | `cli/bin/continuo` | CLI binary (`compose`); on `k8s` the harness runs the CLI inside `deploy/agent-chat` |
+| `BENCH_SCENARIOS` | all | Scenario names to run, comma- or space-separated (for example `cascade-2000,cancel-500`) |
 | `BENCH_QUIET_WINDOWS_UTC` | `2215-2345` | UTC ranges in which no rep starts on `k8s` (the install's scheduled runs); a range may cross midnight |
 | `BENCH_IDLE_S` | `300` | Idle window before rep 1 of a scenario |
 | `BENCH_SETTLE_S` | `15` | Pause before each later rep and after each run |
@@ -72,12 +73,12 @@ BENCH_TARGET=compose scripts/bench/run_baseline_kind.sh [OUT_DIR]
 BENCH_TARGET=k8s BENCH_KUBECONFIG=... BENCH_REDIS_POD=... BENCH_PG_POD=... BENCH_SSH_HOST=... \
   scripts/bench/run_baseline_dev.sh [OUT_DIR]
 
+# A subset, for example to repeat two scenarios
+BENCH_SCENARIOS=cascade-2000,cancel-500 BENCH_TARGET=k8s ... scripts/bench/run_baseline_dev.sh [OUT_DIR]
+
 # One scenario on a topology that is already published
 scripts/bench/run_scenario.sh NAME PAYLOAD SCHEDULE run|test REPS OUT_DIR [CANCEL_AFTER_S]
 
-# Finished dbt Jobs without a TTL: list (dry run), then delete
-scripts/bench/cleanup_legacy_jobs.sh
-scripts/bench/cleanup_legacy_jobs.sh --apply
 ```
 
 `make bench-test` runs the unit tests and shellcheck; `make guards` includes it.
@@ -90,7 +91,7 @@ scripts/bench/cleanup_legacy_jobs.sh --apply
 | `chain-500` | 50 levels × 10 nodes, fan-in 1 | Hand-off cost between levels |
 | `dag-500` | 10 levels × 50 nodes, fan-in 2 | Per-level overhead and throughput |
 | `dag-2000` | 20 levels × 100 nodes, fan-in 2 | The same at four times the size |
-| `test-2000` | `dag-2000` run as a whole-DAG test | Flat fan-out and admission |
+| `test-2000` | `dag-2000` run as a whole-DAG test, on the local stack | Flat fan-out and admission; 2,000 near-simultaneous Jobs can saturate a small cluster's API server, so it never runs on a shared install |
 | `cascade-2000` | `dag-2000` under a single failing root | Retries of the root, then 1,999 skips |
 | `cancel-500` | `dag-500` with 30 s nodes | Cancel after 60 s, immediate re-trigger, second run cancelled after 90 s; overlap of the two runs' Jobs |
 | `outage-postgres`, `outage-neo4j` | `dag-500` | The datastore container is disconnected from its networks for 10 minutes during a run and reconnected with its aliases, so its data survives (local stack only); final status and dropped messages |

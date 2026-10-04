@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Baseline on a k8s install. Exports the live production topology, checks it
-# against the live graphs, runs every synthetic scenario on the union of the
-# live topology and a bench DAG, and re-announces the live topology on every
-# exit after the first injection.
-#   BENCH_TARGET=k8s BENCH_KUBECONFIG=... run_baseline_dev.sh [OUT_DIR]
+# against the live graphs, runs the synthetic scenarios on the union of the live
+# topology and a bench DAG, and re-announces the live topology on every exit
+# after the first injection. BENCH_SCENARIOS selects a subset by name.
+# The whole-DAG test fan-out (test-2000) runs on the local stack instead
+# (run_baseline_kind.sh): 2,000 near-simultaneous Jobs can saturate a small
+# cluster's API server, which the harness must not do to a shared install.
+#   BENCH_TARGET=k8s BENCH_KUBECONFIG=... [BENCH_SCENARIOS=...] run_baseline_dev.sh [OUT_DIR]
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/bench/lib.sh
@@ -72,17 +75,28 @@ scenario() {
   child=""
 }
 
-BENCH_IDLE_S=900 scenario smoke smoke.json bench-smoke run 1 "${out}/smoke"
-if ! python3 -c 'import json, sys; r = json.load(open(sys.argv[1])); sys.exit(0 if r["final_status"] == "succeeded" and r["nodes_executed"] == 3 else 1)' "${out}/smoke/rep1.json"; then
-  echo "run_baseline_dev.sh: smoke run did not succeed on all 3 nodes; see ${out}/smoke" >&2
-  exit 1
+if bench_wanted smoke; then
+  BENCH_IDLE_S=900 scenario smoke smoke.json bench-smoke run 1 "${out}/smoke"
+  if ! python3 -c 'import json, sys; r = json.load(open(sys.argv[1])); sys.exit(0 if r["final_status"] == "succeeded" and r["nodes_executed"] == 3 else 1)' "${out}/smoke/rep1.json"; then
+    echo "run_baseline_dev.sh: smoke run did not succeed on all 3 nodes; see ${out}/smoke" >&2
+    exit 1
+  fi
 fi
 export BENCH_IDLE_S=30
-scenario chain-500 chain-500.json bench-chain-500 run 3 "${out}/chain-500"
-scenario dag-500 dag-500.json bench-dag-500 run 3 "${out}/dag-500"
-scenario dag-2000 dag-2000.json bench-dag-2000 run 3 "${out}/dag-2000"
-scenario test-2000 dag-2000.json bench-dag-2000 test 3 "${out}/test-2000"
-scenario cascade-2000 cascade-2000.json bench-cascade-2000 run 3 "${out}/cascade-2000"
-scenario cancel-500 cancel-500.json bench-cancel-500 run 3 "${out}/cancel-500" 60
+if bench_wanted chain-500; then
+  scenario chain-500 chain-500.json bench-chain-500 run 3 "${out}/chain-500"
+fi
+if bench_wanted dag-500; then
+  scenario dag-500 dag-500.json bench-dag-500 run 3 "${out}/dag-500"
+fi
+if bench_wanted dag-2000; then
+  scenario dag-2000 dag-2000.json bench-dag-2000 run 3 "${out}/dag-2000"
+fi
+if bench_wanted cascade-2000; then
+  scenario cascade-2000 cascade-2000.json bench-cascade-2000 run 3 "${out}/cascade-2000"
+fi
+if bench_wanted cancel-500; then
+  scenario cancel-500 cancel-500.json bench-cancel-500 run 3 "${out}/cancel-500" 60
+fi
 python3 "${here}/report.py" "${out}" > "${out}/report.md"
 echo "run_baseline_dev.sh: report at ${out}/report.md (restore follows)" >&2

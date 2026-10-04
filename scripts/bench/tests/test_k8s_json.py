@@ -31,20 +31,6 @@ def test_env_from_sources_are_candidates_when_not_set_explicitly():
     assert k8s_json.env_sources(d, "POSTGRES_USER") == [("envfrom-configmap", "cm1"), ("envfrom-secret", "s1")]
 
 
-def test_legacy_jobs_are_finished_dbt_jobs_without_ttl():
-    def job(name, app="dbt-job", ttl=None, status=None):
-        spec = {} if ttl is None else {"ttlSecondsAfterFinished": ttl}
-        return {"metadata": {"name": name, "labels": {"app": app}}, "spec": spec, "status": status or {}}
-    doc = {"items": [
-        job("old-ok", status={"succeeded": 1}),
-        job("old-failed", status={"failed": 1}),
-        job("new", ttl=86400, status={"succeeded": 1}),
-        job("running", status={"active": 1}),
-        job("reaper", app="stream-reaper", status={"succeeded": 1}),
-    ]}
-    assert k8s_json.legacy_jobs(doc) == ["old-failed", "old-ok"]
-
-
 def test_data_value_decodes_secrets_and_rejects_missing_keys():
     secret = {"data": {"pw": base64.b64encode(b"s3cret").decode()}}
     assert k8s_json.data_value(secret, "pw", encoded=True) == "s3cret"

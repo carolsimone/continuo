@@ -96,3 +96,47 @@ def test_release_check_compares_current_prod_with_the_export(tmp_path):
     moved = run_lib(env, f'bench_check_release "{out_dir}"')
     assert moved.returncode == 1
     assert "rel-9" in moved.stderr and "rel-8" in moved.stderr
+
+
+def test_release_check_fails_closed_when_current_prod_cannot_be_read(tmp_path):
+    import json
+    import fake_env
+    env = fake_env.make(tmp_path, [])
+    env.update(BENCH_TARGET="k8s", BENCH_KUBECONFIG="/dev/null", BENCH_PG_POD="pg-0", FAKE_EXEC_FAIL="1")
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    (out_dir / "restore.json").write_text(json.dumps({"release_id": "rel-9", "topology": []}))
+    unreadable = run_lib(env, f'bench_check_release "{out_dir}"')
+    assert unreadable.returncode == 2
+    assert "cannot read current_prod" in unreadable.stderr
+
+
+def test_restore_never_re_exports_when_current_prod_cannot_be_read(tmp_path):
+    import json
+    import fake_env
+    env = fake_env.make(tmp_path, [])
+    env.update(BENCH_TARGET="k8s", BENCH_KUBECONFIG="/dev/null", BENCH_PG_POD="pg-0", BENCH_REDIS_POD="redis-0",
+               FAKE_EXEC_FAIL="1")
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    (out_dir / "restore.json").write_text(json.dumps({"release_id": "rel-9", "topology": []}))
+    (out_dir / "schedules-before.json").write_text(json.dumps({"schedules": []}))
+    result = subprocess.run(["bash", str(BENCH / "restore.sh"), str(out_dir)], env=env, capture_output=True,
+                            text=True, timeout=60)
+    assert result.returncode != 0
+    assert "re-exporting" not in result.stderr
+    assert "cannot read current_prod" in result.stderr
+
+
+def test_scenario_subset_selects_by_name():
+    def wanted(name, scenarios=None):
+        env = dict(os.environ)
+        env.pop("BENCH_SCENARIOS", None)
+        if scenarios is not None:
+            env["BENCH_SCENARIOS"] = scenarios
+        return subprocess.run(["bash", "-c", f'. "{BENCH}/lib.sh"; bench_wanted {name}'], env=env).returncode == 0
+    assert wanted("dag-500")
+    assert wanted("cascade-2000", "cascade-2000,cancel-500")
+    assert wanted("cancel-500", "cascade-2000 cancel-500")
+    assert not wanted("dag-500", "cascade-2000,cancel-500")
+    assert not wanted("dag-2000", "dag-200")

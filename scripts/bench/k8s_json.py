@@ -1,5 +1,5 @@
-"""Read kubectl JSON (stdin) for the benchmark: env-var sources, legacy Jobs, Secret and ConfigMap values,
-and Job lists slimmed to what the metrics read.
+"""Read kubectl JSON (stdin) for the benchmark: env-var sources, Secret and ConfigMap values, and Job
+lists slimmed to what the metrics read.
 
 secret-key prints a decoded Secret value on stdout for a shell variable to
 capture; nothing in this module logs a value.
@@ -42,22 +42,6 @@ def env_sources(deploy: dict, var: str) -> list:
     return candidates
 
 
-def legacy_jobs(jobs_doc: dict) -> list:
-    """Finished dbt Jobs created without a TTL, which Kubernetes never removes."""
-    names = []
-    for job in jobs_doc.get("items", []):
-        labels = job.get("metadata", {}).get("labels") or {}
-        if labels.get("app") != "dbt-job":
-            continue
-        if job.get("spec", {}).get("ttlSecondsAfterFinished") is not None:
-            continue
-        status = job.get("status") or {}
-        if not (status.get("succeeded") or status.get("failed")):
-            continue
-        names.append(job["metadata"]["name"])
-    return sorted(names)
-
-
 def slim_jobs(jobs_doc: dict) -> dict:
     """A Job list with only what the metrics read: name, creation time, labels, status and TABLE_NAME.
 
@@ -89,7 +73,7 @@ def data_value(doc: dict, key: str, encoded: bool) -> str:
 def main(argv: list) -> int:
     logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="%(levelname)s %(message)s")
     if not argv:
-        log.error("usage: k8s_json.py env-source VAR | legacy-jobs | slim-jobs | secret-key KEY | configmap-key KEY")
+        log.error("usage: k8s_json.py env-source VAR | slim-jobs | secret-key KEY | configmap-key KEY")
         return 2
     doc = json.load(sys.stdin)
     command = argv[0]
@@ -100,10 +84,6 @@ def main(argv: list) -> int:
     if command == "slim-jobs" and len(argv) == 1:
         json.dump(slim_jobs(doc), sys.stdout)
         sys.stdout.write("\n")
-        return 0
-    if command == "legacy-jobs" and len(argv) == 1:
-        for name in legacy_jobs(doc):
-            print(name)
         return 0
     if command in ("secret-key", "configmap-key") and len(argv) == 2:
         try:
