@@ -19,6 +19,16 @@ type Waker interface {
 // connection; a dead connection is then re-established.
 const pingInterval = 90 * time.Second
 
+// listenerMinReconnect and listenerMaxReconnect bound the listener's wait
+// between connection attempts: it starts at the minimum and doubles up to the
+// maximum. The maximum equals FallbackTick, so once Postgres answers again
+// wake-ups resume within about one fallback poll; while Postgres is down each
+// relay pod tries to connect once every 5 seconds.
+const (
+	listenerMinReconnect = time.Second
+	listenerMaxReconnect = FallbackTick
+)
+
 // PostgresWaker listens on the Postgres channel named after an outbox table.
 // Each outbox table has a statement-level AFTER INSERT trigger that calls
 // pg_notify on the channel named after the table, with an empty payload, and
@@ -38,9 +48,9 @@ var _ Waker = (*PostgresWaker)(nil)
 // NewPostgresWaker opens a dedicated listener connection (outside any pool)
 // and listens on table's channel. It returns once the LISTEN is established.
 // While Postgres is unreachable it keeps waiting: the listener retries with
-// backoff (1 s doubling to 30 s) and logs every failed attempt.
+// backoff (1 s doubling to 5 s) and logs every failed attempt.
 func NewPostgresWaker(dsn, table string, logger *slog.Logger) (*PostgresWaker, error) {
-	l := pq.NewListener(dsn, time.Second, 30*time.Second, func(ev pq.ListenerEventType, err error) {
+	l := pq.NewListener(dsn, listenerMinReconnect, listenerMaxReconnect, func(ev pq.ListenerEventType, err error) {
 		if err != nil {
 			logger.Warn("Outbox listener connection problem", "table", table, "event", ev.String(), "error", err)
 			return
