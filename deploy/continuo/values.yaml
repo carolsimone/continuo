@@ -371,8 +371,10 @@ database:
   # each service's own default, sized to how many queries it runs at once
   # (open/idle: state 20/10, orchestrator 35/5, execution-controller 30/5,
   # release-controller 15/5, remediation 10/5, agent-remediation 10/5,
-  # agent-chat 20/5). Set them when your Postgres allows fewer connections than
-  # those maxima add up to. Set the two together: maxIdleConns may not exceed
+  # agent-chat 20/5). Each limit applies per Go service pod, so the connection
+  # ceiling is the open limit (or each service's own default when unset) times
+  # the Go service pods (seven services, times their replicas). Set them when
+  # your Postgres max_connections is below that ceiling. Set the two together: maxIdleConns may not exceed
   # maxOpenConns, and the render fails when maxIdleConns is set without
   # maxOpenConns (an idle limit above a service's own open limit would stop
   # that service from starting). A service's own services[].env entry overrides
