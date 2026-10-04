@@ -93,10 +93,6 @@ func main() {
 	runConsumer := func(name string, consumer *pkgredis.StreamConsumer) {
 		consumer.SetService(config.ServiceName)
 		consumer.SetHandlerTimeout(consumerHandlerTimeout)
-		// The reclaim gate sits a minute above the handler timeout, so the gate
-		// outlasts a single handler invocation and a peer replica's sweep does
-		// not take a message during one.
-		consumer.SetReclaimMinIdle(consumerHandlerTimeout + time.Minute)
 		liveReg.RegisterWorker(name)
 		liveReg.AddWorkerProbe(name+"_heartbeat", 10*time.Second, func(context.Context) error {
 			return consumer.Healthy(consumer.HeartbeatBudget())

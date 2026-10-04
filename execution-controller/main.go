@@ -190,39 +190,32 @@ func main() {
 		DefaultTaskMaxRetries: cfg.DefaultTaskMaxRetries,
 	}, cancelledSchedulesRepo, outcomes.NewRecorder(logger), logger)
 
-	newConsumer := func(stream, group string, binding pkgredis.MessageHandler, opts ...pkgredis.ConsumerOption) *pkgredis.StreamConsumer {
-		c := pkgredis.NewStreamConsumer(redisClient, stream, group, binding, logger, opts...)
+	newConsumer := func(stream, group string, binding pkgredis.MessageHandler) *pkgredis.StreamConsumer {
+		c := pkgredis.NewStreamConsumer(redisClient, stream, group, binding, logger)
 		logger.Info("consumer initialized", "stream", stream, "group", group)
 		return c
 	}
 
-	// consumerReclaim and schemaOpReclaim keep the PEL sweep from stealing a
-	// message during a single handler invocation: each gate sits a minute above
-	// the handler timeout of its consumers. A schema-op handler may be
-	// legitimately blocked on a schema-op Job for that whole timeout.
-	consumerReclaim := pkgredis.WithReclaimMinIdle(consumerHandlerTimeout + time.Minute)
-	schemaOpReclaim := pkgredis.WithReclaimMinIdle(schemaOpHandlerTimeout + time.Minute)
-
 	queryConsumer := newConsumer(streams.QueryModelV1, streams.ExecutorQueryModel,
-		redis.NewQueryModelBinding(uowFactory, queryHandler, logger), consumerReclaim)
+		redis.NewQueryModelBinding(uowFactory, queryHandler, logger))
 	scheduleCancelledConsumer := newConsumer(streams.ScheduleCancelledV1, streams.ExecutorScheduleCancelled,
-		redis.NewScheduleCancelledBinding(uowFactory, scheduleCancelledHandler, logger), consumerReclaim)
+		redis.NewScheduleCancelledBinding(uowFactory, scheduleCancelledHandler, logger))
 	validationReqConsumer := newConsumer(streams.ValidationRequestedV1, streams.ExecutorValidationRequested,
-		redis.NewValidationRequestedBinding(uowFactory, validationReqHandler, candidateSchemaCreator, logger), schemaOpReclaim)
+		redis.NewValidationRequestedBinding(uowFactory, validationReqHandler, candidateSchemaCreator, logger))
 	seedBuildReqConsumer := newConsumer(streams.SeedBuildRequestedV1, streams.ExecutorSeedBuildRequested,
-		redis.NewSeedBuildRequestedBinding(uowFactory, seedBuildReqHandler, candidateSchemaCreator, logger), schemaOpReclaim)
+		redis.NewSeedBuildRequestedBinding(uowFactory, seedBuildReqHandler, candidateSchemaCreator, logger))
 	compileReqConsumer := newConsumer(streams.CompileRequestedV1, streams.ExecutorCompileRequested,
-		redis.NewCompileRequestedBinding(uowFactory, compileReqHandler, logger), consumerReclaim)
+		redis.NewCompileRequestedBinding(uowFactory, compileReqHandler, logger))
 	validationResultTeardownConsumer := newConsumer(streams.ValidationResultV1, streams.ExecutorValidationResultTeardown,
-		redis.NewValidationResultTeardownBinding(candidateSchemaCleaner, logger), schemaOpReclaim)
+		redis.NewValidationResultTeardownBinding(candidateSchemaCleaner, logger))
 	pipelineRunFinishedTeardownConsumer := newConsumer(streams.PipelineRunFinishedV1, streams.ExecutorPipelineRunFinished,
-		redis.NewPipelineRunFinishedTeardownBinding(candidateSchemaCleaner, logger), schemaOpReclaim)
+		redis.NewPipelineRunFinishedTeardownBinding(candidateSchemaCleaner, logger))
 	releasePromotedTeardownConsumer := newConsumer(streams.ReleasePromotedV1, streams.ExecutorReleasePromoted,
-		redis.NewReleasePromotedTeardownBinding(candidateSchemaCleaner, logger), schemaOpReclaim)
+		redis.NewReleasePromotedTeardownBinding(candidateSchemaCleaner, logger))
 	releaseRejectedTeardownConsumer := newConsumer(streams.ReleaseRejectedV1, streams.ExecutorReleaseRejected,
-		redis.NewReleaseRejectedTeardownBinding(candidateSchemaCleaner, logger), schemaOpReclaim)
+		redis.NewReleaseRejectedTeardownBinding(candidateSchemaCleaner, logger))
 	checkConsumer := newConsumer(streams.CheckK8sV1, streams.K8sCheckStatus,
-		redis.NewCheckK8sBinding(uowFactory, jobStatusHandler, logger), consumerReclaim)
+		redis.NewCheckK8sBinding(uowFactory, jobStatusHandler, logger))
 
 	// ---- background workers ----
 

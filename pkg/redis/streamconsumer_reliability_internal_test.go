@@ -87,13 +87,58 @@ func TestNewStreamConsumer_DefaultsAndBudget(t *testing.T) {
 	assert.Equal(t, 7*time.Minute, c.HeartbeatBudget())
 }
 
-func TestSetReclaimMinIdle(t *testing.T) {
+func TestReclaimGate_FollowsTheHandlerTimeout(t *testing.T) {
 	c := NewStreamConsumer(nil, "s", "g", func(context.Context, goredis.XMessage) error { return nil }, discardLog())
-	assert.Equal(t, defaultReclaimMinIdle, c.reclaimMinIdle)
-	c.SetReclaimMinIdle(6 * time.Minute)
-	assert.Equal(t, 6*time.Minute, c.reclaimMinIdle)
-	c.SetReclaimMinIdle(0)
-	assert.Equal(t, time.Duration(0), c.reclaimMinIdle, "zero disables the gate, as WithReclaimMinIdle(0) does")
+	assert.Equal(t, DefaultHandlerTimeout+reclaimMargin, c.reclaimGate())
+	assert.Equal(t, 90*time.Second, c.reclaimGate())
+	c.SetHandlerTimeout(5 * time.Minute)
+	assert.Equal(t, 6*time.Minute, c.reclaimGate(), "a timeout set after construction moves the gate")
+
+	c = NewStreamConsumer(nil, "s", "g", func(context.Context, goredis.XMessage) error { return nil }, discardLog(),
+		WithHandlerTimeout(time.Minute))
+	assert.Equal(t, 2*time.Minute, c.reclaimGate())
+}
+
+func TestReclaimGate_ExplicitValueWins(t *testing.T) {
+	for _, gate := range []time.Duration{0, 2 * time.Minute} {
+		c := NewStreamConsumer(nil, "s", "g", func(context.Context, goredis.XMessage) error { return nil }, discardLog(),
+			WithReclaimMinIdle(gate), WithHandlerTimeout(time.Minute))
+		c.SetHandlerTimeout(5 * time.Minute)
+		assert.Equal(t, gate, c.reclaimGate(), "an explicit gate, 0 included, is kept whatever the handler timeout")
+	}
+}
+
+func TestAttempt_HoldsTheMessageBeforeTheInlineRetry(t *testing.T) {
+	failingOnce := func(rec *recorder) MessageHandler {
+		calls := 0
+		return func(context.Context, goredis.XMessage) error {
+			calls++
+			rec.record(fmt.Sprintf("handler:%d", calls))
+			if calls == 1 {
+				return errors.New("transient")
+			}
+			return nil
+		}
+	}
+
+	rec := &recorder{}
+	c, _ := reliabilityConsumer(t, failingOnce(rec), rec)
+	_, err := c.attempt(context.Background(), msg("1-0"), readPathSchedule)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"handler:1", "hold:1-0", "handler:2"}, rec.calls,
+		"the inline retry runs on a freshly held message; the first attempt needs no hold")
+
+	rec = &recorder{}
+	c, _ = reliabilityConsumer(t, func(context.Context, goredis.XMessage) error { rec.record("handler"); return nil }, rec)
+	_, err = c.attempt(context.Background(), msg("2-0"), readPathSchedule)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"handler"}, rec.calls, "a message handled on its first attempt is never held")
+
+	rec = &recorder{}
+	c, _ = reliabilityConsumer(t, failingOnce(rec), rec)
+	_, err = c.attempt(context.Background(), msg("3-0"), reclaimSchedule)
+	require.Error(t, err)
+	assert.Equal(t, []string{"handler:1"}, rec.calls, "the reclaim path runs once, on the claim that just delivered it")
 }
 
 func TestStart_RefusesWithoutService(t *testing.T) {
@@ -182,16 +227,17 @@ func TestInfraBackoff_DoublesToTheCap(t *testing.T) {
 
 func TestProcessOne_HandlerDeadlineCountsAsTransient(t *testing.T) {
 	rec := &recorder{}
-	c, _ := reliabilityConsumer(t, func(ctx context.Context, _ goredis.XMessage) error {
+	c, logs := reliabilityConsumer(t, func(ctx context.Context, _ goredis.XMessage) error {
 		<-ctx.Done()
 		// A dial cut short by the deadline surfaces as a network timeout.
 		return &net.OpError{Op: "dial", Net: "tcp", Err: ctx.Err()}
 	}, rec)
 	c.SetHandlerTimeout(20 * time.Millisecond)
 	c.processOne(context.Background(), msg("1-0"))
-	assert.NotContains(t, rec.calls, "hold:1-0", "a handler overrun never pauses the consumer")
-	assert.NotContains(t, rec.calls, "xadd", "the read path leaves an overrun for the reclaim sweep")
-	assert.NotContains(t, rec.calls, "ack:1-0")
+	assert.Equal(t, readPathSchedule[1:], rec.sleeps, "a handler overrun never pauses the consumer, it is retried inline")
+	assert.Zero(t, strings.Count(logs.String(), logInfraPause))
+	assert.Equal(t, []string{"hold:1-0"}, rec.calls,
+		"held once, before the inline retry; the read path leaves an overrun for the reclaim sweep: no dead letter, no ACK")
 }
 
 func TestProcessOne_ShutdownLeavesPermanentFailurePending(t *testing.T) {
@@ -423,9 +469,15 @@ func TestStreamConsumer_InfraPause_PeerSweepDoesNotTakeMessage(t *testing.T) {
 // 150 ms until ctx ends. It returns how many messages the peer handled and a
 // channel closed once the sweeping goroutine has returned.
 func sweepingPeer(ctx context.Context, rc *goredis.Client, stream, group string) (*atomic.Int32, <-chan struct{}) {
+	return sweepingPeerEvery(ctx, rc, stream, group, 300*time.Millisecond, 150*time.Millisecond)
+}
+
+// sweepingPeerEvery is sweepingPeer with the peer's reclaim gate and sweep
+// period given.
+func sweepingPeerEvery(ctx context.Context, rc *goredis.Client, stream, group string, gate, every time.Duration) (*atomic.Int32, <-chan struct{}) {
 	var calls atomic.Int32
 	b := NewStreamConsumer(rc, stream, group, func(context.Context, goredis.XMessage) error { calls.Add(1); return nil },
-		discardLog(), WithReclaimMinIdle(300*time.Millisecond))
+		discardLog(), WithReclaimMinIdle(gate))
 	b.SetService("pkg-redis-test")
 	b.consumerName = "peer"
 	done := make(chan struct{})
@@ -433,10 +485,48 @@ func sweepingPeer(ctx context.Context, rc *goredis.Client, stream, group string)
 		defer close(done)
 		for ctx.Err() == nil {
 			_ = b.reclaimPending(ctx)
-			time.Sleep(150 * time.Millisecond)
+			time.Sleep(every)
 		}
 	}()
 	return &calls, done
+}
+
+func TestStreamConsumer_InlineRetry_PeerSweepDoesNotTakeMessage(t *testing.T) {
+	rc := internalRedisClient(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream := fmt.Sprintf("test-inline-retry-hold-%d", time.Now().UnixNano())
+	group := "test-group"
+	t.Cleanup(func() { rc.Del(context.Background(), stream) })
+	require.NoError(t, rc.XGroupCreateMkStream(ctx, stream, group, "0").Err())
+	require.NoError(t, rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, Values: map[string]any{"k": "v"}}).Err())
+
+	// Each attempt alone stays inside the peer's 400 ms gate, but the two
+	// attempts and the retry delay between them (150+100+300 ms) do not: only
+	// the hold before the retry keeps the peer's sweep away.
+	attempts := 0
+	a := NewStreamConsumer(rc, stream, group, func(context.Context, goredis.XMessage) error {
+		attempts++
+		if attempts == 1 {
+			time.Sleep(150 * time.Millisecond)
+			return errors.New("transient")
+		}
+		time.Sleep(300 * time.Millisecond)
+		return nil
+	}, discardLog())
+	a.SetService("pkg-redis-test")
+
+	peerCalls, peerDone := sweepingPeerEvery(ctx, rc, stream, group, 400*time.Millisecond, 25*time.Millisecond)
+
+	require.NoError(t, a.readAndProcess(ctx))
+	cancel()
+	<-peerDone
+	assert.Equal(t, 2, attempts)
+	assert.Zero(t, peerCalls.Load(), "the peer never took the message during its inline retry")
+	pending, err := rc.XPending(context.Background(), stream, group).Result()
+	require.NoError(t, err)
+	assert.Zero(t, pending.Count)
+	assert.Empty(t, deadLettersFor(t, rc, stream))
 }
 
 // infraRefused is a connection-level failure: Classify reads it as an outage.

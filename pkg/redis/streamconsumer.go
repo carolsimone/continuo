@@ -37,13 +37,18 @@ type DropHandler func(ctx context.Context, msg goredis.XMessage, cause error)
 // StreamConsumer is a generic Redis Streams consumer that delegates message
 // processing to a MessageHandler callback
 type StreamConsumer struct {
-	client         *goredis.Client
-	streamName     string
-	consumerGroup  string
-	consumerName   string
-	handler        MessageHandler
-	logger         *slog.Logger
-	reclaimMinIdle time.Duration
+	client        *goredis.Client
+	streamName    string
+	consumerGroup string
+	consumerName  string
+	handler       MessageHandler
+	logger        *slog.Logger
+
+	// reclaimMinIdle is the reclaim gate set by WithReclaimMinIdle, used in
+	// place of the derived one only when reclaimMinIdleSet is true (see
+	// reclaimGate).
+	reclaimMinIdle    time.Duration
+	reclaimMinIdleSet bool
 
 	// workerCount is the number of parallel processing lanes. The default is 1,
 	// which processes each stream strictly serially.
@@ -89,7 +94,8 @@ type StreamConsumer struct {
 	// handlerTimeout bounds each handler invocation with a context deadline.
 	// It is DefaultHandlerTimeout unless WithHandlerTimeout/SetHandlerTimeout
 	// set another positive value before Start, and is read-only once the loop
-	// runs. HeartbeatBudget derives the liveness bound from it.
+	// runs. HeartbeatBudget derives the liveness bound from it, and reclaimGate
+	// the reclaim gate unless one was set explicitly.
 	handlerTimeout time.Duration
 
 	// service names the consuming service; it is stamped as the producer of
@@ -116,25 +122,26 @@ type StreamConsumer struct {
 // ConsumerOption tunes optional behaviour on a StreamConsumer.
 type ConsumerOption func(*StreamConsumer)
 
-// defaultReclaimMinIdle is the MinIdle gate applied to the periodic PEL sweep.
-// At 30s it matches DefaultHandlerTimeout, so another replica's sweep does not
-// take a message from a handler that is still within its deadline, and it is
-// small enough that a crashed consumer's PEL entry is recovered well within the
-// 2-minute reclaim cadence. A message that fails transiently is retried once
-// inline, so one whose two attempts both run to the deadline can stay in flight
-// past the gate; a service whose handlers run longer sets a higher gate
-// (SetReclaimMinIdle). A message paused on an infrastructure error stays in
-// flight longer than that; every pauseSlice, pause re-claims it and everything
-// else this consumer has pending, so their idle times stay below the gate.
-const defaultReclaimMinIdle = 30 * time.Second
+// reclaimMargin is how far the derived reclaim gate (see reclaimGate) sits
+// above the handler timeout, so a peer's reclaim sweep does not take a message
+// during a single handler invocation. The read or claim that delivers a
+// message restarts its idle time, and so does the hold before an inline retry;
+// an invocation that starts there ends within the handler timeout, a margin
+// short of the gate. A message paused on an infrastructure error stays in
+// flight longer; every pauseSlice, pause holds it and everything else this
+// consumer has pending, so their idle times stay below the gate.
+const reclaimMargin = time.Minute
 
-// WithReclaimMinIdle overrides the minimum idle time a pending entry must have
-// accumulated before this consumer's reclaim sweep is allowed to claim it. The
-// default is conservative (30s) for production safety against multi-replica
-// stealing; tests that exercise the reclaim path inside a single process
-// typically pass 0 to disable the gate.
+// WithReclaimMinIdle sets the reclaim gate explicitly: the minimum idle time a
+// pending entry must have accumulated before this consumer's reclaim sweep may
+// claim it. The value replaces the gate derived from the handler timeout (see
+// reclaimGate), whatever handler timeout the consumer is given. 0 disables the
+// gate, which lets a test exercise the reclaim path inside a single process.
 func WithReclaimMinIdle(d time.Duration) ConsumerOption {
-	return func(c *StreamConsumer) { c.reclaimMinIdle = d }
+	return func(c *StreamConsumer) {
+		c.reclaimMinIdle = d
+		c.reclaimMinIdleSet = true
+	}
 }
 
 // WithWorkerPool enables bounded parallel processing across n lanes, sharding
@@ -184,6 +191,7 @@ func WithOnDrop(fn DropHandler) ConsumerOption {
 // SetHandlerTimeout sets the per-handler deadline before Start; d <= 0 keeps
 // the current one. Callers that receive an already-constructed consumer (e.g.
 // from a per-stream binding factory) use it instead of WithHandlerTimeout. The
+// heartbeat budget and the derived reclaim gate follow the new timeout. The
 // write happens-before the Start goroutine, so no synchronisation is required.
 func (c *StreamConsumer) SetHandlerTimeout(d time.Duration) {
 	if d > 0 {
@@ -191,22 +199,26 @@ func (c *StreamConsumer) SetHandlerTimeout(d time.Duration) {
 	}
 }
 
-// SetReclaimMinIdle sets the reclaim sweep's idle gate before Start, exactly as
-// WithReclaimMinIdle does, for callers that receive an already-constructed
-// consumer. A service whose handlers may legitimately run longer than the
-// default gate sets it above its handler timeout, so the gate outlasts a single
-// handler invocation and a peer replica's sweep does not take a message during
-// one.
-func (c *StreamConsumer) SetReclaimMinIdle(d time.Duration) { c.reclaimMinIdle = d }
-
 // SetService names the service this consumer runs in. It must be called
 // before Start: the name is the producer of every dead letter it writes.
 func (c *StreamConsumer) SetService(name string) { c.service = name }
 
 // HeartbeatBudget is the staleness bound to pass to Healthy: the handler
-// timeout plus heartbeatMargin. Each handler attempt and each slice of an
-// infrastructure pause advance the heartbeat, so a live consumer stays inside it.
+// timeout plus heartbeatMargin, derived from the timeout the consumer runs
+// with. Each handler attempt and each slice of an infrastructure pause advance
+// the heartbeat, so a live consumer stays inside it.
 func (c *StreamConsumer) HeartbeatBudget() time.Duration { return c.handlerTimeout + heartbeatMargin }
+
+// reclaimGate is the minimum idle time a pending entry must have before this
+// consumer's reclaim sweep claims it: the WithReclaimMinIdle value when one was
+// given, otherwise the handler timeout plus reclaimMargin. It is computed on
+// every use, so a handler timeout set after construction moves the gate too.
+func (c *StreamConsumer) reclaimGate() time.Duration {
+	if c.reclaimMinIdleSet {
+		return c.reclaimMinIdle
+	}
+	return c.handlerTimeout + reclaimMargin
+}
 
 // consumerName derives a stable, per-pod consumer name. Reusing the same name
 // across process restarts means the consumer group registry does not grow an
@@ -237,7 +249,6 @@ func NewStreamConsumer(
 		consumerName:     consumerName(consumerGroup),
 		handler:          handler,
 		logger:           logger,
-		reclaimMinIdle:   defaultReclaimMinIdle,
 		workerCount:      1,
 		handlerTimeout:   DefaultHandlerTimeout,
 		infraBackoffBase: defaultInfraBackoffBase,
@@ -268,9 +279,10 @@ func NewStreamConsumer(
 // abandoned by other consumer instances (crash recovery) and for messages whose
 // handler failed transiently. The read path retries a transient error once
 // in-process (readPathSchedule) before leaving the message for this sweep. A
-// message that keeps failing is retried at the larger of this interval and the
-// consumer's reclaim min idle, since a sweep takes only entries idle at least
-// that long.
+// sweep takes only entries idle for at least the consumer's reclaim gate
+// (reclaimGate), so a message that keeps failing is retried by the first sweep
+// after it has been idle that long: no more often than the larger of this
+// interval and the gate.
 const reclaimInterval = 2 * time.Minute
 
 // staleConsumerIdle is how long a zero-pending consumer must have been idle
@@ -308,8 +320,8 @@ const maxDeliveries = 5
 
 // readPathSchedule retries a transient error once, quickly, on first delivery;
 // after that the message waits for the reclaim sweep. reclaimSchedule runs a
-// reclaimed message once per sweep, so a failing message is retried at the
-// larger of reclaimInterval and the consumer's reclaim min idle.
+// reclaimed message once per sweep, so a failing message is retried no more
+// often than the larger of reclaimInterval and the consumer's reclaim gate.
 var (
 	readPathSchedule = []time.Duration{0, 100 * time.Millisecond}
 	reclaimSchedule  = []time.Duration{0}
@@ -375,8 +387,11 @@ func (c *StreamConsumer) classify(err error, deadlineHit bool) ErrorClass {
 }
 
 // attempt runs the handler once per schedule entry and stops at the first
-// success or the first error that is not transient. When ctx ends it returns
-// ctx's error and the caller leaves the message pending.
+// success or the first error that is not transient. Before a delayed retry it
+// holds the message (see hold), so the retry starts with the message's idle
+// time restarted, as the first attempt does on the read or claim that
+// delivered it. When ctx ends it returns ctx's error and the caller leaves the
+// message pending.
 func (c *StreamConsumer) attempt(ctx context.Context, msg goredis.XMessage, schedule []time.Duration) (ErrorClass, error) {
 	class, err := ClassTransient, error(nil)
 	for i, delay := range schedule {
@@ -384,6 +399,7 @@ func (c *StreamConsumer) attempt(ctx context.Context, msg goredis.XMessage, sche
 			if !c.sleepFn(ctx, delay) {
 				return ClassTransient, ctx.Err()
 			}
+			c.holdFn(ctx, msg.ID)
 			c.logger.Warn("Retrying transient handler error",
 				"stream", c.streamName, "message_id", msg.ID, "attempt", i+1, "previous_error", err)
 		}
@@ -466,20 +482,22 @@ func (c *StreamConsumer) pause(ctx context.Context, id string, d time.Duration) 
 	return true
 }
 
-// hold re-claims for this consumer, with XCLAIM … JUSTID, the paused message
-// id and every other entry this consumer has pending (up to holdBatch). JUSTID
-// resets each entry's idle time without counting a delivery, so while one
-// message pauses, neither it nor the rest of its read batch, worker lanes or
-// reclaim page grows idle enough for a peer's reclaim sweep to take it. XCLAIM
-// skips an id that is no longer pending. Failures only shorten the
-// protection, so they are logged.
+// hold re-claims for this consumer, with XCLAIM … JUSTID, the message id it is
+// given and every other entry this consumer has pending (up to holdBatch).
+// JUSTID resets each entry's idle time without counting a delivery. It runs
+// before each inline retry of a transient error and every pauseSlice of an
+// infrastructure pause, so neither the retried or paused message nor the rest
+// of its read batch, worker lanes or reclaim page grows idle enough for a
+// peer's reclaim sweep to take it meanwhile. XCLAIM skips an id that is no
+// longer pending. It is best-effort: failures only shorten the protection, so
+// they are logged.
 func (c *StreamConsumer) hold(ctx context.Context, id string) {
 	ids := []string{id}
 	pending, err := c.client.XPendingExt(ctx, &goredis.XPendingExtArgs{
 		Stream: c.streamName, Group: c.consumerGroup, Consumer: c.consumerName, Start: "-", End: "+", Count: holdBatch,
 	}).Result()
 	if err != nil {
-		c.logger.Warn("Could not list this consumer's pending messages — holding only the paused one",
+		c.logger.Warn("Could not list this consumer's pending messages — holding only this message",
 			"stream", c.streamName, "message_id", id, "error", err)
 	}
 	for _, p := range pending {
@@ -740,9 +758,9 @@ func (c *StreamConsumer) ensureConsumerGroup(ctx context.Context) error {
 
 // reclaimPending claims and reprocesses messages left in the pending entry list
 // (PEL) by consumers other than this one — typically a previous instance that
-// crashed before ACKing. Only entries idle for at least reclaimMinIdle are
-// eligible; this prevents a parallel replica from stealing a peer's in-flight
-// message during a periodic sweep.
+// crashed before ACKing. Only entries idle for at least the reclaim gate
+// (reclaimGate) are eligible; this prevents a parallel replica from stealing a
+// peer's in-flight message during a periodic sweep.
 //
 // Each reclaimed message is settled by settleReclaimed. Handler invocations
 // here are **single-shot** for transient errors (reclaimSchedule): a PEL entry
@@ -751,9 +769,9 @@ func (c *StreamConsumer) ensureConsumerGroup(ctx context.Context) error {
 // path's retry schedule inside the sweep would (a) head-of-line-block the read
 // loop, and (b) duplicate work for the common case where a single attempt under
 // the new owner already succeeds. If the single attempt fails, the entry stays
-// in the PEL until a later sweep finds it idle for at least reclaimMinIdle, so
-// the retry cadence is the larger of reclaimInterval and reclaimMinIdle, until
-// its delivery count reaches maxDeliveries and it is dead-lettered. A
+// in the PEL until a later sweep finds it idle for at least the reclaim gate,
+// so it is retried no more often than the larger of reclaimInterval and the
+// gate, until its delivery count reaches maxDeliveries and it is dead-lettered. A
 // permanent error is dead-lettered at once; an infrastructure error pauses the
 // sweep on that message until the dependency answers. Every message is
 // acknowledged as soon as it is settled — a handled one at once, a
@@ -764,13 +782,14 @@ func (c *StreamConsumer) ensureConsumerGroup(ctx context.Context) error {
 // entries in one cursor-paged command, rather than one XPENDING plus an XCLAIM
 // per entry.
 func (c *StreamConsumer) reclaimPending(ctx context.Context) error {
+	gate := c.reclaimGate()
 	cursor := "0-0"
 	for {
 		msgs, next, err := c.client.XAutoClaim(ctx, &goredis.XAutoClaimArgs{
 			Stream:   c.streamName,
 			Group:    c.consumerGroup,
 			Consumer: c.consumerName,
-			MinIdle:  c.reclaimMinIdle,
+			MinIdle:  gate,
 			Start:    cursor,
 			Count:    100,
 		}).Result()
@@ -782,7 +801,7 @@ func (c *StreamConsumer) reclaimPending(ctx context.Context) error {
 			c.logger.Warn("Reclaiming pending messages from previous consumers",
 				"stream", c.streamName,
 				"count", len(msgs),
-				"min_idle", c.reclaimMinIdle,
+				"min_idle", gate,
 			)
 		}
 

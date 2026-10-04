@@ -442,18 +442,9 @@ func main() {
 		{"remediation_pr_closed_provenance", streams.RemediationPrClosedV1, streams.OrchestratorRemediationPrClosedProvenance, redis.NewPrClosedBinding(provenanceHandler, logger), 0},
 	}
 	for _, c := range consumers {
-		opts := []pkgredis.ConsumerOption{
+		runConsumer(c.name, pkgredis.NewStreamConsumer(redisClient, c.stream, c.group, c.binding, logger,
 			pkgredis.WithHandlerTimeout(c.timeout),
-			pkgredis.WithInfraClassifier(neo4jinfra.IsUnavailable),
-		}
-		if c.timeout > pkgredis.DefaultHandlerTimeout {
-			// A peer replica's reclaim sweep takes a pending message once it has
-			// been idle for the gate. The gate sits a minute above the handler
-			// timeout, so the gate outlasts a single handler invocation and a
-			// peer's sweep does not take a message during one.
-			opts = append(opts, pkgredis.WithReclaimMinIdle(c.timeout+time.Minute))
-		}
-		runConsumer(c.name, pkgredis.NewStreamConsumer(redisClient, c.stream, c.group, c.binding, logger, opts...))
+			pkgredis.WithInfraClassifier(neo4jinfra.IsUnavailable)))
 	}
 
 	// ========================================================================
