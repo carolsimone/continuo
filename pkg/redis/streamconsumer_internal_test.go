@@ -24,6 +24,7 @@ func testConsumer(handler MessageHandler) *StreamConsumer {
 		streamName:       "test-stream",
 		logger:           slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})),
 		handler:          handler,
+		observer:         nopObserver{},
 		workerCount:      1,
 		service:          "pkg-redis-test",
 		handlerTimeout:   DefaultHandlerTimeout,
