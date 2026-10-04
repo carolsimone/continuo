@@ -17,8 +17,16 @@ class ErrorClass(enum.Enum):
     TRANSIENT = "transient"
 
 
-# Failures that mean Redis or S3 could not be reached. They never count toward
-# the delivery limit: the consumer waits and retries the same message.
+# Failures that mean Redis or S3 could not be reached, or that the connection
+# to S3 was lost or timed out part-way through a response. They never count
+# toward the delivery limit: the consumer waits and retries the same message.
+# The botocore pair IncompleteReadError (the body ended before its
+# Content-Length) and ResponseStreamingError (the connection broke while the
+# body was being read) is how a download cut short by S3 surfaces, with
+# ReadTimeoutError and the built-in connection and timeout errors: together they
+# are the failures an S3 transfer retries (s3transfer's
+# S3_RETRYABLE_DOWNLOAD_ERRORS). A bare OSError is not here: a failed local file
+# write is one too.
 _INFRASTRUCTURE = (
     redis.exceptions.ConnectionError,
     redis.exceptions.TimeoutError,
@@ -26,6 +34,8 @@ _INFRASTRUCTURE = (
     botocore.exceptions.ConnectTimeoutError,
     botocore.exceptions.ReadTimeoutError,
     botocore.exceptions.ConnectionClosedError,
+    botocore.exceptions.IncompleteReadError,
+    botocore.exceptions.ResponseStreamingError,
     ConnectionError,
     TimeoutError,
     socket.gaierror,
