@@ -43,6 +43,9 @@ type Config struct {
 	// state does not read them: its pool limits come from DB_MAX_OPEN_CONNS
 	// and DB_MAX_IDLE_CONNS.
 	IgnoredPoolKeys []string
+
+	// MetricsPort is the port the Prometheus /metrics listener binds (METRICS_PORT).
+	MetricsPort int
 }
 
 // Load reads configuration from environment variables.
@@ -62,6 +65,8 @@ func Load(v *pkgconfig.Validator) Config {
 		ShutdownGrace: pkgconfig.EnvDurationOrDefault("SHUTDOWN_GRACE", defaultShutdownGrace),
 
 		IgnoredPoolKeys: setKeys("DB_POOL_SIZE", "DB_MAX_OVERFLOW"),
+
+		MetricsPort: pkgconfig.LoadMetricsPort(v),
 	}
 }
 

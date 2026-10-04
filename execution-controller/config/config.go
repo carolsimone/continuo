@@ -47,6 +47,9 @@ type Config struct {
 
 	// ShutdownGrace bounds the graceful-shutdown drain + infra teardown.
 	ShutdownGrace time.Duration
+
+	// MetricsPort is the port the Prometheus /metrics listener binds (METRICS_PORT).
+	MetricsPort int
 }
 
 // Load reads configuration from environment variables. v accumulates missing
@@ -76,6 +79,8 @@ func Load(v *pkgconfig.Validator) Config {
 		ErrorMessageMaxLength:     envInt("ERROR_MESSAGE_MAX_LENGTH", 4096),
 
 		ShutdownGrace: pkgconfig.EnvDurationOrDefault("SHUTDOWN_GRACE", defaultShutdownGrace),
+
+		MetricsPort: pkgconfig.LoadMetricsPort(v),
 	}
 }
 

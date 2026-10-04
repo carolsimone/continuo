@@ -95,6 +95,9 @@ type Config struct {
 	// back to the default so a misconfigured interval can never produce a hot
 	// loop; a value that is not a Go duration at all fails start-up.
 	VerificationPollInterval time.Duration
+
+	// MetricsPort is the port the Prometheus /metrics listener binds (METRICS_PORT).
+	MetricsPort int
 }
 
 // serviceReposFile is the on-disk structure of config/service_repos.yaml.
@@ -201,6 +204,8 @@ func Load(v *pkgconfig.Validator) Config {
 		VerificationTimeout:  v.DurationOrDefault("VERIFICATION_TIMEOUT", defaultVerificationTimeout),
 		VerificationPollInterval: v.DurationOrDefault(
 			"VERIFICATION_POLL_INTERVAL", defaultVerificationPollInterval),
+
+		MetricsPort: pkgconfig.LoadMetricsPort(v),
 	}
 	cfg.SQLDialect = resolveSQLDialect(v)
 	switch cfg.LLMProvider {

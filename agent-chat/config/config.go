@@ -39,6 +39,9 @@ type Config struct {
 	RetentionSweepEvery   time.Duration
 	RetentionArchiveS3    bool
 	ShutdownGrace         time.Duration
+
+	// MetricsPort is the port the Prometheus /metrics listener binds (METRICS_PORT).
+	MetricsPort int
 }
 
 const defaultSystemPrompt = "You answer questions about continuo schedules for an end user. " +
@@ -50,10 +53,10 @@ const defaultSystemPrompt = "You answer questions about continuo schedules for a
 // values on v so main can fail fast with a complete list.
 func Load(v *pkgconfig.Validator) Config {
 	cfg := Config{
-		GRPCPort:              pkgconfig.EnvIntOrDefault("GRPC_PORT", 50053),
-		HealthPort:            pkgconfig.EnvIntOrDefault("HEALTH_PORT", 8091),
-		Postgres:              pkgconfig.LoadPostgres(v),
-		LLMProvider:           v.Require("LLM_PROVIDER"),
+		GRPCPort:    pkgconfig.EnvIntOrDefault("GRPC_PORT", 50053),
+		HealthPort:  pkgconfig.EnvIntOrDefault("HEALTH_PORT", 8091),
+		Postgres:    pkgconfig.LoadPostgres(v),
+		LLMProvider: v.Require("LLM_PROVIDER"),
 		// LLM_API_KEY is intentionally optional: agent-chat boots and serves
 		// gRPC without it, and chat sessions fail only when they actually call the
 		// LLM. Requiring it would crashloop the pod on a missing key and time out
@@ -79,6 +82,7 @@ func Load(v *pkgconfig.Validator) Config {
 		RetentionSweepEvery:   pkgconfig.EnvDurationOrDefault("RETENTION_SWEEP_EVERY", 24*time.Hour),
 		RetentionArchiveS3:    pkgconfig.EnvBoolOrDefault("RETENTION_ARCHIVE_S3", false),
 		ShutdownGrace:         pkgconfig.EnvDurationOrDefault("SHUTDOWN_GRACE", 10*time.Second),
+		MetricsPort:           pkgconfig.LoadMetricsPort(v),
 	}
 	switch cfg.LLMProvider {
 	case "anthropic", "openai":

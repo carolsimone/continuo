@@ -29,6 +29,9 @@ type Config struct {
 	// AgentRemediationGRPCAddr is agent-remediation's in-cluster gRPC address,
 	// dialed to read a release's remediation attempts before starting a retry round.
 	AgentRemediationGRPCAddr string
+
+	// MetricsPort is the port the Prometheus /metrics listener binds (METRICS_PORT).
+	MetricsPort int
 }
 
 // Load reads configuration from environment variables.
@@ -52,5 +55,7 @@ func Load(v *pkgconfig.Validator) Config {
 		RecoverStuckInterval:  pkgconfig.EnvOrDefault("RECOVER_STUCK_INTERVAL", "1m"),
 		AgentRemediationGRPCAddr: pkgconfig.EnvOrDefault(
 			"AGENT_REMEDIATION_GRPC_ADDR", "agent-remediation:50054"),
+
+		MetricsPort: pkgconfig.LoadMetricsPort(v),
 	}
 }
