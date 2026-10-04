@@ -125,3 +125,53 @@ func TestLoadPostgresWithDefaultDB(t *testing.T) {
 		assert.Equal(t, "default_db", got.DB)
 	})
 }
+
+// POSTGRES_PORT is optional, but a value that is not a port number stops the
+// service instead of connecting to 5432.
+func TestLoadPostgres_Port(t *testing.T) {
+	cases := []struct {
+		name, port string
+		want       int
+		invalid    bool
+	}{
+		{name: "unset defaults to 5432", want: 5432},
+		{name: "set", port: "6543", want: 6543},
+		{name: "text is refused", port: "543x", invalid: true},
+		{name: "zero is refused", port: "0", invalid: true},
+		{name: "negative is refused", port: "-1", invalid: true},
+		{name: "above 65535 is refused", port: "65536", invalid: true},
+	}
+	for _, tc := range cases {
+		for _, load := range []struct {
+			name string
+			fn   func(*Validator) PostgresConfig
+		}{
+			{"LoadPostgres", LoadPostgres},
+			{"LoadPostgresWithDefaultDB", func(v *Validator) PostgresConfig { return LoadPostgresWithDefaultDB(v, "default_db") }},
+		} {
+			t.Run(load.name+"/"+tc.name, func(t *testing.T) {
+				setPostgresEnv(t, map[string]string{"POSTGRES_HOST": "h", "POSTGRES_DB": "d", "POSTGRES_USER": "u",
+					"POSTGRES_PASSWORD": "p", "POSTGRES_PORT": tc.port})
+				v := &Validator{}
+				got := load.fn(v)
+				if tc.invalid {
+					require.Len(t, v.Missing(), 1)
+					assert.Contains(t, v.Missing()[0], "POSTGRES_PORT")
+					return
+				}
+				assert.Empty(t, v.Missing())
+				assert.Equal(t, tc.want, got.Port)
+			})
+		}
+	}
+}
+
+// setPostgresEnv sets every key LoadPostgres reads, to its value in env or to
+// empty, so a test does not depend on the environment it runs in.
+func setPostgresEnv(t *testing.T, env map[string]string) {
+	t.Helper()
+	for _, key := range []string{"POSTGRES_HOST", "POSTGRES_PORT", "POSTGRES_DB", "POSTGRES_USER",
+		"POSTGRES_PASSWORD", "DB_SSLMODE", "DB_MAX_OPEN_CONNS", "DB_MAX_IDLE_CONNS"} {
+		t.Setenv(key, env[key])
+	}
+}

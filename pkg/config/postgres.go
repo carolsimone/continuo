@@ -60,7 +60,7 @@ func loadPostgresCommon(v *Validator, defaultDB string) PostgresConfig {
 	}
 	return PostgresConfig{
 		Host:     v.Require("POSTGRES_HOST"),
-		Port:     envInt("POSTGRES_PORT", 5432),
+		Port:     v.PortOrDefault("POSTGRES_PORT", 5432),
 		DB:       db,
 		User:     v.Require("POSTGRES_USER"),
 		Password: v.Require("POSTGRES_PASSWORD"),
@@ -71,7 +71,8 @@ func loadPostgresCommon(v *Validator, defaultDB string) PostgresConfig {
 
 // LoadPostgres reads PostgreSQL connection config from standard env vars.
 // Tier 1 (required): POSTGRES_HOST, POSTGRES_DB, POSTGRES_USER, POSTGRES_PASSWORD.
-// Tier 2 (defaults): POSTGRES_PORT=5432, DB_SSLMODE=disable.
+// Tier 2 (defaults): POSTGRES_PORT=5432, DB_SSLMODE=disable. A POSTGRES_PORT
+// that is not a port number is recorded on v.
 // DB_MAX_OPEN_CONNS and DB_MAX_IDLE_CONNS are optional pool limits; a zero value means the environment did not set it.
 func LoadPostgres(v *Validator) PostgresConfig {
 	return loadPostgresCommon(v, "")
