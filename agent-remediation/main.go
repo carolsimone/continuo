@@ -269,12 +269,22 @@ func main() {
 
 	// The outbox relay wakes on the notification a committed insert into its
 	// table sends.
-	outboxWaker, err := pkgoutbox.NewPostgresWaker(cfg.Postgres.DSN(), rredis.OutboxTable, logger)
+	outboxWaker, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN(), rredis.OutboxTable, logger)
+	if errors.Is(err, context.Canceled) {
+		logger.Info("shutdown requested while waiting for the outbox listener")
+		os.Exit(0)
+	}
 	if err != nil {
 		logger.Error("Failed to listen for outbox notifications", "error", err)
 		os.Exit(1)
 	}
-	defer func() { _ = outboxWaker.Close() }()
+	// Closing the listener can wait on a connection attempt in progress, so
+	// shutdown stops waiting for it after 5 seconds.
+	defer func() {
+		closeCtx, cancelClose := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancelClose()
+		_ = outboxWaker.CloseContext(closeCtx)
+	}()
 
 	// Start the outbox publisher; spawns its own goroutine internally and runs
 	// until ctx is cancelled.

@@ -14,7 +14,7 @@ import (
 
 func TestPostgresWaker_SignalsOnlyAfterCommit(t *testing.T) {
 	db := dbForTest(t)
-	w, err := outbox.NewPostgresWaker(testPostgresConfig().DSN(), testOutboxTable, newTestLogger())
+	w, err := outbox.NewPostgresWaker(context.Background(), testPostgresConfig().DSN(), testOutboxTable, newTestLogger())
 	require.NoError(t, err)
 	defer func() { _ = w.Close() }()
 
@@ -42,7 +42,7 @@ func TestPostgresWaker_SignalsOnlyAfterCommit(t *testing.T) {
 func TestPostgresWaker_WakesAfterAReconnectAndKeepsListening(t *testing.T) {
 	db := dbForTest(t)
 	const appName = "pkg-outbox-waker-test"
-	w, err := outbox.NewPostgresWaker(testPostgresConfig().DSN()+" application_name="+appName, testOutboxTable, newTestLogger())
+	w, err := outbox.NewPostgresWaker(context.Background(), testPostgresConfig().DSN()+" application_name="+appName, testOutboxTable, newTestLogger())
 	require.NoError(t, err)
 	defer func() { _ = w.Close() }()
 
@@ -75,7 +75,7 @@ func TestProcessor_PublishesOnNotifyLongBeforeTheTick(t *testing.T) {
 	// notification. Its publish fails and its retry is an hour away, so the
 	// relay's initial drain publishes nothing and ends after its first claim.
 	seed := createRows(t, db, uuid.New(), 1)
-	w, err := outbox.NewPostgresWaker(testPostgresConfig().DSN(), testOutboxTable, newTestLogger())
+	w, err := outbox.NewPostgresWaker(context.Background(), testPostgresConfig().DSN(), testOutboxTable, newTestLogger())
 	require.NoError(t, err)
 	defer func() { _ = w.Close() }()
 	pub := &sequentialPublisher{failOnce: map[uuid.UUID]error{seed[0]: errors.New("xadd: connection refused")}}
@@ -103,4 +103,18 @@ func TestProcessor_PublishesOnNotifyLongBeforeTheTick(t *testing.T) {
 		return len(pub.ids) == 1 && pub.ids[0] == ids[0]
 	}, 3*time.Second, 5*time.Millisecond, "the committed row publishes on its notification")
 	t.Logf("published %s after the insert, with a %s tick", time.Since(insertedAt).Round(time.Millisecond), time.Hour)
+}
+
+// A shutdown during boot does not wait for Postgres: when ctx ends before the
+// LISTEN is established, NewPostgresWaker returns ctx's error.
+func TestNewPostgresWaker_ReturnsWhenItsContextEndsBeforeTheListen(t *testing.T) {
+	// Nothing listens on port 1, so every connection attempt is refused and
+	// the listener keeps retrying.
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	w, err := outbox.NewPostgresWaker(ctx, "host=127.0.0.1 port=1 user=u dbname=d sslmode=disable", "t", newTestLogger())
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Nil(t, w)
+	assert.Less(t, time.Since(start), 2*time.Second)
 }

@@ -1,6 +1,7 @@
 package outbox
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -36,11 +37,14 @@ const (
 // After a reconnect the waker signals once, because notifications sent while
 // it was disconnected are lost.
 type PostgresWaker struct {
-	listener  *pq.Listener
-	wake      chan struct{}
-	done      chan struct{}
-	closeOnce sync.Once
-	closeErr  error
+	wake chan struct{}
+	done chan struct{}
+	// closeListener closes the listener connection; on a waker without a
+	// listener it is nil and closing stops forward through done.
+	closeListener func() error
+	closeOnce     sync.Once
+	closed        chan struct{}
+	closeErr      error
 }
 
 var _ Waker = (*PostgresWaker)(nil)
@@ -48,8 +52,10 @@ var _ Waker = (*PostgresWaker)(nil)
 // NewPostgresWaker opens a dedicated listener connection (outside any pool)
 // and listens on table's channel. It returns once the LISTEN is established.
 // While Postgres is unreachable it keeps waiting: the listener retries with
-// backoff (1 s doubling to 5 s) and logs every failed attempt.
-func NewPostgresWaker(dsn, table string, logger *slog.Logger) (*PostgresWaker, error) {
+// backoff (1 s doubling to 5 s) and logs every failed attempt. When ctx is
+// done before the LISTEN is established, NewPostgresWaker closes the listener
+// and returns ctx.Err(), so a shutdown during boot does not wait for Postgres.
+func NewPostgresWaker(ctx context.Context, dsn, table string, logger *slog.Logger) (*PostgresWaker, error) {
 	l := pq.NewListener(dsn, listenerMinReconnect, listenerMaxReconnect, func(ev pq.ListenerEventType, err error) {
 		if err != nil {
 			logger.Warn("Outbox listener connection problem", "table", table, "event", ev.String(), "error", err)
@@ -59,17 +65,33 @@ func NewPostgresWaker(dsn, table string, logger *slog.Logger) (*PostgresWaker, e
 			logger.Info("Outbox listener reconnected", "table", table)
 		}
 	})
-	if err := l.Listen(table); err != nil {
-		_ = l.Close()
-		return nil, fmt.Errorf("listen on %s: %w", table, err)
+	listened := make(chan error, 1)
+	go func() { listened <- l.Listen(table) }()
+	select {
+	case err := <-listened:
+		if err != nil {
+			_ = l.Close()
+			return nil, fmt.Errorf("listen on %s: %w", table, err)
+		}
+	case <-ctx.Done():
+		// Close waits for a connection attempt in progress to end, so it runs
+		// on its own goroutine; closing the listener also ends the Listen call.
+		go func() { _ = l.Close() }()
+		return nil, ctx.Err()
 	}
-	w := newWaker(l.Notify, l.Ping)
-	w.listener = l
-	return w, nil
+	return newWaker(l.Notify, l.Ping, l.Close), nil
 }
 
-func newWaker(notify <-chan *pq.Notification, ping func() error) *PostgresWaker {
-	w := &PostgresWaker{wake: make(chan struct{}, 1), done: make(chan struct{})}
+// newWaker starts forwarding notify into wake signals. closeListener closes
+// the listener that feeds notify; when it is nil, closing the waker stops
+// forward through done instead.
+func newWaker(notify <-chan *pq.Notification, ping func() error, closeListener func() error) *PostgresWaker {
+	w := &PostgresWaker{
+		wake:          make(chan struct{}, 1),
+		done:          make(chan struct{}),
+		closeListener: closeListener,
+		closed:        make(chan struct{}),
+	}
 	go w.forward(notify, ping)
 	return w
 }
@@ -107,18 +129,38 @@ func (w *PostgresWaker) signal() {
 // Wake returns the channel that receives a signal after rows were committed.
 func (w *PostgresWaker) Wake() <-chan struct{} { return w.wake }
 
-// Close closes the listener connection and stops forwarding. The listener is
-// closed first: pq's goroutine then finishes and closes notify, which ends
-// forward. forward keeps reading notify until then, so pq's goroutine never
-// blocks on a full notify channel. A waker without a listener stops forward
-// through done. Calls after the first return the first call's result.
+// Close closes the listener connection and stops forwarding, waiting for the
+// close to finish. CloseContext bounds that wait.
 func (w *PostgresWaker) Close() error {
+	return w.CloseContext(context.Background())
+}
+
+// CloseContext closes the listener connection and stops forwarding. The
+// listener is closed first: pq's goroutine then finishes and closes notify,
+// which ends forward. forward keeps reading notify until then, so pq's
+// goroutine never blocks on a full notify channel. A waker without a listener
+// stops forward through done.
+//
+// Closing a pq listener waits for a connection attempt or a ping in progress,
+// which a dead socket can hold for minutes, so the close runs on its own
+// goroutine and CloseContext returns when ctx is done even if the close has
+// not finished. The close starts only once; every call waits for that close
+// and returns its result.
+func (w *PostgresWaker) CloseContext(ctx context.Context) error {
 	w.closeOnce.Do(func() {
-		if w.listener != nil {
-			w.closeErr = w.listener.Close()
-			return
-		}
-		close(w.done)
+		go func() {
+			defer close(w.closed)
+			if w.closeListener != nil {
+				w.closeErr = w.closeListener()
+				return
+			}
+			close(w.done)
+		}()
 	})
-	return w.closeErr
+	select {
+	case <-w.closed:
+		return w.closeErr
+	case <-ctx.Done():
+		return fmt.Errorf("close outbox listener: %w", ctx.Err())
+	}
 }

@@ -228,12 +228,18 @@ func main() {
 	// Check tickets and terminal announcements flow through this outbox; the
 	// relay wakes on the notification a committed insert sends, so a status
 	// transition reaches its stream without waiting for a poll.
-	outboxWaker, err := pkgoutbox.NewPostgresWaker(cfg.Postgres.DSN(), outboxTable, logger)
+	outboxWaker, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN(), outboxTable, logger)
+	if errors.Is(err, context.Canceled) {
+		logger.Info("Shutdown requested while waiting for the outbox listener")
+		os.Exit(0)
+	}
 	if err != nil {
 		logger.Error("Failed to listen for outbox notifications", "error", err)
 		os.Exit(1)
 	}
-	lifecycleManager.RegisterShutdownHandler(func(context.Context) error { return outboxWaker.Close() })
+	// Closing the listener can wait on a connection attempt in progress, so
+	// the handler stops waiting at the shutdown deadline.
+	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error { return outboxWaker.CloseContext(ctx) })
 	outboxProcessor := pkgoutbox.NewProcessor(pgDB, outboxTable, publisher.NewOutboxPublisher(redisClient, logger), nil, logger,
 		pkgoutbox.ProcessorConfig{Tick: pkgoutbox.FallbackTick, BatchSize: 100, Waker: outboxWaker})
 	runWorker("outbox_processor", outboxProcessor.Run)
