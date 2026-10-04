@@ -73,7 +73,7 @@ func TestProcessor_PublishesOnNotifyLongBeforeTheTick(t *testing.T) {
 	db := dbForTest(t)
 	// The seed row is committed before the listener exists, so it queues no
 	// notification. Its publish fails and its retry is an hour away, so the
-	// relay's initial drain publishes nothing and ends after its first claim.
+	// relay's initial drain reschedules it, then claims nothing and ends.
 	seed := createRows(t, db, uuid.New(), 1)
 	w, err := outbox.NewPostgresWaker(context.Background(), testPostgresConfig().DSN(), testOutboxTable, newTestLogger())
 	require.NoError(t, err)
@@ -86,14 +86,18 @@ func TestProcessor_PublishesOnNotifyLongBeforeTheTick(t *testing.T) {
 	go func() { defer close(stopped); _ = p.Run(ctx) }()
 	defer func() { cancel(); <-stopped }()
 
-	// Once the seed row's publish has been tried, the initial drain's only
-	// claim has run: a row committed from here on reaches the publisher only
-	// through a drain that a wake starts.
+	// The relay's heartbeat advances on every batch and every turn of its
+	// loop. Once the seed row's publish has been tried and the heartbeat has
+	// then stood still for a while, the initial drain has ended and the relay
+	// waits on its hour-long tick: a row committed from here on reaches the
+	// publisher only through a drain that a wake starts.
 	require.Eventually(t, func() bool {
 		pub.mu.Lock()
 		defer pub.mu.Unlock()
 		return len(pub.failOnce) == 0
 	}, 5*time.Second, 10*time.Millisecond, "the initial drain tries the seed row")
+	require.Eventually(t, func() bool { return p.Healthy(200*time.Millisecond) != nil },
+		5*time.Second, 10*time.Millisecond, "the initial drain ends")
 
 	insertedAt := time.Now()
 	ids := createRows(t, db, uuid.New(), 1)

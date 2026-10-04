@@ -268,7 +268,7 @@ func TestFIFO_CreateOwnsTheOrderingKey(t *testing.T) {
 	assert.Equal(t, ids, pub.ids)
 }
 
-// A drain runs batches back to back while they publish rows. A row held behind
+// A drain runs batches back to back while they settle rows. A row held behind
 // an elder that is dead-lettered in one batch publishes in the next batch of
 // the same drain, followed by the dead-letter row, instead of waiting for the
 // next wake.
@@ -284,6 +284,31 @@ func TestFIFO_DrainKeepsGoingWhileBatchesPublish(t *testing.T) {
 	var deadLetter uuid.UUID
 	require.NoError(t, db.Get(&deadLetter, `SELECT id FROM `+testOutboxTable+` WHERE event_type = $1`, outbox.DeadLetterEventType))
 	assert.Equal(t, []uuid.UUID{other[0], ids[1], deadLetter}, pub.ids)
+}
+
+// A batch whose rows all fail and are rescheduled still settles them: the drain
+// keeps going, so a row of another aggregate queued behind them publishes in
+// the same drain instead of waiting for the next wake or tick.
+func TestFIFO_DrainKeepsGoingPastABatchOfRetries(t *testing.T) {
+	db := dbForTest(t)
+	first := createRows(t, db, uuid.New(), 1)
+	second := createRows(t, db, uuid.New(), 1)
+	healthy := createRows(t, db, uuid.New(), 1)
+
+	pub := &sequentialPublisher{failOnce: map[uuid.UUID]error{
+		first[0]:  errors.New("xadd: connection refused"),
+		second[0]: errors.New("xadd: connection refused"),
+	}}
+	p := outbox.NewProcessor(db, testOutboxTable, pub, nil, newTestLogger(),
+		outbox.ProcessorConfig{BatchSize: 2, RetryBaseDelay: time.Hour, RetryMaxDelay: time.Hour})
+	p.DrainForTest(context.Background())
+
+	assert.Equal(t, healthy, pub.ids, "the third aggregate's row publishes in the same drain")
+	for _, id := range []uuid.UUID{first[0], second[0]} {
+		status, retries := rowState(t, db, id)
+		assert.Equal(t, "scheduled", status, "a failed row waits out its retry")
+		assert.Equal(t, 1, retries)
+	}
 }
 
 // insertTiedRows inserts two pending rows of one aggregate that share one

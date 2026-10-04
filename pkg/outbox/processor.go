@@ -229,21 +229,26 @@ func (p *Processor) DeadLetterBacklog(ctx context.Context) (int, error) {
 	return newPostgresRepository(p.db, p.tableName, p.logger).CountTerminal(ctx)
 }
 
-// drain publishes batches back to back until a batch publishes nothing. A
-// batch that published rows may have unblocked younger rows of the same
-// aggregates, so the next batch runs at once instead of at the next wake.
+// drain runs batches back to back until a batch settles no row. A batch that
+// settled rows moved the queue on: a published or dead-lettered row may have
+// unblocked younger rows of its aggregate, and a row rescheduled for a retry
+// leaves the claim, with the younger rows of its aggregate, until the retry is
+// due, so the next batch reaches the rows queued behind them. The next batch
+// therefore runs at once rather than at the next wake or tick; rescheduling a
+// row sends no notification. A batch that settles nothing, such as one that
+// claims nothing or withholds every row it claims, ends the drain.
 func (p *Processor) drain(ctx context.Context) {
 	for {
 		// Advance the heartbeat per batch so a large multi-batch drain (which
 		// can run well beyond one tick) keeps liveness fresh instead of
 		// freezing it at the loop's last turn for the whole drain.
 		p.lastActivity.Store(time.Now().UnixNano())
-		published, err := p.processBatchOnce(ctx)
+		settled, err := p.processBatchOnce(ctx)
 		if err != nil {
 			p.logger.Error("Outbox batch failed", "table", p.tableName, "error", err)
 			return
 		}
-		if published == 0 || ctx.Err() != nil {
+		if settled == 0 || ctx.Err() != nil {
 			return
 		}
 	}
@@ -256,8 +261,11 @@ func (p *Processor) ProcessBatch(ctx context.Context) error {
 }
 
 // processBatchOnce runs exactly one batch and reports how many rows it
-// published, so the drain loop can tell a batch that made progress from one
-// that did not.
+// settled: published, rescheduled for a retry, or dead-lettered. Rows it
+// withheld or did not send because an older row of their aggregate failed in
+// the batch are not settled. The drain loop runs another batch while batches
+// settle rows. A batch that fails returns 0 with its error, and its
+// transaction rolls back.
 func (p *Processor) processBatchOnce(ctx context.Context) (int, error) {
 	tx, err := p.db.BeginTxx(ctx, nil)
 	if err != nil {
@@ -286,6 +294,7 @@ func (p *Processor) processBatchOnce(ctx context.Context) (int, error) {
 	// subset takes per-row retry/fail handling. This keeps the common all-success
 	// path at one round trip for the status flip.
 	processedIDs := make([]uuid.UUID, 0, len(entries))
+	resolved := 0 // rows rescheduled or dead-lettered
 	for i, entry := range entries {
 		pubErr := pubErrs[i]
 		if pubErr == nil {
@@ -307,7 +316,9 @@ func (p *Processor) processBatchOnce(ctx context.Context) (int, error) {
 		if !permanent && entry.RetryCount+1 < MaxAttempts {
 			if err := repo.ScheduleRetry(ctx, entry.ID, backoff(entry.RetryCount+1, p.retryBase, p.retryMax), pubErr.Error()); err != nil {
 				p.logger.Error("Schedule retry failed", "entry_id", entry.ID, "error", err)
+				continue
 			}
+			resolved++
 			continue
 		}
 
@@ -323,6 +334,7 @@ func (p *Processor) processBatchOnce(ctx context.Context) (int, error) {
 			// the mandatory signal must never be silently dropped.
 			return 0, fmt.Errorf("terminate entry %s: %w", entry.ID, err)
 		}
+		resolved++
 	}
 
 	if err := repo.MarkProcessedBatch(ctx, processedIDs); err != nil {
@@ -334,7 +346,7 @@ func (p *Processor) processBatchOnce(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("commit tx: %w", err)
 	}
-	return len(processedIDs), nil
+	return len(processedIDs) + resolved, nil
 }
 
 // terminalWriter is the part of the repository terminate writes through.
