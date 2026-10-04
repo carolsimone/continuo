@@ -119,6 +119,7 @@ type StreamConsumer struct {
 	// Seams over Redis and the clock; NewStreamConsumer wires the real ones.
 	deadLetterFn func(ctx context.Context, values map[string]any) error
 	holdFn       func(ctx context.Context, ids []string)
+	holdTicker   func(d time.Duration) (ticks <-chan time.Time, stop func())
 	deliveriesFn func(ctx context.Context, id string) int64
 	sleepFn      func(ctx context.Context, d time.Duration) bool
 	nowFn        func() time.Time
@@ -143,6 +144,9 @@ const reclaimMargin = time.Minute
 // claim it. The value replaces the gate derived from the handler timeout (see
 // reclaimGate), whatever handler timeout the consumer is given. 0 disables the
 // gate, which lets a test exercise the reclaim path inside a single process.
+// The holder re-claims the messages in hand every pauseSlice, so they are
+// protected from a peer's sweep only while the gate is longer than pauseSlice:
+// a gate at or below it lets a peer take a message this consumer still holds.
 func WithReclaimMinIdle(d time.Duration) ConsumerOption {
 	return func(c *StreamConsumer) {
 		c.reclaimMinIdle = d
@@ -264,6 +268,10 @@ func NewStreamConsumer(
 	c.ackFn = c.ackOne
 	c.deadLetterFn = c.xaddDeadLetter
 	c.holdFn = c.hold
+	c.holdTicker = func(d time.Duration) (<-chan time.Time, func()) {
+		t := time.NewTicker(d)
+		return t.C, t.Stop
+	}
 	c.deliveriesFn = c.deliveryCount
 	c.sleepFn = func(ctx context.Context, d time.Duration) bool { return sleepCtx(ctx, d) == nil }
 	c.nowFn = time.Now
@@ -317,7 +325,8 @@ const (
 // maxDeliveries is the delivery on which a message whose handler still fails
 // transiently is dead-lettered. The count is the pending entry's delivery
 // counter: the first read is delivery 1, each reclaim adds one. Infrastructure
-// pauses never add to it (see pause).
+// pauses never add to it, since they retry the handler in place (see run), and
+// neither do the holder's re-claims (see hold).
 const maxDeliveries = 5
 
 // readPathSchedule retries a transient error once, quickly, on first delivery;
@@ -562,15 +571,15 @@ func (c *StreamConsumer) holdInHand(ctx context.Context, stop <-chan struct{}) {
 	if slice <= 0 {
 		slice = defaultPauseSlice
 	}
-	tick := time.NewTicker(slice)
-	defer tick.Stop()
+	ticks, stopTicks := c.holdTicker(slice)
+	defer stopTicks()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-stop:
 			return
-		case <-tick.C:
+		case <-ticks:
 			if ids := c.inHand.snapshot(); len(ids) > 0 {
 				c.holdFn(ctx, ids)
 			}
@@ -843,21 +852,22 @@ func (c *StreamConsumer) ensureConsumerGroup(ctx context.Context) error {
 // periodic sweep does not steal a peer's in-flight message.
 //
 // Each claimed page is held while its messages are settled one by one by
-// settleReclaimed, so an entry waiting for its turn is not taken by a peer. Handler invocations
-// here are **single-shot** for transient errors (reclaimSchedule): a PEL entry
-// either landed here because a prior owner already burned its inline retry
-// budget on the read path, or because that owner crashed. Re-running the read
-// path's retry schedule inside the sweep would (a) head-of-line-block the read
-// loop, and (b) duplicate work for the common case where a single attempt under
-// the new owner already succeeds. If the single attempt fails, the entry stays
-// in the PEL until a later sweep finds it idle for at least the reclaim gate,
-// so it is retried no more often than the larger of reclaimInterval and the
-// gate, until its delivery count reaches maxDeliveries and it is dead-lettered. A
-// permanent error is dead-lettered at once; an infrastructure error pauses the
-// sweep on that message until the dependency answers. Every message is
-// acknowledged as soon as it is settled — a handled one at once, a
-// dead-lettered one after its dead letter is written — so a pause on one
-// message never holds finished work in the PEL.
+// settleReclaimed, so an entry waiting for its turn is not taken by a peer.
+// Handler invocations here are **single-shot** for transient errors
+// (reclaimSchedule): a PEL entry either landed here because a prior owner
+// already burned its inline retry budget on the read path, or because that
+// owner crashed. Re-running the read path's retry schedule inside the sweep
+// would (a) head-of-line-block the read loop, and (b) duplicate work for the
+// common case where a single attempt under the new owner already succeeds. If
+// the single attempt fails, the entry stays in the PEL until a later sweep
+// finds it idle for at least the reclaim gate, so it is retried no more often
+// than the larger of reclaimInterval and the gate, until its delivery count
+// reaches maxDeliveries and it is dead-lettered. A permanent error is
+// dead-lettered at once; an infrastructure error pauses the sweep on that
+// message until the dependency answers. Every message is acknowledged as soon
+// as it is settled — a handled one at once, a dead-lettered one after its dead
+// letter is written — so a pause on one message never holds finished work in
+// the PEL.
 //
 // Implementation note: XAUTOCLAIM (Redis 6.2+) claims a whole page of up to 100
 // entries in one cursor-paged command, rather than one XPENDING plus an XCLAIM

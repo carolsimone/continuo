@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -109,53 +108,105 @@ func TestReclaimGate_ExplicitValueWins(t *testing.T) {
 	}
 }
 
+// drivenHolder replaces a consumer's holder ticker and hold with channels the
+// test drives, so which messages a re-claim names never depends on timing.
+type drivenHolder struct {
+	ticks chan time.Time
+	held  chan []string
+}
+
+func driveHolder(c *StreamConsumer) *drivenHolder {
+	h := &drivenHolder{ticks: make(chan time.Time), held: make(chan []string)}
+	c.holdTicker = func(time.Duration) (<-chan time.Time, func()) { return h.ticks, func() {} }
+	c.holdFn = func(_ context.Context, ids []string) { h.held <- ids }
+	return h
+}
+
+// tick delivers one tick to the running holder and returns the ids that tick
+// re-claimed.
+func (h *drivenHolder) tick(t *testing.T) []string {
+	t.Helper()
+	select {
+	case h.ticks <- time.Now():
+	case <-time.After(5 * time.Second):
+		t.Fatal("no holder is running")
+	}
+	select {
+	case ids := <-h.held:
+		return ids
+	case <-time.After(5 * time.Second):
+		t.Fatal("the tick re-claimed nothing")
+	}
+	return nil
+}
+
+// running reports whether a holder takes a tick within d.
+func (h *drivenHolder) running(d time.Duration) bool {
+	select {
+	case h.ticks <- time.Now():
+		return true
+	case <-time.After(d):
+		return false
+	}
+}
+
 func TestHoldWhileInHand_HoldsOnlyTheMessagesNotYetSettled(t *testing.T) {
-	rec := &recorder{}
+	var h *drivenHolder
+	var holds [][]string
 	c, _ := reliabilityConsumer(t, func(_ context.Context, m goredis.XMessage) error {
-		switch m.ID {
-		case "1-0":
-			time.Sleep(100 * time.Millisecond)
-		case "2-0":
+		if m.ID == "2-0" {
 			return errors.New("transient") // left pending for the reclaim sweep
-		case "3-0":
-			rec.record("slow-2-started")
-			time.Sleep(100 * time.Millisecond)
 		}
+		holds = append(holds, h.tick(t))
 		return nil
-	}, rec)
-	c.pauseSlice = 20 * time.Millisecond
+	}, &recorder{})
+	h = driveHolder(c)
 	batch := []goredis.XMessage{msg("1-0"), msg("2-0"), msg("3-0"), msg("4-0")}
 	c.holdWhileInHand(context.Background(), batch, func() { c.processSerial(context.Background(), batch) })
 
-	rec.mu.Lock()
-	calls := append([]string(nil), rec.calls...)
-	rec.mu.Unlock()
-	assert.Contains(t, calls, "hold:1-0,2-0,3-0,4-0",
-		"while the first message runs, the siblings waiting behind it are held with it")
-	marker := slices.Index(calls, "slow-2-started")
-	require.Positive(t, marker)
-	var later []string
-	for _, call := range calls[marker:] {
-		if strings.HasPrefix(call, "hold:") {
-			later = append(later, call)
-		}
-	}
-	require.GreaterOrEqual(t, len(later), 3)
-	withLeft := 0
-	for _, h := range later {
-		if strings.Contains(h, "2-0") {
-			withLeft++
-		}
-	}
-	assert.LessOrEqual(t, withLeft, 1,
-		"a message left pending for the sweep leaves the set; at most a re-claim already in flight touches it")
-	assert.Equal(t, "hold:3-0,4-0", later[len(later)-1])
+	assert.Equal(t, [][]string{
+		{"1-0", "2-0", "3-0", "4-0"}, // the siblings waiting behind 1-0 are held with it
+		{"3-0", "4-0"},               // 1-0 acknowledged, 2-0 left pending: neither is held again
+		{"4-0"},
+	}, holds)
 	assert.Empty(t, c.inHand.snapshot(), "every message leaves the set as it settles")
+	assert.False(t, h.running(50*time.Millisecond), "the holder stops once the batch is settled")
+}
 
-	time.Sleep(60 * time.Millisecond)
-	rec.mu.Lock()
-	defer rec.mu.Unlock()
-	assert.Len(t, rec.calls, len(calls), "the holder stops once the batch is settled")
+func TestHoldWhileInHand_ReclaimPageReleasesEachSettledMessage(t *testing.T) {
+	var h *drivenHolder
+	var holds [][]string
+	c, _ := reliabilityConsumer(t, func(_ context.Context, m goredis.XMessage) error {
+		if m.ID == "2-0" {
+			return errors.New("transient") // left pending for the next sweep
+		}
+		holds = append(holds, h.tick(t))
+		return nil
+	}, &recorder{deliveries: 1})
+	h = driveHolder(c)
+	page := []goredis.XMessage{msg("1-0"), msg("2-0"), msg("3-0")}
+	c.holdWhileInHand(context.Background(), page, func() {
+		for _, m := range page {
+			c.settleReclaimed(context.Background(), m)
+		}
+	})
+
+	assert.Equal(t, [][]string{
+		{"1-0", "2-0", "3-0"}, // the page-mates waiting behind 1-0 are held with it
+		{"3-0"},               // 1-0 acknowledged, 2-0 left for the next sweep: neither is held again
+	}, holds)
+	assert.Empty(t, c.inHand.snapshot())
+}
+
+func TestHoldWhileInHand_StopsItsHolderWhenTheBatchSettles(t *testing.T) {
+	c, _ := reliabilityConsumer(t, func(context.Context, goredis.XMessage) error { return nil }, &recorder{})
+	h := driveHolder(c)
+	batch := []goredis.XMessage{msg("1-0")}
+	c.holdWhileInHand(context.Background(), batch, func() { c.processSerial(context.Background(), batch) })
+
+	c.inHand.add([]goredis.XMessage{msg("9-0")}) // what a later batch would put in hand
+	defer c.inHand.remove("9-0")
+	assert.False(t, h.running(50*time.Millisecond), "no holder outlives the batch it held")
 }
 
 func TestHoldWhileInHand_StopsWithTheConsumer(t *testing.T) {
@@ -166,11 +217,12 @@ func TestHoldWhileInHand_StopsWithTheConsumer(t *testing.T) {
 		<-hctx.Done()
 		return hctx.Err()
 	}, rec)
-	c.pauseSlice = 10 * time.Millisecond
+	h := driveHolder(c)
 	batch := []goredis.XMessage{msg("1-0")}
 	c.holdWhileInHand(ctx, batch, func() { c.processSerial(ctx, batch) })
-	assert.Empty(t, rec.calls, "a message in hand at shutdown is neither acknowledged nor held further")
+	assert.Empty(t, rec.calls, "a message in hand at shutdown is neither acknowledged nor dead-lettered")
 	assert.Empty(t, c.inHand.snapshot())
+	assert.False(t, h.running(50*time.Millisecond), "the holder stops with the consumer")
 }
 
 func TestStart_RefusesWithoutService(t *testing.T) {
