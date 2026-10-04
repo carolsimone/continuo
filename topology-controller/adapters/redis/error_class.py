@@ -3,8 +3,10 @@
 import enum
 import socket
 
+import boto3.exceptions
 import botocore.exceptions
 import redis.exceptions
+import s3transfer.exceptions
 
 from service.errors import PermanentMessageError
 
@@ -30,7 +32,39 @@ _INFRASTRUCTURE = (
 )
 
 
+# Raised by an S3 managed transfer (download_file) once its own retries are
+# spent, with the failure of the last attempt in last_exception. boto3 raises its
+# own wrapper over the one s3transfer raises underneath it.
+_TRANSFER_RETRY_WRAPPERS = (
+    boto3.exceptions.RetriesExceededError,
+    s3transfer.exceptions.RetriesExceededError,
+)
+
+# How many wrappers deep classify looks for the failure inside them. A transfer
+# raises one or two; the bound keeps a wrapper that carries itself from looping.
+_MAX_UNWRAP_DEPTH = 8
+
+
+def _underlying_failure(exc: BaseException) -> BaseException:
+    """The failure a transfer-retry wrapper carries, looking through wrappers
+    around wrappers. A wrapper that carries no exception, or one still nested
+    past _MAX_UNWRAP_DEPTH, is returned as it is. Only these wrappers are opened;
+    the __cause__ and __context__ of any exception are not followed."""
+    for _ in range(_MAX_UNWRAP_DEPTH):
+        if not isinstance(exc, _TRANSFER_RETRY_WRAPPERS):
+            break
+        carried = exc.last_exception
+        if not isinstance(carried, BaseException):
+            break
+        exc = carried
+    return exc
+
+
 def classify(exc: BaseException) -> ErrorClass:
+    """The class of a handler failure. A transfer-retry wrapper takes the class
+    of the failure it carries: S3 dropping a download's connection is an outage
+    to wait out, however many times the transfer already retried it."""
+    exc = _underlying_failure(exc)
     if isinstance(exc, PermanentMessageError):
         return ErrorClass.PERMANENT
     if isinstance(exc, _INFRASTRUCTURE):
