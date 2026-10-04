@@ -2,8 +2,10 @@ package redis
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
@@ -37,12 +39,14 @@ func NewCompileCompletedConsumer(rc *goredis.Client, deps *handlers.Deps, logger
 		streams.ReleaseControllerCompileCompleted, newCompileCompletedHandler(deps, logger), logger)
 }
 
+// newCompileCompletedHandler returns the MessageHandler for compile.completed:v1.
+// A payload that cannot be decoded is a permanent failure: the handler returns
+// events.ErrPermanent, so the consumer dead-letters it.
 func newCompileCompletedHandler(deps *handlers.Deps, logger *slog.Logger) pkgredis.MessageHandler {
 	return func(ctx context.Context, msg goredis.XMessage) error {
 		var dto compileResultDTO
 		if err := decodePayload(msg, &dto); err != nil {
-			logger.Error("compile.completed:v1 decode failure — discarding", "message_id", msg.ID, "error", err)
-			return nil
+			return fmt.Errorf("%w: %s decode: %v", pkgevents.ErrPermanent, streams.CompileCompletedV1, err)
 		}
 		if err := handlers.HandleCompileResult(ctx, deps, dto.toInput()); err != nil {
 			return err

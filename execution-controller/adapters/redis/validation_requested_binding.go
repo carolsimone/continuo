@@ -41,10 +41,10 @@ func validationDedupKey(releaseID string) uuid.UUID {
 // (streams.ValidationRequestedV1); no stream literal lives in this file.
 //
 // Errors are surfaced to the StreamConsumer so it can pick the right ACK
-// policy: parse failures are wrapped with events.ErrPermanent (NACK and drop),
-// while handler/repository failures propagate as-is (NACK and let the message
-// stay pending for retry). On a duplicate the transaction is committed (empty
-// txn) and nil is returned so the consumer ACKs.
+// policy: parse failures are wrapped with events.ErrPermanent (the consumer
+// dead-letters the message), while handler/repository failures propagate as-is
+// (the message is left pending for retry). On a duplicate the transaction is
+// committed (empty txn) and nil is returned so the consumer ACKs.
 //
 // Dedup keys on a deterministic release-derived outbox_entry_id (see
 // validationDedupKey) rather than the Redis message_id, so a redelivered

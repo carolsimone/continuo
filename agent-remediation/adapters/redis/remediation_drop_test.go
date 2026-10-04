@@ -38,7 +38,8 @@ func TestFailInFlightOnDrop_FailsRowForDroppedTrigger(t *testing.T) {
 
 	require.Equal(t, 1, calls, "the recovery must run for a decodable dropped trigger")
 	assert.Equal(t, "rel-456", gotRelease)
-	assert.Contains(t, gotReason, "connect: connection refused", "the reason must carry the drop cause")
+	assert.Equal(t, "remediation trigger dead-lettered: connect: connection refused", gotReason,
+		"the reason names the dead letter and carries its cause")
 }
 
 // TestFailInFlightOnDrop_SkipsMessageWithoutPayload verifies a message carrying

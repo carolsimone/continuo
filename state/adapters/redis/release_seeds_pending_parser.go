@@ -13,11 +13,12 @@ import (
 // ParseReleaseSeedsPending decodes a release.seeds.pending:v1 XMessage's
 // `payload` field.
 //
-// A missing payload, malformed JSON, an empty release_id, an empty node list, or
-// a node missing its identity is permanent — the consumer ACKs and drops a
-// message that can never parse rather than redelivering it forever. orchestrator
-// does not emit this event when a release changed no seeds, so an empty list
-// means a malformed message rather than a promotion with nothing to build.
+// A missing payload, malformed JSON, an empty release_id, an empty node list,
+// or a node missing its identity is permanent — the consumer dead-letters a
+// message that can never parse rather than redelivering it forever.
+// orchestrator does not emit this event when a release changed no seeds, so an
+// empty list means a malformed message rather than a promotion with nothing to
+// build.
 func ParseReleaseSeedsPending(msg goredis.XMessage) (events.ReleaseSeedsPending, error) {
 	raw, ok := msg.Values["payload"].(string)
 	if !ok || raw == "" {

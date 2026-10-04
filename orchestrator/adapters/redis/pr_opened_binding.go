@@ -15,9 +15,9 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// ParsePROpened decodes a remediation.pr_opened:v1 XMessage's payload into
-// the case-base DTO. Structural errors are events.ErrPermanent — the
-// consumer ACKs and drops the poison message.
+// ParsePROpened decodes a remediation.pr_opened:v1 XMessage's payload into the
+// case-base DTO. Structural errors are events.ErrPermanent — the consumer
+// dead-letters the poison message.
 func ParsePROpened(msg goredis.XMessage) (event.PROpened, error) {
 	raw, ok := msg.Values["payload"].(string)
 	if !ok || raw == "" {
@@ -39,7 +39,7 @@ func NewPrOpenedBinding(
 	return func(ctx context.Context, msg goredis.XMessage) error {
 		evt, err := ParsePROpened(msg)
 		if err != nil {
-			logger.Error("remediation.pr_opened (proposals): parse failure — discarding",
+			logger.Error("remediation.pr_opened (proposals): parse failure — dead-lettering",
 				"message_id", msg.ID, "error", err)
 			return err
 		}

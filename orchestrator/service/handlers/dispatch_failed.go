@@ -92,8 +92,9 @@ func EmitDispatchFailed(
 // Returns ("", false) for every other error. When false is returned the
 // caller MUST propagate err unchanged (typically wrapped with
 // fmt.Errorf) so the Redis consumer's existing classification still
-// applies: a transient error gets NACKed and reclaimed via XCLAIM; an
-// error wrapping events.ErrPermanent gets ACKed and dropped (see
+// applies: a transient error stays pending and is reclaimed (and
+// dead-lettered once the consumer's delivery limit is reached); an error
+// wrapping events.ErrPermanent is dead-lettered at once (see
 // docs/arch/05-error-classification.md). Synthesising a dispatch_failed
 // event for a transient error would terminally fail a recoverable run;
 // doing so for a permanent error would be redundant and would mask the

@@ -16,7 +16,7 @@ import (
 // (task_id, schedule_id, status, retry_count). Status is lowercased before
 // validation. An empty or unparseable retry_count silently defaults to 0,
 // matching the existing handler's semantics. Errors are parse-permanent and
-// indicate the message should be discarded.
+// indicate the message can never parse, so the consumer dead-letters it.
 func ParseTaskStatusUpdated(msg goredis.XMessage) (events.TaskStatusUpdated, error) {
 	taskIDStr, _ := msg.Values["task_id"].(string)
 	scheduleIDStr, _ := msg.Values["schedule_id"].(string)

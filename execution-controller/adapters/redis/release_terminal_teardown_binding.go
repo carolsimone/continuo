@@ -34,7 +34,9 @@ import (
 //
 // Teardown is best-effort: a parse or cleaner failure is logged and the message
 // is ACKed (returns nil), because a leftover candidate schema must never block
-// a release decision.
+// a release decision. A cleaner failure that arrives with a done ctx (shutdown,
+// or the handler deadline) is returned instead, so the drop is retried rather
+// than acknowledged unfinished.
 //
 // label is a short human-readable name used only in log messages (e.g.
 // "release.rejected teardown"); it must not be a raw stream-name literal — pass
@@ -62,6 +64,9 @@ func newReleaseTerminalTeardownBinding(label string, cleaner ports.CandidateSche
 			return nil
 		}
 		if err := cleaner.DropCandidateSchema(ctx, dto.CandidateSchema); err != nil {
+			if ctx.Err() != nil {
+				return err
+			}
 			logger.Error("release terminal teardown: drop failed (best-effort)",
 				"binding", label, "release_id", dto.ReleaseID,
 				"candidate_schema", dto.CandidateSchema, "error", err)

@@ -17,15 +17,27 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// testConsumer builds a consumer with no live Redis: every Redis seam is a
+// no-op (deliveriesFn reports a first delivery) and sleeps honour ctx.
 func testConsumer(handler MessageHandler) *StreamConsumer {
 	return &StreamConsumer{
-		streamName:  "test-stream",
-		logger:      slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})),
-		handler:     handler,
-		workerCount: 1,
-		// No-op ack by default (no live Redis). Tests asserting ack behaviour
-		// override this with a recorder.
-		ackFn: func(context.Context, string) error { return nil },
+		streamName:       "test-stream",
+		logger:           slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})),
+		handler:          handler,
+		workerCount:      1,
+		service:          "pkg-redis-test",
+		handlerTimeout:   DefaultHandlerTimeout,
+		infraBackoffBase: defaultInfraBackoffBase,
+		infraBackoffCap:  defaultInfraBackoffCap,
+		pauseSlice:       defaultPauseSlice,
+		// No-op ack by default. Tests asserting ack behaviour override this
+		// with a recorder.
+		ackFn:        func(context.Context, string) error { return nil },
+		deadLetterFn: func(context.Context, map[string]any) error { return nil },
+		holdFn:       func(context.Context, []string) {},
+		deliveriesFn: func(context.Context, string) int64 { return 1 },
+		sleepFn:      func(ctx context.Context, d time.Duration) bool { return sleepCtx(ctx, d) == nil },
+		nowFn:        time.Now,
 	}
 }
 
@@ -48,30 +60,35 @@ func msgWithKey(id, keyField, keyVal string) goredis.XMessage {
 
 // safeInvoke must convert a handler panic into a non-permanent error so a single
 // poison message cannot crash the consumer process; the message then stays in
-// the PEL for the next sweep (transient path), it is not ACK-dropped.
+// the PEL for the next sweep (transient path), it is not dead-lettered at once.
 func TestSafeInvoke_RecoversPanic(t *testing.T) {
 	c := testConsumer(func(context.Context, goredis.XMessage) error {
 		panic("boom")
 	})
-	err := c.safeInvoke(context.Background(), goredis.XMessage{ID: "1-0"})
+	deadlineHit, err := c.safeInvoke(context.Background(), goredis.XMessage{ID: "1-0"})
 	require.Error(t, err)
+	assert.False(t, deadlineHit)
 	assert.False(t, errors.Is(err, events.ErrPermanent), "recovered panic must be transient (stays in PEL)")
 	assert.Contains(t, err.Error(), "panic")
 }
 
 func TestSafeInvoke_PassesThroughNilAndError(t *testing.T) {
 	c := testConsumer(func(context.Context, goredis.XMessage) error { return nil })
-	require.NoError(t, c.safeInvoke(context.Background(), goredis.XMessage{ID: "1-0"}))
+	deadlineHit, err := c.safeInvoke(context.Background(), goredis.XMessage{ID: "1-0"})
+	require.NoError(t, err)
+	assert.False(t, deadlineHit)
 
 	sentinel := errors.New("handler error")
 	c = testConsumer(func(context.Context, goredis.XMessage) error { return sentinel })
-	assert.ErrorIs(t, c.safeInvoke(context.Background(), goredis.XMessage{ID: "1-0"}), sentinel)
+	deadlineHit, err = c.safeInvoke(context.Background(), goredis.XMessage{ID: "1-0"})
+	assert.ErrorIs(t, err, sentinel)
+	assert.False(t, deadlineHit)
 }
 
-// invokeWithRetry must not let a handler panic escape: the panic is recovered as
-// a transient error, retried, and the loop continues. Here the handler panics on
+// attempt must not let a handler panic escape: on the read path the panic is
+// recovered as a transient error and retried once. Here the handler panics on
 // its first attempt and succeeds on the second, proving the consumer survives.
-func TestInvokeWithRetry_RecoversPanicThenRetries(t *testing.T) {
+func TestAttempt_RecoversPanicThenRetries(t *testing.T) {
 	var calls atomic.Int32
 	c := testConsumer(func(context.Context, goredis.XMessage) error {
 		if calls.Add(1) == 1 {
@@ -79,7 +96,7 @@ func TestInvokeWithRetry_RecoversPanicThenRetries(t *testing.T) {
 		}
 		return nil
 	})
-	err := c.invokeWithRetry(context.Background(), goredis.XMessage{ID: "1-0"})
+	_, err := c.attempt(context.Background(), goredis.XMessage{ID: "1-0"}, readPathSchedule)
 	require.NoError(t, err)
 	assert.Equal(t, int32(2), calls.Load())
 }
@@ -219,9 +236,9 @@ func TestProcessSharded_DistinctKeysRunInParallel(t *testing.T) {
 	}
 }
 
-// TestProcessSerial_TransientFailureNotAcked: the serial (N=1) path must leave a
-// transiently-failing message un-acked so it stays in the PEL, exactly as
-// before. Permanent and success are acked.
+// TestProcessSerial_AckSelectivity: the serial (N=1) path must leave a
+// transiently-failing message un-acked so it stays in the PEL. A success is
+// acked, and a permanent failure is acked after its dead letter is written.
 func TestProcessSerial_AckSelectivity(t *testing.T) {
 	c := testConsumer(func(_ context.Context, msg goredis.XMessage) error {
 		switch msg.ID {
@@ -325,7 +342,7 @@ func TestSafeInvoke_AdvancesHeartbeatBeforeRunning(t *testing.T) {
 	// Pretend the loop last made progress an hour ago.
 	c.lastActivity.Store(time.Now().Add(-time.Hour).UnixNano())
 
-	go func() { _ = c.safeInvoke(context.Background(), goredis.XMessage{ID: "1-0"}) }()
+	go func() { _, _ = c.safeInvoke(context.Background(), goredis.XMessage{ID: "1-0"}) }()
 
 	<-started // handler is now blocked mid-flight
 	assert.NoError(t, c.Healthy(time.Second),
@@ -335,7 +352,8 @@ func TestSafeInvoke_AdvancesHeartbeatBeforeRunning(t *testing.T) {
 
 // TestSafeInvoke_BoundsHandlerWithDeadline proves a configured handler timeout
 // unblocks a handler that would otherwise hang: the handler waits on ctx.Done()
-// and safeInvoke returns a DeadlineExceeded error promptly.
+// and safeInvoke returns a DeadlineExceeded error promptly, reporting that the
+// handler's own deadline ended the call.
 func TestSafeInvoke_BoundsHandlerWithDeadline(t *testing.T) {
 	c := testConsumer(func(ctx context.Context, _ goredis.XMessage) error {
 		<-ctx.Done() // a well-behaved handler observes cancellation and returns
@@ -344,23 +362,11 @@ func TestSafeInvoke_BoundsHandlerWithDeadline(t *testing.T) {
 	c.SetHandlerTimeout(50 * time.Millisecond)
 
 	start := time.Now()
-	err := c.safeInvoke(context.Background(), goredis.XMessage{ID: "1-0"})
+	deadlineHit, err := c.safeInvoke(context.Background(), goredis.XMessage{ID: "1-0"})
 	elapsed := time.Since(start)
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.True(t, deadlineHit, "the handler's own deadline ended the call")
 	assert.Less(t, elapsed, 2*time.Second, "the deadline must unblock the handler well before this bound")
-}
-
-// TestSafeInvoke_NoDeadlineWhenTimeoutUnset confirms the default (0) leaves the
-// handler context unbounded, preserving behaviour for callers that do not opt
-// in (e.g. orchestrator/state).
-func TestSafeInvoke_NoDeadlineWhenTimeoutUnset(t *testing.T) {
-	var hadDeadline bool
-	c := testConsumer(func(ctx context.Context, _ goredis.XMessage) error {
-		_, hadDeadline = ctx.Deadline()
-		return nil
-	})
-	require.NoError(t, c.safeInvoke(context.Background(), goredis.XMessage{ID: "1-0"}))
-	assert.False(t, hadDeadline, "an unset handler timeout must not impose a deadline on the handler context")
 }

@@ -36,14 +36,6 @@ import (
 // exceeds any legitimate invocation while still bounding a wedge.
 const consumerHandlerTimeout = 60 * time.Second
 
-// consumerHeartbeatStale is the liveness heartbeat budget: how long a consumer's
-// read loop may make no progress before the liveness probe restarts the pod. It
-// MUST exceed consumerHandlerTimeout plus a margin so a legitimately in-flight
-// handler never trips liveness (the heartbeat advances per handler attempt; see
-// pkg/redis.StreamConsumer.safeInvoke), while a true wedge still trips within
-// budget.
-const consumerHeartbeatStale = 3 * time.Minute
-
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
@@ -76,14 +68,15 @@ func main() {
 
 	// runConsumer starts a tracked stream consumer: a bounded handler deadline
 	// so a hung handler eventually returns; RegisterWorker before launch so a
-	// missing worker is observable; WorkerExited when Start returns (which now
-	// happens on a permanent bootstrap error too, not only clean shutdown); and
-	// a worker heartbeat probe so a wedged-but-not-exited loop is caught.
+	// missing worker is observable; WorkerExited when Start returns (on a
+	// permanent consumer-group bootstrap error as well as on a clean shutdown);
+	// and a worker heartbeat probe so a wedged-but-not-exited loop is caught.
 	runConsumer := func(name string, consumer *pkgredis.StreamConsumer) {
+		consumer.SetService(config.ServiceName)
 		consumer.SetHandlerTimeout(consumerHandlerTimeout)
 		liveReg.RegisterWorker(name)
 		liveReg.AddWorkerProbe(name+"_heartbeat", 10*time.Second, func(context.Context) error {
-			return consumer.Healthy(consumerHeartbeatStale)
+			return consumer.Healthy(consumer.HeartbeatBudget())
 		})
 		go func() {
 			err := consumer.Start(ctx)

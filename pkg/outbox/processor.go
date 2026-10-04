@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
@@ -273,9 +274,9 @@ func (p *Processor) processBatchOnce(ctx context.Context) (int, error) {
 		}
 
 		// Terminal: permanent, or transient budget exhausted.
-		kind := FailureKindTransientExhausted
+		kind := model.DeadLetterKindTransientExhausted
 		if permanent {
-			kind = FailureKindPermanent
+			kind = model.DeadLetterKindPermanent
 		}
 		if err := p.terminate(ctx, repo, entry, kind, pubErr); err != nil {
 			// A terminal write failed (dead-letter INSERT or MarkFailed). Abort
@@ -309,7 +310,7 @@ func (p *Processor) processBatchOnce(ctx context.Context) (int, error) {
 // MarkFailed) fails, so the caller can roll the whole batch back: marking a row
 // failed without its dead-letter would silently drop the mandatory failure
 // signal, so the two writes must commit together or not at all.
-func (p *Processor) terminate(ctx context.Context, repo *postgresRepository, entry *Entry, kind string, cause error) error {
+func (p *Processor) terminate(ctx context.Context, repo *postgresRepository, entry *Entry, kind model.DeadLetterKind, cause error) error {
 	attempts := entry.RetryCount + 1
 	if entry.AggregateType != DeadLetterAggregateType {
 		dl := buildDeadLetterEntry(entry, kind, cause, attempts)
@@ -318,7 +319,7 @@ func (p *Processor) terminate(ctx context.Context, repo *postgresRepository, ent
 		}
 	}
 	p.logger.Error("Outbox entry dead-lettered",
-		"failure_kind", kind,
+		"failure_kind", string(kind),
 		"entry_id", entry.ID,
 		"original_event_type", entry.EventType,
 		"original_stream", entry.StreamName,

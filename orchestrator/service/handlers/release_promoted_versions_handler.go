@@ -97,9 +97,9 @@ func (h *ReleasePromotedVersionsHandler) Handle(
 	bundle, err := h.bundles.Fetch(ctx, in.CodeBundleURI)
 	if err != nil {
 		if errors.Is(err, ports.ErrBundleMalformed) || errors.Is(err, ports.ErrBundleTooLarge) {
-			// Re-reading the same bytes cannot fix them: acknowledge, drop, and
-			// make the failure loud.
-			h.logger.Error("code bundle is unreadable — dropping the message",
+			// Re-reading the same bytes cannot fix them: the permanent error
+			// dead-letters the message, and the log line makes the failure loud.
+			h.logger.Error("code bundle is unreadable — dead-lettering the message",
 				"release_id", in.ReleaseID, "uri", in.CodeBundleURI, "error", err)
 			return fmt.Errorf("%w: code bundle %s: %v", pkgevents.ErrPermanent, in.CodeBundleURI, err)
 		}
@@ -111,7 +111,7 @@ func (h *ReleasePromotedVersionsHandler) Handle(
 		// The URI resolved to a document that is not this release's. Writing it
 		// would stamp this release's provenance onto another release's code and
 		// could point :CURRENT at a hash that disagrees with :Table.content_hash.
-		h.logger.Error("code bundle does not match the promoted release — dropping the message",
+		h.logger.Error("code bundle does not match the promoted release — dead-lettering the message",
 			"release_id", in.ReleaseID, "uri", in.CodeBundleURI, "error", err)
 		return fmt.Errorf("%w: code bundle %s: %v", pkgevents.ErrPermanent, in.CodeBundleURI, err)
 	}

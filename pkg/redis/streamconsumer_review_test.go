@@ -2,6 +2,7 @@ package redis
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/carolsimone/continuo/pkg/testdeps"
@@ -12,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/events"
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -68,6 +71,7 @@ func TestStreamConsumer_CleanupStaleConsumers(t *testing.T) {
 	require.NoError(t, err)
 
 	c := NewStreamConsumer(rc, stream, group, func(context.Context, goredis.XMessage) error { return nil }, discardLog())
+	c.SetService("pkg-redis-test")
 	// Self must never be deleted even when drained.
 	require.NoError(t, rc.XGroupCreateConsumer(ctx, stream, group, c.consumerName).Err())
 
@@ -112,6 +116,7 @@ func TestStreamConsumer_WorkerPool_AcksFinishedLaneWhileAnotherBlocks(t *testing
 	require.NoError(t, rc.XGroupCreateMkStream(ctx, stream, group, "0").Err())
 
 	probe := NewStreamConsumer(rc, stream, group, nil, discardLog(), WithWorkerPool(2, keyField))
+	probe.SetService("pkg-redis-test")
 	fastKey, slowKey := distinctLaneKeys(probe)
 
 	block := make(chan struct{})
@@ -130,6 +135,7 @@ func TestStreamConsumer_WorkerPool_AcksFinishedLaneWhileAnotherBlocks(t *testing
 	require.NoError(t, err)
 
 	c := NewStreamConsumer(rc, stream, group, handler, discardLog(), WithWorkerPool(2, keyField))
+	c.SetService("pkg-redis-test")
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go c.Start(runCtx) //nolint:errcheck
@@ -169,6 +175,7 @@ func TestStreamConsumer_WorkerPool_AcksFinishedLaneWhileAnotherBlocks(t *testing
 func TestStreamConsumer_Healthy_ReflectsHeartbeatFreshness(t *testing.T) {
 	c := NewStreamConsumer(goredis.NewClient(&goredis.Options{Addr: "127.0.0.1:1"}),
 		"stream", "group", func(context.Context, goredis.XMessage) error { return nil }, discardLog())
+	c.SetService("pkg-redis-test")
 
 	assert.NoError(t, c.Healthy(time.Minute), "freshly constructed consumer must read healthy")
 
@@ -205,6 +212,7 @@ func TestStreamConsumer_Start_SurvivesConnectionErrors_WithoutExiting(t *testing
 
 	c := NewStreamConsumer(unreachable, "stream", "group",
 		func(context.Context, goredis.XMessage) error { return nil }, discardLog())
+	c.SetService("pkg-redis-test")
 
 	runCtx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -255,6 +263,7 @@ func TestStreamConsumer_Start_PermanentBootstrapError_ReturnsSoHealthSurfaces(t 
 		return nil
 	}
 	c := NewStreamConsumer(rc, stream, group, handler, discardLog())
+	c.SetService("pkg-redis-test")
 
 	// Generous timeout: if the bug regressed (infinite retry), Start would keep
 	// looping until this ctx cancels and we'd see a nil return well after the
@@ -278,12 +287,13 @@ func TestStreamConsumer_Start_PermanentBootstrapError_ReturnsSoHealthSurfaces(t 
 
 // TestStreamConsumer_ReclaimPath_PoisonMessageQuarantinedAfterMaxDeliveries is
 // the [#1] regression: a message that fails transiently on every reclaim sweep
-// (e.g. a handler that keeps timing out — DeadlineExceeded is NOT ErrPermanent,
-// so shouldAck never ACKs it) would otherwise cycle in the PEL forever. Once its
-// PEL delivery counter passes maxDeliveries, the reclaim path must ACK-drop it so
-// the loop makes progress. We drive reclaimPending directly with a 0 idle gate
-// and an always-failing handler, and assert the message leaves the PEL rather
-// than redelivering indefinitely.
+// (e.g. a handler that keeps timing out — DeadlineExceeded is NOT ErrPermanent)
+// would otherwise cycle in the PEL forever. Once its PEL delivery counter
+// reaches maxDeliveries, the reclaim path must dead-letter it (kind
+// transient_exhausted) and acknowledge it so the loop makes progress. We drive
+// reclaimPending directly with a 0 idle gate and an always-failing handler, and
+// assert the message leaves the PEL with exactly one dead letter rather than
+// redelivering indefinitely.
 func TestStreamConsumer_ReclaimPath_PoisonMessageQuarantinedAfterMaxDeliveries(t *testing.T) {
 	rc := internalRedisClient(t)
 	ctx := context.Background()
@@ -312,6 +322,7 @@ func TestStreamConsumer_ReclaimPath_PoisonMessageQuarantinedAfterMaxDeliveries(t
 	}
 	// MinIdle 0 so every sweep is eligible immediately.
 	c := NewStreamConsumer(rc, stream, group, poison, discardLog(), WithReclaimMinIdle(0))
+	c.SetService("pkg-redis-test")
 
 	pendingCount := func() int64 {
 		res, perr := rc.XPending(ctx, stream, group).Result()
@@ -320,24 +331,32 @@ func TestStreamConsumer_ReclaimPath_PoisonMessageQuarantinedAfterMaxDeliveries(t
 	}
 
 	// Sweep repeatedly. Each XAUTOCLAIM bumps the delivery counter; once it
-	// exceeds maxDeliveries the message is ACK-dropped and the PEL empties.
+	// reaches maxDeliveries the message is dead-lettered, acknowledged, and the
+	// PEL empties.
 	require.Eventually(t, func() bool {
 		require.NoError(t, c.reclaimPending(ctx))
 		return pendingCount() == 0
 	}, 10*time.Second, 50*time.Millisecond,
-		"a poison message must be ACK-dropped once it exceeds maxDeliveries, not cycle in the PEL forever")
+		"a poison message must be dead-lettered on its fifth delivery, not cycle in the PEL forever")
 
-	// It was genuinely retried several times before being dropped (i.e. it was a
-	// poison message, not a one-shot drop), and it is gone from the PEL. (Exact
-	// count depends on when the PEL delivery counter crosses the bound; assert a
-	// safe lower bound rather than an exact value.)
+	// It was genuinely retried several times before being dead-lettered (i.e. it
+	// was a poison message, not a one-shot drop), and it is gone from the PEL.
+	// (Exact count depends on when the PEL delivery counter reaches the bound;
+	// assert a safe lower bound rather than an exact value.)
 	assert.GreaterOrEqual(t, calls.Load(), int32(3),
-		"the message should have been retried multiple times before quarantine, not dropped on first failure")
+		"the message should have been retried multiple times before it was dead-lettered, not on its first failure")
+	dl := deadLettersFor(t, rc, stream)
+	require.Len(t, dl, 1, "exactly one dead letter for the abandoned message")
+	var p events.ConsumerDeadLetter
+	require.NoError(t, json.Unmarshal([]byte(dl[0].Values["payload"].(string)), &p))
+	assert.Equal(t, msgID, p.OriginalMessageID)
+	assert.Equal(t, model.DeadLetterKindTransientExhausted, p.FailureKind)
+	assert.Equal(t, int64(5), p.DeliveryCount)
 	pend, err := rc.XPendingExt(ctx, &goredis.XPendingExtArgs{
 		Stream: stream, Group: group, Start: "-", End: "+", Count: 10,
 	}).Result()
 	require.NoError(t, err)
 	for _, p := range pend {
-		assert.NotEqual(t, msgID, p.ID, "the quarantined message must no longer be pending")
+		assert.NotEqual(t, msgID, p.ID, "the dead-lettered message must no longer be pending")
 	}
 }

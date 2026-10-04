@@ -17,8 +17,9 @@ import (
 // ScheduleCatalogHandler processes schedules.loaded:v1 events. Loads the
 // ScheduleCatalog aggregate, invokes Reconcile (which enforces the
 // empty-list guard), persists via SaveCatalog. The aggregate's
-// ErrEmptyReconciliation is surfaced so the consumer NACKs instead of
-// silently soft-deleting every active catalog row.
+// ErrEmptyReconciliation is surfaced as a permanent error, so the consumer
+// dead-letters the message instead of silently soft-deleting every active
+// catalog row.
 type ScheduleCatalogHandler struct {
 	logger *slog.Logger
 }
@@ -32,9 +33,9 @@ func NewScheduleCatalogHandler(logger *slog.Logger) *ScheduleCatalogHandler {
 //
 // Caller contract: u.Begin(ctx) has been called; the handler MUST NOT commit.
 // Returning nil tells the binding to commit; returning an error triggers
-// rollback. ErrEmptyReconciliation is returned wrapped, so the binding can
-// distinguish "domain rejected the payload" from "transient infra error".
-// (Today both produce a NACK; the binding may classify them differently later.)
+// rollback. ErrEmptyReconciliation is returned joined with
+// pkg/events.ErrPermanent, so the consumer dead-letters the message; every other
+// error is transient and leaves the message pending for redelivery.
 func (h *ScheduleCatalogHandler) Handle(
 	ctx context.Context,
 	u uow.UnitOfWork,

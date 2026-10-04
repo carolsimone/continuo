@@ -3,11 +3,13 @@ package redis
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"testing"
 	"time"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/release-controller/adapters/serialization"
@@ -100,23 +102,24 @@ func TestValidationResultHandler_RoutesCompleteKind(t *testing.T) {
 	}
 }
 
-// TestValidationResultHandler_AcksMalformedPayload verifies that an undecodable
-// payload is treated as a permanent failure: the handler returns nil so the
-// consumer ACKs and drops it. deps is nil because decode failure short-circuits
-// before any handler runs.
-func TestValidationResultHandler_AcksMalformedPayload(t *testing.T) {
+// TestValidationResultHandler_DeadLettersMalformedPayload verifies that an
+// undecodable payload is treated as a permanent failure: the handler returns
+// events.ErrPermanent so the consumer dead-letters it. deps is nil because
+// decode failure short-circuits before any handler runs.
+func TestValidationResultHandler_DeadLettersMalformedPayload(t *testing.T) {
 	handler := newValidationResultHandler(nil, newDiscardLogger())
 
 	msg := goredis.XMessage{ID: "0-3", Values: map[string]any{"payload": "not valid json"}}
-	if err := handler(context.Background(), msg); err != nil {
-		t.Fatalf("want nil (ack) for malformed payload, got %v", err)
+	if err := handler(context.Background(), msg); !errors.Is(err, pkgevents.ErrPermanent) {
+		t.Fatalf("want events.ErrPermanent for malformed payload, got %v", err)
 	}
 }
 
-// TestValidationResultHandler_AcksUnknownKind verifies that a well-formed payload
-// with a kind the consumer does not recognise is dropped (ack) rather than
-// retried forever. deps is nil because an unknown kind never dispatches.
-func TestValidationResultHandler_AcksUnknownKind(t *testing.T) {
+// TestValidationResultHandler_DeadLettersUnknownKind verifies that a
+// well-formed payload with a kind the consumer does not recognise is
+// dead-lettered (events.ErrPermanent) rather than retried forever. deps is nil
+// because an unknown kind never dispatches.
+func TestValidationResultHandler_DeadLettersUnknownKind(t *testing.T) {
 	handler := newValidationResultHandler(nil, newDiscardLogger())
 
 	raw, err := json.Marshal(map[string]any{"kind": "banana", "release_id": "rel-x"})
@@ -124,8 +127,8 @@ func TestValidationResultHandler_AcksUnknownKind(t *testing.T) {
 		t.Fatalf("marshal payload: %v", err)
 	}
 	msg := goredis.XMessage{ID: "0-4", Values: map[string]any{"payload": string(raw)}}
-	if err := handler(context.Background(), msg); err != nil {
-		t.Fatalf("want nil (ack) for unknown kind, got %v", err)
+	if err := handler(context.Background(), msg); !errors.Is(err, pkgevents.ErrPermanent) {
+		t.Fatalf("want events.ErrPermanent for unknown kind, got %v", err)
 	}
 }
 

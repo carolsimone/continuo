@@ -1,10 +1,10 @@
-import json
 import logging
 import threading
 import redis
 from config.config import (
     REDIS_URL,
     HTTP_PORT,
+    SERVICE_NAME,
     S3_ENDPOINT_URL, S3_BUCKET, S3_ENV,
     AWS_DEFAULT_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
     RELEASE_REQUESTED_STREAM, RELEASE_REQUESTED_GROUP,
@@ -18,9 +18,9 @@ from adapters.code_bundle_uploader import CodeBundleUploader
 from adapters.health.server import start_health_server
 from adapters.redis.candidate_publisher import CandidateManifestPublisher
 from adapters.redis.consumer import Consumer
+from adapters.redis.release_requested_binding import parse_release_requested
 from adapters.sources.s3 import S3Source
-from adapters.sources.s3_uri import parse_s3_uri
-from domain.model import ManifestKind, ManifestRequest, Runtime
+from domain.model import Runtime
 from service.candidate_artifacts import DbtSqlArtifactBuilder, PythonSpecArtifactBuilder
 from service.candidate_manifest_handler import CandidateManifestHandler
 
@@ -29,13 +29,6 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
 logger = logging.getLogger(__name__)
-
-
-def _decode_field(fields: dict, name: str) -> str | None:
-    raw = fields.get(name.encode()) or fields.get(name)
-    if raw is None:
-        return None
-    return raw.decode() if isinstance(raw, bytes) else raw
 
 
 def main() -> None:
@@ -72,56 +65,8 @@ def main() -> None:
     logger.info("topology-controller SQL dialect: %s", dialect)
 
     def handle_release_requested(fields: dict) -> None:
-        payload_raw = _decode_field(fields, "payload")
-        if not payload_raw:
-            raise ValueError("release.requested:v1 message missing payload")
-        try:
-            payload = json.loads(payload_raw)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"release.requested:v1 payload not valid JSON: {exc}") from exc
-        release_id = payload.get("release_id")
-        manifest_keys_raw = payload.get("manifest_keys")
-        if not release_id or manifest_keys_raw is None:
-            raise ValueError(
-                "release.requested:v1 payload missing release_id or manifest_keys",
-            )
-        # All entries must share a single bucket; derive it from the first URI and
-        # assert the rest agree so misrouted multi-bucket payloads are caught early.
-        # Each entry must carry a non-empty "service" field; a missing or empty
-        # service is treated as a permanent malformed-payload error (not ACKed) so
-        # the service-mismatch/empty-manifest validation in the handler cannot be
-        # silently bypassed.
-        buckets = []
-        requests: list[ManifestRequest] = []
-        for entry in manifest_keys_raw:
-            svc = entry.get("service") if isinstance(entry, dict) else None
-            if not svc:
-                raise ValueError(
-                    "release.requested:v1 manifest_keys entry missing or empty 'service' field"
-                )
-            bucket, key = parse_s3_uri(entry["s3_uri"])
-            buckets.append(bucket)
-            # parse_s3_uri appends a trailing slash to all non-empty paths; strip it
-            # because object keys never end with "/" in S3.
-            # Only an ABSENT kind defaults to dbt — that is the compatibility
-            # path for producers that predate python support. Any value the
-            # producer actually set is passed through verbatim, empty string
-            # included, so the handler reports it as a permanent
-            # UnknownManifestKind failure the operator sees. Defaulting a
-            # present-but-invalid value would parse a python contract with the
-            # dbt parser and misreport it as MalformedManifest, sending the
-            # operator to the wrong artifact.
-            requests.append(ManifestRequest(
-                service=svc,
-                key=key.rstrip("/"),
-                kind=entry.get("kind", ManifestKind.DBT),
-            ))
-        if len(set(buckets)) > 1:
-            raise ValueError(
-                f"release.requested:v1 manifest_keys span multiple buckets: {set(buckets)}"
-            )
-        shared_bucket = buckets[0] if buckets else S3_BUCKET
-        source = S3Source(bucket=shared_bucket, env=S3_ENV, s3_client=s3_client, keys=requests)
+        message = parse_release_requested(fields, S3_BUCKET)
+        source = S3Source(bucket=message.bucket, env=S3_ENV, s3_client=s3_client, keys=message.requests)
         # Cleanup is owned by CandidateManifestHandler.handle() via its own finally block.
         CandidateManifestHandler(
             source=source,
@@ -132,13 +77,14 @@ def main() -> None:
                 Runtime.PYTHON: PythonSpecArtifactBuilder(candidate_spec_uploader),
             },
             dialect=dialect,
-        ).handle(release_id=release_id)
+        ).handle(release_id=message.release_id)
 
     candidate_consumer = Consumer(
         redis_client=redis_client,
         stream_name=RELEASE_REQUESTED_STREAM,
         group_name=RELEASE_REQUESTED_GROUP,
         message_handler=handle_release_requested,
+        service_name=SERVICE_NAME,
     )
 
     candidate_thread = threading.Thread(

@@ -182,9 +182,10 @@ func TestScheduleCatalogHandler_SaveErrorPropagates(t *testing.T) {
 // schedules.loaded:v1 arrives with schedule_names=[], the handler returns
 // an error that satisfies BOTH errors.Is(err, catalog.ErrEmptyReconciliation)
 // (the domain reason) AND errors.Is(err, pkgevents.ErrPermanent) (the infra
-// contract that tells the Redis binding to ACK-and-drop). Without the
-// permanent wrap, the binding NACKs the poison payload and reclaims it
-// forever — defeating the empty-list guard's own intent.
+// contract that tells the Redis binding to dead-letter the message). Without
+// the permanent wrap, the binding leaves the poison payload pending and
+// reclaims it until its delivery limit — defeating the empty-list guard's own
+// intent.
 func TestScheduleCatalogHandler_EmptyListWrapsAsPermanent(t *testing.T) {
 	repo := &fakeCatalogPortRepo{}
 	u := &uow.FakeUnitOfWork{}
@@ -200,6 +201,6 @@ func TestScheduleCatalogHandler_EmptyListWrapsAsPermanent(t *testing.T) {
 	assert.True(t, errors.Is(err, catalog.ErrEmptyReconciliation),
 		"error must wrap catalog.ErrEmptyReconciliation, got: %v", err)
 	assert.True(t, errors.Is(err, pkgevents.ErrPermanent),
-		"error must wrap pkgevents.ErrPermanent so the binding ACKs-and-drops, got: %v", err)
+		"error must wrap pkgevents.ErrPermanent so the binding dead-letters the message, got: %v", err)
 	assert.Nil(t, repo.saved, "SaveCatalog must not be called on empty list")
 }

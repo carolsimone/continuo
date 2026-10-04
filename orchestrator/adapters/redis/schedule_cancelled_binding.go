@@ -11,7 +11,7 @@ import (
 
 // NewScheduleCancelledBinding wires ParseScheduleCancelled into the
 // ScheduleCancelledHandler. A parse failure is permanent (events.ErrPermanent):
-// the binding logs and returns the error so the consumer ACKs and drops the
+// the binding logs and returns the error so the consumer dead-letters the
 // poison message.
 func NewScheduleCancelledBinding(
 	handler *handlers.ScheduleCancelledHandler,
@@ -20,7 +20,7 @@ func NewScheduleCancelledBinding(
 	return func(ctx context.Context, msg goredis.XMessage) error {
 		evt, err := ParseScheduleCancelled(msg)
 		if err != nil {
-			logger.Error("schedule.cancelled: parse failure — discarding",
+			logger.Error("schedule.cancelled: parse failure — dead-lettering",
 				"message_id", msg.ID, "error", err)
 			return err
 		}

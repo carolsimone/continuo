@@ -36,6 +36,8 @@ const (
 	CheckK8sV1 = "check.k8s:v1"
 	// OutboxDeadLetterV1 — Terminal outbox publish failures (permanent payload errors, or transient errors that exhausted their backoff budget), emitted by every service's outbox processor. Operational DLQ, not a domain event.
 	OutboxDeadLetterV1 = "outbox.dead_letter:v1"
+	// ConsumerDeadLetterV1 — Messages a stream consumer gave up on (a permanent error, or a transient error on its fifth delivery), written before the original is acknowledged. Operational DLQ, not a domain event.
+	ConsumerDeadLetterV1 = "consumer.dead_letter:v1"
 	// ScheduleCancelledV1 — Schedule cancellation broadcast; fanned out to orchestrator and execution-controller.
 	ScheduleCancelledV1 = "schedule.cancelled:v1"
 	// ReleaseRequestedV1 — Candidate release accepted by release-controller; triggers manifest load for validation.
@@ -169,6 +171,7 @@ var All = []string{
 	QueryModelV1,
 	CheckK8sV1,
 	OutboxDeadLetterV1,
+	ConsumerDeadLetterV1,
 	ScheduleCancelledV1,
 	ReleaseRequestedV1,
 	ManifestLoadedCandidateV1,

@@ -13,7 +13,7 @@ import (
 
 // NewReleasePromotedBinding wires ParseReleasePromoted into the
 // ReleasePromotedHandler. A parse failure is permanent (events.ErrPermanent):
-// the binding logs and returns the error so the consumer ACKs and drops the
+// the binding logs and returns the error so the consumer dead-letters the
 // poison message.
 //
 // outbox_entry_id is extracted from the message fields and threaded to the
@@ -26,7 +26,7 @@ func NewReleasePromotedBinding(
 	return func(ctx context.Context, msg goredis.XMessage) error {
 		evt, err := ParseReleasePromoted(msg)
 		if err != nil {
-			logger.Error("release.promoted: parse failure — discarding",
+			logger.Error("release.promoted: parse failure — dead-lettering",
 				"message_id", msg.ID, "error", err)
 			return err
 		}

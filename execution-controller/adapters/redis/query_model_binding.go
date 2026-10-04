@@ -24,9 +24,9 @@ import (
 // file.
 //
 // Errors are surfaced to the StreamConsumer so it can pick the right ACK
-// policy: parse failures are wrapped with events.ErrPermanent (NACK and
-// drop), while handler/repository failures propagate as-is (NACK and let
-// the message stay pending for retry). On a duplicate the transaction is
+// policy: parse failures are wrapped with events.ErrPermanent (the consumer
+// dead-letters the message), while handler/repository failures propagate as-is
+// (the message is left pending for retry). On a duplicate the transaction is
 // committed (empty txn) and nil is returned so the consumer ACKs.
 func NewQueryModelBinding(
 	uowFactory func() uow.UnitOfWork,

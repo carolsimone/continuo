@@ -203,10 +203,9 @@ jobs:
 
       - name: Test all Go services
         # Run on the runner via the shared Make target (not in-container): brings up
-        # the data deps and runs `go test -tags integration` for all 8 services with
-        # the full per-service DB env. Running on the runner (clean env) avoids the
-        # container's ambient env leaking into config tests, and covers the 4 services
-        # plus the -tags integration files that the old in-container path missed.
+        # the data deps and runs `go test -tags integration` for every Go service
+        # with its per-service DB env, plus pkg's Redis-backed tests. Running on the
+        # runner (clean env) keeps the container's ambient env out of config tests.
         run: make test-go
 
       - name: Test agent-remediation/adapters/packaging (in-container)
