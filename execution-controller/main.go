@@ -26,6 +26,7 @@ import (
 	pkgdb "github.com/carolsimone/continuo/pkg/db"
 	"github.com/carolsimone/continuo/pkg/lifecycle"
 	"github.com/carolsimone/continuo/pkg/liveness"
+	pkgmetrics "github.com/carolsimone/continuo/pkg/metrics"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -71,9 +72,11 @@ func main() {
 	// heartbeats only, so a backing-store outage stops traffic without
 	// restarting a pod whose consumers are already retrying.
 	liveReg := liveness.NewRegistry()
+	metricsReg := pkgmetrics.New(config.ServiceName)
 
 	startConsumer := func(name string, consumer *pkgredis.StreamConsumer, handlerTimeout time.Duration) {
 		consumer.SetService(config.ServiceName)
+		consumer.SetObserver(metricsReg.Consumers())
 		consumer.SetHandlerTimeout(handlerTimeout)
 		liveReg.RegisterWorker(name)
 		liveReg.AddWorkerProbe(name+"_heartbeat", 10*time.Second, func(context.Context) error {
@@ -120,6 +123,21 @@ func main() {
 		}
 	}()
 
+	// The Prometheus listener comes up with the health server so a dependency
+	// outage stays observable. Serve runs in a plain goroutine; the lifecycle
+	// manager stops it at shutdown.
+	metricsServer, err := pkgmetrics.Listen(cfg.MetricsPort, metricsReg, logger)
+	if err != nil {
+		logger.Error("Failed to bind the metrics port", "port", cfg.MetricsPort, "error", err)
+		os.Exit(1)
+	}
+	go func() {
+		if err := metricsServer.Serve(); err != nil {
+			logger.Error("Metrics server error", "error", err)
+		}
+	}()
+	lifecycleManager.RegisterShutdownHandler(metricsServer.Shutdown)
+
 	// ---- infrastructure ----
 
 	pgDB, err := pkgdb.Open(ctx, cfg.Postgres, dbPool)
@@ -132,6 +150,7 @@ func main() {
 		return pgDB.Close()
 	})
 	liveReg.AddProbe("postgres", 5*time.Second, func(ctx context.Context) error { return pgDB.PingContext(ctx) })
+	metricsReg.WatchDB(pgDB.DB, cfg.Postgres.DB)
 
 	// Redis is a separate workload that may still be starting (or its Service
 	// not yet resolvable) when this process boots, so wait for it with backoff
@@ -151,6 +170,7 @@ func main() {
 		return redisClient.Close()
 	})
 	liveReg.AddProbe("redis", 5*time.Second, func(ctx context.Context) error { return redisClient.Ping(ctx).Err() })
+	metricsReg.WatchRedis(redisClient)
 
 	// dbt command dialect, resolved per service at Job-build time. A missing
 	// file means built-in plain-dbt commands; an invalid file is fatal.
@@ -237,7 +257,8 @@ func main() {
 	// the handler stops waiting at the shutdown deadline.
 	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error { return outboxWaker.CloseContext(ctx) })
 	outboxProcessor := pkgoutbox.NewProcessor(pgDB, postgres.OutboxTable, publisher.NewOutboxPublisher(redisClient, logger), nil, logger,
-		pkgoutbox.ProcessorConfig{Tick: pkgoutbox.FallbackTick, BatchSize: 100, Waker: outboxWaker})
+		pkgoutbox.ProcessorConfig{Tick: pkgoutbox.FallbackTick, BatchSize: 100, Waker: outboxWaker, Observer: metricsReg.Outbox()})
+	metricsReg.WatchOutbox(outboxProcessor)
 	runWorker("outbox_processor", outboxProcessor.Run)
 
 	deployDispatcher := deployer.NewDispatcher(
