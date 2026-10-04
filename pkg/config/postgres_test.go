@@ -8,9 +8,7 @@ import (
 )
 
 func TestLoadPostgres_records_all_missing(t *testing.T) {
-	for _, key := range []string{"POSTGRES_HOST", "POSTGRES_DB", "POSTGRES_USER", "POSTGRES_PASSWORD"} {
-		t.Setenv(key, "")
-	}
+	setPostgresEnv(t, nil)
 	v := &Validator{}
 	LoadPostgres(v)
 	if got := len(v.Missing()); got != 4 {
@@ -19,10 +17,7 @@ func TestLoadPostgres_records_all_missing(t *testing.T) {
 }
 
 func TestLoadPostgres_no_missing_when_all_set(t *testing.T) {
-	t.Setenv("POSTGRES_HOST", "dbhost")
-	t.Setenv("POSTGRES_DB", "mydb")
-	t.Setenv("POSTGRES_USER", "usr")
-	t.Setenv("POSTGRES_PASSWORD", "pw")
+	setPostgresEnv(t, map[string]string{"POSTGRES_HOST": "dbhost", "POSTGRES_DB": "mydb", "POSTGRES_USER": "usr", "POSTGRES_PASSWORD": "pw"})
 	v := &Validator{}
 	cfg := LoadPostgres(v)
 	if len(v.Missing()) != 0 {
@@ -65,45 +60,30 @@ func TestLoadPostgresPool(t *testing.T) {
 }
 
 func TestLoadPostgres_CarriesThePool(t *testing.T) {
-	env := map[string]string{"POSTGRES_HOST": "h", "POSTGRES_DB": "d", "POSTGRES_USER": "u",
-		"POSTGRES_PASSWORD": "p", "DB_MAX_OPEN_CONNS": "12", "DB_MAX_IDLE_CONNS": ""}
-	for k, val := range env {
-		t.Setenv(k, val)
-	}
+	setPostgresEnv(t, map[string]string{"POSTGRES_HOST": "h", "POSTGRES_DB": "d", "POSTGRES_USER": "u",
+		"POSTGRES_PASSWORD": "p", "DB_MAX_OPEN_CONNS": "12"})
 	assert.Equal(t, 12, LoadPostgres(&Validator{}).Pool.MaxOpenConns)
 }
 
 func TestLoadPostgresWithDefaultDB(t *testing.T) {
-	// Test: POSTGRES_DB unset → defaultDB and v.Missing() empty
 	t.Run("POSTGRES_DB unset uses default", func(t *testing.T) {
-		t.Setenv("POSTGRES_HOST", "h")
-		t.Setenv("POSTGRES_DB", "")
-		t.Setenv("POSTGRES_USER", "u")
-		t.Setenv("POSTGRES_PASSWORD", "p")
+		setPostgresEnv(t, map[string]string{"POSTGRES_HOST": "h", "POSTGRES_USER": "u", "POSTGRES_PASSWORD": "p"})
 		v := &Validator{}
 		got := LoadPostgresWithDefaultDB(v, "default_db")
 		assert.Empty(t, v.Missing())
 		assert.Equal(t, "default_db", got.DB)
 	})
 
-	// Test: POSTGRES_DB set → that value
 	t.Run("POSTGRES_DB set uses that value", func(t *testing.T) {
-		t.Setenv("POSTGRES_HOST", "h")
-		t.Setenv("POSTGRES_DB", "custom_db")
-		t.Setenv("POSTGRES_USER", "u")
-		t.Setenv("POSTGRES_PASSWORD", "p")
+		setPostgresEnv(t, map[string]string{"POSTGRES_HOST": "h", "POSTGRES_DB": "custom_db", "POSTGRES_USER": "u", "POSTGRES_PASSWORD": "p"})
 		v := &Validator{}
 		got := LoadPostgresWithDefaultDB(v, "default_db")
 		assert.Empty(t, v.Missing())
 		assert.Equal(t, "custom_db", got.DB)
 	})
 
-	// Test: POSTGRES_HOST unset → still recorded missing
 	t.Run("POSTGRES_HOST unset still recorded missing", func(t *testing.T) {
-		t.Setenv("POSTGRES_HOST", "")
-		t.Setenv("POSTGRES_DB", "")
-		t.Setenv("POSTGRES_USER", "u")
-		t.Setenv("POSTGRES_PASSWORD", "p")
+		setPostgresEnv(t, map[string]string{"POSTGRES_USER": "u", "POSTGRES_PASSWORD": "p"})
 		v := &Validator{}
 		got := LoadPostgresWithDefaultDB(v, "default_db")
 		require.Len(t, v.Missing(), 1)
@@ -111,13 +91,8 @@ func TestLoadPostgresWithDefaultDB(t *testing.T) {
 		assert.Equal(t, "default_db", got.DB)
 	})
 
-	// Test: DB_MAX_OPEN_CONNS honoured (Pool carried)
 	t.Run("DB_MAX_OPEN_CONNS honoured", func(t *testing.T) {
-		t.Setenv("POSTGRES_HOST", "h")
-		t.Setenv("POSTGRES_DB", "")
-		t.Setenv("POSTGRES_USER", "u")
-		t.Setenv("POSTGRES_PASSWORD", "p")
-		t.Setenv("DB_MAX_OPEN_CONNS", "15")
+		setPostgresEnv(t, map[string]string{"POSTGRES_HOST": "h", "POSTGRES_USER": "u", "POSTGRES_PASSWORD": "p", "DB_MAX_OPEN_CONNS": "15"})
 		v := &Validator{}
 		got := LoadPostgresWithDefaultDB(v, "default_db")
 		assert.Empty(t, v.Missing())
