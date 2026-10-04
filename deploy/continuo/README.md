@@ -226,10 +226,16 @@ Inspect and trim the dead-letter streams with `redis-cli` in the Redis pod (the 
 ```bash
 kubectl -n continuo exec continuo-redis-0 -- sh -c 'redis-cli -a "$REDIS_PASSWORD" XLEN consumer.dead_letter:v1'
 kubectl -n continuo exec continuo-redis-0 -- sh -c 'redis-cli -a "$REDIS_PASSWORD" XRANGE consumer.dead_letter:v1 - + COUNT 10'
-kubectl -n continuo exec continuo-redis-0 -- sh -c 'redis-cli -a "$REDIS_PASSWORD" XTRIM consumer.dead_letter:v1 MINID <id>'   # drops entries older than <id>
 ```
 
-The same three commands work on `outbox.dead_letter:v1`.
+To drop the entries older than one entry, set `ID` to that entry's id (`XRANGE` prints the id of each entry before its fields; the value below is an example) and trim up to it:
+
+```bash
+ID=1759494896789-0
+kubectl -n continuo exec continuo-redis-0 -- env ID="$ID" sh -c 'redis-cli -a "$REDIS_PASSWORD" XTRIM consumer.dead_letter:v1 MINID "$ID"'
+```
+
+The same commands work on `outbox.dead_letter:v1`.
 
 ## 5. Release flow and CI gates
 
