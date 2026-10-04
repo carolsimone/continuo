@@ -177,6 +177,33 @@ refuse_reserved continuo --set validation.createWarehouseSecret=false --set vali
 helm template continuo-apis "$CHART" --kube-version "$KUBE_VERSION" > /dev/null \
   || { echo "FAIL: release continuo-apis is outside the reserved prefix and must render"; exit 1; }
 
+# database.pool reaches every Go service through the shared ConfigMap only when
+# set (0 keeps each service's default). An idle limit above the open limit, or
+# an idle limit with no open limit, fails the render instead of producing a
+# release a service would refuse to boot with. A release without a database
+# block (helm upgrade --reuse-values from an older chart) renders the defaults.
+echo "--- database.pool reaches the ConfigMap only when set; idle above open and idle alone are refused"
+if grep -q 'DB_MAX_OPEN_CONNS\|DB_MAX_IDLE_CONNS\|DB_POOL_SIZE\|DB_MAX_OVERFLOW' "${tmp}/defaults.yaml"; then
+  echo "FAIL: the default render sets a pool limit; every service must keep its own default"; exit 1
+fi
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set database.pool.maxOpenConns=40 --set database.pool.maxIdleConns=8 > "${tmp}/pool-set.yaml"
+grep -q 'DB_MAX_OPEN_CONNS: "40"' "${tmp}/pool-set.yaml" && grep -q 'DB_MAX_IDLE_CONNS: "8"' "${tmp}/pool-set.yaml" \
+  || { echo "FAIL: database.pool does not reach the shared ConfigMap"; exit 1; }
+if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set database.pool.maxOpenConns=3 --set database.pool.maxIdleConns=5 > /dev/null 2>&1; then
+  echo "FAIL: maxIdleConns above maxOpenConns must fail the render"; exit 1
+fi
+if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set database.pool.maxIdleConns=5 > /dev/null 2>&1; then
+  echo "FAIL: maxIdleConns without maxOpenConns must fail the render"; exit 1
+fi
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set database=null > "${tmp}/database-null.yaml" \
+  || { echo "FAIL: rendering with database=null failed; helm upgrade --reuse-values from a chart without database.pool would fail"; exit 1; }
+if grep -q 'DB_MAX_OPEN_CONNS\|DB_MAX_IDLE_CONNS' "${tmp}/database-null.yaml"; then
+  echo "FAIL: a release without database values must leave every service on its default pool"; exit 1
+fi
+
 echo "--- bash -n (release scripts)"
 bash -n scripts/release/retag-images.sh
 

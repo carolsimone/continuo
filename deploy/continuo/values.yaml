@@ -365,6 +365,23 @@ databaseInit:
   # connecting user then no longer needs CREATEDB.
   enabled: true
 
+database:
+  # Postgres connection-pool limits for the Go services, published to them as
+  # DB_MAX_OPEN_CONNS and DB_MAX_IDLE_CONNS on the shared ConfigMap. 0 keeps
+  # each service's own default, sized to how many queries it runs at once
+  # (open/idle: state 20/10, orchestrator 35/5, execution-controller 30/5,
+  # release-controller 15/5, remediation 10/5, agent-remediation 10/5,
+  # agent-chat 20/5). Set them when your Postgres allows fewer connections than
+  # those maxima add up to. Set the two together: maxIdleConns may not exceed
+  # maxOpenConns, and the render fails when maxIdleConns is set without
+  # maxOpenConns (an idle limit above a service's own open limit would stop
+  # that service from starting). A service's own services[].env entry overrides
+  # both for that service. docker-compose.yml and the e2e kind manifest leave
+  # both unset, so every service runs its own default.
+  pool:
+    maxOpenConns: 0
+    maxIdleConns: 0
+
 # CronJob that trims Redis Stream entries older than `retention`. It never trims
 # outbox.dead_letter:v1 or consumer.dead_letter:v1: they hold the only copy of
 # every dead letter. consumer.dead_letter:v1 is written without a length cap, so
@@ -414,8 +431,6 @@ services:
       - {name: REDIS_PASSWORD, ref: redis}
     env:
       POSTGRES_DB: continuo_state
-      DB_POOL_SIZE: "10"
-      DB_MAX_OVERFLOW: "20"
       HEALTH_PORT: "8082"
       GRPC_PORT: "50051"
       SCHEDULES_CONFIG_PATH: /etc/continuo/schedules.yaml
