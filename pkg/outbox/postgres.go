@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -48,53 +49,35 @@ func entryFromRow(r *outboxRow) *Entry {
 }
 
 type postgresRepository struct {
-	exec             Executor
-	tableName        string
-	logger           *slog.Logger
-	perAggregateFIFO bool
-}
-
-// Option configures a postgresRepository.
-type Option func(*postgresRepository)
-
-// WithPerAggregateOrdering makes GetPendingBatch return only the oldest pending
-// row per aggregate, so rows sharing an aggregate_id are published in creation
-// order — a later row is withheld until the earlier one is processed. Rows for
-// different aggregates are unaffected and still drain in parallel. Use this for
-// producers that write multiple ordered events for the same aggregate and need
-// the consumer to observe them in order (e.g. execution-controller's RUNNING
-// announcement before its first check_delayed ticket).
-func WithPerAggregateOrdering() Option {
-	return func(r *postgresRepository) { r.perAggregateFIFO = true }
+	exec      Executor
+	tableName string
+	logger    *slog.Logger
 }
 
 // newPostgresRepository builds the concrete repository. In-package callers (the
 // processor) use it directly to reach ScheduleRetry / CountTerminal, which are
 // deliberately NOT on the Repository interface so the ~10 service fakes that
 // satisfy pkgoutbox.Repository need no changes.
-func newPostgresRepository(exec Executor, tableName string, logger *slog.Logger, opts ...Option) *postgresRepository {
-	r := &postgresRepository{exec: exec, tableName: tableName, logger: logger}
-	for _, opt := range opts {
-		opt(r)
-	}
-	return r
+func newPostgresRepository(exec Executor, tableName string, logger *slog.Logger) *postgresRepository {
+	return &postgresRepository{exec: exec, tableName: tableName, logger: logger}
 }
 
 // NewPostgresRepository constructs a Repository bound to a specific physical
 // table. Pass *sqlx.DB for autocommit operations (the Processor's GetPendingBatch
 // holds its own tx) or *sqlx.Tx for transactional writes (the writer's Create
 // must run inside the UoW transaction).
-func NewPostgresRepository(exec Executor, tableName string, logger *slog.Logger, opts ...Option) Repository {
-	return newPostgresRepository(exec, tableName, logger, opts...)
+func NewPostgresRepository(exec Executor, tableName string, logger *slog.Logger) Repository {
+	return newPostgresRepository(exec, tableName, logger)
 }
 
+// Create inserts entry. The outbox owns the ordering key: Create always stamps
+// CreatedAt from nextCreatedAt, replacing any value the caller set, so the rows
+// a process writes publish in the order it wrote them.
 func (r *postgresRepository) Create(ctx context.Context, entry *Entry) error {
 	if entry.ID == uuid.Nil {
 		entry.ID = uuid.New()
 	}
-	if entry.CreatedAt.IsZero() {
-		entry.CreatedAt = time.Now()
-	}
+	entry.CreatedAt = nextCreatedAt(time.Now())
 	if entry.Status == "" {
 		entry.Status = "pending"
 	}
@@ -121,60 +104,132 @@ func (r *postgresRepository) Create(ctx context.Context, entry *Entry) error {
 }
 
 // claimQuery selects up to $1 due rows in creation order and locks them,
-// skipping rows another relay holds. When perAggregateFIFO is set it also
-// withholds any row that has an older still-pending-or-scheduled sibling for
-// the same aggregate, so events for one aggregate publish strictly in creation
-// order. A backed-off ('scheduled') sibling must still withhold younger rows —
-// otherwise a younger row could publish out of order while its older sibling
-// waits out its backoff. created_at is assigned per Create call (time.Now), so
-// siblings written in one writer transaction get distinct, ordered timestamps.
-//
-// Fresh 'pending' rows always have next_attempt_at NULL, so they are always
-// eligible; 'scheduled' rows (backed off after a transient failure) become
-// eligible once their deadline passes. clock_timestamp() is the actual
-// statement-execution wall clock — unlike NOW(), which is fixed at transaction
-// start — so the due-check reflects when this SELECT actually runs, not when
-// the enclosing tx began. The ORDER BY matches the partial index
-// idx_<table>_claimable (created_at, id).
-func claimQuery(table string, perAggregateFIFO bool) string {
-	fifoClause := ""
-	if perAggregateFIFO {
-		fifoClause = fmt.Sprintf(`
-		  AND NOT EXISTS (
-		      SELECT 1 FROM %s older
-		      WHERE older.aggregate_type = o.aggregate_type
-		        AND older.aggregate_id   = o.aggregate_id
-		        AND older.status IN ('pending', 'scheduled')
-		        AND older.created_at < o.created_at
-		  )`, table)
-	}
+// skipping rows another relay holds. It leaves out every row queued behind an
+// older row of its aggregate that waits out a retry (scheduled, next attempt
+// still ahead), so a long queue behind one retrying row cannot fill the batch
+// and hold up every other aggregate in the table. Fresh 'pending' rows have
+// next_attempt_at NULL and are always due. clock_timestamp() is the statement's
+// own wall clock, not the transaction start. The ORDER BY matches the partial
+// index idx_<table>_claimable (created_at, id), and idx_<table>_open_by_aggregate
+// serves the NOT EXISTS probe. FOR UPDATE OF c locks only the claimed rows,
+// never the older rows the probe reads.
+func claimQuery(table string) string {
 	return fmt.Sprintf(`
-		SELECT id, message_processing_id, aggregate_type, aggregate_id,
-		       event_type, payload, stream_name,
-		       status, retry_count,
-		       created_at, processed_at, error_message, next_attempt_at
-		FROM %s o
-		WHERE status IN ('pending', 'scheduled')
-		  AND (next_attempt_at IS NULL OR next_attempt_at <= clock_timestamp())%s
-		ORDER BY created_at ASC, id ASC
+		SELECT c.id, c.message_processing_id, c.aggregate_type, c.aggregate_id,
+		       c.event_type, c.payload, c.stream_name,
+		       c.status, c.retry_count,
+		       c.created_at, c.processed_at, c.error_message, c.next_attempt_at
+		FROM %[1]s c
+		WHERE c.status IN ('pending', 'scheduled')
+		  AND (c.next_attempt_at IS NULL OR c.next_attempt_at <= clock_timestamp())
+		  AND NOT EXISTS (
+		      SELECT 1 FROM %[1]s older
+		      WHERE older.aggregate_type = c.aggregate_type
+		        AND older.aggregate_id   = c.aggregate_id
+		        AND older.status = 'scheduled'
+		        AND older.next_attempt_at > clock_timestamp()
+		        AND older.created_at < c.created_at)
+		ORDER BY c.created_at ASC, c.id ASC
 		LIMIT $1
-		FOR UPDATE SKIP LOCKED
-	`, table, fifoClause)
+		FOR UPDATE OF c SKIP LOCKED`, table)
 }
 
+// GetPendingBatch claims up to limit due rows and returns those it may publish
+// now, in creation order, so the rows of one aggregate publish in the order
+// they were created. The claim already leaves out rows queued behind an older
+// row of their aggregate that waits out a retry. A second query in the same
+// transaction finds each claimed row whose aggregate still has an older open
+// row (pending or scheduled) outside the batch — because another relay holds
+// it, or because its retry fell due after the claim read it — and withholds
+// that row together with every younger row of its aggregate in the batch.
+// Withheld rows are left untouched; the transaction's end releases them.
 func (r *postgresRepository) GetPendingBatch(ctx context.Context, limit int) ([]*Entry, error) {
-	query := claimQuery(r.tableName, r.perAggregateFIFO)
-
 	var rows []*outboxRow
-	if err := r.exec.SelectContext(ctx, &rows, query, limit); err != nil && err != sql.ErrNoRows {
+	if err := r.exec.SelectContext(ctx, &rows, claimQuery(r.tableName), limit); err != nil && err != sql.ErrNoRows {
 		return nil, fmt.Errorf("get pending batch from %s: %w", r.tableName, err)
 	}
-
 	entries := make([]*Entry, len(rows))
 	for i, row := range rows {
 		entries[i] = entryFromRow(row)
 	}
-	return entries, nil
+	if len(entries) == 0 {
+		return entries, nil
+	}
+	blocked, err := r.blockedByOlderSiblings(ctx, entries)
+	if err != nil {
+		return nil, err
+	}
+	return withholdBlocked(entries, blocked), nil
+}
+
+// blockedByOlderSiblings returns the claimed rows that have an older open row
+// of their aggregate outside the claimed set.
+func (r *postgresRepository) blockedByOlderSiblings(ctx context.Context, entries []*Entry) (map[uuid.UUID]bool, error) {
+	ids := make([]uuid.UUID, len(entries))
+	for i, e := range entries {
+		ids[i] = e.ID
+	}
+	query := fmt.Sprintf(`
+		SELECT c.id FROM %[1]s c
+		WHERE c.id = ANY($1)
+		  AND EXISTS (
+		      SELECT 1 FROM %[1]s older
+		      WHERE older.aggregate_type = c.aggregate_type
+		        AND older.aggregate_id   = c.aggregate_id
+		        AND older.status IN ('pending', 'scheduled')
+		        AND older.created_at < c.created_at
+		        AND NOT (older.id = ANY($1)))`, r.tableName)
+	var blockedIDs []uuid.UUID
+	if err := r.exec.SelectContext(ctx, &blockedIDs, query, pq.Array(ids)); err != nil {
+		return nil, fmt.Errorf("find withheld rows in %s: %w", r.tableName, err)
+	}
+	blocked := make(map[uuid.UUID]bool, len(blockedIDs))
+	for _, id := range blockedIDs {
+		blocked[id] = true
+	}
+	return blocked, nil
+}
+
+type aggregateKey struct {
+	aggregateType string
+	aggregateID   uuid.UUID
+}
+
+// withholdBlocked keeps claim order and drops every blocked row, and every
+// later row of a dropped row's aggregate.
+func withholdBlocked(entries []*Entry, blocked map[uuid.UUID]bool) []*Entry {
+	held := map[aggregateKey]bool{}
+	out := make([]*Entry, 0, len(entries))
+	for _, e := range entries {
+		k := aggregateKey{e.AggregateType, e.AggregateID}
+		if held[k] || blocked[e.ID] {
+			held[k] = true
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+// lastCreatedAt is the latest created_at this process stamped, in Unix
+// microseconds.
+var lastCreatedAt atomic.Int64
+
+// nextCreatedAt returns now at microsecond precision, which is what Postgres
+// stores. When needed it is moved forward so it is strictly later than every
+// value this process returned before. Rows one writer creates therefore keep
+// their creation order in created_at, which orders their publication.
+func nextCreatedAt(now time.Time) time.Time {
+	for {
+		last := lastCreatedAt.Load()
+		next := now.UnixMicro()
+		if next <= last {
+			next = last + 1
+		}
+		if lastCreatedAt.CompareAndSwap(last, next) {
+			return time.UnixMicro(next).UTC()
+		}
+	}
 }
 
 func (r *postgresRepository) MarkProcessed(ctx context.Context, id uuid.UUID) error {

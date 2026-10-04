@@ -228,7 +228,7 @@ func (s *Service) Record(ctx context.Context, in RecordInput) error {
 		return nil
 	}
 
-	if err := s.enqueuePROpened(ctx, u, v, in, now, openedAt); err != nil {
+	if err := s.enqueuePROpened(ctx, u, v, in, openedAt); err != nil {
 		return err
 	}
 
@@ -331,7 +331,6 @@ func (s *Service) enqueuePRClosed(ctx context.Context, u uow.UnitOfWork, v propo
 		Payload:       body,
 		StreamName:    streams.RemediationPrClosedV1,
 		Status:        "pending",
-		CreatedAt:     s.clock.Now(),
 	}
 	return u.OutboxRepo().Create(ctx, entry)
 }
@@ -353,11 +352,10 @@ func closingServicePR(v proposal.View, service string) (string, int) {
 // enqueuePROpened builds the deterministic remediation.pr_opened:v1 outbox
 // entry and creates it on the repository bound to the caller's transaction. As
 // with pr_closed, it names only the nodes this per-service PR fixed.
-// now is the outbox row's own bookkeeping timestamp; openedAt is the PR's
-// actual creation time, which the two can legitimately differ on — recovering
-// a stranded PR through the opening sweep resolves it long after GitHub
-// created it.
-func (s *Service) enqueuePROpened(ctx context.Context, u uow.UnitOfWork, v proposal.View, in RecordInput, now, openedAt time.Time) error {
+// openedAt is the PR's actual creation time, which can be long before this
+// call: recovering a stranded PR through the opening sweep resolves it long
+// after GitHub created it.
+func (s *Service) enqueuePROpened(ctx context.Context, u uow.UnitOfWork, v proposal.View, in RecordInput, openedAt time.Time) error {
 	eventID := event.PROpenedEventID(v.ReleaseID, v.Attempt, in.Service)
 	payload := event.PROpened{
 		ProposalID:      in.ProposalID,
@@ -382,7 +380,6 @@ func (s *Service) enqueuePROpened(ctx context.Context, u uow.UnitOfWork, v propo
 		Payload:       body,
 		StreamName:    streams.RemediationPrOpenedV1,
 		Status:        "pending",
-		CreatedAt:     now,
 	}
 	return u.OutboxRepo().Create(ctx, entry)
 }

@@ -249,7 +249,6 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipe
 		Payload:       payload,
 		StreamName:    streams.ReleasePromotedV1,
 		Status:        "pending",
-		CreatedAt:     now,
 	}); err != nil {
 		return fmt.Errorf("outbox insert: %w", err)
 	}
@@ -363,7 +362,7 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 		return fmt.Errorf("encode rejection: %w", err)
 	}
 
-	if err := emitReleaseRejected(ctx, u, r, payload, now); err != nil {
+	if err := emitReleaseRejected(ctx, u, r, payload); err != nil {
 		return err
 	}
 	if err := u.RunRepo().Save(ctx, r); err != nil {

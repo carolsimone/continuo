@@ -858,7 +858,6 @@ func Enqueue(ctx context.Context, u uow.UnitOfWork, clock ports.Clock, p proposa
 	if err != nil {
 		return fmt.Errorf("marshal proposed event: %w", err)
 	}
-	now := clock.Now()
 	entry := &outbox.Entry{
 		ID:            uuid.NewSHA1(uuid.NameSpaceOID, []byte(eventID.String())),
 		AggregateType: "remediation_agent",
@@ -867,7 +866,6 @@ func Enqueue(ctx context.Context, u uow.UnitOfWork, clock ports.Clock, p proposa
 		Payload:       body,
 		StreamName:    streams.RemediationProposedV1,
 		Status:        "pending",
-		CreatedAt:     now,
 	}
 	if msgProcID != uuid.Nil {
 		id := msgProcID

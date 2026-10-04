@@ -227,9 +227,7 @@ func main() {
 	// ---- background workers ----
 
 	outboxProcessor := pkgoutbox.NewProcessor(pgDB, "execution_outbox", publisher.NewOutboxPublisher(redisClient, logger), nil, logger,
-		// PerAggregateFIFO: rows sharing an aggregate publish in insertion order,
-		// so a task's RUNNING announcement leaves before its later rows.
-		pkgoutbox.ProcessorConfig{Tick: outboxTick, BatchSize: 100, PerAggregateFIFO: true})
+		pkgoutbox.ProcessorConfig{Tick: outboxTick, BatchSize: 100})
 	runWorker("outbox_processor", outboxProcessor.Run)
 
 	deployDispatcher := deployer.NewDispatcher(

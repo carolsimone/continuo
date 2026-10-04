@@ -26,6 +26,8 @@ type Executor interface {
 //	error_message (text nullable), next_attempt_at (timestamptz nullable).
 //
 // Create writes MaxAttempts into max_retries; no operation reads the column.
+// Create stamps created_at, and GetPendingBatch returns rows in that order,
+// never a row ahead of an older open row of its aggregate.
 //
 // GetPendingBatch MUST be called inside a transaction held by the caller until
 // the follow-up write that resolves each claimed row — marking it processed,

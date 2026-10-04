@@ -111,7 +111,6 @@ func ClassifyRejection(ctx context.Context, deps Deps, evs []failure.FailureEvid
 			Payload:       body,
 			StreamName:    streams.RemediationRequestedV2,
 			Status:        "pending",
-			CreatedAt:     deps.Clock.Now(),
 		}); err != nil {
 			return fmt.Errorf("enqueue trigger: %w", err)
 		}

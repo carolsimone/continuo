@@ -25,7 +25,7 @@ type Entry struct {
 	StreamName          string
 	Status              string // "pending" | "scheduled" | "processed" | "failed"
 	RetryCount          int
-	CreatedAt           time.Time
+	CreatedAt           time.Time // stamped by Create; orders the publication of one aggregate's rows
 	ProcessedAt         *time.Time
 	ErrorMessage        *string
 	NextAttemptAt       *time.Time // when a 'scheduled' (transiently-failed) row is next eligible; NULL = due now

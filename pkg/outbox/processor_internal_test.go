@@ -52,10 +52,11 @@ func (b *batchPublisher) PublishBatch(_ context.Context, entries []*Entry) []err
 	return make([]error, len(entries))
 }
 
+// entriesN builds n entries, each the only row of its own aggregate.
 func entriesN(n int) []*Entry {
 	out := make([]*Entry, n)
 	for i := range out {
-		out[i] = &Entry{ID: uuid.New(), StreamName: "x:v1"}
+		out[i] = &Entry{ID: uuid.New(), AggregateType: "x", AggregateID: uuid.New(), StreamName: "x:v1"}
 	}
 	return out
 }
