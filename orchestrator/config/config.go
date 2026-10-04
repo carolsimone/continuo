@@ -7,8 +7,8 @@ import (
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 )
 
-// ServiceName names this service as the producer of the events and dead
-// letters it writes.
+// ServiceName names this service as the producer of the dead letters its
+// stream consumers write.
 const ServiceName = "orchestrator"
 
 // defaultShutdownGrace bounds the graceful-shutdown sequence: the in-flight

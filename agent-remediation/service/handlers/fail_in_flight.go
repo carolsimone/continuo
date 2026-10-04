@@ -9,12 +9,12 @@ import (
 // 'failed', recording reason, and returns how many rows moved.
 //
 // It is the recovery path for a remediation trigger the stream consumer
-// abandoned — dead-lettered on its fifth failed delivery — once markGenerating
-// had already committed the in-flight row. The consumer's dead-lettering
-// leaves the service's own store untouched, so only the owning service can
-// close out the row it left behind; without this the row reports a fix as
-// forever "generating" and the release's "Try again" action stays blocked
-// behind that phantom in-flight attempt.
+// abandoned — dead-lettered once the consumer's delivery limit is reached —
+// once markGenerating had already committed the in-flight row. The consumer's
+// dead-lettering leaves the service's own store untouched, so only the owning
+// service can close out the row it left behind; without this the row reports a
+// fix as forever "generating" and the release's "Try again" action stays
+// blocked behind that phantom in-flight attempt.
 //
 // It is idempotent: FailGenerating filters on status, so a row already in a
 // terminal state (a redundant drop notification, or the verification

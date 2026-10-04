@@ -20,9 +20,9 @@ const DefaultTenantID = "default"
 // Postgres timestamps keep.
 const occurredAtLayout = "2006-01-02T15:04:05.000000Z07:00"
 
-// Envelope is the header every new stream version carries. On the wire each
-// field is a Redis stream field of its own, next to a "payload" field holding
-// the stream's typed payload as JSON.
+// Envelope is the header a consumer.dead_letter:v1 entry carries. On the wire
+// each field is a Redis stream field of its own, next to a "payload" field
+// holding the entry's typed payload as JSON.
 type Envelope struct {
 	EventID       string
 	TenantID      string

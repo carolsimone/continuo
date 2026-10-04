@@ -13,8 +13,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ServiceName names this service as the producer of the events and dead
-// letters it writes.
+// ServiceName names this service as the producer of the dead letters its
+// stream consumers write.
 const ServiceName = "agent-remediation"
 
 // Config is the full agent-remediation runtime configuration, read once at boot.
