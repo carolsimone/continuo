@@ -410,6 +410,26 @@ networkPolicy:
   # real service graph. Inert on CNIs that do not enforce NetworkPolicy.
   enabled: true
 
+metrics:
+  # Every Go service (state, orchestrator, execution-controller,
+  # release-controller, remediation, agent-remediation, agent-chat) serves
+  # Prometheus metrics at /metrics on this port, on a listener of its own, so a
+  # scraper can be admitted to it without reaching the service's other ports.
+  # Published to the services as METRICS_PORT on the shared ConfigMap. Must
+  # differ from every service's httpPort and grpcPort (rendering fails otherwise).
+  port: 9464
+  # Adds prometheus.io/scrape, prometheus.io/port and prometheus.io/path pod
+  # annotations to those services, for scrapers that discover pods by annotation.
+  podAnnotations: true
+  # Namespaces allowed through the NetworkPolicy (networkPolicy.enabled) to the
+  # metrics port, as a label selector over namespaces, e.g.
+  #   scrapeNamespaceSelector:
+  #     matchLabels:
+  #       kubernetes.io/metadata.name: monitoring
+  # Empty (the default) adds no rule, so with the NetworkPolicy on no scraper
+  # can reach the port.
+  scrapeNamespaceSelector: {}
+
 ingress:
   # Front door for ui. Fully values-driven: no ingress class or
   # cert-manager/ACME assumptions are baked into the template.

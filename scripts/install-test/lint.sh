@@ -204,6 +204,18 @@ if grep -q 'DB_MAX_OPEN_CONNS\|DB_MAX_IDLE_CONNS' "${tmp}/database-null.yaml"; t
   echo "FAIL: a release without database values must leave every service on its default pool"; exit 1
 fi
 
+# Every Go service serves /metrics on the one port the ConfigMap names. The
+# chart must expose and annotate exactly those services, admit scrapers only
+# when asked and only to that port, and refuse a port another listener uses.
+echo "--- metrics port, annotations and scrape rule cover exactly the services that serve /metrics"
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set-json 'metrics.scrapeNamespaceSelector={"matchLabels":{"kubernetes.io/metadata.name":"monitoring"}}' \
+  > "${tmp}/metrics-scrape.yaml"
+python3 scripts/install-test/assert-metrics.py . "${tmp}/defaults.yaml" "${tmp}/metrics-scrape.yaml"
+if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set metrics.port=8082 > /dev/null 2>&1; then
+  echo "FAIL: metrics.port equal to a service's httpPort must fail the render"; exit 1
+fi
+
 echo "--- bash -n (release scripts)"
 bash -n scripts/release/retag-images.sh
 
