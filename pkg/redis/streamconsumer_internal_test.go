@@ -34,8 +34,7 @@ func testConsumer(handler MessageHandler) *StreamConsumer {
 		// with a recorder.
 		ackFn:        func(context.Context, string) error { return nil },
 		deadLetterFn: func(context.Context, map[string]any) error { return nil },
-		holdFn:       func(context.Context, string) {},
-		holdOneFn:    func(context.Context, string) {},
+		holdFn:       func(context.Context, []string) {},
 		deliveriesFn: func(context.Context, string) int64 { return 1 },
 		sleepFn:      func(ctx context.Context, d time.Duration) bool { return sleepCtx(ctx, d) == nil },
 		nowFn:        time.Now,

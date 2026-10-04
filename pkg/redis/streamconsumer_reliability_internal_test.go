@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -54,8 +55,7 @@ func reliabilityConsumer(t *testing.T, handler MessageHandler, rec *recorder) (*
 		rec.deadLetters = append(rec.deadLetters, v)
 		return nil
 	}
-	c.holdFn = func(_ context.Context, id string) { rec.record("hold:" + id) }
-	c.holdOneFn = func(_ context.Context, id string) { rec.record("hold-one:" + id) }
+	c.holdFn = func(_ context.Context, ids []string) { rec.record("hold:" + strings.Join(ids, ",")) }
 	c.deliveriesFn = func(context.Context, string) int64 { rec.record("deliveries"); return rec.deliveries }
 	c.sleepFn = func(ctx context.Context, d time.Duration) bool {
 		rec.mu.Lock()
@@ -109,55 +109,68 @@ func TestReclaimGate_ExplicitValueWins(t *testing.T) {
 	}
 }
 
-func TestAttempt_HoldsTheMessageBeforeTheInlineRetry(t *testing.T) {
-	failingOnce := func(rec *recorder) MessageHandler {
-		calls := 0
-		return func(context.Context, goredis.XMessage) error {
-			calls++
-			rec.record(fmt.Sprintf("handler:%d", calls))
-			if calls == 1 {
-				return errors.New("transient")
-			}
-			return nil
-		}
-	}
-
+func TestHoldWhileInHand_HoldsOnlyTheMessagesNotYetSettled(t *testing.T) {
 	rec := &recorder{}
-	c, _ := reliabilityConsumer(t, failingOnce(rec), rec)
-	_, err := c.attempt(context.Background(), msg("1-0"), readPathSchedule)
-	require.NoError(t, err)
-	assert.Equal(t, []string{"handler:1", "hold-one:1-0", "handler:2"}, rec.calls,
-		"only the retried message is held before the inline retry; the first attempt needs no hold")
-
-	rec = &recorder{}
-	c, _ = reliabilityConsumer(t, func(context.Context, goredis.XMessage) error { rec.record("handler"); return nil }, rec)
-	_, err = c.attempt(context.Background(), msg("2-0"), readPathSchedule)
-	require.NoError(t, err)
-	assert.Equal(t, []string{"handler"}, rec.calls, "a message handled on its first attempt is never held")
-
-	rec = &recorder{}
-	c, _ = reliabilityConsumer(t, failingOnce(rec), rec)
-	_, err = c.attempt(context.Background(), msg("3-0"), reclaimSchedule)
-	require.Error(t, err)
-	assert.Equal(t, []string{"handler:1"}, rec.calls, "the reclaim path runs once, on the claim that just delivered it")
-}
-
-func TestProcessOne_PauseHoldsEveryPendingEntryAndTheRetryOnlyItsMessage(t *testing.T) {
-	rec := &recorder{}
-	calls := 0
-	c, _ := reliabilityConsumer(t, func(context.Context, goredis.XMessage) error {
-		calls++
-		switch calls {
-		case 1:
-			return infraRefused()
-		case 2:
-			return errors.New("transient")
+	c, _ := reliabilityConsumer(t, func(_ context.Context, m goredis.XMessage) error {
+		switch m.ID {
+		case "1-0":
+			time.Sleep(100 * time.Millisecond)
+		case "2-0":
+			return errors.New("transient") // left pending for the reclaim sweep
+		case "3-0":
+			rec.record("slow-2-started")
+			time.Sleep(100 * time.Millisecond)
 		}
 		return nil
 	}, rec)
-	c.processOne(context.Background(), msg("1-0"))
-	assert.Equal(t, []string{"hold:1-0", "hold-one:1-0", "ack:1-0"}, rec.calls,
-		"the pause holds every pending entry (hold); the inline retry holds only its message (hold-one)")
+	c.pauseSlice = 20 * time.Millisecond
+	batch := []goredis.XMessage{msg("1-0"), msg("2-0"), msg("3-0"), msg("4-0")}
+	c.holdWhileInHand(context.Background(), batch, func() { c.processSerial(context.Background(), batch) })
+
+	rec.mu.Lock()
+	calls := append([]string(nil), rec.calls...)
+	rec.mu.Unlock()
+	assert.Contains(t, calls, "hold:1-0,2-0,3-0,4-0",
+		"while the first message runs, the siblings waiting behind it are held with it")
+	marker := slices.Index(calls, "slow-2-started")
+	require.Positive(t, marker)
+	var later []string
+	for _, call := range calls[marker:] {
+		if strings.HasPrefix(call, "hold:") {
+			later = append(later, call)
+		}
+	}
+	require.GreaterOrEqual(t, len(later), 3)
+	withLeft := 0
+	for _, h := range later {
+		if strings.Contains(h, "2-0") {
+			withLeft++
+		}
+	}
+	assert.LessOrEqual(t, withLeft, 1,
+		"a message left pending for the sweep leaves the set; at most a re-claim already in flight touches it")
+	assert.Equal(t, "hold:3-0,4-0", later[len(later)-1])
+	assert.Empty(t, c.inHand.snapshot(), "every message leaves the set as it settles")
+
+	time.Sleep(60 * time.Millisecond)
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	assert.Len(t, rec.calls, len(calls), "the holder stops once the batch is settled")
+}
+
+func TestHoldWhileInHand_StopsWithTheConsumer(t *testing.T) {
+	rec := &recorder{}
+	ctx, cancel := context.WithCancel(context.Background())
+	c, _ := reliabilityConsumer(t, func(hctx context.Context, _ goredis.XMessage) error {
+		cancel()
+		<-hctx.Done()
+		return hctx.Err()
+	}, rec)
+	c.pauseSlice = 10 * time.Millisecond
+	batch := []goredis.XMessage{msg("1-0")}
+	c.holdWhileInHand(ctx, batch, func() { c.processSerial(ctx, batch) })
+	assert.Empty(t, rec.calls, "a message in hand at shutdown is neither acknowledged nor held further")
+	assert.Empty(t, c.inHand.snapshot())
 }
 
 func TestStart_RefusesWithoutService(t *testing.T) {
@@ -192,8 +205,10 @@ func TestProcessOne_DeadLetterWriteFailureKeepsMessagePending(t *testing.T) {
 	c.infraBackoffBase, c.pauseSlice = 10*time.Millisecond, 10*time.Millisecond
 	c.processOne(context.Background(), msg("1-0"))
 
-	assert.Equal(t, []string{"xadd-failed", "hold:1-0", "xadd-failed", "hold:1-0", "hold:1-0", "xadd", "ack:1-0"}, rec.calls,
+	assert.Equal(t, []string{"xadd-failed", "xadd-failed", "xadd", "ack:1-0"}, rec.calls,
 		"the ACK waits for a successful dead-letter write; the handler is not re-run")
+	assert.Equal(t, []time.Duration{10 * time.Millisecond, 10 * time.Millisecond, 10 * time.Millisecond}, rec.sleeps,
+		"each failed write pauses with backoff before the next")
 	assert.Equal(t, 1, strings.Count(logs.String(), logDeadLettered), "logged once, after the write succeeded")
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -225,13 +240,15 @@ func TestProcessOne_InfrastructureErrorPausesWithoutCounting(t *testing.T) {
 	assert.Equal(t, 3, strings.Count(logs.String(), logInfraPause))
 }
 
-func TestPause_RefreshesHeartbeatAndIdleEverySlice(t *testing.T) {
+func TestPause_AdvancesTheHeartbeatEverySliceAndHoldsNothing(t *testing.T) {
 	rec := &recorder{}
 	c, _ := reliabilityConsumer(t, nil, rec)
 	c.pauseSlice = 5 * time.Second
-	require.True(t, c.pause(context.Background(), "9-0", 12*time.Second))
+	c.lastActivity.Store(time.Now().Add(-time.Hour).UnixNano())
+	require.True(t, c.pause(context.Background(), 12*time.Second))
 	assert.Equal(t, []time.Duration{5 * time.Second, 5 * time.Second, 2 * time.Second}, rec.sleeps)
-	assert.Equal(t, []string{"hold:9-0", "hold:9-0", "hold:9-0"}, rec.calls)
+	assert.NoError(t, c.Healthy(time.Minute), "every slice advances the heartbeat")
+	assert.Empty(t, rec.calls, "the holder, not the pause, keeps the messages in hand below the gate")
 }
 
 func TestInfraBackoff_DoublesToTheCap(t *testing.T) {
@@ -255,8 +272,7 @@ func TestProcessOne_HandlerDeadlineCountsAsTransient(t *testing.T) {
 	c.processOne(context.Background(), msg("1-0"))
 	assert.Equal(t, readPathSchedule[1:], rec.sleeps, "a handler overrun never pauses the consumer, it is retried inline")
 	assert.Zero(t, strings.Count(logs.String(), logInfraPause))
-	assert.Equal(t, []string{"hold-one:1-0"}, rec.calls,
-		"held once, before the inline retry; the read path leaves an overrun for the reclaim sweep: no dead letter, no ACK")
+	assert.Empty(t, rec.calls, "the read path leaves an overrun for the reclaim sweep: no dead letter, no ACK")
 }
 
 func TestProcessOne_ShutdownLeavesPermanentFailurePending(t *testing.T) {
@@ -365,7 +381,7 @@ func TestPauseAndBackoff_NonPositiveSettingsNeverSpin(t *testing.T) {
 		sleeps = append(sleeps, d)
 		return len(sleeps) < 100 // ends a pause that never advances
 	}
-	require.True(t, c.pause(context.Background(), "9-0", 12*time.Second))
+	require.True(t, c.pause(context.Background(), 12*time.Second))
 	assert.Equal(t, []time.Duration{5 * time.Second, 5 * time.Second, 2 * time.Second}, sleeps)
 }
 
@@ -398,7 +414,7 @@ func TestWithInfraClassifier_ServiceOutagePausesTheConsumer(t *testing.T) {
 	c.processOne(context.Background(), msg("1-0"))
 
 	assert.Equal(t, 2, calls)
-	assert.Equal(t, []string{"hold:1-0", "ack:1-0"}, rec.calls, "paused, never dead-lettered, acknowledged once handled")
+	assert.Equal(t, []string{"ack:1-0"}, rec.calls, "paused, never dead-lettered, acknowledged once handled")
 	assert.Equal(t, []time.Duration{time.Second}, rec.sleeps)
 	assert.Equal(t, 1, strings.Count(logs.String(), logInfraPause))
 }
@@ -522,7 +538,8 @@ func TestStreamConsumer_InlineRetry_PeerSweepDoesNotTakeMessage(t *testing.T) {
 
 	// Each attempt alone stays inside the peer's 400 ms gate, but the two
 	// attempts and the retry delay between them (150+100+300 ms) do not: only
-	// the hold before the retry keeps the peer's sweep away.
+	// the holder, re-claiming the message every 100 ms, keeps the peer's sweep
+	// away.
 	attempts := 0
 	a := NewStreamConsumer(rc, stream, group, func(context.Context, goredis.XMessage) error {
 		attempts++
@@ -534,6 +551,7 @@ func TestStreamConsumer_InlineRetry_PeerSweepDoesNotTakeMessage(t *testing.T) {
 		return nil
 	}, discardLog())
 	a.SetService("pkg-redis-test")
+	a.pauseSlice = 100 * time.Millisecond
 
 	peerCalls, peerDone := sweepingPeerEvery(ctx, rc, stream, group, 400*time.Millisecond, 25*time.Millisecond)
 
@@ -571,6 +589,7 @@ func TestStreamConsumer_InlineRetry_LeftPendingSiblingStillReachesTheSweep(t *te
 		return nil
 	}, discardLog(), WithReclaimMinIdle(gate))
 	c.SetService("pkg-redis-test")
+	c.pauseSlice = 20 * time.Millisecond // the holder runs several times during each retried message
 
 	left, err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, Values: map[string]any{"k": "left"}}).Result()
 	require.NoError(t, err)
@@ -600,6 +619,134 @@ func TestStreamConsumer_InlineRetry_LeftPendingSiblingStillReachesTheSweep(t *te
 	require.NoError(t, err)
 	assert.Zero(t, pending.Count)
 	assert.Empty(t, deadLettersFor(t, rc, stream))
+}
+
+func TestStreamConsumer_InfraPause_LeftPendingSiblingStillReachesTheSweep(t *testing.T) {
+	rc := internalRedisClient(t)
+	ctx := context.Background()
+	stream := fmt.Sprintf("test-infra-pause-left-pending-%d", time.Now().UnixNano())
+	group := "test-group"
+	const gate = 600 * time.Millisecond
+	t.Cleanup(func() { rc.Del(ctx, stream) })
+	require.NoError(t, rc.XGroupCreateMkStream(ctx, stream, group, "0").Err())
+
+	// "left" fails both read-path attempts and succeeds once reclaimed; every
+	// "paused" message hits an outage once, pauses, then succeeds.
+	attempts := map[string]int{}
+	c := NewStreamConsumer(rc, stream, group, func(_ context.Context, m goredis.XMessage) error {
+		attempts[m.ID]++
+		if m.Values["k"] == "left" && attempts[m.ID] <= 2 {
+			return errors.New("transient")
+		}
+		if m.Values["k"] == "paused" && attempts[m.ID] == 1 {
+			return infraRefused()
+		}
+		return nil
+	}, discardLog(), WithReclaimMinIdle(gate))
+	c.SetService("pkg-redis-test")
+	c.infraBackoffBase, c.pauseSlice = 100*time.Millisecond, 20*time.Millisecond
+
+	left, err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, Values: map[string]any{"k": "left"}}).Result()
+	require.NoError(t, err)
+	require.NoError(t, c.readAndProcess(ctx))
+	require.Equal(t, 2, attempts[left], "left pending for the reclaim sweep after its inline retry")
+	leftSettled := time.Now()
+
+	// Other messages pause on an outage, more often than the gate, for longer
+	// than the gate.
+	pauses := 0
+	for time.Since(leftSettled) < gate+300*time.Millisecond {
+		require.NoError(t, rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, Values: map[string]any{"k": "paused"}}).Err())
+		require.NoError(t, c.readAndProcess(ctx))
+		pauses++
+	}
+	require.Greater(t, pauses, 3)
+
+	p, err := rc.XPendingExt(ctx, &goredis.XPendingExtArgs{Stream: stream, Group: group, Start: left, End: left, Count: 1}).Result()
+	require.NoError(t, err)
+	require.Len(t, p, 1)
+	assert.GreaterOrEqual(t, p[0].Idle, time.Since(leftSettled)-100*time.Millisecond,
+		"the left-pending message keeps aging while other messages pause")
+
+	require.NoError(t, c.reclaimPending(ctx))
+	assert.Equal(t, 3, attempts[left], "the reclaim sweep claims the left-pending message once it has been idle for the gate")
+	pending, err := rc.XPending(ctx, stream, group).Result()
+	require.NoError(t, err)
+	assert.Zero(t, pending.Count)
+	assert.Empty(t, deadLettersFor(t, rc, stream))
+}
+
+func TestStreamConsumer_SlowHandlers_PeerSweepDoesNotTakeBatchSibling(t *testing.T) {
+	rc := internalRedisClient(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream := fmt.Sprintf("test-slow-handlers-sibling-%d", time.Now().UnixNano())
+	group := "test-group"
+	t.Cleanup(func() { rc.Del(context.Background(), stream) })
+	require.NoError(t, rc.XGroupCreateMkStream(ctx, stream, group, "0").Err())
+	for _, k := range []string{"slow-1", "slow-2", "sibling"} {
+		require.NoError(t, rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, Values: map[string]any{"k": k}}).Err())
+	}
+
+	// All three arrive in one read batch. The two slow handlers succeed, each
+	// within its deadline, but together they keep the sibling waiting 800 ms,
+	// twice the peer's 400 ms gate, before its first attempt.
+	var a *StreamConsumer
+	var siblingDeliveries []int64
+	a = NewStreamConsumer(rc, stream, group, func(hctx context.Context, m goredis.XMessage) error {
+		if m.Values["k"] == "sibling" {
+			siblingDeliveries = append(siblingDeliveries, a.deliveryCount(hctx, m.ID))
+			return nil
+		}
+		time.Sleep(400 * time.Millisecond)
+		return nil
+	}, discardLog())
+	a.SetService("pkg-redis-test")
+	a.pauseSlice = 100 * time.Millisecond
+
+	peerCalls, peerDone := sweepingPeerEvery(ctx, rc, stream, group, 400*time.Millisecond, 25*time.Millisecond)
+
+	require.NoError(t, a.readAndProcess(ctx))
+	cancel()
+	<-peerDone
+	assert.Equal(t, []int64{1}, siblingDeliveries, "the sibling is still on its first delivery when its turn comes")
+	assert.Zero(t, peerCalls.Load(), "the peer never took a message this consumer had in hand")
+	pending, err := rc.XPending(context.Background(), stream, group).Result()
+	require.NoError(t, err)
+	assert.Zero(t, pending.Count)
+}
+
+func TestHold_RestartsIdleOfPendingAndSkipsAcknowledged(t *testing.T) {
+	rc := internalRedisClient(t)
+	ctx := context.Background()
+	stream := fmt.Sprintf("test-hold-acked-%d", time.Now().UnixNano())
+	group := "test-group"
+	t.Cleanup(func() { rc.Del(ctx, stream) })
+	require.NoError(t, rc.XGroupCreateMkStream(ctx, stream, group, "0").Err())
+	acked, err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, Values: map[string]any{"k": "acked"}}).Result()
+	require.NoError(t, err)
+	held, err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, Values: map[string]any{"k": "held"}}).Result()
+	require.NoError(t, err)
+
+	c := NewStreamConsumer(rc, stream, group, nil, discardLog())
+	c.SetService("pkg-redis-test")
+	_, err = rc.XReadGroup(ctx, &goredis.XReadGroupArgs{
+		Group: group, Consumer: c.consumerName, Streams: []string{stream, ">"}, Count: 10,
+	}).Result()
+	require.NoError(t, err)
+	require.NoError(t, rc.XAck(ctx, stream, group, acked).Err())
+	time.Sleep(200 * time.Millisecond)
+
+	// A re-claim that read the set before the first message settled still
+	// names it; XCLAIM skips an acknowledged id.
+	c.hold(ctx, []string{acked, held})
+
+	p, err := rc.XPendingExt(ctx, &goredis.XPendingExtArgs{Stream: stream, Group: group, Start: "-", End: "+", Count: 10}).Result()
+	require.NoError(t, err)
+	require.Len(t, p, 1, "the acknowledged message is not pending again")
+	assert.Equal(t, held, p[0].ID)
+	assert.Less(t, p[0].Idle, 100*time.Millisecond, "the pending message's idle time restarted")
+	assert.Equal(t, int64(1), p[0].RetryCount, "a hold counts no delivery")
 }
 
 // infraRefused is a connection-level failure: Classify reads it as an outage.

@@ -7,7 +7,9 @@ import (
 	"hash/fnv"
 	"log/slog"
 	"os"
+	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -105,16 +107,18 @@ type StreamConsumer struct {
 	// top of the ones Classify knows.
 	infraClassifiers []InfraClassifier
 	// infraBackoffBase doubles per pause after an infrastructure error, up to
-	// infraBackoffCap; pauseSlice bounds each sleep inside a pause, so the
-	// heartbeat and the pending entry's idle time are refreshed at least that
-	// often.
+	// infraBackoffCap. pauseSlice bounds each sleep inside a pause, so the
+	// heartbeat is refreshed at least that often, and is the period at which
+	// the holder re-claims the messages in hand (see holdWhileInHand).
 	infraBackoffBase time.Duration
 	infraBackoffCap  time.Duration
 	pauseSlice       time.Duration
+	// inHand holds the ids of the messages this consumer has read or claimed
+	// and not yet settled.
+	inHand inHandSet
 	// Seams over Redis and the clock; NewStreamConsumer wires the real ones.
 	deadLetterFn func(ctx context.Context, values map[string]any) error
-	holdFn       func(ctx context.Context, id string)
-	holdOneFn    func(ctx context.Context, id string)
+	holdFn       func(ctx context.Context, ids []string)
 	deliveriesFn func(ctx context.Context, id string) int64
 	sleepFn      func(ctx context.Context, d time.Duration) bool
 	nowFn        func() time.Time
@@ -124,14 +128,14 @@ type StreamConsumer struct {
 type ConsumerOption func(*StreamConsumer)
 
 // reclaimMargin is how far the derived reclaim gate (see reclaimGate) sits
-// above the handler timeout, so a peer's reclaim sweep does not take a message
-// during a single handler invocation. The read or claim that delivers a
-// message restarts its idle time, and so does the hold of that message before
-// an inline retry (holdOne); an invocation that starts there ends within the
-// handler timeout, a margin short of the gate. A message paused on an
-// infrastructure error stays in flight longer; every pauseSlice, pause holds it
-// and everything else this consumer has pending, so their idle times stay
-// below the gate.
+// above the handler timeout. A message this consumer has in hand never reaches
+// the gate, because the holder re-claims it every pauseSlice (see
+// holdWhileInHand). The gate is what a message nobody holds waits out before a
+// sweep takes it: one a crashed consumer left behind, or one this consumer
+// left pending after a transient failure. Keeping the gate above the handler
+// timeout means that, should the holder's re-claims fail, a handler invocation
+// that starts on a freshly delivered message still ends before a peer's sweep
+// may take that message.
 const reclaimMargin = time.Minute
 
 // WithReclaimMinIdle sets the reclaim gate explicitly: the minimum idle time a
@@ -260,7 +264,6 @@ func NewStreamConsumer(
 	c.ackFn = c.ackOne
 	c.deadLetterFn = c.xaddDeadLetter
 	c.holdFn = c.hold
-	c.holdOneFn = c.holdOne
 	c.deliveriesFn = c.deliveryCount
 	c.sleepFn = func(ctx context.Context, d time.Duration) bool { return sleepCtx(ctx, d) == nil }
 	c.nowFn = time.Now
@@ -310,10 +313,6 @@ const (
 	defaultInfraBackoffCap  = 60 * time.Second
 	defaultPauseSlice       = 5 * time.Second
 )
-
-// holdBatch bounds how many of this consumer's pending entries one hold
-// re-claims.
-const holdBatch = 200
 
 // maxDeliveries is the delivery on which a message whose handler still fails
 // transiently is dead-lettered. The count is the pending entry's delivery
@@ -390,11 +389,8 @@ func (c *StreamConsumer) classify(err error, deadlineHit bool) ErrorClass {
 }
 
 // attempt runs the handler once per schedule entry and stops at the first
-// success or the first error that is not transient. Before a delayed retry it
-// holds that message alone (see holdOne), so the retry starts with the
-// message's idle time restarted, as the first attempt does on the read or
-// claim that delivered it. When ctx ends it returns ctx's error and the caller
-// leaves the message pending.
+// success or the first error that is not transient. When ctx ends it returns
+// ctx's error and the caller leaves the message pending.
 func (c *StreamConsumer) attempt(ctx context.Context, msg goredis.XMessage, schedule []time.Duration) (ErrorClass, error) {
 	class, err := ClassTransient, error(nil)
 	for i, delay := range schedule {
@@ -402,7 +398,6 @@ func (c *StreamConsumer) attempt(ctx context.Context, msg goredis.XMessage, sche
 			if !c.sleepFn(ctx, delay) {
 				return ClassTransient, ctx.Err()
 			}
-			c.holdOneFn(ctx, msg.ID)
 			c.logger.Warn("Retrying transient handler error",
 				"stream", c.streamName, "message_id", msg.ID, "attempt", i+1, "previous_error", err)
 		}
@@ -439,7 +434,7 @@ func (c *StreamConsumer) run(ctx context.Context, msg goredis.XMessage, schedule
 		delay := c.infraBackoff(pauses)
 		c.logger.Warn(logInfraPause, "stream", c.streamName, "group", c.consumerGroup,
 			"message_id", msg.ID, "pause", pauses, "retry_in", delay, "error", err)
-		if !c.pause(ctx, msg.ID, delay) {
+		if !c.pause(ctx, delay) {
 			return ClassTransient, ctx.Err()
 		}
 	}
@@ -465,17 +460,17 @@ func (c *StreamConsumer) infraBackoff(n int) time.Duration {
 }
 
 // pause waits d. Every pauseSlice (defaultPauseSlice when non-positive) it
-// advances the heartbeat, so liveness never mistakes the wait for a wedge, and
-// holds this consumer's pending messages (see hold), so a peer's reclaim sweep
-// takes none of them over mid-pause. It returns false once ctx ends.
-func (c *StreamConsumer) pause(ctx context.Context, id string, d time.Duration) bool {
+// advances the heartbeat, so liveness never mistakes the wait for a wedge. The
+// paused message stays in hand, so the holder keeps it, and the rest of its
+// batch or page, below the reclaim gate (see holdWhileInHand). It returns
+// false once ctx ends.
+func (c *StreamConsumer) pause(ctx context.Context, d time.Duration) bool {
 	slice := c.pauseSlice
 	if slice <= 0 {
 		slice = defaultPauseSlice
 	}
 	for remaining := d; remaining > 0; {
 		c.lastActivity.Store(time.Now().UnixNano())
-		c.holdFn(ctx, id)
 		step := min(remaining, slice)
 		if !c.sleepFn(ctx, step) {
 			return false
@@ -485,51 +480,116 @@ func (c *StreamConsumer) pause(ctx context.Context, id string, d time.Duration) 
 	return true
 }
 
-// hold re-claims for this consumer, with XCLAIM … JUSTID, the paused message
-// id and every other entry this consumer has pending (up to holdBatch). JUSTID
-// resets each entry's idle time without counting a delivery, so while one
-// message pauses, neither it nor the rest of its read batch, worker lanes or
-// reclaim page grows idle enough for a peer's reclaim sweep to take it. This
-// consumer's own sweep runs between reads, never during a pause, so the hold
-// delays none of its own retries. XCLAIM skips an id that is no longer
-// pending. Failures only shorten the protection, so they are logged.
-func (c *StreamConsumer) hold(ctx context.Context, id string) {
-	ids := []string{id}
-	pending, err := c.client.XPendingExt(ctx, &goredis.XPendingExtArgs{
-		Stream: c.streamName, Group: c.consumerGroup, Consumer: c.consumerName, Start: "-", End: "+", Count: holdBatch,
-	}).Result()
-	if err != nil {
-		c.logger.Warn("Could not list this consumer's pending messages — holding only the paused one",
-			"stream", c.streamName, "message_id", id, "error", err)
+// inHandSet is the set of message ids a consumer has read or claimed and not
+// yet settled. Worker lanes settle concurrently with the holder reading it, so
+// it is mutex-guarded. The zero value is an empty set.
+type inHandSet struct {
+	mu  sync.Mutex
+	ids map[string]struct{}
+}
+
+// add puts every message of msgs in the set and returns their ids.
+func (s *inHandSet) add(msgs []goredis.XMessage) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ids == nil {
+		s.ids = make(map[string]struct{}, len(msgs))
 	}
-	for _, p := range pending {
-		if p.ID != id {
-			ids = append(ids, p.ID)
-		}
+	ids := make([]string, 0, len(msgs))
+	for _, m := range msgs {
+		s.ids[m.ID] = struct{}{}
+		ids = append(ids, m.ID)
 	}
-	err = c.client.XClaimJustID(ctx, &goredis.XClaimArgs{
-		Stream: c.streamName, Group: c.consumerGroup, Consumer: c.consumerName, MinIdle: 0, Messages: ids,
-	}).Err()
-	if err != nil {
-		c.logger.Warn("Could not refresh the idle time of this consumer's pending messages",
-			"stream", c.streamName, "message_id", id, "count", len(ids), "error", err)
+	return ids
+}
+
+// remove takes ids out of the set; an id that is not in it is ignored.
+func (s *inHandSet) remove(ids ...string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, id := range ids {
+		delete(s.ids, id)
 	}
 }
 
-// holdOne re-claims the one message id for this consumer with XCLAIM … JUSTID,
-// restarting its idle time without counting a delivery. It runs before an
-// inline retry, so the retry starts on a freshly held message. It holds nothing
-// else: a message this consumer left pending after a transient failure keeps
-// aging, so it reaches the reclaim gate and is retried by the sweep however
-// often other messages retry inline. XCLAIM skips an id that is no longer
-// pending. A failure only shortens the protection, so it is logged.
-func (c *StreamConsumer) holdOne(ctx context.Context, id string) {
+// snapshot returns the ids in the set, sorted.
+func (s *inHandSet) snapshot() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ids := make([]string, 0, len(s.ids))
+	for id := range s.ids {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	return ids
+}
+
+// holdWhileInHand runs process over msgs, a batch this consumer has just read
+// or a page it has just claimed. Each message is in hand from now until it
+// settles: acknowledged, dead-lettered and acknowledged, or left pending for
+// the reclaim sweep. Meanwhile a holder goroutine re-claims exactly the
+// messages still in hand every pauseSlice (see hold). None of them therefore
+// grows idle enough for a peer's reclaim sweep to take it, whether it is
+// running, paused on an outage, or waiting behind slow handlers in its batch or
+// page. A message that has settled is out of the set, so the holder leaves it
+// alone: one left pending after a transient failure keeps aging until the
+// sweep takes it at the gate. A re-claim that read the set just before a
+// message settled may touch that message once more; an acknowledged one is no
+// longer pending and XCLAIM skips it. The holder stops when process returns or
+// ctx ends; a message still in hand then stays pending.
+func (c *StreamConsumer) holdWhileInHand(ctx context.Context, msgs []goredis.XMessage, process func()) {
+	if len(msgs) == 0 {
+		return
+	}
+	ids := c.inHand.add(msgs)
+	defer c.inHand.remove(ids...)
+	stop, stopped := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(stopped)
+		c.holdInHand(ctx, stop)
+	}()
+	defer func() {
+		close(stop)
+		<-stopped
+	}()
+	process()
+}
+
+// holdInHand re-claims the messages in hand every pauseSlice
+// (defaultPauseSlice when non-positive) until stop closes or ctx ends.
+func (c *StreamConsumer) holdInHand(ctx context.Context, stop <-chan struct{}) {
+	slice := c.pauseSlice
+	if slice <= 0 {
+		slice = defaultPauseSlice
+	}
+	tick := time.NewTicker(slice)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-stop:
+			return
+		case <-tick.C:
+			if ids := c.inHand.snapshot(); len(ids) > 0 {
+				c.holdFn(ctx, ids)
+			}
+		}
+	}
+}
+
+// hold re-claims ids for this consumer with XCLAIM … JUSTID, restarting each
+// entry's idle time without counting a delivery. XCLAIM skips an id that is no
+// longer pending, so it never re-creates an acknowledged entry. It is
+// best-effort: a failure only shortens the protection, so it is logged unless
+// the consumer is stopping.
+func (c *StreamConsumer) hold(ctx context.Context, ids []string) {
 	err := c.client.XClaimJustID(ctx, &goredis.XClaimArgs{
-		Stream: c.streamName, Group: c.consumerGroup, Consumer: c.consumerName, MinIdle: 0, Messages: []string{id},
+		Stream: c.streamName, Group: c.consumerGroup, Consumer: c.consumerName, MinIdle: 0, Messages: ids,
 	}).Err()
-	if err != nil {
-		c.logger.Warn("Could not refresh the idle time of the message before its retry",
-			"stream", c.streamName, "message_id", id, "error", err)
+	if err != nil && ctx.Err() == nil {
+		c.logger.Warn("Could not refresh the idle time of the messages in hand",
+			"stream", c.streamName, "count", len(ids), "error", err)
 	}
 }
 
@@ -579,7 +639,7 @@ func (c *StreamConsumer) deadLetterAndAck(ctx context.Context, msg goredis.XMess
 		delay := c.infraBackoff(writes)
 		c.logger.Error("Dead-letter write failed — message stays pending",
 			"stream", c.streamName, "message_id", msg.ID, "retry_in", delay, "error", werr)
-		if !c.pause(ctx, msg.ID, delay) {
+		if !c.pause(ctx, delay) {
 			return
 		}
 	}
@@ -778,10 +838,12 @@ func (c *StreamConsumer) ensureConsumerGroup(ctx context.Context) error {
 // reclaimPending claims and reprocesses messages left in the pending entry list
 // (PEL) by consumers other than this one — typically a previous instance that
 // crashed before ACKing. Only entries idle for at least the reclaim gate
-// (reclaimGate) are eligible; this prevents a parallel replica from stealing a
-// peer's in-flight message during a periodic sweep.
+// (reclaimGate) are eligible. A live replica's messages in hand never are,
+// because its holder keeps re-claiming them (see holdWhileInHand), so a
+// periodic sweep does not steal a peer's in-flight message.
 //
-// Each reclaimed message is settled by settleReclaimed. Handler invocations
+// Each claimed page is held while its messages are settled one by one by
+// settleReclaimed, so an entry waiting for its turn is not taken by a peer. Handler invocations
 // here are **single-shot** for transient errors (reclaimSchedule): a PEL entry
 // either landed here because a prior owner already burned its inline retry
 // budget on the read path, or because that owner crashed. Re-running the read
@@ -824,12 +886,14 @@ func (c *StreamConsumer) reclaimPending(ctx context.Context) error {
 			)
 		}
 
-		for _, msg := range msgs {
-			if ctx.Err() != nil {
-				return nil
+		c.holdWhileInHand(ctx, msgs, func() {
+			for _, msg := range msgs {
+				if ctx.Err() != nil {
+					return
+				}
+				c.settleReclaimed(ctx, msg)
 			}
-			c.settleReclaimed(ctx, msg)
-		}
+		})
 		if ctx.Err() != nil {
 			return nil
 		}
@@ -846,8 +910,10 @@ func (c *StreamConsumer) reclaimPending(ctx context.Context) error {
 // on success, even when shutdown began during the handler; dead-lettered then
 // acknowledged on a permanent failure, or on a transient one on delivery
 // maxDeliveries or later; otherwise left pending for the next sweep. A
-// message whose handling is cut short by shutdown stays pending.
+// message whose handling is cut short by shutdown stays pending. Whatever the
+// outcome, the message leaves the in-hand set when settleReclaimed returns.
 func (c *StreamConsumer) settleReclaimed(ctx context.Context, msg goredis.XMessage) {
+	defer c.inHand.remove(msg.ID)
 	class, err := c.run(ctx, msg, reclaimSchedule)
 	switch {
 	case err == nil:
@@ -960,11 +1026,14 @@ func (c *StreamConsumer) readAndProcess(ctx context.Context) error {
 	}
 
 	for _, stream := range streams {
-		if c.workerCount <= 1 {
-			c.processSerial(ctx, stream.Messages)
-		} else {
-			c.processSharded(ctx, stream.Messages)
-		}
+		msgs := stream.Messages
+		c.holdWhileInHand(ctx, msgs, func() {
+			if c.workerCount <= 1 {
+				c.processSerial(ctx, msgs)
+			} else {
+				c.processSharded(ctx, msgs)
+			}
+		})
 	}
 
 	return nil
@@ -1046,6 +1115,8 @@ func boundedWorkerCount(n int) int {
 // success, even when shutdown began during the handler; dead-lettered then
 // acknowledged on a permanent error; otherwise left pending for the reclaim
 // sweep. A message whose handling is cut short by shutdown stays pending.
+// Whatever the outcome, the message leaves the in-hand set when processOne
+// returns, so the holder no longer re-claims it.
 //
 // Acknowledging per message (rather than once per batch) preserves
 // ack-after-success under the worker pool: a completed message leaves the PEL
@@ -1053,6 +1124,7 @@ func boundedWorkerCount(n int) int {
 // never keep finished work pending long enough for another replica's reclaim
 // sweep to pick it up again.
 func (c *StreamConsumer) processOne(ctx context.Context, msg goredis.XMessage) {
+	defer c.inHand.remove(msg.ID)
 	class, err := c.run(ctx, msg, readPathSchedule)
 	switch {
 	case err == nil:
