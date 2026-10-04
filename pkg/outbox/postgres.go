@@ -123,17 +123,25 @@ func (r *postgresRepository) Create(ctx context.Context, entry *Entry) error {
 	return nil
 }
 
-func (r *postgresRepository) GetPendingBatch(ctx context.Context, limit int) ([]*Entry, error) {
-	// When per-aggregate ordering is enabled, withhold any row that has an
-	// older still-pending-or-scheduled sibling for the same aggregate, so
-	// events for one aggregate publish strictly in creation order. A
-	// backed-off ('scheduled') sibling must still withhold younger rows —
-	// otherwise a younger row could publish out of order while its older
-	// sibling waits out its backoff. created_at is assigned per Create call
-	// (time.Now), so siblings written in one writer transaction get distinct,
-	// ordered timestamps.
+// claimQuery selects up to $1 due rows in creation order and locks them,
+// skipping rows another relay holds. When perAggregateFIFO is set it also
+// withholds any row that has an older still-pending-or-scheduled sibling for
+// the same aggregate, so events for one aggregate publish strictly in creation
+// order. A backed-off ('scheduled') sibling must still withhold younger rows —
+// otherwise a younger row could publish out of order while its older sibling
+// waits out its backoff. created_at is assigned per Create call (time.Now), so
+// siblings written in one writer transaction get distinct, ordered timestamps.
+//
+// Fresh 'pending' rows always have next_attempt_at NULL, so they are always
+// eligible; 'scheduled' rows (backed off after a transient failure) become
+// eligible once their deadline passes. clock_timestamp() is the actual
+// statement-execution wall clock — unlike NOW(), which is fixed at transaction
+// start — so the due-check reflects when this SELECT actually runs, not when
+// the enclosing tx began. The ORDER BY matches the partial index
+// idx_<table>_claimable (created_at, id).
+func claimQuery(table string, perAggregateFIFO bool) string {
 	fifoClause := ""
-	if r.perAggregateFIFO {
+	if perAggregateFIFO {
 		fifoClause = fmt.Sprintf(`
 		  AND NOT EXISTS (
 		      SELECT 1 FROM %s older
@@ -141,15 +149,9 @@ func (r *postgresRepository) GetPendingBatch(ctx context.Context, limit int) ([]
 		        AND older.aggregate_id   = o.aggregate_id
 		        AND older.status IN ('pending', 'scheduled')
 		        AND older.created_at < o.created_at
-		  )`, r.tableName)
+		  )`, table)
 	}
-	// Fresh 'pending' rows always have next_attempt_at NULL, so they are
-	// always eligible; 'scheduled' rows (previously backed off after a
-	// transient failure) become eligible once their deadline passes.
-	// clock_timestamp() is the actual statement-execution wall clock — unlike
-	// NOW(), which is fixed at transaction start — so the due-check reflects
-	// when this SELECT actually runs, not when the enclosing tx began.
-	query := fmt.Sprintf(`
+	return fmt.Sprintf(`
 		SELECT id, message_processing_id, aggregate_type, aggregate_id,
 		       event_type, payload, stream_name,
 		       status, retry_count, max_retries,
@@ -157,10 +159,14 @@ func (r *postgresRepository) GetPendingBatch(ctx context.Context, limit int) ([]
 		FROM %s o
 		WHERE status IN ('pending', 'scheduled')
 		  AND (next_attempt_at IS NULL OR next_attempt_at <= clock_timestamp())%s
-		ORDER BY created_at ASC
+		ORDER BY created_at ASC, id ASC
 		LIMIT $1
 		FOR UPDATE SKIP LOCKED
-	`, r.tableName, fifoClause)
+	`, table, fifoClause)
+}
+
+func (r *postgresRepository) GetPendingBatch(ctx context.Context, limit int) ([]*Entry, error) {
+	query := claimQuery(r.tableName, r.perAggregateFIFO)
 
 	var rows []*outboxRow
 	if err := r.exec.SelectContext(ctx, &rows, query, limit); err != nil && err != sql.ErrNoRows {

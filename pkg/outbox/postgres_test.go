@@ -298,3 +298,15 @@ func TestScheduleRetry_SetsNextAttemptAndMovesToScheduled(t *testing.T) {
 	assert.NotEqual(t, "failed", status)
 	assert.NotEqual(t, "processed", status)
 }
+
+func TestClaimQueryUsesTheClaimIndex(t *testing.T) {
+	db := dbForTest(t)
+	tx, err := db.Beginx()
+	require.NoError(t, err)
+	defer tx.Rollback()
+	_, err = tx.Exec(`SET LOCAL enable_seqscan = off`)
+	require.NoError(t, err)
+	var plan string
+	require.NoError(t, tx.Get(&plan, `EXPLAIN (FORMAT JSON) `+outbox.ClaimQueryForTest(testOutboxTable), 100))
+	assert.Contains(t, plan, `"Index Name": "idx_execution_outbox_claimable"`)
+}
