@@ -1,4 +1,3 @@
-import json
 import logging
 import threading
 import redis
@@ -19,10 +18,9 @@ from adapters.code_bundle_uploader import CodeBundleUploader
 from adapters.health.server import start_health_server
 from adapters.redis.candidate_publisher import CandidateManifestPublisher
 from adapters.redis.consumer import Consumer
-from adapters.redis.error_class import PermanentMessageError
+from adapters.redis.release_requested_binding import parse_release_requested
 from adapters.sources.s3 import S3Source
-from adapters.sources.s3_uri import parse_s3_uri
-from domain.model import ManifestKind, ManifestRequest, Runtime
+from domain.model import Runtime
 from service.candidate_artifacts import DbtSqlArtifactBuilder, PythonSpecArtifactBuilder
 from service.candidate_manifest_handler import CandidateManifestHandler
 
@@ -31,13 +29,6 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
 logger = logging.getLogger(__name__)
-
-
-def _decode_field(fields: dict, name: str) -> str | None:
-    raw = fields.get(name.encode()) or fields.get(name)
-    if raw is None:
-        return None
-    return raw.decode() if isinstance(raw, bytes) else raw
 
 
 def main() -> None:
@@ -74,89 +65,8 @@ def main() -> None:
     logger.info("topology-controller SQL dialect: %s", dialect)
 
     def handle_release_requested(fields: dict) -> None:
-        try:
-            payload_raw = _decode_field(fields, "payload")
-        except UnicodeDecodeError as exc:
-            raise PermanentMessageError(f"release.requested:v1 payload is not valid UTF-8: {exc}") from exc
-        if not payload_raw:
-            raise PermanentMessageError("release.requested:v1 message missing payload")
-        try:
-            payload = json.loads(payload_raw)
-        except json.JSONDecodeError as exc:
-            raise PermanentMessageError(f"release.requested:v1 payload not valid JSON: {exc}") from exc
-        if not isinstance(payload, dict):
-            raise PermanentMessageError(
-                f"release.requested:v1 payload must be a JSON object, got {type(payload).__name__}",
-            )
-        release_id = payload.get("release_id")
-        manifest_keys_raw = payload.get("manifest_keys")
-        if not release_id or manifest_keys_raw is None:
-            raise PermanentMessageError(
-                "release.requested:v1 payload missing release_id or manifest_keys",
-            )
-        if not isinstance(release_id, str):
-            raise PermanentMessageError(
-                f"release.requested:v1 release_id must be a string, got {type(release_id).__name__}",
-            )
-        if not isinstance(manifest_keys_raw, list):
-            raise PermanentMessageError(
-                f"release.requested:v1 manifest_keys must be a list, got {type(manifest_keys_raw).__name__}",
-            )
-        # All entries must share a single bucket; derive it from the first URI and
-        # assert the rest agree so misrouted multi-bucket payloads are caught early.
-        # Each entry must be an object carrying a non-empty string "service" and
-        # a string "s3_uri". Any other shape is a permanent malformed-payload
-        # error (the consumer dead-letters it) so the service-mismatch/
-        # empty-manifest validation in the handler cannot be silently bypassed.
-        buckets = []
-        requests: list[ManifestRequest] = []
-        for entry in manifest_keys_raw:
-            if not isinstance(entry, dict):
-                raise PermanentMessageError(
-                    f"release.requested:v1 manifest_keys entry must be an object, got {type(entry).__name__}"
-                )
-            svc = entry.get("service")
-            if not svc:
-                raise PermanentMessageError(
-                    "release.requested:v1 manifest_keys entry missing or empty 'service' field"
-                )
-            if not isinstance(svc, str):
-                raise PermanentMessageError(
-                    f"release.requested:v1 manifest_keys entry 'service' must be a string, got {type(svc).__name__}"
-                )
-            s3_uri = entry.get("s3_uri")
-            if not isinstance(s3_uri, str):
-                raise PermanentMessageError(
-                    "release.requested:v1 manifest_keys entry missing 's3_uri' or it is not a string"
-                )
-            try:
-                bucket, key = parse_s3_uri(s3_uri)
-            except ValueError as exc:
-                raise PermanentMessageError(
-                    f"release.requested:v1 manifest_keys entry has an invalid s3_uri: {exc}"
-                ) from exc
-            buckets.append(bucket)
-            # parse_s3_uri appends a trailing slash to all non-empty paths; strip it
-            # because object keys never end with "/" in S3.
-            # Only an ABSENT kind defaults to dbt — that is the compatibility
-            # path for producers that predate python support. Any value the
-            # producer actually set is passed through verbatim, empty string
-            # included, so the handler reports it as a permanent
-            # UnknownManifestKind failure the operator sees. Defaulting a
-            # present-but-invalid value would parse a python contract with the
-            # dbt parser and misreport it as MalformedManifest, sending the
-            # operator to the wrong artifact.
-            requests.append(ManifestRequest(
-                service=svc,
-                key=key.rstrip("/"),
-                kind=entry.get("kind", ManifestKind.DBT),
-            ))
-        if len(set(buckets)) > 1:
-            raise PermanentMessageError(
-                f"release.requested:v1 manifest_keys span multiple buckets: {set(buckets)}"
-            )
-        shared_bucket = buckets[0] if buckets else S3_BUCKET
-        source = S3Source(bucket=shared_bucket, env=S3_ENV, s3_client=s3_client, keys=requests)
+        message = parse_release_requested(fields, S3_BUCKET)
+        source = S3Source(bucket=message.bucket, env=S3_ENV, s3_client=s3_client, keys=message.requests)
         # Cleanup is owned by CandidateManifestHandler.handle() via its own finally block.
         CandidateManifestHandler(
             source=source,
@@ -167,7 +77,7 @@ def main() -> None:
                 Runtime.PYTHON: PythonSpecArtifactBuilder(candidate_spec_uploader),
             },
             dialect=dialect,
-        ).handle(release_id=release_id)
+        ).handle(release_id=message.release_id)
 
     candidate_consumer = Consumer(
         redis_client=redis_client,

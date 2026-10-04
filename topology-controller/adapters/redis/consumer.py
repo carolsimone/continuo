@@ -65,6 +65,13 @@ class Consumer:
         service_name: str,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     ) -> None:
+        # The name is the producer of every dead letter this consumer writes;
+        # refuse to run unnamed rather than stamp an empty producer.
+        if not service_name:
+            raise ValueError(
+                f"consumer of {stream_name!r}/{group_name!r} has an empty service_name: "
+                "name the service that produces its dead letters"
+            )
         self._redis = redis_client
         self._stream = stream_name
         self._group = group_name

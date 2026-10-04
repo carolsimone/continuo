@@ -5,9 +5,10 @@ from types import SimpleNamespace
 import pytest
 
 import main
-from adapters.redis.error_class import ErrorClass, PermanentMessageError, classify
+from adapters.redis.error_class import ErrorClass, classify
 from config.config import SERVICE_NAME
 from domain.model import ManifestRequest
+from service.errors import PermanentMessageError
 from streams_contract import (
     RELEASE_REQUESTED_V1,
     MANIFEST_LOADED_CANDIDATE_V1,
@@ -182,143 +183,6 @@ def test_main_passes_the_configured_engines_dialect_to_the_handler(monkeypatch):
     assert captured["dialect"] == "trino"
 
 
-def test_main_candidate_handler_rejects_missing_payload(monkeypatch):
-    _common_monkeypatches(monkeypatch)
-    monkeypatch.setattr(main, "CandidateManifestHandler", lambda **kw: SimpleNamespace(handle=lambda release_id: None))
-    monkeypatch.setattr(main, "S3Source", lambda **kw: SimpleNamespace(cleanup=lambda: None))
-    main.main()
-    candidate_consumer = next(
-        c for c in _RecordingConsumer.instances if c.stream_name == RELEASE_REQUESTED_V1
-    )
-    import pytest
-    with pytest.raises(ValueError, match="missing payload"):
-        candidate_consumer.message_handler({})
-
-
-def test_main_candidate_handler_rejects_invalid_json_payload(monkeypatch):
-    _common_monkeypatches(monkeypatch)
-    monkeypatch.setattr(main, "CandidateManifestHandler", lambda **kw: SimpleNamespace(handle=lambda release_id: None))
-    monkeypatch.setattr(main, "S3Source", lambda **kw: SimpleNamespace(cleanup=lambda: None))
-    main.main()
-    candidate_consumer = next(
-        c for c in _RecordingConsumer.instances if c.stream_name == RELEASE_REQUESTED_V1
-    )
-    import pytest
-    with pytest.raises(ValueError, match="not valid JSON"):
-        candidate_consumer.message_handler({b"payload": b"not json {{{"})
-
-
-def test_main_candidate_handler_rejects_payload_missing_release_id(monkeypatch):
-    _common_monkeypatches(monkeypatch)
-    monkeypatch.setattr(main, "CandidateManifestHandler", lambda **kw: SimpleNamespace(handle=lambda release_id: None))
-    monkeypatch.setattr(main, "S3Source", lambda **kw: SimpleNamespace(cleanup=lambda: None))
-    main.main()
-    candidate_consumer = next(
-        c for c in _RecordingConsumer.instances if c.stream_name == RELEASE_REQUESTED_V1
-    )
-    import json as _json
-    import pytest
-    with pytest.raises(ValueError, match="missing release_id or manifest_keys"):
-        candidate_consumer.message_handler({b"payload": _json.dumps({"manifest_keys": []}).encode()})
-
-
-def test_main_candidate_handler_rejects_payload_missing_manifest_keys(monkeypatch):
-    _common_monkeypatches(monkeypatch)
-    monkeypatch.setattr(main, "CandidateManifestHandler", lambda **kw: SimpleNamespace(handle=lambda release_id: None))
-    monkeypatch.setattr(main, "S3Source", lambda **kw: SimpleNamespace(cleanup=lambda: None))
-    main.main()
-    candidate_consumer = next(
-        c for c in _RecordingConsumer.instances if c.stream_name == RELEASE_REQUESTED_V1
-    )
-    import json as _json
-    import pytest
-    with pytest.raises(ValueError, match="missing release_id or manifest_keys"):
-        candidate_consumer.message_handler({b"payload": _json.dumps({"release_id": "x"}).encode()})
-
-
-def test_main_candidate_handler_rejects_manifest_key_missing_service_field(monkeypatch):
-    """An entry without a 'service' field is a permanent malformed-payload error."""
-    _common_monkeypatches(monkeypatch)
-    monkeypatch.setattr(main, "CandidateManifestHandler", lambda **kw: SimpleNamespace(handle=lambda release_id: None))
-    monkeypatch.setattr(main, "S3Source", lambda **kw: SimpleNamespace(cleanup=lambda: None))
-    main.main()
-    candidate_consumer = next(
-        c for c in _RecordingConsumer.instances if c.stream_name == RELEASE_REQUESTED_V1
-    )
-    import json as _json
-    import pytest
-    payload = _json.dumps({
-        "release_id": "rel-x",
-        "manifest_keys": [
-            {"s3_uri": "s3://continuo/service-1/rel-x/manifest.json"},  # missing "service"
-        ],
-    })
-    with pytest.raises(ValueError, match="missing or empty 'service' field"):
-        candidate_consumer.message_handler({b"payload": payload.encode()})
-
-
-def test_manifest_keys_kind_defaults_to_dbt_and_is_threaded_when_present(monkeypatch):
-    """release-controller does not send kind yet, so an entry without it must
-    parse as dbt; an entry that carries it must reach the source verbatim."""
-    _common_monkeypatches(monkeypatch)
-    captured = {}
-    monkeypatch.setattr(main, "S3Source",
-                        lambda **kw: captured.setdefault("keys", kw["keys"]) or object())
-    monkeypatch.setattr(main, "CandidateManifestHandler",
-                        lambda **kw: SimpleNamespace(handle=lambda release_id: None))
-    monkeypatch.setattr(main, "Consumer", _RecordingConsumer)
-    monkeypatch.setattr(main.threading, "Thread", _NoopThread)
-    monkeypatch.setattr(main, "start_health_server", lambda *a, **kw: None)
-    _RecordingConsumer.instances = []
-
-    main.main()
-
-    handler = _RecordingConsumer.instances[0].message_handler
-    handler({b"payload": json.dumps({
-        "release_id": "rel-1",
-        "manifest_keys": [
-            {"service": "service-1", "s3_uri": "s3://continuo/service-1/rel-1/manifest.json"},
-            {"service": "marketing-py", "kind": "python",
-             "s3_uri": "s3://continuo/marketing-py/rel-1/contract.yaml"},
-        ],
-    }).encode()})
-
-    assert [(r.service, r.kind) for r in captured["keys"]] == [
-        ("service-1", "dbt"), ("marketing-py", "python"),
-    ]
-
-
-def test_an_explicitly_empty_kind_is_not_defaulted_to_dbt(monkeypatch):
-    """Only an absent kind defaults. A producer that set the field to "" chose a
-    value, and it is not a kind this build can parse — passing it through keeps
-    the handler's UnknownManifestKind failure available. Defaulting it would
-    parse a python contract with the dbt parser and misreport the release as
-    MalformedManifest, pointing the operator at the wrong artifact."""
-    _common_monkeypatches(monkeypatch)
-    captured = {}
-    monkeypatch.setattr(main, "S3Source",
-                        lambda **kw: captured.setdefault("keys", kw["keys"]) or object())
-    monkeypatch.setattr(main, "CandidateManifestHandler",
-                        lambda **kw: SimpleNamespace(handle=lambda release_id: None))
-    monkeypatch.setattr(main, "Consumer", _RecordingConsumer)
-    monkeypatch.setattr(main.threading, "Thread", _NoopThread)
-    monkeypatch.setattr(main, "start_health_server", lambda *a, **kw: None)
-    _RecordingConsumer.instances = []
-
-    main.main()
-
-    handler = _RecordingConsumer.instances[0].message_handler
-    handler({b"payload": json.dumps({
-        "release_id": "rel-1",
-        "manifest_keys": [
-            {"service": "service-1", "kind": "",
-             "s3_uri": "s3://continuo/service-1/rel-1/manifest.json"},
-        ],
-    }).encode()})
-
-    assert [r.kind for r in captured["keys"]] == [""]
-
-
 def test_both_runtimes_have_an_artifact_builder(monkeypatch):
     """A runtime with no builder fails the release at parse time; the
     composition root is the only place that can prevent it."""
@@ -359,67 +223,36 @@ def test_main_names_the_service_on_the_consumer(monkeypatch):
     assert _RecordingConsumer.instances[0].service_name == SERVICE_NAME == "topology-controller"
 
 
-_MALFORMED_PAYLOADS = {
-    "missing payload": {},
-    "invalid json": {b"payload": b"not json {{{"},
-    "missing release_id": {b"payload": json.dumps({"manifest_keys": []}).encode()},
-    "missing manifest_keys": {b"payload": json.dumps({"release_id": "x"}).encode()},
-    "entry without service": {b"payload": json.dumps({
-        "release_id": "x",
-        "manifest_keys": [{"s3_uri": "s3://continuo/s1/x/manifest.json"}],
-    }).encode()},
-    "entry with an invalid s3_uri": {b"payload": json.dumps({
-        "release_id": "x",
-        "manifest_keys": [{"service": "s1", "s3_uri": "http://continuo/s1/x/manifest.json"}],
-    }).encode()},
-    "entry without s3_uri": {b"payload": json.dumps({
-        "release_id": "x",
-        "manifest_keys": [{"service": "s1"}],
-    }).encode()},
-    "entry with a non-string s3_uri": {b"payload": json.dumps({
-        "release_id": "x",
-        "manifest_keys": [{"service": "s1", "s3_uri": 42}],
-    }).encode()},
-    "entry with a non-string service": {b"payload": json.dumps({
-        "release_id": "x",
-        "manifest_keys": [{"service": ["s1"], "s3_uri": "s3://continuo/s1/x/manifest.json"}],
-    }).encode()},
-    "entry that is not an object": {b"payload": json.dumps({
-        "release_id": "x",
-        "manifest_keys": ["s3://continuo/s1/x/manifest.json"],
-    }).encode()},
-    "payload that is a JSON array": {b"payload": b"[1, 2]"},
-    "payload that is a JSON string": {b"payload": b'"release"'},
-    "payload that is JSON null": {b"payload": b"null"},
-    "manifest_keys that is not iterable": {b"payload": json.dumps({
-        "release_id": "x", "manifest_keys": 5,
-    }).encode()},
-    "manifest_keys that is an object": {b"payload": json.dumps({
-        "release_id": "x", "manifest_keys": {"service": "s1"},
-    }).encode()},
-    "release_id that is not a string": {b"payload": json.dumps({
-        "release_id": 7, "manifest_keys": [],
-    }).encode()},
-    "payload that is not UTF-8": {b"payload": b"\xff\xfe{}"},
-    "entries spanning buckets": {b"payload": json.dumps({
-        "release_id": "x",
-        "manifest_keys": [
-            {"service": "s1", "s3_uri": "s3://bucket-a/s1/x/manifest.json"},
-            {"service": "s2", "s3_uri": "s3://bucket-b/s2/x/manifest.json"},
-        ],
-    }).encode()},
-}
-
-
-@pytest.mark.parametrize("fields", _MALFORMED_PAYLOADS.values(), ids=_MALFORMED_PAYLOADS.keys())
-def test_malformed_release_requested_is_a_permanent_error(monkeypatch, fields):
-    """No redelivery can repair a malformed payload, so the handler raises the
-    error the consumer dead-letters at once."""
+def test_the_handler_surfaces_the_parsers_permanent_error_without_building_a_source(monkeypatch):
+    """Decoding lives in the release.requested binding; the handler only runs
+    it first, so a malformed message reaches the consumer as the permanent
+    error it dead-letters and nothing downstream is built."""
     _common_monkeypatches(monkeypatch)
-    monkeypatch.setattr(main, "CandidateManifestHandler", lambda **kw: SimpleNamespace(handle=lambda release_id: None))
-    monkeypatch.setattr(main, "S3Source", lambda **kw: SimpleNamespace(cleanup=lambda: None))
+    built = []
+    monkeypatch.setattr(main, "S3Source", lambda **kw: built.append(kw))
+    monkeypatch.setattr(main, "CandidateManifestHandler", lambda **kw: built.append(kw))
     main.main()
+
     handler = _RecordingConsumer.instances[0].message_handler
     with pytest.raises(PermanentMessageError) as raised:
-        handler(fields)
+        handler({b"payload": b"not json {{{"})
+
     assert classify(raised.value) is ErrorClass.PERMANENT
+    assert built == []
+
+
+def test_the_handler_gives_the_parser_the_configured_bucket_as_the_default(monkeypatch):
+    """A release that lists no manifests names no bucket, so the source reads
+    from the install's configured one."""
+    _common_monkeypatches(monkeypatch)
+    captured = {}
+    monkeypatch.setattr(main, "S3Source", lambda **kw: captured.update(kw) or object())
+    monkeypatch.setattr(main, "CandidateManifestHandler",
+                        lambda **kw: SimpleNamespace(handle=lambda release_id: None))
+    main.main()
+
+    _RecordingConsumer.instances[0].message_handler(
+        {b"payload": json.dumps({"release_id": "rel-1", "manifest_keys": []}).encode()}
+    )
+
+    assert captured["bucket"] == "continuo"

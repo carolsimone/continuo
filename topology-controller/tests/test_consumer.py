@@ -12,14 +12,16 @@ import redis.exceptions as redis_exceptions
 
 import adapters.redis.consumer as consumer_mod
 from adapters.redis.consumer import LOG_DEAD_LETTERED, Consumer
-from adapters.redis.error_class import PermanentMessageError
+from config.config import SERVICE_NAME
+from domain.contract_vocabulary import DeadLetterKind
+from service.errors import PermanentMessageError
 from streams_contract import (
     CONSUMER_DEAD_LETTER_V1,
     RELEASE_REQUESTED_V1,
     TOPOLOGY_CONTROLLER_RELEASE_REQUESTED,
 )
 
-_SERVICE_NAME = "topology-controller"
+_SERVICE_NAME = SERVICE_NAME
 _STREAM = RELEASE_REQUESTED_V1
 _GROUP = TOPOLOGY_CONTROLLER_RELEASE_REQUESTED
 
@@ -443,6 +445,16 @@ def _names(redis_mock):
     return [c[0] for c in redis_mock.method_calls if c[0] in ("xadd", "xack", "xclaim", "xpending_range")]
 
 
+def test_a_consumer_without_a_service_name_refuses_to_start():
+    """The service name is the producer of every dead letter the consumer
+    writes, so an empty one is a configuration error caught at construction,
+    before the consumer touches Redis."""
+    r = MagicMock()
+    with pytest.raises(ValueError, match="service_name"):
+        Consumer(r, _STREAM, _GROUP, lambda fields: None, service_name="")
+    r.xgroup_create.assert_not_called()
+
+
 def test_permanent_error_dead_letters_then_acks(monkeypatch, caplog):
     _defang_sleep(monkeypatch)
     r = MagicMock()
@@ -453,8 +465,8 @@ def test_permanent_error_dead_letters_then_acks(monkeypatch, caplog):
     assert _names(r)[-2:] == ["xadd", "xack"]
     stream, fields = r.xadd.call_args[0]
     assert stream == CONSUMER_DEAD_LETTER_V1
-    assert fields["producer"] == "topology-controller"
-    assert json.loads(fields["payload"])["failure_kind"] == "permanent"
+    assert fields["producer"] == _SERVICE_NAME
+    assert json.loads(fields["payload"])["failure_kind"] == DeadLetterKind.PERMANENT
     assert caplog.text.count(LOG_DEAD_LETTERED) == 1
 
 
@@ -469,7 +481,7 @@ def test_permanent_dead_letter_records_at_least_one_delivery_when_xpending_fails
         c = _dl_consumer(_raising(PermanentMessageError("bad")), r)
         c._dispatch(b"1-0", {})
         payload = json.loads(r.xadd.call_args[0][1]["payload"])
-        assert payload["failure_kind"] == "permanent"
+        assert payload["failure_kind"] == DeadLetterKind.PERMANENT
         assert payload["delivery_count"] == 1
         assert r.xack.called
 
@@ -526,7 +538,7 @@ def test_transient_error_dead_letters_on_the_fifth_delivery(monkeypatch):
         assert r.xadd.called is dead_lettered
         assert r.xack.called is dead_lettered
         if dead_lettered:
-            assert json.loads(r.xadd.call_args[0][1]["payload"])["failure_kind"] == "transient_exhausted"
+            assert json.loads(r.xadd.call_args[0][1]["payload"])["failure_kind"] == DeadLetterKind.TRANSIENT_EXHAUSTED
 
 
 def test_infrastructure_error_pauses_without_counting(monkeypatch):

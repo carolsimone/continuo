@@ -1,6 +1,7 @@
 import json
 from unittest.mock import MagicMock
 from adapters.redis.consumer import Consumer
+from config.config import SERVICE_NAME
 from streams_contract import RELEASE_REQUESTED_V1, TOPOLOGY_CONTROLLER_RELEASE_REQUESTED
 
 
@@ -29,7 +30,7 @@ def test_consume_once_dispatches_payload_and_acks():
         stream_name=RELEASE_REQUESTED_V1,
         group_name=TOPOLOGY_CONTROLLER_RELEASE_REQUESTED,
         message_handler=handler,
-        service_name="topology-controller",
+        service_name=SERVICE_NAME,
     )
 
     consumer._consume_once()
@@ -62,7 +63,7 @@ def test_consume_once_does_not_ack_when_handler_raises():
         stream_name=RELEASE_REQUESTED_V1,
         group_name=TOPOLOGY_CONTROLLER_RELEASE_REQUESTED,
         message_handler=handler,
-        service_name="topology-controller",
+        service_name=SERVICE_NAME,
     )
 
     consumer._consume_once()  # must not raise — the loop body swallows handler errors

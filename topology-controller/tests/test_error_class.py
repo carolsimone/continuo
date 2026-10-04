@@ -4,7 +4,8 @@ import botocore.exceptions
 import pytest
 import redis.exceptions
 
-from adapters.redis.error_class import ErrorClass, PermanentMessageError, classify
+from adapters.redis.error_class import ErrorClass, classify
+from service.errors import PermanentMessageError
 
 
 def _client_error(status):

@@ -6,10 +6,7 @@ import socket
 import botocore.exceptions
 import redis.exceptions
 
-
-class PermanentMessageError(ValueError):
-    """A message no redelivery can process, such as a missing or malformed
-    payload. The consumer dead-letters it at once."""
+from service.errors import PermanentMessageError
 
 
 class ErrorClass(enum.Enum):
