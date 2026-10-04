@@ -23,7 +23,6 @@ type outboxRow struct {
 	StreamName          string     `db:"stream_name"`
 	Status              string     `db:"status"`
 	RetryCount          int        `db:"retry_count"`
-	MaxRetries          int        `db:"max_retries"`
 	CreatedAt           time.Time  `db:"created_at"`
 	ProcessedAt         *time.Time `db:"processed_at"`
 	ErrorMessage        *string    `db:"error_message"`
@@ -41,7 +40,6 @@ func entryFromRow(r *outboxRow) *Entry {
 		StreamName:          r.StreamName,
 		Status:              r.Status,
 		RetryCount:          r.RetryCount,
-		MaxRetries:          r.MaxRetries,
 		CreatedAt:           r.CreatedAt,
 		ProcessedAt:         r.ProcessedAt,
 		ErrorMessage:        r.ErrorMessage,
@@ -100,10 +98,9 @@ func (r *postgresRepository) Create(ctx context.Context, entry *Entry) error {
 	if entry.Status == "" {
 		entry.Status = "pending"
 	}
-	if entry.MaxRetries == 0 {
-		entry.MaxRetries = DefaultMaxRetries
-	}
 
+	// max_retries records the budget the row was written under (MaxAttempts);
+	// the processor applies MaxAttempts directly and never reads the column.
 	query := fmt.Sprintf(`
 		INSERT INTO %s (
 			id, message_processing_id, aggregate_type, aggregate_id,
@@ -115,7 +112,7 @@ func (r *postgresRepository) Create(ctx context.Context, entry *Entry) error {
 	_, err := r.exec.ExecContext(ctx, query,
 		entry.ID, entry.MessageProcessingID, entry.AggregateType, entry.AggregateID,
 		entry.EventType, entry.Payload, entry.StreamName,
-		entry.Status, entry.RetryCount, entry.MaxRetries, entry.CreatedAt,
+		entry.Status, entry.RetryCount, MaxAttempts, entry.CreatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("create outbox entry in %s: %w", r.tableName, err)
@@ -154,7 +151,7 @@ func claimQuery(table string, perAggregateFIFO bool) string {
 	return fmt.Sprintf(`
 		SELECT id, message_processing_id, aggregate_type, aggregate_id,
 		       event_type, payload, stream_name,
-		       status, retry_count, max_retries,
+		       status, retry_count,
 		       created_at, processed_at, error_message, next_attempt_at
 		FROM %s o
 		WHERE status IN ('pending', 'scheduled')

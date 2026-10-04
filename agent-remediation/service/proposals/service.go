@@ -16,9 +16,9 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/event"
-	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
+	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
 	"github.com/carolsimone/continuo/pkg/outbox"
@@ -331,7 +331,6 @@ func (s *Service) enqueuePRClosed(ctx context.Context, u uow.UnitOfWork, v propo
 		Payload:       body,
 		StreamName:    streams.RemediationPrClosedV1,
 		Status:        "pending",
-		MaxRetries:    outbox.DefaultMaxRetries,
 		CreatedAt:     s.clock.Now(),
 	}
 	return u.OutboxRepo().Create(ctx, entry)
@@ -383,7 +382,6 @@ func (s *Service) enqueuePROpened(ctx context.Context, u uow.UnitOfWork, v propo
 		Payload:       body,
 		StreamName:    streams.RemediationPrOpenedV1,
 		Status:        "pending",
-		MaxRetries:    outbox.DefaultMaxRetries,
 		CreatedAt:     now,
 	}
 	return u.OutboxRepo().Create(ctx, entry)

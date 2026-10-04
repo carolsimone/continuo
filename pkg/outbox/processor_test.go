@@ -61,12 +61,12 @@ func (b *batchFakePublisher) PublishBatch(_ context.Context, entries []*outbox.E
 }
 
 // exhaustedRetryCount is the retry_count of a row whose next failure exhausts
-// its retry budget: the execution_outbox max_retries column defaults to 13, and
-// a failure is terminal once retry_count+1 reaches it.
+// the retry budget: a failure is terminal once retry_count+1 reaches
+// outbox.MaxAttempts (13).
 const exhaustedRetryCount = 12
 
 // seedRow inserts one pending row that has already failed retryCount times.
-// max_retries stays at its column default.
+// The max_retries column keeps its default; the processor does not read it.
 func seedRow(t *testing.T, db *sqlx.DB, retryCount int) uuid.UUID {
 	t.Helper()
 	id := uuid.New()
@@ -75,6 +75,21 @@ func seedRow(t *testing.T, db *sqlx.DB, retryCount int) uuid.UUID {
 		id, uuid.New(), retryCount)
 	require.NoError(t, err)
 	return id
+}
+
+// Every row gets the same budget, whatever its own max_retries column says.
+func TestProcessor_UsesOneBudgetForEveryRow(t *testing.T) {
+	db := dbForTest(t)
+	id := seedRow(t, db, 2)
+	_, err := db.Exec(fmt.Sprintf(`UPDATE %s SET max_retries = 3 WHERE id = $1`, testOutboxTable), id)
+	require.NoError(t, err)
+
+	p := outbox.NewProcessor(db, testOutboxTable, &fakePublisher{failTimes: 10}, nil, newTestLogger(), outbox.ProcessorConfig{})
+	require.NoError(t, p.ProcessBatch(context.Background()))
+
+	var status string
+	require.NoError(t, db.Get(&status, fmt.Sprintf(`SELECT status FROM %s WHERE id = $1`, testOutboxTable), id))
+	assert.Equal(t, "scheduled", status, "the third attempt of thirteen is retried, not dead-lettered")
 }
 
 func TestProcessor_SuccessMarksProcessed(t *testing.T) {
@@ -158,7 +173,7 @@ func (p *permanentFailingPublisher) Publish(_ context.Context, _ *outbox.Entry) 
 // TestProcessor_PermanentErrorShortCircuitsRetries verifies that a publish
 // error wrapping events.ErrPermanent bypasses the retry budget and goes
 // straight to MarkFailed + TerminalFailureHook on the first attempt, even
-// when MaxRetries would otherwise allow more attempts.
+// when the retry budget would otherwise allow more attempts.
 func TestProcessor_PermanentErrorShortCircuitsRetries(t *testing.T) {
 	db := dbForTest(t)
 	// The row has its whole retry budget left; a permanent error must override
@@ -340,7 +355,7 @@ func TestProcessor_PermanentErrorDeadLettersImmediately(t *testing.T) {
 	assert.Equal(t, string(model.DeadLetterKindPermanent), kind)
 }
 
-// Transient budget exhaustion: after MaxRetries, terminal with a
+// Transient budget exhaustion: after MaxAttempts, terminal with a
 // failure_kind=transient_exhausted dead-letter.
 func TestProcessor_TransientExhaustionDeadLetters(t *testing.T) {
 	db := dbForTest(t)

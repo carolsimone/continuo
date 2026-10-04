@@ -60,7 +60,6 @@ func enqueueRunFinished(ctx context.Context, u uow.UnitOfWork, r *pipeline.Run, 
 		Payload:       payload,
 		StreamName:    streams.PipelineRunFinishedV1,
 		Status:        "pending",
-		MaxRetries:    pkgoutbox.DefaultMaxRetries,
 		CreatedAt:     now,
 	}); err != nil {
 		return fmt.Errorf("outbox insert (run finished): %w", err)
@@ -87,7 +86,6 @@ func emitReleaseRejected(ctx context.Context, u uow.UnitOfWork, r *pipeline.Run,
 		Payload:       payload,
 		StreamName:    streams.ReleaseRejectedV1,
 		Status:        "pending",
-		MaxRetries:    pkgoutbox.DefaultMaxRetries,
 		CreatedAt:     now,
 	}); err != nil {
 		return fmt.Errorf("outbox insert (release rejected): %w", err)

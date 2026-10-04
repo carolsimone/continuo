@@ -51,7 +51,6 @@ func emitReleaseRequested(ctx context.Context, u uow.UnitOfWork, releaseID strin
 		Payload:       payload,
 		StreamName:    streams.ReleaseRequestedV1,
 		Status:        "pending",
-		MaxRetries:    pkgoutbox.DefaultMaxRetries,
 		CreatedAt:     now,
 	}); err != nil {
 		return fmt.Errorf("outbox insert: %w", err)

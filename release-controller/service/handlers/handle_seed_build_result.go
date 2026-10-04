@@ -212,7 +212,6 @@ func handleSeedBuildOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeli
 		Payload:       payload,
 		StreamName:    streams.ValidationRequestedV1,
 		Status:        "pending",
-		MaxRetries:    pkgoutbox.DefaultMaxRetries,
 		CreatedAt:     now,
 	}); err != nil {
 		return fmt.Errorf("outbox insert: %w", err)

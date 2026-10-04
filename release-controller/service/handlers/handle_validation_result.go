@@ -249,7 +249,6 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipe
 		Payload:       payload,
 		StreamName:    streams.ReleasePromotedV1,
 		Status:        "pending",
-		MaxRetries:    pkgoutbox.DefaultMaxRetries,
 		CreatedAt:     now,
 	}); err != nil {
 		return fmt.Errorf("outbox insert: %w", err)

@@ -25,6 +25,8 @@ type Executor interface {
 //	created_at (timestamptz), processed_at (timestamptz nullable),
 //	error_message (text nullable), next_attempt_at (timestamptz nullable).
 //
+// Create writes MaxAttempts into max_retries; no operation reads the column.
+//
 // GetPendingBatch MUST be called inside a transaction held by the caller until
 // the follow-up write that resolves each claimed row — marking it processed,
 // marking it failed, or rescheduling it for a later attempt — completes,

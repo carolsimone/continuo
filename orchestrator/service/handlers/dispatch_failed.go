@@ -65,7 +65,6 @@ func EmitDispatchFailed(
 		Payload:             payload,
 		StreamName:          streams.RunEntriesDispatchFailedV1,
 		Status:              "pending",
-		MaxRetries:          pkgoutbox.DefaultMaxRetries,
 	}); err != nil {
 		return fmt.Errorf("write run.entries.dispatch_failed to outbox: %w", err)
 	}

@@ -23,10 +23,10 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/event"
-	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/domain/typology"
+	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/service/fixer"
 	"github.com/carolsimone/continuo/agent-remediation/service/llmcache"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
@@ -867,7 +867,6 @@ func Enqueue(ctx context.Context, u uow.UnitOfWork, clock ports.Clock, p proposa
 		Payload:       body,
 		StreamName:    streams.RemediationProposedV1,
 		Status:        "pending",
-		MaxRetries:    outbox.DefaultMaxRetries,
 		CreatedAt:     now,
 	}
 	if msgProcID != uuid.Nil {

@@ -266,7 +266,7 @@ func (p *Processor) processBatchOnce(ctx context.Context) (int, error) {
 		// transient (infra): reschedule with capped backoff and only go terminal
 		// once the budget is exhausted.
 		permanent := errors.Is(pubErr, pkgevents.ErrPermanent)
-		if !permanent && entry.RetryCount+1 < entry.MaxRetries {
+		if !permanent && entry.RetryCount+1 < MaxAttempts {
 			if err := repo.ScheduleRetry(ctx, entry.ID, backoff(entry.RetryCount+1, p.retryBase, p.retryMax), pubErr.Error()); err != nil {
 				p.logger.Error("Schedule retry failed", "entry_id", entry.ID, "error", err)
 			}
