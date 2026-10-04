@@ -93,8 +93,9 @@ func looksLikeServicePrefixedGroup(s string) bool {
 // streamLiteralScanDirs lists the production directories that must reference
 // pkg/streams constants for stream names rather than inline literals. These are
 // the seams where a versioned-stream string is most likely to be hand-written:
-// Redis stream bindings (the message_processing.stream_name dedup value) and
-// the message handlers (the dedup message_type argument).
+// Redis stream bindings (the message_processing.stream_name dedup value), the
+// message handlers (the dedup message_type argument), and the shared consumer,
+// event and outbox packages that name the dead-letter streams.
 var streamLiteralScanDirs = []string{
 	"state/adapters/redis",
 	"state/service/handlers",
@@ -105,6 +106,11 @@ var streamLiteralScanDirs = []string{
 	"execution-controller/service/handlers",
 	"release-controller/adapters/redis",
 	"release-controller/service/handlers",
+	"remediation/adapters/redis",
+	"agent-remediation/adapters/redis",
+	"pkg/redis",
+	"pkg/events",
+	"pkg/outbox",
 }
 
 // TestNoStreamLiteralsInProductionGoFiles walks every production (non-test) Go
