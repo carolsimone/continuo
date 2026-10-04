@@ -106,7 +106,7 @@ func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pi
 		return fmt.Errorf("encode rejection: %w", err)
 	}
 
-	if err := emitReleaseRejected(ctx, u, r, payload, now); err != nil {
+	if err := emitReleaseRejected(ctx, u, r, payload); err != nil {
 		return err
 	}
 	if err := u.RunRepo().Save(ctx, r); err != nil {
@@ -212,8 +212,6 @@ func handleSeedBuildOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeli
 		Payload:       payload,
 		StreamName:    streams.ValidationRequestedV1,
 		Status:        "pending",
-		MaxRetries:    pkgoutbox.DefaultMaxRetries,
-		CreatedAt:     now,
 	}); err != nil {
 		return fmt.Errorf("outbox insert: %w", err)
 	}

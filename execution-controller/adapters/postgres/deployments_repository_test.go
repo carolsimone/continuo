@@ -481,7 +481,7 @@ func runGateInTx(t *testing.T, tx *sqlx.Tx, releaseID, nodeID string, now time.T
 	return validation.EmitValidationAggregateIfComplete(
 		context.Background(),
 		depRepo,
-		outbox.NewPostgresRepository(tx, "execution_outbox", logger),
+		outbox.NewPostgresRepository(tx, postgres.OutboxTable, logger),
 		postgres.NewValidationAggregateRepository(tx),
 		validation.DedupNamespace,
 		releaseID,
@@ -701,7 +701,7 @@ func TestSeedBuildAggregateGate_EmitsCompletion(t *testing.T) {
 	require.NoError(t, txRepo.Save(ctx, dep))
 	require.NoError(t, validation.SettleSeedBuildNodeTerminal(
 		ctx, txRepo,
-		outbox.NewPostgresRepository(tx, "execution_outbox", logger),
+		outbox.NewPostgresRepository(tx, postgres.OutboxTable, logger),
 		postgres.NewValidationAggregateRepository(tx),
 		releaseID, "seed.fx", "ok", now,
 	))

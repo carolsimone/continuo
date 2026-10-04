@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The five migration files must produce exactly the effective schema the
+// The migration files must produce exactly the effective schema the
 // service is written against. Column order does not matter; names, types,
 // nullability and defaults do.
 func TestExecutionSchemaMatchesContract(t *testing.T) {
@@ -57,10 +57,17 @@ func TestExecutionSchemaMatchesContract(t *testing.T) {
 	}
 	rows.Close()
 	require.Subset(t, indexes, []string{
-		"idx_execution_outbox_pending", "idx_execution_outbox_aggregate", "idx_execution_outbox_due",
+		"idx_execution_outbox_claimable", "idx_execution_outbox_open_by_aggregate", "idx_execution_outbox_failed", "idx_execution_outbox_aggregate",
 		"idx_message_processing_outbox_entry_id_stream", "message_processing_message_id_stream_name_key",
 		"idx_deployments_due", "idx_deployments_candidate_release", "uq_deployments_candidate_release_node_mode",
 	})
+
+	require.NotContains(t, indexes, "idx_execution_outbox_pending")
+	require.NotContains(t, indexes, "idx_execution_outbox_due")
+
+	var notifyTriggers int
+	require.NoError(t, db.QueryRow(`SELECT count(*) FROM pg_trigger WHERE tgname='execution_outbox_notify' AND tgrelid='execution_outbox'::regclass AND NOT tgisinternal`).Scan(&notifyTriggers))
+	require.Equal(t, 1, notifyTriggers)
 
 	var checks []string
 	rows, err = db.Query(`SELECT conname FROM pg_constraint WHERE contype='c' AND conrelid IN ('deployments'::regclass,'execution_outbox'::regclass,'validation_aggregates'::regclass,'message_processing'::regclass) ORDER BY 1`)

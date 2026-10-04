@@ -32,8 +32,8 @@ type Publisher interface {
 // sequential semantics untouched.
 //
 // Ordering guarantee: implementations MUST issue the per-entry side effects in
-// the slice order they receive, over a single connection, so per-aggregate FIFO
-// (already enforced by the SELECT order in GetPendingBatch) is preserved.
+// the slice order they receive, over a single connection, so the rows of one
+// aggregate reach their streams in the order GetPendingBatch returned them.
 type BatchPublisher interface {
 	PublishBatch(ctx context.Context, entries []*Entry) []error
 }
@@ -46,37 +46,67 @@ type BatchPublisher interface {
 // dispatch-exhaustion cases.
 type TerminalFailureHook func(ctx context.Context, entry *Entry, cause error) error
 
+// FallbackTick is the poll interval of a relay with a Waker. Between wakes the
+// relay drains on this tick, which publishes rows whose retry came due (an
+// UPDATE, which sends no notification) and rows whose notification was lost
+// while the listener reconnected. A relay without a Waker polls on
+// ProcessorConfig's default Tick instead.
+const FallbackTick = 5 * time.Second
+
 // ProcessorConfig groups the optional knobs.
 type ProcessorConfig struct {
-	Tick      time.Duration // poll interval; default 1s
-	BatchSize int           // max rows per batch; default 100
-	// PerAggregateFIFO publishes rows sharing an aggregate_id in creation order
-	// (a later row waits until the earlier one is processed). Off by default.
-	PerAggregateFIFO bool
+	// Tick is the poll interval; default 1s. A relay with a Waker sets it to
+	// FallbackTick.
+	Tick      time.Duration
+	BatchSize int // max rows per batch; default 100
 	// RetryBaseDelay is the first-retry delay for a transient failure; each
 	// subsequent retry doubles it up to RetryMaxDelay. Default 1s — small so a
-	// brief blip recovers within about a poll tick (important under
-	// PerAggregateFIFO, where a scheduled head withholds its younger siblings
-	// until it publishes), while the exponential growth still spaces out
-	// attempts during a sustained outage.
+	// brief blip is retried soon (a scheduled row withholds the younger rows of
+	// its aggregate until it publishes), while the exponential growth still
+	// spaces out attempts during a sustained outage. A retry is an UPDATE,
+	// which sends no notification, so a row whose retry came due publishes at
+	// the next wake or the next Tick.
 	RetryBaseDelay time.Duration
 	// RetryMaxDelay caps the per-retry backoff so an outage retries at a steady
 	// interval rather than growing unbounded. Default 5m.
 	RetryMaxDelay time.Duration
+	// Waker wakes the relay when rows are committed; Tick is then the fallback
+	// poll for retries coming due and notifications lost during a reconnect.
+	// Without a Waker the relay drains only on Tick.
+	Waker Waker
 }
 
-// Processor owns the poll loop. Each tick:
-//  1. Begins a tx.
-//  2. GetPendingBatch with FOR UPDATE SKIP LOCKED.
-//  3. For each entry: call Publisher.Publish; on success MarkProcessed. On
-//     error, a permanent failure (events.ErrPermanent) or a transient failure
-//     that has exhausted its retry budget is terminal: write a durable
-//     dead-letter row (skipped if the row is itself a dead-letter — loop
-//     guard), fire the TerminalFailureHook (best-effort), and MarkFailed. A
-//     transient failure with budget remaining instead calls ScheduleRetry with
-//     capped exponential backoff, moving the row to 'scheduled' until it is
-//     due for a later poll.
-//  4. Commits.
+// Processor relays the rows of one outbox table to their streams. Every table
+// publishes the rows of one aggregate (aggregate_type, aggregate_id) in creation
+// order. Run drains the table when it starts, on each signal from the Waker
+// (rows were committed), and on each Tick (the fallback poll). A drain runs
+// batch after batch, and each batch runs in one transaction:
+//  1. GetPendingBatch claims up to BatchSize due rows in created_at order with
+//     FOR UPDATE SKIP LOCKED, leaving out rows queued behind an older row of
+//     their aggregate that waits out a retry. A second query in the same
+//     transaction withholds each claimed row whose aggregate has an older open
+//     row outside the batch (another relay holds it), together with the
+//     younger rows of that aggregate in the batch. When that leaves a full
+//     claim short of BatchSize, it claims again for the remaining room, past
+//     the rows already claimed and the withheld aggregates. The rows of one
+//     aggregate inside the batch publish together, in order.
+//  2. The batch is published: in one pipelined round trip when the publisher
+//     implements BatchPublisher, otherwise one row at a time. On the one-row
+//     path a row that fails stops the younger rows of its aggregate in the
+//     batch: they are not sent, stay pending and untouched, and publish once
+//     the failed row publishes on a retry or is dead-lettered. A pipeline
+//     cannot be stopped part way, so on the pipelined path a younger row sent
+//     in the same pipeline as an older row that failed may reach its stream
+//     before the older row's retry.
+//  3. The published rows are marked processed in one UPDATE. A permanent
+//     failure (events.ErrPermanent) or a transient failure that has used up
+//     MaxAttempts is terminal: write a durable dead-letter row (skipped if the
+//     row is itself a dead-letter — loop guard), fire the TerminalFailureHook
+//     (best-effort), and MarkFailed. A transient failure with attempts left
+//     calls ScheduleRetry with capped exponential backoff, moving the row to
+//     'scheduled' until it is due.
+//  4. Commits. A failed terminal write or a failed MarkProcessedBatch rolls the
+//     whole batch back instead, so it is retried.
 type Processor struct {
 	db                *sqlx.DB
 	tableName         string
@@ -85,17 +115,22 @@ type Processor struct {
 	logger            *slog.Logger
 	tick              time.Duration
 	batchSize         int
-	repoOpts          []Option
 	retryBase         time.Duration
 	retryMax          time.Duration
+	waker             Waker
 
 	// lastActivity is the unix-nano timestamp of the most recent unit of Run
-	// progress (a poll tick, and each drained batch), stored via atomic.Int64 so
-	// Healthy can be polled from a health-probe goroutine without racing Run.
+	// progress (each turn of the loop, and each drained batch), stored via
+	// atomic.Int64 so Healthy can be polled from a health-probe goroutine
+	// without racing Run.
 	// It backs the liveness heartbeat that catches a wedged-but-not-exited
 	// processor — the outbox analogue of StreamConsumer's heartbeat — which
 	// RegisterWorker/WorkerExited alone (goroutine-exit only) cannot see.
 	lastActivity atomic.Int64
+
+	// afterDrain, when set, runs each time drain returns. It is nil unless a
+	// test sets it through SetAfterDrainHookForTest to learn when a drain ended.
+	afterDrain func()
 }
 
 func NewProcessor(
@@ -122,10 +157,6 @@ func NewProcessor(
 	if retryMax == 0 {
 		retryMax = 5 * time.Minute
 	}
-	var repoOpts []Option
-	if cfg.PerAggregateFIFO {
-		repoOpts = append(repoOpts, WithPerAggregateOrdering())
-	}
 	p := &Processor{
 		db:                db,
 		tableName:         tableName,
@@ -136,7 +167,7 @@ func NewProcessor(
 		batchSize:         batchSize,
 		retryBase:         retryBase,
 		retryMax:          retryMax,
-		repoOpts:          repoOpts,
+		waker:             cfg.Waker,
 	}
 	// Seed the heartbeat at construction so a probe firing before Run is
 	// scheduled sees "just started," not "stalled since the epoch."
@@ -144,13 +175,23 @@ func NewProcessor(
 	return p
 }
 
+// Run relays rows until ctx is cancelled. It drains once at start, for rows
+// committed while no relay was listening, then on every wake and every tick.
+// A wake that arrives during a drain stays pending and starts the next drain.
 func (p *Processor) Run(ctx context.Context) error {
 	ticker := time.NewTicker(p.tick)
 	defer ticker.Stop()
-	p.logger.Info("Starting outbox processor", "table", p.tableName, "tick", p.tick)
+	// A nil channel never fires: without a waker only the ticker drains.
+	var wake <-chan struct{}
+	if p.waker != nil {
+		wake = p.waker.Wake()
+	}
+	p.logger.Info("Starting outbox processor", "table", p.tableName, "tick", p.tick, "notify", p.waker != nil)
+	p.drain(ctx)
 	for {
-		// Advance the heartbeat once per poll tick, so an idle-but-live loop
-		// stays healthy; drain advances it again per batch under load.
+		// Advance the heartbeat on every turn of the loop, so an idle-but-live
+		// loop stays healthy at least once per tick; drain advances it again
+		// per batch under load.
 		p.lastActivity.Store(time.Now().UnixNano())
 		select {
 		case <-ctx.Done():
@@ -158,16 +199,19 @@ func (p *Processor) Run(ctx context.Context) error {
 			return ctx.Err()
 		case <-ticker.C:
 			p.drain(ctx)
+		case <-wake:
+			p.drain(ctx)
 		}
 	}
 }
 
 // Healthy reports whether Run has made progress within maxStale. It returns nil
-// while the loop is ticking (idle or draining); a non-nil error means the Run
+// while the loop is turning (idle or draining); a non-nil error means the Run
 // goroutine has stopped making progress — wedged in a call that never returns,
 // the outbox analogue of a dead consumer. Wire it into a liveness probe (see
 // pkg/liveness AddWorkerProbe). maxStale MUST be comfortably above the poll
-// tick so an idle processor is never flagged.
+// tick, the longest an idle loop goes between turns, so an idle processor is
+// never flagged.
 func (p *Processor) Healthy(maxStale time.Duration) error {
 	lastAt := time.Unix(0, p.lastActivity.Load())
 	if age := time.Since(lastAt); age > maxStale {
@@ -189,27 +233,29 @@ func (p *Processor) DeadLetterBacklog(ctx context.Context) (int, error) {
 	return newPostgresRepository(p.db, p.tableName, p.logger).CountTerminal(ctx)
 }
 
-// drain processes batches back-to-back as long as each one comes back full
-// (len == batchSize), which signals more pending rows are waiting. This lets a
-// burst of thousands of pending rows clear within the same tick instead of one
-// batch per tick, so publishing throughput is bounded by Postgres+Redis rather
-// than the tick interval. It stops on a short batch (backlog drained), an error,
-// or context cancellation, yielding control back to the ticker.
+// drain runs batches back to back until a batch settles no row. A batch that
+// settled rows moved the queue on: a published or dead-lettered row may have
+// unblocked younger rows of its aggregate, and a row rescheduled for a retry
+// leaves the claim, with the younger rows of its aggregate, until the retry is
+// due, so the next batch reaches the rows queued behind them. The next batch
+// therefore runs at once rather than at the next wake or tick; rescheduling a
+// row sends no notification. A batch that settles nothing, such as one that
+// claims nothing or withholds every row it claims, ends the drain.
 func (p *Processor) drain(ctx context.Context) {
+	if p.afterDrain != nil {
+		defer p.afterDrain()
+	}
 	for {
-		// Advance the heartbeat per batch so a large multi-batch backlog drain
-		// (which can run well beyond one tick) keeps liveness fresh instead of
-		// freezing it at the tick timestamp for the whole drain.
+		// Advance the heartbeat per batch so a large multi-batch drain (which
+		// can run well beyond one tick) keeps liveness fresh instead of
+		// freezing it at the loop's last turn for the whole drain.
 		p.lastActivity.Store(time.Now().UnixNano())
-		processed, err := p.processBatchOnce(ctx)
+		settled, err := p.processBatchOnce(ctx)
 		if err != nil {
 			p.logger.Error("Outbox batch failed", "table", p.tableName, "error", err)
 			return
 		}
-		if processed < p.batchSize {
-			return
-		}
-		if ctx.Err() != nil {
+		if settled == 0 || ctx.Err() != nil {
 			return
 		}
 	}
@@ -221,9 +267,12 @@ func (p *Processor) ProcessBatch(ctx context.Context) error {
 	return err
 }
 
-// processBatchOnce runs exactly one cycle and reports how many rows it claimed
-// (the GetPendingBatch result size), so the drain loop can tell a full batch
-// (more work waiting) from a short one (backlog drained).
+// processBatchOnce runs exactly one batch and reports how many rows it
+// settled: published, rescheduled for a retry, or dead-lettered. Rows it
+// withheld or did not send because an older row of their aggregate failed in
+// the batch are not settled. The drain loop runs another batch while batches
+// settle rows. A batch that fails returns 0 with its error, and its
+// transaction rolls back.
 func (p *Processor) processBatchOnce(ctx context.Context) (int, error) {
 	tx, err := p.db.BeginTxx(ctx, nil)
 	if err != nil {
@@ -235,13 +284,12 @@ func (p *Processor) processBatchOnce(ctx context.Context) (int, error) {
 		}
 	}()
 
-	repo := newPostgresRepository(tx, p.tableName, p.logger, p.repoOpts...)
+	repo := newPostgresRepository(tx, p.tableName, p.logger)
 	entries, err := repo.GetPendingBatch(ctx, p.batchSize)
 	if err != nil {
 		return 0, fmt.Errorf("get pending batch: %w", err)
 	}
-	claimed := len(entries)
-	if claimed == 0 {
+	if len(entries) == 0 {
 		return 0, tx.Commit()
 	}
 
@@ -253,10 +301,16 @@ func (p *Processor) processBatchOnce(ctx context.Context) (int, error) {
 	// subset takes per-row retry/fail handling. This keeps the common all-success
 	// path at one round trip for the status flip.
 	processedIDs := make([]uuid.UUID, 0, len(entries))
+	resolved := 0 // rows rescheduled or dead-lettered
 	for i, entry := range entries {
 		pubErr := pubErrs[i]
 		if pubErr == nil {
 			processedIDs = append(processedIDs, entry.ID)
+			continue
+		}
+		if errors.Is(pubErr, errHeldBehindFailedRow) {
+			// Not sent: an older row of its aggregate failed in this batch. The
+			// row stays pending, untouched, and is claimed again after that row.
 			continue
 		}
 		p.logger.Error("Publish failed", "entry_id", entry.ID, "event_type", entry.EventType, "error", pubErr)
@@ -266,10 +320,12 @@ func (p *Processor) processBatchOnce(ctx context.Context) (int, error) {
 		// transient (infra): reschedule with capped backoff and only go terminal
 		// once the budget is exhausted.
 		permanent := errors.Is(pubErr, pkgevents.ErrPermanent)
-		if !permanent && entry.RetryCount+1 < entry.MaxRetries {
+		if !permanent && entry.RetryCount+1 < MaxAttempts {
 			if err := repo.ScheduleRetry(ctx, entry.ID, backoff(entry.RetryCount+1, p.retryBase, p.retryMax), pubErr.Error()); err != nil {
 				p.logger.Error("Schedule retry failed", "entry_id", entry.ID, "error", err)
+				continue
 			}
+			resolved++
 			continue
 		}
 
@@ -280,15 +336,16 @@ func (p *Processor) processBatchOnce(ctx context.Context) (int, error) {
 		}
 		if err := p.terminate(ctx, repo, entry, kind, pubErr); err != nil {
 			// A terminal write failed (dead-letter INSERT or MarkFailed). Abort
-			// the whole batch so it rolls back and retries next tick, rather than
-			// committing a row marked failed with no dead-letter — the mandatory
-			// signal must never be silently dropped.
+			// the whole batch so it rolls back and retries on the next drain,
+			// rather than committing a row marked failed with no dead-letter —
+			// the mandatory signal must never be silently dropped.
 			return 0, fmt.Errorf("terminate entry %s: %w", entry.ID, err)
 		}
+		resolved++
 	}
 
 	if err := repo.MarkProcessedBatch(ctx, processedIDs); err != nil {
-		p.logger.Error("Mark processed batch failed", "table", p.tableName, "count", len(processedIDs), "error", err)
+		return 0, err
 	}
 
 	err = tx.Commit()
@@ -296,7 +353,13 @@ func (p *Processor) processBatchOnce(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("commit tx: %w", err)
 	}
-	return claimed, nil
+	return len(processedIDs) + resolved, nil
+}
+
+// terminalWriter is the part of the repository terminate writes through.
+type terminalWriter interface {
+	Create(ctx context.Context, entry *Entry) error
+	MarkFailed(ctx context.Context, id uuid.UUID, errorMessage string) error
 }
 
 // terminate handles a row that has reached a terminal state. It writes a durable
@@ -310,7 +373,7 @@ func (p *Processor) processBatchOnce(ctx context.Context) (int, error) {
 // MarkFailed) fails, so the caller can roll the whole batch back: marking a row
 // failed without its dead-letter would silently drop the mandatory failure
 // signal, so the two writes must commit together or not at all.
-func (p *Processor) terminate(ctx context.Context, repo *postgresRepository, entry *Entry, kind model.DeadLetterKind, cause error) error {
+func (p *Processor) terminate(ctx context.Context, repo terminalWriter, entry *Entry, kind model.DeadLetterKind, cause error) error {
 	attempts := entry.RetryCount + 1
 	if entry.AggregateType != DeadLetterAggregateType {
 		dl := buildDeadLetterEntry(entry, kind, cause, attempts)
@@ -336,11 +399,14 @@ func (p *Processor) terminate(ctx context.Context, repo *postgresRepository, ent
 	return nil
 }
 
+// errHeldBehindFailedRow fills the slot of a row the one-row publish path did
+// not send because an older row of its aggregate failed earlier in the batch.
+var errHeldBehindFailedRow = errors.New("held behind a failed older row of its aggregate")
+
 // publish dispatches the batch and returns one error per entry, aligned with
 // entries by index. When the publisher implements BatchPublisher the whole batch
-// goes out in one pipelined round trip; otherwise each entry is published
-// sequentially, preserving the per-aggregate FIFO order already imposed by
-// GetPendingBatch.
+// goes out in one pipelined round trip; otherwise publishEach sends the entries
+// one at a time.
 func (p *Processor) publish(ctx context.Context, entries []*Entry) []error {
 	if batch, ok := p.publisher.(BatchPublisher); ok {
 		errs := batch.PublishBatch(ctx, entries)
@@ -352,9 +418,25 @@ func (p *Processor) publish(ctx context.Context, entries []*Entry) []error {
 		p.logger.Error("BatchPublisher returned mismatched error slice; falling back to per-entry publish",
 			"table", p.tableName, "entries", len(entries), "errors", len(errs))
 	}
+	return p.publishEach(ctx, entries)
+}
+
+// publishEach publishes entries one at a time, in batch order. Once a row of an
+// aggregate fails, the younger rows of that aggregate in the batch are not sent:
+// their slot holds errHeldBehindFailedRow, so none of them reaches its stream
+// before the failed row's retry.
+func (p *Processor) publishEach(ctx context.Context, entries []*Entry) []error {
 	errs := make([]error, len(entries))
+	failed := map[aggregateKey]bool{}
 	for i, entry := range entries {
-		errs[i] = p.publisher.Publish(ctx, entry)
+		k := aggregateKey{entry.AggregateType, entry.AggregateID}
+		if failed[k] {
+			errs[i] = errHeldBehindFailedRow
+			continue
+		}
+		if errs[i] = p.publisher.Publish(ctx, entry); errs[i] != nil {
+			failed[k] = true
+		}
 	}
 	return errs
 }

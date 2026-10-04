@@ -96,7 +96,6 @@ func DispatchDerivedRun(ctx context.Context, u uow.UnitOfWork, logger *slog.Logg
 		Payload:             dispatchedPayload,
 		StreamName:          streams.RunEntriesDispatchedV1,
 		Status:              "pending",
-		MaxRetries:          pkgoutbox.DefaultMaxRetries,
 	}); err != nil {
 		return fmt.Errorf("write run.entries.dispatched: %w", err)
 	}
@@ -132,7 +131,6 @@ func DispatchDerivedRun(ctx context.Context, u uow.UnitOfWork, logger *slog.Logg
 			Payload:             queryPayload,
 			StreamName:          streams.QueryModelV1,
 			Status:              "pending",
-			MaxRetries:          pkgoutbox.DefaultMaxRetries,
 		}); err != nil {
 			return fmt.Errorf("write query.model for %s.%s: %w", t.SchemaName, t.TableName, err)
 		}

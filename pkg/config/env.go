@@ -137,3 +137,39 @@ func EnvDurationOrDefault(key string, fallback time.Duration) time.Duration {
 	}
 	return fallback
 }
+
+// PositiveIntOrZero reads an OPTIONAL whole-number env var that must be at
+// least 1 when set. Unset or empty returns 0. Any other value is recorded as a
+// validation failure naming the key, so start-up fails rather than running a
+// value the operator did not ask for.
+func (v *Validator) PositiveIntOrZero(key string) int {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 {
+		v.Add(fmt.Sprintf("%s (invalid value %q: expected a whole number of at least 1)", key, raw))
+		return 0
+	}
+	return n
+}
+
+// PortOrDefault reads an OPTIONAL TCP port env var, returning fallback when it
+// is unset or empty. A value that is not a whole number from 1 to 65535 is
+// recorded as a validation failure naming the key, so start-up fails rather
+// than the service connecting to the default port. The fallback is still
+// returned so the caller holds a usable value while it finishes collecting
+// the rest of the configuration problems.
+func (v *Validator) PortOrDefault(key string, fallback int) int {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 || n > 65535 {
+		v.Add(fmt.Sprintf("%s (invalid port %q: expected a whole number from 1 to 65535)", key, raw))
+		return fallback
+	}
+	return n
+}

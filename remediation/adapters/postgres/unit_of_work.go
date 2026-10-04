@@ -60,9 +60,14 @@ func (u *UnitOfWork) DecisionRepo() repository.ClassificationDecisionRepository 
 	return NewDecisionRepository(u.tx)
 }
 
+// OutboxTable is the outbox table this service writes its events to and its
+// relay publishes from. Its insert trigger notifies the Postgres channel of the
+// same name, on which the relay's waker listens.
+const OutboxTable = "remediation_outbox"
+
 // OutboxRepo returns the pkg/outbox repository bound to remediation_outbox on
 // the current transaction. The repository is constructed fresh on each call so
 // it is always bound to the active tx.
 func (u *UnitOfWork) OutboxRepo() outbox.Repository {
-	return outbox.NewPostgresRepository(u.tx, "remediation_outbox", u.logger)
+	return outbox.NewPostgresRepository(u.tx, OutboxTable, u.logger)
 }

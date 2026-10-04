@@ -336,9 +336,9 @@ func TestSettleNodeTerminal_FailureEmitsSkippedProjectionForDescendants(t *testi
 // (f) Per-node projection rows each get a distinct, randomly generated
 // aggregate_id — never the terminal row's deterministic
 // uuid.NewSHA1(namespace, "release:"+releaseID) id, and never each other's.
-// The terminal ("kind":"complete") row keeps that deterministic id. Per-node
-// rows are no longer forced into the terminal's PerAggregateFIFO lane, so they
-// can publish in parallel instead of draining one per processor tick.
+// The terminal ("kind":"complete") row keeps that deterministic id. Each
+// per-node row is its own outbox lane, so a per-node row waiting out a retry
+// holds back neither the other per-node rows nor the terminal.
 func TestSettleNodeTerminal_PerNodeUsesDistinctAggregateID(t *testing.T) {
 	log := &callLog{}
 	a := validationNode(t, "rel-2", "node.a", model.StatusDeployed)

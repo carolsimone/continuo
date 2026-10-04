@@ -122,7 +122,7 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 			return fmt.Errorf("encode rejection: %w", err)
 		}
 
-		if err := emitReleaseRejected(ctx, u, r, payload, now); err != nil {
+		if err := emitReleaseRejected(ctx, u, r, payload); err != nil {
 			return err
 		}
 		if err := u.RunRepo().Save(ctx, r); err != nil {
@@ -158,7 +158,7 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 	}
 	set := assembleFor(ctx, u, d.Logger, r, pointers, d.Bucket)
 
-	if err := emitReleaseRequested(ctx, u, in.ReleaseID, set.ManifestKeys, now); err != nil {
+	if err := emitReleaseRequested(ctx, u, in.ReleaseID, set.ManifestKeys); err != nil {
 		return err
 	}
 	if err := u.Commit(); err != nil {

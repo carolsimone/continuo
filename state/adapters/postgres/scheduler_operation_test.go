@@ -8,8 +8,8 @@ import (
 	"time"
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	pkgdb "github.com/carolsimone/continuo/pkg/db"
 	"github.com/carolsimone/continuo/pkg/domain/model"
-	"github.com/carolsimone/continuo/state/database"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
@@ -21,7 +21,7 @@ import (
 // unexported hydrateRun/dehydrateRun), so it cannot import that one.
 func newTestDB(t *testing.T) *sqlx.DB {
 	t.Helper()
-	db, err := database.NewConnection(pkgconfig.LoadPostgres(&pkgconfig.Validator{}))
+	db, err := pkgdb.Open(context.Background(), pkgconfig.LoadPostgres(&pkgconfig.Validator{}), pkgconfig.PoolConfig{MaxOpenConns: 10, MaxIdleConns: 2})
 	if err != nil {
 		t.Fatalf("connect to test db: %v", err)
 	}

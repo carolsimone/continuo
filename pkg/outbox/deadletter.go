@@ -55,7 +55,6 @@ func buildDeadLetterEntry(failed *Entry, kind model.DeadLetterKind, cause error,
 		Payload:       body,
 		StreamName:    streams.OutboxDeadLetterV1,
 		Status:        "pending",
-		MaxRetries:    DefaultMaxRetries,
 	}
 }
 

@@ -175,9 +175,8 @@ test-deps-down:
 # behaviour) races between one package's TRUNCATE and another's assertions.
 # orchestrator pins the same flag for the same reason: adapters/neo4j and
 # service/handlers both wipe and rebuild the one shared Neo4j graph.
-# pkg runs its Redis-backed tests (REDIS_ADDR) against the compose Redis; its
-# other packages run under `make guards`. pkg's tests share one Redis and run
-# one package at a time (-p=1).
+# pkg runs its Redis- and Postgres-backed tests against the compose Redis and
+# the Flyway-built continuo_execution database, one package at a time (-p=1).
 #
 # The runner is outside the compose network, so Neo4j is addressed by its
 # published port (NEO4J_URI), never by the `neo4j` service name the tests
@@ -196,7 +195,7 @@ test-go: test-deps-up
 	      extra="RELEASE_TEST_PG_DSN=postgres://continuo_svc:continuo@localhost:5432/continuo_release?sslmode=disable GOFLAGS=-p=1";; \
 	    remediation) db=continuo_remediation;; \
 	    agent-remediation) db=continuo_agent_remediation;; agent-chat) db=continuo_agent_chat;; \
-	    pkg) db=continuo_execution; pkgs=./redis/...; \
+	    pkg) db=continuo_execution; pkgs=./...; \
 	      extra="REDIS_ADDR=localhost:6379 REDIS_PASSWORD=continuo GOFLAGS=-p=1";; \
 	    *) echo "unknown service $$s" >&2; exit 2;; \
 	  esac; \

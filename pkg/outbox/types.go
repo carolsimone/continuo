@@ -6,15 +6,11 @@ import (
 	"github.com/google/uuid"
 )
 
-// DefaultMaxRetries is the retry budget applied to an outbox Entry that is
-// created without an explicit MaxRetries. The processor drops an entry to
-// "failed" once RetryCount reaches MaxRetries (see processor.go), so this
-// bounds how many times a transiently-failing publish is re-attempted before
-// it is parked for inspection. With the default 1s base and 5m cap, this budget
-// spans a bounded backoff window (~20 min) with capped exponential delays,
-// allowing sustained retries during infrastructure recovery without leaving
-// entries in limbo indefinitely.
-const DefaultMaxRetries = 13
+// MaxAttempts is how many times every outbox row is published before it is
+// dead-lettered to outbox.dead_letter:v1. Failures back off from 1 s, doubling
+// to 5 minutes, so the twelve waits between the thirteen attempts add up to
+// about 24 minutes of outage.
+const MaxAttempts = 13
 
 // Entry is the canonical transactional-outbox row, shared across all services.
 // Each service owns its own physical <service>_outbox table; this struct is the
@@ -29,8 +25,7 @@ type Entry struct {
 	StreamName          string
 	Status              string // "pending" | "scheduled" | "processed" | "failed"
 	RetryCount          int
-	MaxRetries          int
-	CreatedAt           time.Time
+	CreatedAt           time.Time // stamped by Create; orders the publication of one aggregate's rows
 	ProcessedAt         *time.Time
 	ErrorMessage        *string
 	NextAttemptAt       *time.Time // when a 'scheduled' (transiently-failed) row is next eligible; NULL = due now

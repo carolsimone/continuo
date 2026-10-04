@@ -365,6 +365,36 @@ databaseInit:
   # connecting user then no longer needs CREATEDB.
   enabled: true
 
+database:
+  # Postgres connection-pool limits for the Go services, published to them as
+  # DB_MAX_OPEN_CONNS and DB_MAX_IDLE_CONNS on the shared ConfigMap. 0 keeps
+  # each service's own default, sized to how many queries it runs at once
+  # (open/idle: state 20/10, orchestrator 35/5, execution-controller 30/5,
+  # release-controller 15/5, remediation 10/5, agent-remediation 10/5,
+  # agent-chat 20/5). Each limit is a cap per pod, and the sum of the caps is
+  # the worst case: with the defaults and one replica of each service, 140
+  # pooled connections plus one LISTEN connection per pod of the six services
+  # that run an outbox relay (every Go service except agent-chat), 146 in all.
+  # Consumers handle one message at a time, so steady-state use is far lower.
+  # The LISTEN connection sits outside the pool and needs a session-mode path
+  # to Postgres: behind a transaction-mode pooler the relays publish on their
+  # 5 s poll instead of on commit.
+  # maxOpenConns applies to every Go service, orchestrator included, whose 13
+  # consumers need about two connections each: do not set it below about 30,
+  # or handlers that hold a transaction and need a second connection stall
+  # until their deadline. To fit a small Postgres, lower the low-concurrency
+  # services one at a time through their services[].env (DB_MAX_OPEN_CONNS /
+  # DB_MAX_IDLE_CONNS), or raise Postgres max_connections.
+  # Set the two together: maxIdleConns may not exceed maxOpenConns, and the
+  # render fails when maxIdleConns is set without maxOpenConns (an idle limit
+  # above a service's own open limit would stop that service from starting). A
+  # service's own services[].env entry overrides both for that service.
+  # docker-compose.yml and the e2e kind manifest leave both unset, so every
+  # service runs its own default.
+  pool:
+    maxOpenConns: 0
+    maxIdleConns: 0
+
 # CronJob that trims Redis Stream entries older than `retention`. It never trims
 # outbox.dead_letter:v1 or consumer.dead_letter:v1: they hold the only copy of
 # every dead letter. consumer.dead_letter:v1 is written without a length cap, so
@@ -414,8 +444,6 @@ services:
       - {name: REDIS_PASSWORD, ref: redis}
     env:
       POSTGRES_DB: continuo_state
-      DB_POOL_SIZE: "10"
-      DB_MAX_OVERFLOW: "20"
       HEALTH_PORT: "8082"
       GRPC_PORT: "50051"
       SCHEDULES_CONFIG_PATH: /etc/continuo/schedules.yaml

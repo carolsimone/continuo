@@ -1,0 +1,387 @@
+package outbox_test
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"sync"
+	"testing"
+	"time"
+
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/google/uuid"
+	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// orderPublisher records every published row id in publish order and counts
+// batch calls.
+type orderPublisher struct {
+	mu      sync.Mutex
+	ids     []uuid.UUID
+	batches int
+}
+
+func (p *orderPublisher) Publish(_ context.Context, e *outbox.Entry) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.ids = append(p.ids, e.ID)
+	return nil
+}
+
+func (p *orderPublisher) PublishBatch(ctx context.Context, entries []*outbox.Entry) []error {
+	p.mu.Lock()
+	p.batches++
+	p.mu.Unlock()
+	errs := make([]error, len(entries))
+	for i, e := range entries {
+		errs[i] = p.Publish(ctx, e)
+	}
+	return errs
+}
+
+// sequentialPublisher publishes one row per call, as the Publish-only services
+// do. The first attempt at a row named in failOnce returns that error; ids
+// records the rows it published, in publish order.
+type sequentialPublisher struct {
+	mu       sync.Mutex
+	failOnce map[uuid.UUID]error
+	ids      []uuid.UUID
+}
+
+func (p *sequentialPublisher) Publish(_ context.Context, e *outbox.Entry) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err, ok := p.failOnce[e.ID]; ok {
+		delete(p.failOnce, e.ID)
+		return err
+	}
+	p.ids = append(p.ids, e.ID)
+	return nil
+}
+
+func createRows(t *testing.T, db *sqlx.DB, aggregate uuid.UUID, n int) []uuid.UUID {
+	t.Helper()
+	tx := db.MustBegin()
+	repo := outbox.NewPostgresRepository(tx, testOutboxTable, newTestLogger())
+	ids := make([]uuid.UUID, n)
+	for i := range ids {
+		e := &outbox.Entry{AggregateType: "pkg-outbox-test", AggregateID: aggregate, EventType: "e", Payload: []byte(`{}`), StreamName: "s"}
+		require.NoError(t, repo.Create(context.Background(), e))
+		ids[i] = e.ID
+	}
+	require.NoError(t, tx.Commit())
+	return ids
+}
+
+// rowState reads one row's status and retry_count.
+func rowState(t *testing.T, db *sqlx.DB, id uuid.UUID) (string, int) {
+	t.Helper()
+	var status string
+	var retries int
+	require.NoError(t, db.QueryRow(`SELECT status, retry_count FROM `+testOutboxTable+` WHERE id = $1`, id).Scan(&status, &retries))
+	return status, retries
+}
+
+func TestFIFO_SiblingsInOneBatchPublishTogetherInOrder(t *testing.T) {
+	db := dbForTest(t)
+	ids := createRows(t, db, uuid.New(), 3)
+	pub := &orderPublisher{}
+	p := outbox.NewProcessor(db, testOutboxTable, pub, nil, newTestLogger(), outbox.ProcessorConfig{})
+	require.NoError(t, p.ProcessBatch(context.Background()))
+	assert.Equal(t, ids, pub.ids)
+	assert.Equal(t, 1, pub.batches)
+}
+
+func TestFIFO_OlderSiblingLockedByAnotherRelayWithholdsYounger(t *testing.T) {
+	db := dbForTest(t)
+	agg := uuid.New()
+	ids := createRows(t, db, agg, 2)
+	other := createRows(t, db, uuid.New(), 1)
+
+	peer := db.MustBegin()
+	_, err := peer.Exec(`SELECT id FROM `+testOutboxTable+` WHERE id = $1 FOR UPDATE`, ids[0])
+	require.NoError(t, err)
+
+	pub := &orderPublisher{}
+	p := outbox.NewProcessor(db, testOutboxTable, pub, nil, newTestLogger(), outbox.ProcessorConfig{})
+	require.NoError(t, p.ProcessBatch(context.Background()))
+	assert.Equal(t, other, pub.ids, "the younger sibling waits while its elder is held elsewhere")
+
+	require.NoError(t, peer.Rollback())
+	require.NoError(t, p.ProcessBatch(context.Background()))
+	assert.Equal(t, append(other, ids...), pub.ids)
+}
+
+// While another relay holds the oldest row of an aggregate, the younger rows
+// of that aggregate can fill a whole claim. The batch then claims again past
+// them, so a row of another aggregate created after them publishes in the same
+// batch instead of waiting for the other relay.
+func TestFIFO_ClaimReachesPastAnAggregateWithheldBehindAnotherRelay(t *testing.T) {
+	db := dbForTest(t)
+	held := createRows(t, db, uuid.New(), 3)
+	other := createRows(t, db, uuid.New(), 1)
+
+	peer := db.MustBegin()
+	defer func() { _ = peer.Rollback() }()
+	_, err := peer.Exec(`SELECT id FROM `+testOutboxTable+` WHERE id = $1 FOR UPDATE`, held[0])
+	require.NoError(t, err)
+
+	pub := &orderPublisher{}
+	p := outbox.NewProcessor(db, testOutboxTable, pub, nil, newTestLogger(), outbox.ProcessorConfig{BatchSize: 2})
+	require.NoError(t, p.ProcessBatch(context.Background()))
+	assert.Equal(t, other, pub.ids, "the other aggregate's row publishes while the held aggregate waits")
+
+	require.NoError(t, peer.Rollback())
+	require.NoError(t, p.ProcessBatch(context.Background()))
+	assert.Equal(t, append(append([]uuid.UUID{}, other...), held[:2]...), pub.ids)
+	require.NoError(t, p.ProcessBatch(context.Background()))
+	assert.Equal(t, append(append([]uuid.UUID{}, other...), held...), pub.ids, "the held aggregate's rows publish in creation order")
+}
+
+// A later claim of the same batch leaves out the rows the batch already holds
+// and every aggregate it withheld: it neither returns nor locks the withheld
+// aggregate's younger rows, and it does not return a kept row twice.
+func TestGetPendingBatch_RefillSkipsClaimedRowsAndWithheldAggregates(t *testing.T) {
+	db := dbForTest(t)
+	kept := createRows(t, db, uuid.New(), 1)
+	held := createRows(t, db, uuid.New(), 5)
+	other := createRows(t, db, uuid.New(), 1)
+
+	peer := db.MustBegin()
+	defer func() { _ = peer.Rollback() }()
+	_, err := peer.Exec(`SELECT id FROM `+testOutboxTable+` WHERE id = $1 FOR UPDATE`, held[0])
+	require.NoError(t, err)
+
+	tx := db.MustBegin()
+	defer func() { _ = tx.Rollback() }()
+	batch, err := outbox.NewPostgresRepository(tx, testOutboxTable, newTestLogger()).GetPendingBatch(context.Background(), 3)
+	require.NoError(t, err)
+	got := make([]uuid.UUID, len(batch))
+	for i, e := range batch {
+		got[i] = e.ID
+	}
+	assert.Equal(t, []uuid.UUID{kept[0], other[0]}, got)
+
+	var unlocked []uuid.UUID
+	require.NoError(t, db.Select(&unlocked, `SELECT id FROM `+testOutboxTable+`
+		WHERE id = ANY($1) ORDER BY created_at, id FOR UPDATE SKIP LOCKED`, pq.Array(held[3:])))
+	assert.Equal(t, held[3:], unlocked, "the withheld aggregate's unclaimed rows stay unlocked")
+}
+
+func TestFIFO_OlderSiblingWaitingOutARetryWithholdsYounger(t *testing.T) {
+	db := dbForTest(t)
+	ids := createRows(t, db, uuid.New(), 2)
+	_, err := db.Exec(`UPDATE `+testOutboxTable+` SET status = 'scheduled', next_attempt_at = now() + interval '1 hour' WHERE id = $1`, ids[0])
+	require.NoError(t, err)
+	pub := &orderPublisher{}
+	p := outbox.NewProcessor(db, testOutboxTable, pub, nil, newTestLogger(), outbox.ProcessorConfig{})
+	require.NoError(t, p.ProcessBatch(context.Background()))
+	assert.Empty(t, pub.ids)
+}
+
+func TestFIFO_OneAggregateBacklogDrainsInFullBatches(t *testing.T) {
+	db := dbForTest(t)
+	ids := createRows(t, db, uuid.New(), 300)
+	pub := &orderPublisher{}
+	p := outbox.NewProcessor(db, testOutboxTable, pub, nil, newTestLogger(), outbox.ProcessorConfig{BatchSize: 100})
+	for i := 0; i < 3; i++ {
+		require.NoError(t, p.ProcessBatch(context.Background()))
+	}
+	assert.Equal(t, ids, pub.ids)
+	assert.Equal(t, 3, pub.batches, "one round trip per batch, not per row")
+}
+
+// A whole batch of rows queued behind an aggregate's row that waits out a
+// retry must not hold up the rest of the table: the claim leaves those rows
+// out, so the batch reaches the other aggregate's row.
+func TestFIFO_AggregateWaitingOutARetryDoesNotStarveOthers(t *testing.T) {
+	db := dbForTest(t)
+	waiting := createRows(t, db, uuid.New(), 4)
+	_, err := db.Exec(`UPDATE `+testOutboxTable+` SET status = 'scheduled', retry_count = 1, next_attempt_at = now() + interval '1 hour' WHERE id = $1`, waiting[0])
+	require.NoError(t, err)
+	other := createRows(t, db, uuid.New(), 1)
+
+	pub := &orderPublisher{}
+	p := outbox.NewProcessor(db, testOutboxTable, pub, nil, newTestLogger(), outbox.ProcessorConfig{BatchSize: 2})
+	require.NoError(t, p.ProcessBatch(context.Background()))
+
+	assert.Equal(t, other, pub.ids, "the other aggregate's row publishes while the waiting aggregate's rows stay queued")
+	for _, id := range waiting[1:] {
+		status, retries := rowState(t, db, id)
+		assert.Equal(t, "pending", status)
+		assert.Equal(t, 0, retries)
+	}
+}
+
+// On the per-entry publish path a row that fails to publish stops the younger
+// rows of its aggregate in the same batch: they are not sent and stay pending,
+// untouched, so none reaches the stream before the failed row. Once the failed
+// row's retry is due it publishes first and its younger rows follow in order.
+func TestFIFO_FailedElderInBatchWithholdsYoungerSiblings(t *testing.T) {
+	db := dbForTest(t)
+	ids := createRows(t, db, uuid.New(), 3)
+	other := createRows(t, db, uuid.New(), 1)
+
+	pub := &sequentialPublisher{failOnce: map[uuid.UUID]error{ids[0]: errors.New("xadd: connection refused")}}
+	p := outbox.NewProcessor(db, testOutboxTable, pub, nil, newTestLogger(),
+		outbox.ProcessorConfig{RetryBaseDelay: time.Nanosecond, RetryMaxDelay: time.Nanosecond})
+	require.NoError(t, p.ProcessBatch(context.Background()))
+
+	assert.Equal(t, other, pub.ids, "only the other aggregate's row is published")
+	status, retries := rowState(t, db, ids[0])
+	assert.Equal(t, "scheduled", status)
+	assert.Equal(t, 1, retries)
+	for _, id := range ids[1:] {
+		status, retries := rowState(t, db, id)
+		assert.Equal(t, "pending", status, "a younger row is left as it was")
+		assert.Equal(t, 0, retries, "a younger row is not charged a retry")
+	}
+
+	require.NoError(t, p.ProcessBatch(context.Background()))
+	assert.Equal(t, append(append([]uuid.UUID{}, other...), ids...), pub.ids)
+}
+
+// Create stamps created_at itself, so rows publish in the order they were
+// created whatever CreatedAt a caller put on the entry.
+func TestFIFO_CreateOwnsTheOrderingKey(t *testing.T) {
+	db := dbForTest(t)
+	agg := uuid.New()
+	callerTime := time.Now()
+	tx := db.MustBegin()
+	repo := outbox.NewPostgresRepository(tx, testOutboxTable, newTestLogger())
+	var ids []uuid.UUID
+	for _, createdAt := range []time.Time{callerTime, callerTime, callerTime.Add(-time.Hour)} {
+		e := &outbox.Entry{AggregateType: "pkg-outbox-test", AggregateID: agg, EventType: "e", Payload: []byte(`{}`), StreamName: "s", CreatedAt: createdAt}
+		require.NoError(t, repo.Create(context.Background(), e))
+		ids = append(ids, e.ID)
+	}
+	require.NoError(t, tx.Commit())
+
+	pub := &orderPublisher{}
+	p := outbox.NewProcessor(db, testOutboxTable, pub, nil, newTestLogger(), outbox.ProcessorConfig{})
+	require.NoError(t, p.ProcessBatch(context.Background()))
+	assert.Equal(t, ids, pub.ids)
+}
+
+// A drain runs batches back to back while they settle rows. A row held behind
+// an elder that is dead-lettered in one batch publishes in the next batch of
+// the same drain, followed by the dead-letter row, instead of waiting for the
+// next wake.
+func TestFIFO_DrainKeepsGoingWhileBatchesPublish(t *testing.T) {
+	db := dbForTest(t)
+	ids := createRows(t, db, uuid.New(), 2)
+	other := createRows(t, db, uuid.New(), 1)
+
+	pub := &sequentialPublisher{failOnce: map[uuid.UUID]error{ids[0]: fmt.Errorf("bad payload: %w", pkgevents.ErrPermanent)}}
+	p := outbox.NewProcessor(db, testOutboxTable, pub, nil, newTestLogger(), outbox.ProcessorConfig{BatchSize: 10})
+	p.DrainForTest(context.Background())
+
+	var deadLetter uuid.UUID
+	require.NoError(t, db.Get(&deadLetter, `SELECT id FROM `+testOutboxTable+` WHERE event_type = $1`, outbox.DeadLetterEventType))
+	assert.Equal(t, []uuid.UUID{other[0], ids[1], deadLetter}, pub.ids)
+}
+
+// A batch whose rows all fail and are rescheduled still settles them: the drain
+// keeps going, so a row of another aggregate queued behind them publishes in
+// the same drain instead of waiting for the next wake or tick.
+func TestFIFO_DrainKeepsGoingPastABatchOfRetries(t *testing.T) {
+	db := dbForTest(t)
+	first := createRows(t, db, uuid.New(), 1)
+	second := createRows(t, db, uuid.New(), 1)
+	healthy := createRows(t, db, uuid.New(), 1)
+
+	pub := &sequentialPublisher{failOnce: map[uuid.UUID]error{
+		first[0]:  errors.New("xadd: connection refused"),
+		second[0]: errors.New("xadd: connection refused"),
+	}}
+	p := outbox.NewProcessor(db, testOutboxTable, pub, nil, newTestLogger(),
+		outbox.ProcessorConfig{BatchSize: 2, RetryBaseDelay: time.Hour, RetryMaxDelay: time.Hour})
+	p.DrainForTest(context.Background())
+
+	assert.Equal(t, healthy, pub.ids, "the third aggregate's row publishes in the same drain")
+	for _, id := range []uuid.UUID{first[0], second[0]} {
+		status, retries := rowState(t, db, id)
+		assert.Equal(t, "scheduled", status, "a failed row waits out its retry")
+		assert.Equal(t, 1, retries)
+	}
+}
+
+// insertTiedRows inserts two pending rows of one aggregate that share one
+// created_at, the higher id first, and returns their ids in (created_at, id)
+// order. Rows written by two processes can tie this way.
+func insertTiedRows(t *testing.T, db *sqlx.DB, aggregate uuid.UUID) (lower, higher uuid.UUID) {
+	t.Helper()
+	lower, higher = uuid.New(), uuid.New()
+	if bytes.Compare(lower[:], higher[:]) > 0 {
+		lower, higher = higher, lower
+	}
+	createdAt := time.Now().Add(-time.Minute).UTC().Truncate(time.Microsecond)
+	for _, id := range []uuid.UUID{higher, lower} {
+		_, err := db.Exec(`INSERT INTO `+testOutboxTable+`
+			(id, aggregate_type, aggregate_id, event_type, payload, stream_name, created_at)
+			VALUES ($1, 'pkg-outbox-test', $2, 'e', '{}', 's', $3)`, id, aggregate, createdAt)
+		require.NoError(t, err)
+	}
+	return lower, higher
+}
+
+// Rows of one aggregate with the same created_at publish in id order, the
+// order the claim reads them in.
+func TestFIFO_TiedCreatedAtPublishesInIDOrder(t *testing.T) {
+	db := dbForTest(t)
+	lower, higher := insertTiedRows(t, db, uuid.New())
+	pub := &orderPublisher{}
+	p := outbox.NewProcessor(db, testOutboxTable, pub, nil, newTestLogger(), outbox.ProcessorConfig{})
+	require.NoError(t, p.ProcessBatch(context.Background()))
+	assert.Equal(t, []uuid.UUID{lower, higher}, pub.ids)
+}
+
+// A tied row with the higher id is the younger one: while the lower-id row
+// waits out a retry, the claim leaves the higher-id row out, so it does not
+// reach its stream before its elder's retry.
+func TestFIFO_TiedCreatedAtYoungerWaitsForItsElderRetry(t *testing.T) {
+	db := dbForTest(t)
+	lower, higher := insertTiedRows(t, db, uuid.New())
+	pub := &sequentialPublisher{failOnce: map[uuid.UUID]error{lower: errors.New("xadd: connection refused")}}
+	p := outbox.NewProcessor(db, testOutboxTable, pub, nil, newTestLogger(),
+		outbox.ProcessorConfig{RetryBaseDelay: time.Hour, RetryMaxDelay: time.Hour})
+
+	require.NoError(t, p.ProcessBatch(context.Background()))
+	require.Empty(t, pub.ids, "the failed elder holds back its tied younger row in the batch")
+	status, _ := rowState(t, db, lower)
+	require.Equal(t, "scheduled", status)
+
+	require.NoError(t, p.ProcessBatch(context.Background()))
+	assert.Empty(t, pub.ids, "the next claim leaves the younger row out while its elder's retry is ahead")
+
+	_, err := db.Exec(`UPDATE `+testOutboxTable+` SET next_attempt_at = now() - interval '1 second' WHERE id = $1`, lower)
+	require.NoError(t, err)
+	require.NoError(t, p.ProcessBatch(context.Background()))
+	assert.Equal(t, []uuid.UUID{lower, higher}, pub.ids)
+}
+
+// While another relay holds the lower-id row of a tie, the higher-id row is
+// withheld.
+func TestFIFO_TiedCreatedAtElderLockedByAnotherRelayWithholdsYounger(t *testing.T) {
+	db := dbForTest(t)
+	lower, higher := insertTiedRows(t, db, uuid.New())
+	other := createRows(t, db, uuid.New(), 1)
+
+	peer := db.MustBegin()
+	_, err := peer.Exec(`SELECT id FROM `+testOutboxTable+` WHERE id = $1 FOR UPDATE`, lower)
+	require.NoError(t, err)
+
+	pub := &orderPublisher{}
+	p := outbox.NewProcessor(db, testOutboxTable, pub, nil, newTestLogger(), outbox.ProcessorConfig{})
+	require.NoError(t, p.ProcessBatch(context.Background()))
+	assert.Equal(t, other, pub.ids, "the younger tied row waits while its elder is held elsewhere")
+
+	require.NoError(t, peer.Rollback())
+	require.NoError(t, p.ProcessBatch(context.Background()))
+	assert.Equal(t, append(append([]uuid.UUID{}, other...), lower, higher), pub.ids)
+}

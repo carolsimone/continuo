@@ -522,7 +522,6 @@ func (d *Dispatcher) writeFirstCheck(ctx context.Context, outboxRepo outbox.Repo
 		EventType:           event.EventTypeCheckDelayed,
 		Payload:             body,
 		StreamName:          streams.CheckK8sV1,
-		MaxRetries:          outbox.DefaultMaxRetries,
 	}); err != nil {
 		return fmt.Errorf("write first check ticket: %w", err)
 	}
@@ -562,6 +561,5 @@ func (d *Dispatcher) createOutbox(ctx context.Context, outboxRepo outbox.Reposit
 		EventType:           eventType,
 		Payload:             body,
 		StreamName:          stream,
-		MaxRetries:          outbox.DefaultMaxRetries,
 	})
 }

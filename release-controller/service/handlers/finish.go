@@ -60,8 +60,6 @@ func enqueueRunFinished(ctx context.Context, u uow.UnitOfWork, r *pipeline.Run, 
 		Payload:       payload,
 		StreamName:    streams.PipelineRunFinishedV1,
 		Status:        "pending",
-		MaxRetries:    pkgoutbox.DefaultMaxRetries,
-		CreatedAt:     now,
 	}); err != nil {
 		return fmt.Errorf("outbox insert (run finished): %w", err)
 	}
@@ -74,7 +72,7 @@ func enqueueRunFinished(ctx context.Context, u uow.UnitOfWork, r *pipeline.Run, 
 // failure is not a release rejection — nothing downstream of a release
 // listens for it — so for a verification this writes nothing; its failure
 // travels on pipeline.run.finished:v1 alone.
-func emitReleaseRejected(ctx context.Context, u uow.UnitOfWork, r *pipeline.Run, payload []byte, now time.Time) error {
+func emitReleaseRejected(ctx context.Context, u uow.UnitOfWork, r *pipeline.Run, payload []byte) error {
 	if r.Kind() != pipeline.KindCandidate {
 		return nil
 	}
@@ -87,8 +85,6 @@ func emitReleaseRejected(ctx context.Context, u uow.UnitOfWork, r *pipeline.Run,
 		Payload:       payload,
 		StreamName:    streams.ReleaseRejectedV1,
 		Status:        "pending",
-		MaxRetries:    pkgoutbox.DefaultMaxRetries,
-		CreatedAt:     now,
 	}); err != nil {
 		return fmt.Errorf("outbox insert (release rejected): %w", err)
 	}

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	pkgdb "github.com/carolsimone/continuo/pkg/db"
 	"github.com/carolsimone/continuo/pkg/lifecycle"
 	"github.com/carolsimone/continuo/pkg/liveness"
 	pkgmessageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
@@ -20,7 +21,6 @@ import (
 	statepublisher "github.com/carolsimone/continuo/state/adapters/publisher"
 	"github.com/carolsimone/continuo/state/adapters/redis"
 	"github.com/carolsimone/continuo/state/config"
-	"github.com/carolsimone/continuo/state/database"
 	grpcserver "github.com/carolsimone/continuo/state/internal/grpc"
 	"github.com/carolsimone/continuo/state/internal/grpc/handlers"
 	"github.com/carolsimone/continuo/state/internal/scheduler"
@@ -31,10 +31,16 @@ import (
 )
 
 // outboxHeartbeatStale is the liveness budget for the outbox processor's Run
-// loop. The poll tick is 500ms, so 60s is comfortably above it: a wedged (not
-// exited) processor trips within a minute, while an idle-but-live one never
-// does.
+// loop. An idle loop turns at least once per pkgoutbox.FallbackTick (5s), so 60s
+// is comfortably above it: a wedged (not exited) processor trips within a
+// minute, while an idle-but-live one never does.
 const outboxHeartbeatStale = 60 * time.Second
+
+// dbPool bounds the Postgres pool when DB_MAX_OPEN_CONNS / DB_MAX_IDLE_CONNS
+// are unset: two connections per stream consumer (a handler's transaction and
+// a read outside it), plus the outbox relay, background loops and request
+// handlers.
+var dbPool = pkgconfig.PoolConfig{MaxOpenConns: 20, MaxIdleConns: 10}
 
 func main() {
 	// Setup structured logger
@@ -50,6 +56,10 @@ func main() {
 	}
 
 	logger.Info("Starting state service")
+	if len(cfg.IgnoredPoolKeys) > 0 {
+		logger.Warn("Ignoring Postgres pool settings state does not read; set DB_MAX_OPEN_CONNS and DB_MAX_IDLE_CONNS instead",
+			"ignored", strings.Join(cfg.IgnoredPoolKeys, ", "))
+	}
 
 	// Create context with cancellation
 	ctx, cancel := context.WithCancel(context.Background())
@@ -100,7 +110,7 @@ func main() {
 	}()
 
 	// Initialize PostgreSQL connection
-	db, err := database.NewConnection(cfg.Postgres)
+	db, err := pkgdb.Open(ctx, cfg.Postgres, dbPool)
 	if err != nil {
 		logger.Error("Failed to connect to PostgreSQL", "error", err)
 		os.Exit(1)
@@ -158,15 +168,28 @@ func main() {
 
 	// Start outbox processor backed by pkg/outbox. The publisher XADDs each
 	// entry's JSONB payload to its stream. Nested non-scalar fields are
-	// re-encoded to JSON strings so Redis receives only plain scalars.
+	// re-encoded to JSON strings so Redis receives only plain scalars. The
+	// relay wakes on the notification a committed insert sends.
+	outboxWaker, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN(), postgres.OutboxTable, logger)
+	if errors.Is(err, context.Canceled) {
+		logger.Info("Shutdown requested while waiting for the outbox listener")
+		os.Exit(0)
+	}
+	if err != nil {
+		logger.Error("Failed to listen for outbox notifications", "error", err)
+		os.Exit(1)
+	}
+	// Closing the listener can wait on a connection attempt in progress, so
+	// the handler stops waiting at the shutdown deadline.
+	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error { return outboxWaker.CloseContext(ctx) })
 	outboxPub := statepublisher.NewOutboxPublisher(redisClient, logger)
 	outboxProc := pkgoutbox.NewProcessor(
 		db,
-		"state_outbox",
+		postgres.OutboxTable,
 		outboxPub,
 		nil, // no terminal-failure hook for state
 		logger,
-		pkgoutbox.ProcessorConfig{Tick: 500 * time.Millisecond, BatchSize: 100},
+		pkgoutbox.ProcessorConfig{Tick: pkgoutbox.FallbackTick, BatchSize: 100, Waker: outboxWaker},
 	)
 	liveReg.RegisterWorker("outbox_processor")
 	liveReg.AddWorkerProbe("outbox_processor_heartbeat", 10*time.Second, func(context.Context) error {
@@ -187,10 +210,10 @@ func main() {
 	// processed state_outbox rows and terminal message_processing dedup rows
 	// (the latter retains a full payload per consumed message). Both are pruned
 	// past the retention window on the same timer using DB-clock cutoffs.
-	mpPruner := pkgmessageprocessing.NewPruner(db, "state_outbox", logger)
+	mpPruner := pkgmessageprocessing.NewPruner(db, postgres.OutboxTable, logger)
 	retentionSweeper := pkgoutbox.NewRetentionSweeper(
 		[]pkgoutbox.RetentionTarget{
-			pkgoutbox.OutboxRetentionTarget(db, "state_outbox", logger),
+			pkgoutbox.OutboxRetentionTarget(db, postgres.OutboxTable, logger),
 			{
 				Name:  "message_processing",
 				Prune: mpPruner.DeleteTerminalOlderThan,

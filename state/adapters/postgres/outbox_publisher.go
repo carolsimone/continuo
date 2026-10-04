@@ -16,6 +16,11 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
+// OutboxTable is the outbox table this service writes its events to and its
+// relay publishes from. Its insert trigger notifies the Postgres channel of the
+// same name, on which the relay's waker listens.
+const OutboxTable = "state_outbox"
+
 // OutboxPublisher translates run.DomainEvent values to pkg/outbox.Entry rows
 // and writes them inside the bound transaction.
 // RunDispatchTerminal events are informational and produce no outbox row.
@@ -31,14 +36,14 @@ func NewOutboxPublisher(tx *sqlx.Tx, logger *slog.Logger) *OutboxPublisher {
 }
 
 // Append writes one outbox entry per event into the bound transaction.
-// The per-event mapping (stream_name, event_type, aggregate_type, retry budget,
-// payload shape) is defined in translateRunEvent. RunDispatchTerminal is omitted
+// The per-event mapping (stream_name, event_type, aggregate_type, payload
+// shape) is defined in translateRunEvent. RunDispatchTerminal is omitted
 // (no outbox row). An unknown event type returns an error.
 func (p *OutboxPublisher) Append(ctx context.Context, events []run.DomainEvent, msgProcID uuid.UUID) error {
 	if p.tx == nil {
 		return fmt.Errorf("Append requires an active transaction")
 	}
-	repo := pkgoutbox.NewPostgresRepository(p.tx, "state_outbox", p.logger)
+	repo := pkgoutbox.NewPostgresRepository(p.tx, OutboxTable, p.logger)
 	for _, evt := range events {
 		entry, skip, err := translateRunEvent(evt, msgProcID)
 		if err != nil {
@@ -79,7 +84,7 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Ent
 		if err != nil {
 			return nil, false, err
 		}
-		return buildEntry(e.ID, "scheduler", "scheduler_started", streams.SchedulerStartedV1, payload, 3, msgProcPtr), false, nil
+		return buildEntry(e.ID, "scheduler", "scheduler_started", streams.SchedulerStartedV1, payload, msgProcPtr), false, nil
 
 	case run.RunFinalized:
 		payload, err := json.Marshal(pkgevents.RunFinalized{
@@ -90,7 +95,9 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Ent
 		if err != nil {
 			return nil, false, err
 		}
-		return buildEntry(e.ID, "scheduler_tracker", "run.finalized:v1", streams.RunFinalizedV1, payload, 5, msgProcPtr), false, nil
+		// The row's event_type is the stream name; the publisher routes every
+		// row by stream_name and reads event_type only to spot dead letters.
+		return buildEntry(e.ID, "scheduler_tracker", streams.RunFinalizedV1, streams.RunFinalizedV1, payload, msgProcPtr), false, nil
 
 	case run.RunCancelled:
 		payload, err := json.Marshal(map[string]string{
@@ -101,7 +108,7 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Ent
 		if err != nil {
 			return nil, false, err
 		}
-		return buildEntry(e.ID, "scheduler", "schedule_cancelled", streams.ScheduleCancelledV1, payload, 3, msgProcPtr), false, nil
+		return buildEntry(e.ID, "scheduler", "schedule_cancelled", streams.ScheduleCancelledV1, payload, msgProcPtr), false, nil
 
 	case run.RerunRequested:
 		payload, err := json.Marshal(map[string]string{
@@ -114,7 +121,7 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Ent
 		if err != nil {
 			return nil, false, err
 		}
-		return buildEntry(e.ID, "scheduler", "rerun", streams.TriggerRerunV1, payload, 3, msgProcPtr), false, nil
+		return buildEntry(e.ID, "scheduler", "rerun", streams.TriggerRerunV1, payload, msgProcPtr), false, nil
 
 	case run.RebaseRequested:
 		payload, err := json.Marshal(map[string]string{
@@ -127,7 +134,7 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Ent
 		if err != nil {
 			return nil, false, err
 		}
-		return buildEntry(e.ID, "scheduler", "rebase", streams.TriggerRebaseV1, payload, 3, msgProcPtr), false, nil
+		return buildEntry(e.ID, "scheduler", "rebase", streams.TriggerRebaseV1, payload, msgProcPtr), false, nil
 
 	case run.SingleNodeRunRequested:
 		payload, err := json.Marshal(map[string]string{
@@ -145,7 +152,7 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Ent
 		if err != nil {
 			return nil, false, err
 		}
-		return buildEntry(e.ID, "scheduler", "single_node_run", streams.TriggerSingleNodeRunV1, payload, 3, msgProcPtr), false, nil
+		return buildEntry(e.ID, "scheduler", "single_node_run", streams.TriggerSingleNodeRunV1, payload, msgProcPtr), false, nil
 
 	case run.PromotedSeedsRunRequested:
 		nodes := make([]map[string]string, 0, len(e.Nodes))
@@ -169,7 +176,7 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Ent
 		if err != nil {
 			return nil, false, err
 		}
-		return buildEntry(e.ID, "scheduler", "promote_seed", streams.TriggerPromotedSeedsV1, payload, 3, msgProcPtr), false, nil
+		return buildEntry(e.ID, "scheduler", "promote_seed", streams.TriggerPromotedSeedsV1, payload, msgProcPtr), false, nil
 
 	case run.RunDispatchTerminal:
 		// Informational event — no downstream stream yet; omit from outbox.
@@ -180,12 +187,11 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Ent
 	}
 }
 
-// buildEntry constructs a pkg/outbox.Entry with a generated ID and current timestamp.
+// buildEntry constructs a pending pkg/outbox.Entry with a generated ID.
 func buildEntry(
 	aggregateID uuid.UUID,
 	aggregateType, eventType, streamName string,
 	payload []byte,
-	maxRetries int,
 	msgProcID *uuid.UUID,
 ) *pkgoutbox.Entry {
 	return &pkgoutbox.Entry{
@@ -197,7 +203,6 @@ func buildEntry(
 		Payload:             payload,
 		StreamName:          streamName,
 		Status:              "pending",
-		MaxRetries:          maxRetries,
 		RetryCount:          0,
 	}
 }

@@ -67,18 +67,18 @@ func SettleNodeTerminal(
 // emitPerNodeResult writes one "kind":"node" row to the shared
 // validation.result:v1 stream from an already-built payload. It gets its own
 // distinct AggregateID (uuid.New()) rather than sharing the terminal
-// "kind":"complete" row's deterministic id: the outbox processor runs
-// PerAggregateFIFO, which withholds every row in an (aggregate_type,
-// aggregate_id) lane behind an older still-pending sibling in that same lane.
-// Putting all of a release's per-node rows in the terminal's lane serialized
-// them to roughly one per processor tick, throttling the live UI. A distinct
-// id per emit lets per-node rows publish in parallel; strict ordering ahead of
-// the terminal is not required because (a) release-controller's promote/reject
-// decision reads only aggregate_status, which is order-independent, and (b) in
-// the normal case the per-node rows and the terminal are all still pending
-// together and flush in one created_at-ordered outbox batch anyway. The
-// projection itself is an idempotent last-write upsert keyed by node_id, so
-// out-of-order per-node delivery is harmless on its own.
+// "kind":"complete" row's deterministic id. The outbox publishes the rows of
+// one (aggregate_type, aggregate_id) lane in creation order, and a row that
+// fails to publish holds back every younger row of its lane until it publishes
+// on a retry or is dead-lettered; a distinct id per emit keeps one per-node row
+// waiting out a retry from delaying the other per-node rows or the terminal.
+// Strict ordering ahead of the terminal is not required because (a)
+// release-controller's promote/reject decision reads only aggregate_status,
+// which is order-independent, and (b) in the normal case the per-node rows and
+// the terminal are all still pending together and flush in one
+// created_at-ordered outbox batch anyway. The projection itself is an
+// idempotent last-write upsert keyed by node_id, so out-of-order per-node
+// delivery is harmless on its own.
 //
 // Residual: only a transient XADD failure of one per-node row that happens to
 // race a rejection could omit that node from the reject audit trail — the
@@ -95,7 +95,6 @@ func emitPerNodeResult(ctx context.Context, outboxRepo outbox.Repository, namesp
 		EventType:     EventTypeValidationNodeResult,
 		Payload:       body,
 		StreamName:    streams.ValidationResultV1,
-		MaxRetries:    outbox.DefaultMaxRetries,
 	}); err != nil {
 		return fmt.Errorf("create per-node projection row: %w", err)
 	}

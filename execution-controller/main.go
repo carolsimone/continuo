@@ -23,6 +23,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/service/outcomes"
 	"github.com/carolsimone/continuo/execution-controller/service/uow"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	pkgdb "github.com/carolsimone/continuo/pkg/db"
 	"github.com/carolsimone/continuo/pkg/lifecycle"
 	"github.com/carolsimone/continuo/pkg/liveness"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
@@ -43,10 +44,11 @@ const consumerHandlerTimeout = 60 * time.Second
 // sit above that wait.
 const schemaOpHandlerTimeout = k8s.SchemaOpJobTimeout + time.Minute
 
-// outboxTick is the outbox processor cadence. Check tickets and terminal
-// announcements flow through this outbox, so the tick bounds the latency of
-// every status transition.
-const outboxTick = time.Second
+// dbPool bounds the Postgres pool when DB_MAX_OPEN_CONNS / DB_MAX_IDLE_CONNS
+// are unset: two connections per stream consumer (a handler's transaction and
+// a read outside it), plus the outbox relay, background loops and request
+// handlers.
+var dbPool = pkgconfig.PoolConfig{MaxOpenConns: 30, MaxIdleConns: 5}
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -120,9 +122,9 @@ func main() {
 
 	// ---- infrastructure ----
 
-	pgDB, err := postgres.NewPostgresClient(cfg.Postgres, logger)
+	pgDB, err := pkgdb.Open(ctx, cfg.Postgres, dbPool)
 	if err != nil {
-		logger.Error("Failed to create PostgreSQL client", "error", err)
+		logger.Error("Failed to connect to PostgreSQL", "error", err)
 		os.Exit(1)
 	}
 	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
@@ -219,10 +221,23 @@ func main() {
 
 	// ---- background workers ----
 
-	outboxProcessor := pkgoutbox.NewProcessor(pgDB, "execution_outbox", publisher.NewOutboxPublisher(redisClient, logger), nil, logger,
-		// PerAggregateFIFO: rows sharing an aggregate publish in insertion order,
-		// so a task's RUNNING announcement leaves before its later rows.
-		pkgoutbox.ProcessorConfig{Tick: outboxTick, BatchSize: 100, PerAggregateFIFO: true})
+	// Check tickets and terminal announcements flow through this outbox; the
+	// relay wakes on the notification a committed insert sends, so a status
+	// transition reaches its stream without waiting for a poll.
+	outboxWaker, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN(), postgres.OutboxTable, logger)
+	if errors.Is(err, context.Canceled) {
+		logger.Info("Shutdown requested while waiting for the outbox listener")
+		os.Exit(0)
+	}
+	if err != nil {
+		logger.Error("Failed to listen for outbox notifications", "error", err)
+		os.Exit(1)
+	}
+	// Closing the listener can wait on a connection attempt in progress, so
+	// the handler stops waiting at the shutdown deadline.
+	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error { return outboxWaker.CloseContext(ctx) })
+	outboxProcessor := pkgoutbox.NewProcessor(pgDB, postgres.OutboxTable, publisher.NewOutboxPublisher(redisClient, logger), nil, logger,
+		pkgoutbox.ProcessorConfig{Tick: pkgoutbox.FallbackTick, BatchSize: 100, Waker: outboxWaker})
 	runWorker("outbox_processor", outboxProcessor.Run)
 
 	deployDispatcher := deployer.NewDispatcher(

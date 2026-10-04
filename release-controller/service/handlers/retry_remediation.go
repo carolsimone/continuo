@@ -134,8 +134,6 @@ func RetryRemediation(ctx context.Context, deps *Deps, releaseID string) (RetryR
 		Payload:       payload,
 		StreamName:    streams.RemediationRetryRequestedV1,
 		Status:        "pending",
-		MaxRetries:    pkgoutbox.DefaultMaxRetries,
-		CreatedAt:     now,
 	}); err != nil {
 		return RetryRemediationResult{}, fmt.Errorf("outbox insert: %w", err)
 	}

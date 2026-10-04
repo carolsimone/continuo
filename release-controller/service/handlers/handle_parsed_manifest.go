@@ -162,7 +162,7 @@ func handleParseFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeli
 	if err != nil {
 		return fmt.Errorf("encode rejection: %w", err)
 	}
-	if err := emitReleaseRejected(ctx, u, r, payload, now); err != nil {
+	if err := emitReleaseRejected(ctx, u, r, payload); err != nil {
 		return err
 	}
 	if err := u.RunRepo().Save(ctx, r); err != nil {
@@ -330,8 +330,6 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 		Payload:       payload,
 		StreamName:    streams.ValidationRequestedV1,
 		Status:        "pending",
-		MaxRetries:    pkgoutbox.DefaultMaxRetries,
-		CreatedAt:     now,
 	}); err != nil {
 		return fmt.Errorf("outbox insert: %w", err)
 	}
@@ -505,8 +503,6 @@ func emitSeedBuildRequested(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 		Payload:       payload,
 		StreamName:    streams.SeedBuildRequestedV1,
 		Status:        "pending",
-		MaxRetries:    pkgoutbox.DefaultMaxRetries,
-		CreatedAt:     now,
 	}); err != nil {
 		return fmt.Errorf("outbox insert: %w", err)
 	}
@@ -709,7 +705,7 @@ func rejectUnbuildableCrossServiceUpstream(ctx context.Context, d *Deps, u uow.U
 	if err != nil {
 		return fmt.Errorf("encode rejection: %w", err)
 	}
-	if err := emitReleaseRejected(ctx, u, r, payload, now); err != nil {
+	if err := emitReleaseRejected(ctx, u, r, payload); err != nil {
 		return err
 	}
 	if err := u.RunRepo().Save(ctx, r); err != nil {
@@ -843,7 +839,7 @@ func rejectDuplicateTable(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pip
 		return fmt.Errorf("encode rejection: %w", err)
 	}
 
-	if err := emitReleaseRejected(ctx, u, r, payload, now); err != nil {
+	if err := emitReleaseRejected(ctx, u, r, payload); err != nil {
 		return err
 	}
 	if err := u.RunRepo().Save(ctx, r); err != nil {

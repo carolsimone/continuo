@@ -295,6 +295,28 @@ app.kubernetes.io/name: {{ .service }}
 {{- if .Values.postgresql.enabled -}}disable{{- else -}}{{ .Values.externalDatabase.sslMode }}{{- end -}}
 {{- end -}}
 
+{{/*
+Install-wide Postgres pool limits for the Go services. 0, and an absent
+database block (an upgrade with --reuse-values), leave every service on its own
+default, so the ConfigMap omits the key. Rendering fails when the idle limit
+exceeds the open limit, and when an idle limit is set without an open limit: the
+chart cannot know each service's own default open limit, and an idle limit
+above it would stop that service from starting.
+*/}}
+{{- define "continuo.db.pool" -}}
+{{- $db := .Values.database | default dict -}}
+{{- $pool := $db.pool | default dict -}}
+{{- $open := $pool.maxOpenConns | default 0 | int -}}
+{{- $idle := $pool.maxIdleConns | default 0 | int -}}
+{{- if and (gt $open 0) (gt $idle $open) -}}
+{{- fail (printf "database.pool.maxIdleConns (%d) must not exceed database.pool.maxOpenConns (%d)" $idle $open) -}}
+{{- end -}}
+{{- if and (gt $idle 0) (eq $open 0) -}}
+{{- fail (printf "database.pool.maxIdleConns (%d) is set without database.pool.maxOpenConns: set database.pool.maxOpenConns together with maxIdleConns" $idle) -}}
+{{- end -}}
+{{- dict "open" $open "idle" $idle | toJson -}}
+{{- end -}}
+
 {{- define "continuo.redis.host" -}}
 {{- if .Values.redis.enabled -}}
 {{- include "continuo.redis.fullname" . -}}

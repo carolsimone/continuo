@@ -148,7 +148,6 @@ func (h *HandlePromotedSeedsRunHandler) Handle(ctx context.Context, cmd domainMo
 		Payload:             dispatchedPayload,
 		StreamName:          streams.RunEntriesDispatchedV1,
 		Status:              "pending",
-		MaxRetries:          pkgoutbox.DefaultMaxRetries,
 	}); err != nil {
 		return fmt.Errorf("write run.entries.dispatched to outbox: %w", err)
 	}
@@ -183,7 +182,6 @@ func (h *HandlePromotedSeedsRunHandler) Handle(ctx context.Context, cmd domainMo
 			Payload:             queryPayload,
 			StreamName:          streams.QueryModelV1,
 			Status:              "pending",
-			MaxRetries:          pkgoutbox.DefaultMaxRetries,
 		}); err != nil {
 			return fmt.Errorf("write query.model to outbox for %s.%s: %w", task.SchemaName, task.TableName, err)
 		}

@@ -14,6 +14,11 @@ import (
 // setBaseEnv populates all required env vars so Validator reports no missing entries.
 func setBaseEnv(t *testing.T) {
 	t.Helper()
+	// The optional Postgres keys whose environment value would change what
+	// Load returns are cleared; a test that needs one sets it.
+	for _, key := range []string{"POSTGRES_PORT", "DB_MAX_OPEN_CONNS", "DB_MAX_IDLE_CONNS"} {
+		t.Setenv(key, "")
+	}
 	t.Setenv("POSTGRES_HOST", "localhost")
 	t.Setenv("POSTGRES_USER", "u")
 	t.Setenv("POSTGRES_PASSWORD", "p")
@@ -315,4 +320,29 @@ func TestLoad_UnsetDurationIsNotAMisconfiguration(t *testing.T) {
 	assert.Equal(t, 10*time.Minute, cfg.PROpeningGracePeriod)
 	assert.Equal(t, 20*time.Minute, cfg.VerificationTimeout)
 	assert.Equal(t, 15*time.Second, cfg.VerificationPollInterval)
+}
+
+func TestLoad_HonoursSSLModeAndPool(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("POSTGRES_DB", "continuo_x")
+	t.Setenv("DB_SSLMODE", "require")
+	t.Setenv("DB_MAX_OPEN_CONNS", "9")
+
+	v := &pkgconfig.Validator{}
+	cfg := Load(v)
+
+	require.Empty(t, v.Missing())
+	assert.Contains(t, cfg.Postgres.DSN(), "sslmode=require")
+	assert.Equal(t, 9, cfg.Postgres.Pool.MaxOpenConns)
+}
+
+func TestLoad_DefaultsTheDatabaseName(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("POSTGRES_DB", "")
+
+	v := &pkgconfig.Validator{}
+	cfg := Load(v)
+
+	require.Empty(t, v.Missing())
+	assert.Equal(t, "continuo_agent_remediation", cfg.Postgres.DB)
 }

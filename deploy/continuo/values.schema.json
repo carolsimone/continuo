@@ -324,6 +324,21 @@
       }
     },
 
+    "database": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pool": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "maxOpenConns": {"type": "integer", "minimum": 0},
+            "maxIdleConns": {"type": "integer", "minimum": 0}
+          }
+        }
+      }
+    },
+
     "streamReaper": {
       "type": "object",
       "additionalProperties": false,

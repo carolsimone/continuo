@@ -15,9 +15,6 @@ import (
 
 	"google.golang.org/grpc"
 
-	pkgconfig "github.com/carolsimone/continuo/pkg/config"
-	"github.com/carolsimone/continuo/pkg/liveness"
-	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	ragithub "github.com/carolsimone/continuo/agent-remediation/adapters/github"
 	grpcadapter "github.com/carolsimone/continuo/agent-remediation/adapters/grpc"
 	"github.com/carolsimone/continuo/agent-remediation/adapters/llm"
@@ -37,6 +34,11 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/service/proposals"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
 	"github.com/carolsimone/continuo/agent-remediation/service/verification"
+	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	pkgdb "github.com/carolsimone/continuo/pkg/db"
+	"github.com/carolsimone/continuo/pkg/liveness"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 )
 
 // llmClientTimeout bounds a single LLM HTTP request. Without it the LLM path
@@ -53,6 +55,12 @@ const llmClientTimeout = 120 * time.Second
 // LLM requests; 300s comfortably covers 2 × llmClientTimeout plus DB/S3 work
 // while still bounding a true hang.
 const consumerHandlerTimeout = 5 * time.Minute
+
+// dbPool bounds the Postgres pool when DB_MAX_OPEN_CONNS / DB_MAX_IDLE_CONNS
+// are unset: two connections per stream consumer (a handler's transaction and
+// a read outside it), plus the outbox relay, background loops and request
+// handlers.
+var dbPool = pkgconfig.PoolConfig{MaxOpenConns: 10, MaxIdleConns: 5}
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -123,9 +131,9 @@ func main() {
 	srv := &http.Server{Addr: ":" + cfg.HTTPPort, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() { _ = srv.ListenAndServe() }()
 
-	db, err := postgres.NewDB(cfg.Postgres)
+	db, err := pkgdb.Open(ctx, cfg.Postgres, dbPool)
 	if err != nil {
-		logger.Error("postgres connect", "error", err)
+		logger.Error("Failed to connect to PostgreSQL", "error", err)
 		os.Exit(1)
 	}
 	defer func() { _ = db.Close() }()
@@ -259,9 +267,28 @@ func main() {
 		SQLDialect:        cfg.SQLDialect,
 	}
 
+	// The outbox relay wakes on the notification a committed insert into its
+	// table sends.
+	outboxWaker, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN(), postgres.OutboxTable, logger)
+	if errors.Is(err, context.Canceled) {
+		logger.Info("shutdown requested while waiting for the outbox listener")
+		os.Exit(0)
+	}
+	if err != nil {
+		logger.Error("Failed to listen for outbox notifications", "error", err)
+		os.Exit(1)
+	}
+	// Closing the listener can wait on a connection attempt in progress, so
+	// shutdown stops waiting for it after 5 seconds.
+	defer func() {
+		closeCtx, cancelClose := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancelClose()
+		_ = outboxWaker.CloseContext(closeCtx)
+	}()
+
 	// Start the outbox publisher; spawns its own goroutine internally and runs
 	// until ctx is cancelled.
-	rredis.StartOutboxPublisher(ctx, db, rc, liveReg, logger)
+	rredis.StartOutboxPublisher(ctx, db, rc, outboxWaker, liveReg, logger)
 
 	// Start the remediation.requested consumer in a goroutine; blocks until ctx
 	// is cancelled.

@@ -10,9 +10,9 @@ import (
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/remediation/domain/event"
-	"github.com/carolsimone/continuo/remediation/serialization"
 	"github.com/carolsimone/continuo/remediation/domain/failure"
 	"github.com/carolsimone/continuo/remediation/domain/repository"
+	"github.com/carolsimone/continuo/remediation/serialization"
 )
 
 // ClassifyRejection triages every failed node of one rejected release: each
@@ -111,8 +111,6 @@ func ClassifyRejection(ctx context.Context, deps Deps, evs []failure.FailureEvid
 			Payload:       body,
 			StreamName:    streams.RemediationRequestedV2,
 			Status:        "pending",
-			MaxRetries:    outbox.DefaultMaxRetries,
-			CreatedAt:     deps.Clock.Now(),
 		}); err != nil {
 			return fmt.Errorf("enqueue trigger: %w", err)
 		}

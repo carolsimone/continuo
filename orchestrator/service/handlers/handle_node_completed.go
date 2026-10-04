@@ -247,7 +247,6 @@ func (h *HandleNodeCompletedHandler) writeNodeUnblockedEntry(
 		Payload:             evtPayload,
 		StreamName:          streams.QueryModelV1,
 		Status:              "pending",
-		MaxRetries:          pkgoutbox.DefaultMaxRetries,
 	}
 	if err := h.uow.OutboxRepo().Create(ctx, entry); err != nil {
 		return fmt.Errorf("write node_ready_for_execution outbox: %w", err)
@@ -284,7 +283,6 @@ func (h *HandleNodeCompletedHandler) writeCascadeSkippedEntry(
 		Payload:             evtPayload,
 		StreamName:          streams.TaskStatusUpdatedV1,
 		Status:              "pending",
-		MaxRetries:          pkgoutbox.DefaultMaxRetries,
 	}
 	if err := h.uow.OutboxRepo().Create(ctx, entry); err != nil {
 		return fmt.Errorf("write cascade_task_skipped outbox: %w", err)

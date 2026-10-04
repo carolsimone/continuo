@@ -13,6 +13,7 @@ import (
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/liveness"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/remediation/adapters/postgres"
 )
 
 // remediationOutboxPublisher implements pkgoutbox.Publisher by XADDing each
@@ -63,27 +64,29 @@ func (p *remediationOutboxPublisher) Publish(ctx context.Context, entry *pkgoutb
 }
 
 // outboxHeartbeatStale is the liveness budget for the outbox processor's Run
-// loop. The poll tick is 1s, so 60s is comfortably above it: a wedged (not
-// exited) processor trips within a minute, while an idle-but-live one never
-// does.
+// loop. An idle loop turns at least once per pkgoutbox.FallbackTick (5s), so 60s
+// is comfortably above it: a wedged (not exited) processor trips within a
+// minute, while an idle-but-live one never does.
 const outboxHeartbeatStale = 60 * time.Second
 
-// StartOutboxPublisher constructs a pkgoutbox.Processor backed by
-// remediation_outbox and starts its poll loop in a goroutine. The loop runs
+// StartOutboxPublisher constructs a pkgoutbox.Processor backed by postgres.OutboxTable,
+// starts its relay loop in a goroutine and returns the processor. The loop
+// drains the table on each signal from waker and every pkgoutbox.FallbackTick,
 // until ctx is cancelled. It is registered with liveReg both as a worker
 // (RegisterWorker/WorkerExited detects a full goroutine EXIT) and with a
 // heartbeat probe (processor.Healthy detects a wedged-but-not-exited loop).
-func StartOutboxPublisher(ctx context.Context, db *sqlx.DB, rc *goredis.Client, liveReg *liveness.Registry, logger *slog.Logger) {
+func StartOutboxPublisher(ctx context.Context, db *sqlx.DB, rc *goredis.Client, waker pkgoutbox.Waker, liveReg *liveness.Registry, logger *slog.Logger) *pkgoutbox.Processor {
 	publisher := &remediationOutboxPublisher{redis: rc, logger: logger}
 	processor := pkgoutbox.NewProcessor(
 		db,
-		"remediation_outbox",
+		postgres.OutboxTable,
 		publisher,
 		nil, // no terminal-failure hook needed for simple event publishing
 		logger,
 		pkgoutbox.ProcessorConfig{
-			Tick:      0,  // default 1s poll interval
+			Tick:      pkgoutbox.FallbackTick,
 			BatchSize: 64,
+			Waker:     waker,
 		},
 	)
 	liveReg.RegisterWorker("outbox_publisher")
@@ -105,4 +108,5 @@ func StartOutboxPublisher(ctx context.Context, db *sqlx.DB, rc *goredis.Client, 
 			logger.Error("remediation outbox publisher stopped unexpectedly", "error", err)
 		}
 	}()
+	return processor
 }

@@ -9,8 +9,8 @@ import (
 	"time"
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	pkgdb "github.com/carolsimone/continuo/pkg/db"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
-	"github.com/carolsimone/continuo/state/database"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
@@ -21,7 +21,7 @@ import (
 
 func newTestDB(t *testing.T) *sqlx.DB {
 	t.Helper()
-	db, err := database.NewConnection(pkgconfig.LoadPostgres(&pkgconfig.Validator{}))
+	db, err := pkgdb.Open(context.Background(), pkgconfig.LoadPostgres(&pkgconfig.Validator{}), pkgconfig.PoolConfig{MaxOpenConns: 10, MaxIdleConns: 2})
 	require.NoError(t, err)
 	t.Cleanup(func() { db.Close() })
 	return db

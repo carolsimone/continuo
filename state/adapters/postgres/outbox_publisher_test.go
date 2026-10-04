@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
@@ -57,7 +58,7 @@ func TestOutboxPublisher_RunFinalized(t *testing.T) {
 	assert.Equal(t, "run.finalized:v1", found.StreamName, "stream_name")
 	assert.Equal(t, "scheduler_tracker", found.AggregateType, "aggregate_type")
 	assert.Equal(t, "run.finalized:v1", found.EventType, "event_type")
-	assert.Equal(t, 5, found.MaxRetries, "max_retries")
+	assert.Equal(t, pkgoutbox.MaxAttempts, found.MaxRetries, "max_retries is written with the one outbox budget")
 	assert.Nil(t, found.MsgProcID, "message_processing_id should be nil for uuid.Nil input")
 
 	var payload map[string]string
@@ -260,7 +261,6 @@ func TestOutboxPublisher_AllEventTypes(t *testing.T) {
 		wantStream    string
 		wantEventType string
 		wantAggType   string
-		wantRetries   int
 		wantRows      int // expected outbox rows (0 for RunDispatchTerminal)
 	}{
 		{
@@ -274,7 +274,6 @@ func TestOutboxPublisher_AllEventTypes(t *testing.T) {
 			wantStream:    "scheduler.started:v1",
 			wantEventType: "scheduler_started",
 			wantAggType:   "scheduler",
-			wantRetries:   3,
 			wantRows:      1,
 		},
 		{
@@ -283,7 +282,6 @@ func TestOutboxPublisher_AllEventTypes(t *testing.T) {
 			wantStream:    "run.finalized:v1",
 			wantEventType: "run.finalized:v1",
 			wantAggType:   "scheduler_tracker",
-			wantRetries:   5,
 			wantRows:      1,
 		},
 		{
@@ -292,7 +290,6 @@ func TestOutboxPublisher_AllEventTypes(t *testing.T) {
 			wantStream:    "schedule.cancelled:v1",
 			wantEventType: "schedule_cancelled",
 			wantAggType:   "scheduler",
-			wantRetries:   3,
 			wantRows:      1,
 		},
 		{
@@ -301,7 +298,6 @@ func TestOutboxPublisher_AllEventTypes(t *testing.T) {
 			wantStream:    "trigger.rerun:v1",
 			wantEventType: "rerun",
 			wantAggType:   "scheduler",
-			wantRetries:   3,
 			wantRows:      1,
 		},
 		{
@@ -310,7 +306,6 @@ func TestOutboxPublisher_AllEventTypes(t *testing.T) {
 			wantStream:    "trigger.rebase:v1",
 			wantEventType: "rebase",
 			wantAggType:   "scheduler",
-			wantRetries:   3,
 			wantRows:      1,
 		},
 		{
@@ -328,7 +323,6 @@ func TestOutboxPublisher_AllEventTypes(t *testing.T) {
 			wantStream:    "trigger.single_node_run:v1",
 			wantEventType: "single_node_run",
 			wantAggType:   "scheduler",
-			wantRetries:   3,
 			wantRows:      1,
 		},
 		{
@@ -381,7 +375,7 @@ func TestOutboxPublisher_AllEventTypes(t *testing.T) {
 			require.NoErrorf(t, err, "expected outbox row with stream %q for %s", tc.wantStream, tc.name)
 			assert.Equal(t, tc.wantEventType, found.EventType, "event_type")
 			assert.Equal(t, tc.wantAggType, found.AggregateType, "aggregate_type")
-			assert.Equal(t, tc.wantRetries, found.MaxRetries, "max_retries")
+			assert.Equal(t, pkgoutbox.MaxAttempts, found.MaxRetries, "max_retries is written with the one outbox budget")
 		})
 	}
 }

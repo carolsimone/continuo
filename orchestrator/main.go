@@ -23,6 +23,7 @@ import (
 	snapshotsvc "github.com/carolsimone/continuo/orchestrator/service/snapshotsvc"
 	"github.com/carolsimone/continuo/orchestrator/service/watchdog"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	pkgdb "github.com/carolsimone/continuo/pkg/db"
 	"github.com/carolsimone/continuo/pkg/lifecycle"
 	"github.com/carolsimone/continuo/pkg/liveness"
 	pkgmessageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
@@ -40,10 +41,16 @@ import (
 const topologyHandlerTimeout = 5 * time.Minute
 
 // outboxHeartbeatStale is the liveness budget for the outbox processor's Run
-// loop. The poll tick is 1s, so 60s is comfortably above it: a wedged (not
-// exited) processor trips within a minute, while an idle-but-live one never
-// does.
+// loop. An idle loop turns at least once per pkgoutbox.FallbackTick (5s), so 60s
+// is comfortably above it: a wedged (not exited) processor trips within a
+// minute, while an idle-but-live one never does.
 const outboxHeartbeatStale = 60 * time.Second
+
+// dbPool bounds the Postgres pool when DB_MAX_OPEN_CONNS / DB_MAX_IDLE_CONNS
+// are unset: two connections per stream consumer (a handler's transaction and
+// a read outside it), plus the outbox relay, background loops and request
+// handlers.
+var dbPool = pkgconfig.PoolConfig{MaxOpenConns: 35, MaxIdleConns: 5}
 
 func main() {
 	// Setup structured logger
@@ -148,16 +155,9 @@ func main() {
 	logger.Info("Neo4j schema initialized")
 
 	// 2. PostgreSQL client (for outbox / message processing)
-	pgDB, err := postgres.NewPostgresClient(
-		cfg.Postgres.Host,
-		cfg.Postgres.Port,
-		cfg.Postgres.DB,
-		cfg.Postgres.User,
-		cfg.Postgres.Password,
-		logger,
-	)
+	pgDB, err := pkgdb.Open(ctx, cfg.Postgres, dbPool)
 	if err != nil {
-		logger.Error("Failed to create PostgreSQL client", "error", err)
+		logger.Error("Failed to connect to PostgreSQL", "error", err)
 		os.Exit(1)
 	}
 	logger.Info("PostgreSQL client initialized")
@@ -233,14 +233,27 @@ func main() {
 	// INITIALIZE OUTBOX PROCESSOR
 	// ========================================================================
 
+	// The relay wakes on the notification a committed insert sends.
+	outboxWaker, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN(), postgres.OutboxTable, logger)
+	if errors.Is(err, context.Canceled) {
+		logger.Info("Shutdown requested while waiting for the outbox listener")
+		os.Exit(0)
+	}
+	if err != nil {
+		logger.Error("Failed to listen for outbox notifications", "error", err)
+		os.Exit(1)
+	}
+	// Closing the listener can wait on a connection attempt in progress, so
+	// the handler stops waiting at the shutdown deadline.
+	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error { return outboxWaker.CloseContext(ctx) })
 	outboxPub := orchpublisher.NewOutboxPublisher(redisClient, logger)
 	outboxProc := pkgoutbox.NewProcessor(
 		pgDB,
-		"orchestrator_outbox",
+		postgres.OutboxTable,
 		outboxPub,
 		nil, // no terminal-failure hook for orchestrator
 		logger,
-		pkgoutbox.ProcessorConfig{Tick: time.Second, BatchSize: 100},
+		pkgoutbox.ProcessorConfig{Tick: pkgoutbox.FallbackTick, BatchSize: 100, Waker: outboxWaker},
 	)
 	liveReg.RegisterWorker("outbox_processor")
 	liveReg.AddWorkerProbe("outbox_processor_heartbeat", 10*time.Second, func(context.Context) error {
@@ -266,10 +279,10 @@ func main() {
 	// latter retains a full payload per consumed message). Both are pruned past
 	// the retention window on the same timer using DB-clock cutoffs.
 
-	mpPruner := pkgmessageprocessing.NewPruner(pgDB, "orchestrator_outbox", logger)
+	mpPruner := pkgmessageprocessing.NewPruner(pgDB, postgres.OutboxTable, logger)
 	retentionSweeper := pkgoutbox.NewRetentionSweeper(
 		[]pkgoutbox.RetentionTarget{
-			pkgoutbox.OutboxRetentionTarget(pgDB, "orchestrator_outbox", logger),
+			pkgoutbox.OutboxRetentionTarget(pgDB, postgres.OutboxTable, logger),
 			{
 				Name:  "message_processing",
 				Prune: mpPruner.DeleteTerminalOlderThan,

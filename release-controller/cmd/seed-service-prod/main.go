@@ -19,8 +19,11 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
+	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	pkgdb "github.com/carolsimone/continuo/pkg/db"
 	"github.com/carolsimone/continuo/release-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 )
@@ -43,20 +46,19 @@ func main() {
 		os.Exit(1)
 	}
 
-	db, err := postgres.NewDB(postgres.Config{
-		Host:     requireEnv("POSTGRES_HOST"),
-		Port:     envOrDefault("POSTGRES_PORT", "5432"),
-		User:     requireEnv("POSTGRES_USER"),
-		Password: requireEnv("POSTGRES_PASSWORD"),
-		DB:       envOrDefault("POSTGRES_DB", "continuo_release"),
-	})
+	pgCfg, err := loadPostgresConfig()
 	if err != nil {
-		logger.Error("postgres connect", "error", err)
+		logger.Error("invalid configuration", "error", err)
+		os.Exit(1)
+	}
+
+	ctx := context.Background()
+	db, err := pkgdb.Open(ctx, pgCfg, pkgconfig.PoolConfig{MaxOpenConns: 2, MaxIdleConns: 1})
+	if err != nil {
+		logger.Error("Failed to connect to PostgreSQL", "error", err)
 		os.Exit(1)
 	}
 	defer func() { _ = db.Close() }()
-
-	ctx := context.Background()
 
 	cpRepo := postgres.NewCurrentProdRepository(db)
 	cp, err := cpRepo.Get(ctx)
@@ -81,18 +83,23 @@ func main() {
 	fmt.Printf("seeded %d service(s) from release %s\n", n, cp.ReleaseID())
 }
 
-func requireEnv(name string) string {
-	v := os.Getenv(name)
-	if v == "" {
-		_, _ = fmt.Fprintf(os.Stderr, "missing required env var %s\n", name)
-		os.Exit(1)
+// loadPostgresConfig reads the connection settings from the environment.
+// POSTGRES_HOST, POSTGRES_USER and POSTGRES_PASSWORD are required. POSTGRES_PORT
+// defaults to 5432, POSTGRES_DB to continuo_release and DB_SSLMODE to disable.
+// It returns an error naming every key that is missing or holds a value it
+// cannot use, so the command never connects to an endpoint nobody asked for.
+func loadPostgresConfig() (pkgconfig.PostgresConfig, error) {
+	v := &pkgconfig.Validator{}
+	cfg := pkgconfig.PostgresConfig{
+		Host:     v.Require("POSTGRES_HOST"),
+		Port:     v.PortOrDefault("POSTGRES_PORT", 5432),
+		User:     v.Require("POSTGRES_USER"),
+		Password: v.Require("POSTGRES_PASSWORD"),
+		DB:       pkgconfig.EnvOrDefault("POSTGRES_DB", "continuo_release"),
+		SSLMode:  pkgconfig.EnvOrDefault("DB_SSLMODE", "disable"),
 	}
-	return v
-}
-
-func envOrDefault(name, def string) string {
-	if v := os.Getenv(name); v != "" {
-		return v
+	if missing := v.Missing(); len(missing) > 0 {
+		return pkgconfig.PostgresConfig{}, fmt.Errorf("missing or invalid env vars: %s", strings.Join(missing, ", "))
 	}
-	return def
+	return cfg, nil
 }

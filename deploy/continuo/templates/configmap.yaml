@@ -10,6 +10,13 @@ data:
   POSTGRES_PORT: {{ include "continuo.postgresql.port" . | quote }}
   POSTGRES_USER: {{ include "continuo.postgresql.username" . | quote }}
   DB_SSLMODE: {{ include "continuo.db.sslMode" . | quote }}
+  {{- $pool := include "continuo.db.pool" . | fromJson }}
+  {{- if gt (int $pool.open) 0 }}
+  DB_MAX_OPEN_CONNS: {{ int $pool.open | quote }}
+  {{- end }}
+  {{- if gt (int $pool.idle) 0 }}
+  DB_MAX_IDLE_CONNS: {{ int $pool.idle | quote }}
+  {{- end }}
   REDIS_HOST: {{ include "continuo.redis.host" . | quote }}
   REDIS_PORT: {{ include "continuo.redis.port" . | quote }}
   REDIS_ADDR: {{ printf "%s:%s" (include "continuo.redis.host" .) (include "continuo.redis.port" .) | quote }}
