@@ -123,7 +123,7 @@ e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start
 	@echo "Waiting for neo4j and redis to become healthy..."
 	@$(DOCKER_COMPOSE) up -d --wait --no-recreate neo4j redis
 	@echo "Waiting for flyway migrations to complete..."
-	@for svc in flyway-state flyway-execution flyway-orchestrator flyway-release flyway-agent-chat flyway-remediation flyway-agent-remediation; do \
+	@for svc in flyway-state flyway-execution flyway-orchestrator flyway-release flyway-agent-chat flyway-remediation flyway-agent-remediation flyway-dead-letter; do \
 		cid=$$($(DOCKER_COMPOSE) ps -q $$svc 2>/dev/null); \
 		if [ -n "$$cid" ]; then docker wait $$cid 2>/dev/null || true; fi; \
 	done
@@ -141,7 +141,8 @@ e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start
 GO_SERVICES := state orchestrator execution-controller release-controller \
                remediation agent-remediation agent-chat
 FLYWAY_JOBS := flyway-state flyway-execution flyway-orchestrator flyway-release \
-               flyway-agent-chat flyway-remediation flyway-agent-remediation
+               flyway-agent-chat flyway-remediation flyway-agent-remediation \
+               flyway-dead-letter
 
 # Data dependencies for Go tests: Postgres+Neo4j+Redis up and migrated. No service
 # images are built. Tests reach these via POSTGRES_HOST=localhost.

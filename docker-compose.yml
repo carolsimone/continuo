@@ -79,6 +79,15 @@ services:
       - postgres
     tty: true
 
+  flyway-dead-letter:
+    image: flyway/flyway
+    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_dead_letter -user=continuo_svc -password=continuo -connectRetries=30
+    volumes:
+      - ./db/migration/dead_letter:/flyway/sql
+    depends_on:
+      - postgres
+    tty: true
+
   redis:
     image: redis:7.2-alpine
     ports:
