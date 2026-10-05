@@ -77,6 +77,11 @@ func (s *StreamInspector) Snapshot(ctx context.Context, stream string, contractG
 // pending entry already removed from the stream is skipped, and so is an entry
 // addressed to another group by a redrive (its redrive_group names that group):
 // group ignores it when consuming, so it is not group's to quarantine.
+//
+// Both sources are read past the skipped entries until limit kept entries are
+// collected or the source is exhausted. A short result therefore means group
+// needs no more than that many entries below cutoff, which the caller relies on
+// to know that trimming to cutoff cannot pass a needed entry.
 func (s *StreamInspector) NeededEntries(ctx context.Context, stream, group string, lastDelivered, cutoff trim.StreamID, limit int) ([]trim.Entry, error) {
 	if limit <= 0 {
 		return nil, nil
@@ -86,9 +91,9 @@ func (s *StreamInspector) NeededEntries(ctx context.Context, stream, group strin
 	if err != nil {
 		return nil, err
 	}
-	undelivered, err := s.rdb.XRangeN(ctx, stream, "("+lastDelivered.String(), end, int64(limit)).Result()
+	undelivered, err := s.undeliveredEntries(ctx, stream, group, lastDelivered, end, limit)
 	if err != nil {
-		return nil, fmt.Errorf("xrange %s: %w", stream, err)
+		return nil, err
 	}
 	byID := make(map[trim.StreamID]trim.Entry, len(pending)+len(undelivered))
 	for _, m := range append(pending, undelivered...) {
@@ -96,11 +101,7 @@ func (s *StreamInspector) NeededEntries(ctx context.Context, stream, group strin
 		if err != nil {
 			return nil, err
 		}
-		fields := stringFields(m.Values)
-		if target, addressed := fields[pkgredis.RedriveGroupField]; addressed && target != group {
-			continue
-		}
-		byID[id] = trim.Entry{ID: id, Fields: fields}
+		byID[id] = trim.Entry{ID: id, Fields: stringFields(m.Values)}
 	}
 	out := make([]trim.Entry, 0, len(byID))
 	for _, e := range byID {
@@ -113,9 +114,41 @@ func (s *StreamInspector) NeededEntries(ctx context.Context, stream, group strin
 	return out, nil
 }
 
+// addressedToAnother reports whether a redrive addressed m to a group other than group.
+func addressedToAnother(m goredis.XMessage, group string) bool {
+	target, addressed := m.Values[pkgredis.RedriveGroupField]
+	return addressed && fmt.Sprint(target) != group
+}
+
+// undeliveredEntries returns the entries after lastDelivered and below end (an
+// exclusive range bound) that are not addressed to another group, oldest first,
+// up to limit. It pages through the stream so skipped entries do not use up the
+// limit.
+func (s *StreamInspector) undeliveredEntries(ctx context.Context, stream, group string, lastDelivered trim.StreamID, end string, limit int) ([]goredis.XMessage, error) {
+	var out []goredis.XMessage
+	cursor := "(" + lastDelivered.String()
+	for len(out) < limit {
+		page, err := s.rdb.XRangeN(ctx, stream, cursor, end, int64(limit)).Result()
+		if err != nil {
+			return nil, fmt.Errorf("xrange %s: %w", stream, err)
+		}
+		for _, m := range page {
+			if !addressedToAnother(m, group) {
+				out = append(out, m)
+			}
+		}
+		if len(page) < limit {
+			break
+		}
+		cursor = "(" + page[len(page)-1].ID
+	}
+	return out, nil
+}
+
 // pendingEntries returns the entries group has pending below end (an exclusive
-// range bound), oldest first, up to limit existing ones. Pending ids whose entry
-// was already removed from the stream are skipped, so it pages through the
+// range bound), oldest first, up to limit existing ones that are not addressed
+// to another group. Pending ids whose entry was already removed from the stream,
+// and entries addressed to another group, are skipped, so it pages through the
 // pending list until it has limit entries or the list is exhausted.
 func (s *StreamInspector) pendingEntries(ctx context.Context, stream, group, end string, limit int) ([]goredis.XMessage, error) {
 	var out []goredis.XMessage
@@ -139,7 +172,11 @@ func (s *StreamInspector) pendingEntries(ctx context.Context, stream, group, end
 			return nil, fmt.Errorf("xrange pending %s: %w", stream, err)
 		}
 		for _, c := range cmds {
-			out = append(out, c.Val()...)
+			for _, m := range c.Val() {
+				if !addressedToAnother(m, group) {
+					out = append(out, m)
+				}
+			}
 		}
 		if len(page) < limit {
 			break

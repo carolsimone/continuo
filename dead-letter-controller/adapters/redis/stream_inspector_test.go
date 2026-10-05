@@ -202,3 +202,34 @@ func TestNeededEntries_SkipsEntriesTargetedToAnotherGroup(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"10-0", "30-0"}, ids(got))
 }
+
+// Entries addressed to another group must not use up the limit: with the first
+// raw window made only of them, the needed entries beyond it are still returned,
+// so a caller that sees limit entries knows there are more and never trims past
+// one it has not stored.
+func TestNeededEntries_PagesPastEntriesTargetedToAnotherGroup(t *testing.T) {
+	rc, stream := inspectorStream(t)
+	ctx := context.Background()
+	add := func(id string, extra ...any) {
+		values := map[string]any{"k": "v" + id}
+		for i := 0; i < len(extra); i += 2 {
+			values[extra[i].(string)] = extra[i+1]
+		}
+		require.NoError(t, rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, ID: id, Values: values}).Err())
+	}
+	add("10-0", pkgredis.RedriveGroupField, "other")
+	add("20-0", pkgredis.RedriveGroupField, "other")
+	add("30-0")
+	add("40-0", pkgredis.RedriveGroupField, "mine")
+	add("50-0")
+	require.NoError(t, rc.XGroupCreate(ctx, stream, "mine", "0").Err())
+	insp := NewStreamInspector(rc)
+
+	got, err := insp.NeededEntries(ctx, stream, "mine", trim.StreamID{}, trim.StreamID{Ms: 100}, 2)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"30-0", "40-0"}, ids(got), "the limit counts kept entries, so a full result is returned")
+
+	got, err = insp.NeededEntries(ctx, stream, "mine", trim.StreamID{}, trim.StreamID{Ms: 100}, 10)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"30-0", "40-0", "50-0"}, ids(got))
+}
