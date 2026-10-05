@@ -545,6 +545,7 @@ services:
       - HEALTH_PORT=8091
       - CONTINUO_STATE_ADDR=state:50051
       - CONTINUO_ORCHESTRATOR_ADDR=orchestrator:50052
+      - CONTINUO_DEAD_LETTER_ADDR=dead-letter-controller:50055
       - REDIS_ADDR=redis:6379
       - REDIS_PASSWORD=continuo
       - CHAT_MAX_CONCURRENT_SESSIONS=100
