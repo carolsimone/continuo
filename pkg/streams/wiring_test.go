@@ -82,7 +82,7 @@ func TestNoStreamOrGroupLiteralsInMains(t *testing.T) {
 }
 
 func looksLikeServicePrefixedGroup(s string) bool {
-	for _, p := range []string{"state-", "orchestrator-", "execution-", "executor-", "k8s-", "topology-", "agent-remediation-", "remediation-"} {
+	for _, p := range []string{"state-", "orchestrator-", "execution-", "executor-", "k8s-", "topology-", "agent-remediation-", "remediation-", "dead-letter-"} {
 		if strings.HasPrefix(s, p) {
 			return true
 		}

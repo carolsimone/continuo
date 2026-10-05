@@ -10,8 +10,8 @@ export const PARSE_FAILURE_KINDS: readonly ParseFailureKind[] = ['invalid_sql', 
 export type RejectReason = 'compile_failed' | 'parse_rehearsal_failed' | 'artifact_upload_failed' | 'invalid_sql' | 'unqualified_reference' | 'invalid_artifact' | 'internal_error' | 'duplicate_table' | 'unbuildable_cross_service_upstream' | 'nothing_to_validate' | 'seed_build_failed' | 'validation_failed';
 export const REJECT_REASONS: readonly RejectReason[] = ['compile_failed', 'parse_rehearsal_failed', 'artifact_upload_failed', 'invalid_sql', 'unqualified_reference', 'invalid_artifact', 'internal_error', 'duplicate_table', 'unbuildable_cross_service_upstream', 'nothing_to_validate', 'seed_build_failed', 'validation_failed'];
 
-export type DeadLetterKind = 'permanent' | 'transient_exhausted';
-export const DEAD_LETTER_KINDS: readonly DeadLetterKind[] = ['permanent', 'transient_exhausted'];
+export type DeadLetterKind = 'permanent' | 'transient_exhausted' | 'trimmed';
+export const DEAD_LETTER_KINDS: readonly DeadLetterKind[] = ['permanent', 'transient_exhausted', 'trimmed'];
 
 export type NodeRuntime = 'dbt' | 'python';
 export const NODE_RUNTIMES: readonly NodeRuntime[] = ['dbt', 'python'];

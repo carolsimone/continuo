@@ -170,6 +170,8 @@ const (
 	DeadLetterKindPermanent DeadLetterKind = "permanent"
 	// DeadLetterKindTransientExhausted — a retryable error persisted through the delivery or retry limit.
 	DeadLetterKindTransientExhausted DeadLetterKind = "transient_exhausted"
+	// DeadLetterKindTrimmed — the stream's retention cap removed an entry a consumer group had not finished; dead-letter-controller stored it before the trim.
+	DeadLetterKindTrimmed DeadLetterKind = "trimmed"
 )
 
 // DeadLetterKinds returns every value in contract.yaml declaration order.
@@ -177,6 +179,7 @@ func DeadLetterKinds() []DeadLetterKind {
 	return []DeadLetterKind{
 		DeadLetterKindPermanent,
 		DeadLetterKindTransientExhausted,
+		DeadLetterKindTrimmed,
 	}
 }
 
@@ -186,6 +189,8 @@ func (v DeadLetterKind) IsValid() bool {
 	case DeadLetterKindPermanent:
 		return true
 	case DeadLetterKindTransientExhausted:
+		return true
+	case DeadLetterKindTrimmed:
 		return true
 	}
 	return false

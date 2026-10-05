@@ -34,9 +34,9 @@ const (
 	QueryModelV1 = "query.model:v1"
 	// CheckK8sV1 — Delayed status-check tickets; a promoter moves due tickets from the delay queue into the stream.
 	CheckK8sV1 = "check.k8s:v1"
-	// OutboxDeadLetterV1 — Terminal outbox publish failures (permanent payload errors, or transient errors that exhausted their backoff budget), emitted by every service's outbox processor. Operational DLQ, not a domain event.
+	// OutboxDeadLetterV1 — Terminal outbox publish failures (permanent payload errors, or transient errors that exhausted their backoff budget), emitted by every service's outbox processor with the fields the row would have published. dead-letter-controller stores them for listing and redrive.
 	OutboxDeadLetterV1 = "outbox.dead_letter:v1"
-	// ConsumerDeadLetterV1 — Messages a stream consumer gave up on (a permanent error, or a transient error on its fifth delivery), written before the original is acknowledged. Operational DLQ, not a domain event.
+	// ConsumerDeadLetterV1 — Messages a stream consumer gave up on (a permanent error, or a transient error on its fifth delivery), written before the original is acknowledged. dead-letter-controller stores them for listing and redrive.
 	ConsumerDeadLetterV1 = "consumer.dead_letter:v1"
 	// ScheduleCancelledV1 — Schedule cancellation broadcast; fanned out to orchestrator and execution-controller.
 	ScheduleCancelledV1 = "schedule.cancelled:v1"
@@ -106,6 +106,10 @@ const (
 	ExecutorQueryModel = "executor-query-model"
 	// K8sCheckStatus — execution-controller consumer group on check.k8s:v1.
 	K8sCheckStatus = "k8s-check-status"
+	// DeadLetterControllerOutboxDeadLetters — dead-letter-controller consumer group on outbox.dead_letter:v1.
+	DeadLetterControllerOutboxDeadLetters = "dead-letter-controller-outbox-dead-letters"
+	// DeadLetterControllerConsumerDeadLetters — dead-letter-controller consumer group on consumer.dead_letter:v1.
+	DeadLetterControllerConsumerDeadLetters = "dead-letter-controller-consumer-dead-letters"
 	// OrchestratorScheduleCancelled — orchestrator consumer group on schedule.cancelled:v1.
 	OrchestratorScheduleCancelled = "orchestrator-schedule-cancelled"
 	// ExecutorScheduleCancelled — execution-controller consumer group on schedule.cancelled:v1.

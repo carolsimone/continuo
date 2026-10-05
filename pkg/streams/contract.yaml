@@ -153,15 +153,21 @@ streams:
 
   - name: outbox.dead_letter:v1
     const: OutboxDeadLetterV1
-    description: Terminal outbox publish failures (permanent payload errors, or transient errors that exhausted their backoff budget), emitted by every service's outbox processor. Operational DLQ, not a domain event.
+    description: Terminal outbox publish failures (permanent payload errors, or transient errors that exhausted their backoff budget), emitted by every service's outbox processor with the fields the row would have published. dead-letter-controller stores them for listing and redrive.
     producers: [state, orchestrator, execution-controller, release-controller, remediation, agent-remediation]
-    consumers: []
+    consumers:
+      - service: dead-letter-controller
+        group: dead-letter-controller-outbox-dead-letters
+        const: DeadLetterControllerOutboxDeadLetters
 
   - name: consumer.dead_letter:v1
     const: ConsumerDeadLetterV1
-    description: Messages a stream consumer gave up on (a permanent error, or a transient error on its fifth delivery), written before the original is acknowledged. Operational DLQ, not a domain event.
+    description: Messages a stream consumer gave up on (a permanent error, or a transient error on its fifth delivery), written before the original is acknowledged. dead-letter-controller stores them for listing and redrive.
     producers: [state, orchestrator, execution-controller, release-controller, remediation, agent-remediation, topology-controller]
-    consumers: []
+    consumers:
+      - service: dead-letter-controller
+        group: dead-letter-controller-consumer-dead-letters
+        const: DeadLetterControllerConsumerDeadLetters
 
   # ---------------- cross-service fanout ----------------
 
@@ -435,6 +441,9 @@ vocabularies:
       - value: transient_exhausted
         const: TransientExhausted
         description: a retryable error persisted through the delivery or retry limit.
+      - value: trimmed
+        const: Trimmed
+        description: the stream's retention cap removed an entry a consumer group had not finished; dead-letter-controller stored it before the trim.
 
   - name: node_runtime
     const: NodeRuntime

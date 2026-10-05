@@ -860,13 +860,14 @@ func validate(c *Contract) error {
 	groupRe := regexp.MustCompile(`^[a-z][a-z0-9-]+$`)
 	identRe := regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	knownServices := map[string]struct{}{
-		"state":                {},
-		"orchestrator":         {},
-		"execution-controller": {},
-		"topology-controller":  {},
-		"release-controller":   {},
-		"remediation":          {},
-		"agent-remediation":    {},
+		"state":                  {},
+		"orchestrator":           {},
+		"execution-controller":   {},
+		"topology-controller":    {},
+		"release-controller":     {},
+		"remediation":            {},
+		"agent-remediation":      {},
+		"dead-letter-controller": {},
 	}
 
 	streamNames := map[string]int{}
