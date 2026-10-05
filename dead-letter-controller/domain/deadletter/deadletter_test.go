@@ -26,7 +26,9 @@ func TestCheckRedrive(t *testing.T) {
 		{"exactly at the horizon", open(t0.Add(-model.ReplayHorizon)), ErrExpired},
 		{"not redrivable", func() DeadLetter { d := open(t0); d.Redrivable = false; return d }(), ErrNotRedrivable},
 		{"already redriven and expired", func() DeadLetter {
-			d := open(t0.Add(-40 * 24 * time.Hour)); d.Status = StatusRedriven; return d
+			d := open(t0.Add(-40 * 24 * time.Hour))
+			d.Status = StatusRedriven
+			return d
 		}(), nil},
 	}
 	for _, c := range cases {

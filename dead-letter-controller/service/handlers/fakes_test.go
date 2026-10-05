@@ -172,8 +172,10 @@ func (u *fakeUoW) Rollback() error {
 	return nil
 }
 
-func (u *fakeUoW) DeadLetters() repository.DeadLetterRepository { return &txRepo{repo: u.repo, tx: u.tx} }
-func (u *fakeUoW) Outbox() outbox.Repository                   { return &txOutbox{tx: u.tx} }
+func (u *fakeUoW) DeadLetters() repository.DeadLetterRepository {
+	return &txRepo{repo: u.repo, tx: u.tx}
+}
+func (u *fakeUoW) Outbox() outbox.Repository { return &txOutbox{tx: u.tx} }
 
 // txRepo reads committed rows but buffers SaveRedrive in the transaction.
 type txRepo struct {

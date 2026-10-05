@@ -9,7 +9,9 @@ import (
 )
 
 // Query reads stored dead letters.
-type Query struct{ repo repository.DeadLetterRepository }
+type Query struct {
+	repo repository.DeadLetterRepository
+}
 
 func NewQuery(repo repository.DeadLetterRepository) *Query { return &Query{repo: repo} }
 
