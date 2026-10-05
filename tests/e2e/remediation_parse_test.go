@@ -125,6 +125,12 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 			prodNodes = append(prodNodes, map[string]string{"unique_id": n.uniqueID, "content_hash": n.contentHash})
 		}
 	}
+	// Tap the streams before the release is posted: the trim loop removes
+	// consumed entries, so the checks below read what the taps recorded.
+	rejectedTap := startStreamTap(t, ctx, clients.redisClient, streams.ReleaseRejectedV1)
+	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV2)
+	proposedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationProposedV1)
+
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
 	seedServiceProdExcept(t, ctx, clients, allServices, parseFixReleaseService)
@@ -189,15 +195,12 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 	assert.NotContains(t, parseRowDetail, "\x1b", "terminal escapes must not reach the per-node detail")
 
 	// 2. release.rejected:v1 carries stage=parse and the per-node kind/detail.
-	assertRejectedParseStage(t, ctx, clients, releaseID, filePath)
+	assertRejectedParseStage(t, ctx, rejectedTap, releaseID, filePath)
 
 	// 3. remediation.requested:v2 carries source=parse with the parser detail.
 	var trigger parseTriggerPayload
 	pollUntil(t, ctx, 4*time.Minute, 2*time.Second, func() (bool, error) {
-		msgs, err := clients.redisClient.XRange(ctx, streams.RemediationRequestedV2, "-", "+").Result()
-		if err != nil {
-			return false, nil
-		}
+		msgs := requestedTap.Entries()
 		for _, msg := range msgs {
 			raw, _ := msg.Values["payload"].(string)
 			var p parseTriggerPayload
@@ -248,7 +251,7 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 		row.Attempt, row.VerifyError, row.Verifications)
 	require.True(t, strings.HasSuffix(row.FilePath, filePath), "proposal file_path %q must end with %q", row.FilePath, filePath)
 	require.True(t, row.SourceResolved)
-	waitForRemediationProposed(t, ctx, clients, releaseID, ftableEUniqueID, 2*time.Minute)
+	waitForRemediationProposed(t, ctx, proposedTap, releaseID, ftableEUniqueID, 2*time.Minute)
 
 	// 5. The retry endpoint no longer refuses the reason as unhealable. With a
 	//    proposal already open it answers 409 for that reason instead.
@@ -386,13 +389,10 @@ type parseNodeEntry struct {
 // assertRejectedParseStage waits for this release's release.rejected:v1 and
 // checks the parse-leg shape: stage=parse, a per_node entry for ftable_e with
 // its kind, a detail free of terminal escapes, and the candidate's file path.
-func assertRejectedParseStage(t *testing.T, ctx context.Context, clients *testClients, releaseID, filePath string) {
+func assertRejectedParseStage(t *testing.T, ctx context.Context, rejectedTap *streamTap, releaseID, filePath string) {
 	t.Helper()
 	pollUntil(t, ctx, 2*time.Minute, 2*time.Second, func() (bool, error) {
-		msgs, err := clients.redisClient.XRange(ctx, streams.ReleaseRejectedV1, "-", "+").Result()
-		if err != nil {
-			return false, nil
-		}
+		msgs := rejectedTap.Entries()
 		for _, msg := range msgs {
 			raw, _ := msg.Values["payload"].(string)
 			var p struct {

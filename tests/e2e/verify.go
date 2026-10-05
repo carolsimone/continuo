@@ -84,16 +84,15 @@ func verifyJobsCompleted(
 func verifyDependencyControllerUnlockedNextLevel(
 	t *testing.T,
 	ctx context.Context,
-	clients *testClients,
+	queryModelTap *streamTap,
 	nextLevelTables []string,
 	scheduleID uuid.UUID,
 ) {
-	// Wait for query.model:v1 stream to contain messages for next level
+	// Wait for query.model:v1 to contain messages for next level. The tap saw every
+	// entry since before the run was triggered, so a trim of consumed entries
+	// cannot hide one.
 	pollUntil(t, ctx, 60*time.Second, 1*time.Second, func() (bool, error) {
-		messages, err := clients.redisClient.XRange(ctx, "query.model:v1", "-", "+").Result()
-		if err != nil {
-			return false, err
-		}
+		messages := queryModelTap.Entries()
 
 		// Count messages matching next level tables for this specific schedule
 		matchCount := 0
@@ -133,6 +132,7 @@ func verifyFullDAGExecution(
 	t *testing.T,
 	ctx context.Context,
 	clients *testClients,
+	queryModelTap *streamTap,
 	scheduleID uuid.UUID,
 ) {
 	levels := getDAGLevels()
@@ -148,7 +148,7 @@ func verifyFullDAGExecution(
 
 		// If not last level, verify orchestrator published next level
 		if i < len(levels)-1 {
-			verifyDependencyControllerUnlockedNextLevel(t, ctx, clients, levels[i+1], scheduleID)
+			verifyDependencyControllerUnlockedNextLevel(t, ctx, queryModelTap, levels[i+1], scheduleID)
 		}
 	}
 
@@ -201,19 +201,18 @@ func verifyDialectRouting(t *testing.T, ctx context.Context) {
 func verifyOrchestratorPublishedRootNodes(
 	t *testing.T,
 	ctx context.Context,
-	clients *testClients,
+	queryModelTap *streamTap,
 	schedulerID uuid.UUID,
 	expectedRootNodes []string,
 ) {
 	t.Helper()
 	expectedCount := len(expectedRootNodes)
 
-	// Wait for query.model:v1 to contain the expected messages
+	// Wait for query.model:v1 to contain the expected messages. The tap saw every
+	// entry since before the run was triggered, so a trim of consumed entries
+	// cannot hide one.
 	pollUntil(t, ctx, 60*time.Second, 500*time.Millisecond, func() (bool, error) {
-		messages, err := clients.redisClient.XRange(ctx, "query.model:v1", "-", "+").Result()
-		if err != nil {
-			return false, err
-		}
+		messages := queryModelTap.Entries()
 		count := 0
 		for _, msg := range messages {
 			if msg.Values["schedule_id"] == schedulerID.String() {
@@ -224,8 +223,7 @@ func verifyOrchestratorPublishedRootNodes(
 	}, fmt.Sprintf("Timeout waiting for %d messages in query.model:v1", expectedCount))
 
 	// Assert Redis message content and no duplicates
-	messages, err := clients.redisClient.XRange(ctx, "query.model:v1", "-", "+").Result()
-	require.NoError(t, err)
+	messages := queryModelTap.Entries()
 
 	var scheduleMessages []goredis.XMessage
 	for _, msg := range messages {

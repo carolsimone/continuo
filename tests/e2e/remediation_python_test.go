@@ -170,6 +170,11 @@ func TestE2E_PythonValidationFailure_VerifiedFix(t *testing.T) {
 	releaseID := "pyfix-" + uuid.NewString()[:8]
 	t.Logf("release_id=%s service=%s node=%s", releaseID, pyBadReadService, pyBadReadUniqueID)
 
+	// Tap the streams before the release is posted: the trim loop removes
+	// consumed entries, so the checks below read what the taps recorded.
+	proposedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationProposedV1)
+	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV2)
+
 	clearProd := rejectPythonFixtureRelease(t, ctx, clients,
 		pyBadReadService, pyBadReadContract, pyBadReadScript, releaseID)
 	defer clearProd()
@@ -228,7 +233,7 @@ func TestE2E_PythonValidationFailure_VerifiedFix(t *testing.T) {
 		"the fix must keep declaring the same node, not replace it with a different one")
 
 	// 5. The fix is announced for human review.
-	waitForRemediationProposed(t, ctx, clients, releaseID, pyBadReadUniqueID, pyRecordVisibleBudget)
+	waitForRemediationProposed(t, ctx, proposedTap, releaseID, pyBadReadUniqueID, pyRecordVisibleBudget)
 
 	// 6. Nothing from the verification run reached production. The proof that
 	//    the no-promote gate held is the run reaching "passed" above rather
@@ -247,7 +252,7 @@ func TestE2E_PythonValidationFailure_VerifiedFix(t *testing.T) {
 	//    trigger source, not as evidence. The anti-loop rule is proved where it
 	//    can actually be violated: the sibling test below, whose first
 	//    attempt's verification run genuinely fails.
-	assertNoRemediationTriggerFor(t, ctx, clients, runID)
+	assertNoRemediationTriggerFor(t, requestedTap, runID)
 
 	t.Log("✅ a rejected python node was repaired, verified by a real verification run, and proposed for review")
 }
@@ -296,6 +301,10 @@ func TestE2E_PythonValidationFailure_VerificationErrorFeedsNextAttempt(t *testin
 
 	releaseID := "pyloop-" + uuid.NewString()[:8]
 	t.Logf("release_id=%s service=%s node=%s", releaseID, pyLoopService, pyLoopUniqueID)
+
+	// Tap the streams before the release is posted: the trim loop removes
+	// consumed entries, so the checks below read what the taps recorded.
+	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV2)
 
 	clearProd := rejectPythonFixtureRelease(t, ctx, clients,
 		pyLoopService, pyLoopContract, pyLoopScript, releaseID)
@@ -353,8 +362,7 @@ func TestE2E_PythonValidationFailure_VerificationErrorFeedsNextAttempt(t *testin
 	require.NoError(t, clients.remediationDB.GetContext(ctx, &n,
 		`SELECT count(*) FROM classification_decision WHERE release_id = $1`, firstRunID))
 	require.Zero(t, n, "a verification run's failure must never reach the classifier")
-	msgs, err := clients.redisClient.XRange(ctx, streams.RemediationRequestedV2, "-", "+").Result()
-	require.NoError(t, err)
+	msgs := requestedTap.Entries()
 	for _, m := range msgs {
 		require.NotContains(t, m.Values["payload"], firstRunID, "no remediation trigger may name a verification run")
 	}
@@ -681,14 +689,11 @@ func assertPipelineNamedVerification(t *testing.T, ctx context.Context, clients 
 // event in one transaction, so its arrival is what proves the announcement was
 // not lost between the two.
 func waitForRemediationProposed(
-	t *testing.T, ctx context.Context, clients *testClients, releaseID, nodeID string, timeout time.Duration,
+	t *testing.T, ctx context.Context, proposedTap *streamTap, releaseID, nodeID string, timeout time.Duration,
 ) {
 	t.Helper()
 	pollUntil(t, ctx, timeout, 2*time.Second, func() (bool, error) {
-		msgs, err := clients.redisClient.XRange(ctx, streams.RemediationProposedV1, "-", "+").Result()
-		if err != nil {
-			return false, nil
-		}
+		msgs := proposedTap.Entries()
 		for _, msg := range msgs {
 			raw, _ := msg.Values["payload"].(string)
 			if raw == "" {
@@ -710,10 +715,9 @@ func waitForRemediationProposed(
 // given run. Called with a verification run id: a trigger for one would mean
 // a failed fix attempt had been handed back to the fixer as a fresh failure to
 // heal, which is a loop with no exit.
-func assertNoRemediationTriggerFor(t *testing.T, ctx context.Context, clients *testClients, runID string) {
+func assertNoRemediationTriggerFor(t *testing.T, requestedTap *streamTap, runID string) {
 	t.Helper()
-	msgs, err := clients.redisClient.XRange(ctx, streams.RemediationRequestedV2, "-", "+").Result()
-	require.NoError(t, err)
+	msgs := requestedTap.Entries()
 	for _, msg := range msgs {
 		raw, _ := msg.Values["payload"].(string)
 		if raw == "" {
@@ -793,6 +797,11 @@ func TestE2E_PythonParseFailure_VerifiedFix(t *testing.T) {
 	releaseID := "pyparse-" + uuid.NewString()[:8]
 	t.Logf("release_id=%s service=%s node=%s", releaseID, pyParseService, pyParseUniqueID)
 
+	// Tap the streams before the release is posted: the trim loop removes
+	// consumed entries, so the checks below read what the taps recorded.
+	rejectedTap := startStreamTap(t, ctx, clients.redisClient, streams.ReleaseRejectedV1)
+	proposedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationProposedV1)
+
 	clearProd := rejectPythonFixtureRelease(t, ctx, clients,
 		pyParseService, pyParseContract, pyParseScript, releaseID)
 	defer clearProd()
@@ -800,7 +809,7 @@ func TestE2E_PythonParseFailure_VerifiedFix(t *testing.T) {
 	// 1. The rejection is a parse-stage rejection naming the python node, with
 	//    the parser's detail inline and the node's kind on the entry — which is
 	//    what routes it to the python parse fixer before any read.
-	assertRejectedPythonParseStage(t, ctx, clients, releaseID)
+	assertRejectedPythonParseStage(t, ctx, rejectedTap, releaseID)
 
 	// 2. The fixer produced an attempt and parked it on a verification run.
 	verifying := waitForProposal(t, ctx, clients, releaseID, pyParseUniqueID, 1, "verifying", pyAttemptStartBudget)
@@ -837,7 +846,7 @@ func TestE2E_PythonParseFailure_VerifiedFix(t *testing.T) {
 		"the fix must keep declaring the same node, not replace it with a different one")
 
 	// 5. The fix is announced for human review, and nothing reached production.
-	waitForRemediationProposed(t, ctx, clients, releaseID, pyParseUniqueID, pyRecordVisibleBudget)
+	waitForRemediationProposed(t, ctx, proposedTap, releaseID, pyParseUniqueID, pyRecordVisibleBudget)
 	var prodRows int
 	require.NoError(t, clients.releaseDB.GetContext(ctx, &prodRows,
 		`SELECT count(*) FROM service_prod WHERE service_name = $1`, pyParseService))
@@ -851,13 +860,10 @@ func TestE2E_PythonParseFailure_VerifiedFix(t *testing.T) {
 // stage parse, reason unqualified_reference, one per-node entry carrying the
 // parser's detail inline, the script as file_path, the service, and
 // node_type=python-node.
-func assertRejectedPythonParseStage(t *testing.T, ctx context.Context, clients *testClients, releaseID string) {
+func assertRejectedPythonParseStage(t *testing.T, ctx context.Context, rejectedTap *streamTap, releaseID string) {
 	t.Helper()
 	pollUntil(t, ctx, pyRecordVisibleBudget, 2*time.Second, func() (bool, error) {
-		msgs, err := clients.redisClient.XRange(ctx, streams.ReleaseRejectedV1, "-", "+").Result()
-		if err != nil {
-			return false, nil
-		}
+		msgs := rejectedTap.Entries()
 		for _, msg := range msgs {
 			raw, _ := msg.Values["payload"].(string)
 			var p struct {

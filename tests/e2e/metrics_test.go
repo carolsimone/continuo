@@ -4,9 +4,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
+	"strconv"
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -36,6 +39,31 @@ func TestMetrics_GoServicesServePrometheusMetrics(t *testing.T) {
 			}
 		})
 	}
+}
+
+// trimLastSuccessPattern captures the sample value of the trim loop's
+// last-success gauge from Prometheus exposition text.
+var trimLastSuccessPattern = regexp.MustCompile(`(?m)^continuo_stream_trim_last_success_timestamp_seconds ([^\s]+)$`)
+
+// TestMetrics_DeadLetterControllerReportsStreamTrimming asserts the trim loop
+// dead-letter-controller runs is observable: the loop runs once at startup, so
+// its last-success gauge is positive, and every stream it bounds reports a
+// length, query.model:v1 among them.
+func TestMetrics_DeadLetterControllerReportsStreamTrimming(t *testing.T) {
+	host := getEnv("DEAD_LETTER_HOST", "dead-letter-controller")
+	var body string
+	require.Eventually(t, func() bool {
+		body = scrapeMetrics(t, host)
+		m := trimLastSuccessPattern.FindStringSubmatch(body)
+		if m == nil {
+			return false
+		}
+		v, err := strconv.ParseFloat(m[1], 64)
+		return err == nil && v > 0
+	}, 2*time.Minute, 2*time.Second,
+		"continuo_stream_trim_last_success_timestamp_seconds must be positive once the trim loop has run")
+
+	assert.Contains(t, body, fmt.Sprintf("continuo_stream_length{stream=%q}", streams.QueryModelV1))
 }
 
 // scrapeMetrics returns the Prometheus exposition text served by host.

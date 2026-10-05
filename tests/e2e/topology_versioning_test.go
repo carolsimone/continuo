@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/assert"
@@ -52,6 +53,11 @@ func TestTopologyVersioning_MidRunIsolation(t *testing.T) {
 	require.NoError(t, err, "failed to read topology_generation (G1) from topology_state")
 	t.Logf("G1 = %d", g1)
 
+	// Tap run.entries.dispatched:v1 before either run is triggered: state consumes
+	// it and the trim loop removes consumed entries, so steps 6 and 15 read what
+	// the tap recorded rather than the stream's history.
+	dispatchedTap := startStreamTap(t, ctx, clients.redisClient, streams.RunEntriesDispatchedV1)
+
 	// Step 5: Trigger Run 1 via the ui HTTP endpoint.
 	t.Log("=== Step 5: triggerScheduleHTTP — starting Run 1 (S1) ===")
 	scheduleID1Str := triggerScheduleHTTP(t, clients.uiBase, scheduleName)
@@ -64,19 +70,8 @@ func TestTopologyVersioning_MidRunIsolation(t *testing.T) {
 	// topology_generation has been stamped on its Run node in Neo4j.
 	t.Log("=== Step 6: waiting for run.entries.dispatched:v1 for S1 ===")
 
-	// Record the current last message ID so we only look at new messages.
-	dispatchedEntries, err := clients.redisClient.XRevRangeN(ctx, "run.entries.dispatched:v1", "+", "-", 1).Result()
-	lastDispatchedID := "0-0"
-	if err == nil && len(dispatchedEntries) > 0 {
-		lastDispatchedID = dispatchedEntries[0].ID
-	}
-
 	pollUntil(t, ctx, 2*time.Minute, time.Second, func() (bool, error) {
-		msgs, err := clients.redisClient.XRange(ctx, "run.entries.dispatched:v1", "("+lastDispatchedID, "+").Result()
-		if err != nil {
-			return false, nil
-		}
-		for _, msg := range msgs {
+		for _, msg := range dispatchedTap.Entries() {
 			payloadStr, _ := msg.Values["payload"].(string)
 			if payloadStr == "" {
 				continue
@@ -146,19 +141,8 @@ func TestTopologyVersioning_MidRunIsolation(t *testing.T) {
 	// Step 15: Wait for run.entries.dispatched:v1 for S2.
 	t.Log("=== Step 15: waiting for run.entries.dispatched:v1 for S2 ===")
 
-	// Record the current last message ID so we only look at new messages.
-	dispatchedEntries2, err := clients.redisClient.XRevRangeN(ctx, "run.entries.dispatched:v1", "+", "-", 1).Result()
-	lastDispatchedID2 := "0-0"
-	if err == nil && len(dispatchedEntries2) > 0 {
-		lastDispatchedID2 = dispatchedEntries2[0].ID
-	}
-
 	pollUntil(t, ctx, 2*time.Minute, time.Second, func() (bool, error) {
-		msgs, err := clients.redisClient.XRange(ctx, "run.entries.dispatched:v1", "("+lastDispatchedID2, "+").Result()
-		if err != nil {
-			return false, nil
-		}
-		for _, msg := range msgs {
+		for _, msg := range dispatchedTap.Entries() {
 			payloadStr, _ := msg.Values["payload"].(string)
 			if payloadStr == "" {
 				continue

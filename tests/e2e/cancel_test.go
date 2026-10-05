@@ -10,6 +10,7 @@ import (
 	"time"
 
 	orchestratorv1 "github.com/carolsimone/continuo/orchestrator/api/orchestrator/v1"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -50,6 +51,10 @@ func TestCancelMidwayAndRetrigger(t *testing.T) {
 
 	cleanupTestData(t, ctx, clients, testScheduleName)
 
+	// Tap query.model:v1 before anything is triggered: the trim loop removes
+	// consumed entries, so the root-node checks read what the tap recorded.
+	queryModelTap := startStreamTap(t, ctx, clients.redisClient, streams.QueryModelV1)
+
 	// ── Phase 1: Seed topology + trigger via UI endpoint ─────────────────────────
 	t.Log("Phase 1: seeding topology and triggering schedule via UI...")
 	seedTopology(t, ctx, clients)
@@ -58,7 +63,7 @@ func TestCancelMidwayAndRetrigger(t *testing.T) {
 	cancelledID, err := uuid.Parse(cancelledIDStr)
 	require.NoError(t, err)
 
-	verifyOrchestratorPublishedRootNodes(t, ctx, clients, cancelledID, []string{"seed_table_1", "seed_table_2", "seed_table_3"})
+	verifyOrchestratorPublishedRootNodes(t, ctx, queryModelTap, cancelledID, []string{"seed_table_1", "seed_table_2", "seed_table_3"})
 
 	level0 := []string{"seed_table_1", "seed_table_2", "seed_table_3"}
 	verifyExecutorDeployedJobs(t, ctx, clients, level0, testScheduleName)
@@ -94,7 +99,7 @@ func TestCancelMidwayAndRetrigger(t *testing.T) {
 	// Verify by schedule_id — two runs share the same schedule_name in the DB,
 	// so schedule_name-scoped queries would be ambiguous.
 	t.Log("Phase 4: verifying fresh run completes to SUCCEEDED...")
-	verifyOrchestratorPublishedRootNodes(t, ctx, clients, freshID, []string{"seed_table_1", "seed_table_2", "seed_table_3"})
+	verifyOrchestratorPublishedRootNodes(t, ctx, queryModelTap, freshID, []string{"seed_table_1", "seed_table_2", "seed_table_3"})
 
 	allTables := []string{
 		"seed_table_1", "seed_table_2", "seed_table_3",

@@ -98,6 +98,12 @@ func TestE2E_Remediation_CompileFailureProposesFix(t *testing.T) {
 	t.Logf("release_id=%s fixture_service=%s image_tag=%s", releaseID, fixtureService, fixtureImageTag)
 
 	// Clear any mid-flight release so AdvanceQueue can activate this one.
+	// Tap the remediation streams before the release is posted: the trim loop
+	// removes consumed entries, so the polls below read what the taps recorded.
+	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV2)
+	proposedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationProposedV1)
+	rejectedTap := startStreamTap(t, ctx, clients.redisClient, streams.ReleaseRejectedV1)
+
 	resetReleaseControllerQueue(t, ctx, clients)
 
 	// POST /releases for the fixture service. AdvanceQueue moves it
@@ -116,7 +122,7 @@ func TestE2E_Remediation_CompileFailureProposesFix(t *testing.T) {
 
 	// 3. release.rejected:v1 must carry stage=="compile" for this release — the
 	//    discriminator the remediation classifier maps to SourceCompile.
-	assertRejectedStageCompile(t, ctx, clients, releaseID)
+	assertRejectedStageCompile(t, ctx, rejectedTap, releaseID)
 
 	// 4. remediation.requested:v2 must be emitted with source=="compile" and an
 	//    entry carrying a non-empty file_path (derived by the classifier via
@@ -124,10 +130,7 @@ func TestE2E_Remediation_CompileFailureProposesFix(t *testing.T) {
 	//    service name.
 	var node compileNodeEntry
 	pollUntil(t, ctx, 4*time.Minute, 2*time.Second, func() (bool, error) {
-		msgs, err := clients.redisClient.XRange(ctx, streams.RemediationRequestedV2, "-", "+").Result()
-		if err != nil {
-			return false, nil
-		}
+		msgs := requestedTap.Entries()
 		for _, msg := range msgs {
 			raw, ok := msg.Values["payload"].(string)
 			if !ok || raw == "" {
@@ -184,10 +187,7 @@ func TestE2E_Remediation_CompileFailureProposesFix(t *testing.T) {
 	//    covers a whole second pipeline run.
 	var proposed remediationProposedPayload
 	pollUntil(t, ctx, 15*time.Minute, 3*time.Second, func() (bool, error) {
-		msgs, err := clients.redisClient.XRange(ctx, streams.RemediationProposedV1, "-", "+").Result()
-		if err != nil {
-			return false, nil
-		}
+		msgs := proposedTap.Entries()
 		for _, msg := range msgs {
 			raw, ok := msg.Values["payload"].(string)
 			if !ok || raw == "" {
@@ -275,13 +275,10 @@ func assertCompileRejection(t *testing.T, ctx context.Context, clients *testClie
 // assertRejectedStageCompile asserts the release.rejected:v1 event for releaseID
 // carries stage=="compile" — the discriminator the remediation classifier maps
 // to SourceCompile.
-func assertRejectedStageCompile(t *testing.T, ctx context.Context, clients *testClients, releaseID string) {
+func assertRejectedStageCompile(t *testing.T, ctx context.Context, rejectedTap *streamTap, releaseID string) {
 	t.Helper()
 	pollUntil(t, ctx, 2*time.Minute, 2*time.Second, func() (bool, error) {
-		msgs, err := clients.redisClient.XRange(ctx, streams.ReleaseRejectedV1, "-", "+").Result()
-		if err != nil {
-			return false, nil
-		}
+		msgs := rejectedTap.Entries()
 		for _, msg := range msgs {
 			raw, ok := msg.Values["payload"].(string)
 			if !ok || raw == "" {
