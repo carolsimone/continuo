@@ -3,8 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -13,10 +11,6 @@ import (
 	"github.com/carolsimone/continuo/dead-letter-controller/config"
 	"github.com/carolsimone/continuo/pkg/liveness"
 )
-
-func discardLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(io.Discard, nil))
-}
 
 // readiness and liveness build the two health handlers exactly as main wires
 // them through the HTTP adapter (readiness → /ready, liveness → /livez), so
