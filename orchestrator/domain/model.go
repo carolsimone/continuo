@@ -62,7 +62,7 @@ type ScheduleGraph struct {
 }
 
 // Outbox event_type routing keys for orchestrator_outbox rows. Each value is the
-// event_type stored on the row and matched by the publisher's payloadToValues
+// event_type stored on the row and matched by the publisher's Render
 // switch; defining them here (next to the payload structs) gives the emit site
 // (service/handlers) and the publisher adapter (adapters/publisher) one source of
 // truth. Values are the wire-stored event_type strings and must not change.

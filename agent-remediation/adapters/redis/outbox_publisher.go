@@ -29,38 +29,38 @@ var _ pkgoutbox.Publisher = (*agentRemediationOutboxPublisher)(nil)
 // The wire format uses a single "payload" field containing the JSON body,
 // consistent with how other service event consumers decode messages.
 func (p *agentRemediationOutboxPublisher) Publish(ctx context.Context, entry *pkgoutbox.Entry) error {
-	if entry.EventType == pkgoutbox.DeadLetterEventType {
-		// Dead-letter rows publish generically: their payload is already a flat
-		// scalar map (pkgoutbox.DeadLetterPayload), expanded via DeadLetterValues
-		// rather than nested under a single "payload" field like other events.
-		values, err := pkgoutbox.DeadLetterValues(entry)
-		if err != nil {
-			// Our own payload; a decode failure here is deterministic, never transient.
-			return fmt.Errorf("%w: dead-letter values: %v", pkgevents.ErrPermanent, err)
-		}
-		if _, err := p.redis.XAdd(ctx, &goredis.XAddArgs{
-			Stream: entry.StreamName,
-			MaxLen: 10000,
-			Approx: true,
-			Values: values,
-		}).Result(); err != nil {
-			return fmt.Errorf("xadd to %s: %w", entry.StreamName, err)
-		}
-		return nil
+	values, err := p.Render(entry)
+	if err != nil {
+		return err
 	}
-	_, err := p.redis.XAdd(ctx, &goredis.XAddArgs{
+	values["outbox_entry_id"] = entry.ID.String()
+	if _, err := p.redis.XAdd(ctx, &goredis.XAddArgs{
 		Stream: entry.StreamName,
 		MaxLen: 10000,
 		Approx: true,
-		Values: map[string]any{
-			"outbox_entry_id": entry.ID.String(),
-			"payload":         string(entry.Payload),
-		},
-	}).Result()
-	if err != nil {
+		Values: values,
+	}).Result(); err != nil {
 		return fmt.Errorf("xadd to %s: %w", entry.StreamName, err)
 	}
 	return nil
+}
+
+var _ pkgoutbox.Renderer = (*agentRemediationOutboxPublisher)(nil)
+
+// Render returns the field map Publish XADDs for entry, without
+// outbox_entry_id: a dead-letter row's scalar fields, or the row's JSON body as
+// the single "payload" field. Every call returns a fresh map.
+func (p *agentRemediationOutboxPublisher) Render(entry *pkgoutbox.Entry) (map[string]any, error) {
+	if entry.EventType == pkgoutbox.DeadLetterEventType {
+		values, err := pkgoutbox.DeadLetterValues(entry)
+		if err != nil {
+			// Our own payload; a decode failure here is deterministic, never transient.
+			return nil, fmt.Errorf("%w: dead-letter values: %v", pkgevents.ErrPermanent, err)
+		}
+		delete(values, "outbox_entry_id")
+		return values, nil
+	}
+	return map[string]any{"payload": string(entry.Payload)}, nil
 }
 
 // outboxHeartbeatStale is the liveness budget for the outbox processor's Run

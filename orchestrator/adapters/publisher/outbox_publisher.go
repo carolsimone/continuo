@@ -79,7 +79,7 @@ func (p *OutboxPublisher) PublishBatch(ctx context.Context, entries []*outbox.En
 // xaddArgs builds the XADD arguments for one entry, including the shared MaxLen
 // cap so single and batched publishes trim identically.
 func (p *OutboxPublisher) xaddArgs(entry *outbox.Entry) (*goredis.XAddArgs, error) {
-	values, err := p.payloadToValues(entry)
+	values, err := p.publishValues(entry)
 	if err != nil {
 		return nil, err
 	}
@@ -91,16 +91,29 @@ func (p *OutboxPublisher) xaddArgs(entry *outbox.Entry) (*goredis.XAddArgs, erro
 	}, nil
 }
 
-// PayloadToValuesForTest is a test-only accessor that exposes payloadToValues
+// PayloadToValuesForTest is a test-only accessor that exposes publishValues
 // for white-box unit tests without requiring a live Redis client.
 func (p *OutboxPublisher) PayloadToValuesForTest(entry *outbox.Entry) (map[string]interface{}, error) {
-	return p.payloadToValues(entry)
+	return p.publishValues(entry)
 }
 
-// payloadToValues builds the Redis stream field map for each known event type.
-// The logic is identical to the former orchestrator outbox processor's switch,
-// moved here without behavioral change.
-func (p *OutboxPublisher) payloadToValues(entry *outbox.Entry) (map[string]interface{}, error) {
+// publishValues returns the full XADD field map for entry: its rendered fields
+// plus outbox_entry_id, so consumer-side pkg/messageprocessing.DedupWithOutboxEntryID
+// catches a row republished with a fresh Redis message id.
+func (p *OutboxPublisher) publishValues(entry *outbox.Entry) (map[string]interface{}, error) {
+	values, err := p.Render(entry)
+	if err != nil {
+		return nil, err
+	}
+	values["outbox_entry_id"] = entry.ID.String()
+	return values, nil
+}
+
+var _ outbox.Renderer = (*OutboxPublisher)(nil)
+
+// Render returns the field map Publish XADDs for entry, without
+// outbox_entry_id, for each known event type. Every call returns a fresh map.
+func (p *OutboxPublisher) Render(entry *outbox.Entry) (map[string]any, error) {
 	switch entry.EventType {
 	case outbox.DeadLetterEventType:
 		// Dead-letter rows publish generically: their payload is already a flat
@@ -111,6 +124,7 @@ func (p *OutboxPublisher) payloadToValues(entry *outbox.Entry) (map[string]inter
 			// Our own payload; a decode failure here is deterministic, never transient.
 			return nil, fmt.Errorf("%w: dead-letter values: %v", pkgevents.ErrPermanent, err)
 		}
+		delete(values, "outbox_entry_id")
 		return values, nil
 
 	case domain.EventTypeNodeReadyForExecution:
@@ -120,16 +134,15 @@ func (p *OutboxPublisher) payloadToValues(entry *outbox.Entry) (map[string]inter
 		}
 		evt := dto.ToDomain()
 		values := map[string]interface{}{
-			"outbox_entry_id": entry.ID.String(),
-			"schedule_id":     evt.ScheduleID,
-			"schedule_name":   evt.ScheduleName,
-			"service_name":    evt.ServiceName,
-			"schema_name":     evt.SchemaName,
-			"table_name":      evt.TableName,
-			"task_id":         evt.TaskID,
-			"job_name":        evt.JobName,
-			"node_type":       evt.NodeType,
-			"image_tag":       evt.ImageTag,
+			"schedule_id":   evt.ScheduleID,
+			"schedule_name": evt.ScheduleName,
+			"service_name":  evt.ServiceName,
+			"schema_name":   evt.SchemaName,
+			"table_name":    evt.TableName,
+			"task_id":       evt.TaskID,
+			"job_name":      evt.JobName,
+			"node_type":     evt.NodeType,
+			"image_tag":     evt.ImageTag,
 		}
 		// Operation is carried only for non-default dispatches (e.g. "test"): the
 		// executor uses it to pick the dbt verb instead of the NodeType default.
@@ -159,17 +172,13 @@ func (p *OutboxPublisher) payloadToValues(entry *outbox.Entry) (map[string]inter
 			Status:     "skipped",
 			RetryCount: 0,
 		}.ToMap()
-		values["outbox_entry_id"] = entry.ID.String()
 		return values, nil
 
 	case domain.EventTypeRunEntriesDispatched, domain.EventTypeRunEntriesDispatchFailed,
 		domain.EventTypeReleasePromoted, domain.EventTypeReleaseSeedsPending:
 		// These event types carry a self-contained JSON payload that downstream
 		// consumers decode directly from the "payload" field.
-		return map[string]interface{}{
-			"outbox_entry_id": entry.ID.String(),
-			"payload":         string(entry.Payload),
-		}, nil
+		return map[string]interface{}{"payload": string(entry.Payload)}, nil
 
 	default:
 		// Unknown event_type is retried, not dead-lettered: during a rolling
