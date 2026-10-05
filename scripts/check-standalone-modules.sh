@@ -22,6 +22,8 @@ set -uo pipefail
 
 REPO_ROOT="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 DEPLOY_WORKFLOW="${REPO_ROOT}/.github/workflows/deploy.yml"
+# pkg is kept even though no deploy.yml build context builds it standalone now:
+# it keeps pkg buildable outside the workspace, which the CI warm step relies on.
 MODULES="pkg"
 fail=0
 

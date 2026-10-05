@@ -103,8 +103,8 @@ redis:
 externalRedis:
   host: ""
   port: 6379
-  # Synthesized into redis://:$(REDIS_PASSWORD)@host:port for ui,
-  # topology-controller, and stream-reaper. A password containing URL-reserved
+  # Synthesized into redis://:$(REDIS_PASSWORD)@host:port for ui
+  # and topology-controller. A password containing URL-reserved
   # characters (@, :, /) breaks that URL; use a URL-safe password, or set
   # existingSecret with a URL-safe value instead.
   password: ""
@@ -397,11 +397,13 @@ database:
     maxOpenConns: 0
     maxIdleConns: 0
 
-# CronJob that trims Redis Stream entries older than `retention`. It never trims
-# outbox.dead_letter:v1 or consumer.dead_letter:v1: dead-letter-controller
-# consumes both and stores every entry in continuo_dead_letter, so an operator
-# lists, inspects and redrives dead letters with `continuo dlq` instead of
-# reading the streams.
+# Stream trimming, run every 5 minutes by dead-letter-controller. Each stream is
+# trimmed up to the oldest entry any of its consumer groups still needs.
+# Entries older than `retention` that a lagging group still needs are first
+# stored as dead letters (`continuo dlq list quarantine`), then trimmed; they
+# can be redriven for 30 days. `retention` must lie between 0 and 720h.
+# `enabled: false` stops trimming, and streams then grow without bound.
+# `schedule` is accepted for compatibility and ignored.
 streamReaper:
   enabled: true
   schedule: "0 3 * * *"

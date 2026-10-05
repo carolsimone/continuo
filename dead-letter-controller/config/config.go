@@ -2,9 +2,13 @@
 package config
 
 import (
+	"fmt"
+	"os"
+	"strconv"
 	"time"
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 // ServiceName names this service as the producer of the dead letters its
@@ -12,6 +16,14 @@ import (
 const ServiceName = "dead-letter-controller"
 
 const defaultShutdownGrace = 15 * time.Second
+
+const (
+	// defaultTrimEnabled turns the stream trim loop on when STREAM_TRIM_ENABLED is unset.
+	defaultTrimEnabled = true
+	// defaultStreamRetention is how long a stream entry that a lagging consumer
+	// group still needs is kept before it is quarantined, when STREAM_RETENTION is unset.
+	defaultStreamRetention = 72 * time.Hour
+)
 
 // Config is dead-letter-controller's configuration.
 type Config struct {
@@ -21,16 +33,71 @@ type Config struct {
 	HTTPPort      string
 	MetricsPort   int
 	ShutdownGrace time.Duration
+
+	// TrimEnabled turns the stream trim loop on (STREAM_TRIM_ENABLED).
+	TrimEnabled bool
+	// StreamRetention is the age past which a stream entry a lagging group
+	// still needs is quarantined as a dead letter and then trimmed (STREAM_RETENTION).
+	StreamRetention time.Duration
+	// ConfigErr is the first trim setting that could not be parsed. Validate
+	// returns it, so the service refuses to start rather than fall back to a default.
+	ConfigErr error
 }
 
-// Load reads the configuration; v accumulates missing required variables.
+// Load reads the configuration; v accumulates missing required variables. A
+// trim setting that is set but unparseable is recorded in Config.ConfigErr.
 func Load(v *pkgconfig.Validator) Config {
-	return Config{
-		Redis:         pkgconfig.LoadRedis(v),
-		Postgres:      pkgconfig.LoadPostgres(v),
-		GRPCPort:      pkgconfig.EnvIntOrDefault("DEAD_LETTER_GRPC_PORT", 50055),
-		HTTPPort:      pkgconfig.EnvOrDefault("DEAD_LETTER_HTTP_PORT", "8096"),
-		MetricsPort:   pkgconfig.LoadMetricsPort(v),
-		ShutdownGrace: pkgconfig.EnvDurationOrDefault("SHUTDOWN_GRACE", defaultShutdownGrace),
+	trimEnabled, enabledErr := parseBool("STREAM_TRIM_ENABLED", defaultTrimEnabled)
+	retention, retentionErr := parseDuration("STREAM_RETENTION", defaultStreamRetention)
+	cfgErr := enabledErr
+	if cfgErr == nil {
+		cfgErr = retentionErr
 	}
+	return Config{
+		Redis:           pkgconfig.LoadRedis(v),
+		Postgres:        pkgconfig.LoadPostgres(v),
+		GRPCPort:        pkgconfig.EnvIntOrDefault("DEAD_LETTER_GRPC_PORT", 50055),
+		HTTPPort:        pkgconfig.EnvOrDefault("DEAD_LETTER_HTTP_PORT", "8096"),
+		MetricsPort:     pkgconfig.LoadMetricsPort(v),
+		ShutdownGrace:   pkgconfig.EnvDurationOrDefault("SHUTDOWN_GRACE", defaultShutdownGrace),
+		TrimEnabled:     trimEnabled,
+		StreamRetention: retention,
+		ConfigErr:       cfgErr,
+	}
+}
+
+// Validate reports a setting the service cannot honour: an unparseable trim
+// setting, or a retention outside (0, model.ReplayHorizon].
+func (c Config) Validate() error {
+	if c.ConfigErr != nil {
+		return c.ConfigErr
+	}
+	if c.StreamRetention <= 0 || c.StreamRetention > model.ReplayHorizon {
+		return fmt.Errorf("STREAM_RETENTION must be in (0, %dh]: entries quarantined past the replay horizon could never be redriven", int(model.ReplayHorizon.Hours()))
+	}
+	return nil
+}
+
+func parseBool(key string, fallback bool) (bool, error) {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback, nil
+	}
+	b, err := strconv.ParseBool(raw)
+	if err != nil {
+		return fallback, fmt.Errorf("%s: invalid boolean %q", key, raw)
+	}
+	return b, nil
+}
+
+func parseDuration(key string, fallback time.Duration) (time.Duration, error) {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return fallback, fmt.Errorf("%s: invalid duration %q", key, raw)
+	}
+	return d, nil
 }

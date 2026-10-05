@@ -122,8 +122,6 @@ jobs:
               - 'db/**'
             s3_sidecar:
               - 's3-sidecar/**'
-            stream_reaper:
-              - 'pkg/**'
 
       - name: Build publish matrix
         id: matrix
@@ -140,7 +138,6 @@ jobs:
           DEAD_LETTER_CONTROLLER_CHANGED: ${{ steps.filter.outputs.dead_letter_controller }}
           MIGRATIONS_CHANGED: ${{ steps.filter.outputs.migrations }}
           S3_SIDECAR_CHANGED: ${{ steps.filter.outputs.s3_sidecar }}
-          STREAM_REAPER_CHANGED: ${{ steps.filter.outputs.stream_reaper }}
         run: |
           matrix="$(
             jq -cn \
@@ -156,7 +153,6 @@ jobs:
               --arg dead_letter_controller "$DEAD_LETTER_CONTROLLER_CHANGED" \
               --arg migrations "$MIGRATIONS_CHANGED" \
               --arg s3_sidecar "$S3_SIDECAR_CHANGED" \
-              --arg stream_reaper "$STREAM_REAPER_CHANGED" \
               '{
                 include: [
                   {service: "state", changed: $state, dockerfile: "state/Dockerfile.prod", context: "."},
@@ -170,8 +166,7 @@ jobs:
                   {service: "agent-remediation", changed: $agent_remediation, dockerfile: "agent-remediation/Dockerfile.prod", context: "."},
                   {service: "dead-letter-controller", changed: $dead_letter_controller, dockerfile: "dead-letter-controller/Dockerfile.prod", context: "."},
                   {service: "migrations", changed: $migrations, dockerfile: "db/Dockerfile.migrate", context: "db"},
-                  {service: "s3-sidecar", changed: $s3_sidecar, dockerfile: "s3-sidecar/Dockerfile", context: "s3-sidecar"},
-                  {service: "stream-reaper", changed: $stream_reaper, dockerfile: "pkg/cmd/stream-reaper/Dockerfile", context: "pkg"}
+                  {service: "s3-sidecar", changed: $s3_sidecar, dockerfile: "s3-sidecar/Dockerfile", context: "s3-sidecar"}
                 ]
               }'
           )"

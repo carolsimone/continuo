@@ -1,7 +1,7 @@
 {{- if .Values.redis.enabled }}
 # Quickstart Redis: single instance, AOF persistence, noeviction (this Redis
 # holds event streams and auth sessions — data loss on eviction is worse than
-# a full-memory error; streams are bounded by the stream-reaper CronJob).
+# a full-memory error; streams are bounded by dead-letter-controller's trim loop).
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:

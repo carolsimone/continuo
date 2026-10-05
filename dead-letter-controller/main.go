@@ -16,6 +16,7 @@ import (
 	"github.com/carolsimone/continuo/dead-letter-controller/config"
 	"github.com/carolsimone/continuo/dead-letter-controller/service/handlers"
 	"github.com/carolsimone/continuo/dead-letter-controller/service/ports"
+	"github.com/carolsimone/continuo/dead-letter-controller/service/trimmer"
 	"github.com/carolsimone/continuo/dead-letter-controller/service/uow"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	pkgdb "github.com/carolsimone/continuo/pkg/db"
@@ -50,6 +51,10 @@ func main() {
 	cfg := config.Load(v)
 	if missing := v.Missing(); len(missing) > 0 {
 		logger.Error("missing required env vars", "vars", strings.Join(missing, ", "))
+		os.Exit(1)
+	}
+	if err := cfg.Validate(); err != nil {
+		logger.Error("invalid configuration", "error", err)
 		os.Exit(1)
 	}
 
@@ -234,6 +239,25 @@ func main() {
 		streams.DeadLetterControllerConsumerDeadLetters, consumerBinding.Handle, logger, pkgredis.WithoutDeadLetters()))
 	runConsumer("outbox_dead_letters", pkgredis.NewStreamConsumer(redisClient, streams.OutboxDeadLetterV1,
 		streams.DeadLetterControllerOutboxDeadLetters, outboxBinding.Handle, logger, pkgredis.WithoutDeadLetters()))
+
+	// Stream trim loop. Every stream consumer group the contract declares is
+	// watched for lag, and the loop trims each stream to what its groups still
+	// need. It holds a Postgres advisory lock, so only one replica trims at a time.
+	// Watch is idempotent, so the service's own two groups registered above are harmless to repeat.
+	for stream, groups := range streams.Groups {
+		for _, g := range groups {
+			metricsReg.Consumers().Watch(stream, g)
+		}
+	}
+	dlmetrics.WatchStreams(metricsReg, redisClient, streams.All)
+	trimObs := dlmetrics.NewTrim(metricsReg, obs)
+	if cfg.TrimEnabled {
+		t := trimmer.New(trimmer.Config{Retention: cfg.StreamRetention, Groups: streams.Groups, Retired: streams.Retired},
+			redisadapter.NewStreamInspector(redisClient), repo, postgres.NewAdvisoryLock(db), clock, trimObs, logger)
+		lifecycleManager.Go(func() { t.Run(ctx, trimmer.Interval) })
+	} else {
+		logger.Warn("Stream trimming is disabled (STREAM_TRIM_ENABLED=false): streams grow until trimmed by hand")
+	}
 
 	// gRPC server. Serve runs in a plain goroutine the drain step does not wait
 	// on; the shutdown handler stops it. Wrapping Start in a tracked
