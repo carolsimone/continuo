@@ -24,6 +24,7 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/service/watchdog"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	pkgdb "github.com/carolsimone/continuo/pkg/db"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/lifecycle"
 	"github.com/carolsimone/continuo/pkg/liveness"
 	pkgmessageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
@@ -297,16 +298,19 @@ func main() {
 	//
 	// Keeps the two unbounded-growth tables in check: processed
 	// orchestrator_outbox rows and terminal message_processing dedup rows (the
-	// latter retains a full payload per consumed message). Both are pruned past
-	// the retention window on the same timer using DB-clock cutoffs.
+	// latter retains a full payload per consumed message). Processed outbox rows
+	// are kept RETENTION_DAYS; terminal dedup rows are kept at least 30 days (the
+	// replay horizon), longer when RETENTION_DAYS is longer. Both are pruned on
+	// the same timer using DB-clock cutoffs.
 
 	mpPruner := pkgmessageprocessing.NewPruner(pgDB, postgres.OutboxTable, logger)
 	retentionSweeper := pkgoutbox.NewRetentionSweeper(
 		[]pkgoutbox.RetentionTarget{
 			pkgoutbox.OutboxRetentionTarget(pgDB, postgres.OutboxTable, logger),
 			{
-				Name:  "message_processing",
-				Prune: mpPruner.DeleteTerminalOlderThan,
+				Name:         "message_processing",
+				Prune:        mpPruner.DeleteTerminalOlderThan,
+				MinRetention: model.ReplayHorizon,
 			},
 		},
 		pkgoutbox.RetentionConfig{
