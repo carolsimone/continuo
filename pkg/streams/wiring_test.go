@@ -110,6 +110,7 @@ var streamLiteralScanDirs = []string{
 	"release-controller/service/handlers",
 	"remediation/adapters/redis",
 	"agent-remediation/adapters/redis",
+	"dead-letter-controller/adapters/redis",
 	"pkg/redis",
 	"pkg/events",
 	"pkg/outbox",
