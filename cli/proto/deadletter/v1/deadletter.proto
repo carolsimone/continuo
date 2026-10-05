@@ -1,0 +1,81 @@
+syntax = "proto3";
+
+package deadletter.v1;
+
+option go_package = "github.com/carolsimone/continuo/cli/proto/deadletter/v1;deadletterv1";
+
+// DeadLetterService lists, shows and redrives stored dead letters: stream
+// messages a consumer group gave up on, outbox rows a relay could not
+// publish, and stream entries the retention cap removed before a group
+// finished them. Times are RFC 3339 strings in UTC.
+service DeadLetterService {
+  // ListDeadLetters returns dead letters, newest first. Empty filters match
+  // all; status defaults to "open"; limit defaults to 50 and is capped at 500.
+  rpc ListDeadLetters(ListDeadLettersRequest) returns (ListDeadLettersResponse);
+  // GetDeadLetter returns one dead letter with its fields. NOT_FOUND for an
+  // unknown id.
+  rpc GetDeadLetter(GetDeadLetterRequest) returns (GetDeadLetterResponse);
+  // RedriveDeadLetters republishes every listed dead letter to its original
+  // stream, or none: NOT_FOUND for an unknown id, FAILED_PRECONDITION for one
+  // past the 30-day replay horizon or without fields to publish,
+  // INVALID_ARGUMENT for no ids or a blank reason. A dead letter already
+  // redriven is returned unchanged. The caller's identity is read from the
+  // x-continuo-user-id metadata.
+  rpc RedriveDeadLetters(RedriveDeadLettersRequest) returns (RedriveDeadLettersResponse);
+}
+
+message DeadLetter {
+  string id = 1;
+  string source = 2;              // consumer | outbox | quarantine
+  string failure_kind = 3;        // permanent | transient_exhausted | trimmed
+  string stream = 4;
+  string consumer_group = 5;      // empty for an outbox dead letter
+  string original_message_id = 6; // empty for an outbox dead letter
+  string producer = 7;
+  string error = 8;
+  int64 delivery_count = 9;
+  string original_at = 10;
+  string recorded_at = 11;
+  string expires_at = 12;
+  string status = 13;             // open | redriven
+  bool redrivable = 14;
+  Redrive redrive = 15;           // set when status is redriven
+}
+
+message Redrive {
+  string actor = 1;
+  string reason = 2;
+  string at = 3;
+}
+
+message ListDeadLettersRequest {
+  string source = 1;
+  string stream = 2;
+  string status = 3;
+  int32 limit = 4;
+}
+
+message ListDeadLettersResponse {
+  repeated DeadLetter dead_letters = 1;
+  int64 total_open = 2;
+}
+
+message GetDeadLetterRequest {
+  string id = 1;
+}
+
+message GetDeadLetterResponse {
+  DeadLetter dead_letter = 1;
+  map<string, string> fields = 2;
+  string original_event_type = 3;
+  string failed_outbox_id = 4;
+}
+
+message RedriveDeadLettersRequest {
+  repeated string ids = 1;
+  string reason = 2;
+}
+
+message RedriveDeadLettersResponse {
+  repeated DeadLetter dead_letters = 1;
+}

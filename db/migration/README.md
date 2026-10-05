@@ -9,6 +9,7 @@ db/migration/
 ├── state/         State service (scheduler_tracker, task_tracker, task_execution)
 ├── execution/     Execution-controller (message_processing, execution_outbox, cancelled_schedules, deployments, validation_aggregates)
 ├── dependency/    Dependency-controller (outbox, message_processing, published_messages)
+├── dead_letter/   Dead-letter-controller (dead_letters, dead_letter_outbox)
 ```
 
 ## Database Mapping
@@ -18,6 +19,7 @@ db/migration/
 | State | continuo_state | scheduler_tracker, task_tracker, task_execution |
 | Execution-controller | continuo_execution | message_processing, execution_outbox, cancelled_schedules, deployments, validation_aggregates |
 | Dependency-controller | continuo_dependency | outbox, message_processing, published_messages |
+| Dead-letter-controller | continuo_dead_letter | dead_letters, dead_letter_outbox |
 
 ## Running Migrations
 
@@ -34,6 +36,7 @@ docker-compose up -d postgres          # Start Postgres
 docker-compose up flyway-state         # Run state migrations
 docker-compose up flyway-execution     # Run execution migrations
 docker-compose up flyway-dependency    # Run dependency migrations
+docker-compose up flyway-dead-letter   # Run dead-letter migrations
 ```
 
 Or run all services:

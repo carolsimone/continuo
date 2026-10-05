@@ -477,7 +477,7 @@ def test_permanent_dead_letter_records_at_least_one_delivery_when_xpending_fails
         else:
             r.xpending_range.return_value = outcome
         c = _dl_consumer(_raising(PermanentMessageError("bad")), r)
-        c._dispatch(b"1-0", {})
+        c._dispatch(b"1-0", {b"k": b"v"})
         payload = json.loads(r.xadd.call_args[0][1]["payload"])
         assert payload["failure_kind"] == DeadLetterKind.PERMANENT
         assert payload["delivery_count"] == 1
@@ -491,7 +491,7 @@ def test_dead_letter_write_failure_keeps_message_pending(monkeypatch, caplog):
     r.xadd.side_effect = [redis_exceptions.ConnectionError("down"), redis_exceptions.ConnectionError("down"), b"9-0"]
     c = _dl_consumer(_raising(PermanentMessageError("bad")), r)
     with caplog.at_level(logging.ERROR):
-        c._dispatch(b"1-0", {})
+        c._dispatch(b"1-0", {b"k": b"v"})
     calls = _names(r)
     assert calls.count("xadd") == 3
     assert calls[-1] == "xack" and calls.count("xack") == 1
@@ -504,7 +504,7 @@ def test_transient_error_dead_letters_on_the_fifth_delivery(monkeypatch):
         r = MagicMock()
         r.xpending_range.return_value = [{"times_delivered": delivered}]
         c = _dl_consumer(_raising(RuntimeError("flaky")), r)
-        c._dispatch(b"1-0", {})
+        c._dispatch(b"1-0", {b"k": b"v"})
         assert r.xadd.called is dead_lettered
         assert r.xack.called is dead_lettered
         if dead_lettered:
@@ -531,7 +531,7 @@ def test_infrastructure_error_pauses_without_counting(monkeypatch):
 
     c._pause = spy
     _in_hand(c, b"1-0")
-    c._dispatch(b"1-0", {})
+    c._dispatch(b"1-0", {b"k": b"v"})
     assert delays == [1.0, 2.0], "each consecutive outage waits twice as long"
     delivery_count_reads = [
         call for call in r.xpending_range.call_args_list
@@ -555,7 +555,7 @@ def test_dead_letter_write_retries_never_rerun_the_handler(monkeypatch):
         calls.append(fields)
         raise PermanentMessageError("bad")
 
-    _dl_consumer(handler, r)._dispatch(b"1-0", {})
+    _dl_consumer(handler, r)._dispatch(b"1-0", {b"k": b"v"})
     assert len(calls) == 1
     assert r.xadd.call_count == 2
 
@@ -577,7 +577,7 @@ def test_unreadable_delivery_count_never_dead_letters_a_transient_failure(monkey
     _defang_sleep(monkeypatch)
     r = MagicMock()
     r.xpending_range.side_effect = redis_exceptions.ConnectionError("down")
-    _dl_consumer(_raising(RuntimeError("flaky")), r)._dispatch(b"1-0", {})
+    _dl_consumer(_raising(RuntimeError("flaky")), r)._dispatch(b"1-0", {b"k": b"v"})
     assert not r.xadd.called and not r.xack.called
 
 
@@ -607,7 +607,7 @@ def test_dead_letter_is_stamped_from_the_injected_clock(monkeypatch):
     at = datetime(2026, 10, 3, 12, 0, 0, tzinfo=timezone.utc)
     c = Consumer(r, _STREAM, _GROUP, _raising(PermanentMessageError("bad")),
                  service_name=_SERVICE_NAME, clock=lambda: at)
-    c._dispatch(b"1-0", {})
+    c._dispatch(b"1-0", {b"k": b"v"})
     assert r.xadd.call_args[0][1]["occurred_at"] == "2026-10-03T12:00:00.000000Z"
 
 
@@ -688,7 +688,7 @@ def test_failed_ack_is_logged(caplog):
     r.xack.side_effect = redis_exceptions.ConnectionError("down")
     c = _dl_consumer(lambda f: None, r)
     with caplog.at_level(logging.ERROR):
-        c._dispatch(b"1-0", {})
+        c._dispatch(b"1-0", {b"k": b"v"})
     assert "Could not ACK message 1-0" in caplog.text
     assert "Message ACKed" not in caplog.text
 
@@ -919,6 +919,37 @@ def test_dead_letter_error_keeps_the_exception_type(monkeypatch, caplog):
     r = MagicMock()
     r.xpending_range.return_value = [{"times_delivered": 5}]
     with caplog.at_level(logging.ERROR):
-        _dl_consumer(_raising(KeyError("s3_uri")), r)._dispatch(b"1-0", {})
+        _dl_consumer(_raising(KeyError("s3_uri")), r)._dispatch(b"1-0", {b"k": b"v"})
     assert json.loads(r.xadd.call_args[0][1]["payload"])["error"] == "KeyError: 's3_uri'"
     assert "error=KeyError: 's3_uri'" in caplog.text
+
+
+# --- redriven and empty entries ---------------------------------------------
+
+
+def test_dispatch_acks_redrive_for_other_group_without_handler():
+    r = MagicMock()
+    handler = MagicMock()
+    c = _dl_consumer(handler, r)
+    c._dispatch(b"9-0", {b"k": b"v", b"redrive_group": b"other"})
+    handler.assert_not_called()
+    r.xack.assert_called_once_with(_STREAM, _GROUP, b"9-0")
+
+
+def test_dispatch_hands_the_handler_the_original_fields_of_a_redrive_for_this_group():
+    r = MagicMock()
+    handler = MagicMock()
+    c = _dl_consumer(handler, r)
+    c._dispatch(b"9-1", {b"k": b"v", b"redrive_group": _GROUP.encode(), b"redriven_from": b"dl-1"})
+    handler.assert_called_once_with({b"k": b"v"})
+    r.xack.assert_called_once_with(_STREAM, _GROUP, b"9-1")
+
+
+@pytest.mark.parametrize("msg_id, fields", [(b"8-0", {}), (b"8-1", None)])
+def test_dispatch_acks_empty_entry_without_handler(msg_id, fields):
+    r = MagicMock()
+    handler = MagicMock()
+    c = _dl_consumer(handler, r)
+    c._dispatch(msg_id, fields)
+    handler.assert_not_called()
+    r.xack.assert_called_once_with(_STREAM, _GROUP, msg_id)

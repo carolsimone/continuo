@@ -2,7 +2,7 @@
 # Source: pkg/streams/contract.yaml
 
 CONSUMER_DEAD_LETTER_V1 = "consumer.dead_letter:v1"
-"""Messages a stream consumer gave up on (a permanent error, or a transient error on its fifth delivery), written before the original is acknowledged. Operational DLQ, not a domain event."""
+"""Messages a stream consumer gave up on (a permanent error, or a transient error on its fifth delivery), written before the original is acknowledged. dead-letter-controller stores them for listing and redrive."""
 
 RELEASE_REQUESTED_V1 = "release.requested:v1"
 """Candidate release accepted by release-controller; triggers manifest load for validation."""

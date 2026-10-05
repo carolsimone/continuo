@@ -55,7 +55,7 @@ fi
 #   <image-name> <trigger-dir> <dockerfile> <context> <needs-base>
 # <trigger-dir> is the source path whose change means this image must rebuild;
 # <image-name> is what the chart references as continuo-<image-name>. Only the
-# 7 Go-service Deployments, ui, topology-controller and the migrations Job/init
+# 8 Go-service Deployments, ui, topology-controller and the migrations Job/init
 # container are gated by the install's --wait/--wait-for-jobs, but every image
 # the chart can reference is listed so a rename of any of them is handled.
 # needs-base=1 images build FROM continuo-base (Dockerfile.base); it is built
@@ -70,6 +70,7 @@ release-controller|release-controller/|release-controller/Dockerfile.prod|.|1
 agent-chat|agent-chat/|agent-chat/Dockerfile.prod|.|1
 remediation|remediation/|remediation/Dockerfile.prod|.|1
 agent-remediation|agent-remediation/|agent-remediation/Dockerfile.prod|.|1
+dead-letter-controller|dead-letter-controller/|dead-letter-controller/Dockerfile.prod|.|1
 migrations|db/|db/Dockerfile.migrate|db|0
 s3-sidecar|s3-sidecar/|s3-sidecar/Dockerfile|s3-sidecar|0
 stream-reaper|pkg/cmd/stream-reaper/|pkg/cmd/stream-reaper/Dockerfile|pkg|1"

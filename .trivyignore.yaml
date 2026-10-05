@@ -42,6 +42,7 @@ misconfigurations:
       # be set without breaking the local dev flow and the e2e suite.
       - "agent-chat/Dockerfile.dev"
       - "agent-remediation/Dockerfile.dev"
+      - "dead-letter-controller/Dockerfile.dev"
       - "execution-controller/Dockerfile.dev"
       - "orchestrator/Dockerfile.dev"
       - "release-controller/Dockerfile.dev"

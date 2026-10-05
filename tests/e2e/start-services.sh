@@ -43,6 +43,14 @@ check_health "remediation" 8090 "/healthz" || exit 1
 start_service "agent-remediation" "agent-remediation" "agent-remediation"
 check_health "agent-remediation" 8092 "/healthz" || exit 1
 
+# dead-letter-controller stores the dead letters every consumer and outbox
+# relay publishes, and serves DeadLetterService on 50055: the dead-letter e2e
+# lists and redrives through it. /health answers before the gRPC listener
+# binds, so wait for the port as well.
+start_service "dead-letter-controller" "dead-letter-controller" "dead-letter-controller"
+check_health "dead-letter-controller" 8096 "/ready" || exit 1
+wait_for_tcp_port dead-letter-controller 50055 || exit 1
+
 log_info "Starting topology-controller..."
 docker exec -d topology-controller bash -c "cd /app && PYTHONPATH=/app/proto uv run python main.py > /tmp/mc.log 2>&1"
 sleep 3

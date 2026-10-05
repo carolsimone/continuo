@@ -48,3 +48,15 @@ func TestResolve_ActorEmptyByDefault(t *testing.T) {
 	cfg := Resolve(Inputs{})
 	assert.Equal(t, "", cfg.Actor)
 }
+
+func TestResolve_DeadLetterEndpointPrecedence(t *testing.T) {
+	if got := Resolve(Inputs{}).DeadLetterEndpoint; got != "localhost:50055" {
+		t.Fatalf("default = %q", got)
+	}
+	if got := Resolve(Inputs{EnvDeadLetterAddr: "env:1"}).DeadLetterEndpoint; got != "env:1" {
+		t.Fatalf("env = %q", got)
+	}
+	if got := Resolve(Inputs{EnvDeadLetterAddr: "env:1", FlagDeadLetterEndpoint: "flag:2"}).DeadLetterEndpoint; got != "flag:2" {
+		t.Fatalf("flag = %q", got)
+	}
+}

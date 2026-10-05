@@ -20,6 +20,7 @@ type Config struct {
 	CLIPath            string
 	StateAddr          string
 	OrchestratorAddr   string
+	DeadLetterAddr     string // optional: empty leaves the CLI's own default address
 	SystemPrompt       string
 	MaxIterations      int
 	MaxTurnTokens      int
@@ -67,6 +68,7 @@ func Load(v *pkgconfig.Validator) Config {
 		CLIPath:               pkgconfig.EnvOrDefault("CONTINUO_CLI_PATH", "continuo"),
 		StateAddr:             pkgconfig.EnvOrDefault("CONTINUO_STATE_ADDR", "state:50051"),
 		OrchestratorAddr:      pkgconfig.EnvOrDefault("CONTINUO_ORCHESTRATOR_ADDR", "orchestrator:50052"),
+		DeadLetterAddr:        pkgconfig.EnvOrDefault("CONTINUO_DEAD_LETTER_ADDR", ""),
 		SystemPrompt:          pkgconfig.EnvOrDefault("CHAT_SYSTEM_PROMPT", defaultSystemPrompt),
 		MaxIterations:         pkgconfig.EnvIntOrDefault("CHAT_MAX_ITERATIONS", 10),
 		MaxTurnTokens:         pkgconfig.EnvIntOrDefault("CHAT_MAX_TURN_TOKENS", 30000),

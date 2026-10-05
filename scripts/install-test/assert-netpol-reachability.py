@@ -29,6 +29,8 @@ REQUIRED_EDGES = [
      "operator dashboard reads remediation proposals over gRPC"),
     ("ui", "orchestrator", 50052,
      "operator dashboard reads the topology and run projections over gRPC"),
+    ("agent-chat", "dead-letter-controller", 50055,
+     "continuo dlq list/show/redrive read and redrive dead letters over gRPC"),
 ]
 
 

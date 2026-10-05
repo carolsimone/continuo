@@ -257,6 +257,8 @@ spec:
                   fieldPath: metadata.namespace
               {{- else if eq $val "__REDIS_URL__" }}
               value: {{ printf "redis://:$(REDIS_PASSWORD)@%s:%s" (include "continuo.redis.host" $) (include "continuo.redis.port" $) | quote }}
+              {{- else if eq $val "__DEAD_LETTER_CONTROLLER_ADDR__" }}
+              value: {{ $.Values.global.deadLetterControllerGrpcAddr | quote }}
               {{- else if eq $val "__DOCKERHUB_USERNAME__" }}
               value: {{ $.Values.global.teamImagePrefix | quote }}
               {{- else if eq $val "__VALIDATION_IMAGE__" }}

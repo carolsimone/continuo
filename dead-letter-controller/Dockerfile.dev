@@ -1,0 +1,52 @@
+FROM continuo-base:latest
+
+WORKDIR /app
+
+# Layer 1: Workspace stub. All go.mod / go.sum files are copied so
+# `go mod download` can satisfy every dependency cited by go.work, but
+# only the modules this image builds against (pkg, dead-letter-controller)
+# get their source trees later. Limiting the source-copy layers to the
+# service-owned dirs means a change to another service does not invalidate
+# this image's cache.
+COPY go.work go.work.sum* ./
+COPY state/go.mod state/go.sum ./state/
+COPY pkg/go.mod pkg/go.sum ./pkg/
+COPY orchestrator/go.mod orchestrator/go.sum ./orchestrator/
+COPY execution-controller/go.mod execution-controller/go.sum ./execution-controller/
+COPY release-controller/go.mod release-controller/go.sum ./release-controller/
+COPY agent-chat/go.mod agent-chat/go.sum ./agent-chat/
+COPY remediation/go.mod remediation/go.sum ./remediation/
+COPY tests/e2e/go.mod tests/e2e/go.sum ./tests/e2e/
+COPY agent-remediation/go.mod agent-remediation/go.sum ./agent-remediation/
+COPY dead-letter-controller/go.mod dead-letter-controller/go.sum ./dead-letter-controller/
+
+# Layer 2: Drop unused use-directives so `go build` does not require the
+# other services' source trees to be present in this image.
+RUN go work edit -dropuse=./state \
+    && go work edit -dropuse=./agent-chat \
+    && go work edit -dropuse=./orchestrator \
+    && go work edit -dropuse=./execution-controller \
+    && go work edit -dropuse=./release-controller \
+    && go work edit -dropuse=./remediation \
+    && go work edit -dropuse=./agent-remediation \
+    && go work edit -dropuse=./tests/e2e
+
+# Layer 3: Download dependencies with cache mount. Cache persists across
+# builds; rebuild only re-runs when go.mod files change.
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+
+# Layer 4: Source for the modules this service builds against. pkg/ first
+# (lower churn) so a change in dead-letter-controller/ does not invalidate the
+# pkg layer.
+COPY pkg/ ./pkg/
+COPY dead-letter-controller/ ./dead-letter-controller/
+
+WORKDIR /app/dead-letter-controller
+
+# Pre-compile the binary for faster startup in docker-compose.
+RUN go build -o /app/dead-letter-controller/bin/dead-letter-controller main.go
+
+EXPOSE 8096 50055
+
+CMD ["tail", "-f", "/dev/null"]

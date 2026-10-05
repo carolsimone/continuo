@@ -21,6 +21,7 @@ var servicesWithMainGo = []string{
 	"release-controller/main.go",
 	"remediation/main.go",
 	"agent-remediation/main.go",
+	"dead-letter-controller/main.go",
 }
 
 // streamLiteralRe matches versioned stream literals (e.g. "node.updated:v1",
@@ -82,7 +83,7 @@ func TestNoStreamOrGroupLiteralsInMains(t *testing.T) {
 }
 
 func looksLikeServicePrefixedGroup(s string) bool {
-	for _, p := range []string{"state-", "orchestrator-", "execution-", "executor-", "k8s-", "topology-", "agent-remediation-", "remediation-"} {
+	for _, p := range []string{"state-", "orchestrator-", "execution-", "executor-", "k8s-", "topology-", "agent-remediation-", "remediation-", "dead-letter-"} {
 		if strings.HasPrefix(s, p) {
 			return true
 		}
@@ -110,6 +111,8 @@ var streamLiteralScanDirs = []string{
 	"release-controller/service/handlers",
 	"remediation/adapters/redis",
 	"agent-remediation/adapters/redis",
+	"dead-letter-controller/adapters/redis",
+	"dead-letter-controller/service/handlers",
 	"pkg/redis",
 	"pkg/events",
 	"pkg/outbox",

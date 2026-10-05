@@ -83,3 +83,28 @@ func TestCatalog_BracketedPositionalIsOptional(t *testing.T) {
 	assert.False(t, trigger.Params[3].Required)
 	assert.Equal(t, []string{"service", "schema", "table", "source-run-id"}, trigger.ParamOrder)
 }
+
+// The dlq commands drive dead-letter-controller: redrive mutates and takes the
+// ids plus an audit reason, while list's filters are optional bracketed
+// positionals.
+func TestCatalog_DLQTools(t *testing.T) {
+	c := loadCatalog(t)
+
+	redrive, ok := c.Lookup("dlq_redrive")
+	require.True(t, ok)
+	assert.Equal(t, []string{"dlq", "redrive"}, redrive.CLIPath)
+	assert.True(t, redrive.Mutating)
+	require.Len(t, redrive.Params, 2)
+	assert.Equal(t, []string{"ids", "reason"}, redrive.ParamOrder)
+	for _, p := range redrive.Params {
+		assert.True(t, p.Required, "param %q must be required", p.Name)
+	}
+
+	list, ok := c.Lookup("dlq_list")
+	require.True(t, ok)
+	assert.False(t, list.Mutating)
+	require.Len(t, list.Params, 2)
+	for _, p := range list.Params {
+		assert.False(t, p.Required, "param %q must be optional", p.Name)
+	}
+}

@@ -378,7 +378,7 @@ lives in the replaceable `services` list. scripts/install-test/assert-redis-gate
 pins this list to the services whose source imports a Redis client.
 */ -}}
 {{- define "continuo.redis.clientServices" -}}
-["state","orchestrator","agent-chat","execution-controller","ui","topology-controller","release-controller","remediation","agent-remediation"]
+["state","orchestrator","agent-chat","execution-controller","ui","topology-controller","release-controller","remediation","agent-remediation","dead-letter-controller"]
 {{- end -}}
 
 {{- define "continuo.s3.credentialServices" -}}
@@ -571,7 +571,7 @@ scripts/install-test/assert-metrics.py pins this list to the services whose
 source imports pkg/metrics.
 */ -}}
 {{- define "continuo.metrics.services" -}}
-["state","orchestrator","execution-controller","release-controller","remediation","agent-remediation","agent-chat"]
+["state","orchestrator","execution-controller","release-controller","remediation","agent-remediation","agent-chat","dead-letter-controller"]
 {{- end -}}
 
 {{/*

@@ -43,6 +43,7 @@ build-prod: build-base
 	DOCKER_BUILDKIT=1 docker build -t continuo-agent-chat:prod -f agent-chat/Dockerfile.prod .
 	DOCKER_BUILDKIT=1 docker build -t continuo-remediation:prod -f remediation/Dockerfile.prod .
 	DOCKER_BUILDKIT=1 docker build -t continuo-agent-remediation:prod -f agent-remediation/Dockerfile.prod .
+	DOCKER_BUILDKIT=1 docker build -t continuo-dead-letter-controller:prod -f dead-letter-controller/Dockerfile.prod .
 
 # Build single production service
 .PHONY: build-prod-service
@@ -123,7 +124,7 @@ e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start
 	@echo "Waiting for neo4j and redis to become healthy..."
 	@$(DOCKER_COMPOSE) up -d --wait --no-recreate neo4j redis
 	@echo "Waiting for flyway migrations to complete..."
-	@for svc in flyway-state flyway-execution flyway-orchestrator flyway-release flyway-agent-chat flyway-remediation flyway-agent-remediation; do \
+	@for svc in flyway-state flyway-execution flyway-orchestrator flyway-release flyway-agent-chat flyway-remediation flyway-agent-remediation flyway-dead-letter; do \
 		cid=$$($(DOCKER_COMPOSE) ps -q $$svc 2>/dev/null); \
 		if [ -n "$$cid" ]; then docker wait $$cid 2>/dev/null || true; fi; \
 	done
@@ -139,9 +140,10 @@ e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start
 
 # ── CI contract: SINGLE entrypoints used identically by local dev and CI jobs.
 GO_SERVICES := state orchestrator execution-controller release-controller \
-               remediation agent-remediation agent-chat
+               remediation agent-remediation agent-chat dead-letter-controller
 FLYWAY_JOBS := flyway-state flyway-execution flyway-orchestrator flyway-release \
-               flyway-agent-chat flyway-remediation flyway-agent-remediation
+               flyway-agent-chat flyway-remediation flyway-agent-remediation \
+               flyway-dead-letter
 
 # Data dependencies for Go tests: Postgres+Neo4j+Redis up and migrated. No service
 # images are built. Tests reach these via POSTGRES_HOST=localhost.
@@ -194,6 +196,8 @@ test-go: test-deps-up
 	    release-controller) db=continuo_release; \
 	      extra="RELEASE_TEST_PG_DSN=postgres://continuo_svc:continuo@localhost:5432/continuo_release?sslmode=disable GOFLAGS=-p=1";; \
 	    remediation) db=continuo_remediation;; \
+	    dead-letter-controller) db=continuo_dead_letter; \
+	      extra="REDIS_ADDR=localhost:6379 REDIS_PASSWORD=continuo GOFLAGS=-p=1";; \
 	    agent-remediation) db=continuo_agent_remediation;; agent-chat) db=continuo_agent_chat;; \
 	    pkg) db=continuo_execution; pkgs=./...; \
 	      extra="REDIS_ADDR=localhost:6379 REDIS_PASSWORD=continuo GOFLAGS=-p=1";; \

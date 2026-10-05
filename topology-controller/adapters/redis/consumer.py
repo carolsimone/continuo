@@ -10,6 +10,7 @@ from redis.exceptions import TimeoutError as RedisTimeoutError
 
 from adapters.redis.dead_letter import as_text, build_fields, tenant_of
 from adapters.redis.error_class import ErrorClass, classify
+from adapters.redis.redrive import route
 from domain.contract_vocabulary import DeadLetterKind
 from streams_contract import CONSUMER_DEAD_LETTER_V1
 
@@ -147,9 +148,21 @@ class Consumer:
             self._in_hand.clear()
 
     def _dispatch(self, msg_id, msg_fields: dict) -> None:
-        """Handle one message and settle it (see _settle). Whatever the outcome,
-        the message is out of the in-hand set when this returns."""
+        """Handle one message and settle it (see _settle). An entry with no
+        fields, and a redriven entry addressed to another group, are ACKed
+        without reaching the handler. Whatever the outcome, the message is out
+        of the in-hand set when this returns."""
         try:
+            if not msg_fields:
+                # An entry trimmed from the stream while it was pending has no
+                # fields left; there is nothing to handle.
+                logger.warning("Pending entry no longer in the stream — acknowledging: message_id=%s", as_text(msg_id))
+                self._ack(msg_id)
+                return
+            for_us, msg_fields = route(msg_fields, self._group)
+            if not for_us:
+                self._ack(msg_id)
+                return
             self._settle(msg_id, msg_fields)
         finally:
             self._in_hand.pop(as_text(msg_id), None)

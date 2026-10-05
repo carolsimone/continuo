@@ -56,6 +56,8 @@ func PkgConstantsForTest() map[string]string {
 		"OrchestratorRunFinalized": OrchestratorRunFinalized,
 		"ExecutorQueryModel": ExecutorQueryModel,
 		"K8sCheckStatus": K8sCheckStatus,
+		"DeadLetterControllerOutboxDeadLetters": DeadLetterControllerOutboxDeadLetters,
+		"DeadLetterControllerConsumerDeadLetters": DeadLetterControllerConsumerDeadLetters,
 		"OrchestratorScheduleCancelled": OrchestratorScheduleCancelled,
 		"ExecutorScheduleCancelled": ExecutorScheduleCancelled,
 		"TopologyControllerReleaseRequested": TopologyControllerReleaseRequested,

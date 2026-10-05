@@ -142,6 +142,11 @@ func main() {
 		"CONTINUO_STATE_ADDR="+cfg.StateAddr,
 		"CONTINUO_ORCHESTRATOR_ADDR="+cfg.OrchestratorAddr,
 	)
+	// An unset dead-letter address is not forwarded, so the CLI falls back to
+	// its own default rather than receiving a blank override.
+	if cfg.DeadLetterAddr != "" {
+		cliEnv = append(cliEnv, "CONTINUO_DEAD_LETTER_ADDR="+cfg.DeadLetterAddr)
+	}
 	executor := cliexec.NewExecutor(catalog, cfg.CLIPath, cliEnv, cfg.ToolTimeout, cfg.ToolResultMaxBytes, logger)
 
 	// Shared HTTP client for LLM providers. No overall Timeout is set because

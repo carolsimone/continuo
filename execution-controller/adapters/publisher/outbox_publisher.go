@@ -26,7 +26,10 @@ type OutboxPublisher struct {
 	logger *slog.Logger
 }
 
-var _ outbox.Publisher = (*OutboxPublisher)(nil)
+var (
+	_ outbox.Publisher = (*OutboxPublisher)(nil)
+	_ outbox.Renderer  = (*OutboxPublisher)(nil)
+)
 
 // NewOutboxPublisher creates an OutboxPublisher wired to the given Redis client.
 func NewOutboxPublisher(r *goredis.Client, l *slog.Logger) *OutboxPublisher {
@@ -41,7 +44,7 @@ func (p *OutboxPublisher) Publish(ctx context.Context, entry *outbox.Entry) erro
 	if entry.EventType == event.EventTypeCheckDelayed {
 		return p.scheduleDelayedCheck(ctx, entry)
 	}
-	values, err := p.toValues(entry)
+	values, err := p.Render(entry)
 	if err != nil {
 		return err
 	}
@@ -57,6 +60,22 @@ func (p *OutboxPublisher) Publish(ctx context.Context, entry *outbox.Entry) erro
 		return fmt.Errorf("xadd to %s: %w", entry.StreamName, err)
 	}
 	return nil
+}
+
+// Render returns the field map Publish XADDs for entry, without
+// outbox_entry_id. A check_delayed row is written to the delay queue rather
+// than a stream, so it has no fields to render and returns an error. Every
+// call returns a fresh map.
+func (p *OutboxPublisher) Render(entry *outbox.Entry) (map[string]any, error) {
+	if entry.EventType == event.EventTypeCheckDelayed {
+		return nil, fmt.Errorf("%s rows are delay-queue entries, not stream fields", event.EventTypeCheckDelayed)
+	}
+	values, err := p.toValues(entry)
+	if err != nil {
+		return nil, err
+	}
+	delete(values, "outbox_entry_id")
+	return values, nil
 }
 
 // scheduleDelayedCheck converts a check_delayed row into the typed CheckK8s

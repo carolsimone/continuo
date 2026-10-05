@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/carolsimone/continuo/cli/internal/cmd/dlq"
 	"github.com/carolsimone/continuo/cli/internal/cmd/node"
 	"github.com/carolsimone/continuo/cli/internal/cmd/precedents"
 	"github.com/carolsimone/continuo/cli/internal/cmd/schedule"
@@ -23,12 +24,14 @@ func executeWith(args []string, stdout, stderr io.Writer) int {
 	in := config.Inputs{
 		EnvStateAddr:        os.Getenv("CONTINUO_STATE_ADDR"),
 		EnvOrchestratorAddr: os.Getenv("CONTINUO_ORCHESTRATOR_ADDR"),
+		EnvDeadLetterAddr:   os.Getenv("CONTINUO_DEAD_LETTER_ADDR"),
 		EnvTimeout:          os.Getenv("CONTINUO_TIMEOUT"),
 		EnvActor:            os.Getenv("CONTINUO_ACTOR"),
 	}
 	var (
 		flagEndpoint             string
 		flagOrchestratorEndpoint string
+		flagDeadLetterEndpoint   string
 		flagTimeout              string
 		flagHuman                bool
 	)
@@ -46,6 +49,7 @@ func executeWith(args []string, stdout, stderr io.Writer) int {
 	}
 	root.PersistentFlags().StringVar(&flagEndpoint, "endpoint", "", "gRPC address of the state service (env: CONTINUO_STATE_ADDR)")
 	root.PersistentFlags().StringVar(&flagOrchestratorEndpoint, "orchestrator-endpoint", "", "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)")
+	root.PersistentFlags().StringVar(&flagDeadLetterEndpoint, "dead-letter-endpoint", "", "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)")
 	root.PersistentFlags().StringVar(&flagTimeout, "timeout", "", "gRPC deadline (env: CONTINUO_TIMEOUT)")
 	root.PersistentFlags().BoolVar(&flagHuman, "human", false, "emit human text on stderr instead of JSON on stdout")
 	root.PersistentFlags().Bool("json", true, "forward-compat no-op; JSON is the default")
@@ -53,6 +57,7 @@ func executeWith(args []string, stdout, stderr io.Writer) int {
 	root.PersistentPreRunE = func(_ *cobra.Command, _ []string) error {
 		in.FlagEndpoint = flagEndpoint
 		in.FlagOrchestratorEndpoint = flagOrchestratorEndpoint
+		in.FlagDeadLetterEndpoint = flagDeadLetterEndpoint
 		in.FlagTimeout = flagTimeout
 		in.FlagHuman = flagHuman
 		*cfg = config.Resolve(in)
@@ -77,6 +82,7 @@ func executeWith(args []string, stdout, stderr io.Writer) int {
 
 	root.AddCommand(schedule.NewCommand(cfg, stdout, stderr))
 	root.AddCommand(node.NewCommand(cfg, stdout, stderr))
+	root.AddCommand(dlq.NewCommand(cfg, stdout, stderr))
 	root.AddCommand(precedents.NewCommand(cfg, stdout, stderr))
 	root.AddCommand(NewDescribeCommand(cfg, stdout, stderr))
 

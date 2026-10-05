@@ -62,6 +62,7 @@ jobs:
               - 'cli/**'
               - 'remediation/**'
               - 'agent-remediation/**'
+              - 'dead-letter-controller/**'
               - 's3-sidecar/**'
             state:
               - 'Dockerfile.base'
@@ -111,6 +112,12 @@ jobs:
               - 'pkg/**'
               - 'orchestrator/**'
               - 'agent-remediation/**'
+            dead_letter_controller:
+              - 'Dockerfile.base'
+              - 'go.work'
+              - 'go.work.sum'
+              - 'pkg/**'
+              - 'dead-letter-controller/**'
             migrations:
               - 'db/**'
             s3_sidecar:
@@ -130,6 +137,7 @@ jobs:
           AGENT_CHAT_CHANGED: ${{ steps.filter.outputs.agent_chat }}
           REMEDIATION_CHANGED: ${{ steps.filter.outputs.remediation }}
           AGENT_REMEDIATION_CHANGED: ${{ steps.filter.outputs.agent_remediation }}
+          DEAD_LETTER_CONTROLLER_CHANGED: ${{ steps.filter.outputs.dead_letter_controller }}
           MIGRATIONS_CHANGED: ${{ steps.filter.outputs.migrations }}
           S3_SIDECAR_CHANGED: ${{ steps.filter.outputs.s3_sidecar }}
           STREAM_REAPER_CHANGED: ${{ steps.filter.outputs.stream_reaper }}
@@ -145,6 +153,7 @@ jobs:
               --arg agent_chat "$AGENT_CHAT_CHANGED" \
               --arg remediation "$REMEDIATION_CHANGED" \
               --arg agent_remediation "$AGENT_REMEDIATION_CHANGED" \
+              --arg dead_letter_controller "$DEAD_LETTER_CONTROLLER_CHANGED" \
               --arg migrations "$MIGRATIONS_CHANGED" \
               --arg s3_sidecar "$S3_SIDECAR_CHANGED" \
               --arg stream_reaper "$STREAM_REAPER_CHANGED" \
@@ -159,6 +168,7 @@ jobs:
                   {service: "agent-chat", changed: $agent_chat, dockerfile: "agent-chat/Dockerfile.prod", context: "."},
                   {service: "remediation", changed: $remediation, dockerfile: "remediation/Dockerfile.prod", context: "."},
                   {service: "agent-remediation", changed: $agent_remediation, dockerfile: "agent-remediation/Dockerfile.prod", context: "."},
+                  {service: "dead-letter-controller", changed: $dead_letter_controller, dockerfile: "dead-letter-controller/Dockerfile.prod", context: "."},
                   {service: "migrations", changed: $migrations, dockerfile: "db/Dockerfile.migrate", context: "db"},
                   {service: "s3-sidecar", changed: $s3_sidecar, dockerfile: "s3-sidecar/Dockerfile", context: "s3-sidecar"},
                   {service: "stream-reaper", changed: $stream_reaper, dockerfile: "pkg/cmd/stream-reaper/Dockerfile", context: "pkg"}

@@ -23,6 +23,7 @@ var domainModules = []string{
 	"remediation",
 	"agent-remediation",
 	"agent-chat",
+	"dead-letter-controller",
 	"pkg",
 }
 

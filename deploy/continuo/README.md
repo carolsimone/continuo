@@ -136,7 +136,7 @@ Notes that matter before you commit to this path:
   `externalDatabase.host` at anything else yet.
 - **The Postgres connection must be session-mode.** Each outbox relay (state,
   orchestrator, execution-controller, release-controller, remediation,
-  agent-remediation) wakes on a Postgres `LISTEN`/`NOTIFY` notification sent
+  agent-remediation, dead-letter-controller) wakes on a Postgres `LISTEN`/`NOTIFY` notification sent
   when a row is committed, over one dedicated connection per pod. `LISTEN`
   needs a session-mode connection: behind a transaction-mode pooler (for
   example PgBouncer in transaction mode) it does not work, and delivery
@@ -151,8 +151,9 @@ Notes that matter before you commit to this path:
   Postgres).
 - **`databaseInit` needs `CREATEDB`.** With `enabled: true` (the default), an
   init container connects as `externalDatabase.username` and idempotently
-  creates all 9 databases, including `continuo_dbt` (the dbt warehouse — the
-  one database no Flyway migration directory owns). If your DBA provisions
+  creates all 9 databases: the 8 Flyway-migrated service databases (including
+  `continuo_dead_letter`, which dead-letter-controller owns) and `continuo_dbt`
+  (the dbt warehouse — the one database no Flyway migration directory owns). If your DBA provisions
   databases out-of-band, set `databaseInit.enabled: false` and drop `CREATEDB`
   from the connecting user's grants.
 - **How migrations run depends on the Postgres mode.** With
@@ -215,6 +216,7 @@ Every container in this chart, bundled or not, gets:
 | Key | Purpose |
 |---|---|
 | `global.imageRegistry` / `global.imageRepositoryPrefix` / `global.imageTag` | Compose continuo-owned service image refs as `<registry>/<prefix>/continuo-<service>:<tag>`. Empty `imageTag` falls back to `Chart.appVersion`. Does not apply to the validation image — see `validation.engine` / `validation.imageTag` below. |
+| `global.deadLetterControllerGrpcAddr` | In-cluster gRPC address of dead-letter-controller's `DeadLetterService` (default `dead-letter-controller:50055`), published as `DEAD_LETTER_CONTROLLER_GRPC_ADDR` on the shared ConfigMap. Set it, together with the service's `grpcPort`, only if you move the service. |
 | `global.teamImagePrefix` | Registry/namespace prefix execution-controller uses to compose per-team dbt images for compile/seed/scheduled Jobs (unrelated to `global.imageRepositoryPrefix`, which names continuo's own images). |
 | `validation.engine` / `validation.imageTag` | Select and pin the external `continuo-python-runtime-<engine>` image, composed as `<registry>/<prefix>/continuo-python-runtime-<engine>:<imageTag>` (one image ships both the python-node runtime and the validation runner). It ships from a separate repository (`github.com/carolsimone/continuo-python-runtime`) on its own release train, so `imageTag` (default `v0.7.0`) is versioned independently of `global.imageTag`/`appVersion` and must be non-empty. The engine is part of the image name, not the tag, leaving the tag position free for a digest. A plain tag is mutable — the publish workflow re-pushes `:vX.Y.Z` (and `:latest`) on every tag, so re-running a tag moves it under existing installs. For an immutable pin, set `imageTag` to `"vX.Y.Z@sha256:<digest>"`. If you mirror images into a private registry, mirror this ref explicitly — `global.imageTag`'s same-appVersion mirroring does not cover it. |
 | `global.storageClass` | Default `StorageClass` for every bundled datastore PVC (Persistent Volume Claim); each datastore's own `persistence.storageClass` overrides it. |
@@ -223,7 +225,7 @@ Every container in this chart, bundled or not, gets:
 | `externalDatabase.*` / `externalRedis.*` / `externalNeo4j.*` / `s3.*` / `auth.*` (issuer/client fields) | Connection details used when the matching `*.enabled` above is `false`. |
 | `externalDatabase.existingSecret` (+ `existingSecretPasswordKey`) | Pre-created Secret holding the Postgres password, instead of `externalDatabase.password` inline. Same pattern for `externalRedis.existingSecret`, `externalNeo4j.existingSecret` (all key `password` by default), `s3.existingSecret` (keys `access-key-id` / `secret-access-key`), and `auth.existingSecret` (key `client-secret`). |
 | `databaseInit.enabled` | Idempotently creates all 9 databases (the 8 Flyway-migrated service databases plus `continuo_dbt`) before migrations run. Requires the connecting user to have `CREATEDB`; disable when a DBA pre-creates them. |
-| `database.pool.maxOpenConns`, `database.pool.maxIdleConns` | Postgres pool limits for every Go service (`DB_MAX_OPEN_CONNS`/`DB_MAX_IDLE_CONNS`). 0 keeps each service's own default. Set the two together; `maxIdleConns` may not exceed `maxOpenConns`. Each limit is a cap per pod, and the sum of the caps is the worst case: with the defaults and one replica of each service, 140 pooled connections plus one `LISTEN` connection per pod of the six services that run an outbox relay (every Go service except agent-chat), 146 in all; consumers handle one message at a time, so steady-state use is far lower. `maxOpenConns` applies to every service, orchestrator included, whose 13 consumers need about two connections each: do not set it below about 30, or handlers that hold a transaction and need a second connection stall until their deadline. To fit a small Postgres, lower the low-concurrency services one at a time through their `services[].env` (`DB_MAX_OPEN_CONNS`/`DB_MAX_IDLE_CONNS`), or raise Postgres `max_connections`. |
+| `database.pool.maxOpenConns`, `database.pool.maxIdleConns` | Postgres pool limits for every Go service (`DB_MAX_OPEN_CONNS`/`DB_MAX_IDLE_CONNS`). 0 keeps each service's own default. Set the two together; `maxIdleConns` may not exceed `maxOpenConns`. Each limit is a cap per pod, and the sum of the caps is the worst case: with the defaults and one replica of each service, 152 pooled connections plus one `LISTEN` connection per pod of the seven services that run an outbox relay (every Go service except agent-chat), 159 in all; consumers handle one message at a time, so steady-state use is far lower. `maxOpenConns` applies to every service, orchestrator included, whose 13 consumers need about two connections each: do not set it below about 30, or handlers that hold a transaction and need a second connection stall until their deadline. To fit a small Postgres, lower the low-concurrency services one at a time through their `services[].env` (`DB_MAX_OPEN_CONNS`/`DB_MAX_IDLE_CONNS`), or raise Postgres `max_connections`. |
 | `networkPolicy.enabled` | Default-deny ingress within the release plus allow rules derived from the service graph. |
 | `metrics.port` | Port every Go service serves Prometheus `/metrics` on (`METRICS_PORT`, default 9464; must differ from every service port). |
 | `metrics.podAnnotations` | Adds `prometheus.io/{scrape,port,path}` annotations to those pods (default true). |
@@ -232,24 +234,10 @@ Every container in this chart, bundled or not, gets:
 | `auth.operatorEmails` / `auth.viewerEmails` / `auth.roleMapping` | Role assignment for authenticated users. With `dex.enabled: true`, `operatorEmails` defaults to the Dex demo user's email. |
 | `llm.provider` / `llm.model` / `llm.apiKey` (or `llm.existingSecret`) | Optional. Empty `apiKey`: agent-chat and agent-remediation still boot and serve, but LLM (Large Language Model) calls fail until it is set. |
 | `github.token` / `github.appId` / `github.installationId` / `github.appPrivateKey` (or `github.existingSecret`) | Optional. `token` is a read-only PAT (Personal Access Token) agent-remediation uses to fetch source; the `app*` fields are a GitHub App ui uses to open fix PRs (Pull Requests) — Create-PR returns `503` until they're set. |
-| `streamReaper.enabled` / `streamReaper.schedule` / `streamReaper.retention` | CronJob that trims old Redis Stream entries. It never trims `outbox.dead_letter:v1` or `consumer.dead_letter:v1`: they hold the only copy of every dead letter. `consumer.dead_letter:v1` is written without a length cap, so an operator removes handled entries; `outbox.dead_letter:v1` keeps the roughly 10,000-entry cap its publishers apply. See the note below the table for the `redis-cli` commands. |
+| `streamReaper.enabled` / `streamReaper.schedule` / `streamReaper.retention` | CronJob that trims Redis Stream entries older than `retention`. It never trims `outbox.dead_letter:v1` or `consumer.dead_letter:v1`: dead-letter-controller consumes both and stores every entry in `continuo_dead_letter`. See the note below the table for `continuo dlq`. |
 | `services[].resources` / `defaultResources` | Per-service CPU/memory requests and limits; any service without its own `resources` block falls back to `defaultResources`. |
 
-Inspect and trim the dead-letter streams with `redis-cli` in the Redis pod (the bundled one is `continuo-redis-0` in a release named `continuo`; with BYO Redis, point `redis-cli` at it instead):
-
-```bash
-kubectl -n continuo exec continuo-redis-0 -- sh -c 'redis-cli -a "$REDIS_PASSWORD" XLEN consumer.dead_letter:v1'
-kubectl -n continuo exec continuo-redis-0 -- sh -c 'redis-cli -a "$REDIS_PASSWORD" XRANGE consumer.dead_letter:v1 - + COUNT 10'
-```
-
-To drop the entries older than one entry, set `ID` to that entry's id (`XRANGE` prints the id of each entry before its fields; the value below is an example) and trim up to it:
-
-```bash
-ID=1759494896789-0
-kubectl -n continuo exec continuo-redis-0 -- env ID="$ID" sh -c 'redis-cli -a "$REDIS_PASSWORD" XTRIM consumer.dead_letter:v1 MINID "$ID"'
-```
-
-The same commands work on `outbox.dead_letter:v1`.
+dead-letter-controller stores the messages stream consumers give up on (`consumer.dead_letter:v1`) and the outbox rows relays give up on (`outbox.dead_letter:v1`) in its own database, `continuo_dead_letter`, and serves `DeadLetterService` on gRPC port 50055 (`global.deadLetterControllerGrpcAddr`). List, inspect and redrive dead letters with `continuo dlq list`, `continuo dlq show` and `continuo dlq redrive`, which agent-chat reaches through `CONTINUO_DEAD_LETTER_ADDR`. A redrive republishes the stored message to its original stream, only to the consumer group that failed it, within 30 days of the original message; older dead letters are deleted.
 
 ## 5. Release flow and CI gates
 

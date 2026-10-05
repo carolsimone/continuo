@@ -13,6 +13,12 @@
           "default": "false"
         },
         {
+          "name": "dead-letter-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
+          "default": ""
+        },
+        {
           "name": "endpoint",
           "shorthand": "",
           "usage": "gRPC address of the state service (env: CONTINUO_STATE_ADDR)",
@@ -55,6 +61,710 @@
       ]
     },
     {
+      "path": "dlq list",
+      "short": "List open dead letters",
+      "long": "List the open dead letters: messages a consumer gave up on, outbox rows a\nrelay could not publish, and stream entries trimmed before a consumer group\nfinished them.\n\nUse when the user asks what failed to process, what is in the dead-letter\nqueue, or whether any messages were lost.\n\nArguments:\n  [source]  Optional. consumer, outbox, quarantine, or all. Omit (or give\n            all) to list every source; an empty value is a usage error.\n  [stream]  Optional. Only dead letters of this stream, e.g. node.updated:v1.\n            Omit to list every stream; an empty value is a usage error. To\n            filter by stream alone, give all as the source.\n\nOutput (stdout, JSON):\n  {\"total_open\":number,\"dead_letters\":[{\"id\":string,\"source\":string,\n   \"failure_kind\":string,\"stream\":string,\"group\":string,\n   \"original_message_id\":string,\"producer\":string,\"error\":string,\n   \"delivery_count\":number,\"original_at\":string,\"recorded_at\":string,\n   \"expires_at\":string,\"status\":string,\"redrivable\":boolean,\"redrive\":null}]}\n  At most 50 dead letters, newest first. total_open counts every open one.\n\nErrors:\n  usage      (exit 2)  more than two arguments, a blank argument, or an unknown source\n  unavailable(exit 5)  dead-letter-controller is unreachable\n  internal   (exit 6)  unexpected server error",
+      "args": [
+        "[source]",
+        "[stream]"
+      ],
+      "flags": [
+        {
+          "name": "dead-letter-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the state service (env: CONTINUO_STATE_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "human",
+          "shorthand": "",
+          "usage": "emit human text on stderr instead of JSON on stdout",
+          "default": "false"
+        },
+        {
+          "name": "json",
+          "shorthand": "",
+          "usage": "forward-compat no-op; JSON is the default",
+          "default": "true"
+        },
+        {
+          "name": "orchestrator-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "shorthand": "",
+          "usage": "gRPC deadline (env: CONTINUO_TIMEOUT)",
+          "default": ""
+        }
+      ],
+      "examples": [
+        "continuo dlq list",
+        "continuo dlq list consumer",
+        "continuo dlq list all query.model:v1"
+      ],
+      "output_schema": {
+        "total_open": "number",
+        "dead_letters": "array"
+      },
+      "exit_codes": [
+        0,
+        2,
+        5,
+        6
+      ]
+    },
+    {
+      "path": "dlq redrive",
+      "short": "Republish dead letters to their original stream",
+      "long": "Republish dead letters to the stream they came from, so the consumer group\nthat failed them processes them again (an outbox dead letter, never published,\ngoes to every group of its stream).\n\nUse when the user asks to retry, replay or redrive failed messages, after the\ncause was fixed.\n\nArguments:\n  <ids>     One dead letter id, or several separated by commas, as listed by\n            \"dlq list\". Either all are redriven or none is.\n  <reason>  Why they are redriven; recorded with the redrive. Required and\n            must be non-empty.\n\nThe redriving identity is not an argument: it is taken from the\nCONTINUO_ACTOR environment variable when set, otherwise dead-letter-controller\nrecords its own system identity. A dead letter already redriven is returned\nunchanged.\n\nOutput (stdout, JSON):\n  {\"dead_letters\":[{...same object as dlq list, status \"redriven\" and redrive set...}]}\n\nErrors:\n  usage      (exit 2)  wrong number of arguments, no ids, a blank reason, or an id\n                       that is not a dead letter id\n  not_found  (exit 3)  an id matches no dead letter (nothing was redriven)\n  conflict   (exit 4)  a dead letter is older than the 30-day replay horizon, or has\n                       no fields to republish (nothing was redriven)\n  unavailable(exit 5)  dead-letter-controller is unreachable\n  internal   (exit 6)  unexpected server error",
+      "args": [
+        "<ids>",
+        "<reason>"
+      ],
+      "flags": [
+        {
+          "name": "dead-letter-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the state service (env: CONTINUO_STATE_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "human",
+          "shorthand": "",
+          "usage": "emit human text on stderr instead of JSON on stdout",
+          "default": "false"
+        },
+        {
+          "name": "json",
+          "shorthand": "",
+          "usage": "forward-compat no-op; JSON is the default",
+          "default": "true"
+        },
+        {
+          "name": "orchestrator-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "shorthand": "",
+          "usage": "gRPC deadline (env: CONTINUO_TIMEOUT)",
+          "default": ""
+        }
+      ],
+      "examples": [
+        "continuo dlq redrive 7f6c2c4e-1f0a-4f55-9a43-0c1b6f0b9a11 \"upstream fixed\"",
+        "continuo dlq redrive id1,id2 \"schema migrated\""
+      ],
+      "output_schema": {
+        "dead_letters": "array"
+      },
+      "exit_codes": [
+        0,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "mutating": true
+    },
+    {
+      "path": "dlq show",
+      "short": "Show one dead letter with its message fields",
+      "long": "Show one dead letter, including the message fields a redrive would publish.\n\nUse when the user asks why a specific message failed or what it contained,\nusually with an id from \"dlq list\".\n\nArguments:\n  <id>  The dead letter id, as listed by \"dlq list\".\n\nOutput (stdout, JSON):\n  {\"dead_letter\":{...same object as dlq list...},\"fields\":{string:string},\n   \"original_event_type\":string,\"failed_outbox_id\":string}\n\nErrors:\n  usage      (exit 2)  missing id, or an id that is not a dead letter id\n  not_found  (exit 3)  no dead letter with this id\n  unavailable(exit 5)  dead-letter-controller is unreachable\n  internal   (exit 6)  unexpected server error",
+      "args": [
+        "<id>"
+      ],
+      "flags": [
+        {
+          "name": "dead-letter-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the state service (env: CONTINUO_STATE_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "human",
+          "shorthand": "",
+          "usage": "emit human text on stderr instead of JSON on stdout",
+          "default": "false"
+        },
+        {
+          "name": "json",
+          "shorthand": "",
+          "usage": "forward-compat no-op; JSON is the default",
+          "default": "true"
+        },
+        {
+          "name": "orchestrator-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "shorthand": "",
+          "usage": "gRPC deadline (env: CONTINUO_TIMEOUT)",
+          "default": ""
+        }
+      ],
+      "examples": [
+        "continuo dlq show 7f6c2c4e-1f0a-4f55-9a43-0c1b6f0b9a11"
+      ],
+      "output_schema": {
+        "dead_letter": "object",
+        "fields": "object",
+        "original_event_type": "string",
+        "failed_outbox_id": "string"
+      },
+      "exit_codes": [
+        0,
+        2,
+        3,
+        5,
+        6
+      ]
+    },
+    {
+      "path": "node build",
+      "short": "Run and test a model node with dbt build",
+      "long": "Run and test a model node with dbt build.\n\nUse when the user asks to build a specific dbt model now, as opposed to only\ntesting it. dbt build both materializes (runs) the model and runs its tests\nin one invocation. There is no \"no_tests\" skip for a single-node build: a\nmodel with no tests defined is still built. By default the run uses the\nmodel's current (latest) image and manifest version. Pass a past run id to\nbuild the model exactly as that run saw it.\n\nArguments:\n  <service>  The owning service name.\n  <schema>   The schema name.\n  <table>    The table (model) name.\n  [source-run-id]  Optional. The id of a past run of this node, as listed by\n                   \"node history\". When given, the new run reuses the image\n                   and manifest version that run used (\"snapshot_of_run\"\n                   metadata) instead of the latest topology. The source run\n                   must have finished (succeeded, failed or cancelled) and\n                   must have included this node. Omit the argument for\n                   latest mode; an empty value is a usage error.\n\nThe initiating identity is not an argument: it is taken from the CONTINUO_ACTOR\nenvironment variable when set, otherwise the state service records its own\nsystem identity.\n\nThis command reports acceptance, not completion. On success the new run and its\nevent are durably recorded; if the node is not in the topology, the failure is\nsurfaced asynchronously downstream, not by this command. Check the outcome\nwith \"node history\".\n\nOutput (stdout, JSON):\n  {\"run_id\":string,\"schedule_name\":string}\n\nErrors:\n  usage      (exit 2)  wrong number of arguments, a malformed source run id, or the server rejects the identity triple\n  not_found  (exit 3)  the source run does not exist, or it did not include this node\n  conflict   (exit 4)  the source run has not finished yet\n  unavailable(exit 5)  the state service is unreachable\n  internal   (exit 6)  unexpected server error",
+      "args": [
+        "<service>",
+        "<schema>",
+        "<table>",
+        "[source-run-id]"
+      ],
+      "flags": [
+        {
+          "name": "dead-letter-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the state service (env: CONTINUO_STATE_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "human",
+          "shorthand": "",
+          "usage": "emit human text on stderr instead of JSON on stdout",
+          "default": "false"
+        },
+        {
+          "name": "json",
+          "shorthand": "",
+          "usage": "forward-compat no-op; JSON is the default",
+          "default": "true"
+        },
+        {
+          "name": "orchestrator-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "shorthand": "",
+          "usage": "gRPC deadline (env: CONTINUO_TIMEOUT)",
+          "default": ""
+        }
+      ],
+      "examples": [
+        "continuo node build finance analytics orders",
+        "continuo node build finance analytics orders 3f9e1c2a-7b4d-4e8f-9a1b-2c3d4e5f6a7b"
+      ],
+      "output_schema": {
+        "run_id": "string",
+        "schedule_name": "string"
+      },
+      "exit_codes": [
+        0,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "mutating": true
+    },
+    {
+      "path": "node code-units",
+      "short": "List a shared-code unit's (or a node's units') version chain",
+      "long": "List a shared-code unit's version chain, newest first.\n\nUse when the user wants the history of a dbt macro (or other shared-code\nunit): every recorded checksum, its source, and the release that promoted it.\n\nThis command takes exactly one of two mutually exclusive selectors:\n\n  <unit-id>                              query one unit's chain directly.\n  --service <s> --schema <s> --table <t> resolve the named node's CURRENT\n                                          units first, then return each of\n                                          their chains concatenated in\n                                          resolution order. All three flags\n                                          are required together; the node is\n                                          addressed by its unique_id,\n                                          \"<schema>.<table>\" ( --service is\n                                          accepted for consistency with the\n                                          other node subcommands but does not\n                                          appear in the unique_id).\n\nSupplying both the positional <unit-id> and any of --service/--schema/--table,\nor supplying neither, is a usage error — there is no default selector.\n\nFlags:\n  --service  Owning service name of the node whose units to list. Must be\n             combined with --schema and --table; mutually exclusive with\n             <unit-id>.\n  --schema   Schema name of the node whose units to list. Must be combined\n             with --service and --table; mutually exclusive with <unit-id>.\n  --table    Table (model) name of the node whose units to list. Must be\n             combined with --service and --schema; mutually exclusive with\n             <unit-id>.\n  --limit    Maximum number of versions returned per unit, newest first.\n             Default 20; the server also applies this default when sent 0,\n             and clamps any value above 200 down to 200.\n\nOutput (stdout, JSON):\n  {\"versions\":[{\"unit_id\":string,\"checksum\":string,\"source\":string,\n   \"repo\":string,\"commit_sha\":string,\"release_id\":string,\n   \"promoted_at\":string,\"is_current\":bool}]}\n  repo, commit_sha, release_id, promoted_at, and is_current are omitted when\n  the version carries no value for them.\n\nErrors:\n  usage      (exit 2)  wrong number of positional arguments, or the selector is not exactly one of <unit-id> / --service+--schema+--table\n  not_found  (exit 3)  the unit_id, or the node's unique_id, is not recorded\n  unavailable(exit 5)  the orchestrator service is unreachable\n  internal   (exit 6)  unexpected server error",
+      "args": [
+        "[<unit-id>]"
+      ],
+      "flags": [
+        {
+          "name": "limit",
+          "shorthand": "",
+          "usage": "Maximum number of versions returned per unit, newest first (default 20, server max 200)",
+          "default": "20"
+        },
+        {
+          "name": "schema",
+          "shorthand": "",
+          "usage": "Schema name of the node whose units to list (must be combined with --service and --table)",
+          "default": ""
+        },
+        {
+          "name": "service",
+          "shorthand": "",
+          "usage": "Owning service name of the node whose units to list (must be combined with --schema and --table)",
+          "default": ""
+        },
+        {
+          "name": "table",
+          "shorthand": "",
+          "usage": "Table (model) name of the node whose units to list (must be combined with --service and --schema)",
+          "default": ""
+        },
+        {
+          "name": "dead-letter-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the state service (env: CONTINUO_STATE_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "human",
+          "shorthand": "",
+          "usage": "emit human text on stderr instead of JSON on stdout",
+          "default": "false"
+        },
+        {
+          "name": "json",
+          "shorthand": "",
+          "usage": "forward-compat no-op; JSON is the default",
+          "default": "true"
+        },
+        {
+          "name": "orchestrator-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "shorthand": "",
+          "usage": "gRPC deadline (env: CONTINUO_TIMEOUT)",
+          "default": ""
+        }
+      ],
+      "examples": [
+        "continuo node code-units unit_abc123",
+        "continuo node code-units --service finance --schema analytics --table orders"
+      ],
+      "output_schema": {
+        "versions": "array"
+      },
+      "exit_codes": [
+        0,
+        2,
+        3,
+        5,
+        6
+      ]
+    },
+    {
+      "path": "node diff",
+      "short": "Render the diff between two recorded versions of one model node",
+      "long": "Render the diff between two recorded versions of one model node.\n\nUse when the user wants to see exactly what changed between two code versions\nof a dbt model: the raw source diff, the config diff, and which of source,\nshared code, and config actually changed.\n\nArguments:\n  <service>  The owning service name.\n  <schema>   The schema name.\n  <table>    The table (model) name.\n\nThe node is addressed by its unique_id, \"<schema>.<table>\"; <service> is\naccepted for consistency with the other node subcommands but does not appear\nin the unique_id.\n\nFlags:\n  --from  Required. The version_seq to diff from. version_seq is a stable\n          per-node handle used to address a version — it is NOT a\n          chronological ordering, and --from need not be the older version.\n  --to    Required. The version_seq to diff to. Same handle semantics as\n          --from.\n\nOutput (stdout, JSON):\n  {\"unique_id\":string,\n   \"from\":{...version object, same shape as \"node versions\"...},\n   \"to\":{...version object, same shape as \"node versions\"...},\n   \"raw_code_diff\":string,\"config_diff\":string,\"source_changed\":bool,\n   \"shared_code_changed\":bool,\"config_changed\":bool,\"truncated\":bool}\n  raw_code_diff and config_diff are omitted when that part is unchanged.\n  truncated is set when either diff was cut to the server's per-diff 8 KiB cap.\n\nErrors:\n  usage      (exit 2)  wrong number of arguments, missing --from/--to, or --from equals --to\n  not_found  (exit 3)  the node's unique_id, or one of the two seqs, is not recorded\n  unavailable(exit 5)  the orchestrator service is unreachable\n  internal   (exit 6)  unexpected server error",
+      "args": [
+        "<service>",
+        "<schema>",
+        "<table>"
+      ],
+      "flags": [
+        {
+          "name": "from",
+          "shorthand": "",
+          "usage": "Required. The version_seq to diff from (a stable handle, not a chronological position)",
+          "default": "0"
+        },
+        {
+          "name": "to",
+          "shorthand": "",
+          "usage": "Required. The version_seq to diff to (a stable handle, not a chronological position)",
+          "default": "0"
+        },
+        {
+          "name": "dead-letter-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the state service (env: CONTINUO_STATE_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "human",
+          "shorthand": "",
+          "usage": "emit human text on stderr instead of JSON on stdout",
+          "default": "false"
+        },
+        {
+          "name": "json",
+          "shorthand": "",
+          "usage": "forward-compat no-op; JSON is the default",
+          "default": "true"
+        },
+        {
+          "name": "orchestrator-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "shorthand": "",
+          "usage": "gRPC deadline (env: CONTINUO_TIMEOUT)",
+          "default": ""
+        }
+      ],
+      "examples": [
+        "continuo node diff finance analytics orders --from 1 --to 3"
+      ],
+      "output_schema": {
+        "unique_id": "string",
+        "from": "object",
+        "to": "object",
+        "raw_code_diff": "string",
+        "config_diff": "string",
+        "source_changed": "bool",
+        "shared_code_changed": "bool",
+        "config_changed": "bool",
+        "truncated": "bool"
+      },
+      "exit_codes": [
+        0,
+        2,
+        3,
+        5,
+        6
+      ]
+    },
+    {
+      "path": "node full-refresh",
+      "short": "Rebuild one dbt model or seed from scratch (dbt --full-refresh)",
+      "long": "Rebuild one dbt model or seed from scratch (dbt --full-refresh).\n\nUse when the user asks to fully refresh, rebuild from scratch, or re-create a\nspecific dbt model or seed — for example an incremental model whose logic or\ncolumns changed, whose normal runs only insert new rows. The node's production\ntable is dropped and rebuilt. Only this node runs; continuo does not trigger its\nupstream or downstream nodes. On Postgres, views that select from the node are\ndropped with it until their own models run again. Only dbt models and dbt seeds\ncan be fully refreshed; snapshots, dbt tests and python nodes are rejected.\nBy default the run uses the node's current (latest) image and manifest version.\nPass a past run id to rebuild the node exactly as that run saw it.\n\nArguments:\n  <service>  The owning service name.\n  <schema>   The schema name.\n  <table>    The table (model or seed) name.\n  [source-run-id]  Optional. The id of a past run of this node, as listed by\n                   \"node history\". When given, the new run reuses the image\n                   and manifest version that run used (\"snapshot_of_run\"\n                   metadata) instead of the latest topology. The source run\n                   must have finished (succeeded, failed or cancelled) and\n                   must have included this node. Omit the argument for\n                   latest mode; an empty value is a usage error.\n\nThe initiating identity is not an argument: it is taken from the CONTINUO_ACTOR\nenvironment variable when set, otherwise the state service records its own\nsystem identity.\n\nThis command reports acceptance, not completion. On success the new run and its\nevent are durably recorded; if the node is not in the topology, is not a dbt\nmodel or seed, or its service's governing command block defines no\nfull_refresh (model) or seed_full_refresh (seed) command, the failure is\nsurfaced asynchronously downstream, not by this command. Check the outcome\nwith \"node history\".\n\nOutput (stdout, JSON):\n  {\"run_id\":string,\"schedule_name\":string}\n\nErrors:\n  usage      (exit 2)  wrong number of arguments, a malformed source run id, or the server rejects the identity triple\n  not_found  (exit 3)  the source run does not exist, or it did not include this node\n  conflict   (exit 4)  the source run has not finished yet\n  unavailable(exit 5)  the state service is unreachable\n  internal   (exit 6)  unexpected server error",
+      "args": [
+        "<service>",
+        "<schema>",
+        "<table>",
+        "[source-run-id]"
+      ],
+      "flags": [
+        {
+          "name": "dead-letter-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the state service (env: CONTINUO_STATE_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "human",
+          "shorthand": "",
+          "usage": "emit human text on stderr instead of JSON on stdout",
+          "default": "false"
+        },
+        {
+          "name": "json",
+          "shorthand": "",
+          "usage": "forward-compat no-op; JSON is the default",
+          "default": "true"
+        },
+        {
+          "name": "orchestrator-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "shorthand": "",
+          "usage": "gRPC deadline (env: CONTINUO_TIMEOUT)",
+          "default": ""
+        }
+      ],
+      "examples": [
+        "continuo node full-refresh finance analytics orders",
+        "continuo node full-refresh finance analytics orders 3f9e1c2a-7b4d-4e8f-9a1b-2c3d4e5f6a7b"
+      ],
+      "output_schema": {
+        "run_id": "string",
+        "schedule_name": "string"
+      },
+      "exit_codes": [
+        0,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "mutating": true
+    },
+    {
+      "path": "node history",
+      "short": "List the recent run history of one model node",
+      "long": "List the recent run history of one model node.\n\nUse when the user wants to see the last runs of a specific dbt model, including\nwhether each run succeeded, which image and manifest version it used, any\nerror message, and the exact code it executed.\n\nArguments:\n  <service>  The owning service name.\n  <schema>   The schema name.\n  <table>    The table (model) name.\n\nFlags:\n  --operation  Filter history to one operation kind: run | test | build.\n               Default \"run\" (dbt run/materialize rows). \"test\" returns dbt\n               test rows; \"build\" returns dbt build rows. An unrecognized\n               value is a usage error.\n\nOutput (stdout, JSON): up to 50 runs, newest first.\n  {\"runs\":[{\"run_id\":string,\"schedule_name\":string,\"kind\":string,\n   \"terminal_status\":string,\"task_id\":string,\"task_status\":string,\n   \"retry_count\":number,\"image_tag\":string,\n   \"created_at\":string,\"started_at\":string,\"completed_at\":string,\n   \"error_message\":string,\"log_s3_key\":string,\"operation\":string,\n   \"run_results_uri\":string,\"content_hash\":string}]}\n  terminal_status, started_at, completed_at, error_message, log_s3_key,\n  run_results_uri, and content_hash are omitted when empty. run_results_uri\n  points at the structured result block the run's container printed —\n  python-family nodes (python-node, python-csv, python-api) always emit one, dbt\n  nodes never do. An unknown node returns {\"runs\":[]}, not an error.\n\ncontent_hash is the code this run executed, joined client-side from the\norchestrator's GetNodeRunHistory by run id, filtered server-side to the same\n--operation so the enrichment call cannot be starved by newer executions of a\ndifferent operation; it is omitted for runs that predate the stamp. State\nremains the primary source of truth for run history: if the join to the\norchestrator fails for any reason (the service is unreachable, the node has\nno recorded version history, or any other error), history still returns\nstate's rows in full, every content_hash omitted rather than the command\nfailing.\n\nIn --human mode, the joined hash is rendered too: each line ends with an\nEXECUTED_HASH column (the first 12 characters of content_hash, or \"-\" when\nit is unavailable).\n\nErrors:\n  usage      (exit 2)  wrong number of arguments, or --operation is not run|test|build\n  unavailable(exit 5)  the state service is unreachable\n  internal   (exit 6)  unexpected server error",
+      "args": [
+        "<service>",
+        "<schema>",
+        "<table>"
+      ],
+      "flags": [
+        {
+          "name": "operation",
+          "shorthand": "",
+          "usage": "Filter history by operation: run | test | build (default \"run\")",
+          "default": "run"
+        },
+        {
+          "name": "dead-letter-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the state service (env: CONTINUO_STATE_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "human",
+          "shorthand": "",
+          "usage": "emit human text on stderr instead of JSON on stdout",
+          "default": "false"
+        },
+        {
+          "name": "json",
+          "shorthand": "",
+          "usage": "forward-compat no-op; JSON is the default",
+          "default": "true"
+        },
+        {
+          "name": "orchestrator-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "shorthand": "",
+          "usage": "gRPC deadline (env: CONTINUO_TIMEOUT)",
+          "default": ""
+        }
+      ],
+      "examples": [
+        "continuo node history finance analytics orders --operation test"
+      ],
+      "output_schema": {
+        "runs": "array"
+      },
+      "exit_codes": [
+        0,
+        2,
+        5,
+        6
+      ]
+    },
+    {
+      "path": "node list",
+      "short": "List the node catalog with per-node run statistics",
+      "long": "List the node catalog with per-node run statistics, one page at a time.\n\nUse when the user names a model but not its service or schema, wants to know\nwhich nodes exist in a service, or asks how reliable or slow a model has been.\nEach row carries the (service, schema, table) triple every other node\nsubcommand takes as arguments, so this is the command that resolves a bare\ntable name into an addressable node.\n\nStatistics cover each node's most recent 50 runs of the selected operation.\n\nArguments: none. Every filter is a flag.\n\nFlags:\n  --search     Table name to look up. Case-insensitive EXACT match on the\n               table name, not a substring: \"orders\" matches \"orders\" and\n               \"Orders\", never \"orders_daily\". Default \"\" (no filter).\n  --service    Exact service name. Default \"\" (all services).\n  --operation  Which operation's runs feed the statistics: run | test |\n               build. Default \"run\". An unrecognized value is a usage error.\n  --limit      Page size, 1..200. Default 50. A value outside that range is\n               a usage error.\n  --offset     Number of matching rows to skip, >= 0. Default 0.\n\nOutput (stdout, JSON):\n  {\"total_count\":number,\n   \"nodes\":[{\"service_name\":string,\"schema_name\":string,\"table_name\":string,\n   \"run_count\":number,\"success_rate_pct\":number,\"avg_duration_sec\":number,\n   \"p95_duration_sec\":number,\"flaky_rate_pct\":number,\"last_status\":string,\n   \"last_run_at\":string,\"operation\":string}]}\n  total_count is the number of nodes matching the filters regardless of\n  paging; when it exceeds offset + len(nodes), request the next page with a\n  larger --offset. success_rate_pct is omitted when the node has no terminal\n  run in the window; avg_duration_sec and p95_duration_sec are omitted when\n  no run in the window was timed; last_run_at is omitted when the node has\n  never run. last_status is one of succeeded, failed, running, cancelled,\n  pending. No match returns {\"total_count\":0,\"nodes\":[]}, not an error.\n\nErrors:\n  usage      (exit 2)  a positional argument was given, --operation is not\n                       run|test|build, --limit is outside 1..200, or --offset\n                       is negative\n  unavailable(exit 5)  the state service is unreachable\n  internal   (exit 6)  unexpected server error",
+      "args": [],
+      "flags": [
+        {
+          "name": "limit",
+          "shorthand": "",
+          "usage": "Page size, 1..200 (default 50)",
+          "default": "50"
+        },
+        {
+          "name": "offset",
+          "shorthand": "",
+          "usage": "Number of matching rows to skip (default 0)",
+          "default": "0"
+        },
+        {
+          "name": "operation",
+          "shorthand": "",
+          "usage": "Operation whose runs feed the statistics: run | test | build (default \"run\")",
+          "default": "run"
+        },
+        {
+          "name": "search",
+          "shorthand": "",
+          "usage": "Table name to look up (case-insensitive exact match; default \"\" = all)",
+          "default": ""
+        },
+        {
+          "name": "service",
+          "shorthand": "",
+          "usage": "Exact service name filter (default \"\" = all services)",
+          "default": ""
+        },
+        {
+          "name": "dead-letter-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the state service (env: CONTINUO_STATE_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "human",
+          "shorthand": "",
+          "usage": "emit human text on stderr instead of JSON on stdout",
+          "default": "false"
+        },
+        {
+          "name": "json",
+          "shorthand": "",
+          "usage": "forward-compat no-op; JSON is the default",
+          "default": "true"
+        },
+        {
+          "name": "orchestrator-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "shorthand": "",
+          "usage": "gRPC deadline (env: CONTINUO_TIMEOUT)",
+          "default": ""
+        }
+      ],
+      "examples": [
+        "continuo node list --search orders",
+        "continuo node list --service finance --operation test --limit 20 --offset 20"
+      ],
+      "output_schema": {
+        "total_count": "number",
+        "nodes": "array"
+      },
+      "exit_codes": [
+        0,
+        2,
+        5,
+        6
+      ]
+    },
+    {
+      "path": "node test",
+      "short": "Run a model node's dbt tests",
+      "long": "Run a model node's dbt tests.\n\nUse when the user asks to test, validate, or check a specific dbt model now,\nas opposed to running (building) it. The run dispatches dbt test rather than\ndbt run/build for that single node. By default it uses the model's current\n(latest) image and manifest version. Pass a past run id to test the model\nexactly as that run saw it.\n\nArguments:\n  <service>  The owning service name.\n  <schema>   The schema name.\n  <table>    The table (model) name.\n  [source-run-id]  Optional. The id of a past run of this node, as listed by\n                   \"node history\". When given, the new run reuses the image\n                   and manifest version that run used (\"snapshot_of_run\"\n                   metadata) instead of the latest topology. The source run\n                   must have finished (succeeded, failed or cancelled) and\n                   must have included this node. Omit the argument for\n                   latest mode; an empty value is a usage error.\n\nThe initiating identity is not an argument: it is taken from the CONTINUO_ACTOR\nenvironment variable when set, otherwise the state service records its own\nsystem identity.\n\nThis command reports acceptance, not completion. On success the new run and its\nevent are durably recorded. If the node is not in the topology the run fails\nasynchronously. If the model has no tests defined (in the latest topology, or\nin the source run's snapshot when one is given) nothing is dispatched and the\nrun finishes with status \"skipped\". Neither outcome is reported by this\ncommand: check it with \"node history\".\n\nOutput (stdout, JSON):\n  {\"run_id\":string,\"schedule_name\":string}\n\nErrors:\n  usage      (exit 2)  wrong number of arguments, a malformed source run id, or the server rejects the identity triple\n  not_found  (exit 3)  the source run does not exist, or it did not include this node\n  conflict   (exit 4)  the source run has not finished yet\n  unavailable(exit 5)  the state service is unreachable\n  internal   (exit 6)  unexpected server error",
+      "args": [
+        "<service>",
+        "<schema>",
+        "<table>",
+        "[source-run-id]"
+      ],
+      "flags": [
+        {
+          "name": "dead-letter-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the state service (env: CONTINUO_STATE_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "human",
+          "shorthand": "",
+          "usage": "emit human text on stderr instead of JSON on stdout",
+          "default": "false"
+        },
+        {
+          "name": "json",
+          "shorthand": "",
+          "usage": "forward-compat no-op; JSON is the default",
+          "default": "true"
+        },
+        {
+          "name": "orchestrator-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "shorthand": "",
+          "usage": "gRPC deadline (env: CONTINUO_TIMEOUT)",
+          "default": ""
+        }
+      ],
+      "examples": [
+        "continuo node test finance analytics orders",
+        "continuo node test finance analytics orders 3f9e1c2a-7b4d-4e8f-9a1b-2c3d4e5f6a7b"
+      ],
+      "output_schema": {
+        "run_id": "string",
+        "schedule_name": "string"
+      },
+      "exit_codes": [
+        0,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "mutating": true
+    },
+    {
       "path": "node trigger",
       "short": "Trigger a fresh run of one model node",
       "long": "Trigger a fresh run of one model node.\n\nUse when the user asks to run, re-run, or rebuild a specific dbt model now.\nBy default the run uses the model's current (latest) image and manifest\nversion. Pass a past run id to re-run the model exactly as that run saw it.\n\nArguments:\n  <service>  The owning service name.\n  <schema>   The schema name.\n  <table>    The table (model) name.\n  [source-run-id]  Optional. The id of a past run of this node, as listed by\n                   \"node history\". When given, the new run reuses the image\n                   and manifest version that run used (\"snapshot_of_run\"\n                   metadata) instead of the latest topology. The source run\n                   must have finished (succeeded, failed or cancelled) and\n                   must have included this node. Omit the argument for\n                   latest mode; an empty value is a usage error.\n\nThe initiating identity is not an argument: it is taken from the CONTINUO_ACTOR\nenvironment variable when set, otherwise the state service records its own\nsystem identity.\n\nThis command reports acceptance, not completion. On success the new run and its\nevent are durably recorded; if the node is not in the topology the failure is\nsurfaced asynchronously downstream, not by this command. Check the outcome\nwith \"node history\".\n\nOutput (stdout, JSON):\n  {\"run_id\":string,\"schedule_name\":string}\n\nErrors:\n  usage      (exit 2)  wrong number of arguments, a malformed source run id, or the server rejects the identity triple\n  not_found  (exit 3)  the source run does not exist, or it did not include this node\n  conflict   (exit 4)  the source run has not finished yet\n  unavailable(exit 5)  the state service is unreachable\n  internal   (exit 6)  unexpected server error",
@@ -65,6 +775,12 @@
         "[source-run-id]"
       ],
       "flags": [
+        {
+          "name": "dead-letter-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
+          "default": ""
+        },
         {
           "name": "endpoint",
           "shorthand": "",
@@ -115,14 +831,319 @@
       "mutating": true
     },
     {
+      "path": "node upstream-changes",
+      "short": "List a model node's ancestors' most recent code changes",
+      "long": "List a model node's ancestors' most recent code changes, most-recently-changed first.\n\nUse when the user wants to know what changed upstream of a failing or\nsuspicious dbt model: which ancestors changed, how recently, and what their\ndiff looks like.\n\n\"Most recently changed\" is each ancestor's EFFECTIVE last change, not a\nversion's own creation time: a version node is immutable, so a revert that\nre-points an ancestor's running code at an already-recorded version still\ncounts as a change at the moment of the revert, and the reported diff is that\nrevert's actual before/after rather than the two versions' original creation\norder.\n\nArguments:\n  <service>  The owning service name.\n  <schema>   The schema name.\n  <table>    The table (model) name.\n\nThe node is addressed by its unique_id, \"<schema>.<table>\"; <service> is\naccepted for consistency with the other node subcommands but does not appear\nin the unique_id.\n\nContract caps (enforced server-side, not adjustable): results are capped at\nthe 5 most-recently-changed ancestors, and each diff is independently capped\nat 8 KiB with its own truncated flag set on the diffs that were cut — size\nprompts against both caps, not just the top-level result count.\n\nFlags:\n  --depth  How many hops upstream to walk. <= 0 (the default) applies the\n           server's default of 3 hops. The server rejects any value above 10\n           as invalid — this is a hard cap, not a client-side clamp.\n  --since  RFC3339 timestamp; ancestors whose effective last change (see\n           above — a revert counts) predates it are excluded. Empty (the\n           default) applies no time filter.\n\nOutput (stdout, JSON):\n  {\"changes\":[{\"unique_id\":string,\"depth\":number,\n   \"diff\":{...diff object, same shape as \"node diff\"...}}]}\n\nErrors:\n  usage      (exit 2)  wrong number of arguments, --depth above 10, or --since is not RFC3339\n  not_found  (exit 3)  the node's unique_id is not recorded\n  unavailable(exit 5)  the orchestrator service is unreachable\n  internal   (exit 6)  unexpected server error",
+      "args": [
+        "<service>",
+        "<schema>",
+        "<table>"
+      ],
+      "flags": [
+        {
+          "name": "depth",
+          "shorthand": "",
+          "usage": "Hops upstream to walk; <= 0 applies the server default of 3, values above 10 are rejected",
+          "default": "0"
+        },
+        {
+          "name": "since",
+          "shorthand": "",
+          "usage": "RFC3339 timestamp; excludes ancestors whose newest version predates it (default: no filter)",
+          "default": ""
+        },
+        {
+          "name": "dead-letter-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the state service (env: CONTINUO_STATE_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "human",
+          "shorthand": "",
+          "usage": "emit human text on stderr instead of JSON on stdout",
+          "default": "false"
+        },
+        {
+          "name": "json",
+          "shorthand": "",
+          "usage": "forward-compat no-op; JSON is the default",
+          "default": "true"
+        },
+        {
+          "name": "orchestrator-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "shorthand": "",
+          "usage": "gRPC deadline (env: CONTINUO_TIMEOUT)",
+          "default": ""
+        }
+      ],
+      "examples": [
+        "continuo node upstream-changes finance analytics orders --depth 5 --since 2026-07-01T00:00:00Z"
+      ],
+      "output_schema": {
+        "changes": "array"
+      },
+      "exit_codes": [
+        0,
+        2,
+        3,
+        5,
+        6
+      ]
+    },
+    {
+      "path": "node versions",
+      "short": "List a model node's recorded code-version history",
+      "long": "List a model node's recorded code-version history, newest first.\n\nUse when the user wants to see what code a dbt model has run over time: every\nrecorded version's hashes, the release that promoted it, and (with\n--include-code) the code itself.\n\nNewest first means ordered by when each version's code was FIRST promoted,\nnot by when it last ran: a version node is immutable, so a revert to earlier\ncode re-points at the version that already exists rather than moving it in\nthis list. is_current marks the version that actually runs now — after a\nrevert, that can be a version further down this list, not the first row.\n\nArguments:\n  <service>  The owning service name.\n  <schema>   The schema name.\n  <table>    The table (model) name.\n\nThe node is addressed by its unique_id, \"<schema>.<table>\"; <service> is\naccepted for consistency with the other node subcommands but does not appear\nin the unique_id, matching how the orchestrator tracks version history.\n\nFlags:\n  --limit         Maximum number of versions returned, newest first. Default\n                   20; the server also applies this default when sent 0, and\n                   clamps any value above 200 down to 200.\n  --include-code  Include raw_code/compiled_code in the response. Default\n                   false: both fields come back empty and every other field\n                   (hashes, config_json, provenance) is unaffected. A single\n                   version's compiled_code can run to 256 KiB, so leave this\n                   off unless the code itself is needed.\n\nOutput (stdout, JSON):\n  {\"versions\":[{\"unique_id\":string,\"version_seq\":number,\"content_hash\":string,\n   \"source_hash\":string,\"shared_code_hash\":string,\"config_hash\":string,\n   \"runtime\":string,\"raw_code\":string,\"compiled_code\":string,\n   \"compiled_truncated\":bool,\"config_json\":string,\"repo\":string,\n   \"commit_sha\":string,\"release_id\":string,\"promoted_at\":string,\n   \"healed\":bool,\"backfilled\":bool,\"is_current\":bool}]}\n  raw_code and compiled_code are empty unless --include-code is set.\n  compiled_code, compiled_truncated, repo, commit_sha, release_id,\n  promoted_at, healed, backfilled, and is_current are omitted when the\n  version carries no value for them (e.g. a version with no release\n  provenance, or one that is not the node's current version).\n\nErrors:\n  usage      (exit 2)  wrong number of arguments\n  not_found  (exit 3)  the node's unique_id is not recorded\n  unavailable(exit 5)  the orchestrator service is unreachable\n  internal   (exit 6)  unexpected server error",
+      "args": [
+        "<service>",
+        "<schema>",
+        "<table>"
+      ],
+      "flags": [
+        {
+          "name": "include-code",
+          "shorthand": "",
+          "usage": "Include raw_code/compiled_code in the response (default false)",
+          "default": "false"
+        },
+        {
+          "name": "limit",
+          "shorthand": "",
+          "usage": "Maximum number of versions returned, newest first (default 20, server max 200)",
+          "default": "20"
+        },
+        {
+          "name": "dead-letter-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the state service (env: CONTINUO_STATE_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "human",
+          "shorthand": "",
+          "usage": "emit human text on stderr instead of JSON on stdout",
+          "default": "false"
+        },
+        {
+          "name": "json",
+          "shorthand": "",
+          "usage": "forward-compat no-op; JSON is the default",
+          "default": "true"
+        },
+        {
+          "name": "orchestrator-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "shorthand": "",
+          "usage": "gRPC deadline (env: CONTINUO_TIMEOUT)",
+          "default": ""
+        }
+      ],
+      "examples": [
+        "continuo node versions finance analytics orders --limit 5 --include-code"
+      ],
+      "output_schema": {
+        "versions": "array"
+      },
+      "exit_codes": [
+        0,
+        2,
+        3,
+        5,
+        6
+      ]
+    },
+    {
+      "path": "precedents",
+      "short": "Look up how a classified failure was rejected and fixed before",
+      "long": "Look up how a classified failure was rejected and fixed before.\n\nUse when an LLM needs to answer \"how was this exact error solved before?\" for\na validation rejection: has this same failure signature — or the same\n(category, reason) pair — been seen and resolved on a prior release, and if\nso, what changed to fix it.\n\nArguments:\n  signature  Optional positional form of --signature. At most one positional\n             argument is accepted.\n\nSelectors (precedence: --signature, then the positional signature, then\n--category/--reason):\n  --signature  The exact classifier signature to match. Wins over a\n               positional signature when both are given.\n  --category   Together with --reason, matches every rejection sharing that\n               (category, reason) pair. Both must be set to use this form.\n  --reason     See --category.\n\nFlags:\n  --limit         Caps the number of precedents returned, resolved-first then\n                  newest. 0 (the default) applies the server default of 5;\n                  the server clamps the maximum to 20 — this command does not\n                  re-implement that clamp client-side.\n  --include-code  Also return the failing candidate's raw code and the\n                  resolving version's raw code. The error excerpt and the\n                  resolution diff are ALWAYS included regardless of this\n                  flag; the diff is capped server-side at 8 KiB with a\n                  truncated flag set on any diff that was cut.\n\nOutput (stdout, JSON):\n  {\"precedents\":[{\"release_id\":string,\"node_id\":string,\"stage\":string,\n   \"category\":string,\"reason\":string,\"error_excerpt\":string,\n   \"rejected_at\":string,\"failing_code\":string,\"resolved\":bool,\n   \"resolving_version\":{\"version_seq\":number,\"content_hash\":string,\n   \"release_id\":string,\"repo\":string,\"commit_sha\":string,\n   \"promoted_at\":string,\"raw_code\":string},\"resolution_diff\":string,\n   \"resolution_diff_truncated\":bool,\n   \"proposals\":[{\"proposal_id\":string,\"pr_url\":string,\"pr_number\":number,\n   \"pr_state\":string}]}]}\n  failing_code and resolving_version.raw_code are only populated when\n  --include-code is set. resolving_version is omitted when resolved is false.\n  proposals[].pr_state records the proposal's state when the PR was opened\n  (e.g. \"open\") — it is NOT updated when the PR is later merged or closed, so\n  it must not be read as the PR's current state.\n\nAn unknown signature — or an unseen (category, reason) pair — is NOT an\nerror: it returns an empty precedents list with exit 0, because \"no\nprecedent\" is a valid answer to the question this command asks.\n\nErrors:\n  usage      (exit 2)  more than one positional argument was given, or\n                        neither a signature (--signature or positional) nor a\n                        complete --category and --reason pair was given\n  unavailable(exit 5)  the orchestrator service is unreachable\n  internal   (exit 6)  unexpected server error",
+      "args": [
+        "[signature]"
+      ],
+      "flags": [
+        {
+          "name": "category",
+          "shorthand": "",
+          "usage": "Together with --reason, matches rejections sharing this (category, reason) pair",
+          "default": ""
+        },
+        {
+          "name": "include-code",
+          "shorthand": "",
+          "usage": "Also return the failing and resolving code bodies (the error excerpt and resolution diff are always included)",
+          "default": "false"
+        },
+        {
+          "name": "limit",
+          "shorthand": "",
+          "usage": "Caps the number of precedents returned; 0 applies the server default of 5, clamped server-side to a max of 20",
+          "default": "0"
+        },
+        {
+          "name": "reason",
+          "shorthand": "",
+          "usage": "Together with --category, matches rejections sharing this (category, reason) pair",
+          "default": ""
+        },
+        {
+          "name": "signature",
+          "shorthand": "",
+          "usage": "Exact classifier signature to match; wins over a positional signature and over --category/--reason when both are given",
+          "default": ""
+        },
+        {
+          "name": "dead-letter-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the state service (env: CONTINUO_STATE_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "human",
+          "shorthand": "",
+          "usage": "emit human text on stderr instead of JSON on stdout",
+          "default": "false"
+        },
+        {
+          "name": "json",
+          "shorthand": "",
+          "usage": "forward-compat no-op; JSON is the default",
+          "default": "true"
+        },
+        {
+          "name": "orchestrator-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "shorthand": "",
+          "usage": "gRPC deadline (env: CONTINUO_TIMEOUT)",
+          "default": ""
+        }
+      ],
+      "examples": [
+        "continuo precedents 3f9c…",
+        "continuo precedents --signature 3f9c…",
+        "continuo precedents --category logic --reason logic:missing_object --limit 3"
+      ],
+      "output_schema": {
+        "precedents": "array"
+      },
+      "exit_codes": [
+        0,
+        2,
+        5,
+        6
+      ]
+    },
+    {
+      "path": "schedule build",
+      "short": "Run dbt build for every model in the named schedule",
+      "long": "Run dbt build for every model in the named schedule, using the schedule's\ncurrent (latest) topology and manifest version.\n\nUse when the user asks to build an entire schedule (its whole DAG of models)\nnow, as opposed to only testing it. dbt build both materializes (runs) and\ntests each node in one invocation. Unlike schedule test's flat fan-out, the\nwhole-DAG build is dependency-ordered: nodes run in topological order, and\nif a node fails, its downstream descendants are cascade-skipped rather than\nattempted. A node with no tests defined is still built; there is no\n\"no_tests\" skip for build.\n\nArguments:\n  <schedule-name>  The schedule to build.\n\nOutput (stdout, JSON):\n  {\"schedule_id\":string,\"schedule_name\":string,\"triggered_at\":string}\n\nErrors:\n  usage      (exit 2)  wrong number of arguments\n  not_found  (exit 3)  schedule not in the catalog\n  conflict   (exit 4)  a run is already active for this schedule\n  unavailable(exit 5)  the state service is unreachable\n  internal   (exit 6)  unexpected server error",
+      "args": [
+        "<schedule-name>"
+      ],
+      "flags": [
+        {
+          "name": "dead-letter-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the state service (env: CONTINUO_STATE_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "human",
+          "shorthand": "",
+          "usage": "emit human text on stderr instead of JSON on stdout",
+          "default": "false"
+        },
+        {
+          "name": "json",
+          "shorthand": "",
+          "usage": "forward-compat no-op; JSON is the default",
+          "default": "true"
+        },
+        {
+          "name": "orchestrator-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "shorthand": "",
+          "usage": "gRPC deadline (env: CONTINUO_TIMEOUT)",
+          "default": ""
+        }
+      ],
+      "examples": [
+        "continuo schedule build daily"
+      ],
+      "output_schema": {
+        "schedule_id": "string",
+        "schedule_name": "string",
+        "triggered_at": "string"
+      },
+      "exit_codes": [
+        0,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "mutating": true
+    },
+    {
       "path": "schedule cancel",
       "short": "Cancel the active run of the named schedule",
-      "long": "Cancel the active run of the named schedule.\n\nUse when the user asks to stop, cancel, or kill a schedule that is running now.\n\nArguments:\n  <schedule-name>  The schedule whose active run should be cancelled.\n  <reason>         Why the run is being cancelled; recorded for audit. Required\n                   and must be non-empty.\n\nOutput (stdout, JSON):\n  {\"schedule_id\":string,\"schedule_name\":string,\"cancelled_at\":string}",
+      "long": "Cancel the active run of the named schedule.\n\nUse when the user asks to stop, cancel, or kill a schedule that is running now.\n\nArguments:\n  <schedule-name>  The schedule whose active run should be cancelled.\n  <reason>         Why the run is being cancelled; recorded for audit. Required\n                   and must be non-empty.\n\nThe cancelling identity is not an argument: it is taken from the CONTINUO_ACTOR\nenvironment variable when set, otherwise the state service records its own\nsystem identity.\n\nOutput (stdout, JSON):\n  {\"schedule_id\":string,\"schedule_name\":string,\"cancelled_at\":string}\n\nErrors:\n  usage      (exit 2)  wrong number of arguments, or a blank reason\n  conflict   (exit 4)  no active run for the schedule, or it already finished\n  unavailable(exit 5)  the state service is unreachable\n  internal   (exit 6)  unexpected server error",
       "args": [
         "<schedule-name>",
         "<reason>"
       ],
       "flags": [
+        {
+          "name": "dead-letter-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
+          "default": ""
+        },
         {
           "name": "endpoint",
           "shorthand": "",
@@ -180,6 +1201,12 @@
       ],
       "flags": [
         {
+          "name": "dead-letter-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
+          "default": ""
+        },
+        {
           "name": "endpoint",
           "shorthand": "",
           "usage": "gRPC address of the state service (env: CONTINUO_STATE_ADDR)",
@@ -233,6 +1260,12 @@
       "args": [],
       "flags": [
         {
+          "name": "dead-letter-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
+          "default": ""
+        },
+        {
           "name": "endpoint",
           "shorthand": "",
           "usage": "gRPC address of the state service (env: CONTINUO_STATE_ADDR)",
@@ -285,6 +1318,12 @@
       ],
       "flags": [
         {
+          "name": "dead-letter-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
+          "default": ""
+        },
+        {
           "name": "endpoint",
           "shorthand": "",
           "usage": "gRPC address of the state service (env: CONTINUO_STATE_ADDR)",
@@ -334,6 +1373,69 @@
       ]
     },
     {
+      "path": "schedule test",
+      "short": "Run dbt tests for every model in the named schedule",
+      "long": "Run dbt tests for every model in the named schedule, using the schedule's\ncurrent (latest) topology and manifest version.\n\nUse when the user asks to test, validate, or check an entire schedule (its\nwhole DAG of models) now, as opposed to running (building) it. Every node in\nthe schedule that has dbt tests defined runs dbt test; nodes with no tests\ndefined are skipped rather than failed.\n\nArguments:\n  <schedule-name>  The schedule to test.\n\nOutput (stdout, JSON):\n  {\"schedule_id\":string,\"schedule_name\":string,\"triggered_at\":string}\n\nErrors:\n  usage      (exit 2)  wrong number of arguments\n  not_found  (exit 3)  schedule not in the catalog\n  conflict   (exit 4)  a run is already active for this schedule\n  unavailable(exit 5)  the state service is unreachable\n  internal   (exit 6)  unexpected server error",
+      "args": [
+        "<schedule-name>"
+      ],
+      "flags": [
+        {
+          "name": "dead-letter-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the state service (env: CONTINUO_STATE_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "human",
+          "shorthand": "",
+          "usage": "emit human text on stderr instead of JSON on stdout",
+          "default": "false"
+        },
+        {
+          "name": "json",
+          "shorthand": "",
+          "usage": "forward-compat no-op; JSON is the default",
+          "default": "true"
+        },
+        {
+          "name": "orchestrator-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of the orchestrator service (env: CONTINUO_ORCHESTRATOR_ADDR)",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "shorthand": "",
+          "usage": "gRPC deadline (env: CONTINUO_TIMEOUT)",
+          "default": ""
+        }
+      ],
+      "examples": [
+        "continuo schedule test daily"
+      ],
+      "output_schema": {
+        "schedule_id": "string",
+        "schedule_name": "string",
+        "triggered_at": "string"
+      },
+      "exit_codes": [
+        0,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "mutating": true
+    },
+    {
       "path": "schedule trigger",
       "short": "Trigger a new run of the named schedule",
       "long": "Trigger a new run of the named schedule.\n\nUse when the user asks to start, run, or kick off a schedule now.\n\nArguments:\n  <schedule-name>  The schedule to trigger.\n\nOutput (stdout, JSON):\n  {\"schedule_id\":string,\"schedule_name\":string,\"triggered_at\":string}\n\nErrors:\n  usage      (exit 2)  wrong number of arguments\n  not_found  (exit 3)  schedule not in the catalog\n  conflict   (exit 4)  a run is already active for this schedule\n  unavailable(exit 5)  the state service is unreachable\n  internal   (exit 6)  unexpected server error",
@@ -341,6 +1443,12 @@
         "<schedule-name>"
       ],
       "flags": [
+        {
+          "name": "dead-letter-endpoint",
+          "shorthand": "",
+          "usage": "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)",
+          "default": ""
+        },
         {
           "name": "endpoint",
           "shorthand": "",

@@ -25,20 +25,28 @@ func TestMetrics_GoServicesServePrometheusMetrics(t *testing.T) {
 		{getEnv("RELEASE_CONTROLLER_HOST", "release-controller"), withConsumersAndOutbox},
 		{getEnv("REMEDIATION_HOST", "remediation"), withConsumersAndOutbox},
 		{getEnv("AGENT_REMEDIATION_HOST", "agent-remediation"), withConsumersAndOutbox},
+		{getEnv("DEAD_LETTER_HOST", "dead-letter-controller"), withConsumersAndOutbox},
 		{getEnv("AGENT_CHAT_HOST", "agent-chat"), []string{"go_sql_open_connections{"}},
 	}
-	client := &http.Client{Timeout: 10 * time.Second}
 	for _, tc := range cases {
 		t.Run(tc.host, func(t *testing.T) {
-			resp, err := client.Get(fmt.Sprintf("http://%s:9464/metrics", tc.host))
-			require.NoError(t, err)
-			defer resp.Body.Close()
-			require.Equal(t, http.StatusOK, resp.StatusCode)
-			body, err := io.ReadAll(resp.Body)
-			require.NoError(t, err)
+			body := scrapeMetrics(t, tc.host)
 			for _, want := range tc.want {
-				assert.Contains(t, string(body), want)
+				assert.Contains(t, body, want)
 			}
 		})
 	}
+}
+
+// scrapeMetrics returns the Prometheus exposition text served by host.
+func scrapeMetrics(t *testing.T, host string) string {
+	t.Helper()
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(fmt.Sprintf("http://%s:9464/metrics", host))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	return string(body)
 }

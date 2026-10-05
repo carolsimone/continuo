@@ -3,6 +3,7 @@ go 1.26.8
 use (
 	./agent-chat
 	./agent-remediation
+	./dead-letter-controller
 	./execution-controller
 	./orchestrator
 	./pkg

@@ -43,3 +43,6 @@ func (r *Registry) Handler() http.Handler {
 func (r *Registry) WatchDB(db *sql.DB, name string) {
 	r.labelled.MustRegister(collectors.NewDBStatsCollector(db, name))
 }
+
+// Register adds service-specific collectors; their series carry the service label.
+func (r *Registry) Register(cs ...prometheus.Collector) { r.labelled.MustRegister(cs...) }

@@ -22,7 +22,7 @@ func TestBuildDeadLetterEntry_CarriesOriginContext(t *testing.T) {
 		StreamName:    streams.CompileRequestedV1,
 		Payload:       []byte(`{"release_id":"rel-1"}`),
 	}
-	dl := buildDeadLetterEntry(failed, model.DeadLetterKindTransientExhausted, errors.New("connection refused"), 10)
+	dl := buildDeadLetterEntry(failed, "test_outbox", nil, model.DeadLetterKindTransientExhausted, errors.New("connection refused"), 10)
 
 	if dl.EventType != DeadLetterEventType {
 		t.Fatalf("event_type=%q want %q", dl.EventType, DeadLetterEventType)
@@ -53,7 +53,7 @@ func TestDeadLetterValues_AreScalars(t *testing.T) {
 		EventType: "compile_requested", StreamName: streams.CompileRequestedV1,
 		Payload: []byte(`{"release_id":"rel-1"}`),
 	}
-	dl := buildDeadLetterEntry(failed, model.DeadLetterKindPermanent, errors.New("bad payload"), 1)
+	dl := buildDeadLetterEntry(failed, "test_outbox", nil, model.DeadLetterKindPermanent, errors.New("bad payload"), 1)
 	values, err := DeadLetterValues(dl)
 	if err != nil {
 		t.Fatalf("DeadLetterValues: %v", err)
@@ -72,7 +72,7 @@ func TestDeadLetterPayload_FailureKindIsTheContractValue(t *testing.T) {
 		model.DeadLetterKindPermanent:          `"failure_kind":"permanent"`,
 		model.DeadLetterKindTransientExhausted: `"failure_kind":"transient_exhausted"`,
 	} {
-		dl := buildDeadLetterEntry(failed, kind, errors.New("x"), 1)
+		dl := buildDeadLetterEntry(failed, "test_outbox", nil, kind, errors.New("x"), 1)
 		assert.Contains(t, string(dl.Payload), wire, "the payload carries the dead_letter_kind wire value")
 	}
 	assert.Contains(t, streams.All, streams.ConsumerDeadLetterV1)

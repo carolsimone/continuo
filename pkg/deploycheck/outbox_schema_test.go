@@ -44,5 +44,5 @@ func TestEveryOutboxTableHasClaimIndexesAndNotifyTrigger(t *testing.T) {
 			}
 		}
 	}
-	assert.Equal(t, 6, tables, "outbox tables found under db/migration")
+	assert.Equal(t, 7, tables, "outbox tables found under db/migration")
 }

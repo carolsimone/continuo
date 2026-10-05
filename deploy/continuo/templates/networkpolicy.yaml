@@ -40,7 +40,7 @@ spec:
                 operator: In
                 values: [state, orchestrator, execution-controller,
                          release-controller, remediation, agent-remediation,
-                         agent-chat, db-init-migrate]
+                         agent-chat, dead-letter-controller, db-init-migrate]
         - podSelector:
             matchLabels:
               app: dbt-job
@@ -78,7 +78,8 @@ spec:
                 operator: In
                 values: [state, orchestrator, execution-controller,
                          release-controller, remediation, agent-remediation,
-                         agent-chat, topology-controller, ui, stream-reaper]
+                         agent-chat, dead-letter-controller,
+                         topology-controller, ui, stream-reaper]
       ports:
         - port: 6379
 {{- end }}
@@ -268,6 +269,31 @@ spec:
               app.kubernetes.io/name: release-controller
       ports:
         - port: 50054
+---
+# agent-chat reaches dead-letter-controller's gRPC server (port 50055) for
+# `continuo dlq list`, `show` and `redrive`. It is the CLI's one caller, so no
+# other pod is admitted to this port.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "continuo.fullname" . }}-allow-dead-letter-controller-grpc
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "continuo.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ $instance }}
+      app.kubernetes.io/name: dead-letter-controller
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ $instance }}
+              app.kubernetes.io/name: agent-chat
+      ports:
+        - port: 50055
 ---
 # Front door: ui accepts traffic from any source (ingress controller
 # namespaces vary per cluster; authentication is enforced in the app itself).

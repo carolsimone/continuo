@@ -45,7 +45,7 @@ func TestDescribe_ListsEveryRunnableCommand(t *testing.T) {
 	for _, c := range p.Commands {
 		paths[c.Path] = true
 	}
-	for _, want := range []string{"schedule list", "schedule trigger", "schedule cancel", "schedule graph", "schedule status", "describe", "precedents"} {
+	for _, want := range []string{"schedule list", "schedule trigger", "schedule cancel", "schedule graph", "schedule status", "dlq list", "dlq show", "dlq redrive", "describe", "precedents"} {
 		assert.True(t, paths[want], "describe missing command %q", want)
 	}
 }
@@ -152,8 +152,34 @@ func TestDescribe_MutatingFlagMarksMutatingCommands(t *testing.T) {
 	cancel := findCmd(t, p, "schedule cancel")
 	assert.True(t, cancel.Mutating, "schedule cancel must be marked mutating")
 
-	for _, path := range []string{"schedule status", "schedule list", "schedule graph", "describe"} {
+	redrive := findCmd(t, p, "dlq redrive")
+	assert.True(t, redrive.Mutating, "dlq redrive must be marked mutating")
+
+	for _, path := range []string{"schedule status", "schedule list", "schedule graph", "dlq list", "dlq show", "describe"} {
 		c := findCmd(t, p, path)
 		assert.False(t, c.Mutating, "command %q must not be mutating", path)
+	}
+}
+
+func TestDescribe_DLQCommandsDocumentTheirPositionalArgsAndExitCodes(t *testing.T) {
+	p := runDescribe(t)
+
+	list := findCmd(t, p, "dlq list")
+	assert.Equal(t, []string{"[source]", "[stream]"}, list.Args)
+	show := findCmd(t, p, "dlq show")
+	assert.Equal(t, []string{"<id>"}, show.Args)
+	redrive := findCmd(t, p, "dlq redrive")
+	assert.Equal(t, []string{"<ids>", "<reason>"}, redrive.Args)
+
+	var exitCodes []int
+	require.NoError(t, json.Unmarshal(redrive.ExitCodes, &exitCodes))
+	assert.Contains(t, exitCodes, 4, "redrive must document conflict (expired / not redrivable)")
+
+	for _, c := range []describeCommandJSON{list, show, redrive} {
+		flagNames := map[string]bool{}
+		for _, f := range c.Flags {
+			flagNames[f.Name] = true
+		}
+		assert.True(t, flagNames["dead-letter-endpoint"], "%s must expose the global --dead-letter-endpoint flag", c.Path)
 	}
 }

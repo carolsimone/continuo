@@ -70,6 +70,7 @@
         "orchestratorGrpcAddr": {"type": "string"},
         "agentRemediationGrpcAddr": {"type": "string"},
         "agentChatGrpcAddr": {"type": "string"},
+        "deadLetterControllerGrpcAddr": {"type": "string"},
         "terminationGracePeriodSeconds": {
           "type": "integer",
           "minimum": 20,

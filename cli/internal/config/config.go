@@ -6,6 +6,7 @@ import "time"
 const (
 	defaultStateEndpoint        = "localhost:50051"
 	defaultOrchestratorEndpoint = "localhost:50052"
+	defaultDeadLetterEndpoint   = "localhost:50055"
 	defaultTimeout              = 10 * time.Second
 )
 
@@ -13,6 +14,7 @@ const (
 type Config struct {
 	StateEndpoint        string
 	OrchestratorEndpoint string
+	DeadLetterEndpoint   string
 	Timeout              time.Duration
 	Human                bool
 	// Actor labels who is performing an action (e.g. schedule cancel's
@@ -25,10 +27,12 @@ type Config struct {
 type Inputs struct {
 	FlagEndpoint             string
 	FlagOrchestratorEndpoint string
+	FlagDeadLetterEndpoint   string
 	FlagTimeout              string
 	FlagHuman                bool
 	EnvStateAddr             string
 	EnvOrchestratorAddr      string
+	EnvDeadLetterAddr        string
 	EnvTimeout               string
 	EnvActor                 string
 }
@@ -38,6 +42,7 @@ func Resolve(in Inputs) Config {
 	cfg := Config{
 		StateEndpoint:        defaultStateEndpoint,
 		OrchestratorEndpoint: defaultOrchestratorEndpoint,
+		DeadLetterEndpoint:   defaultDeadLetterEndpoint,
 		Timeout:              defaultTimeout,
 		Human:                in.FlagHuman,
 	}
@@ -52,6 +57,12 @@ func Resolve(in Inputs) Config {
 	}
 	if in.FlagOrchestratorEndpoint != "" {
 		cfg.OrchestratorEndpoint = in.FlagOrchestratorEndpoint
+	}
+	if in.EnvDeadLetterAddr != "" {
+		cfg.DeadLetterEndpoint = in.EnvDeadLetterAddr
+	}
+	if in.FlagDeadLetterEndpoint != "" {
+		cfg.DeadLetterEndpoint = in.FlagDeadLetterEndpoint
 	}
 	if d, err := time.ParseDuration(in.EnvTimeout); err == nil {
 		cfg.Timeout = d

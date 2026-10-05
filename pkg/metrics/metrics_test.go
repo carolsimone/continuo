@@ -7,15 +7,29 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/metrics"
 	"github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestRegister_AddsServiceLabelledCollector(t *testing.T) {
+	reg := metrics.New("svc")
+	g := prometheus.NewGauge(prometheus.GaugeOpts{Name: "continuo_test_gauge", Help: "h"})
+	g.Set(3)
+	reg.Register(g)
+	rec := httptest.NewRecorder()
+	reg.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	if !strings.Contains(rec.Body.String(), `continuo_test_gauge{service="svc"} 3`) {
+		t.Fatalf("body:\n%s", rec.Body.String())
+	}
+}
 
 type fakeBacklog struct {
 	table string

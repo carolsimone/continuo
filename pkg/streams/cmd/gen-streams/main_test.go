@@ -785,3 +785,14 @@ func TestEmitVocabulary_NoSecretRefWithoutTheAttribute(t *testing.T) {
 		}
 	}
 }
+
+func TestValidate_AcceptsDeadLetterControllerConsumer(t *testing.T) {
+	c := &Contract{Streams: []Stream{{
+		Name: "consumer.dead_letter:v1", Const: "ConsumerDeadLetterV1", Description: "d",
+		Producers: []string{"dead-letter-controller"},
+		Consumers: []Consumer{{Service: "dead-letter-controller", Group: "dead-letter-controller-consumer-dead-letters", Const: "DeadLetterControllerConsumerDeadLetters"}},
+	}}}
+	if err := validate(c); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+}

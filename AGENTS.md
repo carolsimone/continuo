@@ -1,7 +1,7 @@
 # Structure
 This is a monorepo with multiple microservices.
 
-## Go services (7)
+## Go services (8)
 * `state` — owns run lifecycle state (pending → running → finalized) and schedule records; the authoritative write-path for task and run transitions.
 * `orchestrator` — owns Neo4j topology and run projections, Postgres outbox/dedup. Consumes `node.updated:v1`, `scheduler.started:v1`, `release.promoted:v1`, `trigger.rerun:v1`, `trigger.rebase:v1`, `trigger.single_node_run:v1`, `trigger.promoted_seeds:v1`, `run.finalized:v1`, `schedule.cancelled:v1`, `remediation.requested:v2`, `remediation.pr_opened:v1`, `remediation.pr_closed:v1`. Produces `query.model:v1`, `schedules.loaded:v1`. Serves gRPC `OrchestratorQuery` for UI reads.
 * `execution-controller` — schedules dbt/python task execution as Kubernetes Jobs, watches each Job to a terminal state, uploads its logs and results to S3, and surfaces the outcome into the run lifecycle (production tasks) or the release lifecycle (validation, seed-build and compile legs).
@@ -9,6 +9,7 @@ This is a monorepo with multiple microservices.
 * `remediation` — failure classifier; triages a rejected release's failing nodes one by one, records every decision, and emits ONE `remediation.requested:v2` heal trigger per (release, remediation round) carrying every fixable failure.
 * `agent-remediation` — LLM fix-proposer; works a whole rejected release at a time. Receives one batched heal trigger, groups the failing set (same error signature + a shared changed ancestor become one cluster fixed at that ancestor), calls the LLM once per cluster, and reads source from GitHub (read-only) for compile/seed_build/duplicate_table failures and primarily from the release's code bundle in S3 for validation failures (falling back to GitHub only on a permanent bundle miss); also reads narrow graph context (source location, upstream diffs, current version, failure precedent) from orchestrator. Every fix is verified by a real verification run per edited service before it is offered, and one attempt yields one proposal and one fix PR for human approval.
 * `agent-chat` — chat and agent gRPC backend; hosts the conversational LLM interface used by the UI.
+* `dead-letter-controller` — stores every dead letter from both dead-letter streams (`consumer.dead_letter:v1`, `outbox.dead_letter:v1`) in its own `continuo_dead_letter` Postgres database, serves gRPC `DeadLetterService` (list, get, redrive) for `continuo dlq`, and redrives a dead letter to the consumer group that failed it.
 
 ## Python service (1)
 * `topology-controller` — Python 3.12/uv service (not Go); consumes `release.requested:v1` Redis Stream events, batch-loads the release's dbt manifest.json files, resolves cross-service upstream deps via sqlglot, and publishes the resolved candidate topology to `manifest.loaded.candidate:v1` for release-controller (which promotes it into the orchestrator's Neo4j topology via `release.promoted:v1`). Run tests with `docker exec topology-controller uv run pytest -v`. Start the process manually (container runs `tail -f /dev/null` by default): `docker exec -d topology-controller bash -c "cd /app && PYTHONPATH=/app/proto uv run python main.py > /tmp/mc.log 2>&1"`.

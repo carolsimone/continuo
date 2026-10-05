@@ -74,47 +74,48 @@ func (p *OutboxPublisher) PublishBatch(ctx context.Context, entries []*outbox.En
 	return errs
 }
 
-// xaddArgs unmarshals the entry's JSONB payload, injects outbox_entry_id for
-// consumer-side dedup, normalizes nested values to scalars, and returns the
-// XADD arguments (including the shared MaxLen cap so single and batched
-// publishes trim identically).
-func (p *OutboxPublisher) xaddArgs(entry *outbox.Entry) (*goredis.XAddArgs, error) {
-	// A dead-letter row is published generically: its payload is already a flat
-	// scalar map (outbox.DeadLetterPayload), so it is expanded onto the stream
-	// via DeadLetterValues rather than routed through the map-unmarshal path
-	// below (which would produce the identical result, but this branch keeps
-	// the dead-letter wire shape explicit and independent of that path).
+var _ outbox.Renderer = (*OutboxPublisher)(nil)
+
+// Render returns the field map Publish XADDs for entry, without
+// outbox_entry_id. A dead-letter row renders through outbox.DeadLetterValues;
+// every other row's JSON payload is flattened to scalar fields, with nested
+// values JSON-encoded. Every call returns a fresh map.
+func (p *OutboxPublisher) Render(entry *outbox.Entry) (map[string]any, error) {
 	if entry.EventType == outbox.DeadLetterEventType {
 		values, err := outbox.DeadLetterValues(entry)
 		if err != nil {
 			// Our own payload; a decode failure here is deterministic, never transient.
 			return nil, fmt.Errorf("%w: dead-letter values: %v", pkgevents.ErrPermanent, err)
 		}
-		return &goredis.XAddArgs{
-			Stream: entry.StreamName,
-			MaxLen: streamMaxLen,
-			Approx: true,
-			Values: values,
-		}, nil
+		delete(values, "outbox_entry_id")
+		return values, nil
 	}
-
 	var fields map[string]interface{}
 	if err := json.Unmarshal(entry.Payload, &fields); err != nil {
 		return nil, fmt.Errorf("%w: unmarshal payload for stream %s: %v", pkgevents.ErrPermanent, entry.StreamName, err)
 	}
-	// Inject outbox_entry_id so consumer-side dedup via
-	// pkg/messageprocessing.DedupWithOutboxEntryID can catch Processor-crash
-	// redeliveries (same outbox row republished with a fresh Redis msg_id).
-	fields["outbox_entry_id"] = entry.ID.String()
 	normalized, err := normalizeRedisFields(fields)
 	if err != nil {
 		return nil, fmt.Errorf("normalize fields for stream %s: %w", entry.StreamName, err)
 	}
+	return normalized, nil
+}
+
+// xaddArgs builds the XADD for entry: its rendered fields plus outbox_entry_id,
+// so consumer-side pkg/messageprocessing.DedupWithOutboxEntryID catches a row
+// republished with a fresh Redis message id. It carries the shared MaxLen cap
+// so single and batched publishes trim identically.
+func (p *OutboxPublisher) xaddArgs(entry *outbox.Entry) (*goredis.XAddArgs, error) {
+	values, err := p.Render(entry)
+	if err != nil {
+		return nil, err
+	}
+	values["outbox_entry_id"] = entry.ID.String()
 	return &goredis.XAddArgs{
 		Stream: entry.StreamName,
 		MaxLen: streamMaxLen,
 		Approx: true,
-		Values: normalized,
+		Values: values,
 	}, nil
 }
 

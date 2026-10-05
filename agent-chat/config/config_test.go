@@ -81,3 +81,19 @@ func TestLoad_UnsetProvider_SingleMissingEntry(t *testing.T) {
 	assert.NotContains(t, missing, "LLM_PROVIDER (must be anthropic|openai|openai-compatible)",
 		"descriptive entry must not fire for an unset provider, got %v", missing)
 }
+
+func TestLoad_DeadLetterAddr(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("CONTINUO_DEAD_LETTER_ADDR", "dead-letter-controller:50055")
+	cfg := Load(&pkgconfig.Validator{})
+	assert.Equal(t, "dead-letter-controller:50055", cfg.DeadLetterAddr)
+}
+
+// An unset dead-letter address stays empty so the CLI keeps its own default
+// instead of receiving a blank override.
+func TestLoad_DeadLetterAddrDefaultsEmpty(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("CONTINUO_DEAD_LETTER_ADDR", "")
+	cfg := Load(&pkgconfig.Validator{})
+	assert.Equal(t, "", cfg.DeadLetterAddr)
+}

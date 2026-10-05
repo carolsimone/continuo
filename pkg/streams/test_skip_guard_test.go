@@ -17,6 +17,7 @@ import (
 var skipAllowlist = map[string]string{
 	"agent-chat/adapters/anthropic/provider_integration_test.go": "calls the paid Anthropic API; needs a secret CI does not hold",
 	"agent-remediation/adapters/packaging/cli_packager_test.go":  "continuo-runtime ships only in the agent-remediation image; a dedicated in-container CI step runs this package",
+	"cli/proto_vendor_test.go":                                   "the cli module is built alone (its image holds no service source) and may not import pkg/testdeps; the contract comparison runs in the monorepo checkout",
 }
 
 // skipGuardSkipDirs are not scanned: tests/e2e is a separate harness with its
