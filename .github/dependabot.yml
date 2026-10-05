@@ -16,6 +16,7 @@ updates:
     directories:
       - /agent-chat
       - /cli
+      - /dead-letter-controller
       - /execution-controller
       - /orchestrator
       - /pkg

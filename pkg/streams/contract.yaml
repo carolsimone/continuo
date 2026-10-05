@@ -154,7 +154,7 @@ streams:
   - name: outbox.dead_letter:v1
     const: OutboxDeadLetterV1
     description: Terminal outbox publish failures (permanent payload errors, or transient errors that exhausted their backoff budget), emitted by every service's outbox processor with the fields the row would have published. dead-letter-controller stores them for listing and redrive.
-    producers: [state, orchestrator, execution-controller, release-controller, remediation, agent-remediation]
+    producers: [state, orchestrator, execution-controller, release-controller, remediation, agent-remediation, dead-letter-controller]
     consumers:
       - service: dead-letter-controller
         group: dead-letter-controller-outbox-dead-letters
@@ -163,7 +163,7 @@ streams:
   - name: consumer.dead_letter:v1
     const: ConsumerDeadLetterV1
     description: Messages a stream consumer gave up on (a permanent error, or a transient error on its fifth delivery), written before the original is acknowledged. dead-letter-controller stores them for listing and redrive.
-    producers: [state, orchestrator, execution-controller, release-controller, remediation, agent-remediation, topology-controller]
+    producers: [state, orchestrator, execution-controller, release-controller, remediation, agent-remediation, topology-controller, dead-letter-controller]
     consumers:
       - service: dead-letter-controller
         group: dead-letter-controller-consumer-dead-letters

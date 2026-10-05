@@ -43,6 +43,7 @@ build-prod: build-base
 	DOCKER_BUILDKIT=1 docker build -t continuo-agent-chat:prod -f agent-chat/Dockerfile.prod .
 	DOCKER_BUILDKIT=1 docker build -t continuo-remediation:prod -f remediation/Dockerfile.prod .
 	DOCKER_BUILDKIT=1 docker build -t continuo-agent-remediation:prod -f agent-remediation/Dockerfile.prod .
+	DOCKER_BUILDKIT=1 docker build -t continuo-dead-letter-controller:prod -f dead-letter-controller/Dockerfile.prod .
 
 # Build single production service
 .PHONY: build-prod-service

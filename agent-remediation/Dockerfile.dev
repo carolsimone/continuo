@@ -26,6 +26,7 @@ COPY release-controller/go.mod release-controller/go.sum ./release-controller/
 COPY agent-chat/go.mod agent-chat/go.sum ./agent-chat/
 COPY remediation/go.mod remediation/go.sum ./remediation/
 COPY agent-remediation/go.mod agent-remediation/go.sum ./agent-remediation/
+COPY dead-letter-controller/go.mod dead-letter-controller/go.sum ./dead-letter-controller/
 COPY tests/e2e/go.mod tests/e2e/go.sum ./tests/e2e/
 
 # Layer 2: Drop unused use-directives so `go build` does not require the
@@ -36,6 +37,7 @@ RUN go work edit -dropuse=./state \
     && go work edit -dropuse=./execution-controller \
     && go work edit -dropuse=./release-controller \
     && go work edit -dropuse=./remediation \
+    && go work edit -dropuse=./dead-letter-controller \
     && go work edit -dropuse=./tests/e2e
 
 # Layer 3: Download dependencies with cache mount. Cache persists across

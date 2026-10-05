@@ -21,6 +21,7 @@ var servicesWithMainGo = []string{
 	"release-controller/main.go",
 	"remediation/main.go",
 	"agent-remediation/main.go",
+	"dead-letter-controller/main.go",
 }
 
 // streamLiteralRe matches versioned stream literals (e.g. "node.updated:v1",
@@ -111,6 +112,7 @@ var streamLiteralScanDirs = []string{
 	"remediation/adapters/redis",
 	"agent-remediation/adapters/redis",
 	"dead-letter-controller/adapters/redis",
+	"dead-letter-controller/service/handlers",
 	"pkg/redis",
 	"pkg/events",
 	"pkg/outbox",

@@ -465,6 +465,36 @@ services:
     networks:
       - default
 
+  dead-letter-controller:
+    build:
+      context: .
+      dockerfile: dead-letter-controller/Dockerfile.dev
+    container_name: dead-letter-controller
+    depends_on:
+      postgres:
+        condition: service_started
+      redis:
+        condition: service_started
+      flyway-dead-letter:
+        condition: service_started
+    environment:
+      - METRICS_PORT=9464
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=continuo_svc
+      - POSTGRES_PASSWORD=continuo
+      - POSTGRES_DB=continuo_dead_letter
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=continuo
+      - DEAD_LETTER_HTTP_PORT=8096
+      - DEAD_LETTER_GRPC_PORT=50055
+    ports:
+      - "8096:8096"
+      - "50055:50055"
+    networks:
+      - default
+
   stub-llm:
     build:
       context: ./tests/e2e/stub-llm

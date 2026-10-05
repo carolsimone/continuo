@@ -15,9 +15,9 @@ COPY pkg/go.mod pkg/go.sum ./pkg/
 COPY orchestrator/go.mod orchestrator/go.sum ./orchestrator/
 COPY execution-controller/go.mod execution-controller/go.sum ./execution-controller/
 COPY release-controller/go.mod release-controller/go.sum ./release-controller/
+COPY tests/e2e/go.mod tests/e2e/go.sum ./tests/e2e/
 COPY agent-chat/go.mod agent-chat/go.sum ./agent-chat/
 COPY remediation/go.mod remediation/go.sum ./remediation/
-COPY tests/e2e/go.mod tests/e2e/go.sum ./tests/e2e/
 COPY agent-remediation/go.mod agent-remediation/go.sum ./agent-remediation/
 COPY dead-letter-controller/go.mod dead-letter-controller/go.sum ./dead-letter-controller/
 
@@ -26,24 +26,24 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download
 
 # Copy source code
-COPY remediation/ ./remediation/
+COPY dead-letter-controller/ ./dead-letter-controller/
 COPY pkg/ ./pkg/
 
 # Build static binary
-WORKDIR /app/remediation
+WORKDIR /app/dead-letter-controller
 RUN --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -a -installsuffix cgo -o /app/bin/remediation .
+    CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -a -installsuffix cgo -o /app/bin/dead-letter-controller .
 
 # Runtime stage
 FROM alpine:latest
 
 RUN apk --no-cache add ca-certificates tzdata
 
-COPY --from=builder /app/bin/remediation /usr/local/bin/remediation
+COPY --from=builder /app/bin/dead-letter-controller /usr/local/bin/dead-letter-controller
 
-EXPOSE 8090
+EXPOSE 8096 50055
 
 # Static binary; no filesystem writes at runtime — run unprivileged.
 USER 65532:65532
 
-CMD ["remediation"]
+CMD ["dead-letter-controller"]

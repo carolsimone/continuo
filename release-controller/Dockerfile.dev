@@ -11,6 +11,7 @@ COPY release-controller/go.mod release-controller/go.sum ./release-controller/
 COPY tests/e2e/go.mod tests/e2e/go.sum ./tests/e2e/
 COPY remediation/go.mod remediation/go.sum ./remediation/
 COPY agent-remediation/go.mod agent-remediation/go.sum ./agent-remediation/
+COPY dead-letter-controller/go.mod dead-letter-controller/go.sum ./dead-letter-controller/
 
 # orchestrator is not dropped: release-controller's go.mod replaces
 # agent-remediation with a local directory, and agent-remediation's own
@@ -22,6 +23,7 @@ RUN go work edit -dropuse=./state \
     && go work edit -dropuse=./agent-chat \
     && go work edit -dropuse=./execution-controller \
     && go work edit -dropuse=./remediation \
+    && go work edit -dropuse=./dead-letter-controller \
     && go work edit -dropuse=./tests/e2e
 
 RUN --mount=type=cache,target=/go/pkg/mod \

@@ -51,6 +51,13 @@ services:
       cache_to:
         - "type=gha,scope=agent-remediation,mode=max"
 
+  dead-letter-controller:
+    build:
+      cache_from:
+        - "type=gha,scope=dead-letter-controller"
+      cache_to:
+        - "type=gha,scope=dead-letter-controller,mode=max"
+
   agent-chat:
     build:
       cache_from:
