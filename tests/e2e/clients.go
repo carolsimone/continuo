@@ -10,8 +10,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awscreds "github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	orchestratorv1 "github.com/carolsimone/continuo/orchestrator/api/orchestrator/v1"
 	remediationv1 "github.com/carolsimone/continuo/agent-remediation/api/remediation/v1"
+	deadletterv1 "github.com/carolsimone/continuo/dead-letter-controller/api/deadletter/v1"
+	orchestratorv1 "github.com/carolsimone/continuo/orchestrator/api/orchestrator/v1"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
@@ -27,6 +28,7 @@ type testClients struct {
 	orchestratorClient     orchestratorv1.OrchestratorQueryClient
 	stateClient            statev1.StateServiceClient
 	agentRemediationClient remediationv1.RemediationProposalsClient
+	deadLetterClient       deadletterv1.DeadLetterServiceClient
 	redisClient            *goredis.Client
 	neo4jDriver            neo4jdriver.DriverWithContext
 	executionDB            *sqlx.DB
@@ -36,6 +38,7 @@ type testClients struct {
 	dbtDB                  *sqlx.DB
 	remediationDB          *sqlx.DB
 	agentRemediationDB     *sqlx.DB
+	deadLetterDB           *sqlx.DB
 	s3Client               *s3.Client
 	releaseBase            string
 	logger                 *slog.Logger
@@ -52,6 +55,7 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 	orchestratorHost := getEnv("ORCHESTRATOR_HOST", "orchestrator")
 	stateHost := getEnv("STATE_HOST", "state")
 	agentRemediationHost := getEnv("AGENT_REMEDIATION_HOST", "agent-remediation")
+	deadLetterHost := getEnv("DEAD_LETTER_HOST", "dead-letter-controller")
 	redisHost := getEnv("REDIS_HOST", "redis")
 	neo4jHost := getEnv("NEO4J_HOST", "neo4j")
 	pgHost := getEnv("POSTGRES_HOST", "postgres")
@@ -78,6 +82,13 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 	)
 	require.NoError(t, err, "Failed to connect to agent-remediation service")
 
+	// Setup dead-letter-controller gRPC client (DeadLetterService, port 50055)
+	deadLetterConn, err := grpc.NewClient(
+		fmt.Sprintf("%s:50055", deadLetterHost),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	require.NoError(t, err, "Failed to connect to dead-letter-controller service")
+
 	// Setup Redis client
 	redisClient := goredis.NewClient(&goredis.Options{
 		Addr:     fmt.Sprintf("%s:6379", redisHost),
@@ -101,11 +112,13 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 	dbtDB := connectPostgres(t, pgHost, getEnv("E2E_WAREHOUSE_DB", "continuo_dbt"))
 	remediationDB := connectPostgres(t, pgHost, "continuo_remediation")
 	agentRemediationDB := connectPostgres(t, pgHost, "continuo_agent_remediation")
+	deadLetterDB := connectPostgres(t, pgHost, "continuo_dead_letter")
 
 	return &testClients{
 		orchestratorClient:     orchestratorv1.NewOrchestratorQueryClient(orchestratorConn),
 		stateClient:            statev1.NewStateServiceClient(stateConn),
 		agentRemediationClient: remediationv1.NewRemediationProposalsClient(agentRemediationConn),
+		deadLetterClient:       deadletterv1.NewDeadLetterServiceClient(deadLetterConn),
 		redisClient:            redisClient,
 		neo4jDriver:            neo4jDriver,
 		executionDB:            executionDB,
@@ -115,6 +128,7 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 		dbtDB:                  dbtDB,
 		remediationDB:          remediationDB,
 		agentRemediationDB:     agentRemediationDB,
+		deadLetterDB:           deadLetterDB,
 		s3Client:               newMinioS3Client(),
 		releaseBase:            getEnv("RELEASE_CONTROLLER_BASE", "http://release-controller:8088"),
 		logger:                 logger,
@@ -165,6 +179,7 @@ func (c *testClients) close(ctx context.Context) {
 	_ = c.dbtDB.Close()
 	_ = c.remediationDB.Close()
 	_ = c.agentRemediationDB.Close()
+	_ = c.deadLetterDB.Close()
 }
 
 // getEnv returns environment variable or default value

@@ -315,6 +315,8 @@ services:
       - ./go.work:/app/go.work
       - ./agent-chat:/app/agent-chat
       - ./agent-remediation:/app/agent-remediation
+      - ./dead-letter-controller:/app/dead-letter-controller
+      - ./cli:/app/cli
       - ./kubeconfig:/app/kubeconfig
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
@@ -605,6 +607,8 @@ services:
       - ./go.work:/app/go.work
       - ./agent-chat:/app/agent-chat
       - ./agent-remediation:/app/agent-remediation
+      - ./dead-letter-controller:/app/dead-letter-controller
+      - ./cli:/app/cli
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - default
