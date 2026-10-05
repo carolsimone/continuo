@@ -253,7 +253,7 @@ func TestProcessSerial_AckSelectivity(t *testing.T) {
 	})
 	ack, acked, ackMu := ackRecorder()
 	c.ackFn = ack
-	msgs := []goredis.XMessage{{ID: "ok-0"}, {ID: "perm-0"}, {ID: "trans-0"}}
+	msgs := []goredis.XMessage{msg("ok-0"), msg("perm-0"), msg("trans-0")}
 	c.processSerial(context.Background(), msgs)
 	ackMu.Lock()
 	assert.ElementsMatch(t, []string{"ok-0", "perm-0"}, *acked,

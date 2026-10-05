@@ -94,6 +94,10 @@ type StreamConsumer struct {
 	// notification.
 	onDrop DropHandler
 
+	// noDeadLetters, set by WithoutDeadLetters, leaves a message the consumer
+	// would dead-letter pending instead, logged, for the next sweep.
+	noDeadLetters bool
+
 	// handlerTimeout bounds each handler invocation with a context deadline.
 	// It is DefaultHandlerTimeout unless WithHandlerTimeout/SetHandlerTimeout
 	// set another positive value before Start, and is read-only once the loop
@@ -197,6 +201,15 @@ func WithInfraClassifier(f InfraClassifier) ConsumerOption {
 // Without it, abandoned messages are dead-lettered with no notification.
 func WithOnDrop(fn DropHandler) ConsumerOption {
 	return func(c *StreamConsumer) { c.onDrop = fn }
+}
+
+// WithoutDeadLetters makes the consumer never dead-letter: a message whose
+// handler fails permanently, or still fails on its last delivery, stays
+// pending and is retried on every sweep. It is for consumers of the
+// dead-letter streams themselves, whose dead letters would feed the stream
+// they read.
+func WithoutDeadLetters() ConsumerOption {
+	return func(c *StreamConsumer) { c.noDeadLetters = true }
 }
 
 // SetHandlerTimeout sets the per-handler deadline before Start; d <= 0 keeps
@@ -937,6 +950,10 @@ func (c *StreamConsumer) reclaimPending(ctx context.Context) error {
 // outcome, the message leaves the in-hand set when settleReclaimed returns.
 func (c *StreamConsumer) settleReclaimed(ctx context.Context, msg goredis.XMessage) {
 	defer c.inHand.remove(msg.ID)
+	msg, ok := c.admit(ctx, msg)
+	if !ok {
+		return
+	}
 	class, err := c.run(ctx, msg, reclaimSchedule)
 	switch {
 	case err == nil:
@@ -945,6 +962,11 @@ func (c *StreamConsumer) settleReclaimed(ctx context.Context, msg goredis.XMessa
 	case ctx.Err() != nil:
 		return
 	case class == ClassPermanent:
+		if c.noDeadLetters {
+			c.logger.Error("Failure on a consumer that never dead-letters — leaving in PEL for next sweep",
+				"stream", c.streamName, "message_id", msg.ID, "deliveries", c.deliveriesFn(ctx, msg.ID), "error", err)
+			return
+		}
 		// An unreadable delivery counter reads 0; the message was delivered at
 		// least once.
 		c.deadLetterAndAck(ctx, msg, model.DeadLetterKindPermanent, err, max(c.deliveriesFn(ctx, msg.ID), 1))
@@ -952,6 +974,11 @@ func (c *StreamConsumer) settleReclaimed(ctx context.Context, msg goredis.XMessa
 	}
 	n := c.deliveriesFn(ctx, msg.ID)
 	if n >= maxDeliveries {
+		if c.noDeadLetters {
+			c.logger.Error("Failure on a consumer that never dead-letters — leaving in PEL for next sweep",
+				"stream", c.streamName, "message_id", msg.ID, "deliveries", n, "error", err)
+			return
+		}
 		c.deadLetterAndAck(ctx, msg, model.DeadLetterKindTransientExhausted, err, n)
 		return
 	}
@@ -1148,6 +1175,10 @@ func boundedWorkerCount(n int) int {
 // sweep to pick it up again.
 func (c *StreamConsumer) processOne(ctx context.Context, msg goredis.XMessage) {
 	defer c.inHand.remove(msg.ID)
+	msg, ok := c.admit(ctx, msg)
+	if !ok {
+		return
+	}
 	class, err := c.run(ctx, msg, readPathSchedule)
 	switch {
 	case err == nil:
@@ -1155,11 +1186,39 @@ func (c *StreamConsumer) processOne(ctx context.Context, msg goredis.XMessage) {
 	case ctx.Err() != nil:
 		// Stopping: the message stays pending and is redelivered after restart.
 	case class == ClassPermanent:
+		if c.noDeadLetters {
+			c.logger.Error("Permanent failure on a consumer that never dead-letters — leaving in PEL",
+				"stream", c.streamName, "message_id", msg.ID, "error", err)
+			return
+		}
 		c.deadLetterAndAck(ctx, msg, model.DeadLetterKindPermanent, err, 1)
 	default:
 		c.logger.Error("Message still failing after in-process retries — leaving in PEL for the reclaim sweep",
 			"stream", c.streamName, "message_id", msg.ID, "error", err)
 	}
+}
+
+// admit decides whether msg reaches the handler. An entry with no fields (one
+// trimmed from the stream after it was delivered) and a redriven entry
+// addressed to another group are acknowledged without a handler. It returns
+// the message to handle, with any redrive fields removed.
+func (c *StreamConsumer) admit(ctx context.Context, msg goredis.XMessage) (goredis.XMessage, bool) {
+	if len(msg.Values) == 0 {
+		c.logger.Warn("Pending entry no longer in the stream — acknowledging",
+			"stream", c.streamName, "group", c.consumerGroup, "message_id", msg.ID)
+		c.ackHandled(ctx, msg.ID)
+		return msg, false
+	}
+	routed, ok := routeRedrive(msg, c.consumerGroup)
+	if !ok {
+		c.ackHandled(ctx, msg.ID)
+		return msg, false
+	}
+	if _, redriven := msg.Values[RedrivenFromField]; redriven {
+		c.logger.Info("Handling a redriven entry", "stream", c.streamName, "group", c.consumerGroup,
+			"message_id", msg.ID, "redriven_from", msg.Values[RedrivenFromField])
+	}
+	return routed, true
 }
 
 // ackOne acknowledges a single message, logging and returning the error on

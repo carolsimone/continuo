@@ -38,13 +38,13 @@ func TestProcessOne_NotifiesDropOnlyAfterAckSucceeds(t *testing.T) {
 		calls = append(calls, "ack-failed")
 		return errors.New("XACK failed")
 	}
-	c.processOne(context.Background(), goredis.XMessage{ID: "1-0"})
+	c.processOne(context.Background(), msg("1-0"))
 	require.Equal(t, []string{"dead-letter", "ack-failed"}, calls,
 		"the dead letter precedes the ACK; a failed ACK leaves the message pending — the drop must not be notified")
 
 	calls = nil
 	c.ackFn = func(context.Context, string) error { calls = append(calls, "ack"); return nil }
-	c.processOne(context.Background(), goredis.XMessage{ID: "1-0"})
+	c.processOne(context.Background(), msg("1-0"))
 	require.Equal(t, []string{"dead-letter", "ack", "drop"}, calls,
 		"a confirmed ACK after the dead letter notifies the drop exactly once")
 }
