@@ -102,6 +102,14 @@ jobs:
         with:
           go-version-file: go.work
 
+      - name: Warm the standalone module cache
+        # guards runs check-standalone-modules.sh, which builds pkg in module mode
+        # with GOPROXY=off to catch go.sum drift — so pkg's dependencies must already
+        # be in the module cache. Download them here with the proxy on, before that
+        # hermetic build, so a PR that adds a dependency does not fail guards on a
+        # cold runner cache (the proxy-on build in make test-go runs only later).
+        run: cd pkg && GOWORK=off go mod download
+
       - name: Run guards
         # The single copy of the fast, infra-free gates lives in the Makefile's
         # `guards` target (static check scripts, the pkg and stub-llm test
