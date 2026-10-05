@@ -396,7 +396,7 @@ type terminalWriter interface {
 func (p *Processor) terminate(ctx context.Context, repo terminalWriter, entry *Entry, kind model.DeadLetterKind, cause error) error {
 	attempts := entry.RetryCount + 1
 	if entry.AggregateType != DeadLetterAggregateType {
-		dl := buildDeadLetterEntry(entry, kind, cause, attempts)
+		dl := buildDeadLetterEntry(entry, p.tableName, p.publisher, kind, cause, attempts)
 		if err := repo.Create(ctx, dl); err != nil {
 			return fmt.Errorf("create dead-letter for %s: %w", entry.ID, err)
 		}
