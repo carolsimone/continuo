@@ -4,7 +4,7 @@
 # This is the single primitive shared by `make lint-go` and CI, so local and CI
 # run byte-identical rules. The module list is derived from go.work (the
 # authoritative workspace registry) plus the cli module, which lives outside the
-# workspace by design (see CLAUDE.md). We never scan for go.mod files, because
+# workspace by design (see AGENTS.md). We never scan for go.mod files, because
 # .claude/worktrees/ holds full stale copies of every module.
 #
 # Usage:
@@ -59,7 +59,7 @@ for m in ${targets}; do
   echo "==> linting ${m}"
   if [ "${m}" = "./cli" ]; then
     # cli is nested under the repo root's go.work but is deliberately not a
-    # member (see CLAUDE.md). Go's workspace auto-detection would otherwise
+    # member (see AGENTS.md). Go's workspace auto-detection would otherwise
     # walk up and pick up the root go.work anyway, so force it off and let
     # cli's own self-contained go.mod resolve instead.
     ( cd "${m}" && GOWORK=off golangci-lint run ./... ) || rc=1

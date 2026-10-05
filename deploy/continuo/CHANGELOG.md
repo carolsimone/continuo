@@ -3,7 +3,7 @@
 All notable changes to the `continuo` Helm chart (`deploy/continuo/`) are
 documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Chart `version` follows semver against the values contract — see the "Helm
-chart versioning" section of the repository's `CLAUDE.md` for the exact rule
+chart versioning" section of the repository's `AGENTS.md` for the exact rule
 and the process for updating this file.
 
 This changelog starts at the point it was introduced. `v0.1.0-rc.1` and

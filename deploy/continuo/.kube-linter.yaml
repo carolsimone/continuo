@@ -45,7 +45,7 @@ checks:
     # security effect on the manifest.
     - "sorted-keys"
     # execution-controller's entire job is dispatching dbt task execution as
-    # Kubernetes Jobs and watching them to a terminal state (see CLAUDE.md
+    # Kubernetes Jobs and watching them to a terminal state (see AGENTS.md
     # service description) — create access to `batch/jobs` is the feature,
     # not an oversight. Its Role is scoped to `jobs` create/get/list/watch/
     # delete and `pods`/`pods/log` get/list/watch; it has no direct `pods`
@@ -76,7 +76,7 @@ checks:
     - "restart-policy"
     # allow-postgresql/allow-minio NetworkPolicies select ingress from
     # `app: dbt-job` — the label execution-controller stamps on the dbt Job
-    # pods it creates dynamically at runtime (see CLAUDE.md execution-controller
+    # pods it creates dynamically at runtime (see AGENTS.md execution-controller
     # description). Those pods are never part of this chart's own rendered
     # manifest, so kube-linter's static podSelector match always (correctly)
     # finds nothing; the rule is validated against the live cluster instead.

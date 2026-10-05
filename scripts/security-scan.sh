@@ -111,7 +111,7 @@ scan_vuln() {
     echo "==> govulncheck ${m}"
     if [ "${m}" = "./cli" ]; then
       # cli is nested under the root go.work but is deliberately not a member
-      # (see CLAUDE.md). Go's workspace auto-detection would otherwise walk up
+      # (see AGENTS.md). Go's workspace auto-detection would otherwise walk up
       # and pick up the root go.work; force it off so cli's own go.mod resolves.
       ( cd "${m}" && GOWORK=off govulncheck ./... ) || rc=1
     else

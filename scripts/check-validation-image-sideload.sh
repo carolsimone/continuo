@@ -49,7 +49,7 @@ fail=0
 
 # --- half 1: nothing anywhere uses the bare form for this ref -------------
 # .git and any dir literally named "worktrees" (.claude/worktrees holds full
-# stale copies of every module — see CLAUDE.md) aren't source. .superpowers
+# stale copies of every module — see AGENTS.md) aren't source. .superpowers
 # is this branch's own gitignored scratch/review notes, which legitimately
 # quote the old bare form verbatim when diffing the fix; it is never part of
 # a checked-out repo in CI, so scanning it here would only be noise.

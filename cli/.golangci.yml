@@ -16,11 +16,11 @@ linters:
         main:
           deny:
             - pkg: github.com/carolsimone/continuo/state
-              desc: "cli consumes services only via public gRPC; no backend internals (CLAUDE.md)"
+              desc: "cli consumes services only via public gRPC; no backend internals (AGENTS.md)"
             - pkg: github.com/carolsimone/continuo/orchestrator
-              desc: "cli consumes services only via public gRPC; no backend internals (CLAUDE.md)"
+              desc: "cli consumes services only via public gRPC; no backend internals (AGENTS.md)"
             - pkg: github.com/carolsimone/continuo/pkg
-              desc: "cli consumes services only via public gRPC; no backend internals (CLAUDE.md)"
+              desc: "cli consumes services only via public gRPC; no backend internals (AGENTS.md)"
   exclusions:
     generated: lax
     paths:
