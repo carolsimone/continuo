@@ -36,9 +36,13 @@ func ParseID(s string) (StreamID, error) {
 }
 
 // IDAt is the first id at time t.
-func IDAt(t time.Time) StreamID { return StreamID{Ms: uint64(t.UnixMilli())} }
+func IDAt(t time.Time) StreamID {
+	return StreamID{Ms: uint64(t.UnixMilli())} //nolint:gosec // G115: stream-id milliseconds are non-negative and fit in uint64
+}
 
-func (a StreamID) String() string { return strconv.FormatUint(a.Ms, 10) + "-" + strconv.FormatUint(a.Seq, 10) }
+func (a StreamID) String() string {
+	return strconv.FormatUint(a.Ms, 10) + "-" + strconv.FormatUint(a.Seq, 10)
+}
 
 // Less reports whether a sorts before b.
 func (a StreamID) Less(b StreamID) bool { return a.Ms < b.Ms || (a.Ms == b.Ms && a.Seq < b.Seq) }
@@ -55,7 +59,9 @@ func (a StreamID) Next() StreamID {
 }
 
 // Time is when an entry with id a was added.
-func (a StreamID) Time() time.Time { return time.UnixMilli(int64(a.Ms)).UTC() }
+func (a StreamID) Time() time.Time {
+	return time.UnixMilli(int64(a.Ms)).UTC() //nolint:gosec // G115: stream-id milliseconds fit in int64
+}
 
 // Entry is one stream entry.
 type Entry struct {
