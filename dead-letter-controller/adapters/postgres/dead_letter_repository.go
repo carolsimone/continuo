@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/carolsimone/continuo/dead-letter-controller/domain/deadletter"
@@ -117,6 +119,91 @@ func (r *DeadLetterRepository) Insert(ctx context.Context, dl deadletter.DeadLet
 		return false, fmt.Errorf("insert dead letter: %w", err)
 	}
 	return n == 1, nil
+}
+
+// insertChunk is how many dead letters one multi-row INSERT carries.
+const insertChunk = 500
+
+// InsertBatch stores each dead letter whose DedupKey is not already stored, in
+// one transaction, and returns how many it inserted.
+func (r *DeadLetterRepository) InsertBatch(ctx context.Context, dls []deadletter.DeadLetter) (int, error) {
+	if len(dls) == 0 {
+		return 0, nil
+	}
+	var inserted int
+	err := r.inTx(ctx, func(exec sqlx.ExtContext) error {
+		for start := 0; start < len(dls); start += insertChunk {
+			chunk := dls[start:min(start+insertChunk, len(dls))]
+			n, err := insertChunkOn(ctx, exec, chunk)
+			if err != nil {
+				return err
+			}
+			inserted += n
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("insert dead letter batch: %w", err)
+	}
+	return inserted, nil
+}
+
+// inTx runs fn atomically: on its own transaction when the repository runs on a
+// pool, or on the surrounding transaction when it already runs on one.
+func (r *DeadLetterRepository) inTx(ctx context.Context, fn func(exec sqlx.ExtContext) error) error {
+	db, ok := r.exec.(*sqlx.DB)
+	if !ok {
+		return fn(r.exec)
+	}
+	tx, err := db.BeginTxx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if err := fn(tx); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
+// insertChunkOn runs one multi-row INSERT of dls, skipping the rows whose
+// DedupKey is already stored, and returns how many it inserted.
+func insertChunkOn(ctx context.Context, exec sqlx.ExtContext, dls []deadletter.DeadLetter) (int, error) {
+	const perRow = 17
+	var sb strings.Builder
+	sb.WriteString(`INSERT INTO dead_letters (` + columns + `) VALUES `)
+	args := make([]any, 0, len(dls)*perRow)
+	for i, dl := range dls {
+		fields := dl.Fields
+		if fields == nil {
+			fields = map[string]string{}
+		}
+		body, err := json.Marshal(fields)
+		if err != nil {
+			return 0, err
+		}
+		if i > 0 {
+			sb.WriteByte(',')
+		}
+		sb.WriteByte('(')
+		for c := 1; c <= perRow; c++ {
+			if c > 1 {
+				sb.WriteByte(',')
+			}
+			sb.WriteString("$" + strconv.Itoa(i*perRow+c))
+		}
+		sb.WriteString(",NULL,NULL,NULL)")
+		args = append(args, dl.ID, dl.DedupKey, string(dl.Source), string(dl.FailureKind), dl.Stream, dl.Group,
+			dl.OriginalMessageID, dl.Producer, dl.Error, dl.DeliveryCount, string(body), dl.Redrivable,
+			dl.OriginalEventType, dl.FailedOutboxID, dl.OriginalAt, dl.RecordedAt, string(dl.Status))
+	}
+	sb.WriteString(` ON CONFLICT (dedup_key) DO NOTHING`)
+	res, err := exec.ExecContext(ctx, sb.String(), args...)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	return int(n), err
 }
 
 // Get returns the dead letter with the given id, or deadletter.ErrNotFound.

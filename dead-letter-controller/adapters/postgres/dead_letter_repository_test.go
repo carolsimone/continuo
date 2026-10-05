@@ -4,6 +4,7 @@ package postgres
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"testing"
@@ -206,5 +207,39 @@ func TestPostgresBacklog(t *testing.T) {
 	rows, err := repo.Backlog(ctx)
 	if err != nil || len(rows) != 1 || rows[0].Open != 2 || rows[0].Kind != model.DeadLetterKindPermanent {
 		t.Fatalf("backlog = %+v %v", rows, err)
+	}
+}
+
+func TestPostgresInsertBatch_IdempotentAcrossRuns(t *testing.T) {
+	repo := NewDeadLetterRepository(testDB(t))
+	ctx := context.Background()
+	now := time.Now()
+	a, b, c, d := sample("quarantine|s|g|1-0", now), sample("quarantine|s|g|2-0", now),
+		sample("quarantine|s|g|3-0", now), sample("quarantine|s|g|4-0", now)
+
+	n, err := repo.InsertBatch(ctx, []deadletter.DeadLetter{a, b, c})
+	if err != nil || n != 3 {
+		t.Fatalf("first batch inserted %d, err %v; want 3", n, err)
+	}
+	n, err = repo.InsertBatch(ctx, []deadletter.DeadLetter{a, b, c, d})
+	if err != nil || n != 1 {
+		t.Fatalf("second batch inserted %d, err %v; want 1", n, err)
+	}
+	got, err := repo.Get(ctx, d.ID)
+	if err != nil || got.Fields["k"] != "v" || !got.OriginalAt.Equal(d.OriginalAt) {
+		t.Fatalf("stored row %+v err %v", got, err)
+	}
+}
+
+func TestPostgresInsertBatch_SpansChunks(t *testing.T) {
+	repo := NewDeadLetterRepository(testDB(t))
+	ctx := context.Background()
+	var dls []deadletter.DeadLetter
+	for i := 0; i < insertChunk+7; i++ {
+		dls = append(dls, sample(fmt.Sprintf("quarantine|s|g|%d-0", i), time.Now()))
+	}
+	n, err := repo.InsertBatch(ctx, dls)
+	if err != nil || n != len(dls) {
+		t.Fatalf("inserted %d, err %v; want %d", n, err, len(dls))
 	}
 }

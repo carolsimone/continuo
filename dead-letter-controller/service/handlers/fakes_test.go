@@ -52,6 +52,20 @@ func (r *fakeRepo) Insert(_ context.Context, dl deadletter.DeadLetter) (bool, er
 	return true, nil
 }
 
+func (r *fakeRepo) InsertBatch(ctx context.Context, dls []deadletter.DeadLetter) (int, error) {
+	n := 0
+	for _, dl := range dls {
+		ok, err := r.Insert(ctx, dl)
+		if err != nil {
+			return n, err
+		}
+		if ok {
+			n++
+		}
+	}
+	return n, nil
+}
+
 func (r *fakeRepo) Get(_ context.Context, id uuid.UUID) (deadletter.DeadLetter, error) {
 	dl, ok := r.rows[id]
 	if !ok {
@@ -187,6 +201,9 @@ var _ repository.DeadLetterRepository = (*txRepo)(nil)
 
 func (r *txRepo) Insert(ctx context.Context, dl deadletter.DeadLetter) (bool, error) {
 	return r.repo.Insert(ctx, dl)
+}
+func (r *txRepo) InsertBatch(ctx context.Context, dls []deadletter.DeadLetter) (int, error) {
+	return r.repo.InsertBatch(ctx, dls)
 }
 func (r *txRepo) Get(ctx context.Context, id uuid.UUID) (deadletter.DeadLetter, error) {
 	return r.repo.Get(ctx, id)
