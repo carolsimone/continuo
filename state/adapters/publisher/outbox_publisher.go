@@ -26,12 +26,6 @@ func NewOutboxPublisher(redis *goredis.Client, logger *slog.Logger) *OutboxPubli
 	return &OutboxPublisher{redis: redis, logger: logger}
 }
 
-// streamMaxLen caps each published stream at roughly this many entries
-// (Approx/~ trimming). It bounds Redis memory for streams a consumer group may
-// lag on. Trimming can drop the oldest entries before a lagging group reads
-// them; 10000 is the accepted bound, matching the orchestrator's publisher.
-const streamMaxLen = 10000
-
 // Publish unmarshals the entry's JSONB payload into a field map, normalizes
 // any nested structures to scalar strings, and XADDs them to entry.StreamName.
 func (p *OutboxPublisher) Publish(ctx context.Context, entry *outbox.Entry) error {
@@ -103,8 +97,8 @@ func (p *OutboxPublisher) Render(entry *outbox.Entry) (map[string]any, error) {
 
 // xaddArgs builds the XADD for entry: its rendered fields plus outbox_entry_id,
 // so consumer-side pkg/messageprocessing.DedupWithOutboxEntryID catches a row
-// republished with a fresh Redis message id. It carries the shared MaxLen cap
-// so single and batched publishes trim identically.
+// republished with a fresh Redis message id. It sets no length cap: the
+// dead-letter-controller's trim loop bounds every stream.
 func (p *OutboxPublisher) xaddArgs(entry *outbox.Entry) (*goredis.XAddArgs, error) {
 	values, err := p.Render(entry)
 	if err != nil {
@@ -113,8 +107,6 @@ func (p *OutboxPublisher) xaddArgs(entry *outbox.Entry) (*goredis.XAddArgs, erro
 	values["outbox_entry_id"] = entry.ID.String()
 	return &goredis.XAddArgs{
 		Stream: entry.StreamName,
-		MaxLen: streamMaxLen,
-		Approx: true,
 		Values: values,
 	}, nil
 }

@@ -53,3 +53,24 @@ func TestRender_ReturnsAFreshMapEachCall(t *testing.T) {
 		t.Fatalf("second render = %v, want a fresh map", second)
 	}
 }
+
+// TestXAddArgs_DoNotTrim asserts the publisher never trims a stream: the
+// dead-letter-controller's trim loop is the only thing that bounds them.
+func TestXAddArgs_DoNotTrim(t *testing.T) {
+	p := &agentRemediationOutboxPublisher{}
+	entry := &pkgoutbox.Entry{ID: uuid.New(), EventType: "release_promoted", StreamName: "some.stream:v1", Payload: []byte(`{}`)}
+	values, err := p.Render(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := p.xaddArgs(entry, values)
+	if args.Stream != "some.stream:v1" {
+		t.Fatalf("stream = %q", args.Stream)
+	}
+	if args.MaxLen != 0 || args.MinID != "" || args.Approx {
+		t.Fatalf("publisher trims: MaxLen=%d MinID=%q Approx=%v", args.MaxLen, args.MinID, args.Approx)
+	}
+	if args.Values.(map[string]any)["outbox_entry_id"] != entry.ID.String() {
+		t.Fatalf("outbox_entry_id missing from %v", args.Values)
+	}
+}

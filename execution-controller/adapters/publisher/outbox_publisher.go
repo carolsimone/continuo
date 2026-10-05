@@ -13,7 +13,6 @@ import (
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/num"
 	"github.com/carolsimone/continuo/pkg/outbox"
-	"github.com/carolsimone/continuo/pkg/streams"
 	goredis "github.com/redis/go-redis/v9"
 )
 
@@ -37,8 +36,8 @@ func NewOutboxPublisher(r *goredis.Client, l *slog.Logger) *OutboxPublisher {
 }
 
 // Publish routes an outbox row to Redis. Every event type XADDs a field map to
-// entry.StreamName, capped at streams.StreamMaxLen with approximate trimming,
-// except check_delayed: that row is written to the delay queue (ticket + due
+// entry.StreamName without a length cap (the dead-letter-controller's trim loop
+// bounds every stream), except check_delayed: that row is written to the delay queue (ticket + due
 // time) so a not-yet-due check waits off the stream until the promoter moves it.
 func (p *OutboxPublisher) Publish(ctx context.Context, entry *outbox.Entry) error {
 	if entry.EventType == event.EventTypeCheckDelayed {
@@ -48,18 +47,21 @@ func (p *OutboxPublisher) Publish(ctx context.Context, entry *outbox.Entry) erro
 	if err != nil {
 		return err
 	}
-	// outbox_entry_id rides every XADD so consumer-side DedupWithOutboxEntryID
-	// catches a row republished with a fresh Redis message id.
-	values["outbox_entry_id"] = entry.ID.String()
-	if _, err := p.redis.XAdd(ctx, &goredis.XAddArgs{
-		Stream: entry.StreamName,
-		MaxLen: streams.StreamMaxLen,
-		Approx: true,
-		Values: values,
-	}).Result(); err != nil {
+	if _, err := p.redis.XAdd(ctx, p.xaddArgs(entry, values)).Result(); err != nil {
 		return fmt.Errorf("xadd to %s: %w", entry.StreamName, err)
 	}
 	return nil
+}
+
+// xaddArgs builds the XADD for entry from its rendered fields. outbox_entry_id
+// rides every XADD so consumer-side DedupWithOutboxEntryID catches a row
+// republished with a fresh Redis message id. It sets no length cap.
+func (p *OutboxPublisher) xaddArgs(entry *outbox.Entry, values map[string]any) *goredis.XAddArgs {
+	values["outbox_entry_id"] = entry.ID.String()
+	return &goredis.XAddArgs{
+		Stream: entry.StreamName,
+		Values: values,
+	}
 }
 
 // Render returns the field map Publish XADDs for entry, without

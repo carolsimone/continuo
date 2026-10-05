@@ -116,3 +116,16 @@ def test_publish_ok_carries_code_bundle_uri():
     pub.publish_ok(release_id="rel-1", topology=[], code_bundle_uri="s3://b/code-bundles/rel-1/bundle.json")
     body = json.loads(redis_mock.xadd.call_args.args[1]["payload"])
     assert body["code_bundle_uri"] == "s3://b/code-bundles/rel-1/bundle.json"
+
+
+def test_publish_does_not_cap_the_stream():
+    # The dead-letter-controller's trim loop bounds every stream, so neither
+    # publish path passes a MAXLEN/MINID cap to XADD.
+    pub, redis_mock = _make()
+    pub.publish_ok(release_id="rel-1", topology=[])
+    pub.publish_failed(release_id="rel-2", failure_kind=ParseFailureKind.INVALID_SQL, detail="boom")
+    assert redis_mock.xadd.call_count == 2
+    for call in redis_mock.xadd.call_args_list:
+        assert "maxlen" not in call.kwargs
+        assert "minid" not in call.kwargs
+        assert "approximate" not in call.kwargs
