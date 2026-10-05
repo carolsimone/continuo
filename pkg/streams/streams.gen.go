@@ -157,7 +157,7 @@ const (
 )
 
 // All is every stream name from contract.yaml, in contract order — for callers
-// that must operate over all streams (e.g. the stream reaper).
+// that must operate over all streams (e.g. dead-letter-controller's trim loop).
 var All = []string{
 	SchedulerStartedV1,
 	SchedulesLoadedV1,
@@ -193,4 +193,62 @@ var All = []string{
 	RemediationProposedV1,
 	RemediationPrOpenedV1,
 	RemediationPrClosedV1,
+}
+
+// Groups maps every contract stream to the consumer groups the contract
+// declares for it, for callers that must know which groups a stream serves
+// (dead-letter-controller's trim loop).
+var Groups = map[string][]string{
+	SchedulerStartedV1:          {OrchestratorSchedulerStarted},
+	SchedulesLoadedV1:           {StateScheduleCatalog},
+	RunEntriesDispatchedV1:      {StateRunEntriesDispatched},
+	RunEntriesDispatchFailedV1:  {StateRunEntriesDispatchFailed},
+	TaskStatusUpdatedV1:         {StateTaskStatusUpdated},
+	TaskExecutionRecordedV1:     {StateTaskExecutionRecorded},
+	NodeUpdatedV1:               {OrchestratorNodeUpdated},
+	TriggerRerunV1:              {OrchestratorRerun},
+	TriggerRebaseV1:             {OrchestratorRebase},
+	TriggerSingleNodeRunV1:      {OrchestratorSingleNodeRun},
+	ReleaseSeedsPendingV1:       {StateReleaseSeedsPending},
+	TriggerPromotedSeedsV1:      {OrchestratorPromotedSeeds},
+	RunFinalizedV1:              {OrchestratorRunFinalized},
+	QueryModelV1:                {ExecutorQueryModel},
+	CheckK8sV1:                  {K8sCheckStatus},
+	OutboxDeadLetterV1:          {DeadLetterControllerOutboxDeadLetters},
+	ConsumerDeadLetterV1:        {DeadLetterControllerConsumerDeadLetters},
+	ScheduleCancelledV1:         {OrchestratorScheduleCancelled, ExecutorScheduleCancelled},
+	ReleaseRequestedV1:          {TopologyControllerReleaseRequested},
+	ManifestLoadedCandidateV1:   {ReleaseControllerManifestLoadedCandidate},
+	ValidationRequestedV1:       {ExecutorValidationRequested},
+	ValidationResultV1:          {ReleaseControllerValidationResult, ExecutorValidationResultTeardown},
+	SeedBuildRequestedV1:        {ExecutorSeedBuildRequested},
+	SeedBuildCompletedV1:        {ReleaseControllerSeedBuildCompleted},
+	CompileRequestedV1:          {ExecutorCompileRequested},
+	CompileCompletedV1:          {ReleaseControllerCompileCompleted},
+	ReleasePromotedV1:           {OrchestratorReleasePromoted, OrchestratorReleasePromotedVersions, ExecutorReleasePromoted},
+	ReleaseRejectedV1:           {RemediationReleaseRejected, ExecutorReleaseRejected},
+	PipelineRunFinishedV1:       {ExecutorPipelineRunFinished},
+	RemediationRetryRequestedV1: {RemediationRetryRequested},
+	RemediationRequestedV2:      {AgentRemediationRemediationRequested, OrchestratorRemediationRequestedRejections},
+	RemediationProposedV1:       {},
+	RemediationPrOpenedV1:       {OrchestratorRemediationPrOpenedProposals},
+	RemediationPrClosedV1:       {OrchestratorRemediationPrClosedProvenance},
+}
+
+// Retired lists the streams removed from the contract; their keys are deleted
+// from Redis.
+var Retired = []string{
+	"compile.node.completed:v1",
+	"initialize.run:v1",
+	"manifest.loaded:v1",
+	"node.deployed:v1",
+	"remediation.requested:v1",
+	"rerun.ready:v1",
+	"retry.task:v1",
+	"run.initialized:v1",
+	"seed.build.node.completed:v1",
+	"task.failed:v1",
+	"update.graph:v1",
+	"validation.completed:v1",
+	"validation.node.completed:v1",
 }

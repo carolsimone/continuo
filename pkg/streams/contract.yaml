@@ -345,6 +345,23 @@ streams:
         group: orchestrator-remediation-pr-closed-provenance
         const: OrchestratorRemediationPrClosedProvenance
 
+# Streams removed from the contract. dead-letter-controller deletes their keys
+# from Redis; nothing produces or consumes them.
+retired_streams:
+  - name: compile.node.completed:v1
+  - name: initialize.run:v1
+  - name: manifest.loaded:v1
+  - name: node.deployed:v1
+  - name: remediation.requested:v1
+  - name: rerun.ready:v1
+  - name: retry.task:v1
+  - name: run.initialized:v1
+  - name: seed.build.node.completed:v1
+  - name: task.failed:v1
+  - name: update.graph:v1
+  - name: validation.completed:v1
+  - name: validation.node.completed:v1
+
 # Closed value sets shared across services. Each becomes a typed string in Go
 # (pkg/domain/model/vocabulary.gen.go) and a StrEnum in Python
 # (topology-controller/domain/contract_vocabulary.py). They land in the domain
