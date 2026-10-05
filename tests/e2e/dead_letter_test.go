@@ -40,7 +40,7 @@ func TestDeadLetter_MalformedMessagesAreDeadLetteredNotDropped(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
+	t.Cleanup(func() { clients.close(ctx) })
 
 	cases := []struct{ producer, stream, group string }{
 		{"state", streams.TaskStatusUpdatedV1, streams.StateTaskStatusUpdated},
@@ -75,7 +75,7 @@ func TestDeadLetter_RedriveReachesOnlyItsGroup(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
+	t.Cleanup(func() { clients.close(ctx) })
 
 	// release.promoted:v1 has three consumer groups. Both orchestrator groups
 	// reject an entry with no payload as a permanent failure (their bindings
@@ -172,7 +172,7 @@ func TestDeadLetter_CLIListsAndRedrives(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
+	t.Cleanup(func() { clients.close(ctx) })
 
 	const stream = streams.ReleasePromotedV1
 	const group = streams.OrchestratorReleasePromoted
@@ -239,7 +239,7 @@ func TestDeadLetter_BacklogMetricIsExposed(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	clients := setupClients(t, ctx)
-	defer clients.close(ctx)
+	t.Cleanup(func() { clients.close(ctx) })
 
 	id := publishMalformed(ctx, t, clients, streams.TaskStatusUpdatedV1)
 	dl := awaitConsumerDeadLetter(ctx, t, clients, streams.TaskStatusUpdatedV1, streams.StateTaskStatusUpdated, id, "open")
