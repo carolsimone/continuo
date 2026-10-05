@@ -139,7 +139,7 @@ e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start
 
 # ── CI contract: SINGLE entrypoints used identically by local dev and CI jobs.
 GO_SERVICES := state orchestrator execution-controller release-controller \
-               remediation agent-remediation agent-chat
+               remediation agent-remediation agent-chat dead-letter-controller
 FLYWAY_JOBS := flyway-state flyway-execution flyway-orchestrator flyway-release \
                flyway-agent-chat flyway-remediation flyway-agent-remediation \
                flyway-dead-letter
@@ -195,6 +195,8 @@ test-go: test-deps-up
 	    release-controller) db=continuo_release; \
 	      extra="RELEASE_TEST_PG_DSN=postgres://continuo_svc:continuo@localhost:5432/continuo_release?sslmode=disable GOFLAGS=-p=1";; \
 	    remediation) db=continuo_remediation;; \
+	    dead-letter-controller) db=continuo_dead_letter; \
+	      extra="REDIS_ADDR=localhost:6379 REDIS_PASSWORD=continuo GOFLAGS=-p=1";; \
 	    agent-remediation) db=continuo_agent_remediation;; agent-chat) db=continuo_agent_chat;; \
 	    pkg) db=continuo_execution; pkgs=./...; \
 	      extra="REDIS_ADDR=localhost:6379 REDIS_PASSWORD=continuo GOFLAGS=-p=1";; \
