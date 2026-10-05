@@ -71,11 +71,12 @@ const outboxHeartbeatStale = 60 * time.Second
 // StartOutboxPublisher constructs a pkgoutbox.Processor backed by postgres.OutboxTable,
 // starts its relay loop in a goroutine and returns the processor. The loop
 // drains the table on each signal from waker and every pkgoutbox.FallbackTick,
-// until ctx is cancelled. It is registered with liveReg both as a worker
+// until ctx is cancelled; obs receives each batch's publish and failure counts.
+// It is registered with liveReg both as a worker
 // (RegisterWorker/WorkerExited detects a full goroutine EXIT) and with a
 // heartbeat probe (processor.Healthy detects a wedged-but-not-exited loop) —
 // the outbox analogue of a consumer's liveness backstop.
-func StartOutboxPublisher(ctx context.Context, db *sqlx.DB, rc *goredis.Client, waker pkgoutbox.Waker, liveReg *liveness.Registry, logger *slog.Logger) *pkgoutbox.Processor {
+func StartOutboxPublisher(ctx context.Context, db *sqlx.DB, rc *goredis.Client, waker pkgoutbox.Waker, obs pkgoutbox.Observer, liveReg *liveness.Registry, logger *slog.Logger) *pkgoutbox.Processor {
 	publisher := &releaseOutboxPublisher{redis: rc, logger: logger}
 	processor := pkgoutbox.NewProcessor(
 		db,
@@ -87,6 +88,7 @@ func StartOutboxPublisher(ctx context.Context, db *sqlx.DB, rc *goredis.Client, 
 			Tick:      pkgoutbox.FallbackTick,
 			BatchSize: 64,
 			Waker:     waker,
+			Observer:  obs,
 		},
 	)
 	liveReg.RegisterWorker("outbox_publisher")

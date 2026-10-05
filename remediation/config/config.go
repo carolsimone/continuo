@@ -17,6 +17,9 @@ type Config struct {
 	Redis    Redis
 	S3       pkgconfig.S3Config
 	HTTPPort string
+
+	// MetricsPort is the port the Prometheus /metrics listener binds (METRICS_PORT).
+	MetricsPort int
 }
 
 // Load reads configuration from environment variables.
@@ -31,5 +34,7 @@ func Load(v *pkgconfig.Validator) Config {
 		},
 		S3:       pkgconfig.LoadS3(v),
 		HTTPPort: pkgconfig.EnvOrDefault("REMEDIATION_HTTP_PORT", "8090"),
+
+		MetricsPort: pkgconfig.LoadMetricsPort(v),
 	}
 }

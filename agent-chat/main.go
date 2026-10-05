@@ -29,6 +29,7 @@ import (
 	pkgdb "github.com/carolsimone/continuo/pkg/db"
 	"github.com/carolsimone/continuo/pkg/lifecycle"
 	"github.com/carolsimone/continuo/pkg/liveness"
+	pkgmetrics "github.com/carolsimone/continuo/pkg/metrics"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	goredis "github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
@@ -39,6 +40,11 @@ import (
 // dbPool bounds the Postgres pool when DB_MAX_OPEN_CONNS / DB_MAX_IDLE_CONNS
 // are unset: the gRPC sessions' queries.
 var dbPool = pkgconfig.PoolConfig{MaxOpenConns: 20, MaxIdleConns: 5}
+
+// metricsServiceName labels agent-chat's metrics. It is deliberately not
+// config.ServiceName: that constant marks the services that run stream
+// consumers and produce dead letters, which agent-chat does not.
+const metricsServiceName = "agent-chat"
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -67,6 +73,7 @@ func main() {
 	lifecycleManager.SetupSignalHandlers(cancel, cfg.ShutdownGrace)
 
 	liveReg := liveness.NewRegistry()
+	metricsReg := pkgmetrics.New(metricsServiceName)
 
 	// HTTP health server: /health is a plain process-up probe. /ready is backed
 	// by the liveness registry so traffic stops when Postgres is unreachable;
@@ -82,6 +89,21 @@ func main() {
 		}
 	}()
 
+	// The Prometheus listener comes up with the health server so a dependency
+	// outage stays observable. Serve runs in a plain goroutine; the lifecycle
+	// manager stops it at shutdown.
+	metricsServer, err := pkgmetrics.Listen(cfg.MetricsPort, metricsReg, logger)
+	if err != nil {
+		logger.Error("Failed to bind the metrics port", "port", cfg.MetricsPort, "error", err)
+		os.Exit(1)
+	}
+	go func() {
+		if err := metricsServer.Serve(); err != nil {
+			logger.Error("Metrics server error", "error", err)
+		}
+	}()
+	lifecycleManager.RegisterShutdownHandler(metricsServer.Shutdown)
+
 	// Postgres connection.
 	db, err := pkgdb.Open(ctx, cfg.Postgres, dbPool)
 	if err != nil {
@@ -89,6 +111,7 @@ func main() {
 		os.Exit(1)
 	}
 	logger.Info("postgres connection established")
+	metricsReg.WatchDB(db.DB, cfg.Postgres.DB)
 
 	// Register database cleanup (LIFO — runs after gRPC and health servers close).
 	lifecycleManager.RegisterShutdownHandler(func(_ context.Context) error {
@@ -172,6 +195,7 @@ func main() {
 			os.Exit(1)
 		}
 		logger.Info("Redis connection established for shared rate limiting", "addr", cfg.RedisAddr)
+		metricsReg.WatchRedis(redisClient)
 		lifecycleManager.RegisterShutdownHandler(func(_ context.Context) error {
 			logger.Info("Closing Redis connection")
 			return redisClient.Close()

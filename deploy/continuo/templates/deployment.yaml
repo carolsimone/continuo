@@ -16,6 +16,7 @@
       "ui" (dict "name" "continuo.cancelConfigMapName") }}
 {{- range $svc := .Values.services }}
 {{- if ($svc.enabled | default true) }}
+{{- $servesMetrics := has $svc.name (include "continuo.metrics.services" $ | fromJsonArray) }}
 {{- $mounted := default (dict) (get $mountedConfigMaps $svc.name) }}
 ---
 apiVersion: apps/v1
@@ -60,6 +61,11 @@ spec:
         {{- if eq $svc.name "ui" }}
         # The ui reads its CI bindings once at boot; a changed binding must roll it.
         checksum/ci-auth: {{ include "continuo.ciAuth.json" $ | sha256sum }}
+        {{- end }}
+        {{- if and $servesMetrics (eq (include "continuo.metrics.podAnnotations" $) "true") }}
+        prometheus.io/scrape: "true"
+        prometheus.io/port: {{ include "continuo.metrics.port" $ | quote }}
+        prometheus.io/path: /metrics
         {{- end }}
         {{- if $mounted.template }}
         {{- $chartManaged := false }}
@@ -285,7 +291,7 @@ spec:
             {{- end }}
           {{- end }}
           {{- end }}
-          {{- if or $svc.httpPort $svc.grpcPort }}
+          {{- if or $svc.httpPort $svc.grpcPort $servesMetrics }}
           ports:
             {{- if $svc.httpPort }}
             - name: http
@@ -294,6 +300,10 @@ spec:
             {{- if $svc.grpcPort }}
             - name: grpc
               containerPort: {{ $svc.grpcPort }}
+            {{- end }}
+            {{- if $servesMetrics }}
+            - name: metrics
+              containerPort: {{ include "continuo.metrics.port" $ }}
             {{- end }}
           {{- end }}
           {{- if $svc.httpPort }}

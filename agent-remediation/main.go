@@ -37,6 +37,7 @@ import (
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	pkgdb "github.com/carolsimone/continuo/pkg/db"
 	"github.com/carolsimone/continuo/pkg/liveness"
+	pkgmetrics "github.com/carolsimone/continuo/pkg/metrics"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 )
@@ -91,6 +92,7 @@ func main() {
 	// outage stops traffic but must not restart a pod whose consumer is already
 	// retrying).
 	liveReg := liveness.NewRegistry()
+	metricsReg := pkgmetrics.New(config.ServiceName)
 
 	// runConsumer starts a tracked stream consumer: a bounded handler deadline
 	// so a hung handler (e.g. a stuck LLM request) eventually returns;
@@ -100,6 +102,7 @@ func main() {
 	// wedged-but-not-exited loop is caught.
 	runConsumer := func(name string, consumer *pkgredis.StreamConsumer) {
 		consumer.SetService(config.ServiceName)
+		consumer.SetObserver(metricsReg.Consumers())
 		consumer.SetHandlerTimeout(consumerHandlerTimeout)
 		liveReg.RegisterWorker(name)
 		liveReg.AddWorkerProbe(name+"_heartbeat", 10*time.Second, func(context.Context) error {
@@ -131,6 +134,26 @@ func main() {
 	srv := &http.Server{Addr: ":" + cfg.HTTPPort, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() { _ = srv.ListenAndServe() }()
 
+	// The Prometheus listener comes up before any dependency is reachable so a
+	// dependency outage stays observable. Serve runs in a plain goroutine; it
+	// is stopped when ctx ends.
+	metricsServer, err := pkgmetrics.Listen(cfg.MetricsPort, metricsReg, logger)
+	if err != nil {
+		logger.Error("Failed to bind the metrics port", "port", cfg.MetricsPort, "error", err)
+		os.Exit(1)
+	}
+	go func() {
+		if err := metricsServer.Serve(); err != nil {
+			logger.Error("Metrics server error", "error", err)
+		}
+	}()
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = metricsServer.Shutdown(shutdownCtx)
+	}()
+
 	db, err := pkgdb.Open(ctx, cfg.Postgres, dbPool)
 	if err != nil {
 		logger.Error("Failed to connect to PostgreSQL", "error", err)
@@ -140,6 +163,7 @@ func main() {
 	liveReg.AddProbe("postgres", 5*time.Second, func(ctx context.Context) error {
 		return db.PingContext(ctx)
 	})
+	metricsReg.WatchDB(db.DB, cfg.Postgres.DB)
 
 	// Redis is a separate workload that may still be starting (or its Service
 	// not yet resolvable) when this process boots, so wait for it with backoff
@@ -161,6 +185,7 @@ func main() {
 	liveReg.AddProbe("redis", 5*time.Second, func(ctx context.Context) error {
 		return rc.Ping(ctx).Err()
 	})
+	metricsReg.WatchRedis(rc)
 
 	store := s3.NewS3(
 		cfg.S3.EndpointURL,
@@ -288,7 +313,8 @@ func main() {
 
 	// Start the outbox publisher; spawns its own goroutine internally and runs
 	// until ctx is cancelled.
-	rredis.StartOutboxPublisher(ctx, db, rc, outboxWaker, liveReg, logger)
+	outboxProc := rredis.StartOutboxPublisher(ctx, db, rc, outboxWaker, metricsReg.Outbox(), liveReg, logger)
+	metricsReg.WatchOutbox(outboxProc)
 
 	// Start the remediation.requested consumer in a goroutine; blocks until ctx
 	// is cancelled.

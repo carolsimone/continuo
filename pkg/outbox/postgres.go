@@ -408,6 +408,24 @@ func (r *postgresRepository) CountTerminal(ctx context.Context) (int, error) {
 	return n, nil
 }
 
+// Backlog reads the open-row count and age through the claim index, and the
+// dead-lettered count through the failed-row index.
+func (r *postgresRepository) Backlog(ctx context.Context) (Backlog, error) {
+	var open int
+	var ageSeconds float64
+	q := fmt.Sprintf(`SELECT count(*),
+	       COALESCE(EXTRACT(EPOCH FROM clock_timestamp() - min(created_at)), 0)::float8
+	  FROM %s WHERE status IN ('pending', 'scheduled')`, r.tableName)
+	if err := r.exec.QueryRowContext(ctx, q).Scan(&open, &ageSeconds); err != nil {
+		return Backlog{}, fmt.Errorf("read backlog of %s: %w", r.tableName, err)
+	}
+	failed, err := r.CountTerminal(ctx)
+	if err != nil {
+		return Backlog{}, err
+	}
+	return Backlog{Open: open, OldestOpenAge: time.Duration(ageSeconds * float64(time.Second)), DeadLettered: failed}, nil
+}
+
 // ScheduleRetry records a transient publish failure: it bumps retry_count,
 // moves the row to 'scheduled', stamps the next eligible attempt time
 // (clock_timestamp() + retryIn), and stores the error for visibility. The

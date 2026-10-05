@@ -113,6 +113,8 @@ spec:
           ports:
             - containerPort: 8084
               name: health
+            - containerPort: 9464
+              name: metrics
           env:
             - name: REDIS_HOST
               value: "${DOCKER_BRIDGE_IP}"
@@ -180,6 +182,8 @@ spec:
               value: "60"
             - name: HTTP_PORT
               value: "8084"
+            - name: METRICS_PORT
+              value: "9464"
           readinessProbe:
             httpGet:
               path: /ready

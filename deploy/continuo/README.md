@@ -197,7 +197,9 @@ Every container in this chart, bundled or not, gets:
   actually reaches). `networkPolicy.enabled` is on by default; it is inert
   (accepted but not enforced) on a CNI (Container Network Interface) that
   doesn't implement `NetworkPolicy`, so leaving it enabled costs nothing even
-  on a cluster that can't act on it.
+  on a cluster that can't act on it. Scrapers are admitted only through
+  `metrics.scrapeNamespaceSelector` (empty by default, so none), and only to the
+  metrics port.
 - **No committed credentials.** Every credential value in `values.yaml`
   defaults to an empty string. Bundled datastores auto-generate a password on
   first install via a Helm `lookup` against the live Secret, so upgrades reuse
@@ -223,6 +225,9 @@ Every container in this chart, bundled or not, gets:
 | `databaseInit.enabled` | Idempotently creates all 9 databases (the 8 Flyway-migrated service databases plus `continuo_dbt`) before migrations run. Requires the connecting user to have `CREATEDB`; disable when a DBA pre-creates them. |
 | `database.pool.maxOpenConns`, `database.pool.maxIdleConns` | Postgres pool limits for every Go service (`DB_MAX_OPEN_CONNS`/`DB_MAX_IDLE_CONNS`). 0 keeps each service's own default. Set the two together; `maxIdleConns` may not exceed `maxOpenConns`. Each limit is a cap per pod, and the sum of the caps is the worst case: with the defaults and one replica of each service, 140 pooled connections plus one `LISTEN` connection per pod of the six services that run an outbox relay (every Go service except agent-chat), 146 in all; consumers handle one message at a time, so steady-state use is far lower. `maxOpenConns` applies to every service, orchestrator included, whose 13 consumers need about two connections each: do not set it below about 30, or handlers that hold a transaction and need a second connection stall until their deadline. To fit a small Postgres, lower the low-concurrency services one at a time through their `services[].env` (`DB_MAX_OPEN_CONNS`/`DB_MAX_IDLE_CONNS`), or raise Postgres `max_connections`. |
 | `networkPolicy.enabled` | Default-deny ingress within the release plus allow rules derived from the service graph. |
+| `metrics.port` | Port every Go service serves Prometheus `/metrics` on (`METRICS_PORT`, default 9464; must differ from every service port). |
+| `metrics.podAnnotations` | Adds `prometheus.io/{scrape,port,path}` annotations to those pods (default true). |
+| `metrics.scrapeNamespaceSelector` | Namespace selector admitted to the metrics port by the NetworkPolicy; empty (default) admits none. |
 | `ingress.enabled` / `ingress.className` / `ingress.host` / `ingress.annotations` / `ingress.tls.*` | Front door for `ui` only. Fully values-driven — no ingress class or cert-manager/ACME assumptions are baked in; set them yourself (see `values-byo.yaml.example`). With `networkPolicy.enabled` it also renders an allow rule for cert-manager's HTTP-01 solver pods (matched by their `acme.cert-manager.io/http01-solver` label, port 8089) so ACME challenges pass the default-deny; the rule selects nothing on installs without cert-manager. |
 | `auth.operatorEmails` / `auth.viewerEmails` / `auth.roleMapping` | Role assignment for authenticated users. With `dex.enabled: true`, `operatorEmails` defaults to the Dex demo user's email. |
 | `llm.provider` / `llm.model` / `llm.apiKey` (or `llm.existingSecret`) | Optional. Empty `apiKey`: agent-chat and agent-remediation still boot and serve, but LLM (Large Language Model) calls fail until it is set. |

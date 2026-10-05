@@ -45,6 +45,7 @@ type StreamConsumer struct {
 	consumerName  string
 	handler       MessageHandler
 	logger        *slog.Logger
+	observer      Observer
 
 	// reclaimMinIdle is the reclaim gate set by WithReclaimMinIdle, used in
 	// place of the derived one only when reclaimMinIdleSet is true (see
@@ -259,6 +260,7 @@ func NewStreamConsumer(
 		consumerName:     consumerName(consumerGroup),
 		handler:          handler,
 		logger:           logger,
+		observer:         nopObserver{},
 		workerCount:      1,
 		handlerTimeout:   DefaultHandlerTimeout,
 		infraBackoffBase: defaultInfraBackoffBase,
@@ -411,7 +413,15 @@ func (c *StreamConsumer) attempt(ctx context.Context, msg goredis.XMessage, sche
 				"stream", c.streamName, "message_id", msg.ID, "attempt", i+1, "previous_error", err)
 		}
 		var deadlineHit bool
+		started := time.Now()
 		deadlineHit, err = c.safeInvoke(ctx, msg)
+		if ctx.Err() == nil {
+			result := "ok"
+			if err != nil {
+				result = c.classify(err, deadlineHit).String()
+			}
+			c.observer.Handled(c.streamName, c.consumerGroup, result, time.Since(started))
+		}
 		if err == nil {
 			return ClassTransient, nil
 		}
@@ -443,6 +453,7 @@ func (c *StreamConsumer) run(ctx context.Context, msg goredis.XMessage, schedule
 		delay := c.infraBackoff(pauses)
 		c.logger.Warn(logInfraPause, "stream", c.streamName, "group", c.consumerGroup,
 			"message_id", msg.ID, "pause", pauses, "retry_in", delay, "error", err)
+		c.observer.Paused(c.streamName, c.consumerGroup)
 		if !c.pause(ctx, delay) {
 			return ClassTransient, ctx.Err()
 		}
@@ -654,6 +665,7 @@ func (c *StreamConsumer) deadLetterAndAck(ctx context.Context, msg goredis.XMess
 	}
 	c.logger.Error(logDeadLettered, "stream", c.streamName, "group", c.consumerGroup, "message_id", msg.ID,
 		"failure_kind", string(kind), "deliveries", deliveries, "dead_letter_event_id", values["event_id"], "error", cause)
+	c.observer.DeadLettered(c.streamName, c.consumerGroup, kind)
 	sctx, cancel := c.settleContext(ctx)
 	defer cancel()
 	if err := c.ackFn(sctx, msg.ID); err != nil {
@@ -724,6 +736,7 @@ func (c *StreamConsumer) Start(ctx context.Context) error {
 		case <-time.After(3 * time.Second):
 		}
 	}
+	c.observer.Watch(c.streamName, c.consumerGroup)
 	c.logger.Info("Starting consumer",
 		"stream", c.streamName,
 		"group", c.consumerGroup,

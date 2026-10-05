@@ -13,6 +13,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/lifecycle"
 	"github.com/carolsimone/continuo/pkg/liveness"
 	pkgmessageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
+	pkgmetrics "github.com/carolsimone/continuo/pkg/metrics"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -72,6 +73,7 @@ func main() {
 	lifecycleManager.SetupSignalHandlers(cancel, cfg.ShutdownGrace)
 
 	liveReg := liveness.NewRegistry()
+	metricsReg := pkgmetrics.New(config.ServiceName)
 
 	// runConsumer starts a tracked stream consumer. Its goroutine is tracked by
 	// the lifecycle WaitGroup so shutdown drains in-flight handler invocations
@@ -81,6 +83,7 @@ func main() {
 	// read loop has gone wedged without exiting.
 	runConsumer := func(name string, consumer *pkgredis.StreamConsumer) {
 		consumer.SetService(config.ServiceName)
+		consumer.SetObserver(metricsReg.Consumers())
 		liveReg.RegisterWorker(name)
 		liveReg.AddWorkerProbe(name+"_heartbeat", 10*time.Second, func(context.Context) error {
 			return consumer.Healthy(consumer.HeartbeatBudget())
@@ -109,6 +112,21 @@ func main() {
 		}
 	}()
 
+	// The Prometheus listener comes up with the health server so a dependency
+	// outage stays observable. Serve runs in a plain goroutine; the lifecycle
+	// manager stops it at shutdown.
+	metricsServer, err := pkgmetrics.Listen(cfg.MetricsPort, metricsReg, logger)
+	if err != nil {
+		logger.Error("Failed to bind the metrics port", "port", cfg.MetricsPort, "error", err)
+		os.Exit(1)
+	}
+	go func() {
+		if err := metricsServer.Serve(); err != nil {
+			logger.Error("Metrics server error", "error", err)
+		}
+	}()
+	lifecycleManager.RegisterShutdownHandler(metricsServer.Shutdown)
+
 	// Initialize PostgreSQL connection
 	db, err := pkgdb.Open(ctx, cfg.Postgres, dbPool)
 	if err != nil {
@@ -116,6 +134,7 @@ func main() {
 		os.Exit(1)
 	}
 	logger.Info("PostgreSQL connection established")
+	metricsReg.WatchDB(db.DB, cfg.Postgres.DB)
 
 	// Register database cleanup
 	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
@@ -149,6 +168,7 @@ func main() {
 		os.Exit(1)
 	}
 	logger.Info("Redis connection established")
+	metricsReg.WatchRedis(redisClient)
 
 	// Register Redis client cleanup
 	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
@@ -189,8 +209,9 @@ func main() {
 		outboxPub,
 		nil, // no terminal-failure hook for state
 		logger,
-		pkgoutbox.ProcessorConfig{Tick: pkgoutbox.FallbackTick, BatchSize: 100, Waker: outboxWaker},
+		pkgoutbox.ProcessorConfig{Tick: pkgoutbox.FallbackTick, BatchSize: 100, Waker: outboxWaker, Observer: metricsReg.Outbox()},
 	)
+	metricsReg.WatchOutbox(outboxProc)
 	liveReg.RegisterWorker("outbox_processor")
 	liveReg.AddWorkerProbe("outbox_processor_heartbeat", 10*time.Second, func(context.Context) error {
 		return outboxProc.Healthy(outboxHeartbeatStale)

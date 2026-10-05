@@ -564,3 +564,37 @@ staticPasswords:
     username: {{ $root.Values.dex.demoUser.username | quote }}
     userID: {{ $root.Values.dex.demoUser.userID | quote }}
 {{- end -}}
+
+{{/*
+The services that serve /metrics on the metrics port: every Go service.
+scripts/install-test/assert-metrics.py pins this list to the services whose
+source imports pkg/metrics.
+*/ -}}
+{{- define "continuo.metrics.services" -}}
+["state","orchestrator","execution-controller","release-controller","remediation","agent-remediation","agent-chat"]
+{{- end -}}
+
+{{/*
+The port every Go service serves /metrics on (default 9464, also when the
+metrics block is absent from stored values). Rendering fails when it equals a
+service's httpPort or grpcPort, which that service could then not bind.
+*/ -}}
+{{- define "continuo.metrics.port" -}}
+{{- $m := .Values.metrics | default dict -}}
+{{- $port := $m.port | default 9464 | int -}}
+{{- range $svc := .Values.services -}}
+{{- if or (eq (int (default 0 $svc.httpPort)) $port) (eq (int (default 0 $svc.grpcPort)) $port) -}}
+{{- fail (printf "metrics.port %d is service %s's httpPort or grpcPort; choose a free port" $port $svc.name) -}}
+{{- end -}}
+{{- end -}}
+{{- $port -}}
+{{- end -}}
+
+{{/*
+Whether the metrics pods carry prometheus.io annotations: true unless
+metrics.podAnnotations is set to false.
+*/ -}}
+{{- define "continuo.metrics.podAnnotations" -}}
+{{- $m := .Values.metrics | default dict -}}
+{{- if hasKey $m "podAnnotations" -}}{{ $m.podAnnotations }}{{- else -}}true{{- end -}}
+{{- end -}}

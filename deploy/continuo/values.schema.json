@@ -357,6 +357,16 @@
       }
     },
 
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+        "podAnnotations": {"type": "boolean"},
+        "scrapeNamespaceSelector": {"type": "object"}
+      }
+    },
+
     "ingress": {
       "type": "object",
       "additionalProperties": false,

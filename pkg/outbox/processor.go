@@ -74,6 +74,8 @@ type ProcessorConfig struct {
 	// poll for retries coming due and notifications lost during a reconnect.
 	// Without a Waker the relay drains only on Tick.
 	Waker Waker
+	// Observer receives published and failed counts for metrics. Default: none.
+	Observer Observer
 }
 
 // Processor relays the rows of one outbox table to their streams. Every table
@@ -118,6 +120,7 @@ type Processor struct {
 	retryBase         time.Duration
 	retryMax          time.Duration
 	waker             Waker
+	observer          Observer
 
 	// lastActivity is the unix-nano timestamp of the most recent unit of Run
 	// progress (each turn of the loop, and each drained batch), stored via
@@ -168,6 +171,10 @@ func NewProcessor(
 		retryBase:         retryBase,
 		retryMax:          retryMax,
 		waker:             cfg.Waker,
+		observer:          cfg.Observer,
+	}
+	if p.observer == nil {
+		p.observer = nopObserver{}
 	}
 	// Seed the heartbeat at construction so a probe firing before Run is
 	// scheduled sees "just started," not "stalled since the epoch."
@@ -231,6 +238,15 @@ func (p *Processor) Healthy(maxStale time.Duration) error {
 // health-probe goroutine independent of the Run loop.
 func (p *Processor) DeadLetterBacklog(ctx context.Context) (int, error) {
 	return newPostgresRepository(p.db, p.tableName, p.logger).CountTerminal(ctx)
+}
+
+// Table names the outbox table this processor drains.
+func (p *Processor) Table() string { return p.tableName }
+
+// Backlog reports the table's open and dead-lettered rows. It runs outside the
+// Run loop, on p.db.
+func (p *Processor) Backlog(ctx context.Context) (Backlog, error) {
+	return newPostgresRepository(p.db, p.tableName, p.logger).Backlog(ctx)
 }
 
 // drain runs batches back to back until a batch settles no row. A batch that
@@ -325,6 +341,7 @@ func (p *Processor) processBatchOnce(ctx context.Context) (int, error) {
 				p.logger.Error("Schedule retry failed", "entry_id", entry.ID, "error", err)
 				continue
 			}
+			p.observer.Failed(p.tableName, "retry")
 			resolved++
 			continue
 		}
@@ -352,6 +369,9 @@ func (p *Processor) processBatchOnce(ctx context.Context) (int, error) {
 	tx = nil
 	if err != nil {
 		return 0, fmt.Errorf("commit tx: %w", err)
+	}
+	if len(processedIDs) > 0 {
+		p.observer.Published(p.tableName, len(processedIDs))
 	}
 	return len(processedIDs) + resolved, nil
 }
@@ -396,6 +416,7 @@ func (p *Processor) terminate(ctx context.Context, repo terminalWriter, entry *E
 	if err := repo.MarkFailed(ctx, entry.ID, cause.Error()); err != nil {
 		return fmt.Errorf("mark failed for %s: %w", entry.ID, err)
 	}
+	p.observer.Failed(p.tableName, string(kind))
 	return nil
 }
 

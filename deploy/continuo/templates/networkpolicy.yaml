@@ -336,4 +336,32 @@ spec:
     - ports:
         - port: 5556
 {{- end }}
+{{- $m := .Values.metrics | default dict }}
+{{- with $m.scrapeNamespaceSelector }}
+---
+# Admits the namespaces metrics.scrapeNamespaceSelector names to the metrics
+# port of every Go service, and to no other port.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "continuo.fullname" $ }}-allow-metrics-scrape
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "continuo.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ $instance }}
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: {{ include "continuo.metrics.services" $ }}
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            {{- toYaml . | nindent 12 }}
+      ports:
+        - port: {{ include "continuo.metrics.port" $ }}
+{{- end }}
 {{- end }}
