@@ -12,10 +12,12 @@ import (
 )
 
 // RedrivePublisher publishes dead-letter-controller's outbox: a redrive row
-// XADDs the stored fields to the original stream with outbox_entry_id set to
-// the row's id, redriven_from naming the dead letter and, for one group,
-// redrive_group; a dead-letter row of this outbox publishes like any other
-// service's.
+// XADDs the stored fields to the original stream with redriven_from naming the
+// dead letter and, for one group, redrive_group. A consumer or quarantine
+// redrive carries the row's id as outbox_entry_id, so it is reprocessed; an
+// outbox-source redrive preserves the original event's outbox_entry_id, so
+// consumers that already processed it deduplicate it. A dead-letter row of this
+// outbox publishes like any other service's.
 type RedrivePublisher struct{ redis *goredis.Client }
 
 var (
@@ -56,14 +58,35 @@ func (p *RedrivePublisher) Render(entry *pkgoutbox.Entry) (map[string]any, error
 	}
 }
 
+// stampedOutboxEntryID is the outbox_entry_id Publish stamps on entry: the
+// original event's id for an outbox-source redrive, the entry's own id
+// otherwise, so consumers deduplicate a republish of the same row.
+func stampedOutboxEntryID(entry *pkgoutbox.Entry) (string, error) {
+	if entry.EventType == serialization.EventTypeRedrive {
+		r, err := serialization.DecodeRedrive(entry.Payload)
+		if err != nil {
+			return "", fmt.Errorf("%w: %v", pkgevents.ErrPermanent, err)
+		}
+		if r.OutboxEntryID != "" {
+			return r.OutboxEntryID, nil
+		}
+	}
+	return entry.ID.String(), nil
+}
+
 // Publish XADDs the rendered fields to the entry's stream, stamping
-// outbox_entry_id with the entry's id so consumers deduplicate a republish.
+// outbox_entry_id: the original event's id for an outbox-source redrive (so
+// consumers that already processed it deduplicate it), the entry's id otherwise.
 func (p *RedrivePublisher) Publish(ctx context.Context, entry *pkgoutbox.Entry) error {
 	values, err := p.Render(entry)
 	if err != nil {
 		return err
 	}
-	values["outbox_entry_id"] = entry.ID.String()
+	id, err := stampedOutboxEntryID(entry)
+	if err != nil {
+		return err
+	}
+	values["outbox_entry_id"] = id
 	if err := p.redis.XAdd(ctx, &goredis.XAddArgs{Stream: entry.StreamName, Values: values}).Err(); err != nil {
 		return fmt.Errorf("xadd to %s: %w", entry.StreamName, err)
 	}

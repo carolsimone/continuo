@@ -76,3 +76,50 @@ func TestRedrivePublisher_UnknownEventTypeAndBadPayloadArePermanent(t *testing.T
 		}
 	}
 }
+
+func TestRedrivePublisher_StampedOutboxEntryID(t *testing.T) {
+	cases := []struct {
+		name string
+		dl   deadletter.DeadLetter
+		want func(entryID uuid.UUID) string
+	}{
+		{"outbox keeps the original id", deadletter.DeadLetter{Source: deadletter.SourceOutbox, FailedOutboxID: "orig-42"},
+			func(uuid.UUID) string { return "orig-42" }},
+		{"consumer gets a fresh id", deadletter.DeadLetter{Source: deadletter.SourceConsumer, Group: "g", FailedOutboxID: "ignored"},
+			func(id uuid.UUID) string { return id.String() }},
+		{"quarantine gets a fresh id", deadletter.DeadLetter{Source: deadletter.SourceQuarantine, Group: "g"},
+			func(id uuid.UUID) string { return id.String() }},
+	}
+	for _, c := range cases {
+		c.dl.ID = uuid.New()
+		c.dl.Fields = map[string]string{"k": "v"}
+		body, err := serialization.EncodeRedrive(c.dl)
+		if err != nil {
+			t.Fatal(err)
+		}
+		e := &pkgoutbox.Entry{ID: uuid.New(), EventType: serialization.EventTypeRedrive, Payload: body}
+		got, err := stampedOutboxEntryID(e)
+		if err != nil || got != c.want(e.ID) {
+			t.Errorf("%s: got %q, %v; want %q", c.name, got, err, c.want(e.ID))
+		}
+	}
+}
+
+func TestRedrivePublisher_RenderOmitsOutboxEntryIDForOutboxRedrive(t *testing.T) {
+	dl := deadletter.DeadLetter{ID: uuid.New(), Source: deadletter.SourceOutbox, FailedOutboxID: "orig-42", Fields: map[string]string{"k": "v"}}
+	body, _ := serialization.EncodeRedrive(dl)
+	values, err := NewRedrivePublisher(nil).Render(&pkgoutbox.Entry{ID: uuid.New(), EventType: serialization.EventTypeRedrive, Payload: body})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := values["outbox_entry_id"]; ok {
+		t.Fatal("Render must not include outbox_entry_id; Publish stamps it")
+	}
+}
+
+func TestStampedOutboxEntryID_DeadLetterRowUsesEntryID(t *testing.T) {
+	e := &pkgoutbox.Entry{ID: uuid.New(), EventType: pkgoutbox.DeadLetterEventType, Payload: []byte(`{}`)}
+	if got, err := stampedOutboxEntryID(e); err != nil || got != e.ID.String() {
+		t.Fatalf("got %q, %v", got, err)
+	}
+}

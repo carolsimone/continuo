@@ -44,3 +44,44 @@ func TestRedrivePublisher_PublishXAddsTheStoredFields(t *testing.T) {
 		t.Fatalf("values = %v", v)
 	}
 }
+
+func TestRedrivePublisher_PublishStampsOutboxEntryIDPerSource(t *testing.T) {
+	addr := os.Getenv("REDIS_ADDR")
+	if addr == "" {
+		testdeps.Unavailable(t, "REDIS_ADDR not set — skipping Redis integration test")
+	}
+	rc := goredis.NewClient(&goredis.Options{Addr: addr, Password: os.Getenv("REDIS_PASSWORD")})
+	t.Cleanup(func() { _ = rc.Close() })
+	ctx := context.Background()
+
+	for _, c := range []struct {
+		name      string
+		source    deadletter.Source
+		wantOwnID bool
+	}{
+		{"outbox preserves the original id", deadletter.SourceOutbox, false},
+		{"consumer stamps the entry id", deadletter.SourceConsumer, true},
+		{"quarantine stamps the entry id", deadletter.SourceQuarantine, true},
+	} {
+		stream := "test.redrive:" + uuid.NewString()
+		t.Cleanup(func() { rc.Del(ctx, stream) })
+		dl := deadletter.DeadLetter{ID: uuid.New(), Source: c.source, Group: "g", FailedOutboxID: "orig-42",
+			Fields: map[string]string{"k": "v", "outbox_entry_id": "orig-42"}}
+		body, _ := serialization.EncodeRedrive(dl)
+		entry := &pkgoutbox.Entry{ID: uuid.New(), EventType: serialization.EventTypeRedrive, Payload: body, StreamName: stream}
+		if err := NewRedrivePublisher(rc).Publish(ctx, entry); err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		msgs, err := rc.XRange(ctx, stream, "-", "+").Result()
+		if err != nil || len(msgs) != 1 {
+			t.Fatalf("%s: msgs = %v, err = %v", c.name, msgs, err)
+		}
+		want := "orig-42"
+		if c.wantOwnID {
+			want = entry.ID.String()
+		}
+		if got := msgs[0].Values["outbox_entry_id"]; got != want {
+			t.Errorf("%s: outbox_entry_id = %v, want %s", c.name, got, want)
+		}
+	}
+}
