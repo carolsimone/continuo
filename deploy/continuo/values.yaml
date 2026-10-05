@@ -401,7 +401,7 @@ database:
 # trimmed up to the oldest entry any of its consumer groups still needs.
 # Entries older than `retention` that a lagging group still needs are first
 # stored as dead letters (`continuo dlq list quarantine`), then trimmed; they
-# can be redriven for 30 days. `retention` must lie between 0 and 720h.
+# can be redriven for 30 days. `retention` must lie strictly between 0 and 720h.
 # `enabled: false` stops trimming, and streams then grow without bound.
 # `schedule` is accepted for compatibility and ignored.
 streamReaper:

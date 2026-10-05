@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/carolsimone/continuo/dead-letter-controller/domain/trim"
+	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/testdeps"
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
@@ -177,4 +178,27 @@ func TestDeleteIfExists(t *testing.T) {
 	deleted, err = ins.DeleteIfExists(ctx, stream)
 	require.NoError(t, err)
 	assert.False(t, deleted)
+}
+
+// A redriven entry addressed to another group is skipped by this group when it
+// consumes, so it is not this group's to quarantine: a later redrive would
+// retarget it and hand this group an event meant for the other.
+func TestNeededEntries_SkipsEntriesTargetedToAnotherGroup(t *testing.T) {
+	rc, stream := inspectorStream(t)
+	ctx := context.Background()
+	add := func(id string, extra ...any) {
+		values := map[string]any{"k": "v" + id}
+		for i := 0; i < len(extra); i += 2 {
+			values[extra[i].(string)] = extra[i+1]
+		}
+		require.NoError(t, rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, ID: id, Values: values}).Err())
+	}
+	add("10-0")
+	add("20-0", pkgredis.RedriveGroupField, "other")
+	add("30-0", pkgredis.RedriveGroupField, "mine")
+	require.NoError(t, rc.XGroupCreate(ctx, stream, "mine", "0").Err())
+
+	got, err := NewStreamInspector(rc).NeededEntries(ctx, stream, "mine", trim.StreamID{}, trim.StreamID{Ms: 100}, 10)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"10-0", "30-0"}, ids(got))
 }

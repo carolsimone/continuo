@@ -186,7 +186,10 @@ func (t *Trimmer) quarantine(ctx context.Context, stream string, w trim.Work, bu
 	if err != nil {
 		return nil, fmt.Errorf("quarantine %s/%s: %w", stream, w.Group, err)
 	}
-	*budget -= len(entries)
+	// Only rows this run newly stored spend the budget: entries a previous run
+	// already stored come back as n=0, and charging them would let one group
+	// starve every group after it.
+	*budget -= n
 	t.obs.Quarantined(stream, w.Group, n)
 	t.logger.Warn("Quarantined stream entries before trimming", "stream", stream, "group", w.Group,
 		"entries", len(entries), "newly_stored", n)

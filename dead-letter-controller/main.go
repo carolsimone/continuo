@@ -58,6 +58,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	pool, err := pkgdb.EffectivePool(cfg.Postgres.Pool, dbPool)
+	if err != nil {
+		logger.Error("invalid configuration", "error", err)
+		os.Exit(1)
+	}
+	if err := config.RequireTrimPoolCapacity(cfg.TrimEnabled, pool.MaxOpenConns); err != nil {
+		logger.Error("invalid configuration", "error", err)
+		os.Exit(1)
+	}
+
 	logger.Info("Starting dead-letter-controller service")
 
 	ctx, cancel := context.WithCancel(context.Background())

@@ -175,6 +175,33 @@ func TestTrimmer_BudgetExhaustedNeverTrimsPastUnstored(t *testing.T) {
 	assert.Equal(t, []trim.StreamID{{Ms: 4}}, ins.trimmed["s:v1"], "trim stops at the first entry not stored")
 }
 
+// Two lagging groups need the same entries, more than the budget. The first run
+// stores the first group's share; the next run sees those rows already stored
+// (n=0), so they must not spend the budget again, or the second group is never
+// stored and the stream never trims.
+func TestTrimmer_SharedBudgetDoesNotStarveSecondGroup(t *testing.T) {
+	var entries []trim.Entry
+	for i := uint64(1); i <= 5; i++ {
+		entries = append(entries, trim.Entry{ID: trim.StreamID{Ms: i}, Fields: map[string]string{"k": "v"}})
+	}
+	ins := newFakeInspector()
+	ins.add("s:v1", trim.Snapshot{Present: []trim.Group{{Name: "g1"}, {Name: "g2"}}},
+		map[string][]trim.Entry{"g1": entries, "g2": entries})
+	h := newHarnessWithBudget(ins, map[string][]string{"s:v1": {"g1", "g2"}}, 3)
+
+	require.NoError(t, h.trimmer.RunOnce(context.Background()))
+	require.NoError(t, h.trimmer.RunOnce(context.Background()))
+
+	for i := uint64(1); i <= 3; i++ {
+		id := trim.StreamID{Ms: i}.String()
+		assert.NotEmpty(t, h.repo.byKey(deadletter.QuarantineKey("s:v1", "g2", id)).DedupKey,
+			"the second group's entry %s is stored once the first group's are already stored", id)
+	}
+	assert.Equal(t, 6, h.repo.count())
+	last := ins.trimmed["s:v1"][len(ins.trimmed["s:v1"])-1]
+	assert.Equal(t, trim.StreamID{Ms: 4}, last, "the stream trims past the entries both groups have stored")
+}
+
 func TestTrimmer_StoreFailureTrimsNothing(t *testing.T) {
 	ins := newFakeInspector()
 	ins.add("s:v1", trim.Snapshot{Present: []trim.Group{{Name: "lag"}}},

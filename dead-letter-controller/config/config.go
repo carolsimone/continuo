@@ -67,13 +67,24 @@ func Load(v *pkgconfig.Validator) Config {
 }
 
 // Validate reports a setting the service cannot honour: an unparseable trim
-// setting, or a retention outside (0, model.ReplayHorizon].
+// setting, or a retention outside (0, model.ReplayHorizon).
 func (c Config) Validate() error {
 	if c.ConfigErr != nil {
 		return c.ConfigErr
 	}
-	if c.StreamRetention <= 0 || c.StreamRetention > model.ReplayHorizon {
-		return fmt.Errorf("STREAM_RETENTION must be in (0, %dh]: entries quarantined past the replay horizon could never be redriven", int(model.ReplayHorizon.Hours()))
+	if c.StreamRetention <= 0 || c.StreamRetention >= model.ReplayHorizon {
+		return fmt.Errorf("STREAM_RETENTION must be in (0, %dh): an entry quarantined at the replay horizon is already past its redrive window", int(model.ReplayHorizon.Hours()))
+	}
+	return nil
+}
+
+// RequireTrimPoolCapacity rejects a pool too small for the trim loop. The loop
+// holds one pooled connection for its advisory lock for the whole run, and
+// quarantining needs a second one; with a single connection the insert would
+// wait forever for the connection the lock holds.
+func RequireTrimPoolCapacity(trimEnabled bool, maxOpenConns int) error {
+	if trimEnabled && maxOpenConns < 2 {
+		return fmt.Errorf("STREAM_TRIM_ENABLED requires DB_MAX_OPEN_CONNS >= 2 (got %d): the trim loop holds one connection for its advisory lock while quarantining", maxOpenConns)
 	}
 	return nil
 }

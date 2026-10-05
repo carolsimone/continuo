@@ -32,8 +32,33 @@ func TestValidate_StreamRetentionBounds(t *testing.T) {
 			t.Errorf("retention %v accepted", r)
 		}
 	}
-	if err := (Config{TrimEnabled: true, StreamRetention: model.ReplayHorizon}).Validate(); err != nil {
-		t.Errorf("the horizon itself must be accepted: %v", err)
+	// An entry quarantined at the horizon is already past its redrive window.
+	if err := (Config{TrimEnabled: true, StreamRetention: model.ReplayHorizon}).Validate(); err == nil {
+		t.Error("the horizon itself must be rejected")
+	}
+	if err := (Config{TrimEnabled: true, StreamRetention: model.ReplayHorizon - time.Second}).Validate(); err != nil {
+		t.Errorf("a retention just under the horizon must be accepted: %v", err)
+	}
+}
+
+func TestRequireTrimPoolCapacity(t *testing.T) {
+	cases := []struct {
+		name    string
+		trim    bool
+		open    int
+		wantErr bool
+	}{
+		{"trim on, one connection", true, 1, true},
+		{"trim on, two connections", true, 2, false},
+		{"trim on, default pool", true, 12, false},
+		{"trim off, one connection", false, 1, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if err := RequireTrimPoolCapacity(c.trim, c.open); (err != nil) != c.wantErr {
+				t.Fatalf("RequireTrimPoolCapacity(%v, %d) = %v, wantErr %v", c.trim, c.open, err, c.wantErr)
+			}
+		})
 	}
 }
 

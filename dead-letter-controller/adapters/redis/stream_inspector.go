@@ -8,6 +8,7 @@ import (
 
 	"github.com/carolsimone/continuo/dead-letter-controller/domain/trim"
 	"github.com/carolsimone/continuo/dead-letter-controller/service/ports"
+	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	goredis "github.com/redis/go-redis/v9"
 )
 
@@ -73,7 +74,9 @@ func (s *StreamInspector) Snapshot(ctx context.Context, stream string, contractG
 
 // NeededEntries returns, in id order and at most limit long, the entries of
 // stream below cutoff that group has pending or has not been delivered. A
-// pending entry already removed from the stream is skipped.
+// pending entry already removed from the stream is skipped, and so is an entry
+// addressed to another group by a redrive (its redrive_group names that group):
+// group ignores it when consuming, so it is not group's to quarantine.
 func (s *StreamInspector) NeededEntries(ctx context.Context, stream, group string, lastDelivered, cutoff trim.StreamID, limit int) ([]trim.Entry, error) {
 	if limit <= 0 {
 		return nil, nil
@@ -93,7 +96,11 @@ func (s *StreamInspector) NeededEntries(ctx context.Context, stream, group strin
 		if err != nil {
 			return nil, err
 		}
-		byID[id] = trim.Entry{ID: id, Fields: stringFields(m.Values)}
+		fields := stringFields(m.Values)
+		if target, addressed := fields[pkgredis.RedriveGroupField]; addressed && target != group {
+			continue
+		}
+		byID[id] = trim.Entry{ID: id, Fields: fields}
 	}
 	out := make([]trim.Entry, 0, len(byID))
 	for _, e := range byID {
