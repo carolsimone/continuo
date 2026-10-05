@@ -530,7 +530,7 @@ services:
       GRPC_PORT: "50053"
       CONTINUO_STATE_ADDR: state:50051
       CONTINUO_ORCHESTRATOR_ADDR: orchestrator:50052
-      CONTINUO_DEAD_LETTER_ADDR: dead-letter-controller:50055
+      CONTINUO_DEAD_LETTER_ADDR: __DEAD_LETTER_CONTROLLER_ADDR__  # rendered from global.deadLetterControllerGrpcAddr
       LLM_PROVIDER: __LLM_PROVIDER__
       LLM_MODEL: __LLM_MODEL__
       CHAT_MAX_CONCURRENT_SESSIONS: "100"
