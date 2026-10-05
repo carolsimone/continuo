@@ -26,6 +26,7 @@ data:
   ORCHESTRATOR_GRPC_ADDR: {{ .Values.global.orchestratorGrpcAddr | quote }}
   AGENT_REMEDIATION_GRPC_ADDR: {{ .Values.global.agentRemediationGrpcAddr | quote }}
   AGENT_CHAT_GRPC_ADDR: {{ .Values.global.agentChatGrpcAddr | quote }}
+  DEAD_LETTER_CONTROLLER_GRPC_ADDR: {{ .Values.global.deadLetterControllerGrpcAddr | quote }}
   STATE_SERVICE_GRPC_ADDR: {{ .Values.global.stateGrpcAddr | quote }}
   S3_ENDPOINT_URL: {{ include "continuo.s3.endpointUrl" . | quote }}
   S3_BUCKET: {{ include "continuo.s3.bucket" . | quote }}

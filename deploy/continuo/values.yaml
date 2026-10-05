@@ -31,6 +31,7 @@ global:
   orchestratorGrpcAddr: orchestrator:50052
   agentRemediationGrpcAddr: agent-remediation:50054  # in-cluster gRPC address release-controller uses to read remediation attempts before starting a retry round
   agentChatGrpcAddr: agent-chat:50053
+  deadLetterControllerGrpcAddr: dead-letter-controller:50055  # in-cluster gRPC address of dead-letter-controller's DeadLetterService (`continuo dlq`)
 
   # Pod-level shutdown budget (kubectl/kubelet SIGTERM-to-SIGKILL window) for
   # every Deployment. Each service also bounds its own graceful-shutdown
@@ -371,10 +372,11 @@ database:
   # each service's own default, sized to how many queries it runs at once
   # (open/idle: state 20/10, orchestrator 35/5, execution-controller 30/5,
   # release-controller 15/5, remediation 10/5, agent-remediation 10/5,
-  # agent-chat 20/5). Each limit is a cap per pod, and the sum of the caps is
-  # the worst case: with the defaults and one replica of each service, 140
-  # pooled connections plus one LISTEN connection per pod of the six services
-  # that run an outbox relay (every Go service except agent-chat), 146 in all.
+  # agent-chat 20/5, dead-letter-controller 12/5). Each limit is a cap per pod,
+  # and the sum of the caps is the worst case: with the defaults and one
+  # replica of each service, 152 pooled connections plus one LISTEN connection
+  # per pod of the seven services that run an outbox relay (every Go service
+  # except agent-chat), 159 in all.
   # Consumers handle one message at a time, so steady-state use is far lower.
   # The LISTEN connection sits outside the pool and needs a session-mode path
   # to Postgres: behind a transaction-mode pooler the relays publish on their
@@ -396,10 +398,10 @@ database:
     maxIdleConns: 0
 
 # CronJob that trims Redis Stream entries older than `retention`. It never trims
-# outbox.dead_letter:v1 or consumer.dead_letter:v1: they hold the only copy of
-# every dead letter. consumer.dead_letter:v1 is written without a length cap, so
-# an operator removes handled entries from it; outbox.dead_letter:v1 keeps the
-# roughly 10,000-entry cap its publishers apply when they append.
+# outbox.dead_letter:v1 or consumer.dead_letter:v1: dead-letter-controller
+# consumes both and stores every entry in continuo_dead_letter, so an operator
+# lists, inspects and redrives dead letters with `continuo dlq` instead of
+# reading the streams.
 streamReaper:
   enabled: true
   schedule: "0 3 * * *"
@@ -412,8 +414,8 @@ networkPolicy:
 
 metrics:
   # Every Go service (state, orchestrator, execution-controller,
-  # release-controller, remediation, agent-remediation, agent-chat) serves
-  # Prometheus metrics at /metrics on this port, on a listener of its own, so a
+  # release-controller, remediation, agent-remediation, agent-chat,
+  # dead-letter-controller) serves Prometheus metrics at /metrics on this port, on a listener of its own, so a
   # scraper can be admitted to it without reaching the service's other ports.
   # Published to the services as METRICS_PORT on the shared ConfigMap. Must
   # differ from every service's httpPort and grpcPort (rendering fails otherwise).
@@ -528,6 +530,7 @@ services:
       GRPC_PORT: "50053"
       CONTINUO_STATE_ADDR: state:50051
       CONTINUO_ORCHESTRATOR_ADDR: orchestrator:50052
+      CONTINUO_DEAD_LETTER_ADDR: dead-letter-controller:50055
       LLM_PROVIDER: __LLM_PROVIDER__
       LLM_MODEL: __LLM_MODEL__
       CHAT_MAX_CONCURRENT_SESSIONS: "100"
@@ -741,3 +744,21 @@ services:
     volumes:
       - name: service-repos
         configMap: {name: ""}
+
+  # dead-letter-controller stores every dead letter (stream consumer, outbox
+  # and stream-trim quarantine) in continuo_dead_letter and serves
+  # DeadLetterService for `continuo dlq`.
+  - name: dead-letter-controller
+    enabled: true
+    replicas: 1
+    httpPort: 8096
+    grpcPort: 50055
+    probePath: /ready
+    livenessPath: /livez
+    secretEnv:
+      - {name: POSTGRES_PASSWORD, ref: postgres}
+      - {name: REDIS_PASSWORD, ref: redis}
+    env:
+      POSTGRES_DB: continuo_dead_letter
+      DEAD_LETTER_HTTP_PORT: "8096"
+      DEAD_LETTER_GRPC_PORT: "50055"

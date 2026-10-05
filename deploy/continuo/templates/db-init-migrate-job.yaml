@@ -54,8 +54,8 @@ spec:
         runAsGroup: 65532
       {{- if .Values.databaseInit.enabled }}
       initContainers:
-        # Idempotently creates every continuo database (the 9 Flyway-migrated
-        # service DBs plus continuo_dbt, the dbt warehouse). Requires CREATEDB;
+        # Idempotently creates every continuo database (the 8 Flyway-migrated
+        # service DBs plus continuo_dbt, the dbt warehouse: 9 in all). Requires CREATEDB;
         # disable databaseInit when a DBA pre-creates the databases.
         - name: db-init
           image: {{ include "continuo.image" (dict "root" $ "name" "migrations") | quote }}
