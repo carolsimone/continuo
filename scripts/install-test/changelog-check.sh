@@ -38,5 +38,5 @@ echo "$surface"
 echo
 echo "Add an entry under '## [Unreleased]' in deploy/continuo/CHANGELOG.md" \
      "describing the change (Added/Changed/Removed/Breaking), then decide" \
-     "the chart's semver bump per CLAUDE.md's Helm chart versioning section."
+     "the chart's semver bump per AGENTS.md's Helm chart versioning section."
 exit 1

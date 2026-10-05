@@ -50,7 +50,7 @@ reporting it. Do not flag hypotheticals.
   reach collaborators through ports. Flag handlers carrying business logic or
   talking to infrastructure directly.
 
-## Layer 2 — Continuo-specific rules (from CLAUDE.md)
+## Layer 2 — Continuo-specific rules (from AGENTS.md)
 
 Treat each as a concrete check:
 

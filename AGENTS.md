@@ -92,6 +92,13 @@ The exception is `topology-controller`, which is Python 3.12 and uses uv for dep
 All the other services should, more or less, use a similar stack but with different dependencies.
 Remove any dependency that is not needed.
 
+# Design, plans and decisions (external: `carolsimone/arch`)
+Design documents, implementation plans, and Architecture Decision Records (ADRs) live in the private repository `carolsimone/arch`, under `continuo/` (`design/`, `plans/`, `decisions/`). That repository is the source of truth for the design and plans behind this system — the intent of a change and the decisions taken. Consult it before designing a change, and record the design/plan/ADR for new work there.
+
+It is append-only and historical: a design or plan describes the system **as of its date**. It is authoritative for intent and decisions, not for current behaviour — verify any file-, function-, or line-level detail against the code before relying on it. Precedence, highest first: the code; tests, guards and CI; this file and the in-repo `docs/arch/` current-state pack; then the design, plans and ADRs in `carolsimone/arch`.
+
+`docs/arch/` in this repository remains the present-tense, current-state architecture reference (gitignored, local to the main checkout). `carolsimone/arch` is the durable, shared record of design and decisions over time.
+
 # Helm chart versioning (`deploy/continuo/`)
 `release.yml` locks the chart's `version` and `appVersion` together — one `vX.Y.Z` git tag stamps both identically and retags every service image to match, so there is no chart-vs-app compatibility matrix to track. The only thing chart versioning has to protect is: **does an unmodified existing user's `values.yaml`/overrides still produce a working install after `helm upgrade` to the new version?**
 
