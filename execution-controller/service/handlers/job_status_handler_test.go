@@ -622,6 +622,38 @@ func TestHandleUnknownStatus_FailsPermanentlyWithTheBudgetSpent(t *testing.T) {
 	require.Equal(t, "pod evicted", decodeExecutionPayload(t, entries).ErrorMessage)
 }
 
+// TestHandleUnknownStatus_ReportsTheAttemptCountWhenItExceedsTheBudget verifies
+// that an Unknown-status failure stamps the higher of the attempt count and the
+// retry budget, so an attempt count already above the budget is reported as is
+// rather than clamped down to the budget.
+func TestHandleUnknownStatus_ReportsTheAttemptCountWhenItExceedsTheBudget(t *testing.T) {
+	outbox := &jobStatusFakeOutboxRepo{}
+	handler := newHandler(&fakeK8sClient{
+		status: &model.JobResult{Status: model.JobStatusUnknown, TerminationMsg: "pod evicted"},
+		labels: map[string]string{},
+	}, noopCancelledRepo())
+
+	cmd := command.CheckJobStatus{
+		TaskID:     uuid.New(),
+		ScheduleID: uuid.New(),
+		JobName:    "job-unknown-over-budget",
+		RetryCount: 4,
+		MaxRetries: 3,
+	}
+
+	if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	entries := outbox.entries
+	require.Equal(t, []string{"task_status_updated", "task_execution_recorded", "node_updated"}, eventTypesOf(entries))
+
+	var statusPayload pkgevents.TaskStatusUpdated
+	require.NoError(t, json.Unmarshal(entries[0].Payload, &statusPayload))
+	require.Equal(t, "FAILED", statusPayload.Status)
+	require.Equal(t, cmd.RetryCount, statusPayload.RetryCount, "the FAILED status reports the higher attempt count, not the budget alone")
+}
+
 // TestHandleRunningCarriesRetryInfo verifies that a subsequent poll of a running
 // job (RunningAnnounced=true) writes only the check_delayed re-poll and carries
 // RetryCount and MaxRetries forward in its payload.

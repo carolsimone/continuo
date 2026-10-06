@@ -94,11 +94,11 @@ func TestOutboxPublisher_NodeReadyForExecution_CarriesMaxRetries(t *testing.T) {
 	evt := domain.NodeReadyForExecution{
 		ScheduleID: "sched-1", ScheduleName: "daily", ServiceName: "svc",
 		SchemaName: "public", TableName: "orders", TaskID: "task-1", JobName: "job-1",
-		NodeType: "dbt-model", ImageTag: "v1", MaxRetries: 2,
+		NodeType: "dbt-model", ImageTag: "v1", MaxRetries: 4,
 	}
 	entry := makeEntry("node_ready_for_execution", mustMarshal(t, serialization.NodeReadyForExecutionFromDomain(evt)))
 	vals := payloadToValuesFor(t, entry)
-	assert.Equal(t, "2", vals["max_retries"])
+	assert.Equal(t, "4", vals["max_retries"])
 }
 
 func TestOutboxPublisher_NodeReadyForExecution_CarriesSecretRef(t *testing.T) {

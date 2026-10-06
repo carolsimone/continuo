@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The namespace and the name layout are baked into every task id already
-// recorded, so the id of a fixed (run, table) must never change.
+// The namespace and the name layout are baked into the ids TaskIDFor derives,
+// so the id of a fixed (run, table) must never change.
 func TestTaskIDFor_IsStable(t *testing.T) {
 	got := snapshot.TaskIDFor("0b0e8f5e-2c55-4c47-9b4a-6d3f0c8a1e21",
 		snapshot.FQN{Service: "svc", Schema: "sch", Table: "orders", ScheduleName: "daily"})
@@ -42,6 +42,9 @@ type selectorCase struct {
 	selector snapshot.Selector
 	reader   *fakeTopologyReader
 	params   func(runID string) snapshot.Params
+	// wantRows is the projection length the case must select, so a fixture edit
+	// that drops a row fails the test instead of shrinking its coverage.
+	wantRows int
 }
 
 func selectorCases() []selectorCase {
@@ -68,37 +71,39 @@ func selectorCases() []selectorCase {
 
 	return []selectorCase{
 		{
-			name: "LatestFullDAG", selector: snapshot.LatestFullDAG{},
+			name: "LatestFullDAG", selector: snapshot.LatestFullDAG{}, wantRows: 2,
 			reader: &fakeTopologyReader{LatestDAG: latest},
 			params: func(runID string) snapshot.Params { return snapshot.Params{RunID: runID, ScheduleName: "x"} },
 		},
 		{
-			name: "LatestFullDAG test fan-out", selector: snapshot.LatestFullDAG{},
+			name: "LatestFullDAG test fan-out", selector: snapshot.LatestFullDAG{}, wantRows: 2,
 			reader: &fakeTopologyReader{LatestDAG: latest},
 			params: func(runID string) snapshot.Params {
 				return snapshot.Params{RunID: runID, ScheduleName: "x", Operation: "test"}
 			},
 		},
 		{
-			name: "RebasePartition", selector: snapshot.RebasePartition{},
+			name: "RebasePartition", selector: snapshot.RebasePartition{}, wantRows: 2,
 			reader: &fakeTopologyReader{SourceTasks: source, LatestDAG: latest},
 			params: func(runID string) snapshot.Params {
 				return snapshot.Params{RunID: runID, ScheduleName: "x", SourceRunID: &srcID}
 			},
 		},
 		{
-			name: "SourcePinnedDAG", selector: snapshot.SourcePinnedDAG{},
+			name: "SourcePinnedDAG", selector: snapshot.SourcePinnedDAG{}, wantRows: 2,
 			reader: &fakeTopologyReader{SourceTasks: source},
 			params: func(runID string) snapshot.Params { return snapshot.Params{RunID: runID, SourceRunID: &srcID} },
 		},
 		{
 			name:     "SingleNode latest",
+			wantRows: 1,
 			selector: snapshot.SingleNode{ServiceName: "svc", SchemaName: "sch", TableName: "a", MetadataSource: "latest"},
 			reader:   &fakeTopologyReader{SingleLatest: singleRow},
 			params:   func(runID string) snapshot.Params { return snapshot.Params{RunID: runID} },
 		},
 		{
 			name:     "SingleNode snapshot_of_run",
+			wantRows: 1,
 			selector: snapshot.SingleNode{ServiceName: "svc", SchemaName: "sch", TableName: "a", MetadataSource: "snapshot_of_run"},
 			reader: &fakeTopologyReader{SingleFromSourceRun: map[string]map[snapshot.FQN]snapshot.LatestTableRow{
 				srcID.String(): singleRow,
@@ -106,7 +111,7 @@ func selectorCases() []selectorCase {
 			params: func(runID string) snapshot.Params { return snapshot.Params{RunID: runID, SourceRunID: &srcID} },
 		},
 		{
-			name: "NodeSet", selector: snapshot.NodeSet{Nodes: []snapshot.FQN{single}},
+			name: "NodeSet", selector: snapshot.NodeSet{Nodes: []snapshot.FQN{single}}, wantRows: 1,
 			reader: &fakeTopologyReader{SingleLatest: singleRow},
 			params: func(runID string) snapshot.Params { return snapshot.Params{RunID: runID} },
 		},
@@ -127,7 +132,7 @@ func TestSelectors_DeriveTaskIDsFromRunAndTable(t *testing.T) {
 			require.NoError(t, err)
 			other, err := tc.selector.SelectTasks(ctx, tc.reader, tc.params("run-2"))
 			require.NoError(t, err)
-			require.NotEmpty(t, first)
+			require.Len(t, first, tc.wantRows, "the case must keep selecting its full projection")
 
 			firstIDs, otherIDs := taskIDsByFQN(first), taskIDsByFQN(other)
 			assert.Equal(t, firstIDs, taskIDsByFQN(again), "the same run id must give the same task ids")

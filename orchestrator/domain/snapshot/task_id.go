@@ -2,10 +2,11 @@ package snapshot
 
 import "github.com/google/uuid"
 
-// taskIDNamespace seeds the task ids TaskIDFor derives. Never change it: every
-// task id already written to an :EXECUTES edge, a task_tracker row and a Job
-// label was derived from it, and a redelivered snapshot of an existing run must
-// derive those same ids again.
+// taskIDNamespace seeds the task ids TaskIDFor derives. Never change it: the id
+// TaskIDFor derives for a run and table is recorded on that task's :EXECUTES
+// edge, task_tracker row and Job label, so a redelivered snapshot of the run
+// must derive the same id again — a different namespace would mint ids that
+// match no existing edge.
 var taskIDNamespace = uuid.MustParse("1e94c4ff-326b-43dc-8d7f-036d0d0bf7c7")
 
 // TaskIDFor derives the task id of table f in run runID as a UUIDv5 over the
