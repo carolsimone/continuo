@@ -101,7 +101,7 @@ func (f *fakeMessageProcessingRepository) UpdateState(ctx context.Context, id uu
 	return nil
 }
 
-func (f *fakeMessageProcessingRepository) DeleteTerminalOlderThan(_ context.Context, _ time.Duration, _ int) (int64, error) {
+func (f *fakeMessageProcessingRepository) DeleteOlderThan(_ context.Context, _ time.Duration, _ int) (int64, error) {
 	return 0, nil
 }
 

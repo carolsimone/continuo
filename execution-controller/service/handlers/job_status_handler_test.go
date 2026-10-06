@@ -195,7 +195,7 @@ func (r *fakeMessageProcessingRepo) UpdateState(_ context.Context, _ uuid.UUID, 
 	return nil
 }
 
-func (r *fakeMessageProcessingRepo) DeleteTerminalOlderThan(_ context.Context, _ time.Duration, _ int) (int64, error) {
+func (r *fakeMessageProcessingRepo) DeleteOlderThan(_ context.Context, _ time.Duration, _ int) (int64, error) {
 	return 0, nil
 }
 

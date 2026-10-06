@@ -25,8 +25,9 @@ type RetentionTarget struct {
 // RetentionConfig groups the sweeper's timing knobs. All have safe defaults so
 // no operator configuration is required.
 type RetentionConfig struct {
-	// Retention is how long a processed/terminal row is kept before it is
-	// eligible for deletion. Default 7 days.
+	// Retention is how long a processed outbox row or a dedup row is kept
+	// before it is eligible for deletion; a target's MinRetention can raise
+	// it. Default 7 days.
 	Retention time.Duration
 	// Interval is how often the sweep runs. Default 1 hour.
 	Interval time.Duration

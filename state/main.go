@@ -229,18 +229,18 @@ func main() {
 	})
 
 	// Retention sweeper — keeps the two unbounded-growth tables in check:
-	// processed state_outbox rows and terminal message_processing dedup rows
-	// (the latter retains a full payload per consumed message). Processed outbox
-	// rows are kept RETENTION_DAYS; terminal dedup rows are kept at least 30 days
-	// (the replay horizon), longer when RETENTION_DAYS is longer. Both are pruned
-	// on the same timer using DB-clock cutoffs.
+	// processed state_outbox rows and message_processing dedup rows (the latter
+	// retains a full payload per consumed message). Processed outbox rows are
+	// kept RETENTION_DAYS; dedup rows, whatever their state, are kept at least
+	// 30 days (the replay horizon), longer when RETENTION_DAYS is longer. Both
+	// are pruned on the same timer using DB-clock cutoffs.
 	mpPruner := pkgmessageprocessing.NewPruner(db, postgres.OutboxTable, logger)
 	retentionSweeper := pkgoutbox.NewRetentionSweeper(
 		[]pkgoutbox.RetentionTarget{
 			pkgoutbox.OutboxRetentionTarget(db, postgres.OutboxTable, logger),
 			{
 				Name:         "message_processing",
-				Prune:        mpPruner.DeleteTerminalOlderThan,
+				Prune:        mpPruner.DeleteOlderThan,
 				MinRetention: model.ReplayHorizon,
 			},
 		},

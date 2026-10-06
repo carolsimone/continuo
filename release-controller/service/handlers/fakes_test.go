@@ -380,7 +380,7 @@ func (fakeMessageProcessing) UpdateState(_ context.Context, _ uuid.UUID, _ strin
 	return nil
 }
 
-func (fakeMessageProcessing) DeleteTerminalOlderThan(_ context.Context, _ time.Duration, _ int) (int64, error) {
+func (fakeMessageProcessing) DeleteOlderThan(_ context.Context, _ time.Duration, _ int) (int64, error) {
 	return 0, nil
 }
 

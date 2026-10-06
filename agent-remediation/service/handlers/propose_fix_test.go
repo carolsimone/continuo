@@ -466,7 +466,7 @@ func (r *fakeMsgProcRepo) UpdateState(_ context.Context, _ uuid.UUID, _ string) 
 	return nil
 }
 
-func (r *fakeMsgProcRepo) DeleteTerminalOlderThan(
+func (r *fakeMsgProcRepo) DeleteOlderThan(
 	_ context.Context, _ time.Duration, _ int,
 ) (int64, error) {
 	return 0, nil
