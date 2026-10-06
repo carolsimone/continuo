@@ -76,6 +76,9 @@ func (r *RunRepositoryAdapter) SaveRun(ctx context.Context, rn *run.Run) error {
 			if errors.Is(err, ErrActiveScheduleConflict) {
 				return run.ErrScheduleHasActiveRun
 			}
+			if errors.Is(err, ErrRunExists) {
+				return run.ErrRunAlreadyExists
+			}
 			return fmt.Errorf("create scheduler_tracker: %w", err)
 		}
 		rn.ResetChanges()
@@ -134,6 +137,11 @@ func (r *RunRepositoryAdapter) SaveRun(ctx context.Context, rn *run.Run) error {
 	if ch.IsStartedDirty() {
 		if started := rn.StartedAt(); started != nil {
 			fields.StartedAt = started
+		}
+	}
+	if ch.IsHeartbeatDirty() {
+		if heartbeat := rn.LastHeartbeatAt(); heartbeat != nil {
+			fields.LastHeartbeatAt = heartbeat
 		}
 	}
 	if ch.IsStatusDirty() {

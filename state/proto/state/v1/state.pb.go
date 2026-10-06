@@ -1650,9 +1650,8 @@ func (x *CancelScheduleResponse) GetScheduleId() string {
 
 type ListStuckCandidatesRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Tasks created at or after this instant count as recent progress; a run is a
-	// stuck candidate only when its most recent task predates this cutoff and no
-	// task is RUNNING. Required.
+	// A run whose progress time (last_heartbeat_at, or created_at before its first
+	// progress) is at or after this instant is not a candidate. Required.
 	Cutoff        *timestamppb.Timestamp `protobuf:"bytes,1,opt,name=cutoff,proto3" json:"cutoff,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

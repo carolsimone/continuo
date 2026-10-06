@@ -2,11 +2,9 @@ package handlers
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 
-	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/events"
 	"github.com/carolsimone/continuo/state/service/uow"
@@ -17,8 +15,9 @@ import (
 // Loads the Run aggregate, invokes AcceptDispatch (which bulk-creates child
 // tasks via the TaskCollection port, seeds counters, transitions
 // init_status=completed, and either rolls up to terminal or transitions to
-// RUNNING based on the projection), persists via SaveRun, and publishes
-// emitted domain events via OutboxPublisher.
+// RUNNING based on the projection — or finalizes the run failed when a task
+// cannot be named), persists via SaveRun, and publishes emitted domain events
+// via OutboxPublisher.
 type RunEntriesDispatchedHandler struct {
 	logger *slog.Logger
 }
@@ -47,11 +46,9 @@ func (h *RunEntriesDispatchedHandler) Handle(
 	projection := toDispatchedTasks(evt)
 	domainEvents, err := r.AcceptDispatch(ctx, u.TaskCollection(), projection, u.Clock().Now())
 	if err != nil {
-		if errors.Is(err, run.ErrInvalidDispatchedTask) {
-			return errors.Join(pkgevents.ErrPermanent, err)
-		}
 		return fmt.Errorf("accept dispatch: %w", err)
 	}
+	logDispatchTerminal(h.logger, "run.entries.dispatched", evt.ScheduleID, domainEvents)
 	if err := u.Run().SaveRun(ctx, r); err != nil {
 		return fmt.Errorf("save run: %w", err)
 	}

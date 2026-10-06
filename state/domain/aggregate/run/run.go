@@ -62,6 +62,7 @@ type changeSet struct {
 	cancelDirty            bool
 	startedDirty           bool
 	completedDirty         bool
+	heartbeatDirty         bool
 }
 
 // HydrateRun rebuilds a Run from persisted scheduler_tracker columns. Used by
@@ -336,18 +337,29 @@ func (c changeSet) IsTerminalTaskCountDirty() bool { return c.terminalTaskCountD
 func (c changeSet) IsCancelDirty() bool            { return c.cancelDirty }
 func (c changeSet) IsStartedDirty() bool           { return c.startedDirty }
 func (c changeSet) IsCompletedDirty() bool         { return c.completedDirty }
+func (c changeSet) IsHeartbeatDirty() bool         { return c.heartbeatDirty }
 
 // AcceptDispatch consumes the run.entries.dispatched:v1 projection. The
 // projection IS the full child set (no prior tasks exist), so the aggregate
 // makes the auto-rollup decision in one pass over the input.
 //
 // Behaviour:
-//   - No-op (returns no events, no mutations) when r is already terminal.
+//   - No-op (returns no events, no mutations) when r is already terminal, or
+//     when its init_status is already completed: a run is dispatched once, so a
+//     repeated projection neither re-creates tasks nor resets the counters.
 //     The handler binding still commits the surrounding tx so dedup is recorded.
+//   - A projected task whose identity cannot be turned into a Kubernetes Job
+//     name finalizes the run as failed through MarkDispatchTerminal with reason
+//     DispatchReasonInvalidTask, before any task is written. No error is
+//     returned: the outcome commits like any other dispatch result. This path
+//     leaves init_status unchanged (the run is terminal, so a redelivery still
+//     no-ops through IsTerminal).
 //   - BulkCreate every projected task.
 //   - total_task_count = len(projection); terminal_task_count seeded from
 //     already-terminal projected rows.
-//   - init_status = completed always after dispatch.
+//   - init_status = completed once the projected tasks are written (every
+//     path except the unnameable-task finalization above).
+//   - last_heartbeat_at (the run's progress clock) = now.
 //   - Status transition:
 //     every projected task terminal && all succeeded → SUCCEEDED + completed_at
 //     every projected task terminal && any non-succeeded → FAILED + completed_at
@@ -359,15 +371,30 @@ func (r *Run) AcceptDispatch(
 	projection []DispatchedTask,
 	now time.Time,
 ) ([]DomainEvent, error) {
-	if r.IsTerminal() {
+	return r.acceptDispatch(ctx, tasks, projection, now, domain.ComputeJobName)
+}
+
+// jobNameFunc names a task's Kubernetes Job from its node identity and run id.
+type jobNameFunc func(serviceName, schemaName, tableName, runID string) (string, error)
+
+// acceptDispatch is AcceptDispatch with the Job-naming function supplied by the
+// caller.
+func (r *Run) acceptDispatch(
+	ctx context.Context,
+	tasks TaskCollection,
+	projection []DispatchedTask,
+	now time.Time,
+	nameJob jobNameFunc,
+) ([]DomainEvent, error) {
+	if r.IsTerminal() || r.initStatus == InitStatusCompleted {
 		return nil, nil
 	}
 
 	built := make([]Task, 0, len(projection))
 	for _, p := range projection {
-		jobName, err := domain.ComputeJobName(p.ServiceName, p.SchemaName, p.TableName, r.scheduleID.String())
+		jobName, err := nameJob(p.ServiceName, p.SchemaName, p.TableName, r.scheduleID.String())
 		if err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrInvalidDispatchedTask, err)
+			return r.MarkDispatchTerminal(false, DispatchReasonInvalidTask, now)
 		}
 		built = append(built, Task{
 			TaskID:              p.TaskID,
@@ -409,6 +436,7 @@ func (r *Run) AcceptDispatch(
 	r.changes.totalTaskCountDirty = true
 	r.changes.terminalTaskCountDirty = true
 	r.changes.initStatusDirty = true
+	r.recordProgress(now)
 
 	if allTerminal {
 		outcome := SchedulerStatusFailed
@@ -495,6 +523,10 @@ func (r *Run) Cancel(
 // on a RUNNING and the terminal of the same attempt; a genuine retry is a
 // strictly newer attempt. The aggregate uses that to honor a real retry's
 // un-fill while ignoring a stale RUNNING re-delivered after its own terminal.
+//
+// Every task write that takes effect stamps the run's progress clock
+// (last_heartbeat_at) with now. A replay, a superseded attempt, or a write the
+// task row refused (affected == 0) leaves the clock where it was.
 func (r *Run) RecordTaskStatus(
 	ctx context.Context,
 	tasks TaskCollection,
@@ -561,8 +593,12 @@ func (r *Run) RecordTaskStatus(
 			if newStatus == prev {
 				return nil, nil
 			}
-			if _, err := tasks.SetStatusAndAttempt(ctx, taskID, newStatus, retryCount); err != nil {
+			affected, err := tasks.SetStatusAndAttempt(ctx, taskID, newStatus, retryCount)
+			if err != nil {
 				return nil, fmt.Errorf("set task status: %w", err)
+			}
+			if affected > 0 {
+				r.recordProgress(now)
 			}
 			return nil, nil
 		}
@@ -574,6 +610,7 @@ func (r *Run) RecordTaskStatus(
 		if affected == 0 {
 			return nil, nil // cancelled or vanished — leave counters untouched.
 		}
+		r.recordProgress(now)
 		r.fillSlot()
 		return r.finalizeIfComplete(ctx, tasks, now)
 	}
@@ -586,6 +623,7 @@ func (r *Run) RecordTaskStatus(
 	if affected == 0 {
 		return nil, nil // cancelled or vanished — leave counters untouched.
 	}
+	r.recordProgress(now)
 	switch {
 	case prevWasTerminal && !isTerminal:
 		// Genuine retry running again — un-fill the slot.
@@ -608,6 +646,15 @@ func (r *Run) RecordTaskStatus(
 	}
 }
 
+// recordProgress stamps the run's progress clock with now. The clock reads the
+// last dispatch or applied task status change; the dispatch watchdog measures a
+// stall from it.
+func (r *Run) recordProgress(now time.Time) {
+	at := now
+	r.lastHeartbeatAt = &at
+	r.changes.heartbeatDirty = true
+}
+
 // fillSlot marks one more task as terminal in the run's bookkeeping.
 func (r *Run) fillSlot() {
 	r.terminalTaskCount++
@@ -626,8 +673,9 @@ func (r *Run) unfillSlot() {
 
 // finalizeIfComplete finalizes the scheduler when every task is terminal, the
 // graph has finished loading, the run is still RUNNING, and no failed task is
-// still retryable. Returns the RunFinalized event(s), or nil when finalization
-// is deferred.
+// still retryable. The outcome is failed when any task is failed or cancelled,
+// succeeded otherwise (every task succeeded or skipped). Returns the
+// RunFinalized event(s), or nil when finalization is deferred.
 func (r *Run) finalizeIfComplete(ctx context.Context, tasks TaskCollection, now time.Time) ([]DomainEvent, error) {
 	if r.totalTaskCount == nil || r.terminalTaskCount != *r.totalTaskCount {
 		return nil, nil
@@ -657,11 +705,12 @@ func (r *Run) finalizeIfComplete(ctx context.Context, tasks TaskCollection, now 
 	return r.finalize(outcome, now), nil
 }
 
-// MarkDispatchTerminal is called when orchestrator emits
-// run.entries.dispatch_failed:v1. A benign outcome (no work to do — a Test run
-// with no tests) finalizes the run as `skipped`; any other reason finalizes it
-// as `failed`. reason is recorded on the RunDispatchTerminal side event for
-// observability regardless of outcome. No-op when r is already terminal.
+// MarkDispatchTerminal finalizes a run whose dispatch produced no work: it is
+// called when orchestrator emits run.entries.dispatch_failed:v1, and by
+// AcceptDispatch for a task it cannot name. A benign outcome (no work to do — a
+// Test run with no tests) finalizes the run as `skipped`; any other reason
+// finalizes it as `failed`. reason is recorded on the RunDispatchTerminal side
+// event regardless of outcome. No-op when r is already terminal.
 func (r *Run) MarkDispatchTerminal(benign bool, reason string, now time.Time) ([]DomainEvent, error) {
 	if r.IsTerminal() {
 		return nil, nil

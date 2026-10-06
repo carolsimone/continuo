@@ -381,8 +381,8 @@ func (h *SchedulerHandler) ListAllSchedules(
 	return &statev1.ListAllSchedulesResponse{Schedules: summaries}, nil
 }
 
-// ListStuckCandidates returns active runs whose dispatch has silently stalled
-// (no RUNNING task, most recent task older than cutoff). One indexed query.
+// ListStuckCandidates returns the active runs that have made no lifecycle
+// progress since cutoff and have no RUNNING task.
 func (h *SchedulerHandler) ListStuckCandidates(
 	ctx context.Context,
 	req *statev1.ListStuckCandidatesRequest,

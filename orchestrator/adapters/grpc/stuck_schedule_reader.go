@@ -2,9 +2,12 @@ package grpc
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	googlegrpc "google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/carolsimone/continuo/orchestrator/service/ports"
@@ -14,7 +17,7 @@ import (
 // stuckScheduleClient is the slice of the state gRPC client the watchdog needs.
 type stuckScheduleClient interface {
 	ListStuckCandidates(ctx context.Context, in *statev1.ListStuckCandidatesRequest, opts ...googlegrpc.CallOption) (*statev1.ListStuckCandidatesResponse, error)
-	CancelSchedule(ctx context.Context, in *statev1.CancelScheduleRequest, opts ...googlegrpc.CallOption) (*statev1.CancelScheduleResponse, error)
+	CancelScheduler(ctx context.Context, in *statev1.CancelSchedulerRequest, opts ...googlegrpc.CallOption) (*statev1.SchedulerResponse, error)
 }
 
 // StuckScheduleAdapter translates between the orchestrator's domain-typed
@@ -26,7 +29,7 @@ type StuckScheduleAdapter struct {
 
 var (
 	_ ports.StuckScheduleReader = (*StuckScheduleAdapter)(nil)
-	_ ports.ScheduleCanceller   = (*StuckScheduleAdapter)(nil)
+	_ ports.RunCanceller        = (*StuckScheduleAdapter)(nil)
 )
 
 // NewStuckScheduleAdapter constructs the adapter over the state gRPC client.
@@ -34,7 +37,8 @@ func NewStuckScheduleAdapter(client stuckScheduleClient) *StuckScheduleAdapter {
 	return &StuckScheduleAdapter{client: client}
 }
 
-// ListStuckCandidates queries state for active runs whose dispatch has stalled.
+// ListStuckCandidates queries state for the active runs that have stopped making
+// progress.
 func (a *StuckScheduleAdapter) ListStuckCandidates(ctx context.Context, cutoff time.Time) ([]ports.StuckSchedule, error) {
 	resp, err := a.client.ListStuckCandidates(ctx, &statev1.ListStuckCandidatesRequest{
 		Cutoff: timestamppb.New(cutoff),
@@ -52,12 +56,22 @@ func (a *StuckScheduleAdapter) ListStuckCandidates(ctx context.Context, cutoff t
 	return out, nil
 }
 
-// CancelSchedule cancels the active run of the named schedule via state.
-func (a *StuckScheduleAdapter) CancelSchedule(ctx context.Context, scheduleName, cancelledBy, reason string) error {
-	_, err := a.client.CancelSchedule(ctx, &statev1.CancelScheduleRequest{
-		ScheduleName:       scheduleName,
+// CancelRun cancels one run by its id through state's CancelScheduler. state
+// answers FailedPrecondition for a run already terminal and NotFound for an id
+// it does not know; both are reported as ports.ErrRunNotCancellable. Any other
+// error is returned unchanged.
+func (a *StuckScheduleAdapter) CancelRun(ctx context.Context, runID, cancelledBy, reason string) error {
+	_, err := a.client.CancelScheduler(ctx, &statev1.CancelSchedulerRequest{
+		ScheduleId:         runID,
 		CancelledBy:        cancelledBy,
 		CancellationReason: reason,
 	})
-	return err
+	switch status.Code(err) {
+	case codes.OK:
+		return nil
+	case codes.FailedPrecondition, codes.NotFound:
+		return fmt.Errorf("%w: %s", ports.ErrRunNotCancellable, status.Convert(err).Message())
+	default:
+		return err
+	}
 }

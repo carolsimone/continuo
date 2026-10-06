@@ -97,6 +97,69 @@ func TestSchedulerRepository_CreateTx_InsertsTracker(t *testing.T) {
 	assert.Equal(t, map[string]run.ServiceMetadata{"svc-a": {ImageTag: ""}}, gotMeta)
 }
 
+// TestSchedulerRepository_CreateTx_ExistingIDIsANoOp inserts the same run id
+// twice in one transaction. The second insert writes nothing, returns
+// ErrRunExists, and leaves the transaction usable.
+func TestSchedulerRepository_CreateTx_ExistingIDIsANoOp(t *testing.T) {
+	db := newTestDB(t)
+	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
+	ctx := context.Background()
+
+	id := uuid.New()
+	tracker := &postgres.SchedulerTracker{
+		ScheduleID:           id,
+		ScheduleName:         "exists-" + id.String()[:8],
+		Status:               run.SchedulerStatusRunning,
+		CreatedAt:            time.Now(),
+		InitializationStatus: "in_progress",
+	}
+	defer db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", id)
+
+	tx, err := db.BeginTxx(ctx, nil)
+	require.NoError(t, err)
+	defer tx.Rollback()
+
+	require.NoError(t, repo.CreateTx(ctx, tx, tracker))
+	assert.ErrorIs(t, repo.CreateTx(ctx, tx, tracker), postgres.ErrRunExists)
+
+	// The transaction is still usable: a failed statement would have aborted it.
+	_, err = repo.GetByIDForUpdateTx(ctx, tx, id)
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
+
+	var rows int
+	require.NoError(t, db.GetContext(ctx, &rows, "SELECT count(*) FROM scheduler_tracker WHERE schedule_id = $1", id))
+	assert.Equal(t, 1, rows)
+}
+
+// TestSchedulerRepository_CreateTx_ActiveNameConflictStillRaises confirms the
+// schedule_id conflict target does not swallow the one-active-run-per-schedule
+// index: a different id with the same active schedule_name still fails.
+func TestSchedulerRepository_CreateTx_ActiveNameConflictStillRaises(t *testing.T) {
+	db := newTestDB(t)
+	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
+	ctx := context.Background()
+
+	name := "active-" + uuid.New().String()[:8]
+	first, second := uuid.New(), uuid.New()
+	defer db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id IN ($1, $2)", first, second)
+
+	tx, err := db.BeginTxx(ctx, nil)
+	require.NoError(t, err)
+	defer tx.Rollback()
+	newTracker := func(id uuid.UUID) *postgres.SchedulerTracker {
+		return &postgres.SchedulerTracker{
+			ScheduleID:           id,
+			ScheduleName:         name,
+			Status:               run.SchedulerStatusPending,
+			CreatedAt:            time.Now(),
+			InitializationStatus: "in_progress",
+		}
+	}
+	require.NoError(t, repo.CreateTx(ctx, tx, newTracker(first)))
+	assert.ErrorIs(t, repo.CreateTx(ctx, tx, newTracker(second)), postgres.ErrActiveScheduleConflict)
+}
+
 func TestSchedulerRepository_SetTotalTaskCountTx(t *testing.T) {
 	db := newTestDB(t)
 	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
@@ -232,6 +295,57 @@ func TestSchedulerTrackerRepository_CancelTx(t *testing.T) {
 	require.NoError(t, err)
 	defer tx2.Rollback()
 	assert.ErrorIs(t, repo.CancelTx(ctx, tx2, id, "test-user", "duplicate", time.Now().UTC()), postgres.ErrNotCancellable)
+}
+
+// TestSchedulerTrackerRepository_CancelTx_RefusesEveryTerminalStatus drives
+// CancelTx against a run in every status. Only an active run is cancelled; a
+// run in any terminal status, skipped included, returns ErrNotCancellable and
+// its row is left exactly as it was.
+func TestSchedulerTrackerRepository_CancelTx_RefusesEveryTerminalStatus(t *testing.T) {
+	db := newTestDB(t)
+	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
+	ctx := context.Background()
+
+	for _, status := range []run.SchedulerStatus{
+		run.SchedulerStatusPending,
+		run.SchedulerStatusRunning,
+		run.SchedulerStatusSucceeded,
+		run.SchedulerStatusFailed,
+		run.SchedulerStatusCancelled,
+		run.SchedulerStatusSkipped,
+	} {
+		t.Run(string(status), func(t *testing.T) {
+			id := uuid.New()
+			require.NoError(t, repo.Create(ctx, &postgres.SchedulerTracker{
+				ScheduleID:           id,
+				ScheduleName:         "cxl-" + string(status) + "-" + id.String()[:8],
+				Status:               status,
+				CreatedAt:            time.Now(),
+				InitializationStatus: "completed",
+			}))
+			t.Cleanup(func() {
+				db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", id)
+			})
+
+			tx, err := db.BeginTxx(ctx, nil)
+			require.NoError(t, err)
+			defer tx.Rollback()
+			err = repo.CancelTx(ctx, tx, id, "test-user", "table test", time.Now().UTC())
+			require.NoError(t, tx.Commit())
+
+			got, getErr := repo.GetByID(ctx, id)
+			require.NoError(t, getErr)
+			if status.IsTerminal() {
+				assert.ErrorIs(t, err, postgres.ErrNotCancellable)
+				assert.Equal(t, status, got.Status, "a terminal run keeps its status")
+				assert.Nil(t, got.CancelledAt, "a terminal run is not stamped cancelled")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, run.SchedulerStatusCancelled, got.Status)
+			assert.NotNil(t, got.CancelledAt)
+		})
+	}
 }
 
 // TestSchedulerTrackerRepository_TerminalCountSurvivesRetryFlow walks the full

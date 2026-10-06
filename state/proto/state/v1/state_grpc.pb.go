@@ -58,12 +58,14 @@ type StateServiceClient interface {
 	// CancelSchedule cancels the active run of a named schedule.
 	// Errors: INVALID_ARGUMENT (empty name), FAILED_PRECONDITION (no active run or run not cancellable).
 	CancelSchedule(ctx context.Context, in *CancelScheduleRequest, opts ...grpc.CallOption) (*CancelScheduleResponse, error)
-	// ListStuckCandidates returns the active (pending|running) runs whose dispatch
-	// has silently stalled: the run has no task in TASK_STATUS_RUNNING and the most
-	// recent task's created_at is strictly older than `cutoff`. Runs with zero tasks
-	// are excluded — they have not started, so they are not stuck. This is a single
-	// indexed server-side query that replaces the watchdog's per-schedule ListTasks
-	// fan-out and the 50-task paging blind spot. Empty `cutoff` is INVALID_ARGUMENT.
+	// ListStuckCandidates returns the active (pending|running) runs that have made
+	// no lifecycle progress since `cutoff` and have no task in TASK_STATUS_RUNNING.
+	// A run's progress time is Scheduler.last_heartbeat_at, stamped when the run is
+	// dispatched and whenever a task status change is applied, or its created_at
+	// when it has never progressed, so a run whose dispatch never arrived (zero
+	// tasks) is returned. A run with a RUNNING task is never returned: a long task
+	// reports no progress until it ends. One server-side query over every task of
+	// every active run. Empty `cutoff` is INVALID_ARGUMENT.
 	ListStuckCandidates(ctx context.Context, in *ListStuckCandidatesRequest, opts ...grpc.CallOption) (*ListStuckCandidatesResponse, error)
 	// Task operations
 	GetTask(ctx context.Context, in *GetTaskRequest, opts ...grpc.CallOption) (*TaskResponse, error)
@@ -352,12 +354,14 @@ type StateServiceServer interface {
 	// CancelSchedule cancels the active run of a named schedule.
 	// Errors: INVALID_ARGUMENT (empty name), FAILED_PRECONDITION (no active run or run not cancellable).
 	CancelSchedule(context.Context, *CancelScheduleRequest) (*CancelScheduleResponse, error)
-	// ListStuckCandidates returns the active (pending|running) runs whose dispatch
-	// has silently stalled: the run has no task in TASK_STATUS_RUNNING and the most
-	// recent task's created_at is strictly older than `cutoff`. Runs with zero tasks
-	// are excluded — they have not started, so they are not stuck. This is a single
-	// indexed server-side query that replaces the watchdog's per-schedule ListTasks
-	// fan-out and the 50-task paging blind spot. Empty `cutoff` is INVALID_ARGUMENT.
+	// ListStuckCandidates returns the active (pending|running) runs that have made
+	// no lifecycle progress since `cutoff` and have no task in TASK_STATUS_RUNNING.
+	// A run's progress time is Scheduler.last_heartbeat_at, stamped when the run is
+	// dispatched and whenever a task status change is applied, or its created_at
+	// when it has never progressed, so a run whose dispatch never arrived (zero
+	// tasks) is returned. A run with a RUNNING task is never returned: a long task
+	// reports no progress until it ends. One server-side query over every task of
+	// every active run. Empty `cutoff` is INVALID_ARGUMENT.
 	ListStuckCandidates(context.Context, *ListStuckCandidatesRequest) (*ListStuckCandidatesResponse, error)
 	// Task operations
 	GetTask(context.Context, *GetTaskRequest) (*TaskResponse, error)

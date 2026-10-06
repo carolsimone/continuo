@@ -179,7 +179,7 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Ent
 		return buildEntry(e.ID, "scheduler", "promote_seed", streams.TriggerPromotedSeedsV1, payload, msgProcPtr), false, nil
 
 	case run.RunDispatchTerminal:
-		// Informational event — no downstream stream yet; omit from outbox.
+		// Maps to no stream; the dispatch handlers log its reason.
 		return nil, true, nil
 
 	default:

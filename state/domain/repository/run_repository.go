@@ -30,7 +30,9 @@ type RunRepository interface {
 	// SaveRun persists every dirty field of r. The adapter consults
 	// r.Changes() to dispatch to the existing tuned SQL methods. After a
 	// successful save the adapter calls r.ResetChanges() so the aggregate
-	// can be saved again within the same tx if necessary.
+	// can be saved again within the same tx if necessary. Saving a newly
+	// constructed Run whose id is already persisted writes nothing and returns
+	// run.ErrRunAlreadyExists; the transaction stays usable.
 	SaveRun(ctx context.Context, r *run.Run) error
 
 	// HasActiveSchedule returns true when a PENDING or RUNNING Run exists

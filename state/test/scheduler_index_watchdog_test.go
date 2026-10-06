@@ -238,9 +238,12 @@ func TestListStuckCandidates_ConsidersAllTasksBeyondFiftyRows(t *testing.T) {
 	assert.Empty(t, got, "a RUNNING task anywhere in the run means it is not stuck, even past 50 tasks")
 }
 
-// TestListStuckCandidates_StalledRunIsCandidate confirms a run with only stale,
-// non-running tasks IS reported, while a run with no tasks is not.
-func TestListStuckCandidates_StalledRunIsCandidate(t *testing.T) {
+// TestListStuckCandidates_StalledRunsAreCandidates confirms that an active run
+// whose progress time is older than the cutoff is reported whether or not it has
+// tasks: a run with only stale non-running tasks, and a run whose dispatch never
+// arrived (zero tasks). With no last_heartbeat_at, created_at is the progress
+// time.
+func TestListStuckCandidates_StalledRunsAreCandidates(t *testing.T) {
 	if testing.Short() {
 		t.Skip("integration test")
 	}
@@ -261,18 +264,61 @@ func TestListStuckCandidates_StalledRunIsCandidate(t *testing.T) {
 	`, stalled, time.Now().Add(-45*time.Minute))
 	require.NoError(t, err)
 
-	// A run with no tasks must never be reported (it has not started).
-	notStarted := uuid.New()
+	neverDispatched := uuid.New()
 	_, err = rawDB.Exec(`
 		INSERT INTO scheduler_tracker (schedule_id, schedule_name, status, created_at)
-		VALUES ($1, 'not-started', 'pending', NOW() - INTERVAL '90 minutes')
-	`, notStarted)
+		VALUES ($1, 'never-dispatched', 'pending', NOW() - INTERVAL '90 minutes')
+	`, neverDispatched)
 	require.NoError(t, err)
 
 	cutoff := time.Now().Add(-30 * time.Minute)
 	got, err := repo.ListStuckCandidates(context.Background(), cutoff)
 	require.NoError(t, err)
-	require.Len(t, got, 1)
-	assert.Equal(t, "stalled", got[0].ScheduleName)
-	assert.Equal(t, stalled, got[0].ScheduleID)
+	assert.ElementsMatch(t, []postgres.StuckCandidate{
+		{ScheduleName: "stalled", ScheduleID: stalled},
+		{ScheduleName: "never-dispatched", ScheduleID: neverDispatched},
+	}, got)
+}
+
+// TestListStuckCandidates_RecentProgressIsNotCandidate confirms the progress
+// clock, not task creation, decides staleness: a run whose tasks were created
+// long ago but whose last_heartbeat_at is recent is not reported, nor is a
+// zero-task run created inside the window, nor a terminal run.
+func TestListStuckCandidates_RecentProgressIsNotCandidate(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test")
+	}
+	rawDB, cleanup := setupPostgres(t)
+	defer cleanup()
+	logger := slog.New(slog.NewTextHandler(nopWriter{}, nil))
+	repo := postgres.NewSchedulerTrackerRepository(rawDB, logger)
+
+	progressing := uuid.New()
+	_, err := rawDB.Exec(`
+		INSERT INTO scheduler_tracker (schedule_id, schedule_name, status, created_at, last_heartbeat_at)
+		VALUES ($1, 'progressing', 'running', NOW() - INTERVAL '90 minutes', NOW() - INTERVAL '5 minutes')
+	`, progressing)
+	require.NoError(t, err)
+	_, err = rawDB.Exec(`
+		INSERT INTO task_tracker (task_id, schedule_id, created_at, service_name, schema_name, table_name, job_name, status, max_retries)
+		VALUES (gen_random_uuid(), $1, NOW() - INTERVAL '90 minutes', 'svc', 'sch', 'waiting', 'waiting', 'pending', 3)
+	`, progressing)
+	require.NoError(t, err)
+
+	_, err = rawDB.Exec(`
+		INSERT INTO scheduler_tracker (schedule_id, schedule_name, status, created_at)
+		VALUES (gen_random_uuid(), 'just-created', 'pending', NOW() - INTERVAL '5 minutes')
+	`)
+	require.NoError(t, err)
+
+	_, err = rawDB.Exec(`
+		INSERT INTO scheduler_tracker (schedule_id, schedule_name, status, created_at, completed_at)
+		VALUES (gen_random_uuid(), 'finished', 'failed', NOW() - INTERVAL '90 minutes', NOW() - INTERVAL '80 minutes')
+	`)
+	require.NoError(t, err)
+
+	cutoff := time.Now().Add(-30 * time.Minute)
+	got, err := repo.ListStuckCandidates(context.Background(), cutoff)
+	require.NoError(t, err)
+	assert.Empty(t, got, "recent progress, a run inside its window and a terminal run are never candidates")
 }

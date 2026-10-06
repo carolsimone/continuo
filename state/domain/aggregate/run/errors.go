@@ -6,7 +6,7 @@ import "errors"
 // rejection; adapters translate them to gRPC codes / consumer ACK policies.
 var (
 	// ErrAlreadyTerminal is returned by mutating methods invoked on a Run
-	// whose status is in {SUCCEEDED, FAILED, CANCELLED}.
+	// whose status is terminal: SUCCEEDED, FAILED, CANCELLED or SKIPPED.
 	ErrAlreadyTerminal = errors.New("run is already in a terminal state")
 
 	// ErrSourceMustBeTerminallyFailedOrCancelled is returned by
@@ -38,6 +38,13 @@ var (
 	// one, so an unset id would otherwise collide across every promotion.
 	ErrRunIDRequired = errors.New("run id is required")
 
+	// ErrRunAlreadyExists is returned by RunRepository.SaveRun when a newly
+	// constructed Run's id is already persisted; nothing is written. Only a
+	// constructor that takes its id (NewPromotedSeedsRun) can produce it: the id
+	// is derived from the triggering event, so a second delivery of that event
+	// finds the run the first one created.
+	ErrRunAlreadyExists = errors.New("run already exists")
+
 	// ErrReleaseIDRequired is returned by NewPromotedSeedsRun when the release
 	// that triggered the run is not identified.
 	ErrReleaseIDRequired = errors.New("release_id is required")
@@ -63,11 +70,4 @@ var (
 	// ErrTaskNotFound is returned by Run.HasTaskAt and by TaskCollection
 	// implementations when a specific task lookup yields nothing.
 	ErrTaskNotFound = errors.New("task not found")
-
-	// ErrInvalidDispatchedTask is returned by AcceptDispatch when a projected
-	// task's identity fields (service/schema/table) cannot be turned into a
-	// valid k8s job-name by pkg/domain.ComputeJobName. The payload is
-	// defective and cannot succeed on retry; the application handler maps
-	// this to pkg/events.ErrPermanent, a non-retryable failure.
-	ErrInvalidDispatchedTask = errors.New("dispatched task has invalid identity fields")
 )

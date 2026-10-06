@@ -19,7 +19,7 @@ import (
 const releaseSeedsPendingStreamName = streams.ReleaseSeedsPendingV1
 
 // NewReleaseSeedsPendingBinding returns a pkg/redis.MessageHandler that parses each
-// release.promoted:v1 message, runs dedup, and invokes PromotedSeedsHandler
+// release.seeds.pending:v1 message, runs dedup, and invokes PromotedSeedsHandler
 // inside a single Unit-of-Work transaction. See bindStreamHandler for the shared
 // pipeline and ACK-policy semantics.
 func NewReleaseSeedsPendingBinding(

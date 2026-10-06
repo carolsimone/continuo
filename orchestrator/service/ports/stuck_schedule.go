@@ -2,28 +2,37 @@ package ports
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
-// StuckSchedule identifies one active run the watchdog should consider
-// terminating: its dispatch has silently stalled. ScheduleName drives the
-// cancellation; RunID is carried for logging/traceability.
+// StuckSchedule identifies one active run the watchdog cancels: it has made no
+// lifecycle progress since the cutoff and has no task running. RunID names the
+// run to cancel; ScheduleName is carried for logging.
 type StuckSchedule struct {
 	ScheduleName string
 	RunID        string
 }
 
-// StuckScheduleReader returns active runs whose dispatch has silently stalled —
-// no task is running and the most recent task is older than the cutoff. The
-// state service answers this with a single indexed query, so the watchdog issues
-// O(1) RPCs per tick instead of fanning out one ListTasks call per schedule, and
-// it considers ALL of a run's tasks rather than only the newest page.
+// StuckScheduleReader returns the active runs that have made no lifecycle
+// progress since the cutoff and have no task running. A run's progress time is
+// its last dispatch or applied task status change, or its creation when it has
+// never progressed, so a run whose dispatch never arrived is returned too. The
+// state service answers with one server-side query, so the watchdog issues one
+// read per tick however many runs are active.
 type StuckScheduleReader interface {
 	ListStuckCandidates(ctx context.Context, cutoff time.Time) ([]StuckSchedule, error)
 }
 
-// ScheduleCanceller cancels the active run of a named schedule. The watchdog
-// uses it to terminate stalled dispatches via state's cancellation pathway.
-type ScheduleCanceller interface {
-	CancelSchedule(ctx context.Context, scheduleName, cancelledBy, reason string) error
+// ErrRunNotCancellable means the run a cancel names is already terminal or is
+// unknown to state, so there is nothing left to cancel.
+var ErrRunNotCancellable = errors.New("run not cancellable")
+
+// RunCanceller cancels one run by its id through state's cancellation pathway.
+// The watchdog uses it to cancel stalled runs.
+type RunCanceller interface {
+	// CancelRun cancels the run with id runID, recording cancelledBy and reason.
+	// The error wraps ErrRunNotCancellable when the run is already terminal or
+	// unknown.
+	CancelRun(ctx context.Context, runID, cancelledBy, reason string) error
 }

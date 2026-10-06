@@ -913,16 +913,11 @@ func TestHasTaskAt_ReturnsFalseWhenMissing(t *testing.T) {
 }
 
 // TestComputeJobName_RejectsUnsanitizableIdentity pins the failure condition
-// that AcceptDispatch wraps as run.ErrInvalidDispatchedTask: pkg/domain.
-// ComputeJobName returns an error when a projected task's identity sanitizes to
-// an empty job name. AcceptDispatch calls ComputeJobName directly and wraps any
-// error in ErrInvalidDispatchedTask; the application handler maps that sentinel
-// to pkg/events.ErrPermanent so the consumer binding dead-letters the poison
-// message instead of retrying it until its delivery limit.
-//
-// Every constructible Run has a non-empty schedule_id whose String() always
-// contributes a non-empty suffix, so the empty-name branch can only be reached
-// at the ComputeJobName boundary itself; this test exercises that boundary.
+// AcceptDispatch turns into a failed run (reason DispatchReasonInvalidTask):
+// pkg/domain.ComputeJobName returns an error when a task's identity and run-id
+// suffix both sanitize to nothing. Every constructible Run has a non-empty
+// schedule_id suffix, so AcceptDispatch cannot reach that branch with the real
+// function; accept_dispatch_internal_test.go drives it with a failing one.
 func TestComputeJobName_RejectsUnsanitizableIdentity(t *testing.T) {
 	if _, err := domain.ComputeJobName("-", "-", "-", ""); err == nil {
 		t.Fatal("ComputeJobName must reject an identity that sanitizes to empty")
@@ -984,4 +979,264 @@ func TestRun_Cancel_AlreadyTerminal_NoEvents(t *testing.T) {
 	if len(events) != 0 {
 		t.Fatalf("want no events on re-cancel, got %d", len(events))
 	}
+}
+
+// dispatchedRun returns a RUNNING run with one pending task per id, dispatched
+// at dispatchedAt, with a clean change set.
+func dispatchedRun(t *testing.T, tc *fakeTaskCollection, dispatchedAt time.Time, ids ...uuid.UUID) *run.Run {
+	t.Helper()
+	r := freshPendingRun(t)
+	projection := make([]run.DispatchedTask, 0, len(ids))
+	for i, id := range ids {
+		projection = append(projection, run.DispatchedTask{
+			TaskID:      id,
+			ServiceName: "s", SchemaName: "p", TableName: fmt.Sprintf("t%d", i),
+			Status: run.TaskStatusPending, MaxRetries: 3,
+		})
+	}
+	if _, err := r.AcceptDispatch(context.Background(), tc, projection, dispatchedAt); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	r.ResetChanges()
+	return r
+}
+
+func TestNewPendingRun_LeavesProgressClockUnset(t *testing.T) {
+	r := freshPendingRun(t)
+	if r.LastHeartbeatAt() != nil {
+		t.Fatalf("LastHeartbeatAt = %v, want nil before the run is dispatched", *r.LastHeartbeatAt())
+	}
+	if r.Changes().IsHeartbeatDirty() {
+		t.Fatal("a new run must not mark the progress clock dirty")
+	}
+}
+
+func TestAcceptDispatch_StampsProgressClock(t *testing.T) {
+	for name, status := range map[string]run.TaskStatus{
+		"moves to running": run.TaskStatusPending,
+		"auto-rollup":      run.TaskStatusSucceeded,
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := freshPendingRun(t)
+			now := time.Now().Add(time.Minute)
+			_, err := r.AcceptDispatch(context.Background(), newFakeTaskCollection(), []run.DispatchedTask{
+				{TaskID: uuid.New(), ServiceName: "s", SchemaName: "p", TableName: "a", Status: status, MaxRetries: 3},
+			}, now)
+			if err != nil {
+				t.Fatalf("AcceptDispatch: %v", err)
+			}
+			if r.LastHeartbeatAt() == nil || !r.LastHeartbeatAt().Equal(now) {
+				t.Fatalf("LastHeartbeatAt = %v, want %v", r.LastHeartbeatAt(), now)
+			}
+			if !r.Changes().IsHeartbeatDirty() {
+				t.Fatal("dispatch must mark the progress clock dirty")
+			}
+		})
+	}
+}
+
+func TestRecordTaskStatus_StampsProgressWhenTheWriteApplies(t *testing.T) {
+	cases := []struct {
+		name    string
+		prepare func(tc *fakeTaskCollection, id uuid.UUID)
+		status  run.TaskStatus
+		attempt int32
+	}{
+		{name: "same attempt pending to running", status: run.TaskStatusRunning},
+		{name: "first terminal of the attempt", status: run.TaskStatusSucceeded},
+		{name: "cascade skip", status: run.TaskStatusSkipped},
+		{
+			name: "newer attempt adopted",
+			prepare: func(tc *fakeTaskCollection, id uuid.UUID) {
+				tc.statuses[id] = run.TaskStatusFailed
+			},
+			status:  run.TaskStatusRunning,
+			attempt: 1,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			tc := newFakeTaskCollection()
+			id := uuid.New()
+			dispatchedAt := time.Now()
+			r := dispatchedRun(t, tc, dispatchedAt, id, uuid.New())
+			if c.prepare != nil {
+				c.prepare(tc, id)
+			}
+			later := dispatchedAt.Add(time.Hour)
+
+			if _, err := r.RecordTaskStatus(context.Background(), tc, id, c.status, c.attempt, later); err != nil {
+				t.Fatalf("RecordTaskStatus: %v", err)
+			}
+			if r.LastHeartbeatAt() == nil || !r.LastHeartbeatAt().Equal(later) {
+				t.Fatalf("LastHeartbeatAt = %v, want %v", r.LastHeartbeatAt(), later)
+			}
+			if !r.Changes().IsHeartbeatDirty() {
+				t.Fatal("an applied task write must mark the progress clock dirty")
+			}
+		})
+	}
+}
+
+func TestRecordTaskStatus_NoProgressWithoutAnAppliedWrite(t *testing.T) {
+	cases := []struct {
+		name    string
+		prepare func(t *testing.T, r *run.Run, tc *fakeTaskCollection, id uuid.UUID, at time.Time)
+		status  run.TaskStatus
+		attempt int32
+	}{
+		{
+			name: "replayed terminal",
+			prepare: func(t *testing.T, r *run.Run, tc *fakeTaskCollection, id uuid.UUID, at time.Time) {
+				if _, err := r.RecordTaskStatus(context.Background(), tc, id, run.TaskStatusSucceeded, 0, at); err != nil {
+					t.Fatalf("first terminal: %v", err)
+				}
+			},
+			status: run.TaskStatusSucceeded,
+		},
+		{name: "unchanged status", status: run.TaskStatusPending},
+		{
+			name: "stale older attempt",
+			prepare: func(_ *testing.T, _ *run.Run, tc *fakeTaskCollection, id uuid.UUID, _ time.Time) {
+				tc.attempts[id] = 2
+			},
+			status:  run.TaskStatusRunning,
+			attempt: 1,
+		},
+		{
+			name: "cancelled task row",
+			prepare: func(_ *testing.T, _ *run.Run, tc *fakeTaskCollection, id uuid.UUID, _ time.Time) {
+				tc.statuses[id] = run.TaskStatusCancelled
+			},
+			status:  run.TaskStatusRunning,
+			attempt: 1,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			tc := newFakeTaskCollection()
+			id := uuid.New()
+			dispatchedAt := time.Now()
+			r := dispatchedRun(t, tc, dispatchedAt, id, uuid.New())
+			if c.prepare != nil {
+				c.prepare(t, r, tc, id, dispatchedAt.Add(time.Minute))
+			}
+			r.ResetChanges()
+			before := *r.LastHeartbeatAt()
+
+			if _, err := r.RecordTaskStatus(context.Background(), tc, id, c.status, c.attempt, dispatchedAt.Add(time.Hour)); err != nil {
+				t.Fatalf("RecordTaskStatus: %v", err)
+			}
+			if r.Changes().IsHeartbeatDirty() {
+				t.Fatal("a write that applied nothing must not mark the progress clock dirty")
+			}
+			if !r.LastHeartbeatAt().Equal(before) {
+				t.Fatalf("LastHeartbeatAt = %v, want it unchanged at %v", *r.LastHeartbeatAt(), before)
+			}
+		})
+	}
+}
+
+// A run is dispatched once. A second run.entries.dispatched:v1 for a run whose
+// init_status is already completed must not re-create tasks, reset counters or
+// move the progress clock.
+func TestAcceptDispatch_RepeatedDispatchIsNoOp(t *testing.T) {
+	ctx := context.Background()
+	tc := newFakeTaskCollection()
+	dispatchedAt := time.Now()
+	r := dispatchedRun(t, tc, dispatchedAt, uuid.New())
+
+	events, err := r.AcceptDispatch(ctx, tc, []run.DispatchedTask{
+		{TaskID: uuid.New(), ServiceName: "s", SchemaName: "p", TableName: "again", Status: run.TaskStatusPending, MaxRetries: 3},
+		{TaskID: uuid.New(), ServiceName: "s", SchemaName: "p", TableName: "again2", Status: run.TaskStatusSucceeded, MaxRetries: 3},
+	}, dispatchedAt.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("AcceptDispatch: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("got %d events, want none", len(events))
+	}
+	if len(tc.bulkCreated) != 1 {
+		t.Fatalf("BulkCreate holds %d tasks, want only the first dispatch's 1", len(tc.bulkCreated))
+	}
+	if total := r.TotalTaskCount(); total == nil || *total != 1 || r.TerminalTaskCount() != 0 {
+		t.Fatalf("counters = total %v terminal %d, want 1 / 0", r.TotalTaskCount(), r.TerminalTaskCount())
+	}
+	ch := r.Changes()
+	if ch.IsStatusDirty() || ch.IsInitStatusDirty() || ch.IsTotalTaskCountDirty() ||
+		ch.IsTerminalTaskCountDirty() || ch.IsStartedDirty() || ch.IsHeartbeatDirty() {
+		t.Fatalf("a repeated dispatch must write nothing; change set = %+v", ch)
+	}
+	if !r.LastHeartbeatAt().Equal(dispatchedAt) {
+		t.Fatalf("LastHeartbeatAt = %v, want the first dispatch's %v", *r.LastHeartbeatAt(), dispatchedAt)
+	}
+}
+
+func TestRun_Cancel_SkippedRun_ErrAlreadyTerminal(t *testing.T) {
+	ctx := context.Background()
+	tc := newFakeTaskCollection()
+	r := runningRunWithProjection(t, tc, uuid.New())
+	if _, err := r.MarkDispatchTerminal(true, "no_tests", time.Now()); err != nil {
+		t.Fatalf("MarkDispatchTerminal: %v", err)
+	}
+	events, err := r.Cancel(ctx, tc, "tester", "late", time.Now())
+	if err != run.ErrAlreadyTerminal {
+		t.Fatalf("Cancel on a skipped run: err = %v, want ErrAlreadyTerminal", err)
+	}
+	if len(events) != 0 || len(tc.bulkCancelled) != 0 {
+		t.Fatalf("want no events and no task cancels; events=%d bulkCancelled=%d", len(events), len(tc.bulkCancelled))
+	}
+	if r.Status() != run.SchedulerStatusSkipped {
+		t.Fatalf("status = %q, want skipped", r.Status())
+	}
+}
+
+// A task projected as cancelled (an inherited row of a derived run) fills its
+// slot at dispatch, and its run finalizes failed rather than succeeded.
+func TestAcceptDispatch_CancelledProjectedTaskIsTerminal(t *testing.T) {
+	t.Run("all projected tasks terminal", func(t *testing.T) {
+		r := freshPendingRun(t)
+		events, err := r.AcceptDispatch(context.Background(), newFakeTaskCollection(), []run.DispatchedTask{
+			{TaskID: uuid.New(), ServiceName: "s", SchemaName: "p", TableName: "a", Status: run.TaskStatusSucceeded, MaxRetries: 3},
+			{TaskID: uuid.New(), ServiceName: "s", SchemaName: "p", TableName: "b", Status: run.TaskStatusCancelled, MaxRetries: 3},
+		}, time.Now())
+		if err != nil {
+			t.Fatalf("AcceptDispatch: %v", err)
+		}
+		if r.Status() != run.SchedulerStatusFailed || r.TerminalTaskCount() != 2 {
+			t.Fatalf("status=%q terminal=%d, want failed / 2", r.Status(), r.TerminalTaskCount())
+		}
+		if fin, ok := events[0].(run.RunFinalized); !ok || fin.Outcome != run.SchedulerStatusFailed {
+			t.Fatalf("events[0] = %+v, want RunFinalized{Outcome: failed}", events[0])
+		}
+	})
+
+	t.Run("finalizes failed once the rest succeed", func(t *testing.T) {
+		ctx := context.Background()
+		tc := newFakeTaskCollection()
+		r := freshPendingRun(t)
+		pending := uuid.New()
+		if _, err := r.AcceptDispatch(ctx, tc, []run.DispatchedTask{
+			{TaskID: pending, ServiceName: "s", SchemaName: "p", TableName: "a", Status: run.TaskStatusPending, MaxRetries: 3},
+			{TaskID: uuid.New(), ServiceName: "s", SchemaName: "p", TableName: "b", Status: run.TaskStatusCancelled, MaxRetries: 3},
+		}, time.Now()); err != nil {
+			t.Fatalf("AcceptDispatch: %v", err)
+		}
+		if r.Status() != run.SchedulerStatusRunning || r.TerminalTaskCount() != 1 {
+			t.Fatalf("status=%q terminal=%d, want running / 1 (the cancelled task fills its slot)", r.Status(), r.TerminalTaskCount())
+		}
+
+		// TaskCollection.HasFailed answers true for a run holding a cancelled task.
+		tc.hasFailed = true
+		events, err := r.RecordTaskStatus(ctx, tc, pending, run.TaskStatusSucceeded, 0, time.Now())
+		if err != nil {
+			t.Fatalf("RecordTaskStatus: %v", err)
+		}
+		if r.Status() != run.SchedulerStatusFailed {
+			t.Fatalf("status = %q, want failed", r.Status())
+		}
+		if fin, ok := events[0].(run.RunFinalized); !ok || fin.Outcome != run.SchedulerStatusFailed {
+			t.Fatalf("events[0] = %+v, want RunFinalized{Outcome: failed}", events[0])
+		}
+	})
 }

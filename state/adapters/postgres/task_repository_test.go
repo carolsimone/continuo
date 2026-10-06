@@ -108,6 +108,55 @@ func TestTaskRepository_HasRetryableFailedTaskTx(t *testing.T) {
 	})
 }
 
+// TestTaskRepository_HasFailedTaskTx_CountsCancelledTasks pins the finalize
+// predicate: a run with a failed or a cancelled task did not succeed, while
+// succeeded and skipped tasks never make it fail.
+func TestTaskRepository_HasFailedTaskTx_CountsCancelledTasks(t *testing.T) {
+	db := newTestDB(t)
+	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
+	ctx := context.Background()
+
+	cases := []struct {
+		name     string
+		statuses []run.TaskStatus
+		want     bool
+	}{
+		{"failed task", []run.TaskStatus{run.TaskStatusSucceeded, run.TaskStatusFailed}, true},
+		{"cancelled task", []run.TaskStatus{run.TaskStatusSucceeded, run.TaskStatusCancelled}, true},
+		{"succeeded and skipped", []run.TaskStatus{run.TaskStatusSucceeded, run.TaskStatusSkipped}, false},
+		{"no tasks", nil, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s := createScheduler(t, schedulerRepo, "test-schedule-"+uuid.New().String())
+			t.Cleanup(func() {
+				db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", s.ScheduleID)
+			})
+			for _, status := range c.statuses {
+				require.NoError(t, taskRepo.Create(ctx, &postgres.TaskTracker{
+					TaskID:      uuid.New(),
+					ScheduleID:  s.ScheduleID,
+					ServiceName: "svc",
+					SchemaName:  "schema",
+					TableName:   "tbl_" + uuid.New().String()[:8],
+					JobName:     "job",
+					Status:      status,
+					MaxRetries:  3,
+					CreatedAt:   time.Now(),
+				}))
+			}
+
+			tx, err := db.BeginTxx(ctx, nil)
+			require.NoError(t, err)
+			defer tx.Rollback()
+			got, err := taskRepo.HasFailedTaskTx(ctx, tx, s.ScheduleID)
+			require.NoError(t, err)
+			assert.Equal(t, c.want, got)
+		})
+	}
+}
+
 func TestTaskTrackerRepository_BulkCancelByScheduleIDTx(t *testing.T) {
 	db := newTestDB(t)
 	schedRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())

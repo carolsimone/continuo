@@ -126,11 +126,10 @@ type PromotedSeedsRunRequested struct {
 func (PromotedSeedsRunRequested) runDomainEvent()         {}
 func (e PromotedSeedsRunRequested) ScheduleID() uuid.UUID { return e.ID }
 
-// RunDispatchTerminal is recorded by Run.MarkDispatchTerminal for observability.
-// The publisher emits RunFinalized (status=skipped for a benign no_tests
-// dispatch, otherwise failed) onto run.finalized:v1; this auxiliary event is
-// informational and currently has no downstream stream. Kept so a future
-// "dispatch outcome reason" stream is mechanical to add.
+// RunDispatchTerminal is recorded by Run.MarkDispatchTerminal next to the
+// RunFinalized that carries the outcome (skipped for a benign no_tests
+// dispatch, otherwise failed). It names why the dispatch ended the run. It maps
+// to no stream and no column: the dispatch handlers log its Reason at WARN.
 type RunDispatchTerminal struct {
 	ID     uuid.UUID
 	Name   string
@@ -139,3 +138,8 @@ type RunDispatchTerminal struct {
 
 func (RunDispatchTerminal) runDomainEvent()         {}
 func (e RunDispatchTerminal) ScheduleID() uuid.UUID { return e.ID }
+
+// DispatchReasonInvalidTask is the RunDispatchTerminal reason AcceptDispatch
+// records when a projected task's identity cannot be turned into a Kubernetes
+// Job name.
+const DispatchReasonInvalidTask = "invalid_dispatched_task"

@@ -1,10 +1,13 @@
 package watchdog_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,9 +22,9 @@ import (
 // ---------------------------------------------------------------------------
 
 type cancelCall struct {
-	scheduleName string
-	cancelledBy  string
-	reason       string
+	runID       string
+	cancelledBy string
+	reason      string
 }
 
 type fakeStuckReader struct {
@@ -47,8 +50,8 @@ type fakeCanceller struct {
 	err   error
 }
 
-func (f *fakeCanceller) CancelSchedule(_ context.Context, scheduleName, cancelledBy, reason string) error {
-	f.calls = append(f.calls, cancelCall{scheduleName, cancelledBy, reason})
+func (f *fakeCanceller) CancelRun(_ context.Context, runID, cancelledBy, reason string) error {
+	f.calls = append(f.calls, cancelCall{runID, cancelledBy, reason})
 	return f.err
 }
 
@@ -56,12 +59,16 @@ type fixedClock struct{ t time.Time }
 
 func (c fixedClock) Now() time.Time { return c.t }
 
-func newWatchdogForTest(reader ports.StuckScheduleReader, canceller ports.ScheduleCanceller, now time.Time, noProgressFor time.Duration) *watchdog.Watchdog {
+func newWatchdogForTest(reader ports.StuckScheduleReader, canceller ports.RunCanceller, now time.Time, noProgressFor time.Duration) *watchdog.Watchdog {
+	return newLoggingWatchdogForTest(reader, canceller, now, noProgressFor, io.Discard)
+}
+
+func newLoggingWatchdogForTest(reader ports.StuckScheduleReader, canceller ports.RunCanceller, now time.Time, noProgressFor time.Duration, logs io.Writer) *watchdog.Watchdog {
 	w := watchdog.NewWatchdog(
 		watchdog.Config{Enabled: true, Interval: time.Second, NoProgressFor: noProgressFor},
 		reader,
 		canceller,
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		slog.New(slog.NewTextHandler(logs, nil)),
 	)
 	watchdog.SetClockForTest(w, fixedClock{t: now})
 	return w
@@ -71,7 +78,9 @@ func newWatchdogForTest(reader ports.StuckScheduleReader, canceller ports.Schedu
 // Tests
 // ---------------------------------------------------------------------------
 
-func TestWatchdog_StuckCandidate_CallsCancelSchedule(t *testing.T) {
+// The watchdog cancels the stalled run itself, by its id — never "whatever run
+// of this schedule is active now", which could be a newer, healthy run.
+func TestWatchdog_StuckCandidate_CancelsThatRunByID(t *testing.T) {
 	now := time.Now()
 	reader := &fakeStuckReader{
 		candidates: []ports.StuckSchedule{{ScheduleName: "stuck-schedule", RunID: "run-uuid-1"}},
@@ -81,9 +90,30 @@ func TestWatchdog_StuckCandidate_CallsCancelSchedule(t *testing.T) {
 
 	require.NoError(t, watchdog.TickForTest(w, context.Background()))
 	require.Len(t, canceller.calls, 1)
-	assert.Equal(t, "stuck-schedule", canceller.calls[0].scheduleName)
+	assert.Equal(t, "run-uuid-1", canceller.calls[0].runID)
 	assert.Equal(t, "watchdog", canceller.calls[0].cancelledBy)
-	assert.Contains(t, canceller.calls[0].reason, "watchdog:")
+	assert.True(t, strings.HasPrefix(canceller.calls[0].reason, "watchdog:"),
+		"reason %q must start with watchdog:", canceller.calls[0].reason)
+}
+
+// A candidate that reached a terminal status between the read and the cancel is
+// not a failure: the watchdog logs it at INFO and moves on to the next one.
+func TestWatchdog_RunAlreadyTerminal_LoggedAtInfoAndSweepContinues(t *testing.T) {
+	reader := &fakeStuckReader{
+		candidates: []ports.StuckSchedule{
+			{ScheduleName: "a", RunID: "r-a"},
+			{ScheduleName: "b", RunID: "r-b"},
+		},
+	}
+	canceller := &fakeCanceller{err: fmt.Errorf("%w: scheduler already in terminal state", ports.ErrRunNotCancellable)}
+	var logs bytes.Buffer
+	w := newLoggingWatchdogForTest(reader, canceller, time.Now(), 30*time.Minute, &logs)
+
+	require.NoError(t, watchdog.TickForTest(w, context.Background()))
+	assert.Len(t, canceller.calls, 2, "both candidates attempted")
+	assert.Contains(t, logs.String(), "level=INFO")
+	assert.Contains(t, logs.String(), "run already terminal")
+	assert.NotContains(t, logs.String(), "level=ERROR", "an already-terminal run is not an error")
 }
 
 // The watchdog derives the cutoff as now-NoProgressFor and delegates stuck

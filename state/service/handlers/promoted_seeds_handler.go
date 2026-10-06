@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -49,6 +50,10 @@ func NewPromotedSeedsHandler(logger *slog.Logger) *PromotedSeedsHandler {
 // The event is only emitted for a release that changed at least one seed, so
 // there is no empty-run case to guard here — orchestrator withholds the event
 // rather than having state create a task-less run that could never finalise.
+//
+// A release whose run already exists is done: an earlier delivery created the
+// run and wrote trigger.promoted_seeds:v1 in the same transaction, so Handle
+// returns nil and writes nothing.
 func (h *PromotedSeedsHandler) Handle(
 	ctx context.Context,
 	u uow.UnitOfWork,
@@ -77,13 +82,20 @@ func (h *PromotedSeedsHandler) Handle(
 	}
 
 	if err := u.Run().SaveRun(ctx, newRun); err != nil {
+		if errors.Is(err, run.ErrRunAlreadyExists) {
+			h.logger.Info("release.seeds.pending: promoted-seeds run already exists",
+				"release_id", evt.ReleaseID,
+				"run_id", runID,
+			)
+			return nil
+		}
 		return fmt.Errorf("save run: %w", err)
 	}
 	if err := u.Outbox().Append(ctx, []run.DomainEvent{domainEvt}, msgProcID); err != nil {
 		return fmt.Errorf("append outbox: %w", err)
 	}
 
-	h.logger.Info("release.promoted: promoted-seeds run created",
+	h.logger.Info("release.seeds.pending: promoted-seeds run created",
 		"release_id", evt.ReleaseID,
 		"run_id", runID,
 		"seed_count", len(nodes),
@@ -93,10 +105,10 @@ func (h *PromotedSeedsHandler) Handle(
 
 // PromotedSeedsRunID derives the run id for a release's promoted-seeds run.
 //
-// It is deterministic so that a redelivered release.promoted:v1 resolves to the
-// run that already exists rather than minting a second one. SaveRun is an upsert
-// on the run id, so the redelivery re-writes the same row instead of rebuilding
-// seeds that are already built.
+// It is deterministic so that a release handled twice resolves to the run that
+// already exists rather than minting a second one: SaveRun reports
+// run.ErrRunAlreadyExists for the second, and Handle treats the release as done
+// instead of rebuilding seeds that are already built.
 func PromotedSeedsRunID(releaseID string) uuid.UUID {
 	return uuid.NewSHA1(promotedSeedsNamespace, []byte("schedule:"+releaseID))
 }
