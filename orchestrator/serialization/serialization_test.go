@@ -11,7 +11,7 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/domain/event"
 )
 
-const goldenNodeReady = `{"schedule_id":"s","schedule_name":"sn","service_name":"svc","schema_name":"sch","table_name":"tbl","task_id":"t","job_name":"j","node_type":"dbt-model","image_tag":"img","secret_ref":"continuo-api-fx","operation":"test"}`
+const goldenNodeReady = `{"schedule_id":"s","schedule_name":"sn","service_name":"svc","schema_name":"sch","table_name":"tbl","task_id":"t","job_name":"j","node_type":"dbt-model","image_tag":"img","secret_ref":"continuo-api-fx","operation":"test","max_retries":2}`
 
 func TestNodeReadyForExecutionRoundTrip(t *testing.T) {
 	var dto NodeReadyForExecutionDTO
@@ -22,7 +22,7 @@ func TestNodeReadyForExecutionRoundTrip(t *testing.T) {
 	want := domain.NodeReadyForExecution{ //nolint:gosec // G101: secret_ref names a Kubernetes Secret, not a credential
 		ScheduleID: "s", ScheduleName: "sn", ServiceName: "svc", SchemaName: "sch",
 		TableName: "tbl", TaskID: "t", JobName: "j", NodeType: "dbt-model",
-		ImageTag: "img", SecretRef: "continuo-api-fx", Operation: "test",
+		ImageTag: "img", SecretRef: "continuo-api-fx", Operation: "test", MaxRetries: 2,
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("toDomain:\n got %+v\nwant %+v", got, want)
@@ -40,6 +40,13 @@ func TestNodeReadyOperationOmitempty(t *testing.T) {
 	out, _ := json.Marshal(NodeReadyForExecutionFromDomain(domain.NodeReadyForExecution{TaskID: "t"}))
 	if strings.Contains(string(out), `"operation"`) {
 		t.Fatalf("operation must be omitted when empty: %s", out)
+	}
+}
+
+func TestNodeReadyMaxRetriesOmitempty(t *testing.T) {
+	out, _ := json.Marshal(NodeReadyForExecutionFromDomain(domain.NodeReadyForExecution{TaskID: "t"}))
+	if strings.Contains(string(out), `"max_retries"`) {
+		t.Fatalf("max_retries must be omitted when unset: %s", out)
 	}
 }
 

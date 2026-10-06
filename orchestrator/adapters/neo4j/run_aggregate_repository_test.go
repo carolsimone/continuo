@@ -10,6 +10,8 @@ import (
 
 	neo4jinfra "github.com/carolsimone/continuo/orchestrator/adapters/neo4j"
 	domainRun "github.com/carolsimone/continuo/orchestrator/domain/run"
+	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
+	pkgEvents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/google/uuid"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/assert"
@@ -665,4 +667,95 @@ func TestRunAggregateRepository_Save_StaleVersion_ReturnsErrVersionConflict(t *t
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, domainRun.ErrVersionConflict),
 		"stale save must return ErrVersionConflict, got: %v", err)
+}
+
+// setEdgeMaxRetries stamps max_retries on the run's :EXECUTES edge to the
+// seeded table, as the snapshot writer does for every projected task.
+func setEdgeMaxRetries(t *testing.T, ctx context.Context, client neo4jinfra.Neo4jClient, runID, table string, maxRetries int) {
+	t.Helper()
+	session := client.NewSession(ctx, neo4j.AccessModeWrite)
+	defer session.Close(ctx)
+	_, err := session.Run(ctx, `
+		MATCH (:Run {run_id: $run_id})-[e:EXECUTES]->(:Table {table_name: $table, test_marker: $marker})
+		SET e.max_retries = $max_retries`,
+		map[string]any{"run_id": runID, "table": table, "marker": t.Name(), "max_retries": maxRetries},
+	)
+	require.NoError(t, err)
+}
+
+// TestRunAggregateRepository_RehydrateReadsTheEdgeRetryBudget covers all three
+// rehydrate queries: a node takes the max_retries stamped on its :EXECUTES
+// edge, and a node whose edge carries none takes the default budget.
+func TestRunAggregateRepository_RehydrateReadsTheEdgeRetryBudget(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires Neo4j")
+	}
+	kA := domainRun.NodeKey{ServiceName: "svc-1", SchemaName: "public", TableName: "a"}
+	kB := domainRun.NodeKey{ServiceName: "svc-1", SchemaName: "public", TableName: "b"}
+	for name, scope := range map[string]domainRun.Scope{
+		"full":      domainRun.ScopeFull{},
+		"succeeded": domainRun.ScopeNodeCompletion{Key: kA, Status: "SUCCEEDED"},
+		"failed":    domainRun.ScopeNodeCompletion{Key: kA, Status: "FAILED"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo, client, cleanup := newTestAggRepo(t)
+			defer cleanup()
+
+			ctx := context.Background()
+			runID := fmt.Sprintf("run-%s", t.Name())
+			seedRun(t, ctx, client, runID, 2, 0, 0,
+				[]seededNode{
+					{"public", "a", "svc-1", "RUNNING"},
+					{"public", "b", "svc-1", "PENDING"},
+				},
+				[]seededEdge{
+					{childSchema: "public", childTable: "b", parentSchema: "public", parentTable: "a"},
+				},
+			)
+			setEdgeMaxRetries(t, ctx, client, runID, "b", 5)
+
+			agg, err := repo.Rehydrate(ctx, runID, scope)
+			require.NoError(t, err)
+			nA, nB := nodeByKey(agg, kA), nodeByKey(agg, kB)
+			require.NotNil(t, nA)
+			require.NotNil(t, nB)
+			assert.Equal(t, int32(5), nB.MaxRetries, "the budget stamped on the edge")
+			assert.Equal(t, pkgEvents.DefaultTaskMaxRetries, nA.MaxRetries, "an edge without max_retries takes the default budget")
+		})
+	}
+}
+
+// TestRunAggregateRepository_RehydrateCarriesTheWrittenRetryBudget pins the
+// round trip the unblock dispatch relies on: the budget the snapshot writer
+// stamps on a task's :EXECUTES edge is the one rehydrate puts on its run node.
+func TestRunAggregateRepository_RehydrateCarriesTheWrittenRetryBudget(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires Neo4j")
+	}
+	driver := newDriver(t)
+	client := newTestClient(t)
+	ctx := context.Background()
+
+	scheduleName := "test-mat-" + uuid.New().String()[:8]
+	seedTable(t, driver, scheduleName, "svc", "s", "a", "img:1")
+	runID := uuid.New().String()
+	t.Cleanup(func() { cleanupRunAndTables(t, driver, runID, "test-mat-") })
+
+	projection := []snapshot.TaskProjection{{
+		TaskID: uuid.New(), ServiceName: "svc", SchemaName: "s", TableName: "a",
+		ScheduleName: scheduleName, NodeType: "dbt-model", InitialStatus: "PENDING",
+		ImageTag: "img:1", MaxRetries: 5,
+	}}
+	params := snapshot.Params{RunID: runID, ScheduleName: scheduleName, Kind: "cron"}
+	require.NoError(t, neo4jinfra.NewSnapshotTxRunner(client).Run(ctx,
+		func(_ snapshot.TopologyReader, w snapshot.SnapshotWriter) error {
+			return w.WriteRunAndExecutesEdges(ctx, params, projection)
+		}))
+
+	repo := neo4jinfra.NewRunAggregateRepository(client, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	agg, err := repo.Rehydrate(ctx, runID, domainRun.ScopeFull{})
+	require.NoError(t, err)
+	n := nodeByKey(agg, domainRun.NodeKey{ServiceName: "svc", SchemaName: "s", TableName: "a"})
+	require.NotNil(t, n)
+	assert.Equal(t, int32(5), n.MaxRetries)
 }

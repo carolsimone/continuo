@@ -140,8 +140,6 @@ spec:
               value: "5"
             - name: K8S_FIRST_CHECK_DELAY_SECONDS
               value: "1"
-            - name: DEFAULT_TASK_MAX_RETRIES
-              value: "2"
             - name: LOG_TAIL_LINES
               value: "50"
             - name: ERROR_MESSAGE_MAX_LENGTH

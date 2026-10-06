@@ -6,7 +6,6 @@ import (
 
 	pkgModel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgEvents "github.com/carolsimone/continuo/pkg/events"
-	"github.com/google/uuid"
 )
 
 // RebasePartition is the rebase selector (Feature 2). Given a terminal source
@@ -103,7 +102,7 @@ func (RebasePartition) SelectTasks(ctx context.Context, r TopologyReader, p Para
 		if _, isRebased := rebaseFQNs[f]; isRebased {
 			_, blocked := blockedFQNs[f]
 			projection = append(projection, TaskProjection{
-				TaskID:          uuid.New(),
+				TaskID:          rowTaskID(p.RunID, f, lt.ScheduleName),
 				ServiceName:     f.Service,
 				SchemaName:      f.Schema,
 				TableName:       f.Table,
@@ -126,7 +125,7 @@ func (RebasePartition) SelectTasks(ctx context.Context, r TopologyReader, p Para
 				root = *st.InheritedFromRoot
 			}
 			projection = append(projection, TaskProjection{
-				TaskID:              uuid.New(),
+				TaskID:              rowTaskID(p.RunID, f, st.ScheduleName),
 				ServiceName:         f.Service,
 				SchemaName:          f.Schema,
 				TableName:           f.Table,

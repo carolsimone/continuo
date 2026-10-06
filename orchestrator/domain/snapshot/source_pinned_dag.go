@@ -6,7 +6,6 @@ import (
 
 	pkgModel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgEvents "github.com/carolsimone/continuo/pkg/events"
-	"github.com/google/uuid"
 )
 
 // SourcePinnedDAG is the rerun selector. It produces a projection bound to the
@@ -17,8 +16,8 @@ import (
 //   - Every non-SUCCEEDED source task is seeded into the rebase set.
 //   - Every descendant of a seeded task (in the source's pinned :EXECUTES set)
 //     joins the rebase set, regardless of its source status.
-//   - Rebase-set rows → PENDING, fresh task_id, source's pinned
-//     image_tag, InheritedFromTaskID = nil.
+//   - Rebase-set rows → PENDING, task_id derived by TaskIDFor, source's
+//     pinned image_tag, InheritedFromTaskID = nil.
 //   - Every other source task → InitialStatus = source's stored status,
 //     source's pinned metadata, InheritedFromTaskID = root-resolved source
 //     task_id (forwards when the source row was itself inherited).
@@ -105,7 +104,7 @@ func (SourcePinnedDAG) SelectTasks(ctx context.Context, r TopologyReader, p Para
 		if _, isRebased := rebaseFQNs[f]; isRebased {
 			_, blocked := blockedFQNs[f]
 			projection = append(projection, TaskProjection{
-				TaskID:          uuid.New(),
+				TaskID:          rowTaskID(p.RunID, f, st.ScheduleName),
 				ServiceName:     f.Service,
 				SchemaName:      f.Schema,
 				TableName:       f.Table,
@@ -126,7 +125,7 @@ func (SourcePinnedDAG) SelectTasks(ctx context.Context, r TopologyReader, p Para
 			root = *st.InheritedFromRoot
 		}
 		projection = append(projection, TaskProjection{
-			TaskID:              uuid.New(),
+			TaskID:              rowTaskID(p.RunID, f, st.ScheduleName),
 			ServiceName:         f.Service,
 			SchemaName:          f.Schema,
 			TableName:           f.Table,

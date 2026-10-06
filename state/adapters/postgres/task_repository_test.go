@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -408,4 +409,57 @@ func TestTaskRepository_SetStatusAndAttemptTx_AdvancesAttemptOnSameStatus(t *tes
 	require.NoError(t, err)
 	assert.Equal(t, "failed", status)
 	assert.Equal(t, int32(2), retryCount, "retry_count must advance to the newer attempt")
+}
+
+// TestTaskTrackerRepository_BulkCreateTx_AboveBindParameterLimit covers a run
+// with more tasks than one INSERT can bind (13 parameters per row against
+// PostgreSQL's 65535-parameter limit, so more than 5041 rows): every task is
+// inserted in one transaction, and inserting the same tasks again adds none.
+func TestTaskTrackerRepository_BulkCreateTx_AboveBindParameterLimit(t *testing.T) {
+	db := newTestDB(t)
+	schedRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
+	ctx := context.Background()
+
+	sched := createScheduler(t, schedRepo, "bulk-create-"+uuid.New().String())
+	// Deleting the scheduler_tracker row cascades to its task_tracker rows.
+	t.Cleanup(func() {
+		db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", sched.ScheduleID)
+	})
+
+	const n = 6000
+	tasks := make([]*postgres.TaskTracker, n)
+	for i := range tasks {
+		tasks[i] = &postgres.TaskTracker{
+			TaskID:      uuid.New(),
+			ScheduleID:  sched.ScheduleID,
+			CreatedAt:   time.Now(),
+			ServiceName: "svc",
+			SchemaName:  "sch",
+			TableName:   fmt.Sprintf("t_%05d", i),
+			JobName:     fmt.Sprintf("j-%05d", i),
+			Status:      run.TaskStatusPending,
+			MaxRetries:  2,
+		}
+	}
+
+	insertAll := func() {
+		tx, err := db.BeginTxx(ctx, nil)
+		require.NoError(t, err)
+		defer tx.Rollback()
+		require.NoError(t, taskRepo.BulkCreateTx(ctx, tx, tasks))
+		require.NoError(t, tx.Commit())
+	}
+	countRows := func() int {
+		var count int
+		require.NoError(t, db.GetContext(ctx, &count,
+			"SELECT COUNT(*) FROM task_tracker WHERE schedule_id = $1", sched.ScheduleID))
+		return count
+	}
+
+	insertAll()
+	assert.Equal(t, n, countRows(), "every task of the run is inserted")
+
+	insertAll()
+	assert.Equal(t, n, countRows(), "inserting the same task ids again adds no rows")
 }

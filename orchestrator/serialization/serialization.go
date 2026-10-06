@@ -29,6 +29,7 @@ type NodeReadyForExecutionDTO struct {
 	ImageTag     string `json:"image_tag"`
 	SecretRef    string `json:"secret_ref,omitempty"`
 	Operation    string `json:"operation,omitempty"`
+	MaxRetries   int32  `json:"max_retries,omitempty"`
 }
 
 // NodeReadyForExecutionFromDomain maps a domain event to its DTO.
@@ -45,6 +46,7 @@ func NodeReadyForExecutionFromDomain(e domain.NodeReadyForExecution) NodeReadyFo
 		ImageTag:     e.ImageTag,
 		SecretRef:    e.SecretRef,
 		Operation:    e.Operation,
+		MaxRetries:   e.MaxRetries,
 	}
 }
 
@@ -62,6 +64,7 @@ func (d NodeReadyForExecutionDTO) ToDomain() domain.NodeReadyForExecution {
 		ImageTag:     d.ImageTag,
 		SecretRef:    d.SecretRef,
 		Operation:    d.Operation,
+		MaxRetries:   d.MaxRetries,
 	}
 }
 

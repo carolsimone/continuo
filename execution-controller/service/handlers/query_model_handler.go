@@ -46,5 +46,5 @@ func (h *QueryModelHandler) Handle(
 			"schedule_id", evt.ScheduleID, "task_id", evt.TaskID)
 		return nil
 	}
-	return createDeployment(ctx, u, evt, msgProcID, 0, 0)
+	return createDeployment(ctx, u, evt, msgProcID, 0, int(evt.MaxRetries))
 }

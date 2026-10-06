@@ -120,3 +120,43 @@ func TestNodeSet_WithoutPin_FallsBackToTheTopologyRow(t *testing.T) {
 	require.Len(t, got, 1)
 	assert.Equal(t, "from-topology", got[0].ImageTag)
 }
+
+// A table listed twice yields one task: its id is derived from (run, table), so
+// a second row would duplicate the first row's id and the run would count a
+// task that never completes.
+func TestNodeSet_RepeatedNode_YieldsOneTask(t *testing.T) {
+	a := snapshot.FQN{Service: "core", Schema: "analytics", Table: "seed_users"}
+	r := &fakeTopologyReader{
+		SingleLatest: map[snapshot.FQN]snapshot.LatestTableRow{
+			a: {ScheduleName: "seed", NodeType: "dbt-seed", ImageTag: "v1"},
+		},
+	}
+
+	got, err := snapshot.NodeSet{Nodes: []snapshot.FQN{a, a}}.SelectTasks(context.Background(), r, snapshot.Params{RunID: "run-1"})
+	require.NoError(t, err)
+	require.Len(t, got, 1, "one projection row, so the run counts one task")
+	assert.Equal(t, "seed_users", got[0].TableName)
+	assert.Equal(t, snapshot.TaskIDFor("run-1", snapshot.FQN{Service: "core", Schema: "analytics", Table: "seed_users", ScheduleName: "seed"}), got[0].TaskID)
+}
+
+// Two requested FQNs that differ only in schedule_name but resolve to one
+// topology row yield one task, not two. The task id is derived from the row's
+// schedule_name, so both would mint the same id; deduping on the full FQN
+// (schedule included) would miss them and the run would count a task it never
+// sees complete. The dedup therefore keys on (service, schema, table).
+func TestNodeSet_SameTableDifferentScheduleKeys_YieldsOneTask(t *testing.T) {
+	base := snapshot.FQN{Service: "core", Schema: "analytics", Table: "seed_users"}
+	reqA := base
+	reqA.ScheduleName = "a"
+	reqB := base
+	reqB.ScheduleName = "b"
+	row := snapshot.LatestTableRow{ScheduleName: "seed", NodeType: "dbt-seed", ImageTag: "v1"}
+	r := &fakeTopologyReader{
+		SingleLatest: map[snapshot.FQN]snapshot.LatestTableRow{reqA: row, reqB: row},
+	}
+
+	got, err := snapshot.NodeSet{Nodes: []snapshot.FQN{reqA, reqB}}.SelectTasks(context.Background(), r, snapshot.Params{RunID: "run-1"})
+	require.NoError(t, err)
+	require.Len(t, got, 1, "one row despite two schedule-qualified keys for the same table")
+	assert.Equal(t, snapshot.TaskIDFor("run-1", snapshot.FQN{Service: "core", Schema: "analytics", Table: "seed_users", ScheduleName: "seed"}), got[0].TaskID)
+}

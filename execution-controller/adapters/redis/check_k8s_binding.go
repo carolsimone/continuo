@@ -30,7 +30,7 @@ func NewCheckK8sBinding(
 	logger *slog.Logger,
 ) pkgredis.MessageHandler {
 	return func(ctx context.Context, msg goredis.XMessage) error {
-		cmd, err := ParseCheckK8s(msg, 0)
+		cmd, err := ParseCheckK8s(msg)
 		if err != nil {
 			logger.Error("check_k8s: parse failure", "message_id", msg.ID, "error", err)
 			return fmt.Errorf("%w: %v", pkgevents.ErrPermanent, err)

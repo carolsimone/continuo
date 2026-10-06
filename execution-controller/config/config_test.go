@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -52,9 +53,27 @@ func TestLoad_UnionOfDispatchAndObserveSettings(t *testing.T) {
 	require.Equal(t, 50, cfg.MaxConcurrentJobs)
 	require.Equal(t, 10, cfg.K8sCheckDelaySeconds)
 	require.Equal(t, 1, cfg.K8sFirstCheckDelaySeconds)
-	require.Equal(t, 2, cfg.DefaultTaskMaxRetries)
 	require.Equal(t, 50, cfg.LogTailLines)
 	require.Equal(t, 4096, cfg.ErrorMessageMaxLength)
 	require.Equal(t, "b", cfg.S3.Bucket)
 	require.Equal(t, "require", cfg.Postgres.SSLMode)
+}
+
+// Each task's retry budget arrives on its query.model:v1 dispatch. Load names
+// DEFAULT_TASK_MAX_RETRIES when it is set, so main can warn that it is ignored.
+func TestLoad_NamesTheIgnoredRetryKey(t *testing.T) {
+	cases := []struct {
+		name, maxRetries string
+		want             []string
+	}{
+		{name: "not set"},
+		{name: "set", maxRetries: "3", want: []string{"DEFAULT_TASK_MAX_RETRIES"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("DEFAULT_TASK_MAX_RETRIES", tc.maxRetries)
+			cfg := Load(&pkgconfig.Validator{})
+			assert.Equal(t, tc.want, cfg.IgnoredRetryKeys)
+		})
+	}
 }

@@ -545,3 +545,65 @@ func TestSnapshotWriter_PinsSecretRefOnTheEdge(t *testing.T) {
 	})
 	require.NoError(t, err)
 }
+
+// TestSnapshotWriter_RedeliveredSnapshotMatchesTheEdgeTaskIDs covers a trigger
+// redelivered after its snapshot committed in Neo4j but before the Postgres
+// unit of work did: the run is selected and written a second time, the
+// :EXECUTES edges keep the task_id they were created with (ON CREATE SET), and
+// the second projection — the one whose ids reach state and the executor —
+// must carry exactly those ids.
+func TestSnapshotWriter_RedeliveredSnapshotMatchesTheEdgeTaskIDs(t *testing.T) {
+	driver := newDriver(t)
+	scheduleName := "test-mat-" + uuid.New().String()[:8]
+	seedTable(t, driver, scheduleName, "svc", "s", "a", "img:1")
+	seedTable(t, driver, scheduleName, "svc", "s", "b", "img:1")
+
+	runID := uuid.New().String()
+	t.Cleanup(func() { cleanupRunAndTables(t, driver, runID, "test-mat-") })
+	params := snapshot.Params{RunID: runID, ScheduleName: scheduleName, Kind: "cron"}
+
+	ctx := context.Background()
+	selectAndWrite := func() []snapshot.TaskProjection {
+		session := driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+		defer session.Close(ctx)
+		out, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+			projection, err := snapshot.LatestFullDAG{}.SelectTasks(ctx, neo4jinfra.NewTopologyReaderForTest(tx), params)
+			if err != nil {
+				return nil, err
+			}
+			return projection, neo4jinfra.NewSnapshotWriterForTest(tx).WriteRunAndExecutesEdges(ctx, params, projection)
+		})
+		require.NoError(t, err)
+		return out.([]snapshot.TaskProjection)
+	}
+
+	selectAndWrite()
+	second := selectAndWrite()
+	require.Len(t, second, 2)
+
+	read := driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
+	defer read.Close(ctx)
+	got, err := read.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		r, err := tx.Run(ctx, `
+			MATCH (:Run {run_id: $run_id})-[e:EXECUTES]->(t:Table {schedule_name: $sched})
+			RETURN t.table_name AS tbl, e.task_id AS tid`,
+			map[string]interface{}{"run_id": runID, "sched": scheduleName})
+		if err != nil {
+			return nil, err
+		}
+		byTable := map[string]string{}
+		for r.Next(ctx) {
+			tbl, _ := r.Record().Get("tbl")
+			tid, _ := r.Record().Get("tid")
+			byTable[tbl.(string)] = tid.(string)
+		}
+		return byTable, r.Err()
+	})
+	require.NoError(t, err)
+	edges := got.(map[string]string)
+	require.Len(t, edges, 2)
+	for _, p := range second {
+		require.Equal(t, edges[p.TableName], p.TaskID.String(),
+			"%s: the redelivered projection must carry the task_id already on the edge", p.TableName)
+	}
+}

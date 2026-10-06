@@ -88,6 +88,18 @@ func seedJob(t *testing.T, db *sqlx.DB, maxRetries, retryCount int) uuid.UUID {
 	return id
 }
 
+// failedAnnouncementRetryCount decodes the retry_count of the
+// task_status_updated row the dispatcher wrote for a terminal deploy failure.
+func failedAnnouncementRetryCount(t *testing.T, db *sqlx.DB) int32 {
+	t.Helper()
+	var payload []byte
+	require.NoError(t, db.QueryRow(
+		`SELECT payload FROM execution_outbox WHERE event_type='task_status_updated' LIMIT 1`).Scan(&payload))
+	var got pkgevents.TaskStatusUpdated
+	require.NoError(t, json.Unmarshal(payload, &got))
+	return got.RetryCount
+}
+
 func outboxCountByType(t *testing.T, db *sqlx.DB, eventType string) int {
 	t.Helper()
 	var n int
@@ -263,6 +275,9 @@ func TestDispatcher_BudgetExhaustedWritesFailed(t *testing.T) {
 	assert.Equal(t, 1, outboxCountByType(t, db, "task_status_updated"))
 	assert.Equal(t, 1, outboxCountByType(t, db, "node_updated"))
 	assert.Equal(t, 0, outboxCountByType(t, db, "check_delayed"))
+
+	// seedJob's task budget is 2; a deploy failure spends it.
+	assert.Equal(t, int32(2), failedAnnouncementRetryCount(t, db), "the FAILED status reports the task budget as spent")
 }
 
 func TestDispatcher_PermanentErrorWritesFailedImmediately(t *testing.T) {
@@ -276,6 +291,7 @@ func TestDispatcher_PermanentErrorWritesFailedImmediately(t *testing.T) {
 	var status string
 	require.NoError(t, db.QueryRow(`SELECT status FROM deployments WHERE id=$1`, id).Scan(&status))
 	assert.Equal(t, "failed", status, "permanent error skips the retry budget")
+	assert.Equal(t, int32(2), failedAnnouncementRetryCount(t, db), "the FAILED status reports the task budget as spent")
 }
 
 func TestDispatcher_CapZeroHeadroomDeploysNothing(t *testing.T) {
@@ -350,6 +366,9 @@ func TestDispatcher_CorruptedJobParamsMarksFailedWithRowIdentity(t *testing.T) {
 	assert.Equal(t, taskID.String(), got.TaskID, "FAILED announcement uses the row's task_id")
 	assert.Equal(t, scheduleID.String(), got.ScheduleID)
 	assert.Equal(t, "FAILED", got.Status)
+
+	// Corrupt job_params carry no task budget, so the default budget is reported spent.
+	assert.Equal(t, pkgevents.DefaultTaskMaxRetries, failedAnnouncementRetryCount(t, db))
 }
 
 func mustDeploymentID(t *testing.T, db *sqlx.DB, taskID uuid.UUID) uuid.UUID {

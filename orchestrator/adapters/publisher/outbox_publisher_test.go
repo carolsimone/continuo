@@ -83,6 +83,22 @@ func TestOutboxPublisher_NodeReadyForExecution(t *testing.T) {
 	// A node with no API credentials carries no secret_ref field.
 	_, hasSecretRef := vals["secret_ref"]
 	assert.False(t, hasSecretRef, "node_ready_for_execution without a secret_ref must not carry a secret_ref field")
+	// A dispatch without a retry budget carries no max_retries field.
+	_, hasMaxRetries := vals["max_retries"]
+	assert.False(t, hasMaxRetries, "node_ready_for_execution without a retry budget must not carry a max_retries field")
+}
+
+func TestOutboxPublisher_NodeReadyForExecution_CarriesMaxRetries(t *testing.T) {
+	// The executor retries a failed attempt while its retry count is below the
+	// budget on the dispatch, so the budget must reach the wire.
+	evt := domain.NodeReadyForExecution{
+		ScheduleID: "sched-1", ScheduleName: "daily", ServiceName: "svc",
+		SchemaName: "public", TableName: "orders", TaskID: "task-1", JobName: "job-1",
+		NodeType: "dbt-model", ImageTag: "v1", MaxRetries: 4,
+	}
+	entry := makeEntry("node_ready_for_execution", mustMarshal(t, serialization.NodeReadyForExecutionFromDomain(evt)))
+	vals := payloadToValuesFor(t, entry)
+	assert.Equal(t, "4", vals["max_retries"])
 }
 
 func TestOutboxPublisher_NodeReadyForExecution_CarriesSecretRef(t *testing.T) {

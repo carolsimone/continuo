@@ -144,3 +144,37 @@ func TestHandleNodeCompleted_UnblockedNodeCarriesPinnedSecretRef(t *testing.T) {
 	assert.Equal(t, "fx", got.TableName)
 	assert.Equal(t, "continuo-api-fx", got.SecretRef)
 }
+
+// TestHandleNodeCompleted_UnblockedNodeCarriesItsRetryBudget verifies that a
+// downstream node dispatched through NodeUnblocked carries the retry budget its
+// run node was rehydrated with, the same budget state holds for the task.
+func TestHandleNodeCompleted_UnblockedNodeCarriesItsRetryBudget(t *testing.T) {
+	ctx := context.Background()
+	u := newFakeUnitOfWork()
+
+	kA := run.NodeKey{ServiceName: "svc", SchemaName: "p", TableName: "a"}
+	kC := run.NodeKey{ServiceName: "svc", SchemaName: "p", TableName: "c"}
+
+	agg := run.NewRun("run-1", "daily", []*run.RunNode{
+		{Key: kA, TaskID: uuid.New(), Status: "RUNNING", ScheduleName: "daily",
+			NodeType: "dbt-model", Downstreams: []run.NodeKey{kC}},
+		{Key: kC, TaskID: uuid.New(), Status: "PENDING", ScheduleName: "daily",
+			NodeType: "dbt-model", ImageTag: "it1", MaxRetries: 5, Upstreams: []run.NodeKey{kA}},
+	})
+
+	h := handlers.NewHandleNodeCompletedHandler(u, &fakeAggregateRepository{agg: agg}, fakeCancelledSchedules{}, newTestLogger())
+	require.NoError(t, h.Handle(ctx, domainModel.NodeCompletedInput{
+		TaskID:       uuid.New(),
+		ScheduleID:   uuid.New(),
+		ScheduleName: "daily",
+		ServiceName:  "svc",
+		SchemaName:   "p",
+		TableName:    "a",
+		Status:       "SUCCEEDED",
+	}, "msg-1", nil))
+
+	dispatched := queryModelDispatches(t, u)
+	require.Len(t, dispatched, 1, "the unblocked node is dispatched once")
+	assert.Equal(t, "c", dispatched[0].TableName)
+	assert.Equal(t, int32(5), dispatched[0].MaxRetries)
+}

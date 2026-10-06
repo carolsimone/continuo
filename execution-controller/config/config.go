@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"time"
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
@@ -38,8 +39,6 @@ type Config struct {
 	// announces the task as RUNNING, and a Job that finishes before it is
 	// never observed running at all.
 	K8sFirstCheckDelaySeconds int
-	// DefaultTaskMaxRetries applies when a dispatch carries no retry budget.
-	DefaultTaskMaxRetries int
 	// LogTailLines is how many trailing log lines feed the error message.
 	LogTailLines int
 	// ErrorMessageMaxLength truncates the error message recorded for a failed Job.
@@ -47,6 +46,12 @@ type Config struct {
 
 	// ShutdownGrace bounds the graceful-shutdown drain + infra teardown.
 	ShutdownGrace time.Duration
+
+	// IgnoredRetryKeys names DEFAULT_TASK_MAX_RETRIES when it is set.
+	// execution-controller does not read it: each task's retry budget arrives
+	// on its query.model:v1 dispatch, and pkg/events.DefaultTaskMaxRetries
+	// applies to a dispatch that carries none.
+	IgnoredRetryKeys []string
 
 	// MetricsPort is the port the Prometheus /metrics listener binds (METRICS_PORT).
 	MetricsPort int
@@ -74,14 +79,26 @@ func Load(v *pkgconfig.Validator) Config {
 		MaxConcurrentJobs:         envInt("MAX_CONCURRENT_JOBS", 50),
 		K8sCheckDelaySeconds:      envInt("K8S_CHECK_DELAY_SECONDS", 10),
 		K8sFirstCheckDelaySeconds: envInt("K8S_FIRST_CHECK_DELAY_SECONDS", 1),
-		DefaultTaskMaxRetries:     envInt("DEFAULT_TASK_MAX_RETRIES", 2),
 		LogTailLines:              envInt("LOG_TAIL_LINES", 50),
 		ErrorMessageMaxLength:     envInt("ERROR_MESSAGE_MAX_LENGTH", 4096),
 
 		ShutdownGrace: pkgconfig.EnvDurationOrDefault("SHUTDOWN_GRACE", defaultShutdownGrace),
 
+		IgnoredRetryKeys: setKeys("DEFAULT_TASK_MAX_RETRIES"),
+
 		MetricsPort: pkgconfig.LoadMetricsPort(v),
 	}
+}
+
+// setKeys returns the keys among keys that are set to a non-empty value.
+func setKeys(keys ...string) []string {
+	var set []string
+	for _, key := range keys {
+		if os.Getenv(key) != "" {
+			set = append(set, key)
+		}
+	}
+	return set
 }
 
 func envInt(key string, fallback int) int { return pkgconfig.EnvIntOrDefault(key, fallback) }

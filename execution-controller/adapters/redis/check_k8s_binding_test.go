@@ -38,7 +38,7 @@ var _ repository.CancelledSchedulesRepository = (*noopCancelledSchedulesRepo)(ni
 // Job-status check, including the dispatcher's own first check ticket.
 func TestCheckK8sBinding_DuplicateSkipsHandler(t *testing.T) {
 	k8s := fakes.NewFakeK8sClient()
-	cfg := &handlers.JobStatusConfig{K8sNamespace: "default", DefaultTaskMaxRetries: 3, ErrorMessageMaxLen: 4096, LogTailLines: 50}
+	cfg := &handlers.JobStatusConfig{K8sNamespace: "default", ErrorMessageMaxLen: 4096, LogTailLines: 50}
 	handler := handlers.NewJobStatusHandler(k8s, nil, cfg, noopCancelledSchedulesRepo{}, outcomes.NewRecorder(slog.Default()), slog.Default())
 
 	u := &fakes.FakeUnitOfWork{

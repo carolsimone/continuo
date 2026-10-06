@@ -147,11 +147,10 @@ func newSucceededHandler(logger *slog.Logger) *handlers.JobStatusHandler {
 	}
 
 	cfg := &handlers.JobStatusConfig{
-		K8sNamespace:          "default",
-		CheckDelaySeconds:     30,
-		ErrorMessageMaxLen:    4096,
-		LogTailLines:          50,
-		DefaultTaskMaxRetries: 3,
+		K8sNamespace:       "default",
+		CheckDelaySeconds:  30,
+		ErrorMessageMaxLen: 4096,
+		LogTailLines:       50,
 	}
 
 	return handlers.NewJobStatusHandler(

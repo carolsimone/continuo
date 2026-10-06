@@ -6,7 +6,6 @@ import (
 
 	"github.com/carolsimone/continuo/execution-controller/domain/command"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
-	"github.com/carolsimone/continuo/pkg/num"
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -14,7 +13,7 @@ import (
 // ParseCheckK8s decodes a check.k8s:v1 message into a CheckJobStatus. The typed
 // event travels in the JSON `payload` field; its task-level retry count is named
 // retry_count.
-func ParseCheckK8s(msg goredis.XMessage, defaultMaxRetries int) (command.CheckJobStatus, error) {
+func ParseCheckK8s(msg goredis.XMessage) (command.CheckJobStatus, error) {
 	var wire pkgevents.CheckK8s
 	if err := decodePayload(msg, &wire); err != nil {
 		return command.CheckJobStatus{}, err
@@ -34,7 +33,7 @@ func ParseCheckK8s(msg goredis.XMessage, defaultMaxRetries int) (command.CheckJo
 		retryCount:       wire.RetryCount,
 		maxRetries:       wire.MaxRetries,
 		runningAnnounced: wire.RunningAnnounced,
-	}, defaultMaxRetries)
+	})
 }
 
 // decodePayload reads the `payload` field and unmarshals it into dst.
@@ -68,9 +67,9 @@ type checkJobFields struct {
 }
 
 // buildCheckJobStatus validates the decoded fields and assembles the command.
-// A non-positive max_retries is treated as absent; it falls back to
-// defaultMaxRetries.
-func buildCheckJobStatus(f checkJobFields, defaultMaxRetries int) (command.CheckJobStatus, error) {
+// max_retries is carried as decoded; a ticket without one leaves it at 0, and
+// the job-status handler applies pkgevents.DefaultTaskMaxRetries.
+func buildCheckJobStatus(f checkJobFields) (command.CheckJobStatus, error) {
 	taskID, err := uuid.Parse(f.taskID)
 	if err != nil {
 		return command.CheckJobStatus{}, fmt.Errorf("invalid task_id: %w", err)
@@ -78,15 +77,6 @@ func buildCheckJobStatus(f checkJobFields, defaultMaxRetries int) (command.Check
 	scheduleID, err := uuid.Parse(f.scheduleID)
 	if err != nil {
 		return command.CheckJobStatus{}, fmt.Errorf("invalid schedule_id: %w", err)
-	}
-
-	maxRetries := f.maxRetries
-	if maxRetries <= 0 {
-		converted, err := num.Int32(defaultMaxRetries, "default_max_retries")
-		if err != nil {
-			return command.CheckJobStatus{}, err
-		}
-		maxRetries = converted
 	}
 
 	return command.CheckJobStatus{
@@ -102,7 +92,7 @@ func buildCheckJobStatus(f checkJobFields, defaultMaxRetries int) (command.Check
 		SecretRef:        f.secretRef,
 		Operation:        f.operation,
 		RetryCount:       f.retryCount,
-		MaxRetries:       maxRetries,
+		MaxRetries:       f.maxRetries,
 		RunningAnnounced: f.runningAnnounced,
 	}, nil
 }

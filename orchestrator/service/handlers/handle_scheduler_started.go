@@ -76,8 +76,9 @@ func (h *HandleSchedulerStartedHandler) Handle(ctx context.Context, evt domain.S
 	}
 
 	// Snapshot the graph for this run via the unified routine: LatestFullDAG
-	// selector enumerates active :Tables + upstream dbt-seeds, mints fresh
-	// task_ids, and the materialiser writes :Run + :EXECUTES edges in one tx.
+	// selector enumerates active :Tables + upstream dbt-seeds and derives each
+	// task_id from (run_id, table) with snapshot.TaskIDFor, and the
+	// materialiser writes :Run + :EXECUTES edges in one tx.
 	projection, err := h.snapshotSvc.Snapshot(ctx, snapshot.Params{
 		RunID:        evt.ScheduleID.String(),
 		ScheduleName: evt.ScheduleName,
@@ -187,6 +188,7 @@ func (h *HandleSchedulerStartedHandler) Handle(ctx context.Context, evt domain.S
 			ImageTag:     task.ImageTag,
 			SecretRef:    task.SecretRef,
 			Operation:    evt.Operation,
+			MaxRetries:   task.MaxRetries,
 		}
 
 		evtPayload, err := json.Marshal(serialization.NodeReadyForExecutionFromDomain(nodeEvt))

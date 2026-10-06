@@ -30,7 +30,11 @@ func newSnapshotWriter(tx neo4j.ManagedTransaction) *snapshotWriter {
 //
 // :EXECUTES edge:  task_id, status, image_tag, secret_ref?,
 //
-//	test_count?, inherited_from_task_id?, content_hash
+//	test_count?, inherited_from_task_id?, content_hash, max_retries
+//
+// max_retries is the task's retry budget from the projection. The run
+// aggregate reads it back on rehydrate, so a node dispatched later through
+// NodeUnblocked carries the same budget as the run's initial frontier.
 //
 // content_hash comes from the projection, pinning which code version this run
 // executed even after a later release changes the node. It is deliberately NOT
@@ -91,6 +95,7 @@ func (w *snapshotWriter) WriteRunAndExecutesEdges(ctx context.Context, p snapsho
 			"content_hash":           t.ContentHash,
 			"test_count":             testCount,
 			"inherited_from_task_id": inheritedFrom,
+			"max_retries":            t.MaxRetries,
 		}
 	}
 	const query = `
@@ -136,7 +141,8 @@ func (w *snapshotWriter) WriteRunAndExecutesEdges(ctx context.Context, p snapsho
 		              e.image_tag        = t.image_tag,
 		              e.secret_ref       = t.secret_ref,
 		              e.test_count       = t.test_count,
-		              e.content_hash     = t.content_hash
+		              e.content_hash     = t.content_hash,
+		              e.max_retries      = t.max_retries
 		FOREACH (_ IN CASE WHEN t.inherited_from_task_id IS NULL THEN [] ELSE [1] END |
 		    SET e.inherited_from_task_id = t.inherited_from_task_id
 		)

@@ -1,10 +1,12 @@
 package events
 
-// DefaultTaskMaxRetries is the canonical retry budget that the orchestrator
-// stamps onto every DispatchedTask. It MUST match execution-controller's
-// DefaultTaskMaxRetries default (execution-controller/config/config.go) —
-// otherwise state's HasRetryableFailedTaskTx and the retry loop drift apart
-// and runs finalize as failed mid-retry.
+// DefaultTaskMaxRetries is the retry budget of every task the orchestrator
+// projects. The orchestrator stamps it on each DispatchedTask
+// (run.entries.dispatched:v1), where state stores it as the task's max_retries,
+// and on each query.model:v1 dispatch, where execution-controller retries a
+// failed attempt while its retry count is below it — so both read one value.
+// execution-controller applies it itself only to a dispatch or check ticket
+// that carries no budget.
 const DefaultTaskMaxRetries int32 = 2
 
 // DispatchedTask is one row in RunEntriesDispatched.AllTasks.

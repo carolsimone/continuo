@@ -144,3 +144,35 @@ func TestParseQueryModel_SecretRef(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "", evt.SecretRef)
 }
+
+func TestParseQueryModel_MaxRetries(t *testing.T) {
+	base := map[string]interface{}{
+		"task_id":     uuid.New().String(),
+		"schedule_id": uuid.New().String(),
+		"node_type":   "dbt-model",
+	}
+	evt, err := ParseQueryModel(goredis.XMessage{ID: "1-0", Values: base})
+	require.NoError(t, err)
+	assert.Equal(t, int32(0), evt.MaxRetries, "absent max_retries leaves the budget unset")
+
+	withBudget := map[string]interface{}{"max_retries": "5"}
+	for k, v := range base {
+		withBudget[k] = v
+	}
+	evt, err = ParseQueryModel(goredis.XMessage{ID: "1-0", Values: withBudget})
+	require.NoError(t, err)
+	assert.Equal(t, int32(5), evt.MaxRetries)
+}
+
+func TestParseQueryModel_InvalidMaxRetriesIsPermanentError(t *testing.T) {
+	for _, bad := range []string{"two", "-1", "99999999999"} {
+		values := map[string]interface{}{
+			"task_id":     uuid.New().String(),
+			"schedule_id": uuid.New().String(),
+			"node_type":   "dbt-model",
+			"max_retries": bad,
+		}
+		_, err := ParseQueryModel(goredis.XMessage{ID: "1-0", Values: values})
+		require.Error(t, err, "max_retries=%q", bad)
+	}
+}

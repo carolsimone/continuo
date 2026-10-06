@@ -38,6 +38,43 @@ func (f *fakeSnapshotService) SourceOperation(_ context.Context, _ string) (stri
 	return f.sourceOp, f.sourceOpErr
 }
 
+// queryModelDispatches decodes every query.model:v1 entry the handler wrote.
+func queryModelDispatches(t *testing.T, u *fakeUnitOfWork) []serialization.NodeReadyForExecutionDTO {
+	t.Helper()
+	var out []serialization.NodeReadyForExecutionDTO
+	for _, e := range u.outboxRepo.CreatedEntries {
+		if e.StreamName != streams.QueryModelV1 {
+			continue
+		}
+		var dto serialization.NodeReadyForExecutionDTO
+		require.NoError(t, json.Unmarshal(e.Payload, &dto))
+		out = append(out, dto)
+	}
+	return out
+}
+
+// TestHandleSchedulerStarted_DispatchCarriesTheTaskRetryBudget verifies that a
+// frontier dispatch carries the retry budget of its projection row, the same
+// budget run.entries.dispatched:v1 gives state for the task.
+func TestHandleSchedulerStarted_DispatchCarriesTheTaskRetryBudget(t *testing.T) {
+	ctx := context.Background()
+	u := newFakeUnitOfWork()
+	snap := &fakeSnapshotService{projection: []snapshot.TaskProjection{{
+		TaskID: uuid.New(), ServiceName: "svc", SchemaName: "p", TableName: "t",
+		ScheduleName: "daily", NodeType: "dbt-model", InitialStatus: "PENDING",
+		ReadyToDispatch: true, MaxRetries: 4,
+	}}}
+
+	h := handlers.NewHandleSchedulerStartedHandler(u, snap, newTestLogger())
+	require.NoError(t, h.Handle(ctx, domain.SchedulerStarted{
+		ScheduleID: uuid.New(), ScheduleName: "daily", Kind: "cron",
+	}, "msg-1", nil))
+
+	dispatched := queryModelDispatches(t, u)
+	require.Len(t, dispatched, 1)
+	assert.Equal(t, int32(4), dispatched[0].MaxRetries)
+}
+
 // TestHandleSchedulerStarted_InvalidNodeType_FailsRun verifies that a dispatch
 // frontier node with an unparseable node_type fails the run fast via
 // run.entries.dispatch_failed:v1 instead of being silently skipped (which would
