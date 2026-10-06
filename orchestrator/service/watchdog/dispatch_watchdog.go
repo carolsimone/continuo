@@ -1,9 +1,10 @@
-// Package watchdog detects schedules whose dispatch has silently stalled
-// and terminates them via the cancellation pathway.
+// Package watchdog cancels active runs that have made no lifecycle progress
+// within a configured window.
 package watchdog
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -25,19 +26,19 @@ type Config struct {
 	NoProgressFor time.Duration
 }
 
-// Watchdog terminates schedules whose dispatch has silently stalled. It depends
+// Watchdog cancels active runs that have stopped making progress. It depends
 // only on domain-typed ports; the gRPC wire types live in the adapter that
-// implements StuckScheduleReader and ScheduleCanceller.
+// implements StuckScheduleReader and RunCanceller.
 type Watchdog struct {
 	cfg       Config
 	reader    ports.StuckScheduleReader
-	canceller ports.ScheduleCanceller
+	canceller ports.RunCanceller
 	clock     Clock
 	logger    *slog.Logger
 }
 
 // NewWatchdog constructs a Watchdog. Uses the real clock.
-func NewWatchdog(cfg Config, reader ports.StuckScheduleReader, canceller ports.ScheduleCanceller, logger *slog.Logger) *Watchdog {
+func NewWatchdog(cfg Config, reader ports.StuckScheduleReader, canceller ports.RunCanceller, logger *slog.Logger) *Watchdog {
 	return &Watchdog{cfg: cfg, reader: reader, canceller: canceller, clock: realClock{}, logger: logger}
 }
 
@@ -85,11 +86,12 @@ func (w *Watchdog) tickTimeout() time.Duration {
 	return d
 }
 
-// tick asks state for the active runs whose dispatch has silently stalled —
-// a single indexed query that considers every task of each run — and cancels
-// each via state.CancelSchedule. CancelSchedule writes an outbox row that
-// publishes schedule.cancelled:v1; the cancelled_schedules guards in the
-// consumers absorb in-flight messages.
+// tick asks state for the active runs with no progress since now minus
+// NoProgressFor and no running task, then cancels each by its run id. A cancel
+// writes the outbox rows that publish schedule.cancelled:v1 and
+// run.finalized:v1; the cancelled_schedules guards in the consumers absorb
+// in-flight messages. A run that reached a terminal status after the read is
+// skipped.
 func (w *Watchdog) tick(parent context.Context) error {
 	ctx, cancel := context.WithTimeout(parent, w.tickTimeout())
 	defer cancel()
@@ -99,16 +101,21 @@ func (w *Watchdog) tick(parent context.Context) error {
 	if err != nil {
 		return fmt.Errorf("list stuck candidates: %w", err)
 	}
-	reason := fmt.Sprintf("watchdog: no task progress for >%dm", int(w.cfg.NoProgressFor.Minutes()))
+	reason := fmt.Sprintf("watchdog: no run progress for >%dm", int(w.cfg.NoProgressFor.Minutes()))
 	for _, c := range candidates {
-		w.logger.Warn("Watchdog terminating stuck schedule",
+		w.logger.Warn("Watchdog cancelling stalled run",
 			"schedule_name", c.ScheduleName,
 			"schedule_id", c.RunID,
 			"reason", reason,
 		)
-		if err := w.canceller.CancelSchedule(ctx, c.ScheduleName, "watchdog", reason); err != nil {
-			w.logger.Error("Watchdog CancelSchedule failed",
-				"schedule_name", c.ScheduleName, "error", err)
+		if err := w.canceller.CancelRun(ctx, c.RunID, "watchdog", reason); err != nil {
+			if errors.Is(err, ports.ErrRunNotCancellable) {
+				w.logger.Info("Watchdog skipped run already terminal",
+					"schedule_name", c.ScheduleName, "schedule_id", c.RunID, "error", err)
+				continue
+			}
+			w.logger.Error("Watchdog CancelRun failed",
+				"schedule_name", c.ScheduleName, "schedule_id", c.RunID, "error", err)
 			continue
 		}
 	}

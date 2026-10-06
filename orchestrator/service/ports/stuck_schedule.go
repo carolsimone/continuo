@@ -2,12 +2,13 @@ package ports
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
-// StuckSchedule identifies one active run the watchdog should consider
-// terminating: its dispatch has silently stalled. ScheduleName drives the
-// cancellation; RunID is carried for logging/traceability.
+// StuckSchedule identifies one active run the watchdog cancels: it has made no
+// lifecycle progress since the cutoff and has no task running. RunID names the
+// run to cancel; ScheduleName is carried for logging.
 type StuckSchedule struct {
 	ScheduleName string
 	RunID        string
@@ -23,8 +24,15 @@ type StuckScheduleReader interface {
 	ListStuckCandidates(ctx context.Context, cutoff time.Time) ([]StuckSchedule, error)
 }
 
-// ScheduleCanceller cancels the active run of a named schedule. The watchdog
-// uses it to terminate stalled dispatches via state's cancellation pathway.
-type ScheduleCanceller interface {
-	CancelSchedule(ctx context.Context, scheduleName, cancelledBy, reason string) error
+// ErrRunNotCancellable means the run a cancel names is already terminal or is
+// unknown to state, so there is nothing left to cancel.
+var ErrRunNotCancellable = errors.New("run not cancellable")
+
+// RunCanceller cancels one run by its id through state's cancellation pathway.
+// The watchdog uses it to cancel stalled runs.
+type RunCanceller interface {
+	// CancelRun cancels the run with id runID, recording cancelledBy and reason.
+	// The error wraps ErrRunNotCancellable when the run is already terminal or
+	// unknown.
+	CancelRun(ctx context.Context, runID, cancelledBy, reason string) error
 }
