@@ -23,6 +23,10 @@ var (
 	ErrDuplicateKey = errors.New("duplicate key violation")
 	// ErrNotCancellable is returned when Cancel affects zero rows (not found or already terminal)
 	ErrNotCancellable = errors.New("scheduler not found or already in terminal state")
+	// ErrRunExists is returned by CreateTx when a scheduler_tracker row with the
+	// same schedule_id already exists. The INSERT does nothing, so the
+	// transaction stays usable.
+	ErrRunExists = errors.New("scheduler_tracker row already exists")
 	// ErrActiveScheduleConflict is returned when an INSERT violates the partial
 	// unique index uq_scheduler_tracker_active_per_schedule — another active
 	// (pending|running) run already exists for the same schedule_name. This is the
@@ -179,6 +183,11 @@ func (r *schedulerTrackerRepository) Create(ctx context.Context, tracker *Schedu
 }
 
 // CreateTx inserts a new scheduler_tracker record within an existing transaction.
+// The insert names schedule_id as its conflict target: a row with the same id
+// makes it a no-op reported as ErrRunExists, without aborting the transaction.
+// The one-active-run-per-schedule index is not a conflict target, so a
+// different id with the same active schedule_name still fails, as
+// ErrActiveScheduleConflict.
 func (r *schedulerTrackerRepository) CreateTx(ctx context.Context, tx *sqlx.Tx, tracker *SchedulerTracker) error {
 	meta, err := tracker.GetServiceMetadata()
 	if err != nil {
@@ -189,7 +198,7 @@ func (r *schedulerTrackerRepository) CreateTx(ctx context.Context, tx *sqlx.Tx, 
 		return fmt.Errorf("marshal service_metadata: %w", err)
 	}
 
-	_, err = tx.ExecContext(ctx, `
+	res, err := tx.ExecContext(ctx, `
 		INSERT INTO scheduler_tracker (
 			schedule_id, schedule_name, status, created_at,
 			started_at, completed_at, last_heartbeat_at,
@@ -205,6 +214,7 @@ func (r *schedulerTrackerRepository) CreateTx(ctx context.Context, tx *sqlx.Tx, 
 			$13, $14,
 			$15, $16, $17, $18
 		)
+		ON CONFLICT (schedule_id) DO NOTHING
 	`,
 		tracker.ScheduleID, tracker.ScheduleName, tracker.Status, tracker.CreatedAt,
 		tracker.StartedAt, tracker.CompletedAt, tracker.LastHeartbeatAt,
@@ -222,6 +232,13 @@ func (r *schedulerTrackerRepository) CreateTx(ctx context.Context, tx *sqlx.Tx, 
 			return ErrDuplicateKey
 		}
 		return fmt.Errorf("failed to create scheduler_tracker: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to create scheduler_tracker: %w", err)
+	}
+	if rows == 0 {
+		return ErrRunExists
 	}
 	return nil
 }

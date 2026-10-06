@@ -76,6 +76,9 @@ func (r *RunRepositoryAdapter) SaveRun(ctx context.Context, rn *run.Run) error {
 			if errors.Is(err, ErrActiveScheduleConflict) {
 				return run.ErrScheduleHasActiveRun
 			}
+			if errors.Is(err, ErrRunExists) {
+				return run.ErrRunAlreadyExists
+			}
 			return fmt.Errorf("create scheduler_tracker: %w", err)
 		}
 		rn.ResetChanges()

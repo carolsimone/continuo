@@ -38,6 +38,13 @@ var (
 	// one, so an unset id would otherwise collide across every promotion.
 	ErrRunIDRequired = errors.New("run id is required")
 
+	// ErrRunAlreadyExists is returned by RunRepository.SaveRun when a newly
+	// constructed Run's id is already persisted; nothing is written. Only a
+	// constructor that takes its id (NewPromotedSeedsRun) can produce it: the id
+	// is derived from the triggering event, so a second delivery of that event
+	// finds the run the first one created.
+	ErrRunAlreadyExists = errors.New("run already exists")
+
 	// ErrReleaseIDRequired is returned by NewPromotedSeedsRun when the release
 	// that triggered the run is not identified.
 	ErrReleaseIDRequired = errors.New("release_id is required")

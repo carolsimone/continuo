@@ -2,6 +2,7 @@ package handlers_test
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"testing"
@@ -16,12 +17,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// fakePromotedSeedsRunRepo captures the run the handler creates.
+// fakePromotedSeedsRunRepo captures the run the handler creates. A non-nil
+// saveErr is returned by SaveRun instead.
 type fakePromotedSeedsRunRepo struct {
-	saved []*run.Run
+	saved   []*run.Run
+	saveErr error
 }
 
 func (f *fakePromotedSeedsRunRepo) SaveRun(_ context.Context, r *run.Run) error {
+	if f.saveErr != nil {
+		return f.saveErr
+	}
 	f.saved = append(f.saved, r)
 	return nil
 }
@@ -129,4 +135,38 @@ func TestPromotedSeedsRunID_IsDeterministicPerRelease(t *testing.T) {
 	assert.Equal(t, handlers.PromotedSeedsRunID("rel-1"), handlers.PromotedSeedsRunID("rel-1"))
 	assert.NotEqual(t, handlers.PromotedSeedsRunID("rel-1"), handlers.PromotedSeedsRunID("rel-2"))
 	assert.NotEqual(t, uuid.Nil, handlers.PromotedSeedsRunID("rel-1"))
+}
+
+// A second release.seeds.pending:v1 for a release whose run already exists —
+// a redriven or re-emitted promotion — is complete: the first delivery created
+// the run and wrote trigger.promoted_seeds:v1, so nothing is written again.
+func TestPromotedSeedsHandler_ExistingRunIsANoOp(t *testing.T) {
+	repo := &fakePromotedSeedsRunRepo{saveErr: run.ErrRunAlreadyExists}
+	outbox := &fakePromotedSeedsOutbox{}
+	u := promotedSeedsUoW(repo, outbox)
+	require.NoError(t, u.Begin(context.Background()))
+
+	err := handlers.NewPromotedSeedsHandler(promotedSeedsLogger()).Handle(
+		context.Background(), u,
+		events.ReleaseSeedsPending{ReleaseID: "rel-1", Nodes: []events.SeedNode{seedNode("seed_users")}},
+		uuid.New(),
+	)
+	require.NoError(t, err, "an existing run is not an error")
+	assert.Empty(t, outbox.appended, "trigger.promoted_seeds:v1 must not be written twice")
+}
+
+func TestPromotedSeedsHandler_SaveErrorPropagates(t *testing.T) {
+	boom := errors.New("db down")
+	repo := &fakePromotedSeedsRunRepo{saveErr: boom}
+	outbox := &fakePromotedSeedsOutbox{}
+	u := promotedSeedsUoW(repo, outbox)
+	require.NoError(t, u.Begin(context.Background()))
+
+	err := handlers.NewPromotedSeedsHandler(promotedSeedsLogger()).Handle(
+		context.Background(), u,
+		events.ReleaseSeedsPending{ReleaseID: "rel-1", Nodes: []events.SeedNode{seedNode("seed_users")}},
+		uuid.New(),
+	)
+	require.ErrorIs(t, err, boom)
+	assert.Empty(t, outbox.appended)
 }
