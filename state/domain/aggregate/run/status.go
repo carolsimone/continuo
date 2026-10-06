@@ -36,6 +36,25 @@ func (s SchedulerStatus) IsTerminal() bool {
 	return false
 }
 
+// schedulerStatuses lists every SchedulerStatus value.
+var schedulerStatuses = []SchedulerStatus{
+	SchedulerStatusPending, SchedulerStatusRunning, SchedulerStatusSucceeded,
+	SchedulerStatusFailed, SchedulerStatusCancelled, SchedulerStatusSkipped,
+}
+
+// TerminalSchedulerStatuses returns every SchedulerStatus for which IsTerminal
+// reports true, so a storage guard against terminal runs names the same set the
+// aggregate checks.
+func TerminalSchedulerStatuses() []SchedulerStatus {
+	out := make([]SchedulerStatus, 0, len(schedulerStatuses))
+	for _, s := range schedulerStatuses {
+		if s.IsTerminal() {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 // TaskStatus is the lifecycle status of one task within a Run.
 type TaskStatus string
 
@@ -57,9 +76,11 @@ func (t TaskStatus) IsValid() bool {
 	return false
 }
 
+// IsTerminal reports whether a task in status t will not run again in its
+// current attempt. A cancelled task is terminal: it never runs again.
 func (t TaskStatus) IsTerminal() bool {
 	switch t {
-	case TaskStatusSucceeded, TaskStatusFailed, TaskStatusSkipped:
+	case TaskStatusSucceeded, TaskStatusFailed, TaskStatusCancelled, TaskStatusSkipped:
 		return true
 	}
 	return false

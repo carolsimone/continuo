@@ -670,8 +670,9 @@ func (r *Run) unfillSlot() {
 
 // finalizeIfComplete finalizes the scheduler when every task is terminal, the
 // graph has finished loading, the run is still RUNNING, and no failed task is
-// still retryable. Returns the RunFinalized event(s), or nil when finalization
-// is deferred.
+// still retryable. The outcome is failed when any task is failed or cancelled,
+// succeeded otherwise (every task succeeded or skipped). Returns the
+// RunFinalized event(s), or nil when finalization is deferred.
 func (r *Run) finalizeIfComplete(ctx context.Context, tasks TaskCollection, now time.Time) ([]DomainEvent, error) {
 	if r.totalTaskCount == nil || r.terminalTaskCount != *r.totalTaskCount {
 		return nil, nil

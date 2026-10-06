@@ -32,7 +32,8 @@ type TaskTrackerRepository interface {
 	// concurrent task.status.updated deliveries for the same task serialize.
 	// retry_count is the attempt discriminator the Run aggregate orders updates by.
 	LoadStatusAndAttemptTx(ctx context.Context, tx *sqlx.Tx, taskID uuid.UUID) (status string, retryCount int32, err error)
-	// HasFailedTaskTx reports whether any task for the given schedule has status = 'failed'.
+	// HasFailedTaskTx reports whether any task for the given schedule has status
+	// 'failed' or 'cancelled'.
 	HasFailedTaskTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID) (bool, error)
 	// HasRetryableFailedTaskTx reports whether any task for the given schedule has
 	// status = 'failed' AND retry_count < max_retries (i.e. k8s will retry it).
@@ -333,11 +334,13 @@ func (r *taskTrackerRepository) ExistsTx(ctx context.Context, tx *sqlx.Tx, taskI
 	return exists, nil
 }
 
-// HasFailedTaskTx reports whether any task_tracker row for the given schedule has status = 'failed'.
+// HasFailedTaskTx reports whether any task_tracker row for the given schedule
+// has status 'failed' or 'cancelled': a task that neither succeeded nor was
+// skipped, so its run finalizes failed.
 func (r *taskTrackerRepository) HasFailedTaskTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID) (bool, error) {
 	var exists bool
 	err := tx.QueryRowContext(ctx,
-		`SELECT EXISTS(SELECT 1 FROM task_tracker WHERE schedule_id = $1 AND status = 'failed' LIMIT 1)`,
+		`SELECT EXISTS(SELECT 1 FROM task_tracker WHERE schedule_id = $1 AND status IN ('failed', 'cancelled') LIMIT 1)`,
 		scheduleID,
 	).Scan(&exists)
 	if err != nil {

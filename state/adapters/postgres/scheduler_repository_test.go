@@ -234,6 +234,57 @@ func TestSchedulerTrackerRepository_CancelTx(t *testing.T) {
 	assert.ErrorIs(t, repo.CancelTx(ctx, tx2, id, "test-user", "duplicate", time.Now().UTC()), postgres.ErrNotCancellable)
 }
 
+// TestSchedulerTrackerRepository_CancelTx_RefusesEveryTerminalStatus drives
+// CancelTx against a run in every status. Only an active run is cancelled; a
+// run in any terminal status, skipped included, returns ErrNotCancellable and
+// its row is left exactly as it was.
+func TestSchedulerTrackerRepository_CancelTx_RefusesEveryTerminalStatus(t *testing.T) {
+	db := newTestDB(t)
+	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
+	ctx := context.Background()
+
+	for _, status := range []run.SchedulerStatus{
+		run.SchedulerStatusPending,
+		run.SchedulerStatusRunning,
+		run.SchedulerStatusSucceeded,
+		run.SchedulerStatusFailed,
+		run.SchedulerStatusCancelled,
+		run.SchedulerStatusSkipped,
+	} {
+		t.Run(string(status), func(t *testing.T) {
+			id := uuid.New()
+			require.NoError(t, repo.Create(ctx, &postgres.SchedulerTracker{
+				ScheduleID:           id,
+				ScheduleName:         "cxl-" + string(status) + "-" + id.String()[:8],
+				Status:               status,
+				CreatedAt:            time.Now(),
+				InitializationStatus: "completed",
+			}))
+			t.Cleanup(func() {
+				db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", id)
+			})
+
+			tx, err := db.BeginTxx(ctx, nil)
+			require.NoError(t, err)
+			defer tx.Rollback()
+			err = repo.CancelTx(ctx, tx, id, "test-user", "table test", time.Now().UTC())
+			require.NoError(t, tx.Commit())
+
+			got, getErr := repo.GetByID(ctx, id)
+			require.NoError(t, getErr)
+			if status.IsTerminal() {
+				assert.ErrorIs(t, err, postgres.ErrNotCancellable)
+				assert.Equal(t, status, got.Status, "a terminal run keeps its status")
+				assert.Nil(t, got.CancelledAt, "a terminal run is not stamped cancelled")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, run.SchedulerStatusCancelled, got.Status)
+			assert.NotNil(t, got.CancelledAt)
+		})
+	}
+}
+
 // TestSchedulerTrackerRepository_TerminalCountSurvivesRetryFlow walks the full
 // FAILED → RUNNING → FAILED → RUNNING → FAILED transition sequence that a
 // retry-exhausting task produces in production. The aggregate increments the

@@ -29,8 +29,9 @@ type TaskCollection interface {
 	// Exists checks whether a task_tracker row with the given id is present.
 	Exists(ctx context.Context, taskID uuid.UUID) (bool, error)
 
-	// HasFailed reports whether any task in the given run is in status
-	// FAILED.
+	// HasFailed reports whether any task in the given run is FAILED or
+	// CANCELLED — a task that neither succeeded nor was skipped. The run's
+	// finalized outcome is failed when it is true.
 	HasFailed(ctx context.Context, runID uuid.UUID) (bool, error)
 
 	// HasRetryableFailed reports whether any task in the given run is

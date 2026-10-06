@@ -6,7 +6,7 @@ import "errors"
 // rejection; adapters translate them to gRPC codes / consumer ACK policies.
 var (
 	// ErrAlreadyTerminal is returned by mutating methods invoked on a Run
-	// whose status is in {SUCCEEDED, FAILED, CANCELLED}.
+	// whose status is terminal: SUCCEEDED, FAILED, CANCELLED or SKIPPED.
 	ErrAlreadyTerminal = errors.New("run is already in a terminal state")
 
 	// ErrSourceMustBeTerminallyFailedOrCancelled is returned by

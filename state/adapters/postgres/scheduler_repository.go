@@ -13,6 +13,7 @@ import (
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 )
 
 var (
@@ -272,7 +273,9 @@ func (r *schedulerTrackerRepository) GetByID(ctx context.Context, scheduleID uui
 // CancelTx cancels a scheduler within an existing transaction.
 // Cancellation is terminal, so both cancelled_at and completed_at are stamped
 // with cancelledAt — the single authoritative instant the aggregate produced —
-// keeping the persisted row equal to the value returned to the caller.
+// keeping the persisted row equal to the value returned to the caller. A run in
+// any terminal status (run.TerminalSchedulerStatuses) is left untouched and
+// reported as ErrNotCancellable.
 func (r *schedulerTrackerRepository) CancelTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID, cancelledBy, reason string, cancelledAt time.Time) error {
 	result, err := tx.ExecContext(ctx, `
 		UPDATE scheduler_tracker
@@ -282,8 +285,8 @@ func (r *schedulerTrackerRepository) CancelTx(ctx context.Context, tx *sqlx.Tx, 
 		    cancelled_by        = $3,
 		    cancellation_reason = $4
 		WHERE schedule_id = $5
-		  AND status NOT IN ('succeeded', 'failed', 'cancelled')
-	`, run.SchedulerStatusCancelled, cancelledAt, cancelledBy, reason, scheduleID)
+		  AND NOT (status = ANY($6::text[]))
+	`, run.SchedulerStatusCancelled, cancelledAt, cancelledBy, reason, scheduleID, pq.Array(terminalSchedulerStatuses()))
 	if err != nil {
 		return fmt.Errorf("failed to cancel scheduler tx: %w", err)
 	}
@@ -292,6 +295,17 @@ func (r *schedulerTrackerRepository) CancelTx(ctx context.Context, tx *sqlx.Tx, 
 		return ErrNotCancellable
 	}
 	return nil
+}
+
+// terminalSchedulerStatuses returns the domain's terminal run statuses as
+// column values.
+func terminalSchedulerStatuses() []string {
+	statuses := run.TerminalSchedulerStatuses()
+	out := make([]string, len(statuses))
+	for i, s := range statuses {
+		out[i] = string(s)
+	}
+	return out
 }
 
 // HasActiveSchedule checks if there's a running or pending schedule with the given name

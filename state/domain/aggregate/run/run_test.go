@@ -1171,3 +1171,72 @@ func TestAcceptDispatch_RepeatedDispatchIsNoOp(t *testing.T) {
 		t.Fatalf("LastHeartbeatAt = %v, want the first dispatch's %v", *r.LastHeartbeatAt(), dispatchedAt)
 	}
 }
+
+func TestRun_Cancel_SkippedRun_ErrAlreadyTerminal(t *testing.T) {
+	ctx := context.Background()
+	tc := newFakeTaskCollection()
+	r := runningRunWithProjection(t, tc, uuid.New())
+	if _, err := r.MarkDispatchTerminal(true, "no_tests", time.Now()); err != nil {
+		t.Fatalf("MarkDispatchTerminal: %v", err)
+	}
+	events, err := r.Cancel(ctx, tc, "tester", "late", time.Now())
+	if err != run.ErrAlreadyTerminal {
+		t.Fatalf("Cancel on a skipped run: err = %v, want ErrAlreadyTerminal", err)
+	}
+	if len(events) != 0 || len(tc.bulkCancelled) != 0 {
+		t.Fatalf("want no events and no task cancels; events=%d bulkCancelled=%d", len(events), len(tc.bulkCancelled))
+	}
+	if r.Status() != run.SchedulerStatusSkipped {
+		t.Fatalf("status = %q, want skipped", r.Status())
+	}
+}
+
+// A task projected as cancelled (an inherited row of a derived run) fills its
+// slot at dispatch, and its run finalizes failed rather than succeeded.
+func TestAcceptDispatch_CancelledProjectedTaskIsTerminal(t *testing.T) {
+	t.Run("all projected tasks terminal", func(t *testing.T) {
+		r := freshPendingRun(t)
+		events, err := r.AcceptDispatch(context.Background(), newFakeTaskCollection(), []run.DispatchedTask{
+			{TaskID: uuid.New(), ServiceName: "s", SchemaName: "p", TableName: "a", Status: run.TaskStatusSucceeded, MaxRetries: 3},
+			{TaskID: uuid.New(), ServiceName: "s", SchemaName: "p", TableName: "b", Status: run.TaskStatusCancelled, MaxRetries: 3},
+		}, time.Now())
+		if err != nil {
+			t.Fatalf("AcceptDispatch: %v", err)
+		}
+		if r.Status() != run.SchedulerStatusFailed || r.TerminalTaskCount() != 2 {
+			t.Fatalf("status=%q terminal=%d, want failed / 2", r.Status(), r.TerminalTaskCount())
+		}
+		if fin, ok := events[0].(run.RunFinalized); !ok || fin.Outcome != run.SchedulerStatusFailed {
+			t.Fatalf("events[0] = %+v, want RunFinalized{Outcome: failed}", events[0])
+		}
+	})
+
+	t.Run("finalizes failed once the rest succeed", func(t *testing.T) {
+		ctx := context.Background()
+		tc := newFakeTaskCollection()
+		r := freshPendingRun(t)
+		pending := uuid.New()
+		if _, err := r.AcceptDispatch(ctx, tc, []run.DispatchedTask{
+			{TaskID: pending, ServiceName: "s", SchemaName: "p", TableName: "a", Status: run.TaskStatusPending, MaxRetries: 3},
+			{TaskID: uuid.New(), ServiceName: "s", SchemaName: "p", TableName: "b", Status: run.TaskStatusCancelled, MaxRetries: 3},
+		}, time.Now()); err != nil {
+			t.Fatalf("AcceptDispatch: %v", err)
+		}
+		if r.Status() != run.SchedulerStatusRunning || r.TerminalTaskCount() != 1 {
+			t.Fatalf("status=%q terminal=%d, want running / 1 (the cancelled task fills its slot)", r.Status(), r.TerminalTaskCount())
+		}
+
+		// TaskCollection.HasFailed answers true for a run holding a cancelled task.
+		tc.hasFailed = true
+		events, err := r.RecordTaskStatus(ctx, tc, pending, run.TaskStatusSucceeded, 0, time.Now())
+		if err != nil {
+			t.Fatalf("RecordTaskStatus: %v", err)
+		}
+		if r.Status() != run.SchedulerStatusFailed {
+			t.Fatalf("status = %q, want failed", r.Status())
+		}
+		if fin, ok := events[0].(run.RunFinalized); !ok || fin.Outcome != run.SchedulerStatusFailed {
+			t.Fatalf("events[0] = %+v, want RunFinalized{Outcome: failed}", events[0])
+		}
+	})
+}
