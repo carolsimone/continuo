@@ -101,4 +101,9 @@ type NodeReadyForExecution struct {
 	// single-node TEST runs so the executor runs `dbt test` instead of the
 	// default verb for the node's NodeType.
 	Operation string
+	// MaxRetries is the task's retry budget: the executor retries a failed
+	// attempt while the attempt's retry count is below it. Zero means the
+	// dispatch carries no budget and the executor applies
+	// pkg/events.DefaultTaskMaxRetries.
+	MaxRetries int32
 }

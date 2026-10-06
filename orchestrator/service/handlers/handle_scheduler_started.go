@@ -188,6 +188,7 @@ func (h *HandleSchedulerStartedHandler) Handle(ctx context.Context, evt domain.S
 			ImageTag:     task.ImageTag,
 			SecretRef:    task.SecretRef,
 			Operation:    evt.Operation,
+			MaxRetries:   task.MaxRetries,
 		}
 
 		evtPayload, err := json.Marshal(serialization.NodeReadyForExecutionFromDomain(nodeEvt))

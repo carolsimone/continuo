@@ -144,7 +144,7 @@ func (h *HandleSingleNodeRunHandler) Handle(ctx context.Context, cmd domainModel
 				SchemaName:  cmd.SchemaName,
 				TableName:   cmd.TableName,
 				NodeType:    nodeType,
-				MaxRetries:  pkgEvents.DefaultTaskMaxRetries,
+				MaxRetries:  sole.MaxRetries,
 				ImageTag:    imageTag,
 			},
 		},
@@ -184,6 +184,7 @@ func (h *HandleSingleNodeRunHandler) Handle(ctx context.Context, cmd domainModel
 		ImageTag:     imageTag,
 		SecretRef:    secretRef,
 		Operation:    cmd.Operation,
+		MaxRetries:   sole.MaxRetries,
 	}
 	queryPayload, err := json.Marshal(serialization.NodeReadyForExecutionFromDomain(queryEvt))
 	if err != nil {

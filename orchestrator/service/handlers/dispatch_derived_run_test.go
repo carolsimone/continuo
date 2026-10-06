@@ -192,3 +192,24 @@ func TestDispatchDerivedRun_InvalidRunID_Errors(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, errors.Is(err, errors.Unwrap(err)) || err != nil, "must propagate parse error")
 }
+
+func TestDispatchDerivedRun_FrontierCarriesTheTaskRetryBudget(t *testing.T) {
+	ctx := context.Background()
+	uow := newFakeUnitOfWork()
+
+	require.NoError(t, handlers.DispatchDerivedRun(ctx, uow, newTestLogger(), handlers.DerivedRunDispatch{
+		RunID:               "00000000-0000-0000-0000-000000000001",
+		ScheduleName:        "daily",
+		Kind:                "rerun",
+		MessageProcessingID: uuid.New(),
+		Projection: []snapshot.TaskProjection{{
+			TaskID: uuid.New(), ServiceName: "svc", SchemaName: "s", TableName: "tgt",
+			ScheduleName: "daily", NodeType: "dbt-model", InitialStatus: "PENDING",
+			ReadyToDispatch: true, ImageTag: "v1", MaxRetries: 4,
+		}},
+	}))
+
+	queries := queryModelDispatches(t, uow)
+	require.Len(t, queries, 1)
+	assert.Equal(t, int32(4), queries[0].MaxRetries)
+}

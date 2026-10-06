@@ -123,3 +123,20 @@ func TestHandlePromotedSeedsRun_SingleSeed_StillAnnouncesTheRun(t *testing.T) {
 	assert.Equal(t, streams.RunEntriesDispatchedV1, entries[0].StreamName)
 	assert.Equal(t, streams.QueryModelV1, entries[1].StreamName)
 }
+
+// Each seed's dispatch carries the retry budget of its projection row, which
+// is what lets a failed seed build be retried.
+func TestHandlePromotedSeedsRun_DispatchCarriesTheTaskRetryBudget(t *testing.T) {
+	ctx := context.Background()
+	uow := newFakeUnitOfWork()
+	runID := uuid.New().String()
+	projection := seedProjection("seed_users")
+	projection[0].MaxRetries = 4
+	h := handlers.NewHandlePromotedSeedsRunHandler(uow, &fakeSnapshotService{projection: projection}, newTestLogger())
+
+	require.NoError(t, h.Handle(ctx, promotedSeedsCmd(runID, "seed_users"), "msg-1", nil))
+
+	queries := queryModelDispatches(t, uow)
+	require.Len(t, queries, 1)
+	assert.Equal(t, int32(4), queries[0].MaxRetries)
+}

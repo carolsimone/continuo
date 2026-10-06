@@ -224,3 +224,35 @@ func TestHandleSingleNodeRun_FullRefreshUnsupported_EmitsDispatchFailed(t *testi
 	assert.Equal(t, pkgEvents.DispatchFailedReasonFullRefreshUnsupported, failed.Reason)
 	assert.True(t, uow.CommittedTx)
 }
+
+// TestHandleSingleNodeRun_StampsTheProjectionRetryBudget verifies that the
+// task's retry budget comes from its projection row on both the
+// run.entries.dispatched:v1 row state stores and the query.model:v1 dispatch
+// the executor retries by, so the two cannot disagree.
+func TestHandleSingleNodeRun_StampsTheProjectionRetryBudget(t *testing.T) {
+	ctx := context.Background()
+	uow := newFakeUnitOfWork()
+	snap := &fakeSnapshotService{projection: []snapshot.TaskProjection{{
+		TaskID: uuid.New(), ServiceName: "svc", SchemaName: "s", TableName: "t",
+		ScheduleName: "daily", NodeType: "dbt-model", InitialStatus: "PENDING",
+		ImageTag: "v1", MaxRetries: 4,
+	}}}
+	h := handlers.NewHandleSingleNodeRunHandler(uow, snap, newTestLogger())
+
+	require.NoError(t, h.Handle(ctx, domainModel.SingleNodeRunInput{
+		RunID: uuid.New().String(), ScheduleName: "daily", ServiceName: "svc",
+		SchemaName: "s", TableName: "t", MetadataSource: "latest", InitiatedBy: "system",
+	}, "msg-1", nil))
+
+	entries := uow.outboxRepo.CreatedEntries
+	require.Len(t, entries, 2, "1 dispatched + 1 query.model")
+	require.Equal(t, streams.RunEntriesDispatchedV1, entries[0].StreamName)
+	var dispatched pkgEvents.RunEntriesDispatched
+	require.NoError(t, json.Unmarshal(entries[0].Payload, &dispatched))
+	require.Len(t, dispatched.AllTasks, 1)
+	assert.Equal(t, int32(4), dispatched.AllTasks[0].MaxRetries)
+
+	queries := queryModelDispatches(t, uow)
+	require.Len(t, queries, 1)
+	assert.Equal(t, int32(4), queries[0].MaxRetries)
+}

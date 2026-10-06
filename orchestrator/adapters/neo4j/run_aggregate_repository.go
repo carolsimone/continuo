@@ -8,6 +8,8 @@ import (
 
 	domainRun "github.com/carolsimone/continuo/orchestrator/domain/run"
 	pkgModel "github.com/carolsimone/continuo/pkg/domain/model"
+	pkgEvents "github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/pkg/num"
 	"github.com/google/uuid"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
@@ -56,6 +58,7 @@ func (r *RunAggregateRepository) rehydrateFull(ctx context.Context, runID string
             COALESCE(e.status, 'PENDING')      AS status,
             COALESCE(e.image_tag, '')          AS image_tag,
             COALESCE(e.secret_ref, '')         AS secret_ref,
+            e.max_retries                      AS max_retries,
             t.table_name                       AS table_name,
             t.schema_name                      AS schema_name,
             t.service_name                     AS service_name,
@@ -111,6 +114,7 @@ func (r *RunAggregateRepository) rehydrateForCompletion(ctx context.Context, run
                 COALESCE(e.status, 'PENDING')      AS status,
                 COALESCE(e.image_tag, '')          AS image_tag,
                 COALESCE(e.secret_ref, '')         AS secret_ref,
+                e.max_retries                      AS max_retries,
                 t.table_name                       AS table_name,
                 t.schema_name                      AS schema_name,
                 t.service_name                     AS service_name,
@@ -151,6 +155,7 @@ func (r *RunAggregateRepository) rehydrateForCompletion(ctx context.Context, run
                 COALESCE(e.status, 'PENDING')      AS status,
                 COALESCE(e.image_tag, '')          AS image_tag,
                 COALESCE(e.secret_ref, '')         AS secret_ref,
+                e.max_retries                      AS max_retries,
                 t.table_name                       AS table_name,
                 t.schema_name                      AS schema_name,
                 t.service_name                     AS service_name,
@@ -372,6 +377,7 @@ func (r *RunAggregateRepository) collectRunFromFlatRows(
 		schedTVal, _ := rec.Get("schedule_name_t")
 		itVal, _ := rec.Get("image_tag")
 		srVal, _ := rec.Get("secret_ref")
+		mrVal, _ := rec.Get("max_retries")
 		upsRaw, _ := rec.Get("upstreams")
 		downsRaw, _ := rec.Get("downstreams")
 
@@ -399,6 +405,7 @@ func (r *RunAggregateRepository) collectRunFromFlatRows(
 			NodeType:     safeString(ntypeVal),
 			ImageTag:     safeString(itVal),
 			SecretRef:    safeString(srVal),
+			MaxRetries:   edgeMaxRetries(mrVal),
 			Upstreams:    ups,
 			Downstreams:  downs,
 		})
@@ -422,6 +429,15 @@ func (r *RunAggregateRepository) collectRunFromFlatRows(
 		rebuilt.Status = domainRun.RunStatusInProgress
 	}
 	return rebuilt, nil
+}
+
+// edgeMaxRetries reads the retry budget stamped on an :EXECUTES edge. An edge
+// written without one takes the budget every projected task is stamped with.
+func edgeMaxRetries(v interface{}) int32 {
+	if v == nil {
+		return pkgEvents.DefaultTaskMaxRetries
+	}
+	return num.ClampInt32(toInt64(v))
 }
 
 func extractNodeKeys(raw interface{}) []domainRun.NodeKey {

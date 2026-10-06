@@ -44,8 +44,11 @@ type RunNode struct {
 	NodeType     string
 	ImageTag     string
 	SecretRef    string
-	Upstreams    []NodeKey // used to check if all upstreams are terminal (unblocking)
-	Downstreams  []NodeKey // immediate downstream keys (cascade skip traversal)
+	// MaxRetries is the task's retry budget, carried onto the NodeUnblocked
+	// that dispatches the node.
+	MaxRetries  int32
+	Upstreams   []NodeKey // used to check if all upstreams are terminal (unblocking)
+	Downstreams []NodeKey // immediate downstream keys (cascade skip traversal)
 }
 
 func (n *RunNode) isTerminal() bool {

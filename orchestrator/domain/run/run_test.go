@@ -31,6 +31,26 @@ func makeRun(nodes ...*run.RunNode) *run.Run {
 
 // finalization tests
 
+func TestCompleteNode_UnblockedNodeCarriesItsRetryBudget(t *testing.T) {
+	up := key("public", "orders")
+	down := key("public", "customers")
+	downNode := node(down, "PENDING", []run.NodeKey{up}, nil)
+	downNode.MaxRetries = 5
+	r := makeRun(node(up, "RUNNING", nil, []run.NodeKey{down}), downNode)
+
+	events, err := r.CompleteNode(up, "SUCCEEDED")
+
+	require.NoError(t, err)
+	var unblocked []run.NodeUnblocked
+	for _, e := range events {
+		if u, ok := e.(run.NodeUnblocked); ok {
+			unblocked = append(unblocked, u)
+		}
+	}
+	require.Len(t, unblocked, 1)
+	assert.Equal(t, int32(5), unblocked[0].MaxRetries)
+}
+
 func TestCompleteNode_LastNodeSucceeded_FinalizesAsSucceeded(t *testing.T) {
 	k := key("public", "orders")
 	r := makeRun(node(k, "RUNNING", nil, nil))

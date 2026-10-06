@@ -26,6 +26,9 @@ type NodeUnblocked struct {
 	// Operation is the run's operation ("" | "test" | "build"), carried so the
 	// downstream unblock dispatch runs the same dbt verb as the frontier.
 	Operation string
+	// MaxRetries is the node's retry budget, so the unblock dispatch carries
+	// the same budget state holds for the task.
+	MaxRetries int32
 }
 
 func (NodeUnblocked) domainEvent() {}

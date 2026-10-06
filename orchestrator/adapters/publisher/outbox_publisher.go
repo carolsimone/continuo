@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strconv"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	"github.com/carolsimone/continuo/orchestrator/serialization"
@@ -147,6 +148,12 @@ func (p *OutboxPublisher) Render(entry *outbox.Entry) (map[string]any, error) {
 		// Omitted for every node without API credentials.
 		if evt.SecretRef != "" {
 			values["secret_ref"] = evt.SecretRef
+		}
+		// MaxRetries is the task's retry budget, the one state stores for the
+		// task. Omitted when unset; the executor then applies
+		// pkgevents.DefaultTaskMaxRetries.
+		if evt.MaxRetries > 0 {
+			values["max_retries"] = strconv.FormatInt(int64(evt.MaxRetries), 10)
 		}
 		return values, nil
 

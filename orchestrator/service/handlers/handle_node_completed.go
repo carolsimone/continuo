@@ -232,6 +232,7 @@ func (h *HandleNodeCompletedHandler) writeNodeUnblockedEntry(
 		ImageTag:     e.ImageTag,
 		SecretRef:    e.SecretRef,
 		Operation:    e.Operation,
+		MaxRetries:   e.MaxRetries,
 	}
 	evtPayload, err := json.Marshal(serialization.NodeReadyForExecutionFromDomain(evt))
 	if err != nil {

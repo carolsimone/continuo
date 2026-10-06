@@ -184,6 +184,7 @@ func (r *Run) checkUnblocked(from NodeKey) []DomainEvent {
 				ImageTag:     downstream.ImageTag,
 				SecretRef:    downstream.SecretRef,
 				Operation:    r.Operation,
+				MaxRetries:   downstream.MaxRetries,
 			})
 		}
 	}
