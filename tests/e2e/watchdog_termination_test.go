@@ -48,16 +48,21 @@ func TestWatchdog_TerminatesStuckSchedule(t *testing.T) {
 	t.Logf("seeding runs: stalled=%s (%s) progressing=%s (%s)",
 		stalledName, stalledID, progressingName, progressingID)
 
-	t.Cleanup(func() {
-		// task_tracker rows cascade from scheduler_tracker; both deletes are
-		// scoped to the two runs this test created.
+	// Registered after the deferred clients.close, so it runs first, while
+	// stateDB is still open. task_tracker rows cascade from scheduler_tracker;
+	// both deletes are scoped to the two runs this test created.
+	defer func() {
 		for _, id := range []uuid.UUID{stalledID, progressingID} {
-			_, _ = clients.stateDB.ExecContext(context.Background(),
-				`DELETE FROM task_tracker WHERE schedule_id = $1`, id)
-			_, _ = clients.stateDB.ExecContext(context.Background(),
-				`DELETE FROM scheduler_tracker WHERE schedule_id = $1`, id)
+			if _, err := clients.stateDB.ExecContext(context.Background(),
+				`DELETE FROM task_tracker WHERE schedule_id = $1`, id); err != nil {
+				t.Logf("cleanup: delete task_tracker for run %s failed: %v", id, err)
+			}
+			if _, err := clients.stateDB.ExecContext(context.Background(),
+				`DELETE FROM scheduler_tracker WHERE schedule_id = $1`, id); err != nil {
+				t.Logf("cleanup: delete scheduler_tracker for run %s failed: %v", id, err)
+			}
 		}
-	})
+	}()
 
 	// Status values are lowercase per the scheduler_tracker CHECK constraint.
 	_, err := clients.stateDB.ExecContext(ctx, `
@@ -77,6 +82,8 @@ func TestWatchdog_TerminatesStuckSchedule(t *testing.T) {
 		uuid.New(), progressingID, createdAt)
 	require.NoError(t, err, "INSERT task_tracker (progressing) failed")
 
+	// A never-dispatched run: initialization_status='in_progress', NULL
+	// total_task_count, no task rows and no last_heartbeat_at.
 	_, err = clients.stateDB.ExecContext(ctx, `
 		INSERT INTO scheduler_tracker (
 		  schedule_id, schedule_name, status, created_at,
@@ -99,13 +106,26 @@ func TestWatchdog_TerminatesStuckSchedule(t *testing.T) {
 		return false, nil
 	}, "Timeout waiting for the watchdog to cancel the stalled run")
 
-	st := readScheduleState(t, ctx, clients, stalledName)
+	// Assert by run id: the cancel must have landed on the seeded run's id.
+	type runRow struct {
+		Status             string `db:"status"`
+		CancelledBy        string `db:"cancelled_by"`
+		CancellationReason string `db:"cancellation_reason"`
+	}
+	const byID = `SELECT status,
+		coalesce(cancelled_by, '') AS cancelled_by,
+		coalesce(cancellation_reason, '') AS cancellation_reason
+		FROM scheduler_tracker WHERE schedule_id = $1`
+
+	var st runRow
+	require.NoError(t, clients.stateDB.GetContext(ctx, &st, byID, stalledID))
 	assert.Equal(t, "cancelled", st.Status, "stalled run: expected status=cancelled")
 	assert.Equal(t, "watchdog", st.CancelledBy, "stalled run: expected cancelled_by=watchdog")
 	assert.True(t, strings.HasPrefix(st.CancellationReason, "watchdog:"),
 		"stalled run: expected cancellation_reason to start with 'watchdog:', got %q", st.CancellationReason)
 
-	kept := readScheduleState(t, ctx, clients, progressingName)
+	var kept runRow
+	require.NoError(t, clients.stateDB.GetContext(ctx, &kept, byID, progressingID))
 	assert.Equal(t, "running", kept.Status,
 		"a run with a fresh progress clock must stay active even though its task was created 31 minutes ago")
 	assert.Empty(t, kept.CancelledBy, "progressing run must not be cancelled")
