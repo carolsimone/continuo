@@ -8,10 +8,11 @@ build:
 run:
 	go run main.go
 
-# Run all tests (requires Docker for testcontainers)
+# Run all tests against an externally migrated, empty executor test database.
+# See test/README.md for POSTGRES_* configuration and isolation requirements.
 test:
 	@echo "Running all tests..."
-	@echo "NOTE: Repository and E2E tests require Docker to be running"
+	@echo "NOTE: Database tests require an empty, externally migrated executor database"
 	go test -v ./... -timeout 5m
 
 # Run unit tests only with fakes (no Docker required)
@@ -19,10 +20,10 @@ test-unit:
 	@echo "Running unit tests with fakes (no Docker required)..."
 	go test -v ./test/fakes_test.go -timeout 2m
 
-# Run integration tests with testcontainers
+# Run integration tests against the externally migrated executor database.
 test-integration:
 	@echo "Running integration tests..."
-	go test -v ./test/... -timeout 5m
+	REQUIRE_TEST_DEPS=1 go test -tags integration -v ./... -timeout 5m
 
 # Format code
 fmt:

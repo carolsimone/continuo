@@ -2,84 +2,71 @@ package test
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
+	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	"github.com/carolsimone/continuo/pkg/testdeps"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	"github.com/stretchr/testify/require"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-// setupPostgres starts a PostgreSQL testcontainer and runs migrations to create
-// the execution database's schema (execution_outbox, deployments,
-// cancelled_schedules, message_processing) used by the standardized outbox
-// pattern.
-func setupPostgres(t *testing.T) (*sqlx.DB, func()) {
-	ctx := context.Background()
-
-	// Start PostgreSQL container
-	req := testcontainers.ContainerRequest{
-		Image:        "postgres:16-alpine",
-		ExposedPorts: []string{"5432/tcp"},
-		Env: map[string]string{
-			"POSTGRES_USER":     "testuser",
-			"POSTGRES_PASSWORD": "testpass",
-			"POSTGRES_DB":       "testdb",
-		},
-		WaitingFor: wait.ForLog("database system is ready to accept connections").
-			WithOccurrence(2).
-			WithStartupTimeout(60 * time.Second),
+// SetupPostgres connects to an externally migrated executor test database.
+// Every executor DB suite shares a session advisory lock, so each test owns
+// all rows inserted after its empty-table check. A database containing rows
+// is refused rather than clearing data belonging to another process.
+func SetupPostgres(t *testing.T) (*sqlx.DB, func()) {
+	t.Helper()
+	cfg := pkgconfig.LoadPostgres(&pkgconfig.Validator{})
+	if cfg.Host == "" {
+		testdeps.Unavailable(t, "POSTGRES_HOST not set; configure an empty executor database and run its Flyway migrations")
 	}
-
-	postgresContainer, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-		ContainerRequest: req,
-		Started:          true,
-	})
-	require.NoError(t, err, "Failed to start PostgreSQL container")
-
-	// Get container host and port
-	host, err := postgresContainer.Host(ctx)
-	require.NoError(t, err, "Failed to get container host")
-
-	port, err := postgresContainer.MappedPort(ctx, "5432")
-	require.NoError(t, err, "Failed to get container port")
-
-	// Force IPv4 for macOS compatibility
-	if host == "localhost" {
-		host = "127.0.0.1"
+	db, err := sqlx.Connect("postgres", cfg.DSN())
+	if err != nil {
+		testdeps.Unavailable(t, "executor postgres unreachable: %v", err)
 	}
+	t.Cleanup(func() { _ = db.Close() })
 
-	// Create connection string
-	connStr := "host=" + host + " port=" + port.Port() + " user=testuser password=testpass dbname=testdb sslmode=disable"
-
-	// Retry connection to database (port mapping may take a moment)
-	var db *sqlx.DB
-	maxRetries := 10
-	for i := 0; i < maxRetries; i++ {
-		db, err = sqlx.Connect("postgres", connStr)
-		if err == nil {
-			break
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	lockConn, err := db.Conn(ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, unlockErr := lockConn.ExecContext(context.Background(), `SELECT pg_advisory_unlock(861248012)`)
+		if unlockErr != nil {
+			t.Errorf("release executor test lock: %v", unlockErr)
 		}
-		t.Logf("Connection attempt %d/%d failed, retrying...", i+1, maxRetries)
-		time.Sleep(500 * time.Millisecond)
+		_ = lockConn.Close()
+	})
+	_, err = lockConn.ExecContext(ctx, `SELECT pg_advisory_lock(861248012)`)
+	require.NoError(t, err, "serialize executor database tests")
+
+	for _, table := range []string{"execution_outbox", "deployments", "validation_aggregates", "cancelled_schedules", "message_processing"} {
+		var present bool
+		require.NoError(t, db.Get(&present, `SELECT to_regclass($1) IS NOT NULL`, table))
+		require.True(t, present, "%s missing: run Flyway migrations from db/migration/execution before testing", table)
+		var count int
+		require.NoError(t, db.Get(&count, `SELECT count(*) FROM `+table))
+		require.Zero(t, count, "%s contains data: use an empty, dedicated executor test database without running controllers", table)
 	}
-	require.NoError(t, err, "Failed to connect to database after retries")
 
-	// Apply the real db/migration/execution/V*.sql migrations in version order,
-	// keeping the testcontainer schema (execution_outbox, deployments,
-	// message_processing, and any later columns like
-	// message_processing.outbox_entry_id) in lock-step with production.
-	// Hand-rolled inline DDL drifts the first time a new migration adds a
-	// column; this can't.
-	require.NoError(t, ApplyMigrations(db.DB), "apply execution database migrations")
-
-	// Cleanup function
+	var once sync.Once
 	cleanup := func() {
-		_ = db.Close()
-		_ = postgresContainer.Terminate(ctx)
+		once.Do(func() {
+			cleanCtx, cleanCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cleanCancel()
+			_, cleanErr := db.ExecContext(cleanCtx, `TRUNCATE execution_outbox, deployments, validation_aggregates, cancelled_schedules, message_processing`)
+			if cleanErr != nil {
+				t.Errorf("clean executor test-owned rows: %v", cleanErr)
+			}
+		})
 	}
-
+	t.Cleanup(cleanup)
 	return db, cleanup
+}
+
+func setupPostgres(t *testing.T) (*sqlx.DB, func()) {
+	return SetupPostgres(t)
 }

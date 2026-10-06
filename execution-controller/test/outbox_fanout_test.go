@@ -4,7 +4,7 @@ package test
 // decisions that must produce exactly N canonical outbox rows in a single
 // atomic transaction.
 //
-// These tests use a real PostgreSQL instance (via testcontainers) to verify
+// These tests use an externally migrated PostgreSQL test database to verify
 // that the D1 design guarantee holds at the storage layer — not just in memory:
 //
 //   1. Happy path: handleSucceeded commits exactly 3 rows.

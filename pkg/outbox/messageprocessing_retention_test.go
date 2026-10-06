@@ -12,6 +12,37 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// seedDeploymentReferencing inserts a production deployments row naming
+// messageProcessingID and deletes it when the test ends.
+func seedDeploymentReferencing(t *testing.T, db *sqlx.DB, messageProcessingID uuid.UUID) uuid.UUID {
+	t.Helper()
+	id := uuid.New()
+	_, err := db.Exec(
+		`INSERT INTO deployments (id, message_processing_id, task_id, schedule_id, job_params)
+		 VALUES ($1, $2, gen_random_uuid(), gen_random_uuid(), '{}'::jsonb)`,
+		id, messageProcessingID,
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = db.Exec(`DELETE FROM deployments WHERE id = $1`, id) })
+	return id
+}
+
+// TestDeleteOlderThan_PurgesRowADeploymentNamesAndClearsTheName proves a
+// deployments row does not hold an aged dedup row back: the row is purged and
+// the deployment's message_processing_id becomes NULL.
+func TestDeleteOlderThan_PurgesRowADeploymentNamesAndClearsTheName(t *testing.T) {
+	db := dbForTest(t)
+	pruner := messageprocessing.NewPruner(db, testOutboxTable, newTestLogger())
+	id := seedDedupRow(t, db, messageprocessing.StateProcessing, time.Now().Add(-10*24*time.Hour))
+	deploymentID := seedDeploymentReferencing(t, db, id)
+	n := pruneUntilIdle(t, pruner)
+	assert.GreaterOrEqual(t, n, int64(1), "the aged row is purged")
+	assert.False(t, dedupRowExists(t, db, id), "a deployment naming the row does not keep it")
+	var ref uuid.NullUUID
+	require.NoError(t, db.QueryRow(`SELECT message_processing_id FROM deployments WHERE id = $1`, deploymentID).Scan(&ref))
+	assert.False(t, ref.Valid, "the deployment's message_processing_id is cleared")
+}
+
 // These tests run against the same DB harness (dbForTest) as the outbox tests:
 // continuo_execution holds both execution_outbox and message_processing, so the
 // dedup retention DELETE can be exercised here without a second harness.

@@ -124,6 +124,9 @@ func NewSeedBuildRequestedBinding(
 			}
 			return err
 		}
+		if err := u.MessageProcessingRepo().UpdateState(ctx, msgProcID, messageprocessing.StateCompleted); err != nil {
+			return fmt.Errorf("mark completed: %w", err)
+		}
 		if err := u.Commit(); err != nil {
 			return fmt.Errorf("commit tx: %w", err)
 		}

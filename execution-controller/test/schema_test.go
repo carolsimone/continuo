@@ -60,6 +60,7 @@ func TestExecutionSchemaMatchesContract(t *testing.T) {
 		"idx_execution_outbox_claimable", "idx_execution_outbox_open_by_aggregate", "idx_execution_outbox_failed", "idx_execution_outbox_aggregate",
 		"idx_message_processing_outbox_entry_id_stream", "message_processing_message_id_stream_name_key",
 		"idx_deployments_due", "idx_deployments_candidate_release", "uq_deployments_candidate_release_node_mode",
+		"idx_deployments_message_processing_id", "idx_execution_outbox_message_processing_id",
 	})
 
 	require.NotContains(t, indexes, "idx_execution_outbox_pending")
@@ -82,4 +83,11 @@ func TestExecutionSchemaMatchesContract(t *testing.T) {
 		"deployments_status_check", "deployments_mode_check", "deployments_outcome_check", "deployments_candidate_identity_check",
 		"execution_outbox_status_check", "validation_aggregates_mode_check", "message_processing_state_check",
 	}, checks)
+
+	// deployments.message_processing_id is provenance only: pruning an aged
+	// dedup row clears it rather than being refused.
+	var onDelete string
+	require.NoError(t, db.QueryRow(`SELECT confdeltype FROM pg_constraint
+		WHERE conname = 'deployments_message_processing_id_fkey' AND conrelid = 'deployments'::regclass`).Scan(&onDelete))
+	require.Equal(t, "n", onDelete, "deployments.message_processing_id is ON DELETE SET NULL")
 }
