@@ -335,8 +335,8 @@ func (r *taskTrackerRepository) ExistsTx(ctx context.Context, tx *sqlx.Tx, taskI
 }
 
 // HasFailedTaskTx reports whether any task_tracker row for the given schedule
-// has status 'failed' or 'cancelled': a task that neither succeeded nor was
-// skipped, so its run finalizes failed.
+// has status 'failed' or 'cancelled': a task that ended unsuccessfully (pending
+// and running tasks do not match), so its run finalizes failed.
 func (r *taskTrackerRepository) HasFailedTaskTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID) (bool, error) {
 	var exists bool
 	err := tx.QueryRowContext(ctx,

@@ -351,11 +351,14 @@ func (c changeSet) IsHeartbeatDirty() bool         { return c.heartbeatDirty }
 //   - A projected task whose identity cannot be turned into a Kubernetes Job
 //     name finalizes the run as failed through MarkDispatchTerminal with reason
 //     DispatchReasonInvalidTask, before any task is written. No error is
-//     returned: the outcome commits like any other dispatch result.
+//     returned: the outcome commits like any other dispatch result. This path
+//     leaves init_status unchanged (the run is terminal, so a redelivery still
+//     no-ops through IsTerminal).
 //   - BulkCreate every projected task.
 //   - total_task_count = len(projection); terminal_task_count seeded from
 //     already-terminal projected rows.
-//   - init_status = completed always after dispatch.
+//   - init_status = completed once the projected tasks are written (every
+//     path except the unnameable-task finalization above).
 //   - last_heartbeat_at (the run's progress clock) = now.
 //   - Status transition:
 //     every projected task terminal && all succeeded → SUCCEEDED + completed_at

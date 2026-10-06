@@ -128,7 +128,7 @@ func TestPromotedSeedsHandler_CarriesPinnedMetadataOntoTheTrigger(t *testing.T) 
 	assert.Equal(t, "dbt-seed", evt.Nodes[0].NodeType)
 }
 
-// The run id is derived from the release id, so a redelivered release.promoted:v1
+// The run id is derived from the release id, so a redelivered release.seeds.pending:v1
 // resolves to the run that already exists rather than minting a second one and
 // rebuilding seeds that are already built.
 func TestPromotedSeedsRunID_IsDeterministicPerRelease(t *testing.T) {
