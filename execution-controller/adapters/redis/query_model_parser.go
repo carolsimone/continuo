@@ -7,7 +7,6 @@ import (
 
 	"github.com/carolsimone/continuo/execution-controller/domain/events"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
-	"github.com/carolsimone/continuo/pkg/num"
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -62,7 +61,7 @@ func ParseQueryModel(msg goredis.XMessage) (events.QueryModel, error) {
 		if n < 0 {
 			return events.QueryModel{}, fmt.Errorf("invalid max_retries %d: must not be negative", n)
 		}
-		maxRetries = num.ClampInt32(n)
+		maxRetries = int32(n)
 	}
 	return events.QueryModel{
 		OutboxEntryID: outboxEntryID,

@@ -41,13 +41,19 @@ func (s NodeSet) SelectTasks(ctx context.Context, r TopologyReader, p Params) ([
 		if fqn.Service == "" || fqn.Schema == "" || fqn.Table == "" {
 			return nil, fmt.Errorf("NodeSet: service_name, schema_name, and table_name are required")
 		}
-		// A task id is derived from (run, table), so a repeated node would
-		// produce a second task with the first one's id, which the run would
-		// count but never see complete.
-		if _, dup := seen[fqn]; dup {
+		// A task id is derived from the run and the row's (service, schema,
+		// table, schedule_name), with the schedule_name taken from the looked-up
+		// topology row rather than the requested FQN. Two FQNs that differ only
+		// in schedule_name therefore resolve to one row and one task id, so the
+		// dedup keys on (service, schema, table) — the identity that actually
+		// fixes the id. A repeated node would otherwise produce a second task
+		// with the first one's id, which the run would count but never see
+		// complete.
+		key := FQN{Service: fqn.Service, Schema: fqn.Schema, Table: fqn.Table}
+		if _, dup := seen[key]; dup {
 			continue
 		}
-		seen[fqn] = struct{}{}
+		seen[key] = struct{}{}
 		row, ok, err := r.LoadSingleLatestTable(ctx, fqn)
 		if err != nil {
 			return nil, fmt.Errorf("NodeSet %s.%s.%s: %w", fqn.Service, fqn.Schema, fqn.Table, err)
