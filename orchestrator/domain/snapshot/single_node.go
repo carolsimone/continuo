@@ -6,7 +6,6 @@ import (
 
 	pkgModel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgEvents "github.com/carolsimone/continuo/pkg/events"
-	"github.com/google/uuid"
 )
 
 // SingleNode is the Feature 4 selector — produces exactly one TaskProjection
@@ -40,7 +39,7 @@ func (s SingleNode) SelectTasks(ctx context.Context, r TopologyReader, p Params)
 		if err := checkFullRefreshTarget(p.Operation, row.NodeType); err != nil {
 			return nil, err
 		}
-		return []TaskProjection{toSingleNodeProjection(fqn, row)}, nil
+		return []TaskProjection{toSingleNodeProjection(p.RunID, fqn, row)}, nil
 	case "snapshot_of_run":
 		if p.SourceRunID == nil {
 			return nil, fmt.Errorf("SingleNode: snapshot_of_run mode requires SourceRunID")
@@ -58,7 +57,7 @@ func (s SingleNode) SelectTasks(ctx context.Context, r TopologyReader, p Params)
 		if err := checkFullRefreshTarget(p.Operation, row.NodeType); err != nil {
 			return nil, err
 		}
-		return []TaskProjection{toSingleNodeProjection(fqn, row)}, nil
+		return []TaskProjection{toSingleNodeProjection(p.RunID, fqn, row)}, nil
 	default:
 		return nil, fmt.Errorf("SingleNode: invalid MetadataSource %q (want 'latest' or 'snapshot_of_run')", s.MetadataSource)
 	}
@@ -76,9 +75,9 @@ func checkFullRefreshTarget(operation, nodeType string) error {
 	return nil
 }
 
-func toSingleNodeProjection(fqn FQN, row LatestTableRow) TaskProjection {
+func toSingleNodeProjection(runID string, fqn FQN, row LatestTableRow) TaskProjection {
 	return TaskProjection{
-		TaskID:         uuid.New(),
+		TaskID:         rowTaskID(runID, fqn, row.ScheduleName),
 		ServiceName:    fqn.Service,
 		SchemaName:     fqn.Schema,
 		TableName:      fqn.Table,

@@ -6,7 +6,6 @@ import (
 
 	pkgModel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgEvents "github.com/carolsimone/continuo/pkg/events"
-	"github.com/google/uuid"
 )
 
 // LatestFullDAG is the cron / trigger selector. It returns every active :Table
@@ -40,7 +39,7 @@ func (LatestFullDAG) SelectTasks(ctx context.Context, r TopologyReader, p Params
 				continue
 			}
 			projection = append(projection, TaskProjection{
-				TaskID:          uuid.New(),
+				TaskID:          rowTaskID(p.RunID, f, row.ScheduleName),
 				ServiceName:     f.Service,
 				SchemaName:      f.Schema,
 				TableName:       f.Table,
@@ -93,7 +92,7 @@ func (LatestFullDAG) SelectTasks(ctx context.Context, r TopologyReader, p Params
 	for f, row := range rows {
 		_, isBlocked := blocked[f]
 		projection = append(projection, TaskProjection{
-			TaskID:          uuid.New(),
+			TaskID:          rowTaskID(p.RunID, f, row.ScheduleName),
 			ServiceName:     f.Service,
 			SchemaName:      f.Schema,
 			TableName:       f.Table,
