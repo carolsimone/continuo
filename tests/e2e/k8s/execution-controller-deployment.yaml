@@ -182,6 +182,8 @@ spec:
               value: "8084"
             - name: METRICS_PORT
               value: "9464"
+            - name: LOG_LEVEL
+              value: "INFO"
           readinessProbe:
             httpGet:
               path: /ready

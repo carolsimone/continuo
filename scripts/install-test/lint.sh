@@ -111,6 +111,23 @@ loglevel_changed="$(mc_checksum --set global.logLevel=DEBUG)"
 echo "--- chart ConfigMap changes roll exactly the pods that read them at startup"
 python3 scripts/install-test/assert-config-rollout.py "$CHART" "$KUBE_VERSION"
 
+# global.logLevel reaches every service as LOG_LEVEL, and a service refuses to
+# start on a level it does not know, so the chart (continuo.logLevel in
+# _helpers.tpl) refuses such a level at render time instead. The services
+# match the level in any case, so a mixed-case level must still render.
+echo "--- global.logLevel: a level the services do not accept fails the render"
+if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+     --set global.logLevel=verbose > /dev/null 2> "${tmp}/loglevel.err"; then
+  echo "FAIL: global.logLevel=verbose rendered; every service would refuse to start"; exit 1
+fi
+grep -q 'logLevel' "${tmp}/loglevel.err" || { echo "FAIL: unexpected error:"; cat "${tmp}/loglevel.err"; exit 1; }
+echo "--- global.logLevel: a mixed-case level renders as given"
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set global.logLevel=Info > "${tmp}/loglevel-mixed.yaml" \
+  || { echo "FAIL: global.logLevel=Info did not render; the services accept it"; exit 1; }
+grep -q 'LOG_LEVEL: "Info"' "${tmp}/loglevel-mixed.yaml" \
+  || { echo "FAIL: LOG_LEVEL did not render as Info"; exit 1; }
+
 # ciAuth.bindings.*.repositoryId must be a quoted digit string: GitHub's
 # repository_id claim is a string, so an unquoted YAML number would render a
 # binding the ui can never match. The schema refuses it at render time. A valid

@@ -1,3 +1,4 @@
+import logging
 import os
 
 from streams_contract import (
@@ -57,6 +58,38 @@ def warehouse_dialect() -> str:
             f"{', '.join(sorted(_ENGINE_DIALECTS))}"
         ) from None
 
+
+# LOG_LEVEL (the chart's global.logLevel, injected through the shared
+# ConfigMap) -> the logging level this service logs at, matched without regard
+# to case. These are the names every Go service accepts
+# (pkg/config.AcceptedLogLevels, in the same order; pkg/streams'
+# TestTopologyControllerLogLevelsMatchTheGoServices pins the two). Unset or
+# empty is INFO.
+_LOG_LEVELS = {
+    "debug": logging.DEBUG,
+    "info": logging.INFO,
+    "warn": logging.WARNING,
+    "warning": logging.WARNING,
+    "error": logging.ERROR,
+}
+
+
+def log_level() -> int:
+    """Return the logging level LOG_LEVEL names.
+
+    Raises RuntimeError for a name outside _LOG_LEVELS, so a level this service
+    cannot honour stops it at startup rather than logging at another level.
+    """
+    raw = os.environ.get("LOG_LEVEL", "")
+    if not raw:
+        return logging.INFO
+    try:
+        return _LOG_LEVELS[raw.lower()]
+    except KeyError:
+        raise RuntimeError(
+            f"unsupported LOG_LEVEL {raw!r}: expected one of {', '.join(_LOG_LEVELS)}"
+        ) from None
+
 # Candidate-parse flow: release.requested:v1 → manifest.loaded.candidate:v1.
 RELEASE_REQUESTED_STREAM         = RELEASE_REQUESTED_V1
 RELEASE_REQUESTED_GROUP          = TOPOLOGY_CONTROLLER_RELEASE_REQUESTED
@@ -73,9 +106,11 @@ def validate() -> None:
     """Raise RuntimeError listing all missing required env vars.
 
     Also rejects an unsupported WAREHOUSE_ENGINE, which is optional but must
-    name an engine this service has a SQL dialect for.
+    name an engine this service has a SQL dialect for, and a LOG_LEVEL that
+    names no level this service logs at.
     """
     missing = [key for key in _REQUIRED if not os.environ.get(key)]
     if missing:
         raise RuntimeError(f"missing required env vars: {', '.join(missing)}")
     warehouse_dialect()
+    log_level()

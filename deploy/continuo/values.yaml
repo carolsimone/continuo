@@ -19,6 +19,11 @@ global:
   storageClass: ""
 
   env: production
+  # Level every Go service and topology-controller log at, published as
+  # LOG_LEVEL on the shared ConfigMap: DEBUG, INFO, WARN (or WARNING) or
+  # ERROR, in any case. The chart refuses to render any other value, and a
+  # service given one refuses to start. ui writes its server log with console
+  # and has no level.
   logLevel: INFO
 
   # Registry/namespace prefix for per-team dbt images (execution-controller

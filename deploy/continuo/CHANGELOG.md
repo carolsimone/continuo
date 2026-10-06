@@ -34,6 +34,8 @@ A new service, dead-letter-controller, stores every dead letter in its own datab
 - Publishers no longer cap streams at about 10,000 entries; trimming alone bounds them.
 - Streams the release no longer uses (13 names, from `compile.node.completed:v1` to `validation.node.completed:v1`) are deleted from Redis.
 - Stream consumers acknowledge without handling an entry that dead-letter-controller redrove for another consumer group, and an entry that was trimmed from the stream while it was pending.
+- Every Go service and topology-controller log at `global.logLevel` (`LOG_LEVEL` on the shared ConfigMap); they logged at INFO whatever it said. The accepted levels are `DEBUG`, `INFO`, `WARN`, `WARNING` and `ERROR`, in any case. Any other value now fails `helm install` and `helm upgrade` with a message naming the accepted levels, and a service started outside the chart with another value refuses to start. ui's server log has no level and is unaffected.
+- Values-contract semver impact: MINOR; existing supported `global.logLevel` overrides continue to work unchanged. Chart versions are stamped by the release workflow.
 
 ### Removed
 - The `stream-reaper` CronJob and its image. An install that mirrors images no longer needs `stream-reaper`.
