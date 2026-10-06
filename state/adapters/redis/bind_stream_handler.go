@@ -16,9 +16,9 @@ import (
 )
 
 // streamBinding describes one Redis-stream binding. Every state consumer runs
-// the identical parse → begin → rollback-defer → dedup → handle → commit
-// pipeline (bindStreamHandler below); the only things that vary per stream are
-// captured here.
+// the identical parse → begin → rollback-defer → dedup → handle → mark
+// completed → commit pipeline (bindStreamHandler below); the only things that
+// vary per stream are captured here.
 //
 // E is the parsed event type produced by Parse.
 type streamBinding[E any] struct {
@@ -69,7 +69,9 @@ func valuesPayload(msg goredis.XMessage) []byte {
 // policy: parse failures are wrapped with events.ErrPermanent (the consumer
 // dead-letters the message), while handler/repository failures propagate as-is
 // (the message is left pending for retry). On a duplicate the transaction is
-// committed (empty txn) and nil is returned so the consumer ACKs.
+// committed (empty txn) and nil is returned so the consumer ACKs. A handled
+// message's dedup row is marked completed in the handler's transaction, just
+// before it commits.
 func bindStreamHandler[E any](
 	uowFactory func() uow.UnitOfWork,
 	logger *slog.Logger,
@@ -118,6 +120,9 @@ func bindStreamHandler[E any](
 				logger.Error(b.label+": transient handler error", "message_id", msg.ID, "error", err)
 			}
 			return err
+		}
+		if err := u.MessageProcessingRepo().UpdateState(ctx, msgProcID, messageprocessing.StateCompleted); err != nil {
+			return fmt.Errorf("mark completed: %w", err)
 		}
 		if err := u.Commit(); err != nil {
 			return fmt.Errorf("commit tx: %w", err)
