@@ -40,9 +40,9 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 COPY pkg/ ./pkg/
 COPY execution-controller/ ./execution-controller/
 
-# execution-controller/test/migrations.go loads db/migration/execution/V*.sql
-# at test runtime so the in-container integration tests apply the same
-# Flyway DDL as production.
+# SQL-inspection tests read migration source to evaluate normalization
+# expressions in read-only fixture queries. Tests connect to an externally
+# migrated database and do not apply the migration statements.
 COPY db/migration/execution/ ./db/migration/execution/
 
 WORKDIR /app/execution-controller

@@ -329,7 +329,7 @@ func main() {
 		},
 		logger,
 	)
-	go retentionSweeper.Run(ctx)
+	lifecycleManager.Go(func() { retentionSweeper.Run(ctx) })
 
 	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error { return healthServer.Shutdown(ctx) })
 
