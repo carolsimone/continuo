@@ -246,7 +246,14 @@ func (r *taskTrackerRepository) ListByScheduleID(ctx context.Context, scheduleID
 	return tasks, total, nil
 }
 
-// BulkCreateTx inserts multiple task_tracker rows within a transaction.
+// taskTrackerInsertChunk is the most rows one BulkCreateTx statement inserts.
+// Each row binds 13 parameters and PostgreSQL accepts at most 65535 per
+// statement, so a single statement holds at most 5041 rows.
+const taskTrackerInsertChunk = 1000
+
+// BulkCreateTx inserts multiple task_tracker rows within a transaction, in
+// statements of at most taskTrackerInsertChunk rows, so a run of any size
+// inserts every task and the rows commit or roll back together with tx.
 // Uses ON CONFLICT (task_id) DO NOTHING for idempotent bulk inserts.
 func (r *taskTrackerRepository) BulkCreateTx(ctx context.Context, tx *sqlx.Tx, tasks []*TaskTracker) error {
 	if len(tasks) == 0 {
@@ -268,9 +275,11 @@ func (r *taskTrackerRepository) BulkCreateTx(ctx context.Context, tx *sqlx.Tx, t
 		)
 		ON CONFLICT (task_id) DO NOTHING
 	`
-	_, err := tx.NamedExecContext(ctx, query, tasks)
-	if err != nil {
-		return fmt.Errorf("bulk create task_tracker: %w", err)
+	for start := 0; start < len(tasks); start += taskTrackerInsertChunk {
+		end := min(start+taskTrackerInsertChunk, len(tasks))
+		if _, err := tx.NamedExecContext(ctx, query, tasks[start:end]); err != nil {
+			return fmt.Errorf("bulk create task_tracker rows %d-%d of %d: %w", start, end-1, len(tasks), err)
+		}
 	}
 	return nil
 }

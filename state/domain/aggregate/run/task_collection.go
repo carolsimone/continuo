@@ -52,7 +52,8 @@ type TaskCollection interface {
 	// aggregate decides when a write is warranted; this just persists it.
 	SetStatusAndAttempt(ctx context.Context, taskID uuid.UUID, status TaskStatus, retryCount int32) (rowsAffected int, err error)
 
-	// BulkCreate inserts every task in one statement.
+	// BulkCreate inserts every task of a run inside the caller's
+	// transaction, so the whole set commits or rolls back together.
 	BulkCreate(ctx context.Context, tasks []Task) error
 
 	// BulkCancel marks every non-terminal task of the given run as
