@@ -588,11 +588,12 @@ func TestHandleFailedPermanent(t *testing.T) {
 	}
 }
 
-// TestHandleUnknownStatus_WritesOnlyTaskStatusUpdated verifies that a production
-// task (no mode label) whose Job status is Unknown writes exactly one outbox
-// row — task_status_updated (FAILED) — with no task_execution_recorded and no
-// node_updated row, since no terminal Job outcome was actually observed.
-func TestHandleUnknownStatus_WritesOnlyTaskStatusUpdated(t *testing.T) {
+// TestHandleUnknownStatus_FailsPermanentlyWithTheBudgetSpent verifies that a
+// production task (no mode label) whose Job status is Unknown is recorded as a
+// permanent failure — task_status_updated (FAILED), task_execution_recorded and
+// node_updated (FAILED) — and that the FAILED status carries the task's retry
+// budget, so state sees no attempts left and finalizes the run.
+func TestHandleUnknownStatus_FailsPermanentlyWithTheBudgetSpent(t *testing.T) {
 	outbox := &jobStatusFakeOutboxRepo{}
 	handler := newHandler(&fakeK8sClient{
 		status: &model.JobResult{Status: model.JobStatusUnknown, TerminationMsg: "pod evicted"},
@@ -612,18 +613,13 @@ func TestHandleUnknownStatus_WritesOnlyTaskStatusUpdated(t *testing.T) {
 	}
 
 	entries := outbox.entries
-	require.Len(t, entries, 1, "expected only task_status_updated")
-	if got := eventTypeOf(entries, 0); got != "task_status_updated" {
-		t.Errorf("entries[0]: expected task_status_updated, got %q", got)
-	}
+	require.Equal(t, []string{"task_status_updated", "task_execution_recorded", "node_updated"}, eventTypesOf(entries))
 
 	var statusPayload pkgevents.TaskStatusUpdated
-	if err := json.Unmarshal(entries[0].Payload, &statusPayload); err != nil {
-		t.Fatalf("unmarshal task_status_updated: %v", err)
-	}
-	if statusPayload.Status != "FAILED" {
-		t.Errorf("task_status_updated status: expected FAILED, got %q", statusPayload.Status)
-	}
+	require.NoError(t, json.Unmarshal(entries[0].Payload, &statusPayload))
+	require.Equal(t, "FAILED", statusPayload.Status)
+	require.Equal(t, cmd.MaxRetries, statusPayload.RetryCount, "the FAILED status reports the retry budget as spent")
+	require.Equal(t, "pod evicted", decodeExecutionPayload(t, entries).ErrorMessage)
 }
 
 // TestHandleRunningCarriesRetryInfo verifies that a subsequent poll of a running

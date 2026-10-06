@@ -528,9 +528,20 @@ func (d *Dispatcher) writeFirstCheck(ctx context.Context, outboxRepo outbox.Repo
 	return nil
 }
 
+// writeFailedAnnouncements announces a production task whose deploy failed
+// terminally: task_status_updated (FAILED) and node_updated (FAILED). A deploy
+// failure gets no retry Job, so the FAILED status reports the task's retry
+// budget as spent: state finalizes a run only once no failed task has attempts
+// left (retry_count < max_retries), and a lower count would hold the run open
+// until the watchdog cancels it. A command decoded from corrupt job_params
+// carries no budget, so the default budget applies.
 func (d *Dispatcher) writeFailedAnnouncements(ctx context.Context, outboxRepo outbox.Repository, dep *model.Deployment) error {
 	cmd := dep.Command()
-	retryCount, err := num.Int32(cmd.TaskRetryCount, "task_retry_count")
+	budget := cmd.TaskMaxRetries
+	if budget <= 0 {
+		budget = int(pkgevents.DefaultTaskMaxRetries)
+	}
+	retryCount, err := num.Int32(max(cmd.TaskRetryCount, budget), "task_retry_count")
 	if err != nil {
 		return fmt.Errorf("write FAILED task_status announcement: %w", err)
 	}

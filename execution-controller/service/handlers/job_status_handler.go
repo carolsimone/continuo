@@ -157,7 +157,7 @@ func (h *JobStatusHandler) Handle(ctx context.Context, u uow.UnitOfWork, cmd com
 		}
 		return h.handleFailedWithRetry(ctx, u, cmd, result, retryCount, maxRetries)
 	default:
-		return h.handleUnknown(ctx, u, cmd, result)
+		return h.handleUnknown(ctx, u, cmd, result, retryCount, maxRetries)
 	}
 }
 
@@ -659,29 +659,26 @@ func (h *JobStatusHandler) handleRunning(ctx context.Context, u uow.UnitOfWork, 
 	return nil
 }
 
-// handleUnknown handles unknown job statuses (treated as permanent failure).
-// Writes 1 canonical outbox row in the transaction: task_status_updated (FAILED).
-func (h *JobStatusHandler) handleUnknown(ctx context.Context, u uow.UnitOfWork, cmd command.CheckJobStatus, result *model.JobResult) error {
-	repo := u.OutboxRepo()
-	errorMsg := h.truncateErrorMessage(result.TerminationMsg)
-	if errorMsg == "" {
-		errorMsg = "Job not found or unknown status"
+// handleUnknown records a production Job whose status is Unknown as a
+// permanent failure, writing the same rows as handleFailedPermanent:
+// task_status_updated (FAILED), task_execution_recorded and node_updated
+// (FAILED). An Unknown status gets no retry Job, so the FAILED status reports
+// the task's retry budget as spent: state finalizes a run only once no failed
+// task has attempts left (retry_count < max_retries), and a lower count would
+// hold the run open until the watchdog cancels it.
+func (h *JobStatusHandler) handleUnknown(ctx context.Context, u uow.UnitOfWork, cmd command.CheckJobStatus, result *model.JobResult, retryCount, maxRetries int32) error {
+	unknown := *result
+	if unknown.TerminationMsg == "" {
+		unknown.TerminationMsg = "Job not found or unknown status"
 	}
 
-	newRetryCount := cmd.RetryCount
-
-	// Row 1: task_status_updated (FAILED)
-	if err := h.writeTaskStatusUpdated(ctx, repo, cmd.TaskID, cmd.ScheduleID, "FAILED", newRetryCount); err != nil {
-		return fmt.Errorf("task_status_updated: %w", err)
-	}
-
-	h.logger.Error("Job status unknown — recorded as failed",
+	h.logger.Error("Job status unknown — recording a permanent failure",
 		"task_id", cmd.TaskID,
 		"job_name", cmd.JobName,
-		"error", errorMsg,
+		"error", unknown.TerminationMsg,
 	)
 
-	return nil
+	return h.handleFailedPermanent(ctx, u, cmd, &unknown, max(retryCount, maxRetries))
 }
 
 // writeTaskStatusUpdated writes a task_status_updated canonical outbox row.
