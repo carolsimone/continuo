@@ -47,6 +47,7 @@ func (h *RunEntriesDispatchFailedHandler) Handle(
 	if err != nil {
 		return fmt.Errorf("mark dispatch terminal: %w", err)
 	}
+	logDispatchTerminal(h.logger, "run.entries.dispatch_failed", evt.ScheduleID, domainEvents)
 	if err := u.Run().SaveRun(ctx, r); err != nil {
 		return fmt.Errorf("save run: %w", err)
 	}

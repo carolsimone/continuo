@@ -344,8 +344,14 @@ func (c changeSet) IsHeartbeatDirty() bool         { return c.heartbeatDirty }
 // makes the auto-rollup decision in one pass over the input.
 //
 // Behaviour:
-//   - No-op (returns no events, no mutations) when r is already terminal.
+//   - No-op (returns no events, no mutations) when r is already terminal, or
+//     when its init_status is already completed: a run is dispatched once, so a
+//     repeated projection neither re-creates tasks nor resets the counters.
 //     The handler binding still commits the surrounding tx so dedup is recorded.
+//   - A projected task whose identity cannot be turned into a Kubernetes Job
+//     name finalizes the run as failed through MarkDispatchTerminal with reason
+//     DispatchReasonInvalidTask, before any task is written. No error is
+//     returned: the outcome commits like any other dispatch result.
 //   - BulkCreate every projected task.
 //   - total_task_count = len(projection); terminal_task_count seeded from
 //     already-terminal projected rows.
@@ -362,15 +368,30 @@ func (r *Run) AcceptDispatch(
 	projection []DispatchedTask,
 	now time.Time,
 ) ([]DomainEvent, error) {
-	if r.IsTerminal() {
+	return r.acceptDispatch(ctx, tasks, projection, now, domain.ComputeJobName)
+}
+
+// jobNameFunc names a task's Kubernetes Job from its node identity and run id.
+type jobNameFunc func(serviceName, schemaName, tableName, runID string) (string, error)
+
+// acceptDispatch is AcceptDispatch with the Job-naming function supplied by the
+// caller.
+func (r *Run) acceptDispatch(
+	ctx context.Context,
+	tasks TaskCollection,
+	projection []DispatchedTask,
+	now time.Time,
+	nameJob jobNameFunc,
+) ([]DomainEvent, error) {
+	if r.IsTerminal() || r.initStatus == InitStatusCompleted {
 		return nil, nil
 	}
 
 	built := make([]Task, 0, len(projection))
 	for _, p := range projection {
-		jobName, err := domain.ComputeJobName(p.ServiceName, p.SchemaName, p.TableName, r.scheduleID.String())
+		jobName, err := nameJob(p.ServiceName, p.SchemaName, p.TableName, r.scheduleID.String())
 		if err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrInvalidDispatchedTask, err)
+			return r.MarkDispatchTerminal(false, DispatchReasonInvalidTask, now)
 		}
 		built = append(built, Task{
 			TaskID:              p.TaskID,
@@ -680,11 +701,12 @@ func (r *Run) finalizeIfComplete(ctx context.Context, tasks TaskCollection, now 
 	return r.finalize(outcome, now), nil
 }
 
-// MarkDispatchTerminal is called when orchestrator emits
-// run.entries.dispatch_failed:v1. A benign outcome (no work to do — a Test run
-// with no tests) finalizes the run as `skipped`; any other reason finalizes it
-// as `failed`. reason is recorded on the RunDispatchTerminal side event for
-// observability regardless of outcome. No-op when r is already terminal.
+// MarkDispatchTerminal finalizes a run whose dispatch produced no work: it is
+// called when orchestrator emits run.entries.dispatch_failed:v1, and by
+// AcceptDispatch for a task it cannot name. A benign outcome (no work to do — a
+// Test run with no tests) finalizes the run as `skipped`; any other reason
+// finalizes it as `failed`. reason is recorded on the RunDispatchTerminal side
+// event regardless of outcome. No-op when r is already terminal.
 func (r *Run) MarkDispatchTerminal(benign bool, reason string, now time.Time) ([]DomainEvent, error) {
 	if r.IsTerminal() {
 		return nil, nil

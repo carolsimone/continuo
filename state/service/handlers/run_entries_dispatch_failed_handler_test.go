@@ -1,6 +1,7 @@
 package handlers_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"log/slog"
@@ -169,6 +170,31 @@ func TestRunEntriesDispatchFailedHandler_FinalizesRunningSchedulerAsFailed(t *te
 	assert.Equal(t, run.SchedulerStatusFailed, finalized.Outcome)
 	assert.Equal(t, scheduleID, dispatchFailed.ID)
 	assert.Equal(t, string(pkgevents.DispatchFailedReasonTargetNotFound), dispatchFailed.Reason)
+}
+
+// TestRunEntriesDispatchFailedHandler_LogsReasonAtWarn verifies the reason a
+// dispatch finalized the run is logged at WARN with the run id: the
+// RunDispatchTerminal event carrying it is persisted nowhere.
+func TestRunEntriesDispatchFailedHandler_LogsReasonAtWarn(t *testing.T) {
+	scheduleID := uuid.New()
+	runRepo := &fakeDispatchFailedRunRepo{stored: newPendingTestRun(scheduleID, "test-schedule")}
+	u := &uow.FakeUnitOfWork{}
+	u.SetRunRepo(runRepo)
+	u.SetOutboxPublisher(&fakeDispatchFailedOutboxPub{})
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	err := handlers.NewRunEntriesDispatchFailedHandler(logger).Handle(context.Background(), u, events.RunEntriesDispatchFailed{
+		ScheduleID:   scheduleID,
+		ScheduleName: "test-schedule",
+		Reason:       pkgevents.DispatchFailedReasonEmptyProjection,
+	}, uuid.New())
+	require.NoError(t, err)
+
+	out := logs.String()
+	assert.Contains(t, out, "level=WARN")
+	assert.Contains(t, out, "reason="+string(pkgevents.DispatchFailedReasonEmptyProjection))
+	assert.Contains(t, out, "schedule_id="+scheduleID.String())
 }
 
 // TestRunEntriesDispatchFailedHandler_IdempotentOnAlreadyTerminal verifies

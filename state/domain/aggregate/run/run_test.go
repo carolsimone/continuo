@@ -913,16 +913,11 @@ func TestHasTaskAt_ReturnsFalseWhenMissing(t *testing.T) {
 }
 
 // TestComputeJobName_RejectsUnsanitizableIdentity pins the failure condition
-// that AcceptDispatch wraps as run.ErrInvalidDispatchedTask: pkg/domain.
-// ComputeJobName returns an error when a projected task's identity sanitizes to
-// an empty job name. AcceptDispatch calls ComputeJobName directly and wraps any
-// error in ErrInvalidDispatchedTask; the application handler maps that sentinel
-// to pkg/events.ErrPermanent so the consumer binding dead-letters the poison
-// message instead of retrying it until its delivery limit.
-//
-// Every constructible Run has a non-empty schedule_id whose String() always
-// contributes a non-empty suffix, so the empty-name branch can only be reached
-// at the ComputeJobName boundary itself; this test exercises that boundary.
+// AcceptDispatch turns into a failed run (reason DispatchReasonInvalidTask):
+// pkg/domain.ComputeJobName returns an error when a task's identity and run-id
+// suffix both sanitize to nothing. Every constructible Run has a non-empty
+// schedule_id suffix, so AcceptDispatch cannot reach that branch with the real
+// function; accept_dispatch_internal_test.go drives it with a failing one.
 func TestComputeJobName_RejectsUnsanitizableIdentity(t *testing.T) {
 	if _, err := domain.ComputeJobName("-", "-", "-", ""); err == nil {
 		t.Fatal("ComputeJobName must reject an identity that sanitizes to empty")
@@ -1139,5 +1134,40 @@ func TestRecordTaskStatus_NoProgressWithoutAnAppliedWrite(t *testing.T) {
 				t.Fatalf("LastHeartbeatAt = %v, want it unchanged at %v", *r.LastHeartbeatAt(), before)
 			}
 		})
+	}
+}
+
+// A run is dispatched once. A second run.entries.dispatched:v1 for a run whose
+// init_status is already completed must not re-create tasks, reset counters or
+// move the progress clock.
+func TestAcceptDispatch_RepeatedDispatchIsNoOp(t *testing.T) {
+	ctx := context.Background()
+	tc := newFakeTaskCollection()
+	dispatchedAt := time.Now()
+	r := dispatchedRun(t, tc, dispatchedAt, uuid.New())
+
+	events, err := r.AcceptDispatch(ctx, tc, []run.DispatchedTask{
+		{TaskID: uuid.New(), ServiceName: "s", SchemaName: "p", TableName: "again", Status: run.TaskStatusPending, MaxRetries: 3},
+		{TaskID: uuid.New(), ServiceName: "s", SchemaName: "p", TableName: "again2", Status: run.TaskStatusSucceeded, MaxRetries: 3},
+	}, dispatchedAt.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("AcceptDispatch: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("got %d events, want none", len(events))
+	}
+	if len(tc.bulkCreated) != 1 {
+		t.Fatalf("BulkCreate holds %d tasks, want only the first dispatch's 1", len(tc.bulkCreated))
+	}
+	if total := r.TotalTaskCount(); total == nil || *total != 1 || r.TerminalTaskCount() != 0 {
+		t.Fatalf("counters = total %v terminal %d, want 1 / 0", r.TotalTaskCount(), r.TerminalTaskCount())
+	}
+	ch := r.Changes()
+	if ch.IsStatusDirty() || ch.IsInitStatusDirty() || ch.IsTotalTaskCountDirty() ||
+		ch.IsTerminalTaskCountDirty() || ch.IsStartedDirty() || ch.IsHeartbeatDirty() {
+		t.Fatalf("a repeated dispatch must write nothing; change set = %+v", ch)
+	}
+	if !r.LastHeartbeatAt().Equal(dispatchedAt) {
+		t.Fatalf("LastHeartbeatAt = %v, want the first dispatch's %v", *r.LastHeartbeatAt(), dispatchedAt)
 	}
 }
