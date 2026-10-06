@@ -277,10 +277,11 @@ services:
       - STATE_GRPC_ADDR=state:50051
       # Dispatch watchdog — explicit at production defaults (also the
       # config.go fallback). Do NOT lower NO_PROGRESS_MINUTES here: a
-      # value below the longest realistic create→running latency (image
-      # pull + pod schedule on a fresh kind cluster) cancels real e2e
-      # schedules. TestWatchdog_TerminatesStuckSchedule seeds
-      # task_tracker rows with stale created_at instead.
+      # value below the longest realistic gap between two progress stamps
+      # (dispatch to first RUNNING includes image pull + pod schedule on a
+      # fresh kind cluster) cancels real e2e runs.
+      # TestWatchdog_TerminatesStuckSchedule seeds runs whose progress
+      # clock is already 31 minutes old instead.
       - ORCHESTRATOR_WATCHDOG_ENABLED=true
       - ORCHESTRATOR_WATCHDOG_INTERVAL_SECONDS=60
       - ORCHESTRATOR_WATCHDOG_NO_PROGRESS_MINUTES=30

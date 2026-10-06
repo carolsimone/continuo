@@ -12,21 +12,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestWatchdog_TerminatesStuckSchedule verifies the orchestrator's dispatch
-// watchdog (PR #33 B2) detects a schedule that has no task in 'running' and no
-// task progress within ORCHESTRATOR_WATCHDOG_NO_PROGRESS_MINUTES, then cancels
-// it via the state.CancelSchedule pathway — leaving cancellation_reason
-// starting with "watchdog:".
+// TestWatchdog_TerminatesStuckSchedule verifies that orchestrator's dispatch
+// watchdog cancels an active run that has made no lifecycle progress within
+// ORCHESTRATOR_WATCHDOG_NO_PROGRESS_MINUTES, by the run's id through state's
+// CancelScheduler, and leaves alone a run whose progress clock is recent.
 //
-// We bypass the dispatch path entirely (B1 would otherwise terminal-fail an
-// empty-image_tag dispatch before B2 has a chance) by inserting
-// scheduler_tracker + task_tracker rows directly via SQL with stale timestamps.
+// The test seeds two runs directly in scheduler_tracker / task_tracker, both
+// created 31 minutes ago so they are older than the 30-minute threshold:
 //
-// Independent of the watchdog env timing: this test seeds task_tracker
-// rows with created_at 31 minutes in the past, so the watchdog's
-// IsScheduleStuck predicate is satisfied on the very next tick at
-// production defaults (INTERVAL_SECONDS=60, NO_PROGRESS_MINUTES=30).
-// Total runtime ≈ one tick (≤60s) + cancel path round-trip (~5–10s).
+//   - stalled: pending, zero tasks, no last_heartbeat_at — its dispatch never
+//     arrived. Its progress time is created_at, so it is a candidate.
+//   - progressing: running, one pending task created 31 minutes ago, and
+//     last_heartbeat_at = now(). Task creation is old but the progress clock is
+//     fresh, so it is not a candidate.
+//
+// progressing is inserted first, so the watchdog tick that lists stalled has
+// already evaluated progressing. Once stalled is cancelled, progressing must
+// still be active. One tick (INTERVAL_SECONDS=60) plus the cancel round-trip
+// bounds the wait.
 func TestWatchdog_TerminatesStuckSchedule(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -36,40 +39,34 @@ func TestWatchdog_TerminatesStuckSchedule(t *testing.T) {
 
 	verifyServicesHealthy(t)
 
-	scheduleName := fmt.Sprintf("watchdog-test-%s", uuid.NewString()[:8])
-	scheduleID := uuid.New()
-	taskID := uuid.New()
-	t.Logf("seeding stuck schedule: name=%s schedule_id=%s task_id=%s",
-		scheduleName, scheduleID, taskID)
-
-	// Seed 31 minutes in the past so the watchdog fires on its next tick
-	// regardless of NO_PROGRESS_MINUTES (production default 30, local
-	// docker-compose 30). Test no longer depends on the env override.
+	suffix := uuid.NewString()[:8]
+	stalledName := fmt.Sprintf("watchdog-stalled-%s", suffix)
+	progressingName := fmt.Sprintf("watchdog-progressing-%s", suffix)
+	stalledID := uuid.New()
+	progressingID := uuid.New()
 	createdAt := time.Now().Add(-31 * time.Minute)
+	t.Logf("seeding runs: stalled=%s (%s) progressing=%s (%s)",
+		stalledName, stalledID, progressingName, progressingID)
 
-	// Insert into schedule_catalog so state.ListAllSchedules surfaces the
-	// schedule (the watchdog reads its candidate set from there). Without
-	// this row the schedule is invisible to the watchdog and never cancelled.
+	t.Cleanup(func() {
+		// task_tracker rows cascade from scheduler_tracker; both deletes are
+		// scoped to the two runs this test created.
+		for _, id := range []uuid.UUID{stalledID, progressingID} {
+			_, _ = clients.stateDB.ExecContext(context.Background(),
+				`DELETE FROM task_tracker WHERE schedule_id = $1`, id)
+			_, _ = clients.stateDB.ExecContext(context.Background(),
+				`DELETE FROM scheduler_tracker WHERE schedule_id = $1`, id)
+		}
+	})
+
+	// Status values are lowercase per the scheduler_tracker CHECK constraint.
 	_, err := clients.stateDB.ExecContext(ctx, `
-		INSERT INTO schedule_catalog (schedule_name, first_seen_at, last_seen_at, service_metadata)
-		VALUES ($1, $2, $2, '{}')
-		ON CONFLICT (schedule_name) DO NOTHING`,
-		scheduleName, createdAt)
-	require.NoError(t, err, "INSERT schedule_catalog failed")
-
-	// Insert the scheduler_tracker row.
-	// Status must be lowercase per the table's CHECK constraint (see schema).
-	_, err = clients.stateDB.ExecContext(ctx, `
 		INSERT INTO scheduler_tracker (
-		  schedule_id, schedule_name, status, created_at,
+		  schedule_id, schedule_name, status, created_at, last_heartbeat_at,
 		  initialization_status, service_metadata, total_task_count, terminal_task_count
-		) VALUES ($1, $2, 'running', $3, 'completed', '{}', 1, 0)`,
-		scheduleID, scheduleName, createdAt)
-	require.NoError(t, err, "INSERT scheduler_tracker failed")
-
-	// Insert one task in 'pending' state, also stale, so IsScheduleStuck's
-	// check (no task in 'running' + most-recent created_at older than
-	// NO_PROGRESS) is satisfied.
+		) VALUES ($1, $2, 'running', $3, now(), 'completed', '{}', 1, 0)`,
+		progressingID, progressingName, createdAt)
+	require.NoError(t, err, "INSERT scheduler_tracker (progressing) failed")
 	_, err = clients.stateDB.ExecContext(ctx, `
 		INSERT INTO task_tracker (
 		  task_id, schedule_id, created_at,
@@ -77,40 +74,39 @@ func TestWatchdog_TerminatesStuckSchedule(t *testing.T) {
 		  status, retry_count, max_retries
 		) VALUES ($1, $2, $3, 'svc-watchdog', 'raw', 'users',
 		          'job-svc-watchdog-raw-users', 'pending', 0, 3)`,
-		taskID, scheduleID, createdAt)
-	require.NoError(t, err, "INSERT task_tracker failed")
+		uuid.New(), progressingID, createdAt)
+	require.NoError(t, err, "INSERT task_tracker (progressing) failed")
 
-	t.Cleanup(func() {
-		// Best-effort cleanup: delete by schedule_id so we don't leak rows
-		// across test runs. task_tracker has ON DELETE CASCADE so deleting
-		// the scheduler row also removes the tasks, but explicit is clearer.
-		_, _ = clients.stateDB.ExecContext(context.Background(),
-			`DELETE FROM task_tracker WHERE schedule_id = $1`, scheduleID)
-		_, _ = clients.stateDB.ExecContext(context.Background(),
-			`DELETE FROM scheduler_tracker WHERE schedule_id = $1`, scheduleID)
-		_, _ = clients.stateDB.ExecContext(context.Background(),
-			`DELETE FROM schedule_catalog WHERE schedule_name = $1`, scheduleName)
-	})
+	_, err = clients.stateDB.ExecContext(ctx, `
+		INSERT INTO scheduler_tracker (
+		  schedule_id, schedule_name, status, created_at,
+		  initialization_status, service_metadata, terminal_task_count
+		) VALUES ($1, $2, 'pending', $3, 'in_progress', '{}', 0)`,
+		stalledID, stalledName, createdAt)
+	require.NoError(t, err, "INSERT scheduler_tracker (stalled) failed")
 
-	t.Log("Stuck schedule seeded — waiting for watchdog to cancel it...")
+	t.Log("Runs seeded — waiting for the watchdog to cancel the stalled one...")
 
-	// Poll up to 150s. Worst case: just missed a tick at INTERVAL_SECONDS=60,
-	// next tick in 60s, plus cancel path round-trip via state.CancelSchedule
-	// outbox + cancel publisher (~5–10s).
+	// Worst case: the seed just missed a tick, the next comes 60s later, then
+	// CancelScheduler commits the cancel in one transaction.
 	pollUntil(t, ctx, 150*time.Second, 5*time.Second, func() (bool, error) {
-		st := readScheduleState(t, ctx, clients, scheduleName)
+		st := readScheduleState(t, ctx, clients, stalledName)
 		if st.Status == "cancelled" && strings.HasPrefix(st.CancellationReason, "watchdog:") {
-			t.Logf("✅ watchdog cancelled: status=%s cancelled_by=%s reason=%q",
-				st.Status, st.CancelledBy, st.CancellationReason)
+			t.Logf("watchdog cancelled the stalled run: cancelled_by=%s reason=%q",
+				st.CancelledBy, st.CancellationReason)
 			return true, nil
 		}
 		return false, nil
-	}, "Timeout waiting for watchdog to cancel the stuck schedule")
+	}, "Timeout waiting for the watchdog to cancel the stalled run")
 
-	// Final structural assertion in case the polled condition raced.
-	st := readScheduleState(t, ctx, clients, scheduleName)
-	assert.Equal(t, "cancelled", st.Status, "expected status=cancelled")
-	assert.Equal(t, "watchdog", st.CancelledBy, "expected cancelled_by=watchdog")
+	st := readScheduleState(t, ctx, clients, stalledName)
+	assert.Equal(t, "cancelled", st.Status, "stalled run: expected status=cancelled")
+	assert.Equal(t, "watchdog", st.CancelledBy, "stalled run: expected cancelled_by=watchdog")
 	assert.True(t, strings.HasPrefix(st.CancellationReason, "watchdog:"),
-		"expected cancellation_reason to start with 'watchdog:', got %q", st.CancellationReason)
+		"stalled run: expected cancellation_reason to start with 'watchdog:', got %q", st.CancellationReason)
+
+	kept := readScheduleState(t, ctx, clients, progressingName)
+	assert.Equal(t, "running", kept.Status,
+		"a run with a fresh progress clock must stay active even though its task was created 31 minutes ago")
+	assert.Empty(t, kept.CancelledBy, "progressing run must not be cancelled")
 }
