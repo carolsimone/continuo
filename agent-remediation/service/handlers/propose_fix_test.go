@@ -21,10 +21,10 @@ import (
 
 	"github.com/carolsimone/continuo/agent-remediation/adapters/repofs"
 	"github.com/carolsimone/continuo/agent-remediation/domain/event"
-	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
+	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
@@ -390,6 +390,15 @@ type fakeMsgProcRepo struct {
 	seen map[string]uuid.UUID
 	// rows stores inserted rows keyed by UUID for GetByID.
 	rows map[uuid.UUID]*messageprocessing.MessageProcessing
+	// stateChanges records every UpdateState call, in order.
+	stateChanges   []msgProcStateChange
+	updateStateErr error
+}
+
+// msgProcStateChange is one UpdateState call on fakeMsgProcRepo.
+type msgProcStateChange struct {
+	id    uuid.UUID
+	state string
 }
 
 func newFakeMsgProcRepo() *fakeMsgProcRepo {
@@ -462,7 +471,14 @@ func (r *fakeMsgProcRepo) GetByID(
 	return m, nil
 }
 
-func (r *fakeMsgProcRepo) UpdateState(_ context.Context, _ uuid.UUID, _ string) error {
+func (r *fakeMsgProcRepo) UpdateState(_ context.Context, id uuid.UUID, state string) error {
+	r.stateChanges = append(r.stateChanges, msgProcStateChange{id: id, state: state})
+	if r.updateStateErr != nil {
+		return r.updateStateErr
+	}
+	if row, ok := r.rows[id]; ok {
+		row.State = state
+	}
 	return nil
 }
 
@@ -478,10 +494,17 @@ type fakeUoW struct {
 	ob        *fakeOutbox
 	mp        *fakeMsgProcRepo
 	committed bool
+	// stateChangesAtCommit is how many dedup state changes had been made when
+	// Commit was last called.
+	stateChangesAtCommit int
 }
 
-func (u *fakeUoW) Begin(context.Context) error                         { return nil }
-func (u *fakeUoW) Commit() error                                       { u.committed = true; return nil }
+func (u *fakeUoW) Begin(context.Context) error { return nil }
+func (u *fakeUoW) Commit() error {
+	u.committed = true
+	u.stateChangesAtCommit = len(u.mp.stateChanges)
+	return nil
+}
 func (u *fakeUoW) Rollback() error                                     { return nil }
 func (u *fakeUoW) ProposalRepo() repository.ProposalRepository         { return u.pr }
 func (u *fakeUoW) OutboxRepo() outbox.Repository                       { return u.ob }
@@ -2080,6 +2103,55 @@ func TestRecord_NormalizesRepresentativeViews(t *testing.T) {
 	require.Equal(t, "sig-a", got.ErrorSignature)
 	require.Equal(t, "verify-r1-svc-a1", got.VerificationRunID)
 	require.Empty(t, u.ob.entries, "record announces nothing")
+}
+
+// TestRecord_MarksTheDedupClaimCompletedBeforeCommit pins the dedup row's
+// lifecycle: record claims the trigger, writes the proposal and marks the claim
+// completed in the same transaction, before it commits.
+func TestRecord_MarksTheDedupClaimCompletedBeforeCommit(t *testing.T) {
+	u := newFakeUoW()
+	d := deps(u, fakeEvidence{}, nil, &fakeArtifacts{})
+
+	p := proposal.Proposal{Status: proposal.StatusFailed, Rationale: "no fix", Model: "m"}
+	require.NoError(t, record(context.Background(), d, baseTrigger(), 1, p))
+
+	require.Len(t, u.mp.rows, 1, "the trigger is claimed once")
+	var claimed uuid.UUID
+	for id := range u.mp.rows {
+		claimed = id
+	}
+	require.Equal(t, []msgProcStateChange{{id: claimed, state: messageprocessing.StateCompleted}}, u.mp.stateChanges)
+	require.Equal(t, 1, u.stateChangesAtCommit, "the claim is marked completed before the transaction commits")
+	require.Len(t, u.pr.inserted, 1)
+}
+
+// TestRecord_CompletionFailureDoesNotCommit prevents an incomplete dedup claim
+// and its proposal from being committed when the completion update fails.
+func TestRecord_CompletionFailureDoesNotCommit(t *testing.T) {
+	u := newFakeUoW()
+	u.mp.updateStateErr = fmt.Errorf("completion unavailable")
+	d := deps(u, fakeEvidence{}, nil, &fakeArtifacts{})
+	p := proposal.Proposal{Status: proposal.StatusFailed, Rationale: "no fix", Model: "m"}
+
+	err := record(context.Background(), d, baseTrigger(), 1, p)
+
+	require.ErrorIs(t, err, u.mp.updateStateErr)
+	require.ErrorContains(t, err, "mark completed")
+	require.False(t, u.committed, "the proposal and claim must not commit")
+}
+
+// TestRecord_DuplicateTriggerMarksNothing: a redelivered trigger collides on
+// its claim, writes nothing and leaves the existing claim as it is.
+func TestRecord_DuplicateTriggerMarksNothing(t *testing.T) {
+	u := newFakeUoW()
+	d := deps(u, fakeEvidence{}, nil, &fakeArtifacts{})
+	p := proposal.Proposal{Status: proposal.StatusFailed, Rationale: "no fix", Model: "m"}
+
+	require.NoError(t, record(context.Background(), d, baseTrigger(), 1, p))
+	require.NoError(t, record(context.Background(), d, baseTrigger(), 1, p))
+
+	require.Len(t, u.mp.stateChanges, 1, "only the first delivery marks its claim")
+	require.Len(t, u.pr.inserted, 1, "the duplicate writes no proposal")
 }
 
 // TestEnqueue_CarriesTheResolvedSetAndEveryEdit pins the announcement the

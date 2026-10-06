@@ -16,9 +16,9 @@ import (
 
 	rredis "github.com/carolsimone/continuo/agent-remediation/adapters/redis"
 	"github.com/carolsimone/continuo/agent-remediation/domain/event"
-	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
+	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/service/handlers"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
@@ -346,6 +346,9 @@ func (m *fakeMsgProc) AlreadyProcessed(_ context.Context, messageID, streamName 
 func (m *fakeMsgProc) GetByID(_ context.Context, id uuid.UUID) (*messageprocessing.MessageProcessing, error) {
 	return &messageprocessing.MessageProcessing{ID: id}, nil
 }
+
+// UpdateState accepts the completion mark record writes before it commits.
+func (m *fakeMsgProc) UpdateState(context.Context, uuid.UUID, string) error { return nil }
 
 // fakeUoW satisfies uow.UnitOfWork over the in-memory repositories, counting
 // commits so a test can assert a transaction closed rather than rolled back.

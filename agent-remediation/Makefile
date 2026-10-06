@@ -8,9 +8,9 @@ test:
 test-unit:
 	go test -v -short ./...
 
-# Run integration tests with testcontainers
+# Run integration tests against a clean, externally migrated POSTGRES_* database.
 test-integration:
-	go test -v -tags integration ./... -timeout 5m
+	REQUIRE_TEST_DEPS=1 go test -v -tags integration ./... -timeout 5m
 
 # Run full test suite with coverage (used in CI)
 test-ci:

@@ -51,6 +51,8 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 COPY pkg/ ./pkg/
 COPY orchestrator/ ./orchestrator/
 COPY agent-remediation/ ./agent-remediation/
+# Integration tests read production backfill expressions as SELECT fixtures.
+COPY db/migration/agent_remediation/ ./db/migration/agent_remediation/
 
 WORKDIR /app/agent-remediation
 

@@ -96,6 +96,14 @@ type Config struct {
 	// loop; a value that is not a Go duration at all fails start-up.
 	VerificationPollInterval time.Duration
 
+	// RetentionDays and RetentionSweepIntervalMin pace the retention sweeper:
+	// processed remediation_agent_outbox rows are deleted after RetentionDays,
+	// message_processing dedup rows after the longer of RetentionDays and the
+	// 30-day replay horizon, every RetentionSweepIntervalMin minutes. Both have
+	// safe defaults.
+	RetentionDays             int
+	RetentionSweepIntervalMin int
+
 	// MetricsPort is the port the Prometheus /metrics listener binds (METRICS_PORT).
 	MetricsPort int
 }
@@ -204,6 +212,9 @@ func Load(v *pkgconfig.Validator) Config {
 		VerificationTimeout:  v.DurationOrDefault("VERIFICATION_TIMEOUT", defaultVerificationTimeout),
 		VerificationPollInterval: v.DurationOrDefault(
 			"VERIFICATION_POLL_INTERVAL", defaultVerificationPollInterval),
+
+		RetentionDays:             pkgconfig.EnvIntOrDefault("RETENTION_DAYS", 7),
+		RetentionSweepIntervalMin: pkgconfig.EnvIntOrDefault("RETENTION_SWEEP_INTERVAL_MINUTES", 60),
 
 		MetricsPort: pkgconfig.LoadMetricsPort(v),
 	}

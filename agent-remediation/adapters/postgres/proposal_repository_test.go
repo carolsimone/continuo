@@ -11,117 +11,75 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"strconv"
 	"testing"
 	"time"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
+	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	"github.com/carolsimone/continuo/pkg/streams"
-	"github.com/carolsimone/continuo/pkg/testmigrations"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-// agentRemediationMigrationDir resolves <repo>/db/migration/agent_remediation/
-// from this source file's location so the testcontainer schema stays in
-// lock-step with the production migration.
+// newTestDB connects to an externally migrated, dedicated integration database.
+// Every test starts with empty application tables and deletes only the rows it
+// creates. The package runs serially; the database must have no other writers.
+func newTestDB(t *testing.T) *sqlx.DB {
+	t.Helper()
+	v := &pkgconfig.Validator{}
+	cfg := pkgconfig.LoadPostgres(v)
+	require.Empty(t, v.Missing(), "set POSTGRES_* to a dedicated, externally migrated test database")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	db, err := sqlx.ConnectContext(ctx, "postgres", cfg.DSN())
+	require.NoError(t, err, "connect to the externally migrated test database")
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+
+	// Probe the current schema before any writes; missing tables or columns
+	// require external Flyway migration, never DDL from the test.
+	_, err = db.ExecContext(ctx, `SELECT verification_run_id, services FROM proposal LIMIT 0`)
+	require.NoError(t, err, "run the agent_remediation Flyway migrations before integration tests")
+	for _, table := range []string{"proposal", "proposal_pull_request", "message_processing", OutboxTable} {
+		var count int
+		require.NoError(t, db.GetContext(ctx, &count, "SELECT count(*) FROM "+table),
+			"run the agent_remediation Flyway migrations before integration tests")
+		require.Zero(t, count, "refusing non-empty test database: %s contains pre-existing rows", table)
+	}
+
+	// The empty-table guard establishes that the serial test owns every row
+	// inserted during its lifetime. Cleanup deletes those concrete UUIDs;
+	// child pull-request rows are removed by the proposal foreign-key cascade.
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cleanupCancel()
+		for _, table := range []string{OutboxTable, "message_processing", "proposal"} {
+			var ids []string
+			if !assert.NoError(t, db.SelectContext(cleanupCtx, &ids, "SELECT id FROM "+table)) {
+				continue
+			}
+			if len(ids) > 0 {
+				_, err := db.ExecContext(cleanupCtx, "DELETE FROM "+table+" WHERE id = ANY($1::uuid[])", pq.Array(ids))
+				assert.NoError(t, err, "delete test-owned rows from %s", table)
+			}
+		}
+	})
+	return db
+}
+
+// agentRemediationMigrationDir locates production SQL for read-only expression
+// checks; tests never execute its migration statements.
 func agentRemediationMigrationDir() (string, error) {
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
-		return "", fmt.Errorf("runtime.Caller failed — cannot locate proposal_repository_test.go")
+		return "", fmt.Errorf("runtime.Caller failed: cannot locate production migration SQL")
 	}
-	// thisFile = <repo>/agent-remediation/adapters/postgres/proposal_repository_test.go
 	repoRoot := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(thisFile))))
 	return filepath.Join(repoRoot, "db", "migration", "agent_remediation"), nil
-}
-
-// getEnvOrDefault returns the env var value or the fallback default.
-func getEnvOrDefault(key, defaultVal string) string {
-	if val := os.Getenv(key); val != "" {
-		return val
-	}
-	return defaultVal
-}
-
-// newRawTestDB boots a PostgreSQL testcontainer and returns a connected
-// *sqlx.DB with no migrations applied. The container is terminated when the
-// test finishes via t.Cleanup. Most tests want newTestDB (the fully
-// migrated database); this is the raw connection a test stages an older
-// schema on top of, applying only a prefix of the migration files itself.
-func newRawTestDB(t *testing.T) *sqlx.DB {
-	t.Helper()
-	ctx := context.Background()
-
-	req := testcontainers.ContainerRequest{
-		Image:        "postgres:16-alpine",
-		ExposedPorts: []string{"5432/tcp"},
-		Env: map[string]string{
-			"POSTGRES_USER":     "testuser",
-			"POSTGRES_PASSWORD": "testpass",
-			"POSTGRES_DB":       "testdb",
-		},
-		WaitingFor: wait.ForLog("database system is ready to accept connections").
-			WithOccurrence(2).
-			WithStartupTimeout(60 * time.Second),
-	}
-
-	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-		ContainerRequest: req,
-		Started:          true,
-	})
-	require.NoError(t, err, "start postgres container")
-
-	t.Cleanup(func() {
-		_ = container.Terminate(context.Background())
-	})
-
-	host, err := container.Host(ctx)
-	require.NoError(t, err, "get container host")
-	port, err := container.MappedPort(ctx, "5432")
-	require.NoError(t, err, "get container port")
-
-	// Force IPv4 for macOS compatibility.
-	if host == "localhost" {
-		host = "127.0.0.1"
-	}
-
-	connStr := fmt.Sprintf(
-		"host=%s port=%s user=testuser password=testpass dbname=testdb sslmode=disable",
-		host, port.Port(),
-	)
-
-	var db *sqlx.DB
-	for i := 0; i < 10; i++ {
-		db, err = sqlx.Connect("postgres", connStr)
-		if err == nil {
-			break
-		}
-		t.Logf("connection attempt %d/10 failed, retrying...", i+1)
-		time.Sleep(500 * time.Millisecond)
-	}
-	require.NoError(t, err, "connect to postgres after retries")
-
-	return db
-}
-
-// newTestDB boots a PostgreSQL testcontainer, applies every agent_remediation
-// migration, and returns a ready *sqlx.DB.
-func newTestDB(t *testing.T) *sqlx.DB {
-	t.Helper()
-	db := newRawTestDB(t)
-
-	dir, err := agentRemediationMigrationDir()
-	require.NoError(t, err, "resolve agent_remediation migration dir")
-	require.NoError(t, testmigrations.Apply(db.DB, dir), "apply agent_remediation migrations")
-
-	return db
 }
 
 // TestProposalRepositorySourceFixFields inserts a proposal with all three
@@ -2439,81 +2397,67 @@ func TestList_FiltersByService(t *testing.T) {
 	assert.Equal(t, map[string]bool{"rel-1": true, "rel-2": true}, ids)
 }
 
-// applyUpTo applies the migration files whose version is <= max, from a temp
-// copy of dir, so a test can stage a schema from before a given migration.
-func applyUpTo(t *testing.T, db *sqlx.DB, dir string, max int) {
-	t.Helper()
-	tmp := t.TempDir()
-	entries, err := os.ReadDir(dir)
-	require.NoError(t, err)
-	for _, e := range entries {
-		m := regexp.MustCompile(`^V(\d+)__`).FindStringSubmatch(e.Name())
-		if m == nil {
-			continue
-		}
-		v, _ := strconv.Atoi(m[1])
-		if v > max {
-			continue
-		}
-		b, err := os.ReadFile(filepath.Join(dir, e.Name()))
-		require.NoError(t, err)
-		require.NoError(t, os.WriteFile(filepath.Join(tmp, e.Name()), b, 0o600))
-	}
-	require.NoError(t, testmigrations.Apply(db.DB, tmp))
+// TestProposalSchemaVerificationContract checks the externally migrated schema
+// exposes current verification fields and the services GIN index.
+func TestProposalSchemaVerificationContract(t *testing.T) {
+	db := newTestDB(t)
+	var columns []string
+	require.NoError(t, db.Select(&columns, `SELECT column_name FROM information_schema.columns
+		WHERE table_schema=current_schema() AND table_name=$1
+		AND column_name IN ($2,$3,$4) ORDER BY column_name`,
+		"proposal", "verification_run_id", "shadow_release_id", "services"))
+	require.Equal(t, []string{"services", "verification_run_id"}, columns)
+	var indexDefinition string
+	require.NoError(t, db.Get(&indexDefinition, `SELECT indexdef FROM pg_indexes
+		WHERE schemaname=current_schema() AND tablename=$1 AND indexname=$2`,
+		"proposal", "idx_proposal_services"))
+	require.Contains(t, indexDefinition, "USING gin (services)")
 }
 
-// applyOnly applies exactly one migration file from dir.
-func applyOnly(t *testing.T, db *sqlx.DB, dir, name string) {
-	t.Helper()
-	tmp := t.TempDir()
-	b, err := os.ReadFile(filepath.Join(dir, name))
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(tmp, name), b, 0o600))
-	require.NoError(t, testmigrations.Apply(db.DB, tmp))
-}
-
-// TestV18_ConvertsLegacyVerificationRows verifies the V18 backfill against a
-// schema staged at V17: shadow_release_id is renamed and read back as
-// verification_run_id, services is populated from the trigger payload's node
-// services (falling back to the verifications array), and each stored
-// verification element is rewritten from its legacy shadow_release_id key to
-// run_id, with phase/error derived from the row's terminal status and
-// activated_at left null (unknown for a row this old).
+// TestV18_ConvertsLegacyVerificationRows evaluates the production backfill
+// expressions in read-only SELECTs over legacy JSON fixtures. It verifies
+// service union, verification run IDs, terminal phases and failure summaries
+// without changing the externally migrated schema or executing any migration.
 func TestV18_ConvertsLegacyVerificationRows(t *testing.T) {
-	db := newRawTestDB(t) // newTestDB without the migration step; see Step 2
+	db := newTestDB(t)
 	dir, err := agentRemediationMigrationDir()
 	require.NoError(t, err)
-	applyUpTo(t, db, dir, 17)
-	_, err = db.Exec(`INSERT INTO proposal (source, release_id, remediation_round, node_id, error_signature, attempt, status,
-	                    shadow_release_id, verify_error, trigger_payload, verifications, resolved_node_ids, node_outcomes, created_at)
-	                  VALUES ('validation','rel-1',1,'model.core.orders','sig',1,'proposed',
-	                    'shadow-rel-1-core-a1','',
-	                    '{"nodes":[{"node_id":"model.core.orders","service":"core"},{"node_id":"model.ops.x","service":"ops"}]}',
-	                    '[{"service":"core","kind":"dbt","shadow_release_id":"shadow-rel-1-core-a1"}]',
-	                    '["model.core.orders"]','{}', now())`)
+	sqlBytes, err := os.ReadFile(filepath.Join(dir, "V18__proposal_verification_phase_and_services.sql"))
 	require.NoError(t, err)
-	_, err = db.Exec(`INSERT INTO proposal (source, release_id, remediation_round, node_id, error_signature, attempt, status,
-	                    shadow_release_id, verify_error, trigger_payload, verifications, resolved_node_ids, node_outcomes, created_at)
-	                  VALUES ('validation','rel-2',1,'model.core.orders','sig',1,'failed',
-	                    'shadow-rel-2-core-a1','model.core.orders: boom','{}',
-	                    '[{"service":"core","kind":"dbt","shadow_release_id":"shadow-rel-2-core-a1"}]',
-	                    '["model.core.orders"]','{}', now())`)
-	require.NoError(t, err)
-
-	applyOnly(t, db, dir, "V18__proposal_verification_phase_and_services.sql")
-
-	var rows []struct {
-		ReleaseID         string         `db:"release_id"`
-		VerificationRunID string         `db:"verification_run_id"`
-		Services          pq.StringArray `db:"services"`
-		Verifications     []byte         `db:"verifications"`
+	services := regexp.MustCompile(`(?s)UPDATE proposal SET services = (.*?);`).FindStringSubmatch(string(sqlBytes))
+	verifications := regexp.MustCompile(`(?s)UPDATE proposal SET verifications = (.*?)\n WHERE`).FindStringSubmatch(string(sqlBytes))
+	require.Len(t, services, 2, "locate the production services expression")
+	require.Len(t, verifications, 2, "locate the production verifications expression")
+	query := `WITH proposal(status, verify_error, trigger_payload, verifications) AS
+		(VALUES ($1::text, $2::text, $3::jsonb, $4::jsonb))
+		SELECT ` + services[1] + ` AS services, ` + verifications[1] + ` AS verifications FROM proposal`
+	for _, fixture := range []struct {
+		status, verifyError, trigger, verifications, wantVerifications string
+		wantServices                                                   []string
+	}{
+		{
+			status: "proposed", verifyError: "", trigger: `{"nodes":[{"service":"core"},{"service":"ops"}]}`,
+			verifications:     `[{"service":"core","kind":"dbt","shadow_release_id":"shadow-rel-1-core-a1"}]`,
+			wantServices:      []string{"core", "ops"},
+			wantVerifications: `[{"service":"core","kind":"dbt","run_id":"shadow-rel-1-core-a1","phase":"passed","activated_at":null,"error":""}]`,
+		},
+		{
+			status: "failed", verifyError: "model.core.orders: boom", trigger: `{}`,
+			verifications:     `[{"service":"core","kind":"dbt","shadow_release_id":"shadow-rel-2-core-a1"}]`,
+			wantServices:      []string{"core"},
+			wantVerifications: `[{"service":"core","kind":"dbt","run_id":"shadow-rel-2-core-a1","phase":"failed","activated_at":null,"error":"model.core.orders: boom"}]`,
+		},
+	} {
+		t.Run(fixture.status, func(t *testing.T) {
+			var got struct {
+				Services      pq.StringArray `db:"services"`
+				Verifications []byte         `db:"verifications"`
+			}
+			require.NoError(t, db.Get(&got, query, fixture.status, fixture.verifyError, fixture.trigger, fixture.verifications))
+			require.Equal(t, pq.StringArray(fixture.wantServices), got.Services)
+			require.JSONEq(t, fixture.wantVerifications, string(got.Verifications))
+		})
 	}
-	require.NoError(t, db.Select(&rows, `SELECT release_id, verification_run_id, services, verifications FROM proposal ORDER BY release_id`))
-	require.Len(t, rows, 2)
-	assert.Equal(t, "shadow-rel-1-core-a1", rows[0].VerificationRunID)
-	assert.Equal(t, pq.StringArray{"core", "ops"}, rows[0].Services)
-	assert.JSONEq(t, `[{"service":"core","kind":"dbt","run_id":"shadow-rel-1-core-a1","phase":"passed","activated_at":null,"error":""}]`, string(rows[0].Verifications))
-	assert.JSONEq(t, `[{"service":"core","kind":"dbt","run_id":"shadow-rel-2-core-a1","phase":"failed","activated_at":null,"error":"model.core.orders: boom"}]`, string(rows[1].Verifications))
 }
 
 // seedVerifying records one attempt for releaseID parked in 'verifying' with
