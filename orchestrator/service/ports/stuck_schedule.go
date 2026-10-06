@@ -13,11 +13,12 @@ type StuckSchedule struct {
 	RunID        string
 }
 
-// StuckScheduleReader returns active runs whose dispatch has silently stalled —
-// no task is running and the most recent task is older than the cutoff. The
-// state service answers this with a single indexed query, so the watchdog issues
-// O(1) RPCs per tick instead of fanning out one ListTasks call per schedule, and
-// it considers ALL of a run's tasks rather than only the newest page.
+// StuckScheduleReader returns the active runs that have made no lifecycle
+// progress since the cutoff and have no task running. A run's progress time is
+// its last dispatch or applied task status change, or its creation when it has
+// never progressed, so a run whose dispatch never arrived is returned too. The
+// state service answers with one server-side query, so the watchdog issues one
+// read per tick however many runs are active.
 type StuckScheduleReader interface {
 	ListStuckCandidates(ctx context.Context, cutoff time.Time) ([]StuckSchedule, error)
 }

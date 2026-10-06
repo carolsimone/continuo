@@ -55,9 +55,10 @@ type SchedulerTrackerRepository interface {
 	// GetActiveScheduler returns the most recently created PENDING or RUNNING run for a schedule.
 	// Returns nil, nil when no active run exists (never returns ErrNotFound).
 	GetActiveScheduler(ctx context.Context, scheduleName string) (*SchedulerTracker, error)
-	// ListStuckCandidates returns active (pending|running) runs whose dispatch has
-	// silently stalled: the run has at least one task, no task in 'running', and the
-	// most recent task's created_at is strictly older than cutoff. One indexed query.
+	// ListStuckCandidates returns active (pending|running) runs that have made no
+	// lifecycle progress since cutoff and have no task in 'running'. A run's
+	// progress time is last_heartbeat_at, or created_at when it has never
+	// progressed, so a run with zero tasks is returned too.
 	ListStuckCandidates(ctx context.Context, cutoff time.Time) ([]StuckCandidate, error)
 	// New: tx-accepting variants for atomic HTTP handler
 	UpdateInitializationStatusTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID, status string) error
@@ -78,7 +79,7 @@ type SchedulerTrackerRepository interface {
 	GetByIDForUpdateTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID) (*SchedulerTracker, error)
 }
 
-// StuckCandidate identifies one active run whose dispatch has silently stalled.
+// StuckCandidate identifies one active run that has stopped making progress.
 type StuckCandidate struct {
 	ScheduleName string
 	ScheduleID   uuid.UUID
@@ -628,20 +629,23 @@ func (r *schedulerTrackerRepository) GetLastRunPerSchedule(ctx context.Context) 
 }
 
 // ListStuckCandidates returns one row per active (pending|running) run whose
-// dispatch has silently stalled. A run qualifies when it has at least one task,
-// none of its tasks is in 'running', and its most recent task's created_at is
-// strictly older than cutoff. The aggregation considers ALL of a run's tasks —
-// there is no paging blind spot — and replaces the watchdog's per-schedule
-// ListTasks fan-out with a single indexed query.
+// progress time is strictly older than cutoff and none of whose tasks is in
+// 'running'. The progress time is last_heartbeat_at, which the Run aggregate
+// stamps on dispatch and on every applied task status change, or created_at for
+// a run that has never progressed, so a run whose dispatch never arrived (zero
+// tasks) qualifies. A run with a running task never qualifies: a long task
+// reports nothing until it ends.
 func (r *schedulerTrackerRepository) ListStuckCandidates(ctx context.Context, cutoff time.Time) ([]StuckCandidate, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT st.schedule_name, st.schedule_id
 		FROM scheduler_tracker st
-		JOIN task_tracker tt ON tt.schedule_id = st.schedule_id
 		WHERE st.status IN ('pending', 'running')
-		GROUP BY st.schedule_id, st.schedule_name
-		HAVING count(*) FILTER (WHERE tt.status = 'running') = 0
-		   AND max(tt.created_at) < $1
+		  AND COALESCE(st.last_heartbeat_at, st.created_at) < $1
+		  AND NOT EXISTS (
+		      SELECT 1 FROM task_tracker tt
+		      WHERE tt.schedule_id = st.schedule_id
+		        AND tt.status = 'running'
+		  )
 	`, cutoff)
 	if err != nil {
 		return nil, fmt.Errorf("list stuck candidates: %w", err)
