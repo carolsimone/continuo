@@ -33,16 +33,21 @@ func (p *remediationOutboxPublisher) Publish(ctx context.Context, entry *pkgoutb
 	if err != nil {
 		return err
 	}
-	values["outbox_entry_id"] = entry.ID.String()
-	if _, err := p.redis.XAdd(ctx, &goredis.XAddArgs{
-		Stream: entry.StreamName,
-		MaxLen: 10000,
-		Approx: true,
-		Values: values,
-	}).Result(); err != nil {
+	if _, err := p.redis.XAdd(ctx, p.xaddArgs(entry, values)).Result(); err != nil {
 		return fmt.Errorf("xadd to %s: %w", entry.StreamName, err)
 	}
 	return nil
+}
+
+// xaddArgs builds the XADD for entry from its rendered fields plus
+// outbox_entry_id. It sets no length cap: the dead-letter-controller's trim loop
+// bounds every stream.
+func (p *remediationOutboxPublisher) xaddArgs(entry *pkgoutbox.Entry, values map[string]any) *goredis.XAddArgs {
+	values["outbox_entry_id"] = entry.ID.String()
+	return &goredis.XAddArgs{
+		Stream: entry.StreamName,
+		Values: values,
+	}
 }
 
 var _ pkgoutbox.Renderer = (*remediationOutboxPublisher)(nil)

@@ -31,6 +31,7 @@ var handlerDirs = []string{
 	"remediation/service/handlers",
 	"agent-remediation/service",
 	"dead-letter-controller/service/handlers",
+	"dead-letter-controller/service/trimmer",
 	// Every service's Unit-of-Work port. The interface is application
 	// vocabulary; the concrete *UnitOfWork that satisfies it belongs in
 	// adapters/postgres, so this package must not reach back into an adapter.

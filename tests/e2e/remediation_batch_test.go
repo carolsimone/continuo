@@ -125,6 +125,11 @@ func TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest(t *testing.
 	t.Logf("seeded prod snapshot with %d nodes (%s and %s excluded)",
 		len(prodNodes), ftableEUniqueID, ftableKUniqueID)
 
+	// Tap the streams before the release is posted: the trim loop removes
+	// consumed entries, so the checks below read what the taps recorded.
+	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV2)
+	proposedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationProposedV1)
+
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
 	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
@@ -153,9 +158,9 @@ func TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest(t *testing.
 	//    batching contract at its source: the classifier emits per release, not
 	//    per node, so a second message here would mean two fix attempts, two
 	//    proposals and two pull requests downstream.
-	trigger := waitForBatchedTrigger(t, ctx, clients, releaseID,
+	trigger := waitForBatchedTrigger(t, ctx, requestedTap, releaseID,
 		[]string{ftableEUniqueID, ftableKUniqueID}, batchTriggerBudget)
-	require.Len(t, triggersForRelease(t, ctx, clients, releaseID), 1,
+	require.Len(t, triggersForRelease(t, requestedTap, releaseID), 1,
 		"a rejected release must produce exactly one %s", streams.RemediationRequestedV2)
 	require.Len(t, trigger.Nodes, 2,
 		"the trigger must carry exactly the two failing models; got %v", triggerNodeIDs(trigger))
@@ -218,8 +223,8 @@ func TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest(t *testing.
 	t.Logf("✅ one verification run %s passed for both edits", verifications[0].RunID)
 
 	// 8. ONE announcement, carrying the same batched view as the row.
-	proposed := waitForBatchProposedEvent(t, ctx, clients, releaseID, batchEventBudget)
-	require.Len(t, proposedEventsForRelease(t, ctx, clients, releaseID), 1,
+	proposed := waitForBatchProposedEvent(t, ctx, proposedTap, releaseID, batchEventBudget)
+	require.Len(t, proposedEventsForRelease(t, proposedTap, releaseID), 1,
 		"one verified attempt announces itself once")
 	require.Equal(t, []string{ftableEUniqueID, ftableKUniqueID}, proposed.ResolvedNodeIDs,
 		"%s must announce the whole resolved set", streams.RemediationProposedV1)
@@ -320,6 +325,10 @@ func TestE2E_BatchedRemediation_SharedUpstreamFixedOnce(t *testing.T) {
 	}
 	t.Logf("seeded prod snapshot with %d nodes (%s hash staled)", len(prodNodes), ftableUUniqueID)
 
+	// Tap the streams before the release is posted: the trim loop removes
+	// consumed entries, so the checks below read what the taps recorded.
+	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV2)
+
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
 	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
@@ -344,7 +353,7 @@ func TestE2E_BatchedRemediation_SharedUpstreamFixedOnce(t *testing.T) {
 		"only the two descendants that read the dropped column may fail; got %v", failing)
 	t.Logf("release %s failing_nodes=%v", releaseID, failing)
 
-	trigger := waitForBatchedTrigger(t, ctx, clients, releaseID,
+	trigger := waitForBatchedTrigger(t, ctx, requestedTap, releaseID,
 		[]string{ftableVUniqueID, ftableWUniqueID}, batchTriggerBudget)
 	vNode, ok := trigger.findNode(ftableVUniqueID)
 	require.True(t, ok, "trigger must carry an entry for %s", ftableVUniqueID)
@@ -572,6 +581,10 @@ func TestE2E_BatchedRemediation_TwoServicesTwoPullRequests(t *testing.T) {
 	t.Logf("seeded prod snapshot with %d nodes (%s and %s excluded)",
 		len(prodNodes), ftableEUniqueID, ftableGUniqueID)
 
+	// Tap the streams before the release is posted: the trim loop removes
+	// consumed entries, so the checks below read what the taps recorded.
+	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV2)
+
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
 	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
@@ -594,7 +607,7 @@ func TestE2E_BatchedRemediation_TwoServicesTwoPullRequests(t *testing.T) {
 	t.Logf("release %s failing_nodes=%v", releaseID, failing)
 
 	// 4. ONE trigger carrying both failing nodes, from two different services.
-	trigger := waitForBatchedTrigger(t, ctx, clients, releaseID,
+	trigger := waitForBatchedTrigger(t, ctx, requestedTap, releaseID,
 		[]string{ftableEUniqueID, ftableGUniqueID}, batchTriggerBudget)
 	require.Len(t, trigger.Nodes, 2, "the trigger must carry exactly the two cross-service failures; got %v",
 		triggerNodeIDs(trigger))
@@ -774,6 +787,10 @@ func TestE2E_BatchedRemediation_AmendedMergeMarksProvenanceAmended(t *testing.T)
 	require.True(t, ftableFound, "ftable_e not found in any manifest")
 	t.Logf("seeded prod snapshot with %d nodes (ftable_e excluded)", len(prodNodes))
 
+	// Tap the streams before the release is posted: the trim loop removes
+	// consumed entries, so the checks below read what the taps recorded.
+	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV2)
+
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
 	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
@@ -782,7 +799,7 @@ func TestE2E_BatchedRemediation_AmendedMergeMarksProvenanceAmended(t *testing.T)
 	postRelease(t, clients, changedService, releaseID, changedImageTag, false)
 	waitForReleaseRejected(t, ctx, clients, releaseID, batchRejectBudget)
 
-	trigger := waitForBatchedTrigger(t, ctx, clients, releaseID, []string{ftableEUniqueID}, batchTriggerBudget)
+	trigger := waitForBatchedTrigger(t, ctx, requestedTap, releaseID, []string{ftableEUniqueID}, batchTriggerBudget)
 	require.Len(t, trigger.Nodes, 1, "the trigger must carry exactly ftable_e; got %v", triggerNodeIDs(trigger))
 
 	row := waitForBatchProposal(t, ctx, clients, releaseID, 1, "proposed", batchProposalBudget)
@@ -950,13 +967,13 @@ func decodeNodeIDs(t *testing.T, raw []byte) []string {
 // meaningful: a trigger observed mid-write would otherwise satisfy a
 // single-node wait and then fail a count.
 func waitForBatchedTrigger(
-	t *testing.T, ctx context.Context, clients *testClients,
+	t *testing.T, ctx context.Context, requestedTap *streamTap,
 	releaseID string, nodeIDs []string, timeout time.Duration,
 ) remediationRequestedPayload {
 	t.Helper()
 	var found remediationRequestedPayload
 	pollUntil(t, ctx, timeout, 2*time.Second, func() (bool, error) {
-		for _, p := range triggersForRelease(t, ctx, clients, releaseID) {
+		for _, p := range triggersForRelease(t, requestedTap, releaseID) {
 			complete := true
 			for _, id := range nodeIDs {
 				if _, ok := p.findNode(id); !ok {
@@ -978,10 +995,9 @@ func waitForBatchedTrigger(
 // triggersForRelease returns every remediation.requested:v2 message naming the
 // release. A release is remediated once, so the length of this is itself an
 // assertion subject.
-func triggersForRelease(t *testing.T, ctx context.Context, clients *testClients, releaseID string) []remediationRequestedPayload {
+func triggersForRelease(t *testing.T, requestedTap *streamTap, releaseID string) []remediationRequestedPayload {
 	t.Helper()
-	msgs, err := clients.redisClient.XRange(ctx, streams.RemediationRequestedV2, "-", "+").Result()
-	require.NoError(t, err, "read %s", streams.RemediationRequestedV2)
+	msgs := requestedTap.Entries()
 	var out []remediationRequestedPayload
 	for _, msg := range msgs {
 		raw, _ := msg.Values["payload"].(string)
@@ -1029,12 +1045,12 @@ type batchProposedPayload struct {
 // waitForBatchProposedEvent polls remediation.proposed:v1 for the release's
 // announcement and returns it.
 func waitForBatchProposedEvent(
-	t *testing.T, ctx context.Context, clients *testClients, releaseID string, timeout time.Duration,
+	t *testing.T, ctx context.Context, proposedTap *streamTap, releaseID string, timeout time.Duration,
 ) batchProposedPayload {
 	t.Helper()
 	var found batchProposedPayload
 	pollUntil(t, ctx, timeout, 2*time.Second, func() (bool, error) {
-		events := proposedEventsForRelease(t, ctx, clients, releaseID)
+		events := proposedEventsForRelease(t, proposedTap, releaseID)
 		if len(events) == 0 {
 			return false, nil
 		}
@@ -1046,10 +1062,9 @@ func waitForBatchProposedEvent(
 
 // proposedEventsForRelease returns every remediation.proposed:v1 message naming
 // the release.
-func proposedEventsForRelease(t *testing.T, ctx context.Context, clients *testClients, releaseID string) []batchProposedPayload {
+func proposedEventsForRelease(t *testing.T, proposedTap *streamTap, releaseID string) []batchProposedPayload {
 	t.Helper()
-	msgs, err := clients.redisClient.XRange(ctx, streams.RemediationProposedV1, "-", "+").Result()
-	require.NoError(t, err, "read %s", streams.RemediationProposedV1)
+	msgs := proposedTap.Entries()
 	var out []batchProposedPayload
 	for _, msg := range msgs {
 		raw, _ := msg.Values["payload"].(string)
@@ -1277,6 +1292,10 @@ func TestE2E_BatchedRemediation_CrossServiceBreakFixedAtProducer(t *testing.T) {
 		require.True(t, seen[id], "%s not found in any baseline manifest", id)
 	}
 
+	// Tap the streams before the release is posted: the trim loop removes
+	// consumed entries, so the checks below read what the taps recorded.
+	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV2)
+
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
 	seedServiceProdExcept(t, ctx, clients, allServices, producerService)
@@ -1295,7 +1314,7 @@ func TestE2E_BatchedRemediation_CrossServiceBreakFixedAtProducer(t *testing.T) {
 		"only the cross-service consumer of the dropped column may fail; got %v", failing)
 
 	// 3. The trigger names the producer, in the other service, as the cause.
-	trigger := waitForBatchedTrigger(t, ctx, clients, releaseID, []string{xbreakDownUniqueID}, batchTriggerBudget)
+	trigger := waitForBatchedTrigger(t, ctx, requestedTap, releaseID, []string{xbreakDownUniqueID}, batchTriggerBudget)
 	require.Len(t, trigger.Nodes, 1, "exactly the failing consumer; got %v", triggerNodeIDs(trigger))
 	down, ok := trigger.findNode(xbreakDownUniqueID)
 	require.True(t, ok)

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -118,6 +119,10 @@ func TestE2E_ReleasePromote_RejectsColumnBreakAcrossServices(t *testing.T) {
 		"xbreak_down not found in any manifest — is the model in service-2 and the image rebuilt + manifests re-uploaded?")
 	t.Logf("seeded prod snapshot with %d nodes (xbreak pair excluded)", len(prodNodes))
 
+	// Tap the streams before the release is posted: the trim loop removes
+	// consumed entries, so the checks below read what the taps recorded.
+	validationTap := startStreamTap(t, ctx, clients.redisClient, streams.ValidationRequestedV1)
+
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
 	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
@@ -133,7 +138,7 @@ func TestE2E_ReleasePromote_RejectsColumnBreakAcrossServices(t *testing.T) {
 	// The cross-service closure must schedule BOTH nodes (upstream first), proving
 	// the downstream was pulled in as a consumer of the changed upstream and that
 	// the break is exercised across a service boundary — not within one service.
-	assertValidationRequestedNodes(t, ctx, clients, releaseID,
+	assertValidationRequestedNodes(t, ctx, validationTap, releaseID,
 		[]string{xbreakUpUniqueID, xbreakDownUniqueID})
 
 	// xbreak_up builds cleanly into the candidate schema; xbreak_down's

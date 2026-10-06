@@ -265,7 +265,7 @@ bench-test:  ## Unit tests and shellcheck for the run-lifecycle benchmark harnes
 #   own non-root USER), so a new or renamed dev image cannot silently resurface
 #   the Trivy DS002 advisory that list silences.
 # - check-standalone-modules: a Go module that a production image builds
-#   outside go.work (pkg, for stream-reaper) must build in module mode with a
+#   outside go.work (pkg) must build in module mode with a
 #   read-only go.sum. Inside the workspace go.work.sum papers over a stale
 #   module go.sum, so the gap otherwise surfaces only as a failed image build
 #   in the deploy workflow on main, which skips the deploy job.

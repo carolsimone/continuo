@@ -36,3 +36,5 @@ data:
   ENV: {{ .Values.global.env | quote }}
   LOG_LEVEL: {{ .Values.global.logLevel | quote }}
   METRICS_PORT: {{ include "continuo.metrics.port" . | quote }}
+  STREAM_TRIM_ENABLED: {{ .Values.streamReaper.enabled | quote }}
+  STREAM_RETENTION: {{ .Values.streamReaper.retention | quote }}

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
@@ -78,6 +79,10 @@ func TestE2E_Verification_FailsConsumerFixThatIgnoresChangedUpstream(t *testing.
 		require.True(t, seen[id], "%s not found in any baseline manifest — is the model in service-2 and the image rebuilt?", id)
 	}
 
+	// Tap the streams before the release is posted: the trim loop removes
+	// consumed entries, so the checks below read what the taps recorded.
+	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV2)
+
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
 	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
@@ -94,7 +99,7 @@ func TestE2E_Verification_FailsConsumerFixThatIgnoresChangedUpstream(t *testing.
 
 	// 3. One failing node, whose changed ancestor is in its own service, so the
 	//    agent fixes the consumer itself.
-	trigger := waitForBatchedTrigger(t, ctx, clients, releaseID, []string{ybreakDownUniqueID}, batchTriggerBudget)
+	trigger := waitForBatchedTrigger(t, ctx, requestedTap, releaseID, []string{ybreakDownUniqueID}, batchTriggerBudget)
 	require.Len(t, trigger.Nodes, 1, "the trigger must carry exactly the failing consumer; got %v", triggerNodeIDs(trigger))
 	down, ok := trigger.findNode(ybreakDownUniqueID)
 	require.True(t, ok)

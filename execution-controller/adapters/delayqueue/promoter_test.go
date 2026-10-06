@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 
 	goredis "github.com/redis/go-redis/v9"
@@ -169,4 +170,36 @@ func TestPromoteDue_ReplayCarriesSameOutboxEntryID(t *testing.T) {
 	assert.Equal(t, "entry-1", msgs[0].Values["outbox_entry_id"])
 	assert.Equal(t, "entry-1", msgs[1].Values["outbox_entry_id"],
 		"replay carries the same outbox_entry_id so the consumer can dedup it")
+}
+
+// TestPromoteScript_DoesNotTrim pins that the promote script's XADD carries no
+// MAXLEN: the dead-letter-controller's trim loop bounds check.k8s:v1.
+func TestPromoteScript_DoesNotTrim(t *testing.T) {
+	assert.NotContains(t, strings.ToUpper(promoteScript), "MAXLEN",
+		"the promoter must not cap the stream; the trim loop bounds it")
+}
+
+// TestPromoteDue_DoesNotTrimTheStream proves promoting onto a stream that is
+// already past any fixed cap leaves every older entry in place.
+func TestPromoteDue_DoesNotTrimTheStream(t *testing.T) {
+	r := newTestRedis(t)
+	ctx := context.Background()
+	p := NewPromoter(r, testLogger())
+
+	const preexisting = 10001
+	pipe := r.Pipeline()
+	for i := 0; i < preexisting; i++ {
+		pipe.XAdd(ctx, &goredis.XAddArgs{Stream: p.stream, Values: map[string]any{"i": i}})
+	}
+	_, err := pipe.Exec(ctx)
+	require.NoError(t, err)
+
+	require.NoError(t, Schedule(ctx, r, "job-1", "entry-1", `{"v":1}`, 1000))
+	n, err := p.PromoteDue(ctx, 2000)
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+
+	xlen, err := r.XLen(ctx, p.stream).Result()
+	require.NoError(t, err)
+	assert.Equal(t, int64(preexisting+1), xlen, "promotion must not trim older entries")
 }

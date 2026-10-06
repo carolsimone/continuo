@@ -308,6 +308,9 @@ func awaitConsumerDeadLetter(ctx context.Context, t *testing.T, clients *testCli
 // redrivenEntries returns the entries of stream, from fromID on, that
 // dead-letter-controller published when it redrove deadLetterID.
 func redrivenEntries(ctx context.Context, rc *goredis.Client, stream, fromID, deadLetterID string) []goredis.XMessage {
+	// fromID is the id of the entry the test published before triggering the
+	// redrive, so the range starts at the work under test; the redriven entry is
+	// read right after it is published, before any trim run can reach it.
 	entries, err := rc.XRangeN(ctx, stream, fromID, "+", 5000).Result()
 	if err != nil {
 		return nil

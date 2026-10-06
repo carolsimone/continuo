@@ -639,7 +639,8 @@ func (c *StreamConsumer) settleContext(ctx context.Context) (context.Context, co
 	return context.WithTimeout(context.WithoutCancel(ctx), d)
 }
 
-// xaddDeadLetter appends one entry to consumer.dead_letter:v1, untrimmed.
+// xaddDeadLetter appends one entry to consumer.dead_letter:v1 with no length cap;
+// the dead-letter-controller's trim loop bounds the stream.
 func (c *StreamConsumer) xaddDeadLetter(ctx context.Context, values map[string]any) error {
 	return c.client.XAdd(ctx, &goredis.XAddArgs{Stream: streams.ConsumerDeadLetterV1, Values: values}).Err()
 }

@@ -3,7 +3,6 @@ import logging
 import re
 from collections.abc import Sequence
 
-from adapters.redis.constants import STREAM_MAXLEN
 from domain.model import FailedNode
 from domain.contract_vocabulary import ParseFailureKind
 
@@ -38,7 +37,7 @@ class CandidateManifestPublisher:
             "topology": topology,
             "code_bundle_uri": code_bundle_uri,
         }
-        self._redis.xadd(self._stream, {"payload": json.dumps(body)}, maxlen=STREAM_MAXLEN)
+        self._redis.xadd(self._stream, {"payload": json.dumps(body)})
         logger.info(
             "Published manifest.loaded.candidate ok",
             extra={"release_id": release_id, "node_count": len(topology)},
@@ -68,7 +67,7 @@ class CandidateManifestPublisher:
                 for n in failed_nodes
             ],
         }
-        self._redis.xadd(self._stream, {"payload": json.dumps(body)}, maxlen=STREAM_MAXLEN)
+        self._redis.xadd(self._stream, {"payload": json.dumps(body)})
         logger.error(
             "Published manifest.loaded.candidate failed",
             extra={

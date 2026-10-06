@@ -116,6 +116,10 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 
 	// 2. Reset the queue, seed current_prod, and seed service_prod for all
 	//    other services (so assembly reconstructs the full topology).
+	// Tap the streams before the release is posted: the trim loop removes
+	// consumed entries, so the checks below read what the taps recorded.
+	validationTap := startStreamTap(t, ctx, clients.redisClient, streams.ValidationRequestedV1)
+
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
 	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
@@ -124,7 +128,7 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 	postRelease(t, clients, changedService, releaseID, changedImageTag, false)
 
 	// 5. The derived validation set must be exactly the one changed node.
-	assertValidationRequestedNodes(t, ctx, clients, releaseID, []string{probeUniqueID})
+	assertValidationRequestedNodes(t, ctx, validationTap, releaseID, []string{probeUniqueID})
 
 	// 6. A real dbt validation job runs for rel_probe; on success the release
 	//    promotes. A rejection fails the test immediately with the reason.
@@ -346,6 +350,10 @@ func TestE2E_ReleasePromote_GatedIntraServiceUpstream(t *testing.T) {
 		"rel_probe_down not found in any manifest — is the model in service-1 and the image rebuilt + manifests re-uploaded?")
 	t.Logf("seeded prod snapshot with %d nodes (rel_probe* chain excluded)", len(prodNodes))
 
+	// Tap the streams before the release is posted: the trim loop removes
+	// consumed entries, so the checks below read what the taps recorded.
+	validationTap := startStreamTap(t, ctx, clients.redisClient, streams.ValidationRequestedV1)
+
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
 	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
@@ -354,7 +362,7 @@ func TestE2E_ReleasePromote_GatedIntraServiceUpstream(t *testing.T) {
 
 	// The derived validation set must be exactly the intra-service chain, in
 	// topological order (upstream first).
-	assertValidationRequestedNodes(t, ctx, clients, releaseID,
+	assertValidationRequestedNodes(t, ctx, validationTap, releaseID,
 		[]string{probeUpUniqueID, probeDownUniqueID})
 
 	waitForReleasePromoted(t, ctx, clients, releaseID, 12*time.Minute)
@@ -437,13 +445,17 @@ func TestE2E_ReleasePromote_GatedCrossServiceUpstream(t *testing.T) {
 		"xprobe_down not found in any manifest — is the model in service-2 and the image rebuilt + manifests re-uploaded?")
 	t.Logf("seeded prod snapshot with %d nodes (xprobe pair excluded)", len(prodNodes))
 
+	// Tap the streams before the release is posted: the trim loop removes
+	// consumed entries, so the checks below read what the taps recorded.
+	validationTap := startStreamTap(t, ctx, clients.redisClient, streams.ValidationRequestedV1)
+
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
 	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
 
 	postRelease(t, clients, changedService, releaseID, changedImageTag, false)
 
-	assertValidationRequestedNodes(t, ctx, clients, releaseID,
+	assertValidationRequestedNodes(t, ctx, validationTap, releaseID,
 		[]string{xprobeUpUniqueID, xprobeDownUniqueID})
 
 	waitForReleasePromoted(t, ctx, clients, releaseID, 12*time.Minute)
@@ -579,6 +591,10 @@ func TestE2E_ReleasePromote_PerServiceLeavesOthersIntact(t *testing.T) {
 	require.True(t, probeFound,
 		"rel_probe not found in baseline — service-1 manifests must include it")
 
+	// Tap the streams before the release is posted: the trim loop removes
+	// consumed entries, so the checks below read what the taps recorded.
+	validationTap := startStreamTap(t, ctx, clients.redisClient, streams.ValidationRequestedV1)
+
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
 	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
@@ -586,7 +602,7 @@ func TestE2E_ReleasePromote_PerServiceLeavesOthersIntact(t *testing.T) {
 	postRelease(t, clients, changedService, releaseID, changedImageTag, false)
 
 	// rel_probe is the only changed node — validate + promote.
-	assertValidationRequestedNodes(t, ctx, clients, releaseID, []string{probeUniqueID})
+	assertValidationRequestedNodes(t, ctx, validationTap, releaseID, []string{probeUniqueID})
 	waitForReleasePromoted(t, ctx, clients, releaseID, 10*time.Minute)
 	waitForTopologySwap(t, ctx, clients, releaseID, probeUniqueID, 2*time.Minute)
 
@@ -904,14 +920,11 @@ func postRelease(t *testing.T, clients *testClients, service, releaseID, imageTa
 // assertValidationRequestedNodes waits for the validation.requested:v1 message
 // for releaseID and asserts its node_ids_in_order matches the expected set.
 // This proves the changed-node derivation produced exactly the intended scope.
-func assertValidationRequestedNodes(t *testing.T, ctx context.Context, clients *testClients, releaseID string, want []string) {
+func assertValidationRequestedNodes(t *testing.T, ctx context.Context, validationTap *streamTap, releaseID string, want []string) {
 	t.Helper()
 	var got []string
 	pollUntil(t, ctx, 8*time.Minute, 1*time.Second, func() (bool, error) {
-		msgs, err := clients.redisClient.XRange(ctx, streams.ValidationRequestedV1, "-", "+").Result()
-		if err != nil {
-			return false, nil
-		}
+		msgs := validationTap.Entries()
 		for _, msg := range msgs {
 			payload, _ := msg.Values["payload"].(string)
 			if payload == "" {

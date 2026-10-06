@@ -796,3 +796,38 @@ func TestValidate_AcceptsDeadLetterControllerConsumer(t *testing.T) {
 		t.Fatalf("validate: %v", err)
 	}
 }
+
+func TestValidate_RetiredStreamMustNotBeLive(t *testing.T) {
+	c := &Contract{
+		Streams:        []Stream{{Name: "a:v1", Const: "AV1", Description: "d", Producers: []string{"state"}}},
+		RetiredStreams: []RetiredStream{{Name: "a:v1"}},
+	}
+	if err := validate(c); err == nil {
+		t.Fatal("a retired stream that is still in streams: must be rejected")
+	}
+}
+
+func TestEmitGo_GroupsAndRetired(t *testing.T) {
+	c := &Contract{
+		Streams: []Stream{
+			{Name: "a:v1", Const: "AV1", Description: "d", Consumers: []Consumer{{Service: "state", Group: "state-a", Const: "StateA"}}},
+			{Name: "b:v1", Const: "BV1", Description: "d"},
+		},
+		RetiredStreams: []RetiredStream{{Name: "old:v1"}},
+	}
+	out, err := emitGo(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"var Groups = map[string][]string{",
+		"AV1: {StateA},",
+		"BV1: {},",
+		"var Retired = []string{",
+		`"old:v1",`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+}

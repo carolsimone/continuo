@@ -13,9 +13,12 @@ import (
 // DedupKey and reports whether it inserted. Get returns deadletter.ErrNotFound
 // for an unknown id. LockForRedrive returns the existing rows among ids, locked
 // until the transaction ends. DeleteExpired removes up to limit rows whose
-// original message predates originalBefore and returns them.
+// original message predates originalBefore and returns them. InsertBatch stores
+// each dead letter not already stored, by DedupKey, and returns how many it
+// inserted.
 type DeadLetterRepository interface {
 	Insert(ctx context.Context, dl deadletter.DeadLetter) (bool, error)
+	InsertBatch(ctx context.Context, dls []deadletter.DeadLetter) (int, error)
 	Get(ctx context.Context, id uuid.UUID) (deadletter.DeadLetter, error)
 	List(ctx context.Context, f deadletter.Filter) ([]deadletter.DeadLetter, error)
 	CountOpen(ctx context.Context) (int64, error)

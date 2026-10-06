@@ -4,9 +4,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
+	"strconv"
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -38,15 +41,67 @@ func TestMetrics_GoServicesServePrometheusMetrics(t *testing.T) {
 	}
 }
 
+// Every series a service exposes carries a service label, so the samples below
+// are matched with their label set, e.g.
+// continuo_stream_trim_last_success_timestamp_seconds{service="dead-letter-controller"} 1.7e+09.
+
+// trimLastSuccessPattern captures the sample value of the trim loop's
+// last-success gauge from Prometheus exposition text.
+var trimLastSuccessPattern = regexp.MustCompile(`(?m)^continuo_stream_trim_last_success_timestamp_seconds\{[^}]*\} (\S+)$`)
+
+// queryModelLengthPattern matches the stream-length sample for query.model:v1,
+// e.g. continuo_stream_length{service="dead-letter-controller",stream="query.model:v1"} 12.
+var queryModelLengthPattern = regexp.MustCompile(
+	`(?m)^continuo_stream_length\{[^}]*stream="` + regexp.QuoteMeta(streams.QueryModelV1) + `"[^}]*\} \S+$`)
+
+// TestMetrics_DeadLetterControllerReportsStreamTrimming asserts the trim loop
+// dead-letter-controller runs is observable: the loop runs once at startup, so
+// its last-success gauge is positive, and every stream it bounds reports a
+// length, query.model:v1 among them.
+func TestMetrics_DeadLetterControllerReportsStreamTrimming(t *testing.T) {
+	host := getEnv("DEAD_LETTER_HOST", "dead-letter-controller")
+	var body string
+	require.Eventually(t, func() bool {
+		var err error
+		body, err = fetchMetrics(host)
+		if err != nil {
+			return false
+		}
+		m := trimLastSuccessPattern.FindStringSubmatch(body)
+		if m == nil {
+			return false
+		}
+		v, err := strconv.ParseFloat(m[1], 64)
+		return err == nil && v > 0
+	}, 2*time.Minute, 2*time.Second,
+		"continuo_stream_trim_last_success_timestamp_seconds must be positive once the trim loop has run")
+
+	assert.Regexp(t, queryModelLengthPattern, body, "no continuo_stream_length sample for %s", streams.QueryModelV1)
+}
+
 // scrapeMetrics returns the Prometheus exposition text served by host.
 func scrapeMetrics(t *testing.T, host string) string {
 	t.Helper()
+	body, err := fetchMetrics(host)
+	require.NoError(t, err)
+	return body
+}
+
+// fetchMetrics is scrapeMetrics without test assertions, for callers that retry
+// on a failed scrape.
+func fetchMetrics(host string) (string, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Get(fmt.Sprintf("http://%s:9464/metrics", host))
-	require.NoError(t, err)
+	if err != nil {
+		return "", err
+	}
 	defer resp.Body.Close()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("GET /metrics on %s: status %d", host, resp.StatusCode)
+	}
 	body, err := io.ReadAll(resp.Body)
-	require.NoError(t, err)
-	return string(body)
+	if err != nil {
+		return "", err
+	}
+	return string(body), nil
 }

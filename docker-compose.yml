@@ -491,6 +491,8 @@ services:
       - REDIS_PASSWORD=continuo
       - DEAD_LETTER_HTTP_PORT=8096
       - DEAD_LETTER_GRPC_PORT=50055
+      - STREAM_TRIM_ENABLED=true
+      - STREAM_RETENTION=72h
     ports:
       - "8096:8096"
       - "50055:50055"

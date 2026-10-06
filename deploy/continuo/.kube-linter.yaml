@@ -34,7 +34,7 @@ checks:
     # the one this recommendation assumes.
     - "dnsconfig-options"
     # Fires only on the Job/CronJob one-shot containers (db-init-migrate,
-    # minio bucket-init, stream-reaper) — verified across all three rendered
+    # minio bucket-init) — verified across all three rendered
     # topologies. Run-to-completion containers correctly have no
     # liveness/readiness probe; the check has no concept of that pod lifecycle
     # and never fires on any long-running Deployment/StatefulSet here.

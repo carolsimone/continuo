@@ -95,6 +95,11 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 
 	// 2. Reset the queue, seed current_prod (all nodes except ftable_e), and seed
 	//    service_prod for all services except service-2.
+	// Tap the remediation streams before the release is posted: the trim loop
+	// removes consumed entries, so the polls below read what the taps recorded.
+	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV2)
+	proposedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationProposedV1)
+
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
 	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
@@ -118,10 +123,7 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 	//    rejection and emitted the release's batched trigger with an entry for
 	//    ftable_e. This is a precondition for the agent-remediation to pick it up.
 	pollUntil(t, ctx, 3*time.Minute, 2*time.Second, func() (bool, error) {
-		msgs, err := clients.redisClient.XRange(ctx, streams.RemediationRequestedV2, "-", "+").Result()
-		if err != nil {
-			return false, nil
-		}
+		msgs := requestedTap.Entries()
 		for _, msg := range msgs {
 			raw, ok := msg.Values["payload"].(string)
 			if !ok || raw == "" {
@@ -149,10 +151,7 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 	//    budget covers a whole second pipeline run, not just the model call.
 	var proposed remediationProposedPayload
 	pollUntil(t, ctx, 20*time.Minute, 3*time.Second, func() (bool, error) {
-		msgs, err := clients.redisClient.XRange(ctx, streams.RemediationProposedV1, "-", "+").Result()
-		if err != nil {
-			return false, nil
-		}
+		msgs := proposedTap.Entries()
 		for _, msg := range msgs {
 			raw, ok := msg.Values["payload"].(string)
 			if !ok || raw == "" {

@@ -13,3 +13,19 @@ func TestRemediationRequestedV2_ReplacesV1(t *testing.T) {
 		t.Fatalf("consumer group renamed: %q", OrchestratorRemediationRequestedRejections)
 	}
 }
+
+func TestGroups_CoversEveryStream(t *testing.T) {
+	if len(Groups) != len(All) {
+		t.Fatalf("Groups has %d streams, All has %d", len(Groups), len(All))
+	}
+	for _, s := range All {
+		if _, ok := Groups[s]; !ok {
+			t.Errorf("Groups is missing %s", s)
+		}
+	}
+	for _, r := range Retired {
+		if _, live := Groups[r]; live {
+			t.Errorf("%s is both live and retired", r)
+		}
+	}
+}

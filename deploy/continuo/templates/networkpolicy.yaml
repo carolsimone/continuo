@@ -79,7 +79,7 @@ spec:
                 values: [state, orchestrator, execution-controller,
                          release-controller, remediation, agent-remediation,
                          agent-chat, dead-letter-controller,
-                         topology-controller, ui, stream-reaper]
+                         topology-controller, ui]
       ports:
         - port: 6379
 {{- end }}

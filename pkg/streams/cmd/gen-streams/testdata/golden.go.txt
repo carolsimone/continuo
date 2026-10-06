@@ -15,7 +15,18 @@ const (
 )
 
 // All is every stream name from contract.yaml, in contract order — for callers
-// that must operate over all streams (e.g. the stream reaper).
+// that must operate over all streams (e.g. dead-letter-controller's trim loop).
 var All = []string{
 	NodeUpdatedV1,
 }
+
+// Groups maps every contract stream to the consumer groups the contract
+// declares for it, for callers that must know which groups a stream serves
+// (dead-letter-controller's trim loop).
+var Groups = map[string][]string{
+	NodeUpdatedV1: {OrchestratorNodeUpdated},
+}
+
+// Retired lists the streams removed from the contract; their keys are deleted
+// from Redis.
+var Retired = []string{}

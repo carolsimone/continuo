@@ -169,7 +169,12 @@ func TestE2E_ReleasePromote_PythonContractSkipsCompileAndPromotes(t *testing.T) 
 	verifyK8sAvailable(t, ctx)
 	requireReleaseControllerHealthy(t, clients)
 
-	releaseID, cleanup := promotePythonFixtureRelease(t, ctx, clients)
+	// Tap the streams before the release is posted: the trim loop removes
+	// consumed entries, so the checks below read what the taps recorded.
+	validationTap := startStreamTap(t, ctx, clients.redisClient, streams.ValidationRequestedV1)
+	compileTap := startStreamTap(t, ctx, clients.redisClient, streams.CompileRequestedV1)
+
+	releaseID, cleanup := promotePythonFixtureRelease(t, ctx, clients, validationTap)
 	defer cleanup()
 
 	// Skip-compile threading: the validation request names exactly the python
@@ -180,10 +185,10 @@ func TestE2E_ReleasePromote_PythonContractSkipsCompileAndPromotes(t *testing.T) 
 	// object (seeded above) must have passed for the release to promote at
 	// all, which waitForReleasePromoted inside promotePythonFixtureRelease
 	// already proved.
-	assertValidationNodeOp(t, ctx, clients, releaseID, pyProbeUniqueID, "build_from_columns", ".json")
-	assertValidationNodeOp(t, ctx, clients, releaseID, pyCsvUniqueID, "build_from_columns", ".json")
-	assertValidationNodeOp(t, ctx, clients, releaseID, pyAPIUniqueID, "build_from_columns", ".json")
-	assertNoCompileRequested(t, ctx, clients, releaseID)
+	assertValidationNodeOp(t, ctx, validationTap, releaseID, pyProbeUniqueID, "build_from_columns", ".json")
+	assertValidationNodeOp(t, ctx, validationTap, releaseID, pyCsvUniqueID, "build_from_columns", ".json")
+	assertValidationNodeOp(t, ctx, validationTap, releaseID, pyAPIUniqueID, "build_from_columns", ".json")
+	assertNoCompileRequested(t, compileTap, releaseID)
 
 	// The promoted pointer records the python kind and the contract artifact.
 	var kind, s3Key string
@@ -209,7 +214,7 @@ func TestE2E_ReleasePromote_PythonContractSkipsCompileAndPromotes(t *testing.T) 
 // would instead run after every deferred call, against a closed pool. A
 // leftover service_prod pointer would drag this service's contract into every
 // later test's assembled manifest set.
-func promotePythonFixtureRelease(t *testing.T, ctx context.Context, clients *testClients) (string, func()) {
+func promotePythonFixtureRelease(t *testing.T, ctx context.Context, clients *testClients, validationTap *streamTap) (string, func()) {
 	t.Helper()
 
 	releaseID := "e2e-py-" + uuid.NewString()[:8]
@@ -247,7 +252,7 @@ func promotePythonFixtureRelease(t *testing.T, ctx context.Context, clients *tes
 
 	postPythonRelease(t, clients, pyE2EService, releaseID, pyFixtureImage)
 
-	assertValidationRequestedNodes(t, ctx, clients, releaseID,
+	assertValidationRequestedNodes(t, ctx, validationTap, releaseID,
 		[]string{pyProbeUniqueID, pyBadShapeUniqueID, pyCsvUniqueID, pyAPIUniqueID})
 
 	// Real build_from_columns Jobs run in kind against the published runner
@@ -283,7 +288,11 @@ func TestE2E_PythonNodeRun_MaterializesAndReportsFailures(t *testing.T) {
 	verifyK8sAvailable(t, ctx)
 	requireReleaseControllerHealthy(t, clients)
 
-	_, cleanup := promotePythonFixtureRelease(t, ctx, clients)
+	// Tap the streams before the release is posted: the trim loop removes
+	// consumed entries, so the checks below read what the taps recorded.
+	validationTap := startStreamTap(t, ctx, clients.redisClient, streams.ValidationRequestedV1)
+
+	_, cleanup := promotePythonFixtureRelease(t, ctx, clients, validationTap)
 	defer cleanup()
 
 	t.Run("conforming node materializes its declared rows", func(t *testing.T) {
@@ -468,13 +477,10 @@ func putS3Object(t *testing.T, ctx context.Context, clients *testClients, key st
 
 // assertValidationNodeOp finds the release's validation.requested:v1 message
 // and asserts the named node's validation_op and candidate_artifact_uri suffix.
-func assertValidationNodeOp(t *testing.T, ctx context.Context, clients *testClients, releaseID, nodeID, wantOp, wantURISuffix string) {
+func assertValidationNodeOp(t *testing.T, ctx context.Context, validationTap *streamTap, releaseID, nodeID, wantOp, wantURISuffix string) {
 	t.Helper()
 	pollUntil(t, ctx, 2*time.Minute, 1*time.Second, func() (bool, error) {
-		msgs, err := clients.redisClient.XRange(ctx, streams.ValidationRequestedV1, "-", "+").Result()
-		if err != nil {
-			return false, nil
-		}
+		msgs := validationTap.Entries()
 		for _, msg := range msgs {
 			payload, _ := msg.Values["payload"].(string)
 			if payload == "" {
@@ -508,10 +514,9 @@ func assertValidationNodeOp(t *testing.T, ctx context.Context, clients *testClie
 // assertNoCompileRequested asserts no compile.requested:v1 message exists for
 // the release — the skip-compile branch's negative proof. Called after the
 // validation request has been observed, so ordering is settled.
-func assertNoCompileRequested(t *testing.T, ctx context.Context, clients *testClients, releaseID string) {
+func assertNoCompileRequested(t *testing.T, compileTap *streamTap, releaseID string) {
 	t.Helper()
-	msgs, err := clients.redisClient.XRange(ctx, streams.CompileRequestedV1, "-", "+").Result()
-	require.NoError(t, err)
+	msgs := compileTap.Entries()
 	for _, msg := range msgs {
 		payload, _ := msg.Values["payload"].(string)
 		var p struct {

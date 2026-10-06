@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/streams"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -37,6 +38,11 @@ func TestE2E_HappyPath_FullDAGExecution(t *testing.T) {
 	// Cleanup any existing data
 	cleanupTestData(t, ctx, clients, testScheduleName)
 
+	// Tap query.model:v1 before anything is triggered: the orchestrator consumes it
+	// and the trim loop removes consumed entries, so the checks below read what
+	// the tap recorded rather than the stream's history.
+	queryModelTap := startStreamTap(t, ctx, clients.redisClient, streams.QueryModelV1)
+
 	// Seed the full e2e topology via a release.promoted:v1 event.
 	t.Log("Seeding topology via release.promoted:v1...")
 	seedTopology(t, ctx, clients)
@@ -49,11 +55,11 @@ func TestE2E_HappyPath_FullDAGExecution(t *testing.T) {
 
 	// Verify orchestrator published root node messages to query.model:v1
 	t.Log("Verifying orchestrator published root node messages...")
-	verifyOrchestratorPublishedRootNodes(t, ctx, clients, schedulerID, []string{"seed_table_1", "seed_table_2", "seed_table_3"})
+	verifyOrchestratorPublishedRootNodes(t, ctx, queryModelTap, schedulerID, []string{"seed_table_1", "seed_table_2", "seed_table_3"})
 
 	// Verify complete DAG execution
 	t.Log("Verifying full DAG execution...")
-	verifyFullDAGExecution(t, ctx, clients, schedulerID)
+	verifyFullDAGExecution(t, ctx, clients, queryModelTap, schedulerID)
 
 	// Verify service-1 Jobs actually ran through the customname-dbt dialect and
 	// service-2/3 Jobs through the built-in dialect (pins the dbt-commands

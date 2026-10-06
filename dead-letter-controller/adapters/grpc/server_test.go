@@ -53,6 +53,16 @@ func (r *fakeRepo) Insert(_ context.Context, dl deadletter.DeadLetter) (bool, er
 	return true, nil
 }
 
+func (r *fakeRepo) InsertBatch(ctx context.Context, dls []deadletter.DeadLetter) (int, error) {
+	n := 0
+	for _, dl := range dls {
+		if ok, _ := r.Insert(ctx, dl); ok {
+			n++
+		}
+	}
+	return n, nil
+}
+
 func (r *fakeRepo) Get(_ context.Context, id uuid.UUID) (deadletter.DeadLetter, error) {
 	dl, ok := r.rows[id]
 	if !ok {

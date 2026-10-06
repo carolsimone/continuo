@@ -8,8 +8,9 @@ import (
 
 // frozenGroups are consumer-group strings that are live Redis state. A group
 // is created at offset 0, so a renamed group replays the retained stream
-// history (up to StreamMaxLen entries) against an empty dedup table. These
-// strings therefore never change, whatever the owning service is called.
+// history (everything the dead-letter-controller's trim loop has not yet
+// trimmed) against an empty dedup table. These strings therefore never change,
+// whatever the owning service is called.
 var frozenGroups = []string{
 	"executor-query-model", "executor-schedule-cancelled",
 	"executor-validation-requested",

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
@@ -68,12 +69,17 @@ func TestE2E_ReleaseValidation_TestThatNoLongerBindsRejects(t *testing.T) {
 	for _, id := range []string{tbindUniqueID, tbindNotNullTestID, tbindSingularTestID} {
 		require.True(t, seen[id], "%s missing from the baseline manifests — rebuild service-2 and re-upload", id)
 	}
+	// Tap the streams before the release is posted: the trim loop removes
+	// consumed entries, so the checks below read what the taps recorded.
+	validationTap := startStreamTap(t, ctx, clients.redisClient, streams.ValidationRequestedV1)
+	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV2)
+
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
 	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
 
 	postRelease(t, clients, changedService, releaseID, changedImageTag, false)
-	assertValidationRequestedNodes(t, ctx, clients, releaseID, []string{tbindUniqueID, tbindNotNullTestID, tbindSingularTestID})
+	assertValidationRequestedNodes(t, ctx, validationTap, releaseID, []string{tbindUniqueID, tbindNotNullTestID, tbindSingularTestID})
 	waitForReleaseRejected(t, ctx, clients, releaseID, batchRejectBudget)
 
 	detail := getReleaseJSON(t, clients, releaseID)
@@ -87,7 +93,7 @@ func TestE2E_ReleaseValidation_TestThatNoLongerBindsRejects(t *testing.T) {
 	require.Equal(t, "failed", perNode[tbindNotNullTestID].Status)
 
 	// The classifier carries both tests; the agent skips them as non-targets.
-	trigger := waitForBatchedTrigger(t, ctx, clients, releaseID, []string{tbindNotNullTestID, tbindSingularTestID}, batchTriggerBudget)
+	trigger := waitForBatchedTrigger(t, ctx, requestedTap, releaseID, []string{tbindNotNullTestID, tbindSingularTestID}, batchTriggerBudget)
 	for _, n := range trigger.Nodes {
 		require.Equal(t, "dbt-test", n.NodeType)
 	}
@@ -140,12 +146,16 @@ func TestE2E_ReleaseValidation_TestsBindAndArePromotedInvisibly(t *testing.T) {
 	for id, found := range held {
 		require.True(t, found, "%s missing from the baseline manifests — rebuild service-2 and re-upload", id)
 	}
+	// Tap the streams before the release is posted: the trim loop removes
+	// consumed entries, so the checks below read what the taps recorded.
+	validationTap := startStreamTap(t, ctx, clients.redisClient, streams.ValidationRequestedV1)
+
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
 	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
 
 	postRelease(t, clients, changedService, releaseID, changedImageTag, false)
-	assertValidationRequestedNodes(t, ctx, clients, releaseID, []string{tbindOkUniqueID, tbindOkNotNullTestID})
+	assertValidationRequestedNodes(t, ctx, validationTap, releaseID, []string{tbindOkUniqueID, tbindOkNotNullTestID})
 	waitForReleasePromoted(t, ctx, clients, releaseID, batchRejectBudget)
 	// The orchestrator swaps the Neo4j topology asynchronously after the release
 	// reports promoted; wait for tbind_ok to be current for this release before

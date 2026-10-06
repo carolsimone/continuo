@@ -345,7 +345,7 @@
       "additionalProperties": false,
       "properties": {
         "enabled": {"type": "boolean"},
-        "schedule": {"type": "string"},
+        "schedule": {"type": "string", "description": "Ignored; trimming runs every 5 minutes inside dead-letter-controller."},
         "retention": {"type": "string"}
       }
     },

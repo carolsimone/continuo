@@ -14,10 +14,12 @@ import (
 type PruneFunc func(ctx context.Context, retention time.Duration, limit int) (int64, error)
 
 // RetentionTarget names one table-and-prune pair the sweeper should keep
-// bounded. Name is used only in log lines.
+// bounded. Name is used only in log lines. MinRetention, when longer than the
+// sweeper's retention, is the retention used for this target.
 type RetentionTarget struct {
-	Name  string
-	Prune PruneFunc
+	Name         string
+	Prune        PruneFunc
+	MinRetention time.Duration
 }
 
 // RetentionConfig groups the sweeper's timing knobs. All have safe defaults so
@@ -110,12 +112,13 @@ func (s *RetentionSweeper) sweep(ctx context.Context) {
 // fewer rows than the batch limit (backlog cleared) or the per-sweep batch cap
 // is reached. Returns the total deleted across the loop.
 func (s *RetentionSweeper) pruneTarget(ctx context.Context, target RetentionTarget) (int64, error) {
+	retention := max(s.cfg.Retention, target.MinRetention)
 	var total int64
 	for i := 0; i < s.cfg.MaxBatchesPerSweep; i++ {
 		if ctx.Err() != nil {
 			return total, ctx.Err()
 		}
-		n, err := target.Prune(ctx, s.cfg.Retention, s.cfg.BatchLimit)
+		n, err := target.Prune(ctx, retention, s.cfg.BatchLimit)
 		if err != nil {
 			return total, err
 		}

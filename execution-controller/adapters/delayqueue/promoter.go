@@ -15,10 +15,6 @@ import (
 // loops until a partial batch drains the backlog.
 const promoteBatch = 500
 
-// promoteMaxLen caps the promoter's XADD, sharing streams.StreamMaxLen with the
-// direct publisher path so the stream is bounded on both routes onto it.
-const promoteMaxLen = streams.StreamMaxLen
-
 // promoteScript atomically moves all due tickets (score <= now) from the ZSET
 // into the stream, bounded by LIMIT. Because Redis runs the whole script
 // uninterrupted, with multiple execution-controller replicas each due job is
@@ -34,7 +30,7 @@ const promoteMaxLen = streams.StreamMaxLen
 // Redis msg_id — which the primary (message_id, stream_name) dedup would miss.
 //
 //	KEYS[1] = pending (ZSET)  KEYS[2] = tickets (HASH)  KEYS[3] = stream
-//	ARGV[1] = now (unix sec)  ARGV[2] = batch limit     ARGV[3] = stream maxlen
+//	ARGV[1] = now (unix sec)  ARGV[2] = batch limit
 const promoteScript = `
 local due = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', ARGV[1], 'LIMIT', 0, ARGV[2])
 for _, job in ipairs(due) do
@@ -47,7 +43,7 @@ for _, job in ipairs(due) do
     -- it. Dropping the one bad ticket keeps the rest of the backlog flowing.
     local ok, t = pcall(cjson.decode, raw)
     if ok and type(t) == 'table' and t.payload and t.entry_id then
-      redis.call('XADD', KEYS[3], 'MAXLEN', '~', ARGV[3], '*',
+      redis.call('XADD', KEYS[3], '*',
         'payload', t.payload, 'outbox_entry_id', t.entry_id)
     end
     redis.call('HDEL', KEYS[2], job)
@@ -66,7 +62,6 @@ type Promoter struct {
 	logger *slog.Logger
 	stream string
 	batch  int
-	maxLen int
 }
 
 // NewPromoter builds a Promoter for the check.k8s delay queue.
@@ -77,7 +72,6 @@ func NewPromoter(client *goredis.Client, logger *slog.Logger) *Promoter {
 		logger: logger,
 		stream: streams.CheckK8sV1,
 		batch:  promoteBatch,
-		maxLen: promoteMaxLen,
 	}
 }
 
@@ -89,7 +83,7 @@ func (p *Promoter) PromoteDue(ctx context.Context, now int64) (int, error) {
 	for {
 		n, err := p.script.Run(ctx, p.client,
 			[]string{PendingKey, TicketsKey, p.stream},
-			now, p.batch, p.maxLen,
+			now, p.batch,
 		).Int()
 		if err != nil {
 			return total, fmt.Errorf("promote due check tickets: %w", err)
