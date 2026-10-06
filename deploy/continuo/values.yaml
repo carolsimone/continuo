@@ -18,6 +18,8 @@ global:
   # default. Each datastore's persistence.storageClass overrides it.
   storageClass: ""
 
+  # Names the install's environment, published as ENV on the shared
+  # ConfigMap. No service reads it yet.
   env: production
   # Level every Go service and topology-controller log at, published as
   # LOG_LEVEL on the shared ConfigMap: DEBUG, INFO, WARN (or WARNING) or
@@ -588,8 +590,6 @@ services:
       S3_SIDECAR_IMAGE: __S3_SIDECAR_IMAGE__
       HTTP_PORT: "8084"
       DOCKERHUB_USERNAME: __DOCKERHUB_USERNAME__
-      # Tag for the per-TEAM dbt images (not continuo images); team image pinning is out of scope here.
-      IMAGE_TAG: latest
       DBT_COMMANDS_CONFIG_PATH: /etc/continuo/dbt-commands.yaml
     volumeMounts:
       - {name: dbt-commands, mountPath: /etc/continuo, readOnly: true}

@@ -143,12 +143,6 @@ services:
       - GRPC_PORT=50051
       - REDIS_ADDR=redis:6379
       - REDIS_PASSWORD=continuo
-      - REDIS_STREAM_SCHEDULER_STARTED=scheduler.started:v1
-      - REDIS_STREAM_SCHEDULES_LOADED=schedules.loaded:v1
-      - REDIS_STREAM_RUN_ENTRIES_DISPATCHED=run.entries.dispatched:v1
-      - REDIS_STREAM_RUN_ENTRIES_DISPATCH_FAILED=run.entries.dispatch_failed:v1
-      - REDIS_STREAM_TASK_STATUS_UPDATED=task.status.updated:v1
-      - REDIS_STREAM_TASK_EXECUTION_RECORDED=task.execution.recorded:v1
       - SCHEDULES_CONFIG_PATH=/etc/continuo/schedules.yaml
     ports:
       - "8082:8082"   # Health check HTTP

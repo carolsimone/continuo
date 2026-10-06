@@ -40,6 +40,8 @@ A new service, dead-letter-controller, stores every dead letter in its own datab
 ### Removed
 - The `stream-reaper` CronJob and its image. An install that mirrors images no longer needs `stream-reaper`.
 - `DB_POOL_SIZE` and `DB_MAX_OVERFLOW` from state's default `env`. State's own defaults equal the values they set (20 open, 10 idle). An overridden `services` list that still sets them keeps working: state ignores them and logs a warning at startup naming `DB_MAX_OPEN_CONNS` / `DB_MAX_IDLE_CONNS`, the keys it reads; use those instead.
+- `STATE_SERVICE_GRPC_ADDR` and `DEAD_LETTER_CONTROLLER_GRPC_ADDR` from the shared ConfigMap. No service read them: `global.stateGrpcAddr` reaches orchestrator and ui as `STATE_GRPC_ADDR`, and `global.deadLetterControllerGrpcAddr` reaches agent-chat as `CONTINUO_DEAD_LETTER_ADDR`; both values keys are unchanged.
+- `IMAGE_TAG` from execution-controller's default `env`. execution-controller does not read it: each team dbt Job runs the image tag its dispatch carries. A values file that overrides the whole `services:` list and still sets it keeps working; the variable is ignored.
 
 ### Fixed
 - orchestrator, release-controller and remediation honour `externalDatabase.sslMode` (`DB_SSLMODE`); they always connected with `sslmode=disable`.

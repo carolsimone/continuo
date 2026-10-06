@@ -86,7 +86,7 @@ func cleanupPostgres(t *testing.T, ctx context.Context, clients *testClients, sc
 		_, _ = db.Exec("DELETE FROM message_processing")
 	}
 
-	// Clean orchestrator_outbox (renamed from outbox).
+	// Clean the run's orchestrator_outbox rows.
 	if schedulerID != "" {
 		_, _ = clients.orchestratorDB.Exec("DELETE FROM orchestrator_outbox WHERE aggregate_id = $1", schedulerID)
 	}
