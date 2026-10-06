@@ -38,4 +38,8 @@ type QueryModel struct {
 	// message produced by an older orchestrator. Empty for everything current.
 	// See events.ModePromoteSeed.
 	Mode string
+	// MaxRetries is the task's retry budget the orchestrator stamped on the
+	// dispatch. Zero means the message carried none; the queued deployment
+	// then takes pkgevents.DefaultTaskMaxRetries.
+	MaxRetries int32
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/domain/events"
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	"github.com/carolsimone/continuo/execution-controller/service/uow"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/google/uuid"
 )
 
@@ -22,9 +23,10 @@ import (
 // msgProcID is the binding-layer dedup row's UUID (from message_processing);
 // it is stored for provenance. Pass uuid.Nil when no inbound trigger applies.
 //
-// taskMaxRetries <= 0 falls back to the service default of 2 — the task-level
-// retry budget carried in the command for the eventual RUNNING/FAILED
-// announcements, distinct from the deploy-attempt budget the aggregate owns.
+// taskMaxRetries is the task-level retry budget carried in the command for the
+// eventual RUNNING/FAILED announcements, distinct from the deploy-attempt
+// budget the aggregate owns; taskMaxRetries <= 0 falls back to
+// pkgevents.DefaultTaskMaxRetries.
 func createDeployment(
 	ctx context.Context,
 	u uow.UnitOfWork,
@@ -33,7 +35,7 @@ func createDeployment(
 	taskRetryCount, taskMaxRetries int,
 ) error {
 	if taskMaxRetries <= 0 {
-		taskMaxRetries = 2
+		taskMaxRetries = int(pkgevents.DefaultTaskMaxRetries)
 	}
 
 	cmd := command.DeployTask{

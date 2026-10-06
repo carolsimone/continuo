@@ -19,7 +19,6 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/service/uow"
 	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
-	"github.com/carolsimone/continuo/pkg/num"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/parsecache"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -36,11 +35,10 @@ const DefaultLogIOTimeout = 20 * time.Second
 
 // JobStatusConfig contains handler configuration
 type JobStatusConfig struct {
-	K8sNamespace          string
-	CheckDelaySeconds     int
-	ErrorMessageMaxLen    int
-	LogTailLines          int64
-	DefaultTaskMaxRetries int // used when max_retries is absent from the inbound message
+	K8sNamespace       string
+	CheckDelaySeconds  int
+	ErrorMessageMaxLen int
+	LogTailLines       int64
 	// LogIOTimeout bounds the pod-log fetch and its S3 uploads. Zero selects
 	// DefaultLogIOTimeout.
 	LogIOTimeout time.Duration
@@ -88,14 +86,7 @@ func (h *JobStatusHandler) Handle(ctx context.Context, u uow.UnitOfWork, cmd com
 	}
 
 	retryCount := cmd.RetryCount
-	maxRetries := cmd.MaxRetries
-	if maxRetries == 0 {
-		converted, err := num.Int32(h.config.DefaultTaskMaxRetries, "default_task_max_retries")
-		if err != nil {
-			return fmt.Errorf("check job status: %w", err)
-		}
-		maxRetries = converted
-	}
+	maxRetries := taskRetryBudget(cmd.MaxRetries)
 
 	cancelled, err := h.cancelledSchedules.Exists(ctx, cmd.ScheduleID)
 	if err != nil {
@@ -168,6 +159,15 @@ func (h *JobStatusHandler) Handle(ctx context.Context, u uow.UnitOfWork, cmd com
 	default:
 		return h.handleUnknown(ctx, u, cmd, result)
 	}
+}
+
+// taskRetryBudget returns the task's retry budget carried on the check ticket,
+// or pkgevents.DefaultTaskMaxRetries when the ticket carries none.
+func taskRetryBudget(maxRetries int32) int32 {
+	if maxRetries <= 0 {
+		return pkgevents.DefaultTaskMaxRetries
+	}
+	return maxRetries
 }
 
 // handleSucceeded handles successful job completion.
@@ -613,14 +613,7 @@ func (h *JobStatusHandler) handleRunning(ctx context.Context, u uow.UnitOfWork, 
 
 	checkAfter := time.Now().Add(time.Duration(h.config.CheckDelaySeconds) * time.Second)
 
-	maxRetries := cmd.MaxRetries
-	if maxRetries == 0 {
-		converted, err := num.Int32(h.config.DefaultTaskMaxRetries, "default_task_max_retries")
-		if err != nil {
-			return fmt.Errorf("check job status: %w", err)
-		}
-		maxRetries = converted
-	}
+	maxRetries := taskRetryBudget(cmd.MaxRetries)
 
 	// Determine the outbox entry ID to carry forward for future dedup; use a new UUID
 	// so each check-delayed row has its own identity in the check.k8s:v1 stream.

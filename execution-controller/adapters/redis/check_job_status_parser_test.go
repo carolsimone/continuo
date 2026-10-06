@@ -30,7 +30,7 @@ func TestParseCheckK8s_DecodesPayloadAndRetryCount(t *testing.T) {
 		ScheduleID: uuid.New().String(),
 		JobName:    "job-2",
 		RetryCount: 4,
-	}), 3)
+	}))
 	if err != nil {
 		t.Fatalf("ParseCheckK8s: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestParseCheckK8s_CarriesRunningAnnounced(t *testing.T) {
 		ScheduleID:       uuid.New().String(),
 		JobName:          "job-ra",
 		RunningAnnounced: true,
-	}), 3)
+	}))
 	if err != nil {
 		t.Fatalf("ParseCheckK8s: %v", err)
 	}
@@ -56,22 +56,38 @@ func TestParseCheckK8s_CarriesRunningAnnounced(t *testing.T) {
 	}
 }
 
-func TestParseCheckK8s_DefaultMaxRetriesWhenAbsent(t *testing.T) {
+// TestParseCheckK8s_MaxRetriesAsDecoded verifies the parser carries the ticket's
+// budget unchanged and leaves an absent one at 0, which the job-status handler
+// replaces with the default budget.
+func TestParseCheckK8s_MaxRetriesAsDecoded(t *testing.T) {
 	cmd, err := ParseCheckK8s(payloadMsg(t, pkgevents.CheckK8s{
 		TaskID:     uuid.New().String(),
 		ScheduleID: uuid.New().String(),
 		JobName:    "job-3",
-	}), 7)
+		MaxRetries: 5,
+	}))
 	if err != nil {
 		t.Fatalf("ParseCheckK8s: %v", err)
 	}
-	if cmd.MaxRetries != 7 {
-		t.Fatalf("expected default max_retries 7, got %d", cmd.MaxRetries)
+	if cmd.MaxRetries != 5 {
+		t.Fatalf("expected max_retries 5, got %d", cmd.MaxRetries)
+	}
+
+	cmd, err = ParseCheckK8s(payloadMsg(t, pkgevents.CheckK8s{
+		TaskID:     uuid.New().String(),
+		ScheduleID: uuid.New().String(),
+		JobName:    "job-3",
+	}))
+	if err != nil {
+		t.Fatalf("ParseCheckK8s: %v", err)
+	}
+	if cmd.MaxRetries != 0 {
+		t.Fatalf("expected absent max_retries to stay 0, got %d", cmd.MaxRetries)
 	}
 }
 
 func TestParseCheckK8s_InvalidJSONErrors(t *testing.T) {
-	_, err := ParseCheckK8s(msgWith(map[string]interface{}{"payload": "{not json"}), 3)
+	_, err := ParseCheckK8s(msgWith(map[string]interface{}{"payload": "{not json"}))
 	if err == nil {
 		t.Fatal("expected error for malformed payload JSON")
 	}
@@ -86,7 +102,7 @@ func TestParseCheckK8s_CarriesOperation(t *testing.T) {
 		ScheduleID: uuid.New().String(),
 		JobName:    "job-op",
 		Operation:  "test",
-	}), 3)
+	}))
 	if err != nil {
 		t.Fatalf("ParseCheckK8s: %v", err)
 	}
@@ -104,7 +120,7 @@ func TestParseCheckK8s_CarriesSecretRef(t *testing.T) {
 		ScheduleID: uuid.New().String(),
 		JobName:    "job-secret",
 		SecretRef:  "continuo-api-fx",
-	}), 3)
+	}))
 	if err != nil {
 		t.Fatalf("ParseCheckK8s: %v", err)
 	}
@@ -118,7 +134,7 @@ func TestParseCheckK8s_WithoutSecretRefIsEmpty(t *testing.T) {
 		TaskID:     uuid.New().String(),
 		ScheduleID: uuid.New().String(),
 		JobName:    "job-no-secret",
-	}), 3)
+	}))
 	if err != nil {
 		t.Fatalf("ParseCheckK8s: %v", err)
 	}

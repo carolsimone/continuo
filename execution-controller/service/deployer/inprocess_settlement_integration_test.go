@@ -103,7 +103,7 @@ func TestValidationTerminal_OutcomeAndPerNodeResultCommitTogether(t *testing.T) 
 		},
 	}
 	handler := handlers.NewJobStatusHandler(observer, &fakes.FakeLogUploader{},
-		&handlers.JobStatusConfig{K8sNamespace: "default", CheckDelaySeconds: 1, LogTailLines: 5, ErrorMessageMaxLen: 100, DefaultTaskMaxRetries: 2},
+		&handlers.JobStatusConfig{K8sNamespace: "default", CheckDelaySeconds: 1, LogTailLines: 5, ErrorMessageMaxLen: 100},
 		postgres.NewCancelledSchedulesRepository(db), outcomes.NewRecorder(slog.Default()), slog.Default())
 
 	u := postgres.NewPostgresUnitOfWork(db, slog.Default())
@@ -162,7 +162,7 @@ func TestProductionFailureBelowBudget_RetryRowCommitsWithFailedAnnouncement(t *t
 		},
 	}
 	handler := handlers.NewJobStatusHandler(observer, &fakes.FakeLogUploader{},
-		&handlers.JobStatusConfig{K8sNamespace: "default", CheckDelaySeconds: 1, LogTailLines: 5, ErrorMessageMaxLen: 100, DefaultTaskMaxRetries: 2},
+		&handlers.JobStatusConfig{K8sNamespace: "default", CheckDelaySeconds: 1, LogTailLines: 5, ErrorMessageMaxLen: 100},
 		postgres.NewCancelledSchedulesRepository(db), outcomes.NewRecorder(slog.Default()), slog.Default())
 
 	u := postgres.NewPostgresUnitOfWork(db, slog.Default())

@@ -13,6 +13,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/service/handlers"
 	"github.com/carolsimone/continuo/execution-controller/test/fakes"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -62,7 +63,8 @@ func TestQueryModelHandler_EnqueuesDeployment(t *testing.T) {
 	assert.Equal(t, "dbt-public-orders", cmd.JobName)
 	assert.Empty(t, cmd.SecretRef)
 	assert.Equal(t, 0, cmd.TaskRetryCount)
-	assert.Equal(t, 2, cmd.TaskMaxRetries, "default task max retries off the retry stream")
+	assert.Equal(t, int(pkgevents.DefaultTaskMaxRetries), cmd.TaskMaxRetries,
+		"a dispatch without max_retries takes the default budget")
 	assert.True(t, dep.IsDeployable())
 }
 
@@ -122,4 +124,23 @@ func TestQueryModelHandler_PropagatesMsgProcIDToDeployment(t *testing.T) {
 	assert.Equal(t, msgProcID, *dep.MessageProcessingID())
 	assert.NotEqual(t, evt.OutboxEntryID, *dep.MessageProcessingID(),
 		"orchestrator's OutboxEntryID must never be used as the executor's message_processing FK")
+}
+
+// TestQueryModelHandler_CarriesTheDispatchedRetryBudget proves the queued
+// deployment takes the retry budget the orchestrator stamped on the dispatch.
+func TestQueryModelHandler_CarriesTheDispatchedRetryBudget(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	depl := &stubDeploymentsRepo{}
+	u := newFakeUoW(depl, &stubCancelledRepo{ids: map[uuid.UUID]bool{}})
+
+	evt := events.QueryModel{
+		TaskID: uuid.New(), ScheduleID: uuid.New(), ScheduleName: "daily",
+		ServiceName: "dbt", SchemaName: "public", TableName: "orders",
+		JobName: "dbt-public-orders", NodeType: pkg_model.NodeTypeDbtModel, ImageTag: "sha-abc",
+		MaxRetries: 5,
+	}
+
+	require.NoError(t, handlers.NewQueryModelHandler(logger).Handle(context.Background(), u, evt, uuid.New()))
+	require.Len(t, depl.added, 1)
+	assert.Equal(t, 5, depl.added[0].Command().TaskMaxRetries)
 }

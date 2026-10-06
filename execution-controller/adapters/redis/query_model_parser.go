@@ -3,9 +3,11 @@ package redis
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/carolsimone/continuo/execution-controller/domain/events"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/num"
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -48,6 +50,20 @@ func ParseQueryModel(msg goredis.XMessage) (events.QueryModel, error) {
 	if err != nil {
 		return events.QueryModel{}, fmt.Errorf("invalid operation: %w", err)
 	}
+	// max_retries is the task's retry budget stamped by the orchestrator.
+	// Absent or empty → 0 (createDeployment applies the default budget).
+	// Present but not a non-negative integer → permanent error.
+	var maxRetries int32
+	if s := stringField(msg.Values, "max_retries"); s != "" {
+		n, err := strconv.ParseInt(s, 10, 32)
+		if err != nil {
+			return events.QueryModel{}, fmt.Errorf("invalid max_retries: %w", err)
+		}
+		if n < 0 {
+			return events.QueryModel{}, fmt.Errorf("invalid max_retries %d: must not be negative", n)
+		}
+		maxRetries = num.ClampInt32(n)
+	}
 	return events.QueryModel{
 		OutboxEntryID: outboxEntryID,
 		TaskID:        taskID,
@@ -62,6 +78,7 @@ func ParseQueryModel(msg goredis.XMessage) (events.QueryModel, error) {
 		SecretRef:     stringField(msg.Values, "secret_ref"),
 		Operation:     operation,
 		Mode:          stringField(msg.Values, "mode"),
+		MaxRetries:    maxRetries,
 	}, nil
 }
 

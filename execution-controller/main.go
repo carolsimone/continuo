@@ -61,6 +61,10 @@ func main() {
 		os.Exit(1)
 	}
 	logger.Info("Starting execution-controller service")
+	if len(cfg.IgnoredRetryKeys) > 0 {
+		logger.Warn("Ignoring task retry setting execution-controller does not read; each task's retry budget comes from its query.model:v1 dispatch, falling back to pkg/events.DefaultTaskMaxRetries",
+			"ignored", strings.Join(cfg.IgnoredRetryKeys, ", "))
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -205,11 +209,10 @@ func main() {
 	seedBuildReqHandler := handlers.NewSeedBuildRequestedHandler(logger)
 	compileReqHandler := handlers.NewCompileRequestedHandler(logger)
 	jobStatusHandler := handlers.NewJobStatusHandler(k8sClient, logUploader, &handlers.JobStatusConfig{
-		K8sNamespace:          cfg.K8sNamespace,
-		CheckDelaySeconds:     cfg.K8sCheckDelaySeconds,
-		ErrorMessageMaxLen:    cfg.ErrorMessageMaxLength,
-		LogTailLines:          int64(cfg.LogTailLines),
-		DefaultTaskMaxRetries: cfg.DefaultTaskMaxRetries,
+		K8sNamespace:       cfg.K8sNamespace,
+		CheckDelaySeconds:  cfg.K8sCheckDelaySeconds,
+		ErrorMessageMaxLen: cfg.ErrorMessageMaxLength,
+		LogTailLines:       int64(cfg.LogTailLines),
 	}, cancelledSchedulesRepo, outcomes.NewRecorder(logger), logger)
 
 	newConsumer := func(stream, group string, binding pkgredis.MessageHandler) *pkgredis.StreamConsumer {

@@ -201,7 +201,6 @@ services:
       - MAX_CONCURRENT_JOBS=50
       - K8S_CHECK_DELAY_SECONDS=10
       - K8S_FIRST_CHECK_DELAY_SECONDS=1
-      - DEFAULT_TASK_MAX_RETRIES=2
       - LOG_TAIL_LINES=50
       - ERROR_MESSAGE_MAX_LENGTH=4096
       # The validation image is a published external image; scripts/setup.sh
