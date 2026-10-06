@@ -269,6 +269,10 @@ bench-test:  ## Unit tests and shellcheck for the run-lifecycle benchmark harnes
 #   read-only go.sum. Inside the workspace go.work.sum papers over a stale
 #   module go.sum, so the gap otherwise surfaces only as a failed image build
 #   in the deploy workflow on main, which skips the deploy job.
+# - check-generated-streams: every file gen-streams writes from
+#   pkg/streams/contract.yaml (Go, Python and TypeScript) must equal what the
+#   generator produces from the contract, so a contract edit cannot land
+#   without its regenerated bindings. It leaves the tree as it found it.
 #
 # The tests cover the two Go modules no other test target reaches: pkg (the
 # cross-cutting static guards) and tests/e2e/stub-llm (the canned model the
@@ -296,6 +300,7 @@ guards: bench-test
 	bash scripts/check-validation-image-sideload.sh
 	bash scripts/check-dev-dockerfile-nonroot.sh
 	bash scripts/check-standalone-modules.sh
+	bash scripts/check-generated-streams.sh
 	cd pkg && go test ./...
 	cd pkg && go test -race ./lifecycle/...
 	cd tests/e2e/stub-llm && GOWORK=off go test ./...
