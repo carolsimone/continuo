@@ -62,6 +62,7 @@ type changeSet struct {
 	cancelDirty            bool
 	startedDirty           bool
 	completedDirty         bool
+	heartbeatDirty         bool
 }
 
 // HydrateRun rebuilds a Run from persisted scheduler_tracker columns. Used by
@@ -336,6 +337,7 @@ func (c changeSet) IsTerminalTaskCountDirty() bool { return c.terminalTaskCountD
 func (c changeSet) IsCancelDirty() bool            { return c.cancelDirty }
 func (c changeSet) IsStartedDirty() bool           { return c.startedDirty }
 func (c changeSet) IsCompletedDirty() bool         { return c.completedDirty }
+func (c changeSet) IsHeartbeatDirty() bool         { return c.heartbeatDirty }
 
 // AcceptDispatch consumes the run.entries.dispatched:v1 projection. The
 // projection IS the full child set (no prior tasks exist), so the aggregate
@@ -348,6 +350,7 @@ func (c changeSet) IsCompletedDirty() bool         { return c.completedDirty }
 //   - total_task_count = len(projection); terminal_task_count seeded from
 //     already-terminal projected rows.
 //   - init_status = completed always after dispatch.
+//   - last_heartbeat_at (the run's progress clock) = now.
 //   - Status transition:
 //     every projected task terminal && all succeeded → SUCCEEDED + completed_at
 //     every projected task terminal && any non-succeeded → FAILED + completed_at
@@ -409,6 +412,7 @@ func (r *Run) AcceptDispatch(
 	r.changes.totalTaskCountDirty = true
 	r.changes.terminalTaskCountDirty = true
 	r.changes.initStatusDirty = true
+	r.recordProgress(now)
 
 	if allTerminal {
 		outcome := SchedulerStatusFailed
@@ -495,6 +499,10 @@ func (r *Run) Cancel(
 // on a RUNNING and the terminal of the same attempt; a genuine retry is a
 // strictly newer attempt. The aggregate uses that to honor a real retry's
 // un-fill while ignoring a stale RUNNING re-delivered after its own terminal.
+//
+// Every task write that takes effect stamps the run's progress clock
+// (last_heartbeat_at) with now. A replay, a superseded attempt, or a write the
+// task row refused (affected == 0) leaves the clock where it was.
 func (r *Run) RecordTaskStatus(
 	ctx context.Context,
 	tasks TaskCollection,
@@ -561,8 +569,12 @@ func (r *Run) RecordTaskStatus(
 			if newStatus == prev {
 				return nil, nil
 			}
-			if _, err := tasks.SetStatusAndAttempt(ctx, taskID, newStatus, retryCount); err != nil {
+			affected, err := tasks.SetStatusAndAttempt(ctx, taskID, newStatus, retryCount)
+			if err != nil {
 				return nil, fmt.Errorf("set task status: %w", err)
+			}
+			if affected > 0 {
+				r.recordProgress(now)
 			}
 			return nil, nil
 		}
@@ -574,6 +586,7 @@ func (r *Run) RecordTaskStatus(
 		if affected == 0 {
 			return nil, nil // cancelled or vanished — leave counters untouched.
 		}
+		r.recordProgress(now)
 		r.fillSlot()
 		return r.finalizeIfComplete(ctx, tasks, now)
 	}
@@ -586,6 +599,7 @@ func (r *Run) RecordTaskStatus(
 	if affected == 0 {
 		return nil, nil // cancelled or vanished — leave counters untouched.
 	}
+	r.recordProgress(now)
 	switch {
 	case prevWasTerminal && !isTerminal:
 		// Genuine retry running again — un-fill the slot.
@@ -606,6 +620,15 @@ func (r *Run) RecordTaskStatus(
 		// slot was empty and stays empty.
 		return nil, nil
 	}
+}
+
+// recordProgress stamps the run's progress clock with now. The clock reads the
+// last dispatch or applied task status change; the dispatch watchdog measures a
+// stall from it.
+func (r *Run) recordProgress(now time.Time) {
+	at := now
+	r.lastHeartbeatAt = &at
+	r.changes.heartbeatDirty = true
 }
 
 // fillSlot marks one more task as terminal in the run's bookkeeping.

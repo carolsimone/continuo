@@ -985,3 +985,159 @@ func TestRun_Cancel_AlreadyTerminal_NoEvents(t *testing.T) {
 		t.Fatalf("want no events on re-cancel, got %d", len(events))
 	}
 }
+
+// dispatchedRun returns a RUNNING run with one pending task per id, dispatched
+// at dispatchedAt, with a clean change set.
+func dispatchedRun(t *testing.T, tc *fakeTaskCollection, dispatchedAt time.Time, ids ...uuid.UUID) *run.Run {
+	t.Helper()
+	r := freshPendingRun(t)
+	projection := make([]run.DispatchedTask, 0, len(ids))
+	for i, id := range ids {
+		projection = append(projection, run.DispatchedTask{
+			TaskID:      id,
+			ServiceName: "s", SchemaName: "p", TableName: fmt.Sprintf("t%d", i),
+			Status: run.TaskStatusPending, MaxRetries: 3,
+		})
+	}
+	if _, err := r.AcceptDispatch(context.Background(), tc, projection, dispatchedAt); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	r.ResetChanges()
+	return r
+}
+
+func TestNewPendingRun_LeavesProgressClockUnset(t *testing.T) {
+	r := freshPendingRun(t)
+	if r.LastHeartbeatAt() != nil {
+		t.Fatalf("LastHeartbeatAt = %v, want nil before the run is dispatched", *r.LastHeartbeatAt())
+	}
+	if r.Changes().IsHeartbeatDirty() {
+		t.Fatal("a new run must not mark the progress clock dirty")
+	}
+}
+
+func TestAcceptDispatch_StampsProgressClock(t *testing.T) {
+	for name, status := range map[string]run.TaskStatus{
+		"moves to running": run.TaskStatusPending,
+		"auto-rollup":      run.TaskStatusSucceeded,
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := freshPendingRun(t)
+			now := time.Now().Add(time.Minute)
+			_, err := r.AcceptDispatch(context.Background(), newFakeTaskCollection(), []run.DispatchedTask{
+				{TaskID: uuid.New(), ServiceName: "s", SchemaName: "p", TableName: "a", Status: status, MaxRetries: 3},
+			}, now)
+			if err != nil {
+				t.Fatalf("AcceptDispatch: %v", err)
+			}
+			if r.LastHeartbeatAt() == nil || !r.LastHeartbeatAt().Equal(now) {
+				t.Fatalf("LastHeartbeatAt = %v, want %v", r.LastHeartbeatAt(), now)
+			}
+			if !r.Changes().IsHeartbeatDirty() {
+				t.Fatal("dispatch must mark the progress clock dirty")
+			}
+		})
+	}
+}
+
+func TestRecordTaskStatus_StampsProgressWhenTheWriteApplies(t *testing.T) {
+	cases := []struct {
+		name    string
+		prepare func(tc *fakeTaskCollection, id uuid.UUID)
+		status  run.TaskStatus
+		attempt int32
+	}{
+		{name: "same attempt pending to running", status: run.TaskStatusRunning},
+		{name: "first terminal of the attempt", status: run.TaskStatusSucceeded},
+		{name: "cascade skip", status: run.TaskStatusSkipped},
+		{
+			name: "newer attempt adopted",
+			prepare: func(tc *fakeTaskCollection, id uuid.UUID) {
+				tc.statuses[id] = run.TaskStatusFailed
+			},
+			status:  run.TaskStatusRunning,
+			attempt: 1,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			tc := newFakeTaskCollection()
+			id := uuid.New()
+			dispatchedAt := time.Now()
+			r := dispatchedRun(t, tc, dispatchedAt, id, uuid.New())
+			if c.prepare != nil {
+				c.prepare(tc, id)
+			}
+			later := dispatchedAt.Add(time.Hour)
+
+			if _, err := r.RecordTaskStatus(context.Background(), tc, id, c.status, c.attempt, later); err != nil {
+				t.Fatalf("RecordTaskStatus: %v", err)
+			}
+			if r.LastHeartbeatAt() == nil || !r.LastHeartbeatAt().Equal(later) {
+				t.Fatalf("LastHeartbeatAt = %v, want %v", r.LastHeartbeatAt(), later)
+			}
+			if !r.Changes().IsHeartbeatDirty() {
+				t.Fatal("an applied task write must mark the progress clock dirty")
+			}
+		})
+	}
+}
+
+func TestRecordTaskStatus_NoProgressWithoutAnAppliedWrite(t *testing.T) {
+	cases := []struct {
+		name    string
+		prepare func(t *testing.T, r *run.Run, tc *fakeTaskCollection, id uuid.UUID, at time.Time)
+		status  run.TaskStatus
+		attempt int32
+	}{
+		{
+			name: "replayed terminal",
+			prepare: func(t *testing.T, r *run.Run, tc *fakeTaskCollection, id uuid.UUID, at time.Time) {
+				if _, err := r.RecordTaskStatus(context.Background(), tc, id, run.TaskStatusSucceeded, 0, at); err != nil {
+					t.Fatalf("first terminal: %v", err)
+				}
+			},
+			status: run.TaskStatusSucceeded,
+		},
+		{name: "unchanged status", status: run.TaskStatusPending},
+		{
+			name: "stale older attempt",
+			prepare: func(_ *testing.T, _ *run.Run, tc *fakeTaskCollection, id uuid.UUID, _ time.Time) {
+				tc.attempts[id] = 2
+			},
+			status:  run.TaskStatusRunning,
+			attempt: 1,
+		},
+		{
+			name: "cancelled task row",
+			prepare: func(_ *testing.T, _ *run.Run, tc *fakeTaskCollection, id uuid.UUID, _ time.Time) {
+				tc.statuses[id] = run.TaskStatusCancelled
+			},
+			status:  run.TaskStatusRunning,
+			attempt: 1,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			tc := newFakeTaskCollection()
+			id := uuid.New()
+			dispatchedAt := time.Now()
+			r := dispatchedRun(t, tc, dispatchedAt, id, uuid.New())
+			if c.prepare != nil {
+				c.prepare(t, r, tc, id, dispatchedAt.Add(time.Minute))
+			}
+			r.ResetChanges()
+			before := *r.LastHeartbeatAt()
+
+			if _, err := r.RecordTaskStatus(context.Background(), tc, id, c.status, c.attempt, dispatchedAt.Add(time.Hour)); err != nil {
+				t.Fatalf("RecordTaskStatus: %v", err)
+			}
+			if r.Changes().IsHeartbeatDirty() {
+				t.Fatal("a write that applied nothing must not mark the progress clock dirty")
+			}
+			if !r.LastHeartbeatAt().Equal(before) {
+				t.Fatalf("LastHeartbeatAt = %v, want it unchanged at %v", *r.LastHeartbeatAt(), before)
+			}
+		})
+	}
+}

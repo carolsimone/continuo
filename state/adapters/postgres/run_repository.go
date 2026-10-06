@@ -136,6 +136,11 @@ func (r *RunRepositoryAdapter) SaveRun(ctx context.Context, rn *run.Run) error {
 			fields.StartedAt = started
 		}
 	}
+	if ch.IsHeartbeatDirty() {
+		if heartbeat := rn.LastHeartbeatAt(); heartbeat != nil {
+			fields.LastHeartbeatAt = heartbeat
+		}
+	}
 	if ch.IsStatusDirty() {
 		v := string(rn.Status())
 		fields.Status = &v

@@ -511,6 +511,9 @@ type RunRowUpdate struct {
 	TotalTaskCount       *int32
 	TerminalTaskCount    *int32
 	StartedAt            *time.Time
+	// LastHeartbeatAt is the run's progress clock: the last dispatch or applied
+	// task status change.
+	LastHeartbeatAt *time.Time
 	// CompletedAtNow, when true, sets completed_at = NOW() (terminal transition).
 	CompletedAtNow bool
 }
@@ -520,8 +523,8 @@ type RunRowUpdate struct {
 // and values are bound as parameters. Returns ErrNotFound when the row is
 // absent. A no-op fields set (nothing dirty) returns nil without touching the DB.
 func (r *schedulerTrackerRepository) UpdateRunRowTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, fields RunRowUpdate) error {
-	setClauses := make([]string, 0, 6)
-	args := make([]any, 0, 7)
+	setClauses := make([]string, 0, 7)
+	args := make([]any, 0, 8)
 
 	add := func(column string, value any) {
 		args = append(args, value)
@@ -542,6 +545,9 @@ func (r *schedulerTrackerRepository) UpdateRunRowTx(ctx context.Context, tx *sql
 	}
 	if fields.StartedAt != nil {
 		add("started_at", *fields.StartedAt)
+	}
+	if fields.LastHeartbeatAt != nil {
+		add("last_heartbeat_at", *fields.LastHeartbeatAt)
 	}
 	if fields.CompletedAtNow {
 		setClauses = append(setClauses, "completed_at = NOW()")
