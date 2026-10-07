@@ -377,6 +377,23 @@ validation:
 execution:
   maxConcurrentJobs: 50
 
+# Maintenance mode. While enabled, continuo starts no new work and lets the
+# work already running finish: ui, the public release API and the CLI refuse new
+# runs, triggers, releases, remediation retries and dead-letter redrives with
+# HTTP 503 / gRPC UNAVAILABLE and the message "continuo is in maintenance mode";
+# state skips cron fires (they are not caught up afterwards); release-controller
+# activates no queued release; agent-remediation records each fix attempt that
+# comes due as skipped, and **Retry remediation** starts it once maintenance is
+# off. Runs, releases and fix verifications already in progress complete.
+# Enforced by ui, state, release-controller, agent-remediation and
+# dead-letter-controller, which refuse to start on any value other than true or
+# false. Changing it restarts every continuo service (the shared ConfigMap
+# changes); turn it on with
+#   helm upgrade <release> <chart> --reuse-values --set maintenance.enabled=true
+# and off again with --set maintenance.enabled=false.
+maintenance:
+  enabled: false
+
 databaseInit:
   # Idempotently creates all 9 databases (including continuo_dbt) before the
   # Flyway migrations run. Disable when a DBA pre-creates databases; the

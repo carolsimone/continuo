@@ -1,5 +1,14 @@
 Continuo {{ .Chart.AppVersion }} (chart {{ .Chart.Version }}) {{ if .Release.IsUpgrade }}upgraded{{ else }}installed{{ end }} as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
 
+{{- if eq (include "continuo.maintenance.enabled" .) "true" }}
+
+MAINTENANCE MODE IS ON
+  continuo accepts no new runs, triggers, releases, remediation retries or
+  dead-letter redrives, and cron fires are skipped. Work already running
+  finishes. Turn it off with:
+    helm upgrade {{ .Release.Name }} <chart> --reuse-values --set maintenance.enabled=false
+{{- end }}
+
 {{- if .Release.IsUpgrade }}
 
 UPGRADE NOTES

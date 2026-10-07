@@ -144,6 +144,7 @@ services:
       - REDIS_ADDR=redis:6379
       - REDIS_PASSWORD=continuo
       - SCHEDULES_CONFIG_PATH=/etc/continuo/schedules.yaml
+      - MAINTENANCE_ENABLED=false
     ports:
       - "8082:8082"   # Health check HTTP
       - "50051:50051" # gRPC
@@ -351,6 +352,7 @@ services:
       - AWS_SECRET_ACCESS_KEY=minioadmin
       - AWS_DEFAULT_REGION=us-east-1
       - AGENT_REMEDIATION_GRPC_ADDR=agent-remediation:50054
+      - MAINTENANCE_ENABLED=false
     ports:
       - "8088:8088"
     networks:
@@ -450,6 +452,7 @@ services:
       - RELEASE_CONTROLLER_URL=http://release-controller:8088
       - VERIFICATION_TIMEOUT=${VERIFICATION_TIMEOUT:-20m}
       - VERIFICATION_POLL_INTERVAL=${VERIFICATION_POLL_INTERVAL:-5s}
+      - MAINTENANCE_ENABLED=false
     volumes:
       # The local stack runs on the e2e map, which adds the suite's fixture
       # services to the demo ones. The map agent-remediation documents for
@@ -492,6 +495,7 @@ services:
       - LOG_LEVEL=INFO
       - STREAM_TRIM_ENABLED=true
       - STREAM_RETENTION=72h
+      - MAINTENANCE_ENABLED=false
     ports:
       - "8096:8096"
       - "50055:50055"
@@ -652,6 +656,7 @@ services:
       - GITHUB_APP_INSTALLATION_ID=1
       - GITHUB_API_BASE_URL=http://stub-github:9200
       - CI_AUTH_CONFIG_PATH=/app/ci-auth/ci-auth.json
+      - MAINTENANCE_ENABLED=false
     ports:
       - "8090:8090"
     volumes:
@@ -710,6 +715,7 @@ services:
       - REDIS_URL=redis://:continuo@redis:6379
       - CI_AUTH_CONFIG_PATH=/app/ci-auth/ci-auth.json
       - CI_AUTH_ALLOW_INSECURE_ISSUER=true
+      - MAINTENANCE_ENABLED=false
     volumes:
       - ./ui/config:/app/config:ro
       - ./tests/e2e/ci-auth.json:/app/ci-auth/ci-auth.json:ro
