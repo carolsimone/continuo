@@ -9,6 +9,7 @@ from config.config import (
     AWS_DEFAULT_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
     RELEASE_REQUESTED_STREAM, RELEASE_REQUESTED_GROUP,
     MANIFEST_LOADED_CANDIDATE_STREAM,
+    log_level,
     validate,
     warehouse_dialect,
 )
@@ -24,14 +25,14 @@ from domain.model import Runtime
 from service.candidate_artifacts import DbtSqlArtifactBuilder, PythonSpecArtifactBuilder
 from service.candidate_manifest_handler import CandidateManifestHandler
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s %(message)s",
-)
 logger = logging.getLogger(__name__)
 
 
 def main() -> None:
+    # The root logger takes the level LOG_LEVEL names; log_level() refuses an
+    # unknown name, which stops the process before anything else starts.
+    logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    logging.getLogger().setLevel(log_level())
     validate()
     logger.info("topology-controller starting (candidate consumer)")
 

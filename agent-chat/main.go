@@ -47,9 +47,12 @@ var dbPool = pkgconfig.PoolConfig{MaxOpenConns: 20, MaxIdleConns: 5}
 const metricsServiceName = "agent-chat"
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
-
+	// The logger writes at the level LOG_LEVEL names. An unknown level is
+	// recorded on v, and the missing-configuration check below stops the
+	// service once this logger can report it.
 	v := &pkgconfig.Validator{}
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: pkgconfig.LoadLogLevel(v)}))
+
 	cfg := config.Load(v)
 	if missing := v.Missing(); len(missing) > 0 {
 		logger.Error("missing required configuration", "vars", strings.Join(missing, ", "))

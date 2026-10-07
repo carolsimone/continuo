@@ -31,9 +31,9 @@ type Config struct {
 	SchedulesConfigPath string
 
 	// Retention sweeper — purges processed outbox rows older than
-	// RetentionDays and terminal message_processing dedup rows older than the
-	// longer of RetentionDays and the 30-day replay horizon. Both knobs have safe
-	// defaults so no configuration is required.
+	// RetentionDays and message_processing dedup rows, in any state, older than
+	// the longer of RetentionDays and the 30-day replay horizon. Both knobs have
+	// safe defaults so no configuration is required.
 	RetentionDays             int
 	RetentionSweepIntervalMin int
 

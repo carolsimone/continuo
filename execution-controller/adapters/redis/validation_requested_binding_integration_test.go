@@ -15,6 +15,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/service/handlers"
 	"github.com/carolsimone/continuo/execution-controller/service/uow"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/jmoiron/sqlx"
 	goredis "github.com/redis/go-redis/v9"
@@ -113,6 +114,8 @@ func TestValidationRequestedBinding_HappyPath_EnqueuesAllNodes(t *testing.T) {
 		releaseID, "model.shop.orders"))
 	assert.Equal(t, 1, countRows(t, db,
 		`SELECT COUNT(*) FROM message_processing WHERE stream_name = $1`, streams.ValidationRequestedV1))
+	assert.Equal(t, messageprocessing.StateCompleted, dedupState(t, db, streams.ValidationRequestedV1),
+		"the dedup row is marked completed in the handler's transaction")
 }
 
 func TestValidationRequestedBinding_RedeliveredMessageIsDedupedAndAcked(t *testing.T) {

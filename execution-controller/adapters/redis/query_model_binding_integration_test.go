@@ -8,13 +8,13 @@ import (
 	"os"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/carolsimone/continuo/execution-controller/adapters/postgres"
 	executorredis "github.com/carolsimone/continuo/execution-controller/adapters/redis"
 	"github.com/carolsimone/continuo/execution-controller/service/handlers"
 	"github.com/carolsimone/continuo/execution-controller/service/uow"
 	executortest "github.com/carolsimone/continuo/execution-controller/test"
+	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
@@ -22,68 +22,11 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-// setupPostgres spins a Postgres testcontainer, applies executor's Flyway
-// migrations, and returns a connected *sqlx.DB plus a cleanup func.
+// setupPostgres connects to the externally migrated, empty executor test database.
 func setupPostgres(t *testing.T) (*sqlx.DB, func()) {
-	t.Helper()
-	ctx := context.Background()
-
-	req := testcontainers.ContainerRequest{
-		Image:        "postgres:16-alpine",
-		ExposedPorts: []string{"5432/tcp"},
-		Env: map[string]string{
-			"POSTGRES_USER":     "testuser",
-			"POSTGRES_PASSWORD": "testpass",
-			"POSTGRES_DB":       "testdb",
-		},
-		WaitingFor: wait.ForLog("database system is ready to accept connections").
-			WithOccurrence(2).
-			WithStartupTimeout(60 * time.Second),
-	}
-
-	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-		ContainerRequest: req,
-		Started:          true,
-	})
-	require.NoError(t, err, "failed to start postgres container")
-
-	host, err := container.Host(ctx)
-	require.NoError(t, err, "failed to get container host")
-
-	port, err := container.MappedPort(ctx, "5432")
-	require.NoError(t, err, "failed to get container port")
-
-	// Force IPv4 for macOS/colima compatibility.
-	if host == "localhost" {
-		host = "127.0.0.1"
-	}
-
-	connStr := "host=" + host + " port=" + port.Port() + " user=testuser password=testpass dbname=testdb sslmode=disable"
-
-	var db *sqlx.DB
-	for i := 0; i < 10; i++ {
-		db, err = sqlx.Connect("postgres", connStr)
-		if err == nil {
-			break
-		}
-		t.Logf("connection attempt %d/10 failed, retrying...", i+1)
-		time.Sleep(500 * time.Millisecond)
-	}
-	require.NoError(t, err, "failed to connect to postgres after retries")
-
-	require.NoError(t, executortest.ApplyMigrations(db.DB), "failed to apply executor migrations")
-
-	cleanup := func() {
-		_ = db.Close()
-		if err := container.Terminate(ctx); err != nil {
-			t.Logf("failed to terminate container: %v", err)
-		}
-	}
-	return db, cleanup
+	return executortest.SetupPostgres(t)
 }
 
 // buildBinding constructs a QueryModelBinding backed by the given *sqlx.DB
@@ -145,6 +88,18 @@ func TestQueryModelBinding_SingleMessageHappyPath(t *testing.T) {
 	assert.Equal(t, 1, countRows(t, db, `SELECT COUNT(*) FROM deployments`))
 	assert.Equal(t, 1, countRows(t, db,
 		`SELECT COUNT(*) FROM message_processing WHERE stream_name = $1`, streams.QueryModelV1))
+	assert.Equal(t, messageprocessing.StateCompleted, dedupState(t, db, streams.QueryModelV1),
+		"the dedup row is marked completed in the handler's transaction")
+}
+
+// dedupState returns the state of the single message_processing row a binding
+// wrote under streamName.
+func dedupState(t *testing.T, db *sqlx.DB, streamName string) string {
+	t.Helper()
+	var state string
+	require.NoError(t, db.QueryRowContext(context.Background(),
+		`SELECT state FROM message_processing WHERE stream_name = $1`, streamName).Scan(&state))
+	return state
 }
 
 func TestQueryModelBinding_ConcurrentDedup(t *testing.T) {

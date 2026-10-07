@@ -317,6 +317,22 @@ above it would stop that service from starting.
 {{- dict "open" $open "idle" $idle | toJson -}}
 {{- end -}}
 
+{{/* LOG_LEVEL for every service, from global.logLevel, rendered as given. The
+     services match the level without regard to case and treat an unset or
+     empty one as info; any other name stops every service at startup, so the
+     render fails on it first. $accepted is pkg/config.AcceptedLogLevels, and
+     pkg/streams' TestChartLogLevelsMatchTheServices pins the two lists to each
+     other. The shared ConfigMap includes this helper, so every install runs the
+     check. */}}
+{{- define "continuo.logLevel" -}}
+{{- $level := .Values.global.logLevel | default "info" -}}
+{{- $accepted := list "debug" "info" "warn" "warning" "error" -}}
+{{- if not (has (lower $level) $accepted) -}}
+{{- fail (printf "global.logLevel=%q is not a log level the services accept: use one of %s, in any case (INFO, Info and info all work). A service given another level refuses to start." $level (join ", " $accepted)) -}}
+{{- end -}}
+{{- $level -}}
+{{- end -}}
+
 {{- define "continuo.redis.host" -}}
 {{- if .Values.redis.enabled -}}
 {{- include "continuo.redis.fullname" . -}}

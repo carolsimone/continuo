@@ -48,10 +48,10 @@ var _ Repository = (*postgresRepository)(nil)
 type postgresRepository struct {
 	exec executor
 	// outboxTable is the caller's outbox table name (e.g. "orchestrator_outbox",
-	// "state_outbox"), used only by DeleteTerminalOlderThan to exclude rows a
-	// live outbox entry still references. Empty for repositories built via
-	// NewPostgresRepository, which never call DeleteTerminalOlderThan (that
-	// method is reached only through the Pruner interface, built via NewPruner).
+	// "state_outbox"), used only by DeleteOlderThan to exclude rows a live
+	// outbox entry still references. Empty for repositories built via
+	// NewPostgresRepository, which never call DeleteOlderThan (that method is
+	// reached only through the Pruner interface, built via NewPruner).
 	outboxTable string
 	logger      *slog.Logger
 }
@@ -164,29 +164,29 @@ func (r *postgresRepository) GetByID(
 	return fromRow(&rr), nil
 }
 
-func (r *postgresRepository) DeleteTerminalOlderThan(
+func (r *postgresRepository) DeleteOlderThan(
 	ctx context.Context, retention time.Duration, limit int,
 ) (int64, error) {
-	// Bounded delete of terminal dedup rows. A subquery picks up to limit
-	// eligible ids (state in the terminal set, updated_at older than
-	// NOW()-retention, and no row in the caller's outbox table still
-	// referencing it via message_processing_id) and the outer DELETE removes
-	// exactly those, keeping each statement's lock footprint small.
-	// 'processing' rows are excluded so an in-flight (or stuck) message keeps
-	// its dedup guard. The outbox exclusion is unconditional on the outbox
-	// row's status: a 'pending'/'scheduled' row means the event hasn't been
-	// published yet, and a 'failed' (dead-lettered) row is retained
-	// indefinitely by design (see pkg/outbox.DeleteProcessedOlderThan, which
-	// only ever prunes 'processed' rows) — in both cases deleting the
-	// referenced dedup row here would violate the outbox table's foreign key.
-	// The cutoff uses the DB clock (NOW()) to avoid host/DB skew; make_interval
-	// takes whole seconds.
+	// Bounded delete of aged dedup rows. A subquery picks up to limit ids
+	// (updated_at older than NOW()-retention, whatever the state, and no row
+	// in the caller's outbox table still referencing it via
+	// message_processing_id) and the outer DELETE removes exactly those,
+	// keeping each statement's lock footprint small. The outbox exclusion is
+	// unconditional on the outbox row's status: a 'pending'/'scheduled' row
+	// means the event hasn't been published yet, and a 'failed'
+	// (dead-lettered) row is retained indefinitely by design (see
+	// pkg/outbox.DeleteProcessedOlderThan, which only ever prunes 'processed'
+	// rows) — in both cases deleting the referenced dedup row here would
+	// violate the outbox table's foreign key. Any other table that keeps a
+	// message_processing id only as provenance declares its foreign key
+	// ON DELETE SET NULL, so the delete clears the reference there. The cutoff
+	// uses the DB clock (NOW()) to avoid host/DB skew; make_interval takes
+	// whole seconds.
 	query := fmt.Sprintf(`
 		DELETE FROM message_processing
 		WHERE id IN (
 			SELECT id FROM message_processing
-			WHERE state IN ('completed', 'acked')
-			  AND updated_at < NOW() - make_interval(secs => $1)
+			WHERE updated_at < NOW() - make_interval(secs => $1)
 			  AND NOT EXISTS (
 			      SELECT 1 FROM %s o WHERE o.message_processing_id = message_processing.id
 			  )
@@ -196,7 +196,7 @@ func (r *postgresRepository) DeleteTerminalOlderThan(
 	`, r.outboxTable)
 	result, err := r.exec.ExecContext(ctx, query, retention.Seconds(), limit)
 	if err != nil {
-		return 0, fmt.Errorf("delete terminal message_processing older than: %w", err)
+		return 0, fmt.Errorf("delete message_processing older than: %w", err)
 	}
 	n, _ := result.RowsAffected()
 	return n, nil

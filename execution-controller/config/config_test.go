@@ -9,6 +9,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestLoad_RetentionSweeperSettings(t *testing.T) {
+	t.Setenv("K8S_NAMESPACE", "ns")
+	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "sec")
+	t.Setenv("RETENTION_DAYS", "")
+	t.Setenv("RETENTION_SWEEP_INTERVAL_MINUTES", "")
+	cfg := Load(&pkgconfig.Validator{})
+	require.Equal(t, 7, cfg.RetentionDays)
+	require.Equal(t, 60, cfg.RetentionSweepIntervalMin)
+	t.Setenv("RETENTION_DAYS", "45")
+	t.Setenv("RETENTION_SWEEP_INTERVAL_MINUTES", "15")
+	cfg = Load(&pkgconfig.Validator{})
+	require.Equal(t, 45, cfg.RetentionDays)
+	require.Equal(t, 15, cfg.RetentionSweepIntervalMin)
+}
+
 func TestLoad_MaxConcurrentJobsDefault(t *testing.T) {
 	os.Setenv("K8S_NAMESPACE", "default")
 	os.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh-secret")

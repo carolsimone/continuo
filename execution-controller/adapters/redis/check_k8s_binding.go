@@ -23,7 +23,8 @@ import (
 // permanent (the consumer dead-letters the message); dedup, handler and
 // repository work all run inside one UnitOfWork transaction, so a duplicate
 // message is ACKed without invoking the handler and a handler/repository
-// failure propagates so the message stays pending for retry.
+// failure propagates so the message stays pending for retry. A handled
+// message's dedup row is marked completed just before the commit.
 func NewCheckK8sBinding(
 	uowFactory func() uow.UnitOfWork,
 	handler *handlers.JobStatusHandler,
@@ -52,7 +53,7 @@ func NewCheckK8sBinding(
 			}
 		}()
 
-		_, dup, err := messageprocessing.DedupWithOutboxEntryID(
+		msgProcID, dup, err := messageprocessing.DedupWithOutboxEntryID(
 			ctx, u.MessageProcessingRepo(), logger,
 			msg.ID, streams.CheckK8sV1, payload,
 			messageprocessing.ExtractOutboxEntryID(msg.Values),
@@ -75,6 +76,9 @@ func NewCheckK8sBinding(
 				logger.Error("check_k8s: transient handler error", "message_id", msg.ID, "error", err)
 			}
 			return err
+		}
+		if err := u.MessageProcessingRepo().UpdateState(ctx, msgProcID, messageprocessing.StateCompleted); err != nil {
+			return fmt.Errorf("mark completed: %w", err)
 		}
 		if err := u.Commit(); err != nil {
 			return fmt.Errorf("commit tx: %w", err)

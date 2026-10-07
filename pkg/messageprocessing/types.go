@@ -6,6 +6,16 @@ import (
 	"github.com/google/uuid"
 )
 
+// The states a message_processing row holds. A consumer inserts its row as
+// StateProcessing and marks it StateCompleted before it commits the handler's
+// writes. The table also accepts StateAcked, which Dedup treats like
+// StateCompleted.
+const (
+	StateProcessing = "processing"
+	StateCompleted  = "completed"
+	StateAcked      = "acked"
+)
+
 // MessageProcessing tracks consumed Redis messages for exactly-once processing.
 // Each service owns its own physical message_processing table in its own database;
 // this struct is the shared Go contract.
@@ -18,7 +28,7 @@ type MessageProcessing struct {
 	// (and the V12 (outbox_entry_id, stream_name) unique index entries) remain
 	// distinct and do not collide across groups.
 	StreamName string
-	State      string // "processing", "completed", "acked"
+	State      string // StateProcessing, StateCompleted or StateAcked
 	Payload    []byte
 	Error      *string
 	// OutboxEntryID, when non-nil, is the upstream pkg/outbox row UUID that

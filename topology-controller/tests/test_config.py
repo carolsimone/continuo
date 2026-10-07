@@ -1,3 +1,4 @@
+import logging
 import os
 import pytest
 
@@ -127,3 +128,53 @@ def test_every_failure_kind_the_handler_can_publish_is_in_the_contract():
     used = set(re.findall(r"ParseFailureKind\.([A-Z_]+)", src))
     assert used <= {m.name for m in ParseFailureKind}
     assert {"INVALID_ARTIFACT", "INTERNAL"} <= used
+
+
+@pytest.mark.parametrize("raw,level", [
+    ("", logging.INFO),
+    ("debug", logging.DEBUG),
+    ("DEBUG", logging.DEBUG),
+    ("Info", logging.INFO),
+    ("warn", logging.WARNING),
+    ("WARNING", logging.WARNING),
+    ("error", logging.ERROR),
+])
+def test_log_level_maps_every_accepted_name(monkeypatch, raw, level):
+    """LOG_LEVEL names a level case-insensitively; empty means INFO."""
+    monkeypatch.setenv("LOG_LEVEL", raw)
+    from config.config import log_level
+    assert log_level() == level
+
+
+def test_log_level_defaults_to_info_when_unset(monkeypatch):
+    monkeypatch.delenv("LOG_LEVEL", raising=False)
+    from config.config import log_level
+    assert log_level() == logging.INFO
+
+
+def test_log_level_rejects_an_unknown_name(monkeypatch):
+    """An unknown level fails loudly, naming every accepted one."""
+    monkeypatch.setenv("LOG_LEVEL", "verbose")
+    from config.config import log_level
+    with pytest.raises(RuntimeError) as exc_info:
+        log_level()
+    msg = str(exc_info.value)
+    assert "verbose" in msg
+    for name in ("debug", "info", "warn", "warning", "error"):
+        assert name in msg
+
+
+def test_validate_rejects_an_unknown_log_level(monkeypatch):
+    """The unknown-level failure lands at startup, via validate()."""
+    monkeypatch.setenv("REDIS_URL", "redis://redis:6379")
+    monkeypatch.setenv("S3_ENDPOINT_URL", "http://minio:9000")
+    monkeypatch.setenv("S3_BUCKET", "continuo")
+    monkeypatch.setenv("S3_ENV", "local")
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "minioadmin")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "minioadmin")
+    monkeypatch.setenv("LOG_LEVEL", "verbose")
+
+    from config.config import validate
+    with pytest.raises(RuntimeError, match="verbose"):
+        validate()

@@ -26,6 +26,12 @@ type Config struct {
 	CancelledSchedulesTTLHours         int
 	CancelledSchedulesSweepIntervalMin int
 
+	// Retention sweeper: processed execution_outbox rows are deleted after
+	// RetentionDays, message_processing dedup rows after the longer of
+	// RetentionDays and the 30-day replay horizon. Both have safe defaults.
+	RetentionDays             int
+	RetentionSweepIntervalMin int
+
 	HTTPPort int
 
 	// K8sNamespace is where every Job is created and observed.
@@ -73,6 +79,9 @@ func Load(v *pkgconfig.Validator) Config {
 
 		CancelledSchedulesTTLHours:         envInt("CANCELLED_SCHEDULES_TTL_HOURS", 24),
 		CancelledSchedulesSweepIntervalMin: envInt("CANCELLED_SCHEDULES_SWEEP_INTERVAL_MINUTES", 60),
+
+		RetentionDays:             envInt("RETENTION_DAYS", 7),
+		RetentionSweepIntervalMin: envInt("RETENTION_SWEEP_INTERVAL_MINUTES", 60),
 
 		HTTPPort:                  envInt("HTTP_PORT", 8084),
 		K8sNamespace:              v.Require("K8S_NAMESPACE"),

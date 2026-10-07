@@ -3,6 +3,7 @@ package redis
 import (
 	"context"
 	"log/slog"
+	"reflect"
 	"testing"
 	"time"
 
@@ -15,6 +16,51 @@ import (
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	"github.com/google/uuid"
 )
+
+// allCancelledSchedulesRepo reports every schedule as cancelled, so the
+// job-status handler absorbs the check without writing anything.
+type allCancelledSchedulesRepo struct{ noopCancelledSchedulesRepo }
+
+func (allCancelledSchedulesRepo) Exists(context.Context, uuid.UUID) (bool, error) { return true, nil }
+
+// TestCheckK8sBinding_MarksDedupRowCompletedBeforeCommit proves a handled
+// check marks its dedup row completed inside the transaction, before commit.
+func TestCheckK8sBinding_MarksDedupRowCompletedBeforeCommit(t *testing.T) {
+	k8s := fakes.NewFakeK8sClient()
+	cfg := &handlers.JobStatusConfig{K8sNamespace: "default", ErrorMessageMaxLen: 4096, LogTailLines: 50}
+	handler := handlers.NewJobStatusHandler(k8s, nil, cfg, allCancelledSchedulesRepo{}, outcomes.NewRecorder(slog.Default()), slog.Default())
+	type stateChange struct {
+		id            uuid.UUID
+		state         string
+		commitsBefore int
+	}
+	claimed := uuid.New()
+	var changes []stateChange
+	u := &fakes.FakeUnitOfWork{}
+	u.MessageProcessing = &fakes.FakeMessageProcessingRepository{
+		InsertIfNotExistsFunc: func(context.Context, *messageprocessing.MessageProcessing) (uuid.UUID, bool, error) {
+			return claimed, true, nil
+		},
+		UpdateStateFunc: func(_ context.Context, id uuid.UUID, state string) error {
+			changes = append(changes, stateChange{id: id, state: state, commitsBefore: u.CommitCalled})
+			return nil
+		},
+	}
+	binding := NewCheckK8sBinding(func() uow.UnitOfWork { return u }, handler, slog.Default())
+	err := binding(context.Background(), payloadMsg(t, pkgevents.CheckK8s{
+		TaskID: uuid.New().String(), ScheduleID: uuid.New().String(), JobName: "job-x",
+	}))
+	if err != nil {
+		t.Fatalf("binding returned error: %v", err)
+	}
+	want := []stateChange{{id: claimed, state: messageprocessing.StateCompleted, commitsBefore: 0}}
+	if !reflect.DeepEqual(changes, want) {
+		t.Fatalf("dedup state changes = %+v, want %+v", changes, want)
+	}
+	if u.CommitCalled != 1 || u.RollbackCalled != 0 {
+		t.Fatalf("want one commit and no rollback; got commits=%d rollbacks=%d", u.CommitCalled, u.RollbackCalled)
+	}
+}
 
 // noopCancelledSchedulesRepo is a minimal repository.CancelledSchedulesRepository
 // stand-in for binding tests that never exercise schedule cancellation.

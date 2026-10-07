@@ -64,9 +64,9 @@ const (
 
 // RunEntriesDispatchFailed — stream: run.entries.dispatch_failed:v1
 // Published by: orchestrator when it cannot produce dispatch work for a
-// run. Symmetric to RunEntriesDispatched: that one creates tasks +
-// flips scheduler_tracker to running; this one writes no tasks + flips
-// scheduler_tracker to failed.
+// run. Symmetric to RunEntriesDispatched: that one creates tasks and
+// flips scheduler_tracker to running; this one writes no tasks and flips
+// scheduler_tracker to failed, or to skipped for a benign reason (no_tests).
 // Consumed by: state.
 type RunEntriesDispatchFailed struct {
 	ScheduleID   string               `json:"schedule_id"`
@@ -76,9 +76,9 @@ type RunEntriesDispatchFailed struct {
 
 // RunFinalized — stream: run.finalized:v1
 // Published by: state
-// Consumed by: UI, analytics
+// Consumed by: orchestrator
 type RunFinalized struct {
 	ScheduleID   string `json:"schedule_id"`
 	ScheduleName string `json:"schedule_name"`
-	Status       string `json:"status"` // succeeded | failed | cancelled
+	Status       string `json:"status"` // succeeded | failed | cancelled | skipped
 }

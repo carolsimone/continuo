@@ -12,11 +12,42 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// seedDeploymentReferencing inserts a production deployments row naming
+// messageProcessingID and deletes it when the test ends.
+func seedDeploymentReferencing(t *testing.T, db *sqlx.DB, messageProcessingID uuid.UUID) uuid.UUID {
+	t.Helper()
+	id := uuid.New()
+	_, err := db.Exec(
+		`INSERT INTO deployments (id, message_processing_id, task_id, schedule_id, job_params)
+		 VALUES ($1, $2, gen_random_uuid(), gen_random_uuid(), '{}'::jsonb)`,
+		id, messageProcessingID,
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = db.Exec(`DELETE FROM deployments WHERE id = $1`, id) })
+	return id
+}
+
+// TestDeleteOlderThan_PurgesRowADeploymentNamesAndClearsTheName proves a
+// deployments row does not hold an aged dedup row back: the row is purged and
+// the deployment's message_processing_id becomes NULL.
+func TestDeleteOlderThan_PurgesRowADeploymentNamesAndClearsTheName(t *testing.T) {
+	db := dbForTest(t)
+	pruner := messageprocessing.NewPruner(db, testOutboxTable, newTestLogger())
+	id := seedDedupRow(t, db, messageprocessing.StateProcessing, time.Now().Add(-10*24*time.Hour))
+	deploymentID := seedDeploymentReferencing(t, db, id)
+	n := pruneUntilIdle(t, pruner)
+	assert.GreaterOrEqual(t, n, int64(1), "the aged row is purged")
+	assert.False(t, dedupRowExists(t, db, id), "a deployment naming the row does not keep it")
+	var ref uuid.NullUUID
+	require.NoError(t, db.QueryRow(`SELECT message_processing_id FROM deployments WHERE id = $1`, deploymentID).Scan(&ref))
+	assert.False(t, ref.Valid, "the deployment's message_processing_id is cleared")
+}
+
 // These tests run against the same DB harness (dbForTest) as the outbox tests:
 // continuo_execution holds both execution_outbox and message_processing, so the
 // dedup retention DELETE can be exercised here without a second harness.
 //
-// DeleteTerminalOlderThan is table-wide by design, so on this shared database
+// DeleteOlderThan is table-wide by design, so on this shared database
 // every test seeds only rows whose stream_name starts with testStreamPrefix,
 // asserts each seeded row's fate by id, and bounds the pruner's returned count
 // from below by the rows the test owns.
@@ -28,7 +59,7 @@ func pruneUntilIdle(t *testing.T, pruner messageprocessing.Pruner) int64 {
 	t.Helper()
 	var total int64
 	for i := 0; i < 1000; i++ {
-		n, err := pruner.DeleteTerminalOlderThan(context.Background(), 7*24*time.Hour, 100)
+		n, err := pruner.DeleteOlderThan(context.Background(), 7*24*time.Hour, 100)
 		require.NoError(t, err)
 		if n == 0 {
 			return total
@@ -58,25 +89,30 @@ func dedupRowExists(t *testing.T, db *sqlx.DB, id uuid.UUID) bool {
 	return n > 0
 }
 
-// TestDeleteTerminalOlderThan_PurgesAgedTerminalKeepsRest verifies the dedup
-// retention delete removes only terminal rows (completed/acked) older than the
-// window, leaving recent terminal rows and any still-'processing' row in place.
-func TestDeleteTerminalOlderThan_PurgesAgedTerminalKeepsRest(t *testing.T) {
+// TestDeleteOlderThan_PurgesAgedRowsInAnyStateKeepsRecent verifies the
+// dedup retention delete removes every row older than the window, whether it
+// is completed, acked or still processing, and keeps recent rows. A committed
+// row in any state records a handled message, so its age alone decides.
+func TestDeleteOlderThan_PurgesAgedRowsInAnyStateKeepsRecent(t *testing.T) {
 	db := dbForTest(t)
 	pruner := messageprocessing.NewPruner(db, testOutboxTable, newTestLogger())
 
-	oldCompleted := seedDedupRow(t, db, "completed", time.Now().Add(-10*24*time.Hour))
-	oldAcked := seedDedupRow(t, db, "acked", time.Now().Add(-10*24*time.Hour))
-	recentCompleted := seedDedupRow(t, db, "completed", time.Now().Add(-1*time.Hour))
-	oldProcessing := seedDedupRow(t, db, "processing", time.Now().Add(-10*24*time.Hour))
+	aged := time.Now().Add(-10 * 24 * time.Hour)
+	recent := time.Now().Add(-1 * time.Hour)
+	oldCompleted := seedDedupRow(t, db, messageprocessing.StateCompleted, aged)
+	oldAcked := seedDedupRow(t, db, messageprocessing.StateAcked, aged)
+	oldProcessing := seedDedupRow(t, db, messageprocessing.StateProcessing, aged)
+	recentCompleted := seedDedupRow(t, db, messageprocessing.StateCompleted, recent)
+	recentProcessing := seedDedupRow(t, db, messageprocessing.StateProcessing, recent)
 
 	n := pruneUntilIdle(t, pruner)
-	assert.GreaterOrEqual(t, n, int64(2), "both aged terminal rows deleted")
+	assert.GreaterOrEqual(t, n, int64(3), "the three aged rows are deleted")
 
-	assert.False(t, dedupRowExists(t, db, oldCompleted), "aged completed purged")
-	assert.False(t, dedupRowExists(t, db, oldAcked), "aged acked purged")
-	assert.True(t, dedupRowExists(t, db, recentCompleted), "recent terminal kept")
-	assert.True(t, dedupRowExists(t, db, oldProcessing), "in-flight processing row never purged")
+	assert.False(t, dedupRowExists(t, db, oldCompleted), "aged completed row purged")
+	assert.False(t, dedupRowExists(t, db, oldAcked), "aged acked row purged")
+	assert.False(t, dedupRowExists(t, db, oldProcessing), "aged processing row purged")
+	assert.True(t, dedupRowExists(t, db, recentCompleted), "recent completed row kept")
+	assert.True(t, dedupRowExists(t, db, recentProcessing), "recent processing row kept")
 }
 
 // seedOutboxRowReferencing inserts a minimal execution_outbox row with the
@@ -96,7 +132,7 @@ func seedOutboxRowReferencing(t *testing.T, db *sqlx.DB, messageProcessingID uui
 	return id
 }
 
-// TestDeleteTerminalOlderThan_SkipsRowsStillReferencedByOutbox reproduces the
+// TestDeleteOlderThan_SkipsRowsStillReferencedByOutbox reproduces the
 // production FK violation (the foreign key from execution_outbox's
 // message_processing_id to message_processing, Postgres error 23503): a
 // terminal, aged message_processing row that a dead-lettered ('failed')
@@ -105,14 +141,14 @@ func seedOutboxRowReferencing(t *testing.T, db *sqlx.DB, messageProcessingID uui
 // retention excludes them, by design — see pkg/outbox.DeleteProcessedOlderThan)
 // and would otherwise make the row un-purgeable forever while poisoning every
 // batched DELETE that selects it.
-func TestDeleteTerminalOlderThan_SkipsRowsStillReferencedByOutbox(t *testing.T) {
+func TestDeleteOlderThan_SkipsRowsStillReferencedByOutbox(t *testing.T) {
 	db := dbForTest(t)
 	pruner := messageprocessing.NewPruner(db, testOutboxTable, newTestLogger())
 
-	referencedByFailed := seedDedupRow(t, db, "completed", time.Now().Add(-10*24*time.Hour))
+	referencedByFailed := seedDedupRow(t, db, messageprocessing.StateCompleted, time.Now().Add(-10*24*time.Hour))
 	seedOutboxRowReferencing(t, db, referencedByFailed, "failed")
 
-	unreferenced := seedDedupRow(t, db, "completed", time.Now().Add(-10*24*time.Hour))
+	unreferenced := seedDedupRow(t, db, messageprocessing.StateCompleted, time.Now().Add(-10*24*time.Hour))
 
 	n := pruneUntilIdle(t, pruner)
 	assert.GreaterOrEqual(t, n, int64(1), "the unreferenced row is purged")
@@ -122,16 +158,16 @@ func TestDeleteTerminalOlderThan_SkipsRowsStillReferencedByOutbox(t *testing.T) 
 	assert.False(t, dedupRowExists(t, db, unreferenced), "unreferenced aged row purged")
 }
 
-// TestDeleteTerminalOlderThan_PurgesRowOnceOutboxReferenceIsGone confirms the
+// TestDeleteOlderThan_PurgesRowOnceOutboxReferenceIsGone confirms the
 // exclusion is not permanent: once the referencing outbox row is removed (the
 // normal case — outbox retention purges 'processed' rows past its own
 // window), the message_processing row becomes eligible again on the next
 // sweep.
-func TestDeleteTerminalOlderThan_PurgesRowOnceOutboxReferenceIsGone(t *testing.T) {
+func TestDeleteOlderThan_PurgesRowOnceOutboxReferenceIsGone(t *testing.T) {
 	db := dbForTest(t)
 	pruner := messageprocessing.NewPruner(db, testOutboxTable, newTestLogger())
 
-	id := seedDedupRow(t, db, "completed", time.Now().Add(-10*24*time.Hour))
+	id := seedDedupRow(t, db, messageprocessing.StateCompleted, time.Now().Add(-10*24*time.Hour))
 	outboxID := seedOutboxRowReferencing(t, db, id, "processed")
 
 	pruneUntilIdle(t, pruner)

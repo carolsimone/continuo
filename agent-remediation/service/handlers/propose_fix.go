@@ -753,7 +753,8 @@ func markGenerating(ctx context.Context, deps Deps, t Trigger, attempt int) erro
 // needs nothing to replay.
 //
 // Inbound dedup is performed atomically inside the transaction: the
-// message_processing claim and the proposal write commit or roll back together.
+// message_processing claim, marked completed once the proposal is written, and
+// the proposal write commit or roll back together.
 // A redelivered trigger collides on the claim and causes a rollback with a nil
 // return (consumer ACKs, no duplicate written). A transient error rolls back
 // without persisting the claim, so the message is cleanly retried.
@@ -782,13 +783,16 @@ func record(ctx context.Context, deps Deps, t Trigger, attempt int, p proposal.P
 	// Claim this inbound trigger atomically within the write transaction. A
 	// duplicate (redelivered or replayed message) returns dup=true: log and
 	// return nil so the consumer ACKs without writing anything. The rollback
-	// deferred above discards the tx without persisting the claim.
-	if _, dup, err := messageprocessing.DedupWithOutboxEntryID(
+	// deferred above discards the tx without persisting the claim. A claim
+	// whose proposal is written is marked completed before the commit.
+	msgProcID, dup, err := messageprocessing.DedupWithOutboxEntryID(
 		ctx, u.MessageProcessingRepo(), deps.Logger,
 		t.MessageID, streams.RemediationRequestedV2, t.RawPayload, t.OutboxEntryID,
-	); err != nil {
+	)
+	if err != nil {
 		return fmt.Errorf("dedup: %w", err)
-	} else if dup {
+	}
+	if dup {
 		deps.Logger.Info("duplicate remediation.requested trigger — skipping",
 			"message_id", t.MessageID, "release", t.ReleaseID)
 		return nil
@@ -796,6 +800,9 @@ func record(ctx context.Context, deps Deps, t Trigger, attempt int, p proposal.P
 
 	if err := u.ProposalRepo().Upsert(ctx, p); err != nil {
 		return fmt.Errorf("upsert proposal: %w", err)
+	}
+	if err := u.MessageProcessingRepo().UpdateState(ctx, msgProcID, messageprocessing.StateCompleted); err != nil {
+		return fmt.Errorf("mark completed: %w", err)
 	}
 	if err := u.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)

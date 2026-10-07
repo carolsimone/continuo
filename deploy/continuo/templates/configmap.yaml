@@ -26,15 +26,13 @@ data:
   ORCHESTRATOR_GRPC_ADDR: {{ .Values.global.orchestratorGrpcAddr | quote }}
   AGENT_REMEDIATION_GRPC_ADDR: {{ .Values.global.agentRemediationGrpcAddr | quote }}
   AGENT_CHAT_GRPC_ADDR: {{ .Values.global.agentChatGrpcAddr | quote }}
-  DEAD_LETTER_CONTROLLER_GRPC_ADDR: {{ .Values.global.deadLetterControllerGrpcAddr | quote }}
-  STATE_SERVICE_GRPC_ADDR: {{ .Values.global.stateGrpcAddr | quote }}
   S3_ENDPOINT_URL: {{ include "continuo.s3.endpointUrl" . | quote }}
   S3_BUCKET: {{ include "continuo.s3.bucket" . | quote }}
   S3_ENV: {{ include "continuo.s3.env" . | quote }}
   AWS_DEFAULT_REGION: {{ include "continuo.s3.region" . | quote }}
   WAREHOUSE_ENGINE: {{ .Values.validation.engine | default "postgres" | quote }}
   ENV: {{ .Values.global.env | quote }}
-  LOG_LEVEL: {{ .Values.global.logLevel | quote }}
+  LOG_LEVEL: {{ include "continuo.logLevel" . | quote }}
   METRICS_PORT: {{ include "continuo.metrics.port" . | quote }}
   STREAM_TRIM_ENABLED: {{ .Values.streamReaper.enabled | quote }}
   STREAM_RETENTION: {{ .Values.streamReaper.retention | quote }}

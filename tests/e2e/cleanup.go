@@ -74,10 +74,10 @@ func cleanupPostgres(t *testing.T, ctx context.Context, clients *testClients, sc
 		SELECT schedule_id FROM scheduler_tracker WHERE schedule_name = $1
 	`, scheduleName)
 
-	// Clean the execution database. Order matters: execution_outbox and
-	// deployments carry a FK to message_processing, so they go first. The
-	// harness owns these tables for the suite; leaving pending outbox rows
-	// would make pkg/outbox.Processor retry them forever.
+	// Clean the execution database. Order matters: execution_outbox carries a
+	// FK to message_processing, so it goes first (deployments' FK clears itself
+	// on delete). The harness owns these tables for the suite; leaving pending
+	// outbox rows would make pkg/outbox.Processor retry them forever.
 	_, _ = clients.executionDB.Exec("DELETE FROM execution_outbox")
 	_, _ = clients.executionDB.Exec("DELETE FROM deployments")
 	_, _ = clients.executionDB.Exec("DELETE FROM validation_aggregates")
@@ -86,7 +86,7 @@ func cleanupPostgres(t *testing.T, ctx context.Context, clients *testClients, sc
 		_, _ = db.Exec("DELETE FROM message_processing")
 	}
 
-	// Clean orchestrator_outbox (renamed from outbox).
+	// Clean the run's orchestrator_outbox rows.
 	if schedulerID != "" {
 		_, _ = clients.orchestratorDB.Exec("DELETE FROM orchestrator_outbox WHERE aggregate_id = $1", schedulerID)
 	}

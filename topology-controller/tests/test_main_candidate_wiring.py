@@ -1,3 +1,4 @@
+import logging
 import json
 import sys
 from types import SimpleNamespace
@@ -256,3 +257,22 @@ def test_the_handler_gives_the_parser_the_configured_bucket_as_the_default(monke
     )
 
     assert captured["bucket"] == "continuo"
+
+
+def test_main_logs_at_the_level_log_level_names(monkeypatch):
+    _common_monkeypatches(monkeypatch)
+    monkeypatch.setenv("LOG_LEVEL", "debug")
+    root = logging.getLogger()
+    previous = root.level
+    try:
+        main.main()
+        assert root.level == logging.DEBUG
+    finally:
+        root.setLevel(previous)
+
+
+def test_main_refuses_an_unknown_log_level(monkeypatch):
+    _common_monkeypatches(monkeypatch)
+    monkeypatch.setenv("LOG_LEVEL", "verbose")
+    with pytest.raises(RuntimeError, match="LOG_LEVEL"):
+        main.main()

@@ -8,11 +8,11 @@
 #   - Consumer const: PascalCase, service-prefixed (OrchestratorNodeUpdated).
 
 streams:
-  # ---------------- state-produced streams ----------------
+  # ---------------- run lifecycle streams ----------------
 
   - name: scheduler.started:v1
     const: SchedulerStartedV1
-    description: Scheduler boot heartbeat; orchestrator hydrates its projections on receipt.
+    description: A new run created by state (cron fire or manual trigger); orchestrator snapshots the run's tasks onto the topology and dispatches the ready ones.
     producers: [state]
     consumers:
       - service: orchestrator
@@ -21,7 +21,7 @@ streams:
 
   - name: schedules.loaded:v1
     const: SchedulesLoadedV1
-    description: Schedules registered/refreshed by state; consumed by state for catalog projections.
+    description: Schedule names and service metadata of a promoted release, emitted by orchestrator in the topology-swap transaction; state reconciles its schedule catalog from it.
     producers: [orchestrator]
     consumers:
       - service: state
@@ -48,8 +48,8 @@ streams:
 
   - name: task.status.updated:v1
     const: TaskStatusUpdatedV1
-    description: Per-task status transitions emitted by execution-controller.
-    producers: [execution-controller]
+    description: "Per-task status transitions: RUNNING, SUCCEEDED and FAILED from execution-controller, SKIPPED from orchestrator when a node is cascade-skipped; state drives run finalization from them."
+    producers: [execution-controller, orchestrator]
     consumers:
       - service: state
         group: state-task-status-updated
@@ -122,7 +122,7 @@ streams:
 
   - name: run.finalized:v1
     const: RunFinalizedV1
-    description: Run finalization (success, failure, or cancellation) emitted by state; consumed for projections.
+    description: Run finalization (succeeded, failed, cancelled or skipped) emitted by state; orchestrator projects the terminal status onto its run.
     producers: [state]
     consumers:
       - service: orchestrator

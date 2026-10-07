@@ -36,7 +36,10 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/service/verification"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	pkgdb "github.com/carolsimone/continuo/pkg/db"
+	"github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/lifecycle"
 	"github.com/carolsimone/continuo/pkg/liveness"
+	pkgmessageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgmetrics "github.com/carolsimone/continuo/pkg/metrics"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
@@ -64,9 +67,12 @@ const consumerHandlerTimeout = 5 * time.Minute
 var dbPool = pkgconfig.PoolConfig{MaxOpenConns: 10, MaxIdleConns: 5}
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
-
+	// The logger writes at the level LOG_LEVEL names. An unknown level is
+	// recorded on v, and the missing-configuration check below stops the
+	// service once this logger can report it.
 	v := &pkgconfig.Validator{}
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: pkgconfig.LoadLogLevel(v)}))
+
 	cfg := config.Load(v)
 	if missing := v.Missing(); len(missing) > 0 {
 		logger.Error("missing required env vars", "vars", strings.Join(missing, ", "))
@@ -75,6 +81,7 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	lifecycleManager := lifecycle.NewApplicationLifecycle(logger)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -316,6 +323,28 @@ func main() {
 	outboxProc := rredis.StartOutboxPublisher(ctx, db, rc, outboxWaker, metricsReg.Outbox(), liveReg, logger)
 	metricsReg.WatchOutbox(outboxProc)
 
+	// Retention sweeper — prunes processed remediation_agent_outbox rows older
+	// than RETENTION_DAYS and message_processing dedup rows, whatever their
+	// state, older than the longer of RETENTION_DAYS and the 30-day replay
+	// horizon, on one timer using DB-clock cutoffs.
+	mpPruner := pkgmessageprocessing.NewPruner(db, postgres.OutboxTable, logger)
+	retentionSweeper := pkgoutbox.NewRetentionSweeper(
+		[]pkgoutbox.RetentionTarget{
+			pkgoutbox.OutboxRetentionTarget(db, postgres.OutboxTable, logger),
+			{
+				Name:         "message_processing",
+				Prune:        mpPruner.DeleteOlderThan,
+				MinRetention: model.ReplayHorizon,
+			},
+		},
+		pkgoutbox.RetentionConfig{
+			Retention: time.Duration(cfg.RetentionDays) * 24 * time.Hour,
+			Interval:  time.Duration(cfg.RetentionSweepIntervalMin) * time.Minute,
+		},
+		logger,
+	)
+	lifecycleManager.Go(func() { retentionSweeper.Run(ctx) })
+
 	// Start the remediation.requested consumer in a goroutine; blocks until ctx
 	// is cancelled.
 	runConsumer("remediation_requested", rredis.NewRemediationRequestedConsumer(rc, deps, logger))
@@ -396,6 +425,8 @@ func main() {
 
 	logger.Info("agent-remediation started", "http_port", cfg.HTTPPort, "grpc_port", cfg.GRPCPort)
 	<-ctx.Done()
+	// Drain the retention worker before deferred connection-pool closure.
+	lifecycleManager.Shutdown(cancel, 5*time.Second)
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()

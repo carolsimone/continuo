@@ -346,3 +346,25 @@ func TestLoad_DefaultsTheDatabaseName(t *testing.T) {
 	require.Empty(t, v.Missing())
 	assert.Equal(t, "continuo_agent_remediation", cfg.Postgres.DB)
 }
+
+func TestLoad_RetentionSweeperDefaults(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("RETENTION_DAYS", "")
+	t.Setenv("RETENTION_SWEEP_INTERVAL_MINUTES", "")
+	v := &pkgconfig.Validator{}
+	cfg := Load(v)
+	require.Empty(t, v.Missing())
+	assert.Equal(t, 7, cfg.RetentionDays)
+	assert.Equal(t, 60, cfg.RetentionSweepIntervalMin)
+}
+
+func TestLoad_RetentionSweeperOverrides(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("RETENTION_DAYS", "45")
+	t.Setenv("RETENTION_SWEEP_INTERVAL_MINUTES", "15")
+	v := &pkgconfig.Validator{}
+	cfg := Load(v)
+	require.Empty(t, v.Missing())
+	assert.Equal(t, 45, cfg.RetentionDays)
+	assert.Equal(t, 15, cfg.RetentionSweepIntervalMin)
+}

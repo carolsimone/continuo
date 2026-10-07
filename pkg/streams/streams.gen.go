@@ -4,15 +4,15 @@ package streams
 
 // Stream names.
 const (
-	// SchedulerStartedV1 — Scheduler boot heartbeat; orchestrator hydrates its projections on receipt.
+	// SchedulerStartedV1 — A new run created by state (cron fire or manual trigger); orchestrator snapshots the run's tasks onto the topology and dispatches the ready ones.
 	SchedulerStartedV1 = "scheduler.started:v1"
-	// SchedulesLoadedV1 — Schedules registered/refreshed by state; consumed by state for catalog projections.
+	// SchedulesLoadedV1 — Schedule names and service metadata of a promoted release, emitted by orchestrator in the topology-swap transaction; state reconciles its schedule catalog from it.
 	SchedulesLoadedV1 = "schedules.loaded:v1"
 	// RunEntriesDispatchedV1 — Run entries that orchestrator successfully dispatched into the executor queue.
 	RunEntriesDispatchedV1 = "run.entries.dispatched:v1"
 	// RunEntriesDispatchFailedV1 — Run entries orchestrator failed to dispatch.
 	RunEntriesDispatchFailedV1 = "run.entries.dispatch_failed:v1"
-	// TaskStatusUpdatedV1 — Per-task status transitions emitted by execution-controller.
+	// TaskStatusUpdatedV1 — Per-task status transitions: RUNNING, SUCCEEDED and FAILED from execution-controller, SKIPPED from orchestrator when a node is cascade-skipped; state drives run finalization from them.
 	TaskStatusUpdatedV1 = "task.status.updated:v1"
 	// TaskExecutionRecordedV1 — Completed task executions emitted by execution-controller's outbox processor.
 	TaskExecutionRecordedV1 = "task.execution.recorded:v1"
@@ -28,7 +28,7 @@ const (
 	ReleaseSeedsPendingV1 = "release.seeds.pending:v1"
 	// TriggerPromotedSeedsV1 — Run trigger for the seeds a promoted release changed; state creates the run, orchestrator projects its tasks.
 	TriggerPromotedSeedsV1 = "trigger.promoted_seeds:v1"
-	// RunFinalizedV1 — Run finalization (success, failure, or cancellation) emitted by state; consumed for projections.
+	// RunFinalizedV1 — Run finalization (succeeded, failed, cancelled or skipped) emitted by state; orchestrator projects the terminal status onto its run.
 	RunFinalizedV1 = "run.finalized:v1"
 	// QueryModelV1 — Tasks dispatched by orchestrator for the executor pool.
 	QueryModelV1 = "query.model:v1"

@@ -366,9 +366,14 @@ func cleanupSingleNodeRun(t *testing.T, ctx context.Context, clients *testClient
 	_, _ = clients.stateDB.Exec(`DELETE FROM task_tracker WHERE schedule_id = $1`, runID)
 	_, _ = clients.stateDB.Exec(`DELETE FROM scheduler_tracker WHERE schedule_id = $1`, runID)
 
-	// Outboxes.
-	_, _ = clients.orchestratorDB.Exec(`DELETE FROM outbox WHERE aggregate_id = $1`, runID)
-	_, _ = clients.stateDB.Exec(`DELETE FROM state_outbox WHERE aggregate_id = $1`, runID)
+	// Outboxes. A failed delete leaves rows for later tests to trip over, so it
+	// is logged rather than discarded.
+	if _, err := clients.orchestratorDB.Exec(`DELETE FROM orchestrator_outbox WHERE aggregate_id = $1`, runID); err != nil {
+		t.Logf("Warning: failed to delete orchestrator_outbox rows for run %s: %v", runID, err)
+	}
+	if _, err := clients.stateDB.Exec(`DELETE FROM state_outbox WHERE aggregate_id = $1`, runID); err != nil {
+		t.Logf("Warning: failed to delete state_outbox rows for run %s: %v", runID, err)
+	}
 
 	// K8s jobs created for this run.
 	cleanupK8s(t, ctx)

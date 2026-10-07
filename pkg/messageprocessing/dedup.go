@@ -89,7 +89,7 @@ func DedupWithOutboxEntryID(
 	msg := &MessageProcessing{
 		MessageID:     messageID,
 		StreamName:    streamName,
-		State:         "processing",
+		State:         StateProcessing,
 		Payload:       payload,
 		OutboxEntryID: outboxEntryID,
 	}
@@ -111,7 +111,7 @@ func DedupWithOutboxEntryID(
 	if outboxEntryID != nil {
 		logArgs = append(logArgs, "outbox_entry_id", outboxEntryID.String())
 	}
-	if existing.State == "completed" || existing.State == "acked" {
+	if existing.State == StateCompleted || existing.State == StateAcked {
 		logger.Info("Message already processed, skipping", logArgs...)
 		return existing.ID, true, nil
 	}

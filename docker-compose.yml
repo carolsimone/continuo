@@ -143,12 +143,6 @@ services:
       - GRPC_PORT=50051
       - REDIS_ADDR=redis:6379
       - REDIS_PASSWORD=continuo
-      - REDIS_STREAM_SCHEDULER_STARTED=scheduler.started:v1
-      - REDIS_STREAM_SCHEDULES_LOADED=schedules.loaded:v1
-      - REDIS_STREAM_RUN_ENTRIES_DISPATCHED=run.entries.dispatched:v1
-      - REDIS_STREAM_RUN_ENTRIES_DISPATCH_FAILED=run.entries.dispatch_failed:v1
-      - REDIS_STREAM_TASK_STATUS_UPDATED=task.status.updated:v1
-      - REDIS_STREAM_TASK_EXECUTION_RECORDED=task.execution.recorded:v1
       - SCHEDULES_CONFIG_PATH=/etc/continuo/schedules.yaml
     ports:
       - "8082:8082"   # Health check HTTP
@@ -223,6 +217,7 @@ services:
       - AWS_DEFAULT_REGION=us-east-1
       # Application
       - HTTP_PORT=8084
+      - LOG_LEVEL=INFO
     ports:
       - "8084:8084"   # Health check HTTP
     volumes:
@@ -349,6 +344,7 @@ services:
       - REDIS_PORT=6379
       - REDIS_PASSWORD=continuo
       - RELEASE_CONTROLLER_HTTP_PORT=8088
+      - LOG_LEVEL=INFO
       - S3_BUCKET=continuo
       - S3_ENDPOINT_URL=http://minio:9000
       - AWS_ACCESS_KEY_ID=minioadmin
@@ -385,6 +381,7 @@ services:
       - REDIS_PORT=6379
       - REDIS_PASSWORD=continuo
       - REMEDIATION_HTTP_PORT=8090
+      - LOG_LEVEL=INFO
       - S3_BUCKET=continuo
       - S3_ENDPOINT_URL=http://minio:9000
       - AWS_ACCESS_KEY_ID=minioadmin
@@ -430,6 +427,7 @@ services:
       - AGENT_REMEDIATION_HTTP_PORT=8092
       - AGENT_REMEDIATION_GRPC_PORT=50054
       - AGENT_REMEDIATION_MAX_ATTEMPTS=3
+      - LOG_LEVEL=INFO
       - REMEDIATION_PR_POLL_INTERVAL=${REMEDIATION_PR_POLL_INTERVAL:-5s}
       - REMEDIATION_PR_OPENING_GRACE_PERIOD=${REMEDIATION_PR_OPENING_GRACE_PERIOD:-15s}
       - S3_BUCKET=continuo
@@ -491,6 +489,7 @@ services:
       - REDIS_PASSWORD=continuo
       - DEAD_LETTER_HTTP_PORT=8096
       - DEAD_LETTER_GRPC_PORT=50055
+      - LOG_LEVEL=INFO
       - STREAM_TRIM_ENABLED=true
       - STREAM_RETENTION=72h
     ports:
@@ -783,6 +782,7 @@ services:
       # SQL dialect for dependency resolution and the candidate-schema rewrite.
       # Mirrors the chart's validation.engine; the local stack runs Postgres.
       WAREHOUSE_ENGINE: postgres
+      LOG_LEVEL: INFO
     volumes:
       - ./pkg:/app/pkg:ro
     depends_on:

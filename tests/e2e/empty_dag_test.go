@@ -11,8 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestEmptyCronDAG_FinalisesAsFailed guards the empty-projection path introduced
-// in the ref-emit-dispatch branch:
+// TestEmptyCronDAG_FinalisesAsFailed guards the empty-projection path:
 //
 //	ActivateSchedule("empty-dag-*") → scheduler.started:v1
 //	→ orchestrator HandleSchedulerStarted: Snapshot(LatestFullDAG) returns
@@ -64,10 +63,14 @@ func TestEmptyCronDAG_FinalisesAsFailed(t *testing.T) {
 			`SELECT schedule_id FROM scheduler_tracker WHERE schedule_name = $1`, scheduleName)
 
 		if scheduleID != "" {
-			_, _ = clients.stateDB.ExecContext(bg,
-				`DELETE FROM state_outbox WHERE aggregate_id = $1`, scheduleID)
-			_, _ = clients.orchestratorDB.ExecContext(bg,
-				`DELETE FROM outbox WHERE aggregate_id = $1`, scheduleID)
+			if _, err := clients.stateDB.ExecContext(bg,
+				`DELETE FROM state_outbox WHERE aggregate_id = $1`, scheduleID); err != nil {
+				t.Logf("Warning: failed to delete state_outbox rows for run %s: %v", scheduleID, err)
+			}
+			if _, err := clients.orchestratorDB.ExecContext(bg,
+				`DELETE FROM orchestrator_outbox WHERE aggregate_id = $1`, scheduleID); err != nil {
+				t.Logf("Warning: failed to delete orchestrator_outbox rows for run %s: %v", scheduleID, err)
+			}
 		}
 
 		_, _ = clients.stateDB.ExecContext(bg,

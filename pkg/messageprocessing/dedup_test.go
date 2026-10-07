@@ -107,7 +107,7 @@ func (f *fakeRepo) UpdateState(_ context.Context, _ uuid.UUID, _ string) error {
 	return nil
 }
 
-func (f *fakeRepo) DeleteTerminalOlderThan(_ context.Context, _ time.Duration, _ int) (int64, error) {
+func (f *fakeRepo) DeleteOlderThan(_ context.Context, _ time.Duration, _ int) (int64, error) {
 	return 0, nil
 }
 
