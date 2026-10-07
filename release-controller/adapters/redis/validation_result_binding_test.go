@@ -181,6 +181,9 @@ func (r *fakeReleaseRepo) Create(ctx context.Context, rel *pipeline.Run) (bool, 
 func (r *fakeReleaseRepo) NextQueued(ctx context.Context) (*pipeline.Run, error) {
 	return nil, nil
 }
+func (r *fakeReleaseRepo) NextQueuedOfKind(ctx context.Context, kind pipeline.Kind) (*pipeline.Run, error) {
+	return nil, nil
+}
 func (r *fakeReleaseRepo) Active(ctx context.Context) (*pipeline.Run, error) {
 	return nil, nil
 }

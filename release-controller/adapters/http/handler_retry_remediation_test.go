@@ -64,6 +64,10 @@ func (f *fakeReleaseRepo) NextQueued(context.Context) (*pipeline.Run, error) {
 	return nil, nil
 }
 
+func (f *fakeReleaseRepo) NextQueuedOfKind(context.Context, pipeline.Kind) (*pipeline.Run, error) {
+	return nil, nil
+}
+
 // Active returns the single run in a non-terminal, non-received status, or
 // nil. Mirrors the Postgres query that guards AdvanceQueue from launching a
 // second concurrent run.

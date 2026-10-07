@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/carolsimone/continuo/pkg/maintenance"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 )
@@ -107,8 +108,12 @@ func resubmitOutcome(existing *pipeline.Run, in ReceiveCandidateInput, kind rele
 // returns an error wrapping ErrInvalidCandidate; a run-id kind clash wraps
 // ErrRunKindConflict; a release id that names a candidate with different facts
 // wraps ErrReleaseIDConflict; any other error is a storage failure. The caller
-// (HTTP handler) is responsible for returning 202 Accepted to CI.
+// (HTTP handler) is responsible for returning 202 Accepted to CI. It refuses
+// with maintenance.ErrActive while maintenance mode is on.
 func ReceiveCandidate(ctx context.Context, d *Deps, in ReceiveCandidateInput) error {
+	if d.Maintenance {
+		return maintenance.ErrActive
+	}
 	if err := in.validate(); err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalidCandidate, err)
 	}

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
@@ -24,6 +25,7 @@ func setRequiredEnv(t *testing.T) {
 	t.Setenv("S3_ENDPOINT_URL", "http://minio:9000")
 	t.Setenv("S3_BUCKET", "continuo")
 	t.Setenv("AWS_DEFAULT_REGION", "us-east-1")
+	t.Setenv("MAINTENANCE_ENABLED", "false")
 }
 
 func TestLoad_AgentRemediationGRPCAddrDefault(t *testing.T) {
@@ -74,4 +76,21 @@ func TestLoad_DefaultsTheDatabaseName(t *testing.T) {
 
 	require.Empty(t, v.Missing())
 	assert.Equal(t, "continuo_release", cfg.Postgres.DB)
+}
+
+func TestLoad_ReadsMaintenance(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("MAINTENANCE_ENABLED", "true")
+	v := &pkgconfig.Validator{}
+	cfg := Load(v)
+	assert.True(t, cfg.Maintenance)
+	assert.Empty(t, v.Missing())
+}
+
+func TestLoad_RequiresMaintenance(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("MAINTENANCE_ENABLED", "yes")
+	v := &pkgconfig.Validator{}
+	Load(v)
+	assert.Contains(t, strings.Join(v.Missing(), ","), "MAINTENANCE_ENABLED")
 }

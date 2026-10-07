@@ -58,6 +58,10 @@ func main() {
 		os.Exit(1)
 	}
 
+	if cfg.Maintenance {
+		logger.Warn("Maintenance mode is on: release intake and remediation retries are refused; the queue activates only verification runs")
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -159,6 +163,8 @@ func main() {
 		Logger:    logger,
 		Bucket:    cfg.S3.Bucket,
 		Proposals: proposalsClient,
+
+		Maintenance: cfg.Maintenance,
 
 		Rejections: serialization.ReleaseRejectedJSON{},
 	}

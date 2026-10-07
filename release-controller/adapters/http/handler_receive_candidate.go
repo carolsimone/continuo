@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/maintenance"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 )
 
@@ -51,6 +52,10 @@ func (s *Server) handleReceiveCandidate(w http.ResponseWriter, r *http.Request) 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	if err := handlers.ReceiveCandidate(ctx, s.deps, in); err != nil {
+		if errors.Is(err, maintenance.ErrActive) {
+			writeMaintenance(w)
+			return
+		}
 		if errors.Is(err, handlers.ErrRunKindConflict) || errors.Is(err, handlers.ErrReleaseIDConflict) {
 			http.Error(w, err.Error(), http.StatusConflict)
 			return

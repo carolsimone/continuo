@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/maintenance"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
@@ -65,8 +66,12 @@ type RetryRemediationResult struct {
 // when the candidate has no stored rejection, when the current round has not
 // yet produced a proposal row (a second click before the first has landed),
 // or when an attempt is still in flight or a fix is already proposed — the
-// caller should look at that instead of retrying.
+// caller should look at that instead of retrying. It refuses with
+// maintenance.ErrActive while maintenance mode is on.
 func RetryRemediation(ctx context.Context, deps *Deps, releaseID string) (RetryRemediationResult, error) {
+	if deps.Maintenance {
+		return RetryRemediationResult{}, maintenance.ErrActive
+	}
 	u := deps.NewUoW()
 	if err := u.Begin(ctx); err != nil {
 		return RetryRemediationResult{}, fmt.Errorf("begin: %w", err)
