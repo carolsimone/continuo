@@ -30,8 +30,8 @@ func SetupPostgres(t *testing.T) (*sqlx.DB, func()) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
 	lockConn, err := db.Conn(ctx)
+	cancel()
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		_, unlockErr := lockConn.ExecContext(context.Background(), `SELECT pg_advisory_unlock(861248012)`)
@@ -40,7 +40,12 @@ func SetupPostgres(t *testing.T) (*sqlx.DB, func()) {
 		}
 		_ = lockConn.Close()
 	})
-	_, err = lockConn.ExecContext(ctx, `SELECT pg_advisory_lock(861248012)`)
+	// The lock wait gets the full test timeout: advisory-lock waiters are not
+	// granted fairly, so a short deadline would flake a serialized suite into
+	// a failure when another package's test simply runs long.
+	lockCtx, lockCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer lockCancel()
+	_, err = lockConn.ExecContext(lockCtx, `SELECT pg_advisory_lock(861248012)`)
 	require.NoError(t, err, "serialize executor database tests")
 
 	for _, table := range []string{"execution_outbox", "deployments", "validation_aggregates", "cancelled_schedules", "message_processing"} {
