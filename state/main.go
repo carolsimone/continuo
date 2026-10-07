@@ -58,6 +58,9 @@ func main() {
 	}
 
 	logger.Info("Starting state service")
+	if cfg.Maintenance {
+		logger.Warn("Maintenance mode is on: cron fires are skipped and RPCs that start runs are refused")
+	}
 	if len(cfg.IgnoredPoolKeys) > 0 {
 		logger.Warn("Ignoring Postgres pool settings state does not read; set DB_MAX_OPEN_CONNS and DB_MAX_IDLE_CONNS instead",
 			"ignored", strings.Join(cfg.IgnoredPoolKeys, ", "))
@@ -330,7 +333,7 @@ func main() {
 	logger.Info("Schedules config loaded", "schedules", len(schedulesConfig.Schedules))
 
 	// Initialize cron scheduler
-	cronScheduler, err := scheduler.NewCronSchedulerWithConfig(activateHandler, uowFactory, logger, schedulesConfig)
+	cronScheduler, err := scheduler.NewCronSchedulerWithConfig(activateHandler, uowFactory, logger, schedulesConfig, cfg.Maintenance)
 	if err != nil {
 		logger.Error("Failed to create cron scheduler", "error", err)
 		os.Exit(1)
@@ -363,7 +366,7 @@ func main() {
 	nodeRunHandler := handlers.NewNodeRunHandler(nodeRunRepo, logger)
 
 	// Create gRPC server
-	grpcServer, err := grpcserver.NewServer(cfg.GRPCPort, schedulerHandler, taskHandler, taskExecutionHandler, rerunHandler, singleNodeRunHandler, rebaseHandler, nodeRunHandler, logger)
+	grpcServer, err := grpcserver.NewServer(cfg.GRPCPort, schedulerHandler, taskHandler, taskExecutionHandler, rerunHandler, singleNodeRunHandler, rebaseHandler, nodeRunHandler, logger, cfg.Maintenance)
 	if err != nil {
 		logger.Error("Failed to create gRPC server", "error", err)
 		os.Exit(1)

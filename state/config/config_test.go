@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
@@ -26,4 +27,18 @@ func TestLoad_NamesTheIgnoredPoolKeys(t *testing.T) {
 			assert.Equal(t, tc.want, cfg.IgnoredPoolKeys)
 		})
 	}
+}
+
+func TestLoad_ReadsMaintenance(t *testing.T) {
+	t.Setenv("MAINTENANCE_ENABLED", "true")
+	v := &pkgconfig.Validator{}
+	cfg := Load(v)
+	assert.True(t, cfg.Maintenance)
+}
+
+func TestLoad_RequiresMaintenance(t *testing.T) {
+	t.Setenv("MAINTENANCE_ENABLED", "yes")
+	v := &pkgconfig.Validator{}
+	Load(v)
+	assert.Contains(t, strings.Join(v.Missing(), ","), "MAINTENANCE_ENABLED")
 }

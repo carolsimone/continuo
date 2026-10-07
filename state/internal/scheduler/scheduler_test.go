@@ -71,7 +71,7 @@ func TestNewCronSchedulerWithConfig_DynamicSchedules(t *testing.T) {
 	uowFactory := func() uow.UnitOfWork {
 		panic("uow must not be called during constructor test")
 	}
-	s, err := scheduler.NewCronSchedulerWithConfig(activate, uowFactory, testLogger(), cfg)
+	s, err := scheduler.NewCronSchedulerWithConfig(activate, uowFactory, testLogger(), cfg, false)
 	require.NoError(t, err)
 	require.NotNil(t, s)
 }
@@ -82,7 +82,7 @@ func TestNewCronSchedulerWithConfig_InvalidTimezone(t *testing.T) {
 		Schedules: []scheduler.ScheduleEntry{{Name: "x", Cron: "0 * * * *"}},
 	}
 	activate := svchandlers.NewActivateScheduleHandler(testLogger())
-	_, err := scheduler.NewCronSchedulerWithConfig(activate, nil, testLogger(), cfg)
+	_, err := scheduler.NewCronSchedulerWithConfig(activate, nil, testLogger(), cfg, false)
 	require.Error(t, err)
 }
 
