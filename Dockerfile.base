@@ -1,8 +1,11 @@
 FROM golang:1.27.1
 
-# Install system dependencies
+# Install system dependencies. docker.io is the daemon; Debian trixie ships
+# the client binary in the separate docker-cli package, and the e2e suite
+# shells out to it (tests/e2e/maintenance_mode_test.go).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     docker.io \
+    docker-cli \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
