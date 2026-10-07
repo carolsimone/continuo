@@ -13,6 +13,7 @@ import (
 	"github.com/carolsimone/continuo/dead-letter-controller/domain/deadletter"
 	"github.com/carolsimone/continuo/dead-letter-controller/service/handlers"
 	"github.com/carolsimone/continuo/pkg/identity"
+	"github.com/carolsimone/continuo/pkg/maintenance/grpcgate"
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -33,23 +34,26 @@ type Server struct {
 }
 
 // NewServer listens on the TCP port (0 picks a free one) and returns a server
-// ready to Start.
-func NewServer(port int, query *handlers.Query, redriver *handlers.Redriver, logger *slog.Logger) (*Server, error) {
+// ready to Start. While maintenance is true, RedriveDeadLetters is refused.
+func NewServer(port int, query *handlers.Query, redriver *handlers.Redriver, logger *slog.Logger, maintenance bool) (*Server, error) {
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
 		return nil, fmt.Errorf("failed to listen: %w", err)
 	}
-	return newServer(lis, query, redriver, logger), nil
+	return newServer(lis, query, redriver, logger, maintenance), nil
 }
 
 // newServer builds a server over an existing listener.
-func newServer(lis net.Listener, query *handlers.Query, redriver *handlers.Redriver, logger *slog.Logger) *Server {
+func newServer(lis net.Listener, query *handlers.Query, redriver *handlers.Redriver, logger *slog.Logger, maintenance bool) *Server {
 	// The identity interceptor runs first so the caller's user id is on the
-	// context before the logging interceptor or any handler reads it.
+	// context before the logging interceptor or any handler reads it. While
+	// maintenance mode is on, RedriveDeadLetters is refused: a redrive could
+	// re-inject a trigger or a release past every API gate.
 	grpcServer := grpc.NewServer(
 		grpc.ChainUnaryInterceptor(
 			identity.UnaryServerInterceptor(),
 			loggingInterceptor(logger),
+			grpcgate.UnaryServerInterceptor(maintenance, deadletterv1.DeadLetterService_RedriveDeadLetters_FullMethodName),
 		),
 	)
 	s := &Server{grpcServer: grpcServer, listener: lis, logger: logger, query: query, redriver: redriver}
