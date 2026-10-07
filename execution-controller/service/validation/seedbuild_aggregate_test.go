@@ -2,6 +2,7 @@ package validation_test
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 	"time"
 
@@ -139,6 +140,10 @@ type modeScopedDepRepo struct {
 }
 
 func (r *modeScopedDepRepo) Add(context.Context, *model.Deployment) error { return nil }
+func (r *modeScopedDepRepo) GetByJobName(context.Context, string) (*model.Deployment, error) {
+	return nil, sql.ErrNoRows
+}
+
 func (r *modeScopedDepRepo) GetDueBatch(context.Context, int) ([]*model.Deployment, error) {
 	return nil, nil
 }

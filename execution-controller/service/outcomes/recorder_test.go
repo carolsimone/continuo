@@ -41,6 +41,10 @@ func depKey(releaseID, nodeID string, mode model.Mode) string {
 }
 
 func (r *stubDeploymentsRepo) Add(context.Context, *model.Deployment) error { return nil }
+func (r *stubDeploymentsRepo) GetByJobName(context.Context, string) (*model.Deployment, error) {
+	return nil, sql.ErrNoRows
+}
+
 func (r *stubDeploymentsRepo) GetDueBatch(context.Context, int) ([]*model.Deployment, error) {
 	return nil, nil
 }

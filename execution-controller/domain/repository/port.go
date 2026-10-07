@@ -22,6 +22,10 @@ type DeploymentRepository interface {
 	// GetDueBatch returns up to limit pending Deployments whose next attempt is
 	// due, oldest first, locked FOR UPDATE SKIP LOCKED.
 	GetDueBatch(ctx context.Context, limit int) ([]*model.Deployment, error)
+	// GetByJobName returns the most recently created deployment whose Job is
+	// jobName, locked for the rest of the transaction, or sql.ErrNoRows when
+	// none exists.
+	GetByJobName(ctx context.Context, jobName string) (*model.Deployment, error)
 	// Save persists the mutated state of an existing Deployment.
 	Save(ctx context.Context, d *model.Deployment) error
 	// GetByReleaseNode returns the (mode, release_id, node_id) Deployment, or

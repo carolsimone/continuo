@@ -226,6 +226,10 @@ type candidateDeploymentsRepo struct {
 }
 
 func (r *candidateDeploymentsRepo) Add(context.Context, *model.Deployment) error { return nil }
+func (r *candidateDeploymentsRepo) GetByJobName(context.Context, string) (*model.Deployment, error) {
+	return nil, sql.ErrNoRows
+}
+
 func (r *candidateDeploymentsRepo) GetDueBatch(context.Context, int) ([]*model.Deployment, error) {
 	return nil, nil
 }

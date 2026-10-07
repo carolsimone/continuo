@@ -2,6 +2,7 @@ package handlers_test
 
 import (
 	"context"
+	"database/sql"
 	"sync"
 
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
@@ -19,6 +20,10 @@ func (r *stubDeploymentsRepo) Add(_ context.Context, d *model.Deployment) error 
 	r.added = append(r.added, d)
 	return nil
 }
+func (r *stubDeploymentsRepo) GetByJobName(context.Context, string) (*model.Deployment, error) {
+	return nil, sql.ErrNoRows
+}
+
 func (r *stubDeploymentsRepo) GetDueBatch(_ context.Context, _ int) ([]*model.Deployment, error) {
 	return nil, nil
 }

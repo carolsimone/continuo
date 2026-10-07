@@ -335,3 +335,20 @@ func commandIDs(cmd command.DeployTask) (uuid.UUID, uuid.UUID, error) {
 	}
 	return taskID, scheduleID, nil
 }
+
+func (r *deploymentsRepository) GetByJobName(ctx context.Context, jobName string) (*model.Deployment, error) {
+	const query = `SELECT` + validationSelectColumns + `
+		FROM deployments
+		WHERE job_name = $1
+		ORDER BY created_at DESC
+		LIMIT 1
+		FOR UPDATE`
+	var rows []*deploymentRow
+	if err := r.exec.SelectContext(ctx, &rows, query, jobName); err != nil {
+		return nil, fmt.Errorf("get deployment for job %s: %w", jobName, err)
+	}
+	if len(rows) == 0 {
+		return nil, sql.ErrNoRows
+	}
+	return r.toAggregate(rows[0]), nil
+}
