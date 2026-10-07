@@ -19,7 +19,7 @@ const maintenanceTrailerKey = "continuo-maintenance"
 func maintenanceInterceptor(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
 	var trailer metadata.MD
 	err := invoker(ctx, method, req, reply, cc, append(opts, grpc.Trailer(&trailer))...)
-	if err != nil && len(trailer.Get(maintenanceTrailerKey)) > 0 && trailer.Get(maintenanceTrailerKey)[0] == "true" {
+	if values := trailer.Get(maintenanceTrailerKey); err != nil && len(values) > 0 && values[0] == "true" {
 		return fmt.Errorf("%w: %w", output.ErrMaintenance, err)
 	}
 	return err
