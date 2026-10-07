@@ -106,6 +106,9 @@ type Config struct {
 
 	// MetricsPort is the port the Prometheus /metrics listener binds (METRICS_PORT).
 	MetricsPort int
+
+	// Maintenance is MAINTENANCE_ENABLED (see handlers.Deps.Maintenance).
+	Maintenance bool
 }
 
 // serviceReposFile is the on-disk structure of config/service_repos.yaml.
@@ -217,6 +220,8 @@ func Load(v *pkgconfig.Validator) Config {
 		RetentionSweepIntervalMin: pkgconfig.EnvIntOrDefault("RETENTION_SWEEP_INTERVAL_MINUTES", 60),
 
 		MetricsPort: pkgconfig.LoadMetricsPort(v),
+
+		Maintenance: pkgconfig.LoadMaintenance(v),
 	}
 	cfg.SQLDialect = resolveSQLDialect(v)
 	switch cfg.LLMProvider {
