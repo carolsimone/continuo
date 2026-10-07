@@ -105,7 +105,7 @@ func TestReconstituteCompile_RoundTrip(t *testing.T) {
 	outcomeAt := now.Add(10 * time.Second)
 
 	d := model.ReconstituteCompile(
-		id, &msgProcID, cmd, model.StatusDeployed,
+		id, &msgProcID, cmd, model.StatusDone,
 		1, 3, now, now,
 		&deployedAt, &errMsg,
 		"failed", "s3://logs", "s3://results", "parse-prod", &outcomeAt,
@@ -113,7 +113,7 @@ func TestReconstituteCompile_RoundTrip(t *testing.T) {
 
 	assert.Equal(t, id, d.ID())
 	assert.Equal(t, model.ModeCompile, d.Mode())
-	assert.Equal(t, model.StatusDeployed, d.Status())
+	assert.Equal(t, model.StatusDone, d.Status())
 	assert.Equal(t, 1, d.RetryCount())
 	assert.Equal(t, 3, d.MaxRetries())
 	assert.Equal(t, "failed", d.Outcome())

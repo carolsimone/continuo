@@ -221,6 +221,27 @@ if grep -q 'DB_MAX_OPEN_CONNS\|DB_MAX_IDLE_CONNS' "${tmp}/database-null.yaml"; t
   echo "FAIL: a release without database values must leave every service on its default pool"; exit 1
 fi
 
+# execution.maxConcurrentJobs reaches execution-controller through the shared
+# ConfigMap; a value below 1 fails the render, and a release without an
+# execution block (helm upgrade --reuse-values from an older chart) renders the
+# default.
+echo "--- execution.maxConcurrentJobs reaches the ConfigMap; values below 1 are refused"
+grep -q 'MAX_CONCURRENT_JOBS: "50"' "${tmp}/defaults.yaml" \
+  || { echo "FAIL: the default render does not set MAX_CONCURRENT_JOBS to 50"; exit 1; }
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set execution.maxConcurrentJobs=7 > "${tmp}/cap-set.yaml"
+grep -q 'MAX_CONCURRENT_JOBS: "7"' "${tmp}/cap-set.yaml" \
+  || { echo "FAIL: execution.maxConcurrentJobs does not reach the shared ConfigMap"; exit 1; }
+if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set execution.maxConcurrentJobs=0 > /dev/null 2>&1; then
+  echo "FAIL: execution.maxConcurrentJobs=0 must fail the render"; exit 1
+fi
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set execution=null > "${tmp}/execution-null.yaml" \
+  || { echo "FAIL: rendering with execution=null failed; helm upgrade --reuse-values from a chart without execution would fail"; exit 1; }
+grep -q 'MAX_CONCURRENT_JOBS: "50"' "${tmp}/execution-null.yaml" \
+  || { echo "FAIL: a release without execution values must get the default cap"; exit 1; }
+if grep -A40 'name: execution-controller' "${tmp}/defaults.yaml" | grep -q 'name: MAX_CONCURRENT_JOBS'; then
+  echo "FAIL: execution-controller's own env must not shadow the ConfigMap's MAX_CONCURRENT_JOBS"; exit 1
+fi
+
 # Every Go service serves /metrics on the one port the ConfigMap names. The
 # chart must expose and annotate exactly those services, admit scrapers only
 # when asked and only to that port, and refuse a port another listener uses.

@@ -6,13 +6,17 @@ import (
 	"log/slog"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/carolsimone/continuo/execution-controller/adapters/commandcfg"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
@@ -128,6 +132,14 @@ func newQueryTestClient() *K8sClient {
 	return c
 }
 
+func TestCreateJob_AlreadyExistsIsSuccess(t *testing.T) {
+	existing := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "dbt-public-orders", Namespace: "default"}}
+	c := &K8sClient{logger: slog.New(slog.NewTextHandler(os.Stderr, nil)), commands: commandcfg.Defaults()}
+	c.setClientsetForTest(fake.NewSimpleClientset(existing))
+	require.NoError(t, c.CreateJob(context.Background(), existing.DeepCopy()),
+		"a Job with the same deterministic name was created by an earlier launch")
+}
+
 // TestCreateQueryJob_NormalProduction_HasNoModeLabel verifies that a production
 // dbt job carries NO "mode" label. The job-status handler routes a terminal Job
 // by that label, and only the release legs (validation, seed-build, compile) set
@@ -193,4 +205,30 @@ func TestCreateQueryJob_SetsTTLSecondsAfterFinished(t *testing.T) {
 
 	require.NotNil(t, job.Spec.TTLSecondsAfterFinished, "job must set TTLSecondsAfterFinished")
 	assert.Equal(t, jobTTLSecondsAfterFinished, *job.Spec.TTLSecondsAfterFinished)
+}
+
+func TestListJobStates_FinishedFromConditions(t *testing.T) {
+	done := metav1.NewTime(time.Now().Add(-5 * time.Minute))
+	jobs := []runtime.Object{
+		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "running", Namespace: "default", Labels: map[string]string{"app": "dbt-job"}},
+			Status: batchv1.JobStatus{Active: 1}},
+		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "complete", Namespace: "default", Labels: map[string]string{"app": "dbt-job"}},
+			Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue, LastTransitionTime: done}}}},
+		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "failed", Namespace: "default", Labels: map[string]string{"app": "dbt-job"}},
+			Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue, LastTransitionTime: done}}}},
+		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "schema-op", Namespace: "default", Labels: map[string]string{"app": "continuo-schema-op"}}},
+	}
+	c := &K8sClient{clientset: fake.NewSimpleClientset(jobs...), logger: slog.Default()}
+
+	got, err := c.ListJobStates(context.Background(), "default", "app=dbt-job")
+	require.NoError(t, err)
+	require.Len(t, got, 3, "schema-op Jobs take no slot and are not listed")
+	assert.False(t, got["running"].Finished)
+	assert.True(t, got["complete"].Finished)
+	assert.WithinDuration(t, done.Time, got["complete"].FinishedAt, time.Second)
+	assert.True(t, got["failed"].Finished)
+}
+
+func TestDBTJobLabelSelector_MatchesTheLabelJobsCarry(t *testing.T) {
+	assert.Equal(t, "app=dbt-job", dbtJobLabelSelector)
 }

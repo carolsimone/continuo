@@ -269,22 +269,50 @@ func main() {
 	metricsReg.WatchOutbox(outboxProcessor)
 	runWorker("outbox_processor", outboxProcessor.Run)
 
+	// The dispatcher wakes on the notification the deployments table's
+	// triggers send when a deployment is accepted or a slot is released, so
+	// queued work starts without waiting for the 5 s poll.
+	dispatcherWaker, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN(), postgres.DeploymentsChannel, logger)
+	if errors.Is(err, context.Canceled) {
+		logger.Info("Shutdown requested while waiting for the dispatcher listener")
+		os.Exit(0)
+	}
+	if err != nil {
+		logger.Error("Failed to listen for deployment notifications", "error", err)
+		os.Exit(1)
+	}
+	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error { return dispatcherWaker.CloseContext(ctx) })
+
+	newDeploymentRepo := func(exec pkgoutbox.Executor) repository.DeploymentRepository {
+		return postgres.NewDeploymentsRepository(exec, logger)
+	}
+	newAdmissionRepo := func(exec pkgoutbox.Executor) repository.AdmissionRepository {
+		return postgres.NewAdmissionRepository(exec, logger)
+	}
+	k8sDeployer := k8s.NewDeployer(k8sClient, cfg.K8sNamespace)
+
 	deployDispatcher := deployer.NewDispatcher(
-		pgDB, k8s.NewDeployer(k8sClient, cfg.K8sNamespace),
-		func(exec pkgoutbox.Executor) repository.DeploymentRepository {
-			return postgres.NewDeploymentsRepository(exec, logger)
-		},
+		pgDB, k8sDeployer,
+		newDeploymentRepo,
 		func(exec pkgoutbox.Executor) repository.ValidationAggregateRepository {
 			return postgres.NewValidationAggregateRepository(exec)
 		},
+		newAdmissionRepo,
 		cfg.MaxConcurrentJobs, logger,
 		deployer.DispatcherConfig{
-			Tick: 5 * time.Second, BatchSize: 50,
+			Tick: 5 * time.Second, BatchSize: 50, Waker: dispatcherWaker,
 			CheckDelay:      time.Duration(cfg.K8sCheckDelaySeconds) * time.Second,
 			FirstCheckDelay: time.Duration(cfg.K8sFirstCheckDelaySeconds) * time.Second,
 		},
 	)
 	runWorker("deploy_dispatcher", deployDispatcher.Run)
+
+	// Every minute, compare the deployments holding a slot with Kubernetes:
+	// return reservations a crashed launcher left to the queue, check Jobs that
+	// vanished, and free the slots of Jobs that finished unobserved.
+	admissionReconciler := deployer.NewReconciler(pgDB, k8sDeployer, newAdmissionRepo, newDeploymentRepo,
+		logger, deployer.ReconcilerConfig{})
+	runWorker("admission_reconciler", admissionReconciler.Run)
 
 	// Every second, atomically move due check tickets from the delay queue onto
 	// check.k8s:v1. A missed tick loses nothing: the queue is durable.

@@ -15,6 +15,9 @@ const ServiceName = "execution-controller"
 // drain plus the infra-close handlers. Override with SHUTDOWN_GRACE (e.g. "30s").
 const defaultShutdownGrace = 15 * time.Second
 
+// defaultMaxConcurrentJobs is the admission cap when MAX_CONCURRENT_JOBS is unset.
+const defaultMaxConcurrentJobs = 50
+
 // Config holds every setting the service reads at boot.
 type Config struct {
 	Redis    pkgconfig.RedisConfig
@@ -36,7 +39,8 @@ type Config struct {
 
 	// K8sNamespace is where every Job is created and observed.
 	K8sNamespace string
-	// MaxConcurrentJobs caps the Jobs the dispatcher keeps in flight.
+	// MaxConcurrentJobs caps the deployments holding an execution slot
+	// (reserved, starting or running) across every replica.
 	MaxConcurrentJobs int
 	// K8sCheckDelaySeconds is the delay between two status checks of a running Job.
 	K8sCheckDelaySeconds int
@@ -85,7 +89,7 @@ func Load(v *pkgconfig.Validator) Config {
 
 		HTTPPort:                  envInt("HTTP_PORT", 8084),
 		K8sNamespace:              v.Require("K8S_NAMESPACE"),
-		MaxConcurrentJobs:         envInt("MAX_CONCURRENT_JOBS", 50),
+		MaxConcurrentJobs:         maxConcurrentJobs(v),
 		K8sCheckDelaySeconds:      envInt("K8S_CHECK_DELAY_SECONDS", 10),
 		K8sFirstCheckDelaySeconds: envInt("K8S_FIRST_CHECK_DELAY_SECONDS", 1),
 		LogTailLines:              envInt("LOG_TAIL_LINES", 50),
@@ -97,6 +101,16 @@ func Load(v *pkgconfig.Validator) Config {
 
 		MetricsPort: pkgconfig.LoadMetricsPort(v),
 	}
+}
+
+// maxConcurrentJobs reads the admission cap: the most deployments holding an
+// execution slot at once, across every replica. A value that is not a whole
+// number of at least 1 is a validation failure.
+func maxConcurrentJobs(v *pkgconfig.Validator) int {
+	if n := v.PositiveIntOrZero("MAX_CONCURRENT_JOBS"); n > 0 {
+		return n
+	}
+	return defaultMaxConcurrentJobs
 }
 
 // setKeys returns the keys among keys that are set to a non-empty value.

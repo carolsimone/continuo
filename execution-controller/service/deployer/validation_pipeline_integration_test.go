@@ -62,8 +62,6 @@ func (c *capturingDeployer) DeployCompile(_ context.Context, spec deploy.Validat
 	return nil
 }
 
-func (c *capturingDeployer) CountActive(context.Context) (int, error) { return 0, nil }
-
 func (c *capturingDeployer) specs() []deploy.ValidationJobSpec {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -127,6 +125,9 @@ func newCapturingDispatcher(db *sqlx.DB, dep deploy.Deployer) *deployer.Dispatch
 		},
 		func(exec outbox.Executor) repository.ValidationAggregateRepository {
 			return executorpg.NewValidationAggregateRepository(exec)
+		},
+		func(exec outbox.Executor) repository.AdmissionRepository {
+			return executorpg.NewAdmissionRepository(exec, logger)
 		},
 		50, logger, deployer.DispatcherConfig{},
 	)
@@ -210,7 +211,7 @@ func countDeployments(t *testing.T, db *sqlx.DB, query string, args ...any) int 
 
 // waitValidationRowsDue blocks until no pending validation row for releaseID has
 // a next_attempt_at in the DB's future. next_attempt_at is stamped with the Go
-// process clock and GetDueBatch compares against the DB's NOW(); on a VM-backed
+// process clock and the claim compares against the DB's NOW(); on a VM-backed
 // Docker host those clocks can differ by tens of milliseconds, so a row enqueued
 // "now" can read as not-yet-due for a moment. Production dispatches on a 5s tick
 // where this is moot; the test dispatches immediately, so wait for the DB to
@@ -270,9 +271,9 @@ func TestValidationPipeline_EndToEnd(t *testing.T) {
 	}
 
 	// Step 3: dispatch the batch. Each row → a DeployValidation call + a
-	// first check_delayed ticket; rows move to status=deployed; NO terminal yet.
+	// first check_delayed ticket; rows move to status=starting; NO terminal yet.
 	// Wait for the rows to be due first: next_attempt_at is stamped with the Go
-	// process clock while GetDueBatch compares against the DB's NOW(), and on a
+	// process clock while the claim compares against the DB's NOW(), and on a
 	// VM-backed Docker host (colima) those can differ by tens of ms. Production
 	// dispatches on a 5s tick so the skew is irrelevant there; the test dispatches
 	// immediately, so wait until the DB agrees the rows are due.
@@ -304,8 +305,8 @@ func TestValidationPipeline_EndToEnd(t *testing.T) {
 	assert.Equal(t, 3, countByStream(t, db, streams.CheckK8sV1),
 		"one check_delayed ticket per dispatched validation Job")
 	assert.Equal(t, 3, countDeployments(t, db,
-		`SELECT COUNT(*) FROM deployments WHERE mode='validation' AND release_id=$1 AND status='deployed'`, releaseID),
-		"all rows now deployed")
+		`SELECT COUNT(*) FROM deployments WHERE mode='validation' AND release_id=$1 AND status='starting'`, releaseID),
+		"all rows now started")
 	assert.Equal(t, 0, countByStreamAndKind(t, db, streams.ValidationResultV1, "complete"),
 		"no aggregate yet — every node still awaits its terminal")
 

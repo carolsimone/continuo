@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
@@ -49,6 +50,49 @@ func TestLoad_MaxConcurrentJobsFromEnv(t *testing.T) {
 	cfg := Load(&pkgconfig.Validator{})
 	if cfg.MaxConcurrentJobs != 12 {
 		t.Fatalf("want 12, got %d", cfg.MaxConcurrentJobs)
+	}
+}
+
+// setRequiredEnv sets every variable Load requires, so a test sees only the
+// validation failures it provokes.
+func setRequiredEnv(t *testing.T) {
+	t.Helper()
+	for k, v := range map[string]string{
+		"REDIS_HOST": "r", "REDIS_PORT": "6379", "REDIS_PASSWORD": "p",
+		"POSTGRES_HOST": "h", "POSTGRES_DB": "d", "POSTGRES_USER": "u", "POSTGRES_PASSWORD": "pw",
+		"S3_ENDPOINT_URL": "http://minio:9000", "S3_BUCKET": "b", "AWS_DEFAULT_REGION": "us-east-1",
+		"K8S_NAMESPACE": "ns", "VALIDATION_WAREHOUSE_SECRET": "sec",
+	} {
+		t.Setenv(k, v)
+	}
+}
+
+func TestLoad_MaxConcurrentJobs(t *testing.T) {
+	cases := []struct {
+		raw     string
+		want    int
+		invalid bool
+	}{
+		{"", 50, false},
+		{"7", 7, false},
+		{"0", 0, true},
+		{"-3", 0, true},
+		{"fifty", 0, true},
+	}
+	for _, c := range cases {
+		t.Run(c.raw, func(t *testing.T) {
+			setRequiredEnv(t)
+			t.Setenv("MAX_CONCURRENT_JOBS", c.raw)
+			v := &pkgconfig.Validator{}
+			cfg := Load(v)
+			if c.invalid {
+				require.NotEmpty(t, v.Missing(), "a cap the service cannot honour stops it at boot")
+				assert.Contains(t, strings.Join(v.Missing(), ","), "MAX_CONCURRENT_JOBS")
+				return
+			}
+			require.Empty(t, v.Missing())
+			assert.Equal(t, c.want, cfg.MaxConcurrentJobs)
+		})
 	}
 }
 

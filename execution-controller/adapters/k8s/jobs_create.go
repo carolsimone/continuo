@@ -63,7 +63,7 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 		"service_name": params.ServiceName,
 	}
 	// The runtime label distinguishes python pods for operators without
-	// changing the app selector that CountActive uses for the concurrency cap.
+	// changing the app selector every executor Job carries.
 	if params.NodeType.IsPython() {
 		jobLabels["runtime"] = "python"
 	}

@@ -12,16 +12,13 @@ import (
 
 // DeploymentRepository persists and loads Deployment aggregates from the
 // deployments command queue.
-//
-// GetDueBatch MUST be called inside a transaction the caller holds until the
-// per-aggregate Save completes, because the batch locks rows with
-// FOR UPDATE SKIP LOCKED.
 type DeploymentRepository interface {
 	// Add inserts a new pending Deployment.
 	Add(ctx context.Context, d *model.Deployment) error
-	// GetDueBatch returns up to limit pending Deployments whose next attempt is
-	// due, oldest first, locked FOR UPDATE SKIP LOCKED.
-	GetDueBatch(ctx context.Context, limit int) ([]*model.Deployment, error)
+	// GetByJobName returns the most recently created deployment whose Job is
+	// jobName, locked for the rest of the transaction, or sql.ErrNoRows when
+	// none exists.
+	GetByJobName(ctx context.Context, jobName string) (*model.Deployment, error)
 	// Save persists the mutated state of an existing Deployment.
 	Save(ctx context.Context, d *model.Deployment) error
 	// GetByReleaseNode returns the (mode, release_id, node_id) Deployment, or
@@ -30,11 +27,13 @@ type DeploymentRepository interface {
 	// other's rows: outcomes.Recorder passes the terminal Job's mode (ModeValidation,
 	// ModeSeedBuild, or ModeCompile).
 	GetByReleaseNode(ctx context.Context, releaseID, nodeID string, mode model.Mode) (*model.Deployment, error)
-	// PendingValidationCount counts rows of the given mode for releaseID that
-	// are not yet terminal — i.e. status IN ('pending','blocked','deployed') AND
-	// outcome IS NULL. 'blocked' rows are not terminal: they are waiting for
-	// in-set upstreams to complete before they can be dispatched. Including them
-	// prevents the aggregate-emit gate from firing before all nodes have settled.
+	// PendingValidationCount counts rows of the given mode for releaseID whose
+	// outcome is not yet recorded (pending, blocked, in flight, or done without an
+	// observed outcome). 'blocked' rows are waiting for in-set upstreams to
+	// complete before they can be dispatched, and a done row without an outcome had
+	// its slot released before a status check recorded its Job's result; counting
+	// both prevents the aggregate-emit gate from firing before every node has
+	// settled.
 	// mode scopes the count so a release's validation and seed-build legs are
 	// counted independently.
 	PendingValidationCount(ctx context.Context, releaseID string, mode model.Mode) (int, error)

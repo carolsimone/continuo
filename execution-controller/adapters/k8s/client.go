@@ -12,6 +12,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/service/ports"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -120,6 +121,11 @@ func (c *K8sClient) JobExists(ctx context.Context, namespace, jobName string) (b
 // CreateJob creates a K8s Job
 func (c *K8sClient) CreateJob(ctx context.Context, job *batchv1.Job) error {
 	_, err := c.clientset.BatchV1().Jobs(job.Namespace).Create(ctx, job, metav1.CreateOptions{})
+	if errors.IsAlreadyExists(err) {
+		c.logger.Info("K8s job already exists, treating its creation as done",
+			"namespace", job.Namespace, "job_name", job.Name)
+		return nil
+	}
 	if err != nil {
 		c.logger.Error("Failed to create K8s job",
 			"namespace", job.Namespace,
@@ -146,26 +152,6 @@ func (c *K8sClient) deleteJob(ctx context.Context, namespace, jobName string) er
 	return nil
 }
 
-// CountActiveJobs returns the number of Jobs in the namespace matching
-// labelSelector that currently have a running pod (.status.active > 0). Jobs
-// that are created but whose pod is still Pending/unscheduled (active == 0) do
-// not count. Used by deployer.Dispatcher to enforce the concurrent-Job cap.
-func (c *K8sClient) CountActiveJobs(ctx context.Context, namespace, labelSelector string) (int, error) {
-	list, err := c.clientset.BatchV1().Jobs(namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: labelSelector,
-	})
-	if err != nil {
-		return 0, fmt.Errorf("list jobs for active count: %w", err)
-	}
-	active := 0
-	for i := range list.Items {
-		if list.Items[i].Status.Active > 0 {
-			active++
-		}
-	}
-	return active, nil
-}
-
 // setClientsetForTest swaps the clientset for a fake in unit tests.
 func (c *K8sClient) setClientsetForTest(cs kubernetes.Interface) { c.clientset = cs }
 
@@ -184,4 +170,37 @@ func sanitizeK8sLabel(s string) string {
 		out = out[:63]
 	}
 	return strings.Trim(out, "-_.")
+}
+
+// listPageSize bounds each page of a Job listing.
+const listPageSize = 500
+
+// ListJobStates lists the Jobs in namespace matching labelSelector, page by
+// page, and reports for each whether it finished (a true Complete or Failed
+// condition) and when.
+func (c *K8sClient) ListJobStates(ctx context.Context, namespace, labelSelector string) (map[string]ports.JobState, error) {
+	out := map[string]ports.JobState{}
+	opts := metav1.ListOptions{LabelSelector: labelSelector, Limit: listPageSize}
+	for {
+		list, err := c.clientset.BatchV1().Jobs(namespace).List(ctx, opts)
+		if err != nil {
+			return nil, fmt.Errorf("list jobs: %w", err)
+		}
+		for i := range list.Items {
+			out[list.Items[i].Name] = jobState(&list.Items[i])
+		}
+		if list.Continue == "" {
+			return out, nil
+		}
+		opts.Continue = list.Continue
+	}
+}
+
+func jobState(j *batchv1.Job) ports.JobState {
+	for _, cond := range j.Status.Conditions {
+		if (cond.Type == batchv1.JobComplete || cond.Type == batchv1.JobFailed) && cond.Status == corev1.ConditionTrue {
+			return ports.JobState{Finished: true, FinishedAt: cond.LastTransitionTime.Time}
+		}
+	}
+	return ports.JobState{}
 }

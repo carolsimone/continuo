@@ -2,11 +2,13 @@ package redis
 
 import (
 	"context"
+	"database/sql"
 	"log/slog"
 	"reflect"
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	"github.com/carolsimone/continuo/execution-controller/domain/repository"
 	"github.com/carolsimone/continuo/execution-controller/service/handlers"
 	"github.com/carolsimone/continuo/execution-controller/service/outcomes"
@@ -36,7 +38,7 @@ func TestCheckK8sBinding_MarksDedupRowCompletedBeforeCommit(t *testing.T) {
 	}
 	claimed := uuid.New()
 	var changes []stateChange
-	u := &fakes.FakeUnitOfWork{}
+	u := &fakes.FakeUnitOfWork{Deployments: noRowDeploymentsRepo{}}
 	u.MessageProcessing = &fakes.FakeMessageProcessingRepository{
 		InsertIfNotExistsFunc: func(context.Context, *messageprocessing.MessageProcessing) (uuid.UUID, bool, error) {
 			return claimed, true, nil
@@ -60,6 +62,16 @@ func TestCheckK8sBinding_MarksDedupRowCompletedBeforeCommit(t *testing.T) {
 	if u.CommitCalled != 1 || u.RollbackCalled != 0 {
 		t.Fatalf("want one commit and no rollback; got commits=%d rollbacks=%d", u.CommitCalled, u.RollbackCalled)
 	}
+}
+
+// noRowDeploymentsRepo is a deployments repository in which no Job has a row,
+// answering the lookup the job-status handler makes first.
+type noRowDeploymentsRepo struct {
+	repository.DeploymentRepository
+}
+
+func (noRowDeploymentsRepo) GetByJobName(context.Context, string) (*model.Deployment, error) {
+	return nil, sql.ErrNoRows
 }
 
 // noopCancelledSchedulesRepo is a minimal repository.CancelledSchedulesRepository

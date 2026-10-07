@@ -9,17 +9,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// Status is the lifecycle state of a Deployment.
-type Status string
-
-const (
-	StatusPending  Status = "pending"
-	StatusBlocked  Status = "blocked"
-	StatusDeployed Status = "deployed"
-	StatusFailed   Status = "failed"
-	StatusSkipped  Status = "skipped"
-)
-
 // defaultMaxRetries is the deploy-attempt budget for a new Deployment.
 const defaultMaxRetries = 3
 
@@ -68,7 +57,9 @@ type Deployment struct {
 	deployedAt          *time.Time
 	errorMessage        *string
 
-	// Validation-only terminal outcome, attached by RecordOutcome after dispatch.
+	// Terminal outcome: attached by RecordOutcome (validation, seed-build,
+	// compile) or Finish (production). The dbt artifact fields are populated
+	// only by RecordOutcome.
 	outcome          string
 	dbtLogURI        string
 	dbtRunResultsURI string
@@ -146,8 +137,8 @@ func NewCompileDeployment(cmd command.ValidationDeployTask, msgProcID *uuid.UUID
 	}
 }
 
-// Reconstitute rebuilds a Deployment from persisted state. Adapters use this to
-// turn a stored row back into an aggregate.
+// Reconstitute rebuilds a production Deployment that has no recorded outcome
+// from persisted state.
 func Reconstitute(
 	id uuid.UUID,
 	msgProcID *uuid.UUID,
@@ -157,6 +148,25 @@ func Reconstitute(
 	nextAttemptAt, createdAt time.Time,
 	deployedAt *time.Time,
 	errorMessage *string,
+) *Deployment {
+	return ReconstituteProduction(id, msgProcID, cmd, status, retryCount, maxRetries,
+		nextAttemptAt, createdAt, deployedAt, errorMessage, "", nil)
+}
+
+// ReconstituteProduction rebuilds a production Deployment from persisted state,
+// including the outcome its attempt recorded. Adapters use this for rows whose
+// mode == production.
+func ReconstituteProduction(
+	id uuid.UUID,
+	msgProcID *uuid.UUID,
+	cmd command.DeployTask,
+	status Status,
+	retryCount, maxRetries int,
+	nextAttemptAt, createdAt time.Time,
+	deployedAt *time.Time,
+	errorMessage *string,
+	outcome string,
+	outcomeAt *time.Time,
 ) *Deployment {
 	return &Deployment{
 		id:                  id,
@@ -170,6 +180,8 @@ func Reconstitute(
 		createdAt:           createdAt,
 		deployedAt:          deployedAt,
 		errorMessage:        errorMessage,
+		outcome:             outcome,
+		outcomeAt:           outcomeAt,
 	}
 }
 
@@ -302,139 +314,210 @@ func (d *Deployment) IsDeployable() bool {
 		d.command.NodeType != ""
 }
 
-// MarkDeployed transitions a pending Deployment to deployed.
-func (d *Deployment) MarkDeployed(now time.Time) error {
-	if d.status != StatusPending {
-		return fmt.Errorf("cannot mark deployed from status %q", d.status)
+// moveTo changes the deployment's status when the state machine allows it.
+func (d *Deployment) moveTo(next Status) error {
+	if !CanMove(d.status, next) {
+		return fmt.Errorf("deployment %s cannot move from %q to %q", d.id, d.status, next)
 	}
-	d.status = StatusDeployed
+	d.status = next
+	return nil
+}
+
+// Reserve takes an execution slot for a pending deployment.
+func (d *Deployment) Reserve() error { return d.moveTo(StatusReserved) }
+
+// MarkStarted records that the reserved deployment's Job was created.
+// deployed_at keeps the creation time.
+func (d *Deployment) MarkStarted(now time.Time) error {
+	if err := d.moveTo(StatusStarting); err != nil {
+		return err
+	}
 	d.deployedAt = &now
 	d.errorMessage = nil
 	return nil
 }
 
-// RegisterFailure records a failed deploy attempt and applies the retry policy.
-// When the failure is transient and the attempt budget is not yet exhausted it
-// reschedules (bumps retryCount, pushes nextAttemptAt) and returns terminal=false.
-// Otherwise it marks the Deployment failed and returns terminal=true.
-func (d *Deployment) RegisterFailure(now time.Time, permanent bool, reason string, backoff BackoffPolicy) (terminal bool) {
-	msg := reason
-	d.errorMessage = &msg
-	if !permanent && d.retryCount+1 < d.maxRetries {
-		d.nextAttemptAt = now.Add(backoff.delay(d.retryCount))
-		d.retryCount++
-		return false
+// MarkRunning records the first status check that found the Job unfinished. It
+// reports whether the status changed; a running deployment stays running.
+func (d *Deployment) MarkRunning() (bool, error) {
+	if d.status == StatusRunning {
+		return false, nil
 	}
-	d.status = StatusFailed
-	return true
+	if err := d.moveTo(StatusRunning); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
-// RecordOutcome attaches the terminal outcome to a previously dispatched
-// (status=deployed) validation, seed-build, OR compile deployment — all three
-// legs report a per-node terminal status the same way: the job-status handler
-// observes the terminal Job and records it here via outcomes.Recorder.
-// Production deployments announce their result through a different path and
-// are rejected. Only "ok" and "failed" are accepted.
-func (d *Deployment) RecordOutcome(outcome, logURI, runResultsURI, failedContainer string, now time.Time) error {
-	if d.mode != ModeValidation && d.mode != ModeSeedBuild && d.mode != ModeCompile {
-		return fmt.Errorf("RecordOutcome called on non-validation/seed-build/compile deployment %s", d.id)
-	}
+// settle records a terminal outcome and ends the deployment done. The Job
+// exists (starting or running), or reconciliation already released the slot
+// without an outcome (done): recording on a done row is not a status move.
+func (d *Deployment) settle(outcome string, now time.Time) error {
 	if d.outcomeAt != nil {
 		return fmt.Errorf("outcome already recorded for deployment %s", d.id)
 	}
-	if d.status != StatusDeployed {
-		return fmt.Errorf("RecordOutcome from status %q; expected deployed", d.status)
+	if d.status != StatusDone {
+		if err := d.moveTo(StatusDone); err != nil {
+			return err
+		}
+	}
+	d.outcome = outcome
+	ts := now
+	d.outcomeAt = &ts
+	return nil
+}
+
+// Finish records a production Job's terminal outcome ("ok" or "failed") and
+// releases its slot. A recorded outcome marks the Job's result as reported, so
+// a later status check for the same Job writes nothing.
+func (d *Deployment) Finish(outcome string, now time.Time) error {
+	if d.mode != ModeProduction {
+		return fmt.Errorf("Finish called on %s deployment %s; candidates record through RecordOutcome", d.mode, d.id)
 	}
 	if outcome != "ok" && outcome != "failed" {
 		return fmt.Errorf("invalid outcome %q", outcome)
 	}
-	d.outcome = outcome
+	return d.settle(outcome, now)
+}
+
+// ReleaseSlot frees the slot of a started deployment whose Job finished
+// without a status check recording it. The outcome stays unset, so a status
+// check that arrives later still records and reports it.
+func (d *Deployment) ReleaseSlot() error {
+	if !d.status.InFlight() || d.status == StatusReserved {
+		return fmt.Errorf("deployment %s cannot release its slot from %q: only a started deployment's Job can finish", d.id, d.status)
+	}
+	return d.moveTo(StatusDone)
+}
+
+// HasOutcome reports whether the deployment's terminal outcome is recorded.
+func (d *Deployment) HasOutcome() bool { return d.outcomeAt != nil }
+
+// JobName is the name of the Kubernetes Job the deployment creates.
+func (d *Deployment) JobName() string {
+	if d.mode == ModeProduction {
+		return d.command.JobName
+	}
+	return d.validationCmd.JobName
+}
+
+// RegisterFailure records a failed deploy attempt of a reserved deployment and
+// applies the retry policy. A transient failure with attempts left returns the
+// deployment to pending (freeing its slot), bumps retryCount and pushes
+// nextAttemptAt, and reports terminal=false. Otherwise the deployment fails and
+// terminal=true.
+func (d *Deployment) RegisterFailure(now time.Time, permanent bool, reason string, backoff BackoffPolicy) (terminal bool, err error) {
+	if !permanent && d.retryCount+1 < d.maxRetries {
+		if err := d.moveTo(StatusPending); err != nil {
+			return false, err
+		}
+		d.nextAttemptAt = now.Add(backoff.delay(d.retryCount))
+		d.retryCount++
+		d.setError(reason)
+		return false, nil
+	}
+	if err := d.moveTo(StatusFailed); err != nil {
+		return false, err
+	}
+	d.setError(reason)
+	return true, nil
+}
+
+func (d *Deployment) setError(reason string) {
+	msg := reason
+	d.errorMessage = &msg
+}
+
+// RecordOutcome attaches the terminal outcome to a started (starting, running,
+// or done-without-outcome) validation, seed-build, OR compile deployment and
+// releases its slot — all three legs report a per-node terminal status the same
+// way: the job-status handler observes the terminal Job and records it here via
+// outcomes.Recorder. Production deployments announce their result through a
+// different path (Finish) and are rejected. Only "ok" and "failed" are accepted.
+func (d *Deployment) RecordOutcome(outcome, logURI, runResultsURI, failedContainer string, now time.Time) error {
+	if d.mode != ModeValidation && d.mode != ModeSeedBuild && d.mode != ModeCompile {
+		return fmt.Errorf("RecordOutcome called on non-validation/seed-build/compile deployment %s", d.id)
+	}
+	if outcome != "ok" && outcome != "failed" {
+		return fmt.Errorf("invalid outcome %q", outcome)
+	}
+	if err := d.settle(outcome, now); err != nil {
+		return err
+	}
 	d.dbtLogURI = logURI
 	d.dbtRunResultsURI = runResultsURI
 	d.failedContainer = failedContainer
+	return nil
+}
+
+// failBeforeStart drives a reserved deployment that cannot be deployed to the
+// terminal failed state and records outcome="failed". A deployment that
+// RegisterFailure already failed (the terminal branch of a dispatch) skips the
+// move.
+func (d *Deployment) failBeforeStart(reason string, now time.Time) error {
+	if d.outcomeAt != nil {
+		return fmt.Errorf("outcome already recorded for deployment %s", d.id)
+	}
+	if d.status != StatusFailed {
+		if err := d.moveTo(StatusFailed); err != nil {
+			return err
+		}
+	}
+	d.setError(reason)
+	d.outcome = "failed"
 	ts := now
 	d.outcomeAt = &ts
 	return nil
 }
 
 // FailValidation drives a validation deployment to a terminal failed state and
-// records outcome="failed" in one step. Unlike RecordOutcome it does not require
-// a prior StatusDeployed: a validation row that fails BEFORE it is dispatched
-// (not deployable, or a permanent pre-deploy deployer error) is still pending,
-// yet must reach a terminal "failed" outcome so the per-release aggregate can be
-// emitted. It is validation-only and idempotent-safe in that it rejects a second
-// recording once an outcome exists.
+// records outcome="failed" in one step. Unlike RecordOutcome it acts on a
+// deployment that never started: a validation row that fails BEFORE its Job is
+// created (not deployable, or a permanent pre-deploy deployer error) is still
+// reserved, yet must reach a terminal "failed" outcome so the per-release
+// aggregate can be emitted. It is validation-only and idempotent-safe in that it
+// rejects a second recording once an outcome exists.
 func (d *Deployment) FailValidation(reason string, now time.Time) error {
 	if d.mode != ModeValidation {
 		return fmt.Errorf("FailValidation called on non-validation deployment %s", d.id)
 	}
-	if d.outcomeAt != nil {
-		return fmt.Errorf("outcome already recorded for deployment %s", d.id)
-	}
-	msg := reason
-	d.errorMessage = &msg
-	d.status = StatusFailed
-	d.outcome = "failed"
-	ts := now
-	d.outcomeAt = &ts
-	return nil
+	return d.failBeforeStart(reason, now)
 }
 
 // FailSeedBuild drives a seed-build deployment to a terminal failed state and
 // records outcome="failed" in one step. It is the seed-build equivalent of
-// FailValidation: a seed-build row that fails BEFORE it is dispatched (not
-// deployable, or a permanent pre-deploy deployer error) is still pending yet
-// must reach a terminal "failed" outcome so the per-release seed-build
-// aggregate can be emitted.
+// FailValidation: a seed-build row that fails BEFORE its Job is created (not
+// deployable, or a permanent pre-deploy deployer error) must reach a terminal
+// "failed" outcome so the per-release seed-build aggregate can be emitted.
 func (d *Deployment) FailSeedBuild(reason string, now time.Time) error {
 	if d.mode != ModeSeedBuild {
 		return fmt.Errorf("FailSeedBuild called on non-seed-build deployment %s", d.id)
 	}
-	if d.outcomeAt != nil {
-		return fmt.Errorf("outcome already recorded for deployment %s", d.id)
-	}
-	msg := reason
-	d.errorMessage = &msg
-	d.status = StatusFailed
-	d.outcome = "failed"
-	ts := now
-	d.outcomeAt = &ts
-	return nil
+	return d.failBeforeStart(reason, now)
 }
 
 // FailCompile drives a compile deployment to a terminal failed state and
 // records outcome="failed" in one step. It is the compile equivalent of
-// FailSeedBuild: a compile row that fails BEFORE it is dispatched (not
-// deployable, or a permanent pre-deploy deployer error) is still pending yet
-// must reach a terminal "failed" outcome so the per-release compile aggregate
-// can be emitted.
+// FailSeedBuild: a compile row that fails BEFORE its Job is created (not
+// deployable, or a permanent pre-deploy deployer error) must reach a terminal
+// "failed" outcome so the per-release compile aggregate can be emitted.
 func (d *Deployment) FailCompile(reason string, now time.Time) error {
 	if d.mode != ModeCompile {
 		return fmt.Errorf("FailCompile called on non-compile deployment %s", d.id)
 	}
-	if d.outcomeAt != nil {
-		return fmt.Errorf("outcome already recorded for deployment %s", d.id)
-	}
-	msg := reason
-	d.errorMessage = &msg
-	d.status = StatusFailed
-	d.outcome = "failed"
-	ts := now
-	d.outcomeAt = &ts
-	return nil
+	return d.failBeforeStart(reason, now)
 }
 
 // Unblock transitions a gated validation deployment from blocked to pending so
 // the dispatcher can pick it up. Caller decides readiness (all in-set upstreams
-// succeeded); the aggregate only guards the source state.
+// succeeded); the state machine guards the source state.
 func (d *Deployment) Unblock(now time.Time) error {
 	if d.mode != ModeValidation {
 		return fmt.Errorf("Unblock called on non-validation deployment %s", d.id)
 	}
-	if d.status != StatusBlocked {
-		return fmt.Errorf("cannot Unblock from status %q", d.status)
+	if err := d.moveTo(StatusPending); err != nil {
+		return err
 	}
-	d.status = StatusPending
 	d.nextAttemptAt = now
 	return nil
 }
@@ -447,12 +530,10 @@ func (d *Deployment) Skip(reason string, now time.Time) error {
 	if d.mode != ModeValidation {
 		return fmt.Errorf("Skip called on non-validation deployment %s", d.id)
 	}
-	if d.status != StatusBlocked {
-		return fmt.Errorf("cannot Skip from status %q", d.status)
+	if err := d.moveTo(StatusSkipped); err != nil {
+		return err
 	}
-	msg := reason
-	d.errorMessage = &msg
-	d.status = StatusSkipped
+	d.setError(reason)
 	d.outcome = "skipped"
 	ts := now
 	d.outcomeAt = &ts

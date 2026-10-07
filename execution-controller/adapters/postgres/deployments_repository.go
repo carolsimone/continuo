@@ -101,33 +101,12 @@ func (r *deploymentsRepository) Add(ctx context.Context, d *model.Deployment) er
 	return nil
 }
 
-func (r *deploymentsRepository) GetDueBatch(ctx context.Context, limit int) ([]*model.Deployment, error) {
-	const query = `
-		SELECT id, message_processing_id, task_id, schedule_id, job_params,
-		       status, retry_count, max_retries, next_attempt_at,
-		       created_at, deployed_at, error_message,
-		       mode, release_id, node_id, outcome, dbt_log_uri, outcome_at, run_results_uri, failed_container
-		FROM deployments
-		WHERE status = 'pending' AND next_attempt_at <= NOW()
-		ORDER BY next_attempt_at ASC
-		LIMIT $1
-		FOR UPDATE SKIP LOCKED`
-	var rows []*deploymentRow
-	if err := r.exec.SelectContext(ctx, &rows, query, limit); err != nil && err != sql.ErrNoRows {
-		return nil, fmt.Errorf("get due deployments batch: %w", err)
-	}
-	out := make([]*model.Deployment, len(rows))
-	for i, row := range rows {
-		out[i] = r.toAggregate(row)
-	}
-	return out, nil
-}
-
 func (r *deploymentsRepository) Save(ctx context.Context, d *model.Deployment) error {
 	const query = `
 		UPDATE deployments
 		SET status = $2, retry_count = $3, next_attempt_at = $4, deployed_at = $5, error_message = $6,
-		    outcome = $7, dbt_log_uri = $8, outcome_at = $9, run_results_uri = $10, failed_container = $11
+		    outcome = $7, dbt_log_uri = $8, outcome_at = $9, run_results_uri = $10, failed_container = $11,
+		    state_changed_at = CASE WHEN status <> $2 THEN NOW() ELSE state_changed_at END
 		WHERE id = $1`
 	res, err := r.exec.ExecContext(ctx, query,
 		d.ID(), string(d.Status()), d.RetryCount(), d.NextAttemptAt(), d.DeployedAt(), d.ErrorMessage(),
@@ -176,8 +155,7 @@ func (r *deploymentsRepository) PendingValidationCount(ctx context.Context, rele
 	const query = `
 		SELECT COUNT(*)
 		FROM deployments
-		WHERE mode = $2 AND release_id = $1
-		  AND status IN ('pending','blocked','deployed') AND outcome IS NULL`
+		WHERE mode = $2 AND release_id = $1 AND outcome IS NULL`
 	var n int
 	if err := r.exec.QueryRowContext(ctx, query, releaseID, string(mode)).Scan(&n); err != nil {
 		return 0, fmt.Errorf("count pending validations for release %s: %w", releaseID, err)
@@ -297,10 +275,11 @@ func (r *deploymentsRepository) toAggregate(row *deploymentRow) *model.Deploymen
 	} else {
 		cmd = cmdDTO.ToDomain()
 	}
-	return model.Reconstitute(
+	return model.ReconstituteProduction(
 		row.ID, row.MessageProcessingID, cmd, model.Status(row.Status),
 		row.RetryCount, row.MaxRetries, row.NextAttemptAt, row.CreatedAt,
 		row.DeployedAt, row.ErrorMessage,
+		derefStr(row.Outcome), row.OutcomeAt,
 	)
 }
 
@@ -334,4 +313,21 @@ func commandIDs(cmd command.DeployTask) (uuid.UUID, uuid.UUID, error) {
 		return uuid.Nil, uuid.Nil, fmt.Errorf("parse schedule_id %q: %w", cmd.ScheduleID, err)
 	}
 	return taskID, scheduleID, nil
+}
+
+func (r *deploymentsRepository) GetByJobName(ctx context.Context, jobName string) (*model.Deployment, error) {
+	const query = `SELECT` + validationSelectColumns + `
+		FROM deployments
+		WHERE job_name = $1
+		ORDER BY created_at DESC
+		LIMIT 1
+		FOR UPDATE`
+	var rows []*deploymentRow
+	if err := r.exec.SelectContext(ctx, &rows, query, jobName); err != nil {
+		return nil, fmt.Errorf("get deployment for job %s: %w", jobName, err)
+	}
+	if len(rows) == 0 {
+		return nil, sql.ErrNoRows
+	}
+	return r.toAggregate(rows[0]), nil
 }

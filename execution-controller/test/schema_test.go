@@ -1,8 +1,10 @@
 package test
 
 import (
+	"regexp"
 	"testing"
 
+	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -41,7 +43,8 @@ func TestExecutionSchemaMatchesContract(t *testing.T) {
 	require.ElementsMatch(t, []string{"id", "message_id", "stream_name", "state", "payload", "error", "created_at", "updated_at", "outbox_entry_id"}, names(columns("message_processing")))
 	require.ElementsMatch(t, []string{"id", "message_processing_id", "aggregate_type", "aggregate_id", "event_type", "payload", "stream_name", "status", "retry_count", "max_retries", "created_at", "processed_at", "error_message", "next_attempt_at"}, names(columns("execution_outbox")))
 	require.ElementsMatch(t, []string{"schedule_id", "cancelled_at"}, names(columns("cancelled_schedules")))
-	require.ElementsMatch(t, []string{"id", "message_processing_id", "task_id", "schedule_id", "job_params", "status", "retry_count", "max_retries", "next_attempt_at", "created_at", "deployed_at", "error_message", "mode", "release_id", "node_id", "outcome", "dbt_log_uri", "outcome_at", "run_results_uri", "failed_container"}, names(columns("deployments")))
+	require.ElementsMatch(t, []string{"id", "message_processing_id", "task_id", "schedule_id", "job_params", "status", "retry_count", "max_retries", "next_attempt_at", "created_at", "deployed_at", "error_message", "mode", "release_id", "node_id", "outcome", "dbt_log_uri", "outcome_at", "run_results_uri", "failed_container", "state_changed_at", "job_name"}, names(columns("deployments")))
+	require.ElementsMatch(t, []string{"scope", "created_at"}, names(columns("admission_capacity")))
 	require.ElementsMatch(t, []string{"release_id", "aggregate_emitted_at", "mode"}, names(columns("validation_aggregates")))
 
 	require.Equal(t, "13", *columns("execution_outbox")["max_retries"].Default)
@@ -61,6 +64,7 @@ func TestExecutionSchemaMatchesContract(t *testing.T) {
 		"idx_message_processing_outbox_entry_id_stream", "message_processing_message_id_stream_name_key",
 		"idx_deployments_due", "idx_deployments_candidate_release", "uq_deployments_candidate_release_node_mode",
 		"idx_deployments_message_processing_id", "idx_execution_outbox_message_processing_id",
+		"idx_deployments_job_name", "idx_deployments_in_flight",
 	})
 
 	require.NotContains(t, indexes, "idx_execution_outbox_pending")
@@ -90,4 +94,44 @@ func TestExecutionSchemaMatchesContract(t *testing.T) {
 	require.NoError(t, db.QueryRow(`SELECT confdeltype FROM pg_constraint
 		WHERE conname = 'deployments_message_processing_id_fkey' AND conrelid = 'deployments'::regclass`).Scan(&onDelete))
 	require.Equal(t, "n", onDelete, "deployments.message_processing_id is ON DELETE SET NULL")
+
+	var scopes []string
+	require.NoError(t, db.Select(&scopes, `SELECT scope FROM admission_capacity ORDER BY scope`))
+	require.Equal(t, []string{"global"}, scopes, "the global capacity record is seeded and never deleted")
+
+	var admissionTriggers int
+	require.NoError(t, db.QueryRow(`SELECT count(*) FROM pg_trigger WHERE tgrelid='deployments'::regclass
+		AND tgname IN ('deployments_accepted_notify','deployments_admission_notify') AND NOT tgisinternal`).Scan(&admissionTriggers))
+	require.Equal(t, 2, admissionTriggers)
+
+	// The status sets the SQL repeats must equal the Go state machine's.
+	quoted := regexp.MustCompile(`'([a-z_]+)'`)
+	valuesIn := func(def string) []string {
+		var out []string
+		for _, m := range quoted.FindAllStringSubmatch(def, -1) {
+			out = append(out, m[1])
+		}
+		return out
+	}
+	var statusCheck string
+	require.NoError(t, db.QueryRow(`SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname='deployments_status_check'`).Scan(&statusCheck))
+	require.ElementsMatch(t, model.StatusStrings(model.AllStatuses()), valuesIn(statusCheck),
+		"deployments_status_check lists exactly model.AllStatuses()")
+
+	var inFlightIndex string
+	require.NoError(t, db.QueryRow(`SELECT pg_get_indexdef('idx_deployments_in_flight'::regclass)`).Scan(&inFlightIndex))
+	require.ElementsMatch(t, model.StatusStrings(model.InFlightStatuses()), valuesIn(inFlightIndex),
+		"idx_deployments_in_flight covers exactly model.InFlightStatuses()")
+
+	// The admission trigger's WHEN names 'pending' once, then the in-flight set
+	// twice (for OLD and NEW).
+	var triggerDef string
+	require.NoError(t, db.QueryRow(`SELECT pg_get_triggerdef(oid) FROM pg_trigger WHERE tgname='deployments_admission_notify'`).Scan(&triggerDef))
+	var want []string
+	want = append(want, string(model.StatusPending), string(model.StatusPending))
+	for i := 0; i < 2; i++ {
+		want = append(want, model.StatusStrings(model.InFlightStatuses())...)
+	}
+	require.ElementsMatch(t, want, valuesIn(triggerDef),
+		"deployments_admission_notify wakes on 'pending' and on leaving exactly model.InFlightStatuses(): %s", triggerDef)
 }

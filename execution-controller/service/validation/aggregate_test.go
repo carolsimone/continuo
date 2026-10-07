@@ -2,6 +2,7 @@ package validation_test
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 	"time"
 
@@ -24,9 +25,10 @@ type fakeDepRepo struct {
 }
 
 func (r *fakeDepRepo) Add(context.Context, *model.Deployment) error { return nil }
-func (r *fakeDepRepo) GetDueBatch(context.Context, int) ([]*model.Deployment, error) {
-	return nil, nil
+func (r *fakeDepRepo) GetByJobName(context.Context, string) (*model.Deployment, error) {
+	return nil, sql.ErrNoRows
 }
+
 func (r *fakeDepRepo) Save(context.Context, *model.Deployment) error { return nil }
 func (r *fakeDepRepo) GetByReleaseNode(context.Context, string, string, model.Mode) (*model.Deployment, error) {
 	return nil, nil
@@ -92,7 +94,8 @@ func TestEmitValidationAggregate_IncludesCandidateSchema(t *testing.T) {
 	dep := model.NewValidationDeployment(cmd, nil, time.Now(), false)
 	// Drive it to a terminal ok outcome so ListValidationResults would include it
 	// and Outcome() == "ok".
-	require.NoError(t, dep.MarkDeployed(time.Now()))
+	require.NoError(t, dep.Reserve())
+	require.NoError(t, dep.MarkStarted(time.Now()))
 	require.NoError(t, dep.RecordOutcome("ok", "", "", "", time.Now()))
 
 	depRepo := &fakeDepRepo{pending: 0, results: []*model.Deployment{dep}}
@@ -131,7 +134,8 @@ func TestEmitValidationAggregate_CarriesDecisionOnly(t *testing.T) {
 		ImageTag:        "t",
 	}
 	dep := model.NewValidationDeployment(cmd, nil, time.Now(), false)
-	require.NoError(t, dep.MarkDeployed(time.Now()))
+	require.NoError(t, dep.Reserve())
+	require.NoError(t, dep.MarkStarted(time.Now()))
 	require.NoError(t, dep.RecordOutcome("failed", "s3://logs/n1", "run-results/n1.json", "", time.Now()))
 
 	depRepo := &fakeDepRepo{pending: 0, results: []*model.Deployment{dep}}
