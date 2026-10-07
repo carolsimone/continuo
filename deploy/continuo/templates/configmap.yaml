@@ -37,3 +37,4 @@ data:
   STREAM_TRIM_ENABLED: {{ .Values.streamReaper.enabled | quote }}
   STREAM_RETENTION: {{ .Values.streamReaper.retention | quote }}
   MAX_CONCURRENT_JOBS: {{ include "continuo.execution.maxConcurrentJobs" . | quote }}
+  MAINTENANCE_ENABLED: {{ include "continuo.maintenance.enabled" . | quote }}

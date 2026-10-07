@@ -135,7 +135,7 @@ func TestMain(m *testing.M) {
 	nodeRunHandler := handlers.NewNodeRunHandler(nodeRunRepo, logger)
 
 	// ---- Create gRPC server on a random port ----
-	stateServer, err = grpcserver.NewServer(0, schedulerHandler, taskHandler, execHandler, rerunHandler, singleNodeRunHandler, rebaseHandler, nodeRunHandler, logger)
+	stateServer, err = grpcserver.NewServer(0, schedulerHandler, taskHandler, execHandler, rerunHandler, singleNodeRunHandler, rebaseHandler, nodeRunHandler, logger, false)
 	if err != nil {
 		logger.Error("Failed to create gRPC server", "error", err)
 		os.Exit(1)

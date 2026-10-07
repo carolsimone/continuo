@@ -34,6 +34,10 @@ type Config struct {
 	MetricsPort   int
 	ShutdownGrace time.Duration
 
+	// Maintenance is MAINTENANCE_ENABLED: while true, RedriveDeadLetters is
+	// refused. Listing, showing and the stream trim loop keep working.
+	Maintenance bool
+
 	// TrimEnabled turns the stream trim loop on (STREAM_TRIM_ENABLED).
 	TrimEnabled bool
 	// StreamRetention is the age past which a stream entry a lagging group
@@ -60,6 +64,7 @@ func Load(v *pkgconfig.Validator) Config {
 		HTTPPort:        pkgconfig.EnvOrDefault("DEAD_LETTER_HTTP_PORT", "8096"),
 		MetricsPort:     pkgconfig.LoadMetricsPort(v),
 		ShutdownGrace:   pkgconfig.EnvDurationOrDefault("SHUTDOWN_GRACE", defaultShutdownGrace),
+		Maintenance:     pkgconfig.LoadMaintenance(v),
 		TrimEnabled:     trimEnabled,
 		StreamRetention: retention,
 		ConfigErr:       cfgErr,

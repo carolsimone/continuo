@@ -7,6 +7,7 @@ import (
 	"net"
 
 	"github.com/carolsimone/continuo/pkg/identity"
+	"github.com/carolsimone/continuo/pkg/maintenance/grpcgate"
 	"github.com/carolsimone/continuo/state/internal/grpc/handlers"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"google.golang.org/grpc"
@@ -28,6 +29,16 @@ type Server struct {
 	nodeRunHandler       *handlers.NodeRunHandler
 }
 
+// MaintenanceGatedMethods are the RPCs that start a run. While maintenance mode
+// is on they are refused before their handler runs; cancels and reads are not.
+var MaintenanceGatedMethods = []string{
+	statev1.StateService_TriggerSchedule_FullMethodName,
+	statev1.StateService_ActivateSchedule_FullMethodName,
+	statev1.StateService_TriggerRerun_FullMethodName,
+	statev1.StateService_TriggerRebase_FullMethodName,
+	statev1.StateService_TriggerSingleNodeRun_FullMethodName,
+}
+
 // NewServer creates a new gRPC server
 func NewServer(
 	port int,
@@ -39,6 +50,7 @@ func NewServer(
 	rebaseHandler *handlers.RebaseHandler,
 	nodeRunHandler *handlers.NodeRunHandler,
 	logger *slog.Logger,
+	maintenance bool,
 ) (*Server, error) {
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
@@ -47,11 +59,13 @@ func NewServer(
 
 	// The identity interceptor runs first so it converts the initiating-user
 	// metadata header into an identity.Identity on the context before any
-	// handler (or the logging interceptor) observes the request.
+	// handler (or the logging interceptor) observes the request. The
+	// maintenance gate runs last so a refused call is still logged.
 	grpcServer := grpc.NewServer(
 		grpc.ChainUnaryInterceptor(
 			identity.UnaryServerInterceptor(),
 			loggingInterceptor(logger),
+			grpcgate.UnaryServerInterceptor(maintenance, MaintenanceGatedMethods...),
 		),
 	)
 

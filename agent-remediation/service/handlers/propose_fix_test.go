@@ -2316,3 +2316,67 @@ func TestProposeFix_RationaleIsComposedFromFacts(t *testing.T) {
 	assert.Contains(t, p.Rationale, "Model's note: upstream renamed amount to amount_eur")
 	assert.NotEqual(t, "s.n: upstream renamed amount to amount_eur", p.Rationale)
 }
+
+// A fix attempt that comes due during maintenance is recorded skipped for
+// every node, with the reason, and spends no model call and no verification
+// run. The skipped row closes the round, so the release can be retried once
+// maintenance is off.
+func TestProposeFix_MaintenanceRecordsTheAttemptSkipped(t *testing.T) {
+	u := newFakeUoW()
+	llm := newFakeLLM(ports.ProposeResult{}, nil)
+	gw := &fakeGateway{imageTag: "tag-1"}
+	d := deps(u, fakeEvidence{}, &llm, &fakeArtifacts{})
+	d.Pipeline = gw
+	d.Releases = gw
+	d.Maintenance = true
+	tr := baseTrigger()
+	tr.Nodes = []TriggerNode{
+		{NodeID: "s.b", ErrorSignature: "sig-b", Service: "svc", NodeType: "dbt-model"},
+		{NodeID: "s.a", ErrorSignature: "sig-a", Service: "svc", NodeType: "dbt-model"},
+	}
+
+	require.NoError(t, ProposeFix(context.Background(), d, tr))
+
+	require.Len(t, u.pr.inserted, 1)
+	p := u.pr.inserted[0]
+	assert.Equal(t, proposal.StatusSkipped, p.Status)
+	assert.Equal(t, MaintenanceSkipReason, p.Rationale)
+	for _, id := range []string{"s.a", "s.b"} {
+		assert.Equal(t, proposal.StatusSkipped, p.NodeOutcomes[id].Status)
+		assert.Equal(t, MaintenanceSkipReason, p.NodeOutcomes[id].Reason)
+	}
+	assert.Empty(t, u.pr.generating, "a skipped attempt never marks generating")
+	assert.Zero(t, llm.calls)
+	assert.Empty(t, gw.submitted)
+	assert.Empty(t, u.ob.entries)
+}
+
+// The attempt cap still wins during maintenance: a round already at its cap is
+// escalated, as it would be with maintenance off.
+func TestProposeFix_MaintenanceDoesNotHideTheAttemptCap(t *testing.T) {
+	u := newFakeUoW()
+	u.pr.count = 3
+	llm := newFakeLLM(ports.ProposeResult{}, nil)
+	d := deps(u, fakeEvidence{}, &llm, &fakeArtifacts{})
+	d.Maintenance = true
+
+	require.NoError(t, ProposeFix(context.Background(), d, baseTrigger()))
+
+	require.Len(t, u.pr.inserted, 1)
+	assert.Equal(t, proposal.StatusEscalated, u.pr.inserted[0].Status)
+}
+
+// A trigger already handled is acknowledged without a new row, during
+// maintenance as at any other time.
+func TestProposeFix_MaintenanceKeepsDedup(t *testing.T) {
+	u := newFakeUoW()
+	llm := newFakeLLM(ports.ProposeResult{}, nil)
+	d := deps(u, fakeEvidence{}, &llm, &fakeArtifacts{})
+	d.Maintenance = true
+	tr := baseTrigger()
+
+	require.NoError(t, ProposeFix(context.Background(), d, tr))
+	require.NoError(t, ProposeFix(context.Background(), d, tr))
+
+	require.Len(t, u.pr.inserted, 1, "the redelivered trigger writes nothing")
+}

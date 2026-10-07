@@ -116,6 +116,15 @@ func (r *RunRepository) NextQueued(ctx context.Context) (*pipeline.Run, error) {
 	return run, nil
 }
 
+// NextQueuedOfKind returns the oldest received run of the given kind, or nil.
+func (r *RunRepository) NextQueuedOfKind(ctx context.Context, kind pipeline.Kind) (*pipeline.Run, error) {
+	run, err := r.getOne(ctx, `WHERE status = 'received' AND run_kind = $1 ORDER BY created_at ASC, run_id ASC LIMIT 1`, string(kind))
+	if err != nil {
+		return nil, fmt.Errorf("select next queued %s: %w", kind, err)
+	}
+	return run, nil
+}
+
 // Active returns the single run of either kind that is currently in a leg, or nil.
 func (r *RunRepository) Active(ctx context.Context) (*pipeline.Run, error) {
 	run, err := r.getOne(ctx, `WHERE status IN `+activeStatuses+` ORDER BY created_at ASC, run_id ASC LIMIT 1`)

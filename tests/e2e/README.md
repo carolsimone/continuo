@@ -385,3 +385,5 @@ docker-compose up -d --force-recreate neo4j
 ```
 
 `E2E_WAREHOUSE_DB` (default `continuo_dbt`) selects the warehouse database the harness inspects for dbt-materialized tables.
+
+**Maintenance mode (`TestMaintenanceMode`):** triggers a single-node run, then restarts the `state` and `release-controller` containers with `MAINTENANCE_ENABLED=true` (relaunching `go run main.go` with the flag overridden; each service's output goes to `/tmp/<container>.log` inside its container). With maintenance on it asserts a new node run (via `ui`) and a new public release are refused with HTTP 503 and the `maintenance` code, and that the run already in flight still reaches `succeeded`. It then restarts both services with the flag off and asserts a new run is accepted and succeeds. The restarts take a minute or more each, and a `t.Cleanup` turns maintenance off again even on failure. If the test is interrupted before that cleanup runs, restore the stack with `docker restart state release-controller && bash tests/e2e/start-services.sh`.

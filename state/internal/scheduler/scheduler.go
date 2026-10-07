@@ -53,16 +53,19 @@ func LoadSchedulesConfig(path string) (*SchedulesConfig, error) {
 
 // CronScheduler manages scheduled activations driven by schedules.yaml.
 type CronScheduler struct {
-	cron       *cron.Cron
-	activate   *svchandlers.ActivateScheduleHandler
-	uowFactory func() uow.UnitOfWork
-	config     *SchedulesConfig
-	logger     *slog.Logger
+	cron        *cron.Cron
+	activate    *svchandlers.ActivateScheduleHandler
+	uowFactory  func() uow.UnitOfWork
+	config      *SchedulesConfig
+	logger      *slog.Logger
+	maintenance bool
 }
 
 // NewCronSchedulerWithConfig creates a CronScheduler from the provided config.
 // Fails if the timezone is invalid or any cron expression is malformed.
-func NewCronSchedulerWithConfig(activate *svchandlers.ActivateScheduleHandler, uowFactory func() uow.UnitOfWork, logger *slog.Logger, cfg *SchedulesConfig) (*CronScheduler, error) {
+// While maintenance is true every fire is skipped and logged; skipped fires are
+// not caught up later.
+func NewCronSchedulerWithConfig(activate *svchandlers.ActivateScheduleHandler, uowFactory func() uow.UnitOfWork, logger *slog.Logger, cfg *SchedulesConfig, maintenance bool) (*CronScheduler, error) {
 	location, err := time.LoadLocation(cfg.Timezone)
 	if err != nil {
 		return nil, fmt.Errorf("invalid timezone %q: %w", cfg.Timezone, err)
@@ -76,11 +79,12 @@ func NewCronSchedulerWithConfig(activate *svchandlers.ActivateScheduleHandler, u
 	}
 
 	s := &CronScheduler{
-		cron:       cronScheduler,
-		activate:   activate,
-		uowFactory: uowFactory,
-		config:     cfg,
-		logger:     logger,
+		cron:        cronScheduler,
+		activate:    activate,
+		uowFactory:  uowFactory,
+		config:      cfg,
+		logger:      logger,
+		maintenance: maintenance,
 	}
 
 	for _, entry := range cfg.Schedules {
@@ -123,6 +127,10 @@ func (s *CronScheduler) Stop(ctx context.Context) error {
 }
 
 func (s *CronScheduler) activateSchedule(name string) {
+	if s.maintenance {
+		s.logger.Info("Cron fire skipped: maintenance mode is on", "schedule_name", name)
+		return
+	}
 	s.logger.Info("Cron trigger fired", "schedule_name", name)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

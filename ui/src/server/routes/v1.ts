@@ -5,6 +5,7 @@ import { authorize } from '../auth/authorize';
 import { principalAuditFields, principalKey, type Principal } from '../auth/principal';
 import { principalOf } from '../auth/request-principal';
 import { audit } from '../auth/audit';
+import { MAINTENANCE_CODE, sendMaintenance } from '../maintenance';
 
 // The public, versioned release API that CD pipelines call. Its request and
 // response shapes are owned here, not passed through from release-controller,
@@ -53,6 +54,17 @@ interface PublicSubmitAccepted {
 // changing the shape a pipeline reads.
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+// upstreamCode is the `code` field of a JSON error body, or '' when the body
+// is not JSON or carries none.
+function upstreamCode(text: string): string {
+  try {
+    const body = JSON.parse(text);
+    return isObject(body) ? str(body.code) : '';
+  } catch {
+    return '';
+  }
+}
 
 function fail(res: Response, status: number, code: string, error: string): void {
   res.status(status).json({ error, code });
@@ -217,6 +229,9 @@ export function createV1Router(releases: ReleaseClient, publicUrl?: string): Rou
       return fail(res, 409, 'release_kind_conflict', p.kind === 'ci' ? CI_CONFLICT_MESSAGE : upstream.text.trim());
     }
     if (upstream.status === 400) return fail(res, 400, 'bad_request', upstream.text.trim());
+    if (upstream.status === 503 && upstreamCode(upstream.text) === MAINTENANCE_CODE) {
+      return sendMaintenance(res);
+    }
     return fail(res, 503, 'upstream_unavailable', 'release service unavailable');
   });
 

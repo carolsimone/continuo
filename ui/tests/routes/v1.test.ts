@@ -4,6 +4,7 @@ import request from 'supertest';
 import type { Server } from 'node:http';
 import { once } from 'node:events';
 import { createV1Router, projectCurrentProd, projectRelease, READ_RATE_LIMIT_PER_MINUTE, SUBMIT_RATE_LIMIT_PER_MINUTE } from '../../src/server/routes/v1';
+import { MAINTENANCE_MESSAGE } from '../../src/server/maintenance';
 import { HttpError, type ReleaseClient } from '../../src/server/release-client';
 import type { Principal } from '../../src/server/auth/principal';
 import { githubClaimsFrom } from '../../src/server/auth/bearer';
@@ -133,6 +134,16 @@ describe('POST /api/v1/releases', () => {
     expect(r400.body).toEqual({ error: 'image_tag required', code: 'bad_request' });
     const down = fakeClient({ submitRelease: vi.fn(async () => { throw new TypeError('fetch failed'); }) });
     expect((await request(appAs(operator, down)).post('/api/v1/releases').send(body)).status).toBe(503);
+  });
+
+  it('maps an upstream maintenance refusal to 503 maintenance, and a plain 503 to upstream_unavailable', async () => {
+    const refused = fakeClient({ submitRelease: vi.fn(async () => ({ status: 503, text: JSON.stringify({ error: MAINTENANCE_MESSAGE, code: 'maintenance' }) })) });
+    const r = await request(appAs(operator, refused)).post('/api/v1/releases').send(body);
+    expect([r.status, r.body.code, r.body.error]).toEqual([503, 'maintenance', MAINTENANCE_MESSAGE]);
+    expect(r.headers['retry-after']).toBe('300');
+    const plain = fakeClient({ submitRelease: vi.fn(async () => ({ status: 503, text: 'overloaded' })) });
+    const p = await request(appAs(operator, plain)).post('/api/v1/releases').send(body);
+    expect([p.status, p.body.code]).toEqual([503, 'upstream_unavailable']);
   });
 
   it("passes release-controller's 409 through with its message to a person, and asks it nothing else", async () => {

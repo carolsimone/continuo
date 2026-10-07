@@ -832,3 +832,32 @@ func TestRunRepository_ListFiltersByKindAndVerifiedRelease(t *testing.T) {
 	require.Len(t, items, 1)
 	require.Equal(t, "verify-rel-a-core-a1", items[0].ID())
 }
+
+// While maintenance holds candidate releases, the queue activates only
+// verification runs: NextQueuedOfKind finds the oldest received run of one
+// kind, past any older run of the other kind.
+func TestRunRepository_NextQueuedOfKind(t *testing.T) {
+	db := openTestDB(t)
+	repo := postgres.NewRunRepository(db, nil)
+	ctx := context.Background()
+	cand := pipeline.NewCandidate("rCAND", "svc", "t", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
+	verify := pipeline.NewVerification("rVERIFY", "svc", "t", "rCAND", 1, "", release.ManifestKindPython, time.Unix(200, 0).UTC())
+	require.NoError(t, repo.Save(ctx, cand))
+	require.NoError(t, repo.Save(ctx, verify))
+
+	v, err := repo.NextQueuedOfKind(ctx, pipeline.KindVerification)
+	require.NoError(t, err)
+	require.NotNil(t, v)
+	assert.Equal(t, "rVERIFY", v.ID())
+
+	c, err := repo.NextQueuedOfKind(ctx, pipeline.KindCandidate)
+	require.NoError(t, err)
+	require.NotNil(t, c)
+	assert.Equal(t, "rCAND", c.ID())
+
+	require.NoError(t, v.TransitionToParsing(time.Unix(300, 0).UTC()))
+	require.NoError(t, repo.Save(ctx, v))
+	none, err := repo.NextQueuedOfKind(ctx, pipeline.KindVerification)
+	require.NoError(t, err)
+	assert.Nil(t, none, "an activated verification run is no longer queued")
+}

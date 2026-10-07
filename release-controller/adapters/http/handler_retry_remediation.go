@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/maintenance"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 )
@@ -25,6 +26,8 @@ func (s *Server) handleRetryRemediation(w http.ResponseWriter, r *http.Request) 
 	case err == nil:
 		w.WriteHeader(http.StatusAccepted)
 		_ = json.NewEncoder(w).Encode(map[string]any{"release_id": res.ReleaseID, "remediation_round": res.RemediationRound})
+	case errors.Is(err, maintenance.ErrActive):
+		writeMaintenance(w)
 	case errors.Is(err, handlers.ErrReleaseNotFound):
 		w.WriteHeader(http.StatusNotFound)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "not_found"})

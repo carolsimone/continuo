@@ -87,7 +87,15 @@ type Deps struct {
 	// SQLDialect is the sqlglot dialect the operator's warehouse engine
 	// speaks, used when packaging a proposed contract fix.
 	SQLDialect string
+	// Maintenance is MAINTENANCE_ENABLED. While true, an attempt that comes due
+	// is recorded skipped for every node instead of calling the model.
+	Maintenance bool
 }
+
+// MaintenanceSkipReason is the reason a fix attempt that came due during
+// maintenance mode carries. Its round is closed, so the release can be retried
+// once maintenance is off.
+const MaintenanceSkipReason = "not attempted: continuo was in maintenance mode"
 
 // ProposeFix turns one rejected release's healable failing set into a single
 // fix attempt. It counts prior attempts and enforces the per-round cap, groups
@@ -99,7 +107,8 @@ type Deps struct {
 //
 // It announces nothing. A fix is a proposal only once every verification run
 // judging it has passed, and the reconciler that polls those runs is what
-// emits remediation.proposed:v1.
+// emits remediation.proposed:v1. While maintenance mode is on it records the
+// attempt skipped instead.
 func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 	// A trigger without a remediation round (unset, or explicit 0) belongs to
 	// round 1, the round every rejection starts a release at.
@@ -142,6 +151,20 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 			Status:          proposal.StatusEscalated,
 			ResolvedNodeIDs: nodeIDs,
 			NodeOutcomes:    outcomesFor(nodeIDs, proposal.NodeOutcome{Status: proposal.StatusEscalated}),
+		})
+	}
+
+	// During maintenance no new fix work starts. The attempt is recorded
+	// skipped, which closes the round without a model call or a verification
+	// run, so an operator can retry the release once maintenance is off.
+	if deps.Maintenance {
+		deps.Logger.Info("remediation attempt skipped: maintenance mode is on",
+			"release", t.ReleaseID, "round", t.RemediationRound, "attempt", attempt)
+		return record(ctx, deps, t, attempt, proposal.Proposal{
+			Status:          proposal.StatusSkipped,
+			ResolvedNodeIDs: nodeIDs,
+			NodeOutcomes:    outcomesFor(nodeIDs, proposal.NodeOutcome{Status: proposal.StatusSkipped, Reason: MaintenanceSkipReason}),
+			Rationale:       MaintenanceSkipReason,
 		})
 	}
 

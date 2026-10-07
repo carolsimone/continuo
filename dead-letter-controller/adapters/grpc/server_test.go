@@ -15,6 +15,7 @@ import (
 	"github.com/carolsimone/continuo/dead-letter-controller/service/uow"
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/identity"
+	"github.com/carolsimone/continuo/pkg/maintenance"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -143,10 +144,14 @@ func (noopObserver) Recorded(deadletter.DeadLetter) {}
 func (noopObserver) Redriven(deadletter.DeadLetter) {}
 func (noopObserver) Expired(deadletter.DeadLetter)  {}
 
-// newTestClient serves the real handlers over the fakes through an in-memory
-// listener, with the production interceptors, and returns a connected client
-// and the fake repository.
 func newTestClient(t *testing.T) (deadletterv1.DeadLetterServiceClient, *fakeRepo) {
+	return newTestClientWithMaintenance(t, false)
+}
+
+// newTestClientWithMaintenance serves the real handlers over the fakes through
+// an in-memory listener, with the production interceptors and maintenance mode
+// set to maintenanceOn, and returns a connected client and the fake repository.
+func newTestClientWithMaintenance(t *testing.T, maintenanceOn bool) (deadletterv1.DeadLetterServiceClient, *fakeRepo) {
 	t.Helper()
 	repo := &fakeRepo{rows: map[uuid.UUID]deadletter.DeadLetter{}}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -154,7 +159,7 @@ func newTestClient(t *testing.T) (deadletterv1.DeadLetterServiceClient, *fakeRep
 	redriver := handlers.NewRedriver(func() uow.UnitOfWork { return &fakeUoW{repo: repo} }, clock{}, noopObserver{}, logger)
 
 	lis := bufconn.Listen(1 << 20)
-	srv := newServer(lis, query, redriver, logger)
+	srv := newServer(lis, query, redriver, logger, maintenanceOn)
 	go func() { _ = srv.Start() }()
 	t.Cleanup(func() { _ = srv.Shutdown(context.Background()) })
 
@@ -164,6 +169,24 @@ func newTestClient(t *testing.T) (deadletterv1.DeadLetterServiceClient, *fakeRep
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = conn.Close() })
 	return deadletterv1.NewDeadLetterServiceClient(conn), repo
+}
+
+// During maintenance a redrive could re-inject a trigger or a release past
+// every API gate, so it is refused; listing still works.
+func TestMaintenance_RedriveRefusedListAllowed(t *testing.T) {
+	c, repo := newTestClientWithMaintenance(t, true)
+	open := repo.putOpen(time.Now().Add(-time.Hour))
+
+	var trailer metadata.MD
+	_, err := c.RedriveDeadLetters(ctxWithUser("alice"),
+		&deadletterv1.RedriveDeadLettersRequest{Ids: []string{open.ID.String()}, Reason: "r"}, grpc.Trailer(&trailer))
+	require.Equal(t, codes.Unavailable, status.Code(err), "%v", err)
+	require.Equal(t, maintenance.Message, status.Convert(err).Message())
+	require.Equal(t, []string{"true"}, trailer.Get(maintenance.TrailerKey))
+	require.Equal(t, deadletter.StatusOpen, repo.rows[open.ID].Status, "the dead letter stays open")
+
+	_, err = c.ListDeadLetters(context.Background(), &deadletterv1.ListDeadLettersRequest{})
+	require.NoError(t, err)
 }
 
 func ctxWithUser(user string) context.Context {
@@ -281,7 +304,7 @@ func TestToStatus_MapsEveryDomainError(t *testing.T) {
 func TestNewServer_ListensAndShutsDown(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	repo := &fakeRepo{rows: map[uuid.UUID]deadletter.DeadLetter{}}
-	srv, err := NewServer(0, handlers.NewQuery(repo), nil, logger)
+	srv, err := NewServer(0, handlers.NewQuery(repo), nil, logger, false)
 	require.NoError(t, err)
 	assert.NotEmpty(t, srv.Addr())
 

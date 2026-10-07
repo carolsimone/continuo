@@ -47,6 +47,9 @@ type RunRepository interface {
 	Create(ctx context.Context, r *pipeline.Run) (bool, error)
 	// NextQueued is the oldest received run of either kind; nil if none.
 	NextQueued(ctx context.Context) (*pipeline.Run, error)
+
+	// NextQueuedOfKind is the oldest received run of the given kind; nil if none.
+	NextQueuedOfKind(ctx context.Context, kind pipeline.Kind) (*pipeline.Run, error)
 	// Active is the single run of either kind currently compiling, parsing,
 	// seed_building, or validating; nil if none.
 	Active(ctx context.Context) (*pipeline.Run, error)

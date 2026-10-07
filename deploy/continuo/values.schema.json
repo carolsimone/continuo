@@ -329,6 +329,17 @@
       }
     },
 
+    "maintenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Refuse new work while letting running work finish."
+        }
+      }
+    },
+
     "databaseInit": {
       "type": "object",
       "additionalProperties": false,

@@ -235,6 +235,19 @@ func (f *fakeRunRepo) NextQueued(_ context.Context) (*pipeline.Run, error) {
 	return nil, nil
 }
 
+// NextQueuedOfKind returns the oldest run of the given kind in StatusReceived, or nil.
+func (f *fakeRunRepo) NextQueuedOfKind(_ context.Context, kind pipeline.Kind) (*pipeline.Run, error) {
+	f.store.mu.Lock()
+	defer f.store.mu.Unlock()
+	for _, id := range f.store.order {
+		r := f.store.releases[id]
+		if r.Status() == pipeline.StatusReceived && r.Kind() == kind {
+			return r, nil
+		}
+	}
+	return nil, nil
+}
+
 // Active returns the single run in StatusCompiling, StatusParsing,
 // StatusSeedBuilding, or StatusValidating, or nil. Mirrors the Postgres query
 // that guards AdvanceQueue from launching a second concurrent run.

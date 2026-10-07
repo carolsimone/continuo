@@ -53,6 +53,7 @@ Errors:
   usage      (exit 2)  wrong number of arguments, a malformed source run id, or the server rejects the identity triple
 ` + sourceRunErrorsDoc + `
   unavailable(exit 5)  the state service is unreachable
+  maintenance(exit 7)  continuo is in maintenance mode; new work is refused until it is turned off (not retryable)
   internal   (exit 6)  unexpected server error`,
 		Example: `  continuo node trigger finance analytics orders
   continuo node trigger finance analytics orders 3f9e1c2a-7b4d-4e8f-9a1b-2c3d4e5f6a7b`,

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -20,6 +21,7 @@ func setRequiredEnv(t *testing.T) {
 	t.Setenv("REDIS_PORT", "6379")
 	t.Setenv("REDIS_PASSWORD", "secret")
 	t.Setenv("METRICS_PORT", "9464")
+	t.Setenv("MAINTENANCE_ENABLED", "false")
 }
 
 func TestValidate_StreamRetentionBounds(t *testing.T) {
@@ -94,5 +96,28 @@ func TestLoad_TrimSettings(t *testing.T) {
 	t.Setenv("STREAM_RETENTION", "three days")
 	if Load(&pkgconfig.Validator{}).Validate() == nil {
 		t.Fatal("an unparseable STREAM_RETENTION must fail closed")
+	}
+}
+
+func TestLoad_ReadsMaintenance(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("MAINTENANCE_ENABLED", "true")
+	v := &pkgconfig.Validator{}
+	cfg := Load(v)
+	if len(v.Missing()) != 0 {
+		t.Fatalf("missing = %v", v.Missing())
+	}
+	if !cfg.Maintenance {
+		t.Fatal("MAINTENANCE_ENABLED=true must enable maintenance mode")
+	}
+}
+
+func TestLoad_RequiresMaintenance(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("MAINTENANCE_ENABLED", "yes")
+	v := &pkgconfig.Validator{}
+	Load(v)
+	if !strings.Contains(strings.Join(v.Missing(), ","), "MAINTENANCE_ENABLED") {
+		t.Fatalf("missing = %v, want MAINTENANCE_ENABLED reported", v.Missing())
 	}
 }

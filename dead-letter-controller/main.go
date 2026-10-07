@@ -72,6 +72,9 @@ func main() {
 	}
 
 	logger.Info("Starting dead-letter-controller service")
+	if cfg.Maintenance {
+		logger.Warn("Maintenance mode is on: RedriveDeadLetters is refused; listing and the stream trim loop keep running")
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -276,7 +279,7 @@ func main() {
 	// on; the shutdown handler stops it. Wrapping Start in a tracked
 	// lifecycleManager.Go goroutine while a shutdown handler also stops the same
 	// receiver would deadlock the drain (TestLifecycleGoNeverWrapsAServerStart).
-	grpcServer, err := grpcadapter.NewServer(cfg.GRPCPort, query, redriver, logger)
+	grpcServer, err := grpcadapter.NewServer(cfg.GRPCPort, query, redriver, logger, cfg.Maintenance)
 	if err != nil {
 		logger.Error("Failed to create gRPC server", "error", err)
 		os.Exit(1)

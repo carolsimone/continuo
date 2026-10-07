@@ -622,6 +622,16 @@ default; a value below 1 fails the render.
 {{- end -}}
 
 {{/*
+MAINTENANCE_ENABLED for the shared ConfigMap: "true" or "false". A release
+without a maintenance block (helm upgrade --reuse-values from an older chart)
+renders "false"; the schema refuses a non-boolean value.
+*/ -}}
+{{- define "continuo.maintenance.enabled" -}}
+{{- $m := .Values.maintenance | default dict -}}
+{{- if and (hasKey $m "enabled") $m.enabled -}}true{{- else -}}false{{- end -}}
+{{- end -}}
+
+{{/*
 Whether the metrics pods carry prometheus.io annotations: true unless
 metrics.podAnnotations is set to false.
 */ -}}

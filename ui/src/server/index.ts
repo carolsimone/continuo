@@ -16,6 +16,7 @@ import { attachChatWebSocket } from './ws/chat';
 import { loadAuthConfig, loadPublicUrl } from './auth/config';
 import { buildAuth } from './auth';
 import { loadCiAuthConfig } from './auth/ci-config';
+import { loadMaintenance } from './maintenance';
 
 const PORT = parseInt(process.env.PORT || '8090', 10);
 const STATE_GRPC_ADDR = process.env.STATE_GRPC_ADDR || 'localhost:50051';
@@ -35,6 +36,12 @@ const GITHUB_APP_INSTALLATION_ID = process.env.GITHUB_APP_INSTALLATION_ID || '';
 const GITHUB_API_BASE_URL = process.env.GITHUB_API_BASE_URL || undefined;
 
 async function main() {
+  // Fail fast: MAINTENANCE_ENABLED must be exactly "true" or "false".
+  const maintenanceEnabled = loadMaintenance(process.env);
+  if (maintenanceEnabled) {
+    console.warn('maintenance mode is on: new runs, triggers, releases and remediation retries are refused');
+  }
+
   // Fail fast: missing/invalid auth configuration must never boot an open UI.
   const authConfig = loadAuthConfig(process.env);
   const ciAuth = loadCiAuthConfig(process.env, authConfig.mode);
@@ -66,7 +73,7 @@ async function main() {
   // sign, in which case the Author column simply stays empty.
   const commitAuthorResolver = resolveGithubAppCommitAuthorResolver(githubAppCfg);
 
-  const app = createApp(client, graphClient, auth.app, CONFIG_FILE, RELEASE_CONTROLLER_URL, CHAT_BRIDGE_ENABLED, remediationClient, prCreator, commitAuthorResolver, githubWebBaseUrl(GITHUB_API_BASE_URL), loadPublicUrl(process.env));
+  const app = createApp(client, graphClient, auth.app, CONFIG_FILE, RELEASE_CONTROLLER_URL, CHAT_BRIDGE_ENABLED, remediationClient, prCreator, commitAuthorResolver, githubWebBaseUrl(GITHUB_API_BASE_URL), loadPublicUrl(process.env), maintenanceEnabled);
 
   if (process.env.NODE_ENV === 'production') {
     const staticDir = path.join(__dirname, '../dist');

@@ -45,6 +45,10 @@ type Config struct {
 	// and DB_MAX_IDLE_CONNS.
 	IgnoredPoolKeys []string
 
+	// Maintenance is MAINTENANCE_ENABLED: while true, state skips cron fires and
+	// refuses the RPCs that start runs.
+	Maintenance bool
+
 	// MetricsPort is the port the Prometheus /metrics listener binds (METRICS_PORT).
 	MetricsPort int
 }
@@ -66,6 +70,8 @@ func Load(v *pkgconfig.Validator) Config {
 		ShutdownGrace: pkgconfig.EnvDurationOrDefault("SHUTDOWN_GRACE", defaultShutdownGrace),
 
 		IgnoredPoolKeys: setKeys("DB_POOL_SIZE", "DB_MAX_OVERFLOW"),
+
+		Maintenance: pkgconfig.LoadMaintenance(v),
 
 		MetricsPort: pkgconfig.LoadMetricsPort(v),
 	}

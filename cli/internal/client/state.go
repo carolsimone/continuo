@@ -32,7 +32,8 @@ type StateClient interface {
 // NewStateClient dials the given endpoint and returns a production StateClient.
 // The returned client must be Closed by the caller.
 func NewStateClient(ctx context.Context, endpoint string) (StateClient, error) {
-	conn, err := grpc.NewClient(endpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(endpoint, grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithUnaryInterceptor(maintenanceInterceptor))
 	if err != nil {
 		return nil, err
 	}

@@ -4,6 +4,8 @@
 package output
 
 import (
+	"errors"
+
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -17,7 +19,16 @@ const (
 	CodeConflict    ErrorCode = "conflict"
 	CodeUnavailable ErrorCode = "unavailable"
 	CodeInternal    ErrorCode = "internal"
+	// CodeMaintenance marks a call the server refused because continuo is in
+	// maintenance mode. It is not retryable: the refusal lasts until an
+	// operator turns maintenance off.
+	CodeMaintenance ErrorCode = "maintenance"
 )
+
+// ErrMaintenance marks an error the server refused because continuo is in
+// maintenance mode. The gRPC clients wrap a refusal with it when the reply
+// carries the maintenance trailer.
+var ErrMaintenance = errors.New("maintenance mode")
 
 // CLIError is the structured error surfaced to stdout (JSON) and via exit code.
 type CLIError struct {
@@ -39,6 +50,8 @@ func (e CLIError) ExitCode() int {
 		return 5
 	case CodeInternal:
 		return 6
+	case CodeMaintenance:
+		return 7
 	default:
 		return 1
 	}
@@ -56,6 +69,9 @@ func NewUsageError(msg string) CLIError {
 func FromGRPC(err error) CLIError {
 	if err == nil {
 		return CLIError{}
+	}
+	if errors.Is(err, ErrMaintenance) {
+		return CLIError{Code: CodeMaintenance, Message: serverMessage(err), Retryable: false}
 	}
 	st, ok := status.FromError(err)
 	if !ok {
@@ -76,4 +92,17 @@ func FromGRPC(err error) CLIError {
 	default:
 		return CLIError{Code: CodeInternal, Message: msg, Retryable: false}
 	}
+}
+
+// serverMessage returns the message of the gRPC status wrapped inside err.
+// status.FromError reports the whole wrapped error text for a wrapped status,
+// so the status is located with errors.As to recover the server's own message.
+func serverMessage(err error) string {
+	var carrier interface{ GRPCStatus() *status.Status }
+	if errors.As(err, &carrier) {
+		if st := carrier.GRPCStatus(); st != nil {
+			return st.Message()
+		}
+	}
+	return err.Error()
 }

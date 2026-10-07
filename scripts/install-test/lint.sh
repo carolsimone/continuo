@@ -242,6 +242,24 @@ if grep -A40 'name: execution-controller' "${tmp}/defaults.yaml" | grep -q 'name
   echo "FAIL: execution-controller's own env must not shadow the ConfigMap's MAX_CONCURRENT_JOBS"; exit 1
 fi
 
+# maintenance.enabled reaches every service through the shared ConfigMap as
+# exactly "true" or "false"; a non-boolean value fails the render, and a release
+# without a maintenance block (helm upgrade --reuse-values from an older chart)
+# renders "false".
+echo "--- maintenance.enabled reaches the ConfigMap; non-booleans are refused"
+grep -q 'MAINTENANCE_ENABLED: "false"' "${tmp}/defaults.yaml" \
+  || { echo "FAIL: the default render does not set MAINTENANCE_ENABLED to false"; exit 1; }
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set maintenance.enabled=true > "${tmp}/maintenance-on.yaml"
+grep -q 'MAINTENANCE_ENABLED: "true"' "${tmp}/maintenance-on.yaml" \
+  || { echo "FAIL: maintenance.enabled=true does not reach the shared ConfigMap"; exit 1; }
+if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set-string maintenance.enabled=yes > /dev/null 2>&1; then
+  echo "FAIL: a non-boolean maintenance.enabled must fail the render"; exit 1
+fi
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set maintenance=null > "${tmp}/maintenance-null.yaml" \
+  || { echo "FAIL: rendering with maintenance=null failed; helm upgrade --reuse-values from a chart without maintenance would fail"; exit 1; }
+grep -q 'MAINTENANCE_ENABLED: "false"' "${tmp}/maintenance-null.yaml" \
+  || { echo "FAIL: a release without maintenance values must render MAINTENANCE_ENABLED false"; exit 1; }
+
 # Every Go service serves /metrics on the one port the ConfigMap names. The
 # chart must expose and annotate exactly those services, admit scrapers only
 # when asked and only to that port, and refuse a port another listener uses.

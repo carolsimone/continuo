@@ -30,6 +30,7 @@ func setBaseEnv(t *testing.T) {
 	t.Setenv("AWS_DEFAULT_REGION", "us-east-1")
 	t.Setenv("LLM_PROVIDER", "anthropic")
 	t.Setenv("LLM_MODEL", "claude-sonnet-4-6")
+	t.Setenv("MAINTENANCE_ENABLED", "false")
 }
 
 func TestLoad_DefaultsAndRequired(t *testing.T) {
@@ -367,4 +368,21 @@ func TestLoad_RetentionSweeperOverrides(t *testing.T) {
 	require.Empty(t, v.Missing())
 	assert.Equal(t, 45, cfg.RetentionDays)
 	assert.Equal(t, 15, cfg.RetentionSweepIntervalMin)
+}
+
+func TestLoad_ReadsMaintenance(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("MAINTENANCE_ENABLED", "true")
+	v := &pkgconfig.Validator{}
+	cfg := Load(v)
+	assert.True(t, cfg.Maintenance)
+	assert.Empty(t, v.Missing())
+}
+
+func TestLoad_RequiresMaintenance(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("MAINTENANCE_ENABLED", "yes")
+	v := &pkgconfig.Validator{}
+	Load(v)
+	assert.Contains(t, strings.Join(v.Missing(), ","), "MAINTENANCE_ENABLED")
 }

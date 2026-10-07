@@ -79,6 +79,10 @@ func main() {
 		os.Exit(1)
 	}
 
+	if cfg.Maintenance {
+		logger.Warn("Maintenance mode is on: fix attempts that come due are recorded skipped")
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	lifecycleManager := lifecycle.NewApplicationLifecycle(logger)
@@ -297,6 +301,7 @@ func main() {
 		Releases:          releaseGateway,
 		PriorAttempts:     proposalRepo,
 		SQLDialect:        cfg.SQLDialect,
+		Maintenance:       cfg.Maintenance,
 	}
 
 	// The outbox relay wakes on the notification a committed insert into its

@@ -155,7 +155,7 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 		},
 		WithSeconds: true,
 	}
-	cronScheduler, err := scheduler.NewCronSchedulerWithConfig(activateHandler, uowFactory, logger, cfg)
+	cronScheduler, err := scheduler.NewCronSchedulerWithConfig(activateHandler, uowFactory, logger, cfg, false)
 	require.NoError(t, err, "Failed to create cron scheduler")
 
 	// Start cron scheduler

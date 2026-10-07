@@ -20,7 +20,8 @@ type DeadLetterClient interface {
 // NewDeadLetterClient dials dead-letter-controller. The returned client must
 // be Closed by the caller.
 func NewDeadLetterClient(_ context.Context, endpoint string) (DeadLetterClient, error) {
-	conn, err := grpc.NewClient(endpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(endpoint, grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithUnaryInterceptor(maintenanceInterceptor))
 	if err != nil {
 		return nil, err
 	}

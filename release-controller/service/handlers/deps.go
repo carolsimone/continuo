@@ -23,4 +23,10 @@ type Deps struct {
 	// Rejections renders the release.rejected:v1 body of whichever leg ended
 	// the candidate, so the handlers pass values and never wire keys.
 	Rejections ports.ReleaseRejectedEncoder
+
+	// Maintenance is MAINTENANCE_ENABLED. While true, release intake and
+	// remediation retries are refused and the queue activates only
+	// verification runs, so candidates wait and fixes already being verified
+	// finish.
+	Maintenance bool
 }

@@ -8,7 +8,9 @@ import (
 
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/service/uow"
 	"github.com/google/uuid"
 )
 
@@ -33,6 +35,8 @@ import (
 //     contract artifact before POST /releases — so the release goes straight
 //     to TransitionToParsing and emits release.requested:v1 with the set
 //     assembled here.
+//
+// While maintenance mode is on it activates only verification runs.
 func AdvanceQueue(ctx context.Context, d *Deps) error {
 	u := d.NewUoW()
 	if err := u.Begin(ctx); err != nil {
@@ -56,7 +60,7 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 		return u.Commit()
 	}
 
-	next, err := u.RunRepo().NextQueued(ctx)
+	next, err := nextToActivate(ctx, u, d.Maintenance)
 	if err != nil {
 		return fmt.Errorf("next queued: %w", err)
 	}
@@ -193,4 +197,16 @@ func uncoveredProdServices(cp *release.CurrentProd, pointers []*release.ServiceP
 	}
 	sort.Strings(missing)
 	return missing
+}
+
+// nextToActivate is the run the queue activates next: the oldest received run
+// of either kind or, while maintenance mode is on, the oldest received
+// verification run. Maintenance holds candidate releases in the queue, in
+// creation order, but lets the verification runs of remediation attempts
+// already in progress finish.
+func nextToActivate(ctx context.Context, u uow.UnitOfWork, maintenance bool) (*pipeline.Run, error) {
+	if maintenance {
+		return u.RunRepo().NextQueuedOfKind(ctx, pipeline.KindVerification)
+	}
+	return u.RunRepo().NextQueued(ctx)
 }
