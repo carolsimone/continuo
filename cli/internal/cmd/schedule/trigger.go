@@ -35,11 +35,12 @@ Errors:
   not_found  (exit 3)  schedule not in the catalog
   conflict   (exit 4)  a run is already active for this schedule
   unavailable(exit 5)  the state service is unreachable
+  maintenance(exit 7)  continuo is in maintenance mode; new work is refused until it is turned off (not retryable)
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo schedule trigger daily-revenue",
 		Annotations: map[string]string{
 			"output_schema": `{"schedule_id":"string","schedule_name":"string","triggered_at":"string"}`,
-			"exit_codes":    `[0,2,3,4,5,6]`,
+			"exit_codes":    `[0,2,3,4,5,6,7]`,
 			"mutating":      "true",
 		},
 		Args: func(cmd *cobra.Command, args []string) error {

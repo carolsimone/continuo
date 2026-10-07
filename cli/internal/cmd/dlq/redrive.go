@@ -48,11 +48,12 @@ Errors:
   conflict   (exit 4)  a dead letter is older than the 30-day replay horizon, or has
                        no fields to republish (nothing was redriven)
   unavailable(exit 5)  dead-letter-controller is unreachable
+  maintenance(exit 7)  continuo is in maintenance mode; new work is refused until it is turned off (not retryable)
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo dlq redrive 7f6c2c4e-1f0a-4f55-9a43-0c1b6f0b9a11 \"upstream fixed\"\n  continuo dlq redrive id1,id2 \"schema migrated\"",
 		Annotations: map[string]string{
 			"output_schema": `{"dead_letters":"array"}`,
-			"exit_codes":    `[0,2,3,4,5,6]`,
+			"exit_codes":    `[0,2,3,4,5,6,7]`,
 			"mutating":      "true",
 		},
 		Args: func(cmd *cobra.Command, args []string) error {

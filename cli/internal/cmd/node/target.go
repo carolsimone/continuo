@@ -63,5 +63,5 @@ const sourceRunArgDoc = `  [source-run-id]  Optional. The id of a past run of th
 const sourceRunErrorsDoc = `  not_found  (exit 3)  the source run does not exist, or it did not include this node
   conflict   (exit 4)  the source run has not finished yet`
 
-// nodeRunExitCodes is the exit_codes annotation for node trigger, test and build.
-const nodeRunExitCodes = `[0,2,3,4,5,6]`
+// nodeRunExitCodes is the exit_codes annotation for node trigger, test, build and full_refresh.
+const nodeRunExitCodes = `[0,2,3,4,5,6,7]`
