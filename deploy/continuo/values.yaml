@@ -367,6 +367,16 @@ validation:
   # namespace concept, not a postgres database.
   warehouseDatabase: continuo_dbt
 
+# Admission of Jobs in execution-controller. Every task, whole-DAG test,
+# validation, seed-build and compile Job holds one slot from the moment it is
+# admitted until its outcome is recorded; at most maxConcurrentJobs slots are
+# held at once, across every execution-controller replica, and further work
+# waits in execution-controller's queue. Per-release schema-operation Jobs
+# take no slot. Must be a whole number of at least 1: anything else fails the
+# install, and execution-controller refuses to start on it.
+execution:
+  maxConcurrentJobs: 50
+
 databaseInit:
   # Idempotently creates all 9 databases (including continuo_dbt) before the
   # Flyway migrations run. Disable when a DBA pre-creates databases; the
@@ -579,7 +589,6 @@ services:
     env:
       POSTGRES_DB: continuo_execution
       K8S_NAMESPACE: __RELEASE_NAMESPACE__
-      MAX_CONCURRENT_JOBS: "50"
       K8S_CHECK_DELAY_SECONDS: "10"
       K8S_FIRST_CHECK_DELAY_SECONDS: "1"
       LOG_TAIL_LINES: "50"

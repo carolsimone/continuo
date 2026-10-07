@@ -317,6 +317,18 @@
       }
     },
 
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxConcurrentJobs": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Most Jobs holding an execution slot at once across execution-controller replicas."
+        }
+      }
+    },
+
     "databaseInit": {
       "type": "object",
       "additionalProperties": false,

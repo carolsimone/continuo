@@ -607,6 +607,21 @@ service's httpPort or grpcPort, which that service could then not bind.
 {{- end -}}
 
 {{/*
+The admission cap execution-controller enforces. A release without an
+execution block (helm upgrade --reuse-values from an older chart) gets the
+default; a value below 1 fails the render.
+*/ -}}
+{{- define "continuo.execution.maxConcurrentJobs" -}}
+{{- $e := .Values.execution | default dict -}}
+{{- $n := 50 -}}
+{{- if hasKey $e "maxConcurrentJobs" -}}{{- $n = int $e.maxConcurrentJobs -}}{{- end -}}
+{{- if lt $n 1 -}}
+{{- fail (printf "execution.maxConcurrentJobs=%v must be a whole number of at least 1" $e.maxConcurrentJobs) -}}
+{{- end -}}
+{{- $n -}}
+{{- end -}}
+
+{{/*
 Whether the metrics pods carry prometheus.io annotations: true unless
 metrics.podAnnotations is set to false.
 */ -}}
