@@ -29,9 +29,6 @@ func (r *fakeDepRepo) GetByJobName(context.Context, string) (*model.Deployment, 
 	return nil, sql.ErrNoRows
 }
 
-func (r *fakeDepRepo) GetDueBatch(context.Context, int) ([]*model.Deployment, error) {
-	return nil, nil
-}
 func (r *fakeDepRepo) Save(context.Context, *model.Deployment) error { return nil }
 func (r *fakeDepRepo) GetByReleaseNode(context.Context, string, string, model.Mode) (*model.Deployment, error) {
 	return nil, nil

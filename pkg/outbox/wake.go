@@ -30,12 +30,14 @@ const (
 	listenerMaxReconnect = FallbackTick
 )
 
-// PostgresWaker listens on the Postgres channel named after an outbox table.
-// Each outbox table has a statement-level AFTER INSERT trigger that calls
-// pg_notify on the channel named after the table, with an empty payload, and
-// Postgres delivers the notification when the inserting transaction commits.
-// After a reconnect the waker signals once, because notifications sent while
-// it was disconnected are lost.
+// PostgresWaker listens on the Postgres channel named by its table argument,
+// which a table's trigger notifies: every outbox table has a statement-level
+// AFTER INSERT trigger that calls pg_notify on the channel named after the
+// table, and execution-controller's deployments table notifies the channel
+// named by its adapter. Notifications carry an empty payload, and Postgres
+// delivers one when the notifying transaction commits. After a reconnect the
+// waker signals once, because notifications sent while it was disconnected are
+// lost.
 type PostgresWaker struct {
 	wake chan struct{}
 	done chan struct{}

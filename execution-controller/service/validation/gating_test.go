@@ -42,9 +42,6 @@ func (r *chainDepRepo) GetByJobName(context.Context, string) (*model.Deployment,
 	return nil, sql.ErrNoRows
 }
 
-func (r *chainDepRepo) GetDueBatch(context.Context, int) ([]*model.Deployment, error) {
-	return nil, nil
-}
 func (r *chainDepRepo) Save(_ context.Context, d *model.Deployment) error {
 	r.calls.record("Save")
 	r.nodes[d.NodeID()] = d

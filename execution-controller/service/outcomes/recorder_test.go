@@ -45,9 +45,6 @@ func (r *stubDeploymentsRepo) GetByJobName(context.Context, string) (*model.Depl
 	return nil, sql.ErrNoRows
 }
 
-func (r *stubDeploymentsRepo) GetDueBatch(context.Context, int) ([]*model.Deployment, error) {
-	return nil, nil
-}
 func (r *stubDeploymentsRepo) Save(_ context.Context, d *model.Deployment) error {
 	r.saved = append(r.saved, d)
 	return nil

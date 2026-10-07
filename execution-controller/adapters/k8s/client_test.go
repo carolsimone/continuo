@@ -12,6 +12,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	batchv1 "k8s.io/api/batch/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
@@ -126,6 +127,14 @@ func newQueryTestClient() *K8sClient {
 	c := &K8sClient{logger: slog.New(slog.NewTextHandler(os.Stderr, nil)), commands: commandcfg.Defaults()}
 	c.setClientsetForTest(cs)
 	return c
+}
+
+func TestCreateJob_AlreadyExistsIsSuccess(t *testing.T) {
+	existing := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "dbt-public-orders", Namespace: "default"}}
+	c := &K8sClient{logger: slog.New(slog.NewTextHandler(os.Stderr, nil)), commands: commandcfg.Defaults()}
+	c.setClientsetForTest(fake.NewSimpleClientset(existing))
+	require.NoError(t, c.CreateJob(context.Background(), existing.DeepCopy()),
+		"a Job with the same deterministic name was created by an earlier launch")
 }
 
 // TestCreateQueryJob_NormalProduction_HasNoModeLabel verifies that a production

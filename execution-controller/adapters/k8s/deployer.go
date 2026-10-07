@@ -10,12 +10,9 @@ import (
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 )
 
-// dbtJobLabelSelector matches the label every executor dbt Job carries.
-const dbtJobLabelSelector = "app=dbt-job"
-
 // Deployer adapts the K8sClient to the domain deploy.Deployer port. It holds
-// the namespace and label selector so those infrastructure concerns stay out
-// of the domain and application layers.
+// the namespace so that infrastructure concern stays out of the domain and
+// application layers.
 type Deployer struct {
 	client    *K8sClient
 	namespace string
@@ -148,11 +145,6 @@ func compileParamsFromSpec(spec deploy.ValidationJobSpec, namespace string) (Val
 		SourceOverlayURI:    spec.SourceOverlayURI,
 		Namespace:           namespace,
 	}, nil
-}
-
-// CountActive returns the number of executor dbt Jobs currently running.
-func (d *Deployer) CountActive(ctx context.Context) (int, error) {
-	return d.client.CountActiveJobs(ctx, d.namespace, dbtJobLabelSelector)
 }
 
 var _ deploy.Deployer = (*Deployer)(nil)

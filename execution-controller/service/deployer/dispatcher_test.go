@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,56 +28,84 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// fakeDeployer implements domain/deploy.Deployer.
+// fakeDeployer implements domain/deploy.Deployer. It is safe for concurrent
+// use: dispatchers running in parallel share one instance.
 type fakeDeployer struct {
+	mu                    sync.Mutex
 	deployErr             error
 	deployCalls           int
 	validationDeployCalls int
-	active                int
+	delay                 time.Duration // slept inside every Deploy* call
+}
+
+func (f *fakeDeployer) record(counter *int) error {
+	f.mu.Lock()
+	*counter++
+	err := f.deployErr
+	f.mu.Unlock()
+	time.Sleep(f.delay)
+	return err
 }
 
 func (f *fakeDeployer) Deploy(_ context.Context, _ deploy.JobSpec) error {
-	f.deployCalls++
-	return f.deployErr
+	return f.record(&f.deployCalls)
 }
 func (f *fakeDeployer) DeployValidation(_ context.Context, _ deploy.ValidationJobSpec) error {
-	f.validationDeployCalls++
-	return f.deployErr
+	return f.record(&f.validationDeployCalls)
 }
 func (f *fakeDeployer) DeploySeedBuild(_ context.Context, _ deploy.ValidationJobSpec) error {
-	f.validationDeployCalls++
-	return f.deployErr
+	return f.record(&f.validationDeployCalls)
 }
 func (f *fakeDeployer) DeployCompile(_ context.Context, _ deploy.ValidationJobSpec) error {
-	f.validationDeployCalls++
-	return f.deployErr
+	return f.record(&f.validationDeployCalls)
 }
-func (f *fakeDeployer) CountActive(_ context.Context) (int, error) { return f.active, nil }
 
-// newTestDispatcher builds a Dispatcher whose repo factory is the real Postgres
-// adapter bound to the per-batch tx, with a fake Deployer.
+// calls is the number of Deploy* calls of every kind.
+func (f *fakeDeployer) calls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.deployCalls + f.validationDeployCalls
+}
+
+func repoFactory(exec outbox.Executor) repository.DeploymentRepository {
+	return postgres.NewDeploymentsRepository(exec, testLogger())
+}
+
+func aggRepoFactory(exec outbox.Executor) repository.ValidationAggregateRepository {
+	return postgres.NewValidationAggregateRepository(exec)
+}
+
+func admissionFactory(exec outbox.Executor) repository.AdmissionRepository {
+	return postgres.NewAdmissionRepository(exec, testLogger())
+}
+
+// newTestDispatcher builds a Dispatcher whose repo factories are the real
+// Postgres adapters bound to the claim or launch tx, with a fake Deployer.
 func newTestDispatcher(db *sqlx.DB, fk *fakeDeployer, maxConcurrent int) *deployer.Dispatcher {
-	return deployer.NewDispatcher(
-		db, fk,
-		func(exec outbox.Executor) repository.DeploymentRepository {
-			return postgres.NewDeploymentsRepository(exec, testLogger())
-		},
-		func(exec outbox.Executor) repository.ValidationAggregateRepository {
-			return postgres.NewValidationAggregateRepository(exec)
-		},
-		maxConcurrent, testLogger(), deployer.DispatcherConfig{},
-	)
+	return newTestDispatcherWith(db, fk, maxConcurrent, deployer.DispatcherConfig{}, admissionFactory)
+}
+
+// newTestDispatcherWith builds a Dispatcher with an explicit config and
+// admission repository factory.
+func newTestDispatcherWith(db *sqlx.DB, fk *fakeDeployer, maxConcurrent int, cfg deployer.DispatcherConfig, admission deployer.AdmissionRepoFactory) *deployer.Dispatcher {
+	return deployer.NewDispatcher(db, fk, repoFactory, aggRepoFactory, admission, maxConcurrent, testLogger(), cfg)
 }
 
 // seedJob inserts a deployable pending row (valid command in job_params) with a
 // chosen deploy-attempt budget, due one minute ago.
 func seedJob(t *testing.T, db *sqlx.DB, maxRetries, retryCount int) uuid.UUID {
 	t.Helper()
+	return seedJobNamed(t, db, "dbt-public-orders-"+uuid.NewString()[:8], maxRetries, retryCount)
+}
+
+// seedJobNamed is seedJob with an explicit Job name.
+func seedJobNamed(t *testing.T, db *sqlx.DB, name string, maxRetries, retryCount int) uuid.UUID {
+	t.Helper()
 	id := uuid.New()
 	payload, err := json.Marshal(serialization.DeployTaskFromDomain(command.DeployTask{
 		TaskID: uuid.New().String(), ScheduleID: uuid.New().String(),
 		ScheduleName: "daily", ServiceName: "dbt", SchemaName: "public",
-		TableName: "orders", JobName: "dbt-public-orders", NodeType: "dbt-model",
+		TableName: "orders", JobName: name, NodeType: "dbt-model",
 		ImageTag: "sha-abc", TaskRetryCount: 0, TaskMaxRetries: 2,
 	}))
 	require.NoError(t, err)
@@ -100,6 +129,29 @@ func failedAnnouncementRetryCount(t *testing.T, db *sqlx.DB) int32 {
 	return got.RetryCount
 }
 
+// seedRunning inserts a deployable row already holding a slot.
+func seedRunning(t *testing.T, db *sqlx.DB) uuid.UUID {
+	t.Helper()
+	id := seedJob(t, db, 3, 0)
+	_, err := db.Exec(`UPDATE deployments SET status = 'running' WHERE id = $1`, id)
+	require.NoError(t, err)
+	return id
+}
+
+func countByStatus(t *testing.T, db *sqlx.DB, status string) int {
+	t.Helper()
+	var n int
+	require.NoError(t, db.Get(&n, `SELECT count(*) FROM deployments WHERE status = $1`, status))
+	return n
+}
+
+func countStatusOf(t *testing.T, db *sqlx.DB, id uuid.UUID) string {
+	t.Helper()
+	var status string
+	require.NoError(t, db.Get(&status, `SELECT status FROM deployments WHERE id = $1`, id))
+	return status
+}
+
 func outboxCountByType(t *testing.T, db *sqlx.DB, eventType string) int {
 	t.Helper()
 	var n int
@@ -107,11 +159,11 @@ func outboxCountByType(t *testing.T, db *sqlx.DB, eventType string) int {
 	return n
 }
 
-func TestDispatcher_SuccessWritesStartedOnly(t *testing.T) {
+func TestDispatcher_SuccessMarksStartedAndWritesFirstCheck(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 	id := seedJob(t, db, 3, 0)
-	fk := &fakeDeployer{active: 0}
+	fk := &fakeDeployer{}
 
 	require.NoError(t, newTestDispatcher(db, fk, 50).ProcessBatch(context.Background()))
 
@@ -147,7 +199,7 @@ func TestDispatch_WritesCheckDelayedTicketOnDeploySuccess(t *testing.T) {
 		uuid.New(), taskID, uuid.New(), payload, 3, 0)
 	require.NoError(t, err)
 
-	fk := &fakeDeployer{active: 0}
+	fk := &fakeDeployer{}
 	require.NoError(t, newTestDispatcher(db, fk, 50).ProcessBatch(context.Background()))
 
 	var rows []struct {
@@ -190,7 +242,7 @@ func TestDispatch_FirstCheckCarriesSecretRef(t *testing.T) {
 		uuid.New(), taskID, uuid.New(), payload, 3, 0)
 	require.NoError(t, err)
 
-	require.NoError(t, newTestDispatcher(db, &fakeDeployer{active: 0}, 50).ProcessBatch(context.Background()))
+	require.NoError(t, newTestDispatcher(db, &fakeDeployer{}, 50).ProcessBatch(context.Background()))
 
 	var raw json.RawMessage
 	require.NoError(t, db.Get(&raw, `SELECT payload FROM execution_outbox WHERE aggregate_id = $1`, taskID))
@@ -223,17 +275,8 @@ func TestDispatch_FirstCheckUsesFirstCheckDelay(t *testing.T) {
 		uuid.New(), taskID, uuid.New(), payload, 3, 0)
 	require.NoError(t, err)
 
-	d := deployer.NewDispatcher(
-		db, &fakeDeployer{},
-		func(exec outbox.Executor) repository.DeploymentRepository {
-			return postgres.NewDeploymentsRepository(exec, testLogger())
-		},
-		func(exec outbox.Executor) repository.ValidationAggregateRepository {
-			return postgres.NewValidationAggregateRepository(exec)
-		},
-		50, testLogger(),
-		deployer.DispatcherConfig{CheckDelay: 60 * time.Second, FirstCheckDelay: 3 * time.Second},
-	)
+	d := newTestDispatcherWith(db, &fakeDeployer{}, 50,
+		deployer.DispatcherConfig{CheckDelay: 60 * time.Second, FirstCheckDelay: 3 * time.Second}, admissionFactory)
 	require.NoError(t, d.ProcessBatch(context.Background()))
 
 	var raw json.RawMessage
@@ -297,12 +340,15 @@ func TestDispatcher_PermanentErrorWritesFailedImmediately(t *testing.T) {
 func TestDispatcher_CapZeroHeadroomDeploysNothing(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
+	for i := 0; i < 5; i++ {
+		seedRunning(t, db)
+	}
 	id := seedJob(t, db, 3, 0)
-	fk := &fakeDeployer{active: 5}
+	fk := &fakeDeployer{}
 
 	require.NoError(t, newTestDispatcher(db, fk, 5).ProcessBatch(context.Background()))
 
-	assert.Equal(t, 0, fk.deployCalls, "no deploys when cap reached")
+	assert.Equal(t, 0, fk.calls(), "no deploys when cap reached")
 	var status string
 	var rc int
 	require.NoError(t, db.QueryRow(`SELECT status, retry_count FROM deployments WHERE id=$1`, id).Scan(&status, &rc))
@@ -313,17 +359,18 @@ func TestDispatcher_CapZeroHeadroomDeploysNothing(t *testing.T) {
 func TestDispatcher_HeadroomLimitsBatch(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
+	for i := 0; i < 3; i++ {
+		seedRunning(t, db)
+	}
 	for i := 0; i < 5; i++ {
 		seedJob(t, db, 3, 0)
 	}
-	fk := &fakeDeployer{active: 3}
+	fk := &fakeDeployer{}
 
 	require.NoError(t, newTestDispatcher(db, fk, 5).ProcessBatch(context.Background()))
 
-	assert.Equal(t, 2, fk.deployCalls, "only headroom (cap-active) rows deployed")
-	var deployed int
-	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM deployments WHERE status='starting'`).Scan(&deployed))
-	assert.Equal(t, 2, deployed)
+	assert.Equal(t, 2, fk.calls(), "only headroom (cap minus in-flight rows) deployed")
+	assert.Equal(t, 2, countByStatus(t, db, "starting"))
 }
 
 func TestDispatcher_CorruptedJobParamsMarksFailedWithRowIdentity(t *testing.T) {
@@ -339,10 +386,10 @@ func TestDispatcher_CorruptedJobParamsMarksFailedWithRowIdentity(t *testing.T) {
 		uuid.New(), taskID, scheduleID)
 	require.NoError(t, err)
 
-	fk := &fakeDeployer{active: 0}
+	fk := &fakeDeployer{}
 	require.NoError(t, newTestDispatcher(db, fk, 50).ProcessBatch(context.Background()))
 
-	assert.Equal(t, 0, fk.deployCalls, "deploy never attempted when payload is corrupt")
+	assert.Equal(t, 0, fk.calls(), "deploy never attempted when payload is corrupt")
 
 	var status string
 	require.NoError(t, db.QueryRow(`SELECT status FROM deployments WHERE id=$1`,
@@ -432,11 +479,8 @@ func TestDispatcher_PerRowTransaction_FailureDoesNotRollBackOthers(t *testing.T)
 			failAt:               2, // the second deployment's Save fails
 		}
 	}
-	aggFactory := func(exec outbox.Executor) repository.ValidationAggregateRepository {
-		return postgres.NewValidationAggregateRepository(exec)
-	}
-	fk := &fakeDeployer{active: 0}
-	disp := deployer.NewDispatcher(db, fk, factory, aggFactory, 50, testLogger(), deployer.DispatcherConfig{})
+	fk := &fakeDeployer{}
+	disp := deployer.NewDispatcher(db, fk, factory, aggRepoFactory, admissionFactory, 50, testLogger(), deployer.DispatcherConfig{})
 
 	require.Error(t, disp.ProcessBatch(context.Background()), "second row's Save error surfaces")
 
@@ -444,6 +488,143 @@ func TestDispatcher_PerRowTransaction_FailureDoesNotRollBackOthers(t *testing.T)
 	require.NoError(t, db.QueryRow(`SELECT status FROM deployments WHERE id=$1`, older).Scan(&olderStatus))
 	require.NoError(t, db.QueryRow(`SELECT status FROM deployments WHERE id=$1`, newer).Scan(&newerStatus))
 	assert.Equal(t, "starting", olderStatus, "first deployment committed in its own transaction")
-	assert.Equal(t, "pending", newerStatus, "second deployment's transaction rolled back — stays pending for retry")
+	assert.Equal(t, "reserved", newerStatus, "second deployment's launch rolled back — its reservation stands until the reconciler returns it to pending")
 	assert.Equal(t, 2, fk.deployCalls)
+}
+
+func TestDispatcher_CapCountsInFlightRows(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	for i := 0; i < 3; i++ {
+		seedRunning(t, db)
+	}
+	for i := 0; i < 5; i++ {
+		seedJob(t, db, 3, 0)
+	}
+	fk := &fakeDeployer{}
+
+	require.NoError(t, newTestDispatcher(db, fk, 4).ProcessBatch(context.Background()))
+
+	assert.Equal(t, 1, fk.calls(), "three running rows leave one slot under a cap of four")
+	assert.Equal(t, 1, countByStatus(t, db, "starting"))
+	assert.Equal(t, 4, countByStatus(t, db, "pending"))
+
+	require.NoError(t, newTestDispatcher(db, fk, 2).ProcessBatch(context.Background()))
+	assert.Equal(t, 1, fk.calls(), "a cap lowered below what is in flight admits nothing")
+}
+
+// pausingAdmission holds a claim between its count and its reservation until
+// resume closes (or a second passes), so a test can run a second claimer in
+// that window.
+type pausingAdmission struct {
+	repository.AdmissionRepository
+	counted chan<- struct{}
+	resume  <-chan struct{}
+}
+
+func (p pausingAdmission) CountInFlight(ctx context.Context) (int, error) {
+	n, err := p.AdmissionRepository.CountInFlight(ctx)
+	p.counted <- struct{}{}
+	select {
+	case <-p.resume:
+	case <-time.After(time.Second):
+	}
+	return n, err
+}
+
+func TestDispatcher_ConcurrentClaimsNeverExceedTheCap(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	for i := 0; i < 10; i++ {
+		seedJob(t, db, 3, 0)
+	}
+	fk := &fakeDeployer{}
+	counted := make(chan struct{}, 1)
+	resume := make(chan struct{})
+	pausing := func(exec outbox.Executor) repository.AdmissionRepository {
+		return pausingAdmission{postgres.NewAdmissionRepository(exec, testLogger()), counted, resume}
+	}
+	first := newTestDispatcherWith(db, fk, 3, deployer.DispatcherConfig{}, pausing)
+	second := newTestDispatcherWith(db, fk, 3, deployer.DispatcherConfig{}, admissionFactory)
+
+	firstDone := make(chan error, 1)
+	go func() { firstDone <- first.ProcessBatch(context.Background()) }()
+	<-counted // the first claimer has counted 0 in flight and holds the scope
+	secondDone := make(chan error, 1)
+	go func() {
+		err := second.ProcessBatch(context.Background())
+		close(resume)
+		secondDone <- err
+	}()
+	require.NoError(t, <-firstDone)
+	require.NoError(t, <-secondDone)
+
+	// Without the scope lock the second claimer counts 0 too, reserves three
+	// rows while the first waits, and the first then reserves three more.
+	assert.Equal(t, 3, countByStatus(t, db, "starting"))
+	assert.Equal(t, 7, countByStatus(t, db, "pending"))
+	assert.Equal(t, 3, fk.calls())
+}
+
+func TestDispatcher_TransientFailureFreesTheSlot(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	id := seedJob(t, db, 3, 0)
+	fk := &fakeDeployer{deployErr: errors.New("api server timeout")}
+
+	require.NoError(t, newTestDispatcher(db, fk, 1).ProcessBatch(context.Background()))
+
+	assert.Equal(t, 1, fk.calls(), "the row is not re-reserved in the same pass")
+	var status string
+	var retry int
+	require.NoError(t, db.QueryRow(`SELECT status, retry_count FROM deployments WHERE id = $1`, id).Scan(&status, &retry))
+	assert.Equal(t, "pending", status)
+	assert.Equal(t, 1, retry)
+	assert.Equal(t, 0, countByStatus(t, db, "reserved"))
+}
+
+// TestDispatcher_ReadmitsAReturnedReservation: a reservation whose dispatcher
+// died goes back to pending, and the next claim admits it like any queued row.
+// If the dead launcher had already created the Job, the k8s adapter reports
+// AlreadyExists as success (TestCreateJob_AlreadyExistsIsSuccess).
+func TestDispatcher_ReadmitsAReturnedReservation(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	id := seedJob(t, db, 3, 0)
+	_, err := db.Exec(`UPDATE deployments SET status = 'reserved', state_changed_at = NOW() - interval '5 minutes' WHERE id = $1`, id)
+	require.NoError(t, err)
+	returned, err := postgres.NewAdmissionRepository(db, testLogger()).ReturnStaleReserved(context.Background(), 2*time.Minute)
+	require.NoError(t, err)
+	require.Equal(t, []uuid.UUID{id}, returned)
+	fk := &fakeDeployer{}
+
+	require.NoError(t, newTestDispatcher(db, fk, 5).ProcessBatch(context.Background()))
+
+	assert.Equal(t, "starting", countStatusOf(t, db, id))
+	assert.Equal(t, 1, fk.calls())
+	assert.Equal(t, 1, outboxCountByType(t, db, "check_delayed"))
+}
+
+type chanWaker chan struct{}
+
+func (c chanWaker) Wake() <-chan struct{} { return c }
+
+func TestDispatcher_WakesWithoutWaitingForTheTick(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	fk := &fakeDeployer{}
+	w := make(chanWaker, 1)
+	d := newTestDispatcherWith(db, fk, 5, deployer.DispatcherConfig{Tick: time.Hour, Waker: w}, admissionFactory)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- d.Run(ctx) }()
+	defer func() { cancel(); <-done }()
+
+	time.Sleep(300 * time.Millisecond) // the start-up pass finds nothing
+	id := seedJob(t, db, 3, 0)
+	time.Sleep(300 * time.Millisecond)
+	require.Equal(t, "pending", countStatusOf(t, db, id), "no tick within an hour, so nothing runs until woken")
+
+	w <- struct{}{}
+	require.Eventually(t, func() bool { return countStatusOf(t, db, id) == "starting" }, 5*time.Second, 50*time.Millisecond)
 }

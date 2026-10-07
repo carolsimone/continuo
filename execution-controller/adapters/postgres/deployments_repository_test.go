@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"log/slog"
 	"os"
-	"sync"
 	"testing"
 	"time"
 
@@ -88,26 +87,6 @@ func TestRepo_Add_PersistsPendingAggregate(t *testing.T) {
 	assert.Equal(t, cmd.TaskID, taskID.String(), "task_id column populated from the command identity")
 	assert.Contains(t, string(jobParams), "dbt-public-orders", "command serialized into job_params")
 	assert.False(t, nextAt.IsZero())
-}
-
-func TestRepo_GetDueBatch_OnlyDueRowsOldestFirst(t *testing.T) {
-	db, cleanup := setupPostgres(t)
-	defer cleanup()
-
-	past1 := seedDue(t, db, time.Now().Add(-2*time.Minute))
-	past2 := seedDue(t, db, time.Now().Add(-1*time.Minute))
-	_ = seedDue(t, db, time.Now().Add(10*time.Minute)) // future: excluded
-
-	tx, err := db.BeginTxx(context.Background(), nil)
-	require.NoError(t, err)
-	defer func() { _ = tx.Rollback() }()
-	repo := postgres.NewDeploymentsRepository(tx, testLogger())
-
-	deployments, err := repo.GetDueBatch(context.Background(), 10)
-	require.NoError(t, err)
-	require.Len(t, deployments, 2, "future-dated row excluded")
-	assert.Equal(t, past1, deployments[0].ID(), "oldest next_attempt_at first")
-	assert.Equal(t, past2, deployments[1].ID())
 }
 
 func TestRepo_Save_MarkStarted(t *testing.T) {
@@ -207,102 +186,6 @@ func TestRepo_Save_RescheduleAndFail(t *testing.T) {
 	require.NoError(t, db.QueryRow(`SELECT status, error_message FROM deployments WHERE id=$1`, dep.ID()).Scan(&status, &errMsg))
 	assert.Equal(t, "failed", status)
 	assert.Equal(t, "fatal", errMsg)
-}
-
-func TestRepo_GetDueBatch_CorruptJobParamsRecoversIdentity(t *testing.T) {
-	db, cleanup := setupPostgres(t)
-	defer cleanup()
-
-	taskID := uuid.New()
-	scheduleID := uuid.New()
-	// Valid JSONB but a JSON string — cannot unmarshal into DeployTask.
-	_, err := db.Exec(
-		`INSERT INTO deployments (id, task_id, schedule_id, job_params, next_attempt_at)
-		 VALUES ($1, $2, $3, '"corrupt"'::jsonb, NOW() - interval '1 minute')`,
-		uuid.New(), taskID, scheduleID)
-	require.NoError(t, err)
-
-	tx, err := db.BeginTxx(context.Background(), nil)
-	require.NoError(t, err)
-	defer func() { _ = tx.Rollback() }()
-	repo := postgres.NewDeploymentsRepository(tx, testLogger())
-
-	deployments, err := repo.GetDueBatch(context.Background(), 10)
-	require.NoError(t, err)
-	require.Len(t, deployments, 1)
-
-	dep := deployments[0]
-	assert.False(t, dep.IsDeployable(), "corrupt payload yields an undeployable aggregate")
-	assert.Equal(t, taskID.String(), dep.Command().TaskID, "identity recovered from the task_id column")
-	assert.Equal(t, scheduleID.String(), dep.Command().ScheduleID)
-}
-
-func TestRepo_GetDueBatch_SkipLockedDisjoint(t *testing.T) {
-	db, cleanup := setupPostgres(t)
-	defer cleanup()
-	for i := 0; i < 10; i++ {
-		seedDue(t, db, time.Now().Add(-time.Minute))
-	}
-
-	const workers = 5
-	seen := make([][]uuid.UUID, workers)
-
-	var (
-		selectedWg sync.WaitGroup
-		commitWg   sync.WaitGroup
-		startWg    sync.WaitGroup
-	)
-	startWg.Add(1)
-
-	type result struct {
-		ids []uuid.UUID
-		err error
-	}
-	results := make([]result, workers)
-
-	selectedWg.Add(workers)
-	commitWg.Add(workers)
-	for w := 0; w < workers; w++ {
-		wCopy := w
-		go func() {
-			tx, err := db.BeginTxx(context.Background(), nil)
-			if err != nil {
-				results[wCopy].err = err
-				selectedWg.Done()
-				commitWg.Done()
-				return
-			}
-			startWg.Wait()
-			repo := postgres.NewDeploymentsRepository(tx, testLogger())
-			deployments, err := repo.GetDueBatch(context.Background(), 2)
-			results[wCopy].err = err
-			for _, d := range deployments {
-				results[wCopy].ids = append(results[wCopy].ids, d.ID())
-			}
-			selectedWg.Done()
-			selectedWg.Wait()
-			_ = tx.Commit()
-			commitWg.Done()
-		}()
-	}
-
-	startWg.Done()
-	commitWg.Wait()
-
-	for w, res := range results {
-		require.NoError(t, res.err, "worker %d", w)
-		seen[w] = res.ids
-	}
-
-	all := map[uuid.UUID]int{}
-	for _, ids := range seen {
-		for _, id := range ids {
-			all[id]++
-		}
-	}
-	for id, n := range all {
-		assert.Equal(t, 1, n, "row %s claimed by exactly one worker", id)
-	}
 }
 
 func TestAdd_ValidationRow_RoundTrip(t *testing.T) {

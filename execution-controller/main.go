@@ -269,6 +269,20 @@ func main() {
 	metricsReg.WatchOutbox(outboxProcessor)
 	runWorker("outbox_processor", outboxProcessor.Run)
 
+	// The dispatcher wakes on the notification the deployments table's
+	// triggers send when a deployment is accepted or a slot is released, so
+	// queued work starts without waiting for the 5 s poll.
+	dispatcherWaker, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN(), postgres.DeploymentsChannel, logger)
+	if errors.Is(err, context.Canceled) {
+		logger.Info("Shutdown requested while waiting for the dispatcher listener")
+		os.Exit(0)
+	}
+	if err != nil {
+		logger.Error("Failed to listen for deployment notifications", "error", err)
+		os.Exit(1)
+	}
+	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error { return dispatcherWaker.CloseContext(ctx) })
+
 	deployDispatcher := deployer.NewDispatcher(
 		pgDB, k8s.NewDeployer(k8sClient, cfg.K8sNamespace),
 		func(exec pkgoutbox.Executor) repository.DeploymentRepository {
@@ -277,9 +291,12 @@ func main() {
 		func(exec pkgoutbox.Executor) repository.ValidationAggregateRepository {
 			return postgres.NewValidationAggregateRepository(exec)
 		},
+		func(exec pkgoutbox.Executor) repository.AdmissionRepository {
+			return postgres.NewAdmissionRepository(exec, logger)
+		},
 		cfg.MaxConcurrentJobs, logger,
 		deployer.DispatcherConfig{
-			Tick: 5 * time.Second, BatchSize: 50,
+			Tick: 5 * time.Second, BatchSize: 50, Waker: dispatcherWaker,
 			CheckDelay:      time.Duration(cfg.K8sCheckDelaySeconds) * time.Second,
 			FirstCheckDelay: time.Duration(cfg.K8sFirstCheckDelaySeconds) * time.Second,
 		},

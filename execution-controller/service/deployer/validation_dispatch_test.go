@@ -49,7 +49,6 @@ func (f *fakeValidationDeployer) DeployCompile(context.Context, deploy.Validatio
 	f.compileCalls++
 	return f.deployErr
 }
-func (f *fakeValidationDeployer) CountActive(context.Context) (int, error) { return 0, nil }
 
 // fakeDeploymentRepo is an in-memory DeploymentRepository sufficient for the
 // validation dispatch/aggregate unit tests.
@@ -70,9 +69,6 @@ func (r *fakeDeploymentRepo) GetByJobName(context.Context, string) (*model.Deplo
 	return nil, sql.ErrNoRows
 }
 
-func (r *fakeDeploymentRepo) GetDueBatch(context.Context, int) ([]*model.Deployment, error) {
-	return nil, nil
-}
 func (r *fakeDeploymentRepo) Save(_ context.Context, d *model.Deployment) error {
 	if r.saveErr != nil {
 		return r.saveErr
@@ -327,9 +323,6 @@ func (r *chainDeploymentRepo) GetByJobName(context.Context, string) (*model.Depl
 	return nil, sql.ErrNoRows
 }
 
-func (r *chainDeploymentRepo) GetDueBatch(context.Context, int) ([]*model.Deployment, error) {
-	return nil, nil
-}
 func (r *chainDeploymentRepo) Save(_ context.Context, d *model.Deployment) error {
 	r.nodes[d.NodeID()] = d
 	return nil

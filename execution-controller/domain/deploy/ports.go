@@ -66,8 +66,7 @@ type ValidationJobSpec struct {
 	SourceOverlayURI string
 }
 
-// Deployer is the driven port the dispatcher uses to deploy work and observe
-// how many deploys are currently in flight.
+// Deployer is the driven port the dispatcher uses to create Jobs.
 type Deployer interface {
 	// Deploy executes the job described by spec. Implementations must be
 	// idempotent by job name so a redelivery is a no-op.
@@ -86,6 +85,4 @@ type Deployer interface {
 	// resulting manifest.json to S3 (main container). Implementations must be
 	// idempotent by job name so a redelivery is a no-op.
 	DeployCompile(ctx context.Context, spec ValidationJobSpec) error
-	// CountActive returns the number of deploys currently running.
-	CountActive(ctx context.Context) (int, error)
 }

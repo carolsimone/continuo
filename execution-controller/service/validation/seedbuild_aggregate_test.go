@@ -144,9 +144,6 @@ func (r *modeScopedDepRepo) GetByJobName(context.Context, string) (*model.Deploy
 	return nil, sql.ErrNoRows
 }
 
-func (r *modeScopedDepRepo) GetDueBatch(context.Context, int) ([]*model.Deployment, error) {
-	return nil, nil
-}
 func (r *modeScopedDepRepo) Save(context.Context, *model.Deployment) error { return nil }
 func (r *modeScopedDepRepo) GetByReleaseNode(context.Context, string, string, model.Mode) (*model.Deployment, error) {
 	return nil, nil

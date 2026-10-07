@@ -101,28 +101,6 @@ func (r *deploymentsRepository) Add(ctx context.Context, d *model.Deployment) er
 	return nil
 }
 
-func (r *deploymentsRepository) GetDueBatch(ctx context.Context, limit int) ([]*model.Deployment, error) {
-	const query = `
-		SELECT id, message_processing_id, task_id, schedule_id, job_params,
-		       status, retry_count, max_retries, next_attempt_at,
-		       created_at, deployed_at, error_message,
-		       mode, release_id, node_id, outcome, dbt_log_uri, outcome_at, run_results_uri, failed_container
-		FROM deployments
-		WHERE status = 'pending' AND next_attempt_at <= NOW()
-		ORDER BY next_attempt_at ASC
-		LIMIT $1
-		FOR UPDATE SKIP LOCKED`
-	var rows []*deploymentRow
-	if err := r.exec.SelectContext(ctx, &rows, query, limit); err != nil && err != sql.ErrNoRows {
-		return nil, fmt.Errorf("get due deployments batch: %w", err)
-	}
-	out := make([]*model.Deployment, len(rows))
-	for i, row := range rows {
-		out[i] = r.toAggregate(row)
-	}
-	return out, nil
-}
-
 func (r *deploymentsRepository) Save(ctx context.Context, d *model.Deployment) error {
 	const query = `
 		UPDATE deployments
