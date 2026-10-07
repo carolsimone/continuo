@@ -270,7 +270,7 @@ func TestValidationPipeline_EndToEnd(t *testing.T) {
 	}
 
 	// Step 3: dispatch the batch. Each row → a DeployValidation call + a
-	// first check_delayed ticket; rows move to status=deployed; NO terminal yet.
+	// first check_delayed ticket; rows move to status=starting; NO terminal yet.
 	// Wait for the rows to be due first: next_attempt_at is stamped with the Go
 	// process clock while GetDueBatch compares against the DB's NOW(), and on a
 	// VM-backed Docker host (colima) those can differ by tens of ms. Production
@@ -304,8 +304,8 @@ func TestValidationPipeline_EndToEnd(t *testing.T) {
 	assert.Equal(t, 3, countByStream(t, db, streams.CheckK8sV1),
 		"one check_delayed ticket per dispatched validation Job")
 	assert.Equal(t, 3, countDeployments(t, db,
-		`SELECT COUNT(*) FROM deployments WHERE mode='validation' AND release_id=$1 AND status='deployed'`, releaseID),
-		"all rows now deployed")
+		`SELECT COUNT(*) FROM deployments WHERE mode='validation' AND release_id=$1 AND status='starting'`, releaseID),
+		"all rows now started")
 	assert.Equal(t, 0, countByStreamAndKind(t, db, streams.ValidationResultV1, "complete"),
 		"no aggregate yet — every node still awaits its terminal")
 

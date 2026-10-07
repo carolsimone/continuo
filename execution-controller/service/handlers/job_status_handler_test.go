@@ -266,7 +266,7 @@ func (r *candidateAggRepo) ClaimEmission(context.Context, string, model.Mode, ti
 }
 
 // deployedCandidateDeployment builds a deployment of the given candidate mode
-// in status=deployed (ready to receive an outcome) for (releaseID, nodeID).
+// in status=starting (ready to receive an outcome) for (releaseID, nodeID).
 func deployedCandidateDeployment(t *testing.T, mode model.Mode, releaseID, nodeID string) *model.Deployment {
 	t.Helper()
 	cmd := command.ValidationDeployTask{
@@ -286,8 +286,11 @@ func deployedCandidateDeployment(t *testing.T, mode model.Mode, releaseID, nodeI
 	default:
 		t.Fatalf("deployedCandidateDeployment: unsupported mode %q", mode)
 	}
-	if err := d.MarkDeployed(now); err != nil {
-		t.Fatalf("MarkDeployed: %v", err)
+	if err := d.Reserve(); err != nil {
+		t.Fatalf("Reserve: %v", err)
+	}
+	if err := d.MarkStarted(now); err != nil {
+		t.Fatalf("MarkStarted: %v", err)
 	}
 	return d
 }

@@ -34,6 +34,11 @@ func NewPostgresUnitOfWork(db *sqlx.DB, logger *slog.Logger) *PostgresUnitOfWork
 // same name, on which the relay's waker listens.
 const OutboxTable = "execution_outbox"
 
+// DeploymentsChannel is the Postgres channel the deployments table's triggers
+// notify when a deployment is accepted or a slot is released; the dispatcher's
+// waker listens on it.
+const DeploymentsChannel = "deployments"
+
 func (u *PostgresUnitOfWork) OutboxRepo() pkgoutbox.Repository {
 	if u.tx != nil {
 		return pkgoutbox.NewPostgresRepository(u.tx, OutboxTable, u.logger)

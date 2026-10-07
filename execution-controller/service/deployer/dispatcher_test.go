@@ -107,7 +107,7 @@ func outboxCountByType(t *testing.T, db *sqlx.DB, eventType string) int {
 	return n
 }
 
-func TestDispatcher_SuccessWritesDeployedOnly(t *testing.T) {
+func TestDispatcher_SuccessWritesStartedOnly(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 	id := seedJob(t, db, 3, 0)
@@ -118,7 +118,7 @@ func TestDispatcher_SuccessWritesDeployedOnly(t *testing.T) {
 	assert.Equal(t, 1, fk.deployCalls)
 	var status string
 	require.NoError(t, db.QueryRow(`SELECT status FROM deployments WHERE id=$1`, id).Scan(&status))
-	assert.Equal(t, "deployed", status)
+	assert.Equal(t, "starting", status)
 	// The job-status handler owns the RUNNING announcement; the deploy path writes
 	// only the first check_delayed ticket that starts k8s polling.
 	assert.Equal(t, 0, outboxCountByType(t, db, "task_status_updated"), "deploy path no longer announces RUNNING")
@@ -322,7 +322,7 @@ func TestDispatcher_HeadroomLimitsBatch(t *testing.T) {
 
 	assert.Equal(t, 2, fk.deployCalls, "only headroom (cap-active) rows deployed")
 	var deployed int
-	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM deployments WHERE status='deployed'`).Scan(&deployed))
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM deployments WHERE status='starting'`).Scan(&deployed))
 	assert.Equal(t, 2, deployed)
 }
 
@@ -443,7 +443,7 @@ func TestDispatcher_PerRowTransaction_FailureDoesNotRollBackOthers(t *testing.T)
 	var olderStatus, newerStatus string
 	require.NoError(t, db.QueryRow(`SELECT status FROM deployments WHERE id=$1`, older).Scan(&olderStatus))
 	require.NoError(t, db.QueryRow(`SELECT status FROM deployments WHERE id=$1`, newer).Scan(&newerStatus))
-	assert.Equal(t, "deployed", olderStatus, "first deployment committed in its own transaction")
+	assert.Equal(t, "starting", olderStatus, "first deployment committed in its own transaction")
 	assert.Equal(t, "pending", newerStatus, "second deployment's transaction rolled back — stays pending for retry")
 	assert.Equal(t, 2, fk.deployCalls)
 }

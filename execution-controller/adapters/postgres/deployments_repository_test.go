@@ -110,7 +110,7 @@ func TestRepo_GetDueBatch_OnlyDueRowsOldestFirst(t *testing.T) {
 	assert.Equal(t, past2, deployments[1].ID())
 }
 
-func TestRepo_Save_MarkDeployed(t *testing.T) {
+func TestRepo_Save_MarkStarted(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 	repo := postgres.NewDeploymentsRepository(db, testLogger())
@@ -119,14 +119,55 @@ func TestRepo_Save_MarkDeployed(t *testing.T) {
 	dep := model.NewDeployment(validCmd(), nil, now)
 	require.NoError(t, repo.Add(context.Background(), dep))
 
-	require.NoError(t, dep.MarkDeployed(now))
+	require.NoError(t, dep.Reserve())
+	require.NoError(t, dep.MarkStarted(now))
 	require.NoError(t, repo.Save(context.Background(), dep))
 
 	var status string
 	var deployedAt *time.Time
 	require.NoError(t, db.QueryRow(`SELECT status, deployed_at FROM deployments WHERE id=$1`, dep.ID()).Scan(&status, &deployedAt))
-	assert.Equal(t, "deployed", status)
+	assert.Equal(t, "starting", status)
 	assert.NotNil(t, deployedAt)
+}
+
+func TestRepo_Save_StampsStateChangedAtOnStatusChangeOnly(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	repo := postgres.NewDeploymentsRepository(db, testLogger())
+	ctx := context.Background()
+
+	dep := model.NewDeployment(validCmd(), nil, time.Now())
+	require.NoError(t, repo.Add(ctx, dep))
+	_, err := db.Exec(`UPDATE deployments SET state_changed_at = NOW() - interval '1 hour' WHERE id = $1`, dep.ID())
+	require.NoError(t, err)
+	age := func() time.Duration {
+		var secs float64
+		require.NoError(t, db.QueryRow(`SELECT EXTRACT(EPOCH FROM NOW() - state_changed_at) FROM deployments WHERE id = $1`, dep.ID()).Scan(&secs))
+		return time.Duration(secs * float64(time.Second))
+	}
+
+	require.NoError(t, repo.Save(ctx, dep)) // still pending
+	require.Greater(t, age(), 50*time.Minute, "a save without a status change keeps the clock")
+
+	require.NoError(t, dep.Reserve())
+	require.NoError(t, repo.Save(ctx, dep))
+	require.Less(t, age(), time.Minute, "a status change restarts the clock")
+}
+
+func TestRepo_PendingValidationCount_CountsReleasedRowsWithoutOutcome(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	repo := postgres.NewDeploymentsRepository(db, testLogger())
+	ctx := context.Background()
+
+	dep := model.NewValidationDeployment(validValidationCmd("rel-count", "n1"), nil, time.Now(), false)
+	require.NoError(t, repo.Add(ctx, dep))
+	_, err := db.Exec(`UPDATE deployments SET status = 'done' WHERE id = $1`, dep.ID())
+	require.NoError(t, err)
+
+	n, err := repo.PendingValidationCount(ctx, "rel-count", model.ModeValidation)
+	require.NoError(t, err)
+	require.Equal(t, 1, n, "a node whose slot was released without an outcome still holds the leg open")
 }
 
 func TestRepo_Save_RescheduleAndFail(t *testing.T) {
@@ -140,7 +181,10 @@ func TestRepo_Save_RescheduleAndFail(t *testing.T) {
 	require.NoError(t, repo.Add(context.Background(), dep))
 
 	// Transient failure → reschedule (stays pending, retry_count 1).
-	require.False(t, dep.RegisterFailure(now, false, "boom", backoff))
+	require.NoError(t, dep.Reserve())
+	terminal, err := dep.RegisterFailure(now, false, "boom", backoff)
+	require.NoError(t, err)
+	require.False(t, terminal)
 	require.NoError(t, repo.Save(context.Background(), dep))
 
 	var status, errMsg string
@@ -155,7 +199,10 @@ func TestRepo_Save_RescheduleAndFail(t *testing.T) {
 	assert.True(t, nextAt.After(now))
 
 	// Permanent failure → terminal.
-	require.True(t, dep.RegisterFailure(now, true, "fatal", backoff))
+	require.NoError(t, dep.Reserve())
+	terminal, err = dep.RegisterFailure(now, true, "fatal", backoff)
+	require.NoError(t, err)
+	require.True(t, terminal)
 	require.NoError(t, repo.Save(context.Background(), dep))
 	require.NoError(t, db.QueryRow(`SELECT status, error_message FROM deployments WHERE id=$1`, dep.ID()).Scan(&status, &errMsg))
 	assert.Equal(t, "failed", status)
@@ -336,16 +383,18 @@ func TestPendingValidationCount_PendingDeployedDoneMix(t *testing.T) {
 	pending := model.NewValidationDeployment(validValidationCmd("rel-3", "n1"), nil, now, false)
 	require.NoError(t, repo.Add(ctx, pending))
 
-	// deployed, outcome not yet recorded (counts)
+	// started, outcome not yet recorded (counts)
 	deployed := model.NewValidationDeployment(validValidationCmd("rel-3", "n2"), nil, now, false)
 	require.NoError(t, repo.Add(ctx, deployed))
-	require.NoError(t, deployed.MarkDeployed(now))
+	require.NoError(t, deployed.Reserve())
+	require.NoError(t, deployed.MarkStarted(now))
 	require.NoError(t, repo.Save(ctx, deployed))
 
-	// deployed + outcome recorded (does NOT count — terminal)
+	// started + outcome recorded (does NOT count — terminal)
 	done := model.NewValidationDeployment(validValidationCmd("rel-3", "n3"), nil, now, false)
 	require.NoError(t, repo.Add(ctx, done))
-	require.NoError(t, done.MarkDeployed(now))
+	require.NoError(t, done.Reserve())
+	require.NoError(t, done.MarkStarted(now))
 	require.NoError(t, done.RecordOutcome("ok", "s3://logs/n3", "", "", now))
 	require.NoError(t, repo.Save(ctx, done))
 
@@ -355,7 +404,7 @@ func TestPendingValidationCount_PendingDeployedDoneMix(t *testing.T) {
 
 	count, err := repo.PendingValidationCount(ctx, "rel-3", model.ModeValidation)
 	require.NoError(t, err)
-	assert.Equal(t, 2, count, "pending + deployed-without-outcome count; outcomed row excluded")
+	assert.Equal(t, 2, count, "pending + started-without-outcome count; outcomed row excluded")
 }
 
 func TestListValidationResults_OnlyOutcomedRows(t *testing.T) {
@@ -368,14 +417,16 @@ func TestListValidationResults_OnlyOutcomedRows(t *testing.T) {
 	// outcomed ok
 	okDep := model.NewValidationDeployment(validValidationCmd("rel-4", "n1"), nil, now, false)
 	require.NoError(t, repo.Add(ctx, okDep))
-	require.NoError(t, okDep.MarkDeployed(now))
+	require.NoError(t, okDep.Reserve())
+	require.NoError(t, okDep.MarkStarted(now))
 	require.NoError(t, okDep.RecordOutcome("ok", "s3://logs/n1", "", "", now))
 	require.NoError(t, repo.Save(ctx, okDep))
 
 	// outcomed failed (later outcome_at so it orders second)
 	failDep := model.NewValidationDeployment(validValidationCmd("rel-4", "n2"), nil, now, false)
 	require.NoError(t, repo.Add(ctx, failDep))
-	require.NoError(t, failDep.MarkDeployed(now))
+	require.NoError(t, failDep.Reserve())
+	require.NoError(t, failDep.MarkStarted(now))
 	require.NoError(t, failDep.RecordOutcome("failed", "s3://logs/n2", "run-results/n2.json", "", now.Add(time.Second)))
 	require.NoError(t, repo.Save(ctx, failDep))
 
@@ -416,14 +467,15 @@ func TestClaimEmission_FirstCallerWins_SecondReturnsFalse(t *testing.T) {
 	assert.True(t, wonOther)
 }
 
-// seedDeployedValidationNode inserts a mode=validation row in status=deployed
+// seedDeployedValidationNode inserts a mode=validation row in status=starting
 // with no outcome yet — i.e. one that PendingValidationCount counts as pending.
 func seedDeployedValidationNode(t *testing.T, db *sqlx.DB, releaseID, nodeID string, now time.Time) {
 	t.Helper()
 	repo := postgres.NewDeploymentsRepository(db, testLogger())
 	dep := model.NewValidationDeployment(validValidationCmd(releaseID, nodeID), nil, now, false)
 	require.NoError(t, repo.Add(context.Background(), dep))
-	require.NoError(t, dep.MarkDeployed(now))
+	require.NoError(t, dep.Reserve())
+	require.NoError(t, dep.MarkStarted(now))
 	require.NoError(t, repo.Save(context.Background(), dep))
 }
 
@@ -588,7 +640,8 @@ func TestCrossModeIsolation_SameReleaseID(t *testing.T) {
 	// One terminal-ok seed-build row.
 	seed := model.NewSeedBuildDeployment(validSeedBuildCmd(releaseID, "seed.fx"), nil, now)
 	require.NoError(t, repo.Add(ctx, seed))
-	require.NoError(t, seed.MarkDeployed(now))
+	require.NoError(t, seed.Reserve())
+	require.NoError(t, seed.MarkStarted(now))
 	require.NoError(t, seed.RecordOutcome("ok", "", "", "", now))
 	require.NoError(t, repo.Save(ctx, seed))
 
@@ -652,7 +705,8 @@ func TestSeedBuildAggregateGate_EmitsCompletion(t *testing.T) {
 	repo := postgres.NewDeploymentsRepository(db, logger)
 	seed := model.NewSeedBuildDeployment(validSeedBuildCmd(releaseID, "seed.fx"), nil, now)
 	require.NoError(t, repo.Add(ctx, seed))
-	require.NoError(t, seed.MarkDeployed(now))
+	require.NoError(t, seed.Reserve())
+	require.NoError(t, seed.MarkStarted(now))
 	require.NoError(t, repo.Save(ctx, seed))
 
 	tx, err := db.BeginTxx(ctx, nil)
@@ -760,7 +814,8 @@ func TestAdd_CompileRow_FailedContainer_RoundTrip(t *testing.T) {
 
 	dep := model.NewCompileDeployment(validCompileCmd("rel-fc", "compile.svc"), nil, now)
 	require.NoError(t, repo.Add(ctx, dep))
-	require.NoError(t, dep.MarkDeployed(now))
+	require.NoError(t, dep.Reserve())
+	require.NoError(t, dep.MarkStarted(now))
 	require.NoError(t, repo.Save(ctx, dep))
 
 	// Before RecordOutcome, failed_container reads back empty.

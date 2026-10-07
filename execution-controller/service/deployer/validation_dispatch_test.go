@@ -179,6 +179,7 @@ func TestDispatcher_DispatchOne_ValidationMode_CallsDeployValidation(t *testing.
 	repo := &fakeDeploymentRepo{}
 	dep := model.NewValidationDeployment(deployableValidation(), nil, time.Now(), false)
 
+	require.NoError(t, dep.Reserve())
 	require.NoError(t, d.dispatchOne(context.Background(), repo, &fakeOutboxRepo{}, &fakeAggRepo{}, dep))
 
 	assert.Equal(t, 1, fk.validationCalls, "DeployValidation invoked once")
@@ -193,10 +194,11 @@ func TestDispatcher_DispatchOne_ValidationMode_OnSuccess_WritesCheckDelayedTicke
 	vc := deployableValidation()
 	dep := model.NewValidationDeployment(vc, nil, time.Now(), false)
 
+	require.NoError(t, dep.Reserve())
 	require.NoError(t, d.dispatchOne(context.Background(), repo, outboxRepo, &fakeAggRepo{}, dep))
 
 	require.Len(t, repo.saved, 1)
-	assert.Equal(t, model.StatusDeployed, repo.saved[0].Status(), "success marks deployed")
+	assert.Equal(t, model.StatusStarting, repo.saved[0].Status(), "success marks the Job started")
 	assert.Equal(t, "", repo.saved[0].Outcome(), "no terminal outcome yet — it arrives when the job-status handler observes the terminal Job and records it via outcomes.Recorder")
 
 	// Success writes EXACTLY ONE row: the first check_delayed ticket so the
@@ -231,12 +233,14 @@ func TestDispatcher_DispatchOne_ValidationMode_OnPermanentFailure_RecordsOutcome
 	fk := &fakeValidationDeployer{deployErr: errors.Join(errors.New("bad image"), pkgevents.ErrPermanent)}
 	d := silentDispatcher(fk)
 	failed := model.NewValidationDeployment(deployableValidation(), nil, time.Now(), false)
+	require.NoError(t, failed.Reserve())
 	require.NoError(t, failed.FailValidation("bad image", time.Now())) // the row as ListValidationResults would return it
 	repo := &fakeDeploymentRepo{pending: 0, results: []*model.Deployment{failed}}
 	outboxRepo := &fakeOutboxRepo{}
 	agg := &fakeAggRepo{won: true}
 	dep := model.NewValidationDeployment(deployableValidation(), nil, time.Now(), false)
 
+	require.NoError(t, dep.Reserve())
 	require.NoError(t, d.dispatchOne(context.Background(), repo, outboxRepo, agg, dep))
 
 	require.Len(t, repo.saved, 1)
@@ -259,6 +263,7 @@ func TestDispatcher_DispatchOne_ValidationMode_NotDeployable_SavesFailedBeforeGa
 	d := silentDispatcher(&fakeValidationDeployer{})
 	// pending=0 models the DB state once this last node's outcome is persisted.
 	failed := model.NewValidationDeployment(deployableValidation(), nil, time.Now(), false)
+	require.NoError(t, failed.Reserve())
 	require.NoError(t, failed.FailValidation("not deployable", time.Now()))
 	repo := &fakeDeploymentRepo{pending: 0, results: []*model.Deployment{failed}}
 	outboxRepo := &fakeOutboxRepo{}
@@ -270,6 +275,7 @@ func TestDispatcher_DispatchOne_ValidationMode_NotDeployable_SavesFailedBeforeGa
 	}, nil, time.Now(), false)
 	require.False(t, dep.IsDeployable())
 
+	require.NoError(t, dep.Reserve())
 	require.NoError(t, d.dispatchOne(context.Background(), repo, outboxRepo, agg, dep))
 
 	require.Len(t, repo.saved, 1)
@@ -326,8 +332,7 @@ func (r *chainDeploymentRepo) GetByReleaseNode(_ context.Context, _ string, node
 func (r *chainDeploymentRepo) PendingValidationCount(context.Context, string, model.Mode) (int, error) {
 	count := 0
 	for _, d := range r.nodes {
-		switch d.Status() {
-		case model.StatusPending, model.StatusBlocked, model.StatusDeployed:
+		if !d.HasOutcome() {
 			count++
 		}
 	}
@@ -393,6 +398,7 @@ func TestDispatcher_DispatchValidation_FailAtDispatch_SkipsDescendant_EmitsAggre
 	outboxRepo := &fakeOutboxRepo{}
 	agg := &fakeAggRepo{won: true}
 
+	require.NoError(t, a.Reserve())
 	require.NoError(t, d.dispatchValidation(context.Background(), repo, outboxRepo, agg, a))
 
 	assert.Equal(t, model.StatusFailed, repo.statusOf("node_a"), "A failed at dispatch")
@@ -430,7 +436,8 @@ func recordedResult(t *testing.T, nodeID, outcome, logURI string) *model.Deploym
 	cmd.NodeID = nodeID
 	now := time.Now()
 	d := model.NewValidationDeployment(cmd, nil, now, false)
-	require.NoError(t, d.MarkDeployed(now))
+	require.NoError(t, d.Reserve())
+	require.NoError(t, d.MarkStarted(now))
 	require.NoError(t, d.RecordOutcome(outcome, logURI, "", "", now))
 	return d
 }
@@ -572,6 +579,7 @@ func TestDispatcher_DispatchOne_SeedBuildMode_CallsDeploySeedBuild(t *testing.T)
 	repo := &fakeDeploymentRepo{}
 	dep := model.NewSeedBuildDeployment(deployableSeedBuild(), nil, time.Now())
 
+	require.NoError(t, dep.Reserve())
 	require.NoError(t, d.dispatchOne(context.Background(), repo, &fakeOutboxRepo{}, &fakeAggRepo{}, dep))
 
 	assert.Equal(t, 1, fk.seedBuildCalls, "DeploySeedBuild invoked once")
@@ -587,10 +595,11 @@ func TestDispatcher_DispatchOne_SeedBuildMode_OnSuccess_MarksDeployedAndWritesCh
 	vc := deployableSeedBuild()
 	dep := model.NewSeedBuildDeployment(vc, nil, time.Now())
 
+	require.NoError(t, dep.Reserve())
 	require.NoError(t, d.dispatchOne(context.Background(), repo, outboxRepo, &fakeAggRepo{}, dep))
 
 	require.Len(t, repo.saved, 1)
-	assert.Equal(t, model.StatusDeployed, repo.saved[0].Status(), "success marks deployed")
+	assert.Equal(t, model.StatusStarting, repo.saved[0].Status(), "success marks the Job started")
 	assert.Equal(t, "", repo.saved[0].Outcome(), "no terminal outcome yet — arrives when the job-status handler observes the terminal Job and records it via outcomes.Recorder")
 
 	// Success writes exactly one outbox row: the first check_delayed ticket.
@@ -622,12 +631,14 @@ func TestDispatcher_DispatchOne_SeedBuildMode_OnPermanentFailure_RecordsOutcomeF
 	fk := &fakeValidationDeployer{deployErr: errors.Join(errors.New("bad image"), pkgevents.ErrPermanent)}
 	d := silentDispatcher(fk)
 	failed := model.NewSeedBuildDeployment(deployableSeedBuild(), nil, time.Now())
+	require.NoError(t, failed.Reserve())
 	require.NoError(t, failed.FailSeedBuild("bad image", time.Now()))
 	repo := &fakeDeploymentRepo{pending: 0, results: []*model.Deployment{failed}}
 	outboxRepo := &fakeOutboxRepo{}
 	agg := &fakeAggRepo{won: true}
 	dep := model.NewSeedBuildDeployment(deployableSeedBuild(), nil, time.Now())
 
+	require.NoError(t, dep.Reserve())
 	require.NoError(t, d.dispatchOne(context.Background(), repo, outboxRepo, agg, dep))
 
 	require.Len(t, repo.saved, 1)
@@ -641,6 +652,7 @@ func TestDispatcher_DispatchOne_SeedBuildMode_OnPermanentFailure_RecordsOutcomeF
 func TestDispatcher_DispatchOne_SeedBuildMode_NotDeployable_SavesFailedBeforeGate(t *testing.T) {
 	d := silentDispatcher(&fakeValidationDeployer{})
 	failed := model.NewSeedBuildDeployment(deployableSeedBuild(), nil, time.Now())
+	require.NoError(t, failed.Reserve())
 	require.NoError(t, failed.FailSeedBuild("not deployable", time.Now()))
 	repo := &fakeDeploymentRepo{pending: 0, results: []*model.Deployment{failed}}
 	outboxRepo := &fakeOutboxRepo{}
@@ -652,6 +664,7 @@ func TestDispatcher_DispatchOne_SeedBuildMode_NotDeployable_SavesFailedBeforeGat
 	}, nil, time.Now())
 	require.False(t, dep.IsDeployable())
 
+	require.NoError(t, dep.Reserve())
 	require.NoError(t, d.dispatchOne(context.Background(), repo, outboxRepo, agg, dep))
 
 	require.Len(t, repo.saved, 1)
@@ -683,6 +696,7 @@ func TestDispatcher_DispatchOne_CompileMode_CallsDeployCompile(t *testing.T) {
 	repo := &fakeDeploymentRepo{}
 	dep := model.NewCompileDeployment(deployableCompile(), nil, time.Now())
 
+	require.NoError(t, dep.Reserve())
 	require.NoError(t, d.dispatchOne(context.Background(), repo, &fakeOutboxRepo{}, &fakeAggRepo{}, dep))
 
 	assert.Equal(t, 1, fk.compileCalls, "DeployCompile invoked once")
@@ -699,10 +713,11 @@ func TestDispatcher_DispatchOne_CompileMode_OnSuccess_MarksDeployedAndWritesChec
 	vc := deployableCompile()
 	dep := model.NewCompileDeployment(vc, nil, time.Now())
 
+	require.NoError(t, dep.Reserve())
 	require.NoError(t, d.dispatchOne(context.Background(), repo, outboxRepo, &fakeAggRepo{}, dep))
 
 	require.Len(t, repo.saved, 1)
-	assert.Equal(t, model.StatusDeployed, repo.saved[0].Status(), "success marks deployed")
+	assert.Equal(t, model.StatusStarting, repo.saved[0].Status(), "success marks the Job started")
 	assert.Equal(t, "", repo.saved[0].Outcome(), "no terminal outcome yet — arrives when the job-status handler observes the terminal Job and records it via outcomes.Recorder")
 
 	// Success writes exactly one outbox row: the first check_delayed ticket.
@@ -716,12 +731,14 @@ func TestDispatcher_DispatchOne_CompileMode_OnPermanentFailure_RecordsOutcomeFai
 	fk := &fakeValidationDeployer{deployErr: errors.Join(errors.New("bad image"), pkgevents.ErrPermanent)}
 	d := silentDispatcher(fk)
 	failed := model.NewCompileDeployment(deployableCompile(), nil, time.Now())
+	require.NoError(t, failed.Reserve())
 	require.NoError(t, failed.FailCompile("bad image", time.Now()))
 	repo := &fakeDeploymentRepo{pending: 0, results: []*model.Deployment{failed}}
 	outboxRepo := &fakeOutboxRepo{}
 	agg := &fakeAggRepo{won: true}
 	dep := model.NewCompileDeployment(deployableCompile(), nil, time.Now())
 
+	require.NoError(t, dep.Reserve())
 	require.NoError(t, d.dispatchOne(context.Background(), repo, outboxRepo, agg, dep))
 
 	require.Len(t, repo.saved, 1)
@@ -740,6 +757,7 @@ func TestDispatcher_DispatchOne_CompileMode_OnPermanentFailure_RecordsOutcomeFai
 func TestDispatcher_DispatchOne_CompileMode_NotDeployable_SavesFailedBeforeGate(t *testing.T) {
 	d := silentDispatcher(&fakeValidationDeployer{})
 	failed := model.NewCompileDeployment(deployableCompile(), nil, time.Now())
+	require.NoError(t, failed.Reserve())
 	require.NoError(t, failed.FailCompile("not deployable", time.Now()))
 	repo := &fakeDeploymentRepo{pending: 0, results: []*model.Deployment{failed}}
 	outboxRepo := &fakeOutboxRepo{}
@@ -752,6 +770,7 @@ func TestDispatcher_DispatchOne_CompileMode_NotDeployable_SavesFailedBeforeGate(
 	}, nil, time.Now())
 	require.False(t, dep.IsDeployable())
 
+	require.NoError(t, dep.Reserve())
 	require.NoError(t, d.dispatchOne(context.Background(), repo, outboxRepo, agg, dep))
 
 	require.Len(t, repo.saved, 1)
@@ -779,6 +798,7 @@ func TestDispatcher_NormalProduction_NonDeployable_EmitsFailedAnnouncements(t *t
 	dep := model.NewDeployment(cmd, nil, time.Now())
 	require.False(t, dep.IsDeployable())
 
+	require.NoError(t, dep.Reserve())
 	require.NoError(t, d.dispatchOne(context.Background(), repo, outboxRepo, &fakeAggRepo{}, dep))
 
 	assert.NotEmpty(t, outboxRepo.created, "normal production must emit failure announcements")

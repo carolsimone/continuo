@@ -50,17 +50,10 @@ func (r *chainDepRepo) GetByReleaseNode(_ context.Context, _ string, nodeID stri
 }
 func (r *chainDepRepo) PendingValidationCount(context.Context, string, model.Mode) (int, error) {
 	// Mirrors the production query (deployments_repository.go PendingValidationCount):
-	// status in {pending, blocked, deployed} AND outcome not yet recorded. A node
-	// can sit at status=deployed with its outcome already recorded (RecordOutcome
-	// does not itself advance status), so both conditions are required — status
-	// alone over-counts terminal-but-still-"deployed" nodes as pending.
+	// every row whose outcome is not yet recorded, whatever its status.
 	count := 0
 	for _, d := range r.nodes {
-		if d.Outcome() != "" {
-			continue
-		}
-		switch d.Status() {
-		case model.StatusPending, model.StatusBlocked, model.StatusDeployed:
+		if !d.HasOutcome() {
 			count++
 		}
 	}
@@ -144,8 +137,13 @@ func validationNode(t *testing.T, releaseID, nodeID string, status model.Status,
 	hasUpstreams := len(ups) > 0
 	d := model.NewValidationDeployment(cmd, nil, now, hasUpstreams)
 	switch status {
-	case model.StatusDeployed:
-		require.NoError(t, d.MarkDeployed(now), "seed %s deployed", nodeID)
+	case model.StatusReserved:
+		require.NoError(t, d.Reserve(), "seed %s reserved", nodeID)
+	case model.StatusRunning:
+		require.NoError(t, d.Reserve(), "seed %s reserved", nodeID)
+		require.NoError(t, d.MarkStarted(now), "seed %s started", nodeID)
+		_, err := d.MarkRunning()
+		require.NoError(t, err, "seed %s running", nodeID)
 	case model.StatusBlocked:
 		// NewValidationDeployment with hasUpstreams=true is already blocked.
 	case model.StatusPending:
@@ -154,7 +152,7 @@ func validationNode(t *testing.T, releaseID, nodeID string, status model.Status,
 	return d
 }
 
-// markOk drives a deployed node to a terminal ok outcome (records it back).
+// markOk drives a running node to a terminal ok outcome (records it back).
 func markOk(t *testing.T, d *model.Deployment) {
 	t.Helper()
 	require.NoError(t, d.RecordOutcome("ok", "", "", "", time.Now()))
@@ -166,7 +164,7 @@ func markOk(t *testing.T, d *model.Deployment) {
 // descendants and, once nothing remains pending, emits a failed aggregate.
 func TestSettleNodeTerminal_FailureSkipsTransitiveDescendants_EmitsFailedAggregate(t *testing.T) {
 	log := &callLog{}
-	a1 := validationNode(t, "rel", "a1", model.StatusDeployed)
+	a1 := validationNode(t, "rel", "a1", model.StatusReserved)
 	require.NoError(t, a1.FailValidation("boom", time.Now())) // a1 already terminal failed
 	a2 := validationNode(t, "rel", "a2", model.StatusBlocked, "a1")
 	a3 := validationNode(t, "rel", "a3", model.StatusBlocked, "a2")
@@ -191,7 +189,7 @@ func TestSettleNodeTerminal_FailureSkipsTransitiveDescendants_EmitsFailedAggrega
 // precede any Save.
 func TestSettleNodeTerminal_LocksBeforePropagationAndEmit(t *testing.T) {
 	log := &callLog{}
-	a1 := validationNode(t, "rel", "a1", model.StatusDeployed)
+	a1 := validationNode(t, "rel", "a1", model.StatusReserved)
 	require.NoError(t, a1.FailValidation("boom", time.Now()))
 	a2 := validationNode(t, "rel", "a2", model.StatusBlocked, "a1")
 	repo := newChainDepRepo(log, a1, a2)
@@ -220,8 +218,8 @@ func TestSettleNodeTerminal_LocksBeforePropagationAndEmit(t *testing.T) {
 // under the lock, observes the first settle's committed outcome.
 func TestSettleNodeTerminal_MultiUpstreamConvergesSequentially(t *testing.T) {
 	log := &callLog{}
-	a1 := validationNode(t, "rel", "a1", model.StatusDeployed)
-	b1 := validationNode(t, "rel", "b1", model.StatusDeployed)
+	a1 := validationNode(t, "rel", "a1", model.StatusRunning)
+	b1 := validationNode(t, "rel", "b1", model.StatusRunning)
 	c := validationNode(t, "rel", "c", model.StatusBlocked, "a1", "b1")
 	repo := newChainDepRepo(log, a1, b1, c)
 	outboxRepo := &captureOutbox{}
@@ -250,7 +248,7 @@ func TestSettleNodeTerminal_MultiUpstreamConvergesSequentially(t *testing.T) {
 // is the per-node projection, and its payload carries this node's outcome.
 func TestSettleNodeTerminal_EmitsPerNodeProjectionRow(t *testing.T) {
 	log := &callLog{}
-	a := validationNode(t, "rel-1", "node.a", model.StatusDeployed)
+	a := validationNode(t, "rel-1", "node.a", model.StatusRunning)
 	require.NoError(t, a.RecordOutcome("ok", "s3://logs/a.txt", "", "", time.Now()))
 	b := validationNode(t, "rel-1", "node.b", model.StatusPending)
 	repo := newChainDepRepo(log, a, b)
@@ -286,7 +284,7 @@ func TestSettleNodeTerminal_EmitsPerNodeProjectionRow(t *testing.T) {
 // waits forever for those nodes' projections and the release hangs in validating.
 func TestSettleNodeTerminal_FailureEmitsSkippedProjectionForDescendants(t *testing.T) {
 	log := &callLog{}
-	a1 := validationNode(t, "rel", "a1", model.StatusDeployed)
+	a1 := validationNode(t, "rel", "a1", model.StatusReserved)
 	require.NoError(t, a1.FailValidation("boom", time.Now())) // a1 terminal failed
 	a2 := validationNode(t, "rel", "a2", model.StatusBlocked, "a1")
 	a3 := validationNode(t, "rel", "a3", model.StatusBlocked, "a2")
@@ -341,8 +339,8 @@ func TestSettleNodeTerminal_FailureEmitsSkippedProjectionForDescendants(t *testi
 // holds back neither the other per-node rows nor the terminal.
 func TestSettleNodeTerminal_PerNodeUsesDistinctAggregateID(t *testing.T) {
 	log := &callLog{}
-	a := validationNode(t, "rel-2", "node.a", model.StatusDeployed)
-	b := validationNode(t, "rel-2", "node.b", model.StatusDeployed)
+	a := validationNode(t, "rel-2", "node.a", model.StatusRunning)
+	b := validationNode(t, "rel-2", "node.b", model.StatusRunning)
 	repo := newChainDepRepo(log, a, b)
 	outboxRepo := &captureOutbox{}
 	agg := &orderedAggRepo{won: true, log: log}

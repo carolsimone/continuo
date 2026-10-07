@@ -87,10 +87,11 @@ func (r *stubAggRepo) ClaimEmission(context.Context, string, model.Mode, time.Ti
 }
 
 // newBlockedValidationDeployment builds a validation deployment in
-// status=deployed (ready to receive an outcome) for (releaseID, nodeID). Despite
+// status=starting (ready to receive an outcome) for (releaseID, nodeID). Despite
 // the name, it is the "ready" fixture the recorder needs — NewValidationDeployment
-// with no upstreams starts pending, and RecordOutcome requires status=deployed, so
-// it is driven to deployed via MarkDeployed before being handed to the recorder.
+// with no upstreams starts pending, and RecordOutcome requires a started Job, so
+// it is driven to starting via Reserve and MarkStarted before being handed to
+// the recorder.
 func newBlockedValidationDeployment(t *testing.T, releaseID, nodeID string) *model.Deployment {
 	t.Helper()
 	cmd := command.ValidationDeployTask{
@@ -100,7 +101,8 @@ func newBlockedValidationDeployment(t *testing.T, releaseID, nodeID string) *mod
 	}
 	now := time.Now()
 	d := model.NewValidationDeployment(cmd, nil, now, false)
-	require.NoError(t, d.MarkDeployed(now))
+	require.NoError(t, d.Reserve())
+	require.NoError(t, d.MarkStarted(now))
 	return d
 }
 
@@ -147,7 +149,7 @@ func TestRecord_UnknownReleaseNodeIsNoOp(t *testing.T) {
 	assert.Equal(t, 0, u.Outbox.(*fakes.FakeOutboxRepository).CreateCallCount)
 }
 
-// newDeployedSeedBuild builds a seed-build deployment in status=deployed, ready
+// newDeployedSeedBuild builds a seed-build deployment in status=starting, ready
 // to receive an outcome, for (releaseID, nodeID).
 func newDeployedSeedBuild(t *testing.T, releaseID, nodeID string) *model.Deployment {
 	t.Helper()
@@ -158,7 +160,8 @@ func newDeployedSeedBuild(t *testing.T, releaseID, nodeID string) *model.Deploym
 	}
 	now := time.Now()
 	d := model.NewSeedBuildDeployment(cmd, nil, now)
-	require.NoError(t, d.MarkDeployed(now))
+	require.NoError(t, d.Reserve())
+	require.NoError(t, d.MarkStarted(now))
 	return d
 }
 
@@ -179,7 +182,7 @@ func TestRecord_SeedBuildOutcomeSettlesAggregateWhenComplete(t *testing.T) {
 	assert.Equal(t, 1, entries.CreateCallCount, "seed.build.completed:v1 emitted")
 }
 
-// newDeployedCompile builds a compile deployment in status=deployed, ready to
+// newDeployedCompile builds a compile deployment in status=starting, ready to
 // receive an outcome, for (releaseID, nodeID).
 func newDeployedCompile(t *testing.T, releaseID, nodeID string) *model.Deployment {
 	t.Helper()
@@ -190,7 +193,8 @@ func newDeployedCompile(t *testing.T, releaseID, nodeID string) *model.Deploymen
 	}
 	now := time.Now()
 	d := model.NewCompileDeployment(cmd, nil, now)
-	require.NoError(t, d.MarkDeployed(now))
+	require.NoError(t, d.Reserve())
+	require.NoError(t, d.MarkStarted(now))
 	return d
 }
 

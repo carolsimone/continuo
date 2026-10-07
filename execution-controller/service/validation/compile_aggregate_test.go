@@ -27,7 +27,8 @@ func compileDep(t *testing.T, releaseID, nodeID, outcome string) *model.Deployme
 		ImageTag:  "t",
 	}
 	dep := model.NewCompileDeployment(cmd, nil, time.Now())
-	require.NoError(t, dep.MarkDeployed(time.Now()))
+	require.NoError(t, dep.Reserve())
+	require.NoError(t, dep.MarkStarted(time.Now()))
 	require.NoError(t, dep.RecordOutcome(outcome, "", "", "", time.Now()))
 	return dep
 }
@@ -89,7 +90,8 @@ func TestSettleCompileNode_FailedWithContainer_IncludesFailedContainer(t *testin
 		NodeType: "dbt-model", ImageTag: "t",
 	}
 	dep := model.NewCompileDeployment(cmd, nil, time.Now())
-	require.NoError(t, dep.MarkDeployed(time.Now()))
+	require.NoError(t, dep.Reserve())
+	require.NoError(t, dep.MarkStarted(time.Now()))
 	require.NoError(t, dep.RecordOutcome("failed", "", "", "parse-prod", time.Now()))
 
 	depRepo := &fakeDepRepo{pending: 0, results: []*model.Deployment{dep}}

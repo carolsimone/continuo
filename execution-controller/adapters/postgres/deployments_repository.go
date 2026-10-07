@@ -127,7 +127,8 @@ func (r *deploymentsRepository) Save(ctx context.Context, d *model.Deployment) e
 	const query = `
 		UPDATE deployments
 		SET status = $2, retry_count = $3, next_attempt_at = $4, deployed_at = $5, error_message = $6,
-		    outcome = $7, dbt_log_uri = $8, outcome_at = $9, run_results_uri = $10, failed_container = $11
+		    outcome = $7, dbt_log_uri = $8, outcome_at = $9, run_results_uri = $10, failed_container = $11,
+		    state_changed_at = CASE WHEN status <> $2 THEN NOW() ELSE state_changed_at END
 		WHERE id = $1`
 	res, err := r.exec.ExecContext(ctx, query,
 		d.ID(), string(d.Status()), d.RetryCount(), d.NextAttemptAt(), d.DeployedAt(), d.ErrorMessage(),
@@ -176,8 +177,7 @@ func (r *deploymentsRepository) PendingValidationCount(ctx context.Context, rele
 	const query = `
 		SELECT COUNT(*)
 		FROM deployments
-		WHERE mode = $2 AND release_id = $1
-		  AND status IN ('pending','blocked','deployed') AND outcome IS NULL`
+		WHERE mode = $2 AND release_id = $1 AND outcome IS NULL`
 	var n int
 	if err := r.exec.QueryRowContext(ctx, query, releaseID, string(mode)).Scan(&n); err != nil {
 		return 0, fmt.Errorf("count pending validations for release %s: %w", releaseID, err)

@@ -192,8 +192,12 @@ func (d *Dispatcher) processOne(ctx context.Context) (bool, error) {
 		return false, nil
 	}
 
-	if err := d.dispatchOne(ctx, repo, outboxRepo, aggRepo, due[0]); err != nil {
-		return false, fmt.Errorf("dispatch deployment %s: %w", due[0].ID(), err)
+	dep := due[0]
+	if err := dep.Reserve(); err != nil {
+		return false, err
+	}
+	if err := d.dispatchOne(ctx, repo, outboxRepo, aggRepo, dep); err != nil {
+		return false, fmt.Errorf("dispatch deployment %s: %w", dep.ID(), err)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -225,7 +229,9 @@ func (d *Dispatcher) dispatchOne(ctx context.Context, repo repository.Deployment
 	// A row whose job_params could not be deserialized is unrunnable; fail it
 	// permanently with a routable announcement built from its recovered identity.
 	if !dep.IsDeployable() {
-		dep.RegisterFailure(now, true, "deployment job_params not deployable", d.backoff)
+		if _, err := dep.RegisterFailure(now, true, "deployment job_params not deployable", d.backoff); err != nil {
+			return err
+		}
 		if !isLegacyPromoteSeed {
 			if err := d.writeFailedAnnouncements(ctx, outboxRepo, dep); err != nil {
 				return err
@@ -241,14 +247,18 @@ func (d *Dispatcher) dispatchOne(ctx context.Context, repo repository.Deployment
 				return err
 			}
 		}
-		if err := dep.MarkDeployed(now); err != nil {
+		if err := dep.MarkStarted(now); err != nil {
 			return err
 		}
 		return repo.Save(ctx, dep)
 	}
 
 	permanent := errors.Is(deployErr, pkgevents.ErrPermanent)
-	if dep.RegisterFailure(now, permanent, deployErr.Error(), d.backoff) {
+	terminal, err := dep.RegisterFailure(now, permanent, deployErr.Error(), d.backoff)
+	if err != nil {
+		return err
+	}
+	if terminal {
 		d.logger.Error("Deploy terminal failure", "deployment_id", dep.ID(), "cause", deployErr)
 		if !isLegacyPromoteSeed {
 			if err := d.writeFailedAnnouncements(ctx, outboxRepo, dep); err != nil {
@@ -263,15 +273,15 @@ func (d *Dispatcher) dispatchOne(ctx context.Context, repo repository.Deployment
 }
 
 // dispatchValidation handles a mode=validation row. On success it marks the row
-// deployed and writes the first check_delayed ticket so the job-status handler
+// starting and writes the first check_delayed ticket so the job-status handler
 // status-checks the validation Job (it never polls); it skips the production-only
 // task_status_updated announcement. The per-node terminal outcome ("ok"/"failed")
 // arrives later when the job-status handler observes the terminal Job and records
 // it via outcomes.Recorder, which then triggers the aggregate emit. A validation
 // row that cannot be dispatched
 // (not deployable, or a permanent pre-deploy deployer error) is failed terminally
-// here via FailValidation — which sets a "failed" outcome from pending without
-// requiring StatusDeployed — and we then settle the node: its blocked descendants
+// here via FailValidation — which sets a "failed" outcome on a reserved row whose
+// Job was never created — and we then settle the node: its blocked descendants
 // are skipped and the per-release aggregate is emitted (under the advisory lock),
 // so a release whose node fails at dispatch never strands its downstream rows in
 // "blocked" and still announces its (failed) result.
@@ -295,7 +305,7 @@ func (d *Dispatcher) dispatchValidation(ctx context.Context, repo repository.Dep
 
 	deployErr := d.deployer.DeployValidation(ctx, dep.ValidationCommand().ToValidationJobSpec())
 	if deployErr == nil {
-		if err := dep.MarkDeployed(now); err != nil {
+		if err := dep.MarkStarted(now); err != nil {
 			return err
 		}
 		if err := d.writeFirstCheck(ctx, outboxRepo, dep); err != nil {
@@ -305,7 +315,11 @@ func (d *Dispatcher) dispatchValidation(ctx context.Context, repo repository.Dep
 	}
 
 	permanent := errors.Is(deployErr, pkgevents.ErrPermanent)
-	if dep.RegisterFailure(now, permanent, deployErr.Error(), d.backoff) { // terminal
+	terminal, err := dep.RegisterFailure(now, permanent, deployErr.Error(), d.backoff)
+	if err != nil {
+		return err
+	}
+	if terminal {
 		d.logger.Error("Validation deploy terminal failure",
 			"deployment_id", dep.ID(), "release_id", dep.ReleaseID(), "node_id", dep.NodeID(), "cause", deployErr)
 		if err := dep.FailValidation(deployErr.Error(), now); err != nil {
@@ -338,7 +352,7 @@ func (d *Dispatcher) settleFailedValidation(ctx context.Context, repo repository
 }
 
 // dispatchSeedBuild handles a mode=seed_build row. It is structurally identical
-// to dispatchValidation: on success it marks the row deployed and writes the
+// to dispatchValidation: on success it marks the row started and writes the
 // first check_delayed ticket so the job-status handler status-checks the
 // seed-build Job; on terminal failure it fails the row and settles the per-release seed-build
 // aggregate. Seeds are flat roots with no blocked downstreams so
@@ -364,7 +378,7 @@ func (d *Dispatcher) dispatchSeedBuild(ctx context.Context, repo repository.Depl
 
 	deployErr := d.deployer.DeploySeedBuild(ctx, dep.ValidationCommand().ToValidationJobSpec())
 	if deployErr == nil {
-		if err := dep.MarkDeployed(now); err != nil {
+		if err := dep.MarkStarted(now); err != nil {
 			return err
 		}
 		if err := d.writeFirstCheck(ctx, outboxRepo, dep); err != nil {
@@ -374,7 +388,11 @@ func (d *Dispatcher) dispatchSeedBuild(ctx context.Context, repo repository.Depl
 	}
 
 	permanent := errors.Is(deployErr, pkgevents.ErrPermanent)
-	if dep.RegisterFailure(now, permanent, deployErr.Error(), d.backoff) { // terminal
+	terminal, err := dep.RegisterFailure(now, permanent, deployErr.Error(), d.backoff)
+	if err != nil {
+		return err
+	}
+	if terminal {
 		d.logger.Error("Seed-build deploy terminal failure",
 			"deployment_id", dep.ID(), "release_id", dep.ReleaseID(), "node_id", dep.NodeID(), "cause", deployErr)
 		if err := dep.FailSeedBuild(deployErr.Error(), now); err != nil {
@@ -405,7 +423,7 @@ func (d *Dispatcher) settleFailedSeedBuild(ctx context.Context, repo repository.
 }
 
 // dispatchCompile handles a mode=compile row. It is structurally identical to
-// dispatchSeedBuild: on success it marks the row deployed and writes the first
+// dispatchSeedBuild: on success it marks the row started and writes the first
 // check_delayed ticket so the job-status handler status-checks the compile Job; on
 // terminal failure it fails the row and settles the per-release compile
 // aggregate via SettleCompileNodeTerminal. Compile is a single root node (no
@@ -432,7 +450,7 @@ func (d *Dispatcher) dispatchCompile(ctx context.Context, repo repository.Deploy
 
 	deployErr := d.deployer.DeployCompile(ctx, dep.ValidationCommand().ToValidationJobSpec())
 	if deployErr == nil {
-		if err := dep.MarkDeployed(now); err != nil {
+		if err := dep.MarkStarted(now); err != nil {
 			return err
 		}
 		if err := d.writeFirstCheck(ctx, outboxRepo, dep); err != nil {
@@ -442,7 +460,11 @@ func (d *Dispatcher) dispatchCompile(ctx context.Context, repo repository.Deploy
 	}
 
 	permanent := errors.Is(deployErr, pkgevents.ErrPermanent)
-	if dep.RegisterFailure(now, permanent, deployErr.Error(), d.backoff) { // terminal
+	terminal, err := dep.RegisterFailure(now, permanent, deployErr.Error(), d.backoff)
+	if err != nil {
+		return err
+	}
+	if terminal {
 		d.logger.Error("Compile deploy terminal failure",
 			"deployment_id", dep.ID(), "release_id", dep.ReleaseID(), "node_id", dep.NodeID(), "cause", deployErr)
 		if err := dep.FailCompile(deployErr.Error(), now); err != nil {
