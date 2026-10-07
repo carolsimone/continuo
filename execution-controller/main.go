@@ -283,17 +283,21 @@ func main() {
 	}
 	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error { return dispatcherWaker.CloseContext(ctx) })
 
+	newDeploymentRepo := func(exec pkgoutbox.Executor) repository.DeploymentRepository {
+		return postgres.NewDeploymentsRepository(exec, logger)
+	}
+	newAdmissionRepo := func(exec pkgoutbox.Executor) repository.AdmissionRepository {
+		return postgres.NewAdmissionRepository(exec, logger)
+	}
+	k8sDeployer := k8s.NewDeployer(k8sClient, cfg.K8sNamespace)
+
 	deployDispatcher := deployer.NewDispatcher(
-		pgDB, k8s.NewDeployer(k8sClient, cfg.K8sNamespace),
-		func(exec pkgoutbox.Executor) repository.DeploymentRepository {
-			return postgres.NewDeploymentsRepository(exec, logger)
-		},
+		pgDB, k8sDeployer,
+		newDeploymentRepo,
 		func(exec pkgoutbox.Executor) repository.ValidationAggregateRepository {
 			return postgres.NewValidationAggregateRepository(exec)
 		},
-		func(exec pkgoutbox.Executor) repository.AdmissionRepository {
-			return postgres.NewAdmissionRepository(exec, logger)
-		},
+		newAdmissionRepo,
 		cfg.MaxConcurrentJobs, logger,
 		deployer.DispatcherConfig{
 			Tick: 5 * time.Second, BatchSize: 50, Waker: dispatcherWaker,
@@ -302,6 +306,13 @@ func main() {
 		},
 	)
 	runWorker("deploy_dispatcher", deployDispatcher.Run)
+
+	// Every minute, compare the deployments holding a slot with Kubernetes:
+	// return reservations a crashed launcher left to the queue, check Jobs that
+	// vanished, and free the slots of Jobs that finished unobserved.
+	admissionReconciler := deployer.NewReconciler(pgDB, k8sDeployer, newAdmissionRepo, newDeploymentRepo,
+		logger, deployer.ReconcilerConfig{})
+	runWorker("admission_reconciler", admissionReconciler.Run)
 
 	// Every second, atomically move due check tickets from the delay queue onto
 	// check.k8s:v1. A missed tick loses nothing: the queue is durable.
