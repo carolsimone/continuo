@@ -25,6 +25,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/pkg/validationresult"
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -226,8 +227,11 @@ type candidateDeploymentsRepo struct {
 }
 
 func (r *candidateDeploymentsRepo) Add(context.Context, *model.Deployment) error { return nil }
-func (r *candidateDeploymentsRepo) GetByJobName(context.Context, string) (*model.Deployment, error) {
-	return nil, sql.ErrNoRows
+func (r *candidateDeploymentsRepo) GetByJobName(_ context.Context, name string) (*model.Deployment, error) {
+	if r.byReleaseNode == nil || r.byReleaseNode.JobName() != name {
+		return nil, sql.ErrNoRows
+	}
+	return r.byReleaseNode, nil
 }
 
 func (r *candidateDeploymentsRepo) Save(_ context.Context, d *model.Deployment) error {
@@ -2751,4 +2755,102 @@ func TestHandleRunning_RecirculatesSecretRef(t *testing.T) {
 	if got, _ := payload["secret_ref"].(string); got != "continuo-api-fx" {
 		t.Fatalf("check.k8s ticket dropped secret_ref: got %q (payload=%v)", got, payload)
 	}
+}
+
+func TestHandle_RowWithOutcome_WritesNothing(t *testing.T) {
+	taskID, scheduleID := uuid.New(), uuid.New()
+	row := startedProductionRow("job-done", taskID, scheduleID)
+	require.NoError(t, row.Finish("ok", time.Now()))
+	repo := &jobRowDeploymentsRepo{row: row}
+	outbox := &jobStatusFakeOutboxRepo{}
+	handler := newHandler(&fakeK8sClient{status: &model.JobResult{Status: model.JobStatusFailed}}, noopCancelledRepo())
+
+	cmd := command.CheckJobStatus{TaskID: taskID, ScheduleID: scheduleID, JobName: "job-done", MaxRetries: 3}
+	require.NoError(t, handler.Handle(context.Background(), newJobStatusFakeUoWWithDeployments(outbox, repo), cmd, uuid.Nil))
+
+	assert.Empty(t, outbox.entries, "the Job's result was already reported")
+	assert.Empty(t, repo.added, "no second retry deployment")
+	assert.Empty(t, repo.saved)
+}
+
+func TestHandle_FirstRunningCheckMarksTheRowRunning(t *testing.T) {
+	taskID, scheduleID := uuid.New(), uuid.New()
+	repo := &jobRowDeploymentsRepo{row: startedProductionRow("job-run", taskID, scheduleID)}
+	handler := newHandler(&fakeK8sClient{status: &model.JobResult{Status: model.JobStatusRunning}}, noopCancelledRepo())
+
+	cmd := command.CheckJobStatus{TaskID: taskID, ScheduleID: scheduleID, JobName: "job-run", MaxRetries: 3}
+	require.NoError(t, handler.Handle(context.Background(), newJobStatusFakeUoWWithDeployments(&jobStatusFakeOutboxRepo{}, repo), cmd, uuid.Nil))
+
+	assert.Equal(t, model.StatusRunning, repo.row.Status())
+	require.Len(t, repo.saved, 1)
+}
+
+func TestHandle_SucceededFinishesTheRow(t *testing.T) {
+	taskID, scheduleID := uuid.New(), uuid.New()
+	repo := &jobRowDeploymentsRepo{row: startedProductionRow("job-ok", taskID, scheduleID)}
+	handler := newHandler(&fakeK8sClient{status: &model.JobResult{Status: model.JobStatusSucceeded}}, noopCancelledRepo())
+
+	cmd := command.CheckJobStatus{TaskID: taskID, ScheduleID: scheduleID, JobName: "job-ok", MaxRetries: 3}
+	require.NoError(t, handler.Handle(context.Background(), newJobStatusFakeUoWWithDeployments(&jobStatusFakeOutboxRepo{}, repo), cmd, uuid.Nil))
+
+	assert.Equal(t, model.StatusDone, repo.row.Status())
+	assert.Equal(t, "ok", repo.row.Outcome())
+}
+
+func TestHandle_FailedWithRetryFinishesTheAttemptRow(t *testing.T) {
+	taskID, scheduleID := uuid.New(), uuid.New()
+	repo := &jobRowDeploymentsRepo{row: startedProductionRow("job-r0", taskID, scheduleID)}
+	handler := newHandler(&fakeK8sClient{status: &model.JobResult{Status: model.JobStatusFailed}}, noopCancelledRepo())
+
+	cmd := command.CheckJobStatus{TaskID: taskID, ScheduleID: scheduleID, JobName: "job-r0", RetryCount: 0, MaxRetries: 3}
+	require.NoError(t, handler.Handle(context.Background(), newJobStatusFakeUoWWithDeployments(&jobStatusFakeOutboxRepo{}, repo), cmd, uuid.Nil))
+
+	assert.Equal(t, "failed", repo.row.Outcome())
+	assert.Equal(t, model.StatusDone, repo.row.Status())
+	require.Len(t, repo.added, 1, "the retry is a new deployment")
+}
+
+func TestHandle_VanishedCandidateJobRoutesByItsRow(t *testing.T) {
+	now := time.Now()
+	row := model.ReconstituteValidation(uuid.New(), nil, command.ValidationDeployTask{
+		ReleaseID: "rel-gone", NodeID: "public.orders", JobName: "validate-gone", NodeType: "dbt-model", ImageTag: "i",
+	}, model.StatusRunning, 0, 3, now, now, &now, nil, "", "", "", "", nil)
+	outbox := &jobStatusFakeOutboxRepo{}
+	handler := newHandler(&fakeK8sClient{status: &model.JobResult{Status: model.JobStatusFailed, TerminationMsg: "Job not found in Kubernetes"}}, noopCancelledRepo())
+
+	cmd := command.CheckJobStatus{TaskID: uuid.New(), ScheduleID: uuid.New(), JobName: "validate-gone"}
+	require.NoError(t, handler.Handle(context.Background(), candidateUoW(outbox, row, 0), cmd, uuid.Nil))
+
+	assert.Equal(t, "failed", row.Outcome(), "the outcome lands on the candidate row, not on a production announcement")
+	for _, e := range outbox.entries {
+		assert.NotEqual(t, "task_status_updated", e.EventType, "no production announcement for a candidate Job")
+	}
+}
+
+func TestHandle_CancelledScheduleKeepsPollingARunningJobSilently(t *testing.T) {
+	taskID, scheduleID := uuid.New(), uuid.New()
+	repo := &jobRowDeploymentsRepo{row: startedProductionRow("job-cancel", taskID, scheduleID)}
+	outbox := &jobStatusFakeOutboxRepo{}
+	handler := newHandler(&fakeK8sClient{status: &model.JobResult{Status: model.JobStatusRunning}},
+		&fakeCancelledSchedulesRepo{ids: map[uuid.UUID]bool{scheduleID: true}})
+
+	cmd := command.CheckJobStatus{TaskID: taskID, ScheduleID: scheduleID, JobName: "job-cancel", MaxRetries: 3}
+	require.NoError(t, handler.Handle(context.Background(), newJobStatusFakeUoWWithDeployments(outbox, repo), cmd, uuid.Nil))
+
+	require.Len(t, outbox.entries, 1, "only the next status check")
+	assert.Equal(t, "check_delayed", outbox.entries[0].EventType)
+}
+
+func TestHandle_CancelledScheduleTerminalFinishesTheRowSilently(t *testing.T) {
+	taskID, scheduleID := uuid.New(), uuid.New()
+	repo := &jobRowDeploymentsRepo{row: startedProductionRow("job-cancel-done", taskID, scheduleID)}
+	outbox := &jobStatusFakeOutboxRepo{}
+	handler := newHandler(&fakeK8sClient{status: &model.JobResult{Status: model.JobStatusSucceeded}},
+		&fakeCancelledSchedulesRepo{ids: map[uuid.UUID]bool{scheduleID: true}})
+
+	cmd := command.CheckJobStatus{TaskID: taskID, ScheduleID: scheduleID, JobName: "job-cancel-done", MaxRetries: 3}
+	require.NoError(t, handler.Handle(context.Background(), newJobStatusFakeUoWWithDeployments(outbox, repo), cmd, uuid.Nil))
+
+	assert.Empty(t, outbox.entries)
+	assert.Equal(t, model.StatusDone, repo.row.Status(), "the slot is released")
 }

@@ -275,10 +275,11 @@ func (r *deploymentsRepository) toAggregate(row *deploymentRow) *model.Deploymen
 	} else {
 		cmd = cmdDTO.ToDomain()
 	}
-	return model.Reconstitute(
+	return model.ReconstituteProduction(
 		row.ID, row.MessageProcessingID, cmd, model.Status(row.Status),
 		row.RetryCount, row.MaxRetries, row.NextAttemptAt, row.CreatedAt,
 		row.DeployedAt, row.ErrorMessage,
+		derefStr(row.Outcome), row.OutcomeAt,
 	)
 }
 

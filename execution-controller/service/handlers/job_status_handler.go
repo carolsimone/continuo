@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -77,12 +79,31 @@ func NewJobStatusHandler(
 // the transaction-scoped repositories on u. The binding owns the transaction
 // lifecycle and has already run dedup; msgProcID is accepted for signature
 // parity with the standardized handler shape and is currently unused.
+//
+// The handler also records the attempt's outcome on the Job's deployment row,
+// releasing the admission slot the row held, in the same transaction as the
+// announcements. A row that already has an outcome makes the check a no-op, so
+// each Job's result is reported exactly once.
 func (h *JobStatusHandler) Handle(ctx context.Context, u uow.UnitOfWork, cmd command.CheckJobStatus, msgProcID uuid.UUID) error {
 	h.logger.Info("Checking K8s job status", "task_id", cmd.TaskID, "job_name", cmd.JobName)
 
 	result, err := h.k8sClient.GetJobStatus(ctx, h.config.K8sNamespace, cmd.JobName)
 	if err != nil {
 		return fmt.Errorf("failed to get job status: %w", err)
+	}
+
+	// The deployment row whose Job this is, locked for this transaction. Its
+	// recorded outcome is what makes the Job's result reported exactly once:
+	// a second status check for the same Job (a duplicate ticket, or one the
+	// admission reconciler issued) finds it and writes nothing.
+	dep, err := h.deploymentFor(ctx, u, cmd.JobName)
+	if err != nil {
+		return err
+	}
+	if dep != nil && dep.HasOutcome() {
+		h.logger.Info("Job outcome already recorded — ignoring the status check",
+			"job_name", cmd.JobName, "deployment_id", dep.ID())
+		return nil
 	}
 
 	retryCount := cmd.RetryCount
@@ -93,9 +114,7 @@ func (h *JobStatusHandler) Handle(ctx context.Context, u uow.UnitOfWork, cmd com
 		return fmt.Errorf("cancelled schedules check: %w", err)
 	}
 	if cancelled {
-		h.logger.Info("Schedule cancelled — absorbing job result",
-			"schedule_id", cmd.ScheduleID, "job_name", cmd.JobName, "status", result.Status)
-		return nil
+		return h.handleCancelled(ctx, u, cmd, result, dep)
 	}
 
 	// A still-running Job is mode-agnostic: re-poll it by writing a check.k8s:v1
@@ -106,59 +125,124 @@ func (h *JobStatusHandler) Handle(ctx context.Context, u uow.UnitOfWork, cmd com
 	// this check — a Job spends most of its checks Running, and skipping the extra
 	// Get there keeps the re-poll loop to a single API call.
 	if result.Status == model.JobStatusRunning {
-		return h.handleRunning(ctx, u, cmd)
+		return h.handleRunning(ctx, u, cmd, dep, true)
 	}
 
 	labels, annotations, err := h.k8sClient.GetJobMeta(ctx, h.config.K8sNamespace, cmd.JobName)
 	if err != nil {
 		return fmt.Errorf("fetch job meta: %w", err)
 	}
-
-	if labels["mode"] == pkgevents.ModeValidation {
-		return h.handleValidationTerminal(ctx, u, cmd, result, annotations)
+	mode := labels["mode"]
+	// A vanished Job (deleted, or TTL-reaped) has no labels: GetJobMeta maps
+	// NotFound to empty maps. Its row still knows what it ran, so a candidate
+	// Job's outcome reaches its release.
+	if len(labels) == 0 && dep != nil && dep.Mode() != model.ModeProduction {
+		mode, annotations = candidateRoute(dep)
 	}
 
-	if labels["mode"] == pkgevents.ModeSeedBuild {
-		return h.handleSeedBuildTerminal(ctx, u, cmd, result, annotations)
-	}
-
-	if labels["mode"] == pkgevents.ModeCompile {
-		return h.handleCompileTerminal(ctx, u, cmd, result, annotations)
-	}
-
-	// Legacy promote-seed Jobs queued by a previous version have synthetic task
-	// IDs with no run in state, so their lifecycle stays suppressed. Current
-	// promoted-seed work carries no mode label and falls through to the
-	// production path below. See events.ModePromoteSeed.
-	if labels["mode"] == pkgevents.ModePromoteSeed {
+	switch mode {
+	case pkgevents.ModeValidation:
+		return h.handleValidationTerminal(ctx, u, cmd, dep, result, annotations)
+	case pkgevents.ModeSeedBuild:
+		return h.handleSeedBuildTerminal(ctx, u, cmd, dep, result, annotations)
+	case pkgevents.ModeCompile:
+		return h.handleCompileTerminal(ctx, u, cmd, dep, result, annotations)
+	case pkgevents.ModePromoteSeed:
+		// Legacy promote-seed Jobs queued by a previous version have synthetic
+		// task IDs with no run in state, so their lifecycle stays suppressed;
+		// only the slot is released. See events.ModePromoteSeed.
 		h.logger.Info("Legacy promote-seed Job terminal — no lifecycle events emitted",
 			"job_name", cmd.JobName, "status", result.Status)
-		return nil
+		return h.finishAttempt(ctx, u, dep, attemptOutcome(result))
 	}
 
-	// Empty metadata means the Job is gone (deleted/TTL-reaped): GetJobMeta maps
-	// NotFound to empty maps. A vanished Job has no mode label, so it falls through
-	// to the production task-status path below — correct for a production Job
-	// (whose NotFound→Failed status must still drive the retry/permanent handlers).
-	// A vanished *validation* Job cannot be identified here (no annotations to
-	// recover release_id/node_id), so its per-node outcome is not emitted; surface
-	// it for operators rather than silently writing production rows for it.
-	if len(labels) == 0 {
-		h.logger.Warn("Job metadata unavailable on terminal check — routing as production; a vanished validation Job will not emit its per-node outcome",
+	// A Job with neither labels nor a row cannot be identified; production is
+	// the only mode whose handlers can act on it.
+	if len(labels) == 0 && dep == nil {
+		h.logger.Warn("Job metadata and deployment row unavailable on terminal check — routing as production",
 			"job_name", cmd.JobName, "status", result.Status)
 	}
 
 	switch result.Status {
 	case model.JobStatusSucceeded:
-		return h.handleSucceeded(ctx, u, cmd, result)
+		return h.handleSucceeded(ctx, u, cmd, dep, result)
 	case model.JobStatusFailed:
 		if retryCount >= maxRetries {
-			return h.handleFailedPermanent(ctx, u, cmd, result, retryCount)
+			return h.handleFailedPermanent(ctx, u, cmd, dep, result, retryCount)
 		}
-		return h.handleFailedWithRetry(ctx, u, cmd, result, retryCount, maxRetries)
+		return h.handleFailedWithRetry(ctx, u, cmd, dep, result, retryCount, maxRetries)
 	default:
-		return h.handleUnknown(ctx, u, cmd, result, retryCount, maxRetries)
+		return h.handleUnknown(ctx, u, cmd, dep, result, retryCount, maxRetries)
 	}
+}
+
+// deploymentFor returns the deployment row of jobName, or nil when no row
+// names that Job.
+func (h *JobStatusHandler) deploymentFor(ctx context.Context, u uow.UnitOfWork, jobName string) (*model.Deployment, error) {
+	dep, err := u.DeploymentsRepo().GetByJobName(ctx, jobName)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load deployment for job %s: %w", jobName, err)
+	}
+	return dep, nil
+}
+
+// candidateRoute rebuilds the mode label and release/node annotations of a
+// candidate deployment's Job from its row.
+func candidateRoute(dep *model.Deployment) (string, map[string]string) {
+	modes := map[model.Mode]string{
+		model.ModeValidation: pkgevents.ModeValidation,
+		model.ModeSeedBuild:  pkgevents.ModeSeedBuild,
+		model.ModeCompile:    pkgevents.ModeCompile,
+	}
+	return modes[dep.Mode()], map[string]string{
+		pkgmodel.AnnotationReleaseID: dep.ReleaseID(),
+		pkgmodel.AnnotationNodeID:    dep.NodeID(),
+	}
+}
+
+// attemptOutcome is the outcome a production attempt's row records.
+func attemptOutcome(result *model.JobResult) string {
+	if result.Status == model.JobStatusSucceeded {
+		return "ok"
+	}
+	return "failed"
+}
+
+// finishAttempt records a production Job's outcome on its deployment row,
+// releasing the slot it held. A Job without a row has nothing to release.
+func (h *JobStatusHandler) finishAttempt(ctx context.Context, u uow.UnitOfWork, dep *model.Deployment, outcome string) error {
+	if dep == nil {
+		return nil
+	}
+	if err := dep.Finish(outcome, time.Now()); err != nil {
+		return fmt.Errorf("finish deployment %s: %w", dep.ID(), err)
+	}
+	return u.DeploymentsRepo().Save(ctx, dep)
+}
+
+// handleCancelled observes a Job whose schedule was cancelled without
+// announcing anything for it: a Job still running is checked again so its slot
+// is released once it finishes, and a finished Job's outcome is recorded on its
+// row.
+func (h *JobStatusHandler) handleCancelled(ctx context.Context, u uow.UnitOfWork, cmd command.CheckJobStatus, result *model.JobResult, dep *model.Deployment) error {
+	if result.Status == model.JobStatusRunning {
+		return h.handleRunning(ctx, u, cmd, dep, false)
+	}
+	h.logger.Info("Schedule cancelled — absorbing job result",
+		"schedule_id", cmd.ScheduleID, "job_name", cmd.JobName, "status", result.Status)
+	if dep != nil && dep.Mode() != model.ModeProduction {
+		if !dep.Status().InFlight() {
+			return nil
+		}
+		if err := dep.ReleaseSlot(); err != nil {
+			return fmt.Errorf("release deployment %s: %w", dep.ID(), err)
+		}
+		return u.DeploymentsRepo().Save(ctx, dep)
+	}
+	return h.finishAttempt(ctx, u, dep, attemptOutcome(result))
 }
 
 // taskRetryBudget returns the task's retry budget carried on the check ticket,
@@ -175,7 +259,7 @@ func taskRetryBudget(maxRetries int32) int32 {
 //   - task_status_updated (SUCCEEDED)
 //   - task_execution_recorded
 //   - node_updated (→ node.updated:v1)
-func (h *JobStatusHandler) handleSucceeded(ctx context.Context, u uow.UnitOfWork, cmd command.CheckJobStatus, result *model.JobResult) error {
+func (h *JobStatusHandler) handleSucceeded(ctx context.Context, u uow.UnitOfWork, cmd command.CheckJobStatus, dep *model.Deployment, result *model.JobResult) error {
 	repo := u.OutboxRepo()
 
 	// A successful run's pod output is uploaded exactly as a failed one's is:
@@ -210,7 +294,7 @@ func (h *JobStatusHandler) handleSucceeded(ctx context.Context, u uow.UnitOfWork
 		"execution_time", result.ExecutionSeconds,
 	)
 
-	return nil
+	return h.finishAttempt(ctx, u, dep, "ok")
 }
 
 // handleValidationTerminal records the terminal result for a Job carrying the
@@ -228,11 +312,12 @@ func (h *JobStatusHandler) handleValidationTerminal(
 	ctx context.Context,
 	u uow.UnitOfWork,
 	cmd command.CheckJobStatus,
+	dep *model.Deployment,
 	result *model.JobResult,
 	annotations map[string]string,
 ) error {
 	if result.Status == model.JobStatusUnknown {
-		return h.handleRunning(ctx, u, cmd) // not terminal yet; re-poll
+		return h.handleRunning(ctx, u, cmd, dep, true) // not terminal yet; re-poll
 	}
 
 	_, logS3Key, runResultsURI, _, _ := h.fetchAndUploadLogs(ctx, cmd, nodeArtifactPath(cmd))
@@ -275,11 +360,12 @@ func (h *JobStatusHandler) handleSeedBuildTerminal(
 	ctx context.Context,
 	u uow.UnitOfWork,
 	cmd command.CheckJobStatus,
+	dep *model.Deployment,
 	result *model.JobResult,
 	annotations map[string]string,
 ) error {
 	if result.Status == model.JobStatusUnknown {
-		return h.handleRunning(ctx, u, cmd) // not terminal yet; re-poll
+		return h.handleRunning(ctx, u, cmd, dep, true) // not terminal yet; re-poll
 	}
 
 	_, logS3Key, runResultsURI, _, _ := h.fetchAndUploadLogs(ctx, cmd, nodeArtifactPath(cmd))
@@ -325,11 +411,12 @@ func (h *JobStatusHandler) handleCompileTerminal(
 	ctx context.Context,
 	u uow.UnitOfWork,
 	cmd command.CheckJobStatus,
+	dep *model.Deployment,
 	result *model.JobResult,
 	annotations map[string]string,
 ) error {
 	if result.Status == model.JobStatusUnknown {
-		return h.handleRunning(ctx, u, cmd) // not terminal yet; re-poll
+		return h.handleRunning(ctx, u, cmd, dep, true) // not terminal yet; re-poll
 	}
 
 	_, logS3Key, runResultsURI, _, _ := h.fetchAndUploadLogs(ctx, cmd, compileArtifactPath(cmd))
@@ -489,7 +576,7 @@ func (h *JobStatusHandler) fetchAndUploadLogs(
 //   - task_status_updated (FAILED)
 //   - task_execution_recorded
 //   - node_updated (→ node.updated:v1)
-func (h *JobStatusHandler) handleFailedPermanent(ctx context.Context, u uow.UnitOfWork, cmd command.CheckJobStatus, result *model.JobResult, retryCount int32) error {
+func (h *JobStatusHandler) handleFailedPermanent(ctx context.Context, u uow.UnitOfWork, cmd command.CheckJobStatus, dep *model.Deployment, result *model.JobResult, retryCount int32) error {
 	repo := u.OutboxRepo()
 	newRetryCount := retryCount
 
@@ -518,7 +605,7 @@ func (h *JobStatusHandler) handleFailedPermanent(ctx context.Context, u uow.Unit
 		"error", errorMsg,
 		"log_s3_key", logS3Key,
 	)
-	return nil
+	return h.finishAttempt(ctx, u, dep, "failed")
 }
 
 // retryJobName generates a unique K8s job name for a retry attempt.
@@ -540,7 +627,7 @@ func retryJobName(baseJobName string, retryCount int32) string {
 // and re-queues the task as a new pending deployment — the -rN retry Job — via
 // createDeployment, in the SAME unit of work as the two rows above, so the
 // retry and the FAILED announcement cannot diverge.
-func (h *JobStatusHandler) handleFailedWithRetry(ctx context.Context, u uow.UnitOfWork, cmd command.CheckJobStatus, result *model.JobResult, retryCount, maxRetries int32) error {
+func (h *JobStatusHandler) handleFailedWithRetry(ctx context.Context, u uow.UnitOfWork, cmd command.CheckJobStatus, dep *model.Deployment, result *model.JobResult, retryCount, maxRetries int32) error {
 	repo := u.OutboxRepo()
 	newRetryCount := retryCount + 1
 
@@ -583,7 +670,7 @@ func (h *JobStatusHandler) handleFailedWithRetry(ctx context.Context, u uow.Unit
 		"log_s3_key", logS3Key,
 	)
 
-	return nil
+	return h.finishAttempt(ctx, u, dep, "failed")
 }
 
 // handleRunning handles a still-running Job. The first time an attempt is observed
@@ -596,10 +683,15 @@ func (h *JobStatusHandler) handleFailedWithRetry(ctx context.Context, u uow.Unit
 // it shares the attempt number of that attempt's terminal, which state's
 // attempt-monotonic guard relies on. The announcement and the forward ticket are
 // written in the same transaction, so the flag and the announcement never diverge.
-func (h *JobStatusHandler) handleRunning(ctx context.Context, u uow.UnitOfWork, cmd command.CheckJobStatus) error {
+//
+// announce is false for a Job whose schedule was cancelled: it is still polled so
+// its slot is released once it finishes, but RUNNING is never announced for it.
+// The first observation of a running Job also moves its row from starting to
+// running.
+func (h *JobStatusHandler) handleRunning(ctx context.Context, u uow.UnitOfWork, cmd command.CheckJobStatus, dep *model.Deployment, announce bool) error {
 	repo := u.OutboxRepo()
 
-	if !cmd.RunningAnnounced {
+	if announce && !cmd.RunningAnnounced {
 		labels, _, err := h.k8sClient.GetJobMeta(ctx, h.config.K8sNamespace, cmd.JobName)
 		if err != nil {
 			return fmt.Errorf("fetch job meta for running announcement: %w", err)
@@ -607,6 +699,20 @@ func (h *JobStatusHandler) handleRunning(ctx context.Context, u uow.UnitOfWork, 
 		if labels["mode"] != pkgevents.ModeValidation && labels["mode"] != pkgevents.ModeSeedBuild && labels["mode"] != pkgevents.ModeCompile && labels["mode"] != pkgevents.ModePromoteSeed {
 			if err := h.writeTaskStatusUpdated(ctx, repo, cmd.TaskID, cmd.ScheduleID, "RUNNING", cmd.RetryCount); err != nil {
 				return fmt.Errorf("task_status_updated RUNNING: %w", err)
+			}
+		}
+	}
+
+	// A row reconciliation already released (done, outcome unset) stays done;
+	// the Job is still polled so its terminal records the outcome.
+	if dep != nil && dep.Status().InFlight() {
+		changed, err := dep.MarkRunning()
+		if err != nil {
+			return fmt.Errorf("mark deployment %s running: %w", dep.ID(), err)
+		}
+		if changed {
+			if err := u.DeploymentsRepo().Save(ctx, dep); err != nil {
+				return fmt.Errorf("save running deployment: %w", err)
 			}
 		}
 	}
@@ -666,7 +772,7 @@ func (h *JobStatusHandler) handleRunning(ctx context.Context, u uow.UnitOfWork, 
 // the task's retry budget as spent: state finalizes a run only once no failed
 // task has attempts left (retry_count < max_retries), and a lower count would
 // hold the run open until the watchdog cancels it.
-func (h *JobStatusHandler) handleUnknown(ctx context.Context, u uow.UnitOfWork, cmd command.CheckJobStatus, result *model.JobResult, retryCount, maxRetries int32) error {
+func (h *JobStatusHandler) handleUnknown(ctx context.Context, u uow.UnitOfWork, cmd command.CheckJobStatus, dep *model.Deployment, result *model.JobResult, retryCount, maxRetries int32) error {
 	unknown := *result
 	if unknown.TerminationMsg == "" {
 		unknown.TerminationMsg = "Job not found or unknown status"
@@ -678,7 +784,7 @@ func (h *JobStatusHandler) handleUnknown(ctx context.Context, u uow.UnitOfWork, 
 		"error", unknown.TerminationMsg,
 	)
 
-	return h.handleFailedPermanent(ctx, u, cmd, &unknown, max(retryCount, maxRetries))
+	return h.handleFailedPermanent(ctx, u, cmd, dep, &unknown, max(retryCount, maxRetries))
 }
 
 // writeTaskStatusUpdated writes a task_status_updated canonical outbox row.

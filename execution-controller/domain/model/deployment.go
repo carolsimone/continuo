@@ -135,8 +135,8 @@ func NewCompileDeployment(cmd command.ValidationDeployTask, msgProcID *uuid.UUID
 	}
 }
 
-// Reconstitute rebuilds a Deployment from persisted state. Adapters use this to
-// turn a stored row back into an aggregate.
+// Reconstitute rebuilds a production Deployment that has no recorded outcome
+// from persisted state.
 func Reconstitute(
 	id uuid.UUID,
 	msgProcID *uuid.UUID,
@@ -146,6 +146,25 @@ func Reconstitute(
 	nextAttemptAt, createdAt time.Time,
 	deployedAt *time.Time,
 	errorMessage *string,
+) *Deployment {
+	return ReconstituteProduction(id, msgProcID, cmd, status, retryCount, maxRetries,
+		nextAttemptAt, createdAt, deployedAt, errorMessage, "", nil)
+}
+
+// ReconstituteProduction rebuilds a production Deployment from persisted state,
+// including the outcome its attempt recorded. Adapters use this for rows whose
+// mode == production.
+func ReconstituteProduction(
+	id uuid.UUID,
+	msgProcID *uuid.UUID,
+	cmd command.DeployTask,
+	status Status,
+	retryCount, maxRetries int,
+	nextAttemptAt, createdAt time.Time,
+	deployedAt *time.Time,
+	errorMessage *string,
+	outcome string,
+	outcomeAt *time.Time,
 ) *Deployment {
 	return &Deployment{
 		id:                  id,
@@ -159,6 +178,8 @@ func Reconstitute(
 		createdAt:           createdAt,
 		deployedAt:          deployedAt,
 		errorMessage:        errorMessage,
+		outcome:             outcome,
+		outcomeAt:           outcomeAt,
 	}
 }
 
