@@ -57,7 +57,9 @@ type Deployment struct {
 	deployedAt          *time.Time
 	errorMessage        *string
 
-	// Validation-only terminal outcome, attached by RecordOutcome after dispatch.
+	// Terminal outcome: attached by RecordOutcome (validation, seed-build,
+	// compile) or Finish (production). The dbt artifact fields are populated
+	// only by RecordOutcome.
 	outcome          string
 	dbtLogURI        string
 	dbtRunResultsURI string
