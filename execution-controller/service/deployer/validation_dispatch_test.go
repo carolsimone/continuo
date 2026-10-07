@@ -587,7 +587,7 @@ func TestDispatcher_DispatchOne_SeedBuildMode_CallsDeploySeedBuild(t *testing.T)
 	assert.Equal(t, 0, fk.deployCalls, "production Deploy never invoked for a seed-build row")
 }
 
-func TestDispatcher_DispatchOne_SeedBuildMode_OnSuccess_MarksDeployedAndWritesCheckDelayedTicket(t *testing.T) {
+func TestDispatcher_DispatchOne_SeedBuildMode_OnSuccess_MarksStartedAndWritesCheckDelayedTicket(t *testing.T) {
 	fk := &fakeValidationDeployer{}
 	d := silentDispatcher(fk)
 	repo := &fakeDeploymentRepo{}
@@ -705,7 +705,7 @@ func TestDispatcher_DispatchOne_CompileMode_CallsDeployCompile(t *testing.T) {
 	assert.Equal(t, 0, fk.seedBuildCalls, "DeploySeedBuild never invoked for a compile row")
 }
 
-func TestDispatcher_DispatchOne_CompileMode_OnSuccess_MarksDeployedAndWritesCheckDelayedTicket(t *testing.T) {
+func TestDispatcher_DispatchOne_CompileMode_OnSuccess_MarksStartedAndWritesCheckDelayedTicket(t *testing.T) {
 	fk := &fakeValidationDeployer{}
 	d := silentDispatcher(fk)
 	repo := &fakeDeploymentRepo{}
