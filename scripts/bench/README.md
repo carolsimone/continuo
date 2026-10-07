@@ -79,6 +79,9 @@ BENCH_SCENARIOS=cascade-2000,cancel-500 BENCH_TARGET=k8s ... scripts/bench/run_b
 # One scenario on a topology that is already published
 scripts/bench/run_scenario.sh NAME PAYLOAD SCHEDULE run|test REPS OUT_DIR [CANCEL_AFTER_S]
 
+# Two result folders side by side, scenario by scenario -> markdown on stdout
+python3 scripts/bench/compare.py BEFORE_DIR AFTER_DIR [--labels A,B] > comparison.md
+
 ```
 
 `make bench-test` runs the unit tests and shellcheck; `make guards` includes it.
@@ -125,3 +128,5 @@ psql -v kinds=cron,trigger -v days=30 -f scripts/bench/sql/run_history.sql
 ## Results
 
 Each run writes raw captures, per-rep `rep<N>.json` files and `report.md` under `.bench/` at the repository root, which is gitignored. Results are summarised in the run-lifecycle design notes; raw output is never committed.
+
+`compare.py` reads two such folders, for example the same target measured before and after a change. For every scenario found in both it prints each side's p50 and the change (`after − before`, and the relative change against the size of `before` when that is non-zero), for the timing metrics, each service's CPU-seconds per 1,000 tasks and peak memory, and the idle footprint. Both sides leave out the reps whose sampling paused for over 60 s, and the output names them. When the two sides' final statuses differ, it says so, since their timings then cover different work. A scenario found on one side only is listed as such.

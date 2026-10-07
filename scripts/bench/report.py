@@ -65,14 +65,20 @@ def render(scenarios: dict) -> str:
     return "\n".join(lines)
 
 
+def load(folder: str) -> dict:
+    """Read every <scenario>/rep*.json under folder, grouped by scenario name."""
+    scenarios = {}
+    for rep in sorted(Path(folder).glob("*/rep*.json")):
+        scenarios.setdefault(rep.parent.name, []).append(json.loads(rep.read_text(encoding="utf-8")))
+    return scenarios
+
+
 def main(argv: list) -> int:
     logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="%(levelname)s %(message)s")
     if len(argv) != 1:
         log.error("usage: report.py RESULTS_DIR")
         return 2
-    scenarios = {}
-    for rep in sorted(Path(argv[0]).glob("*/rep*.json")):
-        scenarios.setdefault(rep.parent.name, []).append(json.loads(rep.read_text(encoding="utf-8")))
+    scenarios = load(argv[0])
     if not scenarios:
         log.error("no rep*.json files under %s", argv[0])
         return 1
