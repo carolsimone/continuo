@@ -15,6 +15,7 @@ import { createVerificationsRouter } from './routes/verifications';
 import { createPipelineRouter } from './routes/pipeline';
 import { createRemediationRouter } from './routes/remediation';
 import { createReleaseClient } from './release-client';
+import { maintenanceGate } from './maintenance';
 import { getLogObject } from './s3';
 import type { AppAuth } from './auth/types';
 import type { RemediationClient } from './remediation-client';
@@ -33,6 +34,7 @@ export function createApp(
   commitAuthorResolver?: CommitAuthorResolver,
   githubWebBaseUrl?: string,
   publicUrl?: string,
+  maintenanceEnabled = false,
 ) {
   const app = express();
   app.use(express.json());
@@ -46,6 +48,9 @@ export function createApp(
   app.use(...(auth.authn as [express.RequestHandler, ...express.RequestHandler[]]));
   app.use('/auth', auth.router);
   app.use('/api', ...auth.apiGuards);
+  // Maintenance refuses the routes that start new work; it sits after the
+  // guards so an unauthenticated caller still gets its 401.
+  app.use('/api', maintenanceGate(maintenanceEnabled));
 
   app.use('/api/schedulers', createSchedulersRouter(client));
   app.use('/api/nodes', createNodesRouter(client, graphClient));
@@ -55,7 +60,7 @@ export function createApp(
   app.use('/api/task-execution', createTaskExecutionRouter());
   app.use('/api/topology', createTopologyRouter(graphClient));
   app.use('/api/config', createConfigRouter(configFilePath));
-  app.use('/api/features', createFeaturesRouter(chatBridgeEnabled));
+  app.use('/api/features', createFeaturesRouter(chatBridgeEnabled, maintenanceEnabled));
   const releaseClient = createReleaseClient(releaseControllerUrl);
   // Public, versioned API for CD pipelines; authorizes per action (see authorize.ts).
   app.use('/api/v1', createV1Router(releaseClient, publicUrl));

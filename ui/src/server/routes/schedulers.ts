@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { GrpcClient, userMetadata } from '../grpc-client';
-import { grpcToHttpStatus } from './grpc-status';
+import { grpcToHttpStatus, sendGrpcError } from './grpc-status';
 import { parseLimit, parseOffset } from './paging';
 
 interface ProtoTimestamp {
@@ -73,7 +73,7 @@ export function createSchedulersRouter(client: GrpcClient) {
       { source_run_id: req.params.id },
       userMetadata(req),
       (err: any) => {
-        if (err) return res.status(grpcToHttpStatus(err.code)).json({ error: err.message });
+        if (err) return sendGrpcError(res, err);
         res.sendStatus(200);
       }
     );
@@ -84,7 +84,7 @@ export function createSchedulersRouter(client: GrpcClient) {
       { source_run_id: req.params.id },
       userMetadata(req),
       (err: any) => {
-        if (err) return res.status(grpcToHttpStatus(err.code)).json({ error: err.message });
+        if (err) return sendGrpcError(res, err);
         res.sendStatus(200);
       }
     );

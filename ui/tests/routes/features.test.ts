@@ -9,7 +9,7 @@ describe('GET /api/features', () => {
     app.use('/api/features', createFeaturesRouter(true));
     const res = await request(app).get('/api/features');
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ chatBridgeEnabled: true });
+    expect(res.body).toEqual({ chatBridgeEnabled: true, maintenance: false });
   });
 
   it('reports the chat bridge as disabled when the flag is false', async () => {
@@ -17,6 +17,14 @@ describe('GET /api/features', () => {
     app.use('/api/features', createFeaturesRouter(false));
     const res = await request(app).get('/api/features');
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ chatBridgeEnabled: false });
+    expect(res.body).toEqual({ chatBridgeEnabled: false, maintenance: false });
+  });
+
+  it('reports maintenance mode when it is on', async () => {
+    const app = express();
+    app.use('/api/features', createFeaturesRouter(false, true));
+    const res = await request(app).get('/api/features');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ chatBridgeEnabled: false, maintenance: true });
   });
 });

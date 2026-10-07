@@ -1095,6 +1095,7 @@ a.release-author:hover { text-decoration: underline; }
 .info-strip--warning { background: #fef3c7; border-color: #fde68a; color: #92400e; }
 .info-strip--error   { background: #fef2f2; border-color: #fca5a5; color: #dc2626; }
 .info-strip--info    { background: #eef2ff; border-color: #c7d2fe; color: #4338ca; }
+.maintenance-banner { margin: 8px 16px 0; font-size: 13px; }
 
 /* ---- Rerun-failed modal radio options ---- */
 .rerun-mode-option {

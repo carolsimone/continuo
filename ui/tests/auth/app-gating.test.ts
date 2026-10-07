@@ -70,4 +70,20 @@ describe('createApp gating', () => {
     const app = createApp(fakeGrpc, fakeGraph, oidcModeAuth(store));
     expect((await request(app).get('/api/v1/current-prod')).status).toBe(401);
   });
+
+  it('maintenance: a run-starting route is refused at the edge and the flag is exposed', async () => {
+    const auth = await buildAuth({ mode: 'dev' });
+    // fakeGrpc is an empty object, so reaching the schedules handler would throw.
+    const app = createApp(fakeGrpc, fakeGraph, auth.app, undefined, undefined, false, undefined, undefined, undefined, undefined, undefined, true);
+    const refused = await request(app).post('/api/schedules/daily/trigger').send({});
+    expect([refused.status, refused.body.code]).toEqual([503, 'maintenance']);
+    const features = await request(app).get('/api/features');
+    expect(features.body.maintenance).toBe(true);
+  });
+
+  it('maintenance: an unauthenticated caller still gets its 401', async () => {
+    const store = new SessionStore(new FakeRedis(), 3600, 7200);
+    const app = createApp(fakeGrpc, fakeGraph, oidcModeAuth(store), undefined, undefined, false, undefined, undefined, undefined, undefined, undefined, true);
+    expect((await request(app).post('/api/schedules/daily/trigger').send({})).status).toBe(401);
+  });
 });

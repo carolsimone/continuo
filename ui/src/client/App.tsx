@@ -9,10 +9,12 @@ import ChatContainer from './chat/ChatContainer';
 import { useAuth } from './auth/useAuth';
 import { AuthContext } from './auth/AuthContext';
 import SignInPage from './auth/SignInPage';
+import MaintenanceBanner from './MaintenanceBanner';
 
 export default function App() {
   const auth = useAuth();
   const [chatEnabled, setChatEnabled] = useState(false);
+  const [maintenance, setMaintenance] = useState(false);
 
   // The chat bridge is attached server-side only when CHAT_BRIDGE_ENABLED is
   // set; read the flag after authentication so production (bridge off, or a
@@ -20,9 +22,15 @@ export default function App() {
   useEffect(() => {
     if (auth.status !== 'authenticated') return;
     fetch('/api/features')
-      .then((r) => (r.ok ? r.json() : { chatBridgeEnabled: false }))
-      .then((d) => setChatEnabled(Boolean(d.chatBridgeEnabled)))
-      .catch(() => setChatEnabled(false));
+      .then((r) => (r.ok ? r.json() : { chatBridgeEnabled: false, maintenance: false }))
+      .then((d) => {
+        setChatEnabled(Boolean(d.chatBridgeEnabled));
+        setMaintenance(Boolean(d.maintenance));
+      })
+      .catch(() => {
+        setChatEnabled(false);
+        setMaintenance(false);
+      });
   }, [auth.status]);
 
   if (auth.status === 'loading') return null;
@@ -33,6 +41,7 @@ export default function App() {
       <BrowserRouter>
         <div className="app-shell">
           <div className="app-shell__main">
+            {maintenance && <MaintenanceBanner />}
             <Routes>
               <Route path="/" element={<DashboardPage />} />
               <Route path="/schedule/:name" element={<DetailPage />} />

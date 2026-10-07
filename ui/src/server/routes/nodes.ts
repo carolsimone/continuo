@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { GrpcClient, userMetadata } from '../grpc-client';
 import { GrpcGraphClient } from '../grpc-graph-client';
-import { grpcToHttpStatus } from './grpc-status';
+import { grpcToHttpStatus, sendGrpcError } from './grpc-status';
 import { parseLimit, parseOffset } from './paging';
 import { operationFromWire } from '../shared/operation';
 import { parseNodeOperation, parseNodeRunOperation } from './operation';
@@ -135,7 +135,7 @@ export function createNodesRouter(stateClient: GrpcClient, graphClient: GrpcGrap
       },
       userMetadata(req),
       (err: any, response: any) => {
-        if (err) return res.status(grpcToHttpStatus(err.code)).json({ error: err.message });
+        if (err) return sendGrpcError(res, err);
         res.json({ run_id: response.run_id, schedule_name: response.schedule_name });
       },
     );
