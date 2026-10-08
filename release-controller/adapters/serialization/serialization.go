@@ -114,8 +114,9 @@ func TransitionsToDomain(in []TransitionDTO) []pipeline.Transition {
 // NodeDTO is the JSON shape of one release.Node, as stored in the
 // current_prod.topology_snapshot JSONB column, and as read by the legacy
 // topology repository from the inline release_pipeline_runs.candidate_topology
-// column during the one-time upgrade step. A stored candidate_artifact_uri key from an older row is
-// ignored on decode: candidate URIs are derived per run.
+// column during the one-time upgrade step. A stored candidate_artifact_uri
+// key from an older row is ignored on decode: candidate URIs are derived per
+// run.
 type NodeDTO struct {
 	UniqueID           string   `json:"unique_id"`
 	SchemaName         string   `json:"schema_name"`
