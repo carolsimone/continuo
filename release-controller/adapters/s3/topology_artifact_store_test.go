@@ -70,8 +70,9 @@ func sampleTopology() release.Topology {
 			ContentHash: "sha256:c", ImageTag: "img:1", UpstreamUniqueIDs: []string{}, Schedule: "daily"},
 		{UniqueID: "test.svc.not_null_orders_id", ServiceName: "svc", NodeType: "dbt-test",
 			UpstreamUniqueIDs: []string{"svc.orders"}},
+		//nolint:gosec // test fixture secret_ref value, not a credential
 		{UniqueID: "api.rates", SchemaName: "api", TableName: "rates", ServiceName: "api", NodeType: "python-api",
-			ImageTag: "img:2", UpstreamUniqueIDs: []string{}, SecretRef: "continuo-api-rates"}, //nolint:gosec // test fixture secret_ref value, not a credential
+			ImageTag: "img:2", UpstreamUniqueIDs: []string{}, SecretRef: "continuo-api-rates"},
 	}
 }
 
