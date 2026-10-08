@@ -103,6 +103,25 @@ func TestTopologyArtifactStore_WriteThenLoadRoundTrips(t *testing.T) {
 	assert.True(t, sort.StringsAreSorted(ids), "an artifact's nodes come back in unique_id order")
 }
 
+// A write repeated for the same topology produces the same object and
+// reference, so a retry after a crash between writing an artifact and
+// recording its reference leaves the stored bytes and checksum unchanged.
+func TestTopologyArtifactStore_RepeatedWriteIsByteIdentical(t *testing.T) {
+	objects := newFakeObjects()
+	store := NewTopologyArtifactStore(objects, "continuo", 4)
+	const key = "tenants/default/topologies/r1/topology.json.gz"
+
+	first, err := store.Write(context.Background(), "r1", sampleTopology())
+	require.NoError(t, err)
+	firstBytes := append([]byte(nil), objects.objects[key]...)
+
+	second, err := NewTopologyArtifactStore(objects, "continuo", 4).Write(context.Background(), "r1", sampleTopology())
+	require.NoError(t, err)
+
+	assert.Equal(t, first, second)
+	assert.Equal(t, firstBytes, objects.objects[key])
+}
+
 func TestTopologyArtifactStore_LoadOfAMissingObjectIsNotFound(t *testing.T) {
 	_, err := NewTopologyArtifactStore(newFakeObjects(), "continuo", 4).Load(context.Background(),
 		release.TopologyRef{URI: "s3://continuo/tenants/default/topologies/gone/topology.json.gz", SHA256: "x"})

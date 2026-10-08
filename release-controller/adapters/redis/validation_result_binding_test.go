@@ -195,3 +195,5 @@ func (r *fakeReleaseRepo) List(ctx context.Context, f repository.ListFilter) ([]
 func (r *fakeReleaseRepo) DeleteFinishedBefore(ctx context.Context, cutoff time.Time, keepReleaseIDs []string) (int, error) {
 	panic("not implemented")
 }
+
+func (f *fakeUoW) LegacyTopologyRepo() repository.LegacyTopologyRepository { panic("not implemented") }

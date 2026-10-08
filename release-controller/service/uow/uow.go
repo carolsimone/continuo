@@ -15,6 +15,7 @@ type UnitOfWork interface {
 	RunRepo() repository.RunRepository
 	CurrentProdRepo() repository.CurrentProdRepository
 	ServiceProdRepo() repository.ServiceProdRepository
+	LegacyTopologyRepo() repository.LegacyTopologyRepository
 	OutboxRepo() pkgoutbox.Repository
 	MessageProcessingRepo() messageprocessing.Repository
 	Begin(ctx context.Context) error

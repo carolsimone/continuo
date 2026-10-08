@@ -245,6 +245,21 @@ func main() {
 	outboxProc := redisadapter.StartOutboxPublisher(ctx, db, rc, outboxWaker, metricsReg.Outbox(), liveReg, logger)
 	metricsReg.WatchOutbox(outboxProc)
 
+	// Runs holding an inline topology or left parsing are settled before any
+	// consumer reads a run: inline topologies are written to artifacts and runs
+	// left parsing fail with upgrade_interrupted. The step waits out an
+	// unreachable Postgres or object store; readiness stays false meanwhile.
+	if err := runStartupStep(ctx, logger, "upgrade legacy topologies", func(ctx context.Context) error {
+		return handlers.UpgradeLegacyTopologies(ctx, deps)
+	}); err != nil {
+		if errors.Is(err, context.Canceled) {
+			logger.Info("shutdown requested during the startup upgrade step")
+			os.Exit(0)
+		}
+		logger.Error("startup upgrade step failed", "error", err)
+		os.Exit(1)
+	}
+
 	// Start stream consumers in goroutines; each blocks until ctx is cancelled.
 	runConsumer("manifest_loaded_candidate", redisadapter.NewManifestLoadedCandidateConsumer(rc, deps, logger))
 	runConsumer("validation_result", redisadapter.NewValidationResultConsumer(rc, deps, logger))
