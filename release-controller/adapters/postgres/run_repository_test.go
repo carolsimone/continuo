@@ -276,7 +276,7 @@ func TestRunRepository_ListFiltersByStatus(t *testing.T) {
 	require.NoError(t, repo.Save(ctx, a))
 	b := pipeline.NewCandidate("rb", "svc", "t", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(101, 0).UTC())
 	require.NoError(t, b.TransitionToParsing(time.Unix(102, 0).UTC()))
-	require.NoError(t, b.TransitionToValidating(nil, nil, time.Unix(103, 0).UTC()))
+	require.NoError(t, b.TransitionToValidating(release.TopologyRef{}, nil, time.Unix(103, 0).UTC()))
 	require.NoError(t, b.Fail("validation_failed", "", []string{"x"}, time.Unix(104, 0).UTC()))
 	require.NoError(t, repo.Save(ctx, b))
 
@@ -293,7 +293,7 @@ func TestRunRepository_PerNodeResultsRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	r := pipeline.NewCandidate("rp", "svc", "t", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
 	require.NoError(t, r.TransitionToParsing(time.Unix(101, 0).UTC()))
-	require.NoError(t, r.TransitionToValidating(nil, nil, time.Unix(102, 0).UTC()))
+	require.NoError(t, r.TransitionToValidating(release.TopologyRef{}, nil, time.Unix(102, 0).UTC()))
 	r.RecordValidationResults([]pipeline.NodeValidationResult{{NodeID: "a", Status: "failed", DBTLogURI: "k/a.log", DurationMS: 9}})
 	// A parse-leg result reports through its own Detail rather than a log, so
 	// the column has to carry that text back out of JSONB unchanged.
@@ -418,14 +418,14 @@ func TestRunRepository_DeleteFinishedBeforeKeepsCurrentProd(t *testing.T) {
 	mkRejected := func(id string, ts int64) {
 		r := pipeline.NewCandidate(id, "svc", "t", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(ts, 0).UTC())
 		require.NoError(t, r.TransitionToParsing(time.Unix(ts+1, 0).UTC()))
-		require.NoError(t, r.TransitionToValidating(nil, nil, time.Unix(ts+2, 0).UTC()))
+		require.NoError(t, r.TransitionToValidating(release.TopologyRef{}, nil, time.Unix(ts+2, 0).UTC()))
 		require.NoError(t, r.Fail("validation_failed", "", nil, time.Unix(ts+3, 0).UTC()))
 		require.NoError(t, repo.Save(ctx, r))
 	}
 	mkPromoted := func(id string, ts int64) {
 		r := pipeline.NewCandidate(id, "svc", "t", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(ts, 0).UTC())
 		require.NoError(t, r.TransitionToParsing(time.Unix(ts+1, 0).UTC()))
-		require.NoError(t, r.TransitionToValidating(nil, nil, time.Unix(ts+2, 0).UTC()))
+		require.NoError(t, r.TransitionToValidating(release.TopologyRef{}, nil, time.Unix(ts+2, 0).UTC()))
 		require.NoError(t, r.Promote(time.Unix(ts+3, 0).UTC()))
 		require.NoError(t, repo.Save(ctx, r))
 	}
@@ -459,7 +459,7 @@ func TestRunRepository_DeleteFinishedBeforeKeepsServiceProdRefs(t *testing.T) {
 	mkPromoted := func(id string, ts int64) {
 		r := pipeline.NewCandidate(id, "svc", "t", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(ts, 0).UTC())
 		require.NoError(t, r.TransitionToParsing(time.Unix(ts+1, 0).UTC()))
-		require.NoError(t, r.TransitionToValidating(nil, nil, time.Unix(ts+2, 0).UTC()))
+		require.NoError(t, r.TransitionToValidating(release.TopologyRef{}, nil, time.Unix(ts+2, 0).UTC()))
 		require.NoError(t, r.Promote(time.Unix(ts+3, 0).UTC()))
 		require.NoError(t, repo.Save(ctx, r))
 	}
@@ -499,7 +499,7 @@ func TestRunRepository_DeleteFinishedBeforeEmptyKeepSlice(t *testing.T) {
 
 	r := pipeline.NewCandidate("old-prom", "svc", "t", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
 	require.NoError(t, r.TransitionToParsing(time.Unix(101, 0).UTC()))
-	require.NoError(t, r.TransitionToValidating(nil, nil, time.Unix(102, 0).UTC()))
+	require.NoError(t, r.TransitionToValidating(release.TopologyRef{}, nil, time.Unix(102, 0).UTC()))
 	require.NoError(t, r.Promote(time.Unix(103, 0).UTC()))
 	require.NoError(t, repo.Save(ctx, r))
 
@@ -653,7 +653,7 @@ func TestRunRepository_DeleteFinishedBefore_DeletesCandidateSQLPrefixes(t *testi
 	mkTerminal := func(id string, ts int64) {
 		r := pipeline.NewCandidate(id, "svc", "t", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(ts, 0).UTC())
 		require.NoError(t, r.TransitionToParsing(time.Unix(ts+1, 0).UTC()))
-		require.NoError(t, r.TransitionToValidating(nil, nil, time.Unix(ts+2, 0).UTC()))
+		require.NoError(t, r.TransitionToValidating(release.TopologyRef{}, nil, time.Unix(ts+2, 0).UTC()))
 		require.NoError(t, r.Fail("validation_failed", "", nil, time.Unix(ts+3, 0).UTC()))
 		repo := postgres.NewRunRepository(db, nil)
 		require.NoError(t, repo.Save(ctx, r))
@@ -740,7 +740,7 @@ func TestRunRepository_DeleteFinishedBeforePrunesPassedVerification(t *testing.T
 
 	r := pipeline.NewVerification("r-verify-passed", "svc", "t", "rel-orig", 1, "", release.ManifestKindDbt, time.Unix(100, 0).UTC())
 	require.NoError(t, r.TransitionToParsing(time.Unix(101, 0).UTC()))
-	require.NoError(t, r.TransitionToValidating(nil, nil, time.Unix(102, 0).UTC()))
+	require.NoError(t, r.TransitionToValidating(release.TopologyRef{}, nil, time.Unix(102, 0).UTC()))
 	require.NoError(t, r.Pass(time.Unix(103, 0).UTC()))
 	require.NoError(t, repo.Save(ctx, r))
 
@@ -846,11 +846,33 @@ func TestRunRepository_RoundTripsCandidateTopologyRef(t *testing.T) {
 	assert.True(t, got.CandidateTopologyRef().IsZero())
 
 	ref := release.TopologyRef{URI: "s3://continuo/tenants/default/topologies/rRef/topology.json.gz", SHA256: "9f86d081884c7d65", NodeCount: 42}
-	got.SetCandidateTopologyRef(ref)
+	require.NoError(t, got.TransitionToParsing(time.Unix(101, 0).UTC()))
+	require.NoError(t, got.TransitionToValidating(ref, []string{"n"}, time.Unix(102, 0).UTC()))
 	require.NoError(t, repo.Save(ctx, got))
 
 	reread, err := repo.Get(ctx, "rRef")
 	require.NoError(t, err)
 	require.NotNil(t, reread)
-	assert.Equal(t, ref, reread.CandidateTopologyRef(), "the upsert must write the reference set after the first insert")
+	assert.Equal(t, ref, reread.CandidateTopologyRef(), "the upsert must write the reference recorded after the first insert")
+}
+
+// TestRunRepository_SaveLeavesTheLegacyTopologyColumnAlone pins that the run
+// repository never writes candidate_topology: a row from before topology
+// artifacts keeps its inline topology until the one-time upgrade step moves it
+// into an artifact.
+func TestRunRepository_SaveLeavesTheLegacyTopologyColumnAlone(t *testing.T) {
+	db := openTestDB(t)
+	repo := postgres.NewRunRepository(db, nil)
+	ctx := context.Background()
+	r := pipeline.NewCandidate("rLegacy", "svc", "t", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
+	require.NoError(t, repo.Save(ctx, r))
+	_, err := db.Exec(`UPDATE release_pipeline_runs SET candidate_topology = '[{"unique_id":"a"}]'::jsonb WHERE run_id = 'rLegacy'`)
+	require.NoError(t, err)
+
+	require.NoError(t, r.TransitionToCompiling(time.Unix(101, 0).UTC()))
+	require.NoError(t, repo.Save(ctx, r))
+
+	var stored string
+	require.NoError(t, db.Get(&stored, `SELECT candidate_topology::text FROM release_pipeline_runs WHERE run_id = 'rLegacy'`))
+	assert.JSONEq(t, `[{"unique_id":"a"}]`, stored)
 }

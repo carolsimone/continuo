@@ -127,24 +127,23 @@ type Verification struct {
 
 // Run is one pass of one service's delta through the pipeline.
 type Run struct {
-	id                   string
-	kind                 Kind
-	status               Status
-	imageTags            map[string]string
-	changedService       string
-	manifestKind         release.ManifestKind
-	candidateTopology    release.Topology
-	candidateTopologyRef release.TopologyRef
-	validationNodeIDs    []string
-	perNodeResults       []NodeValidationResult
-	failReason           string
-	failDetail           string
-	failingNodes         []string
-	codeBundleURI        string
-	createdAt            time.Time
-	transitions          []Transition
-	candidate            *Candidate    // non-nil iff kind == KindCandidate
-	verification         *Verification // non-nil iff kind == KindVerification
+	id                string
+	kind              Kind
+	status            Status
+	imageTags         map[string]string
+	changedService    string
+	manifestKind      release.ManifestKind
+	candidateTopology release.TopologyRef
+	validationNodeIDs []string
+	perNodeResults    []NodeValidationResult
+	failReason        string
+	failDetail        string
+	failingNodes      []string
+	codeBundleURI     string
+	createdAt         time.Time
+	transitions       []Transition
+	candidate         *Candidate    // non-nil iff kind == KindCandidate
+	verification      *Verification // non-nil iff kind == KindVerification
 }
 
 func newRun(id string, kind Kind, service, imageTag string, manifestKind release.ManifestKind, now time.Time) *Run {
@@ -188,8 +187,7 @@ func (r *Run) ImageTags() map[string]string              { return r.imageTags }
 func (r *Run) ChangedService() string                    { return r.changedService }
 func (r *Run) ManifestKind() release.ManifestKind        { return r.manifestKind }
 func (r *Run) CodeBundleURI() string                     { return r.codeBundleURI }
-func (r *Run) CandidateTopology() release.Topology       { return r.candidateTopology }
-func (r *Run) CandidateTopologyRef() release.TopologyRef { return r.candidateTopologyRef }
+func (r *Run) CandidateTopologyRef() release.TopologyRef { return r.candidateTopology }
 func (r *Run) ValidationNodeIDs() []string               { return r.validationNodeIDs }
 func (r *Run) FailReason() string                        { return r.failReason }
 func (r *Run) FailDetail() string                        { return r.failDetail }
@@ -324,10 +322,6 @@ func (r *Run) SetRejectionPayload(p []byte) {
 // activation so earlier-queued promotions are seen.
 func (r *Run) SetAssembledImageTags(tags map[string]string) { r.imageTags = tags }
 
-// SetCandidateTopologyRef records where the run's candidate topology artifact
-// lives, once the parse result naming it has been read.
-func (r *Run) SetCandidateTopologyRef(ref release.TopologyRef) { r.candidateTopologyRef = ref }
-
 // RecordStageResults replaces all per-node results for the given stage,
 // leaving other stages intact. Idempotent across re-delivery of one leg's
 // aggregate event.
@@ -398,9 +392,9 @@ func (r *Run) TransitionFromCompiling(now time.Time) error {
 	return nil
 }
 
-// TransitionToValidating records the candidate topology and validation set
-// and moves a parsing run into validating.
-func (r *Run) TransitionToValidating(topology release.Topology, validationNodeIDs []string, now time.Time) error {
+// TransitionToValidating records the reference to the candidate topology
+// artifact and the validation set, and moves a parsing run into validating.
+func (r *Run) TransitionToValidating(topology release.TopologyRef, validationNodeIDs []string, now time.Time) error {
 	if r.status != StatusParsing {
 		return fmt.Errorf("cannot transition to validating from %s", r.status)
 	}
@@ -410,10 +404,11 @@ func (r *Run) TransitionToValidating(topology release.Topology, validationNodeID
 	return nil
 }
 
-// TransitionToSeedBuilding records the candidate topology and validation set
-// and moves a parsing run into seed_building, for a run whose changed closure
-// holds new or changed seeds that must be built before validation.
-func (r *Run) TransitionToSeedBuilding(topology release.Topology, validationNodeIDs []string, now time.Time) error {
+// TransitionToSeedBuilding records the reference to the candidate topology
+// artifact and the validation set, and moves a parsing run into
+// seed_building, for a run whose changed closure holds new or changed seeds
+// that must be built before validation.
+func (r *Run) TransitionToSeedBuilding(topology release.TopologyRef, validationNodeIDs []string, now time.Time) error {
 	if r.status != StatusParsing {
 		return fmt.Errorf("cannot transition to seed_building from %s", r.status)
 	}
@@ -504,22 +499,21 @@ func (r *Run) StartRemediationRound(now time.Time) (int, error) {
 // without re-running state-machine validation. Kind selects which of the
 // candidate-only or verification-only fields are read; the others are ignored.
 type RehydrateInput struct {
-	ID                   string
-	Kind                 Kind
-	Status               Status
-	ImageTags            map[string]string
-	ChangedService       string
-	ManifestKind         release.ManifestKind
-	CandidateTopology    release.Topology
-	CandidateTopologyRef release.TopologyRef
-	ValidationNodeIDs    []string
-	PerNodeResults       []NodeValidationResult
-	FailReason           string
-	FailDetail           string
-	FailingNodes         []string
-	CodeBundleURI        string
-	CreatedAt            time.Time
-	Transitions          []Transition
+	ID                string
+	Kind              Kind
+	Status            Status
+	ImageTags         map[string]string
+	ChangedService    string
+	ManifestKind      release.ManifestKind
+	CandidateTopology release.TopologyRef
+	ValidationNodeIDs []string
+	PerNodeResults    []NodeValidationResult
+	FailReason        string
+	FailDetail        string
+	FailingNodes      []string
+	CodeBundleURI     string
+	CreatedAt         time.Time
+	Transitions       []Transition
 	// Candidate-only.
 	Bootstrap        bool
 	Repo             string
@@ -535,22 +529,21 @@ type RehydrateInput struct {
 // Rehydrate reconstructs a Run from persistence. Only repositories call it.
 func Rehydrate(in RehydrateInput) *Run {
 	r := &Run{
-		id:                   in.ID,
-		kind:                 in.Kind,
-		status:               in.Status,
-		imageTags:            in.ImageTags,
-		changedService:       in.ChangedService,
-		manifestKind:         in.ManifestKind,
-		candidateTopology:    in.CandidateTopology,
-		candidateTopologyRef: in.CandidateTopologyRef,
-		validationNodeIDs:    in.ValidationNodeIDs,
-		perNodeResults:       in.PerNodeResults,
-		failReason:           in.FailReason,
-		failDetail:           in.FailDetail,
-		failingNodes:         in.FailingNodes,
-		codeBundleURI:        in.CodeBundleURI,
-		createdAt:            in.CreatedAt,
-		transitions:          in.Transitions,
+		id:                in.ID,
+		kind:              in.Kind,
+		status:            in.Status,
+		imageTags:         in.ImageTags,
+		changedService:    in.ChangedService,
+		manifestKind:      in.ManifestKind,
+		candidateTopology: in.CandidateTopology,
+		validationNodeIDs: in.ValidationNodeIDs,
+		perNodeResults:    in.PerNodeResults,
+		failReason:        in.FailReason,
+		failDetail:        in.FailDetail,
+		failingNodes:      in.FailingNodes,
+		codeBundleURI:     in.CodeBundleURI,
+		createdAt:         in.CreatedAt,
+		transitions:       in.Transitions,
 	}
 	switch in.Kind {
 	case KindVerification:

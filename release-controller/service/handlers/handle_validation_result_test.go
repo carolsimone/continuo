@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
@@ -13,6 +15,7 @@ import (
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
+	"github.com/carolsimone/continuo/release-controller/service/ports"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -375,7 +378,7 @@ func TestHandleValidationResult_VerificationPasses_NoReleaseEvents_FinishedEmitt
 	deps, store := newDeps(now)
 	r := pipeline.NewVerification("verify-rel-1-core-a1", "core", "img", "rel-1", 1, "", release.ManifestKindDbt, now)
 	require.NoError(t, r.TransitionToParsing(now))
-	require.NoError(t, r.TransitionToValidating(release.Topology{{UniqueID: "model.core.orders", ServiceName: "core"}}, []string{"model.core.orders"}, now))
+	require.NoError(t, r.TransitionToValidating(store.storeTopology(r.ID(), release.Topology{{UniqueID: "model.core.orders", ServiceName: "core"}}), []string{"model.core.orders"}, now))
 	r.UpsertStageResult("validation", pipeline.NodeValidationResult{NodeID: "model.core.orders", Status: "ok"})
 	store.SeedRelease(r)
 
@@ -410,7 +413,7 @@ func TestHandleValidationResult_VerificationFails_NoReleaseRejected_FinishedEmit
 	deps, store := newDeps(now)
 	r := pipeline.NewVerification("verify-rel-1-core-a1", "core", "img", "rel-1", 1, "", release.ManifestKindDbt, now)
 	require.NoError(t, r.TransitionToParsing(now))
-	require.NoError(t, r.TransitionToValidating(release.Topology{{UniqueID: "model.core.orders", ServiceName: "core"}}, []string{"model.core.orders"}, now))
+	require.NoError(t, r.TransitionToValidating(store.storeTopology(r.ID(), release.Topology{{UniqueID: "model.core.orders", ServiceName: "core"}}), []string{"model.core.orders"}, now))
 	r.UpsertStageResult("validation", pipeline.NodeValidationResult{NodeID: "model.core.orders", Status: "failed"})
 	store.SeedRelease(r)
 
@@ -434,7 +437,7 @@ func TestHandleValidationResult_CandidatePromoted_EmitsFinishedToo(t *testing.T)
 	deps, store := newDeps(now)
 	r := pipeline.NewCandidate("rel-1", "core", "img", false, "org/r", "sha", release.ManifestKindDbt, now)
 	require.NoError(t, r.TransitionToParsing(now))
-	require.NoError(t, r.TransitionToValidating(release.Topology{{UniqueID: "model.core.orders", ServiceName: "core"}}, []string{"model.core.orders"}, now))
+	require.NoError(t, r.TransitionToValidating(store.storeTopology(r.ID(), release.Topology{{UniqueID: "model.core.orders", ServiceName: "core"}}), []string{"model.core.orders"}, now))
 	r.UpsertStageResult("validation", pipeline.NodeValidationResult{NodeID: "model.core.orders", Status: "ok"})
 	store.SeedRelease(r)
 
@@ -1062,7 +1065,8 @@ func TestHandleValidationResult_Rejected_CarriesChangedAncestors(t *testing.T) {
 	// ancestor of the failing b.
 	r, err := store.GetRelease("rAnc")
 	require.NoError(t, err)
-	topo := r.CandidateTopology()
+	topo, err := deps.Topologies.Load(context.Background(), r.CandidateTopologyRef())
+	require.NoError(t, err)
 	var bHash string
 	for i := range topo {
 		if topo[i].UniqueID == "b" {
@@ -1079,7 +1083,7 @@ func TestHandleValidationResult_Rejected_CarriesChangedAncestors(t *testing.T) {
 		Status:            r.Status(),
 		ImageTags:         r.ImageTags(),
 		ChangedService:    r.ChangedService(),
-		CandidateTopology: topo,
+		CandidateTopology: store.storeTopology(r.ID(), topo),
 		ValidationNodeIDs: r.ValidationNodeIDs(),
 		PerNodeResults:    r.PerNodeResults(),
 		FailReason:        r.FailReason(),
@@ -1178,4 +1182,40 @@ func TestHandleValidationResult_Promote_EmitsCodeBundleURIAndBootstrap(t *testin
 	assert.Equal(t, "s3://continuo/code-bundles/rA/bundle.json", p.CodeBundleURI,
 		"release.promoted:v1 must carry code_bundle_uri on the validation-pass path")
 	assert.False(t, p.Bootstrap, "non-bootstrap release must carry bootstrap=false")
+}
+
+// A later read of the run's topology (after intake verified the artifact) that
+// meets a corrupt artifact surfaces ErrTopologyArtifactCorrupt, which the
+// bindings dead-letter. The error aborts the handler, so its transaction
+// rolls back.
+func TestHandleValidationResult_CorruptArtifactOnTheDecisionReadSurfacesTheCorruption(t *testing.T) {
+	for _, status := range []string{"ok", "failed"} {
+		t.Run(status, func(t *testing.T) {
+			deps, store := seedToValidating(t, "rCorrupt")
+			r, err := store.GetRelease("rCorrupt")
+			require.NoError(t, err)
+			store.topologies.failLoad(r.CandidateTopologyRef().URI, fmt.Errorf("%w: tampered", ports.ErrTopologyArtifactCorrupt))
+
+			err = handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
+				ReleaseID: "rCorrupt", AggregateStatus: status,
+			})
+			require.Error(t, err)
+			assert.True(t, errors.Is(err, ports.ErrTopologyArtifactCorrupt))
+		})
+	}
+}
+
+// The per-node projection reads the topology to stamp the node type; a corrupt
+// artifact there is surfaced the same way.
+func TestHandleNodeValidationResult_CorruptArtifactSurfacesTheCorruption(t *testing.T) {
+	deps, store := seedToValidating(t, "rNodeCorrupt")
+	r, err := store.GetRelease("rNodeCorrupt")
+	require.NoError(t, err)
+	store.topologies.failLoad(r.CandidateTopologyRef().URI, fmt.Errorf("%w: tampered", ports.ErrTopologyArtifactCorrupt))
+
+	err = handlers.HandleNodeValidationResult(context.Background(), deps, handlers.NodeValidationResultInput{
+		ReleaseID: "rNodeCorrupt", Stage: "validation", NodeID: "a", Status: "ok",
+	})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ports.ErrTopologyArtifactCorrupt))
 }

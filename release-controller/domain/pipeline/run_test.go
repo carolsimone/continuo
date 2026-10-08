@@ -28,7 +28,7 @@ func verification(t *testing.T) *pipeline.Run {
 func validating(t *testing.T, r *pipeline.Run) {
 	t.Helper()
 	require.NoError(t, r.TransitionToParsing(t0))
-	require.NoError(t, r.TransitionToValidating(release.Topology{}, nil, t0))
+	require.NoError(t, r.TransitionToValidating(release.TopologyRef{}, nil, t0))
 }
 
 func TestNewCandidate_HasNoVerificationFacts(t *testing.T) {
@@ -180,13 +180,14 @@ func TestMatchesSubmission_AVerificationMatchesNoSubmission(t *testing.T) {
 	assert.False(t, verification(t).MatchesSubmission(candidateSubmission()))
 }
 
-func TestRun_CandidateTopologyRefRehydratesAndIsSettable(t *testing.T) {
+func TestRun_CandidateTopologyRefRehydratesAndIsRecordedByTheTransition(t *testing.T) {
 	ref := release.TopologyRef{URI: "s3://continuo/tenants/default/topologies/r1/topology.json.gz", SHA256: "ab12", NodeCount: 7}
-	r := pipeline.Rehydrate(pipeline.RehydrateInput{ID: "r1", Kind: pipeline.KindCandidate, Status: pipeline.StatusValidating, CandidateTopologyRef: ref})
+	r := pipeline.Rehydrate(pipeline.RehydrateInput{ID: "r1", Kind: pipeline.KindCandidate, Status: pipeline.StatusValidating, CandidateTopology: ref})
 	assert.Equal(t, ref, r.CandidateTopologyRef())
 
 	fresh := candidate(t)
 	assert.True(t, fresh.CandidateTopologyRef().IsZero(), "a run that was never parsed names no artifact")
-	fresh.SetCandidateTopologyRef(ref)
+	require.NoError(t, fresh.TransitionToParsing(t0))
+	require.NoError(t, fresh.TransitionToValidating(ref, []string{"n"}, t0))
 	assert.Equal(t, ref, fresh.CandidateTopologyRef())
 }

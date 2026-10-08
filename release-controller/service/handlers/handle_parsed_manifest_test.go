@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
+	"github.com/carolsimone/continuo/release-controller/service/ports"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -662,7 +664,7 @@ func TestHandleParsedManifest_OK_NothingToValidate_Verification(t *testing.T) {
 		assert.Equal(t, pipeline.StatusPassed, r.Status(),
 			"a candidate identical to production is production's passed code, so the fix it carries is proven")
 		assert.Empty(t, r.FailReason())
-		assert.Len(t, r.CandidateTopology(), 2,
+		assert.Equal(t, 2, r.CandidateTopologyRef().NodeCount,
 			"the parsed topology is persisted, so the release reports its real node count")
 		assert.Empty(t, r.ValidationNodeIDs(), "nothing was sent to the validation leg")
 
@@ -920,7 +922,7 @@ func TestHandleParsedManifest_OK_TestCountSurvivesFromTheArtifact(t *testing.T) 
 	r, err := store.GetRelease("rA")
 	require.NoError(t, err)
 	byID := map[string]release.Node{}
-	for _, n := range r.CandidateTopology() {
+	for _, n := range topologyOf(t, deps, r) {
 		byID[n.UniqueID] = n
 	}
 	assert.Equal(t, 3, byID["a"].TestCount)
@@ -1044,7 +1046,7 @@ func TestHandleParsedManifest_Bootstrap_PromotesWithoutValidation(t *testing.T) 
 	// The candidate topology is recorded — promoteToProduction reads it to seed
 	// current_prod and the release.promoted:v1 payload; an empty one would
 	// silently produce an empty prod snapshot.
-	assert.Len(t, r.CandidateTopology(), 2)
+	assert.Equal(t, 2, r.CandidateTopologyRef().NodeCount)
 
 	// current_prod seeded to this release.
 	assert.Equal(t, "rBoot", store.GetCurrentProd().ReleaseID())
@@ -1770,12 +1772,17 @@ func seedReleaseInParsing(store *fakeStore, id, service string, verification boo
 // verification only when it is absent from failing — the rejected release
 // already proved it.
 func seedRejectedOriginal(store *fakeStore, id, service string, candidate release.Topology, failing []string) {
+	// A rejected release that never recorded a topology holds no reference.
+	var ref release.TopologyRef
+	if candidate != nil {
+		ref = store.storeTopology(id, candidate)
+	}
 	store.SeedRelease(pipeline.Rehydrate(pipeline.RehydrateInput{
 		ID:                id,
 		Status:            pipeline.StatusRejected,
 		ImageTags:         map[string]string{service: "img-" + service},
 		ChangedService:    service,
-		CandidateTopology: candidate,
+		CandidateTopology: ref,
 		FailingNodes:      failing,
 		ManifestKind:      release.ManifestKindDbt,
 		RemediationRound:  1,
@@ -1975,7 +1982,7 @@ func TestHandleParsedManifest_OK_VerificationRestoringProductionAfterCompileReje
 	assert.Equal(t, pipeline.StatusPassed, r.Status(),
 		"a fix that restores a compile-broken model to its promoted content is proven, not unmeasured")
 	assert.Empty(t, r.FailReason())
-	assert.Len(t, r.CandidateTopology(), 1, "the parsed topology is persisted on the passed verification run")
+	assert.Equal(t, 1, r.CandidateTopologyRef().NodeCount, "the parsed topology is persisted on the passed verification run")
 	for _, e := range outboxEntries(store) {
 		assert.NotEqual(t, streams.ReleaseRejectedV1, e.StreamName, "a proven fix must not be reported as a failed attempt")
 		assert.NotEqual(t, streams.ReleasePromotedV1, e.StreamName, "a verification run never promotes")
@@ -2398,4 +2405,49 @@ func TestHandleParsedManifest_OK_RecordsTheTopologyRef(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, pipeline.StatusValidating, r.Status())
 	assert.Equal(t, ref, r.CandidateTopologyRef())
+}
+
+// A verification's baseline is the verified release's artifact. When that
+// artifact cannot be read the verification still runs, measured against
+// production alone, exactly as when the verified release is gone.
+func TestHandleParsedManifest_OK_VerificationFallsBackWhenTheVerifiedArtifactIsUnreadable(t *testing.T) {
+	deps, store := newDeps(time.Unix(100, 0).UTC())
+	deps.Bucket = "continuo"
+	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", verifyProdTopo(), time.Unix(50, 0).UTC()))
+	seedRejectedOriginal(store, "origcorrupt", "service-2", verifyRejectedCandidate(), []string{verifyEID})
+	orig, err := store.GetRelease("origcorrupt")
+	require.NoError(t, err)
+	store.topologies.failLoad(orig.CandidateTopologyRef().URI, fmt.Errorf("%w: tampered", ports.ErrTopologyArtifactCorrupt))
+	seedReleaseInParsing(store, "verifycorrupt", "service-2", true, "origcorrupt")
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "verifycorrupt", Status: "ok", TopologyRef: putTopology(t, deps, "verifycorrupt", verifyParsedTopo()),
+	}))
+
+	r, err := store.GetRelease("verifycorrupt")
+	require.NoError(t, err)
+	assert.Contains(t, r.ValidationNodeIDs(), verifyGID,
+		"an unreadable verified artifact falls back to a production diff, so the sibling is changed")
+}
+
+// An unreachable store while reading the verified release's artifact is not a
+// reason to measure a fix against the wrong baseline: the handler returns the
+// error and the run stays parsing until the store answers.
+func TestHandleParsedManifest_OK_VerificationWaitsForAnUnreachableArtifactStore(t *testing.T) {
+	deps, store := newDeps(time.Unix(100, 0).UTC())
+	deps.Bucket = "continuo"
+	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", verifyProdTopo(), time.Unix(50, 0).UTC()))
+	seedRejectedOriginal(store, "origdown", "service-2", verifyRejectedCandidate(), []string{verifyEID})
+	orig, err := store.GetRelease("origdown")
+	require.NoError(t, err)
+	store.topologies.failLoad(orig.CandidateTopologyRef().URI, storeOutage{})
+	seedReleaseInParsing(store, "verifydown", "service-2", true, "origdown")
+
+	err = handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "verifydown", Status: "ok", TopologyRef: putTopology(t, deps, "verifydown", verifyParsedTopo()),
+	})
+	require.Error(t, err)
+	r, getErr := store.GetRelease("verifydown")
+	require.NoError(t, getErr)
+	assert.Equal(t, pipeline.StatusParsing, r.Status())
 }

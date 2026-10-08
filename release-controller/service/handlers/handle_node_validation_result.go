@@ -45,9 +45,13 @@ func HandleNodeValidationResult(ctx context.Context, d *Deps, in NodeValidationR
 	// NodeType is stamped from the candidate topology (absent from it, e.g. a
 	// non-node compile-leg failure, leaves it empty) so a reader can tell a
 	// test's bind check from a model's build without a separate topology
-	// lookup.
+	// lookup. The topology is read from the run's artifact through the cache.
+	topo, err := candidateTopology(ctx, d, r)
+	if err != nil {
+		return err
+	}
 	var nodeType string
-	for _, n := range r.CandidateTopology() {
+	for _, n := range topo {
 		if n.UniqueID == in.NodeID {
 			nodeType = n.NodeType
 			break

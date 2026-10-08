@@ -509,6 +509,18 @@ func putTopology(t *testing.T, d *handlers.Deps, releaseID string, topo release.
 	return ref
 }
 
+// topologyOf loads r's candidate topology through the artifact store, as
+// every handler does.
+func topologyOf(t *testing.T, d *handlers.Deps, r *pipeline.Run) release.Topology {
+	t.Helper()
+	if r.CandidateTopologyRef().IsZero() {
+		return nil
+	}
+	topo, err := d.Topologies.Load(context.Background(), r.CandidateTopologyRef())
+	require.NoError(t, err)
+	return topo
+}
+
 // storeOutage is an object-store error that reports an HTTP 503, as the AWS
 // SDK's response errors do.
 type storeOutage struct{}

@@ -154,7 +154,10 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipe
 	// The candidate topology is the artifact's: it carries no candidate SQL
 	// URIs (those are derived per run), so current_prod and the promoted
 	// topology take it as is.
-	promotedTopo := r.CandidateTopology()
+	promotedTopo, err := candidateTopology(ctx, d, r)
+	if err != nil {
+		return err
+	}
 
 	// Determine which nodes actually changed versus the prod being replaced, so
 	// the release.promoted event can tag them. Computed against cp's snapshot
@@ -265,7 +268,7 @@ func handleValidationOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipel
 		return fmt.Errorf("commit: %w", err)
 	}
 	d.Telemetry.ReleaseValidationCompleted(ctx, in.ReleaseID, true, len(r.ValidationNodeIDs()), 0, 0)
-	recordTerminalTelemetry(ctx, d, r, len(r.CandidateTopology()))
+	recordTerminalTelemetry(ctx, d, r, r.CandidateTopologyRef().NodeCount)
 	return nil
 }
 
@@ -282,6 +285,10 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 	if err := r.Fail(string(pkg_model.RejectReasonValidationFailed), "", failing, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
+	topo, err := candidateTopology(ctx, d, r)
+	if err != nil {
+		return err
+	}
 
 	// Build a per-node lookup over the candidate topology so each entry in the
 	// rejected payload carries, alongside its outcome:
@@ -297,8 +304,8 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 	// remediation agent recognise a python node — whose candidate artifact is a
 	// JSON validation spec rather than SQL — without a topology lookup of its own.
 	type candidateFacts struct{ artifactURI, nodeType, filePath, service string }
-	factsByNodeID := make(map[string]candidateFacts, len(r.CandidateTopology()))
-	for _, n := range r.CandidateTopology() {
+	factsByNodeID := make(map[string]candidateFacts, len(topo))
+	for _, n := range topo {
 		factsByNodeID[n.UniqueID] = candidateFacts{
 			artifactURI: candidateArtifactURI(d.Bucket, r.ID(), n),
 			nodeType:    n.NodeType,
@@ -314,7 +321,7 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 		return fmt.Errorf("get current prod: %w", err)
 	}
 	changedSet := make(map[string]bool)
-	for _, id := range release.DerivedChangedNodeIDs(r.CandidateTopology(), cp.TopologySnapshot()) {
+	for _, id := range release.DerivedChangedNodeIDs(topo, cp.TopologySnapshot()) {
 		changedSet[id] = true
 	}
 
@@ -339,7 +346,7 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 			Service:              f.service,
 		}
 		if nr.Status != "ok" {
-			for _, a := range release.ChangedAncestors(r.CandidateTopology(), nr.NodeID, changedSet) {
+			for _, a := range release.ChangedAncestors(topo, nr.NodeID, changedSet) {
 				entry.ChangedAncestors = append(entry.ChangedAncestors, ports.ChangedAncestor{
 					NodeID: a.NodeID, FilePath: a.FilePath, Service: a.Service, Depth: a.Depth,
 				})

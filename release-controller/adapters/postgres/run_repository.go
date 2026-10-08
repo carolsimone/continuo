@@ -44,7 +44,7 @@ func NewRunRepository(q Queryer, deleter ports.CandidateSQLDeleter) *RunReposito
 var _ repository.RunRepository = (*RunRepository)(nil)
 
 const runColumns = `run_id, run_kind, status, image_tags, changed_service,
-	candidate_topology, validation_node_ids, fail_reason, fail_detail, failing_nodes,
+	validation_node_ids, fail_reason, fail_detail, failing_nodes,
 	per_node_results, created_at, transitions, code_bundle_uri, manifest_kind,
 	bootstrap, repo, commit_sha, remediation_round, rejection_payload,
 	verifies_release_id, attempt, source_overlay_uri,
@@ -58,7 +58,6 @@ type runRow struct {
 	Status            string         `db:"status"`
 	ImageTagsJSON     []byte         `db:"image_tags"`
 	ChangedService    string         `db:"changed_service"`
-	CandidateTopology []byte         `db:"candidate_topology"`
 	ValidationNodeIDs pq.StringArray `db:"validation_node_ids"`
 	FailReason        sql.NullString `db:"fail_reason"`
 	FailDetail        string         `db:"fail_detail"`
@@ -143,6 +142,9 @@ func (r *RunRepository) Active(ctx context.Context) (*pipeline.Run, error) {
 // created_at, manifest kind, provenance, verification facts) are written only
 // on INSERT; the ON CONFLICT clause updates the mutable ones. image_tags is
 // mutable because SetAssembledImageTags overwrites it at activation.
+// candidate_topology is never written: a run stores the reference to its
+// topology artifact, and a row from before artifacts keeps its inline topology
+// for the one-time upgrade step.
 func (r *RunRepository) Save(ctx context.Context, run *pipeline.Run) error {
 	args, err := encodeRun(run)
 	if err != nil {
@@ -155,11 +157,10 @@ func (r *RunRepository) Save(ctx context.Context, run *pipeline.Run) error {
 	// beforehand.
 	res, err := r.q.ExecContext(ctx,
 		`INSERT INTO release_pipeline_runs (`+runColumns+`)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
 		 ON CONFLICT (run_id) DO UPDATE SET
 		   status = EXCLUDED.status,
 		   image_tags = EXCLUDED.image_tags,
-		   candidate_topology = EXCLUDED.candidate_topology,
 		   validation_node_ids = EXCLUDED.validation_node_ids,
 		   fail_reason = EXCLUDED.fail_reason,
 		   fail_detail = EXCLUDED.fail_detail,
@@ -195,7 +196,7 @@ func (r *RunRepository) Create(ctx context.Context, run *pipeline.Run) (bool, er
 	}
 	res, err := r.q.ExecContext(ctx,
 		`INSERT INTO release_pipeline_runs (`+runColumns+`)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
 		 ON CONFLICT (run_id) DO NOTHING`,
 		args...)
 	if err != nil {
@@ -213,10 +214,6 @@ func encodeRun(run *pipeline.Run) ([]any, error) {
 	imageTagsJSON, err := json.Marshal(run.ImageTags())
 	if err != nil {
 		return nil, fmt.Errorf("marshal image_tags: %w", err)
-	}
-	topoJSON, err := json.Marshal(serialization.TopologyFromDomain(run.CandidateTopology()))
-	if err != nil {
-		return nil, fmt.Errorf("marshal topology: %w", err)
 	}
 	transitionsJSON, err := json.Marshal(serialization.TransitionsFromDomain(run.Transitions()))
 	if err != nil {
@@ -243,7 +240,7 @@ func encodeRun(run *pipeline.Run) ([]any, error) {
 	}
 	return []any{
 		run.ID(), string(run.Kind()), string(run.Status()), imageTagsJSON, run.ChangedService(),
-		topoJSON, pq.StringArray(run.ValidationNodeIDs()), failReason, run.FailDetail(), pq.StringArray(run.FailingNodes()),
+		pq.StringArray(run.ValidationNodeIDs()), failReason, run.FailDetail(), pq.StringArray(run.FailingNodes()),
 		perNodeJSON, run.CreatedAt(), transitionsJSON, run.CodeBundleURI(), string(run.ManifestKind()),
 		run.IsBootstrap(), run.Repo(), run.CommitSHA(), max(run.RemediationRound(), 1), rejectionPayload,
 		run.VerifiesReleaseID(), run.Attempt(), run.SourceOverlayURI(),
@@ -257,14 +254,6 @@ func rowToRun(row runRow) (*pipeline.Run, error) {
 		if err := json.Unmarshal(row.ImageTagsJSON, &imageTags); err != nil {
 			return nil, fmt.Errorf("unmarshal image_tags: %w", err)
 		}
-	}
-	var topo release.Topology
-	if len(row.CandidateTopology) > 0 {
-		var topoDTO serialization.TopologyDTO
-		if err := json.Unmarshal(row.CandidateTopology, &topoDTO); err != nil {
-			return nil, fmt.Errorf("unmarshal candidate_topology: %w", err)
-		}
-		topo = topoDTO.ToDomain()
 	}
 	var perNode []pipeline.NodeValidationResult
 	if len(row.PerNodeResults) > 0 {
@@ -283,14 +272,13 @@ func rowToRun(row runRow) (*pipeline.Run, error) {
 		transitions = serialization.TransitionsToDomain(transitionsDTO)
 	}
 	return pipeline.Rehydrate(pipeline.RehydrateInput{
-		ID:                row.RunID,
-		Kind:              pipeline.Kind(row.RunKind),
-		Status:            pipeline.Status(row.Status),
-		ImageTags:         imageTags,
-		ChangedService:    row.ChangedService,
-		ManifestKind:      release.ManifestKind(row.ManifestKind),
-		CandidateTopology: topo,
-		CandidateTopologyRef: release.TopologyRef{
+		ID:             row.RunID,
+		Kind:           pipeline.Kind(row.RunKind),
+		Status:         pipeline.Status(row.Status),
+		ImageTags:      imageTags,
+		ChangedService: row.ChangedService,
+		ManifestKind:   release.ManifestKind(row.ManifestKind),
+		CandidateTopology: release.TopologyRef{
 			URI:       row.CandidateTopologyURI.String,
 			SHA256:    row.CandidateTopologySHA256.String,
 			NodeCount: int(row.CandidateNodeCount.Int32),

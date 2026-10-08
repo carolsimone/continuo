@@ -108,7 +108,7 @@ func assembleFor(
 			"release_id", r.ID(), "verifies_release_id", r.VerifiesReleaseID(), "error", err)
 		return set
 	}
-	if len(original.CandidateTopology()) == 0 {
+	if original.CandidateTopologyRef().IsZero() {
 		logger.Warn("the verified release never parsed, so it has no candidate manifest; assembling from production instead",
 			"release_id", r.ID(), "verifies_release_id", original.ID())
 		return set

@@ -30,7 +30,7 @@ func TestRun_TransitionReceivedToParsing(t *testing.T) {
 func TestRun_TransitionParsingToValidating(t *testing.T) {
 	r := pipeline.NewCandidate("sha-abc", "svc", "tag", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(0, 0))
 	require.NoError(t, r.TransitionToParsing(time.Unix(1, 0)))
-	require.NoError(t, r.TransitionToValidating(release.Topology{}, []string{"n"}, time.Unix(2, 0)))
+	require.NoError(t, r.TransitionToValidating(release.TopologyRef{}, []string{"n"}, time.Unix(2, 0)))
 	assert.Equal(t, pipeline.StatusValidating, r.Status())
 	assert.Equal(t, []string{"n"}, r.ValidationNodeIDs())
 }
@@ -38,7 +38,7 @@ func TestRun_TransitionParsingToValidating(t *testing.T) {
 func TestRun_TransitionValidatingToPromoted(t *testing.T) {
 	r := pipeline.NewCandidate("sha-abc", "svc", "tag", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(0, 0))
 	require.NoError(t, r.TransitionToParsing(time.Unix(1, 0)))
-	require.NoError(t, r.TransitionToValidating(release.Topology{}, []string{"n"}, time.Unix(2, 0)))
+	require.NoError(t, r.TransitionToValidating(release.TopologyRef{}, []string{"n"}, time.Unix(2, 0)))
 	require.NoError(t, r.Promote(time.Unix(3, 0)))
 	assert.Equal(t, pipeline.StatusPromoted, r.Status())
 }
@@ -46,7 +46,7 @@ func TestRun_TransitionValidatingToPromoted(t *testing.T) {
 func TestRun_TransitionValidatingToRejected(t *testing.T) {
 	r := pipeline.NewCandidate("sha-abc", "svc", "tag", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(0, 0))
 	require.NoError(t, r.TransitionToParsing(time.Unix(1, 0)))
-	require.NoError(t, r.TransitionToValidating(release.Topology{}, []string{"n"}, time.Unix(2, 0)))
+	require.NoError(t, r.TransitionToValidating(release.TopologyRef{}, []string{"n"}, time.Unix(2, 0)))
 	require.NoError(t, r.Fail("validation_failed", "", []string{"n"}, time.Unix(3, 0)))
 	assert.Equal(t, pipeline.StatusRejected, r.Status())
 	assert.Equal(t, "validation_failed", r.FailReason())
@@ -54,14 +54,14 @@ func TestRun_TransitionValidatingToRejected(t *testing.T) {
 
 func TestRun_CannotSkipStates(t *testing.T) {
 	r := pipeline.NewCandidate("sha-abc", "svc", "tag", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(0, 0))
-	assert.Error(t, r.TransitionToValidating(release.Topology{}, []string{"n"}, time.Unix(1, 0)))
+	assert.Error(t, r.TransitionToValidating(release.TopologyRef{}, []string{"n"}, time.Unix(1, 0)))
 	assert.Error(t, r.Promote(time.Unix(1, 0)))
 }
 
 func TestRun_CannotDoublePromote(t *testing.T) {
 	r := pipeline.NewCandidate("sha-abc", "svc", "tag", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(0, 0))
 	require.NoError(t, r.TransitionToParsing(time.Unix(1, 0)))
-	require.NoError(t, r.TransitionToValidating(release.Topology{}, []string{"n"}, time.Unix(2, 0)))
+	require.NoError(t, r.TransitionToValidating(release.TopologyRef{}, []string{"n"}, time.Unix(2, 0)))
 	require.NoError(t, r.Promote(time.Unix(3, 0)))
 	assert.Error(t, r.Promote(time.Unix(4, 0)))
 }
@@ -69,7 +69,7 @@ func TestRun_CannotDoublePromote(t *testing.T) {
 func TestRun_TransitionsAreRecorded(t *testing.T) {
 	r := pipeline.NewCandidate("sha-abc", "svc", "tag", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(0, 0))
 	require.NoError(t, r.TransitionToParsing(time.Unix(1, 0)))
-	require.NoError(t, r.TransitionToValidating(release.Topology{}, []string{"n"}, time.Unix(2, 0)))
+	require.NoError(t, r.TransitionToValidating(release.TopologyRef{}, []string{"n"}, time.Unix(2, 0)))
 	transitions := r.Transitions()
 	require.Len(t, transitions, 3)
 	assert.Equal(t, pipeline.StatusReceived, transitions[0].To)
@@ -87,7 +87,7 @@ func TestRun_SetAssembledImageTags(t *testing.T) {
 func TestRecordValidationResults_RetainedAcrossReject(t *testing.T) {
 	r := pipeline.NewCandidate("rX", "svc", "t", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(1, 0).UTC())
 	require.NoError(t, r.TransitionToParsing(time.Unix(2, 0).UTC()))
-	require.NoError(t, r.TransitionToValidating(release.Topology{{UniqueID: "a"}}, []string{"a"}, time.Unix(3, 0).UTC()))
+	require.NoError(t, r.TransitionToValidating(release.TopologyRef{}, []string{"a"}, time.Unix(3, 0).UTC()))
 
 	r.RecordValidationResults([]pipeline.NodeValidationResult{
 		{NodeID: "a", Status: "failed", DBTLogURI: "k/a.log", DurationMS: 12},
@@ -103,7 +103,7 @@ func TestRecordValidationResults_RetainedAcrossReject(t *testing.T) {
 func TestRecordValidationResults_RetainedAcrossPromote(t *testing.T) {
 	r := pipeline.NewCandidate("rY", "svc", "t", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(1, 0).UTC())
 	require.NoError(t, r.TransitionToParsing(time.Unix(2, 0).UTC()))
-	require.NoError(t, r.TransitionToValidating(release.Topology{{UniqueID: "a"}}, []string{"a"}, time.Unix(3, 0).UTC()))
+	require.NoError(t, r.TransitionToValidating(release.TopologyRef{}, []string{"a"}, time.Unix(3, 0).UTC()))
 	r.RecordValidationResults([]pipeline.NodeValidationResult{{NodeID: "a", Status: "ok"}})
 	require.NoError(t, r.Promote(time.Unix(4, 0).UTC()))
 	assert.Equal(t, []pipeline.NodeValidationResult{{Stage: "validation", NodeID: "a", Status: "ok"}}, r.PerNodeResults())
@@ -182,16 +182,16 @@ func newParsingCandidate(t *testing.T) *pipeline.Run {
 
 func TestTransitionToSeedBuilding_FromParsing(t *testing.T) {
 	r := newParsingCandidate(t)
-	topo := release.Topology{{UniqueID: "seed.core.fx"}}
+	topo := release.TopologyRef{URI: "s3://continuo/tenants/default/topologies/rel-1/topology.json.gz", SHA256: "ab", NodeCount: 1}
 	require.NoError(t, r.TransitionToSeedBuilding(topo, []string{"seed.core.fx"}, lifecycleT0))
 	assert.Equal(t, pipeline.StatusSeedBuilding, r.Status())
-	assert.Equal(t, topo, r.CandidateTopology())
+	assert.Equal(t, topo, r.CandidateTopologyRef())
 	assert.Equal(t, []string{"seed.core.fx"}, r.ValidationNodeIDs())
 }
 
 func TestTransitionFromSeedBuilding_ToValidating(t *testing.T) {
 	r := newParsingCandidate(t)
-	require.NoError(t, r.TransitionToSeedBuilding(release.Topology{}, []string{"seed.core.fx", "model.fin.report"}, lifecycleT0))
+	require.NoError(t, r.TransitionToSeedBuilding(release.TopologyRef{}, []string{"seed.core.fx", "model.fin.report"}, lifecycleT0))
 	require.NoError(t, r.TransitionFromSeedBuilding([]string{"model.fin.report"}, lifecycleT1))
 	assert.Equal(t, pipeline.StatusValidating, r.Status())
 	assert.Equal(t, []string{"model.fin.report"}, r.ValidationNodeIDs(),
@@ -200,12 +200,12 @@ func TestTransitionFromSeedBuilding_ToValidating(t *testing.T) {
 
 func TestTransitionToSeedBuilding_RejectsWrongSource(t *testing.T) {
 	r := newReceivedCandidate(t) // status=received
-	require.Error(t, r.TransitionToSeedBuilding(release.Topology{}, nil, lifecycleT0))
+	require.Error(t, r.TransitionToSeedBuilding(release.TopologyRef{}, nil, lifecycleT0))
 }
 
 func TestTransitionToRejected_FromSeedBuilding(t *testing.T) {
 	r := newParsingCandidate(t)
-	require.NoError(t, r.TransitionToSeedBuilding(release.Topology{}, nil, lifecycleT0))
+	require.NoError(t, r.TransitionToSeedBuilding(release.TopologyRef{}, nil, lifecycleT0))
 	require.NoError(t, r.Fail("seed_build_failed", "", nil, lifecycleT1))
 	assert.Equal(t, pipeline.StatusRejected, r.Status())
 }

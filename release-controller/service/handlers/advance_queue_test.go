@@ -284,8 +284,10 @@ func verifiedOriginal(id string, now time.Time) *pipeline.Run {
 		Status:         pipeline.StatusRejected,
 		ImageTags:      map[string]string{"svc-a": "tag-a-candidate", "svc-b": "tag-b-old"},
 		ChangedService: "svc-a",
-		CandidateTopology: release.Topology{
-			{UniqueID: "s.a", ServiceName: "svc-a", OriginalFilePath: "models/a.sql"},
+		// Activation only needs to know the verified release was parsed; it
+		// never reads the artifact.
+		CandidateTopology: release.TopologyRef{
+			URI: "s3://b/tenants/default/topologies/" + id + "/topology.json.gz", SHA256: "sha-" + id, NodeCount: 1,
 		},
 		ManifestKind: release.ManifestKindDbt,
 		CreatedAt:    now,

@@ -258,7 +258,10 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 	// node as new and validates the whole topology). A verification run splits
 	// the two so the fix's shared changed ancestor is rebuilt for context
 	// without expanding this run to a sibling service's still-unfixed failure.
-	scope, contextRebuilds := changedNodeIDsFor(ctx, u, d, r, topo, cp)
+	scope, contextRebuilds, err := changedNodeIDsFor(ctx, u, d, r, topo, cp)
+	if err != nil {
+		return err
+	}
 
 	// Validate the scope closure — the fix's own delta and everything downstream
 	// of it — plus the FULL transitive upstream closure (across service
@@ -300,8 +303,7 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 		if r.Kind() == pipeline.KindVerification && len(topo) == 0 {
 			return failVerificationNothingToValidate(ctx, d, u, r, now)
 		}
-		r.SetCandidateTopologyRef(in.TopologyRef)
-		if err := r.TransitionToValidating(topo, validationIDs, now); err != nil {
+		if err := r.TransitionToValidating(in.TopologyRef, validationIDs, now); err != nil {
 			return fmt.Errorf("transition to validating: %w", err)
 		}
 		if err := concludeValidated(ctx, d, u, r, now); err != nil {
@@ -329,8 +331,7 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 	}
 
 	// No new/changed seeds: Part A path (validate directly).
-	r.SetCandidateTopologyRef(in.TopologyRef)
-	if err := r.TransitionToValidating(topo, validationIDs, now); err != nil {
+	if err := r.TransitionToValidating(in.TopologyRef, validationIDs, now); err != nil {
 		return fmt.Errorf("transition to validating: %w", err)
 	}
 
@@ -402,27 +403,39 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 // set; a node another release promoted since the rejection matches current_prod
 // and is in neither set.
 //
-// If the verified release cannot be read, or never parsed far enough to hold a
-// candidate topology, the verification falls back to the plain current_prod
-// diff as scope — a weaker but still-running check, mirroring assembleFor's
-// graceful degradation.
-func changedNodeIDsFor(ctx context.Context, u uow.UnitOfWork, d *Deps, r *pipeline.Run, topo release.Topology, cp *release.CurrentProd) (scope, context []string) {
+// If the verified release cannot be read, never parsed far enough to hold a
+// candidate topology, or its artifact is missing or corrupt, the verification
+// falls back to the plain current_prod diff as scope — a weaker but
+// still-running check, mirroring assembleFor's graceful degradation. An
+// unreachable object store is returned as an error instead: measuring a fix
+// against the wrong baseline because of an outage would be silent and wrong.
+func changedNodeIDsFor(ctx context.Context, u uow.UnitOfWork, d *Deps, r *pipeline.Run, topo release.Topology, cp *release.CurrentProd) (scope, contextRebuilds []string, err error) {
 	changedVsProd := release.DerivedChangedNodeIDs(topo, cp.TopologySnapshot())
 	if r.Kind() == pipeline.KindCandidate || r.VerifiesReleaseID() == "" {
-		return changedVsProd, nil
+		return changedVsProd, nil, nil
 	}
 	original, err := u.RunRepo().Get(ctx, r.VerifiesReleaseID())
 	if err != nil || original == nil {
 		d.Logger.Warn("verification run verifies a release that cannot be read; measuring its changed set against production instead",
 			"release_id", r.ID(), "verifies_release_id", r.VerifiesReleaseID(), "error", err)
-		return changedVsProd, nil
+		return changedVsProd, nil, nil
 	}
-	if len(original.CandidateTopology()) == 0 {
+	originalTopo, err := candidateTopology(ctx, d, original)
+	if errors.Is(err, ports.ErrTopologyArtifactNotFound) || errors.Is(err, ports.ErrTopologyArtifactCorrupt) {
+		d.Logger.Warn("the verified release's topology artifact cannot be read; measuring the verification's changed set against production instead",
+			"release_id", r.ID(), "verifies_release_id", original.ID(), "error", err)
+		return changedVsProd, nil, nil
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(originalTopo) == 0 {
 		d.Logger.Warn("the verified release has no candidate topology; measuring the verification's changed set against production instead",
 			"release_id", r.ID(), "verifies_release_id", original.ID())
-		return changedVsProd, nil
+		return changedVsProd, nil, nil
 	}
-	return release.VerificationBuildSets(topo, cp.TopologySnapshot(), original.CandidateTopology(), original.FailingNodes())
+	scope, contextRebuilds = release.VerificationBuildSets(topo, cp.TopologySnapshot(), originalTopo, original.FailingNodes())
+	return scope, contextRebuilds, nil
 }
 
 // rebuiltFromCandidateSet is the set of validation nodes built from their own
@@ -499,13 +512,12 @@ func seedBuildNodesInOrder(topo release.Topology, seedIDs []string) []map[string
 }
 
 // emitSeedBuildRequested transitions the release to SeedBuilding (recording the
-// full candidate topology + validation IDs for the later validation.requested),
+// reference to the candidate topology + validation IDs for the later validation.requested),
 // emits seed.build.requested:v1 with ONLY the seed nodes, and commits.
 func emitSeedBuildRequested(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run,
 	releaseID string, ref release.TopologyRef, topo release.Topology, validationIDs, seedIDs []string, now time.Time) error {
 
-	r.SetCandidateTopologyRef(ref)
-	if err := r.TransitionToSeedBuilding(topo, validationIDs, now); err != nil {
+	if err := r.TransitionToSeedBuilding(ref, validationIDs, now); err != nil {
 		return fmt.Errorf("transition to seed building: %w", err)
 	}
 	if err := u.RunRepo().Save(ctx, r); err != nil {
@@ -551,17 +563,16 @@ func emitSeedBuildRequested(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 }
 
 // promoteBootstrap promotes a bootstrap release without validation: it records
-// the candidate topology (TransitionToValidating with no validation nodes) and
+// the reference to the candidate topology (TransitionToValidating with no validation nodes) and
 // runs the shared promoteToProduction path, which seeds current_prod and emits
 // release.promoted:v1. The full parse/checked/promoted telemetry span is
 // emitted (with a zero-node validation) so a bootstrap is observable like any
 // other promotion.
 func promoteBootstrap(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, releaseID string, ref release.TopologyRef, topo release.Topology, now time.Time) error {
-	// TransitionToValidating records the candidate topology and satisfies
-	// promoteToProduction's Validating precondition; no nodes are submitted to
-	// validation.
-	r.SetCandidateTopologyRef(ref)
-	if err := r.TransitionToValidating(topo, nil, now); err != nil {
+	// TransitionToValidating records the reference to the candidate topology
+	// artifact and satisfies promoteToProduction's Validating precondition; no
+	// nodes are submitted to validation.
+	if err := r.TransitionToValidating(ref, nil, now); err != nil {
 		return fmt.Errorf("transition to validating (bootstrap): %w", err)
 	}
 	// A verification run is never bootstrap (NewVerification never sets it), so
