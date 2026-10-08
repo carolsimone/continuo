@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/pkg/topologyartifact"
 	"github.com/carolsimone/continuo/release-controller/adapters/serialization"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
@@ -366,37 +368,44 @@ func (r *RunRepository) List(ctx context.Context, f repository.ListFilter) ([]*p
 }
 
 // DeleteFinishedBefore removes terminal runs of either kind created before
-// cutoff and not in keepIDs, then deletes each removed run's candidate-SQL
-// and code-bundle prefixes from S3 (soft-fail; the bucket lifecycle rule is
-// the backstop). Runs inside the caller's transaction; see the prune handler.
+// cutoff and not in keepIDs. For each removed run it then deletes the
+// candidate-SQL and code-bundle prefixes from S3, plus the topology artifact
+// of a run that was never promoted. A promoted run's artifact is kept: it
+// records a topology that ran in production. S3 deletion soft-fails (the
+// bucket lifecycle rule is the backstop for candidate SQL and code bundles).
+// Runs inside the caller's transaction; see the prune handler.
 func (r *RunRepository) DeleteFinishedBefore(ctx context.Context, cutoff time.Time, keepIDs []string) (int, error) {
 	rows, err := r.q.QueryxContext(ctx,
 		`DELETE FROM release_pipeline_runs
 		 WHERE status IN ('promoted','rejected','superseded','passed','failed')
 		   AND created_at < $1
 		   AND run_id <> ALL($2)
-		 RETURNING run_id`,
+		 RETURNING run_id, status`,
 		cutoff, pq.Array(keepIDs))
 	if err != nil {
 		return 0, fmt.Errorf("delete finished runs: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	var ids []string
+	type prunedRun struct{ id, status string }
+	var pruned []prunedRun
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return 0, fmt.Errorf("scan deleted run_id: %w", err)
+		var p prunedRun
+		if err := rows.Scan(&p.id, &p.status); err != nil {
+			return 0, fmt.Errorf("scan deleted run: %w", err)
 		}
-		ids = append(ids, id)
+		pruned = append(pruned, p)
 	}
 	if err := rows.Err(); err != nil {
-		return 0, fmt.Errorf("iterate deleted run ids: %w", err)
+		return 0, fmt.Errorf("iterate deleted runs: %w", err)
 	}
 	if r.deleter != nil {
-		for _, id := range ids {
-			_ = r.deleter.DeletePrefix(ctx, "candidate-sql/"+id+"/")
-			_ = r.deleter.DeletePrefix(ctx, "code-bundles/"+id+"/")
+		for _, p := range pruned {
+			_ = r.deleter.DeletePrefix(ctx, "candidate-sql/"+p.id+"/")
+			_ = r.deleter.DeletePrefix(ctx, "code-bundles/"+p.id+"/")
+			if p.status != string(pipeline.StatusPromoted) {
+				_ = r.deleter.DeletePrefix(ctx, topologyartifact.Key(pkgevents.DefaultTenantID, p.id))
+			}
 		}
 	}
-	return len(ids), nil
+	return len(pruned), nil
 }

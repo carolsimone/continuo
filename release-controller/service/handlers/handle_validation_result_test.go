@@ -1219,3 +1219,92 @@ func TestHandleNodeValidationResult_CorruptArtifactSurfacesTheCorruption(t *test
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ports.ErrTopologyArtifactCorrupt))
 }
+
+func nodeIDs(topo release.Topology) []string {
+	ids := make([]string, len(topo))
+	for i, n := range topo {
+		ids[i] = n.UniqueID
+	}
+	return ids
+}
+
+// TestPromoteToProduction_CurrentProdTakesTheArtifactTopology pins that a
+// promotion writes current_prod from the run's artifact — dbt-test nodes
+// included, so an unchanged test is not re-checked next release — and builds
+// release.promoted:v1 from the same topology without them, carrying the
+// artifact's image tags and the changed flags against the previous prod.
+func TestPromoteToProduction_CurrentProdTakesTheArtifactTopology(t *testing.T) {
+	deps, store := seedToParsing(t, "rArt", map[string]string{"svc-a": "sha-a"})
+	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", release.Topology{
+		{UniqueID: "a", ServiceName: "svc-a", NodeType: "dbt-model", ContentHash: "h_a"},
+	}, time.Unix(50, 0).UTC()))
+	topo := release.Topology{
+		{UniqueID: "a", ServiceName: "svc-a", NodeType: "dbt-model", ContentHash: "h_a", ImageTag: "sha-a", UpstreamUniqueIDs: []string{}},
+		{UniqueID: "b", ServiceName: "svc-a", NodeType: "dbt-model", ContentHash: "h_b", ImageTag: "sha-a", UpstreamUniqueIDs: []string{"a"}},
+		{UniqueID: "test.b", ServiceName: "svc-a", NodeType: "dbt-test", ImageTag: "sha-a", UpstreamUniqueIDs: []string{"b"}},
+	}
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rArt", Status: "ok", TopologyRef: putTopology(t, deps, "rArt", topo),
+	}))
+	r, err := store.GetRelease("rArt")
+	require.NoError(t, err)
+	results := make([]handlers.NodeResult, 0, len(r.ValidationNodeIDs()))
+	for _, id := range r.ValidationNodeIDs() {
+		results = append(results, handlers.NodeResult{NodeID: id, Status: "ok"})
+	}
+	seedValidationNodes(t, deps, "rArt", results)
+	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
+		ReleaseID: "rArt", AggregateStatus: "ok",
+	}))
+
+	cp := store.GetCurrentProd()
+	assert.Equal(t, "rArt", cp.ReleaseID())
+	assert.ElementsMatch(t, []string{"a", "b", "test.b"}, nodeIDs(cp.TopologySnapshot()), "current_prod keeps the test node")
+
+	var p promotedPayload
+	require.NoError(t, json.Unmarshal(findEntry(t, store, streams.ReleasePromotedV1).Payload, &p))
+	changed := map[string]bool{}
+	for _, n := range p.Topology {
+		changed[n.UniqueID] = n.Changed
+		assert.Equal(t, "sha-a", n.ImageTag, "the wire carries the artifact's image tag")
+	}
+	assert.Equal(t, map[string]bool{"a": false, "b": true}, changed, "no test node on the wire; b is new against prod")
+}
+
+// An object store that is unreachable at promotion time leaves everything as
+// it was: the handler returns the outage (the consumer pauses and redelivers
+// the decision) and neither current_prod nor the run moves.
+func TestHandleValidationResult_UnreachableArtifactStoreAtPromotionChangesNothing(t *testing.T) {
+	deps, store := seedToValidating(t, "rDown")
+	seedValidationNodes(t, deps, "rDown", []handlers.NodeResult{{NodeID: "a", Status: "ok"}, {NodeID: "b", Status: "ok"}})
+	r, err := store.GetRelease("rDown")
+	require.NoError(t, err)
+	store.topologies.failLoad(r.CandidateTopologyRef().URI, storeOutage{})
+
+	err = handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{ReleaseID: "rDown", AggregateStatus: "ok"})
+	require.Error(t, err)
+	var status interface{ HTTPStatusCode() int }
+	assert.True(t, errors.As(err, &status), "the outage keeps its status code, so the consumer pauses")
+	assert.Equal(t, 0, store.CurrentProdUpsertCalls())
+	got, err := store.GetRelease("rDown")
+	require.NoError(t, err)
+	assert.Equal(t, pipeline.StatusValidating, got.Status())
+	for _, e := range outboxEntries(store) {
+		assert.NotEqual(t, streams.ReleasePromotedV1, e.StreamName)
+	}
+}
+
+// A corrupt artifact at promotion time is reported as corrupt, which the
+// validation.result binding dead-letters (permanentOnCorruptTopology);
+// current_prod does not move.
+func TestHandleValidationResult_CorruptArtifactAtPromotionIsReportedCorrupt(t *testing.T) {
+	deps, store := seedToValidating(t, "rBad")
+	seedValidationNodes(t, deps, "rBad", []handlers.NodeResult{{NodeID: "a", Status: "ok"}, {NodeID: "b", Status: "ok"}})
+	r, err := store.GetRelease("rBad")
+	require.NoError(t, err)
+	store.topologies.failLoad(r.CandidateTopologyRef().URI, fmt.Errorf("%w: tampered", ports.ErrTopologyArtifactCorrupt))
+
+	err = handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{ReleaseID: "rBad", AggregateStatus: "ok"})
+	assert.ErrorIs(t, err, ports.ErrTopologyArtifactCorrupt)
+	assert.Equal(t, 0, store.CurrentProdUpsertCalls())
+}

@@ -678,7 +678,9 @@ func TestRunRepository_DeleteFinishedBefore_DeletesCandidateSQLPrefixes(t *testi
 			"candidate-sql/prune-b/",
 			"code-bundles/prune-a/",
 			"code-bundles/prune-b/",
-		}, got, "deleter must be called with both the candidate-sql and code-bundles prefix for each pruned run")
+			"tenants/default/topologies/prune-a/topology.json.gz",
+			"tenants/default/topologies/prune-b/topology.json.gz",
+		}, got, "a rejected run loses its candidate SQL, its code bundle and its topology artifact")
 	})
 
 	// Reseed because the previous sub-test deleted prune-a and prune-b.
@@ -695,7 +697,22 @@ func TestRunRepository_DeleteFinishedBefore_DeletesCandidateSQLPrefixes(t *testi
 		// Both the candidate-sql and code-bundles prefix were attempted for each
 		// pruned run despite every call failing.
 		got := fd.prefixes()
-		assert.Len(t, got, 4, "deleter must be attempted for both prefixes of every pruned run")
+		assert.Len(t, got, 6, "deleter must be attempted for every object of every pruned run")
+	})
+
+	t.Run("a promoted run keeps its topology artifact", func(t *testing.T) {
+		r := pipeline.NewCandidate("prune-promoted", "svc", "t", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(105, 0).UTC())
+		require.NoError(t, r.TransitionToParsing(time.Unix(106, 0).UTC()))
+		require.NoError(t, r.TransitionToValidating(release.TopologyRef{}, nil, time.Unix(107, 0).UTC()))
+		require.NoError(t, r.Promote(time.Unix(108, 0).UTC()))
+		require.NoError(t, postgres.NewRunRepository(db, nil).Save(ctx, r))
+
+		fd := &fakeDeleter{}
+		n, err := postgres.NewRunRepository(db, fd).DeleteFinishedBefore(ctx, cutoff, []string{"keep-c"})
+		require.NoError(t, err)
+		assert.Equal(t, 1, n)
+		assert.Equal(t, []string{"candidate-sql/prune-promoted/", "code-bundles/prune-promoted/"}, fd.prefixes(),
+			"a promoted run's artifact records a topology that ran in production and is kept")
 	})
 }
 
