@@ -39,6 +39,11 @@ import (
 // exceeds any legitimate invocation while still bounding a wedge.
 const consumerHandlerTimeout = 60 * time.Second
 
+// topologyCacheSize bounds the decoded topologies release-controller keeps in
+// memory. One run is active at a time; the active run, the release it may
+// verify, and recent runs still receiving results fit with room to spare.
+const topologyCacheSize = 16
+
 // dbPool bounds the Postgres pool when DB_MAX_OPEN_CONNS / DB_MAX_IDLE_CONNS
 // are unset: two connections per stream consumer (a handler's transaction and
 // a read outside it), plus the outbox relay, background loops and request
@@ -136,7 +141,7 @@ func main() {
 	})
 	metricsReg.WatchDB(db.DB, cfg.Postgres.DB)
 
-	// S3 client for pruning candidate-SQL objects when releases are deleted.
+	// S3 client: prune-time deletion of a run's objects, and topology artifact reads and writes.
 	s3Client := s3adapter.NewS3Client(
 		cfg.S3.EndpointURL,
 		cfg.S3.Bucket,
@@ -163,6 +168,8 @@ func main() {
 		Logger:    logger,
 		Bucket:    cfg.S3.Bucket,
 		Proposals: proposalsClient,
+
+		Topologies: s3adapter.NewTopologyArtifactStore(s3Client, cfg.S3.Bucket, topologyCacheSize),
 
 		Maintenance: cfg.Maintenance,
 

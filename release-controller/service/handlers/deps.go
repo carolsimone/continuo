@@ -20,6 +20,10 @@ type Deps struct {
 	Bucket    string
 	Proposals ports.ProposalReader // lists a release's remediation attempts for the retry decision
 
+	// Topologies reads and writes topology artifacts: every handler that needs
+	// a run's candidate topology loads it through here by the run's reference.
+	Topologies ports.TopologyArtifactStore
+
 	// Rejections renders the release.rejected:v1 body of whichever leg ended
 	// the candidate, so the handlers pass values and never wire keys.
 	Rejections ports.ReleaseRejectedEncoder
