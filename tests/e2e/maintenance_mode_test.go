@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -65,6 +66,38 @@ func setMaintenance(t *testing.T, ctx context.Context, on bool) {
 	t.Logf("maintenance=%t restart took %s", on, time.Since(start).Round(time.Second))
 }
 
+// reconnecting reports whether a response is the UI's gRPC channel still
+// re-establishing to a backend that was just restarted: a 500 whose body names
+// an UNAVAILABLE / connection-refused error. `docker restart` drops the UI's
+// persistent channel to state (50051) and release-controller, and the client
+// reconnects with backoff a moment later, so the first request after a restart
+// can land in that window. Such a response is retried, never asserted on.
+func reconnecting(status int, body map[string]any) bool {
+	if status != http.StatusInternalServerError {
+		return false
+	}
+	msg, _ := body["error"].(string)
+	return strings.Contains(msg, "UNAVAILABLE") ||
+		strings.Contains(msg, "No connection established") ||
+		strings.Contains(msg, "ECONNREFUSED")
+}
+
+// afterRestart calls post until the UI has reconnected to the just-restarted
+// backend, returning the first settled response. The maintenance assertions
+// then test the refusal or acceptance itself, not the reconnect race that a
+// `docker restart` opens; a genuine refusal (503) or acceptance (200) is
+// returned at once, since only a reconnect-class 500 is retried.
+func afterRestart(t *testing.T, ctx context.Context, post func() (int, map[string]any)) (int, map[string]any) {
+	t.Helper()
+	var status int
+	var out map[string]any
+	pollUntil(t, ctx, time.Minute, time.Second, func() (bool, error) {
+		status, out = post()
+		return !reconnecting(status, out), nil
+	}, "UI kept returning a gRPC-reconnect error after the maintenance restart")
+	return status, out
+}
+
 func postJSON(t *testing.T, url string, body any) (int, map[string]any) {
 	t.Helper()
 	raw, err := json.Marshal(body)
@@ -113,15 +146,19 @@ func TestMaintenanceMode(t *testing.T) {
 	setMaintenance(t, ctx, true)
 
 	// 3. A new run through ui is refused by state, and ui maps the refusal.
-	status, body := postJSON(t, nodeRunURL, map[string]string{"operation": "run"})
+	status, body := afterRestart(t, ctx, func() (int, map[string]any) {
+		return postJSON(t, nodeRunURL, map[string]string{"operation": "run"})
+	})
 	require.Equal(t, http.StatusServiceUnavailable, status, "%v", body)
 	require.Equal(t, "maintenance", body["code"])
 	require.Equal(t, maintenanceMessage, body["error"])
 
 	// 4. A new release through the public API is refused by release-controller.
 	token := mintCIToken(t, e2eDbtRepositoryID, "carolsimone/continuo-demo", "maintenance")
-	status, out := submitPublicRelease(t, clients, token, map[string]any{
-		"service": "service-1", "release_id": "e2e-maintenance-refused", "image_tag": "unused",
+	status, out := afterRestart(t, ctx, func() (int, map[string]any) {
+		return submitPublicRelease(t, clients, token, map[string]any{
+			"service": "service-1", "release_id": "e2e-maintenance-refused", "image_tag": "unused",
+		})
 	})
 	require.Equal(t, http.StatusServiceUnavailable, status, "%v", out)
 	require.Equal(t, "maintenance", out["code"])
@@ -131,7 +168,9 @@ func TestMaintenanceMode(t *testing.T) {
 
 	// 6. Maintenance off: new work is accepted again.
 	setMaintenance(t, ctx, false)
-	status, body = postJSON(t, nodeRunURL, map[string]string{"operation": "run"})
+	status, body = afterRestart(t, ctx, func() (int, map[string]any) {
+		return postJSON(t, nodeRunURL, map[string]string{"operation": "run"})
+	})
 	require.Equal(t, http.StatusOK, status, "%v", body)
 	runIDStr, ok := body["run_id"].(string)
 	require.True(t, ok, "run_id missing from node-run response: %v", body)
