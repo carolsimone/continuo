@@ -142,7 +142,8 @@ func main() {
 	metricsReg.WatchDB(db.DB, cfg.Postgres.DB)
 
 	// S3 client: prune-time deletion of a run's objects, and topology artifact reads and writes.
-	s3Client := s3adapter.NewS3Client(
+	s3Client, err := s3adapter.NewS3Client(
+		ctx,
 		cfg.S3.EndpointURL,
 		cfg.S3.Bucket,
 		cfg.S3.Region,
@@ -150,6 +151,10 @@ func main() {
 		cfg.S3.SecretAccessKey,
 		logger,
 	)
+	if err != nil {
+		logger.Error("Failed to configure the S3 client", "error", err)
+		os.Exit(1)
+	}
 
 	// Dial agent-remediation once for the RetryRemediation handler, which reads
 	// a release's remediation attempts before starting another round.

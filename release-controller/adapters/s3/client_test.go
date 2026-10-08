@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -21,8 +23,10 @@ import (
 // a 5xx answer reaches the caller on the first attempt.
 func newTestClient(t *testing.T, endpoint string) *S3Client {
 	t.Helper()
+	cfg, err := awsConfig(context.Background(), "us-east-1", "key", "secret")
+	require.NoError(t, err)
 	return &S3Client{
-		client: awss3.NewFromConfig(awsConfig("us-east-1", "key", "secret"), func(o *awss3.Options) {
+		client: awss3.NewFromConfig(cfg, func(o *awss3.Options) {
 			o.UsePathStyle = true
 			o.BaseEndpoint = aws.String(endpoint)
 			o.RetryMaxAttempts = 1
@@ -87,26 +91,70 @@ func TestS3Client_PutObjectSendsTheBodyAndContentType(t *testing.T) {
 	assert.True(t, bytes.Contains(gotBody, payload), "the object body must be sent")
 }
 
+// isolateAWSEnvironment keeps a test from reading the developer's shared
+// config files or probing the EC2 metadata endpoint.
+func isolateAWSEnvironment(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("AWS_CONFIG_FILE", filepath.Join(dir, "config"))
+	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", filepath.Join(dir, "credentials"))
+	t.Setenv("AWS_EC2_METADATA_DISABLED", "true")
+	t.Setenv("AWS_PROFILE", "")
+}
+
 // An install running under an IAM role or workload identity supplies no static
-// keys on purpose. A static provider built from empty strings fails every
-// request instead of deferring to the SDK's default credential chain, so the
-// config must leave Credentials unset.
-func TestAWSConfig_OmitsStaticProviderWhenKeysAreAbsent(t *testing.T) {
+// keys on purpose. With the keys absent the config must resolve credentials
+// through the SDK's default chain; the environment provider stands in for the
+// chain here, and retrieving from it proves the chain is wired in.
+func TestAWSConfig_ResolvesTheDefaultChainWhenKeysAreAbsent(t *testing.T) {
 	for _, tc := range []struct{ name, key, secret string }{
 		{"both empty", "", ""},
-		{"only key id", "AKIA", ""},
-		{"only secret", "", "shh"},
+		{"only key id", "AKIASTATIC", ""},
+		{"only secret", "", "static-secret"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Nil(t, awsConfig("us-east-1", tc.key, tc.secret).Credentials)
+			isolateAWSEnvironment(t)
+			t.Setenv("AWS_ACCESS_KEY_ID", "AKIAFROMCHAIN")
+			t.Setenv("AWS_SECRET_ACCESS_KEY", "chain-secret")
+
+			cfg, err := awsConfig(context.Background(), "us-east-1", tc.key, tc.secret)
+			require.NoError(t, err)
+			require.NotNil(t, cfg.Credentials)
+			creds, err := cfg.Credentials.Retrieve(context.Background())
+			require.NoError(t, err)
+			assert.Equal(t, "AKIAFROMCHAIN", creds.AccessKeyID)
+			assert.Equal(t, "chain-secret", creds.SecretAccessKey)
+			assert.Equal(t, "us-east-1", cfg.Region)
 		})
 	}
 }
 
-func TestAWSConfig_UsesStaticProviderWhenBothKeysArePresent(t *testing.T) {
-	cfg := awsConfig("us-east-1", "AKIA", "shh")
+// Explicit keys (the compose / MinIO path) take precedence over whatever the
+// default chain would find.
+func TestAWSConfig_StaticKeysOverrideTheDefaultChain(t *testing.T) {
+	isolateAWSEnvironment(t)
+	t.Setenv("AWS_ACCESS_KEY_ID", "AKIAFROMCHAIN")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "chain-secret")
+
+	cfg, err := awsConfig(context.Background(), "us-east-1", "AKIASTATIC", "static-secret")
+	require.NoError(t, err)
 	require.NotNil(t, cfg.Credentials)
 	creds, err := cfg.Credentials.Retrieve(context.Background())
 	require.NoError(t, err)
-	assert.Equal(t, "AKIA", creds.AccessKeyID)
+	assert.Equal(t, "AKIASTATIC", creds.AccessKeyID)
+	assert.Equal(t, "static-secret", creds.SecretAccessKey)
+}
+
+// A default chain that cannot be loaded stops startup instead of yielding a
+// client that signs nothing: a profile the shared config does not define is
+// such a failure.
+func TestAWSConfig_FailsClosedWhenTheDefaultConfigCannotLoad(t *testing.T) {
+	isolateAWSEnvironment(t)
+	cfgFile := filepath.Join(t.TempDir(), "config")
+	require.NoError(t, os.WriteFile(cfgFile, []byte("[profile other]\nregion = us-east-1\n"), 0o600))
+	t.Setenv("AWS_CONFIG_FILE", cfgFile)
+	t.Setenv("AWS_PROFILE", "missing")
+
+	_, err := awsConfig(context.Background(), "us-east-1", "", "")
+	assert.Error(t, err)
 }
