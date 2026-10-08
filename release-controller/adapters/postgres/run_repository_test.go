@@ -642,41 +642,6 @@ func TestRunRepository_CodeBundleURIUpdatesAfterCreation(t *testing.T) {
 	assert.Equal(t, "s3://b/code-bundles/rCBU/bundle.json", reloaded.CodeBundleURI())
 }
 
-func TestRunRepository_RoundTripsCandidateArtifactURI(t *testing.T) {
-	db := openTestDB(t)
-	repo := postgres.NewRunRepository(db, nil)
-	ctx := context.Background()
-
-	// Build a run that already has a candidate topology containing a node
-	// with a CandidateArtifactURI. Rehydrate bypasses the state machine so we can
-	// inject the topology directly, mirroring how the repository reconstructs
-	// runs from Postgres.
-	topo := release.Topology{
-		{UniqueID: "n", CandidateArtifactURI: "s3://b/candidate-sql/r/n.sql"},
-	}
-	r := pipeline.Rehydrate(pipeline.RehydrateInput{
-		ID:                "rCSURI",
-		Kind:              pipeline.KindCandidate,
-		Status:            pipeline.StatusValidating,
-		ChangedService:    "svc-a",
-		ImageTags:         map[string]string{"svc-a": "img-1"},
-		CandidateTopology: topo,
-		ValidationNodeIDs: []string{"n"},
-		Repo:              "acme/demo",
-		CommitSHA:         "deadbeef",
-		ManifestKind:      release.ManifestKindDbt,
-		CreatedAt:         time.Unix(100, 0).UTC(),
-	})
-	require.NoError(t, repo.Save(ctx, r))
-
-	got, err := repo.Get(ctx, "rCSURI")
-	require.NoError(t, err)
-	require.NotNil(t, got)
-	require.Len(t, got.CandidateTopology(), 1)
-	assert.Equal(t, "s3://b/candidate-sql/r/n.sql", got.CandidateTopology()[0].CandidateArtifactURI,
-		"candidate_artifact_uri must survive a JSONB round-trip through Postgres")
-}
-
 // TestRunRepository_DeleteFinishedBefore_DeletesCandidateSQLPrefixes verifies
 // that DeleteFinishedBefore calls the CandidateSQLDeleter with the correct
 // candidate-sql/<id>/ AND code-bundles/<id>/ prefixes for each pruned run,

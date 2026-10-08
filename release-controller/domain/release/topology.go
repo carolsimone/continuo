@@ -30,27 +30,6 @@ type Node struct {
 	// SecretRef is the continuo-api-* Secret a python-api node's pod receives
 	// as env vars; empty for every other node.
 	SecretRef string
-	// CandidateArtifactURI is an S3 URI pointing to the object the node's
-	// validation Job must fetch to build the node as an empty table in the
-	// candidate schema: for a dbt node the compiled SQL with schema-qualified
-	// references rewritten to the candidate schema, for a python node the
-	// validation spec (declared reads plus output columns). Which shape it is
-	// follows from NodeType. This is transient validation data and must not be
-	// persisted to current_prod or published in the promoted topology.
-	CandidateArtifactURI string
-}
-
-// WithoutCandidateArtifactURI returns a copy of the topology with per-node
-// CandidateArtifactURI cleared. The URI is release-specific transient
-// validation data — it must not be persisted to current_prod or published in
-// the promoted topology.
-func (t Topology) WithoutCandidateArtifactURI() Topology {
-	out := make(Topology, len(t))
-	for i, n := range t {
-		n.CandidateArtifactURI = ""
-		out[i] = n
-	}
-	return out
 }
 
 // WithoutTests returns a copy of the topology without dbt-test nodes. A test

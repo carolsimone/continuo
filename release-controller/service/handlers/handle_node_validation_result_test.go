@@ -56,10 +56,10 @@ func TestHandleNodeValidationResult_StampsNodeTypeFromCandidateTopology(t *testi
 	}))
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID: "rA", Status: "ok",
-		Topology: release.Topology{
+		TopologyRef: putTopology(t, deps, "rA", release.Topology{
 			{UniqueID: "a", ServiceName: "svc-a", NodeType: "dbt-model", UpstreamUniqueIDs: []string{}},
 			{UniqueID: "test.p.not_null_a_id.1", ServiceName: "svc-a", NodeType: "dbt-test", UpstreamUniqueIDs: []string{"a"}},
-		},
+		}),
 	}))
 
 	err := handlers.HandleNodeValidationResult(context.Background(), deps, handlers.NodeValidationResultInput{

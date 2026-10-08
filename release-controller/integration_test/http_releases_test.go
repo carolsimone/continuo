@@ -84,10 +84,10 @@ func TestIntegration_GetReleaseIncludesPerNode(t *testing.T) {
 	}))
 	require.NoError(t, handlers.HandleParsedManifest(ctx, deps, handlers.HandleParsedManifestInput{
 		ReleaseID: "rd1", Status: "ok",
-		Topology: release.Topology{
+		TopologyRef: putTopology(t, deps, "rd1", release.Topology{
 			{UniqueID: "a", ServiceName: "service-1"},
 			{UniqueID: "b", ServiceName: "service-1", UpstreamUniqueIDs: []string{"a"}},
-		},
+		}),
 	}))
 	// Project each node's result via the per-node stream (node b failing) so the
 	// per_node_results are stored, then deliver the slim terminal decision.

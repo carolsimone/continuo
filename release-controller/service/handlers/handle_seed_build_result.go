@@ -195,7 +195,7 @@ func handleSeedBuildOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeli
 	payload, err := json.Marshal(map[string]any{
 		"release_id":        in.ReleaseID,
 		"mode":              "validation",
-		"nodes":             validationNodesInOrder(topo, validationIDs, inSet, rebuiltFromCandidate),
+		"nodes":             validationNodesInOrder(d.Bucket, in.ReleaseID, topo, validationIDs, inSet, rebuiltFromCandidate),
 		"node_ids_in_order": validationIDs,
 		"image_tags":        r.ImageTags(),
 		"candidate_schema":  candidateSchema,

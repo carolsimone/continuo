@@ -163,22 +163,6 @@ func TestRun_RehydrateRoundTripsCodeBundleURI(t *testing.T) {
 	assert.Equal(t, "s3://b/code-bundles/r/bundle.json", r.CodeBundleURI())
 }
 
-func TestTopology_WithoutCandidateArtifactURI_ClearsField(t *testing.T) {
-	// WithoutCandidateArtifactURI must return a copy with every node's CandidateArtifactURI
-	// cleared, leaving other fields intact.
-	topo := release.Topology{
-		{UniqueID: "a", CandidateArtifactURI: "s3://continuo/svc-a/rA/a.sql", TableName: "tbl_a"},
-		{UniqueID: "b", CandidateArtifactURI: "s3://continuo/svc-a/rA/b.sql", TableName: "tbl_b"},
-	}
-	stripped := topo.WithoutCandidateArtifactURI()
-	for _, n := range stripped {
-		assert.Empty(t, n.CandidateArtifactURI, "CandidateArtifactURI must be cleared in stripped topology")
-	}
-	assert.Equal(t, "tbl_a", stripped[0].TableName, "other fields must be preserved")
-	// original must be unmodified
-	assert.NotEmpty(t, topo[0].CandidateArtifactURI, "original topology must not be mutated")
-}
-
 var (
 	lifecycleT0 = time.Unix(1, 0)
 	lifecycleT1 = time.Unix(2, 0)

@@ -162,11 +162,13 @@ func (f *fakeUoW) LockReleaseQueue(ctx context.Context) error {
 // queue so AdvanceQueue completes as a no-op after taking its lock.
 type fakeReleaseRepo struct {
 	loadedID      string
+	gotID         string
 	advanceLocked bool
 }
 
 func (r *fakeReleaseRepo) Get(ctx context.Context, id string) (*pipeline.Run, error) {
-	panic("not implemented")
+	r.gotID = id
+	return nil, nil
 }
 func (r *fakeReleaseRepo) Load(ctx context.Context, id string) (*pipeline.Run, error) {
 	r.loadedID = id

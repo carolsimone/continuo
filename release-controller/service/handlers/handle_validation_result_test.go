@@ -56,9 +56,9 @@ func seedToValidating(t *testing.T, releaseID string) (*handlers.Deps, *fakeStor
 		{UniqueID: "b", ServiceName: "svc-a", UpstreamUniqueIDs: []string{"a"}},
 	}
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: releaseID,
-		Status:    "ok",
-		Topology:  topo,
+		ReleaseID:   releaseID,
+		Status:      "ok",
+		TopologyRef: putTopology(t, deps, releaseID, topo),
 	}))
 	return deps, store
 }
@@ -280,9 +280,9 @@ func seedToValidatingVerification(t *testing.T, releaseID string) (*handlers.Dep
 		{UniqueID: "b", ServiceName: "svc-a", UpstreamUniqueIDs: []string{"a"}},
 	}
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: releaseID,
-		Status:    "ok",
-		Topology:  topo,
+		ReleaseID:   releaseID,
+		Status:      "ok",
+		TopologyRef: putTopology(t, deps, releaseID, topo),
 	}))
 	return deps, store
 }
@@ -470,9 +470,9 @@ func seedToValidatingPython(t *testing.T, releaseID string) (*handlers.Deps, *fa
 		{UniqueID: "b", ServiceName: "svc-py", UpstreamUniqueIDs: []string{"a"}},
 	}
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: releaseID,
-		Status:    "ok",
-		Topology:  topo,
+		ReleaseID:   releaseID,
+		Status:      "ok",
+		TopologyRef: putTopology(t, deps, releaseID, topo),
 	}))
 	return deps, store
 }
@@ -576,7 +576,7 @@ func TestHandleValidationResult_Verification_Failed_NoReleaseRejected_FinishedEm
 }
 
 // seedToValidatingWithURIs is like seedToValidating but uses a two-node topology
-// where each node carries a CandidateArtifactURI so the rejected payload enrichment
+// where the nodes' candidate artifact URIs are derived (one .sql, one .json) so the rejected payload enrichment
 // can be verified. Node "b" (svc-a) fails validation; node "a" passes.
 func seedToValidatingWithURIs(t *testing.T, releaseID string) (*handlers.Deps, *fakeStore) {
 	t.Helper()
@@ -598,17 +598,15 @@ func seedToValidatingWithURIs(t *testing.T, releaseID string) (*handlers.Deps, *
 
 	topo := release.Topology{
 		{UniqueID: "a", ServiceName: "svc-a", UpstreamUniqueIDs: []string{},
-			NodeType: "dbt-model", OriginalFilePath: "models/a.sql",
-			CandidateArtifactURI: "s3://continuo/svc-a/" + releaseID + "/candidate_a.sql"},
+			NodeType: "dbt-model", OriginalFilePath: "models/a.sql", ImageTag: "sha-a"},
 		{UniqueID: "b", ServiceName: "svc-a", UpstreamUniqueIDs: []string{"a"},
-			NodeType: "python-node", OriginalFilePath: "python/b.py",
-			CandidateArtifactURI: "s3://continuo/svc-a/" + releaseID + "/candidate_b.json"},
+			NodeType: "python-node", OriginalFilePath: "python/b.py", ImageTag: "sha-a"},
 	}
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID:     releaseID,
 		Status:        "ok",
 		CodeBundleURI: "s3://continuo/code-bundles/" + releaseID + "/bundle.json",
-		Topology:      topo,
+		TopologyRef:   putTopology(t, deps, releaseID, topo),
 	}))
 	return deps, store
 }
@@ -678,9 +676,9 @@ func TestHandleValidationResult_Rejected_CarriesCandidateArtifactURIAndProvenanc
 		byID[pn.NodeID] = pn.CandidateArtifactURI
 		runResultsByID[pn.NodeID] = pn.RunResultsURI
 	}
-	assert.Equal(t, "s3://continuo/svc-a/rA/candidate_a.sql", byID["a"],
+	assert.Equal(t, "s3://continuo/candidate-sql/rA/candidate_a.sql", byID["a"],
 		"ok nodes must also carry candidate_artifact_uri (pointer, not inline content)")
-	assert.Equal(t, "s3://continuo/svc-a/rA/candidate_b.json", byID["b"],
+	assert.Equal(t, "s3://continuo/candidate-sql/rA/candidate_b.json", byID["b"],
 		"failing node must carry candidate_artifact_uri")
 	assert.Equal(t, "run-results/rA/b.json", runResultsByID["b"],
 		"failing node must carry run_results_uri through to release.rejected:v1")
@@ -831,10 +829,10 @@ func TestHandleValidationResult_Promote_StampsChangedAndProvenance(t *testing.T)
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID: "rA",
 		Status:    "ok",
-		Topology: release.Topology{
+		TopologyRef: putTopology(t, deps, "rA", release.Topology{
 			{UniqueID: "a", ServiceName: "svc-a", ContentHash: "h", UpstreamUniqueIDs: []string{}},
 			{UniqueID: "b", ServiceName: "svc-a", ContentHash: "new", UpstreamUniqueIDs: []string{"a"}},
-		},
+		}),
 	}))
 
 	seedValidationNodes(t, deps, "rA", []handlers.NodeResult{
@@ -888,10 +886,10 @@ func TestHandleValidationResult_Promote_StripsTestsFromWireButKeepsInCurrentProd
 	}))
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID: "rA", Status: "ok",
-		Topology: release.Topology{
+		TopologyRef: putTopology(t, deps, "rA", release.Topology{
 			{UniqueID: "a", ServiceName: "svc-a", NodeType: "dbt-model", UpstreamUniqueIDs: []string{}},
 			{UniqueID: "test.p.not_null_a_id.1", ServiceName: "svc-a", NodeType: "dbt-test", UpstreamUniqueIDs: []string{"a"}},
-		},
+		}),
 	}))
 	seedValidationNodes(t, deps, "rA", []handlers.NodeResult{
 		{NodeID: "a", Status: "ok"},
@@ -961,9 +959,9 @@ func TestHandleValidationResult_Promote_EmitsOriginalFilePath(t *testing.T) {
 	}))
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID: "rA", Status: "ok",
-		Topology: release.Topology{
+		TopologyRef: putTopology(t, deps, "rA", release.Topology{
 			{UniqueID: "a", ServiceName: "svc-a", OriginalFilePath: "models/a.sql", UpstreamUniqueIDs: []string{}},
-		},
+		}),
 	}))
 	seedValidationNodes(t, deps, "rA", []handlers.NodeResult{{NodeID: "a", Status: "ok"}})
 	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
@@ -993,10 +991,10 @@ func TestHandleValidationResult_Promote_EmitsSecretRef(t *testing.T) {
 	}))
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID: "rA", Status: "ok",
-		Topology: release.Topology{
+		TopologyRef: putTopology(t, deps, "rA", release.Topology{
 			{UniqueID: "a", ServiceName: "svc-a", NodeType: "python-api", SecretRef: "continuo-api-fx", UpstreamUniqueIDs: []string{}},
 			{UniqueID: "b", ServiceName: "svc-a", NodeType: "python-node", UpstreamUniqueIDs: []string{"a"}},
-		},
+		}),
 	}))
 	seedValidationNodes(t, deps, "rA", []handlers.NodeResult{{NodeID: "a", Status: "ok"}, {NodeID: "b", Status: "ok"}})
 	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
@@ -1033,9 +1031,9 @@ func TestHandleValidationResult_Promote_EmitsTestCount(t *testing.T) {
 	}))
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID: "rA", Status: "ok",
-		Topology: release.Topology{
+		TopologyRef: putTopology(t, deps, "rA", release.Topology{
 			{UniqueID: "a", ServiceName: "svc-a", TestCount: 3, UpstreamUniqueIDs: []string{}},
-		},
+		}),
 	}))
 	seedValidationNodes(t, deps, "rA", []handlers.NodeResult{{NodeID: "a", Status: "ok"}})
 	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
@@ -1148,7 +1146,7 @@ func TestHandleValidationResult_Rejected_CarriesChangedAncestors(t *testing.T) {
 // that on the normal validation-pass promotion path (HandleValidationResult ->
 // promoteToProduction), release.promoted:v1 carries the release's
 // code_bundle_uri (persisted at parse time by handleParseOK from
-// topology-controller's manifest.loaded.candidate:v1) and bootstrap=false for a
+// topology-controller's manifest.loaded.candidate:v2) and bootstrap=false for a
 // non-bootstrap release.
 func TestHandleValidationResult_Promote_EmitsCodeBundleURIAndBootstrap(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
@@ -1165,9 +1163,9 @@ func TestHandleValidationResult_Promote_EmitsCodeBundleURIAndBootstrap(t *testin
 		ReleaseID:     "rA",
 		Status:        "ok",
 		CodeBundleURI: "s3://continuo/code-bundles/rA/bundle.json",
-		Topology: release.Topology{
+		TopologyRef: putTopology(t, deps, "rA", release.Topology{
 			{UniqueID: "a", ServiceName: "svc-a", UpstreamUniqueIDs: []string{}},
-		},
+		}),
 	}))
 	seedValidationNodes(t, deps, "rA", []handlers.NodeResult{{NodeID: "a", Status: "ok"}})
 	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{

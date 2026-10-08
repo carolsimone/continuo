@@ -2,7 +2,6 @@ package redis
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 
@@ -10,64 +9,42 @@ import (
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
-	"github.com/carolsimone/continuo/release-controller/adapters/serialization"
+	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// parsedManifestDTO is the JSON shape of a manifest.loaded.candidate:v1 payload.
-// It carries the json tags for the parse result so the handler input stays a
-// domain-typed struct; the topology decodes through the shared Node DTO.
-type parsedManifestDTO struct {
-	ReleaseID     string                    `json:"release_id"`
-	Status        string                    `json:"status"`
-	Topology      serialization.TopologyDTO `json:"topology,omitempty"`
-	CodeBundleURI string                    `json:"code_bundle_uri,omitempty"`
-	FailureKind   string                    `json:"failure_kind,omitempty"`
-	Detail        string                    `json:"detail,omitempty"`
-	FailedNodes   []parsedFailedNodeDTO     `json:"failed_nodes,omitempty"`
-}
-
-// parsedFailedNodeDTO is one failed_nodes entry of a failed parse.
-type parsedFailedNodeDTO struct {
-	NodeID   string `json:"node_id"`
-	Kind     string `json:"kind"`
-	Service  string `json:"service"`
-	FilePath string `json:"file_path"`
-	NodeType string `json:"node_type"`
-	Detail   string `json:"detail"`
-}
-
-// toInput maps the decoded wire DTO to the handler's domain-typed input. A
-// failure_kind this build does not declare is passed through as is; the
-// handler maps it to internal_error and names it in the detail, so a release
-// from a newer producer still rejects and the queue still advances.
-func (d parsedManifestDTO) toInput(logger *slog.Logger) handlers.HandleParsedManifestInput {
-	kind := pkg_model.ParseFailureKind(d.FailureKind)
-	if d.Status == "failed" && !kind.IsValid() {
-		logger.Error("manifest.loaded.candidate:v1 carries an undeclared failure_kind; rejecting as internal_error",
-			"release_id", d.ReleaseID, "failure_kind", d.FailureKind)
+// parsedManifestInput maps a decoded manifest.loaded.candidate entry to the
+// handler's domain-typed input. A failure_kind this build does not declare is
+// passed through as is; the handler maps it to internal_error and names it in
+// the detail, so a release from a newer producer still rejects and the queue
+// still advances.
+func parsedManifestInput(p pkgevents.ManifestLoadedCandidate, logger *slog.Logger) handlers.HandleParsedManifestInput {
+	kind := pkg_model.ParseFailureKind(p.FailureKind)
+	if p.Status == pkgevents.ManifestStatusFailed && !kind.IsValid() {
+		logger.Error("manifest.loaded.candidate carries an undeclared failure_kind; rejecting as internal_error",
+			"release_id", p.ReleaseID, "failure_kind", p.FailureKind)
 	}
-	failed := make([]handlers.ParsedFailedNode, 0, len(d.FailedNodes))
-	for _, n := range d.FailedNodes {
+	failed := make([]handlers.ParsedFailedNode, 0, len(p.FailedNodes))
+	for _, n := range p.FailedNodes {
 		failed = append(failed, handlers.ParsedFailedNode{
 			NodeID: n.NodeID, Kind: pkg_model.ParseFailureKind(n.Kind), Service: n.Service,
 			FilePath: n.FilePath, NodeType: n.NodeType, Detail: n.Detail,
 		})
 	}
 	return handlers.HandleParsedManifestInput{
-		ReleaseID:     d.ReleaseID,
-		Status:        d.Status,
-		Topology:      d.Topology.ToDomain(),
-		CodeBundleURI: d.CodeBundleURI,
+		ReleaseID:     p.ReleaseID,
+		Status:        p.Status,
+		TopologyRef:   release.TopologyRef{URI: p.TopologyURI, SHA256: p.TopologySHA256, NodeCount: p.NodeCount},
+		CodeBundleURI: p.CodeBundleURI,
 		FailureKind:   kind,
-		Detail:        d.Detail,
+		Detail:        p.Detail,
 		FailedNodes:   failed,
 	}
 }
 
 // NewManifestLoadedCandidateConsumer constructs a StreamConsumer that reads
-// manifest.loaded.candidate:v1 and dispatches each message to
+// manifest.loaded.candidate:v2 and dispatches each entry to
 // handlers.HandleParsedManifest. The consumer group is created idempotently by
 // StreamConsumer.Start; call Start(ctx) in a goroutine to begin consuming.
 func NewManifestLoadedCandidateConsumer(
@@ -78,29 +55,29 @@ func NewManifestLoadedCandidateConsumer(
 	handler := newManifestLoadedCandidateHandler(deps, logger)
 	return pkgredis.NewStreamConsumer(
 		rc,
-		streams.ManifestLoadedCandidateV1,
-		streams.ReleaseControllerManifestLoadedCandidate,
+		streams.ManifestLoadedCandidateV2,
+		streams.ReleaseControllerManifestLoadedCandidateV2,
 		handler,
 		logger,
 	)
 }
 
-// newManifestLoadedCandidateHandler returns a MessageHandler that decodes the
-// "payload" field of each manifest.loaded.candidate:v1 message, calls
+// newManifestLoadedCandidateHandler returns a MessageHandler that decodes each
+// manifest.loaded.candidate:v2 entry (envelope fields plus payload), calls
 // handlers.HandleParsedManifest, and on success advances the release queue.
 // Advancing after a failed parse is essential: no kind:"complete" terminal
 // message on validation.result:v1 will arrive for a rejected release, so
 // without this call every queued candidate would stay in StatusReceived
-// indefinitely. A payload that cannot be decoded is a permanent failure: the
-// handler returns events.ErrPermanent, so the consumer dead-letters it.
+// indefinitely. An entry that does not decode is a permanent failure, as is a
+// corrupt topology artifact met by the handler; the consumer dead-letters both.
 func newManifestLoadedCandidateHandler(deps *handlers.Deps, logger *slog.Logger) pkgredis.MessageHandler {
 	return func(ctx context.Context, msg goredis.XMessage) error {
-		var dto parsedManifestDTO
-		if err := decodePayload(msg, &dto); err != nil {
-			return fmt.Errorf("%w: %s decode: %v", pkgevents.ErrPermanent, streams.ManifestLoadedCandidateV1, err)
+		_, p, err := pkgevents.DecodeManifestLoadedCandidate(stringFields(msg.Values))
+		if err != nil {
+			return fmt.Errorf("%w: %s decode: %v", pkgevents.ErrPermanent, streams.ManifestLoadedCandidateV2, err)
 		}
-		if err := handlers.HandleParsedManifest(ctx, deps, dto.toInput(logger)); err != nil {
-			return err
+		if err := handlers.HandleParsedManifest(ctx, deps, parsedManifestInput(p, logger)); err != nil {
+			return permanentOnCorruptTopology(err)
 		}
 		// Advance the queue after every parse result. On the success path the
 		// release is now in Validating (active), so this is a no-op. On the
@@ -112,17 +89,4 @@ func newManifestLoadedCandidateHandler(deps *handlers.Deps, logger *slog.Logger)
 		}
 		return nil
 	}
-}
-
-// decodePayload extracts the "payload" field from a Redis stream message and
-// unmarshals it into dst.
-func decodePayload(msg goredis.XMessage, dst any) error {
-	raw, ok := msg.Values["payload"].(string)
-	if !ok {
-		return fmt.Errorf("missing or non-string payload field")
-	}
-	if err := json.Unmarshal([]byte(raw), dst); err != nil {
-		return fmt.Errorf("unmarshal payload: %w", err)
-	}
-	return nil
 }

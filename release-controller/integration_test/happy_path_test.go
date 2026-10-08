@@ -46,6 +46,7 @@ func setup(t *testing.T) (*httpinfra.Server, *handlers.Deps, *sqlx.DB) {
 		Logger:    slog.Default(),
 		Bucket:    "test-bucket",
 
+		Topologies: newMemTopologies(),
 		Rejections: serialization.ReleaseRejectedJSON{},
 	}
 	srv := httpinfra.NewServer(deps, liveness.NewRegistry(), "0", slog.Default())
@@ -88,10 +89,10 @@ func TestIntegration_HappyPath(t *testing.T) {
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID: "rA",
 		Status:    "ok",
-		Topology: release.Topology{
+		TopologyRef: putTopology(t, deps, "rA", release.Topology{
 			{UniqueID: "a", ServiceName: "service-1"},
 			{UniqueID: "b", ServiceName: "service-1", UpstreamUniqueIDs: []string{"a"}},
-		},
+		}),
 	}))
 	r, _ = deps.NewUoW().RunRepo().Get(context.Background(), "rA")
 	assert.Equal(t, pipeline.StatusValidating, r.Status())

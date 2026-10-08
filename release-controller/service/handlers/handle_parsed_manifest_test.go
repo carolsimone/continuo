@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"testing"
 	"time"
@@ -11,7 +12,6 @@ import (
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
-	"github.com/carolsimone/continuo/release-controller/adapters/serialization"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
@@ -99,9 +99,9 @@ func TestHandleParsedManifest_OK_TransitionsToValidating(t *testing.T) {
 		{UniqueID: "b", ServiceName: "svc-a", UpstreamUniqueIDs: []string{"a"}},
 	}
 	err := handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: "rA",
-		Status:    "ok",
-		Topology:  topo,
+		ReleaseID:   "rA",
+		Status:      "ok",
+		TopologyRef: putTopology(t, deps, "rA", topo),
 	})
 	require.NoError(t, err)
 
@@ -127,7 +127,7 @@ func TestHandleParsedManifest_OK_TransitionsToValidating(t *testing.T) {
 
 // TestHandleParsedManifest_OK_StoresCodeBundleURI verifies that handleParseOK
 // persists CodeBundleURI (published by topology-controller on
-// manifest.loaded.candidate:v1) onto the saved release on the normal
+// manifest.loaded.candidate:v2) onto the saved release on the normal
 // (non-bootstrap) validating path, so it survives to be carried on
 // release.promoted:v1 once validation passes.
 func TestHandleParsedManifest_OK_StoresCodeBundleURI(t *testing.T) {
@@ -140,7 +140,7 @@ func TestHandleParsedManifest_OK_StoresCodeBundleURI(t *testing.T) {
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID:     "rA",
 		Status:        "ok",
-		Topology:      topo,
+		TopologyRef:   putTopology(t, deps, "rA", topo),
 		CodeBundleURI: "s3://continuo/code-bundles/rA/bundle.json",
 	}))
 
@@ -153,7 +153,7 @@ func TestHandleParsedManifest_OK_StoresCodeBundleURI(t *testing.T) {
 // TestHandleParsedManifest_Bootstrap_StoresCodeBundleURI verifies that
 // handleParseOK persists CodeBundleURI on the bootstrap path (promoteBootstrap),
 // which skips validation entirely but still goes through the same
-// r.SetCodeBundleURI call right after joinImageTags.
+// r.SetCodeBundleURI call right after the artifact is read.
 func TestHandleParsedManifest_Bootstrap_StoresCodeBundleURI(t *testing.T) {
 	deps, store := seedToParsingBootstrap(t, "rBoot", map[string]string{"svc-a": "sha-a"})
 
@@ -163,7 +163,7 @@ func TestHandleParsedManifest_Bootstrap_StoresCodeBundleURI(t *testing.T) {
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID:     "rBoot",
 		Status:        "ok",
-		Topology:      topo,
+		TopologyRef:   putTopology(t, deps, "rBoot", topo),
 		CodeBundleURI: "s3://continuo/code-bundles/rBoot/bundle.json",
 	}))
 
@@ -315,16 +315,16 @@ func TestReleaseRejected_NeverCarriesErrorClass(t *testing.T) {
 				ReleaseID:     "rA",
 				Status:        "ok",
 				CodeBundleURI: "s3://continuo/code-bundles/rA/bundle.json",
-				Topology:      duplicateOrdersTopology(),
+				TopologyRef:   putTopology(t, deps, "rA", duplicateOrdersTopology()),
 			}))
 			return store
 		}},
 		{"unbuildable_cross_service_upstream", func(t *testing.T) *fakeStore {
 			deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
 			require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-				ReleaseID: "rA",
-				Status:    "ok",
-				Topology:  unbuildableUpstreamTopology(),
+				ReleaseID:   "rA",
+				Status:      "ok",
+				TopologyRef: putTopology(t, deps, "rA", unbuildableUpstreamTopology()),
 			}))
 			return store
 		}},
@@ -419,13 +419,13 @@ func TestHandleParsedManifest_OK_ValidationRequestedCarriesPerNodeFields(t *test
 	})
 
 	topo := release.Topology{
-		{UniqueID: "a", ServiceName: "svc-a", NodeType: "dbt-model", SchemaName: "schema_a", TableName: "table_a"},
-		{UniqueID: "b", ServiceName: "svc-a", NodeType: "dbt-seed", SchemaName: "schema_b", TableName: "table_b", UpstreamUniqueIDs: []string{"a"}},
+		{UniqueID: "a", ServiceName: "svc-a", NodeType: "dbt-model", SchemaName: "schema_a", TableName: "table_a", ImageTag: "sha-a"},
+		{UniqueID: "b", ServiceName: "svc-a", NodeType: "dbt-seed", SchemaName: "schema_b", TableName: "table_b", UpstreamUniqueIDs: []string{"a"}, ImageTag: "sha-a"},
 	}
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: "rA",
-		Status:    "ok",
-		Topology:  topo,
+		ReleaseID:   "rA",
+		Status:      "ok",
+		TopologyRef: putTopology(t, deps, "rA", topo),
 	}))
 
 	// B5: a new dbt-seed routes to seed_building, not validating.
@@ -488,9 +488,9 @@ func TestHandleParsedManifest_OK_DerivesChangedSetFromContentHashDiff(t *testing
 		{UniqueID: "d", ServiceName: "svc-a", ContentHash: "h_d", UpstreamUniqueIDs: []string{"c"}},
 	}
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: "rA",
-		Status:    "ok",
-		Topology:  topo,
+		ReleaseID:   "rA",
+		Status:      "ok",
+		TopologyRef: putTopology(t, deps, "rA", topo),
 	}))
 
 	r, err := store.GetRelease("rA")
@@ -541,9 +541,9 @@ func TestHandleParsedManifest_OK_ChangedNodePullsDownstream(t *testing.T) {
 		{UniqueID: "b", ServiceName: "svc-a", ContentHash: "h_b", UpstreamUniqueIDs: []string{"a"}},
 	}
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: "rA",
-		Status:    "ok",
-		Topology:  topo,
+		ReleaseID:   "rA",
+		Status:      "ok",
+		TopologyRef: putTopology(t, deps, "rA", topo),
 	}))
 
 	r, err := store.GetRelease("rA")
@@ -564,9 +564,9 @@ func TestHandleParsedManifest_OK_BootstrapValidatesAllNodes(t *testing.T) {
 		{UniqueID: "c", ServiceName: "svc-a", ContentHash: "h_c"},
 	}
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: "rA",
-		Status:    "ok",
-		Topology:  topo,
+		ReleaseID:   "rA",
+		Status:      "ok",
+		TopologyRef: putTopology(t, deps, "rA", topo),
 	}))
 
 	r, err := store.GetRelease("rA")
@@ -593,7 +593,7 @@ func TestHandleParsedManifest_OK_NothingToValidate_PromotesDirectly(t *testing.T
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID:     "rA",
 		Status:        "ok",
-		Topology:      topo,
+		TopologyRef:   putTopology(t, deps, "rA", topo),
 		CodeBundleURI: "s3://continuo/code-bundles/rA/bundle.json",
 	}))
 
@@ -652,9 +652,9 @@ func TestHandleParsedManifest_OK_NothingToValidate_Verification(t *testing.T) {
 		store.SeedCurrentProd(release.RehydrateCurrentProd("prev", unchangedTopo(), time.Unix(50, 0).UTC()))
 
 		require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-			ReleaseID: "rVerify",
-			Status:    "ok",
-			Topology:  unchangedTopo(),
+			ReleaseID:   "rVerify",
+			Status:      "ok",
+			TopologyRef: putTopology(t, deps, "rVerify", unchangedTopo()),
 		}))
 
 		r, err := store.GetRelease("rVerify")
@@ -682,9 +682,9 @@ func TestHandleParsedManifest_OK_NothingToValidate_Verification(t *testing.T) {
 		store.SeedCurrentProd(release.RehydrateCurrentProd("prev", unchangedTopo(), time.Unix(50, 0).UTC()))
 
 		require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-			ReleaseID: "rVerify",
-			Status:    "ok",
-			Topology:  release.Topology{},
+			ReleaseID:   "rVerify",
+			Status:      "ok",
+			TopologyRef: putTopology(t, deps, "rVerify", release.Topology{}),
 		}))
 
 		r, err := store.GetRelease("rVerify")
@@ -711,9 +711,9 @@ func TestHandleParsedManifest_OK_NothingToValidate_Verification(t *testing.T) {
 		store.SeedCurrentProd(release.RehydrateCurrentProd("prev", unchangedTopo(), time.Unix(50, 0).UTC()))
 
 		require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-			ReleaseID: "rA",
-			Status:    "ok",
-			Topology:  unchangedTopo(),
+			ReleaseID:   "rA",
+			Status:      "ok",
+			TopologyRef: putTopology(t, deps, "rA", unchangedTopo()),
 		}))
 
 		r, err := store.GetRelease("rA")
@@ -746,9 +746,9 @@ func TestHandleParseOK_RejectsUnbuildableCrossServiceUpstream(t *testing.T) {
 	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
 
 	err := handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: "rA",
-		Status:    "ok",
-		Topology:  unbuildableUpstreamTopology(),
+		ReleaseID:   "rA",
+		Status:      "ok",
+		TopologyRef: putTopology(t, deps, "rA", unbuildableUpstreamTopology()),
 	})
 	require.NoError(t, err, "handler must return nil (graceful rejection, not an infrastructure error)")
 
@@ -796,9 +796,9 @@ func TestHandleParseOK_RejectsUnbuildableUpstreamOnDownstreamNode(t *testing.T) 
 		{UniqueID: "c2", ServiceName: "svc-a", ContentHash: "h_c2", UpstreamUniqueIDs: []string{"c1", "ghost_upstream"}},
 	}
 	err := handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: "rA",
-		Status:    "ok",
-		Topology:  topo,
+		ReleaseID:   "rA",
+		Status:      "ok",
+		TopologyRef: putTopology(t, deps, "rA", topo),
 	})
 	require.NoError(t, err)
 
@@ -835,9 +835,9 @@ func TestHandleParseOK_CrossServiceUpstreamInCandidatePromotes(t *testing.T) {
 		{UniqueID: "a2", ServiceName: "svc-a", ContentHash: "h_a2", UpstreamUniqueIDs: []string{"b_up"}},
 	}
 	err := handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: "rA",
-		Status:    "ok",
-		Topology:  topo,
+		ReleaseID:   "rA",
+		Status:      "ok",
+		TopologyRef: putTopology(t, deps, "rA", topo),
 	})
 	require.NoError(t, err)
 
@@ -868,25 +868,20 @@ func TestHandleParseOK_CrossServiceUpstreamInCandidatePromotes(t *testing.T) {
 	assert.Empty(t, byID["b_up"], "b_up has no in-set upstreams")
 }
 
-// TestHandleParseOK_EmitsCandidateArtifactURIPerNode verifies each node's
-// candidate_artifact_uri (the S3 URI of the object validation must fetch to
-// build the node in the candidate schema, produced by topology-controller) is
-// carried into the validation.requested:v1 payload under the key
-// "candidate_artifact_uri", where the executor fetches it to build the empty
-// candidate table.
-func TestHandleParseOK_EmitsCandidateArtifactURIPerNode(t *testing.T) {
+// TestHandleParseOK_DerivesCandidateArtifactURIPerNode verifies each node's
+// candidate_artifact_uri on validation.requested:v1 is derived from the run id,
+// the node and its type — the key topology-controller wrote the object under —
+// since the artifact carries no URIs. A dbt node's object is .sql, a python
+// node's .json.
+func TestHandleParseOK_DerivesCandidateArtifactURIPerNode(t *testing.T) {
 	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
 
 	topo := release.Topology{
-		{UniqueID: "a1", ServiceName: "svc-a", ContentHash: "h_a1",
-			CandidateArtifactURI: "s3://continuo/svc-a/rA/candidate_a1.sql"},
-		{UniqueID: "a2", ServiceName: "svc-a", ContentHash: "h_a2", UpstreamUniqueIDs: []string{"a1"},
-			CandidateArtifactURI: "s3://continuo/svc-a/rA/candidate_a2.sql"},
+		{UniqueID: "a1", ServiceName: "svc-a", NodeType: "dbt-model", ContentHash: "h_a1", ImageTag: "sha-a"},
+		{UniqueID: "a2", ServiceName: "svc-a", NodeType: "python-node", ContentHash: "h_a2", ImageTag: "sha-a", UpstreamUniqueIDs: []string{"a1"}},
 	}
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: "rA",
-		Status:    "ok",
-		Topology:  topo,
+		ReleaseID: "rA", Status: "ok", TopologyRef: putTopology(t, deps, "rA", topo),
 	}))
 
 	entry := findEntry(t, store, streams.ValidationRequestedV1)
@@ -896,52 +891,34 @@ func TestHandleParseOK_EmitsCandidateArtifactURIPerNode(t *testing.T) {
 		UniqueID             string `json:"unique_id"`
 		CandidateArtifactURI string `json:"candidate_artifact_uri"`
 		ValidationOp         string `json:"validation_op"`
-		ProdSchema           string `json:"prod_schema"`
 	}
 	require.NoError(t, json.Unmarshal(rawPayload["nodes"], &nodes))
 	got := map[string]string{}
 	op := map[string]string{}
-	prodSchema := map[string]string{}
 	for _, n := range nodes {
 		got[n.UniqueID] = n.CandidateArtifactURI
 		op[n.UniqueID] = n.ValidationOp
-		prodSchema[n.UniqueID] = n.ProdSchema
 	}
-	assert.Equal(t, "s3://continuo/svc-a/rA/candidate_a1.sql", got["a1"])
-	assert.Equal(t, "s3://continuo/svc-a/rA/candidate_a2.sql", got["a2"])
-
-	// No prod snapshot is seeded, so both nodes are new -> in the changed-closure
-	// -> build_from_sql with empty prod_schema.
+	assert.Equal(t, "s3://continuo/candidate-sql/rA/candidate_a1.sql", got["a1"])
+	assert.Equal(t, "s3://continuo/candidate-sql/rA/candidate_a2.json", got["a2"])
 	assert.Equal(t, "build_from_sql", op["a1"])
-	assert.Equal(t, "", prodSchema["a1"])
-	assert.Equal(t, "build_from_sql", op["a2"])
-	assert.Equal(t, "", prodSchema["a2"])
+	assert.Equal(t, "build_from_columns", op["a2"])
 }
 
-// TestHandleParsedManifest_OK_TestCountSurvivesToCandidateTopology verifies
-// that test_count on the manifest.loaded.candidate:v1 payload survives the
-// topology DTO decode (the same serialization.TopologyDTO the real Redis
-// binding decodes into) and persists on the release's candidate topology.
-func TestHandleParsedManifest_OK_TestCountSurvivesToCandidateTopology(t *testing.T) {
+// TestHandleParsedManifest_OK_TestCountSurvivesFromTheArtifact pins that
+// test_count read from the artifact reaches the stored candidate topology.
+func TestHandleParsedManifest_OK_TestCountSurvivesFromTheArtifact(t *testing.T) {
 	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
-
-	rawTopology := []byte(`[
-		{"unique_id": "a", "service_name": "svc-a", "test_count": 3},
-		{"unique_id": "b", "service_name": "svc-a", "upstream_unique_ids": ["a"], "test_count": 0}
-	]`)
-	var topoDTO serialization.TopologyDTO
-	require.NoError(t, json.Unmarshal(rawTopology, &topoDTO))
-	in := handlers.HandleParsedManifestInput{
-		ReleaseID: "rA",
-		Status:    "ok",
-		Topology:  topoDTO.ToDomain(),
+	topo := release.Topology{
+		{UniqueID: "a", ServiceName: "svc-a", TestCount: 3, ImageTag: "sha-a"},
+		{UniqueID: "b", ServiceName: "svc-a", UpstreamUniqueIDs: []string{"a"}, TestCount: 0, ImageTag: "sha-a"},
 	}
-
-	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, in))
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rA", Status: "ok", TopologyRef: putTopology(t, deps, "rA", topo),
+	}))
 
 	r, err := store.GetRelease("rA")
 	require.NoError(t, err)
-
 	byID := map[string]release.Node{}
 	for _, n := range r.CandidateTopology() {
 		byID[n.UniqueID] = n
@@ -962,9 +939,9 @@ func TestHandleParseOK_EmitsUpstreamNodeIDs_NoDeferURI(t *testing.T) {
 		{UniqueID: "a2", ServiceName: "svc-a", ContentHash: "h_a2", UpstreamUniqueIDs: []string{"a1"}},
 	}
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: "rA",
-		Status:    "ok",
-		Topology:  topo,
+		ReleaseID:   "rA",
+		Status:      "ok",
+		TopologyRef: putTopology(t, deps, "rA", topo),
 	}))
 
 	entry := findEntry(t, store, streams.ValidationRequestedV1)
@@ -994,7 +971,7 @@ func TestHandleParseOK_EmitsUpstreamNodeIDs_NoDeferURI(t *testing.T) {
 }
 
 // TestHandleParseOK_UnknownRelease_DropsWithoutPanic guards against a stale or
-// duplicate manifest.loaded.candidate:v1 message whose release row no longer exists (e.g.
+// duplicate manifest.loaded.candidate:v2 message whose release row no longer exists (e.g.
 // it was pruned, or the message was reclaimed from a previous consumer for a
 // deleted release). ReleaseRepo.Get returns (nil, nil) for a missing release;
 // the handler must ack and drop rather than dereference a nil aggregate and
@@ -1005,9 +982,9 @@ func TestHandleParseOK_UnknownRelease_DropsWithoutPanic(t *testing.T) {
 	err := handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID: "does-not-exist",
 		Status:    "ok",
-		Topology: release.Topology{
+		TopologyRef: putTopology(t, deps, "does-not-exist", release.Topology{
 			{UniqueID: "a", ServiceName: "svc-a"},
-		},
+		}),
 	})
 	require.NoError(t, err, "unknown release must be dropped, not error")
 
@@ -1016,13 +993,11 @@ func TestHandleParseOK_UnknownRelease_DropsWithoutPanic(t *testing.T) {
 	assert.Equal(t, "", store.GetCurrentProd().ReleaseID())
 }
 
-func TestHandleParsedManifest_ImageTagJoinedIntoTopology(t *testing.T) {
-	// Two-service topology with all upstreams present in the candidate topology
-	// (no dangling references). This tests that image tags from the Release are
-	// joined into the stored candidate topology correctly.
-	// svc-a is the changed service; svc-b already has a service_prod pointer so
-	// its tag is assembled into the release's image_tags at AdvanceQueue time.
-	// Seed service_prod BEFORE AdvanceQueue so the assembly picks it up.
+// TestHandleParsedManifest_ImageTagsComeFromTheArtifact pins that the image
+// tags a run validates with are the ones its artifact carries: topology-controller
+// joins the run's assembled tags onto every node (release.requested:v1
+// carries them), and release-controller uses them as they are.
+func TestHandleParsedManifest_ImageTagsComeFromTheArtifact(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
 	store.SeedServiceProd(release.NewServiceProd("svc-b", "prev", "s3://continuo/svc-b/prev/manifest.json", "tag-beta", release.ManifestKindDbt, time.Unix(0, 0)))
@@ -1030,41 +1005,23 @@ func TestHandleParsedManifest_ImageTagJoinedIntoTopology(t *testing.T) {
 		Service: "svc-a", ReleaseID: "rA", ImageTag: "tag-alpha", Repo: "acme/demo", CommitSHA: "deadbeef",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
-	// Simulate the compile leg completing (Compiling → Parsing).
-	require.NoError(t, handlers.HandleCompileResult(context.Background(), deps, handlers.HandleCompileResultInput{
-		ReleaseID: "rA", Status: "ok",
-	}))
-
-	// Seed prod with "a" (unchanged hash) so "a" is not in the changed set; "b"
-	// is the only changed node and its upstream "a" is present in the candidate
-	// topology, so no unbuildable-upstream rejection fires.
+	require.NoError(t, handlers.HandleCompileResult(context.Background(), deps, handlers.HandleCompileResultInput{ReleaseID: "rA", Status: "ok"}))
 	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", release.Topology{
 		{UniqueID: "a", ServiceName: "svc-a", ContentHash: "h_a"},
 	}, time.Unix(50, 0).UTC()))
 
 	topo := release.Topology{
-		{UniqueID: "a", ServiceName: "svc-a", UpstreamUniqueIDs: []string{}, ContentHash: "h_a"},
-		{UniqueID: "b", ServiceName: "svc-b", UpstreamUniqueIDs: []string{"a"}, ContentHash: "h_b_new"},
+		{UniqueID: "a", ServiceName: "svc-a", NodeType: "dbt-model", UpstreamUniqueIDs: []string{}, ContentHash: "h_a", ImageTag: "tag-alpha"},
+		{UniqueID: "b", ServiceName: "svc-b", NodeType: "dbt-model", UpstreamUniqueIDs: []string{"a"}, ContentHash: "h_b_new", ImageTag: "tag-beta"},
 	}
-	err := handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: "rA",
-		Status:    "ok",
-		Topology:  topo,
-	})
-	require.NoError(t, err)
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rA", Status: "ok", TopologyRef: putTopology(t, deps, "rA", topo),
+	}))
 
-	r, err := store.GetRelease("rA")
-	require.NoError(t, err)
-
-	stored := r.CandidateTopology()
-	require.Len(t, stored, 2)
-
-	nodeByID := map[string]release.Node{}
-	for _, n := range stored {
-		nodeByID[n.UniqueID] = n
-	}
-	assert.Equal(t, "tag-alpha", nodeByID["a"].ImageTag)
-	assert.Equal(t, "tag-beta", nodeByID["b"].ImageTag)
+	nodes := decodeValidationRequestedNodes(t, store)
+	byID := indexNodesByUniqueID(t, nodes)
+	assert.Equal(t, "tag-alpha", byID["a"]["image_tag"])
+	assert.Equal(t, "tag-beta", byID["b"]["image_tag"])
 }
 
 func TestHandleParsedManifest_Bootstrap_PromotesWithoutValidation(t *testing.T) {
@@ -1077,7 +1034,7 @@ func TestHandleParsedManifest_Bootstrap_PromotesWithoutValidation(t *testing.T) 
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID:     "rBoot",
 		Status:        "ok",
-		Topology:      topo,
+		TopologyRef:   putTopology(t, deps, "rBoot", topo),
 		CodeBundleURI: "s3://continuo/code-bundles/rBoot/bundle.json",
 	}))
 
@@ -1152,7 +1109,7 @@ func TestHandleParsedManifest_AssignsPerNodeValidationOp(t *testing.T) {
 	}
 
 	err := handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: "rel-op-1", Status: "ok", Topology: topo,
+		ReleaseID: "rel-op-1", Status: "ok", TopologyRef: putTopology(t, deps, "rel-op-1", topo),
 	})
 	require.NoError(t, err)
 
@@ -1229,17 +1186,16 @@ func TestHandleParsedManifest_DbtTestGetsCheckBinds(t *testing.T) {
 	}, time.Unix(50, 0).UTC()))
 
 	topo := release.Topology{
-		{UniqueID: "svc.m", ServiceName: "svc", NodeType: "dbt-model", SchemaName: "analytics", TableName: "m", ContentHash: "hash-m-NEW",
-			CandidateArtifactURI: "s3://c/m"},
+		{UniqueID: "svc.m", ServiceName: "svc", NodeType: "dbt-model", SchemaName: "analytics", TableName: "m", ContentHash: "hash-m-NEW"},
 		{UniqueID: "svc.u", ServiceName: "svc", NodeType: "dbt-model", SchemaName: "analytics", TableName: "u", ContentHash: "hash-u"},
 		{UniqueID: "test.p.not_null_m_id.1", ServiceName: "svc", NodeType: "dbt-test",
-			UpstreamUniqueIDs: []string{"svc.m"}, CandidateArtifactURI: "s3://c/t1"},
+			UpstreamUniqueIDs: []string{"svc.m"}},
 		{UniqueID: "test.p.rel.2", ServiceName: "svc", NodeType: "dbt-test",
-			UpstreamUniqueIDs: []string{"svc.m", "svc.u"}, CandidateArtifactURI: "s3://c/t2"},
+			UpstreamUniqueIDs: []string{"svc.m", "svc.u"}},
 	}
 
 	err := handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: "rel-test-op-1", Status: "ok", Topology: topo,
+		ReleaseID: "rel-test-op-1", Status: "ok", TopologyRef: putTopology(t, deps, "rel-test-op-1", topo),
 	})
 	require.NoError(t, err)
 
@@ -1274,7 +1230,7 @@ func TestHandleParsedManifest_NewSeedRoutesToSeedBuild(t *testing.T) {
 	}
 
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: "rel-seed-1", Status: "ok", Topology: topo,
+		ReleaseID: "rel-seed-1", Status: "ok", TopologyRef: putTopology(t, deps, "rel-seed-1", topo),
 	}))
 
 	// Release must be in seed_building state.
@@ -1316,7 +1272,7 @@ func TestHandleParsedManifest_SeedBuildRequestedCarriesSourceOverlay(t *testing.
 	}
 
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: "verify-rel-seed-1", Status: "ok", Topology: topo,
+		ReleaseID: "verify-rel-seed-1", Status: "ok", TopologyRef: putTopology(t, deps, "verify-rel-seed-1", topo),
 	}))
 
 	entry := findEntry(t, store, streams.SeedBuildRequestedV1)
@@ -1337,7 +1293,7 @@ func TestHandleParsedManifest_SeedBuildRequestedOmitsAbsentSourceOverlay(t *test
 	}
 
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: "rel-seed-nooverlay", Status: "ok", Topology: topo,
+		ReleaseID: "rel-seed-nooverlay", Status: "ok", TopologyRef: putTopology(t, deps, "rel-seed-nooverlay", topo),
 	}))
 
 	entry := findEntry(t, store, streams.SeedBuildRequestedV1)
@@ -1358,7 +1314,7 @@ func TestHandleParsedManifest_NoNewSeedsGoesStraightToValidation(t *testing.T) {
 		{UniqueID: "model.a", ServiceName: "svc-a", NodeType: "dbt-model", SchemaName: "sc", TableName: "a", ContentHash: "h-new"},
 	}
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: "rel-noseed-1", Status: "ok", Topology: topo,
+		ReleaseID: "rel-noseed-1", Status: "ok", TopologyRef: putTopology(t, deps, "rel-noseed-1", topo),
 	}))
 
 	// validation.requested:v1 must be emitted (Part-A path, unchanged).
@@ -1393,7 +1349,7 @@ func TestHandleParsedManifest_DuplicateTableRejects(t *testing.T) {
 		ReleaseID:     "rA",
 		Status:        "ok",
 		CodeBundleURI: "s3://continuo/code-bundles/rA/bundle.json",
-		Topology:      duplicateOrdersTopology(),
+		TopologyRef:   putTopology(t, deps, "rA", duplicateOrdersTopology()),
 	})
 	require.NoError(t, err)
 
@@ -1432,9 +1388,9 @@ func TestHandleParsedManifest_DuplicateTable_Verification_NoReleaseRejected_Fini
 	deps, store := seedToParsingVerification(t, "rVerify", map[string]string{"marketing": "sha-m"})
 
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: "rVerify",
-		Status:    "ok",
-		Topology:  duplicateOrdersTopology(),
+		ReleaseID:   "rVerify",
+		Status:      "ok",
+		TopologyRef: putTopology(t, deps, "rVerify", duplicateOrdersTopology()),
 	}))
 
 	r, err := store.GetRelease("rVerify")
@@ -1456,10 +1412,10 @@ func TestHandleParsedManifest_DuplicateTablePayloadNamesTargetAndOther(t *testin
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID: "rA",
 		Status:    "ok",
-		Topology: release.Topology{
+		TopologyRef: putTopology(t, deps, "rA", release.Topology{
 			{UniqueID: "analytics.orders", ServiceName: "finance", OriginalFilePath: "models/orders.sql", NodeType: "dbt-model"},
 			{UniqueID: "analytics.orders", ServiceName: "marketing", OriginalFilePath: "models/orders.sql", NodeType: "python-node"},
-		},
+		}),
 	}))
 
 	entry := findEntry(t, store, streams.ReleaseRejectedV1)
@@ -1489,10 +1445,10 @@ func TestHandleParsedManifest_DuplicateTablePayloadSameServiceCarriesBothFilePat
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID: "rA",
 		Status:    "ok",
-		Topology: release.Topology{
+		TopologyRef: putTopology(t, deps, "rA", release.Topology{
 			{UniqueID: "analytics.orders", ServiceName: "marketing", OriginalFilePath: "models/orders.sql"},
 			{UniqueID: "analytics.orders", ServiceName: "marketing", OriginalFilePath: "models/orders_v2.sql"},
-		},
+		}),
 	}))
 
 	entry := findEntry(t, store, streams.ReleaseRejectedV1)
@@ -1518,10 +1474,10 @@ func TestHandleParsedManifest_DuplicateTableRejectsBootstrap(t *testing.T) {
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID: "rBoot",
 		Status:    "ok",
-		Topology: release.Topology{
+		TopologyRef: putTopology(t, deps, "rBoot", release.Topology{
 			{UniqueID: "analytics.orders", ServiceName: "finance", OriginalFilePath: "models/orders.sql"},
 			{UniqueID: "analytics.orders", ServiceName: "marketing", OriginalFilePath: "models/orders.sql"},
-		},
+		}),
 	}))
 
 	r, rErr := store.GetRelease("rBoot")
@@ -1548,10 +1504,10 @@ func TestHandleParsedManifest_DuplicateTablePinsNothingToValidateShortCircuit(t 
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID: "rA",
 		Status:    "ok",
-		Topology: release.Topology{
+		TopologyRef: putTopology(t, deps, "rA", release.Topology{
 			{UniqueID: "analytics.orders", ServiceName: "finance", OriginalFilePath: "models/orders.sql", ContentHash: "h1"},
 			{UniqueID: "analytics.orders", ServiceName: "marketing", OriginalFilePath: "models/orders_copy.sql", ContentHash: "h1"},
-		},
+		}),
 	}))
 
 	r, rErr := store.GetRelease("rA")
@@ -1572,11 +1528,11 @@ func TestHandleParsedManifest_DuplicateTableThreeWayEmitsNoPerNodeEntry(t *testi
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID: "rA",
 		Status:    "ok",
-		Topology: release.Topology{
+		TopologyRef: putTopology(t, deps, "rA", release.Topology{
 			{UniqueID: "analytics.orders", ServiceName: "finance", OriginalFilePath: "models/orders.sql"},
 			{UniqueID: "analytics.orders", ServiceName: "marketing", OriginalFilePath: "models/orders.sql"},
 			{UniqueID: "analytics.orders", ServiceName: "sales", OriginalFilePath: "models/orders.sql"},
-		},
+		}),
 	}))
 
 	r, rErr := store.GetRelease("rA")
@@ -1606,7 +1562,7 @@ func TestHandleParsedManifest_DuplicateTableMixedTwoAndThreeWayEmitsOnlyTheTwoWa
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID: "rA",
 		Status:    "ok",
-		Topology: release.Topology{
+		TopologyRef: putTopology(t, deps, "rA", release.Topology{
 			// Two-way collision: analytics.customers.
 			{UniqueID: "analytics.customers", ServiceName: "finance", OriginalFilePath: "models/customers.sql"},
 			{UniqueID: "analytics.customers", ServiceName: "marketing", OriginalFilePath: "models/customers.sql"},
@@ -1614,7 +1570,7 @@ func TestHandleParsedManifest_DuplicateTableMixedTwoAndThreeWayEmitsOnlyTheTwoWa
 			{UniqueID: "analytics.orders", ServiceName: "finance", OriginalFilePath: "models/orders.sql"},
 			{UniqueID: "analytics.orders", ServiceName: "marketing", OriginalFilePath: "models/orders.sql"},
 			{UniqueID: "analytics.orders", ServiceName: "sales", OriginalFilePath: "models/orders.sql"},
-		},
+		}),
 	}))
 
 	entry := findEntry(t, store, streams.ReleaseRejectedV1)
@@ -1641,12 +1597,12 @@ func TestHandleParsedManifest_DuplicateTableIdentityCollisionRejectsWithNoPerNod
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID: "rA",
 		Status:    "ok",
-		Topology: release.Topology{
+		TopologyRef: putTopology(t, deps, "rA", release.Topology{
 			{UniqueID: "analytics.orders", ResolvedRelationID: "analytics.orders_finance",
 				ServiceName: "finance", OriginalFilePath: "models/orders.sql"},
 			{UniqueID: "analytics.orders", ResolvedRelationID: "analytics.orders_marketing",
 				ServiceName: "marketing", OriginalFilePath: "models/orders_v2.sql"},
-		},
+		}),
 	}))
 
 	r, rErr := store.GetRelease("rA")
@@ -1678,12 +1634,12 @@ func TestHandleParsedManifest_DuplicateTablePayloadCarriesRelationID(t *testing.
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID: "rA",
 		Status:    "ok",
-		Topology: release.Topology{
+		TopologyRef: putTopology(t, deps, "rA", release.Topology{
 			{UniqueID: "analytics.orders_v1", ResolvedRelationID: "analytics.orders",
 				ServiceName: "finance", OriginalFilePath: "models/orders_v1.sql"},
 			{UniqueID: "analytics.orders_v2", ResolvedRelationID: "analytics.orders",
 				ServiceName: "marketing", OriginalFilePath: "models/orders_v2.sql"},
-		},
+		}),
 	}))
 
 	entry := findEntry(t, store, streams.ReleaseRejectedV1)
@@ -1706,7 +1662,7 @@ func TestHandleParsedManifest_DuplicateTableRelationAndIdentityBothNamedOnlyRela
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID: "rA",
 		Status:    "ok",
-		Topology: release.Topology{
+		TopologyRef: putTopology(t, deps, "rA", release.Topology{
 			// Relation collision: different unique_ids, same resolved relation.
 			{UniqueID: "analytics.orders_v1", ResolvedRelationID: "analytics.orders",
 				ServiceName: "finance", OriginalFilePath: "models/orders_v1.sql"},
@@ -1717,7 +1673,7 @@ func TestHandleParsedManifest_DuplicateTableRelationAndIdentityBothNamedOnlyRela
 				ServiceName: "finance", OriginalFilePath: "models/customers.sql"},
 			{UniqueID: "analytics.customers", ResolvedRelationID: "analytics.customers_sales",
 				ServiceName: "sales", OriginalFilePath: "models/customers.sql"},
-		},
+		}),
 	}))
 
 	r, rErr := store.GetRelease("rA")
@@ -1751,12 +1707,12 @@ func TestHandleParsedManifest_DistinctRelationsPassTheGate(t *testing.T) {
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID: "rOK",
 		Status:    "ok",
-		Topology: release.Topology{
+		TopologyRef: putTopology(t, deps, "rOK", release.Topology{
 			{UniqueID: "analytics.orders", SchemaName: "analytics", TableName: "orders",
 				ServiceName: "finance", OriginalFilePath: "models/orders.sql", ContentHash: "h1"},
 			{UniqueID: "marketing.orders", SchemaName: "marketing", TableName: "orders",
 				ServiceName: "marketing", OriginalFilePath: "models/orders.sql", ContentHash: "h2"},
-		},
+		}),
 	}))
 
 	r, rErr := store.GetRelease("rOK")
@@ -1870,9 +1826,9 @@ func TestHandleParsedManifest_OK_VerificationBaselinesOnVerifiedCandidate(t *tes
 	seedReleaseInParsing(store, "verify2", "service-2", true, "orig")
 
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: "verify2",
-		Status:    "ok",
-		Topology:  verifyParsedTopo(),
+		ReleaseID:   "verify2",
+		Status:      "ok",
+		TopologyRef: putTopology(t, deps, "verify2", verifyParsedTopo()),
 	}))
 
 	r, err := store.GetRelease("verify2")
@@ -1898,9 +1854,9 @@ func TestHandleParsedManifest_OK_CandidateDiffsAgainstProdOnly(t *testing.T) {
 	seedReleaseInParsing(store, "prodrel", "service-2", false, "")
 
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: "prodrel",
-		Status:    "ok",
-		Topology:  verifyParsedTopo(),
+		ReleaseID:   "prodrel",
+		Status:      "ok",
+		TopologyRef: putTopology(t, deps, "prodrel", verifyParsedTopo()),
 	}))
 
 	r, err := store.GetRelease("prodrel")
@@ -1923,9 +1879,9 @@ func TestHandleParsedManifest_OK_VerificationWithoutVerifiesDiffsAgainstProdOnly
 	seedReleaseInParsing(store, "verifynv", "service-2", true, "")
 
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: "verifynv",
-		Status:    "ok",
-		Topology:  verifyParsedTopo(),
+		ReleaseID:   "verifynv",
+		Status:      "ok",
+		TopologyRef: putTopology(t, deps, "verifynv", verifyParsedTopo()),
 	}))
 
 	r, err := store.GetRelease("verifynv")
@@ -1950,9 +1906,9 @@ func TestHandleParsedManifest_OK_VerificationFallsBackWhenVerifiedReleaseUnreada
 	seedReleaseInParsing(store, "verifymiss", "service-2", true, "missing")
 
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: "verifymiss",
-		Status:    "ok",
-		Topology:  verifyParsedTopo(),
+		ReleaseID:   "verifymiss",
+		Status:      "ok",
+		TopologyRef: putTopology(t, deps, "verifymiss", verifyParsedTopo()),
 	}))
 
 	r, err := store.GetRelease("verifymiss")
@@ -1976,9 +1932,9 @@ func TestHandleParsedManifest_OK_VerificationFallsBackWhenVerifiedCandidateEmpty
 	seedReleaseInParsing(store, "verifyempty", "service-2", true, "origempty")
 
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: "verifyempty",
-		Status:    "ok",
-		Topology:  verifyParsedTopo(),
+		ReleaseID:   "verifyempty",
+		Status:      "ok",
+		TopologyRef: putTopology(t, deps, "verifyempty", verifyParsedTopo()),
 	}))
 
 	r, err := store.GetRelease("verifyempty")
@@ -2009,9 +1965,9 @@ func TestHandleParsedManifest_OK_VerificationRestoringProductionAfterCompileReje
 	seedReleaseInParsing(store, "verifyfix", "core", true, "origcompile")
 
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: "verifyfix",
-		Status:    "ok",
-		Topology:  prod, // the fix restored the model to its promoted content
+		ReleaseID:   "verifyfix",
+		Status:      "ok",
+		TopologyRef: putTopology(t, deps, "verifyfix", prod), // the fix restored the model to its promoted content
 	}))
 
 	r, err := store.GetRelease("verifyfix")
@@ -2074,9 +2030,9 @@ func TestHandleParsedManifest_OK_VerificationBaselinePrefersNewerProdOverRejecte
 	seedReleaseInParsing(store, "verifypromoted", "service-2", true, "origpromoted")
 
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: "verifypromoted",
-		Status:    "ok",
-		Topology:  parsed,
+		ReleaseID:   "verifypromoted",
+		Status:      "ok",
+		TopologyRef: putTopology(t, deps, "verifypromoted", parsed),
 	}))
 
 	r, err := store.GetRelease("verifypromoted")
@@ -2141,9 +2097,9 @@ func TestHandleParsedManifest_OK_VerificationExcludesEstablishedSiblingModificat
 	seedReleaseInParsing(store, "verifyestab", "service-2", true, "origestab")
 
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: "verifyestab",
-		Status:    "ok",
-		Topology:  parsed,
+		ReleaseID:   "verifyestab",
+		Status:      "ok",
+		TopologyRef: putTopology(t, deps, "verifyestab", parsed),
 	}))
 
 	r, err := store.GetRelease("verifyestab")
@@ -2182,8 +2138,8 @@ func TestHandleParsedManifest_OK_VerificationRebuildsTheRejectedReleasesValidate
 	}
 	parsed := release.Topology{
 		{UniqueID: verifyUID, ServiceName: "shared", ContentHash: "h_u"},
-		{UniqueID: verifyMID, ServiceName: "service-2", NodeType: "dbt-model", ContentHash: "m_new", CandidateArtifactURI: "s3://c/m"},
-		{UniqueID: verifyDID, ServiceName: "service-3", NodeType: "dbt-model", ContentHash: "d_fixed", UpstreamUniqueIDs: []string{verifyMID}, CandidateArtifactURI: "s3://c/d"},
+		{UniqueID: verifyMID, ServiceName: "service-2", NodeType: "dbt-model", ContentHash: "m_new"},
+		{UniqueID: verifyDID, ServiceName: "service-3", NodeType: "dbt-model", ContentHash: "d_fixed", UpstreamUniqueIDs: []string{verifyMID}},
 	}
 
 	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", prod, time.Unix(50, 0).UTC()))
@@ -2191,9 +2147,9 @@ func TestHandleParsedManifest_OK_VerificationRebuildsTheRejectedReleasesValidate
 	seedReleaseInParsing(store, "verifyok", "service-3", true, "origok")
 
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: "verifyok",
-		Status:    "ok",
-		Topology:  parsed,
+		ReleaseID:   "verifyok",
+		Status:      "ok",
+		TopologyRef: putTopology(t, deps, "verifyok", parsed),
 	}))
 
 	r, err := store.GetRelease("verifyok")
@@ -2254,9 +2210,9 @@ func TestHandleParsedManifest_OK_VerificationLeavesTheRejectedReleasesSkippedNod
 	seedReleaseInParsing(store, "verifyskip", "service-2", true, "origskip")
 
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: "verifyskip",
-		Status:    "ok",
-		Topology:  parsed,
+		ReleaseID:   "verifyskip",
+		Status:      "ok",
+		TopologyRef: putTopology(t, deps, "verifyskip", parsed),
 	}))
 
 	r, err := store.GetRelease("verifyskip")
@@ -2302,8 +2258,8 @@ func TestHandleParsedManifest_OK_VerificationDoesNotDragASiblingInThroughAContex
 	// context, and assembles C UNCHANGED (still broken) from the rejected candidate.
 	parsed := release.Topology{
 		{UniqueID: verifyUID, ServiceName: "shared", ContentHash: "h_u"},
-		{UniqueID: verifyAncID, ServiceName: "service-2", NodeType: "dbt-model", ContentHash: "a_new", CandidateArtifactURI: "s3://c/a"},
-		{UniqueID: verifyFixID, ServiceName: "service-3", NodeType: "dbt-model", ContentHash: "b_fixed", UpstreamUniqueIDs: []string{verifyAncID}, CandidateArtifactURI: "s3://c/b"},
+		{UniqueID: verifyAncID, ServiceName: "service-2", NodeType: "dbt-model", ContentHash: "a_new"},
+		{UniqueID: verifyFixID, ServiceName: "service-3", NodeType: "dbt-model", ContentHash: "b_fixed", UpstreamUniqueIDs: []string{verifyAncID}},
 		{UniqueID: verifySibID, ServiceName: "service-4", NodeType: "dbt-model", ContentHash: "c_broken", UpstreamUniqueIDs: []string{verifyAncID}},
 	}
 
@@ -2312,9 +2268,9 @@ func TestHandleParsedManifest_OK_VerificationDoesNotDragASiblingInThroughAContex
 	seedReleaseInParsing(store, "verifyconn", "service-3", true, "origconn")
 
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: "verifyconn",
-		Status:    "ok",
-		Topology:  parsed,
+		ReleaseID:   "verifyconn",
+		Status:      "ok",
+		TopologyRef: putTopology(t, deps, "verifyconn", parsed),
 	}))
 
 	r, err := store.GetRelease("verifyconn")
@@ -2342,4 +2298,104 @@ func TestHandleParsedManifest_OK_VerificationDoesNotDragASiblingInThroughAContex
 	assert.Equal(t, "build_from_sql", ops[verifyFixID])
 	_, sawSibling := ops[verifySibID]
 	assert.False(t, sawSibling, "the still-broken sibling is not in the validation request at all; nodes=%v", ops)
+}
+
+// An artifact that is gone can never be read: the release is rejected with
+// internal_error through the parse failure path and the run is not left parsing.
+func TestHandleParsedManifest_MissingArtifactRejectsAsInternalError(t *testing.T) {
+	deps, store := seedToParsing(t, "rMiss", map[string]string{"svc-a": "sha-a"})
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rMiss", Status: "ok",
+		TopologyRef: release.TopologyRef{URI: "s3://continuo/tenants/default/topologies/rMiss/topology.json.gz", SHA256: "abc", NodeCount: 2},
+	}))
+
+	r, err := store.GetRelease("rMiss")
+	require.NoError(t, err)
+	assert.Equal(t, pipeline.StatusRejected, r.Status())
+	assert.Equal(t, string(pkg_model.RejectReasonInternalError), r.FailReason())
+	assert.Contains(t, r.FailDetail(), "rMiss/topology.json.gz")
+	require.NotNil(t, findEntry(t, store, streams.ReleaseRejectedV1))
+	assert.Equal(t, "rejected", outcomeOf(t, lastEntryOn(store, streams.PipelineRunFinishedV1)))
+}
+
+func TestHandleParsedManifest_CorruptArtifactRejectsAsInternalError(t *testing.T) {
+	deps, store := seedToParsing(t, "rBad", map[string]string{"svc-a": "sha-a"})
+	ref := putTopology(t, deps, "rBad", release.Topology{{UniqueID: "a", ServiceName: "svc-a", ImageTag: "sha-a"}})
+	ref.SHA256 = "0000"
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rBad", Status: "ok", TopologyRef: ref,
+	}))
+
+	r, err := store.GetRelease("rBad")
+	require.NoError(t, err)
+	assert.Equal(t, pipeline.StatusRejected, r.Status())
+	assert.Equal(t, string(pkg_model.RejectReasonInternalError), r.FailReason())
+}
+
+func TestHandleParsedManifest_ResultNamingNoArtifactRejects(t *testing.T) {
+	deps, store := seedToParsing(t, "rNone", map[string]string{"svc-a": "sha-a"})
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rNone", Status: "ok",
+	}))
+
+	r, err := store.GetRelease("rNone")
+	require.NoError(t, err)
+	assert.Equal(t, pipeline.StatusRejected, r.Status())
+	assert.Equal(t, string(pkg_model.RejectReasonInternalError), r.FailReason())
+}
+
+// An unreachable object store is not the release's fault: the handler returns
+// the error (the consumer pauses and redelivers) and the run stays parsing.
+func TestHandleParsedManifest_UnreachableArtifactStoreLeavesTheRunParsing(t *testing.T) {
+	deps, store := seedToParsing(t, "rDown", map[string]string{"svc-a": "sha-a"})
+	ref := putTopology(t, deps, "rDown", release.Topology{{UniqueID: "a", ServiceName: "svc-a", ImageTag: "sha-a"}})
+	store.topologies.failLoad(ref.URI, storeOutage{})
+	before := len(store.OutboxEntries())
+
+	err := handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rDown", Status: "ok", TopologyRef: ref,
+	})
+	require.Error(t, err)
+	var status interface{ HTTPStatusCode() int }
+	require.True(t, errors.As(err, &status), "the outage must keep its status code so the consumer classifies it as infrastructure")
+
+	r, getErr := store.GetRelease("rDown")
+	require.NoError(t, getErr)
+	assert.Equal(t, pipeline.StatusParsing, r.Status())
+	assert.Len(t, store.OutboxEntries(), before, "nothing is emitted for a parse result that could not be read")
+}
+
+// A resolved topology with no nodes is still a topology: its artifact
+// (node_count 0) is a reference like any other, never mistaken for "no
+// artifact", so the release is not rejected as unreadable.
+func TestHandleParsedManifest_OK_ZeroNodeArtifactIsAReference(t *testing.T) {
+	deps, store := seedToParsing(t, "rEmpty", map[string]string{"svc-a": "sha-a"})
+	ref := putTopology(t, deps, "rEmpty", release.Topology{})
+	require.Equal(t, 0, ref.NodeCount)
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rEmpty", Status: "ok", TopologyRef: ref,
+	}))
+
+	r, err := store.GetRelease("rEmpty")
+	require.NoError(t, err)
+	assert.NotEqual(t, string(pkg_model.RejectReasonInternalError), r.FailReason(), "an empty topology is not an unreadable one")
+	assert.Equal(t, ref, r.CandidateTopologyRef())
+}
+
+func TestHandleParsedManifest_OK_RecordsTheTopologyRef(t *testing.T) {
+	deps, store := seedToParsing(t, "rRef", map[string]string{"svc-a": "sha-a"})
+	ref := putTopology(t, deps, "rRef", release.Topology{{UniqueID: "a", ServiceName: "svc-a", ImageTag: "sha-a", UpstreamUniqueIDs: []string{}}})
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rRef", Status: "ok", TopologyRef: ref,
+	}))
+
+	r, err := store.GetRelease("rRef")
+	require.NoError(t, err)
+	assert.Equal(t, pipeline.StatusValidating, r.Status())
+	assert.Equal(t, ref, r.CandidateTopologyRef())
 }

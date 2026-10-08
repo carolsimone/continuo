@@ -151,9 +151,10 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipe
 	if err != nil {
 		return fmt.Errorf("get current prod: %w", err)
 	}
-	// candidate_artifact_uri is transient, release-specific validation data; the promoted
-	// topology (current_prod and the release.promoted event) must not carry it.
-	promotedTopo := r.CandidateTopology().WithoutCandidateArtifactURI()
+	// The candidate topology is the artifact's: it carries no candidate SQL
+	// URIs (those are derived per run), so current_prod and the promoted
+	// topology take it as is.
+	promotedTopo := r.CandidateTopology()
 
 	// Determine which nodes actually changed versus the prod being replaced, so
 	// the release.promoted event can tag them. Computed against cp's snapshot
@@ -284,7 +285,7 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 
 	// Build a per-node lookup over the candidate topology so each entry in the
 	// rejected payload carries, alongside its outcome:
-	//   - candidate_artifact_uri: the S3 pointer to the artifact that was
+	//   - candidate_artifact_uri: the S3 pointer (derived per run) to the artifact that was
 	//     checked — mirroring the dbt_log_uri pattern as a pointer, not inline
 	//     content;
 	//   - node_type, file_path, service: the node's kind and source location as
@@ -299,7 +300,7 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 	factsByNodeID := make(map[string]candidateFacts, len(r.CandidateTopology()))
 	for _, n := range r.CandidateTopology() {
 		factsByNodeID[n.UniqueID] = candidateFacts{
-			artifactURI: n.CandidateArtifactURI,
+			artifactURI: candidateArtifactURI(d.Bucket, r.ID(), n),
 			nodeType:    n.NodeType,
 			filePath:    n.OriginalFilePath,
 			service:     n.ServiceName,

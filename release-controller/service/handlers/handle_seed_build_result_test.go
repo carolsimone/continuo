@@ -37,11 +37,10 @@ func ctx(t *testing.T) context.Context {
 func topoSeedPlusModel() release.Topology {
 	return release.Topology{
 		{UniqueID: "seed.core.fx", ServiceName: "svc-fin", NodeType: "dbt-seed",
-			SchemaName: "schema_fin", TableName: "fx"},
+			SchemaName: "schema_fin", TableName: "fx", ImageTag: "sha-fin"},
 		{UniqueID: "model.fin.report", ServiceName: "svc-fin", NodeType: "dbt-model",
-			SchemaName: "schema_fin", TableName: "report",
-			UpstreamUniqueIDs:    []string{"seed.core.fx"},
-			CandidateArtifactURI: "s3://continuo/svc-fin/rel-seed-ok/candidate_report.sql"},
+			SchemaName: "schema_fin", TableName: "report", ImageTag: "sha-fin",
+			UpstreamUniqueIDs: []string{"seed.core.fx"}},
 	}
 }
 
@@ -50,7 +49,7 @@ func topoSeedPlusModel() release.Topology {
 func topoSeedOnly() release.Topology {
 	return release.Topology{
 		{UniqueID: "seed.core.fx", ServiceName: "svc-fin", NodeType: "dbt-seed",
-			SchemaName: "schema_fin", TableName: "fx"},
+			SchemaName: "schema_fin", TableName: "fx", ImageTag: "sha-fin"},
 	}
 }
 
@@ -81,7 +80,7 @@ func putSeedBuildingRelease(t *testing.T, store *fakeStore, deps *handlers.Deps,
 		ReleaseID:     releaseID,
 		Status:        "ok",
 		CodeBundleURI: "s3://continuo/code-bundles/" + releaseID + "/bundle.json",
-		Topology:      topo,
+		TopologyRef:   putTopology(t, deps, releaseID, topo),
 	}))
 
 	r, err := store.GetRelease(releaseID)
@@ -478,7 +477,7 @@ func putSeedBuildingVerification(t *testing.T, releaseID string, service string,
 	deps, store := seedToParsingVerification(t, releaseID, map[string]string{service: "img-" + service})
 
 	require.NoError(t, handlers.HandleParsedManifest(ctx(t), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: releaseID, Status: "ok", Topology: topo,
+		ReleaseID: releaseID, Status: "ok", TopologyRef: putTopology(t, deps, releaseID, topo),
 	}))
 
 	r := mustGetRelease(t, store, releaseID)
