@@ -7,9 +7,6 @@ CONSUMER_DEAD_LETTER_V1 = "consumer.dead_letter:v1"
 RELEASE_REQUESTED_V1 = "release.requested:v1"
 """Candidate release accepted by release-controller; triggers manifest load for validation."""
 
-MANIFEST_LOADED_CANDIDATE_V1 = "manifest.loaded.candidate:v1"
-"""Resolved candidate topology from topology-controller back to release-controller."""
-
 MANIFEST_LOADED_CANDIDATE_V2 = "manifest.loaded.candidate:v2"
 """How resolving a candidate release ended, from topology-controller back to release-controller. On success it carries the URI and SHA-256 of the release's topology artifact in S3 and the code bundle URI; on failure the parse failure kind, a detail and the failed nodes. Carries the event envelope; the topology itself is never on the stream."""
 

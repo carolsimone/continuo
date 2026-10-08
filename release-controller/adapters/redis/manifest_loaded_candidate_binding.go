@@ -56,7 +56,7 @@ func NewManifestLoadedCandidateConsumer(
 	return pkgredis.NewStreamConsumer(
 		rc,
 		streams.ManifestLoadedCandidateV2,
-		streams.ReleaseControllerManifestLoadedCandidateV2,
+		streams.ReleaseControllerManifestLoadedCandidate,
 		handler,
 		logger,
 	)
@@ -68,8 +68,9 @@ func NewManifestLoadedCandidateConsumer(
 // Advancing after a failed parse is essential: no kind:"complete" terminal
 // message on validation.result:v1 will arrive for a rejected release, so
 // without this call every queued candidate would stay in StatusReceived
-// indefinitely. An entry that does not decode is a permanent failure, as is a
-// corrupt topology artifact met by the handler; the consumer dead-letters both.
+// indefinitely. An entry that does not decode is a permanent failure and is
+// dead-lettered. A missing or corrupt topology artifact is rejected by the
+// handler's intake with internal_error, so the queue still advances.
 func newManifestLoadedCandidateHandler(deps *handlers.Deps, logger *slog.Logger) pkgredis.MessageHandler {
 	return func(ctx context.Context, msg goredis.XMessage) error {
 		_, p, err := pkgevents.DecodeManifestLoadedCandidate(stringFields(msg.Values))

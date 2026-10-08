@@ -194,23 +194,14 @@ streams:
         group: topology-controller-release-requested
         const: TopologyControllerReleaseRequested
 
-  - name: manifest.loaded.candidate:v1
-    const: ManifestLoadedCandidateV1
-    description: Resolved candidate topology from topology-controller back to release-controller.
-    producers: [topology-controller]
-    consumers:
-      - service: release-controller
-        group: release-controller-manifest-loaded-candidate
-        const: ReleaseControllerManifestLoadedCandidate
-
   - name: manifest.loaded.candidate:v2
     const: ManifestLoadedCandidateV2
     description: How resolving a candidate release ended, from topology-controller back to release-controller. On success it carries the URI and SHA-256 of the release's topology artifact in S3 and the code bundle URI; on failure the parse failure kind, a detail and the failed nodes. Carries the event envelope; the topology itself is never on the stream.
     producers: [topology-controller]
     consumers:
       - service: release-controller
-        group: release-controller-manifest-loaded-candidate-v2
-        const: ReleaseControllerManifestLoadedCandidateV2
+        group: release-controller-manifest-loaded-candidate
+        const: ReleaseControllerManifestLoadedCandidate
 
   - name: validation.requested:v1
     const: ValidationRequestedV1
@@ -359,6 +350,7 @@ streams:
 retired_streams:
   - name: compile.node.completed:v1
   - name: initialize.run:v1
+  - name: manifest.loaded.candidate:v1
   - name: manifest.loaded:v1
   - name: node.deployed:v1
   - name: remediation.requested:v1
