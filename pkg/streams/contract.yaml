@@ -203,6 +203,15 @@ streams:
         group: release-controller-manifest-loaded-candidate
         const: ReleaseControllerManifestLoadedCandidate
 
+  - name: manifest.loaded.candidate:v2
+    const: ManifestLoadedCandidateV2
+    description: How resolving a candidate release ended, from topology-controller back to release-controller. On success it carries the URI and SHA-256 of the release's topology artifact in S3 and the code bundle URI; on failure the parse failure kind, a detail and the failed nodes. Carries the event envelope; the topology itself is never on the stream.
+    producers: [topology-controller]
+    consumers:
+      - service: release-controller
+        group: release-controller-manifest-loaded-candidate-v2
+        const: ReleaseControllerManifestLoadedCandidateV2
+
   - name: validation.requested:v1
     const: ValidationRequestedV1
     description: dbt --empty validation run requested by release-controller; execution-controller dispatches per-node jobs.
@@ -447,6 +456,10 @@ vocabularies:
         const: ValidationFailed
         healable: true
         description: at least one node failed the candidate's dbt --empty validation run.
+      - value: upgrade_interrupted
+        const: UpgradeInterrupted
+        healable: false
+        description: the run was in `parsing` when release-controller moved to topology artifacts; its parse result was published on a stream the new version no longer reads. Submit the release again.
 
   - name: dead_letter_kind
     const: DeadLetterKind

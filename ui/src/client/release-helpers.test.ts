@@ -75,6 +75,7 @@ const REJECT_REASONS = [
   'nothing_to_validate',
   'seed_build_failed',
   'validation_failed',
+  'upgrade_interrupted',
 ];
 
 describe('reject_reason vocabulary coverage', () => {

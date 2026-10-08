@@ -29,3 +29,13 @@ func TestGroups_CoversEveryStream(t *testing.T) {
 		}
 	}
 }
+
+func TestManifestLoadedCandidateV2_HasReleaseControllersGroup(t *testing.T) {
+	if ManifestLoadedCandidateV2 != "manifest.loaded.candidate:v2" {
+		t.Fatalf("ManifestLoadedCandidateV2 = %q", ManifestLoadedCandidateV2)
+	}
+	groups := Groups[ManifestLoadedCandidateV2]
+	if len(groups) != 1 || groups[0] != ReleaseControllerManifestLoadedCandidateV2 {
+		t.Fatalf("Groups[%s] = %v, want release-controller's one group", ManifestLoadedCandidateV2, groups)
+	}
+}
