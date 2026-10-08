@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"slices"
 	"testing"
@@ -153,22 +154,37 @@ func TestDecode_KeepsNodesThatShareAUniqueID(t *testing.T) {
 	assert.Equal(t, "two", doc.Nodes[1].ServiceName)
 }
 
+// The input holds far more nodes than the insertion-sort threshold of an
+// unstable sort (12), with a few unique ids repeated and interleaved, so only a
+// stable sort keeps the input order inside each group of equal ids.
 func TestCanonicalJSON_KeepsInputOrderForEqualUniqueIDs(t *testing.T) {
-	d := topologyartifact.Document{TenantID: "default", ReleaseID: "r", Nodes: []topologyartifact.Node{
-		{UniqueID: "a.b", ServiceName: "two"},
-		{UniqueID: "a.a", ServiceName: "zero"},
-		{UniqueID: "a.b", ServiceName: "one"},
-	}}
-	first, err := topologyartifact.CanonicalJSON(d)
+	ids := []string{"c.c", "a.a", "d.d", "b.b"}
+	const total = 40
+	d := topologyartifact.Document{TenantID: "default", ReleaseID: "r"}
+	wantByID := map[string][]string{}
+	for i := 0; i < total; i++ {
+		id := ids[(i*7+i/3)%len(ids)]
+		svc := fmt.Sprintf("svc-%02d", i)
+		d.Nodes = append(d.Nodes, topologyartifact.Node{UniqueID: id, ServiceName: svc})
+		wantByID[id] = append(wantByID[id], svc)
+	}
+	var want []string
+	for _, id := range []string{"a.a", "b.b", "c.c", "d.d"} {
+		require.Greater(t, len(wantByID[id]), 1, "the input must repeat %s", id)
+		want = append(want, wantByID[id]...)
+	}
+	require.Len(t, want, total)
+
+	got, err := topologyartifact.CanonicalJSON(d)
 	require.NoError(t, err)
 	var parsed topologyartifact.Document
-	require.NoError(t, json.Unmarshal(first, &parsed))
-	require.Len(t, parsed.Nodes, 3)
-	assert.Equal(t, []string{"zero", "two", "one"},
-		[]string{parsed.Nodes[0].ServiceName, parsed.Nodes[1].ServiceName, parsed.Nodes[2].ServiceName})
-	second, err := topologyartifact.CanonicalJSON(d)
-	require.NoError(t, err)
-	assert.Equal(t, first, second)
+	require.NoError(t, json.Unmarshal(got, &parsed))
+	require.Len(t, parsed.Nodes, total)
+	gotServices := make([]string, 0, total)
+	for _, n := range parsed.Nodes {
+		gotServices = append(gotServices, n.ServiceName)
+	}
+	assert.Equal(t, want, gotServices)
 }
 
 func TestKey(t *testing.T) {
