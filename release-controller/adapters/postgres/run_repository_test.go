@@ -861,3 +861,31 @@ func TestRunRepository_NextQueuedOfKind(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, none, "an activated verification run is no longer queued")
 }
+
+// TestRunRepository_RoundTripsCandidateTopologyRef pins the three columns that
+// locate a run's topology artifact: a reference set after the run was first
+// inserted is written by the upsert, and a run without one keeps NULL columns
+// (the upgrade step's legacy query selects on candidate_topology_uri IS NULL).
+func TestRunRepository_RoundTripsCandidateTopologyRef(t *testing.T) {
+	db := openTestDB(t)
+	repo := postgres.NewRunRepository(db, nil)
+	ctx := context.Background()
+
+	r := pipeline.NewCandidate("rRef", "svc", "t", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
+	require.NoError(t, repo.Save(ctx, r))
+	var uriIsNull bool
+	require.NoError(t, db.Get(&uriIsNull, `SELECT candidate_topology_uri IS NULL FROM release_pipeline_runs WHERE run_id = 'rRef'`))
+	assert.True(t, uriIsNull, "a run without an artifact stores NULL, not an empty string")
+	got, err := repo.Get(ctx, "rRef")
+	require.NoError(t, err)
+	assert.True(t, got.CandidateTopologyRef().IsZero())
+
+	ref := release.TopologyRef{URI: "s3://continuo/tenants/default/topologies/rRef/topology.json.gz", SHA256: "9f86d081884c7d65", NodeCount: 42}
+	got.SetCandidateTopologyRef(ref)
+	require.NoError(t, repo.Save(ctx, got))
+
+	reread, err := repo.Get(ctx, "rRef")
+	require.NoError(t, err)
+	require.NotNil(t, reread)
+	assert.Equal(t, ref, reread.CandidateTopologyRef(), "the upsert must write the reference set after the first insert")
+}

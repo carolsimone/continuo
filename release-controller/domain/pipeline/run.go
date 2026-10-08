@@ -127,23 +127,24 @@ type Verification struct {
 
 // Run is one pass of one service's delta through the pipeline.
 type Run struct {
-	id                string
-	kind              Kind
-	status            Status
-	imageTags         map[string]string
-	changedService    string
-	manifestKind      release.ManifestKind
-	candidateTopology release.Topology
-	validationNodeIDs []string
-	perNodeResults    []NodeValidationResult
-	failReason        string
-	failDetail        string
-	failingNodes      []string
-	codeBundleURI     string
-	createdAt         time.Time
-	transitions       []Transition
-	candidate         *Candidate    // non-nil iff kind == KindCandidate
-	verification      *Verification // non-nil iff kind == KindVerification
+	id                   string
+	kind                 Kind
+	status               Status
+	imageTags            map[string]string
+	changedService       string
+	manifestKind         release.ManifestKind
+	candidateTopology    release.Topology
+	candidateTopologyRef release.TopologyRef
+	validationNodeIDs    []string
+	perNodeResults       []NodeValidationResult
+	failReason           string
+	failDetail           string
+	failingNodes         []string
+	codeBundleURI        string
+	createdAt            time.Time
+	transitions          []Transition
+	candidate            *Candidate    // non-nil iff kind == KindCandidate
+	verification         *Verification // non-nil iff kind == KindVerification
 }
 
 func newRun(id string, kind Kind, service, imageTag string, manifestKind release.ManifestKind, now time.Time) *Run {
@@ -180,21 +181,22 @@ func NewVerification(id, service, imageTag, verifiesReleaseID string, attempt in
 	return r
 }
 
-func (r *Run) ID() string                             { return r.id }
-func (r *Run) Kind() Kind                             { return r.kind }
-func (r *Run) Status() Status                         { return r.status }
-func (r *Run) ImageTags() map[string]string           { return r.imageTags }
-func (r *Run) ChangedService() string                 { return r.changedService }
-func (r *Run) ManifestKind() release.ManifestKind     { return r.manifestKind }
-func (r *Run) CodeBundleURI() string                  { return r.codeBundleURI }
-func (r *Run) CandidateTopology() release.Topology    { return r.candidateTopology }
-func (r *Run) ValidationNodeIDs() []string            { return r.validationNodeIDs }
-func (r *Run) FailReason() string                     { return r.failReason }
-func (r *Run) FailDetail() string                     { return r.failDetail }
-func (r *Run) FailingNodes() []string                 { return r.failingNodes }
-func (r *Run) PerNodeResults() []NodeValidationResult { return r.perNodeResults }
-func (r *Run) CreatedAt() time.Time                   { return r.createdAt }
-func (r *Run) Transitions() []Transition              { return r.transitions }
+func (r *Run) ID() string                                { return r.id }
+func (r *Run) Kind() Kind                                { return r.kind }
+func (r *Run) Status() Status                            { return r.status }
+func (r *Run) ImageTags() map[string]string              { return r.imageTags }
+func (r *Run) ChangedService() string                    { return r.changedService }
+func (r *Run) ManifestKind() release.ManifestKind        { return r.manifestKind }
+func (r *Run) CodeBundleURI() string                     { return r.codeBundleURI }
+func (r *Run) CandidateTopology() release.Topology       { return r.candidateTopology }
+func (r *Run) CandidateTopologyRef() release.TopologyRef { return r.candidateTopologyRef }
+func (r *Run) ValidationNodeIDs() []string               { return r.validationNodeIDs }
+func (r *Run) FailReason() string                        { return r.failReason }
+func (r *Run) FailDetail() string                        { return r.failDetail }
+func (r *Run) FailingNodes() []string                    { return r.failingNodes }
+func (r *Run) PerNodeResults() []NodeValidationResult    { return r.perNodeResults }
+func (r *Run) CreatedAt() time.Time                      { return r.createdAt }
+func (r *Run) Transitions() []Transition                 { return r.transitions }
 
 // Candidate returns the candidate-only facts, nil for a verification.
 func (r *Run) Candidate() *Candidate { return r.candidate }
@@ -321,6 +323,10 @@ func (r *Run) SetRejectionPayload(p []byte) {
 // set built from every service's live service_prod pointer, read at
 // activation so earlier-queued promotions are seen.
 func (r *Run) SetAssembledImageTags(tags map[string]string) { r.imageTags = tags }
+
+// SetCandidateTopologyRef records where the run's candidate topology artifact
+// lives, once the parse result naming it has been read.
+func (r *Run) SetCandidateTopologyRef(ref release.TopologyRef) { r.candidateTopologyRef = ref }
 
 // RecordStageResults replaces all per-node results for the given stage,
 // leaving other stages intact. Idempotent across re-delivery of one leg's
@@ -498,21 +504,22 @@ func (r *Run) StartRemediationRound(now time.Time) (int, error) {
 // without re-running state-machine validation. Kind selects which of the
 // candidate-only or verification-only fields are read; the others are ignored.
 type RehydrateInput struct {
-	ID                string
-	Kind              Kind
-	Status            Status
-	ImageTags         map[string]string
-	ChangedService    string
-	ManifestKind      release.ManifestKind
-	CandidateTopology release.Topology
-	ValidationNodeIDs []string
-	PerNodeResults    []NodeValidationResult
-	FailReason        string
-	FailDetail        string
-	FailingNodes      []string
-	CodeBundleURI     string
-	CreatedAt         time.Time
-	Transitions       []Transition
+	ID                   string
+	Kind                 Kind
+	Status               Status
+	ImageTags            map[string]string
+	ChangedService       string
+	ManifestKind         release.ManifestKind
+	CandidateTopology    release.Topology
+	CandidateTopologyRef release.TopologyRef
+	ValidationNodeIDs    []string
+	PerNodeResults       []NodeValidationResult
+	FailReason           string
+	FailDetail           string
+	FailingNodes         []string
+	CodeBundleURI        string
+	CreatedAt            time.Time
+	Transitions          []Transition
 	// Candidate-only.
 	Bootstrap        bool
 	Repo             string
@@ -528,21 +535,22 @@ type RehydrateInput struct {
 // Rehydrate reconstructs a Run from persistence. Only repositories call it.
 func Rehydrate(in RehydrateInput) *Run {
 	r := &Run{
-		id:                in.ID,
-		kind:              in.Kind,
-		status:            in.Status,
-		imageTags:         in.ImageTags,
-		changedService:    in.ChangedService,
-		manifestKind:      in.ManifestKind,
-		candidateTopology: in.CandidateTopology,
-		validationNodeIDs: in.ValidationNodeIDs,
-		perNodeResults:    in.PerNodeResults,
-		failReason:        in.FailReason,
-		failDetail:        in.FailDetail,
-		failingNodes:      in.FailingNodes,
-		codeBundleURI:     in.CodeBundleURI,
-		createdAt:         in.CreatedAt,
-		transitions:       in.Transitions,
+		id:                   in.ID,
+		kind:                 in.Kind,
+		status:               in.Status,
+		imageTags:            in.ImageTags,
+		changedService:       in.ChangedService,
+		manifestKind:         in.ManifestKind,
+		candidateTopology:    in.CandidateTopology,
+		candidateTopologyRef: in.CandidateTopologyRef,
+		validationNodeIDs:    in.ValidationNodeIDs,
+		perNodeResults:       in.PerNodeResults,
+		failReason:           in.FailReason,
+		failDetail:           in.FailDetail,
+		failingNodes:         in.FailingNodes,
+		codeBundleURI:        in.CodeBundleURI,
+		createdAt:            in.CreatedAt,
+		transitions:          in.Transitions,
 	}
 	switch in.Kind {
 	case KindVerification:
