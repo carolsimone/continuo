@@ -6,13 +6,14 @@ from types import SimpleNamespace
 import pytest
 
 import main
-from adapters.redis.error_class import ErrorClass, classify
+from adapters.redis.error_class import ErrorClass, classify, is_infrastructure
+from adapters.topology_artifact_writer import TopologyArtifactWriter
 from config.config import SERVICE_NAME
 from domain.model import ManifestRequest
 from service.errors import PermanentMessageError
 from streams_contract import (
     RELEASE_REQUESTED_V1,
-    MANIFEST_LOADED_CANDIDATE_V1,
+    MANIFEST_LOADED_CANDIDATE_V2,
     TOPOLOGY_CONTROLLER_RELEASE_REQUESTED,
 )
 
@@ -52,7 +53,7 @@ def _common_monkeypatches(monkeypatch):
     monkeypatch.setattr(main, "REDIS_URL", "redis://localhost:6379/0")
     monkeypatch.setattr(main, "RELEASE_REQUESTED_STREAM", RELEASE_REQUESTED_V1)
     monkeypatch.setattr(main, "RELEASE_REQUESTED_GROUP", TOPOLOGY_CONTROLLER_RELEASE_REQUESTED)
-    monkeypatch.setattr(main, "MANIFEST_LOADED_CANDIDATE_STREAM", MANIFEST_LOADED_CANDIDATE_V1)
+    monkeypatch.setattr(main, "MANIFEST_LOADED_CANDIDATE_STREAM", MANIFEST_LOADED_CANDIDATE_V2)
     monkeypatch.setattr(main, "CandidateManifestPublisher", lambda *a, **kw: object())
     monkeypatch.setattr(main, "CandidateSqlUploader", lambda *a, **kw: object())
     monkeypatch.setattr(main, "CodeBundleUploader", lambda *a, **kw: object())
@@ -292,3 +293,34 @@ def test_main_hands_the_handler_the_requests_image_tags(monkeypatch, payload_tag
     _RecordingConsumer.instances[0].message_handler({b"payload": json.dumps(payload).encode()})
 
     assert captured["image_tags"] == handed
+
+
+def test_main_hands_each_handler_the_artifact_writer_and_the_outage_test(monkeypatch):
+    """The handler writes the artifact through the composition root's writer and
+    re-raises an S3 outage only when the consumer's own classifier calls it one."""
+    _common_monkeypatches(monkeypatch)
+    captured = {}
+    monkeypatch.setattr(main, "S3Source", lambda **kw: SimpleNamespace(cleanup=lambda: None))
+    monkeypatch.setattr(main, "CandidateManifestHandler",
+                        lambda **kw: captured.update(kw) or SimpleNamespace(handle=lambda release_id: None))
+    main.main()
+
+    _RecordingConsumer.instances[0].message_handler({b"payload": json.dumps({
+        "release_id": "rel-1", "manifest_keys": [], "image_tags": {},
+    }).encode()})
+
+    assert isinstance(captured["artifact_writer"], TopologyArtifactWriter)
+    assert captured["is_infrastructure_error"] is is_infrastructure
+
+
+def test_main_publishes_parse_results_on_the_v2_stream_as_this_service(monkeypatch):
+    _common_monkeypatches(monkeypatch)
+    built = []
+    monkeypatch.setattr(main, "CandidateManifestPublisher",
+                        lambda *a, **kw: built.append((a, kw)) or object())
+
+    main.main()
+
+    ((args, kwargs),) = built
+    assert args[1] == MANIFEST_LOADED_CANDIDATE_V2
+    assert kwargs["producer"] == SERVICE_NAME

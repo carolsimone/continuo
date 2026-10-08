@@ -6,6 +6,10 @@ from domain.contract_vocabulary import ParseFailureKind
 from domain.contract_vocabulary import NodeRuntime as Runtime
 from domain.contract_vocabulary import NodeType
 
+DEFAULT_TENANT_ID = "default"
+"""The tenant every release belongs to on a single-tenant install. It prefixes
+the topology artifact's key and stamps every event this service writes."""
+
 
 class ManifestKind(StrEnum):
     """Which artifact dialect a service's release payload speaks.

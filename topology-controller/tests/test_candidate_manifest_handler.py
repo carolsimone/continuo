@@ -5,6 +5,8 @@ from pathlib import Path
 from unittest.mock import MagicMock, create_autospec
 import pytest
 import yaml
+import botocore.exceptions
+from adapters.redis.error_class import is_infrastructure
 from domain.model import FailedNode, ManifestFile, ManifestKind, Runtime
 from domain.exceptions import InvalidCompiledSqlError, UnqualifiedTableReferenceError
 from service import candidate_artifacts, candidate_manifest_handler
@@ -13,6 +15,7 @@ from service.candidate_manifest_handler import CandidateManifestHandler
 from service.content_hash import content_hash_fold
 from service.ports import ManifestSourcePort
 from domain.contract_vocabulary import ParseFailureKind
+from tests.fakes import RecordingArtifactWriter
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -52,9 +55,10 @@ class FakeBundleUploader:
 
 
 def _handler(source, publisher, uploader, bundle_uploader=None, dialect="postgres",
-             image_tags=None) -> CandidateManifestHandler:
-    """Build a handler pinned to the postgres dialect, a fake bundle uploader
-    and an empty image-tag map unless a test names otherwise.
+             image_tags=None, artifact_writer=None) -> CandidateManifestHandler:
+    """Build a handler pinned to the postgres dialect, a fake bundle uploader,
+    a recording artifact writer and an empty image-tag map unless a test names
+    otherwise. Outages are recognised by the consumer's own classifier.
 
     `uploader` is the dbt candidate-SQL uploader; it is wrapped in the dbt
     artifact builder here so these cases keep asserting directly on the upload
@@ -64,13 +68,15 @@ def _handler(source, publisher, uploader, bundle_uploader=None, dialect="postgre
         source=source,
         publisher=publisher,
         bundle_uploader=bundle_uploader if bundle_uploader is not None else FakeBundleUploader(),
+        artifact_writer=artifact_writer if artifact_writer is not None else RecordingArtifactWriter(),
         artifact_builders={Runtime.DBT: DbtSqlArtifactBuilder(uploader)},
         dialect=dialect,
         image_tags=image_tags if image_tags is not None else {},
+        is_infrastructure_error=is_infrastructure,
     )
 
 
-def _dispatch_handler(source, publisher, artifact_builders=None, dialect="postgres"):
+def _dispatch_handler(source, publisher, artifact_builders=None, dialect="postgres", artifact_writer=None):
     """A handler for the parse-dispatch cases.
 
     These cases all fail (or are rejected) before any node reaches the artifact
@@ -81,16 +87,18 @@ def _dispatch_handler(source, publisher, artifact_builders=None, dialect="postgr
         source=source,
         publisher=publisher,
         bundle_uploader=FakeBundleUploader(),
+        artifact_writer=artifact_writer if artifact_writer is not None else RecordingArtifactWriter(),
         artifact_builders=artifact_builders or {Runtime.DBT: DbtSqlArtifactBuilder(_make_uploader())},
         dialect=dialect,
         image_tags={},
+        is_infrastructure_error=is_infrastructure,
     )
 
 
-def _python_handler(source, publisher, spec_uploader=None, dialect="postgres"):
+def _python_handler(source, publisher, spec_uploader=None, dialect="postgres", artifact_writer=None):
     """A handler wired for both kinds, for cases that publish a python node."""
     return _dispatch_handler(
-        source, publisher, dialect=dialect,
+        source, publisher, dialect=dialect, artifact_writer=artifact_writer,
         artifact_builders={
             Runtime.DBT: DbtSqlArtifactBuilder(_make_uploader()),
             Runtime.PYTHON: PythonSpecArtifactBuilder(
@@ -107,27 +115,29 @@ def resolved_topology():
         "manifest_service2.json",
     )
     publisher = MagicMock()
-    uploader = _make_uploader()
-    _handler(source, publisher, uploader).handle(release_id="rel-1")
+    writer = RecordingArtifactWriter()
+    _handler(source, publisher, _make_uploader(), artifact_writer=writer).handle(release_id="rel-1")
     publisher.publish_ok.assert_called_once()
     assert publisher.publish_ok.call_args.kwargs["release_id"] == "rel-1"
-    return publisher.publish_ok.call_args.kwargs["topology"]
+    assert publisher.publish_ok.call_args.kwargs["artifact"] == writer.refs[0]
+    return writer.nodes
 
 
 @pytest.fixture
 def handler_with_mocks():
-    """Return (handler, publisher, uploader) with a two-node, two-manifest source
-    (service1's "users" and service2's "orders", which selects from
-    test_schema.users) — this cross-service reference is what gives the
-    candidate-schema rewrite something real to do."""
+    """Return (handler, publisher, uploader, writer) with a two-node,
+    two-manifest source (service1's "users" and service2's "orders", which
+    selects from test_schema.users) — this cross-service reference is what
+    gives the candidate-schema rewrite something real to do."""
     source = _make_source(
         "manifest_service1.json",
         "manifest_service2.json",
     )
     publisher = MagicMock()
     uploader = _make_uploader()
-    handler = _handler(source, publisher, uploader)
-    return handler, publisher, uploader
+    writer = RecordingArtifactWriter()
+    handler = _handler(source, publisher, uploader, artifact_writer=writer)
+    return handler, publisher, uploader, writer
 
 
 def test_handle_publishes_ok_with_resolved_topology(resolved_topology):
@@ -155,11 +165,12 @@ def test_handle_publishes_ok_with_empty_topology_when_no_manifests():
     source = create_autospec(ManifestSourcePort)
     source.list_manifests.return_value = []
     publisher = MagicMock()
+    writer = RecordingArtifactWriter()
 
-    handler = _handler(source, publisher, _make_uploader())
-    handler.handle(release_id="rel-empty")
+    _handler(source, publisher, _make_uploader(), artifact_writer=writer).handle(release_id="rel-empty")
 
-    publisher.publish_ok.assert_called_once_with(release_id="rel-empty", topology=[], code_bundle_uri="")
+    assert writer.writes == [{"tenant_id": "default", "release_id": "rel-empty", "nodes": []}]
+    publisher.publish_ok.assert_called_once_with(release_id="rel-empty", artifact=writer.refs[0], code_bundle_uri="")
     publisher.publish_failed.assert_not_called()
 
 
@@ -471,16 +482,13 @@ def test_handle_publishes_ok_matching_declared_service():
         ("manifest_service2.json", "service-2"),
     ])
     publisher = MagicMock()
+    writer = RecordingArtifactWriter()
 
-    handler = _handler(source, publisher, _make_uploader())
-    handler.handle(release_id="rel-ok")
+    _handler(source, publisher, _make_uploader(), artifact_writer=writer).handle(release_id="rel-ok")
 
     publisher.publish_ok.assert_called_once()
     assert publisher.publish_ok.call_args.kwargs["release_id"] == "rel-ok"
-    topology = publisher.publish_ok.call_args.kwargs["topology"]
-    assert len(topology) == 2
-    services = {n["service_name"] for n in topology}
-    assert services == {"service-1", "service-2"}
+    assert {n["service_name"] for n in writer.nodes} == {"service-1", "service-2"}
     publisher.publish_failed.assert_not_called()
 
 
@@ -491,14 +499,13 @@ def test_every_node_runs_in_the_image_its_service_is_tagged_with():
         ("manifest_service1.json", "service-1"),
         ("manifest_service2.json", "service-2"),
     ])
-    publisher = MagicMock()
+    writer = RecordingArtifactWriter()
 
-    _handler(source, publisher, _make_uploader(), image_tags={
+    _handler(source, MagicMock(), _make_uploader(), artifact_writer=writer, image_tags={
         "service-1": "reg/service-1:abc", "service-2": "reg/service-2:def",
     }).handle(release_id="rel-1")
 
-    topology = publisher.publish_ok.call_args.kwargs["topology"]
-    assert {n["service_name"]: n["image_tag"] for n in topology} == {
+    assert {n["service_name"]: n["image_tag"] for n in writer.nodes} == {
         "service-1": "reg/service-1:abc", "service-2": "reg/service-2:def",
     }
 
@@ -508,14 +515,13 @@ def test_a_service_the_request_names_no_tag_for_keeps_an_empty_image_tag():
         ("manifest_service1.json", "service-1"),
         ("manifest_service2.json", "service-2"),
     ])
-    publisher = MagicMock()
+    writer = RecordingArtifactWriter()
 
-    _handler(source, publisher, _make_uploader(), image_tags={
+    _handler(source, MagicMock(), _make_uploader(), artifact_writer=writer, image_tags={
         "service-1": "reg/service-1:abc",
     }).handle(release_id="rel-1")
 
-    topology = publisher.publish_ok.call_args.kwargs["topology"]
-    assert {n["service_name"]: n["image_tag"] for n in topology} == {
+    assert {n["service_name"]: n["image_tag"] for n in writer.nodes} == {
         "service-1": "reg/service-1:abc", "service-2": "",
     }
 
@@ -526,11 +532,14 @@ def test_a_request_without_image_tags_fails_the_release_as_internal():
     (internal) before fetching anything, so it never sits in parsing."""
     source = _make_source("manifest_service1.json")
     publisher = MagicMock()
+    writer = RecordingArtifactWriter()
     handler = CandidateManifestHandler(
         source=source, publisher=publisher, bundle_uploader=FakeBundleUploader(),
+        artifact_writer=writer,
         artifact_builders={Runtime.DBT: DbtSqlArtifactBuilder(_make_uploader())},
         dialect="postgres",
         image_tags=None,
+        is_infrastructure_error=is_infrastructure,
     )
 
     handler.handle(release_id="rel-1")
@@ -540,6 +549,7 @@ def test_a_request_without_image_tags_fails_the_release_as_internal():
     assert "image_tags" in kw["detail"]
     assert kw["failed_nodes"] == []
     publisher.publish_ok.assert_not_called()
+    assert writer.writes == []
     source.list_manifests.assert_not_called()
     source.cleanup.assert_called_once()
 
@@ -571,21 +581,20 @@ def test_handle_skips_declared_service_checks_when_declared_service_empty(tmp_pa
 # candidate_artifact_uri: upload-per-node and fatal-on-upload-failure
 # ---------------------------------------------------------------------------
 
-def test_publishes_candidate_artifact_uri_and_uploads(handler_with_mocks):
-    """Each node's candidate SQL is uploaded to S3; the topology carries
-    candidate_artifact_uri (not the inline candidate_sql string) — and the SQL
-    text actually handed to the uploader is the candidate-schema-rewritten
-    SQL, so passing "" or the un-rewritten source would fail this test."""
-    handler, publisher, uploader = handler_with_mocks
-    uploader.upload.return_value = "s3://continuo/candidate-sql/rel-1/public.orders.sql"
+def test_uploads_the_rewritten_candidate_sql_and_keeps_its_reference_out_of_the_artifact(handler_with_mocks):
+    """Each node's candidate SQL is uploaded to S3 — the candidate-schema
+    rewritten SQL, so passing "" or the un-rewritten source would fail this
+    test — and the artifact carries no reference to it: release-controller
+    derives the object's key from the release id, unique_id and node_type."""
+    handler, publisher, uploader, writer = handler_with_mocks
+    uploader.upload.return_value = "s3://continuo/candidate-sql/rel-1/candidate_test_schema.orders.sql"
 
     handler.handle(release_id="rel-1")
 
     publisher.publish_ok.assert_called_once()
-    node = publisher.publish_ok.call_args.kwargs["topology"][0]
-    assert "candidate_sql" not in node
-    assert node["candidate_artifact_uri"] == "s3://continuo/candidate-sql/rel-1/public.orders.sql"
-
+    for node in writer.nodes:
+        assert "candidate_sql" not in node
+        assert "candidate_artifact_uri" not in node
     # service2's "orders" node selects from test_schema.users (service1), so its
     # candidate_sql is genuinely rewritten onto the release's candidate schema.
     sqls = {c.kwargs["unique_id"]: c.kwargs["sql"] for c in uploader.upload.call_args_list}
@@ -627,17 +636,67 @@ def test_configured_dialect_reaches_the_resolver_and_the_rewriter(monkeypatch):
     assert seen["rewrite"] and set(seen["rewrite"]) == {"trino"}
 
 
-def test_upload_failure_is_fatal(handler_with_mocks):
-    """An S3 upload error is fatal — publish_failed is called and publish_ok is not."""
-    handler, publisher, uploader = handler_with_mocks
-    uploader.upload.side_effect = RuntimeError("s3 down")
+_WRITE_SITES = ["candidate_sql", "code_bundle", "topology_artifact"]
+_OUTAGES = [
+    botocore.exceptions.EndpointConnectionError(endpoint_url="http://minio:9000"),
+    botocore.exceptions.ClientError(
+        {"Error": {"Code": "SlowDown", "Message": "reduce your request rate"},
+         "ResponseMetadata": {"HTTPStatusCode": 503}}, "PutObject"),
+]
 
-    handler.handle(release_id="rel-1")
+
+def _failing_write_handler(site, failure):
+    """A handler over manifest_service1.json whose `site` write raises failure."""
+    source = _make_source("manifest_service1.json")
+    publisher = MagicMock()
+    uploader = _make_uploader()
+    bundle_uploader = FakeBundleUploader()
+    writer = RecordingArtifactWriter()
+    if site == "candidate_sql":
+        uploader.upload.side_effect = failure
+    elif site == "code_bundle":
+        bundle_uploader = FakeBundleUploader(fail=failure)
+    else:
+        writer = RecordingArtifactWriter(fail=failure)
+    handler = _handler(source, publisher, uploader, bundle_uploader=bundle_uploader, artifact_writer=writer)
+    return handler, source, publisher
+
+
+@pytest.mark.parametrize("outage", _OUTAGES, ids=["s3-unreachable", "s3-503"])
+@pytest.mark.parametrize("site", _WRITE_SITES)
+def test_an_s3_outage_on_any_write_propagates_for_the_consumer_to_wait_out(site, outage):
+    """An outage is not the release's fault: the failure reaches the consumer,
+    which classifies it as infrastructure, pauses and redelivers the same
+    message. Nothing is published, so the release stays parsing until S3 is
+    back."""
+    handler, source, publisher = _failing_write_handler(site, outage)
+
+    with pytest.raises(type(outage)) as raised:
+        handler.handle(release_id="rel-1")
+
+    assert is_infrastructure(raised.value)
+    publisher.publish_ok.assert_not_called()
+    publisher.publish_failed.assert_not_called()
+    source.cleanup.assert_called_once()
+
+
+@pytest.mark.parametrize("site", _WRITE_SITES)
+def test_a_write_failure_that_is_not_an_outage_fails_the_release_as_internal(site):
+    """A refused write (here a 403) will not heal by waiting: publish failed so
+    the operator sees a rejected release, and never publish a reference to an
+    object that did not land."""
+    denied = botocore.exceptions.ClientError(
+        {"Error": {"Code": "AccessDenied", "Message": "denied"},
+         "ResponseMetadata": {"HTTPStatusCode": 403}}, "PutObject")
+    handler, _source, publisher = _failing_write_handler(site, denied)
+
+    handler.handle(release_id="rel-1")  # must NOT raise
 
     publisher.publish_ok.assert_not_called()
     kw = _failed_kwargs(publisher)
     assert kw["failure_kind"] == ParseFailureKind.INTERNAL
     assert kw["failed_nodes"] == []
+    assert "AccessDenied" in kw["detail"]
 
 
 def test_handle_calls_source_cleanup_even_on_upload_failure():
@@ -666,16 +725,15 @@ def test_bundle_uploaded_once_per_release():
     )
     publisher = MagicMock()
     bundle_uploader = FakeBundleUploader(uri="s3://continuo/code-bundles/rel-1/bundle.json")
+    writer = RecordingArtifactWriter()
 
-    handler = _handler(source, publisher, _make_uploader(), bundle_uploader=bundle_uploader)
-    handler.handle(release_id="rel-1")
+    _handler(source, publisher, _make_uploader(), bundle_uploader=bundle_uploader,
+             artifact_writer=writer).handle(release_id="rel-1")
 
     assert len(bundle_uploader.uploads) == 1
     uploaded_release_id, bundle = bundle_uploader.uploads[0]
     assert uploaded_release_id == "rel-1"
-
-    topology = publisher.publish_ok.call_args.kwargs["topology"]
-    assert set(bundle["nodes"].keys()) == {node["unique_id"] for node in topology}
+    assert set(bundle["nodes"].keys()) == {node["unique_id"] for node in writer.nodes}
     assert publisher.publish_ok.call_args.kwargs["code_bundle_uri"] == "s3://continuo/code-bundles/rel-1/bundle.json"
 
 
@@ -701,11 +759,12 @@ def test_empty_manifests_publish_empty_bundle_uri():
     source.list_manifests.return_value = []
     publisher = MagicMock()
     bundle_uploader = FakeBundleUploader()
+    writer = RecordingArtifactWriter()
 
-    handler = _handler(source, publisher, _make_uploader(), bundle_uploader=bundle_uploader)
-    handler.handle(release_id="rel-empty")
+    _handler(source, publisher, _make_uploader(), bundle_uploader=bundle_uploader,
+             artifact_writer=writer).handle(release_id="rel-empty")
 
-    publisher.publish_ok.assert_called_once_with(release_id="rel-empty", topology=[], code_bundle_uri="")
+    publisher.publish_ok.assert_called_once_with(release_id="rel-empty", artifact=writer.refs[0], code_bundle_uri="")
     assert bundle_uploader.uploads == []
 
 
@@ -934,27 +993,29 @@ def test_an_empty_kind_fails_the_release_rather_than_parsing_as_dbt():
 
 def test_a_python_kind_entry_is_published_as_a_python_node(tmp_path):
     publisher = MagicMock()
+    writer = RecordingArtifactWriter()
+    spec_uploader = _make_uploader("s3://continuo/candidate-sql/rel-1/candidate_test_schema.py_metrics.json")
     source = _source_of(ManifestFile(
         path=_python_contract(tmp_path, _python_entry()), declared_service="service-py", kind=ManifestKind.PYTHON,
     ))
 
-    _python_handler(source, publisher).handle(release_id="rel-1")
+    _python_handler(source, publisher, spec_uploader=spec_uploader, artifact_writer=writer).handle(release_id="rel-1")
 
-    topology = publisher.publish_ok.call_args.kwargs["topology"]
+    topology = writer.nodes
     assert [n["node_type"] for n in topology] == ["python-node"]
     assert topology[0]["unique_id"] == "test_schema.py_metrics"
-    assert topology[0]["candidate_artifact_uri"].endswith(".json")
     assert topology[0]["original_file_path"] == "scripts/py_metrics.py"
+    assert spec_uploader.upload.call_args.kwargs["unique_id"] == "test_schema.py_metrics"
 
 
 def _published_python_topology(tmp_path, entry):
-    publisher = MagicMock()
+    writer = RecordingArtifactWriter()
     source = _source_of(ManifestFile(
         path=_python_contract(tmp_path, entry),
         declared_service="service-py", kind=ManifestKind.PYTHON,
     ))
-    _python_handler(source, publisher).handle(release_id="rel-1")
-    return publisher.publish_ok.call_args.kwargs["topology"]
+    _python_handler(source, MagicMock(), artifact_writer=writer).handle(release_id="rel-1")
+    return writer.nodes
 
 
 def test_a_python_api_secret_ref_is_published_on_its_topology_entry(tmp_path):
@@ -976,6 +1037,7 @@ def test_a_release_mixing_old_and_new_python_contracts_publishes_python_node(tmp
     contract written by an older runtime (kind python-model) sits beside a new
     one (kind python-node) in the same release. Both resolve to python-node."""
     publisher = MagicMock()
+    writer = RecordingArtifactWriter()
     old = ManifestFile(
         path=_python_contract(
             tmp_path, _python_entry(table="py_old", kind="python-model"),
@@ -989,10 +1051,10 @@ def test_a_release_mixing_old_and_new_python_contracts_publishes_python_node(tmp
         declared_service="service-new", kind=ManifestKind.PYTHON,
     )
 
-    _python_handler(_source_of(old, new), publisher).handle(release_id="rel-1")
+    _python_handler(_source_of(old, new), publisher, artifact_writer=writer).handle(release_id="rel-1")
 
     publisher.publish_failed.assert_not_called()
-    topology = publisher.publish_ok.call_args.kwargs["topology"]
+    topology = writer.nodes
     assert sorted((n["unique_id"], n["node_type"]) for n in topology) == [
         ("test_schema.py_new", "python-node"),
         ("test_schema.py_old", "python-node"),
@@ -1005,27 +1067,30 @@ def test_a_release_mixing_old_and_new_python_contracts_publishes_python_node(tmp
 
 def test_dbt_test_is_published_but_not_registered_or_bundled():
     """A dbt test that tests a tracked node becomes its own dbt-test topology
-    entry — bind-checked against the candidate schema like a model — but
-    writes no relation (empty resolved_relation_id) and is excluded from both
-    the node registry (nothing can reference it) and the code bundle (it is
-    never a fix target and never read as source)."""
+    entry — bind-checked against the candidate schema like a model, so its
+    rewritten SQL is uploaded too — but writes no relation (empty
+    resolved_relation_id) and is excluded from both the node registry (nothing
+    can reference it) and the code bundle (it is never a fix target and never
+    read as source)."""
     source = _make_source("manifest_with_test.json")
     publisher = MagicMock()
     uploader = _make_uploader("s3://c/candidate.sql")
     bundle_uploader = FakeBundleUploader()
+    writer = RecordingArtifactWriter()
 
-    _handler(source, publisher, uploader, bundle_uploader=bundle_uploader).handle(release_id="rel-1")
+    _handler(source, publisher, uploader, bundle_uploader=bundle_uploader,
+             artifact_writer=writer).handle(release_id="rel-1")
 
     publisher.publish_ok.assert_called_once()
-    topology = publisher.publish_ok.call_args.kwargs["topology"]
+    topology = writer.nodes
     tests = [n for n in topology if n["node_type"] == "dbt-test"]
     assert len(tests) == 1
     t = tests[0]
     assert t["unique_id"].startswith("test.")
     assert t["resolved_relation_id"] == ""
-    assert t["candidate_artifact_uri"] == "s3://c/candidate.sql"
     assert t["upstream_unique_ids"] == ["test_schema.users"]  # resolved from the compiled SQL
     assert "test_schema.users" in {n["unique_id"] for n in topology}
+    assert t["unique_id"] in {c.kwargs["unique_id"] for c in uploader.upload.call_args_list}
 
     _, bundle = bundle_uploader.uploads[0]
     assert all(not uid.startswith("test.") for uid in bundle["nodes"]), \
@@ -1040,17 +1105,14 @@ def test_dbt_test_is_published_but_not_registered_or_bundled():
 # wire-shape pin and mixed-DAG resolution
 # ---------------------------------------------------------------------------
 
-def test_the_dbt_topology_entry_wire_shape_is_frozen(handler_with_mocks):
-    """Adding a runtime must not change one byte of what a dbt node publishes.
-    If this fails, a key was added, removed, renamed, or retyped — decide
-    deliberately, do not just update the expectation."""
-    handler, publisher, _uploader = handler_with_mocks
+def test_the_dbt_artifact_entry_shape_is_frozen(handler_with_mocks):
+    """Adding a runtime must not change one byte of what a dbt node writes into
+    the artifact. If this fails, a key was added, removed, renamed, or retyped
+    — decide deliberately, and change pkg/topologyartifact.Node with it."""
+    handler, _publisher, _uploader, writer = handler_with_mocks
     handler.handle(release_id="rel-1")
 
-    entry = next(
-        n for n in publisher.publish_ok.call_args.kwargs["topology"]
-        if n["unique_id"] == "test_schema.orders"
-    )
+    entry = next(n for n in writer.nodes if n["unique_id"] == "test_schema.orders")
 
     assert json.dumps(entry, sort_keys=True) == json.dumps({
         "unique_id": "test_schema.orders",
@@ -1065,7 +1127,6 @@ def test_the_dbt_topology_entry_wire_shape_is_frozen(handler_with_mocks):
         "original_file_path": "",
         "upstream_unique_ids": ["test_schema.users"],
         "schedule": "daily",
-        "candidate_artifact_uri": "",
     }, sort_keys=True)
 
 
@@ -1081,24 +1142,22 @@ def test_a_release_mixes_dbt_and_python_and_resolves_edges_in_both_directions(tm
         ManifestFile(path=str(FIXTURES / "manifest_service4.json"), declared_service="service-4"),
     )
 
-    # _python_handler's default dbt uploader (via _make_uploader()) returns "",
-    # which can never satisfy the ".sql"-suffix assertion below, so this test
-    # builds the handler directly and gives the dbt uploader a realistic URI —
-    # the same way handler_with_mocks/PythonSpecArtifactBuilder cases do for
-    # their own runtime — to keep "each kind points at its own shape" real.
+    dbt_uploader = _make_uploader("s3://continuo/candidate-sql/rel-1/candidate_test_schema.orders.sql")
+    writer = RecordingArtifactWriter()
     handler = CandidateManifestHandler(
         source=source, publisher=publisher, bundle_uploader=FakeBundleUploader(),
+        artifact_writer=writer,
         artifact_builders={
-            Runtime.DBT: DbtSqlArtifactBuilder(
-                _make_uploader("s3://continuo/candidate-sql/rel-1/candidate_test_schema.orders.sql")),
+            Runtime.DBT: DbtSqlArtifactBuilder(dbt_uploader),
             Runtime.PYTHON: PythonSpecArtifactBuilder(spec_uploader),
         },
         dialect="postgres",
         image_tags={},
+        is_infrastructure_error=is_infrastructure,
     )
     handler.handle(release_id="rel-1")
 
-    topology = {n["unique_id"]: n for n in publisher.publish_ok.call_args.kwargs["topology"]}
+    topology = {n["unique_id"]: n for n in writer.nodes}
     assert set(topology) == {
         "test_schema.orders", "test_schema.py_metrics", "test_schema.summary",
     }
@@ -1106,9 +1165,12 @@ def test_a_release_mixes_dbt_and_python_and_resolves_edges_in_both_directions(tm
     assert topology["test_schema.py_metrics"]["upstream_unique_ids"] == ["test_schema.orders"]
     # dbt reads python
     assert topology["test_schema.summary"]["upstream_unique_ids"] == ["test_schema.py_metrics"]
-    # each kind published exactly one artifact key, pointing at its own shape
-    assert topology["test_schema.py_metrics"]["candidate_artifact_uri"].endswith(".json")
-    assert topology["test_schema.orders"]["candidate_artifact_uri"].endswith(".sql")
+    # each kind uploaded through its own builder: the spec for the python node,
+    # compiled SQL for the dbt nodes
+    assert spec_uploader.upload.call_args.kwargs["unique_id"] == "test_schema.py_metrics"
+    assert {c.kwargs["unique_id"] for c in dbt_uploader.upload.call_args_list} == {
+        "test_schema.orders", "test_schema.summary",
+    }
     # the python node's read was redirected at the candidate schema — the
     # rewriter force-quotes only the schema identifier, never the table, so
     # the real form is `"_candidate_rel_1".orders` (schema quoted, table bare).
@@ -1126,12 +1188,14 @@ def test_a_python_node_rides_the_code_bundle_with_its_runtime_marker(tmp_path):
     ))
     handler = CandidateManifestHandler(
         source=source, publisher=publisher, bundle_uploader=bundle_uploader,
+        artifact_writer=RecordingArtifactWriter(),
         artifact_builders={
             Runtime.DBT: DbtSqlArtifactBuilder(_make_uploader()),
             Runtime.PYTHON: PythonSpecArtifactBuilder(_make_uploader("s3://x.json")),
         },
         dialect="postgres",
         image_tags={},
+        is_infrastructure_error=is_infrastructure,
     )
 
     handler.handle(release_id="rel-1")
@@ -1191,11 +1255,12 @@ def test_upstream_unique_ids_match_node_unique_id_exactly_with_mixed_case(tmp_pa
     ]
     publisher = MagicMock()
     uploader = _make_uploader()
+    writer = RecordingArtifactWriter()
 
-    handler = _handler(source, publisher, uploader)
+    handler = _handler(source, publisher, uploader, artifact_writer=writer)
     handler.handle(release_id="rel-1")
 
-    topology = {n["unique_id"]: n for n in publisher.publish_ok.call_args.kwargs["topology"]}
+    topology = {n["unique_id"]: n for n in writer.nodes}
     # Both nodes exist with lowercased unique_ids
     assert "analytics.upstream_table" in topology
     assert "businesslayer.downstream_table" in topology

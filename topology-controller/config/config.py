@@ -3,7 +3,7 @@ import os
 
 from streams_contract import (
     RELEASE_REQUESTED_V1,
-    MANIFEST_LOADED_CANDIDATE_V1,
+    MANIFEST_LOADED_CANDIDATE_V2,
     TOPOLOGY_CONTROLLER_RELEASE_REQUESTED,
 )
 
@@ -90,10 +90,10 @@ def log_level() -> int:
             f"unsupported LOG_LEVEL {raw!r}: expected one of {', '.join(_LOG_LEVELS)}"
         ) from None
 
-# Candidate-parse flow: release.requested:v1 → manifest.loaded.candidate:v1.
+# Candidate-parse flow: release.requested:v1 → manifest.loaded.candidate:v2.
 RELEASE_REQUESTED_STREAM         = RELEASE_REQUESTED_V1
 RELEASE_REQUESTED_GROUP          = TOPOLOGY_CONTROLLER_RELEASE_REQUESTED
-MANIFEST_LOADED_CANDIDATE_STREAM = MANIFEST_LOADED_CANDIDATE_V1
+MANIFEST_LOADED_CANDIDATE_STREAM = MANIFEST_LOADED_CANDIDATE_V2
 
 _REQUIRED = [
     "REDIS_URL",

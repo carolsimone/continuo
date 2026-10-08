@@ -21,10 +21,10 @@ def _ctx(**overrides):
     return RewriteContext(**base)
 
 
-def test_dbt_builder_rewrites_uploads_and_returns_the_artifact_key():
+def test_dbt_builder_rewrites_the_compiled_sql_and_uploads_it():
     """The dbt builder owns the whole per-node artifact step: rewrite the
-    compiled SQL to the candidate schema, upload it, and hand back the single
-    topology key that references it."""
+    compiled SQL to the candidate schema and upload it, where release-controller
+    derives the key from the release id, unique_id and node_type."""
     uploader = MagicMock()
     uploader.upload.return_value = "s3://continuo/candidate-sql/rel-1/candidate_test_schema.orders.sql"
     node = ManifestNode(
@@ -35,17 +35,13 @@ def test_dbt_builder_rewrites_uploads_and_returns_the_artifact_key():
         node_type=NodeType.DBT_MODEL, runtime=Runtime.DBT,
     )
 
-    keys = DbtSqlArtifactBuilder(uploader).build(node, _ctx())
+    assert DbtSqlArtifactBuilder(uploader).build(node, _ctx()) is None
 
     uploader.upload.assert_called_once()
     called = uploader.upload.call_args.kwargs
     assert called["release_id"] == "rel-1"
     assert called["unique_id"] == "test_schema.orders"
     assert '"_candidate_rel_1".users' in called["sql"]
-    assert keys == {
-        "candidate_artifact_uri":
-            "s3://continuo/candidate-sql/rel-1/candidate_test_schema.orders.sql",
-    }
 
 
 def test_dbt_builder_leaves_a_self_reference_on_the_production_schema():
@@ -85,7 +81,7 @@ def test_python_builder_uploads_rewritten_reads_columns_and_config():
         node_type=NodeType.PYTHON_NODE, runtime=Runtime.PYTHON,
     )
 
-    keys = PythonSpecArtifactBuilder(uploader).build(node, _ctx())
+    assert PythonSpecArtifactBuilder(uploader).build(node, _ctx()) is None
 
     called = uploader.upload.call_args.kwargs
     assert called["unique_id"] == "test_schema.py_metrics"
@@ -97,10 +93,6 @@ def test_python_builder_uploads_rewritten_reads_columns_and_config():
     assert "_candidate_rel_1" not in spec["reads"][1]
     assert spec["output_columns"] == [{"name": "id", "type": "INTEGER", "nullable": False}]
     assert spec["config"] == {"indexes": [{"columns": ["id"], "unique": True}]}
-    assert keys == {
-        "candidate_artifact_uri":
-            "s3://continuo/candidate-sql/rel-1/candidate_test_schema.py_metrics.json",
-    }
 
 
 def test_python_builder_preserves_read_order():

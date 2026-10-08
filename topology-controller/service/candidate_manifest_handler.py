@@ -1,7 +1,7 @@
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from domain.exceptions import InvalidCompiledSqlError, UnqualifiedTableReferenceError
-from domain.model import FailedNode, NodeRegistry, NodeRegistryEntry, NodeType
+from domain.model import DEFAULT_TENANT_ID, FailedNode, NodeRegistry, NodeRegistryEntry, NodeType
 from service.candidate_artifacts import CandidateArtifactBuilder, RewriteContext
 from service.code_bundle import build_code_bundle
 from service.manifest_parsers import parser_for
@@ -9,6 +9,7 @@ from service.ports import (
     CandidatePublisherPort,
     CodeBundleUploaderPort,
     ManifestSourcePort,
+    TopologyArtifactWriterPort,
 )
 from service.resolver import resolve_upstream_deps
 from service.rewriter import candidate_schema_name
@@ -35,8 +36,9 @@ def _summary(failed: list[FailedNode]) -> str:
 
 
 class CandidateManifestHandler:
-    """Parses a per-release set of dbt manifests and python contracts and
-    publishes the resolved candidate topology back to release-controller.
+    """Parses a per-release set of dbt manifests and python contracts, writes
+    the resolved candidate topology to S3 as the release's topology artifact,
+    and publishes a reference to it back to release-controller.
 
     Every node carries its service's image tag from the release request
     (image_tags), the map release-controller assembled when it activated the
@@ -47,16 +49,21 @@ class CandidateManifestHandler:
 
     Each node's candidate artifact — the object its validation Job fetches to
     build it as an empty table — is built and uploaded by the artifact_builders
-    entry selected by the node's runtime; the topology carries the resulting
-    topology keys (e.g. candidate_artifact_uri, an s3:// reference) rather than
-    the inline SQL string. Upload failures are fatal — publish_failed is
-    called and the handler returns so the consumer ACKs without dangling refs.
+    entry selected by the node's runtime, at the key release-controller derives
+    from the release id, the node's unique_id and its node_type; the topology
+    artifact carries no reference to it.
 
     A single code-bundle document (one per release, covering every published
-    node plus the shared-code units they depend on) is built and uploaded via
-    bundle_uploader immediately before publish_ok; the resulting s3:// URI is
-    published as code_bundle_uri. A bundle-upload failure is fatal for the
-    same reason as a candidate-SQL upload failure.
+    node plus the shared-code units they depend on) is uploaded via
+    bundle_uploader, then the topology artifact via artifact_writer, and only
+    then is the outcome published, so a published reference never dangles. An
+    empty release (no manifests) writes an artifact with no nodes and publishes
+    an empty code_bundle_uri.
+
+    A write that fails with an S3 outage (is_infrastructure_error: S3
+    unreachable, a 5xx) propagates to the consumer, which pauses and redelivers
+    the same message; nothing is published, so the release waits in parsing.
+    Any other write failure publishes status=failed with kind internal.
 
     Failures publish status=failed with a typed failure_kind and return
     normally so the consumer ACKs. A node whose SQL sqlglot cannot parse, or
@@ -64,8 +71,8 @@ class CandidateManifestHandler:
     fatal on first sight: every node is resolved, then one publish_failed
     carries the whole failed set (failure_kind by contract precedence) so the
     operator sees every broken node at once. An unreadable, empty, or
-    wrong-service artifact is invalid_artifact; a missing builder or a failed
-    S3 write is internal. Neither carries failed nodes.
+    wrong-service artifact is invalid_artifact; a missing builder, missing
+    image tags or a refused S3 write is internal. Neither carries failed nodes.
 
     dialect is the sqlglot dialect of the warehouse the install targets,
     supplied by the composition root from the configured engine. It governs
@@ -78,16 +85,20 @@ class CandidateManifestHandler:
         source: ManifestSourcePort,
         publisher: CandidatePublisherPort,
         bundle_uploader: CodeBundleUploaderPort,
+        artifact_writer: TopologyArtifactWriterPort,
         artifact_builders: dict[str, CandidateArtifactBuilder],
         dialect: str,
         image_tags: Mapping[str, str] | None,
+        is_infrastructure_error: Callable[[BaseException], bool],
     ) -> None:
         self._source = source
         self._publisher = publisher
         self._bundle_uploader = bundle_uploader
+        self._artifact_writer = artifact_writer
         self._artifact_builders = artifact_builders
         self._dialect = dialect
         self._image_tags = image_tags
+        self._is_infrastructure_error = is_infrastructure_error
 
     def handle(self, release_id: str) -> None:
         try:
@@ -111,7 +122,7 @@ class CandidateManifestHandler:
                 "candidate: no manifest files found — publishing empty topology",
                 extra={"release_id": release_id},
             )
-            self._publisher.publish_ok(release_id=release_id, topology=[], code_bundle_uri="")
+            self._publish(release_id, topology=[], code_bundle_uri="")
             return
 
         logger.info(
@@ -277,18 +288,12 @@ class CandidateManifestHandler:
                 )
                 return
 
-            # An upload failure is fatal: publishing a node whose validation
-            # input never landed would leave release-controller with a dangling
-            # reference. Fail the release so the operator re-triggers it.
+            # A node whose validation input never landed must not be published:
+            # release-controller would derive a key to an object that is not there.
             try:
-                artifact_keys = builder.build(node, ctx)
+                builder.build(node, ctx)
             except Exception as exc:
-                self._publisher.publish_failed(
-                    release_id=release_id,
-                    failure_kind=ParseFailureKind.INTERNAL,
-                    detail=str(exc),
-                    failed_nodes=[],
-                )
+                self._reject_internal_unless_infra(release_id, exc)
                 return
 
             entry = {
@@ -306,7 +311,6 @@ class CandidateManifestHandler:
                     dep.unique_id for dep in node.upstream_deps
                 ],
                 "schedule":            node.schedule_name,
-                **artifact_keys,
             }
             if node.secret_ref:
                 entry["secret_ref"] = node.secret_ref
@@ -320,20 +324,43 @@ class CandidateManifestHandler:
         try:
             code_bundle_uri = self._bundle_uploader.upload(release_id, bundle)
         except Exception as exc:
-            # Same fatal semantics as candidate-SQL uploads: never publish a
-            # topology that references a bundle that failed to land.
-            self._publisher.publish_failed(
-                release_id=release_id,
-                failure_kind=ParseFailureKind.INTERNAL,
-                detail=str(exc),
-                failed_nodes=[],
+            self._reject_internal_unless_infra(release_id, exc)
+            return
+
+        self._publish(release_id, topology=topology, code_bundle_uri=code_bundle_uri)
+
+    def _publish(self, release_id: str, *, topology: list[dict], code_bundle_uri: str) -> None:
+        """Write the release's topology artifact, then publish the reference to
+        it. The write follows the same outage rule as every other write."""
+        try:
+            artifact = self._artifact_writer.write(
+                tenant_id=DEFAULT_TENANT_ID, release_id=release_id, nodes=topology,
             )
+        except Exception as exc:
+            self._reject_internal_unless_infra(release_id, exc)
             return
 
         self._publisher.publish_ok(
-            release_id=release_id, topology=topology, code_bundle_uri=code_bundle_uri,
+            release_id=release_id, artifact=artifact, code_bundle_uri=code_bundle_uri,
         )
         logger.info(
             "candidate: parse complete",
-            extra={"release_id": release_id, "published_nodes": len(topology)},
+            extra={
+                "release_id": release_id,
+                "published_nodes": artifact.node_count,
+                "topology_uri": artifact.uri,
+            },
+        )
+
+    def _reject_internal_unless_infra(self, release_id: str, exc: Exception) -> None:
+        """Re-raise an S3 outage (is_infrastructure_error) so the consumer
+        pauses and retries; otherwise publish a failed/internal result for this
+        release."""
+        if self._is_infrastructure_error(exc):
+            raise exc
+        self._publisher.publish_failed(
+            release_id=release_id,
+            failure_kind=ParseFailureKind.INTERNAL,
+            detail=str(exc),
+            failed_nodes=[],
         )

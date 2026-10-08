@@ -42,13 +42,12 @@ class TopologyArtifactWriterPort(Protocol):
 @runtime_checkable
 class CandidatePublisherPort(Protocol):
     """Publishes the outcome of a candidate-parse attempt back to
-    release-controller: publish_ok carries the resolved topology, publish_failed
-    a typed failure kind, a summary detail, and one FailedNode per node the
-    parse could not resolve (empty for artifact and internal failures)."""
+    release-controller: publish_ok carries the reference to the release's
+    topology artifact, publish_failed a typed failure kind, a summary detail,
+    and one FailedNode per node the parse could not resolve (empty for
+    artifact and internal failures)."""
 
-    def publish_ok(
-        self, release_id: str, topology: list[dict], code_bundle_uri: str = ""
-    ) -> None:
+    def publish_ok(self, *, release_id: str, artifact: TopologyArtifactRef, code_bundle_uri: str) -> None:
         ...
 
     def publish_failed(

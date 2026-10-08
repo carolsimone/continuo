@@ -148,3 +148,17 @@ def test_a_download_whose_stream_is_cut_short_is_infrastructure(tmp_path, monkey
         botocore.exceptions.IncompleteReadError, botocore.exceptions.ResponseStreamingError,
     )), raised.value.last_exception
     assert classify(raised.value) is ErrorClass.INFRASTRUCTURE
+
+
+@pytest.mark.parametrize("exc, want", [
+    (botocore.exceptions.EndpointConnectionError(endpoint_url="http://minio:9000"), True),
+    (_client_error(503), True),
+    (_client_error(403), False),
+    (RuntimeError("boom"), False),
+    (PermanentMessageError("no payload"), False),
+])
+def test_is_infrastructure_is_classify_says_infrastructure(exc, want):
+    """The candidate handler re-raises a write failure is_infrastructure accepts,
+    so the consumer waits the outage out instead of the release being rejected."""
+    from adapters.redis.error_class import is_infrastructure
+    assert is_infrastructure(exc) is want
