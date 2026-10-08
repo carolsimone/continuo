@@ -34,6 +34,16 @@ class FailedNode:
 
 
 @dataclass(frozen=True)
+class TopologyArtifactRef:
+    """Where a release's topology artifact lives, the SHA-256 of its stored
+    bytes, and how many nodes it holds: the reference the parse result carries
+    instead of the nodes themselves."""
+    uri: str
+    sha256: str
+    node_count: int
+
+
+@dataclass(frozen=True)
 class ManifestRequest:
     """One service's artifact to fetch for a release: its S3 object key plus the
     kind that decides which parser reads it."""

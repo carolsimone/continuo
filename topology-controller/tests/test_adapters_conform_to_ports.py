@@ -12,16 +12,19 @@ import pytest
 from adapters.code_bundle_uploader import CodeBundleUploader
 from adapters.redis.candidate_publisher import CandidateManifestPublisher
 from adapters.sources.s3 import S3Source
+from adapters.topology_artifact_writer import TopologyArtifactWriter
 from service.ports import (
     CandidatePublisherPort,
     CodeBundleUploaderPort,
     ManifestSourcePort,
+    TopologyArtifactWriterPort,
 )
 
 CONCRETE_PORT_PAIRS = [
     (CandidateManifestPublisher, CandidatePublisherPort),
     (CodeBundleUploader, CodeBundleUploaderPort),
     (S3Source, ManifestSourcePort),
+    (TopologyArtifactWriter, TopologyArtifactWriterPort),
 ]
 
 
