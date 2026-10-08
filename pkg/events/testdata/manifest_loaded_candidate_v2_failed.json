@@ -1,0 +1,46 @@
+{
+  "input": {
+    "tenant_id": "default",
+    "producer": "topology-controller",
+    "occurred_at": "2026-10-08T09:30:05.000250Z",
+    "payload": {
+      "release_id": "rel-2026-10-08-0002",
+      "status": "failed",
+      "failure_kind": "invalid_sql",
+      "detail": "1 node(s) failed to parse: staging.orders",
+      "failed_nodes": [
+        {
+          "node_id": "staging.orders",
+          "kind": "invalid_sql",
+          "service": "service-1",
+          "file_path": "models/staging/orders.sql",
+          "node_type": "dbt-model",
+          "detail": "Invalid expression / Unexpected token. Line 3, Col: 14."
+        }
+      ]
+    }
+  },
+  "fields": {
+    "event_id": "af8f0c05-a09b-5e8c-b0a3-ff98eff564ac",
+    "tenant_id": "default",
+    "occurred_at": "2026-10-08T09:30:05.000250Z",
+    "producer": "topology-controller",
+    "schema_version": "1",
+    "payload": {
+      "release_id": "rel-2026-10-08-0002",
+      "status": "failed",
+      "failure_kind": "invalid_sql",
+      "detail": "1 node(s) failed to parse: staging.orders",
+      "failed_nodes": [
+        {
+          "node_id": "staging.orders",
+          "kind": "invalid_sql",
+          "service": "service-1",
+          "file_path": "models/staging/orders.sql",
+          "node_type": "dbt-model",
+          "detail": "Invalid expression / Unexpected token. Line 3, Col: 14."
+        }
+      ]
+    }
+  }
+}
