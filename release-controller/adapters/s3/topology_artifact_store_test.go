@@ -71,7 +71,7 @@ func sampleTopology() release.Topology {
 		{UniqueID: "test.svc.not_null_orders_id", ServiceName: "svc", NodeType: "dbt-test",
 			UpstreamUniqueIDs: []string{"svc.orders"}},
 		{UniqueID: "api.rates", SchemaName: "api", TableName: "rates", ServiceName: "api", NodeType: "python-api",
-			ImageTag: "img:2", UpstreamUniqueIDs: []string{}, SecretRef: "continuo-api-rates"},
+			ImageTag: "img:2", UpstreamUniqueIDs: []string{}, SecretRef: "continuo-api-rates"}, //nolint:gosec // test fixture secret_ref value, not a credential
 	}
 }
 
@@ -289,7 +289,7 @@ func TestCloneTopology_CoversEveryReferenceField(t *testing.T) {
 	nodeType := reflect.TypeOf(release.Node{})
 	for i := 0; i < nodeType.NumField(); i++ {
 		switch f := nodeType.Field(i); f.Type.Kind() {
-		case reflect.Slice, reflect.Map, reflect.Ptr, reflect.Interface, reflect.Chan, reflect.Func:
+		case reflect.Slice, reflect.Map, reflect.Pointer, reflect.Interface, reflect.Chan, reflect.Func:
 			referenceFields = append(referenceFields, f.Name)
 		}
 	}

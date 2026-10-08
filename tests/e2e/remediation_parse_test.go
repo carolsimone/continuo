@@ -45,7 +45,7 @@ const parseFixBrokenService = "service-2"
 //	ftable_e's compiled_code replaced by SQL that does not parse
 //	→ POST /releases (service-1) → compile service-1 → release.requested:v1
 //	→ topology-controller resolves the whole assembled set and sqlglot rejects
-//	  ftable_e → manifest.loaded.candidate:v1
+//	  ftable_e → manifest.loaded.candidate:v2
 //	  {status: failed, failure_kind: invalid_sql, failed_nodes: [ftable_e]}
 //	→ release-controller: Fail(invalid_sql), RecordStageResults("parse")
 //	→ release.rejected:v1 {stage: parse, per_node: [{kind, detail, file_path, service}]}
