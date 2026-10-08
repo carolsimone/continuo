@@ -111,12 +111,8 @@ def test_main_candidate_handler_dispatches_with_manifest_keys(monkeypatch):
     captured = {}
 
     class FakeCandidateHandler:
-        def __init__(self, source, publisher, bundle_uploader, artifact_builders, dialect):
-            captured["source"] = source
-            captured["publisher"] = publisher
-            captured["artifact_builders"] = artifact_builders
-            captured["bundle_uploader"] = bundle_uploader
-            captured["dialect"] = dialect
+        def __init__(self, **kw):
+            captured.update(kw)
 
         def handle(self, release_id):
             captured["release_id"] = release_id
@@ -160,8 +156,8 @@ def test_main_passes_the_configured_engines_dialect_to_the_handler(monkeypatch):
     captured = {}
 
     class FakeCandidateHandler:
-        def __init__(self, source, publisher, bundle_uploader, artifact_builders, dialect):
-            captured["dialect"] = dialect
+        def __init__(self, **kw):
+            captured["dialect"] = kw["dialect"]
 
         def handle(self, release_id):
             pass
@@ -276,3 +272,23 @@ def test_main_refuses_an_unknown_log_level(monkeypatch):
     monkeypatch.setenv("LOG_LEVEL", "verbose")
     with pytest.raises(RuntimeError, match="LOG_LEVEL"):
         main.main()
+
+
+@pytest.mark.parametrize("payload_tags, handed", [
+    ({"service-1": "reg/service-1:abc"}, {"service-1": "reg/service-1:abc"}),
+    (None, None),
+], ids=["present", "absent"])
+def test_main_hands_the_handler_the_requests_image_tags(monkeypatch, payload_tags, handed):
+    _common_monkeypatches(monkeypatch)
+    captured = {}
+    monkeypatch.setattr(main, "S3Source", lambda **kw: SimpleNamespace(cleanup=lambda: None))
+    monkeypatch.setattr(main, "CandidateManifestHandler",
+                        lambda **kw: captured.update(kw) or SimpleNamespace(handle=lambda release_id: None))
+    main.main()
+    payload = {"release_id": "rel-1", "manifest_keys": []}
+    if payload_tags is not None:
+        payload["image_tags"] = payload_tags
+
+    _RecordingConsumer.instances[0].message_handler({b"payload": json.dumps(payload).encode()})
+
+    assert captured["image_tags"] == handed

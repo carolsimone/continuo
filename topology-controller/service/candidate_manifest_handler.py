@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Mapping
 from domain.exceptions import InvalidCompiledSqlError, UnqualifiedTableReferenceError
 from domain.model import FailedNode, NodeRegistry, NodeRegistryEntry, NodeType
 from service.candidate_artifacts import CandidateArtifactBuilder, RewriteContext
@@ -14,6 +15,11 @@ from service.rewriter import candidate_schema_name
 from domain.contract_vocabulary import ParseFailureKind
 
 logger = logging.getLogger(__name__)
+
+_NO_IMAGE_TAGS = (
+    "the release request carries no image_tags, so no node can be given the "
+    "image it runs in"
+)
 
 
 def _highest_precedence(kinds: list[ParseFailureKind]) -> ParseFailureKind:
@@ -32,9 +38,11 @@ class CandidateManifestHandler:
     """Parses a per-release set of dbt manifests and python contracts and
     publishes the resolved candidate topology back to release-controller.
 
-    image_tag is left empty by design; release-controller joins the
-    per-service tags from the POST /releases body onto the topology.
-    The registry is built in-memory solely for dependency resolution
+    Every node carries its service's image tag from the release request
+    (image_tags), the map release-controller assembled when it activated the
+    release; a service the map names no tag for keeps an empty tag. A request
+    with no image_tags at all fails the release as internal before anything is
+    fetched. The registry is built in-memory solely for dependency resolution
     and is not persisted anywhere.
 
     Each node's candidate artifact — the object its validation Job fetches to
@@ -72,12 +80,14 @@ class CandidateManifestHandler:
         bundle_uploader: CodeBundleUploaderPort,
         artifact_builders: dict[str, CandidateArtifactBuilder],
         dialect: str,
+        image_tags: Mapping[str, str] | None,
     ) -> None:
         self._source = source
         self._publisher = publisher
         self._bundle_uploader = bundle_uploader
         self._artifact_builders = artifact_builders
         self._dialect = dialect
+        self._image_tags = image_tags
 
     def handle(self, release_id: str) -> None:
         try:
@@ -86,6 +96,15 @@ class CandidateManifestHandler:
             self._source.cleanup()
 
     def _handle_impl(self, release_id: str) -> None:
+        if self._image_tags is None:
+            self._publisher.publish_failed(
+                release_id=release_id,
+                failure_kind=ParseFailureKind.INTERNAL,
+                detail=_NO_IMAGE_TAGS,
+                failed_nodes=[],
+            )
+            return
+
         manifests = self._source.list_manifests()
         if not manifests:
             logger.warning(
@@ -166,6 +185,7 @@ class CandidateManifestHandler:
 
             for node in nodes:
                 node.code_unit_ids = [f"{namespace}:{uid}" for uid in node.code_unit_ids]
+                node.image_tag = self._image_tags.get(node.service_name, "")
 
             if mf.declared_service:
                 # Validate that the manifest actually belongs to the declared service.

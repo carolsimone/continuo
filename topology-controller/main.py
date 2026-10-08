@@ -78,6 +78,7 @@ def main() -> None:
                 Runtime.PYTHON: PythonSpecArtifactBuilder(candidate_spec_uploader),
             },
             dialect=dialect,
+            image_tags=message.image_tags,
         ).handle(release_id=message.release_id)
 
     candidate_consumer = Consumer(

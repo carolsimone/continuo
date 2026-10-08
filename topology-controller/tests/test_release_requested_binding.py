@@ -113,6 +113,39 @@ def test_an_explicitly_empty_kind_is_not_defaulted_to_dbt():
     assert [r.kind for r in got.requests] == [""]
 
 
+def test_image_tags_are_parsed_when_present():
+    """release-controller assembles one image tag per service when it activates
+    the release; the handler joins them onto the nodes."""
+    got = parse_release_requested(
+        _fields({
+            "release_id": "rel-1",
+            "manifest_keys": [],
+            "image_tags": {"service-1": "reg/service-1:abc", "service-2": "reg/service-2:def"},
+        }),
+        _DEFAULT_BUCKET,
+    )
+
+    assert got.image_tags == {"service-1": "reg/service-1:abc", "service-2": "reg/service-2:def"}
+
+
+@pytest.mark.parametrize("payload", [
+    {"release_id": "r", "manifest_keys": []},
+    {"release_id": "r", "manifest_keys": [], "image_tags": None},
+], ids=["absent", "null"])
+def test_absent_or_null_image_tags_parse_as_none(payload):
+    """No tags is not malformed: the handler turns it into a rejected release
+    the operator sees, rather than a dead letter that leaves it parsing."""
+    assert parse_release_requested(_fields(payload), _DEFAULT_BUCKET).image_tags is None
+
+
+def test_an_empty_image_tags_object_is_kept_as_an_empty_mapping():
+    got = parse_release_requested(
+        _fields({"release_id": "r", "manifest_keys": [], "image_tags": {}}), _DEFAULT_BUCKET,
+    )
+
+    assert got.image_tags == {}
+
+
 _MALFORMED_PAYLOADS = {
     "missing payload": {},
     "invalid json": {b"payload": b"not json {{{"},
@@ -155,6 +188,12 @@ _MALFORMED_PAYLOADS = {
         "release_id": 7, "manifest_keys": [],
     }).encode()},
     "payload that is not UTF-8": {b"payload": b"\xff\xfe{}"},
+    "image_tags that is a list": {b"payload": json.dumps({
+        "release_id": "x", "manifest_keys": [], "image_tags": ["reg/s1:abc"],
+    }).encode()},
+    "image_tags with a non-string tag": {b"payload": json.dumps({
+        "release_id": "x", "manifest_keys": [], "image_tags": {"s1": 7},
+    }).encode()},
     "entries spanning buckets": {b"payload": json.dumps({
         "release_id": "x",
         "manifest_keys": [

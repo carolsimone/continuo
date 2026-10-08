@@ -65,6 +65,7 @@ def test_candidate_topology_carries_test_count(tmp_path):
         source=source, publisher=publisher, bundle_uploader=bundle_uploader,
         artifact_builders={Runtime.DBT: DbtSqlArtifactBuilder(uploader)},
         dialect="postgres",
+        image_tags={},
     )
     handler.handle(release_id="rel-1")
 

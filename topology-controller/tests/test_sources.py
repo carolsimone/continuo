@@ -36,7 +36,8 @@ def test_s3_source_returns_one_file_per_key():
 
 
 def test_s3_source_image_tag_always_empty():
-    """image_tag is always empty; release-controller joins tags downstream."""
+    """The source leaves image_tag empty; the candidate handler joins the
+    release request's per-service tags onto the nodes."""
     source = _make_s3_source(keys=[ManifestRequest(service="svc", key="svc/rel/manifest.json")])
     try:
         result = source.list_manifests()

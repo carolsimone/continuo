@@ -51,9 +51,10 @@ class FakeBundleUploader:
         return self._uri
 
 
-def _handler(source, publisher, uploader, bundle_uploader=None, dialect="postgres") -> CandidateManifestHandler:
-    """Build a handler pinned to the postgres dialect and a fake bundle uploader
-    unless a test names otherwise.
+def _handler(source, publisher, uploader, bundle_uploader=None, dialect="postgres",
+             image_tags=None) -> CandidateManifestHandler:
+    """Build a handler pinned to the postgres dialect, a fake bundle uploader
+    and an empty image-tag map unless a test names otherwise.
 
     `uploader` is the dbt candidate-SQL uploader; it is wrapped in the dbt
     artifact builder here so these cases keep asserting directly on the upload
@@ -65,6 +66,7 @@ def _handler(source, publisher, uploader, bundle_uploader=None, dialect="postgre
         bundle_uploader=bundle_uploader if bundle_uploader is not None else FakeBundleUploader(),
         artifact_builders={Runtime.DBT: DbtSqlArtifactBuilder(uploader)},
         dialect=dialect,
+        image_tags=image_tags if image_tags is not None else {},
     )
 
 
@@ -81,6 +83,7 @@ def _dispatch_handler(source, publisher, artifact_builders=None, dialect="postgr
         bundle_uploader=FakeBundleUploader(),
         artifact_builders=artifact_builders or {Runtime.DBT: DbtSqlArtifactBuilder(_make_uploader())},
         dialect=dialect,
+        image_tags={},
     )
 
 
@@ -129,11 +132,6 @@ def handler_with_mocks():
 
 def test_handle_publishes_ok_with_resolved_topology(resolved_topology):
     assert len(resolved_topology) == 2
-
-
-def test_handle_publishes_ok_with_image_tag_empty_string(resolved_topology):
-    for node in resolved_topology:
-        assert node["image_tag"] == ""
 
 
 def test_handle_publishes_ok_with_node_type_on_each_node(resolved_topology):
@@ -484,6 +482,66 @@ def test_handle_publishes_ok_matching_declared_service():
     services = {n["service_name"] for n in topology}
     assert services == {"service-1", "service-2"}
     publisher.publish_failed.assert_not_called()
+
+
+def test_every_node_runs_in_the_image_its_service_is_tagged_with():
+    """Each node carries the tag of its own service from the release request,
+    joined by service name."""
+    source = _make_source_with_declared([
+        ("manifest_service1.json", "service-1"),
+        ("manifest_service2.json", "service-2"),
+    ])
+    publisher = MagicMock()
+
+    _handler(source, publisher, _make_uploader(), image_tags={
+        "service-1": "reg/service-1:abc", "service-2": "reg/service-2:def",
+    }).handle(release_id="rel-1")
+
+    topology = publisher.publish_ok.call_args.kwargs["topology"]
+    assert {n["service_name"]: n["image_tag"] for n in topology} == {
+        "service-1": "reg/service-1:abc", "service-2": "reg/service-2:def",
+    }
+
+
+def test_a_service_the_request_names_no_tag_for_keeps_an_empty_image_tag():
+    source = _make_source_with_declared([
+        ("manifest_service1.json", "service-1"),
+        ("manifest_service2.json", "service-2"),
+    ])
+    publisher = MagicMock()
+
+    _handler(source, publisher, _make_uploader(), image_tags={
+        "service-1": "reg/service-1:abc",
+    }).handle(release_id="rel-1")
+
+    topology = publisher.publish_ok.call_args.kwargs["topology"]
+    assert {n["service_name"]: n["image_tag"] for n in topology} == {
+        "service-1": "reg/service-1:abc", "service-2": "",
+    }
+
+
+def test_a_request_without_image_tags_fails_the_release_as_internal():
+    """Without tags no node can be given the image it runs in. That is
+    continuo's own wiring failing, not the user's source: reject the release
+    (internal) before fetching anything, so it never sits in parsing."""
+    source = _make_source("manifest_service1.json")
+    publisher = MagicMock()
+    handler = CandidateManifestHandler(
+        source=source, publisher=publisher, bundle_uploader=FakeBundleUploader(),
+        artifact_builders={Runtime.DBT: DbtSqlArtifactBuilder(_make_uploader())},
+        dialect="postgres",
+        image_tags=None,
+    )
+
+    handler.handle(release_id="rel-1")
+
+    kw = _failed_kwargs(publisher)
+    assert kw["failure_kind"] == ParseFailureKind.INTERNAL
+    assert "image_tags" in kw["detail"]
+    assert kw["failed_nodes"] == []
+    publisher.publish_ok.assert_not_called()
+    source.list_manifests.assert_not_called()
+    source.cleanup.assert_called_once()
 
 
 def test_handle_skips_declared_service_checks_when_declared_service_empty(tmp_path):
@@ -1036,6 +1094,7 @@ def test_a_release_mixes_dbt_and_python_and_resolves_edges_in_both_directions(tm
             Runtime.PYTHON: PythonSpecArtifactBuilder(spec_uploader),
         },
         dialect="postgres",
+        image_tags={},
     )
     handler.handle(release_id="rel-1")
 
@@ -1072,6 +1131,7 @@ def test_a_python_node_rides_the_code_bundle_with_its_runtime_marker(tmp_path):
             Runtime.PYTHON: PythonSpecArtifactBuilder(_make_uploader("s3://x.json")),
         },
         dialect="postgres",
+        image_tags={},
     )
 
     handler.handle(release_id="rel-1")
