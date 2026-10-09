@@ -1,6 +1,6 @@
 module github.com/carolsimone/continuo/e2e
 
-go 1.26.8
+go 1.26.9
 
 replace (
 	github.com/carolsimone/continuo/orchestrator => ../../orchestrator
@@ -13,7 +13,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.6
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.113.4
 	github.com/carolsimone/continuo/orchestrator v0.0.0-00010101000000-000000000000
-	github.com/carolsimone/continuo/pkg v0.0.0-00010101000000-000000000000
+	github.com/carolsimone/continuo/pkg v0.0.0
 	github.com/carolsimone/continuo/state v0.0.0-00010101000000-000000000000
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
@@ -36,10 +36,9 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.20.4 // indirect
 	github.com/aws/smithy-go v1.28.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/kr/text v0.2.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
-	golang.org/x/net v0.58.0 // indirect
+	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
