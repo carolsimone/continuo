@@ -67,6 +67,7 @@ type fakeStore struct {
 	order         []string // insertion order, oldest first; drives NextQueued FIFO
 	cp            *release.CurrentProd
 	cpUpsertCalls int
+	lastSeq       int64
 	serviceProd   map[string]*release.ServiceProd
 	entries       []*pkgoutbox.Entry
 	// racing holds runs another submission commits between a transaction's
@@ -353,6 +354,28 @@ func (f *fakeCurrentProdRepo) Upsert(_ context.Context, cp *release.CurrentProd)
 
 var _ repository.CurrentProdRepository = (*fakeCurrentProdRepo)(nil)
 
+// LastPromotionSeq returns the last seq the fake sequence handed out.
+func (s *fakeStore) LastPromotionSeq() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastSeq
+}
+
+// --- fakePromotionSequenceRepo ---
+
+// fakePromotionSequenceRepo hands out seqs from the shared store, one higher
+// than the last, as the Postgres row does.
+type fakePromotionSequenceRepo struct{ store *fakeStore }
+
+func (f *fakePromotionSequenceRepo) Next(_ context.Context) (int64, error) {
+	f.store.mu.Lock()
+	defer f.store.mu.Unlock()
+	f.store.lastSeq++
+	return f.store.lastSeq, nil
+}
+
+var _ repository.PromotionSequenceRepository = (*fakePromotionSequenceRepo)(nil)
+
 // --- fakeServiceProdRepo ---
 
 type fakeServiceProdRepo struct {
@@ -627,6 +650,7 @@ type fakeUoW struct {
 	releases *fakeRunRepo
 	cp       *fakeCurrentProdRepo
 	sp       *fakeServiceProdRepo
+	seq      *fakePromotionSequenceRepo
 	outbox   *fakeOutbox
 	msgProc  fakeMessageProcessing
 	legacy   *fakeLegacyTopologyRepo
@@ -637,14 +661,18 @@ func newFakeUoW(store *fakeStore) *fakeUoW {
 		releases: &fakeRunRepo{store: store},
 		cp:       &fakeCurrentProdRepo{store: store},
 		sp:       &fakeServiceProdRepo{store: store},
+		seq:      &fakePromotionSequenceRepo{store: store},
 		outbox:   &fakeOutbox{store: store},
 		legacy:   &fakeLegacyTopologyRepo{store: store},
 	}
 }
 
-func (f *fakeUoW) RunRepo() repository.RunRepository                       { return f.releases }
-func (f *fakeUoW) CurrentProdRepo() repository.CurrentProdRepository       { return f.cp }
-func (f *fakeUoW) ServiceProdRepo() repository.ServiceProdRepository       { return f.sp }
+func (f *fakeUoW) RunRepo() repository.RunRepository                 { return f.releases }
+func (f *fakeUoW) CurrentProdRepo() repository.CurrentProdRepository { return f.cp }
+func (f *fakeUoW) ServiceProdRepo() repository.ServiceProdRepository { return f.sp }
+func (f *fakeUoW) PromotionSequenceRepo() repository.PromotionSequenceRepository {
+	return f.seq
+}
 func (f *fakeUoW) LegacyTopologyRepo() repository.LegacyTopologyRepository { return f.legacy }
 func (f *fakeUoW) OutboxRepo() pkgoutbox.Repository                        { return f.outbox }
 func (f *fakeUoW) MessageProcessingRepo() messageprocessing.Repository     { return f.msgProc }

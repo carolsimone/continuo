@@ -136,15 +136,16 @@ type fakeUoW struct {
 	outbox   *fakeOutboxRepo
 }
 
-func (u *fakeUoW) RunRepo() repository.RunRepository                   { return u.releases }
-func (u *fakeUoW) CurrentProdRepo() repository.CurrentProdRepository   { return nil }
-func (u *fakeUoW) ServiceProdRepo() repository.ServiceProdRepository   { return nil }
-func (u *fakeUoW) OutboxRepo() pkgoutbox.Repository                    { return u.outbox }
-func (u *fakeUoW) MessageProcessingRepo() messageprocessing.Repository { return nil }
-func (u *fakeUoW) Begin(context.Context) error                         { return nil }
-func (u *fakeUoW) Commit() error                                       { return nil }
-func (u *fakeUoW) Rollback() error                                     { return nil }
-func (u *fakeUoW) LockReleaseQueue(context.Context) error              { return nil }
+func (u *fakeUoW) RunRepo() repository.RunRepository                             { return u.releases }
+func (u *fakeUoW) CurrentProdRepo() repository.CurrentProdRepository             { return nil }
+func (u *fakeUoW) ServiceProdRepo() repository.ServiceProdRepository             { return nil }
+func (u *fakeUoW) PromotionSequenceRepo() repository.PromotionSequenceRepository { return nil }
+func (u *fakeUoW) OutboxRepo() pkgoutbox.Repository                              { return u.outbox }
+func (u *fakeUoW) MessageProcessingRepo() messageprocessing.Repository           { return nil }
+func (u *fakeUoW) Begin(context.Context) error                                   { return nil }
+func (u *fakeUoW) Commit() error                                                 { return nil }
+func (u *fakeUoW) Rollback() error                                               { return nil }
+func (u *fakeUoW) LockReleaseQueue(context.Context) error                        { return nil }
 
 var _ uow.UnitOfWork = (*fakeUoW)(nil)
 

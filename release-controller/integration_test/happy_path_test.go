@@ -39,6 +39,8 @@ func setup(t *testing.T) (*httpinfra.Server, *handlers.Deps, *sqlx.DB) {
 	require.NoError(t, err)
 	_, err = db.Exec("TRUNCATE release_pipeline_runs, current_prod, release_controller_outbox, message_processing, service_prod RESTART IDENTITY CASCADE")
 	require.NoError(t, err)
+	_, err = db.Exec("UPDATE promotion_sequence SET last_seq = 0 WHERE id = 1")
+	require.NoError(t, err, "promotion_sequence is missing: run make test-deps-up to apply the release migrations")
 	deps := &handlers.Deps{
 		NewUoW:    func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, slog.Default(), nil) },
 		Clock:     ports.SystemClock{},
