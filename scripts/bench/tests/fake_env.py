@@ -3,7 +3,9 @@
 The fakes keep their state in FAKE_DIR:
   state, current, n  the schedule's latest run (continuo)
   calls              one line per `schedule cancel` (continuo) and per `docker network ...` call
-  exec-calls.jsonl   argv and stdin of every `kubectl exec`; exec-output is what it prints
+  exec-calls.jsonl   argv and stdin of every `kubectl exec` and every announce-topology `docker exec`; exec-output is
+                     what they print, announce-output (when present) what an announce-topology call prints instead,
+                     and FAKE_ANNOUNCE_RC the announce-topology exit code
   jobs.json          what `kubectl get jobs` prints
   logs/<svc>.log     the service logs that `docker exec <svc> ... /tmp/<svc>.log` reads
   on-trigger/<svc>.log  lines a trigger appends to logs/<svc>.log, standing for what services log during the run
@@ -54,12 +56,15 @@ if " exec " in f" {args} " and os.environ.get("FAKE_EXEC_FAIL"):
     sys.exit("Unable to connect to the server: net/http: TLS handshake timeout")
 if " exec " in f" {args} ":
     fake = os.environ["FAKE_DIR"]
+    announce = "announce-topology" in sys.argv[1:]
     with open(os.path.join(fake, "exec-calls.jsonl"), "a") as calls:
         calls.write(json.dumps({"argv": sys.argv[1:], "stdin": sys.stdin.read()}) + "\n")
-    output = os.path.join(fake, "exec-output")
+    output = os.path.join(fake, "announce-output" if announce else "exec-output")
+    if announce and not os.path.exists(output):
+        output = os.path.join(fake, "exec-output")
     if os.path.exists(output):
         sys.stdout.write(open(output).read())
-    sys.exit(0)
+    sys.exit(int(os.environ.get("FAKE_ANNOUNCE_RC", "0")) if announce else 0)
 if "get deploy" in args:
     env = [{"name": name, "value": "fake-" + name.lower()}
            for name in ("POSTGRES_USER", "POSTGRES_DB", "POSTGRES_PASSWORD", "REDIS_PASSWORD")]
@@ -93,6 +98,15 @@ elif args[0] == "stats":
     print("state\t1.00%\t10MiB / 1GiB")
 elif args[0] == "exec":
     rest = [a for a in args[1:] if a not in ("-i", "-e", "REDISCLI_AUTH")]
+    if any(part.endswith("announce-topology") for part in rest):
+        with open(os.path.join(fake, "exec-calls.jsonl"), "a") as calls:
+            calls.write(json.dumps({"argv": args, "stdin": sys.stdin.read()}) + "\n")
+        for name in ("announce-output", "exec-output"):
+            output = os.path.join(fake, name)
+            if os.path.exists(output):
+                sys.stdout.write(open(output).read())
+                break
+        sys.exit(int(os.environ.get("FAKE_ANNOUNCE_RC", "0")))
     command = [part.replace("/tmp/", logs) for part in rest[1:]]
     if "redis-cli" in command:
         sys.stdin.read()

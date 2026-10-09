@@ -131,6 +131,21 @@ bench_psql() {
     psql "${user}" "${db}" "${sql}"
 }
 
+# release-controller's announce-topology command with ARGS: inside
+# deploy/release-controller on k8s (the production image carries it on PATH),
+# inside the release-controller container on compose (the dev image builds it
+# next to the service binary). It reads the caller's stdin, so callers redirect
+# it, from /dev/null when they have no input; its JSON result goes to stdout and
+# its exit code is the command's own (2: usage or a release id already taken,
+# 3: no current_prod).
+bench_announce() {
+  if [ "$(bench_target)" = "k8s" ]; then
+    bench_kubectl exec -i deploy/release-controller -- announce-topology "$@"
+  else
+    docker exec -i "$(bench_container release-controller)" /app/release-controller/bin/announce-topology "$@"
+  fi
+}
+
 # Prints the final status once SCHEDULE's latest run is RUN_ID and is no
 # longer running, or "timeout" after LIMIT_S seconds. Polls every second.
 bench_wait_run() {

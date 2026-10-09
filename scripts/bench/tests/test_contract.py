@@ -27,7 +27,7 @@ def test_unknown_constant_raises(tmp_path):
 
 
 def test_real_contract_resolves_the_promotion_stream():
-    assert re.fullmatch(r"[a-z0-9._]+:v\d+", contract.stream_by_const("ReleasePromotedV1"))
+    assert re.fullmatch(r"[a-z0-9._]+:v\d+", contract.stream_by_const("ReleasePromotedV2"))
 
 
 VOCAB_FIXTURE = FIXTURE + """

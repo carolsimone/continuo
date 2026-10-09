@@ -26,7 +26,7 @@ def test_preflight_fetches_the_graph_of_every_schedule(tmp_path):
     kubectl.chmod(0o755)
     out = tmp_path / "out"
     out.mkdir()
-    (out / "restore.json").write_text(json.dumps({"release_id": "r", "topology": [], "image_tags": {}}))
+    (out / "restore.json").write_text(json.dumps({"release_id": "r", "topology": []}))
     env = dict(os.environ, PATH=f"{fakebin}:{os.environ['PATH']}", BENCH_TARGET="k8s", BENCH_KUBECONFIG="/dev/null")
     result = subprocess.run(["bash", str(BENCH / "preflight.sh"), str(out)], env=env,
                             capture_output=True, text=True)
