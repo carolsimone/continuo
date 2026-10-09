@@ -375,23 +375,26 @@ func TestCodeVersionRepository_RetiredNodeReattachesWithoutDuplicating(t *testin
 		"the version keeps the sequence number it was created with")
 }
 
-func TestCodeVersionRepository_ReturnsGraphReleaseID(t *testing.T) {
+func TestCodeVersionRepository_ReturnsGraphReleaseAndPromotionSeq(t *testing.T) {
 	ctx := context.Background()
 	client := newTestClient(t)
 	wipeVersionFixtures(t, client)
 	t.Cleanup(func() { wipeVersionFixtures(t, client) })
 
 	s := client.NewSession(ctx, neo4j.AccessModeWrite)
-	r, err := s.Run(ctx, `MERGE (m:Meta {key:'current_release'}) SET m.release_id = 'rel-7'`, nil)
+	r, err := s.Run(ctx, `MERGE (m:Meta {key:'current_release'}) SET m.release_id = 'rel-7', m.promotion_seq = 7`, nil)
 	require.NoError(t, err)
 	_, err = r.Consume(ctx)
 	require.NoError(t, err)
 	require.NoError(t, s.Close(ctx))
 
-	res, err := newVersionRepo(client).WriteVersions(ctx,
-		versionWriteInput("rel-7", time.Now().UTC(), nil, nil))
+	in := versionWriteInput("rel-7", time.Now().UTC(), nil, nil)
+	in.PromotionSeq = 7
+	res, err := newVersionRepo(client).WriteVersions(ctx, in)
 	require.NoError(t, err)
 	assert.Equal(t, "rel-7", res.GraphReleaseID)
+	assert.Equal(t, int64(7), res.GraphPromotionSeq)
+	assert.False(t, res.GraphAhead)
 }
 
 // More than one batch must behave exactly like one.
@@ -523,20 +526,24 @@ func TestCodeVersionRepository_GraphAheadRecordsUnattachedHistory(t *testing.T) 
 
 	base := time.Now().UTC()
 
-	// The graph reflects a NEWER release than the one being ingested.
+	// The graph reflects a NEWER promotion than the one being ingested. Its
+	// updated_at is deliberately older: ordering comes from the seq alone.
 	s := client.NewSession(ctx, neo4j.AccessModeWrite)
 	r, err := s.Run(ctx,
-		`MERGE (m:Meta {key:'current_release'}) SET m.release_id = 'rel-9', m.updated_at = $at`,
-		map[string]any{"at": base.Add(time.Hour)})
+		`MERGE (m:Meta {key:'current_release'}) SET m.release_id = 'rel-9', m.promotion_seq = 9, m.updated_at = $at`,
+		map[string]any{"at": base.Add(-time.Hour)})
 	require.NoError(t, err)
 	_, err = r.Consume(ctx)
 	require.NoError(t, err)
 	require.NoError(t, s.Close(ctx))
 
-	res, err := newVersionRepo(client).WriteVersions(ctx, versionWriteInput("rel-1", base,
-		[]codeversion.NodeVersion{nodeInput("analytics.retired", "sha256:gone")}, nil))
+	in := versionWriteInput("rel-1", base,
+		[]codeversion.NodeVersion{nodeInput("analytics.retired", "sha256:gone")}, nil)
+	in.PromotionSeq = 1
+	res, err := newVersionRepo(client).WriteVersions(ctx, in)
 	require.NoError(t, err)
 	assert.True(t, res.GraphAhead)
+	assert.Equal(t, int64(9), res.GraphPromotionSeq)
 	assert.Equal(t, []string{"analytics.retired"}, res.UnmatchedNodeIDs)
 	assert.Equal(t, 1, res.NodeVersionsCreated, "the history is recorded, not lost")
 
@@ -560,19 +567,25 @@ func TestCodeVersionRepository_SwapNotLandedIsNotReportedAsGraphAhead(t *testing
 	t.Cleanup(func() { wipeVersionFixtures(t, client) })
 
 	base := time.Now().UTC()
+
+	// The graph reflects an OLDER promotion; its updated_at is deliberately
+	// later, which must not matter.
 	s := client.NewSession(ctx, neo4j.AccessModeWrite)
 	r, err := s.Run(ctx,
-		`MERGE (m:Meta {key:'current_release'}) SET m.release_id = 'rel-0', m.updated_at = $at`,
-		map[string]any{"at": base.Add(-time.Hour)})
+		`MERGE (m:Meta {key:'current_release'}) SET m.release_id = 'rel-0', m.promotion_seq = 2, m.updated_at = $at`,
+		map[string]any{"at": base.Add(time.Hour)})
 	require.NoError(t, err)
 	_, err = r.Consume(ctx)
 	require.NoError(t, err)
 	require.NoError(t, s.Close(ctx))
 
-	res, err := newVersionRepo(client).WriteVersions(ctx, versionWriteInput("rel-1", base,
-		[]codeversion.NodeVersion{nodeInput("analytics.pending", "sha256:x")}, nil))
+	in := versionWriteInput("rel-1", base,
+		[]codeversion.NodeVersion{nodeInput("analytics.pending", "sha256:x")}, nil)
+	in.PromotionSeq = 3
+	res, err := newVersionRepo(client).WriteVersions(ctx, in)
 	require.NoError(t, err)
-	assert.False(t, res.GraphAhead, "an older topology means the swap has not landed yet")
+	assert.False(t, res.GraphAhead, "an older live promotion means the swap has not landed yet")
+	assert.Equal(t, int64(2), res.GraphPromotionSeq)
 	assert.Equal(t, []string{"analytics.pending"}, res.UnmatchedNodeIDs)
 	assert.Equal(t, 0, res.NodeVersionsCreated, "nothing is written; the handler retries instead")
 }

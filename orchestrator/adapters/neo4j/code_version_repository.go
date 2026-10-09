@@ -85,16 +85,16 @@ func (r *CodeVersionRepository) WriteVersions(
 	session := r.client.NewSession(ctx, neo4j.AccessModeWrite)
 	defer func() { _ = session.Close(ctx) }()
 
-	graphRelease, graphAt, err := r.readGraphRelease(ctx, session)
+	graphRelease, graphSeq, err := r.readGraphRelease(ctx, session)
 	if err != nil {
 		return out, err
 	}
 	out.GraphReleaseID = graphRelease
-	// A topology stamped later than this promotion means the swap has moved past
-	// it. Nodes this release carried may already have been retired and deleted,
-	// so waiting for them is futile — their history is recorded unattached below.
-	out.GraphAhead = graphRelease != "" && graphRelease != in.ReleaseID &&
-		graphAt.After(in.PromotedAt.UTC())
+	out.GraphPromotionSeq = graphSeq
+	// A live promotion newer than this one means the swap has moved past it.
+	// Nodes this release carried may already have been retired and deleted, so
+	// waiting for them is futile — their history is recorded unattached below.
+	out.GraphAhead = graphSeq > in.PromotionSeq
 
 	unitsByID := make(map[string]codeversion.CodeUnitVersion, len(in.Units))
 	for _, u := range in.Units {
@@ -120,6 +120,7 @@ func (r *CodeVersionRepository) WriteVersions(
 
 	r.logger.Info("code versions ingested",
 		"release_id", in.ReleaseID,
+		"promotion_seq", in.PromotionSeq,
 		"bundle_nodes", len(in.Nodes),
 		"node_versions_created", out.NodeVersionsCreated,
 		"unit_versions_created", out.UnitVersionsCreated,
@@ -130,31 +131,32 @@ func (r *CodeVersionRepository) WriteVersions(
 	return out, nil
 }
 
-// readGraphRelease returns the release_id the topology currently reflects, or ""
-// on a graph that has never been promoted to.
-func (r *CodeVersionRepository) readGraphRelease(ctx context.Context, session neo4j.SessionWithContext) (string, time.Time, error) {
+// readGraphRelease returns the release the topology currently reflects and its
+// promotion seq: "" and 0 on a graph that has never been promoted to, and 0 as
+// the seq of a graph promoted before promotion seqs existed.
+func (r *CodeVersionRepository) readGraphRelease(ctx context.Context, session neo4j.SessionWithContext) (string, int64, error) {
 	res, err := session.Run(ctx, `
 		OPTIONAL MATCH (m:Meta {key: 'current_release'})
-		RETURN m.release_id AS release_id, m.updated_at AS updated_at
+		RETURN m.release_id AS release_id, COALESCE(m.promotion_seq, 0) AS promotion_seq
 	`, nil)
 	if err != nil {
-		return "", time.Time{}, fmt.Errorf("read current release meta: %w", err)
+		return "", 0, fmt.Errorf("read current release meta: %w", err)
 	}
 	var id string
-	var at time.Time
+	var seq int64
 	if res.Next(ctx) {
 		rec := res.Record()
 		if v, ok := rec.Get("release_id"); ok && v != nil {
 			id, _ = v.(string)
 		}
-		if v, ok := rec.Get("updated_at"); ok && v != nil {
-			at, _ = v.(time.Time)
+		if v, ok := rec.Get("promotion_seq"); ok && v != nil {
+			seq, _ = v.(int64)
 		}
 	}
 	if err := res.Err(); err != nil {
-		return "", time.Time{}, fmt.Errorf("iterate current release meta: %w", err)
+		return "", 0, fmt.Errorf("iterate current release meta: %w", err)
 	}
-	return id, at, nil
+	return id, seq, nil
 }
 
 // writeBatch applies one batch of nodes in a single explicit transaction: read
