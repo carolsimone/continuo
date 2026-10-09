@@ -16,7 +16,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	orchestratorv1 "github.com/carolsimone/continuo/orchestrator/api/orchestrator/v1"
+	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/carolsimone/continuo/pkg/topologyartifact"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/google/uuid"
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -50,7 +52,7 @@ const probeUniqueID = "e2e_schema.rel_probe"
 //	→ topology artifact in S3 + manifest.loaded.candidate:v2 → release-controller derives the changed-node
 //	set → validation.requested:v1 → executor/k8s run a real dbt --empty job →
 //	validation.result:v1 terminal (kind=complete) → release-controller promotes
-//	→ release.promoted:v1 → orchestrator swaps the Neo4j topology.
+//	→ release.promoted:v2 → orchestrator loads the artifact and swaps the Neo4j topology.
 //
 // The changed service is service-1 (which contains rel_probe). current_prod is
 // seeded with every node EXCEPT rel_probe, so the derived changed set is exactly
@@ -142,6 +144,11 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 	// 7. The orchestrator must have swapped the Neo4j topology to this release.
 	//    The swap is asynchronous relative to promotion, so poll.
 	waitForTopologySwap(t, ctx, clients, releaseID, probeUniqueID, 2*time.Minute)
+
+	// 7a. Promotion moved current_prod by reference: it points at the release's
+	//     own artifact under the seq the promotion took, and the orchestrator's
+	//     live pointer carries that same seq.
+	assertCurrentProdByReference(t, ctx, clients, releaseID)
 
 	// 7b. The version-ingestion consumer must have recorded the promoted code
 	//     behind the node, fingerprinted identically to what the swap stamped
@@ -560,7 +567,7 @@ func TestE2E_ReleasePromote_PerServiceLeavesOthersIntact(t *testing.T) {
 
 	// Collect the service-2 and service-3 node IDs we expect to survive in the
 	// Neo4j graph. dbt-test nodes are excluded: they are validation-only, are
-	// stripped from release.promoted:v1 (Topology.WithoutTests), and never
+	// kept out of the graph by the orchestrator, and never
 	// become :Table nodes, so the graph-level anti-amputation check cannot look
 	// for them. current_prod retention of an unchanged test is covered by the
 	// bind-check e2e. A dbt-test's manifest id is "test.<project>.<name>[.<hash>]";
@@ -855,23 +862,43 @@ func resetReleaseControllerQueue(t *testing.T, ctx context.Context, clients *tes
 	require.NoError(t, err, "reset release outbox")
 }
 
-// seedCurrentProd writes the singleton current_prod row. Only unique_id and
-// content_hash matter for the change-detector; other Node fields default to
-// zero values on the release-controller side. release_id is reset to empty for
-// a clean baseline so a prior promoted release's value does not linger across
-// reused-stack runs.
+// seedCurrentProd points current_prod at a fresh topology artifact holding
+// nodes. Only unique_id and content_hash matter for the change detector, so the
+// artifact carries just those; other node fields stay empty. Each call writes
+// under its own release id, so a prior promoted release never lingers across
+// reused-stack runs. current_prod's promotion seq is left alone: seeding
+// announces nothing.
 func seedCurrentProd(t *testing.T, ctx context.Context, clients *testClients, nodes []map[string]string) {
 	t.Helper()
-	topoJSON, err := json.Marshal(nodes)
-	require.NoError(t, err, "marshal current_prod snapshot")
+	releaseID := "e2e-prod-" + uuid.NewString()[:8]
+	artifactNodes := make([]topologyartifact.Node, 0, len(nodes))
+	for _, n := range nodes {
+		artifactNodes = append(artifactNodes, topologyartifact.Node{
+			UniqueID:          n["unique_id"],
+			ContentHash:       n["content_hash"],
+			UpstreamUniqueIDs: []string{},
+		})
+	}
+	gz, sha, err := topologyartifact.Encode(topologyartifact.Document{
+		SchemaVersion: topologyartifact.SchemaVersion,
+		TenantID:      events.DefaultTenantID,
+		ReleaseID:     releaseID,
+		Nodes:         artifactNodes,
+	})
+	require.NoError(t, err, "encode the current_prod artifact")
+	key := topologyartifact.Key(events.DefaultTenantID, releaseID)
+	putS3Object(t, ctx, clients, key, gz)
 	_, err = clients.releaseDB.ExecContext(ctx,
-		`INSERT INTO current_prod (id, release_id, topology_snapshot, updated_at)
-		 VALUES (1, '', $1, now())
+		`INSERT INTO current_prod (id, release_id, topology_snapshot, topology_uri, topology_sha256, node_count, updated_at)
+		 VALUES (1, $1, NULL, $2, $3, $4, now())
 		 ON CONFLICT (id) DO UPDATE SET
 		   release_id = EXCLUDED.release_id,
-		   topology_snapshot = EXCLUDED.topology_snapshot,
+		   topology_snapshot = NULL,
+		   topology_uri = EXCLUDED.topology_uri,
+		   topology_sha256 = EXCLUDED.topology_sha256,
+		   node_count = EXCLUDED.node_count,
 		   updated_at = EXCLUDED.updated_at`,
-		topoJSON)
+		releaseID, "s3://"+e2eS3Bucket+"/"+key, sha, len(artifactNodes))
 	require.NoError(t, err, "seed current_prod")
 }
 
@@ -984,7 +1011,7 @@ func waitForReleasePromoted(t *testing.T, ctx context.Context, clients *testClie
 }
 
 // waitForTopologySwap polls Neo4j until the orchestrator has applied the
-// release.promoted:v1 swap: the :Meta singleton points at releaseID and the
+// release.promoted:v2 swap: the :Meta singleton points at releaseID and the
 // promoted node is active and stamped with the new release_id. The swap is
 // asynchronous relative to the release reaching "promoted", so this must poll.
 func waitForTopologySwap(t *testing.T, ctx context.Context, clients *testClients, releaseID, uniqueID string, timeout time.Duration) {

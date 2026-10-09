@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"testing"
@@ -10,9 +11,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestE2E_DAGLatestSnapshot verifies the ui exposes per-schedule
-// topology aggregates and the schedule graph carries topology_generation.
-// Both surfaces back the homepage "DAG Latest Snapshot" section.
+// TestE2E_DAGLatestSnapshot verifies the ui exposes per-schedule topology
+// aggregates and the schedule graph carries the live promotion seq (in its
+// topology_generation field). Both surfaces back the homepage "DAG Latest
+// Snapshot" section.
 func TestE2E_DAGLatestSnapshot(t *testing.T) {
 	base := os.Getenv("UI_HTTP_BASE")
 	if base == "" {
@@ -62,8 +64,14 @@ func TestE2E_DAGLatestSnapshot(t *testing.T) {
 		graph := mustGetJSON(t, fmt.Sprintf("%s/api/schedules/%s/graph", base, scheduleName))
 		gen, ok := graph["topology_generation"].(float64)
 		require.True(t, ok, "topology_generation must be present on /graph response (got %v)", graph["topology_generation"])
-		assert.Greater(t, gen, float64(0),
-			"topology_generation must be > 0 once the orchestrator has ingested a manifest")
+		assert.Greater(t, gen, float64(0), "topology_generation must be > 0 once a promotion has been applied")
+
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		clients := setupClients(t, ctx)
+		defer clients.close(ctx)
+		assert.Equal(t, float64(readLivePointer(ctx, clients).promotionSeq), gen,
+			"the schedule graph's topology_generation is the live promotion seq")
 	})
 
 	t.Run("topology_summary_fields_are_well_shaped", func(t *testing.T) {

@@ -2,16 +2,12 @@ package e2e
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
+	"sort"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/carolsimone/continuo/pkg/topologyartifact"
 	"github.com/google/uuid"
-	goredis "github.com/redis/go-redis/v9"
-	"github.com/stretchr/testify/require"
 )
 
 // topoNode is one node of the fixed e2e DAG seeded into the topology.
@@ -62,34 +58,11 @@ var e2eTestCounts = map[string]int{
 	"seed_table_3": 1,
 }
 
-// promotedNode mirrors orchestrator/domain/event.ReleasePromotedNode (the
-// release.promoted:v1 topology element).
-type promotedNode struct {
-	UniqueID          string   `json:"unique_id"`
-	SchemaName        string   `json:"schema_name"`
-	TableName         string   `json:"table_name"`
-	ServiceName       string   `json:"service_name"`
-	NodeType          string   `json:"node_type"`
-	ImageTag          string   `json:"image_tag"`
-	Schedule          string   `json:"schedule"`
-	UpstreamUniqueIDs []string `json:"upstream_unique_ids"`
-	TestCount         int      `json:"test_count"`
-}
-
-// seedTopology installs the full e2e topology by publishing a release.promoted:v1
-// event and waiting for the orchestrator to apply it. This reuses the production
-// promotion path (the same handler a real release drives), so it establishes the
-// complete topology state — Neo4j :Table/:DEPENDS_ON, the topology_generation +
-// :TopologyRoot, the :Meta current_release pointer, and schedules.loaded ->
-// schedule_catalog — without re-implementing any of it. It bypasses validation
-// (release.promoted is post-validation), so it can seed any topology, including
-// the intentionally-failing ftable_* DAGs whose runs fail at execution time.
-//
-// Per-service image_tag is read from the release-controller service_prod table
-// so the seeded nodes carry the content-addressed tag the kind images actually
-// have. Seed *data* (e2e_schema.seed_table_*) is materialized separately by
-// setup.sh's `dbt seed` step; this only establishes the topology graph.
-func seedTopology(t *testing.T, ctx context.Context, clients *testClients) {
+// e2eTopology returns the fixed e2e DAG as topology artifact nodes, plus the
+// schedules it declares, sorted. Per-service image_tag is read from the
+// release-controller service_prod table so the nodes carry the
+// content-addressed tag the kind images actually have.
+func e2eTopology(t *testing.T, ctx context.Context, clients *testClients) ([]topologyartifact.Node, []string) {
 	t.Helper()
 
 	// A prior blue/green test may have mutated service_prod; re-establish the
@@ -102,7 +75,7 @@ func seedTopology(t *testing.T, ctx context.Context, clients *testClients) {
 	}
 
 	scheduleSet := map[string]bool{}
-	topology := make([]promotedNode, 0, len(e2eDAG))
+	nodes := make([]topologyartifact.Node, 0, len(e2eDAG))
 	for _, n := range e2eDAG {
 		scheduleSet[n.schedule] = true
 		ups := make([]string, 0, len(n.upstream))
@@ -116,49 +89,42 @@ func seedTopology(t *testing.T, ctx context.Context, clients *testClients) {
 		if strings.HasPrefix(n.table, "seed_table") {
 			nodeType = "dbt-seed"
 		}
-		topology = append(topology, promotedNode{
-			UniqueID:          seedSchemaName + "." + n.table,
-			SchemaName:        seedSchemaName,
-			TableName:         n.table,
-			ServiceName:       n.service,
-			NodeType:          nodeType,
-			ImageTag:          imageTags[n.service],
-			Schedule:          n.schedule,
-			UpstreamUniqueIDs: ups,
-			TestCount:         e2eTestCounts[n.table],
+		nodes = append(nodes, topologyartifact.Node{
+			UniqueID:           seedSchemaName + "." + n.table,
+			SchemaName:         seedSchemaName,
+			TableName:          n.table,
+			ResolvedRelationID: seedSchemaName + "." + n.table,
+			ServiceName:        n.service,
+			NodeType:           nodeType,
+			ImageTag:           imageTags[n.service],
+			Schedule:           n.schedule,
+			UpstreamUniqueIDs:  ups,
+			TestCount:          e2eTestCounts[n.table],
 		})
 	}
+	schedules := make([]string, 0, len(scheduleSet))
+	for s := range scheduleSet {
+		schedules = append(schedules, s)
+	}
+	sort.Strings(schedules)
+	return nodes, schedules
+}
 
-	releaseID := "e2e-seed-" + uuid.NewString()[:8]
-	payload, err := json.Marshal(map[string]any{
-		"release_id": releaseID,
-		"topology":   topology,
-		"image_tags": imageTags,
-	})
-	require.NoError(t, err, "marshal release.promoted payload")
-
-	require.NoError(t, clients.redisClient.XAdd(ctx, &goredis.XAddArgs{
-		Stream: streams.ReleasePromotedV1,
-		Values: map[string]any{"payload": string(payload)},
-	}).Err(), "publish release.promoted:v1")
-
-	// Wait until the orchestrator has applied the promotion: the Neo4j :Meta
-	// current_release pointer flips to this release, and the schedule_catalog
-	// reflects every seeded schedule (so the tests' ActivateSchedule/Trigger
-	// calls find their schedules). Polling both proves the swap committed and
-	// schedules.loaded propagated to the state service.
-	wantSchedules := len(scheduleSet)
-	pollUntil(t, ctx, 60*time.Second, 1*time.Second, func() (bool, error) {
-		if neo4jScalarString(ctx, clients,
-			`MATCH (m:Meta {key: 'current_release'}) RETURN m.release_id AS v`, nil) != releaseID {
-			return false, nil
-		}
-		var count int
-		if err := clients.stateDB.QueryRowContext(ctx,
-			`SELECT COUNT(DISTINCT schedule_name) FROM schedule_catalog WHERE removed_at IS NULL`,
-		).Scan(&count); err != nil {
-			return false, nil
-		}
-		return count >= wantSchedules, nil
-	}, fmt.Sprintf("timeout waiting for orchestrator to apply seeded topology (release %s)", releaseID))
+// seedTopology installs the full e2e topology through release-controller's
+// announce-topology: release-controller writes the artifact, takes the next
+// promotion seq and queues release.promoted:v2, and the orchestrator applies it
+// on the path a promoted release takes — Neo4j :Table/:DEPENDS_ON, :Meta and
+// :TopologyRoot, schedules.loaded -> schedule_catalog. It skips validation, so
+// it can seed any topology, including the intentionally failing ftable_* DAGs
+// whose runs fail at execution time. It returns the announcement, whose
+// promotion seq new runs carry.
+//
+// Seed *data* (e2e_schema.seed_table_*) is materialized separately by
+// setup.sh's `dbt seed` step; this only establishes the topology graph.
+func seedTopology(t *testing.T, ctx context.Context, clients *testClients) announceResult {
+	t.Helper()
+	nodes, schedules := e2eTopology(t, ctx, clients)
+	res := announceTopology(t, ctx, "e2e-seed-"+uuid.NewString()[:8], nodes)
+	waitForAnnouncedTopology(t, ctx, clients, res, schedules)
+	return res
 }
