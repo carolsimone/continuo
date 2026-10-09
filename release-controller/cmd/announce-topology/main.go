@@ -211,6 +211,12 @@ func readTopology(r io.Reader) (release.Topology, error) {
 			SecretRef:          n.SecretRef,
 		})
 	}
+	// Orchestrator strips every dbt-test node before it applies a promotion, so
+	// a topology that is all dbt-test nodes swaps in nothing and retires every
+	// live node. Require at least one node that survives that filter.
+	if len(topo.WithoutTests()) == 0 {
+		return nil, errors.New("the topology has no node that survives the live-topology filter (every node is a dbt-test); announcing it would retire every live node")
+	}
 	return topo, nil
 }
 

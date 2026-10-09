@@ -48,8 +48,11 @@ func AnnounceTopology(ctx context.Context, d *Deps, releaseID string, topo relea
 	if !releaseIDPattern.MatchString(releaseID) {
 		return AnnounceResult{}, fmt.Errorf("%w: %q", ErrInvalidReleaseID, releaseID)
 	}
-	if len(topo) == 0 {
-		return AnnounceResult{}, errors.New("announce topology: the topology has no nodes; announcing it would retire every live node")
+	// Orchestrator strips every dbt-test node before it applies a promotion, so a
+	// topology that is all dbt-test nodes swaps in nothing and retires every live
+	// node. Require at least one node that survives that filter.
+	if len(topo.WithoutTests()) == 0 {
+		return AnnounceResult{}, errors.New("announce topology: the topology has no node that survives the live-topology filter (every node is a dbt-test); announcing it would retire every live node")
 	}
 
 	u := d.NewUoW()
@@ -57,6 +60,13 @@ func AnnounceTopology(ctx context.Context, d *Deps, releaseID string, topo relea
 		return AnnounceResult{}, fmt.Errorf("begin tx: %w", err)
 	}
 	defer u.Rollback() //nolint:errcheck
+
+	// Hold the release-queue lock across the current_prod read, the seq
+	// allocation and the announcement, so a concurrent promotion cannot commit
+	// between them and be clobbered under a higher seq.
+	if err := u.LockReleaseQueue(ctx); err != nil {
+		return AnnounceResult{}, fmt.Errorf("lock release queue: %w", err)
+	}
 
 	run, err := u.RunRepo().Get(ctx, releaseID)
 	if err != nil {
@@ -104,6 +114,13 @@ func ReannounceCurrentProd(ctx context.Context, d *Deps) (AnnounceResult, error)
 		return AnnounceResult{}, fmt.Errorf("begin tx: %w", err)
 	}
 	defer u.Rollback() //nolint:errcheck
+
+	// Hold the release-queue lock across the current_prod read, the seq
+	// allocation and the re-announcement, so a concurrent promotion cannot
+	// commit between them and be clobbered under a higher seq.
+	if err := u.LockReleaseQueue(ctx); err != nil {
+		return AnnounceResult{}, fmt.Errorf("lock release queue: %w", err)
+	}
 
 	cp, err := u.CurrentProdRepo().Get(ctx)
 	if err != nil {

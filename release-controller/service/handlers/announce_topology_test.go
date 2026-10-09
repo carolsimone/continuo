@@ -91,6 +91,27 @@ func TestAnnounceTopology_RefusesAnEmptyTopology(t *testing.T) {
 	assert.Empty(t, outboxEntries(store))
 }
 
+// A topology of only dbt-test nodes survives the len(topo)==0 guard but
+// orchestrator strips every dbt-test when it applies the promotion, leaving an
+// empty swap set that retires every live node. Announcing it is refused, and a
+// topology with at least one non-test node is accepted.
+func TestAnnounceTopology_RefusesAnAllDbtTestTopology(t *testing.T) {
+	deps, store := newDeps(time.Unix(100, 0).UTC())
+	onlyTests := release.Topology{
+		{UniqueID: "test.p.not_null_a.1", ServiceName: "svc", NodeType: "dbt-test", UpstreamUniqueIDs: []string{"a"}},
+	}
+	_, err := handlers.AnnounceTopology(context.Background(), deps, "bench-1", onlyTests)
+	require.Error(t, err)
+	assert.Empty(t, outboxEntries(store))
+	assert.Equal(t, int64(0), store.LastPromotionSeq())
+
+	_, err = handlers.AnnounceTopology(context.Background(), deps, "bench-2", release.Topology{
+		{UniqueID: "a", ServiceName: "svc", NodeType: "dbt-model", UpstreamUniqueIDs: []string{}},
+		{UniqueID: "test.p.not_null_a.1", ServiceName: "svc", NodeType: "dbt-test", UpstreamUniqueIDs: []string{"a"}},
+	})
+	require.NoError(t, err)
+}
+
 func TestReannounceCurrentProd(t *testing.T) {
 	t.Run("nothing promoted", func(t *testing.T) {
 		deps, store := newDeps(time.Unix(100, 0).UTC())

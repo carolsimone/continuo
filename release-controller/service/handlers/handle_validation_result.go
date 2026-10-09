@@ -145,6 +145,15 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipe
 	releaseID := r.ID()
 	ref := r.CandidateTopologyRef()
 
+	// Hold the release-queue lock across the current_prod read, the seq
+	// allocation and the current_prod move, so a concurrent announce or
+	// re-announce cannot read current_prod, take a higher seq and clobber this
+	// promotion between those steps. Every holder takes this lock before reading
+	// current_prod, so the order is consistent.
+	if err := u.LockReleaseQueue(ctx); err != nil {
+		return fmt.Errorf("lock release queue: %w", err)
+	}
+
 	cp, err := u.CurrentProdRepo().Get(ctx)
 	if err != nil {
 		return fmt.Errorf("get current prod: %w", err)

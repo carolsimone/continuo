@@ -131,6 +131,21 @@ func TestTopologyRoundTrip(t *testing.T) {
 	assert.Equal(t, topo, got)
 }
 
+// A topology of only dbt-test nodes is refused: orchestrator strips every
+// dbt-test when it applies the promotion, so announcing one would leave an
+// empty swap set that retires every live node. One non-test node is enough.
+func TestReadTopology_RefusesAnAllDbtTestTopology(t *testing.T) {
+	onlyTests := `[{"unique_id":"test.p.not_null_a.1","service_name":"svc","node_type":"dbt-test","upstream_unique_ids":["a"]}]`
+	_, err := readTopology(strings.NewReader(onlyTests))
+	require.Error(t, err)
+
+	withModel := `[{"unique_id":"a","service_name":"svc","node_type":"dbt-model","upstream_unique_ids":[]},
+	 {"unique_id":"test.p.not_null_a.1","service_name":"svc","node_type":"dbt-test","upstream_unique_ids":["a"]}]`
+	topo, err := readTopology(strings.NewReader(withModel))
+	require.NoError(t, err)
+	require.Len(t, topo, 2)
+}
+
 func TestLoadConfig_NamesEveryMissingKey(t *testing.T) {
 	for _, key := range []string{"POSTGRES_HOST", "POSTGRES_USER", "POSTGRES_PASSWORD", "S3_ENDPOINT_URL", "S3_BUCKET", "AWS_DEFAULT_REGION"} {
 		t.Setenv(key, "")
