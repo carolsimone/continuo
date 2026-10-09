@@ -431,10 +431,14 @@ func main() {
 	// :NodeVersion / :CodeUnitVersion history behind the topology. Isolated from
 	// the swap so promotion never waits on object storage, and free to retry
 	// until the swap it trails has landed.
-	codeBundleReader := s3infra.NewCodeBundleReader(
-		cfg.S3.EndpointURL, cfg.S3.Bucket, cfg.S3.Region,
+	codeBundleReader, err := s3infra.NewCodeBundleReader(
+		ctx, cfg.S3.EndpointURL, cfg.S3.Bucket, cfg.S3.Region,
 		cfg.S3.AccessKeyID, cfg.S3.SecretAccessKey,
 	)
+	if err != nil {
+		logger.Error("Failed to build the object-storage client", "error", err)
+		os.Exit(1)
+	}
 	codeVersionRepo := neo4jinfra.NewCodeVersionRepository(neo4jClient, logger)
 	releasePromotedVersionsHandler := handlers.NewReleasePromotedVersionsHandler(
 		postgres.NewPostgresUnitOfWork(pgDB, logger), codeBundleReader, codeVersionRepo, logger)
