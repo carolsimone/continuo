@@ -19,75 +19,59 @@ import (
 	"github.com/google/uuid"
 )
 
-// releaseSchedulesNamespace seeds the deterministic event_id stamped on
-// schedules.loaded:v1 emissions from the release-promoted path. UUID v5
-// ensures duplicate emissions for the same release_id resolve to the
-// same event_id, so state's ScheduleCatalogHandler dedups them as one.
+// releaseSchedulesNamespace seeds the deterministic ids stamped on the outbox
+// rows this handler writes: the schedules.loaded:v1 event_id, derived from the
+// release and its promotion seq, and the aggregate ids, derived from the release.
 //
-// IMMUTABLE: changing this value re-keys every schedules.loaded:v1
-// event_id derived from a release_id and breaks consumer-side dedup for
-// any in-flight redeliveries. The integration test mirrors this literal;
-// keep them in sync.
+// IMMUTABLE: changing this value re-keys every id derived from it. The tests
+// mirror this literal; keep them in sync.
 var releaseSchedulesNamespace = uuid.MustParse("f0d20655-ae9f-4dc9-a512-99f7ce3955c8")
 
-// ReleasePromotedHandler consumes release.promoted:v1 messages, atomically
-// swaps the Neo4j topology via ReleasePromotionRepository, increments the
-// topology_generation counter, updates :TopologyRoot service_metadata in Neo4j,
-// and emits a schedules.loaded:v1 outbox entry so that the state service can
-// refresh its schedule projections. The handler is idempotent: the outbox row
-// is always emitted (even when changed=false) because the deterministic event_id
-// (uuid.NewSHA1 of releaseSchedulesNamespace + release_id) allows state's
-// ScheduleCatalogHandler to dedup re-emissions at the consumer side.
+// ReleasePromotedHandler consumes release promotions on the topology-swap group.
+// It swaps the live Neo4j topology when a promotion is newer than the live one
+// and, in the same Postgres transaction as its dedup row, writes the follow-up
+// events state needs: schedules.loaded:v1 for an applied or redelivered
+// promotion, and release.seeds.pending:v1 for the seeds it changed. A promotion
+// older than the live topology changes nothing.
 type ReleasePromotedHandler struct {
-	uow               uow.UnitOfWork
-	topology          repository.ReleasePromotionRepository
-	topologyRepo      repository.TopologyRepository
-	topologyStateRepo repository.TopologyStateRepository
-	logger            *slog.Logger
+	uow      uow.UnitOfWork
+	topology repository.ReleasePromotionRepository
+	logger   *slog.Logger
 }
 
 // NewReleasePromotedHandler creates a new ReleasePromotedHandler.
 func NewReleasePromotedHandler(
 	u uow.UnitOfWork,
 	topo repository.ReleasePromotionRepository,
-	topologyRepo repository.TopologyRepository,
-	topologyStateRepo repository.TopologyStateRepository,
 	logger *slog.Logger,
 ) *ReleasePromotedHandler {
-	return &ReleasePromotedHandler{
-		uow:               u,
-		topology:          topo,
-		topologyRepo:      topologyRepo,
-		topologyStateRepo: topologyStateRepo,
-		logger:            logger,
-	}
+	return &ReleasePromotedHandler{uow: u, topology: topo, logger: logger}
 }
 
-// Handle processes a release.promoted:v1 message. Steps:
-//  1. Begin Postgres transaction.
-//  2. Dedup check — if the (messageID, release.promoted:v1) pair is already
-//     recorded, commit and return nil (ACK). outboxEntryID is threaded through
-//     so a re-XADD of the same upstream outbox row (different Redis message ID,
-//     same business event) is caught by the secondary unique index.
-//  3. Translate wire nodes to domain nodes and call PromoteRelease on the
-//     Neo4j repository.
-//  4. Derive schedule names and service_metadata from the promoted nodes.
-//  5. If changed=true: increment topology_generation and write :TopologyRoot.
-//     If changed=false: read the current generation for the payload.
-//  6. Always write a schedules.loaded:v1 outbox entry. The event_id is
-//     deterministic (uuid v5 of releaseSchedulesNamespace + release_id), so
-//     state's ScheduleCatalogHandler deduplicates re-emissions from idempotent
-//     redeliveries.
-//  7. Mark dedup row as completed, commit.
+// Handle processes one promotion. Steps:
+//  1. Begin the Postgres transaction and dedup the message. Several consumer
+//     groups read the stream, so the dedup is scoped by this group's name;
+//     outboxEntryID catches a re-XADD of the same upstream outbox row under a
+//     fresh Redis message ID.
+//  2. Swap the topology through PromoteRelease, which decides by promotion seq
+//     and records the seq and service metadata in the swap's own transaction.
+//  3. Applied or redelivered: write schedules.loaded:v1 and the seeds request.
+//     A redelivery writes them again — after a crash between the Neo4j commit
+//     and this transaction they were never committed — and both are idempotent
+//     downstream: the event_id is deterministic per promotion and state derives
+//     the seeds run id from the release.
+//  4. Stale: write nothing.
+//  5. Mark the dedup row completed and commit.
 func (h *ReleasePromotedHandler) Handle(
 	ctx context.Context,
 	messageID string,
 	outboxEntryID *uuid.UUID,
 	in domainModel.PromoteReleaseInput,
 ) error {
-	h.logger.Info("Processing release.promoted:v1",
+	h.logger.Info("Processing release.promoted",
 		"message_id", messageID,
 		"release_id", in.ReleaseID,
+		"promotion_seq", in.PromotionSeq,
 		"node_count", len(in.Topology),
 	)
 
@@ -101,18 +85,6 @@ func (h *ReleasePromotedHandler) Handle(
 	}
 	defer h.uow.Rollback() //nolint:errcheck
 
-	// Dedup scope rule: when a single consumer group reads a stream, use the
-	// stream name as the dedup scope. When MULTIPLE consumer groups read the
-	// SAME stream, each group must scope its dedup by its CONSUMER-GROUP name
-	// so their message_processing rows remain distinct and the V12 unique index
-	// (outbox_entry_id, stream_name) keeps them independent.
-	//
-	// release.promoted:v1 has two orchestrator consumer groups:
-	//   - this handler (topology-swap): group streams.OrchestratorReleasePromoted
-	//   - SeedBuildOnPromoteHandler:    group streams.OrchestratorReleasePromotedSeedBuild
-	// Both scope by their group name so their dedup rows never collide.
-	// outboxEntryID provides a secondary uniqueness key that catches a re-XADD
-	// of the same upstream outbox row under a fresh Redis message ID.
 	msgProcessingID, shouldSkip, err := messageprocessing.DedupWithOutboxEntryID(
 		ctx, h.uow.MessageProcessingRepo(), h.logger,
 		messageID, streams.OrchestratorReleasePromoted, payload, outboxEntryID,
@@ -124,25 +96,8 @@ func (h *ReleasePromotedHandler) Handle(
 		return nil
 	}
 
-	// Translate wire-format nodes to domain nodes.
-	domainNodes := toDomainNodes(in.Topology)
-
-	// Atomically swap the Neo4j topology. PromoteRelease short-circuits (returns
-	// changed=false) when the :Meta singleton already records the same release_id.
-	// time.Now().UTC() at the boundary: the Neo4j Go driver serialises time.Time
-	// using its Location().String() as a timezone identifier and rejects "Local".
-	// The adapter also normalises to UTC defensively (see release_promotion_repository.go),
-	// but converting here documents the contract and protects future call sites
-	// from re-encountering the same bug.
-	changed, err := h.topology.PromoteRelease(ctx, in.ReleaseID, domainNodes, time.Now().UTC())
-	if err != nil {
-		// Transient failure: do not write dedup so the message can be replayed.
-		return fmt.Errorf("failed to promote release topology: %w", err)
-	}
-
-	// Derive sorted-unique schedule names and per-service metadata from the
-	// promoted topology. image_tag comes from the per-node field (first-seen wins for
-	// duplicate service entries).
+	// Sorted-unique schedule names and per-service metadata; image_tag comes
+	// from the per-node field (first-seen wins for duplicate service entries).
 	scheduleNames, serviceMetadata := scheduleAndMetadataFromNodes(
 		in.Topology,
 		func(n domainEvent.ReleasePromotedNode) (schedule, service, imageTag string) {
@@ -150,116 +105,91 @@ func (h *ReleasePromotedHandler) Handle(
 		},
 	)
 
-	// Deterministic event_id: uuid v5 of (namespace, release_id) guarantees that
-	// every re-emission for the same release carries the identical event_id, so
-	// state's ScheduleCatalogHandler deduplicates it as one logical event.
-	eventID := uuid.NewSHA1(releaseSchedulesNamespace, []byte(in.ReleaseID))
-
-	// After a successful swap, increment the topology_generation counter and
-	// write the updated service_metadata to :TopologyRoot so runs initialised
-	// after this promotion inherit the correct generation and metadata.
-	// On a no-op (changed=false), read the current generation for the payload
-	// without bumping it — the topology has not actually changed.
-	//
-	// Drift window — known limitation. IncrementGeneration commits its own tx
-	// independent of the main UoW (topology_state is shared mutable state; see
-	// orchestrator/adapters/postgres/topology_state_repository.go).
-	// If attempt 1 commits PromoteRelease in Neo4j and IncrementGeneration in
-	// Postgres but the main UoW then rolls back, attempt 2 sees changed=false
-	// and reads the already-advanced generation — end state stays consistent.
-	// If attempt 1 fails BEFORE IncrementGeneration commits and PromoteRelease
-	// already committed, attempt 2 sees changed=false with the OLD generation,
-	// and :TopologyRoot stays at the previous generation. Fully closing this
-	// requires pulling IncrementGeneration into the main UoW — tracked as a
-	// cross-handler refactor in https://github.com/carolsimone/continuo/issues/94.
-	// Calling SetServiceMetadata on both branches narrows the window: if
-	// attempt 1 incremented but never wrote :TopologyRoot, attempt 2's retry
-	// catches up since SetServiceMetadata is an idempotent MERGE.
-	var topologyGeneration int64
-	if changed {
-		topologyGeneration, err = h.topologyStateRepo.IncrementGeneration(ctx)
-		if err != nil {
-			return fmt.Errorf("increment topology generation: %w", err)
-		}
-	} else {
-		topologyGeneration, err = h.topologyStateRepo.GetGeneration(ctx)
-		if err != nil {
-			return fmt.Errorf("get current topology generation: %w", err)
-		}
-		h.logger.Info("Release already promoted — re-emitting schedules.loaded:v1 for idempotency",
-			"message_id", messageID,
-			"release_id", in.ReleaseID,
-			"topology_generation", topologyGeneration,
-		)
-	}
-	// SetServiceMetadata is an idempotent MERGE on :TopologyRoot, so calling
-	// it on the changed=false branch catches up any cross-step crash where
-	// attempt 1 incremented the counter but never landed :TopologyRoot. On
-	// the no-crash redelivery case it re-writes the same values plus an
-	// updated_at bump — no functional impact.
-	if err := h.topologyRepo.SetServiceMetadata(ctx, serviceMetadata, topologyGeneration); err != nil {
-		return fmt.Errorf("set service metadata on :TopologyRoot: %w", err)
+	// time.Now().UTC() at the boundary: the Neo4j Go driver serialises
+	// time.Time using its Location().String() as a timezone identifier and
+	// rejects "Local".
+	outcome, err := h.topology.PromoteRelease(ctx, in.ReleaseID, in.PromotionSeq,
+		toDomainNodes(in.Topology), serviceMetadata, time.Now().UTC())
+	if err != nil {
+		// Transient failure: rolling back discards the dedup row so the message replays.
+		return fmt.Errorf("failed to promote release topology: %w", err)
 	}
 
-	// Build the schedules.loaded:v1 outbox payload consumed by state's
-	// ScheduleCatalogHandler to refresh its schedule projections.
-	outboxPayload, err := json.Marshal(map[string]interface{}{
-		"event_id":            eventID.String(),
-		"schedule_names":      scheduleNames,
-		"service_metadata":    serviceMetadata,
-		"topology_generation": topologyGeneration,
+	if outcome != topology.PromotionStale {
+		if err := h.writeSchedulesLoaded(ctx, msgProcessingID, in.ReleaseID, in.PromotionSeq, scheduleNames, serviceMetadata); err != nil {
+			return err
+		}
+		if err := h.writeSeedsPending(ctx, msgProcessingID, in); err != nil {
+			return err
+		}
+	}
+	return h.complete(ctx, msgProcessingID, in.ReleaseID, in.PromotionSeq, outcome)
+}
+
+// writeSchedulesLoaded writes the schedules.loaded:v1 row state reconciles its
+// schedule catalog from. The promotion seq travels with it so state can ignore
+// a catalog older than the one it already applied.
+func (h *ReleasePromotedHandler) writeSchedulesLoaded(
+	ctx context.Context,
+	msgProcessingID uuid.UUID,
+	releaseID string,
+	promotionSeq int64,
+	scheduleNames []string,
+	serviceMetadata map[string]map[string]string,
+) error {
+	body, err := json.Marshal(map[string]any{
+		"event_id":         schedulesLoadedEventID(releaseID, promotionSeq).String(),
+		"schedule_names":   scheduleNames,
+		"service_metadata": serviceMetadata,
+		"promotion_seq":    promotionSeq,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to marshal outbox payload: %w", err)
 	}
-
-	// AggregateID is derived deterministically from release_id so every
-	// outbox row this handler writes for the same release shares the same
-	// aggregate identity. That makes audit queries (e.g., "show all outbox
-	// rows for release X") trivial and keeps the always-emit-on-redelivery
-	// pattern from leaving uncorrelated duplicates in orchestrator_outbox.
-	outboxEntry := &pkgoutbox.Entry{
+	// AggregateID is derived from release_id so every row written for one release
+	// shares an aggregate identity: audit queries ("all outbox rows for release
+	// X") stay trivial and re-emissions on redelivery stay correlated.
+	if err := h.uow.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
 		ID:                  uuid.New(),
 		MessageProcessingID: &msgProcessingID,
 		AggregateType:       "orchestrator",
-		AggregateID:         uuid.NewSHA1(releaseSchedulesNamespace, []byte("aggregate:"+in.ReleaseID)),
+		AggregateID:         uuid.NewSHA1(releaseSchedulesNamespace, []byte("aggregate:"+releaseID)),
 		EventType:           domain.EventTypeReleasePromoted,
-		Payload:             outboxPayload,
+		Payload:             body,
 		StreamName:          streams.SchedulesLoadedV1,
 		Status:              "pending",
-	}
-
-	if err := h.uow.OutboxRepo().Create(ctx, outboxEntry); err != nil {
+	}); err != nil {
 		return fmt.Errorf("failed to write to outbox: %w", err)
 	}
+	return nil
+}
 
-	// The seeds this release changed have to be built into the production schema.
-	// That request is written here, inside the transaction that swaps the
-	// topology, so the :Table nodes a run will be projected onto are guaranteed to
-	// exist by the time anything acts on it — the snapshot writer MATCHes them and
-	// would otherwise attach no :EXECUTES edges at all. Each node carries the
-	// image tag and node type from THIS release, so a promotion that is overtaken
-	// by a later one still builds its seeds with its own image.
-	if err := h.writeSeedsPending(ctx, msgProcessingID, in); err != nil {
-		return err
-	}
+// schedulesLoadedEventID is the deterministic event_id of the schedules.loaded:v1
+// row for one promotion: the same release announced again under a newer seq is a
+// new event.
+func schedulesLoadedEventID(releaseID string, promotionSeq int64) uuid.UUID {
+	return uuid.NewSHA1(releaseSchedulesNamespace, []byte(fmt.Sprintf("%s|%d", releaseID, promotionSeq)))
+}
 
+// complete marks the dedup row processed and commits.
+func (h *ReleasePromotedHandler) complete(
+	ctx context.Context,
+	msgProcessingID uuid.UUID,
+	releaseID string,
+	promotionSeq int64,
+	outcome topology.PromotionOutcome,
+) error {
 	if err := h.uow.MessageProcessingRepo().UpdateState(ctx, msgProcessingID, "completed"); err != nil {
 		return fmt.Errorf("failed to update message state: %w", err)
 	}
-
 	if err := h.uow.Commit(); err != nil {
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
-
 	h.logger.Info("Release promotion processing finished",
-		"release_id", in.ReleaseID,
-		"node_count", len(in.Topology),
-		"schedule_count", len(scheduleNames),
-		"topology_generation", topologyGeneration,
-		"changed", changed,
+		"release_id", releaseID,
+		"promotion_seq", promotionSeq,
+		"outcome", string(outcome),
 	)
-
 	return nil
 }
 

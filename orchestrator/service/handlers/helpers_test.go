@@ -10,7 +10,6 @@ import (
 	"time"
 
 	neo4jinfra "github.com/carolsimone/continuo/orchestrator/adapters/neo4j"
-	"github.com/carolsimone/continuo/orchestrator/domain/repository"
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/google/uuid"
@@ -134,58 +133,6 @@ func (f *fakeUnitOfWork) Rollback() error                 { f.RolledBackTx = tru
 func newTestLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 }
-
-// ── fakes: repository.TopologyRepository ─────────────────────────────────────
-
-// fakeTopologyRepository is an in-memory stub for repository.TopologyRepository.
-type fakeTopologyRepository struct {
-	setServiceMetadataCalls []setServiceMetadataCall
-	setServiceMetadataErr   error
-}
-
-type setServiceMetadataCall struct {
-	ServiceMetadata    map[string]map[string]string
-	TopologyGeneration int64
-}
-
-func (f *fakeTopologyRepository) SetServiceMetadata(_ context.Context, serviceMetadata map[string]map[string]string, topologyGeneration int64) error {
-	f.setServiceMetadataCalls = append(f.setServiceMetadataCalls, setServiceMetadataCall{
-		ServiceMetadata:    serviceMetadata,
-		TopologyGeneration: topologyGeneration,
-	})
-	return f.setServiceMetadataErr
-}
-
-var _ repository.TopologyRepository = (*fakeTopologyRepository)(nil)
-
-// ── fakes: repository.TopologyStateRepository ────────────────────────────────
-
-type fakeTopologyStateRepository struct {
-	generation             int64
-	incrementGenerationErr error
-	getGenerationErr       error
-	incrementCalls         int
-	getCalls               int
-}
-
-func (f *fakeTopologyStateRepository) IncrementGeneration(_ context.Context) (int64, error) {
-	f.incrementCalls++
-	if f.incrementGenerationErr != nil {
-		return 0, f.incrementGenerationErr
-	}
-	f.generation++
-	return f.generation, nil
-}
-
-func (f *fakeTopologyStateRepository) GetGeneration(_ context.Context) (int64, error) {
-	f.getCalls++
-	if f.getGenerationErr != nil {
-		return 0, f.getGenerationErr
-	}
-	return f.generation, nil
-}
-
-var _ repository.TopologyStateRepository = (*fakeTopologyStateRepository)(nil)
 
 // ── integration test infrastructure ──────────────────────────────────────────
 

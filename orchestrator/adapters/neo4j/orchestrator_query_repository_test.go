@@ -360,3 +360,28 @@ func TestGetNodeLocation_UnknownNode_ErrNodeNotFound(t *testing.T) {
 	_, err := repo.GetNodeLocation(context.Background(), "analytics.absent")
 	require.True(t, errors.Is(err, domain.ErrNodeNotFound))
 }
+
+// The drift views compare runs with the live topology's promotion seq, which the
+// swap writes on :TopologyRoot in its own transaction.
+func TestOrchestratorQueryRepository_GetGeneration_ReadsTheLivePromotionSeq(t *testing.T) {
+	repo, client, cleanup := newTestQueryRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+	s := client.NewSession(ctx, neo4j.AccessModeWrite)
+	t.Cleanup(func() {
+		_, _ = s.Run(ctx, `MATCH (root:TopologyRoot {id:'singleton'}) REMOVE root.promotion_seq`, nil)
+		s.Close(ctx)
+	})
+
+	_, err := s.Run(ctx, `MATCH (root:TopologyRoot {id:'singleton'}) REMOVE root.promotion_seq`, nil)
+	require.NoError(t, err)
+	got, err := repo.GetGeneration(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), got, "0 before the first promotion")
+
+	_, err = s.Run(ctx, `MERGE (root:TopologyRoot {id:'singleton'}) SET root.promotion_seq = 9`, nil)
+	require.NoError(t, err)
+	got, err = repo.GetGeneration(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, int64(9), got)
+}

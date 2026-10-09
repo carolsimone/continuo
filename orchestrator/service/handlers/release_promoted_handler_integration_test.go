@@ -3,6 +3,7 @@ package handlers_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	neo4jinfra "github.com/carolsimone/continuo/orchestrator/adapters/neo4j"
@@ -22,10 +23,10 @@ import (
 // declared in release_promoted_handler.go.
 var releaseSchedulesNamespaceForTest = uuid.MustParse("f0d20655-ae9f-4dc9-a512-99f7ce3955c8")
 
-// deterministicEventID returns the UUID v5 for a given release_id using the
-// same algorithm as the handler, so integration tests can assert the exact value.
-func deterministicEventID(releaseID string) string {
-	return uuid.NewSHA1(releaseSchedulesNamespaceForTest, []byte(releaseID)).String()
+// deterministicEventID returns the schedules.loaded:v1 event_id for one
+// promotion using the same algorithm as the handler.
+func deterministicEventID(releaseID string, promotionSeq int64) string {
+	return uuid.NewSHA1(releaseSchedulesNamespaceForTest, []byte(fmt.Sprintf("%s|%d", releaseID, promotionSeq))).String()
 }
 
 // wipeReleasePromotedFixtures removes any :Table nodes and the
@@ -39,6 +40,8 @@ func wipeReleasePromotedFixtures(t *testing.T, client neo4jinfra.Neo4jClient) {
 	require.NoError(t, err)
 	_, err = s.Run(ctx, `MATCH (m:Meta {key:'current_release'}) DELETE m`, nil)
 	require.NoError(t, err)
+	_, err = s.Run(ctx, `MATCH (root:TopologyRoot {id:'singleton'}) DELETE root`, nil)
+	require.NoError(t, err)
 }
 
 // TestReleasePromotedConsumer_HappyPath_E2E exercises the full handler chain
@@ -46,7 +49,7 @@ func wipeReleasePromotedFixtures(t *testing.T, client neo4jinfra.Neo4jClient) {
 //   - :Table nodes and a :DEPENDS_ON edge are created.
 //   - :Meta {key:'current_release'} is set to the release_id.
 //   - A schedules.loaded:v1 outbox row is written with deterministic event_id,
-//     topology_generation, and valid payload shape.
+//     promotion_seq, and valid payload shape.
 //   - A dedup row is written to message_processing.
 //
 // The test skips automatically when Neo4j or Postgres are unavailable
@@ -56,9 +59,6 @@ func TestReleasePromotedConsumer_HappyPath_E2E(t *testing.T) {
 	ctx := context.Background()
 	client := newCommandTestNeo4jClient(t)
 	pgDB := newCommandTestDB(t)
-	topologyStateRepo := pginfra.NewTopologyStateRepository(pgDB)
-	topologyRepo := neo4jinfra.NewTopologyRepository(client, newTestLogger())
-
 	wipeReleasePromotedFixtures(t, client)
 	t.Cleanup(func() {
 		wipeReleasePromotedFixtures(t, client)
@@ -72,8 +72,6 @@ func TestReleasePromotedConsumer_HappyPath_E2E(t *testing.T) {
 	handler := handlers.NewReleasePromotedHandler(
 		pginfra.NewPostgresUnitOfWork(pgDB, newTestLogger()),
 		repo,
-		topologyRepo,
-		topologyStateRepo,
 		newTestLogger(),
 	)
 
@@ -81,7 +79,8 @@ func TestReleasePromotedConsumer_HappyPath_E2E(t *testing.T) {
 	msgID := "msg-int-happy-" + uuid.New().String()[:8]
 
 	cmd := domainModel.PromoteReleaseInput{
-		ReleaseID: releaseID,
+		ReleaseID:    releaseID,
+		PromotionSeq: 1,
 		Topology: []domainEvent.ReleasePromotedNode{
 			{
 				UniqueID:          "service-a.public.table_a",
@@ -156,16 +155,16 @@ func TestReleasePromotedConsumer_HappyPath_E2E(t *testing.T) {
 	assert.Equal(t, streams.SchedulesLoadedV1, outboxStreamName)
 
 	// Payload shape check: deterministic event_id, schedule_names,
-	// service_metadata, and topology_generation.
+	// service_metadata, and promotion_seq.
 	var outboxGot map[string]interface{}
 	require.NoError(t, json.Unmarshal(outboxPayload, &outboxGot))
-	assert.Equal(t, deterministicEventID(releaseID), outboxGot["event_id"],
+	assert.Equal(t, deterministicEventID(releaseID, 1), outboxGot["event_id"],
 		"event_id must be the deterministic UUID v5 of the namespace + release_id")
 	assert.Equal(t, []interface{}{"daily"}, outboxGot["schedule_names"])
 
-	topGen, ok := outboxGot["topology_generation"]
-	assert.True(t, ok, "topology_generation must be present in the outbox payload")
-	assert.NotNil(t, topGen, "topology_generation must be non-nil")
+	assert.Equal(t, float64(1), outboxGot["promotion_seq"], "the outbox payload carries the promotion seq")
+	_, legacy := outboxGot["topology_generation"]
+	assert.False(t, legacy, "the legacy counter is gone from the payload")
 
 	sm, ok := outboxGot["service_metadata"].(map[string]interface{})
 	require.True(t, ok, "service_metadata must be a JSON object")
@@ -185,17 +184,15 @@ func TestReleasePromotedConsumer_HappyPath_E2E(t *testing.T) {
 // TestReleasePromotedConsumer_Idempotent_E2E delivers the same logical
 // release_id twice via two different Redis message IDs. The expected outcome is:
 //   - Neo4j has no duplicates (unchanged after the second call).
-//   - Postgres outbox has 2 rows: the second call sees changed=false from the
-//     repository but still emits a schedules.loaded:v1 row for idempotency.
-//     Both rows carry the SAME deterministic event_id.
+//   - Postgres outbox has 2 rows: the second delivery carries the same
+//     promotion seq, so the swap recognises it as already live and emits a
+//     schedules.loaded:v1 row again. Both rows carry the SAME deterministic
+//     event_id.
 //   - Postgres dedup has 2 rows, one per message_id.
 func TestReleasePromotedConsumer_Idempotent_E2E(t *testing.T) {
 	ctx := context.Background()
 	client := newCommandTestNeo4jClient(t)
 	pgDB := newCommandTestDB(t)
-	topologyStateRepo := pginfra.NewTopologyStateRepository(pgDB)
-	topologyRepo := neo4jinfra.NewTopologyRepository(client, newTestLogger())
-
 	wipeReleasePromotedFixtures(t, client)
 	t.Cleanup(func() {
 		wipeReleasePromotedFixtures(t, client)
@@ -211,7 +208,8 @@ func TestReleasePromotedConsumer_Idempotent_E2E(t *testing.T) {
 	releaseID := "rA-idem-" + uuid.New().String()[:8]
 
 	cmd := domainModel.PromoteReleaseInput{
-		ReleaseID: releaseID,
+		ReleaseID:    releaseID,
+		PromotionSeq: 1,
 		Topology: []domainEvent.ReleasePromotedNode{
 			{
 				UniqueID:          "svc.public.t",
@@ -230,8 +228,6 @@ func TestReleasePromotedConsumer_Idempotent_E2E(t *testing.T) {
 	handler1 := handlers.NewReleasePromotedHandler(
 		pginfra.NewPostgresUnitOfWork(pgDB, newTestLogger()),
 		repo,
-		topologyRepo,
-		topologyStateRepo,
 		newTestLogger(),
 	)
 	require.NoError(t, handler1.Handle(ctx, msgID1, nil, cmd))
@@ -240,8 +236,6 @@ func TestReleasePromotedConsumer_Idempotent_E2E(t *testing.T) {
 	handler2 := handlers.NewReleasePromotedHandler(
 		pginfra.NewPostgresUnitOfWork(pgDB, newTestLogger()),
 		repo,
-		topologyRepo,
-		topologyStateRepo,
 		newTestLogger(),
 	)
 	require.NoError(t, handler2.Handle(ctx, msgID2, nil, cmd))
@@ -271,7 +265,7 @@ func TestReleasePromotedConsumer_Idempotent_E2E(t *testing.T) {
 		`SELECT payload FROM orchestrator_outbox WHERE event_type = 'release_promoted' ORDER BY created_at`)
 	require.NoError(t, err)
 	defer rows.Close()
-	wantEventID := deterministicEventID(releaseID)
+	wantEventID := deterministicEventID(releaseID, 1)
 	rowCount := 0
 	for rows.Next() {
 		var rawPayload []byte
@@ -304,9 +298,6 @@ func TestReleasePromotedConsumer_TwoDifferentReleases_E2E(t *testing.T) {
 	ctx := context.Background()
 	client := newCommandTestNeo4jClient(t)
 	pgDB := newCommandTestDB(t)
-	topologyStateRepo := pginfra.NewTopologyStateRepository(pgDB)
-	topologyRepo := neo4jinfra.NewTopologyRepository(client, newTestLogger())
-
 	wipeReleasePromotedFixtures(t, client)
 	t.Cleanup(func() {
 		wipeReleasePromotedFixtures(t, client)
@@ -322,7 +313,8 @@ func TestReleasePromotedConsumer_TwoDifferentReleases_E2E(t *testing.T) {
 
 	relIDA := "rA-twor-" + uuid.New().String()[:8]
 	cmdA := domainModel.PromoteReleaseInput{
-		ReleaseID: relIDA,
+		ReleaseID:    relIDA,
+		PromotionSeq: 1,
 		Topology: []domainEvent.ReleasePromotedNode{
 			{
 				UniqueID:          "svc.public.node_a",
@@ -340,8 +332,6 @@ func TestReleasePromotedConsumer_TwoDifferentReleases_E2E(t *testing.T) {
 	handlerA := handlers.NewReleasePromotedHandler(
 		pginfra.NewPostgresUnitOfWork(pgDB, newTestLogger()),
 		repo,
-		topologyRepo,
-		topologyStateRepo,
 		newTestLogger(),
 	)
 	require.NoError(t, handlerA.Handle(ctx, "msg-twor-A-"+uuid.New().String()[:8], nil, cmdA))
@@ -350,7 +340,8 @@ func TestReleasePromotedConsumer_TwoDifferentReleases_E2E(t *testing.T) {
 
 	relIDB := "rB-twor-" + uuid.New().String()[:8]
 	cmdB := domainModel.PromoteReleaseInput{
-		ReleaseID: relIDB,
+		ReleaseID:    relIDB,
+		PromotionSeq: 2,
 		Topology: []domainEvent.ReleasePromotedNode{
 			{
 				UniqueID:          "svc.public.node_c",
@@ -368,8 +359,6 @@ func TestReleasePromotedConsumer_TwoDifferentReleases_E2E(t *testing.T) {
 	handlerB := handlers.NewReleasePromotedHandler(
 		pginfra.NewPostgresUnitOfWork(pgDB, newTestLogger()),
 		repo,
-		topologyRepo,
-		topologyStateRepo,
 		newTestLogger(),
 	)
 	require.NoError(t, handlerB.Handle(ctx, "msg-twor-B-"+uuid.New().String()[:8], nil, cmdB))
@@ -418,7 +407,7 @@ func TestReleasePromotedConsumer_TwoDifferentReleases_E2E(t *testing.T) {
 		eventIDs = append(eventIDs, p["event_id"].(string))
 	}
 	require.Len(t, eventIDs, 2)
-	assert.Equal(t, deterministicEventID(relIDA), eventIDs[0])
-	assert.Equal(t, deterministicEventID(relIDB), eventIDs[1])
+	assert.Equal(t, deterministicEventID(relIDA, 1), eventIDs[0])
+	assert.Equal(t, deterministicEventID(relIDB, 2), eventIDs[1])
 	assert.NotEqual(t, eventIDs[0], eventIDs[1], "different releases must produce different event_ids")
 }

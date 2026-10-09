@@ -297,6 +297,34 @@ func (r *OrchestratorQueryRepository) GetRunTopologyGeneration(ctx context.Conte
 	return 0, nil
 }
 
+// GetGeneration returns the promotion seq of the live topology: the
+// :TopologyRoot singleton's promotion_seq, written in the same transaction as
+// the swap that made that topology live. It returns 0 before the first
+// promotion. The schedule-graph cache keys on it and the drift views compare
+// runs against it.
+func (r *OrchestratorQueryRepository) GetGeneration(ctx context.Context) (int64, error) {
+	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
+	defer func() { _ = session.Close(ctx) }()
+
+	result, err := session.Run(ctx, `
+		OPTIONAL MATCH (root:TopologyRoot {id: 'singleton'})
+		RETURN COALESCE(root.promotion_seq, 0) AS seq
+	`, nil)
+	if err != nil {
+		return 0, fmt.Errorf("GetGeneration: %w", err)
+	}
+	if !result.Next(ctx) {
+		if err := result.Err(); err != nil {
+			return 0, fmt.Errorf("GetGeneration iterate: %w", err)
+		}
+		return 0, nil
+	}
+	if v, ok := recordValue(result.Record(), "seq").(int64); ok {
+		return v, nil
+	}
+	return 0, nil
+}
+
 // ListActiveRuns returns ALL in-flight :Run nodes (completed_at IS NULL),
 // ordered by schedule_name then newest-first (created_at DESC). The query
 // does not deduplicate: multiple rows for the same schedule_name can appear
@@ -370,8 +398,8 @@ func (r *OrchestratorQueryRepository) ListScheduleTopologies(ctx context.Context
 		if v, ok := recordValue(record, "node_count").(int64); ok {
 			summary.NodeCount = int(v)
 		}
-		// :Table.last_updated_at is written by TopologyRepository with Cypher
-		// `datetime()` (zoned), which the Go driver returns as time.Time.
+		// :Table.last_updated_at is written with Cypher `datetime()` (zoned),
+		// which the Go driver returns as time.Time.
 		// Test fixtures may use `localdatetime()` which arrives as
 		// neo4j.LocalDateTime. Handle both so the gRPC field is populated in
 		// production and tests.

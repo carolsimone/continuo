@@ -19,34 +19,27 @@ type CancelledSchedulesRepository interface {
 	DeleteExpired(ctx context.Context, ttl time.Duration) (int64, error)
 }
 
-// TopologyStateRepository tracks the monotonic topology_generation counter.
-type TopologyStateRepository interface {
-	IncrementGeneration(ctx context.Context) (int64, error)
-	GetGeneration(ctx context.Context) (int64, error)
-}
-
-// TopologyRepository is the write interface for the topology graph.
-type TopologyRepository interface {
-	SetServiceMetadata(ctx context.Context, serviceMetadata map[string]map[string]string, topologyGeneration int64) error
-}
-
-// ReleasePromotionRepository performs the atomic Neo4j topology swap triggered
-// by release.promoted:v1. Implementations MUST:
-//  1. Run all writes inside a single Neo4j explicit transaction.
-//  2. Read :Meta {key:'current_release'} first and short-circuit (return
-//     false, nil) if release_id already matches.
-//  3. Otherwise TRUNCATE :Table + :DEPENDS_ON, recreate from `nodes`, and
-//     MERGE the :Meta singleton to the new release_id within the same tx.
+// ReleasePromotionRepository swaps the live Neo4j topology when a promotion is
+// newer than the one the graph holds. Implementations MUST run the whole swap in
+// one Neo4j transaction that first write-locks the :Meta {key:'current_release'}
+// singleton and only then reads its promotion_seq, so concurrent promotions
+// serialise and an older one can never revert a newer one.
 type ReleasePromotionRepository interface {
-	// PromoteRelease atomically swaps the current topology to the one carried
-	// by nodes. Returns (changed=true) when the swap was performed; (false)
-	// when current_release already matched and the call was a no-op.
+	// PromoteRelease applies the release's topology when promotionSeq is greater
+	// than the live promotion's, recording release_id and promotionSeq on :Meta
+	// and serviceMetadata and promotionSeq on :TopologyRoot in the same
+	// transaction. It returns PromotionApplied when it swapped,
+	// PromotionRedelivered when the same promotion is already live, and
+	// PromotionStale when a newer promotion is live; in the last two cases the
+	// graph is untouched.
 	PromoteRelease(
 		ctx context.Context,
 		releaseID string,
+		promotionSeq int64,
 		nodes []topology.ReleasePromotedTopologyNode,
+		serviceMetadata map[string]map[string]string,
 		now time.Time,
-	) (changed bool, err error)
+	) (topology.PromotionOutcome, error)
 }
 
 // CodeVersionRepository writes the code-version history behind the :Table

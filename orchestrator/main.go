@@ -227,7 +227,6 @@ func main() {
 	// INITIALIZE REPOSITORIES
 	// ========================================================================
 
-	topologyRepo := neo4jinfra.NewTopologyRepository(neo4jClient, logger)
 	queryRepo := neo4jinfra.NewOrchestratorQueryRepository(neo4jClient, logger)
 	runAggRepo := neo4jinfra.NewRunAggregateRepository(neo4jClient, logger)
 	snapshotTxRunner := neo4jinfra.NewSnapshotTxRunner(neo4jClient)
@@ -243,7 +242,6 @@ func main() {
 	// consumers would cause "transaction already in progress" errors when two
 	// consumers process messages concurrently — the second Begin() sees inTx=true
 	// and the message is never ACKed, getting stuck in the PEL forever.
-	topologyStateRepo := postgres.NewTopologyStateRepository(pgDB)
 	handleNodeCompletedHandler := handlers.NewHandleNodeCompletedHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), runAggRepo, cancelledSchedulesRepo, logger)
 	handleSchedulerStartedHandler := handlers.NewHandleSchedulerStartedHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), snapshotService, logger)
 	handleRerunHandler := handlers.NewHandleRerunHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), snapshotService, logger)
@@ -413,13 +411,12 @@ func main() {
 	// full-inherited rebases that produce no node.updated:v1 traffic).
 	runFinalizedHandler := handlers.NewRunFinalizedHandler(runAggRepo, logger)
 
-	// release.promoted:v1 atomically replaces the Neo4j topology when
-	// release-controller promotes a candidate release to production, then emits
-	// schedules.loaded:v1 so state can refresh its schedule projections. The
-	// consumer is dormant until release-controller emits its first
-	// release.promoted:v1 event in production.
+	// release.promoted swaps the live Neo4j topology when release-controller
+	// promotes a release, then emits schedules.loaded:v1 so state can refresh
+	// its schedule projections. The swap decides by promotion seq, so a late or
+	// redriven older promotion never reverts the live topology.
 	releasePromotionRepo := neo4jinfra.NewReleasePromotionRepository(neo4jClient, logger)
-	releasePromotedHandler := handlers.NewReleasePromotedHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), releasePromotionRepo, topologyRepo, topologyStateRepo, logger)
+	releasePromotedHandler := handlers.NewReleasePromotedHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), releasePromotionRepo, logger)
 
 	// trigger.promoted_seeds:v1 — projects the run state created for a promoted
 	// release onto its changed seeds, so building them into the prod schema runs
@@ -493,11 +490,11 @@ func main() {
 	// START gRPC SERVER
 	// ========================================================================
 
-	runQueries := queries.NewRunQueryService(queryRepo, topologyStateRepo, logger)
-	// Topology shapes are immutable per topology_generation, so wrap the schedule
-	// reader in an LRU cache keyed by (schedule_name, generation). Run graphs
-	// carry live status overlays and stay uncached (served by queryRepo).
-	scheduleGraphReader := neo4jinfra.NewCachingScheduleGraphReader(queryRepo, topologyStateRepo, logger)
+	runQueries := queries.NewRunQueryService(queryRepo, queryRepo, logger)
+	// Topology shapes are immutable per promotion, so wrap the schedule reader in
+	// an LRU cache keyed by (schedule_name, live promotion seq). Run graphs carry
+	// live status overlays and stay uncached (served by queryRepo).
+	scheduleGraphReader := neo4jinfra.NewCachingScheduleGraphReader(queryRepo, queryRepo, logger)
 	codeVersionQueryRepo := neo4jinfra.NewCodeVersionQueryRepository(neo4jClient, logger)
 	codeVersionQueries := queries.NewCodeVersionQueryService(codeVersionQueryRepo)
 	precedentQueryRepo := neo4jinfra.NewPrecedentQueryRepository(neo4jClient, logger)

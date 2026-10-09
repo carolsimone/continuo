@@ -14,26 +14,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// wipeReleaseFixtures removes all :Table nodes and the :Meta {key:'current_release'}
-// singleton so each test starts from a clean slate.
+// wipeReleaseFixtures removes all :Table and :Run nodes and the :Meta and
+// :TopologyRoot singletons so each test starts from a clean slate.
 func wipeReleaseFixtures(t *testing.T, client neo4jinfra.Neo4jClient) {
 	t.Helper()
 	ctx := context.Background()
 	s := client.NewSession(ctx, neo4j.AccessModeWrite)
 	defer s.Close(ctx)
-	res, err := s.Run(ctx, `MATCH (n:Table) DETACH DELETE n`, nil)
-	require.NoError(t, err)
-	_, err = res.Consume(ctx)
-	require.NoError(t, err)
-	res2, err := s.Run(ctx, `MATCH (m:Meta {key:'current_release'}) DELETE m`, nil)
-	require.NoError(t, err)
-	_, err = res2.Consume(ctx)
-	require.NoError(t, err)
-	// Also clean up any :Run nodes created during tests.
-	res3, err := s.Run(ctx, `MATCH (n:Run) DETACH DELETE n`, nil)
-	require.NoError(t, err)
-	_, err = res3.Consume(ctx)
-	require.NoError(t, err)
+	for _, q := range []string{
+		`MATCH (n:Table) DETACH DELETE n`,
+		`MATCH (m:Meta {key:'current_release'}) DELETE m`,
+		`MATCH (root:TopologyRoot {id:'singleton'}) DELETE root`,
+		`MATCH (n:Run) DETACH DELETE n`,
+	} {
+		res, err := s.Run(ctx, q, nil)
+		require.NoError(t, err)
+		_, err = res.Consume(ctx)
+		require.NoError(t, err)
+	}
 }
 
 func newReleaseRepo(client neo4jinfra.Neo4jClient) *neo4jinfra.ReleasePromotionRepository {
@@ -58,7 +56,7 @@ func TestReleasePromotionRepository_FirstPromotionCreatesNodesEdgesAndMeta(t *te
 		{UniqueID: "b", SchemaName: "public", TableName: "customers", ServiceName: "svc", ImageTag: "sha:1", Schedule: "daily", UpstreamUniqueIDs: []string{"a"}},
 		{UniqueID: "c", SchemaName: "public", TableName: "items", ServiceName: "svc", ImageTag: "sha:1", Schedule: "daily", UpstreamUniqueIDs: []string{"a"}},
 	}
-	changed, err := repo.PromoteRelease(ctx, "rel-1", nodes, time.Now().UTC())
+	changed, err := promote(ctx, repo, "rel-1", nodes, time.Now().UTC())
 	require.NoError(t, err)
 	assert.True(t, changed)
 
@@ -137,7 +135,7 @@ func TestReleasePromotionRepository_RetiresTablesWithoutUniqueID(t *testing.T) {
 	nodes := []topology.ReleasePromotedTopologyNode{
 		{UniqueID: "public.new_tbl", SchemaName: "public", TableName: "new_tbl", ServiceName: "svc", ImageTag: "sha:1", Schedule: "daily", UpstreamUniqueIDs: []string{}},
 	}
-	changed, err := repo.PromoteRelease(ctx, "rel-upgrade", nodes, time.Now().UTC())
+	changed, err := promote(ctx, repo, "rel-upgrade", nodes, time.Now().UTC())
 	require.NoError(t, err)
 	assert.True(t, changed)
 
@@ -175,37 +173,6 @@ func TestReleasePromotionRepository_RetiresTablesWithoutUniqueID(t *testing.T) {
 	assert.Equal(t, true, na)
 }
 
-// TestReleasePromotionRepository_RedeliveryWithSameReleaseIDIsNoOp tests that
-// calling PromoteRelease twice with the same release_id returns (false, nil) on
-// the second call and leaves the topology unchanged.
-func TestReleasePromotionRepository_RedeliveryWithSameReleaseIDIsNoOp(t *testing.T) {
-	ctx := context.Background()
-	client := newTestClient(t)
-	wipeReleaseFixtures(t, client)
-	t.Cleanup(func() { wipeReleaseFixtures(t, client) })
-
-	repo := newReleaseRepo(client)
-	nodes := []topology.ReleasePromotedTopologyNode{
-		{UniqueID: "a", SchemaName: "p", TableName: "t", ServiceName: "s", ImageTag: "x", Schedule: "d", UpstreamUniqueIDs: []string{}},
-	}
-	_, err := repo.PromoteRelease(ctx, "rel-1", nodes, time.Now().UTC())
-	require.NoError(t, err)
-
-	// Second call with same release_id but an empty topology — must be a no-op.
-	changed, err := repo.PromoteRelease(ctx, "rel-1", []topology.ReleasePromotedTopologyNode{}, time.Now().UTC())
-	require.NoError(t, err)
-	assert.False(t, changed)
-
-	// Topology unchanged: still 1 node.
-	s := client.NewSession(ctx, neo4j.AccessModeRead)
-	defer s.Close(ctx)
-	res, err := s.Run(ctx, `MATCH (t:Table) RETURN count(t) AS n`, nil)
-	require.NoError(t, err)
-	require.True(t, res.Next(ctx))
-	n, _ := res.Record().Get("n")
-	assert.Equal(t, int64(1), n)
-}
-
 // TestReleasePromotionRepository_NewReleaseTruncatesOldTopology tests that a
 // second PromoteRelease call with a different release_id retires unreferenced
 // old :Table nodes and replaces them with the new topology. Nodes that carry no
@@ -221,13 +188,13 @@ func TestReleasePromotionRepository_NewReleaseTruncatesOldTopology(t *testing.T)
 		{UniqueID: "a", SchemaName: "p", TableName: "ta", ServiceName: "s", ImageTag: "x", Schedule: "d"},
 		{UniqueID: "b", SchemaName: "p", TableName: "tb", ServiceName: "s", ImageTag: "x", Schedule: "d"},
 	}
-	_, err := repo.PromoteRelease(ctx, "rel-1", first, time.Now().UTC())
+	_, err := promote(ctx, repo, "rel-1", first, time.Now().UTC())
 	require.NoError(t, err)
 
 	second := []topology.ReleasePromotedTopologyNode{
 		{UniqueID: "c", SchemaName: "p", TableName: "tc", ServiceName: "s", ImageTag: "y", Schedule: "d"},
 	}
-	changed, err := repo.PromoteRelease(ctx, "rel-2", second, time.Now().UTC())
+	changed, err := promote(ctx, repo, "rel-2", second, time.Now().UTC())
 	require.NoError(t, err)
 	assert.True(t, changed)
 
@@ -264,7 +231,7 @@ func TestReleasePromotionRepository_EmptyTopologyStillUpdatesMeta(t *testing.T) 
 	t.Cleanup(func() { wipeReleaseFixtures(t, client) })
 
 	repo := newReleaseRepo(client)
-	changed, err := repo.PromoteRelease(ctx, "rel-empty", nil, time.Now().UTC())
+	changed, err := promote(ctx, repo, "rel-empty", nil, time.Now().UTC())
 	require.NoError(t, err)
 	assert.True(t, changed)
 
@@ -300,7 +267,7 @@ func TestReleasePromotionRepository_UnknownUpstreamSkipsEdgeButCreatesNode(t *te
 	nodes := []topology.ReleasePromotedTopologyNode{
 		{UniqueID: "a", SchemaName: "p", TableName: "t", ServiceName: "s", ImageTag: "x", Schedule: "d", UpstreamUniqueIDs: []string{"dangling"}},
 	}
-	changed, err := repo.PromoteRelease(ctx, "rel-1", nodes, time.Now().UTC())
+	changed, err := promote(ctx, repo, "rel-1", nodes, time.Now().UTC())
 	require.NoError(t, err)
 	assert.True(t, changed)
 
@@ -341,7 +308,7 @@ func TestReleasePromotionRepository_PreservesRunExecutesEdgesWhenRetiringTables(
 	nodesA := []topology.ReleasePromotedTopologyNode{
 		{UniqueID: "a", SchemaName: "p", TableName: "ta", ServiceName: "s", ImageTag: "x", Schedule: "daily", UpstreamUniqueIDs: []string{}},
 	}
-	_, err := repo.PromoteRelease(ctx, "rA", nodesA, time.Now().UTC())
+	_, err := promote(ctx, repo, "rA", nodesA, time.Now().UTC())
 	require.NoError(t, err)
 
 	// Manually create a :Run node and a :Run-[:EXECUTES]->:Table{unique_id:"a"} edge,
@@ -358,7 +325,7 @@ func TestReleasePromotionRepository_PreservesRunExecutesEdgesWhenRetiringTables(
 	nodesB := []topology.ReleasePromotedTopologyNode{
 		{UniqueID: "b", SchemaName: "p", TableName: "tb", ServiceName: "s", ImageTag: "y", Schedule: "daily", UpstreamUniqueIDs: []string{}},
 	}
-	changed, err := repo.PromoteRelease(ctx, "rB", nodesB, time.Now().UTC())
+	changed, err := promote(ctx, repo, "rB", nodesB, time.Now().UTC())
 	require.NoError(t, err)
 	assert.True(t, changed)
 
@@ -417,7 +384,7 @@ func TestPromotion_DoesNotStampLastProvenance(t *testing.T) {
 		{UniqueID: "a", SchemaName: "p", TableName: "ta", ServiceName: "s", ImageTag: "x", Schedule: "d",
 			UpstreamUniqueIDs: []string{}},
 	}
-	_, err := repo.PromoteRelease(ctx, "rel-1", nodes, time.Now().UTC())
+	_, err := promote(ctx, repo, "rel-1", nodes, time.Now().UTC())
 	require.NoError(t, err)
 
 	s := client.NewSession(ctx, neo4j.AccessModeRead)
@@ -449,7 +416,7 @@ func TestReleasePromotionRepository_DeletesOrphanedTablesWithNoRunReferences(t *
 	nodesA := []topology.ReleasePromotedTopologyNode{
 		{UniqueID: "a", SchemaName: "p", TableName: "ta", ServiceName: "s", ImageTag: "x", Schedule: "daily", UpstreamUniqueIDs: []string{}},
 	}
-	_, err := repo.PromoteRelease(ctx, "rA", nodesA, time.Now().UTC())
+	_, err := promote(ctx, repo, "rA", nodesA, time.Now().UTC())
 	require.NoError(t, err)
 
 	// Promote release rB without "a" in the topology. Since no Run references "a",
@@ -457,7 +424,7 @@ func TestReleasePromotionRepository_DeletesOrphanedTablesWithNoRunReferences(t *
 	nodesB := []topology.ReleasePromotedTopologyNode{
 		{UniqueID: "b", SchemaName: "p", TableName: "tb", ServiceName: "s", ImageTag: "y", Schedule: "daily", UpstreamUniqueIDs: []string{}},
 	}
-	changed, err := repo.PromoteRelease(ctx, "rB", nodesB, time.Now().UTC())
+	changed, err := promote(ctx, repo, "rB", nodesB, time.Now().UTC())
 	require.NoError(t, err)
 	assert.True(t, changed)
 
@@ -494,7 +461,7 @@ func TestPromotion_PersistsTestCount(t *testing.T) {
 		{UniqueID: "a", SchemaName: "p", TableName: "ta", ServiceName: "s", ImageTag: "x", Schedule: "d",
 			TestCount: 2, UpstreamUniqueIDs: []string{}},
 	}
-	changed, err := repo.PromoteRelease(ctx, "rel-1", nodes, time.Now().UTC())
+	changed, err := promote(ctx, repo, "rel-1", nodes, time.Now().UTC())
 	require.NoError(t, err)
 	assert.True(t, changed)
 
@@ -518,7 +485,7 @@ func TestReleasePromotionRepository_SetsOriginalFilePathUnconditionally(t *testi
 		{UniqueID: "a", SchemaName: "p", TableName: "ta", ServiceName: "s", ImageTag: "x", Schedule: "d",
 			OriginalFilePath: "models/a.sql"},
 	}
-	_, err := repo.PromoteRelease(ctx, "rel-1", nodes, time.Now().UTC())
+	_, err := promote(ctx, repo, "rel-1", nodes, time.Now().UTC())
 	require.NoError(t, err)
 
 	s := client.NewSession(ctx, neo4j.AccessModeRead)
@@ -556,7 +523,7 @@ func TestReleasePromotionRepository_SetsAndClearsSecretRef(t *testing.T) {
 		{UniqueID: "analytics.fx", SchemaName: "analytics", TableName: "fx", ServiceName: "svc", //nolint:gosec // G101: secret_ref names a Kubernetes Secret, not a credential
 			NodeType: "python-api", ImageTag: "x", Schedule: "d", SecretRef: "continuo-api-fx"},
 	}
-	_, err := repo.PromoteRelease(ctx, "rel-1", withRef, time.Now().UTC())
+	_, err := promote(ctx, repo, "rel-1", withRef, time.Now().UTC())
 	require.NoError(t, err)
 	assert.Equal(t, "continuo-api-fx", readSecretRef())
 
@@ -564,7 +531,7 @@ func TestReleasePromotionRepository_SetsAndClearsSecretRef(t *testing.T) {
 		{UniqueID: "analytics.fx", SchemaName: "analytics", TableName: "fx", ServiceName: "svc",
 			NodeType: "python-api", ImageTag: "x", Schedule: "d", SecretRef: ""},
 	}
-	_, err = repo.PromoteRelease(ctx, "rel-2", withoutRef, time.Now().UTC())
+	_, err = promote(ctx, repo, "rel-2", withoutRef, time.Now().UTC())
 	require.NoError(t, err)
 	assert.Nil(t, readSecretRef(), "an empty secret_ref must clear the property to null")
 }
@@ -585,7 +552,7 @@ func TestReleasePromotionRepository_StoresContentHashOnTable(t *testing.T) {
 		{UniqueID: "b", SchemaName: "public", TableName: "customers", ServiceName: "svc",
 			ContentHash: "sha256:bbb", UpstreamUniqueIDs: []string{}},
 	}
-	_, err := repo.PromoteRelease(ctx, "rel-1", nodes, time.Now().UTC())
+	_, err := promote(ctx, repo, "rel-1", nodes, time.Now().UTC())
 	require.NoError(t, err)
 
 	s := client.NewSession(ctx, neo4j.AccessModeRead)
@@ -617,14 +584,14 @@ func TestReleasePromotionRepository_ContentHashRefreshesOnUnchangedNode(t *testi
 		{UniqueID: "a", SchemaName: "public", TableName: "orders", ServiceName: "svc",
 			ContentHash: "sha256:v1", UpstreamUniqueIDs: []string{}},
 	}
-	_, err := repo.PromoteRelease(ctx, "rel-1", base, time.Now().UTC())
+	_, err := promote(ctx, repo, "rel-1", base, time.Now().UTC())
 	require.NoError(t, err)
 
 	next := []topology.ReleasePromotedTopologyNode{
 		{UniqueID: "a", SchemaName: "public", TableName: "orders", ServiceName: "svc",
 			ContentHash: "sha256:v2", UpstreamUniqueIDs: []string{}},
 	}
-	_, err = repo.PromoteRelease(ctx, "rel-2", next, time.Now().UTC())
+	_, err = promote(ctx, repo, "rel-2", next, time.Now().UTC())
 	require.NoError(t, err)
 
 	s := client.NewSession(ctx, neo4j.AccessModeRead)
@@ -652,7 +619,7 @@ func TestReleasePromotionRepository_KeepsRetiredAtOfAlreadyRetiredTables(t *test
 		}
 	}
 	base := time.Now().UTC().Truncate(time.Second)
-	_, err := repo.PromoteRelease(ctx, "r1", node("a"), base)
+	_, err := promote(ctx, repo, "r1", node("a"), base)
 	require.NoError(t, err)
 
 	// A run reference keeps the retired node from being deleted as an orphan.
@@ -662,9 +629,9 @@ func TestReleasePromotionRepository_KeepsRetiredAtOfAlreadyRetiredTables(t *test
 	w.Close(ctx)
 
 	retiredAt := base.Add(time.Hour)
-	_, err = repo.PromoteRelease(ctx, "r2", node("b"), retiredAt)
+	_, err = promote(ctx, repo, "r2", node("b"), retiredAt)
 	require.NoError(t, err)
-	_, err = repo.PromoteRelease(ctx, "r3", node("c"), retiredAt.Add(time.Hour))
+	_, err = promote(ctx, repo, "r3", node("c"), retiredAt.Add(time.Hour))
 	require.NoError(t, err)
 
 	r := client.NewSession(ctx, neo4j.AccessModeRead)

@@ -14,13 +14,9 @@ test-integration:
 
 # Run full test suite with coverage (used in CI)
 #
-# -p 1 serializes packages: integration tests across packages share a Neo4j
-# singleton (:TopologyRoot {id:'singleton'}) and the topology_state Postgres
-# row. With the default GOMAXPROCS-wide parallelism, run_repository_test.go's
-# TestSnapshotGraph_StampsGeneration cleanup runs REMOVE root.topology_generation
-# while ingest_topology_integration_test.go is mid-flight, leaving the read
-# in TestIngestTopology_RetiresNodesMissingFromLatestManifestSnapshot with
-# nil — caught only when test runtimes overlap, hence the historical flake.
+# -p 1 serializes packages: integration tests across packages share the Neo4j
+# singletons (:TopologyRoot {id:'singleton'}, :Meta {key:'current_release'}),
+# so packages running at the same time would overwrite each other's fixtures.
 test-ci:
 	go test -v -p 1 ./... -timeout 5m -coverprofile=/tmp/coverage.out -covermode=atomic -coverpkg=$(shell go list -f '{{if ne .Name "main"}}{{.ImportPath}}{{end}}' ./... | grep . | grep -v '/proto/' | grep -v '/config' | paste -sd,)
 	@echo "=== Coverage: orchestrator ==="

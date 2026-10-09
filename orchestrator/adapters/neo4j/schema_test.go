@@ -51,6 +51,7 @@ func TestInitSchema_Idempotent(t *testing.T) {
 	for _, want := range []string{
 		"run_id_unique",
 		"table_uid_unique",
+		"meta_key_unique",
 		"table_fqn",
 		"table_schedule",
 		"run_schedule",
