@@ -14,7 +14,7 @@ var _ outbox.Renderer = (*OutboxPublisher)(nil)
 
 func TestRender_PayloadEventIsPayloadFieldWithoutOutboxEntryID(t *testing.T) {
 	p := NewOutboxPublisher(nil, nil)
-	values, err := p.Render(&outbox.Entry{ID: uuid.New(), EventType: "release_promoted", StreamName: streams.ReleasePromotedV1, Payload: []byte(`{"release_id":"r1"}`)})
+	values, err := p.Render(&outbox.Entry{ID: uuid.New(), EventType: "release_promoted", StreamName: streams.ReleasePromotedV2, Payload: []byte(`{"release_id":"r1"}`)})
 	require.NoError(t, err)
 	require.Equal(t, map[string]any{"payload": `{"release_id":"r1"}`}, values)
 }

@@ -56,8 +56,6 @@ const (
 	CompileRequestedV1 = "compile.requested:v1"
 	// CompileCompletedV1 — aggregated compile result from execution-controller back to release-controller.
 	CompileCompletedV1 = "compile.completed:v1"
-	// ReleasePromotedV1 — Release promoted to production; orchestrator atomically replaces its Neo4j topology.
-	ReleasePromotedV1 = "release.promoted:v1"
 	// ReleasePromotedV2 — A topology becoming the live one, numbered by promotion_seq. It is either a promoted release or a topology release-controller announces without moving current_prod. Carries the URI and SHA-256 of the topology artifact in S3 and the event envelope, never the topology. orchestrator swaps its live topology only for a higher promotion_seq and records code versions; execution-controller drops the release's candidate schema.
 	ReleasePromotedV2 = "release.promoted:v2"
 	// ReleaseRejectedV1 — Candidate release rejected (compile, parse, seed-build, or validation failure); consumed by the remediation classifier. A verification run's failure never rides this stream.
@@ -134,18 +132,12 @@ const (
 	ExecutorCompileRequested = "executor-compile-requested"
 	// ReleaseControllerCompileCompleted — release-controller consumer group on compile.completed:v1.
 	ReleaseControllerCompileCompleted = "release-controller-compile-completed"
-	// OrchestratorReleasePromoted — orchestrator consumer group on release.promoted:v1.
+	// OrchestratorReleasePromoted — orchestrator consumer group on release.promoted:v2.
 	OrchestratorReleasePromoted = "orchestrator-release-promoted"
-	// OrchestratorReleasePromotedVersions — orchestrator consumer group on release.promoted:v1.
+	// OrchestratorReleasePromotedVersions — orchestrator consumer group on release.promoted:v2.
 	OrchestratorReleasePromotedVersions = "orchestrator-release-promoted-versions"
-	// ExecutorReleasePromoted — execution-controller consumer group on release.promoted:v1.
+	// ExecutorReleasePromoted — execution-controller consumer group on release.promoted:v2.
 	ExecutorReleasePromoted = "executor-release-promoted"
-	// OrchestratorReleasePromotedV2 — orchestrator consumer group on release.promoted:v2.
-	OrchestratorReleasePromotedV2 = "orchestrator-release-promoted-v2"
-	// OrchestratorReleasePromotedVersionsV2 — orchestrator consumer group on release.promoted:v2.
-	OrchestratorReleasePromotedVersionsV2 = "orchestrator-release-promoted-versions-v2"
-	// ExecutorReleasePromotedV2 — execution-controller consumer group on release.promoted:v2.
-	ExecutorReleasePromotedV2 = "executor-release-promoted-v2"
 	// RemediationReleaseRejected — remediation consumer group on release.rejected:v1.
 	RemediationReleaseRejected = "remediation-release-rejected"
 	// ExecutorReleaseRejected — execution-controller consumer group on release.rejected:v1.
@@ -193,7 +185,6 @@ var All = []string{
 	SeedBuildCompletedV1,
 	CompileRequestedV1,
 	CompileCompletedV1,
-	ReleasePromotedV1,
 	ReleasePromotedV2,
 	ReleaseRejectedV1,
 	PipelineRunFinishedV1,
@@ -234,8 +225,7 @@ var Groups = map[string][]string{
 	SeedBuildCompletedV1:        {ReleaseControllerSeedBuildCompleted},
 	CompileRequestedV1:          {ExecutorCompileRequested},
 	CompileCompletedV1:          {ReleaseControllerCompileCompleted},
-	ReleasePromotedV1:           {OrchestratorReleasePromoted, OrchestratorReleasePromotedVersions, ExecutorReleasePromoted},
-	ReleasePromotedV2:           {OrchestratorReleasePromotedV2, OrchestratorReleasePromotedVersionsV2, ExecutorReleasePromotedV2},
+	ReleasePromotedV2:           {OrchestratorReleasePromoted, OrchestratorReleasePromotedVersions, ExecutorReleasePromoted},
 	ReleaseRejectedV1:           {RemediationReleaseRejected, ExecutorReleaseRejected},
 	PipelineRunFinishedV1:       {ExecutorPipelineRunFinished},
 	RemediationRetryRequestedV1: {RemediationRetryRequested},
@@ -253,6 +243,7 @@ var Retired = []string{
 	"manifest.loaded.candidate:v1",
 	"manifest.loaded:v1",
 	"node.deployed:v1",
+	"release.promoted:v1",
 	"remediation.requested:v1",
 	"rerun.ready:v1",
 	"retry.task:v1",

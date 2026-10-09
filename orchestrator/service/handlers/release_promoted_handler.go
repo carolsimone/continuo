@@ -98,7 +98,7 @@ func (h *ReleasePromotedHandler) Handle(
 
 	msgProcessingID, shouldSkip, err := messageprocessing.DedupWithOutboxEntryID(
 		ctx, h.uow.MessageProcessingRepo(), h.logger,
-		messageID, streams.OrchestratorReleasePromotedV2, payload, outboxEntryID,
+		messageID, streams.OrchestratorReleasePromoted, payload, outboxEntryID,
 	)
 	if err != nil {
 		return fmt.Errorf("message deduplication failed: %w", err)

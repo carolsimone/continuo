@@ -79,7 +79,7 @@ func (h *ReleasePromotedVersionsHandler) Handle(
 	// under the (outbox_entry_id, stream_name) unique index.
 	msgProcessingID, shouldSkip, err := messageprocessing.DedupWithOutboxEntryID(
 		ctx, h.uow.MessageProcessingRepo(), h.logger,
-		messageID, streams.OrchestratorReleasePromotedVersionsV2, payload, outboxEntryID,
+		messageID, streams.OrchestratorReleasePromotedVersions, payload, outboxEntryID,
 	)
 	if err != nil {
 		return fmt.Errorf("dedup: %w", err)

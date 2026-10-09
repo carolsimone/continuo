@@ -71,8 +71,8 @@ func TestTopologyByReference_LatePromotionMovesNothing(t *testing.T) {
 	replayID, err := clients.redisClient.XAdd(ctx, &goredis.XAddArgs{Stream: streams.ReleasePromotedV2, Values: replay}).Result()
 	require.NoError(t, err, "replay A's promotion")
 
-	awaitGroupSettled(t, ctx, clients, streams.ReleasePromotedV2, streams.OrchestratorReleasePromotedV2, replayID)
-	assert.Nil(t, findConsumerDeadLetter(ctx, clients, streams.ReleasePromotedV2, streams.OrchestratorReleasePromotedV2, replayID, "open"),
+	awaitGroupSettled(t, ctx, clients, streams.ReleasePromotedV2, streams.OrchestratorReleasePromoted, replayID)
+	assert.Nil(t, findConsumerDeadLetter(ctx, clients, streams.ReleasePromotedV2, streams.OrchestratorReleasePromoted, replayID, "open"),
 		"a late promotion is a valid entry: acknowledged, never dead-lettered")
 	assert.Equal(t, livePointer{releaseID: b.ReleaseID, promotionSeq: b.PromotionSeq}, readLivePointer(ctx, clients),
 		"a late promotion must not move the live pointer")
@@ -137,7 +137,7 @@ func TestTopologyByReference_CorruptArtifactIsDeadLettered(t *testing.T) {
 	id, err := clients.redisClient.XAdd(ctx, &goredis.XAddArgs{Stream: streams.ReleasePromotedV2, Values: fields}).Result()
 	require.NoError(t, err)
 
-	dl := awaitConsumerDeadLetter(ctx, t, clients, streams.ReleasePromotedV2, streams.OrchestratorReleasePromotedV2, id, "open")
+	dl := awaitConsumerDeadLetter(ctx, t, clients, streams.ReleasePromotedV2, streams.OrchestratorReleasePromoted, id, "open")
 	cleanup := []string{dl.GetId()}
 	t.Cleanup(func() { deleteDeadLetterRows(t, clients, cleanup...) })
 	assert.Equal(t, model.DeadLetterKindPermanent, model.DeadLetterKind(dl.GetFailureKind()))
@@ -146,7 +146,7 @@ func TestTopologyByReference_CorruptArtifactIsDeadLettered(t *testing.T) {
 
 	// The other two groups settle on the entry as well; whichever dead letter
 	// the versions group records is removed with this test's.
-	for _, g := range []string{streams.OrchestratorReleasePromotedVersionsV2, streams.ExecutorReleasePromotedV2} {
+	for _, g := range []string{streams.OrchestratorReleasePromotedVersions, streams.ExecutorReleasePromoted} {
 		awaitGroupSettled(t, ctx, clients, streams.ReleasePromotedV2, g, id)
 		if other := findConsumerDeadLetter(ctx, clients, streams.ReleasePromotedV2, g, id, "open"); other != nil {
 			cleanup = append(cleanup, other.GetId())

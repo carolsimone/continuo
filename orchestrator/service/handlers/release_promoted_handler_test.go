@@ -198,7 +198,7 @@ func TestReleasePromoted_HappyPath_PromotesTheArtifactAndEmitsSchedulesLoaded(t 
 	assert.Empty(t, entriesOn(uow, streams.ReleaseSeedsPendingV1), "nothing changed, nothing to build")
 
 	assert.True(t, uow.CommittedTx)
-	mp, err := uow.msgProcRepo.GetByMessageIDAndStream(ctx, "msg-rp-1", streams.OrchestratorReleasePromotedV2)
+	mp, err := uow.msgProcRepo.GetByMessageIDAndStream(ctx, "msg-rp-1", streams.OrchestratorReleasePromoted)
 	require.NoError(t, err)
 	require.NotNil(t, mp)
 	assert.Equal(t, "completed", mp.State)

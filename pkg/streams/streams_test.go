@@ -1,7 +1,6 @@
 package streams
 
 import (
-	"slices"
 	"testing"
 )
 
@@ -54,12 +53,33 @@ func TestManifestLoadedCandidateV2_ReplacesV1(t *testing.T) {
 	}
 }
 
-func TestReleasePromotedV2_HasItsThreeGroups(t *testing.T) {
+func TestReleasePromotedV2_ReplacesV1(t *testing.T) {
 	if ReleasePromotedV2 != "release.promoted:v2" {
 		t.Fatalf("ReleasePromotedV2 = %q", ReleasePromotedV2)
 	}
-	want := []string{OrchestratorReleasePromotedV2, OrchestratorReleasePromotedVersionsV2, ExecutorReleasePromotedV2}
-	if got := Groups[ReleasePromotedV2]; !slices.Equal(got, want) {
-		t.Fatalf("Groups[%s] = %v, want %v", ReleasePromotedV2, got, want)
+	want := map[string]bool{
+		"orchestrator-release-promoted":          false,
+		"orchestrator-release-promoted-versions": false,
+		"executor-release-promoted":              false,
+	}
+	for _, g := range Groups[ReleasePromotedV2] {
+		if _, ok := want[g]; !ok {
+			t.Errorf("unexpected group %q on release.promoted:v2", g)
+		}
+		want[g] = true
+	}
+	for g, seen := range want {
+		if !seen {
+			t.Errorf("release.promoted:v2 is missing group %q", g)
+		}
+	}
+	retired := false
+	for _, r := range Retired {
+		if r == "release.promoted:v1" {
+			retired = true
+		}
+	}
+	if !retired {
+		t.Fatal("release.promoted:v1 must be listed in retired_streams")
 	}
 }

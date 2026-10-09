@@ -135,7 +135,7 @@ func TestVersionsHandler_WritesVersionsFromTheBundle(t *testing.T) {
 	assert.False(t, repo.in.Nodes[0].Healed, "a changed node of a non-bootstrap release is exact")
 	assert.True(t, uow.CommittedTx)
 
-	mp, err := uow.msgProcRepo.GetByMessageIDAndStream(ctx, "1-0", streams.OrchestratorReleasePromotedVersionsV2)
+	mp, err := uow.msgProcRepo.GetByMessageIDAndStream(ctx, "1-0", streams.OrchestratorReleasePromotedVersions)
 	require.NoError(t, err)
 	require.NotNil(t, mp, "the dedup row is scoped by the v2 versions group")
 }
