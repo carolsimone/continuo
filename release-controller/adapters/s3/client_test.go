@@ -74,6 +74,26 @@ func TestS3Client_GetObjectRefusesAnObjectOverTheCap(t *testing.T) {
 	assert.ErrorIs(t, err, ErrObjectTooLarge)
 }
 
+// A response that ends before its declared Content-Length is a transport
+// failure, not a bad object: it must classify as infrastructure so the
+// consumer pauses for storage recovery instead of dead-lettering the load.
+func TestS3Client_GetObjectTruncatedBodyIsInfrastructure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", "100")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("only ten b"))
+		// Returning with fewer bytes than declared makes the server close the connection.
+	}))
+	defer srv.Close()
+
+	_, err := newTestClient(t, srv.URL).GetObject(context.Background(), "k", 1024)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, io.ErrUnexpectedEOF)
+	assert.False(t, errors.Is(err, ErrObjectNotFound))
+	assert.False(t, errors.Is(err, ErrObjectTooLarge))
+	assert.Equal(t, pkgredis.ClassInfrastructure, pkgredis.Classify(err))
+}
+
 func TestS3Client_PutObjectSendsTheBodyAndContentType(t *testing.T) {
 	var gotPath, gotType string
 	var gotBody []byte

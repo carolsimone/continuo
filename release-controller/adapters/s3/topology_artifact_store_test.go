@@ -2,9 +2,13 @@ package s3
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"io"
 	"reflect"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 
@@ -138,6 +142,37 @@ func TestTopologyArtifactStore_LoadWithAnotherChecksumIsCorrupt(t *testing.T) {
 	_, err = NewTopologyArtifactStore(objects, "continuo", 4).Load(context.Background(), ref)
 	assert.ErrorIs(t, err, ports.ErrTopologyArtifactCorrupt)
 	assert.ErrorIs(t, err, topologyartifact.ErrChecksumMismatch)
+}
+
+// A stored object that matches its checksum but cannot be decoded (a gzip
+// stream cut short, bytes that are not gzip) is a corrupt artifact: permanent
+// by nature, never an infrastructure outage, even though a cut-short gzip
+// stream reports io.ErrUnexpectedEOF while it is read.
+func TestTopologyArtifactStore_UndecodableObjectIsCorruptNotInfrastructure(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		damage func(gz []byte) []byte
+	}{
+		{"truncated gzip", func(gz []byte) []byte { return gz[:len(gz)/2] }},
+		{"not gzip", func([]byte) []byte { return []byte("not a gzip stream") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			objects := newFakeObjects()
+			ref, err := NewTopologyArtifactStore(objects, "continuo", 4).Write(context.Background(), "r1", sampleTopology())
+			require.NoError(t, err)
+			key := strings.TrimPrefix(ref.URI, "s3://continuo/")
+			damaged := tc.damage(objects.objects[key])
+			objects.objects[key] = damaged
+			sum := sha256.Sum256(damaged)
+			ref.SHA256 = hex.EncodeToString(sum[:])
+
+			_, err = NewTopologyArtifactStore(objects, "continuo", 4).Load(context.Background(), ref)
+			require.Error(t, err)
+			assert.ErrorIs(t, err, ports.ErrTopologyArtifactCorrupt)
+			assert.False(t, errors.Is(err, io.ErrUnexpectedEOF), "a decode failure is not a transport truncation")
+			assert.NotEqual(t, pkgredis.ClassInfrastructure, pkgredis.Classify(err))
+		})
+	}
 }
 
 func TestTopologyArtifactStore_LoadOutsideTheBucketIsCorrupt(t *testing.T) {
