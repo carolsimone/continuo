@@ -1,6 +1,9 @@
 package streams
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestRemediationRequestedV2_ReplacesV1(t *testing.T) {
 	if RemediationRequestedV2 != "remediation.requested:v2" {
@@ -48,5 +51,15 @@ func TestManifestLoadedCandidateV2_ReplacesV1(t *testing.T) {
 	}
 	if !retired {
 		t.Fatal("manifest.loaded.candidate:v1 must be listed in retired_streams")
+	}
+}
+
+func TestReleasePromotedV2_HasItsThreeGroups(t *testing.T) {
+	if ReleasePromotedV2 != "release.promoted:v2" {
+		t.Fatalf("ReleasePromotedV2 = %q", ReleasePromotedV2)
+	}
+	want := []string{OrchestratorReleasePromotedV2, OrchestratorReleasePromotedVersionsV2, ExecutorReleasePromotedV2}
+	if got := Groups[ReleasePromotedV2]; !slices.Equal(got, want) {
+		t.Fatalf("Groups[%s] = %v, want %v", ReleasePromotedV2, got, want)
 	}
 }

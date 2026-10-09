@@ -1,0 +1,46 @@
+{
+  "input": {
+    "tenant_id": "default",
+    "producer": "release-controller",
+    "occurred_at": "2026-10-08T09:31:00.000001Z",
+    "payload": {
+      "release_id": "rel-2026-10-08-0001",
+      "promoted_at": "2026-10-08T09:31:00.000001Z",
+      "promotion_seq": 7,
+      "topology_uri": "s3://continuo/tenants/default/topologies/rel-2026-10-08-0001/topology.json.gz",
+      "topology_sha256": "c24510f9d0bf0bb622bac658a15570a66a9bf1e3e00ccf4ea6c84e1c232e3f48",
+      "changed_node_ids": [
+        "raw.orders",
+        "staging.orders"
+      ],
+      "candidate_schema": "_candidate_rel_2026_10_08_0001",
+      "code_bundle_uri": "s3://continuo/code-bundles/rel-2026-10-08-0001/bundle.json",
+      "repo": "carolsimone/continuo-demo",
+      "commit_sha": "0123456789abcdef0123456789abcdef01234567",
+      "bootstrap": false
+    }
+  },
+  "fields": {
+    "event_id": "0d787b5e-4987-5351-98ba-205b935409e9",
+    "tenant_id": "default",
+    "occurred_at": "2026-10-08T09:31:00.000001Z",
+    "producer": "release-controller",
+    "schema_version": "1",
+    "payload": {
+      "release_id": "rel-2026-10-08-0001",
+      "promoted_at": "2026-10-08T09:31:00.000001Z",
+      "promotion_seq": 7,
+      "topology_uri": "s3://continuo/tenants/default/topologies/rel-2026-10-08-0001/topology.json.gz",
+      "topology_sha256": "c24510f9d0bf0bb622bac658a15570a66a9bf1e3e00ccf4ea6c84e1c232e3f48",
+      "changed_node_ids": [
+        "raw.orders",
+        "staging.orders"
+      ],
+      "candidate_schema": "_candidate_rel_2026_10_08_0001",
+      "code_bundle_uri": "s3://continuo/code-bundles/rel-2026-10-08-0001/bundle.json",
+      "repo": "carolsimone/continuo-demo",
+      "commit_sha": "0123456789abcdef0123456789abcdef01234567",
+      "bootstrap": false
+    }
+  }
+}
