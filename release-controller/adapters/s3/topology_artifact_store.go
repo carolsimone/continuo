@@ -2,6 +2,8 @@ package s3
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -57,17 +59,32 @@ func (s *TopologyArtifactStore) Load(ctx context.Context, ref release.TopologyRe
 }
 
 // Write stores topo as releaseID's artifact under the default tenant and
-// returns its reference. The cache is primed with the topology decoded from
-// the written bytes, so a later Load returns exactly what a reader of the
-// object would.
+// returns its reference. The object is immutable: when one already exists at
+// the key, a re-write of the identical bytes is left as it is (so a crash-retry
+// stays idempotent) and a write of different bytes is refused with
+// ports.ErrTopologyArtifactImmutable, rather than invalidating the checksum an
+// earlier announcement still names. The cache is primed with the topology
+// decoded from the written bytes, so a later Load returns exactly what a reader
+// of the object would.
 func (s *TopologyArtifactStore) Write(ctx context.Context, releaseID string, topo release.Topology) (release.TopologyRef, error) {
 	gz, sum, err := topologyartifact.Encode(documentFromTopology(releaseID, topo))
 	if err != nil {
 		return release.TopologyRef{}, fmt.Errorf("encode topology artifact %s: %w", releaseID, err)
 	}
 	key := topologyartifact.Key(pkgevents.DefaultTenantID, releaseID)
-	if err := s.objects.PutObject(ctx, key, gz, "application/gzip"); err != nil {
-		return release.TopologyRef{}, fmt.Errorf("write topology artifact %s: %w", key, err)
+	switch existing, err := s.objects.GetObject(ctx, key, topologyartifact.MaxObjectBytes); {
+	case err == nil:
+		existingSum := sha256.Sum256(existing)
+		if hex.EncodeToString(existingSum[:]) != sum {
+			return release.TopologyRef{}, fmt.Errorf("%w: %s", ports.ErrTopologyArtifactImmutable, key)
+		}
+		// Identical bytes already stored: nothing to re-put.
+	case errors.Is(err, ErrObjectNotFound):
+		if err := s.objects.PutObject(ctx, key, gz, "application/gzip"); err != nil {
+			return release.TopologyRef{}, fmt.Errorf("write topology artifact %s: %w", key, err)
+		}
+	default:
+		return release.TopologyRef{}, fmt.Errorf("read existing topology artifact %s: %w", key, err)
 	}
 	ref := release.TopologyRef{URI: "s3://" + s.bucket + "/" + key, SHA256: sum, NodeCount: len(topo)}
 	doc, err := topologyartifact.Decode(gz, sum)
