@@ -91,10 +91,12 @@ func UpgradeLegacyTopologies(ctx context.Context, d *Deps) error {
 	for _, r := range failed {
 		recordTerminalTelemetry(ctx, d, r, 0)
 	}
-	if len(failed) > 0 {
-		if err := AdvanceQueue(ctx, d); err != nil {
-			return fmt.Errorf("advance queue after the upgrade step: %w", err)
-		}
+	// The queue pump is idempotent, so it runs whether or not this invocation
+	// rejected a run: a failure here, or a crash between the commit and this
+	// call, is retried by the next start, which finds nothing left to reject
+	// and must still move the queued runs on.
+	if err := AdvanceQueue(ctx, d); err != nil {
+		return fmt.Errorf("advance queue after the upgrade step: %w", err)
 	}
 	return nil
 }

@@ -71,3 +71,25 @@ func TestIntegration_UpgradeLegacyTopologies(t *testing.T) {
 	require.NoError(t, handlers.UpgradeLegacyTopologies(ctx, deps))
 	assert.Equal(t, 1, countRejected(), "a second start changes nothing")
 }
+
+// The queue pump after the one-time step does not depend on the step having
+// rejected a run: an upgrade that finds nothing to settle (the retry after a
+// failed or interrupted pump) still promotes the oldest received run.
+func TestIntegration_UpgradeLegacyTopologies_PumpsTheQueueWhenNoRunFailed(t *testing.T) {
+	_, deps, db := setup(t)
+	defer db.Close()
+	ctx := context.Background()
+	runs := postgres.NewRunRepository(db, nil)
+
+	queued := pipeline.NewCandidate("rQueued", "service-1", "img", true, "acme/demo", "sha", release.ManifestKindDbt, time.Unix(100, 0).UTC())
+	require.NoError(t, runs.Save(ctx, queued))
+
+	require.NoError(t, handlers.UpgradeLegacyTopologies(ctx, deps))
+
+	got, err := runs.Get(ctx, "rQueued")
+	require.NoError(t, err)
+	assert.Equal(t, pipeline.StatusCompiling, got.Status(), "the queued run was activated although no run was rejected")
+	var rejected int
+	require.NoError(t, db.Get(&rejected, `SELECT count(*) FROM release_controller_outbox WHERE stream_name = $1`, streams.ReleaseRejectedV1))
+	assert.Zero(t, rejected, "the upgrade step rejected nothing")
+}
