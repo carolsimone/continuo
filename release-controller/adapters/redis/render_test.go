@@ -1,9 +1,14 @@
 package redis
 
 import (
+	"encoding/json"
+	"errors"
 	"testing"
+	"time"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/release-controller/service/ports"
 	"github.com/google/uuid"
 )
 
@@ -72,5 +77,61 @@ func TestXAddArgs_DoNotTrim(t *testing.T) {
 	}
 	if args.Values.(map[string]any)["outbox_entry_id"] != entry.ID.String() {
 		t.Fatalf("outbox_entry_id missing from %v", args.Values)
+	}
+}
+
+// A release.promoted:v2 row's payload is the typed event; Render wraps it in
+// the envelope, deriving the event id from the seq and occurred_at from the
+// row's creation, so every retry publishes identical fields.
+func TestRender_ReleasePromotedV2RowCarriesTheEnvelope(t *testing.T) {
+	created := time.Date(2026, 10, 8, 12, 0, 0, 123456000, time.UTC)
+	want := pkgevents.ReleasePromoted{
+		ReleaseID:       "r7",
+		PromotedAt:      created,
+		PromotionSeq:    7,
+		TopologyURI:     "s3://b/tenants/default/topologies/r7/topology.json.gz",
+		TopologySHA256:  "f00d",
+		ChangedNodeIDs:  []string{"a"},
+		CandidateSchema: "_candidate_r7",
+		CodeBundleURI:   "s3://b/code-bundles/r7/bundle.json",
+		Repo:            "acme/demo",
+		CommitSHA:       "deadbeef",
+	}
+	payload, err := json.Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &releaseOutboxPublisher{}
+	values, err := p.Render(&pkgoutbox.Entry{ID: uuid.New(), EventType: ports.ReleasePromotedV2EventType, Payload: payload, CreatedAt: created})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields, err := pkgoutbox.StringifyFields(values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, got, err := pkgevents.DecodeReleasePromoted(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ReleaseID != want.ReleaseID || got.PromotionSeq != 7 || got.TopologySHA256 != "f00d" || len(got.ChangedNodeIDs) != 1 {
+		t.Fatalf("payload = %+v", got)
+	}
+	if env.EventID != pkgevents.ReleasePromotedEventID(pkgevents.DefaultTenantID, 7) {
+		t.Fatalf("event_id = %q", env.EventID)
+	}
+	if env.Producer != "release-controller" || env.TenantID != pkgevents.DefaultTenantID || !env.OccurredAt.Equal(created) {
+		t.Fatalf("envelope = %+v", env)
+	}
+	if _, ok := values["outbox_entry_id"]; ok {
+		t.Fatal("Render must not include outbox_entry_id")
+	}
+}
+
+func TestRender_MalformedReleasePromotedV2RowIsPermanent(t *testing.T) {
+	p := &releaseOutboxPublisher{}
+	_, err := p.Render(&pkgoutbox.Entry{ID: uuid.New(), EventType: ports.ReleasePromotedV2EventType, Payload: []byte(`{`)})
+	if !errors.Is(err, pkgevents.ErrPermanent) {
+		t.Fatalf("err = %v, want ErrPermanent", err)
 	}
 }

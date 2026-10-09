@@ -2,6 +2,7 @@ package redis
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -11,6 +12,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/liveness"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/release-controller/adapters/postgres"
+	"github.com/carolsimone/continuo/release-controller/service/ports"
 	"github.com/jmoiron/sqlx"
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -51,11 +53,17 @@ func (p *releaseOutboxPublisher) xaddArgs(entry *pkgoutbox.Entry, values map[str
 
 var _ pkgoutbox.Renderer = (*releaseOutboxPublisher)(nil)
 
+// envelopeProducer names release-controller as the producer of the events it
+// publishes with an envelope.
+const envelopeProducer = "release-controller"
+
 // Render returns the field map Publish XADDs for entry, without
-// outbox_entry_id: a dead-letter row's scalar fields, or the row's JSON body as
-// the single "payload" field. Every call returns a fresh map.
+// outbox_entry_id: a dead-letter row's scalar fields, a release.promoted:v2
+// row's envelope fields, or the row's JSON body as the single "payload" field.
+// Every call returns a fresh map.
 func (p *releaseOutboxPublisher) Render(entry *pkgoutbox.Entry) (map[string]any, error) {
-	if entry.EventType == pkgoutbox.DeadLetterEventType {
+	switch entry.EventType {
+	case pkgoutbox.DeadLetterEventType:
 		values, err := pkgoutbox.DeadLetterValues(entry)
 		if err != nil {
 			// Our own payload; a decode failure here is deterministic, never transient.
@@ -63,6 +71,12 @@ func (p *releaseOutboxPublisher) Render(entry *pkgoutbox.Entry) (map[string]any,
 		}
 		delete(values, "outbox_entry_id")
 		return values, nil
+	case ports.ReleasePromotedV2EventType:
+		var promoted pkgevents.ReleasePromoted
+		if err := json.Unmarshal(entry.Payload, &promoted); err != nil {
+			return nil, fmt.Errorf("%w: release.promoted payload: %v", pkgevents.ErrPermanent, err)
+		}
+		return pkgevents.ReleasePromotedFields(pkgevents.DefaultTenantID, envelopeProducer, entry.CreatedAt, promoted)
 	}
 	return map[string]any{"payload": string(entry.Payload)}, nil
 }
