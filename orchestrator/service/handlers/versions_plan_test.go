@@ -8,7 +8,6 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	domainEvent "github.com/carolsimone/continuo/orchestrator/domain/event"
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/pkg/codebundle"
 	"github.com/stretchr/testify/assert"
@@ -40,12 +39,14 @@ func bundleFixture() codebundle.Bundle {
 }
 
 func inputFixture(changed, bootstrap bool) domainModel.PromoteReleaseInput {
-	return domainModel.PromoteReleaseInput{
-		ReleaseID: "rel-1", Repo: "org/svc", CommitSHA: "deadbeef", Bootstrap: bootstrap,
-		Topology: []domainEvent.ReleasePromotedNode{
-			{UniqueID: "analytics.revenue", ContentHash: "sha256:abc", Changed: changed},
-		},
+	in := domainModel.PromoteReleaseInput{
+		ReleaseID: "rel-1", PromotionSeq: 4, Repo: "org/svc", CommitSHA: "deadbeef",
+		Bootstrap: bootstrap, ChangedNodeIDs: []string{},
 	}
+	if changed {
+		in.ChangedNodeIDs = []string{"analytics.revenue"}
+	}
+	return in
 }
 
 func TestPlanVersionWrite_CopiesTheBundleNode(t *testing.T) {
@@ -162,7 +163,7 @@ func TestPlanVersionWrite_TruncationKeepsValidUTF8(t *testing.T) {
 	assert.True(t, utf8.ValidString(in.Nodes[0].CompiledCode))
 }
 
-// The event's flags qualify a write; they never trigger one.
+// changed_node_ids qualifies a write; it never triggers one.
 func TestPlanVersionWrite_HealedProvenance(t *testing.T) {
 	assert.False(t, planVersionWrite(inputFixture(true, false), bundleFixture(), versionsTestLogger()).Nodes[0].Healed,
 		"changed and not a bootstrap: this release authored the code")
@@ -172,10 +173,14 @@ func TestPlanVersionWrite_HealedProvenance(t *testing.T) {
 		"bootstrap: baseline seeding, so the stamps are approximate")
 }
 
-func TestPlanVersionWrite_BundleNodeAbsentFromTopologyIsHealed(t *testing.T) {
+func TestPlanVersionWrite_BundleNodeOutsideChangedNodeIDsIsHealed(t *testing.T) {
 	in := inputFixture(true, false)
-	in.Topology = nil
+	in.ChangedNodeIDs = []string{"analytics.other"}
 	assert.True(t, planVersionWrite(in, bundleFixture(), versionsTestLogger()).Nodes[0].Healed)
+}
+
+func TestPlanVersionWrite_CarriesThePromotionSeq(t *testing.T) {
+	assert.Equal(t, int64(4), planVersionWrite(inputFixture(true, false), bundleFixture(), versionsTestLogger()).PromotionSeq)
 }
 
 func TestPlanVersionWrite_IsDeterministicallyOrdered(t *testing.T) {

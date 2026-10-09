@@ -1,5 +1,3 @@
-// Package s3 implements ports.CodeBundleReader over AWS SDK v2 S3 (MinIO
-// or MinIO in dev).
 package s3
 
 import (
@@ -10,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/credentials"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 
@@ -33,22 +30,14 @@ type CodeBundleReader struct {
 // Compile-time assertion that the adapter satisfies the application port.
 var _ ports.CodeBundleReader = (*CodeBundleReader)(nil)
 
-// NewCodeBundleReader builds an S3-backed CodeBundleReader. endpointURL empty →
-// AWS default; non-empty (e.g. http://minio:9000) → path-style addressing.
-//
-// Static credentials are attached only when both key values are supplied. An
-// install running under an IAM role or workload identity leaves them empty on
-// purpose, and a static provider built from empty strings does not fall through
-// to the SDK's default credential chain — it fails every request with "static
-// credentials are empty". Leaving Credentials nil is what lets the chain resolve
-// the role.
-func NewCodeBundleReader(endpointURL, bucket, region, accessKeyID, secretKey string) *CodeBundleReader {
-	cfg := awsConfig(region, accessKeyID, secretKey)
-	opts := []func(*awss3.Options){func(o *awss3.Options) { o.UsePathStyle = true }}
-	if endpointURL != "" {
-		opts = append(opts, func(o *awss3.Options) { o.BaseEndpoint = aws.String(endpointURL) })
+// NewCodeBundleReader builds an S3-backed CodeBundleReader (see newClient for
+// the endpoint and credential rules).
+func NewCodeBundleReader(ctx context.Context, endpointURL, bucket, region, accessKeyID, secretKey string) (*CodeBundleReader, error) {
+	client, err := newClient(ctx, endpointURL, region, accessKeyID, secretKey)
+	if err != nil {
+		return nil, err
 	}
-	return &CodeBundleReader{client: awss3.NewFromConfig(cfg, opts...), defaultBucket: bucket}
+	return &CodeBundleReader{client: client, defaultBucket: bucket}, nil
 }
 
 // Fetch reads and decodes the bundle at uri. A missing object yields
@@ -95,28 +84,4 @@ func (r *CodeBundleReader) Fetch(ctx context.Context, uri string) (codebundle.Bu
 		return codebundle.Bundle{}, fmt.Errorf("%w: %s: %v", ports.ErrBundleMalformed, uri, err)
 	}
 	return bundle, nil
-}
-
-// awsConfig builds the SDK config, attaching a static credential provider only
-// when both key values are present so the default credential chain stays
-// reachable for role-based installs.
-func awsConfig(region, accessKeyID, secretKey string) aws.Config {
-	cfg := aws.Config{Region: region}
-	if accessKeyID != "" && secretKey != "" {
-		cfg.Credentials = credentials.NewStaticCredentialsProvider(accessKeyID, secretKey, "")
-	}
-	return cfg
-}
-
-// parseS3URI splits "s3://bucket/key" into (bucket, key). A bare value with no
-// scheme is treated as a key with an empty bucket, so the caller's default
-// bucket applies.
-func parseS3URI(uri string) (bucket, key string) {
-	if rest, ok := strings.CutPrefix(uri, "s3://"); ok {
-		if i := strings.IndexByte(rest, '/'); i >= 0 {
-			return rest[:i], rest[i+1:]
-		}
-		return rest, ""
-	}
-	return "", uri
 }

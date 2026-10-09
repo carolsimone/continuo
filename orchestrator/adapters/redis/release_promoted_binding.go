@@ -4,17 +4,16 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// NewReleasePromotedBinding wires ParseReleasePromoted into the
-// ReleasePromotedHandler. A parse failure is permanent (events.ErrPermanent):
+// NewReleasePromotedBinding wires ParseReleasePromotedV2 into the
+// ReleasePromotedHandler. A decode failure is permanent (events.ErrPermanent):
 // the binding logs and returns the error so the consumer dead-letters the
-// poison message.
+// entry.
 //
 // outbox_entry_id is extracted from the message fields and threaded to the
 // handler so the dedup layer can catch re-XADDs of the same upstream outbox
@@ -24,23 +23,12 @@ func NewReleasePromotedBinding(
 	logger *slog.Logger,
 ) pkgredis.MessageHandler {
 	return func(ctx context.Context, msg goredis.XMessage) error {
-		evt, err := ParseReleasePromoted(msg)
+		in, err := ParseReleasePromotedV2(msg)
 		if err != nil {
-			logger.Error("release.promoted: parse failure — dead-lettering",
+			logger.Error("release.promoted: decode failure — dead-lettering",
 				"message_id", msg.ID, "error", err)
 			return err
 		}
-		in := model.PromoteReleaseInput{
-			ReleaseID:     evt.ReleaseID,
-			Topology:      evt.Topology,
-			ImageTags:     evt.ImageTags,
-			Repo:          evt.Repo,
-			CommitSHA:     evt.CommitSHA,
-			PromotedAt:    evt.PromotedAt,
-			CodeBundleURI: evt.CodeBundleURI,
-			Bootstrap:     evt.Bootstrap,
-		}
-		outboxEntryID := messageprocessing.ExtractOutboxEntryID(msg.Values)
-		return handler.Handle(ctx, msg.ID, outboxEntryID, in)
+		return handler.Handle(ctx, msg.ID, messageprocessing.ExtractOutboxEntryID(msg.Values), in)
 	}
 }

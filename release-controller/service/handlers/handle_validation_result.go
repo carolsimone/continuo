@@ -2,18 +2,15 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
-	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
-	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/service/ports"
 	"github.com/carolsimone/continuo/release-controller/service/uow"
-	"github.com/google/uuid"
 )
 
 // HandleValidationResultInput carries the terminal validation decision (the
@@ -40,7 +37,7 @@ type HandleValidationResultInput struct {
 //
 // If every present validation node passed and the aggregate status is ok: a
 // candidate promotes to production (updates CurrentProd, upserts the changed
-// service's service_prod pointer, emits release.promoted:v1) and a
+// service's service_prod pointer, emits release.promoted:v2) and a
 // verification passes without touching either. Otherwise a candidate rejects
 // and emits release.rejected:v1, while a verification fails and emits no
 // release event. A run of either kind, on either outcome, emits
@@ -51,6 +48,18 @@ func HandleValidationResult(ctx context.Context, d *Deps, in HandleValidationRes
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer u.Rollback() //nolint:errcheck
+
+	// Take the release-queue advisory lock before the run row is loaded FOR
+	// UPDATE below. A promotion holds both locks, and every transaction that
+	// takes both must take the advisory lock first so the global
+	// advisory→run-row order holds and the cross-process wait-for graph stays
+	// acyclic (no deadlock). Acquiring it here serializes the whole
+	// validation-result handler under the queue lock, which is acceptable: it
+	// already serializes at promotion, validation results are low-throughput and
+	// single-consumer, and a consistent lock order beats the narrow concurrency.
+	if err := u.LockReleaseQueue(ctx); err != nil {
+		return fmt.Errorf("lock release queue: %w", err)
+	}
 
 	r, err := u.RunRepo().Load(ctx, in.ReleaseID) // FOR UPDATE: serialize against per-node upserts
 	if err != nil {
@@ -136,50 +145,60 @@ func concludeValidated(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeli
 }
 
 // promoteToProduction applies the promotion effects shared by the
-// validation-passed path and the nothing-to-validate short-circuit: it points
-// current_prod at this release's candidate topology, upserts the changed
-// service's service_prod pointer, transitions the release to Promoted, persists
-// it, and writes the release.promoted:v1 and pipeline.run.finished:v1 outbox
-// rows. The caller owns Begin/Commit and any telemetry. The release must
-// already hold its candidate topology (i.e. be in Validating) and be a
-// candidate — call concludeValidated instead when the run's kind is unknown
-// to the caller.
+// validation-passed path and the nothing-to-validate short-circuit: it takes
+// the next promotion seq, points current_prod at this release's candidate
+// topology artifact under that seq, upserts the changed service's
+// service_prod pointer, transitions the release to Promoted, persists it, and
+// writes the release.promoted:v2 and pipeline.run.finished:v1 outbox rows. The
+// caller owns Begin/Commit and any telemetry. The release must already hold
+// its candidate topology (i.e. be in Validating) and be a candidate — call
+// concludeValidated instead when the run's kind is unknown to the caller.
 func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, now time.Time) error {
 	releaseID := r.ID()
+	ref := r.CandidateTopologyRef()
+
+	// Hold the release-queue lock across the current_prod read, the seq
+	// allocation and the current_prod move, so a concurrent announce or
+	// re-announce cannot read current_prod, take a higher seq and clobber this
+	// promotion between those steps. Every holder takes this lock before reading
+	// current_prod, so the order is consistent. This keeps promoteToProduction
+	// correct for every caller; a caller that loads a run row FOR UPDATE first
+	// (HandleValidationResult) takes this lock immediately after Begin, and this
+	// re-acquisition in the same transaction is a no-op (pg_advisory_xact_lock
+	// taken twice in one tx simply succeeds).
+	if err := u.LockReleaseQueue(ctx); err != nil {
+		return fmt.Errorf("lock release queue: %w", err)
+	}
 
 	cp, err := u.CurrentProdRepo().Get(ctx)
 	if err != nil {
 		return fmt.Errorf("get current prod: %w", err)
 	}
-	// The candidate topology is the artifact's: it carries no candidate SQL
-	// URIs (those are derived per run), so current_prod and the promoted
-	// topology take it as is.
-	promotedTopo, err := candidateTopology(ctx, d, r)
+	// Computed against the production topology BEFORE cp.Update replaces it.
+	changed, err := changedSincePromotion(ctx, d, r, cp)
 	if err != nil {
 		return err
 	}
 
-	// Determine which nodes actually changed versus the prod being replaced, so
-	// the release.promoted event can tag them. Computed against cp's snapshot
-	// BEFORE cp.Update overwrites it below. Bootstrap (empty prod) flags all.
-	changedSet := make(map[string]bool)
-	for _, id := range release.DerivedChangedNodeIDs(promotedTopo, cp.TopologySnapshot()) {
-		changedSet[id] = true
+	seq, err := u.PromotionSequenceRepo().Next(ctx)
+	if err != nil {
+		return fmt.Errorf("take promotion seq: %w", err)
 	}
-
-	cp.Update(releaseID, promotedTopo, now)
+	if err := cp.Update(releaseID, ref, seq, now); err != nil {
+		return fmt.Errorf("move current prod: %w", err)
+	}
 	if err := u.CurrentProdRepo().Upsert(ctx, cp); err != nil {
 		return fmt.Errorf("upsert current prod: %w", err)
 	}
 
 	// Upsert the changed service's production pointer so future releases can
 	// assemble this service's manifest key at their AdvanceQueue step.
-	changed := r.ChangedService()
+	changedService := r.ChangedService()
 	sp := release.NewServiceProd(
-		changed,
+		changedService,
 		releaseID,
-		CanonicalManifestKey(d.Bucket, changed, releaseID, r.ManifestKind()),
-		r.ImageTags()[changed],
+		CanonicalManifestKey(d.Bucket, changedService, releaseID, r.ManifestKind()),
+		r.ImageTags()[changedService],
 		r.ManifestKind(),
 		now,
 	)
@@ -194,67 +213,20 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipe
 		return fmt.Errorf("save release: %w", err)
 	}
 
-	type promotedNodeWire struct {
-		UniqueID          string   `json:"unique_id"`
-		SchemaName        string   `json:"schema_name"`
-		TableName         string   `json:"table_name"`
-		ServiceName       string   `json:"service_name"`
-		NodeType          string   `json:"node_type"`
-		ContentHash       string   `json:"content_hash"`
-		TestCount         int      `json:"test_count"`
-		ImageTag          string   `json:"image_tag"`
-		UpstreamUniqueIDs []string `json:"upstream_unique_ids"`
-		Schedule          string   `json:"schedule"`
-		Changed           bool     `json:"changed"`
-		OriginalFilePath  string   `json:"original_file_path"`
-		SecretRef         string   `json:"secret_ref,omitempty"`
-	}
-	// Tests are validation-only: current_prod keeps them so an unchanged test
-	// is not re-checked next release, but the promoted topology the
-	// orchestrator draws and schedules never carries them.
-	publishedTopo := promotedTopo.WithoutTests()
-	wireTopo := make([]promotedNodeWire, len(publishedTopo))
-	for i, n := range publishedTopo {
-		wireTopo[i] = promotedNodeWire{
-			UniqueID:          n.UniqueID,
-			SchemaName:        n.SchemaName,
-			TableName:         n.TableName,
-			ServiceName:       n.ServiceName,
-			NodeType:          n.NodeType,
-			ContentHash:       n.ContentHash,
-			TestCount:         n.TestCount,
-			ImageTag:          n.ImageTag,
-			UpstreamUniqueIDs: n.UpstreamUniqueIDs,
-			Schedule:          n.Schedule,
-			Changed:           changedSet[n.UniqueID],
-			OriginalFilePath:  n.OriginalFilePath,
-			SecretRef:         n.SecretRef,
-		}
-	}
-	payload, err := json.Marshal(map[string]any{
-		"release_id":       releaseID,
-		"topology":         wireTopo,
-		"image_tags":       r.ImageTags(),
-		"repo":             r.Repo(),
-		"commit_sha":       r.CommitSHA(),
-		"promoted_at":      now.UTC(),
-		"candidate_schema": CandidateSchemaFor(releaseID),
-		"code_bundle_uri":  r.CodeBundleURI(),
-		"bootstrap":        r.IsBootstrap(),
-	})
-	if err != nil {
-		return fmt.Errorf("marshal payload: %w", err)
-	}
-	if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
-		ID:            uuid.New(),
-		AggregateType: "release-controller",
-		AggregateID:   AggregateIDForRelease(releaseID),
-		EventType:     "release_promoted",
-		Payload:       payload,
-		StreamName:    streams.ReleasePromotedV1,
-		Status:        "pending",
+	if err := enqueueReleasePromoted(ctx, u, events.ReleasePromoted{
+		ReleaseID:       releaseID,
+		PromotedAt:      now.UTC(),
+		PromotionSeq:    seq,
+		TopologyURI:     ref.URI,
+		TopologySHA256:  ref.SHA256,
+		ChangedNodeIDs:  changed,
+		CandidateSchema: CandidateSchemaFor(releaseID),
+		CodeBundleURI:   r.CodeBundleURI(),
+		Repo:            r.Repo(),
+		CommitSHA:       r.CommitSHA(),
+		Bootstrap:       r.IsBootstrap(),
 	}); err != nil {
-		return fmt.Errorf("outbox insert: %w", err)
+		return err
 	}
 	return enqueueRunFinished(ctx, u, r, now)
 }
@@ -316,12 +288,12 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 
 	// Which candidate nodes changed against production, so each failing node
 	// can name the changed ancestors that may be the root cause of its failure.
-	cp, err := u.CurrentProdRepo().Get(ctx)
+	prod, err := currentProdTopology(ctx, d, u)
 	if err != nil {
-		return fmt.Errorf("get current prod: %w", err)
+		return err
 	}
 	changedSet := make(map[string]bool)
-	for _, id := range release.DerivedChangedNodeIDs(topo, cp.TopologySnapshot()) {
+	for _, id := range release.DerivedChangedNodeIDs(topo, prod) {
 		changedSet[id] = true
 	}
 

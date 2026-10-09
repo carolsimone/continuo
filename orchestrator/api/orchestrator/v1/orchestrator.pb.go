@@ -534,8 +534,8 @@ type GetScheduleGraphResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Nodes []*TableNode           `protobuf:"bytes,1,rep,name=nodes,proto3" json:"nodes,omitempty"`
 	Edges []*GraphEdge           `protobuf:"bytes,2,rep,name=edges,proto3" json:"edges,omitempty"`
-	// topology_generation is :TopologyRoot.topology_generation at query time.
-	// Returns 0 when the singleton is missing or the property is unset; consumers
+	// topology_generation is the promotion seq of the live topology at query time
+	// (:TopologyRoot.promotion_seq). Returns 0 before the first promotion; consumers
 	// MUST treat 0 as "generation unknown", not "generation zero".
 	TopologyGeneration int64 `protobuf:"varint,3,opt,name=topology_generation,json=topologyGeneration,proto3" json:"topology_generation,omitempty"`
 	unknownFields      protoimpl.UnknownFields
@@ -835,13 +835,12 @@ type GetRunGraphResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Nodes []*TableNode           `protobuf:"bytes,1,rep,name=nodes,proto3" json:"nodes,omitempty"`
 	Edges []*GraphEdge           `protobuf:"bytes,2,rep,name=edges,proto3" json:"edges,omitempty"`
-	// run_topology_generation is the value stamped on the :Run node at
-	// SnapshotGraph time (orchestrator/adapters/neo4j/run_repository.go:91-99).
-	// Returns 0 when the run does not exist or pre-dates topology tracking;
+	// run_topology_generation is the promotion seq the run was created under,
+	// stamped on the :Run node when its snapshot is written. Returns 0 when the
+	// run does not exist or was created before runs carried a promotion seq;
 	// consumers MUST treat 0 as "drift unknown", not "no drift".
 	RunTopologyGeneration int64 `protobuf:"varint,3,opt,name=run_topology_generation,json=runTopologyGeneration,proto3" json:"run_topology_generation,omitempty"`
-	// latest_topology_generation is the orchestrator's current
-	// topology_state.topology_generation (Postgres singleton).
+	// latest_topology_generation is the promotion seq of the live topology.
 	LatestTopologyGeneration int64 `protobuf:"varint,4,opt,name=latest_topology_generation,json=latestTopologyGeneration,proto3" json:"latest_topology_generation,omitempty"`
 	unknownFields            protoimpl.UnknownFields
 	sizeCache                protoimpl.SizeCache
@@ -943,7 +942,7 @@ func (*ListActiveRunDriftsRequest) Descriptor() ([]byte, []int) {
 
 type ListActiveRunDriftsResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// latest_topology_generation matches the value in GetRunGraphResponse.
+	// latest_topology_generation is the live promotion seq, as in GetRunGraphResponse.
 	LatestTopologyGeneration int64             `protobuf:"varint,1,opt,name=latest_topology_generation,json=latestTopologyGeneration,proto3" json:"latest_topology_generation,omitempty"`
 	ActiveRuns               []*ActiveRunDrift `protobuf:"bytes,2,rep,name=active_runs,json=activeRuns,proto3" json:"active_runs,omitempty"`
 	unknownFields            protoimpl.UnknownFields
@@ -995,10 +994,11 @@ func (x *ListActiveRunDriftsResponse) GetActiveRuns() []*ActiveRunDrift {
 }
 
 type ActiveRunDrift struct {
-	state                 protoimpl.MessageState `protogen:"open.v1"`
-	ScheduleName          string                 `protobuf:"bytes,1,opt,name=schedule_name,json=scheduleName,proto3" json:"schedule_name,omitempty"`
-	RunId                 string                 `protobuf:"bytes,2,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
-	RunTopologyGeneration int64                  `protobuf:"varint,3,opt,name=run_topology_generation,json=runTopologyGeneration,proto3" json:"run_topology_generation,omitempty"`
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	ScheduleName string                 `protobuf:"bytes,1,opt,name=schedule_name,json=scheduleName,proto3" json:"schedule_name,omitempty"`
+	RunId        string                 `protobuf:"bytes,2,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	// run_topology_generation is the promotion seq the run was created under; 0 when unknown.
+	RunTopologyGeneration int64 `protobuf:"varint,3,opt,name=run_topology_generation,json=runTopologyGeneration,proto3" json:"run_topology_generation,omitempty"`
 	unknownFields         protoimpl.UnknownFields
 	sizeCache             protoimpl.SizeCache
 }

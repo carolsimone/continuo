@@ -17,7 +17,7 @@ func (s *Server) handleGetCurrentProd(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"current_prod_release_id": cp.ReleaseID(),
-		"node_count":              len(cp.TopologySnapshot()),
+		"node_count":              cp.Topology().NodeCount,
 		"updated_at":              cp.UpdatedAt(),
 	})
 }

@@ -140,3 +140,82 @@ def test_scenario_subset_selects_by_name():
     assert wanted("cancel-500", "cascade-2000 cancel-500")
     assert not wanted("dag-500", "cascade-2000,cancel-500")
     assert not wanted("dag-2000", "dag-200")
+
+
+def exec_calls(env):
+    import json
+    return [json.loads(line) for line in (Path(env["FAKE_DIR"]) / "exec-calls.jsonl").read_text().splitlines()]
+
+
+def test_announce_runs_inside_the_release_controller_deployment_on_k8s(tmp_path):
+    import fake_env
+    env = fake_env.make(tmp_path, [])
+    env.update(BENCH_TARGET="k8s", BENCH_KUBECONFIG="/dev/null")
+    (Path(env["FAKE_DIR"]) / "announce-output").write_text('{"release_id":"r","promotion_seq":3}\n')
+    out = run_lib(env, "printf '[]' | bench_announce --release-id r --topology -")
+    assert out.returncode == 0, out.stderr
+    assert out.stdout == '{"release_id":"r","promotion_seq":3}\n'
+    call = exec_calls(env)[-1]
+    assert "exec -i deploy/release-controller -- announce-topology --release-id r --topology -" in " ".join(call["argv"])
+    assert call["stdin"] == "[]"
+
+
+def test_announce_runs_inside_the_release_controller_container_on_compose(tmp_path):
+    import fake_env
+    env = fake_env.make(tmp_path, [])
+    (Path(env["FAKE_DIR"]) / "announce-output").write_text('{"release_id":"r","promotion_seq":4}\n')
+    out = run_lib(env, "bench_announce --reannounce-current < /dev/null")
+    assert out.returncode == 0, out.stderr
+    assert '"promotion_seq":4' in out.stdout
+    assert exec_calls(env)[-1]["argv"][-2:] == ["/app/release-controller/bin/announce-topology", "--reannounce-current"]
+
+
+def test_restore_treats_no_current_prod_as_nothing_to_restore(tmp_path):
+    import json
+    import fake_env
+    env = fake_env.make(tmp_path, [])
+    env.update(BENCH_TARGET="k8s", BENCH_KUBECONFIG="/dev/null", BENCH_PG_POD="pg-0", FAKE_ANNOUNCE_RC="3")
+    (Path(env["FAKE_DIR"]) / "exec-output").write_text("rel-9\n")
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    (out_dir / "restore.json").write_text(json.dumps({"release_id": "rel-9", "topology": []}))
+    (out_dir / "schedules-before.json").write_text(json.dumps({"schedules": []}))
+    result = subprocess.run(["bash", str(BENCH / "restore.sh"), str(out_dir)], env=env, capture_output=True,
+                            text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    assert "nothing to restore" in result.stderr
+    assert "--reannounce-current" in " ".join(exec_calls(env)[-1]["argv"])
+
+
+def test_export_reads_current_prod_through_announce_topology(tmp_path):
+    import json
+    import fake_env
+    env = fake_env.make(tmp_path, [])
+    env.update(BENCH_TARGET="k8s", BENCH_KUBECONFIG="/dev/null", BENCH_PG_POD="pg-0")
+    fake = Path(env["FAKE_DIR"])
+    (fake / "exec-output").write_text("rel-9\n")
+    (fake / "announce-output").write_text(json.dumps([
+        {"unique_id": "a.x", "schema_name": "a", "table_name": "x", "node_type": "dbt-model", "schedule": "daily",
+         "upstream_unique_ids": [], "test_count": 1},
+        {"unique_id": "a.not_null_x", "node_type": "dbt-test", "upstream_unique_ids": ["a.x"]}]))
+    out_dir = tmp_path / "out"
+    result = subprocess.run(["bash", str(BENCH / "export_topology.sh"), str(out_dir)], env=env, capture_output=True,
+                            text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    assert any("--print-current" in " ".join(call["argv"]) for call in exec_calls(env))
+    current = json.loads((out_dir / "current.json").read_text())
+    assert current["release_id"] == "rel-9" and len(current["topology"]) == 2
+    restore = json.loads((out_dir / "restore.json").read_text())
+    assert restore["release_id"] == "rel-9"
+    assert [n["unique_id"] for n in restore["topology"]] == ["a.x"]
+
+
+def test_export_refuses_when_current_prod_names_no_release(tmp_path):
+    import fake_env
+    env = fake_env.make(tmp_path, [])
+    env.update(BENCH_TARGET="k8s", BENCH_KUBECONFIG="/dev/null", BENCH_PG_POD="pg-0")
+    (Path(env["FAKE_DIR"]) / "exec-output").write_text("\n")
+    result = subprocess.run(["bash", str(BENCH / "export_topology.sh"), str(tmp_path / "out")], env=env,
+                            capture_output=True, text=True, timeout=60)
+    assert result.returncode != 0
+    assert "names no release" in result.stderr

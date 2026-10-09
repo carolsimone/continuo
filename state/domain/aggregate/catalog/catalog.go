@@ -9,19 +9,25 @@ import (
 
 // ScheduleCatalog is the aggregate root for the schedule_catalog table.
 // Loaded as a whole-set view via CatalogRepository.LoadCatalogForUpdate and
-// persisted via SaveCatalog after Reconcile.
+// persisted via SaveCatalog after Reconcile. promotionSeq is the promotion seq
+// of the last schedules.loaded:v1 payload it applied.
 type ScheduleCatalog struct {
-	entries map[string]Entry
+	entries      map[string]Entry
+	promotionSeq int64
 }
 
-// Hydrate constructs a ScheduleCatalog from persisted rows. Used by the
-// postgres adapter inside LoadCatalogForUpdate / GetCatalog.
-func Hydrate(initial map[string]Entry) *ScheduleCatalog {
+// Hydrate constructs a ScheduleCatalog from persisted rows and the promotion
+// seq it last applied. Used by the postgres adapter inside
+// LoadCatalogForUpdate / GetCatalog.
+func Hydrate(initial map[string]Entry, promotionSeq int64) *ScheduleCatalog {
 	if initial == nil {
 		initial = map[string]Entry{}
 	}
-	return &ScheduleCatalog{entries: initial}
+	return &ScheduleCatalog{entries: initial, promotionSeq: promotionSeq}
 }
+
+// PromotionSeq returns the promotion seq of the last payload Reconcile applied.
+func (c *ScheduleCatalog) PromotionSeq() int64 { return c.promotionSeq }
 
 // Entry returns the catalog entry for `name` plus a presence flag.
 func (c *ScheduleCatalog) Entry(name string) (Entry, bool) {
@@ -42,12 +48,19 @@ func (c *ScheduleCatalog) Names() []string {
 // Reconcile applies a schedules.loaded:v1 payload, mutating the in-memory
 // entry set: absent names are added, previously-removed names are reactivated,
 // and active names no longer present are soft-deleted (RemovedAt stamped with
-// now). See package errors for the empty-list guard.
+// now). promotionSeq orders the payloads: one lower than the catalog's
+// describes an older release and is refused with ErrStalePromotion, leaving the
+// catalog unchanged; an equal one re-applies. See package errors for the
+// empty-list guard.
 func (c *ScheduleCatalog) Reconcile(
+	promotionSeq int64,
 	presentNames []string,
 	serviceMetadata map[string]map[string]run.ServiceMetadata,
 	now time.Time,
 ) error {
+	if promotionSeq < c.promotionSeq {
+		return ErrStalePromotion
+	}
 	if len(presentNames) == 0 {
 		return ErrEmptyReconciliation
 	}
@@ -74,6 +87,7 @@ func (c *ScheduleCatalog) Reconcile(
 		entry.RemovedAt = &removed
 		c.entries[name] = entry
 	}
+	c.promotionSeq = promotionSeq
 	return nil
 }
 

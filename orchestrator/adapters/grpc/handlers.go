@@ -29,11 +29,10 @@ type ScheduleAndRunListReader interface {
 	GetNodeLocation(ctx context.Context, uniqueID string) (*domain.NodeLocation, error)
 }
 
-// DriftAwareRunReader returns view-shaped run data composed from Neo4j
-// (the :Run node and its pinned topology_generation) AND Postgres (the
-// current topology_state.topology_generation). Used by the RPCs that
-// surface drift to the dashboard and rerun modal. Satisfied by
-// service/queries.RunQueryService.
+// DriftAwareRunReader returns view-shaped run data: a run's graph plus the
+// promotion seq the run was created under and the live topology's promotion
+// seq, both read from Neo4j. Used by the RPCs that surface drift to the
+// dashboard and rerun modal. Satisfied by service/queries.RunQueryService.
 type DriftAwareRunReader interface {
 	GetRunGraph(ctx context.Context, runID string) (*queries.RunGraphView, error)
 	ListActiveRunDrifts(ctx context.Context) (*queries.ActiveRunDriftView, error)

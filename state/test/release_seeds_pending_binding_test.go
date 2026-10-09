@@ -20,7 +20,7 @@ import (
 
 // TestReleaseSeedsPendingBinding_SecondDeliveryForTheSameReleaseIsANoOp drives
 // the release.seeds.pending:v1 binding twice for one release, as orchestrator
-// does when it handles the same release.promoted:v1 twice (a redelivery or a
+// does when it handles the same release.promoted:v2 twice (a redelivery or a
 // dead-letter redrive): each delivery has its own stream message id and outbox
 // entry id, so dedup does not catch the second. Both deliveries must commit,
 // and the release must end up with one run and one trigger.promoted_seeds:v1

@@ -59,6 +59,12 @@ func (u *UnitOfWork) ServiceProdRepo() repository.ServiceProdRepository {
 	return NewServiceProdRepository(u.queryer())
 }
 
+// PromotionSequenceRepo returns the promotion-sequence repository bound to the
+// current queryer.
+func (u *UnitOfWork) PromotionSequenceRepo() repository.PromotionSequenceRepository {
+	return NewPromotionSequenceRepository(u.queryer())
+}
+
 // LegacyTopologyRepo returns the repository the one-time upgrade step uses,
 // bound to the current queryer.
 func (u *UnitOfWork) LegacyTopologyRepo() repository.LegacyTopologyRepository {

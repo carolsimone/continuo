@@ -93,7 +93,11 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 		return fmt.Errorf("list service prod: %w", err)
 	}
 	if cp != nil && cp.ReleaseID() != "" {
-		if missing := uncoveredProdServices(cp, pointers, next.ChangedService()); len(missing) > 0 {
+		prod, err := loadProdTopology(ctx, d, cp)
+		if err != nil {
+			return err
+		}
+		if missing := uncoveredProdServices(prod, pointers, next.ChangedService()); len(missing) > 0 {
 			d.Logger.Warn(
 				"release activation blocked: service_prod is missing pointers for live services; run seed-service-prod before accepting releases",
 				"release_id", next.ID(),
@@ -175,17 +179,17 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 }
 
 // uncoveredProdServices returns the sorted set of service names live in the
-// current_prod topology that have no service_prod pointer and are not the
+// production topology that have no service_prod pointer and are not the
 // release's changed service. A non-empty result means assembling the full
 // topology now would silently drop those services on promote.
-func uncoveredProdServices(cp *release.CurrentProd, pointers []*release.ServiceProd, changedService string) []string {
+func uncoveredProdServices(prod release.Topology, pointers []*release.ServiceProd, changedService string) []string {
 	covered := map[string]struct{}{changedService: {}}
 	for _, p := range pointers {
 		covered[p.ServiceName()] = struct{}{}
 	}
 
 	missingSet := map[string]struct{}{}
-	for _, n := range cp.TopologySnapshot() {
+	for _, n := range prod {
 		if _, ok := covered[n.ServiceName]; !ok {
 			missingSet[n.ServiceName] = struct{}{}
 		}

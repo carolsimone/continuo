@@ -33,7 +33,7 @@ func PkgConstantsForTest() map[string]string {
 		"SeedBuildCompletedV1": SeedBuildCompletedV1,
 		"CompileRequestedV1": CompileRequestedV1,
 		"CompileCompletedV1": CompileCompletedV1,
-		"ReleasePromotedV1": ReleasePromotedV1,
+		"ReleasePromotedV2": ReleasePromotedV2,
 		"ReleaseRejectedV1": ReleaseRejectedV1,
 		"PipelineRunFinishedV1": PipelineRunFinishedV1,
 		"RemediationRetryRequestedV1": RemediationRetryRequestedV1,

@@ -10,9 +10,10 @@ import (
 	"time"
 
 	neo4jinfra "github.com/carolsimone/continuo/orchestrator/adapters/neo4j"
-	"github.com/carolsimone/continuo/orchestrator/domain/repository"
+	"github.com/carolsimone/continuo/orchestrator/service/ports"
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/topologyartifact"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
@@ -135,57 +136,40 @@ func newTestLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 }
 
-// ── fakes: repository.TopologyRepository ─────────────────────────────────────
+// ── fakes: ports.TopologyArtifactReader ──────────────────────────────────────
 
-// fakeTopologyRepository is an in-memory stub for repository.TopologyRepository.
-type fakeTopologyRepository struct {
-	setServiceMetadataCalls []setServiceMetadataCall
-	setServiceMetadataErr   error
+// fakeArtifactReader serves topology artifacts from memory, keyed by URI. err,
+// when set, is returned for every read.
+type fakeArtifactReader struct {
+	docs  map[string]topologyartifact.Document
+	err   error
+	calls []string
 }
 
-type setServiceMetadataCall struct {
-	ServiceMetadata    map[string]map[string]string
-	TopologyGeneration int64
-}
-
-func (f *fakeTopologyRepository) SetServiceMetadata(_ context.Context, serviceMetadata map[string]map[string]string, topologyGeneration int64) error {
-	f.setServiceMetadataCalls = append(f.setServiceMetadataCalls, setServiceMetadataCall{
-		ServiceMetadata:    serviceMetadata,
-		TopologyGeneration: topologyGeneration,
-	})
-	return f.setServiceMetadataErr
-}
-
-var _ repository.TopologyRepository = (*fakeTopologyRepository)(nil)
-
-// ── fakes: repository.TopologyStateRepository ────────────────────────────────
-
-type fakeTopologyStateRepository struct {
-	generation             int64
-	incrementGenerationErr error
-	getGenerationErr       error
-	incrementCalls         int
-	getCalls               int
-}
-
-func (f *fakeTopologyStateRepository) IncrementGeneration(_ context.Context) (int64, error) {
-	f.incrementCalls++
-	if f.incrementGenerationErr != nil {
-		return 0, f.incrementGenerationErr
+func (f *fakeArtifactReader) Load(_ context.Context, uri, _ string) (topologyartifact.Document, error) {
+	f.calls = append(f.calls, uri)
+	if f.err != nil {
+		return topologyartifact.Document{}, f.err
 	}
-	f.generation++
-	return f.generation, nil
-}
-
-func (f *fakeTopologyStateRepository) GetGeneration(_ context.Context) (int64, error) {
-	f.getCalls++
-	if f.getGenerationErr != nil {
-		return 0, f.getGenerationErr
+	doc, ok := f.docs[uri]
+	if !ok {
+		return topologyartifact.Document{}, fmt.Errorf("%w: %s", ports.ErrTopologyArtifactNotFound, uri)
 	}
-	return f.generation, nil
+	return doc, nil
 }
 
-var _ repository.TopologyStateRepository = (*fakeTopologyStateRepository)(nil)
+var _ ports.TopologyArtifactReader = (*fakeArtifactReader)(nil)
+
+// artifactFor registers doc under the URI its release's artifact has and
+// returns that URI, so a test can build a promotion that names it.
+func (f *fakeArtifactReader) artifactFor(doc topologyartifact.Document) string {
+	if f.docs == nil {
+		f.docs = map[string]topologyartifact.Document{}
+	}
+	uri := "s3://continuo/" + topologyartifact.Key(doc.TenantID, doc.ReleaseID)
+	f.docs[uri] = doc
+	return uri
+}
 
 // ── integration test infrastructure ──────────────────────────────────────────
 

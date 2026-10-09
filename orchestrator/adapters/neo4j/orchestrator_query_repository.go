@@ -29,13 +29,13 @@ func (r *OrchestratorQueryRepository) GetScheduleGraph(ctx context.Context, sche
 
 	query := `
         OPTIONAL MATCH (root:TopologyRoot {id: 'singleton'})
-        WITH COALESCE(root.topology_generation, 0) AS topology_generation
+        WITH COALESCE(root.promotion_seq, 0) AS promotion_seq
         OPTIONAL MATCH (n:Table {schedule_name: $schedule_name})
         WHERE COALESCE(n.active, true)
         OPTIONAL MATCH (n)-[:DEPENDS_ON]->(u:Table)
           WHERE COALESCE(u.active, true)
             AND (u.schedule_name <> $schedule_name OR u.schedule_name IS NULL)
-        WITH topology_generation,
+        WITH promotion_seq,
              collect(DISTINCT n) AS scheduleNodes,
              collect(DISTINCT u) AS externalNodes,
              collect(DISTINCT CASE WHEN u IS NOT NULL THEN {
@@ -45,12 +45,12 @@ func (r *OrchestratorQueryRepository) GetScheduleGraph(ctx context.Context, sche
         UNWIND (CASE WHEN size(scheduleNodes)=0 THEN [null] ELSE scheduleNodes END) AS n
         OPTIONAL MATCH (n)-[:DEPENDS_ON]->(m:Table {schedule_name: $schedule_name})
           WHERE COALESCE(m.active, true)
-        WITH topology_generation, scheduleNodes, externalNodes, crossEdges,
+        WITH promotion_seq, scheduleNodes, externalNodes, crossEdges,
              collect(DISTINCT CASE WHEN m IS NOT NULL THEN {
                from_id: n.service_name + '.' + n.schema_name + '.' + n.table_name,
                to_id:   m.service_name + '.' + m.schema_name + '.' + m.table_name
              } END) AS internalEdges
-        RETURN topology_generation,
+        RETURN promotion_seq,
                scheduleNodes + externalNodes AS allNodes,
                crossEdges + internalEdges    AS allEdges
     `
@@ -72,7 +72,7 @@ func (r *OrchestratorQueryRepository) GetScheduleGraph(ctx context.Context, sche
 	record := result.Record()
 
 	var topologyGen int64
-	if v, ok := recordValue(record, "topology_generation").(int64); ok {
+	if v, ok := recordValue(record, "promotion_seq").(int64); ok {
 		topologyGen = v
 	}
 
@@ -267,18 +267,17 @@ func (r *OrchestratorQueryRepository) GetRunGraph(ctx context.Context, runID str
 	return nodes, edges, nil
 }
 
-// GetRunTopologyGeneration returns the topology_generation stamped on the :Run
-// node at Snapshot time. Returns 0 when the run does not exist OR when
-// the property is unset (pre-tracking runs). The 0-vs-missing-vs-unset
-// ambiguity is resolved at the service layer with a documented contract:
-// 0 means "drift unknown".
+// GetRunTopologyGeneration returns the promotion seq stamped on the :Run node
+// at snapshot time. Returns 0 when the run does not exist OR when the property
+// is unset (a run created before runs carried a promotion seq). The service
+// layer documents the contract: 0 means "drift unknown".
 func (r *OrchestratorQueryRepository) GetRunTopologyGeneration(ctx context.Context, runID string) (int64, error) {
 	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
 	defer func() { _ = session.Close(ctx) }()
 
 	query := `
 		MATCH (r:Run {run_id: $run_id})
-		RETURN COALESCE(r.topology_generation, 0) AS gen
+		RETURN COALESCE(r.promotion_seq, 0) AS gen
 	`
 	result, err := session.Run(ctx, query, map[string]interface{}{"run_id": runID})
 	if err != nil {
@@ -292,6 +291,34 @@ func (r *OrchestratorQueryRepository) GetRunTopologyGeneration(ctx context.Conte
 	}
 	raw, _ := result.Record().Get("gen")
 	if v, ok := raw.(int64); ok {
+		return v, nil
+	}
+	return 0, nil
+}
+
+// GetGeneration returns the promotion seq of the live topology: the
+// :TopologyRoot singleton's promotion_seq, written in the same transaction as
+// the swap that made that topology live. It returns 0 before the first
+// promotion. The schedule-graph cache keys on it and the drift views compare
+// runs against it.
+func (r *OrchestratorQueryRepository) GetGeneration(ctx context.Context) (int64, error) {
+	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
+	defer func() { _ = session.Close(ctx) }()
+
+	result, err := session.Run(ctx, `
+		OPTIONAL MATCH (root:TopologyRoot {id: 'singleton'})
+		RETURN COALESCE(root.promotion_seq, 0) AS seq
+	`, nil)
+	if err != nil {
+		return 0, fmt.Errorf("GetGeneration: %w", err)
+	}
+	if !result.Next(ctx) {
+		if err := result.Err(); err != nil {
+			return 0, fmt.Errorf("GetGeneration iterate: %w", err)
+		}
+		return 0, nil
+	}
+	if v, ok := recordValue(result.Record(), "seq").(int64); ok {
 		return v, nil
 	}
 	return 0, nil
@@ -312,7 +339,7 @@ func (r *OrchestratorQueryRepository) ListActiveRuns(ctx context.Context) ([]*do
         WHERE r.completed_at IS NULL
         RETURN r.schedule_name AS schedule_name,
                r.run_id        AS run_id,
-               COALESCE(r.topology_generation, 0) AS topology_generation
+               COALESCE(r.promotion_seq, 0) AS promotion_seq
         ORDER BY r.schedule_name, r.created_at DESC
     `
 	result, err := session.Run(ctx, query, nil)
@@ -326,7 +353,7 @@ func (r *OrchestratorQueryRepository) ListActiveRuns(ctx context.Context) ([]*do
 		scheduleName := safeString(recordValue(record, "schedule_name"))
 		runID := safeString(recordValue(record, "run_id"))
 		var gen int64
-		if v, ok := recordValue(record, "topology_generation").(int64); ok {
+		if v, ok := recordValue(record, "promotion_seq").(int64); ok {
 			gen = v
 		}
 		runs = append(runs, &domain.ActiveRun{
@@ -370,8 +397,8 @@ func (r *OrchestratorQueryRepository) ListScheduleTopologies(ctx context.Context
 		if v, ok := recordValue(record, "node_count").(int64); ok {
 			summary.NodeCount = int(v)
 		}
-		// :Table.last_updated_at is written by TopologyRepository with Cypher
-		// `datetime()` (zoned), which the Go driver returns as time.Time.
+		// :Table.last_updated_at is written with Cypher `datetime()` (zoned),
+		// which the Go driver returns as time.Time.
 		// Test fixtures may use `localdatetime()` which arrives as
 		// neo4j.LocalDateTime. Handle both so the gRPC field is populated in
 		// production and tests.

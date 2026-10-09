@@ -9,8 +9,6 @@
 package serialization
 
 import (
-	"time"
-
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	"github.com/carolsimone/continuo/orchestrator/domain/event"
 	"github.com/carolsimone/continuo/orchestrator/domain/model"
@@ -65,71 +63,6 @@ func (d NodeReadyForExecutionDTO) ToDomain() domain.NodeReadyForExecution {
 		SecretRef:    d.SecretRef,
 		Operation:    d.Operation,
 		MaxRetries:   d.MaxRetries,
-	}
-}
-
-// ReleasePromotedNodeDTO is the JSON shape of one node in a release.promoted:v1
-// topology array.
-type ReleasePromotedNodeDTO struct {
-	UniqueID          string   `json:"unique_id"`
-	SchemaName        string   `json:"schema_name"`
-	TableName         string   `json:"table_name"`
-	ServiceName       string   `json:"service_name"`
-	NodeType          string   `json:"node_type"`
-	ContentHash       string   `json:"content_hash"`
-	TestCount         int      `json:"test_count"`
-	ImageTag          string   `json:"image_tag"`
-	SecretRef         string   `json:"secret_ref"`
-	Schedule          string   `json:"schedule"`
-	UpstreamUniqueIDs []string `json:"upstream_unique_ids"`
-	Changed           bool     `json:"changed"`
-	OriginalFilePath  string   `json:"original_file_path"`
-}
-
-// ReleasePromotedDTO is the JSON shape of the release.promoted:v1 payload.
-type ReleasePromotedDTO struct {
-	ReleaseID     string                   `json:"release_id"`
-	Topology      []ReleasePromotedNodeDTO `json:"topology"`
-	ImageTags     map[string]string        `json:"image_tags"`
-	Repo          string                   `json:"repo"`
-	CommitSHA     string                   `json:"commit_sha"`
-	PromotedAt    time.Time                `json:"promoted_at"`
-	CodeBundleURI string                   `json:"code_bundle_uri"`
-	Bootstrap     bool                     `json:"bootstrap"`
-}
-
-// ReleasePromotedToDomain maps a decoded DTO back to the domain event.
-func (d ReleasePromotedDTO) ToDomain() event.ReleasePromoted {
-	var topo []event.ReleasePromotedNode
-	if d.Topology != nil {
-		topo = make([]event.ReleasePromotedNode, len(d.Topology))
-		for i, n := range d.Topology {
-			topo[i] = event.ReleasePromotedNode{
-				UniqueID:          n.UniqueID,
-				SchemaName:        n.SchemaName,
-				TableName:         n.TableName,
-				ServiceName:       n.ServiceName,
-				NodeType:          n.NodeType,
-				ContentHash:       n.ContentHash,
-				TestCount:         n.TestCount,
-				ImageTag:          n.ImageTag,
-				SecretRef:         n.SecretRef,
-				Schedule:          n.Schedule,
-				UpstreamUniqueIDs: n.UpstreamUniqueIDs,
-				Changed:           n.Changed,
-				OriginalFilePath:  n.OriginalFilePath,
-			}
-		}
-	}
-	return event.ReleasePromoted{
-		ReleaseID:     d.ReleaseID,
-		Topology:      topo,
-		ImageTags:     d.ImageTags,
-		Repo:          d.Repo,
-		CommitSHA:     d.CommitSHA,
-		PromotedAt:    d.PromotedAt,
-		CodeBundleURI: d.CodeBundleURI,
-		Bootstrap:     d.Bootstrap,
 	}
 }
 

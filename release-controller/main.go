@@ -245,6 +245,23 @@ func main() {
 	outboxProc := redisadapter.StartOutboxPublisher(ctx, db, rc, outboxWaker, metricsReg.Outbox(), liveReg, logger)
 	metricsReg.WatchOutbox(outboxProc)
 
+	// A current_prod that names a release but references no topology artifact
+	// gets its artifact and is re-announced under a fresh promotion seq before
+	// any consumer runs. This runs before the legacy-topology upgrade below: that
+	// step advances the release queue, and a queue advance that loads a legacy
+	// current_prod with no topology artifact fails, so the backfill must repair
+	// current_prod first.
+	if err := runStartupStep(ctx, logger, "backfill current_prod topology artifact", func(ctx context.Context) error {
+		return handlers.BackfillCurrentProdArtifact(ctx, deps)
+	}); err != nil {
+		if errors.Is(err, context.Canceled) {
+			logger.Info("shutdown requested during the current_prod backfill step")
+			os.Exit(0)
+		}
+		logger.Error("current_prod backfill step failed", "error", err)
+		os.Exit(1)
+	}
+
 	// Runs holding an inline topology or left parsing are settled before any
 	// consumer reads a run: inline topologies are written to artifacts and runs
 	// left parsing fail with upgrade_interrupted. The step waits out an

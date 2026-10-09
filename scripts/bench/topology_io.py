@@ -1,11 +1,10 @@
 """Live-topology export, union with a bench DAG, and comparison with the live graphs.
 
-On a shared install the benchmark never publishes a topology that omits a live
-node: a promotion retires missing nodes and deletes those no recent run used,
-cutting their code-version and failure-history links. It also never publishes
-a dbt test node: release-controller's current_prod keeps tests for validation,
-but a promotion strips them, and the orchestrator would otherwise add them to
-its graph as tables.
+On a shared install the benchmark never announces a topology that omits a live
+node: a swap retires missing nodes and deletes those no recent run used,
+cutting their code-version and failure-history links. It also never announces
+a dbt test node: the artifact current_prod points at keeps tests for
+validation, but the orchestrator leaves them out of its graph.
 """
 from __future__ import annotations
 
@@ -21,39 +20,36 @@ log = logging.getLogger(__name__)
 
 TEST_NODE_TYPE = contract.vocabulary_value("node_type", "DbtTest")
 
-STRING_FIELDS = ("unique_id", "schema_name", "table_name", "service_name", "node_type",
+STRING_FIELDS = ("unique_id", "schema_name", "table_name", "resolved_relation_id", "service_name", "node_type",
                  "content_hash", "image_tag", "schedule", "original_file_path")
 
 
-def snapshot_to_wire(node: dict) -> dict:
-    """A release-controller current_prod node as a release-promotion node, marked unchanged."""
-    wire = {field: node.get(field) or "" for field in STRING_FIELDS}
-    wire["test_count"] = int(node.get("test_count") or 0)
-    wire["upstream_unique_ids"] = list(node.get("upstream_unique_ids") or [])
-    wire["changed"] = False
+def artifact_node(node: dict) -> dict:
+    """A node of current_prod's artifact in the shape announce-topology reads, nothing else."""
+    out = {field: node.get(field) or "" for field in STRING_FIELDS}
+    out["test_count"] = int(node.get("test_count") or 0)
+    out["upstream_unique_ids"] = list(node.get("upstream_unique_ids") or [])
     if node.get("secret_ref"):
-        wire["secret_ref"] = node["secret_ref"]
-    return wire
+        out["secret_ref"] = node["secret_ref"]
+    return out
 
 
-def image_tags(nodes: list) -> dict:
-    tags = {}
-    for node in nodes:
-        service, tag = node.get("service_name"), node.get("image_tag")
-        if service and tag and service not in tags:
-            tags[service] = tag
-    return tags
+def current(release_id: str, nodes: list) -> dict:
+    """The export of current_prod: its release id and the nodes announce-topology --print-current printed."""
+    if not release_id or not isinstance(nodes, list):
+        raise ValueError("the export needs current_prod's release id and a node list")
+    return {"release_id": release_id, "topology": nodes}
 
 
 def restore_payload(current: dict) -> dict:
-    """The payload that re-announces the exported release unchanged."""
+    """The exported live release as a payload: its id and its nodes, test nodes left out."""
     if not current.get("release_id") or not isinstance(current.get("topology"), list):
         raise ValueError("the current_prod export needs a release_id and a topology list")
-    nodes = [snapshot_to_wire(node) for node in current["topology"] if node.get("node_type") != TEST_NODE_TYPE]
+    nodes = [artifact_node(node) for node in current["topology"] if node.get("node_type") != TEST_NODE_TYPE]
     dropped = len(current["topology"]) - len(nodes)
     if dropped:
-        log.info("restore payload leaves out %d %s nodes, as a promotion does", dropped, TEST_NODE_TYPE)
-    return {"release_id": current["release_id"], "topology": nodes, "image_tags": image_tags(nodes)}
+        log.info("restore payload leaves out %d %s nodes, as the orchestrator does", dropped, TEST_NODE_TYPE)
+    return {"release_id": current["release_id"], "topology": nodes}
 
 
 def union(base: dict, bench: dict, release_id: str) -> dict:
@@ -67,8 +63,14 @@ def union(base: dict, bench: dict, release_id: str) -> dict:
     shared = sorted({node["schedule"] for node in bench_nodes} & base_schedules)
     if shared:
         raise ValueError(f"bench schedule already used by the live topology: {shared}")
-    nodes = [dict(node, changed=False) for node in base_nodes] + list(bench_nodes)
-    return {"release_id": release_id, "topology": nodes, "image_tags": image_tags(nodes)}
+    return {"release_id": release_id, "topology": list(base_nodes) + list(bench_nodes)}
+
+
+def nodes(payload: dict) -> list:
+    """The payload's node list, as announce-topology --topology reads it."""
+    if not isinstance(payload.get("topology"), list):
+        raise ValueError("the payload needs a topology list")
+    return payload["topology"]
 
 
 def graph_ids(graph: dict) -> set:
@@ -85,7 +87,7 @@ def compare(payload: dict, graphs: list) -> list:
     problems = []
     tests = sorted(node["unique_id"] for node in payload["topology"] if node.get("node_type") == TEST_NODE_TYPE)
     if tests:
-        problems.append(f"payload carries {len(tests)} {TEST_NODE_TYPE} nodes, which a promotion never publishes: {tests[:5]}")
+        problems.append(f"payload carries {len(tests)} {TEST_NODE_TYPE} nodes, which the orchestrator never draws: {tests[:5]}")
     missing_live = sorted(scheduled - live)
     if missing_live:
         problems.append(f"{len(missing_live)} scheduled export nodes missing from the live graphs: {missing_live[:5]}")
@@ -100,6 +102,9 @@ def main(argv: list) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("restore-payload")
+    cur = sub.add_parser("current")
+    cur.add_argument("--release-id", required=True)
+    sub.add_parser("nodes")
     u = sub.add_parser("union")
     u.add_argument("--base", required=True)
     u.add_argument("--bench", required=True)
@@ -114,6 +119,14 @@ def main(argv: list) -> int:
             json.dump(payload, sys.stdout)
             sys.stdout.write("\n")
             log.info("restore payload: release %s, %d nodes", payload["release_id"], len(payload["topology"]))
+            return 0
+        if args.command == "current":
+            json.dump(current(args.release_id, json.load(sys.stdin)), sys.stdout)
+            sys.stdout.write("\n")
+            return 0
+        if args.command == "nodes":
+            json.dump(nodes(json.load(sys.stdin)), sys.stdout)
+            sys.stdout.write("\n")
             return 0
         if args.command == "union":
             base = json.loads(Path(args.base).read_text(encoding="utf-8"))

@@ -15,6 +15,7 @@ import (
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/carolsimone/continuo/pkg/topologyartifact"
 	"github.com/google/uuid"
 )
 
@@ -22,43 +23,45 @@ import (
 // estate-wide mismatch logs a usable sample instead of thousands of ids.
 const unmatchedSampleSize = 5
 
-// ReleasePromotedVersionsHandler consumes release.promoted:v1 on its own
+// ReleasePromotedVersionsHandler consumes release.promoted:v2 on its own
 // consumer group and records the release's code versions in the graph.
 //
 // It is deliberately separate from the topology-swap handler: promotion must
-// never gain a dependency on object storage being available, and nothing on the
-// run path reads versions, so this group can trail the swap and retry freely.
-// Which nodes actually get a version is decided against the graph, not against
-// the event's `changed` flags — that is what lets any later release converge a
-// graph that missed a write.
+// never wait on the code bundle, and nothing on the run path reads versions, so
+// this group can trail the swap and retry freely. Which nodes actually get a
+// version is decided against the graph, not against the event's
+// changed_node_ids — that is what lets any later release converge a graph that
+// missed a write. changed_node_ids only qualifies provenance.
 type ReleasePromotedVersionsHandler struct {
-	uow      uow.UnitOfWork
-	bundles  ports.CodeBundleReader
-	versions repository.CodeVersionRepository
-	logger   *slog.Logger
+	uow       uow.UnitOfWork
+	bundles   ports.CodeBundleReader
+	artifacts ports.TopologyArtifactReader
+	versions  repository.CodeVersionRepository
+	logger    *slog.Logger
 }
 
 // NewReleasePromotedVersionsHandler creates a ReleasePromotedVersionsHandler.
 func NewReleasePromotedVersionsHandler(
 	u uow.UnitOfWork,
 	bundles ports.CodeBundleReader,
+	artifacts ports.TopologyArtifactReader,
 	versions repository.CodeVersionRepository,
 	logger *slog.Logger,
 ) *ReleasePromotedVersionsHandler {
-	return &ReleasePromotedVersionsHandler{uow: u, bundles: bundles, versions: versions, logger: logger}
+	return &ReleasePromotedVersionsHandler{uow: u, bundles: bundles, artifacts: artifacts, versions: versions, logger: logger}
 }
 
-// Handle processes one release.promoted:v1 message on the versions group.
+// Handle processes one release.promoted:v2 message on the versions group.
 func (h *ReleasePromotedVersionsHandler) Handle(
 	ctx context.Context,
 	messageID string,
 	outboxEntryID *uuid.UUID,
 	in domainModel.PromoteReleaseInput,
 ) error {
-	h.logger.Info("Processing release.promoted:v1 (versions path)",
+	h.logger.Info("Processing release.promoted:v2 (versions path)",
 		"message_id", messageID,
 		"release_id", in.ReleaseID,
-		"node_count", len(in.Topology),
+		"promotion_seq", in.PromotionSeq,
 	)
 
 	payload, err := json.Marshal(in)
@@ -71,10 +74,9 @@ func (h *ReleasePromotedVersionsHandler) Handle(
 	}
 	defer h.uow.Rollback() //nolint:errcheck
 
-	// Dedup scope rule (shared): three consumer groups read release.promoted:v1,
-	// so each scopes its dedup by its own CONSUMER-GROUP name and their
-	// message_processing rows stay independent under the (outbox_entry_id,
-	// stream_name) unique index.
+	// Several consumer groups read the stream, so each scopes its dedup by its
+	// own CONSUMER-GROUP name and their message_processing rows stay independent
+	// under the (outbox_entry_id, stream_name) unique index.
 	msgProcessingID, shouldSkip, err := messageprocessing.DedupWithOutboxEntryID(
 		ctx, h.uow.MessageProcessingRepo(), h.logger,
 		messageID, streams.OrchestratorReleasePromotedVersions, payload, outboxEntryID,
@@ -87,10 +89,10 @@ func (h *ReleasePromotedVersionsHandler) Handle(
 	}
 
 	if in.CodeBundleURI == "" {
-		// A release promoted before topology-controller began writing bundles.
-		// No retry can produce one, so record the message as handled.
+		// An announcement carries no bundle, and no retry can produce one, so
+		// record the message as handled.
 		h.logger.Warn("release.promoted carries no code_bundle_uri — no versions to ingest",
-			"release_id", in.ReleaseID)
+			"release_id", in.ReleaseID, "promotion_seq", in.PromotionSeq)
 		return h.complete(ctx, msgProcessingID)
 	}
 
@@ -107,8 +109,22 @@ func (h *ReleasePromotedVersionsHandler) Handle(
 		return fmt.Errorf("fetch code bundle %s: %w", in.CodeBundleURI, err)
 	}
 
-	if err := bundleMatchesEvent(bundle, in); err != nil {
-		// The URI resolved to a document that is not this release's. Writing it
+	doc, err := h.artifacts.Load(ctx, in.TopologyURI, in.TopologySHA256)
+	if err != nil {
+		if errors.Is(err, ports.ErrTopologyArtifactCorrupt) {
+			h.logger.Error("topology artifact does not match the promotion — dead-lettering the message",
+				"release_id", in.ReleaseID,
+				"promotion_seq", in.PromotionSeq,
+				"uri", in.TopologyURI,
+				"expected_sha256", in.TopologySHA256,
+				"error", err)
+			return fmt.Errorf("%w: topology artifact %s: %v", pkgevents.ErrPermanent, in.TopologyURI, err)
+		}
+		return fmt.Errorf("load topology artifact %s: %w", in.TopologyURI, err)
+	}
+
+	if err := bundleMatchesTopology(bundle, in.ReleaseID, doc); err != nil {
+		// A document that is not this release's must not be written: doing so
 		// would stamp this release's provenance onto another release's code and
 		// could point :CURRENT at a hash that disagrees with :Table.content_hash.
 		h.logger.Error("code bundle does not match the promoted release — dead-lettering the message",
@@ -132,18 +148,21 @@ func (h *ReleasePromotedVersionsHandler) Handle(
 			// were retired and deleted in between. Retrying would only burn the
 			// delivery budget and end with the message dropped, losing their
 			// history; the repository has recorded it unattached instead.
-			h.logger.Warn("topology has moved past this release — recorded its history unattached",
+			h.logger.Warn("topology has moved past this promotion — recorded its history unattached",
 				"release_id", in.ReleaseID,
+				"promotion_seq", in.PromotionSeq,
 				"graph_release_id", res.GraphReleaseID,
+				"graph_promotion_seq", res.GraphPromotionSeq,
 				"unattached_count", len(res.UnmatchedNodeIDs),
 				"sample", sample)
-		case res.GraphReleaseID != in.ReleaseID:
-			// The topology-swap group reads the same message and has not applied
-			// this release yet, so these nodes have no :Table to attach a version
-			// to. Retrying is how this group trails the swap.
-			return fmt.Errorf("topology swap for release %s has not landed (graph is at %q); "+
-				"%d bundle nodes have no :Table (e.g. %v)",
-				in.ReleaseID, res.GraphReleaseID, len(res.UnmatchedNodeIDs), sample)
+		case res.GraphPromotionSeq < in.PromotionSeq:
+			// The topology-swap group has not applied this promotion yet, so these
+			// nodes have no :Table to attach a version to. Retrying is how this
+			// group trails the swap.
+			return fmt.Errorf("topology swap for release %s (promotion %d) has not landed "+
+				"(graph is at promotion %d, release %q); %d bundle nodes have no :Table (e.g. %v)",
+				in.ReleaseID, in.PromotionSeq, res.GraphPromotionSeq, res.GraphReleaseID,
+				len(res.UnmatchedNodeIDs), sample)
 		default:
 			h.logger.Warn("code bundle names nodes absent from the promoted topology",
 				"release_id", in.ReleaseID,
@@ -154,6 +173,7 @@ func (h *ReleasePromotedVersionsHandler) Handle(
 
 	h.logger.Info("Code version ingestion finished",
 		"release_id", in.ReleaseID,
+		"promotion_seq", in.PromotionSeq,
 		"bundle_nodes", len(bundle.Nodes),
 		"node_versions_created", res.NodeVersionsCreated,
 		"unit_versions_created", res.UnitVersionsCreated,
@@ -163,25 +183,28 @@ func (h *ReleasePromotedVersionsHandler) Handle(
 	return h.complete(ctx, msgProcessingID)
 }
 
-// bundleMatchesEvent checks that the fetched document really describes the
-// release the event promoted. The bundle and the promoted topology come from the
-// same parse, so they must agree; a disagreement means the URI resolved to
+// bundleMatchesTopology checks that the fetched bundle and the topology artifact
+// both describe the release the event promoted. They come from the same parse,
+// so they must agree node by node; a disagreement means a URI resolved to
 // another release's object and the code must not be recorded under this
 // release's provenance.
-func bundleMatchesEvent(b codebundle.Bundle, in domainModel.PromoteReleaseInput) error {
-	if b.ReleaseID != in.ReleaseID {
-		return fmt.Errorf("bundle belongs to release %q, event promoted %q", b.ReleaseID, in.ReleaseID)
+func bundleMatchesTopology(b codebundle.Bundle, releaseID string, doc topologyartifact.Document) error {
+	if b.ReleaseID != releaseID {
+		return fmt.Errorf("bundle belongs to release %q, event promoted %q", b.ReleaseID, releaseID)
 	}
-	for _, n := range in.Topology {
+	if doc.ReleaseID != releaseID {
+		return fmt.Errorf("topology artifact belongs to release %q, event promoted %q", doc.ReleaseID, releaseID)
+	}
+	for _, n := range doc.Nodes {
 		bn, ok := b.Nodes[n.UniqueID]
 		if !ok || n.ContentHash == "" {
-			// A node absent from the bundle is reported by the write path as
-			// unmatched; an event node with no hash predates the field. Neither is
-			// evidence that the document is the wrong one.
+			// A node absent from the bundle (a dbt-test, for one) is reported by
+			// the write path as unmatched or ignored; a node with no hash cannot
+			// be compared. Neither is evidence that the document is the wrong one.
 			continue
 		}
 		if bn.ContentHash != n.ContentHash {
-			return fmt.Errorf("node %s: bundle content_hash %q disagrees with the promoted topology's %q",
+			return fmt.Errorf("node %s: bundle content_hash %q disagrees with the topology artifact's %q",
 				n.UniqueID, bn.ContentHash, n.ContentHash)
 		}
 	}

@@ -20,7 +20,7 @@ import (
 // one version's fidelity instead of bloating the graph store.
 const MaxCompiledCodeBytes = 256 * 1024
 
-// planVersionWrite turns a release's code bundle plus its promoted event into a
+// planVersionWrite turns a release's code bundle plus its promotion into a
 // version-write request. It performs no input/output and makes no write
 // decision: every bundle node is carried through, because whether a node needs a
 // version is a question only the graph can answer.
@@ -29,10 +29,10 @@ func planVersionWrite(
 	b codebundle.Bundle,
 	logger *slog.Logger,
 ) codeversion.WriteInput {
-	// The event's changed flags qualify provenance; they never gate a write.
-	changed := make(map[string]bool, len(in.Topology))
-	for _, n := range in.Topology {
-		changed[n.UniqueID] = n.Changed
+	// changed_node_ids qualifies provenance; it never gates a write.
+	changed := make(map[string]bool, len(in.ChangedNodeIDs))
+	for _, id := range in.ChangedNodeIDs {
+		changed[id] = true
 	}
 
 	uniqueIDs := make([]string, 0, len(b.Nodes))
@@ -71,9 +71,9 @@ func planVersionWrite(
 			CompiledCode:      compiled,
 			CompiledTruncated: truncated,
 			ConfigJSON:        canonicalJSON(n.Config),
-			// A bundle node the topology does not flag as changed — including one
-			// absent from the topology entirely — is carried by a release that did
-			// not author it, so its commit and release stamps are approximate.
+			// A bundle node outside changed_node_ids is carried by a release
+			// that did not author it, so its commit and release stamps are
+			// approximate; a bootstrap release authored none of its code.
 			Healed:   in.Bootstrap || !changed[uniqueID],
 			UnitRefs: refs,
 		})
@@ -96,12 +96,13 @@ func planVersionWrite(
 	}
 
 	return codeversion.WriteInput{
-		ReleaseID:  in.ReleaseID,
-		Repo:       in.Repo,
-		CommitSHA:  in.CommitSHA,
-		PromotedAt: in.PromotedAt,
-		Nodes:      nodes,
-		Units:      units,
+		ReleaseID:    in.ReleaseID,
+		PromotionSeq: in.PromotionSeq,
+		Repo:         in.Repo,
+		CommitSHA:    in.CommitSHA,
+		PromotedAt:   in.PromotedAt,
+		Nodes:        nodes,
+		Units:        units,
 	}
 }
 

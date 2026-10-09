@@ -39,6 +39,8 @@ func setup(t *testing.T) (*httpinfra.Server, *handlers.Deps, *sqlx.DB) {
 	require.NoError(t, err)
 	_, err = db.Exec("TRUNCATE release_pipeline_runs, current_prod, release_controller_outbox, message_processing, service_prod RESTART IDENTITY CASCADE")
 	require.NoError(t, err)
+	_, err = db.Exec("UPDATE promotion_sequence SET last_seq = 0 WHERE id = 1")
+	require.NoError(t, err, "promotion_sequence is missing: run make test-deps-up to apply the release migrations")
 	deps := &handlers.Deps{
 		NewUoW:    func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, slog.Default(), nil) },
 		Clock:     ports.SystemClock{},
@@ -137,6 +139,15 @@ func TestIntegration_HappyPath(t *testing.T) {
 	var count int
 	require.NoError(t, db.Get(&count, `SELECT count(*) FROM release_controller_outbox`))
 	assert.Equal(t, 5, count)
+
+	var promotedEventType string
+	require.NoError(t, db.Get(&promotedEventType,
+		`SELECT event_type FROM release_controller_outbox WHERE stream_name = $1`, streams.ReleasePromotedV2))
+	assert.Equal(t, "release_promoted_v2", promotedEventType)
+
+	var seq int64
+	require.NoError(t, db.Get(&seq, `SELECT promotion_seq FROM current_prod WHERE id = 1`))
+	assert.Equal(t, int64(1), seq, "the first promotion is announced under seq 1")
 
 	var finishedCount int
 	require.NoError(t, db.Get(&finishedCount,

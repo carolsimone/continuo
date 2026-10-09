@@ -127,6 +127,32 @@ func TestTopologyArtifactStore_RepeatedWriteIsByteIdentical(t *testing.T) {
 	assert.Equal(t, firstBytes, objects.objects[key])
 }
 
+// The object is immutable: a repeated write of the same id carrying a changed
+// topology would leave an earlier announcement's checksum naming bytes that no
+// longer exist, so a different-bytes overwrite is refused and the stored object
+// is left untouched. An identical-bytes re-write stays idempotent, so a crash
+// between writing the object and recording its reference is repaired by the
+// retry.
+func TestTopologyArtifactStore_WriteRefusesAChangedOverwrite(t *testing.T) {
+	objects := newFakeObjects()
+	const key = "tenants/default/topologies/r1/topology.json.gz"
+
+	first, err := NewTopologyArtifactStore(objects, "continuo", 4).Write(context.Background(), "r1", sampleTopology())
+	require.NoError(t, err)
+	firstBytes := append([]byte(nil), objects.objects[key]...)
+
+	changed := sampleTopology()
+	changed[0].ContentHash = "sha256:changed"
+	_, err = NewTopologyArtifactStore(objects, "continuo", 4).Write(context.Background(), "r1", changed)
+	require.Error(t, err)
+	assert.Equal(t, firstBytes, objects.objects[key], "a changed-bytes overwrite leaves the stored object untouched")
+
+	again, err := NewTopologyArtifactStore(objects, "continuo", 4).Write(context.Background(), "r1", sampleTopology())
+	require.NoError(t, err)
+	assert.Equal(t, first, again, "an identical-bytes re-write returns the same reference")
+	assert.Equal(t, firstBytes, objects.objects[key])
+}
+
 func TestTopologyArtifactStore_LoadOfAMissingObjectIsNotFound(t *testing.T) {
 	_, err := NewTopologyArtifactStore(newFakeObjects(), "continuo", 4).Load(context.Background(),
 		release.TopologyRef{URI: "s3://continuo/tenants/default/topologies/gone/topology.json.gz", SHA256: "x"})
@@ -197,6 +223,10 @@ func TestTopologyArtifactStore_CacheServesRepeatLoadsAndKeysOnTheChecksum(t *tes
 	ref, err := writer.Write(context.Background(), "r1", sampleTopology())
 	require.NoError(t, err)
 
+	// Write reads the key to enforce immutability; count only the reads the
+	// Loads below drive.
+	objects.gets = 0
+
 	store := NewTopologyArtifactStore(objects, "continuo", 4)
 	_, err = store.Load(context.Background(), ref)
 	require.NoError(t, err)
@@ -216,6 +246,9 @@ func TestTopologyArtifactStore_WritePrimesTheCache(t *testing.T) {
 	store := NewTopologyArtifactStore(objects, "continuo", 4)
 	ref, err := store.Write(context.Background(), "r1", sampleTopology())
 	require.NoError(t, err)
+	// Write reads the key to enforce immutability; count only the reads the
+	// Load below drives, which the primed cache serves.
+	objects.gets = 0
 	_, err = store.Load(context.Background(), ref)
 	require.NoError(t, err)
 	assert.Equal(t, 0, objects.gets)
@@ -254,6 +287,10 @@ func TestTopologyArtifactStore_FirstLoadReturnsACopyOfWhatItCaches(t *testing.T)
 	objects := newFakeObjects()
 	ref, err := NewTopologyArtifactStore(objects, "continuo", 4).Write(context.Background(), "r1", sampleTopology())
 	require.NoError(t, err)
+
+	// Write reads the key to enforce immutability; count only the reads the
+	// Loads below drive.
+	objects.gets = 0
 
 	store := NewTopologyArtifactStore(objects, "continuo", 4)
 	first, err := store.Load(context.Background(), ref)
@@ -307,6 +344,10 @@ func TestTopologyArtifactStore_CacheEvictsTheLeastRecentlyUsed(t *testing.T) {
 	require.NoError(t, err)
 	refB, err := writer.Write(context.Background(), "rB", sampleTopology())
 	require.NoError(t, err)
+
+	// Write reads the key to enforce immutability; count only the reads the
+	// Loads below drive.
+	objects.gets = 0
 
 	store := NewTopologyArtifactStore(objects, "continuo", 1)
 	for _, ref := range []release.TopologyRef{refA, refB, refA} {

@@ -74,6 +74,12 @@ func HandleParsedManifest(ctx context.Context, d *Deps, in HandleParsedManifestI
 	// HandleValidationResult) Load to serialize on the row. The parse leg has no
 	// such contention, so FOR UPDATE would only add lock cost without changing
 	// the outcome.
+	//
+	// Using Get also means this transaction holds no run-row FOR UPDATE when a
+	// promote path (promoteBootstrap, or the nothing-to-validate short-circuit)
+	// later takes the release-queue advisory lock inside promoteToProduction:
+	// with only one of the two locks ever held here, there is no advisory↔run-row
+	// ordering to invert, so no lock taken here needs reordering.
 	r, err := u.RunRepo().Get(ctx, in.ReleaseID)
 	if err != nil {
 		return fmt.Errorf("get release: %w", err)
@@ -245,9 +251,9 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 		return promoteBootstrap(ctx, d, u, r, in.ReleaseID, in.TopologyRef, topo, now)
 	}
 
-	cp, err := u.CurrentProdRepo().Get(ctx)
+	prod, err := currentProdTopology(ctx, d, u)
 	if err != nil {
-		return fmt.Errorf("get current prod: %w", err)
+		return err
 	}
 
 	// Derive the validation build sets: candidate nodes rebuilt from their own
@@ -258,7 +264,7 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 	// node as new and validates the whole topology). A verification run splits
 	// the two so the fix's shared changed ancestor is rebuilt for context
 	// without expanding this run to a sibling service's still-unfixed failure.
-	scope, contextRebuilds, err := changedNodeIDsFor(ctx, u, d, r, topo, cp)
+	scope, contextRebuilds, err := changedNodeIDsFor(ctx, u, d, r, topo, prod)
 	if err != nil {
 		return err
 	}
@@ -409,8 +415,8 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 // still-running check, mirroring assembleFor's graceful degradation. An
 // unreachable object store is returned as an error instead: measuring a fix
 // against the wrong baseline because of an outage would be silent and wrong.
-func changedNodeIDsFor(ctx context.Context, u uow.UnitOfWork, d *Deps, r *pipeline.Run, topo release.Topology, cp *release.CurrentProd) (scope, contextRebuilds []string, err error) {
-	changedVsProd := release.DerivedChangedNodeIDs(topo, cp.TopologySnapshot())
+func changedNodeIDsFor(ctx context.Context, u uow.UnitOfWork, d *Deps, r *pipeline.Run, topo, prod release.Topology) (scope, contextRebuilds []string, err error) {
+	changedVsProd := release.DerivedChangedNodeIDs(topo, prod)
 	if r.Kind() == pipeline.KindCandidate || r.VerifiesReleaseID() == "" {
 		return changedVsProd, nil, nil
 	}
@@ -434,7 +440,7 @@ func changedNodeIDsFor(ctx context.Context, u uow.UnitOfWork, d *Deps, r *pipeli
 			"release_id", r.ID(), "verifies_release_id", original.ID())
 		return changedVsProd, nil, nil
 	}
-	scope, contextRebuilds = release.VerificationBuildSets(topo, cp.TopologySnapshot(), originalTopo, original.FailingNodes())
+	scope, contextRebuilds = release.VerificationBuildSets(topo, prod, originalTopo, original.FailingNodes())
 	return scope, contextRebuilds, nil
 }
 
@@ -565,7 +571,7 @@ func emitSeedBuildRequested(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 // promoteBootstrap promotes a bootstrap release without validation: it records
 // the reference to the candidate topology (TransitionToValidating with no validation nodes) and
 // runs the shared promoteToProduction path, which seeds current_prod and emits
-// release.promoted:v1. The full parse/checked/promoted telemetry span is
+// release.promoted:v2. The full parse/checked/promoted telemetry span is
 // emitted (with a zero-node validation) so a bootstrap is observable like any
 // other promotion.
 func promoteBootstrap(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, releaseID string, ref release.TopologyRef, topo release.Topology, now time.Time) error {

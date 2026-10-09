@@ -39,11 +39,12 @@ def test_fail_root_feeds_every_level_one_node():
     assert all(n["upstream_unique_ids"] == ["bench.fail_root"] for n in level_one)
 
 
-def test_every_node_is_an_unchanged_dbt_model_with_one_test():
+def test_every_node_is_a_dbt_model_with_one_test_writing_its_own_relation():
     nodes = topo(nodes=4, levels=2, fan_in=1)
     assert {n["node_type"] for n in nodes} == {"dbt-model"}
     assert {n["test_count"] for n in nodes} == {1}
-    assert all(n["changed"] is False for n in nodes)
+    assert all("changed" not in n for n in nodes)
+    assert all(n["resolved_relation_id"] == n["unique_id"] for n in nodes)
 
 
 def test_validate_rejects_a_label_unsafe_schedule():
@@ -56,11 +57,9 @@ def test_validate_rejects_a_job_name_prefix_over_54_characters():
         g.validate(topo(nodes=1, levels=1, service="s" * 40), "bench-t")
 
 
-def test_payload_shape_matches_the_promotion_event():
+def test_payload_carries_the_release_id_and_the_nodes():
     nodes = topo(nodes=2, levels=1)
-    assert g.build_payload(nodes, "rel-1", "bench", "v1") == {
-        "release_id": "rel-1", "topology": nodes, "image_tags": {"bench": "v1"},
-    }
+    assert g.build_payload(nodes, "rel-1") == {"release_id": "rel-1", "topology": nodes}
 
 
 def test_main_prints_the_payload(capsys):

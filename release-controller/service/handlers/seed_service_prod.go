@@ -11,10 +11,10 @@ import (
 )
 
 // SeedServiceProd derives one service_prod pointer per distinct service in the
-// current_prod snapshot and upserts it. The manifest S3 key for each service is
-// taken verbatim from existingKeys (service_name -> s3 key); a service present
-// in the snapshot but absent from existingKeys is an error (we cannot point at
-// a manifest we do not know). image_tag is the first non-empty tag among the
+// production topology topo of release releaseID and upserts it. The manifest S3
+// key for each service is taken verbatim from existingKeys (service_name -> s3
+// key); a service present in topo but absent from existingKeys is an error (we
+// cannot point at a manifest we do not know). image_tag is the first non-empty tag among the
 // service's nodes. manifest_kind is derived from the service's own nodes: any
 // node whose NodeType.IsPython() is true (python-node, python-csv or python-api) makes
 // the service ManifestKindPython, otherwise ManifestKindDbt; a service whose
@@ -24,7 +24,8 @@ import (
 // Returns the count of services seeded.
 func SeedServiceProd(
 	ctx context.Context,
-	cp *release.CurrentProd,
+	releaseID string,
+	topo release.Topology,
 	existingKeys map[string]string,
 	repo repository.ServiceProdRepository,
 	now time.Time,
@@ -39,7 +40,7 @@ func SeedServiceProd(
 	entries := map[string]*svcEntry{}
 	orderSeen := []string{} // deterministic iteration order
 
-	for _, node := range cp.TopologySnapshot() {
+	for _, node := range topo {
 		if node.ServiceName == "" {
 			continue
 		}
@@ -75,7 +76,7 @@ func SeedServiceProd(
 		if entries[svc].hasPython {
 			kind = release.ManifestKindPython
 		}
-		sp := release.NewServiceProd(svc, cp.ReleaseID(), existingKeys[svc], entries[svc].imageTag, kind, now)
+		sp := release.NewServiceProd(svc, releaseID, existingKeys[svc], entries[svc].imageTag, kind, now)
 		if err := repo.Upsert(ctx, sp); err != nil {
 			return 0, fmt.Errorf("upsert service_prod for %q: %w", svc, err)
 		}

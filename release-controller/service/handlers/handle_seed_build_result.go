@@ -37,6 +37,11 @@ func HandleSeedBuildResult(ctx context.Context, d *Deps, in HandleSeedBuildResul
 	}
 	defer u.Rollback() //nolint:errcheck
 
+	// Get, not Load: the seed-build leg has a single writer of this row, so no
+	// run-row FOR UPDATE is needed. Holding no run-row lock also means the
+	// nothing-to-validate short-circuit below can take the release-queue advisory
+	// lock inside promoteToProduction without inverting any advisory↔run-row
+	// order — only one of the two locks is ever held here.
 	r, err := u.RunRepo().Get(ctx, in.ReleaseID)
 	if err != nil {
 		return fmt.Errorf("get release: %w", err)
@@ -145,11 +150,11 @@ func handleSeedBuildOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeli
 	// and the same rebuiltFromCandidateSet — so a verification run identifies the
 	// same built seeds and assigns the same per-node build strategy here as it did
 	// when it requested the seed build.
-	cp, err := u.CurrentProdRepo().Get(ctx)
+	prod, err := currentProdTopology(ctx, d, u)
 	if err != nil {
-		return fmt.Errorf("get current prod: %w", err)
+		return err
 	}
-	scope, contextRebuilds, err := changedNodeIDsFor(ctx, u, d, r, topo, cp)
+	scope, contextRebuilds, err := changedNodeIDsFor(ctx, u, d, r, topo, prod)
 	if err != nil {
 		return err
 	}

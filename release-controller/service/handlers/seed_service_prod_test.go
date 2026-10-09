@@ -11,8 +11,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func buildCurrentProd(releaseID string, nodes ...release.Node) *release.CurrentProd {
-	return release.RehydrateCurrentProd(releaseID, release.Topology(nodes), time.Unix(1, 0).UTC())
+// prodSnapshot is a release id and the production topology it names.
+type prodSnapshot struct {
+	releaseID string
+	topo      release.Topology
+}
+
+func buildCurrentProd(releaseID string, nodes ...release.Node) prodSnapshot {
+	return prodSnapshot{releaseID: releaseID, topo: release.Topology(nodes)}
 }
 
 func TestSeedServiceProd_SeedsAllServices(t *testing.T) {
@@ -32,7 +38,7 @@ func TestSeedServiceProd_SeedsAllServices(t *testing.T) {
 	store := newFakeStore()
 	repo := &fakeServiceProdRepo{store: store}
 
-	n, err := handlers.SeedServiceProd(context.Background(), cp, existingKeys, repo, now)
+	n, err := handlers.SeedServiceProd(context.Background(), cp.releaseID, cp.topo, existingKeys, repo, now)
 	require.NoError(t, err)
 	assert.Equal(t, 2, n)
 
@@ -67,7 +73,7 @@ func TestSeedServiceProd_MissingKeyReturnsError(t *testing.T) {
 	store := newFakeStore()
 	repo := &fakeServiceProdRepo{store: store}
 
-	_, err := handlers.SeedServiceProd(context.Background(), cp, existingKeys, repo, now)
+	_, err := handlers.SeedServiceProd(context.Background(), cp.releaseID, cp.topo, existingKeys, repo, now)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "service-2")
 }
@@ -86,7 +92,7 @@ func TestSeedServiceProd_SkipsNodesWithEmptyServiceName(t *testing.T) {
 	store := newFakeStore()
 	repo := &fakeServiceProdRepo{store: store}
 
-	n, err := handlers.SeedServiceProd(context.Background(), cp, existingKeys, repo, now)
+	n, err := handlers.SeedServiceProd(context.Background(), cp.releaseID, cp.topo, existingKeys, repo, now)
 	require.NoError(t, err)
 	assert.Equal(t, 1, n, "node with empty service_name must be skipped")
 }
@@ -102,12 +108,12 @@ func TestSeedServiceProd_IdempotentOnRerun(t *testing.T) {
 	store := newFakeStore()
 	repo := &fakeServiceProdRepo{store: store}
 
-	n1, err := handlers.SeedServiceProd(context.Background(), cp, existingKeys, repo, now)
+	n1, err := handlers.SeedServiceProd(context.Background(), cp.releaseID, cp.topo, existingKeys, repo, now)
 	require.NoError(t, err)
 	assert.Equal(t, 1, n1)
 
 	// Running again should succeed and still report 1 service.
-	n2, err := handlers.SeedServiceProd(context.Background(), cp, existingKeys, repo, now)
+	n2, err := handlers.SeedServiceProd(context.Background(), cp.releaseID, cp.topo, existingKeys, repo, now)
 	require.NoError(t, err)
 	assert.Equal(t, 1, n2)
 
@@ -123,7 +129,7 @@ func TestSeedServiceProd_EmptyTopologyReturnsZero(t *testing.T) {
 	store := newFakeStore()
 	repo := &fakeServiceProdRepo{store: store}
 
-	n, err := handlers.SeedServiceProd(context.Background(), cp, map[string]string{}, repo, now)
+	n, err := handlers.SeedServiceProd(context.Background(), cp.releaseID, cp.topo, map[string]string{}, repo, now)
 	require.NoError(t, err)
 	assert.Equal(t, 0, n)
 }
@@ -144,7 +150,7 @@ func TestSeedServiceProd_DerivesManifestKindPerService(t *testing.T) {
 	store := newFakeStore()
 	repo := &fakeServiceProdRepo{store: store}
 
-	n, err := handlers.SeedServiceProd(context.Background(), cp, existingKeys, repo, now)
+	n, err := handlers.SeedServiceProd(context.Background(), cp.releaseID, cp.topo, existingKeys, repo, now)
 	require.NoError(t, err)
 	assert.Equal(t, 2, n)
 
@@ -174,7 +180,7 @@ func TestSeedServiceProd_CsvServiceClassifiedPython(t *testing.T) {
 	store := newFakeStore()
 	repo := &fakeServiceProdRepo{store: store}
 
-	n, err := handlers.SeedServiceProd(context.Background(), cp, existingKeys, repo, now)
+	n, err := handlers.SeedServiceProd(context.Background(), cp.releaseID, cp.topo, existingKeys, repo, now)
 	require.NoError(t, err)
 	assert.Equal(t, 1, n)
 
@@ -202,7 +208,7 @@ func TestSeedServiceProd_MixedKindServiceErrorsAndWritesNothing(t *testing.T) {
 	store := newFakeStore()
 	repo := &fakeServiceProdRepo{store: store}
 
-	n, err := handlers.SeedServiceProd(context.Background(), cp, existingKeys, repo, now)
+	n, err := handlers.SeedServiceProd(context.Background(), cp.releaseID, cp.topo, existingKeys, repo, now)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "service-1")
 	assert.Equal(t, 0, n)

@@ -227,7 +227,6 @@ func main() {
 	// INITIALIZE REPOSITORIES
 	// ========================================================================
 
-	topologyRepo := neo4jinfra.NewTopologyRepository(neo4jClient, logger)
 	queryRepo := neo4jinfra.NewOrchestratorQueryRepository(neo4jClient, logger)
 	runAggRepo := neo4jinfra.NewRunAggregateRepository(neo4jClient, logger)
 	snapshotTxRunner := neo4jinfra.NewSnapshotTxRunner(neo4jClient)
@@ -243,7 +242,6 @@ func main() {
 	// consumers would cause "transaction already in progress" errors when two
 	// consumers process messages concurrently — the second Begin() sees inTx=true
 	// and the message is never ACKed, getting stuck in the PEL forever.
-	topologyStateRepo := postgres.NewTopologyStateRepository(pgDB)
 	handleNodeCompletedHandler := handlers.NewHandleNodeCompletedHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), runAggRepo, cancelledSchedulesRepo, logger)
 	handleSchedulerStartedHandler := handlers.NewHandleSchedulerStartedHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), snapshotService, logger)
 	handleRerunHandler := handlers.NewHandleRerunHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), snapshotService, logger)
@@ -413,31 +411,43 @@ func main() {
 	// full-inherited rebases that produce no node.updated:v1 traffic).
 	runFinalizedHandler := handlers.NewRunFinalizedHandler(runAggRepo, logger)
 
-	// release.promoted:v1 atomically replaces the Neo4j topology when
-	// release-controller promotes a candidate release to production, then emits
-	// schedules.loaded:v1 so state can refresh its schedule projections. The
-	// consumer is dormant until release-controller emits its first
-	// release.promoted:v1 event in production.
+	// release.promoted:v2 swaps the live Neo4j topology when release-controller
+	// promotes a release, reading the topology from the release's artifact in
+	// object storage, then emits schedules.loaded:v1 so state can refresh its
+	// schedule projections. The swap decides by promotion seq, so a late or
+	// redriven older promotion never reverts the live topology.
+	topologyArtifactReader, err := s3infra.NewTopologyArtifactReader(
+		ctx, cfg.S3.EndpointURL, cfg.S3.Bucket, cfg.S3.Region,
+		cfg.S3.AccessKeyID, cfg.S3.SecretAccessKey,
+	)
+	if err != nil {
+		logger.Error("Failed to build the object-storage client", "error", err)
+		os.Exit(1)
+	}
 	releasePromotionRepo := neo4jinfra.NewReleasePromotionRepository(neo4jClient, logger)
-	releasePromotedHandler := handlers.NewReleasePromotedHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), releasePromotionRepo, topologyRepo, topologyStateRepo, logger)
+	releasePromotedHandler := handlers.NewReleasePromotedHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), topologyArtifactReader, releasePromotionRepo, logger)
 
 	// trigger.promoted_seeds:v1 — projects the run state created for a promoted
 	// release onto its changed seeds, so building them into the prod schema runs
 	// through the same lifecycle as any other run.
 	handlePromotedSeedsHandler := handlers.NewHandlePromotedSeedsRunHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), snapshotService, logger)
 
-	// release.promoted:v1 (versions) — third independent consumer group. It reads
-	// the release's code-bundle document from object storage and records the
-	// :NodeVersion / :CodeUnitVersion history behind the topology. Isolated from
-	// the swap so promotion never waits on object storage, and free to retry
-	// until the swap it trails has landed.
-	codeBundleReader := s3infra.NewCodeBundleReader(
-		cfg.S3.EndpointURL, cfg.S3.Bucket, cfg.S3.Region,
+	// release.promoted:v2 (versions) — an independent consumer group. It reads
+	// the release's code-bundle document and topology artifact from object
+	// storage and records the :NodeVersion / :CodeUnitVersion history behind the
+	// topology. Isolated from the swap so promotion never waits on the bundle,
+	// and free to retry until the swap it trails has landed.
+	codeBundleReader, err := s3infra.NewCodeBundleReader(
+		ctx, cfg.S3.EndpointURL, cfg.S3.Bucket, cfg.S3.Region,
 		cfg.S3.AccessKeyID, cfg.S3.SecretAccessKey,
 	)
+	if err != nil {
+		logger.Error("Failed to build the object-storage client", "error", err)
+		os.Exit(1)
+	}
 	codeVersionRepo := neo4jinfra.NewCodeVersionRepository(neo4jClient, logger)
 	releasePromotedVersionsHandler := handlers.NewReleasePromotedVersionsHandler(
-		postgres.NewPostgresUnitOfWork(pgDB, logger), codeBundleReader, codeVersionRepo, logger)
+		postgres.NewPostgresUnitOfWork(pgDB, logger), codeBundleReader, topologyArtifactReader, codeVersionRepo, logger)
 
 	// remediation.requested:v2 (rejections) + remediation.pr_opened:v1
 	// (proposals) + remediation.pr_closed:v1 (provenance) — the
@@ -472,8 +482,8 @@ func main() {
 		{"rebase", streams.TriggerRebaseV1, streams.OrchestratorRebase, redis.NewRebaseBinding(handleRebaseHandler, logger), topologyHandlerTimeout},
 		{"single_node_run", streams.TriggerSingleNodeRunV1, streams.OrchestratorSingleNodeRun, redis.NewSingleNodeRunBinding(handleSingleNodeRunHandler, logger), topologyHandlerTimeout},
 		{"run_finalized", streams.RunFinalizedV1, streams.OrchestratorRunFinalized, redis.NewRunFinalizedBinding(runFinalizedHandler, logger), 0},
-		{"release_promoted", streams.ReleasePromotedV1, streams.OrchestratorReleasePromoted, redis.NewReleasePromotedBinding(releasePromotedHandler, logger), topologyHandlerTimeout},
-		{"release_promoted_versions", streams.ReleasePromotedV1, streams.OrchestratorReleasePromotedVersions, redis.NewReleasePromotedVersionsBinding(releasePromotedVersionsHandler, logger), topologyHandlerTimeout},
+		{"release_promoted", streams.ReleasePromotedV2, streams.OrchestratorReleasePromoted, redis.NewReleasePromotedBinding(releasePromotedHandler, logger), topologyHandlerTimeout},
+		{"release_promoted_versions", streams.ReleasePromotedV2, streams.OrchestratorReleasePromotedVersions, redis.NewReleasePromotedVersionsBinding(releasePromotedVersionsHandler, logger), topologyHandlerTimeout},
 		{"promoted_seeds", streams.TriggerPromotedSeedsV1, streams.OrchestratorPromotedSeeds, redis.NewPromotedSeedsBinding(handlePromotedSeedsHandler, logger), topologyHandlerTimeout},
 		{"remediation_requested_rejections", streams.RemediationRequestedV2, streams.OrchestratorRemediationRequestedRejections, redis.NewRemediationRequestedBinding(rejectionsHandler, logger), 0},
 		{"remediation_pr_opened_proposals", streams.RemediationPrOpenedV1, streams.OrchestratorRemediationPrOpenedProposals, redis.NewPrOpenedBinding(proposalsHandler, logger), 0},
@@ -489,11 +499,11 @@ func main() {
 	// START gRPC SERVER
 	// ========================================================================
 
-	runQueries := queries.NewRunQueryService(queryRepo, topologyStateRepo, logger)
-	// Topology shapes are immutable per topology_generation, so wrap the schedule
-	// reader in an LRU cache keyed by (schedule_name, generation). Run graphs
-	// carry live status overlays and stay uncached (served by queryRepo).
-	scheduleGraphReader := neo4jinfra.NewCachingScheduleGraphReader(queryRepo, topologyStateRepo, logger)
+	runQueries := queries.NewRunQueryService(queryRepo, queryRepo, logger)
+	// Topology shapes are immutable per promotion, so wrap the schedule reader in
+	// an LRU cache keyed by (schedule_name, live promotion seq). Run graphs carry
+	// live status overlays and stay uncached (served by queryRepo).
+	scheduleGraphReader := neo4jinfra.NewCachingScheduleGraphReader(queryRepo, queryRepo, logger)
 	codeVersionQueryRepo := neo4jinfra.NewCodeVersionQueryRepository(neo4jClient, logger)
 	codeVersionQueries := queries.NewCodeVersionQueryService(codeVersionQueryRepo)
 	precedentQueryRepo := neo4jinfra.NewPrecedentQueryRepository(neo4jClient, logger)

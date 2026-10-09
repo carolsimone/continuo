@@ -56,6 +56,8 @@ func openTestDB(t *testing.T) *sqlx.DB {
 	db, err := sqlx.Connect("postgres", dsn)
 	require.NoError(t, err)
 	_, _ = db.Exec("TRUNCATE release_pipeline_runs, current_prod, release_controller_outbox, message_processing, service_prod RESTART IDENTITY CASCADE")
+	_, err = db.Exec("UPDATE promotion_sequence SET last_seq = 0 WHERE id = 1")
+	require.NoError(t, err, "promotion_sequence is missing: run make test-deps-up to apply the release migrations")
 	return db
 }
 

@@ -1,6 +1,8 @@
 package streams
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestRemediationRequestedV2_ReplacesV1(t *testing.T) {
 	if RemediationRequestedV2 != "remediation.requested:v2" {
@@ -48,5 +50,36 @@ func TestManifestLoadedCandidateV2_ReplacesV1(t *testing.T) {
 	}
 	if !retired {
 		t.Fatal("manifest.loaded.candidate:v1 must be listed in retired_streams")
+	}
+}
+
+func TestReleasePromotedV2_ReplacesV1(t *testing.T) {
+	if ReleasePromotedV2 != "release.promoted:v2" {
+		t.Fatalf("ReleasePromotedV2 = %q", ReleasePromotedV2)
+	}
+	want := map[string]bool{
+		"orchestrator-release-promoted":          false,
+		"orchestrator-release-promoted-versions": false,
+		"executor-release-promoted":              false,
+	}
+	for _, g := range Groups[ReleasePromotedV2] {
+		if _, ok := want[g]; !ok {
+			t.Errorf("unexpected group %q on release.promoted:v2", g)
+		}
+		want[g] = true
+	}
+	for g, seen := range want {
+		if !seen {
+			t.Errorf("release.promoted:v2 is missing group %q", g)
+		}
+	}
+	retired := false
+	for _, r := range Retired {
+		if r == "release.promoted:v1" {
+			retired = true
+		}
+	}
+	if !retired {
+		t.Fatal("release.promoted:v1 must be listed in retired_streams")
 	}
 }

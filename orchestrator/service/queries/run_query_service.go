@@ -4,10 +4,9 @@
 // It mirrors service/handlers/ on the read side: command handlers compose
 // write-side stores; query services compose read-side stores.
 //
-// RunQueryService is the first orchestrator component that joins Neo4j (the
-// :Run node and its topology_generation) with Postgres (the topology_state
-// singleton row). The interfaces are owned by this package per Go convention
-// (consumer defines the interface).
+// RunQueryService composes the run-side reads with the live topology's
+// promotion seq; both come from Neo4j. The interfaces are owned by this package
+// per Go convention (consumer defines the interface).
 package queries
 
 import (
@@ -30,14 +29,14 @@ type RunReader interface {
 }
 
 // TopologyStateReader is the read-side surface RunQueryService needs from
-// the topology-state adapter. Satisfied by adapters/postgres/topologyStateRepository.
+// the live-promotion-seq read. Satisfied by adapters/neo4j
+// OrchestratorQueryRepository.GetGeneration, which returns the live promotion seq.
 type TopologyStateReader interface {
 	GetGeneration(ctx context.Context) (int64, error)
 }
 
 // RunGraphView is the result of GetRunGraph — the existing run graph plus
-// the run's pinned topology_generation and the orchestrator's current
-// topology_state.topology_generation.
+// the promotion seq the run was created under and the live promotion seq.
 type RunGraphView struct {
 	Nodes                    []*domain.TableNode
 	Edges                    []*domain.GraphEdge
@@ -46,15 +45,15 @@ type RunGraphView struct {
 }
 
 // ActiveRunDriftView is the result of ListActiveRunDrifts — every in-flight
-// run with its pinned generation, plus the latest generation for drift
-// computation in the consumer.
+// run with the promotion seq it was created under, plus the live promotion seq
+// for drift computation in the consumer.
 type ActiveRunDriftView struct {
 	ActiveRuns               []*domain.ActiveRun
 	LatestTopologyGeneration int64
 }
 
-// RunQueryService composes the run-side reads (Neo4j) with the topology-state
-// read (Postgres) and assembles drift-aware views.
+// RunQueryService composes the run-side reads with the live promotion seq and
+// assembles drift-aware views.
 type RunQueryService struct {
 	runReader         RunReader
 	topologyStateRepo TopologyStateReader
@@ -71,7 +70,7 @@ func NewRunQueryService(runReader RunReader, topologyStateRepo TopologyStateRead
 }
 
 // GetRunGraph returns the run's nodes/edges plus its pinned topology_generation
-// and the latest topology_generation from topology_state. Reads are sequential.
+// and the latest topology_generation of the live topology. Reads are sequential.
 func (s *RunQueryService) GetRunGraph(ctx context.Context, runID string) (*RunGraphView, error) {
 	nodes, edges, err := s.runReader.GetRunGraph(ctx, runID)
 	if err != nil {

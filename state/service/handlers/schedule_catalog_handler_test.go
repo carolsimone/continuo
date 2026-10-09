@@ -23,17 +23,18 @@ import (
 // SaveCatalog records the aggregate that was passed in and returns saveErr.
 // All other methods are inert stubs.
 type fakeCatalogPortRepo struct {
-	initial map[string]catalog.Entry
-	saved   *catalog.ScheduleCatalog
-	saveErr error
-	loadErr error
+	initial      map[string]catalog.Entry
+	promotionSeq int64
+	saved        *catalog.ScheduleCatalog
+	saveErr      error
+	loadErr      error
 }
 
 func (f *fakeCatalogPortRepo) LoadCatalogForUpdate(_ context.Context) (*catalog.ScheduleCatalog, error) {
 	if f.loadErr != nil {
 		return nil, f.loadErr
 	}
-	return catalog.Hydrate(f.initial), nil
+	return catalog.Hydrate(f.initial, f.promotionSeq), nil
 }
 
 func (f *fakeCatalogPortRepo) SaveCatalog(_ context.Context, c *catalog.ScheduleCatalog) error {
@@ -45,7 +46,7 @@ func (f *fakeCatalogPortRepo) SaveCatalog(_ context.Context, c *catalog.Schedule
 }
 
 func (f *fakeCatalogPortRepo) GetCatalog(_ context.Context) (*catalog.ScheduleCatalog, error) {
-	return catalog.Hydrate(f.initial), nil
+	return catalog.Hydrate(f.initial, f.promotionSeq), nil
 }
 
 func (f *fakeCatalogPortRepo) ExistsActive(_ context.Context, _ string) (bool, error) {
@@ -203,4 +204,43 @@ func TestScheduleCatalogHandler_EmptyListWrapsAsPermanent(t *testing.T) {
 	assert.True(t, errors.Is(err, pkgevents.ErrPermanent),
 		"error must wrap pkgevents.ErrPermanent so the binding dead-letters the message, got: %v", err)
 	assert.Nil(t, repo.saved, "SaveCatalog must not be called on empty list")
+}
+
+// TestScheduleCatalogHandler_OlderPromotionIsAcknowledgedWithoutASave verifies
+// that a payload whose promotion seq is below the catalog's changes nothing and
+// returns nil, so the binding acknowledges it rather than retrying or
+// dead-lettering a valid, merely late, event.
+func TestScheduleCatalogHandler_OlderPromotionIsAcknowledgedWithoutASave(t *testing.T) {
+	repo := &fakeCatalogPortRepo{
+		initial: map[string]catalog.Entry{
+			"orders": {ScheduleName: "orders"},
+			"users":  {ScheduleName: "users"},
+		},
+		promotionSeq: 5,
+	}
+	u := &uow.FakeUnitOfWork{}
+	u.SetCatalogRepo(repo)
+	h := handlers.NewScheduleCatalogHandler(testLogger())
+
+	err := h.Handle(context.Background(), u, events.ScheduleCatalogLoaded{
+		EventID: uuid.New(), ScheduleNames: []string{"orders"}, PromotionSeq: 4,
+	}, uuid.New())
+	require.NoError(t, err)
+	assert.Nil(t, repo.saved, "an older promotion must not be saved")
+}
+
+// TestScheduleCatalogHandler_SavesThePromotionSeq verifies that the saved
+// aggregate carries the seq of the payload it applied.
+func TestScheduleCatalogHandler_SavesThePromotionSeq(t *testing.T) {
+	repo := &fakeCatalogPortRepo{promotionSeq: 5}
+	u := &uow.FakeUnitOfWork{}
+	u.SetCatalogRepo(repo)
+	h := handlers.NewScheduleCatalogHandler(testLogger())
+
+	err := h.Handle(context.Background(), u, events.ScheduleCatalogLoaded{
+		EventID: uuid.New(), ScheduleNames: []string{"orders"}, PromotionSeq: 6,
+	}, uuid.New())
+	require.NoError(t, err)
+	require.NotNil(t, repo.saved)
+	assert.Equal(t, int64(6), repo.saved.PromotionSeq())
 }

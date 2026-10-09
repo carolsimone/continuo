@@ -18,6 +18,9 @@ import (
 //   - table_uid_unique: backs the `MERGE (:Table {unique_id: …})` upsert in the
 //     release-promotion swap and prevents concurrent promotions from minting
 //     duplicate :Table nodes for the same unique_id.
+//   - meta_key_unique: makes the :Meta {key} MERGE that opens every topology
+//     swap race-free, so two promotions arriving together on an empty graph
+//     cannot mint two current_release singletons.
 //   - table_fqn: backs the composite (service_name, schema_name, table_name)
 //     lookups used by the snapshot writer's :EXECUTES match and every
 //     fully-qualified descendant/single-table reader.
@@ -58,6 +61,7 @@ import (
 var schemaStatements = []string{
 	"CREATE CONSTRAINT run_id_unique IF NOT EXISTS FOR (r:Run) REQUIRE r.run_id IS UNIQUE",
 	"CREATE CONSTRAINT table_uid_unique IF NOT EXISTS FOR (t:Table) REQUIRE t.unique_id IS UNIQUE",
+	"CREATE CONSTRAINT meta_key_unique IF NOT EXISTS FOR (m:Meta) REQUIRE m.key IS UNIQUE",
 	"CREATE INDEX table_fqn IF NOT EXISTS FOR (t:Table) ON (t.service_name, t.schema_name, t.table_name)",
 	"CREATE INDEX table_schedule IF NOT EXISTS FOR (t:Table) ON (t.schedule_name)",
 	"CREATE INDEX run_schedule IF NOT EXISTS FOR (r:Run) ON (r.schedule_name)",
@@ -120,6 +124,7 @@ const awaitIndexTimeoutSeconds = 300
 // The table_uid_unique constraint refuses to create if duplicate
 // :Table {unique_id} nodes already exist. See the orchestrator storage-ownership
 // architecture doc for the one-off dedup query to run before first rollout.
+// meta_key_unique likewise refuses to create if two :Meta nodes share a key.
 func InitSchema(ctx context.Context, client Neo4jClient, logger *slog.Logger) error {
 	session := client.NewSession(ctx, neo4j.AccessModeWrite)
 	defer func() { _ = session.Close(ctx) }()

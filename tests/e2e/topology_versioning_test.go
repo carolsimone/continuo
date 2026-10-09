@@ -13,10 +13,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestTopologyVersioning_MidRunIsolation validates that a new release.promoted:v1 arriving between Run 1's SnapshotGraph and its completion does NOT affect the
-// in-flight run: its topology_generation must remain pinned to the value captured
-// at SnapshotGraph time. Run 2 (triggered after the reload) must pick up the
-// incremented generation.
+// TestTopologyVersioning_MidRunIsolation validates that a topology announced
+// between Run 1's SnapshotGraph and its completion does NOT affect the in-flight
+// run: its promotion_seq must remain pinned to the seq captured at SnapshotGraph
+// time. Run 2 (triggered after the announcement) must pick up the new seq.
 func TestTopologyVersioning_MidRunIsolation(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -40,17 +40,13 @@ func TestTopologyVersioning_MidRunIsolation(t *testing.T) {
 	// Step 2: Clean any leftover data from previous runs.
 	cleanupTestData(t, ctx, clients, scheduleName)
 
-	// Step 3: Seed the topology and wait for the orchestrator to apply the
-	// release.promoted topology swap, establishing generation G1.
-	t.Log("=== Step 3: seedTopology — establishing generation G1 ===")
-	seedTopology(t, ctx, clients)
+	// Step 3: Announce the topology and wait for the orchestrator to apply it,
+	// establishing promotion seq G1.
+	t.Log("=== Step 3: seedTopology — establishing promotion seq G1 ===")
+	g1 := seedTopology(t, ctx, clients).PromotionSeq
 
-	// Step 4: Read G1 from orchestrator_db.
-	var g1 int64
-	err := clients.orchestratorDB.QueryRowContext(ctx,
-		`SELECT topology_generation FROM topology_state WHERE id = TRUE`,
-	).Scan(&g1)
-	require.NoError(t, err, "failed to read topology_generation (G1) from topology_state")
+	// Step 4: The live pointer carries G1.
+	require.Equal(t, g1, readLivePointer(ctx, clients).promotionSeq, "the live pointer must carry G1")
 	t.Logf("G1 = %d", g1)
 
 	// Tap run.entries.dispatched:v1 before either run is triggered: state consumes
@@ -65,58 +61,33 @@ func TestTopologyVersioning_MidRunIsolation(t *testing.T) {
 	s1, err := uuid.Parse(scheduleID1Str)
 	require.NoError(t, err, "schedule_id for Run 1 is not a valid UUID")
 
-	// Step 6: Wait for run.entries.dispatched:v1 for S1.
-	// This event is published after SnapshotGraph commits, proving that S1's
-	// topology_generation has been stamped on its Run node in Neo4j.
+	// Step 6: Wait for run.entries.dispatched:v1 for S1. This event is published
+	// after SnapshotGraph commits, proving S1's promotion_seq has been stamped on
+	// its Run node in Neo4j.
 	t.Log("=== Step 6: waiting for run.entries.dispatched:v1 for S1 ===")
+	waitForDispatched(t, ctx, dispatchedTap, s1)
 
-	pollUntil(t, ctx, 2*time.Minute, time.Second, func() (bool, error) {
-		for _, msg := range dispatchedTap.Entries() {
-			payloadStr, _ := msg.Values["payload"].(string)
-			if payloadStr == "" {
-				continue
-			}
-			var p map[string]interface{}
-			if json.Unmarshal([]byte(payloadStr), &p) != nil {
-				continue
-			}
-			if p["schedule_id"] == s1.String() {
-				return true, nil
-			}
-		}
-		return false, nil
-	}, "Timeout waiting for run.entries.dispatched:v1 for schedule "+s1.String())
-	t.Log("run.entries.dispatched:v1 received for S1 — SnapshotGraph has committed")
+	// Step 7: S1 carries G1.
+	t.Log("=== Step 7: verifying S1 promotion_seq in Neo4j == G1 ===")
+	s1Seq := readRunPromotionSeq(t, ctx, clients, s1)
+	assert.Equal(t, g1, s1Seq, "Run 1's promotion_seq must equal G1=%d, got %d", g1, s1Seq)
 
-	// Step 7: Read S1's topology_generation from Neo4j and assert it equals G1.
-	t.Log("=== Step 7: verifying S1 topology_generation in Neo4j == G1 ===")
-	s1Gen := readRunTopologyGeneration(t, ctx, clients, s1)
-	assert.Equal(t, g1, s1Gen,
-		"Run 1's topology_generation must equal G1=%d, got %d", g1, s1Gen)
-	t.Logf("S1 topology_generation = %d (expected G1=%d) ✓", s1Gen, g1)
+	// Step 8: Announce the topology again while S1 is still in flight (fresh
+	// release_id, same DAG): the announcement takes G2 > G1.
+	t.Log("=== Step 8: seedTopology mid-run (fresh release_id, same DAG) — announcing G2 ===")
+	g2 := seedTopology(t, ctx, clients).PromotionSeq
 
-	// Step 8: Seed topology again while S1 is still in-flight (fresh release_id,
-	// same DAG). This increments the generation to G2 = G1+1.
-	t.Log("=== Step 8: seedTopology mid-run (fresh release_id, same DAG) — incrementing to G2 ===")
-	seedTopology(t, ctx, clients)
-
-	// Step 9: Read G2 from orchestrator_db and assert G2 == G1+1.
-	var g2 int64
-	err = clients.orchestratorDB.QueryRowContext(ctx,
-		`SELECT topology_generation FROM topology_state WHERE id = TRUE`,
-	).Scan(&g2)
-	require.NoError(t, err, "failed to read topology_generation (G2) from topology_state")
+	// Step 9: G2 is later than G1, and the live pointer carries it.
 	t.Logf("G2 = %d", g2)
-	require.Equal(t, g1+1, g2, "G2 must equal G1+1: G1=%d G2=%d", g1, g2)
+	require.Greater(t, g2, g1, "every announcement takes a larger promotion seq: G1=%d G2=%d", g1, g2)
+	require.Equal(t, g2, readLivePointer(ctx, clients).promotionSeq, "the live pointer must carry G2")
 
-	// Step 10: Re-read S1's topology_generation from Neo4j and assert it still == G1.
-	// This is the core isolation invariant: an in-flight run must not be affected
-	// by a topology reload that happened after its SnapshotGraph.
-	t.Log("=== Step 10: verifying S1 topology_generation in Neo4j still == G1 ===")
-	s1GenAfterReload := readRunTopologyGeneration(t, ctx, clients, s1)
-	assert.Equal(t, g1, s1GenAfterReload,
-		"Run 1 must remain pinned to G1=%d after mid-run reload; got %d", g1, s1GenAfterReload)
-	t.Logf("S1 topology_generation after reload = %d (expected G1=%d) ✓", s1GenAfterReload, g1)
+	// Step 10: S1 still carries G1. This is the core isolation invariant: an
+	// in-flight run is not affected by a topology announced after its
+	// SnapshotGraph.
+	t.Log("=== Step 10: verifying S1 promotion_seq in Neo4j still == G1 ===")
+	assert.Equal(t, g1, readRunPromotionSeq(t, ctx, clients, s1),
+		"Run 1 must remain pinned to G1=%d after the mid-run announcement", g1)
 
 	// Step 11: Wait for S1 to complete successfully.
 	t.Log("=== Step 11: waiting for Run 1 to complete ===")
@@ -124,25 +95,38 @@ func TestTopologyVersioning_MidRunIsolation(t *testing.T) {
 	verifySchedulerSucceeded(t, ctx, clients, s1)
 	t.Log("Run 1 completed successfully")
 
-	// Run 1's success above already proves its task_tracker rows landed.
-
-	// Step 13: Clean up Run 1 data before triggering Run 2.
-	t.Log("=== Step 13: cleaning up Run 1 data ===")
+	// Step 12: Clean up Run 1 data before triggering Run 2.
+	t.Log("=== Step 12: cleaning up Run 1 data ===")
 	cleanupTestData(t, ctx, clients, scheduleName)
 
-	// Step 14: Trigger Run 2. Since the graph was reloaded in step 8, Run 2 must
-	// pick up G2.
-	t.Log("=== Step 14: triggerScheduleHTTP — starting Run 2 (S2) ===")
+	// Step 13: Trigger Run 2, which must pick up G2.
+	t.Log("=== Step 13: triggerScheduleHTTP — starting Run 2 (S2) ===")
 	scheduleID2Str := triggerScheduleHTTP(t, clients.uiBase, scheduleName)
 	t.Logf("Run 2 created: schedule_id=%s", scheduleID2Str)
 	s2, err := uuid.Parse(scheduleID2Str)
 	require.NoError(t, err, "schedule_id for Run 2 is not a valid UUID")
 
-	// Step 15: Wait for run.entries.dispatched:v1 for S2.
-	t.Log("=== Step 15: waiting for run.entries.dispatched:v1 for S2 ===")
+	// Step 14: Wait for run.entries.dispatched:v1 for S2.
+	t.Log("=== Step 14: waiting for run.entries.dispatched:v1 for S2 ===")
+	waitForDispatched(t, ctx, dispatchedTap, s2)
 
+	// Step 15: S2 carries G2.
+	t.Log("=== Step 15: verifying S2 promotion_seq in Neo4j == G2 ===")
+	assert.Equal(t, g2, readRunPromotionSeq(t, ctx, clients, s2), "Run 2's promotion_seq must equal G2=%d", g2)
+
+	// Step 16: Wait for S2 to complete successfully.
+	t.Log("=== Step 16: waiting for Run 2 to complete ===")
+	waitForAllTasksSucceeded(t, ctx, clients, s2, tables)
+	verifySchedulerSucceeded(t, ctx, clients, s2)
+	t.Log("TestTopologyVersioning_MidRunIsolation PASSED")
+}
+
+// waitForDispatched waits until the tap has recorded run.entries.dispatched:v1
+// for scheduleID, which is published after the run's SnapshotGraph commits.
+func waitForDispatched(t *testing.T, ctx context.Context, tap *streamTap, scheduleID uuid.UUID) {
+	t.Helper()
 	pollUntil(t, ctx, 2*time.Minute, time.Second, func() (bool, error) {
-		for _, msg := range dispatchedTap.Entries() {
+		for _, msg := range tap.Entries() {
 			payloadStr, _ := msg.Values["payload"].(string)
 			if payloadStr == "" {
 				continue
@@ -151,40 +135,17 @@ func TestTopologyVersioning_MidRunIsolation(t *testing.T) {
 			if json.Unmarshal([]byte(payloadStr), &p) != nil {
 				continue
 			}
-			if p["schedule_id"] == s2.String() {
+			if p["schedule_id"] == scheduleID.String() {
 				return true, nil
 			}
 		}
 		return false, nil
-	}, "Timeout waiting for run.entries.dispatched:v1 for schedule "+s2.String())
-	t.Log("run.entries.dispatched:v1 received for S2 — SnapshotGraph has committed")
-
-	// Step 16: Read S2's topology_generation from Neo4j and assert it equals G2.
-	t.Log("=== Step 16: verifying S2 topology_generation in Neo4j == G2 ===")
-	s2Gen := readRunTopologyGeneration(t, ctx, clients, s2)
-	assert.Equal(t, g2, s2Gen,
-		"Run 2's topology_generation must equal G2=%d, got %d", g2, s2Gen)
-	t.Logf("S2 topology_generation = %d (expected G2=%d) ✓", s2Gen, g2)
-
-	// Step 17: Wait for S2 to complete successfully.
-	t.Log("=== Step 17: waiting for Run 2 to complete ===")
-	waitForAllTasksSucceeded(t, ctx, clients, s2, tables)
-	verifySchedulerSucceeded(t, ctx, clients, s2)
-	t.Log("Run 2 completed successfully")
-
-	// Run 2's success above proves its task_tracker rows landed.
-
-	t.Log("TestTopologyVersioning_MidRunIsolation PASSED")
+	}, "Timeout waiting for run.entries.dispatched:v1 for schedule "+scheduleID.String())
 }
 
-// readRunTopologyGeneration queries the Neo4j Run node for the given schedule_id
-// and returns its topology_generation property.
-func readRunTopologyGeneration(
-	t *testing.T,
-	ctx context.Context,
-	clients *testClients,
-	scheduleID uuid.UUID,
-) int64 {
+// readRunPromotionSeq returns the promotion_seq the Neo4j Run node of
+// scheduleID was snapshotted under.
+func readRunPromotionSeq(t *testing.T, ctx context.Context, clients *testClients, scheduleID uuid.UUID) int64 {
 	t.Helper()
 
 	session := clients.neo4jDriver.NewSession(ctx, neo4jdriver.SessionConfig{
@@ -193,19 +154,17 @@ func readRunTopologyGeneration(
 	defer session.Close(ctx)
 
 	result, err := session.Run(ctx,
-		`MATCH (r:Run {run_id: $run_id}) RETURN r.topology_generation AS gen`,
+		`MATCH (r:Run {run_id: $run_id}) RETURN r.promotion_seq AS seq`,
 		map[string]interface{}{"run_id": scheduleID.String()},
 	)
-	require.NoError(t, err, "failed to query topology_generation for run_id=%s", scheduleID)
-	require.True(t, result.Next(ctx),
-		"no Run node found in Neo4j for run_id=%s", scheduleID)
+	require.NoError(t, err, "failed to query promotion_seq for run_id=%s", scheduleID)
+	require.True(t, result.Next(ctx), "no Run node found in Neo4j for run_id=%s", scheduleID)
 
-	genVal, ok := result.Record().Get("gen")
-	require.True(t, ok, "topology_generation property missing from Run node run_id=%s", scheduleID)
-	require.NotNil(t, genVal, "topology_generation is nil on Run node run_id=%s", scheduleID)
+	seqVal, ok := result.Record().Get("seq")
+	require.True(t, ok, "promotion_seq missing from Run node run_id=%s", scheduleID)
+	require.NotNil(t, seqVal, "promotion_seq is nil on Run node run_id=%s", scheduleID)
 
-	gen, ok := genVal.(int64)
-	require.True(t, ok, "topology_generation is not int64 (got %T) for run_id=%s", genVal, scheduleID)
-
-	return gen
+	seq, ok := seqVal.(int64)
+	require.True(t, ok, "promotion_seq is not int64 (got %T) for run_id=%s", seqVal, scheduleID)
+	return seq
 }

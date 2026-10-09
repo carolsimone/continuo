@@ -16,6 +16,13 @@ var ErrTopologyArtifactNotFound = errors.New("topology artifact not found")
 // URI points outside this install's bucket. Reading it again cannot succeed.
 var ErrTopologyArtifactCorrupt = errors.New("topology artifact corrupt")
 
+// ErrTopologyArtifactImmutable reports a Write of a release id whose object
+// already exists with different bytes. The object is immutable — an earlier
+// announcement still names its checksum — so a changed-bytes overwrite is
+// refused rather than silently invalidating that checksum. A re-write of the
+// identical bytes is idempotent and allowed.
+var ErrTopologyArtifactImmutable = errors.New("topology artifact already exists with different bytes")
+
 // TopologyArtifactStore reads and writes topology artifacts: the immutable,
 // checksummed object holding one run's whole candidate topology.
 type TopologyArtifactStore interface {

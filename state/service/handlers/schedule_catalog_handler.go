@@ -35,7 +35,9 @@ func NewScheduleCatalogHandler(logger *slog.Logger) *ScheduleCatalogHandler {
 // Returning nil tells the binding to commit; returning an error triggers
 // rollback. ErrEmptyReconciliation is returned joined with
 // pkg/events.ErrPermanent, so the consumer dead-letters the message; every other
-// error is transient and leaves the message pending for redelivery.
+// error is transient and leaves the message pending for redelivery. An older
+// promotion (catalog.ErrStalePromotion) is logged and returns nil: the event is
+// valid but late, so it is acknowledged without a save.
 func (h *ScheduleCatalogHandler) Handle(
 	ctx context.Context,
 	u uow.UnitOfWork,
@@ -46,7 +48,15 @@ func (h *ScheduleCatalogHandler) Handle(
 	if err != nil {
 		return fmt.Errorf("load catalog: %w", err)
 	}
-	if err := c.Reconcile(evt.ScheduleNames, broadcastServiceMetadata(evt.ScheduleNames, evt.ServiceMetadata), u.Clock().Now()); err != nil {
+	if err := c.Reconcile(evt.PromotionSeq, evt.ScheduleNames, broadcastServiceMetadata(evt.ScheduleNames, evt.ServiceMetadata), u.Clock().Now()); err != nil {
+		if errors.Is(err, catalog.ErrStalePromotion) {
+			h.logger.Info("schedules.loaded: older promotion than the catalog's, ignored",
+				"event_id", evt.EventID,
+				"promotion_seq", evt.PromotionSeq,
+				"catalog_promotion_seq", c.PromotionSeq(),
+			)
+			return nil
+		}
 		if errors.Is(err, catalog.ErrEmptyReconciliation) {
 			h.logger.Error("schedules.loaded: empty schedule_names list — refusing to nuke catalog")
 			return errors.Join(pkgevents.ErrPermanent, err)
@@ -59,6 +69,7 @@ func (h *ScheduleCatalogHandler) Handle(
 	h.logger.Info("Schedule catalog reconciled",
 		"event_id", evt.EventID,
 		"schedule_count", len(evt.ScheduleNames),
+		"promotion_seq", evt.PromotionSeq,
 	)
 	return nil
 }

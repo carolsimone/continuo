@@ -145,7 +145,10 @@ type fakeUoW struct {
 func (f *fakeUoW) RunRepo() repository.RunRepository                 { return f.releaseRepo }
 func (f *fakeUoW) CurrentProdRepo() repository.CurrentProdRepository { panic("not implemented") }
 func (f *fakeUoW) ServiceProdRepo() repository.ServiceProdRepository { panic("not implemented") }
-func (f *fakeUoW) OutboxRepo() pkgoutbox.Repository                  { panic("not implemented") }
+func (f *fakeUoW) PromotionSequenceRepo() repository.PromotionSequenceRepository {
+	panic("not implemented")
+}
+func (f *fakeUoW) OutboxRepo() pkgoutbox.Repository { panic("not implemented") }
 func (f *fakeUoW) MessageProcessingRepo() messageprocessing.Repository {
 	panic("not implemented")
 }

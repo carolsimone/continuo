@@ -131,7 +131,7 @@ func TestHandleParsedManifest_OK_TransitionsToValidating(t *testing.T) {
 // persists CodeBundleURI (published by topology-controller on
 // manifest.loaded.candidate:v2) onto the saved release on the normal
 // (non-bootstrap) validating path, so it survives to be carried on
-// release.promoted:v1 once validation passes.
+// release.promoted:v2 once validation passes.
 func TestHandleParsedManifest_OK_StoresCodeBundleURI(t *testing.T) {
 	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
 
@@ -476,11 +476,11 @@ func TestHandleParsedManifest_OK_DerivesChangedSetFromContentHashDiff(t *testing
 	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
 
 	// Prod: a (hash h_a), b (hash h_b, downstream of a), c (hash h_c, isolated).
-	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", release.Topology{
+	seedProd(t, deps, store, "prev", release.Topology{
 		{UniqueID: "a", ServiceName: "svc-a", ContentHash: "h_a"},
 		{UniqueID: "b", ServiceName: "svc-a", ContentHash: "h_b", UpstreamUniqueIDs: []string{"a"}},
 		{UniqueID: "c", ServiceName: "svc-a", ContentHash: "h_c"},
-	}, time.Unix(50, 0).UTC()))
+	}, time.Unix(50, 0).UTC())
 
 	// Candidate: a unchanged, b changed (h_b2), c unchanged, d new (downstream of c).
 	topo := release.Topology{
@@ -532,10 +532,10 @@ func findEntry(t *testing.T, store *fakeStore, stream string) *pkgoutbox.Entry {
 func TestHandleParsedManifest_OK_ChangedNodePullsDownstream(t *testing.T) {
 	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
 
-	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", release.Topology{
+	seedProd(t, deps, store, "prev", release.Topology{
 		{UniqueID: "a", ServiceName: "svc-a", ContentHash: "h_a"},
 		{UniqueID: "b", ServiceName: "svc-a", ContentHash: "h_b", UpstreamUniqueIDs: []string{"a"}},
-	}, time.Unix(50, 0).UTC()))
+	}, time.Unix(50, 0).UTC())
 
 	// a changed, b unchanged but downstream of a.
 	topo := release.Topology{
@@ -583,10 +583,10 @@ func TestHandleParsedManifest_OK_BootstrapValidatesAllNodes(t *testing.T) {
 // error, leaving no validation.completed and blocking the queue forever.
 func TestHandleParsedManifest_OK_NothingToValidate_PromotesDirectly(t *testing.T) {
 	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
-	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", release.Topology{
+	seedProd(t, deps, store, "prev", release.Topology{
 		{UniqueID: "a", ServiceName: "svc-a", ContentHash: "h_a"},
 		{UniqueID: "b", ServiceName: "svc-a", ContentHash: "h_b", UpstreamUniqueIDs: []string{"a"}},
-	}, time.Unix(50, 0).UTC()))
+	}, time.Unix(50, 0).UTC())
 
 	topo := release.Topology{
 		{UniqueID: "a", ServiceName: "svc-a", ContentHash: "h_a"},
@@ -607,7 +607,7 @@ func TestHandleParsedManifest_OK_NothingToValidate_PromotesDirectly(t *testing.T
 	for _, e := range entries {
 		assert.NotEqual(t, streams.ValidationRequestedV1, e.StreamName, "must not emit an empty validation request")
 	}
-	promoted := findEntry(t, store, streams.ReleasePromotedV1)
+	promoted := findEntry(t, store, streams.ReleasePromotedV2)
 
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(promoted.Payload, &payload))
@@ -651,7 +651,7 @@ func TestHandleParsedManifest_OK_NothingToValidate_Verification(t *testing.T) {
 
 	t.Run("verification whose candidate matches production ends passed", func(t *testing.T) {
 		deps, store := seedToParsingVerification(t, "rVerify", map[string]string{"svc-a": "sha-a"})
-		store.SeedCurrentProd(release.RehydrateCurrentProd("prev", unchangedTopo(), time.Unix(50, 0).UTC()))
+		seedProd(t, deps, store, "prev", unchangedTopo(), time.Unix(50, 0).UTC())
 
 		require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 			ReleaseID:   "rVerify",
@@ -670,7 +670,7 @@ func TestHandleParsedManifest_OK_NothingToValidate_Verification(t *testing.T) {
 
 		for _, e := range outboxEntries(store) {
 			assert.NotEqual(t, streams.ValidationRequestedV1, e.StreamName, "must not emit an empty validation request")
-			assert.NotEqual(t, streams.ReleasePromotedV1, e.StreamName, "a verification run never promotes")
+			assert.NotEqual(t, streams.ReleasePromotedV2, e.StreamName, "a verification run never promotes")
 			assert.NotEqual(t, streams.ReleaseRejectedV1, e.StreamName, "a proven fix must not be reported as a failed attempt")
 		}
 
@@ -681,7 +681,7 @@ func TestHandleParsedManifest_OK_NothingToValidate_Verification(t *testing.T) {
 
 	t.Run("verification with an empty candidate topology fails instead of reported verified", func(t *testing.T) {
 		deps, store := seedToParsingVerification(t, "rVerify", map[string]string{"svc-a": "sha-a"})
-		store.SeedCurrentProd(release.RehydrateCurrentProd("prev", unchangedTopo(), time.Unix(50, 0).UTC()))
+		seedProd(t, deps, store, "prev", unchangedTopo(), time.Unix(50, 0).UTC())
 
 		require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 			ReleaseID:   "rVerify",
@@ -698,7 +698,7 @@ func TestHandleParsedManifest_OK_NothingToValidate_Verification(t *testing.T) {
 
 		for _, e := range outboxEntries(store) {
 			assert.NotEqual(t, streams.ValidationRequestedV1, e.StreamName, "must not emit an empty validation request")
-			assert.NotEqual(t, streams.ReleasePromotedV1, e.StreamName, "a verification run never promotes")
+			assert.NotEqual(t, streams.ReleasePromotedV2, e.StreamName, "a verification run never promotes")
 			assert.NotEqual(t, streams.ReleaseRejectedV1, e.StreamName,
 				"a verification's failure is never a release rejection")
 		}
@@ -710,7 +710,7 @@ func TestHandleParsedManifest_OK_NothingToValidate_Verification(t *testing.T) {
 
 	t.Run("candidate release with the same empty validation set still promotes", func(t *testing.T) {
 		deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
-		store.SeedCurrentProd(release.RehydrateCurrentProd("prev", unchangedTopo(), time.Unix(50, 0).UTC()))
+		seedProd(t, deps, store, "prev", unchangedTopo(), time.Unix(50, 0).UTC())
 
 		require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 			ReleaseID:   "rA",
@@ -723,7 +723,7 @@ func TestHandleParsedManifest_OK_NothingToValidate_Verification(t *testing.T) {
 		assert.Equal(t, pipeline.StatusPromoted, r.Status(),
 			"the empty-set trivial pass must be unchanged for a normal release")
 
-		assert.NotNil(t, findEntry(t, store, streams.ReleasePromotedV1), "promotes directly")
+		assert.NotNil(t, findEntry(t, store, streams.ReleasePromotedV2), "promotes directly")
 		assert.Equal(t, "rA", store.GetCurrentProd().ReleaseID(), "current prod advanced to this release")
 	})
 }
@@ -789,9 +789,9 @@ func TestHandleParseOK_RejectsUnbuildableUpstreamOnDownstreamNode(t *testing.T) 
 	// Seed prod with c2 (unchanged hash) so only c1 is in the changed set. c2 is a
 	// downstream of c1 (so it is pulled into the validation closure), and c2
 	// references "ghost_upstream", which is absent from the candidate topology.
-	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", release.Topology{
+	seedProd(t, deps, store, "prev", release.Topology{
 		{UniqueID: "c2", ServiceName: "svc-a", ContentHash: "h_c2"},
-	}, time.Unix(50, 0).UTC()))
+	}, time.Unix(50, 0).UTC())
 
 	topo := release.Topology{
 		{UniqueID: "c1", ServiceName: "svc-a", ContentHash: "h_c1_new"},
@@ -1008,9 +1008,9 @@ func TestHandleParsedManifest_ImageTagsComeFromTheArtifact(t *testing.T) {
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	require.NoError(t, handlers.HandleCompileResult(context.Background(), deps, handlers.HandleCompileResultInput{ReleaseID: "rA", Status: "ok"}))
-	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", release.Topology{
+	seedProd(t, deps, store, "prev", release.Topology{
 		{UniqueID: "a", ServiceName: "svc-a", ContentHash: "h_a"},
-	}, time.Unix(50, 0).UTC()))
+	}, time.Unix(50, 0).UTC())
 
 	topo := release.Topology{
 		{UniqueID: "a", ServiceName: "svc-a", NodeType: "dbt-model", UpstreamUniqueIDs: []string{}, ContentHash: "h_a", ImageTag: "tag-alpha"},
@@ -1044,7 +1044,7 @@ func TestHandleParsedManifest_Bootstrap_PromotesWithoutValidation(t *testing.T) 
 	require.NoError(t, err)
 	assert.Equal(t, pipeline.StatusPromoted, r.Status())
 	// The candidate topology is recorded — promoteToProduction reads it to seed
-	// current_prod and the release.promoted:v1 payload; an empty one would
+	// current_prod and the release.promoted:v2 payload; an empty one would
 	// silently produce an empty prod snapshot.
 	assert.Equal(t, 2, r.CandidateTopologyRef().NodeCount)
 
@@ -1055,7 +1055,7 @@ func TestHandleParsedManifest_Bootstrap_PromotesWithoutValidation(t *testing.T) 
 	// NO validation_requested, NO rejection.
 	entries := outboxEntries(store)
 	require.Len(t, entries, 4)
-	assert.Equal(t, streams.ReleasePromotedV1, entries[2].StreamName)
+	assert.Equal(t, streams.ReleasePromotedV2, entries[2].StreamName)
 	assert.Equal(t, "promoted", outcomeOf(t, entries[3]))
 
 	var payload map[string]any
@@ -1092,11 +1092,11 @@ func TestHandleParsedManifest_AssignsPerNodeValidationOp(t *testing.T) {
 	// "csv.core.rates" (all unchanged); candidate adds changed
 	// "model.shop.orders", "python.shop.enrich", and "csv.shop.fx", each
 	// depending on its respective upstream.
-	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", release.Topology{
+	seedProd(t, deps, store, "prev", release.Topology{
 		{UniqueID: "model.core.dim", ServiceName: "shop", NodeType: "dbt-model", SchemaName: "analytics", TableName: "dim", ContentHash: "hash-dim-OLD"},
 		{UniqueID: "python.core.stats", ServiceName: "shop", NodeType: "python-node", SchemaName: "analytics", TableName: "stats", ContentHash: "hash-stats-OLD"},
 		{UniqueID: "csv.core.rates", ServiceName: "shop", NodeType: "python-csv", SchemaName: "analytics", TableName: "rates", ContentHash: "hash-rates-OLD"},
-	}, time.Unix(50, 0).UTC()))
+	}, time.Unix(50, 0).UTC())
 
 	topo := release.Topology{
 		{UniqueID: "model.core.dim", ServiceName: "shop", NodeType: "dbt-model", SchemaName: "analytics", TableName: "dim", ContentHash: "hash-dim-OLD"},
@@ -1183,9 +1183,9 @@ func indexNodesByUniqueID(t *testing.T, nodes []map[string]any) map[string]map[s
 func TestHandleParsedManifest_DbtTestGetsCheckBinds(t *testing.T) {
 	deps, store := seedToParsing(t, "rel-test-op-1", map[string]string{"svc": "sha-svc"})
 
-	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", release.Topology{
+	seedProd(t, deps, store, "prev", release.Topology{
 		{UniqueID: "svc.u", ServiceName: "svc", NodeType: "dbt-model", SchemaName: "analytics", TableName: "u", ContentHash: "hash-u"},
-	}, time.Unix(50, 0).UTC()))
+	}, time.Unix(50, 0).UTC())
 
 	topo := release.Topology{
 		{UniqueID: "svc.m", ServiceName: "svc", NodeType: "dbt-model", SchemaName: "analytics", TableName: "m", ContentHash: "hash-m-NEW"},
@@ -1499,9 +1499,9 @@ func TestHandleParsedManifest_DuplicateTableRejectsBootstrap(t *testing.T) {
 // NOT a bootstrap, so it only reaches this route, never the bootstrap one.
 func TestHandleParsedManifest_DuplicateTablePinsNothingToValidateShortCircuit(t *testing.T) {
 	deps, store := seedToParsing(t, "rA", map[string]string{"marketing": "sha-m"})
-	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", release.Topology{
+	seedProd(t, deps, store, "prev", release.Topology{
 		{UniqueID: "analytics.orders", ServiceName: "finance", OriginalFilePath: "models/orders.sql", ContentHash: "h1"},
-	}, time.Unix(50, 0).UTC()))
+	}, time.Unix(50, 0).UTC())
 
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID: "rA",
@@ -1828,7 +1828,7 @@ func TestHandleParsedManifest_OK_VerificationBaselinesOnVerifiedCandidate(t *tes
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
 
-	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", verifyProdTopo(), time.Unix(50, 0).UTC()))
+	seedProd(t, deps, store, "prev", verifyProdTopo(), time.Unix(50, 0).UTC())
 	seedRejectedOriginal(store, "orig", "service-2", verifyRejectedCandidate(), []string{verifyEID, verifyGID})
 	seedReleaseInParsing(store, "verify2", "service-2", true, "orig")
 
@@ -1857,7 +1857,7 @@ func TestHandleParsedManifest_OK_CandidateDiffsAgainstProdOnly(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
 
-	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", verifyProdTopo(), time.Unix(50, 0).UTC()))
+	seedProd(t, deps, store, "prev", verifyProdTopo(), time.Unix(50, 0).UTC())
 	seedReleaseInParsing(store, "prodrel", "service-2", false, "")
 
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
@@ -1882,7 +1882,7 @@ func TestHandleParsedManifest_OK_VerificationWithoutVerifiesDiffsAgainstProdOnly
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
 
-	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", verifyProdTopo(), time.Unix(50, 0).UTC()))
+	seedProd(t, deps, store, "prev", verifyProdTopo(), time.Unix(50, 0).UTC())
 	seedReleaseInParsing(store, "verifynv", "service-2", true, "")
 
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
@@ -1908,7 +1908,7 @@ func TestHandleParsedManifest_OK_VerificationFallsBackWhenVerifiedReleaseUnreada
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
 
-	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", verifyProdTopo(), time.Unix(50, 0).UTC()))
+	seedProd(t, deps, store, "prev", verifyProdTopo(), time.Unix(50, 0).UTC())
 	// "missing" is never seeded, so RunRepo().Get returns (nil, nil).
 	seedReleaseInParsing(store, "verifymiss", "service-2", true, "missing")
 
@@ -1934,7 +1934,7 @@ func TestHandleParsedManifest_OK_VerificationFallsBackWhenVerifiedCandidateEmpty
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
 
-	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", verifyProdTopo(), time.Unix(50, 0).UTC()))
+	seedProd(t, deps, store, "prev", verifyProdTopo(), time.Unix(50, 0).UTC())
 	seedRejectedOriginal(store, "origempty", "service-2", nil, nil) // no candidate topology
 	seedReleaseInParsing(store, "verifyempty", "service-2", true, "origempty")
 
@@ -1967,7 +1967,7 @@ func TestHandleParsedManifest_OK_VerificationRestoringProductionAfterCompileReje
 	prod := release.Topology{
 		{UniqueID: "core.read_order", ServiceName: "core", NodeType: "dbt-model", ContentHash: "h_read_order"},
 	}
-	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", prod, time.Unix(50, 0).UTC()))
+	seedProd(t, deps, store, "prev", prod, time.Unix(50, 0).UTC())
 	seedRejectedOriginal(store, "origcompile", "core", nil, nil) // rejected at compile: no candidate topology
 	seedReleaseInParsing(store, "verifyfix", "core", true, "origcompile")
 
@@ -1985,7 +1985,7 @@ func TestHandleParsedManifest_OK_VerificationRestoringProductionAfterCompileReje
 	assert.Equal(t, 1, r.CandidateTopologyRef().NodeCount, "the parsed topology is persisted on the passed verification run")
 	for _, e := range outboxEntries(store) {
 		assert.NotEqual(t, streams.ReleaseRejectedV1, e.StreamName, "a proven fix must not be reported as a failed attempt")
-		assert.NotEqual(t, streams.ReleasePromotedV1, e.StreamName, "a verification run never promotes")
+		assert.NotEqual(t, streams.ReleasePromotedV2, e.StreamName, "a verification run never promotes")
 	}
 	assert.Equal(t, "prev", store.GetCurrentProd().ReleaseID(),
 		"a passed verification run must not advance current prod")
@@ -2032,7 +2032,7 @@ func TestHandleParsedManifest_OK_VerificationBaselinePrefersNewerProdOverRejecte
 		{UniqueID: verifyHID, ServiceName: "service-4", NodeType: "dbt-model", ContentHash: "h_new"},
 	}
 
-	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", prod, time.Unix(50, 0).UTC()))
+	seedProd(t, deps, store, "prev", prod, time.Unix(50, 0).UTC())
 	seedRejectedOriginal(store, "origpromoted", "service-2", rejectedCandidate, []string{verifyEID, verifyGID})
 	seedReleaseInParsing(store, "verifypromoted", "service-2", true, "origpromoted")
 
@@ -2099,7 +2099,7 @@ func TestHandleParsedManifest_OK_VerificationExcludesEstablishedSiblingModificat
 		{UniqueID: verifySID, ServiceName: "service-3", NodeType: "dbt-model", ContentHash: "s_broken"},
 	}
 
-	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", prod, time.Unix(50, 0).UTC()))
+	seedProd(t, deps, store, "prev", prod, time.Unix(50, 0).UTC())
 	seedRejectedOriginal(store, "origestab", "service-2", rejectedCandidate, []string{verifyEID, verifySID})
 	seedReleaseInParsing(store, "verifyestab", "service-2", true, "origestab")
 
@@ -2149,7 +2149,7 @@ func TestHandleParsedManifest_OK_VerificationRebuildsTheRejectedReleasesValidate
 		{UniqueID: verifyDID, ServiceName: "service-3", NodeType: "dbt-model", ContentHash: "d_fixed", UpstreamUniqueIDs: []string{verifyMID}},
 	}
 
-	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", prod, time.Unix(50, 0).UTC()))
+	seedProd(t, deps, store, "prev", prod, time.Unix(50, 0).UTC())
 	seedRejectedOriginal(store, "origok", "service-2", rejected, []string{verifyDID})
 	seedReleaseInParsing(store, "verifyok", "service-3", true, "origok")
 
@@ -2212,7 +2212,7 @@ func TestHandleParsedManifest_OK_VerificationLeavesTheRejectedReleasesSkippedNod
 		{UniqueID: verifyKID, ServiceName: "service-3", NodeType: "dbt-model", ContentHash: "k_new", UpstreamUniqueIDs: []string{verifyXID}},
 	}
 
-	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", prod, time.Unix(50, 0).UTC()))
+	seedProd(t, deps, store, "prev", prod, time.Unix(50, 0).UTC())
 	seedRejectedOriginal(store, "origskip", "service-2", rejected, []string{verifyEID, verifyXID, verifyKID})
 	seedReleaseInParsing(store, "verifyskip", "service-2", true, "origskip")
 
@@ -2270,7 +2270,7 @@ func TestHandleParsedManifest_OK_VerificationDoesNotDragASiblingInThroughAContex
 		{UniqueID: verifySibID, ServiceName: "service-4", NodeType: "dbt-model", ContentHash: "c_broken", UpstreamUniqueIDs: []string{verifyAncID}},
 	}
 
-	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", prod, time.Unix(50, 0).UTC()))
+	seedProd(t, deps, store, "prev", prod, time.Unix(50, 0).UTC())
 	seedRejectedOriginal(store, "origconn", "service-2", rejected, []string{verifyFixID, verifySibID})
 	seedReleaseInParsing(store, "verifyconn", "service-3", true, "origconn")
 
@@ -2413,7 +2413,7 @@ func TestHandleParsedManifest_OK_RecordsTheTopologyRef(t *testing.T) {
 func TestHandleParsedManifest_OK_VerificationFallsBackWhenTheVerifiedArtifactIsUnreadable(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
-	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", verifyProdTopo(), time.Unix(50, 0).UTC()))
+	seedProd(t, deps, store, "prev", verifyProdTopo(), time.Unix(50, 0).UTC())
 	seedRejectedOriginal(store, "origcorrupt", "service-2", verifyRejectedCandidate(), []string{verifyEID})
 	orig, err := store.GetRelease("origcorrupt")
 	require.NoError(t, err)
@@ -2436,7 +2436,7 @@ func TestHandleParsedManifest_OK_VerificationFallsBackWhenTheVerifiedArtifactIsU
 func TestHandleParsedManifest_OK_VerificationWaitsForAnUnreachableArtifactStore(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
-	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", verifyProdTopo(), time.Unix(50, 0).UTC()))
+	seedProd(t, deps, store, "prev", verifyProdTopo(), time.Unix(50, 0).UTC())
 	seedRejectedOriginal(store, "origdown", "service-2", verifyRejectedCandidate(), []string{verifyEID})
 	orig, err := store.GetRelease("origdown")
 	require.NoError(t, err)
@@ -2450,4 +2450,42 @@ func TestHandleParsedManifest_OK_VerificationWaitsForAnUnreachableArtifactStore(
 	r, getErr := store.GetRelease("verifydown")
 	require.NoError(t, getErr)
 	assert.Equal(t, pipeline.StatusParsing, r.Status())
+}
+
+// The diff against production reads the artifact current_prod points at: a
+// node whose hash matches the production artifact is not changed, so only the
+// new node is in scope and its unchanged upstream is built as its ancestor.
+func TestHandleParsedManifest_DiffReadsTheProductionArtifact(t *testing.T) {
+	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
+	seedProd(t, deps, store, "prev", release.Topology{
+		{UniqueID: "a", ServiceName: "svc-a", ContentHash: "h", UpstreamUniqueIDs: []string{}},
+	}, time.Unix(50, 0).UTC())
+
+	topo := release.Topology{
+		{UniqueID: "a", ServiceName: "svc-a", ContentHash: "h", UpstreamUniqueIDs: []string{}},
+		{UniqueID: "b", ServiceName: "svc-a", ContentHash: "new", UpstreamUniqueIDs: []string{"a"}},
+	}
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rA", Status: "ok", TopologyRef: putTopology(t, deps, "rA", topo),
+	}))
+
+	r, err := store.GetRelease("rA")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"a", "b"}, r.ValidationNodeIDs(), "b is new; a is validated only as b's upstream")
+}
+
+// A current_prod that names a release but references no artifact was written
+// before topology artifacts existed and missed the startup step: the parse
+// fails loudly instead of treating production as empty and validating
+// everything.
+func TestHandleParsedManifest_ProdWithoutArtifactIsAnError(t *testing.T) {
+	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
+	store.SeedCurrentProd(release.RehydrateCurrentProd("rLegacy", release.TopologyRef{}, 0, time.Unix(50, 0).UTC()))
+
+	topo := release.Topology{{UniqueID: "a", ServiceName: "svc-a", UpstreamUniqueIDs: []string{}}}
+	err := handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rA", Status: "ok", TopologyRef: putTopology(t, deps, "rA", topo),
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "current_prod rLegacy references no topology artifact")
 }

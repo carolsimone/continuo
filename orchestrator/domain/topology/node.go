@@ -1,15 +1,11 @@
 package topology
 
-// ReleasePromotedTopologyNode is the domain representation of a node in a
-// release.promoted:v1 payload. Used by ReleasePromotionRepository.
-// Nodes are keyed by unique_id; upstream relationships are expressed as a
-// list of unique_id strings rather than (schema_name, table_name) tuples.
-//
-// The wire event's changed flag is not carried here: ReleasePromotionRepository
-// (the only consumer of this type) refreshes every node's properties on every
-// promotion regardless of whether it changed. Callers that do need the flag
-// (writeSeedsPending, planVersionWrite) read it directly off the wire
-// []domainEvent.ReleasePromotedNode instead.
+// ReleasePromotedTopologyNode is one node of a promoted release's topology, as
+// ReleasePromotionRepository writes it into the live graph. Nodes are keyed by
+// unique_id; upstream relationships are a list of unique_id strings rather
+// than (schema_name, table_name) tuples. Whether a node changed is not carried
+// here: the swap refreshes every node's properties on every promotion, and the
+// callers that need it read the promotion's changed_node_ids.
 type ReleasePromotedTopologyNode struct {
 	UniqueID    string
 	SchemaName  string

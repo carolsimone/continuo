@@ -170,9 +170,12 @@ func TestE2E_ReleaseValidation_TestsBindAndArePromotedInvisibly(t *testing.T) {
 	require.EqualValues(t, 1, neo4jScalarInt(ctx, clients, `MATCH (t:Table {unique_id: $uid}) RETURN t.test_count AS v`, map[string]any{"uid": tbindOkUniqueID}),
 		"test_count on the tested model is unchanged by tests being nodes")
 
-	var prodHasTest int
-	require.NoError(t, clients.releaseDB.QueryRowContext(ctx,
-		`SELECT count(*) FROM current_prod, jsonb_array_elements(topology_snapshot) n WHERE n->>'unique_id' = $1`, tbindOkNotNullTestID).Scan(&prodHasTest))
-	require.Equal(t, 1, prodHasTest, "current_prod keeps the test so it is not re-checked next release")
+	prodHasTest := 0
+	for _, n := range currentProdTopology(t, ctx, clients).Nodes {
+		if n.UniqueID == tbindOkNotNullTestID {
+			prodHasTest++
+		}
+	}
+	require.Equal(t, 1, prodHasTest, "current_prod's artifact keeps the test so it is not re-checked next release")
 	t.Logf("✅ release %s promoted invisibly: tbind_ok's test binds but never reaches Neo4j", releaseID)
 }

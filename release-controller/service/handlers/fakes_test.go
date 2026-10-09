@@ -12,8 +12,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/events"
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/release-controller/adapters/serialization"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
@@ -67,6 +69,8 @@ type fakeStore struct {
 	order         []string // insertion order, oldest first; drives NextQueued FIFO
 	cp            *release.CurrentProd
 	cpUpsertCalls int
+	lastSeq       int64
+	legacyCP      *repository.LegacyCurrentProd
 	serviceProd   map[string]*release.ServiceProd
 	entries       []*pkgoutbox.Entry
 	// racing holds runs another submission commits between a transaction's
@@ -124,6 +128,16 @@ func (s *fakeStore) SeedCurrentProd(cp *release.CurrentProd) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.cp = cp
+}
+
+// SeedLegacyCurrentProd installs a current_prod written before topology
+// artifacts existed: it names releaseID, references no artifact, and holds
+// topo as its legacy snapshot.
+func (s *fakeStore) SeedLegacyCurrentProd(releaseID string, topo release.Topology) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cp = release.RehydrateCurrentProd(releaseID, release.TopologyRef{}, 0, time.Unix(1, 0).UTC())
+	s.legacyCP = &repository.LegacyCurrentProd{ReleaseID: releaseID, Topology: topo}
 }
 
 // GetCurrentProd returns the stored current-prod record, or a fresh one if
@@ -352,6 +366,28 @@ func (f *fakeCurrentProdRepo) Upsert(_ context.Context, cp *release.CurrentProd)
 }
 
 var _ repository.CurrentProdRepository = (*fakeCurrentProdRepo)(nil)
+
+// LastPromotionSeq returns the last seq the fake sequence handed out.
+func (s *fakeStore) LastPromotionSeq() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastSeq
+}
+
+// --- fakePromotionSequenceRepo ---
+
+// fakePromotionSequenceRepo hands out seqs from the shared store, one higher
+// than the last, as the Postgres row does.
+type fakePromotionSequenceRepo struct{ store *fakeStore }
+
+func (f *fakePromotionSequenceRepo) Next(_ context.Context) (int64, error) {
+	f.store.mu.Lock()
+	defer f.store.mu.Unlock()
+	f.store.lastSeq++
+	return f.store.lastSeq, nil
+}
+
+var _ repository.PromotionSequenceRepository = (*fakePromotionSequenceRepo)(nil)
 
 // --- fakeServiceProdRepo ---
 
@@ -607,6 +643,17 @@ func (f *fakeLegacyTopologyRepo) ListParsingAtUpgrade(_ context.Context) ([]stri
 	return out, nil
 }
 
+// GetLegacyCurrentProd mirrors the Postgres query: the legacy snapshot is
+// returned only while current_prod names a release and references no artifact.
+func (f *fakeLegacyTopologyRepo) GetLegacyCurrentProd(_ context.Context) (*repository.LegacyCurrentProd, error) {
+	f.store.mu.Lock()
+	defer f.store.mu.Unlock()
+	if f.store.legacyCP == nil || f.store.cp == nil || f.store.cp.ReleaseID() == "" || !f.store.cp.Topology().IsZero() {
+		return nil, nil
+	}
+	return f.store.legacyCP, nil
+}
+
 func (f *fakeLegacyTopologyRepo) ClearParsingAtUpgrade(_ context.Context, runID string) error {
 	f.store.mu.Lock()
 	defer f.store.mu.Unlock()
@@ -615,6 +662,16 @@ func (f *fakeLegacyTopologyRepo) ClearParsingAtUpgrade(_ context.Context, runID 
 }
 
 var _ repository.LegacyTopologyRepository = (*fakeLegacyTopologyRepo)(nil)
+
+// seedProd writes topo as release releaseID's topology artifact through the
+// Deps' artifact store and points current_prod at it, simulating a prior
+// promotion. Handler tests use it to exercise the diff against production.
+func seedProd(t *testing.T, deps *handlers.Deps, store *fakeStore, releaseID string, topo release.Topology, at time.Time) {
+	t.Helper()
+	ref, err := deps.Topologies.Write(context.Background(), releaseID, topo)
+	require.NoError(t, err)
+	store.SeedCurrentProd(release.RehydrateCurrentProd(releaseID, ref, 0, at))
+}
 
 // --- fakeUoW ---
 
@@ -627,6 +684,7 @@ type fakeUoW struct {
 	releases *fakeRunRepo
 	cp       *fakeCurrentProdRepo
 	sp       *fakeServiceProdRepo
+	seq      *fakePromotionSequenceRepo
 	outbox   *fakeOutbox
 	msgProc  fakeMessageProcessing
 	legacy   *fakeLegacyTopologyRepo
@@ -637,14 +695,18 @@ func newFakeUoW(store *fakeStore) *fakeUoW {
 		releases: &fakeRunRepo{store: store},
 		cp:       &fakeCurrentProdRepo{store: store},
 		sp:       &fakeServiceProdRepo{store: store},
+		seq:      &fakePromotionSequenceRepo{store: store},
 		outbox:   &fakeOutbox{store: store},
 		legacy:   &fakeLegacyTopologyRepo{store: store},
 	}
 }
 
-func (f *fakeUoW) RunRepo() repository.RunRepository                       { return f.releases }
-func (f *fakeUoW) CurrentProdRepo() repository.CurrentProdRepository       { return f.cp }
-func (f *fakeUoW) ServiceProdRepo() repository.ServiceProdRepository       { return f.sp }
+func (f *fakeUoW) RunRepo() repository.RunRepository                 { return f.releases }
+func (f *fakeUoW) CurrentProdRepo() repository.CurrentProdRepository { return f.cp }
+func (f *fakeUoW) ServiceProdRepo() repository.ServiceProdRepository { return f.sp }
+func (f *fakeUoW) PromotionSequenceRepo() repository.PromotionSequenceRepository {
+	return f.seq
+}
 func (f *fakeUoW) LegacyTopologyRepo() repository.LegacyTopologyRepository { return f.legacy }
 func (f *fakeUoW) OutboxRepo() pkgoutbox.Repository                        { return f.outbox }
 func (f *fakeUoW) MessageProcessingRepo() messageprocessing.Repository     { return f.msgProc }
@@ -709,4 +771,15 @@ func outcomeOf(t *testing.T, e *pkgoutbox.Entry) string {
 	}
 	require.NoError(t, json.Unmarshal(e.Payload, &p))
 	return p.Outcome
+}
+
+// promotedEvent decodes the payload of a release.promoted:v2 outbox row.
+func promotedEvent(t *testing.T, e *pkgoutbox.Entry) events.ReleasePromoted {
+	t.Helper()
+	require.NotNil(t, e, "expected a release.promoted:v2 outbox entry")
+	require.Equal(t, streams.ReleasePromotedV2, e.StreamName)
+	require.Equal(t, ports.ReleasePromotedV2EventType, e.EventType)
+	var p events.ReleasePromoted
+	require.NoError(t, json.Unmarshal(e.Payload, &p))
+	return p
 }

@@ -43,8 +43,8 @@ func TestE2E_HappyPath_FullDAGExecution(t *testing.T) {
 	// the tap recorded rather than the stream's history.
 	queryModelTap := startStreamTap(t, ctx, clients.redisClient, streams.QueryModelV1)
 
-	// Seed the full e2e topology via a release.promoted:v1 event.
-	t.Log("Seeding topology via release.promoted:v1...")
+	// Seed the full e2e topology by announcing it through announce-topology.
+	t.Log("Seeding topology via announce-topology...")
 	seedTopology(t, ctx, clients)
 
 	// Create and activate scheduler

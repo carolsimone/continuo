@@ -1,4 +1,4 @@
-"""Generate a synthetic layered DAG as a release-promotion payload for the benchmark.
+"""Generate a synthetic layered DAG as a topology payload for the benchmark.
 
 Level k holds about nodes/levels dbt-model nodes named nKK_IIII; each node
 depends on `fan_in` nodes of level k-1. With --fail-root, level 0 is a single
@@ -62,6 +62,7 @@ def build_topology(*, nodes: int, levels: int, fan_in: int, schedule: str, servi
                 "unique_id": f"{schema}.{table}",
                 "schema_name": schema,
                 "table_name": table,
+                "resolved_relation_id": f"{schema}.{table}",
                 "service_name": service,
                 "node_type": "dbt-model",
                 "content_hash": "",
@@ -70,7 +71,6 @@ def build_topology(*, nodes: int, levels: int, fan_in: int, schedule: str, servi
                 "original_file_path": "",
                 "upstream_unique_ids": upstream,
                 "test_count": 1,
-                "changed": False,
             })
     return topology
 
@@ -92,8 +92,9 @@ def validate(topology: list, schedule: str) -> None:
         seen.add(prefix)
 
 
-def build_payload(topology: list, release_id: str, service: str, image_tag: str) -> dict:
-    return {"release_id": release_id, "topology": topology, "image_tags": {service: image_tag}}
+def build_payload(topology: list, release_id: str) -> dict:
+    """The payload inject.sh announces: the release id and its artifact nodes."""
+    return {"release_id": release_id, "topology": topology}
 
 
 def main(argv: list) -> int:
@@ -118,7 +119,7 @@ def main(argv: list) -> int:
         log.error("%s", err)
         return 2
     release_id = args.release_id or f"bench-{args.schedule}-{int(time.time())}"
-    json.dump(build_payload(topology, release_id, args.service, args.image_tag), sys.stdout)
+    json.dump(build_payload(topology, release_id), sys.stdout)
     sys.stdout.write("\n")
     log.info("generated %d nodes in %d levels for schedule %s", len(topology), args.levels, args.schedule)
     return 0

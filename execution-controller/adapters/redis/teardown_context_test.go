@@ -20,25 +20,24 @@ import (
 // otherwise be acknowledged unfinished instead of retried after the restart.
 func TestTeardownBindings_ReturnCleanerErrorOnlyWhenContextIsDone(t *testing.T) {
 	bindings := []struct {
-		name    string
-		build   func(ports.CandidateSchemaCleaner, *slog.Logger) pkgredis.MessageHandler
-		payload string
+		name   string
+		build  func(ports.CandidateSchemaCleaner, *slog.Logger) pkgredis.MessageHandler
+		values map[string]any
 	}{
 		{"validation.result", redis.NewValidationResultTeardownBinding,
-			`{"kind":"complete","release_id":"rel","candidate_schema":"_candidate_rel"}`},
+			map[string]any{"payload": `{"kind":"complete","release_id":"rel","candidate_schema":"_candidate_rel"}`}},
 		{"pipeline.run.finished", redis.NewPipelineRunFinishedTeardownBinding,
-			`{"run_id":"rel","run_kind":"candidate","outcome":"rejected","candidate_schema":"_candidate_rel"}`},
+			map[string]any{"payload": `{"run_id":"rel","run_kind":"candidate","outcome":"rejected","candidate_schema":"_candidate_rel"}`}},
 		{"release.rejected", redis.NewReleaseRejectedTeardownBinding,
-			`{"release_id":"rel","candidate_schema":"_candidate_rel"}`},
-		{"release.promoted", redis.NewReleasePromotedTeardownBinding,
-			`{"release_id":"rel","candidate_schema":"_candidate_rel"}`},
+			map[string]any{"payload": `{"release_id":"rel","candidate_schema":"_candidate_rel"}`}},
+		{"release.promoted", redis.NewReleasePromotedTeardownBinding, releasePromotedFields(t, "_candidate_rel")},
 	}
 	for _, b := range bindings {
 		t.Run(b.name, func(t *testing.T) {
 			dropErr := errors.New("drop failed")
 			cleaner := cleanerFunc(func(context.Context, string) error { return dropErr })
 			h := b.build(cleaner, slog.Default())
-			msg := goredis.XMessage{ID: "1-0", Values: map[string]any{"payload": b.payload}}
+			msg := goredis.XMessage{ID: "1-0", Values: b.values}
 
 			t.Run("live context stays best-effort", func(t *testing.T) {
 				require.NoError(t, h(context.Background(), msg))

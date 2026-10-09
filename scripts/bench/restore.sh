@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Re-announces the exported production topology under its original release id,
-# then checks the install is back: the schedule list equals the one recorded
-# before the benchmark and the live graphs match the export again. When a
-# release was promoted during the benchmark, it re-exports and re-announces
-# that release instead and checks the graphs only.
+# Re-announces release-controller's current_prod topology under a fresh
+# promotion seq (announce-topology --reannounce-current), then checks the
+# install is back: the schedule list equals the one recorded before the
+# benchmark and the live graphs match the export again. When a release was
+# promoted during the benchmark, it re-exports that release for the comparison
+# and checks the graphs only.
 #   restore.sh OUT_DIR
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -23,7 +24,7 @@ bench_check_release "${out}" || release_state=$?
 case "${release_state}" in
   0) ;;
   1)
-    echo "restore.sh: re-exporting the release promoted during the benchmark" >&2
+    echo "restore.sh: re-exporting the release promoted during the benchmark for the comparison" >&2
     "${here}/export_topology.sh" "${out}"
     moved=1
     ;;
@@ -32,7 +33,19 @@ case "${release_state}" in
     exit 1
     ;;
 esac
-"${here}/inject.sh" "${out}/restore.json" < /dev/null
+rc=0
+announced="$(bench_announce --reannounce-current < /dev/null)" || rc=$?
+case "${rc}" in
+  0) echo "restore.sh: re-announced ${announced}" >&2 ;;
+  3)
+    echo "restore.sh: release-controller has no current_prod to re-announce; nothing to restore" >&2
+    exit 0
+    ;;
+  *)
+    echo "restore.sh: announce-topology --reannounce-current failed (exit ${rc}); nothing was published" >&2
+    exit 1
+    ;;
+esac
 deadline=$(( $(date +%s) + 300 ))
 if [ "${moved}" = "0" ]; then
   until bench_cli_run schedule list 2>/dev/null \

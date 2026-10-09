@@ -77,12 +77,13 @@ func TestDeadLetter_RedriveReachesOnlyItsGroup(t *testing.T) {
 	clients := setupClients(t, ctx)
 	t.Cleanup(func() { clients.close(ctx) })
 
-	// release.promoted:v1 has three consumer groups. Both orchestrator groups
-	// reject an entry with no payload as a permanent failure (their bindings
-	// return events.ErrPermanent from ParseReleasePromoted), so each dead-letters
-	// the original. group is the one the redrive addresses; the others must
-	// acknowledge the redriven entry without a handler.
-	const stream = streams.ReleasePromotedV1
+	// release.promoted:v2 has three consumer groups. Both orchestrator groups
+	// reject an entry without an envelope as a permanent failure (their
+	// bindings wrap events.DecodeReleasePromoted's error in events.ErrPermanent),
+	// so each dead-letters the original; execution-controller's teardown is
+	// best-effort and acknowledges it. group is the one the redrive addresses;
+	// the others must acknowledge the redriven entry without a handler.
+	const stream = streams.ReleasePromotedV2
 	const group = streams.OrchestratorReleasePromoted
 	otherGroups := []string{streams.OrchestratorReleasePromotedVersions, streams.ExecutorReleasePromoted}
 
@@ -174,7 +175,7 @@ func TestDeadLetter_CLIListsAndRedrives(t *testing.T) {
 	clients := setupClients(t, ctx)
 	t.Cleanup(func() { clients.close(ctx) })
 
-	const stream = streams.ReleasePromotedV1
+	const stream = streams.ReleasePromotedV2
 	const group = streams.OrchestratorReleasePromoted
 	bin := buildCLI(t, ctx)
 	env := []string{

@@ -40,6 +40,11 @@ WORKDIR /app/release-controller
 # build omits the siblings.
 RUN go build -o /app/release-controller/bin/release-controller .
 
+# announce-topology, the operator command that announces a topology under the
+# next promotion seq. The e2e suite and the local benchmark run it in this
+# container with `docker exec`, so they need neither S3 nor database access.
+RUN go build -o /app/release-controller/bin/announce-topology ./cmd/announce-topology
+
 EXPOSE 8088
 
 CMD ["tail", "-f", "/dev/null"]

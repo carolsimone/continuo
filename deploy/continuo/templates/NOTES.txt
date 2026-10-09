@@ -30,6 +30,9 @@ UPGRADE NOTES
   With an external bucket (s3.*), grant topology-controller write access and
   release-controller read/write/delete access to tenants/, and keep any
   lifecycle expiry rule off that prefix.
+  orchestrator also reads tenants/ (read access with an external bucket).
+  After the upgrade, release-controller re-announces the current prod release
+  once; promotions are then numbered, and an older one never replaces a newer.
 {{- if .Values.validation.imageTag }}
 
   BREAKING — validation.imageTag is set on this release, and the validation

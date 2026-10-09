@@ -10,8 +10,8 @@ import (
 )
 
 // scheduleGraphCacheSize bounds the number of distinct
-// (schedule_name, topology_generation) entries kept in memory. The shape of a
-// schedule's topology is small (nodes + edges), so a handful of generations per
+// (schedule_name, the live promotion seq) entries kept in memory. The shape of a
+// schedule's topology is small (nodes + edges), so a handful of seqs per
 // schedule fits comfortably; the LRU evicts the least-recently-used entry past
 // this bound.
 const scheduleGraphCacheSize = 32
@@ -29,17 +29,17 @@ type ScheduleGraphProvider interface {
 	GetNodeLocation(ctx context.Context, uniqueID string) (*domain.NodeLocation, error)
 }
 
-// GenerationProvider returns the orchestrator's current topology_generation.
+// GenerationProvider returns the live topology's promotion seq.
 // The cache uses it to form the immutable cache key: a topology shape never
-// changes for a fixed generation, and a generation bump (a new manifest load)
+// changes for a fixed seq, and a seq bump (a newer promotion)
 // produces a new key, naturally invalidating stale shapes without explicit
-// eviction. Satisfied by adapters/postgres topologyStateRepository.GetGeneration.
+// eviction. Satisfied by OrchestratorQueryRepository.GetGeneration.
 type GenerationProvider interface {
 	GetGeneration(ctx context.Context) (int64, error)
 }
 
 // CachingScheduleGraphReader decorates a ScheduleGraphProvider with a bounded
-// LRU cache keyed by (schedule_name, topology_generation).
+// LRU cache keyed by (schedule_name, the live promotion seq).
 //
 // CACHE BOUNDARY: only the IMMUTABLE topology SHAPE is cached. GetScheduleGraph
 // returns nodes/edges that depend solely on the manifest topology at a given
@@ -48,10 +48,10 @@ type GenerationProvider interface {
 // routed through this cache and stay uncached so status changes are always
 // fresh.
 //
-// On each call the decorator probes the current generation (a cheap Postgres
-// single-row read) to build the key. A hit returns the cached shape without
-// touching Neo4j; a miss runs the underlying shape query once and stores the
-// result. Because the key embeds the generation, a bumped generation can never
+// On each call the decorator probes the current seq (a single-node Neo4j
+// read) to build the key. A hit returns the cached shape without
+// touching the shape query; a miss runs the underlying shape query once and
+// stores the result. Because the key embeds the seq, a bumped seq can never
 // serve a stale shape.
 type CachingScheduleGraphReader struct {
 	inner      ScheduleGraphProvider
@@ -87,9 +87,9 @@ func NewCachingScheduleGraphReader(inner ScheduleGraphProvider, generation Gener
 }
 
 // GetScheduleGraph returns the schedule's topology shape, served from the cache
-// when the current generation matches a cached entry. If the generation probe
+// when the current seq matches a cached entry. If the seq probe
 // fails, the call falls back to a direct (uncached) read so a transient
-// Postgres error degrades performance, not correctness.
+// read error degrades performance, not correctness.
 func (c *CachingScheduleGraphReader) GetScheduleGraph(ctx context.Context, scheduleName string) (*domain.ScheduleGraph, error) {
 	gen, err := c.generation.GetGeneration(ctx)
 	if err != nil {
