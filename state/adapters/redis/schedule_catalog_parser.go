@@ -14,6 +14,7 @@ type schedulesLoadedPayload struct {
 	EventID         string                       `json:"event_id"`
 	ScheduleNames   []string                     `json:"schedule_names"`
 	ServiceMetadata map[string]map[string]string `json:"service_metadata"`
+	PromotionSeq    int64                        `json:"promotion_seq"`
 }
 
 // ParseScheduleCatalogLoaded translates a schedules.loaded:v1 Redis XMessage
@@ -35,6 +36,9 @@ func ParseScheduleCatalogLoaded(msg goredis.XMessage) (events.ScheduleCatalogLoa
 	if err != nil {
 		return events.ScheduleCatalogLoaded{}, fmt.Errorf("invalid event_id UUID: %w", err)
 	}
+	if p.PromotionSeq < 0 {
+		return events.ScheduleCatalogLoaded{}, fmt.Errorf("promotion_seq %d is negative", p.PromotionSeq)
+	}
 	meta := make(map[string]run.ServiceMetadata, len(p.ServiceMetadata))
 	for svc, m := range p.ServiceMetadata {
 		meta[svc] = run.ServiceMetadata{
@@ -45,5 +49,6 @@ func ParseScheduleCatalogLoaded(msg goredis.XMessage) (events.ScheduleCatalogLoa
 		EventID:         eventID,
 		ScheduleNames:   p.ScheduleNames,
 		ServiceMetadata: meta,
+		PromotionSeq:    p.PromotionSeq,
 	}, nil
 }

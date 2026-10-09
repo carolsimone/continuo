@@ -29,14 +29,19 @@ func NewCatalogRepositoryAdapter(db *sqlx.DB, tx *sqlx.Tx, repo ScheduleCatalogR
 	return &CatalogRepositoryAdapter{db: db, tx: tx, repo: repo, logger: logger}
 }
 
-// GetCatalog loads the full schedule_catalog (active and removed rows) into a
-// ScheduleCatalog aggregate without acquiring any row locks.
+// GetCatalog loads the full schedule_catalog (active and removed rows) and the
+// promotion seq it last applied into a ScheduleCatalog aggregate without
+// acquiring any row locks.
 func (a *CatalogRepositoryAdapter) GetCatalog(ctx context.Context) (*catalog.ScheduleCatalog, error) {
 	rows, err := a.repo.ListAll(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return hydrateCatalog(rows), nil
+	seq, err := catalogPromotionSeq(ctx, a.db, false)
+	if err != nil {
+		return nil, err
+	}
+	return hydrateCatalog(rows, seq), nil
 }
 
 // scheduleCatalogReconcileLockKey is the fixed advisory-lock key that
@@ -67,7 +72,11 @@ func (a *CatalogRepositoryAdapter) LoadCatalogForUpdate(ctx context.Context) (*c
 	if err != nil {
 		return nil, err
 	}
-	return hydrateCatalog(rows), nil
+	seq, err := catalogPromotionSeq(ctx, a.tx, true)
+	if err != nil {
+		return nil, err
+	}
+	return hydrateCatalog(rows, seq), nil
 }
 
 // SaveCatalog persists the full active set of the catalog inside the caller's
@@ -98,6 +107,12 @@ func (a *CatalogRepositoryAdapter) SaveCatalog(ctx context.Context, c *catalog.S
 	if err := a.repo.SoftDeleteAbsentTx(ctx, a.tx, present); err != nil {
 		return err
 	}
+	if _, err := a.tx.ExecContext(ctx,
+		`UPDATE schedule_catalog_state SET promotion_seq = $1, updated_at = NOW() WHERE id = TRUE`,
+		c.PromotionSeq(),
+	); err != nil {
+		return fmt.Errorf("save schedule_catalog_state: %w", err)
+	}
 	return nil
 }
 
@@ -125,9 +140,10 @@ func (a *CatalogRepositoryAdapter) GetServiceMetadata(ctx context.Context, name 
 	return out, nil
 }
 
-// hydrateCatalog constructs a ScheduleCatalog aggregate from persisted rows,
-// translating from the postgres model type to the catalog domain types.
-func hydrateCatalog(rows []ScheduleCatalogRow) *catalog.ScheduleCatalog {
+// hydrateCatalog constructs a ScheduleCatalog aggregate from persisted rows and
+// the promotion seq the catalog last applied, translating from the postgres
+// model type to the catalog domain types.
+func hydrateCatalog(rows []ScheduleCatalogRow, promotionSeq int64) *catalog.ScheduleCatalog {
 	entries := make(map[string]catalog.Entry, len(rows))
 	for _, r := range rows {
 		meta := make(map[string]run.ServiceMetadata, len(r.ServiceMetadata))
@@ -140,7 +156,22 @@ func hydrateCatalog(rows []ScheduleCatalogRow) *catalog.ScheduleCatalog {
 			ServiceMetadata: meta,
 		}
 	}
-	return catalog.Hydrate(entries)
+	return catalog.Hydrate(entries, promotionSeq)
+}
+
+// catalogPromotionSeq reads the promotion seq the schedule catalog last
+// applied. q is the reconcile transaction (forUpdate locks the row inside the
+// advisory-locked cycle) or the pool for a lock-free read.
+func catalogPromotionSeq(ctx context.Context, q sqlx.QueryerContext, forUpdate bool) (int64, error) {
+	query := `SELECT promotion_seq FROM schedule_catalog_state WHERE id = TRUE`
+	if forUpdate {
+		query += ` FOR UPDATE`
+	}
+	var seq int64
+	if err := sqlx.GetContext(ctx, q, &seq, query); err != nil {
+		return 0, fmt.Errorf("read schedule_catalog_state: %w", err)
+	}
+	return seq, nil
 }
 
 var _ repository.ScheduleCatalogRepository = (*CatalogRepositoryAdapter)(nil)

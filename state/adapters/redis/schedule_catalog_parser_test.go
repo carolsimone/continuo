@@ -16,7 +16,8 @@ func TestParseScheduleCatalogLoaded_HappyPath(t *testing.T) {
 		"schedule_names": ["s1", "s2"],
 		"service_metadata": {
 			"svcA": {"image_tag": "v1"}
-		}
+		},
+		"promotion_seq": 7
 	}`
 	msg := goredis.XMessage{
 		ID:     "1-0",
@@ -27,6 +28,22 @@ func TestParseScheduleCatalogLoaded_HappyPath(t *testing.T) {
 	assert.Equal(t, eventID, evt.EventID)
 	assert.Equal(t, []string{"s1", "s2"}, evt.ScheduleNames)
 	assert.Equal(t, "v1", evt.ServiceMetadata["svcA"].ImageTag)
+	assert.Equal(t, int64(7), evt.PromotionSeq)
+}
+
+func TestParseScheduleCatalogLoaded_AbsentPromotionSeqIsZero(t *testing.T) {
+	msg := goredis.XMessage{ID: "1-0", Values: map[string]interface{}{
+		"payload": `{"event_id":"` + uuid.NewString() + `","schedule_names":["s1"]}`}}
+	evt, err := ParseScheduleCatalogLoaded(msg)
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), evt.PromotionSeq)
+}
+
+func TestParseScheduleCatalogLoaded_NegativePromotionSeq(t *testing.T) {
+	msg := goredis.XMessage{ID: "1-0", Values: map[string]interface{}{
+		"payload": `{"event_id":"` + uuid.NewString() + `","schedule_names":["s1"],"promotion_seq":-1}`}}
+	_, err := ParseScheduleCatalogLoaded(msg)
+	require.Error(t, err)
 }
 
 func TestParseScheduleCatalogLoaded_MissingPayload(t *testing.T) {
