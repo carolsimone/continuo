@@ -29,7 +29,7 @@ type RunReader interface {
 }
 
 // TopologyStateReader is the read-side surface RunQueryService needs from
-// the topology-state adapter. Satisfied by adapters/neo4j
+// the live-promotion-seq read. Satisfied by adapters/neo4j
 // OrchestratorQueryRepository.GetGeneration, which returns the live promotion seq.
 type TopologyStateReader interface {
 	GetGeneration(ctx context.Context) (int64, error)

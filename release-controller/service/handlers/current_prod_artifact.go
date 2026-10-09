@@ -10,9 +10,9 @@ import (
 	"github.com/carolsimone/continuo/release-controller/service/uow"
 )
 
-// BackfillCurrentProdArtifact gives a current_prod that names a release but
-// references no topology artifact its artifact: it writes the release's legacy
-// snapshot as the release's topology artifact, points current_prod at it, and
+// BackfillCurrentProdArtifact repairs a current_prod that names a release but
+// references no topology artifact: it writes the release's legacy snapshot as
+// the release's topology artifact, points current_prod at it, and
 // re-announces the release on release.promoted:v2 under the next promotion
 // seq, so every consumer records the seq the live topology carries.
 //

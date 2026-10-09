@@ -267,10 +267,10 @@ func main() {
 		return handlers.BackfillCurrentProdArtifact(ctx, deps)
 	}); err != nil {
 		if errors.Is(err, context.Canceled) {
-			logger.Info("shutdown requested during the startup upgrade step")
+			logger.Info("shutdown requested during the current_prod backfill step")
 			os.Exit(0)
 		}
-		logger.Error("startup upgrade step failed", "error", err)
+		logger.Error("current_prod backfill step failed", "error", err)
 		os.Exit(1)
 	}
 
