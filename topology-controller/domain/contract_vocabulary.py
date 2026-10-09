@@ -34,6 +34,7 @@ class RejectReason(StrEnum):
     NOTHING_TO_VALIDATE = "nothing_to_validate"
     SEED_BUILD_FAILED = "seed_build_failed"
     VALIDATION_FAILED = "validation_failed"
+    UPGRADE_INTERRUPTED = "upgrade_interrupted"
 
 
 REJECT_REASON_HEALABLE = frozenset({RejectReason.COMPILE_FAILED, RejectReason.INVALID_SQL, RejectReason.UNQUALIFIED_REFERENCE, RejectReason.DUPLICATE_TABLE, RejectReason.SEED_BUILD_FAILED, RejectReason.VALIDATION_FAILED})

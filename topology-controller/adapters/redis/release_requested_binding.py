@@ -17,10 +17,13 @@ from streams_contract import RELEASE_REQUESTED_V1
 @dataclass(frozen=True)
 class ReleaseRequested:
     """A well-formed release.requested:v1 message: the release to parse, the
-    artifact to fetch for each service, and the one bucket they all live in."""
+    artifact to fetch for each service, the one bucket they all live in, and
+    the image tag each service's nodes run in. image_tags is None when the
+    message carries none."""
     release_id: str
     requests: list[ManifestRequest]
     bucket: str
+    image_tags: dict[str, str] | None = None
 
 
 def _decode_field(fields: dict, name: str) -> str | None:
@@ -78,6 +81,19 @@ def _manifest_request(entry: object) -> tuple[str, ManifestRequest]:
     )
 
 
+def _image_tags(raw: object) -> dict[str, str]:
+    """Validate image_tags: an object mapping each service name to the image
+    tag its nodes run in, both strings. Any other shape is a permanent
+    malformed-payload error."""
+    if not isinstance(raw, dict) or not all(
+        isinstance(service, str) and isinstance(tag, str) for service, tag in raw.items()
+    ):
+        raise PermanentMessageError(
+            f"{RELEASE_REQUESTED_V1} image_tags must be an object mapping service names to image tag strings"
+        )
+    return dict(raw)
+
+
 def parse_release_requested(fields: dict, default_bucket: str) -> ReleaseRequested:
     """Decode the stream fields of a release.requested:v1 message.
 
@@ -123,8 +139,10 @@ def parse_release_requested(fields: dict, default_bucket: str) -> ReleaseRequest
         raise PermanentMessageError(
             f"{RELEASE_REQUESTED_V1} manifest_keys span multiple buckets: {set(buckets)}"
         )
+    image_tags_raw = payload.get("image_tags")
     return ReleaseRequested(
         release_id=release_id,
         requests=requests,
         bucket=buckets[0] if buckets else default_bucket,
+        image_tags=None if image_tags_raw is None else _image_tags(image_tags_raw),
     )

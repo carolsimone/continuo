@@ -162,11 +162,13 @@ func (f *fakeUoW) LockReleaseQueue(ctx context.Context) error {
 // queue so AdvanceQueue completes as a no-op after taking its lock.
 type fakeReleaseRepo struct {
 	loadedID      string
+	gotID         string
 	advanceLocked bool
 }
 
 func (r *fakeReleaseRepo) Get(ctx context.Context, id string) (*pipeline.Run, error) {
-	panic("not implemented")
+	r.gotID = id
+	return nil, nil
 }
 func (r *fakeReleaseRepo) Load(ctx context.Context, id string) (*pipeline.Run, error) {
 	r.loadedID = id
@@ -193,3 +195,5 @@ func (r *fakeReleaseRepo) List(ctx context.Context, f repository.ListFilter) ([]
 func (r *fakeReleaseRepo) DeleteFinishedBefore(ctx context.Context, cutoff time.Time, keepReleaseIDs []string) (int, error) {
 	panic("not implemented")
 }
+
+func (f *fakeUoW) LegacyTopologyRepo() repository.LegacyTopologyRepository { panic("not implemented") }

@@ -42,8 +42,8 @@ const (
 	ScheduleCancelledV1 = "schedule.cancelled:v1"
 	// ReleaseRequestedV1 — Candidate release accepted by release-controller; triggers manifest load for validation.
 	ReleaseRequestedV1 = "release.requested:v1"
-	// ManifestLoadedCandidateV1 — Resolved candidate topology from topology-controller back to release-controller.
-	ManifestLoadedCandidateV1 = "manifest.loaded.candidate:v1"
+	// ManifestLoadedCandidateV2 — How resolving a candidate release ended, from topology-controller back to release-controller. On success it carries the URI and SHA-256 of the release's topology artifact in S3 and the code bundle URI; on failure the parse failure kind, a detail and the failed nodes. Carries the event envelope; the topology itself is never on the stream.
+	ManifestLoadedCandidateV2 = "manifest.loaded.candidate:v2"
 	// ValidationRequestedV1 — dbt --empty validation run requested by release-controller; execution-controller dispatches per-node jobs.
 	ValidationRequestedV1 = "validation.requested:v1"
 	// ValidationResultV1 — Unified validation-leg stream from execution-controller. Carries per-node results (kind=node, one per node as it settles) and the terminal decision (kind=complete, emitted last). release-controller projects nodes and decides on complete; the decision reads aggregate_status, so it does not depend on delivery order. execution-controller drops the candidate schema on complete.
@@ -116,7 +116,7 @@ const (
 	ExecutorScheduleCancelled = "executor-schedule-cancelled"
 	// TopologyControllerReleaseRequested — topology-controller consumer group on release.requested:v1.
 	TopologyControllerReleaseRequested = "topology-controller-release-requested"
-	// ReleaseControllerManifestLoadedCandidate — release-controller consumer group on manifest.loaded.candidate:v1.
+	// ReleaseControllerManifestLoadedCandidate — release-controller consumer group on manifest.loaded.candidate:v2.
 	ReleaseControllerManifestLoadedCandidate = "release-controller-manifest-loaded-candidate"
 	// ExecutorValidationRequested — execution-controller consumer group on validation.requested:v1.
 	ExecutorValidationRequested = "executor-validation-requested"
@@ -178,7 +178,7 @@ var All = []string{
 	ConsumerDeadLetterV1,
 	ScheduleCancelledV1,
 	ReleaseRequestedV1,
-	ManifestLoadedCandidateV1,
+	ManifestLoadedCandidateV2,
 	ValidationRequestedV1,
 	ValidationResultV1,
 	SeedBuildRequestedV1,
@@ -218,7 +218,7 @@ var Groups = map[string][]string{
 	ConsumerDeadLetterV1:        {DeadLetterControllerConsumerDeadLetters},
 	ScheduleCancelledV1:         {OrchestratorScheduleCancelled, ExecutorScheduleCancelled},
 	ReleaseRequestedV1:          {TopologyControllerReleaseRequested},
-	ManifestLoadedCandidateV1:   {ReleaseControllerManifestLoadedCandidate},
+	ManifestLoadedCandidateV2:   {ReleaseControllerManifestLoadedCandidate},
 	ValidationRequestedV1:       {ExecutorValidationRequested},
 	ValidationResultV1:          {ReleaseControllerValidationResult, ExecutorValidationResultTeardown},
 	SeedBuildRequestedV1:        {ExecutorSeedBuildRequested},
@@ -240,6 +240,7 @@ var Groups = map[string][]string{
 var Retired = []string{
 	"compile.node.completed:v1",
 	"initialize.run:v1",
+	"manifest.loaded.candidate:v1",
 	"manifest.loaded:v1",
 	"node.deployed:v1",
 	"remediation.requested:v1",

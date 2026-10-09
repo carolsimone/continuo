@@ -29,3 +29,24 @@ func TestGroups_CoversEveryStream(t *testing.T) {
 		}
 	}
 }
+
+func TestManifestLoadedCandidateV2_ReplacesV1(t *testing.T) {
+	if ManifestLoadedCandidateV2 != "manifest.loaded.candidate:v2" {
+		t.Fatalf("ManifestLoadedCandidateV2 = %q", ManifestLoadedCandidateV2)
+	}
+	if ReleaseControllerManifestLoadedCandidate != "release-controller-manifest-loaded-candidate" {
+		t.Fatalf("consumer group renamed: %q", ReleaseControllerManifestLoadedCandidate)
+	}
+	if got := Groups[ManifestLoadedCandidateV2]; len(got) != 1 || got[0] != ReleaseControllerManifestLoadedCandidate {
+		t.Fatalf("manifest.loaded.candidate:v2 groups = %v", got)
+	}
+	retired := false
+	for _, r := range Retired {
+		if r == "manifest.loaded.candidate:v1" {
+			retired = true
+		}
+	}
+	if !retired {
+		t.Fatal("manifest.loaded.candidate:v1 must be listed in retired_streams")
+	}
+}

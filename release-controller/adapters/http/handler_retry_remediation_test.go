@@ -337,3 +337,5 @@ type loadErrUoW struct {
 }
 
 func (u *loadErrUoW) RunRepo() repository.RunRepository { return u.releaseRepo }
+
+func (u *fakeUoW) LegacyTopologyRepo() repository.LegacyTopologyRepository { return nil }

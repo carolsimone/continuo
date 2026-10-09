@@ -84,3 +84,10 @@ def classify(exc: BaseException) -> ErrorClass:
         if status >= 500:
             return ErrorClass.INFRASTRUCTURE
     return ErrorClass.TRANSIENT
+
+
+def is_infrastructure(exc: BaseException) -> bool:
+    """Whether exc is an outage the consumer waits out. The candidate handler
+    re-raises an S3 write failure this accepts instead of rejecting the
+    release, so the consumer pauses and redelivers the same message."""
+    return classify(exc) is ErrorClass.INFRASTRUCTURE

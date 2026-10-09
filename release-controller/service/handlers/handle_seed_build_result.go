@@ -72,8 +72,12 @@ func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pi
 	// entries carry the source location the remediation agent needs: the
 	// promoted topology GetNodeLocation serves cannot find newly-added seeds.
 	type sourceLoc struct{ filePath, service string }
-	locByNodeID := make(map[string]sourceLoc, len(r.CandidateTopology()))
-	for _, n := range r.CandidateTopology() {
+	topo, err := candidateTopology(ctx, d, r)
+	if err != nil {
+		return err
+	}
+	locByNodeID := make(map[string]sourceLoc, len(topo))
+	for _, n := range topo {
 		locByNodeID[n.UniqueID] = sourceLoc{filePath: n.OriginalFilePath, service: n.ServiceName}
 	}
 
@@ -129,7 +133,10 @@ func handleSeedBuildOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeli
 	results, _ := stageResults(in.PerNode)
 	r.RecordStageResults("seed_build", results)
 
-	topo := r.CandidateTopology()
+	topo, err := candidateTopology(ctx, d, r)
+	if err != nil {
+		return err
+	}
 	allIDs := r.ValidationNodeIDs()
 
 	// Recompute the rebuilt-from-candidate set to identify the just-built seeds
@@ -142,7 +149,10 @@ func handleSeedBuildOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeli
 	if err != nil {
 		return fmt.Errorf("get current prod: %w", err)
 	}
-	scope, contextRebuilds := changedNodeIDsFor(ctx, u, d, r, topo, cp)
+	scope, contextRebuilds, err := changedNodeIDsFor(ctx, u, d, r, topo, cp)
+	if err != nil {
+		return err
+	}
 	changedClosure := release.DescendantsClosure(topo, scope)
 	rebuiltFromCandidate := rebuiltFromCandidateSet(changedClosure, contextRebuilds, allIDs)
 	builtSeeds := make(map[string]bool)
@@ -195,7 +205,7 @@ func handleSeedBuildOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeli
 	payload, err := json.Marshal(map[string]any{
 		"release_id":        in.ReleaseID,
 		"mode":              "validation",
-		"nodes":             validationNodesInOrder(topo, validationIDs, inSet, rebuiltFromCandidate),
+		"nodes":             validationNodesInOrder(d.Bucket, in.ReleaseID, topo, validationIDs, inSet, rebuiltFromCandidate),
 		"node_ids_in_order": validationIDs,
 		"image_tags":        r.ImageTags(),
 		"candidate_schema":  candidateSchema,

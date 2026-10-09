@@ -298,6 +298,7 @@ guards: bench-test
 	bash scripts/check-agent-remediation-runtime-pin.sh
 	bash scripts/check-retired-node-kind.sh
 	bash scripts/check-validation-image-sideload.sh
+	bash scripts/check-dockerfile-main-build.sh
 	bash scripts/check-dev-dockerfile-nonroot.sh
 	bash scripts/check-standalone-modules.sh
 	bash scripts/check-generated-streams.sh

@@ -65,7 +65,7 @@ func newValidationResultHandler(deps *handlers.Deps, logger *slog.Logger) pkgred
 			if err := json.Unmarshal([]byte(raw), &in); err != nil {
 				return fmt.Errorf("%w: %s node decode: %v", pkgevents.ErrPermanent, streams.ValidationResultV1, err)
 			}
-			return handlers.HandleNodeValidationResult(ctx, deps, in)
+			return permanentOnCorruptTopology(handlers.HandleNodeValidationResult(ctx, deps, in))
 
 		case "complete":
 			var in handlers.HandleValidationResultInput
@@ -73,7 +73,7 @@ func newValidationResultHandler(deps *handlers.Deps, logger *slog.Logger) pkgred
 				return fmt.Errorf("%w: %s complete decode: %v", pkgevents.ErrPermanent, streams.ValidationResultV1, err)
 			}
 			if err := handlers.HandleValidationResult(ctx, deps, in); err != nil {
-				return err
+				return permanentOnCorruptTopology(err)
 			}
 			// Advance the queue immediately after the terminal decision so the next
 			// queued release begins without waiting for an external trigger.

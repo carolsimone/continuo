@@ -1,0 +1,30 @@
+{
+  "input": {
+    "tenant_id": "default",
+    "producer": "topology-controller",
+    "occurred_at": "2026-10-08T09:30:00.123456Z",
+    "payload": {
+      "release_id": "rel-2026-10-08-0001",
+      "status": "ok",
+      "topology_uri": "s3://continuo/tenants/default/topologies/rel-2026-10-08-0001/topology.json.gz",
+      "topology_sha256": "c24510f9d0bf0bb622bac658a15570a66a9bf1e3e00ccf4ea6c84e1c232e3f48",
+      "node_count": 5,
+      "code_bundle_uri": "s3://continuo/code-bundles/rel-2026-10-08-0001/bundle.json"
+    }
+  },
+  "fields": {
+    "event_id": "12d04e2a-b05e-5f55-90d2-e802cb6e5240",
+    "tenant_id": "default",
+    "occurred_at": "2026-10-08T09:30:00.123456Z",
+    "producer": "topology-controller",
+    "schema_version": "1",
+    "payload": {
+      "release_id": "rel-2026-10-08-0001",
+      "status": "ok",
+      "topology_uri": "s3://continuo/tenants/default/topologies/rel-2026-10-08-0001/topology.json.gz",
+      "topology_sha256": "c24510f9d0bf0bb622bac658a15570a66a9bf1e3e00ccf4ea6c84e1c232e3f48",
+      "node_count": 5,
+      "code_bundle_uri": "s3://continuo/code-bundles/rel-2026-10-08-0001/bundle.json"
+    }
+  }
+}

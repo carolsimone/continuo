@@ -85,7 +85,7 @@ func toReleaseListItem(rel *pipeline.Run) releaseListItem {
 		Status:       string(rel.Status()),
 		CreatedAt:    rel.CreatedAt().UTC().Format(time.RFC3339),
 		ResolvedAt:   resolved,
-		NodeCount:    len(rel.CandidateTopology()),
+		NodeCount:    rel.CandidateTopologyRef().NodeCount,
 		Bootstrap:    rel.IsBootstrap(),
 		RejectReason: rel.FailReason(),
 		Repo:         rel.Repo(),

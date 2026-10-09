@@ -12,16 +12,19 @@ import pytest
 from adapters.code_bundle_uploader import CodeBundleUploader
 from adapters.redis.candidate_publisher import CandidateManifestPublisher
 from adapters.sources.s3 import S3Source
+from adapters.topology_artifact_writer import TopologyArtifactWriter
 from service.ports import (
     CandidatePublisherPort,
     CodeBundleUploaderPort,
     ManifestSourcePort,
+    TopologyArtifactWriterPort,
 )
 
 CONCRETE_PORT_PAIRS = [
     (CandidateManifestPublisher, CandidatePublisherPort),
     (CodeBundleUploader, CodeBundleUploaderPort),
     (S3Source, ManifestSourcePort),
+    (TopologyArtifactWriter, TopologyArtifactWriterPort),
 ]
 
 
@@ -42,7 +45,7 @@ def test_check_is_structural_not_nominal():
     guard inspects the surface rather than trusting inheritance."""
 
     class MissingPublishFailed:
-        def publish_ok(self, release_id, topology, code_bundle_uri=""):
+        def publish_ok(self, *, release_id, artifact, code_bundle_uri):
             ...
 
     assert not issubclass(MissingPublishFailed, CandidatePublisherPort)

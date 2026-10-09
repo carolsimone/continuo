@@ -8,7 +8,7 @@ _to_ports.py) are runtime_checkable so a renamed adapter method is caught.
 from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
 
-from domain.model import FailedNode, ManifestFile
+from domain.model import FailedNode, ManifestFile, TopologyArtifactRef
 from domain.contract_vocabulary import ParseFailureKind
 
 
@@ -32,15 +32,22 @@ class CodeBundleUploaderPort(Protocol):
 
 
 @runtime_checkable
+class TopologyArtifactWriterPort(Protocol):
+    def write(self, *, tenant_id: str, release_id: str, nodes: list[dict]) -> TopologyArtifactRef:
+        """Store a release's topology artifact and return where it lives, the
+        SHA-256 of its stored bytes, and how many nodes it holds."""
+        ...
+
+
+@runtime_checkable
 class CandidatePublisherPort(Protocol):
     """Publishes the outcome of a candidate-parse attempt back to
-    release-controller: publish_ok carries the resolved topology, publish_failed
-    a typed failure kind, a summary detail, and one FailedNode per node the
-    parse could not resolve (empty for artifact and internal failures)."""
+    release-controller: publish_ok carries the reference to the release's
+    topology artifact, publish_failed a typed failure kind, a summary detail,
+    and one FailedNode per node the parse could not resolve (empty for
+    artifact and internal failures)."""
 
-    def publish_ok(
-        self, release_id: str, topology: list[dict], code_bundle_uri: str = ""
-    ) -> None:
+    def publish_ok(self, *, release_id: str, artifact: TopologyArtifactRef, code_bundle_uri: str) -> None:
         ...
 
     def publish_failed(

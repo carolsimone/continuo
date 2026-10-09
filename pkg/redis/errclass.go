@@ -3,6 +3,7 @@ package redis
 import (
 	"database/sql/driver"
 	"errors"
+	"io"
 	"net"
 	"strings"
 	"syscall"
@@ -68,7 +69,9 @@ var unreachableErrnos = []syscall.Errno{
 // isInfrastructure recognises the outages every service shares: a socket
 // error, a broken database connection, a Postgres error in classes 08
 // (connection), 53 (insufficient resources) or 57 (operator intervention)
-// other than 57014, an HTTP 5xx, and the Redis replies a server sends while it
+// other than 57014, an HTTP 5xx, a stream cut short mid-body
+// (io.ErrUnexpectedEOF, a peer that closed before delivering what it promised),
+// and the Redis replies a server sends while it
 // cannot serve. 57014 is query_canceled, which a handler's own deadline causes.
 // Only concrete net error types count: context.DeadlineExceeded also
 // implements net.Error.
@@ -83,7 +86,8 @@ func isInfrastructure(err error) bool {
 	}
 	var opErr *net.OpError
 	var dnsErr *net.DNSError
-	if errors.As(err, &opErr) || errors.As(err, &dnsErr) || errors.Is(err, driver.ErrBadConn) {
+	if errors.As(err, &opErr) || errors.As(err, &dnsErr) || errors.Is(err, driver.ErrBadConn) ||
+		errors.Is(err, io.ErrUnexpectedEOF) {
 		return true
 	}
 	for _, errno := range unreachableErrnos {

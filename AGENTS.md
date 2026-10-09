@@ -12,7 +12,7 @@ This is a monorepo with multiple microservices.
 * `dead-letter-controller` — stores every dead letter from both dead-letter streams (`consumer.dead_letter:v1`, `outbox.dead_letter:v1`) in its own `continuo_dead_letter` Postgres database, serves gRPC `DeadLetterService` (list, get, redrive) for `continuo dlq`, and redrives a dead letter to the consumer group that failed it.
 
 ## Python service (1)
-* `topology-controller` — Python 3.12/uv service (not Go); consumes `release.requested:v1` Redis Stream events, batch-loads the release's dbt manifest.json files, resolves cross-service upstream deps via sqlglot, and publishes the resolved candidate topology to `manifest.loaded.candidate:v1` for release-controller (which promotes it into the orchestrator's Neo4j topology via `release.promoted:v1`). Run tests with `docker exec topology-controller uv run pytest -v`. Start the process manually (container runs `tail -f /dev/null` by default): `docker exec -d topology-controller bash -c "cd /app && PYTHONPATH=/app/proto uv run python main.py > /tmp/mc.log 2>&1"`.
+* `topology-controller` — Python 3.14/uv service (not Go); consumes `release.requested:v1` Redis Stream events, batch-loads the release's dbt manifest.json files, resolves cross-service upstream deps via sqlglot, writes the resolved candidate topology once per release to S3 as an immutable gzipped artifact (`tenants/default/topologies/<release_id>/topology.json.gz`), and announces its URI and SHA-256 on `manifest.loaded.candidate:v2` for release-controller (which promotes it into the orchestrator's Neo4j topology via `release.promoted:v1`). Run tests with `docker exec topology-controller uv run pytest -v`. Start the process manually (container runs `tail -f /dev/null` by default): `docker exec -d topology-controller bash -c "cd /app && PYTHONPATH=/app/proto uv run python main.py > /tmp/mc.log 2>&1"`.
 
 ## Node service (1)
 * `ui` — HTTP API and web UI; serves the operator dashboard and proxies gRPC reads from `orchestrator` and other backend services.
@@ -89,7 +89,7 @@ Do not consider a task complete until the architecture documentation has been re
 - Deprecated/removed features are simply absent, not documented as history.
 
 Services should be Go based service, find `Dockerfile.dev` in the service folders if you need to know how to build them.
-The exception is `topology-controller`, which is Python 3.12 and uses uv for dependency management.
+The exception is `topology-controller`, which is Python 3.14 and uses uv for dependency management.
 All the other services should, more or less, use a similar stack but with different dependencies.
 Remove any dependency that is not needed.
 

@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -32,15 +33,17 @@ type ParsedFailedNode struct {
 }
 
 // HandleParsedManifestInput carries the result of the topology-controller
-// parsing a candidate release. Status must be "ok" or "failed". On "failed",
-// FailureKind says why (a contract value), Detail is the operator-facing
-// summary, and FailedNodes lists every node the parse rejected (empty for an
-// artifact or internal failure). The Redis binding decodes the wire payload
-// and builds this domain-typed input, so it carries no serialization tags.
+// parsing a candidate release. Status must be "ok" or "failed". On "ok",
+// TopologyRef names the candidate topology artifact topology-controller wrote.
+// On "failed", FailureKind says why (a contract value), Detail is the
+// operator-facing summary, and FailedNodes lists every node the parse rejected
+// (empty for an artifact or internal failure). The Redis binding decodes the
+// wire payload and builds this domain-typed input, so it carries no
+// serialization tags.
 type HandleParsedManifestInput struct {
 	ReleaseID     string
 	Status        string // "ok" or "failed"
-	Topology      release.Topology
+	TopologyRef   release.TopologyRef
 	CodeBundleURI string
 	FailureKind   pkg_model.ParseFailureKind
 	Detail        string
@@ -52,7 +55,7 @@ type HandleParsedManifestInput struct {
 // On failure: records one `parse` stage result per failed node, transitions the
 // release to Rejected under the reason ParseReason maps from the failure kind,
 // and emits release.rejected:v1 with stage `parse`.
-// On success: joins image tags into the topology, computes the validation closure,
+// On success: reads the candidate topology artifact, computes the validation closure,
 // transitions to Validating, and emits validation.requested:v1.
 func HandleParsedManifest(ctx context.Context, d *Deps, in HandleParsedManifestInput) error {
 	u := d.NewUoW()
@@ -180,8 +183,38 @@ func handleParseFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeli
 	return nil
 }
 
+// rejectUnreadableTopology rejects a release whose parse result names a
+// topology artifact that cannot be read: absent, not matching its checksum, or
+// not named at all. Reading it again cannot change that, so the release ends
+// through the parse failure path with internal_error — continuo's own failure,
+// which no change to the user's source fixes — and the queue moves on.
+func rejectUnreadableTopology(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, in HandleParsedManifestInput, cause error, now time.Time) error {
+	d.Logger.Error("candidate topology artifact is unreadable; rejecting the release",
+		"release_id", in.ReleaseID, "topology_uri", in.TopologyRef.URI, "error", cause)
+	failed := in
+	failed.Status = "failed"
+	failed.FailureKind = pkg_model.ParseFailureKindInternal
+	failed.Detail = fmt.Sprintf("the candidate topology artifact %q could not be read: %v", in.TopologyRef.URI, cause)
+	failed.FailedNodes = nil
+	return handleParseFailed(ctx, d, u, r, failed, now)
+}
+
 func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, in HandleParsedManifestInput, now time.Time) error {
-	topo := joinImageTags(in.Topology, r.ImageTags())
+	// The parse result names the candidate topology artifact; it is read once
+	// here. An artifact that is missing or does not match its checksum can
+	// never be read, so the release is rejected rather than left parsing. Any
+	// other load error means the object store is unreachable: it is returned so
+	// the consumer pauses and redelivers this result once the store answers.
+	if in.TopologyRef.IsZero() {
+		return rejectUnreadableTopology(ctx, d, u, r, in, errors.New("the parse result names no topology artifact"), now)
+	}
+	topo, err := d.Topologies.Load(ctx, in.TopologyRef)
+	if errors.Is(err, ports.ErrTopologyArtifactNotFound) || errors.Is(err, ports.ErrTopologyArtifactCorrupt) {
+		return rejectUnreadableTopology(ctx, d, u, r, in, err, now)
+	}
+	if err != nil {
+		return fmt.Errorf("load candidate topology %s: %w", in.TopologyRef.URI, err)
+	}
 	r.SetCodeBundleURI(in.CodeBundleURI)
 
 	// A relation must be produced by exactly one node, and a unique_id must
@@ -209,7 +242,7 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 	// re-baseline) where current_prod is empty/mismatched and normal validation
 	// would reject every cross-service upstream as new.
 	if r.IsBootstrap() {
-		return promoteBootstrap(ctx, d, u, r, in.ReleaseID, topo, now)
+		return promoteBootstrap(ctx, d, u, r, in.ReleaseID, in.TopologyRef, topo, now)
 	}
 
 	cp, err := u.CurrentProdRepo().Get(ctx)
@@ -225,7 +258,10 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 	// node as new and validates the whole topology). A verification run splits
 	// the two so the fix's shared changed ancestor is rebuilt for context
 	// without expanding this run to a sibling service's still-unfixed failure.
-	scope, contextRebuilds := changedNodeIDsFor(ctx, u, d, r, topo, cp)
+	scope, contextRebuilds, err := changedNodeIDsFor(ctx, u, d, r, topo, cp)
+	if err != nil {
+		return err
+	}
 
 	// Validate the scope closure — the fix's own delta and everything downstream
 	// of it — plus the FULL transitive upstream closure (across service
@@ -267,7 +303,7 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 		if r.Kind() == pipeline.KindVerification && len(topo) == 0 {
 			return failVerificationNothingToValidate(ctx, d, u, r, now)
 		}
-		if err := r.TransitionToValidating(topo, validationIDs, now); err != nil {
+		if err := r.TransitionToValidating(in.TopologyRef, validationIDs, now); err != nil {
 			return fmt.Errorf("transition to validating: %w", err)
 		}
 		if err := concludeValidated(ctx, d, u, r, now); err != nil {
@@ -291,11 +327,11 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 	// leg; validation.requested is emitted later, on seed.build.completed.
 	seedIDs := newChangedSeedIDs(topo, validationIDs, rebuiltFromCandidate)
 	if len(seedIDs) > 0 {
-		return emitSeedBuildRequested(ctx, d, u, r, in.ReleaseID, topo, validationIDs, seedIDs, now)
+		return emitSeedBuildRequested(ctx, d, u, r, in.ReleaseID, in.TopologyRef, topo, validationIDs, seedIDs, now)
 	}
 
 	// No new/changed seeds: Part A path (validate directly).
-	if err := r.TransitionToValidating(topo, validationIDs, now); err != nil {
+	if err := r.TransitionToValidating(in.TopologyRef, validationIDs, now); err != nil {
 		return fmt.Errorf("transition to validating: %w", err)
 	}
 
@@ -313,7 +349,7 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 	payload, err := json.Marshal(map[string]any{
 		"release_id":        in.ReleaseID,
 		"mode":              "validation",
-		"nodes":             validationNodesInOrder(topo, validationIDs, inSet, rebuiltFromCandidate),
+		"nodes":             validationNodesInOrder(d.Bucket, in.ReleaseID, topo, validationIDs, inSet, rebuiltFromCandidate),
 		"node_ids_in_order": validationIDs,
 		"image_tags":        r.ImageTags(),
 		"candidate_schema":  candidateSchema,
@@ -367,27 +403,39 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 // set; a node another release promoted since the rejection matches current_prod
 // and is in neither set.
 //
-// If the verified release cannot be read, or never parsed far enough to hold a
-// candidate topology, the verification falls back to the plain current_prod
-// diff as scope — a weaker but still-running check, mirroring assembleFor's
-// graceful degradation.
-func changedNodeIDsFor(ctx context.Context, u uow.UnitOfWork, d *Deps, r *pipeline.Run, topo release.Topology, cp *release.CurrentProd) (scope, context []string) {
+// If the verified release cannot be read, never parsed far enough to hold a
+// candidate topology, or its artifact is missing or corrupt, the verification
+// falls back to the plain current_prod diff as scope — a weaker but
+// still-running check, mirroring assembleFor's graceful degradation. An
+// unreachable object store is returned as an error instead: measuring a fix
+// against the wrong baseline because of an outage would be silent and wrong.
+func changedNodeIDsFor(ctx context.Context, u uow.UnitOfWork, d *Deps, r *pipeline.Run, topo release.Topology, cp *release.CurrentProd) (scope, contextRebuilds []string, err error) {
 	changedVsProd := release.DerivedChangedNodeIDs(topo, cp.TopologySnapshot())
 	if r.Kind() == pipeline.KindCandidate || r.VerifiesReleaseID() == "" {
-		return changedVsProd, nil
+		return changedVsProd, nil, nil
 	}
 	original, err := u.RunRepo().Get(ctx, r.VerifiesReleaseID())
 	if err != nil || original == nil {
 		d.Logger.Warn("verification run verifies a release that cannot be read; measuring its changed set against production instead",
 			"release_id", r.ID(), "verifies_release_id", r.VerifiesReleaseID(), "error", err)
-		return changedVsProd, nil
+		return changedVsProd, nil, nil
 	}
-	if len(original.CandidateTopology()) == 0 {
+	originalTopo, err := candidateTopology(ctx, d, original)
+	if errors.Is(err, ports.ErrTopologyArtifactNotFound) || errors.Is(err, ports.ErrTopologyArtifactCorrupt) {
+		d.Logger.Warn("the verified release's topology artifact cannot be read; measuring the verification's changed set against production instead",
+			"release_id", r.ID(), "verifies_release_id", original.ID(), "error", err)
+		return changedVsProd, nil, nil
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(originalTopo) == 0 {
 		d.Logger.Warn("the verified release has no candidate topology; measuring the verification's changed set against production instead",
 			"release_id", r.ID(), "verifies_release_id", original.ID())
-		return changedVsProd, nil
+		return changedVsProd, nil, nil
 	}
-	return release.VerificationBuildSets(topo, cp.TopologySnapshot(), original.CandidateTopology(), original.FailingNodes())
+	scope, contextRebuilds = release.VerificationBuildSets(topo, cp.TopologySnapshot(), originalTopo, original.FailingNodes())
+	return scope, contextRebuilds, nil
 }
 
 // rebuiltFromCandidateSet is the set of validation nodes built from their own
@@ -464,12 +512,12 @@ func seedBuildNodesInOrder(topo release.Topology, seedIDs []string) []map[string
 }
 
 // emitSeedBuildRequested transitions the release to SeedBuilding (recording the
-// full candidate topology + validation IDs for the later validation.requested),
+// reference to the candidate topology + validation IDs for the later validation.requested),
 // emits seed.build.requested:v1 with ONLY the seed nodes, and commits.
 func emitSeedBuildRequested(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run,
-	releaseID string, topo release.Topology, validationIDs, seedIDs []string, now time.Time) error {
+	releaseID string, ref release.TopologyRef, topo release.Topology, validationIDs, seedIDs []string, now time.Time) error {
 
-	if err := r.TransitionToSeedBuilding(topo, validationIDs, now); err != nil {
+	if err := r.TransitionToSeedBuilding(ref, validationIDs, now); err != nil {
 		return fmt.Errorf("transition to seed building: %w", err)
 	}
 	if err := u.RunRepo().Save(ctx, r); err != nil {
@@ -515,16 +563,16 @@ func emitSeedBuildRequested(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 }
 
 // promoteBootstrap promotes a bootstrap release without validation: it records
-// the candidate topology (TransitionToValidating with no validation nodes) and
+// the reference to the candidate topology (TransitionToValidating with no validation nodes) and
 // runs the shared promoteToProduction path, which seeds current_prod and emits
 // release.promoted:v1. The full parse/checked/promoted telemetry span is
 // emitted (with a zero-node validation) so a bootstrap is observable like any
 // other promotion.
-func promoteBootstrap(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, releaseID string, topo release.Topology, now time.Time) error {
-	// TransitionToValidating records the candidate topology and satisfies
-	// promoteToProduction's Validating precondition; no nodes are submitted to
-	// validation.
-	if err := r.TransitionToValidating(topo, nil, now); err != nil {
+func promoteBootstrap(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, releaseID string, ref release.TopologyRef, topo release.Topology, now time.Time) error {
+	// TransitionToValidating records the reference to the candidate topology
+	// artifact and satisfies promoteToProduction's Validating precondition; no
+	// nodes are submitted to validation.
+	if err := r.TransitionToValidating(ref, nil, now); err != nil {
 		return fmt.Errorf("transition to validating (bootstrap): %w", err)
 	}
 	// A verification run is never bootstrap (NewVerification never sets it), so
@@ -544,27 +592,15 @@ func promoteBootstrap(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipelin
 	return nil
 }
 
-// joinImageTags returns a new Topology with ImageTag populated on each node
-// whose ServiceName has a matching entry in imageTags.
-func joinImageTags(topo release.Topology, imageTags map[string]string) release.Topology {
-	result := make(release.Topology, len(topo))
-	for i, n := range topo {
-		if tag, ok := imageTags[n.ServiceName]; ok {
-			n.ImageTag = tag
-		}
-		result[i] = n
-	}
-	return result
-}
-
 // validationNodesInOrder returns one map per validation node in lexical
 // (sorted) order, carrying the per-node fields execution-controller needs to
 // build a candidate dbt job. upstream_node_ids lists the in-set upstreams (intra-
 // AND cross-service) that must succeed before this node can run its candidate
-// schema build. Dispatch ordering is deterministic but NOT topological; per-node
-// execution sequencing is enforced at runtime by the executor's gating on
-// upstream_node_ids, not by position in this list.
-func validationNodesInOrder(topo release.Topology, validationIDs []string, inSet, rebuiltFromCandidate map[string]bool) []map[string]any {
+// schema build. candidate_artifact_uri is derived from the run and the node
+// (candidateArtifactURI). Dispatch ordering is deterministic but NOT
+// topological; per-node execution sequencing is enforced at runtime by the
+// executor's gating on upstream_node_ids, not by position in this list.
+func validationNodesInOrder(bucket, releaseID string, topo release.Topology, validationIDs []string, inSet, rebuiltFromCandidate map[string]bool) []map[string]any {
 	byID := make(map[string]release.Node, len(topo))
 	for _, n := range topo {
 		byID[n.UniqueID] = n
@@ -584,7 +620,7 @@ func validationNodesInOrder(topo release.Topology, validationIDs []string, inSet
 			"table_name":             n.TableName,
 			"image_tag":              n.ImageTag,
 			"upstream_node_ids":      release.InSetUpstreams(topo, id, inSet),
-			"candidate_artifact_uri": n.CandidateArtifactURI,
+			"candidate_artifact_uri": candidateArtifactURI(bucket, releaseID, n),
 			"validation_op":          op,
 			"prod_schema":            prodSchema,
 		})

@@ -29,10 +29,10 @@ func TestIntegration_FailedValidationKeepsCurrentProdUnchanged(t *testing.T) {
 	}))
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID: "rFAIL", Status: "ok",
-		Topology: release.Topology{
+		TopologyRef: putTopology(t, deps, "rFAIL", release.Topology{
 			{UniqueID: "a", ServiceName: "service-1"},
 			{UniqueID: "b", ServiceName: "service-1", UpstreamUniqueIDs: []string{"a"}},
-		},
+		}),
 	}))
 
 	// Project each node's result via the per-node stream, node b failing, then

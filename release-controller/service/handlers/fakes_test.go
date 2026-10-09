@@ -2,9 +2,12 @@ package handlers_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -70,12 +73,25 @@ type fakeStore struct {
 	// Load and its Create: invisible to Load, they land in releases the
 	// moment a Create for their id runs, as a concurrent winner's insert does.
 	racing map[string]*pipeline.Run
+	// topologies backs Deps.Topologies: the artifacts topology-controller would
+	// have written.
+	topologies *fakeTopologies
+
+	// Runs holding their topology inline, as the upgrade step sees them.
+	legacy           map[string]release.Topology
+	legacyOrder      []string
+	legacyRefs       map[string]release.TopologyRef
+	parsingAtUpgrade map[string]bool
 }
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		releases:    map[string]*pipeline.Run{},
-		serviceProd: map[string]*release.ServiceProd{},
+		releases:         map[string]*pipeline.Run{},
+		serviceProd:      map[string]*release.ServiceProd{},
+		topologies:       newFakeTopologies(),
+		legacy:           map[string]release.Topology{},
+		legacyRefs:       map[string]release.TopologyRef{},
+		parsingAtUpgrade: map[string]bool{},
 	}
 }
 
@@ -167,6 +183,39 @@ func (s *fakeStore) RaceRelease(r *pipeline.Run) {
 		s.racing = map[string]*pipeline.Run{}
 	}
 	s.racing[r.ID()] = r
+}
+
+// storeTopology stores topo as releaseID's artifact and returns its reference,
+// for tests that seed a run directly rather than through a handler.
+func (s *fakeStore) storeTopology(releaseID string, topo release.Topology) release.TopologyRef {
+	ref, err := s.topologies.Write(context.Background(), releaseID, topo)
+	if err != nil {
+		panic(err)
+	}
+	return ref
+}
+
+// SeedLegacyTopology records runID as holding topo inline, with no artifact.
+func (s *fakeStore) SeedLegacyTopology(runID string, topo release.Topology) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.legacy[runID] = topo
+	s.legacyOrder = append(s.legacyOrder, runID)
+}
+
+// MarkParsingAtUpgrade records runID as parsing when V24 ran.
+func (s *fakeStore) MarkParsingAtUpgrade(runID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.parsingAtUpgrade[runID] = true
+}
+
+// LegacyRef returns the artifact reference the upgrade step recorded for runID.
+func (s *fakeStore) LegacyRef(runID string) (release.TopologyRef, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ref, ok := s.legacyRefs[runID]
+	return ref, ok
 }
 
 // --- fakeRunRepo ---
@@ -418,6 +467,155 @@ func (f *fakeProposals) ListProposalsForRelease(_ context.Context, _ string) ([]
 
 var _ ports.ProposalReader = (*fakeProposals)(nil)
 
+// --- fakeTopologies ---
+
+// fakeTopologies is an in-memory ports.TopologyArtifactStore. Write stores a
+// copy under the URI the S3 adapter would use, with a checksum of the
+// topology's JSON. Load returns a copy, reporting ErrTopologyArtifactNotFound
+// for an unknown URI, ErrTopologyArtifactCorrupt when the ref's checksum
+// differs from the stored one, and the error failLoad registered for a URI.
+type fakeTopologies struct {
+	mu       sync.Mutex
+	byURI    map[string]fakeArtifact
+	failures map[string]error
+	writeErr error
+}
+
+type fakeArtifact struct {
+	sha256 string
+	topo   release.Topology
+}
+
+func newFakeTopologies() *fakeTopologies {
+	return &fakeTopologies{byURI: map[string]fakeArtifact{}, failures: map[string]error{}}
+}
+
+func (f *fakeTopologies) Write(_ context.Context, releaseID string, topo release.Topology) (release.TopologyRef, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.writeErr != nil {
+		return release.TopologyRef{}, f.writeErr
+	}
+	raw, err := json.Marshal(topo)
+	if err != nil {
+		return release.TopologyRef{}, err
+	}
+	sum := sha256.Sum256(raw)
+	ref := release.TopologyRef{
+		URI:       "s3://continuo/tenants/default/topologies/" + releaseID + "/topology.json.gz",
+		SHA256:    hex.EncodeToString(sum[:]),
+		NodeCount: len(topo),
+	}
+	f.byURI[ref.URI] = fakeArtifact{sha256: ref.SHA256, topo: slices.Clone(topo)}
+	return ref, nil
+}
+
+func (f *fakeTopologies) Load(_ context.Context, ref release.TopologyRef) (release.Topology, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err, ok := f.failures[ref.URI]; ok {
+		return nil, err
+	}
+	a, ok := f.byURI[ref.URI]
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ports.ErrTopologyArtifactNotFound, ref.URI)
+	}
+	if a.sha256 != ref.SHA256 {
+		return nil, fmt.Errorf("%w: %s", ports.ErrTopologyArtifactCorrupt, ref.URI)
+	}
+	return slices.Clone(a.topo), nil
+}
+
+// failLoad makes every Load of uri return err.
+func (f *fakeTopologies) failLoad(uri string, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.failures[uri] = err
+}
+
+// failWrites makes every Write return err.
+func (f *fakeTopologies) failWrites(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.writeErr = err
+}
+
+var _ ports.TopologyArtifactStore = (*fakeTopologies)(nil)
+
+// putTopology writes topo as releaseID's artifact through d.Topologies — the
+// object topology-controller writes for a parsed run — and returns its
+// reference.
+func putTopology(t *testing.T, d *handlers.Deps, releaseID string, topo release.Topology) release.TopologyRef {
+	t.Helper()
+	ref, err := d.Topologies.Write(context.Background(), releaseID, topo)
+	require.NoError(t, err)
+	return ref
+}
+
+// topologyOf loads r's candidate topology through the artifact store, as
+// every handler does.
+func topologyOf(t *testing.T, d *handlers.Deps, r *pipeline.Run) release.Topology {
+	t.Helper()
+	if r.CandidateTopologyRef().IsZero() {
+		return nil
+	}
+	topo, err := d.Topologies.Load(context.Background(), r.CandidateTopologyRef())
+	require.NoError(t, err)
+	return topo
+}
+
+// storeOutage is an object-store error that reports an HTTP 503, as the AWS
+// SDK's response errors do.
+type storeOutage struct{}
+
+func (storeOutage) Error() string       { return "s3: service unavailable" }
+func (storeOutage) HTTPStatusCode() int { return 503 }
+
+// --- fakeLegacyTopologyRepo ---
+
+type fakeLegacyTopologyRepo struct{ store *fakeStore }
+
+func (f *fakeLegacyTopologyRepo) ListRunsWithLegacyTopology(_ context.Context) ([]repository.LegacyRunTopology, error) {
+	f.store.mu.Lock()
+	defer f.store.mu.Unlock()
+	out := make([]repository.LegacyRunTopology, 0, len(f.store.legacyOrder))
+	for _, id := range f.store.legacyOrder {
+		if _, moved := f.store.legacyRefs[id]; moved {
+			continue
+		}
+		out = append(out, repository.LegacyRunTopology{RunID: id, Topology: f.store.legacy[id]})
+	}
+	return out, nil
+}
+
+func (f *fakeLegacyTopologyRepo) SetRunTopologyRef(_ context.Context, runID string, ref release.TopologyRef) error {
+	f.store.mu.Lock()
+	defer f.store.mu.Unlock()
+	f.store.legacyRefs[runID] = ref
+	return nil
+}
+
+func (f *fakeLegacyTopologyRepo) ListParsingAtUpgrade(_ context.Context) ([]string, error) {
+	f.store.mu.Lock()
+	defer f.store.mu.Unlock()
+	var out []string
+	for _, id := range f.store.order {
+		if f.store.parsingAtUpgrade[id] && f.store.releases[id].Status() == pipeline.StatusParsing {
+			out = append(out, id)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeLegacyTopologyRepo) ClearParsingAtUpgrade(_ context.Context, runID string) error {
+	f.store.mu.Lock()
+	defer f.store.mu.Unlock()
+	delete(f.store.parsingAtUpgrade, runID)
+	return nil
+}
+
+var _ repository.LegacyTopologyRepository = (*fakeLegacyTopologyRepo)(nil)
+
 // --- fakeUoW ---
 
 // fakeUoW wraps the four fakes backed by a shared fakeStore. Begin/Commit/Rollback
@@ -431,6 +629,7 @@ type fakeUoW struct {
 	sp       *fakeServiceProdRepo
 	outbox   *fakeOutbox
 	msgProc  fakeMessageProcessing
+	legacy   *fakeLegacyTopologyRepo
 }
 
 func newFakeUoW(store *fakeStore) *fakeUoW {
@@ -439,17 +638,19 @@ func newFakeUoW(store *fakeStore) *fakeUoW {
 		cp:       &fakeCurrentProdRepo{store: store},
 		sp:       &fakeServiceProdRepo{store: store},
 		outbox:   &fakeOutbox{store: store},
+		legacy:   &fakeLegacyTopologyRepo{store: store},
 	}
 }
 
-func (f *fakeUoW) RunRepo() repository.RunRepository                   { return f.releases }
-func (f *fakeUoW) CurrentProdRepo() repository.CurrentProdRepository   { return f.cp }
-func (f *fakeUoW) ServiceProdRepo() repository.ServiceProdRepository   { return f.sp }
-func (f *fakeUoW) OutboxRepo() pkgoutbox.Repository                    { return f.outbox }
-func (f *fakeUoW) MessageProcessingRepo() messageprocessing.Repository { return f.msgProc }
-func (f *fakeUoW) Begin(_ context.Context) error                       { return nil }
-func (f *fakeUoW) Commit() error                                       { return nil }
-func (f *fakeUoW) Rollback() error                                     { return nil }
+func (f *fakeUoW) RunRepo() repository.RunRepository                       { return f.releases }
+func (f *fakeUoW) CurrentProdRepo() repository.CurrentProdRepository       { return f.cp }
+func (f *fakeUoW) ServiceProdRepo() repository.ServiceProdRepository       { return f.sp }
+func (f *fakeUoW) LegacyTopologyRepo() repository.LegacyTopologyRepository { return f.legacy }
+func (f *fakeUoW) OutboxRepo() pkgoutbox.Repository                        { return f.outbox }
+func (f *fakeUoW) MessageProcessingRepo() messageprocessing.Repository     { return f.msgProc }
+func (f *fakeUoW) Begin(_ context.Context) error                           { return nil }
+func (f *fakeUoW) Commit() error                                           { return nil }
+func (f *fakeUoW) Rollback() error                                         { return nil }
 
 // LockReleaseQueue is a no-op in the fake: unit tests execute sequentially,
 // so the tx-scoped advisory lock semantics are proven end-to-end against
@@ -472,6 +673,8 @@ func newDeps(now time.Time) (*handlers.Deps, *fakeStore) {
 		Telemetry: ports.NoOpTelemetry{},
 		Logger:    slog.Default(),
 		Proposals: &fakeProposals{},
+
+		Topologies: store.topologies,
 
 		// The real encoder: the payload-shape assertions in these tests are
 		// assertions about what actually reaches release.rejected:v1.

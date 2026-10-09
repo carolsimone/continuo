@@ -1,0 +1,86 @@
+{
+  "input": {
+    "schema_version": 1,
+    "tenant_id": "default",
+    "release_id": "rel-2026-10-08-0001",
+    "nodes": [
+      {
+        "unique_id": "test.service_1.not_null_orders_id.5c1f0b2a3d",
+        "schema_name": "staging",
+        "table_name": "not_null_orders_id",
+        "resolved_relation_id": "",
+        "service_name": "service-1",
+        "node_type": "dbt-test",
+        "test_count": 0,
+        "content_hash": "sha256:4b0c1f3e",
+        "image_tag": "service-1:abc123",
+        "original_file_path": "models/schema.yml",
+        "upstream_unique_ids": [
+          "staging.orders"
+        ],
+        "schedule": ""
+      },
+      {
+        "unique_id": "staging.orders",
+        "schema_name": "staging",
+        "table_name": "orders",
+        "resolved_relation_id": "staging.orders",
+        "service_name": "service-1",
+        "node_type": "dbt-model",
+        "test_count": 2,
+        "content_hash": "sha256:9e8d7c6b",
+        "image_tag": "service-1:abc123",
+        "original_file_path": "models/z\u00fcrich/\u00f8rders.sql",
+        "upstream_unique_ids": [
+          "raw.orders",
+          "raw.customers"
+        ],
+        "schedule": "daily"
+      },
+      {
+        "unique_id": "raw.orders",
+        "schema_name": "raw",
+        "table_name": "orders",
+        "resolved_relation_id": "raw.orders",
+        "service_name": "service-1",
+        "node_type": "dbt-seed",
+        "test_count": 0,
+        "content_hash": "sha256:1a2b3c4d",
+        "image_tag": "service-1:abc123",
+        "original_file_path": "seeds/orders.csv",
+        "schedule": "daily"
+      },
+      {
+        "unique_id": "analytics.weather",
+        "schema_name": "analytics",
+        "table_name": "weather",
+        "resolved_relation_id": "analytics.weather",
+        "service_name": "service-2",
+        "node_type": "python-api",
+        "test_count": 0,
+        "content_hash": "sha256:5f6e7d8c",
+        "image_tag": "service-2:def456",
+        "original_file_path": "contracts/weather.yaml",
+        "upstream_unique_ids": [],
+        "schedule": "hourly",
+        "secret_ref": "continuo-api-weather"
+      },
+      {
+        "unique_id": "raw.customers",
+        "schema_name": "raw",
+        "table_name": "customers",
+        "resolved_relation_id": "raw.customers",
+        "service_name": "service-1",
+        "node_type": "dbt-seed",
+        "test_count": 0,
+        "content_hash": "sha256:0f1e2d3c",
+        "image_tag": "service-1:abc123",
+        "original_file_path": "seeds/odd\tname <a&b>\u2028\u2029\u0001.csv",
+        "upstream_unique_ids": [],
+        "schedule": "daily",
+        "secret_ref": ""
+      }
+    ]
+  },
+  "canonical": "{\"nodes\":[{\"content_hash\":\"sha256:5f6e7d8c\",\"image_tag\":\"service-2:def456\",\"node_type\":\"python-api\",\"original_file_path\":\"contracts/weather.yaml\",\"resolved_relation_id\":\"analytics.weather\",\"schedule\":\"hourly\",\"schema_name\":\"analytics\",\"secret_ref\":\"continuo-api-weather\",\"service_name\":\"service-2\",\"table_name\":\"weather\",\"test_count\":0,\"unique_id\":\"analytics.weather\",\"upstream_unique_ids\":[]},{\"content_hash\":\"sha256:0f1e2d3c\",\"image_tag\":\"service-1:abc123\",\"node_type\":\"dbt-seed\",\"original_file_path\":\"seeds/odd\\tname <a&b>\\u2028\\u2029\\u0001.csv\",\"resolved_relation_id\":\"raw.customers\",\"schedule\":\"daily\",\"schema_name\":\"raw\",\"service_name\":\"service-1\",\"table_name\":\"customers\",\"test_count\":0,\"unique_id\":\"raw.customers\",\"upstream_unique_ids\":[]},{\"content_hash\":\"sha256:1a2b3c4d\",\"image_tag\":\"service-1:abc123\",\"node_type\":\"dbt-seed\",\"original_file_path\":\"seeds/orders.csv\",\"resolved_relation_id\":\"raw.orders\",\"schedule\":\"daily\",\"schema_name\":\"raw\",\"service_name\":\"service-1\",\"table_name\":\"orders\",\"test_count\":0,\"unique_id\":\"raw.orders\",\"upstream_unique_ids\":[]},{\"content_hash\":\"sha256:9e8d7c6b\",\"image_tag\":\"service-1:abc123\",\"node_type\":\"dbt-model\",\"original_file_path\":\"models/z\u00fcrich/\u00f8rders.sql\",\"resolved_relation_id\":\"staging.orders\",\"schedule\":\"daily\",\"schema_name\":\"staging\",\"service_name\":\"service-1\",\"table_name\":\"orders\",\"test_count\":2,\"unique_id\":\"staging.orders\",\"upstream_unique_ids\":[\"raw.customers\",\"raw.orders\"]},{\"content_hash\":\"sha256:4b0c1f3e\",\"image_tag\":\"service-1:abc123\",\"node_type\":\"dbt-test\",\"original_file_path\":\"models/schema.yml\",\"resolved_relation_id\":\"\",\"schedule\":\"\",\"schema_name\":\"staging\",\"service_name\":\"service-1\",\"table_name\":\"not_null_orders_id\",\"test_count\":0,\"unique_id\":\"test.service_1.not_null_orders_id.5c1f0b2a3d\",\"upstream_unique_ids\":[\"staging.orders\"]}],\"release_id\":\"rel-2026-10-08-0001\",\"schema_version\":1,\"tenant_id\":\"default\"}"
+}

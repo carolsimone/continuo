@@ -2,10 +2,12 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, create_autospec
 
+from adapters.redis.error_class import is_infrastructure
 from domain.model import ManifestFile, Runtime
 from service.candidate_artifacts import DbtSqlArtifactBuilder
 from service.candidate_manifest_handler import CandidateManifestHandler
 from service.ports import ManifestSourcePort
+from tests.fakes import RecordingArtifactWriter
 
 
 def _write(tmp_path, manifest: dict) -> str:
@@ -60,16 +62,19 @@ def test_candidate_topology_carries_test_count(tmp_path):
     uploader.upload.return_value = ""
     bundle_uploader = MagicMock()
     bundle_uploader.upload.return_value = ""
+    writer = RecordingArtifactWriter()
 
     handler = CandidateManifestHandler(
         source=source, publisher=publisher, bundle_uploader=bundle_uploader,
+        artifact_writer=writer, is_infrastructure_error=is_infrastructure,
         artifact_builders={Runtime.DBT: DbtSqlArtifactBuilder(uploader)},
         dialect="postgres",
+        image_tags={},
     )
     handler.handle(release_id="rel-1")
 
     publisher.publish_ok.assert_called_once()
-    topology = publisher.publish_ok.call_args.kwargs["topology"]
+    topology = writer.nodes
     assert len(topology) == 3
     by_id = {n["unique_id"]: n for n in topology}
     assert by_id["analytics.orders"]["test_count"] == 2

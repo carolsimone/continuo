@@ -239,3 +239,14 @@ func TestNodeType_FullRefreshSet(t *testing.T) {
 		t.Error("an undeclared node type does not support a full refresh")
 	}
 }
+
+// A run caught in parsing by the move to topology artifacts fails with this
+// reason. No change to the release's source fixes it, so the remediation
+// classifier must drop it.
+func TestRejectReasonUpgradeInterrupted_IsDeclaredAndNotHealable(t *testing.T) {
+	r := model.RejectReasonUpgradeInterrupted
+	if r != "upgrade_interrupted" || !r.IsValid() || r.Healable() {
+		t.Fatalf("RejectReasonUpgradeInterrupted = %q (valid %v, healable %v), want upgrade_interrupted, valid, not healable",
+			r, r.IsValid(), r.Healable())
+	}
+}

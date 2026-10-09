@@ -22,6 +22,14 @@ UPGRADE NOTES
   "Changed"/"Added" entry may still need a new value set to enable a feature.
   If this upgrade already failed, re-run with --dry-run to see the exact
   rendering/validation error before retrying for real.
+
+  Release topologies now live in object storage (tenants/<tenant>/topologies/
+  in your bucket). Upgrade with no release in flight: turn maintenance on,
+  wait for the active release to finish, upgrade, turn maintenance off. A
+  release caught mid-parse is rejected as upgrade_interrupted; submit it again.
+  With an external bucket (s3.*), grant topology-controller write access and
+  release-controller read/write/delete access to tenants/, and keep any
+  lifecycle expiry rule off that prefix.
 {{- if .Values.validation.imageTag }}
 
   BREAKING — validation.imageTag is set on this release, and the validation

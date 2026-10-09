@@ -19,7 +19,7 @@ check_container_health(){ local c=$1 p=$2 path=${3:-/health} r=${4:-30}; for ((i
   docker exec "$c" curl -sf "http://localhost:${p}${path}" >/dev/null 2>&1 && { log_info "${c} healthy"; return 0; }; sleep 2; done
   log_error "${c} not healthy after $((r*2))s"; docker logs --tail 20 "$c" 2>&1||true; return 1; }
 start_go_service(){ local c=$1 path=$2 warm=${3:-20}; log_info "Starting ${c} (go run, cold ~20-30s)..."
-  docker exec -d "$c" bash -c "cd /app/${path} && go run main.go" || { log_error "Failed to start ${c}"; return 1; }; sleep "$warm"; }
+  docker exec -d "$c" bash -c "cd /app/${path} && go run ." || { log_error "Failed to start ${c}"; return 1; }; sleep "$warm"; }
 
 # Side-loads a pulled (not locally built) image into a kind cluster.
 #

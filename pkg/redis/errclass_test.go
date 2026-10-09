@@ -5,6 +5,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"syscall"
 	"testing"
@@ -38,6 +39,9 @@ func TestClassify(t *testing.T) {
 		{"dns failure", &net.DNSError{Err: "no such host", Name: "postgres", IsNotFound: true}, redis.ClassInfrastructure},
 		{"bare errno", fmt.Errorf("write: %w", syscall.ECONNRESET), redis.ClassInfrastructure},
 		{"bad conn", driver.ErrBadConn, redis.ClassInfrastructure},
+		{"truncated stream", io.ErrUnexpectedEOF, redis.ClassInfrastructure},
+		{"wrapped truncated stream", fmt.Errorf("s3 read: %w", io.ErrUnexpectedEOF), redis.ClassInfrastructure},
+		{"clean eof is not an outage", io.EOF, redis.ClassTransient},
 		{"pg connection failure 08006", &pq.Error{Code: "08006"}, redis.ClassInfrastructure},
 		{"pg admin shutdown 57P01", &pq.Error{Code: "57P01"}, redis.ClassInfrastructure},
 		{"pg starting up 57P03", &pq.Error{Code: "57P03"}, redis.ClassInfrastructure},

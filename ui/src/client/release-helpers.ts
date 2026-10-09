@@ -63,6 +63,7 @@ const STAGE_LABELS: Record<string, string> = {
   artifact_upload: 'Artifact upload',
   nothing_to_validate: 'Nothing to validate',
   unbuildable_cross_service_upstream: 'Unbuildable cross-service upstream',
+  upgrade_interrupted: 'Upgrade interrupted',
 };
 
 // stageLabel maps a raw stage literal to its section display label, falling back

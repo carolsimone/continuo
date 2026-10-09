@@ -89,6 +89,8 @@ const (
 	RejectReasonSeedBuildFailed RejectReason = "seed_build_failed"
 	// RejectReasonValidationFailed — at least one node failed the candidate's dbt --empty validation run.
 	RejectReasonValidationFailed RejectReason = "validation_failed"
+	// RejectReasonUpgradeInterrupted — the run was in `parsing` when release-controller moved to topology artifacts; its parse result was published on a stream the new version no longer reads. Submit the release again.
+	RejectReasonUpgradeInterrupted RejectReason = "upgrade_interrupted"
 )
 
 // RejectReasons returns every value in contract.yaml declaration order.
@@ -106,6 +108,7 @@ func RejectReasons() []RejectReason {
 		RejectReasonNothingToValidate,
 		RejectReasonSeedBuildFailed,
 		RejectReasonValidationFailed,
+		RejectReasonUpgradeInterrupted,
 	}
 }
 
@@ -135,6 +138,8 @@ func (v RejectReason) IsValid() bool {
 	case RejectReasonSeedBuildFailed:
 		return true
 	case RejectReasonValidationFailed:
+		return true
+	case RejectReasonUpgradeInterrupted:
 		return true
 	}
 	return false

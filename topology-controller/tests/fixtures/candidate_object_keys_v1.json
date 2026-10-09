@@ -1,0 +1,50 @@
+[
+  {
+    "release_id": "rel-2026-10-08-0001",
+    "unique_id": "staging.orders",
+    "node_type": "dbt-model",
+    "key": "candidate-sql/rel-2026-10-08-0001/candidate_staging.orders.sql"
+  },
+  {
+    "release_id": "rel-2026-10-08-0001",
+    "unique_id": "raw.orders",
+    "node_type": "dbt-seed",
+    "key": ""
+  },
+  {
+    "release_id": "rel-2026-10-08-0001",
+    "unique_id": "snapshots.orders_history",
+    "node_type": "dbt-snapshot",
+    "key": "candidate-sql/rel-2026-10-08-0001/candidate_snapshots.orders_history.sql"
+  },
+  {
+    "release_id": "rel-2026-10-08-0001",
+    "unique_id": "analytics.scored",
+    "node_type": "python-node",
+    "key": "candidate-sql/rel-2026-10-08-0001/candidate_analytics.scored.json"
+  },
+  {
+    "release_id": "rel-2026-10-08-0001",
+    "unique_id": "raw.rates",
+    "node_type": "python-csv",
+    "key": "candidate-sql/rel-2026-10-08-0001/candidate_raw.rates.json"
+  },
+  {
+    "release_id": "rel-2026-10-08-0001",
+    "unique_id": "analytics.weather",
+    "node_type": "python-api",
+    "key": "candidate-sql/rel-2026-10-08-0001/candidate_analytics.weather.json"
+  },
+  {
+    "release_id": "rel-2026-10-08-0001",
+    "unique_id": "test.service_1.not_null_orders_id.5c1f0b2a3d",
+    "node_type": "dbt-test",
+    "key": "candidate-sql/rel-2026-10-08-0001/candidate_test.service_1.not_null_orders_id.5c1f0b2a3d.sql"
+  },
+  {
+    "release_id": "rel-2026-10-08-0001",
+    "unique_id": "staging.mystery",
+    "node_type": "dbt-unknown",
+    "key": ""
+  }
+]

@@ -111,25 +111,26 @@ func TransitionsToDomain(in []TransitionDTO) []pipeline.Transition {
 	return out
 }
 
-// NodeDTO is the JSON shape of one release.Node. A topology of these is stored
-// in the release_pipeline_runs.candidate_topology and current_prod.topology_snapshot
-// JSONB columns and carried in the topology field of the manifest.loaded.candidate:v1
-// message release-controller consumes.
+// NodeDTO is the JSON shape of one release.Node, as stored in the
+// current_prod.topology_snapshot JSONB column, and as read by the legacy
+// topology repository from the inline release_pipeline_runs.candidate_topology
+// column during the one-time upgrade step. A stored candidate_artifact_uri
+// key from an older row is ignored on decode: candidate URIs are derived per
+// run.
 type NodeDTO struct {
-	UniqueID             string   `json:"unique_id"`
-	SchemaName           string   `json:"schema_name"`
-	TableName            string   `json:"table_name"`
-	ResolvedRelationID   string   `json:"resolved_relation_id"`
-	ServiceName          string   `json:"service_name"`
-	NodeType             string   `json:"node_type"`
-	ContentHash          string   `json:"content_hash"`
-	TestCount            int      `json:"test_count"`
-	ImageTag             string   `json:"image_tag"`
-	UpstreamUniqueIDs    []string `json:"upstream_unique_ids"`
-	Schedule             string   `json:"schedule"`
-	OriginalFilePath     string   `json:"original_file_path"`
-	SecretRef            string   `json:"secret_ref,omitempty"`
-	CandidateArtifactURI string   `json:"candidate_artifact_uri,omitempty"`
+	UniqueID           string   `json:"unique_id"`
+	SchemaName         string   `json:"schema_name"`
+	TableName          string   `json:"table_name"`
+	ResolvedRelationID string   `json:"resolved_relation_id"`
+	ServiceName        string   `json:"service_name"`
+	NodeType           string   `json:"node_type"`
+	ContentHash        string   `json:"content_hash"`
+	TestCount          int      `json:"test_count"`
+	ImageTag           string   `json:"image_tag"`
+	UpstreamUniqueIDs  []string `json:"upstream_unique_ids"`
+	Schedule           string   `json:"schedule"`
+	OriginalFilePath   string   `json:"original_file_path"`
+	SecretRef          string   `json:"secret_ref,omitempty"`
 }
 
 // TopologyDTO is the JSON shape of a release.Topology.
@@ -144,20 +145,19 @@ func TopologyFromDomain(in release.Topology) TopologyDTO {
 	out := make(TopologyDTO, len(in))
 	for i, n := range in {
 		out[i] = NodeDTO{
-			UniqueID:             n.UniqueID,
-			SchemaName:           n.SchemaName,
-			TableName:            n.TableName,
-			ResolvedRelationID:   n.ResolvedRelationID,
-			ServiceName:          n.ServiceName,
-			NodeType:             n.NodeType,
-			ContentHash:          n.ContentHash,
-			TestCount:            n.TestCount,
-			ImageTag:             n.ImageTag,
-			UpstreamUniqueIDs:    n.UpstreamUniqueIDs,
-			Schedule:             n.Schedule,
-			OriginalFilePath:     n.OriginalFilePath,
-			SecretRef:            n.SecretRef,
-			CandidateArtifactURI: n.CandidateArtifactURI,
+			UniqueID:           n.UniqueID,
+			SchemaName:         n.SchemaName,
+			TableName:          n.TableName,
+			ResolvedRelationID: n.ResolvedRelationID,
+			ServiceName:        n.ServiceName,
+			NodeType:           n.NodeType,
+			ContentHash:        n.ContentHash,
+			TestCount:          n.TestCount,
+			ImageTag:           n.ImageTag,
+			UpstreamUniqueIDs:  n.UpstreamUniqueIDs,
+			Schedule:           n.Schedule,
+			OriginalFilePath:   n.OriginalFilePath,
+			SecretRef:          n.SecretRef,
 		}
 	}
 	return out
@@ -171,20 +171,19 @@ func (t TopologyDTO) ToDomain() release.Topology {
 	out := make(release.Topology, len(t))
 	for i, d := range t {
 		out[i] = release.Node{
-			UniqueID:             d.UniqueID,
-			SchemaName:           d.SchemaName,
-			TableName:            d.TableName,
-			ResolvedRelationID:   d.ResolvedRelationID,
-			ServiceName:          d.ServiceName,
-			NodeType:             d.NodeType,
-			ContentHash:          d.ContentHash,
-			TestCount:            d.TestCount,
-			ImageTag:             d.ImageTag,
-			UpstreamUniqueIDs:    d.UpstreamUniqueIDs,
-			Schedule:             d.Schedule,
-			OriginalFilePath:     d.OriginalFilePath,
-			SecretRef:            d.SecretRef,
-			CandidateArtifactURI: d.CandidateArtifactURI,
+			UniqueID:           d.UniqueID,
+			SchemaName:         d.SchemaName,
+			TableName:          d.TableName,
+			ResolvedRelationID: d.ResolvedRelationID,
+			ServiceName:        d.ServiceName,
+			NodeType:           d.NodeType,
+			ContentHash:        d.ContentHash,
+			TestCount:          d.TestCount,
+			ImageTag:           d.ImageTag,
+			UpstreamUniqueIDs:  d.UpstreamUniqueIDs,
+			Schedule:           d.Schedule,
+			OriginalFilePath:   d.OriginalFilePath,
+			SecretRef:          d.SecretRef,
 		}
 	}
 	return out

@@ -35,8 +35,10 @@ COPY release-controller/ ./release-controller/
 
 WORKDIR /app/release-controller
 
-# Pre-compile the binary for faster startup in K8s.
-RUN go build -o /app/release-controller/bin/release-controller main.go
+# Pre-compile the binary for faster startup in K8s. Build the whole package
+# (not `main.go`): package main spans main.go and startup.go, and a single-file
+# build omits the siblings.
+RUN go build -o /app/release-controller/bin/release-controller .
 
 EXPOSE 8088
 

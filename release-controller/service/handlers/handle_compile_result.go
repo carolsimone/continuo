@@ -158,7 +158,11 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 	}
 	set := assembleFor(ctx, u, d.Logger, r, pointers, d.Bucket)
 
-	if err := emitReleaseRequested(ctx, u, in.ReleaseID, set.ManifestKeys); err != nil {
+	// The image tags are the run's own assembled map (set at activation), not
+	// set.ImageTags: they are the image tags assembled at activation, and no
+	// promotion can have moved a pointer while this run held the queue's single
+	// active slot.
+	if err := emitReleaseRequested(ctx, u, in.ReleaseID, set.ManifestKeys, r.ImageTags()); err != nil {
 		return err
 	}
 	if err := u.Commit(); err != nil {

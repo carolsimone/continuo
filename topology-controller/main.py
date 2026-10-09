@@ -19,8 +19,10 @@ from adapters.code_bundle_uploader import CodeBundleUploader
 from adapters.health.server import start_health_server
 from adapters.redis.candidate_publisher import CandidateManifestPublisher
 from adapters.redis.consumer import Consumer
+from adapters.redis.error_class import is_infrastructure
 from adapters.redis.release_requested_binding import parse_release_requested
 from adapters.sources.s3 import S3Source
+from adapters.topology_artifact_writer import TopologyArtifactWriter
 from domain.model import Runtime
 from service.candidate_artifacts import DbtSqlArtifactBuilder, PythonSpecArtifactBuilder
 from service.candidate_manifest_handler import CandidateManifestHandler
@@ -51,13 +53,14 @@ def main() -> None:
 
     redis_client = redis.from_url(REDIS_URL, decode_responses=False)
 
-    # Candidate-parse flow (release.requested:v1 -> manifest.loaded.candidate:v1).
+    # Candidate-parse flow (release.requested:v1 -> manifest.loaded.candidate:v2).
     candidate_publisher = CandidateManifestPublisher(
-        redis_client, MANIFEST_LOADED_CANDIDATE_STREAM,
+        redis_client, MANIFEST_LOADED_CANDIDATE_STREAM, producer=SERVICE_NAME,
     )
     candidate_uploader = CandidateSqlUploader(s3_client, S3_BUCKET)
     candidate_spec_uploader = CandidateSpecUploader(s3_client, S3_BUCKET)
     code_bundle_uploader = CodeBundleUploader(s3_client, S3_BUCKET)
+    topology_artifact_writer = TopologyArtifactWriter(s3_client, S3_BUCKET)
 
     # Resolved once at boot: validate() has already rejected an unsupported
     # engine, so every release parses and re-renders SQL for the warehouse this
@@ -73,11 +76,17 @@ def main() -> None:
             source=source,
             publisher=candidate_publisher,
             bundle_uploader=code_bundle_uploader,
+            artifact_writer=topology_artifact_writer,
             artifact_builders={
                 Runtime.DBT: DbtSqlArtifactBuilder(candidate_uploader),
                 Runtime.PYTHON: PythonSpecArtifactBuilder(candidate_spec_uploader),
             },
             dialect=dialect,
+            image_tags=message.image_tags,
+            # An S3 write failure the consumer's classifier calls an outage
+            # propagates, so the consumer pauses and redelivers instead of the
+            # release being rejected.
+            is_infrastructure_error=is_infrastructure,
         ).handle(release_id=message.release_id)
 
     candidate_consumer = Consumer(

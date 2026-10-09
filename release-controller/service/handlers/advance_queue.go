@@ -119,7 +119,7 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 		if err := u.RunRepo().Save(ctx, next); err != nil {
 			return fmt.Errorf("save release: %w", err)
 		}
-		if err := emitReleaseRequested(ctx, u, next.ID(), set.ManifestKeys); err != nil {
+		if err := emitReleaseRequested(ctx, u, next.ID(), set.ManifestKeys, next.ImageTags()); err != nil {
 			return err
 		}
 		if err := u.Commit(); err != nil {

@@ -23,22 +23,30 @@ type manifestKeyDTO struct {
 }
 
 // releaseRequestedPayload is the exact wire shape of release.requested:v1 as
-// consumed by topology-controller.
+// consumed by topology-controller. ImageTags is the run's assembled map
+// (service -> tag): topology-controller joins it onto every node of the
+// candidate topology artifact it writes, so the artifact carries the image
+// each node runs with.
 type releaseRequestedPayload struct {
-	ReleaseID    string           `json:"release_id"`
-	ManifestKeys []manifestKeyDTO `json:"manifest_keys"`
+	ReleaseID    string            `json:"release_id"`
+	ManifestKeys []manifestKeyDTO  `json:"manifest_keys"`
+	ImageTags    map[string]string `json:"image_tags"`
 }
 
 // emitReleaseRequested maps the assembled manifest keys onto the wire DTO and
 // writes the release.requested:v1 outbox row. Shared by the compile-ok path
 // (dbt) and AdvanceQueue's skip-compile activation branch (python) so the two
-// emission sites cannot drift.
-func emitReleaseRequested(ctx context.Context, u uow.UnitOfWork, releaseID string, keys []release.ManifestKey) error {
+// emission sites cannot drift. imageTags is the run's assembled map; a nil map
+// is sent as an empty object so the key is always present.
+func emitReleaseRequested(ctx context.Context, u uow.UnitOfWork, releaseID string, keys []release.ManifestKey, imageTags map[string]string) error {
 	dtos := make([]manifestKeyDTO, len(keys))
 	for i, k := range keys {
 		dtos[i] = manifestKeyDTO{Service: k.Service, S3URI: k.S3URI, Kind: string(k.Kind)}
 	}
-	payload, err := json.Marshal(releaseRequestedPayload{ReleaseID: releaseID, ManifestKeys: dtos})
+	if imageTags == nil {
+		imageTags = map[string]string{}
+	}
+	payload, err := json.Marshal(releaseRequestedPayload{ReleaseID: releaseID, ManifestKeys: dtos, ImageTags: imageTags})
 	if err != nil {
 		return fmt.Errorf("marshal release.requested payload: %w", err)
 	}

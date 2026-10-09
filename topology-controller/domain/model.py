@@ -6,6 +6,10 @@ from domain.contract_vocabulary import ParseFailureKind
 from domain.contract_vocabulary import NodeRuntime as Runtime
 from domain.contract_vocabulary import NodeType
 
+DEFAULT_TENANT_ID = "default"
+"""The tenant every release belongs to on a single-tenant install. It prefixes
+the topology artifact's key and stamps every event this service writes."""
+
 
 class ManifestKind(StrEnum):
     """Which artifact dialect a service's release payload speaks.
@@ -31,6 +35,16 @@ class FailedNode:
     file_path: str
     node_type: str
     detail: str
+
+
+@dataclass(frozen=True)
+class TopologyArtifactRef:
+    """Where a release's topology artifact lives, the SHA-256 of its stored
+    bytes, and how many nodes it holds: the reference the parse result carries
+    instead of the nodes themselves."""
+    uri: str
+    sha256: str
+    node_count: int
 
 
 @dataclass(frozen=True)

@@ -59,6 +59,12 @@ func (u *UnitOfWork) ServiceProdRepo() repository.ServiceProdRepository {
 	return NewServiceProdRepository(u.queryer())
 }
 
+// LegacyTopologyRepo returns the repository the one-time upgrade step uses,
+// bound to the current queryer.
+func (u *UnitOfWork) LegacyTopologyRepo() repository.LegacyTopologyRepository {
+	return NewLegacyTopologyRepository(u.queryer())
+}
+
 // OutboxTable is the outbox table this service writes its events to and its
 // relay publishes from. Its insert trigger notifies the Postgres channel of the
 // same name, on which the relay's waker listens.

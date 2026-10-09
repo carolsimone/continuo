@@ -47,7 +47,7 @@ const probeUniqueID = "e2e_schema.rel_probe"
 // release pipeline end-to-end through the production cutover path:
 //
 //	POST /releases → release.requested:v1 → topology-controller candidate parse
-//	→ manifest.loaded.candidate:v1 → release-controller derives the changed-node
+//	→ topology artifact in S3 + manifest.loaded.candidate:v2 → release-controller derives the changed-node
 //	set → validation.requested:v1 → executor/k8s run a real dbt --empty job →
 //	validation.result:v1 terminal (kind=complete) → release-controller promotes
 //	→ release.promoted:v1 → orchestrator swaps the Neo4j topology.
@@ -133,6 +133,11 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 	// 6. A real dbt validation job runs for rel_probe; on success the release
 	//    promotes. A rejection fails the test immediately with the reason.
 	waitForReleasePromoted(t, ctx, clients, releaseID, 10*time.Minute)
+
+	// 6b. topology-controller wrote the release's topology once, as an artifact;
+	//     the run references it by URI and checksum, and the artifact carries the
+	//     image tag the release was submitted with.
+	assertCandidateTopologyArtifact(t, ctx, clients, releaseID, probeUniqueID, changedImageTag)
 
 	// 7. The orchestrator must have swapped the Neo4j topology to this release.
 	//    The swap is asynchronous relative to promotion, so poll.

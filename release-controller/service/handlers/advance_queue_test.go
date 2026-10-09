@@ -217,6 +217,8 @@ func TestAdvanceQueue_PythonRelease_SkipsCompile_EmitsReleaseRequested(t *testin
 	assert.Equal(t, map[string]string{"svc-py": "python", "svc-dbt": "dbt"}, byService)
 	assert.Equal(t, "s3://b/svc-py/rPy/contract.yaml", uris["svc-py"])
 	assert.Equal(t, "s3://b/svc-dbt/rOld/manifest.json", uris["svc-dbt"])
+	assert.Equal(t, map[string]string{"svc-py": "img:1", "svc-dbt": "t-old"}, releaseRequestedImageTags(t, entries[0].Payload),
+		"release.requested carries the run's assembled image tags: topology-controller joins exactly these onto every node")
 }
 
 func TestAdvanceQueue_DbtRelease_StillCompiles(t *testing.T) {
@@ -282,8 +284,10 @@ func verifiedOriginal(id string, now time.Time) *pipeline.Run {
 		Status:         pipeline.StatusRejected,
 		ImageTags:      map[string]string{"svc-a": "tag-a-candidate", "svc-b": "tag-b-old"},
 		ChangedService: "svc-a",
-		CandidateTopology: release.Topology{
-			{UniqueID: "s.a", ServiceName: "svc-a", OriginalFilePath: "models/a.sql"},
+		// Activation only needs to know the verified release was parsed; it
+		// never reads the artifact.
+		CandidateTopology: release.TopologyRef{
+			URI: "s3://b/tenants/default/topologies/" + id + "/topology.json.gz", SHA256: "sha-" + id, NodeCount: 1,
 		},
 		ManifestKind: release.ManifestKindDbt,
 		CreatedAt:    now,
@@ -316,6 +320,8 @@ func TestAdvanceQueue_VerificationVerifiesTheRejectedReleasesCandidate(t *testin
 	r, _ := store.GetRelease("rVerify")
 	assert.Equal(t, "tag-a-candidate", r.ImageTags()["svc-a"],
 		"the image tag must come from the rejected release too, or the run would execute production's image against the candidate manifest")
+	assert.Equal(t, "tag-a-candidate", releaseRequestedImageTags(t, entries[0].Payload)["svc-a"],
+		"the verified release's image tag must reach topology-controller too, or the artifact would carry production's image")
 }
 
 // TestAdvanceQueue_VerificationVerifyingAnUnknownRelease_FallsBackToProd
@@ -375,4 +381,15 @@ func manifestKeyURIs(t *testing.T, payload []byte) map[string]string {
 		uris[k.Service] = k.S3URI
 	}
 	return uris
+}
+
+// releaseRequestedImageTags decodes the image_tags map of a release.requested
+// payload.
+func releaseRequestedImageTags(t *testing.T, payload []byte) map[string]string {
+	t.Helper()
+	var p struct {
+		ImageTags map[string]string `json:"image_tags"`
+	}
+	require.NoError(t, json.Unmarshal(payload, &p))
+	return p.ImageTags
 }

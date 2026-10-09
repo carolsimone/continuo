@@ -50,7 +50,7 @@ func newSeedBuildCompletedHandler(deps *handlers.Deps, logger *slog.Logger) pkgr
 			return fmt.Errorf("%w: %s decode: %v", pkgevents.ErrPermanent, streams.SeedBuildCompletedV1, err)
 		}
 		if err := handlers.HandleSeedBuildResult(ctx, deps, dto.toInput()); err != nil {
-			return err
+			return permanentOnCorruptTopology(err)
 		}
 		// Advance the queue after every seed-build result. On the success path the
 		// release stays active (Validating or promoted), so this is a no-op. On the

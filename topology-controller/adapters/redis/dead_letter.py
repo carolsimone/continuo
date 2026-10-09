@@ -4,14 +4,13 @@ The fields match the Go consumers' (pkg/events.ConsumerDeadLetterFields);
 tests/fixtures/consumer_dead_letter_v1.json pins both to the same entry.
 """
 
-import json
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 
+from adapters.redis.envelope import EVENT_ID_NAMESPACE, envelope_fields
 from domain.contract_vocabulary import DeadLetterKind
+from domain.model import DEFAULT_TENANT_ID
 
-EVENT_ID_NAMESPACE = uuid.UUID("2f0c5a7e-8d14-4b63-a1f9-6c3e5b2d7a40")
-DEFAULT_TENANT_ID = "default"
 SCHEMA_VERSION = 1
 
 
@@ -44,11 +43,11 @@ def build_fields(*, tenant_id: str, producer: str, occurred_at: datetime, stream
         "error": error,
         "delivery_count": delivery_count,
     }
-    return {
-        "event_id": event_id(tenant_id, group, stream, message_id),
-        "tenant_id": tenant_id,
-        "occurred_at": occurred_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-        "producer": producer,
-        "schema_version": str(SCHEMA_VERSION),
-        "payload": json.dumps(payload, separators=(",", ":"), ensure_ascii=False),
-    }
+    return envelope_fields(
+        event_id=event_id(tenant_id, group, stream, message_id),
+        tenant_id=tenant_id,
+        occurred_at=occurred_at,
+        producer=producer,
+        schema_version=SCHEMA_VERSION,
+        payload=payload,
+    )

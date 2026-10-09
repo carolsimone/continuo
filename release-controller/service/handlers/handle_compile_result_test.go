@@ -3,6 +3,7 @@ package handlers_test
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
@@ -363,4 +364,21 @@ func TestHandleCompileResult_Verification_Failed_NoReleaseRejected_FinishedEmitt
 			"a verification run's compile failure must not be reported as a release rejection")
 	}
 	assert.Equal(t, "failed", outcomeOf(t, findEntry(t, fakes, streams.PipelineRunFinishedV1)))
+}
+
+// The compile-ok path requests the manifest load with the image tags the run
+// assembled at activation; topology-controller joins exactly these onto the
+// candidate topology it writes.
+func TestHandleCompileResult_OKReleaseRequestedCarriesAssembledImageTags(t *testing.T) {
+	d, fakes := newTestDeps(t)
+	fakes.SeedServiceProd(release.NewServiceProd("svc-b", "rOld", "s3://continuo/svc-b/rOld/manifest.json", "tag-b", release.ManifestKindDbt, time.Unix(0, 0)))
+	putCompilingRelease(t, fakes, d, "rel-c-tags")
+
+	require.NoError(t, handlers.HandleCompileResult(ctx(t), d, handlers.HandleCompileResultInput{
+		ReleaseID: "rel-c-tags", Status: "ok",
+	}))
+
+	e := lastOutbox(t, fakes)
+	require.Equal(t, streams.ReleaseRequestedV1, e.StreamName)
+	assert.Equal(t, map[string]string{"svc-a": "sha-compile", "svc-b": "tag-b"}, releaseRequestedImageTags(t, e.Payload))
 }

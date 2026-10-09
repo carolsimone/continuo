@@ -73,3 +73,16 @@ func TestHandleListReleases_OmitsVerificationRuns(t *testing.T) {
 	require.Len(t, resp.Releases, 1)
 	assert.Equal(t, "rel-1", resp.Releases[0]["release_id"])
 }
+
+// The release list reports a run's node count from its topology reference, so
+// listing never reads an artifact.
+func TestToReleaseListItem_NodeCountComesFromTheTopologyRef(t *testing.T) {
+	r := pipeline.Rehydrate(pipeline.RehydrateInput{
+		ID:     "rel-1",
+		Status: pipeline.StatusValidating,
+		CandidateTopology: release.TopologyRef{
+			URI: "s3://continuo/tenants/default/topologies/rel-1/topology.json.gz", SHA256: "ab", NodeCount: 133,
+		},
+	})
+	assert.Equal(t, 133, toReleaseListItem(r).NodeCount)
+}

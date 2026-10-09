@@ -39,6 +39,11 @@ import (
 // exceeds any legitimate invocation while still bounding a wedge.
 const consumerHandlerTimeout = 60 * time.Second
 
+// topologyCacheSize bounds the decoded topologies release-controller keeps in
+// memory. One run is active at a time; the active run, the release it may
+// verify, and recent runs still receiving results fit with room to spare.
+const topologyCacheSize = 16
+
 // dbPool bounds the Postgres pool when DB_MAX_OPEN_CONNS / DB_MAX_IDLE_CONNS
 // are unset: two connections per stream consumer (a handler's transaction and
 // a read outside it), plus the outbox relay, background loops and request
@@ -136,8 +141,9 @@ func main() {
 	})
 	metricsReg.WatchDB(db.DB, cfg.Postgres.DB)
 
-	// S3 client for pruning candidate-SQL objects when releases are deleted.
-	s3Client := s3adapter.NewS3Client(
+	// S3 client: prune-time deletion of a run's objects, and topology artifact reads and writes.
+	s3Client, err := s3adapter.NewS3Client(
+		ctx,
 		cfg.S3.EndpointURL,
 		cfg.S3.Bucket,
 		cfg.S3.Region,
@@ -145,6 +151,10 @@ func main() {
 		cfg.S3.SecretAccessKey,
 		logger,
 	)
+	if err != nil {
+		logger.Error("Failed to configure the S3 client", "error", err)
+		os.Exit(1)
+	}
 
 	// Dial agent-remediation once for the RetryRemediation handler, which reads
 	// a release's remediation attempts before starting another round.
@@ -163,6 +173,8 @@ func main() {
 		Logger:    logger,
 		Bucket:    cfg.S3.Bucket,
 		Proposals: proposalsClient,
+
+		Topologies: s3adapter.NewTopologyArtifactStore(s3Client, cfg.S3.Bucket, topologyCacheSize),
 
 		Maintenance: cfg.Maintenance,
 
@@ -232,6 +244,21 @@ func main() {
 	// ctx is cancelled.
 	outboxProc := redisadapter.StartOutboxPublisher(ctx, db, rc, outboxWaker, metricsReg.Outbox(), liveReg, logger)
 	metricsReg.WatchOutbox(outboxProc)
+
+	// Runs holding an inline topology or left parsing are settled before any
+	// consumer reads a run: inline topologies are written to artifacts and runs
+	// left parsing fail with upgrade_interrupted. The step waits out an
+	// unreachable Postgres or object store; readiness stays false meanwhile.
+	if err := runStartupStep(ctx, logger, "upgrade legacy topologies", func(ctx context.Context) error {
+		return handlers.UpgradeLegacyTopologies(ctx, deps)
+	}); err != nil {
+		if errors.Is(err, context.Canceled) {
+			logger.Info("shutdown requested during the startup upgrade step")
+			os.Exit(0)
+		}
+		logger.Error("startup upgrade step failed", "error", err)
+		os.Exit(1)
+	}
 
 	// Start stream consumers in goroutines; each blocks until ctx is cancelled.
 	runConsumer("manifest_loaded_candidate", redisadapter.NewManifestLoadedCandidateConsumer(rc, deps, logger))

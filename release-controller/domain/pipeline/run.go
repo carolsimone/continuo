@@ -133,7 +133,7 @@ type Run struct {
 	imageTags         map[string]string
 	changedService    string
 	manifestKind      release.ManifestKind
-	candidateTopology release.Topology
+	candidateTopology release.TopologyRef
 	validationNodeIDs []string
 	perNodeResults    []NodeValidationResult
 	failReason        string
@@ -180,21 +180,21 @@ func NewVerification(id, service, imageTag, verifiesReleaseID string, attempt in
 	return r
 }
 
-func (r *Run) ID() string                             { return r.id }
-func (r *Run) Kind() Kind                             { return r.kind }
-func (r *Run) Status() Status                         { return r.status }
-func (r *Run) ImageTags() map[string]string           { return r.imageTags }
-func (r *Run) ChangedService() string                 { return r.changedService }
-func (r *Run) ManifestKind() release.ManifestKind     { return r.manifestKind }
-func (r *Run) CodeBundleURI() string                  { return r.codeBundleURI }
-func (r *Run) CandidateTopology() release.Topology    { return r.candidateTopology }
-func (r *Run) ValidationNodeIDs() []string            { return r.validationNodeIDs }
-func (r *Run) FailReason() string                     { return r.failReason }
-func (r *Run) FailDetail() string                     { return r.failDetail }
-func (r *Run) FailingNodes() []string                 { return r.failingNodes }
-func (r *Run) PerNodeResults() []NodeValidationResult { return r.perNodeResults }
-func (r *Run) CreatedAt() time.Time                   { return r.createdAt }
-func (r *Run) Transitions() []Transition              { return r.transitions }
+func (r *Run) ID() string                                { return r.id }
+func (r *Run) Kind() Kind                                { return r.kind }
+func (r *Run) Status() Status                            { return r.status }
+func (r *Run) ImageTags() map[string]string              { return r.imageTags }
+func (r *Run) ChangedService() string                    { return r.changedService }
+func (r *Run) ManifestKind() release.ManifestKind        { return r.manifestKind }
+func (r *Run) CodeBundleURI() string                     { return r.codeBundleURI }
+func (r *Run) CandidateTopologyRef() release.TopologyRef { return r.candidateTopology }
+func (r *Run) ValidationNodeIDs() []string               { return r.validationNodeIDs }
+func (r *Run) FailReason() string                        { return r.failReason }
+func (r *Run) FailDetail() string                        { return r.failDetail }
+func (r *Run) FailingNodes() []string                    { return r.failingNodes }
+func (r *Run) PerNodeResults() []NodeValidationResult    { return r.perNodeResults }
+func (r *Run) CreatedAt() time.Time                      { return r.createdAt }
+func (r *Run) Transitions() []Transition                 { return r.transitions }
 
 // Candidate returns the candidate-only facts, nil for a verification.
 func (r *Run) Candidate() *Candidate { return r.candidate }
@@ -392,9 +392,9 @@ func (r *Run) TransitionFromCompiling(now time.Time) error {
 	return nil
 }
 
-// TransitionToValidating records the candidate topology and validation set
-// and moves a parsing run into validating.
-func (r *Run) TransitionToValidating(topology release.Topology, validationNodeIDs []string, now time.Time) error {
+// TransitionToValidating records the reference to the candidate topology
+// artifact and the validation set, and moves a parsing run into validating.
+func (r *Run) TransitionToValidating(topology release.TopologyRef, validationNodeIDs []string, now time.Time) error {
 	if r.status != StatusParsing {
 		return fmt.Errorf("cannot transition to validating from %s", r.status)
 	}
@@ -404,10 +404,11 @@ func (r *Run) TransitionToValidating(topology release.Topology, validationNodeID
 	return nil
 }
 
-// TransitionToSeedBuilding records the candidate topology and validation set
-// and moves a parsing run into seed_building, for a run whose changed closure
-// holds new or changed seeds that must be built before validation.
-func (r *Run) TransitionToSeedBuilding(topology release.Topology, validationNodeIDs []string, now time.Time) error {
+// TransitionToSeedBuilding records the reference to the candidate topology
+// artifact and the validation set, and moves a parsing run into
+// seed_building, for a run whose changed closure holds new or changed seeds
+// that must be built before validation.
+func (r *Run) TransitionToSeedBuilding(topology release.TopologyRef, validationNodeIDs []string, now time.Time) error {
 	if r.status != StatusParsing {
 		return fmt.Errorf("cannot transition to seed_building from %s", r.status)
 	}
@@ -504,7 +505,7 @@ type RehydrateInput struct {
 	ImageTags         map[string]string
 	ChangedService    string
 	ManifestKind      release.ManifestKind
-	CandidateTopology release.Topology
+	CandidateTopology release.TopologyRef
 	ValidationNodeIDs []string
 	PerNodeResults    []NodeValidationResult
 	FailReason        string
