@@ -49,6 +49,18 @@ func HandleValidationResult(ctx context.Context, d *Deps, in HandleValidationRes
 	}
 	defer u.Rollback() //nolint:errcheck
 
+	// Take the release-queue advisory lock before the run row is loaded FOR
+	// UPDATE below. A promotion holds both locks, and every transaction that
+	// takes both must take the advisory lock first so the global
+	// advisory→run-row order holds and the cross-process wait-for graph stays
+	// acyclic (no deadlock). Acquiring it here serializes the whole
+	// validation-result handler under the queue lock, which is acceptable: it
+	// already serializes at promotion, validation results are low-throughput and
+	// single-consumer, and a consistent lock order beats the narrow concurrency.
+	if err := u.LockReleaseQueue(ctx); err != nil {
+		return fmt.Errorf("lock release queue: %w", err)
+	}
+
 	r, err := u.RunRepo().Load(ctx, in.ReleaseID) // FOR UPDATE: serialize against per-node upserts
 	if err != nil {
 		return fmt.Errorf("load release: %w", err)
@@ -149,7 +161,11 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipe
 	// allocation and the current_prod move, so a concurrent announce or
 	// re-announce cannot read current_prod, take a higher seq and clobber this
 	// promotion between those steps. Every holder takes this lock before reading
-	// current_prod, so the order is consistent.
+	// current_prod, so the order is consistent. This keeps promoteToProduction
+	// correct for every caller; a caller that loads a run row FOR UPDATE first
+	// (HandleValidationResult) takes this lock immediately after Begin, and this
+	// re-acquisition in the same transaction is a no-op (pg_advisory_xact_lock
+	// taken twice in one tx simply succeeds).
 	if err := u.LockReleaseQueue(ctx); err != nil {
 		return fmt.Errorf("lock release queue: %w", err)
 	}

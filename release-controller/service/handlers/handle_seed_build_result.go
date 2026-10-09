@@ -37,6 +37,11 @@ func HandleSeedBuildResult(ctx context.Context, d *Deps, in HandleSeedBuildResul
 	}
 	defer u.Rollback() //nolint:errcheck
 
+	// Get, not Load: the seed-build leg has a single writer of this row, so no
+	// run-row FOR UPDATE is needed. Holding no run-row lock also means the
+	// nothing-to-validate short-circuit below can take the release-queue advisory
+	// lock inside promoteToProduction without inverting any advisory↔run-row
+	// order — only one of the two locks is ever held here.
 	r, err := u.RunRepo().Get(ctx, in.ReleaseID)
 	if err != nil {
 		return fmt.Errorf("get release: %w", err)

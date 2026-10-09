@@ -74,6 +74,12 @@ func HandleParsedManifest(ctx context.Context, d *Deps, in HandleParsedManifestI
 	// HandleValidationResult) Load to serialize on the row. The parse leg has no
 	// such contention, so FOR UPDATE would only add lock cost without changing
 	// the outcome.
+	//
+	// Using Get also means this transaction holds no run-row FOR UPDATE when a
+	// promote path (promoteBootstrap, or the nothing-to-validate short-circuit)
+	// later takes the release-queue advisory lock inside promoteToProduction:
+	// with only one of the two locks ever held here, there is no advisory↔run-row
+	// ordering to invert, so no lock taken here needs reordering.
 	r, err := u.RunRepo().Get(ctx, in.ReleaseID)
 	if err != nil {
 		return fmt.Errorf("get release: %w", err)
