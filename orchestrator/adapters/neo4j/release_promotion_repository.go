@@ -320,3 +320,62 @@ func (r *ReleasePromotionRepository) PromoteRelease(
 	)
 	return topology.PromotionApplied, nil
 }
+
+// StillDesiredSeeds matches a late promotion's changed seeds against the live
+// topology. A seed qualifies only when the live :Table with its unique_id is an
+// active dbt-seed with the same, non-empty content_hash: the live release then
+// still wants exactly that data, so building it cannot overwrite newer content.
+// The returned nodes carry the live identity and image_tag.
+func (r *ReleasePromotionRepository) StillDesiredSeeds(
+	ctx context.Context,
+	seeds []topology.ReleasePromotedTopologyNode,
+) ([]topology.ReleasePromotedTopologyNode, error) {
+	if len(seeds) == 0 {
+		return nil, nil
+	}
+	params := make([]map[string]any, 0, len(seeds))
+	for _, s := range seeds {
+		params = append(params, map[string]any{"unique_id": s.UniqueID, "content_hash": s.ContentHash})
+	}
+
+	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
+	defer func() { _ = session.Close(ctx) }()
+	res, err := session.Run(ctx, `
+		UNWIND $seeds AS s
+		MATCH (t:Table {unique_id: s.unique_id})
+		WHERE COALESCE(t.active, true)
+		  AND t.node_type = 'dbt-seed'
+		  AND s.content_hash <> ''
+		  AND t.content_hash = s.content_hash
+		RETURN t.unique_id    AS unique_id,
+		       t.schema_name  AS schema_name,
+		       t.table_name   AS table_name,
+		       t.service_name AS service_name,
+		       t.node_type    AS node_type,
+		       t.content_hash AS content_hash,
+		       t.image_tag    AS image_tag,
+		       t.schedule_name AS schedule_name
+		ORDER BY unique_id
+	`, map[string]any{"seeds": params})
+	if err != nil {
+		return nil, fmt.Errorf("match late seeds against the live topology: %w", err)
+	}
+	var out []topology.ReleasePromotedTopologyNode
+	for res.Next(ctx) {
+		rec := res.Record()
+		out = append(out, topology.ReleasePromotedTopologyNode{
+			UniqueID:    safeString(recordValue(rec, "unique_id")),
+			SchemaName:  safeString(recordValue(rec, "schema_name")),
+			TableName:   safeString(recordValue(rec, "table_name")),
+			ServiceName: safeString(recordValue(rec, "service_name")),
+			NodeType:    safeString(recordValue(rec, "node_type")),
+			ContentHash: safeString(recordValue(rec, "content_hash")),
+			ImageTag:    safeString(recordValue(rec, "image_tag")),
+			Schedule:    safeString(recordValue(rec, "schedule_name")),
+		})
+	}
+	if err := res.Err(); err != nil {
+		return nil, fmt.Errorf("iterate late seed matches: %w", err)
+	}
+	return out, nil
+}

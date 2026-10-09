@@ -10,8 +10,10 @@ import (
 	"time"
 
 	neo4jinfra "github.com/carolsimone/continuo/orchestrator/adapters/neo4j"
+	"github.com/carolsimone/continuo/orchestrator/service/ports"
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/topologyartifact"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
@@ -132,6 +134,41 @@ func (f *fakeUnitOfWork) Rollback() error                 { f.RolledBackTx = tru
 // newTestLogger returns a debug-level text logger writing to stdout.
 func newTestLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+}
+
+// ── fakes: ports.TopologyArtifactReader ──────────────────────────────────────
+
+// fakeArtifactReader serves topology artifacts from memory, keyed by URI. err,
+// when set, is returned for every read.
+type fakeArtifactReader struct {
+	docs  map[string]topologyartifact.Document
+	err   error
+	calls []string
+}
+
+func (f *fakeArtifactReader) Load(_ context.Context, uri, _ string) (topologyartifact.Document, error) {
+	f.calls = append(f.calls, uri)
+	if f.err != nil {
+		return topologyartifact.Document{}, f.err
+	}
+	doc, ok := f.docs[uri]
+	if !ok {
+		return topologyartifact.Document{}, fmt.Errorf("%w: %s", ports.ErrTopologyArtifactNotFound, uri)
+	}
+	return doc, nil
+}
+
+var _ ports.TopologyArtifactReader = (*fakeArtifactReader)(nil)
+
+// artifactFor registers doc under the URI its release's artifact has and
+// returns that URI, so a test can build a promotion that names it.
+func (f *fakeArtifactReader) artifactFor(doc topologyartifact.Document) string {
+	if f.docs == nil {
+		f.docs = map[string]topologyartifact.Document{}
+	}
+	uri := "s3://continuo/" + topologyartifact.Key(doc.TenantID, doc.ReleaseID)
+	f.docs[uri] = doc
+	return uri
 }
 
 // ── integration test infrastructure ──────────────────────────────────────────

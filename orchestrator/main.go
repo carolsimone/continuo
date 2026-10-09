@@ -411,12 +411,21 @@ func main() {
 	// full-inherited rebases that produce no node.updated:v1 traffic).
 	runFinalizedHandler := handlers.NewRunFinalizedHandler(runAggRepo, logger)
 
-	// release.promoted swaps the live Neo4j topology when release-controller
-	// promotes a release, then emits schedules.loaded:v1 so state can refresh
-	// its schedule projections. The swap decides by promotion seq, so a late or
+	// release.promoted:v2 swaps the live Neo4j topology when release-controller
+	// promotes a release, reading the topology from the release's artifact in
+	// object storage, then emits schedules.loaded:v1 so state can refresh its
+	// schedule projections. The swap decides by promotion seq, so a late or
 	// redriven older promotion never reverts the live topology.
+	topologyArtifactReader, err := s3infra.NewTopologyArtifactReader(
+		ctx, cfg.S3.EndpointURL, cfg.S3.Bucket, cfg.S3.Region,
+		cfg.S3.AccessKeyID, cfg.S3.SecretAccessKey,
+	)
+	if err != nil {
+		logger.Error("Failed to build the object-storage client", "error", err)
+		os.Exit(1)
+	}
 	releasePromotionRepo := neo4jinfra.NewReleasePromotionRepository(neo4jClient, logger)
-	releasePromotedHandler := handlers.NewReleasePromotedHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), releasePromotionRepo, logger)
+	releasePromotedHandler := handlers.NewReleasePromotedHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), topologyArtifactReader, releasePromotionRepo, logger)
 
 	// trigger.promoted_seeds:v1 — projects the run state created for a promoted
 	// release onto its changed seeds, so building them into the prod schema runs
@@ -473,7 +482,7 @@ func main() {
 		{"rebase", streams.TriggerRebaseV1, streams.OrchestratorRebase, redis.NewRebaseBinding(handleRebaseHandler, logger), topologyHandlerTimeout},
 		{"single_node_run", streams.TriggerSingleNodeRunV1, streams.OrchestratorSingleNodeRun, redis.NewSingleNodeRunBinding(handleSingleNodeRunHandler, logger), topologyHandlerTimeout},
 		{"run_finalized", streams.RunFinalizedV1, streams.OrchestratorRunFinalized, redis.NewRunFinalizedBinding(runFinalizedHandler, logger), 0},
-		{"release_promoted", streams.ReleasePromotedV1, streams.OrchestratorReleasePromoted, redis.NewReleasePromotedBinding(releasePromotedHandler, logger), topologyHandlerTimeout},
+		{"release_promoted", streams.ReleasePromotedV2, streams.OrchestratorReleasePromotedV2, redis.NewReleasePromotedBinding(releasePromotedHandler, logger), topologyHandlerTimeout},
 		{"release_promoted_versions", streams.ReleasePromotedV1, streams.OrchestratorReleasePromotedVersions, redis.NewReleasePromotedVersionsBinding(releasePromotedVersionsHandler, logger), topologyHandlerTimeout},
 		{"promoted_seeds", streams.TriggerPromotedSeedsV1, streams.OrchestratorPromotedSeeds, redis.NewPromotedSeedsBinding(handlePromotedSeedsHandler, logger), topologyHandlerTimeout},
 		{"remediation_requested_rejections", streams.RemediationRequestedV2, streams.OrchestratorRemediationRequestedRejections, redis.NewRemediationRequestedBinding(rejectionsHandler, logger), 0},

@@ -5,17 +5,20 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"testing"
 	"time"
 
-	domainEvent "github.com/carolsimone/continuo/orchestrator/domain/event"
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/domain/repository"
 	"github.com/carolsimone/continuo/orchestrator/domain/topology"
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
+	"github.com/carolsimone/continuo/orchestrator/service/ports"
 	"github.com/carolsimone/continuo/pkg/events"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/carolsimone/continuo/pkg/topologyartifact"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -24,11 +27,14 @@ import (
 // ── fakes: repository.ReleasePromotionRepository ─────────────────────────────
 
 // fakeReleasePromotionRepository records every swap and answers with outcome
-// (PromotionApplied when unset) or err.
+// (PromotionApplied when unset) or err. stillDesired, when set, decides which
+// seeds StillDesiredSeeds returns; unset, it returns none.
 type fakeReleasePromotionRepository struct {
 	outcome             topology.PromotionOutcome
 	err                 error
 	promoteReleaseCalls []promoteReleaseCall
+	stillDesired        func([]topology.ReleasePromotedTopologyNode) []topology.ReleasePromotedTopologyNode
+	stillDesiredCalls   [][]topology.ReleasePromotedTopologyNode
 }
 
 type promoteReleaseCall struct {
@@ -58,45 +64,59 @@ func (f *fakeReleasePromotionRepository) PromoteRelease(
 	return f.outcome, nil
 }
 
-var _ repository.ReleasePromotionRepository = (*fakeReleasePromotionRepository)(nil)
-
-// ── helpers ───────────────────────────────────────────────────────────────────
-
-func newReleasePromotedHandler(uow *fakeUnitOfWork, promRepo *fakeReleasePromotionRepository) *handlers.ReleasePromotedHandler {
-	return handlers.NewReleasePromotedHandler(uow, promRepo, newTestLogger())
+func (f *fakeReleasePromotionRepository) StillDesiredSeeds(
+	_ context.Context,
+	seeds []topology.ReleasePromotedTopologyNode,
+) ([]topology.ReleasePromotedTopologyNode, error) {
+	f.stillDesiredCalls = append(f.stillDesiredCalls, seeds)
+	if f.stillDesired == nil {
+		return nil, nil
+	}
+	return f.stillDesired(seeds), nil
 }
 
-// twoNodeInput builds promotion 5 of release rA with 2 nodes (a → b).
-func twoNodeInput() domainModel.PromoteReleaseInput {
-	return domainModel.PromoteReleaseInput{
-		ReleaseID:    "rA",
-		PromotionSeq: 5,
-		Topology: []domainEvent.ReleasePromotedNode{
-			{
-				UniqueID:          "svc-a.public.table_a",
-				SchemaName:        "public",
-				TableName:         "table_a",
-				ServiceName:       "service-a",
-				ImageTag:          "tag-a",
-				Schedule:          "daily",
-				UpstreamUniqueIDs: []string{},
-			},
-			{ //nolint:gosec // G101: secret_ref names a Kubernetes Secret, not a credential
-				UniqueID:          "svc-b.public.table_b",
-				SchemaName:        "public",
-				TableName:         "table_b",
-				ServiceName:       "service-b",
-				ImageTag:          "tag-b",
-				SecretRef:         "continuo-api-b",
-				Schedule:          "hourly",
-				UpstreamUniqueIDs: []string{"svc-a.public.table_a"},
-			},
-		},
-		ImageTags: map[string]string{
-			"service-a": "tag-a",
-			"service-b": "tag-b",
+var _ repository.ReleasePromotionRepository = (*fakeReleasePromotionRepository)(nil)
+
+// ── fixtures ──────────────────────────────────────────────────────────────────
+
+// releaseRA is the artifact of release rA: seed a ← model b, plus a dbt-test the
+// live graph must never see.
+func releaseRA() topologyartifact.Document {
+	return topologyartifact.Document{
+		SchemaVersion: topologyartifact.SchemaVersion,
+		TenantID:      "default",
+		ReleaseID:     "rA",
+		Nodes: []topologyartifact.Node{
+			{UniqueID: "svc-a.public.table_a", SchemaName: "public", TableName: "table_a",
+				ServiceName: "service-a", NodeType: "dbt-seed", ContentHash: "sha256:a",
+				ImageTag: "tag-a", Schedule: "daily", UpstreamUniqueIDs: []string{}},
+			{UniqueID: "svc-b.public.table_b", SchemaName: "public", TableName: "table_b", //nolint:gosec // G101: secret_ref names a Kubernetes Secret, not a credential
+				ServiceName: "service-b", NodeType: "python-api", ContentHash: "sha256:b",
+				ImageTag: "tag-b", SecretRef: "continuo-api-b", Schedule: "hourly",
+				UpstreamUniqueIDs: []string{"svc-a.public.table_a"}},
+			{UniqueID: "test.not_null_table_b_id", ServiceName: "service-b", NodeType: "dbt-test",
+				UpstreamUniqueIDs: []string{"svc-b.public.table_b"}},
 		},
 	}
+}
+
+// promotionOf builds promotion seq of doc, registering doc with reader.
+func promotionOf(reader *fakeArtifactReader, doc topologyartifact.Document, seq int64, changed ...string) domainModel.PromoteReleaseInput {
+	if changed == nil {
+		changed = []string{}
+	}
+	return domainModel.PromoteReleaseInput{
+		ReleaseID:      doc.ReleaseID,
+		PromotionSeq:   seq,
+		TopologyURI:    reader.artifactFor(doc),
+		TopologySHA256: "sha-" + doc.ReleaseID,
+		ChangedNodeIDs: changed,
+		PromotedAt:     time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC),
+	}
+}
+
+func newReleasePromotedHandler(uow *fakeUnitOfWork, reader *fakeArtifactReader, promRepo *fakeReleasePromotionRepository) *handlers.ReleasePromotedHandler {
+	return handlers.NewReleasePromotedHandler(uow, reader, promRepo, newTestLogger())
 }
 
 // expectedEventID returns the deterministic schedules.loaded:v1 event_id for one
@@ -120,39 +140,54 @@ type schedulesLoadedPayload struct {
 	PromotionSeq    int64                        `json:"promotion_seq"`
 }
 
-func schedulesLoadedEntries(uow *fakeUnitOfWork) []*pkgoutbox.Entry {
+type seedsPendingPayload struct {
+	ReleaseID string `json:"release_id"`
+	Nodes     []struct {
+		ServiceName string `json:"service_name"`
+		SchemaName  string `json:"schema_name"`
+		TableName   string `json:"table_name"`
+		NodeType    string `json:"node_type"`
+		ImageTag    string `json:"image_tag"`
+	} `json:"nodes"`
+}
+
+func entriesOn(uow *fakeUnitOfWork, stream string) []*pkgoutbox.Entry {
 	var out []*pkgoutbox.Entry
 	for _, e := range uow.outboxRepo.CreatedEntries {
-		if e.StreamName == streams.SchedulesLoadedV1 {
+		if e.StreamName == stream {
 			out = append(out, e)
 		}
 	}
 	return out
 }
 
-// ── tests ─────────────────────────────────────────────────────────────────────
+// ── the swap and schedules.loaded ─────────────────────────────────────────────
 
-func TestReleasePromoted_HappyPath_PromotesAndEmitsSchedulesLoaded(t *testing.T) {
+func TestReleasePromoted_HappyPath_PromotesTheArtifactAndEmitsSchedulesLoaded(t *testing.T) {
 	ctx := context.Background()
 	uow := newFakeUnitOfWork()
+	reader := &fakeArtifactReader{}
 	promRepo := &fakeReleasePromotionRepository{}
-	h := newReleasePromotedHandler(uow, promRepo)
+	in := promotionOf(reader, releaseRA(), 5)
 
-	require.NoError(t, h.Handle(ctx, "msg-rp-1", nil, twoNodeInput()))
+	require.NoError(t, newReleasePromotedHandler(uow, reader, promRepo).Handle(ctx, "msg-rp-1", nil, in))
 
+	assert.Equal(t, []string{in.TopologyURI}, reader.calls, "the topology is read from the artifact")
 	require.Len(t, promRepo.promoteReleaseCalls, 1)
 	call := promRepo.promoteReleaseCalls[0]
 	assert.Equal(t, "rA", call.ReleaseID)
-	assert.Equal(t, int64(5), call.PromotionSeq, "the swap decides by the event's promotion seq")
-	require.Len(t, call.Nodes, 2)
-	assert.Equal(t, "continuo-api-b", call.Nodes[1].SecretRef, "secret_ref reaches the promotion repository")
+	assert.Equal(t, int64(5), call.PromotionSeq)
+	require.Len(t, call.Nodes, 2, "the dbt-test never reaches the live graph")
+	assert.Equal(t, "svc-a.public.table_a", call.Nodes[0].UniqueID)
+	assert.Equal(t, "sha256:a", call.Nodes[0].ContentHash)
+	assert.Equal(t, "continuo-api-b", call.Nodes[1].SecretRef)
+	assert.Equal(t, []string{"svc-a.public.table_a"}, call.Nodes[1].UpstreamUniqueIDs)
 	assert.Equal(t, map[string]map[string]string{
 		"service-a": {"image_tag": "tag-a"},
 		"service-b": {"image_tag": "tag-b"},
-	}, call.ServiceMetadata, "service metadata is written by the swap, inside its transaction")
-	assert.True(t, uow.CommittedTx)
+	}, call.ServiceMetadata)
 
-	entries := schedulesLoadedEntries(uow)
+	entries := entriesOn(uow, streams.SchedulesLoadedV1)
 	require.Len(t, entries, 1)
 	assert.Equal(t, expectedAggregateID("rA"), entries[0].AggregateID)
 	var payload schedulesLoadedPayload
@@ -160,87 +195,256 @@ func TestReleasePromoted_HappyPath_PromotesAndEmitsSchedulesLoaded(t *testing.T)
 	assert.Equal(t, expectedEventID("rA", 5), payload.EventID)
 	assert.Equal(t, []string{"daily", "hourly"}, payload.ScheduleNames)
 	assert.Equal(t, int64(5), payload.PromotionSeq)
+	assert.Empty(t, entriesOn(uow, streams.ReleaseSeedsPendingV1), "nothing changed, nothing to build")
 
-	mp, err := uow.msgProcRepo.GetByMessageIDAndStream(ctx, "msg-rp-1", streams.OrchestratorReleasePromoted)
+	assert.True(t, uow.CommittedTx)
+	mp, err := uow.msgProcRepo.GetByMessageIDAndStream(ctx, "msg-rp-1", streams.OrchestratorReleasePromotedV2)
 	require.NoError(t, err)
 	require.NotNil(t, mp)
 	assert.Equal(t, "completed", mp.State)
 }
 
-// A redelivery after a crash between the Neo4j commit and the Postgres commit
-// finds the promotion already live. The follow-up rows were never committed, so
-// they are written again — with the same event_id.
 func TestReleasePromoted_RedeliveryReemitsSchedulesLoadedWithTheSameEventID(t *testing.T) {
 	uow := newFakeUnitOfWork()
-	h := newReleasePromotedHandler(uow, &fakeReleasePromotionRepository{outcome: topology.PromotionRedelivered})
+	reader := &fakeArtifactReader{}
+	in := promotionOf(reader, releaseRA(), 5)
 
-	require.NoError(t, h.Handle(context.Background(), "msg-rp-idem", nil, twoNodeInput()))
+	require.NoError(t, newReleasePromotedHandler(uow, reader,
+		&fakeReleasePromotionRepository{outcome: topology.PromotionRedelivered}).
+		Handle(context.Background(), "msg-rp-idem", nil, in))
 
-	entries := schedulesLoadedEntries(uow)
+	entries := entriesOn(uow, streams.SchedulesLoadedV1)
 	require.Len(t, entries, 1)
 	var payload schedulesLoadedPayload
 	require.NoError(t, json.Unmarshal(entries[0].Payload, &payload))
 	assert.Equal(t, expectedEventID("rA", 5), payload.EventID)
-	assert.Equal(t, int64(5), payload.PromotionSeq)
+}
+
+func TestReleasePromoted_EmptyTopology_StillEmitsSchedulesLoadedWithEmptyArrays(t *testing.T) {
+	uow := newFakeUnitOfWork()
+	reader := &fakeArtifactReader{}
+	doc := topologyartifact.Document{SchemaVersion: topologyartifact.SchemaVersion, TenantID: "default", ReleaseID: "rEmpty"}
+	promRepo := &fakeReleasePromotionRepository{}
+
+	require.NoError(t, newReleasePromotedHandler(uow, reader, promRepo).
+		Handle(context.Background(), "msg-rp-empty", nil, promotionOf(reader, doc, 1)))
+
+	require.Len(t, promRepo.promoteReleaseCalls, 1)
+	assert.Empty(t, promRepo.promoteReleaseCalls[0].Nodes)
+	entries := entriesOn(uow, streams.SchedulesLoadedV1)
+	require.Len(t, entries, 1)
+	var payload schedulesLoadedPayload
+	require.NoError(t, json.Unmarshal(entries[0].Payload, &payload))
+	assert.Empty(t, payload.ScheduleNames)
+	assert.Empty(t, payload.ServiceMetadata)
+}
+
+// ── seeds ─────────────────────────────────────────────────────────────────────
+
+// The seeds request lists the dbt-seed nodes in changed_node_ids, each with this
+// release's own image tag; a changed non-seed is not this path's work.
+func TestReleasePromoted_AppliedRequestsTheChangedSeeds(t *testing.T) {
+	uow := newFakeUnitOfWork()
+	reader := &fakeArtifactReader{}
+	in := promotionOf(reader, releaseRA(), 5, "svc-a.public.table_a", "svc-b.public.table_b")
+
+	require.NoError(t, newReleasePromotedHandler(uow, reader, &fakeReleasePromotionRepository{}).
+		Handle(context.Background(), "msg-seeds-1", nil, in))
+
+	entries := entriesOn(uow, streams.ReleaseSeedsPendingV1)
+	require.Len(t, entries, 1)
+	var payload seedsPendingPayload
+	require.NoError(t, json.Unmarshal(entries[0].Payload, &payload))
+	assert.Equal(t, "rA", payload.ReleaseID)
+	require.Len(t, payload.Nodes, 1)
+	assert.Equal(t, "service-a", payload.Nodes[0].ServiceName)
+	assert.Equal(t, "public", payload.Nodes[0].SchemaName)
+	assert.Equal(t, "table_a", payload.Nodes[0].TableName)
+	assert.Equal(t, "dbt-seed", payload.Nodes[0].NodeType)
+	assert.Equal(t, "tag-a", payload.Nodes[0].ImageTag)
+}
+
+// bootstrap marks provenance, not change: a bootstrap release requests exactly
+// the seeds changed_node_ids names, like any other.
+func TestReleasePromoted_BootstrapRequestsOnlyTheSeedsInChangedNodeIDs(t *testing.T) {
+	uow := newFakeUnitOfWork()
+	reader := &fakeArtifactReader{}
+	in := promotionOf(reader, releaseRA(), 1)
+	in.Bootstrap = true
+
+	require.NoError(t, newReleasePromotedHandler(uow, reader, &fakeReleasePromotionRepository{}).
+		Handle(context.Background(), "msg-seeds-boot", nil, in))
+	assert.Empty(t, entriesOn(uow, streams.ReleaseSeedsPendingV1))
+}
+
+// An announcement (bench, e2e, upgrade re-announcement) carries no changed nodes
+// and must request no seed build; state would otherwise mint a run for nothing.
+func TestReleasePromoted_NoChangedSeeds_EmitsNoSeedsPending(t *testing.T) {
+	uow := newFakeUnitOfWork()
+	reader := &fakeArtifactReader{}
+	require.NoError(t, newReleasePromotedHandler(uow, reader, &fakeReleasePromotionRepository{}).
+		Handle(context.Background(), "msg-seeds-2", nil, promotionOf(reader, releaseRA(), 5, "svc-b.public.table_b")))
+	assert.Empty(t, entriesOn(uow, streams.ReleaseSeedsPendingV1))
+}
+
+// A late, older promotion leaves the topology and the schedule catalog alone,
+// and requests only the changed seeds the live release still wants — at the
+// live image.
+func TestReleasePromoted_StalePromotionRequestsOnlyStillDesiredSeeds(t *testing.T) {
+	ctx := context.Background()
+	uow := newFakeUnitOfWork()
+	reader := &fakeArtifactReader{}
+	promRepo := &fakeReleasePromotionRepository{
+		outcome: topology.PromotionStale,
+		stillDesired: func(seeds []topology.ReleasePromotedTopologyNode) []topology.ReleasePromotedTopologyNode {
+			live := seeds[0]
+			live.ImageTag = "tag-live"
+			return []topology.ReleasePromotedTopologyNode{live}
+		},
+	}
+	in := promotionOf(reader, releaseRA(), 3, "svc-a.public.table_a", "svc-b.public.table_b")
+
+	require.NoError(t, newReleasePromotedHandler(uow, reader, promRepo).Handle(ctx, "msg-stale", nil, in))
+
+	require.Len(t, promRepo.stillDesiredCalls, 1)
+	require.Len(t, promRepo.stillDesiredCalls[0], 1, "only the changed dbt-seed is matched against the live graph")
+	assert.Equal(t, "svc-a.public.table_a", promRepo.stillDesiredCalls[0][0].UniqueID)
+	assert.Equal(t, "sha256:a", promRepo.stillDesiredCalls[0][0].ContentHash)
+
+	assert.Empty(t, entriesOn(uow, streams.SchedulesLoadedV1), "the catalog is not moved back")
+	entries := entriesOn(uow, streams.ReleaseSeedsPendingV1)
+	require.Len(t, entries, 1)
+	var payload seedsPendingPayload
+	require.NoError(t, json.Unmarshal(entries[0].Payload, &payload))
+	assert.Equal(t, "rA", payload.ReleaseID, "the request belongs to the late release")
+	require.Len(t, payload.Nodes, 1)
+	assert.Equal(t, "tag-live", payload.Nodes[0].ImageTag)
 	assert.True(t, uow.CommittedTx)
 }
 
-// An older promotion arriving late leaves the topology alone and must not move
-// state's schedule catalog back either.
-func TestReleasePromoted_StalePromotionWritesNoSchedulesLoaded(t *testing.T) {
-	ctx := context.Background()
+func TestReleasePromoted_StaleWithNoStillDesiredSeedsWritesNothing(t *testing.T) {
 	uow := newFakeUnitOfWork()
-	h := newReleasePromotedHandler(uow, &fakeReleasePromotionRepository{outcome: topology.PromotionStale})
+	reader := &fakeArtifactReader{}
+	in := promotionOf(reader, releaseRA(), 3, "svc-a.public.table_a")
 
-	require.NoError(t, h.Handle(ctx, "msg-rp-stale", nil, twoNodeInput()))
-
-	assert.Empty(t, schedulesLoadedEntries(uow))
-	assert.True(t, uow.CommittedTx, "the message is acknowledged")
-	mp, err := uow.msgProcRepo.GetByMessageIDAndStream(ctx, "msg-rp-stale", streams.OrchestratorReleasePromoted)
-	require.NoError(t, err)
-	require.NotNil(t, mp)
-	assert.Equal(t, "completed", mp.State)
+	require.NoError(t, newReleasePromotedHandler(uow, reader,
+		&fakeReleasePromotionRepository{outcome: topology.PromotionStale}).
+		Handle(context.Background(), "msg-stale-none", nil, in))
+	assert.Empty(t, uow.outboxRepo.CreatedEntries)
+	assert.True(t, uow.CommittedTx)
 }
 
-// A re-announcement of the same release under a newer seq is a distinct event.
-func TestReleasePromoted_EventIDDiffersPerPromotionSeq(t *testing.T) {
-	first := newFakeUnitOfWork()
-	require.NoError(t, newReleasePromotedHandler(first, &fakeReleasePromotionRepository{}).
-		Handle(context.Background(), "msg-1", nil, twoNodeInput()))
-	in := twoNodeInput()
-	in.PromotionSeq = 6
-	second := newFakeUnitOfWork()
-	require.NoError(t, newReleasePromotedHandler(second, &fakeReleasePromotionRepository{}).
-		Handle(context.Background(), "msg-2", nil, in))
+// ── the artifact ──────────────────────────────────────────────────────────────
 
-	var a, b schedulesLoadedPayload
-	require.NoError(t, json.Unmarshal(schedulesLoadedEntries(first)[0].Payload, &a))
-	require.NoError(t, json.Unmarshal(schedulesLoadedEntries(second)[0].Payload, &b))
-	assert.NotEqual(t, a.EventID, b.EventID)
+// An artifact that does not match the promotion's checksum is permanent: the
+// message is dead-lettered and the live topology is untouched.
+func TestReleasePromoted_CorruptArtifactIsPermanent(t *testing.T) {
+	uow := newFakeUnitOfWork()
+	reader := &fakeArtifactReader{}
+	in := promotionOf(reader, releaseRA(), 5)
+	reader.err = fmt.Errorf("%w: expected sha256 aa, object has bb", ports.ErrTopologyArtifactCorrupt)
+	promRepo := &fakeReleasePromotionRepository{}
+
+	err := newReleasePromotedHandler(uow, reader, promRepo).Handle(context.Background(), "msg-corrupt", nil, in)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, events.ErrPermanent))
+	assert.Empty(t, promRepo.promoteReleaseCalls)
+	assert.False(t, uow.CommittedTx)
 }
+
+// An artifact that is not there yet may still land: retry.
+func TestReleasePromoted_MissingArtifactIsRetryable(t *testing.T) {
+	uow := newFakeUnitOfWork()
+	reader := &fakeArtifactReader{}
+	in := promotionOf(reader, releaseRA(), 5)
+	in.TopologyURI = "s3://continuo/tenants/default/topologies/elsewhere/topology.json.gz"
+
+	err := newReleasePromotedHandler(uow, reader, &fakeReleasePromotionRepository{}).
+		Handle(context.Background(), "msg-missing", nil, in)
+	require.Error(t, err)
+	assert.False(t, errors.Is(err, events.ErrPermanent))
+	assert.True(t, errors.Is(err, ports.ErrTopologyArtifactNotFound))
+	assert.True(t, uow.RolledBackTx)
+}
+
+func TestReleasePromoted_ArtifactOfAnotherReleaseIsPermanent(t *testing.T) {
+	uow := newFakeUnitOfWork()
+	reader := &fakeArtifactReader{}
+	in := promotionOf(reader, releaseRA(), 5)
+	other := releaseRA()
+	other.ReleaseID = "rZ"
+	reader.docs[in.TopologyURI] = other
+
+	err := newReleasePromotedHandler(uow, reader, &fakeReleasePromotionRepository{}).
+		Handle(context.Background(), "msg-other", nil, in)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, events.ErrPermanent))
+}
+
+// How the consumer treats each way the artifact read can fail: a missing object
+// counts toward the delivery limit, a corrupt one dead-letters at once, and an
+// object-storage outage pauses and retries without counting.
+func TestReleasePromoted_ArtifactFailuresAreClassifiedForTheConsumer(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want pkgredis.ErrorClass
+	}{
+		{"missing object", fmt.Errorf("%w: s3://continuo/k", ports.ErrTopologyArtifactNotFound), pkgredis.ClassTransient},
+		{"checksum mismatch", fmt.Errorf("%w: expected sha256 aa, object has bb", ports.ErrTopologyArtifactCorrupt), pkgredis.ClassPermanent},
+		{"object storage 5xx", fmt.Errorf("get topology artifact: %w", httpStatusError{status: 503}), pkgredis.ClassInfrastructure},
+		{"object storage unreachable", fmt.Errorf("get topology artifact: %w", &net.OpError{Op: "dial", Err: errors.New("connection refused")}), pkgredis.ClassInfrastructure},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			uow := newFakeUnitOfWork()
+			reader := &fakeArtifactReader{}
+			in := promotionOf(reader, releaseRA(), 5)
+			reader.err = tc.err
+
+			err := newReleasePromotedHandler(uow, reader, &fakeReleasePromotionRepository{}).
+				Handle(context.Background(), "msg-classify", nil, in)
+
+			require.Error(t, err)
+			assert.Equal(t, tc.want, pkgredis.Classify(err))
+			assert.False(t, uow.CommittedTx, "nothing is committed, so the dedup row is discarded and the message replays")
+		})
+	}
+}
+
+// httpStatusError is an object-storage response error carrying an HTTP status.
+type httpStatusError struct{ status int }
+
+func (e httpStatusError) Error() string       { return fmt.Sprintf("http status %d", e.status) }
+func (e httpStatusError) HTTPStatusCode() int { return e.status }
+
+// ── transaction and dedup ─────────────────────────────────────────────────────
 
 func TestReleasePromoted_DedupHit_ShortCircuits(t *testing.T) {
 	ctx := context.Background()
 	uow := newFakeUnitOfWork()
+	reader := &fakeArtifactReader{}
 	promRepo := &fakeReleasePromotionRepository{}
-	h := newReleasePromotedHandler(uow, promRepo)
+	h := newReleasePromotedHandler(uow, reader, promRepo)
+	in := promotionOf(reader, releaseRA(), 5)
 
-	require.NoError(t, h.Handle(ctx, "msg-rp-dup", nil, twoNodeInput()))
+	require.NoError(t, h.Handle(ctx, "msg-rp-dup", nil, in))
 	promRepo.promoteReleaseCalls = nil
+	reader.calls = nil
 	uow.outboxRepo.CreatedEntries = nil
 
-	require.NoError(t, h.Handle(ctx, "msg-rp-dup", nil, twoNodeInput()))
-	assert.Empty(t, promRepo.promoteReleaseCalls, "PromoteRelease must NOT be called on dedup hit")
-	assert.Empty(t, uow.outboxRepo.CreatedEntries, "no outbox on dedup hit")
+	require.NoError(t, h.Handle(ctx, "msg-rp-dup", nil, in))
+	assert.Empty(t, reader.calls, "a duplicate does not read the artifact")
+	assert.Empty(t, promRepo.promoteReleaseCalls)
+	assert.Empty(t, uow.outboxRepo.CreatedEntries)
 }
 
-// A Neo4j failure is retryable: the transaction is rolled back, so the dedup
-// row is discarded and the message replays.
 func TestReleasePromoted_Neo4jError_PropagatesAsRetryable(t *testing.T) {
 	uow := newFakeUnitOfWork()
-	h := newReleasePromotedHandler(uow, &fakeReleasePromotionRepository{err: errors.New("neo4j: connection unavailable")})
-
-	err := h.Handle(context.Background(), "msg-rp-neo4j-err", nil, twoNodeInput())
+	reader := &fakeArtifactReader{}
+	err := newReleasePromotedHandler(uow, reader,
+		&fakeReleasePromotionRepository{err: errors.New("neo4j: connection unavailable")}).
+		Handle(context.Background(), "msg-rp-neo4j-err", nil, promotionOf(reader, releaseRA(), 5))
 	require.Error(t, err)
 	assert.False(t, errors.Is(err, events.ErrPermanent))
 	assert.False(t, uow.CommittedTx)
@@ -251,38 +455,20 @@ func TestReleasePromoted_Neo4jError_PropagatesAsRetryable(t *testing.T) {
 func TestReleasePromoted_OutboxWriteError_PropagatesAsRetryable(t *testing.T) {
 	uow := newFakeUnitOfWork()
 	uow.outboxRepo.createErr = errors.New("outbox write failed")
-	h := newReleasePromotedHandler(uow, &fakeReleasePromotionRepository{})
-
-	err := h.Handle(context.Background(), "msg-rp-outbox-err", nil, twoNodeInput())
+	reader := &fakeArtifactReader{}
+	err := newReleasePromotedHandler(uow, reader, &fakeReleasePromotionRepository{}).
+		Handle(context.Background(), "msg-rp-outbox-err", nil, promotionOf(reader, releaseRA(), 5))
 	require.Error(t, err)
 	assert.False(t, errors.Is(err, events.ErrPermanent))
 	assert.False(t, uow.CommittedTx)
 }
 
-func TestReleasePromoted_EmptyTopology_StillEmitsSchedulesLoadedWithEmptyArrays(t *testing.T) {
-	uow := newFakeUnitOfWork()
-	promRepo := &fakeReleasePromotionRepository{}
-	h := newReleasePromotedHandler(uow, promRepo)
-
-	in := domainModel.PromoteReleaseInput{ReleaseID: "rEmpty", PromotionSeq: 1, Topology: []domainEvent.ReleasePromotedNode{}}
-	require.NoError(t, h.Handle(context.Background(), "msg-rp-empty", nil, in))
-
-	require.Len(t, promRepo.promoteReleaseCalls, 1)
-	assert.Empty(t, promRepo.promoteReleaseCalls[0].Nodes)
-	entries := schedulesLoadedEntries(uow)
-	require.Len(t, entries, 1)
-	var payload schedulesLoadedPayload
-	require.NoError(t, json.Unmarshal(entries[0].Payload, &payload))
-	assert.Empty(t, payload.ScheduleNames)
-	assert.Empty(t, payload.ServiceMetadata)
-}
-
 func TestReleasePromoted_OutboxEntryIDPassedThrough(t *testing.T) {
 	uow := newFakeUnitOfWork()
-	h := newReleasePromotedHandler(uow, &fakeReleasePromotionRepository{})
-
+	reader := &fakeArtifactReader{}
 	knownID := uuid.MustParse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
-	require.NoError(t, h.Handle(context.Background(), "msg-rp-oeid", &knownID, twoNodeInput()))
+	require.NoError(t, newReleasePromotedHandler(uow, reader, &fakeReleasePromotionRepository{}).
+		Handle(context.Background(), "msg-rp-oeid", &knownID, promotionOf(reader, releaseRA(), 5)))
 
 	var stored *uuid.UUID
 	for _, mp := range uow.msgProcRepo.messages {
@@ -292,51 +478,4 @@ func TestReleasePromoted_OutboxEntryIDPassedThrough(t *testing.T) {
 	}
 	require.NotNil(t, stored, "outbox_entry_id must be threaded to the dedup layer")
 	assert.Equal(t, knownID, *stored)
-}
-
-// The request to build a promotion's changed seeds is written in the same
-// transaction as the dedup row, after the swap has committed the :Table nodes a
-// run will be projected onto. Each node carries this release's image tag.
-func TestReleasePromoted_EmitsSeedsPendingForChangedSeeds(t *testing.T) {
-	uow := newFakeUnitOfWork()
-	h := newReleasePromotedHandler(uow, &fakeReleasePromotionRepository{})
-
-	in := twoNodeInput()
-	in.Topology[0].NodeType = "dbt-seed"
-	in.Topology[0].Changed = true
-	in.Topology[1].NodeType = "dbt-model"
-	in.Topology[1].Changed = true
-	require.NoError(t, h.Handle(context.Background(), "msg-seeds-1", nil, in))
-
-	var seedsEntry *pkgoutbox.Entry
-	for _, e := range uow.outboxRepo.CreatedEntries {
-		if e.StreamName == streams.ReleaseSeedsPendingV1 {
-			seedsEntry = e
-		}
-	}
-	require.NotNil(t, seedsEntry)
-	var payload struct {
-		ReleaseID string `json:"release_id"`
-		Nodes     []struct {
-			TableName string `json:"table_name"`
-			ImageTag  string `json:"image_tag"`
-		} `json:"nodes"`
-	}
-	require.NoError(t, json.Unmarshal(seedsEntry.Payload, &payload))
-	assert.Equal(t, "rA", payload.ReleaseID)
-	require.Len(t, payload.Nodes, 1, "only the changed seed, not the changed model")
-	assert.Equal(t, "table_a", payload.Nodes[0].TableName)
-	assert.Equal(t, "tag-a", payload.Nodes[0].ImageTag)
-}
-
-// A release that changed no seeds must produce no request at all: state would
-// otherwise mint a task-less run that could never reach a terminal state.
-func TestReleasePromoted_NoChangedSeeds_EmitsNoSeedsPending(t *testing.T) {
-	uow := newFakeUnitOfWork()
-	h := newReleasePromotedHandler(uow, &fakeReleasePromotionRepository{})
-
-	require.NoError(t, h.Handle(context.Background(), "msg-seeds-2", nil, twoNodeInput()))
-	for _, e := range uow.outboxRepo.CreatedEntries {
-		assert.NotEqual(t, streams.ReleaseSeedsPendingV1, e.StreamName)
-	}
 }
