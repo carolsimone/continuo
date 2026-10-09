@@ -245,9 +245,9 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 		return promoteBootstrap(ctx, d, u, r, in.ReleaseID, in.TopologyRef, topo, now)
 	}
 
-	cp, err := u.CurrentProdRepo().Get(ctx)
+	prod, err := currentProdTopology(ctx, d, u)
 	if err != nil {
-		return fmt.Errorf("get current prod: %w", err)
+		return err
 	}
 
 	// Derive the validation build sets: candidate nodes rebuilt from their own
@@ -258,7 +258,7 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 	// node as new and validates the whole topology). A verification run splits
 	// the two so the fix's shared changed ancestor is rebuilt for context
 	// without expanding this run to a sibling service's still-unfixed failure.
-	scope, contextRebuilds, err := changedNodeIDsFor(ctx, u, d, r, topo, cp)
+	scope, contextRebuilds, err := changedNodeIDsFor(ctx, u, d, r, topo, prod)
 	if err != nil {
 		return err
 	}
@@ -409,8 +409,8 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 // still-running check, mirroring assembleFor's graceful degradation. An
 // unreachable object store is returned as an error instead: measuring a fix
 // against the wrong baseline because of an outage would be silent and wrong.
-func changedNodeIDsFor(ctx context.Context, u uow.UnitOfWork, d *Deps, r *pipeline.Run, topo release.Topology, cp *release.CurrentProd) (scope, contextRebuilds []string, err error) {
-	changedVsProd := release.DerivedChangedNodeIDs(topo, cp.TopologySnapshot())
+func changedNodeIDsFor(ctx context.Context, u uow.UnitOfWork, d *Deps, r *pipeline.Run, topo, prod release.Topology) (scope, contextRebuilds []string, err error) {
+	changedVsProd := release.DerivedChangedNodeIDs(topo, prod)
 	if r.Kind() == pipeline.KindCandidate || r.VerifiesReleaseID() == "" {
 		return changedVsProd, nil, nil
 	}
@@ -434,7 +434,7 @@ func changedNodeIDsFor(ctx context.Context, u uow.UnitOfWork, d *Deps, r *pipeli
 			"release_id", r.ID(), "verifies_release_id", original.ID())
 		return changedVsProd, nil, nil
 	}
-	scope, contextRebuilds = release.VerificationBuildSets(topo, cp.TopologySnapshot(), originalTopo, original.FailingNodes())
+	scope, contextRebuilds = release.VerificationBuildSets(topo, prod, originalTopo, original.FailingNodes())
 	return scope, contextRebuilds, nil
 }
 

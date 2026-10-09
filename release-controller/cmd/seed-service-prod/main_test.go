@@ -71,3 +71,14 @@ func TestLoadPostgresConfig_NamesEveryMissingKey(t *testing.T) {
 		assert.Contains(t, err.Error(), key)
 	}
 }
+
+func TestLoadS3Config_NamesEveryMissingKey(t *testing.T) {
+	t.Setenv("S3_ENDPOINT_URL", "")
+	t.Setenv("S3_BUCKET", "")
+	t.Setenv("AWS_DEFAULT_REGION", "")
+	_, err := loadS3Config()
+	require.Error(t, err)
+	for _, key := range []string{"S3_ENDPOINT_URL", "S3_BUCKET", "AWS_DEFAULT_REGION"} {
+		assert.Contains(t, err.Error(), key)
+	}
+}

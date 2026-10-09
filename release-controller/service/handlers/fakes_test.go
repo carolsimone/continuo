@@ -68,6 +68,7 @@ type fakeStore struct {
 	cp            *release.CurrentProd
 	cpUpsertCalls int
 	lastSeq       int64
+	legacyCP      *repository.LegacyCurrentProd
 	serviceProd   map[string]*release.ServiceProd
 	entries       []*pkgoutbox.Entry
 	// racing holds runs another submission commits between a transaction's
@@ -125,6 +126,16 @@ func (s *fakeStore) SeedCurrentProd(cp *release.CurrentProd) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.cp = cp
+}
+
+// SeedLegacyCurrentProd installs a current_prod written before topology
+// artifacts existed: it names releaseID, references no artifact, and holds
+// topo as its legacy snapshot.
+func (s *fakeStore) SeedLegacyCurrentProd(releaseID string, topo release.Topology) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cp = release.RehydrateCurrentProd(releaseID, release.TopologyRef{}, 0, time.Unix(1, 0).UTC())
+	s.legacyCP = &repository.LegacyCurrentProd{ReleaseID: releaseID, Topology: topo}
 }
 
 // GetCurrentProd returns the stored current-prod record, or a fresh one if
@@ -630,6 +641,17 @@ func (f *fakeLegacyTopologyRepo) ListParsingAtUpgrade(_ context.Context) ([]stri
 	return out, nil
 }
 
+// GetLegacyCurrentProd mirrors the Postgres query: the legacy snapshot is
+// returned only while current_prod names a release and references no artifact.
+func (f *fakeLegacyTopologyRepo) GetLegacyCurrentProd(_ context.Context) (*repository.LegacyCurrentProd, error) {
+	f.store.mu.Lock()
+	defer f.store.mu.Unlock()
+	if f.store.legacyCP == nil || f.store.cp == nil || f.store.cp.ReleaseID() == "" || !f.store.cp.Topology().IsZero() {
+		return nil, nil
+	}
+	return f.store.legacyCP, nil
+}
+
 func (f *fakeLegacyTopologyRepo) ClearParsingAtUpgrade(_ context.Context, runID string) error {
 	f.store.mu.Lock()
 	defer f.store.mu.Unlock()
@@ -638,6 +660,16 @@ func (f *fakeLegacyTopologyRepo) ClearParsingAtUpgrade(_ context.Context, runID 
 }
 
 var _ repository.LegacyTopologyRepository = (*fakeLegacyTopologyRepo)(nil)
+
+// seedProd writes topo as release releaseID's topology artifact through the
+// Deps' artifact store and points current_prod at it, simulating a prior
+// promotion. Handler tests use it to exercise the diff against production.
+func seedProd(t *testing.T, deps *handlers.Deps, store *fakeStore, releaseID string, topo release.Topology, at time.Time) {
+	t.Helper()
+	ref, err := deps.Topologies.Write(context.Background(), releaseID, topo)
+	require.NoError(t, err)
+	store.SeedCurrentProd(release.RehydrateCurrentProd(releaseID, ref, 0, at))
+}
 
 // --- fakeUoW ---
 

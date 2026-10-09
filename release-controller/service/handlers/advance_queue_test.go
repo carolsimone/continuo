@@ -109,9 +109,7 @@ func TestAdvanceQueue_ProdSeeded_UncoveredService_BlocksActivation(t *testing.T)
 		{UniqueID: "b", ServiceName: "svc-b"},
 		{UniqueID: "c", ServiceName: "svc-c"},
 	}
-	cp := release.NewCurrentProd()
-	cp.Update("rProd", topology, time.Unix(0, 0).UTC())
-	store.SeedCurrentProd(cp)
+	seedProd(t, deps, store, "rProd", topology, time.Unix(0, 0).UTC())
 
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
 		Service: "svc-a", ReleaseID: "rA", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
@@ -134,9 +132,7 @@ func TestAdvanceQueue_ProdSeeded_AllServicesCovered_Proceeds(t *testing.T) {
 		{UniqueID: "b", ServiceName: "svc-b"},
 		{UniqueID: "c", ServiceName: "svc-c"},
 	}
-	cp := release.NewCurrentProd()
-	cp.Update("rProd", topology, time.Unix(0, 0).UTC())
-	store.SeedCurrentProd(cp)
+	seedProd(t, deps, store, "rProd", topology, time.Unix(0, 0).UTC())
 
 	// svc-b and svc-c are covered by pointers; svc-a is the changed service.
 	store.SeedServiceProd(release.NewServiceProd("svc-b", "rOLD1", "s3://bucket/svc-b/rOLD1/manifest.json", "tag-b-old", release.ManifestKindDbt, time.Unix(0, 0)))

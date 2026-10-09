@@ -136,38 +136,45 @@ func concludeValidated(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeli
 }
 
 // promoteToProduction applies the promotion effects shared by the
-// validation-passed path and the nothing-to-validate short-circuit: it points
-// current_prod at this release's candidate topology, upserts the changed
-// service's service_prod pointer, transitions the release to Promoted, persists
-// it, and writes the release.promoted:v1 and pipeline.run.finished:v1 outbox
-// rows. The caller owns Begin/Commit and any telemetry. The release must
-// already hold its candidate topology (i.e. be in Validating) and be a
-// candidate — call concludeValidated instead when the run's kind is unknown
-// to the caller.
+// validation-passed path and the nothing-to-validate short-circuit: it takes
+// the next promotion seq, points current_prod at this release's candidate
+// topology artifact under that seq, upserts the changed service's
+// service_prod pointer, transitions the release to Promoted, persists it, and
+// writes the release.promoted:v1 and pipeline.run.finished:v1 outbox rows. The
+// caller owns Begin/Commit and any telemetry. The release must already hold
+// its candidate topology (i.e. be in Validating) and be a candidate — call
+// concludeValidated instead when the run's kind is unknown to the caller.
 func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, now time.Time) error {
 	releaseID := r.ID()
+	ref := r.CandidateTopologyRef()
 
 	cp, err := u.CurrentProdRepo().Get(ctx)
 	if err != nil {
 		return fmt.Errorf("get current prod: %w", err)
 	}
-	// The candidate topology is the artifact's: it carries no candidate SQL
-	// URIs (those are derived per run), so current_prod and the promoted
-	// topology take it as is.
-	promotedTopo, err := candidateTopology(ctx, d, r)
+	promotedTopo, err := d.Topologies.Load(ctx, ref)
+	if err != nil {
+		return fmt.Errorf("load candidate topology %s: %w", releaseID, err)
+	}
+	prodTopo, err := loadProdTopology(ctx, d, cp)
 	if err != nil {
 		return err
 	}
 
 	// Determine which nodes actually changed versus the prod being replaced, so
-	// the release.promoted event can tag them. Computed against cp's snapshot
-	// BEFORE cp.Update overwrites it below. Bootstrap (empty prod) flags all.
+	// the release.promoted event can tag them. Bootstrap (empty prod) flags all.
 	changedSet := make(map[string]bool)
-	for _, id := range release.DerivedChangedNodeIDs(promotedTopo, cp.TopologySnapshot()) {
+	for _, id := range release.DerivedChangedNodeIDs(promotedTopo, prodTopo) {
 		changedSet[id] = true
 	}
 
-	cp.Update(releaseID, promotedTopo, now)
+	seq, err := u.PromotionSequenceRepo().Next(ctx)
+	if err != nil {
+		return fmt.Errorf("take promotion seq: %w", err)
+	}
+	if err := cp.Update(releaseID, ref, seq, now); err != nil {
+		return fmt.Errorf("move current prod: %w", err)
+	}
 	if err := u.CurrentProdRepo().Upsert(ctx, cp); err != nil {
 		return fmt.Errorf("upsert current prod: %w", err)
 	}
@@ -209,9 +216,9 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipe
 		OriginalFilePath  string   `json:"original_file_path"`
 		SecretRef         string   `json:"secret_ref,omitempty"`
 	}
-	// Tests are validation-only: current_prod keeps them so an unchanged test
-	// is not re-checked next release, but the promoted topology the
-	// orchestrator draws and schedules never carries them.
+	// Tests are validation-only: the artifact current_prod points at keeps
+	// them so an unchanged test is not re-checked next release, but the
+	// promoted topology the orchestrator draws and schedules never carries them.
 	publishedTopo := promotedTopo.WithoutTests()
 	wireTopo := make([]promotedNodeWire, len(publishedTopo))
 	for i, n := range publishedTopo {
@@ -316,12 +323,12 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 
 	// Which candidate nodes changed against production, so each failing node
 	// can name the changed ancestors that may be the root cause of its failure.
-	cp, err := u.CurrentProdRepo().Get(ctx)
+	prod, err := currentProdTopology(ctx, d, u)
 	if err != nil {
-		return fmt.Errorf("get current prod: %w", err)
+		return err
 	}
 	changedSet := make(map[string]bool)
-	for _, id := range release.DerivedChangedNodeIDs(topo, cp.TopologySnapshot()) {
+	for _, id := range release.DerivedChangedNodeIDs(topo, prod) {
 		changedSet[id] = true
 	}
 

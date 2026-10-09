@@ -1,5 +1,5 @@
 // seed-service-prod is a one-time migration command that populates the
-// service_prod table from the existing global current_prod snapshot. Run it
+// service_prod table from the topology current_prod points at. Run it
 // once after deploying the per-service release feature so that each service has
 // a production pointer for the first incremental release cycle.
 //
@@ -25,6 +25,7 @@ import (
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	pkgdb "github.com/carolsimone/continuo/pkg/db"
 	"github.com/carolsimone/continuo/release-controller/adapters/postgres"
+	s3adapter "github.com/carolsimone/continuo/release-controller/adapters/s3"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 )
 
@@ -71,9 +72,29 @@ func main() {
 		os.Exit(1)
 	}
 
+	if cp.Topology().IsZero() {
+		logger.Error("current_prod references no topology artifact; start release-controller once so its startup step writes it")
+		os.Exit(1)
+	}
+	s3Cfg, err := loadS3Config()
+	if err != nil {
+		logger.Error("invalid configuration", "error", err)
+		os.Exit(1)
+	}
+	s3Client, err := s3adapter.NewS3Client(ctx, s3Cfg.EndpointURL, s3Cfg.Bucket, s3Cfg.Region, s3Cfg.AccessKeyID, s3Cfg.SecretAccessKey, logger)
+	if err != nil {
+		logger.Error("connect to object storage", "error", err)
+		os.Exit(1)
+	}
+	topo, err := s3adapter.NewTopologyArtifactStore(s3Client, s3Cfg.Bucket, 1).Load(ctx, cp.Topology())
+	if err != nil {
+		logger.Error("load current_prod topology", "error", err)
+		os.Exit(1)
+	}
+
 	spRepo := postgres.NewServiceProdRepository(db)
 
-	n, err := handlers.SeedServiceProd(ctx, cp, existingKeys, spRepo, time.Now().UTC())
+	n, err := handlers.SeedServiceProd(ctx, cp.ReleaseID(), topo, existingKeys, spRepo, time.Now().UTC())
 	if err != nil {
 		logger.Error("seed failed", "error", err)
 		os.Exit(1)
@@ -100,6 +121,19 @@ func loadPostgresConfig() (pkgconfig.PostgresConfig, error) {
 	}
 	if missing := v.Missing(); len(missing) > 0 {
 		return pkgconfig.PostgresConfig{}, fmt.Errorf("missing or invalid env vars: %s", strings.Join(missing, ", "))
+	}
+	return cfg, nil
+}
+
+// loadS3Config reads the object-storage settings the topology artifact lives
+// behind: S3_ENDPOINT_URL, S3_BUCKET and AWS_DEFAULT_REGION are required;
+// AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are optional (empty uses the
+// IAM role). It names every required key that is missing.
+func loadS3Config() (pkgconfig.S3Config, error) {
+	v := &pkgconfig.Validator{}
+	cfg := pkgconfig.LoadS3(v)
+	if missing := v.Missing(); len(missing) > 0 {
+		return pkgconfig.S3Config{}, fmt.Errorf("missing or invalid env vars: %s", strings.Join(missing, ", "))
 	}
 	return cfg, nil
 }

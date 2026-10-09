@@ -811,10 +811,10 @@ func TestHandleValidationResult_Promote_StampsChangedAndProvenance(t *testing.T)
 	deps.Bucket = "continuo"
 
 	// Prior prod: a@"h", b@"old". Both in svc-a; b depends on a.
-	store.SeedCurrentProd(release.RehydrateCurrentProd("r0", release.Topology{
+	seedProd(t, deps, store, "r0", release.Topology{
 		{UniqueID: "a", ServiceName: "svc-a", ContentHash: "h", UpstreamUniqueIDs: []string{}},
 		{UniqueID: "b", ServiceName: "svc-a", ContentHash: "old", UpstreamUniqueIDs: []string{"a"}},
-	}, time.Unix(50, 0).UTC()))
+	}, time.Unix(50, 0).UTC())
 
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
 		Service:   "svc-a",
@@ -909,8 +909,10 @@ func TestHandleValidationResult_Promote_StripsTestsFromWireButKeepsInCurrentProd
 	assert.Equal(t, "a", p.Topology[0].UniqueID)
 
 	cp := store.GetCurrentProd()
+	prodTopo, err := deps.Topologies.Load(context.Background(), cp.Topology())
+	require.NoError(t, err)
 	keptIDs := map[string]bool{}
-	for _, n := range cp.TopologySnapshot() {
+	for _, n := range prodTopo {
 		keptIDs[n.UniqueID] = true
 	}
 	assert.True(t, keptIDs["test.p.not_null_a_id.1"],
@@ -1100,12 +1102,10 @@ func TestHandleValidationResult_Rejected_CarriesChangedAncestors(t *testing.T) {
 		RejectionPayload:  r.RejectionPayload(),
 	})
 	store.SeedRelease(r)
-	cp := release.NewCurrentProd()
-	cp.Update("prev", release.Topology{
+	seedProd(t, deps, store, "prev", release.Topology{
 		{UniqueID: "a", ContentHash: "old-hash-for-a"},
 		{UniqueID: "b", ContentHash: bHash},
 	}, deps.Clock.Now())
-	store.SeedCurrentProd(cp)
 	seedValidationNodes(t, deps, "rAnc", []handlers.NodeResult{
 		{NodeID: "a", Status: "ok"},
 		{NodeID: "b", Status: "failed", DBTLogURI: "s3://logs/rAnc/b.log"},
@@ -1235,9 +1235,9 @@ func nodeIDs(topo release.Topology) []string {
 // artifact's image tags and the changed flags against the previous prod.
 func TestPromoteToProduction_CurrentProdTakesTheArtifactTopology(t *testing.T) {
 	deps, store := seedToParsing(t, "rArt", map[string]string{"svc-a": "sha-a"})
-	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", release.Topology{
+	seedProd(t, deps, store, "prev", release.Topology{
 		{UniqueID: "a", ServiceName: "svc-a", NodeType: "dbt-model", ContentHash: "h_a"},
-	}, time.Unix(50, 0).UTC()))
+	}, time.Unix(50, 0).UTC())
 	topo := release.Topology{
 		{UniqueID: "a", ServiceName: "svc-a", NodeType: "dbt-model", ContentHash: "h_a", ImageTag: "sha-a", UpstreamUniqueIDs: []string{}},
 		{UniqueID: "b", ServiceName: "svc-a", NodeType: "dbt-model", ContentHash: "h_b", ImageTag: "sha-a", UpstreamUniqueIDs: []string{"a"}},
@@ -1259,7 +1259,9 @@ func TestPromoteToProduction_CurrentProdTakesTheArtifactTopology(t *testing.T) {
 
 	cp := store.GetCurrentProd()
 	assert.Equal(t, "rArt", cp.ReleaseID())
-	assert.ElementsMatch(t, []string{"a", "b", "test.b"}, nodeIDs(cp.TopologySnapshot()), "current_prod keeps the test node")
+	prodTopo, err := deps.Topologies.Load(context.Background(), cp.Topology())
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"a", "b", "test.b"}, nodeIDs(prodTopo), "the artifact current_prod points at keeps the test node")
 
 	var p promotedPayload
 	require.NoError(t, json.Unmarshal(findEntry(t, store, streams.ReleasePromotedV1).Payload, &p))
@@ -1307,4 +1309,25 @@ func TestHandleValidationResult_CorruptArtifactAtPromotionIsReportedCorrupt(t *t
 	err = handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{ReleaseID: "rBad", AggregateStatus: "ok"})
 	assert.ErrorIs(t, err, ports.ErrTopologyArtifactCorrupt)
 	assert.Equal(t, 0, store.CurrentProdUpsertCalls())
+}
+
+// Promotion moves current_prod to the run's own candidate artifact and takes
+// the next promotion seq.
+func TestHandleValidationResult_Promote_PointsCurrentProdAtTheCandidateArtifact(t *testing.T) {
+	deps, store := seedToValidating(t, "rA")
+	seedValidationNodes(t, deps, "rA", []handlers.NodeResult{
+		{NodeID: "a", Status: "ok"},
+		{NodeID: "b", Status: "ok"},
+	})
+	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
+		ReleaseID: "rA", AggregateStatus: "ok",
+	}))
+
+	r, err := store.GetRelease("rA")
+	require.NoError(t, err)
+	cp := store.GetCurrentProd()
+	assert.Equal(t, "rA", cp.ReleaseID())
+	assert.Equal(t, r.CandidateTopologyRef(), cp.Topology())
+	assert.Equal(t, int64(1), cp.PromotionSeq())
+	assert.Equal(t, int64(1), store.LastPromotionSeq())
 }

@@ -22,7 +22,7 @@ func TestPruneFinishedRuns_PassesCutoffAndKeepIDs(t *testing.T) {
 	// Use a dedicated store for this test so we can seed current_prod and
 	// inspect the fakeRunRepo fields after the call.
 	store := newFakeStore()
-	store.SeedCurrentProd(release.RehydrateCurrentProd("live-1", release.Topology{}, now))
+	store.SeedCurrentProd(release.RehydrateCurrentProd("live-1", release.TopologyRef{}, 0, now))
 
 	// Capture the fakeRunRepo that the handler will obtain so we can
 	// assert on the recorded cutoff and keepReleaseIDs.
@@ -51,7 +51,7 @@ func TestPruneFinishedRuns_IncludesServiceProdReleaseIDs(t *testing.T) {
 
 	store := newFakeStore()
 	// current_prod points at cp-1
-	store.SeedCurrentProd(release.RehydrateCurrentProd("cp-1", release.Topology{}, now))
+	store.SeedCurrentProd(release.RehydrateCurrentProd("cp-1", release.TopologyRef{}, 0, now))
 	// service_prod rows point at different releases for each service
 	store.SeedServiceProd(release.NewServiceProd("svc-a", "sp-a", "s3://a", "t1", release.ManifestKindDbt, now))
 	store.SeedServiceProd(release.NewServiceProd("svc-b", "sp-b", "s3://b", "t2", release.ManifestKindDbt, now))
@@ -102,7 +102,7 @@ func TestPruneFinishedRuns_DeduplicatesOverlappingIDs(t *testing.T) {
 
 	store := newFakeStore()
 	// current_prod and a service_prod row both reference the same release.
-	store.SeedCurrentProd(release.RehydrateCurrentProd("shared-1", release.Topology{}, now))
+	store.SeedCurrentProd(release.RehydrateCurrentProd("shared-1", release.TopologyRef{}, 0, now))
 	store.SeedServiceProd(release.NewServiceProd("svc-a", "shared-1", "s3://a", "t1", release.ManifestKindDbt, now))
 
 	var captured *fakeRunRepo

@@ -2,7 +2,9 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/carolsimone/continuo/release-controller/adapters/serialization"
@@ -97,4 +99,31 @@ func (r *LegacyTopologyRepository) ClearParsingAtUpgrade(ctx context.Context, ru
 		return fmt.Errorf("clear the upgrade mark of %s: %w", runID, err)
 	}
 	return nil
+}
+
+// GetLegacyCurrentProd reads current_prod's legacy snapshot while current_prod
+// names a release and references no topology artifact. A row without a
+// release names nothing to write an artifact for.
+func (r *LegacyTopologyRepository) GetLegacyCurrentProd(ctx context.Context) (*repository.LegacyCurrentProd, error) {
+	var row struct {
+		ReleaseID string `db:"release_id"`
+		Snapshot  []byte `db:"topology_snapshot"`
+	}
+	err := r.q.GetContext(ctx, &row,
+		`SELECT release_id, topology_snapshot FROM current_prod
+		 WHERE id = 1 AND topology_uri IS NULL AND release_id <> ''`)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("select legacy current_prod: %w", err)
+	}
+	if len(row.Snapshot) == 0 {
+		return nil, fmt.Errorf("current_prod %s references no topology artifact and holds no legacy snapshot", row.ReleaseID)
+	}
+	var dto serialization.TopologyDTO
+	if err := json.Unmarshal(row.Snapshot, &dto); err != nil {
+		return nil, fmt.Errorf("decode legacy current_prod snapshot: %w", err)
+	}
+	return &repository.LegacyCurrentProd{ReleaseID: row.ReleaseID, Topology: dto.ToDomain()}, nil
 }
