@@ -432,11 +432,11 @@ func main() {
 	// through the same lifecycle as any other run.
 	handlePromotedSeedsHandler := handlers.NewHandlePromotedSeedsRunHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), snapshotService, logger)
 
-	// release.promoted:v1 (versions) — third independent consumer group. It reads
-	// the release's code-bundle document from object storage and records the
-	// :NodeVersion / :CodeUnitVersion history behind the topology. Isolated from
-	// the swap so promotion never waits on object storage, and free to retry
-	// until the swap it trails has landed.
+	// release.promoted:v2 (versions) — an independent consumer group. It reads
+	// the release's code-bundle document and topology artifact from object
+	// storage and records the :NodeVersion / :CodeUnitVersion history behind the
+	// topology. Isolated from the swap so promotion never waits on the bundle,
+	// and free to retry until the swap it trails has landed.
 	codeBundleReader, err := s3infra.NewCodeBundleReader(
 		ctx, cfg.S3.EndpointURL, cfg.S3.Bucket, cfg.S3.Region,
 		cfg.S3.AccessKeyID, cfg.S3.SecretAccessKey,
@@ -447,7 +447,7 @@ func main() {
 	}
 	codeVersionRepo := neo4jinfra.NewCodeVersionRepository(neo4jClient, logger)
 	releasePromotedVersionsHandler := handlers.NewReleasePromotedVersionsHandler(
-		postgres.NewPostgresUnitOfWork(pgDB, logger), codeBundleReader, codeVersionRepo, logger)
+		postgres.NewPostgresUnitOfWork(pgDB, logger), codeBundleReader, topologyArtifactReader, codeVersionRepo, logger)
 
 	// remediation.requested:v2 (rejections) + remediation.pr_opened:v1
 	// (proposals) + remediation.pr_closed:v1 (provenance) — the
@@ -483,7 +483,7 @@ func main() {
 		{"single_node_run", streams.TriggerSingleNodeRunV1, streams.OrchestratorSingleNodeRun, redis.NewSingleNodeRunBinding(handleSingleNodeRunHandler, logger), topologyHandlerTimeout},
 		{"run_finalized", streams.RunFinalizedV1, streams.OrchestratorRunFinalized, redis.NewRunFinalizedBinding(runFinalizedHandler, logger), 0},
 		{"release_promoted", streams.ReleasePromotedV2, streams.OrchestratorReleasePromotedV2, redis.NewReleasePromotedBinding(releasePromotedHandler, logger), topologyHandlerTimeout},
-		{"release_promoted_versions", streams.ReleasePromotedV1, streams.OrchestratorReleasePromotedVersions, redis.NewReleasePromotedVersionsBinding(releasePromotedVersionsHandler, logger), topologyHandlerTimeout},
+		{"release_promoted_versions", streams.ReleasePromotedV2, streams.OrchestratorReleasePromotedVersionsV2, redis.NewReleasePromotedVersionsBinding(releasePromotedVersionsHandler, logger), topologyHandlerTimeout},
 		{"promoted_seeds", streams.TriggerPromotedSeedsV1, streams.OrchestratorPromotedSeeds, redis.NewPromotedSeedsBinding(handlePromotedSeedsHandler, logger), topologyHandlerTimeout},
 		{"remediation_requested_rejections", streams.RemediationRequestedV2, streams.OrchestratorRemediationRequestedRejections, redis.NewRemediationRequestedBinding(rejectionsHandler, logger), 0},
 		{"remediation_pr_opened_proposals", streams.RemediationPrOpenedV1, streams.OrchestratorRemediationPrOpenedProposals, redis.NewPrOpenedBinding(proposalsHandler, logger), 0},

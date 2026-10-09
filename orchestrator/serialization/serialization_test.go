@@ -5,7 +5,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	"github.com/carolsimone/continuo/orchestrator/domain/event"
@@ -54,38 +53,6 @@ func TestNodeReadySecretRefOmitempty(t *testing.T) {
 	out, _ := json.Marshal(NodeReadyForExecutionFromDomain(domain.NodeReadyForExecution{TaskID: "t"}))
 	if strings.Contains(string(out), `"secret_ref"`) {
 		t.Fatalf("secret_ref must be omitted when empty: %s", out)
-	}
-}
-
-const goldenReleasePromoted = `{"release_id":"r","topology":[{"unique_id":"svc.m","schema_name":"sch","table_name":"tbl","service_name":"svc","node_type":"dbt-model","content_hash":"h","test_count":2,"image_tag":"img","secret_ref":"continuo-api-fx","schedule":"daily","upstream_unique_ids":["svc.u"],"changed":true,"original_file_path":"models/m.sql"}],"image_tags":{"svc":"img"},"repo":"acme/demo","commit_sha":"abc","promoted_at":"2026-01-02T03:04:05Z","code_bundle_uri":"s3://b","bootstrap":false}`
-
-func TestReleasePromotedRoundTrip(t *testing.T) {
-	var dto ReleasePromotedDTO
-	if err := json.Unmarshal([]byte(goldenReleasePromoted), &dto); err != nil {
-		t.Fatalf("unmarshal golden: %v", err)
-	}
-	// Byte shape: re-marshalling the decoded DTO reproduces the payload.
-	out, err := json.Marshal(dto)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	if string(out) != goldenReleasePromoted {
-		t.Fatalf("bytes changed:\n got %s\nwant %s", out, goldenReleasePromoted)
-	}
-	got := dto.ToDomain()
-	want := event.ReleasePromoted{
-		ReleaseID: "r",
-		Topology: []event.ReleasePromotedNode{{ //nolint:gosec // G101: secret_ref names a Kubernetes Secret, not a credential
-			UniqueID: "svc.m", SchemaName: "sch", TableName: "tbl", ServiceName: "svc",
-			NodeType: "dbt-model", ContentHash: "h", TestCount: 2, ImageTag: "img", SecretRef: "continuo-api-fx",
-			Schedule: "daily", UpstreamUniqueIDs: []string{"svc.u"}, Changed: true,
-			OriginalFilePath: "models/m.sql",
-		}},
-		ImageTags: map[string]string{"svc": "img"}, Repo: "acme/demo", CommitSHA: "abc",
-		PromotedAt: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), CodeBundleURI: "s3://b", Bootstrap: false,
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("toDomain:\n got %+v\nwant %+v", got, want)
 	}
 }
 
