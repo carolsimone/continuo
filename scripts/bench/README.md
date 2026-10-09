@@ -60,7 +60,7 @@ The machine that runs the harness stays awake for the whole run: a sleeping host
 
 
 - Both targets: `python3` 3.9 or newer, `kubectl`, Docker with BuildKit.
-- `compose`: the stack from `bash scripts/setup.sh` (in a fresh worktree, `bash scripts/ensure-dev-env.sh` first) and the CLI from `make -C cli build`. `run_baseline_kind.sh` starts state, orchestrator and execution-controller itself through `start_local_services.sh`; execution-controller runs in compose and reaches MinIO through the Docker bridge, which the task pods in kind can also reach. The release-controller image must be built from the branch under test (`docker compose build release-controller`), since `inject.sh` runs the `announce-topology` that image carries.
+- `compose`: the stack from `bash scripts/setup.sh` (in a fresh worktree, `bash scripts/ensure-dev-env.sh` first) and the CLI from `make -C cli build`. `run_baseline_kind.sh` starts state, orchestrator, release-controller and execution-controller itself through `start_local_services.sh` (release-controller's outbox publisher is what publishes the announcement `announce-topology` queues); execution-controller runs in compose and reaches MinIO through the Docker bridge, which the task pods in kind can also reach. The release-controller image must be built from the branch under test (`docker compose build release-controller`), since `inject.sh` runs the `announce-topology` that image carries.
 - `k8s`: a kubeconfig for the install, ssh access to its k3s node for the image import, and `docker buildx` for the `linux/amd64` build. Obtaining cluster credentials is managed outside this repository.
 
 ## Usage

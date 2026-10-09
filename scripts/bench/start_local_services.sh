@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
-# Starts the run-lifecycle services of the local compose stack for a benchmark:
-# state, orchestrator and execution-controller, each as a fresh `go run` inside
-# its container (any running instance is stopped first), logging to
-# /tmp/<service>.log in that container, which outage.sh reads. execution-controller
-# runs in compose and reaches MinIO through the Docker bridge, an address that
-# both its own uploads and the task pods in kind resolve; compose DNS names such
-# as `minio` do not resolve inside kind, which would leave every task pod's
-# parse-cache fetch waiting on retries.
+# Starts the services of the local compose stack a benchmark depends on: state,
+# orchestrator, release-controller and execution-controller, each as a fresh
+# `go run` inside its container (any running instance is stopped first), logging
+# to /tmp/<service>.log in that container, which outage.sh reads.
+# release-controller must be running because `announce-topology` (used by
+# inject.sh) only writes the topology artifact and queues the announcement in
+# release-controller's outbox; the service's outbox publisher is what puts it on
+# the stream for the orchestrator. execution-controller runs in compose and
+# reaches MinIO through the Docker bridge, an address that both its own uploads
+# and the task pods in kind resolve; compose DNS names such as `minio` do not
+# resolve inside kind, which would leave every task pod's parse-cache fetch
+# waiting on retries.
 #   start_local_services.sh
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -28,7 +32,7 @@ start() {
 bridge="$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}')"
 [ -n "${bridge}" ] || { echo "start_local_services.sh: no Docker bridge gateway" >&2; exit 1; }
 
-for svc in state orchestrator execution-controller; do
+for svc in state orchestrator release-controller execution-controller; do
   docker exec "${svc}" pkill -f 'go run \.' || true
   docker exec "${svc}" pkill -f "go-build.*/exe/${svc}\$" || true
 done
@@ -38,6 +42,8 @@ start state
 check_container_health state 8082
 start orchestrator
 check_container_health orchestrator 8087
+start release-controller
+check_container_health release-controller 8088 /healthz
 log_info "execution-controller reaches S3 at http://${bridge}:9000"
 start execution-controller -e "S3_ENDPOINT_URL=http://${bridge}:9000"
 check_container_health execution-controller 8084
