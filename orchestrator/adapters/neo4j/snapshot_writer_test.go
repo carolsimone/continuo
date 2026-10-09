@@ -607,3 +607,79 @@ func TestSnapshotWriter_RedeliveredSnapshotMatchesTheEdgeTaskIDs(t *testing.T) {
 			"%s: the redelivered projection must carry the task_id already on the edge", p.TableName)
 	}
 }
+
+// A run records the promotion seq of the topology it was created from; a run
+// derived from another copies the source run's seq; a run derived from a
+// source created before runs carried a seq gets none, which readers report as
+// 0 ("drift unknown").
+func TestSnapshotWriter_StampsThePromotionSeq(t *testing.T) {
+	driver := newDriver(t)
+	ctx := context.Background()
+	scheduleName := "test-seq-" + uuid.New().String()[:8]
+	seedTable(t, driver, scheduleName, "svc", "s", "a", "img:1")
+
+	exec := func(cypher string, params map[string]interface{}) {
+		t.Helper()
+		s := driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+		defer s.Close(ctx)
+		_, err := s.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+			_, err := tx.Run(ctx, cypher, params)
+			return nil, err
+		})
+		require.NoError(t, err)
+	}
+	exec(`MERGE (root:TopologyRoot {id: 'singleton'}) SET root.promotion_seq = 7`, nil)
+
+	fresh, derived, legacySource, fromLegacy := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	exec(`CREATE (:Run {run_id: $id, schedule_name: $sched, topology_generation: 140, service_metadata: '{}'})`,
+		map[string]interface{}{"id": legacySource.String(), "sched": scheduleName})
+	t.Cleanup(func() {
+		for _, id := range []uuid.UUID{fresh, derived, legacySource, fromLegacy} {
+			cleanupRunAndTables(t, driver, id.String(), "test-seq-")
+		}
+		exec(`MATCH (root:TopologyRoot {id: 'singleton'}) REMOVE root.promotion_seq`, nil)
+	})
+
+	write := func(runID uuid.UUID, kind string, source *uuid.UUID) {
+		t.Helper()
+		projection := []snapshot.TaskProjection{{
+			TaskID: uuid.New(), ServiceName: "svc", SchemaName: "s", TableName: "a",
+			ScheduleName: scheduleName, NodeType: "dbt-model", InitialStatus: "PENDING", ImageTag: "img:1",
+		}}
+		s := driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+		defer s.Close(ctx)
+		_, err := s.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+			return nil, neo4jinfra.NewSnapshotWriterForTest(tx).WriteRunAndExecutesEdges(ctx,
+				snapshot.Params{RunID: runID.String(), ScheduleName: scheduleName, Kind: kind, SourceRunID: source},
+				projection)
+		})
+		require.NoError(t, err)
+	}
+	write(fresh, "cron", nil)
+	write(derived, "rerun", &fresh)
+	write(fromLegacy, "rerun", &legacySource)
+
+	seqOf := func(runID uuid.UUID) interface{} {
+		t.Helper()
+		s := driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
+		defer s.Close(ctx)
+		v, err := s.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+			res, err := tx.Run(ctx, `MATCH (r:Run {run_id: $id}) RETURN r.promotion_seq AS seq`,
+				map[string]interface{}{"id": runID.String()})
+			if err != nil {
+				return nil, err
+			}
+			rec, err := res.Single(ctx)
+			if err != nil {
+				return nil, err
+			}
+			seq, _ := rec.Get("seq")
+			return seq, nil
+		})
+		require.NoError(t, err)
+		return v
+	}
+	require.Equal(t, int64(7), seqOf(fresh), "a new run takes the live promotion seq")
+	require.Equal(t, int64(7), seqOf(derived), "a derived run keeps its source's seq")
+	require.Nil(t, seqOf(fromLegacy), "a source without a seq passes none on")
+}

@@ -130,8 +130,8 @@ message GetScheduleGraphRequest { string schedule_name = 1; }
 message GetScheduleGraphResponse {
   repeated TableNode nodes              = 1;
   repeated GraphEdge edges              = 2;
-  // topology_generation is :TopologyRoot.topology_generation at query time.
-  // Returns 0 when the singleton is missing or the property is unset; consumers
+  // topology_generation is the promotion seq of the live topology at query time
+  // (:TopologyRoot.promotion_seq). Returns 0 before the first promotion; consumers
   // MUST treat 0 as "generation unknown", not "generation zero".
   int64 topology_generation             = 3;
 }
@@ -163,25 +163,25 @@ message GetRunGraphRequest { string run_id = 1; }
 message GetRunGraphResponse {
   repeated TableNode nodes = 1;
   repeated GraphEdge edges = 2;
-  // run_topology_generation is the value stamped on the :Run node at
-  // SnapshotGraph time (orchestrator/adapters/neo4j/run_repository.go:91-99).
-  // Returns 0 when the run does not exist or pre-dates topology tracking;
+  // run_topology_generation is the promotion seq the run was created under,
+  // stamped on the :Run node when its snapshot is written. Returns 0 when the
+  // run does not exist or was created before runs carried a promotion seq;
   // consumers MUST treat 0 as "drift unknown", not "no drift".
   int64 run_topology_generation = 3;
-  // latest_topology_generation is the orchestrator's current
-  // topology_state.topology_generation (Postgres singleton).
+  // latest_topology_generation is the promotion seq of the live topology.
   int64 latest_topology_generation = 4;
 }
 
 message ListActiveRunDriftsRequest {}
 message ListActiveRunDriftsResponse {
-  // latest_topology_generation matches the value in GetRunGraphResponse.
+  // latest_topology_generation is the live promotion seq, as in GetRunGraphResponse.
   int64 latest_topology_generation = 1;
   repeated ActiveRunDrift active_runs = 2;
 }
 message ActiveRunDrift {
   string schedule_name = 1;
   string run_id = 2;
+  // run_topology_generation is the promotion seq the run was created under; 0 when unknown.
   int64 run_topology_generation = 3;
 }
 

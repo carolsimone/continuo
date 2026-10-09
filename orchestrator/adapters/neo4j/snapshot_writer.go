@@ -25,7 +25,7 @@ func newSnapshotWriter(tx neo4j.ManagedTransaction) *snapshotWriter {
 //
 // :Run properties: run_id, schedule_name, kind, operation, initiated_by,
 //
-//	created_at, source_run_id?, topology_generation, service_metadata,
+//	created_at, source_run_id?, promotion_seq?, service_metadata,
 //	total_nodes, terminal_count, version
 //
 // :EXECUTES edge:  task_id, status, image_tag, secret_ref?,
@@ -55,9 +55,11 @@ func newSnapshotWriter(tx neo4j.ManagedTransaction) *snapshotWriter {
 // gracefully to "unknown" for later stale (snapshot_of_run) reads instead of
 // silently pinning zero.
 //
-// topology_generation + service_metadata are stamped on CREATE from the source
-// :Run if source_run_id is set, otherwise from :TopologyRoot. Falls back to
-// :TopologyRoot if source :Run was pruned. total_nodes is set to len(projection),
+// promotion_seq + service_metadata are stamped on CREATE from the source :Run
+// if source_run_id is set, otherwise from :TopologyRoot, where the topology swap
+// records the live promotion. Falls back to :TopologyRoot if the source :Run was
+// pruned. A source :Run without a promotion_seq leaves the property unset, which
+// readers report as 0 ("drift unknown"). total_nodes is set to len(projection),
 // terminal_count initialized to 0, and version initialized to 0.
 func (w *snapshotWriter) WriteRunAndExecutesEdges(ctx context.Context, p snapshot.Params, projection []snapshot.TaskProjection) error {
 	if len(projection) == 0 {
@@ -103,9 +105,9 @@ func (w *snapshotWriter) WriteRunAndExecutesEdges(ctx context.Context, p snapsho
 		OPTIONAL MATCH (src:Run {run_id: $source_run_id})
 		WITH root, src,
 		     CASE
-		         WHEN src IS NULL THEN COALESCE(root.topology_generation, 0)
-		         ELSE src.topology_generation
-		     END AS topo_gen,
+		         WHEN src IS NULL THEN COALESCE(root.promotion_seq, 0)
+		         ELSE src.promotion_seq
+		     END AS topo_seq,
 		     CASE
 		         WHEN src IS NULL THEN COALESCE(root.service_metadata, '{}')
 		         ELSE src.service_metadata
@@ -116,7 +118,7 @@ func (w *snapshotWriter) WriteRunAndExecutesEdges(ctx context.Context, p snapsho
 		              run.kind               = $kind,
 		              run.operation           = $operation,
 		              run.initiated_by        = $initiated_by,
-		              run.topology_generation = topo_gen,
+		              run.promotion_seq       = topo_seq,
 		              run.service_metadata    = svc_meta,
 		              run.total_nodes         = $total_nodes,
 		              run.terminal_count      = 0,

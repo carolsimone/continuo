@@ -96,7 +96,7 @@ func txSeedRun(ctx context.Context, tx neo4j.ManagedTransaction, runID, sched st
 		ON CREATE SET r.schedule_name = $sched,
 		              r.created_at = datetime(),
 		              r.kind = 'cron',
-		              r.topology_generation = 1,
+		              r.promotion_seq = 1,
 		              r.service_metadata = '{}'`,
 		map[string]interface{}{"run_id": runID, "sched": sched})
 	return err

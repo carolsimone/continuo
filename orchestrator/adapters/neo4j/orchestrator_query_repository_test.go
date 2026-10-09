@@ -41,7 +41,7 @@ func seedRunWithGeneration(t *testing.T, ctx context.Context, client neo4jinfra.
 	if gen == nil {
 		query = `CREATE (r:Run {run_id: $run_id, schedule_name: 'sched', test_marker: $marker})`
 	} else {
-		query = `CREATE (r:Run {run_id: $run_id, schedule_name: 'sched', topology_generation: $gen, test_marker: $marker})`
+		query = `CREATE (r:Run {run_id: $run_id, schedule_name: 'sched', promotion_seq: $gen, test_marker: $marker})`
 		params["gen"] = *gen
 	}
 	_, err := session.Run(ctx, query, params)
@@ -106,8 +106,8 @@ func TestOrchestratorQueryRepository_ListActiveRuns_OnlyUnfinalized(t *testing.T
 	// Seed: one unfinalized run + one finalized run.
 	session := client.NewSession(ctx, neo4j.AccessModeWrite)
 	_, err := session.Run(ctx, `
-        CREATE (r1:Run {run_id: 'active-1', schedule_name: 'sched-a', topology_generation: 5, test_marker: $m})
-        CREATE (r2:Run {run_id: 'finalized-1', schedule_name: 'sched-b', topology_generation: 4,
+        CREATE (r1:Run {run_id: 'active-1', schedule_name: 'sched-a', promotion_seq: 5, test_marker: $m})
+        CREATE (r2:Run {run_id: 'finalized-1', schedule_name: 'sched-b', promotion_seq: 4,
                        completed_at: datetime(), terminal_status: 'SUCCEEDED', test_marker: $m})
     `, map[string]any{"m": t.Name()})
 	require.NoError(t, err)
@@ -173,19 +173,19 @@ func TestOrchestratorQueryRepository_ListActiveRuns_NewestFirst(t *testing.T) {
 	_, err := session.Run(ctx, `
         CREATE (r1:Run {
             run_id: 'order-older', schedule_name: 'sched-order',
-            topology_generation: 1,
+            promotion_seq: 1,
             created_at: datetime('2026-05-01T00:00:00Z'),
             test_marker: $m
         })
         CREATE (r2:Run {
             run_id: 'order-newer', schedule_name: 'sched-order',
-            topology_generation: 2,
+            promotion_seq: 2,
             created_at: datetime('2026-05-02T00:00:00Z'),
             test_marker: $m
         })
         CREATE (r3:Run {
             run_id: 'order-finalized', schedule_name: 'sched-order',
-            topology_generation: 3,
+            promotion_seq: 3,
             created_at: datetime('2026-05-03T00:00:00Z'),
             completed_at: datetime(), terminal_status: 'SUCCEEDED',
             test_marker: $m
@@ -296,7 +296,7 @@ func TestGetScheduleGraph_PopulatesTopologyGeneration(t *testing.T) {
 	s := client.NewSession(ctx, neo4j.AccessModeWrite)
 	_, err := s.Run(ctx, `
         MERGE (root:TopologyRoot {id:'singleton'})
-        SET   root.topology_generation = 42
+        SET   root.promotion_seq = 42
         CREATE (:Table {service_name:'svc', schema_name:'s', table_name:'a',
                         schedule_name:'gen-test', active:true,
                         last_updated_at: datetime('2026-05-26T10:00:00Z'),
@@ -309,7 +309,7 @@ func TestGetScheduleGraph_PopulatesTopologyGeneration(t *testing.T) {
 		defer s.Close(ctx)
 		_, _ = s.Run(ctx, "MATCH (t:Table {test_marker:$m}) DETACH DELETE t",
 			map[string]any{"m": marker})
-		_, _ = s.Run(ctx, "MATCH (r:TopologyRoot {id:'singleton'}) REMOVE r.topology_generation",
+		_, _ = s.Run(ctx, "MATCH (r:TopologyRoot {id:'singleton'}) REMOVE r.promotion_seq",
 			nil)
 	})
 
@@ -384,4 +384,24 @@ func TestOrchestratorQueryRepository_GetGeneration_ReadsTheLivePromotionSeq(t *t
 	got, err = repo.GetGeneration(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, int64(9), got)
+}
+
+// A run created before runs carried a promotion seq has only the legacy
+// topology_generation counter. That counter is not a promotion seq, so the run
+// reads as 0 ("drift unknown"), never as the counter's value.
+func TestOrchestratorQueryRepository_GetRunTopologyGeneration_IgnoresTheLegacyCounter(t *testing.T) {
+	repo, client, cleanup := newTestQueryRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	s := client.NewSession(ctx, neo4j.AccessModeWrite)
+	_, err := s.Run(ctx,
+		`CREATE (r:Run {run_id: 'legacy-gen', schedule_name: 'sched', topology_generation: 140, test_marker: $m})`,
+		map[string]any{"m": t.Name()})
+	require.NoError(t, err)
+	s.Close(ctx)
+
+	got, err := repo.GetRunTopologyGeneration(ctx, "legacy-gen")
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), got)
 }

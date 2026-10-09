@@ -36,7 +36,7 @@ type TopologyStateReader interface {
 }
 
 // RunGraphView is the result of GetRunGraph — the existing run graph plus
-// the run's pinned topology_generation and the live topology's promotion seq.
+// the promotion seq the run was created under and the live promotion seq.
 type RunGraphView struct {
 	Nodes                    []*domain.TableNode
 	Edges                    []*domain.GraphEdge
@@ -45,8 +45,8 @@ type RunGraphView struct {
 }
 
 // ActiveRunDriftView is the result of ListActiveRunDrifts — every in-flight
-// run with its pinned generation, plus the latest generation for drift
-// computation in the consumer.
+// run with the promotion seq it was created under, plus the live promotion seq
+// for drift computation in the consumer.
 type ActiveRunDriftView struct {
 	ActiveRuns               []*domain.ActiveRun
 	LatestTopologyGeneration int64
