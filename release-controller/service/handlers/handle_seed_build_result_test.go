@@ -359,7 +359,7 @@ func TestHandleSeedBuildResult_OKThenValidationCompletePromotes(t *testing.T) {
 	r = mustGetRelease(t, store, releaseID)
 	assert.Equal(t, pipeline.StatusPromoted, r.Status(),
 		"seed-build then per-node validation-ok must promote, not hang on the barrier")
-	assert.NotNil(t, findEntry(t, store, streams.ReleasePromotedV1))
+	assert.NotNil(t, findEntry(t, store, streams.ReleasePromotedV2))
 }
 
 func TestHandleSeedBuildResult_UnknownReleaseDropped(t *testing.T) {
@@ -388,11 +388,11 @@ func TestHandleSeedBuildResult_EmptyAfterExclusionPromotesDirect(t *testing.T) {
 	r := mustGetRelease(t, store, releaseID)
 	assert.Equal(t, pipeline.StatusPromoted, r.Status(), "seed-only release promotes directly after seed build")
 
-	// No validation.requested must be emitted; release.promoted:v1 is written.
+	// No validation.requested must be emitted; release.promoted:v2 is written.
 	for _, e := range store.OutboxEntries() {
 		assert.NotEqual(t, streams.ValidationRequestedV1, e.StreamName)
 	}
-	assert.NotNil(t, findEntry(t, store, streams.ReleasePromotedV1))
+	assert.NotNil(t, findEntry(t, store, streams.ReleasePromotedV2))
 	assert.Equal(t, "promoted", outcomeOf(t, findEntry(t, store, streams.PipelineRunFinishedV1)))
 
 	// Verify current_prod was updated
@@ -409,12 +409,12 @@ func TestHandleSeedBuildResult_EmptyAfterExclusionPromotePayloadCarriesCandidate
 		ReleaseID: releaseID, Status: "ok",
 	}))
 
-	entry := findEntry(t, store, streams.ReleasePromotedV1)
+	entry := findEntry(t, store, streams.ReleasePromotedV2)
 
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(entry.Payload, &payload))
 	assert.Equal(t, "_candidate_rel_seed_only_schema", payload["candidate_schema"],
-		"release.promoted:v1 on seed-only path must carry candidate_schema so executor can tear down the schema")
+		"release.promoted:v2 on seed-only path must carry candidate_schema so executor can tear down the schema")
 }
 
 // topoSeedsWithFilePath returns a topology with two dbt-seeds that each carry
@@ -519,7 +519,7 @@ func TestHandleSeedBuildResult_Verification_Failed_NoReleaseRejected_FinishedEmi
 // verifies a verification run whose only change is a seed (nothing left to
 // validate after the built seed is excluded) ends at Passed rather than
 // Promoted, touches neither current_prod nor service_prod, emits neither
-// release.promoted:v1 nor release.rejected:v1, and emits
+// release.promoted:v2 nor release.rejected:v1, and emits
 // pipeline.run.finished:v1 with outcome "passed".
 func TestHandleSeedBuildResult_Verification_SeedOnlyOK_PassesNoReleaseEvents_FinishedEmitted(t *testing.T) {
 	releaseID := "rel-verify-seed-only"
@@ -536,7 +536,7 @@ func TestHandleSeedBuildResult_Verification_SeedOnlyOK_PassesNoReleaseEvents_Fin
 	assert.Nil(t, store.GetServiceProd("svc-fin"), "a verification never writes service_prod")
 
 	for _, e := range store.OutboxEntries() {
-		assert.NotEqual(t, streams.ReleasePromotedV1, e.StreamName)
+		assert.NotEqual(t, streams.ReleasePromotedV2, e.StreamName)
 		assert.NotEqual(t, streams.ReleaseRejectedV1, e.StreamName)
 	}
 	assert.Equal(t, "passed", outcomeOf(t, findEntry(t, store, streams.PipelineRunFinishedV1)))

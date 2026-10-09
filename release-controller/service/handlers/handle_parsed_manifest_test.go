@@ -131,7 +131,7 @@ func TestHandleParsedManifest_OK_TransitionsToValidating(t *testing.T) {
 // persists CodeBundleURI (published by topology-controller on
 // manifest.loaded.candidate:v2) onto the saved release on the normal
 // (non-bootstrap) validating path, so it survives to be carried on
-// release.promoted:v1 once validation passes.
+// release.promoted:v2 once validation passes.
 func TestHandleParsedManifest_OK_StoresCodeBundleURI(t *testing.T) {
 	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
 
@@ -607,7 +607,7 @@ func TestHandleParsedManifest_OK_NothingToValidate_PromotesDirectly(t *testing.T
 	for _, e := range entries {
 		assert.NotEqual(t, streams.ValidationRequestedV1, e.StreamName, "must not emit an empty validation request")
 	}
-	promoted := findEntry(t, store, streams.ReleasePromotedV1)
+	promoted := findEntry(t, store, streams.ReleasePromotedV2)
 
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(promoted.Payload, &payload))
@@ -670,7 +670,7 @@ func TestHandleParsedManifest_OK_NothingToValidate_Verification(t *testing.T) {
 
 		for _, e := range outboxEntries(store) {
 			assert.NotEqual(t, streams.ValidationRequestedV1, e.StreamName, "must not emit an empty validation request")
-			assert.NotEqual(t, streams.ReleasePromotedV1, e.StreamName, "a verification run never promotes")
+			assert.NotEqual(t, streams.ReleasePromotedV2, e.StreamName, "a verification run never promotes")
 			assert.NotEqual(t, streams.ReleaseRejectedV1, e.StreamName, "a proven fix must not be reported as a failed attempt")
 		}
 
@@ -698,7 +698,7 @@ func TestHandleParsedManifest_OK_NothingToValidate_Verification(t *testing.T) {
 
 		for _, e := range outboxEntries(store) {
 			assert.NotEqual(t, streams.ValidationRequestedV1, e.StreamName, "must not emit an empty validation request")
-			assert.NotEqual(t, streams.ReleasePromotedV1, e.StreamName, "a verification run never promotes")
+			assert.NotEqual(t, streams.ReleasePromotedV2, e.StreamName, "a verification run never promotes")
 			assert.NotEqual(t, streams.ReleaseRejectedV1, e.StreamName,
 				"a verification's failure is never a release rejection")
 		}
@@ -723,7 +723,7 @@ func TestHandleParsedManifest_OK_NothingToValidate_Verification(t *testing.T) {
 		assert.Equal(t, pipeline.StatusPromoted, r.Status(),
 			"the empty-set trivial pass must be unchanged for a normal release")
 
-		assert.NotNil(t, findEntry(t, store, streams.ReleasePromotedV1), "promotes directly")
+		assert.NotNil(t, findEntry(t, store, streams.ReleasePromotedV2), "promotes directly")
 		assert.Equal(t, "rA", store.GetCurrentProd().ReleaseID(), "current prod advanced to this release")
 	})
 }
@@ -1044,7 +1044,7 @@ func TestHandleParsedManifest_Bootstrap_PromotesWithoutValidation(t *testing.T) 
 	require.NoError(t, err)
 	assert.Equal(t, pipeline.StatusPromoted, r.Status())
 	// The candidate topology is recorded — promoteToProduction reads it to seed
-	// current_prod and the release.promoted:v1 payload; an empty one would
+	// current_prod and the release.promoted:v2 payload; an empty one would
 	// silently produce an empty prod snapshot.
 	assert.Equal(t, 2, r.CandidateTopologyRef().NodeCount)
 
@@ -1055,7 +1055,7 @@ func TestHandleParsedManifest_Bootstrap_PromotesWithoutValidation(t *testing.T) 
 	// NO validation_requested, NO rejection.
 	entries := outboxEntries(store)
 	require.Len(t, entries, 4)
-	assert.Equal(t, streams.ReleasePromotedV1, entries[2].StreamName)
+	assert.Equal(t, streams.ReleasePromotedV2, entries[2].StreamName)
 	assert.Equal(t, "promoted", outcomeOf(t, entries[3]))
 
 	var payload map[string]any
@@ -1985,7 +1985,7 @@ func TestHandleParsedManifest_OK_VerificationRestoringProductionAfterCompileReje
 	assert.Equal(t, 1, r.CandidateTopologyRef().NodeCount, "the parsed topology is persisted on the passed verification run")
 	for _, e := range outboxEntries(store) {
 		assert.NotEqual(t, streams.ReleaseRejectedV1, e.StreamName, "a proven fix must not be reported as a failed attempt")
-		assert.NotEqual(t, streams.ReleasePromotedV1, e.StreamName, "a verification run never promotes")
+		assert.NotEqual(t, streams.ReleasePromotedV2, e.StreamName, "a verification run never promotes")
 	}
 	assert.Equal(t, "prev", store.GetCurrentProd().ReleaseID(),
 		"a passed verification run must not advance current prod")

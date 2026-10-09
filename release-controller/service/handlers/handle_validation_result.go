@@ -2,18 +2,15 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
-	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
-	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/service/ports"
 	"github.com/carolsimone/continuo/release-controller/service/uow"
-	"github.com/google/uuid"
 )
 
 // HandleValidationResultInput carries the terminal validation decision (the
@@ -40,7 +37,7 @@ type HandleValidationResultInput struct {
 //
 // If every present validation node passed and the aggregate status is ok: a
 // candidate promotes to production (updates CurrentProd, upserts the changed
-// service's service_prod pointer, emits release.promoted:v1) and a
+// service's service_prod pointer, emits release.promoted:v2) and a
 // verification passes without touching either. Otherwise a candidate rejects
 // and emits release.rejected:v1, while a verification fails and emits no
 // release event. A run of either kind, on either outcome, emits
@@ -140,7 +137,7 @@ func concludeValidated(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeli
 // the next promotion seq, points current_prod at this release's candidate
 // topology artifact under that seq, upserts the changed service's
 // service_prod pointer, transitions the release to Promoted, persists it, and
-// writes the release.promoted:v1 and pipeline.run.finished:v1 outbox rows. The
+// writes the release.promoted:v2 and pipeline.run.finished:v1 outbox rows. The
 // caller owns Begin/Commit and any telemetry. The release must already hold
 // its candidate topology (i.e. be in Validating) and be a candidate — call
 // concludeValidated instead when the run's kind is unknown to the caller.
@@ -152,20 +149,10 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipe
 	if err != nil {
 		return fmt.Errorf("get current prod: %w", err)
 	}
-	promotedTopo, err := d.Topologies.Load(ctx, ref)
-	if err != nil {
-		return fmt.Errorf("load candidate topology %s: %w", releaseID, err)
-	}
-	prodTopo, err := loadProdTopology(ctx, d, cp)
+	// Computed against the production topology BEFORE cp.Update replaces it.
+	changed, err := changedSincePromotion(ctx, d, r, cp)
 	if err != nil {
 		return err
-	}
-
-	// Determine which nodes actually changed versus the prod being replaced, so
-	// the release.promoted event can tag them. Bootstrap (empty prod) flags all.
-	changedSet := make(map[string]bool)
-	for _, id := range release.DerivedChangedNodeIDs(promotedTopo, prodTopo) {
-		changedSet[id] = true
 	}
 
 	seq, err := u.PromotionSequenceRepo().Next(ctx)
@@ -181,12 +168,12 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipe
 
 	// Upsert the changed service's production pointer so future releases can
 	// assemble this service's manifest key at their AdvanceQueue step.
-	changed := r.ChangedService()
+	changedService := r.ChangedService()
 	sp := release.NewServiceProd(
-		changed,
+		changedService,
 		releaseID,
-		CanonicalManifestKey(d.Bucket, changed, releaseID, r.ManifestKind()),
-		r.ImageTags()[changed],
+		CanonicalManifestKey(d.Bucket, changedService, releaseID, r.ManifestKind()),
+		r.ImageTags()[changedService],
 		r.ManifestKind(),
 		now,
 	)
@@ -201,67 +188,20 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipe
 		return fmt.Errorf("save release: %w", err)
 	}
 
-	type promotedNodeWire struct {
-		UniqueID          string   `json:"unique_id"`
-		SchemaName        string   `json:"schema_name"`
-		TableName         string   `json:"table_name"`
-		ServiceName       string   `json:"service_name"`
-		NodeType          string   `json:"node_type"`
-		ContentHash       string   `json:"content_hash"`
-		TestCount         int      `json:"test_count"`
-		ImageTag          string   `json:"image_tag"`
-		UpstreamUniqueIDs []string `json:"upstream_unique_ids"`
-		Schedule          string   `json:"schedule"`
-		Changed           bool     `json:"changed"`
-		OriginalFilePath  string   `json:"original_file_path"`
-		SecretRef         string   `json:"secret_ref,omitempty"`
-	}
-	// Tests are validation-only: the artifact current_prod points at keeps
-	// them so an unchanged test is not re-checked next release, but the
-	// promoted topology the orchestrator draws and schedules never carries them.
-	publishedTopo := promotedTopo.WithoutTests()
-	wireTopo := make([]promotedNodeWire, len(publishedTopo))
-	for i, n := range publishedTopo {
-		wireTopo[i] = promotedNodeWire{
-			UniqueID:          n.UniqueID,
-			SchemaName:        n.SchemaName,
-			TableName:         n.TableName,
-			ServiceName:       n.ServiceName,
-			NodeType:          n.NodeType,
-			ContentHash:       n.ContentHash,
-			TestCount:         n.TestCount,
-			ImageTag:          n.ImageTag,
-			UpstreamUniqueIDs: n.UpstreamUniqueIDs,
-			Schedule:          n.Schedule,
-			Changed:           changedSet[n.UniqueID],
-			OriginalFilePath:  n.OriginalFilePath,
-			SecretRef:         n.SecretRef,
-		}
-	}
-	payload, err := json.Marshal(map[string]any{
-		"release_id":       releaseID,
-		"topology":         wireTopo,
-		"image_tags":       r.ImageTags(),
-		"repo":             r.Repo(),
-		"commit_sha":       r.CommitSHA(),
-		"promoted_at":      now.UTC(),
-		"candidate_schema": CandidateSchemaFor(releaseID),
-		"code_bundle_uri":  r.CodeBundleURI(),
-		"bootstrap":        r.IsBootstrap(),
-	})
-	if err != nil {
-		return fmt.Errorf("marshal payload: %w", err)
-	}
-	if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
-		ID:            uuid.New(),
-		AggregateType: "release-controller",
-		AggregateID:   AggregateIDForRelease(releaseID),
-		EventType:     "release_promoted",
-		Payload:       payload,
-		StreamName:    streams.ReleasePromotedV1,
-		Status:        "pending",
+	if err := enqueueReleasePromoted(ctx, u, events.ReleasePromoted{
+		ReleaseID:       releaseID,
+		PromotedAt:      now.UTC(),
+		PromotionSeq:    seq,
+		TopologyURI:     ref.URI,
+		TopologySHA256:  ref.SHA256,
+		ChangedNodeIDs:  changed,
+		CandidateSchema: CandidateSchemaFor(releaseID),
+		CodeBundleURI:   r.CodeBundleURI(),
+		Repo:            r.Repo(),
+		CommitSHA:       r.CommitSHA(),
+		Bootstrap:       r.IsBootstrap(),
 	}); err != nil {
-		return fmt.Errorf("outbox insert: %w", err)
+		return err
 	}
 	return enqueueRunFinished(ctx, u, r, now)
 }

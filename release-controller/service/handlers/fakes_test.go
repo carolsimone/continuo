@@ -12,8 +12,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/events"
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/release-controller/adapters/serialization"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
@@ -769,4 +771,15 @@ func outcomeOf(t *testing.T, e *pkgoutbox.Entry) string {
 	}
 	require.NoError(t, json.Unmarshal(e.Payload, &p))
 	return p.Outcome
+}
+
+// promotedEvent decodes the payload of a release.promoted:v2 outbox row.
+func promotedEvent(t *testing.T, e *pkgoutbox.Entry) events.ReleasePromoted {
+	t.Helper()
+	require.NotNil(t, e, "expected a release.promoted:v2 outbox entry")
+	require.Equal(t, streams.ReleasePromotedV2, e.StreamName)
+	require.Equal(t, ports.ReleasePromotedV2EventType, e.EventType)
+	var p events.ReleasePromoted
+	require.NoError(t, json.Unmarshal(e.Payload, &p))
+	return p
 }

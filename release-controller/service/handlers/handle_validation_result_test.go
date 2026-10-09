@@ -253,7 +253,7 @@ func TestHandleValidationResult_AllOK_Promotes(t *testing.T) {
 	require.Len(t, entries, 5) // CompileRequested + ReleaseRequested + ValidationRequested + ReleasePromoted + PipelineRunFinished
 
 	third := entries[3]
-	assert.Equal(t, streams.ReleasePromotedV1, third.StreamName)
+	assert.Equal(t, streams.ReleasePromotedV2, third.StreamName)
 	assert.Equal(t, "promoted", outcomeOf(t, entries[4]))
 
 	// Assert the changed service's service_prod row carries the correct values.
@@ -293,7 +293,7 @@ func seedToValidatingVerification(t *testing.T, releaseID string) (*handlers.Dep
 // TestHandleValidationResult_Verification_StopsAtPassed_NeverPromotes drives
 // HandleValidationResult with a verification run in Validating and an all-ok
 // aggregate. The verification run must stop at StatusPassed: no
-// release.promoted:v1 outbox row, current_prod's Upsert never called, and the
+// release.promoted:v2 outbox row, current_prod's Upsert never called, and the
 // promoted-telemetry span never fires. A control on the identical flow with a
 // candidate must still promote exactly as today, proving the gate is
 // specific to the run's kind rather than a general regression.
@@ -320,8 +320,8 @@ func TestHandleValidationResult_Verification_StopsAtPassed_NeverPromotes(t *test
 
 		entries := outboxEntries(store)
 		for _, e := range entries {
-			assert.NotEqual(t, streams.ReleasePromotedV1, e.StreamName,
-				"a verification run must never emit release.promoted:v1")
+			assert.NotEqual(t, streams.ReleasePromotedV2, e.StreamName,
+				"a verification run must never emit release.promoted:v2")
 		}
 
 		assert.Equal(t, 0, store.CurrentProdUpsertCalls(),
@@ -359,18 +359,18 @@ func TestHandleValidationResult_Verification_StopsAtPassed_NeverPromotes(t *test
 		entries := outboxEntries(store)
 		var sawPromoted bool
 		for _, e := range entries {
-			if e.StreamName == streams.ReleasePromotedV1 {
+			if e.StreamName == streams.ReleasePromotedV2 {
 				sawPromoted = true
 			}
 		}
-		assert.True(t, sawPromoted, "a candidate release must still emit release.promoted:v1")
+		assert.True(t, sawPromoted, "a candidate release must still emit release.promoted:v2")
 	})
 }
 
 // TestHandleValidationResult_VerificationPasses_NoReleaseEvents_FinishedEmitted
 // drives a verification run straight to passed and asserts the exact
 // pipeline.run.finished:v1 payload contract: a verification's pass emits
-// neither release.promoted:v1 nor release.rejected:v1, but does emit exactly
+// neither release.promoted:v2 nor release.rejected:v1, but does emit exactly
 // one pipeline.run.finished:v1 whose run_kind, outcome, verifies_release_id,
 // and candidate_schema describe this verification.
 func TestHandleValidationResult_VerificationPasses_NoReleaseEvents_FinishedEmitted(t *testing.T) {
@@ -392,7 +392,7 @@ func TestHandleValidationResult_VerificationPasses_NoReleaseEvents_FinishedEmitt
 	for _, e := range store.entries {
 		streamsEmitted[e.StreamName]++
 	}
-	assert.Equal(t, 0, streamsEmitted[streams.ReleasePromotedV1])
+	assert.Equal(t, 0, streamsEmitted[streams.ReleasePromotedV2])
 	assert.Equal(t, 0, streamsEmitted[streams.ReleaseRejectedV1])
 	assert.Equal(t, 1, streamsEmitted[streams.PipelineRunFinishedV1])
 	var payload map[string]any
@@ -430,7 +430,7 @@ func TestHandleValidationResult_VerificationFails_NoReleaseRejected_FinishedEmit
 }
 
 // TestHandleValidationResult_CandidatePromoted_EmitsFinishedToo is the
-// control: a candidate's promotion still emits release.promoted:v1, and now
+// control: a candidate's promotion still emits release.promoted:v2, and now
 // also emits pipeline.run.finished:v1 with outcome "promoted".
 func TestHandleValidationResult_CandidatePromoted_EmitsFinishedToo(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).UTC()
@@ -444,7 +444,7 @@ func TestHandleValidationResult_CandidatePromoted_EmitsFinishedToo(t *testing.T)
 	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{ReleaseID: r.ID(), AggregateStatus: "ok"}))
 
 	assert.Equal(t, "promoted", outcomeOf(t, lastEntryOn(store, streams.PipelineRunFinishedV1)))
-	assert.NotNil(t, lastEntryOn(store, streams.ReleasePromotedV1))
+	assert.NotNil(t, lastEntryOn(store, streams.ReleasePromotedV2))
 }
 
 // seedToValidatingPython mirrors seedToValidating but registers the release as
@@ -771,36 +771,6 @@ func TestHandleValidationResult_AggregateStatusFailed_Rejects(t *testing.T) {
 		"aggregate_status must be surfaced so operators can diagnose a rejection with no per-node signal")
 }
 
-// promotedNodeWire mirrors the per-node shape of release.promoted:v1, including
-// the new `changed` flag and all other per-node fields to catch regressions
-// if any field is dropped or renamed.
-type promotedNodeWire struct {
-	UniqueID          string   `json:"unique_id"`
-	SchemaName        string   `json:"schema_name"`
-	TableName         string   `json:"table_name"`
-	ServiceName       string   `json:"service_name"`
-	NodeType          string   `json:"node_type"`
-	ContentHash       string   `json:"content_hash"`
-	TestCount         int      `json:"test_count"`
-	ImageTag          string   `json:"image_tag"`
-	UpstreamUniqueIDs []string `json:"upstream_unique_ids"`
-	Schedule          string   `json:"schedule"`
-	Changed           bool     `json:"changed"`
-	OriginalFilePath  string   `json:"original_file_path"`
-	SecretRef         string   `json:"secret_ref"`
-}
-
-// promotedPayload is the JSON shape released into release.promoted:v1.
-type promotedPayload struct {
-	ReleaseID     string             `json:"release_id"`
-	Repo          string             `json:"repo"`
-	CommitSHA     string             `json:"commit_sha"`
-	PromotedAt    time.Time          `json:"promoted_at"`
-	Topology      []promotedNodeWire `json:"topology"`
-	CodeBundleURI string             `json:"code_bundle_uri"`
-	Bootstrap     bool               `json:"bootstrap"`
-}
-
 // TestHandleValidationResult_Promote_StampsChangedAndProvenance verifies that a
 // promotion emits release-level provenance (repo, commit_sha, promoted_at) and
 // flags exactly the nodes whose content_hash differs from the prior prod: node
@@ -850,33 +820,21 @@ func TestHandleValidationResult_Promote_StampsChangedAndProvenance(t *testing.T)
 	entries := outboxEntries(store)
 	require.Len(t, entries, 5) // CompileRequested + ReleaseRequested + ValidationRequested + ReleasePromoted + PipelineRunFinished
 	promotedEntry := entries[3]
-	require.Equal(t, streams.ReleasePromotedV1, promotedEntry.StreamName)
 
-	var p promotedPayload
-	require.NoError(t, json.Unmarshal(promotedEntry.Payload, &p))
+	p := promotedEvent(t, promotedEntry)
 	assert.Equal(t, "acme/demo", p.Repo)
 	assert.Equal(t, "deadbeef", p.CommitSHA)
 	assert.Equal(t, time.Unix(100, 0).UTC(), p.PromotedAt.UTC())
-
-	changedByID := map[string]bool{}
-	contentHashByID := map[string]string{}
-	for _, n := range p.Topology {
-		changedByID[n.UniqueID] = n.Changed
-		contentHashByID[n.UniqueID] = n.ContentHash
-	}
-	assert.False(t, changedByID["a"], "a is unchanged (hash matches prior prod)")
-	assert.True(t, changedByID["b"], "b changed (hash differs from prior prod)")
-	assert.Equal(t, "new", contentHashByID["b"], "b's content_hash must match candidate (verifies field is emitted)")
-	assert.Equal(t, "h", contentHashByID["a"], "a's content_hash must match candidate")
+	assert.Equal(t, []string{"b"}, p.ChangedNodeIDs, "b changed (hash differs from prior prod); a is unchanged")
 }
 
-// TestHandleValidationResult_Promote_StripsTestsFromWireButKeepsInCurrentProd
-// verifies that a dbt-test node in the candidate topology is absent from the
-// release.promoted:v1 event's topology — the orchestrator only ever draws
-// and schedules relations, never a test — while current_prod's own snapshot
+// TestHandleValidationResult_Promote_TestNeverChangedButKeptInCurrentProd
+// verifies that a dbt-test node in the candidate topology is never announced
+// in release.promoted:v2's changed_node_ids — the orchestrator only ever draws
+// and schedules relations, never a test — while current_prod's own artifact
 // still holds it, so an unchanged test is not re-checked by a future
 // release.
-func TestHandleValidationResult_Promote_StripsTestsFromWireButKeepsInCurrentProd(t *testing.T) {
+func TestHandleValidationResult_Promote_TestNeverChangedButKeptInCurrentProd(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
 
@@ -902,11 +860,8 @@ func TestHandleValidationResult_Promote_StripsTestsFromWireButKeepsInCurrentProd
 		ReleaseID: "rA", AggregateStatus: "ok",
 	}))
 
-	last := findEntry(t, store, streams.ReleasePromotedV1)
-	var p promotedPayload
-	require.NoError(t, json.Unmarshal(last.Payload, &p))
-	require.Len(t, p.Topology, 1, "only the model is published; the test is stripped")
-	assert.Equal(t, "a", p.Topology[0].UniqueID)
+	p := promotedEvent(t, findEntry(t, store, streams.ReleasePromotedV2))
+	assert.Equal(t, []string{"a"}, p.ChangedNodeIDs, "a test is never announced as changed")
 
 	cp := store.GetCurrentProd()
 	prodTopo, err := deps.Topologies.Load(context.Background(), cp.Topology())
@@ -916,12 +871,12 @@ func TestHandleValidationResult_Promote_StripsTestsFromWireButKeepsInCurrentProd
 		keptIDs[n.UniqueID] = true
 	}
 	assert.True(t, keptIDs["test.p.not_null_a_id.1"],
-		"current_prod keeps the test so an unchanged test is not re-checked next release")
+		"current_prod's artifact keeps the test so an unchanged test is not re-checked next release")
 	assert.True(t, keptIDs["a"])
 }
 
 // TestHandleValidationResult_Promote_CarriesCandidateSchema verifies that the
-// release.promoted:v1 payload includes candidate_schema so the execution-controller's
+// release.promoted:v2 payload includes candidate_schema so the execution-controller's
 // release.promoted teardown consumer can drop the schema when present (idempotent
 // no-op if validation.completed already cleaned it up).
 func TestHandleValidationResult_Promote_CarriesCandidateSchema(t *testing.T) {
@@ -937,7 +892,7 @@ func TestHandleValidationResult_Promote_CarriesCandidateSchema(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	promotedEntry := findEntry(t, store, streams.ReleasePromotedV1)
+	promotedEntry := findEntry(t, store, streams.ReleasePromotedV2)
 
 	var payload map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(promotedEntry.Payload, &payload))
@@ -945,111 +900,7 @@ func TestHandleValidationResult_Promote_CarriesCandidateSchema(t *testing.T) {
 	var candidateSchema string
 	require.NoError(t, json.Unmarshal(payload["candidate_schema"], &candidateSchema))
 	assert.Equal(t, "_candidate_rA", candidateSchema,
-		"release.promoted:v1 must carry candidate_schema for executor teardown")
-}
-
-// TestHandleValidationResult_Promote_EmitsOriginalFilePath verifies that promotion
-// carries the original_file_path field from the candidate topology through to the
-// release.promoted:v1 event, allowing the orchestrator to persist ancestry metadata.
-func TestHandleValidationResult_Promote_EmitsOriginalFilePath(t *testing.T) {
-	deps, store := newDeps(time.Unix(100, 0).UTC())
-	deps.Bucket = "continuo"
-
-	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: "svc-a", ReleaseID: "rA", ImageTag: "sha-a", Repo: "acme/demo", CommitSHA: "deadbeef",
-	}))
-	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
-	require.NoError(t, handlers.HandleCompileResult(context.Background(), deps, handlers.HandleCompileResultInput{
-		ReleaseID: "rA", Status: "ok",
-	}))
-	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: "rA", Status: "ok",
-		TopologyRef: putTopology(t, deps, "rA", release.Topology{
-			{UniqueID: "a", ServiceName: "svc-a", OriginalFilePath: "models/a.sql", UpstreamUniqueIDs: []string{}},
-		}),
-	}))
-	seedValidationNodes(t, deps, "rA", []handlers.NodeResult{{NodeID: "a", Status: "ok"}})
-	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
-		ReleaseID: "rA", AggregateStatus: "ok",
-	}))
-
-	last := findEntry(t, store, streams.ReleasePromotedV1)
-	var p promotedPayload
-	require.NoError(t, json.Unmarshal(last.Payload, &p))
-	require.Len(t, p.Topology, 1)
-	assert.Equal(t, "models/a.sql", p.Topology[0].OriginalFilePath)
-}
-
-// TestHandleValidationResult_Promote_EmitsSecretRef verifies that promotion
-// carries a python-api node's secret_ref through to release.promoted:v1 and
-// omits the key for a node that names none.
-func TestHandleValidationResult_Promote_EmitsSecretRef(t *testing.T) {
-	deps, store := newDeps(time.Unix(100, 0).UTC())
-	deps.Bucket = "continuo"
-
-	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: "svc-a", ReleaseID: "rA", ImageTag: "sha-a", Repo: "acme/demo", CommitSHA: "deadbeef",
-	}))
-	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
-	require.NoError(t, handlers.HandleCompileResult(context.Background(), deps, handlers.HandleCompileResultInput{
-		ReleaseID: "rA", Status: "ok",
-	}))
-	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: "rA", Status: "ok",
-		TopologyRef: putTopology(t, deps, "rA", release.Topology{
-			{UniqueID: "a", ServiceName: "svc-a", NodeType: "python-api", SecretRef: "continuo-api-fx", UpstreamUniqueIDs: []string{}},
-			{UniqueID: "b", ServiceName: "svc-a", NodeType: "python-node", UpstreamUniqueIDs: []string{"a"}},
-		}),
-	}))
-	seedValidationNodes(t, deps, "rA", []handlers.NodeResult{{NodeID: "a", Status: "ok"}, {NodeID: "b", Status: "ok"}})
-	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
-		ReleaseID: "rA", AggregateStatus: "ok",
-	}))
-
-	last := findEntry(t, store, streams.ReleasePromotedV1)
-	var p promotedPayload
-	require.NoError(t, json.Unmarshal(last.Payload, &p))
-	require.Len(t, p.Topology, 2)
-	byID := map[string]promotedNodeWire{}
-	for _, n := range p.Topology {
-		byID[n.UniqueID] = n
-	}
-	assert.Equal(t, "continuo-api-fx", byID["a"].SecretRef)
-	assert.Equal(t, "", byID["b"].SecretRef)
-	assert.Equal(t, 1, strings.Count(string(last.Payload), "secret_ref"), "an empty ref is omitted from the wire")
-}
-
-// TestHandleValidationResult_Promote_EmitsTestCount verifies that promotion
-// carries the per-node test_count from the candidate topology through to the
-// release.promoted:v1 event, allowing the orchestrator to persist it onto the
-// Neo4j node.
-func TestHandleValidationResult_Promote_EmitsTestCount(t *testing.T) {
-	deps, store := newDeps(time.Unix(100, 0).UTC())
-	deps.Bucket = "continuo"
-
-	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: "svc-a", ReleaseID: "rA", ImageTag: "sha-a", Repo: "acme/demo", CommitSHA: "deadbeef",
-	}))
-	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
-	require.NoError(t, handlers.HandleCompileResult(context.Background(), deps, handlers.HandleCompileResultInput{
-		ReleaseID: "rA", Status: "ok",
-	}))
-	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: "rA", Status: "ok",
-		TopologyRef: putTopology(t, deps, "rA", release.Topology{
-			{UniqueID: "a", ServiceName: "svc-a", TestCount: 3, UpstreamUniqueIDs: []string{}},
-		}),
-	}))
-	seedValidationNodes(t, deps, "rA", []handlers.NodeResult{{NodeID: "a", Status: "ok"}})
-	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
-		ReleaseID: "rA", AggregateStatus: "ok",
-	}))
-
-	last := findEntry(t, store, streams.ReleasePromotedV1)
-	var p promotedPayload
-	require.NoError(t, json.Unmarshal(last.Payload, &p))
-	require.Len(t, p.Topology, 1)
-	assert.Equal(t, 3, p.Topology[0].TestCount, "release.promoted:v1 must carry per-node test_count")
+		"release.promoted:v2 must carry candidate_schema for executor teardown")
 }
 
 // TestHandleValidationResult_Rejected_CarriesChangedAncestors verifies that
@@ -1148,7 +999,7 @@ func TestHandleValidationResult_Rejected_CarriesChangedAncestors(t *testing.T) {
 
 // TestHandleValidationResult_Promote_EmitsCodeBundleURIAndBootstrap verifies
 // that on the normal validation-pass promotion path (HandleValidationResult ->
-// promoteToProduction), release.promoted:v1 carries the release's
+// promoteToProduction), release.promoted:v2 carries the release's
 // code_bundle_uri (persisted at parse time by handleParseOK from
 // topology-controller's manifest.loaded.candidate:v2) and bootstrap=false for a
 // non-bootstrap release.
@@ -1176,11 +1027,10 @@ func TestHandleValidationResult_Promote_EmitsCodeBundleURIAndBootstrap(t *testin
 		ReleaseID: "rA", AggregateStatus: "ok",
 	}))
 
-	last := findEntry(t, store, streams.ReleasePromotedV1)
-	var p promotedPayload
-	require.NoError(t, json.Unmarshal(last.Payload, &p))
+	last := findEntry(t, store, streams.ReleasePromotedV2)
+	p := promotedEvent(t, last)
 	assert.Equal(t, "s3://continuo/code-bundles/rA/bundle.json", p.CodeBundleURI,
-		"release.promoted:v1 must carry code_bundle_uri on the validation-pass path")
+		"release.promoted:v2 must carry code_bundle_uri on the validation-pass path")
 	assert.False(t, p.Bootstrap, "non-bootstrap release must carry bootstrap=false")
 }
 
@@ -1230,9 +1080,9 @@ func nodeIDs(topo release.Topology) []string {
 
 // TestPromoteToProduction_CurrentProdTakesTheArtifactTopology pins that a
 // promotion writes current_prod from the run's artifact — dbt-test nodes
-// included, so an unchanged test is not re-checked next release — and builds
-// release.promoted:v1 from the same topology without them, carrying the
-// artifact's image tags and the changed flags against the previous prod.
+// included, so an unchanged test is not re-checked next release — and
+// announces on release.promoted:v2 the artifact's reference together with the
+// non-test nodes that changed against the previous prod.
 func TestPromoteToProduction_CurrentProdTakesTheArtifactTopology(t *testing.T) {
 	deps, store := seedToParsing(t, "rArt", map[string]string{"svc-a": "sha-a"})
 	seedProd(t, deps, store, "prev", release.Topology{
@@ -1263,14 +1113,9 @@ func TestPromoteToProduction_CurrentProdTakesTheArtifactTopology(t *testing.T) {
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"a", "b", "test.b"}, nodeIDs(prodTopo), "the artifact current_prod points at keeps the test node")
 
-	var p promotedPayload
-	require.NoError(t, json.Unmarshal(findEntry(t, store, streams.ReleasePromotedV1).Payload, &p))
-	changed := map[string]bool{}
-	for _, n := range p.Topology {
-		changed[n.UniqueID] = n.Changed
-		assert.Equal(t, "sha-a", n.ImageTag, "the wire carries the artifact's image tag")
-	}
-	assert.Equal(t, map[string]bool{"a": false, "b": true}, changed, "no test node on the wire; b is new against prod")
+	p := promotedEvent(t, findEntry(t, store, streams.ReleasePromotedV2))
+	assert.Equal(t, cp.Topology().URI, p.TopologyURI)
+	assert.Equal(t, []string{"b"}, p.ChangedNodeIDs, "no test node is announced; b is new against prod")
 }
 
 // An object store that is unreachable at promotion time leaves everything as
@@ -1292,7 +1137,7 @@ func TestHandleValidationResult_UnreachableArtifactStoreAtPromotionChangesNothin
 	require.NoError(t, err)
 	assert.Equal(t, pipeline.StatusValidating, got.Status())
 	for _, e := range outboxEntries(store) {
-		assert.NotEqual(t, streams.ReleasePromotedV1, e.StreamName)
+		assert.NotEqual(t, streams.ReleasePromotedV2, e.StreamName)
 	}
 }
 

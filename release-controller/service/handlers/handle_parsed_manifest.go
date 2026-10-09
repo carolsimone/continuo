@@ -565,7 +565,7 @@ func emitSeedBuildRequested(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 // promoteBootstrap promotes a bootstrap release without validation: it records
 // the reference to the candidate topology (TransitionToValidating with no validation nodes) and
 // runs the shared promoteToProduction path, which seeds current_prod and emits
-// release.promoted:v1. The full parse/checked/promoted telemetry span is
+// release.promoted:v2. The full parse/checked/promoted telemetry span is
 // emitted (with a zero-node validation) so a bootstrap is observable like any
 // other promotion.
 func promoteBootstrap(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, releaseID string, ref release.TopologyRef, topo release.Topology, now time.Time) error {
