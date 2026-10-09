@@ -260,6 +260,20 @@ func main() {
 		os.Exit(1)
 	}
 
+	// A current_prod that names a release but references no topology artifact
+	// gets its artifact and is re-announced under a fresh promotion seq before
+	// any consumer runs.
+	if err := runStartupStep(ctx, logger, "backfill current_prod topology artifact", func(ctx context.Context) error {
+		return handlers.BackfillCurrentProdArtifact(ctx, deps)
+	}); err != nil {
+		if errors.Is(err, context.Canceled) {
+			logger.Info("shutdown requested during the startup upgrade step")
+			os.Exit(0)
+		}
+		logger.Error("startup upgrade step failed", "error", err)
+		os.Exit(1)
+	}
+
 	// Start stream consumers in goroutines; each blocks until ctx is cancelled.
 	runConsumer("manifest_loaded_candidate", redisadapter.NewManifestLoadedCandidateConsumer(rc, deps, logger))
 	runConsumer("validation_result", redisadapter.NewValidationResultConsumer(rc, deps, logger))
