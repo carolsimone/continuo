@@ -21,7 +21,7 @@ start() {
   local svc="$1"
   shift
   log_info "Starting ${svc} (go run, logs in ${svc}:/tmp/${svc}.log)..."
-  docker exec -d "$@" "${svc}" bash -c "cd /app/${svc} && exec go run main.go > /tmp/${svc}.log 2>&1"
+  docker exec -d "$@" "${svc}" bash -c "cd /app/${svc} && exec go run . > /tmp/${svc}.log 2>&1"
   sleep 25
 }
 
@@ -29,8 +29,8 @@ bridge="$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gatew
 [ -n "${bridge}" ] || { echo "start_local_services.sh: no Docker bridge gateway" >&2; exit 1; }
 
 for svc in state orchestrator execution-controller; do
-  docker exec "${svc}" pkill -f 'go run main.go' || true
-  docker exec "${svc}" pkill -f 'go-build.*/main$' || true
+  docker exec "${svc}" pkill -f 'go run \.' || true
+  docker exec "${svc}" pkill -f "go-build.*/exe/${svc}\$" || true
 done
 sleep 3
 

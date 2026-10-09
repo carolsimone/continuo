@@ -6,7 +6,7 @@ build:
 
 # Run the service locally
 run:
-	go run main.go
+	go run .
 
 # Run all tests against an externally migrated, empty executor test database.
 # See test/README.md for POSTGRES_* configuration and isolation requirements.

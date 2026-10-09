@@ -34,6 +34,14 @@ var maintenanceServices = []struct{ container, dir, health string }{
 func setMaintenance(t *testing.T, ctx context.Context, on bool) {
 	t.Helper()
 	start := time.Now()
+	// A relaunch that dies on startup leaves the health URL unreachable until
+	// the poll times out; the log tail names the cause (a compile error, a bad
+	// config). pollUntil ends the test with t.Fatal, which runs this defer.
+	defer func() {
+		if t.Failed() {
+			logServiceTails(t)
+		}
+	}()
 	errs := make(chan error, len(maintenanceServices))
 	for _, s := range maintenanceServices {
 		go func() {
@@ -42,7 +50,7 @@ func setMaintenance(t *testing.T, ctx context.Context, on bool) {
 				return
 			}
 			cmd := exec.CommandContext(ctx, "docker", "exec", "-d", "-e", fmt.Sprintf("MAINTENANCE_ENABLED=%t", on), //nolint:gosec // fixed arguments
-				s.container, "bash", "-c", "cd /app/"+s.dir+" && go run main.go > /tmp/"+s.container+".log 2>&1")
+				s.container, "bash", "-c", "cd /app/"+s.dir+" && go run . > /tmp/"+s.container+".log 2>&1")
 			if out, err := cmd.CombinedOutput(); err != nil {
 				errs <- fmt.Errorf("relaunch %s: %v: %s", s.container, err, out)
 				return
@@ -64,6 +72,22 @@ func setMaintenance(t *testing.T, ctx context.Context, on bool) {
 		}, s.container+" did not become healthy after the maintenance restart")
 	}
 	t.Logf("maintenance=%t restart took %s", on, time.Since(start).Round(time.Second))
+}
+
+// logServiceTails writes the last lines of each restarted service's
+// /tmp/<container>.log into the test output.
+func logServiceTails(t *testing.T) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	for _, s := range maintenanceServices {
+		out, err := exec.CommandContext(ctx, "docker", "exec", s.container, "tail", "-n", "50", "/tmp/"+s.container+".log").CombinedOutput() //nolint:gosec // fixed container names
+		if err != nil {
+			t.Logf("tail of %s log failed: %v: %s", s.container, err, out)
+			continue
+		}
+		t.Logf("last lines of %s:/tmp/%s.log:\n%s", s.container, s.container, out)
+	}
 }
 
 // reconnecting reports whether a response is the UI's gRPC channel still
