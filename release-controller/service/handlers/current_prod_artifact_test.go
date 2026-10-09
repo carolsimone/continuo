@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/carolsimone/continuo/release-controller/service/ports"
@@ -77,6 +78,45 @@ func TestBackfillCurrentProdArtifact_NothingToDo(t *testing.T) {
 		assert.Empty(t, outboxEntries(store))
 		assert.Equal(t, int64(0), store.LastPromotionSeq())
 	})
+}
+
+// When the release current_prod names already references a topology artifact —
+// as an upgrade-from-main leaves it, the promoted run pointing at the
+// topology-controller-written object at the deterministic key — the backfill
+// reuses that reference rather than writing Go-encoded bytes over it, which
+// would change the checksum the run still records. current_prod ends up
+// pointing at the run's own artifact.
+func TestBackfillCurrentProdArtifact_ReusesThePromotedRunsReference(t *testing.T) {
+	deps, store := newDeps(time.Unix(100, 0).UTC())
+
+	// The promoted run already has an artifact reference (topoA). The legacy
+	// current_prod snapshot (topoB) differs, so a fresh Write would record a
+	// different checksum under the same key.
+	topoA := release.Topology{{UniqueID: "a", ServiceName: "svc-a", NodeType: "dbt-model", ContentHash: "A", UpstreamUniqueIDs: []string{}}}
+	topoB := release.Topology{{UniqueID: "a", ServiceName: "svc-a", NodeType: "dbt-model", ContentHash: "B", UpstreamUniqueIDs: []string{}}}
+	runRef := store.storeTopology("rLive", topoA)
+	store.SeedRelease(pipeline.Rehydrate(pipeline.RehydrateInput{
+		ID:                "rLive",
+		Kind:              pipeline.KindCandidate,
+		Status:            pipeline.StatusPromoted,
+		ManifestKind:      release.ManifestKindDbt,
+		CandidateTopology: runRef,
+		CreatedAt:         time.Unix(1, 0).UTC(),
+	}))
+	store.SeedLegacyCurrentProd("rLive", topoB)
+
+	require.NoError(t, handlers.BackfillCurrentProdArtifact(context.Background(), deps))
+
+	cp := store.GetCurrentProd()
+	assert.Equal(t, runRef.URI, cp.Topology().URI)
+	assert.Equal(t, runRef.SHA256, cp.Topology().SHA256, "current_prod reuses the run's artifact, not a rewrite of the legacy snapshot")
+
+	got, err := deps.Topologies.Load(context.Background(), cp.Topology())
+	require.NoError(t, err)
+	assert.Equal(t, topoA, got, "the reused artifact is the run's own topology")
+
+	p := promotedEvent(t, findEntry(t, store, streams.ReleasePromotedV2))
+	assert.Equal(t, runRef.SHA256, p.TopologySHA256)
 }
 
 // failingWrites is an artifact store whose writes fail, as S3 does while it is

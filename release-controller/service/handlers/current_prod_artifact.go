@@ -42,9 +42,23 @@ func BackfillCurrentProdArtifact(ctx context.Context, d *Deps) error {
 		return u.Commit()
 	}
 
-	ref, err := d.Topologies.Write(ctx, legacy.ReleaseID, legacy.Topology)
+	// The release current_prod names is a promoted pipeline run. When that run
+	// already references a topology artifact — an upgrade-from-main leaves the
+	// run pointing at the topology-controller-written object at the deterministic
+	// key — reuse that reference. Writing Go-encoded bytes over it would change
+	// the checksum the run still records. Write only when no reference exists.
+	run, err := u.RunRepo().Get(ctx, legacy.ReleaseID)
 	if err != nil {
-		return fmt.Errorf("write topology artifact of current_prod %s: %w", legacy.ReleaseID, err)
+		return fmt.Errorf("get the promoted run %s: %w", legacy.ReleaseID, err)
+	}
+	var ref release.TopologyRef
+	if run != nil && !run.CandidateTopologyRef().IsZero() {
+		ref = run.CandidateTopologyRef()
+	} else {
+		ref, err = d.Topologies.Write(ctx, legacy.ReleaseID, legacy.Topology)
+		if err != nil {
+			return fmt.Errorf("write topology artifact of current_prod %s: %w", legacy.ReleaseID, err)
+		}
 	}
 	cp, err := u.CurrentProdRepo().Get(ctx)
 	if err != nil {
