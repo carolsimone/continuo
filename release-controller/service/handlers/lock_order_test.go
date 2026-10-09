@@ -4,7 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"io/fs"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -60,68 +60,74 @@ func collectFuncEvents(t *testing.T) (events map[string][]lockEvent, sawLoad, sa
 	dir := filepath.Dir(thisFile)
 
 	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, dir, func(fi fs.FileInfo) bool {
-		return !strings.HasSuffix(fi.Name(), "_test.go")
-	}, 0)
+	entries, err := os.ReadDir(dir)
 	if err != nil {
-		t.Fatalf("parse handlers package: %v", err)
+		t.Fatalf("read handlers package directory: %v", err)
+	}
+	var files []*ast.File
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, 0)
+		if err != nil {
+			t.Fatalf("parse handlers package: %v", err)
+		}
+		files = append(files, f)
 	}
 
 	events = map[string][]lockEvent{}
 	// Pass 1: the set of function names declared in this package, so a call
 	// expression can be recognised as a local call worth inlining.
 	local := map[string]bool{}
-	for _, pkg := range pkgs {
-		for _, f := range pkg.Files {
-			for _, decl := range f.Decls {
-				if fn, ok := decl.(*ast.FuncDecl); ok {
-					local[fn.Name.Name] = true
-				}
+	for _, f := range files {
+		for _, decl := range f.Decls {
+			if fn, ok := decl.(*ast.FuncDecl); ok {
+				local[fn.Name.Name] = true
 			}
 		}
 	}
 
 	// Pass 2: the ordered events of each function body.
-	for _, pkg := range pkgs {
-		for _, f := range pkg.Files {
-			for _, decl := range f.Decls {
-				fn, ok := decl.(*ast.FuncDecl)
-				if !ok || fn.Body == nil {
-					continue
+	for _, f := range files {
+		for _, decl := range f.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
+			}
+			var seq []lockEvent
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
 				}
-				var seq []lockEvent
-				ast.Inspect(fn.Body, func(n ast.Node) bool {
-					call, ok := n.(*ast.CallExpr)
-					if !ok {
-						return true
-					}
-					switch fun := call.Fun.(type) {
-					case *ast.SelectorExpr:
-						switch fun.Sel.Name {
-						case "LockReleaseQueue":
-							seq = append(seq, lockEvent{kind: eventLock})
-							sawLock = true
-						case "Load":
-							// Match only <uow>.RunRepo().Load(...): the receiver of
-							// .Load must itself be a .RunRepo() call. Get/Save/Active
-							// on RunRepo, and Load on any other repo, are not run-row
-							// FOR UPDATE and must not count.
-							if inner, ok := fun.X.(*ast.CallExpr); ok {
-								if innerSel, ok := inner.Fun.(*ast.SelectorExpr); ok && innerSel.Sel.Name == "RunRepo" {
-									seq = append(seq, lockEvent{kind: eventLoad})
-									sawLoad = true
-								}
+				switch fun := call.Fun.(type) {
+				case *ast.SelectorExpr:
+					switch fun.Sel.Name {
+					case "LockReleaseQueue":
+						seq = append(seq, lockEvent{kind: eventLock})
+						sawLock = true
+					case "Load":
+						// Match only <uow>.RunRepo().Load(...): the receiver of
+						// .Load must itself be a .RunRepo() call. Get/Save/Active
+						// on RunRepo, and Load on any other repo, are not run-row
+						// FOR UPDATE and must not count.
+						if inner, ok := fun.X.(*ast.CallExpr); ok {
+							if innerSel, ok := inner.Fun.(*ast.SelectorExpr); ok && innerSel.Sel.Name == "RunRepo" {
+								seq = append(seq, lockEvent{kind: eventLoad})
+								sawLoad = true
 							}
 						}
-					case *ast.Ident:
-						if local[fun.Name] {
-							seq = append(seq, lockEvent{call: fun.Name})
-						}
 					}
-					return true
-				})
-				events[fn.Name.Name] = seq
-			}
+				case *ast.Ident:
+					if local[fun.Name] {
+						seq = append(seq, lockEvent{call: fun.Name})
+					}
+				}
+				return true
+			})
+			events[fn.Name.Name] = seq
 		}
 	}
 	return events, sawLoad, sawLock
