@@ -234,7 +234,7 @@ func promotePythonFixtureRelease(t *testing.T, ctx context.Context, clients *tes
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProdExcept(t, ctx, clients, allServices, pyE2EService)
+	seedServiceProd(t, ctx, clients, allServices)
 	cleanup := func() {
 		if _, err := clients.releaseDB.ExecContext(context.Background(),
 			`DELETE FROM service_prod WHERE service_name = $1`, pyE2EService); err != nil {

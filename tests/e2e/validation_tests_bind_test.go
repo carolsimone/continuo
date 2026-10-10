@@ -76,7 +76,7 @@ func TestE2E_ReleaseValidation_TestThatNoLongerBindsRejects(t *testing.T) {
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
+	seedServiceProd(t, ctx, clients, allServices)
 
 	postRelease(t, clients, changedService, releaseID, changedImageTag, false)
 	assertValidationRequestedNodes(t, ctx, validationTap, releaseID, []string{tbindUniqueID, tbindNotNullTestID, tbindSingularTestID})
@@ -152,7 +152,7 @@ func TestE2E_ReleaseValidation_TestsBindAndArePromotedInvisibly(t *testing.T) {
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
+	seedServiceProd(t, ctx, clients, allServices)
 
 	postRelease(t, clients, changedService, releaseID, changedImageTag, false)
 	assertValidationRequestedNodes(t, ctx, validationTap, releaseID, []string{tbindOkUniqueID, tbindOkNotNullTestID})

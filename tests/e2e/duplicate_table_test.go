@@ -80,7 +80,7 @@ func TestE2E_DuplicateTable_RejectsBeforePromotion(t *testing.T) {
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProdExcept(t, ctx, clients, allServices, dupE2EService)
+	seedServiceProd(t, ctx, clients, allServices)
 	defer func() {
 		if _, derr := clients.releaseDB.ExecContext(context.Background(),
 			`DELETE FROM service_prod WHERE service_name = $1`, dupE2EService); derr != nil {

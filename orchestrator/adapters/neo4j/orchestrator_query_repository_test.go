@@ -367,20 +367,17 @@ func TestOrchestratorQueryRepository_GetGeneration_ReadsTheLivePromotionSeq(t *t
 	repo, client, cleanup := newTestQueryRepo(t)
 	defer cleanup()
 	ctx := context.Background()
-	s := client.NewSession(ctx, neo4j.AccessModeWrite)
 	t.Cleanup(func() {
-		_, _ = s.Run(ctx, `MATCH (root:TopologyRoot {id:'singleton'}) REMOVE root.promotion_seq`, nil)
-		s.Close(ctx)
+		runWrite(t, client, `MATCH (root:TopologyRoot {id:'singleton'}) REMOVE root.promotion_seq`, nil)
 	})
 
-	_, err := s.Run(ctx, `MATCH (root:TopologyRoot {id:'singleton'}) REMOVE root.promotion_seq`, nil)
-	require.NoError(t, err)
+	// Consume each write before GetGeneration reads through a separate session.
+	runWrite(t, client, `MATCH (root:TopologyRoot {id:'singleton'}) REMOVE root.promotion_seq`, nil)
 	got, err := repo.GetGeneration(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), got, "0 before the first promotion")
 
-	_, err = s.Run(ctx, `MERGE (root:TopologyRoot {id:'singleton'}) SET root.promotion_seq = 9`, nil)
-	require.NoError(t, err)
+	runWrite(t, client, `MERGE (root:TopologyRoot {id:'singleton'}) SET root.promotion_seq = 9`, nil)
 	got, err = repo.GetGeneration(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, int64(9), got)

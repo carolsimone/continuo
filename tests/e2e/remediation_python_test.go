@@ -406,7 +406,7 @@ func rejectPythonFixtureRelease(
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProdExcept(t, ctx, clients, allServices, service)
+	seedServiceProd(t, ctx, clients, allServices)
 	clearPythonServiceProd(t, ctx, clients)
 	cleanup := func() { clearPythonServiceProd(t, context.Background(), clients) }
 

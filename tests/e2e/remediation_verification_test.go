@@ -85,7 +85,7 @@ func TestE2E_Verification_FailsConsumerFixThatIgnoresChangedUpstream(t *testing.
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
+	seedServiceProd(t, ctx, clients, allServices)
 	seedModelTopologyNodes(t, ctx, clients,
 		topologyModel{uniqueID: ybreakUpUniqueID, schema: "e2e_schema", table: "ybreak_up", service: changedService, filePath: "models/ybreak_up.sql"},
 		topologyModel{uniqueID: ybreakDownUniqueID, schema: "e2e_schema", table: "ybreak_down", service: changedService, filePath: "models/ybreak_down.sql"},

@@ -95,7 +95,7 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 	t.Logf("seeded prod snapshot with %d nodes (ftable_e excluded)", len(prodNodes))
 
 	// 2. Reset the queue, seed current_prod (all nodes except ftable_e), and seed
-	//    service_prod for all services except service-2.
+	//    service_prod for every baseline service.
 	// Tap the remediation streams before the release is posted: the trim loop
 	// removes consumed entries, so the polls below read what the taps recorded.
 	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV2)
@@ -103,7 +103,7 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
+	seedServiceProd(t, ctx, clients, allServices)
 
 	// 3b. Seed the ftable_e :Table topology node in Neo4j so that the
 	//     agent-remediation's Locator (GetNodeLocation gRPC) can resolve the

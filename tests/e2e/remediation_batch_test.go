@@ -133,7 +133,7 @@ func TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest(t *testing.
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
+	seedServiceProd(t, ctx, clients, allServices)
 
 	// 2. Place both broken models in the graph. The independent fixers read the
 	//    failing node's location off the trigger, but the agent also asks the
@@ -333,7 +333,7 @@ func TestE2E_BatchedRemediation_SharedUpstreamFixedOnce(t *testing.T) {
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
+	seedServiceProd(t, ctx, clients, allServices)
 
 	// 2. Place the changed ancestor in the graph. The upstream fixer edits a node
 	//    that never failed; its location now travels on the trigger (each failing
@@ -590,7 +590,14 @@ func TestE2E_BatchedRemediation_TwoServicesTwoPullRequests(t *testing.T) {
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
+	seedServiceProd(t, ctx, clients, allServices)
+
+	// The other service's verification needs the rejected service's baseline
+	// pointer to cover every service live in current_prod at activation.
+	var baselineManifest string
+	require.NoError(t, clients.releaseDB.QueryRowContext(ctx,
+		`SELECT manifest_s3_key FROM service_prod WHERE service_name = $1`, changedService).Scan(&baselineManifest))
+	require.Equal(t, "s3://continuo/service-2/e2e-baseline/manifest.json", baselineManifest)
 
 	// 2. Seed both broken models' :Table nodes in Neo4j so the Locator can
 	//    resolve each one's file path and owning service.
@@ -797,7 +804,7 @@ func TestE2E_BatchedRemediation_AmendedMergeMarksProvenanceAmended(t *testing.T)
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
+	seedServiceProd(t, ctx, clients, allServices)
 	seedFTableETopologyNode(t, ctx, clients)
 
 	postRelease(t, clients, changedService, releaseID, changedImageTag, false)
@@ -1302,7 +1309,7 @@ func TestE2E_BatchedRemediation_CrossServiceBreakFixedAtProducer(t *testing.T) {
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProdExcept(t, ctx, clients, allServices, producerService)
+	seedServiceProd(t, ctx, clients, allServices)
 	// The producer is placed in the graph so the fixer's version read has
 	// something to diff against; its location travels on the trigger.
 	seedModelTopologyNodes(t, ctx, clients, topologyModel{
