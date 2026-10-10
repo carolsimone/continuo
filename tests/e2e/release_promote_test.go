@@ -100,7 +100,7 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 
 	var prodNodes []map[string]string
 	probeFound := false
-	for _, si := range allServices {
+	for svc, si := range allServices {
 		for _, n := range si.nodes {
 			if n.uniqueID == probeUniqueID {
 				probeFound = true
@@ -108,6 +108,7 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 			}
 			prodNodes = append(prodNodes, map[string]string{
 				"unique_id":    n.uniqueID,
+				"service":      svc,
 				"content_hash": n.contentHash,
 			})
 		}
@@ -339,7 +340,7 @@ func TestE2E_ReleasePromote_GatedIntraServiceUpstream(t *testing.T) {
 
 	var prodNodes []map[string]string
 	var upFound, downFound bool
-	for _, si := range allServices {
+	for svc, si := range allServices {
 		for _, n := range si.nodes {
 			switch n.uniqueID {
 			case probeUpUniqueID:
@@ -352,6 +353,7 @@ func TestE2E_ReleasePromote_GatedIntraServiceUpstream(t *testing.T) {
 			}
 			prodNodes = append(prodNodes, map[string]string{
 				"unique_id":    n.uniqueID,
+				"service":      svc,
 				"content_hash": n.contentHash,
 			})
 		}
@@ -434,7 +436,7 @@ func TestE2E_ReleasePromote_GatedCrossServiceUpstream(t *testing.T) {
 
 	var prodNodes []map[string]string
 	var upFound, downFound bool
-	for _, si := range allServices {
+	for svc, si := range allServices {
 		for _, n := range si.nodes {
 			switch n.uniqueID {
 			case xprobeUpUniqueID:
@@ -447,6 +449,7 @@ func TestE2E_ReleasePromote_GatedCrossServiceUpstream(t *testing.T) {
 			}
 			prodNodes = append(prodNodes, map[string]string{
 				"unique_id":    n.uniqueID,
+				"service":      svc,
 				"content_hash": n.contentHash,
 			})
 		}
@@ -588,7 +591,7 @@ func TestE2E_ReleasePromote_PerServiceLeavesOthersIntact(t *testing.T) {
 	// Seed current_prod with ALL nodes except rel_probe (changed node for service-1).
 	var prodNodes []map[string]string
 	probeFound := false
-	for _, si := range allServices {
+	for svc, si := range allServices {
 		for _, n := range si.nodes {
 			if n.uniqueID == probeUniqueID {
 				probeFound = true
@@ -596,6 +599,7 @@ func TestE2E_ReleasePromote_PerServiceLeavesOthersIntact(t *testing.T) {
 			}
 			prodNodes = append(prodNodes, map[string]string{
 				"unique_id":    n.uniqueID,
+				"service":      svc,
 				"content_hash": n.contentHash,
 			})
 		}
@@ -863,11 +867,13 @@ func resetReleaseControllerQueue(t *testing.T, ctx context.Context, clients *tes
 }
 
 // seedCurrentProd points current_prod at a fresh topology artifact holding
-// nodes. Only unique_id and content_hash matter for the change detector, so the
-// artifact carries just those; other node fields stay empty. Each call writes
-// under its own release id, so a prior promoted release never lingers across
-// reused-stack runs. current_prod's promotion seq is left alone: seeding
-// announces nothing.
+// nodes. The change detector reads unique_id and content_hash, and the
+// activation guard reads service_name (every service live in the prod topology
+// must carry a service_prod pointer or be the release's changed service), so
+// each node map must carry those three keys; other node fields stay empty.
+// Each call writes under its own release id, so a prior promoted release never
+// lingers across reused-stack runs. current_prod's promotion seq is left
+// alone: seeding announces nothing.
 func seedCurrentProd(t *testing.T, ctx context.Context, clients *testClients, nodes []map[string]string) {
 	t.Helper()
 	releaseID := "e2e-prod-" + uuid.NewString()[:8]
@@ -875,6 +881,7 @@ func seedCurrentProd(t *testing.T, ctx context.Context, clients *testClients, no
 	for _, n := range nodes {
 		artifactNodes = append(artifactNodes, topologyartifact.Node{
 			UniqueID:          n["unique_id"],
+			ServiceName:       n["service"],
 			ContentHash:       n["content_hash"],
 			UpstreamUniqueIDs: []string{},
 		})

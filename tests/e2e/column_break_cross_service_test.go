@@ -96,7 +96,7 @@ func TestE2E_ReleasePromote_RejectsColumnBreakAcrossServices(t *testing.T) {
 
 	var prodNodes []map[string]string
 	var upFound, downFound bool
-	for _, si := range allServices {
+	for svc, si := range allServices {
 		for _, n := range si.nodes {
 			switch n.uniqueID {
 			case xbreakUpUniqueID:
@@ -109,6 +109,7 @@ func TestE2E_ReleasePromote_RejectsColumnBreakAcrossServices(t *testing.T) {
 			}
 			prodNodes = append(prodNodes, map[string]string{
 				"unique_id":    n.uniqueID,
+				"service":      svc,
 				"content_hash": n.contentHash,
 			})
 		}

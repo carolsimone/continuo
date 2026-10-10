@@ -74,7 +74,7 @@ func TestE2E_DuplicateTable_RejectsBeforePromotion(t *testing.T) {
 	var prodNodes []map[string]string
 	for _, c := range candidates {
 		prodNodes = append(prodNodes, map[string]string{
-			"unique_id": c.uniqueID, "content_hash": c.contentHash,
+			"unique_id": c.uniqueID, "service": c.service, "content_hash": c.contentHash,
 		})
 	}
 

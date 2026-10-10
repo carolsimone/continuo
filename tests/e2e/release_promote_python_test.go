@@ -224,10 +224,10 @@ func promotePythonFixtureRelease(t *testing.T, ctx context.Context, clients *tes
 	allServices := baselineServices(t, ctx, clients)
 	require.NotEmpty(t, allServices)
 	var prodNodes []map[string]string
-	for _, si := range allServices {
+	for svc, si := range allServices {
 		for _, n := range si.nodes {
 			prodNodes = append(prodNodes, map[string]string{
-				"unique_id": n.uniqueID, "content_hash": n.contentHash,
+				"unique_id": n.uniqueID, "service": svc, "content_hash": n.contentHash,
 			})
 		}
 	}

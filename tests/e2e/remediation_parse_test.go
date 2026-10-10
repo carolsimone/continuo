@@ -117,12 +117,12 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 	// in the registry, so the closure stops at service-3's ftable_c rather than
 	// reaching service-1's ftable_a/ftable_b.
 	var prodNodes []map[string]string
-	for _, si := range allServices {
+	for svc, si := range allServices {
 		for _, n := range si.nodes {
 			if n.uniqueID == ftableEUniqueID {
 				continue
 			}
-			prodNodes = append(prodNodes, map[string]string{"unique_id": n.uniqueID, "content_hash": n.contentHash})
+			prodNodes = append(prodNodes, map[string]string{"unique_id": n.uniqueID, "service": svc, "content_hash": n.contentHash})
 		}
 	}
 	// Tap the streams before the release is posted: the trim loop removes
