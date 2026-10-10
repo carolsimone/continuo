@@ -60,7 +60,8 @@ func (a StreamID) Next() StreamID {
 
 // Time is when an entry with id a was added.
 func (a StreamID) Time() time.Time {
-	return time.UnixMilli(int64(a.Ms)).UTC() //nolint:gosec // G115: stream-id milliseconds fit in int64
+	seconds := int64(a.Ms / 1000) //nolint:gosec // G115: MaxUint64/1000 is less than MaxInt64
+	return time.Unix(seconds, int64(a.Ms%1000)*int64(time.Millisecond)).UTC()
 }
 
 // Entry is one stream entry.
