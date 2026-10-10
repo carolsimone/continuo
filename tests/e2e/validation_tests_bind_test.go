@@ -56,14 +56,14 @@ func TestE2E_ReleaseValidation_TestThatNoLongerBindsRejects(t *testing.T) {
 	// changed node; its two tests are pulled in as its descendants.
 	seen := map[string]bool{}
 	var prodNodes []map[string]string
-	for _, si := range allServices {
+	for svc, si := range allServices {
 		for _, n := range si.nodes {
 			seen[n.uniqueID] = true
 			hash := n.contentHash
 			if n.uniqueID == tbindUniqueID {
 				hash = "stale-" + hash
 			}
-			prodNodes = append(prodNodes, map[string]string{"unique_id": n.uniqueID, "content_hash": hash})
+			prodNodes = append(prodNodes, map[string]string{"unique_id": n.uniqueID, "service": svc, "content_hash": hash})
 		}
 	}
 	for _, id := range []string{tbindUniqueID, tbindNotNullTestID, tbindSingularTestID} {
@@ -76,7 +76,7 @@ func TestE2E_ReleaseValidation_TestThatNoLongerBindsRejects(t *testing.T) {
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
+	seedServiceProd(t, ctx, clients, allServices)
 
 	postRelease(t, clients, changedService, releaseID, changedImageTag, false)
 	assertValidationRequestedNodes(t, ctx, validationTap, releaseID, []string{tbindUniqueID, tbindNotNullTestID, tbindSingularTestID})
@@ -134,13 +134,13 @@ func TestE2E_ReleaseValidation_TestsBindAndArePromotedInvisibly(t *testing.T) {
 	// arrive as new nodes in the assembled candidate topology.
 	held := map[string]bool{tbindOkUniqueID: false, tbindOkNotNullTestID: false}
 	var prodNodes []map[string]string
-	for _, si := range allServices {
+	for svc, si := range allServices {
 		for _, n := range si.nodes {
 			if _, excluded := held[n.uniqueID]; excluded {
 				held[n.uniqueID] = true
 				continue
 			}
-			prodNodes = append(prodNodes, map[string]string{"unique_id": n.uniqueID, "content_hash": n.contentHash})
+			prodNodes = append(prodNodes, map[string]string{"unique_id": n.uniqueID, "service": svc, "content_hash": n.contentHash})
 		}
 	}
 	for id, found := range held {
@@ -152,7 +152,7 @@ func TestE2E_ReleaseValidation_TestsBindAndArePromotedInvisibly(t *testing.T) {
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
+	seedServiceProd(t, ctx, clients, allServices)
 
 	postRelease(t, clients, changedService, releaseID, changedImageTag, false)
 	assertValidationRequestedNodes(t, ctx, validationTap, releaseID, []string{tbindOkUniqueID, tbindOkNotNullTestID})

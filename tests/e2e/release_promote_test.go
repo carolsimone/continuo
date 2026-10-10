@@ -35,7 +35,7 @@ const e2eS3Bucket = "continuo"
 //
 //	<service>/e2e-baseline/manifest.json
 //
-// Tests seed service_prod rows pointing at these keys for the unchanged services
+// Tests seed service_prod rows pointing at these keys for every baseline service
 // so that release-controller assembly can reconstruct the full topology.
 const e2eBaselineReleaseID = "e2e-baseline"
 
@@ -57,7 +57,7 @@ const probeUniqueID = "e2e_schema.rel_probe"
 // The changed service is service-1 (which contains rel_probe). current_prod is
 // seeded with every node EXCEPT rel_probe, so the derived changed set is exactly
 // {rel_probe}: one known-good node that validates without touching any
-// production table. service_prod is seeded for the other services so that
+// production table. service_prod is seeded for every baseline service so that
 // assembly can reconstruct the full manifest list at advance-time.
 //
 // After promotion, the test also drives two real production runs of rel_probe
@@ -100,7 +100,7 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 
 	var prodNodes []map[string]string
 	probeFound := false
-	for _, si := range allServices {
+	for svc, si := range allServices {
 		for _, n := range si.nodes {
 			if n.uniqueID == probeUniqueID {
 				probeFound = true
@@ -108,6 +108,7 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 			}
 			prodNodes = append(prodNodes, map[string]string{
 				"unique_id":    n.uniqueID,
+				"service":      svc,
 				"content_hash": n.contentHash,
 			})
 		}
@@ -116,15 +117,15 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 		"rel_probe not found in any manifest — is the model in service-1 and the image rebuilt?")
 	t.Logf("seeded prod snapshot with %d nodes (rel_probe excluded)", len(prodNodes))
 
-	// 2. Reset the queue, seed current_prod, and seed service_prod for all
-	//    other services (so assembly reconstructs the full topology).
+	// 2. Reset the queue and seed current_prod and every service_prod pointer
+	//    so candidate and verification assembly reconstruct the full topology.
 	// Tap the streams before the release is posted: the trim loop removes
 	// consumed entries, so the checks below read what the taps recorded.
 	validationTap := startStreamTap(t, ctx, clients.redisClient, streams.ValidationRequestedV1)
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
+	seedServiceProd(t, ctx, clients, allServices)
 
 	// 4. POST /releases with the single-service per-service body.
 	postRelease(t, clients, changedService, releaseID, changedImageTag, false)
@@ -339,7 +340,7 @@ func TestE2E_ReleasePromote_GatedIntraServiceUpstream(t *testing.T) {
 
 	var prodNodes []map[string]string
 	var upFound, downFound bool
-	for _, si := range allServices {
+	for svc, si := range allServices {
 		for _, n := range si.nodes {
 			switch n.uniqueID {
 			case probeUpUniqueID:
@@ -352,6 +353,7 @@ func TestE2E_ReleasePromote_GatedIntraServiceUpstream(t *testing.T) {
 			}
 			prodNodes = append(prodNodes, map[string]string{
 				"unique_id":    n.uniqueID,
+				"service":      svc,
 				"content_hash": n.contentHash,
 			})
 		}
@@ -368,7 +370,7 @@ func TestE2E_ReleasePromote_GatedIntraServiceUpstream(t *testing.T) {
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
+	seedServiceProd(t, ctx, clients, allServices)
 
 	postRelease(t, clients, changedService, releaseID, changedImageTag, false)
 
@@ -434,7 +436,7 @@ func TestE2E_ReleasePromote_GatedCrossServiceUpstream(t *testing.T) {
 
 	var prodNodes []map[string]string
 	var upFound, downFound bool
-	for _, si := range allServices {
+	for svc, si := range allServices {
 		for _, n := range si.nodes {
 			switch n.uniqueID {
 			case xprobeUpUniqueID:
@@ -447,6 +449,7 @@ func TestE2E_ReleasePromote_GatedCrossServiceUpstream(t *testing.T) {
 			}
 			prodNodes = append(prodNodes, map[string]string{
 				"unique_id":    n.uniqueID,
+				"service":      svc,
 				"content_hash": n.contentHash,
 			})
 		}
@@ -463,7 +466,7 @@ func TestE2E_ReleasePromote_GatedCrossServiceUpstream(t *testing.T) {
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
+	seedServiceProd(t, ctx, clients, allServices)
 
 	postRelease(t, clients, changedService, releaseID, changedImageTag, false)
 
@@ -588,7 +591,7 @@ func TestE2E_ReleasePromote_PerServiceLeavesOthersIntact(t *testing.T) {
 	// Seed current_prod with ALL nodes except rel_probe (changed node for service-1).
 	var prodNodes []map[string]string
 	probeFound := false
-	for _, si := range allServices {
+	for svc, si := range allServices {
 		for _, n := range si.nodes {
 			if n.uniqueID == probeUniqueID {
 				probeFound = true
@@ -596,6 +599,7 @@ func TestE2E_ReleasePromote_PerServiceLeavesOthersIntact(t *testing.T) {
 			}
 			prodNodes = append(prodNodes, map[string]string{
 				"unique_id":    n.uniqueID,
+				"service":      svc,
 				"content_hash": n.contentHash,
 			})
 		}
@@ -609,7 +613,7 @@ func TestE2E_ReleasePromote_PerServiceLeavesOthersIntact(t *testing.T) {
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
+	seedServiceProd(t, ctx, clients, allServices)
 
 	postRelease(t, clients, changedService, releaseID, changedImageTag, false)
 
@@ -863,18 +867,23 @@ func resetReleaseControllerQueue(t *testing.T, ctx context.Context, clients *tes
 }
 
 // seedCurrentProd points current_prod at a fresh topology artifact holding
-// nodes. Only unique_id and content_hash matter for the change detector, so the
-// artifact carries just those; other node fields stay empty. Each call writes
-// under its own release id, so a prior promoted release never lingers across
-// reused-stack runs. current_prod's promotion seq is left alone: seeding
-// announces nothing.
+// nodes. The change detector reads unique_id and content_hash, and the
+// activation guard reads service_name (every service live in the prod topology
+// must carry a service_prod pointer or be the release's changed service), so
+// each node map must carry unique_id, content_hash, and service; other node
+// fields stay empty.
+// Each call writes under its own release id, so a prior promoted release never
+// lingers across reused-stack runs. current_prod's promotion seq is left
+// alone: seeding announces nothing.
 func seedCurrentProd(t *testing.T, ctx context.Context, clients *testClients, nodes []map[string]string) {
 	t.Helper()
 	releaseID := "e2e-prod-" + uuid.NewString()[:8]
 	artifactNodes := make([]topologyartifact.Node, 0, len(nodes))
 	for _, n := range nodes {
+		require.NotEmpty(t, n["service"], "current_prod node %s must identify its service", n["unique_id"])
 		artifactNodes = append(artifactNodes, topologyartifact.Node{
 			UniqueID:          n["unique_id"],
+			ServiceName:       n["service"],
 			ContentHash:       n["content_hash"],
 			UpstreamUniqueIDs: []string{},
 		})
@@ -902,17 +911,13 @@ func seedCurrentProd(t *testing.T, ctx context.Context, clients *testClients, no
 	require.NoError(t, err, "seed current_prod")
 }
 
-// seedServiceProdExcept seeds the service_prod table with the baseline manifest
-// key and image_tag for every service in allServices EXCEPT changedService.
-// This gives release-controller assembly the other services' manifest pointers
-// at advance-time without re-uploading their manifests (they already live at
-// their e2e-baseline canonical keys).
-func seedServiceProdExcept(t *testing.T, ctx context.Context, clients *testClients, allServices map[string]serviceInfo, changedService string) {
+// seedServiceProd seeds the baseline manifest key and image tag for every
+// service. Assembly replaces the changed service's pointer with its candidate;
+// a verification editing another service still needs that baseline pointer to
+// cover every service live in current_prod at activation.
+func seedServiceProd(t *testing.T, ctx context.Context, clients *testClients, allServices map[string]serviceInfo) {
 	t.Helper()
 	for svc, si := range allServices {
-		if svc == changedService {
-			continue
-		}
 		s3URI := canonicalManifestS3URI(svc, e2eBaselineReleaseID)
 		_, err := clients.releaseDB.ExecContext(ctx,
 			`INSERT INTO service_prod (service_name, release_id, manifest_s3_key, image_tag, manifest_kind, updated_at)
@@ -926,11 +931,6 @@ func seedServiceProdExcept(t *testing.T, ctx context.Context, clients *testClien
 			svc, e2eBaselineReleaseID, s3URI, si.imageTag)
 		require.NoError(t, err, "seed service_prod for %s", svc)
 	}
-	// Ensure the changed service has NO row in service_prod so assembly
-	// derives a fresh canonical key from the new release_id.
-	_, err := clients.releaseDB.ExecContext(ctx,
-		`DELETE FROM service_prod WHERE service_name = $1`, changedService)
-	require.NoError(t, err, "clear service_prod row for changed service %s", changedService)
 }
 
 // postRelease submits a dbt release through the public API as the CI pipeline

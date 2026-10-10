@@ -74,13 +74,13 @@ func TestE2E_DuplicateTable_RejectsBeforePromotion(t *testing.T) {
 	var prodNodes []map[string]string
 	for _, c := range candidates {
 		prodNodes = append(prodNodes, map[string]string{
-			"unique_id": c.uniqueID, "content_hash": c.contentHash,
+			"unique_id": c.uniqueID, "service": c.service, "content_hash": c.contentHash,
 		})
 	}
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProdExcept(t, ctx, clients, allServices, dupE2EService)
+	seedServiceProd(t, ctx, clients, allServices)
 	defer func() {
 		if _, derr := clients.releaseDB.ExecContext(context.Background(),
 			`DELETE FROM service_prod WHERE service_name = $1`, dupE2EService); derr != nil {

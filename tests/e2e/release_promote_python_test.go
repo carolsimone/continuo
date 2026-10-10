@@ -224,17 +224,17 @@ func promotePythonFixtureRelease(t *testing.T, ctx context.Context, clients *tes
 	allServices := baselineServices(t, ctx, clients)
 	require.NotEmpty(t, allServices)
 	var prodNodes []map[string]string
-	for _, si := range allServices {
+	for svc, si := range allServices {
 		for _, n := range si.nodes {
 			prodNodes = append(prodNodes, map[string]string{
-				"unique_id": n.uniqueID, "content_hash": n.contentHash,
+				"unique_id": n.uniqueID, "service": svc, "content_hash": n.contentHash,
 			})
 		}
 	}
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProdExcept(t, ctx, clients, allServices, pyE2EService)
+	seedServiceProd(t, ctx, clients, allServices)
 	cleanup := func() {
 		if _, err := clients.releaseDB.ExecContext(context.Background(),
 			`DELETE FROM service_prod WHERE service_name = $1`, pyE2EService); err != nil {

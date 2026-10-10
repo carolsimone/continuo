@@ -396,17 +396,17 @@ func rejectPythonFixtureRelease(
 	require.NotEmpty(t, allServices,
 		"no baseline manifests under s3://%s/<service>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
 	var prodNodes []map[string]string
-	for _, si := range allServices {
+	for svc, si := range allServices {
 		for _, n := range si.nodes {
 			prodNodes = append(prodNodes, map[string]string{
-				"unique_id": n.uniqueID, "content_hash": n.contentHash,
+				"unique_id": n.uniqueID, "service": svc, "content_hash": n.contentHash,
 			})
 		}
 	}
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProdExcept(t, ctx, clients, allServices, service)
+	seedServiceProd(t, ctx, clients, allServices)
 	clearPythonServiceProd(t, ctx, clients)
 	cleanup := func() { clearPythonServiceProd(t, context.Background(), clients) }
 

@@ -106,7 +106,7 @@ func TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest(t *testing.
 
 	held := map[string]bool{ftableEUniqueID: false, ftableKUniqueID: false}
 	var prodNodes []map[string]string
-	for _, si := range allServices {
+	for svc, si := range allServices {
 		for _, n := range si.nodes {
 			if _, excluded := held[n.uniqueID]; excluded {
 				held[n.uniqueID] = true
@@ -114,6 +114,7 @@ func TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest(t *testing.
 			}
 			prodNodes = append(prodNodes, map[string]string{
 				"unique_id":    n.uniqueID,
+				"service":      svc,
 				"content_hash": n.contentHash,
 			})
 		}
@@ -132,7 +133,7 @@ func TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest(t *testing.
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
+	seedServiceProd(t, ctx, clients, allServices)
 
 	// 2. Place both broken models in the graph. The independent fixers read the
 	//    failing node's location off the trigger, but the agent also asks the
@@ -304,7 +305,7 @@ func TestE2E_BatchedRemediation_SharedUpstreamFixedOnce(t *testing.T) {
 
 	seen := map[string]bool{}
 	var prodNodes []map[string]string
-	for _, si := range allServices {
+	for svc, si := range allServices {
 		for _, n := range si.nodes {
 			seen[n.uniqueID] = true
 			hash := n.contentHash
@@ -315,6 +316,7 @@ func TestE2E_BatchedRemediation_SharedUpstreamFixedOnce(t *testing.T) {
 			}
 			prodNodes = append(prodNodes, map[string]string{
 				"unique_id":    n.uniqueID,
+				"service":      svc,
 				"content_hash": hash,
 			})
 		}
@@ -331,7 +333,7 @@ func TestE2E_BatchedRemediation_SharedUpstreamFixedOnce(t *testing.T) {
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
+	seedServiceProd(t, ctx, clients, allServices)
 
 	// 2. Place the changed ancestor in the graph. The upstream fixer edits a node
 	//    that never failed; its location now travels on the trigger (each failing
@@ -563,7 +565,7 @@ func TestE2E_BatchedRemediation_TwoServicesTwoPullRequests(t *testing.T) {
 
 	held := map[string]bool{ftableEUniqueID: false, ftableGUniqueID: false}
 	var prodNodes []map[string]string
-	for _, si := range allServices {
+	for svc, si := range allServices {
 		for _, n := range si.nodes {
 			if _, excluded := held[n.uniqueID]; excluded {
 				held[n.uniqueID] = true
@@ -571,6 +573,7 @@ func TestE2E_BatchedRemediation_TwoServicesTwoPullRequests(t *testing.T) {
 			}
 			prodNodes = append(prodNodes, map[string]string{
 				"unique_id":    n.uniqueID,
+				"service":      svc,
 				"content_hash": n.contentHash,
 			})
 		}
@@ -587,7 +590,14 @@ func TestE2E_BatchedRemediation_TwoServicesTwoPullRequests(t *testing.T) {
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
+	seedServiceProd(t, ctx, clients, allServices)
+
+	// The other service's verification needs the rejected service's baseline
+	// pointer to cover every service live in current_prod at activation.
+	var baselineManifest string
+	require.NoError(t, clients.releaseDB.QueryRowContext(ctx,
+		`SELECT manifest_s3_key FROM service_prod WHERE service_name = $1`, changedService).Scan(&baselineManifest))
+	require.Equal(t, "s3://continuo/service-2/e2e-baseline/manifest.json", baselineManifest)
 
 	// 2. Seed both broken models' :Table nodes in Neo4j so the Locator can
 	//    resolve each one's file path and owning service.
@@ -772,7 +782,7 @@ func TestE2E_BatchedRemediation_AmendedMergeMarksProvenanceAmended(t *testing.T)
 
 	var prodNodes []map[string]string
 	ftableFound := false
-	for _, si := range allServices {
+	for svc, si := range allServices {
 		for _, n := range si.nodes {
 			if n.uniqueID == ftableEUniqueID {
 				ftableFound = true
@@ -780,6 +790,7 @@ func TestE2E_BatchedRemediation_AmendedMergeMarksProvenanceAmended(t *testing.T)
 			}
 			prodNodes = append(prodNodes, map[string]string{
 				"unique_id":    n.uniqueID,
+				"service":      svc,
 				"content_hash": n.contentHash,
 			})
 		}
@@ -793,7 +804,7 @@ func TestE2E_BatchedRemediation_AmendedMergeMarksProvenanceAmended(t *testing.T)
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
+	seedServiceProd(t, ctx, clients, allServices)
 	seedFTableETopologyNode(t, ctx, clients)
 
 	postRelease(t, clients, changedService, releaseID, changedImageTag, false)
@@ -1278,14 +1289,14 @@ func TestE2E_BatchedRemediation_CrossServiceBreakFixedAtProducer(t *testing.T) {
 
 	seen := map[string]bool{}
 	var prodNodes []map[string]string
-	for _, si := range allServices {
+	for svc, si := range allServices {
 		for _, n := range si.nodes {
 			seen[n.uniqueID] = true
 			hash := n.contentHash
 			if n.uniqueID == xbreakUpUniqueID {
 				hash = "stale-" + hash
 			}
-			prodNodes = append(prodNodes, map[string]string{"unique_id": n.uniqueID, "content_hash": hash})
+			prodNodes = append(prodNodes, map[string]string{"unique_id": n.uniqueID, "service": svc, "content_hash": hash})
 		}
 	}
 	for _, id := range []string{xbreakUpUniqueID, xbreakDownUniqueID} {
@@ -1298,7 +1309,7 @@ func TestE2E_BatchedRemediation_CrossServiceBreakFixedAtProducer(t *testing.T) {
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProdExcept(t, ctx, clients, allServices, producerService)
+	seedServiceProd(t, ctx, clients, allServices)
 	// The producer is placed in the graph so the fixer's version read has
 	// something to diff against; its location travels on the trigger.
 	seedModelTopologyNodes(t, ctx, clients, topologyModel{

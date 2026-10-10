@@ -65,14 +65,14 @@ func TestE2E_Verification_FailsConsumerFixThatIgnoresChangedUpstream(t *testing.
 
 	seen := map[string]bool{}
 	var prodNodes []map[string]string
-	for _, si := range allServices {
+	for svc, si := range allServices {
 		for _, n := range si.nodes {
 			seen[n.uniqueID] = true
 			hash := n.contentHash
 			if n.uniqueID == ybreakUpUniqueID {
 				hash = "stale-" + hash
 			}
-			prodNodes = append(prodNodes, map[string]string{"unique_id": n.uniqueID, "content_hash": hash})
+			prodNodes = append(prodNodes, map[string]string{"unique_id": n.uniqueID, "service": svc, "content_hash": hash})
 		}
 	}
 	for _, id := range []string{ybreakUpUniqueID, ybreakDownUniqueID} {
@@ -85,7 +85,7 @@ func TestE2E_Verification_FailsConsumerFixThatIgnoresChangedUpstream(t *testing.
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
+	seedServiceProd(t, ctx, clients, allServices)
 	seedModelTopologyNodes(t, ctx, clients,
 		topologyModel{uniqueID: ybreakUpUniqueID, schema: "e2e_schema", table: "ybreak_up", service: changedService, filePath: "models/ybreak_up.sql"},
 		topologyModel{uniqueID: ybreakDownUniqueID, schema: "e2e_schema", table: "ybreak_down", service: changedService, filePath: "models/ybreak_down.sql"},

@@ -62,7 +62,7 @@ func TestE2E_RemediationRetry_RoundTwo(t *testing.T) {
 
 	var prodNodes []map[string]string
 	ftableFound := false
-	for _, si := range allServices {
+	for svc, si := range allServices {
 		for _, n := range si.nodes {
 			if n.uniqueID == ftableEUniqueID {
 				ftableFound = true
@@ -70,6 +70,7 @@ func TestE2E_RemediationRetry_RoundTwo(t *testing.T) {
 			}
 			prodNodes = append(prodNodes, map[string]string{
 				"unique_id":    n.uniqueID,
+				"service":      svc,
 				"content_hash": n.contentHash,
 			})
 		}
@@ -79,10 +80,10 @@ func TestE2E_RemediationRetry_RoundTwo(t *testing.T) {
 	t.Logf("seeded prod snapshot with %d nodes (ftable_e excluded)", len(prodNodes))
 
 	// Reset the queue, seed current_prod (all nodes except ftable_e), and seed
-	// service_prod for all services except service-2.
+	// service_prod for every baseline service.
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
+	seedServiceProd(t, ctx, clients, allServices)
 
 	// Seed the ftable_e :Table topology node in Neo4j so the agent-remediation's
 	// Locator can resolve the node's file path and service name for both rounds.

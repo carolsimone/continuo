@@ -96,7 +96,7 @@ func TestE2E_ReleasePromote_RejectsColumnBreakAcrossServices(t *testing.T) {
 
 	var prodNodes []map[string]string
 	var upFound, downFound bool
-	for _, si := range allServices {
+	for svc, si := range allServices {
 		for _, n := range si.nodes {
 			switch n.uniqueID {
 			case xbreakUpUniqueID:
@@ -109,6 +109,7 @@ func TestE2E_ReleasePromote_RejectsColumnBreakAcrossServices(t *testing.T) {
 			}
 			prodNodes = append(prodNodes, map[string]string{
 				"unique_id":    n.uniqueID,
+				"service":      svc,
 				"content_hash": n.contentHash,
 			})
 		}
@@ -125,10 +126,10 @@ func TestE2E_ReleasePromote_RejectsColumnBreakAcrossServices(t *testing.T) {
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
+	seedServiceProd(t, ctx, clients, allServices)
 
-	// Capture current_prod's release pointer AFTER seeding (seedCurrentProd resets
-	// it to ""). A rejected release must leave this exact value in place.
+	// Capture current_prod's release pointer after seeding its fresh artifact.
+	// A rejected release must leave this exact value in place.
 	var currentProdBefore string
 	require.NoError(t, clients.releaseDB.QueryRowContext(ctx,
 		`SELECT release_id FROM current_prod`).Scan(&currentProdBefore))

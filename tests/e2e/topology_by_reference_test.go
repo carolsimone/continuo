@@ -2,7 +2,6 @@ package e2e
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -141,7 +140,8 @@ func TestTopologyByReference_CorruptArtifactIsDeadLettered(t *testing.T) {
 	cleanup := []string{dl.GetId()}
 	t.Cleanup(func() { deleteDeadLetterRows(t, clients, cleanup...) })
 	assert.Equal(t, model.DeadLetterKindPermanent, model.DeadLetterKind(dl.GetFailureKind()))
-	assert.Contains(t, strings.ToLower(dl.GetError()), "checksum")
+	assert.Contains(t, dl.GetError(), announcedSHA, "the dead letter names the expected hash")
+	assert.Contains(t, dl.GetError(), storedSHA, "the dead letter names the object's actual hash")
 	assert.Equal(t, before, readLivePointer(ctx, clients), "a corrupt artifact must never move the live pointer")
 
 	// The other two groups settle on the entry as well; whichever dead letter
