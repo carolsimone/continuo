@@ -62,6 +62,12 @@ func (f *fakeDispatchFailedRunRepo) GetActiveScheduler(_ context.Context, _ stri
 func (f *fakeDispatchFailedRunRepo) GetLastRunPerSchedule(_ context.Context) (map[string]repository.LastRunSummary, error) {
 	panic("GetLastRunPerSchedule not implemented in fake")
 }
+func (f *fakeDispatchFailedRunRepo) RunExists(_ context.Context, _ uuid.UUID) (bool, error) {
+	panic("RunExists not implemented in fake")
+}
+func (f *fakeDispatchFailedRunRepo) CountReleaseRuns(_ context.Context, _ string, _ run.Kind) (int, error) {
+	panic("CountReleaseRuns not implemented in fake")
+}
 
 // fakeDispatchFailedOutboxPub is an in-memory OutboxPublisher that captures
 // the appended domain events for assertion.

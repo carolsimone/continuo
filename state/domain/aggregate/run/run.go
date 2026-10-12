@@ -24,6 +24,10 @@ type Run struct {
 	initStatus  InitStatus
 	kind        Kind
 	sourceRunID *uuid.UUID
+	// releaseID is the topology release this run builds, or "" when the
+	// run names none. A promote-seed run carries the release it was
+	// planned against.
+	releaseID string
 	// initiatedBy records the user who triggered this run, or the "system"
 	// sentinel for cron / platform-initiated runs. Stamped at creation and
 	// immutable thereafter.
@@ -105,6 +109,11 @@ func HydrateRun(
 		serviceMetadata:    serviceMetadata,
 	}
 }
+
+// HydrateReleaseID restores the release id read from
+// scheduler_tracker.release_id on a Run rebuilt by HydrateRun. Used by the
+// postgres adapter only; application code MUST NOT call it.
+func (r *Run) HydrateReleaseID(releaseID string) { r.releaseID = releaseID }
 
 // NewPendingRun creates a fresh PENDING Run for activation. Caller flow:
 // SchedulePolicy.ScheduleExistsInCatalog → SchedulePolicy.IsScheduleAvailable
@@ -232,14 +241,18 @@ func NewSingleNodeRun(
 	return r, evt, nil
 }
 
-// NewPromotedSeedsRun creates a RUNNING Run for the seeds a promoted release
-// changed, one task per node.
+// NewPromotedSeedsRun creates a RUNNING Run that loads the given seeds of a
+// release into the production schema, one task per node.
 //
 // Unlike every other constructor here the run id is supplied rather than
-// generated. A promotion is announced by an event that can be redelivered, and
-// the caller derives the id deterministically from the release id, so a
-// redelivered promotion resolves to the same run instead of minting a second one
-// that would rebuild the same seeds.
+// generated: the caller derives it deterministically from the release, so
+// planning the same release again resolves to a run that already exists
+// instead of minting a second one that would load the same seeds.
+//
+// The run records releaseID, the release whose content it loads, and its
+// event carries promotionSeq, the live promotion seq the run was planned
+// against (0 when none), so a projecting service can wait until its own
+// topology has reached it.
 //
 // The run carries no operation: a seed is materialised by its own dbt verb,
 // chosen downstream from the node type, not by a verb selected here.
@@ -247,6 +260,7 @@ func NewPromotedSeedsRun(
 	id uuid.UUID,
 	scheduleName string,
 	releaseID string,
+	promotionSeq int64,
 	nodes []SeedNode,
 	now time.Time,
 ) (*Run, DomainEvent, error) {
@@ -268,6 +282,7 @@ func NewPromotedSeedsRun(
 		status:          SchedulerStatusRunning,
 		initStatus:      InitStatusInProgress,
 		kind:            KindPromoteSeed,
+		releaseID:       releaseID,
 		initiatedBy:     "system",
 		createdAt:       now,
 		lastHeartbeatAt: &now,
@@ -275,10 +290,11 @@ func NewPromotedSeedsRun(
 	}
 	r.changes.created = true
 	evt := PromotedSeedsRunRequested{
-		ID:        id,
-		Name:      scheduleName,
-		ReleaseID: releaseID,
-		Nodes:     nodes,
+		ID:           id,
+		Name:         scheduleName,
+		ReleaseID:    releaseID,
+		PromotionSeq: promotionSeq,
+		Nodes:        nodes,
 	}
 	return r, evt, nil
 }
@@ -292,6 +308,7 @@ func (r *Run) ScheduleName() string             { return r.scheduleName }
 func (r *Run) Status() SchedulerStatus          { return r.status }
 func (r *Run) Kind() Kind                       { return r.kind }
 func (r *Run) SourceRunID() *uuid.UUID          { return r.sourceRunID }
+func (r *Run) ReleaseID() string                { return r.releaseID }
 func (r *Run) InitiatedBy() string              { return r.initiatedBy }
 func (r *Run) Operation() model.Operation       { return r.operation }
 func (r *Run) InitializationStatus() InitStatus { return r.initStatus }

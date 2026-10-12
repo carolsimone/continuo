@@ -11,6 +11,7 @@ import (
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	pkgdb "github.com/carolsimone/continuo/pkg/db"
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/lifecycle"
 	"github.com/carolsimone/continuo/pkg/liveness"
 	pkgmessageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
@@ -30,6 +31,7 @@ import (
 	"github.com/carolsimone/continuo/state/internal/scheduler"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 	ports "github.com/carolsimone/continuo/state/service/ports"
+	"github.com/carolsimone/continuo/state/service/seedreconcile"
 	"github.com/carolsimone/continuo/state/service/uow"
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -44,6 +46,9 @@ const outboxHeartbeatStale = 60 * time.Second
 // artifact read from object storage, then the load of a whole topology, every
 // node and edge, in one transaction.
 const releasePromotedHandlerTimeout = 5 * time.Minute
+
+// seedReconcileInterval is how often the periodic seed reconcile runs.
+const seedReconcileInterval = 60 * time.Second
 
 // dbPool bounds the Postgres pool when DB_MAX_OPEN_CONNS / DB_MAX_IDLE_CONNS
 // are unset: two connections per stream consumer (a handler's transaction and
@@ -281,7 +286,12 @@ func main() {
 		logger.Error("Failed to build the object-storage client", "error", err)
 		os.Exit(1)
 	}
-	releasePromotedHandler := svchandlers.NewReleasePromotedHandler(s3adapter.NewTopologyArtifactReader(objectStore), nil, logger)
+	// The seed reconcile loads the dbt seeds whose live content the warehouse
+	// does not hold. It runs inside every release.promoted:v2 transaction that
+	// moves the live release, and every seedReconcileInterval from the loop
+	// started below; maintenance mode stops it creating runs.
+	seedReconciler := seedreconcile.New(uowFactory, cfg.Maintenance, pkgevents.DefaultTenantID, logger)
+	releasePromotedHandler := svchandlers.NewReleasePromotedHandler(s3adapter.NewTopologyArtifactReader(objectStore), seedReconciler, logger)
 
 	// Every state consumer is the same shape: a domain handler wrapped by a
 	// redis binding (parser + dedup + UoW transaction), driven by a
@@ -346,6 +356,11 @@ func main() {
 			pkgredis.WithHandlerTimeout(c.timeout)))
 		logger.Info("Stream consumer initialized", "consumer", c.name)
 	}
+
+	// The periodic seed reconcile builds what a promotion's own pass left for
+	// later, such as a seed whose previous load was still running. Its
+	// goroutine is tracked, so shutdown waits for a pass in progress.
+	lifecycleManager.Go(func() { seedReconciler.Loop(ctx, seedReconcileInterval) })
 
 	// Initialize activation handler shared by the cron loop and gRPC methods.
 	activateHandler := svchandlers.NewActivateScheduleHandler(logger)

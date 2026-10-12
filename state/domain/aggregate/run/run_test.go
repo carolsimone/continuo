@@ -1240,3 +1240,51 @@ func TestAcceptDispatch_CancelledProjectedTaskIsTerminal(t *testing.T) {
 		}
 	})
 }
+
+// A promote-seed run carries the release it builds and the promotion seq it
+// was planned against; its event carries both to the trigger.
+func TestNewPromotedSeedsRun_CarriesTheReleaseAndItsPromotionSeq(t *testing.T) {
+	id := uuid.New()
+	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	nodes := []run.SeedNode{{
+		NodeID:   run.NodeID{ServiceName: "svc", SchemaName: "raw", TableName: "orders"},
+		NodeType: "dbt-seed",
+		ImageTag: "svc:2",
+	}}
+
+	r, evt, err := run.NewPromotedSeedsRun(id, "promote-seed-abc12345", "rel-1", 7, nodes, now)
+	if err != nil {
+		t.Fatalf("NewPromotedSeedsRun: %v", err)
+	}
+	if r.ReleaseID() != "rel-1" {
+		t.Fatalf("ReleaseID() = %q, want rel-1", r.ReleaseID())
+	}
+	if r.Kind() != run.KindPromoteSeed || r.Status() != run.SchedulerStatusRunning {
+		t.Fatalf("kind/status = %q/%q, want promote_seed/running", r.Kind(), r.Status())
+	}
+	got, ok := evt.(run.PromotedSeedsRunRequested)
+	if !ok {
+		t.Fatalf("event = %T, want PromotedSeedsRunRequested", evt)
+	}
+	if got.ID != id || got.Name != "promote-seed-abc12345" || got.ReleaseID != "rel-1" || got.PromotionSeq != 7 || len(got.Nodes) != 1 {
+		t.Fatalf("event = %+v", got)
+	}
+}
+
+// A run rebuilt from its row gets its release back only through
+// HydrateReleaseID; a run that names none reports "".
+func TestHydrateReleaseID_RestoresTheStoredRelease(t *testing.T) {
+	r := run.HydrateRun(uuid.New(), "promote-seed-abc12345", run.SchedulerStatusRunning, run.InitStatusCompleted,
+		run.KindPromoteSeed, nil, identity.SystemUserID, model.OperationRun, time.Now(),
+		nil, nil, nil, nil, nil, nil, nil, 0, map[string]run.ServiceMetadata{})
+	if r.ReleaseID() != "" {
+		t.Fatalf("ReleaseID() = %q before hydration, want empty", r.ReleaseID())
+	}
+	r.HydrateReleaseID("rel-9")
+	if r.ReleaseID() != "rel-9" {
+		t.Fatalf("ReleaseID() = %q, want rel-9", r.ReleaseID())
+	}
+	if r.Changes().IsCreated() || r.Changes().IsStatusDirty() {
+		t.Fatal("hydrating the release id must not mark the run dirty")
+	}
+}

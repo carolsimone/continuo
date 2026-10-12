@@ -46,6 +46,15 @@ type RunRepository interface {
 	// GetLastRunPerSchedule returns the most recent Run per schedule name.
 	// Read-only projection for ListAllSchedules.
 	GetLastRunPerSchedule(ctx context.Context) (map[string]LastRunSummary, error)
+
+	// RunExists reports whether a run with id is persisted. It reads inside the
+	// bound transaction and needs one.
+	RunExists(ctx context.Context, id uuid.UUID) (bool, error)
+
+	// CountReleaseRuns counts the runs of kind whose release_id is releaseID.
+	// It reads inside the bound transaction, so it sees the runs the
+	// transaction wrote, and needs one.
+	CountReleaseRuns(ctx context.Context, releaseID string, kind run.Kind) (int, error)
 }
 
 // LastRunSummary is the projection row returned by GetLastRunPerSchedule.

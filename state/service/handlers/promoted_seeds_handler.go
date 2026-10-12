@@ -74,6 +74,7 @@ func (h *PromotedSeedsHandler) Handle(
 		runID,
 		promotedSeedsScheduleName(runID),
 		evt.ReleaseID,
+		0,
 		nodes,
 		u.Clock().Now(),
 	)

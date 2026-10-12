@@ -218,6 +218,12 @@ func (f *activateFakeRunRepo) GetActiveScheduler(_ context.Context, _ string) (*
 func (f *activateFakeRunRepo) GetLastRunPerSchedule(_ context.Context) (map[string]repository.LastRunSummary, error) {
 	panic("GetLastRunPerSchedule not used in activate tests")
 }
+func (f *activateFakeRunRepo) RunExists(_ context.Context, _ uuid.UUID) (bool, error) {
+	panic("RunExists not used in activate tests")
+}
+func (f *activateFakeRunRepo) CountReleaseRuns(_ context.Context, _ string, _ run.Kind) (int, error) {
+	panic("CountReleaseRuns not used in activate tests")
+}
 
 // ---- fake outbox for activation tests ----
 
@@ -607,6 +613,12 @@ func (f *cancelFakeRunRepo) GetActiveScheduler(_ context.Context, _ string) (*ru
 
 func (f *cancelFakeRunRepo) GetLastRunPerSchedule(_ context.Context) (map[string]repository.LastRunSummary, error) {
 	panic("GetLastRunPerSchedule not used in cancel tests")
+}
+func (f *cancelFakeRunRepo) RunExists(_ context.Context, _ uuid.UUID) (bool, error) {
+	panic("RunExists not used in cancel tests")
+}
+func (f *cancelFakeRunRepo) CountReleaseRuns(_ context.Context, _ string, _ run.Kind) (int, error) {
+	panic("CountReleaseRuns not used in cancel tests")
 }
 
 // cancelFakeOutbox is an in-memory OutboxPublisher for cancel handler tests.

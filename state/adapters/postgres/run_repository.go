@@ -178,6 +178,34 @@ func (r *RunRepositoryAdapter) GetActiveScheduler(ctx context.Context, name stri
 	return hydrateRun(tr)
 }
 
+// RunExists reports whether a scheduler_tracker row with id exists, reading
+// inside the bound transaction.
+func (r *RunRepositoryAdapter) RunExists(ctx context.Context, id uuid.UUID) (bool, error) {
+	if r.tx == nil {
+		return false, fmt.Errorf("RunExists requires an active transaction")
+	}
+	var exists bool
+	if err := r.tx.GetContext(ctx, &exists,
+		`SELECT EXISTS (SELECT 1 FROM scheduler_tracker WHERE schedule_id = $1)`, id); err != nil {
+		return false, fmt.Errorf("check run %s exists: %w", id, err)
+	}
+	return exists, nil
+}
+
+// CountReleaseRuns counts the scheduler_tracker rows of kind that name
+// releaseID, reading inside the bound transaction.
+func (r *RunRepositoryAdapter) CountReleaseRuns(ctx context.Context, releaseID string, kind run.Kind) (int, error) {
+	if r.tx == nil {
+		return 0, fmt.Errorf("CountReleaseRuns requires an active transaction")
+	}
+	var n int
+	if err := r.tx.GetContext(ctx, &n,
+		`SELECT count(*) FROM scheduler_tracker WHERE release_id = $1 AND kind = $2`, releaseID, string(kind)); err != nil {
+		return 0, fmt.Errorf("count the %s runs of release %s: %w", kind, releaseID, err)
+	}
+	return n, nil
+}
+
 // GetLastRunPerSchedule returns the most recent Run summary per schedule name.
 func (r *RunRepositoryAdapter) GetLastRunPerSchedule(ctx context.Context) (map[string]repository.LastRunSummary, error) {
 	raw, err := r.schedRepo.GetLastRunPerSchedule(ctx)
@@ -203,7 +231,7 @@ func hydrateRun(tr *SchedulerTracker) (*run.Run, error) {
 	if err != nil {
 		return nil, err
 	}
-	return run.HydrateRun(
+	rn := run.HydrateRun(
 		tr.ScheduleID,
 		tr.ScheduleName,
 		tr.Status,
@@ -218,7 +246,25 @@ func hydrateRun(tr *SchedulerTracker) (*run.Run, error) {
 		nullInt32ToPtr(tr.TotalTaskCount),
 		tr.TerminalTaskCount,
 		meta,
-	), nil
+	)
+	rn.HydrateReleaseID(stringOrEmpty(tr.ReleaseID))
+	return rn, nil
+}
+
+// optionalString maps "" to a NULL column value.
+func optionalString(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// stringOrEmpty maps a NULL column value to "".
+func stringOrEmpty(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }
 
 // operationFromColumn maps the non-empty stored operation
@@ -277,6 +323,7 @@ func dehydrateRun(r *run.Run) (*SchedulerTracker, error) {
 		SourceRunID:          r.SourceRunID(),
 		InitiatedBy:          r.InitiatedBy(),
 		Operation:            operationWithDefault(string(r.Operation())),
+		ReleaseID:            optionalString(r.ReleaseID()),
 	}, nil
 }
 
