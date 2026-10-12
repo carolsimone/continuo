@@ -60,8 +60,8 @@ function freshRoutes() {
         },
       ],
       edges: [],
-      run_topology_generation: 7,
-      latest_topology_generation: 7,
+      run_promotion_seq: 7,
+      latest_promotion_seq: 7,
     }),
     [`/api/schedules/${SCHED}/graph`]: async () => ({
       nodes: [
@@ -596,7 +596,7 @@ function latestRoutes() {
         { node_id: 'svc.sch.a', node_type: 'dbt-model', schedule_name: LATEST_SCHED },
       ],
       edges: [],
-      topology_generation: 5,
+      promotion_seq: 5,
     }),
     [`/api/schedules/${LATEST_SCHED}/runs`]: async () => ({
       runs: [
@@ -617,8 +617,8 @@ function latestRoutes() {
         { node_id: 'svc.sch.a', node_type: 'dbt-model', schedule_name: LATEST_SCHED, status: 'succeeded' },
       ],
       edges: [],
-      run_topology_generation: 4,
-      latest_topology_generation: 5,
+      run_promotion_seq: 4,
+      latest_promotion_seq: 5,
     }),
     [`/api/schedulers/${LATEST_RUN_ID}`]: async () => ({
       scheduler: {
@@ -690,6 +690,44 @@ describe('DetailPage in latest mode', () => {
       const urls = fetchMock.mock.calls.map(c => String(c[0]));
       expect(urls.some(u => /\/api\/schedulers\/[^/]+\/tasks$/.test(u))).toBe(false);
       expect(urls.some(u => /\/api\/schedulers\/[^/]+\/executions$/.test(u))).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('labels the header with the live promotion seq', async () => {
+    const fetchMock = mockFetchSequence(latestRoutes());
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      render(withLatestRouter());
+      const chip = await screen.findByLabelText('live promotion seq');
+      expect(chip).toHaveTextContent('promotion 5');
+      expect(chip.closest('.info-strip--info')).toBeInTheDocument();
+      expect(screen.queryByText(/topology v/)).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe('DetailPage — header drift chip', () => {
+  it('shows how many releases the live run is behind the live topology', async () => {
+    const routes = {
+      ...failedRoutes(),
+      [`/api/runs/${RUN_ID}/graph`]: async () => ({
+        nodes: [
+          { node_id: SAMPLE_NODE_ID, node_type: 'dbt-model', schedule_name: SCHED, status: 'failed' },
+        ],
+        edges: [],
+        run_promotion_seq: 4,
+        latest_promotion_seq: 6,
+      }),
+    };
+    vi.stubGlobal('fetch', mockFetchSequence(routes));
+    try {
+      render(withRouter({ last_run_id: RUN_ID }));
+      const chip = await screen.findByText('source 2 releases behind latest');
+      expect(chip.closest('.info-strip--warning')).toBeInTheDocument();
     } finally {
       vi.unstubAllGlobals();
     }
@@ -790,8 +828,8 @@ describe('DetailPage — Run List service grouping', () => {
           { node_id: NODE_B, node_type: 'dbt-model', schedule_name: SCHED, status: 'failed' },
         ],
         edges: [{ from_node_id: NODE_A, to_node_id: NODE_B }],
-        run_topology_generation: 7,
-        latest_topology_generation: 7,
+        run_promotion_seq: 7,
+        latest_promotion_seq: 7,
       }),
       [`/api/schedulers/${RUN_ID}/tasks`]: async () => ({
         tasks: [

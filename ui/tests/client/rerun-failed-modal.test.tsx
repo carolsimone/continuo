@@ -33,13 +33,13 @@ describe('RerunFailedModal', () => {
 
     rerender(
       <RerunFailedModal
-        driftLabel="source 1 gen behind latest"
+        driftLabel="source 1 release behind latest"
         submitting={false}
         onClose={() => {}}
         onSubmit={() => {}}
       />,
     );
-    const strip = screen.getByText('source 1 gen behind latest');
+    const strip = screen.getByText('source 1 release behind latest');
     expect(strip.closest('.info-strip--warning')).toBeInTheDocument();
   });
 

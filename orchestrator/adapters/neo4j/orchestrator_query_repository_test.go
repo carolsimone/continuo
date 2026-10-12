@@ -32,7 +32,7 @@ func newTestQueryRepo(t *testing.T) (*neo4jinfra.OrchestratorQueryRepository, ne
 	return repo, client, cleanup
 }
 
-func seedRunWithGeneration(t *testing.T, ctx context.Context, client neo4jinfra.Neo4jClient, runID string, gen *int64) {
+func seedRunWithPromotionSeq(t *testing.T, ctx context.Context, client neo4jinfra.Neo4jClient, runID string, gen *int64) {
 	t.Helper()
 	session := client.NewSession(ctx, neo4j.AccessModeWrite)
 	defer session.Close(ctx)
@@ -48,7 +48,7 @@ func seedRunWithGeneration(t *testing.T, ctx context.Context, client neo4jinfra.
 	require.NoError(t, err)
 }
 
-func TestOrchestratorQueryRepository_GetRunTopologyGeneration_ReturnsValue(t *testing.T) {
+func TestOrchestratorQueryRepository_GetRunPromotionSeq_ReturnsValue(t *testing.T) {
 	if testing.Short() {
 		t.Skip("requires Neo4j")
 	}
@@ -58,14 +58,14 @@ func TestOrchestratorQueryRepository_GetRunTopologyGeneration_ReturnsValue(t *te
 	ctx := context.Background()
 	runID := fmt.Sprintf("run-%s-1", t.Name())
 	gen := int64(7)
-	seedRunWithGeneration(t, ctx, client, runID, &gen)
+	seedRunWithPromotionSeq(t, ctx, client, runID, &gen)
 
-	got, err := repo.GetRunTopologyGeneration(ctx, runID)
+	got, err := repo.GetRunPromotionSeq(ctx, runID)
 	require.NoError(t, err)
 	assert.Equal(t, int64(7), got)
 }
 
-func TestOrchestratorQueryRepository_GetRunTopologyGeneration_ReturnsZeroWhenUnset(t *testing.T) {
+func TestOrchestratorQueryRepository_GetRunPromotionSeq_ReturnsZeroWhenUnset(t *testing.T) {
 	if testing.Short() {
 		t.Skip("requires Neo4j")
 	}
@@ -74,14 +74,14 @@ func TestOrchestratorQueryRepository_GetRunTopologyGeneration_ReturnsZeroWhenUns
 
 	ctx := context.Background()
 	runID := fmt.Sprintf("run-%s-2", t.Name())
-	seedRunWithGeneration(t, ctx, client, runID, nil) // property absent
+	seedRunWithPromotionSeq(t, ctx, client, runID, nil) // property absent
 
-	got, err := repo.GetRunTopologyGeneration(ctx, runID)
+	got, err := repo.GetRunPromotionSeq(ctx, runID)
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), got)
 }
 
-func TestOrchestratorQueryRepository_GetRunTopologyGeneration_ReturnsZeroWhenRunMissing(t *testing.T) {
+func TestOrchestratorQueryRepository_GetRunPromotionSeq_ReturnsZeroWhenRunMissing(t *testing.T) {
 	if testing.Short() {
 		t.Skip("requires Neo4j")
 	}
@@ -89,7 +89,7 @@ func TestOrchestratorQueryRepository_GetRunTopologyGeneration_ReturnsZeroWhenRun
 	defer cleanup()
 
 	ctx := context.Background()
-	got, err := repo.GetRunTopologyGeneration(ctx, "nonexistent-run")
+	got, err := repo.GetRunPromotionSeq(ctx, "nonexistent-run")
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), got)
 }
@@ -125,10 +125,10 @@ func TestOrchestratorQueryRepository_ListActiveRuns_OnlyUnfinalized(t *testing.T
 	require.Len(t, filtered, 1)
 	assert.Equal(t, "active-1", filtered[0].RunID)
 	assert.Equal(t, "sched-a", filtered[0].ScheduleName)
-	assert.Equal(t, int64(5), filtered[0].TopologyGeneration)
+	assert.Equal(t, int64(5), filtered[0].PromotionSeq)
 }
 
-func TestOrchestratorQueryRepository_ListActiveRuns_ZeroForUnsetGeneration(t *testing.T) {
+func TestOrchestratorQueryRepository_ListActiveRuns_ZeroForUnsetPromotionSeq(t *testing.T) {
 	if testing.Short() {
 		t.Skip("requires Neo4j")
 	}
@@ -153,7 +153,7 @@ func TestOrchestratorQueryRepository_ListActiveRuns_ZeroForUnsetGeneration(t *te
 		}
 	}
 	require.NotNil(t, found)
-	assert.Equal(t, int64(0), found.TopologyGeneration)
+	assert.Equal(t, int64(0), found.PromotionSeq)
 }
 
 // TestOrchestratorQueryRepository_ListActiveRuns_NewestFirst verifies that
@@ -284,7 +284,7 @@ func TestListScheduleTopologies_EmptyReturnsEmptySlice(t *testing.T) {
 	require.NotNil(t, got, "must return [] not nil")
 }
 
-func TestGetScheduleGraph_PopulatesTopologyGeneration(t *testing.T) {
+func TestGetScheduleGraph_PopulatesPromotionSeq(t *testing.T) {
 	if testing.Short() {
 		t.Skip("requires Neo4j")
 	}
@@ -315,7 +315,7 @@ func TestGetScheduleGraph_PopulatesTopologyGeneration(t *testing.T) {
 
 	g, err := repo.GetScheduleGraph(ctx, "gen-test")
 	require.NoError(t, err)
-	assert.Equal(t, int64(42), g.TopologyGeneration)
+	assert.Equal(t, int64(42), g.PromotionSeq)
 	assert.Len(t, g.Nodes, 1, "schedule graph must return the seeded node")
 }
 
@@ -386,7 +386,7 @@ func TestOrchestratorQueryRepository_GetGeneration_ReadsTheLivePromotionSeq(t *t
 // A run created before runs carried a promotion seq has only the legacy
 // topology_generation counter. That counter is not a promotion seq, so the run
 // reads as 0 ("drift unknown"), never as the counter's value.
-func TestOrchestratorQueryRepository_GetRunTopologyGeneration_IgnoresTheLegacyCounter(t *testing.T) {
+func TestOrchestratorQueryRepository_GetRunPromotionSeq_IgnoresTheLegacyCounter(t *testing.T) {
 	repo, client, cleanup := newTestQueryRepo(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -398,7 +398,7 @@ func TestOrchestratorQueryRepository_GetRunTopologyGeneration_IgnoresTheLegacyCo
 	require.NoError(t, err)
 	s.Close(ctx)
 
-	got, err := repo.GetRunTopologyGeneration(ctx, "legacy-gen")
+	got, err := repo.GetRunPromotionSeq(ctx, "legacy-gen")
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), got)
 }

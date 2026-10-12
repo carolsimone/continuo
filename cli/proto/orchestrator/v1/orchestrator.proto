@@ -130,10 +130,10 @@ message GetScheduleGraphRequest { string schedule_name = 1; }
 message GetScheduleGraphResponse {
   repeated TableNode nodes              = 1;
   repeated GraphEdge edges              = 2;
-  // topology_generation is the promotion seq of the live topology at query time
-  // (:TopologyRoot.promotion_seq). Returns 0 before the first promotion; consumers
-  // MUST treat 0 as "generation unknown", not "generation zero".
-  int64 topology_generation             = 3;
+  // promotion_seq is the live promotion seq at query time
+  // (:TopologyRoot.promotion_seq). It is 0 before the first promotion;
+  // consumers MUST treat 0 as "unknown", not as a seq.
+  int64 promotion_seq                   = 3;
 }
 
 message ListRunsRequest {
@@ -163,26 +163,26 @@ message GetRunGraphRequest { string run_id = 1; }
 message GetRunGraphResponse {
   repeated TableNode nodes = 1;
   repeated GraphEdge edges = 2;
-  // run_topology_generation is the promotion seq the run was created under,
-  // stamped on the :Run node when its snapshot is written. Returns 0 when the
-  // run does not exist or was created before runs carried a promotion seq;
-  // consumers MUST treat 0 as "drift unknown", not "no drift".
-  int64 run_topology_generation = 3;
-  // latest_topology_generation is the promotion seq of the live topology.
-  int64 latest_topology_generation = 4;
+  // run_promotion_seq is the promotion seq the run was created under, stamped
+  // on the :Run node when its snapshot is written. It is 0 when the run does
+  // not exist or carries no promotion seq; consumers MUST treat 0 as "drift
+  // unknown", not "no drift".
+  int64 run_promotion_seq = 3;
+  // latest_promotion_seq is the live promotion seq (:TopologyRoot.promotion_seq).
+  int64 latest_promotion_seq = 4;
 }
 
 message ListActiveRunDriftsRequest {}
 message ListActiveRunDriftsResponse {
-  // latest_topology_generation is the live promotion seq, as in GetRunGraphResponse.
-  int64 latest_topology_generation = 1;
+  // latest_promotion_seq is the live promotion seq, as in GetRunGraphResponse.
+  int64 latest_promotion_seq = 1;
   repeated ActiveRunDrift active_runs = 2;
 }
 message ActiveRunDrift {
   string schedule_name = 1;
   string run_id = 2;
-  // run_topology_generation is the promotion seq the run was created under; 0 when unknown.
-  int64 run_topology_generation = 3;
+  // run_promotion_seq is the promotion seq the run was created under; 0 when unknown.
+  int64 run_promotion_seq = 3;
 }
 
 message ListScheduleTopologiesRequest {}

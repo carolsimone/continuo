@@ -283,9 +283,11 @@ bench-test:  ## Unit tests and shellcheck for the run-lifecycle benchmark harnes
 # RegisterShutdownHandler/Shutdown racing on the shared handler slice) are only
 # checked by the race detector, not by a plain pass/fail test run.
 #
-# The proto diffs pin ui's vendored copies to the canonical contracts:
-# @grpc/proto-loader reads those copies at boot, so drift silently drops
-# fields on the wire instead of failing any build.
+# The proto diffs pin the vendored copies to the canonical contracts. ui's
+# @grpc/proto-loader reads its copies at boot, so drift silently drops fields
+# on the wire instead of failing any build; cli generates its orchestrator
+# stubs from its own copy, so drift there ships a client built from another
+# contract.
 .PHONY: guards
 guards: bench-test
 	bash scripts/check-service-names.sh
@@ -308,6 +310,7 @@ guards: bench-test
 	diff state/proto/state/v1/state.proto ui/proto/state.proto
 	diff agent-remediation/proto/remediation/v1/remediation.proto ui/proto/remediation/v1/remediation.proto
 	diff orchestrator/proto/orchestrator/v1/orchestrator.proto ui/proto/orchestrator/v1/orchestrator.proto
+	diff orchestrator/proto/orchestrator/v1/orchestrator.proto cli/proto/orchestrator/v1/orchestrator.proto
 
 .PHONY: stack-up
 stack-up:

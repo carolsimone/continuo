@@ -71,9 +71,9 @@ func (r *OrchestratorQueryRepository) GetScheduleGraph(ctx context.Context, sche
 
 	record := result.Record()
 
-	var topologyGen int64
+	var promotionSeq int64
 	if v, ok := recordValue(record, "promotion_seq").(int64); ok {
-		topologyGen = v
+		promotionSeq = v
 	}
 
 	rawNodes, _ := record.Get("allNodes")
@@ -132,7 +132,7 @@ func (r *OrchestratorQueryRepository) GetScheduleGraph(ctx context.Context, sche
 	}
 
 	r.logger.Debug("GetScheduleGraph", "schedule", scheduleName, "nodes", len(nodes), "edges", len(edges))
-	return &domain.ScheduleGraph{Nodes: nodes, Edges: edges, TopologyGeneration: topologyGen}, nil
+	return &domain.ScheduleGraph{Nodes: nodes, Edges: edges, PromotionSeq: promotionSeq}, nil
 }
 
 // ListRuns returns a page of completed runs for a schedule, newest-first, along
@@ -267,29 +267,29 @@ func (r *OrchestratorQueryRepository) GetRunGraph(ctx context.Context, runID str
 	return nodes, edges, nil
 }
 
-// GetRunTopologyGeneration returns the promotion seq stamped on the :Run node
-// at snapshot time. Returns 0 when the run does not exist OR when the property
-// is unset (a run created before runs carried a promotion seq). The service
-// layer documents the contract: 0 means "drift unknown".
-func (r *OrchestratorQueryRepository) GetRunTopologyGeneration(ctx context.Context, runID string) (int64, error) {
+// GetRunPromotionSeq returns the promotion seq stamped on the :Run node at
+// snapshot time. It returns 0 when the run does not exist or carries no
+// promotion_seq property; the service layer documents the contract: 0 means
+// "drift unknown".
+func (r *OrchestratorQueryRepository) GetRunPromotionSeq(ctx context.Context, runID string) (int64, error) {
 	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
 	defer func() { _ = session.Close(ctx) }()
 
 	query := `
 		MATCH (r:Run {run_id: $run_id})
-		RETURN COALESCE(r.promotion_seq, 0) AS gen
+		RETURN COALESCE(r.promotion_seq, 0) AS seq
 	`
 	result, err := session.Run(ctx, query, map[string]interface{}{"run_id": runID})
 	if err != nil {
-		return 0, fmt.Errorf("GetRunTopologyGeneration: %w", err)
+		return 0, fmt.Errorf("GetRunPromotionSeq: %w", err)
 	}
 	if !result.Next(ctx) {
 		if err := result.Err(); err != nil {
-			return 0, fmt.Errorf("GetRunTopologyGeneration iterate: %w", err)
+			return 0, fmt.Errorf("GetRunPromotionSeq iterate: %w", err)
 		}
 		return 0, nil
 	}
-	raw, _ := result.Record().Get("gen")
+	raw, _ := result.Record().Get("seq")
 	if v, ok := raw.(int64); ok {
 		return v, nil
 	}
@@ -352,14 +352,14 @@ func (r *OrchestratorQueryRepository) ListActiveRuns(ctx context.Context) ([]*do
 		record := result.Record()
 		scheduleName := safeString(recordValue(record, "schedule_name"))
 		runID := safeString(recordValue(record, "run_id"))
-		var gen int64
+		var seq int64
 		if v, ok := recordValue(record, "promotion_seq").(int64); ok {
-			gen = v
+			seq = v
 		}
 		runs = append(runs, &domain.ActiveRun{
-			ScheduleName:       scheduleName,
-			RunID:              runID,
-			TopologyGeneration: gen,
+			ScheduleName: scheduleName,
+			RunID:        runID,
+			PromotionSeq: seq,
 		})
 	}
 	if err := result.Err(); err != nil {

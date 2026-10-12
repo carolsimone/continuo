@@ -115,7 +115,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
   const [scheduler, setScheduler] = useState<Scheduler | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [graph, setGraph] = useState<ScheduleGraph | null>(null);
-  const [topologyGeneration, setTopologyGeneration] = useState<number>(0);
+  const [promotionSeq, setPromotionSeq] = useState<number>(0);
   const [executions, setExecutions] = useState<TaskExecution[]>([]);
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
@@ -181,7 +181,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
           if (cancelled) return;
           setGraph(data);
           setGraphState(data.nodes.length > 0 ? 'ready' : 'empty');
-          setTopologyGeneration(Number(data.topology_generation ?? 0));
+          setPromotionSeq(Number(data.promotion_seq ?? 0));
         })
         .catch(() => {
           if (cancelled) return;
@@ -533,14 +533,14 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
 
   const driftLabel: string | null = (() => {
     if (!liveRunGraph) return null;
-    const state = getDriftState(liveRunGraph.run_topology_generation, liveRunGraph.latest_topology_generation);
-    // Only a stale run gets a label; 'unknown' (a run predating topology
-    // tracking) and 'fresh' are silent.
+    const state = getDriftState(liveRunGraph.run_promotion_seq, liveRunGraph.latest_promotion_seq);
+    // Only a stale run gets a label; 'unknown' (a run without a promotion
+    // seq) and 'fresh' are silent.
     if (state !== 'stale') return null;
     return getDriftBadge(
       state,
-      Number(liveRunGraph.run_topology_generation ?? 0),
-      Number(liveRunGraph.latest_topology_generation ?? 0),
+      Number(liveRunGraph.run_promotion_seq ?? 0),
+      Number(liveRunGraph.latest_promotion_seq ?? 0),
     );
   })();
 
@@ -605,10 +605,10 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
             {driftLabel}
           </span>
         )}
-        {mode === 'latest' && topologyGeneration > 0 && (
-          <span className="info-strip info-strip--info info-strip--inline" aria-label="topology generation">
+        {mode === 'latest' && promotionSeq > 0 && (
+          <span className="info-strip info-strip--info info-strip--inline" aria-label="live promotion seq">
             <span className="info-strip__icon">ⓘ</span>
-            topology v{topologyGeneration}
+            promotion {promotionSeq}
           </span>
         )}
       </PageHeader>

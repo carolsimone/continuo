@@ -68,3 +68,15 @@ describe('GET /api/schedules/:name/graph edge direction', () => {
     expect(res.body.edges).toEqual([{ from_node_id: 'svc.raw.seed_orders', to_node_id: 'svc.sales.orders' }]);
   });
 });
+
+describe('GET /api/schedules/:name/graph promotion seq', () => {
+  it('passes the live promotion seq through as a number', async () => {
+    mockGraphClient.getScheduleGraph.mockImplementationOnce((_req: any, cb: any) => {
+      cb(null, { nodes: [], edges: [], promotion_seq: '42' }); // gRPC-JS returns int64 as string
+    });
+    const res = await request(app).get('/api/schedules/daily/graph');
+    expect(res.status).toBe(200);
+    expect(res.body.promotion_seq).toBe(42);
+    expect(res.body).not.toHaveProperty('topology_generation');
+  });
+});

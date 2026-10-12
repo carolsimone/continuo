@@ -24,12 +24,12 @@ describe('resolveActiveGraph mode=latest', () => {
 
 describe('headerDriftLabel', () => {
   it('returns null in latest mode even when drift is non-null', () => {
-    expect(headerDriftLabel({ mode: 'latest', driftLabel: 'source 1 gen behind latest' })).toBeNull();
+    expect(headerDriftLabel({ mode: 'latest', driftLabel: 'source 1 release behind latest' })).toBeNull();
   });
 
   it('returns the drift label in run mode', () => {
-    expect(headerDriftLabel({ mode: 'run', driftLabel: 'source 1 gen behind latest' }))
-      .toBe('source 1 gen behind latest');
+    expect(headerDriftLabel({ mode: 'run', driftLabel: 'source 1 release behind latest' }))
+      .toBe('source 1 release behind latest');
   });
 
   it('returns null when drift is null regardless of mode', () => {
@@ -38,7 +38,7 @@ describe('headerDriftLabel', () => {
   });
 
   it('treats undefined mode as run (backwards compatible)', () => {
-    expect(headerDriftLabel({ driftLabel: 'source 2 gen behind latest' } as any))
-      .toBe('source 2 gen behind latest');
+    expect(headerDriftLabel({ driftLabel: 'source 2 releases behind latest' } as any))
+      .toBe('source 2 releases behind latest');
   });
 });

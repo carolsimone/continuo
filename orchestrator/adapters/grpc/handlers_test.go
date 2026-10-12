@@ -44,8 +44,8 @@ func (f *fakeDriftAwareRuns) ListActiveRunDrifts(ctx context.Context) (*queries.
 // fakeScheduleAndRunLists satisfies grpcadapter.ScheduleAndRunListReader for
 // the GetScheduleGraph and ListRuns RPCs. The drift-aware GetRunGraph path
 // goes through DriftAwareRunReader instead. It records the limit/offset the
-// handler computed so pagination clamping can be asserted, and replays a fixed
-// page + total back.
+// handler computed so pagination clamping can be asserted, replays a fixed
+// page + total back, and returns graph (or an empty graph) for GetScheduleGraph.
 type fakeScheduleAndRunLists struct {
 	gotLimit    int
 	gotOffset   int
@@ -53,9 +53,13 @@ type fakeScheduleAndRunLists struct {
 	total       int
 	location    *domain.NodeLocation
 	locationErr error
+	graph       *domain.ScheduleGraph
 }
 
-func (fakeScheduleAndRunLists) GetScheduleGraph(context.Context, string) (*domain.ScheduleGraph, error) {
+func (f *fakeScheduleAndRunLists) GetScheduleGraph(context.Context, string) (*domain.ScheduleGraph, error) {
+	if f.graph != nil {
+		return f.graph, nil
+	}
 	return &domain.ScheduleGraph{}, nil
 }
 func (f *fakeScheduleAndRunLists) ListRuns(_ context.Context, _ string, limit, offset int) ([]*domain.RunSummary, int, error) {
@@ -541,20 +545,20 @@ func TestQueryHandler_GetNodeRunHistory_OperationPassesThrough(t *testing.T) {
 	assert.Equal(t, "test", cv.gotRunOperation)
 }
 
-func TestQueryHandler_GetRunGraph_PopulatesGenerations(t *testing.T) {
+func TestQueryHandler_GetRunGraph_PopulatesPromotionSeqs(t *testing.T) {
 	rq := &fakeDriftAwareRuns{
 		runGraphView: &queries.RunGraphView{
-			Nodes:                    []*domain.TableNode{{TableName: "t"}},
-			Edges:                    []*domain.GraphEdge{},
-			RunTopologyGeneration:    5,
-			LatestTopologyGeneration: 7,
+			Nodes:              []*domain.TableNode{{TableName: "t"}},
+			Edges:              []*domain.GraphEdge{},
+			RunPromotionSeq:    5,
+			LatestPromotionSeq: 7,
 		},
 	}
 	h := newHandler(rq)
 	resp, err := h.GetRunGraph(context.Background(), &orchestratorv1.GetRunGraphRequest{RunId: "r1"})
 	require.NoError(t, err)
-	assert.Equal(t, int64(5), resp.RunTopologyGeneration)
-	assert.Equal(t, int64(7), resp.LatestTopologyGeneration)
+	assert.Equal(t, int64(5), resp.RunPromotionSeq)
+	assert.Equal(t, int64(7), resp.LatestPromotionSeq)
 	assert.Len(t, resp.Nodes, 1)
 }
 
@@ -568,19 +572,27 @@ func TestQueryHandler_ListActiveRunDrifts_PopulatesView(t *testing.T) {
 	rq := &fakeDriftAwareRuns{
 		driftView: &queries.ActiveRunDriftView{
 			ActiveRuns: []*domain.ActiveRun{
-				{ScheduleName: "sched-a", RunID: "run-a", TopologyGeneration: 5},
+				{ScheduleName: "sched-a", RunID: "run-a", PromotionSeq: 5},
 			},
-			LatestTopologyGeneration: 7,
+			LatestPromotionSeq: 7,
 		},
 	}
 	h := newHandler(rq)
 	resp, err := h.ListActiveRunDrifts(context.Background(), &orchestratorv1.ListActiveRunDriftsRequest{})
 	require.NoError(t, err)
-	assert.Equal(t, int64(7), resp.LatestTopologyGeneration)
+	assert.Equal(t, int64(7), resp.LatestPromotionSeq)
 	require.Len(t, resp.ActiveRuns, 1)
 	assert.Equal(t, "sched-a", resp.ActiveRuns[0].ScheduleName)
 	assert.Equal(t, "run-a", resp.ActiveRuns[0].RunId)
-	assert.Equal(t, int64(5), resp.ActiveRuns[0].RunTopologyGeneration)
+	assert.Equal(t, int64(5), resp.ActiveRuns[0].RunPromotionSeq)
+}
+
+// The schedule graph carries the live promotion seq the repository read with it.
+func TestQueryHandler_GetScheduleGraph_CarriesTheLivePromotionSeq(t *testing.T) {
+	h := newHandlerWithLists(&fakeScheduleAndRunLists{graph: &domain.ScheduleGraph{PromotionSeq: 42}})
+	resp, err := h.GetScheduleGraph(context.Background(), &orchestratorv1.GetScheduleGraphRequest{ScheduleName: "daily"})
+	require.NoError(t, err)
+	assert.Equal(t, int64(42), resp.GetPromotionSeq())
 }
 
 func TestQueryHandler_ListRuns_ClampsPageSizeAndOffset(t *testing.T) {

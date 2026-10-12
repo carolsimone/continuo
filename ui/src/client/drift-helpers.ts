@@ -2,39 +2,40 @@
 // Rerun button. No React, no DOM. Single source of truth for drift semantics.
 //
 // Backend contract:
-//   run_topology_generation = 0 → drift unknown (run pre-dates tracking).
-//   run_topology_generation < latest_topology_generation → stale.
-//   run_topology_generation >= latest_topology_generation → fresh.
+//   run_promotion_seq = 0 → drift unknown (the run carries no promotion seq).
+//   run_promotion_seq < latest_promotion_seq → stale.
+//   run_promotion_seq >= latest_promotion_seq → fresh.
 
 export type DriftState = 'fresh' | 'stale' | 'unknown';
 
 /**
- * Compute the drift state for a run pinned to `runGen` against the
- * orchestrator's current `latestGen`.
+ * Compute the drift state for a run created under promotion seq `runSeq`
+ * against the live promotion seq `latestSeq`.
  */
 export function getDriftState(
-  runGen: number | null | undefined,
-  latestGen: number | null | undefined,
+  runSeq: number | null | undefined,
+  latestSeq: number | null | undefined,
 ): DriftState {
-  if (runGen === null || runGen === undefined) return 'unknown';
-  const r = Number(runGen);
+  if (runSeq === null || runSeq === undefined) return 'unknown';
+  const r = Number(runSeq);
   if (Number.isNaN(r)) return 'unknown';
   if (r === 0) return 'unknown';
-  const l = Number.isFinite(Number(latestGen)) ? Number(latestGen) : 0;
+  const l = Number.isFinite(Number(latestSeq)) ? Number(latestSeq) : 0;
   if (r >= l) return 'fresh';
   return 'stale';
 }
 
 /**
- * Render the badge label shown next to the Rerun button when the run is
- * pinned to an older topology generation than the latest. Callers invoke
- * this only when state === 'stale'; the 'unknown' state (a run that
- * pre-dates topology tracking) is never surfaced in the UI.
+ * Render the badge label shown when the run was created under an older
+ * promotion seq than the live one: the number of promotions since, worded as
+ * releases, singular for one. Callers invoke this only when state === 'stale';
+ * the 'unknown' state (a run without a promotion seq) is never surfaced in the UI.
  */
 export function getDriftBadge(
   state: 'stale',
-  runGen: number,
-  latestGen: number,
+  runSeq: number,
+  latestSeq: number,
 ): string {
-  return `source ${latestGen - runGen} gen behind latest`;
+  const behind = latestSeq - runSeq;
+  return `source ${behind} ${behind === 1 ? 'release' : 'releases'} behind latest`;
 }

@@ -44,8 +44,8 @@ const routes = {
       { node_id: CSV_NODE_ID, node_type: 'python-csv', schedule_name: SCHED, status: 'succeeded' },
     ],
     edges: [],
-    run_topology_generation: 1,
-    latest_topology_generation: 1,
+    run_promotion_seq: 1,
+    latest_promotion_seq: 1,
   }),
   [`/api/schedulers/${RUN_ID}`]: async () => ({
     scheduler: {
