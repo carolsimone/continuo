@@ -66,7 +66,7 @@ func TestNewRun_StampsInitiatorOnAggregateAndEvent(t *testing.T) {
 	})
 
 	t.Run("derived rerun", func(t *testing.T) {
-		r, evt, err := run.NewDerivedRun("daily", run.KindRerun, src, "okta|bob", model.OperationRun, now)
+		r, evt, err := run.NewDerivedRun("daily", run.KindRerun, src, "", "okta|bob", model.OperationRun, now)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -220,6 +220,14 @@ func (f *fakeTaskCollection) HasRetryableFailed(_ context.Context, _ uuid.UUID) 
 }
 func (f *fakeTaskCollection) HasNonSucceeded(_ context.Context, _ uuid.UUID) (bool, error) {
 	return f.hasNonSucc, nil
+}
+func (f *fakeTaskCollection) GetByID(_ context.Context, id uuid.UUID) (run.Task, error) {
+	for _, t := range f.byNode {
+		if t.TaskID == id {
+			return t, nil
+		}
+	}
+	return run.Task{}, run.ErrTaskNotFound
 }
 func (f *fakeTaskCollection) GetByNode(_ context.Context, _ uuid.UUID, n run.NodeID) (run.Task, error) {
 	t, ok := f.byNode[n]
@@ -1286,5 +1294,25 @@ func TestHydrateReleaseID_RestoresTheStoredRelease(t *testing.T) {
 	}
 	if r.Changes().IsCreated() || r.Changes().IsStatusDirty() {
 		t.Fatal("hydrating the release id must not mark the run dirty")
+	}
+}
+
+// A rerun replays its source's tasks at the source's images, so it carries the
+// source's release; a rebase reads the latest topology and carries none.
+func TestNewDerivedRun_RerunCarriesItsSourceRelease(t *testing.T) {
+	now := time.Now()
+	rerun, _, err := run.NewDerivedRun("promote-seed-abc12345", run.KindRerun, uuid.New(), "rel-1", "okta|alice", model.OperationRun, now)
+	if err != nil {
+		t.Fatalf("NewDerivedRun(rerun): %v", err)
+	}
+	if rerun.ReleaseID() != "rel-1" {
+		t.Fatalf("rerun ReleaseID() = %q, want rel-1", rerun.ReleaseID())
+	}
+	rebase, _, err := run.NewDerivedRun("promote-seed-abc12345", run.KindRebase, uuid.New(), "rel-1", "okta|alice", model.OperationRun, now)
+	if err != nil {
+		t.Fatalf("NewDerivedRun(rebase): %v", err)
+	}
+	if rebase.ReleaseID() != "" {
+		t.Fatalf("rebase ReleaseID() = %q, want empty", rebase.ReleaseID())
 	}
 }

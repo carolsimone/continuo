@@ -164,10 +164,15 @@ func NewPendingRun(
 // run's dbt verb (run/build) against the derived task set. A test source
 // is rejected upstream in orchestrator before a derived run is requested.
 // Stamps last_heartbeat_at so dashboards show the new run immediately.
+//
+// A rerun replays the source run's tasks at the source run's images, so it
+// carries sourceReleaseID, the release the source run names (empty when it
+// names none). A rebase reads the latest topology and carries no release.
 func NewDerivedRun(
 	scheduleName string,
 	kind Kind,
 	sourceRunID uuid.UUID,
+	sourceReleaseID string,
 	initiatedBy string,
 	operation model.Operation,
 	now time.Time,
@@ -195,6 +200,7 @@ func NewDerivedRun(
 	r.changes.created = true
 	var evt DomainEvent
 	if kind == KindRerun {
+		r.releaseID = sourceReleaseID
 		evt = RerunRequested{ID: id, Name: scheduleName, SourceID: sourceRunID, InitiatedBy: initiatedBy}
 	} else {
 		evt = RebaseRequested{ID: id, Name: scheduleName, SourceID: sourceRunID, InitiatedBy: initiatedBy}

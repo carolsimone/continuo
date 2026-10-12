@@ -13,6 +13,8 @@ import (
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/events"
 	repository "github.com/carolsimone/continuo/state/domain/repository"
+	"github.com/carolsimone/continuo/state/domain/seeds"
+	"github.com/carolsimone/continuo/state/domain/topology"
 	"github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/google/uuid"
@@ -108,6 +110,17 @@ type fakeTaskStatusTaskCollection struct {
 	// HasFailed response
 	hasFailed    bool
 	hasFailedErr error
+
+	// GetByID response
+	task   run.Task
+	getErr error
+}
+
+func (f *fakeTaskStatusTaskCollection) GetByID(_ context.Context, _ uuid.UUID) (run.Task, error) {
+	if f.getErr != nil {
+		return run.Task{}, f.getErr
+	}
+	return f.task, nil
 }
 
 func (f *fakeTaskStatusTaskCollection) GetStatus(_ context.Context, _ uuid.UUID) (run.TaskStatus, bool, error) {
@@ -415,4 +428,136 @@ func TestTaskStatusUpdated_AppendErrorPropagates(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "append outbox")
 	assert.True(t, runRepo.saveCalled, "SaveRun is called before the outbox append")
+}
+
+// hashTopology answers NodeContentHash from hashes, keyed
+// "<release>/<node key>", and records each lookup as
+// "<tenant>/<release>/<node key>".
+type hashTopology struct {
+	fakeTopologyRepo
+	hashes map[string]string
+	asked  []string
+}
+
+var _ repository.TopologyRepository = (*hashTopology)(nil)
+
+func (f *hashTopology) NodeContentHash(_ context.Context, tenantID, releaseID string, key topology.NodeKey) (string, bool, error) {
+	f.asked = append(f.asked, tenantID+"/"+releaseID+"/"+string(key))
+	h, ok := f.hashes[releaseID+"/"+string(key)]
+	return h, ok, nil
+}
+
+// builtRecorder captures the versions recorded as loaded and their tenants.
+type builtRecorder struct {
+	fakeMaterializationRepo
+	tenants []string
+	built   []seeds.Built
+}
+
+var _ repository.MaterializationRepository = (*builtRecorder)(nil)
+
+func (f *builtRecorder) RecordBuilt(_ context.Context, tenantID string, b seeds.Built) error {
+	f.tenants = append(f.tenants, tenantID)
+	f.built = append(f.built, b)
+	return nil
+}
+
+type taskStatusClock struct{ at time.Time }
+
+func (c taskStatusClock) Now() time.Time { return c.at }
+
+// newReleaseTaskStatusRun builds a RUNNING one-task run that names releaseID.
+func newReleaseTaskStatusRun(id uuid.UUID, releaseID string) *run.Run {
+	r := newRunningTaskStatusRun(id, "promote-seed-abc12345", 1, 0)
+	r.HydrateReleaseID(releaseID)
+	return r
+}
+
+// A succeeded task of a run that names a release records the version it
+// loaded: the node's content hash in that release and the task's image.
+func TestTaskStatusUpdated_RecordsTheVersionAReleaseRunLoaded(t *testing.T) {
+	scheduleID, taskID := uuid.New(), uuid.New()
+	at := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	runRepo := &fakeTaskStatusRunRepo{stored: newReleaseTaskStatusRun(scheduleID, "rel-1")}
+	taskColl := &fakeTaskStatusTaskCollection{
+		prevStatus: run.TaskStatusRunning, prevExists: true, updateAffected: 1,
+		task: run.Task{TaskID: taskID, ScheduleID: scheduleID, ServiceName: "svc", SchemaName: "RAW", TableName: "Orders", ImageTag: "svc:7"},
+	}
+	topo := &hashTopology{hashes: map[string]string{"rel-1/raw.orders": "h-orders"}}
+	mats := &builtRecorder{}
+	u := newTaskStatusHandlerUoW(runRepo, &fakeTaskStatusOutboxPub{}, taskColl)
+	u.TopologyRepo, u.MaterializationRepo = topo, mats
+	u.SetClock(taskStatusClock{at: at})
+
+	require.NoError(t, handlers.NewTaskStatusUpdatedHandler(taskStatusTestLogger()).Handle(context.Background(), u,
+		events.TaskStatusUpdated{TaskID: taskID, ScheduleID: scheduleID, Status: run.TaskStatusSucceeded}, uuid.New()))
+
+	assert.Equal(t, []string{"default/rel-1/raw.orders"}, topo.asked)
+	assert.Equal(t, []string{"default"}, mats.tenants)
+	assert.Equal(t, []seeds.Built{{
+		Key: "raw.orders", ContentHash: "h-orders", ImageTag: "svc:7", ReleaseID: "rel-1",
+		RunID: scheduleID, TaskID: taskID, At: at, Source: seeds.SourceBuild,
+	}}, mats.built)
+}
+
+// Nothing is recorded for a run that names no release, for a task that did
+// not succeed, for a task whose row is gone, or for a node the run's release
+// lacks or holds without a content hash.
+func TestTaskStatusUpdated_RecordsNothingWithoutAVersion(t *testing.T) {
+	scheduleID, taskID := uuid.New(), uuid.New()
+	orders := run.Task{TaskID: taskID, ScheduleID: scheduleID, ServiceName: "svc", SchemaName: "raw", TableName: "orders", ImageTag: "svc:7"}
+	cases := []struct {
+		name    string
+		run     *run.Run
+		status  run.TaskStatus
+		getErr  error
+		hashes  map[string]string
+		lookups int
+	}{
+		{"a run without a release", newRunningTaskStatusRun(scheduleID, "daily", 1, 0), run.TaskStatusSucceeded, nil,
+			map[string]string{"rel-1/raw.orders": "h-orders"}, 0},
+		{"a failed task", newReleaseTaskStatusRun(scheduleID, "rel-1"), run.TaskStatusFailed, nil,
+			map[string]string{"rel-1/raw.orders": "h-orders"}, 0},
+		{"a task row that is gone", newReleaseTaskStatusRun(scheduleID, "rel-1"), run.TaskStatusSucceeded, run.ErrTaskNotFound,
+			map[string]string{"rel-1/raw.orders": "h-orders"}, 0},
+		{"a node the release lacks", newReleaseTaskStatusRun(scheduleID, "rel-1"), run.TaskStatusSucceeded, nil,
+			map[string]string{}, 1},
+		{"a node without a content hash", newReleaseTaskStatusRun(scheduleID, "rel-1"), run.TaskStatusSucceeded, nil,
+			map[string]string{"rel-1/raw.orders": ""}, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			runRepo := &fakeTaskStatusRunRepo{stored: tc.run}
+			taskColl := &fakeTaskStatusTaskCollection{
+				prevStatus: run.TaskStatusRunning, prevExists: true, updateAffected: 1, hasFailed: tc.status == run.TaskStatusFailed,
+				task: orders, getErr: tc.getErr,
+			}
+			topo := &hashTopology{hashes: tc.hashes}
+			mats := &builtRecorder{}
+			u := newTaskStatusHandlerUoW(runRepo, &fakeTaskStatusOutboxPub{}, taskColl)
+			u.TopologyRepo, u.MaterializationRepo = topo, mats
+
+			require.NoError(t, handlers.NewTaskStatusUpdatedHandler(taskStatusTestLogger()).Handle(context.Background(), u,
+				events.TaskStatusUpdated{TaskID: taskID, ScheduleID: scheduleID, Status: tc.status}, uuid.New()))
+
+			assert.Len(t, topo.asked, tc.lookups)
+			assert.Empty(t, mats.built)
+		})
+	}
+}
+
+// A failure to read the task fails the message, so it is redelivered.
+func TestTaskStatusUpdated_TaskReadFailureFailsTheMessage(t *testing.T) {
+	scheduleID := uuid.New()
+	boom := errors.New("connection reset by peer")
+	u := newTaskStatusHandlerUoW(&fakeTaskStatusRunRepo{stored: newReleaseTaskStatusRun(scheduleID, "rel-1")},
+		&fakeTaskStatusOutboxPub{}, &fakeTaskStatusTaskCollection{
+			prevStatus: run.TaskStatusRunning, prevExists: true, updateAffected: 1, getErr: boom,
+		})
+	u.TopologyRepo, u.MaterializationRepo = &hashTopology{}, &builtRecorder{}
+
+	err := handlers.NewTaskStatusUpdatedHandler(taskStatusTestLogger()).Handle(context.Background(), u,
+		events.TaskStatusUpdated{TaskID: uuid.New(), ScheduleID: scheduleID, Status: run.TaskStatusSucceeded}, uuid.New())
+	require.Error(t, err)
+	assert.ErrorIs(t, err, boom)
 }

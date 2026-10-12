@@ -698,6 +698,9 @@ func (f *cancelFakeTaskCollection) Update(_ context.Context, _ run.Task) error {
 func (f *cancelFakeTaskCollection) HasNonSucceeded(_ context.Context, _ uuid.UUID) (bool, error) {
 	panic("HasNonSucceeded not used in cancel tests")
 }
+func (f *cancelFakeTaskCollection) GetByID(_ context.Context, _ uuid.UUID) (run.Task, error) {
+	panic("GetByID not used in cancel tests")
+}
 
 // newCancelUoWFactory wires a FakeUnitOfWork with the three fakes needed by the
 // cancel handler methods and returns a factory that always returns the same
