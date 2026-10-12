@@ -20,9 +20,12 @@ import (
 // finalization state machine — terminal-count increment/decrement on
 // retries, defer finalize when retryable failed tasks remain, emit
 // RunFinalized with the correct outcome), persists via SaveRun, publishes
-// emitted events. When a task of a run that names a release succeeds, it also
-// records the version the task loaded into the warehouse, which the seed
-// reconcile compares with the live release.
+// emitted events. When the run applies the success of a task of a run that
+// names a release, it also records the version the task loaded into the
+// warehouse, which the seed reconcile compares with the live release. A success
+// the run ignores (the run is over, the attempt was superseded, the task
+// already finished that attempt) records no version either, so a stale delivery
+// cannot overwrite what the applied one recorded.
 type TaskStatusUpdatedHandler struct {
 	logger *slog.Logger
 }
@@ -48,7 +51,7 @@ func (h *TaskStatusUpdatedHandler) Handle(
 	if err != nil {
 		return fmt.Errorf("load run: %w", err)
 	}
-	domainEvents, err := r.RecordTaskStatus(ctx, u.TaskCollection(), evt.TaskID, evt.Status, evt.RetryCount, u.Clock().Now())
+	domainEvents, succeededApplied, err := r.RecordTaskStatus(ctx, u.TaskCollection(), evt.TaskID, evt.Status, evt.RetryCount, u.Clock().Now())
 	if err != nil {
 		return fmt.Errorf("record task status: %w", err)
 	}
@@ -58,7 +61,7 @@ func (h *TaskStatusUpdatedHandler) Handle(
 	if err := u.Outbox().Append(ctx, domainEvents, msgProcID); err != nil {
 		return fmt.Errorf("append outbox: %w", err)
 	}
-	if evt.Status == run.TaskStatusSucceeded && r.ReleaseID() != "" {
+	if succeededApplied && r.ReleaseID() != "" {
 		if err := h.recordLoaded(ctx, u, r, evt); err != nil {
 			return err
 		}

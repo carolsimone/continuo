@@ -534,6 +534,14 @@ func (r *Run) Cancel(
 //   - the new status is terminal but terminal_task_count != total_task_count
 //     or retryable-failed remains, so finalize is deferred
 //
+// The boolean result reports whether this call persisted a terminal SUCCEEDED
+// for the task: the status write took effect and newStatus is SUCCEEDED. It is
+// false for every ignored delivery (a run already terminal, a superseded
+// attempt, a replay of a finished attempt, a write the task row refused) and for
+// any other status, so a caller that acts on a task's success acts only on the
+// delivery that made it. It does not depend on finalization: an accepted
+// success that leaves other tasks open returns no events and true.
+//
 // Returns ErrTaskRowNotProjected when the task row is not yet present; the
 // adapter binding treats this as a transient error and the consumer redelivers.
 //
@@ -557,9 +565,9 @@ func (r *Run) RecordTaskStatus(
 	newStatus TaskStatus,
 	retryCount int32,
 	now time.Time,
-) ([]DomainEvent, error) {
+) ([]DomainEvent, bool, error) {
 	if r.IsTerminal() {
-		return nil, nil
+		return nil, false, nil
 	}
 	prev, prevAttempt, exists, err := tasks.LoadStatusAndAttempt(ctx, taskID)
 	if err != nil {
@@ -569,7 +577,7 @@ func (r *Run) RecordTaskStatus(
 		// newer terminal already recorded for the task, defeating the
 		// attempt-monotonic guard. Propagate so the consumer redelivers once
 		// the read recovers.
-		return nil, fmt.Errorf("load task status and attempt: %w", err)
+		return nil, false, fmt.Errorf("load task status and attempt: %w", err)
 	}
 
 	// Guard: if the row is not present, return a transient error so the
@@ -577,10 +585,10 @@ func (r *Run) RecordTaskStatus(
 	if !exists {
 		present, exErr := tasks.Exists(ctx, taskID)
 		if exErr != nil {
-			return nil, fmt.Errorf("exists check: %w", exErr)
+			return nil, false, fmt.Errorf("exists check: %w", exErr)
 		}
 		if !present {
-			return nil, ErrTaskRowNotProjected
+			return nil, false, ErrTaskRowNotProjected
 		}
 		// Row reported absent by the status read but present on re-check
 		// (a concurrent insert landed between the two reads); proceed with
@@ -599,7 +607,7 @@ func (r *Run) RecordTaskStatus(
 	// Older attempt — superseded. Covers both a stale RUNNING and a stale
 	// terminal left over from an attempt newer state has already moved past.
 	if prevKnown && retryCount < prevAttempt {
-		return nil, nil
+		return nil, false, nil
 	}
 
 	// Same attempt as the stored row.
@@ -608,64 +616,64 @@ func (r *Run) RecordTaskStatus(
 			// Terminal already recorded for this attempt: a replayed terminal,
 			// or a RUNNING re-delivered after its own terminal. No-op — do not
 			// regress status or un-fill the slot.
-			return nil, nil
+			return nil, false, nil
 		}
 		if !isTerminal {
 			// Non-terminal progress within the attempt (e.g. PENDING→RUNNING).
 			// Persist the status change; the slot is unaffected.
 			if newStatus == prev {
-				return nil, nil
+				return nil, false, nil
 			}
 			affected, err := tasks.SetStatusAndAttempt(ctx, taskID, newStatus, retryCount)
 			if err != nil {
-				return nil, fmt.Errorf("set task status: %w", err)
+				return nil, false, fmt.Errorf("set task status: %w", err)
 			}
 			if affected > 0 {
 				r.recordProgress(now)
 			}
-			return nil, nil
+			return nil, false, nil
 		}
 		// First terminal for this attempt — fill the slot.
 		affected, err := tasks.SetStatusAndAttempt(ctx, taskID, newStatus, retryCount)
 		if err != nil {
-			return nil, fmt.Errorf("set task status: %w", err)
+			return nil, false, fmt.Errorf("set task status: %w", err)
 		}
 		if affected == 0 {
-			return nil, nil // cancelled or vanished — leave counters untouched.
+			return nil, false, nil // cancelled or vanished — leave counters untouched.
 		}
 		r.recordProgress(now)
 		r.fillSlot()
-		return r.finalizeIfComplete(ctx, tasks, now)
+		return r.finalizeApplied(ctx, tasks, newStatus, now)
 	}
 
 	// Newer attempt (retryCount > prevAttempt) or no prior status — adopt it.
 	affected, err := tasks.SetStatusAndAttempt(ctx, taskID, newStatus, retryCount)
 	if err != nil {
-		return nil, fmt.Errorf("set task status: %w", err)
+		return nil, false, fmt.Errorf("set task status: %w", err)
 	}
 	if affected == 0 {
-		return nil, nil // cancelled or vanished — leave counters untouched.
+		return nil, false, nil // cancelled or vanished — leave counters untouched.
 	}
 	r.recordProgress(now)
 	switch {
 	case prevWasTerminal && !isTerminal:
 		// Genuine retry running again — un-fill the slot.
 		r.unfillSlot()
-		return nil, nil
+		return nil, false, nil
 	case !prevWasTerminal && isTerminal:
 		// Terminal of a running/new attempt — fill the slot.
 		r.fillSlot()
-		return r.finalizeIfComplete(ctx, tasks, now)
+		return r.finalizeApplied(ctx, tasks, newStatus, now)
 	case prevWasTerminal && isTerminal:
 		// A newer attempt's terminal arriving after an older attempt's terminal
 		// (e.g. the retry also failed, or it succeeded). The slot stays filled —
 		// no count change — but the task's retryability may have flipped, so
 		// re-check finalization with the now-current attempt persisted.
-		return r.finalizeIfComplete(ctx, tasks, now)
+		return r.finalizeApplied(ctx, tasks, newStatus, now)
 	default:
 		// Non-terminal after non-terminal (newer attempt already running) — the
 		// slot was empty and stays empty.
-		return nil, nil
+		return nil, false, nil
 	}
 }
 
@@ -692,6 +700,17 @@ func (r *Run) unfillSlot() {
 		r.terminalTaskCount = 0
 	}
 	r.changes.terminalTaskCountDirty = true
+}
+
+// finalizeApplied finalizes the run when its tasks are complete, after a
+// terminal status for one of them took effect. The success flag it returns is
+// that status being SUCCEEDED, independent of whether the run finalized.
+func (r *Run) finalizeApplied(ctx context.Context, tasks TaskCollection, applied TaskStatus, now time.Time) ([]DomainEvent, bool, error) {
+	events, err := r.finalizeIfComplete(ctx, tasks, now)
+	if err != nil {
+		return nil, false, err
+	}
+	return events, applied == TaskStatusSucceeded, nil
 }
 
 // finalizeIfComplete finalizes the scheduler when every task is terminal, the

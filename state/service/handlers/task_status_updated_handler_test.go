@@ -546,6 +546,69 @@ func TestTaskStatusUpdated_RecordsNothingWithoutAVersion(t *testing.T) {
 	}
 }
 
+// A version is recorded only when this delivery applied the task's success. A
+// success the run ignores — the run is already over, the attempt was
+// superseded, the task already finished that attempt, or the task row refused
+// the write — loads nothing and records nothing, while a success the run
+// accepts records even when other tasks keep the run open.
+func TestTaskStatusUpdated_RecordsAVersionOnlyForAnAppliedSuccess(t *testing.T) {
+	scheduleID, taskID := uuid.New(), uuid.New()
+	orders := run.Task{TaskID: taskID, ScheduleID: scheduleID, ServiceName: "svc", SchemaName: "raw", TableName: "orders", ImageTag: "svc:7"}
+	releaseRun := func(total, terminal int32) func() *run.Run {
+		return func() *run.Run {
+			r := newRunningTaskStatusRun(scheduleID, "promote-seed-abc12345", total, terminal)
+			r.HydrateReleaseID("rel-1")
+			return r
+		}
+	}
+	cancelledRun := func() *run.Run {
+		r := newTerminalTaskStatusRun(scheduleID, "promote-seed-abc12345", run.SchedulerStatusCancelled)
+		r.HydrateReleaseID("rel-1")
+		return r
+	}
+	cases := []struct {
+		name        string
+		run         func() *run.Run
+		prev        run.TaskStatus
+		prevAttempt int32
+		attempt     int32
+		affected    int
+		recorded    bool
+	}{
+		{"a run that is already over", cancelledRun, run.TaskStatusRunning, 0, 0, 1, false},
+		{"a superseded attempt", releaseRun(2, 0), run.TaskStatusRunning, 2, 1, 1, false},
+		{"a replay of a finished attempt", releaseRun(2, 1), run.TaskStatusSucceeded, 0, 0, 1, false},
+		{"a task row that refuses the write", releaseRun(2, 0), run.TaskStatusRunning, 0, 0, 0, false},
+		{"a success that leaves the run open", releaseRun(2, 0), run.TaskStatusRunning, 0, 0, 1, true},
+		{"a success that finishes the run", releaseRun(1, 0), run.TaskStatusRunning, 0, 0, 1, true},
+		{"a retry that succeeds after a failed attempt", releaseRun(2, 1), run.TaskStatusFailed, 0, 1, 1, true},
+		{"a first success the task row had no status for", releaseRun(2, 0), "", 0, 0, 1, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			taskColl := &fakeTaskStatusTaskCollection{
+				prevStatus: tc.prev, prevAttempt: tc.prevAttempt, prevExists: tc.prev != "", existsValue: true,
+				updateAffected: tc.affected, task: orders,
+			}
+			topo := &hashTopology{hashes: map[string]string{"rel-1/raw.orders": "h-orders"}}
+			mats := &builtRecorder{}
+			u := newTaskStatusHandlerUoW(&fakeTaskStatusRunRepo{stored: tc.run()}, &fakeTaskStatusOutboxPub{}, taskColl)
+			u.TopologyRepo, u.MaterializationRepo = topo, mats
+
+			require.NoError(t, handlers.NewTaskStatusUpdatedHandler(taskStatusTestLogger()).Handle(context.Background(), u,
+				events.TaskStatusUpdated{TaskID: taskID, ScheduleID: scheduleID, Status: run.TaskStatusSucceeded, RetryCount: tc.attempt}, uuid.New()))
+
+			if tc.recorded {
+				require.Len(t, mats.built, 1)
+				assert.Equal(t, topology.NodeKey("raw.orders"), mats.built[0].Key)
+				return
+			}
+			assert.Empty(t, mats.built, "a success that was not applied records no loaded version")
+			assert.Empty(t, topo.asked, "and does not even look the node up")
+		})
+	}
+}
+
 // A failure to read the task fails the message, so it is redelivered.
 func TestTaskStatusUpdated_TaskReadFailureFailsTheMessage(t *testing.T) {
 	scheduleID := uuid.New()
