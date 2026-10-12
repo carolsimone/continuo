@@ -15,6 +15,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/liveness"
 	pkgmessageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgmetrics "github.com/carolsimone/continuo/pkg/metrics"
+	"github.com/carolsimone/continuo/pkg/objectstore"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -22,6 +23,7 @@ import (
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	statepublisher "github.com/carolsimone/continuo/state/adapters/publisher"
 	"github.com/carolsimone/continuo/state/adapters/redis"
+	s3adapter "github.com/carolsimone/continuo/state/adapters/s3"
 	"github.com/carolsimone/continuo/state/config"
 	grpcserver "github.com/carolsimone/continuo/state/internal/grpc"
 	"github.com/carolsimone/continuo/state/internal/grpc/handlers"
@@ -37,6 +39,11 @@ import (
 // is comfortably above it: a wedged (not exited) processor trips within a
 // minute, while an idle-but-live one never does.
 const outboxHeartbeatStale = 60 * time.Second
+
+// releasePromotedHandlerTimeout bounds one release.promoted:v2 delivery: the
+// artifact read from object storage, then the load of a whole topology, every
+// node and edge, in one transaction.
+const releasePromotedHandlerTimeout = 5 * time.Minute
 
 // dbPool bounds the Postgres pool when DB_MAX_OPEN_CONNS / DB_MAX_IDLE_CONNS
 // are unset: two connections per stream consumer (a handler's transaction and
@@ -266,17 +273,29 @@ func main() {
 		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, taskExecutionRepo, catalogRepo, clk, logger)
 	}
 
+	// release.promoted:v2 stores each promoted release's topology in Postgres
+	// and moves state's live-release pointer. The handler reads the release's
+	// topology artifact from object storage before its transaction opens.
+	objectStore, err := objectstore.New(ctx, objectstore.ConfigFromS3(cfg.S3))
+	if err != nil {
+		logger.Error("Failed to build the object-storage client", "error", err)
+		os.Exit(1)
+	}
+	releasePromotedHandler := svchandlers.NewReleasePromotedHandler(s3adapter.NewTopologyArtifactReader(objectStore), nil, logger)
+
 	// Every state consumer is the same shape: a domain handler wrapped by a
 	// redis binding (parser + dedup + UoW transaction), driven by a
 	// StreamConsumer on its (stream, group). They are declared in one table and
 	// started uniformly via runConsumer below; consumer lifecycle is tied to
 	// ctx — the lifecycle manager cancels ctx on shutdown, which exits each
 	// Start cleanly. Stream/group names always come from pkg/streams constants.
+	// timeout is the handler deadline; 0 keeps pkgredis.DefaultHandlerTimeout.
 	consumers := []struct {
 		name    string
 		stream  string
 		group   string
 		binding pkgredis.MessageHandler
+		timeout time.Duration
 	}{
 		{
 			name:    "schedule_catalog",
@@ -314,9 +333,17 @@ func main() {
 			group:   streams.StateReleaseSeedsPending,
 			binding: redis.NewReleaseSeedsPendingBinding(uowFactory, svchandlers.NewPromotedSeedsHandler(logger), logger),
 		},
+		{
+			name:    "release_promoted",
+			stream:  streams.ReleasePromotedV2,
+			group:   streams.StateReleasePromoted,
+			binding: redis.NewReleasePromotedBinding(uowFactory, releasePromotedHandler, logger),
+			timeout: releasePromotedHandlerTimeout,
+		},
 	}
 	for _, c := range consumers {
-		runConsumer(c.name, pkgredis.NewStreamConsumer(redisClient, c.stream, c.group, c.binding, logger))
+		runConsumer(c.name, pkgredis.NewStreamConsumer(redisClient, c.stream, c.group, c.binding, logger,
+			pkgredis.WithHandlerTimeout(c.timeout)))
 		logger.Info("Stream consumer initialized", "consumer", c.name)
 	}
 
