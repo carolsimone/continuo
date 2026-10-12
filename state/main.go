@@ -32,6 +32,7 @@ import (
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 	ports "github.com/carolsimone/continuo/state/service/ports"
 	"github.com/carolsimone/continuo/state/service/seedreconcile"
+	"github.com/carolsimone/continuo/state/service/topologyretention"
 	"github.com/carolsimone/continuo/state/service/uow"
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -243,30 +244,6 @@ func main() {
 		}
 	})
 
-	// Retention sweeper — keeps the two unbounded-growth tables in check:
-	// processed state_outbox rows and message_processing dedup rows (the latter
-	// retains a full payload per consumed message). Processed outbox rows are
-	// kept RETENTION_DAYS; dedup rows, whatever their state, are kept at least
-	// 30 days (the replay horizon), longer when RETENTION_DAYS is longer. Both
-	// are pruned on the same timer using DB-clock cutoffs.
-	mpPruner := pkgmessageprocessing.NewPruner(db, postgres.OutboxTable, logger)
-	retentionSweeper := pkgoutbox.NewRetentionSweeper(
-		[]pkgoutbox.RetentionTarget{
-			pkgoutbox.OutboxRetentionTarget(db, postgres.OutboxTable, logger),
-			{
-				Name:         "message_processing",
-				Prune:        mpPruner.DeleteOlderThan,
-				MinRetention: model.ReplayHorizon,
-			},
-		},
-		pkgoutbox.RetentionConfig{
-			Retention: time.Duration(cfg.RetentionDays) * 24 * time.Hour,
-			Interval:  time.Duration(cfg.RetentionSweepIntervalMin) * time.Minute,
-		},
-		logger,
-	)
-	go retentionSweeper.Run(ctx)
-
 	clk := ports.SystemClock{}
 
 	// UoW factory shared by every stream binding below. Each invocation
@@ -277,6 +254,37 @@ func main() {
 	uowFactory := func() uow.UnitOfWork {
 		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, taskExecutionRepo, catalogRepo, clk, logger)
 	}
+
+	// Retention sweeper — keeps the unbounded-growth tables in check:
+	// processed state_outbox rows, message_processing dedup rows (which retain
+	// a full payload per consumed message) and stored topologies. Processed
+	// outbox rows are kept RETENTION_DAYS; dedup rows, whatever their state,
+	// are kept at least 30 days (the replay horizon), longer when
+	// RETENTION_DAYS is longer; a promoted release is kept RETENTION_DAYS after
+	// it was loaded, and for as long as it is live or a pending or running run
+	// names it. All are pruned on the same timer.
+	mpPruner := pkgmessageprocessing.NewPruner(db, postgres.OutboxTable, logger)
+	topologyPruner := topologyretention.NewPruner(uowFactory, logger)
+	retentionSweeper := pkgoutbox.NewRetentionSweeper(
+		[]pkgoutbox.RetentionTarget{
+			pkgoutbox.OutboxRetentionTarget(db, postgres.OutboxTable, logger),
+			{
+				Name:         "message_processing",
+				Prune:        mpPruner.DeleteOlderThan,
+				MinRetention: model.ReplayHorizon,
+			},
+			{
+				Name:  "topology_releases",
+				Prune: topologyPruner.Prune,
+			},
+		},
+		pkgoutbox.RetentionConfig{
+			Retention: time.Duration(cfg.RetentionDays) * 24 * time.Hour,
+			Interval:  time.Duration(cfg.RetentionSweepIntervalMin) * time.Minute,
+		},
+		logger,
+	)
+	go retentionSweeper.Run(ctx)
 
 	// release.promoted:v2 stores each promoted release's topology in Postgres
 	// and moves state's live-release pointer. The handler reads the release's
