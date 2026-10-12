@@ -33,6 +33,10 @@ type FakeUnitOfWork struct {
 	// TaskExecutionWriter backs TaskExecutions(); set it to capture or assert
 	// recorded-execution writes in handler tests.
 	TaskExecutionWriter repository.TaskExecutionWriter
+
+	// TopologyRepo backs Topology(); set it to observe topology writes in
+	// handler tests.
+	TopologyRepo repository.TopologyRepository
 }
 
 func (f *FakeUnitOfWork) MessageProcessingRepo() messageprocessing.Repository {
@@ -79,6 +83,9 @@ func (f *FakeUnitOfWork) TaskExecutions() repository.TaskExecutionWriter {
 
 // Catalog returns the aggregate-level repository.ScheduleCatalogRepository set via SetCatalogRepo.
 func (f *FakeUnitOfWork) Catalog() repository.ScheduleCatalogRepository { return f.catalogRepo }
+
+// Topology returns the repository.TopologyRepository set via the TopologyRepo field.
+func (f *FakeUnitOfWork) Topology() repository.TopologyRepository { return f.TopologyRepo }
 
 // Clock returns the configured clock, falling back to ports.SystemClock{} when
 // no override has been set.

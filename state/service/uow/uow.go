@@ -22,6 +22,7 @@ import (
 //
 // The aggregate-level accessors (Run, Catalog, Outbox, TaskCollection, Clock,
 // TaskExecutions) are used by handlers that operate on domain aggregates.
+// Topology serves the promoted-topology tables and the live-release pointer.
 type UnitOfWork interface {
 	MessageProcessingRepo() messageprocessing.Repository
 
@@ -32,6 +33,7 @@ type UnitOfWork interface {
 	TaskCollection() run.TaskCollection
 	Clock() ports.Clock
 	TaskExecutions() repository.TaskExecutionWriter
+	Topology() repository.TopologyRepository
 
 	Begin(ctx context.Context) error
 	Commit() error
