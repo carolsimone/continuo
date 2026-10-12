@@ -27,6 +27,7 @@ type MaterializationRepository interface {
 	RecordBuilt(ctx context.Context, tenantID string, b seeds.Built) error
 
 	// DeleteAbsentFrom deletes the rows of nodes the release does not have and
-	// returns how many it deleted.
+	// returns how many it deleted. A row whose latest request names a run that
+	// is still pending or running is kept.
 	DeleteAbsentFrom(ctx context.Context, tenantID, releaseID string) (int64, error)
 }

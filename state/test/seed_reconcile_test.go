@@ -256,6 +256,34 @@ func TestSeedReconcile(t *testing.T) {
 		assert.Empty(t, h.promoteSeedRuns(t, releaseID), "nothing is loaded again")
 	})
 
+	t.Run("a seed that leaves the release and returns while its build runs is not built a second time", func(t *testing.T) {
+		h := newReconcileHarness(db)
+		rel1, rel2, rel3 := "rel-1-"+uuid.NewString()[:8], "rel-2-"+uuid.NewString()[:8], "rel-3-"+uuid.NewString()[:8]
+		run1 := firstPromoteSeedRunID(rel1)
+
+		h.promote(t, rel1, 1, false, []string{"raw.orders"}, seedAt("orders", "sha256:orders-1"), seedAt("users", "sha256:users-1"))
+		require.Equal(t, []uuid.UUID{run1}, h.promoteSeedRuns(t, rel1), "the first release builds orders")
+
+		// The next release drops orders while its build runs, and the one after
+		// brings it back at other content.
+		h.promote(t, rel2, 2, false, nil, seedAt("users", "sha256:users-1"))
+		h.promote(t, rel3, 3, false, []string{"raw.orders"}, seedAt("orders", "sha256:orders-3"), seedAt("users", "sha256:users-1"))
+
+		assert.Empty(t, h.promoteSeedRuns(t, rel2))
+		assert.Empty(t, h.promoteSeedRuns(t, rel3), "the build of orders is still running, so no second load starts beside it")
+		orders := h.materialization(t, "raw.orders")
+		assert.Equal(t, "sha256:orders-1", orders.AttemptContentHash, "the running build is still on record")
+		assert.Equal(t, uuid.NullUUID{UUID: run1, Valid: true}, orders.AttemptRunID)
+
+		// Once that build ends, the next pass loads the live content.
+		_, err := db.Exec(`UPDATE scheduler_tracker SET status = 'succeeded', completed_at = now() WHERE schedule_id = $1`, run1)
+		require.NoError(t, err)
+		require.NoError(t, h.reconciler.RunOnce(ctx))
+		require.Len(t, h.promoteSeedRuns(t, rel3), 1, "orders is loaded at its live content once the earlier build is over")
+		assert.Equal(t, []string{"orders"}, h.promotedSeedNodes(t, h.promoteSeedRuns(t, rel3)[0]))
+		assert.Equal(t, "sha256:orders-3", h.materialization(t, "raw.orders").AttemptContentHash)
+	})
+
 	t.Run("a bootstrap release adopts nothing and builds every seed with a content hash", func(t *testing.T) {
 		h := newReconcileHarness(db)
 		releaseID := "rel-" + uuid.NewString()[:8]

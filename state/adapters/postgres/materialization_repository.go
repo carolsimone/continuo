@@ -12,6 +12,7 @@ import (
 	"github.com/carolsimone/continuo/state/domain/topology"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 )
 
 // MaterializationRepository implements repository.MaterializationRepository
@@ -123,15 +124,22 @@ func (r *MaterializationRepository) RecordBuilt(ctx context.Context, tenantID st
 	return nil
 }
 
-// DeleteAbsentFrom deletes the tenant's rows whose node the release lacks.
+// DeleteAbsentFrom deletes the tenant's rows whose node the release lacks,
+// except a row whose build request names a run that is still pending or
+// running: that row is the only record of the load in flight, and a release
+// that brings the node back before the run ends must find it there.
 func (r *MaterializationRepository) DeleteAbsentFrom(ctx context.Context, tenantID, releaseID string) (int64, error) {
+	unfinished := pq.Array([]string{string(run.SchedulerStatusPending), string(run.SchedulerStatusRunning)})
 	res, err := r.conn().ExecContext(ctx, `
 		DELETE FROM node_materializations m
 		WHERE m.tenant_id = $1
 		  AND NOT EXISTS (
 		      SELECT 1 FROM topology_nodes n
-		      WHERE n.tenant_id = m.tenant_id AND n.release_id = $2 AND n.node_key = m.node_key)`,
-		tenantID, releaseID)
+		      WHERE n.tenant_id = m.tenant_id AND n.release_id = $2 AND n.node_key = m.node_key)
+		  AND NOT EXISTS (
+		      SELECT 1 FROM scheduler_tracker s
+		      WHERE s.schedule_id = m.attempt_run_id AND s.status = ANY($3))`,
+		tenantID, releaseID, unfinished)
 	if err != nil {
 		return 0, fmt.Errorf("delete materializations absent from release %s: %w", releaseID, err)
 	}

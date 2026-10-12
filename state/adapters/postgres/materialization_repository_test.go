@@ -184,6 +184,50 @@ func TestMaterializationRepository_DeleteAbsentFromKeepsTheReleasesNodes(t *test
 	assert.Contains(t, got, topology.NodeKey("raw.users"))
 }
 
+// A row whose node the release lacks stays while its build request is still
+// pending or running, so a later release that brings the node back finds the
+// build in flight rather than starting a second one. Once the run ends the row
+// is deleted like any other absent node's.
+func TestMaterializationRepository_DeleteAbsentFromKeepsARowWhoseBuildIsInFlight(t *testing.T) {
+	ctx := context.Background()
+	for _, inFlight := range []run.SchedulerStatus{run.SchedulerStatusPending, run.SchedulerStatusRunning} {
+		t.Run(string(inFlight), func(t *testing.T) {
+			db := newTestDB(t)
+			tenant := newTopoTenant(t, db)
+			_, err := saveTopoRelease(t, db, topoRelease(t, tenant, "rel-2", 2, "bb", topoSpec("raw", "users", "dbt-seed", "h2")))
+			require.NoError(t, err)
+			repo := postgres.NewMaterializationRepository(db, nil)
+			runID := insertSeedRun(t, db, inFlight)
+			require.NoError(t, repo.RecordAttempt(ctx, tenant, "raw.orders", "h1", runID, materializedAt))
+			// A row with no build request, and one whose run is over, go
+			// as soon as their node is absent.
+			require.NoError(t, repo.RecordBuilt(ctx, tenant, seeds.Built{
+				Key: "raw.adopted", ContentHash: "h", ImageTag: "svc:1", ReleaseID: "rel-1", At: materializedAt, Source: seeds.SourceAdopted,
+			}))
+			require.NoError(t, repo.RecordAttempt(ctx, tenant, "raw.failed", "h", insertSeedRun(t, db, run.SchedulerStatusFailed), materializedAt))
+
+			deleted, err := repo.DeleteAbsentFrom(ctx, tenant, "rel-2")
+			require.NoError(t, err)
+			assert.Equal(t, int64(2), deleted, "only the rows with no build in flight go")
+			got, err := repo.List(ctx, tenant)
+			require.NoError(t, err)
+			require.Len(t, got, 1)
+			assert.Equal(t, seeds.Materialization{
+				Key: "raw.orders", AttemptContentHash: "h1", AttemptRunID: runID, AttemptState: seeds.AttemptInFlight,
+			}, got["raw.orders"], "the build request of the absent node survives")
+
+			_, err = db.Exec(`UPDATE scheduler_tracker SET status = 'succeeded', completed_at = now() WHERE schedule_id = $1`, runID)
+			require.NoError(t, err)
+			deleted, err = repo.DeleteAbsentFrom(ctx, tenant, "rel-2")
+			require.NoError(t, err)
+			assert.Equal(t, int64(1), deleted, "the row goes once its run has ended")
+			got, err = repo.List(ctx, tenant)
+			require.NoError(t, err)
+			assert.Empty(t, got)
+		})
+	}
+}
+
 // The unit of work's Materializations() writes inside its transaction.
 func TestPostgresUnitOfWork_MaterializationWritesRollBackWithTheTransaction(t *testing.T) {
 	ctx := context.Background()
