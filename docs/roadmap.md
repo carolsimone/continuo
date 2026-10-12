@@ -3,14 +3,10 @@
 What continuo does **today** is in the [README](../README.md#-what-it-delivers).
 This page is what comes **next**.
 
-Each item carries a **Target date** — our best current estimate of when it ships. 
-`TODO` means it is on the list but not yet scheduled. Where an item has a tracking 
-issue, it is linked next to the date.
-
 ## Planned
 
 ### More warehouse engines for the Python runtime
-**Target date:** TODO · **Tracking:** [#517](https://github.com/carolsimone/continuo/issues/517)
+**Tracking:** [#517](https://github.com/carolsimone/continuo/issues/517)
 
 `continuo-python-runtime` runs validation and Python nodes on **Postgres** and
 **Trino** today, both behind a single `WarehouseAdapter` port — one adapter per
@@ -21,7 +17,6 @@ The dbt materialization leg moves to the selected engine too, so a
 Spark/BigQuery/Snowflake install is a full deployment, not a half-Postgres one.
 
 ### Agentic remediation for production run failures
-**Target date:** 2026-10-04
 
 The remediation agent already proposes a fix when a *release* is rejected at
 validation. The next step is the same path for a **scheduled run that fails in
@@ -30,7 +25,6 @@ LLM-proposed diff, and a human reviews and merges it. Merging stays a human
 decision by design.
 
 ### Automatic detection of performance regressions with maintenance agent remediation
-**Target date:** TODO
 
 The graph database already stores every diff and the code of each node, and the
 `state` database has the run history — each node's ancestry and history are
@@ -39,7 +33,6 @@ getting worse and to point at the change that caused it. A "maintenance" agent h
 with the right skills propose a solution the data team will have to edit or merge.
 
 ### Standardize every node on the Open Data Contract Standard (ODCS)
-**Target date:** TODO
 
 Every node — dbt models, Python nodes, seeds, and streaming producers — will
 carry a data contract in the Open Data Contract Standard (ODCS) format: schema,
@@ -49,7 +42,6 @@ metadata we derive today and gives the control plane and the remediation agents
 a single, portable contract to enforce and reason about.
 
 ### Data-quality gate in the deployment pipeline
-**Target date:** TODO
 
 Today a candidate release is gated by compilation, manifest parsing, and schema
 validation before it can be promoted. The next gate is **data quality**: once a
@@ -60,7 +52,6 @@ regressions that compile and schema-validate cleanly but would still ship bad
 data.
 
 ### One control plane for streaming and batch
-**Target date:** TODO
 
 A single view — with contract enforcement and lineage — for both streaming and
 batch. Contracts stay in sync by design, so a software engineer changing a
@@ -70,13 +61,11 @@ automatically, reusing the `agent-remediation` service and the diffs, data
 types, historical diffs, and documentation already stored in the graph database.
 
 ### Test suite for circular dependencies
-**Target date:** TODO
 
 Cycles across projects already fail at CD. The check needs its own test suite
 covering the cross-project and cross-runtime cases.
 
 ### Every UI action available through the CLI
-**Target date:** TODO
 
 `agent-chat` builds its tool catalog from `continuo describe` at boot, so the
 CLI's command tree *is* the set of operations the chat agent can perform. Today
@@ -93,7 +82,7 @@ the chat's human-confirmation gate applies to each new action without changes
 to `agent-chat`.
 
 ### Validate single sign-on against a real Okta tenant
-**Target date:** TODO · **Tracking:** [#564](https://github.com/carolsimone/continuo/issues/564)
+**Tracking:** [#564](https://github.com/carolsimone/continuo/issues/564)
 
 The UI signs users in through standard OpenID Connect (OIDC) discovery, so any
 provider that serves `/.well-known/openid-configuration` plugs in with an issuer
