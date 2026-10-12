@@ -346,12 +346,6 @@ func main() {
 			binding: redis.NewTaskExecutionRecordedBinding(uowFactory, svchandlers.NewTaskExecutionRecordedHandler(logger), logger),
 		},
 		{
-			name:    "release_seeds_pending",
-			stream:  streams.ReleaseSeedsPendingV1,
-			group:   streams.StateReleaseSeedsPending,
-			binding: redis.NewReleaseSeedsPendingBinding(uowFactory, svchandlers.NewPromotedSeedsHandler(logger), logger),
-		},
-		{
 			name:    "release_promoted",
 			stream:  streams.ReleasePromotedV2,
 			group:   streams.StateReleasePromoted,
