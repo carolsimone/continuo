@@ -67,7 +67,7 @@ export function createSchedulesRouter(stateClient: GrpcClient, graphClient: Grpc
         schedule_name: n.schedule_name,
       }));
       const edges = executionOrderEdges(graphResp.edges);
-      const topology_generation = Number(graphResp.topology_generation ?? 0);
+      const topology_generation = Number(graphResp.promotion_seq ?? 0);
       res.json({ nodes, edges, topology_generation });
     });
   });
@@ -144,8 +144,8 @@ export function createRunsRouter(graphClient: GrpcGraphClient) {
       res.json({
         nodes,
         edges,
-        run_topology_generation: Number(resp.run_topology_generation ?? 0),
-        latest_topology_generation: Number(resp.latest_topology_generation ?? 0),
+        run_topology_generation: Number(resp.run_promotion_seq ?? 0),
+        latest_topology_generation: Number(resp.latest_promotion_seq ?? 0),
       });
     });
   });

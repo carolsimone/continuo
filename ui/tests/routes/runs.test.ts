@@ -16,13 +16,13 @@ app.use('/api/runs', createRunsRouter(mockGraphClient));
 describe('GET /api/runs/:run_id/graph', () => {
   beforeEach(() => { vi.clearAllMocks(); });
 
-  it('passes through run_topology_generation and latest_topology_generation as numbers', async () => {
+  it('maps the gRPC promotion seqs onto run_topology_generation and latest_topology_generation as numbers', async () => {
     mockGetRunGraph.mockImplementation((_req: any, cb: any) =>
       cb(null, {
         nodes: [{ service_name: 's', schema_name: 'sch', table_name: 't', node_type: 'model' }],
         edges: [],
-        run_topology_generation: '5',     // gRPC-JS returns int64 as string
-        latest_topology_generation: '7',
+        run_promotion_seq: '5',     // gRPC-JS returns int64 as string
+        latest_promotion_seq: '7',
       })
     );
 

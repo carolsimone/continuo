@@ -534,12 +534,12 @@ type GetScheduleGraphResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Nodes []*TableNode           `protobuf:"bytes,1,rep,name=nodes,proto3" json:"nodes,omitempty"`
 	Edges []*GraphEdge           `protobuf:"bytes,2,rep,name=edges,proto3" json:"edges,omitempty"`
-	// topology_generation is the promotion seq of the live topology at query time
-	// (:TopologyRoot.promotion_seq). Returns 0 before the first promotion; consumers
-	// MUST treat 0 as "generation unknown", not "generation zero".
-	TopologyGeneration int64 `protobuf:"varint,3,opt,name=topology_generation,json=topologyGeneration,proto3" json:"topology_generation,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// promotion_seq is the live promotion seq at query time
+	// (:TopologyRoot.promotion_seq). It is 0 before the first promotion;
+	// consumers MUST treat 0 as "unknown", not as a seq.
+	PromotionSeq  int64 `protobuf:"varint,3,opt,name=promotion_seq,json=promotionSeq,proto3" json:"promotion_seq,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *GetScheduleGraphResponse) Reset() {
@@ -586,9 +586,9 @@ func (x *GetScheduleGraphResponse) GetEdges() []*GraphEdge {
 	return nil
 }
 
-func (x *GetScheduleGraphResponse) GetTopologyGeneration() int64 {
+func (x *GetScheduleGraphResponse) GetPromotionSeq() int64 {
 	if x != nil {
-		return x.TopologyGeneration
+		return x.PromotionSeq
 	}
 	return 0
 }
@@ -835,15 +835,15 @@ type GetRunGraphResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Nodes []*TableNode           `protobuf:"bytes,1,rep,name=nodes,proto3" json:"nodes,omitempty"`
 	Edges []*GraphEdge           `protobuf:"bytes,2,rep,name=edges,proto3" json:"edges,omitempty"`
-	// run_topology_generation is the promotion seq the run was created under,
-	// stamped on the :Run node when its snapshot is written. Returns 0 when the
-	// run does not exist or was created before runs carried a promotion seq;
-	// consumers MUST treat 0 as "drift unknown", not "no drift".
-	RunTopologyGeneration int64 `protobuf:"varint,3,opt,name=run_topology_generation,json=runTopologyGeneration,proto3" json:"run_topology_generation,omitempty"`
-	// latest_topology_generation is the promotion seq of the live topology.
-	LatestTopologyGeneration int64 `protobuf:"varint,4,opt,name=latest_topology_generation,json=latestTopologyGeneration,proto3" json:"latest_topology_generation,omitempty"`
-	unknownFields            protoimpl.UnknownFields
-	sizeCache                protoimpl.SizeCache
+	// run_promotion_seq is the promotion seq the run was created under, stamped
+	// on the :Run node when its snapshot is written. It is 0 when the run does
+	// not exist or carries no promotion seq; consumers MUST treat 0 as "drift
+	// unknown", not "no drift".
+	RunPromotionSeq int64 `protobuf:"varint,3,opt,name=run_promotion_seq,json=runPromotionSeq,proto3" json:"run_promotion_seq,omitempty"`
+	// latest_promotion_seq is the live promotion seq (:TopologyRoot.promotion_seq).
+	LatestPromotionSeq int64 `protobuf:"varint,4,opt,name=latest_promotion_seq,json=latestPromotionSeq,proto3" json:"latest_promotion_seq,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *GetRunGraphResponse) Reset() {
@@ -890,16 +890,16 @@ func (x *GetRunGraphResponse) GetEdges() []*GraphEdge {
 	return nil
 }
 
-func (x *GetRunGraphResponse) GetRunTopologyGeneration() int64 {
+func (x *GetRunGraphResponse) GetRunPromotionSeq() int64 {
 	if x != nil {
-		return x.RunTopologyGeneration
+		return x.RunPromotionSeq
 	}
 	return 0
 }
 
-func (x *GetRunGraphResponse) GetLatestTopologyGeneration() int64 {
+func (x *GetRunGraphResponse) GetLatestPromotionSeq() int64 {
 	if x != nil {
-		return x.LatestTopologyGeneration
+		return x.LatestPromotionSeq
 	}
 	return 0
 }
@@ -942,11 +942,11 @@ func (*ListActiveRunDriftsRequest) Descriptor() ([]byte, []int) {
 
 type ListActiveRunDriftsResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// latest_topology_generation is the live promotion seq, as in GetRunGraphResponse.
-	LatestTopologyGeneration int64             `protobuf:"varint,1,opt,name=latest_topology_generation,json=latestTopologyGeneration,proto3" json:"latest_topology_generation,omitempty"`
-	ActiveRuns               []*ActiveRunDrift `protobuf:"bytes,2,rep,name=active_runs,json=activeRuns,proto3" json:"active_runs,omitempty"`
-	unknownFields            protoimpl.UnknownFields
-	sizeCache                protoimpl.SizeCache
+	// latest_promotion_seq is the live promotion seq, as in GetRunGraphResponse.
+	LatestPromotionSeq int64             `protobuf:"varint,1,opt,name=latest_promotion_seq,json=latestPromotionSeq,proto3" json:"latest_promotion_seq,omitempty"`
+	ActiveRuns         []*ActiveRunDrift `protobuf:"bytes,2,rep,name=active_runs,json=activeRuns,proto3" json:"active_runs,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *ListActiveRunDriftsResponse) Reset() {
@@ -979,9 +979,9 @@ func (*ListActiveRunDriftsResponse) Descriptor() ([]byte, []int) {
 	return file_proto_orchestrator_v1_orchestrator_proto_rawDescGZIP(), []int{14}
 }
 
-func (x *ListActiveRunDriftsResponse) GetLatestTopologyGeneration() int64 {
+func (x *ListActiveRunDriftsResponse) GetLatestPromotionSeq() int64 {
 	if x != nil {
-		return x.LatestTopologyGeneration
+		return x.LatestPromotionSeq
 	}
 	return 0
 }
@@ -997,10 +997,10 @@ type ActiveRunDrift struct {
 	state        protoimpl.MessageState `protogen:"open.v1"`
 	ScheduleName string                 `protobuf:"bytes,1,opt,name=schedule_name,json=scheduleName,proto3" json:"schedule_name,omitempty"`
 	RunId        string                 `protobuf:"bytes,2,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
-	// run_topology_generation is the promotion seq the run was created under; 0 when unknown.
-	RunTopologyGeneration int64 `protobuf:"varint,3,opt,name=run_topology_generation,json=runTopologyGeneration,proto3" json:"run_topology_generation,omitempty"`
-	unknownFields         protoimpl.UnknownFields
-	sizeCache             protoimpl.SizeCache
+	// run_promotion_seq is the promotion seq the run was created under; 0 when unknown.
+	RunPromotionSeq int64 `protobuf:"varint,3,opt,name=run_promotion_seq,json=runPromotionSeq,proto3" json:"run_promotion_seq,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *ActiveRunDrift) Reset() {
@@ -1047,9 +1047,9 @@ func (x *ActiveRunDrift) GetRunId() string {
 	return ""
 }
 
-func (x *ActiveRunDrift) GetRunTopologyGeneration() int64 {
+func (x *ActiveRunDrift) GetRunPromotionSeq() int64 {
 	if x != nil {
-		return x.RunTopologyGeneration
+		return x.RunPromotionSeq
 	}
 	return 0
 }
@@ -2812,11 +2812,11 @@ const file_proto_orchestrator_v1_orchestrator_proto_rawDesc = "" +
 	"\n" +
 	"to_node_id\x18\x02 \x01(\tR\btoNodeId\">\n" +
 	"\x17GetScheduleGraphRequest\x12#\n" +
-	"\rschedule_name\x18\x01 \x01(\tR\fscheduleName\"\xaf\x01\n" +
+	"\rschedule_name\x18\x01 \x01(\tR\fscheduleName\"\xa3\x01\n" +
 	"\x18GetScheduleGraphResponse\x120\n" +
 	"\x05nodes\x18\x01 \x03(\v2\x1a.orchestrator.v1.TableNodeR\x05nodes\x120\n" +
-	"\x05edges\x18\x02 \x03(\v2\x1a.orchestrator.v1.GraphEdgeR\x05edges\x12/\n" +
-	"\x13topology_generation\x18\x03 \x01(\x03R\x12topologyGeneration\"t\n" +
+	"\x05edges\x18\x02 \x03(\v2\x1a.orchestrator.v1.GraphEdgeR\x05edges\x12#\n" +
+	"\rpromotion_seq\x18\x03 \x01(\x03R\fpromotionSeq\"t\n" +
 	"\x0fListRunsRequest\x12#\n" +
 	"\rschedule_name\x18\x01 \x01(\tR\fscheduleName\x12\x1b\n" +
 	"\tpage_size\x18\x02 \x01(\x05R\bpageSize\x12\x1f\n" +
@@ -2835,21 +2835,21 @@ const file_proto_orchestrator_v1_orchestrator_proto_rawDesc = "" +
 	"created_at\x18\x04 \x01(\tR\tcreatedAt\x12!\n" +
 	"\fcompleted_at\x18\x05 \x01(\tR\vcompletedAt\"+\n" +
 	"\x12GetRunGraphRequest\x12\x15\n" +
-	"\x06run_id\x18\x01 \x01(\tR\x05runId\"\xef\x01\n" +
+	"\x06run_id\x18\x01 \x01(\tR\x05runId\"\xd7\x01\n" +
 	"\x13GetRunGraphResponse\x120\n" +
 	"\x05nodes\x18\x01 \x03(\v2\x1a.orchestrator.v1.TableNodeR\x05nodes\x120\n" +
-	"\x05edges\x18\x02 \x03(\v2\x1a.orchestrator.v1.GraphEdgeR\x05edges\x126\n" +
-	"\x17run_topology_generation\x18\x03 \x01(\x03R\x15runTopologyGeneration\x12<\n" +
-	"\x1alatest_topology_generation\x18\x04 \x01(\x03R\x18latestTopologyGeneration\"\x1c\n" +
-	"\x1aListActiveRunDriftsRequest\"\x9d\x01\n" +
-	"\x1bListActiveRunDriftsResponse\x12<\n" +
-	"\x1alatest_topology_generation\x18\x01 \x01(\x03R\x18latestTopologyGeneration\x12@\n" +
+	"\x05edges\x18\x02 \x03(\v2\x1a.orchestrator.v1.GraphEdgeR\x05edges\x12*\n" +
+	"\x11run_promotion_seq\x18\x03 \x01(\x03R\x0frunPromotionSeq\x120\n" +
+	"\x14latest_promotion_seq\x18\x04 \x01(\x03R\x12latestPromotionSeq\"\x1c\n" +
+	"\x1aListActiveRunDriftsRequest\"\x91\x01\n" +
+	"\x1bListActiveRunDriftsResponse\x120\n" +
+	"\x14latest_promotion_seq\x18\x01 \x01(\x03R\x12latestPromotionSeq\x12@\n" +
 	"\vactive_runs\x18\x02 \x03(\v2\x1f.orchestrator.v1.ActiveRunDriftR\n" +
-	"activeRuns\"\x84\x01\n" +
+	"activeRuns\"x\n" +
 	"\x0eActiveRunDrift\x12#\n" +
 	"\rschedule_name\x18\x01 \x01(\tR\fscheduleName\x12\x15\n" +
-	"\x06run_id\x18\x02 \x01(\tR\x05runId\x126\n" +
-	"\x17run_topology_generation\x18\x03 \x01(\x03R\x15runTopologyGeneration\"\x1f\n" +
+	"\x06run_id\x18\x02 \x01(\tR\x05runId\x12*\n" +
+	"\x11run_promotion_seq\x18\x03 \x01(\x03R\x0frunPromotionSeq\"\x1f\n" +
 	"\x1dListScheduleTopologiesRequest\"h\n" +
 	"\x1eListScheduleTopologiesResponse\x12F\n" +
 	"\tschedules\x18\x01 \x03(\v2(.orchestrator.v1.ScheduleTopologySummaryR\tschedules\"\xa1\x01\n" +

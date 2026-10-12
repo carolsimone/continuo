@@ -87,7 +87,7 @@ func (h *QueryHandler) GetScheduleGraph(ctx context.Context, req *orchestratorv1
 		Nodes: make([]*orchestratorv1.TableNode, 0, len(graph.Nodes)),
 		Edges: make([]*orchestratorv1.GraphEdge, 0, len(graph.Edges)),
 	}
-	resp.TopologyGeneration = graph.TopologyGeneration
+	resp.PromotionSeq = graph.TopologyGeneration
 	for _, n := range graph.Nodes {
 		resp.Nodes = append(resp.Nodes, domainToProtoNode(n))
 	}
@@ -164,10 +164,10 @@ func (h *QueryHandler) GetRunGraph(ctx context.Context, req *orchestratorv1.GetR
 		return nil, status.Errorf(codes.Internal, "GetRunGraph: %v", err)
 	}
 	resp := &orchestratorv1.GetRunGraphResponse{
-		Nodes:                    make([]*orchestratorv1.TableNode, 0, len(view.Nodes)),
-		Edges:                    make([]*orchestratorv1.GraphEdge, 0, len(view.Edges)),
-		RunTopologyGeneration:    view.RunTopologyGeneration,
-		LatestTopologyGeneration: view.LatestTopologyGeneration,
+		Nodes:              make([]*orchestratorv1.TableNode, 0, len(view.Nodes)),
+		Edges:              make([]*orchestratorv1.GraphEdge, 0, len(view.Edges)),
+		RunPromotionSeq:    view.RunTopologyGeneration,
+		LatestPromotionSeq: view.LatestTopologyGeneration,
 	}
 	for _, n := range view.Nodes {
 		resp.Nodes = append(resp.Nodes, domainToProtoNode(n))
@@ -188,14 +188,14 @@ func (h *QueryHandler) ListActiveRunDrifts(ctx context.Context, req *orchestrato
 		return nil, status.Errorf(codes.Internal, "ListActiveRunDrifts: %v", err)
 	}
 	resp := &orchestratorv1.ListActiveRunDriftsResponse{
-		LatestTopologyGeneration: view.LatestTopologyGeneration,
-		ActiveRuns:               make([]*orchestratorv1.ActiveRunDrift, 0, len(view.ActiveRuns)),
+		LatestPromotionSeq: view.LatestTopologyGeneration,
+		ActiveRuns:         make([]*orchestratorv1.ActiveRunDrift, 0, len(view.ActiveRuns)),
 	}
 	for _, r := range view.ActiveRuns {
 		resp.ActiveRuns = append(resp.ActiveRuns, &orchestratorv1.ActiveRunDrift{
-			ScheduleName:          r.ScheduleName,
-			RunId:                 r.RunID,
-			RunTopologyGeneration: r.TopologyGeneration,
+			ScheduleName:    r.ScheduleName,
+			RunId:           r.RunID,
+			RunPromotionSeq: r.TopologyGeneration,
 		})
 	}
 	return resp, nil
