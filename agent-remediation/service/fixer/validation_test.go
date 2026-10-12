@@ -663,6 +663,41 @@ func TestValidation_EmptyCandidateArtifactURI_SkipsBeforeAnyRead(t *testing.T) {
 	}
 }
 
+// TestValidation_CandidateUnreadable_Skips verifies that a candidate SQL URI
+// that is set but whose object cannot be read for good — the shape an oversized
+// candidate (over the evidence reader's cap) or a genuinely missing object takes,
+// both surfaced by the adapter as ports.ErrNotFound — is a terminal skip, not an
+// error. The object is immutable, so an error here would redeliver the trigger
+// forever; the node must be skipped so the batch's other clusters still proceed.
+// No LLM call, no source read, no graph read happens on this path.
+func TestValidation_CandidateUnreadable_Skips(t *testing.T) {
+	cs := &fakeCandidateSource{err: fmt.Errorf("must not be called")}
+	up := &fakeUpstream{err: fmt.Errorf("must not be called")}
+	vs := &fakeVersions{err: fmt.Errorf("must not be called")}
+	pr := &fakePrecedents{err: fmt.Errorf("must not be called")}
+	llm := &fakeLLM{}
+	svc := Services{
+		LLM: llm, Evidence: fakeEvidence{err: ports.ErrNotFound},
+		CandidateSource: cs, Upstream: up, Versions: vs, Precedents: pr,
+		Logger: testLogger(),
+	}
+
+	r, err := validationFixer{}.Propose(context.Background(), svc, validationInput())
+	if err != nil {
+		t.Fatalf("an unreadable candidate must skip, not error: %v", err)
+	}
+	if r.Proposal.Status != proposal.StatusSkipped {
+		t.Fatalf("status = %v want skipped", r.Proposal.Status)
+	}
+	if llm.calls != 0 {
+		t.Fatalf("expected no LLM call when the candidate is unreadable, got %d", llm.calls)
+	}
+	if cs.calls != 0 || up.calls != 0 || vs.calls != 0 || pr.calls != 0 {
+		t.Fatalf("expected zero reads after an unreadable candidate, got cs=%d up=%d vs=%d pr=%d",
+			cs.calls, up.calls, vs.calls, pr.calls)
+	}
+}
+
 // TestValidation_PythonNode_SkipsBeforeAnyRead enforces the non-negotiable
 // project invariant that no remediation path ever produces an LLM call or a
 // proposal for a python node, on the shape a python node actually produces:
