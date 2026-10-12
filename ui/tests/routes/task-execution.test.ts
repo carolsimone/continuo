@@ -2,11 +2,11 @@ import request from 'supertest';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 
-vi.mock('../../src/server/s3', () => ({
+vi.mock('../../src/server/clients/s3', () => ({
   getLogObject: vi.fn(),
 }));
 
-import { getLogObject } from '../../src/server/s3';
+import { getLogObject } from '../../src/server/clients/s3';
 import { createTaskExecutionRouter } from '../../src/server/routes/task-execution';
 
 const app = express();

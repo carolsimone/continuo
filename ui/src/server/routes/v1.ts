@@ -1,6 +1,6 @@
 import { Router, type Response } from 'express';
 import { rateLimit } from 'express-rate-limit';
-import { HttpError, type ReleaseClient, type ReleaseSubmission } from '../release-client';
+import { HttpError, type ReleaseClient, type ReleaseSubmission } from '../clients/release-client';
 import { authorize } from '../auth/authorize';
 import { principalAuditFields, principalKey, type Principal } from '../auth/principal';
 import { principalOf } from '../auth/request-principal';

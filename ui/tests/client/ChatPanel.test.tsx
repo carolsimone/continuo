@@ -2,7 +2,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import ChatPanel from '../../src/client/ChatPanel';
+import ChatPanel from '../../src/client/chat/ChatPanel';
 import type { ChatItem } from '../../src/client/chat/chat-state';
 
 const noopConfirm = () => {};

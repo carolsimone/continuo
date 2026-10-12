@@ -1,4 +1,4 @@
-import ChatPanel from '../ChatPanel';
+import ChatPanel from './ChatPanel';
 import { useChatSocket } from './useChatSocket';
 
 // Wraps the chat hook and panel so they mount only when the server bridge is

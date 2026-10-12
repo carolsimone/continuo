@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { assertS3Config } from '../../src/server/s3';
+import { assertS3Config } from '../../src/server/clients/s3';
 
 // assertS3Config must fail closed: a UI booted without explicit S3
 // credentials refuses to start instead of falling back to placeholder keys

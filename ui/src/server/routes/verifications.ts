@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { ReleaseClient } from '../release-client';
+import { ReleaseClient } from '../clients/release-client';
 
 // Verification runs are read-only from the UI: the detail page polls one run
 // by id. Submission belongs to agent-remediation, never to an operator.

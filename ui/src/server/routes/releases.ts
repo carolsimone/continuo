@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { rateLimit } from 'express-rate-limit';
-import { ReleaseClient } from '../release-client';
+import { ReleaseClient } from '../clients/release-client';
 import type { CommitAuthorResolver, ReleaseAuthor } from '../github/commit-author';
 import { commitUrl } from '../github/web-base';
 

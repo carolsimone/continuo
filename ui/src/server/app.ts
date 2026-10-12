@@ -1,6 +1,6 @@
 import express from 'express';
-import { GrpcClient } from './grpc-client';
-import { GrpcGraphClient } from './grpc-graph-client';
+import { GrpcClient } from './clients/grpc-client';
+import { GrpcGraphClient } from './clients/grpc-graph-client';
 import { createSchedulersRouter } from './routes/schedulers';
 import { createNodesRouter } from './routes/nodes';
 import { createSchedulesRouter, createRunsRouter } from './routes/schedules';
@@ -14,11 +14,11 @@ import { createV1Router } from './routes/v1';
 import { createVerificationsRouter } from './routes/verifications';
 import { createPipelineRouter } from './routes/pipeline';
 import { createRemediationRouter } from './routes/remediation';
-import { createReleaseClient } from './release-client';
+import { createReleaseClient } from './clients/release-client';
 import { maintenanceGate } from './maintenance';
-import { getLogObject } from './s3';
+import { getLogObject } from './clients/s3';
 import type { AppAuth } from './auth/types';
-import type { RemediationClient } from './remediation-client';
+import type { RemediationClient } from './clients/remediation-client';
 import type { PullRequestCreator } from './github/pull-request-creator';
 import type { CommitAuthorResolver } from './github/commit-author';
 

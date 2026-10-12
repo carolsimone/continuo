@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from 'vitest';
 import { render } from '@testing-library/react';
-import Brand from '../../src/client/Brand';
+import Brand from '../../src/client/brand/Brand';
 
 describe('Brand', () => {
   it('renders the mark next to the lowercase wordmark, linking home', () => {

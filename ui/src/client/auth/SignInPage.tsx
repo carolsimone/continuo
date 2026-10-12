@@ -1,4 +1,4 @@
-import Brand from '../Brand';
+import Brand from '../brand/Brand';
 
 const ERROR_COPY: Record<string, string> = {
   no_role:

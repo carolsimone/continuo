@@ -8,8 +8,8 @@ import { SessionStore } from '../../src/server/auth/session';
 import { FakeRedis } from './fake-redis';
 import type { AppAuth, AuthUser } from '../../src/server/auth/types';
 import { SESSION_COOKIE } from '../../src/server/auth/types';
-import type { GrpcClient } from '../../src/server/grpc-client';
-import type { GrpcGraphClient } from '../../src/server/grpc-graph-client';
+import type { GrpcClient } from '../../src/server/clients/grpc-client';
+import type { GrpcGraphClient } from '../../src/server/clients/grpc-graph-client';
 
 const fakeGrpc = {} as unknown as GrpcClient;
 const fakeGraph = {} as unknown as GrpcGraphClient;

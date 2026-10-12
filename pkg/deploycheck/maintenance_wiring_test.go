@@ -56,10 +56,10 @@ func TestClientCopiesMatchPkgMaintenance(t *testing.T) {
 	if !strings.Contains(cli, `"`+maintenance.TrailerKey+`"`) {
 		t.Errorf("cli/internal/client/maintenance.go trailer key differs from %q", maintenance.TrailerKey)
 	}
-	ui := readRepoFile(t, "ui", "src", "server", "maintenance.ts")
+	ui := readRepoFile(t, "ui", "src", "server", "maintenance", "index.ts")
 	for _, lit := range []string{maintenance.TrailerKey, maintenance.Message, maintenance.Code} {
 		if !strings.Contains(ui, `'`+lit+`'`) {
-			t.Errorf("ui/src/server/maintenance.ts does not carry %q", lit)
+			t.Errorf("ui/src/server/maintenance/index.ts does not carry %q", lit)
 		}
 	}
 }

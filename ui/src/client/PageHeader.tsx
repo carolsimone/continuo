@@ -1,5 +1,5 @@
 import { ReactNode } from 'react';
-import Brand from './Brand';
+import Brand from './brand/Brand';
 import UserMenu from './auth/UserMenu';
 
 // PageHeader is the identity row every page renders: the product brand first,

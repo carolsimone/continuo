@@ -3,7 +3,7 @@ import request from 'supertest';
 import express from 'express';
 import * as grpc from '@grpc/grpc-js';
 import { createSchedulesRouter } from '../../src/server/routes/schedules';
-import { USER_ID_METADATA_KEY } from '../../src/server/grpc-client';
+import { USER_ID_METADATA_KEY } from '../../src/server/clients/grpc-client';
 
 const mockTriggerSchedule = vi.fn();
 const mockListAllSchedules = vi.fn();

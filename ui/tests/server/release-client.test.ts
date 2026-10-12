@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { createReleaseClient } from '../../src/server/release-client';
+import { createReleaseClient } from '../../src/server/clients/release-client';
 
 afterEach(() => vi.restoreAllMocks());
 

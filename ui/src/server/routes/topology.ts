@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { GrpcGraphClient } from '../grpc-graph-client';
+import { GrpcGraphClient } from '../clients/grpc-graph-client';
 
 function toISO(ts: any): string | null {
   if (!ts) return null;

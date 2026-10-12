@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { ReleaseClient } from '../release-client';
+import { ReleaseClient } from '../clients/release-client';
 
 // GET /api/pipeline — what the release pipeline is doing right now: the
 // active run of either kind, or nothing. Polled by the Releases tab's

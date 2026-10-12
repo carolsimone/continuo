@@ -1,7 +1,7 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import type { IncomingMessage, Server } from 'http';
 import { status as grpcStatus } from '@grpc/grpc-js';
-import type { AgentChatStream } from '../agent-client';
+import type { AgentChatStream } from '../clients/agent-client';
 import type { ClientMessage } from './chat-protocol';
 import { toClientEvent, fromServerEvent } from './chat-protocol';
 import { audit } from '../auth/audit';

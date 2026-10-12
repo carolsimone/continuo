@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import * as grpc from '@grpc/grpc-js';
-import type { RemediationClient } from '../remediation-client';
+import type { RemediationClient } from '../clients/remediation-client';
 import type { PullRequestCreator } from '../github/pull-request-creator';
 import { buildPullRequestBody } from './pr-body';
 

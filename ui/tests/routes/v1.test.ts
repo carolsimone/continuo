@@ -5,7 +5,7 @@ import type { Server } from 'node:http';
 import { once } from 'node:events';
 import { createV1Router, projectCurrentProd, projectRelease, READ_RATE_LIMIT_PER_MINUTE, SUBMIT_RATE_LIMIT_PER_MINUTE } from '../../src/server/routes/v1';
 import { MAINTENANCE_MESSAGE } from '../../src/server/maintenance';
-import { HttpError, type ReleaseClient } from '../../src/server/release-client';
+import { HttpError, type ReleaseClient } from '../../src/server/clients/release-client';
 import type { Principal } from '../../src/server/auth/principal';
 import { githubClaimsFrom } from '../../src/server/auth/bearer';
 import { githubClaims } from '../auth/stub-issuer';

@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import { createRemediationRouter } from '../../src/server/routes/remediation';
-import type { RemediationClient } from '../../src/server/remediation-client';
+import type { RemediationClient } from '../../src/server/clients/remediation-client';
 import type { PullRequestCreator } from '../../src/server/github/pull-request-creator';
 
 // Constructs a gRPC-style error with the given code and message, mirroring what

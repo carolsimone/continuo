@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createRemediationClient } from '../../src/server/remediation-client';
+import { createRemediationClient } from '../../src/server/clients/remediation-client';
 
 describe('createRemediationClient', () => {
   it('constructs a client with all five promise-returning methods', () => {

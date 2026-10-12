@@ -1,6 +1,6 @@
 import { Router } from 'express';
-import { GrpcClient, userMetadata } from '../grpc-client';
-import { GrpcGraphClient } from '../grpc-graph-client';
+import { GrpcClient, userMetadata } from '../clients/grpc-client';
+import { GrpcGraphClient } from '../clients/grpc-graph-client';
 import { grpcToHttpStatus, sendGrpcError } from './grpc-status';
 import { parseOperation } from './operation';
 

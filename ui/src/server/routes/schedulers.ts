@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { GrpcClient, userMetadata } from '../grpc-client';
+import { GrpcClient, userMetadata } from '../clients/grpc-client';
 import { grpcToHttpStatus, sendGrpcError } from './grpc-status';
 import { parseLimit, parseOffset } from './paging';
 

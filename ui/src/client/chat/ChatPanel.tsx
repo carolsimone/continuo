@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
 import ReactMarkdown from 'react-markdown';
-import type { ChatItem } from './chat/chat-state';
+import type { ChatItem } from './chat-state';
 
 export interface ChatPanelProps {
   items: ChatItem[];

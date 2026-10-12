@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getLogObject } from '../s3';
+import { getLogObject } from '../clients/s3';
 
 export function createTaskExecutionRouter() {
   const router = Router();
