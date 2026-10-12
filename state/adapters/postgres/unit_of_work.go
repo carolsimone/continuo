@@ -138,5 +138,11 @@ func (u *PostgresUnitOfWork) Topology() repository.TopologyRepository {
 	return NewTopologyRepository(u.db, u.tx)
 }
 
+// Materializations returns a MaterializationRepository bound to the current
+// transaction.
+func (u *PostgresUnitOfWork) Materializations() repository.MaterializationRepository {
+	return NewMaterializationRepository(u.db, u.tx)
+}
+
 // Compile-time interface assertion.
 var _ uow.UnitOfWork = (*PostgresUnitOfWork)(nil)
