@@ -21,7 +21,9 @@ import (
 // adapter. Satisfied by adapters/neo4j/OrchestratorQueryRepository.
 type RunReader interface {
 	GetRunGraph(ctx context.Context, runID string) ([]*domain.TableNode, []*domain.GraphEdge, error)
-	GetRunTopologyGeneration(ctx context.Context, runID string) (int64, error)
+	// GetRunPromotionSeq returns the promotion seq stamped on the run; 0 when
+	// the run does not exist or carries none.
+	GetRunPromotionSeq(ctx context.Context, runID string) (int64, error)
 	// ListActiveRuns returns in-flight runs (completed_at IS NULL) ordered by
 	// schedule_name, then newest-first (created_at DESC), so callers can keep
 	// the head row per schedule as the current run.
@@ -38,18 +40,18 @@ type TopologyStateReader interface {
 // RunGraphView is the result of GetRunGraph — the existing run graph plus
 // the promotion seq the run was created under and the live promotion seq.
 type RunGraphView struct {
-	Nodes                    []*domain.TableNode
-	Edges                    []*domain.GraphEdge
-	RunTopologyGeneration    int64
-	LatestTopologyGeneration int64
+	Nodes              []*domain.TableNode
+	Edges              []*domain.GraphEdge
+	RunPromotionSeq    int64
+	LatestPromotionSeq int64
 }
 
 // ActiveRunDriftView is the result of ListActiveRunDrifts — every in-flight
 // run with the promotion seq it was created under, plus the live promotion seq
 // for drift computation in the consumer.
 type ActiveRunDriftView struct {
-	ActiveRuns               []*domain.ActiveRun
-	LatestTopologyGeneration int64
+	ActiveRuns         []*domain.ActiveRun
+	LatestPromotionSeq int64
 }
 
 // RunQueryService composes the run-side reads with the live promotion seq and
@@ -69,46 +71,46 @@ func NewRunQueryService(runReader RunReader, topologyStateRepo TopologyStateRead
 	}
 }
 
-// GetRunGraph returns the run's nodes/edges plus its pinned topology_generation
-// and the latest topology_generation of the live topology. Reads are sequential.
+// GetRunGraph returns the run's nodes/edges plus the promotion seq the run was
+// created under and the live promotion seq. Reads are sequential.
 func (s *RunQueryService) GetRunGraph(ctx context.Context, runID string) (*RunGraphView, error) {
 	nodes, edges, err := s.runReader.GetRunGraph(ctx, runID)
 	if err != nil {
 		return nil, fmt.Errorf("RunQueryService.GetRunGraph: %w", err)
 	}
-	runGen, err := s.runReader.GetRunTopologyGeneration(ctx, runID)
+	runSeq, err := s.runReader.GetRunPromotionSeq(ctx, runID)
 	if err != nil {
-		return nil, fmt.Errorf("RunQueryService.GetRunGraph topology_generation: %w", err)
+		return nil, fmt.Errorf("RunQueryService.GetRunGraph run promotion seq: %w", err)
 	}
-	latestGen, err := s.topologyStateRepo.GetGeneration(ctx)
+	latestSeq, err := s.topologyStateRepo.GetGeneration(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("RunQueryService.GetRunGraph latest_generation: %w", err)
+		return nil, fmt.Errorf("RunQueryService.GetRunGraph live promotion seq: %w", err)
 	}
-	if runGen > latestGen {
-		s.logger.Warn("run topology_generation exceeds latest — invariant violation",
-			"run_id", runID, "run_gen", runGen, "latest_gen", latestGen)
+	if runSeq > latestSeq {
+		s.logger.Warn("run promotion seq exceeds the live promotion seq",
+			"run_id", runID, "run_promotion_seq", runSeq, "latest_promotion_seq", latestSeq)
 	}
 	return &RunGraphView{
-		Nodes:                    nodes,
-		Edges:                    edges,
-		RunTopologyGeneration:    runGen,
-		LatestTopologyGeneration: latestGen,
+		Nodes:              nodes,
+		Edges:              edges,
+		RunPromotionSeq:    runSeq,
+		LatestPromotionSeq: latestSeq,
 	}, nil
 }
 
 // ListActiveRunDrifts returns one in-flight run per schedule (the newest) plus
-// the latest topology generation, so consumers (ui /api/schedules) can
-// render per-schedule drift badges. ListActiveRuns returns rows ordered by
-// schedule_name then newest-first (created_at DESC); this method keeps the head
-// row per schedule and drops any extras with a warning.
+// the live promotion seq, so a caller can compare each run with it.
+// ListActiveRuns returns rows ordered by schedule_name then newest-first
+// (created_at DESC); this method keeps the head row per schedule and drops any
+// extras with a warning.
 func (s *RunQueryService) ListActiveRunDrifts(ctx context.Context) (*ActiveRunDriftView, error) {
 	runs, err := s.runReader.ListActiveRuns(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("RunQueryService.ListActiveRunDrifts: %w", err)
 	}
-	latestGen, err := s.topologyStateRepo.GetGeneration(ctx)
+	latestSeq, err := s.topologyStateRepo.GetGeneration(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("RunQueryService.ListActiveRunDrifts latest_generation: %w", err)
+		return nil, fmt.Errorf("RunQueryService.ListActiveRunDrifts live promotion seq: %w", err)
 	}
 
 	// Keep one drift row per schedule — the newest in-flight run. ListActiveRuns
@@ -129,7 +131,7 @@ func (s *RunQueryService) ListActiveRunDrifts(ctx context.Context) (*ActiveRunDr
 	}
 
 	return &ActiveRunDriftView{
-		ActiveRuns:               deduped,
-		LatestTopologyGeneration: latestGen,
+		ActiveRuns:         deduped,
+		LatestPromotionSeq: latestSeq,
 	}, nil
 }

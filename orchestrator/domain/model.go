@@ -56,9 +56,9 @@ type TableNode struct {
 }
 
 type ScheduleGraph struct {
-	Nodes              []*TableNode
-	Edges              []*GraphEdge
-	TopologyGeneration int64 // :TopologyRoot.promotion_seq (the live promotion seq) at query time; 0 when unknown.
+	Nodes        []*TableNode
+	Edges        []*GraphEdge
+	PromotionSeq int64 // :TopologyRoot.promotion_seq (the live promotion seq) at query time; 0 when unknown.
 }
 
 // Outbox event_type routing keys for orchestrator_outbox rows. Each value is the

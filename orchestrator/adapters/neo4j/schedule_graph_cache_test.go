@@ -76,7 +76,7 @@ func newTestCache(spy *spyScheduleGraphProvider, gen *stubGeneration) *CachingSc
 
 func TestScheduleGraphCache_SameGeneration_FetchesOnce(t *testing.T) {
 	spy := &spyScheduleGraphProvider{graphBySchedule: map[string]*domain.ScheduleGraph{
-		"sched-a": {Nodes: []*domain.TableNode{{TableName: "t1"}}, TopologyGeneration: 7},
+		"sched-a": {Nodes: []*domain.TableNode{{TableName: "t1"}}, PromotionSeq: 7},
 	}}
 	gen := &stubGeneration{gen: 7}
 	cache := newTestCache(spy, gen)

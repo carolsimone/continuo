@@ -87,7 +87,7 @@ func (h *QueryHandler) GetScheduleGraph(ctx context.Context, req *orchestratorv1
 		Nodes: make([]*orchestratorv1.TableNode, 0, len(graph.Nodes)),
 		Edges: make([]*orchestratorv1.GraphEdge, 0, len(graph.Edges)),
 	}
-	resp.PromotionSeq = graph.TopologyGeneration
+	resp.PromotionSeq = graph.PromotionSeq
 	for _, n := range graph.Nodes {
 		resp.Nodes = append(resp.Nodes, domainToProtoNode(n))
 	}
@@ -166,8 +166,8 @@ func (h *QueryHandler) GetRunGraph(ctx context.Context, req *orchestratorv1.GetR
 	resp := &orchestratorv1.GetRunGraphResponse{
 		Nodes:              make([]*orchestratorv1.TableNode, 0, len(view.Nodes)),
 		Edges:              make([]*orchestratorv1.GraphEdge, 0, len(view.Edges)),
-		RunPromotionSeq:    view.RunTopologyGeneration,
-		LatestPromotionSeq: view.LatestTopologyGeneration,
+		RunPromotionSeq:    view.RunPromotionSeq,
+		LatestPromotionSeq: view.LatestPromotionSeq,
 	}
 	for _, n := range view.Nodes {
 		resp.Nodes = append(resp.Nodes, domainToProtoNode(n))
@@ -188,14 +188,14 @@ func (h *QueryHandler) ListActiveRunDrifts(ctx context.Context, req *orchestrato
 		return nil, status.Errorf(codes.Internal, "ListActiveRunDrifts: %v", err)
 	}
 	resp := &orchestratorv1.ListActiveRunDriftsResponse{
-		LatestPromotionSeq: view.LatestTopologyGeneration,
+		LatestPromotionSeq: view.LatestPromotionSeq,
 		ActiveRuns:         make([]*orchestratorv1.ActiveRunDrift, 0, len(view.ActiveRuns)),
 	}
 	for _, r := range view.ActiveRuns {
 		resp.ActiveRuns = append(resp.ActiveRuns, &orchestratorv1.ActiveRunDrift{
 			ScheduleName:    r.ScheduleName,
 			RunId:           r.RunID,
-			RunPromotionSeq: r.TopologyGeneration,
+			RunPromotionSeq: r.PromotionSeq,
 		})
 	}
 	return resp, nil

@@ -548,10 +548,10 @@ func TestQueryHandler_GetNodeRunHistory_OperationPassesThrough(t *testing.T) {
 func TestQueryHandler_GetRunGraph_PopulatesPromotionSeqs(t *testing.T) {
 	rq := &fakeDriftAwareRuns{
 		runGraphView: &queries.RunGraphView{
-			Nodes:                    []*domain.TableNode{{TableName: "t"}},
-			Edges:                    []*domain.GraphEdge{},
-			RunTopologyGeneration:    5,
-			LatestTopologyGeneration: 7,
+			Nodes:              []*domain.TableNode{{TableName: "t"}},
+			Edges:              []*domain.GraphEdge{},
+			RunPromotionSeq:    5,
+			LatestPromotionSeq: 7,
 		},
 	}
 	h := newHandler(rq)
@@ -572,9 +572,9 @@ func TestQueryHandler_ListActiveRunDrifts_PopulatesView(t *testing.T) {
 	rq := &fakeDriftAwareRuns{
 		driftView: &queries.ActiveRunDriftView{
 			ActiveRuns: []*domain.ActiveRun{
-				{ScheduleName: "sched-a", RunID: "run-a", TopologyGeneration: 5},
+				{ScheduleName: "sched-a", RunID: "run-a", PromotionSeq: 5},
 			},
-			LatestTopologyGeneration: 7,
+			LatestPromotionSeq: 7,
 		},
 	}
 	h := newHandler(rq)
@@ -589,7 +589,7 @@ func TestQueryHandler_ListActiveRunDrifts_PopulatesView(t *testing.T) {
 
 // The schedule graph carries the live promotion seq the repository read with it.
 func TestQueryHandler_GetScheduleGraph_CarriesTheLivePromotionSeq(t *testing.T) {
-	h := newHandlerWithLists(&fakeScheduleAndRunLists{graph: &domain.ScheduleGraph{TopologyGeneration: 42}})
+	h := newHandlerWithLists(&fakeScheduleAndRunLists{graph: &domain.ScheduleGraph{PromotionSeq: 42}})
 	resp, err := h.GetScheduleGraph(context.Background(), &orchestratorv1.GetScheduleGraphRequest{ScheduleName: "daily"})
 	require.NoError(t, err)
 	assert.Equal(t, int64(42), resp.GetPromotionSeq())
