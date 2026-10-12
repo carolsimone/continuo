@@ -56,7 +56,7 @@ const (
 	CompileRequestedV1 = "compile.requested:v1"
 	// CompileCompletedV1 — aggregated compile result from execution-controller back to release-controller.
 	CompileCompletedV1 = "compile.completed:v1"
-	// ReleasePromotedV2 — A topology becoming the live one, numbered by promotion_seq. It is either a promoted release or a topology release-controller announces without moving current_prod. Carries the URI and SHA-256 of the topology artifact in S3 and the event envelope, never the topology. orchestrator swaps its live topology only for a higher promotion_seq and records code versions; execution-controller drops the release's candidate schema.
+	// ReleasePromotedV2 — A topology becoming the live one, numbered by promotion_seq. It is either a promoted release or a topology release-controller announces without moving current_prod. Carries the URI and SHA-256 of the topology artifact in S3 and the event envelope, never the topology. orchestrator swaps its live topology only for a higher promotion_seq and records code versions; state stores the release's topology in Postgres once and moves its live release only for a higher promotion_seq; execution-controller drops the release's candidate schema.
 	ReleasePromotedV2 = "release.promoted:v2"
 	// ReleaseRejectedV1 — Candidate release rejected (compile, parse, seed-build, or validation failure); consumed by the remediation classifier. A verification run's failure never rides this stream.
 	ReleaseRejectedV1 = "release.rejected:v1"
@@ -138,6 +138,8 @@ const (
 	OrchestratorReleasePromotedVersions = "orchestrator-release-promoted-versions"
 	// ExecutorReleasePromoted — execution-controller consumer group on release.promoted:v2.
 	ExecutorReleasePromoted = "executor-release-promoted"
+	// StateReleasePromoted — state consumer group on release.promoted:v2.
+	StateReleasePromoted = "state-release-promoted"
 	// RemediationReleaseRejected — remediation consumer group on release.rejected:v1.
 	RemediationReleaseRejected = "remediation-release-rejected"
 	// ExecutorReleaseRejected — execution-controller consumer group on release.rejected:v1.
@@ -225,7 +227,7 @@ var Groups = map[string][]string{
 	SeedBuildCompletedV1:        {ReleaseControllerSeedBuildCompleted},
 	CompileRequestedV1:          {ExecutorCompileRequested},
 	CompileCompletedV1:          {ReleaseControllerCompileCompleted},
-	ReleasePromotedV2:           {OrchestratorReleasePromoted, OrchestratorReleasePromotedVersions, ExecutorReleasePromoted},
+	ReleasePromotedV2:           {OrchestratorReleasePromoted, OrchestratorReleasePromotedVersions, ExecutorReleasePromoted, StateReleasePromoted},
 	ReleaseRejectedV1:           {RemediationReleaseRejected, ExecutorReleaseRejected},
 	PipelineRunFinishedV1:       {ExecutorPipelineRunFinished},
 	RemediationRetryRequestedV1: {RemediationRetryRequested},

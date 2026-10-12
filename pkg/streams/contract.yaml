@@ -262,7 +262,7 @@ streams:
 
   - name: release.promoted:v2
     const: ReleasePromotedV2
-    description: A topology becoming the live one, numbered by promotion_seq. It is either a promoted release or a topology release-controller announces without moving current_prod. Carries the URI and SHA-256 of the topology artifact in S3 and the event envelope, never the topology. orchestrator swaps its live topology only for a higher promotion_seq and records code versions; execution-controller drops the release's candidate schema.
+    description: A topology becoming the live one, numbered by promotion_seq. It is either a promoted release or a topology release-controller announces without moving current_prod. Carries the URI and SHA-256 of the topology artifact in S3 and the event envelope, never the topology. orchestrator swaps its live topology only for a higher promotion_seq and records code versions; state stores the release's topology in Postgres once and moves its live release only for a higher promotion_seq; execution-controller drops the release's candidate schema.
     producers: [release-controller]
     consumers:
       - service: orchestrator
@@ -274,6 +274,9 @@ streams:
       - service: execution-controller
         group: executor-release-promoted
         const: ExecutorReleasePromoted
+      - service: state
+        group: state-release-promoted
+        const: StateReleasePromoted
 
   - name: release.rejected:v1
     const: ReleaseRejectedV1

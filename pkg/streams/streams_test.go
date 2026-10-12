@@ -61,6 +61,7 @@ func TestReleasePromotedV2_ReplacesV1(t *testing.T) {
 		"orchestrator-release-promoted":          false,
 		"orchestrator-release-promoted-versions": false,
 		"executor-release-promoted":              false,
+		"state-release-promoted":                 false,
 	}
 	for _, g := range Groups[ReleasePromotedV2] {
 		if _, ok := want[g]; !ok {
