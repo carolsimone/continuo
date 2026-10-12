@@ -152,53 +152,53 @@ describe('SchedulerCard — cancel button uses .btn', () => {
 
 describe('SchedulerCard — drift strip', () => {
   it('renders the stale strip when /api/runs/:id/graph reports stale (in-flight run)', async () => {
-    installFetch({ graph: { run_topology_generation: 5, latest_topology_generation: 7 } });
+    installFetch({ graph: { run_promotion_seq: 5, latest_promotion_seq: 7 } });
     renderCard(baseSchedule({ is_running: true, last_run_id: 'run-1' }));
-    const strip = await screen.findByText(/source 2 gen behind latest/);
+    const strip = await screen.findByText(/source 2 releases behind latest/);
     expect(strip.closest('.info-strip')).toBeInTheDocument();
     expect(strip.closest('.info-strip--warning')).toBeInTheDocument();
   });
 
   it('renders the stale strip when the last finalised run is stale', async () => {
-    installFetch({ graph: { run_topology_generation: 3, latest_topology_generation: 10 } });
+    installFetch({ graph: { run_promotion_seq: 3, latest_promotion_seq: 10 } });
     renderCard(baseSchedule({
       is_running: false,
       last_run_status: 'SUCCEEDED',
       last_run_id: 'run-final',
     }));
-    const strip = await screen.findByText(/source 7 gen behind latest/);
+    const strip = await screen.findByText(/source 7 releases behind latest/);
     expect(strip.closest('.info-strip--warning')).toBeInTheDocument();
   });
 
-  it('does NOT render a strip when run_topology_generation is 0 (unknown, pre-tracking run)', async () => {
-    const handler = installFetch({ graph: { run_topology_generation: 0, latest_topology_generation: 7 } });
+  it('does NOT render a strip when run_promotion_seq is 0 (unknown, pre-tracking run)', async () => {
+    const handler = installFetch({ graph: { run_promotion_seq: 0, latest_promotion_seq: 7 } });
     renderCard(baseSchedule({ is_running: true, last_run_id: 'run-1' }));
     await waitFor(() => {
       expect(handler).toHaveBeenCalled();
     });
     expect(screen.queryByText(/topology version unknown/i)).toBeNull();
-    expect(screen.queryByText(/gen behind latest/i)).toBeNull();
+    expect(screen.queryByText(/behind latest/i)).toBeNull();
   });
 
   it('does NOT render the strip when drift is fresh', async () => {
-    const handler = installFetch({ graph: { run_topology_generation: 7, latest_topology_generation: 7 } });
+    const handler = installFetch({ graph: { run_promotion_seq: 7, latest_promotion_seq: 7 } });
     renderCard(baseSchedule({ is_running: true, last_run_id: 'run-1' }));
     await waitFor(() => {
       expect(handler).toHaveBeenCalled();
     });
-    expect(screen.queryByText(/gen behind latest/i)).toBeNull();
+    expect(screen.queryByText(/behind latest/i)).toBeNull();
     expect(screen.queryByText(/topology version unknown/i)).toBeNull();
   });
 
   it('does NOT fetch graph or render strip for a never-run schedule', async () => {
-    const handler = installFetch({ graph: { run_topology_generation: 1, latest_topology_generation: 9 } });
+    const handler = installFetch({ graph: { run_promotion_seq: 1, latest_promotion_seq: 9 } });
     renderCard(baseSchedule({ is_running: false, last_run_id: null, last_run_status: '' }));
     await Promise.resolve();
     const calledGraph = handler.mock.calls.some(([input]) =>
       String(input).includes('/graph')
     );
     expect(calledGraph).toBe(false);
-    expect(screen.queryByText(/gen behind latest/i)).toBeNull();
+    expect(screen.queryByText(/behind latest/i)).toBeNull();
     expect(screen.queryByText(/topology version unknown/i)).toBeNull();
   });
 });

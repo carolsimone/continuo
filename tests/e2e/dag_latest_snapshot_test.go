@@ -12,9 +12,9 @@ import (
 )
 
 // TestE2E_DAGLatestSnapshot verifies the ui exposes per-schedule topology
-// aggregates and the schedule graph carries the live promotion seq (in its
-// topology_generation field). Both surfaces back the homepage "DAG Latest
-// Snapshot" section.
+// aggregates and the schedule graph carries the live promotion seq (its
+// promotion_seq field). Both surfaces back the homepage "DAG Latest Snapshot"
+// section.
 func TestE2E_DAGLatestSnapshot(t *testing.T) {
 	base := os.Getenv("UI_HTTP_BASE")
 	if base == "" {
@@ -50,7 +50,7 @@ func TestE2E_DAGLatestSnapshot(t *testing.T) {
 	}
 	require.True(t, found, "expected at least one schedule with node_count > 0 in /api/topology/schedules")
 
-	t.Run("schedule_graph_exposes_topology_generation", func(t *testing.T) {
+	t.Run("schedule_graph_exposes_promotion_seq", func(t *testing.T) {
 		// Pick the first available schedule name from the topology listing.
 		body := mustGetJSON(t, fmt.Sprintf("%s/api/topology/schedules", base))
 		raw, _ := body["schedules"].([]interface{})
@@ -62,16 +62,17 @@ func TestE2E_DAGLatestSnapshot(t *testing.T) {
 		require.NotEmpty(t, scheduleName, "first schedule must have a name")
 
 		graph := mustGetJSON(t, fmt.Sprintf("%s/api/schedules/%s/graph", base, scheduleName))
-		gen, ok := graph["topology_generation"].(float64)
-		require.True(t, ok, "topology_generation must be present on /graph response (got %v)", graph["topology_generation"])
-		assert.Greater(t, gen, float64(0), "topology_generation must be > 0 once a promotion has been applied")
+		seq, ok := graph["promotion_seq"].(float64)
+		require.True(t, ok, "promotion_seq must be present on /graph response (got %v)", graph["promotion_seq"])
+		assert.Greater(t, seq, float64(0), "promotion_seq must be > 0 once a promotion has been applied")
+		assert.NotContains(t, graph, "topology_generation", "the schedule graph carries the seq only as promotion_seq")
 
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
 		clients := setupClients(t, ctx)
 		defer clients.close(ctx)
-		assert.Equal(t, float64(readLivePointer(ctx, clients).promotionSeq), gen,
-			"the schedule graph's topology_generation is the live promotion seq")
+		assert.Equal(t, float64(readLivePointer(ctx, clients).promotionSeq), seq,
+			"the schedule graph's promotion_seq is the live promotion seq")
 	})
 
 	t.Run("topology_summary_fields_are_well_shaped", func(t *testing.T) {

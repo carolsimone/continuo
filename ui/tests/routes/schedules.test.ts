@@ -51,10 +51,10 @@ describe('GET /api/schedules', () => {
       last_run_id: 'run-1',
       last_run_status: 'PENDING',
     });
-    expect(daily).not.toHaveProperty('active_run_topology_generation');
+    expect(daily).not.toHaveProperty('active_run_promotion_seq');
     expect(daily).not.toHaveProperty('active_run_id');
 
-    expect(res.body).not.toHaveProperty('latest_topology_generation');
+    expect(res.body).not.toHaveProperty('latest_promotion_seq');
   });
 
   it('returns 500 if state call fails', async () => {

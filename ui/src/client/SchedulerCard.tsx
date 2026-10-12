@@ -64,8 +64,8 @@ export default function SchedulerCard({ schedule }: Props) {
         .then(data => {
           if (cancelled) return;
           setDrift({
-            run: Number(data.run_topology_generation ?? 0),
-            latest: Number(data.latest_topology_generation ?? 0),
+            run: Number(data.run_promotion_seq ?? 0),
+            latest: Number(data.latest_promotion_seq ?? 0),
           });
         })
         .catch(() => {});

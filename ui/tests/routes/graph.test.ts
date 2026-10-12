@@ -76,6 +76,7 @@ describe('GET /api/schedules/:name/graph promotion seq', () => {
     });
     const res = await request(app).get('/api/schedules/daily/graph');
     expect(res.status).toBe(200);
-    expect(res.body.topology_generation).toBe(42);
+    expect(res.body.promotion_seq).toBe(42);
+    expect(res.body).not.toHaveProperty('topology_generation');
   });
 });

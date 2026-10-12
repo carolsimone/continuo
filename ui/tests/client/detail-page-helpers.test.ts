@@ -142,12 +142,12 @@ describe('detail page graph helpers', () => {
   });
 
   it('hides the header drift chip in latest mode regardless of drift', () => {
-    expect(headerDriftLabel({ mode: 'latest', driftLabel: 'source 1 gen behind latest' })).toBeNull();
+    expect(headerDriftLabel({ mode: 'latest', driftLabel: 'source 1 release behind latest' })).toBeNull();
   });
 
   it('shows the header drift chip in run mode', () => {
-    expect(headerDriftLabel({ mode: 'run', driftLabel: 'source 1 gen behind latest' }))
-      .toBe('source 1 gen behind latest');
+    expect(headerDriftLabel({ mode: 'run', driftLabel: 'source 1 release behind latest' }))
+      .toBe('source 1 release behind latest');
   });
 
   it('returns null when there is no drift to display', () => {

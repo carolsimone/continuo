@@ -57,7 +57,7 @@ export interface GraphEdge {
 export interface ScheduleGraph {
   nodes: GraphNode[];
   edges: GraphEdge[];
-  topology_generation?: number;
+  promotion_seq?: number;
 }
 
 export interface RunSummary {
@@ -80,8 +80,8 @@ export interface RunGraph {
   edges: GraphEdge[];
   // Drift fields from /api/runs/:run_id/graph (populated by orchestrator
   // RunQueryService.GetRunGraph). 0 means "drift unknown" — see drift-helpers.
-  run_topology_generation: number;
-  latest_topology_generation: number;
+  run_promotion_seq: number;
+  latest_promotion_seq: number;
 }
 
 export interface TaskExecution {
