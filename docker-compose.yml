@@ -625,7 +625,6 @@ services:
   ui:
     build:
       context: ./ui
-      network: host
     container_name: ui
     depends_on:
       state:
@@ -678,7 +677,6 @@ services:
   ui-auth:
     build:
       context: ./ui
-      network: host
     container_name: ui-auth
     profiles: ["auth-e2e"]
     depends_on:
