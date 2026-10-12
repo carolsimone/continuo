@@ -29,6 +29,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/liveness"
 	pkgmessageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgmetrics "github.com/carolsimone/continuo/pkg/metrics"
+	"github.com/carolsimone/continuo/pkg/objectstore"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -199,7 +200,15 @@ func main() {
 	candidateSchemaCreator := k8s.NewCandidateSchemaCreator(k8sClient, cfg.K8sNamespace, logger)
 	candidateSchemaCleaner := k8s.NewCandidateSchemaCleaner(k8sClient, cfg.K8sNamespace, logger)
 
-	logUploader := s3adapter.NewS3Client(cfg.S3.EndpointURL, cfg.S3.Bucket, cfg.S3.Region, cfg.S3.AccessKeyID, cfg.S3.SecretAccessKey)
+	// The log uploader writes through the shared object-storage client as its
+	// objectstore.Writer role. Static S3 keys when both are set; otherwise the
+	// SDK's default credential chain (IAM role, workload identity).
+	objectStore, err := objectstore.New(ctx, objectstore.ConfigFromS3(cfg.S3))
+	if err != nil {
+		logger.Error("Failed to build the object-storage client", "error", err)
+		os.Exit(1)
+	}
+	logUploader := s3adapter.NewLogUploader(objectStore)
 
 	cancelledSchedulesRepo := postgres.NewCancelledSchedulesRepository(pgDB)
 

@@ -24,6 +24,7 @@ import (
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	pkgdb "github.com/carolsimone/continuo/pkg/db"
+	"github.com/carolsimone/continuo/pkg/objectstore"
 	"github.com/carolsimone/continuo/release-controller/adapters/postgres"
 	s3adapter "github.com/carolsimone/continuo/release-controller/adapters/s3"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
@@ -81,12 +82,12 @@ func main() {
 		logger.Error("invalid configuration", "error", err)
 		os.Exit(1)
 	}
-	s3Client, err := s3adapter.NewS3Client(ctx, s3Cfg.EndpointURL, s3Cfg.Bucket, s3Cfg.Region, s3Cfg.AccessKeyID, s3Cfg.SecretAccessKey, logger)
+	objectStore, err := objectstore.New(ctx, objectstore.ConfigFromS3(s3Cfg))
 	if err != nil {
 		logger.Error("connect to object storage", "error", err)
 		os.Exit(1)
 	}
-	topo, err := s3adapter.NewTopologyArtifactStore(s3Client, s3Cfg.Bucket, 1).Load(ctx, cp.Topology())
+	topo, err := s3adapter.NewTopologyArtifactStore(objectStore, s3Cfg.Bucket, 1).Load(ctx, cp.Topology())
 	if err != nil {
 		logger.Error("load current_prod topology", "error", err)
 		os.Exit(1)

@@ -12,11 +12,11 @@ import (
 // caller retries: a bundle that is merely late becomes readable.
 var ErrBundleNotFound = errors.New("code bundle not found")
 
-// ErrBundleMalformed means the object exists but cannot be interpreted (bad
-// JSON, unknown contract_version, a node missing content_hash, or a document
-// that does not belong to the release that referenced it). Re-reading it can
-// never help, so the caller fails the message permanently and the consumer
-// dead-letters it.
+// ErrBundleMalformed means the bundle cannot be interpreted: its URI names no
+// object, or the object is bad JSON, has an unknown contract_version, holds a
+// node missing content_hash, or does not belong to the release that
+// referenced it. Re-reading it can never help, so the caller fails the
+// message permanently and the consumer dead-letters it.
 var ErrBundleMalformed = errors.New("code bundle malformed")
 
 // ErrBundleTooLarge means the object exceeds the size this build will hold in

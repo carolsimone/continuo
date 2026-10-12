@@ -19,6 +19,7 @@ import (
 	pkgdb "github.com/carolsimone/continuo/pkg/db"
 	"github.com/carolsimone/continuo/pkg/liveness"
 	pkgmetrics "github.com/carolsimone/continuo/pkg/metrics"
+	"github.com/carolsimone/continuo/pkg/objectstore"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	rcgrpc "github.com/carolsimone/continuo/release-controller/adapters/grpc"
@@ -141,20 +142,15 @@ func main() {
 	})
 	metricsReg.WatchDB(db.DB, cfg.Postgres.DB)
 
-	// S3 client: prune-time deletion of a run's objects, and topology artifact reads and writes.
-	s3Client, err := s3adapter.NewS3Client(
-		ctx,
-		cfg.S3.EndpointURL,
-		cfg.S3.Bucket,
-		cfg.S3.Region,
-		cfg.S3.AccessKeyID,
-		cfg.S3.SecretAccessKey,
-		logger,
-	)
+	// One object-storage client, passed to each adapter as the role it uses:
+	// prune-time prefix deletion (objectstore.PrefixDeleter), and topology
+	// artifact reads and writes (objectstore.ReadWriter).
+	objectStore, err := objectstore.New(ctx, objectstore.ConfigFromS3(cfg.S3))
 	if err != nil {
 		logger.Error("Failed to configure the S3 client", "error", err)
 		os.Exit(1)
 	}
+	candidateSQLDeleter := s3adapter.NewCandidateSQLDeleter(objectStore, logger)
 
 	// Dial agent-remediation once for the RetryRemediation handler, which reads
 	// a release's remediation attempts before starting another round.
@@ -167,14 +163,14 @@ func main() {
 	proposalsClient := rcgrpc.NewProposalsClient(remediationv1.NewRemediationProposalsClient(remediationConn))
 
 	deps := &handlers.Deps{
-		NewUoW:    func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger, s3Client) },
+		NewUoW:    func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger, candidateSQLDeleter) },
 		Clock:     ports.SystemClock{},
 		Telemetry: ports.NoOpTelemetry{},
 		Logger:    logger,
 		Bucket:    cfg.S3.Bucket,
 		Proposals: proposalsClient,
 
-		Topologies: s3adapter.NewTopologyArtifactStore(s3Client, cfg.S3.Bucket, topologyCacheSize),
+		Topologies: s3adapter.NewTopologyArtifactStore(objectStore, cfg.S3.Bucket, topologyCacheSize),
 
 		Maintenance: cfg.Maintenance,
 

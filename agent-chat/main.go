@@ -30,6 +30,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/lifecycle"
 	"github.com/carolsimone/continuo/pkg/liveness"
 	pkgmetrics "github.com/carolsimone/continuo/pkg/metrics"
+	"github.com/carolsimone/continuo/pkg/objectstore"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	goredis "github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
@@ -214,7 +215,10 @@ func main() {
 		limiter = ratelimit.NewMemory(cfg.RateLimitPerMinute)
 	}
 
-	// Optional S3 archiver for thread retention.
+	// Optional S3 archiver for thread retention, writing through the shared
+	// object-storage client as its objectstore.Writer role. Static S3 keys
+	// when both are set; otherwise the SDK's default credential chain (IAM
+	// role, workload identity).
 	var archiver ports.Archiver
 	if cfg.RetentionArchiveS3 {
 		sv := &pkgconfig.Validator{}
@@ -223,7 +227,12 @@ func main() {
 			logger.Error("S3 archive enabled but configuration missing", "vars", strings.Join(missing, ", "))
 			os.Exit(1)
 		}
-		archiver = s3.NewArchiver(s3cfg.EndpointURL, s3cfg.Bucket, s3cfg.Region, s3cfg.AccessKeyID, s3cfg.SecretAccessKey)
+		objectStore, err := objectstore.New(ctx, objectstore.ConfigFromS3(s3cfg))
+		if err != nil {
+			logger.Error("Failed to build the object-storage client", "error", err)
+			os.Exit(1)
+		}
+		archiver = s3.NewArchiver(objectStore)
 	}
 
 	// Retention job sweeps idle threads on a configurable interval. It stops

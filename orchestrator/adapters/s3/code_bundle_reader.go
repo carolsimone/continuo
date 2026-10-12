@@ -1,18 +1,19 @@
+// Package s3 implements orchestrator's object-storage ports, the code-bundle
+// reader and the topology-artifact reader. Each adapter depends on the
+// objectstore.Reader role, never on the concrete client, parses the URI it is
+// given once with objectstore.ParseRef, and translates the store's errors
+// into its port's.
 package s3
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
-
-	"github.com/aws/aws-sdk-go-v2/aws"
-	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
-	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 
 	"github.com/carolsimone/continuo/orchestrator/service/ports"
 	"github.com/carolsimone/continuo/pkg/codebundle"
+	"github.com/carolsimone/continuo/pkg/objectstore"
 )
 
 // maxBundleBytes caps the code-bundle document orchestrator will hold in memory.
@@ -21,63 +22,48 @@ import (
 // container's memory limit during the read-then-decode step.
 const maxBundleBytes int64 = 64 * 1024 * 1024
 
-// CodeBundleReader fetches code-bundle documents from S3.
+// CodeBundleReader implements ports.CodeBundleReader over an object-store
+// reader.
 type CodeBundleReader struct {
-	client        *awss3.Client
-	defaultBucket string
+	objects objectstore.Reader
 }
 
 // Compile-time assertion that the adapter satisfies the application port.
 var _ ports.CodeBundleReader = (*CodeBundleReader)(nil)
 
-// NewCodeBundleReader builds an S3-backed CodeBundleReader (see newClient for
-// the endpoint and credential rules).
-func NewCodeBundleReader(ctx context.Context, endpointURL, bucket, region, accessKeyID, secretKey string) (*CodeBundleReader, error) {
-	client, err := newClient(ctx, endpointURL, region, accessKeyID, secretKey)
-	if err != nil {
-		return nil, err
-	}
-	return &CodeBundleReader{client: client, defaultBucket: bucket}, nil
+// NewCodeBundleReader builds a CodeBundleReader over objects. A bundle URI
+// without a bucket reads the store's default bucket.
+func NewCodeBundleReader(objects objectstore.Reader) *CodeBundleReader {
+	return &CodeBundleReader{objects: objects}
 }
 
-// Fetch reads and decodes the bundle at uri. A missing object yields
-// ports.ErrBundleNotFound; an uninterpretable one yields ports.ErrBundleMalformed.
+// Fetch reads and decodes the bundle at uri, mapping the store's outcomes onto
+// the port's errors:
+//   - a blank uri or a missing object: ports.ErrBundleNotFound (retried);
+//   - a uri that names no object (objectstore.ErrInvalidRef) or an
+//     undecodable object: ports.ErrBundleMalformed (permanent);
+//   - an object over maxBundleBytes: ports.ErrBundleTooLarge (permanent);
+//   - any other failure keeps its cause, so an S3 outage reaches the
+//     consumer's classifier intact.
 func (r *CodeBundleReader) Fetch(ctx context.Context, uri string) (codebundle.Bundle, error) {
 	if strings.TrimSpace(uri) == "" {
 		return codebundle.Bundle{}, ports.ErrBundleNotFound
 	}
-	bucket, key := parseS3URI(uri)
-	if bucket == "" {
-		bucket = r.defaultBucket
-	}
-	out, err := r.client.GetObject(ctx, &awss3.GetObjectInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String(key),
-	})
+	ref, err := objectstore.ParseRef(uri)
 	if err != nil {
-		var nsk *s3types.NoSuchKey
-		if errors.As(err, &nsk) {
-			return codebundle.Bundle{}, fmt.Errorf("%w: %s", ports.ErrBundleNotFound, uri)
-		}
+		return codebundle.Bundle{}, fmt.Errorf("%w: %w", ports.ErrBundleMalformed, err)
+	}
+	// The read is bounded before decoding allocates a second representation
+	// of the document, so an unbounded object cannot exhaust the container's
+	// memory limit before the per-node size guard ever runs.
+	body, err := r.objects.Get(ctx, ref, maxBundleBytes)
+	switch {
+	case errors.Is(err, objectstore.ErrNotFound):
+		return codebundle.Bundle{}, fmt.Errorf("%w: %s", ports.ErrBundleNotFound, uri)
+	case errors.Is(err, objectstore.ErrTooLarge):
+		return codebundle.Bundle{}, fmt.Errorf("%w: %w", ports.ErrBundleTooLarge, err)
+	case err != nil:
 		return codebundle.Bundle{}, fmt.Errorf("get code bundle %s: %w", uri, err)
-	}
-	defer func() { _ = out.Body.Close() }()
-
-	// Bound the read before allocating. Decoding also allocates a second
-	// representation of the document, so an unbounded object — a pathological
-	// compiled model, or a bundle far larger than any real estate — could exhaust
-	// the container's memory limit before the per-node size guard ever runs.
-	if out.ContentLength != nil && *out.ContentLength > maxBundleBytes {
-		return codebundle.Bundle{}, fmt.Errorf("%w: %s is %d bytes, over the %d-byte ceiling",
-			ports.ErrBundleTooLarge, uri, *out.ContentLength, maxBundleBytes)
-	}
-	body, err := io.ReadAll(io.LimitReader(out.Body, maxBundleBytes+1))
-	if err != nil {
-		return codebundle.Bundle{}, fmt.Errorf("read code bundle %s: %w", uri, err)
-	}
-	if int64(len(body)) > maxBundleBytes {
-		return codebundle.Bundle{}, fmt.Errorf("%w: %s exceeds the %d-byte ceiling",
-			ports.ErrBundleTooLarge, uri, maxBundleBytes)
 	}
 	bundle, err := codebundle.Decode(body)
 	if err != nil {

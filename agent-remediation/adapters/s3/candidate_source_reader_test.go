@@ -1,18 +1,22 @@
 package s3
 
 import (
-	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
-	"net/http/httptest"
-	"sync/atomic"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
+	"github.com/carolsimone/continuo/pkg/objectstore"
+	"github.com/carolsimone/continuo/pkg/objectstore/objectstoretest"
 )
+
+// testBucket is the default bucket of every store these tests build.
+const testBucket = "test-bucket"
 
 // validBundleJSON is a code-bundle document containing exactly one node,
 // analytics.orders, decodable by pkg/codebundle.Decode.
@@ -22,50 +26,56 @@ const validBundleJSON = `{"contract_version":1,"release_id":"rel-1",
 
 const testBundleURI = "s3://test-bucket/code-bundles/rel-1/bundle.json"
 
-// candidateSourceServer starts an httptest server that plays the given S3
-// GetObject response on every request, recording whether it was ever hit so
-// a test can prove NodeSource short-circuited without touching S3.
-func candidateSourceServer(status int, body string) (*httptest.Server, *atomic.Bool) {
-	var called atomic.Bool
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		called.Store(true)
-		w.WriteHeader(status)
-		_, _ = w.Write([]byte(body))
-	}))
-	return srv, &called
-}
+// bundleRef is the object testBundleURI names.
+var bundleRef = objectstore.Ref{Bucket: testBucket, Key: "code-bundles/rel-1/bundle.json"}
 
-func newTestReader(endpointURL string) *CandidateSourceReader {
-	return NewCandidateSourceReader(endpointURL, "test-bucket", "us-east-1", "AKIAEXAMPLE", "secret")
+// statusError is a store error carrying an HTTP status, as the AWS SDK's
+// response errors do.
+type statusError struct{ code int }
+
+func (e statusError) Error() string       { return fmt.Sprintf("s3 answered HTTP %d", e.code) }
+func (e statusError) HTTPStatusCode() int { return e.code }
+
+// newBundleStore returns an in-memory store holding body at bundleRef.
+func newBundleStore(t *testing.T, body string) *objectstoretest.Memory {
+	t.Helper()
+	mem := objectstoretest.NewMemory(testBucket)
+	require.NoError(t, mem.Put(context.Background(), bundleRef, []byte(body), "application/json"))
+	return mem
 }
 
 func TestNodeSource_ReturnsNodeEntry(t *testing.T) {
-	srv, called := candidateSourceServer(http.StatusOK, validBundleJSON)
-	defer srv.Close()
+	mem := newBundleStore(t, validBundleJSON)
 
-	r := newTestReader(srv.URL)
-	src, err := r.NodeSource(context.Background(), testBundleURI, "analytics.orders", "rel-1")
+	src, err := NewCandidateSourceReader(mem).NodeSource(context.Background(), testBundleURI, "analytics.orders", "rel-1")
 	require.NoError(t, err)
 	require.Equal(t, ports.CandidateSource{RawCode: "select 1 as x", Runtime: "dbt"}, src)
-	require.True(t, called.Load(), "NodeSource must fetch the bundle from S3")
+	assert.Equal(t, []objectstoretest.Read{{Ref: bundleRef, MaxBytes: maxBundleBytes}}, mem.Reads(),
+		"NodeSource reads the bundle, capped at the bundle ceiling")
 }
 
-func TestNodeSource_EmptyURI_ErrNotFound(t *testing.T) {
-	srv, called := candidateSourceServer(http.StatusOK, validBundleJSON)
-	defer srv.Close()
+// A URI that names no object is a permanent miss, refused before any read:
+// the caller takes its repo-read fallback.
+func TestNodeSource_URIThatNamesNoObject_ErrNotFound(t *testing.T) {
+	for _, tc := range []struct{ name, uri string }{
+		{"empty", ""},
+		{"bucket without a key", "s3://test-bucket"},
+		{"another scheme", "https://minio:9000/test-bucket/code-bundles/rel-1/bundle.json"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mem := newBundleStore(t, validBundleJSON)
 
-	r := newTestReader(srv.URL)
-	_, err := r.NodeSource(context.Background(), "", "analytics.orders", "rel-1")
-	require.ErrorIs(t, err, ports.ErrNotFound)
-	require.False(t, called.Load(), "an empty bundle URI must short-circuit before any S3 call")
+			_, err := NewCandidateSourceReader(mem).NodeSource(context.Background(), tc.uri, "analytics.orders", "rel-1")
+			require.ErrorIs(t, err, ports.ErrNotFound)
+			assert.Empty(t, mem.Reads(), "a URI that names no object short-circuits before any read")
+		})
+	}
 }
 
 func TestNodeSource_NodeAbsent_ErrNotFound(t *testing.T) {
-	srv, _ := candidateSourceServer(http.StatusOK, validBundleJSON)
-	defer srv.Close()
+	mem := newBundleStore(t, validBundleJSON)
 
-	r := newTestReader(srv.URL)
-	_, err := r.NodeSource(context.Background(), testBundleURI, "analytics.missing", "rel-1")
+	_, err := NewCandidateSourceReader(mem).NodeSource(context.Background(), testBundleURI, "analytics.missing", "rel-1")
 	require.ErrorIs(t, err, ports.ErrNotFound)
 }
 
@@ -76,30 +86,23 @@ func TestNodeSource_NodeAbsent_ErrNotFound(t *testing.T) {
 // stale or misrouted object could still resolve to another release's
 // document naming the same unique_id.
 func TestNodeSource_ReleaseMismatch_ErrNotFound(t *testing.T) {
-	srv, _ := candidateSourceServer(http.StatusOK, validBundleJSON)
-	defer srv.Close()
+	mem := newBundleStore(t, validBundleJSON)
 
-	r := newTestReader(srv.URL)
-	_, err := r.NodeSource(context.Background(), testBundleURI, "analytics.orders", "rel-2")
+	_, err := NewCandidateSourceReader(mem).NodeSource(context.Background(), testBundleURI, "analytics.orders", "rel-2")
 	require.ErrorIs(t, err, ports.ErrNotFound)
 }
 
 func TestNodeSource_MalformedBundle_ErrNotFound(t *testing.T) {
-	srv, _ := candidateSourceServer(http.StatusOK, "not valid json")
-	defer srv.Close()
+	mem := newBundleStore(t, "not valid json")
 
-	r := newTestReader(srv.URL)
-	_, err := r.NodeSource(context.Background(), testBundleURI, "analytics.orders", "rel-1")
+	_, err := NewCandidateSourceReader(mem).NodeSource(context.Background(), testBundleURI, "analytics.orders", "rel-1")
 	require.ErrorIs(t, err, ports.ErrNotFound)
 }
 
 func TestNodeSource_MissingObject_ErrNotFound(t *testing.T) {
-	srv, _ := candidateSourceServer(http.StatusNotFound,
-		`<Error><Code>NoSuchKey</Code><Message>The specified key does not exist.</Message></Error>`)
-	defer srv.Close()
+	mem := objectstoretest.NewMemory(testBucket)
 
-	r := newTestReader(srv.URL)
-	_, err := r.NodeSource(context.Background(), testBundleURI, "analytics.orders", "rel-1")
+	_, err := NewCandidateSourceReader(mem).NodeSource(context.Background(), testBundleURI, "analytics.orders", "rel-1")
 	require.ErrorIs(t, err, ports.ErrNotFound)
 }
 
@@ -108,27 +111,26 @@ func TestNodeSource_MissingObject_ErrNotFound(t *testing.T) {
 // read in full, so the caller falls back to a repo read rather than retrying
 // a fetch that will never succeed.
 func TestNodeSource_OversizedBundle_ErrNotFound(t *testing.T) {
-	oversized := bytes.Repeat([]byte("a"), int(maxBundleBytes)+1)
-	srv, _ := candidateSourceServer(http.StatusOK, string(oversized))
-	defer srv.Close()
+	mem := objectstoretest.NewMemory(testBucket)
+	mem.FailGet(bundleRef, fmt.Errorf("%w: %s is over the limit", objectstore.ErrTooLarge, bundleRef))
 
-	r := newTestReader(srv.URL)
-	_, err := r.NodeSource(context.Background(), testBundleURI, "analytics.orders", "rel-1")
+	_, err := NewCandidateSourceReader(mem).NodeSource(context.Background(), testBundleURI, "analytics.orders", "rel-1")
 	require.ErrorIs(t, err, ports.ErrNotFound)
 }
 
-// TestNodeSource_TransientFetchError_NotFlattened proves a non-NoSuchKey S3
-// failure is kept distinct from the permanent conditions above: it must not
-// be classified as ErrNotFound, so the caller does not fall back to a repo
-// read and the trigger redelivers instead.
+// TestNodeSource_TransientFetchError_NotFlattened proves a failure other than
+// a missing or oversized object is kept distinct from the permanent
+// conditions above: it must not be classified as ErrNotFound, so the caller
+// does not fall back to a repo read and the trigger redelivers instead.
 func TestNodeSource_TransientFetchError_NotFlattened(t *testing.T) {
-	srv, _ := candidateSourceServer(http.StatusForbidden,
-		`<Error><Code>AccessDenied</Code><Message>Access Denied</Message></Error>`)
-	defer srv.Close()
+	mem := objectstoretest.NewMemory(testBucket)
+	mem.FailGet(bundleRef, statusError{code: http.StatusServiceUnavailable})
 
-	r := newTestReader(srv.URL)
-	_, err := r.NodeSource(context.Background(), testBundleURI, "analytics.orders", "rel-1")
+	_, err := NewCandidateSourceReader(mem).NodeSource(context.Background(), testBundleURI, "analytics.orders", "rel-1")
 	require.Error(t, err)
 	require.False(t, errors.Is(err, ports.ErrNotFound),
 		"a transient fetch error must not be flattened into ErrNotFound so the trigger redelivers")
+	var status interface{ HTTPStatusCode() int }
+	require.True(t, errors.As(err, &status))
+	assert.Equal(t, http.StatusServiceUnavailable, status.HTTPStatusCode())
 }

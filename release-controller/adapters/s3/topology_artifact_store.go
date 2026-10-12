@@ -1,3 +1,7 @@
+// Package s3 implements release-controller's object-storage ports, each over
+// the narrowest pkg/objectstore role it uses: the topology artifact store over
+// objectstore.ReadWriter and the prune-time candidate-SQL deleter over
+// objectstore.PrefixDeleter.
 package s3
 
 import (
@@ -6,9 +10,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"strings"
 
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/pkg/objectstore"
 	"github.com/carolsimone/continuo/pkg/topologyartifact"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/service/ports"
@@ -17,7 +21,7 @@ import (
 // TopologyArtifactStore implements ports.TopologyArtifactStore over an object
 // store, with an LRU of decoded topologies in front of it.
 type TopologyArtifactStore struct {
-	objects ObjectStore
+	objects objectstore.ReadWriter
 	bucket  string
 	cache   *topologyCache
 }
@@ -25,26 +29,31 @@ type TopologyArtifactStore struct {
 var _ ports.TopologyArtifactStore = (*TopologyArtifactStore)(nil)
 
 // NewTopologyArtifactStore reads and writes artifacts in bucket through
-// objects, caching up to cacheSize decoded topologies.
-func NewTopologyArtifactStore(objects ObjectStore, bucket string, cacheSize int) *TopologyArtifactStore {
+// objects, caching up to cacheSize decoded topologies. bucket is named in
+// every reference Write returns and is the only bucket Load reads.
+func NewTopologyArtifactStore(objects objectstore.ReadWriter, bucket string, cacheSize int) *TopologyArtifactStore {
 	return &TopologyArtifactStore{objects: objects, bucket: bucket, cache: newTopologyCache(cacheSize)}
 }
 
 // Load returns the topology ref names, verifying the object against
-// ref.SHA256. A cached topology is returned only for the same checksum.
+// ref.SHA256. A cached topology is returned only for the same checksum. A URI
+// that does not name an object in this store's bucket, an object over
+// topologyartifact.MaxObjectBytes, and an object that does not decode or
+// match the checksum are ports.ErrTopologyArtifactCorrupt; a missing object is
+// ports.ErrTopologyArtifactNotFound; any other error keeps its cause.
 func (s *TopologyArtifactStore) Load(ctx context.Context, ref release.TopologyRef) (release.Topology, error) {
 	if topo, ok := s.cache.get(ref); ok {
 		return topo, nil
 	}
-	key, err := s.keyOf(ref.URI)
+	obj, err := s.objectOf(ref.URI)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ports.ErrTopologyArtifactCorrupt, err)
+		return nil, fmt.Errorf("%w: %w", ports.ErrTopologyArtifactCorrupt, err)
 	}
-	body, err := s.objects.GetObject(ctx, key, topologyartifact.MaxObjectBytes)
+	body, err := s.objects.Get(ctx, obj, topologyartifact.MaxObjectBytes)
 	switch {
-	case errors.Is(err, ErrObjectNotFound):
+	case errors.Is(err, objectstore.ErrNotFound):
 		return nil, fmt.Errorf("%w: %s", ports.ErrTopologyArtifactNotFound, ref.URI)
-	case errors.Is(err, ErrObjectTooLarge):
+	case errors.Is(err, objectstore.ErrTooLarge):
 		return nil, fmt.Errorf("%w: %s: %w", ports.ErrTopologyArtifactCorrupt, ref.URI, err)
 	case err != nil:
 		return nil, fmt.Errorf("read topology artifact %s: %w", ref.URI, err)
@@ -71,22 +80,22 @@ func (s *TopologyArtifactStore) Write(ctx context.Context, releaseID string, top
 	if err != nil {
 		return release.TopologyRef{}, fmt.Errorf("encode topology artifact %s: %w", releaseID, err)
 	}
-	key := topologyartifact.Key(pkgevents.DefaultTenantID, releaseID)
-	switch existing, err := s.objects.GetObject(ctx, key, topologyartifact.MaxObjectBytes); {
+	obj := objectstore.Ref{Bucket: s.bucket, Key: topologyartifact.Key(pkgevents.DefaultTenantID, releaseID)}
+	switch existing, err := s.objects.Get(ctx, obj, topologyartifact.MaxObjectBytes); {
 	case err == nil:
 		existingSum := sha256.Sum256(existing)
 		if hex.EncodeToString(existingSum[:]) != sum {
-			return release.TopologyRef{}, fmt.Errorf("%w: %s", ports.ErrTopologyArtifactImmutable, key)
+			return release.TopologyRef{}, fmt.Errorf("%w: %s", ports.ErrTopologyArtifactImmutable, obj)
 		}
 		// Identical bytes already stored: nothing to re-put.
-	case errors.Is(err, ErrObjectNotFound):
-		if err := s.objects.PutObject(ctx, key, gz, "application/gzip"); err != nil {
-			return release.TopologyRef{}, fmt.Errorf("write topology artifact %s: %w", key, err)
+	case errors.Is(err, objectstore.ErrNotFound):
+		if err := s.objects.Put(ctx, obj, gz, "application/gzip"); err != nil {
+			return release.TopologyRef{}, fmt.Errorf("write topology artifact %s: %w", obj, err)
 		}
 	default:
-		return release.TopologyRef{}, fmt.Errorf("read existing topology artifact %s: %w", key, err)
+		return release.TopologyRef{}, fmt.Errorf("read existing topology artifact %s: %w", obj, err)
 	}
-	ref := release.TopologyRef{URI: "s3://" + s.bucket + "/" + key, SHA256: sum, NodeCount: len(topo)}
+	ref := release.TopologyRef{URI: obj.String(), SHA256: sum, NodeCount: len(topo)}
 	doc, err := topologyartifact.Decode(gz, sum)
 	if err != nil {
 		return release.TopologyRef{}, fmt.Errorf("decode the topology artifact just written for %s: %w", releaseID, err)
@@ -95,20 +104,17 @@ func (s *TopologyArtifactStore) Write(ctx context.Context, releaseID string, top
 	return ref, nil
 }
 
-// keyOf returns the object key of uri, which must name this store's bucket.
-func (s *TopologyArtifactStore) keyOf(uri string) (string, error) {
-	rest, ok := strings.CutPrefix(uri, "s3://")
-	if !ok {
-		return "", fmt.Errorf("topology artifact URI %q is not an s3:// URI", uri)
+// objectOf parses uri once and requires it to name an object in this store's
+// bucket. A bare key names no bucket and is refused too.
+func (s *TopologyArtifactStore) objectOf(uri string) (objectstore.Ref, error) {
+	obj, err := objectstore.ParseRef(uri)
+	if err != nil {
+		return objectstore.Ref{}, err
 	}
-	bucket, key, ok := strings.Cut(rest, "/")
-	if !ok || key == "" {
-		return "", fmt.Errorf("topology artifact URI %q names no key", uri)
+	if obj.Bucket != s.bucket {
+		return objectstore.Ref{}, fmt.Errorf("topology artifact URI %q is not in bucket %q", uri, s.bucket)
 	}
-	if bucket != s.bucket {
-		return "", fmt.Errorf("topology artifact URI %q is outside bucket %q", uri, s.bucket)
-	}
-	return key, nil
+	return obj, nil
 }
 
 func documentFromTopology(releaseID string, topo release.Topology) topologyartifact.Document {

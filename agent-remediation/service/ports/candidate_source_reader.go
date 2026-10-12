@@ -26,10 +26,11 @@ type CandidateSource struct {
 // bundle in object storage.
 type CandidateSourceReader interface {
 	// NodeSource returns the node's entry from the bundle at bundleURI, after
-	// confirming the bundle belongs to releaseID. Empty URI, a missing object,
+	// confirming the bundle belongs to releaseID. A URI that names no object
+	// (an empty one included), a missing object, an object too large to hold,
 	// a missing node, an uninterpretable bundle, or a bundle for a different
 	// release (a stale or misrouted object naming the same node id) all yield
 	// ErrNotFound (the caller falls back to the repo read); a transient fetch
-	// error is returned as-is so the trigger redelivers.
+	// error is returned with its cause so the trigger redelivers.
 	NodeSource(ctx context.Context, bundleURI, uniqueID, releaseID string) (CandidateSource, error)
 }

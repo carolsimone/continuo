@@ -36,6 +36,7 @@ import (
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	pkgdb "github.com/carolsimone/continuo/pkg/db"
+	"github.com/carolsimone/continuo/pkg/objectstore"
 	"github.com/carolsimone/continuo/pkg/topologyartifact"
 	"github.com/carolsimone/continuo/release-controller/adapters/postgres"
 	s3adapter "github.com/carolsimone/continuo/release-controller/adapters/s3"
@@ -289,18 +290,19 @@ func connect(ctx context.Context) (topologyAnnouncer, func(), error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("connect to PostgreSQL: %w", err)
 	}
-	s3Client, err := s3adapter.NewS3Client(ctx, s3Cfg.EndpointURL, s3Cfg.Bucket, s3Cfg.Region, s3Cfg.AccessKeyID, s3Cfg.SecretAccessKey, logger)
+	objectStore, err := objectstore.New(ctx, objectstore.ConfigFromS3(s3Cfg))
 	if err != nil {
 		_ = db.Close()
 		return nil, nil, fmt.Errorf("connect to object storage: %w", err)
 	}
+	candidateSQLDeleter := s3adapter.NewCandidateSQLDeleter(objectStore, logger)
 	deps := &handlers.Deps{
-		NewUoW:     func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger, s3Client) },
+		NewUoW:     func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger, candidateSQLDeleter) },
 		Clock:      ports.SystemClock{},
 		Telemetry:  ports.NoOpTelemetry{},
 		Logger:     logger,
 		Bucket:     s3Cfg.Bucket,
-		Topologies: s3adapter.NewTopologyArtifactStore(s3Client, s3Cfg.Bucket, 1),
+		Topologies: s3adapter.NewTopologyArtifactStore(objectStore, s3Cfg.Bucket, 1),
 	}
 	return depsAnnouncer{d: deps}, func() { _ = db.Close() }, nil
 }

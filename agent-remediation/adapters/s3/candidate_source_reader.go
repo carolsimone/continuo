@@ -4,24 +4,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"strings"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/credentials"
-	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
-	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
-
-	"github.com/carolsimone/continuo/pkg/codebundle"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
+	"github.com/carolsimone/continuo/pkg/codebundle"
+	"github.com/carolsimone/continuo/pkg/objectstore"
 )
 
-// CandidateSourceReader reads one node's source out of a release's code
-// bundle in object storage. It reuses the bundle contract decoder shared
-// with the orchestrator, but exposes only the slice remediation needs.
+// CandidateSourceReader implements ports.CandidateSourceReader over an
+// object-store reader: it reads one node's source out of a release's code
+// bundle. It reuses the bundle contract decoder shared with the orchestrator,
+// but exposes only the slice remediation needs.
 type CandidateSourceReader struct {
-	client *awss3.Client
-	bucket string
+	objects objectstore.Reader
 }
 
 var _ ports.CandidateSourceReader = (*CandidateSourceReader)(nil)
@@ -30,48 +24,29 @@ var _ ports.CandidateSourceReader = (*CandidateSourceReader)(nil)
 // orchestrator's ceiling for the same object.
 const maxBundleBytes int64 = 64 * 1024 * 1024
 
-// NewCandidateSourceReader builds an S3 client for the given bucket.
-// endpointURL empty → AWS default; non-empty (e.g. http://minio:9000) → path-style addressing.
-func NewCandidateSourceReader(endpointURL, bucket, region, accessKeyID, secretKey string) *CandidateSourceReader {
-	cfg := aws.Config{
-		Region:      region,
-		Credentials: credentials.NewStaticCredentialsProvider(accessKeyID, secretKey, ""),
-	}
-	opts := []func(*awss3.Options){func(o *awss3.Options) { o.UsePathStyle = true }}
-	if endpointURL != "" {
-		opts = append(opts, func(o *awss3.Options) { o.BaseEndpoint = aws.String(endpointURL) })
-	}
-	return &CandidateSourceReader{client: awss3.NewFromConfig(cfg, opts...), bucket: bucket}
+// NewCandidateSourceReader builds a CandidateSourceReader over objects. A
+// bundle URI without a bucket reads the store's default bucket.
+func NewCandidateSourceReader(objects objectstore.Reader) *CandidateSourceReader {
+	return &CandidateSourceReader{objects: objects}
 }
 
-// NodeSource returns the node's bundle entry. Every permanently-unreadable
-// condition — empty URI, missing object, missing node, malformed document, or
-// a bundle for a release other than releaseID — maps to ports.ErrNotFound so
-// the caller takes its repo-read fallback; transient fetch errors return as-is
-// so the trigger redelivers.
+// NodeSource returns the node's bundle entry. Every permanently unreadable
+// condition maps to ports.ErrNotFound so the caller takes its repo-read
+// fallback: a URI that names no object (an empty one included), a missing
+// object, an object over maxBundleBytes, a malformed document, a bundle for a
+// release other than releaseID, and a missing node. Any other fetch error
+// returns with its cause so the trigger redelivers.
 func (r *CandidateSourceReader) NodeSource(ctx context.Context, bundleURI, uniqueID, releaseID string) (ports.CandidateSource, error) {
-	if strings.TrimSpace(bundleURI) == "" {
-		return ports.CandidateSource{}, ports.ErrNotFound
-	}
-	bucket, key := parseS3URI(bundleURI)
-	if bucket == "" {
-		bucket = r.bucket
-	}
-	out, err := r.client.GetObject(ctx, &awss3.GetObjectInput{Bucket: aws.String(bucket), Key: aws.String(key)})
+	ref, err := objectstore.ParseRef(bundleURI)
 	if err != nil {
-		var nsk *s3types.NoSuchKey
-		if errors.As(err, &nsk) {
-			return ports.CandidateSource{}, ports.ErrNotFound
-		}
+		return ports.CandidateSource{}, fmt.Errorf("%w: %w", ports.ErrNotFound, err)
+	}
+	body, err := r.objects.Get(ctx, ref, maxBundleBytes)
+	switch {
+	case errors.Is(err, objectstore.ErrNotFound), errors.Is(err, objectstore.ErrTooLarge):
+		return ports.CandidateSource{}, fmt.Errorf("%w: %w", ports.ErrNotFound, err)
+	case err != nil:
 		return ports.CandidateSource{}, fmt.Errorf("get code bundle %s: %w", bundleURI, err)
-	}
-	defer func() { _ = out.Body.Close() }()
-	body, err := io.ReadAll(io.LimitReader(out.Body, maxBundleBytes+1))
-	if err != nil {
-		return ports.CandidateSource{}, fmt.Errorf("read code bundle %s: %w", bundleURI, err)
-	}
-	if int64(len(body)) > maxBundleBytes {
-		return ports.CandidateSource{}, ports.ErrNotFound
 	}
 	bundle, err := codebundle.Decode(body)
 	if err != nil {

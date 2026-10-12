@@ -1,12 +1,16 @@
 package s3
 
 import (
+	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/carolsimone/continuo/agent-chat/domain"
+	"github.com/carolsimone/continuo/pkg/objectstore"
+	"github.com/carolsimone/continuo/pkg/objectstore/objectstoretest"
 	"github.com/google/uuid"
 )
 
@@ -74,5 +78,52 @@ func TestEncodeArchive_ContentStaysRoleTagged(t *testing.T) {
 	// Content interface was marshaled directly instead of through the DTO.
 	if strings.Contains(got, `"Text":`) {
 		t.Errorf("archive leaked the domain Content shape (found \"Text\":)\ngot: %s", got)
+	}
+}
+
+// TestArchiveThread_PutsTheArchiveAsJSON proves the archive lands at
+// chat-archive/<user>/<thread>.json in the store's default bucket, as JSON
+// carrying each message's role-tagged content.
+func TestArchiveThread_PutsTheArchiveAsJSON(t *testing.T) {
+	mem := objectstoretest.NewMemory("continuo")
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	th := domain.Thread{ID: uuid.New(), UserID: "alice", CreatedAt: now, UpdatedAt: now}
+	msgs := []domain.Message{
+		{ID: uuid.New(), ThreadID: th.ID, Seq: 1, Role: domain.RoleUser, Content: domain.TextContent{Text: "hi"}, CreatedAt: now},
+	}
+
+	if err := NewArchiver(mem).ArchiveThread(context.Background(), th, msgs); err != nil {
+		t.Fatalf("ArchiveThread: %v", err)
+	}
+
+	puts := mem.Puts()
+	if len(puts) != 1 {
+		t.Fatalf("want 1 write, got %d", len(puts))
+	}
+	if want := (objectstore.Ref{Bucket: "continuo", Key: "chat-archive/alice/" + th.ID.String() + ".json"}); puts[0].Ref != want {
+		t.Errorf("ref = %+v, want %+v", puts[0].Ref, want)
+	}
+	if puts[0].ContentType != "application/json" {
+		t.Errorf("content type = %q, want application/json", puts[0].ContentType)
+	}
+	if !strings.Contains(string(puts[0].Body), `"Content":{"text":"hi"}`) {
+		t.Errorf("archive body missing the message content: %s", puts[0].Body)
+	}
+}
+
+// TestArchiveThread_ReturnsARefusedWrite proves a refused write reaches the
+// retention job with its cause, so the thread is not deleted unarchived.
+func TestArchiveThread_ReturnsARefusedWrite(t *testing.T) {
+	mem := objectstoretest.NewMemory("continuo")
+	th := domain.Thread{ID: uuid.New(), UserID: "alice"}
+	refused := errors.New("access denied")
+	mem.FailPut(objectstore.Ref{Key: "chat-archive/alice/" + th.ID.String() + ".json"}, refused)
+
+	err := NewArchiver(mem).ArchiveThread(context.Background(), th, nil)
+	if !errors.Is(err, refused) {
+		t.Fatalf("ArchiveThread error = %v, want it to wrap %v", err, refused)
+	}
+	if len(mem.Puts()) != 0 {
+		t.Errorf("a refused write stored %d objects", len(mem.Puts()))
 	}
 }

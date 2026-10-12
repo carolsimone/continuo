@@ -10,10 +10,11 @@ import (
 // ErrTopologyArtifactNotFound reports a reference whose object does not exist.
 var ErrTopologyArtifactNotFound = errors.New("topology artifact not found")
 
-// ErrTopologyArtifactCorrupt reports an object that exists but is not the
-// artifact the reference names: its bytes do not match the reference's
-// SHA-256, it cannot be decoded, it exceeds the size a reader accepts, or the
-// URI points outside this install's bucket. Reading it again cannot succeed.
+// ErrTopologyArtifactCorrupt reports a reference that does not name a readable
+// artifact of this install: its URI is not an s3:// URI naming an object in
+// this install's bucket, or the object's bytes do not match the reference's
+// SHA-256, cannot be decoded, or exceed the size a reader accepts. Reading it
+// again cannot succeed.
 var ErrTopologyArtifactCorrupt = errors.New("topology artifact corrupt")
 
 // ErrTopologyArtifactImmutable reports a Write of a release id whose object

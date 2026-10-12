@@ -31,13 +31,19 @@ import (
 	"github.com/carolsimone/continuo/pkg/outbox"
 )
 
-// fakeEvidence returns pre-loaded strings by URI, or an error if set.
+// fakeEvidence returns pre-loaded strings by URI. A per-URI error in errByURI
+// takes precedence (so one object can be unreadable while others read), then a
+// blanket err applies to every URI.
 type fakeEvidence struct {
-	vals map[string]string
-	err  error
+	vals     map[string]string
+	errByURI map[string]error
+	err      error
 }
 
 func (f fakeEvidence) Fetch(_ context.Context, uri string) (string, error) {
+	if e, ok := f.errByURI[uri]; ok {
+		return "", e
+	}
 	if f.err != nil {
 		return "", f.err
 	}
@@ -1769,6 +1775,56 @@ func TestProposeFix_MixedOutcomes_SkippedMemberDoesNotBlockVerification(t *testi
 	assert.Equal(t, []string{"models/b.sql"},
 		tarNames(t, []byte(art.written["svc/verify-r1-svc-a1/source-overlay.tar.gz"])),
 		"the skipped node contributes nothing to the verification run")
+}
+
+// TestProposeFix_UnreadableCandidateDoesNotBlockVerification: a validation node
+// whose candidate SQL object is permanently unreadable — oversized beyond the
+// evidence reader's cap, or missing, both surfaced as ports.ErrNotFound — must
+// skip that one node, not abort the whole batched trigger. The object is
+// immutable, so aborting would redeliver forever until the trigger is
+// dead-lettered, starving every other fixable node in the release. ProposeFix
+// returns nil, the unreadable node records skipped, and the fixable node still
+// reaches verification.
+func TestProposeFix_UnreadableCandidateDoesNotBlockVerification(t *testing.T) {
+	u := newFakeUoW()
+	ev := fakeEvidence{
+		vals: map[string]string{
+			"s3://b/sql-b": "select b", "s3://b/log": "column does not exist",
+			"s3://art/proposed-fix/r1/s.b/attempt-1.source.sql": "select b2",
+		},
+		// s.a's candidate object is over the reader's cap: the adapter returns
+		// ports.ErrNotFound for it, the shape this fix must tolerate.
+		errByURI: map[string]error{"s3://b/sql-a": ports.ErrNotFound},
+	}
+	llm := fakeLLM{queue: []ports.ProposeResult{
+		{ProposedSQL: "select b2", Rationale: "b", Confidence: "high", Model: "m"},
+		{ProposedSQL: "select b2", Rationale: "b", Confidence: "high", Model: "m"},
+	}}
+	art := &fakeArtifacts{}
+	gw := &fakeGateway{imageTag: "tag-1"}
+	d := deps(u, ev, &llm, art)
+	d.Pipeline = gw
+	d.Releases = gw
+	d.CandidateSource = fakeCandidateSource{src: ports.CandidateSource{RawCode: "select x", Runtime: ports.RuntimeDbt}}
+	tr := baseTrigger()
+	tr.Nodes = []TriggerNode{
+		// s.a carries a candidate artifact URI, but its object is unreadable, so
+		// its fix skips rather than aborting the trigger.
+		{NodeID: "s.a", ErrorSignature: "sig-a", Category: "logic", DBTLogURI: "s3://b/log", CandidateArtifactURI: "s3://b/sql-a", FilePath: "models/a.sql", Service: "svc", NodeType: "dbt-model"},
+		{NodeID: "s.b", ErrorSignature: "sig-b", Category: "logic", DBTLogURI: "s3://b/log", CandidateArtifactURI: "s3://b/sql-b", FilePath: "models/b.sql", Service: "svc", NodeType: "dbt-model"},
+	}
+
+	require.NoError(t, ProposeFix(context.Background(), d, tr),
+		"an unreadable candidate must skip its node, not return an error that redelivers the trigger")
+
+	require.Len(t, u.pr.inserted, 1)
+	p := u.pr.inserted[0]
+	assert.Equal(t, proposal.StatusVerifying, p.Status)
+	assert.Equal(t, proposal.StatusSkipped, p.NodeOutcomes["s.a"].Status)
+	assert.Equal(t, proposal.StatusVerifying, p.NodeOutcomes["s.b"].Status)
+	require.Len(t, p.Edits, 1)
+	assert.Equal(t, "services/svc/models/b.sql", p.Edits[0].Path)
+	require.Len(t, gw.submitted, 1, "the fixable node still reaches a verification run")
 }
 
 // TestProposeFix_AllSkipped_RecordsSkippedWithoutVerification: nothing was

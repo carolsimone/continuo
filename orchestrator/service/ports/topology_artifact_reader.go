@@ -13,10 +13,11 @@ import (
 // is dead-lettered.
 var ErrTopologyArtifactNotFound = errors.New("topology artifact not found")
 
-// ErrTopologyArtifactCorrupt means the object is not the artifact the promotion
-// announced: its SHA-256 differs from the event's, it is not a readable topology
-// document, or it exceeds the size a reader accepts. Re-reading the same object
-// cannot help, so the caller fails the message permanently.
+// ErrTopologyArtifactCorrupt means the promotion does not name a readable
+// artifact: its URI names no object, or the object's SHA-256 differs from the
+// event's, it is not a readable topology document, or it exceeds the size a
+// reader accepts. Re-reading the same object cannot help, so the caller fails
+// the message permanently.
 var ErrTopologyArtifactCorrupt = errors.New("topology artifact corrupt")
 
 // TopologyArtifactReader reads a release's topology artifact and verifies it

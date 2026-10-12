@@ -76,6 +76,19 @@ func (validationFixer) Propose(ctx context.Context, svc Services, in Input) (Res
 	}
 
 	candidateSQL, err := svc.Evidence.Fetch(ctx, in.CandidateArtifactURI)
+	if errors.Is(err, ports.ErrNotFound) {
+		// The candidate SQL URI is set but its object cannot be read for good
+		// (it names no object, the object is missing or empty, or it is larger
+		// than the evidence reader holds): there is no candidate SQL to fix, the
+		// same terminal state as an unset URI above, so the node is skipped. The
+		// object is immutable, so returning an error here would redeliver the
+		// trigger against it forever until it is dead-lettered — starving every
+		// other fixable node in the same release of its proposal — whereas a skip
+		// records this node's outcome and lets the remaining clusters proceed.
+		svc.Logger.Info("validation fix: candidate SQL unreadable; skipping",
+			"node", in.NodeID, "candidate_uri", in.CandidateArtifactURI, "error", err)
+		return Result{Proposal: proposal.Proposal{Status: proposal.StatusSkipped}}, nil
+	}
 	if err != nil {
 		return Result{}, fmt.Errorf("fetch candidate sql: %w", err)
 	}

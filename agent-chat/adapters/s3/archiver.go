@@ -1,44 +1,30 @@
 package s3
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/credentials"
-	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/carolsimone/continuo/agent-chat/domain"
 	"github.com/carolsimone/continuo/agent-chat/serialization"
 	"github.com/carolsimone/continuo/agent-chat/service/ports"
+	"github.com/carolsimone/continuo/pkg/objectstore"
 	"github.com/google/uuid"
 )
 
-// Archiver writes whole threads as JSON objects under chat-archive/ in the
-// configured bucket.
+// Archiver implements ports.Archiver over an object-store writer: it writes
+// whole threads as JSON objects under chat-archive/ in the store's default
+// bucket.
 type Archiver struct {
-	client *awss3.Client
-	bucket string
+	objects objectstore.Writer
 }
 
 var _ ports.Archiver = (*Archiver)(nil)
 
-// NewArchiver creates an Archiver backed by S3 or a MinIO endpoint.
-// endpointURL: e.g. "http://minio:9000" (empty string → AWS default).
-func NewArchiver(endpointURL, bucket, region, accessKeyID, secretKey string) *Archiver {
-	cfg := aws.Config{
-		Region:      region,
-		Credentials: credentials.NewStaticCredentialsProvider(accessKeyID, secretKey, ""),
-	}
-	opts := []func(*awss3.Options){
-		func(o *awss3.Options) { o.UsePathStyle = true },
-	}
-	if endpointURL != "" {
-		opts = append(opts, func(o *awss3.Options) { o.BaseEndpoint = aws.String(endpointURL) })
-	}
-	return &Archiver{client: awss3.NewFromConfig(cfg, opts...), bucket: bucket}
+// NewArchiver builds an Archiver over objects.
+func NewArchiver(objects objectstore.Writer) *Archiver {
+	return &Archiver{objects: objects}
 }
 
 type archivedThread struct {
@@ -59,24 +45,17 @@ type archivedMessage struct {
 	CreatedAt time.Time       `json:"CreatedAt"`
 }
 
-// ArchiveThread serialises the thread and its messages to S3 as a JSON object
-// at chat-archive/<userID>/<threadID>.json.
+// ArchiveThread serialises the thread and its messages to object storage as a
+// JSON object at chat-archive/<userID>/<threadID>.json. A failed write is
+// returned with its cause; the store's error names the object, and the
+// retention job adds the thread id.
 func (a *Archiver) ArchiveThread(ctx context.Context, t domain.Thread, msgs []domain.Message) error {
 	body, err := encodeArchive(t, msgs)
 	if err != nil {
 		return err
 	}
 	key := fmt.Sprintf("chat-archive/%s/%s.json", t.UserID, t.ID)
-	_, err = a.client.PutObject(ctx, &awss3.PutObjectInput{
-		Bucket:      aws.String(a.bucket),
-		Key:         aws.String(key),
-		Body:        bytes.NewReader(body),
-		ContentType: aws.String("application/json"),
-	})
-	if err != nil {
-		return fmt.Errorf("s3 PutObject key=%s: %w", key, err)
-	}
-	return nil
+	return a.objects.Put(ctx, objectstore.Ref{Key: key}, body, "application/json")
 }
 
 // encodeArchive builds the JSON body written to S3, encoding each message's

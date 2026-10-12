@@ -15,6 +15,7 @@ import (
 	pkgdb "github.com/carolsimone/continuo/pkg/db"
 	"github.com/carolsimone/continuo/pkg/liveness"
 	pkgmetrics "github.com/carolsimone/continuo/pkg/metrics"
+	"github.com/carolsimone/continuo/pkg/objectstore"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/remediation/adapters/postgres"
@@ -164,13 +165,15 @@ func main() {
 	})
 	metricsReg.WatchRedis(rc)
 
-	logReader := rs3.NewLogReader(
-		cfg.S3.EndpointURL,
-		cfg.S3.Bucket,
-		cfg.S3.Region,
-		cfg.S3.AccessKeyID,
-		cfg.S3.SecretAccessKey,
-	)
+	// The log reader reads through the shared object-storage client as its
+	// objectstore.Reader role. Static S3 keys when both are set; otherwise the
+	// SDK's default credential chain (IAM role, workload identity).
+	objectStore, err := objectstore.New(ctx, objectstore.ConfigFromS3(cfg.S3))
+	if err != nil {
+		logger.Error("object storage client", "error", err)
+		os.Exit(1)
+	}
+	logReader := rs3.NewLogReader(objectStore)
 
 	deps := handlers.Deps{
 		NewUoW:    func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger) },

@@ -29,6 +29,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/liveness"
 	pkgmessageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgmetrics "github.com/carolsimone/continuo/pkg/metrics"
+	"github.com/carolsimone/continuo/pkg/objectstore"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -411,19 +412,22 @@ func main() {
 	// full-inherited rebases that produce no node.updated:v1 traffic).
 	runFinalizedHandler := handlers.NewRunFinalizedHandler(runAggRepo, logger)
 
+	// One object-storage client, passed to each reader as its
+	// objectstore.Reader role: the topology artifact reader of both promotion
+	// groups, and the code-bundle reader of the versions and rejections
+	// groups.
+	objectStore, err := objectstore.New(ctx, objectstore.ConfigFromS3(cfg.S3))
+	if err != nil {
+		logger.Error("Failed to build the object-storage client", "error", err)
+		os.Exit(1)
+	}
+
 	// release.promoted:v2 swaps the live Neo4j topology when release-controller
 	// promotes a release, reading the topology from the release's artifact in
 	// object storage, then emits schedules.loaded:v1 so state can refresh its
 	// schedule projections. The swap decides by promotion seq, so a late or
 	// redriven older promotion never reverts the live topology.
-	topologyArtifactReader, err := s3infra.NewTopologyArtifactReader(
-		ctx, cfg.S3.EndpointURL, cfg.S3.Bucket, cfg.S3.Region,
-		cfg.S3.AccessKeyID, cfg.S3.SecretAccessKey,
-	)
-	if err != nil {
-		logger.Error("Failed to build the object-storage client", "error", err)
-		os.Exit(1)
-	}
+	topologyArtifactReader := s3infra.NewTopologyArtifactReader(objectStore)
 	releasePromotionRepo := neo4jinfra.NewReleasePromotionRepository(neo4jClient, logger)
 	releasePromotedHandler := handlers.NewReleasePromotedHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), topologyArtifactReader, releasePromotionRepo, logger)
 
@@ -437,14 +441,7 @@ func main() {
 	// storage and records the :NodeVersion / :CodeUnitVersion history behind the
 	// topology. Isolated from the swap so promotion never waits on the bundle,
 	// and free to retry until the swap it trails has landed.
-	codeBundleReader, err := s3infra.NewCodeBundleReader(
-		ctx, cfg.S3.EndpointURL, cfg.S3.Bucket, cfg.S3.Region,
-		cfg.S3.AccessKeyID, cfg.S3.SecretAccessKey,
-	)
-	if err != nil {
-		logger.Error("Failed to build the object-storage client", "error", err)
-		os.Exit(1)
-	}
+	codeBundleReader := s3infra.NewCodeBundleReader(objectStore)
 	codeVersionRepo := neo4jinfra.NewCodeVersionRepository(neo4jClient, logger)
 	releasePromotedVersionsHandler := handlers.NewReleasePromotedVersionsHandler(
 		postgres.NewPostgresUnitOfWork(pgDB, logger), codeBundleReader, topologyArtifactReader, codeVersionRepo, logger)

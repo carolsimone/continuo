@@ -8,10 +8,10 @@ import (
 	"io"
 	"reflect"
 	"sort"
-	"strings"
-	"sync"
 	"testing"
 
+	"github.com/carolsimone/continuo/pkg/objectstore"
+	"github.com/carolsimone/continuo/pkg/objectstore/objectstoretest"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/topologyartifact"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
@@ -20,43 +20,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// fakeObjects is an in-memory ObjectStore counting reads.
-type fakeObjects struct {
-	mu      sync.Mutex
-	objects map[string][]byte
-	types   map[string]string
-	gets    int
-	getErr  error
-}
+// bucket is the artifact store's bucket and the in-memory store's default one.
+const bucket = "continuo"
 
-func newFakeObjects() *fakeObjects {
-	return &fakeObjects{objects: map[string][]byte{}, types: map[string]string{}}
-}
-
-func (f *fakeObjects) GetObject(_ context.Context, key string, maxBytes int64) ([]byte, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.gets++
-	if f.getErr != nil {
-		return nil, f.getErr
-	}
-	body, ok := f.objects[key]
-	if !ok {
-		return nil, ErrObjectNotFound
-	}
-	if int64(len(body)) > maxBytes {
-		return nil, ErrObjectTooLarge
-	}
-	return append([]byte(nil), body...), nil
-}
-
-func (f *fakeObjects) PutObject(_ context.Context, key string, body []byte, contentType string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.objects[key] = append([]byte(nil), body...)
-	f.types[key] = contentType
-	return nil
-}
+// r1Ref is where the store writes release r1's artifact.
+var r1Ref = objectstore.Ref{Bucket: bucket, Key: "tenants/default/topologies/r1/topology.json.gz"}
 
 // outage is an object-store error that reports an HTTP 503, as the AWS SDK's
 // response errors do.
@@ -88,17 +56,29 @@ func byUniqueID(topo release.Topology) map[string]release.Node {
 	return out
 }
 
+// stored returns the bytes mem holds at ref; the read it makes is recorded,
+// so call it only where read counts are not asserted afterwards.
+func stored(t *testing.T, mem *objectstoretest.Memory, ref objectstore.Ref) []byte {
+	t.Helper()
+	body, err := mem.Get(context.Background(), ref, topologyartifact.MaxObjectBytes)
+	require.NoError(t, err)
+	return body
+}
+
 func TestTopologyArtifactStore_WriteThenLoadRoundTrips(t *testing.T) {
-	objects := newFakeObjects()
-	ref, err := NewTopologyArtifactStore(objects, "continuo", 4).Write(context.Background(), "r1", sampleTopology())
+	mem := objectstoretest.NewMemory(bucket)
+	ref, err := NewTopologyArtifactStore(mem, bucket, 4).Write(context.Background(), "r1", sampleTopology())
 	require.NoError(t, err)
 	assert.Equal(t, "s3://continuo/tenants/default/topologies/r1/topology.json.gz", ref.URI)
 	assert.Len(t, ref.SHA256, 64)
 	assert.Equal(t, 4, ref.NodeCount)
-	assert.Equal(t, "application/gzip", objects.types["tenants/default/topologies/r1/topology.json.gz"])
+	puts := mem.Puts()
+	require.Len(t, puts, 1)
+	assert.Equal(t, r1Ref, puts[0].Ref)
+	assert.Equal(t, "application/gzip", puts[0].ContentType)
 
 	// A second store has an empty cache, so this reads the object back.
-	got, err := NewTopologyArtifactStore(objects, "continuo", 4).Load(context.Background(), ref)
+	got, err := NewTopologyArtifactStore(mem, bucket, 4).Load(context.Background(), ref)
 	require.NoError(t, err)
 	assert.Equal(t, byUniqueID(sampleTopology()), byUniqueID(got))
 	ids := make([]string, len(got))
@@ -112,19 +92,18 @@ func TestTopologyArtifactStore_WriteThenLoadRoundTrips(t *testing.T) {
 // reference, so a retry after a crash between writing an artifact and
 // recording its reference leaves the stored bytes and checksum unchanged.
 func TestTopologyArtifactStore_RepeatedWriteIsByteIdentical(t *testing.T) {
-	objects := newFakeObjects()
-	store := NewTopologyArtifactStore(objects, "continuo", 4)
-	const key = "tenants/default/topologies/r1/topology.json.gz"
+	mem := objectstoretest.NewMemory(bucket)
 
-	first, err := store.Write(context.Background(), "r1", sampleTopology())
+	first, err := NewTopologyArtifactStore(mem, bucket, 4).Write(context.Background(), "r1", sampleTopology())
 	require.NoError(t, err)
-	firstBytes := append([]byte(nil), objects.objects[key]...)
+	firstBytes := stored(t, mem, r1Ref)
 
-	second, err := NewTopologyArtifactStore(objects, "continuo", 4).Write(context.Background(), "r1", sampleTopology())
+	second, err := NewTopologyArtifactStore(mem, bucket, 4).Write(context.Background(), "r1", sampleTopology())
 	require.NoError(t, err)
 
 	assert.Equal(t, first, second)
-	assert.Equal(t, firstBytes, objects.objects[key])
+	assert.Equal(t, firstBytes, stored(t, mem, r1Ref))
+	assert.Len(t, mem.Puts(), 1, "identical bytes already stored are not written again")
 }
 
 // The object is immutable: a repeated write of the same id carrying a changed
@@ -134,40 +113,51 @@ func TestTopologyArtifactStore_RepeatedWriteIsByteIdentical(t *testing.T) {
 // between writing the object and recording its reference is repaired by the
 // retry.
 func TestTopologyArtifactStore_WriteRefusesAChangedOverwrite(t *testing.T) {
-	objects := newFakeObjects()
-	const key = "tenants/default/topologies/r1/topology.json.gz"
+	mem := objectstoretest.NewMemory(bucket)
 
-	first, err := NewTopologyArtifactStore(objects, "continuo", 4).Write(context.Background(), "r1", sampleTopology())
+	first, err := NewTopologyArtifactStore(mem, bucket, 4).Write(context.Background(), "r1", sampleTopology())
 	require.NoError(t, err)
-	firstBytes := append([]byte(nil), objects.objects[key]...)
+	firstBytes := stored(t, mem, r1Ref)
 
 	changed := sampleTopology()
 	changed[0].ContentHash = "sha256:changed"
-	_, err = NewTopologyArtifactStore(objects, "continuo", 4).Write(context.Background(), "r1", changed)
-	require.Error(t, err)
-	assert.Equal(t, firstBytes, objects.objects[key], "a changed-bytes overwrite leaves the stored object untouched")
+	_, err = NewTopologyArtifactStore(mem, bucket, 4).Write(context.Background(), "r1", changed)
+	require.ErrorIs(t, err, ports.ErrTopologyArtifactImmutable)
+	assert.Equal(t, firstBytes, stored(t, mem, r1Ref), "a changed-bytes overwrite leaves the stored object untouched")
 
-	again, err := NewTopologyArtifactStore(objects, "continuo", 4).Write(context.Background(), "r1", sampleTopology())
+	again, err := NewTopologyArtifactStore(mem, bucket, 4).Write(context.Background(), "r1", sampleTopology())
 	require.NoError(t, err)
 	assert.Equal(t, first, again, "an identical-bytes re-write returns the same reference")
-	assert.Equal(t, firstBytes, objects.objects[key])
+	assert.Equal(t, firstBytes, stored(t, mem, r1Ref))
 }
 
 func TestTopologyArtifactStore_LoadOfAMissingObjectIsNotFound(t *testing.T) {
-	_, err := NewTopologyArtifactStore(newFakeObjects(), "continuo", 4).Load(context.Background(),
+	_, err := NewTopologyArtifactStore(objectstoretest.NewMemory(bucket), bucket, 4).Load(context.Background(),
 		release.TopologyRef{URI: "s3://continuo/tenants/default/topologies/gone/topology.json.gz", SHA256: "x"})
 	assert.ErrorIs(t, err, ports.ErrTopologyArtifactNotFound)
 }
 
 func TestTopologyArtifactStore_LoadWithAnotherChecksumIsCorrupt(t *testing.T) {
-	objects := newFakeObjects()
-	ref, err := NewTopologyArtifactStore(objects, "continuo", 4).Write(context.Background(), "r1", sampleTopology())
+	mem := objectstoretest.NewMemory(bucket)
+	ref, err := NewTopologyArtifactStore(mem, bucket, 4).Write(context.Background(), "r1", sampleTopology())
 	require.NoError(t, err)
 
 	ref.SHA256 = "0000000000000000000000000000000000000000000000000000000000000000"
-	_, err = NewTopologyArtifactStore(objects, "continuo", 4).Load(context.Background(), ref)
+	_, err = NewTopologyArtifactStore(mem, bucket, 4).Load(context.Background(), ref)
 	assert.ErrorIs(t, err, ports.ErrTopologyArtifactCorrupt)
 	assert.ErrorIs(t, err, topologyartifact.ErrChecksumMismatch)
+}
+
+// An object over the size limit will not shrink on a later read: it is
+// corrupt, a permanent failure.
+func TestTopologyArtifactStore_LoadOfAnOversizedObjectIsCorrupt(t *testing.T) {
+	mem := objectstoretest.NewMemory(bucket)
+	mem.FailGet(r1Ref, objectstore.ErrTooLarge)
+
+	_, err := NewTopologyArtifactStore(mem, bucket, 4).Load(context.Background(),
+		release.TopologyRef{URI: r1Ref.String(), SHA256: "x"})
+	assert.ErrorIs(t, err, ports.ErrTopologyArtifactCorrupt)
+	assert.NotErrorIs(t, err, ports.ErrTopologyArtifactNotFound)
 }
 
 // A stored object that matches its checksum but cannot be decoded (a gzip
@@ -183,16 +173,15 @@ func TestTopologyArtifactStore_UndecodableObjectIsCorruptNotInfrastructure(t *te
 		{"not gzip", func([]byte) []byte { return []byte("not a gzip stream") }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			objects := newFakeObjects()
-			ref, err := NewTopologyArtifactStore(objects, "continuo", 4).Write(context.Background(), "r1", sampleTopology())
+			mem := objectstoretest.NewMemory(bucket)
+			ref, err := NewTopologyArtifactStore(mem, bucket, 4).Write(context.Background(), "r1", sampleTopology())
 			require.NoError(t, err)
-			key := strings.TrimPrefix(ref.URI, "s3://continuo/")
-			damaged := tc.damage(objects.objects[key])
-			objects.objects[key] = damaged
+			damaged := tc.damage(stored(t, mem, r1Ref))
+			require.NoError(t, mem.Put(context.Background(), r1Ref, damaged, "application/gzip"))
 			sum := sha256.Sum256(damaged)
 			ref.SHA256 = hex.EncodeToString(sum[:])
 
-			_, err = NewTopologyArtifactStore(objects, "continuo", 4).Load(context.Background(), ref)
+			_, err = NewTopologyArtifactStore(mem, bucket, 4).Load(context.Background(), ref)
 			require.Error(t, err)
 			assert.ErrorIs(t, err, ports.ErrTopologyArtifactCorrupt)
 			assert.False(t, errors.Is(err, io.ErrUnexpectedEOF), "a decode failure is not a transport truncation")
@@ -201,57 +190,78 @@ func TestTopologyArtifactStore_UndecodableObjectIsCorruptNotInfrastructure(t *te
 	}
 }
 
-func TestTopologyArtifactStore_LoadOutsideTheBucketIsCorrupt(t *testing.T) {
-	_, err := NewTopologyArtifactStore(newFakeObjects(), "continuo", 4).Load(context.Background(),
-		release.TopologyRef{URI: "s3://elsewhere/tenants/default/topologies/r1/topology.json.gz", SHA256: "x"})
-	assert.ErrorIs(t, err, ports.ErrTopologyArtifactCorrupt)
+// A stored reference that does not name an object in this install's bucket is
+// a defect no retry repairs: corrupt, and refused before any read.
+func TestTopologyArtifactStore_LoadOfAURINamingNoArtifactInTheBucketIsCorrupt(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		uri        string
+		invalidRef bool
+	}{
+		{"another bucket", "s3://elsewhere/tenants/default/topologies/r1/topology.json.gz", false},
+		{"bare key", "tenants/default/topologies/r1/topology.json.gz", false},
+		{"empty", "", true},
+		{"bucket without a key", "s3://continuo", true},
+		{"bucket with an empty key", "s3://continuo/", true},
+		{"another scheme", "https://minio:9000/continuo/tenants/default/topologies/r1/topology.json.gz", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mem := objectstoretest.NewMemory(bucket)
+
+			_, err := NewTopologyArtifactStore(mem, bucket, 4).Load(context.Background(),
+				release.TopologyRef{URI: tc.uri, SHA256: "x"})
+			assert.ErrorIs(t, err, ports.ErrTopologyArtifactCorrupt)
+			assert.Equal(t, tc.invalidRef, errors.Is(err, objectstore.ErrInvalidRef))
+			assert.Empty(t, mem.Reads())
+		})
+	}
 }
 
 func TestTopologyArtifactStore_UnreachableStoreIsInfrastructure(t *testing.T) {
-	objects := newFakeObjects()
-	objects.getErr = outage{}
-	_, err := NewTopologyArtifactStore(objects, "continuo", 4).Load(context.Background(),
-		release.TopologyRef{URI: "s3://continuo/tenants/default/topologies/r1/topology.json.gz", SHA256: "x"})
+	mem := objectstoretest.NewMemory(bucket)
+	mem.FailGet(r1Ref, outage{})
+	_, err := NewTopologyArtifactStore(mem, bucket, 4).Load(context.Background(),
+		release.TopologyRef{URI: r1Ref.String(), SHA256: "x"})
 	require.Error(t, err)
 	assert.False(t, errors.Is(err, ports.ErrTopologyArtifactNotFound) || errors.Is(err, ports.ErrTopologyArtifactCorrupt))
 	assert.Equal(t, pkgredis.ClassInfrastructure, pkgredis.Classify(err))
 }
 
 func TestTopologyArtifactStore_CacheServesRepeatLoadsAndKeysOnTheChecksum(t *testing.T) {
-	objects := newFakeObjects()
-	writer := NewTopologyArtifactStore(objects, "continuo", 4)
+	mem := objectstoretest.NewMemory(bucket)
+	writer := NewTopologyArtifactStore(mem, bucket, 4)
 	ref, err := writer.Write(context.Background(), "r1", sampleTopology())
 	require.NoError(t, err)
 
 	// Write reads the key to enforce immutability; count only the reads the
 	// Loads below drive.
-	objects.gets = 0
+	before := len(mem.Reads())
 
-	store := NewTopologyArtifactStore(objects, "continuo", 4)
+	store := NewTopologyArtifactStore(mem, bucket, 4)
 	_, err = store.Load(context.Background(), ref)
 	require.NoError(t, err)
 	_, err = store.Load(context.Background(), ref)
 	require.NoError(t, err)
-	assert.Equal(t, 1, objects.gets, "the second load is served from the cache")
+	assert.Equal(t, 1, len(mem.Reads())-before, "the second load is served from the cache")
 
 	other := ref
 	other.SHA256 = "0000000000000000000000000000000000000000000000000000000000000000"
 	_, err = store.Load(context.Background(), other)
 	assert.ErrorIs(t, err, ports.ErrTopologyArtifactCorrupt, "a cached entry never answers for another checksum")
-	assert.Equal(t, 2, objects.gets)
+	assert.Equal(t, 2, len(mem.Reads())-before)
 }
 
 func TestTopologyArtifactStore_WritePrimesTheCache(t *testing.T) {
-	objects := newFakeObjects()
-	store := NewTopologyArtifactStore(objects, "continuo", 4)
+	mem := objectstoretest.NewMemory(bucket)
+	store := NewTopologyArtifactStore(mem, bucket, 4)
 	ref, err := store.Write(context.Background(), "r1", sampleTopology())
 	require.NoError(t, err)
 	// Write reads the key to enforce immutability; count only the reads the
 	// Load below drives, which the primed cache serves.
-	objects.gets = 0
+	before := len(mem.Reads())
 	_, err = store.Load(context.Background(), ref)
 	require.NoError(t, err)
-	assert.Equal(t, 0, objects.gets)
+	assert.Equal(t, before, len(mem.Reads()))
 }
 
 // A returned topology shares no memory with the cached one: a caller that
@@ -259,7 +269,7 @@ func TestTopologyArtifactStore_WritePrimesTheCache(t *testing.T) {
 // change what the next Load returns, whether the first Load read the object or
 // was served from the cache.
 func TestTopologyArtifactStore_LoadReturnsACopy(t *testing.T) {
-	store := NewTopologyArtifactStore(newFakeObjects(), "continuo", 4)
+	store := NewTopologyArtifactStore(objectstoretest.NewMemory(bucket), bucket, 4)
 	ref, err := store.Write(context.Background(), "r1", sampleTopology())
 	require.NoError(t, err)
 
@@ -284,15 +294,15 @@ func TestTopologyArtifactStore_LoadReturnsACopy(t *testing.T) {
 // topology while caching it; editing the returned slices must not reach the
 // cached entry.
 func TestTopologyArtifactStore_FirstLoadReturnsACopyOfWhatItCaches(t *testing.T) {
-	objects := newFakeObjects()
-	ref, err := NewTopologyArtifactStore(objects, "continuo", 4).Write(context.Background(), "r1", sampleTopology())
+	mem := objectstoretest.NewMemory(bucket)
+	ref, err := NewTopologyArtifactStore(mem, bucket, 4).Write(context.Background(), "r1", sampleTopology())
 	require.NoError(t, err)
 
 	// Write reads the key to enforce immutability; count only the reads the
 	// Loads below drive.
-	objects.gets = 0
+	before := len(mem.Reads())
 
-	store := NewTopologyArtifactStore(objects, "continuo", 4)
+	store := NewTopologyArtifactStore(mem, bucket, 4)
 	first, err := store.Load(context.Background(), ref)
 	require.NoError(t, err)
 	orders := indexOf(t, first, "svc.orders")
@@ -301,7 +311,7 @@ func TestTopologyArtifactStore_FirstLoadReturnsACopyOfWhatItCaches(t *testing.T)
 	second, err := store.Load(context.Background(), ref)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"svc.customers"}, second[orders].UpstreamUniqueIDs)
-	assert.Equal(t, 1, objects.gets)
+	assert.Equal(t, 1, len(mem.Reads())-before)
 }
 
 // Two nodes may claim the same unique_id; release-controller's duplicate gate
@@ -311,12 +321,12 @@ func TestTopologyArtifactStore_LoadKeepsNodesSharingAUniqueID(t *testing.T) {
 		{UniqueID: "svc.orders", SchemaName: "svc", TableName: "orders", ServiceName: "a", NodeType: "dbt-model", UpstreamUniqueIDs: []string{}},
 		{UniqueID: "svc.orders", SchemaName: "svc", TableName: "orders", ServiceName: "b", NodeType: "dbt-model", UpstreamUniqueIDs: []string{}},
 	}
-	objects := newFakeObjects()
-	writer := NewTopologyArtifactStore(objects, "continuo", 4)
+	mem := objectstoretest.NewMemory(bucket)
+	writer := NewTopologyArtifactStore(mem, bucket, 4)
 	ref, err := writer.Write(context.Background(), "r1", topo)
 	require.NoError(t, err)
 
-	fromObject, err := NewTopologyArtifactStore(objects, "continuo", 4).Load(context.Background(), ref)
+	fromObject, err := NewTopologyArtifactStore(mem, bucket, 4).Load(context.Background(), ref)
 	require.NoError(t, err)
 	require.Len(t, fromObject, 2)
 	assert.ElementsMatch(t, []string{"a", "b"}, []string{fromObject[0].ServiceName, fromObject[1].ServiceName})
@@ -338,8 +348,8 @@ func indexOf(t *testing.T, topo release.Topology, uniqueID string) int {
 }
 
 func TestTopologyArtifactStore_CacheEvictsTheLeastRecentlyUsed(t *testing.T) {
-	objects := newFakeObjects()
-	writer := NewTopologyArtifactStore(objects, "continuo", 0)
+	mem := objectstoretest.NewMemory(bucket)
+	writer := NewTopologyArtifactStore(mem, bucket, 0)
 	refA, err := writer.Write(context.Background(), "rA", sampleTopology())
 	require.NoError(t, err)
 	refB, err := writer.Write(context.Background(), "rB", sampleTopology())
@@ -347,14 +357,14 @@ func TestTopologyArtifactStore_CacheEvictsTheLeastRecentlyUsed(t *testing.T) {
 
 	// Write reads the key to enforce immutability; count only the reads the
 	// Loads below drive.
-	objects.gets = 0
+	before := len(mem.Reads())
 
-	store := NewTopologyArtifactStore(objects, "continuo", 1)
+	store := NewTopologyArtifactStore(mem, bucket, 1)
 	for _, ref := range []release.TopologyRef{refA, refB, refA} {
 		_, err := store.Load(context.Background(), ref)
 		require.NoError(t, err)
 	}
-	assert.Equal(t, 3, objects.gets, "with room for one topology, loading B evicts A")
+	assert.Equal(t, 3, len(mem.Reads())-before, "with room for one topology, loading B evicts A")
 }
 
 // cloneTopology must copy every reference-typed field of release.Node. A new

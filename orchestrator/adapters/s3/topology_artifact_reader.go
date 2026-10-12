@@ -7,14 +7,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"sync"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
-	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
-
 	"github.com/carolsimone/continuo/orchestrator/service/ports"
+	"github.com/carolsimone/continuo/pkg/objectstore"
 	"github.com/carolsimone/continuo/pkg/topologyartifact"
 )
 
@@ -23,19 +19,13 @@ import (
 // so a small window serves both reads of every promotion from one fetch.
 const topologyArtifactCacheSize = 8
 
-// objectGetter reads one object's bytes. It wraps ports.ErrTopologyArtifactNotFound
-// for a missing object and ports.ErrTopologyArtifactCorrupt for an oversized
-// one; every other error keeps its cause in the %w chain and wraps neither, so
-// the consumer's classifier recognises an outage.
-type objectGetter func(ctx context.Context, bucket, key string) ([]byte, error)
-
-// TopologyArtifactReader reads release topology artifacts from S3, verifies each
-// against the SHA-256 its promotion carried, and keeps the most recently read
-// documents in memory. An artifact never changes once written, so an entry keyed
-// by URI and checksum stays valid for as long as it is held.
+// TopologyArtifactReader reads release topology artifacts through an
+// object-store reader, verifies each against the SHA-256 its promotion
+// carried, and keeps the most recently read documents in memory. An artifact
+// never changes once written, so an entry keyed by URI and checksum stays
+// valid for as long as it is held.
 type TopologyArtifactReader struct {
-	get           objectGetter
-	defaultBucket string
+	objects objectstore.Reader
 
 	mu      sync.Mutex
 	entries map[artifactKey]*list.Element
@@ -53,43 +43,46 @@ type artifactEntry struct {
 // Compile-time assertion that the adapter satisfies the application port.
 var _ ports.TopologyArtifactReader = (*TopologyArtifactReader)(nil)
 
-// NewTopologyArtifactReader builds an S3-backed TopologyArtifactReader with the
-// same endpoint and credential rules as NewCodeBundleReader.
-func NewTopologyArtifactReader(ctx context.Context, endpointURL, bucket, region, accessKeyID, secretKey string) (*TopologyArtifactReader, error) {
-	client, err := newClient(ctx, endpointURL, region, accessKeyID, secretKey)
-	if err != nil {
-		return nil, err
-	}
-	return newTopologyArtifactReader(s3ObjectGetter(client), bucket, topologyArtifactCacheSize), nil
+// NewTopologyArtifactReader builds a TopologyArtifactReader over objects. An
+// artifact URI without a bucket reads the store's default bucket.
+func NewTopologyArtifactReader(objects objectstore.Reader) *TopologyArtifactReader {
+	return newTopologyArtifactReader(objects, topologyArtifactCacheSize)
 }
 
-func newTopologyArtifactReader(get objectGetter, bucket string, maxSize int) *TopologyArtifactReader {
+func newTopologyArtifactReader(objects objectstore.Reader, maxSize int) *TopologyArtifactReader {
 	return &TopologyArtifactReader{
-		get:           get,
-		defaultBucket: bucket,
-		entries:       make(map[artifactKey]*list.Element),
-		lru:           list.New(),
-		maxSize:       maxSize,
+		objects: objects,
+		entries: make(map[artifactKey]*list.Element),
+		lru:     list.New(),
+		maxSize: maxSize,
 	}
 }
 
 // Load returns the topology document at uri once its bytes hash to sha256Hex.
+// The store's outcomes map onto the port's errors: a missing object is
+// ports.ErrTopologyArtifactNotFound (retried); a uri that names no object, an
+// object over topologyartifact.MaxObjectBytes, a checksum mismatch and an
+// undecodable document are ports.ErrTopologyArtifactCorrupt (permanent); any
+// other error keeps its cause and wraps neither, so the consumer's classifier
+// recognises an outage.
 func (r *TopologyArtifactReader) Load(ctx context.Context, uri, sha256Hex string) (topologyartifact.Document, error) {
 	key := artifactKey{uri: uri, sha256: sha256Hex}
 	if doc, ok := r.cached(key); ok {
 		return doc, nil
 	}
 
-	bucket, objectKey := parseS3URI(uri)
-	if bucket == "" {
-		bucket = r.defaultBucket
-	}
-	if objectKey == "" {
-		return topologyartifact.Document{}, fmt.Errorf("%w: %q names no object", ports.ErrTopologyArtifactCorrupt, uri)
-	}
-	body, err := r.get(ctx, bucket, objectKey)
+	ref, err := objectstore.ParseRef(uri)
 	if err != nil {
-		return topologyartifact.Document{}, err
+		return topologyartifact.Document{}, fmt.Errorf("%w: %w", ports.ErrTopologyArtifactCorrupt, err)
+	}
+	body, err := r.objects.Get(ctx, ref, topologyartifact.MaxObjectBytes)
+	switch {
+	case errors.Is(err, objectstore.ErrNotFound):
+		return topologyartifact.Document{}, fmt.Errorf("%w: %w", ports.ErrTopologyArtifactNotFound, err)
+	case errors.Is(err, objectstore.ErrTooLarge):
+		return topologyartifact.Document{}, fmt.Errorf("%w: %w", ports.ErrTopologyArtifactCorrupt, err)
+	case err != nil:
+		return topologyartifact.Document{}, fmt.Errorf("get topology artifact %s: %w", uri, err)
 	}
 
 	doc, err := topologyartifact.Decode(body, sha256Hex)
@@ -128,37 +121,5 @@ func (r *TopologyArtifactReader) put(key artifactKey, doc topologyartifact.Docum
 		oldest := r.lru.Back()
 		r.lru.Remove(oldest)
 		delete(r.entries, oldest.Value.(*artifactEntry).key)
-	}
-}
-
-// s3ObjectGetter reads objects through client, bounded by the artifact size cap.
-func s3ObjectGetter(client *awss3.Client) objectGetter {
-	return func(ctx context.Context, bucket, key string) ([]byte, error) {
-		out, err := client.GetObject(ctx, &awss3.GetObjectInput{
-			Bucket: aws.String(bucket),
-			Key:    aws.String(key),
-		})
-		if err != nil {
-			var nsk *s3types.NoSuchKey
-			if errors.As(err, &nsk) {
-				return nil, fmt.Errorf("%w: s3://%s/%s", ports.ErrTopologyArtifactNotFound, bucket, key)
-			}
-			return nil, fmt.Errorf("get topology artifact s3://%s/%s: %w", bucket, key, err)
-		}
-		defer func() { _ = out.Body.Close() }()
-
-		if out.ContentLength != nil && *out.ContentLength > topologyartifact.MaxObjectBytes {
-			return nil, fmt.Errorf("%w: s3://%s/%s is %d bytes, over the %d-byte ceiling",
-				ports.ErrTopologyArtifactCorrupt, bucket, key, *out.ContentLength, topologyartifact.MaxObjectBytes)
-		}
-		body, err := io.ReadAll(io.LimitReader(out.Body, topologyartifact.MaxObjectBytes+1))
-		if err != nil {
-			return nil, fmt.Errorf("read topology artifact s3://%s/%s: %w", bucket, key, err)
-		}
-		if len(body) > topologyartifact.MaxObjectBytes {
-			return nil, fmt.Errorf("%w: s3://%s/%s exceeds the %d-byte ceiling",
-				ports.ErrTopologyArtifactCorrupt, bucket, key, topologyartifact.MaxObjectBytes)
-		}
-		return body, nil
 	}
 }
