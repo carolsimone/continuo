@@ -42,3 +42,31 @@ func TestLoad_RequiresMaintenance(t *testing.T) {
 	Load(v)
 	assert.Contains(t, strings.Join(v.Missing(), ","), "MAINTENANCE_ENABLED")
 }
+
+// state reads topology artifacts from object storage, so it refuses to start
+// without the bucket's endpoint, name and region.
+func TestLoad_RequiresS3(t *testing.T) {
+	t.Setenv("S3_ENDPOINT_URL", "")
+	t.Setenv("S3_BUCKET", "")
+	t.Setenv("AWS_DEFAULT_REGION", "")
+	v := &pkgconfig.Validator{}
+	Load(v)
+	missing := strings.Join(v.Missing(), ",")
+	for _, key := range []string{"S3_ENDPOINT_URL", "S3_BUCKET", "AWS_DEFAULT_REGION"} {
+		assert.Contains(t, missing, key)
+	}
+}
+
+// The access keys are optional: left empty, the client uses the SDK's default
+// credential chain.
+func TestLoad_ReadsS3(t *testing.T) {
+	t.Setenv("S3_ENDPOINT_URL", "http://minio:9000")
+	t.Setenv("S3_BUCKET", "continuo")
+	t.Setenv("AWS_DEFAULT_REGION", "us-east-1")
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+	v := &pkgconfig.Validator{}
+	cfg := Load(v)
+	assert.Equal(t, pkgconfig.S3Config{EndpointURL: "http://minio:9000", Bucket: "continuo", Region: "us-east-1"}, cfg.S3)
+	assert.NotContains(t, strings.Join(v.Missing(), ","), "AWS_ACCESS_KEY_ID")
+}

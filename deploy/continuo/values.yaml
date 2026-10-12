@@ -500,6 +500,10 @@ services:
     secretEnv:
       - {name: POSTGRES_PASSWORD, ref: postgres}
       - {name: REDIS_PASSWORD, ref: redis}
+      # S3 credentials are NOT listed here. state reads each promoted release's
+      # topology artifact, and the deployment template injects the credentials
+      # for every storage-reading service (see continuo.s3.credentialServices in
+      # _helpers.tpl). Endpoint, bucket and region arrive via the shared ConfigMap.
     env:
       POSTGRES_DB: continuo_state
       HEALTH_PORT: "8082"

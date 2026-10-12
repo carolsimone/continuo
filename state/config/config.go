@@ -21,6 +21,11 @@ type Config struct {
 	Redis    pkgconfig.RedisConfig
 	Postgres pkgconfig.PostgresConfig
 
+	// S3 locates the object storage holding release topology artifacts.
+	// Endpoint, bucket and region are required; empty access keys select the
+	// SDK's default credential chain.
+	S3 pkgconfig.S3Config
+
 	// gRPC
 	GRPCPort int
 
@@ -59,6 +64,7 @@ func Load(v *pkgconfig.Validator) Config {
 	return Config{
 		Redis:    pkgconfig.LoadRedisFromAddr(v),
 		Postgres: pkgconfig.LoadPostgres(v),
+		S3:       pkgconfig.LoadS3(v),
 
 		GRPCPort:            envInt("GRPC_PORT", 50051),
 		HealthPort:          env("HEALTH_PORT", "8082"),

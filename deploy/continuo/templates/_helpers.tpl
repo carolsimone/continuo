@@ -398,7 +398,7 @@ pins this list to the services whose source imports a Redis client.
 {{- end -}}
 
 {{- define "continuo.s3.credentialServices" -}}
-["orchestrator","topology-controller","execution-controller","release-controller","remediation","agent-remediation","ui","agent-chat"]
+["state","orchestrator","topology-controller","execution-controller","release-controller","remediation","agent-remediation","ui","agent-chat"]
 {{- end -}}
 
 {{- define "continuo.auth.issuerUrl" -}}

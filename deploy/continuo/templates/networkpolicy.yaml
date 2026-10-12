@@ -132,7 +132,8 @@ spec:
                 operator: In
                 values: [execution-controller, release-controller,
                          remediation, agent-remediation, ui,
-                         topology-controller, orchestrator, minio-bucket-init]
+                         topology-controller, orchestrator, state,
+                         minio-bucket-init]
         - podSelector:
             matchLabels:
               app: dbt-job
