@@ -175,7 +175,7 @@ func (p *OutboxPublisher) Render(entry *outbox.Entry) (map[string]any, error) {
 		return values, nil
 
 	case domain.EventTypeRunEntriesDispatched, domain.EventTypeRunEntriesDispatchFailed,
-		domain.EventTypeReleasePromoted, domain.EventTypeReleaseSeedsPending:
+		domain.EventTypeReleasePromoted:
 		// These event types carry a self-contained JSON payload that downstream
 		// consumers decode directly from the "payload" field.
 		return map[string]interface{}{"payload": string(entry.Payload)}, nil

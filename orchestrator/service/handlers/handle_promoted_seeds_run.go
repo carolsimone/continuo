@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
+	"github.com/carolsimone/continuo/orchestrator/domain/repository"
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/carolsimone/continuo/orchestrator/serialization"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
@@ -19,28 +21,46 @@ import (
 	"github.com/google/uuid"
 )
 
+// graphPollInterval is how often Handle re-reads the graph's promotion seq
+// while it waits for the swap a trigger was planned against.
+const graphPollInterval = 250 * time.Millisecond
+
 // HandlePromotedSeedsRunHandler consumes trigger.promoted_seeds:v1 messages and
-// projects the run state created for a promoted release.
+// projects the run state created to load the live release's seeds.
 //
 // state creates the run; this projects its tasks onto it. That is the same split
-// every other run uses, and it is what puts a production seed build inside the
+// every other run uses, and it is what puts a production seed load inside the
 // standard lifecycle: because the run exists, the terminal announcements have
-// somewhere to land, so a failed seed build is retried on its task's retry
+// somewhere to land, so a failed seed load is retried on its task's retry
 // budget, recorded as an execution, and visible as a failed run.
 type HandlePromotedSeedsRunHandler struct {
 	uow         uow.UnitOfWork
 	snapshotSvc SnapshotService
+	promotions  repository.LivePromotionReader
+	graphWait   time.Duration
 	logger      *slog.Logger
 }
 
 // NewHandlePromotedSeedsRunHandler creates a HandlePromotedSeedsRunHandler.
-func NewHandlePromotedSeedsRunHandler(u uow.UnitOfWork, snapshotSvc SnapshotService, logger *slog.Logger) *HandlePromotedSeedsRunHandler {
-	return &HandlePromotedSeedsRunHandler{uow: u, snapshotSvc: snapshotSvc, logger: logger}
+// graphWait bounds how long Handle waits for the graph to reach the promotion a
+// trigger was planned against before it fails the delivery retryably.
+func NewHandlePromotedSeedsRunHandler(
+	u uow.UnitOfWork,
+	snapshotSvc SnapshotService,
+	promotions repository.LivePromotionReader,
+	graphWait time.Duration,
+	logger *slog.Logger,
+) *HandlePromotedSeedsRunHandler {
+	return &HandlePromotedSeedsRunHandler{uow: u, snapshotSvc: snapshotSvc, promotions: promotions, graphWait: graphWait, logger: logger}
 }
 
 // Handle projects the run's tasks and dispatches them.
 //
-// It runs the dedup → snapshot → outbox flow:
+// It runs the gate → dedup → snapshot → outbox flow:
+//  0. When the trigger carries a promotion seq, wait until the graph has
+//     applied that promotion (see awaitGraph). state and this service apply a
+//     promotion independently, and the snapshot reads the live :Table nodes,
+//     so a run projected against an older graph could miss its seeds.
 //  1. Dedup on messageID scoped to trigger.promoted_seeds:v1.
 //  2. Snapshot the run with a NodeSet selector over the seeds on the message.
 //     A target missing from the topology, or an empty projection, emits
@@ -53,8 +73,15 @@ func (h *HandlePromotedSeedsRunHandler) Handle(ctx context.Context, cmd domainMo
 		"message_id", messageID,
 		"run_id", cmd.RunID,
 		"release_id", cmd.ReleaseID,
+		"promotion_seq", cmd.PromotionSeq,
 		"seed_count", len(cmd.Nodes),
 	)
+
+	if cmd.PromotionSeq > 0 {
+		if err := h.awaitGraph(ctx, cmd); err != nil {
+			return err
+		}
+	}
 
 	cmdPayload, err := json.Marshal(cmd)
 	if err != nil {
@@ -201,4 +228,32 @@ func (h *HandlePromotedSeedsRunHandler) Handle(ctx context.Context, cmd domainMo
 		"task_count", len(projection),
 	)
 	return nil
+}
+
+// awaitGraph returns once the graph's promotion seq has reached the one the
+// run was planned against, re-reading every graphPollInterval for up to
+// h.graphWait. A graph still behind then gets a plain error naming both
+// seqs: the consumer redelivers the trigger and dead-letters it on the
+// fifth delivery. A failed read keeps its cause, so a Neo4j outage pauses the
+// consumer instead of spending a delivery.
+func (h *HandlePromotedSeedsRunHandler) awaitGraph(ctx context.Context, cmd domainModel.PromotedSeedsRunInput) error {
+	deadline := time.Now().Add(h.graphWait)
+	for {
+		live, err := h.promotions.LivePromotionSeq(ctx)
+		if err != nil {
+			return fmt.Errorf("read the graph's promotion seq for promoted-seeds run %s: %w", cmd.RunID, err)
+		}
+		if live >= cmd.PromotionSeq {
+			return nil
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("promoted-seeds run %s was planned against promotion %d but the graph is at promotion %d",
+				cmd.RunID, cmd.PromotionSeq, live)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(graphPollInterval):
+		}
+	}
 }

@@ -27,14 +27,11 @@ import (
 // ── fakes: repository.ReleasePromotionRepository ─────────────────────────────
 
 // fakeReleasePromotionRepository records every swap and answers with outcome
-// (PromotionApplied when unset) or err. stillDesired, when set, decides which
-// seeds StillDesiredSeeds returns; unset, it returns none.
+// (PromotionApplied when unset) or err.
 type fakeReleasePromotionRepository struct {
 	outcome             topology.PromotionOutcome
 	err                 error
 	promoteReleaseCalls []promoteReleaseCall
-	stillDesired        func([]topology.ReleasePromotedTopologyNode) []topology.ReleasePromotedTopologyNode
-	stillDesiredCalls   [][]topology.ReleasePromotedTopologyNode
 }
 
 type promoteReleaseCall struct {
@@ -62,17 +59,6 @@ func (f *fakeReleasePromotionRepository) PromoteRelease(
 		return topology.PromotionApplied, nil
 	}
 	return f.outcome, nil
-}
-
-func (f *fakeReleasePromotionRepository) StillDesiredSeeds(
-	_ context.Context,
-	seeds []topology.ReleasePromotedTopologyNode,
-) ([]topology.ReleasePromotedTopologyNode, error) {
-	f.stillDesiredCalls = append(f.stillDesiredCalls, seeds)
-	if f.stillDesired == nil {
-		return nil, nil
-	}
-	return f.stillDesired(seeds), nil
 }
 
 var _ repository.ReleasePromotionRepository = (*fakeReleasePromotionRepository)(nil)
@@ -140,17 +126,6 @@ type schedulesLoadedPayload struct {
 	PromotionSeq    int64                        `json:"promotion_seq"`
 }
 
-type seedsPendingPayload struct {
-	ReleaseID string `json:"release_id"`
-	Nodes     []struct {
-		ServiceName string `json:"service_name"`
-		SchemaName  string `json:"schema_name"`
-		TableName   string `json:"table_name"`
-		NodeType    string `json:"node_type"`
-		ImageTag    string `json:"image_tag"`
-	} `json:"nodes"`
-}
-
 func entriesOn(uow *fakeUnitOfWork, stream string) []*pkgoutbox.Entry {
 	var out []*pkgoutbox.Entry
 	for _, e := range uow.outboxRepo.CreatedEntries {
@@ -195,7 +170,6 @@ func TestReleasePromoted_HappyPath_PromotesTheArtifactAndEmitsSchedulesLoaded(t 
 	assert.Equal(t, expectedEventID("rA", 5), payload.EventID)
 	assert.Equal(t, []string{"daily", "hourly"}, payload.ScheduleNames)
 	assert.Equal(t, int64(5), payload.PromotionSeq)
-	assert.Empty(t, entriesOn(uow, streams.ReleaseSeedsPendingV1), "nothing changed, nothing to build")
 
 	assert.True(t, uow.CommittedTx)
 	mp, err := uow.msgProcRepo.GetByMessageIDAndStream(ctx, "msg-rp-1", streams.OrchestratorReleasePromoted)
@@ -241,97 +215,35 @@ func TestReleasePromoted_EmptyTopology_StillEmitsSchedulesLoadedWithEmptyArrays(
 
 // ── seeds ─────────────────────────────────────────────────────────────────────
 
-// The seeds request lists the dbt-seed nodes in changed_node_ids, each with this
-// release's own image tag; a changed non-seed is not this path's work.
-func TestReleasePromoted_AppliedRequestsTheChangedSeeds(t *testing.T) {
-	uow := newFakeUnitOfWork()
-	reader := &fakeArtifactReader{}
-	in := promotionOf(reader, releaseRA(), 5, "svc-a.public.table_a", "svc-b.public.table_b")
-
-	require.NoError(t, newReleasePromotedHandler(uow, reader, &fakeReleasePromotionRepository{}).
-		Handle(context.Background(), "msg-seeds-1", nil, in))
-
-	entries := entriesOn(uow, streams.ReleaseSeedsPendingV1)
-	require.Len(t, entries, 1)
-	var payload seedsPendingPayload
-	require.NoError(t, json.Unmarshal(entries[0].Payload, &payload))
-	assert.Equal(t, "rA", payload.ReleaseID)
-	require.Len(t, payload.Nodes, 1)
-	assert.Equal(t, "service-a", payload.Nodes[0].ServiceName)
-	assert.Equal(t, "public", payload.Nodes[0].SchemaName)
-	assert.Equal(t, "table_a", payload.Nodes[0].TableName)
-	assert.Equal(t, "dbt-seed", payload.Nodes[0].NodeType)
-	assert.Equal(t, "tag-a", payload.Nodes[0].ImageTag)
-}
-
-// bootstrap marks provenance, not change: a bootstrap release requests exactly
-// the seeds changed_node_ids names, like any other.
-func TestReleasePromoted_BootstrapRequestsOnlyTheSeedsInChangedNodeIDs(t *testing.T) {
-	uow := newFakeUnitOfWork()
-	reader := &fakeArtifactReader{}
-	in := promotionOf(reader, releaseRA(), 1)
-	in.Bootstrap = true
-
-	require.NoError(t, newReleasePromotedHandler(uow, reader, &fakeReleasePromotionRepository{}).
-		Handle(context.Background(), "msg-seeds-boot", nil, in))
-	assert.Empty(t, entriesOn(uow, streams.ReleaseSeedsPendingV1))
-}
-
-// An announcement (bench, e2e, upgrade re-announcement) carries no changed nodes
-// and must request no seed build; state would otherwise mint a run for nothing.
-func TestReleasePromoted_NoChangedSeeds_EmitsNoSeedsPending(t *testing.T) {
-	uow := newFakeUnitOfWork()
-	reader := &fakeArtifactReader{}
-	require.NoError(t, newReleasePromotedHandler(uow, reader, &fakeReleasePromotionRepository{}).
-		Handle(context.Background(), "msg-seeds-2", nil, promotionOf(reader, releaseRA(), 5, "svc-b.public.table_b")))
-	assert.Empty(t, entriesOn(uow, streams.ReleaseSeedsPendingV1))
-}
-
-// A late, older promotion leaves the topology and the schedule catalog alone,
-// and requests only the changed seeds the live release still wants — at the
-// live image.
-func TestReleasePromoted_StalePromotionRequestsOnlyStillDesiredSeeds(t *testing.T) {
-	ctx := context.Background()
-	uow := newFakeUnitOfWork()
-	reader := &fakeArtifactReader{}
-	promRepo := &fakeReleasePromotionRepository{
-		outcome: topology.PromotionStale,
-		stillDesired: func(seeds []topology.ReleasePromotedTopologyNode) []topology.ReleasePromotedTopologyNode {
-			live := seeds[0]
-			live.ImageTag = "tag-live"
-			return []topology.ReleasePromotedTopologyNode{live}
-		},
+// A promotion writes schedules.loaded:v1 when it applied or was redelivered and
+// nothing when it was stale. It never asks for a seed load, whatever seeds it
+// changed: state plans seed loads from its own copy of the topology.
+func TestReleasePromoted_WritesOnlySchedulesLoaded(t *testing.T) {
+	cases := []struct {
+		outcome topology.PromotionOutcome
+		want    []string
+	}{
+		{topology.PromotionApplied, []string{streams.SchedulesLoadedV1}},
+		{topology.PromotionRedelivered, []string{streams.SchedulesLoadedV1}},
+		{topology.PromotionStale, nil},
 	}
-	in := promotionOf(reader, releaseRA(), 3, "svc-a.public.table_a", "svc-b.public.table_b")
+	for _, tc := range cases {
+		t.Run(string(tc.outcome), func(t *testing.T) {
+			uow := newFakeUnitOfWork()
+			reader := &fakeArtifactReader{}
+			in := promotionOf(reader, releaseRA(), 5, "svc-a.public.table_a", "svc-b.public.table_b")
 
-	require.NoError(t, newReleasePromotedHandler(uow, reader, promRepo).Handle(ctx, "msg-stale", nil, in))
+			require.NoError(t, newReleasePromotedHandler(uow, reader, &fakeReleasePromotionRepository{outcome: tc.outcome}).
+				Handle(context.Background(), "msg-only-"+string(tc.outcome), nil, in))
 
-	require.Len(t, promRepo.stillDesiredCalls, 1)
-	require.Len(t, promRepo.stillDesiredCalls[0], 1, "only the changed dbt-seed is matched against the live graph")
-	assert.Equal(t, "svc-a.public.table_a", promRepo.stillDesiredCalls[0][0].UniqueID)
-	assert.Equal(t, "sha256:a", promRepo.stillDesiredCalls[0][0].ContentHash)
-
-	assert.Empty(t, entriesOn(uow, streams.SchedulesLoadedV1), "the catalog is not moved back")
-	entries := entriesOn(uow, streams.ReleaseSeedsPendingV1)
-	require.Len(t, entries, 1)
-	var payload seedsPendingPayload
-	require.NoError(t, json.Unmarshal(entries[0].Payload, &payload))
-	assert.Equal(t, "rA", payload.ReleaseID, "the request belongs to the late release")
-	require.Len(t, payload.Nodes, 1)
-	assert.Equal(t, "tag-live", payload.Nodes[0].ImageTag)
-	assert.True(t, uow.CommittedTx)
-}
-
-func TestReleasePromoted_StaleWithNoStillDesiredSeedsWritesNothing(t *testing.T) {
-	uow := newFakeUnitOfWork()
-	reader := &fakeArtifactReader{}
-	in := promotionOf(reader, releaseRA(), 3, "svc-a.public.table_a")
-
-	require.NoError(t, newReleasePromotedHandler(uow, reader,
-		&fakeReleasePromotionRepository{outcome: topology.PromotionStale}).
-		Handle(context.Background(), "msg-stale-none", nil, in))
-	assert.Empty(t, uow.outboxRepo.CreatedEntries)
-	assert.True(t, uow.CommittedTx)
+			var streamsWritten []string
+			for _, e := range uow.outboxRepo.CreatedEntries {
+				streamsWritten = append(streamsWritten, e.StreamName)
+			}
+			assert.Equal(t, tc.want, streamsWritten)
+			assert.True(t, uow.CommittedTx)
+		})
+	}
 }
 
 // ── the artifact ──────────────────────────────────────────────────────────────

@@ -82,3 +82,21 @@ func TestParsePromotedSeedsRun_RejectsMalformedMessagesPermanently(t *testing.T)
 		})
 	}
 }
+
+// promotion_seq is optional: absent, the run is projected without waiting for
+// the graph; present, it must be a positive integer.
+func TestParsePromotedSeedsRun_ReadsTheOptionalPromotionSeq(t *testing.T) {
+	in, err := redis.ParsePromotedSeedsRun(promotedSeedsMsg(nil))
+	require.NoError(t, err)
+	assert.Zero(t, in.PromotionSeq)
+
+	in, err = redis.ParsePromotedSeedsRun(promotedSeedsMsg(map[string]interface{}{"promotion_seq": "7"}))
+	require.NoError(t, err)
+	assert.Equal(t, int64(7), in.PromotionSeq)
+
+	for _, bad := range []string{"", "seven", "0", "-3"} {
+		_, err := redis.ParsePromotedSeedsRun(promotedSeedsMsg(map[string]interface{}{"promotion_seq": bad}))
+		require.Error(t, err, "promotion_seq %q", bad)
+		assert.True(t, errors.Is(err, events.ErrPermanent), "promotion_seq %q must be permanent", bad)
+	}
+}

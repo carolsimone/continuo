@@ -33,15 +33,13 @@ var releaseSchedulesNamespace = uuid.MustParse("f0d20655-ae9f-4dc9-a512-99f7ce39
 
 // ReleasePromotedHandler consumes release.promoted:v2 on the topology-swap group.
 // It reads the promoted release's topology from its artifact, swaps the live
-// Neo4j topology when the promotion is newer than the live one, and writes the
-// follow-up events state needs in the same Postgres transaction as its dedup
-// row: schedules.loaded:v1 for an applied (or redelivered) promotion and
-// release.seeds.pending:v1 for the seeds it changed.
+// Neo4j topology when the promotion is newer than the live one, and writes
+// schedules.loaded:v1 for an applied (or redelivered) promotion in the same
+// Postgres transaction as its dedup row.
 //
 // A promotion older than the live one arriving late leaves the live topology
-// and the schedule catalog alone. The seeds it changed are still requested when
-// the live release carries the same seed content, built at the live image: no
-// seed build is lost to reordering, and older data never overwrites newer data.
+// and the schedule catalog alone. Seed loads are not this handler's concern:
+// state plans them from its own copy of every promoted topology.
 type ReleasePromotedHandler struct {
 	uow       uow.UnitOfWork
 	artifacts ports.TopologyArtifactReader
@@ -68,11 +66,10 @@ func NewReleasePromotedHandler(
 //     an artifact of another release is permanent; a missing object or an
 //     outage is retried.
 //  3. Swap the topology through PromoteRelease, which decides by promotion seq.
-//  4. Applied or redelivered: write schedules.loaded:v1 and the request for the
-//     changed seeds. A redelivery writes them again — after a crash between the
-//     Neo4j commit and this transaction they were never committed — and both
-//     are idempotent downstream.
-//  5. Stale: request only the changed seeds the live release still wants.
+//  4. Applied or redelivered: write schedules.loaded:v1. A redelivery writes
+//     it again — after a crash between the Neo4j commit and this transaction
+//     it was never committed — and it is idempotent downstream.
+//  5. Stale: write nothing.
 //  6. Mark the dedup row completed and commit.
 func (h *ReleasePromotedHandler) Handle(
 	ctx context.Context,
@@ -144,24 +141,11 @@ func (h *ReleasePromotedHandler) Handle(
 		return fmt.Errorf("failed to promote release topology: %w", err)
 	}
 
-	seeds := changedSeeds(nodes, in.ChangedNodeIDs)
 	if outcome == topology.PromotionStale {
-		if len(seeds) > 0 {
-			seeds, err = h.topology.StillDesiredSeeds(ctx, seeds)
-			if err != nil {
-				return fmt.Errorf("match the late release's seeds against the live topology: %w", err)
-			}
-		}
 		h.logger.Warn("release.promoted is older than the live topology — topology and schedule catalog left unchanged",
 			"release_id", in.ReleaseID,
-			"promotion_seq", in.PromotionSeq,
-			"seeds_still_wanted", len(seeds))
-	} else {
-		if err := h.writeSchedulesLoaded(ctx, msgProcessingID, in.ReleaseID, in.PromotionSeq, scheduleNames, serviceMetadata); err != nil {
-			return err
-		}
-	}
-	if err := h.writeSeedsPending(ctx, msgProcessingID, in.ReleaseID, seeds); err != nil {
+			"promotion_seq", in.PromotionSeq)
+	} else if err := h.writeSchedulesLoaded(ctx, msgProcessingID, in.ReleaseID, in.PromotionSeq, scheduleNames, serviceMetadata); err != nil {
 		return err
 	}
 	return h.complete(ctx, msgProcessingID, in.ReleaseID, in.PromotionSeq, outcome)
@@ -190,24 +174,6 @@ func promotedNodes(doc topologyartifact.Document) []topology.ReleasePromotedTopo
 			UpstreamUniqueIDs: append([]string(nil), n.UpstreamUniqueIDs...),
 			OriginalFilePath:  n.OriginalFilePath,
 		})
-	}
-	return out
-}
-
-// changedSeeds returns the dbt-seed nodes named in changedNodeIDs, each carrying
-// this release's image tag. An unchanged seed is left out: its data is already
-// materialised and its content hash has not moved, so rebuilding it would cost
-// a Job for no effect.
-func changedSeeds(nodes []topology.ReleasePromotedTopologyNode, changedNodeIDs []string) []topology.ReleasePromotedTopologyNode {
-	changed := make(map[string]bool, len(changedNodeIDs))
-	for _, id := range changedNodeIDs {
-		changed[id] = true
-	}
-	var out []topology.ReleasePromotedTopologyNode
-	for _, n := range nodes {
-		if n.NodeType == string(pkgModel.NodeTypeDbtSeed) && changed[n.UniqueID] {
-			out = append(out, n)
-		}
 	}
 	return out
 }
@@ -255,48 +221,6 @@ func (h *ReleasePromotedHandler) writeSchedulesLoaded(
 // new event.
 func schedulesLoadedEventID(releaseID string, promotionSeq int64) uuid.UUID {
 	return uuid.NewSHA1(releaseSchedulesNamespace, []byte(fmt.Sprintf("%s|%d", releaseID, promotionSeq)))
-}
-
-// writeSeedsPending writes the release.seeds.pending:v1 row asking state to
-// build seeds, or nothing when seeds is empty — state would otherwise mint a
-// task-less run that could never finish. The row belongs to releaseID; state
-// derives the seeds run id from it, so a redelivery creates no second run.
-func (h *ReleasePromotedHandler) writeSeedsPending(
-	ctx context.Context,
-	msgProcessingID uuid.UUID,
-	releaseID string,
-	seeds []topology.ReleasePromotedTopologyNode,
-) error {
-	if len(seeds) == 0 {
-		return nil
-	}
-	nodes := make([]map[string]string, 0, len(seeds))
-	for _, n := range seeds {
-		nodes = append(nodes, map[string]string{
-			"service_name": n.ServiceName,
-			"schema_name":  n.SchemaName,
-			"table_name":   n.TableName,
-			"node_type":    n.NodeType,
-			"image_tag":    n.ImageTag,
-		})
-	}
-	payload, err := json.Marshal(map[string]any{
-		"release_id": releaseID,
-		"nodes":      nodes,
-	})
-	if err != nil {
-		return fmt.Errorf("marshal release.seeds.pending payload: %w", err)
-	}
-	return h.uow.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
-		ID:                  uuid.New(),
-		MessageProcessingID: &msgProcessingID,
-		AggregateType:       "orchestrator",
-		AggregateID:         uuid.NewSHA1(releaseSchedulesNamespace, []byte("seeds-pending:"+releaseID)),
-		EventType:           domain.EventTypeReleaseSeedsPending,
-		Payload:             payload,
-		StreamName:          streams.ReleaseSeedsPendingV1,
-		Status:              "pending",
-	})
 }
 
 // complete marks the dedup row processed and commits.

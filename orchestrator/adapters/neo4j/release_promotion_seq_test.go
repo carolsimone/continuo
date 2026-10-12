@@ -235,49 +235,30 @@ func TestReleasePromotionRepository_ConcurrentPromotionsKeepTheNewestLive(t *tes
 	}
 }
 
-func seedSeed(uniqueID, hash, image string) topology.ReleasePromotedTopologyNode {
-	return topology.ReleasePromotedTopologyNode{
-		UniqueID: uniqueID, SchemaName: "seeds", TableName: uniqueID, ServiceName: "svc",
-		NodeType: "dbt-seed", ContentHash: hash, ImageTag: image, Schedule: "daily",
-		UpstreamUniqueIDs: []string{},
-	}
-}
-
-// A late, older promotion may only request a seed the live release still wants:
-// same unique_id, active, same content. It is built at the live image.
-func TestReleasePromotionRepository_StillDesiredSeeds(t *testing.T) {
+// LivePromotionSeq reads the seq of the last applied promotion recorded on
+// :Meta: 0 on a graph no promotion has reached, and unchanged by a stale
+// promotion.
+func TestReleasePromotionRepository_LivePromotionSeq(t *testing.T) {
 	ctx := context.Background()
 	client := newTestClient(t)
 	wipeReleaseFixtures(t, client)
 	t.Cleanup(func() { wipeReleaseFixtures(t, client) })
 	repo := newReleaseRepo(client)
 
-	live := []topology.ReleasePromotedTopologyNode{
-		seedSeed("seeds.same", "sha256:h1", "img-new"),
-		seedSeed("seeds.changed_again", "sha256:h2-new", "img-new"),
-	}
-	_, err := repo.PromoteRelease(ctx, "rel-new", 2, live, nil, time.Now().UTC())
+	seq, err := repo.LivePromotionSeq(ctx)
 	require.NoError(t, err)
+	assert.Equal(t, int64(0), seq, "no promotion has reached the graph")
 
-	late := []topology.ReleasePromotedTopologyNode{
-		seedSeed("seeds.same", "sha256:h1", "img-old"),
-		seedSeed("seeds.changed_again", "sha256:h2-old", "img-old"),
-		seedSeed("seeds.removed", "sha256:h3", "img-old"),
-		seedSeed("seeds.no_hash", "", "img-old"),
-	}
-	got, err := repo.StillDesiredSeeds(ctx, late)
+	_, err = repo.PromoteRelease(ctx, "rel-live", 4, seqNode("live"), nil, time.Now().UTC())
 	require.NoError(t, err)
-	require.Len(t, got, 1, "only the seed whose live content is unchanged")
-	assert.Equal(t, "seeds.same", got[0].UniqueID)
-	assert.Equal(t, "img-new", got[0].ImageTag, "built at the live release's image")
-	assert.Equal(t, "svc", got[0].ServiceName)
-	assert.Equal(t, "seeds", got[0].SchemaName)
-	assert.Equal(t, "seeds.same", got[0].TableName)
-	assert.Equal(t, "dbt-seed", got[0].NodeType)
-}
+	seq, err = repo.LivePromotionSeq(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, int64(4), seq)
 
-func TestReleasePromotionRepository_StillDesiredSeeds_EmptyInputReadsNothing(t *testing.T) {
-	got, err := newReleaseRepo(newTestClient(t)).StillDesiredSeeds(context.Background(), nil)
+	outcome, err := repo.PromoteRelease(ctx, "rel-old", 3, seqNode("old"), nil, time.Now().UTC())
 	require.NoError(t, err)
-	assert.Empty(t, got)
+	assert.Equal(t, topology.PromotionStale, outcome)
+	seq, err = repo.LivePromotionSeq(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, int64(4), seq, "a stale promotion leaves the live seq alone")
 }
