@@ -46,11 +46,14 @@ func TestSeedReconcile_LoadsAChangedSeedOnce(t *testing.T) {
 
 	nodes, schedules := e2eTopology(t, ctx, clients)
 	hash := "sha256:e2e-seed-reconcile-" + uuid.NewString()
+	var seedImageTag string
 	for i := range nodes {
 		if nodes[i].TableName == "seed_table_1" {
 			nodes[i].ContentHash = hash
+			seedImageTag = nodes[i].ImageTag
 		}
 	}
+	require.NotEmpty(t, seedImageTag, "seed_table_1 is pinned to its service's image")
 
 	first := announceTopology(t, ctx, "e2e-seedrec-"+uuid.NewString()[:8], nodes)
 	waitForAnnouncedTopology(t, ctx, clients, first, schedules)
@@ -60,9 +63,13 @@ func TestSeedReconcile_LoadsAChangedSeedOnce(t *testing.T) {
 	require.Len(t, runs, 1, "one promote-seed run, for the one seed whose content changed")
 	waitForAllTasksSucceeded(t, ctx, clients, runs[0], []string{"seed_table_1"})
 	verifySchedulerSucceeded(t, ctx, clients, runs[0])
+	// A reconcile pass that ran while the first Job was in flight would have
+	// dispatched the seed again; the run list is read again now that it is done.
+	require.Equal(t, runs, promoteSeedRuns(t, ctx, clients, first.ReleaseID), "the seed is dispatched once while its run is in flight")
 
 	loaded := readLoadedSeed(t, ctx, clients)
 	assert.Equal(t, hash, loaded.ContentHash)
+	assert.Equal(t, seedImageTag, loaded.ImageTag, "the seed is built with the image its node is pinned to")
 	assert.Equal(t, first.ReleaseID, loaded.ReleaseID)
 	assert.Equal(t, uuid.NullUUID{UUID: runs[0], Valid: true}, loaded.RunID)
 	require.NotNil(t, loaded.Source)
@@ -74,6 +81,7 @@ func TestSeedReconcile_LoadsAChangedSeedOnce(t *testing.T) {
 
 	assert.Empty(t, promoteSeedRuns(t, ctx, clients, second.ReleaseID), "the same content announced again loads nothing")
 	assert.Equal(t, loaded, readLoadedSeed(t, ctx, clients), "the recorded version is unchanged")
+	assert.Equal(t, runs, promoteSeedRuns(t, ctx, clients, first.ReleaseID), "no later reconcile pass dispatched the first release's seed again")
 }
 
 // waitForStateLiveRelease waits until state's live release for the default
@@ -107,6 +115,7 @@ func promoteSeedRuns(t *testing.T, ctx context.Context, clients *testClients, re
 // loadedSeed is seed_table_1's row in state's node_materializations.
 type loadedSeed struct {
 	ContentHash string        `db:"content_hash"`
+	ImageTag    string        `db:"image_tag"`
 	ReleaseID   string        `db:"release_id"`
 	RunID       uuid.NullUUID `db:"run_id"`
 	Source      *string       `db:"source"`
@@ -116,7 +125,7 @@ func readLoadedSeed(t *testing.T, ctx context.Context, clients *testClients) loa
 	t.Helper()
 	var row loadedSeed
 	require.NoError(t, clients.stateDB.GetContext(ctx, &row, `
-		SELECT content_hash, release_id, run_id, source FROM node_materializations
+		SELECT content_hash, image_tag, release_id, run_id, source FROM node_materializations
 		WHERE tenant_id = $1 AND node_key = $2`, events.DefaultTenantID, seedReconcileNodeKey))
 	return row
 }
