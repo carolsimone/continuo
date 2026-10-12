@@ -36,9 +36,11 @@ type Config struct {
 	SchedulesConfigPath string
 
 	// Retention sweeper — purges processed outbox rows older than
-	// RetentionDays and message_processing dedup rows, in any state, older than
-	// the longer of RetentionDays and the 30-day replay horizon. Both knobs have
-	// safe defaults so no configuration is required.
+	// RetentionDays, message_processing dedup rows, in any state, older than
+	// the longer of RetentionDays and the 30-day replay horizon, and promoted
+	// topology releases loaded more than RetentionDays ago that are neither the
+	// live release nor named by a pending or running run. Both knobs have safe
+	// defaults so no configuration is required.
 	RetentionDays             int
 	RetentionSweepIntervalMin int
 
