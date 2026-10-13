@@ -12,13 +12,15 @@ import (
 // upgradeThroughRelease is the continuo release whose release-controller moves
 // every topology stored inline into object storage at startup. An install runs
 // it at least once before it reaches a release whose database drops those
-// columns.
+// columns. The same version appears in release migration V26's refusal message
+// and in the chart's CHANGELOG and NOTES.txt upgrade note; keep all four in
+// step. TestUpgradeThroughReleaseMatchesTheMigration pins this to V26.
 const upgradeThroughRelease = "0.10.0"
 
 // ErrLegacyTopologyColumnsPresent reports that the release database still has a
 // column release migration V26 drops: the migration has not applied yet, or it
 // refused because rows still need the columns.
-var ErrLegacyTopologyColumnsPresent = errors.New("release migration V26 not applied")
+var ErrLegacyTopologyColumnsPresent = errors.New("release migration V26 has not applied")
 
 // ErrReleaseSchemaNotReady reports that the release schema is not initialized:
 // its base tables are absent, so the database has not been migrated yet.

@@ -105,6 +105,23 @@ func TestV26_RefusesUnsettledRowsAndDropsTheColumnsOnceSettled(t *testing.T) {
 		})
 	}
 
+	// Two unsettled kinds at once exercise the summed guard (a + b + c > 0 with
+	// more than one non-zero term) and show that each count is reported
+	// independently.
+	t.Run("refuses multiple unsettled kinds at once", func(t *testing.T) {
+		insertCandidateRun(t, db, "rCombo", "validating")
+		mustExec(t, db, `UPDATE release_pipeline_runs SET candidate_topology = '[{"unique_id":"a"}]'::jsonb WHERE run_id = 'rCombo'`)
+		mustExec(t, db, `UPDATE current_prod SET release_id = 'rLive' WHERE id = 1`)
+		t.Cleanup(func() { _, _ = db.Exec(`UPDATE current_prod SET release_id = '' WHERE id = 1`) })
+		t.Cleanup(func() { _, _ = db.Exec(`DELETE FROM release_pipeline_runs WHERE run_id = 'rCombo'`) })
+
+		_, err := db.Exec(v26)
+		require.Error(t, err, "the migration must refuse")
+		assert.Contains(t, err.Error(), "1 run(s) hold an inline candidate topology, 0 run(s) wait on a parse result from before artifacts, 1 current_prod row(s) reference no artifact")
+		assert.Regexp(t, upgradeThrough, err.Error())
+		assert.Equal(t, allLegacyColumns, legacyColumns(t, db), "a refused migration drops nothing")
+	})
+
 	t.Run("drops the columns once every row is settled", func(t *testing.T) {
 		mustExec(t, db, `UPDATE current_prod SET release_id = 'rLive',
 			topology_uri = 's3://continuo/tenants/default/topologies/rLive/topology.json.gz',
