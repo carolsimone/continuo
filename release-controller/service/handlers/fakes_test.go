@@ -471,7 +471,6 @@ type fakeTopologies struct {
 	mu       sync.Mutex
 	byURI    map[string]fakeArtifact
 	failures map[string]error
-	writeErr error
 }
 
 type fakeArtifact struct {
@@ -486,9 +485,6 @@ func newFakeTopologies() *fakeTopologies {
 func (f *fakeTopologies) Write(_ context.Context, releaseID string, topo release.Topology) (release.TopologyRef, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.writeErr != nil {
-		return release.TopologyRef{}, f.writeErr
-	}
 	raw, err := json.Marshal(topo)
 	if err != nil {
 		return release.TopologyRef{}, err
@@ -524,13 +520,6 @@ func (f *fakeTopologies) failLoad(uri string, err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.failures[uri] = err
-}
-
-// failWrites makes every Write return err.
-func (f *fakeTopologies) failWrites(err error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.writeErr = err
 }
 
 var _ ports.TopologyArtifactStore = (*fakeTopologies)(nil)
