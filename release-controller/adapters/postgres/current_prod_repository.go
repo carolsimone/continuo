@@ -25,8 +25,7 @@ var _ repository.CurrentProdRepository = (*CurrentProdRepository)(nil)
 
 // Get returns the singleton CurrentProd. When no row exists yet (before the
 // first promotion), a zero-value CurrentProd is returned — not an error. A row
-// written before topology artifacts existed reads with a zero topology
-// reference until release-controller's startup step writes its artifact.
+// that references no topology artifact reads with a zero topology reference.
 func (c *CurrentProdRepository) Get(ctx context.Context) (*release.CurrentProd, error) {
 	var row struct {
 		ReleaseID      string         `db:"release_id"`
@@ -54,8 +53,7 @@ func (c *CurrentProdRepository) Get(ctx context.Context) (*release.CurrentProd, 
 }
 
 // Upsert writes the current production state. The singleton id=1 row is
-// inserted on the first promotion and updated on every later write, which
-// also clears the legacy topology_snapshot.
+// inserted on the first promotion and updated on every later write.
 func (c *CurrentProdRepository) Upsert(ctx context.Context, cp *release.CurrentProd) error {
 	ref := cp.Topology()
 	_, err := c.q.ExecContext(ctx,
@@ -67,8 +65,7 @@ func (c *CurrentProdRepository) Upsert(ctx context.Context, cp *release.CurrentP
 		   topology_sha256 = EXCLUDED.topology_sha256,
 		   node_count = EXCLUDED.node_count,
 		   promotion_seq = EXCLUDED.promotion_seq,
-		   updated_at = EXCLUDED.updated_at,
-		   topology_snapshot = NULL`,
+		   updated_at = EXCLUDED.updated_at`,
 		cp.ReleaseID(),
 		sql.NullString{String: ref.URI, Valid: ref.URI != ""},
 		sql.NullString{String: ref.SHA256, Valid: ref.SHA256 != ""},

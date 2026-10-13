@@ -2474,10 +2474,9 @@ func TestHandleParsedManifest_DiffReadsTheProductionArtifact(t *testing.T) {
 	assert.ElementsMatch(t, []string{"a", "b"}, r.ValidationNodeIDs(), "b is new; a is validated only as b's upstream")
 }
 
-// A current_prod that names a release but references no artifact was written
-// before topology artifacts existed and missed the startup step: the parse
-// fails loudly instead of treating production as empty and validating
-// everything.
+// A current_prod that names a release but references no artifact gives the
+// parse no topology to diff against: it fails loudly instead of treating
+// production as empty and validating everything.
 func TestHandleParsedManifest_ProdWithoutArtifactIsAnError(t *testing.T) {
 	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
 	store.SeedCurrentProd(release.RehydrateCurrentProd("rLegacy", release.TopologyRef{}, 0, time.Unix(50, 0).UTC()))

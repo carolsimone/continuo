@@ -10,9 +10,8 @@ import (
 
 // loadProdTopology returns the topology current_prod points at. Nothing
 // promoted yet — no release and no artifact — is an empty production topology.
-// A release without an artifact is a current_prod written before topology
-// artifacts existed; release-controller's startup step writes that artifact
-// before any handler runs, so meeting one here is an error.
+// A release without an artifact is a current_prod that references no topology
+// artifact, which is an error.
 func loadProdTopology(ctx context.Context, d *Deps, cp *release.CurrentProd) (release.Topology, error) {
 	if cp == nil || cp.Topology().IsZero() {
 		if cp != nil && cp.ReleaseID() != "" {

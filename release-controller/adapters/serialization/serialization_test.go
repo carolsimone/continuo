@@ -3,12 +3,10 @@ package serialization
 import (
 	"encoding/json"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
-	"github.com/carolsimone/continuo/release-controller/domain/release"
 )
 
 // goldenPerNode is the exact JSON a fully-populated []NodeValidationResult is
@@ -92,62 +90,6 @@ func TestTransitionsNilRoundTripsAsNull(t *testing.T) {
 	}
 }
 
-// goldenTopology is the exact JSON a release.Topology is stored and carried as.
-// Only secret_ref is omitempty; upstream_unique_ids has no omitempty
-// so a nil slice serialises as null.
-const goldenTopology = `[{"unique_id":"svc.model","schema_name":"sch","table_name":"tbl","resolved_relation_id":"sch.tbl","service_name":"svc","node_type":"dbt-model","content_hash":"abc","test_count":2,"image_tag":"v1","upstream_unique_ids":["svc.up"],"schedule":"daily","original_file_path":"models/m.sql"}]`
-
-func TestTopologyDTORoundTrip(t *testing.T) {
-	var dto TopologyDTO
-	if err := json.Unmarshal([]byte(goldenTopology), &dto); err != nil {
-		t.Fatalf("unmarshal golden: %v", err)
-	}
-	got := dto.ToDomain()
-	want := release.Topology{{
-		UniqueID: "svc.model", SchemaName: "sch", TableName: "tbl",
-		ResolvedRelationID: "sch.tbl", ServiceName: "svc", NodeType: "dbt-model",
-		ContentHash: "abc", TestCount: 2, ImageTag: "v1",
-		UpstreamUniqueIDs: []string{"svc.up"}, Schedule: "daily",
-		OriginalFilePath: "models/m.sql",
-	}}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("toDomain:\n got %+v\nwant %+v", got, want)
-	}
-	out, err := json.Marshal(TopologyFromDomain(got))
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	if string(out) != goldenTopology {
-		t.Fatalf("bytes changed:\n got %s\nwant %s", out, goldenTopology)
-	}
-}
-
-// TestTopologyZeroNodeOmitemptyShape pins that secret_ref is the
-// only omitted key and that a nil upstream slice serialises as null.
-func TestTopologyZeroNodeOmitemptyShape(t *testing.T) {
-	out, err := json.Marshal(TopologyFromDomain(release.Topology{{}}))
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	const want = `[{"unique_id":"","schema_name":"","table_name":"","resolved_relation_id":"","service_name":"","node_type":"","content_hash":"","test_count":0,"image_tag":"","upstream_unique_ids":null,"schedule":"","original_file_path":""}]`
-	if string(out) != want {
-		t.Fatalf("zero-node shape changed:\n got %s\nwant %s", out, want)
-	}
-}
-
-func TestTopologyNilRoundTripsAsNull(t *testing.T) {
-	out, err := json.Marshal(TopologyFromDomain(nil))
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	if string(out) != "null" {
-		t.Fatalf("nil topology must marshal as null, got %s", out)
-	}
-	if TopologyDTO(nil).ToDomain() != nil {
-		t.Fatal("nil DTO must map to nil domain topology")
-	}
-}
-
 func TestNodeValidationResultsNilRoundTripsAsNull(t *testing.T) {
 	out, err := json.Marshal(NodeValidationResultsFromDomain(nil))
 	if err != nil {
@@ -158,40 +100,5 @@ func TestNodeValidationResultsNilRoundTripsAsNull(t *testing.T) {
 	}
 	if NodeValidationResultsToDomain(nil) != nil {
 		t.Fatal("nil DTO slice must map to nil domain slice")
-	}
-}
-
-func TestNodeDTO_SecretRefRoundTripsAndIsOmittedWhenEmpty(t *testing.T) {
-	in := release.Topology{
-		{UniqueID: "analytics.fx", NodeType: "python-api", SecretRef: "continuo-api-fx"},
-		{UniqueID: "analytics.a", NodeType: "dbt-model"},
-	}
-	raw, err := json.Marshal(TopologyFromDomain(in))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(raw), `"secret_ref":"continuo-api-fx"`) {
-		t.Fatalf("secret_ref missing from %s", raw)
-	}
-	if n := strings.Count(string(raw), "secret_ref"); n != 1 {
-		t.Fatalf("an empty ref must be omitted; secret_ref appears %d times in %s", n, raw)
-	}
-
-	var back TopologyDTO
-	if err := json.Unmarshal(raw, &back); err != nil {
-		t.Fatal(err)
-	}
-	if got := back.ToDomain()[0].SecretRef; got != in[0].SecretRef {
-		t.Fatalf("SecretRef = %q, want %q", got, in[0].SecretRef)
-	}
-}
-
-func TestNodeDTO_StoredTopologyWithoutSecretRefDecodesEmpty(t *testing.T) {
-	var back TopologyDTO
-	if err := json.Unmarshal([]byte(`[{"unique_id":"analytics.fx","node_type":"python-api"}]`), &back); err != nil {
-		t.Fatal(err)
-	}
-	if got := back.ToDomain()[0].SecretRef; got != "" {
-		t.Fatalf("SecretRef = %q, want empty", got)
 	}
 }

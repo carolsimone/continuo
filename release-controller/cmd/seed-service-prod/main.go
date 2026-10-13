@@ -74,7 +74,7 @@ func main() {
 	}
 
 	if cp.Topology().IsZero() {
-		logger.Error("current_prod references no topology artifact; start release-controller once so its startup step writes it")
+		logger.Error("current_prod references no topology artifact", "release_id", cp.ReleaseID())
 		os.Exit(1)
 	}
 	s3Cfg, err := loadS3Config()

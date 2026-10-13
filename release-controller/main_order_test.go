@@ -6,25 +6,24 @@ import (
 	"testing"
 )
 
-// The current_prod backfill must run before the legacy-topology upgrade.
-// UpgradeLegacyTopologies advances the release queue, and a queue advance that
-// loads a legacy current_prod naming a release with no topology artifact fails
-// and crash-loops the boot before the backfill could repair it. main.go
-// therefore calls BackfillCurrentProdArtifact first, then
-// UpgradeLegacyTopologies.
-func TestStartupRunsBackfillBeforeUpgrade(t *testing.T) {
+// A run left received while no queue event fired must not wait for the next
+// one after a restart: a candidate held while maintenance mode was on
+// activates only when something advances the queue, and the restart that
+// turns maintenance off is the first chance to. main.go therefore advances the
+// queue once before it starts the stream consumers.
+func TestStartupAdvancesTheQueueBeforeTheConsumersStart(t *testing.T) {
 	src, err := os.ReadFile("main.go")
 	if err != nil {
 		t.Fatalf("read main.go: %v", err)
 	}
 	body := string(src)
-	backfill := strings.Index(body, "handlers.BackfillCurrentProdArtifact(")
-	upgrade := strings.Index(body, "handlers.UpgradeLegacyTopologies(")
-	if backfill < 0 || upgrade < 0 {
-		t.Fatalf("expected both startup steps to be called in main.go (backfill=%d upgrade=%d)", backfill, upgrade)
+	advance := strings.Index(body, "handlers.AdvanceQueue(")
+	consumers := strings.Index(body, `runConsumer("`)
+	if advance < 0 || consumers < 0 {
+		t.Fatalf("expected main.go to advance the queue and start the consumers (advance=%d consumers=%d)", advance, consumers)
 	}
-	if backfill > upgrade {
-		t.Fatal("BackfillCurrentProdArtifact must be called before UpgradeLegacyTopologies in main.go: " +
-			"the upgrade advances the queue, which crash-loops on a legacy current_prod the backfill has not yet repaired")
+	if advance > consumers {
+		t.Fatal("main.go must call handlers.AdvanceQueue before its first runConsumer: " +
+			"a candidate held while maintenance mode was on would otherwise wait for the next queue event")
 	}
 }

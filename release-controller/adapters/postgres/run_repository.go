@@ -144,9 +144,7 @@ func (r *RunRepository) Active(ctx context.Context) (*pipeline.Run, error) {
 // created_at, manifest kind, provenance, verification facts) are written only
 // on INSERT; the ON CONFLICT clause updates the mutable ones. image_tags is
 // mutable because SetAssembledImageTags overwrites it at activation.
-// candidate_topology is never written: a run stores the reference to its
-// topology artifact, and a row from before artifacts keeps its inline topology
-// for the one-time upgrade step.
+// A run stores the reference to its topology artifact, never the topology.
 func (r *RunRepository) Save(ctx context.Context, run *pipeline.Run) error {
 	args, err := encodeRun(run)
 	if err != nil {

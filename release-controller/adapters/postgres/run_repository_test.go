@@ -848,8 +848,8 @@ func TestRunRepository_NextQueuedOfKind(t *testing.T) {
 
 // TestRunRepository_RoundTripsCandidateTopologyRef pins the three columns that
 // locate a run's topology artifact: a reference set after the run was first
-// inserted is written by the upsert, and a run without one keeps NULL columns
-// (the upgrade step's legacy query selects on candidate_topology_uri IS NULL).
+// inserted is written by the upsert, and a run without one keeps NULL columns,
+// so "has no artifact" is the single predicate candidate_topology_uri IS NULL.
 func TestRunRepository_RoundTripsCandidateTopologyRef(t *testing.T) {
 	db := openTestDB(t)
 	repo := postgres.NewRunRepository(db, nil)
@@ -873,25 +873,4 @@ func TestRunRepository_RoundTripsCandidateTopologyRef(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, reread)
 	assert.Equal(t, ref, reread.CandidateTopologyRef(), "the upsert must write the reference recorded after the first insert")
-}
-
-// TestRunRepository_SaveLeavesTheLegacyTopologyColumnAlone pins that the run
-// repository never writes candidate_topology: a row from before topology
-// artifacts keeps its inline topology until the one-time upgrade step moves it
-// into an artifact.
-func TestRunRepository_SaveLeavesTheLegacyTopologyColumnAlone(t *testing.T) {
-	db := openTestDB(t)
-	repo := postgres.NewRunRepository(db, nil)
-	ctx := context.Background()
-	r := pipeline.NewCandidate("rLegacy", "svc", "t", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
-	require.NoError(t, repo.Save(ctx, r))
-	_, err := db.Exec(`UPDATE release_pipeline_runs SET candidate_topology = '[{"unique_id":"a"}]'::jsonb WHERE run_id = 'rLegacy'`)
-	require.NoError(t, err)
-
-	require.NoError(t, r.TransitionToCompiling(time.Unix(101, 0).UTC()))
-	require.NoError(t, repo.Save(ctx, r))
-
-	var stored string
-	require.NoError(t, db.Get(&stored, `SELECT candidate_topology::text FROM release_pipeline_runs WHERE run_id = 'rLegacy'`))
-	assert.JSONEq(t, `[{"unique_id":"a"}]`, stored)
 }

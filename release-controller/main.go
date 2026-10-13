@@ -241,36 +241,21 @@ func main() {
 	outboxProc := redisadapter.StartOutboxPublisher(ctx, db, rc, outboxWaker, metricsReg.Outbox(), liveReg, logger)
 	metricsReg.WatchOutbox(outboxProc)
 
-	// A current_prod that names a release but references no topology artifact
-	// gets its artifact and is re-announced under a fresh promotion seq before
-	// any consumer runs. This runs before the legacy-topology upgrade below: that
-	// step advances the release queue, and a queue advance that loads a legacy
-	// current_prod with no topology artifact fails, so the backfill must repair
-	// current_prod first.
-	if err := runStartupStep(ctx, logger, "backfill current_prod topology artifact", func(ctx context.Context) error {
-		return handlers.BackfillCurrentProdArtifact(ctx, deps)
+	// The queue is advanced once before any consumer runs, so a run left
+	// received while no queue event fired starts on this boot: a candidate held
+	// while maintenance mode was on activates when the restart that turns it
+	// off comes up, not with the next submission. The advance waits out an
+	// unreachable Postgres or object store while readiness stays false; any
+	// other failure is logged and left to the next queue event, as the
+	// consumers do.
+	if err := runStartupStep(ctx, logger, "advance the release queue", func(ctx context.Context) error {
+		return handlers.AdvanceQueue(ctx, deps)
 	}); err != nil {
 		if errors.Is(err, context.Canceled) {
-			logger.Info("shutdown requested during the current_prod backfill step")
+			logger.Info("shutdown requested during the startup queue advance")
 			os.Exit(0)
 		}
-		logger.Error("current_prod backfill step failed", "error", err)
-		os.Exit(1)
-	}
-
-	// Runs holding an inline topology or left parsing are settled before any
-	// consumer reads a run: inline topologies are written to artifacts and runs
-	// left parsing fail with upgrade_interrupted. The step waits out an
-	// unreachable Postgres or object store; readiness stays false meanwhile.
-	if err := runStartupStep(ctx, logger, "upgrade legacy topologies", func(ctx context.Context) error {
-		return handlers.UpgradeLegacyTopologies(ctx, deps)
-	}); err != nil {
-		if errors.Is(err, context.Canceled) {
-			logger.Info("shutdown requested during the startup upgrade step")
-			os.Exit(0)
-		}
-		logger.Error("startup upgrade step failed", "error", err)
-		os.Exit(1)
+		logger.Error("startup queue advance failed; the next queue event retries it", "error", err)
 	}
 
 	// Start stream consumers in goroutines; each blocks until ctx is cancelled.
