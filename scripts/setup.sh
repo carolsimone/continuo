@@ -40,7 +40,11 @@ if ! command -v kind &> /dev/null; then
         fi
     else
         # Linux (CI runners, etc.)
-        sudo curl -Lo /usr/local/bin/kind https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64
+        case "$(uname -m)" in
+            aarch64|arm64) kind_arch=arm64 ;;
+            *) kind_arch=amd64 ;;
+        esac
+        sudo curl -Lo /usr/local/bin/kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-${kind_arch}"
         sudo chmod +x /usr/local/bin/kind
     fi
 fi

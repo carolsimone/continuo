@@ -195,6 +195,14 @@ jobs:
         # builder selection leaks into this job.
         uses: ./.github/actions/isolate-docker-state
 
+      - name: Set up QEMU
+        # continuo-base is published for both architectures; the half that is
+        # not this runner's own builds under emulation. Derived from the
+        # runner, so the same step works on the x86 and the arm64 box.
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: ${{ runner.arch == 'ARM64' && 'amd64' || 'arm64' }}
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
@@ -210,7 +218,7 @@ jobs:
         with:
           context: .
           file: Dockerfile.base
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           push: true
           # :v1 is the pinned tag every Dockerfile.prod consumes (see the
           # BASE_IMAGE build-arg in build-publish below); bump both together
@@ -271,12 +279,13 @@ jobs:
         uses: ./.github/actions/isolate-docker-state
 
       - name: Set up QEMU
-        # binfmt registration for linux/arm64. The Go images cross-compile and
-        # need no emulation, but the Python images are built under QEMU; without
-        # this the arm64 half of every build fails on this amd64 runner.
+        # binfmt registration for the architecture this runner is NOT. The Go
+        # images cross-compile and need no emulation, but the Python images are
+        # built under QEMU; without this the non-native half of every build
+        # fails. Derived from the runner, so x86 and arm64 boxes both work.
         uses: docker/setup-qemu-action@v3
         with:
-          platforms: arm64
+          platforms: ${{ runner.arch == 'ARM64' && 'amd64' || 'arm64' }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -342,7 +351,7 @@ jobs:
 
       - name: Assert the published image is multi-arch
         # Fails closed if a build silently reverts to single-arch. Proves the
-        # arm64 variant EXISTS; the smoke step below proves it RUNS.
+        # non-native variant EXISTS; the smoke step below proves it RUNS.
         run: |
           set -euo pipefail
           platforms="$(docker buildx imagetools inspect "${IMAGE_REPO}:${GITHUB_SHA}" --raw \
@@ -356,17 +365,19 @@ jobs:
             fi
           done
 
-      - name: Smoke-run the arm64 variant
-        # Executes the arm64 image under QEMU on this amd64 runner. Catches a
-        # wrong GOARCH: the manifest would still list linux/arm64, but the
-        # binary inside would fail with "exec format error".
+      - name: Smoke-run the non-native variant
+        # Executes the image built for the architecture this runner is NOT,
+        # under QEMU. Catches a wrong GOARCH: the manifest would still list the
+        # platform, but the binary inside would fail with "exec format error".
         # Skipped for images with no runnable entrypoint of this shape.
         if: matrix.service != 'migrations'
+        env:
+          SMOKE_ARCH: ${{ runner.arch == 'ARM64' && 'amd64' || 'arm64' }}
         run: |
           set -euo pipefail
-          docker run --rm --platform linux/arm64 --entrypoint /bin/sh \
+          docker run --rm --platform "linux/${SMOKE_ARCH}" --entrypoint /bin/sh \
             "${IMAGE_REPO}:${GITHUB_SHA}" \
-            -c 'uname -m && echo "arm64 variant executed OK"'
+            -c "uname -m && echo \"${SMOKE_ARCH} variant executed OK\""
 
   deploy:
     # force_publish is a backfill-only run (see build-publish above); it
