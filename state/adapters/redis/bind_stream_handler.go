@@ -16,9 +16,9 @@ import (
 )
 
 // streamBinding describes one Redis-stream binding. Every state consumer runs
-// the identical parse → begin → rollback-defer → dedup → handle → mark
-// completed → commit pipeline (bindStreamHandler below); the only things that
-// vary per stream are captured here.
+// the identical parse → load (when set) → begin → rollback-defer → dedup →
+// handle → mark completed → commit pipeline (bindStreamHandler below); the only
+// things that vary per stream are captured here.
 //
 // E is the parsed event type produced by Parse.
 type streamBinding[E any] struct {
@@ -32,6 +32,11 @@ type streamBinding[E any] struct {
 	// permanent: bindStreamHandler wraps it with events.ErrPermanent so the
 	// consumer dead-letters the poison message.
 	parse func(msg goredis.XMessage) (E, error)
+	// load, when set, completes the parsed event with input read from outside
+	// the database, such as an object-storage read, before any transaction
+	// opens. Its error is returned as it is: a permanent one is dead-lettered,
+	// an outage pauses the consumer, and any other is retried.
+	load func(ctx context.Context, evt E) (E, error)
 	// payload derives the bytes stored in the dedup row's payload column. Two
 	// shapes exist: the explicit "payload" stream field, and a JSON encoding of
 	// the whole Values map for flat-field streams. defaultPayload / valuesPayload
@@ -67,11 +72,11 @@ func valuesPayload(msg goredis.XMessage) []byte {
 //
 // Errors are surfaced to the StreamConsumer so it can pick the right ACK
 // policy: parse failures are wrapped with events.ErrPermanent (the consumer
-// dead-letters the message), while handler/repository failures propagate as-is
-// (the message is left pending for retry). On a duplicate the transaction is
-// committed (empty txn) and nil is returned so the consumer ACKs. A handled
-// message's dedup row is marked completed in the handler's transaction, just
-// before it commits.
+// dead-letters the message), while load, handler and repository failures
+// propagate as they are and the consumer classifies them. On a duplicate the
+// transaction is committed (empty txn) and nil is returned so the consumer
+// ACKs. A handled message's dedup row is marked completed in the handler's
+// transaction, just before it commits.
 func bindStreamHandler[E any](
 	uowFactory func() uow.UnitOfWork,
 	logger *slog.Logger,
@@ -82,6 +87,15 @@ func bindStreamHandler[E any](
 		if err != nil {
 			logger.Error(b.label+": parse failure", "message_id", msg.ID, "error", err)
 			return fmt.Errorf("%w: %v", pkgevents.ErrPermanent, err)
+		}
+
+		if b.load != nil {
+			evt, err = b.load(ctx, evt)
+			if err != nil {
+				logger.Error(b.label+": load failure", "message_id", msg.ID,
+					"permanent", errors.Is(err, pkgevents.ErrPermanent), "error", err)
+				return err
+			}
 		}
 
 		u := uowFactory()

@@ -62,6 +62,24 @@ func (a *TaskCollectionAdapter) GetByNode(ctx context.Context, runID uuid.UUID, 
 		}
 		return run.Task{}, err
 	}
+	return taskFromRow(t), nil
+}
+
+// GetByID reads one task by id. A task's node and image never change once its
+// row is written, so the read uses the autocommit db.
+func (a *TaskCollectionAdapter) GetByID(ctx context.Context, taskID uuid.UUID) (run.Task, error) {
+	t, err := a.repo.GetByID(ctx, taskID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return run.Task{}, run.ErrTaskNotFound
+		}
+		return run.Task{}, err
+	}
+	return taskFromRow(t), nil
+}
+
+// taskFromRow maps a task_tracker row onto the domain task.
+func taskFromRow(t *TaskTracker) run.Task {
 	return run.Task{
 		TaskID:              t.TaskID,
 		ScheduleID:          t.ScheduleID,
@@ -78,7 +96,7 @@ func (a *TaskCollectionAdapter) GetByNode(ctx context.Context, runID uuid.UUID, 
 		ImageTag:            t.ImageTag,
 		InheritedFromTaskID: t.InheritedFromTaskID,
 		Operation:           operationFromColumn(t.Operation),
-	}, nil
+	}
 }
 
 func (a *TaskCollectionAdapter) SetStatusAndAttempt(ctx context.Context, taskID uuid.UUID, status run.TaskStatus, retryCount int32) (int, error) {

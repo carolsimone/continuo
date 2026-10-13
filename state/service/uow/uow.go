@@ -22,6 +22,8 @@ import (
 //
 // The aggregate-level accessors (Run, Catalog, Outbox, TaskCollection, Clock,
 // TaskExecutions) are used by handlers that operate on domain aggregates.
+// Topology serves the promoted-topology tables and the live-release pointer;
+// Materializations serves the record of what each node last loaded.
 type UnitOfWork interface {
 	MessageProcessingRepo() messageprocessing.Repository
 
@@ -32,6 +34,8 @@ type UnitOfWork interface {
 	TaskCollection() run.TaskCollection
 	Clock() ports.Clock
 	TaskExecutions() repository.TaskExecutionWriter
+	Topology() repository.TopologyRepository
+	Materializations() repository.MaterializationRepository
 
 	Begin(ctx context.Context) error
 	Commit() error

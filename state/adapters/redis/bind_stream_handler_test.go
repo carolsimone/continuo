@@ -3,11 +3,13 @@ package redis
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"testing"
 	"time"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/google/uuid"
@@ -155,4 +157,58 @@ func TestBindStreamHandler_CompletionErrorRollsBack(t *testing.T) {
 	require.Equal(t, []dedupStateChange{{id: repo.claimed, state: messageprocessing.StateCompleted, commitsBefore: 0}}, repo.changes)
 	require.Equal(t, 0, u.CommitCalled)
 	require.Equal(t, 1, u.RollbackCalled)
+}
+
+// TestBindStreamHandler_LoadRunsBeforeTheTransaction: load completes the event
+// before Begin, and the handler receives what load returned.
+func TestBindStreamHandler_LoadRunsBeforeTheTransaction(t *testing.T) {
+	u, _ := newRecordingUnitOfWork(false)
+	beginsAtLoad := -1
+	var handled string
+	b := testStreamBinding(func(_ context.Context, _ uow.UnitOfWork, evt string, _ uuid.UUID) error {
+		handled = evt
+		return nil
+	})
+	b.load = func(_ context.Context, evt string) (string, error) {
+		beginsAtLoad = u.BeginCalled
+		return evt + "+loaded", nil
+	}
+	h := bindStreamHandler(func() uow.UnitOfWork { return u }, bindTestLogger(), b)
+
+	require.NoError(t, h(context.Background(), bindTestMessage()))
+	require.Equal(t, 0, beginsAtLoad, "load runs before the transaction opens")
+	require.Equal(t, "1-0+loaded", handled)
+	require.Equal(t, 1, u.CommitCalled)
+}
+
+// TestBindStreamHandler_LoadErrorKeepsItsClassAndOpensNoTransaction: a failed
+// load returns its error as it is, permanent only when it says so, and never
+// opens a transaction or claims a dedup row.
+func TestBindStreamHandler_LoadErrorKeepsItsClassAndOpensNoTransaction(t *testing.T) {
+	cases := map[string]struct {
+		err       error
+		permanent bool
+	}{
+		"retryable": {errors.New("artifact not found"), false},
+		"permanent": {fmt.Errorf("%w: checksum mismatch", pkgevents.ErrPermanent), true},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			u, repo := newRecordingUnitOfWork(false)
+			handled := false
+			b := testStreamBinding(func(context.Context, uow.UnitOfWork, string, uuid.UUID) error {
+				handled = true
+				return nil
+			})
+			b.load = func(context.Context, string) (string, error) { return "", tc.err }
+			h := bindStreamHandler(func() uow.UnitOfWork { return u }, bindTestLogger(), b)
+
+			err := h(context.Background(), bindTestMessage())
+			require.ErrorIs(t, err, tc.err)
+			require.Equal(t, tc.permanent, errors.Is(err, pkgevents.ErrPermanent))
+			require.False(t, handled)
+			require.Zero(t, u.BeginCalled)
+			require.Equal(t, uuid.Nil, repo.claimed, "no dedup row is claimed")
+		})
+	}
 }

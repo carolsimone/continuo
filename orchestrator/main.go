@@ -43,6 +43,14 @@ import (
 // DAG or release, which they write to Neo4j in one handler.
 const topologyHandlerTimeout = 5 * time.Minute
 
+// promotedSeedsGraphWait bounds how long the trigger.promoted_seeds:v1 handler
+// waits for the graph to reach the promotion a trigger was planned against.
+// state writes the trigger in its own promotion transaction and the
+// topology-swap group applies the same promotion independently, so the trigger
+// often arrives first; a swap that has not landed by then fails the delivery
+// retryably. Well inside topologyHandlerTimeout.
+const promotedSeedsGraphWait = 30 * time.Second
+
 // outboxHeartbeatStale is the liveness budget for the outbox processor's Run
 // loop. An idle loop turns at least once per pkgoutbox.FallbackTick (5s), so 60s
 // is comfortably above it: a wedged (not exited) processor trips within a
@@ -431,10 +439,12 @@ func main() {
 	releasePromotionRepo := neo4jinfra.NewReleasePromotionRepository(neo4jClient, logger)
 	releasePromotedHandler := handlers.NewReleasePromotedHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), topologyArtifactReader, releasePromotionRepo, logger)
 
-	// trigger.promoted_seeds:v1 — projects the run state created for a promoted
-	// release onto its changed seeds, so building them into the prod schema runs
-	// through the same lifecycle as any other run.
-	handlePromotedSeedsHandler := handlers.NewHandlePromotedSeedsRunHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), snapshotService, logger)
+	// trigger.promoted_seeds:v1 — projects the run state created to load the
+	// live release's seeds, once the graph has applied the promotion the run was
+	// planned against, so loading them into the prod schema runs through the
+	// same lifecycle as any other run.
+	handlePromotedSeedsHandler := handlers.NewHandlePromotedSeedsRunHandler(
+		postgres.NewPostgresUnitOfWork(pgDB, logger), snapshotService, releasePromotionRepo, promotedSeedsGraphWait, logger)
 
 	// release.promoted:v2 (versions) — an independent consumer group. It reads
 	// the release's code-bundle document and topology artifact from object

@@ -46,6 +46,10 @@ type TaskCollection interface {
 	// the given run. Returns ErrTaskNotFound if no row matches.
 	GetByNode(ctx context.Context, runID uuid.UUID, node NodeID) (Task, error)
 
+	// GetByID returns one task by id. Returns ErrTaskNotFound if no row
+	// matches.
+	GetByID(ctx context.Context, taskID uuid.UUID) (Task, error)
+
 	// SetStatusAndAttempt writes status and retry_count for one task. It does
 	// not overwrite a cancelled task. Returns rowsAffected (0 if the task is
 	// cancelled or the row is missing). It applies no attempt logic — the Run

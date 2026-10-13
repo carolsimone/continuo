@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strconv"
 
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/identity"
@@ -165,14 +166,20 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Ent
 				"image_tag":    n.ImageTag,
 			})
 		}
-		payload, err := json.Marshal(map[string]any{
+		fields := map[string]any{
 			"schedule_id":   e.ID.String(),
 			"schedule_name": e.Name,
 			"release_id":    e.ReleaseID,
 			"kind":          "promote_seed",
 			"nodes":         nodes,
 			"initiated_by":  "system",
-		})
+		}
+		// promotion_seq is the live promotion seq the run was planned against;
+		// orchestrator projects the run only once its graph has reached it.
+		if e.PromotionSeq > 0 {
+			fields["promotion_seq"] = strconv.FormatInt(e.PromotionSeq, 10)
+		}
+		payload, err := json.Marshal(fields)
 		if err != nil {
 			return nil, false, err
 		}

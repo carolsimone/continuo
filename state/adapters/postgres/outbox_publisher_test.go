@@ -545,3 +545,48 @@ func patchEventID(evt run.DomainEvent, newID uuid.UUID) run.DomainEvent {
 		return evt
 	}
 }
+
+// trigger.promoted_seeds:v1 carries the promotion seq its run was planned
+// against as a decimal string; a run planned against none carries no field.
+func TestOutboxPublisher_PromotedSeedsRunRequested_PromotionSeq(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	cases := map[string]struct {
+		seq     int64
+		present bool
+		want    any
+	}{
+		"planned against a promotion": {seq: 7, present: true, want: "7"},
+		"planned against none":        {seq: 0, present: false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			id := uuid.New()
+			t.Cleanup(func() { _, _ = db.ExecContext(ctx, "DELETE FROM state_outbox WHERE aggregate_id = $1", id) })
+			tx, err := db.BeginTxx(ctx, nil)
+			require.NoError(t, err)
+			defer tx.Rollback()
+			require.NoError(t, postgres.NewOutboxPublisher(tx, discardLogger()).Append(ctx, []run.DomainEvent{run.PromotedSeedsRunRequested{
+				ID: id, Name: "promote-seed-abc12345", ReleaseID: "rel-1", PromotionSeq: tc.seq,
+				Nodes: []run.SeedNode{{NodeID: run.NodeID{ServiceName: "svc", SchemaName: "raw", TableName: "orders"}, NodeType: "dbt-seed", ImageTag: "svc:1"}},
+			}}, uuid.Nil))
+			require.NoError(t, tx.Commit())
+
+			var row struct {
+				StreamName string `db:"stream_name"`
+				Payload    []byte `db:"payload"`
+			}
+			require.NoError(t, db.GetContext(ctx, &row, `SELECT stream_name, payload FROM state_outbox WHERE aggregate_id = $1`, id))
+			assert.Equal(t, streams.TriggerPromotedSeedsV1, row.StreamName)
+			var payload map[string]any
+			require.NoError(t, json.Unmarshal(row.Payload, &payload))
+			assert.Equal(t, "rel-1", payload["release_id"])
+			assert.Equal(t, "promote_seed", payload["kind"])
+			got, present := payload["promotion_seq"]
+			assert.Equal(t, tc.present, present)
+			if tc.present {
+				assert.Equal(t, tc.want, got)
+			}
+		})
+	}
+}

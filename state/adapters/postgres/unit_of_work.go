@@ -133,5 +133,16 @@ func (u *PostgresUnitOfWork) TaskCollection() run.TaskCollection {
 	return NewTaskCollectionAdapter(u.taskRepo, u.tx)
 }
 
+// Topology returns a TopologyRepository bound to the current transaction.
+func (u *PostgresUnitOfWork) Topology() repository.TopologyRepository {
+	return NewTopologyRepository(u.db, u.tx)
+}
+
+// Materializations returns a MaterializationRepository bound to the current
+// transaction.
+func (u *PostgresUnitOfWork) Materializations() repository.MaterializationRepository {
+	return NewMaterializationRepository(u.db, u.tx)
+}
+
 // Compile-time interface assertion.
 var _ uow.UnitOfWork = (*PostgresUnitOfWork)(nil)

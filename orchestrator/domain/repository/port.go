@@ -40,12 +40,13 @@ type ReleasePromotionRepository interface {
 		serviceMetadata map[string]map[string]string,
 		now time.Time,
 	) (topology.PromotionOutcome, error)
+}
 
-	// StillDesiredSeeds returns, for each given dbt-seed node, the live node
-	// with the same unique_id when it is active and carries the same non-empty
-	// content_hash — with the live image_tag and identity. A seed changed again
-	// or removed by a newer promotion is left out. Read-only.
-	StillDesiredSeeds(ctx context.Context, seeds []topology.ReleasePromotedTopologyNode) ([]topology.ReleasePromotedTopologyNode, error)
+// LivePromotionReader reads the promotion the live graph holds.
+type LivePromotionReader interface {
+	// LivePromotionSeq returns the promotion_seq of the last applied promotion
+	// recorded on :Meta {key:'current_release'}, or 0 before the first.
+	LivePromotionSeq(ctx context.Context) (int64, error)
 }
 
 // CodeVersionRepository writes the code-version history behind the :Table

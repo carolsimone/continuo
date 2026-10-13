@@ -127,10 +127,19 @@ services:
       dockerfile: state/Dockerfile.dev
     container_name: state
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_started
+      redis:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully
     environment:
       - METRICS_PORT=9464
+      - S3_ENDPOINT_URL=http://minio:9000
+      - S3_BUCKET=continuo
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin
+      - AWS_DEFAULT_REGION=us-east-1
       - POSTGRES_DB=continuo_state
       - POSTGRES_USER=continuo_svc
       - POSTGRES_PASSWORD=continuo

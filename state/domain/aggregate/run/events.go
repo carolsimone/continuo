@@ -114,13 +114,16 @@ type SeedNode struct {
 // PromotedSeedsRunRequested is recorded by NewPromotedSeedsRun.
 // Translated to trigger.promoted_seeds:v1.
 //
-// Nodes carries the seeds the release changed, with their pinned metadata, so
-// the run's membership and the images it builds with are decided once.
+// Nodes carries the seeds the run loads, with their pinned metadata, so the
+// run's membership and the images it builds with are decided once.
+// PromotionSeq is the live promotion seq the run was planned against; 0 means
+// none.
 type PromotedSeedsRunRequested struct {
-	ID        uuid.UUID
-	Name      string
-	ReleaseID string
-	Nodes     []SeedNode
+	ID           uuid.UUID
+	Name         string
+	ReleaseID    string
+	PromotionSeq int64
+	Nodes        []SeedNode
 }
 
 func (PromotedSeedsRunRequested) runDomainEvent()         {}

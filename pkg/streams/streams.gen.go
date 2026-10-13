@@ -24,9 +24,7 @@ const (
 	TriggerRebaseV1 = "trigger.rebase:v1"
 	// TriggerSingleNodeRunV1 — User-initiated single-node run trigger.
 	TriggerSingleNodeRunV1 = "trigger.single_node_run:v1"
-	// ReleaseSeedsPendingV1 — Seeds a promoted release changed, emitted by orchestrator in the same transaction as the topology swap so the nodes exist before any run is projected onto them.
-	ReleaseSeedsPendingV1 = "release.seeds.pending:v1"
-	// TriggerPromotedSeedsV1 — Run trigger for the seeds a promoted release changed; state creates the run, orchestrator projects its tasks.
+	// TriggerPromotedSeedsV1 — Run trigger for the live release's seeds that still need building. state creates the run and writes the trigger in the same transaction, carrying the optional promotion_seq of the live promotion the run was planned against; orchestrator projects the run's tasks once its graph holds that promotion.
 	TriggerPromotedSeedsV1 = "trigger.promoted_seeds:v1"
 	// RunFinalizedV1 — Run finalization (succeeded, failed, cancelled or skipped) emitted by state; orchestrator projects the terminal status onto its run.
 	RunFinalizedV1 = "run.finalized:v1"
@@ -56,7 +54,7 @@ const (
 	CompileRequestedV1 = "compile.requested:v1"
 	// CompileCompletedV1 — aggregated compile result from execution-controller back to release-controller.
 	CompileCompletedV1 = "compile.completed:v1"
-	// ReleasePromotedV2 — A topology becoming the live one, numbered by promotion_seq. It is either a promoted release or a topology release-controller announces without moving current_prod. Carries the URI and SHA-256 of the topology artifact in S3 and the event envelope, never the topology. orchestrator swaps its live topology only for a higher promotion_seq and records code versions; execution-controller drops the release's candidate schema.
+	// ReleasePromotedV2 — A topology becoming the live one, numbered by promotion_seq. It is either a promoted release or a topology release-controller announces without moving current_prod. Carries the URI and SHA-256 of the topology artifact in S3 and the event envelope, never the topology. orchestrator swaps its live topology only for a higher promotion_seq and records code versions; state stores the release's topology in Postgres once and moves its live release only for a higher promotion_seq; execution-controller drops the release's candidate schema.
 	ReleasePromotedV2 = "release.promoted:v2"
 	// ReleaseRejectedV1 — Candidate release rejected (compile, parse, seed-build, or validation failure); consumed by the remediation classifier. A verification run's failure never rides this stream.
 	ReleaseRejectedV1 = "release.rejected:v1"
@@ -96,8 +94,6 @@ const (
 	OrchestratorRebase = "orchestrator-rebase"
 	// OrchestratorSingleNodeRun — orchestrator consumer group on trigger.single_node_run:v1.
 	OrchestratorSingleNodeRun = "orchestrator-single-node-run"
-	// StateReleaseSeedsPending — state consumer group on release.seeds.pending:v1.
-	StateReleaseSeedsPending = "state-release-seeds-pending"
 	// OrchestratorPromotedSeeds — orchestrator consumer group on trigger.promoted_seeds:v1.
 	OrchestratorPromotedSeeds = "orchestrator-promoted-seeds"
 	// OrchestratorRunFinalized — orchestrator consumer group on run.finalized:v1.
@@ -138,6 +134,8 @@ const (
 	OrchestratorReleasePromotedVersions = "orchestrator-release-promoted-versions"
 	// ExecutorReleasePromoted — execution-controller consumer group on release.promoted:v2.
 	ExecutorReleasePromoted = "executor-release-promoted"
+	// StateReleasePromoted — state consumer group on release.promoted:v2.
+	StateReleasePromoted = "state-release-promoted"
 	// RemediationReleaseRejected — remediation consumer group on release.rejected:v1.
 	RemediationReleaseRejected = "remediation-release-rejected"
 	// ExecutorReleaseRejected — execution-controller consumer group on release.rejected:v1.
@@ -169,7 +167,6 @@ var All = []string{
 	TriggerRerunV1,
 	TriggerRebaseV1,
 	TriggerSingleNodeRunV1,
-	ReleaseSeedsPendingV1,
 	TriggerPromotedSeedsV1,
 	RunFinalizedV1,
 	QueryModelV1,
@@ -209,7 +206,6 @@ var Groups = map[string][]string{
 	TriggerRerunV1:              {OrchestratorRerun},
 	TriggerRebaseV1:             {OrchestratorRebase},
 	TriggerSingleNodeRunV1:      {OrchestratorSingleNodeRun},
-	ReleaseSeedsPendingV1:       {StateReleaseSeedsPending},
 	TriggerPromotedSeedsV1:      {OrchestratorPromotedSeeds},
 	RunFinalizedV1:              {OrchestratorRunFinalized},
 	QueryModelV1:                {ExecutorQueryModel},
@@ -225,7 +221,7 @@ var Groups = map[string][]string{
 	SeedBuildCompletedV1:        {ReleaseControllerSeedBuildCompleted},
 	CompileRequestedV1:          {ExecutorCompileRequested},
 	CompileCompletedV1:          {ReleaseControllerCompileCompleted},
-	ReleasePromotedV2:           {OrchestratorReleasePromoted, OrchestratorReleasePromotedVersions, ExecutorReleasePromoted},
+	ReleasePromotedV2:           {OrchestratorReleasePromoted, OrchestratorReleasePromotedVersions, ExecutorReleasePromoted, StateReleasePromoted},
 	ReleaseRejectedV1:           {RemediationReleaseRejected, ExecutorReleaseRejected},
 	PipelineRunFinishedV1:       {ExecutorPipelineRunFinished},
 	RemediationRetryRequestedV1: {RemediationRetryRequested},
@@ -244,6 +240,7 @@ var Retired = []string{
 	"manifest.loaded:v1",
 	"node.deployed:v1",
 	"release.promoted:v1",
+	"release.seeds.pending:v1",
 	"remediation.requested:v1",
 	"rerun.ready:v1",
 	"retry.task:v1",

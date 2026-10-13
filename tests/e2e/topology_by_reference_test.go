@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -143,6 +144,12 @@ func TestTopologyByReference_CorruptArtifactIsDeadLettered(t *testing.T) {
 	assert.Contains(t, dl.GetError(), announcedSHA, "the dead letter names the expected hash")
 	assert.Contains(t, dl.GetError(), storedSHA, "the dead letter names the object's actual hash")
 	assert.Equal(t, before, readLivePointer(ctx, clients), "a corrupt artifact must never move the live pointer")
+
+	// state's group reads the same artifact and refuses it for the same reason.
+	stateDL := awaitConsumerDeadLetter(ctx, t, clients, streams.ReleasePromotedV2, streams.StateReleasePromoted, id, "open")
+	cleanup = append(cleanup, stateDL.GetId())
+	assert.Equal(t, model.DeadLetterKindPermanent, model.DeadLetterKind(stateDL.GetFailureKind()))
+	assert.Contains(t, strings.ToLower(stateDL.GetError()), "checksum")
 
 	// The other two groups settle on the entry as well; whichever dead letter
 	// the versions group records is removed with this test's.

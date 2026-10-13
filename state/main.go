@@ -11,10 +11,12 @@ import (
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	pkgdb "github.com/carolsimone/continuo/pkg/db"
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/lifecycle"
 	"github.com/carolsimone/continuo/pkg/liveness"
 	pkgmessageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgmetrics "github.com/carolsimone/continuo/pkg/metrics"
+	"github.com/carolsimone/continuo/pkg/objectstore"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -22,12 +24,15 @@ import (
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	statepublisher "github.com/carolsimone/continuo/state/adapters/publisher"
 	"github.com/carolsimone/continuo/state/adapters/redis"
+	s3adapter "github.com/carolsimone/continuo/state/adapters/s3"
 	"github.com/carolsimone/continuo/state/config"
 	grpcserver "github.com/carolsimone/continuo/state/internal/grpc"
 	"github.com/carolsimone/continuo/state/internal/grpc/handlers"
 	"github.com/carolsimone/continuo/state/internal/scheduler"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 	ports "github.com/carolsimone/continuo/state/service/ports"
+	"github.com/carolsimone/continuo/state/service/seedreconcile"
+	"github.com/carolsimone/continuo/state/service/topologyretention"
 	"github.com/carolsimone/continuo/state/service/uow"
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -37,6 +42,14 @@ import (
 // is comfortably above it: a wedged (not exited) processor trips within a
 // minute, while an idle-but-live one never does.
 const outboxHeartbeatStale = 60 * time.Second
+
+// releasePromotedHandlerTimeout bounds one release.promoted:v2 delivery: the
+// artifact read from object storage, then the load of a whole topology, every
+// node and edge, in one transaction.
+const releasePromotedHandlerTimeout = 5 * time.Minute
+
+// seedReconcileInterval is how often the periodic seed reconcile runs.
+const seedReconcileInterval = 60 * time.Second
 
 // dbPool bounds the Postgres pool when DB_MAX_OPEN_CONNS / DB_MAX_IDLE_CONNS
 // are unset: two connections per stream consumer (a handler's transaction and
@@ -231,30 +244,6 @@ func main() {
 		}
 	})
 
-	// Retention sweeper — keeps the two unbounded-growth tables in check:
-	// processed state_outbox rows and message_processing dedup rows (the latter
-	// retains a full payload per consumed message). Processed outbox rows are
-	// kept RETENTION_DAYS; dedup rows, whatever their state, are kept at least
-	// 30 days (the replay horizon), longer when RETENTION_DAYS is longer. Both
-	// are pruned on the same timer using DB-clock cutoffs.
-	mpPruner := pkgmessageprocessing.NewPruner(db, postgres.OutboxTable, logger)
-	retentionSweeper := pkgoutbox.NewRetentionSweeper(
-		[]pkgoutbox.RetentionTarget{
-			pkgoutbox.OutboxRetentionTarget(db, postgres.OutboxTable, logger),
-			{
-				Name:         "message_processing",
-				Prune:        mpPruner.DeleteOlderThan,
-				MinRetention: model.ReplayHorizon,
-			},
-		},
-		pkgoutbox.RetentionConfig{
-			Retention: time.Duration(cfg.RetentionDays) * 24 * time.Hour,
-			Interval:  time.Duration(cfg.RetentionSweepIntervalMin) * time.Minute,
-		},
-		logger,
-	)
-	go retentionSweeper.Run(ctx)
-
 	clk := ports.SystemClock{}
 
 	// UoW factory shared by every stream binding below. Each invocation
@@ -266,17 +255,65 @@ func main() {
 		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, taskExecutionRepo, catalogRepo, clk, logger)
 	}
 
+	// Retention sweeper — keeps the unbounded-growth tables in check:
+	// processed state_outbox rows, message_processing dedup rows (which retain
+	// a full payload per consumed message) and stored topologies. Processed
+	// outbox rows are kept RETENTION_DAYS; dedup rows, whatever their state,
+	// are kept at least 30 days (the replay horizon), longer when
+	// RETENTION_DAYS is longer; a promoted release is kept RETENTION_DAYS after
+	// it was loaded, and for as long as it is live or a pending or running run
+	// names it. All are pruned on the same timer.
+	mpPruner := pkgmessageprocessing.NewPruner(db, postgres.OutboxTable, logger)
+	topologyPruner := topologyretention.NewPruner(uowFactory, logger)
+	retentionSweeper := pkgoutbox.NewRetentionSweeper(
+		[]pkgoutbox.RetentionTarget{
+			pkgoutbox.OutboxRetentionTarget(db, postgres.OutboxTable, logger),
+			{
+				Name:         "message_processing",
+				Prune:        mpPruner.DeleteOlderThan,
+				MinRetention: model.ReplayHorizon,
+			},
+			{
+				Name:  "topology_releases",
+				Prune: topologyPruner.Prune,
+			},
+		},
+		pkgoutbox.RetentionConfig{
+			Retention: time.Duration(cfg.RetentionDays) * 24 * time.Hour,
+			Interval:  time.Duration(cfg.RetentionSweepIntervalMin) * time.Minute,
+		},
+		logger,
+	)
+	go retentionSweeper.Run(ctx)
+
+	// release.promoted:v2 stores each promoted release's topology in Postgres
+	// and moves state's live-release pointer. The handler reads the release's
+	// topology artifact from object storage before its transaction opens.
+	objectStore, err := objectstore.New(ctx, objectstore.ConfigFromS3(cfg.S3))
+	if err != nil {
+		logger.Error("Failed to build the object-storage client", "error", err)
+		os.Exit(1)
+	}
+	// The seed reconcile loads the dbt seeds whose live content the warehouse
+	// does not hold. It runs inside every release.promoted:v2 transaction that
+	// moves the live release, and every seedReconcileInterval from the loop
+	// started below; maintenance mode stops it creating runs.
+	seedReconciler := seedreconcile.New(uowFactory, cfg.Maintenance, pkgevents.DefaultTenantID, logger)
+	releasePromotedHandler := svchandlers.NewReleasePromotedHandler(s3adapter.NewTopologyArtifactReader(objectStore), seedReconciler, logger)
+
 	// Every state consumer is the same shape: a domain handler wrapped by a
 	// redis binding (parser + dedup + UoW transaction), driven by a
 	// StreamConsumer on its (stream, group). They are declared in one table and
 	// started uniformly via runConsumer below; consumer lifecycle is tied to
 	// ctx — the lifecycle manager cancels ctx on shutdown, which exits each
 	// Start cleanly. Stream/group names always come from pkg/streams constants.
+	// timeout is the handler deadline; 0 keeps pkgredis.DefaultHandlerTimeout.
 	consumers := []struct {
 		name    string
 		stream  string
 		group   string
 		binding pkgredis.MessageHandler
+		timeout time.Duration
 	}{
 		{
 			name:    "schedule_catalog",
@@ -309,16 +346,23 @@ func main() {
 			binding: redis.NewTaskExecutionRecordedBinding(uowFactory, svchandlers.NewTaskExecutionRecordedHandler(logger), logger),
 		},
 		{
-			name:    "release_seeds_pending",
-			stream:  streams.ReleaseSeedsPendingV1,
-			group:   streams.StateReleaseSeedsPending,
-			binding: redis.NewReleaseSeedsPendingBinding(uowFactory, svchandlers.NewPromotedSeedsHandler(logger), logger),
+			name:    "release_promoted",
+			stream:  streams.ReleasePromotedV2,
+			group:   streams.StateReleasePromoted,
+			binding: redis.NewReleasePromotedBinding(uowFactory, releasePromotedHandler, logger),
+			timeout: releasePromotedHandlerTimeout,
 		},
 	}
 	for _, c := range consumers {
-		runConsumer(c.name, pkgredis.NewStreamConsumer(redisClient, c.stream, c.group, c.binding, logger))
+		runConsumer(c.name, pkgredis.NewStreamConsumer(redisClient, c.stream, c.group, c.binding, logger,
+			pkgredis.WithHandlerTimeout(c.timeout)))
 		logger.Info("Stream consumer initialized", "consumer", c.name)
 	}
+
+	// The periodic seed reconcile builds what a promotion's own pass left for
+	// later, such as a seed whose previous load was still running. Its
+	// goroutine is tracked, so shutdown waits for a pass in progress.
+	lifecycleManager.Go(func() { seedReconciler.Loop(ctx, seedReconcileInterval) })
 
 	// Initialize activation handler shared by the cron loop and gRPC methods.
 	activateHandler := svchandlers.NewActivateScheduleHandler(logger)

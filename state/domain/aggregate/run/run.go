@@ -24,6 +24,10 @@ type Run struct {
 	initStatus  InitStatus
 	kind        Kind
 	sourceRunID *uuid.UUID
+	// releaseID is the topology release this run builds, or "" when the
+	// run names none. A promote-seed run carries the release it was
+	// planned against.
+	releaseID string
 	// initiatedBy records the user who triggered this run, or the "system"
 	// sentinel for cron / platform-initiated runs. Stamped at creation and
 	// immutable thereafter.
@@ -106,6 +110,11 @@ func HydrateRun(
 	}
 }
 
+// HydrateReleaseID restores the release id read from
+// scheduler_tracker.release_id on a Run rebuilt by HydrateRun. Used by the
+// postgres adapter only; application code MUST NOT call it.
+func (r *Run) HydrateReleaseID(releaseID string) { r.releaseID = releaseID }
+
 // NewPendingRun creates a fresh PENDING Run for activation. Caller flow:
 // SchedulePolicy.ScheduleExistsInCatalog → SchedulePolicy.IsScheduleAvailable
 // → NewPendingRun → SaveRun → OutboxPublisher.Append.
@@ -155,10 +164,15 @@ func NewPendingRun(
 // run's dbt verb (run/build) against the derived task set. A test source
 // is rejected upstream in orchestrator before a derived run is requested.
 // Stamps last_heartbeat_at so dashboards show the new run immediately.
+//
+// A rerun replays the source run's tasks at the source run's images, so it
+// carries sourceReleaseID, the release the source run names (empty when it
+// names none). A rebase reads the latest topology and carries no release.
 func NewDerivedRun(
 	scheduleName string,
 	kind Kind,
 	sourceRunID uuid.UUID,
+	sourceReleaseID string,
 	initiatedBy string,
 	operation model.Operation,
 	now time.Time,
@@ -186,6 +200,7 @@ func NewDerivedRun(
 	r.changes.created = true
 	var evt DomainEvent
 	if kind == KindRerun {
+		r.releaseID = sourceReleaseID
 		evt = RerunRequested{ID: id, Name: scheduleName, SourceID: sourceRunID, InitiatedBy: initiatedBy}
 	} else {
 		evt = RebaseRequested{ID: id, Name: scheduleName, SourceID: sourceRunID, InitiatedBy: initiatedBy}
@@ -232,14 +247,18 @@ func NewSingleNodeRun(
 	return r, evt, nil
 }
 
-// NewPromotedSeedsRun creates a RUNNING Run for the seeds a promoted release
-// changed, one task per node.
+// NewPromotedSeedsRun creates a RUNNING Run that loads the given seeds of a
+// release into the production schema, one task per node.
 //
 // Unlike every other constructor here the run id is supplied rather than
-// generated. A promotion is announced by an event that can be redelivered, and
-// the caller derives the id deterministically from the release id, so a
-// redelivered promotion resolves to the same run instead of minting a second one
-// that would rebuild the same seeds.
+// generated: the caller derives it deterministically from the release, so
+// planning the same release again resolves to a run that already exists
+// instead of minting a second one that would load the same seeds.
+//
+// The run records releaseID, the release whose content it loads, and its
+// event carries promotionSeq, the live promotion seq the run was planned
+// against (0 when none), so a projecting service can wait until its own
+// topology has reached it.
 //
 // The run carries no operation: a seed is materialised by its own dbt verb,
 // chosen downstream from the node type, not by a verb selected here.
@@ -247,6 +266,7 @@ func NewPromotedSeedsRun(
 	id uuid.UUID,
 	scheduleName string,
 	releaseID string,
+	promotionSeq int64,
 	nodes []SeedNode,
 	now time.Time,
 ) (*Run, DomainEvent, error) {
@@ -268,6 +288,7 @@ func NewPromotedSeedsRun(
 		status:          SchedulerStatusRunning,
 		initStatus:      InitStatusInProgress,
 		kind:            KindPromoteSeed,
+		releaseID:       releaseID,
 		initiatedBy:     "system",
 		createdAt:       now,
 		lastHeartbeatAt: &now,
@@ -275,10 +296,11 @@ func NewPromotedSeedsRun(
 	}
 	r.changes.created = true
 	evt := PromotedSeedsRunRequested{
-		ID:        id,
-		Name:      scheduleName,
-		ReleaseID: releaseID,
-		Nodes:     nodes,
+		ID:           id,
+		Name:         scheduleName,
+		ReleaseID:    releaseID,
+		PromotionSeq: promotionSeq,
+		Nodes:        nodes,
 	}
 	return r, evt, nil
 }
@@ -292,6 +314,7 @@ func (r *Run) ScheduleName() string             { return r.scheduleName }
 func (r *Run) Status() SchedulerStatus          { return r.status }
 func (r *Run) Kind() Kind                       { return r.kind }
 func (r *Run) SourceRunID() *uuid.UUID          { return r.sourceRunID }
+func (r *Run) ReleaseID() string                { return r.releaseID }
 func (r *Run) InitiatedBy() string              { return r.initiatedBy }
 func (r *Run) Operation() model.Operation       { return r.operation }
 func (r *Run) InitializationStatus() InitStatus { return r.initStatus }
@@ -511,6 +534,14 @@ func (r *Run) Cancel(
 //   - the new status is terminal but terminal_task_count != total_task_count
 //     or retryable-failed remains, so finalize is deferred
 //
+// The boolean result reports whether this call persisted a terminal SUCCEEDED
+// for the task: the status write took effect and newStatus is SUCCEEDED. It is
+// false for every ignored delivery (a run already terminal, a superseded
+// attempt, a replay of a finished attempt, a write the task row refused) and for
+// any other status, so a caller that acts on a task's success acts only on the
+// delivery that made it. It does not depend on finalization: an accepted
+// success that leaves other tasks open returns no events and true.
+//
 // Returns ErrTaskRowNotProjected when the task row is not yet present; the
 // adapter binding treats this as a transient error and the consumer redelivers.
 //
@@ -534,9 +565,9 @@ func (r *Run) RecordTaskStatus(
 	newStatus TaskStatus,
 	retryCount int32,
 	now time.Time,
-) ([]DomainEvent, error) {
+) ([]DomainEvent, bool, error) {
 	if r.IsTerminal() {
-		return nil, nil
+		return nil, false, nil
 	}
 	prev, prevAttempt, exists, err := tasks.LoadStatusAndAttempt(ctx, taskID)
 	if err != nil {
@@ -546,7 +577,7 @@ func (r *Run) RecordTaskStatus(
 		// newer terminal already recorded for the task, defeating the
 		// attempt-monotonic guard. Propagate so the consumer redelivers once
 		// the read recovers.
-		return nil, fmt.Errorf("load task status and attempt: %w", err)
+		return nil, false, fmt.Errorf("load task status and attempt: %w", err)
 	}
 
 	// Guard: if the row is not present, return a transient error so the
@@ -554,10 +585,10 @@ func (r *Run) RecordTaskStatus(
 	if !exists {
 		present, exErr := tasks.Exists(ctx, taskID)
 		if exErr != nil {
-			return nil, fmt.Errorf("exists check: %w", exErr)
+			return nil, false, fmt.Errorf("exists check: %w", exErr)
 		}
 		if !present {
-			return nil, ErrTaskRowNotProjected
+			return nil, false, ErrTaskRowNotProjected
 		}
 		// Row reported absent by the status read but present on re-check
 		// (a concurrent insert landed between the two reads); proceed with
@@ -576,7 +607,7 @@ func (r *Run) RecordTaskStatus(
 	// Older attempt — superseded. Covers both a stale RUNNING and a stale
 	// terminal left over from an attempt newer state has already moved past.
 	if prevKnown && retryCount < prevAttempt {
-		return nil, nil
+		return nil, false, nil
 	}
 
 	// Same attempt as the stored row.
@@ -585,64 +616,64 @@ func (r *Run) RecordTaskStatus(
 			// Terminal already recorded for this attempt: a replayed terminal,
 			// or a RUNNING re-delivered after its own terminal. No-op — do not
 			// regress status or un-fill the slot.
-			return nil, nil
+			return nil, false, nil
 		}
 		if !isTerminal {
 			// Non-terminal progress within the attempt (e.g. PENDING→RUNNING).
 			// Persist the status change; the slot is unaffected.
 			if newStatus == prev {
-				return nil, nil
+				return nil, false, nil
 			}
 			affected, err := tasks.SetStatusAndAttempt(ctx, taskID, newStatus, retryCount)
 			if err != nil {
-				return nil, fmt.Errorf("set task status: %w", err)
+				return nil, false, fmt.Errorf("set task status: %w", err)
 			}
 			if affected > 0 {
 				r.recordProgress(now)
 			}
-			return nil, nil
+			return nil, false, nil
 		}
 		// First terminal for this attempt — fill the slot.
 		affected, err := tasks.SetStatusAndAttempt(ctx, taskID, newStatus, retryCount)
 		if err != nil {
-			return nil, fmt.Errorf("set task status: %w", err)
+			return nil, false, fmt.Errorf("set task status: %w", err)
 		}
 		if affected == 0 {
-			return nil, nil // cancelled or vanished — leave counters untouched.
+			return nil, false, nil // cancelled or vanished — leave counters untouched.
 		}
 		r.recordProgress(now)
 		r.fillSlot()
-		return r.finalizeIfComplete(ctx, tasks, now)
+		return r.finalizeApplied(ctx, tasks, newStatus, now)
 	}
 
 	// Newer attempt (retryCount > prevAttempt) or no prior status — adopt it.
 	affected, err := tasks.SetStatusAndAttempt(ctx, taskID, newStatus, retryCount)
 	if err != nil {
-		return nil, fmt.Errorf("set task status: %w", err)
+		return nil, false, fmt.Errorf("set task status: %w", err)
 	}
 	if affected == 0 {
-		return nil, nil // cancelled or vanished — leave counters untouched.
+		return nil, false, nil // cancelled or vanished — leave counters untouched.
 	}
 	r.recordProgress(now)
 	switch {
 	case prevWasTerminal && !isTerminal:
 		// Genuine retry running again — un-fill the slot.
 		r.unfillSlot()
-		return nil, nil
+		return nil, false, nil
 	case !prevWasTerminal && isTerminal:
 		// Terminal of a running/new attempt — fill the slot.
 		r.fillSlot()
-		return r.finalizeIfComplete(ctx, tasks, now)
+		return r.finalizeApplied(ctx, tasks, newStatus, now)
 	case prevWasTerminal && isTerminal:
 		// A newer attempt's terminal arriving after an older attempt's terminal
 		// (e.g. the retry also failed, or it succeeded). The slot stays filled —
 		// no count change — but the task's retryability may have flipped, so
 		// re-check finalization with the now-current attempt persisted.
-		return r.finalizeIfComplete(ctx, tasks, now)
+		return r.finalizeApplied(ctx, tasks, newStatus, now)
 	default:
 		// Non-terminal after non-terminal (newer attempt already running) — the
 		// slot was empty and stays empty.
-		return nil, nil
+		return nil, false, nil
 	}
 }
 
@@ -669,6 +700,17 @@ func (r *Run) unfillSlot() {
 		r.terminalTaskCount = 0
 	}
 	r.changes.terminalTaskCountDirty = true
+}
+
+// finalizeApplied finalizes the run when its tasks are complete, after a
+// terminal status for one of them took effect. The success flag it returns is
+// that status being SUCCEEDED, independent of whether the run finalized.
+func (r *Run) finalizeApplied(ctx context.Context, tasks TaskCollection, applied TaskStatus, now time.Time) ([]DomainEvent, bool, error) {
+	events, err := r.finalizeIfComplete(ctx, tasks, now)
+	if err != nil {
+		return nil, false, err
+	}
+	return events, applied == TaskStatusSucceeded, nil
 }
 
 // finalizeIfComplete finalizes the scheduler when every task is terminal, the

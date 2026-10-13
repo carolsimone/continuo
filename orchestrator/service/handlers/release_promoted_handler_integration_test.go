@@ -54,7 +54,7 @@ func releasePromotedFixture(t *testing.T) (*handlers.ReleasePromotedHandler, *fa
 	cleanup := func() {
 		wipeReleasePromotedFixtures(t, client)
 		_, _ = pgDB.ExecContext(context.Background(),
-			`DELETE FROM orchestrator_outbox WHERE event_type IN ('release_promoted', 'release_seeds_pending')`)
+			`DELETE FROM orchestrator_outbox WHERE event_type = 'release_promoted'`)
 		_, _ = pgDB.ExecContext(context.Background(),
 			`DELETE FROM message_processing WHERE stream_name = $1`, streams.OrchestratorReleasePromoted)
 	}
@@ -200,9 +200,8 @@ func TestReleasePromotedConsumer_TwoDifferentReleases_E2E(t *testing.T) {
 }
 
 // A promotion older than the live one arrives after it: the topology stays on
-// the newer release, no schedules.loaded is written for the older one, and of
-// its changed seeds only the one the live release still carries unchanged is
-// requested — built at the live image.
+// the newer release, no schedules.loaded is written for the older one, and no
+// outbox row names the late release.
 func TestReleasePromotedConsumer_LateOlderPromotion_E2E(t *testing.T) {
 	ctx := context.Background()
 	h, reader, client, pgDB := releasePromotedFixture(t)
@@ -229,13 +228,9 @@ func TestReleasePromotedConsumer_LateOlderPromotion_E2E(t *testing.T) {
 	require.Len(t, loaded, 1, "only the newer release moved the catalog")
 	assert.Equal(t, deterministicEventID(relNew, 2), loaded[0]["event_id"])
 
-	seeds := outboxPayloads(t, pgDB, streams.ReleaseSeedsPendingV1)
-	require.Len(t, seeds, 1)
-	assert.Equal(t, relOld, seeds[0]["release_id"])
-	nodes, ok := seeds[0]["nodes"].([]any)
-	require.True(t, ok)
-	require.Len(t, nodes, 1)
-	node := nodes[0].(map[string]any)
-	assert.Equal(t, "seeds.same", node["table_name"])
-	assert.Equal(t, "img-new", node["image_tag"])
+	var lateRows int
+	require.NoError(t, pgDB.QueryRowContext(ctx,
+		`SELECT count(*) FROM orchestrator_outbox WHERE aggregate_id = $1`,
+		expectedAggregateID(relOld)).Scan(&lateRows))
+	assert.Zero(t, lateRows, "the late release writes nothing: not a catalog, not a seed request")
 }

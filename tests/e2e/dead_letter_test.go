@@ -77,24 +77,25 @@ func TestDeadLetter_RedriveReachesOnlyItsGroup(t *testing.T) {
 	clients := setupClients(t, ctx)
 	t.Cleanup(func() { clients.close(ctx) })
 
-	// release.promoted:v2 has three consumer groups. Both orchestrator groups
-	// reject an entry without an envelope as a permanent failure (their
+	// release.promoted:v2 has four consumer groups. Both orchestrator groups and
+	// state's reject an entry without an envelope as a permanent failure (their
 	// bindings wrap events.DecodeReleasePromoted's error in events.ErrPermanent),
 	// so each dead-letters the original; execution-controller's teardown is
 	// best-effort and acknowledges it. group is the one the redrive addresses;
 	// the others must acknowledge the redriven entry without a handler.
 	const stream = streams.ReleasePromotedV2
 	const group = streams.OrchestratorReleasePromoted
-	otherGroups := []string{streams.OrchestratorReleasePromotedVersions, streams.ExecutorReleasePromoted}
+	otherGroups := []string{streams.OrchestratorReleasePromotedVersions, streams.StateReleasePromoted, streams.ExecutorReleasePromoted}
 
 	// 1-2. Publish the malformed entry and wait for the dead letter of the group
-	// that will be redriven. The sibling orchestrator group dead-letters the same
-	// original; waiting for it too means its late arrival cannot be mistaken for
-	// a result of the redrive.
+	// that will be redriven. The sibling groups dead-letter the same original;
+	// waiting for theirs too means a late arrival cannot be mistaken for a
+	// result of the redrive.
 	origID := publishMalformed(ctx, t, clients, stream)
 	dl := awaitConsumerDeadLetter(ctx, t, clients, stream, group, origID, "open")
 	sibling := awaitConsumerDeadLetter(ctx, t, clients, stream, streams.OrchestratorReleasePromotedVersions, origID, "open")
-	cleanupIDs := []string{dl.GetId(), sibling.GetId()}
+	stateSibling := awaitConsumerDeadLetter(ctx, t, clients, stream, streams.StateReleasePromoted, origID, "open")
+	cleanupIDs := []string{dl.GetId(), sibling.GetId(), stateSibling.GetId()}
 	t.Cleanup(func() { deleteDeadLetterRows(t, clients, cleanupIDs...) })
 	require.True(t, dl.GetRedrivable(), "a dead letter with fields must be redrivable")
 
@@ -186,7 +187,8 @@ func TestDeadLetter_CLIListsAndRedrives(t *testing.T) {
 	origID := publishMalformed(ctx, t, clients, stream)
 	dl := awaitConsumerDeadLetter(ctx, t, clients, stream, group, origID, "open")
 	sibling := awaitConsumerDeadLetter(ctx, t, clients, stream, streams.OrchestratorReleasePromotedVersions, origID, "open")
-	cleanupIDs := []string{dl.GetId(), sibling.GetId()}
+	stateSibling := awaitConsumerDeadLetter(ctx, t, clients, stream, streams.StateReleasePromoted, origID, "open")
+	cleanupIDs := []string{dl.GetId(), sibling.GetId(), stateSibling.GetId()}
 	t.Cleanup(func() { deleteDeadLetterRows(t, clients, cleanupIDs...) })
 
 	// dlq list consumer <stream>: exit 0 and a dead_letters array holding the

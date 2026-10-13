@@ -61,6 +61,7 @@ func TestReleasePromotedV2_ReplacesV1(t *testing.T) {
 		"orchestrator-release-promoted":          false,
 		"orchestrator-release-promoted-versions": false,
 		"executor-release-promoted":              false,
+		"state-release-promoted":                 false,
 	}
 	for _, g := range Groups[ReleasePromotedV2] {
 		if _, ok := want[g]; !ok {
@@ -81,5 +82,21 @@ func TestReleasePromotedV2_ReplacesV1(t *testing.T) {
 	}
 	if !retired {
 		t.Fatal("release.promoted:v1 must be listed in retired_streams")
+	}
+}
+
+func TestReleaseSeedsPendingV1_IsRetired(t *testing.T) {
+	const name = "release.seeds.pending:v1"
+	if _, live := Groups[name]; live {
+		t.Fatalf("%s is still a live stream", name)
+	}
+	retired := false
+	for _, r := range Retired {
+		if r == name {
+			retired = true
+		}
+	}
+	if !retired {
+		t.Fatalf("%s must be listed in retired_streams", name)
 	}
 }

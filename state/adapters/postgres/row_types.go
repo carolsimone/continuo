@@ -31,6 +31,7 @@ type SchedulerTracker struct {
 	SourceRunID          *uuid.UUID                     `json:"source_run_id,omitempty" db:"source_run_id"`
 	InitiatedBy          string                         `json:"initiated_by" db:"initiated_by"`
 	Operation            string                         `json:"operation" db:"operation"`
+	ReleaseID            *string                        `json:"release_id,omitempty" db:"release_id"`
 	ServiceMetadata      map[string]run.ServiceMetadata `json:"service_metadata"`
 	ServiceMetadataRaw   []byte                         `json:"-" db:"service_metadata"`
 }

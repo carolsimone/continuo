@@ -3,6 +3,7 @@ package redis
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 
 	"github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/serialization"
@@ -60,11 +61,37 @@ func ParsePromotedSeedsRun(msg goredis.XMessage) (model.PromotedSeedsRunInput, e
 		}
 	}
 
+	promotionSeq, err := optionalPromotionSeq(msg)
+	if err != nil {
+		return model.PromotedSeedsRunInput{}, err
+	}
+
 	return model.PromotedSeedsRunInput{
 		RunID:        scheduleID,
 		ScheduleName: scheduleName,
 		ReleaseID:    releaseID,
 		Nodes:        nodes,
 		InitiatedBy:  optionalUserField(msg, "initiated_by"),
+		PromotionSeq: promotionSeq,
 	}, nil
+}
+
+// optionalPromotionSeq reads promotion_seq, the live promotion seq state
+// planned the run against. The field is optional and 0 stands for its absence;
+// present, it must be a positive decimal integer, and anything else is
+// permanent.
+func optionalPromotionSeq(msg goredis.XMessage) (int64, error) {
+	raw, present := msg.Values["promotion_seq"]
+	if !present {
+		return 0, nil
+	}
+	s, ok := raw.(string)
+	if !ok {
+		return 0, fmt.Errorf("%w: message %s has a non-string promotion_seq field", events.ErrPermanent, msg.ID)
+	}
+	seq, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || seq < 1 {
+		return 0, fmt.Errorf("%w: message %s has promotion_seq %q, want a positive integer", events.ErrPermanent, msg.ID, s)
+	}
+	return seq, nil
 }
