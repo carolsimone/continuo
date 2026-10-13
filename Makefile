@@ -145,8 +145,14 @@ FLYWAY_JOBS := flyway-state flyway-execution flyway-orchestrator flyway-release 
                flyway-agent-chat flyway-remediation flyway-agent-remediation \
                flyway-dead-letter
 
+# Where the compose stack's published ports are reachable from THIS host. On a
+# kind lane of the self-hosted runner, the lane's own Docker daemon publishes
+# on 127.0.N.1 and the runner exports CI_HOST_IP to match; everywhere else
+# (laptops, GitHub-hosted fork-PR runs) it is localhost.
+CI_HOST_IP ?= localhost
+
 # Data dependencies for Go tests: Postgres+Neo4j+Redis up and migrated. No service
-# images are built. Tests reach these via POSTGRES_HOST=localhost.
+# images are built. Tests reach these via POSTGRES_HOST=$(CI_HOST_IP).
 .PHONY: test-deps-up
 test-deps-up:
 	$(DOCKER_COMPOSE) up -d postgres neo4j redis
@@ -194,19 +200,19 @@ test-go: test-deps-up
 	    orchestrator) db=continuo_orchestrator; extra="GOFLAGS=-p=1";; \
 	    execution-controller) db=continuo_execution;; \
 	    release-controller) db=continuo_release; \
-	      extra="RELEASE_TEST_PG_DSN=postgres://continuo_svc:continuo@localhost:5432/continuo_release?sslmode=disable GOFLAGS=-p=1";; \
+	      extra="RELEASE_TEST_PG_DSN=postgres://continuo_svc:continuo@$(CI_HOST_IP):5432/continuo_release?sslmode=disable GOFLAGS=-p=1";; \
 	    remediation) db=continuo_remediation;; \
 	    dead-letter-controller) db=continuo_dead_letter; \
-	      extra="REDIS_ADDR=localhost:6379 REDIS_PASSWORD=continuo GOFLAGS=-p=1";; \
+	      extra="REDIS_ADDR=$(CI_HOST_IP):6379 REDIS_PASSWORD=continuo GOFLAGS=-p=1";; \
 	    agent-remediation) db=continuo_agent_remediation;; agent-chat) db=continuo_agent_chat;; \
 	    pkg) db=continuo_execution; pkgs=./...; \
-	      extra="REDIS_ADDR=localhost:6379 REDIS_PASSWORD=continuo GOFLAGS=-p=1";; \
+	      extra="REDIS_ADDR=$(CI_HOST_IP):6379 REDIS_PASSWORD=continuo GOFLAGS=-p=1";; \
 	    *) echo "unknown service $$s" >&2; exit 2;; \
 	  esac; \
 	  echo "== go test $$s (db=$$db) =="; \
-	  (cd $$s && env POSTGRES_HOST=localhost POSTGRES_PORT=5432 POSTGRES_DB=$$db \
+	  (cd $$s && env POSTGRES_HOST=$(CI_HOST_IP) POSTGRES_PORT=5432 POSTGRES_DB=$$db \
 	     POSTGRES_USER=continuo_svc POSTGRES_PASSWORD=continuo DB_SSLMODE=disable \
-	     NEO4J_HOST=localhost NEO4J_URI=bolt://localhost:7687 NEO4J_USER=neo4j \
+	     NEO4J_HOST=$(CI_HOST_IP) NEO4J_URI=bolt://$(CI_HOST_IP):7687 NEO4J_USER=neo4j \
 	     NEO4J_PASSWORD=atlas_password REQUIRE_TEST_DEPS=1 $$extra \
 	     go test -tags integration -count=1 $$pkgs -timeout 20m) || rc=1; \
 	done; exit $$rc
@@ -320,7 +326,7 @@ stack-up:
 e2e:
 	bash tests/e2e/start-services.sh
 	$(DOCKER_COMPOSE) up -d ui
-	bash -c 'source scripts/lib/common.sh && wait_for_http_host http://localhost:8090/api/schedulers'
+	bash -c 'source scripts/lib/common.sh && wait_for_http_host http://$(CI_HOST_IP):8090/api/schedulers'
 	bash tests/e2e/deploy-k8s-controllers.sh
 	docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator go test -v -count=1 -timeout 100m /app/tests/e2e/...
 	bash tests/e2e/cleanup-k8s-controllers.sh

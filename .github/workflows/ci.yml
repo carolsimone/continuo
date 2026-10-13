@@ -301,7 +301,9 @@ jobs:
         timeout-minutes: 140
         run: |
           source scripts/lib/common.sh
-          docker compose up -d ui && wait_for_http_host http://localhost:8090/api/schedulers
+          # CI_HOST_IP is the lane's bind IP on the self-hosted runner (each kind
+          # lane's own Docker daemon publishes there); unset on GitHub-hosted.
+          docker compose up -d ui && wait_for_http_host "http://${CI_HOST_IP:-localhost}:8090/api/schedulers"
           bash tests/e2e/deploy-k8s-controllers.sh
           docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator go test -v -timeout 125m /app/tests/e2e/...
 
