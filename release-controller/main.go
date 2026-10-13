@@ -142,6 +142,15 @@ func main() {
 	})
 	metricsReg.WatchDB(db.DB, cfg.Postgres.DB)
 
+	// release-controller never reads the columns that held topologies inline,
+	// so it refuses to run on a database that still has them: release migration
+	// V26 has not applied yet, or it refused because rows still need them.
+	// Nothing else has started yet.
+	if err := handlers.CheckLegacyTopologyColumnsDropped(ctx, postgres.NewLegacyTopologyColumns(db)); err != nil {
+		logger.Error("Refusing to start: the release database is not migrated", "error", err)
+		os.Exit(1)
+	}
+
 	// One object-storage client, passed to each adapter as the role it uses:
 	// prune-time prefix deletion (objectstore.PrefixDeleter), and topology
 	// artifact reads and writes (objectstore.ReadWriter).
