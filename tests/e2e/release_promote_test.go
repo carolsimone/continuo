@@ -898,11 +898,10 @@ func seedCurrentProd(t *testing.T, ctx context.Context, clients *testClients, no
 	key := topologyartifact.Key(events.DefaultTenantID, releaseID)
 	putS3Object(t, ctx, clients, key, gz)
 	_, err = clients.releaseDB.ExecContext(ctx,
-		`INSERT INTO current_prod (id, release_id, topology_snapshot, topology_uri, topology_sha256, node_count, updated_at)
-		 VALUES (1, $1, NULL, $2, $3, $4, now())
+		`INSERT INTO current_prod (id, release_id, topology_uri, topology_sha256, node_count, updated_at)
+		 VALUES (1, $1, $2, $3, $4, now())
 		 ON CONFLICT (id) DO UPDATE SET
 		   release_id = EXCLUDED.release_id,
-		   topology_snapshot = NULL,
 		   topology_uri = EXCLUDED.topology_uri,
 		   topology_sha256 = EXCLUDED.topology_sha256,
 		   node_count = EXCLUDED.node_count,

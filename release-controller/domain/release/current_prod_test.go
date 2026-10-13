@@ -50,10 +50,3 @@ func TestCurrentProd_ReannounceRecordsTheSeqOnly(t *testing.T) {
 	assert.Equal(t, time.Unix(10, 0), cp.UpdatedAt())
 	assert.Error(t, cp.Reannounce(9), "the same seq twice is refused")
 }
-
-func TestCurrentProd_RecordArtifact(t *testing.T) {
-	cp := release.RehydrateCurrentProd("r1", release.TopologyRef{}, 0, time.Unix(10, 0))
-	cp.RecordArtifact(prodRef)
-	assert.Equal(t, prodRef, cp.Topology())
-	assert.Equal(t, "r1", cp.ReleaseID())
-}

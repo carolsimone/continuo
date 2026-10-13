@@ -42,11 +42,6 @@ func (c *CurrentProd) Update(releaseID string, topology TopologyRef, promotionSe
 	return nil
 }
 
-// RecordArtifact attaches the topology artifact of the release current_prod
-// already names: the one-time step for a release promoted before topology
-// artifacts existed.
-func (c *CurrentProd) RecordArtifact(topology TopologyRef) { c.topology = topology }
-
 // Reannounce records a fresh promotion seq for the release current_prod
 // already names. The release, its topology and the time current_prod last
 // moved stay as they are.

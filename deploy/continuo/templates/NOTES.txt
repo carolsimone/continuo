@@ -23,17 +23,13 @@ UPGRADE NOTES
   If this upgrade already failed, re-run with --dry-run to see the exact
   rendering/validation error before retrying for real.
 
-  Release topologies now live in object storage (tenants/<tenant>/topologies/
-  in your bucket). Upgrade with no release in flight: turn maintenance on,
-  wait for the active release to finish, upgrade, turn maintenance off. A
-  release caught mid-parse is rejected as upgrade_interrupted; submit it again.
+  Release topologies live in object storage (tenants/<tenant>/topologies/ in
+  your bucket).
   With an external bucket (s3.*), grant topology-controller write access and
   release-controller read/write/delete access to tenants/, and keep any
   lifecycle expiry rule off that prefix.
   orchestrator and state also read tenants/ (read access with an external
   bucket).
-  After the upgrade, release-controller re-announces the current prod release
-  once; promotions are then numbered, and an older one never replaces a newer.
 {{- if .Values.validation.imageTag }}
 
   BREAKING — validation.imageTag is set on this release, and the validation
@@ -68,6 +64,16 @@ UPGRADE NOTES
 {{- end }}
 
 {{- if .Release.IsUpgrade }}
+
+BREAKING: upgrade through continuo 0.10.0 first. This release drops
+release-controller's inline topology columns, and its database migration
+refuses to run until release-controller 0.10.0 has started once and
+moved their contents into object storage. From an older release, upgrade to
+0.10.0, wait until release-controller is Ready, then upgrade to this
+release. Upgrade with no release in flight (maintenance on, the active release
+finished). release-controller refuses to start until that migration has
+applied; if it keeps exiting with a message naming the db-init-migrate Job,
+the migration refused: upgrade to 0.10.0 first.
 
 BREAKING (service renames): the "ui-service" service is now "ui". If your
 values override services[].name entries, update them before upgrading.

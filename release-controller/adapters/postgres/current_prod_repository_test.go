@@ -38,33 +38,15 @@ func TestCurrentProdRepository_UpsertAndGet(t *testing.T) {
 	assert.Equal(t, time.Unix(500, 0).UTC(), got.UpdatedAt().UTC())
 }
 
-// A row written before topology artifacts existed reads with the release it
-// names and no topology reference.
-func TestCurrentProdRepository_LegacyRowHasNoTopologyRef(t *testing.T) {
+// A row that references no topology artifact reads with a zero reference: its
+// NULL reference columns map to a zero TopologyRef.
+func TestCurrentProdRepository_RowWithoutAnArtifactHasNoTopologyRef(t *testing.T) {
 	db := openTestDB(t)
-	_, err := db.Exec(`INSERT INTO current_prod (id, release_id, topology_snapshot, updated_at)
-		VALUES (1, 'rLegacy', '[{"unique_id":"a"}]'::jsonb, now())`)
+	_, err := db.Exec(`INSERT INTO current_prod (id, release_id, updated_at) VALUES (1, '', now())`)
 	require.NoError(t, err)
 
 	got, err := postgres.NewCurrentProdRepository(db).Get(context.Background())
 	require.NoError(t, err)
-	assert.Equal(t, "rLegacy", got.ReleaseID())
+	assert.Empty(t, got.ReleaseID())
 	assert.True(t, got.Topology().IsZero())
-}
-
-// Every write by reference clears the legacy snapshot, so the JSONB never
-// disagrees with the release current_prod names.
-func TestCurrentProdRepository_UpsertClearsTheLegacySnapshot(t *testing.T) {
-	db := openTestDB(t)
-	_, err := db.Exec(`INSERT INTO current_prod (id, release_id, topology_snapshot, updated_at)
-		VALUES (1, 'rLegacy', '[{"unique_id":"a"}]'::jsonb, now())`)
-	require.NoError(t, err)
-
-	ref := release.TopologyRef{URI: "s3://b/k", SHA256: "f00d", NodeCount: 1}
-	require.NoError(t, postgres.NewCurrentProdRepository(db).Upsert(context.Background(),
-		release.RehydrateCurrentProd("rLegacy", ref, 1, time.Unix(500, 0).UTC())))
-
-	var snapshotIsNull bool
-	require.NoError(t, db.Get(&snapshotIsNull, `SELECT topology_snapshot IS NULL FROM current_prod WHERE id = 1`))
-	assert.True(t, snapshotIsNull)
 }

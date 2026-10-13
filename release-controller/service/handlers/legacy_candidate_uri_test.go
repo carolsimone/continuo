@@ -7,10 +7,10 @@ import (
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 )
 
-// A run from before topology artifacts stored each node's candidate SQL URI
-// inline, as topology-controller built it. The upgrade step drops those URIs,
-// and validation and rejection derive them per run instead; this pins that
-// the derived URI is the one the run stored, for every node type.
+// A run created before topology artifacts stored each node's candidate SQL URI
+// inline, as topology-controller built it, and the candidate SQL objects stay at
+// those URIs. Validation and rejection derive the URIs per run instead; this
+// pins that the derived URI is the one the run stored, for every node type.
 func TestCandidateArtifactURI_EqualsTheURIsLegacyRunsStored(t *testing.T) {
 	const legacy = `[
 	  {"unique_id":"core.orders","node_type":"dbt-model","candidate_artifact_uri":"s3://continuo/candidate-sql/rel-7/candidate_core.orders.sql"},

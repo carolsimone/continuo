@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"time"
 
 	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/service/uow"
 )
 
 // ErrNoCurrentProd reports that nothing has been promoted, so there is no
@@ -130,7 +132,7 @@ func ReannounceCurrentProd(ctx context.Context, d *Deps) (AnnounceResult, error)
 		return AnnounceResult{}, ErrNoCurrentProd
 	}
 	if cp.Topology().IsZero() {
-		return AnnounceResult{}, fmt.Errorf("current_prod %s references no topology artifact; start release-controller once so its startup step writes it", cp.ReleaseID())
+		return AnnounceResult{}, fmt.Errorf("current_prod %s references no topology artifact", cp.ReleaseID())
 	}
 	seq, err := reannounce(ctx, u, cp, d.Clock.Now())
 	if err != nil {
@@ -155,4 +157,32 @@ func CurrentProdTopology(ctx context.Context, d *Deps) (release.Topology, error)
 		return nil, ErrNoCurrentProd
 	}
 	return loadProdTopology(ctx, d, cp)
+}
+
+// reannounce takes the next promotion seq, records it on cp, persists cp and
+// queues release.promoted:v2 for cp's release and artifact. A re-announcement
+// changes nothing but the seq, so it names no changed node, no candidate
+// schema and no code bundle.
+func reannounce(ctx context.Context, u uow.UnitOfWork, cp *release.CurrentProd, now time.Time) (int64, error) {
+	seq, err := u.PromotionSequenceRepo().Next(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("take promotion seq: %w", err)
+	}
+	if err := cp.Reannounce(seq); err != nil {
+		return 0, fmt.Errorf("re-announce current prod: %w", err)
+	}
+	if err := u.CurrentProdRepo().Upsert(ctx, cp); err != nil {
+		return 0, fmt.Errorf("upsert current prod: %w", err)
+	}
+	ref := cp.Topology()
+	if err := enqueueReleasePromoted(ctx, u, events.ReleasePromoted{
+		ReleaseID:      cp.ReleaseID(),
+		PromotedAt:     now.UTC(),
+		PromotionSeq:   seq,
+		TopologyURI:    ref.URI,
+		TopologySHA256: ref.SHA256,
+	}); err != nil {
+		return 0, err
+	}
+	return seq, nil
 }
