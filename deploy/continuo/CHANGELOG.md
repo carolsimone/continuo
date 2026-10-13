@@ -12,6 +12,8 @@ shipped in those.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-13
+
 ### Breaking
 - release-controller's database drops the columns that held topologies inline in Postgres — `release_pipeline_runs.candidate_topology`, `release_pipeline_runs.parsing_at_upgrade` and `current_prod.topology_snapshot` — and release-controller drops the startup steps that moved their contents into object storage. An install must have run release-controller of continuo 0.10.0 at least once before it upgrades to this release. The release database migration refuses to run otherwise: while a run still holds an inline candidate topology, a run left parsing by that earlier upgrade is still parsing, or `current_prod` names a release with no topology object, it fails with "upgrade to continuo 0.10.0 and let release-controller start once before upgrading to this release" and drops nothing. From an older release, upgrade to 0.10.0 first, wait until release-controller is Ready, then upgrade to this release. Upgrade with no release in flight (maintenance on, the active release finished): a release-controller 0.10.0 pod still serving during the upgrade fails any promotion it handles once the column is dropped. release-controller refuses to start until that migration has applied, so with the bundled Postgres, where pods start before the `db-init-migrate` Job ends, it restarts until the Job completes; if the migration refused, release-controller keeps exiting with a message naming the Job and 0.10.0, and the previous release's data is untouched. No values change. MINOR.
 
