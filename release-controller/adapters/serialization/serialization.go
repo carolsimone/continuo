@@ -1,7 +1,7 @@
 // Package serialization holds the wire- and persistence-facing DTOs for
 // release-controller's boundary types, keeping the domain packages (pipeline,
 // release) free of json struct tags. The Postgres repositories (JSONB columns),
-// the HTTP read handlers (response bodies), and the Redis manifest binding all
+// the HTTP read handlers (response bodies) and the release.rejected:v1 encoder
 // map through these DTOs, so the on-disk and on-the-wire byte shapes are fixed
 // here rather than on the domain types.
 package serialization
