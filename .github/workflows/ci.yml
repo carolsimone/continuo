@@ -40,7 +40,7 @@ jobs:
     # fromJSON is needed because a ternary cannot yield a YAML sequence.
     runs-on: ${{ github.event.pull_request.head.repo.fork
       && 'ubuntu-latest'
-      || fromJSON('["self-hosted","kind"]') }}
+      || fromJSON('["arm-probe","arm-probe-kind"]') }}
     # Hard backstop against runaway runs. Without this the job inherits GitHub's
     # 6-hour default, so a stuck step (e.g. a hung image build) can silently burn
     # hours of Actions minutes. Deliberately below the sum of the two step caps
