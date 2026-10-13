@@ -38,3 +38,24 @@ func TestLegacyTopologyColumns_RefusesASchemaBeforeV26(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, handlers.ErrLegacyTopologyColumnsPresent)
 }
+
+// A reachable but un-migrated database has neither the tables nor the columns.
+// The check refuses it rather than reading the absent columns as a migration
+// that has run, so release-controller never starts against a schema it cannot
+// use.
+func TestLegacyTopologyColumns_RefusesAnUninitializedSchema(t *testing.T) {
+	db := releaseDBBefore(t, 1)
+	cols := postgres.NewLegacyTopologyColumns(db)
+
+	initialized, err := cols.SchemaInitialized(context.Background())
+	require.NoError(t, err)
+	assert.False(t, initialized)
+
+	present, err := cols.Present(context.Background())
+	require.NoError(t, err)
+	assert.Empty(t, present)
+
+	err = handlers.CheckLegacyTopologyColumnsDropped(context.Background(), cols)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, handlers.ErrReleaseSchemaNotReady)
+}
