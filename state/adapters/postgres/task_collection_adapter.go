@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
+	"github.com/carolsimone/continuo/state/domain/topology"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 )
@@ -96,6 +97,7 @@ func taskFromRow(t *TaskTracker) run.Task {
 		ImageTag:            t.ImageTag,
 		InheritedFromTaskID: t.InheritedFromTaskID,
 		Operation:           operationFromColumn(t.Operation),
+		NodeKey:             topology.NodeKey(stringOrEmpty(t.NodeKey)),
 	}
 }
 
@@ -123,6 +125,7 @@ func (a *TaskCollectionAdapter) BulkCreate(ctx context.Context, tasks []run.Task
 			ImageTag:            t.ImageTag,
 			InheritedFromTaskID: t.InheritedFromTaskID,
 			Operation:           operationWithDefault(string(t.Operation)),
+			NodeKey:             optionalString(string(t.NodeKey)),
 		})
 	}
 	return a.repo.BulkCreateTx(ctx, a.tx, rows)

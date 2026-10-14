@@ -74,6 +74,7 @@ type TaskTracker struct {
 	ImageTag            string         `json:"image_tag" db:"image_tag"`
 	InheritedFromTaskID *uuid.UUID     `json:"inherited_from_task_id,omitempty" db:"inherited_from_task_id"`
 	Operation           string         `json:"operation" db:"operation"`
+	NodeKey             *string        `json:"node_key,omitempty" db:"node_key"`
 }
 
 // TaskExecution is the storage row carrier for the task_execution table.

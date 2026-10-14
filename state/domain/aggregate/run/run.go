@@ -8,6 +8,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/domain"
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/num"
+	"github.com/carolsimone/continuo/state/domain/topology"
 	"github.com/google/uuid"
 )
 
@@ -430,6 +431,7 @@ func (r *Run) acceptDispatch(
 			ServiceName:         p.ServiceName,
 			SchemaName:          p.SchemaName,
 			TableName:           p.TableName,
+			NodeKey:             topology.KeyOf(p.SchemaName, p.TableName),
 			JobName:             jobName,
 			Status:              p.Status,
 			MaxRetries:          int(p.MaxRetries),

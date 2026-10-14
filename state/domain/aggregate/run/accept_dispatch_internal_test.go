@@ -8,7 +8,10 @@ import (
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/identity"
+	"github.com/carolsimone/continuo/state/domain/topology"
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // createOnlyTasks is a TaskCollection that records BulkCreate; the dispatch
@@ -61,4 +64,19 @@ func TestAcceptDispatch_UnnameableTaskFinalizesRunFailed(t *testing.T) {
 	if !r.Changes().IsStatusDirty() || !r.Changes().IsCompletedDirty() {
 		t.Fatal("the failed outcome must be marked for SaveRun")
 	}
+}
+
+// AcceptDispatch records each task's node key, the lowercased schema.table.
+func TestAcceptDispatch_TasksCarryTheirNodeKey(t *testing.T) {
+	r, _, err := NewPendingRun("daily", KindCron, nil, "system", nil, model.OperationRun, ReleaseStamp{}, time.Now())
+	require.NoError(t, err)
+	tasks := &createOnlyTasks{}
+
+	_, err = r.AcceptDispatch(context.Background(), tasks, []DispatchedTask{
+		{TaskID: uuid.New(), ServiceName: "svc", SchemaName: "RAW", TableName: "Orders", Status: TaskStatusPending, MaxRetries: 2, ImageTag: "svc:1"},
+	}, time.Now())
+	require.NoError(t, err)
+
+	require.Len(t, tasks.created, 1)
+	assert.Equal(t, topology.NodeKey("raw.orders"), tasks.created[0].NodeKey)
 }

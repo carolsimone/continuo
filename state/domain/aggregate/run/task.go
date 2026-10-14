@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/state/domain/topology"
 	"github.com/google/uuid"
 )
 
@@ -17,6 +18,7 @@ type Task struct {
 	ServiceName         string
 	SchemaName          string
 	TableName           string
+	NodeKey             topology.NodeKey
 	JobName             string
 	Status              TaskStatus
 	RetryCount          int
