@@ -62,6 +62,13 @@ func (f *fakeTopologyRepo) ReleaseNodes(context.Context, string, string, string)
 	return nil, nil
 }
 
+func (f *fakeTopologyRepo) ScheduleGraph(context.Context, string, string, string) (topology.Graph, error) {
+	return topology.Graph{}, nil
+}
+func (f *fakeTopologyRepo) Graph(context.Context, string, string, []topology.NodeKey) (topology.Graph, error) {
+	return topology.Graph{}, nil
+}
+
 func (f *fakeTopologyRepo) NodeContentHash(context.Context, string, string, topology.NodeKey) (string, bool, error) {
 	return "", false, nil
 }
