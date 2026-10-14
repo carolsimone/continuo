@@ -121,7 +121,8 @@ var _ UnitOfWork = (*FakeUnitOfWork)(nil)
 var ErrNotFaked = errors.New("uow fake: method not faked")
 
 // LiveReleaseOnly is a repository.TopologyRepository that answers only
-// LivePointer, with Live. Handler tests that create runs use it.
+// LivePointer, with Live, and LockTopology, which it grants at once. Handler
+// tests that create runs use it.
 type LiveReleaseOnly struct{ Live topology.Pointer }
 
 var _ repository.TopologyRepository = (*LiveReleaseOnly)(nil)
@@ -129,7 +130,7 @@ var _ repository.TopologyRepository = (*LiveReleaseOnly)(nil)
 func (f *LiveReleaseOnly) LivePointer(context.Context, string) (topology.Pointer, error) {
 	return f.Live, nil
 }
-func (f *LiveReleaseOnly) LockTopology(context.Context) error { return ErrNotFaked }
+func (f *LiveReleaseOnly) LockTopology(context.Context) error { return nil }
 func (f *LiveReleaseOnly) SaveRelease(context.Context, topology.Release) (bool, error) {
 	return false, ErrNotFaked
 }
