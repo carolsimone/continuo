@@ -514,12 +514,11 @@ func (r *Run) acceptDispatch(
 // started_at and its progress clock. A plan without a pending task leaves
 // nothing to run, so the run finalizes succeeded at once.
 //
-// Start refuses a terminal run (ErrAlreadyTerminal), a run whose tasks are
-// already stored (ErrAlreadyPlanned), a plan without tasks (ErrNoNodes) and a
-// plan naming a node g does not hold (ErrPlanNodeNotInGraph) and a plan whose
-// ready list names a task that is not one of its pending tasks
-// (ErrPlanReadyNotPending), before it
-// stores anything.
+// Start refuses, before it stores anything: a terminal run (ErrAlreadyTerminal),
+// a run whose tasks are already stored (ErrAlreadyPlanned), a plan without
+// tasks (ErrNoNodes), a plan naming a node g does not hold
+// (ErrPlanNodeNotInGraph), and a plan whose ready list names a task that is
+// not one of its pending tasks (ErrPlanReadyNotPending).
 func (r *Run) Start(
 	ctx context.Context,
 	tasks TaskCollection,
