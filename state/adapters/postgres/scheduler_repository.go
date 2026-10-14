@@ -252,7 +252,7 @@ func (r *schedulerTrackerRepository) GetByID(ctx context.Context, scheduleID uui
 			cancelled_at, cancelled_by, cancellation_reason,
 			initialization_status, service_metadata,
 			total_task_count, terminal_task_count,
-			kind, source_run_id, initiated_by, operation, release_id, promotion_seq
+			kind, source_run_id, initiated_by, operation, release_id, promotion_seq, planned_at
 		FROM scheduler_tracker
 		WHERE schedule_id = $1
 	`
@@ -366,7 +366,7 @@ func (r *schedulerTrackerRepository) GetActiveScheduler(ctx context.Context, sch
 			cancelled_at, cancelled_by, cancellation_reason,
 			initialization_status, service_metadata,
 			total_task_count, terminal_task_count,
-			kind, source_run_id, initiated_by, operation, release_id, promotion_seq
+			kind, source_run_id, initiated_by, operation, release_id, promotion_seq, planned_at
 		FROM scheduler_tracker
 		WHERE schedule_name = $1
 		  AND status IN ('pending', 'running')
@@ -475,7 +475,7 @@ func (r *schedulerTrackerRepository) GetByIDForUpdateTx(ctx context.Context, tx 
 			cancelled_at, cancelled_by, cancellation_reason,
 			initialization_status, service_metadata,
 			total_task_count, terminal_task_count,
-			kind, source_run_id, initiated_by, operation, release_id, promotion_seq
+			kind, source_run_id, initiated_by, operation, release_id, promotion_seq, planned_at
 		FROM scheduler_tracker
 		WHERE schedule_id = $1
 		FOR UPDATE
@@ -546,6 +546,8 @@ type RunRowUpdate struct {
 	// LastHeartbeatAt is the run's progress clock: the last dispatch or applied
 	// task status change.
 	LastHeartbeatAt *time.Time
+	// PlannedAt is when state chose and stored the run's tasks.
+	PlannedAt *time.Time
 	// CompletedAtNow, when true, sets completed_at = NOW() (terminal transition).
 	CompletedAtNow bool
 }
@@ -555,8 +557,8 @@ type RunRowUpdate struct {
 // and values are bound as parameters. Returns ErrNotFound when the row is
 // absent. A no-op fields set (nothing dirty) returns nil without touching the DB.
 func (r *schedulerTrackerRepository) UpdateRunRowTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, fields RunRowUpdate) error {
-	setClauses := make([]string, 0, 7)
-	args := make([]any, 0, 8)
+	setClauses := make([]string, 0, 8)
+	args := make([]any, 0, 9)
 
 	add := func(column string, value any) {
 		args = append(args, value)
@@ -580,6 +582,9 @@ func (r *schedulerTrackerRepository) UpdateRunRowTx(ctx context.Context, tx *sql
 	}
 	if fields.LastHeartbeatAt != nil {
 		add("last_heartbeat_at", *fields.LastHeartbeatAt)
+	}
+	if fields.PlannedAt != nil {
+		add("planned_at", *fields.PlannedAt)
 	}
 	if fields.CompletedAtNow {
 		setClauses = append(setClauses, "completed_at = NOW()")

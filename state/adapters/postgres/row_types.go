@@ -33,6 +33,7 @@ type SchedulerTracker struct {
 	Operation            string                         `json:"operation" db:"operation"`
 	ReleaseID            *string                        `json:"release_id,omitempty" db:"release_id"`
 	PromotionSeq         *int64                         `json:"promotion_seq,omitempty" db:"promotion_seq"`
+	PlannedAt            *time.Time                     `json:"planned_at,omitempty" db:"planned_at"`
 	ServiceMetadata      map[string]run.ServiceMetadata `json:"service_metadata"`
 	ServiceMetadataRaw   []byte                         `json:"-" db:"service_metadata"`
 }
@@ -75,6 +76,7 @@ type TaskTracker struct {
 	InheritedFromTaskID *uuid.UUID     `json:"inherited_from_task_id,omitempty" db:"inherited_from_task_id"`
 	Operation           string         `json:"operation" db:"operation"`
 	NodeKey             *string        `json:"node_key,omitempty" db:"node_key"`
+	DispatchedAt        *time.Time     `json:"dispatched_at,omitempty" db:"dispatched_at"`
 }
 
 // TaskExecution is the storage row carrier for the task_execution table.

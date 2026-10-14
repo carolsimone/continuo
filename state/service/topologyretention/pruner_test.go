@@ -59,6 +59,13 @@ func (f *pruneTopology) ReleaseNodes(context.Context, string, string, string) ([
 	return nil, errors.New("ReleaseNodes is not used by the pruner")
 }
 
+func (f *pruneTopology) ScheduleGraph(context.Context, string, string, string) (topology.Graph, error) {
+	return topology.Graph{}, errors.New("ScheduleGraph is not used by the pruner")
+}
+func (f *pruneTopology) Graph(context.Context, string, string, []topology.NodeKey) (topology.Graph, error) {
+	return topology.Graph{}, errors.New("Graph is not used by the pruner")
+}
+
 func (f *pruneTopology) NodeContentHash(context.Context, string, string, topology.NodeKey) (string, bool, error) {
 	return "", false, errors.New("NodeContentHash is not used by the pruner")
 }

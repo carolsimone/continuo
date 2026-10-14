@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	repository "github.com/carolsimone/continuo/state/domain/repository"
 	"github.com/carolsimone/continuo/state/domain/topology"
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 )
 
 // topologyLockKey is the transaction-scoped advisory-lock key that serialises
@@ -251,6 +253,120 @@ func (r *TopologyRepository) ReleaseNodes(ctx context.Context, tenantID, release
 		nodes = append(nodes, row.toDomain())
 	}
 	return nodes, nil
+}
+
+// topologyNodeColumns lists the topology_nodes columns topologyNodeRow scans.
+const topologyNodeColumns = `node_key, unique_id, service_name, schema_name, table_name, node_type, test_count,
+		       content_hash, image_tag, secret_ref, schedule_name`
+
+// ScheduleGraph reads the schedule's nodes through idx_topology_nodes_schedule
+// and the edges into them, then the dbt-seed nodes among the upstreams those
+// edges name outside the schedule. Each read is an index lookup by key, so the
+// cost follows the schedule's size whatever the table's statistics say.
+func (r *TopologyRepository) ScheduleGraph(ctx context.Context, tenantID, releaseID, scheduleName string) (topology.Graph, error) {
+	var rows []topologyNodeRow
+	if err := sqlx.SelectContext(ctx, r.conn(), &rows, `
+		SELECT `+topologyNodeColumns+`
+		FROM topology_nodes
+		WHERE tenant_id = $1 AND release_id = $2 AND schedule_name = $3`,
+		tenantID, releaseID, scheduleName); err != nil {
+		return topology.Graph{}, fmt.Errorf("read the nodes of schedule %s in release %s: %w", scheduleName, releaseID, err)
+	}
+	if len(rows) == 0 {
+		return topology.Graph{}, nil
+	}
+	edges, err := r.edgesInto(ctx, tenantID, releaseID, rows)
+	if err != nil {
+		return topology.Graph{}, err
+	}
+	held := make(map[string]bool, len(rows))
+	for _, row := range rows {
+		held[row.NodeKey] = true
+	}
+	var outside []string
+	for _, e := range edges {
+		if !held[string(e.Upstream)] {
+			held[string(e.Upstream)] = true
+			outside = append(outside, string(e.Upstream))
+		}
+	}
+	if len(outside) > 0 {
+		var seeds []topologyNodeRow
+		if err := sqlx.SelectContext(ctx, r.conn(), &seeds, `
+			SELECT `+topologyNodeColumns+`
+			FROM topology_nodes
+			WHERE tenant_id = $1 AND release_id = $2 AND node_key = ANY($3) AND node_type = $4`,
+			tenantID, releaseID, pq.Array(outside), string(model.NodeTypeDbtSeed)); err != nil {
+			return topology.Graph{}, fmt.Errorf("read the seeds schedule %s reads in release %s: %w", scheduleName, releaseID, err)
+		}
+		rows = append(rows, seeds...)
+	}
+	return graphOf(rows, edges), nil
+}
+
+// Graph reads the release's nodes with a key in keys through the primary key,
+// then the edges into them.
+func (r *TopologyRepository) Graph(ctx context.Context, tenantID, releaseID string, keys []topology.NodeKey) (topology.Graph, error) {
+	if len(keys) == 0 {
+		return topology.Graph{}, nil
+	}
+	wanted := make([]string, 0, len(keys))
+	for _, k := range keys {
+		wanted = append(wanted, string(k))
+	}
+	var rows []topologyNodeRow
+	if err := sqlx.SelectContext(ctx, r.conn(), &rows, `
+		SELECT `+topologyNodeColumns+`
+		FROM topology_nodes
+		WHERE tenant_id = $1 AND release_id = $2 AND node_key = ANY($3)`,
+		tenantID, releaseID, pq.Array(wanted)); err != nil {
+		return topology.Graph{}, fmt.Errorf("read %d nodes of release %s: %w", len(wanted), releaseID, err)
+	}
+	if len(rows) == 0 {
+		return topology.Graph{}, nil
+	}
+	edges, err := r.edgesInto(ctx, tenantID, releaseID, rows)
+	if err != nil {
+		return topology.Graph{}, err
+	}
+	return graphOf(rows, edges), nil
+}
+
+// edgesInto reads every edge of the release whose downstream is one of rows,
+// joining the keys as a set so each is one probe of
+// idx_topology_edges_downstream.
+func (r *TopologyRepository) edgesInto(ctx context.Context, tenantID, releaseID string, rows []topologyNodeRow) ([]topology.Edge, error) {
+	keys := make([]string, 0, len(rows))
+	for _, row := range rows {
+		keys = append(keys, row.NodeKey)
+	}
+	var edgeRows []struct {
+		Upstream   string `db:"upstream_key"`
+		Downstream string `db:"downstream_key"`
+	}
+	if err := sqlx.SelectContext(ctx, r.conn(), &edgeRows, `
+		SELECT e.upstream_key, e.downstream_key
+		FROM unnest($3::text[]) AS d(node_key)
+		JOIN topology_edges e
+		  ON e.tenant_id = $1 AND e.release_id = $2 AND e.downstream_key = d.node_key`,
+		tenantID, releaseID, pq.Array(keys)); err != nil {
+		return nil, fmt.Errorf("read the edges into %d nodes of release %s: %w", len(keys), releaseID, err)
+	}
+	edges := make([]topology.Edge, 0, len(edgeRows))
+	for _, e := range edgeRows {
+		edges = append(edges, topology.Edge{Upstream: topology.NodeKey(e.Upstream), Downstream: topology.NodeKey(e.Downstream)})
+	}
+	return edges, nil
+}
+
+// graphOf builds the graph of rows; topology.NewGraph drops every edge with an
+// end outside them.
+func graphOf(rows []topologyNodeRow, edges []topology.Edge) topology.Graph {
+	nodes := make([]topology.Node, 0, len(rows))
+	for _, row := range rows {
+		nodes = append(nodes, row.toDomain())
+	}
+	return topology.NewGraph(nodes, edges)
 }
 
 // NodeContentHash reads one node's content hash.

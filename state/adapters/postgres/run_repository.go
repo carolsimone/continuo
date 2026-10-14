@@ -144,6 +144,9 @@ func (r *RunRepositoryAdapter) SaveRun(ctx context.Context, rn *run.Run) error {
 			fields.LastHeartbeatAt = heartbeat
 		}
 	}
+	if ch.IsPlannedDirty() {
+		fields.PlannedAt = rn.PlannedAt()
+	}
 	if ch.IsStatusDirty() {
 		v := string(rn.Status())
 		fields.Status = &v
@@ -248,6 +251,7 @@ func hydrateRun(tr *SchedulerTracker) (*run.Run, error) {
 		meta,
 	)
 	rn.HydrateRelease(run.ReleaseStamp{ReleaseID: stringOrEmpty(tr.ReleaseID), PromotionSeq: int64OrZero(tr.PromotionSeq)})
+	rn.HydratePlannedAt(tr.PlannedAt)
 	return rn, nil
 }
 

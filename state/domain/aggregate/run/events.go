@@ -2,6 +2,7 @@ package run
 
 import (
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/state/domain/topology"
 	"github.com/google/uuid"
 )
 
@@ -128,6 +129,23 @@ type PromotedSeedsRunRequested struct {
 
 func (PromotedSeedsRunRequested) runDomainEvent()         {}
 func (e PromotedSeedsRunRequested) ScheduleID() uuid.UUID { return e.ID }
+
+// TaskDispatched is recorded by Run.Start for each task it dispatches: the
+// run, the task, the node it builds as the run's release holds it, its
+// Kubernetes Job name, the dbt verb and the task's retry budget. Translated to
+// query.model:v1.
+type TaskDispatched struct {
+	ID           uuid.UUID
+	ScheduleName string
+	TaskID       uuid.UUID
+	Node         topology.Node
+	JobName      string
+	Operation    model.Operation
+	MaxRetries   int32
+}
+
+func (TaskDispatched) runDomainEvent()         {}
+func (e TaskDispatched) ScheduleID() uuid.UUID { return e.ID }
 
 // RunDispatchTerminal is recorded by Run.MarkDispatchTerminal next to the
 // RunFinalized that carries the outcome (skipped for a benign no_tests

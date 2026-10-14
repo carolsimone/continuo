@@ -39,6 +39,16 @@ type TopologyRepository interface {
 	// in key order.
 	ReleaseNodes(ctx context.Context, tenantID, releaseID, nodeType string) ([]topology.Node, error)
 
+	// ScheduleGraph returns the graph a run of scheduleName reads in a
+	// release: the nodes of the schedule, the dbt-seed nodes of any schedule
+	// they read directly, and the edges among them. A schedule with no node in
+	// the release yields an empty graph.
+	ScheduleGraph(ctx context.Context, tenantID, releaseID, scheduleName string) (topology.Graph, error)
+
+	// Graph returns the nodes of a release whose key is in keys and the edges
+	// among them. A key the release does not hold is left out.
+	Graph(ctx context.Context, tenantID, releaseID string, keys []topology.NodeKey) (topology.Graph, error)
+
 	// NodeContentHash returns the content hash of one node of a release, and
 	// whether the release has that node.
 	NodeContentHash(ctx context.Context, tenantID, releaseID string, key topology.NodeKey) (hash string, found bool, err error)

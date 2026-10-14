@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -76,31 +77,67 @@ func NewPostgresRepository(exec Executor, tableName string, logger *slog.Logger)
 // far publication follows that order across processes, commit order and the
 // pipelined publish path.
 func (r *postgresRepository) Create(ctx context.Context, entry *Entry) error {
-	if entry.ID == uuid.Nil {
-		entry.ID = uuid.New()
-	}
-	entry.CreatedAt = nextCreatedAt(time.Now())
-	if entry.Status == "" {
-		entry.Status = "pending"
-	}
+	return r.createAll(ctx, []*Entry{entry})
+}
 
-	// max_retries records the budget the row was written under (MaxAttempts);
-	// the processor applies MaxAttempts directly and never reads the column.
-	query := fmt.Sprintf(`
+// CreateAll inserts entries into tableName through exec as Create inserts one
+// entry, stamping each CreatedAt in slice order, with one INSERT per
+// createAllChunk entries instead of one per entry. exec is normally the
+// transaction that wrote the change the entries announce.
+func CreateAll(ctx context.Context, exec Executor, tableName string, entries []*Entry) error {
+	return newPostgresRepository(exec, tableName, slog.New(slog.DiscardHandler)).createAll(ctx, entries)
+}
+
+// createAllChunk is the most rows one createAll statement inserts. Each row
+// binds outboxInsertParams parameters and PostgreSQL accepts at most 65535
+// per statement.
+const createAllChunk = 1000
+
+// outboxInsertParams is the number of parameters one inserted row binds.
+const outboxInsertParams = 11
+
+func (r *postgresRepository) createAll(ctx context.Context, entries []*Entry) error {
+	for start := 0; start < len(entries); start += createAllChunk {
+		chunk := entries[start:min(start+createAllChunk, len(entries))]
+		var query strings.Builder
+		// max_retries records the budget the row was written under
+		// (MaxAttempts); the processor applies MaxAttempts directly and never
+		// reads the column.
+		fmt.Fprintf(&query, `
 		INSERT INTO %s (
 			id, message_processing_id, aggregate_type, aggregate_id,
 			event_type, payload, stream_name,
 			status, retry_count, max_retries, created_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-	`, r.tableName)
-
-	_, err := r.exec.ExecContext(ctx, query,
-		entry.ID, entry.MessageProcessingID, entry.AggregateType, entry.AggregateID,
-		entry.EventType, entry.Payload, entry.StreamName,
-		entry.Status, entry.RetryCount, MaxAttempts, entry.CreatedAt,
-	)
-	if err != nil {
-		return fmt.Errorf("create outbox entry in %s: %w", r.tableName, err)
+		) VALUES `, r.tableName)
+		args := make([]any, 0, len(chunk)*outboxInsertParams)
+		for i, entry := range chunk {
+			if entry.ID == uuid.Nil {
+				entry.ID = uuid.New()
+			}
+			entry.CreatedAt = nextCreatedAt(time.Now())
+			if entry.Status == "" {
+				entry.Status = "pending"
+			}
+			if i > 0 {
+				query.WriteString(", ")
+			}
+			query.WriteString("(")
+			for p := range outboxInsertParams {
+				if p > 0 {
+					query.WriteString(", ")
+				}
+				fmt.Fprintf(&query, "$%d", len(args)+p+1)
+			}
+			query.WriteString(")")
+			args = append(args,
+				entry.ID, entry.MessageProcessingID, entry.AggregateType, entry.AggregateID,
+				entry.EventType, entry.Payload, entry.StreamName,
+				entry.Status, entry.RetryCount, MaxAttempts, entry.CreatedAt,
+			)
+		}
+		if _, err := r.exec.ExecContext(ctx, query.String(), args...); err != nil {
+			return fmt.Errorf("create outbox entries in %s (%d rows): %w", r.tableName, len(chunk), err)
+		}
 	}
 	return nil
 }

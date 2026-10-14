@@ -36,15 +36,16 @@ func NewOutboxPublisher(tx *sqlx.Tx, logger *slog.Logger) *OutboxPublisher {
 	return &OutboxPublisher{tx: tx, logger: logger}
 }
 
-// Append writes one outbox entry per event into the bound transaction.
-// The per-event mapping (stream_name, event_type, aggregate_type, payload
-// shape) is defined in translateRunEvent. RunDispatchTerminal is omitted
-// (no outbox row). An unknown event type returns an error.
+// Append writes one outbox entry per event into the bound transaction, in
+// event order, with as few INSERTs as pkg/outbox.CreateAll needs. The per-event
+// mapping (stream_name, event_type, aggregate_type, payload shape) is defined
+// in translateRunEvent. RunDispatchTerminal is omitted (no outbox row). An
+// unknown event type returns an error and writes nothing.
 func (p *OutboxPublisher) Append(ctx context.Context, events []run.DomainEvent, msgProcID uuid.UUID) error {
 	if p.tx == nil {
 		return fmt.Errorf("Append requires an active transaction")
 	}
-	repo := pkgoutbox.NewPostgresRepository(p.tx, OutboxTable, p.logger)
+	entries := make([]*pkgoutbox.Entry, 0, len(events))
 	for _, evt := range events {
 		entry, skip, err := translateRunEvent(evt, msgProcID)
 		if err != nil {
@@ -53,9 +54,13 @@ func (p *OutboxPublisher) Append(ctx context.Context, events []run.DomainEvent, 
 		if skip {
 			continue
 		}
-		if err := repo.Create(ctx, entry); err != nil {
-			return fmt.Errorf("create outbox entry for %T: %w", evt, err)
-		}
+		entries = append(entries, entry)
+	}
+	if len(entries) == 0 {
+		return nil
+	}
+	if err := pkgoutbox.CreateAll(ctx, p.tx, OutboxTable, entries); err != nil {
+		return fmt.Errorf("append %d outbox entries: %w", len(entries), err)
 	}
 	return nil
 }
@@ -185,6 +190,28 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Ent
 		}
 		return buildEntry(e.ID, "scheduler", "promote_seed", streams.TriggerPromotedSeedsV1, payload, msgProcPtr), false, nil
 
+	case run.TaskDispatched:
+		payload, err := json.Marshal(pkgevents.QueryModel{
+			ScheduleID:   e.ID.String(),
+			ScheduleName: e.ScheduleName,
+			TaskID:       e.TaskID.String(),
+			ServiceName:  e.Node.ServiceName,
+			SchemaName:   e.Node.SchemaName,
+			TableName:    e.Node.TableName,
+			JobName:      e.JobName,
+			NodeType:     e.Node.NodeType,
+			ImageTag:     e.Node.ImageTag,
+			SecretRef:    e.Node.SecretRef,
+			Operation:    string(e.Operation),
+			MaxRetries:   e.MaxRetries,
+		}.Fields())
+		if err != nil {
+			return nil, false, err
+		}
+		// The row's event_type is the stream name, as for run.finalized:v1;
+		// every dispatch of a run shares the run as its aggregate, so the relay
+		// publishes them in the order they were written.
+		return buildEntry(e.ID, "scheduler", streams.QueryModelV1, streams.QueryModelV1, payload, msgProcPtr), false, nil
 	case run.RunDispatchTerminal:
 		// RunDispatchTerminal is informational and maps to no stream.
 		// The dispatch handlers log its reason.

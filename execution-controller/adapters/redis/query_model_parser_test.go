@@ -2,9 +2,13 @@
 package redis
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
@@ -175,4 +179,37 @@ func TestParseQueryModel_InvalidMaxRetriesIsPermanentError(t *testing.T) {
 		_, err := ParseQueryModel(goredis.XMessage{ID: "1-0", Values: values})
 		require.Error(t, err, "max_retries=%q", bad)
 	}
+}
+
+// The golden query.model:v1 fixture's fields, as the producer writes them,
+// parse into the dispatch its input describes.
+func TestParseQueryModel_ParsesTheGoldenFixture(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "pkg", "events", "testdata", "query_model_v1.json"))
+	require.NoError(t, err)
+	var fixture struct {
+		Input  pkgevents.QueryModel `json:"input"`
+		Fields map[string]string    `json:"fields"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &fixture))
+	values := make(map[string]interface{}, len(fixture.Fields))
+	for k, v := range fixture.Fields {
+		values[k] = v
+	}
+
+	evt, err := ParseQueryModel(goredis.XMessage{ID: "1-0", Values: values})
+	require.NoError(t, err)
+	in := fixture.Input
+	assert.Equal(t, uuid.MustParse(in.ScheduleID), evt.ScheduleID)
+	assert.Equal(t, uuid.MustParse(in.TaskID), evt.TaskID)
+	assert.Equal(t, in.ScheduleName, evt.ScheduleName)
+	assert.Equal(t, in.ServiceName, evt.ServiceName)
+	assert.Equal(t, in.SchemaName, evt.SchemaName)
+	assert.Equal(t, in.TableName, evt.TableName)
+	assert.Equal(t, in.JobName, evt.JobName)
+	assert.Equal(t, pkg_model.NodeType(in.NodeType), evt.NodeType)
+	assert.Equal(t, in.ImageTag, evt.ImageTag)
+	assert.Equal(t, in.SecretRef, evt.SecretRef)
+	assert.Equal(t, pkg_model.Operation(in.Operation), evt.Operation)
+	assert.Equal(t, in.MaxRetries, evt.MaxRetries)
+	assert.Equal(t, uuid.Nil, evt.OutboxEntryID, "the relay adds outbox_entry_id; the fixture is the payload alone")
 }

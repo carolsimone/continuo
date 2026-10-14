@@ -140,6 +140,13 @@ func (f *LiveReleaseOnly) SetLivePointer(context.Context, string, topology.Point
 func (f *LiveReleaseOnly) ReleaseNodes(context.Context, string, string, string) ([]topology.Node, error) {
 	return nil, ErrNotFaked
 }
+func (f *LiveReleaseOnly) ScheduleGraph(context.Context, string, string, string) (topology.Graph, error) {
+	return topology.Graph{}, ErrNotFaked
+}
+func (f *LiveReleaseOnly) Graph(context.Context, string, string, []topology.NodeKey) (topology.Graph, error) {
+	return topology.Graph{}, ErrNotFaked
+}
+
 func (f *LiveReleaseOnly) NodeContentHash(context.Context, string, string, topology.NodeKey) (string, bool, error) {
 	return "", false, ErrNotFaked
 }
