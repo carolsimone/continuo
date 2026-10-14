@@ -5,13 +5,13 @@ import express from 'express';
 import { createRunsRouter } from '../../src/server/routes/schedules';
 
 const mockGetRunGraph = vi.fn();
-const mockGraphClient = {
+const mockStateClient = {
   getRunGraph: mockGetRunGraph,
 } as any;
 
 const app = express();
 app.use(express.json());
-app.use('/api/runs', createRunsRouter(mockGraphClient));
+app.use('/api/runs', createRunsRouter(mockStateClient));
 
 describe('GET /api/runs/:run_id/graph', () => {
   beforeEach(() => { vi.clearAllMocks(); });
@@ -34,6 +34,23 @@ describe('GET /api/runs/:run_id/graph', () => {
     expect(typeof res.body.run_promotion_seq).toBe('number');
     expect(res.body).not.toHaveProperty('run_topology_generation');
     expect(res.body).not.toHaveProperty('latest_topology_generation');
+  });
+
+  it('returns task statuses as the state service sends them', async () => {
+    mockGetRunGraph.mockImplementation((_req: any, cb: any) =>
+      cb(null, {
+        nodes: [{ service_name: 's', schema_name: 'sch', table_name: 't', node_type: 'dbt-model', status: 'skipped' }],
+        edges: [],
+        run_promotion_seq: '0',
+        latest_promotion_seq: '3',
+      })
+    );
+
+    const res = await request(app).get('/api/runs/run-1/graph');
+
+    expect(res.status).toBe(200);
+    expect(res.body.nodes[0].status).toBe('skipped');
+    expect(res.body.run_promotion_seq).toBe(0);
   });
 
   it('defaults missing promotion seq fields to 0', async () => {

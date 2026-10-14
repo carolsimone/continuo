@@ -18,8 +18,6 @@ const proto = grpc.loadPackageDefinition(packageDefinition) as any;
 
 export interface GrpcGraphClient {
   getScheduleGraph: (request: any, callback: (err: any, res: any) => void) => void;
-  listRuns: (request: any, callback: (err: any, res: any) => void) => void;
-  getRunGraph: (request: any, callback: (err: any, res: any) => void) => void;
   listScheduleTopologies: (request: any, callback: (err: any, res: any) => void) => void;
   getNode: (request: any, callback: (err: any, res: any) => void) => void;
   getNodeVersions: (request: any, callback: (err: any, res: any) => void) => void;

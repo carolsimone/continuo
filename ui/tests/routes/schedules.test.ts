@@ -8,15 +8,16 @@ import { USER_ID_METADATA_KEY } from '../../src/server/clients/grpc-client';
 const mockTriggerSchedule = vi.fn();
 const mockListAllSchedules = vi.fn();
 const mockCancelSchedule = vi.fn();
+const mockListRuns = vi.fn();
 
 const mockStateClient = {
   triggerSchedule: mockTriggerSchedule,
   listAllSchedules: mockListAllSchedules,
   cancelSchedule: mockCancelSchedule,
+  listRuns: mockListRuns,
 };
 
-// graph client is still needed by the constructor for `/:name/graph` and
-// `/:name/runs`; the `GET /` route no longer uses it.
+// graph client is still needed by the constructor for `/:name/graph`.
 const mockGraphClient = {} as any;
 
 const app = express();
@@ -66,6 +67,24 @@ describe('GET /api/schedules', () => {
 
     expect(res.status).toBe(500);
     expect(res.body.error).toMatch(/state down/);
+  });
+});
+
+describe('GET /api/schedules/:name/runs', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it('lists completed runs from the state service', async () => {
+    mockListRuns.mockImplementation((req: any, cb: any) => {
+      expect(req).toEqual({ schedule_name: 'daily' });
+      cb(null, { runs: [{ run_id: 'r1', schedule_name: 'daily', terminal_status: 'succeeded',
+        created_at: '2026-10-14T23:00:00Z', completed_at: '2026-10-14T23:03:00Z' }], total_count: 1 });
+    });
+
+    const res = await request(app).get('/api/schedules/daily/runs');
+
+    expect(res.status).toBe(200);
+    expect(res.body.runs).toEqual([{ run_id: 'r1', schedule_name: 'daily', terminal_status: 'succeeded',
+      created_at: '2026-10-14T23:00:00Z', completed_at: '2026-10-14T23:03:00Z' }]);
   });
 });
 
