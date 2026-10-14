@@ -8,6 +8,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/domain"
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/num"
+	"github.com/carolsimone/continuo/state/domain/runplan"
 	"github.com/carolsimone/continuo/state/domain/topology"
 	"github.com/google/uuid"
 )
@@ -43,9 +44,12 @@ type Run struct {
 	cancelledAt        *time.Time
 	cancelledBy        *string
 	cancellationReason *string
+	// plannedAt is when Start chose and stored the run's tasks; nil on a run
+	// whose tasks state did not choose.
+	plannedAt *time.Time
 
-	// totalTaskCount is nil until the run's child set is known (it is stamped on
-	// AcceptDispatch). nil mirrors a NULL total_task_count column.
+	// totalTaskCount is nil until the run's child set is known (it is stamped by
+	// AcceptDispatch or Start). nil mirrors a NULL total_task_count column.
 	totalTaskCount    *int32
 	terminalTaskCount int32
 
@@ -67,6 +71,7 @@ type changeSet struct {
 	startedDirty           bool
 	completedDirty         bool
 	heartbeatDirty         bool
+	plannedDirty           bool
 }
 
 // HydrateRun rebuilds a Run from persisted scheduler_tracker columns. Used by
@@ -113,6 +118,10 @@ func HydrateRun(
 // HydrateRelease restores the release stamp read from scheduler_tracker.
 // Adapter-only: domain code receives the stamp through a constructor.
 func (r *Run) HydrateRelease(s ReleaseStamp) { r.release = s }
+
+// HydratePlannedAt restores planned_at read from scheduler_tracker.
+// Adapter-only: domain code plans a run through Start.
+func (r *Run) HydratePlannedAt(at *time.Time) { r.plannedAt = at }
 
 // NewPendingRun creates a fresh PENDING Run for activation. Caller flow:
 // SchedulePolicy.ScheduleExistsInCatalog → SchedulePolicy.IsScheduleAvailable
@@ -330,6 +339,7 @@ func (r *Run) LastHeartbeatAt() *time.Time      { return r.lastHeartbeatAt }
 func (r *Run) CancelledAt() *time.Time          { return r.cancelledAt }
 func (r *Run) CancelledBy() *string             { return r.cancelledBy }
 func (r *Run) CancellationReason() *string      { return r.cancellationReason }
+func (r *Run) PlannedAt() *time.Time            { return r.plannedAt }
 func (r *Run) TotalTaskCount() *int32           { return r.totalTaskCount }
 func (r *Run) TerminalTaskCount() int32         { return r.terminalTaskCount }
 func (r *Run) ServiceMetadata() map[string]ServiceMetadata {
@@ -366,6 +376,7 @@ func (c changeSet) IsCancelDirty() bool            { return c.cancelDirty }
 func (c changeSet) IsStartedDirty() bool           { return c.startedDirty }
 func (c changeSet) IsCompletedDirty() bool         { return c.completedDirty }
 func (c changeSet) IsHeartbeatDirty() bool         { return c.heartbeatDirty }
+func (c changeSet) IsPlannedDirty() bool           { return c.plannedDirty }
 
 // AcceptDispatch consumes the run.entries.dispatched:v1 projection. The
 // projection IS the full child set (no prior tasks exist), so the aggregate
@@ -487,6 +498,123 @@ func (r *Run) acceptDispatch(
 	r.changes.statusDirty = true
 	r.changes.startedDirty = true
 	return nil, nil
+}
+
+// Start stores the tasks plan chose for r and dispatches the plan's ready
+// tasks. g is the slice of r's release the plan was chosen from; every task
+// reads its node there.
+//
+// Each planned task gets the id TaskIDFor derives for tenantID, r and its node,
+// its node's Job name, r's operation and the node's image. A pending task gets
+// status pending and maxRetries; an inherited task gets status succeeded, no
+// retry budget and the task it inherits from, and is never dispatched. Each
+// ready task is stamped dispatched at now and recorded as a TaskDispatched, in
+// key order. The run records the plan: planned_at, the total task count, the
+// inherited tasks as terminal, init status completed, status running,
+// started_at and its progress clock. A plan without a pending task leaves
+// nothing to run, so the run finalizes succeeded at once.
+//
+// Start refuses a terminal run (ErrAlreadyTerminal), a run whose tasks are
+// already stored (ErrAlreadyPlanned), a plan without tasks (ErrNoNodes) and a
+// plan naming a node g does not hold (ErrPlanNodeNotInGraph), before it
+// stores anything.
+func (r *Run) Start(
+	ctx context.Context,
+	tasks TaskCollection,
+	tenantID string,
+	plan runplan.Plan,
+	g topology.Graph,
+	maxRetries int32,
+	now time.Time,
+) ([]DomainEvent, error) {
+	if r.IsTerminal() {
+		return nil, ErrAlreadyTerminal
+	}
+	if r.plannedAt != nil || r.initStatus == InitStatusCompleted {
+		return nil, ErrAlreadyPlanned
+	}
+	if len(plan.Tasks) == 0 {
+		return nil, ErrNoNodes
+	}
+	ready := make(map[topology.NodeKey]bool, len(plan.Ready))
+	for _, k := range plan.Ready {
+		ready[k] = true
+	}
+
+	built := make([]Task, 0, len(plan.Tasks))
+	var events []DomainEvent
+	inherited := int32(0)
+	for _, p := range plan.Tasks {
+		n, ok := g.Node(p.Key)
+		if !ok {
+			return nil, fmt.Errorf("%w: %s", ErrPlanNodeNotInGraph, p.Key)
+		}
+		jobName, err := domain.ComputeJobName(n.ServiceName, n.SchemaName, n.TableName, r.scheduleID.String())
+		if err != nil {
+			return nil, fmt.Errorf("name the job of %s: %w", p.Key, err)
+		}
+		t := Task{
+			TaskID:      TaskIDFor(tenantID, r.scheduleID, p.Key),
+			ScheduleID:  r.scheduleID,
+			CreatedAt:   now,
+			ServiceName: n.ServiceName,
+			SchemaName:  n.SchemaName,
+			TableName:   n.TableName,
+			NodeKey:     p.Key,
+			JobName:     jobName,
+			Status:      TaskStatusPending,
+			MaxRetries:  int(maxRetries),
+			ImageTag:    n.ImageTag,
+			Operation:   r.operation,
+		}
+		switch {
+		case p.Inherited:
+			root := p.InheritedFrom
+			t.Status = TaskStatusSucceeded
+			t.MaxRetries = 0
+			t.InheritedFromTaskID = &root
+			inherited++
+		case ready[p.Key]:
+			at := now
+			t.DispatchedAt = &at
+			events = append(events, TaskDispatched{
+				ID:           r.scheduleID,
+				ScheduleName: r.scheduleName,
+				TaskID:       t.TaskID,
+				Node:         n,
+				JobName:      jobName,
+				Operation:    r.operation,
+				MaxRetries:   maxRetries,
+			})
+		}
+		built = append(built, t)
+	}
+
+	if err := tasks.BulkCreate(ctx, built); err != nil {
+		return nil, fmt.Errorf("bulk create tasks: %w", err)
+	}
+
+	total := num.ClampInt32(len(built))
+	r.totalTaskCount = &total
+	r.terminalTaskCount = inherited
+	r.initStatus = InitStatusCompleted
+	planned := now
+	r.plannedAt = &planned
+	r.status = SchedulerStatusRunning
+	started := now
+	r.startedAt = &started
+	r.changes.totalTaskCountDirty = true
+	r.changes.terminalTaskCountDirty = true
+	r.changes.initStatusDirty = true
+	r.changes.plannedDirty = true
+	r.changes.statusDirty = true
+	r.changes.startedDirty = true
+	r.recordProgress(now)
+
+	if !plan.HasPending() {
+		return append(events, r.finalize(SchedulerStatusSucceeded, now)...), nil
+	}
+	return events, nil
 }
 
 // Cancel marks r as cancelled (a terminal transition), bulk-cancels its child

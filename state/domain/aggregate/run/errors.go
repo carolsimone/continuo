@@ -49,9 +49,18 @@ var (
 	// that triggered the run is not identified.
 	ErrReleaseIDRequired = errors.New("release_id is required")
 
-	// ErrNoNodes is returned by NewPromotedSeedsRun when the node set is empty.
-	// A run with no tasks would never reach a terminal state on its own.
+	// ErrNoNodes is returned by NewPromotedSeedsRun when the node set is empty,
+	// and by Run.Start when the plan holds no task. A run with no tasks would
+	// never reach a terminal state on its own.
 	ErrNoNodes = errors.New("run requires at least one node")
+
+	// ErrAlreadyPlanned is returned by Run.Start when the run's tasks are
+	// already stored: a run is planned once.
+	ErrAlreadyPlanned = errors.New("run is already planned")
+
+	// ErrPlanNodeNotInGraph is returned by Run.Start when the plan names a
+	// node the graph it was chosen from does not hold.
+	ErrPlanNodeNotInGraph = errors.New("planned node is not in the graph")
 
 	// ErrScheduleHasActiveRun is returned by the SchedulePolicy domain
 	// service when the named schedule already has a PENDING or RUNNING run.
