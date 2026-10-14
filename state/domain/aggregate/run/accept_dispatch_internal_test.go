@@ -27,7 +27,7 @@ func (c *createOnlyTasks) BulkCreate(_ context.Context, tasks []Task) error {
 // run finalizes failed with a recorded reason instead of returning an error
 // that would roll back the dispatch and dead-letter the message.
 func TestAcceptDispatch_UnnameableTaskFinalizesRunFailed(t *testing.T) {
-	r, _, err := NewPendingRun("daily", KindCron, nil, identity.SystemUserID, nil, model.OperationRun, time.Now())
+	r, _, err := NewPendingRun("daily", KindCron, nil, identity.SystemUserID, nil, model.OperationRun, ReleaseStamp{}, time.Now())
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}

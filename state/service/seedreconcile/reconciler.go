@@ -222,7 +222,7 @@ func createRun(ctx context.Context, u uow.UnitOfWork, live topology.Pointer, toB
 	nodes := seedNodes(toBuild)
 	for n := existing + 1; n <= existing+maxRunIDProbes; n++ {
 		id := seeds.RunID(live.ReleaseID, n)
-		newRun, evt, err := run.NewPromotedSeedsRun(id, scheduleName(id), live.ReleaseID, live.PromotionSeq, nodes, now)
+		newRun, evt, err := run.NewPromotedSeedsRun(id, scheduleName(id), run.ReleaseStamp{ReleaseID: live.ReleaseID, PromotionSeq: live.PromotionSeq}, nodes, now)
 		if err != nil {
 			return uuid.Nil, nil, fmt.Errorf("new promote-seed run: %w", err)
 		}

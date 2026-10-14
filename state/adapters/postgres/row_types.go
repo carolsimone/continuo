@@ -32,6 +32,7 @@ type SchedulerTracker struct {
 	InitiatedBy          string                         `json:"initiated_by" db:"initiated_by"`
 	Operation            string                         `json:"operation" db:"operation"`
 	ReleaseID            *string                        `json:"release_id,omitempty" db:"release_id"`
+	PromotionSeq         *int64                         `json:"promotion_seq,omitempty" db:"promotion_seq"`
 	ServiceMetadata      map[string]run.ServiceMetadata `json:"service_metadata"`
 	ServiceMetadataRaw   []byte                         `json:"-" db:"service_metadata"`
 }

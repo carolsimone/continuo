@@ -469,7 +469,7 @@ func (c taskStatusClock) Now() time.Time { return c.at }
 // newReleaseTaskStatusRun builds a RUNNING one-task run that names releaseID.
 func newReleaseTaskStatusRun(id uuid.UUID, releaseID string) *run.Run {
 	r := newRunningTaskStatusRun(id, "promote-seed-abc12345", 1, 0)
-	r.HydrateReleaseID(releaseID)
+	r.HydrateRelease(run.ReleaseStamp{ReleaseID: releaseID})
 	return r
 }
 
@@ -557,13 +557,13 @@ func TestTaskStatusUpdated_RecordsAVersionOnlyForAnAppliedSuccess(t *testing.T) 
 	releaseRun := func(total, terminal int32) func() *run.Run {
 		return func() *run.Run {
 			r := newRunningTaskStatusRun(scheduleID, "promote-seed-abc12345", total, terminal)
-			r.HydrateReleaseID("rel-1")
+			r.HydrateRelease(run.ReleaseStamp{ReleaseID: "rel-1"})
 			return r
 		}
 	}
 	cancelledRun := func() *run.Run {
 		r := newTerminalTaskStatusRun(scheduleID, "promote-seed-abc12345", run.SchedulerStatusCancelled)
-		r.HydrateReleaseID("rel-1")
+		r.HydrateRelease(run.ReleaseStamp{ReleaseID: "rel-1"})
 		return r
 	}
 	cases := []struct {

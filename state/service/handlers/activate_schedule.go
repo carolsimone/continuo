@@ -82,7 +82,7 @@ func (h *ActivateScheduleHandler) Handle(
 		}
 	}()
 
-	newRun, evt, err := run.NewPendingRun(name, kind, sourceRunID, initiator.UserID, metadata, operation, u.Clock().Now())
+	newRun, evt, err := run.NewPendingRun(name, kind, sourceRunID, initiator.UserID, metadata, operation, run.ReleaseStamp{}, u.Clock().Now())
 	if err != nil {
 		return uuid.Nil, 0, err
 	}

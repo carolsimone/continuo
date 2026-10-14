@@ -247,7 +247,7 @@ func hydrateRun(tr *SchedulerTracker) (*run.Run, error) {
 		tr.TerminalTaskCount,
 		meta,
 	)
-	rn.HydrateReleaseID(stringOrEmpty(tr.ReleaseID))
+	rn.HydrateRelease(run.ReleaseStamp{ReleaseID: stringOrEmpty(tr.ReleaseID), PromotionSeq: int64OrZero(tr.PromotionSeq)})
 	return rn, nil
 }
 
@@ -263,6 +263,22 @@ func optionalString(s string) *string {
 func stringOrEmpty(p *string) string {
 	if p == nil {
 		return ""
+	}
+	return *p
+}
+
+// optionalInt64 maps 0 to NULL, so a run that names no release stores no seq.
+func optionalInt64(n int64) *int64 {
+	if n == 0 {
+		return nil
+	}
+	return &n
+}
+
+// int64OrZero reads a nullable bigint as 0 when NULL.
+func int64OrZero(p *int64) int64 {
+	if p == nil {
+		return 0
 	}
 	return *p
 }
@@ -323,7 +339,8 @@ func dehydrateRun(r *run.Run) (*SchedulerTracker, error) {
 		SourceRunID:          r.SourceRunID(),
 		InitiatedBy:          r.InitiatedBy(),
 		Operation:            operationWithDefault(string(r.Operation())),
-		ReleaseID:            optionalString(r.ReleaseID()),
+		ReleaseID:            optionalString(r.Release().ReleaseID),
+		PromotionSeq:         optionalInt64(r.Release().PromotionSeq),
 	}, nil
 }
 

@@ -82,7 +82,7 @@ func (h *builtHarness) saveRun(t *testing.T, rn *run.Run) uuid.UUID {
 func (h *builtHarness) seedRun(t *testing.T, releaseID, table string) uuid.UUID {
 	t.Helper()
 	id := uuid.New()
-	rn, _, err := run.NewPromotedSeedsRun(id, "promote-seed-"+strings.ReplaceAll(id.String(), "-", "")[:8], releaseID, 1,
+	rn, _, err := run.NewPromotedSeedsRun(id, "promote-seed-"+strings.ReplaceAll(id.String(), "-", "")[:8], run.ReleaseStamp{ReleaseID: releaseID, PromotionSeq: 1},
 		[]run.SeedNode{{NodeID: run.NodeID{ServiceName: "service-1", SchemaName: "raw", TableName: table}, NodeType: "dbt-seed", ImageTag: "service-1:v1"}},
 		time.Now())
 	require.NoError(t, err)
@@ -170,7 +170,7 @@ func TestBuiltVersions(t *testing.T) {
 	})
 
 	t.Run("a run that names no release records nothing", func(t *testing.T) {
-		rn, _, err := run.NewPendingRun("trigger-"+uuid.NewString()[:8], run.KindTrigger, nil, "", nil, model.OperationRun, time.Now())
+		rn, _, err := run.NewPendingRun("trigger-"+uuid.NewString()[:8], run.KindTrigger, nil, "", nil, model.OperationRun, run.ReleaseStamp{}, time.Now())
 		require.NoError(t, err)
 		runID := h.saveRun(t, rn)
 		taskID := h.dispatch(t, runID, "no_release", "service-1:v1")

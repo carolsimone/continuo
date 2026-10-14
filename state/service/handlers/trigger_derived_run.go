@@ -24,6 +24,9 @@ type triggerDerivedConfig struct {
 	// (CanBeRerunSource / CanBeRebaseSource); it returns the kind-specific
 	// "nothing to do" sentinel so the gRPC adapter can distinguish the paths.
 	eligible func(ctx context.Context, src *run.Run, tasks run.TaskCollection) error
+	// stampOf is the release stamp the derived run runs on, given its source:
+	// a rerun replays the source's release; a rebase names none of its own.
+	stampOf func(src *run.Run) run.ReleaseStamp
 	// logLabel is the human label used in the success log line.
 	logLabel string
 }
@@ -48,6 +51,7 @@ func NewTriggerRerunHandler(logger *slog.Logger) *TriggerDerivedRunHandler {
 			eligible: func(ctx context.Context, src *run.Run, tasks run.TaskCollection) error {
 				return src.CanBeRerunSource(ctx, tasks)
 			},
+			stampOf:  func(src *run.Run) run.ReleaseStamp { return src.Release() },
 			logLabel: "Rerun triggered",
 		},
 	}
@@ -62,6 +66,7 @@ func NewTriggerRebaseHandler(logger *slog.Logger) *TriggerDerivedRunHandler {
 			eligible: func(ctx context.Context, src *run.Run, tasks run.TaskCollection) error {
 				return src.CanBeRebaseSource(ctx, tasks)
 			},
+			stampOf:  func(*run.Run) run.ReleaseStamp { return run.ReleaseStamp{} },
 			logLabel: "Rebase triggered",
 		},
 	}
@@ -91,7 +96,7 @@ func (h *TriggerDerivedRunHandler) Handle(ctx context.Context, u uow.UnitOfWork,
 		}
 	}()
 
-	newRun, evt, err := run.NewDerivedRun(src.ScheduleName(), h.cfg.kind, sourceID, src.ReleaseID(), initiator.UserID, src.Operation(), u.Clock().Now())
+	newRun, evt, err := run.NewDerivedRun(src.ScheduleName(), h.cfg.kind, sourceID, h.cfg.stampOf(src), initiator.UserID, src.Operation(), u.Clock().Now())
 	if err != nil {
 		return uuid.Nil, "", err
 	}
