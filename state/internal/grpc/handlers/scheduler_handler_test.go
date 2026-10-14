@@ -244,7 +244,7 @@ func (f *activateFakeOutbox) Append(_ context.Context, evts []run.DomainEvent, _
 // newActivateUoWFactory wires a FakeUnitOfWork for activation handler tests
 // and returns both the fake (for inspection) and a factory.
 func newActivateUoWFactory(catalogRepo *stubCatalogRepo, runRepo *activateFakeRunRepo, outbox *activateFakeOutbox) (*uow.FakeUnitOfWork, func() uow.UnitOfWork) {
-	fu := &uow.FakeUnitOfWork{}
+	fu := &uow.FakeUnitOfWork{TopologyRepo: &uow.LiveReleaseOnly{}}
 	fu.SetCatalogRepo(catalogRepo)
 	fu.SetRunRepo(runRepo)
 	fu.SetOutboxPublisher(outbox)
