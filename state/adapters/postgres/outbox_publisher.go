@@ -36,15 +36,16 @@ func NewOutboxPublisher(tx *sqlx.Tx, logger *slog.Logger) *OutboxPublisher {
 	return &OutboxPublisher{tx: tx, logger: logger}
 }
 
-// Append writes one outbox entry per event into the bound transaction.
-// The per-event mapping (stream_name, event_type, aggregate_type, payload
-// shape) is defined in translateRunEvent. RunDispatchTerminal is omitted
-// (no outbox row). An unknown event type returns an error.
+// Append writes one outbox entry per event into the bound transaction, in
+// event order, with as few INSERTs as pkg/outbox.CreateAll needs. The per-event
+// mapping (stream_name, event_type, aggregate_type, payload shape) is defined
+// in translateRunEvent. RunDispatchTerminal is omitted (no outbox row). An
+// unknown event type returns an error and writes nothing.
 func (p *OutboxPublisher) Append(ctx context.Context, events []run.DomainEvent, msgProcID uuid.UUID) error {
 	if p.tx == nil {
 		return fmt.Errorf("Append requires an active transaction")
 	}
-	repo := pkgoutbox.NewPostgresRepository(p.tx, OutboxTable, p.logger)
+	entries := make([]*pkgoutbox.Entry, 0, len(events))
 	for _, evt := range events {
 		entry, skip, err := translateRunEvent(evt, msgProcID)
 		if err != nil {
@@ -53,9 +54,13 @@ func (p *OutboxPublisher) Append(ctx context.Context, events []run.DomainEvent, 
 		if skip {
 			continue
 		}
-		if err := repo.Create(ctx, entry); err != nil {
-			return fmt.Errorf("create outbox entry for %T: %w", evt, err)
-		}
+		entries = append(entries, entry)
+	}
+	if len(entries) == 0 {
+		return nil
+	}
+	if err := pkgoutbox.CreateAll(ctx, p.tx, OutboxTable, entries); err != nil {
+		return fmt.Errorf("append %d outbox entries: %w", len(entries), err)
 	}
 	return nil
 }
