@@ -1,0 +1,213 @@
+package postgres_test
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/pkg/identity"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/carolsimone/continuo/state/adapters/postgres"
+	"github.com/carolsimone/continuo/state/adapters/publisher"
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
+	"github.com/carolsimone/continuo/state/domain/runplan"
+	"github.com/carolsimone/continuo/state/domain/topology"
+	"github.com/carolsimone/continuo/state/service/ports"
+	"github.com/google/uuid"
+	"github.com/jmoiron/sqlx"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// newPlanningUoW returns a unit of work over db.
+func newPlanningUoW(db *sqlx.DB) *postgres.PostgresUnitOfWork {
+	logger := discardLogger()
+	return postgres.NewPostgresUnitOfWork(db,
+		postgres.NewSchedulerTrackerRepository(db, logger),
+		postgres.NewTaskTrackerRepository(db, logger),
+		postgres.NewTaskExecutionRepository(db, logger),
+		postgres.NewScheduleCatalogRepository(db, logger),
+		ports.SystemClock{}, logger)
+}
+
+// failureGraph is e2e-schedule-failure: ftable_a and ftable_b feed ftable_c,
+// which feeds ftable_d and ftable_e, which feed ftable_f; ftable_a feeds
+// ftable_g, which feeds ftable_h.
+func failureGraph() topology.Graph {
+	tables := []string{"ftable_a", "ftable_b", "ftable_c", "ftable_d", "ftable_e", "ftable_f", "ftable_g", "ftable_h"}
+	nodes := make([]topology.Node, 0, len(tables))
+	for _, table := range tables {
+		nodes = append(nodes, topology.Node{
+			Key: topology.KeyOf("e2e_schema", table), ServiceName: "service-1", SchemaName: "e2e_schema",
+			TableName: table, NodeType: "dbt-model", ImageTag: "service-1:5", ScheduleName: "e2e-schedule-failure",
+		})
+	}
+	e := func(up, down string) topology.Edge {
+		return topology.Edge{Upstream: topology.KeyOf("e2e_schema", up), Downstream: topology.KeyOf("e2e_schema", down)}
+	}
+	return topology.NewGraph(nodes, []topology.Edge{
+		e("ftable_a", "ftable_c"), e("ftable_b", "ftable_c"), e("ftable_c", "ftable_d"), e("ftable_c", "ftable_e"),
+		e("ftable_d", "ftable_f"), e("ftable_e", "ftable_f"), e("ftable_a", "ftable_g"), e("ftable_g", "ftable_h"),
+	})
+}
+
+// newStartRun returns a new cron run on release R5 under a schedule name no
+// other test uses, and deletes it with its tasks and outbox rows when the test
+// ends.
+func newStartRun(t *testing.T, db *sqlx.DB, now time.Time) *run.Run {
+	t.Helper()
+	r, _, err := run.NewPendingRun("start-"+uuid.NewString()[:8], run.KindCron, nil, identity.SystemUserID, nil,
+		model.OperationRun, run.ReleaseStamp{ReleaseID: "R5", PromotionSeq: 12}, now)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		ctx := context.Background()
+		_, _ = db.ExecContext(ctx, `DELETE FROM state_outbox WHERE aggregate_id = $1`, r.ScheduleID())
+		_, _ = db.ExecContext(ctx, `DELETE FROM scheduler_tracker WHERE schedule_id = $1`, r.ScheduleID())
+	})
+	return r
+}
+
+// A run is created, started and saved in one transaction: its row first, then
+// its tasks, its plan and one query.model:v1 outbox row per ready task, all
+// committed together.
+func TestStartedRun_StoresItsTasksPlanAndDispatches(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	g := failureGraph()
+	plan, err := runplan.WholeDAG{Operation: model.OperationRun}.Select(g)
+	require.NoError(t, err)
+	r := newStartRun(t, db, now)
+
+	u := newPlanningUoW(db)
+	require.NoError(t, u.Begin(ctx))
+	require.NoError(t, u.Run().SaveRun(ctx, r))
+	events, err := r.Start(ctx, u.TaskCollection(), pkgevents.DefaultTenantID, plan, g, pkgevents.DefaultTaskMaxRetries, now)
+	require.NoError(t, err)
+	require.NoError(t, u.Run().SaveRun(ctx, r))
+	require.NoError(t, u.Outbox().Append(ctx, events, uuid.Nil))
+	require.NoError(t, u.Commit())
+
+	var row struct {
+		Status    string     `db:"status"`
+		Init      string     `db:"initialization_status"`
+		Total     int32      `db:"total_task_count"`
+		Terminal  int32      `db:"terminal_task_count"`
+		PlannedAt *time.Time `db:"planned_at"`
+		StartedAt *time.Time `db:"started_at"`
+	}
+	require.NoError(t, db.Get(&row, `
+		SELECT status, initialization_status, total_task_count, terminal_task_count, planned_at, started_at
+		FROM scheduler_tracker WHERE schedule_id = $1`, r.ScheduleID()))
+	assert.Equal(t, "running", row.Status)
+	assert.Equal(t, "completed", row.Init)
+	assert.Equal(t, int32(8), row.Total)
+	assert.Equal(t, int32(0), row.Terminal)
+	require.NotNil(t, row.PlannedAt)
+	assert.True(t, now.Equal(*row.PlannedAt))
+	require.NotNil(t, row.StartedAt)
+	assert.True(t, now.Equal(*row.StartedAt))
+
+	var dispatched []string
+	require.NoError(t, db.Select(&dispatched, `
+		SELECT node_key FROM task_tracker
+		WHERE schedule_id = $1 AND dispatched_at IS NOT NULL ORDER BY node_key`, r.ScheduleID()))
+	assert.Equal(t, []string{"e2e_schema.ftable_a", "e2e_schema.ftable_b"}, dispatched)
+
+	var taskIDs []string
+	require.NoError(t, db.Select(&taskIDs, `
+		SELECT payload->>'task_id' FROM state_outbox
+		WHERE aggregate_id = $1 AND stream_name = $2 ORDER BY payload->>'table_name'`,
+		r.ScheduleID(), streams.QueryModelV1))
+	assert.Equal(t, []string{
+		run.TaskIDFor(pkgevents.DefaultTenantID, r.ScheduleID(), "e2e_schema.ftable_a").String(),
+		run.TaskIDFor(pkgevents.DefaultTenantID, r.ScheduleID(), "e2e_schema.ftable_b").String(),
+	}, taskIDs)
+
+	loaded, err := newPlanningUoW(db).Run().GetRun(ctx, r.ScheduleID())
+	require.NoError(t, err)
+	require.NotNil(t, loaded.PlannedAt())
+	assert.True(t, now.Equal(*loaded.PlannedAt()))
+}
+
+// A task row names its run, so a run must be saved before it is started: tasks
+// of a run with no row are refused by the foreign key and the transaction
+// stores nothing.
+func TestStartedRun_TasksNeedTheRunRowFirst(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	g := failureGraph()
+	plan, err := runplan.WholeDAG{Operation: model.OperationRun}.Select(g)
+	require.NoError(t, err)
+	r := newStartRun(t, db, now)
+
+	u := newPlanningUoW(db)
+	require.NoError(t, u.Begin(ctx))
+	defer u.Rollback()
+	_, err = r.Start(ctx, u.TaskCollection(), pkgevents.DefaultTenantID, plan, g, pkgevents.DefaultTaskMaxRetries, now)
+	require.Error(t, err)
+	assert.Equal(t, "23503", pqCode(t, err))
+}
+
+// A TaskDispatched is stored as the query.model:v1 row whose published fields
+// are the golden fixture's.
+func TestOutboxPublisher_TaskDispatchedMatchesTheGoldenFixture(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "pkg", "events", "testdata", "query_model_v1.json"))
+	require.NoError(t, err)
+	var fixture struct {
+		Input  pkgevents.QueryModel `json:"input"`
+		Fields map[string]string    `json:"fields"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &fixture))
+	in := fixture.Input
+	runID := uuid.MustParse(in.ScheduleID)
+	t.Cleanup(func() { _, _ = db.ExecContext(ctx, `DELETE FROM state_outbox WHERE aggregate_id = $1`, runID) })
+
+	tx, err := db.BeginTxx(ctx, nil)
+	require.NoError(t, err)
+	defer tx.Rollback()
+	require.NoError(t, postgres.NewOutboxPublisher(tx, discardLogger()).Append(ctx, []run.DomainEvent{run.TaskDispatched{
+		ID:           runID,
+		ScheduleName: in.ScheduleName,
+		TaskID:       uuid.MustParse(in.TaskID),
+		Node: topology.Node{
+			Key: topology.KeyOf(in.SchemaName, in.TableName), ServiceName: in.ServiceName, SchemaName: in.SchemaName,
+			TableName: in.TableName, NodeType: in.NodeType, ImageTag: in.ImageTag, SecretRef: in.SecretRef,
+		},
+		JobName:    in.JobName,
+		Operation:  model.Operation(in.Operation),
+		MaxRetries: in.MaxRetries,
+	}}, uuid.Nil))
+	require.NoError(t, tx.Commit())
+
+	var stored struct {
+		StreamName    string `db:"stream_name"`
+		AggregateType string `db:"aggregate_type"`
+		EventType     string `db:"event_type"`
+		Payload       []byte `db:"payload"`
+	}
+	require.NoError(t, db.Get(&stored, `
+		SELECT stream_name, aggregate_type, event_type, payload FROM state_outbox WHERE aggregate_id = $1`, runID))
+	assert.Equal(t, streams.QueryModelV1, stored.StreamName)
+	assert.Equal(t, "scheduler", stored.AggregateType)
+	assert.Equal(t, streams.QueryModelV1, stored.EventType)
+
+	rendered, err := publisher.NewOutboxPublisher(nil, discardLogger()).Render(&pkgoutbox.Entry{
+		StreamName: stored.StreamName, EventType: stored.EventType, Payload: stored.Payload,
+	})
+	require.NoError(t, err)
+	want := make(map[string]any, len(fixture.Fields))
+	for k, v := range fixture.Fields {
+		want[k] = v
+	}
+	assert.Equal(t, want, rendered)
+}

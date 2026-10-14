@@ -185,6 +185,28 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Ent
 		}
 		return buildEntry(e.ID, "scheduler", "promote_seed", streams.TriggerPromotedSeedsV1, payload, msgProcPtr), false, nil
 
+	case run.TaskDispatched:
+		payload, err := json.Marshal(pkgevents.QueryModel{
+			ScheduleID:   e.ID.String(),
+			ScheduleName: e.ScheduleName,
+			TaskID:       e.TaskID.String(),
+			ServiceName:  e.Node.ServiceName,
+			SchemaName:   e.Node.SchemaName,
+			TableName:    e.Node.TableName,
+			JobName:      e.JobName,
+			NodeType:     e.Node.NodeType,
+			ImageTag:     e.Node.ImageTag,
+			SecretRef:    e.Node.SecretRef,
+			Operation:    string(e.Operation),
+			MaxRetries:   e.MaxRetries,
+		}.Fields())
+		if err != nil {
+			return nil, false, err
+		}
+		// The row's event_type is the stream name, as for run.finalized:v1;
+		// every dispatch of a run shares the run as its aggregate, so the relay
+		// publishes them in the order they were written.
+		return buildEntry(e.ID, "scheduler", streams.QueryModelV1, streams.QueryModelV1, payload, msgProcPtr), false, nil
 	case run.RunDispatchTerminal:
 		// RunDispatchTerminal is informational and maps to no stream.
 		// The dispatch handlers log its reason.

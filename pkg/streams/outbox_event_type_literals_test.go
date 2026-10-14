@@ -39,6 +39,9 @@ var eventTypeScanDirs = []string{
 	"execution-controller/adapters/publisher",
 	"execution-controller/service/deployer",
 	"execution-controller/service/handlers",
+	"state/adapters/postgres",
+	"state/adapters/publisher",
+	"state/service/handlers",
 }
 
 // TestOutboxEventTypesUseConstants fails if any scanned production file contains
