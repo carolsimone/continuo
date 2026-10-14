@@ -19,11 +19,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func newTestDB(t *testing.T) *sqlx.DB {
-	t.Helper()
+func newTestDB(tb testing.TB) *sqlx.DB {
+	tb.Helper()
 	db, err := pkgdb.Open(context.Background(), pkgconfig.LoadPostgres(&pkgconfig.Validator{}), pkgconfig.PoolConfig{MaxOpenConns: 10, MaxIdleConns: 2})
-	require.NoError(t, err)
-	t.Cleanup(func() { db.Close() })
+	require.NoError(tb, err)
+	tb.Cleanup(func() { db.Close() })
 	return db
 }
 
