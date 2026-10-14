@@ -27,8 +27,8 @@ func (c ReadyCandidate) Ready() bool {
 	return true
 }
 
-// TaskGraph is the port the Run aggregate calls to read how its tasks connect
-// over the edges of its release. An edge counts only when both its ends are
+// TaskGraph is the port that reads how a run's tasks connect over the edges
+// of its release. An edge counts only when both its ends are
 // tasks of the run. The adapter that satisfies it reads inside the current
 // Unit-of-Work transaction, so it sees the statuses that transaction wrote.
 type TaskGraph interface {

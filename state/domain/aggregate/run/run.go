@@ -516,7 +516,9 @@ func (r *Run) acceptDispatch(
 //
 // Start refuses a terminal run (ErrAlreadyTerminal), a run whose tasks are
 // already stored (ErrAlreadyPlanned), a plan without tasks (ErrNoNodes) and a
-// plan naming a node g does not hold (ErrPlanNodeNotInGraph), before it
+// plan naming a node g does not hold (ErrPlanNodeNotInGraph) and a plan whose
+// ready list names a task that is not one of its pending tasks
+// (ErrPlanReadyNotPending), before it
 // stores anything.
 func (r *Run) Start(
 	ctx context.Context,

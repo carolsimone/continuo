@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -22,8 +23,8 @@ func TestCreateAll_WritesEveryEntryInSliceOrder(t *testing.T) {
 	entries := make([]*outbox.Entry, 2500)
 	for i := range entries {
 		entries[i] = &outbox.Entry{
-			AggregateType: "scheduler", AggregateID: aggregate, EventType: "x:v1",
-			Payload: []byte(`{"n":"` + uuid.NewString() + `"}`), StreamName: "x:v1",
+			AggregateType: "scheduler", AggregateID: aggregate, EventType: streams.QueryModelV1,
+			Payload: []byte(`{"n":"` + uuid.NewString() + `"}`), StreamName: streams.QueryModelV1,
 		}
 	}
 

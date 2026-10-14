@@ -61,6 +61,7 @@ var (
 	// ErrPlanNodeNotInGraph is returned by Run.Start when the plan names a
 	// node the graph it was chosen from does not hold.
 	ErrPlanNodeNotInGraph = errors.New("planned node is not in the graph")
+
 	// ErrPlanReadyNotPending is returned by Run.Start when the plan lists a
 	// ready task that is not one of its pending tasks.
 	ErrPlanReadyNotPending = errors.New("ready task is not a pending task of the plan")
