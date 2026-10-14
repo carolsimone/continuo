@@ -37,6 +37,9 @@ const (
 	StateService_ListNodes_FullMethodName                = "/state.v1.StateService/ListNodes"
 	StateService_ListNodeNames_FullMethodName            = "/state.v1.StateService/ListNodeNames"
 	StateService_ListNodeServices_FullMethodName         = "/state.v1.StateService/ListNodeServices"
+	StateService_GetRunGraph_FullMethodName              = "/state.v1.StateService/GetRunGraph"
+	StateService_ListRuns_FullMethodName                 = "/state.v1.StateService/ListRuns"
+	StateService_ListActiveRunDrifts_FullMethodName      = "/state.v1.StateService/ListActiveRunDrifts"
 	StateService_GetTaskExecution_FullMethodName         = "/state.v1.StateService/GetTaskExecution"
 	StateService_ListTaskExecutions_FullMethodName       = "/state.v1.StateService/ListTaskExecutions"
 )
@@ -124,6 +127,23 @@ type StateServiceClient interface {
 	// Powers the catalog and Remediation-tab service filters (the complete
 	// service list, independent of the paginated catalog).
 	ListNodeServices(ctx context.Context, in *ListNodeServicesRequest, opts ...grpc.CallOption) (*ListNodeServicesResponse, error)
+	// GetRunGraph returns a run's tasks as nodes and the dependencies among them
+	// in the run's own release, with the promotion seq that release was live
+	// under and the live one. Edges point from the dependent node to its
+	// dependency; node ids are "service.schema.table". An unknown run returns no
+	// nodes and run_promotion_seq 0; a run that names no release returns its
+	// nodes, no edges and run_promotion_seq 0. Consumers treat 0 as "drift
+	// unknown". Empty or malformed run_id is INVALID_ARGUMENT.
+	GetRunGraph(ctx context.Context, in *GetRunGraphRequest, opts ...grpc.CallOption) (*GetRunGraphResponse, error)
+	// ListRuns returns a schedule's completed runs, newest first. page_size is
+	// clamped to [1, 200], 0 meaning 50; a negative page_offset is 0.
+	// total_count counts every completed run of the schedule. Empty
+	// schedule_name is INVALID_ARGUMENT.
+	ListRuns(ctx context.Context, in *ListRunsRequest, opts ...grpc.CallOption) (*ListRunsResponse, error)
+	// ListActiveRunDrifts returns the live promotion seq and every schedule's
+	// newest pending or running run with the promotion seq its release was live
+	// under (0 when it names no release).
+	ListActiveRunDrifts(ctx context.Context, in *ListActiveRunDriftsRequest, opts ...grpc.CallOption) (*ListActiveRunDriftsResponse, error)
 	// TaskExecution operations
 	GetTaskExecution(ctx context.Context, in *GetTaskExecutionRequest, opts ...grpc.CallOption) (*TaskExecutionResponse, error)
 	ListTaskExecutions(ctx context.Context, in *ListTaskExecutionsRequest, opts ...grpc.CallOption) (*ListTaskExecutionsResponse, error)
@@ -317,6 +337,36 @@ func (c *stateServiceClient) ListNodeServices(ctx context.Context, in *ListNodeS
 	return out, nil
 }
 
+func (c *stateServiceClient) GetRunGraph(ctx context.Context, in *GetRunGraphRequest, opts ...grpc.CallOption) (*GetRunGraphResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetRunGraphResponse)
+	err := c.cc.Invoke(ctx, StateService_GetRunGraph_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *stateServiceClient) ListRuns(ctx context.Context, in *ListRunsRequest, opts ...grpc.CallOption) (*ListRunsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListRunsResponse)
+	err := c.cc.Invoke(ctx, StateService_ListRuns_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *stateServiceClient) ListActiveRunDrifts(ctx context.Context, in *ListActiveRunDriftsRequest, opts ...grpc.CallOption) (*ListActiveRunDriftsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListActiveRunDriftsResponse)
+	err := c.cc.Invoke(ctx, StateService_ListActiveRunDrifts_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *stateServiceClient) GetTaskExecution(ctx context.Context, in *GetTaskExecutionRequest, opts ...grpc.CallOption) (*TaskExecutionResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(TaskExecutionResponse)
@@ -420,6 +470,23 @@ type StateServiceServer interface {
 	// Powers the catalog and Remediation-tab service filters (the complete
 	// service list, independent of the paginated catalog).
 	ListNodeServices(context.Context, *ListNodeServicesRequest) (*ListNodeServicesResponse, error)
+	// GetRunGraph returns a run's tasks as nodes and the dependencies among them
+	// in the run's own release, with the promotion seq that release was live
+	// under and the live one. Edges point from the dependent node to its
+	// dependency; node ids are "service.schema.table". An unknown run returns no
+	// nodes and run_promotion_seq 0; a run that names no release returns its
+	// nodes, no edges and run_promotion_seq 0. Consumers treat 0 as "drift
+	// unknown". Empty or malformed run_id is INVALID_ARGUMENT.
+	GetRunGraph(context.Context, *GetRunGraphRequest) (*GetRunGraphResponse, error)
+	// ListRuns returns a schedule's completed runs, newest first. page_size is
+	// clamped to [1, 200], 0 meaning 50; a negative page_offset is 0.
+	// total_count counts every completed run of the schedule. Empty
+	// schedule_name is INVALID_ARGUMENT.
+	ListRuns(context.Context, *ListRunsRequest) (*ListRunsResponse, error)
+	// ListActiveRunDrifts returns the live promotion seq and every schedule's
+	// newest pending or running run with the promotion seq its release was live
+	// under (0 when it names no release).
+	ListActiveRunDrifts(context.Context, *ListActiveRunDriftsRequest) (*ListActiveRunDriftsResponse, error)
 	// TaskExecution operations
 	GetTaskExecution(context.Context, *GetTaskExecutionRequest) (*TaskExecutionResponse, error)
 	ListTaskExecutions(context.Context, *ListTaskExecutionsRequest) (*ListTaskExecutionsResponse, error)
@@ -486,6 +553,15 @@ func (UnimplementedStateServiceServer) ListNodeNames(context.Context, *ListNodeN
 }
 func (UnimplementedStateServiceServer) ListNodeServices(context.Context, *ListNodeServicesRequest) (*ListNodeServicesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListNodeServices not implemented")
+}
+func (UnimplementedStateServiceServer) GetRunGraph(context.Context, *GetRunGraphRequest) (*GetRunGraphResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetRunGraph not implemented")
+}
+func (UnimplementedStateServiceServer) ListRuns(context.Context, *ListRunsRequest) (*ListRunsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListRuns not implemented")
+}
+func (UnimplementedStateServiceServer) ListActiveRunDrifts(context.Context, *ListActiveRunDriftsRequest) (*ListActiveRunDriftsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListActiveRunDrifts not implemented")
 }
 func (UnimplementedStateServiceServer) GetTaskExecution(context.Context, *GetTaskExecutionRequest) (*TaskExecutionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetTaskExecution not implemented")
@@ -838,6 +914,60 @@ func _StateService_ListNodeServices_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _StateService_GetRunGraph_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetRunGraphRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StateServiceServer).GetRunGraph(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StateService_GetRunGraph_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StateServiceServer).GetRunGraph(ctx, req.(*GetRunGraphRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StateService_ListRuns_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListRunsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StateServiceServer).ListRuns(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StateService_ListRuns_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StateServiceServer).ListRuns(ctx, req.(*ListRunsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StateService_ListActiveRunDrifts_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListActiveRunDriftsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StateServiceServer).ListActiveRunDrifts(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StateService_ListActiveRunDrifts_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StateServiceServer).ListActiveRunDrifts(ctx, req.(*ListActiveRunDriftsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _StateService_GetTaskExecution_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetTaskExecutionRequest)
 	if err := dec(in); err != nil {
@@ -952,6 +1082,18 @@ var StateService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListNodeServices",
 			Handler:    _StateService_ListNodeServices_Handler,
+		},
+		{
+			MethodName: "GetRunGraph",
+			Handler:    _StateService_GetRunGraph_Handler,
+		},
+		{
+			MethodName: "ListRuns",
+			Handler:    _StateService_ListRuns_Handler,
+		},
+		{
+			MethodName: "ListActiveRunDrifts",
+			Handler:    _StateService_ListActiveRunDrifts_Handler,
 		},
 		{
 			MethodName: "GetTaskExecution",

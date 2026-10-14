@@ -21,6 +21,7 @@ import (
 	"math"
 	"time"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/projection"
 	"github.com/google/uuid"
@@ -76,7 +77,7 @@ func (r *nodeRunRepository) List(
 	const query = `
 		WITH target_tasks AS (
 			SELECT t.task_id, t.schedule_id, t.status AS task_status,
-			       t.retry_count, t.image_tag, t.operation
+			       t.retry_count, t.image_tag, t.operation, t.node_key
 			FROM task_tracker t
 			WHERE t.service_name = $1
 			  AND t.schema_name  = $2
@@ -105,17 +106,20 @@ func (r *nodeRunRepository) List(
 		       le.error_message     AS error_message,
 		       le.log_s3_key        AS log_s3_key,
 		       le.run_results_uri   AS run_results_uri,
-		       tt.operation         AS operation
+		       tt.operation         AS operation,
+		       COALESCE(n.content_hash, '') AS content_hash
 		FROM target_tasks tt
 		JOIN scheduler_tracker s ON s.schedule_id = tt.schedule_id
 		LEFT JOIN latest_exec le ON le.task_id = tt.task_id
+		LEFT JOIN topology_nodes n
+		  ON n.tenant_id = $6 AND n.release_id = s.release_id AND n.node_key = tt.node_key
 		ORDER BY s.created_at DESC
 		LIMIT $5
 	`
 
 	rows := []nodeRunRow{}
 	if err := r.db.SelectContext(ctx, &rows, query,
-		serviceName, schemaName, tableName, operation, limit); err != nil {
+		serviceName, schemaName, tableName, operation, limit, pkgevents.DefaultTenantID); err != nil {
 		r.logger.Error("Failed to list node runs",
 			"service", serviceName, "schema", schemaName, "table", tableName,
 			"error", err)
@@ -147,6 +151,7 @@ type nodeRunRow struct {
 	LogS3Key       *string        `db:"log_s3_key"`
 	RunResultsURI  *string        `db:"run_results_uri"`
 	Operation      string         `db:"operation"`
+	ContentHash    string         `db:"content_hash"`
 }
 
 func toNodeRun(row nodeRunRow) *projection.NodeRun {
@@ -166,6 +171,7 @@ func toNodeRun(row nodeRunRow) *projection.NodeRun {
 		LogS3Key:       row.LogS3Key,
 		RunResultsURI:  row.RunResultsURI,
 		Operation:      row.Operation,
+		ContentHash:    row.ContentHash,
 	}
 }
 

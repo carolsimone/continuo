@@ -22,7 +22,7 @@ func dialState(t *testing.T, maintenanceOn bool) statev1.StateServiceClient {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	// Only RerunHandler is real: its argument validation answers before its
 	// use case is touched, which is all the "off" case needs.
-	srv, err := NewServer(0, nil, nil, nil, handlers.NewRerunHandler(nil, nil, logger), nil, nil, nil, logger, maintenanceOn)
+	srv, err := NewServer(0, nil, nil, nil, handlers.NewRerunHandler(nil, nil, logger), nil, nil, nil, nil, logger, maintenanceOn)
 	require.NoError(t, err)
 	go func() { _ = srv.Start() }()
 	t.Cleanup(func() { _ = srv.Shutdown(context.Background()) })

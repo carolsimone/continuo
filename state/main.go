@@ -31,6 +31,7 @@ import (
 	"github.com/carolsimone/continuo/state/internal/scheduler"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 	ports "github.com/carolsimone/continuo/state/service/ports"
+	"github.com/carolsimone/continuo/state/service/runreads"
 	"github.com/carolsimone/continuo/state/service/seedreconcile"
 	"github.com/carolsimone/continuo/state/service/topologyretention"
 	"github.com/carolsimone/continuo/state/service/uow"
@@ -408,9 +409,10 @@ func main() {
 	singleNodeRunHandler := handlers.NewSingleNodeRunHandler(singleNodeRunUC, uowFactory, logger)
 	nodeRunRepo := postgres.NewNodeRunRepository(db, logger)
 	nodeRunHandler := handlers.NewNodeRunHandler(nodeRunRepo, logger)
+	runReadHandler := handlers.NewRunReadHandler(runreads.New(postgres.NewRunReadRepository(db)), logger)
 
 	// Create gRPC server
-	grpcServer, err := grpcserver.NewServer(cfg.GRPCPort, schedulerHandler, taskHandler, taskExecutionHandler, rerunHandler, singleNodeRunHandler, rebaseHandler, nodeRunHandler, logger, cfg.Maintenance)
+	grpcServer, err := grpcserver.NewServer(cfg.GRPCPort, schedulerHandler, taskHandler, taskExecutionHandler, rerunHandler, singleNodeRunHandler, rebaseHandler, nodeRunHandler, runReadHandler, logger, cfg.Maintenance)
 	if err != nil {
 		logger.Error("Failed to create gRPC server", "error", err)
 		os.Exit(1)

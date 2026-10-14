@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -634,4 +635,65 @@ func TestNodeRunRepository_ListNodes_EmptyPageKeepsTotal(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, page)
 	assert.Equal(t, 3, total, "total_count must survive an empty page")
+}
+
+// A node run reports the node's content hash in the run's own release, not in
+// the live release, and none when the run names no release.
+func TestNodeRunRepository_ContentHashComesFromTheRunsRelease(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	tenant := "default"
+	oldRelease := "rel-" + uuid.NewString()
+	liveRelease := "rel-" + uuid.NewString()
+	table := "hash_" + strings.ReplaceAll(uuid.NewString()[:8], "-", "")
+	key := "raw." + table
+	base := time.Now().UnixMicro()
+
+	// insertRelease stores a release holding the node under a given content
+	// hash and removes it (with its nodes) when the test ends.
+	insertRelease := func(release string, promotionSeq int64, contentHash string) {
+		_, err := db.Exec(`INSERT INTO topology_releases (tenant_id, release_id, promotion_seq, topology_uri, topology_sha256) VALUES ($1, $2, $3, 's3://b/k', 'x')`, tenant, release, promotionSeq)
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			_, _ = db.Exec(`DELETE FROM topology_releases WHERE tenant_id = $1 AND release_id = $2`, tenant, release)
+		})
+		_, err = db.Exec(`INSERT INTO topology_nodes (tenant_id, release_id, node_key, unique_id, service_name, schema_name, table_name, node_type, content_hash)
+			VALUES ($1, $2, $3, $3, 'svc', 'raw', $4, 'dbt-model', $5)`, tenant, release, key, table, contentHash)
+		require.NoError(t, err)
+	}
+	insertRelease(oldRelease, base, "sha256:h1")
+	insertRelease(liveRelease, base+1, "sha256:h2")
+
+	// The newer release is the live one; whatever live row the tenant had is
+	// put back when the test ends.
+	var prior struct {
+		ReleaseID    string `db:"release_id"`
+		PromotionSeq int64  `db:"promotion_seq"`
+	}
+	hadPrior := db.GetContext(ctx, &prior, `SELECT release_id, promotion_seq FROM live_release WHERE tenant_id = $1`, tenant) == nil
+	_, err := db.Exec(`
+		INSERT INTO live_release (tenant_id, release_id, promotion_seq, updated_at) VALUES ($1, $2, $3, now())
+		ON CONFLICT (tenant_id) DO UPDATE SET release_id = EXCLUDED.release_id, promotion_seq = EXCLUDED.promotion_seq`,
+		tenant, liveRelease, base+1)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if hadPrior {
+			_, _ = db.Exec(`UPDATE live_release SET release_id = $2, promotion_seq = $3 WHERE tenant_id = $1`, tenant, prior.ReleaseID, prior.PromotionSeq)
+			return
+		}
+		_, _ = db.Exec(`DELETE FROM live_release WHERE tenant_id = $1`, tenant)
+	})
+
+	stamped := readRun(t, db, "hash-"+uuid.NewString()[:8], &oldRelease, nil, "succeeded", true)
+	legacy := readRun(t, db, "hash-"+uuid.NewString()[:8], nil, nil, "succeeded", true)
+	readTask(t, db, stamped, table, "succeeded")
+	readTask(t, db, legacy, table, "succeeded")
+
+	rows, err := postgres.NewNodeRunRepository(db, discardLogger()).List(ctx, "svc", "raw", table, "run", 50)
+	require.NoError(t, err)
+	hashes := map[uuid.UUID]string{}
+	for _, r := range rows {
+		hashes[r.ScheduleID] = r.ContentHash
+	}
+	assert.Equal(t, map[uuid.UUID]string{stamped: "sha256:h1", legacy: ""}, hashes)
 }

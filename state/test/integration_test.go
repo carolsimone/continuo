@@ -14,6 +14,7 @@ import (
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 	ports "github.com/carolsimone/continuo/state/service/ports"
+	"github.com/carolsimone/continuo/state/service/runreads"
 	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
@@ -133,9 +134,10 @@ func TestMain(m *testing.M) {
 	rebaseHandler := handlers.NewRebaseHandler(rebaseUC, integrationUoWFactory, logger)
 	nodeRunRepo := postgres.NewNodeRunRepository(db, logger)
 	nodeRunHandler := handlers.NewNodeRunHandler(nodeRunRepo, logger)
+	runReadHandler := handlers.NewRunReadHandler(runreads.New(postgres.NewRunReadRepository(db)), logger)
 
 	// ---- Create gRPC server on a random port ----
-	stateServer, err = grpcserver.NewServer(0, schedulerHandler, taskHandler, execHandler, rerunHandler, singleNodeRunHandler, rebaseHandler, nodeRunHandler, logger, false)
+	stateServer, err = grpcserver.NewServer(0, schedulerHandler, taskHandler, execHandler, rerunHandler, singleNodeRunHandler, rebaseHandler, nodeRunHandler, runReadHandler, logger, false)
 	if err != nil {
 		logger.Error("Failed to create gRPC server", "error", err)
 		os.Exit(1)

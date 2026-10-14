@@ -27,6 +27,7 @@ type Server struct {
 	singleNodeRunHandler *handlers.SingleNodeRunHandler
 	rebaseHandler        *handlers.RebaseHandler
 	nodeRunHandler       *handlers.NodeRunHandler
+	runReadHandler       *handlers.RunReadHandler
 }
 
 // MaintenanceGatedMethods are the RPCs that start a run. While maintenance mode
@@ -49,6 +50,7 @@ func NewServer(
 	singleNodeRunHandler *handlers.SingleNodeRunHandler,
 	rebaseHandler *handlers.RebaseHandler,
 	nodeRunHandler *handlers.NodeRunHandler,
+	runReadHandler *handlers.RunReadHandler,
 	logger *slog.Logger,
 	maintenance bool,
 ) (*Server, error) {
@@ -80,6 +82,7 @@ func NewServer(
 		singleNodeRunHandler: singleNodeRunHandler,
 		rebaseHandler:        rebaseHandler,
 		nodeRunHandler:       nodeRunHandler,
+		runReadHandler:       runReadHandler,
 	}
 
 	statev1.RegisterStateServiceServer(grpcServer, server)
@@ -229,4 +232,19 @@ func loggingInterceptor(logger *slog.Logger) grpc.UnaryServerInterceptor {
 		}
 		return resp, err
 	}
+}
+
+// GetRunGraph delegates to the run read handler.
+func (s *Server) GetRunGraph(ctx context.Context, req *statev1.GetRunGraphRequest) (*statev1.GetRunGraphResponse, error) {
+	return s.runReadHandler.GetRunGraph(ctx, req)
+}
+
+// ListRuns delegates to the run read handler.
+func (s *Server) ListRuns(ctx context.Context, req *statev1.ListRunsRequest) (*statev1.ListRunsResponse, error) {
+	return s.runReadHandler.ListRuns(ctx, req)
+}
+
+// ListActiveRunDrifts delegates to the run read handler.
+func (s *Server) ListActiveRunDrifts(ctx context.Context, req *statev1.ListActiveRunDriftsRequest) (*statev1.ListActiveRunDriftsResponse, error) {
+	return s.runReadHandler.ListActiveRunDrifts(ctx, req)
 }
