@@ -536,8 +536,17 @@ func (r *Run) Start(
 	if len(plan.Tasks) == 0 {
 		return nil, ErrNoNodes
 	}
+	pending := make(map[topology.NodeKey]bool, len(plan.Tasks))
+	for _, p := range plan.Tasks {
+		if !p.Inherited {
+			pending[p.Key] = true
+		}
+	}
 	ready := make(map[topology.NodeKey]bool, len(plan.Ready))
 	for _, k := range plan.Ready {
+		if !pending[k] {
+			return nil, fmt.Errorf("%w: %s", ErrPlanReadyNotPending, k)
+		}
 		ready[k] = true
 	}
 

@@ -30,7 +30,7 @@ func sourceRun(op model.Operation, succeeded, unsucceeded []string) runplan.Sour
 	return runplan.Source{Operation: op, Tasks: tasks}
 }
 
-// failedFailureRun is the design's example run of e2e-schedule-failure:
+// failedFailureRun is a run of e2e-schedule-failure:
 // ftable_e and ftable_g exhausted their retries, which skipped ftable_f and
 // ftable_h; every other task succeeded.
 func failedFailureRun() runplan.Source {

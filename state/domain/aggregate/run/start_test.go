@@ -61,7 +61,7 @@ func createdByKey(tc *fakeTaskCollection) map[topology.NodeKey]run.Task {
 	return out
 }
 
-// The design's example run: every node is a pending task, the two with no
+// The e2e-schedule-failure run: every node is a pending task, the two with no
 // upstream are dispatched when the run is created, and the run is running.
 func TestStart_StoresEveryTaskAndDispatchesTheReadyOnes(t *testing.T) {
 	g := failureSchedule()
@@ -115,7 +115,7 @@ func TestStart_StoresEveryTaskAndDispatchesTheReadyOnes(t *testing.T) {
 		ch.IsTotalTaskCountDirty() && ch.IsTerminalTaskCountDirty() && ch.IsHeartbeatDirty())
 }
 
-// A rerun of the design's example: the carried-over successes are stored
+// A rerun of the e2e-schedule-failure run: the carried-over successes are stored
 // succeeded, with no retry budget, pointing at the task that ran them, and are
 // counted terminal; only the re-executed failures are dispatched.
 func TestStart_InheritedTasksAreSucceededAndNeverDispatched(t *testing.T) {
@@ -211,6 +211,24 @@ func TestStart_IsRefusedWithoutStoringAnything(t *testing.T) {
 		_, err := newCronRun(t, model.OperationRun).Start(context.Background(), tc, "default", ghost, g, 2, startNow)
 		require.ErrorIs(t, err, run.ErrPlanNodeNotInGraph)
 		assert.Contains(t, err.Error(), "e2e_schema.ghost")
+		assert.Empty(t, tc.bulkCreated)
+	})
+	t.Run("a ready task outside the plan", func(t *testing.T) {
+		tc := newFakeTaskCollection()
+		bad := runplan.Plan{Tasks: slices.Clone(plan.Tasks), Ready: append(slices.Clone(plan.Ready), "e2e_schema.ghost")}
+		_, err := newCronRun(t, model.OperationRun).Start(context.Background(), tc, "default", bad, g, 2, startNow)
+		require.ErrorIs(t, err, run.ErrPlanReadyNotPending)
+		assert.Contains(t, err.Error(), "e2e_schema.ghost")
+		assert.Empty(t, tc.bulkCreated)
+	})
+	t.Run("a ready task the plan inherits", func(t *testing.T) {
+		tc := newFakeTaskCollection()
+		bad := runplan.Plan{Tasks: slices.Clone(plan.Tasks), Ready: slices.Clone(plan.Ready)}
+		bad.Tasks[0].Inherited, bad.Tasks[0].InheritedFrom = true, uuid.New()
+		bad.Ready = append(bad.Ready, bad.Tasks[0].Key)
+		_, err := newCronRun(t, model.OperationRun).Start(context.Background(), tc, "default", bad, g, 2, startNow)
+		require.ErrorIs(t, err, run.ErrPlanReadyNotPending)
+		assert.Contains(t, err.Error(), string(bad.Tasks[0].Key))
 		assert.Empty(t, tc.bulkCreated)
 	})
 	t.Run("a run already planned", func(t *testing.T) {

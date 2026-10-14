@@ -17,7 +17,7 @@ func sourceGraph(dag []fixtureNode, src runplan.Source) topology.Graph {
 	return releaseGraph(dag).Restrict(sourceKeys(src))
 }
 
-// The design's example: the failures and the tasks they skipped run again,
+// The e2e-schedule-failure run: the failures and the tasks they skipped run again,
 // and of those only the failures are ready, since each reads only inherited
 // tasks.
 func TestRerun_ReExecutesTheFailuresAndTheirDescendants(t *testing.T) {

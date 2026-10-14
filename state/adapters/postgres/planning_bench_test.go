@@ -15,9 +15,9 @@ import (
 )
 
 // The benchmarks below measure the run-planning hot paths on synthetic
-// releases stored in the test database. Run them on the isolated stack:
+// releases stored in the test database the state migrations built:
 //
-//	"$P22/gotest.sh" state -run '^$' -bench 'StartRun|TaskSucceeded|FinalFailure' -benchtime 20x ./adapters/postgres/
+//	go test -tags integration -run '^$' -bench 'StartRun|TaskSucceeded|FinalFailure' -benchtime 20x ./adapters/postgres/
 
 // The synthetic release shapes the benchmarks run on, besides cascade2000.
 var (

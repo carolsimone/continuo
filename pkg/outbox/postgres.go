@@ -85,7 +85,7 @@ func (r *postgresRepository) Create(ctx context.Context, entry *Entry) error {
 // createAllChunk entries instead of one per entry. exec is normally the
 // transaction that wrote the change the entries announce.
 func CreateAll(ctx context.Context, exec Executor, tableName string, entries []*Entry) error {
-	return newPostgresRepository(exec, tableName, nil).createAll(ctx, entries)
+	return newPostgresRepository(exec, tableName, slog.New(slog.DiscardHandler)).createAll(ctx, entries)
 }
 
 // createAllChunk is the most rows one createAll statement inserts. Each row
@@ -136,7 +136,7 @@ func (r *postgresRepository) createAll(ctx context.Context, entries []*Entry) er
 			)
 		}
 		if _, err := r.exec.ExecContext(ctx, query.String(), args...); err != nil {
-			return fmt.Errorf("create %d outbox entries in %s: %w", len(chunk), r.tableName, err)
+			return fmt.Errorf("create outbox entries in %s (%d rows): %w", r.tableName, len(chunk), err)
 		}
 	}
 	return nil

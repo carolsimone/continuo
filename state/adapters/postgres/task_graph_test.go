@@ -89,7 +89,7 @@ func inGraphTx(t *testing.T, db *sqlx.DB, tenant string, fn func(g *postgres.Tas
 	fn(postgres.NewTaskGraph(tx, tenant))
 }
 
-// The design's example run: when ftable_a succeeds, ftable_c still waits for
+// The e2e-schedule-failure run: when ftable_a succeeds, ftable_c still waits for
 // ftable_b and ftable_g is ready; when ftable_b succeeds, ftable_c is ready.
 func TestTaskGraph_ReadyCandidatesOfTheExampleRun(t *testing.T) {
 	ctx := context.Background()
@@ -174,7 +174,7 @@ func TestTaskGraph_AnEdgeCountsOnlyBetweenTasksOfTheRun(t *testing.T) {
 	})
 }
 
-// The design's example: ftable_e's failure leaves ftable_f unable to run,
+// The e2e-schedule-failure run: ftable_e's failure leaves ftable_f unable to run,
 // ftable_g's leaves ftable_h; a failure of ftable_c reaches ftable_f by two
 // paths and lists it once.
 func TestTaskGraph_PendingDescendantsOfTheExampleRunsFailures(t *testing.T) {
