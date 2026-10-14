@@ -12,7 +12,6 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	"github.com/carolsimone/continuo/orchestrator/domain/casebase"
 	"github.com/carolsimone/continuo/orchestrator/domain/codeversion"
-	"github.com/carolsimone/continuo/orchestrator/service/queries"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -31,7 +30,7 @@ import (
 // return codes.Unimplemented from the embedded UnimplementedOrchestratorQueryServer.
 func TestServer_RoutesEveryOrchestratorQueryRPC(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	handler := grpcadapter.NewQueryHandler(stubScheduleAndRunLists{}, stubDriftAwareRuns{}, stubCodeVersionHistoryReader{}, stubPrecedentHistoryReader{}, logger)
+	handler := grpcadapter.NewQueryHandler(stubScheduleLists{}, stubCodeVersionHistoryReader{}, stubPrecedentHistoryReader{}, logger)
 	server, err := grpcadapter.NewServer(0, handler, logger) // 0 = ephemeral port
 	require.NoError(t, err)
 	go func() { _ = server.Start() }()
@@ -58,18 +57,6 @@ func TestServer_RoutesEveryOrchestratorQueryRPC(t *testing.T) {
 			_, err := client.GetScheduleGraph(ctx, &orchestratorv1.GetScheduleGraphRequest{ScheduleName: "x"})
 			return err
 		}},
-		{"ListRuns", func() error {
-			_, err := client.ListRuns(ctx, &orchestratorv1.ListRunsRequest{ScheduleName: "x"})
-			return err
-		}},
-		{"GetRunGraph", func() error {
-			_, err := client.GetRunGraph(ctx, &orchestratorv1.GetRunGraphRequest{RunId: "x"})
-			return err
-		}},
-		{"ListActiveRunDrifts", func() error {
-			_, err := client.ListActiveRunDrifts(ctx, &orchestratorv1.ListActiveRunDriftsRequest{})
-			return err
-		}},
 		{"ListScheduleTopologies", func() error {
 			_, err := client.ListScheduleTopologies(ctx, &orchestratorv1.ListScheduleTopologiesRequest{})
 			return err
@@ -94,10 +81,6 @@ func TestServer_RoutesEveryOrchestratorQueryRPC(t *testing.T) {
 			_, err := client.GetCodeUnitVersions(ctx, &orchestratorv1.GetCodeUnitVersionsRequest{UnitId: "x"})
 			return err
 		}},
-		{"GetNodeRunHistory", func() error {
-			_, err := client.GetNodeRunHistory(ctx, &orchestratorv1.GetNodeRunHistoryRequest{UniqueId: "x"})
-			return err
-		}},
 		{"GetPrecedents", func() error {
 			_, err := client.GetPrecedents(ctx, &orchestratorv1.GetPrecedentsRequest{Signature: "x"})
 			return err
@@ -118,33 +101,20 @@ func TestServer_RoutesEveryOrchestratorQueryRPC(t *testing.T) {
 	}
 }
 
-// stubScheduleAndRunLists satisfies grpcadapter.ScheduleAndRunListReader.
-type stubScheduleAndRunLists struct{}
+// stubScheduleLists satisfies grpcadapter.ScheduleListReader.
+type stubScheduleLists struct{}
 
-func (stubScheduleAndRunLists) GetScheduleGraph(context.Context, string) (*domain.ScheduleGraph, error) {
+func (stubScheduleLists) GetScheduleGraph(context.Context, string) (*domain.ScheduleGraph, error) {
 	return &domain.ScheduleGraph{}, nil
 }
-func (stubScheduleAndRunLists) ListRuns(context.Context, string, int, int) ([]*domain.RunSummary, int, error) {
-	return nil, 0, nil
-}
-func (stubScheduleAndRunLists) ListScheduleTopologies(context.Context) ([]*domain.ScheduleTopologySummary, error) {
+func (stubScheduleLists) ListScheduleTopologies(context.Context) ([]*domain.ScheduleTopologySummary, error) {
 	return nil, nil
 }
-func (stubScheduleAndRunLists) GetNode(context.Context, string, string, string, domain.NodeScope) (*domain.NodeMeta, error) {
+func (stubScheduleLists) GetNode(context.Context, string, string, string, domain.NodeScope) (*domain.NodeMeta, error) {
 	return nil, nil
 }
-func (stubScheduleAndRunLists) GetNodeLocation(context.Context, string) (*domain.NodeLocation, error) {
+func (stubScheduleLists) GetNodeLocation(context.Context, string) (*domain.NodeLocation, error) {
 	return &domain.NodeLocation{}, nil
-}
-
-// stubDriftAwareRuns satisfies grpcadapter.DriftAwareRunReader.
-type stubDriftAwareRuns struct{}
-
-func (stubDriftAwareRuns) GetRunGraph(context.Context, string) (*queries.RunGraphView, error) {
-	return &queries.RunGraphView{}, nil
-}
-func (stubDriftAwareRuns) ListActiveRunDrifts(context.Context) (*queries.ActiveRunDriftView, error) {
-	return &queries.ActiveRunDriftView{}, nil
 }
 
 // stubCodeVersionHistoryReader satisfies grpcadapter.CodeVersionHistoryReader.
@@ -163,9 +133,6 @@ func (stubCodeVersionHistoryReader) GetUpstreamChanges(context.Context, string, 
 	return nil, nil
 }
 func (stubCodeVersionHistoryReader) GetCodeUnitVersions(context.Context, string, string, int32) ([]codeversion.UnitVersionView, error) {
-	return nil, nil
-}
-func (stubCodeVersionHistoryReader) GetNodeRunHistory(context.Context, string, int32, string) ([]codeversion.RunExecution, error) {
 	return nil, nil
 }
 

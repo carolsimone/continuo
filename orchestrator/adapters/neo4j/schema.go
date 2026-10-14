@@ -26,8 +26,8 @@ import (
 //     fully-qualified descendant/single-table reader.
 //   - table_schedule: backs the `MATCH (:Table {schedule_name: …})` scans in
 //     LoadLatestSourceDAG and the schedule-graph query.
-//   - run_schedule: backs the `MATCH (:Run {schedule_name: …})` lookup in
-//     ListRuns.
+//   - run_schedule: backs the schedule_name ordering of the in-flight :Run
+//     scan in ListActiveRuns.
 //   - node_version_unique: makes (unique_id, content_hash) a code version's
 //     identity, so a redelivered release MERGEs onto the version it already
 //     wrote instead of minting a duplicate.

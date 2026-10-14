@@ -3,7 +3,6 @@ package neo4jinfra_test
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"os"
 	"testing"
@@ -30,68 +29,6 @@ func newTestQueryRepo(t *testing.T) (*neo4jinfra.OrchestratorQueryRepository, ne
 		_, _ = session.Run(ctx, "MATCH (r:Run {test_marker: $m}) DETACH DELETE r", map[string]any{"m": t.Name()})
 	}
 	return repo, client, cleanup
-}
-
-func seedRunWithPromotionSeq(t *testing.T, ctx context.Context, client neo4jinfra.Neo4jClient, runID string, gen *int64) {
-	t.Helper()
-	session := client.NewSession(ctx, neo4j.AccessModeWrite)
-	defer session.Close(ctx)
-	var query string
-	params := map[string]any{"run_id": runID, "marker": t.Name()}
-	if gen == nil {
-		query = `CREATE (r:Run {run_id: $run_id, schedule_name: 'sched', test_marker: $marker})`
-	} else {
-		query = `CREATE (r:Run {run_id: $run_id, schedule_name: 'sched', promotion_seq: $gen, test_marker: $marker})`
-		params["gen"] = *gen
-	}
-	_, err := session.Run(ctx, query, params)
-	require.NoError(t, err)
-}
-
-func TestOrchestratorQueryRepository_GetRunPromotionSeq_ReturnsValue(t *testing.T) {
-	if testing.Short() {
-		t.Skip("requires Neo4j")
-	}
-	repo, client, cleanup := newTestQueryRepo(t)
-	defer cleanup()
-
-	ctx := context.Background()
-	runID := fmt.Sprintf("run-%s-1", t.Name())
-	gen := int64(7)
-	seedRunWithPromotionSeq(t, ctx, client, runID, &gen)
-
-	got, err := repo.GetRunPromotionSeq(ctx, runID)
-	require.NoError(t, err)
-	assert.Equal(t, int64(7), got)
-}
-
-func TestOrchestratorQueryRepository_GetRunPromotionSeq_ReturnsZeroWhenUnset(t *testing.T) {
-	if testing.Short() {
-		t.Skip("requires Neo4j")
-	}
-	repo, client, cleanup := newTestQueryRepo(t)
-	defer cleanup()
-
-	ctx := context.Background()
-	runID := fmt.Sprintf("run-%s-2", t.Name())
-	seedRunWithPromotionSeq(t, ctx, client, runID, nil) // property absent
-
-	got, err := repo.GetRunPromotionSeq(ctx, runID)
-	require.NoError(t, err)
-	assert.Equal(t, int64(0), got)
-}
-
-func TestOrchestratorQueryRepository_GetRunPromotionSeq_ReturnsZeroWhenRunMissing(t *testing.T) {
-	if testing.Short() {
-		t.Skip("requires Neo4j")
-	}
-	repo, _, cleanup := newTestQueryRepo(t)
-	defer cleanup()
-
-	ctx := context.Background()
-	got, err := repo.GetRunPromotionSeq(ctx, "nonexistent-run")
-	require.NoError(t, err)
-	assert.Equal(t, int64(0), got)
 }
 
 func TestOrchestratorQueryRepository_ListActiveRuns_OnlyUnfinalized(t *testing.T) {
@@ -159,8 +96,8 @@ func TestOrchestratorQueryRepository_ListActiveRuns_ZeroForUnsetPromotionSeq(t *
 // TestOrchestratorQueryRepository_ListActiveRuns_NewestFirst verifies that
 // ListActiveRuns returns in-flight runs for the same schedule ordered
 // newest-first (created_at DESC), and excludes finalized runs regardless of
-// created_at. The ordering contract is required by RunQueryService.ListActiveRunDrifts
-// so that keeping the head row per schedule always yields the newest run.
+// created_at. The ordering contract is required by the run reconciler so that
+// keeping the head row per schedule always yields the newest run.
 func TestOrchestratorQueryRepository_ListActiveRuns_NewestFirst(t *testing.T) {
 	if testing.Short() {
 		t.Skip("requires Neo4j")
@@ -383,22 +320,3 @@ func TestOrchestratorQueryRepository_GetGeneration_ReadsTheLivePromotionSeq(t *t
 	assert.Equal(t, int64(9), got)
 }
 
-// A run created before runs carried a promotion seq has only the legacy
-// topology_generation counter. That counter is not a promotion seq, so the run
-// reads as 0 ("drift unknown"), never as the counter's value.
-func TestOrchestratorQueryRepository_GetRunPromotionSeq_IgnoresTheLegacyCounter(t *testing.T) {
-	repo, client, cleanup := newTestQueryRepo(t)
-	defer cleanup()
-	ctx := context.Background()
-
-	s := client.NewSession(ctx, neo4j.AccessModeWrite)
-	_, err := s.Run(ctx,
-		`CREATE (r:Run {run_id: 'legacy-gen', schedule_name: 'sched', topology_generation: 140, test_marker: $m})`,
-		map[string]any{"m": t.Name()})
-	require.NoError(t, err)
-	s.Close(ctx)
-
-	got, err := repo.GetRunPromotionSeq(ctx, "legacy-gen")
-	require.NoError(t, err)
-	assert.Equal(t, int64(0), got)
-}

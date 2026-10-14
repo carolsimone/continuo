@@ -74,18 +74,3 @@ type UnitVersionView struct {
 	PromotedAt time.Time
 	IsCurrent  bool
 }
-
-// RunExecution is one run that executed a node, with the code it actually ran.
-type RunExecution struct {
-	RunID        string
-	TaskID       string
-	Status       string
-	ScheduleName string
-	Operation    string
-	ImageTag     string
-	// ContentHash is the code the run executed, stamped on the :EXECUTES edge at
-	// snapshot time. Empty for runs that predate the stamp.
-	ContentHash string
-	CreatedAt   time.Time
-	CompletedAt time.Time
-}

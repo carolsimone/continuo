@@ -172,11 +172,8 @@ func (r *CodeVersionQueryRepository) CurrentNodeVersion(ctx context.Context, uni
 // nodeKnown reports whether uniqueID is a recorded node: either it still has
 // an active :Table, or it has at least one :NodeVersion (a retired node whose
 // :Table was deleted but whose history survives). This is the same
-// known/unknown boundary every code-version RPC applies — NodeVersions
-// reaches it only after finding zero :NodeVersion rows itself, so the
-// :NodeVersion half of this check is redundant there but keeps RunExecutions,
-// which has no version rows of its own to fall back on, applying the
-// identical definition.
+// known/unknown boundary every code-version RPC applies: a node is known when
+// it still has a :Table or has at least one surviving :NodeVersion row.
 func (r *CodeVersionQueryRepository) nodeKnown(ctx context.Context, session neo4j.SessionWithContext, uniqueID string) (bool, error) {
 	result, err := session.Run(ctx, `
 		OPTIONAL MATCH (t:Table {unique_id: $uid})
@@ -521,75 +518,6 @@ func (r *CodeVersionQueryRepository) UnitsForNode(ctx context.Context, uniqueID 
 		return nil, fmt.Errorf("CodeVersionQueryRepository.UnitsForNode: %w", err)
 	}
 	return units, nil
-}
-
-// RunExecutions returns runs that executed the node, newest first, optionally
-// filtered server-side to one operation ("" applies no filter). Status and
-// content_hash come from the :EXECUTES edge (the code that specific run
-// executed); the rest comes from the :Run node. An unknown unique_id returns
-// ErrNodeNotFound; a known node with no matching runs returns an empty slice
-// — the empty-result case applies the same nodeKnown check NodeVersions uses,
-// so both RPCs draw the known/unknown line identically.
-func (r *CodeVersionQueryRepository) RunExecutions(ctx context.Context, uniqueID string, limit int32, operation string) ([]codeversion.RunExecution, error) {
-	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
-	defer func() { _ = session.Close(ctx) }()
-
-	query := `
-		MATCH (run:Run)-[e:EXECUTES]->(t:Table {unique_id: $uid})
-		WHERE $operation = '' OR coalesce(run.operation, '') = $operation
-		RETURN run.run_id AS run_id,
-		       e.task_id AS task_id,
-		       coalesce(e.status, 'PENDING') AS status,
-		       run.schedule_name AS schedule_name,
-		       coalesce(run.operation, '') AS operation,
-		       coalesce(e.image_tag, '') AS image_tag,
-		       coalesce(e.content_hash, '') AS content_hash,
-		       run.created_at AS created_at,
-		       run.completed_at AS completed_at
-		ORDER BY run.created_at DESC
-		LIMIT $limit
-	`
-	result, err := session.Run(ctx, query, map[string]any{"uid": uniqueID, "limit": int64(limit), "operation": operation})
-	if err != nil {
-		return nil, fmt.Errorf("CodeVersionQueryRepository.RunExecutions: %w", err)
-	}
-	runs := make([]codeversion.RunExecution, 0)
-	for result.Next(ctx) {
-		rec := result.Record()
-		runID, _ := recordString(rec, "run_id")
-		taskID, _ := recordString(rec, "task_id")
-		status, _ := recordString(rec, "status")
-		scheduleName, _ := recordString(rec, "schedule_name")
-		runOperation, _ := recordString(rec, "operation")
-		imageTag, _ := recordString(rec, "image_tag")
-		contentHash, _ := recordString(rec, "content_hash")
-		runs = append(runs, codeversion.RunExecution{
-			RunID:        runID,
-			TaskID:       taskID,
-			Status:       status,
-			ScheduleName: scheduleName,
-			Operation:    runOperation,
-			ImageTag:     imageTag,
-			ContentHash:  contentHash,
-			CreatedAt:    recordTime(rec, "created_at"),
-			CompletedAt:  recordTime(rec, "completed_at"),
-		})
-	}
-	if err := result.Err(); err != nil {
-		return nil, fmt.Errorf("CodeVersionQueryRepository.RunExecutions: %w", err)
-	}
-	if len(runs) > 0 {
-		return runs, nil
-	}
-
-	known, err := r.nodeKnown(ctx, session, uniqueID)
-	if err != nil {
-		return nil, fmt.Errorf("CodeVersionQueryRepository.RunExecutions: %w", err)
-	}
-	if !known {
-		return nil, fmt.Errorf("CodeVersionQueryRepository.RunExecutions: node %s: %w", uniqueID, domain.ErrNodeNotFound)
-	}
-	return runs, nil
 }
 
 // versionViewFromRecord builds a VersionView from one row projected by

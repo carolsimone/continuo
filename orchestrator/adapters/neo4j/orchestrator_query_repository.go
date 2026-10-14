@@ -135,172 +135,10 @@ func (r *OrchestratorQueryRepository) GetScheduleGraph(ctx context.Context, sche
 	return &domain.ScheduleGraph{Nodes: nodes, Edges: edges, PromotionSeq: promotionSeq}, nil
 }
 
-// ListRuns returns a page of completed runs for a schedule, newest-first, along
-// with the total number of completed runs matching the schedule (independent of
-// the page window) so callers can paginate. limit must be > 0 and offset >= 0;
-// the gRPC handler clamps both before calling.
-func (r *OrchestratorQueryRepository) ListRuns(ctx context.Context, scheduleName string, limit, offset int) ([]*domain.RunSummary, int, error) {
-	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
-	defer func() { _ = session.Close(ctx) }()
-
-	// count and page share the same MATCH so their filter can never drift.
-	countQuery := `
-		MATCH (run:Run {schedule_name: $schedule_name})
-		WHERE run.completed_at IS NOT NULL
-		RETURN count(run) AS total
-	`
-	countResult, err := session.Run(ctx, countQuery, map[string]interface{}{"schedule_name": scheduleName})
-	if err != nil {
-		return nil, 0, fmt.Errorf("ListRuns count: %w", err)
-	}
-	var total int
-	if countResult.Next(ctx) {
-		if v, ok := recordValue(countResult.Record(), "total").(int64); ok {
-			total = int(v)
-		}
-	}
-	if err := countResult.Err(); err != nil {
-		return nil, 0, fmt.Errorf("ListRuns count iterate: %w", err)
-	}
-
-	pageQuery := `
-		MATCH (run:Run {schedule_name: $schedule_name})
-		WHERE run.completed_at IS NOT NULL
-		RETURN run.run_id AS run_id,
-		       run.schedule_name AS schedule_name,
-		       run.terminal_status AS terminal_status,
-		       toString(run.created_at) AS created_at,
-		       toString(run.completed_at) AS completed_at
-		ORDER BY run.created_at DESC
-		SKIP $offset
-		LIMIT $limit
-	`
-	result, err := session.Run(ctx, pageQuery, map[string]interface{}{
-		"schedule_name": scheduleName,
-		"offset":        int64(offset),
-		"limit":         int64(limit),
-	})
-	if err != nil {
-		return nil, 0, fmt.Errorf("ListRuns: %w", err)
-	}
-
-	var runs []*domain.RunSummary
-	for result.Next(ctx) {
-		record := result.Record()
-		summary := &domain.RunSummary{
-			RunID:          safeString(recordValue(record, "run_id")),
-			ScheduleName:   safeString(recordValue(record, "schedule_name")),
-			TerminalStatus: safeString(recordValue(record, "terminal_status")),
-		}
-		summary.CreatedAt = r.parseNeo4jTimestamp("created_at", safeString(recordValue(record, "created_at")))
-		summary.CompletedAt = r.parseNeo4jTimestamp("completed_at", safeString(recordValue(record, "completed_at")))
-		runs = append(runs, summary)
-	}
-	if err := result.Err(); err != nil {
-		return nil, 0, fmt.Errorf("ListRuns iterate: %w", err)
-	}
-	return runs, total, nil
-}
-
-// GetRunGraph returns nodes with their execution status and edges for a run.
-func (r *OrchestratorQueryRepository) GetRunGraph(ctx context.Context, runID string) ([]*domain.TableNode, []*domain.GraphEdge, error) {
-	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
-	defer func() { _ = session.Close(ctx) }()
-
-	nodeQuery := `
-		MATCH (:Run {run_id: $run_id})-[exec:EXECUTES]->(n:Table)
-		RETURN n.table_name AS table_name,
-		       n.schema_name AS schema_name,
-		       n.service_name AS service_name,
-		       COALESCE(n.owner, "") AS owner,
-		       COALESCE(n.schedule_name, "") AS schedule_name,
-		       COALESCE(n.criticality, "unspecified") AS criticality,
-		       n.last_updated_at AS last_updated_at,
-		       n.created_at AS created_at,
-		       COALESCE(n.node_type, "") AS node_type,
-		       COALESCE(exec.status, "") AS status
-	`
-	nodeResult, err := session.Run(ctx, nodeQuery, map[string]interface{}{"run_id": runID})
-	if err != nil {
-		return nil, nil, fmt.Errorf("GetRunGraph nodes: %w", err)
-	}
-
-	var nodes []*domain.TableNode
-	for nodeResult.Next(ctx) {
-		record := nodeResult.Record()
-		node, err := recordToTableNode(record)
-		if err != nil {
-			return nil, nil, fmt.Errorf("GetRunGraph parse node: %w", err)
-		}
-		node.Status = safeString(recordValue(record, "status"))
-		nodes = append(nodes, node)
-	}
-	if err := nodeResult.Err(); err != nil {
-		return nil, nil, fmt.Errorf("GetRunGraph nodes iterate: %w", err)
-	}
-
-	edgeQuery := `
-		MATCH (run:Run {run_id: $run_id})-[:EXECUTES]->(from_n:Table)-[:DEPENDS_ON]->(to_n:Table)
-		WHERE EXISTS { MATCH (run)-[:EXECUTES]->(to_n) }
-		RETURN from_n.service_name + '.' + from_n.schema_name + '.' + from_n.table_name AS from_node_id,
-		       to_n.service_name + '.' + to_n.schema_name + '.' + to_n.table_name AS to_node_id
-	`
-	edgeResult, err := session.Run(ctx, edgeQuery, map[string]interface{}{"run_id": runID})
-	if err != nil {
-		return nil, nil, fmt.Errorf("GetRunGraph edges: %w", err)
-	}
-
-	var edges []*domain.GraphEdge
-	for edgeResult.Next(ctx) {
-		record := edgeResult.Record()
-		fromNodeID := safeString(recordValue(record, "from_node_id"))
-		toNodeID := safeString(recordValue(record, "to_node_id"))
-		if fromNodeID == "" || toNodeID == "" {
-			continue
-		}
-		edges = append(edges, &domain.GraphEdge{FromNodeID: fromNodeID, ToNodeID: toNodeID})
-	}
-	if err := edgeResult.Err(); err != nil {
-		return nil, nil, fmt.Errorf("GetRunGraph edges iterate: %w", err)
-	}
-
-	return nodes, edges, nil
-}
-
-// GetRunPromotionSeq returns the promotion seq stamped on the :Run node at
-// snapshot time. It returns 0 when the run does not exist or carries no
-// promotion_seq property; the service layer documents the contract: 0 means
-// "drift unknown".
-func (r *OrchestratorQueryRepository) GetRunPromotionSeq(ctx context.Context, runID string) (int64, error) {
-	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
-	defer func() { _ = session.Close(ctx) }()
-
-	query := `
-		MATCH (r:Run {run_id: $run_id})
-		RETURN COALESCE(r.promotion_seq, 0) AS seq
-	`
-	result, err := session.Run(ctx, query, map[string]interface{}{"run_id": runID})
-	if err != nil {
-		return 0, fmt.Errorf("GetRunPromotionSeq: %w", err)
-	}
-	if !result.Next(ctx) {
-		if err := result.Err(); err != nil {
-			return 0, fmt.Errorf("GetRunPromotionSeq iterate: %w", err)
-		}
-		return 0, nil
-	}
-	raw, _ := result.Record().Get("seq")
-	if v, ok := raw.(int64); ok {
-		return v, nil
-	}
-	return 0, nil
-}
-
 // GetGeneration returns the promotion seq of the live topology: the
 // :TopologyRoot singleton's promotion_seq, written in the same transaction as
 // the swap that made that topology live. It returns 0 before the first
-// promotion. The schedule-graph cache keys on it and the drift views compare
-// runs against it.
+// promotion. The schedule-graph cache keys on it.
 func (r *OrchestratorQueryRepository) GetGeneration(ctx context.Context) (int64, error) {
 	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
 	defer func() { _ = session.Close(ctx) }()
@@ -329,7 +167,7 @@ func (r *OrchestratorQueryRepository) GetGeneration(ctx context.Context) (int64,
 // does not deduplicate: multiple rows for the same schedule_name can appear
 // when a concurrent-trigger invariant is violated, making the anomaly
 // observable to the caller. Deduplication to the newest run per schedule is
-// the responsibility of the caller (RunQueryService).
+// the responsibility of the caller (the run reconciler).
 func (r *OrchestratorQueryRepository) ListActiveRuns(ctx context.Context) ([]*domain.ActiveRun, error) {
 	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
 	defer func() { _ = session.Close(ctx) }()
@@ -414,24 +252,6 @@ func (r *OrchestratorQueryRepository) ListScheduleTopologies(ctx context.Context
 		return nil, fmt.Errorf("ListScheduleTopologies iterate: %w", err)
 	}
 	return out, nil
-}
-
-// parseNeo4jTimestamp parses a Neo4j RFC3339Nano datetime string into a
-// time.Time. An empty value maps to the zero time silently (the field was
-// never set); a non-empty but unparseable value is logged before falling back
-// to the zero time, so corrupt timestamps surface in the logs instead of
-// vanishing.
-func (r *OrchestratorQueryRepository) parseNeo4jTimestamp(field, value string) time.Time {
-	if value == "" {
-		return time.Time{}
-	}
-	ts, err := time.Parse(time.RFC3339Nano, value)
-	if err != nil {
-		r.logger.Warn("Unparseable Neo4j timestamp — using zero time",
-			"field", field, "value", value, "error", err)
-		return time.Time{}
-	}
-	return ts
 }
 
 // GetNode returns per-node topology metadata for a single :Table, addressed by

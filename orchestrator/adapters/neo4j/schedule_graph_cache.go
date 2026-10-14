@@ -18,12 +18,11 @@ const scheduleGraphCacheSize = 32
 
 // ScheduleGraphProvider is the full read surface the cache decorates. It caches
 // only GetScheduleGraph (the expensive, immutable topology-shape query) and
-// passes ListRuns / ListScheduleTopologies / GetNode / GetNodeLocation straight
-// through so the decorator can stand in for the repository wherever the
-// schedule-and-run reader is required. Satisfied by *OrchestratorQueryRepository.
+// passes ListScheduleTopologies / GetNode / GetNodeLocation straight through so
+// the decorator can stand in for the repository wherever the schedule reader is
+// required. Satisfied by *OrchestratorQueryRepository.
 type ScheduleGraphProvider interface {
 	GetScheduleGraph(ctx context.Context, scheduleName string) (*domain.ScheduleGraph, error)
-	ListRuns(ctx context.Context, scheduleName string, limit, offset int) ([]*domain.RunSummary, int, error)
 	ListScheduleTopologies(ctx context.Context) ([]*domain.ScheduleTopologySummary, error)
 	GetNode(ctx context.Context, service, schema, table string, scope domain.NodeScope) (*domain.NodeMeta, error)
 	GetNodeLocation(ctx context.Context, uniqueID string) (*domain.NodeLocation, error)
@@ -43,10 +42,7 @@ type GenerationProvider interface {
 //
 // CACHE BOUNDARY: only the IMMUTABLE topology SHAPE is cached. GetScheduleGraph
 // returns nodes/edges that depend solely on the manifest topology at a given
-// generation — it carries NO per-run status overlay. Run-graph reads
-// (GetRunGraph), which DO overlay live :EXECUTES.status, are intentionally not
-// routed through this cache and stay uncached so status changes are always
-// fresh.
+// generation — it carries NO per-run status overlay.
 //
 // On each call the decorator probes the current seq (a single-node Neo4j
 // read) to build the key. A hit returns the cached shape without
@@ -109,11 +105,6 @@ func (c *CachingScheduleGraphReader) GetScheduleGraph(ctx context.Context, sched
 	}
 	c.put(key, graph)
 	return graph, nil
-}
-
-// ListRuns passes through to the underlying reader; run history is not cached.
-func (c *CachingScheduleGraphReader) ListRuns(ctx context.Context, scheduleName string, limit, offset int) ([]*domain.RunSummary, int, error) {
-	return c.inner.ListRuns(ctx, scheduleName, limit, offset)
 }
 
 // ListScheduleTopologies passes through to the underlying reader.

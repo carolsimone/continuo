@@ -36,12 +36,6 @@ type fakeNodeOrchestrator struct {
 	gotUnitsUniqueID string
 	gotUnitsLimit    int32
 
-	runHistoryResp         *orchestratorv1.GetNodeRunHistoryResponse
-	runHistoryErr          error
-	gotRunHistoryUniqueID  string
-	gotRunHistoryLimit     int32
-	gotRunHistoryOperation string
-
 	precedentsResp           *orchestratorv1.GetPrecedentsResponse
 	precedentsErr            error
 	gotPrecedentsSignature   string
@@ -75,11 +69,6 @@ func (f *fakeNodeOrchestrator) GetUpstreamChanges(_ context.Context, uniqueID st
 func (f *fakeNodeOrchestrator) GetCodeUnitVersions(_ context.Context, unitID, uniqueID string, limit int32) (*orchestratorv1.GetCodeUnitVersionsResponse, error) {
 	f.gotUnitsUnitID, f.gotUnitsUniqueID, f.gotUnitsLimit = unitID, uniqueID, limit
 	return f.unitsResp, f.unitsErr
-}
-
-func (f *fakeNodeOrchestrator) GetNodeRunHistory(_ context.Context, uniqueID string, limit int32, operation string) (*orchestratorv1.GetNodeRunHistoryResponse, error) {
-	f.gotRunHistoryUniqueID, f.gotRunHistoryLimit, f.gotRunHistoryOperation = uniqueID, limit, operation
-	return f.runHistoryResp, f.runHistoryErr
 }
 
 func (f *fakeNodeOrchestrator) GetPrecedents(_ context.Context, signature, category, reason string, limit int32, includeCode bool) (*orchestratorv1.GetPrecedentsResponse, error) {

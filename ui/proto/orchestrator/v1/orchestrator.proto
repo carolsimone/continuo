@@ -5,9 +5,6 @@ import "google/protobuf/timestamp.proto";
 
 service OrchestratorQuery {
   rpc GetScheduleGraph(GetScheduleGraphRequest) returns (GetScheduleGraphResponse);
-  rpc ListRuns(ListRunsRequest) returns (ListRunsResponse);
-  rpc GetRunGraph(GetRunGraphRequest) returns (GetRunGraphResponse);
-  rpc ListActiveRunDrifts(ListActiveRunDriftsRequest) returns (ListActiveRunDriftsResponse);
   rpc ListScheduleTopologies(ListScheduleTopologiesRequest)
       returns (ListScheduleTopologiesResponse);
   rpc GetNode(GetNodeRequest) returns (GetNodeResponse);
@@ -51,10 +48,6 @@ service OrchestratorQuery {
   // is NOT_FOUND; a known unit with no recorded history returns an empty
   // versions list.
   rpc GetCodeUnitVersions(GetCodeUnitVersionsRequest) returns (GetCodeUnitVersionsResponse);
-  // GetNodeRunHistory returns runs that executed the node, newest first,
-  // optionally filtered server-side to one operation. An unknown unique_id is
-  // NOT_FOUND; a known node with no matching runs returns an empty runs list.
-  rpc GetNodeRunHistory(GetNodeRunHistoryRequest) returns (GetNodeRunHistoryResponse);
 
   // GetPrecedents returns past rejections matching an error signature — or,
   // when signature is empty, a (category, reason) pair — resolved-first, then
@@ -134,55 +127,6 @@ message GetScheduleGraphResponse {
   // (:TopologyRoot.promotion_seq). It is 0 before the first promotion;
   // consumers MUST treat 0 as "unknown", not as a seq.
   int64 promotion_seq                   = 3;
-}
-
-message ListRunsRequest {
-  string schedule_name = 1;
-  // page_size bounds the rows returned. Server clamps to [1, 200]; 0 (unset)
-  // defaults to 50. Mirrors the StateService.ListNodes pagination contract.
-  int32 page_size = 2;
-  // page_offset skips this many rows before the page. Negative values are
-  // treated as 0.
-  int32 page_offset = 3;
-}
-message ListRunsResponse {
-  repeated RunSummary runs = 1;
-  // total_count is the number of completed runs matching schedule_name,
-  // independent of page_size/page_offset, so callers can paginate.
-  int32 total_count = 2;
-}
-message RunSummary {
-  string run_id = 1;
-  string schedule_name = 2;
-  string terminal_status = 3;
-  string created_at = 4;
-  string completed_at = 5;
-}
-
-message GetRunGraphRequest { string run_id = 1; }
-message GetRunGraphResponse {
-  repeated TableNode nodes = 1;
-  repeated GraphEdge edges = 2;
-  // run_promotion_seq is the promotion seq the run was created under, stamped
-  // on the :Run node when its snapshot is written. It is 0 when the run does
-  // not exist or carries no promotion seq; consumers MUST treat 0 as "drift
-  // unknown", not "no drift".
-  int64 run_promotion_seq = 3;
-  // latest_promotion_seq is the live promotion seq (:TopologyRoot.promotion_seq).
-  int64 latest_promotion_seq = 4;
-}
-
-message ListActiveRunDriftsRequest {}
-message ListActiveRunDriftsResponse {
-  // latest_promotion_seq is the live promotion seq, as in GetRunGraphResponse.
-  int64 latest_promotion_seq = 1;
-  repeated ActiveRunDrift active_runs = 2;
-}
-message ActiveRunDrift {
-  string schedule_name = 1;
-  string run_id = 2;
-  // run_promotion_seq is the promotion seq the run was created under; 0 when unknown.
-  int64 run_promotion_seq = 3;
 }
 
 message ListScheduleTopologiesRequest {}
@@ -267,22 +211,6 @@ message UnitVersionView {
   bool   is_current  = 8;
 }
 
-// RunExecution is one run that executed a node, with the code it actually
-// ran.
-message RunExecution {
-  string run_id        = 1;
-  string task_id       = 2;
-  string status        = 3;
-  string schedule_name = 4;
-  string operation     = 5;
-  string image_tag     = 6;
-  // content_hash is the code the run executed, stamped on the :EXECUTES edge
-  // at snapshot time. Empty for runs that predate the stamp.
-  string content_hash = 7;
-  string created_at   = 8;  // RFC3339
-  string completed_at = 9;  // RFC3339, "" while the run has not finished
-}
-
 message GetNodeVersionsRequest {
   string unique_id = 1;
   // limit bounds the number of versions returned, newest first. <= 0
@@ -343,20 +271,6 @@ message GetCodeUnitVersionsRequest {
 }
 message GetCodeUnitVersionsResponse {
   repeated UnitVersionView versions = 1;
-}
-
-message GetNodeRunHistoryRequest {
-  string unique_id = 1;
-  // limit bounds the number of runs returned, newest first. <= 0 defaults to
-  // 20; values above 200 are clamped to it.
-  int32 limit = 2;
-  // operation filters to runs of exactly this operation ("run"/"test"/
-  // "build"). "" (empty, default) applies no filter and returns every
-  // operation.
-  string operation = 3;
-}
-message GetNodeRunHistoryResponse {
-  repeated RunExecution runs = 1;
 }
 
 message GetPrecedentsRequest {

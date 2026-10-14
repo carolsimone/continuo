@@ -506,16 +506,14 @@ func main() {
 	// START gRPC SERVER
 	// ========================================================================
 
-	runQueries := queries.NewRunQueryService(queryRepo, queryRepo, logger)
 	// Topology shapes are immutable per promotion, so wrap the schedule reader in
-	// an LRU cache keyed by (schedule_name, live promotion seq). Run graphs carry
-	// live status overlays and stay uncached (served by queryRepo).
+	// an LRU cache keyed by (schedule_name, live promotion seq).
 	scheduleGraphReader := neo4jinfra.NewCachingScheduleGraphReader(queryRepo, queryRepo, logger)
 	codeVersionQueryRepo := neo4jinfra.NewCodeVersionQueryRepository(neo4jClient, logger)
 	codeVersionQueries := queries.NewCodeVersionQueryService(codeVersionQueryRepo)
 	precedentQueryRepo := neo4jinfra.NewPrecedentQueryRepository(neo4jClient, logger)
 	precedentQueries := queries.NewPrecedentQueryService(precedentQueryRepo)
-	queryHandler := grpcinfra.NewQueryHandler(scheduleGraphReader, runQueries, codeVersionQueries, precedentQueries, logger)
+	queryHandler := grpcinfra.NewQueryHandler(scheduleGraphReader, codeVersionQueries, precedentQueries, logger)
 
 	grpcServer, err := grpcinfra.NewServer(cfg.GRPCPort, queryHandler, logger)
 	if err != nil {
