@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package state.v1;
 
-option go_package = "github.com/carolsimone/continuo/cli/proto/state/v1;statev1";
+option go_package = "github.com/carolsimone/continuo/state/api/state/v1;statev1";
 
 import "google/protobuf/timestamp.proto";
 
@@ -22,12 +22,20 @@ service StateService {
   // Errors: INVALID_ARGUMENT (empty name), FAILED_PRECONDITION (no active run or run not cancellable).
   rpc CancelSchedule(CancelScheduleRequest) returns (CancelScheduleResponse);
 
+  // ListStuckCandidates returns the active (pending|running) runs that have made
+  // no lifecycle progress since `cutoff` and have no task in TASK_STATUS_RUNNING.
+  // A run's progress time is Scheduler.last_heartbeat_at, stamped when the run is
+  // dispatched and whenever a task status change is applied, or its created_at
+  // when it has never progressed, so a run whose dispatch never arrived (zero
+  // tasks) is returned. A run with a RUNNING task is never returned: a long task
+  // reports no progress until it ends. One server-side query over every task of
+  // every active run. Empty `cutoff` is INVALID_ARGUMENT.
+  rpc ListStuckCandidates(ListStuckCandidatesRequest) returns (ListStuckCandidatesResponse);
+
   // Task operations
   rpc GetTask(GetTaskRequest) returns (TaskResponse);
   rpc GetTaskByScheduleAndNode(GetTaskByScheduleAndNodeRequest) returns (TaskResponse);
   rpc ListTasks(ListTasksRequest) returns (ListTasksResponse);
-  // ResetTask unconditionally resets a task to PENDING with retry_count=0.
-  rpc ResetTask(ResetTaskRequest) returns (TaskResponse);
 
   // GetSchedulerInitStatus returns initialization_status for a scheduler.
   // Used by orchestrator to guard premature finalization during re-run.
@@ -82,6 +90,31 @@ service StateService {
   // optionally filtered by service. Powers the Nodes-tab search autocomplete
   // (the complete name list, independent of the paginated catalog).
   rpc ListNodeNames(ListNodeNamesRequest) returns (ListNodeNamesResponse);
+
+  // ListNodeServices returns the distinct service names of nodes that have run.
+  // Powers the catalog and Remediation-tab service filters (the complete
+  // service list, independent of the paginated catalog).
+  rpc ListNodeServices(ListNodeServicesRequest) returns (ListNodeServicesResponse);
+
+  // GetRunGraph returns a run's tasks as nodes and the dependencies among them
+  // in the run's own release, with the promotion seq that release was live
+  // under and the live one. Edges point from the dependent node to its
+  // dependency; node ids are "service.schema.table". An unknown run returns no
+  // nodes and run_promotion_seq 0; a run that names no release returns its
+  // nodes, no edges and run_promotion_seq 0. Consumers treat 0 as "drift
+  // unknown". Empty or malformed run_id is INVALID_ARGUMENT.
+  rpc GetRunGraph(GetRunGraphRequest) returns (GetRunGraphResponse);
+
+  // ListRuns returns a schedule's completed runs, newest first. page_size is
+  // clamped to [1, 200], 0 meaning 50; a negative page_offset is 0.
+  // total_count counts every completed run of the schedule. Empty
+  // schedule_name is INVALID_ARGUMENT.
+  rpc ListRuns(ListRunsRequest) returns (ListRunsResponse);
+
+  // ListActiveRunDrifts returns the live promotion seq and every schedule's
+  // newest pending or running run with the promotion seq its release was live
+  // under (0 when it names no release).
+  rpc ListActiveRunDrifts(ListActiveRunDriftsRequest) returns (ListActiveRunDriftsResponse);
 
   // TaskExecution operations
   rpc GetTaskExecution(GetTaskExecutionRequest) returns (TaskExecutionResponse);
@@ -229,8 +262,10 @@ message TaskExecutionResponse {
 
 message ListTaskExecutionsRequest {
   string schedule_id = 1;  // Required
-  int32  page_size   = 2;  // UI hardcodes 500
-  int32  page_offset = 3;
+  // page_size bounds the rows returned. Server clamps to [1, 200]; 0 (unset)
+  // defaults to 50.
+  int32  page_size   = 2;
+  int32  page_offset = 3;  // Negative values are treated as 0.
 }
 
 message ListTaskExecutionsResponse {
@@ -297,8 +332,20 @@ message CancelScheduleResponse {
   string schedule_id = 1;  // schedule_id of the cancelled run
 }
 
-message ResetTaskRequest {
-  string task_id = 1;
+message ListStuckCandidatesRequest {
+  // A run whose progress time (last_heartbeat_at, or created_at before its first
+  // progress) is at or after this instant is not a candidate. Required.
+  google.protobuf.Timestamp cutoff = 1;
+}
+
+// StuckCandidate identifies one active run the watchdog should consider cancelling.
+message StuckCandidate {
+  string schedule_name = 1;  // the schedule whose active run is stuck
+  string schedule_id   = 2;  // schedule_id (run id) of the active run
+}
+
+message ListStuckCandidatesResponse {
+  repeated StuckCandidate candidates = 1;
 }
 
 message GetSchedulerInitStatusRequest {
@@ -371,6 +418,7 @@ message NodeRun {
   string log_s3_key       = 14; // "" when none
   string operation        = 15; // run | test | build | full_refresh
   string run_results_uri  = 16; // "" when none
+  string content_hash     = 17; // node's content hash in the run's release; "" when the run names no release
 }
 
 message ListNodesRequest {
@@ -406,4 +454,66 @@ message ListNodeNamesRequest {
 
 message ListNodeNamesResponse {
   repeated string table_names = 1;  // distinct, sorted ascending
+}
+
+message ListNodeServicesRequest {}
+
+message ListNodeServicesResponse {
+  repeated string service_names = 1;  // distinct, sorted ascending
+}
+
+message RunGraphNode {
+  string service_name  = 1;
+  string schema_name   = 2;
+  string table_name    = 3;
+  string schedule_name = 4;  // the node's schedule in the run's release; "" when unknown
+  string node_type     = 5;  // "" when the run names no release
+  string status        = 6;  // the task's status: pending | running | succeeded | failed | cancelled | skipped
+  string task_id       = 7;
+}
+
+message RunGraphEdge {
+  string from_node_id = 1;  // the dependent node, "service.schema.table"
+  string to_node_id   = 2;  // its dependency, "service.schema.table"
+}
+
+message GetRunGraphRequest { string run_id = 1; }
+
+message GetRunGraphResponse {
+  repeated RunGraphNode nodes = 1;
+  repeated RunGraphEdge edges = 2;
+  int64 run_promotion_seq     = 3;  // 0 when the run is unknown or names no release
+  int64 latest_promotion_seq  = 4;  // the live promotion seq; 0 when no release is live
+}
+
+message ListRunsRequest {
+  string schedule_name = 1;
+  int32  page_size     = 2;
+  int32  page_offset   = 3;
+}
+
+message RunSummary {
+  string run_id          = 1;
+  string schedule_name   = 2;
+  string terminal_status = 3;  // succeeded | failed | cancelled | skipped
+  string created_at      = 4;  // RFC3339, UTC, seconds
+  string completed_at    = 5;  // RFC3339, UTC, seconds
+}
+
+message ListRunsResponse {
+  repeated RunSummary runs = 1;
+  int32 total_count        = 2;
+}
+
+message ListActiveRunDriftsRequest {}
+
+message ActiveRunDrift {
+  string schedule_name    = 1;
+  string run_id           = 2;
+  int64 run_promotion_seq = 3;  // 0 when the run names no release
+}
+
+message ListActiveRunDriftsResponse {
+  int64 latest_promotion_seq          = 1;
+  repeated ActiveRunDrift active_runs = 2;
 }

@@ -293,7 +293,8 @@ bench-test:  ## Unit tests and shellcheck for the run-lifecycle benchmark harnes
 # @grpc/proto-loader reads its copies at boot, so drift silently drops fields
 # on the wire instead of failing any build; cli generates its orchestrator
 # stubs from its own copy, so drift there ships a client built from another
-# contract.
+# contract. cli generates its state stubs from its own copy, so drift there ships
+# a client built from another contract.
 .PHONY: guards
 guards: bench-test
 	bash scripts/check-service-names.sh
@@ -317,6 +318,7 @@ guards: bench-test
 	diff agent-remediation/proto/remediation/v1/remediation.proto ui/proto/remediation/v1/remediation.proto
 	diff orchestrator/proto/orchestrator/v1/orchestrator.proto ui/proto/orchestrator/v1/orchestrator.proto
 	diff orchestrator/proto/orchestrator/v1/orchestrator.proto cli/proto/orchestrator/v1/orchestrator.proto
+	diff state/proto/state/v1/state.proto cli/proto/state/v1/state.proto
 
 .PHONY: stack-up
 stack-up:
