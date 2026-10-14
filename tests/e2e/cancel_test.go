@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	orchestratorv1 "github.com/carolsimone/continuo/orchestrator/api/orchestrator/v1"
 	"github.com/carolsimone/continuo/pkg/streams"
+	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -80,7 +80,7 @@ func TestCancelMidwayAndRetrigger(t *testing.T) {
 	verifySchedulerCancelled(t, ctx, clients, cancelledID)
 	verifyTasksCancelled(t, ctx, clients, cancelledID)
 	verifyCancelledSchedulesGuardArmed(t, ctx, clients, cancelledID)
-	verifyOrchestratorRunNotActive(t, ctx, clients, cancelledID)
+	verifyRunNotActive(t, ctx, clients, cancelledID)
 
 	t.Log("Phase 2 complete: schedule cancelled, guards armed in all three services")
 
@@ -176,15 +176,15 @@ func verifyTasksCancelled(t *testing.T, ctx context.Context, clients *testClient
 	t.Logf("✅ %d tasks have status='cancelled'", count)
 }
 
-// verifyOrchestratorRunNotActive polls OrchestratorQuery.ListActiveRunDrifts until
-// the given run is no longer reported as in-flight. A cancelled run is finalized
-// via run.finalized:v1 (the orchestrator stamps completed_at on its :Run node), so
-// it must drop out of the active set rather than linger forever.
-func verifyOrchestratorRunNotActive(t *testing.T, ctx context.Context, clients *testClients, runID uuid.UUID) {
+// verifyRunNotActive polls StateService.ListActiveRunDrifts until the given run
+// is no longer reported as in-flight. A cancelled run is finalized via
+// run.finalized:v1 (state stamps the run terminal), so it must drop out of the
+// active set rather than linger forever.
+func verifyRunNotActive(t *testing.T, ctx context.Context, clients *testClients, runID uuid.UUID) {
 	t.Helper()
 	want := runID.String()
 	pollUntil(t, ctx, 30*time.Second, 500*time.Millisecond, func() (bool, error) {
-		resp, err := clients.orchestratorClient.ListActiveRunDrifts(ctx, &orchestratorv1.ListActiveRunDriftsRequest{})
+		resp, err := clients.stateClient.ListActiveRunDrifts(ctx, &statev1.ListActiveRunDriftsRequest{})
 		if err != nil {
 			return false, err
 		}
@@ -194,8 +194,8 @@ func verifyOrchestratorRunNotActive(t *testing.T, ctx context.Context, clients *
 			}
 		}
 		return true, nil // cancelled run no longer active
-	}, "Timeout waiting for cancelled run to leave orchestrator active set")
-	t.Logf("✅ orchestrator no longer reports run %s as active (finalized via run.finalized:v1)", want)
+	}, "Timeout waiting for cancelled run to leave state active set")
+	t.Logf("✅ state no longer reports run %s as active (finalized via run.finalized:v1)", want)
 }
 
 // verifyCancelledSchedulesGuardArmed polls both service databases until each

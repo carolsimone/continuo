@@ -80,11 +80,6 @@ type CodeVersionReader interface {
 	UnitVersionsBatch(ctx context.Context, unitIDs []string, limit int32) (map[string][]codeversion.UnitVersionView, error)
 	// UnitsForNode returns the units the node's current version uses.
 	UnitsForNode(ctx context.Context, uniqueID string) ([]string, error)
-	// RunExecutions returns runs that executed the node, newest first,
-	// optionally filtered to one operation ("" applies no filter). An unknown
-	// node returns ErrNodeNotFound; a known node with no matching runs returns
-	// an empty slice.
-	RunExecutions(ctx context.Context, uniqueID string, limit int32, operation string) ([]codeversion.RunExecution, error)
 }
 
 // CodeVersionQueryService composes the code-version reader into the capped,
@@ -234,18 +229,6 @@ func (s *CodeVersionQueryService) GetCodeUnitVersions(ctx context.Context, unitI
 		all = append(all, byUnit[id]...)
 	}
 	return all, nil
-}
-
-// GetNodeRunHistory returns runs that executed the node, newest first,
-// optionally filtered to one operation ("" returns every operation). limit
-// <= 0 defaults to defaultQueryLimit; anything above maxQueryLimit is
-// clamped to it.
-func (s *CodeVersionQueryService) GetNodeRunHistory(ctx context.Context, uniqueID string, limit int32, operation string) ([]codeversion.RunExecution, error) {
-	runs, err := s.reader.RunExecutions(ctx, uniqueID, clampQueryLimit(limit), operation)
-	if err != nil {
-		return nil, fmt.Errorf("CodeVersionQueryService.GetNodeRunHistory: %w", err)
-	}
-	return runs, nil
 }
 
 // clampQueryLimit applies the default/max bound shared by every list-limit

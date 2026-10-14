@@ -25,10 +25,10 @@ const (
 	StateService_ListAllSchedules_FullMethodName         = "/state.v1.StateService/ListAllSchedules"
 	StateService_TriggerSchedule_FullMethodName          = "/state.v1.StateService/TriggerSchedule"
 	StateService_CancelSchedule_FullMethodName           = "/state.v1.StateService/CancelSchedule"
+	StateService_ListStuckCandidates_FullMethodName      = "/state.v1.StateService/ListStuckCandidates"
 	StateService_GetTask_FullMethodName                  = "/state.v1.StateService/GetTask"
 	StateService_GetTaskByScheduleAndNode_FullMethodName = "/state.v1.StateService/GetTaskByScheduleAndNode"
 	StateService_ListTasks_FullMethodName                = "/state.v1.StateService/ListTasks"
-	StateService_ResetTask_FullMethodName                = "/state.v1.StateService/ResetTask"
 	StateService_GetSchedulerInitStatus_FullMethodName   = "/state.v1.StateService/GetSchedulerInitStatus"
 	StateService_TriggerRerun_FullMethodName             = "/state.v1.StateService/TriggerRerun"
 	StateService_TriggerSingleNodeRun_FullMethodName     = "/state.v1.StateService/TriggerSingleNodeRun"
@@ -36,6 +36,10 @@ const (
 	StateService_ListNodeRuns_FullMethodName             = "/state.v1.StateService/ListNodeRuns"
 	StateService_ListNodes_FullMethodName                = "/state.v1.StateService/ListNodes"
 	StateService_ListNodeNames_FullMethodName            = "/state.v1.StateService/ListNodeNames"
+	StateService_ListNodeServices_FullMethodName         = "/state.v1.StateService/ListNodeServices"
+	StateService_GetRunGraph_FullMethodName              = "/state.v1.StateService/GetRunGraph"
+	StateService_ListRuns_FullMethodName                 = "/state.v1.StateService/ListRuns"
+	StateService_ListActiveRunDrifts_FullMethodName      = "/state.v1.StateService/ListActiveRunDrifts"
 	StateService_GetTaskExecution_FullMethodName         = "/state.v1.StateService/GetTaskExecution"
 	StateService_ListTaskExecutions_FullMethodName       = "/state.v1.StateService/ListTaskExecutions"
 )
@@ -57,12 +61,19 @@ type StateServiceClient interface {
 	// CancelSchedule cancels the active run of a named schedule.
 	// Errors: INVALID_ARGUMENT (empty name), FAILED_PRECONDITION (no active run or run not cancellable).
 	CancelSchedule(ctx context.Context, in *CancelScheduleRequest, opts ...grpc.CallOption) (*CancelScheduleResponse, error)
+	// ListStuckCandidates returns the active (pending|running) runs that have made
+	// no lifecycle progress since `cutoff` and have no task in TASK_STATUS_RUNNING.
+	// A run's progress time is Scheduler.last_heartbeat_at, stamped when the run is
+	// dispatched and whenever a task status change is applied, or its created_at
+	// when it has never progressed, so a run whose dispatch never arrived (zero
+	// tasks) is returned. A run with a RUNNING task is never returned: a long task
+	// reports no progress until it ends. One server-side query over every task of
+	// every active run. Empty `cutoff` is INVALID_ARGUMENT.
+	ListStuckCandidates(ctx context.Context, in *ListStuckCandidatesRequest, opts ...grpc.CallOption) (*ListStuckCandidatesResponse, error)
 	// Task operations
 	GetTask(ctx context.Context, in *GetTaskRequest, opts ...grpc.CallOption) (*TaskResponse, error)
 	GetTaskByScheduleAndNode(ctx context.Context, in *GetTaskByScheduleAndNodeRequest, opts ...grpc.CallOption) (*TaskResponse, error)
 	ListTasks(ctx context.Context, in *ListTasksRequest, opts ...grpc.CallOption) (*ListTasksResponse, error)
-	// ResetTask unconditionally resets a task to PENDING with retry_count=0.
-	ResetTask(ctx context.Context, in *ResetTaskRequest, opts ...grpc.CallOption) (*TaskResponse, error)
 	// GetSchedulerInitStatus returns initialization_status for a scheduler.
 	// Used by orchestrator to guard premature finalization during re-run.
 	GetSchedulerInitStatus(ctx context.Context, in *GetSchedulerInitStatusRequest, opts ...grpc.CallOption) (*GetSchedulerInitStatusResponse, error)
@@ -112,6 +123,27 @@ type StateServiceClient interface {
 	// optionally filtered by service. Powers the Nodes-tab search autocomplete
 	// (the complete name list, independent of the paginated catalog).
 	ListNodeNames(ctx context.Context, in *ListNodeNamesRequest, opts ...grpc.CallOption) (*ListNodeNamesResponse, error)
+	// ListNodeServices returns the distinct service names of nodes that have run.
+	// Powers the catalog and Remediation-tab service filters (the complete
+	// service list, independent of the paginated catalog).
+	ListNodeServices(ctx context.Context, in *ListNodeServicesRequest, opts ...grpc.CallOption) (*ListNodeServicesResponse, error)
+	// GetRunGraph returns a run's tasks as nodes and the dependencies among them
+	// in the run's own release, with the promotion seq that release was live
+	// under and the live one. Edges point from the dependent node to its
+	// dependency; node ids are "service.schema.table". An unknown run returns no
+	// nodes and run_promotion_seq 0; a run that names no release returns its
+	// nodes, no edges and run_promotion_seq 0. Consumers treat 0 as "drift
+	// unknown". Empty or malformed run_id is INVALID_ARGUMENT.
+	GetRunGraph(ctx context.Context, in *GetRunGraphRequest, opts ...grpc.CallOption) (*GetRunGraphResponse, error)
+	// ListRuns returns a schedule's completed runs, newest first. page_size is
+	// clamped to [1, 200], 0 meaning 50; a negative page_offset is 0.
+	// total_count counts every completed run of the schedule. Empty
+	// schedule_name is INVALID_ARGUMENT.
+	ListRuns(ctx context.Context, in *ListRunsRequest, opts ...grpc.CallOption) (*ListRunsResponse, error)
+	// ListActiveRunDrifts returns the live promotion seq and every schedule's
+	// newest pending or running run with the promotion seq its release was live
+	// under (0 when it names no release).
+	ListActiveRunDrifts(ctx context.Context, in *ListActiveRunDriftsRequest, opts ...grpc.CallOption) (*ListActiveRunDriftsResponse, error)
 	// TaskExecution operations
 	GetTaskExecution(ctx context.Context, in *GetTaskExecutionRequest, opts ...grpc.CallOption) (*TaskExecutionResponse, error)
 	ListTaskExecutions(ctx context.Context, in *ListTaskExecutionsRequest, opts ...grpc.CallOption) (*ListTaskExecutionsResponse, error)
@@ -185,6 +217,16 @@ func (c *stateServiceClient) CancelSchedule(ctx context.Context, in *CancelSched
 	return out, nil
 }
 
+func (c *stateServiceClient) ListStuckCandidates(ctx context.Context, in *ListStuckCandidatesRequest, opts ...grpc.CallOption) (*ListStuckCandidatesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListStuckCandidatesResponse)
+	err := c.cc.Invoke(ctx, StateService_ListStuckCandidates_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *stateServiceClient) GetTask(ctx context.Context, in *GetTaskRequest, opts ...grpc.CallOption) (*TaskResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(TaskResponse)
@@ -209,16 +251,6 @@ func (c *stateServiceClient) ListTasks(ctx context.Context, in *ListTasksRequest
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListTasksResponse)
 	err := c.cc.Invoke(ctx, StateService_ListTasks_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *stateServiceClient) ResetTask(ctx context.Context, in *ResetTaskRequest, opts ...grpc.CallOption) (*TaskResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(TaskResponse)
-	err := c.cc.Invoke(ctx, StateService_ResetTask_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -295,6 +327,46 @@ func (c *stateServiceClient) ListNodeNames(ctx context.Context, in *ListNodeName
 	return out, nil
 }
 
+func (c *stateServiceClient) ListNodeServices(ctx context.Context, in *ListNodeServicesRequest, opts ...grpc.CallOption) (*ListNodeServicesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListNodeServicesResponse)
+	err := c.cc.Invoke(ctx, StateService_ListNodeServices_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *stateServiceClient) GetRunGraph(ctx context.Context, in *GetRunGraphRequest, opts ...grpc.CallOption) (*GetRunGraphResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetRunGraphResponse)
+	err := c.cc.Invoke(ctx, StateService_GetRunGraph_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *stateServiceClient) ListRuns(ctx context.Context, in *ListRunsRequest, opts ...grpc.CallOption) (*ListRunsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListRunsResponse)
+	err := c.cc.Invoke(ctx, StateService_ListRuns_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *stateServiceClient) ListActiveRunDrifts(ctx context.Context, in *ListActiveRunDriftsRequest, opts ...grpc.CallOption) (*ListActiveRunDriftsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListActiveRunDriftsResponse)
+	err := c.cc.Invoke(ctx, StateService_ListActiveRunDrifts_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *stateServiceClient) GetTaskExecution(ctx context.Context, in *GetTaskExecutionRequest, opts ...grpc.CallOption) (*TaskExecutionResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(TaskExecutionResponse)
@@ -332,12 +404,19 @@ type StateServiceServer interface {
 	// CancelSchedule cancels the active run of a named schedule.
 	// Errors: INVALID_ARGUMENT (empty name), FAILED_PRECONDITION (no active run or run not cancellable).
 	CancelSchedule(context.Context, *CancelScheduleRequest) (*CancelScheduleResponse, error)
+	// ListStuckCandidates returns the active (pending|running) runs that have made
+	// no lifecycle progress since `cutoff` and have no task in TASK_STATUS_RUNNING.
+	// A run's progress time is Scheduler.last_heartbeat_at, stamped when the run is
+	// dispatched and whenever a task status change is applied, or its created_at
+	// when it has never progressed, so a run whose dispatch never arrived (zero
+	// tasks) is returned. A run with a RUNNING task is never returned: a long task
+	// reports no progress until it ends. One server-side query over every task of
+	// every active run. Empty `cutoff` is INVALID_ARGUMENT.
+	ListStuckCandidates(context.Context, *ListStuckCandidatesRequest) (*ListStuckCandidatesResponse, error)
 	// Task operations
 	GetTask(context.Context, *GetTaskRequest) (*TaskResponse, error)
 	GetTaskByScheduleAndNode(context.Context, *GetTaskByScheduleAndNodeRequest) (*TaskResponse, error)
 	ListTasks(context.Context, *ListTasksRequest) (*ListTasksResponse, error)
-	// ResetTask unconditionally resets a task to PENDING with retry_count=0.
-	ResetTask(context.Context, *ResetTaskRequest) (*TaskResponse, error)
 	// GetSchedulerInitStatus returns initialization_status for a scheduler.
 	// Used by orchestrator to guard premature finalization during re-run.
 	GetSchedulerInitStatus(context.Context, *GetSchedulerInitStatusRequest) (*GetSchedulerInitStatusResponse, error)
@@ -387,6 +466,27 @@ type StateServiceServer interface {
 	// optionally filtered by service. Powers the Nodes-tab search autocomplete
 	// (the complete name list, independent of the paginated catalog).
 	ListNodeNames(context.Context, *ListNodeNamesRequest) (*ListNodeNamesResponse, error)
+	// ListNodeServices returns the distinct service names of nodes that have run.
+	// Powers the catalog and Remediation-tab service filters (the complete
+	// service list, independent of the paginated catalog).
+	ListNodeServices(context.Context, *ListNodeServicesRequest) (*ListNodeServicesResponse, error)
+	// GetRunGraph returns a run's tasks as nodes and the dependencies among them
+	// in the run's own release, with the promotion seq that release was live
+	// under and the live one. Edges point from the dependent node to its
+	// dependency; node ids are "service.schema.table". An unknown run returns no
+	// nodes and run_promotion_seq 0; a run that names no release returns its
+	// nodes, no edges and run_promotion_seq 0. Consumers treat 0 as "drift
+	// unknown". Empty or malformed run_id is INVALID_ARGUMENT.
+	GetRunGraph(context.Context, *GetRunGraphRequest) (*GetRunGraphResponse, error)
+	// ListRuns returns a schedule's completed runs, newest first. page_size is
+	// clamped to [1, 200], 0 meaning 50; a negative page_offset is 0.
+	// total_count counts every completed run of the schedule. Empty
+	// schedule_name is INVALID_ARGUMENT.
+	ListRuns(context.Context, *ListRunsRequest) (*ListRunsResponse, error)
+	// ListActiveRunDrifts returns the live promotion seq and every schedule's
+	// newest pending or running run with the promotion seq its release was live
+	// under (0 when it names no release).
+	ListActiveRunDrifts(context.Context, *ListActiveRunDriftsRequest) (*ListActiveRunDriftsResponse, error)
 	// TaskExecution operations
 	GetTaskExecution(context.Context, *GetTaskExecutionRequest) (*TaskExecutionResponse, error)
 	ListTaskExecutions(context.Context, *ListTaskExecutionsRequest) (*ListTaskExecutionsResponse, error)
@@ -418,6 +518,9 @@ func (UnimplementedStateServiceServer) TriggerSchedule(context.Context, *Trigger
 func (UnimplementedStateServiceServer) CancelSchedule(context.Context, *CancelScheduleRequest) (*CancelScheduleResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CancelSchedule not implemented")
 }
+func (UnimplementedStateServiceServer) ListStuckCandidates(context.Context, *ListStuckCandidatesRequest) (*ListStuckCandidatesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListStuckCandidates not implemented")
+}
 func (UnimplementedStateServiceServer) GetTask(context.Context, *GetTaskRequest) (*TaskResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetTask not implemented")
 }
@@ -426,9 +529,6 @@ func (UnimplementedStateServiceServer) GetTaskByScheduleAndNode(context.Context,
 }
 func (UnimplementedStateServiceServer) ListTasks(context.Context, *ListTasksRequest) (*ListTasksResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListTasks not implemented")
-}
-func (UnimplementedStateServiceServer) ResetTask(context.Context, *ResetTaskRequest) (*TaskResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method ResetTask not implemented")
 }
 func (UnimplementedStateServiceServer) GetSchedulerInitStatus(context.Context, *GetSchedulerInitStatusRequest) (*GetSchedulerInitStatusResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetSchedulerInitStatus not implemented")
@@ -450,6 +550,18 @@ func (UnimplementedStateServiceServer) ListNodes(context.Context, *ListNodesRequ
 }
 func (UnimplementedStateServiceServer) ListNodeNames(context.Context, *ListNodeNamesRequest) (*ListNodeNamesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListNodeNames not implemented")
+}
+func (UnimplementedStateServiceServer) ListNodeServices(context.Context, *ListNodeServicesRequest) (*ListNodeServicesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListNodeServices not implemented")
+}
+func (UnimplementedStateServiceServer) GetRunGraph(context.Context, *GetRunGraphRequest) (*GetRunGraphResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetRunGraph not implemented")
+}
+func (UnimplementedStateServiceServer) ListRuns(context.Context, *ListRunsRequest) (*ListRunsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListRuns not implemented")
+}
+func (UnimplementedStateServiceServer) ListActiveRunDrifts(context.Context, *ListActiveRunDriftsRequest) (*ListActiveRunDriftsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListActiveRunDrifts not implemented")
 }
 func (UnimplementedStateServiceServer) GetTaskExecution(context.Context, *GetTaskExecutionRequest) (*TaskExecutionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetTaskExecution not implemented")
@@ -586,6 +698,24 @@ func _StateService_CancelSchedule_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _StateService_ListStuckCandidates_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListStuckCandidatesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StateServiceServer).ListStuckCandidates(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StateService_ListStuckCandidates_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StateServiceServer).ListStuckCandidates(ctx, req.(*ListStuckCandidatesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _StateService_GetTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetTaskRequest)
 	if err := dec(in); err != nil {
@@ -636,24 +766,6 @@ func _StateService_ListTasks_Handler(srv interface{}, ctx context.Context, dec f
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(StateServiceServer).ListTasks(ctx, req.(*ListTasksRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _StateService_ResetTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ResetTaskRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(StateServiceServer).ResetTask(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: StateService_ResetTask_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(StateServiceServer).ResetTask(ctx, req.(*ResetTaskRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -784,6 +896,78 @@ func _StateService_ListNodeNames_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _StateService_ListNodeServices_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListNodeServicesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StateServiceServer).ListNodeServices(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StateService_ListNodeServices_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StateServiceServer).ListNodeServices(ctx, req.(*ListNodeServicesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StateService_GetRunGraph_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetRunGraphRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StateServiceServer).GetRunGraph(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StateService_GetRunGraph_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StateServiceServer).GetRunGraph(ctx, req.(*GetRunGraphRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StateService_ListRuns_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListRunsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StateServiceServer).ListRuns(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StateService_ListRuns_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StateServiceServer).ListRuns(ctx, req.(*ListRunsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StateService_ListActiveRunDrifts_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListActiveRunDriftsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StateServiceServer).ListActiveRunDrifts(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StateService_ListActiveRunDrifts_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StateServiceServer).ListActiveRunDrifts(ctx, req.(*ListActiveRunDriftsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _StateService_GetTaskExecution_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetTaskExecutionRequest)
 	if err := dec(in); err != nil {
@@ -852,6 +1036,10 @@ var StateService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _StateService_CancelSchedule_Handler,
 		},
 		{
+			MethodName: "ListStuckCandidates",
+			Handler:    _StateService_ListStuckCandidates_Handler,
+		},
+		{
 			MethodName: "GetTask",
 			Handler:    _StateService_GetTask_Handler,
 		},
@@ -862,10 +1050,6 @@ var StateService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListTasks",
 			Handler:    _StateService_ListTasks_Handler,
-		},
-		{
-			MethodName: "ResetTask",
-			Handler:    _StateService_ResetTask_Handler,
 		},
 		{
 			MethodName: "GetSchedulerInitStatus",
@@ -894,6 +1078,22 @@ var StateService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListNodeNames",
 			Handler:    _StateService_ListNodeNames_Handler,
+		},
+		{
+			MethodName: "ListNodeServices",
+			Handler:    _StateService_ListNodeServices_Handler,
+		},
+		{
+			MethodName: "GetRunGraph",
+			Handler:    _StateService_GetRunGraph_Handler,
+		},
+		{
+			MethodName: "ListRuns",
+			Handler:    _StateService_ListRuns_Handler,
+		},
+		{
+			MethodName: "ListActiveRunDrifts",
+			Handler:    _StateService_ListActiveRunDrifts_Handler,
 		},
 		{
 			MethodName: "GetTaskExecution",

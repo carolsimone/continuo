@@ -32,14 +32,6 @@ type GraphEdge struct {
 	ToNodeID   string
 }
 
-type RunSummary struct {
-	RunID          string
-	ScheduleName   string
-	TerminalStatus string
-	CreatedAt      time.Time
-	CompletedAt    time.Time
-}
-
 type TableNode struct {
 	TableName     string
 	SchemaName    string

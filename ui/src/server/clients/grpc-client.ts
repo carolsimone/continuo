@@ -54,6 +54,8 @@ export interface GrpcClient {
   listNodes: (request: any, callback: (err: any, res: any) => void) => void;
   listNodeNames: (request: any, callback: (err: any, res: any) => void) => void;
   listNodeServices: (request: any, callback: (err: any, res: any) => void) => void;
+  getRunGraph: (request: any, callback: (err: any, res: any) => void) => void;
+  listRuns: (request: any, callback: (err: any, res: any) => void) => void;
 }
 
 export function createGrpcClient(address: string): GrpcClient {

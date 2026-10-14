@@ -3,6 +3,7 @@ package handlers_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"testing"
@@ -31,6 +32,10 @@ type fakeTaskStatusRunRepo struct {
 	loadErr    error
 	saveErr    error
 	saveCalled bool
+	// byID is what GetRun returns, for tests that walk a rerun's source runs;
+	// getCalls counts those reads.
+	byID     map[uuid.UUID]*run.Run
+	getCalls int
 }
 
 func (f *fakeTaskStatusRunRepo) LoadRunForUpdate(_ context.Context, _ uuid.UUID) (*run.Run, error) {
@@ -49,8 +54,16 @@ func (f *fakeTaskStatusRunRepo) SaveRun(_ context.Context, r *run.Run) error {
 	return nil
 }
 
-func (f *fakeTaskStatusRunRepo) GetRun(_ context.Context, _ uuid.UUID) (*run.Run, error) {
-	panic("GetRun not implemented in fake")
+func (f *fakeTaskStatusRunRepo) GetRun(_ context.Context, id uuid.UUID) (*run.Run, error) {
+	if f.byID == nil {
+		panic("GetRun not implemented in fake")
+	}
+	f.getCalls++
+	r, ok := f.byID[id]
+	if !ok {
+		return nil, fmt.Errorf("run %s not in fake", id)
+	}
+	return r, nil
 }
 func (f *fakeTaskStatusRunRepo) HasActiveSchedule(_ context.Context, _ string) (bool, error) {
 	panic("HasActiveSchedule not implemented in fake")
@@ -185,11 +198,16 @@ func newTaskStatusHandlerUoW(
 // handler tests. Bypasses constructors via HydrateRun so the event buffer is
 // clean.
 func newRunningTaskStatusRun(id uuid.UUID, name string, total, terminal int32) *run.Run {
+	return newRunningTaskStatusRunOfKind(run.KindCron, id, name, total, terminal)
+}
+
+// newRunningTaskStatusRunOfKind is newRunningTaskStatusRun for a run of kind.
+func newRunningTaskStatusRunOfKind(kind run.Kind, id uuid.UUID, name string, total, terminal int32) *run.Run {
 	return run.HydrateRun(
 		id, name,
 		run.SchedulerStatusRunning,
 		run.InitStatusCompleted,
-		run.KindCron,
+		kind,
 		nil,
 		identity.SystemUserID,
 		model.OperationRun,
@@ -204,12 +222,17 @@ func newRunningTaskStatusRun(id uuid.UUID, name string, total, terminal int32) *
 
 // newTerminalTaskStatusRun builds a terminal Run for idempotency tests.
 func newTerminalTaskStatusRun(id uuid.UUID, name string, status run.SchedulerStatus) *run.Run {
+	return newTerminalTaskStatusRunOfKind(run.KindCron, id, name, status)
+}
+
+// newTerminalTaskStatusRunOfKind is newTerminalTaskStatusRun for a run of kind.
+func newTerminalTaskStatusRunOfKind(kind run.Kind, id uuid.UUID, name string, status run.SchedulerStatus) *run.Run {
 	now := time.Now()
 	return run.HydrateRun(
 		id, name,
 		status,
 		run.InitStatusCompleted,
-		run.KindCron,
+		kind,
 		nil,
 		identity.SystemUserID,
 		model.OperationRun,
@@ -466,10 +489,11 @@ type taskStatusClock struct{ at time.Time }
 
 func (c taskStatusClock) Now() time.Time { return c.at }
 
-// newReleaseTaskStatusRun builds a RUNNING one-task run that names releaseID.
+// newReleaseTaskStatusRun builds a RUNNING one-task promote-seed run that names
+// releaseID.
 func newReleaseTaskStatusRun(id uuid.UUID, releaseID string) *run.Run {
-	r := newRunningTaskStatusRun(id, "promote-seed-abc12345", 1, 0)
-	r.HydrateReleaseID(releaseID)
+	r := newRunningTaskStatusRunOfKind(run.KindPromoteSeed, id, "promote-seed-abc12345", 1, 0)
+	r.HydrateRelease(run.ReleaseStamp{ReleaseID: releaseID})
 	return r
 }
 
@@ -498,6 +522,126 @@ func TestTaskStatusUpdated_RecordsTheVersionAReleaseRunLoaded(t *testing.T) {
 		Key: "raw.orders", ContentHash: "h-orders", ImageTag: "svc:7", ReleaseID: "rel-1",
 		RunID: scheduleID, TaskID: taskID, At: at, Source: seeds.SourceBuild,
 	}}, mats.built)
+}
+
+// A cron run names a release but its tasks were chosen elsewhere: its
+// succeeded task records nothing.
+func TestTaskStatusUpdated_CronRunRecordsNoBuiltVersion(t *testing.T) {
+	scheduleID, taskID := uuid.New(), uuid.New()
+	r := newRunningTaskStatusRun(scheduleID, "daily", 1, 0)
+	r.HydrateRelease(run.ReleaseStamp{ReleaseID: "rel-1", PromotionSeq: 3})
+	runRepo := &fakeTaskStatusRunRepo{stored: r}
+	taskColl := &fakeTaskStatusTaskCollection{
+		prevStatus: run.TaskStatusRunning, prevExists: true, updateAffected: 1,
+		task: run.Task{TaskID: taskID, ScheduleID: scheduleID, ServiceName: "svc", SchemaName: "raw", TableName: "orders"},
+	}
+	topo := &hashTopology{hashes: map[string]string{"rel-1/raw.orders": "h-orders"}}
+	mats := &builtRecorder{}
+	u := newTaskStatusHandlerUoW(runRepo, &fakeTaskStatusOutboxPub{}, taskColl)
+	u.TopologyRepo, u.MaterializationRepo = topo, mats
+
+	require.NoError(t, handlers.NewTaskStatusUpdatedHandler(taskStatusTestLogger()).Handle(context.Background(), u,
+		events.TaskStatusUpdated{TaskID: taskID, ScheduleID: scheduleID, Status: run.TaskStatusSucceeded}, uuid.New()))
+
+	assert.Empty(t, topo.asked)
+	assert.Empty(t, mats.built)
+}
+
+// hydratedRunOfKind builds a RUNNING one-task run of kind that names rel-1 and
+// descends from source (nil for none), for the source-chain cases.
+func hydratedRunOfKind(kind run.Kind, id uuid.UUID, source *uuid.UUID) *run.Run {
+	total := int32(1)
+	r := run.HydrateRun(
+		id, "chain",
+		run.SchedulerStatusRunning,
+		run.InitStatusCompleted,
+		kind,
+		source,
+		identity.SystemUserID,
+		model.OperationRun,
+		time.Now(),
+		nil, nil, nil, nil,
+		nil, nil,
+		&total,
+		0,
+		map[string]run.ServiceMetadata{},
+	)
+	r.HydrateRelease(run.ReleaseStamp{ReleaseID: "rel-1", PromotionSeq: 1})
+	return r
+}
+
+// A rerun records the version its task loaded only when its chain of source
+// runs ends at a promote-seed run: any other root, a missing source, or a chain
+// that never ends leaves the tasks to orchestrator's choice and records nothing.
+// A source chain that loops is cut off at a bounded depth rather than walked
+// forever.
+func TestTaskStatusUpdated_RerunRecordsBuiltVersionOnlyWhenItsChainStartsAtAPromoteSeed(t *testing.T) {
+	scheduleID, taskID := uuid.New(), uuid.New()
+	idA, idB := uuid.New(), uuid.New()
+	ptr := func(id uuid.UUID) *uuid.UUID { return &id }
+	orders := run.Task{TaskID: taskID, ScheduleID: scheduleID, ServiceName: "svc", SchemaName: "raw", TableName: "orders", ImageTag: "svc:7"}
+
+	cases := []struct {
+		name    string
+		current *run.Run
+		sources []*run.Run
+		records bool
+	}{
+		{"a rerun of a cron run",
+			hydratedRunOfKind(run.KindRerun, scheduleID, ptr(idA)),
+			[]*run.Run{hydratedRunOfKind(run.KindCron, idA, nil)}, false},
+		{"a rerun of a trigger run",
+			hydratedRunOfKind(run.KindRerun, scheduleID, ptr(idA)),
+			[]*run.Run{hydratedRunOfKind(run.KindTrigger, idA, nil)}, false},
+		{"a rerun without a source run",
+			hydratedRunOfKind(run.KindRerun, scheduleID, nil),
+			nil, false},
+		{"a rerun of a promote-seed run",
+			hydratedRunOfKind(run.KindRerun, scheduleID, ptr(idA)),
+			[]*run.Run{hydratedRunOfKind(run.KindPromoteSeed, idA, nil)}, true},
+		{"a rerun of a rerun of a promote-seed run",
+			hydratedRunOfKind(run.KindRerun, scheduleID, ptr(idA)),
+			[]*run.Run{
+				hydratedRunOfKind(run.KindRerun, idA, ptr(idB)),
+				hydratedRunOfKind(run.KindPromoteSeed, idB, nil),
+			}, true},
+		{"a rerun whose source is itself",
+			hydratedRunOfKind(run.KindRerun, scheduleID, ptr(scheduleID)),
+			[]*run.Run{hydratedRunOfKind(run.KindRerun, scheduleID, ptr(scheduleID))}, false},
+		{"a rerun in a two-run source cycle",
+			hydratedRunOfKind(run.KindRerun, scheduleID, ptr(idA)),
+			[]*run.Run{
+				hydratedRunOfKind(run.KindRerun, idA, ptr(idB)),
+				hydratedRunOfKind(run.KindRerun, idB, ptr(idA)),
+			}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			runRepo := &fakeTaskStatusRunRepo{stored: tc.current, byID: map[uuid.UUID]*run.Run{}}
+			for _, src := range tc.sources {
+				runRepo.byID[src.ScheduleID()] = src
+			}
+			taskColl := &fakeTaskStatusTaskCollection{
+				prevStatus: run.TaskStatusRunning, prevExists: true, updateAffected: 1, task: orders,
+			}
+			topo := &hashTopology{hashes: map[string]string{"rel-1/raw.orders": "h-orders"}}
+			mats := &builtRecorder{}
+			u := newTaskStatusHandlerUoW(runRepo, &fakeTaskStatusOutboxPub{}, taskColl)
+			u.TopologyRepo, u.MaterializationRepo = topo, mats
+
+			require.NoError(t, handlers.NewTaskStatusUpdatedHandler(taskStatusTestLogger()).Handle(context.Background(), u,
+				events.TaskStatusUpdated{TaskID: taskID, ScheduleID: scheduleID, Status: run.TaskStatusSucceeded}, uuid.New()))
+
+			if tc.records {
+				assert.Len(t, mats.built, 1)
+			} else {
+				assert.Empty(t, topo.asked)
+				assert.Empty(t, mats.built)
+			}
+			// A looping chain ends at the depth bound, not after unbounded reads.
+			assert.Less(t, runRepo.getCalls, 100)
+		})
+	}
 }
 
 // Nothing is recorded for a run that names no release, for a task that did
@@ -556,14 +700,14 @@ func TestTaskStatusUpdated_RecordsAVersionOnlyForAnAppliedSuccess(t *testing.T) 
 	orders := run.Task{TaskID: taskID, ScheduleID: scheduleID, ServiceName: "svc", SchemaName: "raw", TableName: "orders", ImageTag: "svc:7"}
 	releaseRun := func(total, terminal int32) func() *run.Run {
 		return func() *run.Run {
-			r := newRunningTaskStatusRun(scheduleID, "promote-seed-abc12345", total, terminal)
-			r.HydrateReleaseID("rel-1")
+			r := newRunningTaskStatusRunOfKind(run.KindPromoteSeed, scheduleID, "promote-seed-abc12345", total, terminal)
+			r.HydrateRelease(run.ReleaseStamp{ReleaseID: "rel-1"})
 			return r
 		}
 	}
 	cancelledRun := func() *run.Run {
-		r := newTerminalTaskStatusRun(scheduleID, "promote-seed-abc12345", run.SchedulerStatusCancelled)
-		r.HydrateReleaseID("rel-1")
+		r := newTerminalTaskStatusRunOfKind(run.KindPromoteSeed, scheduleID, "promote-seed-abc12345", run.SchedulerStatusCancelled)
+		r.HydrateRelease(run.ReleaseStamp{ReleaseID: "rel-1"})
 		return r
 	}
 	cases := []struct {

@@ -24,6 +24,10 @@ type triggerDerivedConfig struct {
 	// (CanBeRerunSource / CanBeRebaseSource); it returns the kind-specific
 	// "nothing to do" sentinel so the gRPC adapter can distinguish the paths.
 	eligible func(ctx context.Context, src *run.Run, tasks run.TaskCollection) error
+	// stampOf is the release stamp the derived run runs on, given its source:
+	// a rerun replays the source's release; a rebase runs on the live one,
+	// read through u inside the creating transaction.
+	stampOf func(ctx context.Context, u uow.UnitOfWork, src *run.Run) (run.ReleaseStamp, error)
 	// logLabel is the human label used in the success log line.
 	logLabel string
 }
@@ -48,6 +52,9 @@ func NewTriggerRerunHandler(logger *slog.Logger) *TriggerDerivedRunHandler {
 			eligible: func(ctx context.Context, src *run.Run, tasks run.TaskCollection) error {
 				return src.CanBeRerunSource(ctx, tasks)
 			},
+			stampOf: func(_ context.Context, _ uow.UnitOfWork, src *run.Run) (run.ReleaseStamp, error) {
+				return src.Release(), nil
+			},
 			logLabel: "Rerun triggered",
 		},
 	}
@@ -61,6 +68,9 @@ func NewTriggerRebaseHandler(logger *slog.Logger) *TriggerDerivedRunHandler {
 			kind: run.KindRebase,
 			eligible: func(ctx context.Context, src *run.Run, tasks run.TaskCollection) error {
 				return src.CanBeRebaseSource(ctx, tasks)
+			},
+			stampOf: func(ctx context.Context, u uow.UnitOfWork, _ *run.Run) (run.ReleaseStamp, error) {
+				return liveStamp(ctx, u)
 			},
 			logLabel: "Rebase triggered",
 		},
@@ -91,7 +101,11 @@ func (h *TriggerDerivedRunHandler) Handle(ctx context.Context, u uow.UnitOfWork,
 		}
 	}()
 
-	newRun, evt, err := run.NewDerivedRun(src.ScheduleName(), h.cfg.kind, sourceID, src.ReleaseID(), initiator.UserID, src.Operation(), u.Clock().Now())
+	stamp, err := h.cfg.stampOf(ctx, u, src)
+	if err != nil {
+		return uuid.Nil, "", err
+	}
+	newRun, evt, err := run.NewDerivedRun(src.ScheduleName(), h.cfg.kind, sourceID, stamp, initiator.UserID, src.Operation(), u.Clock().Now())
 	if err != nil {
 		return uuid.Nil, "", err
 	}

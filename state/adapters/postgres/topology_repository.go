@@ -7,11 +7,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	repository "github.com/carolsimone/continuo/state/domain/repository"
 	"github.com/carolsimone/continuo/state/domain/topology"
 	"github.com/jmoiron/sqlx"
-	"github.com/lib/pq"
 )
 
 // topologyLockKey is the transaction-scoped advisory-lock key that serialises
@@ -270,10 +268,10 @@ func (r *TopologyRepository) NodeContentHash(ctx context.Context, tenantID, rele
 	return hash, true, nil
 }
 
-// PruneReleases deletes old releases that are neither live nor built by an
-// unfinished run; the foreign keys cascade to their nodes and edges.
+// PruneReleases deletes old releases that are neither live nor named by any
+// run; the foreign keys cascade to their nodes and edges. A run reads its own
+// release for its whole life, so a release stays while any run names it.
 func (r *TopologyRepository) PruneReleases(ctx context.Context, loadedBefore time.Time) (int64, error) {
-	unfinished := pq.Array([]string{string(run.SchedulerStatusPending), string(run.SchedulerStatusRunning)})
 	res, err := r.conn().ExecContext(ctx, `
 		DELETE FROM topology_releases rel
 		WHERE rel.loaded_at < $1
@@ -282,8 +280,8 @@ func (r *TopologyRepository) PruneReleases(ctx context.Context, loadedBefore tim
 		      WHERE live.tenant_id = rel.tenant_id AND live.release_id = rel.release_id)
 		  AND NOT EXISTS (
 		      SELECT 1 FROM scheduler_tracker s
-		      WHERE s.release_id = rel.release_id AND s.status = ANY($2))`,
-		loadedBefore, unfinished)
+		      WHERE s.release_id = rel.release_id)`,
+		loadedBefore)
 	if err != nil {
 		return 0, fmt.Errorf("prune topology releases: %w", err)
 	}

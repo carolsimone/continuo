@@ -82,7 +82,11 @@ func (h *ActivateScheduleHandler) Handle(
 		}
 	}()
 
-	newRun, evt, err := run.NewPendingRun(name, kind, sourceRunID, initiator.UserID, metadata, operation, u.Clock().Now())
+	stamp, err := liveStamp(ctx, u)
+	if err != nil {
+		return uuid.Nil, 0, err
+	}
+	newRun, evt, err := run.NewPendingRun(name, kind, sourceRunID, initiator.UserID, metadata, operation, stamp, u.Clock().Now())
 	if err != nil {
 		return uuid.Nil, 0, err
 	}

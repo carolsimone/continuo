@@ -45,10 +45,6 @@ func (f *fakeOrchestrator) GetCodeUnitVersions(context.Context, string, string, 
 	panic("GetCodeUnitVersions should not be called in graph tests")
 }
 
-func (f *fakeOrchestrator) GetNodeRunHistory(context.Context, string, int32, string) (*orchestratorv1.GetNodeRunHistoryResponse, error) {
-	panic("GetNodeRunHistory should not be called in graph tests")
-}
-
 func (f *fakeOrchestrator) GetPrecedents(context.Context, string, string, string, int32, bool) (*orchestratorv1.GetPrecedentsResponse, error) {
 	panic("GetPrecedents should not be called in graph tests")
 }

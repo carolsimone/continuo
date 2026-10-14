@@ -34,10 +34,6 @@ func (s *spyScheduleGraphProvider) GetScheduleGraph(_ context.Context, scheduleN
 	return &domain.ScheduleGraph{}, nil
 }
 
-func (s *spyScheduleGraphProvider) ListRuns(_ context.Context, _ string, _, _ int) ([]*domain.RunSummary, int, error) {
-	return nil, 0, nil
-}
-
 func (s *spyScheduleGraphProvider) ListScheduleTopologies(_ context.Context) ([]*domain.ScheduleTopologySummary, error) {
 	return nil, nil
 }

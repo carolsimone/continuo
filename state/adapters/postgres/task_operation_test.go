@@ -22,7 +22,7 @@ func TestAcceptDispatch_StampsTaskOperation(t *testing.T) {
 	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
 
 	r, _, err := run.NewSingleNodeRun("op-task", run.NodeID{ServiceName: "svc", SchemaName: "analytics", TableName: "tbl_op"},
-		run.MetadataSourceLatest, model.OperationTest, nil, "user-1", time.Now())
+		run.MetadataSourceLatest, model.OperationTest, nil, "user-1", run.ReleaseStamp{}, time.Now())
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		db.Exec(`DELETE FROM task_tracker WHERE schedule_id = $1`, r.ScheduleID())

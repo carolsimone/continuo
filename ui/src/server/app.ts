@@ -55,7 +55,7 @@ export function createApp(
   app.use('/api/schedulers', createSchedulersRouter(client));
   app.use('/api/nodes', createNodesRouter(client, graphClient));
   app.use('/api/schedules', createSchedulesRouter(client, graphClient));
-  app.use('/api/runs', createRunsRouter(graphClient));
+  app.use('/api/runs', createRunsRouter(client));
   app.use('/api/schedulers', createExecutionsRouter(client));
   app.use('/api/task-execution', createTaskExecutionRouter());
   app.use('/api/topology', createTopologyRouter(graphClient));

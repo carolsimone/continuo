@@ -2,13 +2,15 @@ package e2e
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
-	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -48,6 +50,7 @@ func TestTopologyVersioning_MidRunIsolation(t *testing.T) {
 	// Step 4: The live pointer carries G1.
 	require.Equal(t, g1, readLivePointer(ctx, clients).promotionSeq, "the live pointer must carry G1")
 	t.Logf("G1 = %d", g1)
+	waitForStateLiveSeq(t, ctx, clients, g1)
 
 	// Tap run.entries.dispatched:v1 before either run is triggered: state consumes
 	// it and the trim loop removes consumed entries, so steps 6 and 15 read what
@@ -63,12 +66,12 @@ func TestTopologyVersioning_MidRunIsolation(t *testing.T) {
 
 	// Step 6: Wait for run.entries.dispatched:v1 for S1. This event is published
 	// after SnapshotGraph commits, proving S1's promotion_seq has been stamped on
-	// its Run node in Neo4j.
+	// its run in state.
 	t.Log("=== Step 6: waiting for run.entries.dispatched:v1 for S1 ===")
 	waitForDispatched(t, ctx, dispatchedTap, s1)
 
 	// Step 7: S1 carries G1.
-	t.Log("=== Step 7: verifying S1 promotion_seq in Neo4j == G1 ===")
+	t.Log("=== Step 7: verifying S1 promotion_seq in state == G1 ===")
 	s1Seq := readRunPromotionSeq(t, ctx, clients, s1)
 	assert.Equal(t, g1, s1Seq, "Run 1's promotion_seq must equal G1=%d, got %d", g1, s1Seq)
 
@@ -81,11 +84,12 @@ func TestTopologyVersioning_MidRunIsolation(t *testing.T) {
 	t.Logf("G2 = %d", g2)
 	require.Greater(t, g2, g1, "every announcement takes a larger promotion seq: G1=%d G2=%d", g1, g2)
 	require.Equal(t, g2, readLivePointer(ctx, clients).promotionSeq, "the live pointer must carry G2")
+	waitForStateLiveSeq(t, ctx, clients, g2)
 
 	// Step 10: S1 still carries G1. This is the core isolation invariant: an
 	// in-flight run is not affected by a topology announced after its
 	// SnapshotGraph.
-	t.Log("=== Step 10: verifying S1 promotion_seq in Neo4j still == G1 ===")
+	t.Log("=== Step 10: verifying S1 promotion_seq in state still == G1 ===")
 	assert.Equal(t, g1, readRunPromotionSeq(t, ctx, clients, s1),
 		"Run 1 must remain pinned to G1=%d after the mid-run announcement", g1)
 
@@ -111,7 +115,7 @@ func TestTopologyVersioning_MidRunIsolation(t *testing.T) {
 	waitForDispatched(t, ctx, dispatchedTap, s2)
 
 	// Step 15: S2 carries G2.
-	t.Log("=== Step 15: verifying S2 promotion_seq in Neo4j == G2 ===")
+	t.Log("=== Step 15: verifying S2 promotion_seq in state == G2 ===")
 	assert.Equal(t, g2, readRunPromotionSeq(t, ctx, clients, s2), "Run 2's promotion_seq must equal G2=%d", g2)
 
 	// Step 16: Wait for S2 to complete successfully.
@@ -143,28 +147,29 @@ func waitForDispatched(t *testing.T, ctx context.Context, tap *streamTap, schedu
 	}, "Timeout waiting for run.entries.dispatched:v1 for schedule "+scheduleID.String())
 }
 
-// readRunPromotionSeq returns the promotion_seq the Neo4j Run node of
-// scheduleID was snapshotted under.
+// waitForStateLiveSeq polls until state's live release reaches promotion seq
+// seq. A promoted release carries the seq, so a run triggered after this
+// returns is stamped with it.
+func waitForStateLiveSeq(t *testing.T, ctx context.Context, clients *testClients, seq int64) {
+	t.Helper()
+	pollUntil(t, ctx, 2*time.Minute, 500*time.Millisecond, func() (bool, error) {
+		var live int64
+		err := clients.stateDB.GetContext(ctx, &live, `SELECT promotion_seq FROM live_release WHERE tenant_id = 'default'`)
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return live >= seq, err
+	}, fmt.Sprintf("Timeout waiting for state's live release to reach promotion seq %d", seq))
+}
+
+// readRunPromotionSeq returns the promotion seq state stamped on the run that
+// scheduleID created.
 func readRunPromotionSeq(t *testing.T, ctx context.Context, clients *testClients, scheduleID uuid.UUID) int64 {
 	t.Helper()
-
-	session := clients.neo4jDriver.NewSession(ctx, neo4jdriver.SessionConfig{
-		AccessMode: neo4jdriver.AccessModeRead,
-	})
-	defer session.Close(ctx)
-
-	result, err := session.Run(ctx,
-		`MATCH (r:Run {run_id: $run_id}) RETURN r.promotion_seq AS seq`,
-		map[string]interface{}{"run_id": scheduleID.String()},
-	)
-	require.NoError(t, err, "failed to query promotion_seq for run_id=%s", scheduleID)
-	require.True(t, result.Next(ctx), "no Run node found in Neo4j for run_id=%s", scheduleID)
-
-	seqVal, ok := result.Record().Get("seq")
-	require.True(t, ok, "promotion_seq missing from Run node run_id=%s", scheduleID)
-	require.NotNil(t, seqVal, "promotion_seq is nil on Run node run_id=%s", scheduleID)
-
-	seq, ok := seqVal.(int64)
-	require.True(t, ok, "promotion_seq is not int64 (got %T) for run_id=%s", seqVal, scheduleID)
-	return seq
+	var seq sql.NullInt64
+	require.NoError(t, clients.stateDB.GetContext(ctx, &seq,
+		`SELECT promotion_seq FROM scheduler_tracker WHERE schedule_id = $1`, scheduleID),
+		"failed to read promotion_seq for run %s", scheduleID)
+	require.True(t, seq.Valid, "run %s names no release", scheduleID)
+	return seq.Int64
 }

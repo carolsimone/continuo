@@ -3,10 +3,12 @@ package uow
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	repository "github.com/carolsimone/continuo/state/domain/repository"
+	"github.com/carolsimone/continuo/state/domain/topology"
 	ports "github.com/carolsimone/continuo/state/service/ports"
 )
 
@@ -114,3 +116,33 @@ func (f *FakeUnitOfWork) SetClock(c ports.Clock)                                
 
 // Compile-time interface assertion.
 var _ UnitOfWork = (*FakeUnitOfWork)(nil)
+
+// ErrNotFaked is returned by a fake method the test did not set up.
+var ErrNotFaked = errors.New("uow fake: method not faked")
+
+// LiveReleaseOnly is a repository.TopologyRepository that answers only
+// LivePointer, with Live, and LockTopology, which it grants at once. Handler
+// tests that create runs use it.
+type LiveReleaseOnly struct{ Live topology.Pointer }
+
+var _ repository.TopologyRepository = (*LiveReleaseOnly)(nil)
+
+func (f *LiveReleaseOnly) LivePointer(context.Context, string) (topology.Pointer, error) {
+	return f.Live, nil
+}
+func (f *LiveReleaseOnly) LockTopology(context.Context) error { return nil }
+func (f *LiveReleaseOnly) SaveRelease(context.Context, topology.Release) (bool, error) {
+	return false, ErrNotFaked
+}
+func (f *LiveReleaseOnly) SetLivePointer(context.Context, string, topology.Pointer, time.Time) error {
+	return ErrNotFaked
+}
+func (f *LiveReleaseOnly) ReleaseNodes(context.Context, string, string, string) ([]topology.Node, error) {
+	return nil, ErrNotFaked
+}
+func (f *LiveReleaseOnly) NodeContentHash(context.Context, string, string, topology.NodeKey) (string, bool, error) {
+	return "", false, ErrNotFaked
+}
+func (f *LiveReleaseOnly) PruneReleases(context.Context, time.Time) (int64, error) {
+	return 0, ErrNotFaked
+}

@@ -29,10 +29,8 @@ type nodeRun struct {
 	LogS3Key       string `json:"log_s3_key,omitempty"`
 	RunResultsURI  string `json:"run_results_uri,omitempty"`
 	Operation      string `json:"operation"`
-	// ContentHash is the code this run executed, joined client-side from the
-	// orchestrator's run history by run id. Empty for runs that predate the
-	// stamp, and for every run when the orchestrator join itself could not be
-	// completed (see NewHistoryCommand's degrade behavior).
+	// ContentHash is the node's content hash in the release the run ran on, as
+	// the state service records it. Empty for runs that name no release.
 	ContentHash string `json:"content_hash,omitempty"`
 }
 
@@ -48,7 +46,7 @@ const nodeHistoryLimit int32 = 50
 var validHistoryOperations = map[string]bool{"run": true, "test": true, "build": true}
 
 // NewHistoryCommand builds `continuo node history <service> <schema> <table>`.
-func NewHistoryCommand(factory StateClientFactory, orchFactory OrchestratorClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
+func NewHistoryCommand(factory StateClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "history <service> <schema> <table>",
 		Short: "List the recent run history of one model node",
@@ -82,17 +80,10 @@ Output (stdout, JSON): up to 50 runs, newest first.
   python-family nodes (python-node, python-csv, python-api) always emit one, dbt
   nodes never do. An unknown node returns {"runs":[]}, not an error.
 
-content_hash is the code this run executed, joined client-side from the
-orchestrator's GetNodeRunHistory by run id, filtered server-side to the same
---operation so the enrichment call cannot be starved by newer executions of a
-different operation; it is omitted for runs that predate the stamp. State
-remains the primary source of truth for run history: if the join to the
-orchestrator fails for any reason (the service is unreachable, the node has
-no recorded version history, or any other error), history still returns
-state's rows in full, every content_hash omitted rather than the command
-failing.
+content_hash is the node's content hash in the release the run ran on, as
+the state service records it; it is omitted for runs that name no release.
 
-In --human mode, the joined hash is rendered too: each line ends with an
+In --human mode, content_hash is rendered too: each line ends with an
 EXECUTED_HASH column (the first 12 characters of content_hash, or "-" when
 it is unavailable).
 
@@ -132,12 +123,10 @@ Errors:
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}
 
-			contentHashByRunID := fetchContentHashByRunID(ctx, orchFactory, cfg.OrchestratorEndpoint, args[1], args[2], operation)
-
 			if cfg.Human {
-				return humanHistory(stderr, resp.GetRuns(), contentHashByRunID)
+				return humanHistory(stderr, resp.GetRuns())
 			}
-			return output.EmitSuccess(stdout, toHistoryPayload(resp.GetRuns(), contentHashByRunID))
+			return output.EmitSuccess(stdout, toHistoryPayload(resp.GetRuns()))
 		},
 	}
 	cmd.Flags().String("operation", "run", "Filter history by operation: run | test | build (default \"run\")")
@@ -146,40 +135,7 @@ Errors:
 	return cmd
 }
 
-// fetchContentHashByRunID joins run history against the orchestrator's
-// recorded code-version history by run id, filtered server-side to
-// operation: without that filter, newer executions of a different operation
-// could fill the orchestrator's limit and starve out the hashes for the rows
-// state actually returned. It never fails the caller: state is the primary
-// source of truth for node history, so any error dialing the orchestrator or
-// calling GetNodeRunHistory (unreachable service, unknown node, or otherwise)
-// produces an empty map rather than an error, leaving every content_hash
-// omitted for this response.
-func fetchContentHashByRunID(ctx context.Context, orchFactory OrchestratorClientFactory, orchestratorEndpoint, schema, table, operation string) map[string]string {
-	empty := map[string]string{}
-
-	c, err := orchFactory(ctx, orchestratorEndpoint)
-	if err != nil {
-		return empty
-	}
-	defer func() { _ = c.Close() }()
-
-	uniqueID := schema + "." + table
-	resp, err := c.GetNodeRunHistory(ctx, uniqueID, nodeHistoryLimit, operation)
-	if err != nil {
-		return empty
-	}
-
-	byRunID := make(map[string]string, len(resp.GetRuns()))
-	for _, r := range resp.GetRuns() {
-		if r.GetContentHash() != "" {
-			byRunID[r.GetRunId()] = r.GetContentHash()
-		}
-	}
-	return byRunID
-}
-
-func toHistoryPayload(runs []*statev1.NodeRun, contentHashByRunID map[string]string) historyPayload {
+func toHistoryPayload(runs []*statev1.NodeRun) historyPayload {
 	out := make([]nodeRun, 0, len(runs))
 	for _, r := range runs {
 		out = append(out, nodeRun{
@@ -198,7 +154,7 @@ func toHistoryPayload(runs []*statev1.NodeRun, contentHashByRunID map[string]str
 			LogS3Key:       r.GetLogS3Key(),
 			RunResultsURI:  r.GetRunResultsUri(),
 			Operation:      r.GetOperation(),
-			ContentHash:    contentHashByRunID[r.GetRunId()],
+			ContentHash:    r.GetContentHash(),
 		})
 	}
 	return historyPayload{Runs: out}
@@ -214,17 +170,16 @@ const executedHashDisplayLen = 12
 //	RUN_ID  OPERATION  STATUS  KIND  COMPLETED_AT  EXECUTED_HASH
 //	<run_id>  <operation>  <task_status>  <kind>  <completed_at>  <executed_hash>
 //
-// executed_hash is the orchestrator-joined content_hash (see
-// fetchContentHashByRunID), truncated to executedHashDisplayLen characters,
-// or "-" when it is unavailable for this run.
-func humanHistory(stderr io.Writer, runs []*statev1.NodeRun, contentHashByRunID map[string]string) error {
+// executed_hash is the run's content_hash, truncated to executedHashDisplayLen
+// characters, or "-" when the run names no release.
+func humanHistory(stderr io.Writer, runs []*statev1.NodeRun) error {
 	if _, err := fmt.Fprintf(stderr, "RUN_ID  OPERATION  STATUS  KIND  COMPLETED_AT  EXECUTED_HASH\n"); err != nil {
 		return err
 	}
 	for _, r := range runs {
 		if _, err := fmt.Fprintf(stderr, "%s  %s  %s  %s  %s  %s\n",
 			r.GetRunId(), r.GetOperation(), r.GetTaskStatus(), r.GetKind(), r.GetCompletedAt(),
-			shortExecutedHash(contentHashByRunID[r.GetRunId()])); err != nil {
+			shortExecutedHash(r.GetContentHash())); err != nil {
 			return err
 		}
 	}
@@ -232,8 +187,7 @@ func humanHistory(stderr io.Writer, runs []*statev1.NodeRun, contentHashByRunID 
 }
 
 // shortExecutedHash renders the leading executedHashDisplayLen characters of
-// a content hash for human display, or "-" when the run predates the stamp
-// or the orchestrator join could not be completed.
+// a content hash for human display, or "-" when the run names no release.
 func shortExecutedHash(hash string) string {
 	if hash == "" {
 		return "-"

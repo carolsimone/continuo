@@ -463,3 +463,30 @@ func TestTaskTrackerRepository_BulkCreateTx_AboveBindParameterLimit(t *testing.T
 	insertAll()
 	assert.Equal(t, n, countRows(), "inserting the same task ids again adds no rows")
 }
+
+// BulkCreateTx stores each task's node key and GetByID reads it back.
+func TestTaskRepository_NodeKeyRoundTrips(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	logger := discardLogger()
+	runs := postgres.NewSchedulerTrackerRepository(db, logger)
+	tasks := postgres.NewTaskTrackerRepository(db, logger)
+	tracker := createScheduler(t, runs, "nodekey-"+uuid.NewString()[:8])
+	t.Cleanup(func() { _, _ = db.Exec(`DELETE FROM scheduler_tracker WHERE schedule_id = $1`, tracker.ScheduleID) })
+	key := "raw.orders"
+	row := &postgres.TaskTracker{
+		TaskID: uuid.New(), ScheduleID: tracker.ScheduleID, CreatedAt: time.Now(),
+		ServiceName: "svc", SchemaName: "raw", TableName: "orders", JobName: "job",
+		Status: run.TaskStatusPending, MaxRetries: 2, NodeKey: &key,
+	}
+
+	tx, err := db.BeginTxx(ctx, nil)
+	require.NoError(t, err)
+	require.NoError(t, tasks.BulkCreateTx(ctx, tx, []*postgres.TaskTracker{row}))
+	require.NoError(t, tx.Commit())
+
+	read, err := tasks.GetByID(ctx, row.TaskID)
+	require.NoError(t, err)
+	require.NotNil(t, read.NodeKey)
+	assert.Equal(t, key, *read.NodeKey)
+}

@@ -34,4 +34,7 @@ type NodeRun struct {
 	LogS3Key       *string
 	RunResultsURI  *string
 	Operation      string
+	// ContentHash is the node's content hash in the run's release; empty when
+	// the run names no release.
+	ContentHash string
 }

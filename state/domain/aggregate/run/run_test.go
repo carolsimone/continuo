@@ -20,7 +20,7 @@ func TestNewPendingRun_RecordsRunStarted(t *testing.T) {
 		"orders": {ImageTag: "abc"},
 	}
 
-	r, evt, err := run.NewPendingRun("daily_orders", run.KindCron, nil, identity.SystemUserID, meta, model.OperationRun, now)
+	r, evt, err := run.NewPendingRun("daily_orders", run.KindCron, nil, identity.SystemUserID, meta, model.OperationRun, run.ReleaseStamp{}, now)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -53,7 +53,7 @@ func TestNewRun_StampsInitiatorOnAggregateAndEvent(t *testing.T) {
 	src := uuid.New()
 
 	t.Run("pending run", func(t *testing.T) {
-		r, evt, err := run.NewPendingRun("daily", run.KindTrigger, nil, "okta|alice", nil, model.OperationRun, now)
+		r, evt, err := run.NewPendingRun("daily", run.KindTrigger, nil, "okta|alice", nil, model.OperationRun, run.ReleaseStamp{}, now)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -66,7 +66,7 @@ func TestNewRun_StampsInitiatorOnAggregateAndEvent(t *testing.T) {
 	})
 
 	t.Run("derived rerun", func(t *testing.T) {
-		r, evt, err := run.NewDerivedRun("daily", run.KindRerun, src, "", "okta|bob", model.OperationRun, now)
+		r, evt, err := run.NewDerivedRun("daily", run.KindRerun, src, run.ReleaseStamp{}, "okta|bob", model.OperationRun, now)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -80,7 +80,7 @@ func TestNewRun_StampsInitiatorOnAggregateAndEvent(t *testing.T) {
 
 	t.Run("single node run", func(t *testing.T) {
 		target := run.NodeID{ServiceName: "svc", SchemaName: "sch", TableName: "tbl"}
-		r, evt, err := run.NewSingleNodeRun("single-node-run-abcd1234", target, run.MetadataSourceLatest, model.OperationRun, nil, "okta|carol", now)
+		r, evt, err := run.NewSingleNodeRun("single-node-run-abcd1234", target, run.MetadataSourceLatest, model.OperationRun, nil, "okta|carol", run.ReleaseStamp{}, now)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -106,7 +106,7 @@ func TestNewSingleNodeRun_CarriesOperation(t *testing.T) {
 	target := run.NodeID{ServiceName: "svc", SchemaName: "sch", TableName: "tbl"}
 
 	t.Run("test operation", func(t *testing.T) {
-		_, evt, err := run.NewSingleNodeRun("single-node-run-test1234", target, run.MetadataSourceLatest, model.OperationTest, nil, "okta|carol", now)
+		_, evt, err := run.NewSingleNodeRun("single-node-run-test1234", target, run.MetadataSourceLatest, model.OperationTest, nil, "okta|carol", run.ReleaseStamp{}, now)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -117,7 +117,7 @@ func TestNewSingleNodeRun_CarriesOperation(t *testing.T) {
 	})
 
 	t.Run("run operation defaults to empty", func(t *testing.T) {
-		_, evt, err := run.NewSingleNodeRun("single-node-run-run12345", target, run.MetadataSourceLatest, model.OperationRun, nil, "okta|carol", now)
+		_, evt, err := run.NewSingleNodeRun("single-node-run-run12345", target, run.MetadataSourceLatest, model.OperationRun, nil, "okta|carol", run.ReleaseStamp{}, now)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -136,7 +136,7 @@ func TestNewPendingRun_CarriesOperation(t *testing.T) {
 	now := time.Date(2026, 5, 16, 10, 0, 0, 0, time.UTC)
 
 	t.Run("test operation", func(t *testing.T) {
-		_, evt, err := run.NewPendingRun("daily", run.KindTrigger, nil, "okta|carol", nil, model.OperationTest, now)
+		_, evt, err := run.NewPendingRun("daily", run.KindTrigger, nil, "okta|carol", nil, model.OperationTest, run.ReleaseStamp{}, now)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -147,7 +147,7 @@ func TestNewPendingRun_CarriesOperation(t *testing.T) {
 	})
 
 	t.Run("run operation defaults to empty", func(t *testing.T) {
-		_, evt, err := run.NewPendingRun("daily", run.KindCron, nil, identity.SystemUserID, nil, model.OperationRun, now)
+		_, evt, err := run.NewPendingRun("daily", run.KindCron, nil, identity.SystemUserID, nil, model.OperationRun, run.ReleaseStamp{}, now)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -159,14 +159,14 @@ func TestNewPendingRun_CarriesOperation(t *testing.T) {
 }
 
 func TestNewPendingRun_RejectsEmptyName(t *testing.T) {
-	_, _, err := run.NewPendingRun("", run.KindCron, nil, identity.SystemUserID, nil, model.OperationRun, time.Now())
+	_, _, err := run.NewPendingRun("", run.KindCron, nil, identity.SystemUserID, nil, model.OperationRun, run.ReleaseStamp{}, time.Now())
 	if err != run.ErrScheduleNameRequired {
 		t.Fatalf("err: got %v want %v", err, run.ErrScheduleNameRequired)
 	}
 }
 
 func TestNewPendingRun_RejectsInvalidKind(t *testing.T) {
-	_, _, err := run.NewPendingRun("x", run.Kind("bogus"), nil, identity.SystemUserID, nil, model.OperationRun, time.Now())
+	_, _, err := run.NewPendingRun("x", run.Kind("bogus"), nil, identity.SystemUserID, nil, model.OperationRun, run.ReleaseStamp{}, time.Now())
 	if err != run.ErrInvalidKind {
 		t.Fatalf("err: got %v want %v", err, run.ErrInvalidKind)
 	}
@@ -266,7 +266,7 @@ func (f *fakeTaskCollection) Update(_ context.Context, t run.Task) error {
 // zero counters — the state on entry to AcceptDispatch.
 func freshPendingRun(t *testing.T) *run.Run {
 	t.Helper()
-	r, _, err := run.NewPendingRun("daily", run.KindCron, nil, identity.SystemUserID, nil, model.OperationRun, time.Now())
+	r, _, err := run.NewPendingRun("daily", run.KindCron, nil, identity.SystemUserID, nil, model.OperationRun, run.ReleaseStamp{}, time.Now())
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}
@@ -1354,7 +1354,7 @@ func TestNewPromotedSeedsRun_CarriesTheReleaseAndItsPromotionSeq(t *testing.T) {
 		ImageTag: "svc:2",
 	}}
 
-	r, evt, err := run.NewPromotedSeedsRun(id, "promote-seed-abc12345", "rel-1", 7, nodes, now)
+	r, evt, err := run.NewPromotedSeedsRun(id, "promote-seed-abc12345", run.ReleaseStamp{ReleaseID: "rel-1", PromotionSeq: 7}, nodes, now)
 	if err != nil {
 		t.Fatalf("NewPromotedSeedsRun: %v", err)
 	}
@@ -1382,7 +1382,7 @@ func TestHydrateReleaseID_RestoresTheStoredRelease(t *testing.T) {
 	if r.ReleaseID() != "" {
 		t.Fatalf("ReleaseID() = %q before hydration, want empty", r.ReleaseID())
 	}
-	r.HydrateReleaseID("rel-9")
+	r.HydrateRelease(run.ReleaseStamp{ReleaseID: "rel-9"})
 	if r.ReleaseID() != "rel-9" {
 		t.Fatalf("ReleaseID() = %q, want rel-9", r.ReleaseID())
 	}
@@ -1391,22 +1391,14 @@ func TestHydrateReleaseID_RestoresTheStoredRelease(t *testing.T) {
 	}
 }
 
-// A rerun replays its source's tasks at the source's images, so it carries the
-// source's release; a rebase reads the latest topology and carries none.
+// A rerun replays its source's tasks at the source's images, so the caller
+// gives it the source's release stamp and the run records it as is.
 func TestNewDerivedRun_RerunCarriesItsSourceRelease(t *testing.T) {
-	now := time.Now()
-	rerun, _, err := run.NewDerivedRun("promote-seed-abc12345", run.KindRerun, uuid.New(), "rel-1", "okta|alice", model.OperationRun, now)
+	rerun, _, err := run.NewDerivedRun("promote-seed-abc12345", run.KindRerun, uuid.New(), run.ReleaseStamp{ReleaseID: "rel-1", PromotionSeq: 3}, "okta|alice", model.OperationRun, time.Now())
 	if err != nil {
 		t.Fatalf("NewDerivedRun(rerun): %v", err)
 	}
-	if rerun.ReleaseID() != "rel-1" {
-		t.Fatalf("rerun ReleaseID() = %q, want rel-1", rerun.ReleaseID())
-	}
-	rebase, _, err := run.NewDerivedRun("promote-seed-abc12345", run.KindRebase, uuid.New(), "rel-1", "okta|alice", model.OperationRun, now)
-	if err != nil {
-		t.Fatalf("NewDerivedRun(rebase): %v", err)
-	}
-	if rebase.ReleaseID() != "" {
-		t.Fatalf("rebase ReleaseID() = %q, want empty", rebase.ReleaseID())
+	if rerun.ReleaseID() != "rel-1" || rerun.Release().PromotionSeq != 3 {
+		t.Fatalf("rerun Release() = %+v, want rel-1 / 3", rerun.Release())
 	}
 }

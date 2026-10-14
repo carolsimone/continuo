@@ -109,7 +109,7 @@ func (r *taskTrackerRepository) GetByID(ctx context.Context, taskID uuid.UUID) (
 	query := `
 		SELECT task_id, schedule_id, created_at, service_name, schema_name,
 		       table_name, job_name, status, retry_count, max_retries, cancelled_at, cancelled_by,
-		       image_tag, inherited_from_task_id, operation
+		       image_tag, inherited_from_task_id, operation, node_key
 		FROM task_tracker
 		WHERE task_id = $1
 	`
@@ -143,7 +143,7 @@ func (r *taskTrackerRepository) GetByScheduleAndNode(ctx context.Context, schedu
 	query := `
 		SELECT task_id, schedule_id, created_at, service_name, schema_name,
 		       table_name, job_name, status, retry_count, max_retries, cancelled_at, cancelled_by,
-		       image_tag, inherited_from_task_id, operation
+		       image_tag, inherited_from_task_id, operation, node_key
 		FROM task_tracker
 		WHERE schedule_id = $1
 		  AND service_name = $2
@@ -247,8 +247,8 @@ func (r *taskTrackerRepository) ListByScheduleID(ctx context.Context, scheduleID
 }
 
 // taskTrackerInsertChunk is the most rows one BulkCreateTx statement inserts.
-// Each row binds 13 parameters and PostgreSQL accepts at most 65535 per
-// statement, so a single statement holds at most 5041 rows.
+// Each row binds 14 parameters and PostgreSQL accepts at most 65535 per
+// statement, so a single statement holds at most 4681 rows.
 const taskTrackerInsertChunk = 1000
 
 // BulkCreateTx inserts multiple task_tracker rows within a transaction, in
@@ -268,10 +268,10 @@ func (r *taskTrackerRepository) BulkCreateTx(ctx context.Context, tx *sqlx.Tx, t
 	query := `
 		INSERT INTO task_tracker (
 			task_id, schedule_id, created_at, service_name, schema_name,
-			table_name, job_name, status, retry_count, max_retries, image_tag, inherited_from_task_id, operation
+			table_name, job_name, status, retry_count, max_retries, image_tag, inherited_from_task_id, operation, node_key
 		) VALUES (
 			:task_id, :schedule_id, :created_at, :service_name, :schema_name,
-			:table_name, :job_name, :status, :retry_count, :max_retries, :image_tag, :inherited_from_task_id, :operation
+			:table_name, :job_name, :status, :retry_count, :max_retries, :image_tag, :inherited_from_task_id, :operation, :node_key
 		)
 		ON CONFLICT (task_id) DO NOTHING
 	`

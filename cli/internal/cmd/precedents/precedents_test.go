@@ -53,10 +53,6 @@ func (f *fakePrecedentsOrchestrator) GetCodeUnitVersions(context.Context, string
 	panic("GetCodeUnitVersions should not be called in precedents tests")
 }
 
-func (f *fakePrecedentsOrchestrator) GetNodeRunHistory(context.Context, string, int32, string) (*orchestratorv1.GetNodeRunHistoryResponse, error) {
-	panic("GetNodeRunHistory should not be called in precedents tests")
-}
-
 func (f *fakePrecedentsOrchestrator) GetPrecedents(_ context.Context, signature, category, reason string, limit int32, includeCode bool) (*orchestratorv1.GetPrecedentsResponse, error) {
 	f.called = true
 	f.gotSignature, f.gotCategory, f.gotReason = signature, category, reason

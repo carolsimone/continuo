@@ -130,14 +130,14 @@ func (r *schedulerTrackerRepository) Create(ctx context.Context, tracker *Schedu
 			cancelled_at, cancelled_by, cancellation_reason,
 			initialization_status, service_metadata,
 			total_task_count, terminal_task_count,
-			kind, source_run_id, initiated_by, operation, release_id
+			kind, source_run_id, initiated_by, operation, release_id, promotion_seq
 		) VALUES (
 			$1, $2, $3, $4,
 			$5, $6, $7,
 			$8, $9, $10,
 			$11, $12,
 			$13, $14,
-			$15, $16, $17, $18, $19
+			$15, $16, $17, $18, $19, $20
 		)
 	`
 
@@ -148,7 +148,7 @@ func (r *schedulerTrackerRepository) Create(ctx context.Context, tracker *Schedu
 		tracker.InitializationStatus, metaJSON,
 		tracker.TotalTaskCount, tracker.TerminalTaskCount,
 		kindWithDefault(tracker.Kind), tracker.SourceRunID, identity.OrSystem(tracker.InitiatedBy),
-		operationWithDefault(tracker.Operation), tracker.ReleaseID,
+		operationWithDefault(tracker.Operation), tracker.ReleaseID, tracker.PromotionSeq,
 	)
 	if err != nil {
 		// Check for duplicate key error (PostgreSQL error code 23505)
@@ -205,14 +205,14 @@ func (r *schedulerTrackerRepository) CreateTx(ctx context.Context, tx *sqlx.Tx, 
 			cancelled_at, cancelled_by, cancellation_reason,
 			initialization_status, service_metadata,
 			total_task_count, terminal_task_count,
-			kind, source_run_id, initiated_by, operation, release_id
+			kind, source_run_id, initiated_by, operation, release_id, promotion_seq
 		) VALUES (
 			$1, $2, $3, $4,
 			$5, $6, $7,
 			$8, $9, $10,
 			$11, $12,
 			$13, $14,
-			$15, $16, $17, $18, $19
+			$15, $16, $17, $18, $19, $20
 		)
 		ON CONFLICT (schedule_id) DO NOTHING
 	`,
@@ -222,7 +222,7 @@ func (r *schedulerTrackerRepository) CreateTx(ctx context.Context, tx *sqlx.Tx, 
 		tracker.InitializationStatus, metaJSON,
 		tracker.TotalTaskCount, tracker.TerminalTaskCount,
 		kindWithDefault(tracker.Kind), tracker.SourceRunID, identity.OrSystem(tracker.InitiatedBy),
-		operationWithDefault(tracker.Operation), tracker.ReleaseID,
+		operationWithDefault(tracker.Operation), tracker.ReleaseID, tracker.PromotionSeq,
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -252,7 +252,7 @@ func (r *schedulerTrackerRepository) GetByID(ctx context.Context, scheduleID uui
 			cancelled_at, cancelled_by, cancellation_reason,
 			initialization_status, service_metadata,
 			total_task_count, terminal_task_count,
-			kind, source_run_id, initiated_by, operation, release_id
+			kind, source_run_id, initiated_by, operation, release_id, promotion_seq
 		FROM scheduler_tracker
 		WHERE schedule_id = $1
 	`
@@ -366,7 +366,7 @@ func (r *schedulerTrackerRepository) GetActiveScheduler(ctx context.Context, sch
 			cancelled_at, cancelled_by, cancellation_reason,
 			initialization_status, service_metadata,
 			total_task_count, terminal_task_count,
-			kind, source_run_id, initiated_by, operation, release_id
+			kind, source_run_id, initiated_by, operation, release_id, promotion_seq
 		FROM scheduler_tracker
 		WHERE schedule_name = $1
 		  AND status IN ('pending', 'running')
@@ -475,7 +475,7 @@ func (r *schedulerTrackerRepository) GetByIDForUpdateTx(ctx context.Context, tx 
 			cancelled_at, cancelled_by, cancellation_reason,
 			initialization_status, service_metadata,
 			total_task_count, terminal_task_count,
-			kind, source_run_id, initiated_by, operation, release_id
+			kind, source_run_id, initiated_by, operation, release_id, promotion_seq
 		FROM scheduler_tracker
 		WHERE schedule_id = $1
 		FOR UPDATE

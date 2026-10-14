@@ -25,19 +25,6 @@ func TestPromotionSeqFields_KeepTheirWireNumbers(t *testing.T) {
 			msg:  &orchestratorv1.GetScheduleGraphResponse{PromotionSeq: 42},
 			want: []byte{0x18, 42},
 		},
-		{
-			name: "GetRunGraphResponse run_promotion_seq is 3, latest_promotion_seq is 4",
-			msg:  &orchestratorv1.GetRunGraphResponse{RunPromotionSeq: 5, LatestPromotionSeq: 7},
-			want: []byte{0x18, 5, 0x20, 7},
-		},
-		{
-			name: "ListActiveRunDriftsResponse latest_promotion_seq is 1, ActiveRunDrift.run_promotion_seq is 3",
-			msg: &orchestratorv1.ListActiveRunDriftsResponse{
-				LatestPromotionSeq: 9,
-				ActiveRuns:         []*orchestratorv1.ActiveRunDrift{{RunPromotionSeq: 4}},
-			},
-			want: []byte{0x08, 9, 0x12, 2, 0x18, 4},
-		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

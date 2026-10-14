@@ -331,8 +331,8 @@ func TestTopologyRepository_LockAndSaveNeedATransaction(t *testing.T) {
 	assert.Error(t, err)
 }
 
-// Retention deletes a release loaded before the cutoff unless it is live or a
-// pending or running run builds it; its nodes and edges go with it.
+// Retention deletes a release loaded before the cutoff unless it is live or
+// any run names it, finished or not; its nodes and edges go with it.
 func TestTopologyRepository_PruneReleases(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
@@ -359,16 +359,16 @@ func TestTopologyRepository_PruneReleases(t *testing.T) {
 
 	pruned, err := repo.PruneReleases(ctx, time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC))
 	require.NoError(t, err)
-	assert.GreaterOrEqual(t, pruned, int64(2))
+	assert.GreaterOrEqual(t, pruned, int64(1))
 
 	var kept []string
 	require.NoError(t, db.Select(&kept, `
 		SELECT release_id FROM topology_releases WHERE tenant_id = $1 ORDER BY release_id COLLATE "C"`, tenant))
-	assert.Equal(t, []string{id("live"), id("recent"), id("running-run")}, kept)
+	assert.Equal(t, []string{id("finished-run"), id("live"), id("recent"), id("running-run")}, kept)
 	assert.Zero(t, countTopoRows(t, db, `
-		SELECT count(*) FROM topology_nodes WHERE tenant_id = $1 AND release_id IN ($2, $3)`, tenant, id("old"), id("finished-run")))
+		SELECT count(*) FROM topology_nodes WHERE tenant_id = $1 AND release_id = $2`, tenant, id("old")))
 	assert.Zero(t, countTopoRows(t, db, `
-		SELECT count(*) FROM topology_edges WHERE tenant_id = $1 AND release_id IN ($2, $3)`, tenant, id("old"), id("finished-run")))
+		SELECT count(*) FROM topology_edges WHERE tenant_id = $1 AND release_id = $2`, tenant, id("old")))
 }
 
 // The unit of work's Topology() writes inside its transaction.

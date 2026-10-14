@@ -15,12 +15,11 @@ function toISO(ts: ProtoTimestamp | null | undefined): string | null {
   return new Date(ms).toISOString();
 }
 
-// The orchestrator returns each graph edge as the Neo4j DEPENDS_ON relationship
-// it is stored as: `from` is the consumer, `to` is the table it reads. Every
-// client view (dependency depth, swimlane columns, arrowheads, the selected
-// node's upstream/downstream sets, the topology layout) reads an edge as
-// "`from` runs before `to`", so the edge is reversed exactly once here, at the
-// boundary, into execution order.
+// Graph edges arrive in dependency direction: `from` is the dependent node,
+// `to` is the node it reads. Every client view (dependency depth, swimlane
+// columns, arrowheads, the selected node's upstream/downstream sets, the
+// topology layout) reads an edge as "`from` runs before `to`", so the edge is
+// reversed exactly once here, at the boundary, into execution order.
 function executionOrderEdges(edges: any[] | undefined) {
   return (edges || []).map((e: any) => ({
     from_node_id: e.to_node_id,
@@ -72,9 +71,9 @@ export function createSchedulesRouter(stateClient: GrpcClient, graphClient: Grpc
     });
   });
 
-  // GET /api/schedules/:name/runs — list completed runs for a schedule (newest first)
+  // GET /api/schedules/:name/runs — list completed runs for a schedule (newest first), from the state service
   router.get('/:name/runs', (req, res) => {
-    graphClient.listRuns({ schedule_name: req.params.name }, (err: any, resp: any) => {
+    stateClient.listRuns({ schedule_name: req.params.name }, (err: any, resp: any) => {
       if (err) return res.status(500).json({ error: err.message });
       const runs = (resp.runs || []).map((r: any) => ({
         run_id: r.run_id,
@@ -127,12 +126,13 @@ export function createSchedulesRouter(stateClient: GrpcClient, graphClient: Grpc
   return router;
 }
 
-export function createRunsRouter(graphClient: GrpcGraphClient) {
+export function createRunsRouter(stateClient: GrpcClient) {
   const router = Router();
 
-  // GET /api/runs/:run_id/graph — per-run DAG topology + node statuses
+  // GET /api/runs/:run_id/graph — a run's tasks and dependencies from its own
+  // release, with task statuses, from the state service
   router.get('/:run_id/graph', (req, res) => {
-    graphClient.getRunGraph({ run_id: req.params.run_id }, (err: any, resp: any) => {
+    stateClient.getRunGraph({ run_id: req.params.run_id }, (err: any, resp: any) => {
       if (err) return res.status(500).json({ error: err.message });
       const nodes = (resp.nodes || []).map((n: any) => ({
         node_id: `${n.service_name}.${n.schema_name}.${n.table_name}`,

@@ -40,9 +40,6 @@ type fakeCodeVersionReader struct {
 	unitsForNode    []string
 	unitsForNodeErr error
 
-	runExecutions    []codeversion.RunExecution
-	runExecutionsErr error
-
 	// captured args, for assertions on what the service passed down.
 	gotNodeVersionsLimit             int32
 	gotNodeVersionsIncludeCode       []bool // one entry per call, in call order
@@ -50,8 +47,6 @@ type fakeCodeVersionReader struct {
 	gotAncestorsDepth                int32
 	gotAncestorsSince                time.Time
 	gotAncestorsCap                  int32
-	gotRunExecutionsLimit            int32
-	gotRunExecutionsOperation        string
 	gotUnitVersionsLimit             map[string]int32
 	gotUnitVersionsBatchIDs          []string
 	gotUnitVersionsBatchLimit        int32
@@ -116,15 +111,6 @@ func (f *fakeCodeVersionReader) UnitsForNode(ctx context.Context, uniqueID strin
 		return nil, f.unitsForNodeErr
 	}
 	return f.unitsForNode, nil
-}
-
-func (f *fakeCodeVersionReader) RunExecutions(ctx context.Context, uniqueID string, limit int32, operation string) ([]codeversion.RunExecution, error) {
-	f.gotRunExecutionsLimit = limit
-	f.gotRunExecutionsOperation = operation
-	if f.runExecutionsErr != nil {
-		return nil, f.runExecutionsErr
-	}
-	return f.runExecutions, nil
 }
 
 func newCodeVersionSvc(r *fakeCodeVersionReader) *queries.CodeVersionQueryService {
@@ -482,57 +468,6 @@ func TestCodeVersionQueryService_GetCurrentNodeVersion_ReturnsReaderResult(t *te
 	got, err := svc.GetCurrentNodeVersion(context.Background(), "node-1", true)
 	require.NoError(t, err)
 	assert.Equal(t, want, got)
-}
-
-// ---- GetNodeRunHistory ----
-
-func TestCodeVersionQueryService_GetNodeRunHistory_NonPositiveLimitDefaultsTo20(t *testing.T) {
-	r := &fakeCodeVersionReader{}
-	svc := newCodeVersionSvc(r)
-
-	_, err := svc.GetNodeRunHistory(context.Background(), "node-1", 0, "")
-	require.NoError(t, err)
-	assert.Equal(t, int32(20), r.gotRunExecutionsLimit)
-
-	_, err = svc.GetNodeRunHistory(context.Background(), "node-1", -5, "")
-	require.NoError(t, err)
-	assert.Equal(t, int32(20), r.gotRunExecutionsLimit)
-}
-
-func TestCodeVersionQueryService_GetNodeRunHistory_LimitCappedAt200(t *testing.T) {
-	r := &fakeCodeVersionReader{}
-	svc := newCodeVersionSvc(r)
-
-	_, err := svc.GetNodeRunHistory(context.Background(), "node-1", 10000, "")
-	require.NoError(t, err)
-	assert.Equal(t, int32(200), r.gotRunExecutionsLimit)
-}
-
-func TestCodeVersionQueryService_GetNodeRunHistory_LimitWithinRangePassesThrough(t *testing.T) {
-	r := &fakeCodeVersionReader{}
-	svc := newCodeVersionSvc(r)
-
-	_, err := svc.GetNodeRunHistory(context.Background(), "node-1", 50, "")
-	require.NoError(t, err)
-	assert.Equal(t, int32(50), r.gotRunExecutionsLimit)
-}
-
-func TestCodeVersionQueryService_GetNodeRunHistory_EmptyHistoryReturnsEmptySlice(t *testing.T) {
-	r := &fakeCodeVersionReader{runExecutions: []codeversion.RunExecution{}}
-	svc := newCodeVersionSvc(r)
-
-	runs, err := svc.GetNodeRunHistory(context.Background(), "node-1", 20, "")
-	require.NoError(t, err)
-	assert.Empty(t, runs)
-}
-
-func TestCodeVersionQueryService_GetNodeRunHistory_OperationPassesThrough(t *testing.T) {
-	r := &fakeCodeVersionReader{}
-	svc := newCodeVersionSvc(r)
-
-	_, err := svc.GetNodeRunHistory(context.Background(), "node-1", 20, "test")
-	require.NoError(t, err)
-	assert.Equal(t, "test", r.gotRunExecutionsOperation)
 }
 
 // ---- GetCodeUnitVersions ----

@@ -2,8 +2,6 @@ package run
 
 import (
 	"context"
-
-	"github.com/carolsimone/continuo/orchestrator/domain"
 )
 
 // Scope tells the AggregateRepository which subgraph to load when rehydrating
@@ -35,13 +33,4 @@ func (ScopeNodeCompletion) scope() {}
 type AggregateRepository interface {
 	Rehydrate(ctx context.Context, runID string, scope Scope) (*Run, error)
 	Save(ctx context.Context, run *Run) error
-}
-
-// RunQueryPort is the read-side port (CQRS). No aggregate involved.
-type RunQueryPort interface {
-	GetScheduleGraph(ctx context.Context, scheduleName string) (*domain.ScheduleGraph, error)
-	ListRuns(ctx context.Context, scheduleName string, limit, offset int) ([]*domain.RunSummary, int, error)
-	GetRunGraph(ctx context.Context, runID string) ([]*domain.TableNode, []*domain.GraphEdge, error)
-	GetRunPromotionSeq(ctx context.Context, runID string) (int64, error)
-	ListActiveRuns(ctx context.Context) ([]*domain.ActiveRun, error)
 }

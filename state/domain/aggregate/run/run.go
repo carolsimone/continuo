@@ -8,6 +8,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/domain"
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/num"
+	"github.com/carolsimone/continuo/state/domain/topology"
 	"github.com/google/uuid"
 )
 
@@ -24,10 +25,9 @@ type Run struct {
 	initStatus  InitStatus
 	kind        Kind
 	sourceRunID *uuid.UUID
-	// releaseID is the topology release this run builds, or "" when the
-	// run names none. A promote-seed run carries the release it was
-	// planned against.
-	releaseID string
+	// release is the release this run runs on; the zero stamp when the run
+	// names none.
+	release ReleaseStamp
 	// initiatedBy records the user who triggered this run, or the "system"
 	// sentinel for cron / platform-initiated runs. Stamped at creation and
 	// immutable thereafter.
@@ -110,10 +110,9 @@ func HydrateRun(
 	}
 }
 
-// HydrateReleaseID restores the release id read from
-// scheduler_tracker.release_id on a Run rebuilt by HydrateRun. Used by the
-// postgres adapter only; application code MUST NOT call it.
-func (r *Run) HydrateReleaseID(releaseID string) { r.releaseID = releaseID }
+// HydrateRelease restores the release stamp read from scheduler_tracker.
+// Adapter-only: domain code receives the stamp through a constructor.
+func (r *Run) HydrateRelease(s ReleaseStamp) { r.release = s }
 
 // NewPendingRun creates a fresh PENDING Run for activation. Caller flow:
 // SchedulePolicy.ScheduleExistsInCatalog → SchedulePolicy.IsScheduleAvailable
@@ -123,6 +122,8 @@ func (r *Run) HydrateReleaseID(releaseID string) { r.releaseID = releaseID }
 // applies to the whole DAG; state itself does not act on it — it only
 // forwards the value onto the emitted RunStarted event. Callers other than a
 // manual TriggerSchedule (cron, etc.) pass model.OperationRun.
+//
+// stamp is the release the run runs on: the live release when the run is created.
 func NewPendingRun(
 	scheduleName string,
 	kind Kind,
@@ -130,6 +131,7 @@ func NewPendingRun(
 	initiatedBy string,
 	metadata map[string]ServiceMetadata,
 	operation model.Operation,
+	stamp ReleaseStamp,
 	now time.Time,
 ) (*Run, DomainEvent, error) {
 	if scheduleName == "" {
@@ -151,6 +153,7 @@ func NewPendingRun(
 		sourceRunID:     sourceRunID,
 		initiatedBy:     initiatedBy,
 		operation:       operation,
+		release:         stamp,
 		createdAt:       now,
 		serviceMetadata: metadata,
 	}
@@ -165,14 +168,13 @@ func NewPendingRun(
 // is rejected upstream in orchestrator before a derived run is requested.
 // Stamps last_heartbeat_at so dashboards show the new run immediately.
 //
-// A rerun replays the source run's tasks at the source run's images, so it
-// carries sourceReleaseID, the release the source run names (empty when it
-// names none). A rebase reads the latest topology and carries no release.
+// stamp is the release the run runs on: the source run's for a rerun, the
+// live release for a rebase.
 func NewDerivedRun(
 	scheduleName string,
 	kind Kind,
 	sourceRunID uuid.UUID,
-	sourceReleaseID string,
+	stamp ReleaseStamp,
 	initiatedBy string,
 	operation model.Operation,
 	now time.Time,
@@ -193,6 +195,7 @@ func NewDerivedRun(
 		sourceRunID:     &sourceRunID,
 		initiatedBy:     initiatedBy,
 		operation:       operation,
+		release:         stamp,
 		createdAt:       now,
 		lastHeartbeatAt: &now,
 		serviceMetadata: map[string]ServiceMetadata{},
@@ -200,7 +203,6 @@ func NewDerivedRun(
 	r.changes.created = true
 	var evt DomainEvent
 	if kind == KindRerun {
-		r.releaseID = sourceReleaseID
 		evt = RerunRequested{ID: id, Name: scheduleName, SourceID: sourceRunID, InitiatedBy: initiatedBy}
 	} else {
 		evt = RebaseRequested{ID: id, Name: scheduleName, SourceID: sourceRunID, InitiatedBy: initiatedBy}
@@ -212,6 +214,8 @@ func NewDerivedRun(
 // dbt verb (run/test/build) the downstream orchestrator applies to the
 // target node; state itself does not act on it — it only forwards the value
 // onto the emitted SingleNodeRunRequested event.
+//
+// stamp is the release the run runs on; the zero stamp names none.
 func NewSingleNodeRun(
 	scheduleName string,
 	target NodeID,
@@ -219,6 +223,7 @@ func NewSingleNodeRun(
 	operation model.Operation,
 	sourceRunID *uuid.UUID,
 	initiatedBy string,
+	stamp ReleaseStamp,
 	now time.Time,
 ) (*Run, DomainEvent, error) {
 	if scheduleName == "" {
@@ -234,6 +239,7 @@ func NewSingleNodeRun(
 		sourceRunID:     sourceRunID,
 		initiatedBy:     initiatedBy,
 		operation:       operation,
+		release:         stamp,
 		createdAt:       now,
 		lastHeartbeatAt: &now,
 		serviceMetadata: map[string]ServiceMetadata{},
@@ -255,18 +261,16 @@ func NewSingleNodeRun(
 // planning the same release again resolves to a run that already exists
 // instead of minting a second one that would load the same seeds.
 //
-// The run records releaseID, the release whose content it loads, and its
-// event carries promotionSeq, the live promotion seq the run was planned
-// against (0 when none), so a projecting service can wait until its own
-// topology has reached it.
+// The run records stamp, the live release whose seeds it loads; its event
+// carries the stamp's promotion seq, so a projecting service can wait until
+// its own topology has reached it.
 //
 // The run carries no operation: a seed is materialised by its own dbt verb,
 // chosen downstream from the node type, not by a verb selected here.
 func NewPromotedSeedsRun(
 	id uuid.UUID,
 	scheduleName string,
-	releaseID string,
-	promotionSeq int64,
+	stamp ReleaseStamp,
 	nodes []SeedNode,
 	now time.Time,
 ) (*Run, DomainEvent, error) {
@@ -276,7 +280,7 @@ func NewPromotedSeedsRun(
 	if id == uuid.Nil {
 		return nil, nil, ErrRunIDRequired
 	}
-	if releaseID == "" {
+	if stamp.ReleaseID == "" {
 		return nil, nil, ErrReleaseIDRequired
 	}
 	if len(nodes) == 0 {
@@ -288,7 +292,7 @@ func NewPromotedSeedsRun(
 		status:          SchedulerStatusRunning,
 		initStatus:      InitStatusInProgress,
 		kind:            KindPromoteSeed,
-		releaseID:       releaseID,
+		release:         stamp,
 		initiatedBy:     "system",
 		createdAt:       now,
 		lastHeartbeatAt: &now,
@@ -298,8 +302,8 @@ func NewPromotedSeedsRun(
 	evt := PromotedSeedsRunRequested{
 		ID:           id,
 		Name:         scheduleName,
-		ReleaseID:    releaseID,
-		PromotionSeq: promotionSeq,
+		ReleaseID:    stamp.ReleaseID,
+		PromotionSeq: stamp.PromotionSeq,
 		Nodes:        nodes,
 	}
 	return r, evt, nil
@@ -314,7 +318,8 @@ func (r *Run) ScheduleName() string             { return r.scheduleName }
 func (r *Run) Status() SchedulerStatus          { return r.status }
 func (r *Run) Kind() Kind                       { return r.kind }
 func (r *Run) SourceRunID() *uuid.UUID          { return r.sourceRunID }
-func (r *Run) ReleaseID() string                { return r.releaseID }
+func (r *Run) Release() ReleaseStamp            { return r.release }
+func (r *Run) ReleaseID() string                { return r.release.ReleaseID }
 func (r *Run) InitiatedBy() string              { return r.initiatedBy }
 func (r *Run) Operation() model.Operation       { return r.operation }
 func (r *Run) InitializationStatus() InitStatus { return r.initStatus }
@@ -426,6 +431,7 @@ func (r *Run) acceptDispatch(
 			ServiceName:         p.ServiceName,
 			SchemaName:          p.SchemaName,
 			TableName:           p.TableName,
+			NodeKey:             topology.KeyOf(p.SchemaName, p.TableName),
 			JobName:             jobName,
 			Status:              p.Status,
 			MaxRetries:          int(p.MaxRetries),

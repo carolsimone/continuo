@@ -44,6 +44,7 @@ type TriggerSingleNodeRunInput struct {
 // snapshot_of_run) it requires the source run to be terminal and to carry a
 // task at the requested node.
 func (h *TriggerSingleNodeRunHandler) Handle(ctx context.Context, u uow.UnitOfWork, in TriggerSingleNodeRunInput) (uuid.UUID, string, error) {
+	var sourceStamp run.ReleaseStamp
 	if in.MetadataSource == run.MetadataSourceSnapshotOfRun {
 		if in.SourceRunID == nil {
 			return uuid.Nil, "", fmt.Errorf("source_run_id required when metadata_source=snapshot_of_run")
@@ -62,6 +63,7 @@ func (h *TriggerSingleNodeRunHandler) Handle(ctx context.Context, u uow.UnitOfWo
 		if !ok {
 			return uuid.Nil, "", run.ErrTaskNotFound
 		}
+		sourceStamp = src.Release()
 	}
 
 	if err := u.Begin(ctx); err != nil {
@@ -76,7 +78,15 @@ func (h *TriggerSingleNodeRunHandler) Handle(ctx context.Context, u uow.UnitOfWo
 
 	id := uuid.New()
 	scheduleName := "single-node-run-" + strings.ReplaceAll(id.String(), "-", "")[:8]
-	newRun, evt, err := run.NewSingleNodeRun(scheduleName, in.Target, in.MetadataSource, in.Operation, in.SourceRunID, in.Initiator.UserID, u.Clock().Now())
+	stamp := sourceStamp
+	if in.MetadataSource != run.MetadataSourceSnapshotOfRun {
+		live, err := liveStamp(ctx, u)
+		if err != nil {
+			return uuid.Nil, "", err
+		}
+		stamp = live
+	}
+	newRun, evt, err := run.NewSingleNodeRun(scheduleName, in.Target, in.MetadataSource, in.Operation, in.SourceRunID, in.Initiator.UserID, stamp, u.Clock().Now())
 	if err != nil {
 		return uuid.Nil, "", err
 	}

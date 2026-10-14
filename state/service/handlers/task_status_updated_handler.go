@@ -62,8 +62,14 @@ func (h *TaskStatusUpdatedHandler) Handle(
 		return fmt.Errorf("append outbox: %w", err)
 	}
 	if succeededApplied && r.ReleaseID() != "" {
-		if err := h.recordLoaded(ctx, u, r, evt); err != nil {
+		records, err := h.recordsBuiltVersions(ctx, u, r)
+		if err != nil {
 			return err
+		}
+		if records {
+			if err := h.recordLoaded(ctx, u, r, evt); err != nil {
+				return err
+			}
 		}
 	}
 	h.logger.Info("task.status.updated: processed",
@@ -72,6 +78,37 @@ func (h *TaskStatusUpdatedHandler) Handle(
 		"status", evt.Status,
 	)
 	return nil
+}
+
+// maxSourceDepth bounds the walk from a rerun back through its source runs.
+const maxSourceDepth = 32
+
+// recordsBuiltVersions reports whether r's tasks were chosen from r's own
+// release, so a succeeded task loaded that release's version of its node:
+// a promote-seed run, or a rerun whose chain of source runs starts at one.
+// The tasks of every other run are chosen from orchestrator's live graph,
+// which can trail the release the run names.
+func (h *TaskStatusUpdatedHandler) recordsBuiltVersions(ctx context.Context, u uow.UnitOfWork, r *run.Run) (bool, error) {
+	current := r
+	for depth := 0; depth < maxSourceDepth; depth++ {
+		switch current.Kind() {
+		case run.KindPromoteSeed:
+			return true, nil
+		case run.KindRerun:
+			src := current.SourceRunID()
+			if src == nil {
+				return false, nil
+			}
+			next, err := u.Run().GetRun(ctx, *src)
+			if err != nil {
+				return false, fmt.Errorf("read source run %s: %w", *src, err)
+			}
+			current = next
+		default:
+			return false, nil
+		}
+	}
+	return false, nil
 }
 
 // recordLoaded records the version a succeeded task of a run that names a

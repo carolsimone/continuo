@@ -27,7 +27,7 @@ func newReleaseRunUoW(db *sqlx.DB) *postgres.PostgresUnitOfWork {
 // promoteSeedRun builds an unsaved promote-seed run of releaseID with one seed.
 func promoteSeedRun(t *testing.T, id uuid.UUID, releaseID string) *run.Run {
 	t.Helper()
-	rn, _, err := run.NewPromotedSeedsRun(id, "promote-seed-"+id.String()[:8], releaseID, 4,
+	rn, _, err := run.NewPromotedSeedsRun(id, "promote-seed-"+id.String()[:8], run.ReleaseStamp{ReleaseID: releaseID, PromotionSeq: 4},
 		[]run.SeedNode{{NodeID: run.NodeID{ServiceName: "svc", SchemaName: "raw", TableName: "orders"}, NodeType: "dbt-seed", ImageTag: "svc:1"}},
 		time.Now())
 	require.NoError(t, err)
@@ -73,7 +73,7 @@ func TestRunRepository_PromoteSeedRunKeepsItsRelease(t *testing.T) {
 func TestRunRepository_RunWithoutAReleaseStoresNull(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
-	rn, _, err := run.NewPendingRun("no-release-"+uuid.NewString()[:8], run.KindTrigger, nil, "", nil, model.OperationRun, time.Now())
+	rn, _, err := run.NewPendingRun("no-release-"+uuid.NewString()[:8], run.KindTrigger, nil, "", nil, model.OperationRun, run.ReleaseStamp{}, time.Now())
 	require.NoError(t, err)
 	t.Cleanup(func() { _, _ = db.Exec(`DELETE FROM scheduler_tracker WHERE schedule_id = $1`, rn.ScheduleID()) })
 	u := newReleaseRunUoW(db)
@@ -127,4 +127,37 @@ func TestRunRepository_RunExistsAndCountReleaseRuns(t *testing.T) {
 	assert.Error(t, err, "RunExists needs a transaction")
 	_, err = outside.Run().CountReleaseRuns(ctx, releaseID, run.KindPromoteSeed)
 	assert.Error(t, err, "CountReleaseRuns needs a transaction")
+}
+
+// A run stores its release's promotion seq beside the release id, a run with
+// no release stores NULLs, and every load restores the stamp.
+func TestRunRepository_RunKeepsItsReleaseStamp(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	stamped, unstamped := uuid.New(), uuid.New()
+	t.Cleanup(func() {
+		_, _ = db.Exec(`DELETE FROM scheduler_tracker WHERE schedule_id IN ($1, $2)`, stamped, unstamped)
+	})
+	u := newReleaseRunUoW(db)
+
+	stamp := run.ReleaseStamp{ReleaseID: uuid.NewString(), PromotionSeq: 12}
+	withStamp, _, err := run.NewDerivedRun("stamp-"+stamped.String()[:8], run.KindRerun, uuid.New(), stamp, "alice", model.OperationRun, time.Now())
+	require.NoError(t, err)
+	withoutStamp, _, err := run.NewDerivedRun("stamp-"+unstamped.String()[:8], run.KindRerun, uuid.New(), run.ReleaseStamp{}, "alice", model.OperationRun, time.Now())
+	require.NoError(t, err)
+	stamped, unstamped = withStamp.ScheduleID(), withoutStamp.ScheduleID()
+	saveRuns(t, u, withStamp, withoutStamp)
+
+	var seq sql.NullInt64
+	require.NoError(t, db.Get(&seq, `SELECT promotion_seq FROM scheduler_tracker WHERE schedule_id = $1`, stamped))
+	assert.Equal(t, sql.NullInt64{Int64: 12, Valid: true}, seq)
+	require.NoError(t, db.Get(&seq, `SELECT promotion_seq FROM scheduler_tracker WHERE schedule_id = $1`, unstamped))
+	assert.False(t, seq.Valid)
+
+	read, err := u.Run().GetRun(ctx, stamped)
+	require.NoError(t, err)
+	assert.Equal(t, stamp, read.Release())
+	read, err = u.Run().GetRun(ctx, unstamped)
+	require.NoError(t, err)
+	assert.True(t, read.Release().IsZero())
 }

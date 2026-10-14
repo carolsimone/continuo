@@ -20,9 +20,6 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	OrchestratorQuery_GetScheduleGraph_FullMethodName       = "/orchestrator.v1.OrchestratorQuery/GetScheduleGraph"
-	OrchestratorQuery_ListRuns_FullMethodName               = "/orchestrator.v1.OrchestratorQuery/ListRuns"
-	OrchestratorQuery_GetRunGraph_FullMethodName            = "/orchestrator.v1.OrchestratorQuery/GetRunGraph"
-	OrchestratorQuery_ListActiveRunDrifts_FullMethodName    = "/orchestrator.v1.OrchestratorQuery/ListActiveRunDrifts"
 	OrchestratorQuery_ListScheduleTopologies_FullMethodName = "/orchestrator.v1.OrchestratorQuery/ListScheduleTopologies"
 	OrchestratorQuery_GetNode_FullMethodName                = "/orchestrator.v1.OrchestratorQuery/GetNode"
 	OrchestratorQuery_GetNodeLocation_FullMethodName        = "/orchestrator.v1.OrchestratorQuery/GetNodeLocation"
@@ -30,7 +27,6 @@ const (
 	OrchestratorQuery_GetNodeVersionDiff_FullMethodName     = "/orchestrator.v1.OrchestratorQuery/GetNodeVersionDiff"
 	OrchestratorQuery_GetUpstreamChanges_FullMethodName     = "/orchestrator.v1.OrchestratorQuery/GetUpstreamChanges"
 	OrchestratorQuery_GetCodeUnitVersions_FullMethodName    = "/orchestrator.v1.OrchestratorQuery/GetCodeUnitVersions"
-	OrchestratorQuery_GetNodeRunHistory_FullMethodName      = "/orchestrator.v1.OrchestratorQuery/GetNodeRunHistory"
 	OrchestratorQuery_GetPrecedents_FullMethodName          = "/orchestrator.v1.OrchestratorQuery/GetPrecedents"
 )
 
@@ -39,9 +35,6 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type OrchestratorQueryClient interface {
 	GetScheduleGraph(ctx context.Context, in *GetScheduleGraphRequest, opts ...grpc.CallOption) (*GetScheduleGraphResponse, error)
-	ListRuns(ctx context.Context, in *ListRunsRequest, opts ...grpc.CallOption) (*ListRunsResponse, error)
-	GetRunGraph(ctx context.Context, in *GetRunGraphRequest, opts ...grpc.CallOption) (*GetRunGraphResponse, error)
-	ListActiveRunDrifts(ctx context.Context, in *ListActiveRunDriftsRequest, opts ...grpc.CallOption) (*ListActiveRunDriftsResponse, error)
 	ListScheduleTopologies(ctx context.Context, in *ListScheduleTopologiesRequest, opts ...grpc.CallOption) (*ListScheduleTopologiesResponse, error)
 	GetNode(ctx context.Context, in *GetNodeRequest, opts ...grpc.CallOption) (*GetNodeResponse, error)
 	// GetNodeLocation returns where a node's source lives: its project-relative
@@ -82,10 +75,6 @@ type OrchestratorQueryClient interface {
 	// is NOT_FOUND; a known unit with no recorded history returns an empty
 	// versions list.
 	GetCodeUnitVersions(ctx context.Context, in *GetCodeUnitVersionsRequest, opts ...grpc.CallOption) (*GetCodeUnitVersionsResponse, error)
-	// GetNodeRunHistory returns runs that executed the node, newest first,
-	// optionally filtered server-side to one operation. An unknown unique_id is
-	// NOT_FOUND; a known node with no matching runs returns an empty runs list.
-	GetNodeRunHistory(ctx context.Context, in *GetNodeRunHistoryRequest, opts ...grpc.CallOption) (*GetNodeRunHistoryResponse, error)
 	// GetPrecedents returns past rejections matching an error signature — or,
 	// when signature is empty, a (category, reason) pair — resolved-first, then
 	// newest. Each entry carries the classified failure, the version that
@@ -111,36 +100,6 @@ func (c *orchestratorQueryClient) GetScheduleGraph(ctx context.Context, in *GetS
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetScheduleGraphResponse)
 	err := c.cc.Invoke(ctx, OrchestratorQuery_GetScheduleGraph_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *orchestratorQueryClient) ListRuns(ctx context.Context, in *ListRunsRequest, opts ...grpc.CallOption) (*ListRunsResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ListRunsResponse)
-	err := c.cc.Invoke(ctx, OrchestratorQuery_ListRuns_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *orchestratorQueryClient) GetRunGraph(ctx context.Context, in *GetRunGraphRequest, opts ...grpc.CallOption) (*GetRunGraphResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(GetRunGraphResponse)
-	err := c.cc.Invoke(ctx, OrchestratorQuery_GetRunGraph_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *orchestratorQueryClient) ListActiveRunDrifts(ctx context.Context, in *ListActiveRunDriftsRequest, opts ...grpc.CallOption) (*ListActiveRunDriftsResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ListActiveRunDriftsResponse)
-	err := c.cc.Invoke(ctx, OrchestratorQuery_ListActiveRunDrifts_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -217,16 +176,6 @@ func (c *orchestratorQueryClient) GetCodeUnitVersions(ctx context.Context, in *G
 	return out, nil
 }
 
-func (c *orchestratorQueryClient) GetNodeRunHistory(ctx context.Context, in *GetNodeRunHistoryRequest, opts ...grpc.CallOption) (*GetNodeRunHistoryResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(GetNodeRunHistoryResponse)
-	err := c.cc.Invoke(ctx, OrchestratorQuery_GetNodeRunHistory_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *orchestratorQueryClient) GetPrecedents(ctx context.Context, in *GetPrecedentsRequest, opts ...grpc.CallOption) (*GetPrecedentsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetPrecedentsResponse)
@@ -242,9 +191,6 @@ func (c *orchestratorQueryClient) GetPrecedents(ctx context.Context, in *GetPrec
 // for forward compatibility.
 type OrchestratorQueryServer interface {
 	GetScheduleGraph(context.Context, *GetScheduleGraphRequest) (*GetScheduleGraphResponse, error)
-	ListRuns(context.Context, *ListRunsRequest) (*ListRunsResponse, error)
-	GetRunGraph(context.Context, *GetRunGraphRequest) (*GetRunGraphResponse, error)
-	ListActiveRunDrifts(context.Context, *ListActiveRunDriftsRequest) (*ListActiveRunDriftsResponse, error)
 	ListScheduleTopologies(context.Context, *ListScheduleTopologiesRequest) (*ListScheduleTopologiesResponse, error)
 	GetNode(context.Context, *GetNodeRequest) (*GetNodeResponse, error)
 	// GetNodeLocation returns where a node's source lives: its project-relative
@@ -285,10 +231,6 @@ type OrchestratorQueryServer interface {
 	// is NOT_FOUND; a known unit with no recorded history returns an empty
 	// versions list.
 	GetCodeUnitVersions(context.Context, *GetCodeUnitVersionsRequest) (*GetCodeUnitVersionsResponse, error)
-	// GetNodeRunHistory returns runs that executed the node, newest first,
-	// optionally filtered server-side to one operation. An unknown unique_id is
-	// NOT_FOUND; a known node with no matching runs returns an empty runs list.
-	GetNodeRunHistory(context.Context, *GetNodeRunHistoryRequest) (*GetNodeRunHistoryResponse, error)
 	// GetPrecedents returns past rejections matching an error signature — or,
 	// when signature is empty, a (category, reason) pair — resolved-first, then
 	// newest. Each entry carries the classified failure, the version that
@@ -313,15 +255,6 @@ type UnimplementedOrchestratorQueryServer struct{}
 func (UnimplementedOrchestratorQueryServer) GetScheduleGraph(context.Context, *GetScheduleGraphRequest) (*GetScheduleGraphResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetScheduleGraph not implemented")
 }
-func (UnimplementedOrchestratorQueryServer) ListRuns(context.Context, *ListRunsRequest) (*ListRunsResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method ListRuns not implemented")
-}
-func (UnimplementedOrchestratorQueryServer) GetRunGraph(context.Context, *GetRunGraphRequest) (*GetRunGraphResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method GetRunGraph not implemented")
-}
-func (UnimplementedOrchestratorQueryServer) ListActiveRunDrifts(context.Context, *ListActiveRunDriftsRequest) (*ListActiveRunDriftsResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method ListActiveRunDrifts not implemented")
-}
 func (UnimplementedOrchestratorQueryServer) ListScheduleTopologies(context.Context, *ListScheduleTopologiesRequest) (*ListScheduleTopologiesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListScheduleTopologies not implemented")
 }
@@ -342,9 +275,6 @@ func (UnimplementedOrchestratorQueryServer) GetUpstreamChanges(context.Context, 
 }
 func (UnimplementedOrchestratorQueryServer) GetCodeUnitVersions(context.Context, *GetCodeUnitVersionsRequest) (*GetCodeUnitVersionsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetCodeUnitVersions not implemented")
-}
-func (UnimplementedOrchestratorQueryServer) GetNodeRunHistory(context.Context, *GetNodeRunHistoryRequest) (*GetNodeRunHistoryResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method GetNodeRunHistory not implemented")
 }
 func (UnimplementedOrchestratorQueryServer) GetPrecedents(context.Context, *GetPrecedentsRequest) (*GetPrecedentsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetPrecedents not implemented")
@@ -384,60 +314,6 @@ func _OrchestratorQuery_GetScheduleGraph_Handler(srv interface{}, ctx context.Co
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(OrchestratorQueryServer).GetScheduleGraph(ctx, req.(*GetScheduleGraphRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _OrchestratorQuery_ListRuns_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ListRunsRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(OrchestratorQueryServer).ListRuns(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: OrchestratorQuery_ListRuns_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(OrchestratorQueryServer).ListRuns(ctx, req.(*ListRunsRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _OrchestratorQuery_GetRunGraph_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetRunGraphRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(OrchestratorQueryServer).GetRunGraph(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: OrchestratorQuery_GetRunGraph_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(OrchestratorQueryServer).GetRunGraph(ctx, req.(*GetRunGraphRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _OrchestratorQuery_ListActiveRunDrifts_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ListActiveRunDriftsRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(OrchestratorQueryServer).ListActiveRunDrifts(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: OrchestratorQuery_ListActiveRunDrifts_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(OrchestratorQueryServer).ListActiveRunDrifts(ctx, req.(*ListActiveRunDriftsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -568,24 +444,6 @@ func _OrchestratorQuery_GetCodeUnitVersions_Handler(srv interface{}, ctx context
 	return interceptor(ctx, in, info, handler)
 }
 
-func _OrchestratorQuery_GetNodeRunHistory_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetNodeRunHistoryRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(OrchestratorQueryServer).GetNodeRunHistory(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: OrchestratorQuery_GetNodeRunHistory_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(OrchestratorQueryServer).GetNodeRunHistory(ctx, req.(*GetNodeRunHistoryRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _OrchestratorQuery_GetPrecedents_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetPrecedentsRequest)
 	if err := dec(in); err != nil {
@@ -616,18 +474,6 @@ var OrchestratorQuery_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _OrchestratorQuery_GetScheduleGraph_Handler,
 		},
 		{
-			MethodName: "ListRuns",
-			Handler:    _OrchestratorQuery_ListRuns_Handler,
-		},
-		{
-			MethodName: "GetRunGraph",
-			Handler:    _OrchestratorQuery_GetRunGraph_Handler,
-		},
-		{
-			MethodName: "ListActiveRunDrifts",
-			Handler:    _OrchestratorQuery_ListActiveRunDrifts_Handler,
-		},
-		{
 			MethodName: "ListScheduleTopologies",
 			Handler:    _OrchestratorQuery_ListScheduleTopologies_Handler,
 		},
@@ -654,10 +500,6 @@ var OrchestratorQuery_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetCodeUnitVersions",
 			Handler:    _OrchestratorQuery_GetCodeUnitVersions_Handler,
-		},
-		{
-			MethodName: "GetNodeRunHistory",
-			Handler:    _OrchestratorQuery_GetNodeRunHistory_Handler,
 		},
 		{
 			MethodName: "GetPrecedents",

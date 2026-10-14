@@ -10,39 +10,27 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	"github.com/carolsimone/continuo/orchestrator/domain/casebase"
 	"github.com/carolsimone/continuo/orchestrator/domain/codeversion"
-	"github.com/carolsimone/continuo/orchestrator/service/queries"
 	"github.com/carolsimone/continuo/pkg/num"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// ScheduleAndRunListReader returns the schedule's full topology graph and the
-// per-schedule run history. Both reads go straight to Neo4j and return raw
-// domain types — no drift information is composed in. Satisfied by
-// adapters/neo4j.OrchestratorQueryRepository.
-type ScheduleAndRunListReader interface {
+// ScheduleListReader returns the schedule's topology graph, the schedule
+// topology list and node metadata. Reads go straight to Neo4j and return raw
+// domain types. Satisfied by adapters/neo4j.OrchestratorQueryRepository.
+type ScheduleListReader interface {
 	GetScheduleGraph(ctx context.Context, scheduleName string) (*domain.ScheduleGraph, error)
-	ListRuns(ctx context.Context, scheduleName string, limit, offset int) ([]*domain.RunSummary, int, error)
 	ListScheduleTopologies(ctx context.Context) ([]*domain.ScheduleTopologySummary, error)
 	GetNode(ctx context.Context, service, schema, table string, scope domain.NodeScope) (*domain.NodeMeta, error)
 	GetNodeLocation(ctx context.Context, uniqueID string) (*domain.NodeLocation, error)
 }
 
-// DriftAwareRunReader returns view-shaped run data: a run's graph plus the
-// promotion seq the run was created under and the live topology's promotion
-// seq, both read from Neo4j. Used by the RPCs that surface drift to the
-// dashboard and rerun modal. Satisfied by service/queries.RunQueryService.
-type DriftAwareRunReader interface {
-	GetRunGraph(ctx context.Context, runID string) (*queries.RunGraphView, error)
-	ListActiveRunDrifts(ctx context.Context) (*queries.ActiveRunDriftView, error)
-}
-
 // CodeVersionHistoryReader returns the code-version history views served by
 // the code-version RPCs: node version chains, rendered diffs, upstream
-// changes, shared-code unit chains, and run history. Cap policy (upstream
-// ancestor count, diff byte size) and limit defaulting/clamping live here,
-// not in the handler. Satisfied by service/queries.CodeVersionQueryService.
+// changes, and shared-code unit chains. Cap policy (upstream ancestor count,
+// diff byte size) and limit defaulting/clamping live here, not in the handler.
+// Satisfied by service/queries.CodeVersionQueryService.
 type CodeVersionHistoryReader interface {
 	GetNodeVersions(ctx context.Context, uniqueID string, limit int32, includeCode bool) ([]codeversion.VersionView, error)
 	// GetCurrentNodeVersion returns only the version the node runs now — a
@@ -51,7 +39,6 @@ type CodeVersionHistoryReader interface {
 	GetNodeVersionDiff(ctx context.Context, uniqueID string, fromSeq, toSeq int64) (*codeversion.VersionDiff, error)
 	GetUpstreamChanges(ctx context.Context, uniqueID string, depth int32, since time.Time) ([]codeversion.UpstreamChange, error)
 	GetCodeUnitVersions(ctx context.Context, unitID, uniqueID string, limit int32) ([]codeversion.UnitVersionView, error)
-	GetNodeRunHistory(ctx context.Context, uniqueID string, limit int32, operation string) ([]codeversion.RunExecution, error)
 }
 
 // PrecedentHistoryReader serves the failure-precedent RPC. Satisfied by
@@ -63,22 +50,21 @@ type PrecedentHistoryReader interface {
 // QueryHandler implements the OrchestratorQuery gRPC service.
 type QueryHandler struct {
 	orchestratorv1.UnimplementedOrchestratorQueryServer
-	scheduleAndRunLists ScheduleAndRunListReader
-	driftAwareRuns      DriftAwareRunReader
-	codeVersions        CodeVersionHistoryReader
-	precedents          PrecedentHistoryReader
-	logger              *slog.Logger
+	scheduleReader ScheduleListReader
+	codeVersions   CodeVersionHistoryReader
+	precedents     PrecedentHistoryReader
+	logger         *slog.Logger
 }
 
-func NewQueryHandler(scheduleAndRunLists ScheduleAndRunListReader, driftAwareRuns DriftAwareRunReader, codeVersions CodeVersionHistoryReader, precedents PrecedentHistoryReader, logger *slog.Logger) *QueryHandler {
-	return &QueryHandler{scheduleAndRunLists: scheduleAndRunLists, driftAwareRuns: driftAwareRuns, codeVersions: codeVersions, precedents: precedents, logger: logger}
+func NewQueryHandler(scheduleReader ScheduleListReader, codeVersions CodeVersionHistoryReader, precedents PrecedentHistoryReader, logger *slog.Logger) *QueryHandler {
+	return &QueryHandler{scheduleReader: scheduleReader, codeVersions: codeVersions, precedents: precedents, logger: logger}
 }
 
 func (h *QueryHandler) GetScheduleGraph(ctx context.Context, req *orchestratorv1.GetScheduleGraphRequest) (*orchestratorv1.GetScheduleGraphResponse, error) {
 	if req.ScheduleName == "" {
 		return nil, status.Error(codes.InvalidArgument, "schedule_name is required")
 	}
-	graph, err := h.scheduleAndRunLists.GetScheduleGraph(ctx, req.ScheduleName)
+	graph, err := h.scheduleReader.GetScheduleGraph(ctx, req.ScheduleName)
 	if err != nil {
 		h.logger.Error("GetScheduleGraph failed", "schedule", req.ScheduleName, "error", err)
 		return nil, status.Errorf(codes.Internal, "GetScheduleGraph: %v", err)
@@ -100,109 +86,8 @@ func (h *QueryHandler) GetScheduleGraph(ctx context.Context, req *orchestratorv1
 	return resp, nil
 }
 
-// ListRuns pagination bounds. defaultListRunsPageSize applies when the request
-// leaves page_size unset (0); maxListRunsPageSize caps oversized requests so a
-// single call can never scan an unbounded run history. Mirrors the
-// StateService.ListNodes 50/200 contract.
-const (
-	defaultListRunsPageSize = 50
-	maxListRunsPageSize     = 200
-)
-
-func clampPageSize(requested int32) int {
-	size := int(requested)
-	if size <= 0 {
-		return defaultListRunsPageSize
-	}
-	if size > maxListRunsPageSize {
-		return maxListRunsPageSize
-	}
-	return size
-}
-
-func clampOffset(requested int32) int {
-	if requested < 0 {
-		return 0
-	}
-	return int(requested)
-}
-
-func (h *QueryHandler) ListRuns(ctx context.Context, req *orchestratorv1.ListRunsRequest) (*orchestratorv1.ListRunsResponse, error) {
-	if req.ScheduleName == "" {
-		return nil, status.Error(codes.InvalidArgument, "schedule_name is required")
-	}
-	limit := clampPageSize(req.PageSize)
-	offset := clampOffset(req.PageOffset)
-	runs, total, err := h.scheduleAndRunLists.ListRuns(ctx, req.ScheduleName, limit, offset)
-	if err != nil {
-		h.logger.Error("ListRuns failed", "schedule", req.ScheduleName, "error", err)
-		return nil, status.Errorf(codes.Internal, "ListRuns: %v", err)
-	}
-	resp := &orchestratorv1.ListRunsResponse{
-		Runs:       make([]*orchestratorv1.RunSummary, 0, len(runs)),
-		TotalCount: num.ClampInt32(total),
-	}
-	for _, r := range runs {
-		resp.Runs = append(resp.Runs, &orchestratorv1.RunSummary{
-			RunId:          r.RunID,
-			ScheduleName:   r.ScheduleName,
-			TerminalStatus: r.TerminalStatus,
-			CreatedAt:      r.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
-			CompletedAt:    r.CompletedAt.UTC().Format("2006-01-02T15:04:05Z"),
-		})
-	}
-	return resp, nil
-}
-
-func (h *QueryHandler) GetRunGraph(ctx context.Context, req *orchestratorv1.GetRunGraphRequest) (*orchestratorv1.GetRunGraphResponse, error) {
-	if req.RunId == "" {
-		return nil, status.Error(codes.InvalidArgument, "run_id is required")
-	}
-	view, err := h.driftAwareRuns.GetRunGraph(ctx, req.RunId)
-	if err != nil {
-		h.logger.Error("GetRunGraph failed", "run_id", req.RunId, "error", err)
-		return nil, status.Errorf(codes.Internal, "GetRunGraph: %v", err)
-	}
-	resp := &orchestratorv1.GetRunGraphResponse{
-		Nodes:              make([]*orchestratorv1.TableNode, 0, len(view.Nodes)),
-		Edges:              make([]*orchestratorv1.GraphEdge, 0, len(view.Edges)),
-		RunPromotionSeq:    view.RunPromotionSeq,
-		LatestPromotionSeq: view.LatestPromotionSeq,
-	}
-	for _, n := range view.Nodes {
-		resp.Nodes = append(resp.Nodes, domainToProtoNode(n))
-	}
-	for _, e := range view.Edges {
-		resp.Edges = append(resp.Edges, &orchestratorv1.GraphEdge{
-			FromNodeId: e.FromNodeID,
-			ToNodeId:   e.ToNodeID,
-		})
-	}
-	return resp, nil
-}
-
-func (h *QueryHandler) ListActiveRunDrifts(ctx context.Context, req *orchestratorv1.ListActiveRunDriftsRequest) (*orchestratorv1.ListActiveRunDriftsResponse, error) {
-	view, err := h.driftAwareRuns.ListActiveRunDrifts(ctx)
-	if err != nil {
-		h.logger.Error("ListActiveRunDrifts failed", "error", err)
-		return nil, status.Errorf(codes.Internal, "ListActiveRunDrifts: %v", err)
-	}
-	resp := &orchestratorv1.ListActiveRunDriftsResponse{
-		LatestPromotionSeq: view.LatestPromotionSeq,
-		ActiveRuns:         make([]*orchestratorv1.ActiveRunDrift, 0, len(view.ActiveRuns)),
-	}
-	for _, r := range view.ActiveRuns {
-		resp.ActiveRuns = append(resp.ActiveRuns, &orchestratorv1.ActiveRunDrift{
-			ScheduleName:    r.ScheduleName,
-			RunId:           r.RunID,
-			RunPromotionSeq: r.PromotionSeq,
-		})
-	}
-	return resp, nil
-}
-
 func (h *QueryHandler) ListScheduleTopologies(ctx context.Context, _ *orchestratorv1.ListScheduleTopologiesRequest) (*orchestratorv1.ListScheduleTopologiesResponse, error) {
-	summaries, err := h.scheduleAndRunLists.ListScheduleTopologies(ctx)
+	summaries, err := h.scheduleReader.ListScheduleTopologies(ctx)
 	if err != nil {
 		h.logger.Error("ListScheduleTopologies failed", "error", err)
 		return nil, status.Errorf(codes.Internal, "ListScheduleTopologies: %v", err)
@@ -231,7 +116,7 @@ func (h *QueryHandler) GetNode(ctx context.Context, req *orchestratorv1.GetNodeR
 	if req.GetIncludeInactive() {
 		scope = domain.IncludeInactiveNodes
 	}
-	meta, err := h.scheduleAndRunLists.GetNode(ctx, req.ServiceName, req.SchemaName, req.TableName, scope)
+	meta, err := h.scheduleReader.GetNode(ctx, req.ServiceName, req.SchemaName, req.TableName, scope)
 	if err != nil {
 		if errors.Is(err, domain.ErrNodeNotFound) {
 			return nil, status.Errorf(codes.NotFound, "node %s.%s.%s not found", req.ServiceName, req.SchemaName, req.TableName)
@@ -250,7 +135,7 @@ func (h *QueryHandler) GetNode(ctx context.Context, req *orchestratorv1.GetNodeR
 // GetNodeLocation returns where a node's source lives. An unknown unique_id
 // maps to NOT_FOUND per the entity-lookup convention.
 func (h *QueryHandler) GetNodeLocation(ctx context.Context, req *orchestratorv1.GetNodeLocationRequest) (*orchestratorv1.GetNodeLocationResponse, error) {
-	loc, err := h.scheduleAndRunLists.GetNodeLocation(ctx, req.UniqueId)
+	loc, err := h.scheduleReader.GetNodeLocation(ctx, req.UniqueId)
 	if err != nil {
 		if errors.Is(err, domain.ErrNodeNotFound) {
 			return nil, status.Errorf(codes.NotFound, "node %q not found", req.UniqueId)
@@ -376,27 +261,6 @@ func (h *QueryHandler) GetCodeUnitVersions(ctx context.Context, req *orchestrato
 	return resp, nil
 }
 
-func (h *QueryHandler) GetNodeRunHistory(ctx context.Context, req *orchestratorv1.GetNodeRunHistoryRequest) (*orchestratorv1.GetNodeRunHistoryResponse, error) {
-	if req.UniqueId == "" {
-		return nil, status.Error(codes.InvalidArgument, "unique_id is required")
-	}
-	runs, err := h.codeVersions.GetNodeRunHistory(ctx, req.UniqueId, req.Limit, req.Operation)
-	if err != nil {
-		if errors.Is(err, domain.ErrNodeNotFound) {
-			return nil, status.Errorf(codes.NotFound, "node %q not found", req.UniqueId)
-		}
-		h.logger.Error("GetNodeRunHistory failed", "unique_id", req.UniqueId, "error", err)
-		return nil, status.Errorf(codes.Internal, "GetNodeRunHistory: %v", err)
-	}
-	resp := &orchestratorv1.GetNodeRunHistoryResponse{
-		Runs: make([]*orchestratorv1.RunExecution, 0, len(runs)),
-	}
-	for _, r := range runs {
-		resp.Runs = append(resp.Runs, codeRunExecutionToProto(r))
-	}
-	return resp, nil
-}
-
 func (h *QueryHandler) GetPrecedents(ctx context.Context, req *orchestratorv1.GetPrecedentsRequest) (*orchestratorv1.GetPrecedentsResponse, error) {
 	if req.Signature == "" && (req.Category == "" || req.Reason == "") {
 		return nil, status.Error(codes.InvalidArgument, "either signature, or both category and reason, are required")
@@ -510,20 +374,6 @@ func codeUnitVersionViewToProto(v codeversion.UnitVersionView) *orchestratorv1.U
 		ReleaseId:  v.ReleaseID,
 		PromotedAt: formatOptionalRFC3339(v.PromotedAt),
 		IsCurrent:  v.IsCurrent,
-	}
-}
-
-func codeRunExecutionToProto(r codeversion.RunExecution) *orchestratorv1.RunExecution {
-	return &orchestratorv1.RunExecution{
-		RunId:        r.RunID,
-		TaskId:       r.TaskID,
-		Status:       r.Status,
-		ScheduleName: r.ScheduleName,
-		Operation:    r.Operation,
-		ImageTag:     r.ImageTag,
-		ContentHash:  r.ContentHash,
-		CreatedAt:    formatOptionalRFC3339(r.CreatedAt),
-		CompletedAt:  formatOptionalRFC3339(r.CompletedAt),
 	}
 }
 

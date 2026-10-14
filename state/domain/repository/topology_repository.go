@@ -44,8 +44,8 @@ type TopologyRepository interface {
 	NodeContentHash(ctx context.Context, tenantID, releaseID string, key topology.NodeKey) (hash string, found bool, err error)
 
 	// PruneReleases deletes, with their nodes and edges, the releases loaded
-	// before loadedBefore that are not live and that no pending or running run
-	// builds, and returns how many it deleted. Callers hold LockTopology in the
+	// before loadedBefore that are not live and that no run names, finished or
+	// not, and returns how many it deleted. Callers hold LockTopology in the
 	// same transaction.
 	PruneReleases(ctx context.Context, loadedBefore time.Time) (int64, error)
 }
