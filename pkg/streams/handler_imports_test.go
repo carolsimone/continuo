@@ -21,6 +21,7 @@ import (
 var handlerDirs = []string{
 	"orchestrator/service",
 	"state/service/handlers",
+	"state/service/runreads",
 	"state/service/seedreconcile",
 	"state/service/topologyretention",
 	"execution-controller/service/handlers",

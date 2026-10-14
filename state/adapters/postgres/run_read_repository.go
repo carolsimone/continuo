@@ -1,0 +1,181 @@
+package postgres
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jmoiron/sqlx"
+
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
+	"github.com/carolsimone/continuo/state/domain/projection"
+	"github.com/carolsimone/continuo/state/domain/repository"
+)
+
+// RunReadRepository reads run graphs, run lists and drift from Postgres. A
+// run's graph joins its task rows to the nodes and edges of the run's own
+// release, so a later promotion never changes a past run's graph.
+type RunReadRepository struct {
+	db *sqlx.DB
+}
+
+var _ repository.RunReadRepository = (*RunReadRepository)(nil)
+
+// NewRunReadRepository returns a RunReadRepository over db.
+func NewRunReadRepository(db *sqlx.DB) *RunReadRepository {
+	return &RunReadRepository{db: db}
+}
+
+type runGraphNodeRow struct {
+	TaskID       uuid.UUID `db:"task_id"`
+	ServiceName  string    `db:"service_name"`
+	SchemaName   string    `db:"schema_name"`
+	TableName    string    `db:"table_name"`
+	Status       string    `db:"status"`
+	ScheduleName string    `db:"schedule_name"`
+	NodeType     string    `db:"node_type"`
+}
+
+type runGraphEdgeRow struct {
+	FromNodeID string `db:"from_node_id"`
+	ToNodeID   string `db:"to_node_id"`
+}
+
+// GetRunGraph implements repository.RunReadRepository.
+func (r *RunReadRepository) GetRunGraph(ctx context.Context, tenantID string, runID uuid.UUID) (projection.RunGraph, error) {
+	latest, err := r.livePromotionSeq(ctx, tenantID)
+	if err != nil {
+		return projection.RunGraph{}, err
+	}
+	g := projection.RunGraph{LatestPromotionSeq: latest}
+
+	var seq sql.NullInt64
+	err = r.db.GetContext(ctx, &seq, `SELECT promotion_seq FROM scheduler_tracker WHERE schedule_id = $1`, runID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return g, nil
+	}
+	if err != nil {
+		return projection.RunGraph{}, fmt.Errorf("read run %s: %w", runID, err)
+	}
+	g.RunPromotionSeq = seq.Int64
+
+	var nodes []runGraphNodeRow
+	if err := r.db.SelectContext(ctx, &nodes, `
+		SELECT t.task_id, t.service_name, t.schema_name, t.table_name, t.status,
+		       COALESCE(n.schedule_name, '') AS schedule_name,
+		       COALESCE(n.node_type, '')     AS node_type
+		FROM task_tracker t
+		JOIN scheduler_tracker s ON s.schedule_id = t.schedule_id
+		LEFT JOIN topology_nodes n
+		  ON n.tenant_id = $2 AND n.release_id = s.release_id AND n.node_key = t.node_key
+		WHERE t.schedule_id = $1
+		ORDER BY t.service_name, t.schema_name, t.table_name`, runID, tenantID); err != nil {
+		return projection.RunGraph{}, fmt.Errorf("read tasks of run %s: %w", runID, err)
+	}
+	for _, n := range nodes {
+		g.Nodes = append(g.Nodes, projection.RunGraphNode{
+			ServiceName: n.ServiceName, SchemaName: n.SchemaName, TableName: n.TableName,
+			ScheduleName: n.ScheduleName, NodeType: n.NodeType,
+			Status: run.TaskStatus(n.Status), TaskID: n.TaskID,
+		})
+	}
+
+	var edges []runGraphEdgeRow
+	if err := r.db.SelectContext(ctx, &edges, `
+		SELECT d.service_name || '.' || d.schema_name || '.' || d.table_name AS from_node_id,
+		       u.service_name || '.' || u.schema_name || '.' || u.table_name AS to_node_id
+		FROM scheduler_tracker s
+		JOIN topology_edges e ON e.tenant_id = $2 AND e.release_id = s.release_id
+		JOIN task_tracker u ON u.schedule_id = s.schedule_id AND u.node_key = e.upstream_key
+		JOIN task_tracker d ON d.schedule_id = s.schedule_id AND d.node_key = e.downstream_key
+		WHERE s.schedule_id = $1
+		ORDER BY from_node_id, to_node_id`, runID, tenantID); err != nil {
+		return projection.RunGraph{}, fmt.Errorf("read edges of run %s: %w", runID, err)
+	}
+	for _, e := range edges {
+		g.Edges = append(g.Edges, projection.RunGraphEdge{FromNodeID: e.FromNodeID, ToNodeID: e.ToNodeID})
+	}
+	return g, nil
+}
+
+type runSummaryRow struct {
+	RunID        uuid.UUID `db:"schedule_id"`
+	ScheduleName string    `db:"schedule_name"`
+	Status       string    `db:"status"`
+	CreatedAt    time.Time `db:"created_at"`
+	CompletedAt  time.Time `db:"completed_at"`
+}
+
+// ListCompletedRuns implements repository.RunReadRepository.
+func (r *RunReadRepository) ListCompletedRuns(ctx context.Context, scheduleName string, limit, offset int) ([]projection.RunSummary, int, error) {
+	var total int
+	if err := r.db.GetContext(ctx, &total, `
+		SELECT count(*) FROM scheduler_tracker
+		WHERE schedule_name = $1 AND completed_at IS NOT NULL`, scheduleName); err != nil {
+		return nil, 0, fmt.Errorf("count completed runs of %s: %w", scheduleName, err)
+	}
+	var rows []runSummaryRow
+	if err := r.db.SelectContext(ctx, &rows, `
+		SELECT schedule_id, schedule_name, status, created_at, completed_at
+		FROM scheduler_tracker
+		WHERE schedule_name = $1 AND completed_at IS NOT NULL
+		ORDER BY created_at DESC, schedule_id
+		LIMIT $2 OFFSET $3`, scheduleName, limit, offset); err != nil {
+		return nil, 0, fmt.Errorf("list completed runs of %s: %w", scheduleName, err)
+	}
+	runs := make([]projection.RunSummary, 0, len(rows))
+	for _, row := range rows {
+		runs = append(runs, projection.RunSummary{
+			RunID: row.RunID, ScheduleName: row.ScheduleName,
+			TerminalStatus: run.SchedulerStatus(row.Status),
+			CreatedAt:      row.CreatedAt, CompletedAt: row.CompletedAt,
+		})
+	}
+	return runs, total, nil
+}
+
+type activeRunRow struct {
+	ScheduleName string        `db:"schedule_name"`
+	RunID        uuid.UUID     `db:"schedule_id"`
+	PromotionSeq sql.NullInt64 `db:"promotion_seq"`
+}
+
+// ListActiveRunDrifts implements repository.RunReadRepository.
+func (r *RunReadRepository) ListActiveRunDrifts(ctx context.Context, tenantID string) (int64, []projection.ActiveRunDrift, error) {
+	latest, err := r.livePromotionSeq(ctx, tenantID)
+	if err != nil {
+		return 0, nil, err
+	}
+	var rows []activeRunRow
+	if err := r.db.SelectContext(ctx, &rows, `
+		SELECT DISTINCT ON (schedule_name) schedule_name, schedule_id, promotion_seq
+		FROM scheduler_tracker
+		WHERE status IN ('pending', 'running')
+		ORDER BY schedule_name, created_at DESC`); err != nil {
+		return 0, nil, fmt.Errorf("list active runs: %w", err)
+	}
+	drifts := make([]projection.ActiveRunDrift, 0, len(rows))
+	for _, row := range rows {
+		drifts = append(drifts, projection.ActiveRunDrift{
+			ScheduleName: row.ScheduleName, RunID: row.RunID, RunPromotionSeq: row.PromotionSeq.Int64,
+		})
+	}
+	return latest, drifts, nil
+}
+
+// livePromotionSeq returns the tenant's live promotion seq, 0 when no release
+// is live.
+func (r *RunReadRepository) livePromotionSeq(ctx context.Context, tenantID string) (int64, error) {
+	var seq int64
+	err := r.db.GetContext(ctx, &seq, `SELECT promotion_seq FROM live_release WHERE tenant_id = $1`, tenantID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("read live promotion seq: %w", err)
+	}
+	return seq, nil
+}
