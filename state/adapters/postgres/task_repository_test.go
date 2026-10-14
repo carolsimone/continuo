@@ -411,11 +411,11 @@ func TestTaskRepository_SetStatusAndAttemptTx_AdvancesAttemptOnSameStatus(t *tes
 	assert.Equal(t, int32(2), retryCount, "retry_count must advance to the newer attempt")
 }
 
-// TestTaskTrackerRepository_BulkCreateTx_AboveBindParameterLimit covers a run
-// with more tasks than one INSERT can bind (13 parameters per row against
-// PostgreSQL's 65535-parameter limit, so more than 5041 rows): every task is
-// inserted in one transaction, and inserting the same tasks again adds none.
-func TestTaskTrackerRepository_BulkCreateTx_AboveBindParameterLimit(t *testing.T) {
+// TestTaskTrackerRepository_BulkCreateTx_CopiesTenThousandTasks covers a run
+// larger than any multi-row INSERT can bind: every task is written by one COPY
+// in one transaction. Copying the same tasks again fails on the first stored
+// task id and adds none.
+func TestTaskTrackerRepository_BulkCreateTx_CopiesTenThousandTasks(t *testing.T) {
 	db := newTestDB(t)
 	schedRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
 	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
@@ -427,9 +427,10 @@ func TestTaskTrackerRepository_BulkCreateTx_AboveBindParameterLimit(t *testing.T
 		db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", sched.ScheduleID)
 	})
 
-	const n = 6000
+	const n = 10000
 	tasks := make([]*postgres.TaskTracker, n)
 	for i := range tasks {
+		key := fmt.Sprintf("sch.t_%05d", i)
 		tasks[i] = &postgres.TaskTracker{
 			TaskID:      uuid.New(),
 			ScheduleID:  sched.ScheduleID,
@@ -440,15 +441,18 @@ func TestTaskTrackerRepository_BulkCreateTx_AboveBindParameterLimit(t *testing.T
 			JobName:     fmt.Sprintf("j-%05d", i),
 			Status:      run.TaskStatusPending,
 			MaxRetries:  2,
+			NodeKey:     &key,
 		}
 	}
 
-	insertAll := func() {
+	copyAll := func() error {
 		tx, err := db.BeginTxx(ctx, nil)
 		require.NoError(t, err)
 		defer tx.Rollback()
-		require.NoError(t, taskRepo.BulkCreateTx(ctx, tx, tasks))
-		require.NoError(t, tx.Commit())
+		if err := taskRepo.BulkCreateTx(ctx, tx, tasks); err != nil {
+			return err
+		}
+		return tx.Commit()
 	}
 	countRows := func() int {
 		var count int
@@ -457,11 +461,58 @@ func TestTaskTrackerRepository_BulkCreateTx_AboveBindParameterLimit(t *testing.T
 		return count
 	}
 
-	insertAll()
+	require.NoError(t, copyAll())
 	assert.Equal(t, n, countRows(), "every task of the run is inserted")
 
-	insertAll()
-	assert.Equal(t, n, countRows(), "inserting the same task ids again adds no rows")
+	err := copyAll()
+	require.Error(t, err)
+	assert.Equal(t, "23505", pqCode(t, err), "a stored task id fails the copy")
+	assert.Equal(t, n, countRows(), "the failed copy adds no rows")
+}
+
+// BulkCreateTx stores when a task was dispatched and whom an inherited task
+// inherits from, and GetByID reads both back; a task not dispatched reads nil.
+func TestTaskRepository_DispatchedAtRoundTrips(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	logger := discardLogger()
+	runs := postgres.NewSchedulerTrackerRepository(db, logger)
+	tasks := postgres.NewTaskTrackerRepository(db, logger)
+	tracker := createScheduler(t, runs, "dispatched-"+uuid.NewString()[:8])
+	t.Cleanup(func() { _, _ = db.Exec(`DELETE FROM scheduler_tracker WHERE schedule_id = $1`, tracker.ScheduleID) })
+
+	at := time.Date(2026, 10, 14, 23, 0, 41, 123456000, time.UTC)
+	root := uuid.New()
+	dispatchedKey, inheritedKey := "raw.orders", "raw.customers"
+	dispatched := &postgres.TaskTracker{
+		TaskID: uuid.New(), ScheduleID: tracker.ScheduleID, CreatedAt: time.Now(),
+		ServiceName: "svc", SchemaName: "raw", TableName: "orders", JobName: "job-orders",
+		Status: run.TaskStatusPending, MaxRetries: 2, NodeKey: &dispatchedKey, DispatchedAt: &at,
+	}
+	inherited := &postgres.TaskTracker{
+		TaskID: uuid.New(), ScheduleID: tracker.ScheduleID, CreatedAt: time.Now(),
+		ServiceName: "svc", SchemaName: "raw", TableName: "customers", JobName: "job-customers",
+		Status: run.TaskStatusSucceeded, NodeKey: &inheritedKey, InheritedFromTaskID: &root,
+	}
+
+	tx, err := db.BeginTxx(ctx, nil)
+	require.NoError(t, err)
+	require.NoError(t, tasks.BulkCreateTx(ctx, tx, []*postgres.TaskTracker{dispatched, inherited}))
+	require.NoError(t, tx.Commit())
+
+	read, err := tasks.GetByID(ctx, dispatched.TaskID)
+	require.NoError(t, err)
+	require.NotNil(t, read.DispatchedAt)
+	assert.True(t, at.Equal(*read.DispatchedAt))
+	assert.Nil(t, read.InheritedFromTaskID)
+	assert.Equal(t, "run", read.Operation, "an empty operation is stored as run")
+
+	read, err = tasks.GetByID(ctx, inherited.TaskID)
+	require.NoError(t, err)
+	assert.Nil(t, read.DispatchedAt)
+	require.NotNil(t, read.InheritedFromTaskID)
+	assert.Equal(t, root, *read.InheritedFromTaskID)
+	assert.Equal(t, run.TaskStatusSucceeded, read.Status)
 }
 
 // BulkCreateTx stores each task's node key and GetByID reads it back.

@@ -20,7 +20,9 @@ type TaskTrackerRepository interface {
 	GetByID(ctx context.Context, taskID uuid.UUID) (*TaskTracker, error)
 	GetByScheduleAndNode(ctx context.Context, scheduleID uuid.UUID, serviceName, schemaName, tableName string) (*TaskTracker, error)
 	ListByScheduleID(ctx context.Context, scheduleID uuid.UUID, status *run.TaskStatus, limit, offset int) ([]*TaskTracker, int, error)
-	// BulkCreateTx inserts multiple task_tracker rows within a transaction (ON CONFLICT DO NOTHING).
+	// BulkCreateTx inserts every task of a run within a transaction, with one
+	// COPY. A task whose id, or whose node in its run, is already stored fails
+	// the whole copy.
 	BulkCreateTx(ctx context.Context, tx *sqlx.Tx, tasks []*TaskTracker) error
 	// SetStatusAndAttemptTx writes status and retry_count for the given task,
 	// leaving a cancelled row untouched. Returns rows affected.
@@ -109,7 +111,7 @@ func (r *taskTrackerRepository) GetByID(ctx context.Context, taskID uuid.UUID) (
 	query := `
 		SELECT task_id, schedule_id, created_at, service_name, schema_name,
 		       table_name, job_name, status, retry_count, max_retries, cancelled_at, cancelled_by,
-		       image_tag, inherited_from_task_id, operation, node_key
+		       image_tag, inherited_from_task_id, operation, node_key, dispatched_at
 		FROM task_tracker
 		WHERE task_id = $1
 	`
@@ -143,7 +145,7 @@ func (r *taskTrackerRepository) GetByScheduleAndNode(ctx context.Context, schedu
 	query := `
 		SELECT task_id, schedule_id, created_at, service_name, schema_name,
 		       table_name, job_name, status, retry_count, max_retries, cancelled_at, cancelled_by,
-		       image_tag, inherited_from_task_id, operation, node_key
+		       image_tag, inherited_from_task_id, operation, node_key, dispatched_at
 		FROM task_tracker
 		WHERE schedule_id = $1
 		  AND service_name = $2
@@ -246,40 +248,24 @@ func (r *taskTrackerRepository) ListByScheduleID(ctx context.Context, scheduleID
 	return tasks, total, nil
 }
 
-// taskTrackerInsertChunk is the most rows one BulkCreateTx statement inserts.
-// Each row binds 14 parameters and PostgreSQL accepts at most 65535 per
-// statement, so a single statement holds at most 4681 rows.
-const taskTrackerInsertChunk = 1000
+// copyTaskTracker streams a run's tasks with COPY … FROM STDIN.
+const copyTaskTracker = `COPY task_tracker (task_id, schedule_id, created_at, service_name, schema_name, table_name, job_name, status, retry_count, max_retries, image_tag, inherited_from_task_id, operation, node_key, dispatched_at) FROM STDIN`
 
-// BulkCreateTx inserts multiple task_tracker rows within a transaction, in
-// statements of at most taskTrackerInsertChunk rows, so a run of any size
-// inserts every task and the rows commit or roll back together with tx.
-// Uses ON CONFLICT (task_id) DO NOTHING for idempotent bulk inserts.
+// BulkCreateTx inserts every task of a run inside tx with one COPY, so a run
+// of any size is written in one round trip, binds no statement parameters, and
+// commits or rolls back with tx. An empty operation is stored as 'run', which
+// the task_tracker_operation_check constraint requires.
 func (r *taskTrackerRepository) BulkCreateTx(ctx context.Context, tx *sqlx.Tx, tasks []*TaskTracker) error {
-	if len(tasks) == 0 {
-		return nil
-	}
-	// Operation is normalized here (empty → 'run') so callers that build a
-	// TaskTracker without setting it still satisfy the
-	// task_tracker_operation_check constraint.
+	rows := make([][]any, 0, len(tasks))
 	for _, t := range tasks {
-		t.Operation = operationWithDefault(t.Operation)
+		rows = append(rows, []any{
+			t.TaskID, t.ScheduleID, t.CreatedAt, t.ServiceName, t.SchemaName, t.TableName, t.JobName,
+			string(t.Status), t.RetryCount, t.MaxRetries, t.ImageTag, t.InheritedFromTaskID,
+			operationWithDefault(t.Operation), t.NodeKey, t.DispatchedAt,
+		})
 	}
-	query := `
-		INSERT INTO task_tracker (
-			task_id, schedule_id, created_at, service_name, schema_name,
-			table_name, job_name, status, retry_count, max_retries, image_tag, inherited_from_task_id, operation, node_key
-		) VALUES (
-			:task_id, :schedule_id, :created_at, :service_name, :schema_name,
-			:table_name, :job_name, :status, :retry_count, :max_retries, :image_tag, :inherited_from_task_id, :operation, :node_key
-		)
-		ON CONFLICT (task_id) DO NOTHING
-	`
-	for start := 0; start < len(tasks); start += taskTrackerInsertChunk {
-		end := min(start+taskTrackerInsertChunk, len(tasks))
-		if _, err := tx.NamedExecContext(ctx, query, tasks[start:end]); err != nil {
-			return fmt.Errorf("bulk create task_tracker rows %d-%d of %d: %w", start, end-1, len(tasks), err)
-		}
+	if err := copyRows(ctx, tx, copyTaskTracker, rows); err != nil {
+		return fmt.Errorf("copy %d task_tracker rows: %w", len(tasks), err)
 	}
 	return nil
 }

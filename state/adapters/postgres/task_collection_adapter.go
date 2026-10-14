@@ -98,6 +98,7 @@ func taskFromRow(t *TaskTracker) run.Task {
 		InheritedFromTaskID: t.InheritedFromTaskID,
 		Operation:           operationFromColumn(t.Operation),
 		NodeKey:             topology.NodeKey(stringOrEmpty(t.NodeKey)),
+		DispatchedAt:        t.DispatchedAt,
 	}
 }
 
@@ -126,6 +127,7 @@ func (a *TaskCollectionAdapter) BulkCreate(ctx context.Context, tasks []run.Task
 			InheritedFromTaskID: t.InheritedFromTaskID,
 			Operation:           operationWithDefault(string(t.Operation)),
 			NodeKey:             optionalString(string(t.NodeKey)),
+			DispatchedAt:        t.DispatchedAt,
 		})
 	}
 	return a.repo.BulkCreateTx(ctx, a.tx, rows)

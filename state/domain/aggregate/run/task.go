@@ -28,6 +28,9 @@ type Task struct {
 	ImageTag            string
 	InheritedFromTaskID *uuid.UUID
 	Operation           model.Operation
+	// DispatchedAt is when the task's dispatch was written; nil until then,
+	// and always nil on an inherited task, which is never dispatched.
+	DispatchedAt *time.Time
 }
 
 // Node returns the (service, schema, table) triple identifying which model
