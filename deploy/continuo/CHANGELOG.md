@@ -12,6 +12,16 @@ shipped in those.
 
 ## [Unreleased]
 
+### Changed
+
+- Every run records the release it runs on and that release's promotion seq: the live release for scheduled, triggered, rebased and single-node runs, the source run's for reruns and single-node runs pinned to a past run. Every task records its node's key in that release.
+- The state service serves run graphs, run lists and active-run drift (`GetRunGraph`, `ListRuns`, `ListActiveRunDrifts`), read from each run's own release, and `ListNodeRuns` returns each run's content hash. The ui's run graph, drift badge and run list and the CLI's `node history` read them from the state service.
+- Releases a run names are kept by topology retention, finished runs included.
+
+### Removed
+
+- The orchestrator's `ListRuns`, `GetRunGraph`, `ListActiveRunDrifts` and `GetNodeRunHistory` RPCs.
+
 ## [0.11.0] - 2026-10-13
 
 ### Breaking
