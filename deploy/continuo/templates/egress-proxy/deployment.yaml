@@ -1,4 +1,4 @@
-{{- if eq (include "continuo.egress.enabled" .) "true" }}
+{{- if eq (include "continuo.egress.proxyEnabled" .) "true" }}
 {{- $e := .Values.egress | default dict }}
 {{- $p := $e.proxy | default dict }}
 {{- range .Values.services }}

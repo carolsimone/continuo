@@ -3,8 +3,10 @@
 what the agents reach: the LLM (llm.baseUrl, else the provider's public API),
 the GitHub API (agent-remediation's GITHUB_BASE_URL) and the S3 endpoint
 (s3.endpointUrl, when MinIO is off), plus egress.allowedDomains and
-egress.privateDomains. A URL whose host is an IP address is left out of the
-list, because the proxy admits host names only.
+egress.privateDomains. A URL whose host is an IP address, or any name the proxy
+would refuse, or whose port is outside 1-65535, is left out of the list: the
+proxy admits host names only. When nothing is left, no egress-proxy object
+renders, because the proxy refuses to start on an empty allowlist.
 
 The script renders the chart with each settings combination in CASES and
 compares the allowlist in the egress-proxy ConfigMap with the expected one. It
@@ -40,6 +42,21 @@ S3_EXTERNAL_IP = [
     "--set", "s3.bucket=continuo", "--set", "s3.region=eu-central-1",
     "--set", "s3.accessKeyId=probe", "--set", "s3.secretKey=probe",
 ]
+
+
+def llm_url(url: str) -> list:
+    return ["--set", "llm.provider=openai-compatible", "--set", f"llm.baseUrl={url}"]
+
+
+def s3_url(url: str) -> list:
+    return [
+        "--set", "minio.enabled=false", "--set", f"s3.endpointUrl={url}",
+        "--set", "s3.bucket=continuo", "--set", "s3.region=eu-central-1",
+        "--set", "s3.accessKeyId=probe", "--set", "s3.secretKey=probe",
+    ]
+
+
+LONG_HOST = ".".join(["a" * 60] * 4) + ".com"  # 247 characters: a name, but codeload.<it> is too long
 
 
 def agent_remediation_github(url: str) -> list:
@@ -108,6 +125,32 @@ CASES = [
      ["--set-json", 'services=[{"name":"agent-remediation","enabled":true}]'], ANTHROPIC | GITHUB),
     ("no agent-remediation entry",
      ["--set-json", 'services=[{"name":"state","enabled":true}]'], ANTHROPIC | GITHUB),
+    # Ports of URLs are read in base 10, as written.
+    ("URL port with a leading zero", llm_url("http://gpu:08080"), {("gpu", 8080, True)} | GITHUB),
+    ("URL port 0 is dropped", llm_url("http://gpu:0"), GITHUB),
+    ("URL port above 65535 is dropped", llm_url("http://gpu:65536"), GITHUB),
+    ("URL port far above 65535 is dropped", llm_url("http://gpu:99999999999999999999"), GITHUB),
+    ("GitHub Enterprise port with a leading zero",
+     agent_remediation_github("http://ghe.corp.example:08080/api/v3"),
+     ANTHROPIC | {("ghe.corp.example", 8080, True), ("codeload.ghe.corp.example", 8080, True)}),
+    # URL hosts the proxy would refuse are dropped, like IP addresses.
+    ("scheme-less GITHUB_BASE_URL", agent_remediation_github("ghe.corp.example/api/v3"), ANTHROPIC),
+    ("GITHUB_BASE_URL without a host", agent_remediation_github("https://"), ANTHROPIC),
+    ("underscore host in llm.baseUrl", llm_url("http://vllm_x:8000"), GITHUB),
+    ("underscore host in GITHUB_BASE_URL", agent_remediation_github("https://gh_e.example"), ANTHROPIC),
+    ("underscore host in s3.endpointUrl", s3_url("http://my_minio:9000"), ANTHROPIC | GITHUB),
+    ("wildcard host in llm.baseUrl", llm_url("https://*.example.com"), GITHUB),
+    ("single-label URL host with a trailing dot", llm_url("http://gpu-box.:8000"), {("gpu-box", 8000, True)} | GITHUB),
+    ("GitHub Enterprise host whose codeload name is too long",
+     agent_remediation_github(f"https://{LONG_HOST}/api/v3"), ANTHROPIC | {(LONG_HOST, 443, True)}),
+    # Nothing left to allow: no proxy object renders.
+    ("every URL is an IP address and no domain is listed",
+     [*llm_url("http://10.0.0.7:8000"), *agent_remediation_github("http://10.0.0.8:8080")], None),
+    ("every URL is unusable and no domain is listed",
+     [*llm_url("http://vllm_x:8000"), *agent_remediation_github("https://")], None),
+    ("every URL is an IP address, one domain is listed",
+     [*llm_url("http://10.0.0.7:8000"), *agent_remediation_github("http://10.0.0.8:8080"),
+      *values("allowedDomains", ["api.example.com"])], {("api.example.com", 443, False)}),
     ("release without an egress block", ["--set", "egress=null"], ANTHROPIC | GITHUB),
     ("release without llm.baseUrl", ["--set", "llm.baseUrl=null"], ANTHROPIC | GITHUB),
 ]
@@ -164,6 +207,10 @@ BAD_ENTRIES = [
     ("port 0", "api.example.com:0"),
     ("a port above 65535", "api.example.com:65536"),
     ("a port far above 65535", "api.example.com:99999999999999999999"),
+    ("a port with a leading zero", "api.example.com:0443"),
+    ("a port with two leading zeros", "api.example.com:00443"),
+    ("a port with a leading zero that is octal-looking", "api.example.com:010"),
+    ("a port with a leading zero that is no octal number", "api.example.com:09"),
     ("a negative port", "api.example.com:-1"),
     ("a signed port", "api.example.com:+443"),
     ("a port with a space", "api.example.com: 443"),
@@ -197,6 +244,7 @@ for _label, _entry in BAD_ENTRIES:
 # egress.privateDomains goes through the same validator; a sample of the bad
 # entries is enough to show it is wired to it.
 PRIVATE_SAMPLE = {
+    "a port with a leading zero", "a port with a leading zero that is no octal number",
     "a scheme", "a path", "an empty string", "a whitespace-only string", "an IPv4 address",
     "a bare IPv6 address", "a bare wildcard", "an inner wildcard", "an all-digit last label, 127.1",
     "an empty port", "port 0", "two colons",
@@ -214,6 +262,15 @@ REFUSED.append(("metrics.port equal to the proxy port", ["--set", "metrics.port=
 REFUSED.append(("metrics.port equal to the health port", ["--set", "metrics.port=8093"], "metrics.port", None))
 REFUSED.append(("a services entry named egress-proxy",
                 ["--set-json", 'services=[{"name":"egress-proxy","enabled":true}]'], "egress-proxy", None))
+
+# Refusals whose message must also say why.
+WHY = [
+    ("api.example.com:0443", "leading zero"),
+    ("api.example.com:010", "leading zero"),
+    ("api.example.com:09", "leading zero"),
+    ("api.example.com:0", "outside 1-65535"),
+]
+
 
 def helm(chart: str, kube_version: str, args: list) -> subprocess.CompletedProcess:
     return subprocess.run(
@@ -250,6 +307,10 @@ def check_cases(chart: str, kube_version: str, failures: list) -> None:
         if result.returncode != 0:
             failures.append(f"{name}: render failed: {result.stderr.strip()}")
             continue
+        if want is None:
+            if objects := proxy_objects(docs(result.stdout)):
+                failures.append(f"{name}: an empty allowlist must render no egress-proxy object, got {objects}")
+            continue
         found = allowlist(docs(result.stdout))
         if found is None:
             failures.append(f"{name}: no {CONFIGMAP} ConfigMap rendered")
@@ -278,6 +339,13 @@ def check_refused(chart: str, kube_version: str, failures: list) -> None:
             failures.append(f"{name}: the error does not name the entry {entry}: {result.stderr.strip()}")
 
 
+def check_why(chart: str, kube_version: str, failures: list) -> None:
+    for entry, why in WHY:
+        result = helm(chart, kube_version, values("allowedDomains", [entry]))
+        if why not in result.stderr:
+            failures.append(f"{entry!r}: the error must say {why!r}: {result.stderr.strip()}")
+
+
 def check_disabled(chart: str, kube_version: str, failures: list) -> None:
     off = helm(chart, kube_version, ["--set", "egress.enabled=false"])
     if off.returncode != 0:
@@ -295,6 +363,29 @@ def check_disabled(chart: str, kube_version: str, failures: list) -> None:
         result = helm(chart, kube_version, ["--set", "egress.enabled=false", *args])
         if result.returncode != 0:
             failures.append(f"egress.enabled=false with {name}: render failed: {result.stderr.strip()}")
+    # An empty allowlist renders no proxy, so its ports are free as well.
+    empty = [*llm_url("http://10.0.0.7:8000"), *agent_remediation_github("http://10.0.0.8:8080")]
+    for name, args in (
+        ("metrics.port=3128", ["--set", "metrics.port=3128"]),
+        ("metrics.port=8093", ["--set", "metrics.port=8093"]),
+    ):
+        result = helm(chart, kube_version, [*empty, *args])
+        if result.returncode != 0:
+            failures.append(f"an empty allowlist with {name}: render failed: {result.stderr.strip()}")
+        elif objects := proxy_objects(docs(result.stdout)):
+            failures.append(f"an empty allowlist with {name} still renders {objects}")
+    named = ["--set-json", "services=" + json.dumps([
+        {"name": "egress-proxy", "enabled": True},
+        {"name": "agent-remediation", "enabled": True, "env": {"GITHUB_BASE_URL": "http://10.0.0.8:8080"}},
+    ])]
+    result = helm(chart, kube_version, [*llm_url("http://10.0.0.7:8000"), *named])
+    if result.returncode != 0:
+        failures.append(f"an empty allowlist with a services entry named egress-proxy: render failed: {result.stderr.strip()}")
+    # One listed domain brings the proxy back, with that single entry.
+    result = helm(chart, kube_version, [*empty, *values("allowedDomains", ["api.example.com"])])
+    found = allowlist(docs(result.stdout)) if result.returncode == 0 else None
+    if found is None or found[1] != [{"host": "api.example.com", "port": 443, "allowPrivate": False}]:
+        failures.append(f"an empty generated allowlist plus one listed domain must render that single entry: {found}")
     on = helm(chart, kube_version, [])
     kinds = sorted(o.split("/")[0] for o in proxy_objects(docs(on.stdout))) if on.returncode == 0 else []
     if kinds != ["ConfigMap", "Deployment", "Service"]:
@@ -310,6 +401,7 @@ def main(argv: list) -> int:
     failures: list = []
     check_cases(chart, kube_version, failures)
     check_refused(chart, kube_version, failures)
+    check_why(chart, kube_version, failures)
     check_disabled(chart, kube_version, failures)
     for f in failures:
         logger.error("FAIL: %s", f)

@@ -1,4 +1,4 @@
-{{- if eq (include "continuo.egress.enabled" .) "true" }}
+{{- if eq (include "continuo.egress.proxyEnabled" .) "true" }}
 # The address a client sets as its HTTP and HTTPS proxy: http://egress-proxy:3128.
 apiVersion: v1
 kind: Service
