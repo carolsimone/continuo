@@ -29,6 +29,21 @@ const dialTimeout = 10 * time.Second
 // headerTimeout bounds reading a client's request line and headers.
 const headerTimeout = 10 * time.Second
 
+// requestReasons is every reason the proxy records on a request: the listener's
+// and the authorizer's. The metrics adapter exports each at 0 from startup.
+var requestReasons = []string{
+	httpproxy.ReasonOK,
+	httpproxy.ReasonBadRequest,
+	httpproxy.ReasonUnsupported,
+	httpproxy.ReasonCapacity,
+	httpproxy.ReasonDialFailed,
+	httpproxy.ReasonUpstreamError,
+	string(authorize.ReasonNotAllowed),
+	string(authorize.ReasonPrivateAddress),
+	string(authorize.ReasonMetadata),
+	string(authorize.ReasonResolveFailed),
+}
+
 func main() {
 	// The logger writes at the level LOG_LEVEL names. An unknown level is
 	// recorded on v, and the missing-configuration check below stops the
@@ -58,10 +73,14 @@ func main() {
 
 	liveReg := liveness.NewRegistry()
 	metricsReg := pkgmetrics.New(config.Name)
-	observer := metrics.New(metricsReg)
+	observer := metrics.New(metricsReg, requestReasons)
 	startup := liveReg.AddStartupGate()
 
 	healthServer := http.NewServer(cfg.HTTPPort, liveReg, logger)
+	if err := healthServer.Listen(); err != nil {
+		logger.Error("Failed to bind the health port", "port", cfg.HTTPPort, "error", err)
+		os.Exit(1)
+	}
 	go func() {
 		if err := healthServer.Start(); err != nil {
 			logger.Error("Health server error", "error", err)

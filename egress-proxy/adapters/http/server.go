@@ -2,7 +2,10 @@ package http
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
@@ -14,6 +17,7 @@ import (
 type Server struct {
 	httpServer *http.Server
 	logger     *slog.Logger
+	listener   net.Listener
 }
 
 // NewServer creates a new HTTP server. Readiness and liveness are answered
@@ -36,10 +40,21 @@ func NewServer(port string, registry *liveness.Registry, logger *slog.Logger) *S
 	}
 }
 
-// Start starts the HTTP server
+// Listen binds the health port, so a taken port stops the service at startup
+// instead of leaving a process whose probes cannot connect.
+func (s *Server) Listen() error {
+	ln, err := net.Listen("tcp", s.httpServer.Addr)
+	if err != nil {
+		return fmt.Errorf("listen on health port %s: %w", s.httpServer.Addr, err)
+	}
+	s.listener = ln
+	return nil
+}
+
+// Start serves on the port Listen bound until Shutdown, then returns nil.
 func (s *Server) Start() error {
-	s.logger.Info("Starting HTTP health server", "addr", s.httpServer.Addr)
-	if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	s.logger.Info("Starting HTTP health server", "addr", s.listener.Addr().String())
+	if err := s.httpServer.Serve(s.listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
 	return nil
