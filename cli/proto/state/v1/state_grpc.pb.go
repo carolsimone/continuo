@@ -109,10 +109,12 @@ type StateServiceClient interface {
 	// ran, every descendant of those and, with include_changed_upstream, every
 	// changed node upstream of anything it re-executes, until no changed
 	// ancestor is left out. A node is changed when its content_hash, node_type,
-	// secret_ref or upstream nodes differ between the source's release and the
-	// live one; image_tag alone is not a change. Every other source success is
-	// inherited. The new run reuses the source's schedule_name. A non-empty
-	// expected_release_id must name the live release.
+	// secret_ref or upstream nodes differ between the live release and the
+	// release the source's result for the node was built on: the source's
+	// release, or for a success the source inherited, the release of the run
+	// that built it. image_tag alone is not a change. Every other source
+	// success is inherited. The new run reuses the source's schedule_name. A
+	// non-empty expected_release_id must name the live release.
 	// Errors:
 	//
 	//	INVALID_ARGUMENT — empty or malformed source_run_id.
@@ -487,10 +489,12 @@ type StateServiceServer interface {
 	// ran, every descendant of those and, with include_changed_upstream, every
 	// changed node upstream of anything it re-executes, until no changed
 	// ancestor is left out. A node is changed when its content_hash, node_type,
-	// secret_ref or upstream nodes differ between the source's release and the
-	// live one; image_tag alone is not a change. Every other source success is
-	// inherited. The new run reuses the source's schedule_name. A non-empty
-	// expected_release_id must name the live release.
+	// secret_ref or upstream nodes differ between the live release and the
+	// release the source's result for the node was built on: the source's
+	// release, or for a success the source inherited, the release of the run
+	// that built it. image_tag alone is not a change. Every other source
+	// success is inherited. The new run reuses the source's schedule_name. A
+	// non-empty expected_release_id must name the live release.
 	// Errors:
 	//
 	//	INVALID_ARGUMENT — empty or malformed source_run_id.
