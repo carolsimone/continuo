@@ -14,6 +14,7 @@ import (
 	"github.com/carolsimone/continuo/state/domain/aggregate/catalog"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	repository "github.com/carolsimone/continuo/state/domain/repository"
+	"github.com/carolsimone/continuo/state/domain/topology"
 	schedulerpkg "github.com/carolsimone/continuo/state/internal/scheduler"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
@@ -241,14 +242,63 @@ func (f *activateFakeOutbox) Append(_ context.Context, evts []run.DomainEvent, _
 	return nil
 }
 
+// scheduleTopology serves rel-7 as the live release and, for "daily" and
+// "e2e-schedule", a graph of two independent nodes, each with tests when
+// tested is true. Any other schedule has no node.
+type scheduleTopology struct {
+	uow.LiveReleaseOnly
+	tested bool
+}
+
+func (s *scheduleTopology) ScheduleGraph(_ context.Context, _, _, schedule string) (topology.Graph, error) {
+	if schedule != "daily" && schedule != "e2e-schedule" {
+		return topology.NewGraph(nil, nil), nil
+	}
+	tests := 0
+	if s.tested {
+		tests = 1
+	}
+	var nodes []topology.Node
+	for _, table := range []string{"orders", "customers"} {
+		nodes = append(nodes, topology.Node{
+			Key: topology.KeyOf("mart", table), ServiceName: "svc", SchemaName: "mart", TableName: table,
+			NodeType: "dbt-model", TestCount: &tests, ImageTag: "svc:7", ScheduleName: schedule,
+		})
+	}
+	return topology.NewGraph(nodes, nil), nil
+}
+
+// startedTasks accepts the tasks a run starts with.
+type startedTasks struct {
+	run.TaskCollection
+	created []run.Task
+}
+
+func (s *startedTasks) BulkCreate(_ context.Context, tasks []run.Task) error {
+	s.created = append(s.created, tasks...)
+	return nil
+}
+
 // newActivateUoWFactory wires a FakeUnitOfWork for activation handler tests
 // and returns both the fake (for inspection) and a factory.
 func newActivateUoWFactory(catalogRepo *stubCatalogRepo, runRepo *activateFakeRunRepo, outbox *activateFakeOutbox) (*uow.FakeUnitOfWork, func() uow.UnitOfWork) {
-	fu := &uow.FakeUnitOfWork{TopologyRepo: &uow.LiveReleaseOnly{}}
+	fu := &uow.FakeUnitOfWork{TopologyRepo: &scheduleTopology{LiveReleaseOnly: uow.LiveReleaseOnly{Live: topology.Pointer{ReleaseID: "rel-7", PromotionSeq: 12}}}}
 	fu.SetCatalogRepo(catalogRepo)
 	fu.SetRunRepo(runRepo)
 	fu.SetOutboxPublisher(outbox)
+	fu.SetTaskCollection(&startedTasks{})
 	return fu, func() uow.UnitOfWork { return fu }
+}
+
+// dispatchedOperations lists the operation of each TaskDispatched in events.
+func dispatchedOperations(events []run.DomainEvent) []model.Operation {
+	var out []model.Operation
+	for _, e := range events {
+		if d, ok := e.(run.TaskDispatched); ok {
+			out = append(out, d.Operation)
+		}
+	}
+	return out
 }
 
 // ---- ActivateSchedule tests ----
@@ -278,8 +328,28 @@ func TestSchedulerHandler_ActivateSchedule_Success(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.NotEmpty(t, resp.ScheduleId)
-	assert.NotNil(t, runRepo.savedRun, "a new Run must be persisted")
-	require.Len(t, outbox.appended, 1, "RunStarted event must be emitted")
+	require.NotNil(t, runRepo.savedRun, "a new Run must be persisted")
+	assert.Equal(t, run.SchedulerStatusRunning, runRepo.savedRun.Status())
+	assert.Equal(t, run.ReleaseStamp{ReleaseID: "rel-7", PromotionSeq: 12}, runRepo.savedRun.Release())
+	assert.Len(t, outbox.appended, 2, "one dispatch per node of the schedule")
+}
+
+// A cron activation whose selection is refused still records the run,
+// finished failed, and dispatches nothing.
+func TestActivateSchedule_ARefusedSelectionRecordsAFailedRun(t *testing.T) {
+	catalogRepo := &stubCatalogRepo{existsActive: map[string]bool{"empty": true}}
+	runRepo := &activateFakeRunRepo{}
+	outbox := &activateFakeOutbox{}
+	_, factory := newActivateUoWFactory(catalogRepo, runRepo, outbox)
+	h := NewSchedulerHandler(nil, svchandlers.NewActivateScheduleHandler(newTestLogger()), nil, nil, factory, newTestLogger())
+
+	resp, err := h.ActivateSchedule(context.Background(), &statev1.ActivateScheduleRequest{ScheduleName: "empty"})
+
+	require.NoError(t, err)
+	assert.NotEmpty(t, resp.ScheduleId)
+	require.NotNil(t, runRepo.savedRun)
+	assert.Equal(t, run.SchedulerStatusFailed, runRepo.savedRun.Status())
+	assert.Empty(t, dispatchedOperations(outbox.appended))
 }
 
 func TestActivateSchedule_NotInCatalog_ReturnsNotFound(t *testing.T) {
@@ -336,70 +406,72 @@ func TestTriggerSchedule_Success(t *testing.T) {
 	assert.NotEmpty(t, resp.ScheduleId)
 }
 
-// TestTriggerSchedule_Operation_ThreadsOntoRunStarted verifies that the
-// requested `operation` field parses via pkg/domain/model.ParseOperation and
-// rides onto the emitted RunStarted event (and therefore scheduler.started:v1)
-// for the whole-DAG run. An absent operation defaults to model.OperationRun.
-func TestTriggerSchedule_Operation_ThreadsOntoRunStarted(t *testing.T) {
-	t.Run("test operation threads through", func(t *testing.T) {
-		catalogRepo := &stubCatalogRepo{existsActive: map[string]bool{"daily": true}}
-		runRepo := &activateFakeRunRepo{hasActive: false}
+// TestTriggerSchedule_Operation_ThreadsOntoTheDispatches verifies that the
+// requested operation parses via pkg/domain/model.ParseOperation and rides onto
+// every task the run dispatches. An absent operation defaults to
+// model.OperationRun.
+func TestTriggerSchedule_Operation_ThreadsOntoTheDispatches(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		operation string
+		want      model.Operation
+	}{
+		{"test operation threads through", "test", model.OperationTest},
+		{"build operation threads through", "build", model.OperationBuild},
+		{"absent operation defaults to run", "", model.OperationRun},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			catalogRepo := &stubCatalogRepo{existsActive: map[string]bool{"daily": true}}
+			runRepo := &activateFakeRunRepo{hasActive: false}
+			outbox := &activateFakeOutbox{}
+			fu, factory := newActivateUoWFactory(catalogRepo, runRepo, outbox)
+			fu.TopologyRepo.(*scheduleTopology).tested = true
+
+			h := NewSchedulerHandler(nil, svchandlers.NewActivateScheduleHandler(newTestLogger()), nil, nil, factory, newTestLogger())
+			resp, err := h.TriggerSchedule(context.Background(), &statev1.TriggerScheduleRequest{
+				ScheduleName: "daily",
+				Operation:    tc.operation,
+			})
+			require.NoError(t, err)
+			assert.NotEmpty(t, resp.ScheduleId)
+			assert.Equal(t, []model.Operation{tc.want, tc.want}, dispatchedOperations(outbox.appended))
+		})
+	}
+}
+
+// A trigger whose selection is refused creates no run and fails
+// FailedPrecondition; a test trigger of a schedule without data tests is
+// recorded skipped.
+func TestTriggerSchedule_Refusals(t *testing.T) {
+	t.Run("a schedule with no node in the live release", func(t *testing.T) {
+		catalogRepo := &stubCatalogRepo{existsActive: map[string]bool{"empty": true}}
+		runRepo := &activateFakeRunRepo{}
 		outbox := &activateFakeOutbox{}
 		_, factory := newActivateUoWFactory(catalogRepo, runRepo, outbox)
+		h := NewSchedulerHandler(nil, svchandlers.NewActivateScheduleHandler(newTestLogger()), nil, nil, factory, newTestLogger())
 
-		activate := svchandlers.NewActivateScheduleHandler(newTestLogger())
-		h := NewSchedulerHandler(nil, activate, nil, nil, factory, newTestLogger())
+		_, err := h.TriggerSchedule(context.Background(), &statev1.TriggerScheduleRequest{ScheduleName: "empty"})
 
-		resp, err := h.TriggerSchedule(context.Background(), &statev1.TriggerScheduleRequest{
-			ScheduleName: "daily",
-			Operation:    "test",
-		})
-		require.NoError(t, err)
-		assert.NotEmpty(t, resp.ScheduleId)
-		require.Len(t, outbox.appended, 1)
-		started, ok := outbox.appended[0].(run.RunStarted)
-		require.True(t, ok, "expected RunStarted, got %T", outbox.appended[0])
-		assert.Equal(t, model.OperationTest, started.Operation)
+		assert.Equal(t, codes.FailedPrecondition, status.Code(err))
+		assert.Contains(t, status.Convert(err).Message(), "the selection is empty")
+		assert.Nil(t, runRepo.savedRun)
+		assert.Empty(t, outbox.appended)
 	})
 
-	t.Run("build operation threads through", func(t *testing.T) {
+	t.Run("a test run of a schedule without data tests", func(t *testing.T) {
 		catalogRepo := &stubCatalogRepo{existsActive: map[string]bool{"daily": true}}
-		runRepo := &activateFakeRunRepo{hasActive: false}
+		runRepo := &activateFakeRunRepo{}
 		outbox := &activateFakeOutbox{}
 		_, factory := newActivateUoWFactory(catalogRepo, runRepo, outbox)
+		h := NewSchedulerHandler(nil, svchandlers.NewActivateScheduleHandler(newTestLogger()), nil, nil, factory, newTestLogger())
 
-		activate := svchandlers.NewActivateScheduleHandler(newTestLogger())
-		h := NewSchedulerHandler(nil, activate, nil, nil, factory, newTestLogger())
+		resp, err := h.TriggerSchedule(context.Background(), &statev1.TriggerScheduleRequest{ScheduleName: "daily", Operation: "test"})
 
-		resp, err := h.TriggerSchedule(context.Background(), &statev1.TriggerScheduleRequest{
-			ScheduleName: "daily",
-			Operation:    "build",
-		})
 		require.NoError(t, err)
 		assert.NotEmpty(t, resp.ScheduleId)
-		require.Len(t, outbox.appended, 1)
-		started, ok := outbox.appended[0].(run.RunStarted)
-		require.True(t, ok, "expected RunStarted, got %T", outbox.appended[0])
-		assert.Equal(t, model.OperationBuild, started.Operation)
-	})
-
-	t.Run("absent operation defaults to run", func(t *testing.T) {
-		catalogRepo := &stubCatalogRepo{existsActive: map[string]bool{"daily": true}}
-		runRepo := &activateFakeRunRepo{hasActive: false}
-		outbox := &activateFakeOutbox{}
-		_, factory := newActivateUoWFactory(catalogRepo, runRepo, outbox)
-
-		activate := svchandlers.NewActivateScheduleHandler(newTestLogger())
-		h := NewSchedulerHandler(nil, activate, nil, nil, factory, newTestLogger())
-
-		_, err := h.TriggerSchedule(context.Background(), &statev1.TriggerScheduleRequest{
-			ScheduleName: "daily",
-		})
-		require.NoError(t, err)
-		require.Len(t, outbox.appended, 1)
-		started, ok := outbox.appended[0].(run.RunStarted)
-		require.True(t, ok, "expected RunStarted, got %T", outbox.appended[0])
-		assert.Equal(t, model.OperationRun, started.Operation)
+		require.NotNil(t, runRepo.savedRun)
+		assert.Equal(t, run.SchedulerStatusSkipped, runRepo.savedRun.Status())
+		assert.Empty(t, dispatchedOperations(outbox.appended))
 	})
 }
 

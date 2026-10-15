@@ -178,6 +178,7 @@ func TestStateService(t *testing.T) {
 		// manually trigger the schedule. TriggerSchedule mints a PENDING Run via
 		// the Run aggregate (kind='trigger'), which CancelSchedule then cancels.
 		seedActiveSchedule(t, "daily-cancel-success")
+		promoteSchedules(t, stateDB, "daily-cancel-success")
 		trigResp, err := stateClient.TriggerSchedule(ctx, &statev1.TriggerScheduleRequest{
 			ScheduleName: "daily-cancel-success",
 		})
@@ -222,6 +223,7 @@ func TestStateService(t *testing.T) {
 		ctx := context.Background()
 
 		seedActiveSchedule(t, "daily-trigger-kind")
+		promoteSchedules(t, stateDB, "daily-trigger-kind")
 		resp, err := stateClient.TriggerSchedule(ctx, &statev1.TriggerScheduleRequest{
 			ScheduleName: "daily-trigger-kind",
 		})

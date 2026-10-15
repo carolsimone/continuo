@@ -94,6 +94,7 @@ func TestConcurrentActivation_OneWinnerOneActiveRunError(t *testing.T) {
 	defer cleanup()
 
 	factory, handler := newActivationStack(t, rawDB, "race-schedule")
+	promoteSchedules(t, rawDB, "race-schedule")
 
 	const n = 2
 	var wg sync.WaitGroup

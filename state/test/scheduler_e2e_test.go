@@ -25,9 +25,10 @@ import (
 	"github.com/carolsimone/continuo/state/service/uow"
 )
 
-// schedulerStartedEvent holds the fields read back from the Redis stream.
-type schedulerStartedEvent struct {
-	RunnerID     string
+// dispatchEvent holds the fields of a query.model:v1 dispatch read back from
+// the Redis stream.
+type dispatchEvent struct {
+	RunID        string
 	ScheduleName string
 }
 
@@ -80,8 +81,10 @@ func setupRedis(t *testing.T) (*goredis.Client, func()) {
 }
 
 // TestSchedulerActivation_E2E tests the full scheduler activation flow using the
-// transactional outbox pattern: ActivateScheduleHandler writes atomically to
-// scheduler_tracker + state_outbox, then OutboxProcessor publishes to Redis.
+// transactional outbox pattern: ActivateScheduleHandler writes the run, its
+// tasks and the dispatch of each ready task atomically to scheduler_tracker,
+// task_tracker and state_outbox, then OutboxProcessor publishes the dispatches
+// to Redis.
 func TestSchedulerActivation_E2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping e2e test in short mode")
@@ -119,6 +122,7 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 		ON CONFLICT (schedule_name) DO NOTHING
 	`)
 	require.NoError(t, err, "Failed to seed schedule_catalog")
+	promoteSchedules(t, db, "daily", "hourly")
 
 	// Wire the UoW factory. Each cron tick gets a fresh UoW.
 	clk := ports.SystemClock{}
@@ -189,8 +193,8 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 	require.NotNil(t, dailyTracker, "Expected to find daily schedule tracker")
 	require.NotNil(t, hourlyTracker, "Expected to find hourly schedule tracker")
 
-	assert.Equal(t, run.SchedulerStatusPending, dailyTracker.Status)
-	assert.Equal(t, run.SchedulerStatusPending, hourlyTracker.Status)
+	assert.Equal(t, run.SchedulerStatusRunning, dailyTracker.Status)
+	assert.Equal(t, run.SchedulerStatusRunning, hourlyTracker.Status)
 
 	t.Logf("Found daily tracker: %s (status: %s)", dailyTracker.ScheduleID, dailyTracker.Status)
 	t.Logf("Found hourly tracker: %s (status: %s)", hourlyTracker.ScheduleID, hourlyTracker.Status)
@@ -201,7 +205,7 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 	// Allow outbox processor a moment to publish any remaining entries
 	time.Sleep(2 * time.Second)
 
-	streamName := streams.SchedulerStartedV1
+	streamName := streams.QueryModelV1
 
 	// Read all messages from stream
 	readCtx, readCancel := context.WithTimeout(ctx, 5*time.Second)
@@ -215,19 +219,19 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 	require.NoError(t, err, "Failed to read from Redis stream")
 
 	// Collect events
-	var events []schedulerStartedEvent
+	var events []dispatchEvent
 	for _, stream := range messages {
 		for _, msg := range stream.Messages {
-			runnerID, ok := msg.Values["runner_id"].(string)
-			require.True(t, ok, "runner_id field missing or not a string in Redis message %v", msg.Values)
+			runID, ok := msg.Values["schedule_id"].(string)
+			require.True(t, ok, "schedule_id field missing or not a string in Redis message %v", msg.Values)
 			scheduleName, ok := msg.Values["schedule_name"].(string)
 			require.True(t, ok, "schedule_name field missing or not a string in Redis message %v", msg.Values)
-			event := schedulerStartedEvent{
-				RunnerID:     runnerID,
+			event := dispatchEvent{
+				RunID:        runID,
 				ScheduleName: scheduleName,
 			}
 			events = append(events, event)
-			t.Logf("Read Redis event: runner_id=%s, schedule_name=%s", event.RunnerID, event.ScheduleName)
+			t.Logf("Read Redis event: schedule_id=%s, schedule_name=%s", event.RunID, event.ScheduleName)
 		}
 	}
 
@@ -242,17 +246,17 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 	require.NotNil(t, dailyEvent, "Expected to find daily event in Redis")
 	require.NotNil(t, hourlyEvent, "Expected to find hourly event in Redis")
 
-	assert.Equal(t, dailyTracker.ScheduleID.String(), dailyEvent.RunnerID,
-		"Daily tracker schedule_id should match Redis event runner_id")
-	assert.Equal(t, hourlyTracker.ScheduleID.String(), hourlyEvent.RunnerID,
-		"Hourly tracker schedule_id should match Redis event runner_id")
+	assert.Equal(t, dailyTracker.ScheduleID.String(), dailyEvent.RunID,
+		"Daily tracker schedule_id should match the dispatch's schedule_id")
+	assert.Equal(t, hourlyTracker.ScheduleID.String(), hourlyEvent.RunID,
+		"Hourly tracker schedule_id should match the dispatch's schedule_id")
 
 	t.Log("E2E test passed: scheduler_tracker records match Redis events")
 
 	// Test 3: Verify duplicate run prevention
 	t.Log("Testing duplicate run prevention...")
 
-	// Wait for another 30 seconds - should NOT create new records because status is PENDING
+	// Wait for another 30 seconds - should NOT create new records because status is RUNNING
 	time.Sleep(32 * time.Second)
 
 	var trackersAfter []postgres.SchedulerTracker
@@ -263,9 +267,9 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 	`)
 	require.NoError(t, err, "Failed to query scheduler_tracker after second activation")
 
-	// Should still have only 2 records (blocked by PENDING status)
+	// Should still have only 2 records (blocked by RUNNING status)
 	assert.Equal(t, len(trackers), len(trackersAfter),
-		"Should not create new records when previous run is PENDING")
+		"Should not create new records when previous run is RUNNING")
 
 	t.Log("Duplicate run prevention working correctly")
 }
@@ -281,7 +285,7 @@ func findTrackerByName(trackers []postgres.SchedulerTracker, name string) *postg
 }
 
 // findEventByName finds a Redis event by schedule_name
-func findEventByName(events []schedulerStartedEvent, name string) *schedulerStartedEvent {
+func findEventByName(events []dispatchEvent, name string) *dispatchEvent {
 	for _, event := range events {
 		if event.ScheduleName == name {
 			return &event

@@ -9,6 +9,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
+	"github.com/carolsimone/continuo/state/domain/runplan"
 	schedulerpkg "github.com/carolsimone/continuo/state/internal/scheduler"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
@@ -405,7 +406,10 @@ func (h *SchedulerHandler) ListStuckCandidates(
 }
 
 // TriggerSchedule manually triggers a schedule run. Returns FailedPrecondition
-// when a run is already active, NotFound when the schedule is not in catalog.
+// when a run is already active or when the schedule's selection is refused (no
+// node of the schedule in the live release, or a node of an undeclared type),
+// NotFound when the schedule is not in catalog. A test run of a schedule with no
+// node with data tests is created, finished skipped.
 func (h *SchedulerHandler) TriggerSchedule(
 	ctx context.Context,
 	req *statev1.TriggerScheduleRequest,
@@ -426,6 +430,8 @@ func (h *SchedulerHandler) TriggerSchedule(
 		switch {
 		case errors.Is(err, run.ErrScheduleNotInCatalog):
 			return nil, status.Errorf(codes.NotFound, "schedule %q not in catalog", req.ScheduleName)
+		case errors.Is(err, runplan.ErrEmptySelection), errors.Is(err, runplan.ErrInvalidNodeType):
+			return nil, status.Errorf(codes.FailedPrecondition, "schedule %q cannot run: %v", req.ScheduleName, err)
 		default:
 			return nil, status.Errorf(codes.Internal, "trigger: %v", err)
 		}

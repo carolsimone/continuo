@@ -22,7 +22,8 @@ import (
 // under seq.
 func (h *builtHarness) goLive(t *testing.T, releaseID string, seq int64) {
 	t.Helper()
-	h.storeRelease(t, releaseID, promotedNode("raw", "stamp_orders", "dbt-model"))
+	h.storeRelease(t, releaseID, scheduledNode("raw", "stamp_orders", "dbt-model", "stamp-rebase"),
+		scheduledNode("mart", "stamp_trigger", "dbt-model", "stamp-trigger"))
 	h.inTx(t, func(ctx context.Context, u uow.UnitOfWork) error {
 		return u.Topology().SetLivePointer(ctx, pkgevents.DefaultTenantID,
 			topology.Pointer{ReleaseID: releaseID, PromotionSeq: seq}, time.Now())
