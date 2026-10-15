@@ -1,4 +1,4 @@
-{{- if eq (include "continuo.egress.enabled" .) "true" }}
+{{- if eq (include "continuo.egress.proxyEnabled" .) "true" }}
 # The hosts and ports egress-proxy admits, read once at startup. The proxy's
 # pod template carries a digest of this file, so a changed list rolls it.
 apiVersion: v1
