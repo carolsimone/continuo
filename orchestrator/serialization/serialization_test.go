@@ -125,23 +125,3 @@ func TestPRClosedServiceAndEditsOmitempty(t *testing.T) {
 		t.Fatalf("service/edits must be omitted when empty: %s", s)
 	}
 }
-
-const goldenPromotedSeedsNodes = `[{"service_name":"svc","schema_name":"sch","table_name":"tbl","node_type":"dbt-seed","image_tag":"img"}]`
-
-func TestPromotedSeedsNodesRoundTrip(t *testing.T) {
-	var dto []PromotedSeedsNodeDTO
-	if err := json.Unmarshal([]byte(goldenPromotedSeedsNodes), &dto); err != nil {
-		t.Fatalf("unmarshal golden: %v", err)
-	}
-	out, err := json.Marshal(dto)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	if string(out) != goldenPromotedSeedsNodes {
-		t.Fatalf("bytes changed:\n got %s\nwant %s", out, goldenPromotedSeedsNodes)
-	}
-	got := PromotedSeedsNodesToDomain(dto)
-	if len(got) != 1 || got[0].ServiceName != "svc" || got[0].NodeType != "dbt-seed" {
-		t.Fatalf("toDomain fields wrong: %+v", got)
-	}
-}

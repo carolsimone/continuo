@@ -20,7 +20,6 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/internal/sweeper"
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	"github.com/carolsimone/continuo/orchestrator/service/queries"
-	snapshotsvc "github.com/carolsimone/continuo/orchestrator/service/snapshotsvc"
 	"github.com/carolsimone/continuo/orchestrator/service/watchdog"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	pkgdb "github.com/carolsimone/continuo/pkg/db"
@@ -42,14 +41,6 @@ import (
 // topologyHandlerTimeout bounds the consumers whose one message covers a whole
 // DAG or release, which they write to Neo4j in one handler.
 const topologyHandlerTimeout = 5 * time.Minute
-
-// promotedSeedsGraphWait bounds how long the trigger.promoted_seeds:v1 handler
-// waits for the graph to reach the promotion a trigger was planned against.
-// state writes the trigger in its own promotion transaction and the
-// topology-swap group applies the same promotion independently, so the trigger
-// often arrives first; a swap that has not landed by then fails the delivery
-// retryably. Well inside topologyHandlerTimeout.
-const promotedSeedsGraphWait = 30 * time.Second
 
 // outboxHeartbeatStale is the liveness budget for the outbox processor's Run
 // loop. An idle loop turns at least once per pkgoutbox.FallbackTick (5s), so 60s
@@ -238,24 +229,7 @@ func main() {
 
 	queryRepo := neo4jinfra.NewOrchestratorQueryRepository(neo4jClient, logger)
 	runAggRepo := neo4jinfra.NewRunAggregateRepository(neo4jClient, logger)
-	snapshotTxRunner := neo4jinfra.NewSnapshotTxRunner(neo4jClient)
 	cancelledSchedulesRepo := postgres.NewCancelledSchedulesRepository(pgDB)
-	snapshotService := snapshotsvc.NewService(snapshotTxRunner, cancelledSchedulesRepo, logger)
-
-	// ========================================================================
-	// INITIALIZE UNIT OF WORK & COMMAND HANDLERS
-	// ========================================================================
-
-	// Each handler gets its own UnitOfWork instance. UnitOfWork holds a stateful
-	// Postgres transaction (inTx flag + *sqlx.Tx). Sharing one instance across
-	// consumers would cause "transaction already in progress" errors when two
-	// consumers process messages concurrently — the second Begin() sees inTx=true
-	// and the message is never ACKed, getting stuck in the PEL forever.
-	handleNodeCompletedHandler := handlers.NewHandleNodeCompletedHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), runAggRepo, cancelledSchedulesRepo, logger)
-	handleSchedulerStartedHandler := handlers.NewHandleSchedulerStartedHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), snapshotService, logger)
-	handleRerunHandler := handlers.NewHandleRerunHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), snapshotService, logger)
-	handleRebaseHandler := handlers.NewHandleRebaseHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), snapshotService, logger)
-	handleSingleNodeRunHandler := handlers.NewHandleSingleNodeRunHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), snapshotService, logger)
 
 	// ========================================================================
 	// INITIALIZE OUTBOX PROCESSOR
@@ -377,20 +351,8 @@ func main() {
 	go reconcilerInstance.Start(ctx)
 
 	// ========================================================================
-	// INITIALIZE CANCELLED SCHEDULES CONSUMER + SWEEPER
+	// START CANCELLED SCHEDULES SWEEPER
 	// ========================================================================
-
-	scheduleCancelledHandler := handlers.NewScheduleCancelledHandler(cancelledSchedulesRepo, logger)
-	scheduleCancelledBinding := redis.NewScheduleCancelledBinding(scheduleCancelledHandler, logger)
-	scheduleCancelledConsumer := pkgredis.NewStreamConsumer(
-		redisClient,
-		streams.ScheduleCancelledV1,
-		streams.OrchestratorScheduleCancelled,
-		scheduleCancelledBinding,
-		logger,
-		pkgredis.WithInfraClassifier(neo4jinfra.IsUnavailable),
-	)
-	runConsumer("schedule_cancelled", scheduleCancelledConsumer)
 
 	lifecycleManager.Go(func() {
 		ticker := time.NewTicker(time.Duration(cfg.CancelledSchedulesSweepIntervalMin) * time.Minute)
@@ -414,12 +376,12 @@ func main() {
 	// INITIALIZE REDIS CONSUMERS
 	// ========================================================================
 
-	// run.finalized:v1 projects state's terminal scheduler outcome onto Neo4j
-	// :Run.completed_at / terminal_status. Covers edge cases where the
-	// aggregate's internal finalization path is not exercised (e.g.
-	// full-inherited rebases that produce no node.updated:v1 traffic).
-	runFinalizedHandler := handlers.NewRunFinalizedHandler(runAggRepo, logger)
-
+	// Each handler gets its own UnitOfWork instance. UnitOfWork holds a stateful
+	// Postgres transaction (inTx flag + *sqlx.Tx). Sharing one instance across
+	// consumers would cause "transaction already in progress" errors when two
+	// consumers process messages concurrently — the second Begin() sees inTx=true
+	// and the message is never ACKed, getting stuck in the PEL forever.
+	//
 	// One object-storage client, passed to each reader as its
 	// objectstore.Reader role: the topology artifact reader of both promotion
 	// groups, and the code-bundle reader of the versions and rejections
@@ -438,13 +400,6 @@ func main() {
 	topologyArtifactReader := s3infra.NewTopologyArtifactReader(objectStore)
 	releasePromotionRepo := neo4jinfra.NewReleasePromotionRepository(neo4jClient, logger)
 	releasePromotedHandler := handlers.NewReleasePromotedHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), topologyArtifactReader, releasePromotionRepo, logger)
-
-	// trigger.promoted_seeds:v1 — projects the run state created to load the
-	// live release's seeds, once the graph has applied the promotion the run was
-	// planned against, so loading them into the prod schema runs through the
-	// same lifecycle as any other run.
-	handlePromotedSeedsHandler := handlers.NewHandlePromotedSeedsRunHandler(
-		postgres.NewPostgresUnitOfWork(pgDB, logger), snapshotService, releasePromotionRepo, promotedSeedsGraphWait, logger)
 
 	// release.promoted:v2 (versions) — an independent consumer group. It reads
 	// the release's code-bundle document and topology artifact from object
@@ -483,15 +438,8 @@ func main() {
 		binding pkgredis.MessageHandler
 		timeout time.Duration
 	}{
-		{"node_updated", streams.NodeUpdatedV1, streams.OrchestratorNodeUpdated, redis.NewNodeCompletedBinding(handleNodeCompletedHandler, logger), 0},
-		{"scheduler_started", streams.SchedulerStartedV1, streams.OrchestratorSchedulerStarted, redis.NewSchedulerStartedBinding(handleSchedulerStartedHandler, logger), topologyHandlerTimeout},
-		{"rerun", streams.TriggerRerunV1, streams.OrchestratorRerun, redis.NewRerunBinding(handleRerunHandler, logger), topologyHandlerTimeout},
-		{"rebase", streams.TriggerRebaseV1, streams.OrchestratorRebase, redis.NewRebaseBinding(handleRebaseHandler, logger), topologyHandlerTimeout},
-		{"single_node_run", streams.TriggerSingleNodeRunV1, streams.OrchestratorSingleNodeRun, redis.NewSingleNodeRunBinding(handleSingleNodeRunHandler, logger), topologyHandlerTimeout},
-		{"run_finalized", streams.RunFinalizedV1, streams.OrchestratorRunFinalized, redis.NewRunFinalizedBinding(runFinalizedHandler, logger), 0},
 		{"release_promoted", streams.ReleasePromotedV2, streams.OrchestratorReleasePromoted, redis.NewReleasePromotedBinding(releasePromotedHandler, logger), topologyHandlerTimeout},
 		{"release_promoted_versions", streams.ReleasePromotedV2, streams.OrchestratorReleasePromotedVersions, redis.NewReleasePromotedVersionsBinding(releasePromotedVersionsHandler, logger), topologyHandlerTimeout},
-		{"promoted_seeds", streams.TriggerPromotedSeedsV1, streams.OrchestratorPromotedSeeds, redis.NewPromotedSeedsBinding(handlePromotedSeedsHandler, logger), topologyHandlerTimeout},
 		{"remediation_requested_rejections", streams.RemediationRequestedV2, streams.OrchestratorRemediationRequestedRejections, redis.NewRemediationRequestedBinding(rejectionsHandler, logger), 0},
 		{"remediation_pr_opened_proposals", streams.RemediationPrOpenedV1, streams.OrchestratorRemediationPrOpenedProposals, redis.NewPrOpenedBinding(proposalsHandler, logger), 0},
 		{"remediation_pr_closed_provenance", streams.RemediationPrClosedV1, streams.OrchestratorRemediationPrClosedProvenance, redis.NewPrClosedBinding(provenanceHandler, logger), 0},

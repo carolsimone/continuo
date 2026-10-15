@@ -42,13 +42,6 @@ type ReleasePromotionRepository interface {
 	) (topology.PromotionOutcome, error)
 }
 
-// LivePromotionReader reads the promotion the live graph holds.
-type LivePromotionReader interface {
-	// LivePromotionSeq returns the promotion_seq of the last applied promotion
-	// recorded on :Meta {key:'current_release'}, or 0 before the first.
-	LivePromotionSeq(ctx context.Context) (int64, error)
-}
-
 // CodeVersionRepository writes the code-version history behind the :Table
 // topology. Implementations decide what to write by comparing each incoming
 // node's content_hash against the version the graph currently marks as current

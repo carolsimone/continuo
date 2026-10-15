@@ -11,7 +11,6 @@ package serialization
 import (
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	"github.com/carolsimone/continuo/orchestrator/domain/event"
-	"github.com/carolsimone/continuo/orchestrator/domain/model"
 )
 
 // NodeReadyForExecutionDTO is the JSON shape of the query.model:v1 payload.
@@ -233,26 +232,4 @@ func (d PRClosedDTO) ToDomain() event.PRClosed {
 		ClosedAt:        d.ClosedAt,
 		Edits:           edits,
 	}
-}
-
-// PromotedSeedsNodeDTO is the JSON shape of one node in a trigger.promoted_seeds:v1
-// nodes array.
-type PromotedSeedsNodeDTO struct {
-	ServiceName string `json:"service_name"`
-	SchemaName  string `json:"schema_name"`
-	TableName   string `json:"table_name"`
-	NodeType    string `json:"node_type"`
-	ImageTag    string `json:"image_tag"`
-}
-
-// PromotedSeedsNodesToDomain maps decoded node DTOs to domain nodes.
-func PromotedSeedsNodesToDomain(in []PromotedSeedsNodeDTO) []model.PromotedSeedsNode {
-	if in == nil {
-		return nil
-	}
-	out := make([]model.PromotedSeedsNode, len(in))
-	for i, n := range in {
-		out[i] = model.PromotedSeedsNode(n)
-	}
-	return out
 }
