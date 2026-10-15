@@ -13,3 +13,4 @@ orchestrator
 tests/e2e
 state
 dead-letter-controller
+egress-proxy
