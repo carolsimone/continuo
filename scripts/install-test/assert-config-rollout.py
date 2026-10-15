@@ -72,6 +72,8 @@ CASES = [
      "file": "files/service_repos.yaml", "edit": append_yaml_comment},
     {"name": "serviceRepos value", "configmap": "service-repos",
      "args": ["--set", "serviceRepos.config-rollout-probe=probe"]},
+    {"name": "egress.allowedDomains value", "configmap": "egress-proxy",
+     "args": ["--set", "egress.allowedDomains={config-rollout-probe.example.com}"]},
     {"name": "ciAuth.bindings value", "configmap": "ci-auth",
      "args": ["--set-string", "ciAuth.bindings.core[0].repositoryId=812345678"]},
     {"name": "files/cancel-config.json", "configmap": "cancel-config",
