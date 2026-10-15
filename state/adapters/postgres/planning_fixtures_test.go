@@ -100,6 +100,7 @@ func planningTenant(tb testing.TB, db *sqlx.DB) string {
 	tb.Helper()
 	tenant := "plan-" + uuid.NewString()
 	tb.Cleanup(func() {
+		_, _ = db.ExecContext(context.Background(), `DELETE FROM live_release WHERE tenant_id = $1`, tenant)
 		_, _ = db.ExecContext(context.Background(), `DELETE FROM topology_releases WHERE tenant_id = $1`, tenant)
 	})
 	return tenant
