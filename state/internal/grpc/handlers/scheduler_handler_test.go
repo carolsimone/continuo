@@ -228,6 +228,10 @@ func (f *activateFakeRunRepo) GetLastRunPerSchedule(_ context.Context) (map[stri
 func (f *activateFakeRunRepo) RunExists(_ context.Context, _ uuid.UUID) (bool, error) {
 	panic("RunExists not used in activate tests")
 }
+func (f *activateFakeRunRepo) ListUnplannedActive(context.Context) ([]uuid.UUID, error) {
+	panic("ListUnplannedActive is not used here")
+}
+
 func (f *activateFakeRunRepo) CountReleaseRuns(_ context.Context, _ string, _ run.Kind) (int, error) {
 	panic("CountReleaseRuns not used in activate tests")
 }
@@ -695,6 +699,10 @@ func (f *cancelFakeRunRepo) GetLastRunPerSchedule(_ context.Context) (map[string
 func (f *cancelFakeRunRepo) RunExists(_ context.Context, _ uuid.UUID) (bool, error) {
 	panic("RunExists not used in cancel tests")
 }
+func (f *cancelFakeRunRepo) ListUnplannedActive(context.Context) ([]uuid.UUID, error) {
+	panic("ListUnplannedActive is not used here")
+}
+
 func (f *cancelFakeRunRepo) CountReleaseRuns(_ context.Context, _ string, _ run.Kind) (int, error) {
 	panic("CountReleaseRuns not used in cancel tests")
 }

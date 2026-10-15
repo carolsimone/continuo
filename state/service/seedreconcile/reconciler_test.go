@@ -184,6 +184,10 @@ func (f *fakeRuns) RunExists(_ context.Context, id uuid.UUID) (bool, error) {
 	return f.taken[id], nil
 }
 
+func (f *fakeRuns) ListUnplannedActive(context.Context) ([]uuid.UUID, error) {
+	panic("ListUnplannedActive is not used here")
+}
+
 func (f *fakeRuns) CountReleaseRuns(context.Context, string, run.Kind) (int, error) {
 	return f.count, nil
 }

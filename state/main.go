@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/carolsimone/continuo/state/service/runsettle"
+
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	pkgdb "github.com/carolsimone/continuo/pkg/db"
 	"github.com/carolsimone/continuo/pkg/domain/model"
@@ -256,6 +258,16 @@ func main() {
 	uowFactory := func() uow.UnitOfWork {
 		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, taskExecutionRepo, catalogRepo, clk, logger)
 	}
+
+	// A run whose tasks state did not plan cannot move on: no status update
+	// can dispatch or skip its tasks. It is cancelled before any consumer
+	// starts, so its Jobs are suppressed and its schedule is free to run again.
+	settled, err := runsettle.Settle(ctx, uowFactory, logger)
+	if err != nil {
+		logger.Error("Failed to cancel the active runs state did not plan", "error", err)
+		os.Exit(1)
+	}
+	logger.Info("Active runs state did not plan cancelled", "runs", settled)
 
 	// Retention sweeper — keeps the unbounded-growth tables in check:
 	// processed state_outbox rows, message_processing dedup rows (which retain
