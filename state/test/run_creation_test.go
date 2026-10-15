@@ -8,9 +8,11 @@ import (
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/runplan"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
+	"github.com/carolsimone/continuo/state/service/runreads"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -165,6 +167,9 @@ func TestRunCreation(t *testing.T) {
 // A derived run plans inside one transaction, so reading its source's tasks
 // must reuse the transaction's connection: with a pool of one, a second
 // connection for that read would wait on the connection its own caller holds.
+// A rebase preview reads the changed nodes' durations through the pool, so it
+// must read them after its transaction is rolled back. The live release
+// changes raw.pool_a, which the preview names as a changed upstream node.
 func TestRunCreation_DerivedRunsNeedOneConnection(t *testing.T) {
 	if testing.Short() {
 		t.Skip("integration test")
@@ -185,6 +190,9 @@ func TestRunCreation_DerivedRunsNeedOneConnection(t *testing.T) {
 	require.NoError(t, err)
 	_, err = db.Exec(`UPDATE scheduler_tracker SET status = 'failed', completed_at = now() WHERE schedule_id = $1`, srcID)
 	require.NoError(t, err)
+	changedA := scheduledNode("raw", "pool_a", "dbt-model", "pool-derived")
+	changedA.ContentHash += "-changed"
+	promoteRelease(t, db, changedA, scheduledNode("mart", "pool_b", "dbt-model", "pool-derived", "raw.pool_a"))
 
 	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { db.SetMaxOpenConns(0) })
@@ -202,5 +210,12 @@ func TestRunCreation_DerivedRunsNeedOneConnection(t *testing.T) {
 			SourceRunID: srcID, IncludeChangedUpstream: true, Initiator: alice,
 		})
 		require.NoError(t, err)
+	})
+	t.Run("preview", func(t *testing.T) {
+		previewer := runreads.NewRebasePreviewer(defaultPlanner, h.factory, postgres.NewRunReadRepository(db))
+		pv, err := previewer.Preview(ctx, srcID, true)
+		require.NoError(t, err)
+		require.Len(t, pv.Changed, 1, "the preview reads the duration of raw.pool_a")
+		assert.Equal(t, "pool_a", pv.Changed[0].TableName)
 	})
 }
