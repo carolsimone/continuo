@@ -405,7 +405,10 @@ func (h *SchedulerHandler) ListStuckCandidates(
 }
 
 // TriggerSchedule manually triggers a schedule run. Returns FailedPrecondition
-// when a run is already active, NotFound when the schedule is not in catalog.
+// when a run is already active or when the schedule's selection is refused (no
+// node of the schedule in the live release, or a node of an undeclared type),
+// NotFound when the schedule is not in catalog. A test run of a schedule with no
+// node with data tests is created, finished skipped.
 func (h *SchedulerHandler) TriggerSchedule(
 	ctx context.Context,
 	req *statev1.TriggerScheduleRequest,
@@ -423,6 +426,9 @@ func (h *SchedulerHandler) TriggerSchedule(
 	u := h.uowFactory()
 	id, outcome, err := h.activate.Handle(ctx, u, req.ScheduleName, run.KindTrigger, nil, identity.FromContext(ctx), operation)
 	if err != nil {
+		if st, ok := planRefusal(err); ok {
+			return nil, st.Err()
+		}
 		switch {
 		case errors.Is(err, run.ErrScheduleNotInCatalog):
 			return nil, status.Errorf(codes.NotFound, "schedule %q not in catalog", req.ScheduleName)
@@ -437,7 +443,6 @@ func (h *SchedulerHandler) TriggerSchedule(
 }
 
 // GetSchedulerInitStatus returns the initialization_status for a scheduler.
-// Used by orchestrator to guard premature finalization during re-run.
 func (h *SchedulerHandler) GetSchedulerInitStatus(ctx context.Context, req *statev1.GetSchedulerInitStatusRequest) (*statev1.GetSchedulerInitStatusResponse, error) {
 	if req.ScheduleId == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "schedule_id is required")

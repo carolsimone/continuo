@@ -5,7 +5,10 @@ import (
 	"log/slog"
 	"testing"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
+
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
+	"github.com/carolsimone/continuo/state/service/runstart"
 	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/stretchr/testify/require"
 )
@@ -17,7 +20,7 @@ func TestActivateSchedule_SkippedDuringMaintenance(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(&buf, nil))
 	opened := 0
 	cfg := &SchedulesConfig{Timezone: "UTC", Schedules: []ScheduleEntry{{Name: "daily", Cron: "0 1 * * *"}}}
-	s, err := NewCronSchedulerWithConfig(svchandlers.NewActivateScheduleHandler(logger),
+	s, err := NewCronSchedulerWithConfig(svchandlers.NewActivateScheduleHandler(defaultPlanner, logger),
 		func() uow.UnitOfWork { opened++; return nil }, logger, cfg, true)
 	require.NoError(t, err)
 
@@ -27,3 +30,6 @@ func TestActivateSchedule_SkippedDuringMaintenance(t *testing.T) {
 	require.Contains(t, buf.String(), "maintenance")
 	require.Contains(t, buf.String(), "daily")
 }
+
+// defaultPlanner plans the runs of the default tenant, as state's main does.
+var defaultPlanner = runstart.Planner{TenantID: pkgevents.DefaultTenantID}

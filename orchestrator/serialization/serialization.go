@@ -1,70 +1,15 @@
 // Package serialization holds the wire-facing DTOs for orchestrator's
-// json-tagged domain types, keeping the domain packages (domain, domain/event,
-// domain/model) free of struct tags. It sits outside adapters/ so the
-// application layer (service/handlers, which both produces query.model:v1
-// payloads and re-marshals consumed events as dedup fingerprints) may map
-// through it without importing an adapter, and outside domain/ so the tags live
-// away from the domain types. The redis parsers (consume side) and the publisher
-// (query.model produce side) map through these DTOs, fixing the byte shapes here.
+// json-tagged domain types, keeping the domain packages (domain/event) free of
+// struct tags. It sits outside adapters/ so the application layer
+// (service/handlers, which re-marshals consumed events as dedup fingerprints)
+// may map through it without importing an adapter, and outside domain/ so the
+// tags live away from the domain types. The redis parsers map consumed
+// messages through these DTOs, fixing the byte shapes here.
 package serialization
 
 import (
-	"github.com/carolsimone/continuo/orchestrator/domain"
 	"github.com/carolsimone/continuo/orchestrator/domain/event"
-	"github.com/carolsimone/continuo/orchestrator/domain/model"
 )
-
-// NodeReadyForExecutionDTO is the JSON shape of the query.model:v1 payload.
-type NodeReadyForExecutionDTO struct {
-	ScheduleID   string `json:"schedule_id"`
-	ScheduleName string `json:"schedule_name"`
-	ServiceName  string `json:"service_name"`
-	SchemaName   string `json:"schema_name"`
-	TableName    string `json:"table_name"`
-	TaskID       string `json:"task_id"`
-	JobName      string `json:"job_name"`
-	NodeType     string `json:"node_type"`
-	ImageTag     string `json:"image_tag"`
-	SecretRef    string `json:"secret_ref,omitempty"`
-	Operation    string `json:"operation,omitempty"`
-	MaxRetries   int32  `json:"max_retries,omitempty"`
-}
-
-// NodeReadyForExecutionFromDomain maps a domain event to its DTO.
-func NodeReadyForExecutionFromDomain(e domain.NodeReadyForExecution) NodeReadyForExecutionDTO {
-	return NodeReadyForExecutionDTO{
-		ScheduleID:   e.ScheduleID,
-		ScheduleName: e.ScheduleName,
-		ServiceName:  e.ServiceName,
-		SchemaName:   e.SchemaName,
-		TableName:    e.TableName,
-		TaskID:       e.TaskID,
-		JobName:      e.JobName,
-		NodeType:     e.NodeType,
-		ImageTag:     e.ImageTag,
-		SecretRef:    e.SecretRef,
-		Operation:    e.Operation,
-		MaxRetries:   e.MaxRetries,
-	}
-}
-
-// ToDomain maps a decoded DTO back to the domain event.
-func (d NodeReadyForExecutionDTO) ToDomain() domain.NodeReadyForExecution {
-	return domain.NodeReadyForExecution{
-		ScheduleID:   d.ScheduleID,
-		ScheduleName: d.ScheduleName,
-		ServiceName:  d.ServiceName,
-		SchemaName:   d.SchemaName,
-		TableName:    d.TableName,
-		TaskID:       d.TaskID,
-		JobName:      d.JobName,
-		NodeType:     d.NodeType,
-		ImageTag:     d.ImageTag,
-		SecretRef:    d.SecretRef,
-		Operation:    d.Operation,
-		MaxRetries:   d.MaxRetries,
-	}
-}
 
 // RemediationRequestedNodeDTO is the JSON shape of one classified failure.
 type RemediationRequestedNodeDTO struct {
@@ -233,26 +178,4 @@ func (d PRClosedDTO) ToDomain() event.PRClosed {
 		ClosedAt:        d.ClosedAt,
 		Edits:           edits,
 	}
-}
-
-// PromotedSeedsNodeDTO is the JSON shape of one node in a trigger.promoted_seeds:v1
-// nodes array.
-type PromotedSeedsNodeDTO struct {
-	ServiceName string `json:"service_name"`
-	SchemaName  string `json:"schema_name"`
-	TableName   string `json:"table_name"`
-	NodeType    string `json:"node_type"`
-	ImageTag    string `json:"image_tag"`
-}
-
-// PromotedSeedsNodesToDomain maps decoded node DTOs to domain nodes.
-func PromotedSeedsNodesToDomain(in []PromotedSeedsNodeDTO) []model.PromotedSeedsNode {
-	if in == nil {
-		return nil
-	}
-	out := make([]model.PromotedSeedsNode, len(in))
-	for i, n := range in {
-		out[i] = model.PromotedSeedsNode(n)
-	}
-	return out
 }

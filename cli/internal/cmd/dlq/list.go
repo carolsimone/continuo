@@ -28,7 +28,7 @@ queue, or whether any messages were lost.
 Arguments:
   [source]  Optional. consumer, outbox, quarantine, or all. Omit (or give
             all) to list every source; an empty value is a usage error.
-  [stream]  Optional. Only dead letters of this stream, e.g. node.updated:v1.
+  [stream]  Optional. Only dead letters of this stream, e.g. task.status.updated:v1.
             Omit to list every stream; an empty value is a usage error. To
             filter by stream alone, give all as the source.
 

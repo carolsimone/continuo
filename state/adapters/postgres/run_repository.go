@@ -195,6 +195,22 @@ func (r *RunRepositoryAdapter) RunExists(ctx context.Context, id uuid.UUID) (boo
 	return exists, nil
 }
 
+// ListUnplannedActive reads the pending and running scheduler_tracker rows
+// whose planned_at is NULL, oldest first, inside the bound transaction.
+func (r *RunRepositoryAdapter) ListUnplannedActive(ctx context.Context) ([]uuid.UUID, error) {
+	if r.tx == nil {
+		return nil, fmt.Errorf("ListUnplannedActive requires an active transaction")
+	}
+	var ids []uuid.UUID
+	if err := r.tx.SelectContext(ctx, &ids, `
+		SELECT schedule_id FROM scheduler_tracker
+		WHERE status IN ('pending', 'running') AND planned_at IS NULL
+		ORDER BY created_at, schedule_id`); err != nil {
+		return nil, fmt.Errorf("list the active runs state did not plan: %w", err)
+	}
+	return ids, nil
+}
+
 // CountReleaseRuns counts the scheduler_tracker rows of kind that name
 // releaseID, reading inside the bound transaction.
 func (r *RunRepositoryAdapter) CountReleaseRuns(ctx context.Context, releaseID string, kind run.Kind) (int, error) {

@@ -12,7 +12,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
-	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/require"
 )
 
@@ -314,35 +313,46 @@ func readScheduleState(t *testing.T, ctx context.Context, clients *testClients, 
 	return st
 }
 
-// queryNeo4jRunKind returns the :Run.kind property for a run, or "" if the node
-// is not found. Used by PR0 audit assertions to verify the kind is stamped on
-// the Neo4j run snapshot.
-func queryNeo4jRunKind(t *testing.T, clients *testClients, runID uuid.UUID) string {
-	t.Helper()
-	session := clients.neo4jDriver.NewSession(context.Background(), neo4jdriver.SessionConfig{
-		AccessMode: neo4jdriver.AccessModeRead,
-	})
-	defer func() { _ = session.Close(context.Background()) }()
-	result, err := session.Run(context.Background(),
-		`MATCH (r:Run {run_id: $run_id}) RETURN COALESCE(r.kind, "") AS kind`,
-		map[string]interface{}{"run_id": runID.String()})
-	require.NoError(t, err)
-	if !result.Next(context.Background()) {
-		return ""
-	}
-	raw, _ := result.Record().Get("kind")
-	s, _ := raw.(string)
-	return s
-}
-
 // queryPostgresTrackerKind returns scheduler_tracker.kind for a run identified by
-// its schedule_id. Used by PR0 audit assertions.
+// its schedule_id.
 func queryPostgresTrackerKind(t *testing.T, db *sqlx.DB, scheduleID uuid.UUID) string {
 	t.Helper()
 	var kind string
 	require.NoError(t, db.GetContext(context.Background(), &kind,
 		`SELECT kind FROM scheduler_tracker WHERE schedule_id = $1`, scheduleID))
 	return kind
+}
+
+// queryRunOperation returns scheduler_tracker.operation for a run: run, test,
+// build or full_refresh.
+func queryRunOperation(t *testing.T, clients *testClients, runID uuid.UUID) string {
+	t.Helper()
+	var operation string
+	require.NoError(t, clients.stateDB.GetContext(context.Background(), &operation,
+		`SELECT operation FROM scheduler_tracker WHERE schedule_id = $1`, runID))
+	return operation
+}
+
+// queryRunSourceRunID returns scheduler_tracker.source_run_id for a run, or ""
+// when the run has no source run.
+func queryRunSourceRunID(t *testing.T, clients *testClients, runID uuid.UUID) string {
+	t.Helper()
+	var source *string
+	require.NoError(t, clients.stateDB.GetContext(context.Background(), &source,
+		`SELECT source_run_id::text FROM scheduler_tracker WHERE schedule_id = $1`, runID))
+	if source == nil {
+		return ""
+	}
+	return *source
+}
+
+// countRunsOfKind counts the scheduler_tracker rows of kind.
+func countRunsOfKind(t *testing.T, clients *testClients, kind string) int {
+	t.Helper()
+	var n int
+	require.NoError(t, clients.stateDB.GetContext(context.Background(), &n,
+		`SELECT count(*) FROM scheduler_tracker WHERE kind = $1`, kind))
+	return n
 }
 
 // queryFirstTaskTrackerImageTag returns the image_tag of any task_tracker row

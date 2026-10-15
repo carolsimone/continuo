@@ -162,50 +162,6 @@ func (r *OrchestratorQueryRepository) GetGeneration(ctx context.Context) (int64,
 	return 0, nil
 }
 
-// ListActiveRuns returns ALL in-flight :Run nodes (completed_at IS NULL),
-// ordered by schedule_name then newest-first (created_at DESC). The query
-// does not deduplicate: multiple rows for the same schedule_name can appear
-// when a concurrent-trigger invariant is violated, making the anomaly
-// observable to the caller. Deduplication to the newest run per schedule is
-// the responsibility of the caller (the run reconciler).
-func (r *OrchestratorQueryRepository) ListActiveRuns(ctx context.Context) ([]*domain.ActiveRun, error) {
-	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
-	defer func() { _ = session.Close(ctx) }()
-
-	query := `
-        MATCH (r:Run)
-        WHERE r.completed_at IS NULL
-        RETURN r.schedule_name AS schedule_name,
-               r.run_id        AS run_id,
-               COALESCE(r.promotion_seq, 0) AS promotion_seq
-        ORDER BY r.schedule_name, r.created_at DESC
-    `
-	result, err := session.Run(ctx, query, nil)
-	if err != nil {
-		return nil, fmt.Errorf("ListActiveRuns: %w", err)
-	}
-
-	runs := make([]*domain.ActiveRun, 0)
-	for result.Next(ctx) {
-		record := result.Record()
-		scheduleName := safeString(recordValue(record, "schedule_name"))
-		runID := safeString(recordValue(record, "run_id"))
-		var seq int64
-		if v, ok := recordValue(record, "promotion_seq").(int64); ok {
-			seq = v
-		}
-		runs = append(runs, &domain.ActiveRun{
-			ScheduleName: scheduleName,
-			RunID:        runID,
-			PromotionSeq: seq,
-		})
-	}
-	if err := result.Err(); err != nil {
-		return nil, fmt.Errorf("ListActiveRuns iterate: %w", err)
-	}
-	return runs, nil
-}
-
 // ListScheduleTopologies returns one row per schedule_name that has at least
 // one active :Table, with node_count and the most recent last_updated_at
 // across that schedule's nodes. Schedules with zero active nodes are omitted.

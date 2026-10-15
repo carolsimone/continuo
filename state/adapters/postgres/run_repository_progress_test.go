@@ -5,6 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/state/domain/runplan"
+	"github.com/carolsimone/continuo/state/domain/topology"
+
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/google/uuid"
@@ -12,7 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestRunRepository_SaveRun_PersistsProgressClock walks a run through dispatch
+// TestRunRepository_SaveRun_PersistsProgressClock walks a run through its start
 // and its first applied task status change, saving after each, and asserts
 // scheduler_tracker.last_heartbeat_at holds the instant of the latest one.
 func TestRunRepository_SaveRun_PersistsProgressClock(t *testing.T) {
@@ -54,20 +57,23 @@ func TestRunRepository_SaveRun_PersistsProgressClock(t *testing.T) {
 		return *got.LastHeartbeatAt
 	}
 
-	taskID := uuid.New()
 	dispatchedAt := time.Now().Add(-30 * time.Minute).UTC().Truncate(time.Microsecond)
+	g := topology.NewGraph([]topology.Node{{
+		Key: "public.tbl", ServiceName: "svc", SchemaName: "public", TableName: "tbl", NodeType: "dbt-model",
+	}}, nil)
+	plan, err := runplan.SingleNode{Key: "public.tbl", ServiceName: "svc"}.Select(g)
+	require.NoError(t, err)
 	saveIn(func(rn *run.Run, tasks run.TaskCollection) {
-		_, err := rn.AcceptDispatch(ctx, tasks, []run.DispatchedTask{
-			{TaskID: taskID, ServiceName: "svc", SchemaName: "public", TableName: "tbl", Status: run.TaskStatusPending, MaxRetries: 3},
-		}, dispatchedAt)
+		_, err := rn.Start(ctx, tasks, "default", plan, g, 2, dispatchedAt)
 		require.NoError(t, err)
 	})
+	taskID := run.TaskIDFor("default", scheduleID, "public.tbl")
 	got := heartbeat()
-	assert.True(t, got.Equal(dispatchedAt), "after dispatch: last_heartbeat_at = %v, want %v", got, dispatchedAt)
+	assert.True(t, got.Equal(dispatchedAt), "after the start: last_heartbeat_at = %v, want %v", got, dispatchedAt)
 
 	runningAt := time.Now().UTC().Truncate(time.Microsecond)
 	saveIn(func(rn *run.Run, tasks run.TaskCollection) {
-		_, _, err := rn.RecordTaskStatus(ctx, tasks, taskID, run.TaskStatusRunning, 0, runningAt)
+		_, _, err := rn.RecordTaskStatus(ctx, tasks, nil, taskID, run.TaskStatusRunning, 0, runningAt)
 		require.NoError(t, err)
 	})
 	got = heartbeat()

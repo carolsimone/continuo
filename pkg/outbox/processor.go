@@ -40,10 +40,8 @@ type BatchPublisher interface {
 
 // TerminalFailureHook runs once per entry when its retry budget is exhausted,
 // just before MarkFailed. Best-effort: errors are logged, not propagated.
-// Returning nil from the constructor (Processor.OnTerminalFailure unset) means
-// "no-op," which is what state/orchestrator/k8s use; executor uses it to
-// publish task.status.updated:v1=FAILED and node.updated:v1=FAILED for
-// dispatch-exhaustion cases.
+// Passing nil to the constructor (Processor.OnTerminalFailure unset) means
+// "no-op", which is what every service passes.
 type TerminalFailureHook func(ctx context.Context, entry *Entry, cause error) error
 
 // FallbackTick is the poll interval of a relay with a Waker. Between wakes the

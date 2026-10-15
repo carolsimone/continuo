@@ -5,9 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"log/slog"
-	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
@@ -78,41 +76,49 @@ func (h *builtHarness) saveRun(t *testing.T, rn *run.Run) uuid.UUID {
 	return rn.ScheduleID()
 }
 
-// seedRun saves a promote-seed run of releaseID that loads raw.table.
-func (h *builtHarness) seedRun(t *testing.T, releaseID, table string) uuid.UUID {
+// trigger triggers schedule with operation op on the live release, and
+// returns the run.
+func (h *builtHarness) trigger(t *testing.T, schedule string, op model.Operation) uuid.UUID {
 	t.Helper()
-	id := uuid.New()
-	rn, _, err := run.NewPromotedSeedsRun(id, "promote-seed-"+strings.ReplaceAll(id.String(), "-", "")[:8], run.ReleaseStamp{ReleaseID: releaseID, PromotionSeq: 1},
-		[]run.SeedNode{{NodeID: run.NodeID{ServiceName: "service-1", SchemaName: "raw", TableName: table}, NodeType: "dbt-seed", ImageTag: "service-1:v1"}},
-		time.Now())
+	_, err := h.db.Exec(`
+		INSERT INTO schedule_catalog (schedule_name, first_seen_at, last_seen_at) VALUES ($1, now(), now())
+		ON CONFLICT (schedule_name) DO UPDATE SET removed_at = NULL`, schedule)
 	require.NoError(t, err)
-	return h.saveRun(t, rn)
+	id, _, err := svchandlers.NewActivateScheduleHandler(defaultPlanner, h.logger).Handle(context.Background(), h.factory(),
+		schedule, run.KindTrigger, nil, identity.FromUserID("okta|alice"), op)
+	require.NoError(t, err)
+	return id
 }
 
-// dispatch creates the run's one task on raw.table, as run.entries.dispatched:v1
-// does, and returns its id.
-func (h *builtHarness) dispatch(t *testing.T, runID uuid.UUID, table, imageTag string) uuid.UUID {
+// legacyRun saves a running run on releaseID whose tasks state did not plan:
+// planned_at is NULL, and its one pending task at raw.table records no
+// dispatch. It returns the run and its task.
+func (h *builtHarness) legacyRun(t *testing.T, releaseID, table string) (uuid.UUID, uuid.UUID) {
 	t.Helper()
-	taskID := uuid.New()
-	h.inTx(t, func(ctx context.Context, u uow.UnitOfWork) error {
-		return svchandlers.NewRunEntriesDispatchedHandler(h.logger).Handle(ctx, u, events.RunEntriesDispatched{
-			ScheduleID: runID, TotalTaskCount: 1,
-			AllTasks: []events.RunEntriesDispatchedTask{{
-				TaskID: taskID, ServiceName: "service-1", SchemaName: "raw", TableName: table,
-				Status: run.TaskStatusPending, ImageTag: imageTag,
-			}},
-		}, uuid.Nil)
-	})
-	return taskID
+	runID, taskID := uuid.New(), uuid.New()
+	_, err := h.db.Exec(`
+		INSERT INTO scheduler_tracker (schedule_id, schedule_name, status, initialization_status, total_task_count, release_id, promotion_seq)
+		VALUES ($1, $2, 'running', 'completed', 1, $3, 1)`, runID, "legacy-"+runID.String()[:8], releaseID)
+	require.NoError(t, err)
+	_, err = h.db.Exec(`
+		INSERT INTO task_tracker (task_id, schedule_id, service_name, schema_name, table_name, job_name, status, max_retries, image_tag, node_key)
+		VALUES ($1, $2, 'service-1', 'raw', $3, $3, 'pending', 2, 'service-1:v1', $4)`, taskID, runID, table, "raw."+table)
+	require.NoError(t, err)
+	return runID, taskID
 }
 
 // finish reports the task's status, as task.status.updated:v1 does.
 func (h *builtHarness) finish(t *testing.T, runID, taskID uuid.UUID, status run.TaskStatus) {
 	t.Helper()
 	h.inTx(t, func(ctx context.Context, u uow.UnitOfWork) error {
-		return svchandlers.NewTaskStatusUpdatedHandler(h.logger).Handle(ctx, u,
+		return svchandlers.NewTaskStatusUpdatedHandler(pkgevents.DefaultTenantID, h.logger).Handle(ctx, u,
 			events.TaskStatusUpdated{TaskID: taskID, ScheduleID: runID, Status: status}, uuid.Nil)
 	})
+}
+
+// task is the id of runID's task at key, for the default tenant.
+func task(runID uuid.UUID, key topology.NodeKey) uuid.UUID {
+	return run.TaskIDFor(pkgevents.DefaultTenantID, runID, key)
 }
 
 type loadedRow struct {
@@ -139,9 +145,9 @@ func (h *builtHarness) loaded(t *testing.T, key string) (loadedRow, bool) {
 }
 
 // TestBuiltVersions drives task.status.updated:v1 against a real Postgres: a
-// succeeded task of a run that names a release records the version it loaded,
-// a rerun of such a run carries its release, and the other cases record
-// nothing. Every subtest uses its own release and node.
+// succeeded task of a run state planned with a writing operation records the
+// version it loaded, the content hash of its node in the run's release, and
+// the other cases record nothing. Every subtest uses its own release and node.
 func TestBuiltVersions(t *testing.T) {
 	if testing.Short() {
 		t.Skip("integration test")
@@ -150,11 +156,10 @@ func TestBuiltVersions(t *testing.T) {
 	defer cleanup()
 	h := newBuiltHarness(db)
 
-	t.Run("a succeeded promote-seed task records the release's content hash", func(t *testing.T) {
-		releaseID := "rel-" + uuid.NewString()[:8]
-		h.storeRelease(t, releaseID, promotedNode("raw", "orders_built", "dbt-seed"))
-		runID := h.seedRun(t, releaseID, "orders_built")
-		taskID := h.dispatch(t, runID, "orders_built", "service-1:v1")
+	t.Run("a succeeded task of a planned run records the release's content hash", func(t *testing.T) {
+		stamp := promoteRelease(t, db, scheduledNode("raw", "orders_built", "dbt-model", "built-orders"))
+		runID := h.trigger(t, "built-orders", model.OperationRun)
+		taskID := task(runID, "raw.orders_built")
 
 		h.finish(t, runID, taskID, run.TaskStatusSucceeded)
 
@@ -162,59 +167,68 @@ func TestBuiltVersions(t *testing.T) {
 		require.True(t, ok)
 		assert.Equal(t, "sha256:orders_built", row.ContentHash)
 		assert.Equal(t, "service-1:v1", row.ImageTag)
-		assert.Equal(t, releaseID, row.ReleaseID)
+		assert.Equal(t, stamp.ReleaseID, row.ReleaseID)
 		assert.Equal(t, uuid.NullUUID{UUID: runID, Valid: true}, row.RunID)
 		assert.Equal(t, uuid.NullUUID{UUID: taskID, Valid: true}, row.TaskID)
 		require.NotNil(t, row.Source)
 		assert.Equal(t, "build", *row.Source)
 	})
 
-	t.Run("a run that names no release records nothing", func(t *testing.T) {
-		rn, _, err := run.NewPendingRun("trigger-"+uuid.NewString()[:8], run.KindTrigger, nil, "", nil, model.OperationRun, run.ReleaseStamp{}, time.Now())
-		require.NoError(t, err)
-		runID := h.saveRun(t, rn)
-		taskID := h.dispatch(t, runID, "no_release", "service-1:v1")
+	t.Run("a succeeded task of a test run records nothing", func(t *testing.T) {
+		tested := scheduledNode("raw", "tested_built", "dbt-model", "built-tested")
+		one := 1
+		tested.TestCount = &one
+		promoteRelease(t, db, tested)
+		runID := h.trigger(t, "built-tested", model.OperationTest)
+
+		h.finish(t, runID, task(runID, "raw.tested_built"), run.TaskStatusSucceeded)
+
+		_, ok := h.loaded(t, "raw.tested_built")
+		assert.False(t, ok, "a test reads the table, it does not load it")
+	})
+
+	t.Run("a run whose tasks state did not plan records nothing", func(t *testing.T) {
+		releaseID := "rel-" + uuid.NewString()[:8]
+		h.storeRelease(t, releaseID, promotedNode("raw", "legacy_built", "dbt-model"))
+		runID, taskID := h.legacyRun(t, releaseID, "legacy_built")
 
 		h.finish(t, runID, taskID, run.TaskStatusSucceeded)
 
-		_, ok := h.loaded(t, "raw.no_release")
+		_, ok := h.loaded(t, "raw.legacy_built")
 		assert.False(t, ok)
 	})
 
 	t.Run("a failed task records nothing", func(t *testing.T) {
-		releaseID := "rel-" + uuid.NewString()[:8]
-		h.storeRelease(t, releaseID, promotedNode("raw", "failing", "dbt-seed"))
-		runID := h.seedRun(t, releaseID, "failing")
-		taskID := h.dispatch(t, runID, "failing", "service-1:v1")
+		promoteRelease(t, db, scheduledNode("raw", "failing", "dbt-model", "built-failing"))
+		runID := h.trigger(t, "built-failing", model.OperationRun)
 
-		h.finish(t, runID, taskID, run.TaskStatusFailed)
+		h.finish(t, runID, task(runID, "raw.failing"), run.TaskStatusFailed)
 
 		_, ok := h.loaded(t, "raw.failing")
 		assert.False(t, ok)
 	})
 
-	t.Run("a node absent from the run's release records nothing", func(t *testing.T) {
-		releaseID := "rel-" + uuid.NewString()[:8]
-		h.storeRelease(t, releaseID, promotedNode("raw", "present", "dbt-seed"))
-		runID := h.seedRun(t, releaseID, "absent")
-		taskID := h.dispatch(t, runID, "absent", "service-1:v1")
+	t.Run("a node without a content hash records nothing", func(t *testing.T) {
+		blank := scheduledNode("raw", "unhashed", "dbt-model", "built-unhashed")
+		blank.ContentHash = ""
+		promoteRelease(t, db, blank)
+		runID := h.trigger(t, "built-unhashed", model.OperationRun)
 
-		h.finish(t, runID, taskID, run.TaskStatusSucceeded)
+		h.finish(t, runID, task(runID, "raw.unhashed"), run.TaskStatusSucceeded)
 
-		_, ok := h.loaded(t, "raw.absent")
+		_, ok := h.loaded(t, "raw.unhashed")
 		assert.False(t, ok)
 	})
 
 	t.Run("the version is recorded in the task status transaction, so a rollback records nothing", func(t *testing.T) {
-		releaseID := "rel-" + uuid.NewString()[:8]
-		h.storeRelease(t, releaseID, promotedNode("raw", "rolled_back", "dbt-seed"))
-		runID := h.seedRun(t, releaseID, "rolled_back")
-		taskID := h.dispatch(t, runID, "rolled_back", "service-1:v1")
+		promoteRelease(t, db, scheduledNode("raw", "rolled_back", "dbt-model", "built-rollback"))
+		runID := h.trigger(t, "built-rollback", model.OperationRun)
+		taskID := task(runID, "raw.rolled_back")
 
 		ctx := context.Background()
 		u := h.factory()
 		require.NoError(t, u.Begin(ctx))
-		require.NoError(t, svchandlers.NewTaskStatusUpdatedHandler(h.logger).Handle(ctx, u,
+		require.NoError(t, svchandlers.NewTaskStatusUpdatedHandler(pkgevents.DefaultTenantID, h.logger).Handle(ctx, u,
 			events.TaskStatusUpdated{TaskID: taskID, ScheduleID: runID, Status: run.TaskStatusSucceeded}, uuid.Nil))
 		require.NoError(t, u.Rollback())
 
@@ -228,33 +242,25 @@ func TestBuiltVersions(t *testing.T) {
 		assert.Equal(t, "sha256:rolled_back", row.ContentHash)
 	})
 
-	t.Run("a rerun of a promote-seed run carries its release and records on success", func(t *testing.T) {
-		releaseID := "rel-" + uuid.NewString()[:8]
-		h.storeRelease(t, releaseID, promotedNode("raw", "rerun_orders", "dbt-seed"))
-		sourceID := h.seedRun(t, releaseID, "rerun_orders")
-		sourceTask := h.dispatch(t, sourceID, "rerun_orders", "service-1:v1")
-		h.finish(t, sourceID, sourceTask, run.TaskStatusFailed)
-		_, ok := h.loaded(t, "raw.rerun_orders")
-		require.False(t, ok, "the failed source loaded nothing")
-
-		rerunID, _, err := svchandlers.NewTriggerRerunHandler(h.logger).Handle(context.Background(), h.factory(), sourceID, identity.FromUserID("okta|alice"))
+	t.Run("a rerun records the content hash of its source's release", func(t *testing.T) {
+		source := promoteRelease(t, db, scheduledNode("raw", "rerun_orders", "dbt-model", "built-rerun"))
+		sourceID := h.trigger(t, "built-rerun", model.OperationRun)
+		_, err := db.Exec(`UPDATE task_tracker SET status = 'failed', retry_count = 2 WHERE schedule_id = $1`, sourceID)
 		require.NoError(t, err)
-		var stored struct {
-			ReleaseID *string `db:"release_id"`
-			Kind      string  `db:"kind"`
-		}
-		require.NoError(t, db.Get(&stored, `SELECT release_id, kind FROM scheduler_tracker WHERE schedule_id = $1`, rerunID))
-		require.NotNil(t, stored.ReleaseID)
-		assert.Equal(t, releaseID, *stored.ReleaseID)
-		assert.Equal(t, "rerun", stored.Kind)
+		_, err = db.Exec(`UPDATE scheduler_tracker SET status = 'failed', completed_at = now() WHERE schedule_id = $1`, sourceID)
+		require.NoError(t, err)
+		changed := scheduledNode("raw", "rerun_orders", "dbt-model", "built-rerun")
+		changed.ContentHash = "sha256:rerun_orders-changed"
+		promoteRelease(t, db, changed)
 
-		rerunTask := h.dispatch(t, rerunID, "rerun_orders", "service-1:v1")
-		h.finish(t, rerunID, rerunTask, run.TaskStatusSucceeded)
+		rerunID, _, err := svchandlers.NewTriggerRerunHandler(defaultPlanner, h.logger).Handle(context.Background(), h.factory(), sourceID, identity.FromUserID("okta|alice"))
+		require.NoError(t, err)
+		h.finish(t, rerunID, task(rerunID, "raw.rerun_orders"), run.TaskStatusSucceeded)
 
 		row, ok := h.loaded(t, "raw.rerun_orders")
 		require.True(t, ok)
-		assert.Equal(t, "sha256:rerun_orders", row.ContentHash)
+		assert.Equal(t, "sha256:rerun_orders", row.ContentHash, "the rerun loaded the source release's version")
+		assert.Equal(t, source.ReleaseID, row.ReleaseID)
 		assert.Equal(t, uuid.NullUUID{UUID: rerunID, Valid: true}, row.RunID)
-		assert.Equal(t, releaseID, row.ReleaseID)
 	})
 }

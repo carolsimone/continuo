@@ -7,9 +7,9 @@ import (
 )
 
 // QueryModel is the parsed query.model:v1 stream payload — a typed,
-// in-process representation of a deploy request emitted by the orchestrator.
+// in-process representation of a deploy request emitted by state.
 //
-// OutboxEntryID is the orchestrator's outbox row ID, carried through
+// OutboxEntryID is state's outbox row ID, carried through
 // as the message_processing_id provenance field on the executor's outbox
 // row. Zero value (uuid.Nil) means the inbound message did not carry the
 // field; dedup relies solely on the shared (msg.ID, stream_name) layer.
@@ -34,11 +34,11 @@ type QueryModel struct {
 	// pkg_model.OperationFullRefresh rebuilds a model (full_refresh command)
 	// or seed (seed_full_refresh command) from scratch.
 	Operation pkg_model.Operation
-	// Mode carries the legacy promote-seed dispatch mode from a query.model:v1
-	// message produced by an older orchestrator. Empty for everything current.
-	// See events.ModePromoteSeed.
+	// Mode names the Job mode a message carries explicitly. state sets none, so
+	// it is empty for every message state writes; events.ModePromoteSeed is the
+	// one value still honoured.
 	Mode string
-	// MaxRetries is the task's retry budget the orchestrator stamped on the
+	// MaxRetries is the task's retry budget state stamped on the
 	// dispatch. Zero means the message carried none; the queued deployment
 	// then takes pkgevents.DefaultTaskMaxRetries.
 	MaxRetries int32

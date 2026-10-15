@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/events"
 	"github.com/carolsimone/continuo/state/domain/seeds"
@@ -19,28 +19,32 @@ import (
 // Loads the Run aggregate, invokes RecordTaskStatus (which owns the
 // finalization state machine — terminal-count increment/decrement on
 // retries, defer finalize when retryable failed tasks remain, emit
-// RunFinalized with the correct outcome), persists via SaveRun, publishes
-// emitted events. When the run applies the success of a task of a run that
-// names a release, it also records the version the task loaded into the
-// warehouse, which the seed reconcile compares with the live release. A success
-// the run ignores (the run is over, the attempt was superseded, the task
-// already finished that attempt) records no version either, so a stale delivery
-// cannot overwrite what the applied one recorded.
+// RunFinalized with the correct outcome — and, on a run state planned, the
+// dispatch of the tasks a success makes ready and the skip of the tasks a
+// final failure blocks), persists via SaveRun, publishes emitted events. When
+// the run applies the success of a task of a run state planned with an
+// operation that writes the table, it also records the version the task loaded
+// into the warehouse, which the seed reconcile compares with the live release.
+// A success the run ignores (the run is over, the attempt was superseded, the
+// task already finished that attempt) records no version either, so a stale
+// delivery cannot overwrite what the applied one recorded.
 type TaskStatusUpdatedHandler struct {
-	logger *slog.Logger
+	tenantID string
+	logger   *slog.Logger
 }
 
-// NewTaskStatusUpdatedHandler constructs the handler.
-func NewTaskStatusUpdatedHandler(logger *slog.Logger) *TaskStatusUpdatedHandler {
-	return &TaskStatusUpdatedHandler{logger: logger}
+// NewTaskStatusUpdatedHandler constructs the handler for the runs of
+// tenantID.
+func NewTaskStatusUpdatedHandler(tenantID string, logger *slog.Logger) *TaskStatusUpdatedHandler {
+	return &TaskStatusUpdatedHandler{tenantID: tenantID, logger: logger}
 }
 
 // Handle orchestrates the task-status-updated flow.
 //
 // Caller contract: u.Begin(ctx) has been called; the handler MUST NOT commit.
 // Returning nil tells the binding to commit; returning an error triggers
-// rollback. A transient error (e.g. run.ErrTaskRowNotProjected) propagates
-// so the consumer's reclaim loop retries.
+// rollback. run.ErrTaskNotHeld propagates as it is; the stream binding marks
+// it permanent.
 func (h *TaskStatusUpdatedHandler) Handle(
 	ctx context.Context,
 	u uow.UnitOfWork,
@@ -51,7 +55,7 @@ func (h *TaskStatusUpdatedHandler) Handle(
 	if err != nil {
 		return fmt.Errorf("load run: %w", err)
 	}
-	domainEvents, succeededApplied, err := r.RecordTaskStatus(ctx, u.TaskCollection(), evt.TaskID, evt.Status, evt.RetryCount, u.Clock().Now())
+	domainEvents, succeededApplied, err := r.RecordTaskStatus(ctx, u.TaskCollection(), u.TaskGraph(h.tenantID), evt.TaskID, evt.Status, evt.RetryCount, u.Clock().Now())
 	if err != nil {
 		return fmt.Errorf("record task status: %w", err)
 	}
@@ -61,15 +65,9 @@ func (h *TaskStatusUpdatedHandler) Handle(
 	if err := u.Outbox().Append(ctx, domainEvents, msgProcID); err != nil {
 		return fmt.Errorf("append outbox: %w", err)
 	}
-	if succeededApplied && r.ReleaseID() != "" {
-		records, err := h.recordsBuiltVersions(ctx, u, r)
-		if err != nil {
+	if succeededApplied && recordsBuiltVersions(r) {
+		if err := h.recordLoaded(ctx, u, r, evt); err != nil {
 			return err
-		}
-		if records {
-			if err := h.recordLoaded(ctx, u, r, evt); err != nil {
-				return err
-			}
 		}
 	}
 	h.logger.Info("task.status.updated: processed",
@@ -80,35 +78,11 @@ func (h *TaskStatusUpdatedHandler) Handle(
 	return nil
 }
 
-// maxSourceDepth bounds the walk from a rerun back through its source runs.
-const maxSourceDepth = 32
-
-// recordsBuiltVersions reports whether r's tasks were chosen from r's own
-// release, so a succeeded task loaded that release's version of its node:
-// a promote-seed run, or a rerun whose chain of source runs starts at one.
-// The tasks of every other run are chosen from orchestrator's live graph,
-// which can trail the release the run names.
-func (h *TaskStatusUpdatedHandler) recordsBuiltVersions(ctx context.Context, u uow.UnitOfWork, r *run.Run) (bool, error) {
-	current := r
-	for depth := 0; depth < maxSourceDepth; depth++ {
-		switch current.Kind() {
-		case run.KindPromoteSeed:
-			return true, nil
-		case run.KindRerun:
-			src := current.SourceRunID()
-			if src == nil {
-				return false, nil
-			}
-			next, err := u.Run().GetRun(ctx, *src)
-			if err != nil {
-				return false, fmt.Errorf("read source run %s: %w", *src, err)
-			}
-			current = next
-		default:
-			return false, nil
-		}
-	}
-	return false, nil
+// recordsBuiltVersions reports whether a succeeded task of r loaded its node's
+// version of r's release into the warehouse: state chose r's tasks from that
+// release, and r's operation writes the table. A test only reads it.
+func recordsBuiltVersions(r *run.Run) bool {
+	return r.PlannedAt() != nil && r.ReleaseID() != "" && r.Operation() != model.OperationTest
 }
 
 // recordLoaded records the version a succeeded task of a run that names a
@@ -127,7 +101,7 @@ func (h *TaskStatusUpdatedHandler) recordLoaded(ctx context.Context, u uow.UnitO
 		return fmt.Errorf("read task %s: %w", evt.TaskID, err)
 	}
 	key := topology.KeyOf(task.SchemaName, task.TableName)
-	hash, found, err := u.Topology().NodeContentHash(ctx, pkgevents.DefaultTenantID, r.ReleaseID(), key)
+	hash, found, err := u.Topology().NodeContentHash(ctx, h.tenantID, r.ReleaseID(), key)
 	if err != nil {
 		return fmt.Errorf("read the content hash of %s in release %s: %w", key, r.ReleaseID(), err)
 	}
@@ -136,7 +110,7 @@ func (h *TaskStatusUpdatedHandler) recordLoaded(ctx context.Context, u uow.UnitO
 			"task_id", evt.TaskID, "node_key", key, "release_id", r.ReleaseID(), "in_release", found)
 		return nil
 	}
-	if err := u.Materializations().RecordBuilt(ctx, pkgevents.DefaultTenantID, seeds.Built{
+	if err := u.Materializations().RecordBuilt(ctx, h.tenantID, seeds.Built{
 		Key:         key,
 		ContentHash: hash,
 		ImageTag:    task.ImageTag,

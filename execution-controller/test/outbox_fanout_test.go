@@ -7,10 +7,10 @@ package test
 // These tests use an externally migrated PostgreSQL test database to verify
 // that the D1 design guarantee holds at the storage layer — not just in memory:
 //
-//   1. Happy path: handleSucceeded commits exactly 3 rows.
-//   2. Rollback path: a Create error on the 3rd write rolls back all 3, leaving 0 rows.
+//   1. Happy path: handleSucceeded commits exactly 2 rows.
+//   2. Rollback path: a Create error on the 2nd write rolls back both, leaving 0 rows.
 //
-// A future refactor that moves the 3 Creates outside the transaction, or splits
+// A future refactor that moves the 2 Creates outside the transaction, or splits
 // them across two transactions, would fail test 2 — which is the point.
 
 import (
@@ -225,10 +225,10 @@ func eventTypesForAggregate(t testing.TB, db *sqlx.DB, aggregateID uuid.UUID) []
 	return types
 }
 
-// TestK8sFanout_HandleSucceeded_Commits3Rows is the D1 happy-path invariant:
+// TestK8sFanout_HandleSucceeded_Commits2Rows is the D1 happy-path invariant:
 // driving handleSucceeded through a real Postgres transaction must commit exactly
-// 3 rows with the correct event_types in execution_outbox.
-func TestK8sFanout_HandleSucceeded_Commits3Rows(t *testing.T) {
+// 2 rows with the correct event_types in execution_outbox.
+func TestK8sFanout_HandleSucceeded_Commits2Rows(t *testing.T) {
 	db, logger, cleanup := setupTestDB(t)
 	defer cleanup()
 
@@ -241,12 +241,12 @@ func TestK8sFanout_HandleSucceeded_Commits3Rows(t *testing.T) {
 	}
 
 	got := countOutboxRows(t, db, taskID)
-	if got != 3 {
-		t.Fatalf("D1 invariant violated: expected 3 rows in execution_outbox, got %d", got)
+	if got != 2 {
+		t.Fatalf("D1 invariant violated: expected 2 rows in execution_outbox, got %d", got)
 	}
 
 	types := eventTypesForAggregate(t, db, taskID)
-	want := []string{"task_status_updated", "task_execution_recorded", "node_updated"}
+	want := []string{"task_status_updated", "task_execution_recorded"}
 	if len(types) != len(want) {
 		t.Fatalf("event_types mismatch: want %v got %v", want, types)
 	}
@@ -258,22 +258,22 @@ func TestK8sFanout_HandleSucceeded_Commits3Rows(t *testing.T) {
 }
 
 // TestK8sFanout_HandleSucceeded_AtomicRollback is the D1 rollback invariant:
-// when the 3rd outbox Create fails, the entire transaction must roll back and
+// when the 2nd outbox Create fails, the entire transaction must roll back and
 // leave 0 rows in execution_outbox.
 //
-// This guards against accidentally splitting the 3 writes across separate
-// transactions: if they were split, the first two rows would survive the
-// failure and this test would detect it.
+// This guards against accidentally splitting the 2 writes across separate
+// transactions: if they were split, the first row would survive the failure
+// and this test would detect it.
 func TestK8sFanout_HandleSucceeded_AtomicRollback(t *testing.T) {
 	db, logger, cleanup := setupTestDB(t)
 	defer cleanup()
 
 	handler := newSucceededHandler(logger)
 
-	// Inject a failure on the 3rd Create call (node_updated). The counting
-	// repo is created once and reused across OutboxRepo() calls so failOnN counts
-	// every Create within the single transaction.
-	counting := &countingOutboxRepo{failOnN: 3}
+	// Inject a failure on the 2nd Create call (task_execution_recorded). The
+	// counting repo is created once and reused across OutboxRepo() calls so
+	// failOnN counts every Create within the single transaction.
+	counting := &countingOutboxRepo{failOnN: 2}
 	u := &injectingUnitOfWork{
 		real: postgres.NewPostgresUnitOfWork(db, logger),
 		wrapOutbox: func(repo pkgoutbox.Repository) pkgoutbox.Repository {
@@ -285,7 +285,7 @@ func TestK8sFanout_HandleSucceeded_AtomicRollback(t *testing.T) {
 	taskID := uuid.New()
 	err := runInUoW(context.Background(), u, handler, newSucceededCmd(taskID))
 	if err == nil {
-		t.Fatal("expected Handle to return an error when the 3rd Create is injected, got nil")
+		t.Fatal("expected Handle to return an error when the 2nd Create is injected, got nil")
 	}
 	if !errors.Is(err, errInjected) {
 		t.Fatalf("expected errInjected, got: %v", err)

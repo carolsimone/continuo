@@ -22,9 +22,7 @@ func (existingRunSchedRepo) CreateTx(_ context.Context, _ *sqlx.Tx, _ *Scheduler
 }
 
 func TestRunRepositoryAdapter_SaveRun_ExistingRunIsErrRunAlreadyExists(t *testing.T) {
-	rn, _, err := run.NewPromotedSeedsRun(uuid.New(), "promote-seed-test", run.ReleaseStamp{ReleaseID: "rel-1", PromotionSeq: 1},
-		[]run.SeedNode{{NodeID: run.NodeID{ServiceName: "core", SchemaName: "analytics", TableName: "seed_users"}}},
-		time.Now())
+	rn, err := run.NewPromotedSeedsRun(uuid.New(), "promote-seed-test", run.ReleaseStamp{ReleaseID: "rel-1", PromotionSeq: 1}, time.Now())
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}

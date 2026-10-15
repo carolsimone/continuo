@@ -234,31 +234,3 @@ func TestReleasePromotionRepository_ConcurrentPromotionsKeepTheNewestLive(t *tes
 		assert.Equal(t, []string{"new"}, activeTableIDs(t, client), "iteration %d", i)
 	}
 }
-
-// LivePromotionSeq reads the seq of the last applied promotion recorded on
-// :Meta: 0 on a graph no promotion has reached, and unchanged by a stale
-// promotion.
-func TestReleasePromotionRepository_LivePromotionSeq(t *testing.T) {
-	ctx := context.Background()
-	client := newTestClient(t)
-	wipeReleaseFixtures(t, client)
-	t.Cleanup(func() { wipeReleaseFixtures(t, client) })
-	repo := newReleaseRepo(client)
-
-	seq, err := repo.LivePromotionSeq(ctx)
-	require.NoError(t, err)
-	assert.Equal(t, int64(0), seq, "no promotion has reached the graph")
-
-	_, err = repo.PromoteRelease(ctx, "rel-live", 4, seqNode("live"), nil, time.Now().UTC())
-	require.NoError(t, err)
-	seq, err = repo.LivePromotionSeq(ctx)
-	require.NoError(t, err)
-	assert.Equal(t, int64(4), seq)
-
-	outcome, err := repo.PromoteRelease(ctx, "rel-old", 3, seqNode("old"), nil, time.Now().UTC())
-	require.NoError(t, err)
-	assert.Equal(t, topology.PromotionStale, outcome)
-	seq, err = repo.LivePromotionSeq(ctx)
-	require.NoError(t, err)
-	assert.Equal(t, int64(4), seq, "a stale promotion leaves the live seq alone")
-}

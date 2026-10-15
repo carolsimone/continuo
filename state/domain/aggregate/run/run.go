@@ -49,7 +49,7 @@ type Run struct {
 	plannedAt *time.Time
 
 	// totalTaskCount is nil until the run's child set is known (it is stamped by
-	// AcceptDispatch or Start). nil mirrors a NULL total_task_count column.
+	// Start). nil mirrors a NULL total_task_count column.
 	totalTaskCount    *int32
 	terminalTaskCount int32
 
@@ -123,14 +123,13 @@ func (r *Run) HydrateRelease(s ReleaseStamp) { r.release = s }
 // Adapter-only: domain code plans a run through Start.
 func (r *Run) HydratePlannedAt(at *time.Time) { r.plannedAt = at }
 
-// NewPendingRun creates a fresh PENDING Run for activation. Caller flow:
-// SchedulePolicy.ScheduleExistsInCatalog → SchedulePolicy.IsScheduleAvailable
-// → NewPendingRun → SaveRun → OutboxPublisher.Append.
+// NewPendingRun creates a fresh PENDING Run of a schedule, fired by cron or
+// triggered. Caller flow: SchedulePolicy.ScheduleExistsInCatalog →
+// SchedulePolicy.IsScheduleAvailable → NewPendingRun → SaveRun → Start → SaveRun.
 //
-// operation selects the dbt verb (run/test/build) the downstream orchestrator
-// applies to the whole DAG; state itself does not act on it — it only
-// forwards the value onto the emitted RunStarted event. Callers other than a
-// manual TriggerSchedule (cron, etc.) pass model.OperationRun.
+// operation is the dbt verb (run/test/build) the run applies to every node it
+// executes. Callers other than a manual TriggerSchedule (cron, etc.) pass
+// model.OperationRun.
 //
 // stamp is the release the run runs on: the live release when the run is created.
 func NewPendingRun(
@@ -142,19 +141,18 @@ func NewPendingRun(
 	operation model.Operation,
 	stamp ReleaseStamp,
 	now time.Time,
-) (*Run, DomainEvent, error) {
+) (*Run, error) {
 	if scheduleName == "" {
-		return nil, nil, ErrScheduleNameRequired
+		return nil, ErrScheduleNameRequired
 	}
 	if !kind.IsValid() {
-		return nil, nil, ErrInvalidKind
+		return nil, ErrInvalidKind
 	}
 	if metadata == nil {
 		metadata = map[string]ServiceMetadata{}
 	}
-	id := uuid.New()
 	r := &Run{
-		scheduleID:      id,
+		scheduleID:      uuid.New(),
 		scheduleName:    scheduleName,
 		status:          SchedulerStatusPending,
 		initStatus:      InitStatusInProgress,
@@ -167,15 +165,14 @@ func NewPendingRun(
 		serviceMetadata: metadata,
 	}
 	r.changes.created = true
-	evt := RunStarted{ID: id, Name: scheduleName, K: kind, SourceID: sourceRunID, InitiatedBy: initiatedBy, ServiceMetadata: metadata, Operation: operation}
-	return r, evt, nil
+	return r, nil
 }
 
 // NewDerivedRun creates a PENDING Run for rerun/rebase. The derived run
 // inherits the source run's operation: rerun/rebase re-issue the source
-// run's dbt verb (run/build) against the derived task set. A test source
-// is rejected upstream in orchestrator before a derived run is requested.
-// Stamps last_heartbeat_at so dashboards show the new run immediately.
+// run's dbt verb (run/build) against the derived task set; the planner refuses
+// a test source. Stamps last_heartbeat_at so dashboards show the new run
+// immediately.
 //
 // stamp is the release the run runs on: the source run's for a rerun, the
 // live release for a rebase.
@@ -187,16 +184,15 @@ func NewDerivedRun(
 	initiatedBy string,
 	operation model.Operation,
 	now time.Time,
-) (*Run, DomainEvent, error) {
+) (*Run, error) {
 	if scheduleName == "" {
-		return nil, nil, ErrScheduleNameRequired
+		return nil, ErrScheduleNameRequired
 	}
 	if kind != KindRerun && kind != KindRebase {
-		return nil, nil, ErrInvalidKind
+		return nil, ErrInvalidKind
 	}
-	id := uuid.New()
 	r := &Run{
-		scheduleID:      id,
+		scheduleID:      uuid.New(),
 		scheduleName:    scheduleName,
 		status:          SchedulerStatusPending,
 		initStatus:      InitStatusInProgress,
@@ -210,37 +206,26 @@ func NewDerivedRun(
 		serviceMetadata: map[string]ServiceMetadata{},
 	}
 	r.changes.created = true
-	var evt DomainEvent
-	if kind == KindRerun {
-		evt = RerunRequested{ID: id, Name: scheduleName, SourceID: sourceRunID, InitiatedBy: initiatedBy}
-	} else {
-		evt = RebaseRequested{ID: id, Name: scheduleName, SourceID: sourceRunID, InitiatedBy: initiatedBy}
-	}
-	return r, evt, nil
+	return r, nil
 }
 
-// NewSingleNodeRun creates a RUNNING single-task Run. operation selects the
-// dbt verb (run/test/build) the downstream orchestrator applies to the
-// target node; state itself does not act on it — it only forwards the value
-// onto the emitted SingleNodeRunRequested event.
+// NewSingleNodeRun creates a RUNNING single-task Run. operation is the dbt
+// verb (run/test/build/full_refresh) the run applies to its node.
 //
 // stamp is the release the run runs on; the zero stamp names none.
 func NewSingleNodeRun(
 	scheduleName string,
-	target NodeID,
-	metadataSource MetadataSource,
 	operation model.Operation,
 	sourceRunID *uuid.UUID,
 	initiatedBy string,
 	stamp ReleaseStamp,
 	now time.Time,
-) (*Run, DomainEvent, error) {
+) (*Run, error) {
 	if scheduleName == "" {
-		return nil, nil, ErrScheduleNameRequired
+		return nil, ErrScheduleNameRequired
 	}
-	id := uuid.New()
 	r := &Run{
-		scheduleID:      id,
+		scheduleID:      uuid.New(),
 		scheduleName:    scheduleName,
 		status:          SchedulerStatusRunning,
 		initStatus:      InitStatusInProgress,
@@ -254,25 +239,18 @@ func NewSingleNodeRun(
 		serviceMetadata: map[string]ServiceMetadata{},
 	}
 	r.changes.created = true
-	evt := SingleNodeRunRequested{
-		ID: id, Name: scheduleName, Target: target,
-		MetadataSource: metadataSource, Operation: operation,
-		SourceID: sourceRunID, InitiatedBy: initiatedBy,
-	}
-	return r, evt, nil
+	return r, nil
 }
 
-// NewPromotedSeedsRun creates a RUNNING Run that loads the given seeds of a
-// release into the production schema, one task per node.
+// NewPromotedSeedsRun creates a RUNNING Run that loads seeds of a release into
+// the production schema, one task per seed.
 //
 // Unlike every other constructor here the run id is supplied rather than
 // generated: the caller derives it deterministically from the release, so
 // planning the same release again resolves to a run that already exists
 // instead of minting a second one that would load the same seeds.
 //
-// The run records stamp, the live release whose seeds it loads; its event
-// carries the stamp's promotion seq, so a projecting service can wait until
-// its own topology has reached it.
+// The run records stamp, the live release whose seeds it loads.
 //
 // The run carries no operation: a seed is materialised by its own dbt verb,
 // chosen downstream from the node type, not by a verb selected here.
@@ -280,20 +258,16 @@ func NewPromotedSeedsRun(
 	id uuid.UUID,
 	scheduleName string,
 	stamp ReleaseStamp,
-	nodes []SeedNode,
 	now time.Time,
-) (*Run, DomainEvent, error) {
+) (*Run, error) {
 	if scheduleName == "" {
-		return nil, nil, ErrScheduleNameRequired
+		return nil, ErrScheduleNameRequired
 	}
 	if id == uuid.Nil {
-		return nil, nil, ErrRunIDRequired
+		return nil, ErrRunIDRequired
 	}
 	if stamp.ReleaseID == "" {
-		return nil, nil, ErrReleaseIDRequired
-	}
-	if len(nodes) == 0 {
-		return nil, nil, ErrNoNodes
+		return nil, ErrReleaseIDRequired
 	}
 	r := &Run{
 		scheduleID:      id,
@@ -308,14 +282,7 @@ func NewPromotedSeedsRun(
 		serviceMetadata: map[string]ServiceMetadata{},
 	}
 	r.changes.created = true
-	evt := PromotedSeedsRunRequested{
-		ID:           id,
-		Name:         scheduleName,
-		ReleaseID:    stamp.ReleaseID,
-		PromotionSeq: stamp.PromotionSeq,
-		Nodes:        nodes,
-	}
-	return r, evt, nil
+	return r, nil
 }
 
 // ============================================================================
@@ -377,128 +344,6 @@ func (c changeSet) IsStartedDirty() bool           { return c.startedDirty }
 func (c changeSet) IsCompletedDirty() bool         { return c.completedDirty }
 func (c changeSet) IsHeartbeatDirty() bool         { return c.heartbeatDirty }
 func (c changeSet) IsPlannedDirty() bool           { return c.plannedDirty }
-
-// AcceptDispatch consumes the run.entries.dispatched:v1 projection. The
-// projection IS the full child set (no prior tasks exist), so the aggregate
-// makes the auto-rollup decision in one pass over the input.
-//
-// Behaviour:
-//   - No-op (returns no events, no mutations) when r is already terminal, or
-//     when its init_status is already completed: a run is dispatched once, so a
-//     repeated projection neither re-creates tasks nor resets the counters.
-//     The handler binding still commits the surrounding tx so dedup is recorded.
-//   - A projected task whose identity cannot be turned into a Kubernetes Job
-//     name finalizes the run as failed through MarkDispatchTerminal with reason
-//     DispatchReasonInvalidTask, before any task is written. No error is
-//     returned: the outcome commits like any other dispatch result. This path
-//     leaves init_status unchanged (the run is terminal, so a redelivery still
-//     no-ops through IsTerminal).
-//   - BulkCreate every projected task.
-//   - total_task_count = len(projection); terminal_task_count seeded from
-//     already-terminal projected rows.
-//   - init_status = completed once the projected tasks are written (every
-//     path except the unnameable-task finalization above).
-//   - last_heartbeat_at (the run's progress clock) = now.
-//   - Status transition:
-//     every projected task terminal && all succeeded → SUCCEEDED + completed_at
-//     every projected task terminal && any non-succeeded → FAILED + completed_at
-//     otherwise → RUNNING
-//   - Records a RunFinalized event only on the auto-rollup branch.
-func (r *Run) AcceptDispatch(
-	ctx context.Context,
-	tasks TaskCollection,
-	projection []DispatchedTask,
-	now time.Time,
-) ([]DomainEvent, error) {
-	return r.acceptDispatch(ctx, tasks, projection, now, domain.ComputeJobName)
-}
-
-// jobNameFunc names a task's Kubernetes Job from its node identity and run id.
-type jobNameFunc func(serviceName, schemaName, tableName, runID string) (string, error)
-
-// acceptDispatch is AcceptDispatch with the Job-naming function supplied by the
-// caller.
-func (r *Run) acceptDispatch(
-	ctx context.Context,
-	tasks TaskCollection,
-	projection []DispatchedTask,
-	now time.Time,
-	nameJob jobNameFunc,
-) ([]DomainEvent, error) {
-	if r.IsTerminal() || r.initStatus == InitStatusCompleted {
-		return nil, nil
-	}
-
-	built := make([]Task, 0, len(projection))
-	for _, p := range projection {
-		jobName, err := nameJob(p.ServiceName, p.SchemaName, p.TableName, r.scheduleID.String())
-		if err != nil {
-			return r.MarkDispatchTerminal(false, DispatchReasonInvalidTask, now)
-		}
-		built = append(built, Task{
-			TaskID:              p.TaskID,
-			ScheduleID:          r.scheduleID,
-			CreatedAt:           now,
-			ServiceName:         p.ServiceName,
-			SchemaName:          p.SchemaName,
-			TableName:           p.TableName,
-			NodeKey:             topology.KeyOf(p.SchemaName, p.TableName),
-			JobName:             jobName,
-			Status:              p.Status,
-			MaxRetries:          int(p.MaxRetries),
-			ImageTag:            p.ImageTag,
-			InheritedFromTaskID: p.InheritedFromTaskID,
-			Operation:           r.operation,
-		})
-	}
-
-	if err := tasks.BulkCreate(ctx, built); err != nil {
-		return nil, fmt.Errorf("bulk create tasks: %w", err)
-	}
-
-	allTerminal, allSucceeded := true, true
-	terminal := int32(0)
-	for _, p := range projection {
-		if !p.Status.IsTerminal() {
-			allTerminal, allSucceeded = false, false
-			continue
-		}
-		terminal++
-		if p.Status != TaskStatusSucceeded {
-			allSucceeded = false
-		}
-	}
-
-	total := num.ClampInt32(len(projection))
-	r.totalTaskCount = &total
-	r.terminalTaskCount = terminal
-	r.initStatus = InitStatusCompleted
-	r.changes.totalTaskCountDirty = true
-	r.changes.terminalTaskCountDirty = true
-	r.changes.initStatusDirty = true
-	r.recordProgress(now)
-
-	if allTerminal {
-		outcome := SchedulerStatusFailed
-		if allSucceeded {
-			outcome = SchedulerStatusSucceeded
-		}
-		r.status = outcome
-		completedAt := now
-		r.completedAt = &completedAt
-		r.changes.statusDirty = true
-		r.changes.completedDirty = true
-		evt := RunFinalized{ID: r.scheduleID, Name: r.scheduleName, Outcome: outcome}
-		return []DomainEvent{evt}, nil
-	}
-
-	r.status = SchedulerStatusRunning
-	startedAt := now
-	r.startedAt = &startedAt
-	r.changes.statusDirty = true
-	r.changes.startedDirty = true
-	return nil, nil
-}
 
 // Start stores the tasks plan chose for r and dispatches the plan's ready
 // tasks. g is the slice of r's release the plan was chosen from; every task
@@ -669,6 +514,21 @@ func (r *Run) Cancel(
 }
 
 // RecordTaskStatus is the hot-path mutator driven by task.status.updated:v1.
+//
+// On a run whose tasks state planned (planned_at set), a terminal status that
+// takes effect also moves the rest of the run, reading how its tasks connect
+// through graph:
+//   - a success dispatches every pending, undispatched task it makes ready
+//     (each of its in-run upstreams succeeded), stamping dispatched_at and
+//     recording a TaskDispatched per task, in key order;
+//   - a failure on the task's last allowed attempt (retryCount >= the task's
+//     max_retries) skips every pending, undispatched task below it in the run,
+//     which can no longer run, and counts them terminal.
+//
+// A run whose tasks state did not plan reads nothing through graph: its tasks
+// do not record when they were dispatched, so neither readiness nor a cascade
+// can be read from them.
+//
 // Returns no events when:
 //   - the run is already terminal (stale event)
 //   - the task row exists but the status did not change (replay)
@@ -686,8 +546,7 @@ func (r *Run) Cancel(
 // delivery that made it. It does not depend on finalization: an accepted
 // success that leaves other tasks open returns no events and true.
 //
-// Returns ErrTaskRowNotProjected when the task row is not yet present; the
-// adapter binding treats this as a transient error and the consumer redelivers.
+// Returns ErrTaskNotHeld when the run holds no task with taskID.
 //
 // task.status.updated:v1 carries two messages per attempt: execution-controller's
 // job-status handler announces RUNNING once, then the terminal status once the
@@ -705,6 +564,7 @@ func (r *Run) Cancel(
 func (r *Run) RecordTaskStatus(
 	ctx context.Context,
 	tasks TaskCollection,
+	graph TaskGraph,
 	taskID uuid.UUID,
 	newStatus TaskStatus,
 	retryCount int32,
@@ -713,40 +573,30 @@ func (r *Run) RecordTaskStatus(
 	if r.IsTerminal() {
 		return nil, false, nil
 	}
-	prev, prevAttempt, exists, err := tasks.LoadStatusAndAttempt(ctx, taskID)
+	attempt, exists, err := tasks.LoadAttemptState(ctx, taskID)
 	if err != nil {
-		// LoadStatusAndAttempt locks the row FOR UPDATE; a failure here is a
+		// LoadAttemptState locks the row FOR UPDATE; a failure here is a
 		// transient I/O error, not "no prior status". Swallowing it would let
 		// the newer-attempt branch below adopt this delivery and overwrite a
 		// newer terminal already recorded for the task, defeating the
 		// attempt-monotonic guard. Propagate so the consumer redelivers once
 		// the read recovers.
-		return nil, false, fmt.Errorf("load task status and attempt: %w", err)
+		return nil, false, fmt.Errorf("load task attempt: %w", err)
 	}
+	prev, prevAttempt := attempt.Status, attempt.RetryCount
 
-	// Guard: if the row is not present, return a transient error so the
-	// consumer redelivers after the projection arrives.
 	if !exists {
-		present, exErr := tasks.Exists(ctx, taskID)
-		if exErr != nil {
-			return nil, false, fmt.Errorf("exists check: %w", exErr)
-		}
-		if !present {
-			return nil, false, ErrTaskRowNotProjected
-		}
-		// Row reported absent by the status read but present on re-check
-		// (a concurrent insert landed between the two reads); proceed with
-		// empty prev so the new-attempt branch adopts it.
+		return nil, false, ErrTaskNotHeld
 	}
 
 	prevKnown := prev != ""
 	isTerminal := newStatus.IsTerminal()
 	prevWasTerminal := prevKnown && prev.IsTerminal()
 
-	// Order the update by attempt (retry_count). The two/three producers of
-	// task.status.updated:v1 act independently, so messages for one task can be
-	// processed in any order; the attempt number makes the projection
-	// order-independent.
+	// Order the update by attempt (retry_count). Deliveries of
+	// task.status.updated:v1 for one task can be processed in any order (a
+	// redelivery can repeat an earlier one); the attempt number makes the
+	// result order-independent.
 
 	// Older attempt — superseded. Covers both a stale RUNNING and a stale
 	// terminal left over from an attempt newer state has already moved past.
@@ -787,7 +637,7 @@ func (r *Run) RecordTaskStatus(
 		}
 		r.recordProgress(now)
 		r.fillSlot()
-		return r.finalizeApplied(ctx, tasks, newStatus, now)
+		return r.applyTerminal(ctx, tasks, graph, attempt, newStatus, retryCount, now)
 	}
 
 	// Newer attempt (retryCount > prevAttempt) or no prior status — adopt it.
@@ -807,13 +657,13 @@ func (r *Run) RecordTaskStatus(
 	case !prevWasTerminal && isTerminal:
 		// Terminal of a running/new attempt — fill the slot.
 		r.fillSlot()
-		return r.finalizeApplied(ctx, tasks, newStatus, now)
+		return r.applyTerminal(ctx, tasks, graph, attempt, newStatus, retryCount, now)
 	case prevWasTerminal && isTerminal:
 		// A newer attempt's terminal arriving after an older attempt's terminal
 		// (e.g. the retry also failed, or it succeeded). The slot stays filled —
 		// no count change — but the task's retryability may have flipped, so
 		// re-check finalization with the now-current attempt persisted.
-		return r.finalizeApplied(ctx, tasks, newStatus, now)
+		return r.applyTerminal(ctx, tasks, graph, attempt, newStatus, retryCount, now)
 	default:
 		// Non-terminal after non-terminal (newer attempt already running) — the
 		// slot was empty and stays empty.
@@ -846,15 +696,105 @@ func (r *Run) unfillSlot() {
 	r.changes.terminalTaskCountDirty = true
 }
 
-// finalizeApplied finalizes the run when its tasks are complete, after a
-// terminal status for one of them took effect. The success flag it returns is
-// that status being SUCCEEDED, independent of whether the run finalized.
-func (r *Run) finalizeApplied(ctx context.Context, tasks TaskCollection, applied TaskStatus, now time.Time) ([]DomainEvent, bool, error) {
-	events, err := r.finalizeIfComplete(ctx, tasks, now)
+// applyTerminal follows a terminal status that took effect for the task whose
+// stored state was attempt: on a run whose tasks state planned, a success
+// dispatches what it makes ready and a failure on the last allowed attempt
+// skips what it blocks; then the run finalizes when its tasks are complete.
+// The success flag it returns is applied being SUCCEEDED, independent of
+// whether the run finalized.
+func (r *Run) applyTerminal(
+	ctx context.Context,
+	tasks TaskCollection,
+	graph TaskGraph,
+	attempt TaskAttemptState,
+	applied TaskStatus,
+	retryCount int32,
+	now time.Time,
+) ([]DomainEvent, bool, error) {
+	var events []DomainEvent
+	if r.plannedAt != nil {
+		switch {
+		case applied == TaskStatusSucceeded:
+			dispatched, err := r.dispatchReady(ctx, tasks, graph, attempt.NodeKey, now)
+			if err != nil {
+				return nil, false, err
+			}
+			events = dispatched
+		case applied == TaskStatusFailed && retryCount >= attempt.MaxRetries:
+			if err := r.skipBlocked(ctx, tasks, graph, attempt.NodeKey); err != nil {
+				return nil, false, err
+			}
+		}
+	}
+	finalized, err := r.finalizeIfComplete(ctx, tasks, now)
 	if err != nil {
 		return nil, false, err
 	}
-	return events, applied == TaskStatusSucceeded, nil
+	return append(events, finalized...), applied == TaskStatusSucceeded, nil
+}
+
+// dispatchReady dispatches the tasks of r that the success of the task at key
+// makes ready: its pending, undispatched downstream tasks whose every in-run
+// upstream has succeeded. Each one MarkDispatched stamps records a
+// TaskDispatched, in key order.
+func (r *Run) dispatchReady(ctx context.Context, tasks TaskCollection, graph TaskGraph, key topology.NodeKey, now time.Time) ([]DomainEvent, error) {
+	candidates, err := graph.ReadyCandidates(ctx, r.scheduleID, r.release.ReleaseID, key)
+	if err != nil {
+		return nil, fmt.Errorf("read the tasks %s's success may make ready: %w", key, err)
+	}
+	var ready []ReadyCandidate
+	ids := make([]uuid.UUID, 0, len(candidates))
+	for _, c := range candidates {
+		if c.Ready() {
+			ready = append(ready, c)
+			ids = append(ids, c.TaskID)
+		}
+	}
+	if len(ready) == 0 {
+		return nil, nil
+	}
+	stamped, err := tasks.MarkDispatched(ctx, ids, now)
+	if err != nil {
+		return nil, fmt.Errorf("mark the tasks %s's success made ready dispatched: %w", key, err)
+	}
+	isStamped := make(map[uuid.UUID]bool, len(stamped))
+	for _, id := range stamped {
+		isStamped[id] = true
+	}
+	events := make([]DomainEvent, 0, len(stamped))
+	for _, c := range ready {
+		if !isStamped[c.TaskID] {
+			continue
+		}
+		events = append(events, TaskDispatched{
+			ID:           r.scheduleID,
+			ScheduleName: r.scheduleName,
+			TaskID:       c.TaskID,
+			Node:         c.Node,
+			JobName:      c.JobName,
+			Operation:    r.operation,
+			MaxRetries:   c.MaxRetries,
+		})
+	}
+	return events, nil
+}
+
+// skipBlocked skips the pending, undispatched tasks of r below the task at
+// key, which has failed for good, and counts each one it skips as terminal.
+func (r *Run) skipBlocked(ctx context.Context, tasks TaskCollection, graph TaskGraph, key topology.NodeKey) error {
+	blocked, err := graph.PendingDescendants(ctx, r.scheduleID, r.release.ReleaseID, key)
+	if err != nil {
+		return fmt.Errorf("read the tasks %s's failure blocks: %w", key, err)
+	}
+	skipped, err := tasks.MarkSkipped(ctx, blocked)
+	if err != nil {
+		return fmt.Errorf("skip the tasks %s's failure blocks: %w", key, err)
+	}
+	if skipped > 0 {
+		r.terminalTaskCount += num.ClampInt32(skipped)
+		r.changes.terminalTaskCountDirty = true
+	}
+	return nil
 }
 
 // finalizeIfComplete finalizes the scheduler when every task is terminal, the
@@ -891,12 +831,11 @@ func (r *Run) finalizeIfComplete(ctx context.Context, tasks TaskCollection, now 
 	return r.finalize(outcome, now), nil
 }
 
-// MarkDispatchTerminal finalizes a run whose dispatch produced no work: it is
-// called when orchestrator emits run.entries.dispatch_failed:v1, and by
-// AcceptDispatch for a task it cannot name. A benign outcome (no work to do — a
-// Test run with no tests) finalizes the run as `skipped`; any other reason
-// finalizes it as `failed`. reason is recorded on the RunDispatchTerminal side
-// event regardless of outcome. No-op when r is already terminal.
+// MarkDispatchTerminal finalizes a run that was created without tasks: a cron
+// run whose selection was refused. A benign outcome (no work to do — a test
+// run over nodes with no data tests) finalizes the run as `skipped`; any other
+// reason finalizes it as `failed`. reason is recorded on the RunDispatchTerminal
+// side event regardless of outcome. No-op when r is already terminal.
 func (r *Run) MarkDispatchTerminal(benign bool, reason string, now time.Time) ([]DomainEvent, error) {
 	if r.IsTerminal() {
 		return nil, nil

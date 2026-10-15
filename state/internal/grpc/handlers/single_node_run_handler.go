@@ -84,6 +84,9 @@ func (h *SingleNodeRunHandler) TriggerSingleNodeRun(ctx context.Context, req *st
 
 	id, name, err := h.useCase.Handle(ctx, h.uowFactory(), in)
 	if err != nil {
+		if st, ok := planRefusal(err); ok {
+			return nil, st.Err()
+		}
 		switch {
 		case errors.Is(err, postgres.ErrNotFound):
 			return nil, status.Errorf(codes.NotFound, "source run not found")

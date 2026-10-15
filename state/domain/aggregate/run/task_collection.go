@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/carolsimone/continuo/state/domain/topology"
 	"github.com/google/uuid"
 )
 
@@ -16,18 +17,16 @@ import (
 // Write methods are targeted SQL operations the aggregate orchestrates
 // inside its own method bodies.
 type TaskCollection interface {
-	// LoadStatusAndAttempt returns the current status and stored retry_count
-	// (the attempt number) of a single task, locking the row FOR UPDATE so
-	// concurrent task.status.updated deliveries for the same task serialize.
-	// The attempt is the discriminator the aggregate uses to order updates:
-	// a strictly newer attempt supersedes, an older one is stale, and the same
-	// attempt distinguishes a first terminal from a replay/late duplicate. The
-	// third return is false when the row does not exist; err is non-nil only
-	// for genuine I/O failures.
-	LoadStatusAndAttempt(ctx context.Context, taskID uuid.UUID) (status TaskStatus, retryCount int32, exists bool, err error)
-
-	// Exists checks whether a task_tracker row with the given id is present.
-	Exists(ctx context.Context, taskID uuid.UUID) (bool, error)
+	// LoadAttemptState returns what a status update needs of one task: its
+	// status, its stored retry_count (the attempt number), its retry budget
+	// and its node key, locking the row FOR UPDATE so concurrent
+	// task.status.updated deliveries for the same task serialize. The attempt
+	// is the discriminator the aggregate uses to order updates: a strictly
+	// newer attempt supersedes, an older one is stale, and the same attempt
+	// distinguishes a first terminal from a replay/late duplicate. The second
+	// return is false when the row does not exist; err is non-nil only for
+	// genuine I/O failures.
+	LoadAttemptState(ctx context.Context, taskID uuid.UUID) (state TaskAttemptState, exists bool, err error)
 
 	// HasFailed reports whether any task in the given run ended FAILED or
 	// CANCELLED — a terminal unsuccessful task. Pending and running tasks do
@@ -46,6 +45,9 @@ type TaskCollection interface {
 	// the given run. Returns ErrTaskNotFound if no row matches.
 	GetByNode(ctx context.Context, runID uuid.UUID, node NodeID) (Task, error)
 
+	// ListRunTasks returns every task of the given run, in node-key order.
+	ListRunTasks(ctx context.Context, runID uuid.UUID) ([]Task, error)
+
 	// GetByID returns one task by id. Returns ErrTaskNotFound if no row
 	// matches.
 	GetByID(ctx context.Context, taskID uuid.UUID) (Task, error)
@@ -60,9 +62,27 @@ type TaskCollection interface {
 	// transaction, so the whole set commits or rolls back together.
 	BulkCreate(ctx context.Context, tasks []Task) error
 
+	// MarkDispatched stamps dispatched_at with at on each task of taskIDs
+	// that is still pending and undispatched, and returns the ids it stamped.
+	MarkDispatched(ctx context.Context, taskIDs []uuid.UUID, at time.Time) ([]uuid.UUID, error)
+
+	// MarkSkipped sets status skipped on each task of taskIDs that is still
+	// pending and undispatched, and returns how many tasks it changed.
+	MarkSkipped(ctx context.Context, taskIDs []uuid.UUID) (int, error)
+
 	// BulkCancel marks every non-terminal task of the given run as
 	// CANCELLED, stamping cancelled_by and cancelled_at with cancelledAt — the
 	// same authoritative instant the Run aggregate used for the run-level
 	// cancellation. Returns the number of rows updated.
 	BulkCancel(ctx context.Context, runID uuid.UUID, cancelledBy string, cancelledAt time.Time) (rowsAffected int, err error)
+}
+
+// TaskAttemptState is one task as a status update reads it: its status, the
+// attempt it is at, its retry budget and its node in the run's release. NodeKey
+// is empty on a task whose run names no release.
+type TaskAttemptState struct {
+	Status     TaskStatus
+	RetryCount int32
+	MaxRetries int32
+	NodeKey    topology.NodeKey
 }

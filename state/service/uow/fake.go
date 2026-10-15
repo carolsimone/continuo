@@ -42,6 +42,11 @@ type FakeUnitOfWork struct {
 
 	// MaterializationRepo backs Materializations().
 	MaterializationRepo repository.MaterializationRepository
+
+	// Graph backs TaskGraph(); GraphTenant records the tenant it was last
+	// asked for.
+	Graph       run.TaskGraph
+	GraphTenant string
 }
 
 func (f *FakeUnitOfWork) MessageProcessingRepo() messageprocessing.Repository {
@@ -96,6 +101,13 @@ func (f *FakeUnitOfWork) Topology() repository.TopologyRepository { return f.Top
 // the MaterializationRepo field.
 func (f *FakeUnitOfWork) Materializations() repository.MaterializationRepository {
 	return f.MaterializationRepo
+}
+
+// TaskGraph returns the run.TaskGraph set via the Graph field and records
+// tenantID.
+func (f *FakeUnitOfWork) TaskGraph(tenantID string) run.TaskGraph {
+	f.GraphTenant = tenantID
+	return f.Graph
 }
 
 // Clock returns the configured clock, falling back to ports.SystemClock{} when

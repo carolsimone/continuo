@@ -86,7 +86,7 @@ func benchmarkStatusUpdates(b *testing.B, shape releaseShape, next func(keys []s
 	var keys []string
 	require.NoError(b, db.Select(&keys,
 		`SELECT node_key FROM task_tracker WHERE schedule_id = $1 ORDER BY node_key COLLATE "C"`, r.ScheduleID()))
-	handler := handlers.NewTaskStatusUpdatedHandler(discardLogger())
+	handler := handlers.NewTaskStatusUpdatedHandler(tenant, discardLogger())
 	u := newPlanningUoW(db)
 	updated := map[string]bool{}
 

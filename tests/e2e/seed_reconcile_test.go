@@ -20,10 +20,9 @@ const seedReconcileNodeKey = seedSchemaName + ".seed_table_1"
 
 // TestSeedReconcile_LoadsAChangedSeedOnce announces the e2e DAG with
 // seed_table_1 carrying a content hash state has never loaded. state plans one
-// promote-seed run for it in the transaction that applies the announcement,
-// orchestrator projects the run once its graph has applied the same
-// announcement, the seed loads with service-1's image, and state records the
-// hash it loaded. Announcing the same content again under a new release loads
+// promote-seed run for it and dispatches the seed in the transaction that
+// applies the announcement, the seed loads with service-1's image, and state
+// records the hash it loaded. Announcing the same content again under a new release loads
 // nothing. The default e2e DAG, whose seeds carry no content hash, is restored
 // at the end.
 func TestSeedReconcile_LoadsAChangedSeedOnce(t *testing.T) {

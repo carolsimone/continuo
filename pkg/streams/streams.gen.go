@@ -4,39 +4,21 @@ package streams
 
 // Stream names.
 const (
-	// SchedulerStartedV1 — A new run created by state (cron fire or manual trigger); orchestrator snapshots the run's tasks onto the topology and dispatches the ready ones.
-	SchedulerStartedV1 = "scheduler.started:v1"
 	// SchedulesLoadedV1 — Schedule names and service metadata of a promoted release, emitted by orchestrator in the topology-swap transaction; state reconciles its schedule catalog from it.
 	SchedulesLoadedV1 = "schedules.loaded:v1"
-	// RunEntriesDispatchedV1 — Run entries that orchestrator successfully dispatched into the executor queue.
-	RunEntriesDispatchedV1 = "run.entries.dispatched:v1"
-	// RunEntriesDispatchFailedV1 — Run entries orchestrator failed to dispatch.
-	RunEntriesDispatchFailedV1 = "run.entries.dispatch_failed:v1"
-	// TaskStatusUpdatedV1 — Per-task status transitions: RUNNING, SUCCEEDED and FAILED from execution-controller, SKIPPED from orchestrator when a node is cascade-skipped; state drives run finalization from them.
+	// QueryModelV1 — One dispatch per ready task, written by state to its outbox in the transaction that makes the task ready (the run's creation, or the success of the task's last upstream); execution-controller runs the task as a Kubernetes Job.
+	QueryModelV1 = "query.model:v1"
+	// TaskStatusUpdatedV1 — Per-task status transitions (RUNNING, SUCCEEDED and FAILED) from execution-controller. state records each in its run's transaction, dispatches the tasks a success makes ready, skips the pending descendants of a final failure and finalizes the run.
 	TaskStatusUpdatedV1 = "task.status.updated:v1"
 	// TaskExecutionRecordedV1 — Completed task executions emitted by execution-controller's outbox processor.
 	TaskExecutionRecordedV1 = "task.execution.recorded:v1"
-	// NodeUpdatedV1 — Node state transitions; orchestrator updates its projections.
-	NodeUpdatedV1 = "node.updated:v1"
-	// TriggerRerunV1 — User-initiated rerun trigger.
-	TriggerRerunV1 = "trigger.rerun:v1"
-	// TriggerRebaseV1 — User-initiated rebase trigger.
-	TriggerRebaseV1 = "trigger.rebase:v1"
-	// TriggerSingleNodeRunV1 — User-initiated single-node run trigger.
-	TriggerSingleNodeRunV1 = "trigger.single_node_run:v1"
-	// TriggerPromotedSeedsV1 — Run trigger for the live release's seeds that still need building. state creates the run and writes the trigger in the same transaction, carrying the optional promotion_seq of the live promotion the run was planned against; orchestrator projects the run's tasks once its graph holds that promotion.
-	TriggerPromotedSeedsV1 = "trigger.promoted_seeds:v1"
-	// RunFinalizedV1 — Run finalization (succeeded, failed, cancelled or skipped) emitted by state; orchestrator projects the terminal status onto its run.
-	RunFinalizedV1 = "run.finalized:v1"
-	// QueryModelV1 — Tasks dispatched by orchestrator for the executor pool.
-	QueryModelV1 = "query.model:v1"
 	// CheckK8sV1 — Delayed status-check tickets; a promoter moves due tickets from the delay queue into the stream.
 	CheckK8sV1 = "check.k8s:v1"
 	// OutboxDeadLetterV1 — Terminal outbox publish failures (permanent payload errors, or transient errors that exhausted their backoff budget), emitted by every service's outbox processor with the fields the row would have published. dead-letter-controller stores them for listing and redrive.
 	OutboxDeadLetterV1 = "outbox.dead_letter:v1"
 	// ConsumerDeadLetterV1 — Messages a stream consumer gave up on (a permanent error, or a transient error on its fifth delivery), written before the original is acknowledged. dead-letter-controller stores them for listing and redrive.
 	ConsumerDeadLetterV1 = "consumer.dead_letter:v1"
-	// ScheduleCancelledV1 — Schedule cancellation broadcast; fanned out to orchestrator and execution-controller.
+	// ScheduleCancelledV1 — A run's cancellation, written by state; execution-controller records it and drops the run's dispatches and Job results that arrive afterwards.
 	ScheduleCancelledV1 = "schedule.cancelled:v1"
 	// ReleaseRequestedV1 — Candidate release accepted by release-controller; triggers manifest load for validation.
 	ReleaseRequestedV1 = "release.requested:v1"
@@ -74,40 +56,20 @@ const (
 
 // Consumer groups.
 const (
-	// OrchestratorSchedulerStarted — orchestrator consumer group on scheduler.started:v1.
-	OrchestratorSchedulerStarted = "orchestrator-scheduler-started"
 	// StateScheduleCatalog — state consumer group on schedules.loaded:v1.
 	StateScheduleCatalog = "state-schedule-catalog"
-	// StateRunEntriesDispatched — state consumer group on run.entries.dispatched:v1.
-	StateRunEntriesDispatched = "state-run-entries-dispatched"
-	// StateRunEntriesDispatchFailed — state consumer group on run.entries.dispatch_failed:v1.
-	StateRunEntriesDispatchFailed = "state-run-entries-dispatch-failed"
+	// ExecutorQueryModel — execution-controller consumer group on query.model:v1.
+	ExecutorQueryModel = "executor-query-model"
 	// StateTaskStatusUpdated — state consumer group on task.status.updated:v1.
 	StateTaskStatusUpdated = "state-task-status-updated"
 	// StateTaskExecutionRecorded — state consumer group on task.execution.recorded:v1.
 	StateTaskExecutionRecorded = "state-task-execution-recorded"
-	// OrchestratorNodeUpdated — orchestrator consumer group on node.updated:v1.
-	OrchestratorNodeUpdated = "orchestrator-node-updated"
-	// OrchestratorRerun — orchestrator consumer group on trigger.rerun:v1.
-	OrchestratorRerun = "orchestrator-rerun"
-	// OrchestratorRebase — orchestrator consumer group on trigger.rebase:v1.
-	OrchestratorRebase = "orchestrator-rebase"
-	// OrchestratorSingleNodeRun — orchestrator consumer group on trigger.single_node_run:v1.
-	OrchestratorSingleNodeRun = "orchestrator-single-node-run"
-	// OrchestratorPromotedSeeds — orchestrator consumer group on trigger.promoted_seeds:v1.
-	OrchestratorPromotedSeeds = "orchestrator-promoted-seeds"
-	// OrchestratorRunFinalized — orchestrator consumer group on run.finalized:v1.
-	OrchestratorRunFinalized = "orchestrator-run-finalized"
-	// ExecutorQueryModel — execution-controller consumer group on query.model:v1.
-	ExecutorQueryModel = "executor-query-model"
 	// K8sCheckStatus — execution-controller consumer group on check.k8s:v1.
 	K8sCheckStatus = "k8s-check-status"
 	// DeadLetterControllerOutboxDeadLetters — dead-letter-controller consumer group on outbox.dead_letter:v1.
 	DeadLetterControllerOutboxDeadLetters = "dead-letter-controller-outbox-dead-letters"
 	// DeadLetterControllerConsumerDeadLetters — dead-letter-controller consumer group on consumer.dead_letter:v1.
 	DeadLetterControllerConsumerDeadLetters = "dead-letter-controller-consumer-dead-letters"
-	// OrchestratorScheduleCancelled — orchestrator consumer group on schedule.cancelled:v1.
-	OrchestratorScheduleCancelled = "orchestrator-schedule-cancelled"
 	// ExecutorScheduleCancelled — execution-controller consumer group on schedule.cancelled:v1.
 	ExecutorScheduleCancelled = "executor-schedule-cancelled"
 	// TopologyControllerReleaseRequested — topology-controller consumer group on release.requested:v1.
@@ -157,19 +119,10 @@ const (
 // All is every stream name from contract.yaml, in contract order — for callers
 // that must operate over all streams (e.g. dead-letter-controller's trim loop).
 var All = []string{
-	SchedulerStartedV1,
 	SchedulesLoadedV1,
-	RunEntriesDispatchedV1,
-	RunEntriesDispatchFailedV1,
+	QueryModelV1,
 	TaskStatusUpdatedV1,
 	TaskExecutionRecordedV1,
-	NodeUpdatedV1,
-	TriggerRerunV1,
-	TriggerRebaseV1,
-	TriggerSingleNodeRunV1,
-	TriggerPromotedSeedsV1,
-	RunFinalizedV1,
-	QueryModelV1,
 	CheckK8sV1,
 	OutboxDeadLetterV1,
 	ConsumerDeadLetterV1,
@@ -196,23 +149,14 @@ var All = []string{
 // declares for it, for callers that must know which groups a stream serves
 // (dead-letter-controller's trim loop).
 var Groups = map[string][]string{
-	SchedulerStartedV1:          {OrchestratorSchedulerStarted},
 	SchedulesLoadedV1:           {StateScheduleCatalog},
-	RunEntriesDispatchedV1:      {StateRunEntriesDispatched},
-	RunEntriesDispatchFailedV1:  {StateRunEntriesDispatchFailed},
+	QueryModelV1:                {ExecutorQueryModel},
 	TaskStatusUpdatedV1:         {StateTaskStatusUpdated},
 	TaskExecutionRecordedV1:     {StateTaskExecutionRecorded},
-	NodeUpdatedV1:               {OrchestratorNodeUpdated},
-	TriggerRerunV1:              {OrchestratorRerun},
-	TriggerRebaseV1:             {OrchestratorRebase},
-	TriggerSingleNodeRunV1:      {OrchestratorSingleNodeRun},
-	TriggerPromotedSeedsV1:      {OrchestratorPromotedSeeds},
-	RunFinalizedV1:              {OrchestratorRunFinalized},
-	QueryModelV1:                {ExecutorQueryModel},
 	CheckK8sV1:                  {K8sCheckStatus},
 	OutboxDeadLetterV1:          {DeadLetterControllerOutboxDeadLetters},
 	ConsumerDeadLetterV1:        {DeadLetterControllerConsumerDeadLetters},
-	ScheduleCancelledV1:         {OrchestratorScheduleCancelled, ExecutorScheduleCancelled},
+	ScheduleCancelledV1:         {ExecutorScheduleCancelled},
 	ReleaseRequestedV1:          {TopologyControllerReleaseRequested},
 	ManifestLoadedCandidateV2:   {ReleaseControllerManifestLoadedCandidate},
 	ValidationRequestedV1:       {ExecutorValidationRequested},
@@ -239,14 +183,23 @@ var Retired = []string{
 	"manifest.loaded.candidate:v1",
 	"manifest.loaded:v1",
 	"node.deployed:v1",
+	"node.updated:v1",
 	"release.promoted:v1",
 	"release.seeds.pending:v1",
 	"remediation.requested:v1",
 	"rerun.ready:v1",
 	"retry.task:v1",
+	"run.entries.dispatch_failed:v1",
+	"run.entries.dispatched:v1",
+	"run.finalized:v1",
 	"run.initialized:v1",
+	"scheduler.started:v1",
 	"seed.build.node.completed:v1",
 	"task.failed:v1",
+	"trigger.promoted_seeds:v1",
+	"trigger.rebase:v1",
+	"trigger.rerun:v1",
+	"trigger.single_node_run:v1",
 	"update.graph:v1",
 	"validation.completed:v1",
 	"validation.node.completed:v1",

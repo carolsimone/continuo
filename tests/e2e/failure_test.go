@@ -59,6 +59,7 @@ func TestE2E_FailurePath_RerunRebasesBothFailureSubtrees(t *testing.T) {
 
 	t.Log("Verifying ftable_f and ftable_h were never deployed (cascade-skipped)...")
 	verifyNoJobsDeployed(t, ctx, []string{"ftable_f", "ftable_h"})
+	verifyTasksSkipped(t, ctx, clients, schedulerID, []string{"ftable_f", "ftable_h"})
 
 	t.Log("Verifying scheduler reaches FAILED state...")
 	verifySchedulerFailed(t, ctx, clients, schedulerID)

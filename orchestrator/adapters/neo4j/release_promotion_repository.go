@@ -22,11 +22,8 @@ type ReleasePromotionRepository struct {
 	logger *slog.Logger
 }
 
-// Compile-time assertions that the adapter satisfies the domain ports.
-var (
-	_ repository.ReleasePromotionRepository = (*ReleasePromotionRepository)(nil)
-	_ repository.LivePromotionReader        = (*ReleasePromotionRepository)(nil)
-)
+// Compile-time assertion that the adapter satisfies the domain port.
+var _ repository.ReleasePromotionRepository = (*ReleasePromotionRepository)(nil)
 
 // NewReleasePromotionRepository constructs a ReleasePromotionRepository backed
 // by the given Neo4j client.
@@ -322,29 +319,4 @@ func (r *ReleasePromotionRepository) PromoteRelease(
 		"node_count", len(nodes),
 	)
 	return topology.PromotionApplied, nil
-}
-
-// LivePromotionSeq reads promotion_seq on :Meta {key:'current_release'}, the
-// value PromoteRelease records in the transaction that applies a promotion. A
-// graph no promotion has reached has no such node or property and reads 0.
-func (r *ReleasePromotionRepository) LivePromotionSeq(ctx context.Context) (int64, error) {
-	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
-	defer func() { _ = session.Close(ctx) }()
-	res, err := session.Run(ctx, `
-		OPTIONAL MATCH (m:Meta {key:'current_release'})
-		RETURN COALESCE(m.promotion_seq, 0) AS promotion_seq
-	`, nil)
-	if err != nil {
-		return 0, fmt.Errorf("read the live promotion seq: %w", err)
-	}
-	if !res.Next(ctx) {
-		if err := res.Err(); err != nil {
-			return 0, fmt.Errorf("read the live promotion seq: %w", err)
-		}
-		return 0, nil
-	}
-	if v, ok := recordValue(res.Record(), "promotion_seq").(int64); ok {
-		return v, nil
-	}
-	return 0, nil
 }

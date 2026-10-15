@@ -7,7 +7,6 @@ import (
 
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/google/uuid"
-	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -82,8 +81,7 @@ func TestRebaseFromFailedRun(t *testing.T) {
 	assert.Equal(t, srcID, *newSourceRunID, "source_run_id must point to the source")
 
 	// ── Wait for the rebase run's task_tracker rows to materialise ──────────
-	// The orchestrator's HandleRebase emits run.entries.dispatched:v1 which
-	// state's run_entries_dispatched_handler ingests to create task_tracker.
+	// state stores the rebase run's tasks in the transaction that creates it.
 	t.Log("Waiting for rebase task_tracker rows to land...")
 	pollUntil(t, ctx, 60*time.Second, 1*time.Second, func() (bool, error) {
 		var count int
@@ -163,19 +161,6 @@ func TestRebaseFromFailedRun(t *testing.T) {
 //   - B4 (rebase-scoped 'latest' read). Implicit: the projection partition
 //     materialises with the corrected scope; without it, the partition
 //     shape would be wrong and the run would not finalize cleanly.
-//
-// What this test does NOT cover:
-//   - B3 (the dispatched-handler auto-rollup branch's run.finalized:v1
-//     emit). The fixture finalizes through the task-status path, which
-//     already emitted run.finalized:v1 before this branch — the
-//     auto-rollup path is not hit. The all-inherited variant is
-//     precondition-rejected at the gRPC layer (TriggerRebase against an
-//     all-succeeded source returns an error), so B3 is unit-tested only
-//     via TestRunEntriesDispatchedHandler_AllInherited_AutoRollupEmitsFinalize.
-//
-// Cross-component assertion: orchestrator's Neo4j :Run for the rebase has
-// completed_at set, confirming orchestrator consumed run.finalized:v1 and
-// finalized its projection.
 func TestRebaseAllInheritedFinalizes(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -273,53 +258,7 @@ func TestRebaseAllInheritedFinalizes(t *testing.T) {
 	assert.Equal(t, int32(8), totalCount,
 		"expected partition: 4 inherited + 4 rebased = 8 total")
 
-	// ── Assert run.finalized:v1 was emitted via state_outbox ────────────────
-	// Whether the entry is still 'pending' or already 'published', its presence
-	// is what proves the finalization handler ran. Here that handler is
-	// state's task_status_updated_handler (the normal task-status path),
-	// which already emitted run.finalized:v1 before this branch — the
-	// auto-rollup branch's emission is not exercised by this fixture.
-	t.Log("Verifying run.finalized:v1 outbox entry exists for the rebase run...")
-	pollUntil(t, ctx, 60*time.Second, 1*time.Second, func() (bool, error) {
-		var n int
-		qErr := clients.stateDB.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM state_outbox
-			   WHERE aggregate_id = $1 AND stream_name = 'run.finalized:v1'`,
-			rebaseRunID,
-		).Scan(&n)
-		if qErr != nil {
-			return false, qErr
-		}
-		return n >= 1, nil
-	}, "no run.finalized:v1 outbox entry for the rebase run")
-
-	// ── Assert orchestrator finalized the Neo4j :Run ────────────────────────
-	// orchestrator consumes run.finalized:v1 and stamps :Run.completed_at.
-	// If completed_at stays NULL, the run is still 'active' in the
-	// orchestrator's projection — i.e. the cross-component finalization
-	// contract is broken.
-	t.Log("Verifying orchestrator stamped Neo4j :Run.completed_at for the rebase run...")
-	pollUntil(t, ctx, 60*time.Second, 1*time.Second, func() (bool, error) {
-		session := clients.neo4jDriver.NewSession(ctx, neo4jdriver.SessionConfig{
-			AccessMode: neo4jdriver.AccessModeRead,
-		})
-		defer session.Close(ctx)
-		result, qErr := session.Run(ctx,
-			`MATCH (r:Run {run_id: $run_id}) RETURN r.completed_at IS NOT NULL AS done`,
-			map[string]interface{}{"run_id": rebaseRunID.String()})
-		if qErr != nil {
-			return false, qErr
-		}
-		if !result.Next(ctx) {
-			return false, nil
-		}
-		raw, _ := result.Record().Get("done")
-		done, _ := raw.(bool)
-		return done, nil
-	}, "orchestrator did not stamp completed_at on the rebase :Run — "+
-		"orchestrator never finalized its projection (likely missed run.finalized:v1)")
-
-	t.Log("Rebase run finalized end-to-end: state + orchestrator agree")
+	t.Log("Rebase run finalized end-to-end")
 }
 
 // dumpRebaseRowsForDebug logs every task_tracker row attached to a rebase

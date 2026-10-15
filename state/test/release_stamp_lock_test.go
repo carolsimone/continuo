@@ -62,7 +62,7 @@ func TestReleaseStamp_CreationSerialisesWithPromotionAndPruning(t *testing.T) {
 	alice := identity.FromUserID("okta|alice")
 
 	h.goLive(t, "rel-old", 4)
-	h.storeRelease(t, "rel-new", promotedNode("raw", "stamp_orders", "dbt-model"))
+	h.storeRelease(t, "rel-new", promotedNode("raw", "stamp_orders", "dbt-model"), scheduledNode("mart", "stamp_lock", "dbt-model", "stamp-lock"))
 	_, err := db.Exec(`UPDATE topology_releases SET loaded_at = now() - interval '30 days' WHERE release_id = 'rel-old'`)
 	require.NoError(t, err)
 	_, err = db.Exec(`INSERT INTO schedule_catalog (schedule_name, first_seen_at, last_seen_at) VALUES ('stamp-lock', now(), now())`)
@@ -87,7 +87,7 @@ func TestReleaseStamp_CreationSerialisesWithPromotionAndPruning(t *testing.T) {
 		created := make(chan uuid.UUID, 1)
 		failed := make(chan error, 1)
 		go func() {
-			id, _, err := svchandlers.NewActivateScheduleHandler(h.logger).Handle(ctx, h.factory(), "stamp-lock", run.KindTrigger, nil, alice, model.OperationRun)
+			id, _, err := svchandlers.NewActivateScheduleHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), "stamp-lock", run.KindTrigger, nil, alice, model.OperationRun)
 			if err != nil {
 				failed <- err
 				return
@@ -121,7 +121,7 @@ func TestReleaseStamp_CreationSerialisesWithPromotionAndPruning(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "rel-old", p.ReleaseID)
 		stamp := run.ReleaseStamp{ReleaseID: p.ReleaseID, PromotionSeq: p.PromotionSeq}
-		rn, _, err := run.NewPendingRun("stamp-lock", run.KindTrigger, nil, alice.UserID, nil, model.OperationRun, stamp, time.Now())
+		rn, err := run.NewPendingRun("stamp-lock", run.KindTrigger, nil, alice.UserID, nil, model.OperationRun, stamp, time.Now())
 		require.NoError(t, err)
 		require.NoError(t, creation.Run().SaveRun(ctx, rn))
 

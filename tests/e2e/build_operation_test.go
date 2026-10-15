@@ -18,9 +18,9 @@ import (
 // is a valid target — seed_table_1 is used purely because it's a known-good
 // dbt-seed node already exercised by the test-operation e2e case. A
 // TriggerSingleNodeRun with operation="build" dispatches a `dbt build
-// --select seed_table_1` Job that succeeds, and the :Run node records
+// --select seed_table_1` Job that succeeds, and the run records
 // operation="build", proving the operation threaded from the trigger through
-// to the run projection.
+// to the stored run.
 func TestBuildOperationSingleNode(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -63,8 +63,8 @@ func TestBuildOperationSingleNode(t *testing.T) {
 	verifySchedulerSucceeded(t, ctx, clients, runID)
 
 	// The run was created as a build run — proves operation threaded end-to-end.
-	assert.Equal(t, "build", queryNeo4jRunOperation(t, clients, runID),
-		":Run.operation must be 'build' for a build-operation run")
+	assert.Equal(t, "build", queryRunOperation(t, clients, runID),
+		"the run's operation must be 'build' for a build-operation run")
 
 	t.Log("TestBuildOperationSingleNode passed")
 }
@@ -124,12 +124,13 @@ func TestBuildOperationWholeDAGCascadeSkip(t *testing.T) {
 
 	t.Log("Verifying ftable_f and ftable_h were never deployed (cascade-skipped)...")
 	verifyNoJobsDeployed(t, ctx, []string{"ftable_f", "ftable_h"})
+	verifyTasksSkipped(t, ctx, clients, runID, []string{"ftable_f", "ftable_h"})
 
 	t.Log("Verifying scheduler reaches FAILED state...")
 	verifySchedulerFailed(t, ctx, clients, runID)
 
-	assert.Equal(t, "build", queryNeo4jRunOperation(t, clients, runID),
-		":Run.operation must be 'build' for a whole-DAG build run")
+	assert.Equal(t, "build", queryRunOperation(t, clients, runID),
+		"the run's operation must be 'build' for a whole-DAG build run")
 
 	// Regression guard for Task 2's downstream/unblock dispatch fix: ftable_c
 	// is a non-root node reached via the unblock path (upstreams ftable_a and
@@ -189,7 +190,7 @@ func TestBuildOperationRerun(t *testing.T) {
 	t.Log("Verifying scheduler reaches FAILED state...")
 	verifySchedulerFailed(t, ctx, clients, srcID)
 
-	require.Equal(t, "build", queryNeo4jRunOperation(t, clients, srcID),
+	require.Equal(t, "build", queryRunOperation(t, clients, srcID),
 		"precondition: source run must be a build run")
 
 	// ── Rerun the failed build run ──────────────────────────────────────────
@@ -220,14 +221,8 @@ func TestBuildOperationRerun(t *testing.T) {
 	}, "task_tracker rows for rerun run did not materialise (expected 8)")
 
 	// Operation inheritance: the rerun run must itself be recorded as build.
-	// Asserted only after the task-row poll above: TriggerRerun returns once the
-	// Postgres tracker row exists, but the rerun's Neo4j :Run projection is
-	// written asynchronously by the orchestrator consuming trigger.rerun:v1.
-	// task_tracker rows are written downstream of that projection, so once they
-	// exist the :Run node is guaranteed present (avoids reading "" in the timing
-	// window between TriggerRerun returning and the projection materialising).
-	assert.Equal(t, "build", queryNeo4jRunOperation(t, clients, newRunID),
-		":Run.operation must be inherited as 'build' on the rerun run")
+	assert.Equal(t, "build", queryRunOperation(t, clients, newRunID),
+		"the run's operation must be inherited as 'build' on the rerun run")
 
 	t.Log("Waiting for ftable_e (rebased) to exhaust retries on the rerun...")
 	verifyNodeExhaustedRetries(t, ctx, clients, newRunID, "ftable_e")

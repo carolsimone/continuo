@@ -13,12 +13,13 @@ import (
 )
 
 // readyCandidatesQuery reads the pending, undispatched tasks of run $2 that
-// read node $4 directly over release $3's edges, with the statuses of their
-// upstream tasks in the run. Each lookup is an index probe: topology_edges by
-// its primary key prefix (tenant, release, upstream) or by
-// idx_topology_edges_downstream, task_tracker by uq_task_tracker_run_node.
+// read node $4 directly over release $3's edges, with their Job names and
+// retry budgets and the statuses of their upstream tasks in the run. Each
+// lookup is an index probe: topology_edges by its primary key prefix (tenant,
+// release, upstream) or by idx_topology_edges_downstream, task_tracker by
+// uq_task_tracker_run_node.
 const readyCandidatesQuery = `
-	SELECT t.task_id,
+	SELECT t.task_id, t.job_name, t.max_retries,
 	       n.node_key, n.unique_id, n.service_name, n.schema_name, n.table_name, n.node_type, n.test_count,
 	       n.content_hash, n.image_tag, n.secret_ref, n.schedule_name,
 	       ARRAY(
@@ -41,17 +42,18 @@ const readyCandidatesQuery = `
 
 // pendingDescendantsQuery walks release $3's edges down from node $4 through
 // the pending, undispatched tasks of run $2. UNION keeps each node once, so
-// the walk expands every node once however many paths reach it.
+// the walk expands every node once however many paths reach it. Each reached
+// task carries its id out of the walk, so nothing is joined after it.
 const pendingDescendantsQuery = `
-	WITH RECURSIVE blocked(node_key) AS (
-	    SELECT t.node_key
+	WITH RECURSIVE blocked(node_key, task_id) AS (
+	    SELECT t.node_key, t.task_id
 	    FROM topology_edges e
 	    JOIN task_tracker t
 	      ON t.schedule_id = $2 AND t.node_key = e.downstream_key
 	    WHERE e.tenant_id = $1 AND e.release_id = $3 AND e.upstream_key = $4
 	      AND t.status = 'pending' AND t.dispatched_at IS NULL
 	  UNION
-	    SELECT t.node_key
+	    SELECT t.node_key, t.task_id
 	    FROM blocked b
 	    JOIN topology_edges e
 	      ON e.tenant_id = $1 AND e.release_id = $3 AND e.upstream_key = b.node_key
@@ -59,11 +61,7 @@ const pendingDescendantsQuery = `
 	      ON t.schedule_id = $2 AND t.node_key = e.downstream_key
 	    WHERE t.status = 'pending' AND t.dispatched_at IS NULL
 	)
-	SELECT t.task_id
-	FROM blocked b
-	JOIN task_tracker t
-	  ON t.schedule_id = $2 AND t.node_key = b.node_key
-	ORDER BY b.node_key COLLATE "C"`
+	SELECT task_id FROM blocked ORDER BY node_key COLLATE "C"`
 
 // TaskGraph implements run.TaskGraph over task_tracker and the topology
 // tables of one tenant, inside the unit of work's transaction.
@@ -81,7 +79,9 @@ func NewTaskGraph(tx *sqlx.Tx, tenantID string) *TaskGraph {
 }
 
 type readyCandidateRow struct {
-	TaskID uuid.UUID `db:"task_id"`
+	TaskID     uuid.UUID `db:"task_id"`
+	JobName    string    `db:"job_name"`
+	MaxRetries int32     `db:"max_retries"`
 	topologyNodeRow
 	UpstreamStatuses pq.StringArray `db:"upstream_statuses"`
 }
@@ -105,7 +105,13 @@ func (g *TaskGraph) ReadyCandidates(ctx context.Context, runID uuid.UUID, releas
 			}
 			statuses = append(statuses, status)
 		}
-		out = append(out, run.ReadyCandidate{TaskID: row.TaskID, Node: row.toDomain(), UpstreamStatuses: statuses})
+		out = append(out, run.ReadyCandidate{
+			TaskID:           row.TaskID,
+			Node:             row.toDomain(),
+			JobName:          row.JobName,
+			MaxRetries:       row.MaxRetries,
+			UpstreamStatuses: statuses,
+		})
 	}
 	return out, nil
 }

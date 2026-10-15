@@ -7,17 +7,7 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/domain/casebase"
 	"github.com/carolsimone/continuo/orchestrator/domain/codeversion"
 	"github.com/carolsimone/continuo/orchestrator/domain/topology"
-	"github.com/google/uuid"
 )
-
-// CancelledSchedulesRepository tracks schedule IDs that have been cancelled by
-// an upstream control-plane signal. Used to short-circuit terminal-state
-// processing for already-cancelled runs.
-type CancelledSchedulesRepository interface {
-	Insert(ctx context.Context, scheduleID uuid.UUID) error
-	Exists(ctx context.Context, scheduleID uuid.UUID) (bool, error)
-	DeleteExpired(ctx context.Context, ttl time.Duration) (int64, error)
-}
 
 // ReleasePromotionRepository swaps the live Neo4j topology when a promotion is
 // newer than the one the graph holds. Implementations MUST run the whole swap in
@@ -40,13 +30,6 @@ type ReleasePromotionRepository interface {
 		serviceMetadata map[string]map[string]string,
 		now time.Time,
 	) (topology.PromotionOutcome, error)
-}
-
-// LivePromotionReader reads the promotion the live graph holds.
-type LivePromotionReader interface {
-	// LivePromotionSeq returns the promotion_seq of the last applied promotion
-	// recorded on :Meta {key:'current_release'}, or 0 before the first.
-	LivePromotionSeq(ctx context.Context) (int64, error)
 }
 
 // CodeVersionRepository writes the code-version history behind the :Table

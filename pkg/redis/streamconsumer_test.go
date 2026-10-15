@@ -117,9 +117,9 @@ func TestStreamConsumer_FailedHandlerMessageStaysInPEL(t *testing.T) {
 // handler failure leaves a message in the PEL, a new consumer instance (simulating
 // a service restart or periodic reclaim) recovers and successfully processes it.
 //
-// This is the regression test for the root cause of CI TestE2E_FailurePath timeout:
-// the scheduler.started:v1 handler failed due to a shared UnitOfWork returning
-// "transaction already in progress" and the message was never redelivered.
+// A handler that fails — for example on a shared UnitOfWork returning
+// "transaction already in progress" — must not strand its message: a later
+// consumer reclaims it from the PEL and processes it.
 func TestStreamConsumer_ReclaimPendingRecoversStuckMessage(t *testing.T) {
 	rc := redisClientForTest(t)
 	ctx := context.Background()

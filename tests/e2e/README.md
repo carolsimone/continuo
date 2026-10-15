@@ -5,8 +5,8 @@ Comprehensive end-to-end test validating the complete Continuo orchestration pip
 ## Test Overview
 
 The suite covers both the run-orchestration pipeline and the dbt blue/green release pipeline. The happy-path test exercises a 6-node `ftable_*` DAG through every service:
-- `state` - Creates scheduler, owns the run/task lifecycle
-- `orchestrator` - Snapshots topology, identifies root nodes, unlocks downstream dependencies, publishes to query.model:v1 (owns the responsibilities of the former `graph` and `dependency-controller` services)
+- `state` - Plans and creates runs, dispatches ready tasks, owns the run/task lifecycle
+- `orchestrator` - Applies each promoted release to the Neo4j topology and serves topology and catalog reads
 - `execution-controller` - Deploys k8s jobs and monitors their status
 - `topology-controller` - Parses dbt manifests (candidate + legacy paths)
 - `release-controller` - Owns the blue/green candidate-release lifecycle and `current_prod`
@@ -191,9 +191,9 @@ The controller in kind connects to docker-compose services via docker bridge net
 | `trigger_test.go` | `TestTriggerSchedule_SeedRunAndRerun` — trigger seed schedule via TriggerSchedule RPC, wait for completion, re-trigger |
 | `failure_test.go` | `TestE2E_FailurePath_RerunRebasesBothFailureSubtrees` — two parallel failing subtrees, then a rerun rebases both |
 | `rebase_test.go` | `TestRebaseFromFailedRun`, `TestRebaseAllInheritedFinalizes` |
-| `single_node_run_test.go` | `TestSingleNodeRunLatest`, `TestSingleNodeRunStale`, `TestSingleNodeRunTargetNotFound` |
+| `single_node_run_test.go` | `TestSingleNodeRunLatest`, `TestSingleNodeRunStale`, `TestSingleNodeRunTargetNotFound` — a target the live release does not hold is refused with `NotFound` and creates no run |
 | `cancel_test.go` | `TestCancelMidwayAndRetrigger` — cancel an in-flight schedule, then re-trigger |
-| `empty_dag_test.go` | `TestEmptyCronDAG_FinalisesAsFailed` — empty projection fails the run fast |
+| `empty_dag_test.go` | `TestEmptyCronDAG_FinalisesAsFailed` — a cron activation of a schedule with no node in the live release records its run `failed`; a trigger of it, whatever its operation, is refused with `FailedPrecondition` and creates no run |
 | `dag_latest_snapshot_test.go` | `TestE2E_DAGLatestSnapshot` |
 | `topology_versioning_test.go` | `TestTopologyVersioning_MidRunIsolation` — lazy generation switch (in-flight runs immutable) |
 | `watchdog_termination_test.go` | `TestWatchdog_TerminatesStuckSchedule` — a pending run with zero tasks and no progress for 31 minutes is cancelled by the watchdog by run id (`cancelled_by=watchdog`, reason `watchdog: …`); a run whose task is 31 minutes old but whose progress clock is fresh stays active |
@@ -202,11 +202,11 @@ The controller in kind connects to docker-compose services via docker bridge net
 | `remediation_python_test.go` | `TestE2E_PythonValidationFailure_VerifiedFix`, `TestE2E_PythonValidationFailure_VerificationErrorFeedsNextAttempt`, `TestE2E_PythonParseFailure_VerifiedFix` — a rejected python node is repaired in the contract yaml, verified by a real verification run that stops at `passed`, and proposed for review; the second test proves a failed verification run's error feeds the next attempt and reaches no classifier at all; the third drives the same lane from a parse-stage rejection (a read whose relation is not schema-qualified), where the rejection carries the parser's text inline and no log. Uses the fixture repository under `fixtures/py-remediation-repo`, which `stub-github` serves as a tarball |
 | `dead_letter_test.go` | `TestDeadLetter_MalformedMessagesAreDeadLetteredNotDropped`, `TestDeadLetter_RedriveReachesOnlyItsGroup`, `TestDeadLetter_CLIListsAndRedrives`, `TestDeadLetter_BacklogMetricIsExposed` — a message no consumer can parse is stored by dead-letter-controller and served through `ListDeadLetters`; a redrive of it on `release.promoted:v2` is handled only by the group that failed it (the other groups acknowledge it without a handler) and a repeated redrive publishes nothing; the real `continuo dlq list`/`redrive` binary (built from the `./cli` mount with `GOWORK=off`) drives the same flow; the backlog gauge appears once a dead letter is open. dead-letter-controller is started by `start-services.sh` (health `:8096/ready`, gRPC `:50055`) |
 | `seed_topology_test.go` | `seedTopology` helper — announces the e2e DAG through release-controller's `announce-topology` (artifact in MinIO, next promotion seq, `release.promoted:v2`), which the orchestrator applies to Neo4j on the promotion path |
-| `seed_reconcile_test.go` | `TestSeedReconcile_LoadsAChangedSeedOnce` — announces the e2e DAG with `seed_table_1` carrying a new `content_hash`: state plans one `promote_seed` run in the promotion's transaction, orchestrator projects it once its graph has the same promotion, the seed loads with service-1's image and state records the hash in `node_materializations`; announcing the same content again under a new release loads nothing. Restores the default DAG (no seed hashes) at the end |
+| `seed_reconcile_test.go` | `TestSeedReconcile_LoadsAChangedSeedOnce` — announces the e2e DAG with `seed_table_1` carrying a new `content_hash`: state plans one `promote_seed` run and dispatches the seed in the promotion's transaction, the seed loads with service-1's image and state records the hash in `node_materializations`; announcing the same content again under a new release loads nothing. Restores the default DAG (no seed hashes) at the end |
 | `ui_http_test.go` | HTTP assertions against the ui (`verifyUIService`) |
 | `public_api_test.go`, `ci_token.go` | `TestPublicAPI_Authorization` — the public `/api/v1` release API's refusals (unbound repository, bootstrap without `allowBootstrap`, body/token repository mismatch, garbage token) and a CI token reading `current-prod`. `ci_token.go` mints GitHub Actions-shaped tokens from `stub-github`, which the ui trusts as its CI issuer through `tests/e2e/ci-auth.json`; every release the suite submits goes through `/api/v1/releases` with such a token |
 | `auth_oidc_test.go` | `TestAuthOIDC` — real OIDC login flow against Dex (auth-e2e profile), plus Dex password-grant bearers against `/api/v1`; skipped unless `UI_AUTH_HTTP_BASE` is set |
-| `verify.go` | DAG-level assertions (execution-controller's k8s Jobs, dependency unlocking, failure helpers) |
+| `verify.go` | DAG-level assertions (execution-controller's k8s Jobs, dispatch of ready tasks, failure helpers) |
 | `clients.go` | gRPC, Redis, Postgres, Neo4j, S3, and release-controller client setup |
 | `helpers.go` | `pollUntil`, k8s job helpers, `containsAll` |
 | `cleanup.go` | Removes all test data from every data store |
@@ -246,7 +246,7 @@ docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator \
 `TestE2E_FailurePath_NodeFailureDrainsSchedule` uses the 6-node `ftable_*` DAG. It verifies:
 
 - `ftable_e` exhausts 2 retries (3 total attempts) and reaches `failed` status
-- Downstream node (`ftable_f`) is never deployed
+- Downstream node (`ftable_f`) is never deployed and is recorded `skipped`
 - The scheduler is finalised as `FAILED`
 
 The failure model `ftable_e` runs in the `service-2` Docker image but JOINs `public.wrong_name`, which does not exist. This causes the dbt run to fail at execution time on every attempt.
@@ -279,7 +279,7 @@ The failure model `ftable_e` runs in the `service-2` Docker image but JOINs `pub
 4. **Verify Level 0** - Root nodes (`ftable_a`, `ftable_b`) complete successfully
 5. **Verify Level 1** - `ftable_c` executes; `ftable_d` and `ftable_e` are deployed
 6. **Wait for ftable_e failure** - Poll until `retry_count = 2` and `status = 'failed'` in `task_tracker`; `ftable_d` succeeds
-7. **Verify no downstream jobs** - Confirm `ftable_f` is never deployed
+7. **Verify the cascade** - Confirm `ftable_f` is never deployed and is recorded `skipped`
 8. **Verify scheduler FAILED** - Poll `scheduler_tracker` until `status = 'failed'`
 9. **Cleanup** - Remove all test data
 

@@ -122,15 +122,15 @@ func TestMain(m *testing.M) {
 	integrationUoWFactory := func() uow.UnitOfWork {
 		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, execRepo, catalogRepo, clk, logger)
 	}
-	activateHandler := svchandlers.NewActivateScheduleHandler(logger)
+	activateHandler := svchandlers.NewActivateScheduleHandler(defaultPlanner, logger)
 	schedulerHandler := handlers.NewSchedulerHandler(schedulerRepo, activateHandler, nil, nil, integrationUoWFactory, logger)
 	taskHandler := handlers.NewTaskHandler(taskRepo, logger)
 	execHandler := handlers.NewTaskExecutionHandler(execRepo, logger)
-	rerunUC := svchandlers.NewTriggerRerunHandler(logger)
+	rerunUC := svchandlers.NewTriggerRerunHandler(defaultPlanner, logger)
 	rerunHandler := handlers.NewRerunHandler(rerunUC, integrationUoWFactory, logger)
-	singleNodeRunUC := svchandlers.NewTriggerSingleNodeRunHandler(logger)
+	singleNodeRunUC := svchandlers.NewTriggerSingleNodeRunHandler(defaultPlanner, logger)
 	singleNodeRunHandler := handlers.NewSingleNodeRunHandler(singleNodeRunUC, integrationUoWFactory, logger)
-	rebaseUC := svchandlers.NewTriggerRebaseHandler(logger)
+	rebaseUC := svchandlers.NewTriggerRebaseHandler(defaultPlanner, logger)
 	rebaseHandler := handlers.NewRebaseHandler(rebaseUC, integrationUoWFactory, logger)
 	nodeRunRepo := postgres.NewNodeRunRepository(db, logger)
 	nodeRunHandler := handlers.NewNodeRunHandler(nodeRunRepo, logger)
@@ -178,6 +178,7 @@ func TestStateService(t *testing.T) {
 		// manually trigger the schedule. TriggerSchedule mints a PENDING Run via
 		// the Run aggregate (kind='trigger'), which CancelSchedule then cancels.
 		seedActiveSchedule(t, "daily-cancel-success")
+		promoteSchedules(t, stateDB, "daily-cancel-success")
 		trigResp, err := stateClient.TriggerSchedule(ctx, &statev1.TriggerScheduleRequest{
 			ScheduleName: "daily-cancel-success",
 		})
@@ -222,6 +223,7 @@ func TestStateService(t *testing.T) {
 		ctx := context.Background()
 
 		seedActiveSchedule(t, "daily-trigger-kind")
+		promoteSchedules(t, stateDB, "daily-trigger-kind")
 		resp, err := stateClient.TriggerSchedule(ctx, &statev1.TriggerScheduleRequest{
 			ScheduleName: "daily-trigger-kind",
 		})

@@ -69,8 +69,19 @@ func (f *fakeTopology) ReleaseNodes(_ context.Context, _ string, releaseID, node
 func (f *fakeTopology) ScheduleGraph(context.Context, string, string, string) (topology.Graph, error) {
 	return topology.Graph{}, errors.New("ScheduleGraph is not used by the seed reconcile")
 }
-func (f *fakeTopology) Graph(context.Context, string, string, []topology.NodeKey) (topology.Graph, error) {
-	return topology.Graph{}, errors.New("Graph is not used by the seed reconcile")
+func (f *fakeTopology) Graph(_ context.Context, _ string, releaseID string, keys []topology.NodeKey) (topology.Graph, error) {
+	f.calls = append(f.calls, "graph:"+releaseID)
+	want := make(map[topology.NodeKey]bool, len(keys))
+	for _, k := range keys {
+		want[k] = true
+	}
+	var nodes []topology.Node
+	for _, n := range f.nodes[releaseID] {
+		if want[n.Key] {
+			nodes = append(nodes, n)
+		}
+	}
+	return topology.NewGraph(nodes, nil), nil
 }
 
 func (f *fakeTopology) NodeContentHash(context.Context, string, string, topology.NodeKey) (string, bool, error) {
@@ -139,9 +150,24 @@ type fakeRuns struct {
 
 var _ repository.RunRepository = (*fakeRuns)(nil)
 
+// fakeTasks records the tasks a run starts with.
+type fakeTasks struct {
+	run.TaskCollection
+	created []run.Task
+}
+
+func (f *fakeTasks) BulkCreate(_ context.Context, tasks []run.Task) error {
+	f.created = append(f.created, tasks...)
+	return nil
+}
+
 func (f *fakeRuns) SaveRun(_ context.Context, r *run.Run) error {
 	if f.saveErr != nil {
 		return f.saveErr
+	}
+	if !r.Changes().IsCreated() {
+		r.ResetChanges()
+		return nil
 	}
 	if f.taken[r.ScheduleID()] {
 		return run.ErrRunAlreadyExists
@@ -149,12 +175,17 @@ func (f *fakeRuns) SaveRun(_ context.Context, r *run.Run) error {
 	f.taken[r.ScheduleID()] = true
 	f.saved = append(f.saved, r)
 	f.count++
+	r.ResetChanges()
 	return nil
 }
 
 func (f *fakeRuns) RunExists(_ context.Context, id uuid.UUID) (bool, error) {
 	f.existsAsk = append(f.existsAsk, id)
 	return f.taken[id], nil
+}
+
+func (f *fakeRuns) ListUnplannedActive(context.Context) ([]uuid.UUID, error) {
+	panic("ListUnplannedActive is not used here")
 }
 
 func (f *fakeRuns) CountReleaseRuns(context.Context, string, run.Kind) (int, error) {
@@ -200,6 +231,7 @@ type world struct {
 	topo   *fakeTopology
 	mats   *fakeMaterializations
 	runs   *fakeRuns
+	tasks  *fakeTasks
 	outbox *fakeOutbox
 	uows   []*uow.FakeUnitOfWork
 }
@@ -209,6 +241,7 @@ func newWorld(live topology.Pointer, nodes ...topology.Node) *world {
 		topo:   &fakeTopology{live: live, nodes: map[string][]topology.Node{live.ReleaseID: nodes}},
 		mats:   &fakeMaterializations{rows: map[topology.NodeKey]seeds.Materialization{}},
 		runs:   &fakeRuns{taken: map[uuid.UUID]bool{}},
+		tasks:  &fakeTasks{},
 		outbox: &fakeOutbox{},
 	}
 }
@@ -216,6 +249,7 @@ func newWorld(live topology.Pointer, nodes ...topology.Node) *world {
 func (w *world) newUoW() *uow.FakeUnitOfWork {
 	u := &uow.FakeUnitOfWork{TopologyRepo: w.topo, MaterializationRepo: w.mats}
 	u.SetRunRepo(w.runs)
+	u.SetTaskCollection(w.tasks)
 	u.SetOutboxPublisher(w.outbox)
 	u.SetClock(fixedClock{})
 	w.uows = append(w.uows, u)
@@ -247,8 +281,15 @@ func modelNode(table string) topology.Node {
 	}
 }
 
-func seedRunNode(table string) run.SeedNode {
-	return run.SeedNode{NodeID: run.NodeID{ServiceName: "svc", SchemaName: "raw", TableName: table}, NodeType: "dbt-seed", ImageTag: "svc:2"}
+// dispatchedKeys lists the node of each TaskDispatched in events.
+func dispatchedKeys(events []run.DomainEvent) []topology.NodeKey {
+	var out []topology.NodeKey
+	for _, e := range events {
+		if d, ok := e.(run.TaskDispatched); ok {
+			out = append(out, d.Node.Key)
+		}
+	}
+	return out
 }
 
 func moved(releaseID string, seq int64) ports.PromotionTrigger {
@@ -265,8 +306,8 @@ func scheduleNameOf(id uuid.UUID) string {
 var live7 = topology.Pointer{ReleaseID: "rel-2", PromotionSeq: 7}
 
 // A pass that follows a pointer move builds exactly the seeds whose live
-// content differs from what was loaded, in one run on the live release, and
-// writes its trigger with the live promotion seq and the message's dedup row.
+// content differs from what was loaded, in one run on the live release that
+// dispatches each of them, under the message's dedup row.
 func TestAfterPromotion_MovedBuildsTheSeedsWhoseContentDiffers(t *testing.T) {
 	w := newWorld(live7, seedNode("orders", "h-orders-2"), seedNode("users", "h-users-1"), seedNode("blank", ""), modelNode("revenue"))
 	w.loaded("orders", "h-orders-1")
@@ -283,11 +324,14 @@ func TestAfterPromotion_MovedBuildsTheSeedsWhoseContentDiffers(t *testing.T) {
 	assert.Equal(t, scheduleNameOf(wantID), created.ScheduleName())
 	assert.Equal(t, run.KindPromoteSeed, created.Kind())
 	assert.Equal(t, run.SchedulerStatusRunning, created.Status())
-	assert.Equal(t, "rel-2", created.ReleaseID())
-	assert.Equal(t, []run.DomainEvent{run.PromotedSeedsRunRequested{
-		ID: wantID, Name: scheduleNameOf(wantID), ReleaseID: "rel-2", PromotionSeq: 7,
-		Nodes: []run.SeedNode{seedRunNode("orders")},
-	}}, w.outbox.appended)
+	assert.Equal(t, run.ReleaseStamp{ReleaseID: "rel-2", PromotionSeq: 7}, created.Release())
+	assert.NotNil(t, created.PlannedAt())
+	require.Len(t, w.outbox.appended, 1)
+	d, ok := w.outbox.appended[0].(run.TaskDispatched)
+	require.True(t, ok, "%T", w.outbox.appended[0])
+	assert.Equal(t, run.TaskIDFor("default", wantID, "raw.orders"), d.TaskID)
+	assert.Equal(t, seedNode("orders", "h-orders-2"), d.Node)
+	assert.Equal(t, scheduleNameOf(wantID), d.ScheduleName)
 	assert.Equal(t, []uuid.UUID{trigger.MessageProcessingID}, w.outbox.msgProcIDs)
 	assert.Equal(t, []attempt{{key: "raw.orders", hash: "h-orders-2", runID: wantID}}, w.mats.attempts)
 	assert.Empty(t, w.mats.built)
@@ -345,9 +389,8 @@ func TestAfterPromotion_FirstBootstrapPromotionBuildsEverySeed(t *testing.T) {
 
 	assert.Empty(t, w.mats.built, "nothing is adopted")
 	assert.Empty(t, w.runs.existsAsk)
-	require.Len(t, w.outbox.appended, 1)
-	assert.Equal(t, []run.SeedNode{seedRunNode("orders"), seedRunNode("users")},
-		w.outbox.appended[0].(run.PromotedSeedsRunRequested).Nodes, "every hashed seed, in key order")
+	assert.Equal(t, []topology.NodeKey{"raw.orders", "raw.users"}, dispatchedKeys(w.outbox.appended),
+		"every hashed seed, in key order")
 }
 
 // On the first promotion of an install that already ran, the seeds the
@@ -364,8 +407,7 @@ func TestAfterPromotion_FirstPromotionAdoptsTheUnchangedSeeds(t *testing.T) {
 	assert.Equal(t, []seeds.Built{{
 		Key: "raw.users", ContentHash: "h-users-1", ImageTag: "svc:2", ReleaseID: "rel-2", At: testNow, Source: seeds.SourceAdopted,
 	}}, w.mats.built)
-	require.Len(t, w.outbox.appended, 1)
-	assert.Equal(t, []run.SeedNode{seedRunNode("orders")}, w.outbox.appended[0].(run.PromotedSeedsRunRequested).Nodes)
+	assert.Equal(t, []topology.NodeKey{"raw.orders"}, dispatchedKeys(w.outbox.appended))
 }
 
 // When the release's first promote-seed run already exists, every seed is

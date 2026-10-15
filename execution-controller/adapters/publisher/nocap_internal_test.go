@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/carolsimone/continuo/execution-controller/domain/event"
-	"github.com/carolsimone/continuo/execution-controller/serialization"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
@@ -15,18 +15,18 @@ import (
 // dead-letter-controller's trim loop is the only thing that bounds them.
 func TestXAddArgs_DoNotTrim(t *testing.T) {
 	p := NewOutboxPublisher(nil, nil)
-	payload, err := json.Marshal(serialization.NodeUpdatedFromDomain(event.NodeUpdated{Status: "SUCCEEDED"}))
+	payload, err := json.Marshal(pkgevents.TaskStatusUpdated{TaskID: "t1", ScheduleID: "s1", Status: "SUCCEEDED"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	entry := &outbox.Entry{ID: uuid.New(), StreamName: streams.NodeUpdatedV1, EventType: event.EventTypeNodeUpdated, Payload: payload}
+	entry := &outbox.Entry{ID: uuid.New(), StreamName: streams.TaskStatusUpdatedV1, EventType: event.EventTypeTaskStatusUpdated, Payload: payload}
 	values, err := p.Render(entry)
 	if err != nil {
 		t.Fatal(err)
 	}
 	args := p.xaddArgs(entry, values)
-	if args.Stream != streams.NodeUpdatedV1 {
-		t.Fatalf("stream = %q, want %q", args.Stream, streams.NodeUpdatedV1)
+	if args.Stream != streams.TaskStatusUpdatedV1 {
+		t.Fatalf("stream = %q, want %q", args.Stream, streams.TaskStatusUpdatedV1)
 	}
 	if args.MaxLen != 0 || args.MinID != "" || args.Approx {
 		t.Fatalf("publisher trims: MaxLen=%d MinID=%q Approx=%v", args.MaxLen, args.MinID, args.Approx)

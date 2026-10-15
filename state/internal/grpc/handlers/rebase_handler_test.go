@@ -3,19 +3,25 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"github.com/carolsimone/continuo/pkg/testdeps"
 	"testing"
+	"time"
+
+	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/carolsimone/continuo/pkg/testdeps"
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	pkgdb "github.com/carolsimone/continuo/pkg/db"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
+	"github.com/carolsimone/continuo/state/domain/topology"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 	ports "github.com/carolsimone/continuo/state/service/ports"
+	"github.com/carolsimone/continuo/state/service/runstart"
 	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -26,7 +32,22 @@ type rebaseFixture struct {
 	SchedulerRepo postgres.SchedulerTrackerRepository
 	TaskRepo      postgres.TaskTrackerRepository
 	DB            *sqlx.DB
-	Cleanup       func()
+	// Tenant is the tenant the fixture's planner plans for; its releases and
+	// live pointer are deleted when the test ends.
+	Tenant  string
+	Cleanup func()
+}
+
+// fixtureTenant returns a tenant id no other test uses and deletes its
+// topology when the test ends.
+func fixtureTenant(t *testing.T, db *sqlx.DB) string {
+	t.Helper()
+	tenant := "grpc-" + uuid.NewString()
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(context.Background(), `DELETE FROM live_release WHERE tenant_id = $1`, tenant)
+		_, _ = db.ExecContext(context.Background(), `DELETE FROM topology_releases WHERE tenant_id = $1`, tenant)
+	})
+	return tenant
 }
 
 func setupRebaseFixture(t *testing.T) *rebaseFixture {
@@ -44,30 +65,56 @@ func setupRebaseFixture(t *testing.T) *rebaseFixture {
 	factory := func() uow.UnitOfWork {
 		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, taskExecutionRepo, catalogRepo, clk, logger)
 	}
-	useCase := svchandlers.NewTriggerRebaseHandler(logger)
+	tenant := fixtureTenant(t, db)
+	useCase := svchandlers.NewTriggerRebaseHandler(runstart.Planner{TenantID: tenant}, logger)
 	handler := NewRebaseHandler(useCase, factory, logger)
 	return &rebaseFixture{
 		Handler: handler, SchedulerRepo: schedulerRepo, TaskRepo: taskRepo,
-		DB: db, Cleanup: func() { db.Close() },
+		DB: db, Tenant: tenant, Cleanup: func() { db.Close() },
 	}
 }
 
+// promoteNode stores a release of fx's tenant holding node s.t of service svc
+// in scheduleName and makes it the tenant's live release. It returns the
+// release id.
+func promoteNode(t *testing.T, fx *rebaseFixture, scheduleName string) string {
+	t.Helper()
+	ctx := context.Background()
+	releaseID := "rel-" + uuid.NewString()[:8]
+	rel, err := topology.NewRelease(fx.Tenant, releaseID, 1, "s3://continuo/k", "sha-"+releaseID, []topology.NodeSpec{{
+		UniqueID: "model.svc.t", ServiceName: "svc", SchemaName: "s", TableName: "t", NodeType: "dbt-model",
+		ContentHash: "h-t", ImageTag: "img:2", ScheduleName: scheduleName,
+	}})
+	require.NoError(t, err)
+	tx, err := fx.DB.BeginTxx(ctx, nil)
+	require.NoError(t, err)
+	defer tx.Rollback() //nolint:errcheck
+	topo := postgres.NewTopologyRepository(fx.DB, tx)
+	_, err = topo.SaveRelease(ctx, rel)
+	require.NoError(t, err)
+	require.NoError(t, topo.SetLivePointer(ctx, fx.Tenant, topology.Pointer{ReleaseID: releaseID, PromotionSeq: 1}, time.Now()))
+	require.NoError(t, tx.Commit())
+	return releaseID
+}
+
 // seedTerminalRunWithFailedTask creates a scheduler_tracker (status=failed/cancelled)
-// with one task_tracker row in 'failed' status. Returns the schedule_id.
-// Cleanup deletes both rows.
+// on a release of fx's tenant, the live one, with one task_tracker row in
+// 'failed' status at node s.t. Returns the schedule_id. Cleanup deletes both
+// rows.
 func seedTerminalRunWithFailedTask(t *testing.T, fx *rebaseFixture, scheduleName string, srcStatus run.SchedulerStatus) uuid.UUID {
 	t.Helper()
+	releaseID := promoteNode(t, fx, scheduleName)
 	id := uuid.New()
 	_, err := fx.DB.ExecContext(context.Background(), `
-		INSERT INTO scheduler_tracker (schedule_id, schedule_name, status, created_at, completed_at, initialization_status, kind)
-		VALUES ($1, $2, $3, NOW(), NOW(), 'completed', 'cron')`,
-		id, scheduleName, string(srcStatus),
+		INSERT INTO scheduler_tracker (schedule_id, schedule_name, status, created_at, completed_at, initialization_status, kind, release_id, promotion_seq)
+		VALUES ($1, $2, $3, NOW(), NOW(), 'completed', 'cron', $4, 1)`,
+		id, scheduleName, string(srcStatus), releaseID,
 	)
 	require.NoError(t, err)
 
 	_, err = fx.DB.ExecContext(context.Background(), `
-		INSERT INTO task_tracker (task_id, schedule_id, created_at, service_name, schema_name, table_name, job_name, status, retry_count, max_retries, image_tag)
-		VALUES ($1, $2, NOW(), 'svc', 's', 't', 'job', 'failed', 0, 2, 'img:1')`,
+		INSERT INTO task_tracker (task_id, schedule_id, created_at, service_name, schema_name, table_name, job_name, status, retry_count, max_retries, image_tag, node_key)
+		VALUES ($1, $2, NOW(), 'svc', 's', 't', 'job', 'failed', 0, 2, 'img:1', 's.t')`,
 		uuid.New(), id,
 	)
 	require.NoError(t, err)
@@ -105,21 +152,25 @@ func TestRebaseHandler_HappyPath_FailedSource(t *testing.T) {
 	require.NotNil(t, tracker.SourceRunID)
 	require.Equal(t, srcID, *tracker.SourceRunID)
 	require.Equal(t, scheduleName, tracker.ScheduleName)
-	require.Equal(t, run.SchedulerStatusPending, tracker.Status)
+	require.Equal(t, run.SchedulerStatusRunning, tracker.Status)
 
-	// Outbox row on trigger.rebase:v1 with the right payload.
-	var payloadRaw []byte
-	err = fx.DB.GetContext(context.Background(), &payloadRaw,
-		`SELECT payload FROM state_outbox WHERE aggregate_id = $1 AND stream_name = 'trigger.rebase:v1' LIMIT 1`,
-		newID,
-	)
-	require.NoError(t, err)
+	// The failed task is dispatched again on the live release.
+	requireDispatched(t, fx.DB, newID, run.TaskIDFor(fx.Tenant, newID, "s.t"), scheduleName)
+}
+
+// requireDispatched asserts run runID wrote one query.model:v1 dispatch, of
+// taskID.
+func requireDispatched(t *testing.T, db *sqlx.DB, runID, taskID uuid.UUID, scheduleName string) {
+	t.Helper()
+	var payloads [][]byte
+	require.NoError(t, db.SelectContext(context.Background(), &payloads,
+		`SELECT payload FROM state_outbox WHERE aggregate_id = $1 AND stream_name = $2`, runID, streams.QueryModelV1))
+	require.Len(t, payloads, 1)
 	var payload map[string]string
-	require.NoError(t, json.Unmarshal(payloadRaw, &payload))
-	require.Equal(t, newID.String(), payload["schedule_id"])
+	require.NoError(t, json.Unmarshal(payloads[0], &payload))
+	require.Equal(t, runID.String(), payload["schedule_id"])
 	require.Equal(t, scheduleName, payload["schedule_name"])
-	require.Equal(t, "rebase", payload["kind"])
-	require.Equal(t, srcID.String(), payload["source_run_id"])
+	require.Equal(t, taskID.String(), payload["task_id"])
 }
 
 func TestRebaseHandler_HappyPath_CancelledSource(t *testing.T) {
@@ -244,6 +295,17 @@ func TestRebaseHandler_RejectsFailedSourceWithAllSucceededTasks(t *testing.T) {
 	srcID := seedRunWithTaskStatus(t, fx, "rebase-rej-failed-allsucc-"+uuid.New().String()[:8], run.SchedulerStatusFailed, run.TaskStatusSucceeded)
 	_, err := fx.Handler.TriggerRebase(context.Background(), &statev1.TriggerRebaseRequest{SourceRunId: srcID.String()})
 	requireGRPCCode(t, err, codes.FailedPrecondition)
+}
+
+// A source run that names no release cannot be rebased.
+func TestRebaseHandler_RejectsASourceWithoutARelease(t *testing.T) {
+	fx := setupRebaseFixture(t)
+	defer fx.Cleanup()
+
+	srcID := seedRunWithTaskStatus(t, fx, "rebase-rej-norelease-"+uuid.New().String()[:8], run.SchedulerStatusFailed, run.TaskStatusFailed)
+	_, err := fx.Handler.TriggerRebase(context.Background(), &statev1.TriggerRebaseRequest{SourceRunId: srcID.String()})
+	requireGRPCCode(t, err, codes.FailedPrecondition)
+	assert.Contains(t, status.Convert(err).Message(), "names no release")
 }
 
 func TestRebaseHandler_RejectsActiveRunOnSameSchedule(t *testing.T) {

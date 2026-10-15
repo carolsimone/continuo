@@ -24,23 +24,21 @@ func NewTaskCollectionAdapter(repo TaskTrackerRepository, tx *sqlx.Tx) *TaskColl
 	return &TaskCollectionAdapter{repo: repo, tx: tx}
 }
 
-func (a *TaskCollectionAdapter) LoadStatusAndAttempt(ctx context.Context, taskID uuid.UUID) (run.TaskStatus, int32, bool, error) {
-	s, retryCount, err := a.repo.LoadStatusAndAttemptTx(ctx, a.tx, taskID)
+func (a *TaskCollectionAdapter) LoadAttemptState(ctx context.Context, taskID uuid.UUID) (run.TaskAttemptState, bool, error) {
+	row, found, err := a.repo.LoadAttemptStateTx(ctx, a.tx, taskID)
+	if err != nil || !found {
+		return run.TaskAttemptState{}, false, err
+	}
+	status, err := run.ParseTaskStatus(row.Status)
 	if err != nil {
-		return "", 0, false, err
+		return run.TaskAttemptState{}, true, err
 	}
-	if s == "" {
-		return "", 0, false, nil
-	}
-	parsed, err := run.ParseTaskStatus(s)
-	if err != nil {
-		return "", retryCount, true, err
-	}
-	return parsed, retryCount, true, nil
-}
-
-func (a *TaskCollectionAdapter) Exists(ctx context.Context, taskID uuid.UUID) (bool, error) {
-	return a.repo.ExistsTx(ctx, a.tx, taskID)
+	return run.TaskAttemptState{
+		Status:     status,
+		RetryCount: row.RetryCount,
+		MaxRetries: row.MaxRetries,
+		NodeKey:    topology.NodeKey(row.NodeKey),
+	}, true, nil
 }
 
 func (a *TaskCollectionAdapter) HasFailed(ctx context.Context, runID uuid.UUID) (bool, error) {
@@ -64,6 +62,21 @@ func (a *TaskCollectionAdapter) GetByNode(ctx context.Context, runID uuid.UUID, 
 		return run.Task{}, err
 	}
 	return taskFromRow(t), nil
+}
+
+// ListRunTasks reads every task of a run through the unit of work's
+// transaction: a derived run plans while its creating transaction holds a
+// connection, and a read on a second one would wait for it under a small pool.
+func (a *TaskCollectionAdapter) ListRunTasks(ctx context.Context, runID uuid.UUID) ([]run.Task, error) {
+	rows, err := a.repo.ListByRunTx(ctx, a.tx, runID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]run.Task, 0, len(rows))
+	for _, t := range rows {
+		out = append(out, taskFromRow(t))
+	}
+	return out, nil
 }
 
 // GetByID reads one task by id. A task's node and image never change once its
@@ -131,6 +144,15 @@ func (a *TaskCollectionAdapter) BulkCreate(ctx context.Context, tasks []run.Task
 		})
 	}
 	return a.repo.BulkCreateTx(ctx, a.tx, rows)
+}
+
+func (a *TaskCollectionAdapter) MarkDispatched(ctx context.Context, taskIDs []uuid.UUID, at time.Time) ([]uuid.UUID, error) {
+	return a.repo.MarkDispatchedTx(ctx, a.tx, taskIDs, at)
+}
+
+func (a *TaskCollectionAdapter) MarkSkipped(ctx context.Context, taskIDs []uuid.UUID) (int, error) {
+	n, err := a.repo.MarkSkippedTx(ctx, a.tx, taskIDs)
+	return int(n), err
 }
 
 func (a *TaskCollectionAdapter) BulkCancel(ctx context.Context, runID uuid.UUID, cancelledBy string, cancelledAt time.Time) (int, error) {

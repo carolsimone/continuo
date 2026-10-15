@@ -23,6 +23,15 @@ UPGRADE NOTES
   If this upgrade already failed, re-run with --dry-run to see the exact
   rendering/validation error before retrying for real.
 
+  From continuo 0.11.x or earlier: the state service now plans every run.
+  When it first starts on this version, it cancels each run still pending or
+  running that it did not plan (cancelled by "system", reason "the run's tasks
+  were not planned by state, so it cannot continue"). Their queued tasks never
+  start, and the results of Jobs already running are ignored. Such a run
+  cannot be rerun: trigger its schedule again. To keep in-flight runs, upgrade
+  with none active: turn maintenance on, wait until no run is pending or
+  running, upgrade, then turn maintenance off.
+
   Release topologies live in object storage (tenants/<tenant>/topologies/ in
   your bucket).
   With an external bucket (s3.*), grant topology-controller write access and

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/carolsimone/continuo/state/service/runsettle"
+
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	pkgdb "github.com/carolsimone/continuo/pkg/db"
 	"github.com/carolsimone/continuo/pkg/domain/model"
@@ -32,6 +34,7 @@ import (
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 	ports "github.com/carolsimone/continuo/state/service/ports"
 	"github.com/carolsimone/continuo/state/service/runreads"
+	"github.com/carolsimone/continuo/state/service/runstart"
 	"github.com/carolsimone/continuo/state/service/seedreconcile"
 	"github.com/carolsimone/continuo/state/service/topologyretention"
 	"github.com/carolsimone/continuo/state/service/uow"
@@ -256,6 +259,16 @@ func main() {
 		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, taskExecutionRepo, catalogRepo, clk, logger)
 	}
 
+	// A run whose tasks state did not plan cannot move on: no status update
+	// can dispatch or skip its tasks. It is cancelled before any consumer
+	// starts, so its Jobs are suppressed and its schedule is free to run again.
+	settled, err := runsettle.Settle(ctx, uowFactory, logger)
+	if err != nil {
+		logger.Error("Failed to cancel the active runs state did not plan", "error", err)
+		os.Exit(1)
+	}
+	logger.Info("Active runs state did not plan cancelled", "runs", settled)
+
 	// Retention sweeper — keeps the unbounded-growth tables in check:
 	// processed state_outbox rows, message_processing dedup rows (which retain
 	// a full payload per consumed message) and stored topologies. Processed
@@ -323,22 +336,10 @@ func main() {
 			binding: redis.NewScheduleCatalogBinding(uowFactory, svchandlers.NewScheduleCatalogHandler(logger), logger),
 		},
 		{
-			name:    "run_entries_dispatched",
-			stream:  streams.RunEntriesDispatchedV1,
-			group:   streams.StateRunEntriesDispatched,
-			binding: redis.NewRunEntriesDispatchedBinding(uowFactory, svchandlers.NewRunEntriesDispatchedHandler(logger), logger),
-		},
-		{
-			name:    "run_entries_dispatch_failed",
-			stream:  streams.RunEntriesDispatchFailedV1,
-			group:   streams.StateRunEntriesDispatchFailed,
-			binding: redis.NewRunEntriesDispatchFailedBinding(uowFactory, svchandlers.NewRunEntriesDispatchFailedHandler(logger), logger),
-		},
-		{
 			name:    "task_status_updated",
 			stream:  streams.TaskStatusUpdatedV1,
 			group:   streams.StateTaskStatusUpdated,
-			binding: redis.NewTaskStatusUpdatedBinding(uowFactory, svchandlers.NewTaskStatusUpdatedHandler(logger), logger),
+			binding: redis.NewTaskStatusUpdatedBinding(uowFactory, svchandlers.NewTaskStatusUpdatedHandler(pkgevents.DefaultTenantID, logger), logger),
 		},
 		{
 			name:    "task_execution_recorded",
@@ -365,8 +366,12 @@ func main() {
 	// goroutine is tracked, so shutdown waits for a pass in progress.
 	lifecycleManager.Go(func() { seedReconciler.Loop(ctx, seedReconcileInterval) })
 
+	// The cron loop and the gRPC entry points plan their runs for the default
+	// tenant; the seed reconcile builds its own planner for each pass.
+	planner := runstart.Planner{TenantID: pkgevents.DefaultTenantID}
+
 	// Initialize activation handler shared by the cron loop and gRPC methods.
-	activateHandler := svchandlers.NewActivateScheduleHandler(logger)
+	activateHandler := svchandlers.NewActivateScheduleHandler(planner, logger)
 	logger.Info("Activation handler initialized")
 
 	// Load schedules config — fail fast if missing or malformed
@@ -401,11 +406,11 @@ func main() {
 	schedulerHandler := handlers.NewSchedulerHandler(schedulerRepo, activateHandler, catalogRepo, schedulesConfig, uowFactory, logger)
 	taskHandler := handlers.NewTaskHandler(taskRepo, logger)
 	taskExecutionHandler := handlers.NewTaskExecutionHandler(taskExecutionRepo, logger)
-	rerunUC := svchandlers.NewTriggerRerunHandler(logger)
+	rerunUC := svchandlers.NewTriggerRerunHandler(planner, logger)
 	rerunHandler := handlers.NewRerunHandler(rerunUC, uowFactory, logger)
-	rebaseUC := svchandlers.NewTriggerRebaseHandler(logger)
+	rebaseUC := svchandlers.NewTriggerRebaseHandler(planner, logger)
 	rebaseHandler := handlers.NewRebaseHandler(rebaseUC, uowFactory, logger)
-	singleNodeRunUC := svchandlers.NewTriggerSingleNodeRunHandler(logger)
+	singleNodeRunUC := svchandlers.NewTriggerSingleNodeRunHandler(planner, logger)
 	singleNodeRunHandler := handlers.NewSingleNodeRunHandler(singleNodeRunUC, uowFactory, logger)
 	nodeRunRepo := postgres.NewNodeRunRepository(db, logger)
 	nodeRunHandler := handlers.NewNodeRunHandler(nodeRunRepo, logger)

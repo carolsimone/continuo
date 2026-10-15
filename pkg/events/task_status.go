@@ -4,7 +4,6 @@ package events
 // Published by:
 //   - execution-controller (RUNNING on deploy, FAILED on deploy failure,
 //     SUCCEEDED/FAILED from observed job status)
-//   - orchestrator (SKIPPED when a node is cascade-skipped after an upstream failure)
 //
 // Consumed by: state. ToMap is the single serializer for this stream — every
 // producer emits through it so the wire shape stays identical across services.

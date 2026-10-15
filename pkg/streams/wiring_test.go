@@ -24,9 +24,9 @@ var servicesWithMainGo = []string{
 	"dead-letter-controller/main.go",
 }
 
-// streamLiteralRe matches versioned stream literals (e.g. "node.updated:v1",
-// "run.entries.dispatch_failed:v1"). Underscores appear in segment names such
-// as single_node_run, so they are part of the character class.
+// streamLiteralRe matches versioned stream literals (e.g. "query.model:v1",
+// "consumer.dead_letter:v1"). Underscores appear in segment names such as
+// dead_letter, so they are part of the character class.
 var streamLiteralRe = regexp.MustCompile(`^[a-z][a-z._]+:v[0-9]+$`)
 
 // groupLiteralRe matches kebab-case identifiers plausibly used as consumer-group names.
@@ -121,7 +121,7 @@ var streamLiteralScanDirs = []string{
 // TestNoStreamLiteralsInProductionGoFiles walks every production (non-test) Go
 // file under the binding/handler directories and asserts that no string literal
 // matches the versioned-stream regex. This is the repo-wide guard that catches
-// inlined names like "node.updated:v1" outside service main.go files. The
+// inlined names like "query.model:v1" outside service main.go files. The
 // regex matches a literal that is a stream name as a whole; a name inside a
 // longer literal, such as a log message, is not matched. A listed directory
 // that is missing or holds no production Go file fails the test, so a rename
@@ -129,7 +129,7 @@ var streamLiteralScanDirs = []string{
 //
 // Test files (*_test.go) are out of scope: a contract test legitimately asserts
 // that a constant resolves to its exact wire value (e.g. that
-// streams.RunEntriesDispatchFailedV1 == "run.entries.dispatch_failed:v1"), and
+// streams.ConsumerDeadLetterV1 == "consumer.dead_letter:v1"), and
 // such an assertion needs the literal. Generated code (streams.gen.go) is the
 // single source of the literals and lives in this package, not the scan dirs.
 func TestNoStreamLiteralsInProductionGoFiles(t *testing.T) {

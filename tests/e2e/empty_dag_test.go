@@ -6,23 +6,25 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// TestEmptyCronDAG_FinalisesAsFailed guards the empty-projection path:
+// TestEmptyCronDAG_FinalisesAsFailed guards the empty-selection path: a cron
+// activation of a schedule with no node in the live release records the run
+// 'failed' with no task, in the transaction that creates it, and a manual
+// trigger of the same schedule is refused with FailedPrecondition and creates
+// no run, whatever its operation.
 //
-//	ActivateSchedule("empty-dag-*") → scheduler.started:v1
-//	→ orchestrator HandleSchedulerStarted: Snapshot(LatestFullDAG) returns
-//	  ErrEmptyProjection (no :Table nodes for this schedule in Neo4j)
-//	→ run.entries.dispatch_failed:v1 with reason="empty_projection"
-//	→ state RunEntriesDispatchFailedHandler: scheduler_tracker.status = 'failed'
-//
-// Fixture: a unique schedule name is inserted directly into schedule_catalog with
-// no corresponding :Table nodes in Neo4j.  This is safe to do without touching
-// topology-controller or the dbt DAG because LatestFullDAG queries Neo4j by
-// schedule_name and returns an empty map when no nodes match.
+// Fixture: a unique schedule name is inserted directly into schedule_catalog;
+// the live release holds no node of it. This is safe to do without touching
+// topology-controller or the dbt DAG because state selects a schedule's nodes
+// from the live release by schedule_name.
 func TestEmptyCronDAG_FinalisesAsFailed(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -44,9 +46,8 @@ func TestEmptyCronDAG_FinalisesAsFailed(t *testing.T) {
 	now := time.Now()
 
 	// Seed schedule_catalog so ActivateSchedule passes the ExistsActive check.
-	// No :Table nodes are seeded in Neo4j for this schedule, so
-	// LoadLatestSourceDAG returns an empty map and Snapshot returns
-	// ErrEmptyProjection.
+	// The live release holds no node of this schedule, so its selection is
+	// empty.
 	_, err := clients.stateDB.ExecContext(ctx, `
 		INSERT INTO schedule_catalog (schedule_name, first_seen_at, last_seen_at, service_metadata)
 		VALUES ($1, $2, $2, '{}')
@@ -67,10 +68,6 @@ func TestEmptyCronDAG_FinalisesAsFailed(t *testing.T) {
 				`DELETE FROM state_outbox WHERE aggregate_id = $1`, scheduleID); err != nil {
 				t.Logf("Warning: failed to delete state_outbox rows for run %s: %v", scheduleID, err)
 			}
-			if _, err := clients.orchestratorDB.ExecContext(bg,
-				`DELETE FROM orchestrator_outbox WHERE aggregate_id = $1`, scheduleID); err != nil {
-				t.Logf("Warning: failed to delete orchestrator_outbox rows for run %s: %v", scheduleID, err)
-			}
 		}
 
 		_, _ = clients.stateDB.ExecContext(bg,
@@ -80,16 +77,10 @@ func TestEmptyCronDAG_FinalisesAsFailed(t *testing.T) {
 			`DELETE FROM scheduler_tracker WHERE schedule_name = $1`, scheduleName)
 		_, _ = clients.stateDB.ExecContext(bg,
 			`DELETE FROM schedule_catalog WHERE schedule_name = $1`, scheduleName)
-
-		// Remove Redis messages for this schedule from the dispatch-failed stream.
-		// Other tests are isolated by schedule_name, so trimming the whole stream
-		// is safe only if no concurrent e2e test writes there; delete matching
-		// entries by reading + selectively acking is complex, so we leave the
-		// stream in place (it has no side-effects on subsequent test runs).
 	})
 
-	// Activate the schedule via gRPC — state creates scheduler_tracker and
-	// publishes scheduler.started:v1 via its outbox processor.
+	// Activate the schedule via gRPC — state creates the run and, finding no
+	// node of the schedule in the live release, records it failed.
 	resp, err := clients.stateClient.ActivateSchedule(ctx, &statev1.ActivateScheduleRequest{
 		ScheduleName: scheduleName,
 	})
@@ -100,10 +91,8 @@ func TestEmptyCronDAG_FinalisesAsFailed(t *testing.T) {
 	require.NoError(t, err, "schedule_id must be a valid UUID")
 	t.Logf("ActivateSchedule created run: schedule_id=%s", scheduleID)
 
-	// Wait for scheduler_tracker to reach 'failed'.
-	// Path: orchestrator processes scheduler.started:v1, finds no :Table nodes,
-	// emits run.entries.dispatch_failed:v1, state sets status='failed'.
-	// Nominal latency is a few seconds; 30 s is a comfortable bound.
+	// The run is recorded 'failed' in the transaction that creates it; the poll
+	// only absorbs read latency.
 	pollUntil(t, ctx, 30*time.Second, 1*time.Second, func() (bool, error) {
 		var dbStatus string
 		qErr := clients.stateDB.GetContext(ctx, &dbStatus,
@@ -115,4 +104,25 @@ func TestEmptyCronDAG_FinalisesAsFailed(t *testing.T) {
 	}, fmt.Sprintf("Timeout: scheduler_tracker for empty-DAG run %s did not reach status='failed'", scheduleID))
 
 	t.Logf("scheduler_tracker reached status='failed' for empty-DAG run %s", scheduleID)
+
+	var taskCount int
+	require.NoError(t, clients.stateDB.GetContext(ctx, &taskCount,
+		`SELECT count(*) FROM task_tracker WHERE schedule_id = $1`, scheduleID))
+	assert.Zero(t, taskCount, "an empty selection stores no task")
+
+	// A manual trigger of the same schedule is refused and creates no run,
+	// whatever its operation: a test run of a schedule with no node is an empty
+	// selection, not a skipped run.
+	for _, operation := range []string{"", "test"} {
+		_, err := clients.stateClient.TriggerSchedule(ctx, &statev1.TriggerScheduleRequest{
+			ScheduleName: scheduleName,
+			Operation:    operation,
+		})
+		require.Error(t, err, "TriggerSchedule(%q, operation=%q) must be refused", scheduleName, operation)
+		assert.Equal(t, codes.FailedPrecondition, status.Code(err), "operation=%q: %v", operation, err)
+	}
+	var runs int
+	require.NoError(t, clients.stateDB.GetContext(ctx, &runs,
+		`SELECT count(*) FROM scheduler_tracker WHERE schedule_name = $1`, scheduleName))
+	assert.Equal(t, 1, runs, "a refused trigger creates no run")
 }

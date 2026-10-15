@@ -90,32 +90,6 @@ func TestValidationDeployTaskOmitemptyShape(t *testing.T) {
 	}
 }
 
-// goldenNodeUpdated is the exact JSON an event.NodeUpdated is stored as in the
-// node_updated outbox payload. No field is omitempty.
-const goldenNodeUpdated = `{"task_id":"t","schedule_id":"s","schedule_name":"sn","service_name":"svc","schema_name":"sch","table_name":"tbl","status":"FAILED"}`
-
-func TestNodeUpdatedDTORoundTrip(t *testing.T) {
-	var dto NodeUpdatedDTO
-	if err := json.Unmarshal([]byte(goldenNodeUpdated), &dto); err != nil {
-		t.Fatalf("unmarshal golden: %v", err)
-	}
-	got := dto.ToDomain()
-	want := event.NodeUpdated{
-		TaskID: "t", ScheduleID: "s", ScheduleName: "sn", ServiceName: "svc",
-		SchemaName: "sch", TableName: "tbl", Status: "FAILED",
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("toDomain:\n got %+v\nwant %+v", got, want)
-	}
-	out, err := json.Marshal(NodeUpdatedFromDomain(got))
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	if string(out) != goldenNodeUpdated {
-		t.Fatalf("bytes changed:\n got %s\nwant %s", out, goldenNodeUpdated)
-	}
-}
-
 const goldenJobCheckRequest = `{"task_id":"t","schedule_id":"s","schedule_name":"sn","service_name":"svc","schema_name":"sch","table_name":"tbl","job_name":"j","check_after":123,"node_type":"dbt-model","image_tag":"v1","operation":"test","retry_count":1,"max_retries":3,"running_announced":true}`
 
 func TestJobCheckRequestDTORoundTrip(t *testing.T) {

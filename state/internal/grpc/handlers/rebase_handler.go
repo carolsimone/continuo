@@ -20,8 +20,10 @@ import (
 //
 // A rebase synthesises a new Run that inherits the source's schedule_name,
 // points back to the source via source_run_id, and is marked kind='rebase'.
-// The orchestrator (via trigger.rebase:v1 outbox fanout) is responsible for
-// partitioning and projecting inherited tasks.
+// It runs on the live release: it re-executes the source's tasks that did not
+// succeed and whose node the live schedule still holds, every descendant of
+// theirs, and every node of the live schedule the source never ran, and carries
+// every other source success over as succeeded.
 type RebaseHandler struct {
 	useCase    *svchandlers.TriggerDerivedRunHandler
 	uowFactory func() uow.UnitOfWork
@@ -52,6 +54,9 @@ func (h *RebaseHandler) TriggerRebase(ctx context.Context, req *statev1.TriggerR
 
 	id, name, err := h.useCase.Handle(ctx, h.uowFactory(), srcID, identity.FromContext(ctx))
 	if err != nil {
+		if st, ok := planRefusal(err); ok {
+			return nil, st.Err()
+		}
 		switch {
 		case errors.Is(err, postgres.ErrNotFound):
 			return nil, status.Errorf(codes.NotFound, "source run not found")

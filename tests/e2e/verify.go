@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lib/pq"
+
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
@@ -80,8 +82,8 @@ func verifyJobsCompleted(
 	t.Logf("✅ All %d jobs completed successfully", len(tables))
 }
 
-// verifyDependencyControllerUnlockedNextLevel checks that next level nodes were published
-func verifyDependencyControllerUnlockedNextLevel(
+// verifyNextLevelDispatched checks that the next level nodes were dispatched on query.model:v1
+func verifyNextLevelDispatched(
 	t *testing.T,
 	ctx context.Context,
 	queryModelTap *streamTap,
@@ -111,9 +113,9 @@ func verifyDependencyControllerUnlockedNextLevel(
 		}
 
 		return matchCount >= len(nextLevelTables), nil
-	}, fmt.Sprintf("Timeout waiting for orchestrator to unlock %d nodes", len(nextLevelTables)))
+	}, fmt.Sprintf("Timeout waiting for state to dispatch %d nodes", len(nextLevelTables)))
 
-	t.Logf("✅ orchestrator unlocked %d nodes", len(nextLevelTables))
+	t.Logf("✅ state dispatched %d nodes", len(nextLevelTables))
 }
 
 // getDAGLevels returns happy-path DAG nodes grouped by execution level.
@@ -146,9 +148,9 @@ func verifyFullDAGExecution(
 		// Wait for jobs to complete
 		verifyJobsCompleted(t, ctx, clients, level, testScheduleName)
 
-		// If not last level, verify orchestrator published next level
+		// If not last level, verify state dispatched the next level
 		if i < len(levels)-1 {
-			verifyDependencyControllerUnlockedNextLevel(t, ctx, queryModelTap, levels[i+1], scheduleID)
+			verifyNextLevelDispatched(t, ctx, queryModelTap, levels[i+1], scheduleID)
 		}
 	}
 
@@ -196,9 +198,9 @@ func verifyDialectRouting(t *testing.T, ctx context.Context) {
 	t.Log("✅ dialect routing verified: service-1 jobs run customname-dbt, service-2/3 jobs run built-in dbt")
 }
 
-// verifyOrchestratorPublishedRootNodes verifies that the orchestrator published
-// the expected root node messages to query.model:v1 after processing scheduler.started:v1.
-func verifyOrchestratorPublishedRootNodes(
+// verifyRootNodesDispatched verifies that state dispatched the expected root
+// nodes to query.model:v1 when it created the run.
+func verifyRootNodesDispatched(
 	t *testing.T,
 	ctx context.Context,
 	queryModelTap *streamTap,
@@ -244,7 +246,25 @@ func verifyOrchestratorPublishedRootNodes(
 		seenStreamTables[tableName] = true
 	}
 
-	t.Logf("✅ orchestrator published %d root node messages to query.model:v1", expectedCount)
+	t.Logf("✅ state dispatched %d root node messages to query.model:v1", expectedCount)
+}
+
+// verifyTasksSkipped polls state DB until every task of schedulerID at one of
+// tables is 'skipped': state skipped it when an upstream failed for good.
+func verifyTasksSkipped(t *testing.T, ctx context.Context, clients *testClients, schedulerID uuid.UUID, tables []string) {
+	t.Helper()
+	pollUntil(t, ctx, 2*time.Minute, time.Second, func() (bool, error) {
+		var skipped int
+		err := clients.stateDB.GetContext(ctx, &skipped, `
+			SELECT count(*) FROM task_tracker
+			WHERE schedule_id = $1 AND table_name = ANY($2) AND status = 'skipped'`,
+			schedulerID, pq.Array(tables))
+		if err != nil {
+			return false, err
+		}
+		return skipped == len(tables), nil
+	}, fmt.Sprintf("Timeout waiting for %v to be skipped", tables))
+	t.Logf("✅ %v skipped", tables)
 }
 
 // verifyNodeExhaustedRetries polls state DB until the given node has retry_count = 2
@@ -291,7 +311,7 @@ func verifyNoJobsDeployed(
 }
 
 // verifySchedulerSucceeded polls scheduler_tracker until the schedule reaches
-// 'succeeded' status, confirming orchestrator finalised the run correctly.
+// 'succeeded' status, confirming state finalised the run correctly.
 func verifySchedulerSucceeded(
 	t *testing.T,
 	ctx context.Context,
@@ -314,7 +334,7 @@ func verifySchedulerSucceeded(
 }
 
 // verifySchedulerFailed polls scheduler_tracker until the schedule reaches
-// 'failed' status, confirming orchestrator finalised the run correctly.
+// 'failed' status.
 func verifySchedulerFailed(
 	t *testing.T,
 	ctx context.Context,

@@ -135,13 +135,6 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 		}
 		return e.ToMap(), nil
 
-	case event.EventTypeNodeUpdated:
-		var dto serialization.NodeUpdatedDTO
-		if err := json.Unmarshal(entry.Payload, &dto); err != nil {
-			return nil, fmt.Errorf("%w: unmarshal node_updated: %v", pkgevents.ErrPermanent, err)
-		}
-		return dto.ToDomain().ToMap(), nil
-
 	case validation.EventTypeValidationCompleted, validation.EventTypeSeedBuildCompleted, validation.EventTypeCompileCompleted,
 		validation.EventTypeValidationNodeResult:
 		// Candidate-leg events carry their body as a single JSON "payload" field;

@@ -16,8 +16,9 @@ import (
 // uses the latest topology metadata; with a fourth it reuses the metadata
 // snapshot of that past run.
 //
-// The command reports acceptance, not completion. A node that does not exist,
-// or is not a dbt model or seed, fails asynchronously downstream.
+// The command reports acceptance, not completion. A node the live release does
+// not hold is refused (not_found) and a node that is not a dbt model or seed is
+// refused (usage); neither creates a run.
 func NewFullRefreshCommand(factory StateClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "full-refresh <service> <schema> <table> [source-run-id]",
@@ -44,12 +45,13 @@ The initiating identity is not an argument: it is taken from the CONTINUO_ACTOR
 environment variable when set, otherwise the state service records its own
 system identity.
 
-This command reports acceptance, not completion. On success the new run and its
-event are durably recorded; if the node is not in the topology, is not a dbt
-model or seed, or its service's governing command block defines no
-full_refresh (model) or seed_full_refresh (seed) command, the failure is
-surfaced asynchronously downstream, not by this command. Check the outcome
-with "node history".
+This command reports acceptance, not completion. On success the new run is
+planned and durably recorded with its first dispatches. A node the live
+release does not hold is refused (not_found), and a node that is not a dbt
+model or seed is refused (usage); neither creates a run. If the node's service
+governing command block defines no full_refresh (model) or seed_full_refresh
+(seed) command, the run is accepted and fails when it executes. Check the
+outcome of an accepted run with "node history".
 
 Output (stdout, JSON):
   {"run_id":string,"schedule_name":string}
