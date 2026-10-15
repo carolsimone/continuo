@@ -6,17 +6,15 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"net/http"
 	"os"
 	"runtime/debug"
 	"strings"
 	"time"
 
-	"github.com/carolsimone/continuo/agent-chat/adapters/anthropic"
 	"github.com/carolsimone/continuo/agent-chat/adapters/cliexec"
 	"github.com/carolsimone/continuo/agent-chat/adapters/grpcserver"
 	agenthttp "github.com/carolsimone/continuo/agent-chat/adapters/http"
-	adapteropenai "github.com/carolsimone/continuo/agent-chat/adapters/openai"
+	"github.com/carolsimone/continuo/agent-chat/adapters/llmprovider"
 	"github.com/carolsimone/continuo/agent-chat/adapters/postgres"
 	"github.com/carolsimone/continuo/agent-chat/adapters/ratelimit"
 	"github.com/carolsimone/continuo/agent-chat/adapters/s3"
@@ -153,28 +151,12 @@ func main() {
 	}
 	executor := cliexec.NewExecutor(catalog, cfg.CLIPath, cliEnv, cfg.ToolTimeout, cfg.ToolResultMaxBytes, logger)
 
-	// Shared HTTP client for LLM providers. No overall Timeout is set because
-	// streaming responses can run for minutes; context cancellation (interrupt /
-	// turn ctx) is the primary backstop. Transport-level timeouts guard the
-	// socket layer so a dead connection does not hang indefinitely.
-	httpClient := &http.Client{
-		Transport: &http.Transport{
-			DialContext:           (&net.Dialer{Timeout: 30 * time.Second}).DialContext,
-			ResponseHeaderTimeout: 30 * time.Second,
-		},
-	}
-
-	// LLM provider selection.
-	var provider ports.LLMProvider
-	switch cfg.LLMProvider {
-	case "anthropic":
-		provider = anthropic.NewProvider("https://api.anthropic.com", cfg.LLMAPIKey, cfg.LLMModel, httpClient)
-	case "openai":
-		provider = adapteropenai.NewProvider("https://api.openai.com", cfg.LLMAPIKey, cfg.LLMModel, httpClient)
-	case "openai-compatible":
-		provider = adapteropenai.NewProvider(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel, httpClient)
-	default:
-		logger.Error("unsupported LLM provider", "provider", cfg.LLMProvider)
+	// LLM provider. LLM_BASE_URL, when set, is the root every provider's
+	// requests go to; the client sends them through HTTP_PROXY / HTTPS_PROXY
+	// except to the hosts NO_PROXY lists.
+	provider, err := llmprovider.New(cfg.LLMProvider, cfg.LLMAPIKey, cfg.LLMModel, cfg.LLMBaseURL, llmprovider.NewHTTPClient())
+	if err != nil {
+		logger.Error("unsupported LLM provider", "provider", cfg.LLMProvider, "error", err)
 		os.Exit(1)
 	}
 
@@ -314,6 +296,7 @@ func main() {
 		"grpc_port", cfg.GRPCPort,
 		"health_port", cfg.HealthPort,
 		"llm_provider", cfg.LLMProvider,
+		"llm_base_url", cfg.LLMBaseURL,
 		"llm_model", cfg.LLMModel,
 	)
 
