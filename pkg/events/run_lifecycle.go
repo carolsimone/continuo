@@ -1,84 +1,9 @@
 package events
 
-// DefaultTaskMaxRetries is the retry budget of every task the orchestrator
-// projects. The orchestrator stamps it on each DispatchedTask
-// (run.entries.dispatched:v1), where state stores it as the task's max_retries,
-// and on each query.model:v1 dispatch, where execution-controller retries a
-// failed attempt while its retry count is below it — so both read one value.
+// DefaultTaskMaxRetries is the retry budget of every task state plans. state
+// stores it as each task's max_retries and stamps it on the task's
+// query.model:v1 dispatch, where execution-controller retries a failed attempt
+// while its retry count is below it, so both read one value.
 // execution-controller applies it itself only to a dispatch or check ticket
 // that carries no budget.
 const DefaultTaskMaxRetries int32 = 2
-
-// DispatchedTask is one row in RunEntriesDispatched.AllTasks.
-type DispatchedTask struct {
-	TaskID              string `json:"task_id"`
-	ServiceName         string `json:"service_name"`
-	SchemaName          string `json:"schema_name"`
-	TableName           string `json:"table_name"`
-	NodeType            string `json:"node_type"`
-	MaxRetries          int32  `json:"max_retries"`
-	ImageTag            string `json:"image_tag"`
-	Status              string `json:"status,omitempty"`                 // "pending" (default) | "succeeded" (inherited)
-	InheritedFromTaskID string `json:"inherited_from_task_id,omitempty"` // empty for rebased; root task_id (uuid) for inherited
-}
-
-// RunEntriesDispatched — stream: run.entries.dispatched:v1
-// Published by: orchestrator
-// Consumed by: state
-type RunEntriesDispatched struct {
-	ScheduleID     string           `json:"schedule_id"`
-	ScheduleName   string           `json:"schedule_name"`
-	AllTasks       []DispatchedTask `json:"all_tasks"`
-	TotalTaskCount int32            `json:"total_task_count"`
-}
-
-// DispatchFailedReason is the closed set of reasons emitted with
-// run.entries.dispatch_failed:v1. Most values correspond 1:1 to a snapshot
-// package sentinel, mapped by the orchestrator's dispatchFailedReason mapper
-// (orchestrator/service/handlers/dispatch_failed.go). InvalidNodeType is the
-// exception: it is raised directly when a dispatch node carries an unparseable
-// node_type, a permanent data defect that no retry can fix, so the run must
-// fail fast rather than sit until the watchdog cancels it.
-type DispatchFailedReason string
-
-const (
-	DispatchFailedReasonTargetNotFound  DispatchFailedReason = "target_not_found"
-	DispatchFailedReasonEmptyProjection DispatchFailedReason = "empty_projection"
-	DispatchFailedReasonInvalidNodeType DispatchFailedReason = "invalid_node_type"
-	// DispatchFailedReasonNoTests is emitted when a single-node TEST run
-	// targets a node with zero dbt tests: there is no work for `dbt test`
-	// to do, so the orchestrator fails the dispatch fast instead of
-	// scheduling a pointless Job.
-	DispatchFailedReasonNoTests DispatchFailedReason = "no_tests"
-	// DispatchFailedReasonRerunOfTestUnsupported is emitted when a rerun or
-	// rebase's source :Run has operation "test". A rerun/rebase derives its
-	// dispatch from the source run's projection, which carries no per-task
-	// operation, so it cannot safely reissue a `dbt test` run; the caller
-	// must trigger a fresh `node test` / `schedule test` instead.
-	DispatchFailedReasonRerunOfTestUnsupported DispatchFailedReason = "rerun_of_test_unsupported"
-	// DispatchFailedReasonFullRefreshUnsupported is emitted when a
-	// full_refresh run targets a node that is neither a dbt model nor a dbt
-	// seed (a snapshot, a dbt test, or a python node).
-	DispatchFailedReasonFullRefreshUnsupported DispatchFailedReason = "full_refresh_unsupported"
-)
-
-// RunEntriesDispatchFailed — stream: run.entries.dispatch_failed:v1
-// Published by: orchestrator when it cannot produce dispatch work for a
-// run. Symmetric to RunEntriesDispatched: that one creates tasks and
-// flips scheduler_tracker to running; this one writes no tasks and flips
-// scheduler_tracker to failed, or to skipped for a benign reason (no_tests).
-// Consumed by: state.
-type RunEntriesDispatchFailed struct {
-	ScheduleID   string               `json:"schedule_id"`
-	ScheduleName string               `json:"schedule_name"`
-	Reason       DispatchFailedReason `json:"reason"`
-}
-
-// RunFinalized — stream: run.finalized:v1
-// Published by: state
-// Consumed by: orchestrator
-type RunFinalized struct {
-	ScheduleID   string `json:"schedule_id"`
-	ScheduleName string `json:"schedule_name"`
-	Status       string `json:"status"` // succeeded | failed | cancelled | skipped
-}

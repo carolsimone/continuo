@@ -74,40 +74,47 @@ type StateServiceClient interface {
 	GetTask(ctx context.Context, in *GetTaskRequest, opts ...grpc.CallOption) (*TaskResponse, error)
 	GetTaskByScheduleAndNode(ctx context.Context, in *GetTaskByScheduleAndNodeRequest, opts ...grpc.CallOption) (*TaskResponse, error)
 	ListTasks(ctx context.Context, in *ListTasksRequest, opts ...grpc.CallOption) (*ListTasksResponse, error)
-	// GetSchedulerInitStatus returns initialization_status for a scheduler.
-	// Used by orchestrator to guard premature finalization during re-run.
+	// GetSchedulerInitStatus returns initialization_status for a scheduler:
+	// completed once the run's tasks are stored.
 	GetSchedulerInitStatus(ctx context.Context, in *GetSchedulerInitStatusRequest, opts ...grpc.CallOption) (*GetSchedulerInitStatusResponse, error)
-	// TriggerRerun atomically resets the scheduler + target task and enqueues a
-	// trigger.rerun:v1 outbox entry.  Replaces POST /schedules/{id}/rerun.
+	// TriggerRerun creates a run that re-executes a failed or cancelled run's
+	// tasks that did not succeed, and their descendants, on the source run's
+	// release, and dispatches the ready ones in the transaction that creates it.
 	TriggerRerun(ctx context.Context, in *TriggerRerunRequest, opts ...grpc.CallOption) (*TriggerRerunResponse, error)
 	// TriggerSingleNodeRun creates a synthesised single-node run that
 	// executes exactly one task with no downstream pickup. Two modes,
 	// selected via the `metadata_source` field on the request:
-	//   - "latest" (default): metadata pair from latest topology
-	//   - "snapshot_of_run" (stale): metadata pair from the source run's
-	//     :EXECUTES edge; requires `source_run_id`
+	//   - "latest" (default): the node as the live release holds it
+	//   - "snapshot_of_run" (stale): the node as the source run's release
+	//     holds it; requires `source_run_id`
 	//
 	// Errors:
 	//
 	//	INVALID_ARGUMENT — empty/malformed identity, unknown metadata_source,
 	//	                   "snapshot_of_run" without source_run_id, "latest"
-	//	                   with non-empty source_run_id.
+	//	                   with non-empty source_run_id, or a full_refresh of
+	//	                   a node type that cannot be rebuilt from scratch.
 	//	NOT_FOUND — "snapshot_of_run" + source_run_id has no scheduler_tracker
-	//	            row, or no task_tracker row matching the identity.
-	//	FAILED_PRECONDITION — "snapshot_of_run" + source run not terminal.
+	//	            row, or no task_tracker row matching the identity; or the
+	//	            release holds no such node of that service.
+	//	FAILED_PRECONDITION — "snapshot_of_run" + source run not terminal or
+	//	                      naming no release; or a test of a node with no
+	//	                      data tests.
 	TriggerSingleNodeRun(ctx context.Context, in *TriggerSingleNodeRunRequest, opts ...grpc.CallOption) (*TriggerSingleNodeRunResponse, error)
-	// TriggerRebase creates a new run on the source's schedule that re-executes
-	// everything that didn't succeed in the source (failed/cancelled/skipped),
-	// descendants of those, plus new arrivals from the latest topology.
-	// SUCCEEDED tasks from the source are inherited at their pinned metadata.
-	// The new run reuses the source's schedule_name (umbrella §4 — Option A).
+	// TriggerRebase creates a new run on the source's schedule and the live
+	// release that re-executes everything that didn't succeed in the source
+	// (failed/cancelled/skipped), descendants of those, plus nodes of the live
+	// schedule the source never ran. SUCCEEDED tasks from the source are
+	// inherited. The new run reuses the source's schedule_name.
 	// Errors:
 	//
 	//	INVALID_ARGUMENT — empty or malformed source_run_id.
 	//	NOT_FOUND — source_run_id doesn't exist in scheduler_tracker.
 	//	FAILED_PRECONDITION — source not in {FAILED, CANCELLED}; OR source has
 	//	                      zero non-SUCCEEDED tasks; OR an active run already
-	//	                      exists on the source's schedule_name.
+	//	                      exists on the source's schedule_name; OR the
+	//	                      source names no release, is a test run, or leaves
+	//	                      nothing to re-execute.
 	TriggerRebase(ctx context.Context, in *TriggerRebaseRequest, opts ...grpc.CallOption) (*TriggerRebaseResponse, error)
 	// ListNodeRuns returns the most recent task instances for a node, ordered by
 	// scheduler_tracker.created_at DESC. Identity fields are required; limit is
@@ -417,40 +424,47 @@ type StateServiceServer interface {
 	GetTask(context.Context, *GetTaskRequest) (*TaskResponse, error)
 	GetTaskByScheduleAndNode(context.Context, *GetTaskByScheduleAndNodeRequest) (*TaskResponse, error)
 	ListTasks(context.Context, *ListTasksRequest) (*ListTasksResponse, error)
-	// GetSchedulerInitStatus returns initialization_status for a scheduler.
-	// Used by orchestrator to guard premature finalization during re-run.
+	// GetSchedulerInitStatus returns initialization_status for a scheduler:
+	// completed once the run's tasks are stored.
 	GetSchedulerInitStatus(context.Context, *GetSchedulerInitStatusRequest) (*GetSchedulerInitStatusResponse, error)
-	// TriggerRerun atomically resets the scheduler + target task and enqueues a
-	// trigger.rerun:v1 outbox entry.  Replaces POST /schedules/{id}/rerun.
+	// TriggerRerun creates a run that re-executes a failed or cancelled run's
+	// tasks that did not succeed, and their descendants, on the source run's
+	// release, and dispatches the ready ones in the transaction that creates it.
 	TriggerRerun(context.Context, *TriggerRerunRequest) (*TriggerRerunResponse, error)
 	// TriggerSingleNodeRun creates a synthesised single-node run that
 	// executes exactly one task with no downstream pickup. Two modes,
 	// selected via the `metadata_source` field on the request:
-	//   - "latest" (default): metadata pair from latest topology
-	//   - "snapshot_of_run" (stale): metadata pair from the source run's
-	//     :EXECUTES edge; requires `source_run_id`
+	//   - "latest" (default): the node as the live release holds it
+	//   - "snapshot_of_run" (stale): the node as the source run's release
+	//     holds it; requires `source_run_id`
 	//
 	// Errors:
 	//
 	//	INVALID_ARGUMENT — empty/malformed identity, unknown metadata_source,
 	//	                   "snapshot_of_run" without source_run_id, "latest"
-	//	                   with non-empty source_run_id.
+	//	                   with non-empty source_run_id, or a full_refresh of
+	//	                   a node type that cannot be rebuilt from scratch.
 	//	NOT_FOUND — "snapshot_of_run" + source_run_id has no scheduler_tracker
-	//	            row, or no task_tracker row matching the identity.
-	//	FAILED_PRECONDITION — "snapshot_of_run" + source run not terminal.
+	//	            row, or no task_tracker row matching the identity; or the
+	//	            release holds no such node of that service.
+	//	FAILED_PRECONDITION — "snapshot_of_run" + source run not terminal or
+	//	                      naming no release; or a test of a node with no
+	//	                      data tests.
 	TriggerSingleNodeRun(context.Context, *TriggerSingleNodeRunRequest) (*TriggerSingleNodeRunResponse, error)
-	// TriggerRebase creates a new run on the source's schedule that re-executes
-	// everything that didn't succeed in the source (failed/cancelled/skipped),
-	// descendants of those, plus new arrivals from the latest topology.
-	// SUCCEEDED tasks from the source are inherited at their pinned metadata.
-	// The new run reuses the source's schedule_name (umbrella §4 — Option A).
+	// TriggerRebase creates a new run on the source's schedule and the live
+	// release that re-executes everything that didn't succeed in the source
+	// (failed/cancelled/skipped), descendants of those, plus nodes of the live
+	// schedule the source never ran. SUCCEEDED tasks from the source are
+	// inherited. The new run reuses the source's schedule_name.
 	// Errors:
 	//
 	//	INVALID_ARGUMENT — empty or malformed source_run_id.
 	//	NOT_FOUND — source_run_id doesn't exist in scheduler_tracker.
 	//	FAILED_PRECONDITION — source not in {FAILED, CANCELLED}; OR source has
 	//	                      zero non-SUCCEEDED tasks; OR an active run already
-	//	                      exists on the source's schedule_name.
+	//	                      exists on the source's schedule_name; OR the
+	//	                      source names no release, is a test run, or leaves
+	//	                      nothing to re-execute.
 	TriggerRebase(context.Context, *TriggerRebaseRequest) (*TriggerRebaseResponse, error)
 	// ListNodeRuns returns the most recent task instances for a node, ordered by
 	// scheduler_tracker.created_at DESC. Identity fields are required; limit is
