@@ -8,6 +8,7 @@ import (
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	"github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 )
 
@@ -16,11 +17,11 @@ import (
 func TestXAddArgs_DoNotTrim(t *testing.T) {
 	p := NewOutboxPublisher(nil, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})))
 
-	payload, err := json.Marshal(domain.NodeReadyForExecution{ScheduleID: "s1", TableName: "t"})
+	payload, err := json.Marshal(map[string]string{"release_id": "r1"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	args, err := p.xaddArgs(&outbox.Entry{ID: uuid.New(), EventType: "node_ready_for_execution", Payload: payload, StreamName: "node.ready:v1"})
+	args, err := p.xaddArgs(&outbox.Entry{ID: uuid.New(), EventType: domain.EventTypeReleasePromoted, Payload: payload, StreamName: streams.SchedulesLoadedV1})
 	if err != nil {
 		t.Fatal(err)
 	}

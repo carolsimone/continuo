@@ -39,48 +39,9 @@ type ScheduleGraph struct {
 	PromotionSeq int64 // :TopologyRoot.promotion_seq (the live promotion seq) at query time; 0 when unknown.
 }
 
-// Outbox event_type routing keys for orchestrator_outbox rows. Each value is the
-// event_type stored on the row and matched by the publisher's Render
-// switch; defining them here (next to the payload structs) gives the emit site
-// (service/handlers) and the publisher adapter (adapters/publisher) one source of
-// truth. Values are the wire-stored event_type strings and must not change.
-const (
-	EventTypeNodeReadyForExecution    = "node_ready_for_execution"
-	EventTypeCascadeTaskSkipped       = "cascade_task_skipped"
-	EventTypeRunEntriesDispatched     = "run_entries_dispatched"
-	EventTypeRunEntriesDispatchFailed = "run_entries_dispatch_failed"
-	EventTypeReleasePromoted          = "release_promoted"
-)
-
-// CascadeTaskSkipped is the event payload written to task.status.updated:v1 outbox entries
-// for downstream nodes that become unreachable due to an upstream failure.
-type CascadeTaskSkipped struct {
-	TaskID     string
-	ScheduleID string
-}
-
-// NodeReadyForExecution is the event payload written to query.model:v1 outbox entries
-type NodeReadyForExecution struct {
-	ScheduleID   string
-	ScheduleName string
-	ServiceName  string
-	SchemaName   string
-	TableName    string
-	TaskID       string
-	JobName      string
-	NodeType     string
-	ImageTag     string
-	// SecretRef names the continuo-api-* Secret a python-api node's pod
-	// receives; empty for every node that takes no API credentials.
-	SecretRef string
-	// Operation selects the dbt verb. Its DTO field is omitempty so normal
-	// (dbt run/seed/snapshot) messages are wire-identical; set to "test" for
-	// single-node TEST runs so the executor runs `dbt test` instead of the
-	// default verb for the node's NodeType.
-	Operation string
-	// MaxRetries is the task's retry budget: the executor retries a failed
-	// attempt while the attempt's retry count is below it. Zero means the
-	// dispatch carries no budget and the executor applies
-	// pkg/events.DefaultTaskMaxRetries.
-	MaxRetries int32
-}
+// EventTypeReleasePromoted is the event_type of the orchestrator_outbox row the
+// topology swap writes for schedules.loaded:v1. The emit site
+// (service/handlers) and the publisher's Render switch (adapters/publisher)
+// share this one declaration. The value is the stored event_type and must not
+// change.
+const EventTypeReleasePromoted = "release_promoted"

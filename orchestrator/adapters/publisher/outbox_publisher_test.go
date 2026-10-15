@@ -1,13 +1,11 @@
 package publisher_test
 
 import (
-	"encoding/json"
 	"errors"
 	"testing"
 
 	"github.com/carolsimone/continuo/orchestrator/adapters/publisher"
 	"github.com/carolsimone/continuo/orchestrator/domain"
-	"github.com/carolsimone/continuo/orchestrator/serialization"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/google/uuid"
@@ -20,13 +18,6 @@ import (
 // We test by creating a publisher with a nil Redis client and calling an
 // exported test-seam method. Since payloadToValues is unexported, we test it
 // indirectly by round-tripping via the entry struct.
-
-func mustMarshal(t *testing.T, v interface{}) []byte {
-	t.Helper()
-	b, err := json.Marshal(v)
-	require.NoError(t, err)
-	return b
-}
 
 func makeEntry(eventType string, payload []byte) *outbox.Entry {
 	return &outbox.Entry{
@@ -49,114 +40,31 @@ func payloadToValuesFor(t *testing.T, entry *outbox.Entry) map[string]interface{
 	return vals
 }
 
-func TestOutboxPublisher_NodeReadyForExecution(t *testing.T) {
-	evt := domain.NodeReadyForExecution{
-		ScheduleID:   "sched-1",
-		ScheduleName: "daily",
-		ServiceName:  "svc",
-		SchemaName:   "public",
-		TableName:    "orders",
-		TaskID:       "task-1",
-		JobName:      "job-1",
-		NodeType:     "dbt-model",
-		ImageTag:     "v1",
-	}
-	entry := makeEntry("node_ready_for_execution", mustMarshal(t, serialization.NodeReadyForExecutionFromDomain(evt)))
+func TestOutboxPublisher_ReleasePromotedIsAPayloadField(t *testing.T) {
+	raw := []byte(`{"key":"value"}`)
+	entry := makeEntry(domain.EventTypeReleasePromoted, raw)
 	vals := payloadToValuesFor(t, entry)
 
 	assert.Equal(t, entry.ID.String(), vals["outbox_entry_id"])
-	assert.Equal(t, "sched-1", vals["schedule_id"])
-	assert.Equal(t, "daily", vals["schedule_name"])
-	assert.Equal(t, "svc", vals["service_name"])
-	assert.Equal(t, "public", vals["schema_name"])
-	assert.Equal(t, "orders", vals["table_name"])
-	assert.Equal(t, "task-1", vals["task_id"])
-	assert.Equal(t, "job-1", vals["job_name"])
-	assert.Equal(t, "dbt-model", vals["node_type"])
-	assert.Equal(t, "v1", vals["image_tag"])
-	// Production dispatches carry no mode (wire shape unchanged).
-	_, hasMode := vals["mode"]
-	assert.False(t, hasMode, "production node_ready_for_execution must not carry a mode field")
-	// Plain run-operation dispatches carry no operation field (wire shape unchanged).
-	_, hasOperation := vals["operation"]
-	assert.False(t, hasOperation, "run-operation node_ready_for_execution must not carry an operation field")
-	// A node with no API credentials carries no secret_ref field.
-	_, hasSecretRef := vals["secret_ref"]
-	assert.False(t, hasSecretRef, "node_ready_for_execution without a secret_ref must not carry a secret_ref field")
-	// A dispatch without a retry budget carries no max_retries field.
-	_, hasMaxRetries := vals["max_retries"]
-	assert.False(t, hasMaxRetries, "node_ready_for_execution without a retry budget must not carry a max_retries field")
+	assert.Equal(t, string(raw), vals["payload"])
 }
 
-func TestOutboxPublisher_NodeReadyForExecution_CarriesMaxRetries(t *testing.T) {
-	// The executor retries a failed attempt while its retry count is below the
-	// budget on the dispatch, so the budget must reach the wire.
-	evt := domain.NodeReadyForExecution{
-		ScheduleID: "sched-1", ScheduleName: "daily", ServiceName: "svc",
-		SchemaName: "public", TableName: "orders", TaskID: "task-1", JobName: "job-1",
-		NodeType: "dbt-model", ImageTag: "v1", MaxRetries: 4,
-	}
-	entry := makeEntry("node_ready_for_execution", mustMarshal(t, serialization.NodeReadyForExecutionFromDomain(evt)))
-	vals := payloadToValuesFor(t, entry)
-	assert.Equal(t, "4", vals["max_retries"])
-}
-
-func TestOutboxPublisher_NodeReadyForExecution_CarriesSecretRef(t *testing.T) {
-	// A python-api node's pod mounts the named continuo-api-* Secret, so the
-	// executor needs the ref on the wire.
-	evt := domain.NodeReadyForExecution{ //nolint:gosec // G101: secret_ref names a Kubernetes Secret, not a credential
-		ScheduleID: "sched-1", ScheduleName: "daily", ServiceName: "svc",
-		SchemaName: "public", TableName: "fx", TaskID: "task-1", JobName: "job-1",
-		NodeType: "python-api", ImageTag: "v1", SecretRef: "continuo-api-fx",
-	}
-	entry := makeEntry("node_ready_for_execution", mustMarshal(t, serialization.NodeReadyForExecutionFromDomain(evt)))
-	vals := payloadToValuesFor(t, entry)
-	assert.Equal(t, "continuo-api-fx", vals["secret_ref"])
-}
-
-func TestOutboxPublisher_NodeReadyForExecution_CarriesTestOperation(t *testing.T) {
-	// The executor needs the operation on the wire to run `dbt test` instead of
-	// the default `dbt run`/`dbt seed`/`dbt snapshot` for this node type.
-	evt := domain.NodeReadyForExecution{
-		ScheduleID: "sched-1", ScheduleName: "daily", ServiceName: "svc",
-		SchemaName: "public", TableName: "orders", TaskID: "task-1", JobName: "job-1",
-		NodeType: "dbt-model", ImageTag: "v1", Operation: "test",
-	}
-	entry := makeEntry("node_ready_for_execution", mustMarshal(t, serialization.NodeReadyForExecutionFromDomain(evt)))
-	vals := payloadToValuesFor(t, entry)
-	assert.Equal(t, "test", vals["operation"])
-}
-
-func TestOutboxPublisher_CascadeTaskSkipped(t *testing.T) {
-	evt := domain.CascadeTaskSkipped{
-		TaskID:     "task-x",
-		ScheduleID: "sched-2",
-	}
-	entry := makeEntry("cascade_task_skipped", mustMarshal(t, evt))
-	vals := payloadToValuesFor(t, entry)
-
-	assert.Equal(t, entry.ID.String(), vals["outbox_entry_id"])
-	assert.Equal(t, "task-x", vals["task_id"])
-	assert.Equal(t, "sched-2", vals["schedule_id"])
-	assert.Equal(t, "skipped", vals["status"])
-	// retry_count comes from the shared TaskStatusUpdated.ToMap as int32; Redis
-	// serializes it to "0" on the wire, identical to the executor/k8s producers.
-	assert.Equal(t, int32(0), vals["retry_count"])
-}
-
-func TestOutboxPublisher_GenericPayloadCases(t *testing.T) {
+// TestOutboxPublisher_RunEventTypesAreUnknown pins that orchestrator publishes
+// no run event: a row of one of these types left in orchestrator_outbox is
+// retried as an unknown event_type and dead-lettered when its budget is spent.
+func TestOutboxPublisher_RunEventTypesAreUnknown(t *testing.T) {
 	for _, evtType := range []string{
+		"node_ready_for_execution",
+		"cascade_task_skipped",
 		"run_entries_dispatched",
 		"run_entries_dispatch_failed",
-		"release_promoted",
 	} {
 		t.Run(evtType, func(t *testing.T) {
-			raw := []byte(`{"key":"value"}`)
-			entry := makeEntry(evtType, raw)
-			vals := payloadToValuesFor(t, entry)
-
-			assert.Equal(t, entry.ID.String(), vals["outbox_entry_id"])
-			assert.Equal(t, string(raw), vals["payload"])
+			p := publisher.NewOutboxPublisher(nil, nil)
+			_, err := p.PayloadToValuesForTest(makeEntry(evtType, []byte(`{}`)))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "unknown event_type")
+			assert.False(t, errors.Is(err, pkgevents.ErrPermanent))
 		})
 	}
 }

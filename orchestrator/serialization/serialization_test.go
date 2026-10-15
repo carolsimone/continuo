@@ -2,59 +2,11 @@ package serialization
 
 import (
 	"encoding/json"
-	"reflect"
 	"strings"
 	"testing"
 
-	"github.com/carolsimone/continuo/orchestrator/domain"
 	"github.com/carolsimone/continuo/orchestrator/domain/event"
 )
-
-const goldenNodeReady = `{"schedule_id":"s","schedule_name":"sn","service_name":"svc","schema_name":"sch","table_name":"tbl","task_id":"t","job_name":"j","node_type":"dbt-model","image_tag":"img","secret_ref":"continuo-api-fx","operation":"test","max_retries":2}`
-
-func TestNodeReadyForExecutionRoundTrip(t *testing.T) {
-	var dto NodeReadyForExecutionDTO
-	if err := json.Unmarshal([]byte(goldenNodeReady), &dto); err != nil {
-		t.Fatalf("unmarshal golden: %v", err)
-	}
-	got := dto.ToDomain()
-	want := domain.NodeReadyForExecution{ //nolint:gosec // G101: secret_ref names a Kubernetes Secret, not a credential
-		ScheduleID: "s", ScheduleName: "sn", ServiceName: "svc", SchemaName: "sch",
-		TableName: "tbl", TaskID: "t", JobName: "j", NodeType: "dbt-model",
-		ImageTag: "img", SecretRef: "continuo-api-fx", Operation: "test", MaxRetries: 2,
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("toDomain:\n got %+v\nwant %+v", got, want)
-	}
-	out, err := json.Marshal(NodeReadyForExecutionFromDomain(got))
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	if string(out) != goldenNodeReady {
-		t.Fatalf("bytes changed:\n got %s\nwant %s", out, goldenNodeReady)
-	}
-}
-
-func TestNodeReadyOperationOmitempty(t *testing.T) {
-	out, _ := json.Marshal(NodeReadyForExecutionFromDomain(domain.NodeReadyForExecution{TaskID: "t"}))
-	if strings.Contains(string(out), `"operation"`) {
-		t.Fatalf("operation must be omitted when empty: %s", out)
-	}
-}
-
-func TestNodeReadyMaxRetriesOmitempty(t *testing.T) {
-	out, _ := json.Marshal(NodeReadyForExecutionFromDomain(domain.NodeReadyForExecution{TaskID: "t"}))
-	if strings.Contains(string(out), `"max_retries"`) {
-		t.Fatalf("max_retries must be omitted when unset: %s", out)
-	}
-}
-
-func TestNodeReadySecretRefOmitempty(t *testing.T) {
-	out, _ := json.Marshal(NodeReadyForExecutionFromDomain(domain.NodeReadyForExecution{TaskID: "t"}))
-	if strings.Contains(string(out), `"secret_ref"`) {
-		t.Fatalf("secret_ref must be omitted when empty: %s", out)
-	}
-}
 
 const goldenRemediationRequested = `{"event_id":"e","source":"remediation","release_id":"r","code_bundle_uri":"s3://b","classified_at":"2026-01-02T03:04:05Z","nodes":[{"node_id":"n","category":"compile","error_signature":"sig","reason":"why","error_excerpt":"exc","dbt_log_uri":"s3://l"}]}`
 

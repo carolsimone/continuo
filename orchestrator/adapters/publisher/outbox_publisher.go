@@ -2,13 +2,10 @@ package publisher
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
-	"strconv"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
-	"github.com/carolsimone/continuo/orchestrator/serialization"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	goredis "github.com/redis/go-redis/v9"
@@ -121,63 +118,9 @@ func (p *OutboxPublisher) Render(entry *outbox.Entry) (map[string]any, error) {
 		delete(values, "outbox_entry_id")
 		return values, nil
 
-	case domain.EventTypeNodeReadyForExecution:
-		var dto serialization.NodeReadyForExecutionDTO
-		if err := json.Unmarshal(entry.Payload, &dto); err != nil {
-			return nil, fmt.Errorf("%w: unmarshal node_ready_for_execution: %v", pkgevents.ErrPermanent, err)
-		}
-		evt := dto.ToDomain()
-		values := map[string]interface{}{
-			"schedule_id":   evt.ScheduleID,
-			"schedule_name": evt.ScheduleName,
-			"service_name":  evt.ServiceName,
-			"schema_name":   evt.SchemaName,
-			"table_name":    evt.TableName,
-			"task_id":       evt.TaskID,
-			"job_name":      evt.JobName,
-			"node_type":     evt.NodeType,
-			"image_tag":     evt.ImageTag,
-		}
-		// Operation is carried only for non-default dispatches (e.g. "test"): the
-		// executor uses it to pick the dbt verb instead of the NodeType default.
-		// Omitted for normal run dispatches so their wire shape is unchanged.
-		if evt.Operation != "" {
-			values["operation"] = evt.Operation
-		}
-		// SecretRef names the continuo-api-* Secret a python-api pod receives.
-		// Omitted for every node without API credentials.
-		if evt.SecretRef != "" {
-			values["secret_ref"] = evt.SecretRef
-		}
-		// MaxRetries is the task's retry budget, the one state stores for the
-		// task. Omitted when unset; the executor then applies
-		// pkgevents.DefaultTaskMaxRetries.
-		if evt.MaxRetries > 0 {
-			values["max_retries"] = strconv.FormatInt(int64(evt.MaxRetries), 10)
-		}
-		return values, nil
-
-	case domain.EventTypeCascadeTaskSkipped:
-		var evt domain.CascadeTaskSkipped
-		if err := json.Unmarshal(entry.Payload, &evt); err != nil {
-			return nil, fmt.Errorf("%w: unmarshal cascade_task_skipped: %v", pkgevents.ErrPermanent, err)
-		}
-		// A cascade-skipped node is reported on task.status.updated:v1 as a
-		// terminal "skipped" task status. Serialize through the shared
-		// TaskStatusUpdated.ToMap so every producer of this stream emits an
-		// identical wire shape.
-		values := pkgevents.TaskStatusUpdated{
-			TaskID:     evt.TaskID,
-			ScheduleID: evt.ScheduleID,
-			Status:     "skipped",
-			RetryCount: 0,
-		}.ToMap()
-		return values, nil
-
-	case domain.EventTypeRunEntriesDispatched, domain.EventTypeRunEntriesDispatchFailed,
-		domain.EventTypeReleasePromoted:
-		// These event types carry a self-contained JSON payload that downstream
-		// consumers decode directly from the "payload" field.
+	case domain.EventTypeReleasePromoted:
+		// A release_promoted row carries a self-contained JSON payload that
+		// state decodes directly from the "payload" field.
 		return map[string]interface{}{"payload": string(entry.Payload)}, nil
 
 	default:

@@ -19,17 +19,6 @@ func TestRender_PayloadEventIsPayloadFieldWithoutOutboxEntryID(t *testing.T) {
 	require.Equal(t, map[string]any{"payload": `{"release_id":"r1"}`}, values)
 }
 
-func TestRender_CascadeSkippedIsATaskStatusMap(t *testing.T) {
-	p := NewOutboxPublisher(nil, nil)
-	values, err := p.Render(&outbox.Entry{ID: uuid.New(), EventType: "cascade_task_skipped", Payload: []byte(`{"TaskID":"t1","ScheduleID":"s1"}`)})
-	require.NoError(t, err)
-	require.Equal(t, "t1", values["task_id"])
-	require.Equal(t, "skipped", values["status"])
-	require.NotContains(t, values, "outbox_entry_id")
-	_, err = outbox.StringifyFields(values)
-	require.NoError(t, err)
-}
-
 func TestRender_DeadLetterRowOmitsOutboxEntryID(t *testing.T) {
 	p := NewOutboxPublisher(nil, nil)
 	body := []byte(`{"failure_kind":"` + string(model.DeadLetterKindPermanent) + `","original_event_type":"node_updated"}`)
