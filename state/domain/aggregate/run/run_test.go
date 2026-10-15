@@ -297,6 +297,9 @@ func (f *fakeTaskCollection) MarkDispatched(_ context.Context, ids []uuid.UUID, 
 	}
 	return stamped, nil
 }
+func (f *fakeTaskCollection) ListRunTasks(_ context.Context, _ uuid.UUID) ([]run.Task, error) {
+	return f.bulkCreated, nil
+}
 func (f *fakeTaskCollection) MarkSkipped(_ context.Context, ids []uuid.UUID) (int, error) {
 	n := 0
 	for _, id := range ids {

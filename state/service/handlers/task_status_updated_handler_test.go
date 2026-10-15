@@ -149,6 +149,10 @@ func (f *fakeTaskStatusTaskCollection) MarkDispatched(_ context.Context, _ []uui
 	panic("MarkDispatched not implemented in fake")
 }
 
+func (f *fakeTaskStatusTaskCollection) ListRunTasks(_ context.Context, _ uuid.UUID) ([]run.Task, error) {
+	panic("ListRunTasks not implemented in fake")
+}
+
 func (f *fakeTaskStatusTaskCollection) MarkSkipped(_ context.Context, _ []uuid.UUID) (int, error) {
 	panic("MarkSkipped not implemented in fake")
 }

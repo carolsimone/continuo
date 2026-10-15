@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"log/slog"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/policy"
+	"github.com/carolsimone/continuo/state/service/runstart"
 	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/google/uuid"
 )
@@ -70,7 +72,7 @@ func NewTriggerRebaseHandler(logger *slog.Logger) *TriggerDerivedRunHandler {
 				return src.CanBeRebaseSource(ctx, tasks)
 			},
 			stampOf: func(ctx context.Context, u uow.UnitOfWork, _ *run.Run) (run.ReleaseStamp, error) {
-				return liveStamp(ctx, u)
+				return runstart.Planner{TenantID: pkgevents.DefaultTenantID}.LiveStamp(ctx, u)
 			},
 			logLabel: "Rebase triggered",
 		},

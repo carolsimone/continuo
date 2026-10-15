@@ -48,6 +48,9 @@ type TaskCollection interface {
 	// the given run. Returns ErrTaskNotFound if no row matches.
 	GetByNode(ctx context.Context, runID uuid.UUID, node NodeID) (Task, error)
 
+	// ListRunTasks returns every task of the given run, in node-key order.
+	ListRunTasks(ctx context.Context, runID uuid.UUID) ([]Task, error)
+
 	// GetByID returns one task by id. Returns ErrTaskNotFound if no row
 	// matches.
 	GetByID(ctx context.Context, taskID uuid.UUID) (Task, error)

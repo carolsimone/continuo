@@ -108,6 +108,9 @@ func (f *fakeDispatchedTaskCollection) LoadAttemptState(_ context.Context, _ uui
 func (f *fakeDispatchedTaskCollection) MarkDispatched(_ context.Context, _ []uuid.UUID, _ time.Time) ([]uuid.UUID, error) {
 	panic("MarkDispatched not implemented in fake")
 }
+func (f *fakeDispatchedTaskCollection) ListRunTasks(_ context.Context, _ uuid.UUID) ([]run.Task, error) {
+	panic("ListRunTasks not implemented in fake")
+}
 func (f *fakeDispatchedTaskCollection) MarkSkipped(_ context.Context, _ []uuid.UUID) (int, error) {
 	panic("MarkSkipped not implemented in fake")
 }

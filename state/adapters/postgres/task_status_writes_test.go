@@ -119,3 +119,28 @@ func TestTaskCollection_MarkSkippedSkipsOnlyPendingUndispatchedTasks(t *testing.
 		assert.Equal(t, want, status, table)
 	}
 }
+
+// A derived run reads every task of its source, in node-key order.
+func TestTaskCollection_ListRunTasksReadsEveryTaskInKeyOrder(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	tenant := storeFailureSchedule(t, db)
+	r := startScheduleRun(t, db, tenant, "e2e-schedule-failure", model.OperationRun)
+	setTaskStatus(t, db, r, "e2e_schema.ftable_c", run.TaskStatusFailed)
+
+	inTaskTx(t, db, func(tasks run.TaskCollection) {
+		got, err := tasks.ListRunTasks(ctx, r.ScheduleID())
+		require.NoError(t, err)
+		require.Len(t, got, 8)
+		keys := make([]topology.NodeKey, 0, len(got))
+		for _, task := range got {
+			keys = append(keys, task.NodeKey)
+		}
+		assert.Equal(t, []topology.NodeKey{
+			"e2e_schema.ftable_a", "e2e_schema.ftable_b", "e2e_schema.ftable_c", "e2e_schema.ftable_d",
+			"e2e_schema.ftable_e", "e2e_schema.ftable_f", "e2e_schema.ftable_g", "e2e_schema.ftable_h",
+		}, keys)
+		assert.Equal(t, run.TaskStatusFailed, got[2].Status)
+		assert.Equal(t, run.TaskIDFor(tenant, r.ScheduleID(), "e2e_schema.ftable_c"), got[2].TaskID)
+	})
+}

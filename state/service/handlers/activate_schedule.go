@@ -7,9 +7,11 @@ import (
 	"log/slog"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/policy"
+	"github.com/carolsimone/continuo/state/service/runstart"
 	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/google/uuid"
 )
@@ -30,13 +32,14 @@ const (
 // two callers is how they treat OutcomeSkippedActive: cron silently skips,
 // manual returns FailedPrecondition.
 type ActivateScheduleHandler struct {
-	policy policy.SchedulePolicy
-	logger *slog.Logger
+	policy  policy.SchedulePolicy
+	planner runstart.Planner
+	logger  *slog.Logger
 }
 
-// NewActivateScheduleHandler constructs the handler.
+// NewActivateScheduleHandler constructs the handler for the default tenant.
 func NewActivateScheduleHandler(logger *slog.Logger) *ActivateScheduleHandler {
-	return &ActivateScheduleHandler{logger: logger}
+	return &ActivateScheduleHandler{planner: runstart.Planner{TenantID: pkgevents.DefaultTenantID}, logger: logger}
 }
 
 // Handle runs the activation use case. The catalog existence and active-run
@@ -82,7 +85,7 @@ func (h *ActivateScheduleHandler) Handle(
 		}
 	}()
 
-	stamp, err := liveStamp(ctx, u)
+	stamp, err := h.planner.LiveStamp(ctx, u)
 	if err != nil {
 		return uuid.Nil, 0, err
 	}

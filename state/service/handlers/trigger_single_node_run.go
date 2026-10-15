@@ -8,8 +8,10 @@ import (
 	"strings"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
+	"github.com/carolsimone/continuo/state/service/runstart"
 	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/google/uuid"
 )
@@ -80,7 +82,7 @@ func (h *TriggerSingleNodeRunHandler) Handle(ctx context.Context, u uow.UnitOfWo
 	scheduleName := "single-node-run-" + strings.ReplaceAll(id.String(), "-", "")[:8]
 	stamp := sourceStamp
 	if in.MetadataSource != run.MetadataSourceSnapshotOfRun {
-		live, err := liveStamp(ctx, u)
+		live, err := runstart.Planner{TenantID: pkgevents.DefaultTenantID}.LiveStamp(ctx, u)
 		if err != nil {
 			return uuid.Nil, "", err
 		}

@@ -22,6 +22,8 @@ type TaskTrackerRepository interface {
 	GetByID(ctx context.Context, taskID uuid.UUID) (*TaskTracker, error)
 	GetByScheduleAndNode(ctx context.Context, scheduleID uuid.UUID, serviceName, schemaName, tableName string) (*TaskTracker, error)
 	ListByScheduleID(ctx context.Context, scheduleID uuid.UUID, status *run.TaskStatus, limit, offset int) ([]*TaskTracker, int, error)
+	// ListByRun returns every task of a run in node-key order.
+	ListByRun(ctx context.Context, runID uuid.UUID) ([]*TaskTracker, error)
 	// BulkCreateTx inserts every task of a run within a transaction, with one
 	// COPY. A task whose id, or whose node in its run, is already stored fails
 	// the whole copy.
@@ -147,6 +149,23 @@ func (r *taskTrackerRepository) GetByID(ctx context.Context, taskID uuid.UUID) (
 	)
 
 	return &task, nil
+}
+
+// ListByRun returns every task of runID, ordered by node key (byte order),
+// then by task id for rows that have none.
+func (r *taskTrackerRepository) ListByRun(ctx context.Context, runID uuid.UUID) ([]*TaskTracker, error) {
+	var tasks []*TaskTracker
+	err := r.db.SelectContext(ctx, &tasks, `
+		SELECT task_id, schedule_id, created_at, service_name, schema_name,
+		       table_name, job_name, status, retry_count, max_retries, cancelled_at, cancelled_by,
+		       image_tag, inherited_from_task_id, operation, node_key, dispatched_at
+		FROM task_tracker
+		WHERE schedule_id = $1
+		ORDER BY node_key COLLATE "C", task_id`, runID)
+	if err != nil {
+		return nil, fmt.Errorf("list the tasks of run %s: %w", runID, err)
+	}
+	return tasks, nil
 }
 
 // GetByScheduleAndNode retrieves a task_tracker by schedule_id and node information

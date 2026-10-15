@@ -683,6 +683,9 @@ func (f *cancelFakeTaskCollection) LoadAttemptState(_ context.Context, _ uuid.UU
 func (f *cancelFakeTaskCollection) MarkDispatched(_ context.Context, _ []uuid.UUID, _ time.Time) ([]uuid.UUID, error) {
 	panic("MarkDispatched not used in cancel tests")
 }
+func (f *cancelFakeTaskCollection) ListRunTasks(_ context.Context, _ uuid.UUID) ([]run.Task, error) {
+	panic("ListRunTasks not used in cancel tests")
+}
 func (f *cancelFakeTaskCollection) MarkSkipped(_ context.Context, _ []uuid.UUID) (int, error) {
 	panic("MarkSkipped not used in cancel tests")
 }

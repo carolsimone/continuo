@@ -68,6 +68,20 @@ func (a *TaskCollectionAdapter) GetByNode(ctx context.Context, runID uuid.UUID, 
 	return taskFromRow(t), nil
 }
 
+// ListRunTasks reads every task of a run. A run's task set is written once,
+// when the run starts, so the read uses the autocommit db.
+func (a *TaskCollectionAdapter) ListRunTasks(ctx context.Context, runID uuid.UUID) ([]run.Task, error) {
+	rows, err := a.repo.ListByRun(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]run.Task, 0, len(rows))
+	for _, t := range rows {
+		out = append(out, taskFromRow(t))
+	}
+	return out, nil
+}
+
 // GetByID reads one task by id. A task's node and image never change once its
 // row is written, so the read uses the autocommit db.
 func (a *TaskCollectionAdapter) GetByID(ctx context.Context, taskID uuid.UUID) (run.Task, error) {
