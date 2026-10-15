@@ -298,6 +298,9 @@ refuse_render() {
 refuse_render 'llm.baseUrl' --set llm.provider=openai-compatible
 refuse_render 'ends in /v1' --set llm.provider=openai-compatible --set llm.baseUrl=https://api.mistral.ai/v1
 refuse_render 'baseUrl' --set llm.baseUrl=api.mistral.ai
+refuse_render 'with a host' --set llm.baseUrl=https://
+refuse_render 'bare server root' --set 'llm.baseUrl=https://h/api?x=1'
+refuse_render 'bare server root' --set 'llm.baseUrl=https://u:p@h'
 refuse_render 'provider' --set llm.provider=grok
 refuse_render 'LLM_BASE_URL' --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"LLM_BASE_URL":"http://x:1"}}]'
 if ! helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set llm.baseUrl=null > /dev/null; then

@@ -336,9 +336,10 @@ above it would stop that service from starting.
 {{/* llm.baseUrl without a trailing slash, or "" for the provider's public
 address. The agents add /v1/... to it, so a root whose path ends in /v1 would
 request /v1/v1/..., and openai-compatible has no public address. The render
-fails on either, and on anything but an http(s) URL with a host, which the
-agents refuse to start on. Tolerates a release whose values hold no llm block
-or no llm.baseUrl. */}}
+fails on either, on anything but an http(s) URL with a host, which the agents
+refuse to start on, and on a user:password@, ?query or #fragment, which would
+send requests to the wrong place or expose a credential in the Deployment.
+Tolerates a release whose values hold no llm block or no llm.baseUrl. */}}
 {{- define "continuo.llm.baseUrl" -}}
 {{- $llm := .Values.llm | default dict -}}
 {{- $provider := $llm.provider | default "anthropic" -}}
@@ -351,6 +352,9 @@ or no llm.baseUrl. */}}
 {{- $u := urlParse $root -}}
 {{- if not (and (has $u.scheme (list "http" "https")) $u.host) -}}
 {{- fail (printf "llm.baseUrl=%q must be an http or https URL with a host, e.g. http://vllm.ai.svc:8000" $raw) -}}
+{{- end -}}
+{{- if or $u.userinfo $u.query $u.fragment (regexMatch "[?#]" $raw) -}}
+{{- fail (printf "llm.baseUrl=%q must be a bare server root: no user:password@, ?query or #fragment (put the key in llm.apiKey)" $raw) -}}
 {{- end -}}
 {{- if regexMatch "/v1$" $u.path -}}
 {{- fail (printf "llm.baseUrl=%q ends in /v1: give the server root without it (e.g. %s://%s), because the agents add /v1/... themselves" $raw $u.scheme $u.host) -}}

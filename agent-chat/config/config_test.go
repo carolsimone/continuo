@@ -114,5 +114,5 @@ func TestLoad_RejectsBaseURLEndingInV1(t *testing.T) {
 	t.Setenv("LLM_BASE_URL", "https://api.mistral.ai/v1")
 	v := &pkgconfig.Validator{}
 	Load(v)
-	assert.Contains(t, v.Missing(), "LLM_BASE_URL (must be an http:// or https:// server root, without a trailing /v1)")
+	assert.Contains(t, v.Missing(), "LLM_BASE_URL (must be an http:// or https:// server root with no user:password@, ?query or #fragment, without a trailing /v1)")
 }

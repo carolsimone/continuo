@@ -29,11 +29,20 @@ func TestLoadLLM(t *testing.T) {
 		{name: "unknown provider", provider: "grok", wantMissing: []string{"LLM_PROVIDER (must be anthropic|openai|openai-compatible)"}},
 		{name: "openai-compatible needs a base URL", provider: "openai-compatible", wantMissing: []string{"LLM_BASE_URL"}},
 		{name: "trailing /v1 refused", provider: "openai-compatible", baseURL: "https://api.mistral.ai/v1", wantBase: "https://api.mistral.ai/v1",
-			wantMissing: []string{"LLM_BASE_URL (must be an http:// or https:// server root, without a trailing /v1)"}},
+			wantMissing: []string{"LLM_BASE_URL (must be an http:// or https:// server root with no user:password@, ?query or #fragment, without a trailing /v1)"}},
 		{name: "trailing /v1/ refused", provider: "anthropic", baseURL: "https://gw.example/v1/", wantBase: "https://gw.example/v1",
-			wantMissing: []string{"LLM_BASE_URL (must be an http:// or https:// server root, without a trailing /v1)"}},
+			wantMissing: []string{"LLM_BASE_URL (must be an http:// or https:// server root with no user:password@, ?query or #fragment, without a trailing /v1)"}},
 		{name: "no scheme refused", provider: "openai-compatible", baseURL: "api.mistral.ai", wantBase: "api.mistral.ai",
-			wantMissing: []string{"LLM_BASE_URL (must be an http:// or https:// server root, without a trailing /v1)"}},
+			wantMissing: []string{"LLM_BASE_URL (must be an http:// or https:// server root with no user:password@, ?query or #fragment, without a trailing /v1)"}},
+		{name: "v10 is not v1", provider: "openai-compatible", baseURL: "https://x/v10", wantBase: "https://x/v10"},
+		{name: "query refused", provider: "openai-compatible", baseURL: "https://h/api?x=1", wantBase: "https://h/api?x=1",
+			wantMissing: []string{"LLM_BASE_URL (must be an http:// or https:// server root with no user:password@, ?query or #fragment, without a trailing /v1)"}},
+		{name: "empty query refused", provider: "openai-compatible", baseURL: "https://h?", wantBase: "https://h?",
+			wantMissing: []string{"LLM_BASE_URL (must be an http:// or https:// server root with no user:password@, ?query or #fragment, without a trailing /v1)"}},
+		{name: "fragment refused", provider: "openai-compatible", baseURL: "https://h/api#frag", wantBase: "https://h/api#frag",
+			wantMissing: []string{"LLM_BASE_URL (must be an http:// or https:// server root with no user:password@, ?query or #fragment, without a trailing /v1)"}},
+		{name: "userinfo refused", provider: "openai-compatible", baseURL: "https://u:p@h", wantBase: "https://u:p@h", //nolint:gosec // G101: a placeholder URL, not a credential
+			wantMissing: []string{"LLM_BASE_URL (must be an http:// or https:// server root with no user:password@, ?query or #fragment, without a trailing /v1)"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

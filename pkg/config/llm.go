@@ -42,7 +42,7 @@ func LoadLLM(v *Validator) LLMSettings {
 		v.Add("LLM_BASE_URL")
 	}
 	if s.BaseURL != "" && !validLLMBaseURL(s.BaseURL) {
-		v.Add("LLM_BASE_URL (must be an http:// or https:// server root, without a trailing /v1)")
+		v.Add("LLM_BASE_URL (must be an http:// or https:// server root with no user:password@, ?query or #fragment, without a trailing /v1)")
 	}
 	return s
 }
@@ -50,6 +50,9 @@ func LoadLLM(v *Validator) LLMSettings {
 func validLLMBaseURL(raw string) bool {
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return false
+	}
+	if u.User != nil || strings.ContainsAny(raw, "?#") {
 		return false
 	}
 	return !strings.HasSuffix(u.Path, "/v1")

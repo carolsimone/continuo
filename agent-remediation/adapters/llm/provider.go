@@ -10,7 +10,8 @@ import (
 // NewProvider returns an LLMProvider for the named provider.
 // Supported values for provider: "anthropic", "openai", "openai-compatible".
 // For "anthropic", the canonical base URL is https://api.anthropic.com; passing a non-empty
-// baseURL overrides it (used in tests against a local httptest server).
+// baseURL (the operator's llm.baseUrl / LLM_BASE_URL) overrides it, which points
+// the provider at a gateway in front of Anthropic.
 // For "openai", the canonical base URL is https://api.openai.com; same override applies.
 // For "openai-compatible", baseURL is required and used as the endpoint root.
 // If hc is nil, http.DefaultClient is used.
