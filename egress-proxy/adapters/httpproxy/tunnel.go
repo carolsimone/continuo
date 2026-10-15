@@ -1,6 +1,7 @@
 package httpproxy
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -189,26 +190,37 @@ func relay(client, upstream net.Conn, pending []byte, idle time.Duration) (up, d
 		touch()
 	}
 
+	// A direction whose source ended cleanly half-closes its destination, so
+	// the other direction can still carry a reply. Any other end, a reset, a
+	// failed write, or a close by the idle check or Shutdown, closes both.
+	pipe := func(dst, src net.Conn) int64 {
+		n, eof := copyActive(dst, src, touch)
+		if eof {
+			closeWrite(dst)
+		} else {
+			closeBoth()
+		}
+		return n
+	}
 	var wg sync.WaitGroup
 	var upN, downN int64
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		upN = copyActive(upstream, client, touch)
-		closeWrite(upstream)
+		upN = pipe(upstream, client)
 	}()
 	go func() {
 		defer wg.Done()
-		downN = copyActive(client, upstream, touch)
-		closeWrite(client)
+		downN = pipe(client, upstream)
 	}()
 	wg.Wait()
 	return up + upN, downN
 }
 
-// copyActive copies src to dst, calling touch whenever bytes arrive, and
-// returns the bytes written.
-func copyActive(dst io.Writer, src io.Reader, touch func()) int64 {
+// copyActive copies src to dst, calling touch whenever bytes arrive. It
+// returns the bytes written, and whether src ended with io.EOF after every
+// byte read from it was written.
+func copyActive(dst io.Writer, src io.Reader, touch func()) (int64, bool) {
 	buf := make([]byte, 32*1024)
 	var total int64
 	for {
@@ -218,11 +230,11 @@ func copyActive(dst io.Writer, src io.Reader, touch func()) int64 {
 			w, werr := dst.Write(buf[:n])
 			total += int64(w)
 			if werr != nil {
-				return total
+				return total, false
 			}
 		}
 		if err != nil {
-			return total
+			return total, errors.Is(err, io.EOF)
 		}
 	}
 }
