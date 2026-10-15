@@ -21,6 +21,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	stateredis "github.com/carolsimone/continuo/state/adapters/redis"
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/seeds"
 	"github.com/carolsimone/continuo/state/domain/topology"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
@@ -148,7 +149,7 @@ func TestSeedReconcile(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
-	t.Run("a changed seed gets one run, a build request and a trigger, then waits", func(t *testing.T) {
+	t.Run("a changed seed gets one run, a build request and a dispatch, then waits", func(t *testing.T) {
 		h := newReconcileHarness(db)
 		releaseID := "rel-" + uuid.NewString()[:8]
 		h.liveRelease(t, releaseID, 7, promotedNode("raw", "orders", "dbt-seed"), promotedNode("stg", "orders", "dbt-model", "raw.orders"))
@@ -176,20 +177,18 @@ func TestSeedReconcile(t *testing.T) {
 			Payload    []byte `db:"payload"`
 		}
 		require.NoError(t, db.Get(&outbox, `SELECT stream_name, payload FROM state_outbox WHERE aggregate_id = $1`, runID))
-		assert.Equal(t, streams.TriggerPromotedSeedsV1, outbox.StreamName)
+		assert.Equal(t, streams.QueryModelV1, outbox.StreamName, "the run dispatches the seed as it is created")
 		var payload map[string]any
 		require.NoError(t, json.Unmarshal(outbox.Payload, &payload))
-		assert.Equal(t, releaseID, payload["release_id"])
-		assert.Equal(t, "7", payload["promotion_seq"])
-		assert.Equal(t, []any{map[string]any{
-			"service_name": "service-1", "schema_name": "raw", "table_name": "orders",
-			"node_type": "dbt-seed", "image_tag": "service-1:v1",
-		}}, payload["nodes"])
+		assert.Equal(t, runID.String(), payload["schedule_id"])
+		assert.Equal(t, run.TaskIDFor(h.tenant, runID, "raw.orders").String(), payload["task_id"])
+		assert.Equal(t, "orders", payload["table_name"])
+		assert.Equal(t, "dbt-seed", payload["node_type"])
+		assert.Equal(t, "service-1:v1", payload["image_tag"])
 
 		require.NoError(t, h.reconciler.RunOnce(ctx))
 		assert.Len(t, h.promoteSeedRuns(t, releaseID), 1, "a second pass while the run is running creates nothing")
-		assert.Equal(t, 1, countOf(t, db, `SELECT count(*) FROM state_outbox WHERE stream_name = $1 AND payload->>'release_id' = $2`,
-			streams.TriggerPromotedSeedsV1, releaseID))
+		assert.Equal(t, 1, h.seedDispatches(t, releaseID))
 
 		_, err := db.Exec(`UPDATE scheduler_tracker SET status = 'failed', completed_at = now() WHERE schedule_id = $1`, runID)
 		require.NoError(t, err)
@@ -216,8 +215,7 @@ func TestSeedReconcile(t *testing.T) {
 		require.NoError(t, errs[0])
 		require.NoError(t, errs[1])
 		assert.Equal(t, []uuid.UUID{firstPromoteSeedRunID(releaseID)}, h.promoteSeedRuns(t, releaseID))
-		assert.Equal(t, 1, countOf(t, db, `SELECT count(*) FROM state_outbox WHERE stream_name = $1 AND payload->>'release_id' = $2`,
-			streams.TriggerPromotedSeedsV1, releaseID))
+		assert.Equal(t, 2, h.seedDispatches(t, releaseID), "the one run dispatches each seed once")
 	})
 
 	t.Run("a first promotion adopts the seeds it did not change and builds the one it did", func(t *testing.T) {
@@ -309,22 +307,23 @@ func seedAt(table, hash string) topology.NodeSpec {
 	return n
 }
 
-// promotedSeedNodes lists the tables a release's trigger.promoted_seeds:v1 row
-// asks to load.
+// seedDispatches counts the query.model:v1 rows of the runs that name
+// releaseID.
+func (h *reconcileHarness) seedDispatches(t *testing.T, releaseID string) int {
+	t.Helper()
+	return countOf(t, h.db, `
+		SELECT count(*) FROM state_outbox o JOIN scheduler_tracker s ON s.schedule_id = o.aggregate_id
+		WHERE o.stream_name = $1 AND s.release_id = $2`, streams.QueryModelV1, releaseID)
+}
+
+// promotedSeedNodes lists the tables a promote-seed run dispatched to load, one
+// query.model:v1 row each, in table order.
 func (h *reconcileHarness) promotedSeedNodes(t *testing.T, runID uuid.UUID) []string {
 	t.Helper()
-	var payload []byte
-	require.NoError(t, h.db.Get(&payload, `SELECT payload FROM state_outbox WHERE aggregate_id = $1`, runID))
-	var body struct {
-		Nodes []struct {
-			TableName string `json:"table_name"`
-		} `json:"nodes"`
-	}
-	require.NoError(t, json.Unmarshal(payload, &body))
-	tables := make([]string, 0, len(body.Nodes))
-	for _, n := range body.Nodes {
-		tables = append(tables, n.TableName)
-	}
+	var tables []string
+	require.NoError(t, h.db.Select(&tables, `
+		SELECT payload->>'table_name' FROM state_outbox
+		WHERE aggregate_id = $1 AND stream_name = $2 ORDER BY payload->>'table_name'`, runID, streams.QueryModelV1))
 	return tables
 }
 
@@ -357,7 +356,7 @@ func TestSeedReconcile_ReplayOfSeveralRetainedPromotions(t *testing.T) {
 	assert.Equal(t, []string{"orders"}, h.promotedSeedNodes(t, runA))
 	assert.Equal(t, []string{"users"}, h.promotedSeedNodes(t, runC))
 	assert.Equal(t, 2, countOf(t, db, `SELECT count(*) FROM state_outbox WHERE stream_name = $1 AND aggregate_id IN ($2, $3)`,
-		streams.TriggerPromotedSeedsV1, runA, runC), "one trigger per build")
+		streams.QueryModelV1, runA, runC), "one dispatch per build")
 
 	orders := h.materialization(t, "raw.orders")
 	assert.Empty(t, orders.ContentHash, "nothing is recorded as loaded for orders yet")

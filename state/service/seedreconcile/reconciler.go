@@ -1,10 +1,11 @@
 // Package seedreconcile loads into the warehouse the dbt seeds of the live
 // release whose content it does not hold. A pass compares each live seed's
 // content hash with the version state last recorded as loaded and, for the
-// seeds that differ, creates one promote-seed run and records a build request
-// per seed. A pass runs inside every release.promoted:v2 transaction that moves
-// the live release, and on a fixed interval; both hold the topology lock, so
-// two passes never plan the same seed twice.
+// seeds that differ, creates one promote-seed run, which dispatches every one
+// of them as it is created, and records a build request per seed. A pass runs
+// inside every release.promoted:v2 transaction that moves the live release,
+// and on a fixed interval; both hold the topology lock, so two passes never
+// plan the same seed twice.
 package seedreconcile
 
 import (
@@ -21,6 +22,7 @@ import (
 	"github.com/carolsimone/continuo/state/domain/topology"
 	"github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/service/ports"
+	"github.com/carolsimone/continuo/state/service/runstart"
 	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/google/uuid"
 )
@@ -162,7 +164,7 @@ func (r *Reconciler) adopt(ctx context.Context, u uow.UnitOfWork, t ports.Promot
 // pass builds what the tenant's live release needs, in u's transaction, which
 // holds the topology lock. The seeds the decision rules pick form one
 // promote-seed run on the live release, each at its live image; each seed gets
-// a build request naming that run, and the run's trigger is written to the
+// a build request naming that run, and the run's dispatches are written to the
 // outbox under msgProcID.
 func (r *Reconciler) pass(ctx context.Context, u uow.UnitOfWork, tenantID string, msgProcID uuid.UUID) error {
 	live, err := u.Topology().LivePointer(ctx, tenantID)
@@ -189,20 +191,28 @@ func (r *Reconciler) pass(ctx context.Context, u uow.UnitOfWork, tenantID string
 		return nil
 	}
 
+	keys := make([]topology.NodeKey, 0, len(toBuild))
+	for _, d := range toBuild {
+		keys = append(keys, d.Key)
+	}
+	planner := runstart.Planner{TenantID: tenantID}
+	sel, err := planner.Seeds(ctx, u, live, keys)
+	if err != nil {
+		return fmt.Errorf("select the seeds of release %s: %w", live.ReleaseID, err)
+	}
 	now := u.Clock().Now()
-	runID, evt, err := createRun(ctx, u, live, toBuild, now)
+	seedRun, err := createRun(ctx, u, live, toBuild, now)
 	if err != nil {
 		return err
 	}
-	keys := make([]string, 0, len(toBuild))
+	runID := seedRun.ScheduleID()
 	for _, d := range toBuild {
 		if err := u.Materializations().RecordAttempt(ctx, tenantID, d.Key, d.ContentHash, runID, now); err != nil {
 			return fmt.Errorf("record the build request of %s: %w", d.Key, err)
 		}
-		keys = append(keys, string(d.Key))
 	}
-	if err := u.Outbox().Append(ctx, []run.DomainEvent{evt}, msgProcID); err != nil {
-		return fmt.Errorf("append the promote-seed trigger: %w", err)
+	if err := planner.Start(ctx, u, seedRun, sel, msgProcID); err != nil {
+		return err
 	}
 	r.logger.Info("seed reconcile: promote-seed run created",
 		"tenant_id", tenantID, "release_id", live.ReleaseID, "promotion_seq", live.PromotionSeq,
@@ -211,31 +221,31 @@ func (r *Reconciler) pass(ctx context.Context, u uow.UnitOfWork, tenantID string
 }
 
 // createRun saves the promote-seed run that loads toBuild on the live release
-// and returns its id and event. The id is the release's run id numbered one
-// past the runs that already name the release; an id another run holds moves
-// it to the next number.
-func createRun(ctx context.Context, u uow.UnitOfWork, live topology.Pointer, toBuild []seeds.Desired, now time.Time) (uuid.UUID, run.DomainEvent, error) {
+// and returns it. The id is the release's run id numbered one past the runs
+// that already name the release; an id another run holds moves it to the next
+// number.
+func createRun(ctx context.Context, u uow.UnitOfWork, live topology.Pointer, toBuild []seeds.Desired, now time.Time) (*run.Run, error) {
 	existing, err := u.Run().CountReleaseRuns(ctx, live.ReleaseID, run.KindPromoteSeed)
 	if err != nil {
-		return uuid.Nil, nil, fmt.Errorf("count the promote-seed runs of release %s: %w", live.ReleaseID, err)
+		return nil, fmt.Errorf("count the promote-seed runs of release %s: %w", live.ReleaseID, err)
 	}
 	nodes := seedNodes(toBuild)
 	for n := existing + 1; n <= existing+maxRunIDProbes; n++ {
 		id := seeds.RunID(live.ReleaseID, n)
-		newRun, evt, err := run.NewPromotedSeedsRun(id, scheduleName(id), run.ReleaseStamp{ReleaseID: live.ReleaseID, PromotionSeq: live.PromotionSeq}, nodes, now)
+		newRun, _, err := run.NewPromotedSeedsRun(id, scheduleName(id), run.ReleaseStamp{ReleaseID: live.ReleaseID, PromotionSeq: live.PromotionSeq}, nodes, now)
 		if err != nil {
-			return uuid.Nil, nil, fmt.Errorf("new promote-seed run: %w", err)
+			return nil, fmt.Errorf("new promote-seed run: %w", err)
 		}
 		err = u.Run().SaveRun(ctx, newRun)
 		if errors.Is(err, run.ErrRunAlreadyExists) {
 			continue
 		}
 		if err != nil {
-			return uuid.Nil, nil, fmt.Errorf("save promote-seed run %s: %w", id, err)
+			return nil, fmt.Errorf("save promote-seed run %s: %w", id, err)
 		}
-		return id, evt, nil
+		return newRun, nil
 	}
-	return uuid.Nil, nil, fmt.Errorf("no free promote-seed run id for release %s after %d tries", live.ReleaseID, maxRunIDProbes)
+	return nil, fmt.Errorf("no free promote-seed run id for release %s after %d tries", live.ReleaseID, maxRunIDProbes)
 }
 
 // seedNodes maps desired seeds onto the run's nodes, pinning each one's node
