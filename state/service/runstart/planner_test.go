@@ -20,12 +20,21 @@ import (
 
 var planNow = time.Date(2026, 10, 15, 6, 0, 0, 0, time.UTC)
 
-// graphTopology serves graph as every schedule's and every key set's slice of
-// any release, records each read, and grants the topology lock.
+// graphTopology serves each release's graph as every schedule's and every key
+// set's slice of it, records each read, and grants the topology lock. A
+// release without an entry in releases is served graph.
 type graphTopology struct {
 	uow.LiveReleaseOnly
-	graph topology.Graph
-	calls []string
+	graph    topology.Graph
+	releases map[string]topology.Graph
+	calls    []string
+}
+
+func (g *graphTopology) of(releaseID string) topology.Graph {
+	if r, ok := g.releases[releaseID]; ok {
+		return r
+	}
+	return g.graph
 }
 
 func (g *graphTopology) LockTopology(ctx context.Context) error {
@@ -40,12 +49,12 @@ func (g *graphTopology) LivePointer(ctx context.Context, tenant string) (topolog
 
 func (g *graphTopology) ScheduleGraph(_ context.Context, tenant, releaseID, schedule string) (topology.Graph, error) {
 	g.calls = append(g.calls, "schedule "+tenant+" "+releaseID+" "+schedule)
-	return g.graph, nil
+	return g.of(releaseID), nil
 }
 
 func (g *graphTopology) Graph(_ context.Context, tenant, releaseID string, keys []topology.NodeKey) (topology.Graph, error) {
 	g.calls = append(g.calls, "graph "+tenant+" "+releaseID)
-	return g.graph.Restrict(keys), nil
+	return g.of(releaseID).Restrict(keys), nil
 }
 
 // sourceTasks is a TaskCollection holding one run's tasks; BulkCreate records
@@ -96,6 +105,20 @@ func threeNodes() topology.Graph {
 		[]topology.Node{node("raw", "a"), node("mart", "b"), node("mart", "c")},
 		[]topology.Edge{{Upstream: "raw.a", Downstream: "mart.b"}, {Upstream: "mart.b", Downstream: "mart.c"}},
 	)
+}
+
+// withRawAChanged is threeNodes with a new content hash for raw.a.
+func withRawAChanged() topology.Graph {
+	g := threeNodes()
+	nodes := make([]topology.Node, 0, g.Len())
+	for _, k := range g.Keys() {
+		n, _ := g.Node(k)
+		if k == "raw.a" {
+			n.ContentHash = "h-fixed"
+		}
+		nodes = append(nodes, n)
+	}
+	return topology.NewGraph(nodes, []topology.Edge{{Upstream: "raw.a", Downstream: "mart.b"}, {Upstream: "mart.b", Downstream: "mart.c"}})
 }
 
 func fakeUoW(live topology.Pointer, tasks []run.Task) (*uow.FakeUnitOfWork, *graphTopology) {
@@ -175,18 +198,58 @@ func TestPlanner_RerunReadsTheSourceTasksOnTheSourceRelease(t *testing.T) {
 }
 
 // A rebase is chosen from the source's tasks over its schedule's graph on the
-// live release.
+// live release, compared with the source's nodes on the source's release: the
+// live release changed raw.a, upstream of the failed mart.b.
 func TestPlanner_RebaseReadsTheSourceScheduleOnTheLiveRelease(t *testing.T) {
 	tasks := []run.Task{task("mart.b", run.TaskStatusFailed), task("raw.a", run.TaskStatusSucceeded)}
 	u, topo := fakeUoW(topology.Pointer{ReleaseID: "rel-7", PromotionSeq: 12}, tasks)
+	topo.releases = map[string]topology.Graph{"rel-3": threeNodes(), "rel-7": withRawAChanged()}
+	source := sourceRun(t, run.ReleaseStamp{ReleaseID: "rel-3", PromotionSeq: 9})
 
-	sel, err := planner.Rebase(context.Background(), u, sourceRun(t, run.ReleaseStamp{ReleaseID: "rel-3", PromotionSeq: 9}))
+	sel, pv, err := planner.Rebase(context.Background(), u, source, runstart.RebaseOptions{IncludeChangedUpstream: true})
 
 	require.NoError(t, err)
 	assert.Equal(t, run.ReleaseStamp{ReleaseID: "rel-7", PromotionSeq: 12}, sel.Stamp)
-	assert.Equal(t, []string{"lock", "live default", "schedule default rel-7 daily"}, topo.calls)
-	assert.Equal(t, []topology.NodeKey{"mart.b"}, sel.Plan.Ready, "mart.c is new and waits for mart.b")
+	assert.Equal(t, []string{"lock", "live default", "graph default rel-3", "schedule default rel-7 daily"}, topo.calls)
+	assert.Equal(t, []topology.NodeKey{"raw.a"}, sel.Plan.Ready, "mart.b waits for the changed raw.a; mart.c is new and waits for mart.b")
 	assert.Len(t, sel.Plan.Tasks, 3)
+	assert.Equal(t, pv.Plan, sel.Plan)
+	assert.Equal(t, 1, pv.ChangedUpstream)
+	assert.Equal(t, []runplan.ChangedNode{{Key: "raw.a", ServiceName: "svc", SchemaName: "raw", TableName: "a", Downstream: 2}}, pv.Changed)
+
+	topo.calls = nil
+	sel, pv, err = planner.Rebase(context.Background(), u, source, runstart.RebaseOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, []topology.NodeKey{"mart.b"}, sel.Plan.Ready, "without the option raw.a is inherited")
+	assert.Equal(t, 0, pv.ChangedUpstream)
+	assert.Len(t, pv.Changed, 1)
+}
+
+// A rebase previewed on another live release is refused under the topology
+// lock, before anything else is read.
+func TestPlanner_RebaseRefusesAMovedLiveRelease(t *testing.T) {
+	tasks := []run.Task{task("mart.b", run.TaskStatusFailed), task("raw.a", run.TaskStatusSucceeded)}
+	u, topo := fakeUoW(topology.Pointer{ReleaseID: "rel-8", PromotionSeq: 13}, tasks)
+	source := sourceRun(t, run.ReleaseStamp{ReleaseID: "rel-3", PromotionSeq: 9})
+
+	sel, _, err := planner.Rebase(context.Background(), u, source, runstart.RebaseOptions{ExpectedReleaseID: "rel-7"})
+
+	require.ErrorIs(t, err, runstart.ErrLiveReleaseMoved)
+	assert.Equal(t, "the live release changed; preview again", err.Error())
+	assert.Equal(t, run.ReleaseStamp{ReleaseID: "rel-8", PromotionSeq: 13}, sel.Stamp)
+	assert.Equal(t, []string{"lock", "live default"}, topo.calls)
+
+	topo.calls = nil
+	sel, _, err = planner.Rebase(context.Background(), u, source, runstart.RebaseOptions{ExpectedReleaseID: "rel-8"})
+	require.NoError(t, err)
+	assert.Equal(t, run.ReleaseStamp{ReleaseID: "rel-8", PromotionSeq: 13}, sel.Stamp)
+}
+
+// Without a live release a rebase's selection is empty.
+func TestPlanner_RebaseWithoutALiveReleaseIsEmpty(t *testing.T) {
+	u, _ := fakeUoW(topology.Pointer{}, []run.Task{task("mart.b", run.TaskStatusFailed)})
+	_, _, err := planner.Rebase(context.Background(), u, sourceRun(t, run.ReleaseStamp{ReleaseID: "rel-3", PromotionSeq: 9}), runstart.RebaseOptions{})
+	assert.ErrorIs(t, err, runplan.ErrEmptySelection)
 }
 
 // A source run that names no release, or a task of it that names no node,
@@ -198,13 +261,15 @@ func TestPlanner_ASourceWithoutAReleaseIsRefused(t *testing.T) {
 
 	_, err := planner.Rerun(ctx, u, noRelease)
 	assert.ErrorIs(t, err, runstart.ErrSourceHasNoRelease)
-	_, err = planner.Rebase(ctx, u, noRelease)
+	_, _, err = planner.Rebase(ctx, u, noRelease, runstart.RebaseOptions{})
 	assert.ErrorIs(t, err, runstart.ErrSourceHasNoRelease)
 	_, err = planner.SingleNode(ctx, u, run.NodeID{ServiceName: "svc", SchemaName: "raw", TableName: "a"}, model.OperationRun, noRelease)
 	assert.ErrorIs(t, err, runstart.ErrSourceHasNoRelease)
 
 	u, _ = fakeUoW(topology.Pointer{ReleaseID: "rel-7", PromotionSeq: 12}, []run.Task{task("", run.TaskStatusFailed)})
 	_, err = planner.Rerun(ctx, u, sourceRun(t, run.ReleaseStamp{ReleaseID: "rel-3", PromotionSeq: 9}))
+	assert.ErrorIs(t, err, runstart.ErrSourceHasNoRelease)
+	_, _, err = planner.Rebase(ctx, u, sourceRun(t, run.ReleaseStamp{ReleaseID: "rel-3", PromotionSeq: 9}), runstart.RebaseOptions{})
 	assert.ErrorIs(t, err, runstart.ErrSourceHasNoRelease)
 }
 

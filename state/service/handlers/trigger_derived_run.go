@@ -13,90 +13,42 @@ import (
 	"github.com/google/uuid"
 )
 
-// triggerDerivedConfig captures everything that distinguishes a rerun trigger
-// from a rebase trigger. The use-case body (eligibility → policy → select →
-// create, plan and dispatch in one transaction) is identical; only the
-// source-eligibility predicate, the selection, the run Kind and the log label
-// differ, so they are supplied per kind.
-type triggerDerivedConfig struct {
-	// kind is the derived-run kind minted by NewDerivedRun (KindRerun |
-	// KindRebase).
-	kind run.Kind
-	// eligible runs the source aggregate's kind-specific eligibility check
-	// (CanBeRerunSource / CanBeRebaseSource); it returns the kind-specific
-	// "nothing to do" sentinel so the gRPC adapter can distinguish the paths.
-	eligible func(ctx context.Context, src *run.Run, tasks run.TaskCollection) error
-	// selectRun chooses the derived run's tasks and the release it runs on: a
-	// rerun replays the source on the source's release; a rebase restarts it
-	// on the live one.
-	selectRun func(ctx context.Context, p runstart.Planner, u uow.UnitOfWork, src *run.Run) (runstart.Selection, error)
-	// logLabel is the human label used in the success log line.
-	logLabel string
-}
-
-// TriggerDerivedRunHandler is the use case behind both the TriggerRerun and
-// TriggerRebase gRPC methods. It enforces eligibility on the source Run via the
-// aggregate, then creates the derived run, stores its tasks and dispatches the
-// ready ones in one transaction. The only per-trigger variation lives in the
-// triggerDerivedConfig it is constructed with.
-type TriggerDerivedRunHandler struct {
+// derivedRunCreation creates a run derived from a source run: it enforces the
+// source's eligibility through the aggregate and the schedule's active-run
+// policy, then creates the run, stores its tasks and dispatches the ready ones
+// in one transaction. A rerun and a rebase differ in the run kind, the
+// eligibility check, the selection and the log label.
+type derivedRunCreation struct {
 	policy  policy.SchedulePolicy
 	planner runstart.Planner
 	logger  *slog.Logger
-	cfg     triggerDerivedConfig
+	// kind is the derived-run kind NewDerivedRun mints (KindRerun or
+	// KindRebase).
+	kind run.Kind
+	// eligible runs the source aggregate's eligibility check
+	// (CanBeRerunSource or CanBeRebaseSource); it returns the kind's own
+	// "nothing to do" error so the gRPC adapter can tell the two apart.
+	eligible func(ctx context.Context, src *run.Run, tasks run.TaskCollection) error
+	// logLabel is the message of the success log line.
+	logLabel string
 }
 
-// NewTriggerRerunHandler constructs the handler wired for the rerun trigger;
-// planner plans its runs.
-func NewTriggerRerunHandler(planner runstart.Planner, logger *slog.Logger) *TriggerDerivedRunHandler {
-	return &TriggerDerivedRunHandler{
-		planner: planner,
-		logger:  logger,
-		cfg: triggerDerivedConfig{
-			kind: run.KindRerun,
-			eligible: func(ctx context.Context, src *run.Run, tasks run.TaskCollection) error {
-				return src.CanBeRerunSource(ctx, tasks)
-			},
-			selectRun: func(ctx context.Context, p runstart.Planner, u uow.UnitOfWork, src *run.Run) (runstart.Selection, error) {
-				return p.Rerun(ctx, u, src)
-			},
-			logLabel: "Rerun triggered",
-		},
-	}
-}
+// selectDerived chooses a derived run's tasks and the release it runs on,
+// inside the creating transaction.
+type selectDerived func(ctx context.Context, u uow.UnitOfWork, src *run.Run) (runstart.Selection, error)
 
-// NewTriggerRebaseHandler constructs the handler wired for the rebase trigger;
-// planner plans its runs.
-func NewTriggerRebaseHandler(planner runstart.Planner, logger *slog.Logger) *TriggerDerivedRunHandler {
-	return &TriggerDerivedRunHandler{
-		planner: planner,
-		logger:  logger,
-		cfg: triggerDerivedConfig{
-			kind: run.KindRebase,
-			eligible: func(ctx context.Context, src *run.Run, tasks run.TaskCollection) error {
-				return src.CanBeRebaseSource(ctx, tasks)
-			},
-			selectRun: func(ctx context.Context, p runstart.Planner, u uow.UnitOfWork, src *run.Run) (runstart.Selection, error) {
-				return p.Rebase(ctx, u, src)
-			},
-			logLabel: "Rebase triggered",
-		},
-	}
-}
-
-// Handle synthesises a fresh derived Run from a source. Returns
-// (newRunID, scheduleName). A selection the planner refuses (a source that
-// names no release, a test source, nothing to execute again) is returned as
-// is, and nothing is written.
-func (h *TriggerDerivedRunHandler) Handle(ctx context.Context, u uow.UnitOfWork, sourceID uuid.UUID, initiator identity.Identity) (uuid.UUID, string, error) {
+// create creates the run derived from sourceID with the tasks selectRun
+// chooses, and returns its id and schedule name. A selection the planner
+// refuses is returned as is, and nothing is written.
+func (c derivedRunCreation) create(ctx context.Context, u uow.UnitOfWork, sourceID uuid.UUID, initiator identity.Identity, selectRun selectDerived) (uuid.UUID, string, error) {
 	src, err := u.Run().GetRun(ctx, sourceID)
 	if err != nil {
 		return uuid.Nil, "", fmt.Errorf("get source: %w", err)
 	}
-	if err := h.cfg.eligible(ctx, src, u.TaskCollection()); err != nil {
+	if err := c.eligible(ctx, src, u.TaskCollection()); err != nil {
 		return uuid.Nil, "", err
 	}
-	if err := h.policy.IsScheduleAvailable(ctx, u.Run(), src.ScheduleName()); err != nil {
+	if err := c.policy.IsScheduleAvailable(ctx, u.Run(), src.ScheduleName()); err != nil {
 		return uuid.Nil, "", err
 	}
 
@@ -110,18 +62,18 @@ func (h *TriggerDerivedRunHandler) Handle(ctx context.Context, u uow.UnitOfWork,
 		}
 	}()
 
-	sel, err := h.cfg.selectRun(ctx, h.planner, u, src)
+	sel, err := selectRun(ctx, u, src)
 	if err != nil {
 		return uuid.Nil, "", err
 	}
-	newRun, err := run.NewDerivedRun(src.ScheduleName(), h.cfg.kind, sourceID, sel.Stamp, initiator.UserID, src.Operation(), u.Clock().Now())
+	newRun, err := run.NewDerivedRun(src.ScheduleName(), c.kind, sourceID, sel.Stamp, initiator.UserID, src.Operation(), u.Clock().Now())
 	if err != nil {
 		return uuid.Nil, "", err
 	}
 	if err := u.Run().SaveRun(ctx, newRun); err != nil {
 		return uuid.Nil, "", fmt.Errorf("save: %w", err)
 	}
-	if err := h.planner.Start(ctx, u, newRun, sel, uuid.Nil); err != nil {
+	if err := c.planner.Start(ctx, u, newRun, sel, uuid.Nil); err != nil {
 		return uuid.Nil, "", err
 	}
 	if err := u.Commit(); err != nil {
@@ -129,7 +81,38 @@ func (h *TriggerDerivedRunHandler) Handle(ctx context.Context, u uow.UnitOfWork,
 	}
 	committed = true
 
-	h.logger.Info(h.cfg.logLabel, "new_run_id", newRun.ScheduleID(), "schedule_name", newRun.ScheduleName(), "source_run_id", sourceID,
+	c.logger.Info(c.logLabel, "new_run_id", newRun.ScheduleID(), "schedule_name", newRun.ScheduleName(), "source_run_id", sourceID,
 		"release_id", sel.Stamp.ReleaseID, "tasks", len(sel.Plan.Tasks), "dispatched", len(sel.Plan.Ready))
 	return newRun.ScheduleID(), newRun.ScheduleName(), nil
+}
+
+// TriggerDerivedRunHandler is the use case behind the TriggerRerun gRPC
+// method: a new run that replays a failed or cancelled source run on the
+// source's own release.
+type TriggerDerivedRunHandler struct {
+	creation derivedRunCreation
+}
+
+// NewTriggerRerunHandler constructs the rerun use case; planner plans its
+// runs.
+func NewTriggerRerunHandler(planner runstart.Planner, logger *slog.Logger) *TriggerDerivedRunHandler {
+	return &TriggerDerivedRunHandler{creation: derivedRunCreation{
+		planner: planner,
+		logger:  logger,
+		kind:    run.KindRerun,
+		eligible: func(ctx context.Context, src *run.Run, tasks run.TaskCollection) error {
+			return src.CanBeRerunSource(ctx, tasks)
+		},
+		logLabel: "Rerun triggered",
+	}}
+}
+
+// Handle creates a rerun of sourceID and returns (newRunID, scheduleName). A
+// selection the planner refuses (a source that names no release, a test
+// source, nothing to execute again) is returned as is, and nothing is
+// written.
+func (h *TriggerDerivedRunHandler) Handle(ctx context.Context, u uow.UnitOfWork, sourceID uuid.UUID, initiator identity.Identity) (uuid.UUID, string, error) {
+	return h.creation.create(ctx, u, sourceID, initiator, func(ctx context.Context, u uow.UnitOfWork, src *run.Run) (runstart.Selection, error) {
+		return h.creation.planner.Rerun(ctx, u, src)
+	})
 }

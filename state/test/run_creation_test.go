@@ -140,7 +140,9 @@ func TestRunCreation(t *testing.T) {
 		_, err = db.Exec(`UPDATE scheduler_tracker SET status = 'failed', completed_at = now() WHERE schedule_id = $1`, rerunID)
 		require.NoError(t, err)
 
-		rebaseID, _, err := svchandlers.NewTriggerRebaseHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), srcID, alice)
+		rebaseID, _, err := svchandlers.NewTriggerRebaseHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), svchandlers.TriggerRebaseInput{
+			SourceRunID: srcID, IncludeChangedUpstream: true, Initiator: alice,
+		})
 		require.NoError(t, err)
 		assert.Equal(t, live, h.stampOf(t, rebaseID))
 		assert.Equal(t, createdRun{Status: run.SchedulerStatusRunning, Planned: true, Tasks: 3, Dispatch: []string{"mart.derived_b", "mart.derived_c"}}, h.created(t, rebaseID))
@@ -196,7 +198,9 @@ func TestRunCreation_DerivedRunsNeedOneConnection(t *testing.T) {
 		require.NoError(t, err)
 	})
 	t.Run("rebase", func(t *testing.T) {
-		_, _, err := svchandlers.NewTriggerRebaseHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), srcID, alice)
+		_, _, err := svchandlers.NewTriggerRebaseHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), svchandlers.TriggerRebaseInput{
+			SourceRunID: srcID, IncludeChangedUpstream: true, Initiator: alice,
+		})
 		require.NoError(t, err)
 	})
 }

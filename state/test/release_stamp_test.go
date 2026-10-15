@@ -99,7 +99,9 @@ func TestReleaseStamp(t *testing.T) {
 
 	t.Run("a rebase names the live release", func(t *testing.T) {
 		src := h.finished(t, "stamp-rebase", old)
-		id, _, err := svchandlers.NewTriggerRebaseHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), src, alice)
+		id, _, err := svchandlers.NewTriggerRebaseHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), svchandlers.TriggerRebaseInput{
+			SourceRunID: src, IncludeChangedUpstream: true, Initiator: alice,
+		})
 		require.NoError(t, err)
 		assert.Equal(t, live, h.stampOf(t, id))
 	})

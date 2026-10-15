@@ -81,21 +81,6 @@ func (p Planner) Rerun(ctx context.Context, u uow.UnitOfWork, source *run.Run) (
 	return Selection{Stamp: source.Release(), Graph: g, Plan: plan}, err
 }
 
-// Rebase selects a rebase of source onto the live release, over the graph of
-// source's schedule there.
-func (p Planner) Rebase(ctx context.Context, u uow.UnitOfWork, source *run.Run) (Selection, error) {
-	src, _, err := p.source(ctx, u, source)
-	if err != nil {
-		return Selection{}, err
-	}
-	sel, err := p.liveScheduleGraph(ctx, u, source.ScheduleName())
-	if err != nil {
-		return sel, err
-	}
-	sel.Plan, err = runplan.Rebase{Source: src}.Select(sel.Graph)
-	return sel, err
-}
-
 // SingleNode selects a run of the node target names, with operation op: on
 // source's release when source is not nil, else on the live release.
 func (p Planner) SingleNode(ctx context.Context, u uow.UnitOfWork, target run.NodeID, op model.Operation, source *run.Run) (Selection, error) {
@@ -160,6 +145,13 @@ func (p Planner) liveScheduleGraph(ctx context.Context, u uow.UnitOfWork, schedu
 	if err != nil {
 		return Selection{}, err
 	}
+	return p.scheduleGraph(ctx, u, stamp, scheduleName)
+}
+
+// scheduleGraph reads the graph of scheduleName on the live release stamp
+// names, which the caller read under the topology lock it holds. Without a
+// live release the selection is empty.
+func (p Planner) scheduleGraph(ctx context.Context, u uow.UnitOfWork, stamp run.ReleaseStamp, scheduleName string) (Selection, error) {
 	sel := Selection{Stamp: stamp}
 	if stamp.ReleaseID == "" {
 		return sel, fmt.Errorf("%w: no release is live", runplan.ErrEmptySelection)
