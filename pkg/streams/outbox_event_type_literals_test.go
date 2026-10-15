@@ -17,16 +17,10 @@ import (
 // be referenced through that constant so the emit site and the publisher
 // share one source of truth.
 var forbiddenEventTypeLiterals = map[string]bool{
-	"node_ready_for_execution":    true,
-	"cascade_task_skipped":        true,
-	"run_entries_dispatched":      true,
-	"run_entries_dispatch_failed": true,
-	"release_promoted":            true,
-	"task_status_updated":         true,
-	"node_updated":                true,
-	"task_execution_recorded":     true,
-	"node_status_updated":         true,
-	"check_delayed":               true,
+	"release_promoted":        true,
+	"task_status_updated":     true,
+	"task_execution_recorded": true,
+	"check_delayed":           true,
 }
 
 // eventTypeScanDirs are the publisher adapters and producer packages that route

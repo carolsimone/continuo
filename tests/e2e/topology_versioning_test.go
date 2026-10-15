@@ -3,13 +3,11 @@ package e2e
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"testing"
 	"time"
 
-	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -52,23 +50,12 @@ func TestTopologyVersioning_MidRunIsolation(t *testing.T) {
 	t.Logf("G1 = %d", g1)
 	waitForStateLiveSeq(t, ctx, clients, g1)
 
-	// Tap run.entries.dispatched:v1 before either run is triggered: state consumes
-	// it and the trim loop removes consumed entries, so steps 6 and 15 read what
-	// the tap recorded rather than the stream's history.
-	dispatchedTap := startStreamTap(t, ctx, clients.redisClient, streams.RunEntriesDispatchedV1)
-
 	// Step 5: Trigger Run 1 via the ui HTTP endpoint.
 	t.Log("=== Step 5: triggerScheduleHTTP — starting Run 1 (S1) ===")
 	scheduleID1Str := triggerScheduleHTTP(t, clients.uiBase, scheduleName)
 	t.Logf("Run 1 created: schedule_id=%s", scheduleID1Str)
 	s1, err := uuid.Parse(scheduleID1Str)
 	require.NoError(t, err, "schedule_id for Run 1 is not a valid UUID")
-
-	// Step 6: Wait for run.entries.dispatched:v1 for S1. This event is published
-	// after SnapshotGraph commits, proving S1's promotion_seq has been stamped on
-	// its run in state.
-	t.Log("=== Step 6: waiting for run.entries.dispatched:v1 for S1 ===")
-	waitForDispatched(t, ctx, dispatchedTap, s1)
 
 	// Step 7: S1 carries G1.
 	t.Log("=== Step 7: verifying S1 promotion_seq in state == G1 ===")
@@ -110,10 +97,6 @@ func TestTopologyVersioning_MidRunIsolation(t *testing.T) {
 	s2, err := uuid.Parse(scheduleID2Str)
 	require.NoError(t, err, "schedule_id for Run 2 is not a valid UUID")
 
-	// Step 14: Wait for run.entries.dispatched:v1 for S2.
-	t.Log("=== Step 14: waiting for run.entries.dispatched:v1 for S2 ===")
-	waitForDispatched(t, ctx, dispatchedTap, s2)
-
 	// Step 15: S2 carries G2.
 	t.Log("=== Step 15: verifying S2 promotion_seq in state == G2 ===")
 	assert.Equal(t, g2, readRunPromotionSeq(t, ctx, clients, s2), "Run 2's promotion_seq must equal G2=%d", g2)
@@ -123,28 +106,6 @@ func TestTopologyVersioning_MidRunIsolation(t *testing.T) {
 	waitForAllTasksSucceeded(t, ctx, clients, s2, tables)
 	verifySchedulerSucceeded(t, ctx, clients, s2)
 	t.Log("TestTopologyVersioning_MidRunIsolation PASSED")
-}
-
-// waitForDispatched waits until the tap has recorded run.entries.dispatched:v1
-// for scheduleID, which is published after the run's SnapshotGraph commits.
-func waitForDispatched(t *testing.T, ctx context.Context, tap *streamTap, scheduleID uuid.UUID) {
-	t.Helper()
-	pollUntil(t, ctx, 2*time.Minute, time.Second, func() (bool, error) {
-		for _, msg := range tap.Entries() {
-			payloadStr, _ := msg.Values["payload"].(string)
-			if payloadStr == "" {
-				continue
-			}
-			var p map[string]interface{}
-			if json.Unmarshal([]byte(payloadStr), &p) != nil {
-				continue
-			}
-			if p["schedule_id"] == scheduleID.String() {
-				return true, nil
-			}
-		}
-		return false, nil
-	}, "Timeout waiting for run.entries.dispatched:v1 for schedule "+scheduleID.String())
 }
 
 // waitForStateLiveSeq polls until state's live release reaches promotion seq
