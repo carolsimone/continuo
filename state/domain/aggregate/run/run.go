@@ -669,6 +669,21 @@ func (r *Run) Cancel(
 }
 
 // RecordTaskStatus is the hot-path mutator driven by task.status.updated:v1.
+//
+// On a run whose tasks state planned (planned_at set), a terminal status that
+// takes effect also moves the rest of the run, reading how its tasks connect
+// through graph:
+//   - a success dispatches every pending, undispatched task it makes ready
+//     (each of its in-run upstreams succeeded), stamping dispatched_at and
+//     recording a TaskDispatched per task, in key order;
+//   - a failure on the task's last allowed attempt (retryCount >= the task's
+//     max_retries) skips every pending, undispatched task below it in the run,
+//     which can no longer run, and counts them terminal.
+//
+// A run whose tasks state did not plan reads nothing through graph: its tasks
+// do not record when they were dispatched, so neither readiness nor a cascade
+// can be read from them.
+//
 // Returns no events when:
 //   - the run is already terminal (stale event)
 //   - the task row exists but the status did not change (replay)
@@ -705,6 +720,7 @@ func (r *Run) Cancel(
 func (r *Run) RecordTaskStatus(
 	ctx context.Context,
 	tasks TaskCollection,
+	graph TaskGraph,
 	taskID uuid.UUID,
 	newStatus TaskStatus,
 	retryCount int32,
@@ -788,7 +804,7 @@ func (r *Run) RecordTaskStatus(
 		}
 		r.recordProgress(now)
 		r.fillSlot()
-		return r.finalizeApplied(ctx, tasks, newStatus, now)
+		return r.applyTerminal(ctx, tasks, graph, attempt, newStatus, retryCount, now)
 	}
 
 	// Newer attempt (retryCount > prevAttempt) or no prior status — adopt it.
@@ -808,13 +824,13 @@ func (r *Run) RecordTaskStatus(
 	case !prevWasTerminal && isTerminal:
 		// Terminal of a running/new attempt — fill the slot.
 		r.fillSlot()
-		return r.finalizeApplied(ctx, tasks, newStatus, now)
+		return r.applyTerminal(ctx, tasks, graph, attempt, newStatus, retryCount, now)
 	case prevWasTerminal && isTerminal:
 		// A newer attempt's terminal arriving after an older attempt's terminal
 		// (e.g. the retry also failed, or it succeeded). The slot stays filled —
 		// no count change — but the task's retryability may have flipped, so
 		// re-check finalization with the now-current attempt persisted.
-		return r.finalizeApplied(ctx, tasks, newStatus, now)
+		return r.applyTerminal(ctx, tasks, graph, attempt, newStatus, retryCount, now)
 	default:
 		// Non-terminal after non-terminal (newer attempt already running) — the
 		// slot was empty and stays empty.
@@ -847,15 +863,105 @@ func (r *Run) unfillSlot() {
 	r.changes.terminalTaskCountDirty = true
 }
 
-// finalizeApplied finalizes the run when its tasks are complete, after a
-// terminal status for one of them took effect. The success flag it returns is
-// that status being SUCCEEDED, independent of whether the run finalized.
-func (r *Run) finalizeApplied(ctx context.Context, tasks TaskCollection, applied TaskStatus, now time.Time) ([]DomainEvent, bool, error) {
-	events, err := r.finalizeIfComplete(ctx, tasks, now)
+// applyTerminal follows a terminal status that took effect for the task whose
+// stored state was attempt: on a run whose tasks state planned, a success
+// dispatches what it makes ready and a failure on the last allowed attempt
+// skips what it blocks; then the run finalizes when its tasks are complete.
+// The success flag it returns is applied being SUCCEEDED, independent of
+// whether the run finalized.
+func (r *Run) applyTerminal(
+	ctx context.Context,
+	tasks TaskCollection,
+	graph TaskGraph,
+	attempt TaskAttemptState,
+	applied TaskStatus,
+	retryCount int32,
+	now time.Time,
+) ([]DomainEvent, bool, error) {
+	var events []DomainEvent
+	if r.plannedAt != nil {
+		switch {
+		case applied == TaskStatusSucceeded:
+			dispatched, err := r.dispatchReady(ctx, tasks, graph, attempt.NodeKey, now)
+			if err != nil {
+				return nil, false, err
+			}
+			events = dispatched
+		case applied == TaskStatusFailed && retryCount >= attempt.MaxRetries:
+			if err := r.skipBlocked(ctx, tasks, graph, attempt.NodeKey); err != nil {
+				return nil, false, err
+			}
+		}
+	}
+	finalized, err := r.finalizeIfComplete(ctx, tasks, now)
 	if err != nil {
 		return nil, false, err
 	}
-	return events, applied == TaskStatusSucceeded, nil
+	return append(events, finalized...), applied == TaskStatusSucceeded, nil
+}
+
+// dispatchReady dispatches the tasks of r that the success of the task at key
+// makes ready: its pending, undispatched downstream tasks whose every in-run
+// upstream has succeeded. Each one MarkDispatched stamps records a
+// TaskDispatched, in key order.
+func (r *Run) dispatchReady(ctx context.Context, tasks TaskCollection, graph TaskGraph, key topology.NodeKey, now time.Time) ([]DomainEvent, error) {
+	candidates, err := graph.ReadyCandidates(ctx, r.scheduleID, r.release.ReleaseID, key)
+	if err != nil {
+		return nil, fmt.Errorf("read the tasks %s's success may make ready: %w", key, err)
+	}
+	var ready []ReadyCandidate
+	ids := make([]uuid.UUID, 0, len(candidates))
+	for _, c := range candidates {
+		if c.Ready() {
+			ready = append(ready, c)
+			ids = append(ids, c.TaskID)
+		}
+	}
+	if len(ready) == 0 {
+		return nil, nil
+	}
+	stamped, err := tasks.MarkDispatched(ctx, ids, now)
+	if err != nil {
+		return nil, fmt.Errorf("mark the tasks %s's success made ready dispatched: %w", key, err)
+	}
+	isStamped := make(map[uuid.UUID]bool, len(stamped))
+	for _, id := range stamped {
+		isStamped[id] = true
+	}
+	events := make([]DomainEvent, 0, len(stamped))
+	for _, c := range ready {
+		if !isStamped[c.TaskID] {
+			continue
+		}
+		events = append(events, TaskDispatched{
+			ID:           r.scheduleID,
+			ScheduleName: r.scheduleName,
+			TaskID:       c.TaskID,
+			Node:         c.Node,
+			JobName:      c.JobName,
+			Operation:    r.operation,
+			MaxRetries:   c.MaxRetries,
+		})
+	}
+	return events, nil
+}
+
+// skipBlocked skips the pending, undispatched tasks of r below the task at
+// key, which has failed for good, and counts each one it skips as terminal.
+func (r *Run) skipBlocked(ctx context.Context, tasks TaskCollection, graph TaskGraph, key topology.NodeKey) error {
+	blocked, err := graph.PendingDescendants(ctx, r.scheduleID, r.release.ReleaseID, key)
+	if err != nil {
+		return fmt.Errorf("read the tasks %s's failure blocks: %w", key, err)
+	}
+	skipped, err := tasks.MarkSkipped(ctx, blocked)
+	if err != nil {
+		return fmt.Errorf("skip the tasks %s's failure blocks: %w", key, err)
+	}
+	if skipped > 0 {
+		r.terminalTaskCount += num.ClampInt32(skipped)
+		r.changes.terminalTaskCountDirty = true
+	}
+	return nil
 }
 
 // finalizeIfComplete finalizes the scheduler when every task is terminal, the

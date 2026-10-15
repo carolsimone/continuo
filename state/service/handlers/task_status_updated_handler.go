@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 
-	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/events"
 	"github.com/carolsimone/continuo/state/domain/seeds"
@@ -27,12 +26,14 @@ import (
 // already finished that attempt) records no version either, so a stale delivery
 // cannot overwrite what the applied one recorded.
 type TaskStatusUpdatedHandler struct {
-	logger *slog.Logger
+	tenantID string
+	logger   *slog.Logger
 }
 
-// NewTaskStatusUpdatedHandler constructs the handler.
-func NewTaskStatusUpdatedHandler(logger *slog.Logger) *TaskStatusUpdatedHandler {
-	return &TaskStatusUpdatedHandler{logger: logger}
+// NewTaskStatusUpdatedHandler constructs the handler for the runs of
+// tenantID.
+func NewTaskStatusUpdatedHandler(tenantID string, logger *slog.Logger) *TaskStatusUpdatedHandler {
+	return &TaskStatusUpdatedHandler{tenantID: tenantID, logger: logger}
 }
 
 // Handle orchestrates the task-status-updated flow.
@@ -51,7 +52,7 @@ func (h *TaskStatusUpdatedHandler) Handle(
 	if err != nil {
 		return fmt.Errorf("load run: %w", err)
 	}
-	domainEvents, succeededApplied, err := r.RecordTaskStatus(ctx, u.TaskCollection(), evt.TaskID, evt.Status, evt.RetryCount, u.Clock().Now())
+	domainEvents, succeededApplied, err := r.RecordTaskStatus(ctx, u.TaskCollection(), u.TaskGraph(h.tenantID), evt.TaskID, evt.Status, evt.RetryCount, u.Clock().Now())
 	if err != nil {
 		return fmt.Errorf("record task status: %w", err)
 	}
@@ -127,7 +128,7 @@ func (h *TaskStatusUpdatedHandler) recordLoaded(ctx context.Context, u uow.UnitO
 		return fmt.Errorf("read task %s: %w", evt.TaskID, err)
 	}
 	key := topology.KeyOf(task.SchemaName, task.TableName)
-	hash, found, err := u.Topology().NodeContentHash(ctx, pkgevents.DefaultTenantID, r.ReleaseID(), key)
+	hash, found, err := u.Topology().NodeContentHash(ctx, h.tenantID, r.ReleaseID(), key)
 	if err != nil {
 		return fmt.Errorf("read the content hash of %s in release %s: %w", key, r.ReleaseID(), err)
 	}
@@ -136,7 +137,7 @@ func (h *TaskStatusUpdatedHandler) recordLoaded(ctx context.Context, u uow.UnitO
 			"task_id", evt.TaskID, "node_key", key, "release_id", r.ReleaseID(), "in_release", found)
 		return nil
 	}
-	if err := u.Materializations().RecordBuilt(ctx, pkgevents.DefaultTenantID, seeds.Built{
+	if err := u.Materializations().RecordBuilt(ctx, h.tenantID, seeds.Built{
 		Key:         key,
 		ContentHash: hash,
 		ImageTag:    task.ImageTag,

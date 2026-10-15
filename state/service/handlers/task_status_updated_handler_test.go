@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/events"
@@ -269,7 +270,7 @@ func TestTaskStatusUpdated_NonTerminalStatusNoEvents(t *testing.T) {
 	}
 	u := newTaskStatusHandlerUoW(runRepo, outbox, taskColl)
 
-	h := handlers.NewTaskStatusUpdatedHandler(taskStatusTestLogger())
+	h := handlers.NewTaskStatusUpdatedHandler(pkgevents.DefaultTenantID, taskStatusTestLogger())
 	require.NoError(t, h.Handle(context.Background(), u, events.TaskStatusUpdated{
 		TaskID:     taskID,
 		ScheduleID: scheduleID,
@@ -301,7 +302,7 @@ func TestTaskStatusUpdated_TerminalStatusFinalizesRun(t *testing.T) {
 	}
 	u := newTaskStatusHandlerUoW(runRepo, outbox, taskColl)
 
-	h := handlers.NewTaskStatusUpdatedHandler(taskStatusTestLogger())
+	h := handlers.NewTaskStatusUpdatedHandler(pkgevents.DefaultTenantID, taskStatusTestLogger())
 	require.NoError(t, h.Handle(context.Background(), u, events.TaskStatusUpdated{
 		TaskID:     taskID,
 		ScheduleID: scheduleID,
@@ -337,7 +338,7 @@ func TestTaskStatusUpdated_AlreadyTerminalRunIsNoop(t *testing.T) {
 			taskColl := &fakeTaskStatusTaskCollection{}
 			u := newTaskStatusHandlerUoW(runRepo, outbox, taskColl)
 
-			h := handlers.NewTaskStatusUpdatedHandler(taskStatusTestLogger())
+			h := handlers.NewTaskStatusUpdatedHandler(pkgevents.DefaultTenantID, taskStatusTestLogger())
 			require.NoError(t, h.Handle(context.Background(), u, events.TaskStatusUpdated{
 				TaskID:     uuid.New(),
 				ScheduleID: scheduleID,
@@ -369,7 +370,7 @@ func TestTaskStatusUpdated_ErrTaskRowNotProjectedPropagates(t *testing.T) {
 	}
 	u := newTaskStatusHandlerUoW(runRepo, outbox, taskColl)
 
-	h := handlers.NewTaskStatusUpdatedHandler(taskStatusTestLogger())
+	h := handlers.NewTaskStatusUpdatedHandler(pkgevents.DefaultTenantID, taskStatusTestLogger())
 	err := h.Handle(context.Background(), u, events.TaskStatusUpdated{
 		TaskID:     uuid.New(),
 		ScheduleID: scheduleID,
@@ -391,7 +392,7 @@ func TestTaskStatusUpdated_LoadRunErrorPropagates(t *testing.T) {
 	taskColl := &fakeTaskStatusTaskCollection{}
 	u := newTaskStatusHandlerUoW(runRepo, outbox, taskColl)
 
-	h := handlers.NewTaskStatusUpdatedHandler(taskStatusTestLogger())
+	h := handlers.NewTaskStatusUpdatedHandler(pkgevents.DefaultTenantID, taskStatusTestLogger())
 	err := h.Handle(context.Background(), u, events.TaskStatusUpdated{
 		TaskID:     uuid.New(),
 		ScheduleID: uuid.New(),
@@ -420,7 +421,7 @@ func TestTaskStatusUpdated_SaveRunErrorPropagates(t *testing.T) {
 	}
 	u := newTaskStatusHandlerUoW(runRepo, outbox, taskColl)
 
-	h := handlers.NewTaskStatusUpdatedHandler(taskStatusTestLogger())
+	h := handlers.NewTaskStatusUpdatedHandler(pkgevents.DefaultTenantID, taskStatusTestLogger())
 	err := h.Handle(context.Background(), u, events.TaskStatusUpdated{
 		TaskID:     uuid.New(),
 		ScheduleID: scheduleID,
@@ -449,7 +450,7 @@ func TestTaskStatusUpdated_AppendErrorPropagates(t *testing.T) {
 	}
 	u := newTaskStatusHandlerUoW(runRepo, outbox, taskColl)
 
-	h := handlers.NewTaskStatusUpdatedHandler(taskStatusTestLogger())
+	h := handlers.NewTaskStatusUpdatedHandler(pkgevents.DefaultTenantID, taskStatusTestLogger())
 	err := h.Handle(context.Background(), u, events.TaskStatusUpdated{
 		TaskID:     uuid.New(),
 		ScheduleID: scheduleID,
@@ -521,7 +522,7 @@ func TestTaskStatusUpdated_RecordsTheVersionAReleaseRunLoaded(t *testing.T) {
 	u.TopologyRepo, u.MaterializationRepo = topo, mats
 	u.SetClock(taskStatusClock{at: at})
 
-	require.NoError(t, handlers.NewTaskStatusUpdatedHandler(taskStatusTestLogger()).Handle(context.Background(), u,
+	require.NoError(t, handlers.NewTaskStatusUpdatedHandler(pkgevents.DefaultTenantID, taskStatusTestLogger()).Handle(context.Background(), u,
 		events.TaskStatusUpdated{TaskID: taskID, ScheduleID: scheduleID, Status: run.TaskStatusSucceeded}, uuid.New()))
 
 	assert.Equal(t, []string{"default/rel-1/raw.orders"}, topo.asked)
@@ -548,7 +549,7 @@ func TestTaskStatusUpdated_CronRunRecordsNoBuiltVersion(t *testing.T) {
 	u := newTaskStatusHandlerUoW(runRepo, &fakeTaskStatusOutboxPub{}, taskColl)
 	u.TopologyRepo, u.MaterializationRepo = topo, mats
 
-	require.NoError(t, handlers.NewTaskStatusUpdatedHandler(taskStatusTestLogger()).Handle(context.Background(), u,
+	require.NoError(t, handlers.NewTaskStatusUpdatedHandler(pkgevents.DefaultTenantID, taskStatusTestLogger()).Handle(context.Background(), u,
 		events.TaskStatusUpdated{TaskID: taskID, ScheduleID: scheduleID, Status: run.TaskStatusSucceeded}, uuid.New()))
 
 	assert.Empty(t, topo.asked)
@@ -637,7 +638,7 @@ func TestTaskStatusUpdated_RerunRecordsBuiltVersionOnlyWhenItsChainStartsAtAProm
 			u := newTaskStatusHandlerUoW(runRepo, &fakeTaskStatusOutboxPub{}, taskColl)
 			u.TopologyRepo, u.MaterializationRepo = topo, mats
 
-			require.NoError(t, handlers.NewTaskStatusUpdatedHandler(taskStatusTestLogger()).Handle(context.Background(), u,
+			require.NoError(t, handlers.NewTaskStatusUpdatedHandler(pkgevents.DefaultTenantID, taskStatusTestLogger()).Handle(context.Background(), u,
 				events.TaskStatusUpdated{TaskID: taskID, ScheduleID: scheduleID, Status: run.TaskStatusSucceeded}, uuid.New()))
 
 			if tc.records {
@@ -689,7 +690,7 @@ func TestTaskStatusUpdated_RecordsNothingWithoutAVersion(t *testing.T) {
 			u := newTaskStatusHandlerUoW(runRepo, &fakeTaskStatusOutboxPub{}, taskColl)
 			u.TopologyRepo, u.MaterializationRepo = topo, mats
 
-			require.NoError(t, handlers.NewTaskStatusUpdatedHandler(taskStatusTestLogger()).Handle(context.Background(), u,
+			require.NoError(t, handlers.NewTaskStatusUpdatedHandler(pkgevents.DefaultTenantID, taskStatusTestLogger()).Handle(context.Background(), u,
 				events.TaskStatusUpdated{TaskID: taskID, ScheduleID: scheduleID, Status: tc.status}, uuid.New()))
 
 			assert.Len(t, topo.asked, tc.lookups)
@@ -747,7 +748,7 @@ func TestTaskStatusUpdated_RecordsAVersionOnlyForAnAppliedSuccess(t *testing.T) 
 			u := newTaskStatusHandlerUoW(&fakeTaskStatusRunRepo{stored: tc.run()}, &fakeTaskStatusOutboxPub{}, taskColl)
 			u.TopologyRepo, u.MaterializationRepo = topo, mats
 
-			require.NoError(t, handlers.NewTaskStatusUpdatedHandler(taskStatusTestLogger()).Handle(context.Background(), u,
+			require.NoError(t, handlers.NewTaskStatusUpdatedHandler(pkgevents.DefaultTenantID, taskStatusTestLogger()).Handle(context.Background(), u,
 				events.TaskStatusUpdated{TaskID: taskID, ScheduleID: scheduleID, Status: run.TaskStatusSucceeded, RetryCount: tc.attempt}, uuid.New()))
 
 			if tc.recorded {
@@ -771,7 +772,7 @@ func TestTaskStatusUpdated_TaskReadFailureFailsTheMessage(t *testing.T) {
 		})
 	u.TopologyRepo, u.MaterializationRepo = &hashTopology{}, &builtRecorder{}
 
-	err := handlers.NewTaskStatusUpdatedHandler(taskStatusTestLogger()).Handle(context.Background(), u,
+	err := handlers.NewTaskStatusUpdatedHandler(pkgevents.DefaultTenantID, taskStatusTestLogger()).Handle(context.Background(), u,
 		events.TaskStatusUpdated{TaskID: uuid.New(), ScheduleID: scheduleID, Status: run.TaskStatusSucceeded}, uuid.New())
 	require.Error(t, err)
 	assert.ErrorIs(t, err, boom)

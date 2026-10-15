@@ -189,10 +189,13 @@ type fakeTaskCollection struct {
 	loadErr       error
 	maxRetries    map[uuid.UUID]int32
 	keys          map[uuid.UUID]topology.NodeKey
-	// dispatched and skipped record MarkDispatched and MarkSkipped, in call
-	// order.
+	// dispatched holds the tasks stamped dispatched, by BulkCreate or
+	// MarkDispatched; skipped the tasks MarkSkipped changed, in call order.
 	dispatched []uuid.UUID
 	skipped    []uuid.UUID
+	// derived makes HasFailed and HasRetryableFailed read the stored
+	// statuses, attempts and budgets instead of hasFailed and hasRetryable.
+	derived bool
 }
 
 func newFakeTaskCollection() *fakeTaskCollection {
@@ -223,10 +226,26 @@ func (f *fakeTaskCollection) Exists(_ context.Context, id uuid.UUID) (bool, erro
 	return ok, nil
 }
 func (f *fakeTaskCollection) HasFailed(_ context.Context, _ uuid.UUID) (bool, error) {
-	return f.hasFailed, nil
+	if !f.derived {
+		return f.hasFailed, nil
+	}
+	for _, s := range f.statuses {
+		if s == run.TaskStatusFailed || s == run.TaskStatusCancelled {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 func (f *fakeTaskCollection) HasRetryableFailed(_ context.Context, _ uuid.UUID) (bool, error) {
-	return f.hasRetryable, nil
+	if !f.derived {
+		return f.hasRetryable, nil
+	}
+	for id, s := range f.statuses {
+		if s == run.TaskStatusFailed && f.attempts[id] < f.maxRetries[id] {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 func (f *fakeTaskCollection) HasNonSucceeded(_ context.Context, _ uuid.UUID) (bool, error) {
 	return f.hasNonSucc, nil
@@ -262,6 +281,9 @@ func (f *fakeTaskCollection) BulkCreate(_ context.Context, tasks []run.Task) err
 		f.attempts[t.TaskID] = int32(t.RetryCount)   //nolint:gosec // G115: test fixture; RetryCount is a small literal set by the test table, never attacker-controlled input.
 		f.maxRetries[t.TaskID] = int32(t.MaxRetries) //nolint:gosec // G115: test fixture; MaxRetries is a small literal set by the test, never attacker-controlled input.
 		f.keys[t.TaskID] = t.NodeKey
+		if t.DispatchedAt != nil {
+			f.dispatched = append(f.dispatched, t.TaskID)
+		}
 	}
 	return nil
 }
@@ -439,7 +461,7 @@ func TestRecordTaskStatus_FinalizesWhenAllSucceeded(t *testing.T) {
 	r := runningRunWithProjection(t, tc, id1, id2)
 
 	// First task → SUCCEEDED, not yet finalized.
-	events, applied, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusSucceeded, 0, time.Now())
+	events, applied, err := r.RecordTaskStatus(ctx, tc, nil, id1, run.TaskStatusSucceeded, 0, time.Now())
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -456,7 +478,7 @@ func TestRecordTaskStatus_FinalizesWhenAllSucceeded(t *testing.T) {
 	// Second task → SUCCEEDED, finalize.
 	tc.hasFailed = false
 	tc.hasRetryable = false
-	events, applied, err = r.RecordTaskStatus(ctx, tc, id2, run.TaskStatusSucceeded, 0, time.Now())
+	events, applied, err = r.RecordTaskStatus(ctx, tc, nil, id2, run.TaskStatusSucceeded, 0, time.Now())
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -478,10 +500,10 @@ func TestRecordTaskStatus_FinalizesAsFailedWhenAnyFailed(t *testing.T) {
 	id1, id2 := uuid.New(), uuid.New()
 	r := runningRunWithProjection(t, tc, id1, id2)
 
-	_, _, _ = r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 0, time.Now())
+	_, _, _ = r.RecordTaskStatus(ctx, tc, nil, id1, run.TaskStatusFailed, 0, time.Now())
 	tc.hasFailed = true
 	tc.hasRetryable = false
-	events, _, err := r.RecordTaskStatus(ctx, tc, id2, run.TaskStatusSucceeded, 0, time.Now())
+	events, _, err := r.RecordTaskStatus(ctx, tc, nil, id2, run.TaskStatusSucceeded, 0, time.Now())
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -500,10 +522,10 @@ func TestRecordTaskStatus_DefersFinalizeWhenRetryablePending(t *testing.T) {
 	id1, id2 := uuid.New(), uuid.New()
 	r := runningRunWithProjection(t, tc, id1, id2)
 
-	_, _, _ = r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 0, time.Now())
+	_, _, _ = r.RecordTaskStatus(ctx, tc, nil, id1, run.TaskStatusFailed, 0, time.Now())
 	tc.hasFailed = true
 	tc.hasRetryable = true // a retry will come
-	events, _, err := r.RecordTaskStatus(ctx, tc, id2, run.TaskStatusFailed, 0, time.Now())
+	events, _, err := r.RecordTaskStatus(ctx, tc, nil, id2, run.TaskStatusFailed, 0, time.Now())
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -524,13 +546,13 @@ func TestRecordTaskStatus_DecrementsOnRetry(t *testing.T) {
 	id1 := uuid.New()
 	r := runningRunWithProjection(t, tc, id1, uuid.New())
 
-	_, _, _ = r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 0, time.Now())
+	_, _, _ = r.RecordTaskStatus(ctx, tc, nil, id1, run.TaskStatusFailed, 0, time.Now())
 	if r.TerminalTaskCount() != 1 {
 		t.Fatalf("pre-retry terminal: got %d want 1", r.TerminalTaskCount())
 	}
 	// execution-controller emits RUNNING on retry; FAILED→RUNNING must un-fill.
 	tc.statuses[id1] = run.TaskStatusFailed
-	_, _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusRunning, 1, time.Now())
+	_, _, err := r.RecordTaskStatus(ctx, tc, nil, id1, run.TaskStatusRunning, 1, time.Now())
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -550,7 +572,7 @@ func TestRecordTaskStatus_IgnoresStaleRunningAfterSucceeded(t *testing.T) {
 	id1, id2 := uuid.New(), uuid.New()
 	r := runningRunWithProjection(t, tc, id1, id2)
 
-	if _, _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusSucceeded, 0, time.Now()); err != nil {
+	if _, _, err := r.RecordTaskStatus(ctx, tc, nil, id1, run.TaskStatusSucceeded, 0, time.Now()); err != nil {
 		t.Fatalf("succeeded: %v", err)
 	}
 	if r.TerminalTaskCount() != 1 {
@@ -558,7 +580,7 @@ func TestRecordTaskStatus_IgnoresStaleRunningAfterSucceeded(t *testing.T) {
 	}
 
 	// Stale RUNNING for the same attempt (retry_count 0 <= terminal attempt 0).
-	events, _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusRunning, 0, time.Now())
+	events, _, err := r.RecordTaskStatus(ctx, tc, nil, id1, run.TaskStatusRunning, 0, time.Now())
 	if err != nil {
 		t.Fatalf("stale running: %v", err)
 	}
@@ -589,7 +611,7 @@ func TestRecordTaskStatus_PropagatesLoadError(t *testing.T) {
 	r := runningRunWithProjection(t, tc, id1, id2)
 
 	// Record a real terminal for id1 first.
-	if _, _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusSucceeded, 0, time.Now()); err != nil {
+	if _, _, err := r.RecordTaskStatus(ctx, tc, nil, id1, run.TaskStatusSucceeded, 0, time.Now()); err != nil {
 		t.Fatalf("succeeded: %v", err)
 	}
 	if r.TerminalTaskCount() != 1 {
@@ -599,7 +621,7 @@ func TestRecordTaskStatus_PropagatesLoadError(t *testing.T) {
 	// Now the FOR-UPDATE read fails transiently while a stale RUNNING for the
 	// same attempt arrives.
 	tc.loadErr = errors.New("read replica unavailable")
-	events, _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusRunning, 0, time.Now())
+	events, _, err := r.RecordTaskStatus(ctx, tc, nil, id1, run.TaskStatusRunning, 0, time.Now())
 	if err == nil {
 		t.Fatalf("expected the load error to propagate, got nil")
 	}
@@ -630,14 +652,14 @@ func TestRecordTaskStatus_IgnoresStaleRunningAfterFailed(t *testing.T) {
 	id1, id2 := uuid.New(), uuid.New()
 	r := runningRunWithProjection(t, tc, id1, id2)
 
-	if _, _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 0, time.Now()); err != nil {
+	if _, _, err := r.RecordTaskStatus(ctx, tc, nil, id1, run.TaskStatusFailed, 0, time.Now()); err != nil {
 		t.Fatalf("failed: %v", err)
 	}
 	if r.TerminalTaskCount() != 1 {
 		t.Fatalf("after FAILED terminal: got %d want 1", r.TerminalTaskCount())
 	}
 
-	events, _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusRunning, 0, time.Now())
+	events, _, err := r.RecordTaskStatus(ctx, tc, nil, id1, run.TaskStatusRunning, 0, time.Now())
 	if err != nil {
 		t.Fatalf("stale running: %v", err)
 	}
@@ -662,7 +684,7 @@ func TestRecordTaskStatus_HonorsGenuineRetryRunning(t *testing.T) {
 	r := runningRunWithProjection(t, tc, id1, uuid.New())
 
 	// Attempt 0 fails (terminal carries the attempt that ran).
-	if _, _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 0, time.Now()); err != nil {
+	if _, _, err := r.RecordTaskStatus(ctx, tc, nil, id1, run.TaskStatusFailed, 0, time.Now()); err != nil {
 		t.Fatalf("failed: %v", err)
 	}
 	if r.TerminalTaskCount() != 1 {
@@ -670,7 +692,7 @@ func TestRecordTaskStatus_HonorsGenuineRetryRunning(t *testing.T) {
 	}
 
 	// Genuine retry deploys as attempt 1 → strictly newer → un-fill.
-	if _, _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusRunning, 1, time.Now()); err != nil {
+	if _, _, err := r.RecordTaskStatus(ctx, tc, nil, id1, run.TaskStatusRunning, 1, time.Now()); err != nil {
 		t.Fatalf("retry running: %v", err)
 	}
 	if r.TerminalTaskCount() != 0 {
@@ -697,7 +719,7 @@ func TestRecordTaskStatus_ReorderedDoubleTerminalThenLateRunning(t *testing.T) {
 	r := runningRunWithProjection(t, tc, id1, id2)
 
 	// Original attempt fails (carries the attempt that ran = 0).
-	if _, _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 0, time.Now()); err != nil {
+	if _, _, err := r.RecordTaskStatus(ctx, tc, nil, id1, run.TaskStatusFailed, 0, time.Now()); err != nil {
 		t.Fatalf("failed(0): %v", err)
 	}
 	if r.TerminalTaskCount() != 1 {
@@ -706,7 +728,7 @@ func TestRecordTaskStatus_ReorderedDoubleTerminalThenLateRunning(t *testing.T) {
 
 	// Retry attempt's terminal arrives before its RUNNING. Newer terminal:
 	// advance attempt to 1, no double-count.
-	if _, _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 1, time.Now()); err != nil {
+	if _, _, err := r.RecordTaskStatus(ctx, tc, nil, id1, run.TaskStatusFailed, 1, time.Now()); err != nil {
 		t.Fatalf("failed(1): %v", err)
 	}
 	if r.TerminalTaskCount() != 1 {
@@ -717,7 +739,7 @@ func TestRecordTaskStatus_ReorderedDoubleTerminalThenLateRunning(t *testing.T) {
 	}
 
 	// The retry's delayed RUNNING for the now-terminated attempt — must be ignored.
-	if _, _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusRunning, 1, time.Now()); err != nil {
+	if _, _, err := r.RecordTaskStatus(ctx, tc, nil, id1, run.TaskStatusRunning, 1, time.Now()); err != nil {
 		t.Fatalf("late running(1): %v", err)
 	}
 	if r.TerminalTaskCount() != 1 {
@@ -738,10 +760,10 @@ func TestRecordTaskStatus_IgnoresStaleOlderTerminal(t *testing.T) {
 	r := runningRunWithProjection(t, tc, id1, id2)
 
 	// Original attempt fails, retry starts running (attempt 1).
-	if _, _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 0, time.Now()); err != nil {
+	if _, _, err := r.RecordTaskStatus(ctx, tc, nil, id1, run.TaskStatusFailed, 0, time.Now()); err != nil {
 		t.Fatalf("failed(0): %v", err)
 	}
-	if _, _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusRunning, 1, time.Now()); err != nil {
+	if _, _, err := r.RecordTaskStatus(ctx, tc, nil, id1, run.TaskStatusRunning, 1, time.Now()); err != nil {
 		t.Fatalf("running(1): %v", err)
 	}
 	if r.TerminalTaskCount() != 0 {
@@ -749,7 +771,7 @@ func TestRecordTaskStatus_IgnoresStaleOlderTerminal(t *testing.T) {
 	}
 
 	// A stale terminal from the original attempt arrives late — ignore it.
-	if _, _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 0, time.Now()); err != nil {
+	if _, _, err := r.RecordTaskStatus(ctx, tc, nil, id1, run.TaskStatusFailed, 0, time.Now()); err != nil {
 		t.Fatalf("stale failed(0): %v", err)
 	}
 	if r.TerminalTaskCount() != 0 {
@@ -775,7 +797,7 @@ func TestRecordTaskStatus_NewerPermanentTerminalFinalizes(t *testing.T) {
 	// Attempt 0 fails but is retryable → finalize deferred.
 	tc.hasFailed = true
 	tc.hasRetryable = true
-	events, _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 0, time.Now())
+	events, _, err := r.RecordTaskStatus(ctx, tc, nil, id1, run.TaskStatusFailed, 0, time.Now())
 	if err != nil {
 		t.Fatalf("failed(0): %v", err)
 	}
@@ -786,7 +808,7 @@ func TestRecordTaskStatus_NewerPermanentTerminalFinalizes(t *testing.T) {
 	// Retry (attempt 1) fails permanently — no more retries. Slot count is
 	// unchanged, but the run must now finalize as FAILED.
 	tc.hasRetryable = false
-	events, _, err = r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 1, time.Now())
+	events, _, err = r.RecordTaskStatus(ctx, tc, nil, id1, run.TaskStatusFailed, 1, time.Now())
 	if err != nil {
 		t.Fatalf("failed(1): %v", err)
 	}
@@ -810,7 +832,7 @@ func TestRecordTaskStatus_RetrySucceedsAfterFailReorder(t *testing.T) {
 	// Attempt 0 fails but is retryable → finalize deferred.
 	tc.hasFailed = true
 	tc.hasRetryable = true
-	if _, _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusFailed, 0, time.Now()); err != nil {
+	if _, _, err := r.RecordTaskStatus(ctx, tc, nil, id1, run.TaskStatusFailed, 0, time.Now()); err != nil {
 		t.Fatalf("failed(0): %v", err)
 	}
 	if r.TerminalTaskCount() != 1 || r.IsTerminal() {
@@ -821,7 +843,7 @@ func TestRecordTaskStatus_RetrySucceedsAfterFailReorder(t *testing.T) {
 	// task is no longer failed, so the run finalizes SUCCEEDED.
 	tc.hasFailed = false
 	tc.hasRetryable = false
-	events, _, err := r.RecordTaskStatus(ctx, tc, id1, run.TaskStatusSucceeded, 1, time.Now())
+	events, _, err := r.RecordTaskStatus(ctx, tc, nil, id1, run.TaskStatusSucceeded, 1, time.Now())
 	if err != nil {
 		t.Fatalf("succeeded(1): %v", err)
 	}
@@ -843,7 +865,7 @@ func TestRecordTaskStatus_NoOpWhenSchedulerTerminal(t *testing.T) {
 	r := runningRunWithProjection(t, tc, uuid.New())
 	_, _ = r.Cancel(ctx, tc, "tester", "drift", time.Now())
 
-	events, applied, err := r.RecordTaskStatus(ctx, tc, uuid.New(), run.TaskStatusSucceeded, 0, time.Now())
+	events, applied, err := r.RecordTaskStatus(ctx, tc, nil, uuid.New(), run.TaskStatusSucceeded, 0, time.Now())
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -860,7 +882,7 @@ func TestRecordTaskStatus_TransientWhenTaskRowMissing(t *testing.T) {
 	tc := newFakeTaskCollection()
 	r := runningRunWithProjection(t, tc, uuid.New())
 
-	_, _, err := r.RecordTaskStatus(ctx, tc, uuid.New() /* not in tc.statuses */, run.TaskStatusSucceeded, 0, time.Now())
+	_, _, err := r.RecordTaskStatus(ctx, tc, nil, uuid.New() /* not in tc.statuses */, run.TaskStatusSucceeded, 0, time.Now())
 	if err != run.ErrTaskRowNotProjected {
 		t.Fatalf("err: got %v want ErrTaskRowNotProjected", err)
 	}
@@ -1101,7 +1123,7 @@ func TestRecordTaskStatus_ReportsOnlyAnAppliedSuccess(t *testing.T) {
 		{
 			name: "a success that finalizes the run",
 			prepare: func(t *testing.T, r *run.Run, tc *fakeTaskCollection, _, other uuid.UUID) {
-				if _, applied, err := r.RecordTaskStatus(context.Background(), tc, other, run.TaskStatusSucceeded, 0, time.Now()); err != nil || !applied {
+				if _, applied, err := r.RecordTaskStatus(context.Background(), tc, nil, other, run.TaskStatusSucceeded, 0, time.Now()); err != nil || !applied {
 					t.Fatalf("the other task: applied=%v err=%v", applied, err)
 				}
 			},
@@ -1126,7 +1148,7 @@ func TestRecordTaskStatus_ReportsOnlyAnAppliedSuccess(t *testing.T) {
 		{
 			name: "a replay of a success the task already recorded",
 			prepare: func(t *testing.T, r *run.Run, tc *fakeTaskCollection, id, _ uuid.UUID) {
-				if _, applied, err := r.RecordTaskStatus(context.Background(), tc, id, run.TaskStatusSucceeded, 0, time.Now()); err != nil || !applied {
+				if _, applied, err := r.RecordTaskStatus(context.Background(), tc, nil, id, run.TaskStatusSucceeded, 0, time.Now()); err != nil || !applied {
 					t.Fatalf("first delivery: applied=%v err=%v", applied, err)
 				}
 			},
@@ -1159,7 +1181,7 @@ func TestRecordTaskStatus_ReportsOnlyAnAppliedSuccess(t *testing.T) {
 				c.prepare(t, r, tc, id, other)
 			}
 
-			_, applied, err := r.RecordTaskStatus(context.Background(), tc, id, c.status, c.attempt, time.Now())
+			_, applied, err := r.RecordTaskStatus(context.Background(), tc, nil, id, c.status, c.attempt, time.Now())
 			if err != nil {
 				t.Fatalf("RecordTaskStatus: %v", err)
 			}
@@ -1200,7 +1222,7 @@ func TestRecordTaskStatus_StampsProgressWhenTheWriteApplies(t *testing.T) {
 			}
 			later := dispatchedAt.Add(time.Hour)
 
-			if _, _, err := r.RecordTaskStatus(context.Background(), tc, id, c.status, c.attempt, later); err != nil {
+			if _, _, err := r.RecordTaskStatus(context.Background(), tc, nil, id, c.status, c.attempt, later); err != nil {
 				t.Fatalf("RecordTaskStatus: %v", err)
 			}
 			if r.LastHeartbeatAt() == nil || !r.LastHeartbeatAt().Equal(later) {
@@ -1223,7 +1245,7 @@ func TestRecordTaskStatus_NoProgressWithoutAnAppliedWrite(t *testing.T) {
 		{
 			name: "replayed terminal",
 			prepare: func(t *testing.T, r *run.Run, tc *fakeTaskCollection, id uuid.UUID, at time.Time) {
-				if _, _, err := r.RecordTaskStatus(context.Background(), tc, id, run.TaskStatusSucceeded, 0, at); err != nil {
+				if _, _, err := r.RecordTaskStatus(context.Background(), tc, nil, id, run.TaskStatusSucceeded, 0, at); err != nil {
 					t.Fatalf("first terminal: %v", err)
 				}
 			},
@@ -1259,7 +1281,7 @@ func TestRecordTaskStatus_NoProgressWithoutAnAppliedWrite(t *testing.T) {
 			r.ResetChanges()
 			before := *r.LastHeartbeatAt()
 
-			if _, _, err := r.RecordTaskStatus(context.Background(), tc, id, c.status, c.attempt, dispatchedAt.Add(time.Hour)); err != nil {
+			if _, _, err := r.RecordTaskStatus(context.Background(), tc, nil, id, c.status, c.attempt, dispatchedAt.Add(time.Hour)); err != nil {
 				t.Fatalf("RecordTaskStatus: %v", err)
 			}
 			if r.Changes().IsHeartbeatDirty() {
@@ -1363,7 +1385,7 @@ func TestAcceptDispatch_CancelledProjectedTaskIsTerminal(t *testing.T) {
 
 		// TaskCollection.HasFailed answers true for a run holding a cancelled task.
 		tc.hasFailed = true
-		events, _, err := r.RecordTaskStatus(ctx, tc, pending, run.TaskStatusSucceeded, 0, time.Now())
+		events, _, err := r.RecordTaskStatus(ctx, tc, nil, pending, run.TaskStatusSucceeded, 0, time.Now())
 		if err != nil {
 			t.Fatalf("RecordTaskStatus: %v", err)
 		}

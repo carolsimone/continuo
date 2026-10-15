@@ -338,7 +338,7 @@ func main() {
 			name:    "task_status_updated",
 			stream:  streams.TaskStatusUpdatedV1,
 			group:   streams.StateTaskStatusUpdated,
-			binding: redis.NewTaskStatusUpdatedBinding(uowFactory, svchandlers.NewTaskStatusUpdatedHandler(logger), logger),
+			binding: redis.NewTaskStatusUpdatedBinding(uowFactory, svchandlers.NewTaskStatusUpdatedHandler(pkgevents.DefaultTenantID, logger), logger),
 		},
 		{
 			name:    "task_execution_recorded",

@@ -110,7 +110,7 @@ func (h *builtHarness) dispatch(t *testing.T, runID uuid.UUID, table, imageTag s
 func (h *builtHarness) finish(t *testing.T, runID, taskID uuid.UUID, status run.TaskStatus) {
 	t.Helper()
 	h.inTx(t, func(ctx context.Context, u uow.UnitOfWork) error {
-		return svchandlers.NewTaskStatusUpdatedHandler(h.logger).Handle(ctx, u,
+		return svchandlers.NewTaskStatusUpdatedHandler(pkgevents.DefaultTenantID, h.logger).Handle(ctx, u,
 			events.TaskStatusUpdated{TaskID: taskID, ScheduleID: runID, Status: status}, uuid.Nil)
 	})
 }
@@ -214,7 +214,7 @@ func TestBuiltVersions(t *testing.T) {
 		ctx := context.Background()
 		u := h.factory()
 		require.NoError(t, u.Begin(ctx))
-		require.NoError(t, svchandlers.NewTaskStatusUpdatedHandler(h.logger).Handle(ctx, u,
+		require.NoError(t, svchandlers.NewTaskStatusUpdatedHandler(pkgevents.DefaultTenantID, h.logger).Handle(ctx, u,
 			events.TaskStatusUpdated{TaskID: taskID, ScheduleID: runID, Status: run.TaskStatusSucceeded}, uuid.Nil))
 		require.NoError(t, u.Rollback())
 
