@@ -398,17 +398,18 @@ func TestTaskRepository_SetStatusAndAttemptTx_AdvancesAttemptOnSameStatus(t *tes
 
 	assert.Equal(t, int32(1), affected, "same-status write must still affect the row")
 
-	status, retryCount, err := func() (string, int32, error) {
+	row, found, err := func() (postgres.TaskAttemptRow, bool, error) {
 		tx2, err := db.BeginTxx(ctx, nil)
 		if err != nil {
-			return "", 0, err
+			return postgres.TaskAttemptRow{}, false, err
 		}
 		defer tx2.Rollback()
-		return taskRepo.LoadStatusAndAttemptTx(ctx, tx2, task.TaskID)
+		return taskRepo.LoadAttemptStateTx(ctx, tx2, task.TaskID)
 	}()
 	require.NoError(t, err)
-	assert.Equal(t, "failed", status)
-	assert.Equal(t, int32(2), retryCount, "retry_count must advance to the newer attempt")
+	require.True(t, found)
+	assert.Equal(t, "failed", row.Status)
+	assert.Equal(t, int32(2), row.RetryCount, "retry_count must advance to the newer attempt")
 }
 
 // TestTaskTrackerRepository_BulkCreateTx_CopiesTenThousandTasks covers a run

@@ -13,12 +13,13 @@ import (
 )
 
 // readyCandidatesQuery reads the pending, undispatched tasks of run $2 that
-// read node $4 directly over release $3's edges, with the statuses of their
-// upstream tasks in the run. Each lookup is an index probe: topology_edges by
-// its primary key prefix (tenant, release, upstream) or by
-// idx_topology_edges_downstream, task_tracker by uq_task_tracker_run_node.
+// read node $4 directly over release $3's edges, with their Job names and
+// retry budgets and the statuses of their upstream tasks in the run. Each
+// lookup is an index probe: topology_edges by its primary key prefix (tenant,
+// release, upstream) or by idx_topology_edges_downstream, task_tracker by
+// uq_task_tracker_run_node.
 const readyCandidatesQuery = `
-	SELECT t.task_id,
+	SELECT t.task_id, t.job_name, t.max_retries,
 	       n.node_key, n.unique_id, n.service_name, n.schema_name, n.table_name, n.node_type, n.test_count,
 	       n.content_hash, n.image_tag, n.secret_ref, n.schedule_name,
 	       ARRAY(
@@ -78,7 +79,9 @@ func NewTaskGraph(tx *sqlx.Tx, tenantID string) *TaskGraph {
 }
 
 type readyCandidateRow struct {
-	TaskID uuid.UUID `db:"task_id"`
+	TaskID     uuid.UUID `db:"task_id"`
+	JobName    string    `db:"job_name"`
+	MaxRetries int32     `db:"max_retries"`
 	topologyNodeRow
 	UpstreamStatuses pq.StringArray `db:"upstream_statuses"`
 }
@@ -102,7 +105,13 @@ func (g *TaskGraph) ReadyCandidates(ctx context.Context, runID uuid.UUID, releas
 			}
 			statuses = append(statuses, status)
 		}
-		out = append(out, run.ReadyCandidate{TaskID: row.TaskID, Node: row.toDomain(), UpstreamStatuses: statuses})
+		out = append(out, run.ReadyCandidate{
+			TaskID:           row.TaskID,
+			Node:             row.toDomain(),
+			JobName:          row.JobName,
+			MaxRetries:       row.MaxRetries,
+			UpstreamStatuses: statuses,
+		})
 	}
 	return out, nil
 }

@@ -713,16 +713,17 @@ func (r *Run) RecordTaskStatus(
 	if r.IsTerminal() {
 		return nil, false, nil
 	}
-	prev, prevAttempt, exists, err := tasks.LoadStatusAndAttempt(ctx, taskID)
+	attempt, exists, err := tasks.LoadAttemptState(ctx, taskID)
 	if err != nil {
-		// LoadStatusAndAttempt locks the row FOR UPDATE; a failure here is a
+		// LoadAttemptState locks the row FOR UPDATE; a failure here is a
 		// transient I/O error, not "no prior status". Swallowing it would let
 		// the newer-attempt branch below adopt this delivery and overwrite a
 		// newer terminal already recorded for the task, defeating the
 		// attempt-monotonic guard. Propagate so the consumer redelivers once
 		// the read recovers.
-		return nil, false, fmt.Errorf("load task status and attempt: %w", err)
+		return nil, false, fmt.Errorf("load task attempt: %w", err)
 	}
+	prev, prevAttempt := attempt.Status, attempt.RetryCount
 
 	// Guard: if the row is not present, return a transient error so the
 	// consumer redelivers after the projection arrives.

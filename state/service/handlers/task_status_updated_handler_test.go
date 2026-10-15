@@ -102,7 +102,7 @@ func (f *fakeTaskStatusOutboxPub) Append(_ context.Context, evts []run.DomainEve
 // unit tests. It controls the responses of every method called by
 // Run.RecordTaskStatus; unused methods panic on accidental use.
 type fakeTaskStatusTaskCollection struct {
-	// GetStatus / LoadStatusAndAttempt response
+	// GetStatus / LoadAttemptState response
 	prevStatus   run.TaskStatus
 	prevAttempt  int32
 	prevExists   bool
@@ -140,8 +140,16 @@ func (f *fakeTaskStatusTaskCollection) GetStatus(_ context.Context, _ uuid.UUID)
 	return f.prevStatus, f.prevExists, f.getStatusErr
 }
 
-func (f *fakeTaskStatusTaskCollection) LoadStatusAndAttempt(_ context.Context, _ uuid.UUID) (run.TaskStatus, int32, bool, error) {
-	return f.prevStatus, f.prevAttempt, f.prevExists, f.getStatusErr
+func (f *fakeTaskStatusTaskCollection) LoadAttemptState(_ context.Context, _ uuid.UUID) (run.TaskAttemptState, bool, error) {
+	return run.TaskAttemptState{Status: f.prevStatus, RetryCount: f.prevAttempt}, f.prevExists, f.getStatusErr
+}
+
+func (f *fakeTaskStatusTaskCollection) MarkDispatched(_ context.Context, _ []uuid.UUID, _ time.Time) ([]uuid.UUID, error) {
+	panic("MarkDispatched not implemented in fake")
+}
+
+func (f *fakeTaskStatusTaskCollection) MarkSkipped(_ context.Context, _ []uuid.UUID) (int, error) {
+	panic("MarkSkipped not implemented in fake")
 }
 
 func (f *fakeTaskStatusTaskCollection) Exists(_ context.Context, _ uuid.UUID) (bool, error) {

@@ -677,8 +677,14 @@ func (f *cancelFakeTaskCollection) GetByNode(_ context.Context, _ uuid.UUID, _ r
 func (f *cancelFakeTaskCollection) GetStatus(_ context.Context, _ uuid.UUID) (run.TaskStatus, bool, error) {
 	panic("GetStatus not used in cancel tests")
 }
-func (f *cancelFakeTaskCollection) LoadStatusAndAttempt(_ context.Context, _ uuid.UUID) (run.TaskStatus, int32, bool, error) {
-	panic("LoadStatusAndAttempt not used in cancel tests")
+func (f *cancelFakeTaskCollection) LoadAttemptState(_ context.Context, _ uuid.UUID) (run.TaskAttemptState, bool, error) {
+	panic("LoadAttemptState not used in cancel tests")
+}
+func (f *cancelFakeTaskCollection) MarkDispatched(_ context.Context, _ []uuid.UUID, _ time.Time) ([]uuid.UUID, error) {
+	panic("MarkDispatched not used in cancel tests")
+}
+func (f *cancelFakeTaskCollection) MarkSkipped(_ context.Context, _ []uuid.UUID) (int, error) {
+	panic("MarkSkipped not used in cancel tests")
 }
 func (f *cancelFakeTaskCollection) Exists(_ context.Context, _ uuid.UUID) (bool, error) {
 	panic("Exists not used in cancel tests")

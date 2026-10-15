@@ -9,10 +9,13 @@ import (
 
 // ReadyCandidate is a pending, undispatched task of a run that reads, directly,
 // a task of the run that has just succeeded: its id, its node as the run's
-// release holds it, and the status of every task of the run it reads.
+// release holds it, its Job name and retry budget as its row stores them, and
+// the status of every task of the run it reads.
 type ReadyCandidate struct {
 	TaskID           uuid.UUID
 	Node             topology.Node
+	JobName          string
+	MaxRetries       int32
 	UpstreamStatuses []TaskStatus
 }
 

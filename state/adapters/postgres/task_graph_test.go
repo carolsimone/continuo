@@ -5,7 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/domain"
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/topology"
@@ -111,6 +113,10 @@ func TestTaskGraph_ReadyCandidatesOfTheExampleRun(t *testing.T) {
 			TableName: "ftable_g", NodeType: "dbt-model", ContentHash: "h-ftable_g", ImageTag: "service-1:5",
 			ScheduleName: "e2e-schedule-failure",
 		}, got[1].Node)
+		jobName, err := domain.ComputeJobName("service-1", "e2e_schema", "ftable_g", r.ScheduleID().String())
+		require.NoError(t, err)
+		assert.Equal(t, jobName, got[1].JobName)
+		assert.Equal(t, pkgevents.DefaultTaskMaxRetries, got[1].MaxRetries)
 		assert.Equal(t, []run.TaskStatus{run.TaskStatusSucceeded}, got[1].UpstreamStatuses)
 		assert.True(t, got[1].Ready())
 	})

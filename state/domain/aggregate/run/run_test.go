@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
+	"github.com/carolsimone/continuo/state/domain/topology"
 	"github.com/google/uuid"
 )
 
@@ -185,6 +187,12 @@ type fakeTaskCollection struct {
 	byNode        map[run.NodeID]run.Task
 	updateApplied map[uuid.UUID]int
 	loadErr       error
+	maxRetries    map[uuid.UUID]int32
+	keys          map[uuid.UUID]topology.NodeKey
+	// dispatched and skipped record MarkDispatched and MarkSkipped, in call
+	// order.
+	dispatched []uuid.UUID
+	skipped    []uuid.UUID
 }
 
 func newFakeTaskCollection() *fakeTaskCollection {
@@ -194,6 +202,8 @@ func newFakeTaskCollection() *fakeTaskCollection {
 		attempts:      map[uuid.UUID]int32{},
 		byNode:        map[run.NodeID]run.Task{},
 		updateApplied: map[uuid.UUID]int{},
+		maxRetries:    map[uuid.UUID]int32{},
+		keys:          map[uuid.UUID]topology.NodeKey{},
 	}
 }
 
@@ -201,12 +211,12 @@ func (f *fakeTaskCollection) GetStatus(_ context.Context, id uuid.UUID) (run.Tas
 	s, ok := f.statuses[id]
 	return s, ok, nil
 }
-func (f *fakeTaskCollection) LoadStatusAndAttempt(_ context.Context, id uuid.UUID) (run.TaskStatus, int32, bool, error) {
+func (f *fakeTaskCollection) LoadAttemptState(_ context.Context, id uuid.UUID) (run.TaskAttemptState, bool, error) {
 	if f.loadErr != nil {
-		return "", 0, false, f.loadErr
+		return run.TaskAttemptState{}, false, f.loadErr
 	}
 	s, ok := f.statuses[id]
-	return s, f.attempts[id], ok, nil
+	return run.TaskAttemptState{Status: s, RetryCount: f.attempts[id], MaxRetries: f.maxRetries[id], NodeKey: f.keys[id]}, ok, nil
 }
 func (f *fakeTaskCollection) Exists(_ context.Context, id uuid.UUID) (bool, error) {
 	_, ok := f.statuses[id]
@@ -249,9 +259,32 @@ func (f *fakeTaskCollection) BulkCreate(_ context.Context, tasks []run.Task) err
 	f.bulkCreated = append(f.bulkCreated, tasks...)
 	for _, t := range tasks {
 		f.statuses[t.TaskID] = t.Status
-		f.attempts[t.TaskID] = int32(t.RetryCount) //nolint:gosec // G115: test fixture; RetryCount is a small literal set by the test table, never attacker-controlled input.
+		f.attempts[t.TaskID] = int32(t.RetryCount)   //nolint:gosec // G115: test fixture; RetryCount is a small literal set by the test table, never attacker-controlled input.
+		f.maxRetries[t.TaskID] = int32(t.MaxRetries) //nolint:gosec // G115: test fixture; MaxRetries is a small literal set by the test, never attacker-controlled input.
+		f.keys[t.TaskID] = t.NodeKey
 	}
 	return nil
+}
+func (f *fakeTaskCollection) MarkDispatched(_ context.Context, ids []uuid.UUID, _ time.Time) ([]uuid.UUID, error) {
+	var stamped []uuid.UUID
+	for _, id := range ids {
+		if f.statuses[id] == run.TaskStatusPending && !slices.Contains(f.dispatched, id) {
+			f.dispatched = append(f.dispatched, id)
+			stamped = append(stamped, id)
+		}
+	}
+	return stamped, nil
+}
+func (f *fakeTaskCollection) MarkSkipped(_ context.Context, ids []uuid.UUID) (int, error) {
+	n := 0
+	for _, id := range ids {
+		if f.statuses[id] == run.TaskStatusPending && !slices.Contains(f.dispatched, id) {
+			f.statuses[id] = run.TaskStatusSkipped
+			f.skipped = append(f.skipped, id)
+			n++
+		}
+	}
+	return n, nil
 }
 func (f *fakeTaskCollection) BulkCancel(_ context.Context, runID uuid.UUID, by string, _ time.Time) (int, error) {
 	f.bulkCancelled[runID] = by

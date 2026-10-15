@@ -102,8 +102,14 @@ func (f *fakeDispatchedTaskCollection) BulkCreate(_ context.Context, tasks []run
 func (f *fakeDispatchedTaskCollection) GetStatus(_ context.Context, _ uuid.UUID) (run.TaskStatus, bool, error) {
 	return "", false, nil
 }
-func (f *fakeDispatchedTaskCollection) LoadStatusAndAttempt(_ context.Context, _ uuid.UUID) (run.TaskStatus, int32, bool, error) {
-	return "", 0, false, nil
+func (f *fakeDispatchedTaskCollection) LoadAttemptState(_ context.Context, _ uuid.UUID) (run.TaskAttemptState, bool, error) {
+	return run.TaskAttemptState{}, false, nil
+}
+func (f *fakeDispatchedTaskCollection) MarkDispatched(_ context.Context, _ []uuid.UUID, _ time.Time) ([]uuid.UUID, error) {
+	panic("MarkDispatched not implemented in fake")
+}
+func (f *fakeDispatchedTaskCollection) MarkSkipped(_ context.Context, _ []uuid.UUID) (int, error) {
+	panic("MarkSkipped not implemented in fake")
 }
 func (f *fakeDispatchedTaskCollection) Exists(_ context.Context, _ uuid.UUID) (bool, error) {
 	return false, nil
