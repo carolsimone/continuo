@@ -1,11 +1,13 @@
 package runplan_test
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/state/domain/runplan"
 	"github.com/carolsimone/continuo/state/domain/topology"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -45,6 +47,12 @@ func node(table string, upstream ...string) fixtureNode {
 // feeds q.
 func twoBranches() topology.Graph {
 	return releaseGraph([]fixtureNode{node("x"), node("y", "x"), node("z", "y"), node("p"), node("q", "p")})
+}
+
+// onSource maps sourceRelease, the release every fixture source task was
+// built on, to g.
+func onSource(g topology.Graph) map[string]topology.Graph {
+	return map[string]topology.Graph{sourceRelease: g}
 }
 
 // edited returns g with edit applied to table's node.
@@ -129,7 +137,7 @@ func TestRebasePreview_AFixUpstreamOfTheFailureRunsAndAnUnrelatedChangeDoesNot(t
 	src := sourceRun(model.OperationRun, []string{"x", "y", "p", "q"}, []string{"z"})
 	live := rehashed(twoBranches(), "y", "q")
 
-	on, err := runplan.Rebase{Source: src, SourceGraph: twoBranches(), IncludeChangedUpstream: true}.Preview(live)
+	on, err := runplan.Rebase{Source: src, SourceGraphs: onSource(twoBranches()), IncludeChangedUpstream: true}.Preview(live)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"y", "z"}, executedTables(on.Plan))
 	assert.Equal(t, []string{"p", "q", "x"}, inheritedTables(on.Plan))
@@ -137,7 +145,7 @@ func TestRebasePreview_AFixUpstreamOfTheFailureRunsAndAnUnrelatedChangeDoesNot(t
 	assert.Equal(t, []runplan.ChangedNode{changedNode("y", 1)}, on.Changed)
 	assert.Equal(t, counts{FailedOrSkipped: 1, ChangedUpstream: 1, Inherited: 3}, countsOf(t, on))
 
-	off, err := runplan.Rebase{Source: src, SourceGraph: twoBranches()}.Preview(live)
+	off, err := runplan.Rebase{Source: src, SourceGraphs: onSource(twoBranches())}.Preview(live)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"z"}, executedTables(off.Plan))
 	assert.Equal(t, []string{"p", "q", "x", "y"}, inheritedTables(off.Plan))
@@ -146,12 +154,62 @@ func TestRebasePreview_AFixUpstreamOfTheFailureRunsAndAnUnrelatedChangeDoesNot(t
 	assert.Equal(t, counts{FailedOrSkipped: 1, Inherited: 4}, countsOf(t, off))
 }
 
+// builtEarlier marks src's task of table inherited from a run on
+// earlierRelease, which built its result.
+func builtEarlier(src runplan.Source, table string) runplan.Source {
+	tasks := slices.Clone(src.Tasks)
+	i := slices.IndexFunc(tasks, func(t runplan.SourceTask) bool { return t.Key == key(table) })
+	tasks[i].InheritedFrom = uuid.NewSHA1(uuid.NameSpaceURL, []byte("continuo/earlier-run/"+table))
+	tasks[i].BuiltOn = earlierRelease
+	src.Tasks = tasks
+	return src
+}
+
+// earlierRelease is the release of an earlier run a fixture source run
+// inherited a success from.
+const earlierRelease = "rel-earlier"
+
+// The source run, on a release that already fixes y, failed at z after
+// inheriting y from an earlier run, which built y on a release before the
+// fix: there y had another content hash, or read p as well. y is compared
+// with the release that built it, so it is changed; x, which the source run
+// built itself, is compared with the source release and is not, though the
+// earlier release holds another x. With the option the rebase rebuilds y and
+// then z; without it z alone, still naming y.
+func TestRebasePreview_AnInheritedSuccessIsComparedWithTheReleaseThatBuiltIt(t *testing.T) {
+	src := builtEarlier(sourceRun(model.OperationRun, []string{"x", "y", "p", "q"}, []string{"z"}), "y")
+	fixed := rehashed(twoBranches(), "y")
+	for name, earlier := range map[string]topology.Graph{
+		"content hash": rehashed(twoBranches(), "x"),
+		"upstream set": rewired(rehashed(fixed, "x"), "y", "x", "p"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			graphs := map[string]topology.Graph{sourceRelease: fixed, earlierRelease: earlier}
+
+			on, err := runplan.Rebase{Source: src, SourceGraphs: graphs, IncludeChangedUpstream: true}.Preview(fixed)
+			require.NoError(t, err)
+			assert.Equal(t, []string{"y", "z"}, executedTables(on.Plan))
+			assert.Equal(t, []string{"p", "q", "x"}, inheritedTables(on.Plan))
+			assert.Equal(t, keys("y"), on.Plan.Ready)
+			assert.Equal(t, []runplan.ChangedNode{changedNode("y", 1)}, on.Changed)
+			assert.Equal(t, counts{FailedOrSkipped: 1, ChangedUpstream: 1, Inherited: 3}, countsOf(t, on))
+
+			off, err := runplan.Rebase{Source: src, SourceGraphs: graphs}.Preview(fixed)
+			require.NoError(t, err)
+			assert.Equal(t, []string{"z"}, executedTables(off.Plan))
+			assert.Equal(t, []string{"p", "q", "x", "y"}, inheritedTables(off.Plan))
+			assert.Equal(t, []runplan.ChangedNode{changedNode("y", 1)}, off.Changed)
+			assert.Equal(t, counts{FailedOrSkipped: 1, Inherited: 4}, countsOf(t, off))
+		})
+	}
+}
+
 // Select plans what Preview plans, with or without the option.
 func TestRebasePreview_SelectPlansThePreviewsPlan(t *testing.T) {
 	src := sourceRun(model.OperationRun, []string{"x", "y", "p", "q"}, []string{"z"})
 	live := rehashed(twoBranches(), "y", "q")
 	for _, include := range []bool{true, false} {
-		s := runplan.Rebase{Source: src, SourceGraph: twoBranches(), IncludeChangedUpstream: include}
+		s := runplan.Rebase{Source: src, SourceGraphs: onSource(twoBranches()), IncludeChangedUpstream: include}
 		pv, err := s.Preview(live)
 		require.NoError(t, err)
 		plan, err := s.Select(live)
@@ -166,7 +224,7 @@ func TestRebasePreview_AnImageAloneIsNotAChange(t *testing.T) {
 	src := sourceRun(model.OperationRun, []string{"x", "y", "p", "q"}, []string{"z"})
 	live := edited(twoBranches(), "y", func(n *topology.Node) { n.ImageTag = "service-1:2" })
 
-	pv, err := runplan.Rebase{Source: src, SourceGraph: twoBranches(), IncludeChangedUpstream: true}.Preview(live)
+	pv, err := runplan.Rebase{Source: src, SourceGraphs: onSource(twoBranches()), IncludeChangedUpstream: true}.Preview(live)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"z"}, executedTables(pv.Plan))
 	assert.Empty(t, pv.Changed)
@@ -190,7 +248,7 @@ func TestRebasePreview_WhatMakesANodeChanged(t *testing.T) {
 		"service":      {edited(twoBranches(), "y", func(n *topology.Node) { n.ServiceName = "service-9" }), false},
 	} {
 		t.Run(name, func(t *testing.T) {
-			pv, err := runplan.Rebase{Source: src, SourceGraph: twoBranches(), IncludeChangedUpstream: true}.Preview(tc.live)
+			pv, err := runplan.Rebase{Source: src, SourceGraphs: onSource(twoBranches()), IncludeChangedUpstream: true}.Preview(tc.live)
 			require.NoError(t, err)
 			if !tc.changed {
 				assert.Equal(t, []string{"z"}, executedTables(pv.Plan))
@@ -204,13 +262,13 @@ func TestRebasePreview_WhatMakesANodeChanged(t *testing.T) {
 	}
 }
 
-// A node the source release does not hold, among the source run's nodes, has
-// nothing to compare against, so it is never changed.
-func TestRebasePreview_ANodeTheSourceGraphLacksIsNeverChanged(t *testing.T) {
+// A node the release that built it does not hold, among the source run's
+// nodes, has nothing to compare against, so it is never changed.
+func TestRebasePreview_ANodeTheBuildingReleaseLacksIsNeverChanged(t *testing.T) {
 	src := sourceRun(model.OperationRun, []string{"x", "y", "p", "q"}, []string{"z"})
 	sourceGraph := twoBranches().Restrict(keys("x", "z", "p", "q"))
 
-	pv, err := runplan.Rebase{Source: src, SourceGraph: sourceGraph, IncludeChangedUpstream: true}.Preview(rehashed(twoBranches(), "y"))
+	pv, err := runplan.Rebase{Source: src, SourceGraphs: onSource(sourceGraph), IncludeChangedUpstream: true}.Preview(rehashed(twoBranches(), "y"))
 	require.NoError(t, err)
 	assert.Equal(t, []string{"z"}, executedTables(pv.Plan))
 	assert.Empty(t, pv.Changed)
@@ -222,7 +280,7 @@ func TestRebasePreview_AChangedNodeUpstreamOfASkippedNode(t *testing.T) {
 	g := releaseGraph([]fixtureNode{node("f"), node("c"), node("k", "f", "c")})
 	src := sourceRun(model.OperationRun, []string{"c"}, []string{"f", "k"})
 
-	pv, err := runplan.Rebase{Source: src, SourceGraph: g, IncludeChangedUpstream: true}.Preview(rehashed(g, "c"))
+	pv, err := runplan.Rebase{Source: src, SourceGraphs: onSource(g), IncludeChangedUpstream: true}.Preview(rehashed(g, "c"))
 	require.NoError(t, err)
 	assert.Equal(t, []string{"c", "f", "k"}, executedTables(pv.Plan))
 	assert.Equal(t, keys("c", "f"), pv.Plan.Ready)
@@ -239,14 +297,14 @@ func TestRebasePreview_ChangedAncestorsAreAddedUntilNoneIsLeftOut(t *testing.T) 
 	src := sourceRun(model.OperationRun, []string{"u", "v", "w"}, []string{"s"})
 	live := rehashed(g, "u", "v")
 
-	on, err := runplan.Rebase{Source: src, SourceGraph: g, IncludeChangedUpstream: true}.Preview(live)
+	on, err := runplan.Rebase{Source: src, SourceGraphs: onSource(g), IncludeChangedUpstream: true}.Preview(live)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"s", "u", "v", "w"}, executedTables(on.Plan))
 	assert.Equal(t, keys("u", "v"), on.Plan.Ready)
 	assert.Equal(t, []runplan.ChangedNode{changedNode("u", 1), changedNode("v", 2)}, on.Changed)
 	assert.Equal(t, counts{FailedOrSkipped: 1, ChangedUpstream: 2, Downstream: 1}, countsOf(t, on))
 
-	off, err := runplan.Rebase{Source: src, SourceGraph: g}.Preview(live)
+	off, err := runplan.Rebase{Source: src, SourceGraphs: onSource(g)}.Preview(live)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"s"}, executedTables(off.Plan))
 	assert.Equal(t, on.Changed, off.Changed)
@@ -260,7 +318,7 @@ func TestRebasePreview_AChangedLeafBelowAChangedNodeIsDownstream(t *testing.T) {
 	g := releaseGraph([]fixtureNode{node("u"), node("s", "u"), node("l", "u")})
 	src := sourceRun(model.OperationRun, []string{"u", "l"}, []string{"s"})
 
-	pv, err := runplan.Rebase{Source: src, SourceGraph: g, IncludeChangedUpstream: true}.Preview(rehashed(g, "u", "l"))
+	pv, err := runplan.Rebase{Source: src, SourceGraphs: onSource(g), IncludeChangedUpstream: true}.Preview(rehashed(g, "u", "l"))
 	require.NoError(t, err)
 	assert.Equal(t, []string{"l", "s", "u"}, executedTables(pv.Plan))
 	assert.Equal(t, []runplan.ChangedNode{changedNode("u", 2)}, pv.Changed)
@@ -274,7 +332,7 @@ func TestRebasePreview_OfTheFailureSchedule(t *testing.T) {
 	sourceGraph := scheduleGraph(e2eDAG, "e2e-schedule-failure")
 	live := rehashed(sourceGraph, "ftable_c")
 
-	pv, err := runplan.Rebase{Source: failedFailureRun(), SourceGraph: sourceGraph, IncludeChangedUpstream: true}.Preview(live)
+	pv, err := runplan.Rebase{Source: failedFailureRun(), SourceGraphs: onSource(sourceGraph), IncludeChangedUpstream: true}.Preview(live)
 	require.NoError(t, err)
 	assert.Equal(t, planOf(append(
 		inherited("ftable_a", "ftable_b"),
@@ -297,7 +355,7 @@ func TestRebasePreview_ChangedNodesAreOrderedByServiceSchemaAndTable(t *testing.
 	src := sourceRun(model.OperationRun, []string{"a_node", "b_node"}, []string{"z"})
 	live := edited(rehashed(g, "a_node", "b_node"), "b_node", func(n *topology.Node) { n.TableName = "B_Node" })
 
-	pv, err := runplan.Rebase{Source: src, SourceGraph: g}.Preview(live)
+	pv, err := runplan.Rebase{Source: src, SourceGraphs: onSource(g)}.Preview(live)
 	require.NoError(t, err)
 	assert.Equal(t, []runplan.ChangedNode{
 		{Key: key("b_node"), ServiceName: "service-1", SchemaName: e2eSchema, TableName: "B_Node", Downstream: 1},
@@ -312,11 +370,11 @@ func TestRebasePreview_AnUndeclaredNodeTypeTheOptionPullsInIsRefused(t *testing.
 	src := sourceRun(model.OperationRun, []string{"x", "y", "p", "q"}, []string{"z"})
 	live := edited(twoBranches(), "y", func(n *topology.Node) { n.NodeType = "dbt-macro" })
 
-	_, err := runplan.Rebase{Source: src, SourceGraph: twoBranches(), IncludeChangedUpstream: true}.Preview(live)
+	_, err := runplan.Rebase{Source: src, SourceGraphs: onSource(twoBranches()), IncludeChangedUpstream: true}.Preview(live)
 	require.ErrorIs(t, err, runplan.ErrInvalidNodeType)
 	assert.Contains(t, err.Error(), "e2e_schema.y")
 
-	_, err = runplan.Rebase{Source: src, SourceGraph: twoBranches()}.Preview(live)
+	_, err = runplan.Rebase{Source: src, SourceGraphs: onSource(twoBranches())}.Preview(live)
 	assert.NoError(t, err)
 }
 
@@ -326,6 +384,6 @@ func TestRebasePreview_Refusals(t *testing.T) {
 	assert.ErrorIs(t, err, runplan.ErrRerunOfTestUnsupported)
 
 	all := sourceRun(model.OperationRun, []string{"x", "y", "z", "p", "q"}, nil)
-	_, err = runplan.Rebase{Source: all, SourceGraph: twoBranches(), IncludeChangedUpstream: true}.Preview(rehashed(twoBranches(), "y"))
+	_, err = runplan.Rebase{Source: all, SourceGraphs: onSource(twoBranches()), IncludeChangedUpstream: true}.Preview(rehashed(twoBranches(), "y"))
 	assert.ErrorIs(t, err, runplan.ErrNothingToRerun, "a change alone, with nothing failed or new, is no rebase")
 }

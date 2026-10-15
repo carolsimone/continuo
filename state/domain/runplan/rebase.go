@@ -10,8 +10,10 @@ import (
 
 // Rebase selects a rebase of Source onto the live release: a run that
 // restarts the source from its failure. g, the graph Select and Preview take,
-// is the source schedule's graph on the live release; SourceGraph is the
-// source run's release restricted to the source run's nodes.
+// is the source schedule's graph on the live release. SourceGraphs maps the
+// BuiltOn release of every source task to that release restricted to the
+// source run's nodes: the source run's own release, and the release of each
+// earlier run a source success was inherited from.
 //
 // The seed is every source task that did not succeed and whose node g still
 // holds, and every node of g the source never ran. The rebase executes the
@@ -21,13 +23,18 @@ import (
 // source success g still holds is carried over as succeeded; a source task
 // whose node g no longer holds is left out of the run.
 //
-// A node is changed when both releases hold it and its content hash, node
-// type, secret ref or upstream nodes differ between SourceGraph and g. Its
-// image tag, test count, unique id and owning service are not compared: a
-// service release moves the image of every node it owns.
+// A node is changed when the source run ran it, both the release its source
+// task's result was built on and the live release hold it, and its content
+// hash, node type, secret ref or upstream nodes differ between that
+// release's graph in SourceGraphs and g. A success the source run inherited
+// is compared with the release of the run that built it, not with the source
+// run's own release: a fix promoted after that run is a change even when the
+// source run itself is on a release that holds the fix. Its image tag, test
+// count, unique id and owning service are not compared: a service release
+// moves the image of every node it owns.
 type Rebase struct {
 	Source                 Source
-	SourceGraph            topology.Graph
+	SourceGraphs           map[string]topology.Graph
 	IncludeChangedUpstream bool
 }
 
@@ -101,9 +108,10 @@ func (s Rebase) Preview(g topology.Graph) (Preview, error) {
 		}
 	}
 
+	isChanged := s.changedIn(g)
 	closure := withDescendants(g, seed)
-	widened := s.widen(g, closure)
-	changed := s.changedUpstream(g, closure, widened)
+	widened := widen(g, closure, isChanged)
+	changed := changedUpstream(g, closure, widened, isChanged)
 	executed := closure
 	if s.IncludeChangedUpstream {
 		executed = widened
@@ -141,7 +149,7 @@ func (s Rebase) Preview(g topology.Graph) (Preview, error) {
 // the ancestors of the members the previous pass added only: an earlier
 // member's ancestors were looked at in the pass after it joined, and whether a
 // node is changed does not depend on the pass.
-func (s Rebase) widen(g topology.Graph, closure map[topology.NodeKey]bool) map[topology.NodeKey]bool {
+func widen(g topology.Graph, closure map[topology.NodeKey]bool, changed func(topology.NodeKey) bool) map[topology.NodeKey]bool {
 	widened := make(map[topology.NodeKey]bool, len(closure))
 	for k := range closure {
 		widened[k] = true
@@ -150,7 +158,7 @@ func (s Rebase) widen(g topology.Graph, closure map[topology.NodeKey]bool) map[t
 	for len(added) > 0 {
 		var roots []topology.NodeKey
 		for _, a := range g.Ancestors(added) {
-			if !widened[a] && s.changed(g, a) {
+			if !widened[a] && changed(a) {
 				roots = append(roots, a)
 			}
 		}
@@ -168,10 +176,10 @@ func (s Rebase) widen(g topology.Graph, closure map[topology.NodeKey]bool) map[t
 // changedUpstream returns the changed nodes widening added to closure that
 // have a descendant in g, ordered by service, schema and table. widened is
 // closed under descendants, so each such descendant is one widened executes.
-func (s Rebase) changedUpstream(g topology.Graph, closure, widened map[topology.NodeKey]bool) []ChangedNode {
+func changedUpstream(g topology.Graph, closure, widened map[topology.NodeKey]bool, changed func(topology.NodeKey) bool) []ChangedNode {
 	var out []ChangedNode
 	for k := range widened {
-		if closure[k] || !s.changed(g, k) || len(g.Downstreams(k)) == 0 {
+		if closure[k] || !changed(k) || len(g.Downstreams(k)) == 0 {
 			continue
 		}
 		n, _ := g.Node(k)
@@ -191,22 +199,35 @@ func (s Rebase) changedUpstream(g topology.Graph, closure, widened map[topology.
 	return out
 }
 
-// changed reports whether g and SourceGraph both hold k and what k executes
-// differs between them. Upstream nodes are compared within each graph's own
-// node set (the schedule on the live release, the source run's nodes on the
-// source release), so a node whose upstream left the schedule counts as
-// changed.
-func (s Rebase) changed(g topology.Graph, k topology.NodeKey) bool {
-	live, ok := g.Node(k)
-	if !ok {
-		return false
+// changedIn returns whether a node is changed between the release its source
+// task's result was built on and g. Upstream nodes are compared within each
+// graph's own node set (the schedule on the live release, the source run's
+// nodes on the release that built the result), so a node whose upstream left
+// the schedule counts as changed. A node the source run did not run, or one
+// the release that built it does not hold, has nothing to compare against and
+// is never changed.
+func (s Rebase) changedIn(g topology.Graph) func(topology.NodeKey) bool {
+	builtOn := make(map[topology.NodeKey]string, len(s.Source.Tasks))
+	for _, t := range s.Source.Tasks {
+		builtOn[t.Key] = t.BuiltOn
 	}
-	was, ok := s.SourceGraph.Node(k)
-	if !ok {
-		return false
+	return func(k topology.NodeKey) bool {
+		release, ok := builtOn[k]
+		if !ok {
+			return false
+		}
+		live, ok := g.Node(k)
+		if !ok {
+			return false
+		}
+		built := s.SourceGraphs[release]
+		was, ok := built.Node(k)
+		if !ok {
+			return false
+		}
+		return live.ContentHash != was.ContentHash ||
+			live.NodeType != was.NodeType ||
+			live.SecretRef != was.SecretRef ||
+			!slices.Equal(g.Upstreams(k), built.Upstreams(k))
 	}
-	return live.ContentHash != was.ContentHash ||
-		live.NodeType != was.NodeType ||
-		live.SecretRef != was.SecretRef ||
-		!slices.Equal(g.Upstreams(k), s.SourceGraph.Upstreams(k))
 }

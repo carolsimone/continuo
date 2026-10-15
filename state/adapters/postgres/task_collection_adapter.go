@@ -79,6 +79,12 @@ func (a *TaskCollectionAdapter) ListRunTasks(ctx context.Context, runID uuid.UUI
 	return out, nil
 }
 
+// RunReleasesOf reads the release of each task's run through the unit of
+// work's transaction, which a rebase plans in.
+func (a *TaskCollectionAdapter) RunReleasesOf(ctx context.Context, taskIDs []uuid.UUID) (map[uuid.UUID]string, error) {
+	return a.repo.RunReleasesTx(ctx, a.tx, taskIDs)
+}
+
 // GetByID reads one task by id. A task's node and image never change once its
 // row is written, so the read uses the autocommit db.
 func (a *TaskCollectionAdapter) GetByID(ctx context.Context, taskID uuid.UUID) (run.Task, error) {

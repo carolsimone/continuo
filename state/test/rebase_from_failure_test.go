@@ -155,4 +155,36 @@ func TestRebaseFromFailure(t *testing.T) {
 		assert.Equal(t, int32(2), pv.WillRun)
 		finishRun(t, activeID)
 	})
+
+	// The rebase without the option runs on the live release but inherits
+	// rff_y from the source run, which built it on the source release. When
+	// its rff_z fails again, a rebase of it compares rff_y as the source run
+	// built it with the live rff_y, and so still offers the fix.
+	t.Run("a rebase of a rebase compares an inherited success with the release that built it", func(t *testing.T) {
+		require.NotEmpty(t, activeID, "the rebase without the option is the source")
+		_, err := stateDB.Exec(`UPDATE task_tracker SET status = 'failed', retry_count = 2 WHERE schedule_id = $1 AND node_key = 'mart.rff_z'`, activeID)
+		require.NoError(t, err)
+
+		pv, err := stateClient.PreviewRebase(ctx, &statev1.PreviewRebaseRequest{SourceRunId: activeID, IncludeChangedUpstream: true})
+		require.NoError(t, err)
+		assert.Equal(t, live.ReleaseID, pv.ReleaseId)
+		assert.Equal(t, []int32{5, 2, 1, 0, 1, 0, 3},
+			[]int32{pv.TotalNodes, pv.WillRun, pv.FailedOrSkipped, pv.NewNodes, pv.ChangedUpstream, pv.Downstream, pv.Inherited})
+		require.Len(t, pv.ChangedNodes, 1)
+		assert.Equal(t, changedY.String(), pv.ChangedNodes[0].String())
+
+		resp, err := stateClient.TriggerRebase(ctx, &statev1.TriggerRebaseRequest{
+			SourceRunId: activeID, IncludeChangedUpstream: true, ExpectedReleaseId: live.ReleaseID,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, []rebaseTask{
+			{"mart.rff_p", "succeeded", true},
+			{"mart.rff_q", "succeeded", true},
+			{"mart.rff_x", "succeeded", true},
+			{"mart.rff_y", "pending", false},
+			{"mart.rff_z", "pending", false},
+		}, rebaseTasks(t, resp.RunId))
+		assert.Equal(t, []string{"mart.rff_y"}, h.created(t, uuid.MustParse(resp.RunId)).Dispatch)
+		finishRun(t, resp.RunId)
+	})
 }

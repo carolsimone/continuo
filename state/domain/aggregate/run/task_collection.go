@@ -48,6 +48,11 @@ type TaskCollection interface {
 	// ListRunTasks returns every task of the given run, in node-key order.
 	ListRunTasks(ctx context.Context, runID uuid.UUID) ([]Task, error)
 
+	// RunReleasesOf returns, for each task of taskIDs, the release its run
+	// is stamped with. A task that does not exist, or whose run names no
+	// release, is absent from the map.
+	RunReleasesOf(ctx context.Context, taskIDs []uuid.UUID) (map[uuid.UUID]string, error)
+
 	// GetByID returns one task by id. Returns ErrTaskNotFound if no row
 	// matches.
 	GetByID(ctx context.Context, taskID uuid.UUID) (Task, error)

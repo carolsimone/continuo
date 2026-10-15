@@ -165,7 +165,9 @@ func (p Planner) scheduleGraph(ctx context.Context, u uow.UnitOfWork, stamp run.
 }
 
 // source reads source as the runplan source of a derived run, with the keys
-// of its tasks.
+// of its tasks. Every task is marked built on source's release; a rebase
+// replaces that, for an inherited task, with the release of the run that ran
+// the node.
 func (p Planner) source(ctx context.Context, u uow.UnitOfWork, source *run.Run) (runplan.Source, []topology.NodeKey, error) {
 	if source.ReleaseID() == "" {
 		return runplan.Source{}, nil, fmt.Errorf("%w: run %s", ErrSourceHasNoRelease, source.ScheduleID())
@@ -180,7 +182,7 @@ func (p Planner) source(ctx context.Context, u uow.UnitOfWork, source *run.Run) 
 		if t.NodeKey == "" {
 			return runplan.Source{}, nil, fmt.Errorf("%w: task %s of run %s names no node", ErrSourceHasNoRelease, t.TaskID, source.ScheduleID())
 		}
-		st := runplan.SourceTask{Key: t.NodeKey, TaskID: t.TaskID, Succeeded: t.Status == run.TaskStatusSucceeded}
+		st := runplan.SourceTask{Key: t.NodeKey, TaskID: t.TaskID, Succeeded: t.Status == run.TaskStatusSucceeded, BuiltOn: source.ReleaseID()}
 		if t.InheritedFromTaskID != nil {
 			st.InheritedFrom = *t.InheritedFromTaskID
 		}

@@ -202,6 +202,9 @@ func (f *fakeTaskCollection) MarkDispatched(_ context.Context, ids []uuid.UUID, 
 func (f *fakeTaskCollection) ListRunTasks(_ context.Context, _ uuid.UUID) ([]run.Task, error) {
 	return f.bulkCreated, nil
 }
+func (f *fakeTaskCollection) RunReleasesOf(_ context.Context, _ []uuid.UUID) (map[uuid.UUID]string, error) {
+	panic("RunReleasesOf not used by the aggregate")
+}
 func (f *fakeTaskCollection) MarkSkipped(_ context.Context, ids []uuid.UUID) (int, error) {
 	n := 0
 	for _, id := range ids {

@@ -51,6 +51,10 @@ type SourceTask struct {
 	// InheritedFrom is the source task's own inherited-from task, uuid.Nil
 	// when the source task ran the node itself.
 	InheritedFrom uuid.UUID
+	// BuiltOn is the release the task's result was built on: the source
+	// run's release when the source run ran the node itself, the release of
+	// the run of its InheritedFrom task when it inherited the result.
+	BuiltOn string
 }
 
 // Source is the run a rerun or a rebase derives from: its operation and its

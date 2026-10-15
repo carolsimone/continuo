@@ -26,6 +26,9 @@ type TaskTrackerRepository interface {
 	// through tx so a caller that holds the connection does not wait for a
 	// second one.
 	ListByRunTx(ctx context.Context, tx *sqlx.Tx, runID uuid.UUID) ([]*TaskTracker, error)
+	// RunReleasesTx maps each task of taskIDs whose run names a release to
+	// that release, reading through tx.
+	RunReleasesTx(ctx context.Context, tx *sqlx.Tx, taskIDs []uuid.UUID) (map[uuid.UUID]string, error)
 	// BulkCreateTx inserts every task of a run within a transaction, with one
 	// COPY. A task whose id, or whose node in its run, is already stored fails
 	// the whole copy.
@@ -166,6 +169,33 @@ func (r *taskTrackerRepository) ListByRunTx(ctx context.Context, tx *sqlx.Tx, ru
 		return nil, fmt.Errorf("list the tasks of run %s: %w", runID, err)
 	}
 	return tasks, nil
+}
+
+// RunReleasesTx maps each task of taskIDs whose run names a release to that
+// release. A task id no row has, or whose run's release_id is NULL or empty,
+// is absent.
+func (r *taskTrackerRepository) RunReleasesTx(ctx context.Context, tx *sqlx.Tx, taskIDs []uuid.UUID) (map[uuid.UUID]string, error) {
+	out := make(map[uuid.UUID]string, len(taskIDs))
+	if len(taskIDs) == 0 {
+		return out, nil
+	}
+	var rows []struct {
+		TaskID    uuid.UUID `db:"task_id"`
+		ReleaseID string    `db:"release_id"`
+	}
+	err := tx.SelectContext(ctx, &rows, `
+		SELECT t.task_id, s.release_id
+		FROM task_tracker t
+		JOIN scheduler_tracker s ON s.schedule_id = t.schedule_id
+		WHERE t.task_id = ANY($1) AND s.release_id <> ''`,
+		pq.Array(taskIDs))
+	if err != nil {
+		return nil, fmt.Errorf("read the run releases of %d tasks: %w", len(taskIDs), err)
+	}
+	for _, row := range rows {
+		out[row.TaskID] = row.ReleaseID
+	}
+	return out, nil
 }
 
 // GetByScheduleAndNode retrieves a task_tracker by schedule_id and node information
