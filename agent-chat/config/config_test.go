@@ -97,3 +97,31 @@ func TestLoad_DeadLetterAddrDefaultsEmpty(t *testing.T) {
 	cfg := Load(&pkgconfig.Validator{})
 	assert.Equal(t, "", cfg.DeadLetterAddr)
 }
+
+func TestLoad_BaseURLForEveryProvider(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("LLM_PROVIDER", "anthropic")
+	t.Setenv("LLM_BASE_URL", "https://llm-gateway.corp.example/")
+	v := &pkgconfig.Validator{}
+	cfg := Load(v)
+	assert.Empty(t, v.Missing())
+	assert.Equal(t, "https://llm-gateway.corp.example", cfg.LLMBaseURL)
+}
+
+func TestLoad_RejectsBaseURLEmptyAfterTrim(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("LLM_PROVIDER", "anthropic")
+	t.Setenv("LLM_BASE_URL", "/")
+	v := &pkgconfig.Validator{}
+	Load(v)
+	assert.Contains(t, v.Missing(), "LLM_BASE_URL (must be an http:// or https:// server root with no user:password@, ?query or #fragment, without a trailing /v1)")
+}
+
+func TestLoad_RejectsBaseURLEndingInV1(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("LLM_PROVIDER", "openai-compatible")
+	t.Setenv("LLM_BASE_URL", "https://api.mistral.ai/v1")
+	v := &pkgconfig.Validator{}
+	Load(v)
+	assert.Contains(t, v.Missing(), "LLM_BASE_URL (must be an http:// or https:// server root with no user:password@, ?query or #fragment, without a trailing /v1)")
+}

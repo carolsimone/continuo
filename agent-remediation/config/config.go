@@ -26,7 +26,7 @@ type Config struct {
 	LLMProvider string // anthropic | openai | openai-compatible
 	LLMAPIKey   string
 	LLMModel    string
-	LLMBaseURL  string // required for openai-compatible
+	LLMBaseURL  string // server root without /v1; empty: the provider's public address
 
 	// LLMCacheTTL is how long a cached LLM propose result stays valid. The cache
 	// only needs to survive the same-trigger redelivery window (a Redis PEL sweep
@@ -193,14 +193,15 @@ func resolveSQLDialect(v *pkgconfig.Validator) string {
 // otherwise leaves a system that looks configured while the process runs the
 // author's default.
 func Load(v *pkgconfig.Validator) Config {
+	llm := pkgconfig.LoadLLM(v)
 	cfg := Config{
 		Postgres:             pkgconfig.LoadPostgresWithDefaultDB(v, "continuo_agent_remediation"),
 		Redis:                pkgconfig.LoadRedis(v),
 		S3:                   pkgconfig.LoadS3(v),
-		LLMProvider:          v.Require("LLM_PROVIDER"),
+		LLMProvider:          llm.Provider,
 		LLMAPIKey:            pkgconfig.EnvOrDefault("LLM_API_KEY", ""),
 		LLMModel:             v.Require("LLM_MODEL"),
-		LLMBaseURL:           pkgconfig.EnvOrDefault("LLM_BASE_URL", ""),
+		LLMBaseURL:           llm.BaseURL,
 		LLMCacheTTL:          v.DurationOrDefault("LLM_CACHE_TTL", defaultLLMCacheTTL),
 		GitHubToken:          pkgconfig.EnvOrDefault("GITHUB_TOKEN", ""),
 		GitHubBaseURL:        pkgconfig.EnvOrDefault("GITHUB_BASE_URL", "https://api.github.com"),
@@ -224,18 +225,6 @@ func Load(v *pkgconfig.Validator) Config {
 		Maintenance: pkgconfig.LoadMaintenance(v),
 	}
 	cfg.SQLDialect = resolveSQLDialect(v)
-	switch cfg.LLMProvider {
-	case "anthropic", "openai":
-		// valid, no additional requirements
-	case "openai-compatible":
-		if cfg.LLMBaseURL == "" {
-			v.Add("LLM_BASE_URL")
-		}
-	default:
-		if cfg.LLMProvider != "" {
-			v.Add("LLM_PROVIDER (must be anthropic|openai|openai-compatible)")
-		}
-	}
 	// A non-positive TTL would either disable expiry (Redis treats a zero SET
 	// expiration as "never expire") or make every write error; either defeats the
 	// cache's memory self-bounding, so clamp it back to the default.

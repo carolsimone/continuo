@@ -15,7 +15,7 @@ type Config struct {
 	LLMProvider string // anthropic | openai | openai-compatible
 	LLMAPIKey   string
 	LLMModel    string
-	LLMBaseURL  string // required for openai-compatible
+	LLMBaseURL  string // server root without /v1; empty: the provider's public address
 
 	CLIPath            string
 	StateAddr          string
@@ -53,18 +53,19 @@ const defaultSystemPrompt = "You answer questions about continuo schedules for a
 // Load reads configuration from env vars, recording missing/invalid required
 // values on v so main can fail fast with a complete list.
 func Load(v *pkgconfig.Validator) Config {
+	llm := pkgconfig.LoadLLM(v)
 	cfg := Config{
 		GRPCPort:    pkgconfig.EnvIntOrDefault("GRPC_PORT", 50053),
 		HealthPort:  pkgconfig.EnvIntOrDefault("HEALTH_PORT", 8091),
 		Postgres:    pkgconfig.LoadPostgres(v),
-		LLMProvider: v.Require("LLM_PROVIDER"),
+		LLMProvider: llm.Provider,
 		// LLM_API_KEY is intentionally optional: agent-chat boots and serves
 		// gRPC without it, and chat sessions fail only when they actually call the
 		// LLM. Requiring it would crashloop the pod on a missing key and time out
 		// the whole helm deploy. main logs a warning when it is empty.
 		LLMAPIKey:             pkgconfig.EnvOrDefault("LLM_API_KEY", ""),
 		LLMModel:              v.Require("LLM_MODEL"),
-		LLMBaseURL:            pkgconfig.EnvOrDefault("LLM_BASE_URL", ""),
+		LLMBaseURL:            llm.BaseURL,
 		CLIPath:               pkgconfig.EnvOrDefault("CONTINUO_CLI_PATH", "continuo"),
 		StateAddr:             pkgconfig.EnvOrDefault("CONTINUO_STATE_ADDR", "state:50051"),
 		OrchestratorAddr:      pkgconfig.EnvOrDefault("CONTINUO_ORCHESTRATOR_ADDR", "orchestrator:50052"),
@@ -85,18 +86,6 @@ func Load(v *pkgconfig.Validator) Config {
 		RetentionArchiveS3:    pkgconfig.EnvBoolOrDefault("RETENTION_ARCHIVE_S3", false),
 		ShutdownGrace:         pkgconfig.EnvDurationOrDefault("SHUTDOWN_GRACE", 10*time.Second),
 		MetricsPort:           pkgconfig.LoadMetricsPort(v),
-	}
-	switch cfg.LLMProvider {
-	case "anthropic", "openai":
-		// valid, no additional requirements
-	case "openai-compatible":
-		if cfg.LLMBaseURL == "" {
-			v.Add("LLM_BASE_URL")
-		}
-	default:
-		if cfg.LLMProvider != "" {
-			v.Add("LLM_PROVIDER (must be anthropic|openai|openai-compatible)")
-		}
 	}
 	return cfg
 }

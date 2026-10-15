@@ -333,6 +333,67 @@ above it would stop that service from starting.
 {{- $level -}}
 {{- end -}}
 
+{{/* llm.baseUrl without a trailing slash, or "" for the provider's public
+address. The agents add /v1/... to it, so a root whose path ends in /v1 would
+request /v1/v1/..., and openai-compatible has no public address. The render
+fails on either, on anything but an http(s) URL with a host, which the agents
+refuse to start on, and on a user:password@, ?query or #fragment, which would
+send requests to the wrong place or expose a credential in the Deployment.
+Tolerates a release whose values hold no llm block or no llm.baseUrl. */}}
+{{- define "continuo.llm.baseUrl" -}}
+{{- $llm := .Values.llm | default dict -}}
+{{- $provider := $llm.provider | default "anthropic" -}}
+{{- $raw := $llm.baseUrl | default "" | toString | trim -}}
+{{- if and (not $raw) (eq $provider "openai-compatible") -}}
+{{- fail "llm.provider=openai-compatible needs llm.baseUrl: the server root of the OpenAI-compatible server, without /v1, e.g. https://api.mistral.ai, https://openrouter.ai/api or http://vllm.ai.svc:8000" -}}
+{{- end -}}
+{{- if $raw -}}
+{{- $root := regexReplaceAll "/+$" $raw "" -}}
+{{- $u := urlParse $root -}}
+{{- if not (and (has $u.scheme (list "http" "https")) $u.host) -}}
+{{- fail (printf "llm.baseUrl=%q must be an http or https URL with a host, e.g. http://vllm.ai.svc:8000" $raw) -}}
+{{- end -}}
+{{- if or $u.userinfo $u.query $u.fragment (regexMatch "[?#]" $raw) -}}
+{{- fail (printf "llm.baseUrl=%q must be a bare server root: no user:password@, ?query or #fragment (put the key in llm.apiKey)" $raw) -}}
+{{- end -}}
+{{- if regexMatch "/v1$" $u.path -}}
+{{- fail (printf "llm.baseUrl=%q ends in /v1: give the server root without it (e.g. %s://%s), because the agents add /v1/... themselves" $raw $u.scheme $u.host) -}}
+{{- end -}}
+{{- $root -}}
+{{- end -}}
+{{- end -}}
+
+{{/* Environment the chart sets on agent-chat and agent-remediation from values.
+It is injected by deployment.yaml rather than carried by the `services` entries,
+so an overridden or reused `services` list cannot drop it. Emits YAML list
+items with no indentation; empty when nothing is set. */}}
+{{- define "continuo.agent.env" -}}
+{{- $baseUrl := include "continuo.llm.baseUrl" . -}}
+{{- if $baseUrl -}}
+- name: LLM_BASE_URL
+  value: {{ $baseUrl | quote }}
+{{- end -}}
+{{- end -}}
+
+{{/* Fails the render when an agent's `services[].env` or `services[].secretEnv`
+names a variable the chart sets itself: either would render a second entry for
+the same variable and override the chart-managed one.
+Call: include "continuo.agent.assertEnv" (dict "root" $ "svc" $svc) */}}
+{{- define "continuo.agent.assertEnv" -}}
+{{- $reserved := dict "LLM_BASE_URL" "set llm.baseUrl instead" -}}
+{{- $svc := .svc -}}
+{{- range $key, $_ := ($svc.env | default dict) -}}
+{{- if hasKey $reserved $key -}}
+{{- fail (printf "services[name=%s].env sets %s, which the chart sets itself: %s" $svc.name $key (get $reserved $key)) -}}
+{{- end -}}
+{{- end -}}
+{{- range $secret := ($svc.secretEnv | default (list)) -}}
+{{- if hasKey $reserved $secret.name -}}
+{{- fail (printf "services[name=%s].secretEnv sets %s, which the chart sets itself: %s" $svc.name $secret.name (get $reserved $secret.name)) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "continuo.redis.host" -}}
 {{- if .Values.redis.enabled -}}
 {{- include "continuo.redis.fullname" . -}}

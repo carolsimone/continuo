@@ -37,7 +37,7 @@ func NewProvider(baseURL, apiKey, model string, client *http.Client) *Provider {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	return &Provider{baseURL: baseURL, apiKey: apiKey, model: model, client: client}
+	return &Provider{baseURL: strings.TrimRight(baseURL, "/"), apiKey: apiKey, model: model, client: client}
 }
 
 // requestBody is the JSON body sent to POST /v1/messages.
@@ -73,8 +73,8 @@ func (p *Provider) StreamTurn(ctx context.Context, req ports.TurnRequest, onDelt
 		return nil, fmt.Errorf("anthropic: marshal request: %w", err)
 	}
 
-	//nolint:gosec // G704: p.baseURL is always the hardcoded "https://api.anthropic.com"
-	// literal passed by main.go; it is never sourced from operator config or user input.
+	//nolint:gosec // G704: p.baseURL is the operator-configured LLM_BASE_URL or the public
+	// Anthropic address; requests go only to its /v1/messages path, never to model or user input.
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+"/v1/messages", bytes.NewReader(encoded))
 	if err != nil {
 		return nil, fmt.Errorf("anthropic: build request: %w", err)

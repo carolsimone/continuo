@@ -12,8 +12,19 @@ shipped in those.
 
 ## [Unreleased]
 
+`llm.baseUrl` is new, with an empty default that keeps each provider's public address; an unmodified values file upgrades unchanged, including with `--reuse-values`, unless it sets `LLM_BASE_URL` through `services[].env` or `services[].secretEnv` (see Breaking). **MINOR.**
+
+### Breaking
+
+- A `services` entry for agent-chat or agent-remediation whose `env` or `secretEnv` sets `LLM_BASE_URL` fails the render ("services[name=...].env sets LLM_BASE_URL" or "services[name=...].secretEnv sets LLM_BASE_URL", each followed by ", which the chart sets itself: set llm.baseUrl instead"). Before upgrading, move the value to `llm.baseUrl`, as the server root without `/v1`; this is the setting an install running `llm.provider: openai-compatible` used. MINOR.
+
+### Added
+
+- `llm.baseUrl` (default empty) points the agents at an LLM server: the root of an OpenAI-compatible server (`llm.provider: openai-compatible`, e.g. Mistral, OpenRouter, Groq, or a vLLM/Ollama you host), or a gateway in front of Anthropic or OpenAI. The chart sets it on agent-chat and agent-remediation as `LLM_BASE_URL`; a `services` entry whose `env` or `secretEnv` sets `LLM_BASE_URL` fails the render. Give the root without `/v1`: the render fails on a URL ending in `/v1`, on anything but an http(s) URL with a host, on a `user:password@`, `?query` or `#fragment` (put the key in `llm.apiKey`), and on `openai-compatible` without it. A release whose values hold no `llm.baseUrl` (`helm upgrade --reuse-values` from an older chart) renders with the default.
+
 ### Changed
 
+- agent-chat reads `LLM_BASE_URL` for every provider, not only `openai-compatible` (agent-remediation already did). Both strip a trailing slash from it and refuse to start on one ending in `/v1`, or holding a `user:password@`, `?query` or `#fragment`. agent-chat's LLM client now honours `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY`. `llm.provider` accepts only `anthropic`, `openai` and `openai-compatible`; the schema rejects any other value.
 - Every run records the release it runs on and that release's promotion seq: the live release for scheduled, triggered, rebased and single-node runs, the source run's for reruns and single-node runs pinned to a past run. Every task records its node's key in that release.
 - The state service serves run graphs, run lists and active-run drift (`GetRunGraph`, `ListRuns`, `ListActiveRunDrifts`), read from each run's own release, and `ListNodeRuns` returns each run's content hash. The ui's run graph, drift badge and run list and the CLI's `node history` read them from the state service.
 - Releases a run names are kept by topology retention, finished runs included.

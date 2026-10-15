@@ -269,8 +269,13 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "provider": {"type": "string"},
+        "provider": {"type": "string", "enum": ["anthropic", "openai", "openai-compatible"]},
         "model": {"type": "string"},
+        "baseUrl": {
+          "type": "string",
+          "pattern": "^$|^https?://",
+          "description": "Server root the agents add /v1/... to, without /v1. Empty: the provider's public address; required for openai-compatible."
+        },
         "apiKey": {"type": "string"},
         "existingSecret": {"type": "string"},
         "existingSecretApiKeyKey": {"type": "string"}
