@@ -36,6 +36,14 @@ metadata:
     app.kubernetes.io/name: {{ $svc.name }}
 spec:
   replicas: {{ default 1 $svc.replicas }}
+  {{- if eq $svc.name "state" }}
+  # Every state pod consumes the task status group and dispatches what a
+  # success unblocks, so a pod of the previous release must be gone before the
+  # new one consumes: an old pod would record the success of a run the new pod
+  # planned without dispatching its downstream tasks.
+  strategy:
+    type: Recreate
+  {{- end }}
   selector:
     matchLabels:
       {{- include "continuo.selectorLabels" (dict "root" $ "service" $svc.name) | nindent 6 }}

@@ -60,6 +60,12 @@ python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/defaults.yaml
 echo "--- http port env names match what each service reads (defaults)"
 python3 scripts/install-test/assert-port-env.py "${tmp}/defaults.yaml" .
 
+# state's pods all consume one status consumer group and dispatch what a success
+# unblocks, so the previous release's pod must be gone before the new one
+# consumes anything: state rolls with Recreate.
+echo "--- state rolls with Recreate (defaults)"
+python3 scripts/install-test/assert-state-recreate.py "${tmp}/defaults.yaml"
+
 # A bundled Redis is a StatefulSet with no ordering guarantee against the
 # Deployments, so every service whose code connects to Redis must wait for it
 # in bundled mode, and none may wait in BYO mode, where Redis is already up.

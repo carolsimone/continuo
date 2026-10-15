@@ -64,10 +64,11 @@ func (a *TaskCollectionAdapter) GetByNode(ctx context.Context, runID uuid.UUID, 
 	return taskFromRow(t), nil
 }
 
-// ListRunTasks reads every task of a run. A run's task set is written once,
-// when the run starts, so the read uses the autocommit db.
+// ListRunTasks reads every task of a run through the unit of work's
+// transaction: a derived run plans while its creating transaction holds a
+// connection, and a read on a second one would wait for it under a small pool.
 func (a *TaskCollectionAdapter) ListRunTasks(ctx context.Context, runID uuid.UUID) ([]run.Task, error) {
-	rows, err := a.repo.ListByRun(ctx, runID)
+	rows, err := a.repo.ListByRunTx(ctx, a.tx, runID)
 	if err != nil {
 		return nil, err
 	}

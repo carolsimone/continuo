@@ -3,6 +3,7 @@ package test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/identity"
@@ -156,5 +157,46 @@ func TestRunCreation(t *testing.T) {
 		var n int
 		require.NoError(t, db.Get(&n, `SELECT count(*) FROM scheduler_tracker WHERE source_run_id = $1`, src))
 		assert.Zero(t, n)
+	})
+}
+
+// A derived run plans inside one transaction, so reading its source's tasks
+// must reuse the transaction's connection: with a pool of one, a second
+// connection for that read would wait on the connection its own caller holds.
+func TestRunCreation_DerivedRunsNeedOneConnection(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test")
+	}
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	h := newBuiltHarness(db)
+	alice := identity.FromUserID("okta|alice")
+	activate := svchandlers.NewActivateScheduleHandler(defaultPlanner, h.logger)
+
+	h.catalog(t, "pool-derived")
+	promoteRelease(t, db,
+		scheduledNode("raw", "pool_a", "dbt-model", "pool-derived"),
+		scheduledNode("mart", "pool_b", "dbt-model", "pool-derived", "raw.pool_a"))
+	srcID, _, err := activate.Handle(context.Background(), h.factory(), "pool-derived", run.KindTrigger, nil, alice, model.OperationRun)
+	require.NoError(t, err)
+	_, err = db.Exec(`UPDATE task_tracker SET status = CASE node_key WHEN 'raw.pool_a' THEN 'succeeded' ELSE 'failed' END, retry_count = 2 WHERE schedule_id = $1`, srcID)
+	require.NoError(t, err)
+	_, err = db.Exec(`UPDATE scheduler_tracker SET status = 'failed', completed_at = now() WHERE schedule_id = $1`, srcID)
+	require.NoError(t, err)
+
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { db.SetMaxOpenConns(0) })
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	t.Run("rerun", func(t *testing.T) {
+		rerunID, _, err := svchandlers.NewTriggerRerunHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), srcID, alice)
+		require.NoError(t, err)
+		_, err = db.Exec(`UPDATE scheduler_tracker SET status = 'failed', completed_at = now() WHERE schedule_id = $1`, rerunID)
+		require.NoError(t, err)
+	})
+	t.Run("rebase", func(t *testing.T) {
+		_, _, err := svchandlers.NewTriggerRebaseHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), srcID, alice)
+		require.NoError(t, err)
 	})
 }
