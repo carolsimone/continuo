@@ -137,9 +137,9 @@ func (s Rebase) Preview(g topology.Graph) (Preview, error) {
 
 // widen returns closure with every changed ancestor of its members and every
 // descendant of those, repeated until a pass adds nothing. Each pass looks at
-// the ancestors of the members the previous pass added only: the result stays
-// closed under descendants, so an earlier member's ancestors have been looked
-// at already.
+// the ancestors of the members the previous pass added only: an earlier
+// member's ancestors were looked at in the pass after it joined, and whether a
+// node is changed does not depend on the pass.
 func (s Rebase) widen(g topology.Graph, closure map[topology.NodeKey]bool) map[topology.NodeKey]bool {
 	widened := make(map[topology.NodeKey]bool, len(closure))
 	for k := range closure {
