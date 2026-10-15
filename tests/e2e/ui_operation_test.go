@@ -20,7 +20,7 @@ import (
 // ui HTTP API — POST /api/schedules/:name/trigger with a JSON
 // {"operation":"test"} body — the exact wire path the UI's operation selector
 // uses. It proves the operation survives the HTTP → gRPC TriggerSchedule hop
-// by asserting the resulting :Run node's operation property, covering the
+// by asserting the resulting run's stored operation, covering the
 // ui HTTP layer on top of the gRPC-level whole-DAG test coverage.
 func TestUIWholeDAGTestOperation(t *testing.T) {
 	if testing.Short() {
@@ -51,8 +51,8 @@ func TestUIWholeDAGTestOperation(t *testing.T) {
 	t.Log("Waiting for the UI-triggered whole-DAG test run to reach 'succeeded'...")
 	verifySchedulerSucceeded(t, ctx, clients, id)
 
-	assert.Equal(t, "test", queryNeo4jRunOperation(t, clients, id),
-		":Run.operation must be 'test' for a UI-triggered whole-DAG test run")
+	assert.Equal(t, "test", queryRunOperation(t, clients, id),
+		"the run's operation must be 'test' for a UI-triggered whole-DAG test run")
 
 	t.Log("TestUIWholeDAGTestOperation passed")
 }
@@ -96,8 +96,8 @@ func TestUISingleNodeBuildOperation(t *testing.T) {
 	t.Log("Waiting for the UI-triggered single-node build run to reach 'succeeded'...")
 	verifySchedulerSucceeded(t, ctx, clients, runID)
 
-	assert.Equal(t, "build", queryNeo4jRunOperation(t, clients, runID),
-		":Run.operation must be 'build' for a UI-triggered single-node build run")
+	assert.Equal(t, "build", queryRunOperation(t, clients, runID),
+		"the run's operation must be 'build' for a UI-triggered single-node build run")
 
 	// table_name alone is a sufficient filter here: this test runs a single
 	// serial single-node run against a stack cleaned by cleanupTestData, so no

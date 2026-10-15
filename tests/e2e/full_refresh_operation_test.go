@@ -16,7 +16,7 @@ import (
 // end for a service-1 model (table_a) and seed (seed_table_1). service-1 is
 // routed through the customname-dbt dialect in the e2e ConfigMap, so each Job
 // must run customname-dbt with --full-refresh, the run must succeed, and the
-// :Run node must record operation="full_refresh".
+// run must record operation="full_refresh".
 func TestFullRefreshOperationSingleNode(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -44,7 +44,7 @@ func TestFullRefreshOperationSingleNode(t *testing.T) {
 			defer cleanupSingleNodeRun(t, ctx, clients, runID, resp.ScheduleName)
 
 			verifySchedulerSucceeded(t, ctx, clients, runID)
-			assert.Equal(t, "full_refresh", queryNeo4jRunOperation(t, clients, runID))
+			assert.Equal(t, "full_refresh", queryRunOperation(t, clients, runID))
 
 			jobs, err := getK8sJobs(ctx, "table_name="+table+",schedule="+resp.ScheduleName)
 			require.NoError(t, err)

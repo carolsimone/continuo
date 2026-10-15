@@ -5,9 +5,11 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/google/uuid"
-	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -18,8 +20,8 @@ import (
 //  1. Calls TriggerSingleNodeRun (gRPC) for a known seed node.
 //  2. Waits for the synthesised run to reach 'succeeded' in scheduler_tracker.
 //  3. Asserts exactly ONE task_tracker row exists with non-empty image_tag.
-//  4. Asserts the Neo4j :Run node has kind = "single_node_run" and no
-//     source_run_id property.
+//  4. Asserts the run is stored with kind = "single_node_run" and no
+//     source_run_id.
 func TestSingleNodeRunLatest(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -88,13 +90,13 @@ func TestSingleNodeRunLatest(t *testing.T) {
 	assert.NotEmpty(t, imageTag, "task_tracker.image_tag must be non-empty")
 	t.Logf("task_tracker image_tag=%s", imageTag)
 
-	// Assert Neo4j :Run.kind = "single_node_run".
-	runKind := queryNeo4jRunKind(t, clients, runID)
-	assert.Equal(t, "single_node_run", runKind, ":Run.kind must be 'single_node_run'")
+	// Assert the run's kind is "single_node_run".
+	runKind := queryPostgresTrackerKind(t, clients.stateDB, runID)
+	assert.Equal(t, "single_node_run", runKind, "scheduler_tracker.kind must be 'single_node_run'")
 
-	// Assert :Run.source_run_id is absent (latest mode has no source run).
-	hasSourceRunID := queryNeo4jRunHasSourceRunID(t, clients, runID)
-	assert.False(t, hasSourceRunID, ":Run.source_run_id must not be present for a latest-mode single-node run")
+	// Assert the run has no source run (latest mode has none).
+	assert.Empty(t, queryRunSourceRunID(t, clients, runID),
+		"source_run_id must be empty for a latest-mode single-node run")
 
 	// Assert the new state.ListNodeRuns RPC returns this run as the most recent
 	// row for the target node, with the right kind, image_tag,
@@ -152,8 +154,7 @@ func TestSingleNodeRunLatest(t *testing.T) {
 //     source_run_id = the source schedule_id.
 //  5. Waits for the new single-node run to reach SUCCEEDED.
 //  6. Asserts that the new run inherits the source's image_tag,
-//     and that :Run.source_run_id in Neo4j equals the source
-//     schedule_id.
+//     and that its source_run_id equals the source schedule_id.
 func TestSingleNodeRunStale(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -238,20 +239,18 @@ func TestSingleNodeRunStale(t *testing.T) {
 		"stale mode must inherit source's image_tag: got %q, want %q", newImage, srcImage)
 	t.Logf("New run metadata matches source: image_tag=%s", newImage)
 
-	// Assert :Run.source_run_id in Neo4j equals the source schedule_id string.
-	sourceRunID := readNeo4jRunSourceRunID(t, ctx, clients, runID)
+	// Assert the run's source_run_id equals the source schedule_id string.
+	sourceRunID := queryRunSourceRunID(t, clients, runID)
 	require.Equal(t, srcResp.ScheduleId, sourceRunID,
-		":Run.source_run_id must equal source schedule_id: got %q, want %q", sourceRunID, srcResp.ScheduleId)
-	t.Logf(":Run.source_run_id correctly set to %s", sourceRunID)
+		"source_run_id must equal source schedule_id: got %q, want %q", sourceRunID, srcResp.ScheduleId)
+	t.Logf("source_run_id correctly set to %s", sourceRunID)
 
 	t.Log("TestSingleNodeRunStale passed")
 }
 
 // TestSingleNodeRunTargetNotFound verifies that triggering a single-node run
-// against a target that does not exist in the loaded topology terminates the
-// run as 'failed' rather than getting stuck in 'pending'. This guards
-// against the previous bug where orchestrator emitted run.failed:v1 with no
-// consumer, leaving the synthesised scheduler_tracker row stuck.
+// against a target the live release does not hold is refused with NotFound and
+// creates no run.
 func TestSingleNodeRunTargetNotFound(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -265,9 +264,8 @@ func TestSingleNodeRunTargetNotFound(t *testing.T) {
 
 	verifyServicesHealthy(t)
 
-	// Make sure the topology is loaded — the failure path runs through
-	// Snapshot+SingleNode's "target not found" branch when the requested
-	// node is absent from the loaded graph.
+	// Make sure the topology is loaded, so the refusal comes from the target
+	// being absent from the live release.
 	cleanupTestData(t, ctx, clients, "single-node-run")
 	seedTopology(t, ctx, clients)
 
@@ -278,67 +276,20 @@ func TestSingleNodeRunTargetNotFound(t *testing.T) {
 		ghostTable   = "no_such_table"
 	)
 
+	before := countRunsOfKind(t, clients, "single_node_run")
 	t.Logf("Calling TriggerSingleNodeRun against missing target: %s.%s.%s",
 		ghostService, ghostSchema, ghostTable)
-	resp, err := clients.stateClient.TriggerSingleNodeRun(ctx, &statev1.TriggerSingleNodeRunRequest{
+	_, err := clients.stateClient.TriggerSingleNodeRun(ctx, &statev1.TriggerSingleNodeRunRequest{
 		ServiceName:    ghostService,
 		SchemaName:     ghostSchema,
 		TableName:      ghostTable,
 		MetadataSource: "latest",
 	})
-	require.NoError(t, err, "TriggerSingleNodeRun must succeed even for unknown targets — failure routes through events")
-	require.NotEmpty(t, resp.RunId, "TriggerSingleNodeRun must return a non-empty run_id")
-
-	runID, err := uuid.Parse(resp.RunId)
-	require.NoError(t, err, "run_id must be a valid UUID")
-
-	defer func() {
-		cleanupSingleNodeRun(t, ctx, clients, runID, resp.ScheduleName)
-	}()
-
-	t.Log("Waiting for scheduler_tracker to reach 'failed'...")
-	verifySchedulerFailed(t, ctx, clients, runID)
-
-	// The orchestrator must NOT create a task_tracker row when there is no
-	// target to dispatch. A leftover row would mean the system actually
-	// created phantom work.
-	var taskCount int
-	err = clients.stateDB.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM task_tracker WHERE schedule_id = $1`,
-		runID,
-	).Scan(&taskCount)
-	require.NoError(t, err, "failed to count task_tracker rows")
-	assert.Equal(t, 0, taskCount, "no task_tracker rows must exist for a target-not-found run")
+	require.Error(t, err, "TriggerSingleNodeRun must refuse a target the live release does not hold")
+	assert.Equal(t, codes.NotFound, status.Code(err), "a missing target is NotFound: %v", err)
+	assert.Equal(t, before, countRunsOfKind(t, clients, "single_node_run"), "a refused trigger creates no run")
 
 	t.Log("TestSingleNodeRunTargetNotFound passed")
-}
-
-// queryNeo4jRunHasSourceRunID returns true if the :Run node with the given
-// run_id has a non-null source_run_id property set in Neo4j.
-func queryNeo4jRunHasSourceRunID(t *testing.T, clients *testClients, runID uuid.UUID) bool {
-	t.Helper()
-	session := clients.neo4jDriver.NewSession(context.Background(), neo4jdriver.SessionConfig{
-		AccessMode: neo4jdriver.AccessModeRead,
-	})
-	defer session.Close(context.Background())
-
-	result, err := session.Run(
-		context.Background(),
-		`MATCH (r:Run {run_id: $run_id})
-		 RETURN r.source_run_id IS NOT NULL AS has_source`,
-		map[string]interface{}{"run_id": runID.String()},
-	)
-	require.NoError(t, err, "Neo4j query for source_run_id failed")
-	if !result.Next(context.Background()) {
-		// Node not found — treat as absent.
-		return false
-	}
-	raw, ok := result.Record().Get("has_source")
-	if !ok {
-		return false
-	}
-	v, _ := raw.(bool)
-	return v
 }
 
 // cleanupSingleNodeRun removes test data created by TestSingleNodeRunLatest.
@@ -348,16 +299,6 @@ func cleanupSingleNodeRun(t *testing.T, ctx context.Context, clients *testClient
 	t.Helper()
 	t.Logf("Cleaning up single-node run: run_id=%s schedule_name=%s", runID, scheduleName)
 
-	// Neo4j: remove the synthesised Run node.
-	session := clients.neo4jDriver.NewSession(ctx, neo4jdriver.SessionConfig{
-		AccessMode: neo4jdriver.AccessModeWrite,
-	})
-	defer session.Close(ctx)
-	_, _ = session.Run(ctx,
-		`MATCH (r:Run {run_id: $run_id}) DETACH DELETE r`,
-		map[string]interface{}{"run_id": runID.String()},
-	)
-
 	// Postgres: remove task_execution → task_tracker → scheduler_tracker.
 	_, _ = clients.stateDB.Exec(
 		`DELETE FROM task_execution WHERE task_id IN (SELECT id FROM task_tracker WHERE schedule_id = $1)`,
@@ -366,11 +307,8 @@ func cleanupSingleNodeRun(t *testing.T, ctx context.Context, clients *testClient
 	_, _ = clients.stateDB.Exec(`DELETE FROM task_tracker WHERE schedule_id = $1`, runID)
 	_, _ = clients.stateDB.Exec(`DELETE FROM scheduler_tracker WHERE schedule_id = $1`, runID)
 
-	// Outboxes. A failed delete leaves rows for later tests to trip over, so it
-	// is logged rather than discarded.
-	if _, err := clients.orchestratorDB.Exec(`DELETE FROM orchestrator_outbox WHERE aggregate_id = $1`, runID); err != nil {
-		t.Logf("Warning: failed to delete orchestrator_outbox rows for run %s: %v", runID, err)
-	}
+	// The run's outbox rows. A failed delete leaves rows for later tests to trip
+	// over, so it is logged rather than discarded.
 	if _, err := clients.stateDB.Exec(`DELETE FROM state_outbox WHERE aggregate_id = $1`, runID); err != nil {
 		t.Logf("Warning: failed to delete state_outbox rows for run %s: %v", runID, err)
 	}
@@ -407,31 +345,4 @@ func readTaskImageTag(
 		scheduleID, serviceName, schemaName, tableName,
 	)
 	return imageTag
-}
-
-// readNeo4jRunSourceRunID returns the value of :Run.source_run_id for the
-// given run_id, or "" if the property is absent or the node is not found.
-func readNeo4jRunSourceRunID(t *testing.T, _ context.Context, clients *testClients, runID uuid.UUID) string {
-	t.Helper()
-	session := clients.neo4jDriver.NewSession(context.Background(), neo4jdriver.SessionConfig{
-		AccessMode: neo4jdriver.AccessModeRead,
-	})
-	defer session.Close(context.Background())
-
-	result, err := session.Run(
-		context.Background(),
-		`MATCH (r:Run {run_id: $run_id})
-		 RETURN COALESCE(r.source_run_id, "") AS source_run_id`,
-		map[string]interface{}{"run_id": runID.String()},
-	)
-	require.NoError(t, err, "Neo4j query for source_run_id value failed")
-	if !result.Next(context.Background()) {
-		return ""
-	}
-	raw, ok := result.Record().Get("source_run_id")
-	if !ok {
-		return ""
-	}
-	v, _ := raw.(string)
-	return v
 }

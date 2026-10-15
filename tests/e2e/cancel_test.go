@@ -22,12 +22,12 @@ import (
 // Phase 1: Load graph, trigger schedule via UI HTTP endpoint, let level 0 (seeds) complete.
 // Phase 2: Cancel mid-way — before level 1 can finish.
 //
-//	Assert scheduler + tasks reach 'cancelled' and all three service
-//	guards (cancelled_schedules tables) are armed via the Redis event.
+//	Assert scheduler + tasks reach 'cancelled' and execution-controller's
+//	guard (its cancelled_schedules table) is armed via the Redis event.
 //
 // Phase 3: Retrigger immediately via UI HTTP endpoint — no cleanup.
 //
-//	The system self-stabilises: guards reject late events for the old
+//	The system self-stabilises: the guard rejects late events for the old
 //	schedule_id; TriggerSchedule creates a fresh schedule_id.
 //
 // Phase 4: Assert the fresh run completes fully to 'succeeded'.
@@ -63,7 +63,7 @@ func TestCancelMidwayAndRetrigger(t *testing.T) {
 	cancelledID, err := uuid.Parse(cancelledIDStr)
 	require.NoError(t, err)
 
-	verifyOrchestratorPublishedRootNodes(t, ctx, queryModelTap, cancelledID, []string{"seed_table_1", "seed_table_2", "seed_table_3"})
+	verifyRootNodesDispatched(t, ctx, queryModelTap, cancelledID, []string{"seed_table_1", "seed_table_2", "seed_table_3"})
 
 	level0 := []string{"seed_table_1", "seed_table_2", "seed_table_3"}
 	verifyExecutorDeployedJobs(t, ctx, clients, level0, testScheduleName)
@@ -82,10 +82,10 @@ func TestCancelMidwayAndRetrigger(t *testing.T) {
 	verifyCancelledSchedulesGuardArmed(t, ctx, clients, cancelledID)
 	verifyRunNotActive(t, ctx, clients, cancelledID)
 
-	t.Log("Phase 2 complete: schedule cancelled, guards armed in all three services")
+	t.Log("Phase 2 complete: schedule cancelled, guard armed")
 
 	// ── Phase 3: Retrigger — no cleanup ──────────────────────────────────────
-	// Guards are armed; the system rejects any late events for cancelledID.
+	// The guard is armed; the system rejects any late events for cancelledID.
 	// TriggerSchedule creates a brand-new schedule_id for the fresh run.
 	t.Log("Phase 3: retriggering via UI endpoint (no cleanup)...")
 	freshIDStr := triggerScheduleHTTP(t, clients.uiBase, testScheduleName)
@@ -99,7 +99,7 @@ func TestCancelMidwayAndRetrigger(t *testing.T) {
 	// Verify by schedule_id — two runs share the same schedule_name in the DB,
 	// so schedule_name-scoped queries would be ambiguous.
 	t.Log("Phase 4: verifying fresh run completes to SUCCEEDED...")
-	verifyOrchestratorPublishedRootNodes(t, ctx, queryModelTap, freshID, []string{"seed_table_1", "seed_table_2", "seed_table_3"})
+	verifyRootNodesDispatched(t, ctx, queryModelTap, freshID, []string{"seed_table_1", "seed_table_2", "seed_table_3"})
 
 	allTables := []string{
 		"seed_table_1", "seed_table_2", "seed_table_3",
@@ -177,9 +177,8 @@ func verifyTasksCancelled(t *testing.T, ctx context.Context, clients *testClient
 }
 
 // verifyRunNotActive polls StateService.ListActiveRunDrifts until the given run
-// is no longer reported as in-flight. A cancelled run is finalized via
-// run.finalized:v1 (state stamps the run terminal), so it must drop out of the
-// active set rather than linger forever.
+// is no longer reported as in-flight. A cancelled run's row is terminal, so it
+// must drop out of the active set rather than linger forever.
 func verifyRunNotActive(t *testing.T, ctx context.Context, clients *testClients, runID uuid.UUID) {
 	t.Helper()
 	want := runID.String()
@@ -195,49 +194,21 @@ func verifyRunNotActive(t *testing.T, ctx context.Context, clients *testClients,
 		}
 		return true, nil // cancelled run no longer active
 	}, "Timeout waiting for cancelled run to leave state active set")
-	t.Logf("✅ state no longer reports run %s as active (finalized via run.finalized:v1)", want)
+	t.Logf("✅ state no longer reports run %s as active", want)
 }
 
-// verifyCancelledSchedulesGuardArmed polls both service databases until each
-// has a row in cancelled_schedules for the given schedule_id, confirming that
-// the schedule.cancelled:v1 Redis event was consumed by every consumer.
+// verifyCancelledSchedulesGuardArmed polls execution-controller's database
+// until it has a row in cancelled_schedules for the given schedule_id,
+// confirming that the schedule.cancelled:v1 Redis event was consumed.
 func verifyCancelledSchedulesGuardArmed(t *testing.T, ctx context.Context, clients *testClients, schedulerID uuid.UUID) {
 	t.Helper()
-
-	type dbCheck struct {
-		name  string
-		query func() (bool, error)
-	}
-
-	checks := []dbCheck{
-		{
-			name: "orchestrator",
-			query: func() (bool, error) {
-				var exists bool
-				err := clients.orchestratorDB.QueryRowContext(ctx,
-					"SELECT EXISTS(SELECT 1 FROM cancelled_schedules WHERE schedule_id = $1)",
-					schedulerID,
-				).Scan(&exists)
-				return exists, err
-			},
-		},
-		{
-			name: "execution-controller",
-			query: func() (bool, error) {
-				var exists bool
-				err := clients.executionDB.QueryRowContext(ctx,
-					"SELECT EXISTS(SELECT 1 FROM cancelled_schedules WHERE schedule_id = $1)",
-					schedulerID,
-				).Scan(&exists)
-				return exists, err
-			},
-		},
-	}
-
-	for _, c := range checks {
-		pollUntil(t, ctx, 30*time.Second, 500*time.Millisecond, c.query,
-			fmt.Sprintf("Timeout waiting for cancelled_schedules guard in %s", c.name))
-		t.Logf("✅ cancelled_schedules guard armed in %s", c.name)
-	}
+	pollUntil(t, ctx, 30*time.Second, 500*time.Millisecond, func() (bool, error) {
+		var exists bool
+		err := clients.executionDB.QueryRowContext(ctx,
+			"SELECT EXISTS(SELECT 1 FROM cancelled_schedules WHERE schedule_id = $1)",
+			schedulerID,
+		).Scan(&exists)
+		return exists, err
+	}, "Timeout waiting for cancelled_schedules guard in execution-controller")
+	t.Log("✅ cancelled_schedules guard armed in execution-controller")
 }
-

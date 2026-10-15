@@ -14,9 +14,9 @@ import (
 )
 
 // TestTopologyVersioning_MidRunIsolation validates that a topology announced
-// between Run 1's SnapshotGraph and its completion does NOT affect the in-flight
-// run: its promotion_seq must remain pinned to the seq captured at SnapshotGraph
-// time. Run 2 (triggered after the announcement) must pick up the new seq.
+// between Run 1's creation and its completion does NOT affect the in-flight run:
+// its promotion_seq must remain pinned to the seq live when it was created.
+// Run 2 (triggered after the announcement) must pick up the new seq.
 func TestTopologyVersioning_MidRunIsolation(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -75,7 +75,7 @@ func TestTopologyVersioning_MidRunIsolation(t *testing.T) {
 
 	// Step 10: S1 still carries G1. This is the core isolation invariant: an
 	// in-flight run is not affected by a topology announced after its
-	// SnapshotGraph.
+	// creation.
 	t.Log("=== Step 10: verifying S1 promotion_seq in state still == G1 ===")
 	assert.Equal(t, g1, readRunPromotionSeq(t, ctx, clients, s1),
 		"Run 1 must remain pinned to G1=%d after the mid-run announcement", g1)

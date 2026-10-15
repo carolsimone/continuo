@@ -55,7 +55,7 @@ func TestE2E_HappyPath_FullDAGExecution(t *testing.T) {
 
 	// Verify orchestrator published root node messages to query.model:v1
 	t.Log("Verifying orchestrator published root node messages...")
-	verifyOrchestratorPublishedRootNodes(t, ctx, queryModelTap, schedulerID, []string{"seed_table_1", "seed_table_2", "seed_table_3"})
+	verifyRootNodesDispatched(t, ctx, queryModelTap, schedulerID, []string{"seed_table_1", "seed_table_2", "seed_table_3"})
 
 	// Verify complete DAG execution
 	t.Log("Verifying full DAG execution...")
@@ -78,11 +78,8 @@ func TestE2E_HappyPath_FullDAGExecution(t *testing.T) {
 	t.Log("Verifying ui HTTP API...")
 	verifyUIService(t, ctx, schedulerIDStr)
 
-	// ── PR0 audit assertions: kind stamped on both stores; per-task metadata populated ──
-	t.Log("Verifying PR0 audit fields (kind, image_tag)...")
-
-	runKind := queryNeo4jRunKind(t, clients, schedulerID)
-	assert.Equal(t, "cron", runKind, "fresh schedule trigger must stamp :Run.kind = cron")
+	// ── Audit fields: the run's kind and its tasks' images are stored ──
+	t.Log("Verifying audit fields (kind, image_tag)...")
 
 	trackerKind := queryPostgresTrackerKind(t, clients.stateDB, schedulerID)
 	assert.Equal(t, "cron", trackerKind, "scheduler_tracker.kind must be cron after fresh activation")
@@ -90,13 +87,13 @@ func TestE2E_HappyPath_FullDAGExecution(t *testing.T) {
 	imageTag := queryFirstTaskTrackerImageTag(t, clients.stateDB, schedulerID)
 	assert.NotEmpty(t, imageTag, "task_tracker.image_tag must be populated")
 
-	t.Log("✅ PR0 audit assertions passed")
+	t.Log("✅ audit assertions passed")
 
 	t.Log("🎉 E2E test completed successfully!")
 }
 
 // createAndActivateScheduler triggers a schedule run via the state service gRPC.
-// State creates the scheduler_tracker record and publishes scheduler.started:v1 itself.
+// State creates the run, chooses its tasks and dispatches the ready ones itself.
 func createAndActivateScheduler(
 	t *testing.T,
 	ctx context.Context,

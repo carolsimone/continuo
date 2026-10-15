@@ -6,9 +6,11 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/google/uuid"
-	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -18,7 +20,7 @@ import (
 // carries real dbt tests (not_null + unique on id), so a TriggerSingleNodeRun
 // with operation="test" dispatches a `dbt test --select seed_table_1` Job that
 // runs those tests, succeeds, and finalizes the run 'succeeded' with exactly one
-// task. The :Run node records operation="test", proving the operation threaded
+// task. The run records operation="test", proving the operation threaded
 // from the trigger through to the run projection.
 func TestSingleNodeTestOperation(t *testing.T) {
 	if testing.Short() {
@@ -69,16 +71,15 @@ func TestSingleNodeTestOperation(t *testing.T) {
 	assert.Equal(t, 1, taskCount, "expected exactly 1 task for a single-node test run")
 
 	// The run was created as a test run — proves operation threaded end-to-end.
-	assert.Equal(t, "test", queryNeo4jRunOperation(t, clients, runID),
-		":Run.operation must be 'test' for a test-operation run")
+	assert.Equal(t, "test", queryRunOperation(t, clients, runID),
+		"the run's operation must be 'test' for a test-operation run")
 
 	t.Log("TestSingleNodeTestOperation passed")
 }
 
 // TestSingleNodeTestOperationNoTests verifies the no_tests gate: a single-node
-// test on a node with no tests (seed_table_2, test_count=0) is rejected by the
-// orchestrator (run.entries.dispatch_failed:v1 reason no_tests) rather than
-// dispatching a pointless Job. The run finalizes 'skipped' with zero tasks.
+// test on a node with no tests (seed_table_2, test_count=0) is refused with
+// FailedPrecondition, so no run is created and no pointless Job is dispatched.
 func TestSingleNodeTestOperationNoTests(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -97,35 +98,11 @@ func TestSingleNodeTestOperationNoTests(t *testing.T) {
 	)
 
 	verifyServicesHealthy(t)
-	verifyK8sAvailable(t, ctx)
 
 	cleanupTestData(t, ctx, clients, "single-node-test-no-tests")
 	seedTopology(t, ctx, clients)
 
-	t.Logf("TriggerSingleNodeRun operation=test on a zero-test node: %s.%s.%s", targetService, targetSchema, targetTable)
-	resp, err := clients.stateClient.TriggerSingleNodeRun(ctx, &statev1.TriggerSingleNodeRunRequest{
-		ServiceName:    targetService,
-		SchemaName:     targetSchema,
-		TableName:      targetTable,
-		MetadataSource: "latest",
-		Operation:      "test",
-	})
-	require.NoError(t, err, "TriggerSingleNodeRun must succeed even when the node has no tests — the gate routes through events")
-	require.NotEmpty(t, resp.RunId, "must return a non-empty run_id")
-
-	runID, err := uuid.Parse(resp.RunId)
-	require.NoError(t, err, "run_id must be a valid UUID")
-	defer cleanupSingleNodeRun(t, ctx, clients, runID, resp.ScheduleName)
-
-	t.Log("Waiting for the no_tests gate to finalize the run 'skipped'...")
-	verifySchedulerSkipped(t, ctx, clients, runID)
-
-	// The gate must NOT create any task_tracker row — no Job was dispatched.
-	var taskCount int
-	err = clients.stateDB.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM task_tracker WHERE schedule_id = $1`, runID).Scan(&taskCount)
-	require.NoError(t, err, "failed to count task_tracker rows")
-	assert.Equal(t, 0, taskCount, "no task_tracker rows must exist for a no_tests-gated run")
+	requireTestOfNodeRefused(t, ctx, clients, targetService, targetSchema, targetTable)
 
 	t.Log("TestSingleNodeTestOperationNoTests passed")
 }
@@ -134,12 +111,11 @@ func TestSingleNodeTestOperationNoTests(t *testing.T) {
 // production incident where a single-node `test` on a node with no tests dispatched
 // a `dbt test` Job that no-op'd ("Nothing to do") and failed-and-retried 3×.
 //
-// It reproduces the exact prod state: a node whose `test_count` is *unset* on the
-// :Table (topology promoted before test_count capture existed, never re-released).
-// An unset count is treated as "no known tests", so the orchestrator gates the run
-// with reason no_tests — no Job is dispatched at all. This is symmetric with the
-// known-zero gate: only a KNOWN, positive test_count is runnable. The run finalizes
-// 'skipped' with zero tasks, never dispatching a Job that could no-op and retry.
+// It reproduces the exact prod state: a node whose `test_count` is unknown in the
+// live release (a topology promoted before test_count capture existed). An unknown
+// count is treated as "no known tests", so the trigger is refused like a known
+// zero: only a KNOWN, positive test_count is runnable, and no run or Job exists
+// that could no-op and retry.
 func TestSingleNodeTestOperationUnsetTestCountIsGated(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -158,41 +134,35 @@ func TestSingleNodeTestOperationUnsetTestCountIsGated(t *testing.T) {
 	)
 
 	verifyServicesHealthy(t)
-	verifyK8sAvailable(t, ctx)
 
 	cleanupTestData(t, ctx, clients, "single-node-test-unset")
 	seedTopology(t, ctx, clients)
 
-	// Simulate a legacy node predating test_count capture: strip the property so
-	// the orchestrator reads test_count as unknown (test_count_known=false).
-	unsetNeo4jTestCount(t, ctx, clients, targetSchema+"."+targetTable)
+	// Simulate a legacy node predating test_count capture: clear its count in
+	// the live release, so state reads it as unknown.
+	unsetTestCount(t, ctx, clients, targetSchema+"."+targetTable)
 
-	t.Logf("TriggerSingleNodeRun operation=test on an unset-test_count node: %s.%s.%s", targetService, targetSchema, targetTable)
-	resp, err := clients.stateClient.TriggerSingleNodeRun(ctx, &statev1.TriggerSingleNodeRunRequest{
-		ServiceName:    targetService,
-		SchemaName:     targetSchema,
-		TableName:      targetTable,
+	requireTestOfNodeRefused(t, ctx, clients, targetService, targetSchema, targetTable)
+
+	t.Log("TestSingleNodeTestOperationUnsetTestCountIsGated passed")
+}
+
+// requireTestOfNodeRefused triggers a single-node test of the node and asserts
+// the trigger is refused with FailedPrecondition and creates no run.
+func requireTestOfNodeRefused(t *testing.T, ctx context.Context, clients *testClients, service, schema, table string) {
+	t.Helper()
+	before := countRunsOfKind(t, clients, "single_node_run")
+	t.Logf("TriggerSingleNodeRun operation=test on a node without known tests: %s.%s.%s", service, schema, table)
+	_, err := clients.stateClient.TriggerSingleNodeRun(ctx, &statev1.TriggerSingleNodeRunRequest{
+		ServiceName:    service,
+		SchemaName:     schema,
+		TableName:      table,
 		MetadataSource: "latest",
 		Operation:      "test",
 	})
-	require.NoError(t, err, "TriggerSingleNodeRun must succeed even when the node is gated — the gate routes through events")
-	require.NotEmpty(t, resp.RunId, "must return a non-empty run_id")
-
-	runID, err := uuid.Parse(resp.RunId)
-	require.NoError(t, err, "run_id must be a valid UUID")
-	defer cleanupSingleNodeRun(t, ctx, clients, runID, resp.ScheduleName)
-
-	t.Log("Waiting for the unset-test_count no_tests gate to finalize the run 'skipped'...")
-	verifySchedulerSkipped(t, ctx, clients, runID)
-
-	// The gate must NOT dispatch any Job — no task_tracker row, so no no-op run.
-	var taskCount int
-	err = clients.stateDB.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM task_tracker WHERE schedule_id = $1`, runID).Scan(&taskCount)
-	require.NoError(t, err, "failed to count task_tracker rows")
-	assert.Equal(t, 0, taskCount, "no task_tracker rows must exist for a gated unset-test_count run")
-
-	t.Log("TestSingleNodeTestOperationUnsetTestCountIsGated passed")
+	require.Error(t, err, "a test of a node without known tests must be refused")
+	assert.Equal(t, codes.FailedPrecondition, status.Code(err), "the refusal is FailedPrecondition: %v", err)
+	assert.Equal(t, before, countRunsOfKind(t, clients, "single_node_run"), "a refused trigger creates no run")
 }
 
 // TestWholeDAGTestOperation verifies whole-DAG "flat fan-out" test runs. The
@@ -254,8 +224,8 @@ func TestWholeDAGTestOperation(t *testing.T) {
 		"whole-DAG test run must dispatch exactly the nodes with tests (test_count>0), omitting seed_table_2")
 
 	// The run was created as a test run.
-	assert.Equal(t, "test", queryNeo4jRunOperation(t, clients, scheduleID),
-		":Run.operation must be 'test' for a whole-DAG test run")
+	assert.Equal(t, "test", queryRunOperation(t, clients, scheduleID),
+		"the run's operation must be 'test' for a whole-DAG test run")
 
 	t.Log("TestWholeDAGTestOperation passed")
 }
@@ -263,10 +233,9 @@ func TestWholeDAGTestOperation(t *testing.T) {
 // TestWholeDAGTestOperationNoTestsFinalizesSkipped is the regression guard for a
 // whole-DAG Test run over a schedule whose nodes all have no tests. Every node of
 // e2e-schedule-failure defaults to test_count=0 (absent from e2eTestCounts), so a
-// TriggerSchedule with operation="test" gates every node: the orchestrator
-// produces an empty projection, surfaces ErrNoTests (reason no_tests), and state
-// finalizes the run 'skipped' — a benign non-failure — rather than 'failed'. No
-// Job is dispatched, so no task_tracker row exists.
+// TriggerSchedule with operation="test" selects no node, and state records the
+// run 'skipped' — a benign non-failure — rather than 'failed'. No Job is
+// dispatched, so no task_tracker row exists.
 func TestWholeDAGTestOperationNoTestsFinalizesSkipped(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -416,40 +385,18 @@ func TestNodeCatalogOperationScoping(t *testing.T) {
 	t.Log("TestNodeCatalogOperationScoping passed")
 }
 
-// unsetNeo4jTestCount strips the test_count property from an active :Table,
-// simulating a topology node promoted before test_count capture existed. After
-// this the orchestrator reads test_count as unknown (test_count_known=false).
-func unsetNeo4jTestCount(t *testing.T, ctx context.Context, clients *testClients, uniqueID string) {
+// unsetTestCount clears the test count of node key in the default tenant's live
+// release, simulating a node promoted before test_count capture existed: state
+// then reads its count as unknown.
+func unsetTestCount(t *testing.T, ctx context.Context, clients *testClients, key string) {
 	t.Helper()
-	session := clients.neo4jDriver.NewSession(ctx, neo4jdriver.SessionConfig{
-		AccessMode: neo4jdriver.AccessModeWrite,
-	})
-	defer func() { _ = session.Close(ctx) }()
-	res, err := session.Run(ctx,
-		`MATCH (t:Table {unique_id: $unique_id}) WHERE t.active REMOVE t.test_count RETURN count(t) AS n`,
-		map[string]interface{}{"unique_id": uniqueID})
-	require.NoError(t, err, "Neo4j REMOVE test_count for %s failed", uniqueID)
-	require.True(t, res.Next(ctx), "no result row from REMOVE test_count for %s", uniqueID)
-	n, _ := res.Record().Get("n")
-	require.Equal(t, int64(1), n, "expected exactly one active :Table matched for %s", uniqueID)
-}
-
-// queryNeo4jRunOperation returns the :Run.operation property for the given
-// run_id ("" if absent or the node is not found).
-func queryNeo4jRunOperation(t *testing.T, clients *testClients, runID uuid.UUID) string {
-	t.Helper()
-	session := clients.neo4jDriver.NewSession(context.Background(), neo4jdriver.SessionConfig{
-		AccessMode: neo4jdriver.AccessModeRead,
-	})
-	defer func() { _ = session.Close(context.Background()) }()
-	result, err := session.Run(context.Background(),
-		`MATCH (r:Run {run_id: $run_id}) RETURN COALESCE(r.operation, "") AS operation`,
-		map[string]interface{}{"run_id": runID.String()})
-	require.NoError(t, err, "Neo4j query for :Run.operation failed")
-	if !result.Next(context.Background()) {
-		return ""
-	}
-	raw, _ := result.Record().Get("operation")
-	s, _ := raw.(string)
-	return s
+	res, err := clients.stateDB.ExecContext(ctx, `
+		UPDATE topology_nodes n SET test_count = NULL
+		FROM live_release l
+		WHERE l.tenant_id = 'default' AND n.tenant_id = l.tenant_id AND n.release_id = l.release_id
+		  AND n.node_key = $1`, key)
+	require.NoError(t, err, "clear the test count of %s", key)
+	n, err := res.RowsAffected()
+	require.NoError(t, err)
+	require.Equal(t, int64(1), n, "expected exactly one node %s in the live release", key)
 }
