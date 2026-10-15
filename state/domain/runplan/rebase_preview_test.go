@@ -41,8 +41,8 @@ func node(table string, upstream ...string) fixtureNode {
 	return fixtureNode{table, "service-1", "rebase", upstream}
 }
 
-// twoBranches is the design's example: x feeds y, which feeds z, and p feeds
-// q.
+// twoBranches is a schedule of two branches: x feeds y, which feeds z, and p
+// feeds q.
 func twoBranches() topology.Graph {
 	return releaseGraph([]fixtureNode{node("x"), node("y", "x"), node("z", "y"), node("p"), node("q", "p")})
 }
@@ -121,11 +121,11 @@ func changedNode(table string, downstream int) runplan.ChangedNode {
 	return runplan.ChangedNode{Key: key(table), ServiceName: "service-1", SchemaName: e2eSchema, TableName: table, Downstream: downstream}
 }
 
-// The design's example: z failed because y wrote a wrong column. The live
-// release fixes y and changes q on the other branch. With the option the
-// rebase rebuilds y and then z; without it z alone. Either way q, on a branch
-// nothing re-executed reads, stays inherited, and y is named.
-func TestRebasePreview_TheDesignExample(t *testing.T) {
+// Two branches, x → y → z and p → q: z failed because y wrote a wrong column.
+// The live release fixes y and changes q on the other branch. With the option
+// the rebase rebuilds y and then z; without it z alone. Either way q, on a
+// branch nothing re-executed reads, stays inherited, and y is named.
+func TestRebasePreview_AFixUpstreamOfTheFailureRunsAndAnUnrelatedChangeDoesNot(t *testing.T) {
 	src := sourceRun(model.OperationRun, []string{"x", "y", "p", "q"}, []string{"z"})
 	live := rehashed(twoBranches(), "y", "q")
 

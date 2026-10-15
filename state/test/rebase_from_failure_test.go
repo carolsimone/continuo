@@ -39,8 +39,8 @@ func finishRun(t *testing.T, runID string) {
 	require.NoError(t, err)
 }
 
-// TestRebaseFromFailure drives the design's example through state's gRPC
-// server: rebase-from-failure has two branches, mart.rff_x → mart.rff_y →
+// TestRebaseFromFailure previews and rebases a failed run through state's
+// gRPC server: rebase-from-failure has two branches, mart.rff_x → mart.rff_y →
 // mart.rff_z and mart.rff_p → mart.rff_q. The source run's rff_z failed; the
 // live release fixes rff_y and changes rff_q. A rebase with the option
 // rebuilds rff_y and then rff_z; without it rff_z alone; rff_q, on the other
