@@ -63,6 +63,7 @@ jobs:
               - 'remediation/**'
               - 'agent-remediation/**'
               - 'dead-letter-controller/**'
+              - 'egress-proxy/**'
               - 's3-sidecar/**'
             state:
               - 'Dockerfile.base'
@@ -118,6 +119,12 @@ jobs:
               - 'go.work.sum'
               - 'pkg/**'
               - 'dead-letter-controller/**'
+            egress_proxy:
+              - 'Dockerfile.base'
+              - 'go.work'
+              - 'go.work.sum'
+              - 'pkg/**'
+              - 'egress-proxy/**'
             migrations:
               - 'db/**'
             s3_sidecar:
@@ -136,6 +143,7 @@ jobs:
           REMEDIATION_CHANGED: ${{ steps.filter.outputs.remediation }}
           AGENT_REMEDIATION_CHANGED: ${{ steps.filter.outputs.agent_remediation }}
           DEAD_LETTER_CONTROLLER_CHANGED: ${{ steps.filter.outputs.dead_letter_controller }}
+          EGRESS_PROXY_CHANGED: ${{ steps.filter.outputs.egress_proxy }}
           MIGRATIONS_CHANGED: ${{ steps.filter.outputs.migrations }}
           S3_SIDECAR_CHANGED: ${{ steps.filter.outputs.s3_sidecar }}
         run: |
@@ -151,6 +159,7 @@ jobs:
               --arg remediation "$REMEDIATION_CHANGED" \
               --arg agent_remediation "$AGENT_REMEDIATION_CHANGED" \
               --arg dead_letter_controller "$DEAD_LETTER_CONTROLLER_CHANGED" \
+              --arg egress_proxy "$EGRESS_PROXY_CHANGED" \
               --arg migrations "$MIGRATIONS_CHANGED" \
               --arg s3_sidecar "$S3_SIDECAR_CHANGED" \
               '{
@@ -165,6 +174,7 @@ jobs:
                   {service: "remediation", changed: $remediation, dockerfile: "remediation/Dockerfile.prod", context: "."},
                   {service: "agent-remediation", changed: $agent_remediation, dockerfile: "agent-remediation/Dockerfile.prod", context: "."},
                   {service: "dead-letter-controller", changed: $dead_letter_controller, dockerfile: "dead-letter-controller/Dockerfile.prod", context: "."},
+                  {service: "egress-proxy", changed: $egress_proxy, dockerfile: "egress-proxy/Dockerfile.prod", context: "."},
                   {service: "migrations", changed: $migrations, dockerfile: "db/Dockerfile.migrate", context: "db"},
                   {service: "s3-sidecar", changed: $s3_sidecar, dockerfile: "s3-sidecar/Dockerfile", context: "s3-sidecar"}
                 ]

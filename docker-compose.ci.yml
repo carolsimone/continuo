@@ -58,6 +58,13 @@ services:
       cache_to:
         - "type=gha,scope=dead-letter-controller,mode=max"
 
+  egress-proxy:
+    build:
+      cache_from:
+        - "type=gha,scope=egress-proxy"
+      cache_to:
+        - "type=gha,scope=egress-proxy,mode=max"
+
   agent-chat:
     build:
       cache_from:
