@@ -12,15 +12,15 @@ shipped in those.
 
 ## [Unreleased]
 
-`llm.baseUrl` is new, with an empty default that keeps each provider's public address; an unmodified values file upgrades unchanged, including with `--reuse-values`, unless it sets `LLM_BASE_URL` through `services[].env` (see Breaking). **MINOR.**
+`llm.baseUrl` is new, with an empty default that keeps each provider's public address; an unmodified values file upgrades unchanged, including with `--reuse-values`, unless it sets `LLM_BASE_URL` through `services[].env` or `services[].secretEnv` (see Breaking). **MINOR.**
 
 ### Breaking
 
-- A `services` entry for agent-chat or agent-remediation whose `env` sets `LLM_BASE_URL` fails the render ("services[name=...].env sets LLM_BASE_URL, which the chart sets itself: set llm.baseUrl instead"). Before upgrading, move the value to `llm.baseUrl`, as the server root without `/v1`; this is the setting an install running `llm.provider: openai-compatible` used. MINOR.
+- A `services` entry for agent-chat or agent-remediation whose `env` or `secretEnv` sets `LLM_BASE_URL` fails the render ("services[name=...].env sets LLM_BASE_URL" or "services[name=...].secretEnv sets LLM_BASE_URL", each followed by ", which the chart sets itself: set llm.baseUrl instead"). Before upgrading, move the value to `llm.baseUrl`, as the server root without `/v1`; this is the setting an install running `llm.provider: openai-compatible` used. MINOR.
 
 ### Added
 
-- `llm.baseUrl` (default empty) points the agents at an LLM server: the root of an OpenAI-compatible server (`llm.provider: openai-compatible`, e.g. Mistral, OpenRouter, Groq, or a vLLM/Ollama you host), or a gateway in front of Anthropic or OpenAI. The chart sets it on agent-chat and agent-remediation as `LLM_BASE_URL`; a `services` entry that sets `LLM_BASE_URL` itself fails the render. Give the root without `/v1`: the render fails on a URL ending in `/v1`, on anything but an http(s) URL with a host, on a `user:password@`, `?query` or `#fragment` (put the key in `llm.apiKey`), and on `openai-compatible` without it. A release whose values hold no `llm.baseUrl` (`helm upgrade --reuse-values` from an older chart) renders with the default.
+- `llm.baseUrl` (default empty) points the agents at an LLM server: the root of an OpenAI-compatible server (`llm.provider: openai-compatible`, e.g. Mistral, OpenRouter, Groq, or a vLLM/Ollama you host), or a gateway in front of Anthropic or OpenAI. The chart sets it on agent-chat and agent-remediation as `LLM_BASE_URL`; a `services` entry whose `env` or `secretEnv` sets `LLM_BASE_URL` fails the render. Give the root without `/v1`: the render fails on a URL ending in `/v1`, on anything but an http(s) URL with a host, on a `user:password@`, `?query` or `#fragment` (put the key in `llm.apiKey`), and on `openai-compatible` without it. A release whose values hold no `llm.baseUrl` (`helm upgrade --reuse-values` from an older chart) renders with the default.
 
 ### Changed
 

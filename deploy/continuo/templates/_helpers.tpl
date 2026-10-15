@@ -375,14 +375,21 @@ items with no indentation; empty when nothing is set. */}}
 {{- end -}}
 {{- end -}}
 
-{{/* Fails the render when an agent's `services[].env` sets a variable the chart
-sets itself. Call: include "continuo.agent.assertEnv" (dict "root" $ "svc" $svc) */}}
+{{/* Fails the render when an agent's `services[].env` or `services[].secretEnv`
+names a variable the chart sets itself: either would render a second entry for
+the same variable and override the chart-managed one.
+Call: include "continuo.agent.assertEnv" (dict "root" $ "svc" $svc) */}}
 {{- define "continuo.agent.assertEnv" -}}
 {{- $reserved := dict "LLM_BASE_URL" "set llm.baseUrl instead" -}}
 {{- $svc := .svc -}}
 {{- range $key, $_ := ($svc.env | default dict) -}}
 {{- if hasKey $reserved $key -}}
 {{- fail (printf "services[name=%s].env sets %s, which the chart sets itself: %s" $svc.name $key (get $reserved $key)) -}}
+{{- end -}}
+{{- end -}}
+{{- range $secret := ($svc.secretEnv | default (list)) -}}
+{{- if hasKey $reserved $secret.name -}}
+{{- fail (printf "services[name=%s].secretEnv sets %s, which the chart sets itself: %s" $svc.name $secret.name (get $reserved $secret.name)) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}

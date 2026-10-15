@@ -43,6 +43,14 @@ func TestLoadLLM(t *testing.T) {
 			wantMissing: []string{"LLM_BASE_URL (must be an http:// or https:// server root with no user:password@, ?query or #fragment, without a trailing /v1)"}},
 		{name: "userinfo refused", provider: "openai-compatible", baseURL: "https://u:p@h", wantBase: "https://u:p@h", //nolint:gosec // G101: a placeholder URL, not a credential
 			wantMissing: []string{"LLM_BASE_URL (must be an http:// or https:// server root with no user:password@, ?query or #fragment, without a trailing /v1)"}},
+		{name: "anthropic, a lone slash refused", provider: "anthropic", baseURL: "/", wantBase: "",
+			wantMissing: []string{"LLM_BASE_URL (must be an http:// or https:// server root with no user:password@, ?query or #fragment, without a trailing /v1)"}},
+		{name: "openai, only slashes refused", provider: "openai", baseURL: "///", wantBase: "",
+			wantMissing: []string{"LLM_BASE_URL (must be an http:// or https:// server root with no user:password@, ?query or #fragment, without a trailing /v1)"}},
+		{name: "openai-compatible, a lone slash reported once", provider: "openai-compatible", baseURL: "/", wantBase: "",
+			wantMissing: []string{"LLM_BASE_URL (must be an http:// or https:// server root with no user:password@, ?query or #fragment, without a trailing /v1)"}},
+		{name: "anthropic, a blank value refused", provider: "anthropic", baseURL: " ", wantBase: " ",
+			wantMissing: []string{"LLM_BASE_URL (must be an http:// or https:// server root with no user:password@, ?query or #fragment, without a trailing /v1)"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -108,6 +108,15 @@ func TestLoad_BaseURLForEveryProvider(t *testing.T) {
 	assert.Equal(t, "https://llm-gateway.corp.example", cfg.LLMBaseURL)
 }
 
+func TestLoad_RejectsBaseURLEmptyAfterTrim(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("LLM_PROVIDER", "anthropic")
+	t.Setenv("LLM_BASE_URL", "/")
+	v := &pkgconfig.Validator{}
+	Load(v)
+	assert.Contains(t, v.Missing(), "LLM_BASE_URL (must be an http:// or https:// server root with no user:password@, ?query or #fragment, without a trailing /v1)")
+}
+
 func TestLoad_RejectsBaseURLEndingInV1(t *testing.T) {
 	setBaseEnv(t)
 	t.Setenv("LLM_PROVIDER", "openai-compatible")

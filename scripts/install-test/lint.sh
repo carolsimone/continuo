@@ -276,7 +276,7 @@ fi
 # operator's own `services` list cannot drop it. openai-compatible has no
 # public address and needs it; a root ending in /v1 would make every request
 # /v1/v1/...; a provider outside the three the agents accept fails the schema;
-# and a services entry setting LLM_BASE_URL itself is refused. A release
+# and a services entry setting LLM_BASE_URL itself, through env or secretEnv, is refused. A release
 # without llm.baseUrl (helm upgrade --reuse-values from an older chart) renders.
 echo "--- llm: baseUrl reaches both agents; invalid LLM settings fail the render"
 if grep -q 'name: LLM_BASE_URL' "${tmp}/defaults.yaml"; then
@@ -303,6 +303,7 @@ refuse_render 'bare server root' --set 'llm.baseUrl=https://h/api?x=1'
 refuse_render 'bare server root' --set 'llm.baseUrl=https://u:p@h'
 refuse_render 'provider' --set llm.provider=grok
 refuse_render 'LLM_BASE_URL' --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"LLM_BASE_URL":"http://x:1"}}]'
+refuse_render 'secretEnv sets LLM_BASE_URL' --set-json 'services=[{"name":"agent-chat","enabled":true,"secretEnv":[{"name":"LLM_BASE_URL","ref":"llm"}]}]'
 if ! helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set llm.baseUrl=null > /dev/null; then
   echo "FAIL: a release without llm.baseUrl must render"; exit 1
 fi

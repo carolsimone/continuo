@@ -26,23 +26,33 @@ type LLMSettings struct {
 	BaseURL string
 }
 
+// invalidLLMBaseURLMessage is what LoadLLM records for a LLM_BASE_URL that is
+// set but is not a usable server root.
+const invalidLLMBaseURLMessage = "LLM_BASE_URL (must be an http:// or https:// server root with no user:password@, ?query or #fragment, without a trailing /v1)"
+
 // LoadLLM reads LLM_PROVIDER and LLM_BASE_URL. It records on v an unset or
 // unknown provider, an openai-compatible provider without a base URL, and a
-// base URL that is not an http(s) URL with a host or whose path ends in /v1:
+// base URL that is set but is not an http(s) URL with a host, or whose path
+// ends in /v1:
 // the agents add /v1/... themselves, so such a root would request /v1/v1/....
 func LoadLLM(v *Validator) LLMSettings {
+	raw := EnvOrDefault("LLM_BASE_URL", "")
 	s := LLMSettings{
 		Provider: v.Require("LLM_PROVIDER"),
-		BaseURL:  strings.TrimRight(EnvOrDefault("LLM_BASE_URL", ""), "/"),
+		BaseURL:  strings.TrimRight(raw, "/"),
 	}
 	if s.Provider != "" && !slices.Contains(acceptedLLMProviders, s.Provider) {
 		v.Add("LLM_PROVIDER (must be " + strings.Join(acceptedLLMProviders, "|") + ")")
 	}
-	if s.Provider == "openai-compatible" && s.BaseURL == "" {
-		v.Add("LLM_BASE_URL")
-	}
-	if s.BaseURL != "" && !validLLMBaseURL(s.BaseURL) {
-		v.Add("LLM_BASE_URL (must be an http:// or https:// server root with no user:password@, ?query or #fragment, without a trailing /v1)")
+	switch {
+	case raw == "":
+		if s.Provider == "openai-compatible" {
+			v.Add("LLM_BASE_URL")
+		}
+	case !validLLMBaseURL(s.BaseURL):
+		// A value set to something that normalizes to nothing (only slashes)
+		// is malformed, not unset: it must not fall back to the public address.
+		v.Add(invalidLLMBaseURLMessage)
 	}
 	return s
 }
