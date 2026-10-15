@@ -14,10 +14,10 @@ import (
 // the run uses the latest topology metadata; with a fourth it reuses the
 // metadata snapshot of that past run.
 //
-// The command reports acceptance, not completion: the state service durably
-// records the new test run and its outbox event, but if the node is absent
-// from the topology, or the model has no tests, the failure surfaces
-// asynchronously downstream.
+// The command reports acceptance, not completion: the state service plans the
+// test run and durably records it with its first dispatches. A node the live
+// release does not hold is refused (not_found), and so is a node without data
+// tests (conflict); neither creates a run.
 //
 // The initiating identity is not an argument: it comes from cfg.Actor (the
 // CONTINUO_ACTOR env var) and is forwarded as gRPC metadata. When empty, the
@@ -44,12 +44,12 @@ The initiating identity is not an argument: it is taken from the CONTINUO_ACTOR
 environment variable when set, otherwise the state service records its own
 system identity.
 
-This command reports acceptance, not completion. On success the new run and its
-event are durably recorded. If the node is not in the topology the run fails
-asynchronously. If the model has no tests defined (in the latest topology, or
-in the source run's snapshot when one is given) nothing is dispatched and the
-run finishes with status "skipped". Neither outcome is reported by this
-command: check it with "node history".
+This command reports acceptance, not completion. On success the new run is
+planned and durably recorded with its first dispatches. A node the live
+release does not hold is refused (not_found). A model with no data tests
+(in the live release, or in the source run's release when one is given) is
+refused (conflict). Neither refusal creates a run. Check the outcome of an
+accepted run with "node history".
 
 Output (stdout, JSON):
   {"run_id":string,"schedule_name":string}
