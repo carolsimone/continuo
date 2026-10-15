@@ -73,11 +73,11 @@ var (
 	// named schedule has no active row in schedule_catalog.
 	ErrScheduleNotInCatalog = errors.New("schedule not found in catalog")
 
-	// ErrTaskRowNotProjected is returned by Run.RecordTaskStatus when the
-	// task_tracker row referenced by the event does not yet exist. The
-	// adapter binding interprets this as a transient error and the message
-	// is redelivered.
-	ErrTaskRowNotProjected = errors.New("task_tracker row not yet projected")
+	// ErrTaskNotHeld is returned by Run.RecordTaskStatus when the run holds no
+	// task with the status's task id. A run's tasks are stored in the
+	// transaction that creates it, before any of them is dispatched, so such a
+	// status never becomes valid; the stream binding dead-letters it at once.
+	ErrTaskNotHeld = errors.New("the run holds no such task")
 
 	// ErrTaskNotFound is returned by Run.HasTaskAt and by TaskCollection
 	// implementations when a specific task lookup yields nothing.

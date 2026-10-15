@@ -28,9 +28,6 @@ type TaskCollection interface {
 	// genuine I/O failures.
 	LoadAttemptState(ctx context.Context, taskID uuid.UUID) (state TaskAttemptState, exists bool, err error)
 
-	// Exists checks whether a task_tracker row with the given id is present.
-	Exists(ctx context.Context, taskID uuid.UUID) (bool, error)
-
 	// HasFailed reports whether any task in the given run ended FAILED or
 	// CANCELLED — a terminal unsuccessful task. Pending and running tasks do
 	// not match. The run's finalized outcome is failed when it is true.

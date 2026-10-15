@@ -100,10 +100,6 @@ type fakeTaskStatusTaskCollection struct {
 	prevExists   bool
 	getStatusErr error
 
-	// Exists response
-	existsValue bool
-	existsErr   error
-
 	// SetStatusAndAttempt response (rowsAffected)
 	updateAffected int
 	updateErr      error
@@ -146,10 +142,6 @@ func (f *fakeTaskStatusTaskCollection) ListRunTasks(_ context.Context, _ uuid.UU
 
 func (f *fakeTaskStatusTaskCollection) MarkSkipped(_ context.Context, _ []uuid.UUID) (int, error) {
 	return 0, nil
-}
-
-func (f *fakeTaskStatusTaskCollection) Exists(_ context.Context, _ uuid.UUID) (bool, error) {
-	return f.existsValue, f.existsErr
 }
 
 func (f *fakeTaskStatusTaskCollection) SetStatusAndAttempt(_ context.Context, _ uuid.UUID, _ run.TaskStatus, _ int32) (int, error) {
@@ -358,22 +350,16 @@ func TestTaskStatusUpdated_AlreadyTerminalRunIsNoop(t *testing.T) {
 	}
 }
 
-// TestTaskStatusUpdated_ErrTaskRowNotProjectedPropagates verifies that when
-// the task row does not yet exist, RecordTaskStatus surfaces
-// run.ErrTaskRowNotProjected as a transient error. The handler must propagate
-// it (so the binding rolls back and the consumer redelivers), and SaveRun
-// must not be called.
-func TestTaskStatusUpdated_ErrTaskRowNotProjectedPropagates(t *testing.T) {
+// TestTaskStatusUpdated_ATaskTheRunDoesNotHoldFailsTheMessage verifies that a
+// status for a task the run does not hold surfaces run.ErrTaskNotHeld: the
+// handler propagates it (the binding marks it permanent) and SaveRun is not
+// called.
+func TestTaskStatusUpdated_ATaskTheRunDoesNotHoldFailsTheMessage(t *testing.T) {
 	scheduleID := uuid.New()
 
 	runRepo := &fakeTaskStatusRunRepo{stored: newRunningTaskStatusRun(scheduleID, "no-row", 2, 0)}
 	outbox := &fakeTaskStatusOutboxPub{}
-	taskColl := &fakeTaskStatusTaskCollection{
-		// GetStatus reports row not present.
-		prevExists: false,
-		// Exists confirms the row is not yet projected.
-		existsValue: false,
-	}
+	taskColl := &fakeTaskStatusTaskCollection{prevExists: false}
 	u := newTaskStatusHandlerUoW(runRepo, outbox, taskColl)
 
 	h := handlers.NewTaskStatusUpdatedHandler(pkgevents.DefaultTenantID, taskStatusTestLogger())
@@ -384,8 +370,7 @@ func TestTaskStatusUpdated_ErrTaskRowNotProjectedPropagates(t *testing.T) {
 	}, uuid.New())
 
 	require.Error(t, err)
-	assert.ErrorIs(t, err, run.ErrTaskRowNotProjected,
-		"transient missing-row error must propagate so the consumer redelivers")
+	assert.ErrorIs(t, err, run.ErrTaskNotHeld)
 	assert.False(t, runRepo.saveCalled, "SaveRun must not be called when RecordTaskStatus errors")
 	assert.Empty(t, outbox.appended)
 }
@@ -689,12 +674,12 @@ func TestTaskStatusUpdated_RecordsAVersionOnlyForAnAppliedSuccess(t *testing.T) 
 		{"a success that leaves the run open", releaseRun(2, 0), run.TaskStatusRunning, 0, 0, 1, true},
 		{"a success that finishes the run", releaseRun(1, 0), run.TaskStatusRunning, 0, 0, 1, true},
 		{"a retry that succeeds after a failed attempt", releaseRun(2, 1), run.TaskStatusFailed, 0, 1, 1, true},
-		{"a first success the task row had no status for", releaseRun(2, 0), "", 0, 0, 1, true},
+		{"a success with no running status before it", releaseRun(2, 0), run.TaskStatusPending, 0, 0, 1, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			taskColl := &fakeTaskStatusTaskCollection{
-				prevStatus: tc.prev, prevAttempt: tc.prevAttempt, prevExists: tc.prev != "", existsValue: true,
+				prevStatus: tc.prev, prevAttempt: tc.prevAttempt, prevExists: true,
 				updateAffected: tc.affected, task: orders,
 			}
 			topo := &hashTopology{hashes: map[string]string{"rel-1/raw.orders": "h-orders"}}

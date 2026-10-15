@@ -127,10 +127,6 @@ func (f *fakeTaskCollection) LoadAttemptState(_ context.Context, id uuid.UUID) (
 	s, ok := f.statuses[id]
 	return run.TaskAttemptState{Status: s, RetryCount: f.attempts[id], MaxRetries: f.maxRetries[id], NodeKey: f.keys[id]}, ok, nil
 }
-func (f *fakeTaskCollection) Exists(_ context.Context, id uuid.UUID) (bool, error) {
-	_, ok := f.statuses[id]
-	return ok, nil
-}
 func (f *fakeTaskCollection) HasFailed(_ context.Context, _ uuid.UUID) (bool, error) {
 	if !f.derived {
 		return f.hasFailed, nil
@@ -668,14 +664,23 @@ func TestRecordTaskStatus_NoOpWhenSchedulerTerminal(t *testing.T) {
 	}
 }
 
-func TestRecordTaskStatus_TransientWhenTaskRowMissing(t *testing.T) {
+// A status for a task the run does not hold is refused, and the run is left
+// as it was.
+func TestRecordTaskStatus_ATaskTheRunDoesNotHoldIsRefused(t *testing.T) {
 	ctx := context.Background()
 	tc := newFakeTaskCollection()
 	r := runningRunWithProjection(t, tc, uuid.New())
+	terminal := r.TerminalTaskCount()
 
-	_, _, err := r.RecordTaskStatus(ctx, tc, nil, uuid.New() /* not in tc.statuses */, run.TaskStatusSucceeded, 0, time.Now())
-	if err != run.ErrTaskRowNotProjected {
-		t.Fatalf("err: got %v want ErrTaskRowNotProjected", err)
+	evts, applied, err := r.RecordTaskStatus(ctx, tc, nil, uuid.New() /* not in tc.statuses */, run.TaskStatusSucceeded, 0, time.Now())
+	if !errors.Is(err, run.ErrTaskNotHeld) {
+		t.Fatalf("err: got %v want ErrTaskNotHeld", err)
+	}
+	if len(evts) != 0 || applied {
+		t.Fatalf("a refused status records nothing: events=%d applied=%v", len(evts), applied)
+	}
+	if r.TerminalTaskCount() != terminal || r.Status() != run.SchedulerStatusRunning {
+		t.Fatalf("the run moved: terminal=%d status=%s", r.TerminalTaskCount(), r.Status())
 	}
 }
 

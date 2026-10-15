@@ -43,8 +43,8 @@ func NewTaskStatusUpdatedHandler(tenantID string, logger *slog.Logger) *TaskStat
 //
 // Caller contract: u.Begin(ctx) has been called; the handler MUST NOT commit.
 // Returning nil tells the binding to commit; returning an error triggers
-// rollback. A transient error (e.g. run.ErrTaskRowNotProjected) propagates
-// so the consumer's reclaim loop retries.
+// rollback. run.ErrTaskNotHeld propagates as it is; the stream binding marks
+// it permanent.
 func (h *TaskStatusUpdatedHandler) Handle(
 	ctx context.Context,
 	u uow.UnitOfWork,

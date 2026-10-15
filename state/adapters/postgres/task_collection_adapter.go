@@ -41,10 +41,6 @@ func (a *TaskCollectionAdapter) LoadAttemptState(ctx context.Context, taskID uui
 	}, true, nil
 }
 
-func (a *TaskCollectionAdapter) Exists(ctx context.Context, taskID uuid.UUID) (bool, error) {
-	return a.repo.ExistsTx(ctx, a.tx, taskID)
-}
-
 func (a *TaskCollectionAdapter) HasFailed(ctx context.Context, runID uuid.UUID) (bool, error) {
 	return a.repo.HasFailedTaskTx(ctx, a.tx, runID)
 }

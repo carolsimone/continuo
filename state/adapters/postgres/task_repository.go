@@ -31,8 +31,6 @@ type TaskTrackerRepository interface {
 	// SetStatusAndAttemptTx writes status and retry_count for the given task,
 	// leaving a cancelled row untouched. Returns rows affected.
 	SetStatusAndAttemptTx(ctx context.Context, tx *sqlx.Tx, taskID uuid.UUID, status string, retryCount int32) (int32, error)
-	// ExistsTx reports whether a task_tracker row with the given task_id exists.
-	ExistsTx(ctx context.Context, tx *sqlx.Tx, taskID uuid.UUID) (bool, error)
 	// LoadAttemptStateTx returns the task's status, stored retry_count,
 	// max_retries and node_key, locking the row FOR UPDATE so concurrent
 	// task.status.updated deliveries for the same task serialize. found is
@@ -300,9 +298,9 @@ func (r *taskTrackerRepository) BulkCreateTx(ctx context.Context, tx *sqlx.Tx, t
 
 // SetStatusAndAttemptTx writes status and retry_count for the given task,
 // leaving a cancelled row untouched. Returns rows affected (0 if the task is
-// cancelled or the row is missing; use ExistsTx to distinguish). It applies no
-// attempt logic — the Run aggregate decides when a write is warranted under the
-// row lock taken by LoadStatusAndAttemptTx.
+// cancelled or the row is missing). It applies no attempt logic — the Run
+// aggregate decides when a write is warranted under the row lock taken by
+// LoadAttemptStateTx.
 func (r *taskTrackerRepository) SetStatusAndAttemptTx(ctx context.Context, tx *sqlx.Tx, taskID uuid.UUID, status string, retryCount int32) (int32, error) {
 	res, err := tx.ExecContext(ctx, `
 		UPDATE task_tracker
@@ -331,9 +329,7 @@ type TaskAttemptRow struct {
 
 // LoadAttemptStateTx reads the task_tracker row of taskID with FOR UPDATE, so
 // concurrent task.status.updated deliveries for the same task serialize within
-// their transactions. A missing row yields found == false and no error, so the
-// aggregate can disambiguate replay vs. not-yet-projected via its Exists
-// fallback.
+// their transactions. A missing row yields found == false and no error.
 func (r *taskTrackerRepository) LoadAttemptStateTx(ctx context.Context, tx *sqlx.Tx, taskID uuid.UUID) (TaskAttemptRow, bool, error) {
 	var row TaskAttemptRow
 	err := tx.GetContext(ctx, &row,
@@ -388,19 +384,6 @@ func (r *taskTrackerRepository) MarkSkippedTx(ctx context.Context, tx *sqlx.Tx, 
 		return 0, fmt.Errorf("mark %d tasks skipped: %w", len(taskIDs), err)
 	}
 	return n, nil
-}
-
-// ExistsTx reports whether a task_tracker row exists for the given task_id.
-func (r *taskTrackerRepository) ExistsTx(ctx context.Context, tx *sqlx.Tx, taskID uuid.UUID) (bool, error) {
-	var exists bool
-	err := tx.QueryRowContext(ctx,
-		`SELECT EXISTS(SELECT 1 FROM task_tracker WHERE task_id = $1)`,
-		taskID,
-	).Scan(&exists)
-	if err != nil {
-		return false, fmt.Errorf("exists check for task_id %s: %w", taskID, err)
-	}
-	return exists, nil
 }
 
 // HasFailedTaskTx reports whether any task_tracker row for the given schedule

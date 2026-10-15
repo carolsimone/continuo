@@ -775,9 +775,6 @@ func (f *cancelFakeTaskCollection) ListRunTasks(_ context.Context, _ uuid.UUID) 
 func (f *cancelFakeTaskCollection) MarkSkipped(_ context.Context, _ []uuid.UUID) (int, error) {
 	panic("MarkSkipped not used in cancel tests")
 }
-func (f *cancelFakeTaskCollection) Exists(_ context.Context, _ uuid.UUID) (bool, error) {
-	panic("Exists not used in cancel tests")
-}
 func (f *cancelFakeTaskCollection) SetStatusAndAttempt(_ context.Context, _ uuid.UUID, _ run.TaskStatus, _ int32) (int, error) {
 	panic("SetStatusAndAttempt not used in cancel tests")
 }

@@ -546,8 +546,7 @@ func (r *Run) Cancel(
 // delivery that made it. It does not depend on finalization: an accepted
 // success that leaves other tasks open returns no events and true.
 //
-// Returns ErrTaskRowNotProjected when the task row is not yet present; the
-// adapter binding treats this as a transient error and the consumer redelivers.
+// Returns ErrTaskNotHeld when the run holds no task with taskID.
 //
 // task.status.updated:v1 carries two messages per attempt: execution-controller's
 // job-status handler announces RUNNING once, then the terminal status once the
@@ -586,29 +585,18 @@ func (r *Run) RecordTaskStatus(
 	}
 	prev, prevAttempt := attempt.Status, attempt.RetryCount
 
-	// Guard: if the row is not present, return a transient error so the
-	// consumer redelivers after the projection arrives.
 	if !exists {
-		present, exErr := tasks.Exists(ctx, taskID)
-		if exErr != nil {
-			return nil, false, fmt.Errorf("exists check: %w", exErr)
-		}
-		if !present {
-			return nil, false, ErrTaskRowNotProjected
-		}
-		// Row reported absent by the status read but present on re-check
-		// (a concurrent insert landed between the two reads); proceed with
-		// empty prev so the new-attempt branch adopts it.
+		return nil, false, ErrTaskNotHeld
 	}
 
 	prevKnown := prev != ""
 	isTerminal := newStatus.IsTerminal()
 	prevWasTerminal := prevKnown && prev.IsTerminal()
 
-	// Order the update by attempt (retry_count). The two/three producers of
-	// task.status.updated:v1 act independently, so messages for one task can be
-	// processed in any order; the attempt number makes the projection
-	// order-independent.
+	// Order the update by attempt (retry_count). Deliveries of
+	// task.status.updated:v1 for one task can be processed in any order (a
+	// redelivery can repeat an earlier one); the attempt number makes the
+	// result order-independent.
 
 	// Older attempt — superseded. Covers both a stale RUNNING and a stale
 	// terminal left over from an attempt newer state has already moved past.
