@@ -563,7 +563,7 @@ func TestCheckStatusHandler_Handle_AllowsConcurrentCalls(t *testing.T) {
 }
 
 // TestHandleFailedPermanent verifies that a permanently failed job produces
-// 3 canonical outbox rows: task_status_updated, task_execution_recorded, node_updated.
+// 2 canonical outbox rows: task_status_updated and task_execution_recorded.
 func TestHandleFailedPermanent(t *testing.T) {
 	outbox := &jobStatusFakeOutboxRepo{}
 	handler := newHandler(&fakeK8sClient{status: failedResult()}, noopCancelledRepo())
@@ -581,8 +581,8 @@ func TestHandleFailedPermanent(t *testing.T) {
 	}
 
 	entries := outbox.entries
-	if len(entries) != 3 {
-		t.Fatalf("expected 3 outbox entries (task_status_updated + task_execution_recorded + node_updated), got %d", len(entries))
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 outbox entries (task_status_updated + task_execution_recorded), got %d", len(entries))
 	}
 
 	if got := eventTypeOf(entries, 0); got != "task_status_updated" {
@@ -591,15 +591,12 @@ func TestHandleFailedPermanent(t *testing.T) {
 	if got := eventTypeOf(entries, 1); got != "task_execution_recorded" {
 		t.Errorf("entries[1]: expected task_execution_recorded, got %q", got)
 	}
-	if got := eventTypeOf(entries, 2); got != "node_updated" {
-		t.Errorf("entries[2]: expected node_updated, got %q", got)
-	}
 }
 
 // TestHandleUnknownStatus_FailsPermanentlyWithTheBudgetSpent verifies that a
 // production task (no mode label) whose Job status is Unknown is recorded as a
-// permanent failure — task_status_updated (FAILED), task_execution_recorded and
-// node_updated (FAILED) — and that the FAILED status carries the task's retry
+// permanent failure — task_status_updated (FAILED) and task_execution_recorded —
+// and that the FAILED status carries the task's retry
 // budget, so state sees no attempts left and finalizes the run.
 func TestHandleUnknownStatus_FailsPermanentlyWithTheBudgetSpent(t *testing.T) {
 	outbox := &jobStatusFakeOutboxRepo{}
@@ -621,7 +618,7 @@ func TestHandleUnknownStatus_FailsPermanentlyWithTheBudgetSpent(t *testing.T) {
 	}
 
 	entries := outbox.entries
-	require.Equal(t, []string{"task_status_updated", "task_execution_recorded", "node_updated"}, eventTypesOf(entries))
+	require.Equal(t, []string{"task_status_updated", "task_execution_recorded"}, eventTypesOf(entries))
 
 	var statusPayload pkgevents.TaskStatusUpdated
 	require.NoError(t, json.Unmarshal(entries[0].Payload, &statusPayload))
@@ -654,7 +651,7 @@ func TestHandleUnknownStatus_ReportsTheAttemptCountWhenItExceedsTheBudget(t *tes
 	}
 
 	entries := outbox.entries
-	require.Equal(t, []string{"task_status_updated", "task_execution_recorded", "node_updated"}, eventTypesOf(entries))
+	require.Equal(t, []string{"task_status_updated", "task_execution_recorded"}, eventTypesOf(entries))
 
 	var statusPayload pkgevents.TaskStatusUpdated
 	require.NoError(t, json.Unmarshal(entries[0].Payload, &statusPayload))
@@ -916,8 +913,8 @@ func TestAbsentMaxRetriesFallsBackToTheDefaultBudget(t *testing.T) {
 				return
 			}
 			require.Empty(t, deployments.added, "no retry once the default budget is reached")
-			require.NotNil(t, findEntryByEventType(outbox.entries, "node_updated"),
-				"a permanent failure announces node_updated")
+			require.NotNil(t, findEntryByEventType(outbox.entries, "task_status_updated"),
+				"a permanent failure announces task_status_updated")
 		})
 	}
 }
@@ -944,16 +941,11 @@ func TestCheckStatusHandler_FailsPermanentlyAfter3TotalAttempts(t *testing.T) {
 	if len(entries) == 0 {
 		t.Fatal("expected outbox entries, got none")
 	}
-	// Permanent fail path produces: task_status_updated + task_execution_recorded + node_updated
-	hasNodeUpdated := false
-	for _, e := range entries {
-		if e.EventType == "node_updated" {
-			hasNodeUpdated = true
-		}
-	}
-	if !hasNodeUpdated {
-		t.Error("expected node_updated entry for permanent failure")
-	}
+	// Permanent fail path produces: task_status_updated (FAILED) + task_execution_recorded
+	require.Equal(t, []string{"task_status_updated", "task_execution_recorded"}, eventTypesOf(entries))
+	var statusPayload pkgevents.TaskStatusUpdated
+	require.NoError(t, json.Unmarshal(entries[0].Payload, &statusPayload))
+	require.Equal(t, "FAILED", statusPayload.Status)
 }
 
 func TestCheckStatusHandler_DropsOutboxWhenScheduleCancelled(t *testing.T) {
@@ -1012,10 +1004,11 @@ func TestNotFoundRetry(t *testing.T) {
 	require.Len(t, deployments.added, 1, "not_found retried as a new pending deployment")
 }
 
-// TestNotFoundPermanentFailureNotifiesOrchestrator verifies that when "Job not found" retries
-// are exhausted, handleFailedPermanent is called — which writes task_status_updated,
-// task_execution_recorded, and node_updated entries, so the orchestrator cascades failure.
-func TestNotFoundPermanentFailureNotifiesOrchestrator(t *testing.T) {
+// TestNotFoundPermanentFailureReportsTheTaskFailed verifies that when "Job not
+// found" retries are exhausted, handleFailedPermanent is called — which writes
+// task_status_updated (FAILED) on task.status.updated:v1, from which state skips
+// the task's pending descendants, and task_execution_recorded.
+func TestNotFoundPermanentFailureReportsTheTaskFailed(t *testing.T) {
 	notFoundResult := &model.JobResult{
 		Status:         model.JobStatusFailed,
 		TerminationMsg: "Job not found in Kubernetes",
@@ -1046,25 +1039,20 @@ func TestNotFoundPermanentFailureNotifiesOrchestrator(t *testing.T) {
 		eventTypes[i] = e.EventType
 	}
 
-	hasTaskStatusUpdated := findEntryByEventType(entries, "task_status_updated") != nil
-	hasNodeUpdated := findEntryByEventType(entries, "node_updated") != nil
-
-	if !hasTaskStatusUpdated {
-		t.Errorf("expected task_status_updated entry, got event_types: %v", eventTypes)
+	statusEntry := findEntryByEventType(entries, "task_status_updated")
+	if statusEntry == nil {
+		t.Fatalf("expected task_status_updated entry, got event_types: %v", eventTypes)
 	}
-	if !hasNodeUpdated {
-		t.Errorf("expected node_updated entry, got event_types: %v", eventTypes)
+	if statusEntry.StreamName != streams.TaskStatusUpdatedV1 {
+		t.Errorf("task_status_updated stream: expected %s, got %q", streams.TaskStatusUpdatedV1, statusEntry.StreamName)
 	}
-
-	// Verify the node_updated stream is correct
-	nodeEntry := findEntryByEventType(entries, "node_updated")
-	if nodeEntry != nil && nodeEntry.StreamName != streams.NodeUpdatedV1 {
-		t.Errorf("node_updated stream: expected %s, got %q", streams.NodeUpdatedV1, nodeEntry.StreamName)
+	if findEntryByEventType(entries, "node_updated") != nil {
+		t.Errorf("no node_updated entry is written, got event_types: %v", eventTypes)
 	}
 }
 
-// TestHandleSucceeded verifies that a succeeded job produces 3 canonical rows:
-// task_status_updated (SUCCEEDED), task_execution_recorded, node_updated.
+// TestHandleSucceeded verifies that a succeeded job produces 2 canonical rows:
+// task_status_updated (SUCCEEDED) and task_execution_recorded.
 func TestHandleSucceeded(t *testing.T) {
 	now := time.Now()
 	succeededResult := &model.JobResult{
@@ -1090,19 +1078,16 @@ func TestHandleSucceeded(t *testing.T) {
 	}
 
 	entries := outbox.entries
-	if len(entries) != 3 {
-		t.Fatalf("expected 3 outbox entries for succeeded job, got %d", len(entries))
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 outbox entries for succeeded job, got %d", len(entries))
 	}
 
-	// Row order: task_status_updated, task_execution_recorded, node_updated
+	// Row order: task_status_updated, task_execution_recorded
 	if got := eventTypeOf(entries, 0); got != "task_status_updated" {
 		t.Errorf("entries[0]: expected task_status_updated, got %q", got)
 	}
 	if got := eventTypeOf(entries, 1); got != "task_execution_recorded" {
 		t.Errorf("entries[1]: expected task_execution_recorded, got %q", got)
-	}
-	if got := eventTypeOf(entries, 2); got != "node_updated" {
-		t.Errorf("entries[2]: expected node_updated, got %q", got)
 	}
 
 	// Verify task_status_updated payload has SUCCEEDED
@@ -1224,7 +1209,7 @@ func TestHandleSucceeded_ParseCache(t *testing.T) {
 // TestHandle_ValidationModeLabel_RecordsOutcomeAndEmitsPerNodeResult verifies
 // that a succeeded Job carrying mode=validation records the outcome onto the
 // deployments row and emits exactly one validation.result:v1 (kind=node) row
-// (release_id/node_id from annotations) and none of the three production
+// (release_id/node_id from annotations) and none of the production
 // task-status rows. pending=1 (a sibling node still outstanding) keeps the
 // aggregate gate from also firing, so the per-node row stands alone.
 func TestHandle_ValidationModeLabel_RecordsOutcomeAndEmitsPerNodeResult(t *testing.T) {
@@ -1276,7 +1261,7 @@ func TestHandle_ValidationModeLabel_RecordsOutcomeAndEmitsPerNodeResult(t *testi
 	// Ensure no production rows leaked in.
 	for _, e := range entries {
 		switch e.EventType {
-		case "task_status_updated", "task_execution_recorded", "node_updated":
+		case "task_status_updated", "task_execution_recorded":
 			t.Errorf("unexpected production outbox row %q for validation Job", e.EventType)
 		}
 	}
@@ -1386,7 +1371,7 @@ func TestHandle_ValidationModeLabel_RunningStatus_WritesCheckK8sRepoll(t *testin
 		}
 		for _, e := range entries {
 			switch e.EventType {
-			case "task_status_updated", "task_execution_recorded", "node_updated":
+			case "task_status_updated", "task_execution_recorded":
 				t.Errorf("status %s: unexpected non-repoll row %q for running validation Job", status, e.EventType)
 			}
 			if e.StreamName == streams.ValidationResultV1 {
@@ -1592,10 +1577,10 @@ func eventTypesOf(entries []*pkgoutbox.Entry) []string {
 	return out
 }
 
-// TestHandle_ProductionModeLabel_WritesThreeProdOutboxRows_NoChange locks the
+// TestHandle_ProductionModeLabel_WritesTwoProdOutboxRows_NoChange locks the
 // production path: a Job without mode=validation (here mode=production, but a
-// missing label behaves identically) still writes the three production rows.
-func TestHandle_ProductionModeLabel_WritesThreeProdOutboxRows_NoChange(t *testing.T) {
+// missing label behaves identically) still writes the two production rows.
+func TestHandle_ProductionModeLabel_WritesTwoProdOutboxRows_NoChange(t *testing.T) {
 	now := time.Now()
 	for _, labels := range []map[string]string{
 		{"mode": "production"},
@@ -1627,17 +1612,14 @@ func TestHandle_ProductionModeLabel_WritesThreeProdOutboxRows_NoChange(t *testin
 		}
 
 		entries := outbox.entries
-		if len(entries) != 3 {
-			t.Fatalf("labels=%v: expected 3 production outbox rows, got %d", labels, len(entries))
+		if len(entries) != 2 {
+			t.Fatalf("labels=%v: expected 2 production outbox rows, got %d", labels, len(entries))
 		}
 		if got := eventTypeOf(entries, 0); got != "task_status_updated" {
 			t.Errorf("labels=%v: entries[0]: expected task_status_updated, got %q", labels, got)
 		}
 		if got := eventTypeOf(entries, 1); got != "task_execution_recorded" {
 			t.Errorf("labels=%v: entries[1]: expected task_execution_recorded, got %q", labels, got)
-		}
-		if got := eventTypeOf(entries, 2); got != "node_updated" {
-			t.Errorf("labels=%v: entries[2]: expected node_updated, got %q", labels, got)
 		}
 	}
 }
@@ -1647,7 +1629,7 @@ func TestHandle_ProductionModeLabel_WritesThreeProdOutboxRows_NoChange(t *testin
 // (ok on Succeeded / failed on Failed, release_id/node_id from annotations) onto
 // its deployments row and, this being the release's last seed, emits exactly
 // one seed_build_completed aggregate row (stream=seed.build.completed:v1) and
-// none of the three production task-status rows.
+// none of the production task-status rows.
 func TestHandle_SeedBuildModeLabel_RecordsOutcomeAndEmitsAggregateWhenComplete(t *testing.T) {
 	for _, tc := range []struct {
 		name            string
@@ -1707,7 +1689,7 @@ func TestHandle_SeedBuildModeLabel_RecordsOutcomeAndEmitsAggregateWhenComplete(t
 			// Ensure no production rows leaked in.
 			for _, e := range entries {
 				switch e.EventType {
-				case "task_status_updated", "task_execution_recorded", "node_updated":
+				case "task_status_updated", "task_execution_recorded":
 					t.Errorf("unexpected production outbox row %q for seed_build Job", e.EventType)
 				}
 			}
@@ -1766,7 +1748,7 @@ func TestHandle_SeedBuildModeLabel_SuppressesRunningAnnouncement(t *testing.T) {
 // Succeeded / failed on Failed, release_id/node_id from annotations) onto its
 // deployments row and, compile being a single root node, emits exactly one
 // compile_completed aggregate row (stream=compile.completed:v1) and none of the
-// three production task-status rows.
+// production task-status rows.
 func TestHandle_CompileModeLabel_RecordsOutcomeAndEmitsAggregateWhenComplete(t *testing.T) {
 	for _, tc := range []struct {
 		name            string
@@ -1826,7 +1808,7 @@ func TestHandle_CompileModeLabel_RecordsOutcomeAndEmitsAggregateWhenComplete(t *
 			// Ensure no production rows leaked in.
 			for _, e := range entries {
 				switch e.EventType {
-				case "task_status_updated", "task_execution_recorded", "node_updated":
+				case "task_status_updated", "task_execution_recorded":
 					t.Errorf("unexpected production outbox row %q for compile Job", e.EventType)
 				}
 			}
@@ -2022,7 +2004,7 @@ func TestHandle_CompileModeLabel_RunningStatus_WritesCheckK8sRepoll(t *testing.T
 		}
 		for _, e := range entries {
 			switch e.EventType {
-			case "task_status_updated", "task_execution_recorded", "node_updated":
+			case "task_status_updated", "task_execution_recorded":
 				t.Errorf("status %s: unexpected non-repoll row %q for running compile Job", status, e.EventType)
 			}
 			if e.StreamName == streams.CompileCompletedV1 {
@@ -2544,9 +2526,6 @@ func TestHandleSucceeded_LogIOTimeoutStillPersistsOutcome(t *testing.T) {
 	}
 	if findEntryByEventType(outbox.entries, "task_execution_recorded") == nil {
 		t.Fatal("the execution row must still be written")
-	}
-	if findEntryByEventType(outbox.entries, "node_updated") == nil {
-		t.Fatal("the node status row must still be written")
 	}
 }
 

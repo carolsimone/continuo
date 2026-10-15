@@ -593,7 +593,7 @@ func checkTicket(dep *model.Deployment, checkAfter time.Time, runningAnnounced b
 }
 
 // writeFailedAnnouncements announces a production task whose deploy failed
-// terminally: task_status_updated (FAILED) and node_updated (FAILED). A deploy
+// terminally with a task_status_updated (FAILED) row. A deploy
 // failure gets no retry Job, so the FAILED status reports the task's retry
 // budget as spent: state finalizes a run only once no failed task has attempts
 // left (retry_count < max_retries), and a lower count would hold the run open
@@ -612,13 +612,6 @@ func (d *Dispatcher) writeFailedAnnouncements(ctx context.Context, outboxRepo ou
 	if err := d.createOutbox(ctx, outboxRepo, dep, event.EventTypeTaskStatusUpdated, streams.TaskStatusUpdatedV1,
 		pkgevents.TaskStatusUpdated{TaskID: cmd.TaskID, ScheduleID: cmd.ScheduleID, Status: "FAILED", RetryCount: retryCount}); err != nil {
 		return fmt.Errorf("write FAILED task_status announcement: %w", err)
-	}
-	nodeFailed := event.NodeUpdated{
-		TaskID: cmd.TaskID, ScheduleID: cmd.ScheduleID, ScheduleName: cmd.ScheduleName,
-		ServiceName: cmd.ServiceName, SchemaName: cmd.SchemaName, TableName: cmd.TableName, Status: "FAILED",
-	}
-	if err := d.createOutbox(ctx, outboxRepo, dep, event.EventTypeNodeUpdated, streams.NodeUpdatedV1, serialization.NodeUpdatedFromDomain(nodeFailed)); err != nil {
-		return fmt.Errorf("write FAILED node_updated announcement: %w", err)
 	}
 	return nil
 }

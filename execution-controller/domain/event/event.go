@@ -10,40 +10,10 @@ type Event interface {
 const (
 	EventTypeTaskStatusUpdated     = "task_status_updated"
 	EventTypeTaskExecutionRecorded = "task_execution_recorded"
-	EventTypeNodeUpdated           = "node_updated"
 	// EventTypeCheckDelayed rows are not XADDed: the publisher writes them to
 	// the delay queue, and the promoter moves them onto check.k8s:v1 when due.
 	EventTypeCheckDelayed = "check_delayed"
 )
-
-// NodeUpdated is the payload of an execution_outbox row whose event_type is
-// "node_updated". The dispatcher writes it (status FAILED) when a deploy
-// exhausts its retry budget, so orchestrator's HandleNodeCompleted advances
-// the schedule. Stream: node.updated:v1.
-type NodeUpdated struct {
-	TaskID       string
-	ScheduleID   string
-	ScheduleName string
-	ServiceName  string
-	SchemaName   string
-	TableName    string
-	Status       string
-}
-
-func (NodeUpdated) isEvent() {}
-
-// ToMap converts NodeUpdated to a flat map for Redis stream publishing.
-func (e NodeUpdated) ToMap() map[string]interface{} {
-	return map[string]interface{}{
-		"task_id":       e.TaskID,
-		"schedule_id":   e.ScheduleID,
-		"schedule_name": e.ScheduleName,
-		"service_name":  e.ServiceName,
-		"schema_name":   e.SchemaName,
-		"table_name":    e.TableName,
-		"status":        e.Status,
-	}
-}
 
 // JobCheckRequest is the payload of a check_delayed outbox row. The Publisher
 // writes it into the delay queue (HSET payload + ZADD check_after as the

@@ -175,7 +175,6 @@ func TestDispatcher_SuccessMarksStartedAndWritesFirstCheck(t *testing.T) {
 	// only the first check_delayed ticket that starts k8s polling.
 	assert.Equal(t, 0, outboxCountByType(t, db, "task_status_updated"), "deploy path no longer announces RUNNING")
 	assert.Equal(t, 1, outboxCountByType(t, db, "check_delayed"))
-	assert.Equal(t, 0, outboxCountByType(t, db, "node_updated"))
 }
 
 // TestDispatch_WritesCheckDelayedTicketOnDeploySuccess proves a successful
@@ -316,7 +315,7 @@ func TestDispatcher_BudgetExhaustedWritesFailed(t *testing.T) {
 	require.NoError(t, db.QueryRow(`SELECT status FROM deployments WHERE id=$1`, id).Scan(&status))
 	assert.Equal(t, "failed", status)
 	assert.Equal(t, 1, outboxCountByType(t, db, "task_status_updated"))
-	assert.Equal(t, 1, outboxCountByType(t, db, "node_updated"))
+	assert.Equal(t, 0, outboxCountByType(t, db, "node_updated"), "a deploy failure announces task_status_updated only")
 	assert.Equal(t, 0, outboxCountByType(t, db, "check_delayed"))
 
 	// seedJob's task budget is 2; a deploy failure spends it.
@@ -397,7 +396,7 @@ func TestDispatcher_CorruptedJobParamsMarksFailedWithRowIdentity(t *testing.T) {
 		mustDeploymentID(t, db, taskID)).Scan(&status))
 	assert.Equal(t, "failed", status)
 	assert.Equal(t, 1, outboxCountByType(t, db, "task_status_updated"))
-	assert.Equal(t, 1, outboxCountByType(t, db, "node_updated"))
+	assert.Equal(t, 0, outboxCountByType(t, db, "node_updated"), "a deploy failure announces task_status_updated only")
 	assert.Equal(t, 0, outboxCountByType(t, db, "check_delayed"))
 
 	// The FAILED announcement must carry the row's task_id (identity fallback).

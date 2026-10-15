@@ -807,6 +807,5 @@ func TestDispatcher_NormalProduction_NonDeployable_EmitsFailedAnnouncements(t *t
 	for _, e := range outboxRepo.created {
 		eventTypes = append(eventTypes, e.EventType)
 	}
-	assert.Contains(t, eventTypes, "task_status_updated", "production failure must emit task_status_updated")
-	assert.Contains(t, eventTypes, "node_updated", "production failure must emit node_updated")
+	assert.Equal(t, []string{"task_status_updated"}, eventTypes, "production failure emits task_status_updated only")
 }

@@ -141,45 +141,6 @@ func (d ValidationDeployTaskDTO) ToDomain() command.ValidationDeployTask {
 	}
 }
 
-// NodeUpdatedDTO is the JSON shape of event.NodeUpdated as stored in an
-// execution_outbox row's payload (event_type node_updated) and read back by the
-// publisher to build the node.updated:v1 wire event.
-type NodeUpdatedDTO struct {
-	TaskID       string `json:"task_id"`
-	ScheduleID   string `json:"schedule_id"`
-	ScheduleName string `json:"schedule_name"`
-	ServiceName  string `json:"service_name"`
-	SchemaName   string `json:"schema_name"`
-	TableName    string `json:"table_name"`
-	Status       string `json:"status"`
-}
-
-// NodeUpdatedFromDomain maps a domain event to its DTO.
-func NodeUpdatedFromDomain(e event.NodeUpdated) NodeUpdatedDTO {
-	return NodeUpdatedDTO{
-		TaskID:       e.TaskID,
-		ScheduleID:   e.ScheduleID,
-		ScheduleName: e.ScheduleName,
-		ServiceName:  e.ServiceName,
-		SchemaName:   e.SchemaName,
-		TableName:    e.TableName,
-		Status:       e.Status,
-	}
-}
-
-// ToDomain maps a decoded DTO back to the domain event.
-func (d NodeUpdatedDTO) ToDomain() event.NodeUpdated {
-	return event.NodeUpdated{
-		TaskID:       d.TaskID,
-		ScheduleID:   d.ScheduleID,
-		ScheduleName: d.ScheduleName,
-		ServiceName:  d.ServiceName,
-		SchemaName:   d.SchemaName,
-		TableName:    d.TableName,
-		Status:       d.Status,
-	}
-}
-
 // JobCheckRequestDTO is the JSON shape of event.JobCheckRequest as stored in a
 // check_delayed outbox row's payload and the delay-queue ticket.
 type JobCheckRequestDTO struct {

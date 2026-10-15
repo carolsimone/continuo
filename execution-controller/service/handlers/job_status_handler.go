@@ -255,10 +255,9 @@ func taskRetryBudget(maxRetries int32) int32 {
 }
 
 // handleSucceeded handles successful job completion.
-// Writes 3 canonical outbox rows in the transaction:
+// Writes 2 canonical outbox rows in the transaction:
 //   - task_status_updated (SUCCEEDED)
 //   - task_execution_recorded
-//   - node_updated (→ node.updated:v1)
 func (h *JobStatusHandler) handleSucceeded(ctx context.Context, u uow.UnitOfWork, cmd command.CheckJobStatus, dep *model.Deployment, result *model.JobResult) error {
 	repo := u.OutboxRepo()
 
@@ -281,11 +280,6 @@ func (h *JobStatusHandler) handleSucceeded(ctx context.Context, u uow.UnitOfWork
 	// Row 2: task_execution_recorded
 	if err := h.writeTaskExecutionRecorded(ctx, repo, cmd, executionID, result, "", logS3Key, runResultsURI); err != nil {
 		return fmt.Errorf("task_execution_recorded: %w", err)
-	}
-
-	// Row 3: node_updated → node.updated:v1
-	if err := h.writeNodeUpdated(ctx, repo, cmd, "SUCCEEDED"); err != nil {
-		return fmt.Errorf("node_updated: %w", err)
 	}
 
 	h.logger.Info("Job succeeded — outbox entries created",
@@ -572,10 +566,9 @@ func (h *JobStatusHandler) fetchAndUploadLogs(
 }
 
 // handleFailedPermanent handles permanently failed jobs (retry_count >= max_retries).
-// Writes 3 canonical outbox rows in the transaction:
+// Writes 2 canonical outbox rows in the transaction:
 //   - task_status_updated (FAILED)
 //   - task_execution_recorded
-//   - node_updated (→ node.updated:v1)
 func (h *JobStatusHandler) handleFailedPermanent(ctx context.Context, u uow.UnitOfWork, cmd command.CheckJobStatus, dep *model.Deployment, result *model.JobResult, retryCount int32) error {
 	repo := u.OutboxRepo()
 	newRetryCount := retryCount
@@ -591,11 +584,6 @@ func (h *JobStatusHandler) handleFailedPermanent(ctx context.Context, u uow.Unit
 	// Row 2: task_execution_recorded
 	if err := h.writeTaskExecutionRecorded(ctx, repo, cmd, executionID, result, errorMsg, logS3Key, runResultsURI); err != nil {
 		return fmt.Errorf("task_execution_recorded: %w", err)
-	}
-
-	// Row 3: node_updated → node.updated:v1
-	if err := h.writeNodeUpdated(ctx, repo, cmd, "FAILED"); err != nil {
-		return fmt.Errorf("node_updated: %w", err)
 	}
 
 	h.logger.Warn("Job failed permanently — outbox entries created",
@@ -767,11 +755,11 @@ func (h *JobStatusHandler) handleRunning(ctx context.Context, u uow.UnitOfWork, 
 
 // handleUnknown records a production Job whose status is Unknown as a
 // permanent failure, writing the same rows as handleFailedPermanent:
-// task_status_updated (FAILED), task_execution_recorded and node_updated
-// (FAILED). An Unknown status gets no retry Job, so the FAILED status reports
-// the task's retry budget as spent: state finalizes a run only once no failed
-// task has attempts left (retry_count < max_retries), and a lower count would
-// hold the run open until the watchdog cancels it.
+// task_status_updated (FAILED) and task_execution_recorded. An Unknown status
+// gets no retry Job, so the FAILED status reports the task's retry budget as
+// spent: state finalizes a run only once no failed task has attempts left
+// (retry_count < max_retries), and a lower count would hold the run open until
+// the watchdog cancels it.
 func (h *JobStatusHandler) handleUnknown(ctx context.Context, u uow.UnitOfWork, cmd command.CheckJobStatus, dep *model.Deployment, result *model.JobResult, retryCount, maxRetries int32) error {
 	unknown := *result
 	if unknown.TerminationMsg == "" {
@@ -872,34 +860,6 @@ func (h *JobStatusHandler) writeTaskExecutionRecorded(
 		EventType:     event.EventTypeTaskExecutionRecorded,
 		Payload:       payload,
 		StreamName:    streams.TaskExecutionRecordedV1,
-	})
-}
-
-// writeNodeUpdated writes a node_updated canonical outbox row (→ node.updated:v1).
-func (h *JobStatusHandler) writeNodeUpdated(
-	ctx context.Context,
-	repo pkgoutbox.Repository,
-	cmd command.CheckJobStatus,
-	status string,
-) error {
-	payload, err := json.Marshal(serialization.NodeUpdatedFromDomain(event.NodeUpdated{
-		TaskID:       cmd.TaskID.String(),
-		ScheduleID:   cmd.ScheduleID.String(),
-		ScheduleName: cmd.ScheduleName,
-		ServiceName:  cmd.ServiceName,
-		SchemaName:   cmd.SchemaName,
-		TableName:    cmd.TableName,
-		Status:       status,
-	}))
-	if err != nil {
-		return fmt.Errorf("marshal: %w", err)
-	}
-	return repo.Create(ctx, &pkgoutbox.Entry{
-		AggregateType: "task",
-		AggregateID:   cmd.TaskID,
-		EventType:     event.EventTypeNodeUpdated,
-		Payload:       payload,
-		StreamName:    streams.NodeUpdatedV1,
 	})
 }
 

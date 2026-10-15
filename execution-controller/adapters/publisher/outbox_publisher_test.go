@@ -72,26 +72,6 @@ func TestPublisher_TaskStatusUpdated(t *testing.T) {
 	assert.Equal(t, id.String(), v["outbox_entry_id"])
 }
 
-func TestPublisher_NodeUpdatedFailed(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	r := newRedis(t)
-	pub := publisher.NewOutboxPublisher(r, logger)
-
-	payload, err := json.Marshal(serialization.NodeUpdatedFromDomain(event.NodeUpdated{
-		TaskID: "t1", ScheduleID: "s1", ScheduleName: "daily", ServiceName: "dbt",
-		SchemaName: "public", TableName: "orders", Status: "FAILED",
-	}))
-	require.NoError(t, err)
-
-	require.NoError(t, pub.Publish(context.Background(), &outbox.Entry{
-		ID: uuid.New(), EventType: "node_updated", StreamName: streams.NodeUpdatedV1, Payload: payload,
-	}))
-
-	v := lastEntryFields(t, r, streams.NodeUpdatedV1)
-	assert.Equal(t, "FAILED", v["status"])
-	assert.Equal(t, "orders", v["table_name"])
-}
-
 func TestPublisher_ValidationCompleted(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	r := newRedis(t)
@@ -208,11 +188,6 @@ func TestPublisher_ContractAllHandledEventTypes(t *testing.T) {
 			eventType:  event.EventTypeTaskExecutionRecorded,
 			streamName: streams.TaskExecutionRecordedV1,
 			payload:    mustMarshal(t, pkgevents.TaskExecutionRecorded{TaskID: "t1", JobName: "j1"}),
-		},
-		{
-			eventType:  "node_updated",
-			streamName: streams.NodeUpdatedV1,
-			payload:    mustMarshal(t, serialization.NodeUpdatedFromDomain(event.NodeUpdated{TaskID: "t1", ScheduleID: "s1", ScheduleName: "daily", ServiceName: "svc", SchemaName: "public", TableName: "tbl", Status: "SUCCEEDED"})),
 		},
 		{
 			eventType:  event.EventTypeCheckDelayed,
@@ -407,4 +382,19 @@ func TestPublish_CheckDelayed_CarriesRunningAnnounced(t *testing.T) {
 	var ck pkgevents.CheckK8s
 	require.NoError(t, json.Unmarshal([]byte(ticketPayload(t, raw2)), &ck))
 	assert.True(t, ck.RunningAnnounced, "running_announced must survive check_delayed → delay-queue conversion")
+}
+
+// TestPublisher_NodeUpdatedRowIsUnknown pins that execution-controller
+// publishes nothing to node.updated:v1: a node_updated row left in
+// execution_outbox is retried as an unknown event_type and dead-lettered when
+// its budget is spent, never written to the retired stream.
+func TestPublisher_NodeUpdatedRowIsUnknown(t *testing.T) {
+	pub := publisher.NewOutboxPublisher(newRedis(t), slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	err := pub.Publish(context.Background(), &outbox.Entry{
+		ID: uuid.New(), EventType: "node_updated", StreamName: "node.updated:v1",
+		Payload: []byte(`{"task_id":"t1","schedule_id":"s1","status":"FAILED"}`),
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown event_type")
+	assert.False(t, errors.Is(err, pkgevents.ErrPermanent), "an unknown event_type is retried, not dead-lettered at once")
 }
