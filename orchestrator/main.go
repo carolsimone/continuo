@@ -227,7 +227,7 @@ func main() {
 	// ========================================================================
 
 	queryRepo := neo4jinfra.NewOrchestratorQueryRepository(neo4jClient, logger)
-	runAggRepo := neo4jinfra.NewRunAggregateRepository(neo4jClient, logger)
+	runHistoryRepo := neo4jinfra.NewRunHistoryRepository(neo4jClient, logger)
 	cancelledSchedulesRepo := postgres.NewCancelledSchedulesRepository(pgDB)
 
 	// ========================================================================
@@ -309,7 +309,7 @@ func main() {
 	// START RUN SWEEPER
 	// ========================================================================
 
-	runSweeper := sweeper.New(runAggRepo, cfg.RunHistoryRetentionDays, cfg.RunSweeperIntervalMinutes, logger)
+	runSweeper := sweeper.New(runHistoryRepo, cfg.RunHistoryRetentionDays, cfg.RunSweeperIntervalMinutes, logger)
 	go runSweeper.Start(ctx)
 
 	// ========================================================================

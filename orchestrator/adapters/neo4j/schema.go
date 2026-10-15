@@ -12,9 +12,8 @@ import (
 // orchestrator's hot lookup paths. Each uses IF NOT EXISTS so running them on
 // every startup is safe and order-independent.
 //
-//   - run_id_unique: backs every `MATCH (:Run {run_id: …})` lookup (rehydrate,
-//     snapshot writer, all query-repository reads) and guarantees a single :Run
-//     node per run_id.
+//   - run_id_unique: guarantees a single :Run node per run_id in the run
+//     history the graph still holds, which the run sweeper deletes.
 //   - table_uid_unique: backs the `MERGE (:Table {unique_id: …})` upsert in the
 //     release-promotion swap and prevents concurrent promotions from minting
 //     duplicate :Table nodes for the same unique_id.
@@ -22,12 +21,10 @@ import (
 //     swap race-free, so two promotions arriving together on an empty graph
 //     cannot mint two current_release singletons.
 //   - table_fqn: backs the composite (service_name, schema_name, table_name)
-//     lookups used by the snapshot writer's :EXECUTES match and every
-//     fully-qualified descendant/single-table reader.
-//   - table_schedule: backs the `MATCH (:Table {schedule_name: …})` scans in
-//     LoadLatestSourceDAG and the schedule-graph query.
-//   - run_schedule: backs the schedule_name ordering of the in-flight :Run
-//     scan in ListActiveRuns.
+//     lookup of GetNode.
+//   - table_schedule: backs the `MATCH (:Table {schedule_name: …})` scan of
+//     the schedule-graph query.
+//   - run_schedule: an index on :Run.schedule_name; no read path uses it.
 //   - node_version_unique: makes (unique_id, content_hash) a code version's
 //     identity, so a redelivered release MERGEs onto the version it already
 //     wrote instead of minting a duplicate.

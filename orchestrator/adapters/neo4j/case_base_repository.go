@@ -30,7 +30,7 @@ func NewCaseBaseRepository(client Neo4jClient, logger *slog.Logger) *CaseBaseRep
 // rejection's properties (plain SET, so a proposal-created stub is completed),
 // MERGEs the signature hub and its edge, anchors [:FAILED] only when the
 // node's :Table exists (FOREACH-guarded — this writer must never mint a
-// :Table, which would leak a non-promoted node into scheduler snapshots), and
+// :Table, which would leak a non-promoted node into the schedule graph), and
 // back-links [:RESOLVED_BY] to a :NodeVersion when the fix already landed
 // before this consumer caught up. The existing-edge guard is scoped to that
 // target-label family: RESOLVED_BY is a shared relationship type, and a
@@ -183,7 +183,7 @@ func (r *CaseBaseRepository) RecordProposal(ctx context.Context, p casebase.Prop
 // MERGEd when the rejection has not landed yet, exactly as RecordProposal
 // does), and [:EDITED] from that :Proposal to each edit's :Table. The [:EDITED]
 // edge is skipped when its target :Table is absent — this writer must never
-// mint a :Table, which would leak a non-promoted node into scheduler snapshots
+// mint a :Table, which would leak a non-promoted node into the schedule graph
 // (same guard as RecordRejection's [:FAILED] anchor). A rejected outcome passes
 // empty resolved and edits, so it updates only the terminal state and draws no
 // edges. Every resolved node's [:RESOLVED_BY] edge carries the same amended

@@ -13,20 +13,6 @@ const (
 	CriticalitySecondary   Criticality = "SECONDARY"
 )
 
-type NodeStatus string
-
-const (
-	NodeStatusPending   NodeStatus = "PENDING"
-	NodeStatusRunning   NodeStatus = "RUNNING"
-	NodeStatusSucceeded NodeStatus = "SUCCEEDED"
-	NodeStatusFailed    NodeStatus = "FAILED"
-	NodeStatusSkipped   NodeStatus = "SKIPPED"
-)
-
-func (s NodeStatus) IsTerminal() bool {
-	return s == NodeStatusSucceeded || s == NodeStatusFailed || s == NodeStatusSkipped
-}
-
 type GraphEdge struct {
 	FromNodeID string // "{service_name}.{schema_name}.{table_name}"
 	ToNodeID   string
