@@ -215,6 +215,28 @@ func readReply(t *testing.T, br *bufio.Reader, req *http.Request) reply {
 	return reply{StatusCode: resp.StatusCode, Body: string(body)}
 }
 
+// startServer returns the address of a TCP server that runs serve on each
+// connection it accepts and closes the connection when serve returns.
+func startServer(t *testing.T, serve func(net.Conn)) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer c.Close()
+				serve(c)
+			}()
+		}
+	}()
+	return ln.Addr().String()
+}
+
 // connectVia sends "CONNECT target" to the proxy, followed by extra in the
 // same write, and returns the connection, its reader and the response.
 func connectVia(t *testing.T, proxyAddr, target, extra string) (net.Conn, *bufio.Reader, reply) {
@@ -374,14 +396,27 @@ func (d *countingDialer) DialContext(context.Context, string, string) (net.Conn,
 	return nil, errors.New("no dial expected")
 }
 
+// countingAuthorizer passes every call to the real Authorizer and counts the
+// calls to Connect.
+type countingAuthorizer struct {
+	*authorize.Authorizer
+	connects atomic.Int32
+}
+
+func (a *countingAuthorizer) Connect(ctx context.Context, host string, port uint16) (net.Conn, error) {
+	a.connects.Add(1)
+	return a.Authorizer.Connect(ctx, host, port)
+}
+
 // An IP-literal target never matches the allowlist, whose entries are names:
-// it is refused before any lookup or dial. The proxy runs on the real
-// Authorizer and allowlist here.
+// it is refused before Connect, so before any lookup or dial. The proxy runs
+// on the real Authorizer and allowlist here.
 func TestTunnel_RefusesIPLiteralTargets(t *testing.T) {
 	allow, err := allowlist.New([]allowlist.Entry{{Host: "api.example.com", Port: 443}})
 	require.NoError(t, err)
 	resolver, dialer := &countingResolver{}, &countingDialer{}
-	_, obs, addr := startProxy(t, authorize.New(allow, resolver, dialer), Options{})
+	auth := &countingAuthorizer{Authorizer: authorize.New(allow, resolver, dialer)}
+	_, obs, addr := startProxy(t, auth, Options{})
 
 	targets := []string{
 		"10.0.0.1:443",
@@ -398,6 +433,7 @@ func TestTunnel_RefusesIPLiteralTargets(t *testing.T) {
 		want = append(want, "denied:not_allowed")
 	}
 	assert.Equal(t, want, obs.snapshot().requests)
+	assert.Zero(t, auth.connects.Load(), "Connect is never called for an IP literal")
 	assert.Zero(t, resolver.calls.Load(), "no lookup for an IP literal")
 	assert.Zero(t, dialer.calls.Load(), "no dial for an IP literal")
 }
@@ -597,6 +633,109 @@ func TestTunnel_ClosesIdleTunnel(t *testing.T) {
 	require.Error(t, err)
 	assert.Less(t, time.Since(start), 2*time.Second, "closed by the idle timeout, not the read deadline")
 	require.Eventually(t, func() bool { return obs.snapshot().closed == 1 }, 2*time.Second, 10*time.Millisecond)
+}
+
+// The idle timeout counts from the latest byte in either direction, so a
+// tunnel that only receives keeps no overall limit: a destination sending one
+// byte every 30 ms outlives four idle timeouts and every byte arrives.
+func TestTunnel_TrickleDownKeepsTunnelOpen(t *testing.T) {
+	const idle, every, drips = 150 * time.Millisecond, 30 * time.Millisecond, 24
+	upstream := startServer(t, func(c net.Conn) {
+		for range drips {
+			if _, err := c.Write([]byte("x")); err != nil {
+				return
+			}
+			time.Sleep(every)
+		}
+	})
+	auth := &fakeAuth{targets: map[string]string{"api.example.com:443": upstream}}
+	_, _, addr := startProxy(t, auth, Options{IdleTimeout: idle})
+	conn, br, resp := connectVia(t, addr, "api.example.com:443", "")
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	start := time.Now()
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(5*time.Second)))
+	got, err := io.ReadAll(br)
+	require.NoError(t, err)
+	assert.Equal(t, strings.Repeat("x", drips), string(got), "every byte arrives")
+	assert.Greater(t, time.Since(start), 4*idle, "the tunnel outlives the idle timeout")
+}
+
+// A tunnel that only sends stays open the same way: a client sending one
+// byte every 30 ms to a destination that never replies outlives four idle
+// timeouts and every byte arrives.
+func TestTunnel_TrickleUpKeepsTunnelOpen(t *testing.T) {
+	const idle, every, drips = 150 * time.Millisecond, 30 * time.Millisecond, 24
+	received := make(chan int64, 1)
+	upstream := startServer(t, func(c net.Conn) {
+		n, _ := io.Copy(io.Discard, c)
+		received <- n
+	})
+	auth := &fakeAuth{targets: map[string]string{"api.example.com:443": upstream}}
+	_, _, addr := startProxy(t, auth, Options{IdleTimeout: idle})
+	conn, _, resp := connectVia(t, addr, "api.example.com:443", "")
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	start := time.Now()
+	for i := range drips {
+		_, err := conn.Write([]byte("y"))
+		require.NoError(t, err, "write %d", i)
+		time.Sleep(every)
+	}
+	require.NoError(t, conn.(*net.TCPConn).CloseWrite())
+	select {
+	case n := <-received:
+		assert.Equal(t, int64(drips), n, "every byte arrives")
+	case <-time.After(2 * time.Second):
+		t.Fatal("the destination never saw the end of the stream")
+	}
+	assert.Greater(t, time.Since(start), 4*idle, "the tunnel outlives the idle timeout")
+}
+
+// A client that half-closes its side after its request still gets the reply
+// the destination sends once it has read the whole request.
+func TestTunnel_HalfCloseStillCarriesTheReply(t *testing.T) {
+	upstream := startServer(t, func(c net.Conn) {
+		request, err := io.ReadAll(c)
+		if err != nil {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+		_, _ = c.Write([]byte("reply to " + string(request)))
+	})
+	auth := &fakeAuth{targets: map[string]string{"api.example.com:443": upstream}}
+	_, _, addr := startProxy(t, auth, Options{})
+	conn, br, resp := connectVia(t, addr, "api.example.com:443", "")
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	_, err := conn.Write([]byte("request"))
+	require.NoError(t, err)
+	require.NoError(t, conn.(*net.TCPConn).CloseWrite())
+
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(2*time.Second)))
+	got, err := io.ReadAll(br)
+	require.NoError(t, err)
+	assert.Equal(t, "reply to request", string(got))
+}
+
+// A client that resets its connection ends the tunnel at once, even when the
+// destination stays open and silent: its slot is free for the next CONNECT.
+func TestTunnel_ClientResetFreesItsSlot(t *testing.T) {
+	upstream := startServer(t, func(c net.Conn) {
+		_, _ = io.Copy(io.Discard, c)
+		<-t.Context().Done()
+	})
+	auth := &fakeAuth{targets: map[string]string{"api.example.com:443": upstream}}
+	p, obs, addr := startProxy(t, auth, Options{MaxTunnels: 1})
+	conn, _, resp := connectVia(t, addr, "api.example.com:443", "")
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NoError(t, conn.(*net.TCPConn).SetLinger(0))
+	require.NoError(t, conn.Close())
+
+	require.Eventually(t, func() bool { return len(p.slots) == 0 }, 2*time.Second, 10*time.Millisecond,
+		"the tunnel slot is released well before the one-minute idle timeout")
+	_, _, next := connectVia(t, addr, "api.example.com:443", "")
+	assert.Equal(t, http.StatusOK, next.StatusCode)
+	assert.NotContains(t, obs.snapshot().requests, "denied:capacity")
 }
 
 func TestServer_ClosesConnectionThatSendsNoHeaders(t *testing.T) {
