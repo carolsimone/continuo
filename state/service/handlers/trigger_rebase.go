@@ -45,9 +45,10 @@ func NewTriggerRebaseHandler(planner runstart.Planner, logger *slog.Logger) *Tri
 }
 
 // Handle creates the rebase in.SourceRunID asks for and returns (newRunID,
-// scheduleName). A live release other than in.ExpectedReleaseID is
-// runstart.ErrLiveReleaseMoved; it and every selection the planner refuses
-// are returned as is, and nothing is written.
+// scheduleName). A non-empty in.ExpectedReleaseID must name the live release,
+// or the rebase is runstart.ErrLiveReleaseMoved; an empty one skips the
+// check. That refusal and every selection the planner refuses are returned as
+// is, and nothing is written.
 func (h *TriggerRebaseHandler) Handle(ctx context.Context, u uow.UnitOfWork, in TriggerRebaseInput) (uuid.UUID, string, error) {
 	opts := runstart.RebaseOptions{IncludeChangedUpstream: in.IncludeChangedUpstream, ExpectedReleaseID: in.ExpectedReleaseID}
 	return h.creation.create(ctx, u, in.SourceRunID, in.Initiator, func(ctx context.Context, u uow.UnitOfWork, src *run.Run) (runstart.Selection, error) {

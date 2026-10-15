@@ -46,9 +46,10 @@ type Preview struct {
 	ChangedUpstream int
 	Downstream      int
 	Inherited       int
-	// Changed holds every changed node IncludeChangedUpstream adds to the
-	// execution that is upstream of another node it executes, whether or not
-	// the option is set, ordered by service, schema and table.
+	// Changed lists every changed node the widening adds that has a
+	// descendant in g — the nodes IncludeChangedUpstream adds as changed
+	// upstream — whether or not the option is set, ordered by service, schema
+	// and table.
 	Changed []ChangedNode
 }
 
@@ -191,7 +192,10 @@ func (s Rebase) changedUpstream(g topology.Graph, closure, widened map[topology.
 }
 
 // changed reports whether g and SourceGraph both hold k and what k executes
-// differs between them.
+// differs between them. Upstream nodes are compared within each graph's own
+// node set (the schedule on the live release, the source run's nodes on the
+// source release), so a node whose upstream left the schedule counts as
+// changed.
 func (s Rebase) changed(g topology.Graph, k topology.NodeKey) bool {
 	live, ok := g.Node(k)
 	if !ok {
