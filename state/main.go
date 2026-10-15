@@ -366,7 +366,8 @@ func main() {
 	// goroutine is tracked, so shutdown waits for a pass in progress.
 	lifecycleManager.Go(func() { seedReconciler.Loop(ctx, seedReconcileInterval) })
 
-	// Every entry point that creates a run plans it for the default tenant.
+	// The cron loop and the gRPC entry points plan their runs for the default
+	// tenant; the seed reconcile builds its own planner for each pass.
 	planner := runstart.Planner{TenantID: pkgevents.DefaultTenantID}
 
 	// Initialize activation handler shared by the cron loop and gRPC methods.

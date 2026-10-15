@@ -34,7 +34,7 @@ func ParseQueryModel(msg goredis.XMessage) (events.QueryModel, error) {
 	if err != nil {
 		return events.QueryModel{}, fmt.Errorf("invalid node_type: %w", err)
 	}
-	// outbox_entry_id is the orchestrator's outbox row ID, carried as
+	// outbox_entry_id is state's outbox row ID, carried as
 	// provenance on the executor outbox row. Absent or empty → uuid.Nil
 	// (dedup relies solely on (msg.ID, stream_name) in message_processing).
 	// Present-but-malformed → permanent error.
@@ -49,7 +49,7 @@ func ParseQueryModel(msg goredis.XMessage) (events.QueryModel, error) {
 	if err != nil {
 		return events.QueryModel{}, fmt.Errorf("invalid operation: %w", err)
 	}
-	// max_retries is the task's retry budget stamped by the orchestrator.
+	// max_retries is the task's retry budget stamped by state.
 	// Absent or empty → 0 (createDeployment applies the default budget).
 	// Present but not a non-negative integer → permanent error.
 	var maxRetries int32

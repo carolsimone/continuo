@@ -443,7 +443,6 @@ func (h *SchedulerHandler) TriggerSchedule(
 }
 
 // GetSchedulerInitStatus returns the initialization_status for a scheduler.
-// Used by orchestrator to guard premature finalization during re-run.
 func (h *SchedulerHandler) GetSchedulerInitStatus(ctx context.Context, req *statev1.GetSchedulerInitStatusRequest) (*statev1.GetSchedulerInitStatusResponse, error) {
 	if req.ScheduleId == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "schedule_id is required")

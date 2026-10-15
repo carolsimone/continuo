@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/carolsimone/continuo/pkg/delayqueue"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -61,14 +62,14 @@ func cleanupPostgres(t *testing.T, ctx context.Context, clients *testClients, sc
 
 // cleanupRedis removes test streams from Redis
 func cleanupRedis(t *testing.T, ctx context.Context, clients *testClients) {
-	streams := []string{
-		"query.model:v1",
-		"check.k8s:v1",
-		"schedules.loaded:v1",
-		"schedule.cancelled:v1",
+	testStreams := []string{
+		streams.QueryModelV1,
+		streams.CheckK8sV1,
+		streams.SchedulesLoadedV1,
+		streams.ScheduleCancelledV1,
 	}
 
-	for _, stream := range streams {
+	for _, stream := range testStreams {
 		clients.redisClient.Del(ctx, stream)
 	}
 

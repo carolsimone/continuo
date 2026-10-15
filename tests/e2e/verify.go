@@ -311,7 +311,7 @@ func verifyNoJobsDeployed(
 }
 
 // verifySchedulerSucceeded polls scheduler_tracker until the schedule reaches
-// 'succeeded' status, confirming orchestrator finalised the run correctly.
+// 'succeeded' status, confirming state finalised the run correctly.
 func verifySchedulerSucceeded(
 	t *testing.T,
 	ctx context.Context,
