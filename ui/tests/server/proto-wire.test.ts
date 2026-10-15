@@ -2,6 +2,9 @@ import { describe, it, expect } from 'vitest';
 import * as protoLoader from '@grpc/proto-loader';
 import * as grpc from '@grpc/grpc-js';
 import path from 'path';
+import express from 'express';
+import request from 'supertest';
+import { createSchedulersRouter } from '../../src/server/routes/schedulers';
 
 const PROTO_DIR = path.join(process.cwd(), 'proto');
 const PROTO_PATH = path.join(PROTO_DIR, 'state.proto');
@@ -28,6 +31,14 @@ function requestRoundTrip(rpcName: string, request: Record<string, unknown>): Re
   expect(method, `missing rpc method: ${rpcName}`).toBeTruthy();
   const buf: Buffer = method.requestSerialize(request);
   return method.requestDeserialize(buf) as Record<string, unknown>;
+}
+
+// stateMethod returns the production serializer/deserializer pairs of one
+// StateService RPC.
+function stateMethod(rpcName: string): Record<string, any> {
+  const method = (packageDefinition as Record<string, any>)['state.v1.StateService'][rpcName];
+  expect(method, `missing rpc method: ${rpcName}`).toBeTruthy();
+  return method;
 }
 
 // decodeResponse runs the production response deserializer of one
@@ -79,6 +90,94 @@ describe('proto wire: state.proto', () => {
     expect(resp.latest_promotion_seq).toBe('9');
     expect(resp.active_runs).toHaveLength(1);
     expect(resp.active_runs[0].run_promotion_seq).toBe('4');
+  });
+
+  it('TriggerRebase request carries include_changed_upstream as field 2 and expected_release_id as field 3', () => {
+    const method = stateMethod('TriggerRebase');
+    const bytes = [...method.requestSerialize({
+      source_run_id: 'r', include_changed_upstream: true, expected_release_id: 'x',
+    })];
+    expect(bytes).toEqual([0x0a, 1, 0x72, 0x10, 1, 0x1a, 1, 0x78]);
+    expect(requestRoundTrip('TriggerRebase', {
+      source_run_id: 'run-abc-123', include_changed_upstream: true, expected_release_id: 'rel-7',
+    })).toEqual({ source_run_id: 'run-abc-123', include_changed_upstream: true, expected_release_id: 'rel-7' });
+  });
+
+  it('PreviewRebase request carries source_run_id as field 1 and include_changed_upstream as field 2', () => {
+    const method = stateMethod('PreviewRebase');
+    expect([...method.requestSerialize({ source_run_id: 'r', include_changed_upstream: true })])
+      .toEqual([0x0a, 1, 0x72, 0x10, 1]);
+    expect(requestRoundTrip('PreviewRebase', { source_run_id: 'run-abc-123', include_changed_upstream: true }))
+      .toEqual({ source_run_id: 'run-abc-123', include_changed_upstream: true });
+  });
+
+  it('PreviewRebase response decodes every field at its contract number', () => {
+    const lastSuccess = Buffer.alloc(8);
+    lastSuccess.writeDoubleLE(252.5);
+    const changedNode = [
+      0x0a, 1, 0x63, // service_name = "c"
+      0x12, 1, 0x73, // schema_name = "s"
+      0x1a, 1, 0x74, // table_name = "t"
+      0x20, 18, // downstream = 18
+      0x29, ...lastSuccess, // last_success_seconds = 252.5 (double)
+    ];
+    const resp = decodeResponse('PreviewRebase', [
+      0x0a, 2, 0x72, 0x37, // release_id = "r7"
+      0x10, 7, // promotion_seq = 7
+      0x18, 9, // total_nodes
+      0x20, 4, // will_run
+      0x28, 1, // failed_or_skipped
+      0x30, 1, // new_nodes
+      0x38, 1, // changed_upstream
+      0x40, 1, // downstream
+      0x48, 5, // inherited
+      0x52, changedNode.length, ...changedNode, // changed_nodes
+    ]);
+    expect(resp).toEqual({
+      release_id: 'r7', promotion_seq: '7', total_nodes: 9, will_run: 4,
+      failed_or_skipped: 1, new_nodes: 1, changed_upstream: 1, downstream: 1, inherited: 5,
+      changed_nodes: [{ service_name: 'c', schema_name: 's', table_name: 't', downstream: 18, last_success_seconds: 252.5 }],
+    });
+  });
+
+  it('the rebase routes send and read the field names the proto declares', async () => {
+    // Each fake RPC passes its request and its response through the real
+    // serializers, so a field name the route misspells is dropped on the wire
+    // and the assertions below see its default instead of the value.
+    const sentRebase: Record<string, unknown>[] = [];
+    const sentPreview: Record<string, unknown>[] = [];
+    const preview = stateMethod('PreviewRebase');
+    const rebase = stateMethod('TriggerRebase');
+    const client = {
+      triggerRebase: (req: any, _md: unknown, cb: (err: unknown, res: unknown) => void) => {
+        sentRebase.push(rebase.requestDeserialize(rebase.requestSerialize(req)));
+        cb(null, {});
+      },
+      previewRebase: (req: any, cb: (err: unknown, res: unknown) => void) => {
+        sentPreview.push(preview.requestDeserialize(preview.requestSerialize(req)));
+        cb(null, preview.responseDeserialize(preview.responseSerialize({
+          release_id: 'rel-7', promotion_seq: 7, total_nodes: 2000, will_run: 41,
+          failed_or_skipped: 3, new_nodes: 1, changed_upstream: 2, downstream: 35, inherited: 1959,
+          changed_nodes: [{ service_name: 'core', schema_name: 'stg', table_name: 'orders', downstream: 18, last_success_seconds: 252.5 }],
+        })));
+      },
+    };
+    const app = express();
+    app.use(express.json());
+    app.use('/api/schedulers', createSchedulersRouter(client as any));
+
+    const got = await request(app).get('/api/schedulers/run-1/rebase-preview?include_changed_upstream=true');
+    const posted = await request(app).post('/api/schedulers/run-1/rebase')
+      .send({ include_changed_upstream: true, expected_release_id: 'rel-7' });
+
+    expect(sentPreview).toEqual([{ source_run_id: 'run-1', include_changed_upstream: true }]);
+    expect(got.body).toEqual({
+      release_id: 'rel-7', promotion_seq: 7, total_nodes: 2000, will_run: 41,
+      failed_or_skipped: 3, new_nodes: 1, changed_upstream: 2, downstream: 35, inherited: 1959,
+      changed_nodes: [{ service_name: 'core', schema_name: 'stg', table_name: 'orders', downstream: 18, last_success_seconds: 252.5 }],
+    });
+    expect(posted.status).toBe(200);
+    expect(sentRebase).toEqual([{ source_run_id: 'run-1', include_changed_upstream: true, expected_release_id: 'rel-7' }]);
   });
 
   it('StateService client constructor exists', () => {

@@ -2,18 +2,21 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
 import express from 'express';
 import * as grpc from '@grpc/grpc-js';
-import { createSchedulersRouter } from '../../src/server/routes/schedulers';
+import { createSchedulersRouter, RELEASE_MOVED_MESSAGE } from '../../src/server/routes/schedulers';
+import { MAINTENANCE_CODE, MAINTENANCE_TRAILER_KEY } from '../../src/server/maintenance';
 
 const mockListTasks = vi.fn();
 const mockGetScheduler = vi.fn();
 const mockTriggerRerun = vi.fn();
 const mockTriggerRebase = vi.fn();
+const mockPreviewRebase = vi.fn();
 
 const mockClient = {
   listTasks: mockListTasks,
   getScheduler: mockGetScheduler,
   triggerRerun: mockTriggerRerun,
   triggerRebase: mockTriggerRebase,
+  previewRebase: mockPreviewRebase,
 };
 
 const app = express();
@@ -238,34 +241,207 @@ describe('POST /api/schedulers/:id/rerun', () => {
   });
 });
 
+// grpcError builds a failed call the way @grpc/grpc-js reports one: the
+// message carries the code's prefix, details the server's own text.
+function grpcError(code: number, details: string, trailer?: Record<string, string>) {
+  const metadata = new grpc.Metadata();
+  for (const [k, v] of Object.entries(trailer ?? {})) metadata.set(k, v);
+  return Object.assign(new Error(`${code} ${grpc.status[code]}: ${details}`), { code, details, metadata });
+}
+
 describe('POST /api/schedulers/:id/rebase', () => {
   const VALID_ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
 
   beforeEach(() => { vi.clearAllMocks(); });
 
-  it('forwards source_run_id and returns 200 on success', async () => {
-    mockTriggerRebase.mockImplementation((req: any, _md: any, cb: any) => {
-      expect(req).toEqual({ source_run_id: VALID_ID });
-      cb(null);
-    });
+  it('forwards the toggle and the previewed release and returns 200', async () => {
+    mockTriggerRebase.mockImplementation((_req: any, _md: any, cb: any) => cb(null, {}));
 
-    const res = await request(app).post(`/api/schedulers/${VALID_ID}/rebase`).send({});
+    const res = await request(app)
+      .post(`/api/schedulers/${VALID_ID}/rebase`)
+      .send({ include_changed_upstream: true, expected_release_id: 'rel-7' });
 
     expect(res.status).toBe(200);
     expect(mockTriggerRebase).toHaveBeenCalledWith(
-      { source_run_id: VALID_ID },
+      { source_run_id: VALID_ID, include_changed_upstream: true, expected_release_id: 'rel-7' },
       expect.any(Object),
       expect.any(Function),
     );
   });
 
-  it('maps FAILED_PRECONDITION to 409', async () => {
-    const err = Object.assign(new Error('source not terminal'), {
-      code: grpc.status.FAILED_PRECONDITION,
-    });
-    mockTriggerRebase.mockImplementation((_req: any, _md: any, cb: any) => cb(err));
+  it('defaults an absent toggle to false and an absent release to no check', async () => {
+    mockTriggerRebase.mockImplementation((_req: any, _md: any, cb: any) => cb(null, {}));
+
+    const withEmptyBody = await request(app).post(`/api/schedulers/${VALID_ID}/rebase`).send({});
+    const withNoBody = await request(app).post(`/api/schedulers/${VALID_ID}/rebase`);
+
+    expect(withEmptyBody.status).toBe(200);
+    expect(withNoBody.status).toBe(200);
+    expect(mockTriggerRebase.mock.calls.map(c => c[0])).toEqual([
+      { source_run_id: VALID_ID, include_changed_upstream: false, expected_release_id: '' },
+      { source_run_id: VALID_ID, include_changed_upstream: false, expected_release_id: '' },
+    ]);
+  });
+
+  it.each([
+    [{ include_changed_upstream: 'true' }],
+    [{ include_changed_upstream: 1 }],
+    [{ include_changed_upstream: null }],
+    [{ expected_release_id: 7 }],
+    [{ expected_release_id: null }],
+    [[true]],
+  ])('refuses the body %j with 400 before calling state', async (body) => {
+    const res = await request(app).post(`/api/schedulers/${VALID_ID}/rebase`).send(body as object);
+
+    expect(res.status).toBe(400);
+    expect(typeof res.body.error).toBe('string');
+    expect(mockTriggerRebase).not.toHaveBeenCalled();
+  });
+
+  it('answers 409 with code release_moved when the live release is not the previewed one', async () => {
+    mockTriggerRebase.mockImplementation((_req: any, _md: any, cb: any) =>
+      cb(grpcError(grpc.status.FAILED_PRECONDITION, RELEASE_MOVED_MESSAGE)));
+
+    const res = await request(app)
+      .post(`/api/schedulers/${VALID_ID}/rebase`)
+      .send({ include_changed_upstream: true, expected_release_id: 'rel-6' });
+
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({ error: 'the live release changed; preview again', code: 'release_moved' });
+  });
+
+  it('keeps any other FAILED_PRECONDITION a plain 409 without a code', async () => {
+    mockTriggerRebase.mockImplementation((_req: any, _md: any, cb: any) =>
+      cb(grpcError(grpc.status.FAILED_PRECONDITION, 'schedule already has an active run')));
 
     const res = await request(app).post(`/api/schedulers/${VALID_ID}/rebase`).send({});
+
     expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/already has an active run/);
+    expect(res.body.code).toBeUndefined();
+  });
+
+  it('reads the release-moved message only from a FAILED_PRECONDITION', async () => {
+    mockTriggerRebase.mockImplementation((_req: any, _md: any, cb: any) =>
+      cb(grpcError(grpc.status.INTERNAL, RELEASE_MOVED_MESSAGE)));
+
+    const res = await request(app).post(`/api/schedulers/${VALID_ID}/rebase`).send({});
+
+    expect(res.status).toBe(500);
+    expect(res.body.code).toBeUndefined();
+  });
+
+  it('answers a maintenance refusal with 503 maintenance', async () => {
+    mockTriggerRebase.mockImplementation((_req: any, _md: any, cb: any) =>
+      cb(grpcError(grpc.status.UNAVAILABLE, 'maintenance', { [MAINTENANCE_TRAILER_KEY]: 'true' })));
+
+    const res = await request(app).post(`/api/schedulers/${VALID_ID}/rebase`).send({});
+
+    expect(res.status).toBe(503);
+    expect(res.body.code).toBe(MAINTENANCE_CODE);
+  });
+
+  it('maps NOT_FOUND and INVALID_ARGUMENT as every other route does', async () => {
+    mockTriggerRebase
+      .mockImplementationOnce((_req: any, _md: any, cb: any) => cb(grpcError(grpc.status.NOT_FOUND, 'source run not found')))
+      .mockImplementationOnce((_req: any, _md: any, cb: any) => cb(grpcError(grpc.status.INVALID_ARGUMENT, 'invalid source_run_id')));
+
+    const missing = await request(app).post(`/api/schedulers/${VALID_ID}/rebase`).send({});
+    const malformed = await request(app).post('/api/schedulers/not-a-uuid/rebase').send({});
+
+    expect(missing.status).toBe(404);
+    expect(malformed.status).toBe(400);
+  });
+});
+
+describe('GET /api/schedulers/:id/rebase-preview', () => {
+  const VALID_ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it('forwards the toggle and answers the preview in snake_case, the int64 as a number', async () => {
+    mockPreviewRebase.mockImplementation((_req: any, cb: any) => cb(null, {
+      release_id: 'rel-7', promotion_seq: '7', total_nodes: 2000, will_run: 41,
+      failed_or_skipped: 3, new_nodes: 1, changed_upstream: 2, downstream: 35, inherited: 1959,
+      changed_nodes: [
+        { service_name: 'billing', schema_name: 'stg', table_name: 'invoices', downstream: 3, last_success_seconds: 0 },
+        { service_name: 'core', schema_name: 'stg', table_name: 'orders', downstream: 18, last_success_seconds: 252.4 },
+      ],
+    }));
+
+    const res = await request(app).get(`/api/schedulers/${VALID_ID}/rebase-preview?include_changed_upstream=true`);
+
+    expect(res.status).toBe(200);
+    expect(mockPreviewRebase).toHaveBeenCalledWith(
+      { source_run_id: VALID_ID, include_changed_upstream: true },
+      expect.any(Function),
+    );
+    expect(res.body).toEqual({
+      release_id: 'rel-7', promotion_seq: 7, total_nodes: 2000, will_run: 41,
+      failed_or_skipped: 3, new_nodes: 1, changed_upstream: 2, downstream: 35, inherited: 1959,
+      changed_nodes: [
+        { service_name: 'billing', schema_name: 'stg', table_name: 'invoices', downstream: 3, last_success_seconds: null },
+        { service_name: 'core', schema_name: 'stg', table_name: 'orders', downstream: 18, last_success_seconds: 252.4 },
+      ],
+    });
+  });
+
+  it('answers an empty preview with zero counts and no changed nodes', async () => {
+    mockPreviewRebase.mockImplementation((_req: any, cb: any) => cb(null, {
+      release_id: 'rel-7', promotion_seq: '0', total_nodes: 0, will_run: 0,
+      failed_or_skipped: 0, new_nodes: 0, changed_upstream: 0, downstream: 0, inherited: 0,
+      changed_nodes: [],
+    }));
+
+    const res = await request(app).get(`/api/schedulers/${VALID_ID}/rebase-preview`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.promotion_seq).toBe(0);
+    expect(res.body.changed_nodes).toEqual([]);
+  });
+
+  it('reads include_changed_upstream=false and an absent toggle as false', async () => {
+    mockPreviewRebase.mockImplementation((_req: any, cb: any) => cb(null, { changed_nodes: [] }));
+
+    await request(app).get(`/api/schedulers/${VALID_ID}/rebase-preview?include_changed_upstream=false`);
+    await request(app).get(`/api/schedulers/${VALID_ID}/rebase-preview`);
+
+    expect(mockPreviewRebase.mock.calls.map(c => c[0])).toEqual([
+      { source_run_id: VALID_ID, include_changed_upstream: false },
+      { source_run_id: VALID_ID, include_changed_upstream: false },
+    ]);
+  });
+
+  it.each(['maybe', 'TRUE', '1', '', 'true&include_changed_upstream=false'])(
+    'refuses include_changed_upstream=%s with 400 before calling state',
+    async (value) => {
+      const res = await request(app).get(`/api/schedulers/${VALID_ID}/rebase-preview?include_changed_upstream=${value}`);
+
+      expect(res.status).toBe(400);
+      expect(typeof res.body.error).toBe('string');
+      expect(mockPreviewRebase).not.toHaveBeenCalled();
+    },
+  );
+
+  it('maps NOT_FOUND and FAILED_PRECONDITION to 404 and 409 with the message', async () => {
+    mockPreviewRebase
+      .mockImplementationOnce((_req: any, cb: any) => cb(grpcError(grpc.status.NOT_FOUND, 'source run not found')))
+      .mockImplementationOnce((_req: any, cb: any) => cb(grpcError(grpc.status.FAILED_PRECONDITION, 'a test run cannot be rebased')));
+
+    const missing = await request(app).get(`/api/schedulers/${VALID_ID}/rebase-preview`);
+    const refused = await request(app).get(`/api/schedulers/${VALID_ID}/rebase-preview`);
+
+    expect(missing.status).toBe(404);
+    expect(refused.status).toBe(409);
+    expect(refused.body.error).toMatch(/test run/);
+    expect(refused.body.code).toBeUndefined();
+  });
+
+  it('answers INTERNAL with 500', async () => {
+    mockPreviewRebase.mockImplementation((_req: any, cb: any) => cb(grpcError(grpc.status.INTERNAL, 'boom')));
+
+    const res = await request(app).get(`/api/schedulers/${VALID_ID}/rebase-preview`);
+
+    expect(res.status).toBe(500);
   });
 });

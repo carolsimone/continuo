@@ -48,6 +48,7 @@ describe('maintenanceGate', () => {
     ['POST', '/api/remediation/proposals/p1/pull-request'],
     ['GET', '/api/schedules'],
     ['GET', '/api/v1/releases/r1'],
+    ['GET', '/api/schedulers/abc/rebase-preview'],
   ])('lets %s %s through', async (method, path) => {
     const res = await (method === 'GET' ? request(gatedApp(true)).get(path) : request(gatedApp(true)).post(path).send({}));
     expect(res.status).toBe(200);
