@@ -7,17 +7,7 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/domain/casebase"
 	"github.com/carolsimone/continuo/orchestrator/domain/codeversion"
 	"github.com/carolsimone/continuo/orchestrator/domain/topology"
-	"github.com/google/uuid"
 )
-
-// CancelledSchedulesRepository tracks schedule IDs that have been cancelled by
-// an upstream control-plane signal. Used to short-circuit terminal-state
-// processing for already-cancelled runs.
-type CancelledSchedulesRepository interface {
-	Insert(ctx context.Context, scheduleID uuid.UUID) error
-	Exists(ctx context.Context, scheduleID uuid.UUID) (bool, error)
-	DeleteExpired(ctx context.Context, ttl time.Duration) (int64, error)
-}
 
 // ReleasePromotionRepository swaps the live Neo4j topology when a promotion is
 // newer than the one the graph holds. Implementations MUST run the whole swap in

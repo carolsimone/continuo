@@ -42,10 +42,6 @@ type Config struct {
 	RunHistoryRetentionDays   int
 	RunSweeperIntervalMinutes int
 
-	// Cancelled schedules consumer
-	CancelledSchedulesTTLHours         int
-	CancelledSchedulesSweepIntervalMin int
-
 	// Retention sweeper — purges processed orchestrator_outbox rows older than
 	// RetentionDays and message_processing dedup rows, in any state, older than
 	// the longer of RetentionDays and the 30-day replay horizon. Both knobs have
@@ -91,9 +87,6 @@ func Load(v *pkgconfig.Validator) Config {
 
 		RunHistoryRetentionDays:   envInt("RUN_HISTORY_RETENTION_DAYS", 7),
 		RunSweeperIntervalMinutes: envInt("RUN_SWEEPER_INTERVAL_MINUTES", 60),
-
-		CancelledSchedulesTTLHours:         envInt("CANCELLED_SCHEDULES_TTL_HOURS", 24),
-		CancelledSchedulesSweepIntervalMin: envInt("CANCELLED_SCHEDULES_SWEEP_INTERVAL_MINUTES", 60),
 
 		RetentionDays:             envInt("RETENTION_DAYS", 7),
 		RetentionSweepIntervalMin: envInt("RETENTION_SWEEP_INTERVAL_MINUTES", 60),

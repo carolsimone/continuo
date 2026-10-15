@@ -228,7 +228,6 @@ func main() {
 
 	queryRepo := neo4jinfra.NewOrchestratorQueryRepository(neo4jClient, logger)
 	runHistoryRepo := neo4jinfra.NewRunHistoryRepository(neo4jClient, logger)
-	cancelledSchedulesRepo := postgres.NewCancelledSchedulesRepository(pgDB)
 
 	// ========================================================================
 	// INITIALIZE OUTBOX PROCESSOR
@@ -340,28 +339,6 @@ func main() {
 			logger.Error("Watchdog Run exited with error", "error", err)
 		}
 	}()
-
-	// ========================================================================
-	// START CANCELLED SCHEDULES SWEEPER
-	// ========================================================================
-
-	lifecycleManager.Go(func() {
-		ticker := time.NewTicker(time.Duration(cfg.CancelledSchedulesSweepIntervalMin) * time.Minute)
-		defer ticker.Stop()
-		ttl := time.Duration(cfg.CancelledSchedulesTTLHours) * time.Hour
-		for {
-			select {
-			case <-ticker.C:
-				if n, err := cancelledSchedulesRepo.DeleteExpired(ctx, ttl); err != nil {
-					logger.Error("cancelled_schedules sweep failed", "error", err)
-				} else if n > 0 {
-					logger.Info("Swept expired cancelled_schedules rows", "count", n)
-				}
-			case <-ctx.Done():
-				return
-			}
-		}
-	})
 
 	// ========================================================================
 	// INITIALIZE REDIS CONSUMERS

@@ -88,10 +88,9 @@ func (w *Watchdog) tickTimeout() time.Duration {
 
 // tick asks state for the active runs with no progress since now minus
 // NoProgressFor and no running task, then cancels each by its run id. A cancel
-// writes the outbox rows that publish schedule.cancelled:v1 and
-// run.finalized:v1; the cancelled_schedules guards in the consumers absorb
-// in-flight messages. A run that reached a terminal status after the read is
-// skipped.
+// writes the outbox row that publishes schedule.cancelled:v1, from which
+// execution-controller drops the run's in-flight dispatches and Job results. A
+// run that reached a terminal status after the read is skipped.
 func (w *Watchdog) tick(parent context.Context) error {
 	ctx, cancel := context.WithTimeout(parent, w.tickTimeout())
 	defer cancel()
