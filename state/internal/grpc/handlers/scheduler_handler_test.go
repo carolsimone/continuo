@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
+
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
@@ -18,6 +20,7 @@ import (
 	schedulerpkg "github.com/carolsimone/continuo/state/internal/scheduler"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
+	"github.com/carolsimone/continuo/state/service/runstart"
 	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
@@ -186,6 +189,9 @@ func (s *stubSchedulerRepo) CancelTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID,
 	return s.cancelErr
 }
 
+// defaultPlanner plans the runs of the default tenant, as state's main does.
+var defaultPlanner = runstart.Planner{TenantID: pkgevents.DefaultTenantID}
+
 // ---- fake run repo for activation tests ----
 
 // activateFakeRunRepo satisfies repository.RunRepository for ActivateSchedule /
@@ -304,7 +310,7 @@ func dispatchedOperations(events []run.DomainEvent) []model.Operation {
 // ---- ActivateSchedule tests ----
 
 func TestSchedulerHandler_ActivateSchedule_EmptyName(t *testing.T) {
-	activate := svchandlers.NewActivateScheduleHandler(newTestLogger())
+	activate := svchandlers.NewActivateScheduleHandler(defaultPlanner, newTestLogger())
 	h := NewSchedulerHandler(nil, activate, nil, nil, noopUoWFactory(), newTestLogger())
 
 	_, err := h.ActivateSchedule(context.Background(), &statev1.ActivateScheduleRequest{})
@@ -319,7 +325,7 @@ func TestSchedulerHandler_ActivateSchedule_Success(t *testing.T) {
 	outbox := &activateFakeOutbox{}
 	_, factory := newActivateUoWFactory(catalogRepo, runRepo, outbox)
 
-	activate := svchandlers.NewActivateScheduleHandler(newTestLogger())
+	activate := svchandlers.NewActivateScheduleHandler(defaultPlanner, newTestLogger())
 	h := NewSchedulerHandler(nil, activate, nil, nil, factory, newTestLogger())
 
 	resp, err := h.ActivateSchedule(context.Background(), &statev1.ActivateScheduleRequest{
@@ -341,7 +347,7 @@ func TestActivateSchedule_ARefusedSelectionRecordsAFailedRun(t *testing.T) {
 	runRepo := &activateFakeRunRepo{}
 	outbox := &activateFakeOutbox{}
 	_, factory := newActivateUoWFactory(catalogRepo, runRepo, outbox)
-	h := NewSchedulerHandler(nil, svchandlers.NewActivateScheduleHandler(newTestLogger()), nil, nil, factory, newTestLogger())
+	h := NewSchedulerHandler(nil, svchandlers.NewActivateScheduleHandler(defaultPlanner, newTestLogger()), nil, nil, factory, newTestLogger())
 
 	resp, err := h.ActivateSchedule(context.Background(), &statev1.ActivateScheduleRequest{ScheduleName: "empty"})
 
@@ -358,7 +364,7 @@ func TestActivateSchedule_NotInCatalog_ReturnsNotFound(t *testing.T) {
 	outbox := &activateFakeOutbox{}
 	_, factory := newActivateUoWFactory(catalogRepo, runRepo, outbox)
 
-	activate := svchandlers.NewActivateScheduleHandler(newTestLogger())
+	activate := svchandlers.NewActivateScheduleHandler(defaultPlanner, newTestLogger())
 	h := NewSchedulerHandler(nil, activate, nil, nil, factory, newTestLogger())
 
 	_, err := h.ActivateSchedule(context.Background(), &statev1.ActivateScheduleRequest{
@@ -377,7 +383,7 @@ func TestActivateSchedule_AlreadyActive_ReturnsEmptyID(t *testing.T) {
 	outbox := &activateFakeOutbox{}
 	_, factory := newActivateUoWFactory(catalogRepo, runRepo, outbox)
 
-	activate := svchandlers.NewActivateScheduleHandler(newTestLogger())
+	activate := svchandlers.NewActivateScheduleHandler(defaultPlanner, newTestLogger())
 	h := NewSchedulerHandler(nil, activate, nil, nil, factory, newTestLogger())
 
 	resp, err := h.ActivateSchedule(context.Background(), &statev1.ActivateScheduleRequest{
@@ -396,7 +402,7 @@ func TestTriggerSchedule_Success(t *testing.T) {
 	outbox := &activateFakeOutbox{}
 	_, factory := newActivateUoWFactory(catalogRepo, runRepo, outbox)
 
-	activate := svchandlers.NewActivateScheduleHandler(newTestLogger())
+	activate := svchandlers.NewActivateScheduleHandler(defaultPlanner, newTestLogger())
 	h := NewSchedulerHandler(nil, activate, nil, nil, factory, newTestLogger())
 
 	resp, err := h.TriggerSchedule(context.Background(), &statev1.TriggerScheduleRequest{
@@ -427,7 +433,7 @@ func TestTriggerSchedule_Operation_ThreadsOntoTheDispatches(t *testing.T) {
 			fu, factory := newActivateUoWFactory(catalogRepo, runRepo, outbox)
 			fu.TopologyRepo.(*scheduleTopology).tested = true
 
-			h := NewSchedulerHandler(nil, svchandlers.NewActivateScheduleHandler(newTestLogger()), nil, nil, factory, newTestLogger())
+			h := NewSchedulerHandler(nil, svchandlers.NewActivateScheduleHandler(defaultPlanner, newTestLogger()), nil, nil, factory, newTestLogger())
 			resp, err := h.TriggerSchedule(context.Background(), &statev1.TriggerScheduleRequest{
 				ScheduleName: "daily",
 				Operation:    tc.operation,
@@ -448,7 +454,7 @@ func TestTriggerSchedule_Refusals(t *testing.T) {
 		runRepo := &activateFakeRunRepo{}
 		outbox := &activateFakeOutbox{}
 		_, factory := newActivateUoWFactory(catalogRepo, runRepo, outbox)
-		h := NewSchedulerHandler(nil, svchandlers.NewActivateScheduleHandler(newTestLogger()), nil, nil, factory, newTestLogger())
+		h := NewSchedulerHandler(nil, svchandlers.NewActivateScheduleHandler(defaultPlanner, newTestLogger()), nil, nil, factory, newTestLogger())
 
 		_, err := h.TriggerSchedule(context.Background(), &statev1.TriggerScheduleRequest{ScheduleName: "empty"})
 
@@ -463,7 +469,7 @@ func TestTriggerSchedule_Refusals(t *testing.T) {
 		runRepo := &activateFakeRunRepo{}
 		outbox := &activateFakeOutbox{}
 		_, factory := newActivateUoWFactory(catalogRepo, runRepo, outbox)
-		h := NewSchedulerHandler(nil, svchandlers.NewActivateScheduleHandler(newTestLogger()), nil, nil, factory, newTestLogger())
+		h := NewSchedulerHandler(nil, svchandlers.NewActivateScheduleHandler(defaultPlanner, newTestLogger()), nil, nil, factory, newTestLogger())
 
 		resp, err := h.TriggerSchedule(context.Background(), &statev1.TriggerScheduleRequest{ScheduleName: "daily", Operation: "test"})
 
@@ -484,7 +490,7 @@ func TestTriggerSchedule_InvalidOperation(t *testing.T) {
 	outbox := &activateFakeOutbox{}
 	_, factory := newActivateUoWFactory(catalogRepo, runRepo, outbox)
 
-	activate := svchandlers.NewActivateScheduleHandler(newTestLogger())
+	activate := svchandlers.NewActivateScheduleHandler(defaultPlanner, newTestLogger())
 	h := NewSchedulerHandler(nil, activate, nil, nil, factory, newTestLogger())
 
 	_, err := h.TriggerSchedule(context.Background(), &statev1.TriggerScheduleRequest{
@@ -504,7 +510,7 @@ func TestTriggerSchedule_FullRefreshRejected(t *testing.T) {
 	outbox := &activateFakeOutbox{}
 	_, factory := newActivateUoWFactory(catalogRepo, runRepo, outbox)
 
-	activate := svchandlers.NewActivateScheduleHandler(newTestLogger())
+	activate := svchandlers.NewActivateScheduleHandler(defaultPlanner, newTestLogger())
 	h := NewSchedulerHandler(nil, activate, nil, nil, factory, newTestLogger())
 
 	_, err := h.TriggerSchedule(context.Background(), &statev1.TriggerScheduleRequest{
@@ -523,7 +529,7 @@ func TestTriggerSchedule_AlreadyRunning(t *testing.T) {
 	outbox := &activateFakeOutbox{}
 	_, factory := newActivateUoWFactory(catalogRepo, runRepo, outbox)
 
-	activate := svchandlers.NewActivateScheduleHandler(newTestLogger())
+	activate := svchandlers.NewActivateScheduleHandler(defaultPlanner, newTestLogger())
 	h := NewSchedulerHandler(nil, activate, nil, nil, factory, newTestLogger())
 
 	_, err := h.TriggerSchedule(context.Background(), &statev1.TriggerScheduleRequest{
@@ -540,7 +546,7 @@ func TestTriggerSchedule_NotFound(t *testing.T) {
 	outbox := &activateFakeOutbox{}
 	_, factory := newActivateUoWFactory(catalogRepo, runRepo, outbox)
 
-	activate := svchandlers.NewActivateScheduleHandler(newTestLogger())
+	activate := svchandlers.NewActivateScheduleHandler(defaultPlanner, newTestLogger())
 	h := NewSchedulerHandler(nil, activate, nil, nil, factory, newTestLogger())
 
 	_, err := h.TriggerSchedule(context.Background(), &statev1.TriggerScheduleRequest{

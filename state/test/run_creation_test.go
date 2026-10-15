@@ -67,7 +67,7 @@ func TestRunCreation(t *testing.T) {
 	h := newBuiltHarness(db)
 	ctx := context.Background()
 	alice := identity.FromUserID("okta|alice")
-	activate := svchandlers.NewActivateScheduleHandler(h.logger)
+	activate := svchandlers.NewActivateScheduleHandler(defaultPlanner, h.logger)
 
 	h.catalog(t, "creation-daily", "creation-empty")
 	promoteRelease(t, db,
@@ -114,5 +114,47 @@ func TestRunCreation(t *testing.T) {
 		var after int
 		require.NoError(t, db.Get(&after, `SELECT count(*) FROM scheduler_tracker WHERE schedule_name = 'creation-empty'`))
 		assert.Equal(t, before, after)
+	})
+
+	t.Run("a rerun replays its source on the source's release; a rebase restarts it on the live one", func(t *testing.T) {
+		h.catalog(t, "creation-derived")
+		source := promoteRelease(t, db,
+			scheduledNode("raw", "derived_a", "dbt-model", "creation-derived"),
+			scheduledNode("mart", "derived_b", "dbt-model", "creation-derived", "raw.derived_a"))
+		srcID, _, err := activate.Handle(ctx, h.factory(), "creation-derived", run.KindTrigger, nil, alice, model.OperationRun)
+		require.NoError(t, err)
+		_, err = db.Exec(`UPDATE task_tracker SET status = CASE node_key WHEN 'raw.derived_a' THEN 'succeeded' ELSE 'failed' END, retry_count = 2 WHERE schedule_id = $1`, srcID)
+		require.NoError(t, err)
+		_, err = db.Exec(`UPDATE scheduler_tracker SET status = 'failed', completed_at = now() WHERE schedule_id = $1`, srcID)
+		require.NoError(t, err)
+		live := promoteRelease(t, db,
+			scheduledNode("raw", "derived_a", "dbt-model", "creation-derived"),
+			scheduledNode("mart", "derived_b", "dbt-model", "creation-derived", "raw.derived_a"),
+			scheduledNode("mart", "derived_c", "dbt-model", "creation-derived"))
+
+		rerunID, _, err := svchandlers.NewTriggerRerunHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), srcID, alice)
+		require.NoError(t, err)
+		assert.Equal(t, source, h.stampOf(t, rerunID))
+		assert.Equal(t, createdRun{Status: run.SchedulerStatusRunning, Planned: true, Tasks: 2, Dispatch: []string{"mart.derived_b"}}, h.created(t, rerunID))
+		_, err = db.Exec(`UPDATE scheduler_tracker SET status = 'failed', completed_at = now() WHERE schedule_id = $1`, rerunID)
+		require.NoError(t, err)
+
+		rebaseID, _, err := svchandlers.NewTriggerRebaseHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), srcID, alice)
+		require.NoError(t, err)
+		assert.Equal(t, live, h.stampOf(t, rebaseID))
+		assert.Equal(t, createdRun{Status: run.SchedulerStatusRunning, Planned: true, Tasks: 3, Dispatch: []string{"mart.derived_b", "mart.derived_c"}}, h.created(t, rebaseID))
+	})
+
+	t.Run("a rerun of a test run is refused and creates no run", func(t *testing.T) {
+		stamp := promoteSchedules(t, db, "creation-tested")
+		src := h.finished(t, "creation-tested", stamp)
+		_, err := db.Exec(`UPDATE scheduler_tracker SET operation = 'test' WHERE schedule_id = $1`, src)
+		require.NoError(t, err)
+
+		_, _, err = svchandlers.NewTriggerRerunHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), src, alice)
+		require.ErrorIs(t, err, runplan.ErrRerunOfTestUnsupported)
+		var n int
+		require.NoError(t, db.Get(&n, `SELECT count(*) FROM scheduler_tracker WHERE source_run_id = $1`, src))
+		assert.Zero(t, n)
 	})
 }

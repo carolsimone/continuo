@@ -131,7 +131,7 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 	}
 
 	// Initialize activation handler
-	activateHandler := svchandlers.NewActivateScheduleHandler(logger)
+	activateHandler := svchandlers.NewActivateScheduleHandler(defaultPlanner, logger)
 
 	// Start outbox processor in background — picks up pending outbox entries and
 	// publishes them to Redis.

@@ -87,7 +87,7 @@ func TestReleaseStamp_CreationSerialisesWithPromotionAndPruning(t *testing.T) {
 		created := make(chan uuid.UUID, 1)
 		failed := make(chan error, 1)
 		go func() {
-			id, _, err := svchandlers.NewActivateScheduleHandler(h.logger).Handle(ctx, h.factory(), "stamp-lock", run.KindTrigger, nil, alice, model.OperationRun)
+			id, _, err := svchandlers.NewActivateScheduleHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), "stamp-lock", run.KindTrigger, nil, alice, model.OperationRun)
 			if err != nil {
 				failed <- err
 				return

@@ -19,11 +19,12 @@ import (
 // RerunHandler implements the TriggerRerun gRPC method.
 //
 // TriggerRerun mints a new Run on the source's schedule (kind='rerun',
-// source_run_id=<source>). The source row stays at its terminal status as an
-// immutable historical record. The new run reuses the source's schedule_name
-// so it appears in the same schedule's history. Selection of which tasks to
-// re-execute happens in the orchestrator via Snapshot(SourcePinnedDAG{}) —
-// non-SUCCEEDED source tasks + descendants in the source's pinned :EXECUTES set.
+// source_run_id=<source>) and on the source's release. The source row stays at
+// its terminal status as an immutable historical record. The new run reuses
+// the source's schedule_name so it appears in the same schedule's history. It
+// re-executes the source's tasks that did not succeed and every descendant of
+// theirs among the source's tasks, along the source release's edges, and
+// carries every other source task over as succeeded.
 type RerunHandler struct {
 	useCase    *svchandlers.TriggerDerivedRunHandler
 	uowFactory func() uow.UnitOfWork
@@ -54,6 +55,9 @@ func (h *RerunHandler) TriggerRerun(ctx context.Context, req *statev1.TriggerRer
 
 	id, name, err := h.useCase.Handle(ctx, h.uowFactory(), srcID, identity.FromContext(ctx))
 	if err != nil {
+		if st, ok := planRefusal(err); ok {
+			return nil, st.Err()
+		}
 		switch {
 		case errors.Is(err, postgres.ErrNotFound):
 			return nil, status.Errorf(codes.NotFound, "source run not found")

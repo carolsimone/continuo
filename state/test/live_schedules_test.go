@@ -10,10 +10,14 @@ import (
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/topology"
+	"github.com/carolsimone/continuo/state/service/runstart"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/require"
 )
+
+// defaultPlanner plans the runs of the default tenant, as state's main does.
+var defaultPlanner = runstart.Planner{TenantID: pkgevents.DefaultTenantID}
 
 // scheduledNode is promotedNode in schedule.
 func scheduledNode(schema, table, nodeType, schedule string, upstream ...string) topology.NodeSpec {

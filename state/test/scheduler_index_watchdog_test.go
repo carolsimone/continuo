@@ -78,7 +78,7 @@ func newActivationStack(t *testing.T, db *sqlx.DB, names ...string) (func() uow.
 	factory := func() uow.UnitOfWork {
 		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, execRepo, catalogRepo, clk, logger)
 	}
-	return factory, svchandlers.NewActivateScheduleHandler(logger)
+	return factory, svchandlers.NewActivateScheduleHandler(defaultPlanner, logger)
 }
 
 // TestConcurrentActivation_OneWinnerOneActiveRunError fires two simultaneous

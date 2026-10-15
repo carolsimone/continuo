@@ -237,7 +237,7 @@ func TestBuiltVersions(t *testing.T) {
 		_, ok := h.loaded(t, "raw.rerun_orders")
 		require.False(t, ok, "the failed source loaded nothing")
 
-		rerunID, _, err := svchandlers.NewTriggerRerunHandler(h.logger).Handle(context.Background(), h.factory(), sourceID, identity.FromUserID("okta|alice"))
+		rerunID, _, err := svchandlers.NewTriggerRerunHandler(defaultPlanner, h.logger).Handle(context.Background(), h.factory(), sourceID, identity.FromUserID("okta|alice"))
 		require.NoError(t, err)
 		var stored struct {
 			ReleaseID *string `db:"release_id"`
@@ -248,7 +248,7 @@ func TestBuiltVersions(t *testing.T) {
 		assert.Equal(t, releaseID, *stored.ReleaseID)
 		assert.Equal(t, "rerun", stored.Kind)
 
-		rerunTask := h.dispatch(t, rerunID, "rerun_orders", "service-1:v1")
+		rerunTask := run.TaskIDFor(pkgevents.DefaultTenantID, rerunID, "raw.rerun_orders")
 		h.finish(t, rerunID, rerunTask, run.TaskStatusSucceeded)
 
 		row, ok := h.loaded(t, "raw.rerun_orders")

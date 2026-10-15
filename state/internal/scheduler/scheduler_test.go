@@ -5,8 +5,11 @@ import (
 	"os"
 	"testing"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
+
 	"github.com/carolsimone/continuo/state/internal/scheduler"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
+	"github.com/carolsimone/continuo/state/service/runstart"
 	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -65,7 +68,7 @@ func TestNewCronSchedulerWithConfig_DynamicSchedules(t *testing.T) {
 		WithSeconds: true,
 	}
 
-	activate := svchandlers.NewActivateScheduleHandler(testLogger())
+	activate := svchandlers.NewActivateScheduleHandler(defaultPlanner, testLogger())
 	// The UoW factory panics if called — the constructor test does not fire cron
 	// ticks so no activation occurs during this test.
 	uowFactory := func() uow.UnitOfWork {
@@ -81,7 +84,7 @@ func TestNewCronSchedulerWithConfig_InvalidTimezone(t *testing.T) {
 		Timezone:  "Not/ATimezone",
 		Schedules: []scheduler.ScheduleEntry{{Name: "x", Cron: "0 * * * *"}},
 	}
-	activate := svchandlers.NewActivateScheduleHandler(testLogger())
+	activate := svchandlers.NewActivateScheduleHandler(defaultPlanner, testLogger())
 	_, err := scheduler.NewCronSchedulerWithConfig(activate, nil, testLogger(), cfg, false)
 	require.Error(t, err)
 }
@@ -89,3 +92,6 @@ func TestNewCronSchedulerWithConfig_InvalidTimezone(t *testing.T) {
 func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stdout, nil))
 }
+
+// defaultPlanner plans the runs of the default tenant, as state's main does.
+var defaultPlanner = runstart.Planner{TenantID: pkgevents.DefaultTenantID}

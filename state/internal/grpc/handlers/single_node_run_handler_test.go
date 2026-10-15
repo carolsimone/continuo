@@ -3,10 +3,11 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"github.com/carolsimone/continuo/pkg/testdeps"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/carolsimone/continuo/pkg/testdeps"
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	pkgdb "github.com/carolsimone/continuo/pkg/db"
@@ -73,7 +74,7 @@ func setupSingleNodeRunFixture(t *testing.T) *singleNodeRunFixture {
 	factory := func() uow.UnitOfWork {
 		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, taskExecutionRepo, catalogRepo, clk, logger)
 	}
-	useCase := svchandlers.NewTriggerSingleNodeRunHandler(logger)
+	useCase := svchandlers.NewTriggerSingleNodeRunHandler(defaultPlanner, logger)
 	handler := NewSingleNodeRunHandler(useCase, factory, logger)
 
 	// Register the DB close via t.Cleanup (not a bare defer in the calling

@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
-	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/service/runstart"
@@ -25,12 +24,14 @@ var ErrSourceRunNotTerminal = errors.New("source run is not in a terminal state"
 // event. In stale mode (MetadataSource = snapshot_of_run) it validates that
 // the source run is terminal and carries a task at the requested node.
 type TriggerSingleNodeRunHandler struct {
-	logger *slog.Logger
+	planner runstart.Planner
+	logger  *slog.Logger
 }
 
-// NewTriggerSingleNodeRunHandler constructs the handler.
-func NewTriggerSingleNodeRunHandler(logger *slog.Logger) *TriggerSingleNodeRunHandler {
-	return &TriggerSingleNodeRunHandler{logger: logger}
+// NewTriggerSingleNodeRunHandler constructs the handler; planner plans its
+// runs.
+func NewTriggerSingleNodeRunHandler(planner runstart.Planner, logger *slog.Logger) *TriggerSingleNodeRunHandler {
+	return &TriggerSingleNodeRunHandler{planner: planner, logger: logger}
 }
 
 // TriggerSingleNodeRunInput holds the parameters for Handle.
@@ -82,7 +83,7 @@ func (h *TriggerSingleNodeRunHandler) Handle(ctx context.Context, u uow.UnitOfWo
 	scheduleName := "single-node-run-" + strings.ReplaceAll(id.String(), "-", "")[:8]
 	stamp := sourceStamp
 	if in.MetadataSource != run.MetadataSourceSnapshotOfRun {
-		live, err := runstart.Planner{TenantID: pkgevents.DefaultTenantID}.LiveStamp(ctx, u)
+		live, err := h.planner.LiveStamp(ctx, u)
 		if err != nil {
 			return uuid.Nil, "", err
 		}

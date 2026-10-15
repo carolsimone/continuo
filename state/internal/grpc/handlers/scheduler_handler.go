@@ -9,7 +9,6 @@ import (
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
-	"github.com/carolsimone/continuo/state/domain/runplan"
 	schedulerpkg "github.com/carolsimone/continuo/state/internal/scheduler"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
@@ -427,11 +426,12 @@ func (h *SchedulerHandler) TriggerSchedule(
 	u := h.uowFactory()
 	id, outcome, err := h.activate.Handle(ctx, u, req.ScheduleName, run.KindTrigger, nil, identity.FromContext(ctx), operation)
 	if err != nil {
+		if st, ok := planRefusal(err); ok {
+			return nil, st.Err()
+		}
 		switch {
 		case errors.Is(err, run.ErrScheduleNotInCatalog):
 			return nil, status.Errorf(codes.NotFound, "schedule %q not in catalog", req.ScheduleName)
-		case errors.Is(err, runplan.ErrEmptySelection), errors.Is(err, runplan.ErrInvalidNodeType):
-			return nil, status.Errorf(codes.FailedPrecondition, "schedule %q cannot run: %v", req.ScheduleName, err)
 		default:
 			return nil, status.Errorf(codes.Internal, "trigger: %v", err)
 		}

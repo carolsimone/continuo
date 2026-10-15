@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 
-	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/policy"
@@ -15,9 +14,10 @@ import (
 )
 
 // triggerDerivedConfig captures everything that distinguishes a rerun trigger
-// from a rebase trigger. The use-case body (eligibility → policy → atomic
-// SaveRun+outbox) is identical; only the source-eligibility predicate, the run
-// Kind, and the log label differ, so they are supplied per kind.
+// from a rebase trigger. The use-case body (eligibility → policy → select →
+// create, plan and dispatch in one transaction) is identical; only the
+// source-eligibility predicate, the selection, the run Kind and the log label
+// differ, so they are supplied per kind.
 type triggerDerivedConfig struct {
 	// kind is the derived-run kind minted by NewDerivedRun (KindRerun |
 	// KindRebase).
@@ -26,53 +26,58 @@ type triggerDerivedConfig struct {
 	// (CanBeRerunSource / CanBeRebaseSource); it returns the kind-specific
 	// "nothing to do" sentinel so the gRPC adapter can distinguish the paths.
 	eligible func(ctx context.Context, src *run.Run, tasks run.TaskCollection) error
-	// stampOf is the release stamp the derived run runs on, given its source:
-	// a rerun replays the source's release; a rebase runs on the live one,
-	// read through u inside the creating transaction.
-	stampOf func(ctx context.Context, u uow.UnitOfWork, src *run.Run) (run.ReleaseStamp, error)
+	// selectRun chooses the derived run's tasks and the release it runs on: a
+	// rerun replays the source on the source's release; a rebase restarts it
+	// on the live one.
+	selectRun func(ctx context.Context, p runstart.Planner, u uow.UnitOfWork, src *run.Run) (runstart.Selection, error)
 	// logLabel is the human label used in the success log line.
 	logLabel string
 }
 
 // TriggerDerivedRunHandler is the use case behind both the TriggerRerun and
 // TriggerRebase gRPC methods. It enforces eligibility on the source Run via the
-// aggregate and writes a new derived Run atomically with its outbox event. The
-// only per-trigger variation lives in the triggerDerivedConfig it is
-// constructed with.
+// aggregate, then creates the derived run, stores its tasks and dispatches the
+// ready ones in one transaction. The only per-trigger variation lives in the
+// triggerDerivedConfig it is constructed with.
 type TriggerDerivedRunHandler struct {
-	policy policy.SchedulePolicy
-	logger *slog.Logger
-	cfg    triggerDerivedConfig
+	policy  policy.SchedulePolicy
+	planner runstart.Planner
+	logger  *slog.Logger
+	cfg     triggerDerivedConfig
 }
 
-// NewTriggerRerunHandler constructs the handler wired for the rerun trigger.
-func NewTriggerRerunHandler(logger *slog.Logger) *TriggerDerivedRunHandler {
+// NewTriggerRerunHandler constructs the handler wired for the rerun trigger;
+// planner plans its runs.
+func NewTriggerRerunHandler(planner runstart.Planner, logger *slog.Logger) *TriggerDerivedRunHandler {
 	return &TriggerDerivedRunHandler{
-		logger: logger,
+		planner: planner,
+		logger:  logger,
 		cfg: triggerDerivedConfig{
 			kind: run.KindRerun,
 			eligible: func(ctx context.Context, src *run.Run, tasks run.TaskCollection) error {
 				return src.CanBeRerunSource(ctx, tasks)
 			},
-			stampOf: func(_ context.Context, _ uow.UnitOfWork, src *run.Run) (run.ReleaseStamp, error) {
-				return src.Release(), nil
+			selectRun: func(ctx context.Context, p runstart.Planner, u uow.UnitOfWork, src *run.Run) (runstart.Selection, error) {
+				return p.Rerun(ctx, u, src)
 			},
 			logLabel: "Rerun triggered",
 		},
 	}
 }
 
-// NewTriggerRebaseHandler constructs the handler wired for the rebase trigger.
-func NewTriggerRebaseHandler(logger *slog.Logger) *TriggerDerivedRunHandler {
+// NewTriggerRebaseHandler constructs the handler wired for the rebase trigger;
+// planner plans its runs.
+func NewTriggerRebaseHandler(planner runstart.Planner, logger *slog.Logger) *TriggerDerivedRunHandler {
 	return &TriggerDerivedRunHandler{
-		logger: logger,
+		planner: planner,
+		logger:  logger,
 		cfg: triggerDerivedConfig{
 			kind: run.KindRebase,
 			eligible: func(ctx context.Context, src *run.Run, tasks run.TaskCollection) error {
 				return src.CanBeRebaseSource(ctx, tasks)
 			},
-			stampOf: func(ctx context.Context, u uow.UnitOfWork, _ *run.Run) (run.ReleaseStamp, error) {
-				return runstart.Planner{TenantID: pkgevents.DefaultTenantID}.LiveStamp(ctx, u)
+			selectRun: func(ctx context.Context, p runstart.Planner, u uow.UnitOfWork, src *run.Run) (runstart.Selection, error) {
+				return p.Rebase(ctx, u, src)
 			},
 			logLabel: "Rebase triggered",
 		},
@@ -80,7 +85,9 @@ func NewTriggerRebaseHandler(logger *slog.Logger) *TriggerDerivedRunHandler {
 }
 
 // Handle synthesises a fresh derived Run from a source. Returns
-// (newRunID, scheduleName).
+// (newRunID, scheduleName). A selection the planner refuses (a source that
+// names no release, a test source, nothing to execute again) is returned as
+// is, and nothing is written.
 func (h *TriggerDerivedRunHandler) Handle(ctx context.Context, u uow.UnitOfWork, sourceID uuid.UUID, initiator identity.Identity) (uuid.UUID, string, error) {
 	src, err := u.Run().GetRun(ctx, sourceID)
 	if err != nil {
@@ -103,25 +110,26 @@ func (h *TriggerDerivedRunHandler) Handle(ctx context.Context, u uow.UnitOfWork,
 		}
 	}()
 
-	stamp, err := h.cfg.stampOf(ctx, u, src)
+	sel, err := h.cfg.selectRun(ctx, h.planner, u, src)
 	if err != nil {
 		return uuid.Nil, "", err
 	}
-	newRun, evt, err := run.NewDerivedRun(src.ScheduleName(), h.cfg.kind, sourceID, stamp, initiator.UserID, src.Operation(), u.Clock().Now())
+	newRun, _, err := run.NewDerivedRun(src.ScheduleName(), h.cfg.kind, sourceID, sel.Stamp, initiator.UserID, src.Operation(), u.Clock().Now())
 	if err != nil {
 		return uuid.Nil, "", err
 	}
 	if err := u.Run().SaveRun(ctx, newRun); err != nil {
 		return uuid.Nil, "", fmt.Errorf("save: %w", err)
 	}
-	if err := u.Outbox().Append(ctx, []run.DomainEvent{evt}, uuid.Nil); err != nil {
-		return uuid.Nil, "", fmt.Errorf("outbox: %w", err)
+	if err := h.planner.Start(ctx, u, newRun, sel, uuid.Nil); err != nil {
+		return uuid.Nil, "", err
 	}
 	if err := u.Commit(); err != nil {
 		return uuid.Nil, "", fmt.Errorf("commit: %w", err)
 	}
 	committed = true
 
-	h.logger.Info(h.cfg.logLabel, "new_run_id", newRun.ScheduleID(), "schedule_name", newRun.ScheduleName(), "source_run_id", sourceID)
+	h.logger.Info(h.cfg.logLabel, "new_run_id", newRun.ScheduleID(), "schedule_name", newRun.ScheduleName(), "source_run_id", sourceID,
+		"release_id", sel.Stamp.ReleaseID, "tasks", len(sel.Plan.Tasks), "dispatched", len(sel.Plan.Ready))
 	return newRun.ScheduleID(), newRun.ScheduleName(), nil
 }

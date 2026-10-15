@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
-	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/policy"
@@ -45,9 +44,9 @@ type ActivateScheduleHandler struct {
 	logger  *slog.Logger
 }
 
-// NewActivateScheduleHandler constructs the handler for the default tenant.
-func NewActivateScheduleHandler(logger *slog.Logger) *ActivateScheduleHandler {
-	return &ActivateScheduleHandler{planner: runstart.Planner{TenantID: pkgevents.DefaultTenantID}, logger: logger}
+// NewActivateScheduleHandler constructs the handler; planner plans its runs.
+func NewActivateScheduleHandler(planner runstart.Planner, logger *slog.Logger) *ActivateScheduleHandler {
+	return &ActivateScheduleHandler{planner: planner, logger: logger}
 }
 
 // Handle runs the activation use case. The catalog existence and active-run
