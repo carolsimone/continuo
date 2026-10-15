@@ -33,6 +33,7 @@ const (
 	StateService_TriggerRerun_FullMethodName             = "/state.v1.StateService/TriggerRerun"
 	StateService_TriggerSingleNodeRun_FullMethodName     = "/state.v1.StateService/TriggerSingleNodeRun"
 	StateService_TriggerRebase_FullMethodName            = "/state.v1.StateService/TriggerRebase"
+	StateService_PreviewRebase_FullMethodName            = "/state.v1.StateService/PreviewRebase"
 	StateService_ListNodeRuns_FullMethodName             = "/state.v1.StateService/ListNodeRuns"
 	StateService_ListNodes_FullMethodName                = "/state.v1.StateService/ListNodes"
 	StateService_ListNodeNames_FullMethodName            = "/state.v1.StateService/ListNodeNames"
@@ -102,10 +103,16 @@ type StateServiceClient interface {
 	//	                      data tests.
 	TriggerSingleNodeRun(ctx context.Context, in *TriggerSingleNodeRunRequest, opts ...grpc.CallOption) (*TriggerSingleNodeRunResponse, error)
 	// TriggerRebase creates a new run on the source's schedule and the live
-	// release that re-executes everything that didn't succeed in the source
-	// (failed/cancelled/skipped), descendants of those, plus nodes of the live
-	// schedule the source never ran. SUCCEEDED tasks from the source are
-	// inherited. The new run reuses the source's schedule_name.
+	// release that restarts the source from its failure. It re-executes the
+	// source's tasks that did not succeed (failed/cancelled/skipped) whose node
+	// the live schedule still holds, the live schedule's nodes the source never
+	// ran, every descendant of those and, with include_changed_upstream, every
+	// changed node upstream of anything it re-executes, until no changed
+	// ancestor is left out. A node is changed when its content_hash, node_type,
+	// secret_ref or upstream nodes differ between the source's release and the
+	// live one; image_tag alone is not a change. Every other source success is
+	// inherited. The new run reuses the source's schedule_name. A non-empty
+	// expected_release_id must name the live release.
 	// Errors:
 	//
 	//	INVALID_ARGUMENT — empty or malformed source_run_id.
@@ -114,8 +121,20 @@ type StateServiceClient interface {
 	//	                      zero non-SUCCEEDED tasks; OR an active run already
 	//	                      exists on the source's schedule_name; OR the
 	//	                      source names no release, is a test run, or leaves
-	//	                      nothing to re-execute.
+	//	                      nothing to re-execute; OR the live release is not
+	//	                      expected_release_id (message "the live release
+	//	                      changed; preview again").
 	TriggerRebase(ctx context.Context, in *TriggerRebaseRequest, opts ...grpc.CallOption) (*TriggerRebaseResponse, error)
+	// PreviewRebase reports what TriggerRebase would run for the same
+	// source_run_id and include_changed_upstream on the live release, without
+	// creating a run: the live release, how many nodes run and why, and the
+	// changed upstream nodes with what each feeds and its last successful
+	// duration. changed_nodes lists every changed upstream node the option
+	// would add, whether or not include_changed_upstream is set. Maintenance
+	// mode does not refuse it.
+	// Errors: as TriggerRebase, except that an active run on the schedule does
+	// not refuse a preview and no release is compared.
+	PreviewRebase(ctx context.Context, in *PreviewRebaseRequest, opts ...grpc.CallOption) (*PreviewRebaseResponse, error)
 	// ListNodeRuns returns the most recent task instances for a node, ordered by
 	// scheduler_tracker.created_at DESC. Identity fields are required; limit is
 	// capped server-side at 50 (0 uses the default of 50).
@@ -304,6 +323,16 @@ func (c *stateServiceClient) TriggerRebase(ctx context.Context, in *TriggerRebas
 	return out, nil
 }
 
+func (c *stateServiceClient) PreviewRebase(ctx context.Context, in *PreviewRebaseRequest, opts ...grpc.CallOption) (*PreviewRebaseResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PreviewRebaseResponse)
+	err := c.cc.Invoke(ctx, StateService_PreviewRebase_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *stateServiceClient) ListNodeRuns(ctx context.Context, in *ListNodeRunsRequest, opts ...grpc.CallOption) (*ListNodeRunsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListNodeRunsResponse)
@@ -452,10 +481,16 @@ type StateServiceServer interface {
 	//	                      data tests.
 	TriggerSingleNodeRun(context.Context, *TriggerSingleNodeRunRequest) (*TriggerSingleNodeRunResponse, error)
 	// TriggerRebase creates a new run on the source's schedule and the live
-	// release that re-executes everything that didn't succeed in the source
-	// (failed/cancelled/skipped), descendants of those, plus nodes of the live
-	// schedule the source never ran. SUCCEEDED tasks from the source are
-	// inherited. The new run reuses the source's schedule_name.
+	// release that restarts the source from its failure. It re-executes the
+	// source's tasks that did not succeed (failed/cancelled/skipped) whose node
+	// the live schedule still holds, the live schedule's nodes the source never
+	// ran, every descendant of those and, with include_changed_upstream, every
+	// changed node upstream of anything it re-executes, until no changed
+	// ancestor is left out. A node is changed when its content_hash, node_type,
+	// secret_ref or upstream nodes differ between the source's release and the
+	// live one; image_tag alone is not a change. Every other source success is
+	// inherited. The new run reuses the source's schedule_name. A non-empty
+	// expected_release_id must name the live release.
 	// Errors:
 	//
 	//	INVALID_ARGUMENT — empty or malformed source_run_id.
@@ -464,8 +499,20 @@ type StateServiceServer interface {
 	//	                      zero non-SUCCEEDED tasks; OR an active run already
 	//	                      exists on the source's schedule_name; OR the
 	//	                      source names no release, is a test run, or leaves
-	//	                      nothing to re-execute.
+	//	                      nothing to re-execute; OR the live release is not
+	//	                      expected_release_id (message "the live release
+	//	                      changed; preview again").
 	TriggerRebase(context.Context, *TriggerRebaseRequest) (*TriggerRebaseResponse, error)
+	// PreviewRebase reports what TriggerRebase would run for the same
+	// source_run_id and include_changed_upstream on the live release, without
+	// creating a run: the live release, how many nodes run and why, and the
+	// changed upstream nodes with what each feeds and its last successful
+	// duration. changed_nodes lists every changed upstream node the option
+	// would add, whether or not include_changed_upstream is set. Maintenance
+	// mode does not refuse it.
+	// Errors: as TriggerRebase, except that an active run on the schedule does
+	// not refuse a preview and no release is compared.
+	PreviewRebase(context.Context, *PreviewRebaseRequest) (*PreviewRebaseResponse, error)
 	// ListNodeRuns returns the most recent task instances for a node, ordered by
 	// scheduler_tracker.created_at DESC. Identity fields are required; limit is
 	// capped server-side at 50 (0 uses the default of 50).
@@ -555,6 +602,9 @@ func (UnimplementedStateServiceServer) TriggerSingleNodeRun(context.Context, *Tr
 }
 func (UnimplementedStateServiceServer) TriggerRebase(context.Context, *TriggerRebaseRequest) (*TriggerRebaseResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method TriggerRebase not implemented")
+}
+func (UnimplementedStateServiceServer) PreviewRebase(context.Context, *PreviewRebaseRequest) (*PreviewRebaseResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PreviewRebase not implemented")
 }
 func (UnimplementedStateServiceServer) ListNodeRuns(context.Context, *ListNodeRunsRequest) (*ListNodeRunsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListNodeRuns not implemented")
@@ -856,6 +906,24 @@ func _StateService_TriggerRebase_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _StateService_PreviewRebase_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PreviewRebaseRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StateServiceServer).PreviewRebase(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StateService_PreviewRebase_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StateServiceServer).PreviewRebase(ctx, req.(*PreviewRebaseRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _StateService_ListNodeRuns_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListNodeRunsRequest)
 	if err := dec(in); err != nil {
@@ -1080,6 +1148,10 @@ var StateService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "TriggerRebase",
 			Handler:    _StateService_TriggerRebase_Handler,
+		},
+		{
+			MethodName: "PreviewRebase",
+			Handler:    _StateService_PreviewRebase_Handler,
 		},
 		{
 			MethodName: "ListNodeRuns",

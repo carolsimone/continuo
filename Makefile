@@ -319,6 +319,8 @@ guards: bench-test
 	diff orchestrator/proto/orchestrator/v1/orchestrator.proto ui/proto/orchestrator/v1/orchestrator.proto
 	diff orchestrator/proto/orchestrator/v1/orchestrator.proto cli/proto/orchestrator/v1/orchestrator.proto
 	diff state/proto/state/v1/state.proto cli/proto/state/v1/state.proto
+	cmp state/proto/state/v1/state.pb.go cli/proto/state/v1/state.pb.go
+	cmp state/proto/state/v1/state_grpc.pb.go cli/proto/state/v1/state_grpc.pb.go
 
 .PHONY: stack-up
 stack-up:

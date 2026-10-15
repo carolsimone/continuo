@@ -67,10 +67,16 @@ service StateService {
       returns (TriggerSingleNodeRunResponse);
 
   // TriggerRebase creates a new run on the source's schedule and the live
-  // release that re-executes everything that didn't succeed in the source
-  // (failed/cancelled/skipped), descendants of those, plus nodes of the live
-  // schedule the source never ran. SUCCEEDED tasks from the source are
-  // inherited. The new run reuses the source's schedule_name.
+  // release that restarts the source from its failure. It re-executes the
+  // source's tasks that did not succeed (failed/cancelled/skipped) whose node
+  // the live schedule still holds, the live schedule's nodes the source never
+  // ran, every descendant of those and, with include_changed_upstream, every
+  // changed node upstream of anything it re-executes, until no changed
+  // ancestor is left out. A node is changed when its content_hash, node_type,
+  // secret_ref or upstream nodes differ between the source's release and the
+  // live one; image_tag alone is not a change. Every other source success is
+  // inherited. The new run reuses the source's schedule_name. A non-empty
+  // expected_release_id must name the live release.
   // Errors:
   //   INVALID_ARGUMENT — empty or malformed source_run_id.
   //   NOT_FOUND — source_run_id doesn't exist in scheduler_tracker.
@@ -78,8 +84,21 @@ service StateService {
   //                         zero non-SUCCEEDED tasks; OR an active run already
   //                         exists on the source's schedule_name; OR the
   //                         source names no release, is a test run, or leaves
-  //                         nothing to re-execute.
+  //                         nothing to re-execute; OR the live release is not
+  //                         expected_release_id (message "the live release
+  //                         changed; preview again").
   rpc TriggerRebase(TriggerRebaseRequest) returns (TriggerRebaseResponse);
+
+  // PreviewRebase reports what TriggerRebase would run for the same
+  // source_run_id and include_changed_upstream on the live release, without
+  // creating a run: the live release, how many nodes run and why, and the
+  // changed upstream nodes with what each feeds and its last successful
+  // duration. changed_nodes lists every changed upstream node the option
+  // would add, whether or not include_changed_upstream is set. Maintenance
+  // mode does not refuse it.
+  // Errors: as TriggerRebase, except that an active run on the schedule does
+  // not refuse a preview and no release is compared.
+  rpc PreviewRebase(PreviewRebaseRequest) returns (PreviewRebaseResponse);
 
   // ListNodeRuns returns the most recent task instances for a node, ordered by
   // scheduler_tracker.created_at DESC. Identity fields are required; limit is
@@ -387,12 +406,41 @@ message TriggerSingleNodeRunResponse {
 }
 
 message TriggerRebaseRequest {
-  string source_run_id = 1;  // schedule_id of the failed/cancelled run to rebase from
+  string source_run_id            = 1;  // schedule_id of the failed/cancelled run to rebase from
+  bool   include_changed_upstream = 2;  // also re-execute the changed nodes upstream of what re-executes
+  string expected_release_id      = 3;  // the live release the caller previewed; "" skips the check
 }
 
 message TriggerRebaseResponse {
   string run_id        = 1;  // schedule_id of the new rebase run
   string schedule_name = 2;  // copied verbatim from source's schedule_name
+}
+
+message PreviewRebaseRequest {
+  string source_run_id            = 1;  // schedule_id of the failed/cancelled run to rebase from
+  bool   include_changed_upstream = 2;  // as TriggerRebaseRequest.include_changed_upstream
+}
+
+// ChangedUpstreamNode is a changed node upstream of what a rebase re-executes.
+message ChangedUpstreamNode {
+  string service_name         = 1;
+  string schema_name          = 2;
+  string table_name           = 3;
+  int32  downstream           = 4;  // nodes below it in the live schedule
+  double last_success_seconds = 5;  // execution_time_seconds of its latest successful run; 0 when it has none
+}
+
+message PreviewRebaseResponse {
+  string release_id        = 1;  // the live release previewed; send it as TriggerRebaseRequest.expected_release_id
+  int64  promotion_seq     = 2;  // that release's promotion_seq
+  int32  total_nodes       = 3;  // tasks of the rebase: re-executed plus inherited
+  int32  will_run          = 4;  // tasks it re-executes: the sum of the four counts below
+  int32  failed_or_skipped = 5;  // source tasks that did not succeed
+  int32  new_nodes         = 6;  // live schedule nodes the source never ran
+  int32  changed_upstream  = 7;  // changed upstream nodes it re-executes; 0 without include_changed_upstream
+  int32  downstream        = 8;  // every other re-executed node, each below one counted above
+  int32  inherited         = 9;  // source successes carried over
+  repeated ChangedUpstreamNode changed_nodes = 10;  // ordered by service, schema, table
 }
 
 message ListNodeRunsRequest {
