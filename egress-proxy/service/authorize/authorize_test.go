@@ -100,6 +100,8 @@ func TestAuthorize_AddressCheck(t *testing.T) {
 		{"IPv4-mapped private refused", []string{"::ffff:10.0.0.5"}, false, ReasonPrivateAddress},
 		{"NAT64 private refused", []string{"64:ff9b::a00:5"}, false, ReasonPrivateAddress},
 		{"metadata refused even when private is allowed", []string{"169.254.169.254"}, true, ReasonMetadata},
+		{"link-local refused even when private is allowed", []string{"169.254.170.23"}, true, ReasonPrivateAddress},
+		{"Alibaba metadata refused even when private is allowed", []string{"100.100.100.200"}, true, ReasonMetadata},
 		{"NAT64 metadata refused", []string{"64:ff9b::a9fe:a9fe"}, true, ReasonMetadata},
 		{"loopback refused even when private is allowed", []string{"127.0.0.1"}, true, ReasonPrivateAddress},
 		{"unspecified refused even when private is allowed", []string{"0.0.0.0"}, true, ReasonPrivateAddress},

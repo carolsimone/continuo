@@ -607,10 +607,12 @@ services:
       # continuo CLI subprocess inherits, are the stack's own services and
       # bypass it. stub-llm is deliberately absent from NO_PROXY: it is an
       # allowlisted egress destination. The Go module hosts are listed so
-      # `go run` in this container can still fetch modules.
+      # `go run` in this container can still fetch modules. minio is the S3
+      # endpoint agent-chat is given when its archive is enabled; it is the
+      # stack's own service and bypasses the proxy.
       - HTTP_PROXY=http://egress-proxy:3128
       - HTTPS_PROXY=http://egress-proxy:3128
-      - NO_PROXY=localhost,127.0.0.1,::1,postgres,redis,state,orchestrator,dead-letter-controller,proxy.golang.org,sum.golang.org,storage.googleapis.com
+      - NO_PROXY=localhost,127.0.0.1,::1,postgres,redis,state,orchestrator,dead-letter-controller,proxy.golang.org,sum.golang.org,storage.googleapis.com,minio
     ports:
       - "8091:8091"
       - "50053:50053"
