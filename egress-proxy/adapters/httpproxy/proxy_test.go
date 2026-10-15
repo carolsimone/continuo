@@ -60,10 +60,17 @@ func (f *fakeAuth) Connect(ctx context.Context, host string, port uint16) (net.C
 // dial is cancelled. It also gives up when the test ends, so a proxy that
 // never cancels the context fails the test instead of hanging it.
 func blockUntilCancelled(t *testing.T, entered chan struct{}) func(context.Context, string) (net.Conn, error) {
+	return connectUntilCancelled(t, entered, make(chan struct{}))
+}
+
+// connectUntilCancelled is blockUntilCancelled that also closes ended once
+// its context has ended.
+func connectUntilCancelled(t *testing.T, entered, ended chan struct{}) func(context.Context, string) (net.Conn, error) {
 	return func(ctx context.Context, target string) (net.Conn, error) {
 		close(entered)
 		select {
 		case <-ctx.Done():
+			close(ended)
 		case <-t.Context().Done():
 			return nil, errors.New("the test ended before Connect was cancelled")
 		}
@@ -143,6 +150,13 @@ func (s *syncBuffer) entries(t *testing.T) []map[string]any {
 	return out
 }
 
+// logged reports whether a log line with message msg has been written.
+func (s *syncBuffer) logged(msg string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return strings.Contains(s.buf.String(), `"msg":"`+msg+`"`)
+}
+
 func startProxy(t *testing.T, auth Authorizer, opts Options) (*Proxy, *fakeObserver, string) {
 	t.Helper()
 	return startProxyLogging(t, auth, opts, slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -161,15 +175,31 @@ func startProxyLogging(t *testing.T, auth Authorizer, opts Options, logger *slog
 	}
 	obs := &fakeObserver{}
 	p := New(auth, obs, logger, opts)
-	addr, err := p.Listen(0)
+	// The test proxy listens on loopback alone. A listener on every
+	// interface, as Listen opens, can share its port with another process's
+	// loopback listener on some systems, which then receives the test's
+	// connections.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
+	p.listener = ln
 	go func() { _ = p.Serve() }()
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		_ = p.Shutdown(ctx)
 	})
-	return p, obs, net.JoinHostPort("127.0.0.1", strconv.Itoa(addr.(*net.TCPAddr).Port))
+	return p, obs, ln.Addr().String()
+}
+
+func TestListen_ListensOnEveryInterface(t *testing.T) {
+	p := New(&fakeAuth{}, &fakeObserver{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Options{MaxTunnels: 1})
+	addr, err := p.Listen(0)
+	require.NoError(t, err)
+	defer p.listener.Close()
+	tcp, ok := addr.(*net.TCPAddr)
+	require.True(t, ok)
+	assert.True(t, tcp.IP.IsUnspecified(), "listening on %s", tcp)
+	assert.NotZero(t, tcp.Port)
 }
 
 // startEcho returns the address of a TCP server that echoes every byte.
@@ -261,25 +291,46 @@ func sendConnect(t *testing.T, proxyAddr, target string) net.Conn {
 	return c
 }
 
-// rawRequest sends text to the proxy and returns the response.
-func rawRequest(t *testing.T, proxyAddr, text string) reply {
+// exchange sends text to the proxy and returns the response's header, and
+// its status and body read in full. The exchange fails the test after five
+// seconds rather than hang it.
+func exchange(t *testing.T, proxyAddr, text string) (http.Header, reply) {
 	t.Helper()
 	c, err := net.Dial("tcp", proxyAddr)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = c.Close() })
+	require.NoError(t, c.SetDeadline(time.Now().Add(5*time.Second)))
 	_, err = io.WriteString(c, text)
 	require.NoError(t, err)
-	return readReply(t, bufio.NewReader(c), nil)
+	resp, err := http.ReadResponse(bufio.NewReader(c), nil)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	return resp.Header, reply{StatusCode: resp.StatusCode, Body: string(body)}
+}
+
+// rawRequest sends text to the proxy and returns the response.
+func rawRequest(t *testing.T, proxyAddr, text string) reply {
+	t.Helper()
+	_, r := exchange(t, proxyAddr, text)
+	return r
+}
+
+// awaitClosed fails the test unless ch is closed within two seconds.
+func awaitClosed(t *testing.T, ch <-chan struct{}, what string) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting: " + what)
+	}
 }
 
 // waitFor fails the test unless ch is closed within two seconds.
 func waitFor(t *testing.T, ch <-chan struct{}) {
 	t.Helper()
-	select {
-	case <-ch:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for Connect to be called")
-	}
+	awaitClosed(t, ch, "Connect to be called")
 }
 
 // shutdown runs p.Shutdown with the given grace and fails the test unless it

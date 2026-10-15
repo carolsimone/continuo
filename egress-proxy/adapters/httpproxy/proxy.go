@@ -13,6 +13,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -95,13 +96,14 @@ func New(auth Authorizer, obs ports.Observer, logger *slog.Logger, opts Options)
 		cancelRequests: cancelRequests,
 		tunnels:        map[*tunnel]struct{}{},
 	}
-	p.forwarder = newForwarder(auth, p.forwardFailed)
+	errorLog := slog.NewLogLogger(logger.Handler(), slog.LevelWarn)
+	p.forwarder = newForwarder(auth, p.forwardFailed, errorLog)
 	p.server = &http.Server{
 		Handler:           http.HandlerFunc(p.serve),
 		ReadHeaderTimeout: opts.HeaderTimeout,
 		IdleTimeout:       opts.IdleTimeout,
 		BaseContext:       func(net.Listener) context.Context { return requests },
-		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelWarn),
+		ErrorLog:          errorLog,
 	}
 	return p
 }
@@ -128,7 +130,8 @@ func (p *Proxy) Serve() error {
 // Shutdown stops accepting requests and waits for forwarded requests and open
 // tunnels to finish. When ctx ends first, it cancels every request still
 // being served, a Connect in flight among them, closes the open tunnels and
-// waits for their handlers to return, which they do at once. It returns ctx's
+// waits for their handlers to return, which they do at once. Last, it closes
+// the connections to destinations kept open for reuse. It returns ctx's
 // error when a request other than an open tunnel was still being served as
 // ctx ended.
 func (p *Proxy) Shutdown(ctx context.Context) error {
@@ -148,6 +151,7 @@ func (p *Proxy) Shutdown(ctx context.Context) error {
 		<-done
 	}
 	p.cancelRequests()
+	p.closeIdleUpstreams()
 	return err
 }
 
@@ -272,11 +276,15 @@ func splitHostPort(hostport string) (string, uint16, error) {
 	return host, uint16(port), nil
 }
 
-// urlPort is the port of an http:// URL: the explicit one, or 80.
-func urlPort(u *url.URL) (uint16, error) {
-	if u.Port() == "" {
-		return 80, nil
+// urlTarget returns the host and port of an http:// URL: its explicit port,
+// or 80 when its authority names none. An empty host, and an empty, zero or
+// out-of-range port, are errors.
+func urlTarget(u *url.URL) (string, uint16, error) {
+	if !strings.HasSuffix(u.Host, ":") && u.Port() == "" {
+		if u.Hostname() == "" {
+			return "", 0, fmt.Errorf("no host in %q", u.Host)
+		}
+		return u.Hostname(), 80, nil
 	}
-	_, port, err := splitHostPort(u.Host)
-	return port, err
+	return splitHostPort(u.Host)
 }
