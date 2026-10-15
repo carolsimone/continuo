@@ -168,7 +168,7 @@ kubectl -n continuo rollout restart deploy/agent-chat
 `llm.provider` defaults to `anthropic` and `llm.model` to `claude-haiku-4-5`. For
 OpenAI add `--set llm.provider=openai --set llm.model=<model>`. For any server
 that speaks OpenAI's chat-completions API (Mistral, OpenRouter, Groq, or vLLM/Ollama
-you host) add
+you host; chart 0.12.0 or later) add
 `--set llm.provider=openai-compatible --set llm.baseUrl=<root> --set llm.model=<model>`,
 where `<root>` is the server's address without `/v1`, for example
 `https://api.mistral.ai` or `http://vllm.ai.svc:8000`. Once the pod restarts,
