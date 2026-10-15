@@ -3,6 +3,7 @@ package httpproxy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"log/slog"
@@ -136,19 +137,24 @@ func asksForUpgrade(h http.Header) bool {
 }
 
 // forward carries an absolute-form http:// request to an allowlisted host and
-// streams the reply back. It records the request once: as denied when a check
-// or the connection fails, as allowed with its bytes once the destination has
-// answered, even when the reply then breaks off, and not at all when the
-// request ends before an answer because its client left or the shutdown
-// grace ended.
+// streams the reply back. It holds one of the slots CONNECT tunnels share and
+// is counted among the handlers Shutdown waits for.
 func (p *Proxy) forward(w http.ResponseWriter, r *http.Request) {
+	if !p.enter() {
+		p.cancelled(r, r.URL.Host, 0, "the proxy is shutting down")
+		closeWithoutReply(w)
+		return
+	}
+	defer p.open.Done()
+
 	host, port, err := urlTarget(r.URL)
 	if err != nil {
 		p.refuse(w, r, r.URL.Host, 0, http.StatusBadRequest, ReasonBadRequest, err.Error())
 		return
 	}
-	// A protocol switch would turn the request into a connection no tunnel
-	// limit or count applies to, so it is refused before anything is sent.
+	// A protocol switch would turn the request into a two-way byte stream
+	// outside the tunnel handling and its idle rule, so it is refused before
+	// anything is sent.
 	if asksForUpgrade(r.Header) {
 		p.refuse(w, r, host, port, http.StatusMethodNotAllowed, ReasonUnsupported, "protocol upgrades are not forwarded")
 		return
@@ -157,15 +163,45 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request) {
 		p.refuse(w, r, host, port, http.StatusForbidden, string(authorize.ReasonNotAllowed), "host and port are not on the allowlist")
 		return
 	}
-	body := &countingBody{ReadCloser: r.Body}
-	r.Body = body
+	if !p.takeSlot(w, r, host, port) {
+		return
+	}
+	defer p.releaseSlot()
+	p.carry(w, r, host, port)
+}
+
+// carry forwards an admitted request and records it once: as denied when the
+// connection fails or no byte moves before the reply's headers, as allowed
+// with its bytes once the destination has answered, even when the reply then
+// breaks off, and not at all when the request ends before an answer because
+// its client left or the shutdown grace ended.
+//
+// A request no byte has crossed, either way, for the idle timeout is ended:
+// its outbound request is cancelled, which closes the destination's
+// connection, and the client connection's deadlines are set in the past, so
+// a read of a stalled upload or a write to a client that stopped reading
+// returns at once.
+func (p *Proxy) carry(w http.ResponseWriter, r *http.Request, host string, port uint16) {
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	client := http.NewResponseController(w)
 	rec := &recorder{ResponseWriter: w}
+	rec.idle = startIdleTimer(p.opts.IdleTimeout, func() {
+		rec.expired.Store(true)
+		_ = client.SetReadDeadline(longAgo)
+		_ = client.SetWriteDeadline(longAgo)
+		cancel()
+	})
+	body := &countingBody{ReadCloser: r.Body, touch: rec.idle.touch}
+	r = r.WithContext(ctx)
+	r.Body = body
 	start := time.Now()
 	completed := false
 	// ReverseProxy panics with http.ErrAbortHandler when the reply breaks off
 	// after its headers were sent. The request is recorded here, as that
 	// panic passes on to the server, which closes the client connection.
 	defer func() {
+		rec.idle.stop()
 		if rec.failed {
 			return
 		}
@@ -182,19 +218,37 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request) {
 			slog.String("duration", time.Since(start).String()),
 			slog.Int64("bytes_up", up),
 			slog.Int64("bytes_down", down),
-			slog.Bool("aborted", !completed))
+			slog.Bool("aborted", !completed),
+			slog.Bool("idle_timeout", rec.expired.Load()))
 	}()
 	p.forwarder.ServeHTTP(rec, r)
 	completed = true
 }
 
 // forwardFailed answers a forwarded request the transport could not carry, or
-// whose reply was refused, and marks it so forward records nothing more.
+// whose reply was refused, and marks it so carry records nothing more. Every
+// such failure comes before the reply's headers. A request the idle timeout
+// ended is answered 504 upstream_error and its client connection closed;
+// any other failure is classified by upstreamFailed.
 func (p *Proxy) forwardFailed(w http.ResponseWriter, r *http.Request, err error) {
-	if rec, ok := w.(*recorder); ok {
-		rec.failed = true
-	}
 	host, port, _ := urlTarget(r.URL)
+	rec, ok := w.(*recorder)
+	if !ok {
+		p.upstreamFailed(w, r, host, port, err)
+		return
+	}
+	rec.failed = true
+	// Once stop returns the idle timeout has fired or never will.
+	rec.idle.stop()
+	if rec.expired.Load() {
+		// The idle timeout set the client connection's write deadline in the
+		// past; the reply gets one idle timeout to be written.
+		_ = http.NewResponseController(rec.ResponseWriter).SetWriteDeadline(time.Now().Add(p.opts.IdleTimeout))
+		rec.Header().Set("Connection", "close")
+		p.refuse(rec, r, host, port, http.StatusGatewayTimeout, ReasonUpstreamError,
+			fmt.Sprintf("no byte moved either way for %s", p.opts.IdleTimeout))
+		return
+	}
 	p.upstreamFailed(w, r, host, port, err)
 }
 
@@ -207,21 +261,28 @@ func (p *Proxy) closeIdleUpstreams() {
 }
 
 // recorder notes a forwarded reply's status and body bytes, and whether
-// forwarding failed. Unwrap lets ReverseProxy flush through it, and lets the
+// forwarding failed. Each status and each chunk of body the destination sends
+// counts as progress for the idle timeout as it arrives, before it is written
+// to the client, so a write blocked on a client that stopped reading lets the
+// timeout run. Unwrap lets ReverseProxy flush through it, and lets the
 // failure path take over the client connection.
 type recorder struct {
 	http.ResponseWriter
-	status int
-	n      int64
-	failed bool
+	idle    *idleTimer
+	expired atomic.Bool // the idle timeout ended the request
+	status  int
+	n       int64
+	failed  bool
 }
 
 func (r *recorder) WriteHeader(code int) {
+	r.idle.touch()
 	r.status = code
 	r.ResponseWriter.WriteHeader(code)
 }
 
 func (r *recorder) Write(b []byte) (int, error) {
+	r.idle.touch()
 	if r.status == 0 {
 		r.status = http.StatusOK
 	}
@@ -232,15 +293,23 @@ func (r *recorder) Write(b []byte) (int, error) {
 
 func (r *recorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
 
-// countingBody counts the request body bytes the transport reads. The count
-// is atomic because the transport may still be reading when the reply ends.
+// countingBody counts the request body bytes the transport reads from the
+// client, and calls touch whenever some arrive. The count is the bytes read,
+// not the bytes the destination took: when the destination answers before it
+// has read the whole body, the recorded bytes_up is a lower bound of what
+// the client sent. The count is atomic because the transport may still be
+// reading when the reply ends.
 type countingBody struct {
 	io.ReadCloser
-	n atomic.Int64
+	touch func()
+	n     atomic.Int64
 }
 
 func (c *countingBody) Read(b []byte) (int, error) {
 	n, err := c.ReadCloser.Read(b)
+	if n > 0 {
+		c.touch()
+	}
 	c.n.Add(int64(n))
 	return n, err
 }

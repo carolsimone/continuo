@@ -49,11 +49,14 @@ type Authorizer interface {
 
 // Options bound the listener's resource use.
 type Options struct {
-	// MaxTunnels caps the CONNECT tunnels open at once.
+	// MaxTunnels caps the CONNECT tunnels and forwarded requests open at
+	// once; both take a slot from the same pool. The observer's
+	// TunnelOpened and TunnelClosed count tunnels alone, so the open-tunnels
+	// gauge does not include forwarded requests.
 	MaxTunnels int
-	// IdleTimeout closes a tunnel no byte has crossed, either way, for this
-	// long, and a client connection that has waited this long without
-	// sending its next request.
+	// IdleTimeout ends a tunnel or forwarded request no byte has crossed,
+	// either way, for this long, and closes a client connection that has
+	// waited this long without sending its next request.
 	IdleTimeout time.Duration
 	// HeaderTimeout bounds reading a request's line and headers.
 	HeaderTimeout time.Duration
@@ -74,12 +77,12 @@ type Proxy struct {
 	// from, which ends any Connect in flight.
 	cancelRequests context.CancelFunc
 
-	// mu guards tunnels, stopped and closing, and every open.Add: a tunnel
-	// handler is counted only while stopped is false, so no Add races
-	// Shutdown's Wait.
+	// mu guards tunnels, stopped and closing, and every open.Add: a tunnel or
+	// forwarding handler is counted only while stopped is false, so no Add
+	// races Shutdown's Wait.
 	mu      sync.Mutex
 	tunnels map[*tunnel]struct{}
-	stopped bool // Shutdown is waiting for tunnel handlers; no new one starts
+	stopped bool // Shutdown is waiting for tunnel and forwarding handlers; no new one starts
 	closing bool // the shutdown grace has ended; a tunnel is closed on sight
 	open    sync.WaitGroup
 }
@@ -130,10 +133,10 @@ func (p *Proxy) Serve() error {
 // Shutdown stops accepting requests and waits for forwarded requests and open
 // tunnels to finish. When ctx ends first, it cancels every request still
 // being served, a Connect in flight among them, closes the open tunnels and
-// waits for their handlers to return, which they do at once. Last, it closes
-// the connections to destinations kept open for reuse. It returns ctx's
-// error when a request other than an open tunnel was still being served as
-// ctx ended.
+// every client connection, and waits for their handlers to return, which
+// they do at once. Last, it closes the connections to destinations kept open
+// for reuse. It returns ctx's error when a request other than an open tunnel
+// was still being served as ctx ended.
 func (p *Proxy) Shutdown(ctx context.Context) error {
 	err := p.server.Shutdown(ctx)
 	p.mu.Lock()
@@ -158,7 +161,11 @@ func (p *Proxy) Shutdown(ctx context.Context) error {
 // closeAll ends what is still running when the shutdown grace is over. Every
 // tunnel open now, or tracked from now on, is closed; then every request's
 // context is cancelled, so a Connect in flight returns, and a tunnel it
-// opens anyway is closed before its client receives the 200.
+// opens anyway is closed before its client receives the 200. Last, every
+// client connection net/http still serves is closed, so a forwarded request
+// blocked writing to a client that stopped reading returns too. A tunnel's
+// client connection has been taken over from net/http, and the tunnel's own
+// close ends it.
 func (p *Proxy) closeAll() {
 	p.mu.Lock()
 	p.closing = true
@@ -168,6 +175,7 @@ func (p *Proxy) closeAll() {
 	}
 	p.mu.Unlock()
 	p.cancelRequests()
+	_ = p.server.Close()
 	if closed > 0 {
 		p.logger.Info("shutdown grace ended, closed open tunnels", slog.Int("tunnels", closed))
 	}
@@ -184,6 +192,24 @@ func (p *Proxy) serve(w http.ResponseWriter, r *http.Request) {
 			"only CONNECT and absolute-form http:// requests are proxied")
 	}
 }
+
+// takeSlot takes one of the MaxTunnels slots that CONNECT tunnels and
+// forwarded requests share. When none is free it refuses the request with
+// 503 capacity and returns false. A caller that took a slot calls
+// releaseSlot.
+func (p *Proxy) takeSlot(w http.ResponseWriter, r *http.Request, host string, port uint16) bool {
+	select {
+	case p.slots <- struct{}{}:
+		return true
+	default:
+		p.refuse(w, r, host, port, http.StatusServiceUnavailable, ReasonCapacity,
+			fmt.Sprintf("%d tunnels and forwarded requests already open", cap(p.slots)))
+		return false
+	}
+}
+
+// releaseSlot frees a slot takeSlot took.
+func (p *Proxy) releaseSlot() { <-p.slots }
 
 // refuse answers a request the proxy will not carry, records it and logs it.
 // The client sees only the reason; the detail, which may hold resolved

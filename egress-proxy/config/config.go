@@ -15,7 +15,8 @@ import (
 // stream consumer, so it declares no ServiceName.
 const Name = "egress-proxy"
 
-// defaultMaxTunnels is the tunnel cap used when EGRESS_MAX_TUNNELS is unset.
+// defaultMaxTunnels is the cap on tunnels and forwarded requests used when
+// EGRESS_MAX_TUNNELS is unset.
 const defaultMaxTunnels = 1024
 
 // Config is egress-proxy's runtime configuration, read once at startup.
@@ -28,10 +29,11 @@ type Config struct {
 	MetricsPort int
 	// AllowlistPath is the YAML file of admitted hosts (EGRESS_ALLOWLIST_PATH).
 	AllowlistPath string
-	// MaxTunnels caps the CONNECT tunnels open at once (EGRESS_MAX_TUNNELS).
+	// MaxTunnels caps the CONNECT tunnels and forwarded requests open at
+	// once, together (EGRESS_MAX_TUNNELS).
 	MaxTunnels int
-	// IdleTimeout closes a tunnel no byte has crossed for this long
-	// (EGRESS_TUNNEL_IDLE_TIMEOUT).
+	// IdleTimeout ends a tunnel or forwarded request no byte has crossed for
+	// this long (EGRESS_TUNNEL_IDLE_TIMEOUT).
 	IdleTimeout time.Duration
 	// ShutdownGrace bounds the graceful shutdown (SHUTDOWN_GRACE).
 	ShutdownGrace time.Duration

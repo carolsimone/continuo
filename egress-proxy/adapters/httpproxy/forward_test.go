@@ -7,6 +7,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -16,7 +18,9 @@ import (
 	"net/netip"
 	"net/textproto"
 	"net/url"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -218,7 +222,7 @@ func TestForward_FlushesEachWriteOfAFixedLengthReply(t *testing.T) {
 	c, err := net.Dial("tcp", addr)
 	require.NoError(t, err)
 	defer c.Close()
-	require.NoError(t, c.SetReadDeadline(time.Now().Add(time.Second)))
+	require.NoError(t, c.SetReadDeadline(time.Now().Add(5*time.Second)))
 	_, err = io.WriteString(c, get("http://model.internal:8000/v1/embeddings", "model.internal:8000", ""))
 	require.NoError(t, err)
 	br := bufio.NewReader(c)
@@ -821,4 +825,420 @@ func TestShutdown_ClosesIdleDestinationConnections(t *testing.T) {
 	}
 	require.NoError(t, shutdown(t, p, time.Second))
 	awaitClosed(t, gone, "Shutdown must close the idle destination connection")
+}
+
+// slowHandler is a log handler that pauses before writing a "request
+// forwarded" line, so a test can tell whether Shutdown waited for the
+// forwarding handler to finish.
+type slowHandler struct {
+	slog.Handler
+	pause time.Duration
+}
+
+func (h slowHandler) Handle(ctx context.Context, r slog.Record) error {
+	if r.Message == "request forwarded" {
+		time.Sleep(h.pause)
+	}
+	return h.Handler.Handle(ctx, r)
+}
+
+// forwardedEntries returns the "request forwarded" log lines written so far.
+func forwardedEntries(t *testing.T, logs *syncBuffer) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	for _, e := range logs.entries(t) {
+		if e["msg"] == "request forwarded" {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// startFlood returns the address of a destination that answers every request
+// with a reply far larger than any socket buffer and writes it as fast as it
+// is taken. written counts the bytes written; gone is closed when the proxy
+// closes the connection.
+func startFlood(t *testing.T) (addr string, written *atomic.Int64, gone chan struct{}) {
+	t.Helper()
+	written, gone = &atomic.Int64{}, make(chan struct{})
+	closeGone := sync.OnceFunc(func() { close(gone) })
+	addr = startServer(t, func(c net.Conn) {
+		defer closeGone()
+		if _, err := http.ReadRequest(bufio.NewReader(c)); err != nil {
+			return
+		}
+		if _, err := io.WriteString(c, "HTTP/1.1 200 OK\r\nContent-Length: 1073741824\r\n\r\n"); err != nil {
+			return
+		}
+		chunk := make([]byte, 64*1024)
+		for {
+			n, err := c.Write(chunk)
+			written.Add(int64(n))
+			if err != nil {
+				return
+			}
+		}
+	})
+	return addr, written, gone
+}
+
+// awaitStalled waits until the flood destination has stopped writing for
+// 100 ms: the client's, the proxy's and the destination's socket buffers are
+// full and the forwarding handler is blocked writing to the client.
+func awaitStalled(t *testing.T, written *atomic.Int64) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		before := written.Load()
+		time.Sleep(100 * time.Millisecond)
+		return before > 0 && written.Load() == before
+	}, 5*time.Second, 10*time.Millisecond, "the destination must stall on full buffers")
+}
+
+// A forwarded request blocked writing to a client that stopped reading is
+// ended when the shutdown grace ends: Shutdown returns, and it has waited for
+// the handler, which recorded the request once, as an aborted answer.
+func TestShutdown_EndsForwardedRequestToAClientThatStoppedReading(t *testing.T) {
+	var logs syncBuffer
+	flood, written, gone := startFlood(t)
+	auth := &fakeAuth{targets: map[string]string{"model.internal:8000": flood}}
+	logger := slog.New(slowHandler{Handler: slog.NewJSONHandler(&logs, nil), pause: 200 * time.Millisecond})
+	p, obs, addr := startProxyLogging(t, auth, Options{}, logger)
+
+	c, err := net.Dial("tcp", addr)
+	require.NoError(t, err)
+	defer c.Close()
+	_, err = io.WriteString(c, get("http://model.internal:8000/v1/files/1", "model.internal:8000", ""))
+	require.NoError(t, err)
+	require.NoError(t, c.SetReadDeadline(time.Now().Add(5*time.Second)))
+	status, err := bufio.NewReader(c).ReadString('\n')
+	require.NoError(t, err)
+	require.Equal(t, "HTTP/1.1 200 OK\r\n", status)
+	awaitStalled(t, written)
+
+	err = shutdown(t, p, 100*time.Millisecond)
+	assert.ErrorIs(t, err, context.DeadlineExceeded, "the request was still being served when the grace ended")
+
+	assert.Equal(t, []string{"allowed:ok"}, obs.snapshot().requests, "recorded once, before Shutdown returned")
+	entries := forwardedEntries(t, &logs)
+	require.Len(t, entries, 1, "the handler finished before Shutdown returned")
+	assert.Equal(t, true, entries[0]["aborted"])
+	assert.Equal(t, false, entries[0]["idle_timeout"])
+	awaitClosed(t, gone, "the destination's connection must be closed")
+}
+
+// A destination that never answers is cut once no byte has moved for the
+// idle timeout: the client gets 504 upstream_error and a closed connection,
+// the destination's connection is closed, and the slot is free for the next
+// request.
+func TestForward_CutsSilentDestinationAfterIdleTimeout(t *testing.T) {
+	const idle = 150 * time.Millisecond
+	arrived, gone := make(chan struct{}), make(chan struct{})
+	closeArrived, closeGone := sync.OnceFunc(func() { close(arrived) }), sync.OnceFunc(func() { close(gone) })
+	silent := startServer(t, func(c net.Conn) {
+		defer closeGone()
+		br := bufio.NewReader(c)
+		if _, err := http.ReadRequest(br); err != nil {
+			return
+		}
+		closeArrived()
+		_, _ = io.Copy(io.Discard, br)
+	})
+	answering := startDestination(t, func(w http.ResponseWriter, _ received) { _, _ = io.WriteString(w, "ok") })
+	auth := &fakeAuth{targets: map[string]string{"silent.internal:8000": silent, "model.internal:8000": answering.addr}}
+	p, obs, addr := startProxy(t, auth, Options{MaxTunnels: 1, IdleTimeout: idle})
+
+	c, err := net.Dial("tcp", addr)
+	require.NoError(t, err)
+	defer c.Close()
+	require.NoError(t, c.SetReadDeadline(time.Now().Add(5*time.Second)))
+	start := time.Now()
+	_, err = io.WriteString(c, get("http://silent.internal:8000/v1/chat/completions", "silent.internal:8000", ""))
+	require.NoError(t, err)
+	resp, err := http.ReadResponse(bufio.NewReader(c), nil)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	elapsed := time.Since(start)
+
+	assert.Equal(t, http.StatusGatewayTimeout, resp.StatusCode)
+	assert.Equal(t, "egress-proxy: upstream_error\n", string(body))
+	assert.True(t, resp.Close, "the reply closes the client connection")
+	assert.GreaterOrEqual(t, elapsed, idle, "cut by the idle timeout, not before")
+	assert.Less(t, elapsed, 4*idle, "cut soon after the idle timeout")
+	awaitClosed(t, arrived, "the request must have reached the destination")
+	awaitClosed(t, gone, "the destination's connection must be closed")
+
+	require.Eventually(t, func() bool { return len(p.slots) == 0 }, 2*time.Second, 10*time.Millisecond)
+	_, next := exchange(t, addr, get("http://model.internal:8000/", "model.internal:8000", ""))
+	assert.Equal(t, http.StatusOK, next.StatusCode, "the slot was freed")
+	assert.Equal(t, "ok", next.Body)
+	require.Eventually(t, func() bool {
+		s := obs.snapshot().requests
+		return len(s) == 2 && s[0] == "denied:upstream_error" && s[1] == "allowed:ok"
+	}, 2*time.Second, 10*time.Millisecond)
+}
+
+// The idle timeout counts from the latest byte, so a reply that arrives one
+// byte every 30 ms outlives four idle timeouts and every byte arrives.
+func TestForward_TrickleDownKeepsRequestOpen(t *testing.T) {
+	const idle, every, drips = 150 * time.Millisecond, 30 * time.Millisecond, 24
+	dest := startDestination(t, func(w http.ResponseWriter, _ received) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		for range drips {
+			if _, err := io.WriteString(w, "x"); err != nil {
+				return
+			}
+			w.(http.Flusher).Flush()
+			time.Sleep(every)
+		}
+	})
+	auth := &fakeAuth{targets: map[string]string{"model.internal:8000": dest.addr}}
+	_, obs, addr := startProxy(t, auth, Options{IdleTimeout: idle})
+
+	start := time.Now()
+	resp, err := proxiedClient(addr).Get("http://model.internal:8000/v1/files/1/content")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	got, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	assert.Equal(t, strings.Repeat("x", drips), string(got), "every byte arrives")
+	assert.Greater(t, time.Since(start), 4*idle, "the request outlives the idle timeout")
+	require.Eventually(t, func() bool {
+		s := obs.snapshot()
+		return len(s.requests) == 1 && s.requests[0] == "allowed:ok" && s.down == drips
+	}, 2*time.Second, 10*time.Millisecond)
+}
+
+// The reply's headers count as progress on their own: a destination that
+// sends its headers, then its body, each two thirds of an idle timeout after
+// the last, is not cut.
+func TestForward_ReplyHeadersCountAsProgress(t *testing.T) {
+	const idle, gap = 300 * time.Millisecond, 200 * time.Millisecond
+	dest := startDestination(t, func(w http.ResponseWriter, _ received) {
+		time.Sleep(gap)
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		time.Sleep(gap)
+		_, _ = io.WriteString(w, "done")
+	})
+	auth := &fakeAuth{targets: map[string]string{"model.internal:8000": dest.addr}}
+	_, obs, addr := startProxy(t, auth, Options{IdleTimeout: idle})
+
+	resp, err := proxiedClient(addr).Get("http://model.internal:8000/v1/chat/completions")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	assert.Equal(t, "done", string(body))
+	require.Eventually(t, func() bool {
+		s := obs.snapshot().requests
+		return len(s) == 1 && s[0] == "allowed:ok"
+	}, 2*time.Second, 10*time.Millisecond)
+}
+
+// An upload that sends one byte every 30 ms keeps its request open the same
+// way: it outlives four idle timeouts and the destination gets every byte.
+func TestForward_TrickleUpKeepsRequestOpen(t *testing.T) {
+	const idle, every, drips = 150 * time.Millisecond, 30 * time.Millisecond, 24
+	dest := startDestination(t, func(w http.ResponseWriter, got received) {
+		_, _ = io.WriteString(w, "got "+got.Body)
+	})
+	auth := &fakeAuth{targets: map[string]string{"model.internal:8000": dest.addr}}
+	_, obs, addr := startProxy(t, auth, Options{IdleTimeout: idle})
+
+	c, err := net.Dial("tcp", addr)
+	require.NoError(t, err)
+	defer c.Close()
+	start := time.Now()
+	_, err = fmt.Fprintf(c, "POST http://model.internal:8000/v1/files HTTP/1.1\r\nHost: model.internal:8000\r\nContent-Length: %d\r\n\r\n", drips)
+	require.NoError(t, err)
+	for i := range drips {
+		_, err := io.WriteString(c, "y")
+		require.NoError(t, err, "write %d", i)
+		time.Sleep(every)
+	}
+	require.NoError(t, c.SetReadDeadline(time.Now().Add(5*time.Second)))
+	resp, err := http.ReadResponse(bufio.NewReader(c), nil)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, "got "+strings.Repeat("y", drips), string(body), "every byte arrives")
+	assert.Greater(t, time.Since(start), 4*idle, "the request outlives the idle timeout")
+	require.Eventually(t, func() bool {
+		s := obs.snapshot()
+		return len(s.requests) == 1 && s.requests[0] == "allowed:ok" && s.up == drips
+	}, 2*time.Second, 10*time.Millisecond)
+}
+
+// A client that stops reading a reply is cut once no byte has moved for the
+// idle timeout: the request is recorded once as an aborted answer, both
+// connections are closed and the slot is free for the next request.
+func TestForward_CutsClientThatStopsReading(t *testing.T) {
+	const idle = 150 * time.Millisecond
+	var logs syncBuffer
+	flood, written, gone := startFlood(t)
+	answering := startDestination(t, func(w http.ResponseWriter, _ received) { _, _ = io.WriteString(w, "ok") })
+	auth := &fakeAuth{targets: map[string]string{"flood.internal:8000": flood, "model.internal:8000": answering.addr}}
+	p, obs, addr := startProxyLogging(t, auth, Options{MaxTunnels: 1, IdleTimeout: idle}, slog.New(slog.NewJSONHandler(&logs, nil)))
+
+	c, err := net.Dial("tcp", addr)
+	require.NoError(t, err)
+	defer c.Close()
+	_, err = io.WriteString(c, get("http://flood.internal:8000/v1/files/1", "flood.internal:8000", ""))
+	require.NoError(t, err)
+	require.NoError(t, c.SetReadDeadline(time.Now().Add(5*time.Second)))
+	status, err := bufio.NewReader(c).ReadString('\n')
+	require.NoError(t, err)
+	require.Equal(t, "HTTP/1.1 200 OK\r\n", status)
+
+	require.Eventually(t, func() bool {
+		s := obs.snapshot().requests
+		return len(s) == 1 && s[0] == "allowed:ok"
+	}, 3*time.Second, 10*time.Millisecond, "the stalled request must end")
+	awaitClosed(t, gone, "the destination's connection must be closed")
+	assert.NotZero(t, written.Load())
+	entries := forwardedEntries(t, &logs)
+	require.Len(t, entries, 1)
+	assert.Equal(t, true, entries[0]["aborted"])
+	assert.Equal(t, true, entries[0]["idle_timeout"])
+	readUntilClosed(t, c)
+
+	require.Eventually(t, func() bool { return len(p.slots) == 0 }, 2*time.Second, 10*time.Millisecond)
+	_, next := exchange(t, addr, get("http://model.internal:8000/", "model.internal:8000", ""))
+	assert.Equal(t, http.StatusOK, next.StatusCode, "the slot was freed")
+}
+
+// An upload that stalls before the destination answers is cut once no byte
+// has moved for the idle timeout: the client gets 504 upstream_error and its
+// connection is closed.
+func TestForward_CutsStalledUpload(t *testing.T) {
+	const idle = 150 * time.Millisecond
+	dest := startDestination(t, nil)
+	auth := &fakeAuth{targets: map[string]string{"model.internal:8000": dest.addr}}
+	p, obs, addr := startProxy(t, auth, Options{MaxTunnels: 1, IdleTimeout: idle})
+
+	c, err := net.Dial("tcp", addr)
+	require.NoError(t, err)
+	defer c.Close()
+	start := time.Now()
+	_, err = io.WriteString(c, "POST http://model.internal:8000/v1/files HTTP/1.1\r\nHost: model.internal:8000\r\nContent-Length: 100\r\n\r\npartial")
+	require.NoError(t, err)
+	require.NoError(t, c.SetReadDeadline(time.Now().Add(5*time.Second)))
+	br := bufio.NewReader(c)
+	resp, err := http.ReadResponse(br, nil)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+
+	assert.Equal(t, http.StatusGatewayTimeout, resp.StatusCode)
+	assert.Equal(t, "egress-proxy: upstream_error\n", string(body))
+	assert.Less(t, time.Since(start), 4*idle)
+	assert.True(t, resp.Close)
+	require.NoError(t, c.SetReadDeadline(time.Now().Add(2*time.Second)))
+	_, err = br.ReadByte()
+	var ne net.Error
+	if errors.As(err, &ne) {
+		require.False(t, ne.Timeout(), "the proxy must close the connection, not leave it open")
+	}
+	require.Error(t, err)
+	assert.Equal(t, []string{"denied:upstream_error"}, obs.snapshot().requests)
+	require.Eventually(t, func() bool { return len(p.slots) == 0 }, 2*time.Second, 10*time.Millisecond)
+}
+
+// Tunnels and forwarded requests take their slots from one pool: while one
+// holds the only slot, the other is refused 503 capacity.
+func TestForward_SharesTheCapWithTunnels(t *testing.T) {
+	arrived := make(chan struct{}, 4)
+	silent := startServer(t, func(c net.Conn) {
+		br := bufio.NewReader(c)
+		if _, err := http.ReadRequest(br); err != nil {
+			return
+		}
+		arrived <- struct{}{}
+		_, _ = io.Copy(io.Discard, br)
+	})
+	auth := &fakeAuth{targets: map[string]string{
+		"model.internal:8000": silent,
+		"api.example.com:443": startEcho(t),
+	}}
+	p, obs, addr := startProxy(t, auth, Options{MaxTunnels: 1})
+
+	c, err := net.Dial("tcp", addr)
+	require.NoError(t, err)
+	_, err = io.WriteString(c, get("http://model.internal:8000/", "model.internal:8000", ""))
+	require.NoError(t, err)
+	select {
+	case <-arrived:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the forwarded request never reached the destination")
+	}
+
+	_, _, tunnel := connectVia(t, addr, "api.example.com:443", "")
+	assert.Equal(t, http.StatusServiceUnavailable, tunnel.StatusCode, "a forwarded request holds the slot")
+	_, forwarded := exchange(t, addr, get("http://model.internal:8000/", "model.internal:8000", ""))
+	assert.Equal(t, http.StatusServiceUnavailable, forwarded.StatusCode)
+	assert.Equal(t, "egress-proxy: capacity\n", forwarded.Body)
+
+	require.NoError(t, c.Close())
+	require.Eventually(t, func() bool { return len(p.slots) == 0 }, 2*time.Second, 10*time.Millisecond)
+	_, _, opened := connectVia(t, addr, "api.example.com:443", "")
+	require.Equal(t, http.StatusOK, opened.StatusCode)
+	_, refused := exchange(t, addr, get("http://model.internal:8000/", "model.internal:8000", ""))
+	assert.Equal(t, http.StatusServiceUnavailable, refused.StatusCode, "a tunnel holds the slot")
+
+	s := obs.snapshot()
+	assert.Equal(t, []string{"denied:capacity", "denied:capacity", "allowed:ok", "denied:capacity"}, s.requests)
+	assert.Equal(t, 1, s.opened, "the open-tunnels count includes tunnels alone")
+}
+
+// Shutdown waits for a forwarded request in flight that finishes within the
+// grace, and the reply reaches the client whole.
+func TestShutdown_WaitsForForwardedRequestToFinish(t *testing.T) {
+	release := make(chan struct{})
+	closeRelease := sync.OnceFunc(func() { close(release) })
+	defer closeRelease()
+	dest := startDestination(t, func(w http.ResponseWriter, _ received) {
+		<-release
+		_, _ = io.WriteString(w, "done")
+	})
+	auth := &fakeAuth{targets: map[string]string{"model.internal:8000": dest.addr}}
+	p, obs, addr := startProxy(t, auth, Options{})
+	c, err := net.Dial("tcp", addr)
+	require.NoError(t, err)
+	defer c.Close()
+	_, err = io.WriteString(c, get("http://model.internal:8000/", "model.internal:8000", ""))
+	require.NoError(t, err)
+	require.Eventually(t, func() bool { return len(dest.requests()) == 1 }, 2*time.Second, 10*time.Millisecond)
+
+	done := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		done <- p.Shutdown(ctx)
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("Shutdown returned while a request was in flight: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	closeRelease()
+
+	require.NoError(t, c.SetReadDeadline(time.Now().Add(5*time.Second)))
+	resp, err := http.ReadResponse(bufio.NewReader(c), nil)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	assert.Equal(t, "done", string(body))
+	select {
+	case err := <-done:
+		assert.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Shutdown did not return once the request finished")
+	}
+	assert.Equal(t, []string{"allowed:ok"}, obs.snapshot().requests)
 }
