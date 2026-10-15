@@ -272,6 +272,38 @@ if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set metrics.
   echo "FAIL: metrics.port equal to a service's httpPort must fail the render"; exit 1
 fi
 
+# llm.baseUrl reaches both agents as LLM_BASE_URL from the template, so an
+# operator's own `services` list cannot drop it. openai-compatible has no
+# public address and needs it; a root ending in /v1 would make every request
+# /v1/v1/...; a provider outside the three the agents accept fails the schema;
+# and a services entry setting LLM_BASE_URL itself is refused. A release
+# without llm.baseUrl (helm upgrade --reuse-values from an older chart) renders.
+echo "--- llm: baseUrl reaches both agents; invalid LLM settings fail the render"
+if grep -q 'name: LLM_BASE_URL' "${tmp}/defaults.yaml"; then
+  echo "FAIL: the default render sets LLM_BASE_URL; anthropic must use its public address"; exit 1
+fi
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set llm.provider=openai-compatible --set llm.baseUrl=http://vllm.ai.svc:8000/ > "${tmp}/llm-base.yaml"
+[ "$(grep -A1 'name: LLM_BASE_URL' "${tmp}/llm-base.yaml" | grep -c 'value: "http://vllm.ai.svc:8000"')" = 2 ] \
+  || { echo "FAIL: llm.baseUrl must reach agent-chat and agent-remediation as LLM_BASE_URL, without the trailing slash"; exit 1; }
+# refuse_render WANT HELM_ARGS...: the render must fail, and the error must
+# contain WANT so the failure is the one under test.
+refuse_render() {
+  local want="$1"; shift
+  if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" "$@" > /dev/null 2> "${tmp}/refused.err"; then
+    echo "FAIL: rendering with $* succeeded; it must fail"; exit 1
+  fi
+  grep -q -- "$want" "${tmp}/refused.err" || { echo "FAIL: rendering with $* failed for another reason:"; cat "${tmp}/refused.err"; exit 1; }
+}
+refuse_render 'llm.baseUrl' --set llm.provider=openai-compatible
+refuse_render 'ends in /v1' --set llm.provider=openai-compatible --set llm.baseUrl=https://api.mistral.ai/v1
+refuse_render 'baseUrl' --set llm.baseUrl=api.mistral.ai
+refuse_render 'provider' --set llm.provider=grok
+refuse_render 'LLM_BASE_URL' --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"LLM_BASE_URL":"http://x:1"}}]'
+if ! helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set llm.baseUrl=null > /dev/null; then
+  echo "FAIL: a release without llm.baseUrl must render"; exit 1
+fi
+
 echo "--- bash -n (release scripts)"
 bash -n scripts/release/retag-images.sh
 

@@ -254,10 +254,19 @@ ciAuth:
   bindings: {}
 
 llm:
+  # provider: anthropic | openai | openai-compatible. openai-compatible is any
+  # server that speaks OpenAI's chat-completions API: Mistral, OpenRouter,
+  # Groq, or a model you host with vLLM, Ollama or Text Generation Inference.
+  # baseUrl: the server root the agents add /v1/... to, without /v1. Empty
+  # sends anthropic and openai to their public APIs; required for
+  # openai-compatible. e.g. https://api.mistral.ai, https://openrouter.ai/api,
+  # http://vllm.ai.svc:8000. With anthropic or openai it points the agents at
+  # a gateway that speaks that provider's format.
   # Optional. Empty apiKey: agent-chat/agent-remediation boot and serve, but
   # LLM calls fail until it is set.
   provider: anthropic
   model: claude-haiku-4-5
+  baseUrl: ""
   apiKey: ""
   existingSecret: ""
   existingSecretApiKeyKey: api-key

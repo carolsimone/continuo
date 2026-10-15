@@ -12,8 +12,15 @@ shipped in those.
 
 ## [Unreleased]
 
+`llm.baseUrl` is new, with an empty default that keeps each provider's public address; an unmodified values file upgrades unchanged, including with `--reuse-values`. **MINOR.**
+
+### Added
+
+- `llm.baseUrl` (default empty) points the agents at an LLM server: the root of an OpenAI-compatible server (`llm.provider: openai-compatible`, e.g. Mistral, OpenRouter, Groq, or a vLLM/Ollama you host), or a gateway in front of Anthropic or OpenAI. The chart sets it on agent-chat and agent-remediation as `LLM_BASE_URL`; a `services` entry that sets `LLM_BASE_URL` itself fails the render. Give the root without `/v1`: the render fails on a URL ending in `/v1`, on anything but an http(s) URL with a host, and on `openai-compatible` without it. A release whose values hold no `llm.baseUrl` (`helm upgrade --reuse-values` from an older chart) renders with the default.
+
 ### Changed
 
+- agent-chat and agent-remediation read `LLM_BASE_URL` for every provider, not only `openai-compatible`, strip a trailing slash from it, and refuse to start on one ending in `/v1`. `llm.provider` accepts only `anthropic`, `openai` and `openai-compatible`; the schema rejects any other value.
 - Every run records the release it runs on and that release's promotion seq: the live release for scheduled, triggered, rebased and single-node runs, the source run's for reruns and single-node runs pinned to a past run. Every task records its node's key in that release.
 - The state service serves run graphs, run lists and active-run drift (`GetRunGraph`, `ListRuns`, `ListActiveRunDrifts`), read from each run's own release, and `ListNodeRuns` returns each run's content hash. The ui's run graph, drift badge and run list and the CLI's `node history` read them from the state service.
 - Releases a run names are kept by topology retention, finished runs included.

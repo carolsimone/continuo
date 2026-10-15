@@ -18,6 +18,8 @@
 {{- if ($svc.enabled | default true) }}
 {{- $servesMetrics := has $svc.name (include "continuo.metrics.services" $ | fromJsonArray) }}
 {{- $mounted := default (dict) (get $mountedConfigMaps $svc.name) }}
+{{- $isAgent := has $svc.name (list "agent-chat" "agent-remediation") }}
+{{- if $isAgent }}{{ include "continuo.agent.assertEnv" (dict "root" $ "svc" $svc) }}{{ end }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -208,7 +210,7 @@ spec:
             - configMapRef:
                 name: {{ include "continuo.configMapName" $ }}
           {{- $needsS3 := has $svc.name (include "continuo.s3.credentialServices" $ | fromJsonArray) }}
-          {{- if or $svc.secretEnv $svc.env $needsS3 (eq $svc.name "ui") }}
+          {{- if or $svc.secretEnv $svc.env $needsS3 (eq $svc.name "ui") $isAgent }}
           env:
             {{- /*
               Services that read or write object storage get their S3 credentials
@@ -237,6 +239,11 @@ spec:
                    the file is the ci-auth ConfigMap mounted below. */}}
             - name: CI_AUTH_CONFIG_PATH
               value: /app/ci-auth/ci-auth.json
+            {{- end }}
+            {{- if $isAgent }}
+            {{- with include "continuo.agent.env" $ }}
+            {{- . | nindent 12 }}
+            {{- end }}
             {{- end }}
             {{- range $secret := ($svc.secretEnv | default (list)) }}
             {{- if not (and $needsS3 (or (eq $secret.name "AWS_ACCESS_KEY_ID") (eq $secret.name "AWS_SECRET_ACCESS_KEY"))) }}
