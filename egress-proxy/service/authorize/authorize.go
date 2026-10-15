@@ -20,8 +20,8 @@ type Reason string
 const (
 	// ReasonNotAllowed: the host and port are not on the allowlist.
 	ReasonNotAllowed Reason = "not_allowed"
-	// ReasonPrivateAddress: the name resolved to a private, loopback or
-	// unspecified address its entry does not allow.
+	// ReasonPrivateAddress: the name resolved to a loopback, unspecified
+	// or link-local address, or to a private address its entry does not allow.
 	ReasonPrivateAddress Reason = "private_address"
 	// ReasonMetadata: the name resolved to a cloud metadata address.
 	ReasonMetadata Reason = "metadata"
@@ -64,8 +64,9 @@ func (a *Authorizer) Allowed(host string, port uint16) bool {
 
 // Authorize returns the addresses egress-proxy may connect to for host:port,
 // in the order the resolver gave them. Every address must pass the address
-// check: a cloud metadata, loopback or unspecified address is always refused,
-// and a private one unless the matching entry allows private addresses.
+// check: a cloud metadata, link-local, loopback or unspecified address is
+// always refused, and a private one unless the matching entry allows private
+// addresses.
 func (a *Authorizer) Authorize(ctx context.Context, host string, port uint16) ([]netip.Addr, error) {
 	entry, ok := a.allow.Match(host, port)
 	if !ok {

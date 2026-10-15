@@ -496,13 +496,17 @@ egress:
   # Extra hosts the proxy admits: "host" or "host:port" (port 443 when
   # omitted), or "*.example.com" for every name below example.com. An entry is
   # a DNS name, never an IP address, a URL or a bare "*", and a port has no
-  # leading zero. Rendering fails on an entry that is not one.
+  # leading zero. Rendering fails on an entry that is not one. An
+  # internationalised name is written in its punycode (xn--) form: a non-ASCII
+  # entry fails the render, and a non-ASCII URL host is left out of the
+  # allowlist.
   allowedDomains: []
   # The same, for hosts that may resolve to private addresses (10.0.0.0/8,
   # 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, fc00::/7). The hosts of
   # llm.baseUrl, a GitHub Enterprise GITHUB_BASE_URL and s3.endpointUrl are
-  # always allowed to. The proxy never connects to loopback, unspecified or
-  # cloud-metadata addresses.
+  # always allowed to. The proxy never connects to loopback, unspecified,
+  # link-local (169.254.0.0/16, fe80::/10) or cloud-metadata addresses, whatever
+  # the entry says.
   privateDomains: []
   proxy:
     # Two replicas keep the proxy up while one pod restarts.
