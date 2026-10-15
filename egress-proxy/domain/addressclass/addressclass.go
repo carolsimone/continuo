@@ -22,8 +22,8 @@ const (
 	Unspecified
 	// Metadata is a cloud provider's instance metadata service.
 	Metadata
-	// LinkLocal is a link-local address; only instance-metadata and credential
-	// services answer there.
+	// LinkLocal is a link-local address; instance-metadata and credential
+	// services answer there, and it is never an egress destination.
 	LinkLocal
 )
 
@@ -33,14 +33,20 @@ func (c Class) String() string { return names[c] }
 
 var metadataAddrs = []netip.Addr{
 	netip.MustParseAddr("169.254.169.254"),
-	netip.MustParseAddr("fd00:ec2::254"),
-	netip.MustParseAddr("fd00:ec2::23"),
+	netip.MustParseAddr("fd20:ce::254"),    // Google Cloud IPv6
 	netip.MustParseAddr("100.100.100.200"), // Alibaba Cloud
 	netip.MustParseAddr("168.63.129.16"),   // Azure WireServer
 }
 
+// metadataPrefixes are the ranges a cloud provider reserves for its instance
+// services: the whole AWS Nitro IPv6 range answers IMDS (::254), DNS (::253),
+// NTP (::123) and more.
+var metadataPrefixes = mustPrefixes(
+	"fd00:ec2::/32",
+)
+
 // linkLocalPrefixes are the link-local ranges, where cloud credential services
-// such as EKS Pod Identity (169.254.170.23) and ECS (169.254.170.2) answer.
+// answer, for example EKS Pod Identity (169.254.170.23) and ECS (169.254.170.2).
 var linkLocalPrefixes = mustPrefixes(
 	"169.254.0.0/16",
 	"fe80::/10",
@@ -83,9 +89,15 @@ func Of(a netip.Addr) Class {
 		b := a.As16()
 		a = netip.AddrFrom4([4]byte{b[12], b[13], b[14], b[15]})
 	}
-	switch {
-	case slices.Contains(metadataAddrs, a):
+	if slices.Contains(metadataAddrs, a) {
 		return Metadata
+	}
+	for _, p := range metadataPrefixes {
+		if p.Contains(a) {
+			return Metadata
+		}
+	}
+	switch {
 	case a.IsUnspecified():
 		return Unspecified
 	case a.IsLoopback():

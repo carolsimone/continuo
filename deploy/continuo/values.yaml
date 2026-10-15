@@ -479,9 +479,9 @@ egress:
   # entry fails the render, and a non-ASCII URL host is left out of the
   # allowlist.
   allowedDomains: []
-  # The same, for hosts that may resolve to private addresses (10.0.0.0/8,
-  # 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, fc00::/7). The hosts of
-  # llm.baseUrl, a GitHub Enterprise GITHUB_BASE_URL and s3.endpointUrl are
+  # The same, for hosts that may resolve to private addresses, such as
+  # 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10 and fc00::/7. The
+  # hosts of llm.baseUrl, a GitHub Enterprise GITHUB_BASE_URL and s3.endpointUrl are
   # always allowed to. The proxy never connects to loopback, unspecified,
   # link-local (169.254.0.0/16, fe80::/10) or cloud-metadata addresses, whatever
   # the entry says.
