@@ -201,7 +201,7 @@ func (r *Reconciler) pass(ctx context.Context, u uow.UnitOfWork, tenantID string
 		return fmt.Errorf("select the seeds of release %s: %w", live.ReleaseID, err)
 	}
 	now := u.Clock().Now()
-	seedRun, err := createRun(ctx, u, live, toBuild, now)
+	seedRun, err := createRun(ctx, u, live, now)
 	if err != nil {
 		return err
 	}
@@ -220,19 +220,17 @@ func (r *Reconciler) pass(ctx context.Context, u uow.UnitOfWork, tenantID string
 	return nil
 }
 
-// createRun saves the promote-seed run that loads toBuild on the live release
-// and returns it. The id is the release's run id numbered one past the runs
-// that already name the release; an id another run holds moves it to the next
-// number.
-func createRun(ctx context.Context, u uow.UnitOfWork, live topology.Pointer, toBuild []seeds.Desired, now time.Time) (*run.Run, error) {
+// createRun saves a promote-seed run on the live release and returns it. The
+// id is the release's run id numbered one past the runs that already name the
+// release; an id another run holds moves it to the next number.
+func createRun(ctx context.Context, u uow.UnitOfWork, live topology.Pointer, now time.Time) (*run.Run, error) {
 	existing, err := u.Run().CountReleaseRuns(ctx, live.ReleaseID, run.KindPromoteSeed)
 	if err != nil {
 		return nil, fmt.Errorf("count the promote-seed runs of release %s: %w", live.ReleaseID, err)
 	}
-	nodes := seedNodes(toBuild)
 	for n := existing + 1; n <= existing+maxRunIDProbes; n++ {
 		id := seeds.RunID(live.ReleaseID, n)
-		newRun, _, err := run.NewPromotedSeedsRun(id, scheduleName(id), run.ReleaseStamp{ReleaseID: live.ReleaseID, PromotionSeq: live.PromotionSeq}, nodes, now)
+		newRun, err := run.NewPromotedSeedsRun(id, scheduleName(id), run.ReleaseStamp{ReleaseID: live.ReleaseID, PromotionSeq: live.PromotionSeq}, now)
 		if err != nil {
 			return nil, fmt.Errorf("new promote-seed run: %w", err)
 		}
@@ -246,20 +244,6 @@ func createRun(ctx context.Context, u uow.UnitOfWork, live topology.Pointer, toB
 		return newRun, nil
 	}
 	return nil, fmt.Errorf("no free promote-seed run id for release %s after %d tries", live.ReleaseID, maxRunIDProbes)
-}
-
-// seedNodes maps desired seeds onto the run's nodes, pinning each one's node
-// type and live image.
-func seedNodes(ds []seeds.Desired) []run.SeedNode {
-	out := make([]run.SeedNode, 0, len(ds))
-	for _, d := range ds {
-		out = append(out, run.SeedNode{
-			NodeID:   run.NodeID{ServiceName: d.ServiceName, SchemaName: d.SchemaName, TableName: d.TableName},
-			NodeType: d.NodeType,
-			ImageTag: d.ImageTag,
-		})
-	}
-	return out
 }
 
 // scheduleName names a promote-seed run in the UI: a fixed prefix and the

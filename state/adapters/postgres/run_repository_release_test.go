@@ -27,9 +27,7 @@ func newReleaseRunUoW(db *sqlx.DB) *postgres.PostgresUnitOfWork {
 // promoteSeedRun builds an unsaved promote-seed run of releaseID with one seed.
 func promoteSeedRun(t *testing.T, id uuid.UUID, releaseID string) *run.Run {
 	t.Helper()
-	rn, _, err := run.NewPromotedSeedsRun(id, "promote-seed-"+id.String()[:8], run.ReleaseStamp{ReleaseID: releaseID, PromotionSeq: 4},
-		[]run.SeedNode{{NodeID: run.NodeID{ServiceName: "svc", SchemaName: "raw", TableName: "orders"}, NodeType: "dbt-seed", ImageTag: "svc:1"}},
-		time.Now())
+	rn, err := run.NewPromotedSeedsRun(id, "promote-seed-"+id.String()[:8], run.ReleaseStamp{ReleaseID: releaseID, PromotionSeq: 4}, time.Now())
 	require.NoError(t, err)
 	return rn
 }
@@ -73,7 +71,7 @@ func TestRunRepository_PromoteSeedRunKeepsItsRelease(t *testing.T) {
 func TestRunRepository_RunWithoutAReleaseStoresNull(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
-	rn, _, err := run.NewPendingRun("no-release-"+uuid.NewString()[:8], run.KindTrigger, nil, "", nil, model.OperationRun, run.ReleaseStamp{}, time.Now())
+	rn, err := run.NewPendingRun("no-release-"+uuid.NewString()[:8], run.KindTrigger, nil, "", nil, model.OperationRun, run.ReleaseStamp{}, time.Now())
 	require.NoError(t, err)
 	t.Cleanup(func() { _, _ = db.Exec(`DELETE FROM scheduler_tracker WHERE schedule_id = $1`, rn.ScheduleID()) })
 	u := newReleaseRunUoW(db)
@@ -141,9 +139,9 @@ func TestRunRepository_RunKeepsItsReleaseStamp(t *testing.T) {
 	u := newReleaseRunUoW(db)
 
 	stamp := run.ReleaseStamp{ReleaseID: uuid.NewString(), PromotionSeq: 12}
-	withStamp, _, err := run.NewDerivedRun("stamp-"+stamped.String()[:8], run.KindRerun, uuid.New(), stamp, "alice", model.OperationRun, time.Now())
+	withStamp, err := run.NewDerivedRun("stamp-"+stamped.String()[:8], run.KindRerun, uuid.New(), stamp, "alice", model.OperationRun, time.Now())
 	require.NoError(t, err)
-	withoutStamp, _, err := run.NewDerivedRun("stamp-"+unstamped.String()[:8], run.KindRerun, uuid.New(), run.ReleaseStamp{}, "alice", model.OperationRun, time.Now())
+	withoutStamp, err := run.NewDerivedRun("stamp-"+unstamped.String()[:8], run.KindRerun, uuid.New(), run.ReleaseStamp{}, "alice", model.OperationRun, time.Now())
 	require.NoError(t, err)
 	stamped, unstamped = withStamp.ScheduleID(), withoutStamp.ScheduleID()
 	saveRuns(t, u, withStamp, withoutStamp)

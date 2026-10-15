@@ -17,30 +17,10 @@ type DomainEvent interface {
 	ScheduleID() uuid.UUID
 }
 
-// RunStarted is recorded by NewPendingRun (cron + manual trigger).
-// Translated by the publisher to a scheduler.started:v1 outbox row.
-type RunStarted struct {
-	ID              uuid.UUID
-	Name            string
-	K               Kind
-	SourceID        *uuid.UUID
-	InitiatedBy     string
-	ServiceMetadata map[string]ServiceMetadata
-	// Operation is the dbt verb requested for a whole-DAG run ("" | "test" |
-	// "build"). Only a manual TriggerSchedule caller passes a non-default
-	// value; cron and other activate.Handle callers always pass OperationRun.
-	// State does not act on it — it only forwards the value onto
-	// scheduler.started:v1 for the orchestrator to build the run projection.
-	Operation model.Operation
-}
-
-func (RunStarted) runDomainEvent()         {}
-func (e RunStarted) ScheduleID() uuid.UUID { return e.ID }
-
 // RunFinalized is recorded by Run.RecordTaskStatus when the run reaches its
-// terminal status through the finalization decision, by Run.AcceptDispatch
-// when every projected task is already terminal (auto-rollup), and by
-// Run.MarkDispatchTerminal. Translated to run.finalized:v1.
+// terminal status through the finalization decision, by Run.Start when the
+// plan holds no pending task, by Run.Cancel and by Run.MarkDispatchTerminal.
+// It maps to no stream: the run's terminal status is its row.
 type RunFinalized struct {
 	ID      uuid.UUID
 	Name    string
@@ -61,76 +41,8 @@ type RunCancelled struct {
 func (RunCancelled) runDomainEvent()         {}
 func (e RunCancelled) ScheduleID() uuid.UUID { return e.ID }
 
-// RerunRequested is recorded by NewDerivedRun when Kind == KindRerun.
-// Translated to trigger.rerun:v1.
-type RerunRequested struct {
-	ID          uuid.UUID
-	Name        string
-	SourceID    uuid.UUID
-	InitiatedBy string
-}
-
-func (RerunRequested) runDomainEvent()         {}
-func (e RerunRequested) ScheduleID() uuid.UUID { return e.ID }
-
-// RebaseRequested is recorded by NewDerivedRun when Kind == KindRebase.
-// Translated to trigger.rebase:v1.
-type RebaseRequested struct {
-	ID          uuid.UUID
-	Name        string
-	SourceID    uuid.UUID
-	InitiatedBy string
-}
-
-func (RebaseRequested) runDomainEvent()         {}
-func (e RebaseRequested) ScheduleID() uuid.UUID { return e.ID }
-
-// SingleNodeRunRequested is recorded by NewSingleNodeRun.
-// Translated to trigger.single_node_run:v1.
-type SingleNodeRunRequested struct {
-	ID             uuid.UUID
-	Name           string
-	Target         NodeID
-	MetadataSource MetadataSource
-	Operation      model.Operation
-	SourceID       *uuid.UUID
-	InitiatedBy    string
-}
-
-func (SingleNodeRunRequested) runDomainEvent()         {}
-func (e SingleNodeRunRequested) ScheduleID() uuid.UUID { return e.ID }
-
-// SeedNode is one seed of a promoted-seeds run, carrying the metadata the
-// triggering release pinned to it.
-//
-// NodeType and ImageTag are carried rather than re-read downstream: a promotion
-// can be overtaken by a later one, and re-reading the topology would then build
-// this release's seeds with a different release's image.
-type SeedNode struct {
-	NodeID
-	NodeType string
-	ImageTag string
-}
-
-// PromotedSeedsRunRequested is recorded by NewPromotedSeedsRun.
-// Translated to trigger.promoted_seeds:v1.
-//
-// Nodes carries the seeds the run loads, with their pinned metadata, so the
-// run's membership and the images it builds with are decided once.
-// PromotionSeq is the live promotion seq the run was planned against; 0 means
-// none.
-type PromotedSeedsRunRequested struct {
-	ID           uuid.UUID
-	Name         string
-	ReleaseID    string
-	PromotionSeq int64
-	Nodes        []SeedNode
-}
-
-func (PromotedSeedsRunRequested) runDomainEvent()         {}
-func (e PromotedSeedsRunRequested) ScheduleID() uuid.UUID { return e.ID }
-
-// TaskDispatched is recorded by Run.Start for each task it dispatches: the
+// TaskDispatched is recorded by Run.Start for each task it dispatches, and by
+// Run.RecordTaskStatus for each task a success makes ready: the
 // run, the task, the node it builds as the run's release holds it, its
 // Kubernetes Job name, the dbt verb and the task's retry budget. Translated to
 // query.model:v1.
@@ -150,7 +62,7 @@ func (e TaskDispatched) ScheduleID() uuid.UUID { return e.ID }
 // RunDispatchTerminal is recorded by Run.MarkDispatchTerminal next to the
 // RunFinalized that carries the outcome (skipped for a benign no_tests
 // dispatch, otherwise failed). It names why the dispatch ended the run. It maps
-// to no stream and no column: the dispatch handlers log its Reason at WARN.
+// to no stream and no column: the activation handler logs its Reason at WARN.
 type RunDispatchTerminal struct {
 	ID     uuid.UUID
 	Name   string
@@ -159,8 +71,3 @@ type RunDispatchTerminal struct {
 
 func (RunDispatchTerminal) runDomainEvent()         {}
 func (e RunDispatchTerminal) ScheduleID() uuid.UUID { return e.ID }
-
-// DispatchReasonInvalidTask is the RunDispatchTerminal reason AcceptDispatch
-// records when a projected task's identity cannot be turned into a Kubernetes
-// Job name.
-const DispatchReasonInvalidTask = "invalid_dispatched_task"

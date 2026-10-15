@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/carolsimone/continuo/pkg/domain/model"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
@@ -16,153 +15,26 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestOutboxPublisher_RunFinalized(t *testing.T) {
+// A run's terminal status is its row: RunFinalized and RunDispatchTerminal
+// write no outbox row, and a transaction that records only them writes none.
+func TestOutboxPublisher_RunFinalizedWritesNoRow(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
+	scheduleID := uuid.New()
 
 	tx, err := db.BeginTxx(ctx, nil)
 	require.NoError(t, err)
-	defer tx.Rollback()
-
-	pub := postgres.NewOutboxPublisher(tx, discardLogger())
-
-	scheduleID := uuid.New()
-	// Use uuid.Nil so MessageProcessingID is set to nil in the entry.
-	// Passing a random UUID would trigger a FK constraint violation against
-	// message_processing unless a matching row is seeded first.
-	err = pub.Append(ctx, []run.DomainEvent{
+	require.NoError(t, postgres.NewOutboxPublisher(tx, discardLogger()).Append(ctx, []run.DomainEvent{
 		run.RunFinalized{ID: scheduleID, Name: "daily", Outcome: run.SchedulerStatusSucceeded},
-	}, uuid.Nil)
-	require.NoError(t, err)
+		run.RunDispatchTerminal{ID: scheduleID, Name: "daily", Reason: "runplan: the selection is empty"},
+	}, uuid.Nil))
 	require.NoError(t, tx.Commit())
 
-	defer db.ExecContext(ctx, "DELETE FROM state_outbox WHERE aggregate_id = $1", scheduleID)
-
-	// Read back the row directly from the table.
-	type outboxRow struct {
-		StreamName    string     `db:"stream_name"`
-		AggregateType string     `db:"aggregate_type"`
-		EventType     string     `db:"event_type"`
-		MaxRetries    int        `db:"max_retries"`
-		MsgProcID     *uuid.UUID `db:"message_processing_id"`
-		Payload       []byte     `db:"payload"`
-	}
-	var found outboxRow
-	err = db.GetContext(ctx, &found,
-		`SELECT stream_name, aggregate_type, event_type, max_retries, message_processing_id, payload
-		 FROM state_outbox WHERE aggregate_id = $1 LIMIT 1`,
-		scheduleID,
-	)
-	require.NoError(t, err)
-
-	assert.Equal(t, "run.finalized:v1", found.StreamName, "stream_name")
-	assert.Equal(t, "scheduler_tracker", found.AggregateType, "aggregate_type")
-	assert.Equal(t, "run.finalized:v1", found.EventType, "event_type")
-	assert.Equal(t, pkgoutbox.MaxAttempts, found.MaxRetries, "max_retries is written with the one outbox budget")
-	assert.Nil(t, found.MsgProcID, "message_processing_id should be nil for uuid.Nil input")
-
-	var payload map[string]string
-	require.NoError(t, json.Unmarshal(found.Payload, &payload))
-	assert.Equal(t, scheduleID.String(), payload["schedule_id"])
-	assert.Equal(t, "daily", payload["schedule_name"])
-	assert.Equal(t, "succeeded", payload["status"])
+	var count int
+	require.NoError(t, db.GetContext(ctx, &count, `SELECT count(*) FROM state_outbox WHERE aggregate_id = $1`, scheduleID))
+	assert.Zero(t, count)
 }
 
-// TestOutboxPublisher_RunStarted_ServiceMetadataKeysAreSnakeCase pins the
-// scheduler.started:v1 wire contract: the per-service metadata block is keyed
-// image_tag, not the Go field names. The domain value object
-// carries no JSON tags, so the publisher must route it through the adapter DTO.
-func TestOutboxPublisher_RunStarted_ServiceMetadataKeysAreSnakeCase(t *testing.T) {
-	ctx := context.Background()
-	db := newTestDB(t)
-
-	tx, err := db.BeginTxx(ctx, nil)
-	require.NoError(t, err)
-	defer tx.Rollback()
-
-	pub := postgres.NewOutboxPublisher(tx, discardLogger())
-
-	scheduleID := uuid.New()
-	err = pub.Append(ctx, []run.DomainEvent{
-		run.RunStarted{
-			ID:   scheduleID,
-			Name: "daily",
-			K:    run.KindCron,
-			ServiceMetadata: map[string]run.ServiceMetadata{
-				"service-1": {ImageTag: "sha-abc"},
-			},
-		},
-	}, uuid.Nil)
-	require.NoError(t, err)
-	require.NoError(t, tx.Commit())
-	defer db.ExecContext(ctx, "DELETE FROM state_outbox WHERE aggregate_id = $1", scheduleID)
-
-	var payload []byte
-	require.NoError(t, db.GetContext(ctx, &payload,
-		`SELECT payload FROM state_outbox WHERE aggregate_id = $1 AND stream_name = $2 LIMIT 1`,
-		scheduleID, streams.SchedulerStartedV1,
-	))
-
-	var decoded struct {
-		ServiceMetadata map[string]map[string]string `json:"service_metadata"`
-	}
-	require.NoError(t, json.Unmarshal(payload, &decoded))
-
-	svc, ok := decoded.ServiceMetadata["service-1"]
-	require.True(t, ok, "service-1 metadata must be present")
-	assert.Equal(t, "sha-abc", svc["image_tag"], "snake_case image_tag key")
-	_, hasPascal := svc["ImageTag"]
-	assert.False(t, hasPascal, "must not leak Go field name ImageTag onto the wire")
-	_, hasManifest := svc["manifest_version"]
-	assert.False(t, hasManifest, "manifest_version is not part of the service metadata")
-}
-
-// TestOutboxPublisher_RunStarted_CarriesOperation pins the scheduler.started:v1
-// wire contract for the dbt-verb requested on a whole-DAG run: RunStarted.Operation
-// serializes onto the payload as "operation" so the orchestrator can build the
-// full-DAG test/build projection. An unset Operation (the cron/default path)
-// serializes as the empty string, not an omitted key.
-func TestOutboxPublisher_RunStarted_CarriesOperation(t *testing.T) {
-	ctx := context.Background()
-	db := newTestDB(t)
-
-	tx, err := db.BeginTxx(ctx, nil)
-	require.NoError(t, err)
-	defer tx.Rollback()
-
-	pub := postgres.NewOutboxPublisher(tx, discardLogger())
-
-	scheduleID := uuid.New()
-	err = pub.Append(ctx, []run.DomainEvent{
-		run.RunStarted{
-			ID:              scheduleID,
-			Name:            "daily",
-			K:               run.KindTrigger,
-			ServiceMetadata: map[string]run.ServiceMetadata{},
-			Operation:       model.OperationTest,
-		},
-	}, uuid.Nil)
-	require.NoError(t, err)
-	require.NoError(t, tx.Commit())
-	defer db.ExecContext(ctx, "DELETE FROM state_outbox WHERE aggregate_id = $1", scheduleID)
-
-	var payload []byte
-	require.NoError(t, db.GetContext(ctx, &payload,
-		`SELECT payload FROM state_outbox WHERE aggregate_id = $1 AND stream_name = $2 LIMIT 1`,
-		scheduleID, streams.SchedulerStartedV1,
-	))
-
-	var decoded struct {
-		Operation string `json:"operation"`
-	}
-	require.NoError(t, json.Unmarshal(payload, &decoded))
-	assert.Equal(t, "test", decoded.Operation)
-}
-
-// TestOutboxPublisher_RunCancelledPair verifies that appending the
-// [RunCancelled, RunFinalized] pair (as produced by Run.Cancel) writes exactly
-// two outbox rows on their respective streams, and that the run.finalized:v1
-// row carries status "cancelled".
 func TestOutboxPublisher_RunCancelledPair(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
@@ -193,30 +65,13 @@ func TestOutboxPublisher_RunCancelledPair(t *testing.T) {
 		id,
 	)
 	require.NoError(t, err)
-	require.Len(t, rows, 2, "expected exactly 2 outbox rows for the cancel pair")
-
-	// Collect stream names for assertion regardless of order.
-	streamNames := make(map[string][]byte, 2)
-	for _, r := range rows {
-		streamNames[r.StreamName] = r.Payload
-	}
-
-	assert.Contains(t, streamNames, streams.ScheduleCancelledV1, "missing schedule.cancelled:v1 row")
-	assert.Contains(t, streamNames, streams.RunFinalizedV1, "missing run.finalized:v1 row")
+	require.Len(t, rows, 1, "a cancel writes schedule.cancelled:v1 only; its RunFinalized writes no row")
+	assert.Equal(t, streams.ScheduleCancelledV1, rows[0].StreamName)
 
 	// The schedule.cancelled:v1 row carries the cancelling user (provenance).
-	cancelledPayload, ok := streamNames[streams.ScheduleCancelledV1]
-	require.True(t, ok, "schedule.cancelled:v1 row must be present")
 	var cancelled map[string]string
-	require.NoError(t, json.Unmarshal(cancelledPayload, &cancelled))
+	require.NoError(t, json.Unmarshal(rows[0].Payload, &cancelled))
 	assert.Equal(t, "tester", cancelled["cancelled_by"], "schedule.cancelled:v1 must carry cancelled_by")
-
-	// Verify the finalized row carries status "cancelled".
-	finalizedPayload, ok := streamNames[streams.RunFinalizedV1]
-	require.True(t, ok, "run.finalized:v1 row must be present")
-	var payload map[string]string
-	require.NoError(t, json.Unmarshal(finalizedPayload, &payload))
-	assert.Equal(t, "cancelled", payload["status"], "run.finalized:v1 status must be 'cancelled'")
 }
 
 // TestOutboxPublisher_CancelledBy_EmptyBecomesSystem verifies a cancellation
@@ -253,7 +108,6 @@ func TestOutboxPublisher_AllEventTypes(t *testing.T) {
 	db := newTestDB(t)
 
 	scheduleID := uuid.New()
-	sourceID := uuid.New()
 
 	tests := []struct {
 		name          string
@@ -261,29 +115,8 @@ func TestOutboxPublisher_AllEventTypes(t *testing.T) {
 		wantStream    string
 		wantEventType string
 		wantAggType   string
-		wantRows      int // expected outbox rows (0 for RunDispatchTerminal)
+		wantRows      int // expected outbox rows (0 for RunFinalized, RunDispatchTerminal)
 	}{
-		{
-			name: "RunStarted",
-			event: run.RunStarted{
-				ID:              scheduleID,
-				Name:            "sched",
-				K:               run.KindCron,
-				ServiceMetadata: map[string]run.ServiceMetadata{},
-			},
-			wantStream:    "scheduler.started:v1",
-			wantEventType: "scheduler_started",
-			wantAggType:   "scheduler",
-			wantRows:      1,
-		},
-		{
-			name:          "RunFinalized",
-			event:         run.RunFinalized{ID: scheduleID, Name: "sched", Outcome: run.SchedulerStatusFailed},
-			wantStream:    "run.finalized:v1",
-			wantEventType: "run.finalized:v1",
-			wantAggType:   "scheduler_tracker",
-			wantRows:      1,
-		},
 		{
 			name:          "RunCancelled",
 			event:         run.RunCancelled{ID: scheduleID, Name: "sched"},
@@ -293,37 +126,9 @@ func TestOutboxPublisher_AllEventTypes(t *testing.T) {
 			wantRows:      1,
 		},
 		{
-			name:          "RerunRequested",
-			event:         run.RerunRequested{ID: scheduleID, Name: "sched", SourceID: sourceID},
-			wantStream:    "trigger.rerun:v1",
-			wantEventType: "rerun",
-			wantAggType:   "scheduler",
-			wantRows:      1,
-		},
-		{
-			name:          "RebaseRequested",
-			event:         run.RebaseRequested{ID: scheduleID, Name: "sched", SourceID: sourceID},
-			wantStream:    "trigger.rebase:v1",
-			wantEventType: "rebase",
-			wantAggType:   "scheduler",
-			wantRows:      1,
-		},
-		{
-			name: "SingleNodeRunRequested",
-			event: run.SingleNodeRunRequested{
-				ID:   scheduleID,
-				Name: "sched",
-				Target: run.NodeID{
-					ServiceName: "svc",
-					SchemaName:  "sch",
-					TableName:   "tbl",
-				},
-				MetadataSource: run.MetadataSourceLatest,
-			},
-			wantStream:    "trigger.single_node_run:v1",
-			wantEventType: "single_node_run",
-			wantAggType:   "scheduler",
-			wantRows:      1,
+			name:     "RunFinalized produces no row",
+			event:    run.RunFinalized{ID: scheduleID, Name: "sched", Outcome: run.SchedulerStatusFailed},
+			wantRows: 0,
 		},
 		{
 			name:     "RunDispatchTerminal produces no row",
@@ -355,7 +160,7 @@ func TestOutboxPublisher_AllEventTypes(t *testing.T) {
 				// Verify no row was inserted.
 				var count int
 				_ = db.GetContext(ctx, &count, `SELECT COUNT(*) FROM state_outbox WHERE aggregate_id = $1`, aggID)
-				assert.Equal(t, 0, count, "RunDispatchTerminal should produce no outbox row")
+				assert.Equal(t, 0, count, "%s should produce no outbox row", tc.name)
 				return
 			}
 
@@ -380,162 +185,14 @@ func TestOutboxPublisher_AllEventTypes(t *testing.T) {
 	}
 }
 
-// TestOutboxPublisher_InitiatedByProvenance pins the provenance contract: every
-// run-creation event carries initiated_by on the wire, and an empty initiator
-// (a platform-initiated run) is recorded as the "system" sentinel rather than a
-// blank string.
-func TestOutboxPublisher_InitiatedByProvenance(t *testing.T) {
-	ctx := context.Background()
-	db := newTestDB(t)
-	sourceID := uuid.New()
-
-	cases := []struct {
-		name       string
-		event      func(id uuid.UUID) run.DomainEvent
-		wantStream string
-		want       string
-	}{
-		{
-			name: "RunStarted carries the user",
-			event: func(id uuid.UUID) run.DomainEvent {
-				return run.RunStarted{ID: id, Name: "sched", K: run.KindTrigger, InitiatedBy: "okta|alice", ServiceMetadata: map[string]run.ServiceMetadata{}}
-			},
-			wantStream: streams.SchedulerStartedV1,
-			want:       "okta|alice",
-		},
-		{
-			name: "RunStarted empty initiator becomes system",
-			event: func(id uuid.UUID) run.DomainEvent {
-				return run.RunStarted{ID: id, Name: "sched", K: run.KindCron, InitiatedBy: "", ServiceMetadata: map[string]run.ServiceMetadata{}}
-			},
-			wantStream: streams.SchedulerStartedV1,
-			want:       "system",
-		},
-		{
-			name: "RerunRequested carries the user",
-			event: func(id uuid.UUID) run.DomainEvent {
-				return run.RerunRequested{ID: id, Name: "sched", SourceID: sourceID, InitiatedBy: "okta|bob"}
-			},
-			wantStream: streams.TriggerRerunV1,
-			want:       "okta|bob",
-		},
-		{
-			name: "RebaseRequested carries the user",
-			event: func(id uuid.UUID) run.DomainEvent {
-				return run.RebaseRequested{ID: id, Name: "sched", SourceID: sourceID, InitiatedBy: "okta|carol"}
-			},
-			wantStream: streams.TriggerRebaseV1,
-			want:       "okta|carol",
-		},
-		{
-			name: "SingleNodeRunRequested carries the user",
-			event: func(id uuid.UUID) run.DomainEvent {
-				return run.SingleNodeRunRequested{
-					ID: id, Name: "sched",
-					Target:         run.NodeID{ServiceName: "svc", SchemaName: "sch", TableName: "tbl"},
-					MetadataSource: run.MetadataSourceLatest,
-					InitiatedBy:    "okta|dave",
-				}
-			},
-			wantStream: streams.TriggerSingleNodeRunV1,
-			want:       "okta|dave",
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			aggID := uuid.New()
-			tx, err := db.BeginTxx(ctx, nil)
-			require.NoError(t, err)
-
-			pub := postgres.NewOutboxPublisher(tx, discardLogger())
-			require.NoError(t, pub.Append(ctx, []run.DomainEvent{tc.event(aggID)}, uuid.Nil))
-			require.NoError(t, tx.Commit())
-			defer db.ExecContext(ctx, "DELETE FROM state_outbox WHERE aggregate_id = $1", aggID)
-
-			var raw []byte
-			require.NoError(t, db.GetContext(ctx, &raw,
-				`SELECT payload FROM state_outbox WHERE aggregate_id = $1 AND stream_name = $2 LIMIT 1`,
-				aggID, tc.wantStream,
-			))
-			var payload map[string]interface{}
-			require.NoError(t, json.Unmarshal(raw, &payload))
-			assert.Equal(t, tc.want, payload["initiated_by"], "initiated_by on %s", tc.wantStream)
-		})
-	}
-}
-
-// TestOutboxPublisher_SingleNodeRunRequested_Operation verifies that the
-// Operation field carried by SingleNodeRunRequested is serialized onto the
-// trigger.single_node_run:v1 outbox payload, and that an unset Operation
-// (the zero value, model.OperationRun) serializes as an empty string.
-func TestOutboxPublisher_SingleNodeRunRequested_Operation(t *testing.T) {
-	ctx := context.Background()
-	db := newTestDB(t)
-
-	cases := []struct {
-		name string
-		op   model.Operation
-		want string
-	}{
-		{"test operation", model.OperationTest, "test"},
-		{"unset operation defaults to empty", model.OperationRun, ""},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			aggID := uuid.New()
-			tx, err := db.BeginTxx(ctx, nil)
-			require.NoError(t, err)
-
-			pub := postgres.NewOutboxPublisher(tx, discardLogger())
-			evt := run.SingleNodeRunRequested{
-				ID:   aggID,
-				Name: "sched",
-				Target: run.NodeID{
-					ServiceName: "svc",
-					SchemaName:  "sch",
-					TableName:   "tbl",
-				},
-				MetadataSource: run.MetadataSourceLatest,
-				Operation:      tc.op,
-			}
-			require.NoError(t, pub.Append(ctx, []run.DomainEvent{evt}, uuid.Nil))
-			require.NoError(t, tx.Commit())
-			defer db.ExecContext(ctx, "DELETE FROM state_outbox WHERE aggregate_id = $1", aggID)
-
-			var raw []byte
-			require.NoError(t, db.GetContext(ctx, &raw,
-				`SELECT payload FROM state_outbox WHERE aggregate_id = $1 AND stream_name = $2 LIMIT 1`,
-				aggID, streams.TriggerSingleNodeRunV1,
-			))
-			var payload map[string]interface{}
-			require.NoError(t, json.Unmarshal(raw, &payload))
-			assert.Equal(t, tc.want, payload["operation"])
-		})
-	}
-}
-
 // patchEventID returns a copy of evt with its ID field replaced by newID.
 // This lets each sub-test use a unique aggregate_id so they don't pollute each other.
 func patchEventID(evt run.DomainEvent, newID uuid.UUID) run.DomainEvent {
 	switch e := evt.(type) {
-	case run.RunStarted:
-		e.ID = newID
-		return e
 	case run.RunFinalized:
 		e.ID = newID
 		return e
 	case run.RunCancelled:
-		e.ID = newID
-		return e
-	case run.RerunRequested:
-		e.ID = newID
-		return e
-	case run.RebaseRequested:
-		e.ID = newID
-		return e
-	case run.SingleNodeRunRequested:
 		e.ID = newID
 		return e
 	case run.RunDispatchTerminal:
@@ -543,50 +200,5 @@ func patchEventID(evt run.DomainEvent, newID uuid.UUID) run.DomainEvent {
 		return e
 	default:
 		return evt
-	}
-}
-
-// trigger.promoted_seeds:v1 carries the promotion seq its run was planned
-// against as a decimal string; a run planned against none carries no field.
-func TestOutboxPublisher_PromotedSeedsRunRequested_PromotionSeq(t *testing.T) {
-	ctx := context.Background()
-	db := newTestDB(t)
-	cases := map[string]struct {
-		seq     int64
-		present bool
-		want    any
-	}{
-		"planned against a promotion": {seq: 7, present: true, want: "7"},
-		"planned against none":        {seq: 0, present: false},
-	}
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			id := uuid.New()
-			t.Cleanup(func() { _, _ = db.ExecContext(ctx, "DELETE FROM state_outbox WHERE aggregate_id = $1", id) })
-			tx, err := db.BeginTxx(ctx, nil)
-			require.NoError(t, err)
-			defer tx.Rollback()
-			require.NoError(t, postgres.NewOutboxPublisher(tx, discardLogger()).Append(ctx, []run.DomainEvent{run.PromotedSeedsRunRequested{
-				ID: id, Name: "promote-seed-abc12345", ReleaseID: "rel-1", PromotionSeq: tc.seq,
-				Nodes: []run.SeedNode{{NodeID: run.NodeID{ServiceName: "svc", SchemaName: "raw", TableName: "orders"}, NodeType: "dbt-seed", ImageTag: "svc:1"}},
-			}}, uuid.Nil))
-			require.NoError(t, tx.Commit())
-
-			var row struct {
-				StreamName string `db:"stream_name"`
-				Payload    []byte `db:"payload"`
-			}
-			require.NoError(t, db.GetContext(ctx, &row, `SELECT stream_name, payload FROM state_outbox WHERE aggregate_id = $1`, id))
-			assert.Equal(t, streams.TriggerPromotedSeedsV1, row.StreamName)
-			var payload map[string]any
-			require.NoError(t, json.Unmarshal(row.Payload, &payload))
-			assert.Equal(t, "rel-1", payload["release_id"])
-			assert.Equal(t, "promote_seed", payload["kind"])
-			got, present := payload["promotion_seq"]
-			assert.Equal(t, tc.present, present)
-			if tc.present {
-				assert.Equal(t, tc.want, got)
-			}
-		})
 	}
 }

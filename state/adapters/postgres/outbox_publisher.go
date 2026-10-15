@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"strconv"
 
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/identity"
@@ -67,8 +66,8 @@ func (p *OutboxPublisher) Append(ctx context.Context, events []run.DomainEvent, 
 
 // translateRunEvent maps one run.DomainEvent to a pkg/outbox.Entry.
 // Returns (entry, false, nil) on success, (nil, true, nil) when the event
-// produces no row (RunDispatchTerminal), and (nil, false, err) on marshal failure
-// or an unknown event type.
+// produces no row (RunFinalized, RunDispatchTerminal), and (nil, false, err) on
+// marshal failure or an unknown event type.
 func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Entry, bool, error) {
 	var msgProcPtr *uuid.UUID
 	if msgProcID != uuid.Nil {
@@ -77,34 +76,9 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Ent
 	}
 
 	switch e := evt.(type) {
-	case run.RunStarted:
-		payload, err := json.Marshal(map[string]interface{}{
-			"runner_id":        e.ID.String(),
-			"schedule_name":    e.Name,
-			"service_metadata": toServiceMetadataDTOs(e.ServiceMetadata),
-			"kind":             string(e.K),
-			"source_run_id":    sourceIDStr(e.SourceID),
-			"initiated_by":     identity.OrSystem(e.InitiatedBy),
-			"operation":        string(e.Operation),
-		})
-		if err != nil {
-			return nil, false, err
-		}
-		return buildEntry(e.ID, "scheduler", "scheduler_started", streams.SchedulerStartedV1, payload, msgProcPtr), false, nil
-
 	case run.RunFinalized:
-		payload, err := json.Marshal(pkgevents.RunFinalized{
-			ScheduleID:   e.ID.String(),
-			ScheduleName: e.Name,
-			Status:       string(e.Outcome),
-		})
-		if err != nil {
-			return nil, false, err
-		}
-		// The row's event_type is the stream name; the publisher routes every
-		// row by stream_name and reads event_type only to spot dead letters.
-		return buildEntry(e.ID, "scheduler_tracker", streams.RunFinalizedV1, streams.RunFinalizedV1, payload, msgProcPtr), false, nil
-
+		// A run's terminal status is its row; no stream carries it.
+		return nil, true, nil
 	case run.RunCancelled:
 		payload, err := json.Marshal(map[string]string{
 			"schedule_id":   e.ID.String(),
@@ -115,80 +89,6 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Ent
 			return nil, false, err
 		}
 		return buildEntry(e.ID, "scheduler", "schedule_cancelled", streams.ScheduleCancelledV1, payload, msgProcPtr), false, nil
-
-	case run.RerunRequested:
-		payload, err := json.Marshal(map[string]string{
-			"schedule_id":   e.ID.String(),
-			"schedule_name": e.Name,
-			"kind":          "rerun",
-			"source_run_id": e.SourceID.String(),
-			"initiated_by":  identity.OrSystem(e.InitiatedBy),
-		})
-		if err != nil {
-			return nil, false, err
-		}
-		return buildEntry(e.ID, "scheduler", "rerun", streams.TriggerRerunV1, payload, msgProcPtr), false, nil
-
-	case run.RebaseRequested:
-		payload, err := json.Marshal(map[string]string{
-			"schedule_id":   e.ID.String(),
-			"schedule_name": e.Name,
-			"kind":          "rebase",
-			"source_run_id": e.SourceID.String(),
-			"initiated_by":  identity.OrSystem(e.InitiatedBy),
-		})
-		if err != nil {
-			return nil, false, err
-		}
-		return buildEntry(e.ID, "scheduler", "rebase", streams.TriggerRebaseV1, payload, msgProcPtr), false, nil
-
-	case run.SingleNodeRunRequested:
-		payload, err := json.Marshal(map[string]string{
-			"schedule_id":     e.ID.String(),
-			"schedule_name":   e.Name,
-			"service_name":    e.Target.ServiceName,
-			"schema_name":     e.Target.SchemaName,
-			"table_name":      e.Target.TableName,
-			"kind":            "single_node_run",
-			"metadata_source": string(e.MetadataSource),
-			"operation":       string(e.Operation),
-			"source_run_id":   sourceIDStr(e.SourceID),
-			"initiated_by":    identity.OrSystem(e.InitiatedBy),
-		})
-		if err != nil {
-			return nil, false, err
-		}
-		return buildEntry(e.ID, "scheduler", "single_node_run", streams.TriggerSingleNodeRunV1, payload, msgProcPtr), false, nil
-
-	case run.PromotedSeedsRunRequested:
-		nodes := make([]map[string]string, 0, len(e.Nodes))
-		for _, n := range e.Nodes {
-			nodes = append(nodes, map[string]string{
-				"service_name": n.ServiceName,
-				"schema_name":  n.SchemaName,
-				"table_name":   n.TableName,
-				"node_type":    n.NodeType,
-				"image_tag":    n.ImageTag,
-			})
-		}
-		fields := map[string]any{
-			"schedule_id":   e.ID.String(),
-			"schedule_name": e.Name,
-			"release_id":    e.ReleaseID,
-			"kind":          "promote_seed",
-			"nodes":         nodes,
-			"initiated_by":  "system",
-		}
-		// promotion_seq is the live promotion seq the run was planned against;
-		// orchestrator projects the run only once its graph has reached it.
-		if e.PromotionSeq > 0 {
-			fields["promotion_seq"] = strconv.FormatInt(e.PromotionSeq, 10)
-		}
-		payload, err := json.Marshal(fields)
-		if err != nil {
-			return nil, false, err
-		}
-		return buildEntry(e.ID, "scheduler", "promote_seed", streams.TriggerPromotedSeedsV1, payload, msgProcPtr), false, nil
 
 	case run.TaskDispatched:
 		payload, err := json.Marshal(pkgevents.QueryModel{
@@ -208,13 +108,13 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Ent
 		if err != nil {
 			return nil, false, err
 		}
-		// The row's event_type is the stream name, as for run.finalized:v1;
-		// every dispatch of a run shares the run as its aggregate, so the relay
-		// publishes them in the order they were written.
+		// The row's event_type is the stream name; every dispatch of a run
+		// shares the run as its aggregate, so the relay publishes them in the
+		// order they were written.
 		return buildEntry(e.ID, "scheduler", streams.QueryModelV1, streams.QueryModelV1, payload, msgProcPtr), false, nil
 	case run.RunDispatchTerminal:
 		// RunDispatchTerminal is informational and maps to no stream.
-		// The dispatch handlers log its reason.
+		// The activation handler logs its reason.
 		return nil, true, nil
 
 	default:
@@ -240,15 +140,6 @@ func buildEntry(
 		Status:              "pending",
 		RetryCount:          0,
 	}
-}
-
-// sourceIDStr converts an optional UUID pointer to its string representation,
-// returning an empty string when nil.
-func sourceIDStr(p *uuid.UUID) string {
-	if p == nil {
-		return ""
-	}
-	return p.String()
 }
 
 // Compile-time assertion: OutboxPublisher satisfies ports.OutboxPublisher.

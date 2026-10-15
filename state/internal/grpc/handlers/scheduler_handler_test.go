@@ -715,7 +715,7 @@ func (f *cancelFakeOutbox) Append(_ context.Context, evts []run.DomainEvent, _ u
 
 // assertCancelEvents verifies a cancel emits exactly two domain events:
 // RunCancelled (the work-suppression guard, → schedule.cancelled:v1) and
-// RunFinalized{cancelled} (the terminal projection, → run.finalized:v1).
+// RunFinalized{cancelled}, which writes no row.
 func assertCancelEvents(t *testing.T, evts []run.DomainEvent, by string) {
 	t.Helper()
 	require.Len(t, evts, 2, "cancel appends RunCancelled + RunFinalized")

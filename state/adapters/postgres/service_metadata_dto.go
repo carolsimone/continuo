@@ -18,9 +18,9 @@ type serviceMetadataDTO struct {
 
 // toServiceMetadataDTOs converts a domain service-metadata map into the
 // snake_case serialization carrier used everywhere this value crosses a wire or
-// storage boundary (the scheduler_tracker/schedule_catalog JSONB columns and
-// the scheduler.started:v1 event payload). A nil map yields an empty (non-nil)
-// map so it encodes as `{}` rather than `null`.
+// storage boundary (the scheduler_tracker/schedule_catalog JSONB columns). A
+// nil map yields an empty (non-nil) map so it encodes as `{}` rather than
+// `null`.
 func toServiceMetadataDTOs(meta map[string]run.ServiceMetadata) map[string]serviceMetadataDTO {
 	dtos := make(map[string]serviceMetadataDTO, len(meta))
 	for svc, m := range meta {

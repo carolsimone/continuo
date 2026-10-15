@@ -324,18 +324,6 @@ func main() {
 			binding: redis.NewScheduleCatalogBinding(uowFactory, svchandlers.NewScheduleCatalogHandler(logger), logger),
 		},
 		{
-			name:    "run_entries_dispatched",
-			stream:  streams.RunEntriesDispatchedV1,
-			group:   streams.StateRunEntriesDispatched,
-			binding: redis.NewRunEntriesDispatchedBinding(uowFactory, svchandlers.NewRunEntriesDispatchedHandler(logger), logger),
-		},
-		{
-			name:    "run_entries_dispatch_failed",
-			stream:  streams.RunEntriesDispatchFailedV1,
-			group:   streams.StateRunEntriesDispatchFailed,
-			binding: redis.NewRunEntriesDispatchFailedBinding(uowFactory, svchandlers.NewRunEntriesDispatchFailedHandler(logger), logger),
-		},
-		{
 			name:    "task_status_updated",
 			stream:  streams.TaskStatusUpdatedV1,
 			group:   streams.StateTaskStatusUpdated,

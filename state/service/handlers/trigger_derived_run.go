@@ -114,7 +114,7 @@ func (h *TriggerDerivedRunHandler) Handle(ctx context.Context, u uow.UnitOfWork,
 	if err != nil {
 		return uuid.Nil, "", err
 	}
-	newRun, _, err := run.NewDerivedRun(src.ScheduleName(), h.cfg.kind, sourceID, sel.Stamp, initiator.UserID, src.Operation(), u.Clock().Now())
+	newRun, err := run.NewDerivedRun(src.ScheduleName(), h.cfg.kind, sourceID, sel.Stamp, initiator.UserID, src.Operation(), u.Clock().Now())
 	if err != nil {
 		return uuid.Nil, "", err
 	}

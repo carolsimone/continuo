@@ -148,7 +148,7 @@ func TestPlanner_ScheduleRefusals(t *testing.T) {
 
 func sourceRun(t *testing.T, stamp run.ReleaseStamp) *run.Run {
 	t.Helper()
-	r, _, err := run.NewPendingRun("daily", run.KindCron, nil, identity.SystemUserID, nil, model.OperationRun, stamp, planNow)
+	r, err := run.NewPendingRun("daily", run.KindCron, nil, identity.SystemUserID, nil, model.OperationRun, stamp, planNow)
 	require.NoError(t, err)
 	return r
 }

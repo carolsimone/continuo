@@ -9,7 +9,7 @@ import (
 )
 
 func TestNewPendingRun_StoresOperation(t *testing.T) {
-	r, _, err := NewPendingRun("sched", KindTrigger, nil, "user-1", nil, model.OperationTest, ReleaseStamp{}, time.Now())
+	r, err := NewPendingRun("sched", KindTrigger, nil, "user-1", nil, model.OperationTest, ReleaseStamp{}, time.Now())
 	if err != nil {
 		t.Fatalf("NewPendingRun: %v", err)
 	}
@@ -19,8 +19,7 @@ func TestNewPendingRun_StoresOperation(t *testing.T) {
 }
 
 func TestNewSingleNodeRun_StoresOperation(t *testing.T) {
-	r, _, err := NewSingleNodeRun("sched", NodeID{ServiceName: "s", SchemaName: "sc", TableName: "t"},
-		MetadataSource("latest"), model.OperationBuild, nil, "user-1", ReleaseStamp{}, time.Now())
+	r, err := NewSingleNodeRun("sched", model.OperationBuild, nil, "user-1", ReleaseStamp{}, time.Now())
 	if err != nil {
 		t.Fatalf("NewSingleNodeRun: %v", err)
 	}
@@ -30,7 +29,7 @@ func TestNewSingleNodeRun_StoresOperation(t *testing.T) {
 }
 
 func TestNewDerivedRun_InheritsOperation(t *testing.T) {
-	r, _, err := NewDerivedRun("sched", KindRerun, uuid.New(), ReleaseStamp{}, "user-1", model.OperationBuild, time.Now())
+	r, err := NewDerivedRun("sched", KindRerun, uuid.New(), ReleaseStamp{}, "user-1", model.OperationBuild, time.Now())
 	if err != nil {
 		t.Fatalf("NewDerivedRun: %v", err)
 	}
@@ -38,7 +37,7 @@ func TestNewDerivedRun_InheritsOperation(t *testing.T) {
 		t.Fatalf("Operation() = %q, want build", r.Operation())
 	}
 
-	r, _, err = NewDerivedRun("sched", KindRerun, uuid.New(), ReleaseStamp{}, "user-1", model.OperationRun, time.Now())
+	r, err = NewDerivedRun("sched", KindRerun, uuid.New(), ReleaseStamp{}, "user-1", model.OperationRun, time.Now())
 	if err != nil {
 		t.Fatalf("NewDerivedRun: %v", err)
 	}

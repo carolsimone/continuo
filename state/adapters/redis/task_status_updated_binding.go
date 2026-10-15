@@ -23,14 +23,13 @@ const taskStatusUpdatedStreamName = streams.TaskStatusUpdatedV1
 // payload, so the dedup row's payload is the JSON-encoded Values map
 // (valuesPayload); the payload is observability-only and dedup correctness
 // rides on message_id. The dedup row ID is threaded to the handler as msgProcID
-// so the run.finalized:v1 outbox entry emitted on the finalize branch carries
-// provenance back to the originating message.
+// so the query.model:v1 outbox entries a success writes carry provenance back
+// to the originating message.
 //
 // The transient task-not-found path inside the handler returns a plain error
 // (NOT wrapped with ErrPermanent): bindStreamHandler rolls back and the
-// StreamConsumer's reclaim loop redelivers the message after
-// run.entries.dispatched:v1 has caught up. See bindStreamHandler for the shared
-// pipeline and ACK-policy semantics.
+// StreamConsumer's reclaim loop redelivers the message. See bindStreamHandler
+// for the shared pipeline and ACK-policy semantics.
 func NewTaskStatusUpdatedBinding(
 	uowFactory func() uow.UnitOfWork,
 	handler *handlers.TaskStatusUpdatedHandler,

@@ -5,6 +5,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/state/domain/runplan"
+	"github.com/carolsimone/continuo/state/domain/topology"
+
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/google/uuid"
@@ -12,13 +16,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestRunRepository_SaveRun_PersistsStartedAtOnAcceptDispatch walks the real
+// independentNodes is a release slice of unconnected dbt models
+// public.<table> of service svc, with the plan of a run that executes them all.
+func independentNodes(t *testing.T, tables ...string) (runplan.Plan, topology.Graph) {
+	t.Helper()
+	nodes := make([]topology.Node, 0, len(tables))
+	for _, table := range tables {
+		nodes = append(nodes, topology.Node{
+			Key: topology.KeyOf("public", table), ServiceName: "svc", SchemaName: "public", TableName: table, NodeType: "dbt-model",
+		})
+	}
+	g := topology.NewGraph(nodes, nil)
+	plan, err := runplan.WholeDAG{Operation: model.OperationRun}.Select(g)
+	require.NoError(t, err)
+	return plan, g
+}
+
+// TestRunRepository_SaveRun_PersistsStartedAtOnStart walks the real
 // PENDING→RUNNING production path: a PENDING run is created, loaded FOR UPDATE,
-// then AcceptDispatch receives a non-terminal task projection (so the run
-// transitions to RUNNING and stamps started_at). SaveRun must persist that
-// started_at to scheduler_tracker. Before the fix the column stayed NULL forever
-// because SaveRun never consulted IsStartedDirty().
-func TestRunRepository_SaveRun_PersistsStartedAtOnAcceptDispatch(t *testing.T) {
+// then started with a plan holding a pending task (so the run transitions to
+// RUNNING and stamps started_at). SaveRun must persist that started_at to
+// scheduler_tracker.
+func TestRunRepository_SaveRun_PersistsStartedAtOnStart(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	schedRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
@@ -52,21 +71,12 @@ func TestRunRepository_SaveRun_PersistsStartedAtOnAcceptDispatch(t *testing.T) {
 	rn, err := runRepo.LoadRunForUpdate(ctx, scheduleID)
 	require.NoError(t, err)
 
-	// A single non-terminal task keeps the run RUNNING (not auto-finalized),
-	// so AcceptDispatch stamps started_at and sets startedDirty.
-	projection := []run.DispatchedTask{
-		{
-			TaskID:      uuid.New(),
-			ServiceName: "svc",
-			SchemaName:  "public",
-			TableName:   "tbl",
-			Status:      run.TaskStatusPending,
-			MaxRetries:  3,
-		},
-	}
-	_, err = rn.AcceptDispatch(ctx, tasks, projection, time.Now())
+	// A pending task keeps the run RUNNING (not finalized), so Start stamps
+	// started_at and sets startedDirty.
+	plan, g := independentNodes(t, "tbl")
+	_, err = rn.Start(ctx, tasks, "default", plan, g, 2, time.Now())
 	require.NoError(t, err)
-	require.Equal(t, run.SchedulerStatusRunning, rn.Status(), "run must be RUNNING after a non-terminal dispatch")
+	require.Equal(t, run.SchedulerStatusRunning, rn.Status(), "run must be RUNNING after a start with a pending task")
 
 	require.NoError(t, runRepo.SaveRun(ctx, rn))
 	require.NoError(t, tx.Commit())
@@ -112,13 +122,10 @@ func TestRunRepository_SaveRun_SingleUpdateForDirtyColumns(t *testing.T) {
 	rn, err := runRepo.LoadRunForUpdate(ctx, scheduleID)
 	require.NoError(t, err)
 
-	// Two tasks, neither terminal: AcceptDispatch sets total_task_count=2,
+	// Two tasks, neither terminal: Start sets total_task_count=2,
 	// terminal_task_count=0, init_status=completed, status=running, started_at.
-	projection := []run.DispatchedTask{
-		{TaskID: uuid.New(), ServiceName: "svc", SchemaName: "public", TableName: "a", Status: run.TaskStatusPending, MaxRetries: 3},
-		{TaskID: uuid.New(), ServiceName: "svc", SchemaName: "public", TableName: "b", Status: run.TaskStatusPending, MaxRetries: 3},
-	}
-	_, err = rn.AcceptDispatch(ctx, tasks, projection, time.Now())
+	plan, g := independentNodes(t, "a", "b")
+	_, err = rn.Start(ctx, tasks, "default", plan, g, 2, time.Now())
 	require.NoError(t, err)
 
 	require.NoError(t, runRepo.SaveRun(ctx, rn))

@@ -89,7 +89,7 @@ func (h *TriggerSingleNodeRunHandler) Handle(ctx context.Context, u uow.UnitOfWo
 	}
 	id := uuid.New()
 	scheduleName := "single-node-run-" + strings.ReplaceAll(id.String(), "-", "")[:8]
-	newRun, _, err := run.NewSingleNodeRun(scheduleName, in.Target, in.MetadataSource, in.Operation, in.SourceRunID, in.Initiator.UserID, sel.Stamp, u.Clock().Now())
+	newRun, err := run.NewSingleNodeRun(scheduleName, in.Operation, in.SourceRunID, in.Initiator.UserID, sel.Stamp, u.Clock().Now())
 	if err != nil {
 		return uuid.Nil, "", err
 	}

@@ -23,7 +23,7 @@ import (
 // E is the parsed event type produced by Parse.
 type streamBinding[E any] struct {
 	// label is the stream's short name used in log lines
-	// (e.g. "run.entries.dispatched").
+	// (e.g. "task.status.updated").
 	label string
 	// streamName is the wire-stable Redis stream name, also stored in the
 	// message_processing.stream_name column for dedup rows.

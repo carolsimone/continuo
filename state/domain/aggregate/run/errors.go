@@ -49,9 +49,8 @@ var (
 	// that triggered the run is not identified.
 	ErrReleaseIDRequired = errors.New("release_id is required")
 
-	// ErrNoNodes is returned by NewPromotedSeedsRun when the node set is empty,
-	// and by Run.Start when the plan holds no task. A run with no tasks would
-	// never reach a terminal state on its own.
+	// ErrNoNodes is returned by Run.Start when the plan holds no task. A run
+	// with no tasks would never reach a terminal state on its own.
 	ErrNoNodes = errors.New("run requires at least one node")
 
 	// ErrAlreadyPlanned is returned by Run.Start when the run's tasks are
