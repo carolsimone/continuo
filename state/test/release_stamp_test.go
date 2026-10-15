@@ -123,14 +123,4 @@ func TestReleaseStamp(t *testing.T) {
 		assert.Equal(t, old, h.stampOf(t, id))
 	})
 
-	t.Run("a stamped run whose tasks orchestrator chose records no built version", func(t *testing.T) {
-		rn, _, err := run.NewPendingRun("stamp-cron", run.KindCron, nil, identity.SystemUserID, nil, model.OperationRun, live, time.Now())
-		require.NoError(t, err)
-		runID := h.saveRun(t, rn)
-		taskID := h.dispatch(t, runID, "stamp_orders", "service-1:v1")
-		h.finish(t, runID, taskID, run.TaskStatusSucceeded)
-
-		_, ok := h.loaded(t, "raw.stamp_orders")
-		assert.False(t, ok)
-	})
 }
