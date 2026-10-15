@@ -28,6 +28,9 @@ func TestChartLLMProvidersMatchTheServices(t *testing.T) {
 		t.Fatalf("parse values.schema.json: %v", err)
 	}
 	got := schema.Properties.LLM.Properties.Provider.Enum
+	if len(got) == 0 {
+		t.Fatal("values.schema.json has no llm.provider enum; the check would pass vacuously against an empty list")
+	}
 	if want := pkgconfig.AcceptedLLMProviders(); !slices.Equal(got, want) {
 		t.Fatalf("values.schema.json llm.provider enum is %v, want %v (pkg/config.AcceptedLLMProviders, in order)", got, want)
 	}
