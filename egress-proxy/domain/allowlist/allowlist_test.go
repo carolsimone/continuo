@@ -71,8 +71,15 @@ func TestNew_MergesDuplicates(t *testing.T) {
 
 func TestNew_RejectsInvalidEntries(t *testing.T) {
 	label64 := strings.Repeat("a", 64)
+	kelvin := string(rune(0x212A))
+	tooLong := strings.Repeat(strings.Repeat("a", 63)+".", 4) + "com"
 	for _, e := range []Entry{
 		{Host: "", Port: 443},
+		{Host: "127.1", Port: 443},
+		{Host: "2130706433", Port: 443},
+		{Host: "0x7f.0.0.1", Port: 443},
+		{Host: "doc" + kelvin + "er.io", Port: 443},
+		{Host: tooLong, Port: 443},
 		{Host: "1.2.3.4", Port: 443},
 		{Host: "[::1]", Port: 443},
 		{Host: "::1", Port: 443},
@@ -96,4 +103,37 @@ func TestNew_AcceptsSingleLabelHosts(t *testing.T) {
 	a := mustNew(t, Entry{Host: "stub-llm", Port: 9100, AllowPrivate: true})
 	_, ok := a.Match("stub-llm", 9100)
 	assert.True(t, ok)
+}
+
+func TestNew_AcceptsValidNamesNearTheRejectedForms(t *testing.T) {
+	// 253 bytes: three 63-byte labels, then a 61-byte label.
+	longest := strings.Repeat("a", 63) + "." + strings.Repeat("a", 63) + "." + strings.Repeat("a", 63) + "." + strings.Repeat("a", 61)
+	require.Len(t, longest, 253)
+	a := mustNew(t,
+		Entry{Host: "stub-llm", Port: 9100},
+		Entry{Host: "svc1.example.com", Port: 443},
+		Entry{Host: "a1", Port: 443},
+		Entry{Host: longest, Port: 443},
+	)
+	assert.Equal(t, 4, a.Len())
+	_, ok := a.Match("svc1.example.com", 443)
+	assert.True(t, ok)
+	_, ok = a.Match("a1", 443)
+	assert.True(t, ok)
+}
+
+func TestMatch_NonASCIIHostMatchesNothing(t *testing.T) {
+	kelvin := string(rune(0x212A))
+	a := mustNew(t, Entry{Host: "docker.io", Port: 443})
+	_, ok := a.Match("doc"+kelvin+"er.io", 443)
+	assert.False(t, ok, "the Kelvin sign lower-cases to k under Unicode folding")
+	_, ok = a.Match("docKer.io", 443)
+	assert.True(t, ok, "ASCII case is still ignored")
+}
+
+func TestMatch_ReturnsTheNormalizedEntryHost(t *testing.T) {
+	a := mustNew(t, Entry{Host: "Docker.IO.", Port: 443})
+	e, ok := a.Match("DOCKER.io", 443)
+	require.True(t, ok)
+	assert.Equal(t, Normalize("DOCKER.io"), e.Host)
 }

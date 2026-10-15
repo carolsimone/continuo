@@ -73,6 +73,8 @@ func New(entries []Entry) (*Allowlist, error) {
 
 // Match returns the entry admitting host on port: an exact entry, else the
 // longest matching wildcard. A host that is not a valid name matches nothing.
+// Callers connect to the returned Entry.Host (or Normalize(host)), never to
+// the raw input.
 func (a *Allowlist) Match(host string, port uint16) (Entry, bool) {
 	h, err := validHost(host)
 	if err != nil || strings.HasPrefix(h, "*.") {
@@ -93,23 +95,47 @@ func (a *Allowlist) Match(host string, port uint16) (Entry, bool) {
 // Len is the number of distinct host-and-port entries.
 func (a *Allowlist) Len() int { return len(a.exact) + len(a.wildcards) }
 
-// Normalize lower-cases host and removes one trailing dot.
+// maxHostLen is the longest host name in bytes once normalized (RFC 1035).
+const maxHostLen = 253
+
+// Normalize lower-cases the ASCII letters of host and removes one trailing
+// dot. Non-ASCII bytes are kept as they are, so validHost refuses them rather
+// than folding them onto ASCII names.
 func Normalize(host string) string {
-	return strings.TrimSuffix(strings.ToLower(host), ".")
+	b := []byte(host)
+	for i, c := range b {
+		if 'A' <= c && c <= 'Z' {
+			b[i] = c + ('a' - 'A')
+		}
+	}
+	return strings.TrimSuffix(string(b), ".")
 }
 
-// validHost normalizes host and checks it is a DNS name: labels of 1-63
-// letters, digits and inner hyphens, optionally led by a "*" label that has at
-// least two labels after it. IP addresses are refused: entries name hosts.
+// validHost normalizes host and checks it is a DNS name: at most 253 ASCII
+// bytes, labels of 1-63 letters, digits and inner hyphens, optionally led by a
+// "*" label that has at least two labels after it. IP addresses and legacy
+// numeric IPv4 forms (such as "127.1", "2130706433" or "0x7f.0.0.1") are
+// refused: entries name hosts.
 func validHost(raw string) (string, error) {
 	h := Normalize(raw)
 	if h == "" {
 		return "", errors.New("host is empty")
 	}
+	if len(h) > maxHostLen {
+		return "", fmt.Errorf("%q is longer than %d bytes", raw, maxHostLen)
+	}
+	for i := 0; i < len(h); i++ {
+		if h[i] >= 0x80 {
+			return "", fmt.Errorf("%q is not ASCII", raw)
+		}
+	}
 	if _, err := netip.ParseAddr(strings.Trim(h, "[]")); err == nil {
 		return "", fmt.Errorf("%q is an IP address; entries name hosts", raw)
 	}
 	labels := strings.Split(h, ".")
+	if legacyNumeric(labels[len(labels)-1]) {
+		return "", fmt.Errorf("%q reads as a numeric IPv4 address; entries name hosts", raw)
+	}
 	for i, l := range labels {
 		if l == "*" && i == 0 && len(labels) > 2 {
 			continue
@@ -119,6 +145,28 @@ func validHost(raw string) (string, error) {
 		}
 	}
 	return h, nil
+}
+
+// legacyNumeric reports whether a normalized last label is all decimal digits,
+// or "0x" followed only by hex digits. Resolvers read such a last label as part
+// of a numeric IPv4 address.
+func legacyNumeric(l string) bool {
+	if l == "" {
+		return false
+	}
+	if allIn(l, "0123456789") {
+		return true
+	}
+	return strings.HasPrefix(l, "0x") && allIn(l[2:], "0123456789abcdef")
+}
+
+func allIn(s, set string) bool {
+	for i := 0; i < len(s); i++ {
+		if !strings.ContainsRune(set, rune(s[i])) {
+			return false
+		}
+	}
+	return true
 }
 
 func validLabel(l string) bool {
