@@ -13,8 +13,8 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// RebasePreviewer previews a rebase: the read behind PreviewRebase.
-type RebasePreviewer interface {
+// RebasePreviewReader previews a rebase: the read behind PreviewRebase.
+type RebasePreviewReader interface {
 	Preview(ctx context.Context, sourceID uuid.UUID, includeChangedUpstream bool) (runreads.RebasePreview, error)
 }
 
@@ -22,13 +22,13 @@ type RebasePreviewer interface {
 // TriggerRebase would run for the same source and option on the live release,
 // without creating a run.
 type PreviewRebaseHandler struct {
-	previewer RebasePreviewer
-	logger    *slog.Logger
+	reader RebasePreviewReader
+	logger *slog.Logger
 }
 
-// NewPreviewRebaseHandler creates a PreviewRebaseHandler over previewer.
-func NewPreviewRebaseHandler(previewer RebasePreviewer, logger *slog.Logger) *PreviewRebaseHandler {
-	return &PreviewRebaseHandler{previewer: previewer, logger: logger}
+// NewPreviewRebaseHandler creates a PreviewRebaseHandler over reader.
+func NewPreviewRebaseHandler(reader RebasePreviewReader, logger *slog.Logger) *PreviewRebaseHandler {
+	return &PreviewRebaseHandler{reader: reader, logger: logger}
 }
 
 // PreviewRebase validates the request, previews the rebase and maps the
@@ -41,7 +41,7 @@ func (h *PreviewRebaseHandler) PreviewRebase(ctx context.Context, req *statev1.P
 	if err != nil {
 		return nil, err
 	}
-	got, err := h.previewer.Preview(ctx, srcID, req.GetIncludeChangedUpstream())
+	got, err := h.reader.Preview(ctx, srcID, req.GetIncludeChangedUpstream())
 	if err != nil {
 		if st, ok := rebaseRefusal(err); ok {
 			return nil, st.Err()

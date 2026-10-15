@@ -36,16 +36,16 @@ func (f *fakeRebaseStarter) Handle(_ context.Context, _ uow.UnitOfWork, in svcha
 	return uuid.MustParse("6f1d7f0e-3c55-4c4a-9d55-0f2d8f5b7c11"), "daily", nil
 }
 
-// fakeRebasePreviewer records what it was asked and answers with preview or
+// fakeRebasePreviewReader records what it was asked and answers with preview or
 // err.
-type fakeRebasePreviewer struct {
+type fakeRebasePreviewReader struct {
 	sourceID uuid.UUID
 	include  bool
 	preview  runreads.RebasePreview
 	err      error
 }
 
-func (f *fakeRebasePreviewer) Preview(_ context.Context, sourceID uuid.UUID, include bool) (runreads.RebasePreview, error) {
+func (f *fakeRebasePreviewReader) Preview(_ context.Context, sourceID uuid.UUID, include bool) (runreads.RebasePreview, error) {
 	f.sourceID, f.include = sourceID, include
 	return f.preview, f.err
 }
@@ -119,7 +119,7 @@ func TestRebaseHandler_AnUnknownFailureIsInternal(t *testing.T) {
 }
 
 func TestPreviewRebaseHandler_RejectsAMissingOrMalformedSourceRunID(t *testing.T) {
-	h := NewPreviewRebaseHandler(&fakeRebasePreviewer{}, newTestLogger())
+	h := NewPreviewRebaseHandler(&fakeRebasePreviewReader{}, newTestLogger())
 	for _, id := range []string{"", "not-a-uuid"} {
 		_, err := h.PreviewRebase(context.Background(), &statev1.PreviewRebaseRequest{SourceRunId: id})
 		requireGRPCCode(t, err, codes.InvalidArgument)
@@ -131,7 +131,7 @@ func TestPreviewRebaseHandler_RejectsAMissingOrMalformedSourceRunID(t *testing.T
 // successful duration in seconds (0 for a node without one).
 func TestPreviewRebaseHandler_MapsThePreview(t *testing.T) {
 	a := run.NodeID{ServiceName: "billing", SchemaName: "raw", TableName: "Invoices"}
-	previewer := &fakeRebasePreviewer{preview: runreads.RebasePreview{
+	reader := &fakeRebasePreviewReader{preview: runreads.RebasePreview{
 		Release: run.ReleaseStamp{ReleaseID: "rel-7", PromotionSeq: 12},
 		Preview: runplan.Preview{
 			Plan:            runplan.Plan{Tasks: make([]runplan.PlannedTask, 9)},
@@ -143,14 +143,14 @@ func TestPreviewRebaseHandler_MapsThePreview(t *testing.T) {
 		},
 		LastSuccess: map[run.NodeID]time.Duration{a: 252500 * time.Millisecond},
 	}}
-	h := NewPreviewRebaseHandler(previewer, newTestLogger())
+	h := NewPreviewRebaseHandler(reader, newTestLogger())
 	src := uuid.New()
 
 	resp, err := h.PreviewRebase(context.Background(), &statev1.PreviewRebaseRequest{SourceRunId: src.String(), IncludeChangedUpstream: true})
 
 	require.NoError(t, err)
-	assert.Equal(t, src, previewer.sourceID)
-	assert.True(t, previewer.include)
+	assert.Equal(t, src, reader.sourceID)
+	assert.True(t, reader.include)
 	assert.Equal(t, "rel-7", resp.ReleaseId)
 	assert.Equal(t, int64(12), resp.PromotionSeq)
 	assert.Equal(t, int32(9), resp.TotalNodes)
@@ -181,7 +181,7 @@ func TestPreviewRebaseHandler_MapsRefusals(t *testing.T) {
 		{runplan.ErrNothingToRerun, codes.FailedPrecondition},
 		{errors.New("connection reset"), codes.Internal},
 	} {
-		h := NewPreviewRebaseHandler(&fakeRebasePreviewer{err: tc.err}, newTestLogger())
+		h := NewPreviewRebaseHandler(&fakeRebasePreviewReader{err: tc.err}, newTestLogger())
 		_, err := h.PreviewRebase(context.Background(), &statev1.PreviewRebaseRequest{SourceRunId: uuid.NewString()})
 		requireGRPCCode(t, err, tc.code)
 	}
