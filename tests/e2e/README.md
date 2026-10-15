@@ -191,6 +191,7 @@ The controller in kind connects to docker-compose services via docker bridge net
 | `trigger_test.go` | `TestTriggerSchedule_SeedRunAndRerun` — trigger seed schedule via TriggerSchedule RPC, wait for completion, re-trigger |
 | `failure_test.go` | `TestE2E_FailurePath_RerunRebasesBothFailureSubtrees` — two parallel failing subtrees, then a rerun rebases both |
 | `rebase_test.go` | `TestRebaseFromFailedRun`, `TestRebaseAllInheritedFinalizes` |
+| `rebase_upstream_fix_test.go` | `TestRebase_ReRunsAChangedUpstreamNode` — a release changes `ftable_c`, upstream of the failing `ftable_e`, and only `ftable_a`'s image tag: `PreviewRebase` names `ftable_c` (three nodes below it, its last successful duration) with and without the changed upstream nodes; a rebase previewed on the source's release is refused (`FailedPrecondition`, "the live release changed; preview again") and creates no run; a rebase without them re-executes `ftable_e`..`ftable_h`, and one with them also `ftable_c` and `ftable_d`, which succeed; `ftable_a` stays inherited |
 | `single_node_run_test.go` | `TestSingleNodeRunLatest`, `TestSingleNodeRunStale`, `TestSingleNodeRunTargetNotFound` — a target the live release does not hold is refused with `NotFound` and creates no run |
 | `cancel_test.go` | `TestCancelMidwayAndRetrigger` — cancel an in-flight schedule, then re-trigger |
 | `empty_dag_test.go` | `TestEmptyCronDAG_FinalisesAsFailed` — a cron activation of a schedule with no node in the live release records its run `failed`; a trigger of it, whatever its operation, is refused with `FailedPrecondition` and creates no run |
@@ -287,7 +288,7 @@ The failure model `ftable_e` runs in the `service-2` Docker image but JOINs `pub
 
 - Happy path: ~1 minute
 - Failure path: ~1 minute (3 retries + retry delay)
-- Whole suite: ~39 minutes warm (45 tests), slower on a cold stack
+- Whole suite: ~39 minutes warm (71 test functions), slower on a cold stack
 - Timeout: 125 minutes for the whole `tests/e2e/...` package (`go test -timeout`).
   Derived, not measured: the two longest per-test context ceilings (35m each)
   wedging in one run, plus 55m for the rest of the suite. Every per-test
