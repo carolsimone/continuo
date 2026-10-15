@@ -20,9 +20,10 @@ import (
 var ErrSourceRunNotTerminal = errors.New("source run is not in a terminal state")
 
 // TriggerSingleNodeRunHandler is the use case behind the TriggerSingleNodeRun
-// gRPC method. It writes a new single-task Run atomically with its outbox
-// event. In stale mode (MetadataSource = snapshot_of_run) it validates that
-// the source run is terminal and carries a task at the requested node.
+// gRPC method. It creates a single-task Run, stores its task and dispatches it
+// in one transaction: on the live release, or, in stale mode (MetadataSource =
+// snapshot_of_run), on the source run's release, after validating that the
+// source run is terminal and carries a task at the requested node.
 type TriggerSingleNodeRunHandler struct {
 	planner runstart.Planner
 	logger  *slog.Logger
@@ -45,14 +46,18 @@ type TriggerSingleNodeRunInput struct {
 
 // Handle synthesises a single-task Run. In stale mode (MetadataSource =
 // snapshot_of_run) it requires the source run to be terminal and to carry a
-// task at the requested node.
+// task at the requested node. A selection the planner refuses (the node is not
+// in the release or another service owns it, a test of a node without data
+// tests, a full refresh of a type that cannot be rebuilt, a source that names
+// no release) is returned as is, and nothing is written.
 func (h *TriggerSingleNodeRunHandler) Handle(ctx context.Context, u uow.UnitOfWork, in TriggerSingleNodeRunInput) (uuid.UUID, string, error) {
-	var sourceStamp run.ReleaseStamp
+	var src *run.Run
 	if in.MetadataSource == run.MetadataSourceSnapshotOfRun {
 		if in.SourceRunID == nil {
 			return uuid.Nil, "", fmt.Errorf("source_run_id required when metadata_source=snapshot_of_run")
 		}
-		src, err := u.Run().GetRun(ctx, *in.SourceRunID)
+		var err error
+		src, err = u.Run().GetRun(ctx, *in.SourceRunID)
 		if err != nil {
 			return uuid.Nil, "", fmt.Errorf("get source: %w", err)
 		}
@@ -66,7 +71,6 @@ func (h *TriggerSingleNodeRunHandler) Handle(ctx context.Context, u uow.UnitOfWo
 		if !ok {
 			return uuid.Nil, "", run.ErrTaskNotFound
 		}
-		sourceStamp = src.Release()
 	}
 
 	if err := u.Begin(ctx); err != nil {
@@ -79,31 +83,28 @@ func (h *TriggerSingleNodeRunHandler) Handle(ctx context.Context, u uow.UnitOfWo
 		}
 	}()
 
+	sel, err := h.planner.SingleNode(ctx, u, in.Target, in.Operation, src)
+	if err != nil {
+		return uuid.Nil, "", err
+	}
 	id := uuid.New()
 	scheduleName := "single-node-run-" + strings.ReplaceAll(id.String(), "-", "")[:8]
-	stamp := sourceStamp
-	if in.MetadataSource != run.MetadataSourceSnapshotOfRun {
-		live, err := h.planner.LiveStamp(ctx, u)
-		if err != nil {
-			return uuid.Nil, "", err
-		}
-		stamp = live
-	}
-	newRun, evt, err := run.NewSingleNodeRun(scheduleName, in.Target, in.MetadataSource, in.Operation, in.SourceRunID, in.Initiator.UserID, stamp, u.Clock().Now())
+	newRun, _, err := run.NewSingleNodeRun(scheduleName, in.Target, in.MetadataSource, in.Operation, in.SourceRunID, in.Initiator.UserID, sel.Stamp, u.Clock().Now())
 	if err != nil {
 		return uuid.Nil, "", err
 	}
 	if err := u.Run().SaveRun(ctx, newRun); err != nil {
 		return uuid.Nil, "", fmt.Errorf("save: %w", err)
 	}
-	if err := u.Outbox().Append(ctx, []run.DomainEvent{evt}, uuid.Nil); err != nil {
-		return uuid.Nil, "", fmt.Errorf("outbox: %w", err)
+	if err := h.planner.Start(ctx, u, newRun, sel, uuid.Nil); err != nil {
+		return uuid.Nil, "", err
 	}
 	if err := u.Commit(); err != nil {
 		return uuid.Nil, "", fmt.Errorf("commit: %w", err)
 	}
 	committed = true
 
-	h.logger.Info("Single-node run triggered", "new_run_id", newRun.ScheduleID(), "schedule_name", scheduleName, "target", in.Target)
+	h.logger.Info("Single-node run triggered", "new_run_id", newRun.ScheduleID(), "schedule_name", scheduleName, "target", in.Target,
+		"release_id", sel.Stamp.ReleaseID)
 	return newRun.ScheduleID(), newRun.ScheduleName(), nil
 }
