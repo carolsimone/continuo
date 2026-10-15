@@ -21,7 +21,7 @@ import PastRunsPanel from './PastRunsPanel';
 import RunProgressHeader from './RunProgressHeader';
 import RunNodeTable from './RunNodeTable';
 import RunSwimlane from './RunSwimlane';
-import RerunFailedModal, { RerunFailedMode } from './RerunFailedModal';
+import RerunFailedModal from './RerunFailedModal';
 import Tabs, { useActiveTab } from './Tabs';
 
 // Adds or removes a key from a Set without mutating the original — used for the
@@ -124,10 +124,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [expandedServices, setExpandedServices] = useState<Set<string>>(new Set());
   const [graphState, setGraphState] = useState<'loading' | 'ready' | 'empty' | 'error'>('loading');
-  const [rerunState, setRerunState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
-  const [rerunError, setRerunError] = useState<string | null>(null);
-  const [rebaseState, setRebaseState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
-  const [rebaseError, setRebaseError] = useState<string | null>(null);
+  const [rerunFailedState, setRerunFailedState] = useState<'idle' | 'success'>('idle');
   const [triggerState, setTriggerState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [triggerError, setTriggerError] = useState<string | null>(null);
   const [rerunModalOpen, setRerunModalOpen] = useState(false);
@@ -342,49 +339,13 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
     };
   }, [selectedRunId]);
 
-  const handleRerunRun = useCallback(async () => {
-    if (!lastRunId) return;
-    setRerunState('loading');
-    setRerunError(null);
-    try {
-      const res = await fetch(`/api/schedulers/${lastRunId}/rerun`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: '{}',
-      });
-      if (res.ok) {
-        setRerunState('success');
-        setTimeout(() => setRerunState('idle'), 3000);
-      } else {
-        const body = await res.json().catch(() => ({ error: 'Request failed — please try again' }));
-        setRerunError(body.error ?? 'Request failed — please try again');
-        setRerunState('error');
-      }
-    } catch {
-      setRerunError('Request failed — please try again');
-      setRerunState('error');
-    }
-  }, [lastRunId]);
-
-  const handleRebaseRun = useCallback(async () => {
-    if (!lastRunId) return;
-    setRebaseState('loading');
-    setRebaseError(null);
-    try {
-      const res = await fetch(`/api/schedulers/${lastRunId}/rebase`, { method: 'POST' });
-      if (res.ok) {
-        setRebaseState('success');
-        setTimeout(() => setRebaseState('idle'), 3000);
-      } else {
-        const body = await res.json().catch(() => ({ error: 'Request failed — please try again' }));
-        setRebaseError(body.error ?? 'Request failed — please try again');
-        setRebaseState('error');
-      }
-    } catch {
-      setRebaseError('Request failed — please try again');
-      setRebaseState('error');
-    }
-  }, [lastRunId]);
+  // The rerun-failed dialog posts the rerun or the rebase itself; once one is
+  // accepted the dialog closes and the page's button shows the success.
+  const handleRerunFailedSubmitted = useCallback(() => {
+    setRerunModalOpen(false);
+    setRerunFailedState('success');
+    setTimeout(() => setRerunFailedState('idle'), 3000);
+  }, []);
 
   const handleTriggerRun = useCallback(async () => {
     if (!name) return;
@@ -546,15 +507,6 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
 
   const showRerunFailed = isRerunnableStatus(scheduler?.status) && Boolean(lastRunId);
 
-  const handleRerunFailedSubmit = async (rerunMode: RerunFailedMode) => {
-    setRerunModalOpen(false);
-    if (rerunMode === 'this') {
-      await handleRerunRun();
-    } else {
-      await handleRebaseRun();
-    }
-  };
-
   const triggerBtnClass = [
     'btn', 'btn--secondary',
     triggerState === 'loading' ? 'is-loading' : '',
@@ -563,8 +515,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
 
   const rerunFailedBtnClass = [
     'btn', 'btn--secondary',
-    (rerunState === 'loading' || rebaseState === 'loading') ? 'is-loading' : '',
-    (rerunState === 'success' || rebaseState === 'success') ? 'is-success' : '',
+    rerunFailedState === 'success' ? 'is-success' : '',
   ].filter(Boolean).join(' ');
 
   const triggerLabel =
@@ -572,12 +523,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
     triggerState === 'success' ? 'Triggered' :
     '▶ Trigger run';
 
-  const rerunFailedLabel =
-    (rerunState === 'loading' || rebaseState === 'loading') ? 'Triggering…' :
-    (rerunState === 'success' || rebaseState === 'success') ? 'Reran' :
-    '↺ Rerun failed';
-
-  const submittingRerun = rerunState === 'loading' || rebaseState === 'loading';
+  const rerunFailedLabel = rerunFailedState === 'success' ? 'Reran' : '↺ Rerun failed';
 
   const isLatest = mode === 'latest';
   // Full-width tabs for a run view: status first (Run), then structure
@@ -631,7 +577,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
             <button
               type="button"
               className={rerunFailedBtnClass}
-              disabled={submittingRerun || rerunState === 'success' || rebaseState === 'success'}
+              disabled={rerunFailedState === 'success'}
               onClick={() => setRerunModalOpen(true)}
               title="Re-execute non-succeeded tasks"
             >
@@ -644,19 +590,14 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
       {triggerState === 'error' && triggerError && (
         <div className="info-strip info-strip--error">{triggerError}</div>
       )}
-      {rerunState === 'error' && rerunError && (
-        <div className="info-strip info-strip--error">{rerunError}</div>
-      )}
-      {rebaseState === 'error' && rebaseError && (
-        <div className="info-strip info-strip--error">{rebaseError}</div>
-      )}
 
-      {rerunModalOpen && (
+      {rerunModalOpen && lastRunId && (
         <RerunFailedModal
+          runId={lastRunId}
           driftLabel={driftLabel}
-          submitting={submittingRerun}
+          serviceColors={serviceColors}
           onClose={() => setRerunModalOpen(false)}
-          onSubmit={handleRerunFailedSubmit}
+          onSubmitted={handleRerunFailedSubmitted}
         />
       )}
 

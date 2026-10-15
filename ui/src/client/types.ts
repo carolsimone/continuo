@@ -424,3 +424,34 @@ export interface PipelineActive {
 export interface PipelineResponse {
   active: PipelineActive | null;
 }
+
+// A changed node upstream of what a rebase re-runs, as the rebase preview
+// names it. downstream counts the live schedule's nodes below it;
+// last_success_seconds is the duration of its latest successful run, null
+// when it has never succeeded.
+export interface ChangedUpstreamNode {
+  service_name: string;
+  schema_name: string;
+  table_name: string;
+  downstream: number;
+  last_success_seconds: number | null;
+}
+
+// What a rebase of a failed or cancelled run would run on the live release
+// (GET /api/schedulers/:id/rebase-preview). will_run splits into
+// failed_or_skipped + new_nodes + changed_upstream + downstream, and
+// will_run + inherited = total_nodes. changed_nodes lists every changed
+// upstream node the include_changed_upstream option adds, whether or not the
+// preview included them.
+export interface RebasePreview {
+  release_id: string;
+  promotion_seq: number;
+  total_nodes: number;
+  will_run: number;
+  failed_or_skipped: number;
+  new_nodes: number;
+  changed_upstream: number;
+  downstream: number;
+  inherited: number;
+  changed_nodes: ChangedUpstreamNode[];
+}

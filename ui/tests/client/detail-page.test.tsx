@@ -120,6 +120,51 @@ function failedRoutes() {
   };
 }
 
+// REBASE_PREVIEW is the preview the rerun-failed dialog shows before a rebase.
+const REBASE_PREVIEW = {
+  release_id: 'rel-7', promotion_seq: 7, total_nodes: 8, will_run: 4,
+  failed_or_skipped: 4, new_nodes: 0, changed_upstream: 0, downstream: 0, inherited: 4,
+  changed_nodes: [],
+};
+
+// rebaseFetch answers the rebase preview and the rebase POST by exact path —
+// mockFetchSequence matches by substring in insertion order, so its
+// `/api/schedulers/${RUN_ID}` route would otherwise answer both — and every
+// other request from routes the way mockFetchSequence does.
+function rebaseFetch(
+  routes: Record<string, (url: string) => Promise<unknown>>,
+  rebaseReply: { status: number; body: unknown } = { status: 200, body: {} },
+) {
+  return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input.toString();
+    const path = url.split('?')[0];
+    if (path === `/api/schedulers/${RUN_ID}/rebase-preview`) {
+      return { ok: true, status: 200, json: async () => REBASE_PREVIEW } as Response;
+    }
+    if (path === `/api/schedulers/${RUN_ID}/rebase` && init?.method === 'POST') {
+      const { status, body } = rebaseReply;
+      return { ok: status >= 200 && status < 300, status, json: async () => body } as Response;
+    }
+    for (const [pattern, handler] of Object.entries(routes)) {
+      if (url.includes(pattern)) {
+        const body = await handler(url);
+        return { ok: true, status: 200, json: async () => body } as Response;
+      }
+    }
+    return { ok: true, status: 200, json: async () => ({}) } as Response;
+  });
+}
+
+// submitLatest opens the rerun-failed dialog, chooses "Latest snapshot",
+// waits for its preview and confirms.
+async function submitLatest() {
+  fireEvent.click(await screen.findByRole('button', { name: /rerun failed/i }));
+  fireEvent.click(await screen.findByLabelText(/latest snapshot/i));
+  await screen.findByText('Will run');
+  await waitFor(() => expect(screen.getByRole('button', { name: /^Rerun$/ })).toBeEnabled());
+  fireEvent.click(screen.getByRole('button', { name: /^Rerun$/ }));
+}
+
 describe('DetailPage — run-level Rerun button', () => {
   it('shows Rerun failed button when latest run is FAILED', async () => {
     const fetchMock = mockFetchSequence(failedRoutes());
@@ -254,53 +299,46 @@ describe('DetailPage — run-level Rebase button (via modal)', () => {
     expect(screen.queryByRole('button', { name: /rerun failed/i })).toBeNull();
   });
 
-  it('POSTs /api/schedulers/:id/rebase when "Latest snapshot" is selected and submitted', async () => {
-    const fetchMock = mockFetchSequence({
-      ...failedRoutes(),
-      [`/api/schedulers/${RUN_ID}/rebase`]: async () => ({ ok: true }),
-    });
+  it('POSTs /api/schedulers/:id/rebase on the previewed release when "Latest snapshot" is submitted', async () => {
+    const fetchMock = rebaseFetch(failedRoutes());
     vi.stubGlobal('fetch', fetchMock);
 
     render(withRouter({ last_run_id: RUN_ID }));
-
-    const rerunBtn = await screen.findByRole('button', { name: /rerun failed/i });
-    fireEvent.click(rerunBtn);
-
-    // Switch to "latest snapshot" radio
-    const latestRadio = await screen.findByLabelText(/latest snapshot/i);
-    fireEvent.click(latestRadio);
-
-    const submitBtn = screen.getByRole('button', { name: /^Rerun$/ });
-    fireEvent.click(submitBtn);
+    await submitLatest();
 
     await waitFor(() => {
       const calls = fetchMock.mock.calls as unknown as [string, RequestInit?][];
-      const rebaseCall = calls.find(c => String(c[0]).includes(`/api/schedulers/${RUN_ID}/rebase`));
+      const rebaseCall = calls.find(c => c[0] === `/api/schedulers/${RUN_ID}/rebase`);
       expect(rebaseCall).toBeDefined();
       expect(rebaseCall![1]).toMatchObject({ method: 'POST' });
+      expect(JSON.parse(String(rebaseCall![1]!.body))).toEqual({ include_changed_upstream: true, expected_release_id: 'rel-7' });
     });
+    expect(fetchMock.mock.calls.map(c => String(c[0])))
+      .toContain(`/api/schedulers/${RUN_ID}/rebase-preview?include_changed_upstream=true`);
   });
 
   it('turns the Rerun failed button green and relabels on rebase success', async () => {
-    const fetchMock = mockFetchSequence({
-      ...failedRoutes(),
-      [`/api/schedulers/${RUN_ID}/rebase`]: async () => ({ ok: true }),
-    });
-    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('fetch', rebaseFetch(failedRoutes()));
 
     render(withRouter({ last_run_id: RUN_ID }));
-
-    const rerunBtn = await screen.findByRole('button', { name: /rerun failed/i });
-    fireEvent.click(rerunBtn);
-
-    const latestRadio = await screen.findByLabelText(/latest snapshot/i);
-    fireEvent.click(latestRadio);
-
-    const submitBtn = screen.getByRole('button', { name: /^Rerun$/ });
-    fireEvent.click(submitBtn);
+    await submitLatest();
 
     const success = await screen.findByRole('button', { name: /Reran/i });
     expect(success.className).toContain('is-success');
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('keeps a refused rebase inside the dialog and leaves the page without an error strip', async () => {
+    vi.stubGlobal('fetch', rebaseFetch(failedRoutes(), { status: 409, body: { error: 'schedule already has an active run' } }));
+
+    render(withRouter({ last_run_id: RUN_ID }));
+    await submitLatest();
+
+    const strip = (await screen.findByText('schedule already has an active run')).closest('.info-strip--error');
+    expect(strip).toBeTruthy();
+    expect(strip!.closest('[role="dialog"]')).toBeTruthy();
+    expect(screen.getAllByText('schedule already has an active run')).toHaveLength(1);
+    expect(screen.getByRole('button', { name: /rerun failed/i })).not.toHaveClass('is-success');
   });
 });
 
@@ -473,21 +511,15 @@ describe('DetailPage — page structure (Task 5 migration)', () => {
   });
 
   it('switching to "latest snapshot" then submitting POSTs to the rebase endpoint', async () => {
-    const fetchMock = mockFetchSequence({
-      ...failedRoutes(),
-      [`/api/schedulers/${RUN_ID}/rebase`]: async () => ({ ok: true }),
-    });
+    const fetchMock = rebaseFetch(failedRoutes());
     vi.stubGlobal('fetch', fetchMock);
 
     render(withRouter({ last_run_id: RUN_ID }));
-
-    fireEvent.click(await screen.findByRole('button', { name: /rerun failed/i }));
-    fireEvent.click(await screen.findByLabelText(/latest snapshot/i));
-    fireEvent.click(screen.getByRole('button', { name: /^Rerun$/ }));
+    await submitLatest();
 
     await waitFor(() => {
       const calls = fetchMock.mock.calls as unknown as [string, RequestInit?][];
-      const hit = calls.find(c => String(c[0]).includes(`/api/schedulers/${RUN_ID}/rebase`));
+      const hit = calls.find(c => c[0] === `/api/schedulers/${RUN_ID}/rebase`);
       expect(hit).toBeDefined();
       expect(hit![1]).toMatchObject({ method: 'POST' });
     });
