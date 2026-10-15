@@ -5,7 +5,6 @@ import (
 	"log/slog"
 
 	"github.com/carolsimone/continuo/pkg/num"
-	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/carolsimone/continuo/state/service/runreads"
 	"github.com/google/uuid"
@@ -60,16 +59,15 @@ func (h *PreviewRebaseHandler) PreviewRebase(ctx context.Context, req *statev1.P
 		ChangedUpstream: num.ClampInt32(pv.ChangedUpstream),
 		Downstream:      num.ClampInt32(pv.Downstream),
 		Inherited:       num.ClampInt32(pv.Inherited),
-		ChangedNodes:    make([]*statev1.ChangedUpstreamNode, 0, len(pv.Changed)),
+		ChangedNodes:    make([]*statev1.ChangedUpstreamNode, 0, len(got.Changed)),
 	}
-	for _, c := range pv.Changed {
-		id := run.NodeID{ServiceName: c.ServiceName, SchemaName: c.SchemaName, TableName: c.TableName}
+	for _, c := range got.Changed {
 		resp.ChangedNodes = append(resp.ChangedNodes, &statev1.ChangedUpstreamNode{
 			ServiceName:        c.ServiceName,
 			SchemaName:         c.SchemaName,
 			TableName:          c.TableName,
 			Downstream:         num.ClampInt32(c.Downstream),
-			LastSuccessSeconds: got.LastSuccess[id].Seconds(),
+			LastSuccessSeconds: c.LastSuccess.Seconds(),
 		})
 	}
 	return resp, nil

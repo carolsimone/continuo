@@ -15,13 +15,21 @@ import (
 )
 
 // RebasePreview is what a rebase of a source run would do on the live
-// release: the release, the selection with its counts and changed upstream
-// nodes, and how long each changed node's latest successful execution took
-// (absent for a node without one).
+// release: the release, the selection with its counts, and the changed
+// upstream nodes the selection names, in its order (service, schema, table),
+// each with how long its latest successful execution took.
 type RebasePreview struct {
-	Release     run.ReleaseStamp
-	Preview     runplan.Preview
-	LastSuccess map[run.NodeID]time.Duration
+	Release run.ReleaseStamp
+	Preview runplan.Preview
+	Changed []ChangedUpstream
+}
+
+// ChangedUpstream is a changed node upstream of what a rebase executes, with
+// how long its latest successful execution took; LastSuccess is 0 when the
+// node has no successful execution.
+type ChangedUpstream struct {
+	runplan.ChangedNode
+	LastSuccess time.Duration
 }
 
 // RebasePreviewer previews rebases with the selection a rebase makes, in a
@@ -65,7 +73,11 @@ func (p *RebasePreviewer) Preview(ctx context.Context, sourceID uuid.UUID, inclu
 	if err != nil {
 		return RebasePreview{}, fmt.Errorf("read the last successful durations: %w", err)
 	}
-	return RebasePreview{Release: sel.Stamp, Preview: pv, LastSuccess: last}, nil
+	changed := make([]ChangedUpstream, len(pv.Changed))
+	for i, c := range pv.Changed {
+		changed[i] = ChangedUpstream{ChangedNode: c, LastSuccess: last[nodes[i]]}
+	}
+	return RebasePreview{Release: sel.Stamp, Preview: pv, Changed: changed}, nil
 }
 
 // selectRebase makes the rebase's selection in a transaction of u that it

@@ -130,18 +130,19 @@ func TestPreviewRebaseHandler_RejectsAMissingOrMalformedSourceRunID(t *testing.T
 // upstream node in the order the selection lists them, with its last
 // successful duration in seconds (0 for a node without one).
 func TestPreviewRebaseHandler_MapsThePreview(t *testing.T) {
-	a := run.NodeID{ServiceName: "billing", SchemaName: "raw", TableName: "Invoices"}
 	reader := &fakeRebasePreviewReader{preview: runreads.RebasePreview{
 		Release: run.ReleaseStamp{ReleaseID: "rel-7", PromotionSeq: 12},
 		Preview: runplan.Preview{
 			Plan:            runplan.Plan{Tasks: make([]runplan.PlannedTask, 9)},
 			FailedOrSkipped: 2, New: 1, ChangedUpstream: 2, Downstream: 1, Inherited: 3,
-			Changed: []runplan.ChangedNode{
-				{Key: "raw.invoices", ServiceName: "billing", SchemaName: "raw", TableName: "Invoices", Downstream: 4},
-				{Key: "mart.orders", ServiceName: "sales", SchemaName: "mart", TableName: "orders", Downstream: 1},
-			},
 		},
-		LastSuccess: map[run.NodeID]time.Duration{a: 252500 * time.Millisecond},
+		Changed: []runreads.ChangedUpstream{
+			{
+				ChangedNode: runplan.ChangedNode{Key: "raw.invoices", ServiceName: "billing", SchemaName: "raw", TableName: "Invoices", Downstream: 4},
+				LastSuccess: 252500 * time.Millisecond,
+			},
+			{ChangedNode: runplan.ChangedNode{Key: "mart.orders", ServiceName: "sales", SchemaName: "mart", TableName: "orders", Downstream: 1}},
+		},
 	}}
 	h := NewPreviewRebaseHandler(reader, newTestLogger())
 	src := uuid.New()

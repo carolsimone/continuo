@@ -129,8 +129,9 @@ func newPreviewFixture(t *testing.T, status run.SchedulerStatus) *previewFixture
 }
 
 // A preview selects what the rebase would on the live release, writes
-// nothing, and reads the last successful duration of the changed nodes it
-// names. A schedule's active run does not refuse it.
+// nothing, and attaches to each changed node it names, in the selection's
+// order, its last successful duration (0 for a node without one). A
+// schedule's active run does not refuse it.
 func TestRebasePreviewer_PreviewsTheRebaseAndWritesNothing(t *testing.T) {
 	f := newPreviewFixture(t, run.SchedulerStatusFailed)
 	p := runreads.NewRebasePreviewer(runstart.Planner{TenantID: "default"}, f.newUoW, f.reads)
@@ -139,13 +140,15 @@ func TestRebasePreviewer_PreviewsTheRebaseAndWritesNothing(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, run.ReleaseStamp{ReleaseID: "rel-7", PromotionSeq: 12}, got.Release)
-	assert.Equal(t, []runplan.ChangedNode{
-		{Key: "raw.a", ServiceName: "svc", SchemaName: "raw", TableName: "a", Downstream: 2},
-		{Key: "raw.d", ServiceName: "svc", SchemaName: "raw", TableName: "d", Downstream: 1},
-	}, got.Preview.Changed)
+	assert.Equal(t, []runreads.ChangedUpstream{
+		{
+			ChangedNode: runplan.ChangedNode{Key: "raw.a", ServiceName: "svc", SchemaName: "raw", TableName: "a", Downstream: 2},
+			LastSuccess: 252 * time.Second,
+		},
+		{ChangedNode: runplan.ChangedNode{Key: "raw.d", ServiceName: "svc", SchemaName: "raw", TableName: "d", Downstream: 1}},
+	}, got.Changed)
 	assert.Equal(t, 2, got.Preview.FailedOrSkipped)
 	assert.Equal(t, 2, got.Preview.ChangedUpstream)
-	assert.Equal(t, map[run.NodeID]time.Duration{{ServiceName: "svc", SchemaName: "raw", TableName: "a"}: 252 * time.Second}, got.LastSuccess)
 	assert.Equal(t, [][]run.NodeID{{
 		{ServiceName: "svc", SchemaName: "raw", TableName: "a"}, {ServiceName: "svc", SchemaName: "raw", TableName: "d"},
 	}}, f.reads.asked)
@@ -156,7 +159,7 @@ func TestRebasePreviewer_PreviewsTheRebaseAndWritesNothing(t *testing.T) {
 	off, err := p.Preview(context.Background(), f.runs.source.ScheduleID(), false)
 	require.NoError(t, err)
 	assert.Equal(t, 0, off.Preview.ChangedUpstream)
-	assert.Equal(t, got.Preview.Changed, off.Preview.Changed)
+	assert.Equal(t, got.Changed, off.Changed)
 }
 
 // A source that is not failed or cancelled is refused before the
