@@ -5,6 +5,7 @@ import (
 	"go/parser"
 	"go/token"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -52,5 +53,15 @@ func TestMain_ConsumesOnlyTopologyAndCaseBaseStreams(t *testing.T) {
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("main.go names streams %v, want %v", got, want)
+	}
+}
+
+// TestMain_RunsNoRunReconciler pins that orchestrator holds no run status to
+// converge: it imports no reconciler.
+func TestMain_RunsNoRunReconciler(t *testing.T) {
+	for _, imp := range parseMain(t).Imports {
+		if path := strings.Trim(imp.Path.Value, `"`); strings.HasSuffix(path, "/internal/reconciler") {
+			t.Fatalf("main.go imports %s", path)
+		}
 	}
 }

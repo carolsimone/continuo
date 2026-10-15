@@ -16,7 +16,6 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/adapters/redis"
 	s3infra "github.com/carolsimone/continuo/orchestrator/adapters/s3"
 	"github.com/carolsimone/continuo/orchestrator/config"
-	"github.com/carolsimone/continuo/orchestrator/internal/reconciler"
 	"github.com/carolsimone/continuo/orchestrator/internal/sweeper"
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	"github.com/carolsimone/continuo/orchestrator/service/queries"
@@ -341,14 +340,6 @@ func main() {
 			logger.Error("Watchdog Run exited with error", "error", err)
 		}
 	}()
-
-	// ========================================================================
-	// START RECONCILER — converge active :Run projections to state's status
-	// ========================================================================
-
-	runStatusReader := grpcinfra.NewRunStatusReader(stateGRPCClient)
-	reconcilerInstance := reconciler.New(queryRepo, runStatusReader, runAggRepo, cfg.ReconcilerIntervalSecs, logger)
-	go reconcilerInstance.Start(ctx)
 
 	// ========================================================================
 	// START CANCELLED SCHEDULES SWEEPER
