@@ -30,7 +30,10 @@ const rebaseReleaseMovedMessage = "the live release changed; preview again"
 //   - is refused, and creates no run, when the caller previewed the source's
 //     release;
 //   - without the changed upstream nodes re-executes the failed part (ftable_e
-//     to ftable_h) and inherits ftable_a to ftable_d;
+//     to ftable_h) and inherits ftable_a to ftable_d; once that rebase is
+//     cancelled, a preview of a rebase of it still lists ftable_c, because its
+//     inherited ftable_c was built on the base release, not on the live one
+//     the cancelled rebase runs on;
 //   - with them also re-executes ftable_c and ftable_d below it, which succeed,
 //     and inherits only ftable_a and ftable_b.
 //
@@ -160,6 +163,17 @@ func TestRebase_ReRunsAChangedUpstreamNode(t *testing.T) {
 		[]string{"ftable_e", "ftable_f", "ftable_g", "ftable_h"})
 	assert.Equal(t, int(failedPart.GetWillRun()), countExecuted(failedOnlyTasks), "the rebase re-executes what its preview counted")
 	cancelActiveRebase(t, ctx, clients, failedOnly)
+
+	// ── A rebase of the cancelled rebase compares ftable_c with the base ────
+	ofRebase, err := clients.stateClient.PreviewRebase(ctx, &statev1.PreviewRebaseRequest{
+		SourceRunId:            failedOnly.String(),
+		IncludeChangedUpstream: true,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, previewCountsOf(withUpstream), previewCountsOf(ofRebase),
+		"the cancelled rebase's ftable_e..h re-execute, and ftable_c, which it inherited from the source run's build on the base release, is changed")
+	assert.Equal(t, wantChanged, changedNodesOf(ofRebase),
+		"ftable_c is compared with the release that built it, not with the live release the cancelled rebase runs on")
 
 	// ── Rebase with the changed upstream nodes ──────────────────────────────
 	t.Log("Rebasing with the changed upstream nodes...")
