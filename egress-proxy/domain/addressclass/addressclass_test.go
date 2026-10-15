@@ -17,14 +17,14 @@ func TestOf(t *testing.T) {
 		"172.31.255.255":         Private,
 		"192.168.1.1":            Private,
 		"100.64.0.1":             Private,
-		"169.254.10.10":          LinkLocal, // was Private before link-local became its own class
+		"169.254.10.10":          LinkLocal,
 		"0.1.2.3":                Private,
 		"192.0.0.8":              Private,
 		"198.18.0.1":             Private,
 		"224.0.0.1":              Private,
 		"255.255.255.255":        Private,
 		"fd12:3456::1":           Private,
-		"fe80::1":                LinkLocal, // was Private before link-local became its own class
+		"fe80::1":                LinkLocal,
 		"ff02::1":                Private,
 		"127.0.0.1":              Loopback,
 		"127.8.8.8":              Loopback,
@@ -42,14 +42,21 @@ func TestOf(t *testing.T) {
 		"64:ff9b::7f00:1":        Loopback,    // NAT64 of 127.0.0.1
 		"64:ff9b::":              Unspecified, // NAT64 of 0.0.0.0
 		"fd00:ec2::254%eth0":     Metadata,    // zone must not defeat the metadata match
-		"fe80::1%eth0":           LinkLocal,   // was Private before link-local became its own class
-		"169.254.170.23":         LinkLocal,   // EKS Pod Identity
-		"169.254.170.2":          LinkLocal,   // ECS task credentials
+		"fe80::1%eth0":           LinkLocal,
+		"169.254.170.23":         LinkLocal, // EKS Pod Identity
+		"169.254.170.2":          LinkLocal, // ECS task credentials
 		"::ffff:169.254.170.23":  LinkLocal,
 		"64:ff9b::a9fe:aa17":     LinkLocal, // NAT64 of 169.254.170.23
 		"100.100.100.200":        Metadata,  // Alibaba
 		"168.63.129.16":          Metadata,  // Azure WireServer
 		"fd00:ec2::23":           Metadata,
+		"fd00:ec2::253":          Metadata, // AWS Nitro DNS
+		"fd00:ec2::123":          Metadata, // AWS Nitro NTP
+		"fd00:ec2:1::1":          Metadata, // inside fd00:ec2::/32
+		"fd20:ce::254":           Metadata, // Google Cloud
+		"fd00:ec3::1":            Private,  // outside fd00:ec2::/32
+		"fd00:ec1::ffff":         Private,
+		"fd20:ce::1":             Private,
 		"fec0::1":                Private, // deprecated site-local
 		"2002:a00:1::1":          Private, // 6to4
 		"2001::1":                Private, // Teredo

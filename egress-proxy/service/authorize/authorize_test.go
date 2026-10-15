@@ -102,6 +102,7 @@ func TestAuthorize_AddressCheck(t *testing.T) {
 		{"metadata refused even when private is allowed", []string{"169.254.169.254"}, true, ReasonMetadata},
 		{"link-local refused even when private is allowed", []string{"169.254.170.23"}, true, ReasonPrivateAddress},
 		{"Alibaba metadata refused even when private is allowed", []string{"100.100.100.200"}, true, ReasonMetadata},
+		{"AWS IPv6 metadata range refused even when private is allowed", []string{"fd00:ec2::253"}, true, ReasonMetadata},
 		{"NAT64 metadata refused", []string{"64:ff9b::a9fe:a9fe"}, true, ReasonMetadata},
 		{"loopback refused even when private is allowed", []string{"127.0.0.1"}, true, ReasonPrivateAddress},
 		{"unspecified refused even when private is allowed", []string{"0.0.0.0"}, true, ReasonPrivateAddress},
