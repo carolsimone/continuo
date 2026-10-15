@@ -64,7 +64,7 @@ guide**, where an LLM proposes a fix for a model you broke.
 
 | For the LLM extras | What it is |
 |---|---|
-| An LLM API key | Anthropic (the default) or OpenAI — powers the assistant (section 3) and chapter 8 |
+| An LLM API key | Anthropic (the default), OpenAI, or any OpenAI-compatible server (Mistral, OpenRouter, a model you host) — powers the assistant (section 3) and chapter 8 |
 | *(optional)* A GitHub personal access token | *Chapter 8 only, and only for a private fork.* Read-only, fine-grained, `Contents: Read` on your fork — the agent reads source through the GitHub API for failures it cannot fix from the release alone |
 | *(optional)* A GitHub App | *Chapter 8 only.* Needed if you want the UI's "Create PR" button to actually open the pull request rather than just show you the proposed diff |
 
@@ -165,9 +165,14 @@ helm upgrade continuo oci://ghcr.io/carolsimone/charts/continuo \
 kubectl -n continuo rollout restart deploy/agent-chat
 ```
 
-`llm.provider` defaults to `anthropic` and `llm.model` to `claude-haiku-4-5`; for
-OpenAI add `--set llm.provider=openai --set llm.model=<model>`. Once the pod
-restarts, the assistant answers live. This is the same `llm.apiKey` chapter 8 of
+`llm.provider` defaults to `anthropic` and `llm.model` to `claude-haiku-4-5`. For
+OpenAI add `--set llm.provider=openai --set llm.model=<model>`. For any server
+that speaks OpenAI's chat-completions API (Mistral, OpenRouter, or vLLM/Ollama
+you host) add
+`--set llm.provider=openai-compatible --set llm.baseUrl=<root> --set llm.model=<model>`,
+where `<root>` is the server's address without `/v1`, for example
+`https://api.mistral.ai` or `http://vllm.ai.svc:8000`. Once the pod restarts,
+the assistant answers live. This is the same `llm.apiKey` chapter 8 of
 the [Run dbt and Python projects in continuo](run-projects-in-continuo.md) guide
 uses, so setting it here covers both.
 
