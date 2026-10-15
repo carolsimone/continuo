@@ -423,6 +423,8 @@ services:
         condition: service_started
       release-controller:
         condition: service_started
+      egress-proxy:
+        condition: service_started
     environment:
       - METRICS_PORT=9464
       - POSTGRES_HOST=postgres
@@ -462,6 +464,14 @@ services:
       - VERIFICATION_TIMEOUT=${VERIFICATION_TIMEOUT:-20m}
       - VERIFICATION_POLL_INTERVAL=${VERIFICATION_POLL_INTERVAL:-5s}
       - MAINTENANCE_ENABLED=false
+      # Outbound HTTP (the LLM, GitHub, release-controller, S3) goes through
+      # egress-proxy except to the stack's own services, which are reached
+      # directly. stub-llm and stub-github are deliberately absent from
+      # NO_PROXY: they are allowlisted egress destinations. The Go module hosts
+      # are listed so `go run` in this container can still fetch modules.
+      - HTTP_PROXY=http://egress-proxy:3128
+      - HTTPS_PROXY=http://egress-proxy:3128
+      - NO_PROXY=localhost,127.0.0.1,::1,postgres,redis,minio,orchestrator,release-controller,proxy.golang.org,sum.golang.org,storage.googleapis.com
     volumes:
       # The local stack runs on the e2e map, which adds the suite's fixture
       # services to the demo ones. The map agent-remediation documents for
@@ -511,6 +521,24 @@ services:
     networks:
       - default
 
+  egress-proxy:
+    build:
+      context: .
+      dockerfile: egress-proxy/Dockerfile.dev
+    container_name: egress-proxy
+    environment:
+      - METRICS_PORT=9464
+      - LOG_LEVEL=INFO
+      - EGRESS_PROXY_LISTEN_PORT=3128
+      - EGRESS_PROXY_HEALTH_PORT=8093
+      - EGRESS_ALLOWLIST_PATH=/etc/egress-proxy/allowlist.yaml
+    volumes:
+      - ./tests/e2e/config/egress-allowlist.yaml:/etc/egress-proxy/allowlist.yaml:ro
+    # No host ports: the agents and the e2e container reach it by its compose
+    # name, and host 8093 is taken by remediation.
+    networks:
+      - default
+
   stub-llm:
     build:
       context: ./tests/e2e/stub-llm
@@ -549,6 +577,7 @@ services:
       - orchestrator
       - stub-llm
       - redis
+      - egress-proxy
     environment:
       - METRICS_PORT=9464
       - POSTGRES_DB=continuo_agent_chat
@@ -573,6 +602,15 @@ services:
       # Unset: the e2e stub. Set it empty in .env (LLM_BASE_URL=) to call the
       # public API of LLM_PROVIDER=anthropic|openai.
       - LLM_BASE_URL=${LLM_BASE_URL-http://stub-llm:9100}
+      # Outbound HTTP (the LLM) goes through egress-proxy. The gRPC dials to
+      # state, orchestrator and dead-letter-controller, which agent-chat's
+      # continuo CLI subprocess inherits, are the stack's own services and
+      # bypass it. stub-llm is deliberately absent from NO_PROXY: it is an
+      # allowlisted egress destination. The Go module hosts are listed so
+      # `go run` in this container can still fetch modules.
+      - HTTP_PROXY=http://egress-proxy:3128
+      - HTTPS_PROXY=http://egress-proxy:3128
+      - NO_PROXY=localhost,127.0.0.1,::1,postgres,redis,state,orchestrator,dead-letter-controller,proxy.golang.org,sum.golang.org,storage.googleapis.com
     ports:
       - "8091:8091"
       - "50053:50053"
