@@ -2,13 +2,11 @@ package httpproxy
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/carolsimone/continuo/egress-proxy/service/authorize"
@@ -28,8 +26,8 @@ func (t *tunnel) close() {
 	_ = t.upstream.Close()
 }
 
-// enter counts a tunnel handler in, unless Shutdown is already waiting for
-// tunnel handlers to return.
+// enter counts a tunnel or forwarding handler in, unless Shutdown is already
+// waiting for those handlers to return.
 func (p *Proxy) enter() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -58,7 +56,7 @@ func (p *Proxy) untrack(t *tunnel) {
 	p.mu.Unlock()
 }
 
-// tunnel answers a CONNECT request: it checks the host, takes a tunnel slot,
+// tunnel answers a CONNECT request: it checks the host, takes a slot,
 // connects through the Authorizer, then relays bytes both ways until either
 // side closes or the tunnel is idle. The client receives nothing until
 // Connect has succeeded.
@@ -81,13 +79,10 @@ func (p *Proxy) tunnel(w http.ResponseWriter, r *http.Request) {
 		p.refuse(w, r, host, port, http.StatusForbidden, string(authorize.ReasonNotAllowed), "host and port are not on the allowlist")
 		return
 	}
-	select {
-	case p.slots <- struct{}{}:
-		defer func() { <-p.slots }()
-	default:
-		p.refuse(w, r, host, port, http.StatusServiceUnavailable, ReasonCapacity, fmt.Sprintf("%d tunnels already open", cap(p.slots)))
+	if !p.takeSlot(w, r, host, port) {
 		return
 	}
+	defer p.releaseSlot()
 	upstream, err := p.auth.Connect(r.Context(), host, port)
 	if err != nil {
 		p.upstreamFailed(w, r, host, port, err)
@@ -158,28 +153,11 @@ func relay(client, upstream net.Conn, pending []byte, idle time.Duration) (up, d
 	})
 	defer closeBoth()
 
-	// last is the time of the latest byte, as an offset from start, so the
-	// idle check runs on the monotonic clock.
-	start := time.Now()
-	var last atomic.Int64
-	touch := func() { last.Store(int64(time.Since(start))) }
-	stop := make(chan struct{})
-	defer close(stop)
-	go func() {
-		tick := time.NewTicker(max(idle/4, 5*time.Millisecond))
-		defer tick.Stop()
-		for {
-			select {
-			case <-stop:
-				return
-			case <-tick.C:
-				if time.Since(start)-time.Duration(last.Load()) >= idle {
-					closeBoth()
-					return
-				}
-			}
-		}
-	}()
+	// The idle check closes both connections once no byte has moved either
+	// way for idle.
+	timer := startIdleTimer(idle, closeBoth)
+	defer timer.stop()
+	touch := timer.touch
 
 	if len(pending) > 0 {
 		n, err := upstream.Write(pending)
