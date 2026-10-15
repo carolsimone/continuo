@@ -1,11 +1,12 @@
 package llm_test
 
 import (
-	"net/http/httptest"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/carolsimone/continuo/agent-remediation/adapters/llm"
+	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -28,4 +29,14 @@ func TestNewProvider_OpenAICompatible_SucceedsWithBaseURL(t *testing.T) {
 	provider, err := llm.NewProvider("openai-compatible", "key", "model", srv.URL, srv.Client())
 	require.NoError(t, err)
 	assert.NotNil(t, provider)
+}
+
+// TestNewProvider_AcceptsEveryProviderTheConfigAccepts pins this factory to
+// pkg/config.AcceptedLLMProviders, which the chart schema is pinned to.
+func TestNewProvider_AcceptsEveryProviderTheConfigAccepts(t *testing.T) {
+	for _, p := range pkgconfig.AcceptedLLMProviders() {
+		provider, err := llm.NewProvider(p, "key", "model", "http://llm.internal:8000", &http.Client{})
+		require.NoError(t, err, p)
+		assert.NotNil(t, provider, p)
+	}
 }
