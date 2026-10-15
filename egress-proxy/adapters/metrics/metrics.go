@@ -8,6 +8,11 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+const (
+	decisionAllowed = "allowed"
+	decisionDenied  = "denied"
+)
+
 // Metrics is the Prometheus Observer. No series is labelled by host: refused
 // hosts are unbounded, and the denial log names them.
 type Metrics struct {
@@ -18,8 +23,11 @@ type Metrics struct {
 
 var _ ports.Observer = (*Metrics)(nil)
 
-// New registers egress-proxy's series on reg.
-func New(reg *pkgmetrics.Registry) *Metrics {
+// New registers egress-proxy's series on reg. reasons is the closed set of
+// reasons the caller passes to Request. Every decision/reason pair and both
+// directions are exported at 0 from the start, so rate() sees the first
+// increment and a scrape before any traffic lists the series.
+func New(reg *pkgmetrics.Registry, reasons []string) *Metrics {
 	m := &Metrics{
 		requests: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "continuo_egress_requests_total",
 			Help: "Proxied requests and tunnels, by decision (allowed or denied) and reason."}, []string{"decision", "reason"}),
@@ -28,15 +36,24 @@ func New(reg *pkgmetrics.Registry) *Metrics {
 		tunnels: prometheus.NewGauge(prometheus.GaugeOpts{Name: "continuo_egress_active_tunnels",
 			Help: "CONNECT tunnels open now."}),
 	}
+	for _, decision := range []string{decisionAllowed, decisionDenied} {
+		for _, reason := range reasons {
+			m.requests.WithLabelValues(decision, reason)
+		}
+	}
+	for _, direction := range []string{"up", "down"} {
+		m.bytes.WithLabelValues(direction)
+	}
 	reg.Register(m.requests, m.bytes, m.tunnels)
 	return m
 }
 
-// Request counts one request or tunnel.
+// Request counts one request or tunnel. reason must come from the closed set
+// given to New: it is a label value, so callers keep it bounded.
 func (m *Metrics) Request(allowed bool, reason string) {
-	decision := "denied"
+	decision := decisionDenied
 	if allowed {
-		decision = "allowed"
+		decision = decisionAllowed
 	}
 	m.requests.WithLabelValues(decision, reason).Inc()
 }
