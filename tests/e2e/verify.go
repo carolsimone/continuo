@@ -82,8 +82,8 @@ func verifyJobsCompleted(
 	t.Logf("✅ All %d jobs completed successfully", len(tables))
 }
 
-// verifyDependencyControllerUnlockedNextLevel checks that next level nodes were published
-func verifyDependencyControllerUnlockedNextLevel(
+// verifyNextLevelDispatched checks that the next level nodes were dispatched on query.model:v1
+func verifyNextLevelDispatched(
 	t *testing.T,
 	ctx context.Context,
 	queryModelTap *streamTap,
@@ -113,9 +113,9 @@ func verifyDependencyControllerUnlockedNextLevel(
 		}
 
 		return matchCount >= len(nextLevelTables), nil
-	}, fmt.Sprintf("Timeout waiting for orchestrator to unlock %d nodes", len(nextLevelTables)))
+	}, fmt.Sprintf("Timeout waiting for state to dispatch %d nodes", len(nextLevelTables)))
 
-	t.Logf("✅ orchestrator unlocked %d nodes", len(nextLevelTables))
+	t.Logf("✅ state dispatched %d nodes", len(nextLevelTables))
 }
 
 // getDAGLevels returns happy-path DAG nodes grouped by execution level.
@@ -148,9 +148,9 @@ func verifyFullDAGExecution(
 		// Wait for jobs to complete
 		verifyJobsCompleted(t, ctx, clients, level, testScheduleName)
 
-		// If not last level, verify orchestrator published next level
+		// If not last level, verify state dispatched the next level
 		if i < len(levels)-1 {
-			verifyDependencyControllerUnlockedNextLevel(t, ctx, queryModelTap, levels[i+1], scheduleID)
+			verifyNextLevelDispatched(t, ctx, queryModelTap, levels[i+1], scheduleID)
 		}
 	}
 

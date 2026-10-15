@@ -38,7 +38,7 @@ func TestE2E_HappyPath_FullDAGExecution(t *testing.T) {
 	// Cleanup any existing data
 	cleanupTestData(t, ctx, clients, testScheduleName)
 
-	// Tap query.model:v1 before anything is triggered: the orchestrator consumes it
+	// Tap query.model:v1 before anything is triggered: execution-controller consumes it
 	// and the trim loop removes consumed entries, so the checks below read what
 	// the tap recorded rather than the stream's history.
 	queryModelTap := startStreamTap(t, ctx, clients.redisClient, streams.QueryModelV1)
@@ -53,8 +53,8 @@ func TestE2E_HappyPath_FullDAGExecution(t *testing.T) {
 	schedulerID, err := uuid.Parse(schedulerIDStr)
 	require.NoError(t, err, "Invalid schedule_id returned from ActivateSchedule")
 
-	// Verify orchestrator published root node messages to query.model:v1
-	t.Log("Verifying orchestrator published root node messages...")
+	// Verify state dispatched the root nodes to query.model:v1
+	t.Log("Verifying state dispatched the root nodes...")
 	verifyRootNodesDispatched(t, ctx, queryModelTap, schedulerID, []string{"seed_table_1", "seed_table_2", "seed_table_3"})
 
 	// Verify complete DAG execution

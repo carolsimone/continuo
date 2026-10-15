@@ -34,9 +34,9 @@ type QueryModel struct {
 	// pkg_model.OperationFullRefresh rebuilds a model (full_refresh command)
 	// or seed (seed_full_refresh command) from scratch.
 	Operation pkg_model.Operation
-	// Mode carries the legacy promote-seed dispatch mode of an older
-	// query.model:v1 message. Empty for everything current.
-	// See events.ModePromoteSeed.
+	// Mode names the Job mode a message carries explicitly. state sets none, so
+	// it is empty for every message state writes; events.ModePromoteSeed is the
+	// one value still honoured.
 	Mode string
 	// MaxRetries is the task's retry budget state stamped on the
 	// dispatch. Zero means the message carried none; the queued deployment

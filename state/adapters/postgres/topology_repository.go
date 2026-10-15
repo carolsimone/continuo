@@ -95,6 +95,9 @@ func (r *TopologyRepository) SaveRelease(ctx context.Context, rel topology.Relea
 	if err := copyRows(ctx, r.tx, copyTopologyEdges, edgeRows(rel)); err != nil {
 		return false, fmt.Errorf("copy the edges of release %s: %w", rel.ReleaseID, err)
 	}
+	// Analysing inside the transaction puts the new release into the planner's
+	// statistics before any run can name it; the share-update-exclusive lock it
+	// takes only holds off autovacuum on these two tables until commit.
 	if _, err := r.tx.ExecContext(ctx, `ANALYZE topology_nodes, topology_edges`); err != nil {
 		return false, fmt.Errorf("analyze the topology after release %s: %w", rel.ReleaseID, err)
 	}
