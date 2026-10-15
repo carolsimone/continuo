@@ -27,6 +27,10 @@ interface Props {
 
 interface PreviewState {
   data: RebasePreview | null;
+  // changedNodes are the changed upstream nodes the last successful preview
+  // named; a failed preview keeps them, so the option to include them stays
+  // offered.
+  changedNodes: ChangedUpstreamNode[];
   loading: boolean;
   error: string | null;
 }
@@ -87,7 +91,7 @@ function changedItem(n: ChangedUpstreamNode): PreviewItem {
 export default function RerunFailedModal({ runId, driftLabel, serviceColors, onClose, onSubmitted }: Props) {
   const [mode, setMode] = useState<RerunFailedMode>('this');
   const [includeChanged, setIncludeChanged] = useState(true);
-  const [preview, setPreview] = useState<PreviewState>({ data: null, loading: false, error: null });
+  const [preview, setPreview] = useState<PreviewState>({ data: null, changedNodes: [], loading: false, error: null });
   const [reloadKey, setReloadKey] = useState(0);
   const [releaseMoved, setReleaseMoved] = useState(false);
   const [buttonState, setButtonState] = useState<ButtonState>('idle');
@@ -98,12 +102,13 @@ export default function RerunFailedModal({ runId, driftLabel, serviceColors, onC
   // changed-upstream option changes, and after a moved release refused a
   // rebase. Each load aborts the one before it, and an answer that arrives
   // after its load was superseded is dropped. The last preview stays on
-  // screen until the next one replaces it.
+  // screen until the next one replaces it; a failed load drops it but keeps
+  // the changed upstream nodes it named.
   useEffect(() => {
     if (mode !== 'latest') return;
     const controller = new AbortController();
     const { signal } = controller;
-    setPreview(p => ({ data: p.data, loading: true, error: null }));
+    setPreview(p => ({ ...p, loading: true, error: null }));
     fetch(
       `/api/schedulers/${encodeURIComponent(runId)}/rebase-preview?include_changed_upstream=${includeChanged}`,
       { signal },
@@ -111,11 +116,15 @@ export default function RerunFailedModal({ runId, driftLabel, serviceColors, onC
       .then(async res => {
         const body = await res.json().catch(() => ({}));
         if (signal.aborted) return;
-        if (res.ok && isRebasePreview(body)) setPreview({ data: body, loading: false, error: null });
-        else setPreview({ data: null, loading: false, error: (!res.ok && body?.error) || REQUEST_FAILED });
+        if (res.ok && isRebasePreview(body)) {
+          setPreview({ data: body, changedNodes: body.changed_nodes, loading: false, error: null });
+        } else {
+          const error = (!res.ok && body?.error) || REQUEST_FAILED;
+          setPreview(p => ({ ...p, data: null, loading: false, error }));
+        }
       })
       .catch(() => {
-        if (!signal.aborted) setPreview({ data: null, loading: false, error: REQUEST_FAILED });
+        if (!signal.aborted) setPreview(p => ({ ...p, data: null, loading: false, error: REQUEST_FAILED }));
       });
     return () => controller.abort();
   }, [mode, includeChanged, runId, reloadKey]);
@@ -132,6 +141,13 @@ export default function RerunFailedModal({ runId, driftLabel, serviceColors, onC
     setMode(next);
     setReleaseMoved(false);
     setSubmitError(null);
+  };
+
+  // chooseIncludeChanged previews the other selection, so a moved-release
+  // warning shown for the previous one goes.
+  const chooseIncludeChanged = (next: boolean) => {
+    setIncludeChanged(next);
+    setReleaseMoved(false);
   };
 
   const previewReady = preview.data !== null && !preview.loading && preview.error === null;
@@ -177,7 +193,7 @@ export default function RerunFailedModal({ runId, driftLabel, serviceColors, onC
   };
 
   const data = mode === 'latest' ? preview.data : null;
-  const changedItems = (data?.changed_nodes ?? []).map(changedItem);
+  const changedItems = mode === 'latest' ? preview.changedNodes.map(changedItem) : [];
   const reasons = data ? reasonFacts(data) : [];
 
   const rerunClass = [
@@ -250,14 +266,14 @@ export default function RerunFailedModal({ runId, driftLabel, serviceColors, onC
           </section>
         )}
 
-        {data && changedItems.length > 0 && (
+        {changedItems.length > 0 && (
           <>
             <label className="rerun-mode-option">
               <input
                 type="checkbox"
                 checked={includeChanged}
                 disabled={submitting}
-                onChange={e => setIncludeChanged(e.target.checked)}
+                onChange={e => chooseIncludeChanged(e.target.checked)}
               />
               <span className="rerun-mode-option__title">Include changed upstream nodes</span>
               <span className="rerun-mode-option__desc">

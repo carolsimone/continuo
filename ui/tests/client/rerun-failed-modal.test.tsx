@@ -473,6 +473,59 @@ describe('RerunFailedModal — Latest snapshot preview', () => {
     expect(rerunButton()).toBeDisabled();
   });
 
+  it('keeps the toggle, as last set, after a preview fails, and previews again when it is re-checked', async () => {
+    const fetchMock = apiFetch((method, url) => {
+      if (method !== 'GET') return { body: {} };
+      return url.endsWith('=true') ? { body: PREVIEW } : { status: 500, body: { error: 'boom' } };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+    renderModal();
+    await chooseLatest(user);
+
+    await user.click(includeToggle());
+
+    await screen.findByText('boom');
+    expect(screen.queryByText('Will run')).toBeNull();
+    expect(includeToggle()).not.toBeChecked();
+    expect(includeToggle()).toBeEnabled();
+    expect(within(changedHeader()).getByText(/left out of this rerun/i)).toBeInTheDocument();
+    expect(rerunButton()).toBeDisabled();
+
+    await user.click(includeToggle());
+
+    await waitFor(() => expect(within(willRunHeader()).getByText('41')).toBeInTheDocument());
+    expect(includeToggle()).toBeChecked();
+    expect(screen.queryByText('boom')).toBeNull();
+    expect(previewCalls(fetchMock)).toEqual([
+      `${PREVIEW_PATH}?include_changed_upstream=true`,
+      `${PREVIEW_PATH}?include_changed_upstream=false`,
+      `${PREVIEW_PATH}?include_changed_upstream=true`,
+    ]);
+    expect(rerunButton()).toBeEnabled();
+  });
+
+  it('still offers the unchecked toggle when "Latest snapshot" is chosen again after a failed preview', async () => {
+    vi.stubGlobal('fetch', apiFetch((method, url) => {
+      if (method !== 'GET') return { body: {} };
+      return url.endsWith('=true') ? { body: PREVIEW } : { status: 500, body: { error: 'boom' } };
+    }));
+    const user = userEvent.setup();
+    renderModal();
+    await chooseLatest(user);
+    await user.click(includeToggle());
+    await screen.findByText('boom');
+
+    await user.click(screen.getByLabelText(/this snapshot/i));
+    expect(screen.queryByRole('checkbox')).toBeNull();
+    await user.click(screen.getByLabelText(/latest snapshot/i));
+
+    await screen.findByText('boom');
+    expect(includeToggle()).not.toBeChecked();
+    await user.click(includeToggle());
+    await waitFor(() => expect(within(willRunHeader()).getByText('41')).toBeInTheDocument());
+  });
+
   it('drops the preview and enables Rerun when "This snapshot" is chosen again', async () => {
     vi.stubGlobal('fetch', apiFetch((method, url) => (
       method === 'GET' && url.startsWith(PREVIEW_PATH) ? { status: 500, body: { error: 'boom' } } : { body: {} })));
@@ -556,6 +609,31 @@ describe('RerunFailedModal — Latest snapshot rebase', () => {
     await waitFor(() => expect(props.onSubmitted).toHaveBeenCalledWith('latest'));
     const last = postCalls(fetchMock).at(-1) as [string, RequestInit];
     expect(JSON.parse(String(last[1].body)).expected_release_id).toBe('rel-8');
+  });
+
+  it('clears the moved-release warning once the changed-upstream option changes', async () => {
+    let posts = 0;
+    vi.stubGlobal('fetch', apiFetch((method, url) => {
+      if (method === 'GET' && url.startsWith(PREVIEW_PATH)) {
+        return { body: url.endsWith('=true') ? PREVIEW : WITHOUT_CHANGED };
+      }
+      posts += 1;
+      return posts === 1
+        ? { status: 409, body: { error: 'the live release changed; preview again', code: 'release_moved' } }
+        : { body: {} };
+    }));
+    const user = userEvent.setup();
+    renderModal();
+    await chooseLatest(user);
+    await user.click(rerunButton());
+    await screen.findByText('The live release changed; review the updated selection');
+    await waitFor(() => expect(rerunButton()).toBeEnabled());
+
+    await user.click(includeToggle());
+
+    expect(screen.queryByText(/the live release changed/i)).toBeNull();
+    await waitFor(() => expect(within(willRunHeader()).getByText('21')).toBeInTheDocument());
+    expect(screen.queryByText(/the live release changed/i)).toBeNull();
   });
 
   it('keeps any other refusal inside the dialog as an error strip', async () => {
