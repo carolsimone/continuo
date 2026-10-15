@@ -1,0 +1,20 @@
+{{- if eq (include "continuo.egress.enabled" .) "true" }}
+# The hosts and ports egress-proxy admits, read once at startup. The proxy's
+# pod template carries a digest of this file, so a changed list rolls it.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "continuo.egressProxy.configMapName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "continuo.labels" . | nindent 4 }}
+    app.kubernetes.io/name: egress-proxy
+data:
+  allowlist.yaml: |
+    entries:
+    {{- range (include "continuo.egress.allowlist" . | fromJsonArray) }}
+      - host: {{ .host | quote }}
+        port: {{ .port }}
+        allowPrivate: {{ .allowPrivate }}
+    {{- end }}
+{{- end }}

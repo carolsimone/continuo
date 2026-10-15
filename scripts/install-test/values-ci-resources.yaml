@@ -32,3 +32,9 @@ dex:
   resources:
     requests: {cpu: 15m, memory: 64Mi}
     limits: {cpu: 200m, memory: 256Mi}
+egress:
+  proxy:
+    replicas: 1
+    resources:
+      requests: {cpu: 15m, memory: 32Mi}
+      limits: {cpu: 200m, memory: 128Mi}
