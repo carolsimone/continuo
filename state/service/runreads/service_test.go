@@ -3,12 +3,14 @@ package runreads_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/projection"
 	"github.com/carolsimone/continuo/state/domain/repository"
 	"github.com/carolsimone/continuo/state/service/runreads"
@@ -34,6 +36,10 @@ func (f *fakeReads) ListCompletedRuns(_ context.Context, _ string, limit, offset
 func (f *fakeReads) ListActiveRunDrifts(_ context.Context, tenantID string) (int64, []projection.ActiveRunDrift, error) {
 	f.tenants = append(f.tenants, tenantID)
 	return 7, nil, nil
+}
+
+func (f *fakeReads) LastSuccessDurations(context.Context, []run.NodeID) (map[run.NodeID]time.Duration, error) {
+	return nil, nil
 }
 
 func TestService_ReadsTheDefaultTenant(t *testing.T) {

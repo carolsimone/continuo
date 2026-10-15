@@ -1,6 +1,6 @@
 // Package runreads serves the run views people read: a run's graph, a
-// schedule's completed runs and how far active runs are behind the live
-// release.
+// schedule's completed runs, how far active runs are behind the live release,
+// and what a rebase of a failed run would run on the live release.
 package runreads
 
 import (

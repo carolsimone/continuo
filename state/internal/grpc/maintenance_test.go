@@ -20,9 +20,11 @@ import (
 func dialState(t *testing.T, maintenanceOn bool) statev1.StateServiceClient {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	// Only RerunHandler is real: its argument validation answers before its
-	// use case is touched, which is all the "off" case needs.
-	srv, err := NewServer(0, nil, nil, nil, handlers.NewRerunHandler(nil, nil, logger), nil, nil, nil, nil, logger, maintenanceOn)
+	// Only RerunHandler and PreviewRebaseHandler are real: their argument
+	// validation answers before their use case is touched, which is all
+	// reaching a handler needs.
+	srv, err := NewServer(0, nil, nil, nil, handlers.NewRerunHandler(nil, nil, logger), nil, nil,
+		handlers.NewPreviewRebaseHandler(nil, logger), nil, nil, logger, maintenanceOn)
 	require.NoError(t, err)
 	go func() { _ = srv.Start() }()
 	t.Cleanup(func() { _ = srv.Shutdown(context.Background()) })
@@ -79,4 +81,13 @@ func TestMaintenance_OffReachesTheHandler(t *testing.T) {
 	c := dialState(t, false)
 	_, err := c.TriggerRerun(context.Background(), &statev1.TriggerRerunRequest{})
 	require.Equal(t, codes.InvalidArgument, status.Code(err), "the handler's own validation answers when maintenance is off")
+}
+
+// PreviewRebase is a read: maintenance mode does not refuse it.
+func TestMaintenance_PreviewRebaseReachesTheHandler(t *testing.T) {
+	c := dialState(t, true)
+	var md metadata.MD
+	_, err := c.PreviewRebase(context.Background(), &statev1.PreviewRebaseRequest{}, grpclib.Trailer(&md))
+	require.Equal(t, codes.InvalidArgument, status.Code(err), "the handler's own validation answers during maintenance")
+	require.Empty(t, md.Get(maintenance.TrailerKey))
 }

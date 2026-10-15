@@ -26,12 +26,14 @@ type Server struct {
 	rerunHandler         *handlers.RerunHandler
 	singleNodeRunHandler *handlers.SingleNodeRunHandler
 	rebaseHandler        *handlers.RebaseHandler
+	previewRebaseHandler *handlers.PreviewRebaseHandler
 	nodeRunHandler       *handlers.NodeRunHandler
 	runReadHandler       *handlers.RunReadHandler
 }
 
 // MaintenanceGatedMethods are the RPCs that start a run. While maintenance mode
-// is on they are refused before their handler runs; cancels and reads are not.
+// is on they are refused before their handler runs; cancels and reads,
+// PreviewRebase among them, are not.
 var MaintenanceGatedMethods = []string{
 	statev1.StateService_TriggerSchedule_FullMethodName,
 	statev1.StateService_ActivateSchedule_FullMethodName,
@@ -49,6 +51,7 @@ func NewServer(
 	rerunHandler *handlers.RerunHandler,
 	singleNodeRunHandler *handlers.SingleNodeRunHandler,
 	rebaseHandler *handlers.RebaseHandler,
+	previewRebaseHandler *handlers.PreviewRebaseHandler,
 	nodeRunHandler *handlers.NodeRunHandler,
 	runReadHandler *handlers.RunReadHandler,
 	logger *slog.Logger,
@@ -81,6 +84,7 @@ func NewServer(
 		rerunHandler:         rerunHandler,
 		singleNodeRunHandler: singleNodeRunHandler,
 		rebaseHandler:        rebaseHandler,
+		previewRebaseHandler: previewRebaseHandler,
 		nodeRunHandler:       nodeRunHandler,
 		runReadHandler:       runReadHandler,
 	}
@@ -196,6 +200,11 @@ func (s *Server) TriggerSingleNodeRun(ctx context.Context, req *statev1.TriggerS
 // TriggerRebase delegates to rebase handler
 func (s *Server) TriggerRebase(ctx context.Context, req *statev1.TriggerRebaseRequest) (*statev1.TriggerRebaseResponse, error) {
 	return s.rebaseHandler.TriggerRebase(ctx, req)
+}
+
+// PreviewRebase delegates to the rebase preview handler.
+func (s *Server) PreviewRebase(ctx context.Context, req *statev1.PreviewRebaseRequest) (*statev1.PreviewRebaseResponse, error) {
+	return s.previewRebaseHandler.PreviewRebase(ctx, req)
 }
 
 // ListNodeRuns delegates to node run handler
