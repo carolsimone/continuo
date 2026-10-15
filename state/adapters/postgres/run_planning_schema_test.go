@@ -47,3 +47,13 @@ func TestRunPlanning_ScheduleNodesAreIndexed(t *testing.T) {
 	require.NoError(t, db.Get(&def, `SELECT indexdef FROM pg_indexes WHERE indexname = 'idx_topology_nodes_schedule'`))
 	assert.Contains(t, def, "ON public.topology_nodes USING btree (tenant_id, release_id, schedule_name)")
 }
+
+// task_tracker keeps no index on status alone: pending tasks are rare in the
+// table's statistics, and such an index would be read for one run's pending
+// tasks instead of the run's own index.
+func TestRunPlanning_TaskStatusHasNoIndexOfItsOwn(t *testing.T) {
+	db := newTestDB(t)
+	var n int
+	require.NoError(t, db.Get(&n, `SELECT count(*) FROM pg_indexes WHERE tablename = 'task_tracker' AND indexname = 'idx_task_tracker_status'`))
+	assert.Zero(t, n)
+}

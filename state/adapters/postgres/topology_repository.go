@@ -65,6 +65,11 @@ func (r *TopologyRepository) LockTopology(ctx context.Context) error {
 // SaveRelease inserts the release row; only a new row loads the nodes and the
 // edges. A concurrent insert of the same release waits on the first
 // transaction and then finds the row stored.
+//
+// A new release is then analysed, inside the transaction, so the planner's
+// statistics hold it once the transaction commits. Until they do, the planner
+// estimates the release at one row, because the statistics list every stored
+// release, and reads its edges through whichever index matches the release.
 func (r *TopologyRepository) SaveRelease(ctx context.Context, rel topology.Release) (bool, error) {
 	if r.tx == nil {
 		return false, errors.New("SaveRelease requires an active transaction")
@@ -89,6 +94,9 @@ func (r *TopologyRepository) SaveRelease(ctx context.Context, rel topology.Relea
 	}
 	if err := copyRows(ctx, r.tx, copyTopologyEdges, edgeRows(rel)); err != nil {
 		return false, fmt.Errorf("copy the edges of release %s: %w", rel.ReleaseID, err)
+	}
+	if _, err := r.tx.ExecContext(ctx, `ANALYZE topology_nodes, topology_edges`); err != nil {
+		return false, fmt.Errorf("analyze the topology after release %s: %w", rel.ReleaseID, err)
 	}
 	return true, nil
 }

@@ -102,3 +102,41 @@ func TestPlanShape_TaskGraphQueriesReadThroughIndexes(t *testing.T) {
 	assert.Subset(t, indexesOf(descendants), []string{"topology_edges_pkey", "uq_task_tracker_run_node"},
 		"pending descendants: %v", descendants)
 }
+
+// A final failure's pending descendants come out of the walk itself: the query
+// reads no table outside its recursive term, so a new run whose tasks the
+// statistics estimate at one row cannot turn a join after the walk into a
+// nested loop over the walk.
+func TestPlanShape_PendingDescendantsReadNoTableOutsideTheWalk(t *testing.T) {
+	db := newTestDB(t)
+	tenant := storeShape(t, db, cascade2000)
+	r := startScheduleRun(t, db, tenant, cascade2000.schedule(), model.OperationRun)
+
+	var raw string
+	require.NoError(t, db.Get(&raw, `EXPLAIN (FORMAT JSON) `+postgres.PendingDescendantsQueryForTest,
+		tenant, r.ScheduleID(), "rel-1", "bench.fail_root"))
+	var plans []struct {
+		Plan map[string]any `json:"Plan"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(raw), &plans))
+	var outside []string
+	var walk func(node map[string]any)
+	walk = func(node map[string]any) {
+		if name, _ := node["Subplan Name"].(string); name != "" {
+			return
+		}
+		if rel, _ := node["Relation Name"].(string); rel != "" {
+			outside = append(outside, rel)
+		}
+		children, _ := node["Plans"].([]any)
+		for _, c := range children {
+			if child, ok := c.(map[string]any); ok {
+				walk(child)
+			}
+		}
+	}
+	for _, p := range plans {
+		walk(p.Plan)
+	}
+	assert.Empty(t, outside, "tables read outside the walk")
+}

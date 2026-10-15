@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -390,4 +391,28 @@ func TestPostgresUnitOfWork_TopologyWritesRollBackWithTheTransaction(t *testing.
 	require.NoError(t, u.Rollback())
 
 	assert.Zero(t, countTopoRows(t, db, `SELECT count(*) FROM topology_releases WHERE tenant_id = $1`, tenant))
+}
+
+// A stored release is in the planner's statistics once its transaction
+// commits: the planner estimates its edges near their number, not as the one
+// row it assumes for a release the statistics do not list.
+func TestTopologyRepository_SaveReleaseRefreshesThePlannerStatistics(t *testing.T) {
+	db := newTestDB(t)
+	tenant := newTopoTenant(t, db)
+	rel := dag2000.release(t, tenant, "rel-stats")
+	loaded, err := saveTopoRelease(t, db, rel)
+	require.NoError(t, err)
+	require.True(t, loaded)
+
+	var raw string
+	require.NoError(t, db.Get(&raw, `EXPLAIN (FORMAT JSON) SELECT * FROM topology_edges WHERE tenant_id = $1 AND release_id = $2`, tenant, "rel-stats"))
+	var plans []struct {
+		Plan struct {
+			Rows float64 `json:"Plan Rows"`
+		} `json:"Plan"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(raw), &plans))
+	require.Len(t, plans, 1)
+	assert.Greater(t, plans[0].Plan.Rows, float64(len(rel.Edges))/2,
+		"estimated %v of the release's %d edges", plans[0].Plan.Rows, len(rel.Edges))
 }
