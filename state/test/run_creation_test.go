@@ -8,9 +8,11 @@ import (
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/runplan"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
+	"github.com/carolsimone/continuo/state/service/runreads"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -140,7 +142,9 @@ func TestRunCreation(t *testing.T) {
 		_, err = db.Exec(`UPDATE scheduler_tracker SET status = 'failed', completed_at = now() WHERE schedule_id = $1`, rerunID)
 		require.NoError(t, err)
 
-		rebaseID, _, err := svchandlers.NewTriggerRebaseHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), srcID, alice)
+		rebaseID, _, err := svchandlers.NewTriggerRebaseHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), svchandlers.TriggerRebaseInput{
+			SourceRunID: srcID, IncludeChangedUpstream: true, Initiator: alice,
+		})
 		require.NoError(t, err)
 		assert.Equal(t, live, h.stampOf(t, rebaseID))
 		assert.Equal(t, createdRun{Status: run.SchedulerStatusRunning, Planned: true, Tasks: 3, Dispatch: []string{"mart.derived_b", "mart.derived_c"}}, h.created(t, rebaseID))
@@ -161,8 +165,14 @@ func TestRunCreation(t *testing.T) {
 }
 
 // A derived run plans inside one transaction, so reading its source's tasks
-// must reuse the transaction's connection: with a pool of one, a second
-// connection for that read would wait on the connection its own caller holds.
+// and the releases of the runs its source inherited from must reuse the
+// transaction's connection: with a pool of one, a second connection for those
+// reads would wait on the connection its own caller holds. A rebase preview
+// reads the changed nodes' durations through the pool, so it must read them
+// after its transaction is rolled back. The live release changes raw.pool_a;
+// a rebase without the option inherits it from the source run, which built it
+// on the earlier release, so a preview of that rebase names raw.pool_a as a
+// changed upstream node.
 func TestRunCreation_DerivedRunsNeedOneConnection(t *testing.T) {
 	if testing.Short() {
 		t.Skip("integration test")
@@ -183,6 +193,9 @@ func TestRunCreation_DerivedRunsNeedOneConnection(t *testing.T) {
 	require.NoError(t, err)
 	_, err = db.Exec(`UPDATE scheduler_tracker SET status = 'failed', completed_at = now() WHERE schedule_id = $1`, srcID)
 	require.NoError(t, err)
+	changedA := scheduledNode("raw", "pool_a", "dbt-model", "pool-derived")
+	changedA.ContentHash += "-changed"
+	promoteRelease(t, db, changedA, scheduledNode("mart", "pool_b", "dbt-model", "pool-derived", "raw.pool_a"))
 
 	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { db.SetMaxOpenConns(0) })
@@ -195,8 +208,32 @@ func TestRunCreation_DerivedRunsNeedOneConnection(t *testing.T) {
 		_, err = db.Exec(`UPDATE scheduler_tracker SET status = 'failed', completed_at = now() WHERE schedule_id = $1`, rerunID)
 		require.NoError(t, err)
 	})
+	var rebaseID uuid.UUID
 	t.Run("rebase", func(t *testing.T) {
-		_, _, err := svchandlers.NewTriggerRebaseHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), srcID, alice)
+		id, _, err := svchandlers.NewTriggerRebaseHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), svchandlers.TriggerRebaseInput{
+			SourceRunID: srcID, Initiator: alice,
+		})
 		require.NoError(t, err)
+		rebaseID = id
+		_, err = db.Exec(`UPDATE task_tracker SET status = 'failed', retry_count = 2 WHERE schedule_id = $1 AND node_key = 'mart.pool_b'`, rebaseID)
+		require.NoError(t, err)
+		_, err = db.Exec(`UPDATE scheduler_tracker SET status = 'failed', completed_at = now() WHERE schedule_id = $1`, rebaseID)
+		require.NoError(t, err)
+	})
+	t.Run("preview", func(t *testing.T) {
+		require.NotEqual(t, uuid.Nil, rebaseID, "the rebase subtest created the source")
+		previewer := runreads.NewRebasePreviewer(defaultPlanner, h.factory, postgres.NewRunReadRepository(db))
+		pv, err := previewer.Preview(ctx, rebaseID, true)
+		require.NoError(t, err)
+		require.Len(t, pv.Changed, 1, "the preview reads the release that built raw.pool_a and the duration of raw.pool_a")
+		assert.Equal(t, "pool_a", pv.Changed[0].TableName)
+	})
+	t.Run("rebase of a rebase", func(t *testing.T) {
+		require.NotEqual(t, uuid.Nil, rebaseID, "the rebase subtest created the source")
+		id, _, err := svchandlers.NewTriggerRebaseHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), svchandlers.TriggerRebaseInput{
+			SourceRunID: rebaseID, IncludeChangedUpstream: true, Initiator: alice,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"raw.pool_a"}, h.created(t, id).Dispatch)
 	})
 }

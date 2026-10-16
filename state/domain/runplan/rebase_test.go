@@ -29,27 +29,31 @@ func TestRebase_LeavesOutDroppedNodesAndRunsNewOnes(t *testing.T) {
 		fixtureNode{"ftable_i", "service-2", "e2e-schedule-failure", []string{"ftable_d"}},
 		fixtureNode{"ftable_j", "service-3", "e2e-schedule-failure", []string{"ftable_e"}},
 	)
-	plan, err := runplan.Rebase{Source: failedFailureRun()}.Select(scheduleGraph(live, "e2e-schedule-failure"))
+	pv, err := runplan.Rebase{Source: failedFailureRun()}.Preview(scheduleGraph(live, "e2e-schedule-failure"))
 	require.NoError(t, err)
 	assert.Equal(t, planOf(append(
 		inherited("ftable_a", "ftable_b", "ftable_c", "ftable_d"),
 		pending("ftable_e", "ftable_f", "ftable_g", "ftable_i", "ftable_j")...,
-	), "ftable_e", "ftable_g", "ftable_i"), plan)
+	), "ftable_e", "ftable_g", "ftable_i"), pv.Plan)
+	assert.Equal(t, counts{FailedOrSkipped: 3, New: 2, Inherited: 4}, countsOf(t, pv),
+		"the dropped ftable_h is neither run nor inherited")
 }
 
-// A new node runs, but the source successes below it are carried over: only
-// the source's unsucceeded tasks pull their descendants in.
-func TestRebase_ANewUpstreamDoesNotReRunTheSuccessesBelowIt(t *testing.T) {
+// A new node runs, and so does every source success below it: a node that
+// reads a table the run builds anew must be built again after it. ftable_d
+// waits for the new ftable_x; ftable_f waits for both.
+func TestRebase_ANewUpstreamReRunsTheSuccessesBelowIt(t *testing.T) {
 	live := changed(e2eDAG, []string{"ftable_d"},
 		fixtureNode{"ftable_x", "service-1", "e2e-schedule-failure", nil},
 		fixtureNode{"ftable_d", "service-2", "e2e-schedule-failure", []string{"ftable_c", "ftable_x"}},
 	)
-	plan, err := runplan.Rebase{Source: failedFailureRun()}.Select(scheduleGraph(live, "e2e-schedule-failure"))
+	pv, err := runplan.Rebase{Source: failedFailureRun()}.Preview(scheduleGraph(live, "e2e-schedule-failure"))
 	require.NoError(t, err)
 	assert.Equal(t, planOf(append(
-		inherited("ftable_a", "ftable_b", "ftable_c", "ftable_d"),
-		pending("ftable_e", "ftable_f", "ftable_g", "ftable_h", "ftable_x")...,
-	), "ftable_e", "ftable_g", "ftable_x"), plan)
+		inherited("ftable_a", "ftable_b", "ftable_c"),
+		pending("ftable_d", "ftable_e", "ftable_f", "ftable_g", "ftable_h", "ftable_x")...,
+	), "ftable_e", "ftable_g", "ftable_x"), pv.Plan)
+	assert.Equal(t, counts{FailedOrSkipped: 4, New: 1, Downstream: 1, Inherited: 3}, countsOf(t, pv))
 }
 
 // The source's seeds come from the seed schedule; they are carried over like

@@ -141,11 +141,12 @@ func TestRebaseFromFailedRun(t *testing.T) {
 // contains a mix of inherited-terminal and rebased rows finalizes correctly.
 //
 // Setup mirrors TestRebaseFromFailedRun: the failure schedule's source run
-// ends in FAILED with ftable_a/b/c/d=succeeded, ftable_e=failed,
-// ftable_f=skipped. The rebase produces:
+// ends in FAILED with ftable_a/b/c/d=succeeded, ftable_e and ftable_g=failed,
+// ftable_f and ftable_h=skipped. Source and live release are the same, so no
+// node changed and none is new. The rebase produces:
 //
 //	ftable_a/b/c/d  →  inherited (succeeded)
-//	ftable_e/f      →  rebased   (PENDING)
+//	ftable_e/f/g/h  →  rebased   (PENDING)
 //
 // The rebased ftable_e fails again under the same broken dbt fixture
 // (JOIN public.wrong_name), exhausts retries, and the rebase run reaches

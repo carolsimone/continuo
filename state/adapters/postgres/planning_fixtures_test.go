@@ -100,6 +100,7 @@ func planningTenant(tb testing.TB, db *sqlx.DB) string {
 	tb.Helper()
 	tenant := "plan-" + uuid.NewString()
 	tb.Cleanup(func() {
+		_, _ = db.ExecContext(context.Background(), `DELETE FROM live_release WHERE tenant_id = $1`, tenant)
 		_, _ = db.ExecContext(context.Background(), `DELETE FROM topology_releases WHERE tenant_id = $1`, tenant)
 	})
 	return tenant
@@ -161,4 +162,17 @@ func setTaskStatus(tb testing.TB, db *sqlx.DB, r *run.Run, nodeKey string, statu
 	n, err := res.RowsAffected()
 	require.NoError(tb, err)
 	require.Equal(tb, int64(1), n, "no task at %s", nodeKey)
+}
+
+// succeedWithExecutions marks every task of runID succeeded, each with one
+// successful execution whose duration grows with its position in key order.
+func succeedWithExecutions(tb testing.TB, db *sqlx.DB, runID uuid.UUID) {
+	tb.Helper()
+	_, err := db.Exec(`UPDATE task_tracker SET status = 'succeeded' WHERE schedule_id = $1`, runID)
+	require.NoError(tb, err)
+	_, err = db.Exec(`
+		INSERT INTO task_execution (task_id, created_at, started_at, completed_at, execution_time_seconds)
+		SELECT task_id, now(), now(), now(), 1 + row_number() OVER (ORDER BY node_key)
+		FROM task_tracker WHERE schedule_id = $1`, runID)
+	require.NoError(tb, err)
 }

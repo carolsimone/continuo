@@ -744,7 +744,6 @@ a.release-author:hover { text-decoration: underline; }
 }
 
 /* Rerun confirmation dialog (drift warning). */
-.rerun-confirm-dialog { max-width: 480px; }
 .rerun-confirm-title { display: flex; align-items: center; gap: 8px; }
 .rerun-confirm-title-icon { font-size: 18px; }
 .rerun-confirm-chip {
@@ -779,9 +778,10 @@ a.release-author:hover { text-decoration: underline; }
   background: #f8fafc;
 }
 
-/* A picker/list dialog wider than the 360px default (e.g. the snapshot picker),
-   matching the .rerun-confirm-dialog precedent. */
-.dialog--wide { width: 480px; }
+/* A picker/list dialog wider than the 360px default (e.g. the snapshot picker
+   and the rerun-failed dialog). Its content can outgrow a short viewport, so it
+   caps its height and scrolls inside instead of pushing its footer off-screen. */
+.dialog--wide { width: 480px; max-height: calc(100vh - 32px); overflow-y: auto; }
 
 /* Muted one-line explanation directly under a .dialog-title. */
 .dialog-subtitle {
@@ -793,20 +793,26 @@ a.release-author:hover { text-decoration: underline; }
 
 /* Snapshot pick list: a scrollable, select-to-act list of rows inside a modal.
    The bounded height is what keeps a long history inside the viewport instead of
-   growing the dialog past its title and Cancel button. */
-.pick-list {
+   growing the dialog past its title and Cancel button.
+   Preview list: its read-only sibling, naming what a modal's confirming verb will
+   touch. The two share the list, the row box and the row's text by selector
+   grouping; only a pick row is a button, and a preview list is shorter because
+   it shares its dialog with option rows and counts. */
+.pick-list,
+.preview-list {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
   gap: 4px;
-  max-height: min(52vh, 420px);
   overflow-y: auto;
 }
+.pick-list { max-height: min(52vh, 420px); }
+.preview-list { max-height: min(32vh, 280px); }
 
-.pick-row {
-  width: 100%;
+.pick-row,
+.preview-row {
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -814,20 +820,26 @@ a.release-author:hover { text-decoration: underline; }
   border: 1px solid #e2e8f0;
   border-radius: 6px;
   background: #fff;
+}
+.pick-row {
+  width: 100%;
   text-align: left;
   cursor: pointer;
   font: inherit;
   transition: background 0.15s, border-color 0.15s;
 }
 .pick-row:hover  { background: #f8f9fa; border-color: #c7d2fe; }
-.pick-row:focus-visible { outline: 2px solid #a5b4fc; outline-offset: 1px; }
+.pick-row:focus-visible,
+.preview-group__header:focus-visible { outline: 2px solid #a5b4fc; outline-offset: 1px; }
 
-.pick-row__main {
+.pick-row__main,
+.preview-row__main {
   display: flex;
   align-items: center;
   gap: 8px;
 }
-.pick-row__id {
+.pick-row__id,
+.preview-row__id {
   flex: 1;
   min-width: 0;
   font-family: 'SF Mono', 'Fira Mono', monospace;
@@ -838,7 +850,8 @@ a.release-author:hover { text-decoration: underline; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.pick-row__meta {
+.pick-row__meta,
+.preview-facts {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -847,7 +860,34 @@ a.release-author:hover { text-decoration: underline; }
   color: #6b7280;
   font-variant-numeric: tabular-nums;
 }
-.pick-row__sep { color: #cbd5e1; }
+.pick-row__sep,
+.preview-facts__sep { color: #cbd5e1; }
+
+/* A preview section groups a section header with its summary line or list. */
+.preview-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+/* The breakdown of a section header's total, aligned with the header's text. */
+.preview-facts--summary { padding: 0 16px; font-size: 12px; }
+/* Per-service group header of a preview list past twelve rows: the grouped
+   table rows header (.nodes-group-header) with the same fill. */
+.preview-group__header {
+  padding: 7px 10px;
+  border-radius: 6px;
+  background: #f8fafc;
+  cursor: pointer;
+}
+.preview-group__header:hover { background: #f1f5f9; }
+.preview-group__rows {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0 0 0 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
 
 /* ===================== FOUNDATIONS ===================== */
 .page {
@@ -1097,7 +1137,8 @@ a.release-author:hover { text-decoration: underline; }
 .info-strip--info    { background: #eef2ff; border-color: #c7d2fe; color: #4338ca; }
 .maintenance-banner { margin: 8px 16px 0; font-size: 13px; }
 
-/* ---- Rerun-failed modal radio options ---- */
+/* ---- Option rows: a radio choice or an on/off checkbox inside a modal, each
+   with a one-line description ---- */
 .rerun-mode-option {
   display: grid;
   grid-template-columns: auto 1fr;
@@ -1110,7 +1151,8 @@ a.release-author:hover { text-decoration: underline; }
   cursor: pointer;
 }
 .rerun-mode-option:hover { background: #f8fafc; }
-.rerun-mode-option > input[type="radio"] {
+.rerun-mode-option > input[type="radio"],
+.rerun-mode-option > input[type="checkbox"] {
   grid-row: 1 / span 2;
   align-self: center;
 }

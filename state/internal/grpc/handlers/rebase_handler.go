@@ -2,12 +2,9 @@ package handlers
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 
 	"github.com/carolsimone/continuo/pkg/identity"
-	"github.com/carolsimone/continuo/state/adapters/postgres"
-	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/service/uow"
@@ -16,58 +13,70 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// RebaseStarter creates a rebase run: the use case behind TriggerRebase.
+type RebaseStarter interface {
+	Handle(ctx context.Context, u uow.UnitOfWork, in svchandlers.TriggerRebaseInput) (uuid.UUID, string, error)
+}
+
 // RebaseHandler implements the TriggerRebase gRPC method.
 //
-// A rebase synthesises a new Run that inherits the source's schedule_name,
-// points back to the source via source_run_id, and is marked kind='rebase'.
-// It runs on the live release: it re-executes the source's tasks that did not
-// succeed and whose node the live schedule still holds, every descendant of
-// theirs, and every node of the live schedule the source never ran, and carries
-// every other source success over as succeeded.
+// A rebase creates a new run (kind='rebase', source_run_id=<source>) on the
+// source's schedule and the live release that restarts the source from its
+// failure: it re-executes the source's tasks that did not succeed and whose
+// node the live schedule still holds, the live schedule's nodes the source
+// never ran, every descendant of those and, with include_changed_upstream,
+// every changed node upstream of what it re-executes. Every other source
+// success is carried over as succeeded. A non-empty expected_release_id must
+// name the live release.
 type RebaseHandler struct {
-	useCase    *svchandlers.TriggerDerivedRunHandler
+	useCase    RebaseStarter
 	uowFactory func() uow.UnitOfWork
 	logger     *slog.Logger
 }
 
 // NewRebaseHandler creates a new RebaseHandler.
 func NewRebaseHandler(
-	useCase *svchandlers.TriggerDerivedRunHandler,
+	useCase RebaseStarter,
 	uowFactory func() uow.UnitOfWork,
 	logger *slog.Logger,
 ) *RebaseHandler {
 	return &RebaseHandler{useCase: useCase, uowFactory: uowFactory, logger: logger}
 }
 
-// TriggerRebase validates the request and delegates to the rebase-configured
-// TriggerDerivedRunHandler use case.
+// TriggerRebase validates the request and delegates to the rebase use case.
 func (h *RebaseHandler) TriggerRebase(ctx context.Context, req *statev1.TriggerRebaseRequest) (*statev1.TriggerRebaseResponse, error) {
-	h.logger.Info("TriggerRebase called", "source_run_id", req.SourceRunId)
+	h.logger.Info("TriggerRebase called", "source_run_id", req.GetSourceRunId(),
+		"include_changed_upstream", req.GetIncludeChangedUpstream(), "expected_release_id", req.GetExpectedReleaseId())
 
-	if req.SourceRunId == "" {
-		return nil, status.Errorf(codes.InvalidArgument, "source_run_id is required")
-	}
-	srcID, err := uuid.Parse(req.SourceRunId)
+	srcID, err := parseSourceRunID(req.GetSourceRunId())
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid source_run_id format")
+		return nil, err
 	}
-
-	id, name, err := h.useCase.Handle(ctx, h.uowFactory(), srcID, identity.FromContext(ctx))
+	id, name, err := h.useCase.Handle(ctx, h.uowFactory(), svchandlers.TriggerRebaseInput{
+		SourceRunID:            srcID,
+		IncludeChangedUpstream: req.GetIncludeChangedUpstream(),
+		ExpectedReleaseID:      req.GetExpectedReleaseId(),
+		Initiator:              identity.FromContext(ctx),
+	})
 	if err != nil {
-		if st, ok := planRefusal(err); ok {
+		if st, ok := rebaseRefusal(err); ok {
 			return nil, st.Err()
 		}
-		switch {
-		case errors.Is(err, postgres.ErrNotFound):
-			return nil, status.Errorf(codes.NotFound, "source run not found")
-		case errors.Is(err, run.ErrSourceMustBeTerminallyFailedOrCancelled),
-			errors.Is(err, run.ErrNothingToRebase),
-			errors.Is(err, run.ErrScheduleHasActiveRun):
-			return nil, status.Errorf(codes.FailedPrecondition, "%v", err)
-		default:
-			h.logger.Error("TriggerRebase failed", "error", err)
-			return nil, status.Errorf(codes.Internal, "rebase: %v", err)
-		}
+		h.logger.Error("TriggerRebase failed", "error", err)
+		return nil, status.Errorf(codes.Internal, "rebase: %v", err)
 	}
 	return &statev1.TriggerRebaseResponse{RunId: id.String(), ScheduleName: name}, nil
+}
+
+// parseSourceRunID parses a rebase request's source_run_id; a missing or
+// malformed one is InvalidArgument.
+func parseSourceRunID(raw string) (uuid.UUID, error) {
+	if raw == "" {
+		return uuid.Nil, status.Error(codes.InvalidArgument, "source_run_id is required")
+	}
+	id, err := uuid.Parse(raw)
+	if err != nil {
+		return uuid.Nil, status.Error(codes.InvalidArgument, "invalid source_run_id format")
+	}
+	return id, nil
 }

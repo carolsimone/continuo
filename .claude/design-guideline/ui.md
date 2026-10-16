@@ -245,15 +245,29 @@ Row 2: actions                                        [Action]  [Action]  [Actio
   `.dialog-btn--*` siblings.
 - Confirmation modals (e.g. rerun-failed-modal) have:
   - Optional context info-strip at the top (e.g. drift warning).
-  - Radio choices with a short description per option.
+  - Option rows — radio choices, or a checkbox for an on/off setting —
+    each with a short description (see "Option rows").
+  - Optionally, what the confirming verb will touch, as a preview list
+    (see "Preview list").
+  - Status strips (loading, a failed request) directly above the footer,
+    next to the button they explain.
   - Footer: `Cancel` (`.btn--secondary`) on the left, the confirming
-    verb (`.btn--primary`) on the right.
+    verb (`.btn--primary`) on the right, with the standard
+    `.is-loading` (e.g. `Rerunning…`; both buttons disabled while the
+    request is in flight) and `.is-success` states. Escape and an overlay
+    click close the modal unless its request is in flight.
 - The confirming verb is the action the modal performs (`Rerun`,
   `Cancel run`, `Trigger`). Not "OK" or "Submit".
 - The `.dialog` is 360px by default. A picker/list dialog that needs more
   room uses the `.dialog--wide` modifier (480px); it still caps at
   `calc(100vw - 32px)` so it never overflows a narrow viewport. Do not
-  hand a dialog a bespoke width.
+  hand a dialog a bespoke width. A `.dialog--wide` also caps its height at
+  `calc(100vh - 32px)` and scrolls inside, so a list-carrying dialog never
+  pushes its footer off a short viewport:
+
+  ```css
+  .dialog--wide { width: 480px; max-height: calc(100vh - 32px); overflow-y: auto; }
+  ```
 - A muted one-line explanation directly under the `.dialog-title` uses
   `.dialog-subtitle` (12px gray). One line; longer guidance is an
   `.info-strip` instead.
@@ -320,6 +334,189 @@ Rules:
   that is only sometimes known (e.g. a completion time on an in-flight
   run) is simply absent, never an empty label.
 - Empty state is an `.info-strip--neutral`, not a bare paragraph.
+
+### Preview list
+
+The **read-only** sibling of the snapshot pick list: a list inside a
+modal that names what the confirming verb will touch, so the user can
+judge it before confirming. Rows are facts, not choices — nothing happens
+on click, and the footer keeps its confirming verb. The rerun-failed
+dialog is the reference: under "Latest snapshot" it previews the rebase —
+how many nodes will run and why — and lists the changed nodes upstream of
+the failure ("Changed upstream").
+
+```jsx
+<section className="preview-section">
+  <div className="section-header">
+    <div className="section-header__main">
+      <span className="section-header__title">Will run</span>
+      <span className="section-header__count">41</span>
+    </div>
+    <div className="section-header__sub">of 2,000 nodes · 1,959 inherited</div>
+  </div>
+  <span className="preview-facts preview-facts--summary">
+    <span>3 failed or skipped</span><span className="preview-facts__sep">·</span>
+    <span>1 new</span><span className="preview-facts__sep">·</span>
+    <span>2 changed upstream</span><span className="preview-facts__sep">·</span>
+    <span>35 downstream</span>
+  </span>
+</section>
+
+<section className="preview-section">
+  <div className="section-header">
+    <div className="section-header__main">
+      <span className="section-header__title">Changed upstream</span>
+      <span className="section-header__count">2</span>
+    </div>
+  </div>
+  <ul className="preview-list">
+    <li className="preview-row">
+      <span className="preview-row__main">
+        <span className="nodes-group-dot" style={{ background: accent }} />
+        <span className="preview-row__id" title="core.stg.orders">stg.orders</span>
+      </span>
+      <span className="preview-facts">
+        <span>+18 downstream</span><span className="preview-facts__sep">·</span>
+        <span>last run 4m 12s</span>
+      </span>
+    </li>
+  </ul>
+</section>
+```
+
+Past twelve rows the list groups them by service; each group is one
+`li.preview-group` holding a header and, while open, its rows:
+
+```jsx
+<li className="preview-group">
+  <div className="nodes-group-header preview-group__header"
+       role="button" tabIndex={0} aria-expanded={isOpen}>
+    <span className="nodes-group-chevron">▸</span>
+    <span className="nodes-group-dot" style={{ background: accent }} />
+    <span className="nodes-group-name">core</span>
+    <span className="nodes-group-count">9</span>
+  </div>
+  {isOpen && <ul className="preview-group__rows">{/* .preview-row … */}</ul>}
+</li>
+```
+
+The list, the row box and the row's text share their rules with the
+snapshot pick list by selector grouping — one declaration block per
+shared rule, never a copy. Only what differs is declared apart: a pick
+row's button behaviour (`cursor`, `:hover`, `:focus-visible`), each
+list's height, and the preview's own section, summary and group rules.
+
+```css
+.pick-list, .preview-list   { list-style: none; margin: 0; padding: 0; display: flex;
+                              flex-direction: column; gap: 4px; overflow-y: auto; }
+.pick-list                  { max-height: min(52vh, 420px); }
+.preview-list               { max-height: min(32vh, 280px); }
+.pick-row, .preview-row     { display: flex; flex-direction: column; gap: 4px;
+                              padding: 8px 10px; border: 1px solid #e2e8f0;
+                              border-radius: 6px; background: #fff; }
+.pick-row__main, .preview-row__main { display: flex; align-items: center; gap: 8px; }
+.pick-row__id, .preview-row__id     { font-family: 'SF Mono', 'Fira Mono', monospace;
+                                      font-size: 12.5px; font-weight: 600; color: #111827; }
+.pick-row__meta, .preview-facts     { font-size: 11.5px; color: #6b7280;
+                                      font-variant-numeric: tabular-nums; }
+.pick-row__sep, .preview-facts__sep { color: #cbd5e1; }
+.preview-section            { display: flex; flex-direction: column; gap: 8px; }
+.preview-facts--summary     { padding: 0 16px; font-size: 12px; }
+.preview-group__header      { padding: 7px 10px; border-radius: 6px; background: #f8fafc;
+                              cursor: pointer; }
+.preview-group__header:hover { background: #f1f5f9; }
+.preview-group__rows        { list-style: none; margin: 4px 0 0; padding: 0 0 0 18px;
+                              display: flex; flex-direction: column; gap: 4px; }
+```
+
+Rules:
+
+- The list scrolls inside its own `max-height` region, as `.pick-list`
+  does. It is shorter than a pick list because it shares its dialog with
+  option rows and counts; the dialog is a `.dialog--wide`, which itself
+  scrolls when a short viewport cannot hold it.
+- Rows are **not buttons**: a `.preview-row` is an `<li>` with no hover
+  state, no pointer cursor and no click handler. If picking a row is the
+  action, use the snapshot pick list instead.
+- Precede the list with a `.section-header`: its title names what the
+  rows are, its count pill is the number of rows, and its sub-line
+  qualifies them when needed (e.g. `Left out of this rerun` when an
+  option leaves them out, so the list never reads as "will run").
+- A totals section ("Will run") states its total in the count pill and
+  what it is out of in the sub-line; a breakdown of the same total is one
+  `.preview-facts--summary` line directly under the header, never a
+  second sub-line. A count that is zero is left out of the breakdown.
+- Each row: the service accent dot (`.nodes-group-dot`, colour from the
+  page's own `buildServiceColors` map so a service is painted as
+  everywhere else on the page, slate `#94a3b8` for a service the page
+  does not show — the sanctioned style exception, see Service accent
+  colors), then the monospace identifier (`.preview-row__id`, ellipsised,
+  with the full id in `title`). A muted `.preview-facts` line follows,
+  its facts separated by `.preview-facts__sep` (`·`), never punctuation
+  inside the text. Numbers carry thousands separators (`2,000`); a
+  duration uses `formatDuration`, and a sub-second one reads `<1s`.
+- A fact that is not known (the duration of a node that never succeeded)
+  is absent, never an empty label or a dash; a row with no known fact
+  has no facts line.
+- Past twelve rows, rows group under collapsible per-service headers,
+  sorted by service name and collapsed by default. The header reuses the
+  Grouped table rows header (`.nodes-group-header`: chevron, accent dot,
+  service name, `.nodes-group-count`) and its keyboard/role contract
+  (`role="button"`, `tabIndex={0}`, Enter/Space, `aria-expanded`). There
+  is no rolled-up status pill: preview rows carry no status.
+- Empty state: no section at all when an empty list would say nothing the
+  counts above have not said; otherwise an `.info-strip--neutral`.
+- While the preview loads, an `.info-strip--neutral` says so and the
+  confirming verb is disabled; a failed preview is an `.info-strip--error`
+  and the confirming verb stays disabled until a preview arrives. A
+  reload (an option changed) keeps the last preview on screen until the
+  next one replaces it, so the option the user just clicked does not
+  move. When the confirmation is refused because what was previewed is
+  no longer true, the modal previews again and says so in an
+  `.info-strip--warning`.
+
+### Option rows
+
+A choice inside a modal — one of several radio choices, or an on/off
+checkbox — is a `.rerun-mode-option` row: the control, a bold title, and
+one muted line saying what the option does. The whole row is the label,
+so clicking anywhere on it toggles the control.
+
+```jsx
+<label className="rerun-mode-option">
+  <input type="checkbox" checked={include} onChange={…} />
+  <span className="rerun-mode-option__title">Include changed upstream nodes</span>
+  <span className="rerun-mode-option__desc">
+    Unchecked, only the failed part re-runs; a failure caused by one of these changes fails again
+  </span>
+</label>
+```
+
+```css
+.rerun-mode-option { display: grid; grid-template-columns: auto 1fr;
+                     grid-template-rows: auto auto; column-gap: 10px; row-gap: 2px;
+                     padding: 10px 12px; border: 1px solid #e2e8f0; border-radius: 6px;
+                     cursor: pointer; }
+.rerun-mode-option:hover { background: #f8fafc; }
+.rerun-mode-option > input[type="radio"],
+.rerun-mode-option > input[type="checkbox"] { grid-row: 1 / span 2; align-self: center; }
+.rerun-mode-option__title { font-size: 13px; font-weight: 600; color: #0f172a; }
+.rerun-mode-option__desc  { font-size: 12px; color: #475569; }
+```
+
+Rules:
+
+- Radios for mutually exclusive choices, a checkbox for one setting that
+  is on or off. Never a toggle switch or a custom control.
+- The title is a short noun phrase or imperative ("Latest snapshot",
+  "Include changed upstream nodes"); the description is one line and says
+  what happens, including what is lost when the option is off.
+- A checkbox defaults to the choice most users want (the rerun-failed
+  dialog includes changed upstream nodes by default). An option that
+  changes what a preview list shows previews again when it changes.
+- Show a checkbox only when it changes something: the rerun-failed
+  dialog hides "Include changed upstream nodes" when nothing upstream
+  changed.
 
 ## Section headers
 

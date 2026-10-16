@@ -140,6 +140,10 @@ func (f *fakeTaskStatusTaskCollection) ListRunTasks(_ context.Context, _ uuid.UU
 	panic("ListRunTasks not implemented in fake")
 }
 
+func (f *fakeTaskStatusTaskCollection) RunReleasesOf(_ context.Context, _ []uuid.UUID) (map[uuid.UUID]string, error) {
+	panic("RunReleasesOf not implemented in fake")
+}
+
 func (f *fakeTaskStatusTaskCollection) MarkSkipped(_ context.Context, _ []uuid.UUID) (int, error) {
 	return 0, nil
 }

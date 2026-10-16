@@ -2,9 +2,11 @@ package repository
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/projection"
 )
 
@@ -24,4 +26,11 @@ type RunReadRepository interface {
 	// ListActiveRunDrifts returns the tenant's live promotion seq (0 when no
 	// release is live) and the newest active run of every schedule.
 	ListActiveRunDrifts(ctx context.Context, tenantID string) (int64, []projection.ActiveRunDrift, error)
+
+	// LastSuccessDurations returns how long each node's latest successful
+	// execution took: the latest execution without an error and with a
+	// positive duration of a succeeded task of the node that is not a test.
+	// A node without one, inherited tasks included since they record no
+	// execution, is absent from the map.
+	LastSuccessDurations(ctx context.Context, nodes []run.NodeID) (map[run.NodeID]time.Duration, error)
 }

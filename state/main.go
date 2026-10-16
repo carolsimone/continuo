@@ -410,14 +410,16 @@ func main() {
 	rerunHandler := handlers.NewRerunHandler(rerunUC, uowFactory, logger)
 	rebaseUC := svchandlers.NewTriggerRebaseHandler(planner, logger)
 	rebaseHandler := handlers.NewRebaseHandler(rebaseUC, uowFactory, logger)
+	runReadRepo := postgres.NewRunReadRepository(db)
+	previewRebaseHandler := handlers.NewPreviewRebaseHandler(runreads.NewRebasePreviewer(planner, uowFactory, runReadRepo), logger)
 	singleNodeRunUC := svchandlers.NewTriggerSingleNodeRunHandler(planner, logger)
 	singleNodeRunHandler := handlers.NewSingleNodeRunHandler(singleNodeRunUC, uowFactory, logger)
 	nodeRunRepo := postgres.NewNodeRunRepository(db, logger)
 	nodeRunHandler := handlers.NewNodeRunHandler(nodeRunRepo, logger)
-	runReadHandler := handlers.NewRunReadHandler(runreads.New(postgres.NewRunReadRepository(db)), logger)
+	runReadHandler := handlers.NewRunReadHandler(runreads.New(runReadRepo), logger)
 
 	// Create gRPC server
-	grpcServer, err := grpcserver.NewServer(cfg.GRPCPort, schedulerHandler, taskHandler, taskExecutionHandler, rerunHandler, singleNodeRunHandler, rebaseHandler, nodeRunHandler, runReadHandler, logger, cfg.Maintenance)
+	grpcServer, err := grpcserver.NewServer(cfg.GRPCPort, schedulerHandler, taskHandler, taskExecutionHandler, rerunHandler, singleNodeRunHandler, rebaseHandler, previewRebaseHandler, nodeRunHandler, runReadHandler, logger, cfg.Maintenance)
 	if err != nil {
 		logger.Error("Failed to create gRPC server", "error", err)
 		os.Exit(1)

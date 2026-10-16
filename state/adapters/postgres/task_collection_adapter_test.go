@@ -44,3 +44,44 @@ func TestTaskCollectionAdapter_GetByID(t *testing.T) {
 	_, err = adapter.GetByID(ctx, uuid.New())
 	assert.ErrorIs(t, err, run.ErrTaskNotFound)
 }
+
+// RunReleasesOf reads, through the unit of work's transaction, the release
+// each task's run is stamped with. A task whose run names no release, and an
+// id no task has, are absent. With a pool of one connection, held by the
+// transaction, a read on another connection would wait until the deadline.
+func TestTaskCollectionAdapter_RunReleasesOf(t *testing.T) {
+	db := newTestDB(t)
+	logger := discardLogger()
+	schedRepo := postgres.NewSchedulerTrackerRepository(db, logger)
+	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
+	suffix := uuid.NewString()[:8]
+	release := "rel-" + suffix
+	stamped := createScheduler(t, schedRepo, "run-releases-stamped-"+suffix)
+	legacy := createScheduler(t, schedRepo, "run-releases-legacy-"+suffix)
+	stampedTask, legacyTask := uuid.New(), uuid.New()
+	t.Cleanup(func() {
+		_, _ = db.Exec(`DELETE FROM task_tracker WHERE task_id IN ($1, $2)`, stampedTask, legacyTask)
+		_, _ = db.Exec(`DELETE FROM scheduler_tracker WHERE schedule_id IN ($1, $2)`, stamped.ScheduleID, legacy.ScheduleID)
+	})
+	_, err := db.Exec(`UPDATE scheduler_tracker SET release_id = $2, promotion_seq = 1 WHERE schedule_id = $1`, stamped.ScheduleID, release)
+	require.NoError(t, err)
+	for id, sched := range map[uuid.UUID]uuid.UUID{stampedTask: stamped.ScheduleID, legacyTask: legacy.ScheduleID} {
+		require.NoError(t, taskRepo.Create(context.Background(), &postgres.TaskTracker{
+			TaskID: id, ScheduleID: sched, CreatedAt: time.Now(), ServiceName: "service-1",
+			SchemaName: "raw", TableName: "orders", JobName: "job-orders", Status: run.TaskStatusSucceeded,
+		}))
+	}
+
+	db.SetMaxOpenConns(1)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	tx, err := db.BeginTxx(ctx, nil)
+	require.NoError(t, err)
+	defer tx.Rollback() //nolint:errcheck
+	adapter := postgres.NewTaskCollectionAdapter(taskRepo, tx)
+
+	got, err := adapter.RunReleasesOf(ctx, []uuid.UUID{stampedTask, legacyTask, uuid.New()})
+
+	require.NoError(t, err)
+	assert.Equal(t, map[uuid.UUID]string{stampedTask: release}, got)
+}

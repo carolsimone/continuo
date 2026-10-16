@@ -772,6 +772,9 @@ func (f *cancelFakeTaskCollection) MarkDispatched(_ context.Context, _ []uuid.UU
 func (f *cancelFakeTaskCollection) ListRunTasks(_ context.Context, _ uuid.UUID) ([]run.Task, error) {
 	panic("ListRunTasks not used in cancel tests")
 }
+func (f *cancelFakeTaskCollection) RunReleasesOf(_ context.Context, _ []uuid.UUID) (map[uuid.UUID]string, error) {
+	panic("RunReleasesOf not used in cancel tests")
+}
 func (f *cancelFakeTaskCollection) MarkSkipped(_ context.Context, _ []uuid.UUID) (int, error) {
 	panic("MarkSkipped not used in cancel tests")
 }

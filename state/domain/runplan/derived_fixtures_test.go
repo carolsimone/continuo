@@ -15,16 +15,19 @@ func sourceTaskID(table string) uuid.UUID {
 	return uuid.NewSHA1(uuid.NameSpaceURL, []byte("continuo/source-task/"+table))
 }
 
-// sourceRun builds a source run of op whose succeeded tables' tasks
-// succeeded and whose other tables' tasks did not, sorted by key as
-// TaskCollection.ListRunTasks returns them.
+// sourceRelease is the release a fixture source run is on.
+const sourceRelease = "rel-source"
+
+// sourceRun builds a source run of op on sourceRelease whose succeeded
+// tables' tasks succeeded and whose other tables' tasks did not, each built on
+// sourceRelease, sorted by key as TaskCollection.ListRunTasks returns them.
 func sourceRun(op model.Operation, succeeded, unsucceeded []string) runplan.Source {
 	var tasks []runplan.SourceTask
 	for _, t := range succeeded {
-		tasks = append(tasks, runplan.SourceTask{Key: key(t), TaskID: sourceTaskID(t), Succeeded: true})
+		tasks = append(tasks, runplan.SourceTask{Key: key(t), TaskID: sourceTaskID(t), Succeeded: true, BuiltOn: sourceRelease})
 	}
 	for _, t := range unsucceeded {
-		tasks = append(tasks, runplan.SourceTask{Key: key(t), TaskID: sourceTaskID(t)})
+		tasks = append(tasks, runplan.SourceTask{Key: key(t), TaskID: sourceTaskID(t), BuiltOn: sourceRelease})
 	}
 	slices.SortFunc(tasks, func(a, b runplan.SourceTask) int { return cmp.Compare(a.Key, b.Key) })
 	return runplan.Source{Operation: op, Tasks: tasks}
