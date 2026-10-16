@@ -12,6 +12,8 @@ shipped in those.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-16
+
 `llm.baseUrl` is new, with an empty default that keeps each provider's public address; an unmodified values file upgrades unchanged, including with `--reuse-values`, unless it sets `LLM_BASE_URL` through `services[].env` or `services[].secretEnv` (see Breaking). **MINOR.**
 
 ### Breaking
