@@ -457,13 +457,52 @@ networkPolicy:
   # real service graph. Inert on CNIs that do not enforce NetworkPolicy.
   enabled: true
 
+egress:
+  # egress-proxy: a forward proxy that admits a connection only to a host and
+  # port on its allowlist. The chart deploys it and renders the allowlist from
+  # llm.* (llm.baseUrl, else the provider's public API), the GITHUB_BASE_URL of
+  # agent-remediation's `services` entry (its `env` only), s3.endpointUrl when
+  # minio.enabled=false, and the two lists below. The chart does not point the
+  # agents at it: no traffic reaches it until a client is configured to use
+  # http://egress-proxy:3128 as its proxy.
+  # A URL whose host is an IP address or no valid host name, or whose port is
+  # outside 1-65535, is left out of the allowlist: the proxy admits host names
+  # only. When nothing is left to allow, no egress-proxy object renders, because
+  # the proxy refuses to start on an empty list. The rendered list is in the
+  # ConfigMap <release>-egress-proxy.
+  enabled: true
+  # Extra hosts the proxy admits: "host" or "host:port" (port 443 when
+  # omitted), or "*.example.com" for every name below example.com. An entry is
+  # a DNS name, never an IP address, a URL or a bare "*", and a port has no
+  # leading zero. Rendering fails on an entry that is not one. An
+  # internationalised name is written in its punycode (xn--) form: a non-ASCII
+  # entry fails the render, and a non-ASCII URL host is left out of the
+  # allowlist.
+  allowedDomains: []
+  # The same, for hosts that may resolve to private addresses, such as
+  # 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10 and fc00::/7. The
+  # hosts of llm.baseUrl, a GitHub Enterprise GITHUB_BASE_URL and s3.endpointUrl are
+  # always allowed to. The proxy never connects to loopback, unspecified,
+  # link-local (169.254.0.0/16, fe80::/10) or cloud-metadata addresses, whatever
+  # the entry says.
+  privateDomains: []
+  proxy:
+    # Two replicas keep the proxy up while one pod restarts.
+    replicas: 2
+    # The most CONNECT tunnels and forwarded requests one replica holds open at
+    # once; further ones are refused with 503.
+    maxTunnels: 1024
+    # Empty: requests 50m / 64Mi, limits 500m / 256Mi.
+    resources: {}
+
 metrics:
   # Every Go service (state, orchestrator, execution-controller,
   # release-controller, remediation, agent-remediation, agent-chat,
-  # dead-letter-controller) serves Prometheus metrics at /metrics on this port, on a listener of its own, so a
+  # dead-letter-controller, egress-proxy) serves Prometheus metrics at /metrics on this port, on a listener of its own, so a
   # scraper can be admitted to it without reaching the service's other ports.
   # Published to the services as METRICS_PORT on the shared ConfigMap. Must
-  # differ from every service's httpPort and grpcPort (rendering fails otherwise).
+  # differ from every service's httpPort and grpcPort and, while the egress-proxy
+  # renders, from its ports 3128 and 8093 (rendering fails otherwise).
   port: 9464
   # Adds prometheus.io/scrape, prometheus.io/port and prometheus.io/path pod
   # annotations to those services, for scrapers that discover pods by annotation.

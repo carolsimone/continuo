@@ -1,0 +1,18 @@
+# The hosts egress-proxy admits in the local stack, bound into the egress-proxy
+# container at /etc/egress-proxy/allowlist.yaml (EGRESS_ALLOWLIST_PATH). Both
+# agents, agent-chat and agent-remediation, send their outbound HTTP through
+# egress-proxy, so a host missing here is refused with a 403 and logged as
+# `egress denied`.
+#
+# The first two entries are the e2e stubs, which are private addresses on the
+# compose network and so set allowPrivate. The rest are the public LLM and
+# GitHub APIs, for a stack run against a real provider (LLM_PROVIDER=anthropic
+# or openai with an empty LLM_BASE_URL in .env). They are public hosts: a name
+# that resolves to a private address is refused.
+entries:
+  - {host: stub-llm, port: 9100, allowPrivate: true}
+  - {host: stub-github, port: 9200, allowPrivate: true}
+  - {host: api.anthropic.com, port: 443}
+  - {host: api.openai.com, port: 443}
+  - {host: api.github.com, port: 443}
+  - {host: codeload.github.com, port: 443}

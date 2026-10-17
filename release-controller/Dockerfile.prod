@@ -18,6 +18,7 @@ COPY agent-chat/go.mod agent-chat/go.sum ./agent-chat/
 COPY remediation/go.mod remediation/go.sum ./remediation/
 COPY agent-remediation/go.mod agent-remediation/go.sum ./agent-remediation/
 COPY dead-letter-controller/go.mod dead-letter-controller/go.sum ./dead-letter-controller/
+COPY egress-proxy/go.mod egress-proxy/go.sum ./egress-proxy/
 
 RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download
