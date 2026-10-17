@@ -1,6 +1,6 @@
 # Release notes
 
-Every Continuo release is one published Helm chart
+Every continuo release is one published Helm chart
 (`oci://ghcr.io/carolsimone/charts/continuo`). A single `vX.Y.Z` tag stamps the
 chart `version` and its `appVersion`, so a release pins every service image to
 the same tag. A version is the whole platform at that point.
@@ -16,6 +16,30 @@ may not survive the upgrade, so read the changelog first. A release with large
 app changes can still be a `PATCH`.
 
 ---
+
+## 0.12.0 · 2026-10-16 · `MINOR`
+
+- **Rerun failed nodes → Latest snapshot** (a rebase) restarts a failed run from its failure on the live release. It re-runs what did not succeed, the nodes the release added and everything below them and, by default, the changed nodes upstream of what it re-runs, so a fix to the node that caused the failure is picked up. A change to a node's image alone does not count. The dialog previews the selection before you confirm: how many nodes run and why, and each changed upstream node with its last run time.
+- The state service plans every run itself and starts its ready tasks in the same transaction. A trigger that cannot make a valid run is refused at once and creates no run.
+- `llm.baseUrl` points the agents at an LLM server for every provider. A values file that sets `LLM_BASE_URL` through `services[].env` or `secretEnv` now fails the render: move the value to `llm.baseUrl`.
+- Upgrade with no run active: on its first start, the state service cancels every pending or running run it did not plan. Turn maintenance mode on and wait for running work to finish first; `helm upgrade` prints the same note.
+
+[Changelog](https://github.com/carolsimone/continuo/blob/main/deploy/continuo/CHANGELOG.md#0120---2026-10-16) · [Release](https://github.com/carolsimone/continuo/releases/tag/v0.12.0)
+
+## 0.11.0 · 2026-10-13 · `MINOR`
+
+- release-controller's database drops the columns that held topologies inline. Upgrade to 0.10.0 first and let release-controller start once, then upgrade to 0.11.0 with no release in flight; the migration refuses to run otherwise and changes nothing. No values change.
+
+[Changelog](https://github.com/carolsimone/continuo/blob/main/deploy/continuo/CHANGELOG.md#0110---2026-10-13) · [Release](https://github.com/carolsimone/continuo/releases/tag/v0.11.0)
+
+## 0.10.0 · 2026-10-13 · `MINOR`
+
+- Messages are no longer dropped: a new service, dead-letter-controller, stores every message a consumer or an outbox gives up on, and `continuo dlq list`, `show` and `redrive` read and replay them. It also trims the Redis streams, so the `stream-reaper` CronJob is gone.
+- `maintenance.enabled` puts continuo in maintenance mode: no new work starts and work already running finishes.
+- Every Go service serves Prometheus metrics on `metrics.port` (default 9464). `execution.maxConcurrentJobs` caps the Jobs that run at once, and `database.pool.*` bounds each service's Postgres pool.
+- Promotions travel by reference to a topology object in the bucket. With an external bucket, orchestrator and state need read access to the `tenants/` prefix.
+
+[Changelog](https://github.com/carolsimone/continuo/blob/main/deploy/continuo/CHANGELOG.md#0100---2026-10-13) · [Release](https://github.com/carolsimone/continuo/releases/tag/v0.10.0)
 
 ## 0.9.1 · 2026-10-02 · `PATCH`
 
