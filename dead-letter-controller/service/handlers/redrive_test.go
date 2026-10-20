@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,7 +17,7 @@ var now = time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
 
 func storedOpen(repo *fakeRepo, src deadletter.Source, group string, original time.Time) deadletter.DeadLetter {
 	dl := deadletter.DeadLetter{ID: uuid.New(), DedupKey: uuid.NewString(), Source: src, FailureKind: model.DeadLetterKindPermanent,
-		Stream: "node.updated:v1", Group: group, Fields: map[string]string{"k": "v"}, Redrivable: true,
+		Stream: "orders.changed:v1", Group: group, Fields: map[string]string{"k": "v"}, Redrivable: true,
 		OriginalAt: original, RecordedAt: original, Status: deadletter.StatusOpen}
 	repo.put(dl)
 	return dl
@@ -46,7 +47,7 @@ func TestRedrive_MarksAndWritesOneOutboxRowEach(t *testing.T) {
 	if err != nil || p.RedriveGroup != "g1" || p.RedrivenFrom != a.ID.String() {
 		t.Fatalf("payload = %+v %v", p, err)
 	}
-	if h.outbox.created[0].StreamName != "node.updated:v1" || h.outbox.created[0].EventType != serialization.EventTypeRedrive {
+	if h.outbox.created[0].StreamName != "orders.changed:v1" || h.outbox.created[0].EventType != serialization.EventTypeRedrive {
 		t.Fatalf("entry = %+v", h.outbox.created[0])
 	}
 	if h.uow.commits != 1 || len(h.obs.redriven) != 2 {
@@ -121,5 +122,35 @@ func TestRedrive_DuplicateIDsRedriveOnce(t *testing.T) {
 	got, err := h.redriver.Redrive(context.Background(), []uuid.UUID{a.ID, a.ID}, "alice", "r")
 	if err != nil || len(got) != 1 || len(h.outbox.created) != 1 {
 		t.Fatalf("got=%d err=%v outbox=%d", len(got), err, len(h.outbox.created))
+	}
+}
+
+// A dead letter of a retired stream is refused with the reason, and the
+// transaction writes nothing.
+func TestRedrive_RetiredStreamRefusedWithTheReason(t *testing.T) {
+	h := newHarness()
+	live := storedOpen(h.repo, deadletter.SourceConsumer, "g1", now.Add(-time.Hour))
+	retired := storedOpen(h.repo, deadletter.SourceConsumer, "g1", now.Add(-time.Hour))
+	retired.Stream = "orders.created:v1"
+	h.repo.put(retired)
+
+	_, err := h.redriver.Redrive(context.Background(), []uuid.UUID{live.ID, retired.ID}, "alice", "r")
+	if !errors.Is(err, deadletter.ErrNotRedrivable) {
+		t.Fatalf("err = %v, want ErrNotRedrivable", err)
+	}
+	if !strings.Contains(err.Error(), "stream orders.created:v1 is retired") {
+		t.Fatalf("err = %q, want the reason", err)
+	}
+	if len(h.outbox.created) != 0 || h.uow.commits != 0 {
+		t.Fatalf("partial redrive: outbox=%d commits=%d", len(h.outbox.created), h.uow.commits)
+	}
+}
+
+func TestRedrive_GroupTheContractDoesNotNameRefused(t *testing.T) {
+	h := newHarness()
+	dl := storedOpen(h.repo, deadletter.SourceConsumer, "renamed-group", now.Add(-time.Hour))
+	_, err := h.redriver.Redrive(context.Background(), []uuid.UUID{dl.ID}, "alice", "r")
+	if !errors.Is(err, deadletter.ErrNotRedrivable) || !strings.Contains(err.Error(), "group renamed-group does not read stream orders.changed:v1") {
+		t.Fatalf("err = %v", err)
 	}
 }

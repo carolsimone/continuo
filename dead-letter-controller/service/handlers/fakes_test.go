@@ -259,6 +259,10 @@ func (o *recordingObserver) Recorded(dl deadletter.DeadLetter) { o.recorded = ap
 func (o *recordingObserver) Redriven(dl deadletter.DeadLetter) { o.redriven = append(o.redriven, dl) }
 func (o *recordingObserver) Expired(dl deadletter.DeadLetter)  { o.expired = append(o.expired, dl) }
 
+// testContract declares orders.changed:v1, read by groups g and g1, and the
+// retired stream orders.created:v1.
+var testContract = deadletter.NewContract(map[string][]string{"orders.changed:v1": {"g", "g1"}}, []string{"orders.created:v1"})
+
 // harness wires the fakes to the four handlers, with the clock fixed at now.
 type harness struct {
 	repo     *fakeRepo
@@ -284,8 +288,8 @@ func newHarness() *harness {
 		uow:      unit,
 		obs:      obs,
 		recorder: NewRecorder(repo, obs, logger),
-		query:    NewQuery(repo),
-		redriver: NewRedriver(func() uow.UnitOfWork { return unit }, clock, obs, logger),
+		query:    NewQuery(repo, testContract),
+		redriver: NewRedriver(func() uow.UnitOfWork { return unit }, clock, obs, testContract, logger),
 		expirer:  NewExpirer(repo, clock, obs, logger),
 	}
 }

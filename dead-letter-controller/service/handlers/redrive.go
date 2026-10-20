@@ -15,24 +15,26 @@ import (
 )
 
 // Redriver republishes dead letters to their original stream through the
-// outbox.
+// outbox, refusing every one the contract no longer lets it address.
 type Redriver struct {
-	newUoW func() uow.UnitOfWork
-	clock  ports.Clock
-	obs    ports.Observer
-	logger *slog.Logger
+	newUoW   func() uow.UnitOfWork
+	clock    ports.Clock
+	obs      ports.Observer
+	contract deadletter.Contract
+	logger   *slog.Logger
 }
 
-func NewRedriver(newUoW func() uow.UnitOfWork, clock ports.Clock, obs ports.Observer, logger *slog.Logger) *Redriver {
-	return &Redriver{newUoW: newUoW, clock: clock, obs: obs, logger: logger}
+func NewRedriver(newUoW func() uow.UnitOfWork, clock ports.Clock, obs ports.Observer, contract deadletter.Contract, logger *slog.Logger) *Redriver {
+	return &Redriver{newUoW: newUoW, clock: clock, obs: obs, contract: contract, logger: logger}
 }
 
 // Redrive redrives every dead letter in ids, or none. An unknown id fails with
-// ErrNotFound; an expired or non-redrivable one with ErrExpired or
-// ErrNotRedrivable. One transaction marks each open dead letter redriven and
-// writes its outbox row; an already redriven one is returned unchanged. The
-// result follows the order of ids, without duplicates.
-func (r *Redriver) Redrive(ctx context.Context, ids []uuid.UUID, actor, reason string) ([]deadletter.DeadLetter, error) {
+// ErrNotFound; an expired one with ErrExpired; one whose fields are not a
+// message, or whose stream or group the contract retired or does not name,
+// with ErrNotRedrivable and the reason. One transaction marks each open dead
+// letter redriven and writes its outbox row; an already redriven one is
+// returned unchanged. The result follows the order of ids, without duplicates.
+func (r *Redriver) Redrive(ctx context.Context, ids []uuid.UUID, actor, reason string) ([]deadletter.View, error) {
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
 		return nil, deadletter.ErrReasonRequired
@@ -71,12 +73,12 @@ func (r *Redriver) Redrive(ctx context.Context, ids []uuid.UUID, actor, reason s
 	}
 	now := r.clock.Now()
 	for _, id := range ids {
-		if err := byID[id].CheckRedrive(now); err != nil {
+		if err := byID[id].CheckRedrive(now, r.contract); err != nil {
 			return nil, fmt.Errorf("dead letter %s: %w", id, err)
 		}
 	}
 
-	out := make([]deadletter.DeadLetter, 0, len(ids))
+	out := make([]deadletter.View, 0, len(ids))
 	var redriven []deadletter.DeadLetter
 	for _, id := range ids {
 		dl := byID[id]
@@ -96,7 +98,7 @@ func (r *Redriver) Redrive(ctx context.Context, ids []uuid.UUID, actor, reason s
 			}
 			redriven = append(redriven, dl)
 		}
-		out = append(out, dl)
+		out = append(out, dl.ViewUnder(r.contract))
 	}
 	if err := u.Commit(); err != nil {
 		return nil, err

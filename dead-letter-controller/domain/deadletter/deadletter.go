@@ -43,7 +43,7 @@ func (s Status) IsValid() bool { return s == StatusOpen || s == StatusRedriven }
 var (
 	ErrNotFound       = errors.New("dead letter not found")
 	ErrExpired        = errors.New("dead letter is past the replay horizon")
-	ErrNotRedrivable  = errors.New("dead letter has no fields to redrive")
+	ErrNotRedrivable  = errors.New("dead letter cannot be redriven")
 	ErrReasonRequired = errors.New("a redrive reason is required")
 	ErrNoIDs          = errors.New("at least one dead letter id is required")
 	ErrInvalidFilter  = errors.New("invalid dead letter filter")
@@ -85,14 +85,15 @@ type DeadLetter struct {
 // ExpiresAt is when the dead letter leaves the replay horizon.
 func (d DeadLetter) ExpiresAt() time.Time { return d.OriginalAt.Add(model.ReplayHorizon) }
 
-// CheckRedrive returns why d cannot be redriven at now, or nil. An already
-// redriven dead letter returns nil: redriving it again is a no-op.
-func (d DeadLetter) CheckRedrive(now time.Time) error {
+// CheckRedrive returns why d cannot be redriven at now under contract c, or
+// nil. An already redriven dead letter returns nil: redriving it again is a
+// no-op.
+func (d DeadLetter) CheckRedrive(now time.Time, c Contract) error {
 	if d.Status == StatusRedriven {
 		return nil
 	}
-	if !d.Redrivable {
-		return ErrNotRedrivable
+	if reason := d.RedriveRefusal(c); reason != "" {
+		return fmt.Errorf("%w: %s", ErrNotRedrivable, reason)
 	}
 	if !now.Before(d.ExpiresAt()) {
 		return fmt.Errorf("%w (original message from %s)", ErrExpired, d.OriginalAt.UTC().Format(time.RFC3339))
