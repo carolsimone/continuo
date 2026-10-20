@@ -30,8 +30,8 @@ type DeploymentRepository interface {
 	// PendingValidationCount counts rows of the given mode for releaseID whose
 	// outcome is not yet recorded (pending, blocked, in flight, or done without an
 	// observed outcome). 'blocked' rows are waiting for in-set upstreams to
-	// complete before they can be dispatched, and a done row without an outcome had
-	// its slot released before a status check recorded its Job's result; counting
+	// complete before they can be dispatched, and a done row without an outcome was
+	// released by an older version before its Job's result was recorded; counting
 	// both prevents the aggregate-emit gate from firing before every node has
 	// settled.
 	// mode scopes the count so a release's validation and seed-build legs are

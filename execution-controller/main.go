@@ -164,9 +164,9 @@ func main() {
 	liveReg.AddProbe("postgres", 5*time.Second, func(ctx context.Context) error { return pgDB.PingContext(ctx) })
 	metricsReg.WatchDB(pgDB.DB, cfg.Postgres.DB)
 
-	// execution-controller reads columns the newest execution migration adds,
-	// so it refuses to start until that migration has applied; the pod
-	// restarts until it has. Nothing else has started yet.
+	// execution-controller reads columns an execution database not yet
+	// migrated lacks, so it refuses to start until the migration has applied;
+	// the pod restarts until it has. Nothing else has started yet.
 	if err := handlers.CheckSchema(ctx, postgres.NewSchemaColumns(pgDB)); err != nil {
 		logger.Error("Refusing to start: the execution database is not migrated", "error", err)
 		os.Exit(1)

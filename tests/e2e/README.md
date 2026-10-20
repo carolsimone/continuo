@@ -220,7 +220,7 @@ The controller in kind connects to docker-compose services via docker bridge net
 POST /api/v1/releases → release.requested:v1 → topology-controller candidate parse
 → manifest.loaded.candidate:v1 → release-controller derives the changed-node set
 → validation.requested:v1 → execution-controller runs per-node validation jobs,
-settling each terminal outcome in-process (job-status handler → service/outcomes.Recorder,
+settling each terminal outcome in-process (the Job watch's observer → service/outcomes.Recorder,
 same transaction as the observation) → validation.result:v1 (kind=complete)
 → release-controller promotes → release.promoted:v2
 → orchestrator loads the topology artifact and swaps the Neo4j topology

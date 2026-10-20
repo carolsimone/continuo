@@ -49,14 +49,15 @@ metadata:
 rules:
   - apiGroups: ["batch"]
     resources: ["jobs"]
-    # create: dispatches dbt/python/validation/compile Jobs. delete: the
+    # create: dispatches dbt/python/validation/compile Jobs. delete: ends an
+    # attempt by deleting its Job (a start error, the start timeout), and the
     # candidate-schema lifecycle removes its own one-shot schema-op Jobs
-    # (delete-on-success + clear-terminal-before-retry). get/list/watch: polls
-    # every Job it created to a terminal state.
+    # (delete-on-success + clear-terminal-before-retry). get/list/watch: the Job
+    # watch observes every Job it created.
     verbs: ["create", "get", "list", "watch", "delete"]
   - apiGroups: [""]
     resources: ["pods", "pods/log"]
-    # Reads pod status for termination details and pod logs for the error
+    # The Job watch observes every pod of those Jobs; pod logs give the error
     # message and the S3 log upload.
     verbs: ["get", "list", "watch"]
 ---

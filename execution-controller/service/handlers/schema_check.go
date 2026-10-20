@@ -9,8 +9,8 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/service/ports"
 )
 
-// RequiredColumns are the columns execution-controller's code reads that the
-// newest execution migration adds.
+// RequiredColumns are the columns execution-controller's code reads that an
+// execution database not yet migrated lacks: deployments.facts (V10).
 var RequiredColumns = []string{"deployments.facts"}
 
 // ErrSchemaNotReady reports an execution database that lacks a column the

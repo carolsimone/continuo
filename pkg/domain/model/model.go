@@ -36,11 +36,9 @@ type SourceFQN struct {
 }
 
 // Annotation keys carrying the RAW (unsanitized) release/node identity on a
-// validation Job. The dispatcher stamps them, and the job-status handler reads
-// them into the outcomes.NodeOutcome it records. Labels are sanitized for K8s
-// (charset + 63-char limit) and serve only routing/selection; these
-// annotations preserve the exact values so the outcome lookup matches the
-// unmodified deployments key.
+// release leg's Job. The dispatcher stamps them so the Job names the exact
+// release and node it runs: labels are sanitized for Kubernetes (charset +
+// 63-char limit) and serve only selection.
 const (
 	AnnotationReleaseID = "continuo.dev/release-id"
 	AnnotationNodeID    = "continuo.dev/node-id"

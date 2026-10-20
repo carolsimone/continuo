@@ -160,9 +160,9 @@ func TestCreateValidationJob_LabelsCarryModeReleaseNodeIDs(t *testing.T) {
 	assert.Equal(t, want, job.Labels)
 	assert.Equal(t, want, job.Spec.Template.Labels)
 
-	// Raw identity is also stamped as annotations (authoritative for the
-	// outcomes.NodeOutcome the job-status handler records). Here the values are
-	// charset-clean and short, so labels and annotations agree.
+	// Raw identity is also stamped as annotations (the exact values, which
+	// sanitized labels cannot always carry). Here the values are charset-clean
+	// and short, so labels and annotations agree.
 	wantAnnotations := map[string]string{
 		pkg_model.AnnotationReleaseID: "rel123",
 		pkg_model.AnnotationNodeID:    "svc.orders",

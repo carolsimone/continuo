@@ -140,10 +140,10 @@ func TestCreateJob_AlreadyExistsIsSuccess(t *testing.T) {
 }
 
 // TestCreateQueryJob_NormalProduction_HasNoModeLabel verifies that a production
-// dbt job carries NO "mode" label. The job-status handler routes a terminal Job
-// by that label, and only the release legs (validation, seed-build, compile) set
-// one; a query job must fall through to the production lifecycle that owns
-// retries, task executions, and status.
+// dbt job carries NO "mode" label. Only the release legs (validation, seed-build,
+// compile) set one, naming the leg on the Job; the observer settles a result by
+// the deployment row's mode, and a query job belongs to the production lifecycle
+// that owns retries, task executions, and status.
 func TestCreateQueryJob_NormalProduction_HasNoModeLabel(t *testing.T) {
 	t.Setenv("DOCKERHUB_USERNAME", "")
 	c := newQueryTestClient()

@@ -11,15 +11,14 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// GetPodLogs fetches logs for the first pod of a completed job.
-// Returns both the full log and the last tailLines lines.
+// GetPodLogs fetches the log of the first pod of jobName, finished or still
+// terminating. Returns both the full log and the last tailLines lines.
 // Returns empty strings if no pod is found or no logs are available.
 //
 // When the main container produced no output because a preceding init container
 // failed (e.g. the compile Job's `compile` init container), the function falls
 // back to reading the first failed init container's logs so the error message
-// reaches the classifier instead of being silently swallowed. Validation Jobs
-// have no init container; this fallback applies only to the compile leg.
+// reaches the attempt's facts instead of being silently swallowed.
 func (c *K8sClient) GetPodLogs(ctx context.Context, namespace, jobName string, tailLines int64) (fullLog, tail string, err error) {
 	pods, err := c.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: fmt.Sprintf("job-name=%s", jobName),
@@ -51,7 +50,7 @@ func (c *K8sClient) GetPodLogs(ctx context.Context, namespace, jobName string, t
 
 	// When the main container produced no output (it never started because an init
 	// container failed), fall back to that init container's logs. This surfaces error
-	// messages such as "compile: S3 upload ... failed" to the classifier.
+	// messages such as "compile: S3 upload ... failed" in the attempt's error message.
 	// Normal runs are unaffected because fullLog is non-empty for them.
 	if fullLog == "" {
 		if initName := pickInitContainerLog(pod); initName != "" {

@@ -23,7 +23,7 @@ var _ ports.ObserverMetrics = (*Observer)(nil)
 func NewObserver(reg *pkgmetrics.Registry) *Observer {
 	o := &Observer{waiting: map[string]bool{}, awaiting: prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "continuo_attempts_awaiting_pod_stop",
-		Help: "Attempts waiting longer than 15 minutes for a pod to stop; force-delete the pod to end the attempt.",
+		Help: "Attempts waiting past the alert threshold for a pod to stop; force-delete the pod to end the attempt.",
 	})}
 	reg.Register(o.awaiting)
 	return o
