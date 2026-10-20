@@ -207,7 +207,7 @@ func (d *Dispatcher) launch(ctx context.Context, id uuid.UUID) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	dep, err := d.newAdmission(tx).GetReserved(ctx, id)
+	dep, err := d.newAdmission(tx).LoadReserved(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}

@@ -95,17 +95,17 @@ func (r *admissionRepository) ReserveNext(ctx context.Context, limit int) ([]uui
 	return ids, nil
 }
 
-func (r *admissionRepository) GetReserved(ctx context.Context, id uuid.UUID) (*model.Deployment, error) {
-	return r.getLocked(ctx, id, pq.Array([]string{string(model.StatusReserved)}))
+func (r *admissionRepository) LoadReserved(ctx context.Context, id uuid.UUID) (*model.Deployment, error) {
+	return r.loadLocked(ctx, id, pq.Array([]string{string(model.StatusReserved)}))
 }
 
-// getLocked returns row id when its status is one of statuses (a bound
+// loadLocked returns row id when its status is one of statuses (a bound
 // text[]), locked FOR UPDATE SKIP LOCKED, or sql.ErrNoRows.
-func (r *admissionRepository) getLocked(ctx context.Context, id uuid.UUID, statuses any) (*model.Deployment, error) {
+func (r *admissionRepository) loadLocked(ctx context.Context, id uuid.UUID, statuses any) (*model.Deployment, error) {
 	query := `SELECT` + validationSelectColumns + ` FROM deployments WHERE id = $1 AND status = ANY($2) FOR UPDATE SKIP LOCKED`
 	var rows []*deploymentRow
 	if err := r.exec.SelectContext(ctx, &rows, query, id, statuses); err != nil {
-		return nil, fmt.Errorf("get deployment %s: %w", id, err)
+		return nil, fmt.Errorf("load deployment %s: %w", id, err)
 	}
 	if len(rows) == 0 {
 		return nil, sql.ErrNoRows

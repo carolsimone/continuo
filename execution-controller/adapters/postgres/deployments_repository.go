@@ -361,7 +361,7 @@ func (r *deploymentsRepository) LoadByJobName(ctx context.Context, jobName strin
 		FOR UPDATE`
 	var rows []*deploymentRow
 	if err := r.exec.SelectContext(ctx, &rows, query, jobName); err != nil {
-		return nil, fmt.Errorf("get deployment for job %s: %w", jobName, err)
+		return nil, fmt.Errorf("load deployment for job %s: %w", jobName, err)
 	}
 	if len(rows) == 0 {
 		return nil, sql.ErrNoRows

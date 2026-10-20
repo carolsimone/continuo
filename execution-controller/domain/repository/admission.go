@@ -26,10 +26,10 @@ type AdmissionRepository interface {
 	// (release_id) take turns; within one run or release the earliest due goes
 	// first.
 	ReserveNext(ctx context.Context, limit int) ([]uuid.UUID, error)
-	// GetReserved returns the reserved deployment id, locked for the rest of
+	// LoadReserved returns the reserved deployment id, locked for the rest of
 	// the transaction, or sql.ErrNoRows when it is not reserved or another
 	// transaction holds it.
-	GetReserved(ctx context.Context, id uuid.UUID) (*model.Deployment, error)
+	LoadReserved(ctx context.Context, id uuid.UUID) (*model.Deployment, error)
 	// ReturnStaleReserved moves deployments reserved for longer than olderThan
 	// back to pending and returns their ids. A reservation that old lost the
 	// dispatcher that took it; returning it frees the slot, and the claim

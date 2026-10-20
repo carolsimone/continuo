@@ -42,7 +42,7 @@ func (r *observedDeployments) GetByJobName(ctx context.Context, jobName string) 
 		WHERE job_name = $1
 		ORDER BY created_at DESC
 		LIMIT 1`, jobName); err != nil {
-		return nil, fmt.Errorf("find deployment for job %s: %w", jobName, err)
+		return nil, fmt.Errorf("get deployment for job %s: %w", jobName, err)
 	}
 	if len(rows) == 0 {
 		return nil, sql.ErrNoRows

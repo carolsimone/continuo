@@ -132,24 +132,24 @@ func TestAdmission_LockScope_MissingScopeFails(t *testing.T) {
 	assert.Contains(t, err.Error(), "no capacity record")
 }
 
-func TestAdmission_GetReserved_SkipsLockedAndNonReserved(t *testing.T) {
+func TestAdmission_LoadReserved_SkipsLockedAndNonReserved(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 	ctx := context.Background()
 	id := seedProduction(t, db, uuid.New(), time.Now())
 
-	_, err := postgres.NewAdmissionRepository(db, testLogger()).GetReserved(ctx, id)
+	_, err := postgres.NewAdmissionRepository(db, testLogger()).LoadReserved(ctx, id)
 	require.ErrorIs(t, err, sql.ErrNoRows, "a pending row is not launched")
 
 	setStatus(t, db, id, "reserved", 0)
 	tx1, err := db.BeginTxx(ctx, nil)
 	require.NoError(t, err)
 	defer func() { _ = tx1.Rollback() }()
-	dep, err := postgres.NewAdmissionRepository(tx1, testLogger()).GetReserved(ctx, id)
+	dep, err := postgres.NewAdmissionRepository(tx1, testLogger()).LoadReserved(ctx, id)
 	require.NoError(t, err)
 	assert.Equal(t, model.StatusReserved, dep.Status())
 
-	_, err = postgres.NewAdmissionRepository(db, testLogger()).GetReserved(ctx, id)
+	_, err = postgres.NewAdmissionRepository(db, testLogger()).LoadReserved(ctx, id)
 	require.ErrorIs(t, err, sql.ErrNoRows, "a row another launcher holds is skipped")
 }
 
@@ -178,7 +178,7 @@ func TestAdmission_ReturnStaleReserved_SkipsAReservationBeingLaunched(t *testing
 	tx, err := db.BeginTxx(ctx, nil)
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
-	_, err = postgres.NewAdmissionRepository(tx, testLogger()).GetReserved(ctx, id) // a launcher holds it
+	_, err = postgres.NewAdmissionRepository(tx, testLogger()).LoadReserved(ctx, id) // a launcher holds it
 	require.NoError(t, err)
 
 	returned, err := postgres.NewAdmissionRepository(db, testLogger()).ReturnStaleReserved(ctx, 2*time.Minute)
