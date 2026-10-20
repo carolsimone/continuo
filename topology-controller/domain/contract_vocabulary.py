@@ -75,3 +75,38 @@ NODE_TYPES_WITH_SECRET_REF = frozenset({NodeType.PYTHON_API})
 
 NODE_TYPE_RUNTIME: dict[NodeType, NodeRuntime] = {NodeType.DBT_MODEL: NodeRuntime.DBT, NodeType.DBT_SEED: NodeRuntime.DBT, NodeType.DBT_SNAPSHOT: NodeRuntime.DBT, NodeType.PYTHON_NODE: NodeRuntime.PYTHON, NodeType.PYTHON_CSV: NodeRuntime.PYTHON, NodeType.PYTHON_API: NodeRuntime.PYTHON, NodeType.DBT_TEST: NodeRuntime.DBT}
 """Which toolchain builds each NodeType."""
+
+
+class FailureClass(StrEnum):
+    """What kind of failure ended an attempt of a task. execution-controller records it with every failed attempt it observes; state's retry policy decides from it whether the task is tried again."""
+    TASK = "task"
+    RESOURCE = "resource"
+    INFRA = "infra"
+    START = "start"
+    TIMEOUT = "timeout"
+    INVALID = "invalid"
+
+
+class FailureReason(StrEnum):
+    """Why an attempt of a task failed. Each reason is filed under one failure_class (its class attribute)."""
+    EXIT_CODE = "exit_code"
+    OOM_KILLED = "oom_killed"
+    EVICTED = "evicted"
+    NODE_LOST = "node_lost"
+    JOB_MISSING = "job_missing"
+    ATTEMPT_LOST = "attempt_lost"
+    CREATE_FAILED = "create_failed"
+    IMAGE_PULL = "image_pull"
+    INVALID_IMAGE = "invalid_image"
+    MISSING_CONFIG = "missing_config"
+    CREATE_CONTAINER = "create_container"
+    START_TIMEOUT = "start_timeout"
+    DEADLINE_EXCEEDED = "deadline_exceeded"
+    INVALID_NODE_TYPE = "invalid_node_type"
+    MALFORMED_DISPATCH = "malformed_dispatch"
+    JOB_NAME_COLLISION = "job_name_collision"
+    DBT_NOTHING_TO_DO = "dbt_nothing_to_do"
+
+
+FAILURE_REASON_CLASS: dict[FailureReason, FailureClass] = {FailureReason.EXIT_CODE: FailureClass.TASK, FailureReason.OOM_KILLED: FailureClass.RESOURCE, FailureReason.EVICTED: FailureClass.RESOURCE, FailureReason.NODE_LOST: FailureClass.INFRA, FailureReason.JOB_MISSING: FailureClass.INFRA, FailureReason.ATTEMPT_LOST: FailureClass.INFRA, FailureReason.CREATE_FAILED: FailureClass.INFRA, FailureReason.IMAGE_PULL: FailureClass.START, FailureReason.INVALID_IMAGE: FailureClass.START, FailureReason.MISSING_CONFIG: FailureClass.START, FailureReason.CREATE_CONTAINER: FailureClass.START, FailureReason.START_TIMEOUT: FailureClass.TIMEOUT, FailureReason.DEADLINE_EXCEEDED: FailureClass.TIMEOUT, FailureReason.INVALID_NODE_TYPE: FailureClass.INVALID, FailureReason.MALFORMED_DISPATCH: FailureClass.INVALID, FailureReason.JOB_NAME_COLLISION: FailureClass.INVALID, FailureReason.DBT_NOTHING_TO_DO: FailureClass.INVALID}
+"""The FailureClass each FailureReason is filed under."""

@@ -330,3 +330,201 @@ func (v NodeType) Runtime() NodeRuntime {
 	}
 	return ""
 }
+
+// FailureClass — What kind of failure ended an attempt of a task. execution-controller records it with every failed attempt it observes; state's retry policy decides from it whether the task is tried again.
+// Values come from the vocabulary "failure_class" in contract.yaml, in
+// declaration order.
+type FailureClass string
+
+const (
+	// FailureClassTask — the task's own code failed; its main container exited non-zero.
+	FailureClassTask FailureClass = "task"
+	// FailureClassResource — the pod ran out of a node resource; it was killed for memory or evicted.
+	FailureClassResource FailureClass = "resource"
+	// FailureClassInfra — the attempt was lost to the platform (its node, its Job or its record), or Kubernetes refused to create its Job.
+	FailureClassInfra FailureClass = "infra"
+	// FailureClassStart — the pod could not start its containers (an image pull, a missing Secret or ConfigMap, a container the runtime could not create).
+	FailureClassStart FailureClass = "start"
+	// FailureClassTimeout — the attempt ran out of time, before its main container started or before it finished.
+	FailureClassTimeout FailureClass = "timeout"
+	// FailureClassInvalid — the dispatch or the task cannot succeed as given; trying again changes nothing.
+	FailureClassInvalid FailureClass = "invalid"
+)
+
+// FailureClasses returns every value in contract.yaml declaration order.
+func FailureClasses() []FailureClass {
+	return []FailureClass{
+		FailureClassTask,
+		FailureClassResource,
+		FailureClassInfra,
+		FailureClassStart,
+		FailureClassTimeout,
+		FailureClassInvalid,
+	}
+}
+
+// IsValid reports whether v is a value declared in contract.yaml.
+func (v FailureClass) IsValid() bool {
+	switch v {
+	case FailureClassTask:
+		return true
+	case FailureClassResource:
+		return true
+	case FailureClassInfra:
+		return true
+	case FailureClassStart:
+		return true
+	case FailureClassTimeout:
+		return true
+	case FailureClassInvalid:
+		return true
+	}
+	return false
+}
+
+// FailureReason — Why an attempt of a task failed. Each reason is filed under one failure_class (its class attribute).
+// Values come from the vocabulary "failure_reason" in contract.yaml, in
+// declaration order.
+type FailureReason string
+
+const (
+	// FailureReasonExitCode — the main container exited with a non-zero code.
+	FailureReasonExitCode FailureReason = "exit_code"
+	// FailureReasonOOMKilled — the main container was killed for exceeding its memory.
+	FailureReasonOOMKilled FailureReason = "oom_killed"
+	// FailureReasonEvicted — the kubelet evicted the pod under node resource pressure.
+	FailureReasonEvicted FailureReason = "evicted"
+	// FailureReasonNodeLost — the pod left the API before its main container terminated, and execution-controller did not remove it.
+	FailureReasonNodeLost FailureReason = "node_lost"
+	// FailureReasonJobMissing — the attempt's Job is gone from Kubernetes and no pod of it is left.
+	FailureReasonJobMissing FailureReason = "job_missing"
+	// FailureReasonAttemptLost — execution-controller holds neither a record nor a Job of an attempt that was acknowledged.
+	FailureReasonAttemptLost FailureReason = "attempt_lost"
+	// FailureReasonCreateFailed — Kubernetes refused to create the attempt's Job on every try.
+	FailureReasonCreateFailed FailureReason = "create_failed"
+	// FailureReasonImagePull — the pod could not pull an image (ErrImagePull, ImagePullBackOff).
+	FailureReasonImagePull FailureReason = "image_pull"
+	// FailureReasonInvalidImage — an image reference of the pod is malformed (InvalidImageName).
+	FailureReasonInvalidImage FailureReason = "invalid_image"
+	// FailureReasonMissingConfig — a Secret or ConfigMap the pod reads is missing (CreateContainerConfigError).
+	FailureReasonMissingConfig FailureReason = "missing_config"
+	// FailureReasonCreateContainer — the container runtime could not create a container (CreateContainerError).
+	FailureReasonCreateContainer FailureReason = "create_container"
+	// FailureReasonStartTimeout — the main container had not started when the start timeout expired.
+	FailureReasonStartTimeout FailureReason = "start_timeout"
+	// FailureReasonDeadlineExceeded — the Job ran past its active deadline and Kubernetes stopped it.
+	FailureReasonDeadlineExceeded FailureReason = "deadline_exceeded"
+	// FailureReasonInvalidNodeType — the dispatch names a node type execution-controller cannot run.
+	FailureReasonInvalidNodeType FailureReason = "invalid_node_type"
+	// FailureReasonMalformedDispatch — the dispatch's fields cannot build a Job (its operation, image tag, Secret reference or dbt command).
+	FailureReasonMalformedDispatch FailureReason = "malformed_dispatch"
+	// FailureReasonJobNameCollision — a Job of the dispatched name already exists for another task or attempt.
+	FailureReasonJobNameCollision FailureReason = "job_name_collision"
+	// FailureReasonDbtNothingToDo — dbt exited 0 having matched no node ("Nothing to do"), so nothing was built.
+	FailureReasonDbtNothingToDo FailureReason = "dbt_nothing_to_do"
+)
+
+// FailureReasons returns every value in contract.yaml declaration order.
+func FailureReasons() []FailureReason {
+	return []FailureReason{
+		FailureReasonExitCode,
+		FailureReasonOOMKilled,
+		FailureReasonEvicted,
+		FailureReasonNodeLost,
+		FailureReasonJobMissing,
+		FailureReasonAttemptLost,
+		FailureReasonCreateFailed,
+		FailureReasonImagePull,
+		FailureReasonInvalidImage,
+		FailureReasonMissingConfig,
+		FailureReasonCreateContainer,
+		FailureReasonStartTimeout,
+		FailureReasonDeadlineExceeded,
+		FailureReasonInvalidNodeType,
+		FailureReasonMalformedDispatch,
+		FailureReasonJobNameCollision,
+		FailureReasonDbtNothingToDo,
+	}
+}
+
+// IsValid reports whether v is a value declared in contract.yaml.
+func (v FailureReason) IsValid() bool {
+	switch v {
+	case FailureReasonExitCode:
+		return true
+	case FailureReasonOOMKilled:
+		return true
+	case FailureReasonEvicted:
+		return true
+	case FailureReasonNodeLost:
+		return true
+	case FailureReasonJobMissing:
+		return true
+	case FailureReasonAttemptLost:
+		return true
+	case FailureReasonCreateFailed:
+		return true
+	case FailureReasonImagePull:
+		return true
+	case FailureReasonInvalidImage:
+		return true
+	case FailureReasonMissingConfig:
+		return true
+	case FailureReasonCreateContainer:
+		return true
+	case FailureReasonStartTimeout:
+		return true
+	case FailureReasonDeadlineExceeded:
+		return true
+	case FailureReasonInvalidNodeType:
+		return true
+	case FailureReasonMalformedDispatch:
+		return true
+	case FailureReasonJobNameCollision:
+		return true
+	case FailureReasonDbtNothingToDo:
+		return true
+	}
+	return false
+}
+
+// Class reports the FailureClass the contract files v under.
+func (v FailureReason) Class() FailureClass {
+	switch v {
+	case FailureReasonExitCode:
+		return FailureClassTask
+	case FailureReasonOOMKilled:
+		return FailureClassResource
+	case FailureReasonEvicted:
+		return FailureClassResource
+	case FailureReasonNodeLost:
+		return FailureClassInfra
+	case FailureReasonJobMissing:
+		return FailureClassInfra
+	case FailureReasonAttemptLost:
+		return FailureClassInfra
+	case FailureReasonCreateFailed:
+		return FailureClassInfra
+	case FailureReasonImagePull:
+		return FailureClassStart
+	case FailureReasonInvalidImage:
+		return FailureClassStart
+	case FailureReasonMissingConfig:
+		return FailureClassStart
+	case FailureReasonCreateContainer:
+		return FailureClassStart
+	case FailureReasonStartTimeout:
+		return FailureClassTimeout
+	case FailureReasonDeadlineExceeded:
+		return FailureClassTimeout
+	case FailureReasonInvalidNodeType:
+		return FailureClassInvalid
+	case FailureReasonMalformedDispatch:
+		return FailureClassInvalid
+	case FailureReasonJobNameCollision:
+		return FailureClassInvalid
+	case FailureReasonDbtNothingToDo:
+		return FailureClassInvalid
+	}
+	return ""
+}

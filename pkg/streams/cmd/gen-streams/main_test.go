@@ -571,6 +571,153 @@ func TestEmitTSVocabulary(t *testing.T) {
 	}
 }
 
+const failureReasonYAML = `
+streams: []
+vocabularies:
+  - name: failure_class
+    const: FailureClass
+    description: Class.
+    values:
+      - {value: task, const: Task, description: t.}
+      - {value: start, const: Start, description: s.}
+  - name: failure_reason
+    const: FailureReason
+    description: Reason.
+    values:
+      - {value: exit_code, const: ExitCode, class: task, description: e.}
+      - {value: image_pull, const: ImagePull, class: start, description: i.}
+`
+
+func TestValidate_FailureReasonVocabularyWithClass(t *testing.T) {
+	if _, err := loadAndValidate(strings.NewReader(failureReasonYAML)); err != nil {
+		t.Fatalf("loadAndValidate: %v", err)
+	}
+}
+
+func TestValidate_ClassRules(t *testing.T) {
+	cases := map[string]string{
+		"class on some values only": `
+streams: []
+vocabularies:
+  - {name: failure_class, const: FailureClass, values: [{value: task, const: Task}]}
+  - name: failure_reason
+    const: FailureReason
+    values:
+      - {value: a, const: A, class: task}
+      - {value: b, const: B}
+`,
+		"class not a failure_class value": `
+streams: []
+vocabularies:
+  - {name: failure_class, const: FailureClass, values: [{value: task, const: Task}]}
+  - name: failure_reason
+    const: FailureReason
+    values:
+      - {value: a, const: A, class: weather}
+`,
+		"class without failure_class vocabulary": `
+streams: []
+vocabularies:
+  - name: failure_reason
+    const: FailureReason
+    values:
+      - {value: a, const: A, class: task}
+`,
+		"failure_class declared after its user": `
+streams: []
+vocabularies:
+  - name: failure_reason
+    const: FailureReason
+    values:
+      - {value: a, const: A, class: task}
+  - {name: failure_class, const: FailureClass, values: [{value: task, const: Task}]}
+`,
+	}
+	for name, y := range cases {
+		if _, err := loadAndValidate(strings.NewReader(y)); err == nil {
+			t.Errorf("%s: expected an error", name)
+		}
+	}
+}
+
+func TestEmitGoVocabulary_Class(t *testing.T) {
+	c, err := loadAndValidate(strings.NewReader(failureReasonYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, err := emitGoVocabulary(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"func (v FailureReason) Class() FailureClass",
+		"case FailureReasonExitCode:\n\t\treturn FailureClassTask",
+		"case FailureReasonImagePull:\n\t\treturn FailureClassStart",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("missing %q\n%s", want, src)
+		}
+	}
+	if strings.Contains(src, "func (v FailureClass) Class()") {
+		t.Errorf("FailureClass must not get a Class method\n%s", src)
+	}
+}
+
+func TestEmitPythonVocabulary_Class(t *testing.T) {
+	c, err := loadAndValidate(strings.NewReader(failureReasonYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, err := emitPythonVocabulary(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "FAILURE_REASON_CLASS: dict[FailureReason, FailureClass] = {FailureReason.EXIT_CODE: FailureClass.TASK, FailureReason.IMAGE_PULL: FailureClass.START}"
+	if !strings.Contains(src, want) {
+		t.Errorf("missing %q\n%s", want, src)
+	}
+}
+
+func TestEmitTSVocabulary_Class(t *testing.T) {
+	c, err := loadAndValidate(strings.NewReader(failureReasonYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, err := emitTSVocabulary(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "export const FAILURE_REASON_CLASS: Readonly<Record<FailureReason, FailureClass>> = { 'exit_code': 'task', 'image_pull': 'start' };"
+	if !strings.Contains(src, want) {
+		t.Errorf("missing %q\n%s", want, src)
+	}
+}
+
+func TestEmitVocabulary_ListNamesArePlural(t *testing.T) {
+	c, err := loadAndValidate(strings.NewReader(failureReasonYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	goSrc, err := emitGoVocabulary(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tsSrc, err := emitTSVocabulary(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"func FailureClasses() []FailureClass", "func FailureReasons() []FailureReason"} {
+		if !strings.Contains(goSrc, want) {
+			t.Errorf("missing %q\n%s", want, goSrc)
+		}
+	}
+	for _, want := range []string{"export const FAILURE_CLASSES: readonly FailureClass[]", "export const FAILURE_REASONS: readonly FailureReason[]"} {
+		if !strings.Contains(tsSrc, want) {
+			t.Errorf("missing %q\n%s", want, tsSrc)
+		}
+	}
+}
+
 const fullRefreshYAML = `
 streams: []
 vocabularies:
