@@ -38,8 +38,11 @@ type DeadLetter struct {
 	Status            string                 `protobuf:"bytes,13,opt,name=status,proto3" json:"status,omitempty"` // open | redriven
 	Redrivable        bool                   `protobuf:"varint,14,opt,name=redrivable,proto3" json:"redrivable,omitempty"`
 	Redrive           *Redrive               `protobuf:"bytes,15,opt,name=redrive,proto3" json:"redrive,omitempty"` // set when status is redriven
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// Why the dead letter can never be redriven; empty when redrivable is true.
+	// For example "stream query.model:v1 is retired".
+	NotRedrivableReason string `protobuf:"bytes,16,opt,name=not_redrivable_reason,json=notRedrivableReason,proto3" json:"not_redrivable_reason,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *DeadLetter) Reset() {
@@ -175,6 +178,13 @@ func (x *DeadLetter) GetRedrive() *Redrive {
 		return x.Redrive
 	}
 	return nil
+}
+
+func (x *DeadLetter) GetNotRedrivableReason() string {
+	if x != nil {
+		return x.NotRedrivableReason
+	}
+	return ""
 }
 
 type Redrive struct {
@@ -569,7 +579,7 @@ var File_proto_deadletter_v1_deadletter_proto protoreflect.FileDescriptor
 
 const file_proto_deadletter_v1_deadletter_proto_rawDesc = "" +
 	"\n" +
-	"$proto/deadletter/v1/deadletter.proto\x12\rdeadletter.v1\"\xea\x03\n" +
+	"$proto/deadletter/v1/deadletter.proto\x12\rdeadletter.v1\"\x9e\x04\n" +
 	"\n" +
 	"DeadLetter\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x16\n" +
@@ -592,7 +602,8 @@ const file_proto_deadletter_v1_deadletter_proto_rawDesc = "" +
 	"\n" +
 	"redrivable\x18\x0e \x01(\bR\n" +
 	"redrivable\x120\n" +
-	"\aredrive\x18\x0f \x01(\v2\x16.deadletter.v1.RedriveR\aredrive\"G\n" +
+	"\aredrive\x18\x0f \x01(\v2\x16.deadletter.v1.RedriveR\aredrive\x122\n" +
+	"\x15not_redrivable_reason\x18\x10 \x01(\tR\x13notRedrivableReason\"G\n" +
 	"\aRedrive\x12\x14\n" +
 	"\x05actor\x18\x01 \x01(\tR\x05actor\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\x12\x0e\n" +

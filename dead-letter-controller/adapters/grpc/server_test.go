@@ -270,7 +270,8 @@ func TestList_ReturnsOpenRowsAndTotal(t *testing.T) {
 	assert.Equal(t, int64(1), resp.TotalOpen)
 }
 
-// A dead letter of a retired stream is listed, and shown, as not redrivable.
+// A dead letter of a retired stream is listed, and shown, as not redrivable,
+// with the reason.
 func TestList_RetiredStreamIsNotRedrivable(t *testing.T) {
 	c, repo := newTestClient(t)
 	live := repo.putOpen(time.Now().Add(-time.Hour))
@@ -280,15 +281,17 @@ func TestList_RetiredStreamIsNotRedrivable(t *testing.T) {
 
 	resp, err := c.ListDeadLetters(context.Background(), &deadletterv1.ListDeadLettersRequest{})
 	require.NoError(t, err)
-	redrivable := map[string]bool{}
+	redrivable, reasons := map[string]bool{}, map[string]string{}
 	for _, d := range resp.DeadLetters {
-		redrivable[d.Id] = d.Redrivable
+		redrivable[d.Id], reasons[d.Id] = d.Redrivable, d.NotRedrivableReason
 	}
 	assert.Equal(t, map[string]bool{live.ID.String(): true, retired.ID.String(): false}, redrivable)
+	assert.Equal(t, map[string]string{live.ID.String(): "", retired.ID.String(): "stream orders.created:v1 is retired"}, reasons)
 
 	got, err := c.GetDeadLetter(context.Background(), &deadletterv1.GetDeadLetterRequest{Id: retired.ID.String()})
 	require.NoError(t, err)
 	assert.False(t, got.DeadLetter.Redrivable)
+	assert.Equal(t, "stream orders.created:v1 is retired", got.DeadLetter.NotRedrivableReason)
 }
 
 func TestGet_ReturnsFieldsAndExpiry(t *testing.T) {

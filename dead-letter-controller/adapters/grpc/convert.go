@@ -11,7 +11,7 @@ import (
 func ts(t time.Time) string { return t.UTC().Format(time.RFC3339) }
 
 // toProto renders a dead letter as the API shows it: redrivable only when
-// nothing refuses it under the current contract.
+// nothing refuses it under the current contract, and otherwise why not.
 func toProto(v deadletter.View) *deadletterv1.DeadLetter {
 	dl := v.DeadLetter
 	out := &deadletterv1.DeadLetter{
@@ -19,6 +19,7 @@ func toProto(v deadletter.View) *deadletterv1.DeadLetter {
 		ConsumerGroup: dl.Group, OriginalMessageId: dl.OriginalMessageID, Producer: dl.Producer, Error: dl.Error,
 		DeliveryCount: dl.DeliveryCount, OriginalAt: ts(dl.OriginalAt), RecordedAt: ts(dl.RecordedAt),
 		ExpiresAt: ts(dl.ExpiresAt()), Status: string(dl.Status), Redrivable: v.Refusal == "",
+		NotRedrivableReason: v.Refusal,
 	}
 	if dl.Redrive != nil {
 		out.Redrive = &deadletterv1.Redrive{Actor: dl.Redrive.Actor, Reason: dl.Redrive.Reason, At: ts(dl.Redrive.At)}
