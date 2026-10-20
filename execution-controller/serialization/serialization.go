@@ -28,7 +28,6 @@ type DeployTaskDTO struct {
 	TaskRetryCount int    `json:"task_retry_count"`
 	TaskMaxRetries int    `json:"task_max_retries"`
 	Operation      string `json:"operation"`
-	Mode           string `json:"mode,omitempty"`
 }
 
 // DeployTaskFromDomain maps a domain command to its DTO.
@@ -47,7 +46,6 @@ func DeployTaskFromDomain(c command.DeployTask) DeployTaskDTO {
 		TaskRetryCount: c.TaskRetryCount,
 		TaskMaxRetries: c.TaskMaxRetries,
 		Operation:      c.Operation,
-		Mode:           c.Mode,
 	}
 }
 
@@ -67,7 +65,6 @@ func (d DeployTaskDTO) ToDomain() command.DeployTask {
 		TaskRetryCount: d.TaskRetryCount,
 		TaskMaxRetries: d.TaskMaxRetries,
 		Operation:      d.Operation,
-		Mode:           d.Mode,
 	}
 }
 

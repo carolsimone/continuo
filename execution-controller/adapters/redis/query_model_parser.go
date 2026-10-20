@@ -76,7 +76,6 @@ func ParseQueryModel(msg goredis.XMessage) (events.QueryModel, error) {
 		ImageTag:      stringField(msg.Values, "image_tag"),
 		SecretRef:     stringField(msg.Values, "secret_ref"),
 		Operation:     operation,
-		Mode:          stringField(msg.Values, "mode"),
 		MaxRetries:    maxRetries,
 	}, nil
 }

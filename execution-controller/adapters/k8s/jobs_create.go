@@ -67,11 +67,6 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 	if params.NodeType.IsPython() {
 		jobLabels["runtime"] = "python"
 	}
-	// Only legacy promote-seed work still supplies a mode here; current jobs get
-	// no mode label and route through the production lifecycle.
-	if params.Mode != "" {
-		jobLabels["mode"] = params.Mode
-	}
 	ttl := jobTTLSecondsAfterFinished
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{

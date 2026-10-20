@@ -36,9 +36,6 @@ type DeployTask struct {
 	// (pkg_model.OperationRun) is the default: dbt run/seed/snapshot by
 	// NodeType. "test" runs `dbt test --select <node>`.
 	Operation string
-	// Mode carries the legacy promote-seed dispatch mode for deployments queued
-	// by an older version. Empty for everything current. See events.ModePromoteSeed.
-	Mode string
 }
 
 func (DeployTask) isCommand() {}
@@ -116,7 +113,6 @@ func (c DeployTask) ToJobSpec() deploy.JobSpec {
 		ImageTag:     c.ImageTag,
 		SecretRef:    c.SecretRef,
 		Operation:    c.Operation,
-		Mode:         c.Mode,
 	}
 }
 

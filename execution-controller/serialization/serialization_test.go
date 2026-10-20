@@ -11,7 +11,7 @@ import (
 
 // goldenDeployTask is the exact JSON a fully-populated command.DeployTask is
 // stored as in deployments.job_params. Every tagged field is present.
-const goldenDeployTask = `{"task_id":"t","schedule_id":"s","schedule_name":"sn","service_name":"svc","schema_name":"sch","table_name":"tbl","job_name":"j","node_type":"dbt-model","image_tag":"v1","task_retry_count":1,"task_max_retries":3,"operation":"test","mode":"promote_seed"}`
+const goldenDeployTask = `{"task_id":"t","schedule_id":"s","schedule_name":"sn","service_name":"svc","schema_name":"sch","table_name":"tbl","job_name":"j","node_type":"dbt-model","image_tag":"v1","task_retry_count":1,"task_max_retries":3,"operation":"test"}`
 
 func TestDeployTaskDTORoundTrip(t *testing.T) {
 	var dto DeployTaskDTO
@@ -22,7 +22,7 @@ func TestDeployTaskDTORoundTrip(t *testing.T) {
 	want := command.DeployTask{
 		TaskID: "t", ScheduleID: "s", ScheduleName: "sn", ServiceName: "svc",
 		SchemaName: "sch", TableName: "tbl", JobName: "j", NodeType: "dbt-model",
-		ImageTag: "v1", TaskRetryCount: 1, TaskMaxRetries: 3, Operation: "test", Mode: "promote_seed",
+		ImageTag: "v1", TaskRetryCount: 1, TaskMaxRetries: 3, Operation: "test",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("toDomain:\n got %+v\nwant %+v", got, want)
@@ -36,14 +36,19 @@ func TestDeployTaskDTORoundTrip(t *testing.T) {
 	}
 }
 
-func TestDeployTaskModeOmitempty(t *testing.T) {
-	out, err := json.Marshal(DeployTaskFromDomain(command.DeployTask{TaskID: "t"}))
+// A row queued by an older version may still hold a mode in its job_params;
+// it decodes, and the mode is dropped.
+func TestDeployTaskDTO_StoredModeIsIgnored(t *testing.T) {
+	var dto DeployTaskDTO
+	if err := json.Unmarshal([]byte(`{"task_id":"t","job_name":"j","mode":"promote_seed"}`), &dto); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	out, err := json.Marshal(dto)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	const want = `{"task_id":"t","schedule_id":"","schedule_name":"","service_name":"","schema_name":"","table_name":"","job_name":"","node_type":"","image_tag":"","task_retry_count":0,"task_max_retries":0,"operation":""}`
-	if string(out) != want {
-		t.Fatalf("mode omitempty not preserved:\n got %s\nwant %s", out, want)
+	if strings.Contains(string(out), "mode") {
+		t.Fatalf("the mode survived: %s", out)
 	}
 }
 

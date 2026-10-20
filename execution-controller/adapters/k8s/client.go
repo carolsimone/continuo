@@ -50,11 +50,6 @@ type JobParams struct {
 	// pkg_model.OperationFullRefresh rebuilds a model (full_refresh command)
 	// or seed (seed_full_refresh command) from scratch.
 	Operation pkg_model.Operation
-	// Mode is the legacy promote-seed dispatch mode carried by queued work only;
-	// when non-empty it is stamped as a "mode" label so the job-status handler
-	// routes the Job away from the production lifecycle. Empty for everything
-	// current.
-	Mode string
 }
 
 // K8sClient provides methods to interact with Kubernetes

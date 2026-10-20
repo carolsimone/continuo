@@ -53,7 +53,6 @@ func jobParamsFromSpec(spec deploy.JobSpec, nodeType pkg_model.NodeType, namespa
 		ImageTag:     spec.ImageTag,
 		SecretRef:    spec.SecretRef,
 		Operation:    pkg_model.Operation(spec.Operation),
-		Mode:         spec.Mode,
 	}
 }
 

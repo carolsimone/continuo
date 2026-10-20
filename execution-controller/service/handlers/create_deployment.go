@@ -47,7 +47,6 @@ func createDeployment(
 		SecretRef:      base.SecretRef,
 		TaskMaxRetries: taskMaxRetries,
 		Operation:      string(base.Operation),
-		Mode:           base.Mode,
 	}
 
 	var procID *uuid.UUID
