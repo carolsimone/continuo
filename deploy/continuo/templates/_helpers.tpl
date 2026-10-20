@@ -683,6 +683,22 @@ default; a value below 1 fails the render.
 {{- end -}}
 
 {{/*
+JOB_START_TIMEOUT_SECONDS for the shared ConfigMap: execution.startTimeoutMinutes
+in seconds. A release without an execution block, or without the key (helm
+upgrade --reuse-values from an older chart), gets 15 minutes; a value outside
+1-120 fails the render.
+*/ -}}
+{{- define "continuo.execution.startTimeoutSeconds" -}}
+{{- $e := .Values.execution | default dict -}}
+{{- $m := 15 -}}
+{{- if hasKey $e "startTimeoutMinutes" -}}{{- $m = int $e.startTimeoutMinutes -}}{{- end -}}
+{{- if or (lt $m 1) (gt $m 120) -}}
+{{- fail (printf "execution.startTimeoutMinutes=%v must be a whole number of minutes from 1 to 120" $e.startTimeoutMinutes) -}}
+{{- end -}}
+{{- mul $m 60 -}}
+{{- end -}}
+
+{{/*
 MAINTENANCE_ENABLED for the shared ConfigMap: "true" or "false". A release
 without a maintenance block (helm upgrade --reuse-values from an older chart)
 renders "false"; the schema refuses a non-boolean value.

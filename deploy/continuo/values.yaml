@@ -385,6 +385,13 @@ validation:
 # install, and execution-controller refuses to start on it.
 execution:
   maxConcurrentJobs: 50
+  # Start timeout: how long a Job's pod may take, after the Job is created,
+  # to start any container, init or main — waiting for a node, pulling
+  # images, mounting Secrets. Work a container does once it runs does not
+  # count. Past it execution-controller deletes the Job and fails the attempt
+  # with start_timeout. Whole minutes from 1 to 120: anything else fails the
+  # install, and execution-controller refuses to start on it.
+  startTimeoutMinutes: 15
 
 # Maintenance mode. While enabled, continuo starts no new work and lets the
 # work already running finish: ui, the public release API and the CLI refuse new

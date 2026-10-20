@@ -1,9 +1,12 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	"github.com/stretchr/testify/assert"
@@ -135,4 +138,59 @@ func TestLoad_NamesTheIgnoredRetryKey(t *testing.T) {
 			assert.Equal(t, tc.want, cfg.IgnoredRetryKeys)
 		})
 	}
+}
+
+func TestLoad_JobStartTimeout(t *testing.T) {
+	cases := []struct {
+		raw     string
+		want    time.Duration
+		invalid bool
+	}{
+		{"", 15 * time.Minute, false},
+		{"180", 3 * time.Minute, false},
+		{"60", time.Minute, false},
+		{"7200", 2 * time.Hour, false},
+		{"59", 0, true},
+		{"7201", 0, true},
+		{"3m", 0, true},
+	}
+	for _, c := range cases {
+		t.Run(c.raw, func(t *testing.T) {
+			setRequiredEnv(t)
+			t.Setenv("JOB_START_TIMEOUT_SECONDS", c.raw)
+			v := &pkgconfig.Validator{}
+			cfg := Load(v)
+			if c.invalid {
+				require.NotEmpty(t, v.Missing(), "a start timeout the service cannot honour stops it at boot")
+				assert.Contains(t, strings.Join(v.Missing(), ","), "JOB_START_TIMEOUT_SECONDS")
+				return
+			}
+			require.Empty(t, v.Missing())
+			assert.Equal(t, c.want, cfg.JobStartTimeout)
+		})
+	}
+}
+
+// The chart's execution.startTimeoutMinutes is the value the service accepts,
+// in minutes: a value the chart allows but the service refused would render
+// and then stop execution-controller at startup.
+func TestJobStartTimeoutRangeMatchesTheChart(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "deploy", "continuo", "values.schema.json"))
+	require.NoError(t, err)
+	var schema struct {
+		Properties struct {
+			Execution struct {
+				Properties struct {
+					StartTimeoutMinutes struct {
+						Minimum int `json:"minimum"`
+						Maximum int `json:"maximum"`
+					} `json:"startTimeoutMinutes"`
+				} `json:"properties"`
+			} `json:"execution"`
+		} `json:"properties"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &schema))
+	got := schema.Properties.Execution.Properties.StartTimeoutMinutes
+	assert.Equal(t, MinJobStartTimeout, time.Duration(got.Minimum)*time.Minute)
+	assert.Equal(t, MaxJobStartTimeout, time.Duration(got.Maximum)*time.Minute)
 }
