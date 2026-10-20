@@ -2,9 +2,8 @@ package model
 
 import "testing"
 
-// Every failure reason is filed under a declared failure class: state's retry
-// policy decides from the class, so a reason without one could never be
-// retried or refused deliberately.
+// Every failure reason is filed under a declared failure class, which
+// execution-controller records with the reason in each failed attempt's facts.
 func TestFailureReason_EveryReasonNamesADeclaredClass(t *testing.T) {
 	for _, r := range FailureReasons() {
 		if !r.Class().IsValid() {
