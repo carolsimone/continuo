@@ -219,3 +219,30 @@ def test_export_refuses_when_current_prod_names_no_release(tmp_path):
                             capture_output=True, text=True, timeout=60)
     assert result.returncode != 0
     assert "names no release" in result.stderr
+
+
+def test_sql_on_compose_runs_in_the_postgres_container_as_the_services_user(tmp_path):
+    import json
+    import fake_env
+    env = fake_env.make(tmp_path, [])
+    (Path(env["FAKE_DIR"]) / "tasks.json").write_text('[{"table": "a"}]\n')
+    out = run_lib(env, 'bench_sql state "SELECT 1 FROM task_tracker"')
+    assert out.returncode == 0, out.stderr
+    assert out.stdout == '[{"table": "a"}]\n'
+    psql = [json.loads(line) for line in (Path(env["FAKE_DIR"]) / "docker-calls.jsonl").read_text().splitlines()]
+    assert psql[-1]["argv"][-7:] == ["-U", "fake_postgres_user", "-d", "fake_postgres_db", "-At", "-c",
+                                     "SELECT 1 FROM task_tracker"]
+
+
+def test_sql_on_k8s_runs_in_the_postgres_pod_with_the_services_credentials(tmp_path):
+    import json
+    import fake_env
+    env = fake_env.make(tmp_path, [])
+    env.update(BENCH_TARGET="k8s", BENCH_KUBECONFIG="/dev/null", BENCH_PG_POD="pg-0")
+    (Path(env["FAKE_DIR"]) / "exec-output").write_text("[]\n")
+    out = run_lib(env, 'bench_sql execution-controller "SELECT 1"')
+    assert out.returncode == 0, out.stderr
+    call = json.loads((Path(env["FAKE_DIR"]) / "exec-calls.jsonl").read_text().splitlines()[-1])
+    assert "pg-0" in call["argv"]
+    assert call["argv"][-3:] == ["fake-postgres_user", "fake-postgres_db", "SELECT 1"]
+    assert call["stdin"].splitlines()[0] == "fake-postgres_password"

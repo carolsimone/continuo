@@ -160,6 +160,70 @@ def handoff_latencies(topology: list, starts: dict, finishes: dict) -> list:
     return latencies
 
 
+@dataclass(frozen=True)
+class Deployment:
+    table: str
+    queued: datetime
+    created: Optional[datetime]
+    recorded: Optional[datetime]
+
+
+def _optional_ts(value) -> Optional[datetime]:
+    return parse_ts(value) if value else None
+
+
+def read_deployments(rows: list) -> list:
+    """execution-controller's deployments of one run, from run_rows.py's JSON."""
+    return [Deployment(table=row["table"], queued=parse_ts(row["queued"]), created=_optional_ts(row.get("created")),
+                       recorded=_optional_ts(row.get("recorded")))
+            for row in rows if row.get("table") and row.get("queued")]
+
+
+def read_dispatches(rows: list) -> dict:
+    """When state first dispatched each table of one run, from run_rows.py's JSON."""
+    return {row["table"]: parse_ts(row["dispatched"]) for row in rows if row.get("table") and row.get("dispatched")}
+
+
+BREAKDOWN_STEPS = ("observe", "round_trip", "to_dispatch", "to_queue", "admit")
+
+
+def handoff_breakdown(topology: list, finishes: dict, deployments: list, dispatched: dict) -> dict:
+    """Each step of every hand-off in seconds, keyed by step.
+
+    For a node and its upstream whose last Job finished last, with the
+    upstream's last deployment and the node's first:
+      observe      the upstream's Job finished -> execution-controller recorded its result
+      round_trip   result recorded -> the node's deployment queued, both on execution-controller's clock
+      to_dispatch  result recorded -> state dispatched the node
+      to_queue     state dispatched the node -> its deployment queued
+      admit        deployment queued -> its Job created
+    """
+    table_of = {node["unique_id"]: node["table_name"] for node in topology}
+    first, last = {}, {}
+    for dep in sorted(deployments, key=lambda d: d.queued):
+        first.setdefault(dep.table, dep)
+        last[dep.table] = dep
+    steps = {step: [] for step in BREAKDOWN_STEPS}
+    for node in topology:
+        table = node["table_name"]
+        upstream = [table_of[u] for u in node.get("upstream_unique_ids", []) if u in table_of]
+        if not upstream or table not in first or any(u not in finishes for u in upstream):
+            continue
+        source = max(upstream, key=lambda u: finishes[u])
+        recorded = last[source].recorded if source in last else None
+        mine = first[table]
+        if recorded:
+            steps["observe"].append((recorded - finishes[source]).total_seconds())
+            steps["round_trip"].append((mine.queued - recorded).total_seconds())
+            if table in dispatched:
+                steps["to_dispatch"].append((dispatched[table] - recorded).total_seconds())
+        if table in dispatched:
+            steps["to_queue"].append((mine.queued - dispatched[table]).total_seconds())
+        if mine.created:
+            steps["admit"].append((mine.created - mine.queued).total_seconds())
+    return steps
+
+
 _MEM_UNITS = {
     "B": 1 / 1048576, "KiB": 1 / 1024, "Ki": 1 / 1024, "kB": 1000 / 1048576, "KB": 1000 / 1048576,
     "MiB": 1.0, "Mi": 1.0, "MB": 1e6 / 1048576, "GiB": 1024.0, "Gi": 1024.0, "GB": 1e9 / 1048576,

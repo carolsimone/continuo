@@ -7,9 +7,13 @@ The fakes keep their state in FAKE_DIR:
                      what they print, announce-output (when present) what an announce-topology call prints instead,
                      and FAKE_ANNOUNCE_RC the announce-topology exit code
   jobs.json          what `kubectl get jobs` prints
+  deployments.json, tasks.json  what psql prints in a `docker exec` for a query of deployments or task_tracker
+                     (`[]` when absent); docker-calls.jsonl records the argv of every such psql call, and
+                     `docker exec <container> printenv VAR` prints fake_<var>
   logs/<svc>.log     the service logs that `docker exec <svc> ... /tmp/<svc>.log` reads
   on-trigger/<svc>.log  lines a trigger appends to logs/<svc>.log, standing for what services log during the run
-Runs never finish on their own unless FAKE_RUN_RESULT names the status a trigger ends with.
+Runs never finish on their own unless FAKE_RUN_RESULT names the status a trigger ends with. Run ids are
+run-<n>, or UUIDs when FAKE_UUID_RUNS is set.
 """
 import json
 import os
@@ -30,12 +34,13 @@ if cmd == ["schedule", "trigger"]:
         sys.exit(4)
     n = int(read("n", "0")) + 1
     (d / "n").write_text(str(n))
-    (d / "current").write_text(f"run-{n}")
+    run_id = f"00000000-0000-4000-8000-{n:012d}" if os.environ.get("FAKE_UUID_RUNS") else f"run-{n}"
+    (d / "current").write_text(run_id)
     (d / "state").write_text(os.environ.get("FAKE_RUN_RESULT") or "running")
     for extra in sorted((d / "on-trigger").glob("*.log")):
         with open(d / "logs" / extra.name, "a") as log:
             log.write(extra.read_text())
-    print(json.dumps({"schedule_id": f"run-{n}", "schedule_name": sys.argv[3], "triggered_at": "2026-10-03T09:00:00Z"}))
+    print(json.dumps({"schedule_id": run_id, "schedule_name": sys.argv[3], "triggered_at": "2026-10-03T09:00:00Z"}))
 elif cmd == ["schedule", "status"]:
     state = read("state")
     print(json.dumps({"schedule_name": sys.argv[3], "run_id": read("current"), "is_running": state == "running",
@@ -107,6 +112,20 @@ elif args[0] == "exec":
                 sys.stdout.write(open(output).read())
                 break
         sys.exit(int(os.environ.get("FAKE_ANNOUNCE_RC", "0")))
+    if rest[1:2] == ["printenv"]:
+        print("fake_" + rest[2].lower())
+        sys.exit(0)
+    if "psql" in rest:
+        with open(os.path.join(fake, "docker-calls.jsonl"), "a") as calls:
+            calls.write(json.dumps({"argv": args}) + "\n")
+        sql = rest[rest.index("-c") + 1]
+        for name, marker in (("deployments.json", "FROM deployments"), ("tasks.json", "FROM task_tracker")):
+            path = os.path.join(fake, name)
+            if marker in sql and os.path.exists(path):
+                sys.stdout.write(open(path).read())
+                sys.exit(0)
+        print("[]")
+        sys.exit(0)
     command = [part.replace("/tmp/", logs) for part in rest[1:]]
     if "redis-cli" in command:
         sys.stdin.read()

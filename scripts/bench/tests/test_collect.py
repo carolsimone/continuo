@@ -99,3 +99,32 @@ def test_a_succeeded_run_without_jobs_is_a_harness_error():
             scenario="s", rep=1, operation="run", run_id="r1", payload=PAYLOAD, jobs_doc={"items": []},
             trigger_ts=at(0), done_ts=at(5), samples=[], idle_window=None,
             streams_before={}, streams_after={}, extra={"final_status": "succeeded"})
+
+
+def test_a_rep_reports_the_p50_of_every_handoff_step():
+    jobs = {"items": [job("r1", "n00_0000", 2, 6), job("r1", "n01_0000", 9, 12)]}
+    deployment_rows = [
+        {"table": "n00_0000", "queued": at(1).isoformat(), "created": at(2).isoformat(), "recorded": at(6.5).isoformat()},
+        {"table": "n01_0000", "queued": at(8).isoformat(), "created": at(9).isoformat(), "recorded": at(12.5).isoformat()},
+    ]
+    task_rows = [{"table": "n00_0000", "dispatched": at(0.5).isoformat()},
+                 {"table": "n01_0000", "dispatched": at(7.5).isoformat()}]
+    result = collect.build_result(
+        scenario="s", rep=1, operation="run", run_id="r1", payload=PAYLOAD, jobs_doc=jobs,
+        trigger_ts=at(0), done_ts=at(15), samples=[], idle_window=None,
+        streams_before={}, streams_after={}, extra={"final_status": "succeeded"},
+        deployment_rows=deployment_rows, task_rows=task_rows)
+    assert result["observe_p50_s"] == 0.5
+    assert result["round_trip_p50_s"] == 1.5
+    assert result["to_dispatch_p50_s"] == 1.0
+    assert result["to_queue_p50_s"] == 0.5
+    assert result["admit_p50_s"] == 1.0
+
+
+def test_a_rep_without_rows_leaves_the_breakdown_empty():
+    jobs = {"items": [job("r1", "n00_0000", 2, 6), job("r1", "n01_0000", 9, 12)]}
+    result = collect.build_result(
+        scenario="s", rep=1, operation="run", run_id="r1", payload=PAYLOAD, jobs_doc=jobs,
+        trigger_ts=at(0), done_ts=at(15), samples=[], idle_window=None,
+        streams_before={}, streams_after={}, extra={"final_status": "succeeded"})
+    assert result["round_trip_p50_s"] is None

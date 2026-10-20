@@ -118,3 +118,36 @@ def test_an_attempt_created_while_an_earlier_attempt_had_not_finished_overlaps()
         job("r1", "c", 0, 9, failed=True, name="c0"), job("r1", "c", 7, 12, name="c1"),
     ]}
     assert m.overlapping_attempts(m.attempts_for_run(doc, "r1")) == 3
+
+
+def test_breakdown_splits_each_handoff_into_its_steps():
+    topology = [
+        {"unique_id": "b.a", "table_name": "a", "upstream_unique_ids": []},
+        {"unique_id": "b.b", "table_name": "b", "upstream_unique_ids": []},
+        {"unique_id": "b.c", "table_name": "c", "upstream_unique_ids": ["b.a", "b.b"]},
+    ]
+    finishes = {"a": at(6), "b": at(4), "c": at(12)}
+    deployments = m.read_deployments([
+        {"table": "a", "queued": at(0).isoformat(), "created": at(1).isoformat(), "recorded": at(6.5).isoformat()},
+        {"table": "b", "queued": at(0).isoformat(), "created": at(1).isoformat(), "recorded": at(4.5).isoformat()},
+        {"table": "c", "queued": at(8).isoformat(), "created": at(9).isoformat(), "recorded": None},
+    ])
+    dispatched = m.read_dispatches([{"table": "c", "dispatched": at(7.5).isoformat()}, {"table": "a", "dispatched": None}])
+    steps = m.handoff_breakdown(topology, finishes, deployments, dispatched)
+    assert steps == {"observe": [0.5], "round_trip": [1.5], "to_dispatch": [1.0], "to_queue": [0.5], "admit": [1.0]}
+
+
+def test_breakdown_takes_the_upstreams_last_attempt_and_the_nodes_first():
+    topology = [{"unique_id": "b.a", "table_name": "a", "upstream_unique_ids": []},
+                {"unique_id": "b.c", "table_name": "c", "upstream_unique_ids": ["b.a"]}]
+    deployments = m.read_deployments([
+        {"table": "a", "queued": at(0).isoformat(), "created": at(1).isoformat(), "recorded": at(3).isoformat()},
+        {"table": "a", "queued": at(4).isoformat(), "created": at(5).isoformat(), "recorded": at(9).isoformat()},
+        {"table": "c", "queued": at(10).isoformat(), "created": at(11).isoformat(), "recorded": None},
+        {"table": "c", "queued": at(20).isoformat(), "created": None, "recorded": None},
+    ])
+    steps = m.handoff_breakdown(topology, {"a": at(8)}, deployments, {})
+    assert steps["observe"] == [1.0]
+    assert steps["round_trip"] == [1.0]
+    assert steps["admit"] == [1.0]
+    assert steps["to_dispatch"] == [] and steps["to_queue"] == []

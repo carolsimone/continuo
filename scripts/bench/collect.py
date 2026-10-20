@@ -36,7 +36,8 @@ def cancel_overlap(jobs_doc: dict, run_id: str, cancel_ts: datetime, next_run_id
 def build_result(*, scenario: str, rep: int, operation: str, run_id: str, payload: dict, jobs_doc: dict,
                  trigger_ts: datetime, done_ts: datetime, samples: list, idle_window, streams_before: dict,
                  streams_after: dict, extra: Optional[dict] = None, cancel_ts: Optional[datetime] = None,
-                 next_run_id: Optional[str] = None) -> dict:
+                 next_run_id: Optional[str] = None, deployment_rows: Optional[list] = None,
+                 task_rows: Optional[list] = None) -> dict:
     topology = payload["topology"]
     attempts = m.attempts_for_run(jobs_doc, run_id)
     if not attempts and (extra or {}).get("final_status") == "succeeded":
@@ -74,14 +75,21 @@ def build_result(*, scenario: str, rep: int, operation: str, run_id: str, payloa
         "max_sample_gap_s": m.max_sample_gap(samples, trigger_ts, done_ts),
         "usage_idle": m.usage(samples, idle_window[0], idle_window[1]) if idle_window else {},
     }
+    steps = m.handoff_breakdown(topology, finishes, m.read_deployments(deployment_rows or []),
+                                m.read_dispatches(task_rows or [])) if operation == "run" else {}
+    for step in m.BREAKDOWN_STEPS:
+        values = steps.get(step) or []
+        result[f"{step}_p50_s"] = m.percentile(values, 0.5) if values else None
     if cancel_ts is not None:
         result.update(cancel_overlap(jobs_doc, run_id, cancel_ts, next_run_id, trigger_ts))
     result.update(extra or {})
     return result
 
 
-def _load(path: str) -> dict:
-    return json.loads(Path(path).read_text(encoding="utf-8")) if path else {}
+def _load(path: str, empty=None):
+    if not path:
+        return {} if empty is None else empty
+    return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
 def main(argv: list) -> int:
@@ -102,6 +110,8 @@ def main(argv: list) -> int:
     p.add_argument("--streams-after", default="")
     p.add_argument("--cancel-ts", default="")
     p.add_argument("--next-run-id", default="")
+    p.add_argument("--deployments", default="", help="run_rows.py deployments output for the run")
+    p.add_argument("--tasks", default="", help="run_rows.py tasks output for the run")
     p.add_argument("--extra", action="append", default=[], help="key=value added to the result")
     p.add_argument("--out", required=True)
     a = p.parse_args(argv)
@@ -116,7 +126,8 @@ def main(argv: list) -> int:
             samples=samples, idle_window=idle,
             streams_before=_load(a.streams_before), streams_after=_load(a.streams_after),
             extra=extra, cancel_ts=m.parse_ts(a.cancel_ts) if a.cancel_ts else None,
-            next_run_id=a.next_run_id or None)
+            next_run_id=a.next_run_id or None,
+            deployment_rows=_load(a.deployments, []), task_rows=_load(a.tasks, []))
     except ValueError as err:
         log.error("%s", err)
         return 1

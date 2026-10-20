@@ -131,6 +131,25 @@ bench_psql() {
     psql "${user}" "${db}" "${sql}"
 }
 
+# Runs SQL in SERVICE's database and prints psql's unaligned, tuples-only
+# output. On k8s it runs in BENCH_PG_POD as SERVICE's database user
+# (bench_psql); on compose, in the stack's Postgres container as the user and
+# database SERVICE's container is configured with.
+#   bench_sql SERVICE SQL
+bench_sql() {
+  local service="$1" sql="$2" container db user
+  if [ "$(bench_target)" = "k8s" ]; then
+    bench_psql "${BENCH_PG_POD:?BENCH_PG_POD is required (discover.sh lists candidates)}" \
+      "$(bench_env_value "${service}" POSTGRES_USER)" "$(bench_env_value "${service}" POSTGRES_DB)" \
+      "$(bench_env_value "${service}" POSTGRES_PASSWORD)" "${sql}"
+  else
+    container="$(bench_container "${service}")"
+    db="$(docker exec "${container}" printenv POSTGRES_DB)"
+    user="$(docker exec "${container}" printenv POSTGRES_USER)"
+    docker exec -i "$(bench_container postgres)" psql -X -q -U "${user}" -d "${db}" -At -c "${sql}" < /dev/null
+  fi
+}
+
 # release-controller's announce-topology command with ARGS: inside
 # deploy/release-controller on k8s (the production image carries it on PATH),
 # inside the release-controller container on compose (the dev image builds it
