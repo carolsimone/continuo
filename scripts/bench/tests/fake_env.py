@@ -7,6 +7,8 @@ The fakes keep their state in FAKE_DIR:
                      what they print, announce-output (when present) what an announce-topology call prints instead,
                      and FAKE_ANNOUNCE_RC the announce-topology exit code
   jobs.json          what `kubectl get jobs` prints
+  kubectl-calls      one line per `kubectl apply` or `kubectl delete` call (its arguments); `delete jobs`
+                     fails when FAKE_DELETE_JOBS_FAIL is set
   deployments.json, tasks.json  what psql prints in a `docker exec` for a query of deployments or task_tracker
                      (`[]` when absent); docker-calls.jsonl records the argv of every such psql call, and
                      `docker exec <container> printenv VAR` prints fake_<var>
@@ -75,7 +77,11 @@ if "get deploy" in args:
            for name in ("POSTGRES_USER", "POSTGRES_DB", "POSTGRES_PASSWORD", "REDIS_PASSWORD")]
     print(json.dumps({"spec": {"template": {"spec": {"containers": [{"name": "svc", "env": env}]}}}}))
     sys.exit(0)
-if "delete jobs" in args:
+if " apply " in f" {args} " or " delete " in f" {args} ":
+    with open(os.path.join(os.environ["FAKE_DIR"], "kubectl-calls"), "a") as calls:
+        calls.write(args + "\n")
+    if "delete jobs" in args and os.environ.get("FAKE_DELETE_JOBS_FAIL"):
+        sys.exit("Error from server (InternalError): an error on the server has prevented the request")
     sys.exit(0)
 if "get jobs" in args:
     sys.stdout.write(open(os.path.join(os.environ["FAKE_DIR"], "jobs.json")).read())

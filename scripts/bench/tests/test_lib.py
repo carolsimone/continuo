@@ -257,3 +257,54 @@ def test_sql_on_k8s_without_a_postgres_pod_fails_the_read_not_the_script(tmp_pat
     assert out.returncode == 0, out.stderr
     assert out.stdout.strip() == "fell back"
     assert "BENCH_PG_POD is not set" in out.stderr
+
+
+def quota_file(tmp_path):
+    quota = tmp_path / "quota.yaml"
+    quota.write_text("kind: ResourceQuota\n")
+    return quota
+
+
+def test_an_interrupted_start_failure_stops_its_runner_cancels_its_run_and_cleans_up(tmp_path):
+    import signal
+    import time
+    import fake_env
+    env = fake_env.make(tmp_path, [])
+    env.update(BENCH_IDLE_S="0", BENCH_SETTLE_S="0")
+    fake = Path(env["FAKE_DIR"])
+    out, quota = tmp_path / "out", quota_file(tmp_path)
+    proc = subprocess.Popen(
+        ["bash", "-c", f'set -euo pipefail; . "{BENCH}/lib.sh"; '
+                       f'bench_start_failure start-quota "{fake_env.write_payload(tmp_path)}" bench-sq "{out}" "{quota}"'],
+        env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    deadline = time.time() + 60
+    while not (fake / "current").exists() and time.time() < deadline:
+        time.sleep(0.2)
+    assert (fake / "current").exists(), "the scenario triggered its run"
+
+    proc.send_signal(signal.SIGTERM)
+    proc.wait(timeout=60)
+
+    assert proc.returncode == 143
+    assert fake_env.wait_until_gone(str(out)) == [], "the scenario runner is stopped"
+    assert (fake / "calls").read_text().splitlines() == ["cancel benchmark interrupted"]
+    assert (fake / "state").read_text() == "cancelled"
+    calls = (fake / "kubectl-calls").read_text().splitlines()
+    assert calls[0].endswith(f"apply -f {quota}")
+    assert "delete jobs -l schedule=bench-sq" in calls[-2], "the cleanup deletes the Jobs, then the quota"
+    assert calls[-1].endswith(f"delete -f {quota} --ignore-not-found")
+
+
+def test_a_start_failure_removes_its_quota_even_when_its_jobs_cannot_be_deleted(tmp_path):
+    import fake_env
+    env = fake_env.make(tmp_path, [])
+    env.update(BENCH_IDLE_S="0", BENCH_SETTLE_S="0", FAKE_RUN_RESULT="failed", FAKE_DELETE_JOBS_FAIL="1")
+    fake = Path(env["FAKE_DIR"])
+    out, quota = tmp_path / "out", quota_file(tmp_path)
+    result = run_lib(env, f'set -euo pipefail; bench_start_failure start-quota "{fake_env.write_payload(tmp_path)}" '
+                          f'bench-sq "{out}" "{quota}"; echo "returned $?"')
+
+    assert result.returncode != 0, "the failed cleanup step is reported as a failure"
+    assert "could not delete bench-sq's Jobs" in result.stderr
+    calls = (fake / "kubectl-calls").read_text().splitlines()
+    assert calls[-1].endswith(f"delete -f {quota} --ignore-not-found"), "the quota is removed anyway"

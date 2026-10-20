@@ -67,42 +67,18 @@ if bench_wanted fail-once; then
   BENCH_IDLE_S=30 "${here}/run_scenario.sh" fail-once "${p}/fail-once.json" bench-fail-once run 3 "${out}/fail-once"
 fi
 # The start failures never succeed: each rep ends when its run fails, or is
-# cancelled after 15 minutes. On every exit the live bench run is cancelled,
-# so no next attempt is queued, then its Jobs are deleted, before the
-# start-quota scenario's quota, so no pod stuck on its image and no pods: 0
-# quota outlives the scenario. A step that fails is reported and the next one
-# still runs.
-start_failure_cleanup() {
-  local schedule="$1"
-  bench_stop_scenario "" "${schedule}" || echo "run_baseline_kind.sh: could not cancel ${schedule}'s live run" >&2
-  bench_kubectl delete jobs -l "schedule=${schedule}" --ignore-not-found --wait=true >/dev/null \
-    || echo "run_baseline_kind.sh: could not delete ${schedule}'s Jobs" >&2
-}
-start_image_cleanup() {
-  start_failure_cleanup bench-start-image
-}
-start_quota_cleanup() {
-  start_failure_cleanup bench-start-quota
-  bench_kubectl delete resourcequota bench-no-pods --ignore-not-found >/dev/null \
-    || echo "run_baseline_kind.sh: could not delete the bench-no-pods quota; delete it by hand (README)" >&2
-}
+# cancelled after 15 minutes. bench_start_failure cleans up however a scenario
+# ends (its runner, its live run, its Jobs, the quota), so no pod stuck on its
+# image and no pods: 0 quota outlives it.
 if bench_wanted start-image; then
   "${here}/inject.sh" "${p}/start-image.json" bench-start-image
-  trap start_image_cleanup EXIT
-  BENCH_IDLE_S=30 BENCH_RUN_TIMEOUT_S=900 "${here}/run_scenario.sh" start-image "${p}/start-image.json" \
-    bench-start-image run 3 "${out}/start-image"
-  start_image_cleanup
-  trap - EXIT
+  bench_start_failure start-image "${p}/start-image.json" bench-start-image "${out}/start-image"
 fi
 if bench_wanted start-quota; then
   "${here}/inject.sh" "${p}/start-quota.json" bench-start-quota
-  # The quota admits no pod in the Job namespace.
-  trap start_quota_cleanup EXIT
-  bench_kubectl apply -f "${here}/k8s/no-pods-quota.yaml" >/dev/null
-  BENCH_IDLE_S=30 BENCH_RUN_TIMEOUT_S=900 "${here}/run_scenario.sh" start-quota "${p}/start-quota.json" \
-    bench-start-quota run 3 "${out}/start-quota"
-  start_quota_cleanup
-  trap - EXIT
+  # The quota admits no pod in the Job namespace for the length of the scenario.
+  bench_start_failure start-quota "${p}/start-quota.json" bench-start-quota "${out}/start-quota" \
+    "${here}/k8s/no-pods-quota.yaml"
 fi
 python3 "${here}/report.py" "${out}" > "${out}/report.md"
 echo "run_baseline_kind.sh: report at ${out}/report.md" >&2

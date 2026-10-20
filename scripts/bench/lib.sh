@@ -202,6 +202,51 @@ bench_finish_run() {
 # Stops a scenario that is still running: ends its runner CHILD (a process this
 # shell started; empty when none), then cancels SCHEDULE's run if it is live and
 # waits up to 300 s for it to stop, so nothing the benchmark started keeps running.
+# bench_start_failure NAME PAYLOAD SCHEDULE OUT_DIR [QUOTA_FILE]: runs a
+# start-failure scenario, three reps of run_scenario.sh (BENCH_IDLE_S default
+# 30, BENCH_RUN_TIMEOUT_S default 900), as a child process, with QUOTA_FILE's
+# ResourceQuota applied to the Job namespace for its length when given. However
+# the scenario ends, normally or on INT, TERM or HUP, it is cleaned up: the
+# child is stopped, the schedule's live run is cancelled, so no next attempt is
+# queued, the schedule's Jobs are deleted, and the quota is removed. A cleanup
+# step that fails is reported and the next one still runs; the function then
+# fails. A signal exits the shell with 130 or 143 once the cleanup has run.
+bench_start_failure() {
+  local name="$1" payload="$2" schedule="$3" out="$4" rc=0
+  bench_start_failure_child=""
+  bench_start_failure_schedule="${schedule}"
+  bench_start_failure_quota="${5:-}"
+  trap bench_start_failure_cleanup EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM HUP
+  if [ -n "${bench_start_failure_quota}" ]; then
+    bench_kubectl apply -f "${bench_start_failure_quota}" >/dev/null
+  fi
+  BENCH_IDLE_S="${BENCH_IDLE_S:-30}" BENCH_RUN_TIMEOUT_S="${BENCH_RUN_TIMEOUT_S:-900}" \
+    "$(bench_here)/run_scenario.sh" "${name}" "${payload}" "${schedule}" run 3 "${out}" &
+  bench_start_failure_child=$!
+  wait "${bench_start_failure_child}" || rc=$?
+  bench_start_failure_child=""
+  bench_start_failure_cleanup || rc=1
+  trap - EXIT INT TERM HUP
+  return "${rc}"
+}
+
+# bench_start_failure_cleanup: bench_start_failure's cleanup; returns 1 when a
+# step failed.
+bench_start_failure_cleanup() {
+  local schedule="${bench_start_failure_schedule}" quota="${bench_start_failure_quota}" failed=0
+  bench_stop_scenario "${bench_start_failure_child}" "${schedule}" \
+    || { echo "bench: could not stop ${schedule}'s scenario and cancel its run" >&2; failed=1; }
+  bench_kubectl delete jobs -l "schedule=${schedule}" --ignore-not-found --wait=true >/dev/null \
+    || { echo "bench: could not delete ${schedule}'s Jobs" >&2; failed=1; }
+  if [ -n "${quota}" ]; then
+    bench_kubectl delete -f "${quota}" --ignore-not-found >/dev/null \
+      || { echo "bench: could not remove the quota of ${quota}; delete it by hand (README)" >&2; failed=1; }
+  fi
+  return "${failed}"
+}
+
 bench_stop_scenario() {
   local child="$1" schedule="$2" run_id running
   if [ -n "${child}" ]; then
