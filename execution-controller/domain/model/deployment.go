@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/execution-controller/domain/command"
+	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/google/uuid"
 )
 
@@ -65,6 +66,9 @@ type Deployment struct {
 	dbtRunResultsURI string
 	failedContainer  string
 	outcomeAt        *time.Time
+
+	// facts is what has been observed of the attempt's Job so far.
+	facts AttemptFacts
 }
 
 // NewDeployment starts a fresh pending Deployment due immediately.
@@ -150,7 +154,7 @@ func Reconstitute(
 	errorMessage *string,
 ) *Deployment {
 	return ReconstituteProduction(id, msgProcID, cmd, status, retryCount, maxRetries,
-		nextAttemptAt, createdAt, deployedAt, errorMessage, "", nil)
+		nextAttemptAt, createdAt, deployedAt, errorMessage, "", nil, AttemptFacts{})
 }
 
 // ReconstituteProduction rebuilds a production Deployment from persisted state,
@@ -167,6 +171,7 @@ func ReconstituteProduction(
 	errorMessage *string,
 	outcome string,
 	outcomeAt *time.Time,
+	facts AttemptFacts,
 ) *Deployment {
 	return &Deployment{
 		id:                  id,
@@ -182,6 +187,7 @@ func ReconstituteProduction(
 		errorMessage:        errorMessage,
 		outcome:             outcome,
 		outcomeAt:           outcomeAt,
+		facts:               facts,
 	}
 }
 
@@ -199,6 +205,7 @@ func ReconstituteValidation(
 	errorMessage *string,
 	outcome, dbtLogURI, runResultsURI, failedContainer string,
 	outcomeAt *time.Time,
+	facts AttemptFacts,
 ) *Deployment {
 	return &Deployment{
 		id:                  id,
@@ -217,6 +224,7 @@ func ReconstituteValidation(
 		dbtRunResultsURI:    runResultsURI,
 		failedContainer:     failedContainer,
 		outcomeAt:           outcomeAt,
+		facts:               facts,
 	}
 }
 
@@ -233,6 +241,7 @@ func ReconstituteSeedBuild(
 	errorMessage *string,
 	outcome, dbtLogURI, runResultsURI, failedContainer string,
 	outcomeAt *time.Time,
+	facts AttemptFacts,
 ) *Deployment {
 	return &Deployment{
 		id:                  id,
@@ -251,6 +260,7 @@ func ReconstituteSeedBuild(
 		dbtRunResultsURI:    runResultsURI,
 		failedContainer:     failedContainer,
 		outcomeAt:           outcomeAt,
+		facts:               facts,
 	}
 }
 
@@ -267,6 +277,7 @@ func ReconstituteCompile(
 	errorMessage *string,
 	outcome, dbtLogURI, runResultsURI, failedContainer string,
 	outcomeAt *time.Time,
+	facts AttemptFacts,
 ) *Deployment {
 	return &Deployment{
 		id:                  id,
@@ -285,6 +296,7 @@ func ReconstituteCompile(
 		dbtRunResultsURI:    runResultsURI,
 		failedContainer:     failedContainer,
 		outcomeAt:           outcomeAt,
+		facts:               facts,
 	}
 }
 
@@ -337,8 +349,8 @@ func (d *Deployment) MarkStarted(now time.Time) error {
 	return nil
 }
 
-// MarkRunning records the first status check that found the Job unfinished. It
-// reports whether the status changed; a running deployment stays running.
+// MarkRunning records that the Job's main container started. It reports
+// whether the status changed; a running deployment stays running.
 func (d *Deployment) MarkRunning() (bool, error) {
 	if d.status == StatusRunning {
 		return false, nil
@@ -350,8 +362,9 @@ func (d *Deployment) MarkRunning() (bool, error) {
 }
 
 // settle records a terminal outcome and ends the deployment done. The Job
-// exists (starting or running), or reconciliation already released the slot
-// without an outcome (done): recording on a done row is not a status move.
+// exists (starting, running or terminating), or reconciliation already
+// released the slot without an outcome (done): recording on a done row is not
+// a status move.
 func (d *Deployment) settle(outcome string, now time.Time) error {
 	if d.outcomeAt != nil {
 		return fmt.Errorf("outcome already recorded for deployment %s", d.id)
@@ -392,6 +405,29 @@ func (d *Deployment) ReleaseSlot() error {
 
 // HasOutcome reports whether the deployment's terminal outcome is recorded.
 func (d *Deployment) HasOutcome() bool { return d.outcomeAt != nil }
+
+// Observe adds what an observation shows of the attempt to its facts and
+// reports whether it added anything.
+func (d *Deployment) Observe(f AttemptFacts) bool {
+	merged, changed := d.facts.Merge(f)
+	d.facts = merged
+	return changed
+}
+
+// BeginTermination records why execution-controller ends the attempt itself
+// (a start error or the start timeout) and moves the deployment to
+// terminating, where it keeps its slot until the attempt's pods are gone. A
+// terminating deployment stays as it is: the first reason stands.
+func (d *Deployment) BeginTermination(reason pkgmodel.FailureReason, message string) error {
+	if d.status == StatusTerminating {
+		return nil
+	}
+	if err := d.moveTo(StatusTerminating); err != nil {
+		return err
+	}
+	d.facts, _ = d.facts.Merge(AttemptFacts{Reason: reason, Message: message})
+	return nil
+}
 
 // JobName is the name of the Kubernetes Job the deployment creates.
 func (d *Deployment) JobName() string {
@@ -571,3 +607,6 @@ func (d *Deployment) DBTLogURI() string        { return d.dbtLogURI }
 func (d *Deployment) DBTRunResultsURI() string { return d.dbtRunResultsURI }
 func (d *Deployment) FailedContainer() string  { return d.failedContainer }
 func (d *Deployment) OutcomeAt() *time.Time    { return d.outcomeAt }
+
+// Facts returns what has been observed of the attempt's Job so far.
+func (d *Deployment) Facts() AttemptFacts { return d.facts }

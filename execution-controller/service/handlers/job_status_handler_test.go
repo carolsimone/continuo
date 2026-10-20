@@ -2793,7 +2793,7 @@ func TestHandle_VanishedCandidateJobRoutesByItsRow(t *testing.T) {
 	now := time.Now()
 	row := model.ReconstituteValidation(uuid.New(), nil, command.ValidationDeployTask{
 		ReleaseID: "rel-gone", NodeID: "public.orders", JobName: "validate-gone", NodeType: "dbt-model", ImageTag: "i",
-	}, model.StatusRunning, 0, 3, now, now, &now, nil, "", "", "", "", nil)
+	}, model.StatusRunning, 0, 3, now, now, &now, nil, "", "", "", "", nil, model.AttemptFacts{})
 	outbox := &jobStatusFakeOutboxRepo{}
 	handler := newHandler(&fakeK8sClient{status: &model.JobResult{Status: model.JobStatusFailed, TerminationMsg: "Job not found in Kubernetes"}}, noopCancelledRepo())
 

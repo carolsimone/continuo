@@ -43,7 +43,7 @@ func TestExecutionSchemaMatchesContract(t *testing.T) {
 	require.ElementsMatch(t, []string{"id", "message_id", "stream_name", "state", "payload", "error", "created_at", "updated_at", "outbox_entry_id"}, names(columns("message_processing")))
 	require.ElementsMatch(t, []string{"id", "message_processing_id", "aggregate_type", "aggregate_id", "event_type", "payload", "stream_name", "status", "retry_count", "max_retries", "created_at", "processed_at", "error_message", "next_attempt_at"}, names(columns("execution_outbox")))
 	require.ElementsMatch(t, []string{"schedule_id", "cancelled_at"}, names(columns("cancelled_schedules")))
-	require.ElementsMatch(t, []string{"id", "message_processing_id", "task_id", "schedule_id", "job_params", "status", "retry_count", "max_retries", "next_attempt_at", "created_at", "deployed_at", "error_message", "mode", "release_id", "node_id", "outcome", "dbt_log_uri", "outcome_at", "run_results_uri", "failed_container", "state_changed_at", "job_name"}, names(columns("deployments")))
+	require.ElementsMatch(t, []string{"id", "message_processing_id", "task_id", "schedule_id", "job_params", "status", "retry_count", "max_retries", "next_attempt_at", "created_at", "deployed_at", "error_message", "mode", "release_id", "node_id", "outcome", "dbt_log_uri", "outcome_at", "run_results_uri", "failed_container", "state_changed_at", "job_name", "facts"}, names(columns("deployments")))
 	require.ElementsMatch(t, []string{"scope", "created_at"}, names(columns("admission_capacity")))
 	require.ElementsMatch(t, []string{"release_id", "aggregate_emitted_at", "mode"}, names(columns("validation_aggregates")))
 

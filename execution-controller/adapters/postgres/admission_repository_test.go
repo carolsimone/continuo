@@ -10,6 +10,7 @@ import (
 
 	"github.com/carolsimone/continuo/execution-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
+	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
@@ -253,4 +254,58 @@ func TestRepo_ProductionOutcomeSurvivesAReload(t *testing.T) {
 	assert.True(t, got.HasOutcome(), "a reloaded row keeps the outcome it recorded")
 	assert.Equal(t, "ok", got.Outcome())
 	assert.Equal(t, model.StatusDone, got.Status())
+}
+
+// An attempt's facts and the terminating status survive a reload, and a
+// terminating row still holds its slot.
+func TestRepo_FactsAndTerminatingSurviveAReload(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	ctx := context.Background()
+	repo := postgres.NewDeploymentsRepository(db, testLogger())
+
+	cmd := validCmd()
+	cmd.JobName = "dbt-public-orders-terminating"
+	dep := model.NewDeployment(cmd, nil, time.Now())
+	require.NoError(t, repo.Add(ctx, dep))
+	require.NoError(t, dep.Reserve())
+	require.NoError(t, dep.MarkStarted(time.Now()))
+	started := time.Date(2026, 10, 20, 23, 1, 24, 0, time.UTC)
+	dep.Observe(model.AttemptFacts{StartedAt: &started, LogKey: "logs/x.log"})
+	require.NoError(t, dep.BeginTermination(pkgmodel.FailureReasonStartTimeout, "not started after 15m0s"))
+	require.NoError(t, repo.Save(ctx, dep))
+
+	got, err := repo.GetByJobName(ctx, "dbt-public-orders-terminating")
+	require.NoError(t, err)
+	assert.Equal(t, model.StatusTerminating, got.Status())
+	require.NotNil(t, got.Facts().StartedAt)
+	assert.True(t, started.Equal(*got.Facts().StartedAt))
+	assert.Equal(t, "logs/x.log", got.Facts().LogKey)
+	assert.Equal(t, pkgmodel.FailureReasonStartTimeout, got.Facts().Reason)
+	assert.Equal(t, "not started after 15m0s", got.Facts().Message)
+
+	var class string
+	require.NoError(t, db.Get(&class, `SELECT facts->>'failure_class' FROM deployments WHERE id = $1`, dep.ID()))
+	assert.Equal(t, "timeout", class)
+
+	n, err := postgres.NewAdmissionRepository(db, testLogger()).CountInFlight(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 1, n, "a terminating row holds its slot")
+}
+
+// A row whose attempt was never observed stores no facts.
+func TestRepo_UnobservedRowStoresNoFacts(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	ctx := context.Background()
+	repo := postgres.NewDeploymentsRepository(db, testLogger())
+
+	dep := model.NewDeployment(validCmd(), nil, time.Now())
+	require.NoError(t, repo.Add(ctx, dep))
+	require.NoError(t, dep.Reserve())
+	require.NoError(t, repo.Save(ctx, dep))
+
+	var facts sql.NullString
+	require.NoError(t, db.Get(&facts, `SELECT facts::text FROM deployments WHERE id = $1`, dep.ID()))
+	assert.False(t, facts.Valid, "facts stay NULL until something is observed")
 }

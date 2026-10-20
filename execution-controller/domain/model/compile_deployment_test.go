@@ -109,6 +109,7 @@ func TestReconstituteCompile_RoundTrip(t *testing.T) {
 		1, 3, now, now,
 		&deployedAt, &errMsg,
 		"failed", "s3://logs", "s3://results", "parse-prod", &outcomeAt,
+		model.AttemptFacts{},
 	)
 
 	assert.Equal(t, id, d.ID())
