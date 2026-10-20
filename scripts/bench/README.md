@@ -4,7 +4,7 @@
 
 The harness measures continuo's run lifecycle — timing, Redis message volume, and per-service CPU and memory — with identical settings before and after each phase of the run-lifecycle consolidation, so the phases are compared on the same scenarios and the same metrics.
 
-Every node of a synthetic DAG is a real Kubernetes Job with the production dbt pod shape. The Job runs a stand-in `dbt` (`image/`) that prints a line and exits at once (after a 30 s sleep in the `slow30` image), and fails on purpose for tables named `fail_*`. Run time is therefore almost entirely the platform's own overhead.
+Every node of a synthetic DAG is a real Kubernetes Job with the production dbt pod shape. The Job runs a stand-in `dbt` (`image/`) that prints a line and exits at once (after a 30 s sleep in the `slow30` image), fails on purpose for tables named `fail_*`, and fails a table named `once_*` on its first attempt only (a retry's Job name ends in `-r<attempt>`). Run time is therefore almost entirely the platform's own overhead.
 
 ## Targets
 
@@ -12,8 +12,8 @@ Every node of a synthetic DAG is a real Kubernetes Job with the production dbt p
 
 | Target | Environment | Used for |
 |---|---|---|
-| `compose` (default) | The local compose stack with its kind cluster | Harness smoke, `dag-500`, the dependency-outage scenarios, the whole-DAG test fan-out (`test-2000`) |
-| `k8s` | A Helm install reached through `BENCH_KUBECONFIG` | The synthetic scale scenarios |
+| `compose` (default) | The local compose stack with its kind cluster | Harness smoke, `dag-500`, the dependency-outage scenarios, the whole-DAG test fan-out (`test-2000`), the width sweep, fail-once and the two start failures |
+| `k8s` | A Helm install reached through `BENCH_KUBECONFIG` | The synthetic scale scenarios, the width sweep and fail-once |
 
 Environment knobs:
 
@@ -26,7 +26,7 @@ Environment knobs:
 | `BENCH_KIND_CLUSTER` | `continuo` | kind cluster that receives the images (`compose`) |
 | `BENCH_REDIS_POD` | — | Redis pod of the install (`k8s`, required) |
 | `BENCH_REDIS_CONTAINER_NAME` | `redis` | Container inside `BENCH_REDIS_POD` |
-| `BENCH_PG_POD` | — | Postgres pod that holds release-controller's database (`k8s`, required by the export and the release check) |
+| `BENCH_PG_POD` | — | Postgres pod that holds release-controller's, state's and execution-controller's databases (`k8s`, required by the export, the release check and every rep's hand-off breakdown) |
 | `BENCH_SSH_HOST` | — | ssh destination on the k3s node; `build_image.sh` imports the images into its containerd (`k8s`, required) |
 | `CONTINUO_CLI` | `cli/bin/continuo` | CLI binary (`compose`); on `k8s` the harness runs the CLI inside `deploy/agent-chat` |
 | `BENCH_SCENARIOS` | all | Scenario names to run, comma- or space-separated (for example `cascade-2000,cancel-500`) |
@@ -67,7 +67,8 @@ The machine that runs the harness stays awake for the whole run: a sleeping host
 ## Usage
 
 ```bash
-# Local stack: harness smoke, dag-500 and the two outage scenarios -> OUT_DIR/report.md
+# Local stack: harness smoke, dag-500, the two outage scenarios, test-2000, the width sweep, fail-once
+# and the two start failures -> OUT_DIR/report.md
 BENCH_TARGET=compose scripts/bench/run_baseline_kind.sh [OUT_DIR]
 
 # k8s install: every synthetic scenario on the union topology, restore on exit -> OUT_DIR/report.md
@@ -104,6 +105,8 @@ python3 scripts/bench/compare.py BEFORE_DIR AFTER_DIR [--labels A,B] > compariso
 | `start-image` | 10 nodes on an image tag that does not exist (local stack only) | A pod that cannot pull its image: attempts, overlapping attempts, how the run ends |
 | `start-quota` | 10 nodes while a `pods: 0` ResourceQuota (`k8s/no-pods-quota.yaml`) holds the Job namespace (local stack only) | A Job that never gets a pod: whether the start timeout ends it, and how the run ends |
 
+The start failures delete their Jobs on every exit, and start-quota then removes its quota. If the machine running the harness dies during start-quota, remove both by hand: `kubectl --context kind-continuo -n default delete jobs -l schedule=bench-start-quota`, then `kubectl --context kind-continuo -n default delete resourcequota bench-no-pods`; until then the `pods: 0` quota blocks every Job of the local stack.
+
 ## Metric definitions
 
 | Metric | Definition |
@@ -118,7 +121,7 @@ python3 scripts/bench/compare.py BEFORE_DIR AFTER_DIR [--labels A,B] > compariso
 | messages per attempt | The same sum ÷ the run's Jobs |
 | retries | Jobs created after each task's first Job, whether or not the earlier Job finished |
 | retry turnaround | A failed Job's finish to the creation of the next Job of the same task |
-| overlapping attempts | Jobs created while an earlier Job of the same task had not finished; a Job that never finished counts as unfinished, and a Job gone from the cluster as finished (execution-controller deletes a Job only once its pods are gone) |
+| overlapping attempts | Jobs created while an earlier Job of the same task had not finished; a Job that never finished counts as unfinished, and a Job gone from the capture is not counted (the capture holds no lifetime for it) |
 | observe | An upstream's last Job finishing to execution-controller recording its result (`deployments.outcome_at`) |
 | round trip | That result recorded to the node's first deployment queued (`deployments.created_at`), both on execution-controller's clock |
 | to dispatch, to queue | The round trip split at state's first dispatch of the node (`task_tracker.dispatched_at`) |
@@ -132,7 +135,7 @@ A retried node counts from its first Job's creation to its last Job's finish. A 
 
 The hand-off steps take, for each node, the upstream whose last Job finished last, that upstream's last deployment and the node's first. Each rep reads them with `run_rows.py` from execution-controller's and state's databases (`deployments-rep<N>.json`, `tasks-rep<N>.json`); a read that fails leaves the steps empty. Observe, to dispatch and to queue compare two services' clocks, which share a host on the local stack.
 
-## Targets
+## Run-lifecycle targets
 
 `report.py` ends with the run-lifecycle targets and the measured value of each; `compare.py` shows both sides. They are reported, never gated.
 

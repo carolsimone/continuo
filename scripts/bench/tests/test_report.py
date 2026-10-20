@@ -59,7 +59,7 @@ def test_render_lists_each_target_with_its_measured_value():
     assert "| overlapping attempts, largest of any scenario | 0 | 20.00 |" in markdown
 
 
-def test_render_shows_the_new_per_rep_measures():
+def test_render_shows_the_retry_overlap_and_breakdown_measures():
     reps = [{"rep": 1, "nodes_executed": 1, "usage_run": {}, "retry_turnaround_p50_s": 3.0, "round_trip_p50_s": 1.5,
              "messages_per_attempt": 4.0, "overlapping_attempts": 0, "retries": 2}]
     markdown = report.render({"fail-once": reps})

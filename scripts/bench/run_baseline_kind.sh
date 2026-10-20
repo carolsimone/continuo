@@ -67,23 +67,33 @@ if bench_wanted fail-once; then
   BENCH_IDLE_S=30 "${here}/run_scenario.sh" fail-once "${p}/fail-once.json" bench-fail-once run 3 "${out}/fail-once"
 fi
 # The start failures never succeed: each rep ends when its run fails, or is
-# cancelled after 15 minutes. Their Jobs are deleted once the scenario ends.
+# cancelled after 15 minutes. On every exit their Jobs are deleted, before the
+# start-quota scenario's quota, so no pod stuck on its image and no pods: 0
+# quota outlives the scenario.
+start_image_cleanup() {
+  bench_kubectl delete jobs -l schedule=bench-start-image --ignore-not-found --wait=true >/dev/null
+}
+start_quota_cleanup() {
+  bench_kubectl delete jobs -l schedule=bench-start-quota --ignore-not-found --wait=true >/dev/null
+  bench_kubectl delete resourcequota bench-no-pods --ignore-not-found >/dev/null
+}
 if bench_wanted start-image; then
   "${here}/inject.sh" "${p}/start-image.json" bench-start-image
+  trap start_image_cleanup EXIT
   BENCH_IDLE_S=30 BENCH_RUN_TIMEOUT_S=900 "${here}/run_scenario.sh" start-image "${p}/start-image.json" \
     bench-start-image run 3 "${out}/start-image"
-  bench_kubectl delete jobs -l schedule=bench-start-image --ignore-not-found --wait=true >/dev/null
+  start_image_cleanup
+  trap - EXIT
 fi
 if bench_wanted start-quota; then
   "${here}/inject.sh" "${p}/start-quota.json" bench-start-quota
-  # The quota admits no pod in the Job namespace; it is removed on every exit.
-  trap 'bench_kubectl delete resourcequota bench-no-pods --ignore-not-found >/dev/null' EXIT
+  # The quota admits no pod in the Job namespace.
+  trap start_quota_cleanup EXIT
   bench_kubectl apply -f "${here}/k8s/no-pods-quota.yaml" >/dev/null
   BENCH_IDLE_S=30 BENCH_RUN_TIMEOUT_S=900 "${here}/run_scenario.sh" start-quota "${p}/start-quota.json" \
     bench-start-quota run 3 "${out}/start-quota"
-  bench_kubectl delete resourcequota bench-no-pods --ignore-not-found >/dev/null
+  start_quota_cleanup
   trap - EXIT
-  bench_kubectl delete jobs -l schedule=bench-start-quota --ignore-not-found --wait=true >/dev/null
 fi
 python3 "${here}/report.py" "${out}" > "${out}/report.md"
 echo "run_baseline_kind.sh: report at ${out}/report.md" >&2

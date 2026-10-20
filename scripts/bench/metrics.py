@@ -102,9 +102,8 @@ def retry_turnarounds(attempts: list) -> list:
 def overlapping_attempts(attempts: list) -> int:
     """Attempts whose Job was created while an earlier attempt Job of the same task had not finished.
 
-    A Job that never finished counts as unfinished. A Job that is gone from the
-    capture counts as finished: execution-controller deletes a Job only once
-    its pods are gone.
+    A Job that never finished counts as unfinished. A Job gone from the capture
+    is not counted: the capture holds no lifetime for it.
     """
     count = 0
     for runs in attempts_by_table(attempts).values():
