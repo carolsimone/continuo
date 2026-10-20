@@ -41,7 +41,7 @@ func (d DeadLetter) RedriveRefusal(c Contract) string {
 	}
 	groups, declared := c.groups[d.Stream]
 	if !declared {
-		return fmt.Sprintf("stream %s is not in the contract", d.Stream)
+		return fmt.Sprintf("stream %s is not in the streams contract", d.Stream)
 	}
 	if g := d.TargetGroup(); g != "" && !groups[g] {
 		return fmt.Sprintf("group %s does not read stream %s", g, d.Stream)

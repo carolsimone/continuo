@@ -34,7 +34,7 @@ func TestRedriveRefusal(t *testing.T) {
 		{"an outbox dead letter of a stream no group reads", outbox, ""},
 		{"fields that are not a message", unpublishable, "its fields are not a publishable message"},
 		{"a retired stream", on("orders.created:v1", "billing"), "stream orders.created:v1 is retired"},
-		{"a stream the contract does not name", on("orders.deleted:v1", "billing"), "stream orders.deleted:v1 is not in the contract"},
+		{"a stream the contract does not name", on("orders.deleted:v1", "billing"), "stream orders.deleted:v1 is not in the streams contract"},
 		{"a group the contract does not name", on("orders.changed:v1", "returns"), "group returns does not read stream orders.changed:v1"},
 	}
 	for _, c := range cases {
