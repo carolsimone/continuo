@@ -161,7 +161,7 @@ func (c *K8sClient) CreateValidationJob(ctx context.Context, params ValidationJo
 	backoffLimit := int32(0)
 	labels := map[string]string{
 		"app":          "dbt-job",
-		"mode":         events.ModeValidation,
+		"mode":         string(validationmodel.ModeValidation),
 		"release-id":   sanitizeK8sLabel(params.ReleaseID),
 		"node-id":      sanitizeK8sLabel(params.NodeID),
 		"service_name": params.ServiceName,
@@ -343,7 +343,7 @@ func (c *K8sClient) CreateSeedBuildJob(ctx context.Context, params ValidationJob
 	backoffLimit := int32(0)
 	labels := map[string]string{
 		"app":          "dbt-job",
-		"mode":         events.ModeSeedBuild,
+		"mode":         string(validationmodel.ModeSeedBuild),
 		"release-id":   sanitizeK8sLabel(params.ReleaseID),
 		"node-id":      sanitizeK8sLabel(params.NodeID),
 		"service_name": params.ServiceName,
@@ -526,7 +526,7 @@ func (c *K8sClient) CreateCompileJob(ctx context.Context, params ValidationJobPa
 	backoffLimit := int32(0)
 	labels := map[string]string{
 		"app":          "dbt-job",
-		"mode":         events.ModeCompile,
+		"mode":         string(validationmodel.ModeCompile),
 		"release-id":   sanitizeK8sLabel(params.ReleaseID),
 		"node-id":      sanitizeK8sLabel(params.NodeID),
 		"service_name": params.ServiceName,
