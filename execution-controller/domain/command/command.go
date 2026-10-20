@@ -3,7 +3,10 @@
 package command
 
 import (
+	"fmt"
+
 	"github.com/carolsimone/continuo/execution-controller/domain/deploy"
+	"github.com/carolsimone/continuo/pkg/domain"
 	"github.com/google/uuid"
 )
 
@@ -41,6 +44,19 @@ type DeployTask struct {
 }
 
 func (DeployTask) isCommand() {}
+
+// NextAttempt is the command for the task's next attempt: the same task with
+// its retry count one higher and the Job name of that attempt.
+func (c DeployTask) NextAttempt() (DeployTask, error) {
+	next := c
+	next.TaskRetryCount++
+	name, err := domain.ComputeJobName(c.ServiceName, c.SchemaName, c.TableName, c.ScheduleID, next.TaskRetryCount)
+	if err != nil {
+		return DeployTask{}, fmt.Errorf("name attempt %d of task %s: %w", next.TaskRetryCount, c.TaskID, err)
+	}
+	next.JobName = name
+	return next, nil
+}
 
 // ValidationDeployTask is the command to deploy one validation node's dbt
 // --empty job. Parallel to DeployTask: production fields stay on DeployTask;

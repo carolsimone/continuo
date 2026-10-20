@@ -130,3 +130,22 @@ func TestJobObservation_Facts(t *testing.T) {
 	assert.True(t, f.JobSucceeded)
 	assert.Equal(t, at(60), f.AwaitingStopSince, "a pod being deleted starts the stop clock")
 }
+
+func TestJobObservation_Started(t *testing.T) {
+	pending := model.PodObservation{Name: "p", Phase: model.PodPending,
+		Main: model.ContainerObservation{Name: "dbt-job", WaitingReason: "ErrImagePull"}}
+	assert.False(t, model.JobObservation{Pods: []model.PodObservation{pending}}.Started(), "no container ran")
+	assert.False(t, model.JobObservation{}.Started(), "no pod exists")
+	assert.True(t, model.JobObservation{Pods: []model.PodObservation{running()}}.Started())
+
+	compiling := model.PodObservation{Name: "p", Phase: model.PodPending,
+		Main:  model.ContainerObservation{Name: "upload", WaitingReason: "PodInitializing"},
+		Inits: []model.ContainerObservation{{Name: "compile", StartedAt: at(3)}}}
+	obs := model.JobObservation{Pods: []model.PodObservation{compiling}}
+	assert.True(t, obs.Started(), "an init container running dbt has started the pod")
+	assert.False(t, obs.MainStarted(), "the main container has not")
+
+	initFailed := pending
+	initFailed.Inits = []model.ContainerObservation{{Name: "compile", Terminated: true, ExitCode: 2}}
+	assert.True(t, model.JobObservation{Pods: []model.PodObservation{initFailed}}.Started(), "a terminated init container ran")
+}

@@ -77,6 +77,20 @@ func (o JobObservation) MainStarted() bool {
 	return false
 }
 
+// Started reports whether a container of a pod, init or main, has started:
+// the attempt is past scheduling, image pulls and configuration, and its pod
+// has a log to read. The start timeout runs until then.
+func (o JobObservation) Started() bool {
+	for _, p := range o.Pods {
+		for _, c := range append(append([]ContainerObservation{}, p.Inits...), p.Main) {
+			if c.StartedAt != nil || c.Terminated {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // Ended reports whether the attempt has ended: no pod of it can run again, and
 // the Job accounts for that — it finished, or it is being deleted or gone. A
 // Job that holds no pod and has not finished is still creating one.

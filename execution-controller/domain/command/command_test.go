@@ -109,3 +109,24 @@ func TestValidationDeployTask_ToValidationJobSpec_CarriesOp(t *testing.T) {
 	assert.Equal(t, "clone_from_prod", spec.ValidationOp)
 	assert.Equal(t, "analytics", spec.ProdSchema)
 }
+
+func TestDeployTask_NextAttemptNamesTheRetryJobAndKeepsTheTask(t *testing.T) {
+	c := command.DeployTask{ //nolint:gosec // G101: secret_ref names a Kubernetes Secret, not a credential
+		TaskID: "t1", ScheduleID: "7f3e1a2b-0000-0000-0000-000000000000", ScheduleName: "daily",
+		ServiceName: "service-1", SchemaName: "e2e_schema", TableName: "ftable_e",
+		JobName: "service-1-e2e-schema-ftable-e-7f3e1a2b", NodeType: "python-api", ImageTag: "reg/img:v1",
+		SecretRef: "continuo-api-fx", Operation: "build", TaskRetryCount: 0, TaskMaxRetries: 2,
+	}
+	next, err := c.NextAttempt()
+	require.NoError(t, err)
+	assert.Equal(t, "service-1-e2e-schema-ftable-e-7f3e1a2b-r1", next.JobName)
+	assert.Equal(t, 1, next.TaskRetryCount)
+	assert.Equal(t, 2, next.TaskMaxRetries)
+	assert.Equal(t, "continuo-api-fx", next.SecretRef, "the retry keeps the Secret")
+	assert.Equal(t, "build", next.Operation, "the retry keeps the operation")
+	assert.Equal(t, "reg/img:v1", next.ImageTag)
+
+	third, err := next.NextAttempt()
+	require.NoError(t, err)
+	assert.Equal(t, "service-1-e2e-schema-ftable-e-7f3e1a2b-r2", third.JobName, "named from the task, not from the previous Job")
+}
