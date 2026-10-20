@@ -221,3 +221,7 @@ func TestRecord_CompileOutcomeCarriesFailedContainer(t *testing.T) {
 	assert.Equal(t, streams.CompileCompletedV1, captured.StreamName)
 	assert.Contains(t, string(captured.Payload), `"failed_container":"parse-prod"`)
 }
+
+func (*stubDeploymentsRepo) HasAttemptFrom(context.Context, string, int) (bool, error) {
+	return false, nil
+}

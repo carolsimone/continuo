@@ -9,7 +9,8 @@ import (
 )
 
 // ObservedDeployments reads, outside any transaction, the deployments whose
-// attempt the observer follows: those awaiting their result
+// attempt the observer follows: the started ones, and a row an older version
+// released before recording its result while its Job exists
 // (model.Deployment.AwaitingResult).
 type ObservedDeployments interface {
 	// GetByJobName returns the most recently created deployment whose Job is

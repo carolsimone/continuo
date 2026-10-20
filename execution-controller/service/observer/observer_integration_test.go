@@ -470,13 +470,16 @@ func TestProcess_ARowReleasedWithoutItsOutcomeWhoseJobIsGoneIsLeftAlone(t *testi
 	assert.Equal(t, 1, attempts, "no next attempt is queued")
 }
 
-// A failed attempt whose next attempt already exists (an older version queued
-// it when it reported the failure) queues no second one.
+// A failed attempt whose next attempt already exists queues no other, however
+// that attempt's Job was named: older versions named a retry by appending
+// -r<attempt> to the failed attempt's own name (attempt 2 of a task was
+// <job>-r1-r2), so the existing attempt is found by task and attempt number.
 func TestProcess_AFailedAttemptWhoseNextAttemptExistsQueuesNoOther(t *testing.T) {
 	h := newHarness(t)
-	dep := h.started(t, 0, h.now.Add(-time.Hour))
+	dep := h.started(t, 1, h.now.Add(-time.Hour))
 	next, err := dep.Command().NextAttempt()
 	require.NoError(t, err)
+	next.JobName = dep.JobName() + "-r2"
 	require.NoError(t, h.repo.Add(context.Background(), model.NewDeployment(next, nil, h.now)))
 	_, err = h.db.Exec(`UPDATE deployments SET status = 'done' WHERE id = $1`, dep.ID())
 	require.NoError(t, err)
@@ -489,6 +492,35 @@ func TestProcess_AFailedAttemptWhoseNextAttemptExistsQueuesNoOther(t *testing.T)
 	var attempts int
 	require.NoError(t, h.db.Get(&attempts, `SELECT count(*) FROM deployments WHERE task_id = $1`, dep.Command().TaskID))
 	assert.Equal(t, 2, attempts, "the existing next attempt is the only one")
+}
+
+// A row released without its outcome is never ended by the observer, whatever
+// its Job shows: its slot is already free. A Job of it that cannot start (a
+// start error, or nothing started past the start timeout) is recorded and left
+// to run; nothing is reported, deleted or retried, and processing succeeds.
+func TestProcess_ARowReleasedWithoutItsOutcomeIsNeverEnded(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	pulling := h.started(t, 0, h.now.Add(-time.Hour))
+	stuck := h.started(t, 0, h.now.Add(-time.Hour))
+	for _, d := range []*model.Deployment{pulling, stuck} {
+		_, err := h.db.Exec(`UPDATE deployments SET status = 'done' WHERE id = $1`, d.ID())
+		require.NoError(t, err)
+	}
+	h.cache.set(pulling.JobName(), model.JobObservation{JobPresent: true, Pods: []model.PodObservation{{
+		Name: "pod-p", Phase: model.PodPending,
+		Main: model.ContainerObservation{Name: "dbt-job", WaitingReason: "ErrImagePull", WaitingMessage: "not found"}}}})
+	h.cache.set(stuck.JobName(), model.JobObservation{JobPresent: true,
+		Pods: []model.PodObservation{{Name: "pod-s", Phase: model.PodPending}}})
+
+	for _, d := range []*model.Deployment{pulling, stuck} {
+		require.NoError(t, h.o.Process(ctx, d.JobName()))
+		got := h.reload(t, d.JobName())
+		assert.Equal(t, model.StatusDone, got.Status())
+		assert.False(t, got.HasOutcome())
+		assert.NotContains(t, h.term.deleted, d.JobName())
+	}
+	assert.Empty(t, h.outbox(t, event.EventTypeTaskStatusUpdated))
 }
 
 func TestProcess_AFailedAttemptProcessedTwiceQueuesOneRetry(t *testing.T) {

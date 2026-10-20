@@ -200,12 +200,22 @@ func (o *Observer) Process(ctx context.Context, jobName string) error {
 		return nil
 	}
 	obs := o.deps.Cache.Observe(jobName)
-	if dep.Status() == model.StatusDone && !obs.JobPresent {
-		// An older version released this row before recording its result,
-		// and its Job is gone with the result.
-		return nil
-	}
 	now := o.now()
+	if dep.Status() == model.StatusDone {
+		// An older version released this row before recording its result. Its
+		// slot is free, so it is never ended here: it settles once its Job has
+		// ended, records what the Job shows meanwhile, and is left alone once
+		// the Job is gone with the result.
+		switch {
+		case !obs.JobPresent:
+			o.deps.Metrics.AwaitingPodStop(jobName, false)
+			return nil
+		case obs.Ended():
+			return o.finish(ctx, dep, obs, model.AttemptFacts{}, now)
+		default:
+			return o.record(ctx, dep, obs, now)
+		}
+	}
 
 	switch {
 	case dep.Status() == model.StatusTerminating:

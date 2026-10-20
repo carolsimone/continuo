@@ -159,3 +159,7 @@ func (r *modeScopedDepRepo) ListValidationResults(_ context.Context, _ string, m
 func (r *modeScopedDepRepo) ListValidationByRelease(_ context.Context, _ string, mode model.Mode) ([]*model.Deployment, error) {
 	return r.byMode[mode], nil
 }
+
+func (*modeScopedDepRepo) HasAttemptFrom(context.Context, string, int) (bool, error) {
+	return false, nil
+}

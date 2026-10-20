@@ -37,3 +37,7 @@ func (r *stubDeploymentsRepo) ListValidationResults(_ context.Context, _ string,
 func (r *stubDeploymentsRepo) ListValidationByRelease(_ context.Context, _ string, _ model.Mode) ([]*model.Deployment, error) {
 	return nil, nil
 }
+
+func (*stubDeploymentsRepo) HasAttemptFrom(context.Context, string, int) (bool, error) {
+	return false, nil
+}

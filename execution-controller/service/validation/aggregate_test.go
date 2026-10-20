@@ -161,3 +161,5 @@ func TestEmitValidationAggregate_CarriesDecisionOnly(t *testing.T) {
 	require.NotContains(t, payload, "per_node_results", "terminal event must not re-carry per-node content")
 	require.NotContains(t, payload, "run_results_uri", "per-node URIs travel on the projection stream, not the terminal event")
 }
+
+func (*fakeDepRepo) HasAttemptFrom(context.Context, string, int) (bool, error) { return false, nil }

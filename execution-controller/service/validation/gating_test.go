@@ -384,3 +384,5 @@ func TestSettleNodeTerminal_PerNodeUsesDistinctAggregateID(t *testing.T) {
 	assert.NotEqual(t, wantTerminalAggID, nodeAggIDs[1], "node.b's row does not share the terminal's aggregate_id")
 	assert.Equal(t, 1, completeRows, "one terminal row once nothing pending")
 }
+
+func (*chainDepRepo) HasAttemptFrom(context.Context, string, int) (bool, error) { return false, nil }

@@ -555,10 +555,10 @@ func (r *Run) Cancel(
 // written for the same task aggregate, so the per-aggregate FIFO outbox
 // publishes them in creation order, but they still arrive here as separate
 // consumer deliveries and a redelivery can repeat one of them. retry_count
-// carries the attempt number and is stamped identically
-// on a RUNNING and the terminal of the same attempt; a genuine retry is a
-// strictly newer attempt. The aggregate uses that to honor a real retry's
-// un-fill while ignoring a stale RUNNING re-delivered after its own terminal.
+// carries the attempt number and is stamped identically on a RUNNING and the
+// terminal of the same attempt; a genuine retry is a strictly newer attempt.
+// The aggregate uses that to honor a real retry's un-fill while ignoring a
+// stale RUNNING re-delivered after its own terminal.
 //
 // Every task write that takes effect stamps the run's progress clock
 // (last_heartbeat_at) with now. A replay, a superseded attempt, or a write the

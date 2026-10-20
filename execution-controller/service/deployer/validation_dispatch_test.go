@@ -749,3 +749,11 @@ func TestDispatcher_NormalProduction_NonDeployable_EmitsFailedAnnouncements(t *t
 	}
 	assert.Equal(t, []string{"task_status_updated"}, eventTypes, "production failure emits task_status_updated only")
 }
+
+func (*fakeDeploymentRepo) HasAttemptFrom(context.Context, string, int) (bool, error) {
+	return false, nil
+}
+
+func (*chainDeploymentRepo) HasAttemptFrom(context.Context, string, int) (bool, error) {
+	return false, nil
+}

@@ -64,7 +64,7 @@ func TestExecutionSchemaMatchesContract(t *testing.T) {
 		"idx_message_processing_outbox_entry_id_stream", "message_processing_message_id_stream_name_key",
 		"idx_deployments_due", "idx_deployments_candidate_release", "uq_deployments_candidate_release_node_mode",
 		"idx_deployments_message_processing_id", "idx_execution_outbox_message_processing_id",
-		"idx_deployments_job_name", "idx_deployments_in_flight",
+		"idx_deployments_job_name", "idx_deployments_in_flight", "idx_deployments_task_id",
 	})
 
 	require.NotContains(t, indexes, "idx_execution_outbox_pending")

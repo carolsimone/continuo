@@ -19,6 +19,9 @@ type DeploymentRepository interface {
 	// jobName, locked for the rest of the transaction, or sql.ErrNoRows when
 	// none exists.
 	LoadByJobName(ctx context.Context, jobName string) (*model.Deployment, error)
+	// HasAttemptFrom reports whether a production deployment of taskID exists at
+	// attempt or later, however its Job is named.
+	HasAttemptFrom(ctx context.Context, taskID string, attempt int) (bool, error)
 	// Save persists the mutated state of an existing Deployment.
 	Save(ctx context.Context, d *model.Deployment) error
 	// GetByReleaseNode returns the (mode, release_id, node_id) Deployment, or
