@@ -63,7 +63,7 @@
     {
       "path": "dlq list",
       "short": "List open dead letters",
-      "long": "List the open dead letters: messages a consumer gave up on, outbox rows a\nrelay could not publish, and stream entries trimmed before a consumer group\nfinished them.\n\nUse when the user asks what failed to process, what is in the dead-letter\nqueue, or whether any messages were lost.\n\nArguments:\n  [source]  Optional. consumer, outbox, quarantine, or all. Omit (or give\n            all) to list every source; an empty value is a usage error.\n  [stream]  Optional. Only dead letters of this stream, e.g. task.status.updated:v1.\n            Omit to list every stream; an empty value is a usage error. To\n            filter by stream alone, give all as the source.\n\nOutput (stdout, JSON):\n  {\"total_open\":number,\"dead_letters\":[{\"id\":string,\"source\":string,\n   \"failure_kind\":string,\"stream\":string,\"group\":string,\n   \"original_message_id\":string,\"producer\":string,\"error\":string,\n   \"delivery_count\":number,\"original_at\":string,\"recorded_at\":string,\n   \"expires_at\":string,\"status\":string,\"redrivable\":boolean,\"redrive\":null}]}\n  At most 50 dead letters, newest first. total_open counts every open one.\n\nErrors:\n  usage      (exit 2)  more than two arguments, a blank argument, or an unknown source\n  unavailable(exit 5)  dead-letter-controller is unreachable\n  internal   (exit 6)  unexpected server error",
+      "long": "List the open dead letters: messages a consumer gave up on, outbox rows a\nrelay could not publish, and stream entries trimmed before a consumer group\nfinished them.\n\nUse when the user asks what failed to process, what is in the dead-letter\nqueue, or whether any messages were lost.\n\nArguments:\n  [source]  Optional. consumer, outbox, quarantine, or all. Omit (or give\n            all) to list every source; an empty value is a usage error.\n  [stream]  Optional. Only dead letters of this stream, e.g. task.status.updated:v1.\n            Omit to list every stream; an empty value is a usage error. To\n            filter by stream alone, give all as the source.\n\nOutput (stdout, JSON):\n  {\"total_open\":number,\"dead_letters\":[{\"id\":string,\"source\":string,\n   \"failure_kind\":string,\"stream\":string,\"group\":string,\n   \"original_message_id\":string,\"producer\":string,\"error\":string,\n   \"delivery_count\":number,\"original_at\":string,\"recorded_at\":string,\n   \"expires_at\":string,\"status\":string,\"redrivable\":boolean,\n   \"not_redrivable_reason\":string,\"redrive\":null}]}\n  At most 50 dead letters, newest first. total_open counts every open one.\n  redrivable is false, and not_redrivable_reason says why, for a dead letter\n  that can never be redriven: its stream was retired, the contract does not\n  name its stream or consumer group, or its fields are not a message.\n\nErrors:\n  usage      (exit 2)  more than two arguments, a blank argument, or an unknown source\n  unavailable(exit 5)  dead-letter-controller is unreachable\n  internal   (exit 6)  unexpected server error",
       "args": [
         "[source]",
         "[stream]"
@@ -125,7 +125,7 @@
     {
       "path": "dlq redrive",
       "short": "Republish dead letters to their original stream",
-      "long": "Republish dead letters to the stream they came from, so the consumer group\nthat failed them processes them again (an outbox dead letter, never published,\ngoes to every group of its stream).\n\nUse when the user asks to retry, replay or redrive failed messages, after the\ncause was fixed.\n\nArguments:\n  <ids>     One dead letter id, or several separated by commas, as listed by\n            \"dlq list\". Either all are redriven or none is.\n  <reason>  Why they are redriven; recorded with the redrive. Required and\n            must be non-empty.\n\nThe redriving identity is not an argument: it is taken from the\nCONTINUO_ACTOR environment variable when set, otherwise dead-letter-controller\nrecords its own system identity. A dead letter already redriven is returned\nunchanged.\n\nOutput (stdout, JSON):\n  {\"dead_letters\":[{...same object as dlq list, status \"redriven\" and redrive set...}]}\n\nErrors:\n  usage      (exit 2)  wrong number of arguments, no ids, a blank reason, or an id\n                       that is not a dead letter id\n  not_found  (exit 3)  an id matches no dead letter (nothing was redriven)\n  conflict   (exit 4)  a dead letter is older than the 30-day replay horizon, or has\n                       no fields to republish (nothing was redriven)\n  unavailable(exit 5)  dead-letter-controller is unreachable\n  internal   (exit 6)  unexpected server error",
+      "long": "Republish dead letters to the stream they came from, so the consumer group\nthat failed them processes them again (an outbox dead letter, never published,\ngoes to every group of its stream).\n\nUse when the user asks to retry, replay or redrive failed messages, after the\ncause was fixed.\n\nArguments:\n  <ids>     One dead letter id, or several separated by commas, as listed by\n            \"dlq list\". Either all are redriven or none is.\n  <reason>  Why they are redriven; recorded with the redrive. Required and\n            must be non-empty.\n\nThe redriving identity is not an argument: it is taken from the\nCONTINUO_ACTOR environment variable when set, otherwise dead-letter-controller\nrecords its own system identity. A dead letter already redriven is returned\nunchanged.\n\nOutput (stdout, JSON):\n  {\"dead_letters\":[{...same object as dlq list, status \"redriven\" and redrive set...}]}\n\nErrors:\n  usage      (exit 2)  wrong number of arguments, no ids, a blank reason, or an id\n                       that is not a dead letter id\n  not_found  (exit 3)  an id matches no dead letter (nothing was redriven)\n  conflict   (exit 4)  a dead letter is older than the 30-day replay horizon, or can\n                       never be redriven (dlq list shows why; nothing was redriven)\n  unavailable(exit 5)  dead-letter-controller is unreachable\n  maintenance(exit 7)  continuo is in maintenance mode; new work is refused until it is turned off (not retryable)\n  internal   (exit 6)  unexpected server error",
       "args": [
         "<ids>",
         "<reason>"
@@ -181,7 +181,8 @@
         3,
         4,
         5,
-        6
+        6,
+        7
       ],
       "mutating": true
     },
@@ -309,7 +310,8 @@
         3,
         4,
         5,
-        6
+        6,
+        7
       ],
       "mutating": true
     },
@@ -540,14 +542,15 @@
         3,
         4,
         5,
-        6
+        6,
+        7
       ],
       "mutating": true
     },
     {
       "path": "node history",
       "short": "List the recent run history of one model node",
-      "long": "List the recent run history of one model node.\n\nUse when the user wants to see the last runs of a specific dbt model, including\nwhether each run succeeded, which image and manifest version it used, any\nerror message, and the exact code it executed.\n\nArguments:\n  <service>  The owning service name.\n  <schema>   The schema name.\n  <table>    The table (model) name.\n\nFlags:\n  --operation  Filter history to one operation kind: run | test | build.\n               Default \"run\" (dbt run/materialize rows). \"test\" returns dbt\n               test rows; \"build\" returns dbt build rows. An unrecognized\n               value is a usage error.\n\nOutput (stdout, JSON): up to 50 runs, newest first.\n  {\"runs\":[{\"run_id\":string,\"schedule_name\":string,\"kind\":string,\n   \"terminal_status\":string,\"task_id\":string,\"task_status\":string,\n   \"retry_count\":number,\"image_tag\":string,\n   \"created_at\":string,\"started_at\":string,\"completed_at\":string,\n   \"error_message\":string,\"log_s3_key\":string,\"operation\":string,\n   \"run_results_uri\":string,\"content_hash\":string}]}\n  terminal_status, started_at, completed_at, error_message, log_s3_key,\n  run_results_uri, and content_hash are omitted when empty. run_results_uri\n  points at the structured result block the run's container printed —\n  python-family nodes (python-node, python-csv, python-api) always emit one, dbt\n  nodes never do. An unknown node returns {\"runs\":[]}, not an error.\n\ncontent_hash is the code this run executed, joined client-side from the\norchestrator's GetNodeRunHistory by run id, filtered server-side to the same\n--operation so the enrichment call cannot be starved by newer executions of a\ndifferent operation; it is omitted for runs that predate the stamp. State\nremains the primary source of truth for run history: if the join to the\norchestrator fails for any reason (the service is unreachable, the node has\nno recorded version history, or any other error), history still returns\nstate's rows in full, every content_hash omitted rather than the command\nfailing.\n\nIn --human mode, the joined hash is rendered too: each line ends with an\nEXECUTED_HASH column (the first 12 characters of content_hash, or \"-\" when\nit is unavailable).\n\nErrors:\n  usage      (exit 2)  wrong number of arguments, or --operation is not run|test|build\n  unavailable(exit 5)  the state service is unreachable\n  internal   (exit 6)  unexpected server error",
+      "long": "List the recent run history of one model node.\n\nUse when the user wants to see the last runs of a specific dbt model, including\nwhether each run succeeded, which image and manifest version it used, any\nerror message, and the exact code it executed.\n\nArguments:\n  <service>  The owning service name.\n  <schema>   The schema name.\n  <table>    The table (model) name.\n\nFlags:\n  --operation  Filter history to one operation kind: run | test | build.\n               Default \"run\" (dbt run/materialize rows). \"test\" returns dbt\n               test rows; \"build\" returns dbt build rows. An unrecognized\n               value is a usage error.\n\nOutput (stdout, JSON): up to 50 runs, newest first.\n  {\"runs\":[{\"run_id\":string,\"schedule_name\":string,\"kind\":string,\n   \"terminal_status\":string,\"task_id\":string,\"task_status\":string,\n   \"retry_count\":number,\"image_tag\":string,\n   \"created_at\":string,\"started_at\":string,\"completed_at\":string,\n   \"error_message\":string,\"log_s3_key\":string,\"operation\":string,\n   \"run_results_uri\":string,\"content_hash\":string}]}\n  terminal_status, started_at, completed_at, error_message, log_s3_key,\n  run_results_uri, and content_hash are omitted when empty. run_results_uri\n  points at the structured result block the run's container printed —\n  python-family nodes (python-node, python-csv, python-api) always emit one, dbt\n  nodes never do. An unknown node returns {\"runs\":[]}, not an error.\n\ncontent_hash is the node's content hash in the release the run ran on, as\nthe state service records it; it is omitted for runs that name no release.\n\nIn --human mode, content_hash is rendered too: each line ends with an\nEXECUTED_HASH column (the first 12 characters of content_hash, or \"-\" when\nit is unavailable).\n\nErrors:\n  usage      (exit 2)  wrong number of arguments, or --operation is not run|test|build\n  unavailable(exit 5)  the state service is unreachable\n  internal   (exit 6)  unexpected server error",
       "args": [
         "<service>",
         "<schema>",
@@ -760,7 +763,8 @@
         3,
         4,
         5,
-        6
+        6,
+        7
       ],
       "mutating": true
     },
@@ -826,7 +830,8 @@
         3,
         4,
         5,
-        6
+        6,
+        7
       ],
       "mutating": true
     },
@@ -1069,7 +1074,7 @@
     {
       "path": "schedule build",
       "short": "Run dbt build for every model in the named schedule",
-      "long": "Run dbt build for every model in the named schedule, using the schedule's\ncurrent (latest) topology and manifest version.\n\nUse when the user asks to build an entire schedule (its whole DAG of models)\nnow, as opposed to only testing it. dbt build both materializes (runs) and\ntests each node in one invocation. Unlike schedule test's flat fan-out, the\nwhole-DAG build is dependency-ordered: nodes run in topological order, and\nif a node fails, its downstream descendants are cascade-skipped rather than\nattempted. A node with no tests defined is still built; there is no\n\"no_tests\" skip for build.\n\nArguments:\n  <schedule-name>  The schedule to build.\n\nOutput (stdout, JSON):\n  {\"schedule_id\":string,\"schedule_name\":string,\"triggered_at\":string}\n\nErrors:\n  usage      (exit 2)  wrong number of arguments\n  not_found  (exit 3)  schedule not in the catalog\n  conflict   (exit 4)  a run is already active for this schedule\n  unavailable(exit 5)  the state service is unreachable\n  internal   (exit 6)  unexpected server error",
+      "long": "Run dbt build for every model in the named schedule, using the schedule's\ncurrent (latest) topology and manifest version.\n\nUse when the user asks to build an entire schedule (its whole DAG of models)\nnow, as opposed to only testing it. dbt build both materializes (runs) and\ntests each node in one invocation. Unlike schedule test's flat fan-out, the\nwhole-DAG build is dependency-ordered: nodes run in topological order, and\nif a node fails, its downstream descendants are cascade-skipped rather than\nattempted. A node with no tests defined is still built; there is no\n\"no_tests\" skip for build.\n\nArguments:\n  <schedule-name>  The schedule to build.\n\nOutput (stdout, JSON):\n  {\"schedule_id\":string,\"schedule_name\":string,\"triggered_at\":string}\n\nErrors:\n  usage      (exit 2)  wrong number of arguments\n  not_found  (exit 3)  schedule not in the catalog\n  conflict   (exit 4)  a run is already active for this schedule\n  unavailable(exit 5)  the state service is unreachable\n  maintenance(exit 7)  continuo is in maintenance mode; new work is refused until it is turned off (not retryable)\n  internal   (exit 6)  unexpected server error",
       "args": [
         "<schedule-name>"
       ],
@@ -1125,7 +1130,8 @@
         3,
         4,
         5,
-        6
+        6,
+        7
       ],
       "mutating": true
     },
@@ -1375,7 +1381,7 @@
     {
       "path": "schedule test",
       "short": "Run dbt tests for every model in the named schedule",
-      "long": "Run dbt tests for every model in the named schedule, using the schedule's\ncurrent (latest) topology and manifest version.\n\nUse when the user asks to test, validate, or check an entire schedule (its\nwhole DAG of models) now, as opposed to running (building) it. Every node in\nthe schedule that has dbt tests defined runs dbt test; nodes with no tests\ndefined are skipped rather than failed.\n\nArguments:\n  <schedule-name>  The schedule to test.\n\nOutput (stdout, JSON):\n  {\"schedule_id\":string,\"schedule_name\":string,\"triggered_at\":string}\n\nErrors:\n  usage      (exit 2)  wrong number of arguments\n  not_found  (exit 3)  schedule not in the catalog\n  conflict   (exit 4)  a run is already active for this schedule\n  unavailable(exit 5)  the state service is unreachable\n  internal   (exit 6)  unexpected server error",
+      "long": "Run dbt tests for every model in the named schedule, using the schedule's\ncurrent (latest) topology and manifest version.\n\nUse when the user asks to test, validate, or check an entire schedule (its\nwhole DAG of models) now, as opposed to running (building) it. Every node in\nthe schedule that has dbt tests defined runs dbt test; nodes with no tests\ndefined are skipped rather than failed.\n\nArguments:\n  <schedule-name>  The schedule to test.\n\nOutput (stdout, JSON):\n  {\"schedule_id\":string,\"schedule_name\":string,\"triggered_at\":string}\n\nErrors:\n  usage      (exit 2)  wrong number of arguments\n  not_found  (exit 3)  schedule not in the catalog\n  conflict   (exit 4)  a run is already active for this schedule\n  unavailable(exit 5)  the state service is unreachable\n  maintenance(exit 7)  continuo is in maintenance mode; new work is refused until it is turned off (not retryable)\n  internal   (exit 6)  unexpected server error",
       "args": [
         "<schedule-name>"
       ],
@@ -1431,14 +1437,15 @@
         3,
         4,
         5,
-        6
+        6,
+        7
       ],
       "mutating": true
     },
     {
       "path": "schedule trigger",
       "short": "Trigger a new run of the named schedule",
-      "long": "Trigger a new run of the named schedule.\n\nUse when the user asks to start, run, or kick off a schedule now.\n\nArguments:\n  <schedule-name>  The schedule to trigger.\n\nOutput (stdout, JSON):\n  {\"schedule_id\":string,\"schedule_name\":string,\"triggered_at\":string}\n\nErrors:\n  usage      (exit 2)  wrong number of arguments\n  not_found  (exit 3)  schedule not in the catalog\n  conflict   (exit 4)  a run is already active for this schedule\n  unavailable(exit 5)  the state service is unreachable\n  internal   (exit 6)  unexpected server error",
+      "long": "Trigger a new run of the named schedule.\n\nUse when the user asks to start, run, or kick off a schedule now.\n\nArguments:\n  <schedule-name>  The schedule to trigger.\n\nOutput (stdout, JSON):\n  {\"schedule_id\":string,\"schedule_name\":string,\"triggered_at\":string}\n\nErrors:\n  usage      (exit 2)  wrong number of arguments\n  not_found  (exit 3)  schedule not in the catalog\n  conflict   (exit 4)  a run is already active for this schedule\n  unavailable(exit 5)  the state service is unreachable\n  maintenance(exit 7)  continuo is in maintenance mode; new work is refused until it is turned off (not retryable)\n  internal   (exit 6)  unexpected server error",
       "args": [
         "<schedule-name>"
       ],
@@ -1494,7 +1501,8 @@
         3,
         4,
         5,
-        6
+        6,
+        7
       ],
       "mutating": true
     }
