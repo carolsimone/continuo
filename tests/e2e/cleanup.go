@@ -14,9 +14,9 @@ func cleanupTestData(t *testing.T, ctx context.Context, clients *testClients, sc
 	t.Log("Cleaning up test data...")
 
 	// Clean Redis streams before Postgres dedup tables: deleting message_processing
-	// while the check consumer still has pending check.k8s:v1 messages re-enables
-	// those messages and can trigger replays that recreate execution_outbox rows
-	// before the streams are gone.
+	// while a consumer still has pending messages re-enables those messages and
+	// can trigger replays that recreate execution_outbox rows before the streams
+	// are gone.
 	cleanupRedis(t, ctx, clients)
 
 	// Clean PostgreSQL databases

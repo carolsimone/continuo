@@ -326,8 +326,8 @@ func TestValidationPipeline_EndToEnd(t *testing.T) {
 		"model.shop.orders", "model.shop.customers", "model.shop.line_items",
 	})
 
-	// Step 6: the third node's terminal is re-observed (e.g. a re-delivered
-	// check.k8s:v1 ticket). Its outcome is already recorded, so
+	// Step 6: the third node's terminal is re-observed (e.g. two workers
+	// observing the same Job). Its outcome is already recorded, so
 	// outcomes.Recorder's own idempotency check makes this a no-op — no second
 	// aggregate.
 	recordNodeOutcome(t, db, releaseID, "model.shop.line_items", "ok")

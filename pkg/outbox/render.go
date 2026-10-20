@@ -10,8 +10,8 @@ import (
 // Renderer is an optional capability of a Publisher: it returns the field map
 // the publisher would XADD for entry, without outbox_entry_id. The processor
 // embeds those fields in the entry's dead letter so the event can be redriven
-// later. A row that is not published as stream fields (for example a delay-queue
-// row) returns an error and its dead letter is not redrivable.
+// later. A row that is not published as stream fields returns an error and its
+// dead letter is not redrivable.
 type Renderer interface {
 	Render(entry *Entry) (map[string]any, error)
 }
