@@ -195,6 +195,17 @@ func (o *Observer) Process(ctx context.Context, jobName string) error {
 		o.deps.Metrics.AwaitingPodStop(jobName, false)
 		return nil
 	}
+	if dep.Status() == model.StatusDone {
+		// A row released without its outcome is observed only while its Job
+		// can still exist; past the retention its result is gone for good.
+		age, err := o.deps.Observed.StateAge(ctx, dep.ID())
+		if err != nil {
+			return err
+		}
+		if age >= model.FinishedJobRetention {
+			return nil
+		}
+	}
 	obs := o.deps.Cache.Observe(jobName)
 	now := o.now()
 

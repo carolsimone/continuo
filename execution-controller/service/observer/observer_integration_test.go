@@ -428,6 +428,27 @@ func TestResync_QueuesTheJobOfEveryStartedDeployment(t *testing.T) {
 
 // A row the previous version released without recording its outcome is
 // reported once its Job is seen ended.
+// A row released without its outcome longer ago than the finished-Job
+// retention has no Job left to learn its result from: the observer leaves it
+// alone rather than report the attempt failed and run it again.
+func TestProcess_ARowReleasedLongerAgoThanTheJobRetentionIsLeftAlone(t *testing.T) {
+	h := newHarness(t)
+	dep := h.started(t, 0, h.now.Add(-30*time.Hour))
+	_, err := h.db.Exec(`UPDATE deployments SET status = 'done', state_changed_at = NOW() - INTERVAL '25 hours' WHERE id = $1`, dep.ID())
+	require.NoError(t, err)
+	h.look.exists[dep.JobName()] = false
+
+	require.NoError(t, h.o.Process(context.Background(), dep.JobName()))
+
+	got := h.reload(t, dep.JobName())
+	assert.Equal(t, model.StatusDone, got.Status())
+	assert.False(t, got.HasOutcome(), "nothing is recorded for it")
+	assert.Empty(t, h.outbox(t, event.EventTypeTaskStatusUpdated), "nothing is reported")
+	var attempts int
+	require.NoError(t, h.db.Get(&attempts, `SELECT count(*) FROM deployments WHERE task_id = $1`, dep.Command().TaskID))
+	assert.Equal(t, 1, attempts, "no next attempt is queued")
+}
+
 func TestProcess_ARowReleasedWithoutItsOutcomeIsReported(t *testing.T) {
 	h := newHarness(t)
 	dep := h.started(t, 0, h.now.Add(-time.Hour))

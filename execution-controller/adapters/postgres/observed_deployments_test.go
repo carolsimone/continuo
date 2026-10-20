@@ -38,6 +38,26 @@ func addAt(t *testing.T, ctx context.Context, repo interface {
 	return dep
 }
 
+// A row done without its outcome is observed only while its Job can still
+// exist: once the finished-Job retention has passed since it was released, the
+// Job is gone and its result can no longer be learned.
+func TestObserved_ListsARowReleasedWithoutItsOutcomeOnlyWithinTheJobRetention(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	ctx := context.Background()
+	repo := postgres.NewDeploymentsRepository(db, testLogger())
+	recent := addAt(t, ctx, repo, "job-released-recently", model.StatusStarting)
+	old := addAt(t, ctx, repo, "job-released-long-ago", model.StatusStarting)
+	_, err := db.Exec(`UPDATE deployments SET status = 'done', state_changed_at = NOW() - INTERVAL '1 hour' WHERE id = $1`, recent.ID())
+	require.NoError(t, err)
+	_, err = db.Exec(`UPDATE deployments SET status = 'done', state_changed_at = NOW() - INTERVAL '25 hours' WHERE id = $1`, old.ID())
+	require.NoError(t, err)
+
+	names, err := postgres.NewObservedDeployments(db, testLogger()).ListObservedJobNames(ctx)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"job-released-recently"}, names)
+}
+
 func TestObserved_ListsTheJobsOfDeploymentsAwaitingTheirResult(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()

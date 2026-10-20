@@ -8,7 +8,9 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
+	validationmodel "github.com/carolsimone/continuo/execution-controller/domain/model"
 	"github.com/carolsimone/continuo/execution-controller/service/ports"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	batchv1 "k8s.io/api/batch/v1"
@@ -24,9 +26,10 @@ import (
 // The observer reads and uploads a Job's pod log to S3 once its attempt ends, so
 // this window only needs to cover ad-hoc kubectl-level debugging of a
 // still-present pod, not log retention: the S3 copy is durable long before this
-// elapses. 24h matches the other Job TTL backstops in this repo
-// (db-init-migrate-job.yaml, minio/bucket-init-job.yaml).
-const jobTTLSecondsAfterFinished = int32(86400)
+// elapses. It is model.FinishedJobRetention (24h, matching the other Job TTL
+// backstops in this repo: db-init-migrate-job.yaml, minio/bucket-init-job.yaml),
+// which also bounds how long the observer looks for a released row's Job.
+const jobTTLSecondsAfterFinished = int32(validationmodel.FinishedJobRetention / time.Second)
 
 // JobParams represents the parameters needed to create a K8s Job
 type JobParams struct {
