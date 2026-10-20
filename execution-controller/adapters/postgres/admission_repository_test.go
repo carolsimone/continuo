@@ -186,7 +186,7 @@ func TestAdmission_ReturnStaleReserved_SkipsAReservationBeingLaunched(t *testing
 	assert.Empty(t, returned, "a reservation a launcher holds is not taken from it")
 }
 
-func TestRepo_GetByJobName_NewestRow(t *testing.T) {
+func TestRepo_LoadByJobName_NewestRow(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -199,12 +199,12 @@ func TestRepo_GetByJobName_NewestRow(t *testing.T) {
 	require.NoError(t, repo.Add(ctx, older))
 	require.NoError(t, repo.Add(ctx, newer))
 
-	got, err := repo.GetByJobName(ctx, "dbt-public-orders-r1")
+	got, err := repo.LoadByJobName(ctx, "dbt-public-orders-r1")
 	require.NoError(t, err)
 	assert.Equal(t, newer.ID(), got.ID())
 	assert.Equal(t, "dbt-public-orders-r1", got.JobName())
 
-	_, err = repo.GetByJobName(ctx, "no-such-job")
+	_, err = repo.LoadByJobName(ctx, "no-such-job")
 	require.ErrorIs(t, err, sql.ErrNoRows)
 }
 
@@ -223,7 +223,7 @@ func TestRepo_ProductionOutcomeSurvivesAReload(t *testing.T) {
 	require.NoError(t, dep.Finish("ok", time.Now()))
 	require.NoError(t, repo.Save(ctx, dep))
 
-	got, err := repo.GetByJobName(ctx, "dbt-public-orders-outcome")
+	got, err := repo.LoadByJobName(ctx, "dbt-public-orders-outcome")
 	require.NoError(t, err)
 	assert.True(t, got.HasOutcome(), "a reloaded row keeps the outcome it recorded")
 	assert.Equal(t, "ok", got.Outcome())
@@ -249,7 +249,7 @@ func TestRepo_FactsAndTerminatingSurviveAReload(t *testing.T) {
 	require.NoError(t, dep.BeginTermination(pkgmodel.FailureReasonStartTimeout, "not started after 15m0s"))
 	require.NoError(t, repo.Save(ctx, dep))
 
-	got, err := repo.GetByJobName(ctx, "dbt-public-orders-terminating")
+	got, err := repo.LoadByJobName(ctx, "dbt-public-orders-terminating")
 	require.NoError(t, err)
 	assert.Equal(t, model.StatusTerminating, got.Status())
 	require.NotNil(t, got.Facts().StartedAt)

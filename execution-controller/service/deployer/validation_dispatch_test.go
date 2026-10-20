@@ -65,7 +65,7 @@ type fakeDeploymentRepo struct {
 }
 
 func (r *fakeDeploymentRepo) Add(context.Context, *model.Deployment) error { return nil }
-func (r *fakeDeploymentRepo) GetByJobName(context.Context, string) (*model.Deployment, error) {
+func (r *fakeDeploymentRepo) LoadByJobName(context.Context, string) (*model.Deployment, error) {
 	return nil, sql.ErrNoRows
 }
 
@@ -290,7 +290,7 @@ func newChainDeploymentRepo(chain ...*model.Deployment) *chainDeploymentRepo {
 }
 
 func (r *chainDeploymentRepo) Add(context.Context, *model.Deployment) error { return nil }
-func (r *chainDeploymentRepo) GetByJobName(context.Context, string) (*model.Deployment, error) {
+func (r *chainDeploymentRepo) LoadByJobName(context.Context, string) (*model.Deployment, error) {
 	return nil, sql.ErrNoRows
 }
 

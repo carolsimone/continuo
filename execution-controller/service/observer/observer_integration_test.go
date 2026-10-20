@@ -85,7 +85,7 @@ func (h *harness) started(t *testing.T, retry int, deployedAt time.Time) *model.
 
 func (h *harness) reload(t *testing.T, jobName string) *model.Deployment {
 	t.Helper()
-	d, err := h.repo.GetByJobName(context.Background(), jobName)
+	d, err := h.repo.LoadByJobName(context.Background(), jobName)
 	require.NoError(t, err)
 	return d
 }

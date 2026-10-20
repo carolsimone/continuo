@@ -15,10 +15,10 @@ import (
 type DeploymentRepository interface {
 	// Add inserts a new pending Deployment.
 	Add(ctx context.Context, d *model.Deployment) error
-	// GetByJobName returns the most recently created deployment whose Job is
+	// LoadByJobName returns the most recently created deployment whose Job is
 	// jobName, locked for the rest of the transaction, or sql.ErrNoRows when
 	// none exists.
-	GetByJobName(ctx context.Context, jobName string) (*model.Deployment, error)
+	LoadByJobName(ctx context.Context, jobName string) (*model.Deployment, error)
 	// Save persists the mutated state of an existing Deployment.
 	Save(ctx context.Context, d *model.Deployment) error
 	// GetByReleaseNode returns the (mode, release_id, node_id) Deployment, or

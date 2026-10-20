@@ -35,7 +35,7 @@ func startedStatuses() any {
 	return pq.Array(model.StatusStrings([]model.Status{model.StatusStarting, model.StatusRunning, model.StatusTerminating}))
 }
 
-func (r *observedDeployments) FindByJobName(ctx context.Context, jobName string) (*model.Deployment, error) {
+func (r *observedDeployments) GetByJobName(ctx context.Context, jobName string) (*model.Deployment, error) {
 	var rows []*deploymentRow
 	if err := r.exec.SelectContext(ctx, &rows, `SELECT`+validationSelectColumns+`
 		FROM deployments

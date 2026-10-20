@@ -93,7 +93,7 @@ type fakeObserved struct {
 	names []string
 }
 
-func (f *fakeObserved) FindByJobName(_ context.Context, jobName string) (*model.Deployment, error) {
+func (f *fakeObserved) GetByJobName(_ context.Context, jobName string) (*model.Deployment, error) {
 	if f.err != nil {
 		return nil, f.err
 	}

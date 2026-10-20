@@ -12,9 +12,9 @@ import (
 // attempt the observer follows: those awaiting their result
 // (model.Deployment.AwaitingResult).
 type ObservedDeployments interface {
-	// FindByJobName returns the most recently created deployment whose Job is
+	// GetByJobName returns the most recently created deployment whose Job is
 	// jobName, without locking it, or sql.ErrNoRows when none exists.
-	FindByJobName(ctx context.Context, jobName string) (*model.Deployment, error)
+	GetByJobName(ctx context.Context, jobName string) (*model.Deployment, error)
 	// ListObservedJobNames returns the Job names of every deployment awaiting
 	// its result.
 	ListObservedJobNames(ctx context.Context) ([]string, error)

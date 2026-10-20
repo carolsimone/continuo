@@ -352,7 +352,7 @@ func commandIDs(cmd command.DeployTask) (uuid.UUID, uuid.UUID, error) {
 	return taskID, scheduleID, nil
 }
 
-func (r *deploymentsRepository) GetByJobName(ctx context.Context, jobName string) (*model.Deployment, error) {
+func (r *deploymentsRepository) LoadByJobName(ctx context.Context, jobName string) (*model.Deployment, error) {
 	const query = `SELECT` + validationSelectColumns + `
 		FROM deployments
 		WHERE job_name = $1

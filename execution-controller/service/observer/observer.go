@@ -184,7 +184,7 @@ func (o *Observer) Process(ctx context.Context, jobName string) error {
 	ctx, cancel := context.WithTimeout(ctx, processTimeout)
 	defer cancel()
 
-	dep, err := o.deps.Observed.FindByJobName(ctx, jobName)
+	dep, err := o.deps.Observed.GetByJobName(ctx, jobName)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -388,7 +388,7 @@ func (o *Observer) inTx(ctx context.Context, jobName string, fn func(uow.UnitOfW
 			_ = u.Rollback()
 		}
 	}()
-	d, err := u.DeploymentsRepo().GetByJobName(ctx, jobName)
+	d, err := u.DeploymentsRepo().LoadByJobName(ctx, jobName)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

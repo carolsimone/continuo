@@ -140,7 +140,7 @@ type modeScopedDepRepo struct {
 }
 
 func (r *modeScopedDepRepo) Add(context.Context, *model.Deployment) error { return nil }
-func (r *modeScopedDepRepo) GetByJobName(context.Context, string) (*model.Deployment, error) {
+func (r *modeScopedDepRepo) LoadByJobName(context.Context, string) (*model.Deployment, error) {
 	return nil, sql.ErrNoRows
 }
 

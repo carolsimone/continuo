@@ -20,7 +20,7 @@ func (r *stubDeploymentsRepo) Add(_ context.Context, d *model.Deployment) error 
 	r.added = append(r.added, d)
 	return nil
 }
-func (r *stubDeploymentsRepo) GetByJobName(context.Context, string) (*model.Deployment, error) {
+func (r *stubDeploymentsRepo) LoadByJobName(context.Context, string) (*model.Deployment, error) {
 	return nil, sql.ErrNoRows
 }
 

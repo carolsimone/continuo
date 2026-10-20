@@ -58,7 +58,7 @@ func TestObserved_ListsTheJobsOfDeploymentsAwaitingTheirResult(t *testing.T) {
 		"a row done without an outcome still awaits its result")
 }
 
-func TestObserved_FindByJobNameDoesNotWaitForALockedRow(t *testing.T) {
+func TestObserved_GetByJobNameDoesNotWaitForALockedRow(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -68,16 +68,16 @@ func TestObserved_FindByJobNameDoesNotWaitForALockedRow(t *testing.T) {
 	tx, err := db.BeginTxx(ctx, nil)
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
-	_, err = postgres.NewDeploymentsRepository(tx, testLogger()).GetByJobName(ctx, "job-locked")
+	_, err = postgres.NewDeploymentsRepository(tx, testLogger()).LoadByJobName(ctx, "job-locked")
 	require.NoError(t, err)
 
 	readCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	got, err := postgres.NewObservedDeployments(db, testLogger()).FindByJobName(readCtx, "job-locked")
+	got, err := postgres.NewObservedDeployments(db, testLogger()).GetByJobName(readCtx, "job-locked")
 	require.NoError(t, err, "a read outside the transaction does not wait for its lock")
 	assert.Equal(t, dep.ID(), got.ID())
 
-	_, err = postgres.NewObservedDeployments(db, testLogger()).FindByJobName(ctx, "no-such-job")
+	_, err = postgres.NewObservedDeployments(db, testLogger()).GetByJobName(ctx, "no-such-job")
 	require.ErrorIs(t, err, sql.ErrNoRows)
 }
 
