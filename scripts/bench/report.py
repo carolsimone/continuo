@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sys
 from pathlib import Path
+from typing import Optional
 
 import metrics as m
 
@@ -13,8 +15,12 @@ log = logging.getLogger(__name__)
 MAX_SAMPLE_PAUSE_S = 60.0  # the sampler ticks every 5 s; a longer gap means the host slept or stalled
 
 SCALARS = ["wall_s", "busy_s", "idle_s", "first_start_s", "finalize_s", "observed_done_s",
-           "handoff_p50_s", "handoff_p95_s", "messages_per_task", "attempts", "failed_attempts",
+           "handoff_p50_s", "handoff_p95_s", "observe_p50_s", "round_trip_p50_s", "to_dispatch_p50_s",
+           "to_queue_p50_s", "admit_p50_s", "messages_per_task", "messages_per_attempt", "attempts",
+           "failed_attempts", "retries", "retry_turnaround_p50_s", "overlapping_attempts",
            "jobs_active_at_cancel", "overlap_s", "messages_dropped"]
+
+SWEEP = re.compile(r"^sweep-(\d+)$")
 
 
 def aggregate(reps: list) -> dict:
@@ -40,6 +46,49 @@ def aggregate(reps: list) -> dict:
     return out
 
 
+def p50_of(scenarios: dict, name: str, key: str) -> Optional[float]:
+    """The p50 over a scenario's reps of one scalar, or None when no rep has it."""
+    values = [float(r[key]) for r in scenarios.get(name, []) if r.get(key) is not None]
+    return m.percentile(values, 0.5) if values else None
+
+
+def sweep_slope(scenarios: dict) -> Optional[float]:
+    """Least-squares slope of the hand-off p50 against the level width over the sweep-<width> scenarios,
+    in seconds per task of width; None with fewer than two widths measured."""
+    points = []
+    for name in scenarios:
+        match = SWEEP.match(name)
+        value = p50_of(scenarios, name, "handoff_p50_s") if match else None
+        if value is not None:
+            points.append((int(match.group(1)), value))
+    if len(points) < 2:
+        return None
+    mean_x = sum(x for x, _ in points) / len(points)
+    mean_y = sum(y for _, y in points) / len(points)
+    spread = sum((x - mean_x) ** 2 for x, _ in points)
+    return sum((x - mean_x) * (y - mean_y) for x, y in points) / spread
+
+
+def largest(scenarios: dict, key: str) -> Optional[float]:
+    values = [float(r[key]) for reps in scenarios.values() for r in reps if r.get(key) is not None]
+    return max(values) if values else None
+
+
+# The run-lifecycle targets: (measure, target, how it is read from the results).
+TARGETS = [
+    ("hand-off p50 at width 100 (sweep-100)", "≤ 5 s", lambda s: p50_of(s, "sweep-100", "handoff_p50_s")),
+    ("hand-off growth per task of level width (sweep-*)", "< 0.1 s", sweep_slope),
+    ("retry turnaround p50 (fail-once)", "≤ 5 s", lambda s: p50_of(s, "fail-once", "retry_turnaround_p50_s")),
+    ("messages per attempt (sweep-100)", "4", lambda s: p50_of(s, "sweep-100", "messages_per_attempt")),
+    ("overlapping attempts, largest of any scenario", "0", lambda s: largest(s, "overlapping_attempts")),
+]
+
+
+def target_values(scenarios: dict) -> list:
+    """(measure, target, value) for every target; value is None when the results hold no measurement."""
+    return [(measure, target, read(scenarios)) for measure, target, read in TARGETS]
+
+
 def render(scenarios: dict) -> str:
     lines = ["# Benchmark report", ""]
     for name in sorted(scenarios):
@@ -61,6 +110,12 @@ def render(scenarios: dict) -> str:
                 i = agg["idle"].get(service, {})
                 lines.append(f"| {service} | {u['cpu_s_per_1k_tasks_p50']:.1f} | {u['mem_peak_mib_p50']:.0f} | "
                              f"{i.get('cpu_avg_m', float('nan')):.0f} | {i.get('mem_avg_mib', float('nan')):.0f} |")
+        lines.append("")
+    values = target_values(scenarios)
+    if any(value is not None for _, _, value in values):
+        lines += ["## Targets", "", "| measure | target | value |", "|---|---|---|"]
+        for measure, target, value in values:
+            lines.append(f"| {measure} | {target} | {'—' if value is None else f'{value:.2f}'} |")
         lines.append("")
     return "\n".join(lines)
 
