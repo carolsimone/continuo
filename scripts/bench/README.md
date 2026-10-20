@@ -35,6 +35,7 @@ Environment knobs:
 | `BENCH_SETTLE_S` | `15` | Pause before each later rep and after each run |
 | `BENCH_RUN_TIMEOUT_S` | `3600` (`2700` in `outage.sh`) | Longest wait for one run; a run still live then is cancelled and waited for before anything else starts |
 | `BENCH_SECOND_RUN_S` | `90` | How long the cancel scenario's second run lives before it is cancelled |
+| `BENCH_START_TIMEOUT_S` | `120` | Start timeout `start_local_services.sh` gives execution-controller (`compose`), in seconds; a version without a start timeout ignores it |
 
 `discover.sh` prints what the harness reads from a `k8s` install and lists the candidate datastore pods; secrets are reported only as resolved or missing.
 
@@ -98,24 +99,50 @@ python3 scripts/bench/compare.py BEFORE_DIR AFTER_DIR [--labels A,B] > compariso
 | `cascade-2000` | `dag-2000` under a single failing root | Retries of the root, then 1,999 skips |
 | `cancel-500` | `dag-500` with 30 s nodes | Cancel after 60 s, immediate re-trigger, second run cancelled after 90 s; overlap of the two runs' Jobs |
 | `outage-postgres`, `outage-neo4j` | `dag-500` | The datastore container is disconnected from its networks for 10 minutes during a run and reconnected with its aliases, so its data survives (local stack only); final status and dropped messages |
+| `sweep-10`, `sweep-50`, `sweep-100`, `sweep-200` | 5 levels of 10, 50, 100 or 200 nodes, fan-in 2 | Hand-off against level width; the report fits its growth per task of width |
+| `fail-once` | 5 levels × 50 nodes, fan-in 2; every node fails its first attempt and succeeds on its retry | Retry turnaround |
+| `start-image` | 10 nodes on an image tag that does not exist (local stack only) | A pod that cannot pull its image: attempts, overlapping attempts, how the run ends |
+| `start-quota` | 10 nodes while a `pods: 0` ResourceQuota (`k8s/no-pods-quota.yaml`) holds the Job namespace (local stack only) | A Job that never gets a pod: whether the start timeout ends it, and how the run ends |
 
 ## Metric definitions
 
 | Metric | Definition |
 |---|---|
-| wall | Trigger to the last Job's finish |
+| wall | Trigger to the last Job's finish; empty when no Job of the run finished |
 | busy | Union of the Jobs' lifetimes (creation to finish) |
 | idle | wall − busy |
 | first start | Trigger to the first Job's creation |
 | finalize | Last Job's finish to the CLI reporting the run as not running (1 s poll) |
 | hand-off | A node's first Job creation minus its last upstream Job's finish |
 | messages per task | Sum of the streams' `entries-added` deltas ÷ executed tasks |
+| messages per attempt | The same sum ÷ the run's Jobs |
+| retries | Jobs created after each task's first Job, whether or not the earlier Job finished |
+| retry turnaround | A failed Job's finish to the creation of the next Job of the same task |
+| overlapping attempts | Jobs created while an earlier Job of the same task had not finished; a Job that never finished counts as unfinished, and a Job gone from the cluster as finished (execution-controller deletes a Job only once its pods are gone) |
+| observe | An upstream's last Job finishing to execution-controller recording its result (`deployments.outcome_at`) |
+| round trip | That result recorded to the node's first deployment queued (`deployments.created_at`), both on execution-controller's clock |
+| to dispatch, to queue | The round trip split at state's first dispatch of the node (`task_tracker.dispatched_at`) |
+| admit | The node's first deployment queued to its Job created (`deployments.deployed_at`) |
 | CPU-seconds per 1,000 tasks | CPU integrated over the run (5 s samples) ÷ executed tasks × 1,000 |
 | peak memory | Highest per-service memory during the run, replicas summed per instant |
 | idle footprint | Mean CPU and memory over the smoke scenario's idle window |
 | max sample gap | Longest interval between two sampling instants during the run; the report lists reps whose gap exceeds 60 s, since their timings span a host sleep or stall |
 
 A retried node counts from its first Job's creation to its last Job's finish. A failed Job ends at its `Failed` condition's transition time.
+
+The hand-off steps take, for each node, the upstream whose last Job finished last, that upstream's last deployment and the node's first. Each rep reads them with `run_rows.py` from execution-controller's and state's databases (`deployments-rep<N>.json`, `tasks-rep<N>.json`); a read that fails leaves the steps empty. Observe, to dispatch and to queue compare two services' clocks, which share a host on the local stack.
+
+## Targets
+
+`report.py` ends with the run-lifecycle targets and the measured value of each; `compare.py` shows both sides. They are reported, never gated.
+
+| Measure | Target | Read from |
+|---|---|---|
+| Hand-off p50 at width 100 | ≤ 5 s | `sweep-100` |
+| Growth of the hand-off per task of level width | < 0.1 s | least-squares slope of the hand-off p50 over the `sweep-*` widths |
+| Retry turnaround p50 | ≤ 5 s | `fail-once` |
+| Messages per attempt | 4 | `sweep-100` |
+| Overlapping attempts | 0 | the largest of any scenario |
 
 ## Run history
 

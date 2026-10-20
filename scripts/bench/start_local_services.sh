@@ -45,5 +45,8 @@ check_container_health orchestrator 8087
 start release-controller
 check_container_health release-controller 8088 /healthz
 log_info "execution-controller reaches S3 at http://${bridge}:9000"
-start execution-controller -e "S3_ENDPOINT_URL=http://${bridge}:9000"
+# The start-quota scenario waits for the start timeout; BENCH_START_TIMEOUT_S
+# shortens it. A version without a start timeout ignores the variable.
+start execution-controller -e "S3_ENDPOINT_URL=http://${bridge}:9000" \
+  -e "JOB_START_TIMEOUT_SECONDS=${BENCH_START_TIMEOUT_S:-120}"
 check_container_health execution-controller 8084

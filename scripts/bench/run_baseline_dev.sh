@@ -3,9 +3,11 @@
 # against the live graphs, runs the synthetic scenarios on the union of the live
 # topology and a bench DAG, and re-announces the live topology on every exit
 # after the first injection. BENCH_SCENARIOS selects a subset by name.
-# The whole-DAG test fan-out (test-2000) runs on the local stack instead
-# (run_baseline_kind.sh): 2,000 near-simultaneous Jobs can saturate a small
-# cluster's API server, which the harness must not do to a shared install.
+# The whole-DAG test fan-out (test-2000) and the start failures run on the
+# local stack instead (run_baseline_kind.sh): 2,000 near-simultaneous Jobs can
+# saturate a small cluster's API server, and a start failure leaves pods that
+# cannot start or blocks every pod of the namespace, neither of which the
+# harness may do to a shared install.
 #   BENCH_TARGET=k8s BENCH_KUBECONFIG=... [BENCH_SCENARIOS=...] run_baseline_dev.sh [OUT_DIR]
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -58,6 +60,10 @@ bench dag-500 bench-dag-500 --nodes 500 --levels 10 --fan-in 2
 bench dag-2000 bench-dag-2000 --nodes 2000 --levels 20 --fan-in 2
 bench cascade-2000 bench-cascade-2000 --nodes 2000 --levels 20 --fan-in 2 --fail-root
 bench cancel-500 bench-cancel-500 --nodes 500 --levels 10 --fan-in 2 --image-tag slow30
+for width in 10 50 100 200; do
+  bench "sweep-${width}" "bench-sweep-${width}" --nodes $((width * 5)) --levels 5 --fan-in 2
+done
+bench fail-once bench-fail-once --nodes 250 --levels 5 --fan-in 2 --fail-once
 
 # scenario NAME FILE SCHEDULE ARGS... : refuses to publish when a release was
 # promoted since the export, then publishes the union and runs the scenario as a
@@ -97,6 +103,14 @@ if bench_wanted cascade-2000; then
 fi
 if bench_wanted cancel-500; then
   scenario cancel-500 cancel-500.json bench-cancel-500 run 3 "${out}/cancel-500" 60
+fi
+for width in 10 50 100 200; do
+  if bench_wanted "sweep-${width}"; then
+    scenario "sweep-${width}" "sweep-${width}.json" "bench-sweep-${width}" run 3 "${out}/sweep-${width}"
+  fi
+done
+if bench_wanted fail-once; then
+  scenario fail-once fail-once.json bench-fail-once run 3 "${out}/fail-once"
 fi
 python3 "${here}/report.py" "${out}" > "${out}/report.md"
 echo "run_baseline_dev.sh: report at ${out}/report.md (restore follows)" >&2
