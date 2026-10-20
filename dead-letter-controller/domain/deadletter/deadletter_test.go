@@ -12,7 +12,7 @@ var t0 = time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
 
 func open(original time.Time) DeadLetter {
 	return DeadLetter{Source: SourceConsumer, Stream: "orders.changed:v1", Group: "billing", Fields: map[string]string{"k": "v"},
-		Redrivable: true, OriginalAt: original, Status: StatusOpen}
+		Publishable: true, OriginalAt: original, Status: StatusOpen}
 }
 
 func TestCheckRedrive(t *testing.T) {
@@ -24,7 +24,7 @@ func TestCheckRedrive(t *testing.T) {
 		{"fresh", open(t0.Add(-time.Hour)), nil},
 		{"one second before the horizon", open(t0.Add(-model.ReplayHorizon + time.Second)), nil},
 		{"exactly at the horizon", open(t0.Add(-model.ReplayHorizon)), ErrExpired},
-		{"not redrivable", func() DeadLetter { d := open(t0); d.Redrivable = false; return d }(), ErrNotRedrivable},
+		{"not redrivable", func() DeadLetter { d := open(t0); d.Publishable = false; return d }(), ErrNotRedrivable},
 		{"already redriven and expired", func() DeadLetter {
 			d := open(t0.Add(-40 * 24 * time.Hour))
 			d.Status = StatusRedriven

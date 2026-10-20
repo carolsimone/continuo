@@ -153,7 +153,7 @@ func TestTrimmer_QuarantinesThenTrimsToCutoff(t *testing.T) {
 	dl := h.repo.byKey(deadletter.QuarantineKey("s:v1", "lag", old1.ID.String()))
 	assert.Equal(t, deadletter.SourceQuarantine, dl.Source)
 	assert.Equal(t, model.DeadLetterKindTrimmed, dl.FailureKind)
-	assert.True(t, dl.Redrivable)
+	assert.True(t, dl.Publishable)
 	assert.Equal(t, old1.ID.Time(), dl.OriginalAt)
 	assert.Equal(t, []trim.StreamID{cutoffID()}, ins.trimmed["s:v1"])
 	assert.Equal(t, 2, h.obs.quarantined)

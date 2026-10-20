@@ -42,7 +42,7 @@ func (r *fakeRepo) putOpen(originalAt time.Time) deadletter.DeadLetter {
 		ID: uuid.New(), DedupKey: uuid.NewString(), Source: deadletter.SourceConsumer,
 		FailureKind: model.DeadLetterKind("permanent"), Stream: "orders.changed:v1", Group: "billing",
 		OriginalMessageID: "1-0", Producer: "state", Error: "boom", DeliveryCount: 3,
-		Fields: map[string]string{"k": "v"}, Redrivable: true,
+		Fields: map[string]string{"k": "v"}, Publishable: true,
 		OriginalAt: originalAt, RecordedAt: originalAt.Add(time.Minute), Status: deadletter.StatusOpen,
 	}
 	r.rows[dl.ID] = dl
@@ -201,7 +201,7 @@ func TestRedrive_ConflictAndNotFoundCodes(t *testing.T) {
 	c, repo := newTestClient(t)
 	expired := repo.putOpen(time.Now().Add(-model.ReplayHorizon - time.Hour))
 	unreadable := repo.putOpen(time.Now().Add(-time.Hour))
-	unreadable.Redrivable = false
+	unreadable.Publishable = false
 	repo.rows[unreadable.ID] = unreadable
 	retired := repo.putOpen(time.Now().Add(-time.Hour))
 	retired.Stream = "orders.created:v1"

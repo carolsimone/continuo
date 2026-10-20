@@ -2,11 +2,11 @@ package deadletter
 
 import "fmt"
 
-// Contract is what a redrive may address: every stream the contract declares,
-// with the consumer groups that read it, and the streams retired from it. A
-// release that retires a stream or a group turns its open dead letters into
-// ones that can never be redriven: a redrive would publish to a stream or a
-// group nothing reads any more, report success and lose the message.
+// Contract is what a redrive may address: every stream the streams contract
+// declares, with the consumer groups that read it, and the streams retired from
+// it. The open dead letters of a stream or group the contract retires or drops
+// can never be redriven: a redrive would publish to a stream or a group that
+// nothing reads, report success and lose the message.
 type Contract struct {
 	groups  map[string]map[string]bool
 	retired map[string]bool
@@ -33,7 +33,7 @@ func NewContract(groups map[string][]string, retired []string) Contract {
 // can. Age is not considered: CheckRedrive refuses a dead letter past the
 // replay horizon.
 func (d DeadLetter) RedriveRefusal(c Contract) string {
-	if !d.Redrivable {
+	if !d.Publishable {
 		return "its fields are not a publishable message"
 	}
 	if c.retired[d.Stream] {
@@ -55,6 +55,11 @@ type View struct {
 	DeadLetter
 	Refusal string
 }
+
+// Redrivable reports whether the dead letter can be redriven under the
+// contract it was viewed under: its fields are publishable and the contract
+// still addresses its stream and group.
+func (v View) Redrivable() bool { return v.Refusal == "" }
 
 // ViewUnder returns d as seen under c.
 func (d DeadLetter) ViewUnder(c Contract) View {

@@ -39,7 +39,7 @@ func (b *OutboxDeadLetterBinding) Handle(ctx context.Context, msg goredis.XMessa
 	return b.rec.Record(ctx, deadletter.DeadLetter{
 		ID: uuid.New(), DedupKey: deadletter.OutboxKey(p.OutboxTable, p.FailedOutboxID), Source: deadletter.SourceOutbox,
 		FailureKind: p.FailureKind, Stream: p.OriginalStream, Producer: p.OutboxTable, Error: p.Error,
-		DeliveryCount: int64(p.Attempts), Fields: original, Redrivable: len(original) > 0,
+		DeliveryCount: int64(p.Attempts), Fields: original, Publishable: len(original) > 0,
 		OriginalEventType: p.OriginalEventType, FailedOutboxID: p.FailedOutboxID, OriginalAt: originalAt,
 		RecordedAt: now, Status: deadletter.StatusOpen,
 	})

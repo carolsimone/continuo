@@ -18,7 +18,7 @@ func toProto(v deadletter.View) *deadletterv1.DeadLetter {
 		Id: dl.ID.String(), Source: string(dl.Source), FailureKind: string(dl.FailureKind), Stream: dl.Stream,
 		ConsumerGroup: dl.Group, OriginalMessageId: dl.OriginalMessageID, Producer: dl.Producer, Error: dl.Error,
 		DeliveryCount: dl.DeliveryCount, OriginalAt: ts(dl.OriginalAt), RecordedAt: ts(dl.RecordedAt),
-		ExpiresAt: ts(dl.ExpiresAt()), Status: string(dl.Status), Redrivable: v.Refusal == "",
+		ExpiresAt: ts(dl.ExpiresAt()), Status: string(dl.Status), Redrivable: v.Redrivable(),
 		NotRedrivableReason: v.Refusal,
 	}
 	if dl.Redrive != nil {

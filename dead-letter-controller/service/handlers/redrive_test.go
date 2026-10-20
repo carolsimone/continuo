@@ -17,7 +17,7 @@ var now = time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
 
 func storedOpen(repo *fakeRepo, src deadletter.Source, group string, original time.Time) deadletter.DeadLetter {
 	dl := deadletter.DeadLetter{ID: uuid.New(), DedupKey: uuid.NewString(), Source: src, FailureKind: model.DeadLetterKindPermanent,
-		Stream: "orders.changed:v1", Group: group, Fields: map[string]string{"k": "v"}, Redrivable: true,
+		Stream: "orders.changed:v1", Group: group, Fields: map[string]string{"k": "v"}, Publishable: true,
 		OriginalAt: original, RecordedAt: original, Status: deadletter.StatusOpen}
 	repo.put(dl)
 	return dl
@@ -98,7 +98,7 @@ func TestRedrive_UnknownIDNotFound(t *testing.T) {
 func TestRedrive_NotRedrivableRefused(t *testing.T) {
 	h := newHarness()
 	dl := storedOpen(h.repo, deadletter.SourceOutbox, "", now.Add(-time.Hour))
-	dl.Redrivable = false
+	dl.Publishable = false
 	h.repo.put(dl)
 	_, err := h.redriver.Redrive(context.Background(), []uuid.UUID{dl.ID}, "alice", "r")
 	if !errors.Is(err, deadletter.ErrNotRedrivable) {

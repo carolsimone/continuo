@@ -57,7 +57,7 @@ type Redrive struct {
 }
 
 // DeadLetter is one stored dead letter. Fields are the stream fields a redrive
-// publishes; Redrivable is false when they are not a publishable message (an
+// publishes; Publishable is false when they are not a publishable message (an
 // unreadable dead letter, or an outbox row that could not be rendered). Group
 // is empty for an outbox dead letter, whose event was never published to any
 // group. OriginalAt is when the original message was produced.
@@ -73,7 +73,7 @@ type DeadLetter struct {
 	Error             string
 	DeliveryCount     int64
 	Fields            map[string]string
-	Redrivable        bool
+	Publishable       bool
 	OriginalEventType string
 	FailedOutboxID    string
 	OriginalAt        time.Time

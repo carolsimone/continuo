@@ -24,7 +24,7 @@ func TestRedriveRefusal(t *testing.T) {
 	outbox := on("orders.audited:v1", "")
 	outbox.Source = SourceOutbox
 	unpublishable := on("orders.changed:v1", "billing")
-	unpublishable.Redrivable = false
+	unpublishable.Publishable = false
 	cases := []struct {
 		name string
 		dl   DeadLetter
@@ -69,5 +69,17 @@ func TestViewUnder(t *testing.T) {
 	v := on("orders.created:v1", "billing").ViewUnder(testContract)
 	if v.Refusal != "stream orders.created:v1 is retired" || v.Stream != "orders.created:v1" {
 		t.Fatalf("view = %+v", v)
+	}
+}
+
+// A view answers whether the dead letter can be redriven; its stored flag only
+// says whether the fields are publishable.
+func TestView_RedrivableFollowsTheContract(t *testing.T) {
+	retired := on("orders.created:v1", "billing").ViewUnder(testContract)
+	if retired.Redrivable() || !retired.Publishable {
+		t.Fatalf("retired stream: Redrivable() = %v, Publishable = %v; want false, true", retired.Redrivable(), retired.Publishable)
+	}
+	if live := on("orders.changed:v1", "billing").ViewUnder(testContract); !live.Redrivable() {
+		t.Fatalf("declared group: Redrivable() = false, refusal %q", live.Refusal)
 	}
 }

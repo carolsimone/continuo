@@ -53,7 +53,7 @@ func TestConsumerDeadLetterBinding_StoresRedrivableRow(t *testing.T) {
 		t.Fatal(err)
 	}
 	dl := rec.got[0]
-	if dl.Source != deadletter.SourceConsumer || dl.Group != "orchestrator-node-updated" || !dl.Redrivable ||
+	if dl.Source != deadletter.SourceConsumer || dl.Group != "orchestrator-node-updated" || !dl.Publishable ||
 		dl.DedupKey != deadletter.ConsumerKey("node.updated:v1", "orchestrator-node-updated", "1759665600000-0") ||
 		!dl.OriginalAt.Equal(time.UnixMilli(1759665600000).UTC()) || dl.Producer != "state" || dl.DeliveryCount != 5 {
 		t.Fatalf("dl = %+v", dl)
@@ -67,7 +67,7 @@ func TestConsumerDeadLetterBinding_UnreadableStoredNotRedrivable(t *testing.T) {
 		t.Fatalf("an unreadable dead letter must be stored, not returned as an error: %v", err)
 	}
 	dl := rec.got[0]
-	if dl.Redrivable || dl.FailureKind != model.DeadLetterKindPermanent || dl.Stream != streams.ConsumerDeadLetterV1 ||
+	if dl.Publishable || dl.FailureKind != model.DeadLetterKindPermanent || dl.Stream != streams.ConsumerDeadLetterV1 ||
 		dl.DedupKey != deadletter.UnreadableKey(streams.ConsumerDeadLetterV1, "1759665600000-7") || dl.Fields["garbage"] != "1" {
 		t.Fatalf("dl = %+v", dl)
 	}
@@ -103,7 +103,7 @@ func TestConsumerDeadLetterBinding_InvalidFailureKindIsUnreadable(t *testing.T) 
 	if err := NewConsumerDeadLetterBinding(rec, fixedClock{at}).Handle(context.Background(), xmsg("1759665600000-3", values)); err != nil {
 		t.Fatal(err)
 	}
-	if dl := rec.got[0]; dl.Redrivable || dl.DedupKey != deadletter.UnreadableKey(streams.ConsumerDeadLetterV1, "1759665600000-3") {
+	if dl := rec.got[0]; dl.Publishable || dl.DedupKey != deadletter.UnreadableKey(streams.ConsumerDeadLetterV1, "1759665600000-3") {
 		t.Fatalf("dl = %+v", dl)
 	}
 }
@@ -120,7 +120,7 @@ func TestOutboxDeadLetterBinding_RedrivableWhenFieldsPresent(t *testing.T) {
 		t.Fatal(err)
 	}
 	dl := rec.got[0]
-	if dl.Source != deadletter.SourceOutbox || !dl.Redrivable || dl.Fields["node_id"] != "a.b" || dl.Group != "" ||
+	if dl.Source != deadletter.SourceOutbox || !dl.Publishable || dl.Fields["node_id"] != "a.b" || dl.Group != "" ||
 		dl.Producer != "state_outbox" || dl.DedupKey != deadletter.OutboxKey("state_outbox", "00000000-0000-0000-0000-000000000002") ||
 		dl.OriginalAt.Format(outbox.OriginalCreatedAtLayout) != "2026-10-05T10:00:00.000000001Z" || dl.DeliveryCount != 13 {
 		t.Fatalf("dl = %+v", dl)
@@ -136,7 +136,7 @@ func TestOutboxDeadLetterBinding_OldShapeNotRedrivable(t *testing.T) {
 	if err := NewOutboxDeadLetterBinding(rec, fixedClock{at}).Handle(context.Background(), xmsg("1759665600000-0", fields)); err != nil {
 		t.Fatal(err)
 	}
-	if rec.got[0].Redrivable || !rec.got[0].OriginalAt.Equal(time.UnixMilli(1759665600000).UTC()) {
+	if rec.got[0].Publishable || !rec.got[0].OriginalAt.Equal(time.UnixMilli(1759665600000).UTC()) {
 		t.Fatalf("dl = %+v", rec.got[0])
 	}
 }
@@ -147,7 +147,7 @@ func TestOutboxDeadLetterBinding_UnreadableStoredNotRedrivable(t *testing.T) {
 		t.Fatalf("an unreadable dead letter must be stored, not returned as an error: %v", err)
 	}
 	dl := rec.got[0]
-	if dl.Redrivable || dl.Source != deadletter.SourceOutbox || dl.FailureKind != model.DeadLetterKindPermanent ||
+	if dl.Publishable || dl.Source != deadletter.SourceOutbox || dl.FailureKind != model.DeadLetterKindPermanent ||
 		dl.DedupKey != deadletter.UnreadableKey(streams.OutboxDeadLetterV1, "1759665600000-2") {
 		t.Fatalf("dl = %+v", dl)
 	}
