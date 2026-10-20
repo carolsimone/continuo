@@ -32,13 +32,6 @@ func age(t *testing.T, db *sqlx.DB, id uuid.UUID, status string, ago time.Durati
 	require.NoError(t, err)
 }
 
-func jobNameOf(t *testing.T, db *sqlx.DB, id uuid.UUID) string {
-	t.Helper()
-	var name string
-	require.NoError(t, db.Get(&name, `SELECT job_name FROM deployments WHERE id = $1`, id))
-	return name
-}
-
 func TestReconciler_ReturnsStaleReservationsToPending(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()

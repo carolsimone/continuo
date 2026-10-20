@@ -168,13 +168,6 @@ func requestedXMessage(t *testing.T, msgID, releaseID, candidateSchema string, n
 	return goredis.XMessage{ID: msgID, Values: map[string]any{"payload": string(raw)}}
 }
 
-func countByStream(t *testing.T, db *sqlx.DB, stream string) int {
-	t.Helper()
-	var n int
-	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM execution_outbox WHERE stream_name=$1`, stream).Scan(&n))
-	return n
-}
-
 // countByStreamAndKind counts the rows on stream whose payload's "kind" field
 // matches kind. The unified validation.result:v1 stream carries two message
 // kinds — "node" (one per settled node) and "complete" (the terminal decision,

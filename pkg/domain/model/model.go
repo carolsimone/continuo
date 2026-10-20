@@ -35,15 +35,6 @@ type SourceFQN struct {
 	FQN
 }
 
-// Annotation keys carrying the RAW (unsanitized) release/node identity on a
-// release leg's Job. The dispatcher stamps them so the Job names the exact
-// release and node it runs: labels are sanitized for Kubernetes (charset +
-// 63-char limit) and serve only selection.
-const (
-	AnnotationReleaseID = "continuo.dev/release-id"
-	AnnotationNodeID    = "continuo.dev/node-id"
-)
-
 // NodeType, its values, NodeTypes(), IsValid() and Runtime() are generated from
 // the node_type vocabulary in pkg/streams/contract.yaml (vocabulary.gen.go).
 

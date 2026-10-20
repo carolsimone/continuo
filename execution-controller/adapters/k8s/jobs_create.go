@@ -17,6 +17,15 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// Annotation keys carrying the raw (unsanitized) release and node identity on
+// a release leg's Job: labels are sanitized for Kubernetes (charset and the
+// 63-character limit) and serve only selection, so the annotations keep the
+// exact values the Job runs for.
+const (
+	annotationReleaseID = "continuo.dev/release-id"
+	annotationNodeID    = "continuo.dev/node-id"
+)
+
 // CreateQueryJob builds and creates a K8s Job for query execution (idempotent)
 func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error {
 	// Step 1: Check if job already exists (idempotent operation)
@@ -169,8 +178,8 @@ func (c *K8sClient) CreateValidationJob(ctx context.Context, params ValidationJo
 		"table_name":   sanitizeK8sLabel(params.TableName),
 	}
 	annotations := map[string]string{
-		pkg_model.AnnotationReleaseID: params.ReleaseID,
-		pkg_model.AnnotationNodeID:    params.NodeID,
+		annotationReleaseID: params.ReleaseID,
+		annotationNodeID:    params.NodeID,
 	}
 	ttl := jobTTLSecondsAfterFinished
 	job := &batchv1.Job{
@@ -351,8 +360,8 @@ func (c *K8sClient) CreateSeedBuildJob(ctx context.Context, params ValidationJob
 		"table_name":   sanitizeK8sLabel(params.TableName),
 	}
 	annotations := map[string]string{
-		pkg_model.AnnotationReleaseID: params.ReleaseID,
-		pkg_model.AnnotationNodeID:    params.NodeID,
+		annotationReleaseID: params.ReleaseID,
+		annotationNodeID:    params.NodeID,
 	}
 	ttl := jobTTLSecondsAfterFinished
 	job := &batchv1.Job{
@@ -532,8 +541,8 @@ func (c *K8sClient) CreateCompileJob(ctx context.Context, params ValidationJobPa
 		"service_name": params.ServiceName,
 	}
 	annotations := map[string]string{
-		pkg_model.AnnotationReleaseID: params.ReleaseID,
-		pkg_model.AnnotationNodeID:    params.NodeID,
+		annotationReleaseID: params.ReleaseID,
+		annotationNodeID:    params.NodeID,
 	}
 	ttl := jobTTLSecondsAfterFinished
 	job := &batchv1.Job{

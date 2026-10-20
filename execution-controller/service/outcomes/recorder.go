@@ -62,7 +62,7 @@ func (r *Recorder) Record(ctx context.Context, u uow.UnitOfWork, in NodeOutcome)
 		}
 		return fmt.Errorf("get %s deployment: %w", in.Mode, err)
 	}
-	if dep.OutcomeAt() != nil {
+	if dep.HasOutcome() {
 		r.logger.Info("candidate outcome already recorded — treating as redelivery",
 			"mode", in.Mode, "release_id", in.ReleaseID, "node_id", in.NodeID)
 		return nil
