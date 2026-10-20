@@ -62,3 +62,11 @@ type ObserverMetrics interface {
 	// threshold for a pod to stop, or clears the mark.
 	AwaitingPodStop(jobName string, waiting bool)
 }
+
+// LegacyCheckQueue clears the Redis keys of the status-check delay queue that
+// an execution-controller of the previous version writes while it runs beside
+// this one during a rolling update.
+type LegacyCheckQueue interface {
+	// Clear deletes the queue's keys and returns how many existed.
+	Clear(ctx context.Context) (int64, error)
+}

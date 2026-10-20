@@ -9,9 +9,10 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/execution-controller/adapters/commandcfg"
-	"github.com/carolsimone/continuo/execution-controller/adapters/delayqueue"
 	"github.com/carolsimone/continuo/execution-controller/adapters/http"
 	"github.com/carolsimone/continuo/execution-controller/adapters/k8s"
+	"github.com/carolsimone/continuo/execution-controller/adapters/k8s/watch"
+	ecmetrics "github.com/carolsimone/continuo/execution-controller/adapters/metrics"
 	"github.com/carolsimone/continuo/execution-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/execution-controller/adapters/publisher"
 	"github.com/carolsimone/continuo/execution-controller/adapters/redis"
@@ -20,6 +21,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/domain/repository"
 	"github.com/carolsimone/continuo/execution-controller/service/deployer"
 	"github.com/carolsimone/continuo/execution-controller/service/handlers"
+	"github.com/carolsimone/continuo/execution-controller/service/observer"
 	"github.com/carolsimone/continuo/execution-controller/service/outcomes"
 	"github.com/carolsimone/continuo/execution-controller/service/uow"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
@@ -203,6 +205,17 @@ func main() {
 		os.Exit(1)
 	}
 
+	// One watch on the Jobs and pods labelled app=dbt-job queues a Job's name
+	// whenever either changes; the observer's workers take names off the
+	// queue. It starts now so its caches fill while the rest boots.
+	observations := watch.NewQueue()
+	jobWatch, err := watch.New(k8sClient.Clientset(), cfg.K8sNamespace, observations)
+	if err != nil {
+		logger.Error("Failed to build the Job watch", "error", err)
+		os.Exit(1)
+	}
+	jobWatch.Start(ctx)
+
 	// The candidate-schema lifecycle never connects to the warehouse: it runs a
 	// one-shot engine-image Job (ensure_schema/drop_schema) and blocks on it.
 	candidateSchemaCreator := k8s.NewCandidateSchemaCreator(k8sClient, cfg.K8sNamespace, logger)
@@ -230,12 +243,6 @@ func main() {
 	validationReqHandler := handlers.NewValidationRequestedHandler(logger)
 	seedBuildReqHandler := handlers.NewSeedBuildRequestedHandler(logger)
 	compileReqHandler := handlers.NewCompileRequestedHandler(logger)
-	jobStatusHandler := handlers.NewJobStatusHandler(k8sClient, logUploader, &handlers.JobStatusConfig{
-		K8sNamespace:       cfg.K8sNamespace,
-		CheckDelaySeconds:  cfg.K8sCheckDelaySeconds,
-		ErrorMessageMaxLen: cfg.ErrorMessageMaxLength,
-		LogTailLines:       int64(cfg.LogTailLines),
-	}, cancelledSchedulesRepo, outcomes.NewRecorder(logger), logger)
 
 	newConsumer := func(stream, group string, binding pkgredis.MessageHandler) *pkgredis.StreamConsumer {
 		c := pkgredis.NewStreamConsumer(redisClient, stream, group, binding, logger)
@@ -261,14 +268,12 @@ func main() {
 		redis.NewReleasePromotedTeardownBinding(candidateSchemaCleaner, logger))
 	releaseRejectedTeardownConsumer := newConsumer(streams.ReleaseRejectedV1, streams.ExecutorReleaseRejected,
 		redis.NewReleaseRejectedTeardownBinding(candidateSchemaCleaner, logger))
-	checkConsumer := newConsumer(streams.CheckK8sV1, streams.K8sCheckStatus,
-		redis.NewCheckK8sBinding(uowFactory, jobStatusHandler, logger))
 
 	// ---- background workers ----
 
-	// Check tickets and terminal announcements flow through this outbox; the
-	// relay wakes on the notification a committed insert sends, so a status
-	// transition reaches its stream without waiting for a poll.
+	// Task status announcements and release-leg results flow through this
+	// outbox; the relay wakes on the notification a committed insert sends, so
+	// a result reaches its stream without waiting for a poll.
 	outboxWaker, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN(), postgres.OutboxTable, logger)
 	if errors.Is(err, context.Canceled) {
 		logger.Info("Shutdown requested while waiting for the outbox listener")
@@ -316,25 +321,46 @@ func main() {
 		},
 		newAdmissionRepo,
 		cfg.MaxConcurrentJobs, logger,
-		deployer.DispatcherConfig{
-			Tick: 5 * time.Second, BatchSize: 50, Waker: dispatcherWaker,
-			CheckDelay:      time.Duration(cfg.K8sCheckDelaySeconds) * time.Second,
-			FirstCheckDelay: time.Duration(cfg.K8sFirstCheckDelaySeconds) * time.Second,
-		},
+		deployer.DispatcherConfig{Tick: 5 * time.Second, BatchSize: 50, Waker: dispatcherWaker},
 	)
+
+	// Nothing creates or observes a Job until both caches have listed every
+	// Job and pod once: until then an absence from the cache means nothing.
+	if !jobWatch.WaitForCacheSync(ctx) {
+		logger.Info("Shutdown requested while the Job watch synced")
+		os.Exit(0)
+	}
 	runWorker("deploy_dispatcher", deployDispatcher.Run)
 
-	// Every minute, compare the deployments holding a slot with Kubernetes:
-	// return reservations a crashed launcher left to the queue, check Jobs that
-	// vanished, and free the slots of Jobs that finished unobserved.
-	admissionReconciler := deployer.NewReconciler(pgDB, k8sDeployer, newAdmissionRepo, newDeploymentRepo,
-		logger, deployer.ReconcilerConfig{})
-	runWorker("admission_reconciler", admissionReconciler.Run)
+	// The observer follows every created Job to its end: it records what each
+	// attempt shows, ends one that cannot start, and reports its result once
+	// its pods are finished or gone. Every minute it queues every deployment
+	// awaiting its result again.
+	jobControl := k8s.NewJobControl(k8sClient, cfg.K8sNamespace)
+	attemptObserver := observer.New(observer.Config{
+		StartTimeout:       cfg.JobStartTimeout,
+		ErrorMessageMaxLen: cfg.ErrorMessageMaxLength,
+		LogTailLines:       int64(cfg.LogTailLines),
+	}, observer.Deps{
+		NewUoW:     uowFactory,
+		Observed:   postgres.NewObservedDeployments(pgDB, logger),
+		Cache:      jobWatch,
+		Lookup:     jobControl,
+		Terminator: jobControl,
+		Logs:       jobControl,
+		Uploader:   logUploader,
+		Queue:      observations,
+		Legacy:     redis.NewLegacyCheckQueue(redisClient),
+		Outcomes:   outcomes.NewRecorder(logger),
+		Metrics:    ecmetrics.NewObserver(metricsReg),
+		Logger:     logger,
+	})
+	runWorker("observer", attemptObserver.Run)
 
-	// Every second, atomically move due check tickets from the delay queue onto
-	// check.k8s:v1. A missed tick loses nothing: the queue is durable.
-	promoter := delayqueue.NewPromoter(redisClient, logger)
-	runWorker("delayqueue_promoter", func(ctx context.Context) error { return promoter.Run(ctx, time.Second) })
+	// Every minute, return to the queue the reservations a crashed launcher
+	// left behind.
+	admissionReconciler := deployer.NewReconciler(pgDB, newAdmissionRepo, logger, deployer.ReconcilerConfig{})
+	runWorker("admission_reconciler", admissionReconciler.Run)
 
 	runWorker("cancelled_schedules_sweeper", func(ctx context.Context) error {
 		ticker := time.NewTicker(time.Duration(cfg.CancelledSchedulesSweepIntervalMin) * time.Minute)
@@ -392,7 +418,6 @@ func main() {
 	runSchemaOpConsumer("pipeline_run_finished_teardown", pipelineRunFinishedTeardownConsumer)
 	runSchemaOpConsumer("release_promoted_teardown", releasePromotedTeardownConsumer)
 	runSchemaOpConsumer("release_rejected_teardown", releaseRejectedTeardownConsumer)
-	runConsumer("check_k8s", checkConsumer)
 
 	// Everything is initialised and running: readiness may now turn true.
 	startup.Done()

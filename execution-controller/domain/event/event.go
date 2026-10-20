@@ -10,38 +10,7 @@ type Event interface {
 const (
 	EventTypeTaskStatusUpdated     = "task_status_updated"
 	EventTypeTaskExecutionRecorded = "task_execution_recorded"
-	// EventTypeCheckDelayed rows are not XADDed: the publisher writes them to
-	// the delay queue, and the promoter moves them onto check.k8s:v1 when due.
+	// EventTypeCheckDelayed names the status-check tickets a previous version
+	// wrote; the publisher marks them processed without publishing them.
 	EventTypeCheckDelayed = "check_delayed"
 )
-
-// JobCheckRequest is the payload of a check_delayed outbox row. The Publisher
-// writes it into the delay queue (HSET payload + ZADD check_after as the
-// score); check_after is the ZSET score / due time, not a consumer gate.
-type JobCheckRequest struct {
-	TaskID       string
-	ScheduleID   string
-	ScheduleName string
-	ServiceName  string
-	SchemaName   string
-	TableName    string
-	JobName      string
-	CheckAfter   int64 // Unix timestamp for delayed processing
-	NodeType     string
-	ImageTag     string
-	// SecretRef names the continuo-api-* Secret a python-api node's pod
-	// loads its environment from; empty for every other node kind. It rides
-	// every check ticket so a retry rebuilt from the ticket keeps the Secret.
-	SecretRef string
-	// Operation is the dbt verb the Job runs (e.g. "test"); empty for a normal
-	// production `dbt run`. It travels in the durable payload (delay-queue
-	// ticket → promoted stream message) so a check that lands after the Job is
-	// TTL-reaped still carries the verb for retry.
-	Operation  string
-	RetryCount int // current task retry count
-	MaxRetries int // maximum task retries allowed
-	// RunningAnnounced is true once RUNNING has been announced for this attempt.
-	RunningAnnounced bool
-}
-
-func (JobCheckRequest) isEvent() {}

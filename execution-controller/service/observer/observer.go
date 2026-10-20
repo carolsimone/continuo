@@ -1,6 +1,7 @@
 // Package observer follows every attempt execution-controller started to its
 // end. A watch on Jobs and pods queues a Job's name whenever either changes,
-// and a resync queues the Job of every started deployment each minute.
+// and a resync queues the Job of every deployment awaiting its result each
+// minute.
 // Workers take names off the queue, record what the cache shows of the
 // attempt, end an attempt that cannot start, and report the attempt's result
 // once every pod of it is finished or gone.
@@ -71,6 +72,7 @@ type Deps struct {
 	Logs       ports.PodLogReader
 	Uploader   ports.LogUploader
 	Queue      ports.ObservationQueue
+	Legacy     ports.LegacyCheckQueue
 	Outcomes   *outcomes.Recorder
 	Metrics    ports.ObserverMetrics
 	Logger     *slog.Logger
@@ -131,8 +133,9 @@ func (o *Observer) Run(ctx context.Context) error {
 	}
 }
 
-// Resync queues the Job of every starting, running or terminating
-// deployment, so no attempt waits on a watch event that was missed.
+// Resync queues the Job of every deployment awaiting its result, so no
+// attempt waits on a watch event that was missed, and deletes the status-check
+// delay queue a previous version's pod may have written.
 func (o *Observer) Resync(ctx context.Context) error {
 	names, err := o.deps.Observed.ListObservedJobNames(ctx)
 	if err != nil {
@@ -140,6 +143,13 @@ func (o *Observer) Resync(ctx context.Context) error {
 	}
 	for _, name := range names {
 		o.deps.Queue.Add(name)
+	}
+	n, err := o.deps.Legacy.Clear(ctx)
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		o.deps.Logger.Info("Deleted the status-check delay queue a previous version wrote", "keys", n)
 	}
 	return nil
 }
@@ -164,8 +174,13 @@ func (o *Observer) processNext(ctx context.Context) bool {
 }
 
 // Process observes the attempt of jobName's deployment once. A name whose
-// deployment is not starting, running or terminating is ignored.
+// deployment awaits no result is ignored. Until the cache has synced, the
+// name is queued again a second later: an absence from it means nothing yet.
 func (o *Observer) Process(ctx context.Context, jobName string) error {
+	if !o.deps.Cache.Synced() {
+		o.deps.Queue.AddAfter(jobName, time.Second)
+		return nil
+	}
 	ctx, cancel := context.WithTimeout(ctx, processTimeout)
 	defer cancel()
 
@@ -176,7 +191,7 @@ func (o *Observer) Process(ctx context.Context, jobName string) error {
 	if err != nil {
 		return err
 	}
-	if !observed(dep.Status()) {
+	if !dep.AwaitingResult() {
 		o.deps.Metrics.AwaitingPodStop(jobName, false)
 		return nil
 	}
@@ -203,11 +218,6 @@ func (o *Observer) Process(ctx context.Context, jobName string) error {
 		o.deps.Queue.AddAfter(jobName, o.cfg.StartTimeout-waited)
 	}
 	return o.record(ctx, dep, obs, now)
-}
-
-// observed reports whether the observer follows a deployment in status s.
-func observed(s model.Status) bool {
-	return s == model.StatusStarting || s == model.StatusRunning || s == model.StatusTerminating
 }
 
 // processTerminating waits for the pods of an attempt execution-controller
@@ -365,8 +375,8 @@ func (o *Observer) checkStop(dep *model.Deployment, obs model.JobObservation, no
 
 // inTx runs fn on jobName's deployment, locked, in one transaction, and
 // returns the deployment fn saw. It returns nil, and runs nothing, when the
-// deployment is gone or no longer observed: another worker or replica
-// already settled it.
+// deployment is gone or awaits no result: another worker or replica already
+// settled it.
 func (o *Observer) inTx(ctx context.Context, jobName string, fn func(uow.UnitOfWork, *model.Deployment) error) (*model.Deployment, error) {
 	u := o.deps.NewUoW()
 	if err := u.Begin(ctx); err != nil {
@@ -385,7 +395,7 @@ func (o *Observer) inTx(ctx context.Context, jobName string, fn func(uow.UnitOfW
 	if err != nil {
 		return nil, err
 	}
-	if !observed(d.Status()) {
+	if !d.AwaitingResult() {
 		return nil, nil
 	}
 	if err := fn(u, d); err != nil {

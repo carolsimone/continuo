@@ -18,7 +18,6 @@ var frozenGroups = []string{
 	"executor-compile-requested",
 	"executor-validation-result-teardown", "executor-pipeline-run-finished",
 	"executor-release-promoted", "executor-release-rejected",
-	"k8s-check-status",
 }
 
 func TestFrozenConsumerGroupsStillDeclared(t *testing.T) {

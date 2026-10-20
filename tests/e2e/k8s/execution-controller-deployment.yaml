@@ -139,10 +139,6 @@ spec:
             # A pod has 3 minutes to start a container; the chart default is 15.
             - name: JOB_START_TIMEOUT_SECONDS
               value: "180"
-            - name: K8S_CHECK_DELAY_SECONDS
-              value: "5"
-            - name: K8S_FIRST_CHECK_DELAY_SECONDS
-              value: "1"
             - name: LOG_TAIL_LINES
               value: "50"
             - name: ERROR_MESSAGE_MAX_LENGTH

@@ -1,6 +1,6 @@
 // Package outcomes records a candidate Job's terminal result on its deployments
 // row and settles the release leg it belongs to, all on the caller's unit of
-// work. The job-status handler calls it once a validation, seed-build or
+// work. The observer calls it once a validation, seed-build or
 // compile Job is terminal, so the observation, the outcome and the per-node
 // and aggregate results commit together in one transaction.
 package outcomes

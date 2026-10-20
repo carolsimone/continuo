@@ -21,6 +21,7 @@ import (
 	executortest "github.com/carolsimone/continuo/execution-controller/test"
 	"github.com/carolsimone/continuo/pkg/domain"
 	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
@@ -57,7 +58,7 @@ func newHarness(t *testing.T) *harness {
 	h.o = New(Config{StartTimeout: 15 * time.Minute, ErrorMessageMaxLen: 4096, LogTailLines: 50}, Deps{
 		NewUoW:   func() uow.UnitOfWork { return postgres.NewPostgresUnitOfWork(db, logger) },
 		Observed: postgres.NewObservedDeployments(db, logger), Cache: h.cache, Lookup: h.look, Terminator: h.term,
-		Logs: h.logs, Uploader: h.up, Queue: h.q, Outcomes: outcomes.NewRecorder(logger), Metrics: h.m, Logger: logger,
+		Logs: h.logs, Uploader: h.up, Queue: h.q, Legacy: &fakeLegacy{}, Outcomes: outcomes.NewRecorder(logger), Metrics: h.m, Logger: logger,
 	})
 	h.o.now = func() time.Time { return h.now }
 	return h
@@ -423,4 +424,126 @@ func TestResync_QueuesTheJobOfEveryStartedDeployment(t *testing.T) {
 	b := h.started(t, 1, h.now)
 	require.NoError(t, h.o.Resync(context.Background()))
 	assert.ElementsMatch(t, []string{a.JobName(), b.JobName()}, h.q.added)
+}
+
+// A row the previous version released without recording its outcome is
+// reported once its Job is seen ended.
+func TestProcess_ARowReleasedWithoutItsOutcomeIsReported(t *testing.T) {
+	h := newHarness(t)
+	dep := h.started(t, 0, h.now.Add(-time.Hour))
+	_, err := h.db.Exec(`UPDATE deployments SET status = 'done' WHERE id = $1`, dep.ID())
+	require.NoError(t, err)
+	h.cache.set(dep.JobName(), model.JobObservation{JobPresent: true, JobSucceeded: true,
+		Pods: []model.PodObservation{endedPod(model.PodSucceeded, h.now.Add(-50*time.Minute), h.now.Add(-49*time.Minute), 0, "Completed")}})
+
+	require.NoError(t, h.o.Resync(context.Background()))
+	assert.Contains(t, h.q.added, dep.JobName())
+	require.NoError(t, h.o.Process(context.Background(), dep.JobName()))
+
+	assert.Equal(t, "ok", h.reload(t, dep.JobName()).Outcome())
+	status := h.outbox(t, event.EventTypeTaskStatusUpdated)
+	require.Len(t, status, 1)
+	assert.Equal(t, "SUCCEEDED", status[0]["status"])
+}
+
+func TestProcess_AFailedAttemptProcessedTwiceQueuesOneRetry(t *testing.T) {
+	h := newHarness(t)
+	dep := h.started(t, 0, h.now.Add(-time.Minute))
+	h.cache.set(dep.JobName(), model.JobObservation{JobPresent: true, JobFailed: true,
+		Pods: []model.PodObservation{endedPod(model.PodFailed, h.now.Add(-40*time.Second), h.now.Add(-10*time.Second), 1, "Error")}})
+
+	require.NoError(t, h.o.Process(context.Background(), dep.JobName()))
+	require.NoError(t, h.o.Process(context.Background(), dep.JobName()))
+
+	var retries int
+	require.NoError(t, h.db.Get(&retries, `SELECT count(*) FROM deployments WHERE job_name = $1`, dep.JobName()+"-r1"))
+	assert.Equal(t, 1, retries)
+	assert.Len(t, h.outbox(t, event.EventTypeTaskStatusUpdated), 1)
+}
+
+// commitProbe is a unit of work that runs check, on another connection,
+// just before it commits.
+type commitProbe struct {
+	uow.UnitOfWork
+	check func()
+}
+
+func (c *commitProbe) Commit() error {
+	c.check()
+	return c.UnitOfWork.Commit()
+}
+
+// A production failure's FAILED report, its execution record, the row's
+// outcome and the next attempt commit in one transaction.
+func TestSettle_AFailureAndItsRetryCommitTogether(t *testing.T) {
+	h := newHarness(t)
+	dep := h.started(t, 0, h.now.Add(-time.Minute))
+	h.cache.set(dep.JobName(), model.JobObservation{JobPresent: true, JobFailed: true,
+		Pods: []model.PodObservation{endedPod(model.PodFailed, h.now.Add(-40*time.Second), h.now.Add(-10*time.Second), 1, "Error")}})
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	probed := false
+	h.o.deps.NewUoW = func() uow.UnitOfWork {
+		return &commitProbe{UnitOfWork: postgres.NewPostgresUnitOfWork(h.db, logger), check: func() {
+			probed = true
+			assert.Empty(t, h.outbox(t, event.EventTypeTaskStatusUpdated), "nothing is visible before the commit")
+			assert.Empty(t, h.outbox(t, event.EventTypeTaskExecutionRecorded))
+			var retries int
+			require.NoError(t, h.db.Get(&retries, `SELECT count(*) FROM deployments WHERE job_name = $1`, dep.JobName()+"-r1"))
+			assert.Zero(t, retries)
+		}}
+	}
+
+	require.NoError(t, h.o.Process(context.Background(), dep.JobName()))
+
+	require.True(t, probed)
+	assert.Len(t, h.outbox(t, event.EventTypeTaskStatusUpdated), 1)
+	assert.Len(t, h.outbox(t, event.EventTypeTaskExecutionRecorded), 1)
+	assert.Equal(t, "failed", h.reload(t, dep.JobName()).Outcome())
+	assert.Equal(t, model.StatusPending, h.reload(t, dep.JobName()+"-r1").Status())
+}
+
+// failingOutbox fails its nth Create.
+type failingOutbox struct {
+	pkgoutbox.Repository
+	n, calls int
+}
+
+func (f *failingOutbox) Create(ctx context.Context, e *pkgoutbox.Entry) error {
+	f.calls++
+	if f.calls == f.n {
+		return errBoom
+	}
+	return f.Repository.Create(ctx, e)
+}
+
+// failOnSecondCreate is a unit of work whose outbox fails its second Create.
+type failOnSecondCreate struct {
+	uow.UnitOfWork
+	outbox *failingOutbox
+}
+
+func (u *failOnSecondCreate) OutboxRepo() pkgoutbox.Repository {
+	if u.outbox == nil {
+		u.outbox = &failingOutbox{Repository: u.UnitOfWork.OutboxRepo(), n: 2}
+	}
+	return u.outbox
+}
+
+// A failure partway through settling leaves nothing behind: no report, no
+// execution record, and the row still awaits its result.
+func TestSettle_AFailedWriteRollsEverythingBack(t *testing.T) {
+	h := newHarness(t)
+	dep := h.started(t, 0, h.now.Add(-time.Minute))
+	h.cache.set(dep.JobName(), model.JobObservation{JobPresent: true, JobSucceeded: true,
+		Pods: []model.PodObservation{endedPod(model.PodSucceeded, h.now.Add(-40*time.Second), h.now.Add(-10*time.Second), 0, "Completed")}})
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	h.o.deps.NewUoW = func() uow.UnitOfWork {
+		return &failOnSecondCreate{UnitOfWork: postgres.NewPostgresUnitOfWork(h.db, logger)}
+	}
+
+	require.ErrorIs(t, h.o.Process(context.Background(), dep.JobName()), errBoom)
+
+	assert.Empty(t, h.outbox(t, event.EventTypeTaskStatusUpdated))
+	assert.Empty(t, h.outbox(t, event.EventTypeTaskExecutionRecorded))
+	assert.True(t, h.reload(t, dep.JobName()).AwaitingResult(), "the attempt is settled again on the next try")
 }

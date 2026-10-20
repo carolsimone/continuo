@@ -14,10 +14,10 @@ import (
 const defaultMaxRetries = 3
 
 // Mode is the dispatch path that produced this Deployment. Production deploys
-// originate from query.model:v1 or from the job-status handler's retry branch
-// (which queues a failed task's -rN retry in-process, in the same unit of work
-// as its FAILED announcement); validation deploys originate from the
-// candidate-release flow and carry a per-node terminal outcome.
+// originate from query.model:v1 or from the observer's retry of a failed
+// attempt (queued in the same unit of work as its FAILED announcement);
+// validation deploys originate from the candidate-release flow and carry a
+// per-node terminal outcome.
 type Mode string
 
 const (
@@ -406,6 +406,20 @@ func (d *Deployment) ReleaseSlot() error {
 // HasOutcome reports whether the deployment's terminal outcome is recorded.
 func (d *Deployment) HasOutcome() bool { return d.outcomeAt != nil }
 
+// AwaitingResult reports whether the deployment's attempt was started and its
+// result is not recorded yet: it is starting, running or terminating, or done
+// without an outcome (a slot released before the result was recorded).
+func (d *Deployment) AwaitingResult() bool {
+	switch d.status {
+	case StatusStarting, StatusRunning, StatusTerminating:
+		return true
+	case StatusDone:
+		return d.outcomeAt == nil
+	default:
+		return false
+	}
+}
+
 // Observe adds what an observation shows of the attempt to its facts and
 // reports whether it added anything.
 func (d *Deployment) Observe(f AttemptFacts) bool {
@@ -465,10 +479,10 @@ func (d *Deployment) setError(reason string) {
 }
 
 // RecordOutcome attaches the terminal outcome to a started (starting, running,
-// or done-without-outcome) validation, seed-build, OR compile deployment and
-// releases its slot — all three legs report a per-node terminal status the same
-// way: the job-status handler observes the terminal Job and records it here via
-// outcomes.Recorder. Production deployments announce their result through a
+// terminating, or done-without-outcome) validation, seed-build, OR compile
+// deployment and releases its slot — all three legs report a per-node terminal
+// status the same way: the observer sees the attempt end and records it here
+// via outcomes.Recorder. Production deployments announce their result through a
 // different path (Finish) and are rejected. Only "ok" and "failed" are accepted.
 func (d *Deployment) RecordOutcome(outcome, logURI, runResultsURI, failedContainer string, now time.Time) error {
 	if d.mode != ModeValidation && d.mode != ModeSeedBuild && d.mode != ModeCompile {

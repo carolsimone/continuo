@@ -29,8 +29,9 @@ func NewObservedDeployments(exec outbox.Executor, logger *slog.Logger) repositor
 	return &observedDeployments{exec: exec, rows: &deploymentsRepository{exec: exec, logger: logger}}
 }
 
-// observedStatuses binds the statuses of a deployment whose attempt is followed.
-func observedStatuses() any {
+// startedStatuses binds the statuses of a deployment whose Job exists and
+// whose attempt has not ended.
+func startedStatuses() any {
 	return pq.Array(model.StatusStrings([]model.Status{model.StatusStarting, model.StatusRunning, model.StatusTerminating}))
 }
 
@@ -51,8 +52,11 @@ func (r *observedDeployments) FindByJobName(ctx context.Context, jobName string)
 
 func (r *observedDeployments) ListObservedJobNames(ctx context.Context) ([]string, error) {
 	names := []string{}
-	if err := r.exec.SelectContext(ctx, &names,
-		`SELECT job_name FROM deployments WHERE status = ANY($1) AND job_name IS NOT NULL`, observedStatuses()); err != nil {
+	if err := r.exec.SelectContext(ctx, &names, `
+		SELECT job_name FROM deployments
+		WHERE job_name IS NOT NULL
+		  AND (status = ANY($1) OR (status = $2 AND outcome IS NULL))`,
+		startedStatuses(), string(model.StatusDone)); err != nil {
 		return nil, fmt.Errorf("list observed deployments: %w", err)
 	}
 	return names, nil

@@ -38,7 +38,7 @@ func addAt(t *testing.T, ctx context.Context, repo interface {
 	return dep
 }
 
-func TestObserved_ListsTheJobsOfStartedDeploymentsOnly(t *testing.T) {
+func TestObserved_ListsTheJobsOfDeploymentsAwaitingTheirResult(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -48,9 +48,14 @@ func TestObserved_ListsTheJobsOfStartedDeploymentsOnly(t *testing.T) {
 		addAt(t, ctx, repo, "job-"+string(s), s)
 	}
 
+	released := addAt(t, ctx, repo, "job-released", model.StatusStarting)
+	_, err := db.Exec(`UPDATE deployments SET status = 'done' WHERE id = $1`, released.ID())
+	require.NoError(t, err)
+
 	names, err := postgres.NewObservedDeployments(db, testLogger()).ListObservedJobNames(ctx)
 	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{"job-starting", "job-running", "job-terminating"}, names)
+	assert.ElementsMatch(t, []string{"job-starting", "job-running", "job-terminating", "job-released"}, names,
+		"a row done without an outcome still awaits its result")
 }
 
 func TestObserved_FindByJobNameDoesNotWaitForALockedRow(t *testing.T) {

@@ -153,12 +153,10 @@ var _ outbox.Repository = (*fakeOutboxRepo)(nil)
 
 func silentDispatcher(dep deploy.Deployer) *Dispatcher {
 	return &Dispatcher{
-		deployer:        dep,
-		logger:          slog.New(slog.NewTextHandler(io.Discard, nil)),
-		backoff:         model.BackoffPolicy{Base: time.Second, Cap: time.Minute},
-		now:             time.Now,
-		checkDelay:      10 * time.Second,
-		firstCheckDelay: time.Second,
+		deployer: dep,
+		logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		backoff:  model.BackoffPolicy{Base: time.Second, Cap: time.Minute},
+		now:      time.Now,
 	}
 }
 
@@ -186,47 +184,20 @@ func TestDispatcher_DispatchOne_ValidationMode_CallsDeployValidation(t *testing.
 	assert.Equal(t, 0, fk.deployCalls, "production Deploy never invoked for a validation row")
 }
 
-func TestDispatcher_DispatchOne_ValidationMode_OnSuccess_WritesCheckDelayedTicketOnly(t *testing.T) {
+func TestDispatcher_DispatchOne_ValidationMode_OnSuccess_MarksStartedAndWritesNothing(t *testing.T) {
 	fk := &fakeValidationDeployer{}
 	d := silentDispatcher(fk)
 	repo := &fakeDeploymentRepo{}
 	outboxRepo := &fakeOutboxRepo{}
-	vc := deployableValidation()
-	dep := model.NewValidationDeployment(vc, nil, time.Now(), false)
+	dep := model.NewValidationDeployment(deployableValidation(), nil, time.Now(), false)
 
 	require.NoError(t, dep.Reserve())
 	require.NoError(t, d.dispatchOne(context.Background(), repo, outboxRepo, &fakeAggRepo{}, dep))
 
 	require.Len(t, repo.saved, 1)
 	assert.Equal(t, model.StatusStarting, repo.saved[0].Status(), "success marks the Job started")
-	assert.Equal(t, "", repo.saved[0].Outcome(), "no terminal outcome yet — it arrives when the job-status handler observes the terminal Job and records it via outcomes.Recorder")
-
-	// Success writes EXACTLY ONE row: the first check_delayed ticket so the
-	// job-status handler status-checks the validation Job. No task_status_updated
-	// / RUNNING announcement (that is production-only).
-	require.Len(t, outboxRepo.created, 1, "success writes exactly one outbox row")
-	e := outboxRepo.created[0]
-	assert.Equal(t, "check_delayed", e.EventType)
-	assert.Equal(t, streams.CheckK8sV1, e.StreamName)
-	assert.Equal(t, "task", e.AggregateType)
-
-	// The ticket carries the validation job_name and the deterministic synthetic
-	// task/schedule UUIDs derived from (release_id, node_id).
-	wantTaskID, wantScheduleID := model.ValidationSyntheticIDs(vc.ReleaseID, vc.NodeID)
-	assert.Equal(t, wantTaskID, e.AggregateID, "outbox aggregate id is the synthetic task id")
-	var payload struct {
-		TaskID     string `json:"task_id"`
-		ScheduleID string `json:"schedule_id"`
-		JobName    string `json:"job_name"`
-		NodeType   string `json:"node_type"`
-		ImageTag   string `json:"image_tag"`
-	}
-	require.NoError(t, json.Unmarshal(e.Payload, &payload))
-	assert.Equal(t, wantTaskID.String(), payload.TaskID)
-	assert.Equal(t, wantScheduleID.String(), payload.ScheduleID)
-	assert.Equal(t, vc.JobName, payload.JobName)
-	assert.Equal(t, vc.NodeType, payload.NodeType)
-	assert.Equal(t, vc.ImageTag, payload.ImageTag)
+	assert.Equal(t, "", repo.saved[0].Outcome(), "no terminal outcome yet — the observer records it once the Job's attempt ends")
+	assert.Empty(t, outboxRepo.created, "the observer follows the Job; the dispatcher writes nothing")
 }
 
 func TestDispatcher_DispatchOne_ValidationMode_OnPermanentFailure_RecordsOutcomeFailedAndAggregates(t *testing.T) {
@@ -588,44 +559,20 @@ func TestDispatcher_DispatchOne_SeedBuildMode_CallsDeploySeedBuild(t *testing.T)
 	assert.Equal(t, 0, fk.deployCalls, "production Deploy never invoked for a seed-build row")
 }
 
-func TestDispatcher_DispatchOne_SeedBuildMode_OnSuccess_MarksStartedAndWritesCheckDelayedTicket(t *testing.T) {
+func TestDispatcher_DispatchOne_SeedBuildMode_OnSuccess_MarksStartedAndWritesNothing(t *testing.T) {
 	fk := &fakeValidationDeployer{}
 	d := silentDispatcher(fk)
 	repo := &fakeDeploymentRepo{}
 	outboxRepo := &fakeOutboxRepo{}
-	vc := deployableSeedBuild()
-	dep := model.NewSeedBuildDeployment(vc, nil, time.Now())
+	dep := model.NewSeedBuildDeployment(deployableSeedBuild(), nil, time.Now())
 
 	require.NoError(t, dep.Reserve())
 	require.NoError(t, d.dispatchOne(context.Background(), repo, outboxRepo, &fakeAggRepo{}, dep))
 
 	require.Len(t, repo.saved, 1)
 	assert.Equal(t, model.StatusStarting, repo.saved[0].Status(), "success marks the Job started")
-	assert.Equal(t, "", repo.saved[0].Outcome(), "no terminal outcome yet — arrives when the job-status handler observes the terminal Job and records it via outcomes.Recorder")
-
-	// Success writes exactly one outbox row: the first check_delayed ticket.
-	require.Len(t, outboxRepo.created, 1, "success writes exactly one outbox row")
-	e := outboxRepo.created[0]
-	assert.Equal(t, "check_delayed", e.EventType)
-	assert.Equal(t, streams.CheckK8sV1, e.StreamName)
-	assert.Equal(t, "task", e.AggregateType)
-
-	// The ticket carries deterministic synthetic task/schedule UUIDs from (release_id, node_id).
-	wantTaskID, wantScheduleID := model.ValidationSyntheticIDs(vc.ReleaseID, vc.NodeID)
-	assert.Equal(t, wantTaskID, e.AggregateID, "outbox aggregate id is the synthetic task id")
-	var payload struct {
-		TaskID     string `json:"task_id"`
-		ScheduleID string `json:"schedule_id"`
-		JobName    string `json:"job_name"`
-		NodeType   string `json:"node_type"`
-		ImageTag   string `json:"image_tag"`
-	}
-	require.NoError(t, json.Unmarshal(e.Payload, &payload))
-	assert.Equal(t, wantTaskID.String(), payload.TaskID)
-	assert.Equal(t, wantScheduleID.String(), payload.ScheduleID)
-	assert.Equal(t, vc.JobName, payload.JobName)
-	assert.Equal(t, vc.NodeType, payload.NodeType)
-	assert.Equal(t, vc.ImageTag, payload.ImageTag)
+	assert.Equal(t, "", repo.saved[0].Outcome())
+	assert.Empty(t, outboxRepo.created, "the observer follows the Job; the dispatcher writes nothing")
 }
 
 func TestDispatcher_DispatchOne_SeedBuildMode_OnPermanentFailure_RecordsOutcomeFailedAndAggregates(t *testing.T) {
@@ -706,26 +653,19 @@ func TestDispatcher_DispatchOne_CompileMode_CallsDeployCompile(t *testing.T) {
 	assert.Equal(t, 0, fk.seedBuildCalls, "DeploySeedBuild never invoked for a compile row")
 }
 
-func TestDispatcher_DispatchOne_CompileMode_OnSuccess_MarksStartedAndWritesCheckDelayedTicket(t *testing.T) {
+func TestDispatcher_DispatchOne_CompileMode_OnSuccess_MarksStartedAndWritesNothing(t *testing.T) {
 	fk := &fakeValidationDeployer{}
 	d := silentDispatcher(fk)
 	repo := &fakeDeploymentRepo{}
 	outboxRepo := &fakeOutboxRepo{}
-	vc := deployableCompile()
-	dep := model.NewCompileDeployment(vc, nil, time.Now())
+	dep := model.NewCompileDeployment(deployableCompile(), nil, time.Now())
 
 	require.NoError(t, dep.Reserve())
 	require.NoError(t, d.dispatchOne(context.Background(), repo, outboxRepo, &fakeAggRepo{}, dep))
 
 	require.Len(t, repo.saved, 1)
 	assert.Equal(t, model.StatusStarting, repo.saved[0].Status(), "success marks the Job started")
-	assert.Equal(t, "", repo.saved[0].Outcome(), "no terminal outcome yet — arrives when the job-status handler observes the terminal Job and records it via outcomes.Recorder")
-
-	// Success writes exactly one outbox row: the first check_delayed ticket.
-	require.Len(t, outboxRepo.created, 1, "success writes exactly one outbox row")
-	e := outboxRepo.created[0]
-	assert.Equal(t, "check_delayed", e.EventType)
-	assert.Equal(t, streams.CheckK8sV1, e.StreamName)
+	assert.Empty(t, outboxRepo.created, "the observer follows the Job; the dispatcher writes nothing")
 }
 
 func TestDispatcher_DispatchOne_CompileMode_OnPermanentFailure_RecordsOutcomeFailedAndRunsGate(t *testing.T) {

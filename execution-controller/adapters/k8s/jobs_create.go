@@ -140,12 +140,11 @@ type ValidationJobParams struct {
 }
 
 // CreateValidationJob builds and creates a mode=validation K8s Job
-// (idempotent by job name). The Job carries app=dbt-job so existing watchers
-// stay correct, plus the mode=validation label so the job-status handler
-// routes its terminal outcome to outcomes.Recorder, which settles it
-// in-process. release-id/node-id are stored twice: as sanitized labels (for
-// selection/observability) and as raw annotations (the authoritative identity
-// echoed into the recorded outcome).
+// (idempotent by job name). The Job carries app=dbt-job so the Job watch
+// observes it, plus the mode=validation label naming its leg for operators;
+// the observer routes its result by the deployment row's mode.
+// release-id/node-id are stored twice: as sanitized labels (for
+// selection/observability) and as raw annotations (the raw identity).
 func (c *K8sClient) CreateValidationJob(ctx context.Context, params ValidationJobParams) error {
 	exists, err := c.JobExists(ctx, params.Namespace, params.JobName)
 	if err != nil {
@@ -324,8 +323,8 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 // by job name). The Job uses the team image (same as production) and runs
 // `dbt seed --select <TableName>`, materializing into the candidate schema via
 // DBT_TARGET_SCHEMA so the generate_schema_name macro routes the output there.
-// The mode=seed_build label lets the job-status handler route its terminal
-// outcome to outcomes.Recorder for in-process settlement.
+// The mode=seed_build label names its leg for operators; the observer routes
+// its result by the deployment row's mode.
 func (c *K8sClient) CreateSeedBuildJob(ctx context.Context, params ValidationJobParams) error {
 	exists, err := c.JobExists(ctx, params.Namespace, params.JobName)
 	if err != nil {
@@ -504,9 +503,9 @@ func buildSeedBuildPodSpec(p ValidationJobParams, command []string, partialParse
 //     MANIFEST_S3_URI + the S3 credential envs, plus the four PARSE_* envs
 //     when the parse-export leg ran.
 //
-// The mode=compile label lets the job-status handler route its terminal
-// outcome to outcomes.Recorder for in-process settlement. release-id/node-id
-// annotations carry the authoritative identity. ImageTag must be non-empty —
+// The mode=compile label names its leg for operators; the observer routes its
+// result by the deployment row's mode. release-id/node-id annotations carry
+// the raw identity. ImageTag must be non-empty —
 // the team image must be explicitly versioned.
 func (c *K8sClient) CreateCompileJob(ctx context.Context, params ValidationJobParams) error {
 	exists, err := c.JobExists(ctx, params.Namespace, params.JobName)

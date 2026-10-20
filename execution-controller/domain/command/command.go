@@ -7,7 +7,6 @@ import (
 
 	"github.com/carolsimone/continuo/execution-controller/domain/deploy"
 	"github.com/carolsimone/continuo/pkg/domain"
-	"github.com/google/uuid"
 )
 
 // Command is a marker interface for all commands.
@@ -17,8 +16,7 @@ type Command interface {
 
 // DeployTask is the command to deploy one task's dbt job. It is the payload of
 // a queued deployment and carries everything needed both to perform the deploy
-// and to build the RUNNING announcement, the first status-check ticket, and the
-// FAILED announcement afterwards.
+// and to report the attempt's RUNNING and final status afterwards.
 type DeployTask struct {
 	TaskID       string
 	ScheduleID   string
@@ -147,32 +145,3 @@ func (c ValidationDeployTask) ToValidationJobSpec() deploy.ValidationJobSpec {
 		SourceOverlayURI:     c.SourceOverlayURI,
 	}
 }
-
-// CheckJobStatus asks the job-status handler to observe one Kubernetes Job and
-// act on what it finds: re-schedule a check while it runs, or settle it once
-// terminal. It carries everything a retry needs to rebuild the same Job, so a
-// check that lands after the Job is gone can still act.
-type CheckJobStatus struct {
-	TaskID       uuid.UUID
-	ScheduleID   uuid.UUID
-	ScheduleName string
-	ServiceName  string
-	SchemaName   string
-	TableName    string
-	JobName      string
-	NodeType     string
-	ImageTag     string
-	// SecretRef names the continuo-api-* Secret a python-api node's pod
-	// loads its environment from; empty for every other node kind. It rides
-	// every check ticket so a retry rebuilt from the ticket keeps the Secret.
-	SecretRef string
-	Operation string
-	// RetryCount is the task-level attempt number of the Job being checked.
-	RetryCount int32
-	// MaxRetries is the task-level retry budget; zero means "use the service default".
-	MaxRetries int32
-	// RunningAnnounced is true once this attempt has been announced RUNNING.
-	RunningAnnounced bool
-}
-
-func (CheckJobStatus) isCommand() {}

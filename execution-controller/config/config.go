@@ -55,13 +55,6 @@ type Config struct {
 	// JobStartTimeout is how long a Job's pod may take, after the Job is
 	// created, to start any container; past it the attempt is ended.
 	JobStartTimeout time.Duration
-	// K8sCheckDelaySeconds is the delay between two status checks of a running Job.
-	K8sCheckDelaySeconds int
-	// K8sFirstCheckDelaySeconds is how long after a Job is created its first
-	// status check is due. It is deliberately short: the first check is what
-	// announces the task as RUNNING, and a Job that finishes before it is
-	// never observed running at all.
-	K8sFirstCheckDelaySeconds int
 	// LogTailLines is how many trailing log lines feed the error message.
 	LogTailLines int
 	// ErrorMessageMaxLength truncates the error message recorded for a failed Job.
@@ -100,14 +93,12 @@ func Load(v *pkgconfig.Validator) Config {
 		RetentionDays:             envInt("RETENTION_DAYS", 7),
 		RetentionSweepIntervalMin: envInt("RETENTION_SWEEP_INTERVAL_MINUTES", 60),
 
-		HTTPPort:                  envInt("HTTP_PORT", 8084),
-		K8sNamespace:              v.Require("K8S_NAMESPACE"),
-		MaxConcurrentJobs:         maxConcurrentJobs(v),
-		JobStartTimeout:           jobStartTimeout(v),
-		K8sCheckDelaySeconds:      envInt("K8S_CHECK_DELAY_SECONDS", 10),
-		K8sFirstCheckDelaySeconds: envInt("K8S_FIRST_CHECK_DELAY_SECONDS", 1),
-		LogTailLines:              envInt("LOG_TAIL_LINES", 50),
-		ErrorMessageMaxLength:     envInt("ERROR_MESSAGE_MAX_LENGTH", 4096),
+		HTTPPort:              envInt("HTTP_PORT", 8084),
+		K8sNamespace:          v.Require("K8S_NAMESPACE"),
+		MaxConcurrentJobs:     maxConcurrentJobs(v),
+		JobStartTimeout:       jobStartTimeout(v),
+		LogTailLines:          envInt("LOG_TAIL_LINES", 50),
+		ErrorMessageMaxLength: envInt("ERROR_MESSAGE_MAX_LENGTH", 4096),
 
 		ShutdownGrace: pkgconfig.EnvDurationOrDefault("SHUTDOWN_GRACE", defaultShutdownGrace),
 

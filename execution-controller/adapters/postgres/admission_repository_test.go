@@ -153,45 +153,19 @@ func TestAdmission_GetReserved_SkipsLockedAndNonReserved(t *testing.T) {
 	require.ErrorIs(t, err, sql.ErrNoRows, "a row another launcher holds is skipped")
 }
 
-func TestAdmission_ReturnStaleReservedAndListStarted(t *testing.T) {
+func TestAdmission_ReturnStaleReserved(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 	ctx := context.Background()
 	staleReserved := seedProduction(t, db, uuid.New(), time.Now())
 	setStatus(t, db, staleReserved, "reserved", 5*time.Minute)
 	setStatus(t, db, seedProduction(t, db, uuid.New(), time.Now()), "reserved", 10*time.Second)
-	staleRunning := seedProduction(t, db, uuid.New(), time.Now())
-	setStatus(t, db, staleRunning, "running", 5*time.Minute)
-	staleStarting := seedProduction(t, db, uuid.New(), time.Now())
-	setStatus(t, db, staleStarting, "starting", 5*time.Minute)
-	setStatus(t, db, seedProduction(t, db, uuid.New(), time.Now()), "running", 10*time.Second)
-	setStatus(t, db, seedProduction(t, db, uuid.New(), time.Now()), "done", 5*time.Minute)
+	setStatus(t, db, seedProduction(t, db, uuid.New(), time.Now()), "running", 5*time.Minute)
 
-	repo := postgres.NewAdmissionRepository(db, testLogger())
-	returned, err := repo.ReturnStaleReserved(ctx, 2*time.Minute)
+	returned, err := postgres.NewAdmissionRepository(db, testLogger()).ReturnStaleReserved(ctx, 2*time.Minute)
 	require.NoError(t, err)
 	assert.Equal(t, []uuid.UUID{staleReserved}, returned)
 	assert.Equal(t, "pending", statusOf(t, db, staleReserved), "a stale reservation gives its slot back")
-
-	started, err := repo.ListStarted(ctx, 2*time.Minute)
-	require.NoError(t, err)
-	var ids []uuid.UUID
-	for _, d := range started {
-		ids = append(ids, d.ID())
-	}
-	assert.ElementsMatch(t, []uuid.UUID{staleRunning, staleStarting}, ids)
-
-	require.NoError(t, repo.TouchStateChanged(ctx, staleRunning))
-	started, err = repo.ListStarted(ctx, 2*time.Minute)
-	require.NoError(t, err)
-	require.Len(t, started, 1, "touching a row restarts its staleness clock")
-	assert.Equal(t, staleStarting, started[0].ID())
-
-	dep, err := repo.GetStarted(ctx, staleRunning)
-	require.NoError(t, err)
-	assert.Equal(t, model.StatusRunning, dep.Status())
-	_, err = repo.GetStarted(ctx, staleReserved)
-	require.ErrorIs(t, err, sql.ErrNoRows)
 }
 
 func TestAdmission_ReturnStaleReserved_SkipsAReservationBeingLaunched(t *testing.T) {

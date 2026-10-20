@@ -13,26 +13,22 @@ import (
 	"github.com/google/uuid"
 )
 
-// createDeployment enqueues a new pending Deployment aggregate from a
-// QueryModel-shaped event plus task-retry overrides. QueryModelHandler and the
-// job-status handler's retry branch (handleFailedWithRetry, which re-queues a
-// failed task's retry Job in the same unit of work as its FAILED announcement)
-// both call this helper; the only difference is which task retry values get
-// passed in.
+// createDeployment enqueues the pending Deployment of a task's first attempt
+// from a query.model:v1 dispatch.
 //
 // msgProcID is the binding-layer dedup row's UUID (from message_processing);
 // it is stored for provenance. Pass uuid.Nil when no inbound trigger applies.
 //
 // taskMaxRetries is the task-level retry budget carried in the command for the
-// eventual RUNNING/FAILED announcements, distinct from the deploy-attempt
-// budget the aggregate owns; taskMaxRetries <= 0 falls back to
-// pkgevents.DefaultTaskMaxRetries.
+// observer's retry decision and the RUNNING/FAILED announcements, distinct
+// from the deploy-attempt budget the aggregate owns; taskMaxRetries <= 0 falls
+// back to pkgevents.DefaultTaskMaxRetries.
 func createDeployment(
 	ctx context.Context,
 	u uow.UnitOfWork,
 	base events.QueryModel,
 	msgProcID uuid.UUID,
-	taskRetryCount, taskMaxRetries int,
+	taskMaxRetries int,
 ) error {
 	if taskMaxRetries <= 0 {
 		taskMaxRetries = int(pkgevents.DefaultTaskMaxRetries)
@@ -49,7 +45,6 @@ func createDeployment(
 		NodeType:       string(base.NodeType),
 		ImageTag:       base.ImageTag,
 		SecretRef:      base.SecretRef,
-		TaskRetryCount: taskRetryCount,
 		TaskMaxRetries: taskMaxRetries,
 		Operation:      string(base.Operation),
 		Mode:           base.Mode,

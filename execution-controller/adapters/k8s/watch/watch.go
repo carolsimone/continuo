@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/carolsimone/continuo/execution-controller/adapters/k8s"
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	"github.com/carolsimone/continuo/execution-controller/service/ports"
 	batchv1 "k8s.io/api/batch/v1"
@@ -18,10 +19,6 @@ import (
 	batchlisters "k8s.io/client-go/listers/batch/v1"
 	"k8s.io/client-go/tools/cache"
 )
-
-// selector matches the label every Job execution-controller creates, and each
-// of its pods, carries (adapters/k8s/jobs_create.go).
-const selector = "app=dbt-job"
 
 // legacyJobNameLabel is the label the Job controller sets on a Job's pods
 // beside batchv1.JobNameLabel.
@@ -47,7 +44,7 @@ var _ ports.JobCache = (*Watch)(nil)
 func New(cs kubernetes.Interface, namespace string, q ports.ObservationQueue) (*Watch, error) {
 	factory := informers.NewSharedInformerFactoryWithOptions(cs, 0,
 		informers.WithNamespace(namespace),
-		informers.WithTweakListOptions(func(o *metav1.ListOptions) { o.LabelSelector = selector }),
+		informers.WithTweakListOptions(func(o *metav1.ListOptions) { o.LabelSelector = k8s.JobSelector }),
 		informers.WithTransform(trim))
 	jobInformer := factory.Batch().V1().Jobs().Informer()
 	podInformer := factory.Core().V1().Pods().Informer()

@@ -7,13 +7,10 @@ import (
 	"log/slog"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/alicebob/miniredis/v2"
-	"github.com/carolsimone/continuo/execution-controller/adapters/delayqueue"
 	"github.com/carolsimone/continuo/execution-controller/adapters/publisher"
 	"github.com/carolsimone/continuo/execution-controller/domain/event"
-	"github.com/carolsimone/continuo/execution-controller/serialization"
 	"github.com/carolsimone/continuo/execution-controller/service/validation"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
@@ -163,7 +160,7 @@ func TestPublisher_UnknownEventType_IsTransient(t *testing.T) {
 
 // TestPublisher_ContractAllHandledEventTypes is a regression guard that asserts
 // every event_type this service's outbox rows carry — from the dispatcher, the
-// job-status handler, and every other emit site — does NOT return "unknown
+// observer, and every other emit site — does NOT return "unknown
 // event_type". An emit site whose event_type has no matching case in the
 // publisher switch strands its row unpublished with no visible error until an
 // operator notices the missing downstream event. The event_type constants are
@@ -191,12 +188,8 @@ func TestPublisher_ContractAllHandledEventTypes(t *testing.T) {
 		},
 		{
 			eventType:  event.EventTypeCheckDelayed,
-			streamName: streams.CheckK8sV1,
-			payload: mustMarshal(t, serialization.JobCheckRequestFromDomain(event.JobCheckRequest{
-				TaskID: "t1", ScheduleID: "s1", ScheduleName: "daily", ServiceName: "svc",
-				SchemaName: "pub", TableName: "tbl", JobName: "j1", CheckAfter: 1700000000,
-				NodeType: "dbt-model", ImageTag: "sha", RetryCount: 0, MaxRetries: 3,
-			})),
+			streamName: "",
+			payload:    []byte(`{"task_id":"t1","job_name":"j1"}`),
 		},
 		{
 			// Uses the shared constant — the single source of truth for this wire string.
@@ -248,28 +241,22 @@ func mustMarshal(t *testing.T, v any) []byte {
 	return b
 }
 
-// TestPublish_CheckDelayedGoesToDelayQueueNotStream proves a check_delayed
-// outbox row is written into the delay queue (ticket + due time) and never
-// XADDed to its stream — a not-yet-due check waits off the stream until the
-// promoter moves it, instead of self-recirculating.
-func TestPublish_CheckDelayedGoesToDelayQueueNotStream(t *testing.T) {
+// TestPublish_LeftoverCheckDelayedRowIsPublishedNowhere proves a status-check
+// ticket a previous version wrote is marked processed without reaching Redis:
+// no stream entry and no delay-queue key.
+func TestPublish_LeftoverCheckDelayedRowIsPublishedNowhere(t *testing.T) {
 	mr, client := newTestRedis(t)
 	defer mr.Close()
 	p := publisher.NewOutboxPublisher(client, slog.Default())
-	payload, _ := json.Marshal(serialization.JobCheckRequestFromDomain(event.JobCheckRequest{
-		TaskID: uuid.New().String(), ScheduleID: uuid.New().String(), JobName: "job-a",
-		CheckAfter: time.Now().Add(time.Hour).Unix(), RetryCount: 0, MaxRetries: 2,
-	}))
-	entry := &outbox.Entry{ID: uuid.New(), EventType: event.EventTypeCheckDelayed, Payload: payload, StreamName: streams.CheckK8sV1}
+	entry := &outbox.Entry{ID: uuid.New(), EventType: event.EventTypeCheckDelayed,
+		Payload: []byte(`{"task_id":"t1","job_name":"job-a","check_after":1700000000}`)}
 	require.NoError(t, p.Publish(context.Background(), entry))
-	require.False(t, mr.Exists(streams.CheckK8sV1), "check_delayed must not be XADDed")
-	require.True(t, mr.Exists(delayqueue.PendingKey))
-	require.True(t, mr.Exists(delayqueue.TicketsKey))
+	assert.Empty(t, mr.Keys(), "nothing is written to Redis")
 }
 
 // TestPublish_TaskExecutionRecordedUsesTypedMap proves task_execution_recorded,
-// emitted by the job-status handler, is XADDed via its typed ToMap(), not
-// dropped as unknown.
+// emitted by the observer, is XADDed via its typed ToMap(), not dropped as
+// unknown.
 func TestPublish_TaskExecutionRecordedUsesTypedMap(t *testing.T) {
 	mr, client := newTestRedis(t)
 	defer mr.Close()
@@ -322,66 +309,6 @@ func TestPublisher_PayloadShapesUnmarshalSuccessfully(t *testing.T) {
 			require.NotEmpty(t, raw)
 		})
 	}
-}
-
-// TestPublisher_CheckDelayed_OutOfRangeMaxRetries_IsPermanent guards Fix #5:
-// an out-of-range numeric field on a known, well-formed event_type is a
-// deterministic bad payload — retrying it can never succeed — so it must be
-// classified as pkgevents.ErrPermanent.
-func TestPublisher_CheckDelayed_OutOfRangeMaxRetries_IsPermanent(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	r := newRedis(t)
-	pub := publisher.NewOutboxPublisher(r, logger)
-
-	payload := mustMarshal(t, serialization.JobCheckRequestFromDomain(event.JobCheckRequest{
-		TaskID: "t1", ScheduleID: "s1", ScheduleName: "daily", ServiceName: "svc",
-		SchemaName: "pub", TableName: "tbl", JobName: "j1", NodeType: "dbt-model",
-		ImageTag: "sha", MaxRetries: 1 << 40, // exceeds int32 range
-	}))
-
-	err := pub.Publish(context.Background(), &outbox.Entry{
-		ID: uuid.New(), EventType: event.EventTypeCheckDelayed, StreamName: streams.CheckK8sV1, Payload: payload,
-	})
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, pkgevents.ErrPermanent),
-		"out-of-range max_retries must be permanent (ErrPermanent), not retried forever")
-}
-
-// ticketPayload extracts the check payload from the delay-queue ticket envelope
-// stored in TicketsKey (the envelope wraps the payload with the outbox entry ID).
-func ticketPayload(t *testing.T, raw string) string {
-	t.Helper()
-	var env struct {
-		Payload string `json:"payload"`
-	}
-	require.NoError(t, json.Unmarshal([]byte(raw), &env))
-	return env.Payload
-}
-
-// TestPublish_CheckDelayed_CarriesRunningAnnounced verifies running_announced
-// survives the check_delayed → delay-queue typed-payload conversion.
-func TestPublish_CheckDelayed_CarriesRunningAnnounced(t *testing.T) {
-	mr, client := newTestRedis(t)
-	defer mr.Close()
-	p := publisher.NewOutboxPublisher(client, slog.Default())
-
-	raw, err := json.Marshal(serialization.JobCheckRequestFromDomain(event.JobCheckRequest{
-		TaskID:           uuid.New().String(),
-		ScheduleID:       uuid.New().String(),
-		JobName:          "job-1",
-		RunningAnnounced: true,
-	}))
-	require.NoError(t, err)
-
-	require.NoError(t, p.Publish(context.Background(), &outbox.Entry{
-		ID: uuid.New(), EventType: event.EventTypeCheckDelayed, StreamName: streams.CheckK8sV1, Payload: raw,
-	}))
-
-	raw2, err := client.HGet(context.Background(), delayqueue.TicketsKey, "job-1").Result()
-	require.NoError(t, err)
-	var ck pkgevents.CheckK8s
-	require.NoError(t, json.Unmarshal([]byte(ticketPayload(t, raw2)), &ck))
-	assert.True(t, ck.RunningAnnounced, "running_announced must survive check_delayed → delay-queue conversion")
 }
 
 // TestPublisher_NodeUpdatedRowIsUnknown pins that execution-controller

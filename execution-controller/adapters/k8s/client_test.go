@@ -3,10 +3,10 @@ package k8s
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/carolsimone/continuo/execution-controller/adapters/commandcfg"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
@@ -14,9 +14,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	batchv1 "k8s.io/api/batch/v1"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
@@ -207,28 +206,38 @@ func TestCreateQueryJob_SetsTTLSecondsAfterFinished(t *testing.T) {
 	assert.Equal(t, jobTTLSecondsAfterFinished, *job.Spec.TTLSecondsAfterFinished)
 }
 
-func TestListJobStates_FinishedFromConditions(t *testing.T) {
-	done := metav1.NewTime(time.Now().Add(-5 * time.Minute))
-	jobs := []runtime.Object{
-		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "running", Namespace: "default", Labels: map[string]string{"app": "dbt-job"}},
-			Status: batchv1.JobStatus{Active: 1}},
-		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "complete", Namespace: "default", Labels: map[string]string{"app": "dbt-job"}},
-			Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue, LastTransitionTime: done}}}},
-		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "failed", Namespace: "default", Labels: map[string]string{"app": "dbt-job"}},
-			Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue, LastTransitionTime: done}}}},
-		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "schema-op", Namespace: "default", Labels: map[string]string{"app": "continuo-schema-op"}}},
-	}
-	c := &K8sClient{clientset: fake.NewSimpleClientset(jobs...), logger: slog.Default()}
-
-	got, err := c.ListJobStates(context.Background(), "default", "app=dbt-job")
+// The Job watch selects JobSelector, so every Job execution-controller
+// creates, and every pod of one, must carry the label it matches.
+func TestEveryJobKindCarriesTheLabelTheWatchSelects(t *testing.T) {
+	t.Setenv("VALIDATION_IMAGE", "ghcr.io/x/runtime:v1")
+	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh")
+	t.Setenv("S3_SIDECAR_IMAGE", "ghcr.io/x/sidecar:v1")
+	sel, err := labels.Parse(JobSelector)
 	require.NoError(t, err)
-	require.Len(t, got, 3, "schema-op Jobs take no slot and are not listed")
-	assert.False(t, got["running"].Finished)
-	assert.True(t, got["complete"].Finished)
-	assert.WithinDuration(t, done.Time, got["complete"].FinishedAt, time.Second)
-	assert.True(t, got["failed"].Finished)
-}
+	cs := fake.NewSimpleClientset()
+	c := &K8sClient{logger: slog.New(slog.NewTextHandler(io.Discard, nil)), commands: commandcfg.Defaults()}
+	c.setClientsetForTest(cs)
+	ctx := context.Background()
+	cand := ValidationJobParams{ReleaseID: "r1", NodeID: "public.orders", ServiceName: "svc", SchemaName: "public",
+		TableName: "orders", NodeType: "dbt-model", ImageTag: "v1", CandidateSchema: "_cand_r1",
+		CandidateArtifactURI: "s3://b/sql", ManifestS3URI: "s3://b/manifest.json", Namespace: "ns"}
+	require.NoError(t, c.CreateQueryJob(ctx, JobParams{JobName: "task", TaskID: "t", ScheduleID: "s", ServiceName: "svc",
+		SchemaName: "public", TableName: "orders", NodeType: "dbt-model", ImageTag: "v1", Namespace: "ns"}))
+	v := cand
+	v.JobName = "validate"
+	require.NoError(t, c.CreateValidationJob(ctx, v))
+	sb := cand
+	sb.JobName, sb.NodeType = "seed", "dbt-seed"
+	require.NoError(t, c.CreateSeedBuildJob(ctx, sb))
+	cp := cand
+	cp.JobName = "compile"
+	require.NoError(t, c.CreateCompileJob(ctx, cp))
 
-func TestDBTJobLabelSelector_MatchesTheLabelJobsCarry(t *testing.T) {
-	assert.Equal(t, "app=dbt-job", dbtJobLabelSelector)
+	jobs, err := cs.BatchV1().Jobs("ns").List(ctx, metav1.ListOptions{})
+	require.NoError(t, err)
+	require.Len(t, jobs.Items, 4)
+	for _, j := range jobs.Items {
+		assert.True(t, sel.Matches(labels.Set(j.Labels)), "Job %s", j.Name)
+		assert.True(t, sel.Matches(labels.Set(j.Spec.Template.Labels)), "pod template of Job %s", j.Name)
+	}
 }

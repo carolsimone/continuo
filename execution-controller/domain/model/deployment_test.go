@@ -486,3 +486,21 @@ func TestDeployment_CandidateRecordsItsOutcomeFromTerminating(t *testing.T) {
 	require.NoError(t, v.RecordOutcome("failed", "", "", "", now))
 	assert.Equal(t, model.StatusDone, v.Status())
 }
+
+func TestDeployment_AwaitingResult(t *testing.T) {
+	now := time.Now()
+	d := productionDeployment(t)
+	assert.False(t, d.AwaitingResult(), "pending: no attempt started")
+	require.NoError(t, d.Reserve())
+	assert.False(t, d.AwaitingResult(), "reserved: no Job yet")
+	require.NoError(t, d.MarkStarted(now))
+	assert.True(t, d.AwaitingResult(), "starting")
+	require.NoError(t, d.BeginTermination(pkgmodel.FailureReasonImagePull, ""))
+	assert.True(t, d.AwaitingResult(), "terminating")
+	require.NoError(t, d.Finish("failed", now))
+	assert.False(t, d.AwaitingResult(), "done with its outcome recorded")
+
+	released := model.ReconstituteProduction(d.ID(), nil, d.Command(), model.StatusDone, 0, 3, now, now, &now, nil,
+		"", nil, model.AttemptFacts{})
+	assert.True(t, released.AwaitingResult(), "a slot released before the result was recorded still awaits it")
+}

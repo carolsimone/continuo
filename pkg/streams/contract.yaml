@@ -48,15 +48,6 @@ streams:
 
   # ---------------- execution-controller streams ----------------
 
-  - name: check.k8s:v1
-    const: CheckK8sV1
-    description: Delayed status-check tickets; a promoter moves due tickets from the delay queue into the stream.
-    producers: [execution-controller]
-    consumers:
-      - service: execution-controller
-        group: k8s-check-status
-        const: K8sCheckStatus
-
   - name: outbox.dead_letter:v1
     const: OutboxDeadLetterV1
     description: Terminal outbox publish failures (permanent payload errors, or transient errors that exhausted their backoff budget), emitted by every service's outbox processor with the fields the row would have published. dead-letter-controller stores them for listing and redrive.
@@ -254,6 +245,7 @@ streams:
 # Streams removed from the contract. dead-letter-controller deletes their keys
 # from Redis; nothing produces or consumes them.
 retired_streams:
+  - name: check.k8s:v1
   - name: compile.node.completed:v1
   - name: initialize.run:v1
   - name: manifest.loaded.candidate:v1

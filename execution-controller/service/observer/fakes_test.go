@@ -11,13 +11,15 @@ import (
 	"github.com/google/uuid"
 )
 
-// fakeCache serves a fixed observation per Job name.
+// fakeCache serves a fixed observation per Job name; notSynced makes it
+// report a cache that has not listed everything yet.
 type fakeCache struct {
-	mu  sync.Mutex
-	obs map[string]model.JobObservation
+	mu        sync.Mutex
+	obs       map[string]model.JobObservation
+	notSynced bool
 }
 
-func (c *fakeCache) Synced() bool { return true }
+func (c *fakeCache) Synced() bool { return !c.notSynced }
 func (c *fakeCache) Observe(jobName string) model.JobObservation {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -102,3 +104,15 @@ func (f *fakeObserved) FindByJobName(_ context.Context, jobName string) (*model.
 }
 func (f *fakeObserved) ListObservedJobNames(context.Context) ([]string, error)     { return f.names, f.err }
 func (f *fakeObserved) StateAge(context.Context, uuid.UUID) (time.Duration, error) { return 0, f.err }
+
+// fakeLegacy counts Clear calls and reports n keys deleted.
+type fakeLegacy struct {
+	clears int
+	n      int64
+	err    error
+}
+
+func (l *fakeLegacy) Clear(context.Context) (int64, error) {
+	l.clears++
+	return l.n, l.err
+}
