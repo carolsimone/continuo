@@ -787,7 +787,7 @@ func TestHasTaskAt_ReturnsFalseWhenMissing(t *testing.T) {
 // Start refuses a plan for: pkg/domain.ComputeJobName returns an error when a
 // task's identity and run-id suffix both sanitize to nothing.
 func TestComputeJobName_RejectsUnsanitizableIdentity(t *testing.T) {
-	if _, err := domain.ComputeJobName("-", "-", "-", ""); err == nil {
+	if _, err := domain.ComputeJobName("-", "-", "-", "", 0); err == nil {
 		t.Fatal("ComputeJobName must reject an identity that sanitizes to empty")
 	}
 }

@@ -14,6 +14,7 @@ func TestComputeJobName(t *testing.T) {
 		schema      string
 		table       string
 		scheduleID  string
+		attempt     int
 		expected    string
 		expectError bool
 	}{
@@ -168,11 +169,50 @@ func TestComputeJobName(t *testing.T) {
 			scheduleID: "b5c6d7e8-yyyy",
 			expected:   "very-long-service-name-very-long-schema-name-very-long-b5c6d7e8",
 		},
+		{
+			name:       "attempt 1 appends -r1",
+			service:    "analytics",
+			schema:     "public",
+			table:      "users",
+			scheduleID: scheduleID,
+			attempt:    1,
+			expected:   "analytics-public-users-" + shortSuffix + "-r1",
+		},
+		{
+			// The prefix gives up room for "-r1"; the run-id suffix stays whole
+			// and the name is exactly 63 characters.
+			name:       "attempt 1 at the length limit keeps the run-id suffix",
+			service:    "very-long-service-name",
+			schema:     "very-long-schema-name",
+			table:      "very-long-table-name",
+			scheduleID: "a1b2c3d4-xxxx",
+			attempt:    1,
+			expected:   "very-long-service-name-very-long-schema-name-very-l-a1b2c3d4-r1",
+		},
+		{
+			// A cut that ends on a hyphen is trimmed, so no name holds "--".
+			name:       "attempt 10 at the length limit trims the hyphen the cut leaves",
+			service:    "very-long-service-name",
+			schema:     "very-long-schema-name",
+			table:      "very-long-table-name",
+			scheduleID: "a1b2c3d4-xxxx",
+			attempt:    10,
+			expected:   "very-long-service-name-very-long-schema-name-very-a1b2c3d4-r10",
+		},
+		{
+			name:        "negative attempt is refused",
+			service:     "svc",
+			schema:      "sc",
+			table:       "t",
+			scheduleID:  scheduleID,
+			attempt:     -1,
+			expectError: true,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := ComputeJobName(tt.service, tt.schema, tt.table, tt.scheduleID)
+			result, err := ComputeJobName(tt.service, tt.schema, tt.table, tt.scheduleID, tt.attempt)
 
 			if tt.expectError {
 				if err == nil {

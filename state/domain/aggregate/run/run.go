@@ -404,7 +404,7 @@ func (r *Run) Start(
 		if !ok {
 			return nil, fmt.Errorf("%w: %s", ErrPlanNodeNotInGraph, p.Key)
 		}
-		jobName, err := domain.ComputeJobName(n.ServiceName, n.SchemaName, n.TableName, r.scheduleID.String())
+		jobName, err := domain.ComputeJobName(n.ServiceName, n.SchemaName, n.TableName, r.scheduleID.String(), 0)
 		if err != nil {
 			return nil, fmt.Errorf("name the job of %s: %w", p.Key, err)
 		}

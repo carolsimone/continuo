@@ -76,7 +76,7 @@ func TestStart_StoresEveryTaskAndDispatchesTheReadyOnes(t *testing.T) {
 	require.Len(t, tc.bulkCreated, 8)
 	tasks := createdByKey(tc)
 	c := tasks[fkey("ftable_c")]
-	jobName, err := domain.ComputeJobName("service-3", "e2e_schema", "ftable_c", r.ScheduleID().String())
+	jobName, err := domain.ComputeJobName("service-3", "e2e_schema", "ftable_c", r.ScheduleID().String(), 0)
 	require.NoError(t, err)
 	assert.Equal(t, run.Task{
 		TaskID: run.TaskIDFor("default", r.ScheduleID(), fkey("ftable_c")), ScheduleID: r.ScheduleID(),

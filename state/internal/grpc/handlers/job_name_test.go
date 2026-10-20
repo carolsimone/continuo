@@ -137,7 +137,7 @@ func TestComputeJobName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := pkgDomain.ComputeJobName(tt.service, tt.schema, tt.table, tt.scheduleID)
+			result, err := pkgDomain.ComputeJobName(tt.service, tt.schema, tt.table, tt.scheduleID, 0)
 
 			if tt.expectError {
 				if err == nil {
