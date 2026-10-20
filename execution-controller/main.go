@@ -162,6 +162,14 @@ func main() {
 	liveReg.AddProbe("postgres", 5*time.Second, func(ctx context.Context) error { return pgDB.PingContext(ctx) })
 	metricsReg.WatchDB(pgDB.DB, cfg.Postgres.DB)
 
+	// execution-controller reads columns the newest execution migration adds,
+	// so it refuses to start until that migration has applied; the pod
+	// restarts until it has. Nothing else has started yet.
+	if err := handlers.CheckSchema(ctx, postgres.NewSchemaColumns(pgDB)); err != nil {
+		logger.Error("Refusing to start: the execution database is not migrated", "error", err)
+		os.Exit(1)
+	}
+
 	// Redis is a separate workload that may still be starting (or its Service
 	// not yet resolvable) when this process boots, so wait for it with backoff
 	// instead of exiting on the first refused dial.
