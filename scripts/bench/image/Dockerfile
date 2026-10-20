@@ -1,5 +1,6 @@
 # Benchmark stand-in for a team dbt image. `dbt` is a shell script that prints a
-# line and exits at once (or after SLEEP_SECONDS); tables named fail_* fail.
+# line and exits at once (or after SLEEP_SECONDS); tables named fail_* fail, and
+# tables named once_* fail their first attempt only.
 # Used only by scripts/bench.
 FROM busybox:1.37.0
 ARG SLEEP_SECONDS=0

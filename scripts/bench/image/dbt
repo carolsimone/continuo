@@ -1,8 +1,10 @@
 #!/bin/sh
 # Benchmark stand-in for dbt. execution-controller runs it as
-# `dbt <verb> --select <node>` with TABLE_NAME set. It prints one line (an empty
-# log skips the log upload), never prints "Nothing to do" (which the executor
-# reads as a no-op failure), optionally sleeps, and fails for tables named fail_*.
+# `dbt <verb> --select <node>` with TABLE_NAME and JOB_NAME set. It prints one
+# line (an empty log skips the log upload), never prints "Nothing to do" (which
+# the executor reads as a no-op failure), optionally sleeps, fails for tables
+# named fail_*, and fails a table named once_* on its first attempt only: a
+# retry's Job name ends in -r<attempt>.
 set -eu
 verb="${1:-run}"
 node="${TABLE_NAME:-unknown}"
@@ -15,6 +17,15 @@ case "${node}" in
   fail_*)
     echo "bench: ${node} fails on purpose" >&2
     exit 1
+    ;;
+  once_*)
+    case "${JOB_NAME:-}" in
+      *-r[0-9] | *-r[0-9][0-9]) ;;
+      *)
+        echo "bench: ${node} fails its first attempt on purpose" >&2
+        exit 1
+        ;;
+    esac
     ;;
 esac
 echo "bench: ${node} completed"
