@@ -331,7 +331,7 @@ func (v NodeType) Runtime() NodeRuntime {
 	return ""
 }
 
-// FailureClass — What kind of failure ended an attempt of a task. execution-controller records it with every failed attempt it observes; state's retry policy decides from it whether the task is tried again.
+// FailureClass — What kind of failure ended an attempt of a task. execution-controller's observer classifies each attempt it watches end in failure and records the class with the attempt's facts.
 // Values come from the vocabulary "failure_class" in contract.yaml, in
 // declaration order.
 type FailureClass string
@@ -341,13 +341,13 @@ const (
 	FailureClassTask FailureClass = "task"
 	// FailureClassResource — the pod ran out of a node resource; it was killed for memory or evicted.
 	FailureClassResource FailureClass = "resource"
-	// FailureClassInfra — the attempt was lost to the platform (its node, its Job or its record), or Kubernetes refused to create its Job.
+	// FailureClassInfra — the attempt was lost to the platform; its node or its Job is gone.
 	FailureClassInfra FailureClass = "infra"
 	// FailureClassStart — the pod could not start its containers (an image pull, a missing Secret or ConfigMap, a container the runtime could not create).
 	FailureClassStart FailureClass = "start"
-	// FailureClassTimeout — the attempt ran out of time, before its main container started or before it finished.
+	// FailureClassTimeout — the attempt ran out of time, before any container of its pod started or before it finished.
 	FailureClassTimeout FailureClass = "timeout"
-	// FailureClassInvalid — the dispatch or the task cannot succeed as given; trying again changes nothing.
+	// FailureClassInvalid — the task as dispatched cannot produce its result; dbt found nothing to build.
 	FailureClassInvalid FailureClass = "invalid"
 )
 
@@ -398,10 +398,6 @@ const (
 	FailureReasonNodeLost FailureReason = "node_lost"
 	// FailureReasonJobMissing — the attempt's Job is gone from Kubernetes and no pod of it is left.
 	FailureReasonJobMissing FailureReason = "job_missing"
-	// FailureReasonAttemptLost — execution-controller holds neither a record nor a Job of an attempt that was acknowledged.
-	FailureReasonAttemptLost FailureReason = "attempt_lost"
-	// FailureReasonCreateFailed — Kubernetes refused to create the attempt's Job on every try.
-	FailureReasonCreateFailed FailureReason = "create_failed"
 	// FailureReasonImagePull — the pod could not pull an image (ErrImagePull, ImagePullBackOff).
 	FailureReasonImagePull FailureReason = "image_pull"
 	// FailureReasonInvalidImage — an image reference of the pod is malformed (InvalidImageName).
@@ -410,16 +406,10 @@ const (
 	FailureReasonMissingConfig FailureReason = "missing_config"
 	// FailureReasonCreateContainer — the container runtime could not create a container (CreateContainerError).
 	FailureReasonCreateContainer FailureReason = "create_container"
-	// FailureReasonStartTimeout — the main container had not started when the start timeout expired.
+	// FailureReasonStartTimeout — no container of the pod, init or main, had started when the start timeout expired.
 	FailureReasonStartTimeout FailureReason = "start_timeout"
 	// FailureReasonDeadlineExceeded — the Job ran past its active deadline and Kubernetes stopped it.
 	FailureReasonDeadlineExceeded FailureReason = "deadline_exceeded"
-	// FailureReasonInvalidNodeType — the dispatch names a node type execution-controller cannot run.
-	FailureReasonInvalidNodeType FailureReason = "invalid_node_type"
-	// FailureReasonMalformedDispatch — the dispatch's fields cannot build a Job (its operation, image tag, Secret reference or dbt command).
-	FailureReasonMalformedDispatch FailureReason = "malformed_dispatch"
-	// FailureReasonJobNameCollision — a Job of the dispatched name already exists for another task or attempt.
-	FailureReasonJobNameCollision FailureReason = "job_name_collision"
 	// FailureReasonDbtNothingToDo — dbt exited 0 having matched no node ("Nothing to do"), so nothing was built.
 	FailureReasonDbtNothingToDo FailureReason = "dbt_nothing_to_do"
 )
@@ -432,17 +422,12 @@ func FailureReasons() []FailureReason {
 		FailureReasonEvicted,
 		FailureReasonNodeLost,
 		FailureReasonJobMissing,
-		FailureReasonAttemptLost,
-		FailureReasonCreateFailed,
 		FailureReasonImagePull,
 		FailureReasonInvalidImage,
 		FailureReasonMissingConfig,
 		FailureReasonCreateContainer,
 		FailureReasonStartTimeout,
 		FailureReasonDeadlineExceeded,
-		FailureReasonInvalidNodeType,
-		FailureReasonMalformedDispatch,
-		FailureReasonJobNameCollision,
 		FailureReasonDbtNothingToDo,
 	}
 }
@@ -460,10 +445,6 @@ func (v FailureReason) IsValid() bool {
 		return true
 	case FailureReasonJobMissing:
 		return true
-	case FailureReasonAttemptLost:
-		return true
-	case FailureReasonCreateFailed:
-		return true
 	case FailureReasonImagePull:
 		return true
 	case FailureReasonInvalidImage:
@@ -475,12 +456,6 @@ func (v FailureReason) IsValid() bool {
 	case FailureReasonStartTimeout:
 		return true
 	case FailureReasonDeadlineExceeded:
-		return true
-	case FailureReasonInvalidNodeType:
-		return true
-	case FailureReasonMalformedDispatch:
-		return true
-	case FailureReasonJobNameCollision:
 		return true
 	case FailureReasonDbtNothingToDo:
 		return true
@@ -501,10 +476,6 @@ func (v FailureReason) Class() FailureClass {
 		return FailureClassInfra
 	case FailureReasonJobMissing:
 		return FailureClassInfra
-	case FailureReasonAttemptLost:
-		return FailureClassInfra
-	case FailureReasonCreateFailed:
-		return FailureClassInfra
 	case FailureReasonImagePull:
 		return FailureClassStart
 	case FailureReasonInvalidImage:
@@ -517,12 +488,6 @@ func (v FailureReason) Class() FailureClass {
 		return FailureClassTimeout
 	case FailureReasonDeadlineExceeded:
 		return FailureClassTimeout
-	case FailureReasonInvalidNodeType:
-		return FailureClassInvalid
-	case FailureReasonMalformedDispatch:
-		return FailureClassInvalid
-	case FailureReasonJobNameCollision:
-		return FailureClassInvalid
 	case FailureReasonDbtNothingToDo:
 		return FailureClassInvalid
 	}
