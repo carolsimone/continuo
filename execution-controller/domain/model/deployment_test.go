@@ -382,14 +382,13 @@ func TestDeployment_SlotLifecycle(t *testing.T) {
 func TestDeployment_FinishAcceptsADoneRowWithoutOutcome(t *testing.T) {
 	now := time.Now()
 	d := productionDeployment(t)
-	require.NoError(t, d.Reserve())
-	require.NoError(t, d.MarkStarted(now))
-	require.NoError(t, d.ReleaseSlot())
-	assert.Equal(t, model.StatusDone, d.Status())
-	assert.False(t, d.HasOutcome())
+	released := model.ReconstituteProduction(d.ID(), nil, d.Command(), model.StatusDone, 0, 3, now, now, &now, nil,
+		"", nil, model.AttemptFacts{})
+	assert.False(t, released.HasOutcome())
 
-	require.NoError(t, d.Finish("failed", now), "a status check that arrives after reconciliation released the slot still records the outcome")
-	assert.Equal(t, "failed", d.Outcome())
+	require.NoError(t, released.Finish("failed", now), "a row released before its result was recorded still records it")
+	assert.Equal(t, "failed", released.Outcome())
+	assert.Equal(t, model.StatusDone, released.Status())
 }
 
 func TestDeployment_FinishRejections(t *testing.T) {
@@ -404,13 +403,6 @@ func TestDeployment_FinishRejections(t *testing.T) {
 	require.NoError(t, v.Reserve())
 	require.NoError(t, v.MarkStarted(now))
 	require.Error(t, v.Finish("ok", now), "candidate deployments record through RecordOutcome")
-}
-
-func TestDeployment_ReleaseSlotOnlyFromStartedStates(t *testing.T) {
-	d := productionDeployment(t)
-	require.Error(t, d.ReleaseSlot())
-	require.NoError(t, d.Reserve())
-	require.Error(t, d.ReleaseSlot(), "a reserved row is launched, not released")
 }
 
 func TestDeployment_TransientFailureReturnsTheSlot(t *testing.T) {

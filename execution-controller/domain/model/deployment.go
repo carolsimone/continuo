@@ -362,9 +362,9 @@ func (d *Deployment) MarkRunning() (bool, error) {
 }
 
 // settle records a terminal outcome and ends the deployment done. The Job
-// exists (starting, running or terminating), or reconciliation already
-// released the slot without an outcome (done): recording on a done row is not
-// a status move.
+// exists (starting, running or terminating), or the row is done without an
+// outcome (an older version released its slot before recording the result):
+// recording on a done row is not a status move.
 func (d *Deployment) settle(outcome string, now time.Time) error {
 	if d.outcomeAt != nil {
 		return fmt.Errorf("outcome already recorded for deployment %s", d.id)
@@ -382,7 +382,7 @@ func (d *Deployment) settle(outcome string, now time.Time) error {
 
 // Finish records a production Job's terminal outcome ("ok" or "failed") and
 // releases its slot. A recorded outcome marks the Job's result as reported, so
-// a later status check for the same Job writes nothing.
+// observing the same Job again writes nothing.
 func (d *Deployment) Finish(outcome string, now time.Time) error {
 	if d.mode != ModeProduction {
 		return fmt.Errorf("Finish called on %s deployment %s; candidates record through RecordOutcome", d.mode, d.id)
@@ -393,22 +393,13 @@ func (d *Deployment) Finish(outcome string, now time.Time) error {
 	return d.settle(outcome, now)
 }
 
-// ReleaseSlot frees the slot of a started deployment whose Job finished
-// without a status check recording it. The outcome stays unset, so a status
-// check that arrives later still records and reports it.
-func (d *Deployment) ReleaseSlot() error {
-	if !d.status.InFlight() || d.status == StatusReserved {
-		return fmt.Errorf("deployment %s cannot release its slot from %q: only a started deployment's Job can finish", d.id, d.status)
-	}
-	return d.moveTo(StatusDone)
-}
-
 // HasOutcome reports whether the deployment's terminal outcome is recorded.
 func (d *Deployment) HasOutcome() bool { return d.outcomeAt != nil }
 
 // AwaitingResult reports whether the deployment's attempt was started and its
 // result is not recorded yet: it is starting, running or terminating, or done
-// without an outcome (a slot released before the result was recorded).
+// without an outcome (a row an older version released before recording the
+// result).
 func (d *Deployment) AwaitingResult() bool {
 	switch d.status {
 	case StatusStarting, StatusRunning, StatusTerminating:
