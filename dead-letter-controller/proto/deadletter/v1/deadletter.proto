@@ -18,8 +18,8 @@ service DeadLetterService {
   // RedriveDeadLetters republishes every listed dead letter to its original
   // stream, or none: NOT_FOUND for an unknown id, FAILED_PRECONDITION for one
   // past the 30-day replay horizon or one that cannot be redriven (its fields
-  // are not a message, or the contract retired or does not name its stream
-  // or consumer group), INVALID_ARGUMENT for no ids or a blank reason. A dead
+  // are not a message, or the streams contract retired or does not name its
+  // stream or consumer group), INVALID_ARGUMENT for no ids or a blank reason. A dead
   // letter already redriven is returned unchanged. The caller's identity is
   // read from the x-continuo-user-id metadata.
   rpc RedriveDeadLetters(RedriveDeadLettersRequest) returns (RedriveDeadLettersResponse);
@@ -41,6 +41,7 @@ message DeadLetter {
   string status = 13;             // open | redriven
   // Whether a redrive may republish it: its fields are a publishable message
   // and the streams contract still addresses its stream and consumer group.
+  // Age is checked when it is redriven: past expires_at a redrive is refused.
   bool redrivable = 14;
   Redrive redrive = 15;           // set when status is redriven
   // Why the dead letter can never be redriven; empty when redrivable is true.

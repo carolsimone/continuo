@@ -38,6 +38,7 @@ type DeadLetter struct {
 	Status            string                 `protobuf:"bytes,13,opt,name=status,proto3" json:"status,omitempty"` // open | redriven
 	// Whether a redrive may republish it: its fields are a publishable message
 	// and the streams contract still addresses its stream and consumer group.
+	// Age is checked when it is redriven: past expires_at a redrive is refused.
 	Redrivable bool     `protobuf:"varint,14,opt,name=redrivable,proto3" json:"redrivable,omitempty"`
 	Redrive    *Redrive `protobuf:"bytes,15,opt,name=redrive,proto3" json:"redrive,omitempty"` // set when status is redriven
 	// Why the dead letter can never be redriven; empty when redrivable is true.

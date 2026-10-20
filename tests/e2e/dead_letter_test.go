@@ -97,7 +97,7 @@ func TestDeadLetter_RedriveReachesOnlyItsGroup(t *testing.T) {
 	stateSibling := awaitConsumerDeadLetter(ctx, t, clients, stream, streams.StateReleasePromoted, origID, "open")
 	cleanupIDs := []string{dl.GetId(), sibling.GetId(), stateSibling.GetId()}
 	t.Cleanup(func() { deleteDeadLetterRows(t, clients, cleanupIDs...) })
-	require.True(t, dl.GetRedrivable(), "a dead letter with fields must be redrivable")
+	require.True(t, dl.GetRedrivable(), "a dead letter whose fields are a message, of a stream and group the streams contract declares, is redrivable")
 
 	// 3. Redrive as "e2e".
 	callCtx := metadata.AppendToOutgoingContext(ctx, identity.MetadataKey, "e2e")

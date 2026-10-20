@@ -54,7 +54,7 @@ func redriveEntry(dl deadletter.DeadLetter, body []byte) *outbox.Entry {
 
 func sample(key string, original time.Time) deadletter.DeadLetter {
 	return deadletter.DeadLetter{ID: uuid.New(), DedupKey: key, Source: deadletter.SourceConsumer,
-		FailureKind: model.DeadLetterKindPermanent, Stream: "node.updated:v1", Group: "g", OriginalMessageID: "1-0",
+		FailureKind: model.DeadLetterKindPermanent, Stream: "orders.changed:v1", Group: "g", OriginalMessageID: "1-0",
 		Producer: "state", Error: "boom", DeliveryCount: 1, Fields: map[string]string{"k": "v"}, Publishable: true,
 		OriginalAt: original.UTC().Truncate(time.Microsecond), RecordedAt: original.UTC().Truncate(time.Microsecond), Status: deadletter.StatusOpen}
 }
@@ -97,7 +97,7 @@ func TestPostgresList_FiltersAndOrders(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	got, err := repo.List(ctx, deadletter.Filter{Stream: "node.updated:v1", Status: deadletter.StatusOpen, Limit: 10})
+	got, err := repo.List(ctx, deadletter.Filter{Stream: "orders.changed:v1", Status: deadletter.StatusOpen, Limit: 10})
 	if err != nil || len(got) != 2 || got[0].ID != newer.ID {
 		t.Fatalf("got %v %v", got, err)
 	}

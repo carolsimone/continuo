@@ -41,8 +41,9 @@ Output (stdout, JSON):
    "not_redrivable_reason":string,"redrive":null}]}
   At most 50 dead letters, newest first. total_open counts every open one.
   redrivable is false, and not_redrivable_reason says why, for a dead letter
-  that can never be redriven: its stream was retired, the contract does not
-  name its stream or consumer group, or its fields are not a message.
+  that can never be redriven: its stream was retired, the streams contract
+  does not name its stream or consumer group, or its fields are not a
+  message.
 
 Errors:
   usage      (exit 2)  more than two arguments, a blank argument, or an unknown source

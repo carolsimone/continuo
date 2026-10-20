@@ -42,8 +42,8 @@ type DeadLetterServiceClient interface {
 	// RedriveDeadLetters republishes every listed dead letter to its original
 	// stream, or none: NOT_FOUND for an unknown id, FAILED_PRECONDITION for one
 	// past the 30-day replay horizon or one that cannot be redriven (its fields
-	// are not a message, or the contract retired or does not name its stream
-	// or consumer group), INVALID_ARGUMENT for no ids or a blank reason. A dead
+	// are not a message, or the streams contract retired or does not name its
+	// stream or consumer group), INVALID_ARGUMENT for no ids or a blank reason. A dead
 	// letter already redriven is returned unchanged. The caller's identity is
 	// read from the x-continuo-user-id metadata.
 	RedriveDeadLetters(ctx context.Context, in *RedriveDeadLettersRequest, opts ...grpc.CallOption) (*RedriveDeadLettersResponse, error)
@@ -105,8 +105,8 @@ type DeadLetterServiceServer interface {
 	// RedriveDeadLetters republishes every listed dead letter to its original
 	// stream, or none: NOT_FOUND for an unknown id, FAILED_PRECONDITION for one
 	// past the 30-day replay horizon or one that cannot be redriven (its fields
-	// are not a message, or the contract retired or does not name its stream
-	// or consumer group), INVALID_ARGUMENT for no ids or a blank reason. A dead
+	// are not a message, or the streams contract retired or does not name its
+	// stream or consumer group), INVALID_ARGUMENT for no ids or a blank reason. A dead
 	// letter already redriven is returned unchanged. The caller's identity is
 	// read from the x-continuo-user-id metadata.
 	RedriveDeadLetters(context.Context, *RedriveDeadLettersRequest) (*RedriveDeadLettersResponse, error)

@@ -58,7 +58,8 @@ type View struct {
 
 // Redrivable reports whether the dead letter can be redriven under the
 // contract it was viewed under: its fields are publishable and the contract
-// still addresses its stream and group.
+// still addresses its stream and group. Its age is checked when it is
+// redriven (CheckRedrive).
 func (v View) Redrivable() bool { return v.Refusal == "" }
 
 // ViewUnder returns d as seen under c.

@@ -13,7 +13,7 @@ import (
 )
 
 // OutboxDeadLetterBinding stores each outbox.dead_letter:v1 entry. It is
-// redrivable when the entry carries the fields the row would have published.
+// publishable when the entry carries the fields the row would have published.
 // An entry it cannot decode is stored as unreadable and acknowledged; a store
 // failure is returned so the entry stays pending (see ConsumerDeadLetterBinding).
 type OutboxDeadLetterBinding struct {

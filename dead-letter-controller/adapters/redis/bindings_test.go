@@ -41,9 +41,9 @@ func xmsg(id string, values map[string]any) goredis.XMessage {
 	return goredis.XMessage{ID: id, Values: values}
 }
 
-func TestConsumerDeadLetterBinding_StoresRedrivableRow(t *testing.T) {
+func TestConsumerDeadLetterBinding_StoresAPublishableRow(t *testing.T) {
 	values, _ := events.ConsumerDeadLetterFields(events.DeadLetteredMessage{
-		TenantID: "default", Producer: "state", OccurredAt: at, Stream: "node.updated:v1", Group: "orchestrator-node-updated",
+		TenantID: "default", Producer: "state", OccurredAt: at, Stream: "orders.changed:v1", Group: "billing",
 		MessageID: "1759665600000-0", Fields: map[string]string{"k": "v"}, FailureKind: model.DeadLetterKindTransientExhausted,
 		Error: "x", DeliveryCount: 5,
 	})
@@ -53,14 +53,14 @@ func TestConsumerDeadLetterBinding_StoresRedrivableRow(t *testing.T) {
 		t.Fatal(err)
 	}
 	dl := rec.got[0]
-	if dl.Source != deadletter.SourceConsumer || dl.Group != "orchestrator-node-updated" || !dl.Publishable ||
-		dl.DedupKey != deadletter.ConsumerKey("node.updated:v1", "orchestrator-node-updated", "1759665600000-0") ||
+	if dl.Source != deadletter.SourceConsumer || dl.Group != "billing" || !dl.Publishable ||
+		dl.DedupKey != deadletter.ConsumerKey("orders.changed:v1", "billing", "1759665600000-0") ||
 		!dl.OriginalAt.Equal(time.UnixMilli(1759665600000).UTC()) || dl.Producer != "state" || dl.DeliveryCount != 5 {
 		t.Fatalf("dl = %+v", dl)
 	}
 }
 
-func TestConsumerDeadLetterBinding_UnreadableStoredNotRedrivable(t *testing.T) {
+func TestConsumerDeadLetterBinding_UnreadableStoredNotPublishable(t *testing.T) {
 	rec := &fakeRecorder{}
 	b := NewConsumerDeadLetterBinding(rec, fixedClock{at})
 	if err := b.Handle(context.Background(), xmsg("1759665600000-7", map[string]any{"garbage": "1"})); err != nil {
@@ -85,7 +85,7 @@ func TestConsumerDeadLetterBinding_StoreFailureReturnsError(t *testing.T) {
 // pending-until-stored path as an unreadable one, on the readable branch.
 func TestConsumerDeadLetterBinding_StoreFailureOfReadableReturnsError(t *testing.T) {
 	values, _ := events.ConsumerDeadLetterFields(events.DeadLetteredMessage{
-		TenantID: "default", Producer: "state", OccurredAt: at, Stream: "node.updated:v1", Group: "g",
+		TenantID: "default", Producer: "state", OccurredAt: at, Stream: "orders.changed:v1", Group: "g",
 		MessageID: "1759665600000-0", Fields: map[string]string{"k": "v"}, FailureKind: model.DeadLetterKindPermanent,
 	})
 	rec := &fakeRecorder{err: errors.New("postgres down")}
@@ -108,9 +108,9 @@ func TestConsumerDeadLetterBinding_InvalidFailureKindIsUnreadable(t *testing.T) 
 	}
 }
 
-func TestOutboxDeadLetterBinding_RedrivableWhenFieldsPresent(t *testing.T) {
+func TestOutboxDeadLetterBinding_PublishableWhenFieldsPresent(t *testing.T) {
 	fields := map[string]any{
-		"original_event_type": "node_updated", "original_stream": "node.updated:v1", "original_aggregate_id": "00000000-0000-0000-0000-000000000001",
+		"original_event_type": "order_changed", "original_stream": "orders.changed:v1", "original_aggregate_id": "00000000-0000-0000-0000-000000000001",
 		"failure_kind": "transient_exhausted", "error": "redis down", "attempts": "13",
 		"failed_outbox_id": "00000000-0000-0000-0000-000000000002", "original_fields": `{"node_id":"a.b"}`,
 		"original_created_at": "2026-10-05T10:00:00.000000001Z", "outbox_table": "state_outbox", "outbox_entry_id": "x",
@@ -127,7 +127,7 @@ func TestOutboxDeadLetterBinding_RedrivableWhenFieldsPresent(t *testing.T) {
 	}
 }
 
-func TestOutboxDeadLetterBinding_OldShapeNotRedrivable(t *testing.T) {
+func TestOutboxDeadLetterBinding_OldShapeNotPublishable(t *testing.T) {
 	fields := map[string]any{
 		"original_event_type": "e", "original_stream": "s:v1", "original_aggregate_id": "a",
 		"failure_kind": "permanent", "error": "x", "attempts": "1", "failed_outbox_id": "f", "outbox_entry_id": "o",
@@ -141,7 +141,7 @@ func TestOutboxDeadLetterBinding_OldShapeNotRedrivable(t *testing.T) {
 	}
 }
 
-func TestOutboxDeadLetterBinding_UnreadableStoredNotRedrivable(t *testing.T) {
+func TestOutboxDeadLetterBinding_UnreadableStoredNotPublishable(t *testing.T) {
 	rec := &fakeRecorder{}
 	if err := NewOutboxDeadLetterBinding(rec, fixedClock{at}).Handle(context.Background(), xmsg("1759665600000-2", map[string]any{"attempts": "nope"})); err != nil {
 		t.Fatalf("an unreadable dead letter must be stored, not returned as an error: %v", err)
