@@ -89,3 +89,32 @@ def test_sampling_that_starts_late_or_stops_early_counts_as_a_gap():
     assert m.max_sample_gap(samples(range(0, 61, 5)), at(0), at(600)) == 540
     assert m.max_sample_gap(samples(range(100, 601, 5)), at(0), at(600)) == 100
     assert m.max_sample_gap([], at(0), at(600)) is None
+
+
+def test_retry_turnaround_runs_from_a_failed_job_finishing_to_the_retry_job_being_created():
+    doc = {"items": [job("r1", "a", 0, 5, failed=True, name="j-a"), job("r1", "a", 8, 12, name="j-a-r1"),
+                     job("r1", "b", 0, 4, name="j-b")]}
+    assert m.retry_turnarounds(m.attempts_for_run(doc, "r1")) == [3]
+
+
+def test_retry_count_is_every_attempt_after_each_tasks_first():
+    doc = {"items": [job("r1", "a", 0, name="j-a"), job("r1", "a", 2, name="j-a-r1"), job("r1", "a", 4, 6, name="j-a-r2"),
+                     job("r1", "b", 0, 4, name="j-b")]}
+    assert m.retry_count(m.attempts_for_run(doc, "r1")) == 2
+
+
+def test_a_job_that_never_finished_gives_no_turnaround():
+    doc = {"items": [job("r1", "a", 0, None, name="j-a"), job("r1", "a", 2, 3, name="j-a-r1")]}
+    assert m.retry_turnarounds(m.attempts_for_run(doc, "r1")) == []
+
+
+def test_an_attempt_created_while_an_earlier_attempt_had_not_finished_overlaps():
+    # a: attempt 0 never finished, so attempts 1 and 2 each overlap it.
+    # b: attempt 0 finished before attempt 1 was created.
+    # c: attempt 0 finished after attempt 1 was created.
+    doc = {"items": [
+        job("r1", "a", 0, None, name="a0"), job("r1", "a", 10, None, name="a1"), job("r1", "a", 20, None, name="a2"),
+        job("r1", "b", 0, 5, failed=True, name="b0"), job("r1", "b", 6, 9, name="b1"),
+        job("r1", "c", 0, 9, failed=True, name="c0"), job("r1", "c", 7, 12, name="c1"),
+    ]}
+    assert m.overlapping_attempts(m.attempts_for_run(doc, "r1")) == 3

@@ -76,6 +76,44 @@ def attempts_for_run(jobs_doc: dict, run_id: str) -> list:
     return attempts
 
 
+def attempts_by_table(attempts: list) -> dict:
+    """Each table's attempts, its oldest Job first."""
+    grouped = {}
+    for attempt in sorted(attempts, key=lambda a: a.created):
+        grouped.setdefault(attempt.table, []).append(attempt)
+    return grouped
+
+
+def retry_count(attempts: list) -> int:
+    """Attempts after each task's first, whether or not the earlier attempt's Job finished."""
+    return sum(len(runs) - 1 for runs in attempts_by_table(attempts).values())
+
+
+def retry_turnarounds(attempts: list) -> list:
+    """Seconds from each failed attempt's Job finishing to the next attempt's Job being created."""
+    out = []
+    for runs in attempts_by_table(attempts).values():
+        for previous, following in zip(runs, runs[1:]):
+            if previous.failed and previous.finished:
+                out.append((following.created - previous.finished).total_seconds())
+    return out
+
+
+def overlapping_attempts(attempts: list) -> int:
+    """Attempts whose Job was created while an earlier attempt Job of the same task had not finished.
+
+    A Job that never finished counts as unfinished. A Job that is gone from the
+    capture counts as finished: execution-controller deletes a Job only once
+    its pods are gone.
+    """
+    count = 0
+    for runs in attempts_by_table(attempts).values():
+        for index, attempt in enumerate(runs[1:], start=1):
+            if any(earlier.finished is None or earlier.finished > attempt.created for earlier in runs[:index]):
+                count += 1
+    return count
+
+
 def busy_and_gaps(intervals: list) -> tuple:
     """Union length of [start, end] intervals and the gaps between merged islands, in seconds."""
     ordered = sorted(intervals)
