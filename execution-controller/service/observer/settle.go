@@ -2,7 +2,9 @@ package observer
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -59,6 +61,14 @@ func (o *Observer) settle(ctx context.Context, u uow.UnitOfWork, d *model.Deploy
 	}
 	next, err := cmd.NextAttempt()
 	if err != nil {
+		return err
+	}
+	// An older version may have queued the next attempt when it reported this
+	// failure; a task never gets two.
+	if _, err := u.DeploymentsRepo().LoadByJobName(ctx, next.JobName); err == nil {
+		o.deps.Logger.Info("Next attempt already queued", "task_id", cmd.TaskID, "job_name", next.JobName)
+		return nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
 	if err := u.DeploymentsRepo().Add(ctx, model.NewDeployment(next, nil, now)); err != nil {

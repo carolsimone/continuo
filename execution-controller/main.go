@@ -334,8 +334,8 @@ func main() {
 
 	// The observer follows every created Job to its end: it records what each
 	// attempt shows, ends one that cannot start, and reports its result once
-	// its pods are finished or gone. Every minute it queues every deployment
-	// awaiting its result again.
+	// its pods are finished or gone. Every minute it queues every started
+	// deployment again.
 	jobControl := k8s.NewJobControl(k8sClient, cfg.K8sNamespace)
 	attemptObserver := observer.New(observer.Config{
 		StartTimeout:       cfg.JobStartTimeout,

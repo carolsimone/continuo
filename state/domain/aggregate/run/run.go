@@ -554,7 +554,8 @@ func (r *Run) Cancel(
 // the terminal status when it ends before it was seen running). Both are
 // written for the same task aggregate, so the per-aggregate FIFO outbox
 // publishes them in creation order, but they still arrive here as separate
-// consumer deliveries and a redelivery can repeat one of them. retry_count carries the attempt number and is stamped identically
+// consumer deliveries and a redelivery can repeat one of them. retry_count
+// carries the attempt number and is stamped identically
 // on a RUNNING and the terminal of the same attempt; a genuine retry is a
 // strictly newer attempt. The aggregate uses that to honor a real retry's
 // un-fill while ignoring a stale RUNNING re-delivered after its own terminal.

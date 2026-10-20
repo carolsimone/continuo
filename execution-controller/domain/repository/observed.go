@@ -15,10 +15,8 @@ type ObservedDeployments interface {
 	// GetByJobName returns the most recently created deployment whose Job is
 	// jobName, without locking it, or sql.ErrNoRows when none exists.
 	GetByJobName(ctx context.Context, jobName string) (*model.Deployment, error)
-	// ListObservedJobNames returns the Job names of every deployment awaiting
-	// its result: starting, running or terminating, or done without an outcome
-	// within model.FinishedJobRetention of its release, by the database clock,
-	// while its Job can still exist.
+	// ListObservedJobNames returns the Job names of every started deployment:
+	// starting, running or terminating.
 	ListObservedJobNames(ctx context.Context) ([]string, error)
 	// StateAge returns how long ago deployment id last changed status, by the
 	// database's clock.

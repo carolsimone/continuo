@@ -1,7 +1,7 @@
 // Package observer follows every attempt execution-controller started to its
-// end. A watch on Jobs and pods queues a Job's name whenever either changes,
-// and a resync queues the Job of every deployment awaiting its result each
-// minute.
+// end. A watch on Jobs and pods queues a Job's name whenever either changes
+// (and every existing Job's when it starts), and a resync queues the Job of
+// every started deployment each minute.
 // Workers take names off the queue, record what the cache shows of the
 // attempt, end an attempt that cannot start, and report the attempt's result
 // once every pod of it is finished or gone.
@@ -133,9 +133,11 @@ func (o *Observer) Run(ctx context.Context) error {
 	}
 }
 
-// Resync queues the Job of every deployment awaiting its result, so no
-// attempt waits on a watch event that was missed, and deletes the status-check
-// delay queue a previous version's pod may have written.
+// Resync queues the Job of every started deployment, so no attempt waits on a
+// watch event that was missed, and deletes the status-check delay queue a
+// previous version's pod may have written. A row done without its outcome is
+// not listed: only its Job can still tell its result, and the watch delivers
+// every existing Job when it starts.
 func (o *Observer) Resync(ctx context.Context) error {
 	names, err := o.deps.Observed.ListObservedJobNames(ctx)
 	if err != nil {
@@ -174,7 +176,9 @@ func (o *Observer) processNext(ctx context.Context) bool {
 }
 
 // Process observes the attempt of jobName's deployment once. A name whose
-// deployment awaits no result is ignored. Until the cache has synced, the
+// deployment awaits no result is ignored, and so is a row done without its
+// outcome whose Job is gone: its result can no longer be learned, so nothing is
+// reported and no next attempt is queued. Until the cache has synced, the
 // name is queued again a second later: an absence from it means nothing yet.
 func (o *Observer) Process(ctx context.Context, jobName string) error {
 	if !o.deps.Cache.Synced() {
@@ -195,18 +199,12 @@ func (o *Observer) Process(ctx context.Context, jobName string) error {
 		o.deps.Metrics.AwaitingPodStop(jobName, false)
 		return nil
 	}
-	if dep.Status() == model.StatusDone {
-		// A row released without its outcome is observed only while its Job
-		// can still exist; past the retention its result is gone for good.
-		age, err := o.deps.Observed.StateAge(ctx, dep.ID())
-		if err != nil {
-			return err
-		}
-		if age >= model.FinishedJobRetention {
-			return nil
-		}
-	}
 	obs := o.deps.Cache.Observe(jobName)
+	if dep.Status() == model.StatusDone && !obs.JobPresent {
+		// An older version released this row before recording its result,
+		// and its Job is gone with the result.
+		return nil
+	}
 	now := o.now()
 
 	switch {

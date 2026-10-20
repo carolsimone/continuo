@@ -25,7 +25,7 @@ const (
 	StatusTerminating Status = "terminating"
 	// StatusDone holds no slot: the attempt ended. Its outcome is unset only on
 	// a row an older version released before recording the result; the
-	// observer still records it.
+	// observer records it from the Job while the Job exists.
 	StatusDone    Status = "done"
 	StatusFailed  Status = "failed"
 	StatusSkipped Status = "skipped"

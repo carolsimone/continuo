@@ -426,15 +426,35 @@ func TestResync_QueuesTheJobOfEveryStartedDeployment(t *testing.T) {
 	assert.ElementsMatch(t, []string{a.JobName(), b.JobName()}, h.q.added)
 }
 
-// A row the previous version released without recording its outcome is
-// reported once its Job is seen ended.
-// A row released without its outcome longer ago than the finished-Job
-// retention has no Job left to learn its result from: the observer leaves it
-// alone rather than report the attempt failed and run it again.
-func TestProcess_ARowReleasedLongerAgoThanTheJobRetentionIsLeftAlone(t *testing.T) {
+// A row an older version released without recording its outcome is found
+// through the watch, which lists every existing Job when it starts, not
+// through the resync; it is reported once its Job is seen ended.
+func TestProcess_ARowReleasedWithoutItsOutcomeIsReportedFromItsJob(t *testing.T) {
 	h := newHarness(t)
-	dep := h.started(t, 0, h.now.Add(-30*time.Hour))
-	_, err := h.db.Exec(`UPDATE deployments SET status = 'done', state_changed_at = NOW() - INTERVAL '25 hours' WHERE id = $1`, dep.ID())
+	dep := h.started(t, 0, h.now.Add(-time.Hour))
+	_, err := h.db.Exec(`UPDATE deployments SET status = 'done' WHERE id = $1`, dep.ID())
+	require.NoError(t, err)
+	h.cache.set(dep.JobName(), model.JobObservation{JobPresent: true, JobSucceeded: true,
+		Pods: []model.PodObservation{endedPod(model.PodSucceeded, h.now.Add(-50*time.Minute), h.now.Add(-49*time.Minute), 0, "Completed")}})
+
+	require.NoError(t, h.o.Resync(context.Background()))
+	assert.NotContains(t, h.q.added, dep.JobName(), "the resync queues only started deployments")
+	require.NoError(t, h.o.Process(context.Background(), dep.JobName()))
+
+	assert.Equal(t, "ok", h.reload(t, dep.JobName()).Outcome())
+	status := h.outbox(t, event.EventTypeTaskStatusUpdated)
+	require.Len(t, status, 1)
+	assert.Equal(t, "SUCCEEDED", status[0]["status"])
+}
+
+// A row released without its outcome whose Job is gone has no result left to
+// learn. However recently the row changed state (a migration may have stamped
+// every old row just now), the observer leaves it alone: it reports nothing and
+// queues no next attempt, so a historical task never runs again.
+func TestProcess_ARowReleasedWithoutItsOutcomeWhoseJobIsGoneIsLeftAlone(t *testing.T) {
+	h := newHarness(t)
+	dep := h.started(t, 0, h.now.Add(-72*time.Hour))
+	_, err := h.db.Exec(`UPDATE deployments SET status = 'done', state_changed_at = NOW() - INTERVAL '5 minutes' WHERE id = $1`, dep.ID())
 	require.NoError(t, err)
 	h.look.exists[dep.JobName()] = false
 
@@ -444,27 +464,31 @@ func TestProcess_ARowReleasedLongerAgoThanTheJobRetentionIsLeftAlone(t *testing.
 	assert.Equal(t, model.StatusDone, got.Status())
 	assert.False(t, got.HasOutcome(), "nothing is recorded for it")
 	assert.Empty(t, h.outbox(t, event.EventTypeTaskStatusUpdated), "nothing is reported")
+	assert.Empty(t, h.outbox(t, event.EventTypeTaskExecutionRecorded), "no execution record")
 	var attempts int
 	require.NoError(t, h.db.Get(&attempts, `SELECT count(*) FROM deployments WHERE task_id = $1`, dep.Command().TaskID))
 	assert.Equal(t, 1, attempts, "no next attempt is queued")
 }
 
-func TestProcess_ARowReleasedWithoutItsOutcomeIsReported(t *testing.T) {
+// A failed attempt whose next attempt already exists (an older version queued
+// it when it reported the failure) queues no second one.
+func TestProcess_AFailedAttemptWhoseNextAttemptExistsQueuesNoOther(t *testing.T) {
 	h := newHarness(t)
 	dep := h.started(t, 0, h.now.Add(-time.Hour))
-	_, err := h.db.Exec(`UPDATE deployments SET status = 'done' WHERE id = $1`, dep.ID())
+	next, err := dep.Command().NextAttempt()
 	require.NoError(t, err)
-	h.cache.set(dep.JobName(), model.JobObservation{JobPresent: true, JobSucceeded: true,
-		Pods: []model.PodObservation{endedPod(model.PodSucceeded, h.now.Add(-50*time.Minute), h.now.Add(-49*time.Minute), 0, "Completed")}})
+	require.NoError(t, h.repo.Add(context.Background(), model.NewDeployment(next, nil, h.now)))
+	_, err = h.db.Exec(`UPDATE deployments SET status = 'done' WHERE id = $1`, dep.ID())
+	require.NoError(t, err)
+	h.cache.set(dep.JobName(), model.JobObservation{JobPresent: true, JobFailed: true,
+		Pods: []model.PodObservation{endedPod(model.PodFailed, h.now.Add(-50*time.Minute), h.now.Add(-49*time.Minute), 1, "Error")}})
 
-	require.NoError(t, h.o.Resync(context.Background()))
-	assert.Contains(t, h.q.added, dep.JobName())
 	require.NoError(t, h.o.Process(context.Background(), dep.JobName()))
 
-	assert.Equal(t, "ok", h.reload(t, dep.JobName()).Outcome())
-	status := h.outbox(t, event.EventTypeTaskStatusUpdated)
-	require.Len(t, status, 1)
-	assert.Equal(t, "SUCCEEDED", status[0]["status"])
+	assert.Equal(t, "failed", h.reload(t, dep.JobName()).Outcome())
+	var attempts int
+	require.NoError(t, h.db.Get(&attempts, `SELECT count(*) FROM deployments WHERE task_id = $1`, dep.Command().TaskID))
+	assert.Equal(t, 2, attempts, "the existing next attempt is the only one")
 }
 
 func TestProcess_AFailedAttemptProcessedTwiceQueuesOneRetry(t *testing.T) {

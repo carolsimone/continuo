@@ -55,9 +55,8 @@ func (r *observedDeployments) ListObservedJobNames(ctx context.Context) ([]strin
 	if err := r.exec.SelectContext(ctx, &names, `
 		SELECT job_name FROM deployments
 		WHERE job_name IS NOT NULL
-		  AND (status = ANY($1)
-		       OR (status = $2 AND outcome IS NULL AND state_changed_at > NOW() - make_interval(secs => $3)))`,
-		startedStatuses(), string(model.StatusDone), model.FinishedJobRetention.Seconds()); err != nil {
+		  AND status = ANY($1)`,
+		startedStatuses()); err != nil {
 		return nil, fmt.Errorf("list observed deployments: %w", err)
 	}
 	return names, nil

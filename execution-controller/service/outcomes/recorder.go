@@ -48,7 +48,7 @@ func NewRecorder(logger *slog.Logger) *Recorder {
 // rolls back a transaction itself, so the observation, the outcome and the
 // settle all commit together with the caller's other writes.
 //
-// A row whose outcome is already recorded (dep.OutcomeAt() != nil) is left as
+// A row whose outcome is already recorded (dep.HasOutcome()) is left as
 // is, so a re-observed terminal Job is a no-op rather than a double-record. A
 // missing row (sql.ErrNoRows) is logged and ignored: the release it belonged to
 // is no longer tracked here.
