@@ -36,10 +36,12 @@ type DeadLetter struct {
 	RecordedAt        string                 `protobuf:"bytes,11,opt,name=recorded_at,json=recordedAt,proto3" json:"recorded_at,omitempty"`
 	ExpiresAt         string                 `protobuf:"bytes,12,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
 	Status            string                 `protobuf:"bytes,13,opt,name=status,proto3" json:"status,omitempty"` // open | redriven
-	Redrivable        bool                   `protobuf:"varint,14,opt,name=redrivable,proto3" json:"redrivable,omitempty"`
-	Redrive           *Redrive               `protobuf:"bytes,15,opt,name=redrive,proto3" json:"redrive,omitempty"` // set when status is redriven
+	// Whether a redrive may republish it: its fields are a publishable message
+	// and the streams contract still addresses its stream and consumer group.
+	Redrivable bool     `protobuf:"varint,14,opt,name=redrivable,proto3" json:"redrivable,omitempty"`
+	Redrive    *Redrive `protobuf:"bytes,15,opt,name=redrive,proto3" json:"redrive,omitempty"` // set when status is redriven
 	// Why the dead letter can never be redriven; empty when redrivable is true.
-	// For example "stream query.model:v1 is retired".
+	// For example "stream node.updated:v1 is retired".
 	NotRedrivableReason string `protobuf:"bytes,16,opt,name=not_redrivable_reason,json=notRedrivableReason,proto3" json:"not_redrivable_reason,omitempty"`
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache

@@ -39,10 +39,12 @@ message DeadLetter {
   string recorded_at = 11;
   string expires_at = 12;
   string status = 13;             // open | redriven
+  // Whether a redrive may republish it: its fields are a publishable message
+  // and the streams contract still addresses its stream and consumer group.
   bool redrivable = 14;
   Redrive redrive = 15;           // set when status is redriven
   // Why the dead letter can never be redriven; empty when redrivable is true.
-  // For example "stream query.model:v1 is retired".
+  // For example "stream node.updated:v1 is retired".
   string not_redrivable_reason = 16;
 }
 

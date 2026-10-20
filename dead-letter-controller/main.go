@@ -247,9 +247,10 @@ func main() {
 	repo := postgres.NewDeadLetterRepository(db)
 	obs := dlmetrics.New(metricsReg, repo)
 	recorder := handlers.NewRecorder(repo, obs, logger)
-	query := handlers.NewQuery(repo, redriveContract())
+	contract := redriveContract()
+	query := handlers.NewQuery(repo, contract)
 	redriver := handlers.NewRedriver(func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger) }, clock, obs,
-		redriveContract(), logger)
+		contract, logger)
 	expirer := handlers.NewExpirer(repo, clock, obs, logger)
 	lifecycleManager.Go(func() { expirer.Run(ctx, expireInterval) })
 
