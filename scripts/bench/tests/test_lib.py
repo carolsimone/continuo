@@ -246,3 +246,14 @@ def test_sql_on_k8s_runs_in_the_postgres_pod_with_the_services_credentials(tmp_p
     assert "pg-0" in call["argv"]
     assert call["argv"][-3:] == ["fake-postgres_user", "fake-postgres_db", "SELECT 1"]
     assert call["stdin"].splitlines()[0] == "fake-postgres_password"
+
+
+def test_sql_on_k8s_without_a_postgres_pod_fails_the_read_not_the_script(tmp_path):
+    import fake_env
+    env = fake_env.make(tmp_path, [])
+    env.update(BENCH_TARGET="k8s", BENCH_KUBECONFIG="/dev/null")
+    env.pop("BENCH_PG_POD", None)
+    out = run_lib(env, 'if bench_sql state "SELECT 1"; then echo read; else echo "fell back"; fi')
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == "fell back"
+    assert "BENCH_PG_POD is not set" in out.stderr

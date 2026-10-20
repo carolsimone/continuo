@@ -139,7 +139,8 @@ bench_psql() {
 bench_sql() {
   local service="$1" sql="$2" container db user
   if [ "$(bench_target)" = "k8s" ]; then
-    bench_psql "${BENCH_PG_POD:?BENCH_PG_POD is required (discover.sh lists candidates)}" \
+    [ -n "${BENCH_PG_POD:-}" ] || { echo "bench: BENCH_PG_POD is not set (discover.sh lists candidates)" >&2; return 1; }
+    bench_psql "${BENCH_PG_POD}" \
       "$(bench_env_value "${service}" POSTGRES_USER)" "$(bench_env_value "${service}" POSTGRES_DB)" \
       "$(bench_env_value "${service}" POSTGRES_PASSWORD)" "${sql}"
   else

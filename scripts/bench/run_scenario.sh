@@ -41,15 +41,19 @@ finish_run() {
 
 # export_rows KIND SERVICE DEST: the run's KIND rows (run_rows.py) for the
 # per-hand-off breakdown, read from SERVICE's database into DEST. A read that
-# fails leaves DEST an empty array and the breakdown without those rows.
+# fails leaves DEST an empty array and the breakdown without those rows; the
+# warning carries the read's last error line.
 export_rows() {
-  local kind="$1" service="$2" dest="$3" sql
-  if sql="$(python3 "${here}/run_rows.py" "${kind}" "${run_id}")" \
-    && bench_sql "${service}" "${sql}" > "${dest}" 2>/dev/null \
-    && python3 -c 'import json, sys; json.load(open(sys.argv[1]))' "${dest}" 2>/dev/null; then
+  local kind="$1" service="$2" dest="$3" sql err
+  err="$(mktemp)"
+  if sql="$(python3 "${here}/run_rows.py" "${kind}" "${run_id}" 2>"${err}")" \
+    && bench_sql "${service}" "${sql}" > "${dest}" 2>>"${err}" \
+    && python3 -c 'import json, sys; json.load(open(sys.argv[1]))' "${dest}" 2>>"${err}"; then
+    rm -f "${err}"
     return 0
   fi
-  echo "bench: could not read the run's ${kind}; the hand-off breakdown leaves them out" >&2
+  echo "bench: could not read the run's ${kind} ($(tail -n 1 "${err}")); the hand-off breakdown leaves them out" >&2
+  rm -f "${err}"
   echo "[]" > "${dest}"
 }
 
