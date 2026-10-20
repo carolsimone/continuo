@@ -337,7 +337,7 @@ func (v NodeType) Runtime() NodeRuntime {
 type FailureClass string
 
 const (
-	// FailureClassTask — the task's own code failed; its main container exited non-zero.
+	// FailureClassTask — the task's own code failed; a container of its pod, init or main, exited non-zero.
 	FailureClassTask FailureClass = "task"
 	// FailureClassResource — the pod ran out of a node resource; it was killed for memory or evicted.
 	FailureClassResource FailureClass = "resource"
@@ -388,7 +388,7 @@ func (v FailureClass) IsValid() bool {
 type FailureReason string
 
 const (
-	// FailureReasonExitCode — the main container exited with a non-zero code.
+	// FailureReasonExitCode — a container of the pod, init or main, exited with a non-zero code.
 	FailureReasonExitCode FailureReason = "exit_code"
 	// FailureReasonOOMKilled — the main container was killed for exceeding its memory.
 	FailureReasonOOMKilled FailureReason = "oom_killed"

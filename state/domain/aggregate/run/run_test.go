@@ -353,7 +353,7 @@ func TestRecordTaskStatus_DecrementsOnRetry(t *testing.T) {
 
 // TestRecordTaskStatus_IgnoresStaleRunningAfterSucceeded covers the redelivery
 // case where the original attempt's RUNNING is processed after that attempt's
-// SUCCEEDED (both written by execution-controller's job-status handler). Both
+// SUCCEEDED (both written by execution-controller's observer). Both
 // carry the same attempt number, so the late RUNNING must be a no-op: no
 // un-fill, no status regression, no finalize.
 func TestRecordTaskStatus_IgnoresStaleRunningAfterSucceeded(t *testing.T) {

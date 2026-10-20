@@ -440,7 +440,7 @@ vocabularies:
     values:
       - value: task
         const: Task
-        description: the task's own code failed; its main container exited non-zero.
+        description: the task's own code failed; a container of its pod, init or main, exited non-zero.
       - value: resource
         const: Resource
         description: the pod ran out of a node resource; it was killed for memory or evicted.
@@ -468,7 +468,7 @@ vocabularies:
       - value: exit_code
         const: ExitCode
         class: task
-        description: the main container exited with a non-zero code.
+        description: a container of the pod, init or main, exited with a non-zero code.
       - value: oom_killed
         const: OOMKilled
         class: resource
