@@ -1,6 +1,8 @@
 package domain
 
 import (
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -179,25 +181,26 @@ func TestComputeJobName(t *testing.T) {
 			expected:   "analytics-public-users-" + shortSuffix + "-r1",
 		},
 		{
-			// The prefix gives up room for "-r1"; the run-id suffix stays whole
-			// and the name is exactly 63 characters.
-			name:       "attempt 1 at the length limit keeps the run-id suffix",
+			// The prefix gives up room for "-r1" and ends with the first six hex
+			// characters of the full prefix's SHA-256; the run-id suffix stays
+			// whole and the name is exactly 63 characters.
+			name:       "attempt 1 at the length limit keeps the run-id suffix and tags the cut prefix",
 			service:    "very-long-service-name",
 			schema:     "very-long-schema-name",
 			table:      "very-long-table-name",
 			scheduleID: "a1b2c3d4-xxxx",
 			attempt:    1,
-			expected:   "very-long-service-name-very-long-schema-name-very-l-a1b2c3d4-r1",
+			expected:   "very-long-service-name-very-long-schema-name-bc2309-a1b2c3d4-r1",
 		},
 		{
 			// A cut that ends on a hyphen is trimmed, so no name holds "--".
 			name:       "attempt 10 at the length limit trims the hyphen the cut leaves",
 			service:    "very-long-service-name",
-			schema:     "very-long-schema-name",
+			schema:     "very-long-schema-na",
 			table:      "very-long-table-name",
 			scheduleID: "a1b2c3d4-xxxx",
 			attempt:    10,
-			expected:   "very-long-service-name-very-long-schema-name-very-a1b2c3d4-r10",
+			expected:   "very-long-service-name-very-long-schema-na-4fc59f-a1b2c3d4-r10",
 		},
 		{
 			name:        "negative attempt is refused",
@@ -250,5 +253,44 @@ func TestComputeJobName(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Two nodes whose prefixes the retry cut would make equal still get distinct
+// retry names, since a cut retry prefix carries a hash of the full prefix; the
+// run-id suffix stays whole and attempt 0's name keeps the plain 54-character
+// prefix.
+func TestComputeJobName_RetriesOfNodesThatDifferOnlyPastTheCutStayDistinct(t *testing.T) {
+	const runID = "3f2a9c1e-0000-4000-8000-000000000001"
+	daily, weekly := "int_customer_orders_aggregated_daily", "int_customer_orders_aggregated_weekly"
+	for _, attempt := range []int{0, 1, 2, 10} {
+		a, err := ComputeJobName("service-1", "analytics", daily, runID, attempt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := ComputeJobName("service-1", "analytics", weekly, runID, attempt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if a == b {
+			t.Fatalf("attempt %d: both nodes are named %q", attempt, a)
+		}
+		again, _ := ComputeJobName("service-1", "analytics", daily, runID, attempt)
+		if again != a {
+			t.Fatalf("attempt %d: %q then %q for the same node", attempt, a, again)
+		}
+		suffix := "-3f2a9c1e"
+		if attempt > 0 {
+			suffix += "-r" + strconv.Itoa(attempt)
+		}
+		for _, name := range []string{a, b} {
+			if len(name) > 63 || !strings.HasSuffix(name, suffix) {
+				t.Fatalf("attempt %d: %q is longer than 63 or does not end with %q", attempt, name, suffix)
+			}
+		}
+	}
+	first, _ := ComputeJobName("service-1", "analytics", daily, runID, 0)
+	if first != "service-1-analytics-int-customer-orders-aggregated-dai-3f2a9c1e" {
+		t.Fatalf("attempt 0 is %q; its name must not change", first)
 	}
 }
