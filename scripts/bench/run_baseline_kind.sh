@@ -67,15 +67,24 @@ if bench_wanted fail-once; then
   BENCH_IDLE_S=30 "${here}/run_scenario.sh" fail-once "${p}/fail-once.json" bench-fail-once run 3 "${out}/fail-once"
 fi
 # The start failures never succeed: each rep ends when its run fails, or is
-# cancelled after 15 minutes. On every exit their Jobs are deleted, before the
+# cancelled after 15 minutes. On every exit the live bench run is cancelled,
+# so no next attempt is queued, then its Jobs are deleted, before the
 # start-quota scenario's quota, so no pod stuck on its image and no pods: 0
-# quota outlives the scenario.
+# quota outlives the scenario. A step that fails is reported and the next one
+# still runs.
+start_failure_cleanup() {
+  local schedule="$1"
+  bench_stop_scenario "" "${schedule}" || echo "run_baseline_kind.sh: could not cancel ${schedule}'s live run" >&2
+  bench_kubectl delete jobs -l "schedule=${schedule}" --ignore-not-found --wait=true >/dev/null \
+    || echo "run_baseline_kind.sh: could not delete ${schedule}'s Jobs" >&2
+}
 start_image_cleanup() {
-  bench_kubectl delete jobs -l schedule=bench-start-image --ignore-not-found --wait=true >/dev/null
+  start_failure_cleanup bench-start-image
 }
 start_quota_cleanup() {
-  bench_kubectl delete jobs -l schedule=bench-start-quota --ignore-not-found --wait=true >/dev/null
-  bench_kubectl delete resourcequota bench-no-pods --ignore-not-found >/dev/null
+  start_failure_cleanup bench-start-quota
+  bench_kubectl delete resourcequota bench-no-pods --ignore-not-found >/dev/null \
+    || echo "run_baseline_kind.sh: could not delete the bench-no-pods quota; delete it by hand (README)" >&2
 }
 if bench_wanted start-image; then
   "${here}/inject.sh" "${p}/start-image.json" bench-start-image

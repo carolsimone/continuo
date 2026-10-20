@@ -69,7 +69,8 @@ def test_a_rep_whose_rows_cannot_be_read_keeps_going_without_them(tmp_path):
 
     assert result.returncode == 0, result.stderr
     assert "could not read the run's deployments" in result.stderr
-    assert "could not read the run's deployments (ERROR run id 'run-1' is not a UUID)" in result.stderr, \
-        "the warning carries the read's error"
+    err = out / "deployments-rep1.err"
+    assert f"could not read the run's deployments (see {err})" in result.stderr
+    assert "run id 'run-1' is not a UUID" in err.read_text(), "the read's error output is kept beside the rows"
     assert json.loads((out / "deployments-rep1.json").read_text()) == []
     assert json.loads((out / "rep1.json").read_text())["round_trip_p50_s"] is None

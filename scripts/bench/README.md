@@ -133,7 +133,7 @@ The start failures delete their Jobs on every exit, and start-quota then removes
 
 A retried node counts from its first Job's creation to its last Job's finish. A failed Job ends at its `Failed` condition's transition time.
 
-The hand-off steps take, for each node, the upstream whose last Job finished last, that upstream's last deployment and the node's first. Each rep reads them with `run_rows.py` from execution-controller's and state's databases (`deployments-rep<N>.json`, `tasks-rep<N>.json`); a read that fails leaves the steps empty. Observe, to dispatch and to queue compare two services' clocks, which share a host on the local stack.
+The hand-off steps take, for each node, the upstream whose last Job finished last, that upstream's last deployment and the node's first. Each rep reads them with `run_rows.py` from execution-controller's and state's databases (`deployments-rep<N>.json`, `tasks-rep<N>.json`); a read that fails leaves the steps empty and keeps its error output beside them (`deployments-rep<N>.err`, `tasks-rep<N>.err`). Observe, to dispatch and to queue compare two services' clocks, which share a host on the local stack.
 
 ## Run-lifecycle targets
 
