@@ -391,6 +391,13 @@ def runner_script(tmp_path, then=""):
 # Starts the runner and waits until it ignores TERM, so a stop cannot end it before it does.
 START_RUNNER = 'bash "{runner}" & c=$!; while [ ! -e "$FAKE_DIR/runner-ready" ]; do sleep 0.05; done; '
 
+# For a runner's THEN: waits until the stop has read the run's state and its wait has seen the run cancelled (two
+# status calls), so what the runner does next cannot reach the fake before that wait has ended. Without it, a
+# runner faster than the stop changes what the wait reads (a failing status, a newer run), and the wait polls
+# for all of BENCH_CANCEL_WAIT_S.
+AFTER_THE_STOPS_WAIT = ('for _ in $(seq 400); do [ "$(($(wc -l < "$FAKE_DIR/status-calls")))" -ge 2 ] && break; '
+                        'sleep 0.05; done; ')
+
 
 def live_run(fake, run_id="run-7"):
     (fake / "state").write_text("running")
@@ -418,12 +425,7 @@ def test_stopping_a_scenario_reports_a_run_state_it_could_not_read_after_its_run
     fake = Path(env["FAKE_DIR"])
     env["FAKE_STATUS_FAIL_WHEN_EXISTS"] = str(fake / "runner-done")
     live_run(fake)
-    # The runner exits, and status starts failing, only once the stop has read the run's state and its wait has
-    # seen the run cancelled: two status calls. Otherwise the wait's own reads would fail, and it would wait out
-    # BENCH_CANCEL_WAIT_S.
-    runner = runner_script(tmp_path, then='for _ in $(seq 400); do '
-                                           '[ "$(($(wc -l < "$FAKE_DIR/status-calls")))" -ge 2 ] && break; sleep 0.05; '
-                                           'done; : > "$FAKE_DIR/runner-done"')
+    runner = runner_script(tmp_path, then=AFTER_THE_STOPS_WAIT + ': > "$FAKE_DIR/runner-done"')
     out = run_lib(env, START_RUNNER.format(runner=runner) +
                   'if bench_stop_scenario "$c" bench-s; then echo stopped; else echo failed; fi')
     assert out.stdout.strip() == "failed", out.stderr
@@ -470,7 +472,7 @@ def test_stopping_a_scenario_cancels_a_run_its_runner_triggered_meanwhile(tmp_pa
     env = fake_env.make(tmp_path, [])
     fake = Path(env["FAKE_DIR"])
     live_run(fake)
-    runner = runner_script(tmp_path, then="continuo schedule trigger bench-s >/dev/null")
+    runner = runner_script(tmp_path, then=AFTER_THE_STOPS_WAIT + "continuo schedule trigger bench-s >/dev/null")
     out = run_lib(env, START_RUNNER.format(runner=runner) +
                   'if bench_stop_scenario "$c" bench-s; then echo stopped; else echo failed; fi')
     assert out.stdout.strip() == "stopped", out.stderr
