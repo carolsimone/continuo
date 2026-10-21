@@ -29,12 +29,13 @@ const retryHashLen = 6
 // The prefix is lowercased, invalid characters become hyphens, runs of hyphens
 // collapse and leading and trailing hyphens are stripped. It is then clamped so
 // the run-id suffix and the attempt suffix always fit whole, and a hyphen the
-// clamp leaves at its end is trimmed. At attempt 0 the prefix keeps up to 54
-// characters. A later attempt whose prefix must be cut shorter than the attempt
-// suffix allows ends its prefix with -{hash}, the first 6 hex characters of the
-// full prefix's SHA-256, so two nodes whose prefixes the shorter cut would make
-// equal keep distinct retry names. A negative attempt, or a name that is empty
-// after sanitization, is an error.
+// clamp leaves at its end is trimmed. With a full 8-character run id the prefix
+// keeps up to 54 characters at attempt 0. A later attempt whose prefix is longer
+// than its room (51 characters at attempts 1-9, 50 at 10-99) keeps the first 44
+// (43 from attempt 10) and ends with -{hash}, the first 6 hex characters of the
+// full prefix's SHA-256, so two nodes whose prefixes differ only past the cut
+// keep distinct retry names. A negative attempt, or a name that is empty after
+// sanitization, is an error.
 func ComputeJobName(serviceName, schemaName, tableName, scheduleID string, attempt int) (string, error) {
 	if attempt < 0 {
 		return "", fmt.Errorf("attempt %d is negative", attempt)

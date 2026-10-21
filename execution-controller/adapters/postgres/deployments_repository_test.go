@@ -736,11 +736,11 @@ func TestRepo_HasAttemptFrom_CountsTheTasksProductionAttemptsOnly(t *testing.T) 
 	first := validCmd()
 	require.NoError(t, repo.Add(ctx, model.NewDeployment(first, nil, time.Now())))
 	retry := first
-	retry.TaskRetryCount, retry.JobName = 1, first.JobName+"-r1-old-scheme"
+	retry.TaskRetryCount, retry.JobName = 2, first.JobName+"-r1-r2"
 	require.NoError(t, repo.Add(ctx, model.NewDeployment(retry, nil, time.Now())))
 
 	other := validCmd()
-	other.TaskRetryCount = 2
+	other.TaskRetryCount = 3
 	require.NoError(t, repo.Add(ctx, model.NewDeployment(other, nil, time.Now())))
 
 	leg := model.NewValidationDeployment(validValidationCmd("rel-"+uuid.NewString()[:8], "public.orders"), nil, time.Now(), false)
@@ -749,7 +749,7 @@ func TestRepo_HasAttemptFrom_CountsTheTasksProductionAttemptsOnly(t *testing.T) 
 		WHERE id = $2`, first.TaskID, leg.ID())
 	require.NoError(t, err)
 
-	for attempt, want := range map[int]bool{0: true, 1: true, 2: false} {
+	for attempt, want := range map[int]bool{0: true, 1: true, 2: true, 3: false} {
 		got, err := repo.HasAttemptFrom(ctx, first.TaskID, attempt)
 		require.NoError(t, err)
 		assert.Equal(t, want, got, "attempt %d or later", attempt)
