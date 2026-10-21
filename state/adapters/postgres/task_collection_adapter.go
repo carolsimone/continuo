@@ -34,11 +34,31 @@ func (a *TaskCollectionAdapter) LoadAttemptState(ctx context.Context, taskID uui
 		return run.TaskAttemptState{}, true, err
 	}
 	return run.TaskAttemptState{
-		Status:     status,
-		RetryCount: row.Attempt,
-		MaxRetries: row.MaxRetries,
-		NodeKey:    topology.NodeKey(row.NodeKey),
+		Status:       status,
+		RetryCount:   row.Attempt,
+		MaxRetries:   row.MaxRetries,
+		NodeKey:      topology.NodeKey(row.NodeKey),
+		JobName:      row.JobName,
+		ServiceName:  row.ServiceName,
+		SchemaName:   row.SchemaName,
+		TableName:    row.TableName,
+		DispatchedAt: row.DispatchedAt,
 	}, true, nil
+}
+
+// LoadAttempt, SaveAttempt and CancelOpenAttempts run through the unit of
+// work's transaction: the attempt row is locked after the task row and
+// written in the same commit.
+func (a *TaskCollectionAdapter) LoadAttempt(ctx context.Context, taskID uuid.UUID, attempt int32) (run.Attempt, bool, error) {
+	return loadAttempt(ctx, a.tx, taskID, attempt)
+}
+
+func (a *TaskCollectionAdapter) SaveAttempt(ctx context.Context, at run.Attempt) error {
+	return saveAttempt(ctx, a.tx, at)
+}
+
+func (a *TaskCollectionAdapter) CancelOpenAttempts(ctx context.Context, runID uuid.UUID) (int, error) {
+	return cancelOpenAttempts(ctx, a.tx, runID)
 }
 
 func (a *TaskCollectionAdapter) HasFailed(ctx context.Context, runID uuid.UUID) (bool, error) {

@@ -79,6 +79,29 @@ type TaskTracker struct {
 	DispatchedAt        *time.Time     `json:"dispatched_at,omitempty" db:"dispatched_at"`
 }
 
+// taskAttemptRow is the storage row carrier for the task_attempts table. It
+// mirrors the columns attempts read and write, one-to-one; the scheduling
+// columns (next_check_at, checks_sent) are written by their own statements.
+type taskAttemptRow struct {
+	TaskID           uuid.UUID  `db:"task_id"`
+	Attempt          int32      `db:"attempt"`
+	JobName          string     `db:"job_name"`
+	Status           string     `db:"status"`
+	FailureClass     *string    `db:"failure_class"`
+	FailureReason    *string    `db:"failure_reason"`
+	DispatchedAt     time.Time  `db:"dispatched_at"`
+	QueuedAt         *time.Time `db:"queued_at"`
+	StartedAt        *time.Time `db:"started_at"`
+	FinishedAt       *time.Time `db:"finished_at"`
+	ExecutionSeconds *float64   `db:"execution_seconds"`
+	ExitCode         *int32     `db:"exit_code"`
+	ErrorMessage     *string    `db:"error_message"`
+	LogS3Key         *string    `db:"log_s3_key"`
+	RunResultsURI    *string    `db:"run_results_uri"`
+	ParseCache       *string    `db:"parse_cache"`
+	ParseCacheReason *string    `db:"parse_cache_reason"`
+}
+
 // TaskExecution is the storage row carrier for the task_execution table.
 // It mirrors the table schema one-to-one and is used exclusively within this
 // package by the repository implementations.

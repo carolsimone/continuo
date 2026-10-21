@@ -353,10 +353,15 @@ func (r *taskTrackerRepository) SetStatusAndAttemptTx(ctx context.Context, tx *s
 // TaskAttemptRow is the part of a task_tracker row a status update reads.
 // NodeKey is empty when the row has none.
 type TaskAttemptRow struct {
-	Status     string `db:"status"`
-	Attempt    int32  `db:"attempt"`
-	MaxRetries int32  `db:"max_retries"`
-	NodeKey    string `db:"node_key"`
+	Status       string     `db:"status"`
+	Attempt      int32      `db:"attempt"`
+	MaxRetries   int32      `db:"max_retries"`
+	NodeKey      string     `db:"node_key"`
+	JobName      string     `db:"job_name"`
+	ServiceName  string     `db:"service_name"`
+	SchemaName   string     `db:"schema_name"`
+	TableName    string     `db:"table_name"`
+	DispatchedAt *time.Time `db:"dispatched_at"`
 }
 
 // LoadAttemptStateTx reads the task_tracker row of taskID with FOR UPDATE, so
@@ -365,7 +370,8 @@ type TaskAttemptRow struct {
 func (r *taskTrackerRepository) LoadAttemptStateTx(ctx context.Context, tx *sqlx.Tx, taskID uuid.UUID) (TaskAttemptRow, bool, error) {
 	var row TaskAttemptRow
 	err := tx.GetContext(ctx, &row,
-		`SELECT status, attempt, max_retries, COALESCE(node_key, '') AS node_key
+		`SELECT status, attempt, max_retries, COALESCE(node_key, '') AS node_key,
+		        job_name, service_name, schema_name, table_name, dispatched_at
 		 FROM task_tracker WHERE task_id = $1 FOR UPDATE`,
 		taskID,
 	)

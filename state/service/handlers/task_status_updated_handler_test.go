@@ -3,6 +3,7 @@ package handlers_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"testing"
@@ -115,6 +116,49 @@ type fakeTaskStatusTaskCollection struct {
 	// GetByID response
 	task   run.Task
 	getErr error
+
+	// attemptRows holds the stored attempts; cancelledRuns the runs
+	// CancelOpenAttempts was called for; lockOrder the LoadAttemptState
+	// ("task <id>") and LoadAttempt ("attempt <id>/<n>") calls in call order.
+	attemptRows   map[statusAttemptKey]run.Attempt
+	cancelledRuns []uuid.UUID
+	lockOrder     []string
+}
+
+// statusAttemptKey identifies one stored attempt.
+type statusAttemptKey struct {
+	task    uuid.UUID
+	attempt int32
+}
+
+func (f *fakeTaskStatusTaskCollection) LoadAttempt(_ context.Context, id uuid.UUID, attempt int32) (run.Attempt, bool, error) {
+	f.lockOrder = append(f.lockOrder, fmt.Sprintf("attempt %s/%d", id, attempt))
+	a, ok := f.attemptRows[statusAttemptKey{id, attempt}]
+	return a, ok, nil
+}
+
+func (f *fakeTaskStatusTaskCollection) SaveAttempt(_ context.Context, a run.Attempt) error {
+	if f.attemptRows == nil {
+		f.attemptRows = map[statusAttemptKey]run.Attempt{}
+	}
+	f.attemptRows[statusAttemptKey{a.TaskID, a.Number}] = a
+	return nil
+}
+
+// CancelOpenAttempts cancels every open attempt the fake holds and records the
+// run it was called for.
+func (f *fakeTaskStatusTaskCollection) CancelOpenAttempts(_ context.Context, runID uuid.UUID) (int, error) {
+	f.cancelledRuns = append(f.cancelledRuns, runID)
+	n := 0
+	for k, a := range f.attemptRows {
+		if a.Status.IsFinal() {
+			continue
+		}
+		a.Status = run.AttemptCancelled
+		f.attemptRows[k] = a
+		n++
+	}
+	return n, nil
 }
 
 func (f *fakeTaskStatusTaskCollection) GetByID(_ context.Context, _ uuid.UUID) (run.Task, error) {
@@ -128,7 +172,8 @@ func (f *fakeTaskStatusTaskCollection) GetStatus(_ context.Context, _ uuid.UUID)
 	return f.prevStatus, f.prevExists, f.getStatusErr
 }
 
-func (f *fakeTaskStatusTaskCollection) LoadAttemptState(_ context.Context, _ uuid.UUID) (run.TaskAttemptState, bool, error) {
+func (f *fakeTaskStatusTaskCollection) LoadAttemptState(_ context.Context, id uuid.UUID) (run.TaskAttemptState, bool, error) {
+	f.lockOrder = append(f.lockOrder, "task "+id.String())
 	return run.TaskAttemptState{Status: f.prevStatus, RetryCount: f.prevAttempt}, f.prevExists, f.getStatusErr
 }
 

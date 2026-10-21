@@ -51,9 +51,14 @@ func TestTaskCollection_LoadAttemptStateReadsTheTask(t *testing.T) {
 		got, found, err := tasks.LoadAttemptState(ctx, id)
 		require.NoError(t, err)
 		require.True(t, found)
-		assert.Equal(t, run.TaskAttemptState{
-			Status: run.TaskStatusFailed, RetryCount: 1, MaxRetries: 2, NodeKey: "e2e_schema.ftable_e",
-		}, got)
+		assert.Equal(t, run.TaskStatusFailed, got.Status)
+		assert.Equal(t, int32(1), got.RetryCount)
+		assert.Equal(t, int32(2), got.MaxRetries)
+		assert.Equal(t, topology.NodeKey("e2e_schema.ftable_e"), got.NodeKey)
+		assert.NotEmpty(t, got.JobName)
+		assert.NotEmpty(t, got.ServiceName)
+		assert.Equal(t, "e2e_schema", got.SchemaName)
+		assert.Equal(t, "ftable_e", got.TableName)
 
 		_, found, err = tasks.LoadAttemptState(ctx, uuid.New())
 		require.NoError(t, err)

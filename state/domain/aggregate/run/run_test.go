@@ -95,6 +95,12 @@ type fakeTaskCollection struct {
 	loadErr       error
 	maxRetries    map[uuid.UUID]int32
 	keys          map[uuid.UUID]topology.NodeKey
+	// attemptRows holds the stored attempts; cancelledRuns the runs
+	// CancelOpenAttempts was called for; lockOrder the LoadAttemptState
+	// ("task <id>") and LoadAttempt ("attempt <id>/<n>") calls in call order.
+	attemptRows   map[attemptKey]run.Attempt
+	cancelledRuns []uuid.UUID
+	lockOrder     []string
 	// dispatched holds the tasks stamped dispatched, by BulkCreate or
 	// MarkDispatched; skipped the tasks MarkSkipped changed, in call order.
 	dispatched []uuid.UUID
@@ -113,7 +119,40 @@ func newFakeTaskCollection() *fakeTaskCollection {
 		updateApplied: map[uuid.UUID]int{},
 		maxRetries:    map[uuid.UUID]int32{},
 		keys:          map[uuid.UUID]topology.NodeKey{},
+		attemptRows:   map[attemptKey]run.Attempt{},
 	}
+}
+
+// attemptKey identifies one stored attempt.
+type attemptKey struct {
+	task    uuid.UUID
+	attempt int32
+}
+
+func (f *fakeTaskCollection) LoadAttempt(_ context.Context, id uuid.UUID, attempt int32) (run.Attempt, bool, error) {
+	f.lockOrder = append(f.lockOrder, fmt.Sprintf("attempt %s/%d", id, attempt))
+	a, ok := f.attemptRows[attemptKey{id, attempt}]
+	return a, ok, nil
+}
+func (f *fakeTaskCollection) SaveAttempt(_ context.Context, a run.Attempt) error {
+	f.attemptRows[attemptKey{a.TaskID, a.Number}] = a
+	return nil
+}
+
+// CancelOpenAttempts cancels every open attempt the fake holds: a test builds
+// one run, so every stored attempt belongs to it.
+func (f *fakeTaskCollection) CancelOpenAttempts(_ context.Context, runID uuid.UUID) (int, error) {
+	f.cancelledRuns = append(f.cancelledRuns, runID)
+	n := 0
+	for k, a := range f.attemptRows {
+		if a.Status.IsFinal() {
+			continue
+		}
+		a.Status = run.AttemptCancelled
+		f.attemptRows[k] = a
+		n++
+	}
+	return n, nil
 }
 
 func (f *fakeTaskCollection) GetStatus(_ context.Context, id uuid.UUID) (run.TaskStatus, bool, error) {
@@ -121,6 +160,7 @@ func (f *fakeTaskCollection) GetStatus(_ context.Context, id uuid.UUID) (run.Tas
 	return s, ok, nil
 }
 func (f *fakeTaskCollection) LoadAttemptState(_ context.Context, id uuid.UUID) (run.TaskAttemptState, bool, error) {
+	f.lockOrder = append(f.lockOrder, "task "+id.String())
 	if f.loadErr != nil {
 		return run.TaskAttemptState{}, false, f.loadErr
 	}

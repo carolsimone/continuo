@@ -18,8 +18,9 @@ import (
 // inside its own method bodies.
 type TaskCollection interface {
 	// LoadAttemptState returns what a status update needs of one task: its
-	// status, its stored attempt number, its retry budget
-	// and its node key, locking the row FOR UPDATE so concurrent
+	// status, its stored attempt number, its retry budget, its node key, its
+	// identity (job name and node) and its first dispatch time, locking the
+	// row FOR UPDATE so concurrent
 	// task.status.updated deliveries for the same task serialize. The attempt
 	// is the discriminator the aggregate uses to order updates: a strictly
 	// newer attempt supersedes, an older one is stale, and the same attempt
@@ -27,6 +28,25 @@ type TaskCollection interface {
 	// return is false when the row does not exist; err is non-nil only for
 	// genuine I/O failures.
 	LoadAttemptState(ctx context.Context, taskID uuid.UUID) (state TaskAttemptState, exists bool, err error)
+
+	// LoadAttempt returns attempt number attempt of the task, locking its row
+	// FOR UPDATE so concurrent writers of that attempt serialize. The second
+	// return is false when the task has no such attempt; err is non-nil only
+	// for genuine I/O failures. A caller that also locks the task row
+	// (LoadAttemptState) takes that lock first.
+	LoadAttempt(ctx context.Context, taskID uuid.UUID, attempt int32) (Attempt, bool, error)
+
+	// SaveAttempt inserts the attempt or replaces the stored one with the same
+	// (task, number). A new attempt with no DispatchedAt is stamped with the
+	// database clock; a stored dispatch time is never changed. The attempt's
+	// last report time is the database clock and never moves backwards, and an
+	// attempt that is final has no next check.
+	SaveAttempt(ctx context.Context, a Attempt) error
+
+	// CancelOpenAttempts marks every dispatched, queued and running attempt of
+	// the tasks of the given run as cancelled, with no next check, and returns
+	// how many it changed. Attempts that have ended are left as they are.
+	CancelOpenAttempts(ctx context.Context, runID uuid.UUID) (int, error)
 
 	// HasFailed reports whether any task in the given run ended FAILED or
 	// CANCELLED — a terminal unsuccessful task. Pending and running tasks do
@@ -83,11 +103,18 @@ type TaskCollection interface {
 }
 
 // TaskAttemptState is one task as a status update reads it: its status, the
-// attempt it is at, its retry budget and its node in the run's release. NodeKey
-// is empty on a task whose run names no release.
+// attempt it is at, its retry budget, its node in the run's release, its
+// identity (the job name and node it was planned with) and when it was first
+// dispatched. NodeKey is empty on a task whose run names no release;
+// DispatchedAt is nil on a task that was never dispatched.
 type TaskAttemptState struct {
-	Status     TaskStatus
-	RetryCount int32
-	MaxRetries int32
-	NodeKey    topology.NodeKey
+	Status       TaskStatus
+	RetryCount   int32
+	MaxRetries   int32
+	NodeKey      topology.NodeKey
+	JobName      string
+	ServiceName  string
+	SchemaName   string
+	TableName    string
+	DispatchedAt *time.Time
 }
