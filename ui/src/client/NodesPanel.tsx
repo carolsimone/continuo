@@ -24,9 +24,10 @@ function completedAtMs(task: Task, attemptsByTask: Map<string, TaskAttempt[]>): 
   return finishedAt ? new Date(finishedAt).getTime() : 0;
 }
 
-// Ties within a status bucket (e.g. all succeeded) break by completed_at
-// descending — most recently finished first. Tasks with no completed_at
-// (pending/running) tie at 0 and keep their incoming order.
+// Ties within a status bucket (e.g. all succeeded) break by the finished_at of
+// each task's latest attempt, descending — most recently finished first. Tasks
+// whose latest attempt has no finished_at (pending/running) tie at 0 and keep
+// their incoming order.
 function sortTasks(tasks: Task[], attemptsByTask: Map<string, TaskAttempt[]>): Task[] {
   return [...tasks].sort((a, b) =>
     (STATUS_ORDER[a.status] ?? 5) - (STATUS_ORDER[b.status] ?? 5) ||

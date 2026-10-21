@@ -388,11 +388,10 @@ func TestTaskRepository_SetStatusAndAttemptTx_DoesNotReviveCancelledTask(t *test
 	assert.Equal(t, run.TaskStatusCancelled, got.Status, "status must remain cancelled")
 }
 
-// TestTaskRepository_SetStatusAndAttemptTx_AdvancesAttemptOnSameStatus guards the
-// SQL-layer fix: a newer attempt's terminal carrying the same status (failed→failed
-// at a higher attempt) must still advance attempt. The previous status-only
-// gate dropped this write, leaving the stored attempt stale and corrupting the
-// attempt-monotonic comparison in the Run aggregate.
+// TestTaskRepository_SetStatusAndAttemptTx_AdvancesAttemptOnSameStatus asserts
+// that a newer attempt's terminal carrying the same status (failed→failed at a
+// higher attempt) still writes the higher attempt, so the stored attempt the
+// Run aggregate orders status updates by stays current.
 func TestTaskRepository_SetStatusAndAttemptTx_AdvancesAttemptOnSameStatus(t *testing.T) {
 	db := newTestDB(t)
 	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())

@@ -37,9 +37,10 @@ type TaskTrackerRepository interface {
 	// leaving a cancelled row untouched. Returns rows affected.
 	SetStatusAndAttemptTx(ctx context.Context, tx *sqlx.Tx, taskID uuid.UUID, status string, retryCount int32) (int32, error)
 	// LoadAttemptStateTx returns the task's status, stored attempt,
-	// max_retries and node_key, locking the row FOR UPDATE so concurrent
-	// task.status.updated deliveries for the same task serialize. found is
-	// false when the row does not exist. attempt is the
+	// max_retries, node_key, job_name, service_name, schema_name, table_name
+	// and dispatched_at, locking the row FOR UPDATE so concurrent writers of
+	// the task (status updates, execution records, the cancel) serialize.
+	// found is false when the row does not exist. attempt is the
 	// discriminator the Run aggregate orders updates by.
 	LoadAttemptStateTx(ctx context.Context, tx *sqlx.Tx, taskID uuid.UUID) (row TaskAttemptRow, found bool, err error)
 	// MarkDispatchedTx stamps dispatched_at on the pending, undispatched tasks
@@ -366,9 +367,11 @@ type TaskAttemptRow struct {
 	DispatchedAt *time.Time `db:"dispatched_at"`
 }
 
-// LoadAttemptStateTx reads the task_tracker row of taskID with FOR UPDATE, so
-// concurrent task.status.updated deliveries for the same task serialize within
-// their transactions. A missing row yields found == false and no error.
+// LoadAttemptStateTx reads the status, attempt, max_retries, node_key (empty
+// when NULL), job_name, service_name, schema_name, table_name and
+// dispatched_at of the task_tracker row of taskID with FOR UPDATE, so
+// concurrent writers of the same task serialize within their transactions. A
+// missing row yields found == false and no error.
 func (r *taskTrackerRepository) LoadAttemptStateTx(ctx context.Context, tx *sqlx.Tx, taskID uuid.UUID) (TaskAttemptRow, bool, error) {
 	var row TaskAttemptRow
 	err := tx.GetContext(ctx, &row,
