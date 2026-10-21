@@ -145,7 +145,7 @@ func toHistoryPayload(runs []*statev1.NodeRun) historyPayload {
 			TerminalStatus: r.GetTerminalStatus(),
 			TaskID:         r.GetTaskId(),
 			TaskStatus:     r.GetTaskStatus(),
-			RetryCount:     r.GetRetryCount(),
+			RetryCount:     r.GetAttempt(),
 			ImageTag:       r.GetImageTag(),
 			CreatedAt:      r.GetCreatedAt(),
 			StartedAt:      r.GetStartedAt(),

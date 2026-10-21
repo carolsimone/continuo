@@ -55,7 +55,7 @@ func (h *NodeRunHandler) ListNodeRuns(
 			TerminalStatus: string(r.TerminalStatus),
 			TaskId:         r.TaskID.String(),
 			TaskStatus:     string(r.TaskStatus),
-			RetryCount:     num.ClampInt32(r.Attempt),
+			Attempt:        num.ClampInt32(r.Attempt),
 			ImageTag:       r.ImageTag,
 			CreatedAt:      r.CreatedAt.UTC().Format(time.RFC3339),
 			StartedAt:      timePtrToRFC(r.StartedAt),
@@ -65,6 +65,8 @@ func (h *NodeRunHandler) ListNodeRuns(
 			Operation:      r.Operation,
 			RunResultsUri:  stringPtrOrEmpty(r.RunResultsURI),
 			ContentHash:    r.ContentHash,
+			FailureClass:   stringPtrOrEmpty(r.FailureClass),
+			FailureReason:  stringPtrOrEmpty(r.FailureReason),
 		})
 	}
 	return &statev1.ListNodeRunsResponse{Runs: out}, nil

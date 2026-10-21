@@ -146,7 +146,7 @@ func TestHistory_SuccessMapsAllFields(t *testing.T) {
 	fake := &fakeNodeState{runsResp: &statev1.ListNodeRunsResponse{Runs: []*statev1.NodeRun{{
 		RunId: "run_1", ScheduleName: "single-node-run-abcd1234", Kind: "single_node_run",
 		TerminalStatus: "succeeded", TaskId: "task_1", TaskStatus: "succeeded",
-		RetryCount: 0, ImageTag: "img:v9", CreatedAt: "2026-07-10T10:00:00Z", CompletedAt: "2026-07-10T10:05:00Z",
+		Attempt: 0, ImageTag: "img:v9", CreatedAt: "2026-07-10T10:00:00Z", CompletedAt: "2026-07-10T10:05:00Z",
 		RunResultsUri: "run-results/task-executions/finance/analytics/orders/e1.json",
 	}}}}
 

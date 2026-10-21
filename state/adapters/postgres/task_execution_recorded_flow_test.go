@@ -124,21 +124,6 @@ func TestTaskExecutionRecorded_StatusAndRecordInEitherOrderLeaveOneAttempt(t *te
 	}
 }
 
-// Recording an execution writes no task_execution row.
-func TestTaskExecutionRecorded_ARecordNoLongerWritesTaskExecution(t *testing.T) {
-	db := newTestDB(t)
-	tenant := storeFailureSchedule(t, db)
-	f := statusFlow{db: db, tenant: tenant, r: startScheduleRun(t, db, tenant, "e2e-schedule-failure", model.OperationRun)}
-	job, _, _ := f.task(t, recordFlowKey)
-
-	f.record(t, f.executionRecordOf(recordFlowKey, job, "logs/"+job+".log"))
-
-	var n int
-	require.NoError(t, db.Get(&n, `SELECT count(*) FROM task_execution WHERE task_id = $1`, f.taskID(recordFlowKey)))
-	assert.Zero(t, n)
-	require.Len(t, f.recordedAttempts(t, recordFlowKey), 1)
-}
-
 // singleConnDB opens a pool of exactly one connection, so every statement of
 // it, transactions included, runs on the backend whose pid it returns.
 func singleConnDB(t *testing.T) (*sqlx.DB, int) {

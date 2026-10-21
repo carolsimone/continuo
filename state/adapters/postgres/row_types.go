@@ -101,25 +101,3 @@ type taskAttemptRow struct {
 	ParseCache       *string    `db:"parse_cache"`
 	ParseCacheReason *string    `db:"parse_cache_reason"`
 }
-
-// TaskExecution is the storage row carrier for the task_execution table.
-// It mirrors the table schema one-to-one and is used exclusively within this
-// package by the repository implementations.
-type TaskExecution struct {
-	ID                   uuid.UUID  `json:"id" db:"id"`
-	TaskID               uuid.UUID  `json:"task_id" db:"task_id"`
-	CreatedAt            time.Time  `json:"created_at" db:"created_at"`
-	StartedAt            *time.Time `json:"started_at,omitempty" db:"started_at"`
-	CompletedAt          *time.Time `json:"completed_at,omitempty" db:"completed_at"`
-	ExecutionTimeSeconds *float64   `json:"execution_time_seconds,omitempty" db:"execution_time_seconds"`
-	ExecutorID           *string    `json:"executor_id,omitempty" db:"executor_id"`
-	K8sJobName           *string    `json:"k8s_job_name,omitempty" db:"k8s_job_name"`
-	ErrorMessage         *string    `json:"error_message,omitempty" db:"error_message"`
-	CancelledAt          *time.Time `json:"cancelled_at,omitempty" db:"cancelled_at"`
-	CancelledBy          *string    `json:"cancelled_by,omitempty" db:"cancelled_by"`
-	CancellationReason   *string    `json:"cancellation_reason,omitempty" db:"cancellation_reason"`
-	LogS3Key             *string    `json:"log_s3_key,omitempty" db:"log_s3_key"`
-	RunResultsURI        *string    `json:"run_results_uri,omitempty" db:"run_results_uri"`
-	ParseCache           *string    `json:"parse_cache,omitempty" db:"parse_cache"`
-	ParseCacheReason     *string    `json:"parse_cache_reason,omitempty" db:"parse_cache_reason"`
-}
