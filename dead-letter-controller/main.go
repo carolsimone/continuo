@@ -14,6 +14,7 @@ import (
 	"github.com/carolsimone/continuo/dead-letter-controller/adapters/postgres"
 	redisadapter "github.com/carolsimone/continuo/dead-letter-controller/adapters/redis"
 	"github.com/carolsimone/continuo/dead-letter-controller/config"
+	"github.com/carolsimone/continuo/dead-letter-controller/domain/deadletter"
 	"github.com/carolsimone/continuo/dead-letter-controller/service/handlers"
 	"github.com/carolsimone/continuo/dead-letter-controller/service/ports"
 	"github.com/carolsimone/continuo/dead-letter-controller/service/trimmer"
@@ -43,6 +44,12 @@ const expireInterval = time.Hour
 // are unset: two connections per stream consumer, plus the outbox relay, the
 // expirer, gRPC requests and the retention sweeper's lock connection.
 var dbPool = pkgconfig.PoolConfig{MaxOpenConns: 12, MaxIdleConns: 5}
+
+// redriveContract is the contract dead letters are listed and redriven under:
+// the streams and consumer groups pkg/streams declares, and its retired streams.
+func redriveContract() deadletter.Contract {
+	return deadletter.NewContract(streams.Groups, streams.Retired)
+}
 
 func main() {
 	// The logger writes at the level LOG_LEVEL names. An unknown level is
@@ -240,8 +247,10 @@ func main() {
 	repo := postgres.NewDeadLetterRepository(db)
 	obs := dlmetrics.New(metricsReg, repo)
 	recorder := handlers.NewRecorder(repo, obs, logger)
-	query := handlers.NewQuery(repo)
-	redriver := handlers.NewRedriver(func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger) }, clock, obs, logger)
+	contract := redriveContract()
+	query := handlers.NewQuery(repo, contract)
+	redriver := handlers.NewRedriver(func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger) }, clock, obs,
+		contract, logger)
 	expirer := handlers.NewExpirer(repo, clock, obs, logger)
 	lifecycleManager.Go(func() { expirer.Run(ctx, expireInterval) })
 

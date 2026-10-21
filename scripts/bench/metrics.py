@@ -76,6 +76,43 @@ def attempts_for_run(jobs_doc: dict, run_id: str) -> list:
     return attempts
 
 
+def attempts_by_table(attempts: list) -> dict:
+    """Each table's attempts, its oldest Job first."""
+    grouped = {}
+    for attempt in sorted(attempts, key=lambda a: a.created):
+        grouped.setdefault(attempt.table, []).append(attempt)
+    return grouped
+
+
+def retry_count(attempts: list) -> int:
+    """Attempts after each task's first, whether or not the earlier attempt's Job finished."""
+    return sum(len(runs) - 1 for runs in attempts_by_table(attempts).values())
+
+
+def retry_turnarounds(attempts: list) -> list:
+    """Seconds from each failed attempt's Job finishing to the next attempt's Job being created."""
+    out = []
+    for runs in attempts_by_table(attempts).values():
+        for previous, following in zip(runs, runs[1:]):
+            if previous.failed and previous.finished:
+                out.append((following.created - previous.finished).total_seconds())
+    return out
+
+
+def overlapping_attempts(attempts: list) -> int:
+    """Attempts whose Job was created while an earlier attempt Job of the same task had not finished.
+
+    A Job that never finished counts as unfinished. A Job gone from the capture
+    is not counted: the capture holds no lifetime for it.
+    """
+    count = 0
+    for runs in attempts_by_table(attempts).values():
+        for index, attempt in enumerate(runs[1:], start=1):
+            if any(earlier.finished is None or earlier.finished > attempt.created for earlier in runs[:index]):
+                count += 1
+    return count
+
+
 def busy_and_gaps(intervals: list) -> tuple:
     """Union length of [start, end] intervals and the gaps between merged islands, in seconds."""
     ordered = sorted(intervals)
@@ -120,6 +157,70 @@ def handoff_latencies(topology: list, starts: dict, finishes: dict) -> list:
         ready = max(finishes[u] for u in upstream)
         latencies.append((starts[node["table_name"]] - ready).total_seconds())
     return latencies
+
+
+@dataclass(frozen=True)
+class Deployment:
+    table: str
+    queued: datetime
+    created: Optional[datetime]
+    recorded: Optional[datetime]
+
+
+def _optional_ts(value) -> Optional[datetime]:
+    return parse_ts(value) if value else None
+
+
+def read_deployments(rows: list) -> list:
+    """execution-controller's deployments of one run, from run_rows.py's JSON."""
+    return [Deployment(table=row["table"], queued=parse_ts(row["queued"]), created=_optional_ts(row.get("created")),
+                       recorded=_optional_ts(row.get("recorded")))
+            for row in rows if row.get("table") and row.get("queued")]
+
+
+def read_dispatches(rows: list) -> dict:
+    """When state first dispatched each table of one run, from run_rows.py's JSON."""
+    return {row["table"]: parse_ts(row["dispatched"]) for row in rows if row.get("table") and row.get("dispatched")}
+
+
+BREAKDOWN_STEPS = ("observe", "round_trip", "to_dispatch", "to_queue", "admit")
+
+
+def handoff_breakdown(topology: list, finishes: dict, deployments: list, dispatched: dict) -> dict:
+    """Each step of every hand-off in seconds, keyed by step.
+
+    For a node and its upstream whose last Job finished last, with the
+    upstream's last deployment and the node's first:
+      observe      the upstream's Job finished -> execution-controller recorded its result
+      round_trip   result recorded -> the node's deployment queued, both on execution-controller's clock
+      to_dispatch  result recorded -> state dispatched the node
+      to_queue     state dispatched the node -> its deployment queued
+      admit        deployment queued -> its Job created
+    """
+    table_of = {node["unique_id"]: node["table_name"] for node in topology}
+    first, last = {}, {}
+    for dep in sorted(deployments, key=lambda d: d.queued):
+        first.setdefault(dep.table, dep)
+        last[dep.table] = dep
+    steps = {step: [] for step in BREAKDOWN_STEPS}
+    for node in topology:
+        table = node["table_name"]
+        upstream = [table_of[u] for u in node.get("upstream_unique_ids", []) if u in table_of]
+        if not upstream or table not in first or any(u not in finishes for u in upstream):
+            continue
+        source = max(upstream, key=lambda u: finishes[u])
+        recorded = last[source].recorded if source in last else None
+        mine = first[table]
+        if recorded:
+            steps["observe"].append((recorded - finishes[source]).total_seconds())
+            steps["round_trip"].append((mine.queued - recorded).total_seconds())
+            if table in dispatched:
+                steps["to_dispatch"].append((dispatched[table] - recorded).total_seconds())
+        if table in dispatched:
+            steps["to_queue"].append((mine.queued - dispatched[table]).total_seconds())
+        if mine.created:
+            steps["admit"].append((mine.created - mine.queued).total_seconds())
+    return steps
 
 
 _MEM_UNITS = {

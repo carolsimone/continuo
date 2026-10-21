@@ -12,7 +12,7 @@ import (
 func TestRecord_StoresOnceAndObservesOnce(t *testing.T) {
 	h := newHarness()
 	dl := deadletter.DeadLetter{DedupKey: "consumer|s|g|1-0", Source: deadletter.SourceConsumer, FailureKind: model.DeadLetterKindPermanent,
-		Stream: "s", Group: "g", Fields: map[string]string{"k": "v"}, Redrivable: true, OriginalAt: now, RecordedAt: now, Status: deadletter.StatusOpen}
+		Stream: "s", Group: "g", Fields: map[string]string{"k": "v"}, Publishable: true, OriginalAt: now, RecordedAt: now, Status: deadletter.StatusOpen}
 	for i := 0; i < 2; i++ {
 		if err := h.recorder.Record(context.Background(), dl); err != nil {
 			t.Fatal(err)

@@ -131,6 +131,26 @@ bench_psql() {
     psql "${user}" "${db}" "${sql}"
 }
 
+# Runs SQL in SERVICE's database and prints psql's unaligned, tuples-only
+# output. On k8s it runs in BENCH_PG_POD as SERVICE's database user
+# (bench_psql); on compose, in the stack's Postgres container as the user and
+# database SERVICE's container is configured with.
+#   bench_sql SERVICE SQL
+bench_sql() {
+  local service="$1" sql="$2" container db user
+  if [ "$(bench_target)" = "k8s" ]; then
+    [ -n "${BENCH_PG_POD:-}" ] || { echo "bench: BENCH_PG_POD is not set (discover.sh lists candidates)" >&2; return 1; }
+    bench_psql "${BENCH_PG_POD}" \
+      "$(bench_env_value "${service}" POSTGRES_USER)" "$(bench_env_value "${service}" POSTGRES_DB)" \
+      "$(bench_env_value "${service}" POSTGRES_PASSWORD)" "${sql}"
+  else
+    container="$(bench_container "${service}")"
+    db="$(docker exec "${container}" printenv POSTGRES_DB)"
+    user="$(docker exec "${container}" printenv POSTGRES_USER)"
+    docker exec -i "$(bench_container postgres)" psql -X -q -U "${user}" -d "${db}" -At -c "${sql}" < /dev/null
+  fi
+}
+
 # release-controller's announce-topology command with ARGS: inside
 # deploy/release-controller on k8s (the production image carries it on PATH),
 # inside the release-controller container on compose (the dev image builds it
@@ -179,21 +199,113 @@ bench_finish_run() {
   echo "${status}"
 }
 
-# Stops a scenario that is still running: ends its runner CHILD (a process this
-# shell started; empty when none), then cancels SCHEDULE's run if it is live and
-# waits up to 300 s for it to stop, so nothing the benchmark started keeps running.
+# bench_cancel_live_run SCHEDULE: cancels SCHEDULE's run when one is live and
+# waits up to BENCH_CANCEL_WAIT_S (default 300) seconds for it to stop. Returns
+# non-zero, with a message, when the run's state cannot be read (the CLI exits
+# non-zero, printing its error envelope on stdout), the cancel fails, or the run
+# is still live after the wait.
+bench_cancel_live_run() {
+  local schedule="$1" wait_s="${BENCH_CANCEL_WAIT_S:-300}" status_json run_id running ended
+  if ! status_json="$(bench_cli_run schedule status "${schedule}" 2>/dev/null)" \
+     || ! read -r run_id running _ < <(printf '%s' "${status_json}" \
+          | python3 "$(bench_here)/cli_json.py" run-state 2>/dev/null); then
+    echo "bench: could not read ${schedule}'s run state; cancel its live run by hand" >&2
+    return 1
+  fi
+  [ "${running}" = "true" ] || return 0
+  if ! bench_cli_run schedule cancel "${schedule}" "benchmark interrupted" >/dev/null; then
+    echo "bench: could not cancel ${schedule}'s run ${run_id}; cancel it by hand" >&2
+    return 1
+  fi
+  ended="$(bench_wait_run "${schedule}" "${run_id}" "${wait_s}")"
+  if [ "${ended}" = "timeout" ]; then
+    echo "bench: ${schedule}'s run ${run_id} was still live ${wait_s} s after it was cancelled" >&2
+    return 1
+  fi
+}
+
+# bench_spawn COMMAND [ARG...]: starts COMMAND in the background in a process
+# group of its own; $! is then both its PID and the group's id, which
+# bench_stop_scenario signals.
+bench_spawn() {
+  python3 -c 'import os, sys; os.setpgid(0, 0); os.execvp(sys.argv[1], sys.argv[1:])' "$@" &
+}
+
+# Stops a scenario that is still running and returns non-zero, with a message,
+# when its run may still be live. It signals the runner CHILD (a process this
+# shell started; empty when none) and cancels SCHEDULE's live run, then waits for
+# CHILD to exit and cancels a run whose trigger reached state meanwhile. A CHILD
+# started with bench_spawn is signalled with its whole process group, so its
+# subshells, its sampler and any CLI call in flight end with it, a trigger call
+# included; any other CHILD is signalled alone. The cancel comes before the
+# wait: bash 3.2 (macOS) defers a signal until a command substitution ends, so a
+# runner waiting on its run exits only once that substitution has. When the run
+# could not be stopped, CHILD is not waited for: the signal has already ended
+# the subshells of a spawned runner, which then exits.
 bench_stop_scenario() {
-  local child="$1" schedule="$2" run_id running
+  local child="$1" schedule="$2"
   if [ -n "${child}" ]; then
-    kill "${child}" 2>/dev/null || true
+    kill -TERM -- "-${child}" 2>/dev/null || kill "${child}" 2>/dev/null || true
+  fi
+  if [ -n "${schedule}" ]; then
+    bench_cancel_live_run "${schedule}" || return 1
+  fi
+  if [ -n "${child}" ]; then
     wait "${child}" 2>/dev/null || true
+    if [ -n "${schedule}" ]; then
+      bench_cancel_live_run "${schedule}" || return 1
+    fi
   fi
-  [ -n "${schedule}" ] || return 0
-  if read -r run_id running _ < <(bench_cli_run schedule status "${schedule}" 2>/dev/null \
-       | python3 "$(bench_here)/cli_json.py" run-state) && [ "${running}" = "true" ]; then
-    bench_cli_run schedule cancel "${schedule}" "benchmark interrupted" >/dev/null || true
-    bench_wait_run "${schedule}" "${run_id}" 300 >/dev/null
+}
+
+# bench_start_failure NAME PAYLOAD SCHEDULE OUT_DIR [QUOTA_FILE]: runs a
+# start-failure scenario, three reps of run_scenario.sh (BENCH_IDLE_S default
+# 30, BENCH_RUN_TIMEOUT_S default 900), as a child process in a process group of
+# its own (bench_spawn), with QUOTA_FILE's
+# ResourceQuota applied to the Job namespace for its length when given. However
+# the scenario ends, normally or on INT, TERM or HUP, it is cleaned up: the
+# schedule's live run is cancelled, so no next attempt is queued, the child is
+# stopped, the schedule's Jobs are deleted, and the quota is removed; further
+# INT, TERM and HUP are ignored until the cleanup has run. A cleanup step that
+# fails is reported and the next one still runs; the function then fails, and a
+# signal still exits the shell with 130 or 143. It replaces the caller's EXIT,
+# INT, TERM and HUP traps while it runs and resets them to the default when it
+# returns.
+bench_start_failure() {
+  local name="$1" payload="$2" schedule="$3" out="$4" rc=0
+  bench_start_failure_child=""
+  bench_start_failure_schedule="${schedule}"
+  bench_start_failure_quota="${5:-}"
+  trap 'bench_start_failure_cleanup || true' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM HUP
+  if [ -n "${bench_start_failure_quota}" ]; then
+    bench_kubectl apply -f "${bench_start_failure_quota}" >/dev/null
   fi
+  BENCH_IDLE_S="${BENCH_IDLE_S:-30}" BENCH_RUN_TIMEOUT_S="${BENCH_RUN_TIMEOUT_S:-900}" \
+    bench_spawn "$(bench_here)/run_scenario.sh" "${name}" "${payload}" "${schedule}" run 3 "${out}"
+  bench_start_failure_child=$!
+  wait "${bench_start_failure_child}" || rc=$?
+  bench_start_failure_child=""
+  trap - EXIT
+  bench_start_failure_cleanup || rc=1
+  trap - INT TERM HUP
+  return "${rc}"
+}
+
+# bench_start_failure_cleanup: bench_start_failure's cleanup, which INT, TERM
+# and HUP do not interrupt; returns 1 when a step failed.
+bench_start_failure_cleanup() {
+  local schedule="${bench_start_failure_schedule}" quota="${bench_start_failure_quota}" failed=0
+  trap '' INT TERM HUP
+  bench_stop_scenario "${bench_start_failure_child}" "${schedule}" || failed=1
+  bench_kubectl delete jobs -l "schedule=${schedule}" --ignore-not-found --wait=true >/dev/null \
+    || { echo "bench: could not delete ${schedule}'s Jobs" >&2; failed=1; }
+  if [ -n "${quota}" ]; then
+    bench_kubectl delete -f "${quota}" --ignore-not-found >/dev/null \
+      || { echo "bench: could not remove the quota of ${quota}; delete it by hand (README)" >&2; failed=1; }
+  fi
+  return "${failed}"
 }
 
 # k8s only: release-controller's current production release id.

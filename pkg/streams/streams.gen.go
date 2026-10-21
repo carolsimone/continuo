@@ -142,7 +142,7 @@ var All = []string{
 
 // Groups maps every contract stream to the consumer groups the contract
 // declares for it, for callers that must know which groups a stream serves
-// (dead-letter-controller's trim loop).
+// (dead-letter-controller's trim loop and the contract it redrives under).
 var Groups = map[string][]string{
 	SchedulesLoadedV1:           {StateScheduleCatalog},
 	QueryModelV1:                {ExecutorQueryModel},

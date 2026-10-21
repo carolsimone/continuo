@@ -36,7 +36,7 @@ func (r *Recorder) Record(ctx context.Context, dl deadletter.DeadLetter) error {
 	if inserted {
 		r.obs.Recorded(dl)
 		r.logger.Info("Dead letter stored", "id", dl.ID, "source", dl.Source, "stream", dl.Stream,
-			"group", dl.Group, "failure_kind", dl.FailureKind, "redrivable", dl.Redrivable)
+			"group", dl.Group, "failure_kind", dl.FailureKind, "publishable", dl.Publishable)
 	}
 	return nil
 }

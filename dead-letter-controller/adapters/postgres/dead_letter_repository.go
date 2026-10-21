@@ -72,7 +72,7 @@ func (r row) toDomain() (deadletter.DeadLetter, error) {
 	dl := deadletter.DeadLetter{
 		ID: r.ID, DedupKey: r.DedupKey, Source: deadletter.Source(r.Source), FailureKind: model.DeadLetterKind(r.FailureKind),
 		Stream: r.Stream, Group: r.Group, OriginalMessageID: r.OriginalMessageID, Producer: r.Producer, Error: r.Error,
-		DeliveryCount: r.DeliveryCount, Fields: fields, Redrivable: r.Redrivable, OriginalEventType: r.OriginalEventType,
+		DeliveryCount: r.DeliveryCount, Fields: fields, Publishable: r.Redrivable, OriginalEventType: r.OriginalEventType,
 		FailedOutboxID: r.FailedOutboxID, OriginalAt: r.OriginalAt.UTC(), RecordedAt: r.RecordedAt.UTC(),
 		Status: deadletter.Status(r.Status),
 	}
@@ -109,7 +109,7 @@ func (r *DeadLetterRepository) Insert(ctx context.Context, dl deadletter.DeadLet
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,NULL,NULL,NULL)
 		ON CONFLICT (dedup_key) DO NOTHING`,
 		dl.ID, dl.DedupKey, string(dl.Source), string(dl.FailureKind), dl.Stream, dl.Group, dl.OriginalMessageID,
-		dl.Producer, dl.Error, dl.DeliveryCount, string(body), dl.Redrivable, dl.OriginalEventType, dl.FailedOutboxID,
+		dl.Producer, dl.Error, dl.DeliveryCount, string(body), dl.Publishable, dl.OriginalEventType, dl.FailedOutboxID,
 		dl.OriginalAt, dl.RecordedAt, string(dl.Status))
 	if err != nil {
 		return false, fmt.Errorf("insert dead letter: %w", err)
@@ -194,7 +194,7 @@ func insertChunkOn(ctx context.Context, exec sqlx.ExtContext, dls []deadletter.D
 		}
 		sb.WriteString(",NULL,NULL,NULL)")
 		args = append(args, dl.ID, dl.DedupKey, string(dl.Source), string(dl.FailureKind), dl.Stream, dl.Group,
-			dl.OriginalMessageID, dl.Producer, dl.Error, dl.DeliveryCount, string(body), dl.Redrivable,
+			dl.OriginalMessageID, dl.Producer, dl.Error, dl.DeliveryCount, string(body), dl.Publishable,
 			dl.OriginalEventType, dl.FailedOutboxID, dl.OriginalAt, dl.RecordedAt, string(dl.Status))
 	}
 	sb.WriteString(` ON CONFLICT (dedup_key) DO NOTHING`)

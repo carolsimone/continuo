@@ -43,7 +43,7 @@ func (b *ConsumerDeadLetterBinding) Handle(ctx context.Context, msg goredis.XMes
 		ID: uuid.New(), DedupKey: deadletter.ConsumerKey(p.OriginalStream, p.OriginalGroup, p.OriginalMessageID),
 		Source: deadletter.SourceConsumer, FailureKind: p.FailureKind, Stream: p.OriginalStream, Group: p.OriginalGroup,
 		OriginalMessageID: p.OriginalMessageID, Producer: env.Producer, Error: p.Error, DeliveryCount: p.DeliveryCount,
-		Fields: p.Fields, Redrivable: len(p.Fields) > 0, OriginalAt: idTimeOr(p.OriginalMessageID, env.OccurredAt),
+		Fields: p.Fields, Publishable: len(p.Fields) > 0, OriginalAt: idTimeOr(p.OriginalMessageID, env.OccurredAt),
 		RecordedAt: now, Status: deadletter.StatusOpen,
 	})
 }

@@ -178,7 +178,7 @@ func (t *Trimmer) quarantine(ctx context.Context, stream string, w trim.Work, bu
 			Source: deadletter.SourceQuarantine, FailureKind: model.DeadLetterKindTrimmed, Stream: stream,
 			Group: w.Group, OriginalMessageID: e.ID.String(),
 			Error:  fmt.Sprintf("removed by the %s retention cap before group %s finished it", t.cfg.Retention, w.Group),
-			Fields: e.Fields, Redrivable: len(e.Fields) > 0, OriginalAt: e.ID.Time(), RecordedAt: now,
+			Fields: e.Fields, Publishable: len(e.Fields) > 0, OriginalAt: e.ID.Time(), RecordedAt: now,
 			Status: deadletter.StatusOpen,
 		})
 	}

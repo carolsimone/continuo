@@ -88,6 +88,17 @@ def scenario_section(reps_a: list, reps_b: list, label_a: str, label_b: str) -> 
     return lines
 
 
+def targets_section(before: dict, after: dict, label_a: str, label_b: str) -> list:
+    """Each target with its value on both sides, reps with a sampling pause left out."""
+    kept_a = {name: split_paused(reps)[0] for name, reps in before.items()}
+    kept_b = {name: split_paused(reps)[0] for name, reps in after.items()}
+    lines = ["## Targets", "", f"| measure | target | {label_a} | {label_b} |", "|---|---|---|---|"]
+    for (measure, target, a), (_, _, b) in zip(report.target_values(kept_a), report.target_values(kept_b)):
+        lines.append(f"| {measure} | {target} | {fmt(a, 2)} | {fmt(b, 2)} |")
+    lines.append("")
+    return lines
+
+
 def compare(before: dict, after: dict, label_a: str, label_b: str) -> str:
     lines = [f"# Benchmark comparison: {label_a} → {label_b}", ""]
     for name in sorted(set(before) | set(after)):
@@ -98,6 +109,7 @@ def compare(before: dict, after: dict, label_a: str, label_b: str) -> str:
             lines += [f"Only in {label_b}.", ""]
         else:
             lines += scenario_section(before[name], after[name], label_a, label_b)
+    lines += targets_section(before, after, label_a, label_b)
     return "\n".join(lines)
 
 

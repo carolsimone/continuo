@@ -45,8 +45,8 @@ Errors:
   usage      (exit 2)  wrong number of arguments, no ids, a blank reason, or an id
                        that is not a dead letter id
   not_found  (exit 3)  an id matches no dead letter (nothing was redriven)
-  conflict   (exit 4)  a dead letter is older than the 30-day replay horizon, or has
-                       no fields to republish (nothing was redriven)
+  conflict   (exit 4)  a dead letter is older than the 30-day replay horizon, or can
+                       never be redriven (dlq list shows why; nothing was redriven)
   unavailable(exit 5)  dead-letter-controller is unreachable
   maintenance(exit 7)  continuo is in maintenance mode; new work is refused until it is turned off (not retryable)
   internal   (exit 6)  unexpected server error`,

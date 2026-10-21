@@ -9,7 +9,9 @@ import (
 
 	dlhttp "github.com/carolsimone/continuo/dead-letter-controller/adapters/http"
 	"github.com/carolsimone/continuo/dead-letter-controller/config"
+	"github.com/carolsimone/continuo/dead-letter-controller/domain/deadletter"
 	"github.com/carolsimone/continuo/pkg/liveness"
+	"github.com/carolsimone/continuo/pkg/streams"
 )
 
 // readiness and liveness build the two health handlers exactly as main wires
@@ -26,6 +28,22 @@ func code(h http.HandlerFunc) int {
 	rec := httptest.NewRecorder()
 	h(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 	return rec.Code
+}
+
+// The redrive contract is pkg/streams': a group the contract declares can be
+// redriven to, a retired stream cannot.
+func TestRedriveContractIsTheStreamsContract(t *testing.T) {
+	c := redriveContract()
+	live := deadletter.DeadLetter{Source: deadletter.SourceConsumer, Stream: streams.ReleasePromotedV2,
+		Group: streams.OrchestratorReleasePromoted, Publishable: true}
+	if r := live.RedriveRefusal(c); r != "" {
+		t.Fatalf("live stream refused: %s", r)
+	}
+	retired := live
+	retired.Stream = streams.Retired[0]
+	if r := retired.RedriveRefusal(c); r != "stream "+streams.Retired[0]+" is retired" {
+		t.Fatalf("retired stream refusal = %q", r)
+	}
 }
 
 // TestServiceNameMatchesDirectory pins config.ServiceName to this service's
