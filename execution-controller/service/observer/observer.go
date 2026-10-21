@@ -216,7 +216,7 @@ func (o *Observer) Process(ctx context.Context, jobName string) error {
 			o.deps.Metrics.AwaitingPodStop(jobName, false)
 			return nil
 		case obs.Ended():
-			return o.finish(ctx, dep, obs, model.AttemptFacts{}, now)
+			return o.finish(ctx, dep, obs, now)
 		default:
 			return o.record(ctx, dep, obs, now)
 		}
@@ -228,7 +228,7 @@ func (o *Observer) Process(ctx context.Context, jobName string) error {
 	case !obs.JobPresent:
 		return o.processAbsent(ctx, dep, obs, now)
 	case obs.Ended():
-		return o.finish(ctx, dep, obs, model.AttemptFacts{}, now)
+		return o.finish(ctx, dep, obs, now)
 	}
 	if reason, msg, ok := obs.StartError(); ok {
 		return o.terminate(ctx, dep, obs, reason, msg, now)
@@ -254,7 +254,7 @@ func (o *Observer) processTerminating(ctx context.Context, dep *model.Deployment
 		}
 	}
 	if obs.Ended() {
-		return o.finish(ctx, dep, obs, model.AttemptFacts{}, now)
+		return o.finish(ctx, dep, obs, now)
 	}
 	return o.record(ctx, dep, obs, now)
 }
@@ -286,12 +286,8 @@ func (o *Observer) processAbsent(ctx context.Context, dep *model.Deployment, obs
 		// A pod of the missing Job has not finished: wait for it.
 		return o.record(ctx, dep, live, now)
 	}
-	var missing model.AttemptFacts
-	if f, _ := dep.Facts().Merge(live.Facts(now)); f.ExitCode == nil && !f.JobSucceeded {
-		missing = model.AttemptFacts{Reason: pkgmodel.FailureReasonJobMissing,
-			Message: "the Job is gone from Kubernetes and nothing seen of the attempt shows how it ended"}
-	}
-	return o.settleEnded(ctx, dep, obs, live, missing, now)
+	return o.settleEnded(ctx, dep, obs, live, model.AttemptFacts{Reason: pkgmodel.FailureReasonJobMissing,
+		Message: "the Job is gone from Kubernetes and nothing seen of the attempt shows how it ended"}, now)
 }
 
 // record stores what obs shows of an attempt that has not ended. A starting
@@ -351,10 +347,11 @@ func (o *Observer) terminate(ctx context.Context, dep *model.Deployment, obs mod
 
 // finish reports an attempt the cache shows ended, once a live read confirms
 // it: the cache trails the API (the pod watch can trail the Job watch), so a
-// pod it has not delivered yet may still run. Until the API shows every pod of
-// the attempt finished or gone, what the read shows is recorded and the
-// attempt is checked again.
-func (o *Observer) finish(ctx context.Context, dep *model.Deployment, obs model.JobObservation, extra model.AttemptFacts, now time.Time) error {
+// pod it has not delivered yet may still run. Until the API shows the attempt
+// ended too (every pod of it finished or gone, and its Job finished, being
+// deleted or gone), what the read shows is recorded and the attempt is checked
+// again.
+func (o *Observer) finish(ctx context.Context, dep *model.Deployment, obs model.JobObservation, now time.Time) error {
 	live, err := o.deps.Lookup.ObserveLive(ctx, dep.JobName())
 	if err != nil {
 		return err
@@ -363,21 +360,27 @@ func (o *Observer) finish(ctx context.Context, dep *model.Deployment, obs model.
 		o.deps.Queue.AddAfter(dep.JobName(), liveRecheck)
 		return o.record(ctx, dep, live, now)
 	}
-	return o.settleEnded(ctx, dep, obs, live, extra, now)
+	return o.settleEnded(ctx, dep, obs, live, model.AttemptFacts{}, now)
 }
 
 // settleEnded settles an attempt a live read shows ended: it reads the log if
 // none is kept yet and, in one transaction, records what the cache and the
-// live read show, classifies the attempt and writes its result.
+// live read show, then unexplained when nothing recorded of the attempt shows
+// an exit code or the Job's success, classifies the attempt and writes its
+// result. The row is locked by then, so what every replica recorded counts.
 func (o *Observer) settleEnded(ctx context.Context, dep *model.Deployment, obs, live model.JobObservation,
-	extra model.AttemptFacts, now time.Time) error {
+	unexplained model.AttemptFacts, now time.Time) error {
+	var logs model.AttemptFacts
 	if dep.Facts().LogKey == "" && (obs.Started() || live.Started()) {
-		extra, _ = extra.Merge(o.readLogs(ctx, dep))
+		logs = o.readLogs(ctx, dep)
 	}
 	_, err := o.inTx(ctx, dep.JobName(), func(u uow.UnitOfWork, d *model.Deployment) error {
 		d.Observe(obs.Facts(now))
 		d.Observe(live.Facts(now))
-		d.Observe(extra)
+		d.Observe(logs)
+		if f := d.Facts(); f.ExitCode == nil && !f.JobSucceeded {
+			d.Observe(unexplained)
+		}
 		verdict := model.Classify(d.Facts())
 		if !verdict.Succeeded {
 			d.Observe(model.AttemptFacts{Reason: verdict.Reason, Message: fallbackMessage(verdict.Reason)})

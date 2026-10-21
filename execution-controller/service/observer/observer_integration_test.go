@@ -509,6 +509,54 @@ func TestProcess_AMissingJobWhoseFinishedPodShowsNoExitCodeIsJobMissing(t *testi
 	assert.Equal(t, model.StatusPending, h.reload(t, dep.JobName()+"-r1").Status(), "an infra failure is retried")
 }
 
+// A missing Job whose finished pod only the cache still shows (the API has
+// removed it) is settled from that pod's facts, not reported missing.
+func TestProcess_AMissingJobIsSettledFromAPodOnlyTheCacheStillShows(t *testing.T) {
+	h := newHarness(t)
+	dep := h.started(t, 0, h.now.Add(-time.Hour))
+	_, err := h.db.Exec(`UPDATE deployments SET state_changed_at = NOW() - interval '3 minutes' WHERE id = $1`, dep.ID())
+	require.NoError(t, err)
+	h.cache.set(dep.JobName(), model.JobObservation{Pods: []model.PodObservation{
+		endedPod(model.PodSucceeded, h.now.Add(-50*time.Minute), h.now.Add(-49*time.Minute), 0, "Completed")}})
+	h.look.live[dep.JobName()] = model.JobObservation{}
+
+	require.NoError(t, h.o.Process(context.Background(), dep.JobName()))
+
+	got := h.reload(t, dep.JobName())
+	assert.Equal(t, "ok", got.Outcome(), "the cache shows the pod exited 0")
+	assert.Empty(t, got.Facts().Reason)
+	status := h.outbox(t, event.EventTypeTaskStatusUpdated)
+	require.Len(t, status, 1)
+	assert.Equal(t, "SUCCEEDED", status[0]["status"])
+	var attempts int
+	require.NoError(t, h.db.Get(&attempts, `SELECT count(*) FROM deployments WHERE task_id = $1`, dep.Command().TaskID))
+	assert.Equal(t, 1, attempts, "a success queues no next attempt")
+}
+
+// Whether a missing Job's attempt is job_missing is decided on the locked row,
+// so a fact another replica recorded after this one read the row counts.
+func TestProcess_AMissingJobIsSettledFromFactsRecordedAfterTheRowWasRead(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	dep := h.started(t, 0, h.now.Add(-time.Hour))
+	_, err := h.db.Exec(`UPDATE deployments SET state_changed_at = NOW() - interval '3 minutes' WHERE id = $1`, dep.ID())
+	require.NoError(t, err)
+	h.look.live[dep.JobName()] = model.JobObservation{}
+	h.look.onRead = func() {
+		other := h.reload(t, dep.JobName())
+		exit := int32(1)
+		other.Observe(model.AttemptFacts{ExitCode: &exit, FailedContainer: "dbt-job", Message: "Error"})
+		require.NoError(t, h.repo.Save(ctx, other))
+	}
+
+	require.NoError(t, h.o.Process(ctx, dep.JobName()))
+
+	got := h.reload(t, dep.JobName())
+	assert.Equal(t, "failed", got.Outcome())
+	assert.Equal(t, pkgmodel.FailureReasonExitCode, got.Facts().Reason, "the recorded exit code decides")
+	assert.Equal(t, "Error", got.Facts().Message)
+}
+
 func TestProcess_AnEndedAttemptIsSettledOnce(t *testing.T) {
 	h := newHarness(t)
 	dep := h.started(t, 0, h.now.Add(-time.Minute))

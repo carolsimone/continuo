@@ -18,13 +18,17 @@ func (c *fakeCache) set(jobName string, o model.JobObservation) {
 }
 
 // fakeLookup answers a live read with what the cache shows, unless live holds
-// what the API shows for a Job.
+// what the API shows for a Job. onRead, when set, runs before each live read.
 type fakeLookup struct {
-	cache *fakeCache
-	live  map[string]model.JobObservation
+	cache  *fakeCache
+	live   map[string]model.JobObservation
+	onRead func()
 }
 
 func (l *fakeLookup) ObserveLive(_ context.Context, jobName string) (model.JobObservation, error) {
+	if l.onRead != nil {
+		l.onRead()
+	}
 	if o, ok := l.live[jobName]; ok {
 		return o, nil
 	}
