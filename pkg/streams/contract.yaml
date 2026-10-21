@@ -484,7 +484,7 @@ vocabularies:
       - value: job_missing
         const: JobMissing
         class: infra
-        description: the attempt's Job is gone from Kubernetes and no pod of it is left.
+        description: the attempt's Job is gone from Kubernetes and nothing seen of the attempt shows how it ended.
       - value: image_pull
         const: ImagePull
         class: start

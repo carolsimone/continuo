@@ -49,8 +49,9 @@ func newHarness(t *testing.T) *harness {
 	db, cleanup := executortest.SetupPostgres(t)
 	t.Cleanup(cleanup)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := &harness{db: db, repo: postgres.NewDeploymentsRepository(db, logger), cache: &fakeCache{},
-		look: &fakeLookup{exists: map[string]bool{}}, term: &fakeTerminator{}, logs: &fakeLogs{},
+	cache := &fakeCache{}
+	h := &harness{db: db, repo: postgres.NewDeploymentsRepository(db, logger), cache: cache,
+		look: &fakeLookup{cache: cache, live: map[string]model.JobObservation{}}, term: &fakeTerminator{}, logs: &fakeLogs{},
 		up: &fakeUploader{}, q: &fakeQueue{}, m: &fakeMetrics{},
 		// Postgres keeps timestamps to the microsecond; a clock finer than that
 		// would make a duration read back from a stored time miss by nanoseconds.
@@ -280,11 +281,11 @@ func TestProcess_AJobAbsentFromTheCacheIsMissingOnlyAfterTheGraceAndALiveRead(t 
 
 	_, err := h.db.Exec(`UPDATE deployments SET state_changed_at = NOW() - interval '3 minutes' WHERE id = $1`, dep.ID())
 	require.NoError(t, err)
-	h.look.exists[dep.JobName()] = true
+	h.look.live[dep.JobName()] = model.JobObservation{JobPresent: true}
 	require.NoError(t, h.o.Process(context.Background(), dep.JobName()))
 	assert.Equal(t, model.StatusStarting, h.reload(t, dep.JobName()).Status(), "the API still has the Job: the cache trails it")
 
-	delete(h.look.exists, dep.JobName())
+	delete(h.look.live, dep.JobName())
 	h.cache.set(dep.JobName(), model.JobObservation{Pods: []model.PodObservation{runningPod(h.now.Add(-time.Minute))}})
 	require.NoError(t, h.o.Process(context.Background(), dep.JobName()))
 	assert.Empty(t, h.outbox(t, event.EventTypeTaskExecutionRecorded), "a pod of the missing Job is left: nothing is reported")
@@ -405,6 +406,109 @@ func TestProcess_AReleaseLegWhosePodNeverStartsIsRecordedFailed(t *testing.T) {
 		"a leg whose pod never started completes, so its release is decided")
 }
 
+// A terminating attempt is settled only once a live read shows it has ended:
+// the pod watch can trail the Job watch, so a Job being deleted with no pod in
+// the cache may still have a running pod.
+func TestProcess_ATerminatingAttemptIsNotSettledWhileTheAPIStillShowsItsPod(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	dep := h.started(t, 0, h.now.Add(-time.Minute))
+	h.cache.set(dep.JobName(), model.JobObservation{JobPresent: true, Pods: []model.PodObservation{{
+		Name: "pod-1", Phase: model.PodPending,
+		Main: model.ContainerObservation{Name: "dbt-job", WaitingReason: "ErrImagePull", WaitingMessage: "not found"}}}})
+	require.NoError(t, h.o.Process(ctx, dep.JobName()))
+	require.Equal(t, model.StatusTerminating, h.reload(t, dep.JobName()).Status())
+
+	h.cache.set(dep.JobName(), model.JobObservation{JobPresent: true, JobDeleting: true})
+	h.look.live[dep.JobName()] = model.JobObservation{JobPresent: true, JobDeleting: true,
+		Pods: []model.PodObservation{runningPod(h.now.Add(-30 * time.Second))}}
+	delete(h.q.after, dep.JobName())
+	require.NoError(t, h.o.Process(ctx, dep.JobName()))
+	assert.Equal(t, model.StatusTerminating, h.reload(t, dep.JobName()).Status(), "its pod still runs")
+	assert.Empty(t, h.outbox(t, event.EventTypeTaskStatusUpdated), "nothing is reported")
+	assert.Greater(t, h.q.after[dep.JobName()], time.Duration(0), "it is checked again")
+
+	h.look.live[dep.JobName()] = model.JobObservation{}
+	require.NoError(t, h.o.Process(ctx, dep.JobName()))
+	got := h.reload(t, dep.JobName())
+	assert.Equal(t, "failed", got.Outcome())
+	assert.Equal(t, pkgmodel.FailureReasonImagePull, got.Facts().Reason)
+}
+
+// A failed Job whose pod is still stopping (Kubernetes marks a Job failed
+// while its pods terminate) is settled once the live read shows the pod
+// finished, from the facts that read shows when the cache has not caught up.
+func TestProcess_AFailedJobIsSettledOnlyOnceTheAPIShowsItsPodFinished(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	dep := h.started(t, 0, h.now.Add(-time.Minute))
+	stopping := runningPod(h.now.Add(-50 * time.Second))
+	deleting := h.now.Add(-time.Second)
+	stopping.DeletingSince = &deleting
+	h.cache.set(dep.JobName(), model.JobObservation{JobPresent: true, JobFailed: true})
+	h.look.live[dep.JobName()] = model.JobObservation{JobPresent: true, JobFailed: true, Pods: []model.PodObservation{stopping}}
+	require.NoError(t, h.o.Process(ctx, dep.JobName()))
+	assert.False(t, h.reload(t, dep.JobName()).HasOutcome(), "its pod is still stopping")
+	status := h.outbox(t, event.EventTypeTaskStatusUpdated)
+	require.Len(t, status, 1)
+	assert.Equal(t, "RUNNING", status[0]["status"], "the live read shows its main container started; no result yet")
+
+	h.look.live[dep.JobName()] = model.JobObservation{JobPresent: true, JobFailed: true,
+		Pods: []model.PodObservation{endedPod(model.PodFailed, h.now.Add(-50*time.Second), h.now.Add(-time.Second), 1, "Error")}}
+	require.NoError(t, h.o.Process(ctx, dep.JobName()))
+	got := h.reload(t, dep.JobName())
+	assert.Equal(t, "failed", got.Outcome())
+	assert.Equal(t, pkgmodel.FailureReasonExitCode, got.Facts().Reason, "the live read's exit code decides")
+}
+
+// A Job deleted without its pods (cascade=orphan) whose pods have all finished
+// is settled from their facts once the grace and a live read confirm the Job
+// is gone: it is not reported missing, and a failure is retried.
+func TestProcess_AMissingJobWhosePodsAllFinishedIsSettledFromThem(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	succeeded := h.started(t, 0, h.now.Add(-time.Hour))
+	failed := h.started(t, 0, h.now.Add(-time.Hour))
+	for _, d := range []*model.Deployment{succeeded, failed} {
+		_, err := h.db.Exec(`UPDATE deployments SET state_changed_at = NOW() - interval '3 minutes' WHERE id = $1`, d.ID())
+		require.NoError(t, err)
+	}
+	h.cache.set(succeeded.JobName(), model.JobObservation{Pods: []model.PodObservation{
+		endedPod(model.PodSucceeded, h.now.Add(-50*time.Minute), h.now.Add(-49*time.Minute), 0, "Completed")}})
+	h.cache.set(failed.JobName(), model.JobObservation{Pods: []model.PodObservation{
+		endedPod(model.PodFailed, h.now.Add(-50*time.Minute), h.now.Add(-49*time.Minute), 1, "Error")}})
+
+	for _, d := range []*model.Deployment{succeeded, failed} {
+		require.NoError(t, h.o.Process(ctx, d.JobName()))
+	}
+
+	assert.Equal(t, "ok", h.reload(t, succeeded.JobName()).Outcome())
+	got := h.reload(t, failed.JobName())
+	assert.Equal(t, "failed", got.Outcome())
+	assert.Equal(t, pkgmodel.FailureReasonExitCode, got.Facts().Reason, "settled from its pod, not reported missing")
+	var attempts int
+	require.NoError(t, h.db.Get(&attempts, `SELECT count(*) FROM deployments WHERE task_id = $1`, failed.Command().TaskID))
+	assert.Equal(t, 2, attempts, "the failure is retried")
+}
+
+func TestProcess_AMissingJobWhoseFinishedPodShowsNoExitCodeIsJobMissing(t *testing.T) {
+	h := newHarness(t)
+	dep := h.started(t, 0, h.now.Add(-time.Hour))
+	_, err := h.db.Exec(`UPDATE deployments SET state_changed_at = NOW() - interval '3 minutes' WHERE id = $1`, dep.ID())
+	require.NoError(t, err)
+	rejected := model.PodObservation{Name: "pod-1", Phase: model.PodFailed, Reason: "OutOfcpu",
+		Main: model.ContainerObservation{Name: "dbt-job"}}
+	h.cache.set(dep.JobName(), model.JobObservation{Pods: []model.PodObservation{rejected}})
+
+	require.NoError(t, h.o.Process(context.Background(), dep.JobName()))
+
+	got := h.reload(t, dep.JobName())
+	assert.Equal(t, "failed", got.Outcome(), "its only pod has finished, so the attempt is settled rather than waited for")
+	assert.Equal(t, pkgmodel.FailureReasonJobMissing, got.Facts().Reason)
+	assert.Equal(t, "the Job is gone from Kubernetes and nothing seen of the attempt shows how it ended", got.Facts().Message)
+	assert.Equal(t, model.StatusPending, h.reload(t, dep.JobName()+"-r1").Status(), "an infra failure is retried")
+}
+
 func TestProcess_AnEndedAttemptIsSettledOnce(t *testing.T) {
 	h := newHarness(t)
 	dep := h.started(t, 0, h.now.Add(-time.Minute))
@@ -456,7 +560,7 @@ func TestProcess_ARowReleasedWithoutItsOutcomeWhoseJobIsGoneIsLeftAlone(t *testi
 	dep := h.started(t, 0, h.now.Add(-72*time.Hour))
 	_, err := h.db.Exec(`UPDATE deployments SET status = 'done', state_changed_at = NOW() - INTERVAL '5 minutes' WHERE id = $1`, dep.ID())
 	require.NoError(t, err)
-	h.look.exists[dep.JobName()] = false
+	h.look.live[dep.JobName()] = model.JobObservation{}
 
 	require.NoError(t, h.o.Process(context.Background(), dep.JobName()))
 

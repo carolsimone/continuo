@@ -111,3 +111,31 @@ func TestWatch_OnlyLabelledObjectsAreWatched(t *testing.T) {
 	w, _ := startWatch(t, fake.NewClientset(unlabelled))
 	assert.False(t, w.Observe("schema-op").JobPresent, "a schema-operation Job is not a deployment's attempt")
 }
+
+// ObserveLive reads the Job and its pods from the API, past the cache: it needs
+// no started informer, and finds pods that carry only the legacy job-name
+// label.
+func TestWatch_ObserveLiveReadsTheAPIPastTheCache(t *testing.T) {
+	legacy := pod("svc-s-old-7f3e1a2b-x1", "")
+	legacy.Labels = map[string]string{"app": "dbt-job", "job-name": "svc-s-old-7f3e1a2b"}
+	cs := fake.NewClientset(job("svc-s-t-7f3e1a2b"), pod("svc-s-t-7f3e1a2b-x1", "svc-s-t-7f3e1a2b"),
+		pod("svc-s-t-7f3e1a2b-x2", "svc-s-t-7f3e1a2b"), pod("svc-s-u-7f3e1a2b-x1", "svc-s-u-7f3e1a2b"),
+		job("svc-s-old-7f3e1a2b"), legacy)
+	w, err := New(cs, ns, NewQueue())
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	obs, err := w.ObserveLive(ctx, "svc-s-t-7f3e1a2b")
+	require.NoError(t, err)
+	assert.True(t, obs.JobPresent)
+	assert.Len(t, obs.Pods, 2, "the Job's own pods, not another Job's")
+
+	old, err := w.ObserveLive(ctx, "svc-s-old-7f3e1a2b")
+	require.NoError(t, err)
+	assert.Len(t, old.Pods, 1)
+
+	gone, err := w.ObserveLive(ctx, "svc-s-gone-7f3e1a2b")
+	require.NoError(t, err)
+	assert.False(t, gone.JobPresent)
+	assert.Empty(t, gone.Pods)
+}

@@ -23,16 +23,6 @@ func newJobControl(t *testing.T, objs ...runtime.Object) (*JobControl, *fake.Cli
 	return NewJobControl(c, "jobs"), cs
 }
 
-func TestJobControl_JobExistsReadsTheAPI(t *testing.T) {
-	jc, _ := newJobControl(t, &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "j", Namespace: "jobs"}})
-	ok, err := jc.JobExists(context.Background(), "j")
-	require.NoError(t, err)
-	assert.True(t, ok)
-	ok, err = jc.JobExists(context.Background(), "gone")
-	require.NoError(t, err)
-	assert.False(t, ok)
-}
-
 func TestJobControl_DeleteJobIsForegroundAndToleratesAGoneJob(t *testing.T) {
 	jc, cs := newJobControl(t, &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "j", Namespace: "jobs"}})
 	var policy metav1.DeletionPropagation

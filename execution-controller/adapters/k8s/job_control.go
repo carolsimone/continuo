@@ -17,7 +17,6 @@ type JobControl struct {
 }
 
 var (
-	_ ports.JobLookup     = (*JobControl)(nil)
 	_ ports.JobTerminator = (*JobControl)(nil)
 	_ ports.PodLogReader  = (*JobControl)(nil)
 )
@@ -25,11 +24,6 @@ var (
 // NewJobControl binds a JobControl to client and namespace.
 func NewJobControl(client *K8sClient, namespace string) *JobControl {
 	return &JobControl{client: client, namespace: namespace}
-}
-
-// JobExists reports whether jobName exists, read live from the API server.
-func (j *JobControl) JobExists(ctx context.Context, jobName string) (bool, error) {
-	return j.client.JobExists(ctx, j.namespace, jobName)
 }
 
 // DeleteJob deletes jobName with foreground propagation, so the Job object

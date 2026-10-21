@@ -13,6 +13,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/service/ports"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
@@ -27,8 +28,10 @@ const legacyJobNameLabel = "job-name"
 // byJob indexes pods by the name of the Job that created them.
 const byJob = "job"
 
-// Watch is the ports.JobCache over shared Job and pod informers.
+// Watch is the ports.JobCache over shared Job and pod informers, and the
+// ports.JobLookup that reads the same Jobs and pods from the API directly.
 type Watch struct {
+	cs         kubernetes.Interface
 	factory    informers.SharedInformerFactory
 	jobs       batchlisters.JobLister
 	pods       cache.Indexer
@@ -37,7 +40,10 @@ type Watch struct {
 	namespace  string
 }
 
-var _ ports.JobCache = (*Watch)(nil)
+var (
+	_ ports.JobCache  = (*Watch)(nil)
+	_ ports.JobLookup = (*Watch)(nil)
+)
 
 // New builds a Watch on namespace whose changes queue Job names on q. Start
 // runs it.
@@ -71,7 +77,7 @@ func New(cs kubernetes.Interface, namespace string, q ports.ObservationQueue) (*
 	_, _ = jobInformer.AddEventHandler(enqueue(jobNameOfJob))
 	_, _ = podInformer.AddEventHandler(enqueue(jobNameOfPod))
 	return &Watch{
-		factory: factory, jobs: factory.Batch().V1().Jobs().Lister(), pods: podInformer.GetIndexer(),
+		cs: cs, factory: factory, jobs: factory.Batch().V1().Jobs().Lister(), pods: podInformer.GetIndexer(),
 		jobsSynced: jobInformer.HasSynced, podsSynced: podInformer.HasSynced, namespace: namespace,
 	}, nil
 }
@@ -102,6 +108,41 @@ func (w *Watch) Observe(jobName string) model.JobObservation {
 		}
 	}
 	return observation(job, pods)
+}
+
+// ObserveLive reads jobName's Job and its pods from the API, past the cache: a
+// GET of the Job and a LIST of the pods its job-name label names (the current
+// label, else the legacy one). The observer reads it before it settles an
+// attempt, since the pod watch can trail the Job watch.
+func (w *Watch) ObserveLive(ctx context.Context, jobName string) (model.JobObservation, error) {
+	job, err := w.cs.BatchV1().Jobs(w.namespace).Get(ctx, jobName, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		job, err = nil, nil
+	}
+	if err != nil {
+		return model.JobObservation{}, fmt.Errorf("read Job %s: %w", jobName, err)
+	}
+	pods, err := w.livePods(ctx, batchv1.JobNameLabel, jobName)
+	if err == nil && len(pods) == 0 {
+		pods, err = w.livePods(ctx, legacyJobNameLabel, jobName)
+	}
+	if err != nil {
+		return model.JobObservation{}, fmt.Errorf("list the pods of Job %s: %w", jobName, err)
+	}
+	return observation(job, pods), nil
+}
+
+// livePods lists the pods whose label names jobName.
+func (w *Watch) livePods(ctx context.Context, label, jobName string) ([]*corev1.Pod, error) {
+	list, err := w.cs.CoreV1().Pods(w.namespace).List(ctx, metav1.ListOptions{LabelSelector: label + "=" + jobName})
+	if err != nil {
+		return nil, err
+	}
+	pods := make([]*corev1.Pod, 0, len(list.Items))
+	for i := range list.Items {
+		pods = append(pods, &list.Items[i])
+	}
+	return pods, nil
 }
 
 // jobNameOfJob is a Job's name, unwrapping a deletion the informer missed.

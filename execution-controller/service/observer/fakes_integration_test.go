@@ -17,11 +17,18 @@ func (c *fakeCache) set(jobName string, o model.JobObservation) {
 	c.obs[jobName] = o
 }
 
-// fakeLookup answers JobExists from a set.
-type fakeLookup struct{ exists map[string]bool }
+// fakeLookup answers a live read with what the cache shows, unless live holds
+// what the API shows for a Job.
+type fakeLookup struct {
+	cache *fakeCache
+	live  map[string]model.JobObservation
+}
 
-func (l *fakeLookup) JobExists(_ context.Context, jobName string) (bool, error) {
-	return l.exists[jobName], nil
+func (l *fakeLookup) ObserveLive(_ context.Context, jobName string) (model.JobObservation, error) {
+	if o, ok := l.live[jobName]; ok {
+		return o, nil
+	}
+	return l.cache.Observe(jobName), nil
 }
 
 // fakeTerminator records the Jobs it deleted.

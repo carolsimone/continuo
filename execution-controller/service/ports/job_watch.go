@@ -15,10 +15,11 @@ type JobCache interface {
 	Observe(jobName string) model.JobObservation
 }
 
-// JobLookup reads a Job from the Kubernetes API, past the cache.
+// JobLookup reads a Job and its pods from the Kubernetes API, past the cache.
 type JobLookup interface {
-	// JobExists reports whether jobName exists, read live.
-	JobExists(ctx context.Context, jobName string) (bool, error)
+	// ObserveLive returns what the API holds now of jobName's Job and its pods;
+	// JobPresent is false when the Job does not exist.
+	ObserveLive(ctx context.Context, jobName string) (model.JobObservation, error)
 }
 
 // JobTerminator deletes a Job and its pods.

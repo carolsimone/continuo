@@ -396,7 +396,7 @@ const (
 	FailureReasonEvicted FailureReason = "evicted"
 	// FailureReasonNodeLost — the pod left the API before its main container terminated, and execution-controller did not remove it.
 	FailureReasonNodeLost FailureReason = "node_lost"
-	// FailureReasonJobMissing — the attempt's Job is gone from Kubernetes and no pod of it is left.
+	// FailureReasonJobMissing — the attempt's Job is gone from Kubernetes and nothing seen of the attempt shows how it ended.
 	FailureReasonJobMissing FailureReason = "job_missing"
 	// FailureReasonImagePull — the pod could not pull an image (ErrImagePull, ImagePullBackOff).
 	FailureReasonImagePull FailureReason = "image_pull"

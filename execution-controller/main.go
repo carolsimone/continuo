@@ -345,7 +345,7 @@ func main() {
 		NewUoW:     uowFactory,
 		Observed:   postgres.NewObservedDeployments(pgDB, logger),
 		Cache:      jobWatch,
-		Lookup:     jobControl,
+		Lookup:     jobWatch,
 		Terminator: jobControl,
 		Logs:       jobControl,
 		Uploader:   logUploader,

@@ -33,8 +33,13 @@ const (
 	defaultLogIOTimeout   = 20 * time.Second
 
 	// processTimeout bounds the processing of one name: a log read and its
-	// uploads, one transaction and one Kubernetes call.
+	// uploads, one transaction and a few Kubernetes calls.
 	processTimeout = time.Minute
+
+	// liveRecheck is when an attempt the cache shows ended, but a live read
+	// does not, is checked again; the watch event that catches the cache up
+	// usually comes sooner.
+	liveRecheck = 5 * time.Second
 )
 
 // Config holds the observer's clocks and limits. Every zero duration and a
@@ -257,7 +262,9 @@ func (o *Observer) processTerminating(ctx context.Context, dep *model.Deployment
 // processAbsent handles a started deployment whose Job the cache does not
 // hold. The cache trails the API, so the Job counts as missing only once the
 // deployment has been starting or running for MissingGrace and a live read
-// finds no Job; the attempt is then reported once no pod of it is left.
+// finds no Job; the attempt is then reported once every pod the live read
+// lists has finished, from what was seen of it, or as job_missing when nothing
+// seen shows how it ended.
 func (o *Observer) processAbsent(ctx context.Context, dep *model.Deployment, obs model.JobObservation, now time.Time) error {
 	age, err := o.deps.Observed.StateAge(ctx, dep.ID())
 	if err != nil {
@@ -267,23 +274,24 @@ func (o *Observer) processAbsent(ctx context.Context, dep *model.Deployment, obs
 		o.deps.Queue.AddAfter(dep.JobName(), o.cfg.MissingGrace-age)
 		return nil
 	}
-	exists, err := o.deps.Lookup.JobExists(ctx, dep.JobName())
+	live, err := o.deps.Lookup.ObserveLive(ctx, dep.JobName())
 	if err != nil {
 		return err
 	}
-	if exists {
+	if live.JobPresent {
 		o.deps.Queue.AddAfter(dep.JobName(), o.cfg.MissingGrace)
 		return nil
 	}
-	if len(obs.Pods) > 0 {
-		return o.record(ctx, dep, obs, now)
+	if !live.Ended() {
+		// A pod of the missing Job has not finished: wait for it.
+		return o.record(ctx, dep, live, now)
 	}
 	var missing model.AttemptFacts
-	if f := dep.Facts(); f.ExitCode == nil && !f.JobSucceeded {
+	if f, _ := dep.Facts().Merge(live.Facts(now)); f.ExitCode == nil && !f.JobSucceeded {
 		missing = model.AttemptFacts{Reason: pkgmodel.FailureReasonJobMissing,
-			Message: "the Job is gone from Kubernetes and no pod of it is left"}
+			Message: "the Job is gone from Kubernetes and nothing seen of the attempt shows how it ended"}
 	}
-	return o.finish(ctx, dep, obs, missing, now)
+	return o.settleEnded(ctx, dep, obs, live, missing, now)
 }
 
 // record stores what obs shows of an attempt that has not ended. A starting
@@ -341,15 +349,34 @@ func (o *Observer) terminate(ctx context.Context, dep *model.Deployment, obs mod
 	return o.deps.Terminator.DeleteJob(ctx, dep.JobName())
 }
 
-// finish reports an attempt that has ended: the log of a pod that is left is
-// read and uploaded first, then one transaction records the facts and the
-// verdict and writes the attempt's result.
+// finish reports an attempt the cache shows ended, once a live read confirms
+// it: the cache trails the API (the pod watch can trail the Job watch), so a
+// pod it has not delivered yet may still run. Until the API shows every pod of
+// the attempt finished or gone, what the read shows is recorded and the
+// attempt is checked again.
 func (o *Observer) finish(ctx context.Context, dep *model.Deployment, obs model.JobObservation, extra model.AttemptFacts, now time.Time) error {
-	if dep.Facts().LogKey == "" && obs.Started() {
+	live, err := o.deps.Lookup.ObserveLive(ctx, dep.JobName())
+	if err != nil {
+		return err
+	}
+	if !live.Ended() {
+		o.deps.Queue.AddAfter(dep.JobName(), liveRecheck)
+		return o.record(ctx, dep, live, now)
+	}
+	return o.settleEnded(ctx, dep, obs, live, extra, now)
+}
+
+// settleEnded settles an attempt a live read shows ended: it reads the log if
+// none is kept yet and, in one transaction, records what the cache and the
+// live read show, classifies the attempt and writes its result.
+func (o *Observer) settleEnded(ctx context.Context, dep *model.Deployment, obs, live model.JobObservation,
+	extra model.AttemptFacts, now time.Time) error {
+	if dep.Facts().LogKey == "" && (obs.Started() || live.Started()) {
 		extra, _ = extra.Merge(o.readLogs(ctx, dep))
 	}
 	_, err := o.inTx(ctx, dep.JobName(), func(u uow.UnitOfWork, d *model.Deployment) error {
 		d.Observe(obs.Facts(now))
+		d.Observe(live.Facts(now))
 		d.Observe(extra)
 		verdict := model.Classify(d.Facts())
 		if !verdict.Succeeded {
