@@ -4,7 +4,7 @@ import { GrpcGraphClient } from './clients/grpc-graph-client';
 import { createSchedulersRouter } from './routes/schedulers';
 import { createNodesRouter } from './routes/nodes';
 import { createSchedulesRouter, createRunsRouter } from './routes/schedules';
-import { createExecutionsRouter } from './routes/executions';
+import { createAttemptsRouter } from './routes/attempts';
 import { createTaskExecutionRouter } from './routes/task-execution';
 import { createConfigRouter } from './routes/config';
 import { createFeaturesRouter } from './routes/features';
@@ -56,7 +56,7 @@ export function createApp(
   app.use('/api/nodes', createNodesRouter(client, graphClient));
   app.use('/api/schedules', createSchedulesRouter(client, graphClient));
   app.use('/api/runs', createRunsRouter(client));
-  app.use('/api/schedulers', createExecutionsRouter(client));
+  app.use('/api/schedulers', createAttemptsRouter(client));
   app.use('/api/task-execution', createTaskExecutionRouter());
   app.use('/api/topology', createTopologyRouter(graphClient));
   app.use('/api/config', createConfigRouter(configFilePath));

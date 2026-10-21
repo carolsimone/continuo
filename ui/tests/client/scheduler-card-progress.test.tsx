@@ -29,7 +29,7 @@ function taskPage(count: number): Task[] {
     table_name: 'table',
     job_name: 'job',
     status: 'succeeded',
-    retry_count: 0,
+    attempt: 0,
     max_retries: 0,
     created_at: null,
   }));

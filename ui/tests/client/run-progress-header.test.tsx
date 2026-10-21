@@ -6,7 +6,7 @@ import type { Task } from '../../src/client/types';
 
 const t = (status: string): Task => ({
   task_id: Math.random().toString(), service_name: 'core', schema_name: 'a', table_name: 'x',
-  job_name: 'j', status, retry_count: 0, max_retries: 2, created_at: null,
+  job_name: 'j', status, attempt: 0, max_retries: 2, created_at: null,
 });
 
 describe('RunProgressHeader', () => {

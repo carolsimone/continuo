@@ -33,7 +33,7 @@ function renderPage(from?: NodeDetailFrom, navOperation?: string) {
 const mkRun = (over: Partial<{ run_id: string; task_id: string; kind: string; task_status: string; created_at: string; started_at: string | null; completed_at: string | null; error_message: string | null }>) => ({
   run_id: 'r1', schedule_name: 'daily', kind: 'cron',
   terminal_status: 'succeeded', task_id: 't1',
-  task_status: 'succeeded', retry_count: 0,
+  task_status: 'succeeded', attempt: 0, failure_class: null, failure_reason: null,
   image_tag: 'v1',
   created_at: '2026-05-10T10:00:00Z',
   started_at: '2026-05-10T10:00:05Z',

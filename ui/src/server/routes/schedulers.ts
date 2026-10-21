@@ -114,7 +114,7 @@ export function createSchedulersRouter(client: GrpcClient) {
           table_name: t.table_name,
           job_name: t.job_name,
           status: normalizeStatus(t.status),
-          retry_count: t.retry_count,
+          attempt: t.attempt,
           max_retries: t.max_retries,
           created_at: toISO(t.created_at),
         }));

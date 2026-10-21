@@ -23,7 +23,7 @@ function task(nodeId: string, status: string): Task {
   const [service_name, schema_name, table_name] = nodeId.split('.');
   return {
     task_id: nodeId, service_name, schema_name, table_name,
-    job_name: '', status, retry_count: 0, max_retries: 0, created_at: null,
+    job_name: '', status, attempt: 0, max_retries: 0, created_at: null,
   };
 }
 

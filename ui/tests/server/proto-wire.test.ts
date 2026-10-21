@@ -180,6 +180,54 @@ describe('proto wire: state.proto', () => {
     expect(sentRebase).toEqual([{ source_run_id: 'run-1', include_changed_upstream: true, expected_release_id: 'rel-7' }]);
   });
 
+  it('ListTaskAttempts request round-trips run_id, task_id and paging', () => {
+    expect(requestRoundTrip('ListTaskAttempts', {
+      run_id: 'run-abc-123', task_id: 'task-7', page_size: 200, page_offset: 400,
+    })).toEqual({ run_id: 'run-abc-123', task_id: 'task-7', page_size: 200, page_offset: 400 });
+  });
+
+  it("ListTasks response decodes a task's attempt from field 9", () => {
+    const resp = decodeResponse('ListTasks', [0x0a, 0x02, 0x48, 0x02]);
+    expect(resp.tasks).toHaveLength(1);
+    expect(resp.tasks[0].attempt).toBe(2);
+    expect(Object.keys(resp.tasks[0]).filter(k => k.startsWith('retry'))).toEqual([]);
+  });
+
+  it('ListNodeRuns response decodes attempt (field 7) and failure_class (field 18)', () => {
+    const nodeRun = [
+      0x38, 3, // attempt = 3
+      0x92, 0x01, 4, ...Buffer.from('user'), // failure_class = "user" (field 18, wire type 2)
+      0x9a, 0x01, 3, ...Buffer.from('oom'), // failure_reason = "oom" (field 19, wire type 2)
+    ];
+    const resp = decodeResponse('ListNodeRuns', [0x0a, nodeRun.length, ...nodeRun]);
+    expect(resp.runs).toHaveLength(1);
+    expect(resp.runs[0].attempt).toBe(3);
+    expect(resp.runs[0].failure_class).toBe('user');
+    expect(resp.runs[0].failure_reason).toBe('oom');
+  });
+
+  it('ListTaskAttempts response decodes every attempt', () => {
+    const method = stateMethod('ListTaskAttempts');
+    const attempt = {
+      task_id: 'task-1', attempt: 2, job_name: 'core-sales-orders-2', status: 'failed',
+      failure_class: 'user_code', failure_reason: 'compile_error', exit_code: 1,
+      dispatched_at: { seconds: '100', nanos: 0 },
+      queued_at: { seconds: '101', nanos: 0 },
+      started_at: { seconds: '105', nanos: 0 },
+      finished_at: { seconds: '125', nanos: 0 },
+      execution_seconds: 19.5,
+      error_message: 'boom',
+      log_s3_key: 'logs/task-1-2.log',
+      run_results_uri: 'run-results/task-1-2.json',
+    };
+    const second = { ...attempt, task_id: 'task-2', attempt: 0, status: 'succeeded' };
+    const resp = method.responseDeserialize(method.responseSerialize({
+      attempts: [attempt, second], total_count: 2,
+    }));
+    expect(resp.total_count).toBe(2);
+    expect(resp.attempts).toEqual([attempt, second]);
+  });
+
   it('StateService client constructor exists', () => {
     expect(Messages.StateService).toBeTypeOf('function');
   });

@@ -36,11 +36,11 @@ function setup(props: {
 const succeededTasks: Task[] = [
   {
     task_id: 's.sch.a', service_name: 's', schema_name: 'sch', table_name: 'a',
-    job_name: '', status: 'succeeded', retry_count: 0, max_retries: 0, created_at: null,
+    job_name: '', status: 'succeeded', attempt: 0, max_retries: 0, created_at: null,
   },
   {
     task_id: 's.sch.b', service_name: 's', schema_name: 'sch', table_name: 'b',
-    job_name: '', status: 'succeeded', retry_count: 0, max_retries: 0, created_at: null,
+    job_name: '', status: 'succeeded', attempt: 0, max_retries: 0, created_at: null,
   },
 ];
 
@@ -85,7 +85,7 @@ describe('DAGPanel colorByStatus', () => {
       ...succeededTasks,
       {
         task_id: 's.sch.c', service_name: 's', schema_name: 'sch', table_name: 'c',
-        job_name: '', status: 'succeeded', retry_count: 0, max_retries: 0, created_at: null,
+        job_name: '', status: 'succeeded', attempt: 0, max_retries: 0, created_at: null,
       },
     ];
     const { container } = render(
@@ -129,15 +129,15 @@ const SVC_EDGES: GraphEdge[] = [
 const SVC_TASKS: Task[] = [
   {
     task_id: 'svc-a.sch.n1', service_name: 'svc-a', schema_name: 'sch', table_name: 'n1',
-    job_name: '', status: 'failed', retry_count: 0, max_retries: 0, created_at: null,
+    job_name: '', status: 'failed', attempt: 0, max_retries: 0, created_at: null,
   },
   {
     task_id: 'svc-a.sch.n2', service_name: 'svc-a', schema_name: 'sch', table_name: 'n2',
-    job_name: '', status: 'succeeded', retry_count: 0, max_retries: 0, created_at: null,
+    job_name: '', status: 'succeeded', attempt: 0, max_retries: 0, created_at: null,
   },
   {
     task_id: 'svc-b.sch.m1', service_name: 'svc-b', schema_name: 'sch', table_name: 'm1',
-    job_name: '', status: 'succeeded', retry_count: 0, max_retries: 0, created_at: null,
+    job_name: '', status: 'succeeded', attempt: 0, max_retries: 0, created_at: null,
   },
 ];
 

@@ -5,7 +5,7 @@ import type { NodeRun } from '../../src/client/types';
 const mkRun = (over: Partial<NodeRun>): NodeRun => ({
   run_id: 'r', schedule_name: 's', kind: 'cron',
   terminal_status: 'succeeded', task_id: 't',
-  task_status: 'succeeded', retry_count: 0,
+  task_status: 'succeeded', attempt: 0, failure_class: null, failure_reason: null,
   image_tag: 'v1', operation: 'run',
   created_at: '2026-05-10T10:00:00Z',
   started_at: '2026-05-10T10:00:05Z',
@@ -95,16 +95,16 @@ describe('formatRelative', () => {
 describe('computeNodeStats — extended fields', () => {
   const mkRunExt = (over: Partial<NodeRun>): NodeRun => ({
     run_id: 'r', schedule_name: 's', kind: 'cron', terminal_status: '',
-    task_id: Math.random().toString(), task_status: 'succeeded', retry_count: 0,
+    task_id: Math.random().toString(), task_status: 'succeeded', attempt: 0, failure_class: null, failure_reason: null,
     image_tag: '', operation: 'run', created_at: '2026-06-08T11:00:00Z',
     started_at: '2026-06-08T11:00:00Z', completed_at: '2026-06-08T11:00:10Z',
     error_message: null, log_s3_key: null, ...over,
   });
   it('computes p95, last status/run', () => {
     const runs = [
-      mkRunExt({ task_status: 'failed', retry_count: 2, created_at: '2026-06-08T11:30:00Z',
+      mkRunExt({ task_status: 'failed', attempt: 2, created_at: '2026-06-08T11:30:00Z',
               started_at: '2026-06-08T11:30:00Z', completed_at: '2026-06-08T11:30:30Z' }),
-      mkRunExt({ task_status: 'succeeded', retry_count: 0 }),
+      mkRunExt({ task_status: 'succeeded', attempt: 0 }),
     ];
     const s = computeNodeStats(runs);
     expect(s.total).toBe(2);
@@ -122,8 +122,8 @@ describe('computeNodeStats — extended fields', () => {
   });
   it('counts skipped as a terminal non-success (matches server)', () => {
     const runs = [
-      mkRunExt({ task_status: 'succeeded', retry_count: 0 }),
-      mkRunExt({ task_status: 'skipped', retry_count: 0, started_at: null, completed_at: null,
+      mkRunExt({ task_status: 'succeeded', attempt: 0 }),
+      mkRunExt({ task_status: 'skipped', attempt: 0, started_at: null, completed_at: null,
               created_at: '2026-06-08T11:30:00Z' }),
     ];
     const s = computeNodeStats(runs);

@@ -1,12 +1,12 @@
 import { useRef, useEffect } from 'react';
-import { Task, TaskExecution } from './types';
+import { Task, TaskAttempt } from './types';
 import { rollupStatus } from './service-helpers';
-import { taskNodeId } from './detail-page-helpers';
+import { latestAttempt, taskNodeId } from './detail-page-helpers';
 import NodeTableBody from './NodeTableBody';
 
 interface Props {
   tasks: Task[];
-  executions: TaskExecution[];
+  attemptsByTask: Map<string, TaskAttempt[]>; // each task's attempts in attempt order
   selectedNodeId: string | null;
   onNodeSelect: (nodeId: string | null) => void;
   expandedServices: Set<string>;
@@ -18,18 +18,19 @@ const STATUS_ORDER: Record<string, number> = {
   failed: 0, running: 1, pending: 2, skipped: 3, succeeded: 4, cancelled: 5,
 };
 
-function completedAtMs(task: Task, execByTaskId: Map<string, TaskExecution>): number {
-  const completedAt = execByTaskId.get(task.task_id)?.completed_at;
-  return completedAt ? new Date(completedAt).getTime() : 0;
+// A task finished when its highest-numbered attempt finished.
+function completedAtMs(task: Task, attemptsByTask: Map<string, TaskAttempt[]>): number {
+  const finishedAt = latestAttempt(attemptsByTask.get(task.task_id))?.finished_at;
+  return finishedAt ? new Date(finishedAt).getTime() : 0;
 }
 
 // Ties within a status bucket (e.g. all succeeded) break by completed_at
 // descending — most recently finished first. Tasks with no completed_at
 // (pending/running) tie at 0 and keep their incoming order.
-function sortTasks(tasks: Task[], execByTaskId: Map<string, TaskExecution>): Task[] {
+function sortTasks(tasks: Task[], attemptsByTask: Map<string, TaskAttempt[]>): Task[] {
   return [...tasks].sort((a, b) =>
     (STATUS_ORDER[a.status] ?? 5) - (STATUS_ORDER[b.status] ?? 5) ||
-    completedAtMs(b, execByTaskId) - completedAtMs(a, execByTaskId)
+    completedAtMs(b, attemptsByTask) - completedAtMs(a, attemptsByTask)
   );
 }
 
@@ -40,7 +41,7 @@ export interface ServiceGroup {
 }
 
 // Groups sort most-severe-first (same precedence as node rows), ties by name.
-export function groupTasksByService(tasks: Task[], execByTaskId: Map<string, TaskExecution>): ServiceGroup[] {
+export function groupTasksByService(tasks: Task[], attemptsByTask: Map<string, TaskAttempt[]>): ServiceGroup[] {
   const byService = new Map<string, Task[]>();
   tasks.forEach((task) => {
     const bucket = byService.get(task.service_name);
@@ -52,7 +53,7 @@ export function groupTasksByService(tasks: Task[], execByTaskId: Map<string, Tas
     .map(([service, groupTasks]) => ({
       service,
       status: rollupStatus(groupTasks.map((t) => t.status)),
-      tasks: sortTasks(groupTasks, execByTaskId),
+      tasks: sortTasks(groupTasks, attemptsByTask),
     }))
     .sort((a, b) =>
       (STATUS_ORDER[a.status] ?? 5) - (STATUS_ORDER[b.status] ?? 5) ||
@@ -62,14 +63,13 @@ export function groupTasksByService(tasks: Task[], execByTaskId: Map<string, Tas
 
 export default function NodesPanel({
   tasks,
-  executions,
+  attemptsByTask,
   selectedNodeId,
   onNodeSelect,
   expandedServices,
   onServiceToggle,
   serviceColors,
 }: Props) {
-  const execByTaskId = new Map(executions.map(e => [e.task_id, e]));
   const rowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
   const groupRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
   const prevExpandedRef = useRef<Set<string>>(expandedServices);
@@ -97,12 +97,12 @@ export default function NodesPanel({
     return <p style={{ padding: 16, color: '#94a3b8', fontSize: 12, textAlign: 'center', margin: 0 }}>No tasks yet.</p>;
   }
 
-  const groups = groupTasksByService(tasks, execByTaskId);
+  const groups = groupTasksByService(tasks, attemptsByTask);
 
   return (
     <NodeTableBody
       groups={groups}
-      execByTaskId={execByTaskId}
+      attemptsByTask={attemptsByTask}
       edges={[]}
       startedAt={{}}
       forceExpanded={false}

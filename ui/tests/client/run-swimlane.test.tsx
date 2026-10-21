@@ -7,7 +7,7 @@ import type { GraphNode, GraphEdge, Task } from '../../src/client/types';
 const node = (id: string): GraphNode => ({ node_id: id, node_type: 'dbt-model', schedule_name: 's' });
 const task = (id: string, status: string): Task => {
   const [service_name, schema_name, table_name] = id.split('.');
-  return { task_id: id, service_name, schema_name, table_name, job_name: id, status, retry_count: 0, max_retries: 2, created_at: null };
+  return { task_id: id, service_name, schema_name, table_name, job_name: id, status, attempt: 0, max_retries: 2, created_at: null };
 };
 const graph = {
   nodes: [node('core.a.seed'), node('finance.a.rev'), node('finance.a.bad')],

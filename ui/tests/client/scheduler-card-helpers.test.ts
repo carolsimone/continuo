@@ -14,7 +14,7 @@ function makeTask(status: string, table: string): Task {
     table_name: table,
     job_name: '',
     status,
-    retry_count: 0,
+    attempt: 0,
     max_retries: 3,
     created_at: null,
   };

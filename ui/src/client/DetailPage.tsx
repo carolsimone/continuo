@@ -9,9 +9,9 @@ import {
   ScheduleGraph,
   ScheduleSummary,
   Task,
-  TaskExecution,
+  TaskAttempt,
 } from './types';
-import { resolveActiveGraph, headerDriftLabel } from './detail-page-helpers';
+import { resolveActiveGraph, headerDriftLabel, groupAttemptsByTask } from './detail-page-helpers';
 import { buildServiceColors, listServices, serviceOfNode } from './service-helpers';
 import { fetchAllPages } from './fetch-all-pages';
 import { getDriftState, getDriftBadge } from './drift-helpers';
@@ -78,24 +78,6 @@ function extractScheduler(data: { scheduler?: Scheduler } | Scheduler): Schedule
   return 'status' in data ? data : data.scheduler ?? null;
 }
 
-function deriveHistoricalTasks(runGraph: RunGraph | null): Task[] {
-  if (!runGraph) return [];
-  return runGraph.nodes.map((node) => {
-    const [service_name = '', schema_name = '', table_name = ''] = node.node_id.split('.');
-    return {
-      task_id: node.node_id,
-      service_name,
-      schema_name,
-      table_name,
-      job_name: '',
-      status: normalizeStatus(node.status) || 'pending',
-      retry_count: 0,
-      max_retries: 0,
-      created_at: null,
-    };
-  });
-}
-
 export function isRerunnableStatus(status: string | null | undefined): boolean {
   if (!status) return false;
   const s = status.toLowerCase();
@@ -116,7 +98,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [graph, setGraph] = useState<ScheduleGraph | null>(null);
   const [promotionSeq, setPromotionSeq] = useState<number>(0);
-  const [executions, setExecutions] = useState<TaskExecution[]>([]);
+  const [attempts, setAttempts] = useState<TaskAttempt[]>([]);
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [liveRunGraph, setLiveRunGraph] = useState<RunGraph | null>(null);
@@ -143,7 +125,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
     setScheduler(null);
     setTasks([]);
     setGraph(null);
-    setExecutions([]);
+    setAttempts([]);
     setRuns([]);
     setSelectedRunId(null);
     setLiveRunGraph(null);
@@ -249,16 +231,49 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
     };
   }, [lastRunId]);
 
+  // The run the Run tab shows — a selected past run, else the latest — has
+  // its tasks and every attempt of every task read from state. A past run is
+  // read once; the latest run is re-read every 5 s until it is terminal.
   useEffect(() => {
-    if (!lastRunId) return;
-    if (selectedRunId) return;
+    const shownRunId = selectedRunId ?? lastRunId;
+    if (!shownRunId) return;
     if (mode === 'latest') return;
     let cancelled = false;
     let timer: number | undefined;
     const controller = new AbortController();
 
+    const fetchRunRows = () => {
+      fetchAllPages<Task>(`/api/schedulers/${shownRunId}/tasks`, 'tasks', {
+        signal: controller.signal,
+      })
+        .then((all) => {
+          if (!cancelled) setTasks(all);
+        })
+        .catch(() => {
+          if (!cancelled) setTasks([]);
+        });
+
+      fetchAllPages<TaskAttempt>(`/api/schedulers/${shownRunId}/attempts`, 'attempts', {
+        signal: controller.signal,
+      })
+        .then((all) => {
+          if (!cancelled) setAttempts(all);
+        })
+        .catch(() => {
+          if (!cancelled) setAttempts([]);
+        });
+    };
+
+    if (selectedRunId) {
+      fetchRunRows();
+      return () => {
+        cancelled = true;
+        controller.abort();
+      };
+    }
+
     const fetchDynamic = () => {
-      const schedulerRequest = fetch(`/api/schedulers/${lastRunId}`)
+      const schedulerRequest = fetch(`/api/schedulers/${shownRunId}`)
         .then((response) => response.json())
         .then((data: { scheduler?: Scheduler } | Scheduler) => {
           const nextScheduler = extractScheduler(data);
@@ -269,26 +284,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
           return null;
         });
 
-      fetchAllPages<Task>(`/api/schedulers/${lastRunId}/tasks`, 'tasks', {
-        signal: controller.signal,
-      })
-        .then((all) => {
-          if (!cancelled) setTasks(all);
-        })
-        .catch(() => {
-          if (!cancelled) setTasks([]);
-        });
-
-      fetchAllPages<TaskExecution>(`/api/schedulers/${lastRunId}/executions`, 'executions', {
-        signal: controller.signal,
-      })
-        .then((all) => {
-          if (!cancelled) setExecutions(all);
-        })
-        .catch(() => {
-          if (!cancelled) setExecutions([]);
-        });
-
+      fetchRunRows();
       return schedulerRequest;
     };
 
@@ -367,21 +363,12 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
     }
   }, [name]);
 
-  const latestExecutions = Array.from(
-    executions.reduce((map, execution) => {
-      const existing = map.get(execution.task_id);
-      if (!existing || (execution.started_at ?? '') > (existing.started_at ?? '')) {
-        map.set(execution.task_id, execution);
-      }
-      return map;
-    }, new Map<string, TaskExecution>()).values(),
-  );
+  const attemptsByTask = useMemo(() => groupAttemptsByTask(attempts), [attempts]);
 
   const selectedRun = runs.find((run) => run.run_id === selectedRunId) ?? null;
   const activeGraph: ScheduleGraph | null = resolveActiveGraph({
     mode, scheduleGraph: graph, liveRunGraph, selectedRunGraph: runGraph, selectedRunId,
   });
-  const activeTasks = selectedRunId ? deriveHistoricalTasks(runGraph) : tasks;
 
   // The Run tab summarises a run's task set; when there is nothing yet to
   // summarise it must not render RunProgressHeader over an empty list, which
@@ -389,16 +376,16 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
   // never run shows "No runs yet."; a selected historical run whose snapshot
   // is still loading, or a live run whose tasks are still arriving, shows
   // "Loading run…". Only a non-empty task set renders the header and views.
-  const runTabNoRuns = lastRunId === null && runs.length === 0 && activeTasks.length === 0;
+  const runTabNoRuns = lastRunId === null && runs.length === 0 && tasks.length === 0;
   const runTabLoading = !runTabNoRuns
-    && ((selectedRunId ? runGraph === null : lastRunId === undefined) || activeTasks.length === 0);
+    && ((selectedRunId ? runGraph === null : lastRunId === undefined) || tasks.length === 0);
 
   // Service-level grouping shared by the graph and the nodes table. A graph
   // with a single service always renders expanded — a lone service vertex
   // would carry no information.
   const services = useMemo(
-    () => listServices(activeGraph?.nodes ?? [], activeTasks),
-    [activeGraph, activeTasks],
+    () => listServices(activeGraph?.nodes ?? [], tasks),
+    [activeGraph, tasks],
   );
   const serviceColors = useMemo(() => buildServiceColors(services), [services]);
   const effectiveExpandedServices = useMemo(
@@ -486,7 +473,13 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
     ? new Set(activeGraph.edges.filter((e) => e.from_node_id === selectedNodeId).map((e) => e.to_node_id))
     : new Set<string>();
 
+  // The shown run's rows are cleared at once, so the newly chosen run never
+  // renders over the previous run's tasks while its own are read.
   const handleSelectRun = (runId: string | null) => {
+    if (runId !== selectedRunId) {
+      setTasks([]);
+      setAttempts([]);
+    }
     setSelectedRunId(runId);
     setSelectedNodeId(null);
     setExpandedServices(new Set());
@@ -745,11 +738,11 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
                     <button className={runView === 'list' ? 'on' : ''} onClick={() => setRunView('list')}>List</button>
                     <button className={runView === 'graph' ? 'on' : ''} onClick={() => setRunView('graph')}>Graph</button>
                   </div>
-                  <RunProgressHeader tasks={activeTasks} />
+                  <RunProgressHeader tasks={tasks} />
                   {runView === 'list' ? (
                     <RunNodeTable
-                      tasks={activeTasks}
-                      executions={selectedRunId ? [] : latestExecutions}
+                      tasks={tasks}
+                      attemptsByTask={attemptsByTask}
                       edges={activeGraph?.edges ?? []}
                       expandedServices={effectiveExpandedServices}
                       onServiceToggle={handleServiceToggle}
@@ -757,7 +750,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
                   ) : (
                     <RunSwimlane
                       graph={activeGraph ?? { nodes: [], edges: [] }}
-                      tasks={activeTasks}
+                      tasks={tasks}
                       serviceOrder={services}
                       collapsed={laneCollapsed}
                       onLaneToggle={(s) => setLaneCollapsed((prev) => toggleSet(prev, s))}
