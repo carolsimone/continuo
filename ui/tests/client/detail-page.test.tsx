@@ -744,6 +744,132 @@ describe('DetailPage in latest mode', () => {
   });
 });
 
+describe('DetailPage — Run tab polling', () => {
+  // Only setInterval is faked: the page polls through it, while waitFor and
+  // the mocked fetches keep running on real timers and microtasks.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const schedulerAt = (id: string, status: string) => ({
+    scheduler: {
+      schedule_id: id, schedule_name: SCHED, status,
+      created_at: null, started_at: null, completed_at: null, cancelled_at: null, cancelled_by: '',
+    },
+  });
+  const taskAt = (status: string) => ({
+    tasks: [{
+      task_id: 't1', service_name: 'svc1', schema_name: 'public', table_name: 'orders',
+      job_name: 'orders', status, attempt: 0, max_retries: 0, created_at: null,
+    }],
+  });
+  const attemptAt = (status: string) => ({
+    total_count: 1,
+    attempts: [{
+      task_id: 't1', attempt: 0, job_name: 'orders', status,
+      failure_class: null, failure_reason: null,
+      dispatched_at: null, queued_at: null, started_at: null, finished_at: null,
+      execution_seconds: null, error_message: null, log_s3_key: null, run_results_uri: null,
+    } satisfies TaskAttempt],
+  });
+  const rowStatus = () => screen.getByText('orders').closest('tr')?.querySelector('.pill-sm')?.textContent;
+  const callsTo = (fetchMock: ReturnType<typeof vi.fn>, path: string) =>
+    fetchMock.mock.calls.map(c => String(c[0])).filter(u => u.startsWith(path)).length;
+
+  it('reads the tasks and attempts once more after the poll that sees the run end', async () => {
+    // The run ends between the poll's row reads and its scheduler read: that
+    // poll sees the run succeeded but rows that still say running. Only a
+    // read after it returns the settled rows.
+    let ended = false;
+    let staleTasks = true;
+    let staleAttempts = true;
+    const fetchMock = mockFetchSequence({
+      ...freshRoutes(),
+      [`/api/schedulers/${RUN_ID}/tasks`]: async () => {
+        if (ended && !staleTasks) return taskAt('succeeded');
+        if (ended) staleTasks = false;
+        return taskAt('running');
+      },
+      [`/api/schedulers/${RUN_ID}/attempts`]: async () => {
+        if (ended && !staleAttempts) return attemptAt('succeeded');
+        if (ended) staleAttempts = false;
+        return attemptAt('running');
+      },
+      [`/api/schedulers/${RUN_ID}`]: async () => schedulerAt(RUN_ID, ended ? 'succeeded' : 'running'),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      render(withRouter({ last_run_id: RUN_ID }));
+      await waitFor(() => expect(rowStatus()).toBe('running'));
+      const before = callsTo(fetchMock, `/api/schedulers/${RUN_ID}/tasks`);
+
+      ended = true;
+      await vi.advanceTimersByTimeAsync(5000);
+
+      await waitFor(() => expect(rowStatus()).toBe('succeeded'));
+      expect(callsTo(fetchMock, `/api/schedulers/${RUN_ID}/tasks`)).toBe(before + 2);
+
+      // The run is terminal: the poll has stopped.
+      await vi.advanceTimersByTimeAsync(15000);
+      expect(callsTo(fetchMock, `/api/schedulers/${RUN_ID}/tasks`)).toBe(before + 2);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('does not poll a selected past run', async () => {
+    const OLD_RUN_ID = 'run-old';
+    const fetchMock = mockFetchSequence({
+      ...freshRoutes(),
+      [`/api/schedulers/${RUN_ID}/tasks`]: async () => taskAt('running'),
+      [`/api/schedulers/${RUN_ID}`]: async () => schedulerAt(RUN_ID, 'running'),
+      [`/api/schedules/${SCHED}/runs`]: async () => ({
+        runs: [
+          { run_id: OLD_RUN_ID, schedule_name: SCHED, terminal_status: 'failed', created_at: '2026-09-01T10:00:00Z', completed_at: '2026-09-01T10:05:00Z' },
+        ],
+      }),
+      [`/api/runs/${OLD_RUN_ID}/graph`]: async () => ({ nodes: [], edges: [], run_promotion_seq: 6, latest_promotion_seq: 7 }),
+      [`/api/schedulers/${OLD_RUN_ID}/tasks`]: async () => ({
+        total_count: 1,
+        tasks: [{
+          task_id: 'old-t1', service_name: 'svc1', schema_name: 'public', table_name: 'old_orders',
+          job_name: '', status: 'failed', attempt: 0, max_retries: 0, created_at: null,
+        }],
+      }),
+      [`/api/schedulers/${OLD_RUN_ID}/attempts`]: async () => ({ attempts: [], total_count: 0 }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const { container } = render(withRouter({ last_run_id: RUN_ID }));
+      expect(await screen.findByText('orders')).toBeInTheDocument();
+
+      // The live run heads the list; the past run follows it.
+      fireEvent.click(await screen.findByRole('tab', { name: /past runs/i }));
+      await waitFor(() => expect(container.querySelectorAll('.run-row')).toHaveLength(2));
+      fireEvent.click(container.querySelectorAll('.run-row')[1]);
+      fireEvent.click(screen.getByRole('tab', { name: /^run$/i }));
+      expect(await screen.findByText('old_orders')).toBeInTheDocument();
+
+      const rowReads = () => [
+        callsTo(fetchMock, `/api/schedulers/${OLD_RUN_ID}/tasks`),
+        callsTo(fetchMock, `/api/schedulers/${OLD_RUN_ID}/attempts`),
+        callsTo(fetchMock, `/api/schedulers/${RUN_ID}/tasks`),
+        callsTo(fetchMock, `/api/schedulers/${RUN_ID}/attempts`),
+      ];
+      const before = rowReads();
+      expect(before.slice(0, 2)).toEqual([1, 1]);
+
+      await vi.advanceTimersByTimeAsync(15000);
+      expect(rowReads()).toEqual(before);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
 describe('DetailPage — header drift chip', () => {
   it('shows how many releases the live run is behind the live topology', async () => {
     const routes = {

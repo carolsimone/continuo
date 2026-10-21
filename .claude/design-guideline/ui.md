@@ -920,7 +920,11 @@ Rules:
   pill; `running`, `succeeded`, `failed` and `cancelled` get their own.
 - The node row's own cells stay the task's summary: its Attempt cell reads
   `attempt + 1 / max_retries + 1`, and its Error, Started, Completed and
-  Logs cells come from the task's highest-numbered attempt.
+  Logs cells come from the task's highest-numbered attempt. A task whose
+  `max_retries` is 0 shows the attempt number alone (`1`, not `1 / 1`):
+  0 is what a task with no stored retry budget, or the default one,
+  carries, so a denominator would claim a single allowed attempt it may
+  not have.
 - A task without attempts (pending, or skipped before it ran) has no
   expander: no chevron, no `role="button"`, no click or keyboard handler.
   Its Node cell keeps a chevron-wide spacer so node names stay aligned.

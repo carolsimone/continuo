@@ -99,6 +99,17 @@ describe('RunNodeTable', () => {
     expect(container.querySelector('.nodes-attempt')?.textContent).toBe('2 / 3');
   });
 
+  it('reads the Attempt column as the attempt number alone when max_retries is 0', () => {
+    // max_retries 0 is a task with no stored retry budget, or the default
+    // one; "1 / 1" would claim it has a single allowed attempt.
+    const { container } = render(
+      <RunNodeTable tasks={[task('unbudgeted', 'running', { attempt: 0, max_retries: 0 })]}
+        attemptsByTask={noAttempts} edges={[]}
+        expandedServices={new Set(['core'])} onServiceToggle={vi.fn()} />,
+    );
+    expect(container.querySelector('.nodes-attempt')?.textContent).toBe('1');
+  });
+
   it('expands a task row into every attempt with its status, class · reason, wait, run time and log', () => {
     const attempts = groupAttemptsByTask([
       attempt('bad_node', 0, {

@@ -233,7 +233,10 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
 
   // The run the Run tab shows — a selected past run, else the latest — has
   // its tasks and every attempt of every task read from state. A past run is
-  // read once; the latest run is re-read every 5 s until it is terminal.
+  // read once; the latest run is re-read every 5 s until it is terminal. A
+  // poll reads the rows alongside the run's status, so the poll that first
+  // sees the run terminal may hold rows from before the run ended: once that
+  // poll's reads have landed, the rows are read one last time.
   useEffect(() => {
     const shownRunId = selectedRunId ?? lastRunId;
     if (!shownRunId) return;
@@ -242,8 +245,9 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
     let timer: number | undefined;
     const controller = new AbortController();
 
-    const fetchRunRows = () => {
-      fetchAllPages<Task>(`/api/schedulers/${shownRunId}/tasks`, 'tasks', {
+    // Resolves once both reads have landed (or failed) and been applied.
+    const fetchRunRows = (): Promise<void> => {
+      const taskRead = fetchAllPages<Task>(`/api/schedulers/${shownRunId}/tasks`, 'tasks', {
         signal: controller.signal,
       })
         .then((all) => {
@@ -253,7 +257,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
           if (!cancelled) setTasks([]);
         });
 
-      fetchAllPages<TaskAttempt>(`/api/schedulers/${shownRunId}/attempts`, 'attempts', {
+      const attemptRead = fetchAllPages<TaskAttempt>(`/api/schedulers/${shownRunId}/attempts`, 'attempts', {
         signal: controller.signal,
       })
         .then((all) => {
@@ -262,6 +266,8 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
         .catch(() => {
           if (!cancelled) setAttempts([]);
         });
+
+      return Promise.all([taskRead, attemptRead]).then(() => undefined);
     };
 
     if (selectedRunId) {
@@ -284,8 +290,8 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
           return null;
         });
 
-      fetchRunRows();
-      return schedulerRequest;
+      // Resolves with the run's status once its row reads have landed too.
+      return Promise.all([schedulerRequest, fetchRunRows()]).then(([nextScheduler]) => nextScheduler);
     };
 
     fetchDynamic().then((freshScheduler) => {
@@ -297,6 +303,8 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
             if (timer && nextScheduler && isTerminalStatus(nextScheduler.status)) {
               window.clearInterval(timer);
               timer = undefined;
+              // The run has ended: read the rows it ended with.
+              fetchRunRows();
             }
           });
         }, 5000);
