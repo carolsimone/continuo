@@ -418,7 +418,12 @@ def test_stopping_a_scenario_reports_a_run_state_it_could_not_read_after_its_run
     fake = Path(env["FAKE_DIR"])
     env["FAKE_STATUS_FAIL_WHEN_EXISTS"] = str(fake / "runner-done")
     live_run(fake)
-    runner = runner_script(tmp_path, then=': > "$FAKE_DIR/runner-done"')
+    # The runner exits, and status starts failing, only once the stop has read the run's state and its wait has
+    # seen the run cancelled: two status calls. Otherwise the wait's own reads would fail, and it would wait out
+    # BENCH_CANCEL_WAIT_S.
+    runner = runner_script(tmp_path, then='for _ in $(seq 400); do '
+                                           '[ "$(($(wc -l < "$FAKE_DIR/status-calls")))" -ge 2 ] && break; sleep 0.05; '
+                                           'done; : > "$FAKE_DIR/runner-done"')
     out = run_lib(env, START_RUNNER.format(runner=runner) +
                   'if bench_stop_scenario "$c" bench-s; then echo stopped; else echo failed; fi')
     assert out.stdout.strip() == "failed", out.stderr
