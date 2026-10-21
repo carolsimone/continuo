@@ -55,7 +55,7 @@ func (h *NodeRunHandler) ListNodeRuns(
 			TerminalStatus: string(r.TerminalStatus),
 			TaskId:         r.TaskID.String(),
 			TaskStatus:     string(r.TaskStatus),
-			RetryCount:     num.ClampInt32(r.RetryCount),
+			RetryCount:     num.ClampInt32(r.Attempt),
 			ImageTag:       r.ImageTag,
 			CreatedAt:      r.CreatedAt.UTC().Format(time.RFC3339),
 			StartedAt:      timePtrToRFC(r.StartedAt),

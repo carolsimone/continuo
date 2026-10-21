@@ -9,7 +9,8 @@ import "time"
 // 50). Returned by the ListNodes gRPC method.
 //
 // A -1 on SuccessRatePct / AvgDurationSec / P95DurationSec means "undefined":
-// no terminal runs in the window, or no run with a measurable duration. The
+// no terminal runs in the window, or no succeeded attempt with a measurable
+// duration (durations come from each task's succeeded attempt only). The
 // repository converts these to nulls at the BFF boundary so the UI renders "—".
 type NodeSummary struct {
 	ServiceName    string
@@ -19,9 +20,11 @@ type NodeSummary struct {
 	SuccessRatePct int
 	AvgDurationSec int
 	P95DurationSec int
-	FlakyRatePct   int
-	LastStatus     string
-	LastRunAt      time.Time
+	// FlakyRatePct is the share of the window's tasks that needed more than
+	// their first attempt (attempt > 0).
+	FlakyRatePct int
+	LastStatus   string
+	LastRunAt    time.Time
 	// Operation is the run/test/build dimension this catalog row was scoped
 	// to when queried: "run" | "test" | "build".
 	Operation string

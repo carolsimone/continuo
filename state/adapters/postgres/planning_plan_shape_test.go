@@ -144,14 +144,14 @@ func TestPlanShape_PendingDescendantsReadNoTableOutsideTheWalk(t *testing.T) {
 }
 
 // A rebase preview's duration read probes task_tracker by node identity and
-// task_execution by task, on an analysed 2,000-task run whose every task
-// succeeded with one execution: neither table is read whole.
+// task_attempts by task, on an analysed 2,000-task run whose every task
+// succeeded with one attempt: neither table is read whole.
 func TestPlanShape_LastSuccessDurationsProbesTheNodeIdentity(t *testing.T) {
 	db := newTestDB(t)
 	tenant := storeShape(t, db, dag2000)
 	r := startScheduleRun(t, db, tenant, dag2000.schedule(), model.OperationRun)
-	succeedWithExecutions(t, db, r.ScheduleID())
-	_, err := db.ExecContext(context.Background(), `ANALYZE task_tracker, task_execution`)
+	succeedWithAttempts(t, db, r.ScheduleID())
+	_, err := db.ExecContext(context.Background(), `ANALYZE task_tracker, task_attempts`)
 	require.NoError(t, err)
 	services, schemas, tables := make([]string, 10), make([]string, 10), make([]string, 10)
 	for i := range 10 {
@@ -160,6 +160,6 @@ func TestPlanShape_LastSuccessDurationsProbesTheNodeIdentity(t *testing.T) {
 
 	scans := planScans(t, postgres.LastSuccessDurationsQueryForTest, pq.Array(services), pq.Array(schemas), pq.Array(tables))
 	assert.Empty(t, seqScansOf(scans), "last success durations: %v", scans)
-	assert.Subset(t, indexesOf(scans), []string{"idx_task_tracker_node_identity", "idx_task_execution_task_id"},
+	assert.Subset(t, indexesOf(scans), []string{"idx_task_tracker_node_identity", "task_attempts_pkey"},
 		"last success durations: %v", scans)
 }

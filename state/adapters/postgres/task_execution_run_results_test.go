@@ -10,8 +10,9 @@ import (
 
 // TestTaskExecution_RunResultsURI_RoundTrip persists an execution carrying the
 // structured-result key and reads it back through both surfaces that expose it:
-// the task_execution repository and the per-node run-history join. A column
-// missing from any one of the repository's four SQL statements fails here.
+// the task_execution repository and the per-node run-history join, which reads
+// the structured-result key from the task's attempt. A column missing from any
+// one of the repository's four SQL statements fails here.
 func TestTaskExecution_RunResultsURI_RoundTrip(t *testing.T) {
 	db := newTestDB(t)
 	execRepo := postgres.NewTaskExecutionRepository(db, discardLogger())
@@ -46,6 +47,8 @@ func TestTaskExecution_RunResultsURI_RoundTrip(t *testing.T) {
 	if got.RunResultsURI == nil || *got.RunResultsURI != key {
 		t.Fatalf("GetByID RunResultsURI = %v, want %q", got.RunResultsURI, key)
 	}
+
+	insertAttemptRow(t, db, storedAttempt{TaskID: tid, Status: "succeeded", RunResultsURI: strPtr(key)})
 
 	runs, err := nodeRepo.List(ctx, "svc-py", "analytics", "pyrr", "run", 50)
 	if err != nil {
