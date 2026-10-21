@@ -1,6 +1,6 @@
 module github.com/carolsimone/continuo/remediation
 
-go 1.26.9
+go 1.26.10
 
 require (
 	github.com/carolsimone/continuo/pkg v0.0.0-00010101000000-000000000000
