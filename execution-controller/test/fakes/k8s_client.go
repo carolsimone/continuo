@@ -6,31 +6,18 @@ import (
 	"sync"
 
 	"github.com/carolsimone/continuo/execution-controller/adapters/k8s"
-	"github.com/carolsimone/continuo/execution-controller/domain/model"
-	"github.com/carolsimone/continuo/execution-controller/service/ports"
 	batchv1 "k8s.io/api/batch/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-var _ ports.JobObserver = (*FakeK8sClient)(nil)
-
-// FakeK8sClient stands in for the Kubernetes adapter on both sides: it stores
-// created Jobs in memory and answers status, log and metadata reads through
-// the optional Func hooks (defaulting to a succeeded Job with two log lines).
-// The zero value is usable.
+// FakeK8sClient stands in for the Kubernetes adapter's Job creation: it stores
+// created Jobs in memory. The zero value is usable.
 type FakeK8sClient struct {
 	mu            sync.RWMutex
 	jobs          map[string]*batchv1.Job // key: namespace/jobName
 	createJobErr  error
 	jobExistsErr  error
 	createJobFunc func(ctx context.Context, job *batchv1.Job) error
-
-	GetJobStatusFunc func(ctx context.Context, namespace, jobName string) (*model.JobResult, error)
-	GetPodLogsFunc   func(ctx context.Context, namespace, jobName string, tailLines int64) (string, string, error)
-	GetJobMetaFunc   func(ctx context.Context, namespace, jobName string) (labels, annotations map[string]string, err error)
-	CallCount        int
-	LastNamespace    string
-	LastJobName      string
 }
 
 func NewFakeK8sClient() *FakeK8sClient {
@@ -113,28 +100,4 @@ func (f *FakeK8sClient) Reset() {
 	f.createJobErr = nil
 	f.jobExistsErr = nil
 	f.createJobFunc = nil
-}
-
-func (f *FakeK8sClient) GetJobStatus(ctx context.Context, namespace, jobName string) (*model.JobResult, error) {
-	f.CallCount++
-	f.LastNamespace = namespace
-	f.LastJobName = jobName
-	if f.GetJobStatusFunc != nil {
-		return f.GetJobStatusFunc(ctx, namespace, jobName)
-	}
-	return &model.JobResult{Status: model.JobStatusSucceeded}, nil
-}
-
-func (f *FakeK8sClient) GetPodLogs(ctx context.Context, namespace, jobName string, tailLines int64) (string, string, error) {
-	if f.GetPodLogsFunc != nil {
-		return f.GetPodLogsFunc(ctx, namespace, jobName, tailLines)
-	}
-	return "full log line 1\nfull log line 2", "full log line 2", nil
-}
-
-func (f *FakeK8sClient) GetJobMeta(ctx context.Context, namespace, jobName string) (labels, annotations map[string]string, err error) {
-	if f.GetJobMetaFunc != nil {
-		return f.GetJobMetaFunc(ctx, namespace, jobName)
-	}
-	return nil, nil, nil
 }

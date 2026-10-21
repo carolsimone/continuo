@@ -6,6 +6,7 @@ import (
 
 	"github.com/carolsimone/continuo/execution-controller/domain/command"
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
+	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -229,7 +230,7 @@ func TestReconstituteValidation_RestoresOutcome(t *testing.T) {
 	ts := now
 	d := model.ReconstituteValidation(
 		uuid.New(), nil, cmd, model.StatusDone, 0, 3, now, now, &now, nil,
-		"ok", "s3://logs/run", "run-results/run.json", "", &ts,
+		"ok", "s3://logs/run", "run-results/run.json", "", &ts, model.AttemptFacts{},
 	)
 	assert.Equal(t, model.ModeValidation, d.Mode())
 	assert.Equal(t, cmd.ReleaseID, d.ReleaseID())
@@ -317,7 +318,7 @@ func TestReconstituteSeedBuild_RestoresMode(t *testing.T) {
 	ts := now
 	d := model.ReconstituteSeedBuild(
 		uuid.New(), nil, cmd, model.StatusDone, 0, 3, now, now, &now, nil,
-		"ok", "s3://logs/seed", "run-results/seed.json", "", &ts,
+		"ok", "s3://logs/seed", "run-results/seed.json", "", &ts, model.AttemptFacts{},
 	)
 	assert.Equal(t, model.ModeSeedBuild, d.Mode())
 	assert.Equal(t, cmd, d.ValidationCommand())
@@ -381,14 +382,13 @@ func TestDeployment_SlotLifecycle(t *testing.T) {
 func TestDeployment_FinishAcceptsADoneRowWithoutOutcome(t *testing.T) {
 	now := time.Now()
 	d := productionDeployment(t)
-	require.NoError(t, d.Reserve())
-	require.NoError(t, d.MarkStarted(now))
-	require.NoError(t, d.ReleaseSlot())
-	assert.Equal(t, model.StatusDone, d.Status())
-	assert.False(t, d.HasOutcome())
+	released := model.ReconstituteProduction(d.ID(), nil, d.Command(), model.StatusDone, 0, 3, now, now, &now, nil,
+		"", nil, model.AttemptFacts{})
+	assert.False(t, released.HasOutcome())
 
-	require.NoError(t, d.Finish("failed", now), "a status check that arrives after reconciliation released the slot still records the outcome")
-	assert.Equal(t, "failed", d.Outcome())
+	require.NoError(t, released.Finish("failed", now), "a row released before its result was recorded still records it")
+	assert.Equal(t, "failed", released.Outcome())
+	assert.Equal(t, model.StatusDone, released.Status())
 }
 
 func TestDeployment_FinishRejections(t *testing.T) {
@@ -403,13 +403,6 @@ func TestDeployment_FinishRejections(t *testing.T) {
 	require.NoError(t, v.Reserve())
 	require.NoError(t, v.MarkStarted(now))
 	require.Error(t, v.Finish("ok", now), "candidate deployments record through RecordOutcome")
-}
-
-func TestDeployment_ReleaseSlotOnlyFromStartedStates(t *testing.T) {
-	d := productionDeployment(t)
-	require.Error(t, d.ReleaseSlot())
-	require.NoError(t, d.Reserve())
-	require.Error(t, d.ReleaseSlot(), "a reserved row is launched, not released")
 }
 
 func TestDeployment_TransientFailureReturnsTheSlot(t *testing.T) {
@@ -442,4 +435,64 @@ func TestDeployment_JobName(t *testing.T) {
 	assert.Equal(t, "dbt-public-orders", productionDeployment(t).JobName())
 	v := model.NewSeedBuildDeployment(command.ValidationDeployTask{ReleaseID: "r", NodeID: "n", JobName: "seed-j"}, nil, time.Now())
 	assert.Equal(t, "seed-j", v.JobName())
+}
+
+// Execution-controller ends an attempt itself by recording why and moving the
+// deployment to terminating, which keeps its slot until the pods are gone.
+func TestDeployment_BeginTerminationHoldsTheSlotAndKeepsTheFirstReason(t *testing.T) {
+	now := time.Now()
+	d := productionDeployment(t)
+	require.Error(t, d.BeginTermination(pkgmodel.FailureReasonStartTimeout, "not started"), "a pending deployment has no Job to end")
+	require.NoError(t, d.Reserve())
+	require.NoError(t, d.MarkStarted(now))
+
+	require.NoError(t, d.BeginTermination(pkgmodel.FailureReasonStartTimeout, "not started after 15m0s"))
+	assert.Equal(t, model.StatusTerminating, d.Status())
+	assert.True(t, d.Status().InFlight(), "a terminating deployment holds its slot")
+	assert.Equal(t, pkgmodel.FailureReasonStartTimeout, d.Facts().Reason)
+	assert.Equal(t, "not started after 15m0s", d.Facts().Message)
+
+	require.NoError(t, d.BeginTermination(pkgmodel.FailureReasonImagePull, "pull failed"), "ending it again is a no-op")
+	assert.Equal(t, pkgmodel.FailureReasonStartTimeout, d.Facts().Reason, "the first reason stands")
+
+	_, err := d.MarkRunning()
+	require.Error(t, err, "a terminating attempt never runs again")
+	require.NoError(t, d.Finish("failed", now))
+	assert.Equal(t, model.StatusDone, d.Status())
+}
+
+func TestDeployment_ObserveAddsFacts(t *testing.T) {
+	d := productionDeployment(t)
+	start := time.Now().UTC()
+	assert.True(t, d.Observe(model.AttemptFacts{StartedAt: &start}))
+	assert.False(t, d.Observe(model.AttemptFacts{StartedAt: &start}), "the same fact again changes nothing")
+	assert.Equal(t, &start, d.Facts().StartedAt)
+}
+
+func TestDeployment_CandidateRecordsItsOutcomeFromTerminating(t *testing.T) {
+	now := time.Now()
+	v := model.NewCompileDeployment(command.ValidationDeployTask{ReleaseID: "r", NodeID: "n", JobName: "j", ImageTag: "i"}, nil, now)
+	require.NoError(t, v.Reserve())
+	require.NoError(t, v.MarkStarted(now))
+	require.NoError(t, v.BeginTermination(pkgmodel.FailureReasonImagePull, "ErrImagePull"))
+	require.NoError(t, v.RecordOutcome("failed", "", "", "", now))
+	assert.Equal(t, model.StatusDone, v.Status())
+}
+
+func TestDeployment_AwaitingResult(t *testing.T) {
+	now := time.Now()
+	d := productionDeployment(t)
+	assert.False(t, d.AwaitingResult(), "pending: no attempt started")
+	require.NoError(t, d.Reserve())
+	assert.False(t, d.AwaitingResult(), "reserved: no Job yet")
+	require.NoError(t, d.MarkStarted(now))
+	assert.True(t, d.AwaitingResult(), "starting")
+	require.NoError(t, d.BeginTermination(pkgmodel.FailureReasonImagePull, ""))
+	assert.True(t, d.AwaitingResult(), "terminating")
+	require.NoError(t, d.Finish("failed", now))
+	assert.False(t, d.AwaitingResult(), "done with its outcome recorded")
+
+	released := model.ReconstituteProduction(d.ID(), nil, d.Command(), model.StatusDone, 0, 3, now, now, &now, nil,
+		"", nil, model.AttemptFacts{})
+	assert.True(t, released.AwaitingResult(), "a slot released before the result was recorded still awaits it")
 }

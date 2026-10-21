@@ -3,7 +3,7 @@
 // mode=validation node for a release has reached a terminal outcome. It is
 // used by two call sites:
 // the deploy dispatcher (when a node fails AT dispatch) and outcomes.Recorder
-// (when a node terminates after dispatch, via the job-status handler).
+// (when a node's attempt ends after dispatch, via the observer).
 // Both must run identical logic and share one immutable dedup namespace, so the
 // gate lives here, depending only on domain ports and pkg primitives — never on
 // any adapters/* package.

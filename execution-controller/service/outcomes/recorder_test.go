@@ -41,7 +41,7 @@ func depKey(releaseID, nodeID string, mode model.Mode) string {
 }
 
 func (r *stubDeploymentsRepo) Add(context.Context, *model.Deployment) error { return nil }
-func (r *stubDeploymentsRepo) GetByJobName(context.Context, string) (*model.Deployment, error) {
+func (r *stubDeploymentsRepo) LoadByJobName(context.Context, string) (*model.Deployment, error) {
 	return nil, sql.ErrNoRows
 }
 
@@ -220,4 +220,8 @@ func TestRecord_CompileOutcomeCarriesFailedContainer(t *testing.T) {
 	require.NotNil(t, captured)
 	assert.Equal(t, streams.CompileCompletedV1, captured.StreamName)
 	assert.Contains(t, string(captured.Payload), `"failed_container":"parse-prod"`)
+}
+
+func (*stubDeploymentsRepo) HasAttemptFrom(context.Context, string, int) (bool, error) {
+	return false, nil
 }

@@ -55,6 +55,7 @@ type deploymentRow struct {
 	RunResultsURI       *string    `db:"run_results_uri"`
 	FailedContainer     *string    `db:"failed_container"`
 	OutcomeAt           *time.Time `db:"outcome_at"`
+	Facts               []byte     `db:"facts"`
 }
 
 func (r *deploymentsRepository) Add(ctx context.Context, d *model.Deployment) error {
@@ -102,16 +103,21 @@ func (r *deploymentsRepository) Add(ctx context.Context, d *model.Deployment) er
 }
 
 func (r *deploymentsRepository) Save(ctx context.Context, d *model.Deployment) error {
+	facts, err := encodeFacts(d.Facts())
+	if err != nil {
+		return fmt.Errorf("save deployment %s: %w", d.ID(), err)
+	}
 	const query = `
 		UPDATE deployments
 		SET status = $2, retry_count = $3, next_attempt_at = $4, deployed_at = $5, error_message = $6,
 		    outcome = $7, dbt_log_uri = $8, outcome_at = $9, run_results_uri = $10, failed_container = $11,
+		    facts = $12,
 		    state_changed_at = CASE WHEN status <> $2 THEN NOW() ELSE state_changed_at END
 		WHERE id = $1`
 	res, err := r.exec.ExecContext(ctx, query,
 		d.ID(), string(d.Status()), d.RetryCount(), d.NextAttemptAt(), d.DeployedAt(), d.ErrorMessage(),
 		nullableStr(d.Outcome()), nullableStr(d.DBTLogURI()), d.OutcomeAt(), nullableStr(d.DBTRunResultsURI()),
-		nullableStr(d.FailedContainer()),
+		nullableStr(d.FailedContainer()), facts,
 	)
 	if err != nil {
 		return fmt.Errorf("save deployment %s: %w", d.ID(), err)
@@ -128,7 +134,7 @@ const validationSelectColumns = `
 	id, message_processing_id, task_id, schedule_id, job_params,
 	status, retry_count, max_retries, next_attempt_at,
 	created_at, deployed_at, error_message,
-	mode, release_id, node_id, outcome, dbt_log_uri, outcome_at, run_results_uri, failed_container`
+	mode, release_id, node_id, outcome, dbt_log_uri, outcome_at, run_results_uri, failed_container, facts`
 
 func (r *deploymentsRepository) GetByReleaseNode(ctx context.Context, releaseID, nodeID string, mode model.Mode) (*model.Deployment, error) {
 	const query = `
@@ -141,7 +147,7 @@ func (r *deploymentsRepository) GetByReleaseNode(ctx context.Context, releaseID,
 		&row.Status, &row.RetryCount, &row.MaxRetries, &row.NextAttemptAt,
 		&row.CreatedAt, &row.DeployedAt, &row.ErrorMessage,
 		&row.Mode, &row.ReleaseID, &row.NodeID, &row.Outcome, &row.DBTLogURI, &row.OutcomeAt, &row.RunResultsURI,
-		&row.FailedContainer,
+		&row.FailedContainer, &row.Facts,
 	); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, sql.ErrNoRows
@@ -203,6 +209,7 @@ func (r *deploymentsRepository) ListValidationByRelease(ctx context.Context, rel
 // dispatcher can still fail the deployment with a routable announcement; the
 // aggregate's IsDeployable() will report false.
 func (r *deploymentsRepository) toAggregate(row *deploymentRow) *model.Deployment {
+	facts := r.decodeFacts(row)
 	if row.Mode == string(model.ModeValidation) {
 		var vcmd command.ValidationDeployTask
 		var vcmdDTO serialization.ValidationDeployTaskDTO
@@ -221,6 +228,7 @@ func (r *deploymentsRepository) toAggregate(row *deploymentRow) *model.Deploymen
 			row.RetryCount, row.MaxRetries, row.NextAttemptAt, row.CreatedAt,
 			row.DeployedAt, row.ErrorMessage,
 			derefStr(row.Outcome), derefStr(row.DBTLogURI), derefStr(row.RunResultsURI), derefStr(row.FailedContainer), row.OutcomeAt,
+			facts,
 		)
 	}
 
@@ -242,6 +250,7 @@ func (r *deploymentsRepository) toAggregate(row *deploymentRow) *model.Deploymen
 			row.RetryCount, row.MaxRetries, row.NextAttemptAt, row.CreatedAt,
 			row.DeployedAt, row.ErrorMessage,
 			derefStr(row.Outcome), derefStr(row.DBTLogURI), derefStr(row.RunResultsURI), derefStr(row.FailedContainer), row.OutcomeAt,
+			facts,
 		)
 	}
 
@@ -263,6 +272,7 @@ func (r *deploymentsRepository) toAggregate(row *deploymentRow) *model.Deploymen
 			row.RetryCount, row.MaxRetries, row.NextAttemptAt, row.CreatedAt,
 			row.DeployedAt, row.ErrorMessage,
 			derefStr(row.Outcome), derefStr(row.DBTLogURI), derefStr(row.RunResultsURI), derefStr(row.FailedContainer), row.OutcomeAt,
+			facts,
 		)
 	}
 
@@ -279,8 +289,35 @@ func (r *deploymentsRepository) toAggregate(row *deploymentRow) *model.Deploymen
 		row.ID, row.MessageProcessingID, cmd, model.Status(row.Status),
 		row.RetryCount, row.MaxRetries, row.NextAttemptAt, row.CreatedAt,
 		row.DeployedAt, row.ErrorMessage,
-		derefStr(row.Outcome), row.OutcomeAt,
+		derefStr(row.Outcome), row.OutcomeAt, facts,
 	)
+}
+
+// decodeFacts reads a row's facts column. A row never observed has none; a
+// column that does not decode (data corruption: it is written from valid
+// facts) is logged and read as no facts, so the attempt is observed afresh.
+func (r *deploymentsRepository) decodeFacts(row *deploymentRow) model.AttemptFacts {
+	if len(row.Facts) == 0 {
+		return model.AttemptFacts{}
+	}
+	var dto serialization.AttemptFactsDTO
+	if err := json.Unmarshal(row.Facts, &dto); err != nil {
+		r.logger.Error("deployment facts unparseable — reading them as none", "deployment_id", row.ID, "error", err)
+		return model.AttemptFacts{}
+	}
+	return dto.ToDomain()
+}
+
+// encodeFacts renders facts for the facts column: NULL while nothing is known.
+func encodeFacts(f model.AttemptFacts) (any, error) {
+	b, err := json.Marshal(serialization.AttemptFactsFromDomain(f))
+	if err != nil {
+		return nil, fmt.Errorf("encode facts: %w", err)
+	}
+	if string(b) == "{}" {
+		return nil, nil
+	}
+	return b, nil
 }
 
 // nullableStr maps an empty string to NULL so columns guarded by an
@@ -315,7 +352,20 @@ func commandIDs(cmd command.DeployTask) (uuid.UUID, uuid.UUID, error) {
 	return taskID, scheduleID, nil
 }
 
-func (r *deploymentsRepository) GetByJobName(ctx context.Context, jobName string) (*model.Deployment, error) {
+// HasAttemptFrom reads each production deployment's attempt from job_params
+// (task_retry_count), which every version writes, so attempts named under any
+// Job-naming scheme count.
+func (r *deploymentsRepository) HasAttemptFrom(ctx context.Context, taskID string, attempt int) (bool, error) {
+	var found []bool
+	if err := r.exec.SelectContext(ctx, &found, `SELECT true FROM deployments
+		WHERE task_id = $1 AND mode = $2 AND (job_params->>'task_retry_count')::int >= $3
+		LIMIT 1`, taskID, string(model.ModeProduction), attempt); err != nil {
+		return false, fmt.Errorf("look up attempt %d of task %s: %w", attempt, taskID, err)
+	}
+	return len(found) > 0, nil
+}
+
+func (r *deploymentsRepository) LoadByJobName(ctx context.Context, jobName string) (*model.Deployment, error) {
 	const query = `SELECT` + validationSelectColumns + `
 		FROM deployments
 		WHERE job_name = $1
@@ -324,7 +374,7 @@ func (r *deploymentsRepository) GetByJobName(ctx context.Context, jobName string
 		FOR UPDATE`
 	var rows []*deploymentRow
 	if err := r.exec.SelectContext(ctx, &rows, query, jobName); err != nil {
-		return nil, fmt.Errorf("get deployment for job %s: %w", jobName, err)
+		return nil, fmt.Errorf("load deployment for job %s: %w", jobName, err)
 	}
 	if len(rows) == 0 {
 		return nil, sql.ErrNoRows

@@ -91,11 +91,11 @@ func newValidationRequestedBinding(db *sqlx.DB) func(context.Context, goredis.XM
 		uowFactory, handlers.NewValidationRequestedHandler(logger), noopSchemaCreator{}, logger)
 }
 
-// recordNodeOutcome simulates the job-status handler's terminal settle: it
-// opens a transaction on the live *sqlx.DB and calls outcomes.Recorder.Record
-// exactly as JobStatusHandler.handleValidationTerminal does — recording the
-// outcome and settling the leg (gating propagation, per-node projection, and
-// the aggregate once every node is terminal) all in that one transaction.
+// recordNodeOutcome simulates the observer's settle of an ended validation Job:
+// it opens a transaction on the live *sqlx.DB and calls outcomes.Recorder.Record
+// as the observer does — recording the outcome and settling the leg (gating
+// propagation, per-node projection, and the aggregate once every node is
+// terminal) all in that one transaction.
 func recordNodeOutcome(t *testing.T, db *sqlx.DB, releaseID, nodeID, outcome string) {
 	t.Helper()
 	logger := pipelineLogger()
@@ -168,13 +168,6 @@ func requestedXMessage(t *testing.T, msgID, releaseID, candidateSchema string, n
 	return goredis.XMessage{ID: msgID, Values: map[string]any{"payload": string(raw)}}
 }
 
-func countByStream(t *testing.T, db *sqlx.DB, stream string) int {
-	t.Helper()
-	var n int
-	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM execution_outbox WHERE stream_name=$1`, stream).Scan(&n))
-	return n
-}
-
 // countByStreamAndKind counts the rows on stream whose payload's "kind" field
 // matches kind. The unified validation.result:v1 stream carries two message
 // kinds — "node" (one per settled node) and "complete" (the terminal decision,
@@ -236,14 +229,14 @@ func waitValidationRowsDue(t *testing.T, db *sqlx.DB, releaseID string) {
 
 // TestValidationPipeline_EndToEnd drives the whole dispatch side of the
 // validation pipeline against testcontainer Postgres with a fake K8s deployer:
-// validation.requested:v1 → per-node deployments → dispatch (validation Jobs +
-// first check_delayed tickets) → simulated per-node terminal settles → aggregate
-// gating → exactly-once validation.result:v1 (kind=complete). The per-node
-// terminal settle is SIMULATED here by calling outcomes.Recorder.Record directly
-// against a transaction on the live DB, exactly as the job-status handler does
-// once it observes a terminal candidate Job; the routing itself (labels →
-// NodeOutcome) is covered by job_status_handler_test.go. This test owns the
-// dispatch side.
+// validation.requested:v1 → per-node deployments → dispatch (validation Jobs)
+// → simulated per-node terminal settles → aggregate gating → exactly-once
+// validation.result:v1 (kind=complete). The per-node terminal settle is
+// SIMULATED here by calling outcomes.Recorder.Record directly against a
+// transaction on the live DB, as the observer does once a candidate Job's
+// attempt ends; the observer's own settle is covered by
+// service/observer/observer_integration_test.go. This test owns the dispatch
+// side.
 func TestValidationPipeline_EndToEnd(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
@@ -270,8 +263,8 @@ func TestValidationPipeline_EndToEnd(t *testing.T) {
 			releaseID, n.UniqueID), "node %s enqueued pending", n.UniqueID)
 	}
 
-	// Step 3: dispatch the batch. Each row → a DeployValidation call + a
-	// first check_delayed ticket; rows move to status=starting; NO terminal yet.
+	// Step 3: dispatch the batch. Each row → a DeployValidation call; rows move
+	// to status=starting; NO terminal yet.
 	// Wait for the rows to be due first: next_attempt_at is stamped with the Go
 	// process clock while the claim compares against the DB's NOW(), and on a
 	// VM-backed Docker host (colima) those can differ by tens of ms. Production
@@ -300,17 +293,13 @@ func TestValidationPipeline_EndToEnd(t *testing.T) {
 		assert.Equal(t, candidateSchema, s.CandidateSchema, "candidate schema threaded to the Job")
 	}
 
-	// First check_delayed ticket: one per dispatched validation Job so the
-	// job-status handler status-checks each (it never polls).
-	assert.Equal(t, 3, countByStream(t, db, streams.CheckK8sV1),
-		"one check_delayed ticket per dispatched validation Job")
 	assert.Equal(t, 3, countDeployments(t, db,
 		`SELECT COUNT(*) FROM deployments WHERE mode='validation' AND release_id=$1 AND status='starting'`, releaseID),
 		"all rows now started")
 	assert.Equal(t, 0, countByStreamAndKind(t, db, streams.ValidationResultV1, "complete"),
 		"no aggregate yet — every node still awaits its terminal")
 
-	// Step 4: simulate the job-status handler settling terminals for 2 of 3 nodes
+	// Step 4: simulate the observer settling terminals for 2 of 3 nodes
 	// (outcome=ok).
 	recordNodeOutcome(t, db, releaseID, "model.shop.orders", "ok")
 	recordNodeOutcome(t, db, releaseID, "model.shop.customers", "ok")
@@ -330,8 +319,8 @@ func TestValidationPipeline_EndToEnd(t *testing.T) {
 		"model.shop.orders", "model.shop.customers", "model.shop.line_items",
 	})
 
-	// Step 6: the third node's terminal is re-observed (e.g. a re-delivered
-	// check.k8s:v1 ticket). Its outcome is already recorded, so
+	// Step 6: the third node's terminal is re-observed (e.g. two workers
+	// observing the same Job). Its outcome is already recorded, so
 	// outcomes.Recorder's own idempotency check makes this a no-op — no second
 	// aggregate.
 	recordNodeOutcome(t, db, releaseID, "model.shop.line_items", "ok")

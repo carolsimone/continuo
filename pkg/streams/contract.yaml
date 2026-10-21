@@ -48,15 +48,6 @@ streams:
 
   # ---------------- execution-controller streams ----------------
 
-  - name: check.k8s:v1
-    const: CheckK8sV1
-    description: Delayed status-check tickets; a promoter moves due tickets from the delay queue into the stream.
-    producers: [execution-controller]
-    consumers:
-      - service: execution-controller
-        group: k8s-check-status
-        const: K8sCheckStatus
-
   - name: outbox.dead_letter:v1
     const: OutboxDeadLetterV1
     description: Terminal outbox publish failures (permanent payload errors, or transient errors that exhausted their backoff budget), emitted by every service's outbox processor with the fields the row would have published. dead-letter-controller stores them for listing and redrive.
@@ -254,6 +245,7 @@ streams:
 # Streams removed from the contract. dead-letter-controller deletes their keys
 # from Redis; nothing produces or consumes them.
 retired_streams:
+  - name: check.k8s:v1
   - name: compile.node.completed:v1
   - name: initialize.run:v1
   - name: manifest.loaded.candidate:v1
@@ -438,3 +430,86 @@ vocabularies:
         const: DbtTest
         runtime: dbt
         description: a dbt data test; exists only in candidate and current_prod topologies, where validation bind-checks its compiled SQL; never promoted to the orchestrator's graph and never scheduled.
+
+  - name: failure_class
+    const: FailureClass
+    description: >-
+      What kind of failure ended an attempt of a task. execution-controller's
+      observer classifies each attempt it watches end in failure and records
+      the class with the attempt's facts.
+    values:
+      - value: task
+        const: Task
+        description: the task's own code failed; a container of its pod, init or main, exited non-zero.
+      - value: resource
+        const: Resource
+        description: the pod ran out of a node resource; it was killed for memory or evicted.
+      - value: infra
+        const: Infra
+        description: the attempt was lost to the platform; its node or its Job is gone.
+      - value: start
+        const: Start
+        description: the pod could not start its containers (an image pull, a missing Secret or ConfigMap, a container the runtime could not create).
+      - value: timeout
+        const: Timeout
+        description: the attempt ran out of time, before any container of its pod started or before it finished.
+      - value: invalid
+        const: Invalid
+        description: the task as dispatched cannot produce its result; dbt found nothing to build.
+
+  - name: failure_reason
+    const: FailureReason
+    description: >-
+      Why an attempt of a task failed. Each reason is filed under one
+      failure_class (its class attribute).
+    # class: the failure_class value the reason is filed under; every value
+    # names one.
+    values:
+      - value: exit_code
+        const: ExitCode
+        class: task
+        description: a container of the pod, init or main, exited with a non-zero code.
+      - value: oom_killed
+        const: OOMKilled
+        class: resource
+        description: the main container was killed for exceeding its memory.
+      - value: evicted
+        const: Evicted
+        class: resource
+        description: the kubelet evicted the pod under node resource pressure.
+      - value: node_lost
+        const: NodeLost
+        class: infra
+        description: the pod left the API before its main container terminated, and execution-controller did not remove it.
+      - value: job_missing
+        const: JobMissing
+        class: infra
+        description: the attempt's Job is gone from Kubernetes and nothing seen of the attempt shows how it ended.
+      - value: image_pull
+        const: ImagePull
+        class: start
+        description: the pod could not pull an image (ErrImagePull, ImagePullBackOff).
+      - value: invalid_image
+        const: InvalidImage
+        class: start
+        description: an image reference of the pod is malformed (InvalidImageName).
+      - value: missing_config
+        const: MissingConfig
+        class: start
+        description: a Secret or ConfigMap the pod reads is missing (CreateContainerConfigError).
+      - value: create_container
+        const: CreateContainer
+        class: start
+        description: the container runtime could not create a container (CreateContainerError).
+      - value: start_timeout
+        const: StartTimeout
+        class: timeout
+        description: no container of the pod, init or main, had started when the start timeout expired.
+      - value: deadline_exceeded
+        const: DeadlineExceeded
+        class: timeout
+        description: the Job ran past its active deadline and Kubernetes stopped it.
+      - value: dbt_nothing_to_do
+        const: DbtNothingToDo
+        class: invalid
+        description: dbt exited 0 having matched no node ("Nothing to do"), so nothing was built.

@@ -21,3 +21,10 @@ export const NODE_TYPES: readonly NodeType[] = ['dbt-model', 'dbt-seed', 'dbt-sn
 export const NODE_TYPES_SUPPORTING_FULL_REFRESH: readonly NodeType[] = ['dbt-model', 'dbt-seed'];
 export const NODE_TYPES_WITH_SECRET_REF: readonly NodeType[] = ['python-api'];
 export const NODE_TYPE_RUNTIME: Readonly<Record<NodeType, NodeRuntime>> = { 'dbt-model': 'dbt', 'dbt-seed': 'dbt', 'dbt-snapshot': 'dbt', 'python-node': 'python', 'python-csv': 'python', 'python-api': 'python', 'dbt-test': 'dbt' };
+
+export type FailureClass = 'task' | 'resource' | 'infra' | 'start' | 'timeout' | 'invalid';
+export const FAILURE_CLASSES: readonly FailureClass[] = ['task', 'resource', 'infra', 'start', 'timeout', 'invalid'];
+
+export type FailureReason = 'exit_code' | 'oom_killed' | 'evicted' | 'node_lost' | 'job_missing' | 'image_pull' | 'invalid_image' | 'missing_config' | 'create_container' | 'start_timeout' | 'deadline_exceeded' | 'dbt_nothing_to_do';
+export const FAILURE_REASONS: readonly FailureReason[] = ['exit_code', 'oom_killed', 'evicted', 'node_lost', 'job_missing', 'image_pull', 'invalid_image', 'missing_config', 'create_container', 'start_timeout', 'deadline_exceeded', 'dbt_nothing_to_do'];
+export const FAILURE_REASON_CLASS: Readonly<Record<FailureReason, FailureClass>> = { 'exit_code': 'task', 'oom_killed': 'resource', 'evicted': 'resource', 'node_lost': 'infra', 'job_missing': 'infra', 'image_pull': 'start', 'invalid_image': 'start', 'missing_config': 'start', 'create_container': 'start', 'start_timeout': 'timeout', 'deadline_exceeded': 'timeout', 'dbt_nothing_to_do': 'invalid' };

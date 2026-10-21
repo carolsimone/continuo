@@ -1,6 +1,8 @@
 package domain
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"regexp"
 	"strings"
@@ -11,25 +13,38 @@ var (
 	reConsecutiveHyphens = regexp.MustCompile(`-+`)
 )
 
-// ComputeJobName generates a Kubernetes-compliant job name from service/schema/table components
-// plus the first 8 characters of a scheduleID to prevent name collisions across runs.
-// It follows DNS-1123 subdomain naming rules which require:
-// - lowercase alphanumeric characters or hyphens only
-// - must start and end with an alphanumeric character
-// - maximum 63 characters in length
+// retryHashLen is how many hex characters of the full prefix's SHA-256 a retry
+// name carries when its prefix is cut to make room for the attempt suffix.
+const retryHashLen = 6
+
+// ComputeJobName generates the Kubernetes Job name of one attempt of a task:
+// the sanitized {service}-{schema}-{table} prefix, the first 8 characters of
+// the run id (scheduleID), and -r{attempt} for every attempt after the first.
+// It follows DNS-1123 label rules: lowercase alphanumerics and hyphens,
+// starting and ending alphanumeric, at most 63 characters.
 //
-// Format: {service}-{schema}-{table}-{scheduleID[:8]} (lowercase, sanitized)
+// Format: {prefix}-{scheduleID[:8]} for attempt 0, {prefix}-{scheduleID[:8]}-r{attempt}
+// after it.
 //
-// The function performs the following transformations:
-//  1. Sanitizes the {service}-{schema}-{table} prefix (lowercase, invalid chars → hyphens,
-//     consecutive hyphens collapsed, leading/trailing hyphens stripped)
-//  2. Clamps the prefix to 63 - 1 - len(idSuffix) characters so the suffix always fits
-//  3. Trims any trailing hyphen created by mid-hyphen truncation
-//  4. Assembles {prefix}-{idSuffix} (falls back to suffix-only if prefix is empty)
-//  5. Validates the result is non-empty
-//
-// Returns an error if the computed name is empty after sanitization.
-func ComputeJobName(serviceName, schemaName, tableName, scheduleID string) (string, error) {
+// The prefix is lowercased, invalid characters become hyphens, runs of hyphens
+// collapse and leading and trailing hyphens are stripped. It is then clamped so
+// the run-id suffix and the attempt suffix always fit whole, and a hyphen the
+// clamp leaves at its end is trimmed. With a full 8-character run id the prefix
+// keeps up to 54 characters at attempt 0. A later attempt whose prefix is longer
+// than its room (51 characters at attempts 1-9, 50 at 10-99) keeps the first 44
+// (43 from attempt 10) and ends with -{hash}, the first 6 hex characters of the
+// full prefix's SHA-256, so two nodes whose prefixes differ only past the cut
+// keep distinct retry names. A negative attempt, or a name that is empty after
+// sanitization, is an error.
+func ComputeJobName(serviceName, schemaName, tableName, scheduleID string, attempt int) (string, error) {
+	if attempt < 0 {
+		return "", fmt.Errorf("attempt %d is negative", attempt)
+	}
+	attemptSuffix := ""
+	if attempt > 0 {
+		attemptSuffix = fmt.Sprintf("-r%d", attempt)
+	}
+
 	// Clamp suffix to 8 chars.
 	idSuffix := scheduleID
 	if len(idSuffix) > 8 {
@@ -43,13 +58,19 @@ func ComputeJobName(serviceName, schemaName, tableName, scheduleID string) (stri
 	prefix = reConsecutiveHyphens.ReplaceAllString(prefix, "-")
 	prefix = strings.Trim(prefix, "-")
 
-	// Reserve room for "-{idSuffix}" so the suffix always appears in the result.
-	// maxPrefixLen = 63 - 1 - len(idSuffix); for a full 8-char suffix this equals 54.
+	// Reserve room for "-{idSuffix}" and the attempt suffix so both always
+	// appear whole: for a full 8-char run id, 54 characters of prefix at
+	// attempt 0, 51 at attempts 1-9 and 50 at attempts 10-99.
 	if idSuffix != "" {
-		maxPrefixLen := 63 - 1 - len(idSuffix)
+		maxPrefixLen := 63 - 1 - len(idSuffix) - len(attemptSuffix)
 		if len(prefix) > maxPrefixLen {
-			prefix = prefix[:maxPrefixLen]
-			prefix = strings.TrimRight(prefix, "-")
+			if attempt == 0 {
+				prefix = strings.TrimRight(prefix[:maxPrefixLen], "-")
+			} else {
+				sum := sha256.Sum256([]byte(prefix))
+				tag := hex.EncodeToString(sum[:])[:retryHashLen]
+				prefix = strings.TrimRight(prefix[:maxPrefixLen-1-retryHashLen], "-") + "-" + tag
+			}
 		}
 	}
 
@@ -69,5 +90,5 @@ func ComputeJobName(serviceName, schemaName, tableName, scheduleID string) (stri
 		return "", fmt.Errorf("computed job_name is empty after sanitization")
 	}
 
-	return sanitized, nil
+	return sanitized + attemptSuffix, nil
 }

@@ -15,10 +15,13 @@ import (
 type DeploymentRepository interface {
 	// Add inserts a new pending Deployment.
 	Add(ctx context.Context, d *model.Deployment) error
-	// GetByJobName returns the most recently created deployment whose Job is
+	// LoadByJobName returns the most recently created deployment whose Job is
 	// jobName, locked for the rest of the transaction, or sql.ErrNoRows when
 	// none exists.
-	GetByJobName(ctx context.Context, jobName string) (*model.Deployment, error)
+	LoadByJobName(ctx context.Context, jobName string) (*model.Deployment, error)
+	// HasAttemptFrom reports whether a production deployment of taskID exists at
+	// attempt or later, however its Job is named.
+	HasAttemptFrom(ctx context.Context, taskID string, attempt int) (bool, error)
 	// Save persists the mutated state of an existing Deployment.
 	Save(ctx context.Context, d *model.Deployment) error
 	// GetByReleaseNode returns the (mode, release_id, node_id) Deployment, or
@@ -30,8 +33,8 @@ type DeploymentRepository interface {
 	// PendingValidationCount counts rows of the given mode for releaseID whose
 	// outcome is not yet recorded (pending, blocked, in flight, or done without an
 	// observed outcome). 'blocked' rows are waiting for in-set upstreams to
-	// complete before they can be dispatched, and a done row without an outcome had
-	// its slot released before a status check recorded its Job's result; counting
+	// complete before they can be dispatched, and a done row without an outcome was
+	// released by an older version before its Job's result was recorded; counting
 	// both prevents the aggregate-emit gate from firing before every node has
 	// settled.
 	// mode scopes the count so a release's validation and seed-build legs are

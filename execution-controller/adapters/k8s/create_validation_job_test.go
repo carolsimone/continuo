@@ -160,12 +160,12 @@ func TestCreateValidationJob_LabelsCarryModeReleaseNodeIDs(t *testing.T) {
 	assert.Equal(t, want, job.Labels)
 	assert.Equal(t, want, job.Spec.Template.Labels)
 
-	// Raw identity is also stamped as annotations (authoritative for the
-	// outcomes.NodeOutcome the job-status handler records). Here the values are
-	// charset-clean and short, so labels and annotations agree.
+	// Raw identity is also stamped as annotations (the exact values, which
+	// sanitized labels cannot always carry). Here the values are charset-clean
+	// and short, so labels and annotations agree.
 	wantAnnotations := map[string]string{
-		pkg_model.AnnotationReleaseID: "rel123",
-		pkg_model.AnnotationNodeID:    "svc.orders",
+		annotationReleaseID: "rel123",
+		annotationNodeID:    "svc.orders",
 	}
 	assert.Equal(t, wantAnnotations, job.Annotations)
 	assert.Equal(t, wantAnnotations, job.Spec.Template.Annotations)
@@ -192,8 +192,8 @@ func TestCreateValidationJob_AnnotationsCarryRawIDsWhenLabelWouldSanitize(t *tes
 	job := fetchJob(t, c, p.Namespace, p.JobName)
 
 	// Annotations carry the raw values verbatim.
-	assert.Equal(t, rawNodeID, job.Annotations[pkg_model.AnnotationNodeID])
-	assert.Equal(t, rawReleaseID, job.Annotations[pkg_model.AnnotationReleaseID])
+	assert.Equal(t, rawNodeID, job.Annotations[annotationNodeID])
+	assert.Equal(t, rawReleaseID, job.Annotations[annotationReleaseID])
 
 	// Labels are sanitized (differ from raw) — proving annotations are the
 	// authoritative carrier, not the labels.

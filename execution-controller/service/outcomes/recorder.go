@@ -1,6 +1,6 @@
 // Package outcomes records a candidate Job's terminal result on its deployments
 // row and settles the release leg it belongs to, all on the caller's unit of
-// work. The job-status handler calls it once a validation, seed-build or
+// work. The observer calls it once a validation, seed-build or
 // compile Job is terminal, so the observation, the outcome and the per-node
 // and aggregate results commit together in one transaction.
 package outcomes
@@ -48,7 +48,7 @@ func NewRecorder(logger *slog.Logger) *Recorder {
 // rolls back a transaction itself, so the observation, the outcome and the
 // settle all commit together with the caller's other writes.
 //
-// A row whose outcome is already recorded (dep.OutcomeAt() != nil) is left as
+// A row whose outcome is already recorded (dep.HasOutcome()) is left as
 // is, so a re-observed terminal Job is a no-op rather than a double-record. A
 // missing row (sql.ErrNoRows) is logged and ignored: the release it belonged to
 // is no longer tracked here.
@@ -62,7 +62,7 @@ func (r *Recorder) Record(ctx context.Context, u uow.UnitOfWork, in NodeOutcome)
 		}
 		return fmt.Errorf("get %s deployment: %w", in.Mode, err)
 	}
-	if dep.OutcomeAt() != nil {
+	if dep.HasOutcome() {
 		r.logger.Info("candidate outcome already recorded — treating as redelivery",
 			"mode", in.Mode, "release_id", in.ReleaseID, "node_id", in.NodeID)
 		return nil

@@ -38,7 +38,7 @@ func newChainDepRepo(log *callLog, chain ...*model.Deployment) *chainDepRepo {
 }
 
 func (r *chainDepRepo) Add(context.Context, *model.Deployment) error { return nil }
-func (r *chainDepRepo) GetByJobName(context.Context, string) (*model.Deployment, error) {
+func (r *chainDepRepo) LoadByJobName(context.Context, string) (*model.Deployment, error) {
 	return nil, sql.ErrNoRows
 }
 
@@ -384,3 +384,5 @@ func TestSettleNodeTerminal_PerNodeUsesDistinctAggregateID(t *testing.T) {
 	assert.NotEqual(t, wantTerminalAggID, nodeAggIDs[1], "node.b's row does not share the terminal's aggregate_id")
 	assert.Equal(t, 1, completeRows, "one terminal row once nothing pending")
 }
+
+func (*chainDepRepo) HasAttemptFrom(context.Context, string, int) (bool, error) { return false, nil }

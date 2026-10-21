@@ -10,7 +10,6 @@ package serialization
 
 import (
 	"github.com/carolsimone/continuo/execution-controller/domain/command"
-	"github.com/carolsimone/continuo/execution-controller/domain/event"
 )
 
 // DeployTaskDTO is the JSON shape of command.DeployTask as stored in the
@@ -29,7 +28,6 @@ type DeployTaskDTO struct {
 	TaskRetryCount int    `json:"task_retry_count"`
 	TaskMaxRetries int    `json:"task_max_retries"`
 	Operation      string `json:"operation"`
-	Mode           string `json:"mode,omitempty"`
 }
 
 // DeployTaskFromDomain maps a domain command to its DTO.
@@ -48,7 +46,6 @@ func DeployTaskFromDomain(c command.DeployTask) DeployTaskDTO {
 		TaskRetryCount: c.TaskRetryCount,
 		TaskMaxRetries: c.TaskMaxRetries,
 		Operation:      c.Operation,
-		Mode:           c.Mode,
 	}
 }
 
@@ -68,7 +65,6 @@ func (d DeployTaskDTO) ToDomain() command.DeployTask {
 		TaskRetryCount: d.TaskRetryCount,
 		TaskMaxRetries: d.TaskMaxRetries,
 		Operation:      d.Operation,
-		Mode:           d.Mode,
 	}
 }
 
@@ -138,67 +134,5 @@ func (d ValidationDeployTaskDTO) ToDomain() command.ValidationDeployTask {
 		ParseProdS3URI:       d.ParseProdS3URI,
 		ParseCandidateS3URI:  d.ParseCandidateS3URI,
 		SourceOverlayURI:     d.SourceOverlayURI,
-	}
-}
-
-// JobCheckRequestDTO is the JSON shape of event.JobCheckRequest as stored in a
-// check_delayed outbox row's payload and the delay-queue ticket.
-type JobCheckRequestDTO struct {
-	TaskID           string `json:"task_id"`
-	ScheduleID       string `json:"schedule_id"`
-	ScheduleName     string `json:"schedule_name"`
-	ServiceName      string `json:"service_name"`
-	SchemaName       string `json:"schema_name"`
-	TableName        string `json:"table_name"`
-	JobName          string `json:"job_name"`
-	CheckAfter       int64  `json:"check_after"`
-	NodeType         string `json:"node_type"`
-	ImageTag         string `json:"image_tag"`
-	SecretRef        string `json:"secret_ref,omitempty"`
-	Operation        string `json:"operation,omitempty"`
-	RetryCount       int    `json:"retry_count"`
-	MaxRetries       int    `json:"max_retries"`
-	RunningAnnounced bool   `json:"running_announced"`
-}
-
-// JobCheckRequestFromDomain maps a domain event to its DTO.
-func JobCheckRequestFromDomain(e event.JobCheckRequest) JobCheckRequestDTO {
-	return JobCheckRequestDTO{
-		TaskID:           e.TaskID,
-		ScheduleID:       e.ScheduleID,
-		ScheduleName:     e.ScheduleName,
-		ServiceName:      e.ServiceName,
-		SchemaName:       e.SchemaName,
-		TableName:        e.TableName,
-		JobName:          e.JobName,
-		CheckAfter:       e.CheckAfter,
-		NodeType:         e.NodeType,
-		ImageTag:         e.ImageTag,
-		SecretRef:        e.SecretRef,
-		Operation:        e.Operation,
-		RetryCount:       e.RetryCount,
-		MaxRetries:       e.MaxRetries,
-		RunningAnnounced: e.RunningAnnounced,
-	}
-}
-
-// ToDomain maps a decoded DTO back to the domain event.
-func (d JobCheckRequestDTO) ToDomain() event.JobCheckRequest {
-	return event.JobCheckRequest{
-		TaskID:           d.TaskID,
-		ScheduleID:       d.ScheduleID,
-		ScheduleName:     d.ScheduleName,
-		ServiceName:      d.ServiceName,
-		SchemaName:       d.SchemaName,
-		TableName:        d.TableName,
-		JobName:          d.JobName,
-		CheckAfter:       d.CheckAfter,
-		NodeType:         d.NodeType,
-		ImageTag:         d.ImageTag,
-		SecretRef:        d.SecretRef,
-		Operation:        d.Operation,
-		RetryCount:       d.RetryCount,
-		MaxRetries:       d.MaxRetries,
-		RunningAnnounced: d.RunningAnnounced,
 	}
 }

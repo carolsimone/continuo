@@ -10,6 +10,7 @@ import (
 
 	"github.com/carolsimone/continuo/execution-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
+	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
@@ -131,66 +132,40 @@ func TestAdmission_LockScope_MissingScopeFails(t *testing.T) {
 	assert.Contains(t, err.Error(), "no capacity record")
 }
 
-func TestAdmission_GetReserved_SkipsLockedAndNonReserved(t *testing.T) {
+func TestAdmission_LoadReserved_SkipsLockedAndNonReserved(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 	ctx := context.Background()
 	id := seedProduction(t, db, uuid.New(), time.Now())
 
-	_, err := postgres.NewAdmissionRepository(db, testLogger()).GetReserved(ctx, id)
+	_, err := postgres.NewAdmissionRepository(db, testLogger()).LoadReserved(ctx, id)
 	require.ErrorIs(t, err, sql.ErrNoRows, "a pending row is not launched")
 
 	setStatus(t, db, id, "reserved", 0)
 	tx1, err := db.BeginTxx(ctx, nil)
 	require.NoError(t, err)
 	defer func() { _ = tx1.Rollback() }()
-	dep, err := postgres.NewAdmissionRepository(tx1, testLogger()).GetReserved(ctx, id)
+	dep, err := postgres.NewAdmissionRepository(tx1, testLogger()).LoadReserved(ctx, id)
 	require.NoError(t, err)
 	assert.Equal(t, model.StatusReserved, dep.Status())
 
-	_, err = postgres.NewAdmissionRepository(db, testLogger()).GetReserved(ctx, id)
+	_, err = postgres.NewAdmissionRepository(db, testLogger()).LoadReserved(ctx, id)
 	require.ErrorIs(t, err, sql.ErrNoRows, "a row another launcher holds is skipped")
 }
 
-func TestAdmission_ReturnStaleReservedAndListStarted(t *testing.T) {
+func TestAdmission_ReturnStaleReserved(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 	ctx := context.Background()
 	staleReserved := seedProduction(t, db, uuid.New(), time.Now())
 	setStatus(t, db, staleReserved, "reserved", 5*time.Minute)
 	setStatus(t, db, seedProduction(t, db, uuid.New(), time.Now()), "reserved", 10*time.Second)
-	staleRunning := seedProduction(t, db, uuid.New(), time.Now())
-	setStatus(t, db, staleRunning, "running", 5*time.Minute)
-	staleStarting := seedProduction(t, db, uuid.New(), time.Now())
-	setStatus(t, db, staleStarting, "starting", 5*time.Minute)
-	setStatus(t, db, seedProduction(t, db, uuid.New(), time.Now()), "running", 10*time.Second)
-	setStatus(t, db, seedProduction(t, db, uuid.New(), time.Now()), "done", 5*time.Minute)
+	setStatus(t, db, seedProduction(t, db, uuid.New(), time.Now()), "running", 5*time.Minute)
 
-	repo := postgres.NewAdmissionRepository(db, testLogger())
-	returned, err := repo.ReturnStaleReserved(ctx, 2*time.Minute)
+	returned, err := postgres.NewAdmissionRepository(db, testLogger()).ReturnStaleReserved(ctx, 2*time.Minute)
 	require.NoError(t, err)
 	assert.Equal(t, []uuid.UUID{staleReserved}, returned)
 	assert.Equal(t, "pending", statusOf(t, db, staleReserved), "a stale reservation gives its slot back")
-
-	started, err := repo.ListStarted(ctx, 2*time.Minute)
-	require.NoError(t, err)
-	var ids []uuid.UUID
-	for _, d := range started {
-		ids = append(ids, d.ID())
-	}
-	assert.ElementsMatch(t, []uuid.UUID{staleRunning, staleStarting}, ids)
-
-	require.NoError(t, repo.TouchStateChanged(ctx, staleRunning))
-	started, err = repo.ListStarted(ctx, 2*time.Minute)
-	require.NoError(t, err)
-	require.Len(t, started, 1, "touching a row restarts its staleness clock")
-	assert.Equal(t, staleStarting, started[0].ID())
-
-	dep, err := repo.GetStarted(ctx, staleRunning)
-	require.NoError(t, err)
-	assert.Equal(t, model.StatusRunning, dep.Status())
-	_, err = repo.GetStarted(ctx, staleReserved)
-	require.ErrorIs(t, err, sql.ErrNoRows)
 }
 
 func TestAdmission_ReturnStaleReserved_SkipsAReservationBeingLaunched(t *testing.T) {
@@ -203,7 +178,7 @@ func TestAdmission_ReturnStaleReserved_SkipsAReservationBeingLaunched(t *testing
 	tx, err := db.BeginTxx(ctx, nil)
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
-	_, err = postgres.NewAdmissionRepository(tx, testLogger()).GetReserved(ctx, id) // a launcher holds it
+	_, err = postgres.NewAdmissionRepository(tx, testLogger()).LoadReserved(ctx, id) // a launcher holds it
 	require.NoError(t, err)
 
 	returned, err := postgres.NewAdmissionRepository(db, testLogger()).ReturnStaleReserved(ctx, 2*time.Minute)
@@ -211,7 +186,7 @@ func TestAdmission_ReturnStaleReserved_SkipsAReservationBeingLaunched(t *testing
 	assert.Empty(t, returned, "a reservation a launcher holds is not taken from it")
 }
 
-func TestRepo_GetByJobName_NewestRow(t *testing.T) {
+func TestRepo_LoadByJobName_NewestRow(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -224,12 +199,12 @@ func TestRepo_GetByJobName_NewestRow(t *testing.T) {
 	require.NoError(t, repo.Add(ctx, older))
 	require.NoError(t, repo.Add(ctx, newer))
 
-	got, err := repo.GetByJobName(ctx, "dbt-public-orders-r1")
+	got, err := repo.LoadByJobName(ctx, "dbt-public-orders-r1")
 	require.NoError(t, err)
 	assert.Equal(t, newer.ID(), got.ID())
 	assert.Equal(t, "dbt-public-orders-r1", got.JobName())
 
-	_, err = repo.GetByJobName(ctx, "no-such-job")
+	_, err = repo.LoadByJobName(ctx, "no-such-job")
 	require.ErrorIs(t, err, sql.ErrNoRows)
 }
 
@@ -248,9 +223,63 @@ func TestRepo_ProductionOutcomeSurvivesAReload(t *testing.T) {
 	require.NoError(t, dep.Finish("ok", time.Now()))
 	require.NoError(t, repo.Save(ctx, dep))
 
-	got, err := repo.GetByJobName(ctx, "dbt-public-orders-outcome")
+	got, err := repo.LoadByJobName(ctx, "dbt-public-orders-outcome")
 	require.NoError(t, err)
 	assert.True(t, got.HasOutcome(), "a reloaded row keeps the outcome it recorded")
 	assert.Equal(t, "ok", got.Outcome())
 	assert.Equal(t, model.StatusDone, got.Status())
+}
+
+// An attempt's facts and the terminating status survive a reload, and a
+// terminating row still holds its slot.
+func TestRepo_FactsAndTerminatingSurviveAReload(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	ctx := context.Background()
+	repo := postgres.NewDeploymentsRepository(db, testLogger())
+
+	cmd := validCmd()
+	cmd.JobName = "dbt-public-orders-terminating"
+	dep := model.NewDeployment(cmd, nil, time.Now())
+	require.NoError(t, repo.Add(ctx, dep))
+	require.NoError(t, dep.Reserve())
+	require.NoError(t, dep.MarkStarted(time.Now()))
+	started := time.Date(2026, 10, 20, 23, 1, 24, 0, time.UTC)
+	dep.Observe(model.AttemptFacts{StartedAt: &started, LogKey: "logs/x.log"})
+	require.NoError(t, dep.BeginTermination(pkgmodel.FailureReasonStartTimeout, "not started after 15m0s"))
+	require.NoError(t, repo.Save(ctx, dep))
+
+	got, err := repo.LoadByJobName(ctx, "dbt-public-orders-terminating")
+	require.NoError(t, err)
+	assert.Equal(t, model.StatusTerminating, got.Status())
+	require.NotNil(t, got.Facts().StartedAt)
+	assert.True(t, started.Equal(*got.Facts().StartedAt))
+	assert.Equal(t, "logs/x.log", got.Facts().LogKey)
+	assert.Equal(t, pkgmodel.FailureReasonStartTimeout, got.Facts().Reason)
+	assert.Equal(t, "not started after 15m0s", got.Facts().Message)
+
+	var class string
+	require.NoError(t, db.Get(&class, `SELECT facts->>'failure_class' FROM deployments WHERE id = $1`, dep.ID()))
+	assert.Equal(t, "timeout", class)
+
+	n, err := postgres.NewAdmissionRepository(db, testLogger()).CountInFlight(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 1, n, "a terminating row holds its slot")
+}
+
+// A row whose attempt was never observed stores no facts.
+func TestRepo_UnobservedRowStoresNoFacts(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	ctx := context.Background()
+	repo := postgres.NewDeploymentsRepository(db, testLogger())
+
+	dep := model.NewDeployment(validCmd(), nil, time.Now())
+	require.NoError(t, repo.Add(ctx, dep))
+	require.NoError(t, dep.Reserve())
+	require.NoError(t, repo.Save(ctx, dep))
+
+	var facts sql.NullString
+	require.NoError(t, db.Get(&facts, `SELECT facts::text FROM deployments WHERE id = $1`, dep.ID()))
+	assert.False(t, facts.Valid, "facts stay NULL until something is observed")
 }

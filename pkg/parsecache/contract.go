@@ -2,10 +2,10 @@
 // hydration contract. The hydrate-parse-cache initContainer (Python,
 // s3-sidecar/parse_cache_fetcher.py) fetches the release-proven
 // partial-parse artifact into a run pod and reports its outcome on the
-// container's termination message; execution-controller
-// (service/handlers/job_status_handler.go) parses that message to derive
-// task_execution.parse_cache, and also names the initContainer it builds
-// (adapters/k8s/jobs_create.go). These constants are the single Go source of
+// container's termination message; execution-controller's Job observation
+// (domain/model/job_observation.go) parses that message into the attempt's
+// facts, which reach state as task_execution.parse_cache, and
+// adapters/k8s/jobs_create.go names the initContainer it builds. These constants are the single Go source of
 // truth for the three sentinel strings that stitch the Python fetcher and
 // execution-controller together — the cross-language guard in
 // contract_test.go binds them to the Python source so the sides cannot drift
@@ -14,8 +14,8 @@ package parsecache
 
 const (
 	// ContainerName is the initContainer name execution-controller assigns to
-	// the parse-cache hydration step, and the key it looks up in
-	// JobResult.InitTerminationMessages to find its outcome.
+	// the parse-cache hydration step; the Job observation reads that init
+	// container's termination message for the outcome.
 	ContainerName = "hydrate-parse-cache"
 
 	// Hydrated is the termination message the fetcher writes on success (the

@@ -113,7 +113,7 @@ func TestTaskGraph_ReadyCandidatesOfTheExampleRun(t *testing.T) {
 			TableName: "ftable_g", NodeType: "dbt-model", ContentHash: "h-ftable_g", ImageTag: "service-1:5",
 			ScheduleName: "e2e-schedule-failure",
 		}, got[1].Node)
-		jobName, err := domain.ComputeJobName("service-1", "e2e_schema", "ftable_g", r.ScheduleID().String())
+		jobName, err := domain.ComputeJobName("service-1", "e2e_schema", "ftable_g", r.ScheduleID().String(), 0)
 		require.NoError(t, err)
 		assert.Equal(t, jobName, got[1].JobName)
 		assert.Equal(t, pkgevents.DefaultTaskMaxRetries, got[1].MaxRetries)

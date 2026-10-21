@@ -385,6 +385,13 @@ validation:
 # install, and execution-controller refuses to start on it.
 execution:
   maxConcurrentJobs: 50
+  # Start timeout: how long a Job's pod may take, after the Job is created,
+  # to start any container, init or main — waiting for a node, pulling
+  # images, mounting Secrets. Work a container does once it runs does not
+  # count. Past it execution-controller deletes the Job and fails the attempt
+  # with start_timeout. Whole minutes from 1 to 120: anything else fails the
+  # install, and execution-controller refuses to start on it.
+  startTimeoutMinutes: 15
 
 # Maintenance mode. While enabled, continuo starts no new work and lets the
 # work already running finish: ui, the public release API and the CLI refuse new
@@ -607,20 +614,19 @@ services:
       rules:
         - apiGroups: ["batch"]
           resources: ["jobs"]
-          # create: dispatches dbt/python/validation/compile Jobs. delete: the
-          # candidate-schema lifecycle removes its own one-shot schema-op Jobs.
-          # get/list/watch: polls every Job it created to a terminal state.
+          # create: dispatches dbt/python/validation/compile Jobs. delete: ends
+          # an attempt by deleting its Job (a start error, the start timeout), and
+          # the candidate-schema lifecycle removes its own one-shot schema-op Jobs.
+          # get/list/watch: the Job watch observes every Job it created.
           verbs: ["create", "get", "list", "watch", "delete"]
         - apiGroups: [""]
           resources: ["pods", "pods/log"]
-          # Reads pod status for termination details and pod logs for the
+          # The Job watch observes every pod of those Jobs; pod logs give the
           # error message and the S3 log upload.
           verbs: ["get", "list", "watch"]
     env:
       POSTGRES_DB: continuo_execution
       K8S_NAMESPACE: __RELEASE_NAMESPACE__
-      K8S_CHECK_DELAY_SECONDS: "10"
-      K8S_FIRST_CHECK_DELAY_SECONDS: "1"
       LOG_TAIL_LINES: "50"
       ERROR_MESSAGE_MAX_LENGTH: "4096"
       VALIDATION_IMAGE_PULL_POLICY: Always

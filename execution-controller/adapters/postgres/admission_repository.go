@@ -19,11 +19,6 @@ import (
 // query repeats the set as literals.
 func inFlight() any { return pq.Array(model.StatusStrings(model.InFlightStatuses())) }
 
-// started binds the statuses of a deployment whose Job exists.
-func started() any {
-	return pq.Array(model.StatusStrings([]model.Status{model.StatusStarting, model.StatusRunning}))
-}
-
 // admissionRepository is the Postgres adapter implementing
 // repository.AdmissionRepository over admission_capacity and deployments.
 type admissionRepository struct {
@@ -35,7 +30,7 @@ var _ repository.AdmissionRepository = (*admissionRepository)(nil)
 
 // NewAdmissionRepository constructs a repository.AdmissionRepository. Pass the
 // *sqlx.Tx of the claim or launch transaction, or *sqlx.DB for the
-// reconciler's unlocked listings.
+// reconciler.
 func NewAdmissionRepository(exec outbox.Executor, logger *slog.Logger) repository.AdmissionRepository {
 	return &admissionRepository{exec: exec, rows: &deploymentsRepository{exec: exec, logger: logger}}
 }
@@ -100,21 +95,17 @@ func (r *admissionRepository) ReserveNext(ctx context.Context, limit int) ([]uui
 	return ids, nil
 }
 
-func (r *admissionRepository) GetReserved(ctx context.Context, id uuid.UUID) (*model.Deployment, error) {
-	return r.getLocked(ctx, id, pq.Array([]string{string(model.StatusReserved)}))
+func (r *admissionRepository) LoadReserved(ctx context.Context, id uuid.UUID) (*model.Deployment, error) {
+	return r.loadLocked(ctx, id, pq.Array([]string{string(model.StatusReserved)}))
 }
 
-func (r *admissionRepository) GetStarted(ctx context.Context, id uuid.UUID) (*model.Deployment, error) {
-	return r.getLocked(ctx, id, started())
-}
-
-// getLocked returns row id when its status is one of statuses (a bound
+// loadLocked returns row id when its status is one of statuses (a bound
 // text[]), locked FOR UPDATE SKIP LOCKED, or sql.ErrNoRows.
-func (r *admissionRepository) getLocked(ctx context.Context, id uuid.UUID, statuses any) (*model.Deployment, error) {
+func (r *admissionRepository) loadLocked(ctx context.Context, id uuid.UUID, statuses any) (*model.Deployment, error) {
 	query := `SELECT` + validationSelectColumns + ` FROM deployments WHERE id = $1 AND status = ANY($2) FOR UPDATE SKIP LOCKED`
 	var rows []*deploymentRow
 	if err := r.exec.SelectContext(ctx, &rows, query, id, statuses); err != nil {
-		return nil, fmt.Errorf("get deployment %s: %w", id, err)
+		return nil, fmt.Errorf("load deployment %s: %w", id, err)
 	}
 	if len(rows) == 0 {
 		return nil, sql.ErrNoRows
@@ -136,26 +127,4 @@ func (r *admissionRepository) ReturnStaleReserved(ctx context.Context, olderThan
 		return nil, fmt.Errorf("return stale reservations: %w", err)
 	}
 	return ids, nil
-}
-
-func (r *admissionRepository) ListStarted(ctx context.Context, olderThan time.Duration) ([]*model.Deployment, error) {
-	var rows []*deploymentRow
-	if err := r.exec.SelectContext(ctx, &rows, `SELECT`+validationSelectColumns+`
-		FROM deployments
-		WHERE status = ANY($2) AND state_changed_at < NOW() - make_interval(secs => $1)
-		ORDER BY state_changed_at`, olderThan.Seconds(), started()); err != nil {
-		return nil, fmt.Errorf("list started deployments: %w", err)
-	}
-	out := make([]*model.Deployment, len(rows))
-	for i, row := range rows {
-		out[i] = r.rows.toAggregate(row)
-	}
-	return out, nil
-}
-
-func (r *admissionRepository) TouchStateChanged(ctx context.Context, id uuid.UUID) error {
-	if _, err := r.exec.ExecContext(ctx, `UPDATE deployments SET state_changed_at = NOW() WHERE id = $1`, id); err != nil {
-		return fmt.Errorf("touch deployment %s: %w", id, err)
-	}
-	return nil
 }

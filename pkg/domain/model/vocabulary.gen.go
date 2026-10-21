@@ -330,3 +330,166 @@ func (v NodeType) Runtime() NodeRuntime {
 	}
 	return ""
 }
+
+// FailureClass — What kind of failure ended an attempt of a task. execution-controller's observer classifies each attempt it watches end in failure and records the class with the attempt's facts.
+// Values come from the vocabulary "failure_class" in contract.yaml, in
+// declaration order.
+type FailureClass string
+
+const (
+	// FailureClassTask — the task's own code failed; a container of its pod, init or main, exited non-zero.
+	FailureClassTask FailureClass = "task"
+	// FailureClassResource — the pod ran out of a node resource; it was killed for memory or evicted.
+	FailureClassResource FailureClass = "resource"
+	// FailureClassInfra — the attempt was lost to the platform; its node or its Job is gone.
+	FailureClassInfra FailureClass = "infra"
+	// FailureClassStart — the pod could not start its containers (an image pull, a missing Secret or ConfigMap, a container the runtime could not create).
+	FailureClassStart FailureClass = "start"
+	// FailureClassTimeout — the attempt ran out of time, before any container of its pod started or before it finished.
+	FailureClassTimeout FailureClass = "timeout"
+	// FailureClassInvalid — the task as dispatched cannot produce its result; dbt found nothing to build.
+	FailureClassInvalid FailureClass = "invalid"
+)
+
+// FailureClasses returns every value in contract.yaml declaration order.
+func FailureClasses() []FailureClass {
+	return []FailureClass{
+		FailureClassTask,
+		FailureClassResource,
+		FailureClassInfra,
+		FailureClassStart,
+		FailureClassTimeout,
+		FailureClassInvalid,
+	}
+}
+
+// IsValid reports whether v is a value declared in contract.yaml.
+func (v FailureClass) IsValid() bool {
+	switch v {
+	case FailureClassTask:
+		return true
+	case FailureClassResource:
+		return true
+	case FailureClassInfra:
+		return true
+	case FailureClassStart:
+		return true
+	case FailureClassTimeout:
+		return true
+	case FailureClassInvalid:
+		return true
+	}
+	return false
+}
+
+// FailureReason — Why an attempt of a task failed. Each reason is filed under one failure_class (its class attribute).
+// Values come from the vocabulary "failure_reason" in contract.yaml, in
+// declaration order.
+type FailureReason string
+
+const (
+	// FailureReasonExitCode — a container of the pod, init or main, exited with a non-zero code.
+	FailureReasonExitCode FailureReason = "exit_code"
+	// FailureReasonOOMKilled — the main container was killed for exceeding its memory.
+	FailureReasonOOMKilled FailureReason = "oom_killed"
+	// FailureReasonEvicted — the kubelet evicted the pod under node resource pressure.
+	FailureReasonEvicted FailureReason = "evicted"
+	// FailureReasonNodeLost — the pod left the API before its main container terminated, and execution-controller did not remove it.
+	FailureReasonNodeLost FailureReason = "node_lost"
+	// FailureReasonJobMissing — the attempt's Job is gone from Kubernetes and nothing seen of the attempt shows how it ended.
+	FailureReasonJobMissing FailureReason = "job_missing"
+	// FailureReasonImagePull — the pod could not pull an image (ErrImagePull, ImagePullBackOff).
+	FailureReasonImagePull FailureReason = "image_pull"
+	// FailureReasonInvalidImage — an image reference of the pod is malformed (InvalidImageName).
+	FailureReasonInvalidImage FailureReason = "invalid_image"
+	// FailureReasonMissingConfig — a Secret or ConfigMap the pod reads is missing (CreateContainerConfigError).
+	FailureReasonMissingConfig FailureReason = "missing_config"
+	// FailureReasonCreateContainer — the container runtime could not create a container (CreateContainerError).
+	FailureReasonCreateContainer FailureReason = "create_container"
+	// FailureReasonStartTimeout — no container of the pod, init or main, had started when the start timeout expired.
+	FailureReasonStartTimeout FailureReason = "start_timeout"
+	// FailureReasonDeadlineExceeded — the Job ran past its active deadline and Kubernetes stopped it.
+	FailureReasonDeadlineExceeded FailureReason = "deadline_exceeded"
+	// FailureReasonDbtNothingToDo — dbt exited 0 having matched no node ("Nothing to do"), so nothing was built.
+	FailureReasonDbtNothingToDo FailureReason = "dbt_nothing_to_do"
+)
+
+// FailureReasons returns every value in contract.yaml declaration order.
+func FailureReasons() []FailureReason {
+	return []FailureReason{
+		FailureReasonExitCode,
+		FailureReasonOOMKilled,
+		FailureReasonEvicted,
+		FailureReasonNodeLost,
+		FailureReasonJobMissing,
+		FailureReasonImagePull,
+		FailureReasonInvalidImage,
+		FailureReasonMissingConfig,
+		FailureReasonCreateContainer,
+		FailureReasonStartTimeout,
+		FailureReasonDeadlineExceeded,
+		FailureReasonDbtNothingToDo,
+	}
+}
+
+// IsValid reports whether v is a value declared in contract.yaml.
+func (v FailureReason) IsValid() bool {
+	switch v {
+	case FailureReasonExitCode:
+		return true
+	case FailureReasonOOMKilled:
+		return true
+	case FailureReasonEvicted:
+		return true
+	case FailureReasonNodeLost:
+		return true
+	case FailureReasonJobMissing:
+		return true
+	case FailureReasonImagePull:
+		return true
+	case FailureReasonInvalidImage:
+		return true
+	case FailureReasonMissingConfig:
+		return true
+	case FailureReasonCreateContainer:
+		return true
+	case FailureReasonStartTimeout:
+		return true
+	case FailureReasonDeadlineExceeded:
+		return true
+	case FailureReasonDbtNothingToDo:
+		return true
+	}
+	return false
+}
+
+// Class reports the FailureClass the contract files v under.
+func (v FailureReason) Class() FailureClass {
+	switch v {
+	case FailureReasonExitCode:
+		return FailureClassTask
+	case FailureReasonOOMKilled:
+		return FailureClassResource
+	case FailureReasonEvicted:
+		return FailureClassResource
+	case FailureReasonNodeLost:
+		return FailureClassInfra
+	case FailureReasonJobMissing:
+		return FailureClassInfra
+	case FailureReasonImagePull:
+		return FailureClassStart
+	case FailureReasonInvalidImage:
+		return FailureClassStart
+	case FailureReasonMissingConfig:
+		return FailureClassStart
+	case FailureReasonCreateContainer:
+		return FailureClassStart
+	case FailureReasonStartTimeout:
+		return FailureClassTimeout
+	case FailureReasonDeadlineExceeded:
+		return FailureClassTimeout
+	case FailureReasonDbtNothingToDo:
+		return FailureClassInvalid
+	}
+	return ""
+}

@@ -68,9 +68,9 @@ func buildSchemaOpPodSpec(op, candidateSchema string) (corev1.PodSpec, error) {
 }
 
 // schemaOpJob wraps buildSchemaOpPodSpec in a one-shot Job. It carries a distinct
-// app=continuo-schema-op label (never mode=validation/app=dbt-job) so the
-// job-status handler's validation watcher ignores it — its lifecycle is owned
-// here, not surfaced as a validation node. TTLSecondsAfterFinished is a cleanup
+// app=continuo-schema-op label (never mode=validation/app=dbt-job) so the Job
+// watch ignores it — its lifecycle is owned here, not surfaced as a
+// validation node. TTLSecondsAfterFinished is a cleanup
 // backstop; RunSchemaOpJob also deletes the Job once it observes a terminal
 // state. ActiveDeadlineSeconds matches
 // SchemaOpJobTimeout so a hung DDL pod (e.g. a stuck warehouse lock) is killed and the

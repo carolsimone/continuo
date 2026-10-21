@@ -75,3 +75,33 @@ NODE_TYPES_WITH_SECRET_REF = frozenset({NodeType.PYTHON_API})
 
 NODE_TYPE_RUNTIME: dict[NodeType, NodeRuntime] = {NodeType.DBT_MODEL: NodeRuntime.DBT, NodeType.DBT_SEED: NodeRuntime.DBT, NodeType.DBT_SNAPSHOT: NodeRuntime.DBT, NodeType.PYTHON_NODE: NodeRuntime.PYTHON, NodeType.PYTHON_CSV: NodeRuntime.PYTHON, NodeType.PYTHON_API: NodeRuntime.PYTHON, NodeType.DBT_TEST: NodeRuntime.DBT}
 """Which toolchain builds each NodeType."""
+
+
+class FailureClass(StrEnum):
+    """What kind of failure ended an attempt of a task. execution-controller's observer classifies each attempt it watches end in failure and records the class with the attempt's facts."""
+    TASK = "task"
+    RESOURCE = "resource"
+    INFRA = "infra"
+    START = "start"
+    TIMEOUT = "timeout"
+    INVALID = "invalid"
+
+
+class FailureReason(StrEnum):
+    """Why an attempt of a task failed. Each reason is filed under one failure_class (its class attribute)."""
+    EXIT_CODE = "exit_code"
+    OOM_KILLED = "oom_killed"
+    EVICTED = "evicted"
+    NODE_LOST = "node_lost"
+    JOB_MISSING = "job_missing"
+    IMAGE_PULL = "image_pull"
+    INVALID_IMAGE = "invalid_image"
+    MISSING_CONFIG = "missing_config"
+    CREATE_CONTAINER = "create_container"
+    START_TIMEOUT = "start_timeout"
+    DEADLINE_EXCEEDED = "deadline_exceeded"
+    DBT_NOTHING_TO_DO = "dbt_nothing_to_do"
+
+
+FAILURE_REASON_CLASS: dict[FailureReason, FailureClass] = {FailureReason.EXIT_CODE: FailureClass.TASK, FailureReason.OOM_KILLED: FailureClass.RESOURCE, FailureReason.EVICTED: FailureClass.RESOURCE, FailureReason.NODE_LOST: FailureClass.INFRA, FailureReason.JOB_MISSING: FailureClass.INFRA, FailureReason.IMAGE_PULL: FailureClass.START, FailureReason.INVALID_IMAGE: FailureClass.START, FailureReason.MISSING_CONFIG: FailureClass.START, FailureReason.CREATE_CONTAINER: FailureClass.START, FailureReason.START_TIMEOUT: FailureClass.TIMEOUT, FailureReason.DEADLINE_EXCEEDED: FailureClass.TIMEOUT, FailureReason.DBT_NOTHING_TO_DO: FailureClass.INVALID}
+"""The FailureClass each FailureReason is filed under."""

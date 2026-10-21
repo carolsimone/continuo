@@ -12,8 +12,6 @@ const (
 	TaskStatusUpdatedV1 = "task.status.updated:v1"
 	// TaskExecutionRecordedV1 — Completed task executions emitted by execution-controller's outbox processor.
 	TaskExecutionRecordedV1 = "task.execution.recorded:v1"
-	// CheckK8sV1 — Delayed status-check tickets; a promoter moves due tickets from the delay queue into the stream.
-	CheckK8sV1 = "check.k8s:v1"
 	// OutboxDeadLetterV1 — Terminal outbox publish failures (permanent payload errors, or transient errors that exhausted their backoff budget), emitted by every service's outbox processor with the fields the row would have published. dead-letter-controller stores them for listing and redrive.
 	OutboxDeadLetterV1 = "outbox.dead_letter:v1"
 	// ConsumerDeadLetterV1 — Messages a stream consumer gave up on (a permanent error, or a transient error on its fifth delivery), written before the original is acknowledged. dead-letter-controller stores them for listing and redrive.
@@ -64,8 +62,6 @@ const (
 	StateTaskStatusUpdated = "state-task-status-updated"
 	// StateTaskExecutionRecorded — state consumer group on task.execution.recorded:v1.
 	StateTaskExecutionRecorded = "state-task-execution-recorded"
-	// K8sCheckStatus — execution-controller consumer group on check.k8s:v1.
-	K8sCheckStatus = "k8s-check-status"
 	// DeadLetterControllerOutboxDeadLetters — dead-letter-controller consumer group on outbox.dead_letter:v1.
 	DeadLetterControllerOutboxDeadLetters = "dead-letter-controller-outbox-dead-letters"
 	// DeadLetterControllerConsumerDeadLetters — dead-letter-controller consumer group on consumer.dead_letter:v1.
@@ -123,7 +119,6 @@ var All = []string{
 	QueryModelV1,
 	TaskStatusUpdatedV1,
 	TaskExecutionRecordedV1,
-	CheckK8sV1,
 	OutboxDeadLetterV1,
 	ConsumerDeadLetterV1,
 	ScheduleCancelledV1,
@@ -153,7 +148,6 @@ var Groups = map[string][]string{
 	QueryModelV1:                {ExecutorQueryModel},
 	TaskStatusUpdatedV1:         {StateTaskStatusUpdated},
 	TaskExecutionRecordedV1:     {StateTaskExecutionRecorded},
-	CheckK8sV1:                  {K8sCheckStatus},
 	OutboxDeadLetterV1:          {DeadLetterControllerOutboxDeadLetters},
 	ConsumerDeadLetterV1:        {DeadLetterControllerConsumerDeadLetters},
 	ScheduleCancelledV1:         {ExecutorScheduleCancelled},
@@ -178,6 +172,7 @@ var Groups = map[string][]string{
 // Retired lists the streams removed from the contract; their keys are deleted
 // from Redis.
 var Retired = []string{
+	"check.k8s:v1",
 	"compile.node.completed:v1",
 	"initialize.run:v1",
 	"manifest.loaded.candidate:v1",

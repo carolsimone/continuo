@@ -1,7 +1,9 @@
 package config
 
 import (
+	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
@@ -17,6 +19,14 @@ const defaultShutdownGrace = 15 * time.Second
 
 // defaultMaxConcurrentJobs is the admission cap when MAX_CONCURRENT_JOBS is unset.
 const defaultMaxConcurrentJobs = 50
+
+// The start timeout's default and the range execution-controller accepts:
+// the chart's execution.startTimeoutMinutes, 1 to 120 minutes.
+const (
+	defaultJobStartTimeout = 15 * time.Minute
+	MinJobStartTimeout     = time.Minute
+	MaxJobStartTimeout     = 2 * time.Hour
+)
 
 // Config holds every setting the service reads at boot.
 type Config struct {
@@ -40,15 +50,11 @@ type Config struct {
 	// K8sNamespace is where every Job is created and observed.
 	K8sNamespace string
 	// MaxConcurrentJobs caps the deployments holding an execution slot
-	// (reserved, starting or running) across every replica.
+	// (reserved, starting, running or terminating) across every replica.
 	MaxConcurrentJobs int
-	// K8sCheckDelaySeconds is the delay between two status checks of a running Job.
-	K8sCheckDelaySeconds int
-	// K8sFirstCheckDelaySeconds is how long after a Job is created its first
-	// status check is due. It is deliberately short: the first check is what
-	// announces the task as RUNNING, and a Job that finishes before it is
-	// never observed running at all.
-	K8sFirstCheckDelaySeconds int
+	// JobStartTimeout is how long a Job's pod may take, after the Job is
+	// created, to start any container; past it the attempt is ended.
+	JobStartTimeout time.Duration
 	// LogTailLines is how many trailing log lines feed the error message.
 	LogTailLines int
 	// ErrorMessageMaxLength truncates the error message recorded for a failed Job.
@@ -87,13 +93,12 @@ func Load(v *pkgconfig.Validator) Config {
 		RetentionDays:             envInt("RETENTION_DAYS", 7),
 		RetentionSweepIntervalMin: envInt("RETENTION_SWEEP_INTERVAL_MINUTES", 60),
 
-		HTTPPort:                  envInt("HTTP_PORT", 8084),
-		K8sNamespace:              v.Require("K8S_NAMESPACE"),
-		MaxConcurrentJobs:         maxConcurrentJobs(v),
-		K8sCheckDelaySeconds:      envInt("K8S_CHECK_DELAY_SECONDS", 10),
-		K8sFirstCheckDelaySeconds: envInt("K8S_FIRST_CHECK_DELAY_SECONDS", 1),
-		LogTailLines:              envInt("LOG_TAIL_LINES", 50),
-		ErrorMessageMaxLength:     envInt("ERROR_MESSAGE_MAX_LENGTH", 4096),
+		HTTPPort:              envInt("HTTP_PORT", 8084),
+		K8sNamespace:          v.Require("K8S_NAMESPACE"),
+		MaxConcurrentJobs:     maxConcurrentJobs(v),
+		JobStartTimeout:       jobStartTimeout(v),
+		LogTailLines:          envInt("LOG_TAIL_LINES", 50),
+		ErrorMessageMaxLength: envInt("ERROR_MESSAGE_MAX_LENGTH", 4096),
 
 		ShutdownGrace: pkgconfig.EnvDurationOrDefault("SHUTDOWN_GRACE", defaultShutdownGrace),
 
@@ -111,6 +116,25 @@ func maxConcurrentJobs(v *pkgconfig.Validator) int {
 		return n
 	}
 	return defaultMaxConcurrentJobs
+}
+
+// jobStartTimeout reads JOB_START_TIMEOUT_SECONDS, a whole number of seconds
+// from MinJobStartTimeout to MaxJobStartTimeout; unset selects the default. Any
+// other value is a validation failure naming the key.
+func jobStartTimeout(v *pkgconfig.Validator) time.Duration {
+	const key = "JOB_START_TIMEOUT_SECONDS"
+	raw := os.Getenv(key)
+	if raw == "" {
+		return defaultJobStartTimeout
+	}
+	n, err := strconv.Atoi(raw)
+	d := time.Duration(n) * time.Second
+	if err != nil || d < MinJobStartTimeout || d > MaxJobStartTimeout {
+		v.Add(fmt.Sprintf("%s (invalid value %q: expected whole seconds from %d to %d)",
+			key, raw, int(MinJobStartTimeout.Seconds()), int(MaxJobStartTimeout.Seconds())))
+		return defaultJobStartTimeout
+	}
+	return d
 }
 
 // setKeys returns the keys among keys that are set to a non-empty value.

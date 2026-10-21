@@ -723,3 +723,35 @@ func TestAdd_CompileRow_FailedContainer_RoundTrip(t *testing.T) {
 	require.True(t, raw.Valid)
 	assert.Equal(t, "parse-prod", raw.String)
 }
+
+// HasAttemptFrom finds a production attempt of the task at the given number or
+// later, whatever its Job is named, and counts no other task's row and no
+// release-leg row.
+func TestRepo_HasAttemptFrom_CountsTheTasksProductionAttemptsOnly(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	ctx := context.Background()
+	repo := postgres.NewDeploymentsRepository(db, testLogger())
+
+	first := validCmd()
+	require.NoError(t, repo.Add(ctx, model.NewDeployment(first, nil, time.Now())))
+	retry := first
+	retry.TaskRetryCount, retry.JobName = 2, first.JobName+"-r1-r2"
+	require.NoError(t, repo.Add(ctx, model.NewDeployment(retry, nil, time.Now())))
+
+	other := validCmd()
+	other.TaskRetryCount = 3
+	require.NoError(t, repo.Add(ctx, model.NewDeployment(other, nil, time.Now())))
+
+	leg := model.NewValidationDeployment(validValidationCmd("rel-"+uuid.NewString()[:8], "public.orders"), nil, time.Now(), false)
+	require.NoError(t, repo.Add(ctx, leg))
+	_, err := db.Exec(`UPDATE deployments SET task_id = $1, job_params = jsonb_set(job_params, '{task_retry_count}', '5')
+		WHERE id = $2`, first.TaskID, leg.ID())
+	require.NoError(t, err)
+
+	for attempt, want := range map[int]bool{0: true, 1: true, 2: true, 3: false} {
+		got, err := repo.HasAttemptFrom(ctx, first.TaskID, attempt)
+		require.NoError(t, err)
+		assert.Equal(t, want, got, "attempt %d or later", attempt)
+	}
+}

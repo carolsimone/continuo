@@ -248,6 +248,24 @@ if grep -A40 'name: execution-controller' "${tmp}/defaults.yaml" | grep -q 'name
   echo "FAIL: execution-controller's own env must not shadow the ConfigMap's MAX_CONCURRENT_JOBS"; exit 1
 fi
 
+# execution.startTimeoutMinutes reaches execution-controller through the shared
+# ConfigMap in seconds; a value outside 1-120 fails the render, and a release
+# without the key (helm upgrade --reuse-values from an older chart) renders the
+# 15-minute default.
+echo "--- execution.startTimeoutMinutes reaches the ConfigMap in seconds; values outside 1-120 are refused"
+grep -q 'JOB_START_TIMEOUT_SECONDS: "900"' "${tmp}/defaults.yaml" \
+  || { echo "FAIL: the default render does not set JOB_START_TIMEOUT_SECONDS to 900"; exit 1; }
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set execution.startTimeoutMinutes=3 > "${tmp}/start-set.yaml"
+grep -q 'JOB_START_TIMEOUT_SECONDS: "180"' "${tmp}/start-set.yaml" \
+  || { echo "FAIL: execution.startTimeoutMinutes does not reach the shared ConfigMap in seconds"; exit 1; }
+for bad in 0 121; do
+  if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set execution.startTimeoutMinutes=${bad} > /dev/null 2>&1; then
+    echo "FAIL: execution.startTimeoutMinutes=${bad} must fail the render"; exit 1
+  fi
+done
+grep -q 'JOB_START_TIMEOUT_SECONDS: "900"' "${tmp}/execution-null.yaml" \
+  || { echo "FAIL: a release without execution values must get the default start timeout"; exit 1; }
+
 # maintenance.enabled reaches every service through the shared ConfigMap as
 # exactly "true" or "false"; a non-boolean value fails the render, and a release
 # without a maintenance block (helm upgrade --reuse-values from an older chart)

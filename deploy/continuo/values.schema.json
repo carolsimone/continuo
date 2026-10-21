@@ -330,6 +330,12 @@
           "type": "integer",
           "minimum": 1,
           "description": "Most Jobs holding an execution slot at once across execution-controller replicas."
+        },
+        "startTimeoutMinutes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 120,
+          "description": "How long a Job's pod may take, after the Job is created, to start any container (init or main). Past it execution-controller deletes the Job and fails the attempt with start_timeout."
         }
       }
     },

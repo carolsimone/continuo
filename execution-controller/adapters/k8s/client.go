@@ -1,4 +1,4 @@
-// Package k8s is the Kubernetes adapter: one clientset creates dbt, python, validation, seed-build, compile and schema-op Jobs (jobs_create.go, schema_ops.go) and observes their status, metadata and pod logs (jobs_observe.go).
+// Package k8s is the Kubernetes adapter: one clientset creates dbt, python, validation, seed-build, compile and schema-op Jobs (jobs_create.go, schema_ops.go), reads their pod logs (jobs_observe.go) and deletes a Job whose attempt execution-controller ends (job_control.go). The watch package observes every Job.
 package k8s
 
 import (
@@ -12,7 +12,6 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/service/ports"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	batchv1 "k8s.io/api/batch/v1"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -22,11 +21,11 @@ import (
 
 // jobTTLSecondsAfterFinished bounds how long a terminal (Succeeded or Failed) dbt
 // Job — and its pod — stays on the cluster before Kubernetes garbage-collects it.
-// The job-status handler reads and uploads a Job's pod logs to S3 synchronously
-// the moment it observes the Job go terminal, so this window only needs to cover
-// ad-hoc kubectl-level debugging of a still-present pod, not log retention: the S3
-// copy is durable long before this elapses. 24h matches the other Job TTL
-// backstops in this repo (db-init-migrate-job.yaml, minio/bucket-init-job.yaml).
+// The observer reads and uploads a Job's pod log to S3 once its attempt ends, so
+// this window only needs to cover ad-hoc kubectl-level debugging of a
+// still-present pod, not log retention: the S3 copy is durable long before this
+// elapses. 24h matches the other Job TTL backstops in this repo
+// (db-init-migrate-job.yaml, minio/bucket-init-job.yaml).
 const jobTTLSecondsAfterFinished = int32(86400)
 
 // JobParams represents the parameters needed to create a K8s Job
@@ -51,11 +50,6 @@ type JobParams struct {
 	// pkg_model.OperationFullRefresh rebuilds a model (full_refresh command)
 	// or seed (seed_full_refresh command) from scratch.
 	Operation pkg_model.Operation
-	// Mode is the legacy promote-seed dispatch mode carried by queued work only;
-	// when non-empty it is stamped as a "mode" label so the job-status handler
-	// routes the Job away from the production lifecycle. Empty for everything
-	// current.
-	Mode string
 }
 
 // K8sClient provides methods to interact with Kubernetes
@@ -99,6 +93,9 @@ func NewK8sClient(logger *slog.Logger, commands ports.CommandResolver) (*K8sClie
 		commands:  commands,
 	}, nil
 }
+
+// Clientset is the Kubernetes clientset the client uses, for the Job watch.
+func (c *K8sClient) Clientset() kubernetes.Interface { return c.clientset }
 
 // JobExists checks if a K8s Job with the given name exists in the namespace
 func (c *K8sClient) JobExists(ctx context.Context, namespace, jobName string) (bool, error) {
@@ -170,37 +167,4 @@ func sanitizeK8sLabel(s string) string {
 		out = out[:63]
 	}
 	return strings.Trim(out, "-_.")
-}
-
-// listPageSize bounds each page of a Job listing.
-const listPageSize = 500
-
-// ListJobStates lists the Jobs in namespace matching labelSelector, page by
-// page, and reports for each whether it finished (a true Complete or Failed
-// condition) and when.
-func (c *K8sClient) ListJobStates(ctx context.Context, namespace, labelSelector string) (map[string]ports.JobState, error) {
-	out := map[string]ports.JobState{}
-	opts := metav1.ListOptions{LabelSelector: labelSelector, Limit: listPageSize}
-	for {
-		list, err := c.clientset.BatchV1().Jobs(namespace).List(ctx, opts)
-		if err != nil {
-			return nil, fmt.Errorf("list jobs: %w", err)
-		}
-		for i := range list.Items {
-			out[list.Items[i].Name] = jobState(&list.Items[i])
-		}
-		if list.Continue == "" {
-			return out, nil
-		}
-		opts.Continue = list.Continue
-	}
-}
-
-func jobState(j *batchv1.Job) ports.JobState {
-	for _, cond := range j.Status.Conditions {
-		if (cond.Type == batchv1.JobComplete || cond.Type == batchv1.JobFailed) && cond.Status == corev1.ConditionTrue {
-			return ports.JobState{Finished: true, FinishedAt: cond.LastTransitionTime.Time}
-		}
-	}
-	return ports.JobState{}
 }

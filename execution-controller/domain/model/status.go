@@ -5,10 +5,10 @@ import "slices"
 // Status is the lifecycle state of a Deployment. A deployment waits in
 // pending (or blocked, for a candidate node whose in-set upstreams have not all
 // succeeded) for as long as it takes. It holds an execution slot while
-// reserved, starting or running, and ends done (its Job finished), failed (it
-// could not be deployed) or skipped (an in-set upstream failed). reserved is
-// not a waiting state: it lasts from the claim that took the slot to the
-// launch that creates the Job.
+// reserved, starting, running or terminating, and ends done (its attempt
+// ended), failed (it could not be deployed) or skipped (an in-set upstream
+// failed). reserved is not a waiting state: it lasts from the claim that took
+// the slot to the launch that creates the Job.
 type Status string
 
 const (
@@ -18,10 +18,14 @@ const (
 	StatusReserved Status = "reserved"
 	// StatusStarting holds a slot; the Job is created.
 	StatusStarting Status = "starting"
-	// StatusRunning holds a slot; a status check found the Job unfinished.
+	// StatusRunning holds a slot; the Job's main container started.
 	StatusRunning Status = "running"
-	// StatusDone holds no slot: the Job finished. Its outcome is unset when
-	// reconciliation found the Job finished before a status check recorded it.
+	// StatusTerminating holds a slot; execution-controller deleted the Job to
+	// end the attempt itself and waits for its pods to be gone.
+	StatusTerminating Status = "terminating"
+	// StatusDone holds no slot: the attempt ended. Its outcome is unset only on
+	// a row an older version released before recording the result; the
+	// observer records it from the Job while the Job exists.
 	StatusDone    Status = "done"
 	StatusFailed  Status = "failed"
 	StatusSkipped Status = "skipped"
@@ -32,14 +36,14 @@ const (
 // (TestExecutionSchemaMatchesContract).
 func AllStatuses() []Status {
 	return []Status{StatusPending, StatusBlocked, StatusReserved, StatusStarting,
-		StatusRunning, StatusDone, StatusFailed, StatusSkipped}
+		StatusRunning, StatusTerminating, StatusDone, StatusFailed, StatusSkipped}
 }
 
 // InFlightStatuses lists the statuses that hold an execution slot. Queries
 // bind this set; the deployments trigger and in-flight index repeat it and are
 // pinned to it by TestExecutionSchemaMatchesContract.
 func InFlightStatuses() []Status {
-	return []Status{StatusReserved, StatusStarting, StatusRunning}
+	return []Status{StatusReserved, StatusStarting, StatusRunning, StatusTerminating}
 }
 
 // InFlight reports whether a deployment in this status holds an execution slot.
@@ -48,20 +52,25 @@ func (s Status) InFlight() bool { return slices.Contains(InFlightStatuses(), s) 
 // transitions is the deployment state machine: for each status, the statuses
 // a deployment may move to. A status with no entry is terminal.
 //
-//	pending  → reserved                   the claim takes a slot
-//	blocked  → pending | skipped          in-set upstreams succeeded | one failed
-//	reserved → starting                   the Job was created
-//	reserved → pending                    a transient deploy failure, or a stale
-//	                                      reservation, gives the slot back
-//	reserved → failed                     the deployment cannot be deployed
-//	starting → running | done             a check found the Job unfinished | it finished
-//	running  → done                       the Job finished
+//	pending     → reserved                   the claim takes a slot
+//	blocked     → pending | skipped          in-set upstreams succeeded | one failed
+//	reserved    → starting                   the Job was created
+//	reserved    → pending                    a transient deploy failure, or a stale
+//	                                         reservation, gives the slot back
+//	reserved    → failed                     the deployment cannot be deployed
+//	starting    → running                    the main container started
+//	starting    → terminating                a start error or the start timeout:
+//	                                         execution-controller deleted the Job
+//	starting    → done                       the attempt ended before it was seen running
+//	running     → terminating | done         the Job was deleted | the attempt ended
+//	terminating → done                       the attempt's pods are gone
 var transitions = map[Status][]Status{
-	StatusPending:  {StatusReserved},
-	StatusBlocked:  {StatusPending, StatusSkipped},
-	StatusReserved: {StatusStarting, StatusPending, StatusFailed},
-	StatusStarting: {StatusRunning, StatusDone},
-	StatusRunning:  {StatusDone},
+	StatusPending:     {StatusReserved},
+	StatusBlocked:     {StatusPending, StatusSkipped},
+	StatusReserved:    {StatusStarting, StatusPending, StatusFailed},
+	StatusStarting:    {StatusRunning, StatusTerminating, StatusDone},
+	StatusRunning:     {StatusTerminating, StatusDone},
+	StatusTerminating: {StatusDone},
 }
 
 // CanMove reports whether the state machine allows a deployment in from to

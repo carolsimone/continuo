@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -53,9 +54,9 @@ func TestSchemaOpJob_RunsEngineImageWithSecretAndOpEnv(t *testing.T) {
 	require.Len(t, c.EnvFrom, 1)
 	assert.Equal(t, "continuo-warehouse-validation", c.EnvFrom[0].SecretRef.Name)
 
-	// Distinct label so the job-status handler's validation watcher never routes these.
+	// A distinct app label: the Job watch selects app=dbt-job, so it never observes schema-op Jobs.
 	assert.Equal(t, "continuo-schema-op", job.Labels["app"])
-	assert.NotEqual(t, events.ModeValidation, job.Labels["mode"])
+	assert.NotEqual(t, string(model.ModeValidation), job.Labels["mode"])
 	assert.Equal(t, "ensure_schema", job.Labels["schema-op"])
 }
 

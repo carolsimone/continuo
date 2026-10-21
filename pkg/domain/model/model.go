@@ -35,17 +35,6 @@ type SourceFQN struct {
 	FQN
 }
 
-// Annotation keys carrying the RAW (unsanitized) release/node identity on a
-// validation Job. The dispatcher stamps them, and the job-status handler reads
-// them into the outcomes.NodeOutcome it records. Labels are sanitized for K8s
-// (charset + 63-char limit) and serve only routing/selection; these
-// annotations preserve the exact values so the outcome lookup matches the
-// unmodified deployments key.
-const (
-	AnnotationReleaseID = "continuo.dev/release-id"
-	AnnotationNodeID    = "continuo.dev/node-id"
-)
-
 // NodeType, its values, NodeTypes(), IsValid() and Runtime() are generated from
 // the node_type vocabulary in pkg/streams/contract.yaml (vocabulary.gen.go).
 

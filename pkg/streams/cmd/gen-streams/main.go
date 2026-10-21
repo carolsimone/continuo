@@ -76,11 +76,15 @@ type VocabularyValue struct {
 	FullRefresh bool   `yaml:"full_refresh"`
 	SecretRef   bool   `yaml:"secret_ref"`
 	Runtime     string `yaml:"runtime"`
+	Class       string `yaml:"class"`
 	Description string `yaml:"description"`
 }
 
 // nodeRuntimeVocabulary names the vocabulary whose values a "runtime:" attribute may take.
 const nodeRuntimeVocabulary = "node_runtime"
+
+// failureClassVocabulary names the vocabulary whose values a "class:" attribute may take.
+const failureClassVocabulary = "failure_class"
 
 func main() {
 	if err := run(); err != nil {
@@ -318,9 +322,15 @@ var Retired = []string{
 
 // runtimeVocabulary returns the node_runtime vocabulary, or nil when the
 // contract declares none.
-func runtimeVocabulary(c *Contract) *Vocabulary {
+func runtimeVocabulary(c *Contract) *Vocabulary { return vocabularyNamed(c, nodeRuntimeVocabulary) }
+
+// classVocabulary returns the failure_class vocabulary, or nil when the
+// contract declares none.
+func classVocabulary(c *Contract) *Vocabulary { return vocabularyNamed(c, failureClassVocabulary) }
+
+func vocabularyNamed(c *Contract, name string) *Vocabulary {
 	for i := range c.Vocabularies {
-		if c.Vocabularies[i].Name == nodeRuntimeVocabulary {
+		if c.Vocabularies[i].Name == name {
 			return &c.Vocabularies[i]
 		}
 	}
@@ -378,6 +388,8 @@ func secretRefListConst(v Vocabulary) string {
 
 func usesRuntime(v Vocabulary) bool { return len(v.Values) > 0 && v.Values[0].Runtime != "" }
 
+func usesClass(v Vocabulary) bool { return len(v.Values) > 0 && v.Values[0].Class != "" }
+
 // pyMember is the Python enum member name for a vocabulary value.
 func pyMember(value string) string { return strings.ToUpper(strings.ReplaceAll(value, "-", "_")) }
 
@@ -386,26 +398,34 @@ func pyMember(value string) string { return strings.ToUpper(strings.ReplaceAll(v
 // enclosing vocabulary's fields.
 type goVocabRow struct {
 	Const, Name, Description string
-	HasHealable              bool
-	HasFullRefresh           bool
-	HasSecretRef             bool
-	RuntimeType              string
-	Values                   []goVocabValueRow
+	// Plural names the function that lists every value.
+	Plural         string
+	HasHealable    bool
+	HasFullRefresh bool
+	HasSecretRef   bool
+	RuntimeType    string
+	ClassType      string
+	Values         []goVocabValueRow
 }
 
 type goVocabValueRow struct {
 	Const, Type, Value, Description  string
 	Healable, FullRefresh, SecretRef bool
 	RuntimeConst                     string
+	ClassConst                       string
 }
 
 func goVocabRows(c *Contract) []goVocabRow {
 	rv := runtimeVocabulary(c)
+	cv := classVocabulary(c)
 	var rows []goVocabRow
 	for _, v := range c.Vocabularies {
-		row := goVocabRow{Const: v.Const, Name: v.Name, Description: v.Description, HasHealable: hasHealable(v), HasFullRefresh: hasFullRefresh(v), HasSecretRef: hasSecretRef(v)}
+		row := goVocabRow{Const: v.Const, Plural: plural(v.Const), Name: v.Name, Description: v.Description, HasHealable: hasHealable(v), HasFullRefresh: hasFullRefresh(v), HasSecretRef: hasSecretRef(v)}
 		if usesRuntime(v) && rv != nil {
 			row.RuntimeType = rv.Const
+		}
+		if usesClass(v) && cv != nil {
+			row.ClassType = cv.Const
 		}
 		for _, val := range v.Values {
 			vr := goVocabValueRow{
@@ -419,6 +439,9 @@ func goVocabRows(c *Contract) []goVocabRow {
 			}
 			if usesRuntime(v) && rv != nil {
 				vr.RuntimeConst = rv.Const + constForValue(rv, val.Runtime)
+			}
+			if usesClass(v) && cv != nil {
+				vr.ClassConst = cv.Const + constForValue(cv, val.Class)
 			}
 			row.Values = append(row.Values, vr)
 		}
@@ -452,8 +475,8 @@ const (
 {{- end }}
 )
 
-// {{ .Const }}s returns every value in contract.yaml declaration order.
-func {{ .Const }}s() []{{ .Const }} {
+// {{ .Plural }} returns every value in contract.yaml declaration order.
+func {{ .Plural }}() []{{ .Const }} {
 	return []{{ .Const }}{
 {{- range .Values }}
 		{{ .Const }},
@@ -528,6 +551,19 @@ func (v {{ .Const }}) Runtime() {{ .RuntimeType }} {
 {{- range .Values }}
 	case {{ .Const }}:
 		return {{ .RuntimeConst }}
+{{- end }}
+	}
+	return ""
+}
+{{- end }}
+{{- if .ClassType }}
+
+// Class reports the {{ .ClassType }} the contract files v under.
+func (v {{ .Const }}) Class() {{ .ClassType }} {
+	switch v {
+{{- range .Values }}
+	case {{ .Const }}:
+		return {{ .ClassConst }}
 {{- end }}
 	}
 	return ""
@@ -635,8 +671,12 @@ func emitPythonVocabulary(c *Contract) (string, error) {
 		RuntimeConst       string   // "NODE_TYPE_RUNTIME"
 		RuntimeType        string   // "NodeRuntime"
 		RuntimeEntries     []string // "NodeType.DBT_MODEL: NodeRuntime.DBT", ...
+		ClassConst         string   // "FAILURE_REASON_CLASS"
+		ClassType          string   // "FailureClass"
+		ClassEntries       []string // "FailureReason.EXIT_CODE: FailureClass.TASK", ...
 	}
 	rv := runtimeVocabulary(c)
+	cv := classVocabulary(c)
 	var vocabs []pyVocabRow
 	for _, v := range c.Vocabularies {
 		row := pyVocabRow{
@@ -655,6 +695,10 @@ func emitPythonVocabulary(c *Contract) (string, error) {
 			row.RuntimeConst = toScreamingSnake(v.Const) + "_RUNTIME"
 			row.RuntimeType = rv.Const
 		}
+		if usesClass(v) && cv != nil {
+			row.ClassConst = toScreamingSnake(v.Const) + "_CLASS"
+			row.ClassType = cv.Const
+		}
 		for _, val := range v.Values {
 			member := pyMember(val.Value)
 			row.Values = append(row.Values, pyValueRow{Const: member, Value: val.Value})
@@ -669,6 +713,9 @@ func emitPythonVocabulary(c *Contract) (string, error) {
 			}
 			if usesRuntime(v) && rv != nil {
 				row.RuntimeEntries = append(row.RuntimeEntries, v.Const+"."+member+": "+rv.Const+"."+pyMember(val.Runtime))
+			}
+			if usesClass(v) && cv != nil {
+				row.ClassEntries = append(row.ClassEntries, v.Const+"."+member+": "+cv.Const+"."+pyMember(val.Class))
 			}
 		}
 		vocabs = append(vocabs, row)
@@ -704,6 +751,10 @@ class {{ .Const }}(StrEnum):
 {{ .RuntimeConst }}: dict[{{ .Const }}, {{ .RuntimeType }}] = { {{- range $i, $e := .RuntimeEntries }}{{ if $i }}, {{ end }}{{ $e }}{{ end -}} }
 """Which toolchain builds each {{ .Const }}."""
 
+{{ end }}{{ if .ClassType }}
+{{ .ClassConst }}: dict[{{ .Const }}, {{ .ClassType }}] = { {{- range $i, $e := .ClassEntries }}{{ if $i }}, {{ end }}{{ $e }}{{ end -}} }
+"""The {{ .ClassType }} each {{ .Const }} is filed under."""
+
 {{ end }}{{ end }}`
 
 	t, err := template.New("pyvocab").Parse(tmpl)
@@ -725,8 +776,10 @@ func emitTSVocabulary(c *Contract) (string, error) {
 		FullRefreshConst, FullRefreshList     string
 		SecretRefConst, SecretRefList         string
 		RuntimeConst, RuntimeType, RuntimeMap string
+		ClassConst, ClassType, ClassMap       string
 	}
 	rv := runtimeVocabulary(c)
+	cv := classVocabulary(c)
 	var rows []tsRow
 	for _, v := range c.Vocabularies {
 		quoted := make([]string, 0, len(v.Values))
@@ -735,7 +788,7 @@ func emitTSVocabulary(c *Contract) (string, error) {
 		}
 		row := tsRow{
 			Const:     v.Const,
-			ListConst: toScreamingSnake(v.Const) + "S",
+			ListConst: toScreamingSnake(plural(v.Const)),
 			Union:     strings.Join(quoted, " | "),
 			List:      strings.Join(quoted, ", "),
 		}
@@ -768,6 +821,15 @@ func emitTSVocabulary(c *Contract) (string, error) {
 			row.RuntimeType = rv.Const
 			row.RuntimeMap = strings.Join(pairs, ", ")
 		}
+		if usesClass(v) && cv != nil {
+			pairs := make([]string, 0, len(v.Values))
+			for _, val := range v.Values {
+				pairs = append(pairs, "'"+val.Value+"': '"+val.Class+"'")
+			}
+			row.ClassConst = toScreamingSnake(v.Const) + "_CLASS"
+			row.ClassType = cv.Const
+			row.ClassMap = strings.Join(pairs, ", ")
+		}
 		rows = append(rows, row)
 	}
 	tmpl := `// Code generated by gen-streams. DO NOT EDIT.
@@ -787,6 +849,9 @@ export const {{ .SecretRefConst }}: readonly {{ .Const }}[] = [{{ .SecretRefList
 {{- if .RuntimeConst }}
 export const {{ .RuntimeConst }}: Readonly<Record<{{ .Const }}, {{ .RuntimeType }}>> = { {{ .RuntimeMap }} };
 {{- end }}
+{{- if .ClassConst }}
+export const {{ .ClassConst }}: Readonly<Record<{{ .Const }}, {{ .ClassType }}>> = { {{ .ClassMap }} };
+{{- end }}
 {{ end }}`
 	t, err := template.New("tsvocab").Parse(tmpl)
 	if err != nil {
@@ -797,6 +862,15 @@ export const {{ .RuntimeConst }}: Readonly<Record<{{ .Const }}, {{ .RuntimeType 
 		return "", err
 	}
 	return strings.TrimRight(buf.String(), "\n") + "\n", nil
+}
+
+// plural is the plural of a vocabulary's Go name: FailureClass → FailureClasses,
+// NodeType → NodeTypes.
+func plural(name string) string {
+	if strings.HasSuffix(name, "s") {
+		return name + "es"
+	}
+	return name + "s"
 }
 
 func toScreamingSnake(s string) string {
@@ -1009,34 +1083,45 @@ func validate(c *Contract) error {
 		}
 	}
 
-	runtimeValues := map[string]struct{}{}
-	runtimeDeclared := false
+	if err := validateReference(c, "runtime", nodeRuntimeVocabulary, func(v VocabularyValue) string { return v.Runtime }); err != nil {
+		return err
+	}
+	return validateReference(c, "class", failureClassVocabulary, func(v VocabularyValue) string { return v.Class })
+}
+
+// validateReference checks a value attribute that names a value of another
+// vocabulary (runtime names a node_runtime value, class a failure_class
+// value): a vocabulary sets it on every value or none, the referenced
+// vocabulary is declared before it, and every reference is one of its values.
+func validateReference(c *Contract, attr, target string, ref func(VocabularyValue) string) error {
+	targetValues := map[string]struct{}{}
+	targetDeclared := false
 	for _, v := range c.Vocabularies {
-		if v.Name == nodeRuntimeVocabulary {
-			runtimeDeclared = true
+		if v.Name == target {
+			targetDeclared = true
 			for _, val := range v.Values {
-				runtimeValues[val.Value] = struct{}{}
+				targetValues[val.Value] = struct{}{}
 			}
 			continue
 		}
-		withRuntime := 0
+		with := 0
 		for _, val := range v.Values {
-			if val.Runtime != "" {
-				withRuntime++
+			if ref(val) != "" {
+				with++
 			}
 		}
-		if withRuntime == 0 {
+		if with == 0 {
 			continue
 		}
-		if withRuntime != len(v.Values) {
-			return fmt.Errorf("vocabulary %q: runtime must be set on every value or none", v.Name)
+		if with != len(v.Values) {
+			return fmt.Errorf("vocabulary %q: %s must be set on every value or none", v.Name, attr)
 		}
-		if !runtimeDeclared {
-			return fmt.Errorf("vocabulary %q uses runtime, so vocabulary %q must be declared before it", v.Name, nodeRuntimeVocabulary)
+		if !targetDeclared {
+			return fmt.Errorf("vocabulary %q uses %s, so vocabulary %q must be declared before it", v.Name, attr, target)
 		}
 		for i, val := range v.Values {
-			if _, ok := runtimeValues[val.Runtime]; !ok {
-				return fmt.Errorf("vocabulary %q value[%d]: runtime %q is not a value of %q", v.Name, i, val.Runtime, nodeRuntimeVocabulary)
+			if _, ok := targetValues[ref(val)]; !ok {
+				return fmt.Errorf("vocabulary %q value[%d]: %s %q is not a value of %q", v.Name, i, attr, ref(val), target)
 			}
 		}
 	}

@@ -12,6 +12,15 @@ shipped in those.
 
 ## [Unreleased]
 
+### Added
+- `execution.startTimeoutMinutes` (default 15, 1–120; `JOB_START_TIMEOUT_SECONDS` on the shared ConfigMap): how long a Job's pod may take, after the Job is created, to start any container (init or main) — waiting for a node, pulling images, mounting Secrets. Past it execution-controller deletes the Job and fails the attempt as `start_timeout`; work a container does once it runs does not count. A value outside the range fails the render, and execution-controller refuses to start on one. MINOR.
+
+### Changed
+- execution-controller observes every Job, task and release leg alike, through a watch on its Jobs and pods instead of polling each one: a task is reported running when its main container starts and finished within about a second of its pod. A pod waiting on an image it cannot pull, a missing Secret or ConfigMap, or a container the runtime cannot create has its Job deleted, and its attempt is reported failed once the pod is gone, so a retry never runs beside it. A pod that has not stopped 15 minutes after its deletion raises `continuo_attempts_awaiting_pod_stop`. Each attempt the watch sees fail records why it failed (`deployments.facts`), and a task's retry Job is named `<prefix>-<first 8 characters of the run id>-r<attempt>` without ever cutting the run-id part; a retry whose node prefix must be cut ends it with a short hash of the full prefix, so two nodes of one run whose attempt-0 Job names differ keep different retry Job names. execution-controller refuses to start until the execution database migration has applied.
+
+### Removed
+- execution-controller's default `env` drops `K8S_CHECK_DELAY_SECONDS` and `K8S_FIRST_CHECK_DELAY_SECONDS`, which nothing reads any more; a values file that still sets them keeps working. The `check.k8s:v1` stream is retired: dead-letter-controller deletes it, and its open dead letters are listed as not redrivable.
+
 ### Fixed
 - dead-letter-controller lists a dead letter as not redrivable, and says why in `not_redrivable_reason` (shown by `continuo dlq list` and `dlq show`), when its stream is retired or the streams contract does not name its stream or consumer group, and refuses to redrive it (gRPC `FAILED_PRECONDITION`, `continuo dlq redrive` exit 4). A redrive into a retired stream reported success and lost the message. No values change. PATCH.
 

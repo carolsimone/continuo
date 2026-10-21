@@ -6,12 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/carolsimone/continuo/execution-controller/adapters/delayqueue"
 	"github.com/carolsimone/continuo/execution-controller/domain/event"
-	"github.com/carolsimone/continuo/execution-controller/serialization"
 	"github.com/carolsimone/continuo/execution-controller/service/validation"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
-	"github.com/carolsimone/continuo/pkg/num"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -37,11 +34,12 @@ func NewOutboxPublisher(r *goredis.Client, l *slog.Logger) *OutboxPublisher {
 
 // Publish routes an outbox row to Redis. Every event type XADDs a field map to
 // entry.StreamName without a length cap (the dead-letter-controller's trim loop
-// bounds every stream), except check_delayed: that row is written to the delay queue (ticket + due
-// time) so a not-yet-due check waits off the stream until the promoter moves it.
+// bounds every stream), except check_delayed: a status-check ticket a previous
+// version wrote, which is published nowhere and so marked processed, since the
+// observer follows every Job without it.
 func (p *OutboxPublisher) Publish(ctx context.Context, entry *outbox.Entry) error {
 	if entry.EventType == event.EventTypeCheckDelayed {
-		return p.scheduleDelayedCheck(ctx, entry)
+		return nil
 	}
 	values, err := p.Render(entry)
 	if err != nil {
@@ -65,12 +63,11 @@ func (p *OutboxPublisher) xaddArgs(entry *outbox.Entry, values map[string]any) *
 }
 
 // Render returns the field map Publish XADDs for entry, without
-// outbox_entry_id. A check_delayed row is written to the delay queue rather
-// than a stream, so it has no fields to render and returns an error. Every
-// call returns a fresh map.
+// outbox_entry_id. A check_delayed row is published nowhere, so it has no
+// fields to render and returns an error. Every call returns a fresh map.
 func (p *OutboxPublisher) Render(entry *outbox.Entry) (map[string]any, error) {
 	if entry.EventType == event.EventTypeCheckDelayed {
-		return nil, fmt.Errorf("%s rows are delay-queue entries, not stream fields", event.EventTypeCheckDelayed)
+		return nil, fmt.Errorf("%s rows are published nowhere", event.EventTypeCheckDelayed)
 	}
 	values, err := p.toValues(entry)
 	if err != nil {
@@ -78,34 +75,6 @@ func (p *OutboxPublisher) Render(entry *outbox.Entry) (map[string]any, error) {
 	}
 	delete(values, "outbox_entry_id")
 	return values, nil
-}
-
-// scheduleDelayedCheck converts a check_delayed row into the typed CheckK8s
-// payload and enqueues it in the delay queue keyed by job name.
-func (p *OutboxPublisher) scheduleDelayedCheck(ctx context.Context, entry *outbox.Entry) error {
-	var dto serialization.JobCheckRequestDTO
-	if err := json.Unmarshal(entry.Payload, &dto); err != nil {
-		return fmt.Errorf("%w: unmarshal check_delayed: %v", pkgevents.ErrPermanent, err)
-	}
-	e := dto.ToDomain()
-	retryCount, err := num.Int32(e.RetryCount, "retry_count")
-	if err != nil {
-		return fmt.Errorf("%w: check.k8s payload: %v", pkgevents.ErrPermanent, err)
-	}
-	maxRetries, err := num.Int32(e.MaxRetries, "max_retries")
-	if err != nil {
-		return fmt.Errorf("%w: check.k8s payload: %v", pkgevents.ErrPermanent, err)
-	}
-	payload, err := json.Marshal(pkgevents.CheckK8s{
-		TaskID: e.TaskID, ScheduleID: e.ScheduleID, ScheduleName: e.ScheduleName,
-		ServiceName: e.ServiceName, SchemaName: e.SchemaName, TableName: e.TableName,
-		JobName: e.JobName, NodeType: e.NodeType, ImageTag: e.ImageTag, SecretRef: e.SecretRef, Operation: e.Operation,
-		RetryCount: retryCount, MaxRetries: maxRetries, RunningAnnounced: e.RunningAnnounced,
-	})
-	if err != nil {
-		return fmt.Errorf("marshal check.k8s payload: %w", err)
-	}
-	return delayqueue.Schedule(ctx, p.redis, e.JobName, entry.ID.String(), string(payload), e.CheckAfter)
 }
 
 // toValues routes entry.EventType to its typed struct and returns the field map

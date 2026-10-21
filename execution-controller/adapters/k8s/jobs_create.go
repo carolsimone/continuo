@@ -17,6 +17,15 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// Annotation keys carrying the raw (unsanitized) release and node identity on
+// a release leg's Job: labels are sanitized for Kubernetes (charset and the
+// 63-character limit) and serve only selection, so the annotations keep the
+// exact values the Job runs for.
+const (
+	annotationReleaseID = "continuo.dev/release-id"
+	annotationNodeID    = "continuo.dev/node-id"
+)
+
 // CreateQueryJob builds and creates a K8s Job for query execution (idempotent)
 func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error {
 	// Step 1: Check if job already exists (idempotent operation)
@@ -66,11 +75,6 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 	// changing the app selector every executor Job carries.
 	if params.NodeType.IsPython() {
 		jobLabels["runtime"] = "python"
-	}
-	// Only legacy promote-seed work still supplies a mode here; current jobs get
-	// no mode label and route through the production lifecycle.
-	if params.Mode != "" {
-		jobLabels["mode"] = params.Mode
 	}
 	ttl := jobTTLSecondsAfterFinished
 	job := &batchv1.Job{
@@ -140,12 +144,11 @@ type ValidationJobParams struct {
 }
 
 // CreateValidationJob builds and creates a mode=validation K8s Job
-// (idempotent by job name). The Job carries app=dbt-job so existing watchers
-// stay correct, plus the mode=validation label so the job-status handler
-// routes its terminal outcome to outcomes.Recorder, which settles it
-// in-process. release-id/node-id are stored twice: as sanitized labels (for
-// selection/observability) and as raw annotations (the authoritative identity
-// echoed into the recorded outcome).
+// (idempotent by job name). The Job carries app=dbt-job so the Job watch
+// observes it, plus the mode=validation label naming its leg for operators;
+// the observer routes its result by the deployment row's mode.
+// release-id/node-id are stored twice: as sanitized labels (for
+// selection/observability) and as raw annotations (the raw identity).
 func (c *K8sClient) CreateValidationJob(ctx context.Context, params ValidationJobParams) error {
 	exists, err := c.JobExists(ctx, params.Namespace, params.JobName)
 	if err != nil {
@@ -167,7 +170,7 @@ func (c *K8sClient) CreateValidationJob(ctx context.Context, params ValidationJo
 	backoffLimit := int32(0)
 	labels := map[string]string{
 		"app":          "dbt-job",
-		"mode":         events.ModeValidation,
+		"mode":         string(validationmodel.ModeValidation),
 		"release-id":   sanitizeK8sLabel(params.ReleaseID),
 		"node-id":      sanitizeK8sLabel(params.NodeID),
 		"service_name": params.ServiceName,
@@ -175,8 +178,8 @@ func (c *K8sClient) CreateValidationJob(ctx context.Context, params ValidationJo
 		"table_name":   sanitizeK8sLabel(params.TableName),
 	}
 	annotations := map[string]string{
-		pkg_model.AnnotationReleaseID: params.ReleaseID,
-		pkg_model.AnnotationNodeID:    params.NodeID,
+		annotationReleaseID: params.ReleaseID,
+		annotationNodeID:    params.NodeID,
 	}
 	ttl := jobTTLSecondsAfterFinished
 	job := &batchv1.Job{
@@ -324,8 +327,8 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 // by job name). The Job uses the team image (same as production) and runs
 // `dbt seed --select <TableName>`, materializing into the candidate schema via
 // DBT_TARGET_SCHEMA so the generate_schema_name macro routes the output there.
-// The mode=seed_build label lets the job-status handler route its terminal
-// outcome to outcomes.Recorder for in-process settlement.
+// The mode=seed_build label names its leg for operators; the observer routes
+// its result by the deployment row's mode.
 func (c *K8sClient) CreateSeedBuildJob(ctx context.Context, params ValidationJobParams) error {
 	exists, err := c.JobExists(ctx, params.Namespace, params.JobName)
 	if err != nil {
@@ -349,7 +352,7 @@ func (c *K8sClient) CreateSeedBuildJob(ctx context.Context, params ValidationJob
 	backoffLimit := int32(0)
 	labels := map[string]string{
 		"app":          "dbt-job",
-		"mode":         events.ModeSeedBuild,
+		"mode":         string(validationmodel.ModeSeedBuild),
 		"release-id":   sanitizeK8sLabel(params.ReleaseID),
 		"node-id":      sanitizeK8sLabel(params.NodeID),
 		"service_name": params.ServiceName,
@@ -357,8 +360,8 @@ func (c *K8sClient) CreateSeedBuildJob(ctx context.Context, params ValidationJob
 		"table_name":   sanitizeK8sLabel(params.TableName),
 	}
 	annotations := map[string]string{
-		pkg_model.AnnotationReleaseID: params.ReleaseID,
-		pkg_model.AnnotationNodeID:    params.NodeID,
+		annotationReleaseID: params.ReleaseID,
+		annotationNodeID:    params.NodeID,
 	}
 	ttl := jobTTLSecondsAfterFinished
 	job := &batchv1.Job{
@@ -504,9 +507,9 @@ func buildSeedBuildPodSpec(p ValidationJobParams, command []string, partialParse
 //     MANIFEST_S3_URI + the S3 credential envs, plus the four PARSE_* envs
 //     when the parse-export leg ran.
 //
-// The mode=compile label lets the job-status handler route its terminal
-// outcome to outcomes.Recorder for in-process settlement. release-id/node-id
-// annotations carry the authoritative identity. ImageTag must be non-empty —
+// The mode=compile label names its leg for operators; the observer routes its
+// result by the deployment row's mode. release-id/node-id annotations carry
+// the raw identity. ImageTag must be non-empty —
 // the team image must be explicitly versioned.
 func (c *K8sClient) CreateCompileJob(ctx context.Context, params ValidationJobParams) error {
 	exists, err := c.JobExists(ctx, params.Namespace, params.JobName)
@@ -532,14 +535,14 @@ func (c *K8sClient) CreateCompileJob(ctx context.Context, params ValidationJobPa
 	backoffLimit := int32(0)
 	labels := map[string]string{
 		"app":          "dbt-job",
-		"mode":         events.ModeCompile,
+		"mode":         string(validationmodel.ModeCompile),
 		"release-id":   sanitizeK8sLabel(params.ReleaseID),
 		"node-id":      sanitizeK8sLabel(params.NodeID),
 		"service_name": params.ServiceName,
 	}
 	annotations := map[string]string{
-		pkg_model.AnnotationReleaseID: params.ReleaseID,
-		pkg_model.AnnotationNodeID:    params.NodeID,
+		annotationReleaseID: params.ReleaseID,
+		annotationNodeID:    params.NodeID,
 	}
 	ttl := jobTTLSecondsAfterFinished
 	job := &batchv1.Job{
