@@ -32,10 +32,6 @@ type FakeUnitOfWork struct {
 	taskColl    run.TaskCollection
 	clock       ports.Clock
 
-	// TaskExecutionWriter backs TaskExecutions(); set it to capture or assert
-	// recorded-execution writes in handler tests.
-	TaskExecutionWriter repository.TaskExecutionWriter
-
 	// TopologyRepo backs Topology(); set it to observe topology writes in
 	// handler tests.
 	TopologyRepo repository.TopologyRepository
@@ -84,12 +80,6 @@ func (f *FakeUnitOfWork) Rollback() error {
 func (f *FakeUnitOfWork) Run() repository.RunRepository      { return f.runRepo }
 func (f *FakeUnitOfWork) Outbox() ports.OutboxPublisher      { return f.outboxPub }
 func (f *FakeUnitOfWork) TaskCollection() run.TaskCollection { return f.taskColl }
-
-// TaskExecutions returns the aggregate-level repository.TaskExecutionWriter set
-// via the TaskExecutionWriter field.
-func (f *FakeUnitOfWork) TaskExecutions() repository.TaskExecutionWriter {
-	return f.TaskExecutionWriter
-}
 
 // Catalog returns the aggregate-level repository.ScheduleCatalogRepository set via SetCatalogRepo.
 func (f *FakeUnitOfWork) Catalog() repository.ScheduleCatalogRepository { return f.catalogRepo }

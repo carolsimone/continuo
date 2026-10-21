@@ -9,7 +9,6 @@ import (
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/google/uuid"
-	"github.com/jmoiron/sqlx"
 )
 
 // fakeTaskExecutionRepo captures the pagination arguments the handler computed
@@ -21,10 +20,6 @@ type fakeTaskExecutionRepo struct {
 }
 
 func (f *fakeTaskExecutionRepo) Create(context.Context, *postgres.TaskExecution) error {
-	return nil
-}
-
-func (f *fakeTaskExecutionRepo) CreateTx(context.Context, *sqlx.Tx, *postgres.TaskExecution) error {
 	return nil
 }
 

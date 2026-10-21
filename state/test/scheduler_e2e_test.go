@@ -110,7 +110,6 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 	// Initialize repositories
 	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
 	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
-	execRepo := postgres.NewTaskExecutionRepository(db, logger)
 	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
 
 	// Seed schedule_catalog rows so the activation policy can verify existence.
@@ -127,7 +126,7 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 	// Wire the UoW factory. Each cron tick gets a fresh UoW.
 	clk := ports.SystemClock{}
 	uowFactory := func() uow.UnitOfWork {
-		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, execRepo, catalogRepo, clk, logger)
+		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, catalogRepo, clk, logger)
 	}
 
 	// Initialize activation handler

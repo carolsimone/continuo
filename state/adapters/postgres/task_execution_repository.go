@@ -7,8 +7,6 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/carolsimone/continuo/state/domain/events"
-	repository "github.com/carolsimone/continuo/state/domain/repository"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 )
@@ -16,7 +14,6 @@ import (
 // TaskExecutionRepository defines all operations for task_execution table
 type TaskExecutionRepository interface {
 	Create(ctx context.Context, execution *TaskExecution) error
-	CreateTx(ctx context.Context, tx *sqlx.Tx, execution *TaskExecution) error
 	GetByID(ctx context.Context, id uuid.UUID) (*TaskExecution, error)
 	ListByScheduleID(ctx context.Context, scheduleID string, pageSize, pageOffset int) ([]*TaskExecution, int, error)
 }
@@ -81,83 +78,6 @@ func (r *taskExecutionRepository) Create(ctx context.Context, execution *TaskExe
 
 	return nil
 }
-
-// CreateTx inserts a new task_execution record within an existing transaction.
-// Uses ON CONFLICT (id) DO NOTHING for idempotency. created_at is stamped by
-// the DB clock (NOW()) so the ingest timestamp uses a single time authority
-// rather than a Go wall-clock value.
-func (r *taskExecutionRepository) CreateTx(ctx context.Context, tx *sqlx.Tx, execution *TaskExecution) error {
-	_, err := tx.NamedExecContext(ctx, `
-		INSERT INTO task_execution (
-			id, task_id, created_at, started_at, completed_at,
-			execution_time_seconds, executor_id, k8s_job_name,
-			error_message, cancelled_at, cancelled_by, cancellation_reason,
-			log_s3_key, run_results_uri, parse_cache, parse_cache_reason
-		) VALUES (
-			:id, :task_id, NOW(), :started_at, :completed_at,
-			:execution_time_seconds, :executor_id, :k8s_job_name,
-			:error_message, :cancelled_at, :cancelled_by, :cancellation_reason,
-			:log_s3_key, :run_results_uri, :parse_cache, :parse_cache_reason
-		)
-		ON CONFLICT (id) DO NOTHING
-	`, execution)
-	if err != nil {
-		r.logger.Error("Failed to create task_execution in tx",
-			"id", execution.ID,
-			"task_id", execution.TaskID,
-			"error", err,
-		)
-		return fmt.Errorf("failed to create task_execution in tx: %w", err)
-	}
-	r.logger.Info("Created task_execution in tx",
-		"id", execution.ID,
-		"task_id", execution.TaskID,
-	)
-	return nil
-}
-
-// rowFromEvent maps a recorded-execution domain event to its storage row.
-// ExecutorID is intentionally left nil: the event carries no executor id.
-// CreatedAt is left zero: CreateTx stamps it with the DB clock (NOW()).
-func rowFromEvent(evt events.TaskExecutionRecorded) *TaskExecution {
-	return &TaskExecution{
-		ID:                   evt.ExecutionID,
-		TaskID:               evt.TaskID,
-		StartedAt:            evt.StartedAt,
-		CompletedAt:          evt.CompletedAt,
-		ExecutionTimeSeconds: evt.ExecutionTimeSeconds,
-		K8sJobName:           evt.JobName,
-		ErrorMessage:         evt.ErrorMessage,
-		LogS3Key:             evt.LogS3Key,
-		RunResultsURI:        evt.RunResultsURI,
-		ParseCache:           evt.ParseCache,
-		ParseCacheReason:     evt.ParseCacheReason,
-	}
-}
-
-// TaskExecutionWriterAdapter binds a TaskExecutionRepository to a transaction
-// and satisfies repository.TaskExecutionWriter. The UnitOfWork constructs one
-// per call so CreateRecord always writes inside the active transaction.
-type TaskExecutionWriterAdapter struct {
-	repo TaskExecutionRepository
-	tx   *sqlx.Tx
-}
-
-// NewTaskExecutionWriter binds repo to tx for recorded-execution writes.
-func NewTaskExecutionWriter(repo TaskExecutionRepository, tx *sqlx.Tx) *TaskExecutionWriterAdapter {
-	return &TaskExecutionWriterAdapter{repo: repo, tx: tx}
-}
-
-// CreateRecord maps a recorded-execution domain event to the storage row and
-// inserts it inside the bound transaction.
-func (w *TaskExecutionWriterAdapter) CreateRecord(ctx context.Context, evt events.TaskExecutionRecorded) error {
-	if w.tx == nil {
-		return fmt.Errorf("CreateRecord requires an active transaction")
-	}
-	return w.repo.CreateTx(ctx, w.tx, rowFromEvent(evt))
-}
-
-var _ repository.TaskExecutionWriter = (*TaskExecutionWriterAdapter)(nil)
 
 // GetByID retrieves a task_execution by id
 func (r *taskExecutionRepository) GetByID(ctx context.Context, id uuid.UUID) (*TaskExecution, error) {

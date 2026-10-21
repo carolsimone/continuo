@@ -262,9 +262,9 @@ func main() {
 	// returns a fresh PostgresUnitOfWork over the same low-level repos and
 	// *sqlx.DB so concurrent message handlers do not share transaction state.
 	// The UoW builds tx-bound aggregate adapters (Run, Catalog, Outbox,
-	// TaskExecutions) per accessor call.
+	// TaskCollection) per accessor call.
 	uowFactory := func() uow.UnitOfWork {
-		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, taskExecutionRepo, catalogRepo, clk, logger)
+		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, catalogRepo, clk, logger)
 	}
 
 	// A run whose tasks state did not plan cannot move on: no status update

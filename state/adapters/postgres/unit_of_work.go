@@ -20,37 +20,34 @@ import (
 // a fresh adapter bound to the current transaction so write methods run inside
 // the active tx while reads use the autocommit db.
 type PostgresUnitOfWork struct {
-	db                *sqlx.DB
-	tx                *sqlx.Tx
-	schedulerRepo     SchedulerTrackerRepository
-	taskRepo          TaskTrackerRepository
-	taskExecutionRepo TaskExecutionRepository
-	catalogRepo       ScheduleCatalogRepository
-	clock             ports.Clock
-	logger            *slog.Logger
+	db            *sqlx.DB
+	tx            *sqlx.Tx
+	schedulerRepo SchedulerTrackerRepository
+	taskRepo      TaskTrackerRepository
+	catalogRepo   ScheduleCatalogRepository
+	clock         ports.Clock
+	logger        *slog.Logger
 }
 
 // NewPostgresUnitOfWork constructs a PostgresUnitOfWork over the autocommit db
 // and the low-level repositories its aggregate accessors compose. The
-// Run(), Catalog(), Outbox(), TaskExecutions(), and TaskCollection() accessors
+// Run(), Catalog(), Outbox() and TaskCollection() accessors
 // each return an adapter bound to the current transaction.
 func NewPostgresUnitOfWork(
 	db *sqlx.DB,
 	schedulerRepo SchedulerTrackerRepository,
 	taskRepo TaskTrackerRepository,
-	taskExecutionRepo TaskExecutionRepository,
 	catalogRepo ScheduleCatalogRepository,
 	clock ports.Clock,
 	logger *slog.Logger,
 ) *PostgresUnitOfWork {
 	return &PostgresUnitOfWork{
-		db:                db,
-		schedulerRepo:     schedulerRepo,
-		taskRepo:          taskRepo,
-		taskExecutionRepo: taskExecutionRepo,
-		catalogRepo:       catalogRepo,
-		clock:             clock,
-		logger:            logger,
+		db:            db,
+		schedulerRepo: schedulerRepo,
+		taskRepo:      taskRepo,
+		catalogRepo:   catalogRepo,
+		clock:         clock,
+		logger:        logger,
 	}
 }
 
@@ -120,11 +117,6 @@ func (u *PostgresUnitOfWork) Outbox() ports.OutboxPublisher {
 }
 
 func (u *PostgresUnitOfWork) Clock() ports.Clock { return u.clock }
-
-// TaskExecutions returns a TaskExecutionWriter bound to the current transaction.
-func (u *PostgresUnitOfWork) TaskExecutions() repository.TaskExecutionWriter {
-	return NewTaskExecutionWriter(u.taskExecutionRepo, u.tx)
-}
 
 // TaskCollection returns a TaskCollectionAdapter bound to the current
 // transaction (or nil tx if no transaction is in progress). Each call

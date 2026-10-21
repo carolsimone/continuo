@@ -236,7 +236,7 @@ func TestPostgresUnitOfWork_MaterializationWritesRollBackWithTheTransaction(t *t
 	logger := discardLogger()
 	u := postgres.NewPostgresUnitOfWork(db,
 		postgres.NewSchedulerTrackerRepository(db, logger), postgres.NewTaskTrackerRepository(db, logger),
-		postgres.NewTaskExecutionRepository(db, logger), postgres.NewScheduleCatalogRepository(db, logger),
+		postgres.NewScheduleCatalogRepository(db, logger),
 		ports.SystemClock{}, logger)
 
 	require.NoError(t, u.Begin(ctx))
