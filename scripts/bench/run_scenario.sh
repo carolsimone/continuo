@@ -39,6 +39,23 @@ finish_run() {
   bench_finish_run "${schedule}" "$1" "${timeout_s}" "benchmark timeout"
 }
 
+# export_rows KIND SERVICE DEST: the run's KIND rows (run_rows.py) for the
+# per-hand-off breakdown, read from SERVICE's database into DEST. A read that
+# fails leaves DEST an empty array and the breakdown without those rows, and
+# keeps the read's whole error output beside DEST (DEST with .err for .json).
+export_rows() {
+  local kind="$1" service="$2" dest="$3" sql err
+  err="${dest%.json}.err"
+  if sql="$(python3 "${here}/run_rows.py" "${kind}" "${run_id}" 2>"${err}")" \
+    && bench_sql "${service}" "${sql}" > "${dest}" 2>>"${err}" \
+    && python3 -c 'import json, sys; json.load(open(sys.argv[1]))' "${dest}" 2>>"${err}"; then
+    rm -f "${err}"
+    return 0
+  fi
+  echo "bench: could not read the run's ${kind} (see ${err}); the hand-off breakdown leaves them out" >&2
+  echo "[]" > "${dest}"
+}
+
 # The sampler runs detached; it is stopped on every exit, including a failed rep.
 sampler=""
 stop_sampler() {
@@ -88,7 +105,10 @@ for rep in $(seq 1 "${reps}"); do
   python3 "${here}/redis_streams.py" snapshot > "${out}/streams-after-rep${rep}.json"
   stop_sampler
   bench_kubectl get jobs -l "schedule=${schedule}" -o json | python3 "${here}/k8s_json.py" slim-jobs > "${out}/jobs-rep${rep}.json"
+  export_rows deployments execution-controller "${out}/deployments-rep${rep}.json"
+  export_rows tasks state "${out}/tasks-rep${rep}.json"
   python3 "${here}/collect.py" --scenario "${name}" --rep "${rep}" --operation "${op}" --run-id "${run_id}" \
+    --deployments "${out}/deployments-rep${rep}.json" --tasks "${out}/tasks-rep${rep}.json" \
     --payload "${payload}" --jobs "${out}/jobs-rep${rep}.json" --trigger-ts "${trigger_ts}" --done-ts "${done_ts}" \
     --samples "${samples}" --idle-start "${idle_start}" --idle-end "${idle_end}" \
     --streams-before "${out}/streams-before-rep${rep}.json" --streams-after "${out}/streams-after-rep${rep}.json" \

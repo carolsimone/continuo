@@ -4,7 +4,7 @@
 
 The harness measures continuo's run lifecycle — timing, Redis message volume, and per-service CPU and memory — with identical settings before and after each phase of the run-lifecycle consolidation, so the phases are compared on the same scenarios and the same metrics.
 
-Every node of a synthetic DAG is a real Kubernetes Job with the production dbt pod shape. The Job runs a stand-in `dbt` (`image/`) that prints a line and exits at once (after a 30 s sleep in the `slow30` image), and fails on purpose for tables named `fail_*`. Run time is therefore almost entirely the platform's own overhead.
+Every node of a synthetic DAG is a real Kubernetes Job with the production dbt pod shape. The Job runs a stand-in `dbt` (`image/`) that prints a line and exits at once (after a 30 s sleep in the `slow30` image), fails on purpose for tables named `fail_*`, and fails a table named `once_*` on its first attempt only (a retry's Job name ends in `-r<attempt>`). Run time is therefore almost entirely the platform's own overhead.
 
 ## Targets
 
@@ -12,8 +12,8 @@ Every node of a synthetic DAG is a real Kubernetes Job with the production dbt p
 
 | Target | Environment | Used for |
 |---|---|---|
-| `compose` (default) | The local compose stack with its kind cluster | Harness smoke, `dag-500`, the dependency-outage scenarios, the whole-DAG test fan-out (`test-2000`) |
-| `k8s` | A Helm install reached through `BENCH_KUBECONFIG` | The synthetic scale scenarios |
+| `compose` (default) | The local compose stack with its kind cluster | Harness smoke, `dag-500`, the dependency-outage scenarios, the whole-DAG test fan-out (`test-2000`), the width sweep, fail-once and the two start failures |
+| `k8s` | A Helm install reached through `BENCH_KUBECONFIG` | The synthetic scale scenarios, the width sweep and fail-once |
 
 Environment knobs:
 
@@ -26,7 +26,7 @@ Environment knobs:
 | `BENCH_KIND_CLUSTER` | `continuo` | kind cluster that receives the images (`compose`) |
 | `BENCH_REDIS_POD` | — | Redis pod of the install (`k8s`, required) |
 | `BENCH_REDIS_CONTAINER_NAME` | `redis` | Container inside `BENCH_REDIS_POD` |
-| `BENCH_PG_POD` | — | Postgres pod that holds release-controller's database (`k8s`, required by the export and the release check) |
+| `BENCH_PG_POD` | — | Postgres pod that holds release-controller's, state's and execution-controller's databases (`k8s`, required by the export, the release check and every rep's hand-off breakdown) |
 | `BENCH_SSH_HOST` | — | ssh destination on the k3s node; `build_image.sh` imports the images into its containerd (`k8s`, required) |
 | `CONTINUO_CLI` | `cli/bin/continuo` | CLI binary (`compose`); on `k8s` the harness runs the CLI inside `deploy/agent-chat` |
 | `BENCH_SCENARIOS` | all | Scenario names to run, comma- or space-separated (for example `cascade-2000,cancel-500`) |
@@ -35,6 +35,8 @@ Environment knobs:
 | `BENCH_SETTLE_S` | `15` | Pause before each later rep and after each run |
 | `BENCH_RUN_TIMEOUT_S` | `3600` (`2700` in `outage.sh`) | Longest wait for one run; a run still live then is cancelled and waited for before anything else starts |
 | `BENCH_SECOND_RUN_S` | `90` | How long the cancel scenario's second run lives before it is cancelled |
+| `BENCH_CANCEL_WAIT_S` | `300` | How long an interrupted scenario waits for its cancelled run to stop before it reports the run as still live |
+| `BENCH_START_TIMEOUT_S` | `120` | Start timeout `start_local_services.sh` gives execution-controller (`compose`), in seconds; a version without a start timeout ignores it |
 
 `discover.sh` prints what the harness reads from a `k8s` install and lists the candidate datastore pods; secrets are reported only as resolved or missing.
 
@@ -66,7 +68,8 @@ The machine that runs the harness stays awake for the whole run: a sleeping host
 ## Usage
 
 ```bash
-# Local stack: harness smoke, dag-500 and the two outage scenarios -> OUT_DIR/report.md
+# Local stack: harness smoke, dag-500, the two outage scenarios, test-2000, the width sweep, fail-once
+# and the two start failures -> OUT_DIR/report.md
 BENCH_TARGET=compose scripts/bench/run_baseline_kind.sh [OUT_DIR]
 
 # k8s install: every synthetic scenario on the union topology, restore on exit -> OUT_DIR/report.md
@@ -98,24 +101,52 @@ python3 scripts/bench/compare.py BEFORE_DIR AFTER_DIR [--labels A,B] > compariso
 | `cascade-2000` | `dag-2000` under a single failing root | Retries of the root, then 1,999 skips |
 | `cancel-500` | `dag-500` with 30 s nodes | Cancel after 60 s, immediate re-trigger, second run cancelled after 90 s; overlap of the two runs' Jobs |
 | `outage-postgres`, `outage-neo4j` | `dag-500` | The datastore container is disconnected from its networks for 10 minutes during a run and reconnected with its aliases, so its data survives (local stack only); final status and dropped messages |
+| `sweep-10`, `sweep-50`, `sweep-100`, `sweep-200` | 5 levels of 10, 50, 100 or 200 nodes, fan-in 2 | Hand-off against level width; the report fits its growth per task of width |
+| `fail-once` | 5 levels × 50 nodes, fan-in 2; every node fails its first attempt and succeeds on its retry | Retry turnaround |
+| `start-image` | 10 nodes on an image tag that does not exist (local stack only) | A pod that cannot pull its image: attempts, overlapping attempts, how the run ends |
+| `start-quota` | 10 nodes while a `pods: 0` ResourceQuota (`k8s/no-pods-quota.yaml`) holds the Job namespace (local stack only) | A Job that never gets a pod: whether the start timeout ends it, and how the run ends |
+
+However a start failure ends, normally or on INT, TERM or HUP, `bench_start_failure` cancels its live run, stops its runner, deletes its Jobs and then removes the start-quota scenario's quota; further INT, TERM and HUP are ignored until it has, and a step that fails is reported without skipping the next. If the machine running the harness dies during start-quota, remove the Jobs and the quota by hand: `kubectl --context kind-continuo -n default delete jobs -l schedule=bench-start-quota`, then `kubectl --context kind-continuo -n default delete resourcequota bench-no-pods`; until then the `pods: 0` quota blocks every Job of the local stack.
 
 ## Metric definitions
 
 | Metric | Definition |
 |---|---|
-| wall | Trigger to the last Job's finish |
+| wall | Trigger to the last Job's finish; empty when no Job of the run finished |
 | busy | Union of the Jobs' lifetimes (creation to finish) |
 | idle | wall − busy |
 | first start | Trigger to the first Job's creation |
 | finalize | Last Job's finish to the CLI reporting the run as not running (1 s poll) |
 | hand-off | A node's first Job creation minus its last upstream Job's finish |
 | messages per task | Sum of the streams' `entries-added` deltas ÷ executed tasks |
+| messages per attempt | The same sum ÷ the run's Jobs |
+| retries | Jobs created after each task's first Job, whether or not the earlier Job finished |
+| retry turnaround | A failed Job's finish to the creation of the next Job of the same task |
+| overlapping attempts | Jobs created while an earlier Job of the same task had not finished; a Job that never finished counts as unfinished, and a Job gone from the capture is not counted (the capture holds no lifetime for it) |
+| observe | An upstream's last Job finishing to execution-controller recording its result (`deployments.outcome_at`) |
+| round trip | That result recorded to the node's first deployment queued (`deployments.created_at`), both on execution-controller's clock |
+| to dispatch, to queue | The round trip split at state's first dispatch of the node (`task_tracker.dispatched_at`) |
+| admit | The node's first deployment queued to its Job created (`deployments.deployed_at`) |
 | CPU-seconds per 1,000 tasks | CPU integrated over the run (5 s samples) ÷ executed tasks × 1,000 |
 | peak memory | Highest per-service memory during the run, replicas summed per instant |
 | idle footprint | Mean CPU and memory over the smoke scenario's idle window |
 | max sample gap | Longest interval between two sampling instants during the run; the report lists reps whose gap exceeds 60 s, since their timings span a host sleep or stall |
 
 A retried node counts from its first Job's creation to its last Job's finish. A failed Job ends at its `Failed` condition's transition time.
+
+The hand-off steps take, for each node, the upstream whose last Job finished last, that upstream's last deployment and the node's first. Each rep reads them with `run_rows.py` from execution-controller's and state's databases (`deployments-rep<N>.json`, `tasks-rep<N>.json`); a read that fails leaves the steps empty and keeps its error output beside them (`deployments-rep<N>.err`, `tasks-rep<N>.err`). Observe, to dispatch and to queue compare two services' clocks, which share a host on the local stack.
+
+## Run-lifecycle targets
+
+`report.py` ends with the run-lifecycle targets and the measured value of each; `compare.py` shows both sides. They are reported, never gated.
+
+| Measure | Target | Read from |
+|---|---|---|
+| Hand-off p50 at width 100 | ≤ 5 s | `sweep-100` |
+| Growth of the hand-off per task of level width | < 0.1 s | least-squares slope of the hand-off p50 over the `sweep-*` widths |
+| Retry turnaround p50 | ≤ 5 s | `fail-once` |
+| Messages per attempt | 4 | `sweep-100` |
+| Overlapping attempts | 0 | the largest of any scenario |
 
 ## Run history
 

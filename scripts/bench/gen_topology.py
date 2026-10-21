@@ -2,7 +2,9 @@
 
 Level k holds about nodes/levels dbt-model nodes named nKK_IIII; each node
 depends on `fan_in` nodes of level k-1. With --fail-root, level 0 is a single
-node named fail_root, which the benchmark image fails on purpose.
+node named fail_root, which the benchmark image fails on purpose. With
+--fail-once, every node is named once_KK_IIII, which the benchmark image fails
+on its first attempt and runs on every retry.
 """
 from __future__ import annotations
 
@@ -19,6 +21,7 @@ LABEL_SAFE = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
 MAX_JOB_NAME_PREFIX = 54  # pkg/domain/naming.go: 63 - "-" - 8-character run-id suffix
 MAX_SCHEDULE_NAME = 50  # scheduler_tracker.schedule_name varchar(50)
 FAIL_ROOT = "fail_root"
+FAIL_ONCE_PREFIX = "once_"
 
 
 def level_sizes(nodes: int, levels: int, fail_root: bool) -> list:
@@ -34,20 +37,23 @@ def level_sizes(nodes: int, levels: int, fail_root: bool) -> list:
     return [base + (1 if index < extra else 0) for index in range(levels)]
 
 
-def node_name(level: int, index: int) -> str:
-    return f"n{level:02d}_{index:04d}"
+def node_name(level: int, index: int, prefix: str = "n") -> str:
+    return f"{prefix}{level:02d}_{index:04d}"
 
 
 def build_topology(*, nodes: int, levels: int, fan_in: int, schedule: str, service: str, schema: str,
-                   image_tag: str, fail_root: bool) -> list:
+                   image_tag: str, fail_root: bool, fail_once: bool = False) -> list:
     if fan_in < 1:
         raise ValueError("fan_in must be at least 1")
+    if fail_root and fail_once:
+        raise ValueError("--fail-root and --fail-once cannot be combined")
+    prefix = FAIL_ONCE_PREFIX if fail_once else "n"
     names = []
     for level, size in enumerate(level_sizes(nodes, levels, fail_root)):
         if level == 0 and fail_root:
             names.append([FAIL_ROOT])
         else:
-            names.append([node_name(level, index) for index in range(size)])
+            names.append([node_name(level, index, prefix) for index in range(size)])
     topology = []
     for level, row in enumerate(names):
         for index, table in enumerate(row):
@@ -108,12 +114,13 @@ def main(argv: list) -> int:
     parser.add_argument("--schema", default="bench")
     parser.add_argument("--image-tag", default="v1")
     parser.add_argument("--fail-root", action="store_true")
+    parser.add_argument("--fail-once", action="store_true")
     parser.add_argument("--release-id", default="")
     args = parser.parse_args(argv)
     try:
         topology = build_topology(nodes=args.nodes, levels=args.levels, fan_in=args.fan_in,
                                   schedule=args.schedule, service=args.service, schema=args.schema,
-                                  image_tag=args.image_tag, fail_root=args.fail_root)
+                                  image_tag=args.image_tag, fail_root=args.fail_root, fail_once=args.fail_once)
         validate(topology, args.schedule)
     except ValueError as err:
         log.error("%s", err)

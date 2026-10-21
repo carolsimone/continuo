@@ -67,3 +67,16 @@ def test_main_prints_the_payload(capsys):
     out = json.loads(capsys.readouterr().out)
     assert out["release_id"] == "rel-x"
     assert len(out["topology"]) == 4
+
+
+def test_fail_once_names_every_node_for_the_image_to_fail_once():
+    nodes = topo(fail_once=True)
+    assert sorted(n["table_name"] for n in nodes)[:2] == ["once_00_0000", "once_00_0001"]
+    assert all(n["table_name"].startswith("once_") for n in nodes)
+    by_table = {n["table_name"]: n for n in nodes}
+    assert by_table["once_01_0000"]["upstream_unique_ids"] == ["bench.once_00_0000", "bench.once_00_0001"]
+
+
+def test_main_refuses_fail_root_with_fail_once(capsys):
+    assert g.main(["--nodes", "6", "--levels", "2", "--schedule", "bench-t", "--fail-root", "--fail-once"]) == 2
+    assert capsys.readouterr().out == ""

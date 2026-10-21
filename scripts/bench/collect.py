@@ -36,46 +36,60 @@ def cancel_overlap(jobs_doc: dict, run_id: str, cancel_ts: datetime, next_run_id
 def build_result(*, scenario: str, rep: int, operation: str, run_id: str, payload: dict, jobs_doc: dict,
                  trigger_ts: datetime, done_ts: datetime, samples: list, idle_window, streams_before: dict,
                  streams_after: dict, extra: Optional[dict] = None, cancel_ts: Optional[datetime] = None,
-                 next_run_id: Optional[str] = None) -> dict:
+                 next_run_id: Optional[str] = None, deployment_rows: Optional[list] = None,
+                 task_rows: Optional[list] = None) -> dict:
     topology = payload["topology"]
     attempts = m.attempts_for_run(jobs_doc, run_id)
-    if not attempts:
+    if not attempts and (extra or {}).get("final_status") == "succeeded":
         raise ValueError(f"no Jobs found for run {run_id}")
     starts, finishes = m.node_windows(attempts)
     finished = [(a.created, a.finished) for a in attempts if a.finished]
     busy, gaps = m.busy_and_gaps(finished)
-    first_start = min(a.created for a in attempts)
-    last_finish = max((f for _, f in finished), default=first_start)
-    wall = (last_finish - trigger_ts).total_seconds()
+    first_start = min((a.created for a in attempts), default=None)
+    last_finish = max((f for _, f in finished), default=None)
+    wall = (last_finish - trigger_ts).total_seconds() if last_finish else None
     handoffs = m.handoff_latencies(topology, starts, finishes) if operation == "run" else []
+    turnarounds = m.retry_turnarounds(attempts)
     deltas = m.messages_delta(streams_before, streams_after)
     total = sum(deltas.values())
     result = {
         "scenario": scenario, "rep": rep, "operation": operation, "run_id": run_id,
         "nodes": len(topology), "nodes_executed": len(starts), "attempts": len(attempts),
         "failed_attempts": sum(1 for a in attempts if a.failed),
-        "wall_s": wall, "busy_s": busy, "idle_s": wall - busy, "gaps_s": gaps,
-        "first_start_s": (first_start - trigger_ts).total_seconds(),
+        "wall_s": wall, "busy_s": busy, "idle_s": wall - busy if wall is not None else None, "gaps_s": gaps,
+        "first_start_s": (first_start - trigger_ts).total_seconds() if first_start else None,
         "observed_done_s": (done_ts - trigger_ts).total_seconds(),
-        "finalize_s": (done_ts - last_finish).total_seconds(),
+        "finalize_s": (done_ts - last_finish).total_seconds() if last_finish else None,
         "handoff_p50_s": m.percentile(handoffs, 0.5) if handoffs else None,
         "handoff_p95_s": m.percentile(handoffs, 0.95) if handoffs else None,
         "handoff_max_s": max(handoffs) if handoffs else None,
+        "retries": m.retry_count(attempts),
+        "retry_turnaround_p50_s": m.percentile(turnarounds, 0.5) if turnarounds else None,
+        "retry_turnaround_max_s": max(turnarounds) if turnarounds else None,
+        "overlapping_attempts": m.overlapping_attempts(attempts),
         "messages_total": total,
         "messages_per_task": total / max(len(starts), 1),
+        "messages_per_attempt": total / max(len(attempts), 1),
         "messages_by_stream": deltas,
         "usage_run": m.usage(samples, trigger_ts, done_ts),
         "max_sample_gap_s": m.max_sample_gap(samples, trigger_ts, done_ts),
         "usage_idle": m.usage(samples, idle_window[0], idle_window[1]) if idle_window else {},
     }
+    steps = m.handoff_breakdown(topology, finishes, m.read_deployments(deployment_rows or []),
+                                m.read_dispatches(task_rows or [])) if operation == "run" else {}
+    for step in m.BREAKDOWN_STEPS:
+        values = steps.get(step) or []
+        result[f"{step}_p50_s"] = m.percentile(values, 0.5) if values else None
     if cancel_ts is not None:
         result.update(cancel_overlap(jobs_doc, run_id, cancel_ts, next_run_id, trigger_ts))
     result.update(extra or {})
     return result
 
 
-def _load(path: str) -> dict:
-    return json.loads(Path(path).read_text(encoding="utf-8")) if path else {}
+def _load(path: str, empty=None):
+    if not path:
+        return {} if empty is None else empty
+    return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
 def main(argv: list) -> int:
@@ -96,6 +110,8 @@ def main(argv: list) -> int:
     p.add_argument("--streams-after", default="")
     p.add_argument("--cancel-ts", default="")
     p.add_argument("--next-run-id", default="")
+    p.add_argument("--deployments", default="", help="run_rows.py deployments output for the run")
+    p.add_argument("--tasks", default="", help="run_rows.py tasks output for the run")
     p.add_argument("--extra", action="append", default=[], help="key=value added to the result")
     p.add_argument("--out", required=True)
     a = p.parse_args(argv)
@@ -110,12 +126,13 @@ def main(argv: list) -> int:
             samples=samples, idle_window=idle,
             streams_before=_load(a.streams_before), streams_after=_load(a.streams_after),
             extra=extra, cancel_ts=m.parse_ts(a.cancel_ts) if a.cancel_ts else None,
-            next_run_id=a.next_run_id or None)
+            next_run_id=a.next_run_id or None,
+            deployment_rows=_load(a.deployments, []), task_rows=_load(a.tasks, []))
     except ValueError as err:
         log.error("%s", err)
         return 1
     Path(a.out).write_text(json.dumps(result, indent=2, default=str), encoding="utf-8")
-    log.info("%s rep %d: wall %.1fs, idle %.1fs, %d messages", a.scenario, a.rep,
+    log.info("%s rep %d: wall %s s, idle %s s, %d messages", a.scenario, a.rep,
              result["wall_s"], result["idle_s"], result["messages_total"])
     return 0
 

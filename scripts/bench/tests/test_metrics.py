@@ -89,3 +89,65 @@ def test_sampling_that_starts_late_or_stops_early_counts_as_a_gap():
     assert m.max_sample_gap(samples(range(0, 61, 5)), at(0), at(600)) == 540
     assert m.max_sample_gap(samples(range(100, 601, 5)), at(0), at(600)) == 100
     assert m.max_sample_gap([], at(0), at(600)) is None
+
+
+def test_retry_turnaround_runs_from_a_failed_job_finishing_to_the_retry_job_being_created():
+    doc = {"items": [job("r1", "a", 0, 5, failed=True, name="j-a"), job("r1", "a", 8, 12, name="j-a-r1"),
+                     job("r1", "b", 0, 4, name="j-b")]}
+    assert m.retry_turnarounds(m.attempts_for_run(doc, "r1")) == [3]
+
+
+def test_retry_count_is_every_attempt_after_each_tasks_first():
+    doc = {"items": [job("r1", "a", 0, name="j-a"), job("r1", "a", 2, name="j-a-r1"), job("r1", "a", 4, 6, name="j-a-r2"),
+                     job("r1", "b", 0, 4, name="j-b")]}
+    assert m.retry_count(m.attempts_for_run(doc, "r1")) == 2
+
+
+def test_a_job_that_never_finished_gives_no_turnaround():
+    doc = {"items": [job("r1", "a", 0, None, name="j-a"), job("r1", "a", 2, 3, name="j-a-r1")]}
+    assert m.retry_turnarounds(m.attempts_for_run(doc, "r1")) == []
+
+
+def test_an_attempt_created_while_an_earlier_attempt_had_not_finished_overlaps():
+    # a: attempt 0 never finished, so attempts 1 and 2 each overlap it.
+    # b: attempt 0 finished before attempt 1 was created.
+    # c: attempt 0 finished after attempt 1 was created.
+    doc = {"items": [
+        job("r1", "a", 0, None, name="a0"), job("r1", "a", 10, None, name="a1"), job("r1", "a", 20, None, name="a2"),
+        job("r1", "b", 0, 5, failed=True, name="b0"), job("r1", "b", 6, 9, name="b1"),
+        job("r1", "c", 0, 9, failed=True, name="c0"), job("r1", "c", 7, 12, name="c1"),
+    ]}
+    assert m.overlapping_attempts(m.attempts_for_run(doc, "r1")) == 3
+
+
+def test_breakdown_splits_each_handoff_into_its_steps():
+    topology = [
+        {"unique_id": "b.a", "table_name": "a", "upstream_unique_ids": []},
+        {"unique_id": "b.b", "table_name": "b", "upstream_unique_ids": []},
+        {"unique_id": "b.c", "table_name": "c", "upstream_unique_ids": ["b.a", "b.b"]},
+    ]
+    finishes = {"a": at(6), "b": at(4), "c": at(12)}
+    deployments = m.read_deployments([
+        {"table": "a", "queued": at(0).isoformat(), "created": at(1).isoformat(), "recorded": at(6.5).isoformat()},
+        {"table": "b", "queued": at(0).isoformat(), "created": at(1).isoformat(), "recorded": at(4.5).isoformat()},
+        {"table": "c", "queued": at(8).isoformat(), "created": at(9).isoformat(), "recorded": None},
+    ])
+    dispatched = m.read_dispatches([{"table": "c", "dispatched": at(7.5).isoformat()}, {"table": "a", "dispatched": None}])
+    steps = m.handoff_breakdown(topology, finishes, deployments, dispatched)
+    assert steps == {"observe": [0.5], "round_trip": [1.5], "to_dispatch": [1.0], "to_queue": [0.5], "admit": [1.0]}
+
+
+def test_breakdown_takes_the_upstreams_last_attempt_and_the_nodes_first():
+    topology = [{"unique_id": "b.a", "table_name": "a", "upstream_unique_ids": []},
+                {"unique_id": "b.c", "table_name": "c", "upstream_unique_ids": ["b.a"]}]
+    deployments = m.read_deployments([
+        {"table": "a", "queued": at(0).isoformat(), "created": at(1).isoformat(), "recorded": at(3).isoformat()},
+        {"table": "a", "queued": at(4).isoformat(), "created": at(5).isoformat(), "recorded": at(9).isoformat()},
+        {"table": "c", "queued": at(10).isoformat(), "created": at(11).isoformat(), "recorded": None},
+        {"table": "c", "queued": at(20).isoformat(), "created": None, "recorded": None},
+    ])
+    steps = m.handoff_breakdown(topology, {"a": at(8)}, deployments, {})
+    assert steps["observe"] == [1.0]
+    assert steps["round_trip"] == [1.0]
+    assert steps["admit"] == [1.0]
+    assert steps["to_dispatch"] == [] and steps["to_queue"] == []

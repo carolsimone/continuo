@@ -7,9 +7,20 @@ The fakes keep their state in FAKE_DIR:
                      what they print, announce-output (when present) what an announce-topology call prints instead,
                      and FAKE_ANNOUNCE_RC the announce-topology exit code
   jobs.json          what `kubectl get jobs` prints
+  events             one line per `schedule cancel` ("cancel <reason>") and per `kubectl apply` or `kubectl
+                     delete` ("kubectl <arguments>"), in call order; `delete jobs` fails once
+                     FAKE_DELETE_JOBS_FAIL_AFTER calls of it have succeeded, and every `kubectl delete` takes
+                     FAKE_DELETE_SLEEP seconds. Like the real CLI, a failing call prints an error envelope on
+                     stdout and exits 5: `schedule status` fails when FAKE_STATUS_FAIL is set or the file
+                     FAKE_STATUS_FAIL_WHEN_EXISTS names exists, and `schedule cancel` when FAKE_CANCEL_FAIL is
+                     set; with FAKE_CANCEL_NOOP a cancel is accepted and the run stays live
+  deployments.json, tasks.json  what psql prints in a `docker exec` for a query of deployments or task_tracker
+                     (`[]` when absent); docker-calls.jsonl records the argv of every such psql call, and
+                     `docker exec <container> printenv VAR` prints fake_<var>
   logs/<svc>.log     the service logs that `docker exec <svc> ... /tmp/<svc>.log` reads
   on-trigger/<svc>.log  lines a trigger appends to logs/<svc>.log, standing for what services log during the run
-Runs never finish on their own unless FAKE_RUN_RESULT names the status a trigger ends with.
+Runs never finish on their own unless FAKE_RUN_RESULT names the status a trigger ends with. Run ids are
+run-<n>, or UUIDs when FAKE_UUID_RUNS is set.
 """
 import json
 import os
@@ -23,6 +34,9 @@ d = Path(os.environ["FAKE_DIR"])
 def read(name, default=""):
     p = d / name
     return p.read_text().strip() if p.exists() else default
+def unavailable():
+    print(json.dumps({"error": {"code": "unavailable", "message": "connection refused", "retryable": True}}))
+    sys.exit(5)
 cmd = sys.argv[1:3]
 if cmd == ["schedule", "trigger"]:
     if read("state") == "running":
@@ -30,18 +44,27 @@ if cmd == ["schedule", "trigger"]:
         sys.exit(4)
     n = int(read("n", "0")) + 1
     (d / "n").write_text(str(n))
-    (d / "current").write_text(f"run-{n}")
+    run_id = f"00000000-0000-4000-8000-{n:012d}" if os.environ.get("FAKE_UUID_RUNS") else f"run-{n}"
+    (d / "current").write_text(run_id)
     (d / "state").write_text(os.environ.get("FAKE_RUN_RESULT") or "running")
     for extra in sorted((d / "on-trigger").glob("*.log")):
         with open(d / "logs" / extra.name, "a") as log:
             log.write(extra.read_text())
-    print(json.dumps({"schedule_id": f"run-{n}", "schedule_name": sys.argv[3], "triggered_at": "2026-10-03T09:00:00Z"}))
+    print(json.dumps({"schedule_id": run_id, "schedule_name": sys.argv[3], "triggered_at": "2026-10-03T09:00:00Z"}))
 elif cmd == ["schedule", "status"]:
+    marker = os.environ.get("FAKE_STATUS_FAIL_WHEN_EXISTS")
+    if os.environ.get("FAKE_STATUS_FAIL") or (marker and os.path.exists(marker)):
+        unavailable()
     state = read("state")
     print(json.dumps({"schedule_name": sys.argv[3], "run_id": read("current"), "is_running": state == "running",
                       "last_run_status": state}))
 elif cmd == ["schedule", "cancel"]:
-    (d / "state").write_text("cancelled")
+    if os.environ.get("FAKE_CANCEL_FAIL"):
+        unavailable()
+    with open(d / "events", "a") as events:
+        events.write(f"cancel {sys.argv[4]}\n")
+    if not os.environ.get("FAKE_CANCEL_NOOP"):
+        (d / "state").write_text("cancelled")
     with open(d / "calls", "a") as calls:
         calls.write(f"cancel {sys.argv[4]}\n")
     print(json.dumps({"schedule_id": read("current"), "cancelled_at": "2026-10-03T09:00:05Z"}))
@@ -50,7 +73,7 @@ else:
 '''
 
 FAKE_KUBECTL = r'''#!/usr/bin/env python3
-import json, os, sys
+import json, os, sys, time
 args = " ".join(sys.argv[1:])
 if " exec " in f" {args} " and os.environ.get("FAKE_EXEC_FAIL"):
     sys.exit("Unable to connect to the server: net/http: TLS handshake timeout")
@@ -70,7 +93,18 @@ if "get deploy" in args:
            for name in ("POSTGRES_USER", "POSTGRES_DB", "POSTGRES_PASSWORD", "REDIS_PASSWORD")]
     print(json.dumps({"spec": {"template": {"spec": {"containers": [{"name": "svc", "env": env}]}}}}))
     sys.exit(0)
-if "delete jobs" in args:
+if " apply " in f" {args} " or " delete " in f" {args} ":
+    fake = os.environ["FAKE_DIR"]
+    with open(os.path.join(fake, "events"), "a") as events:
+        events.write("kubectl " + args + "\n")
+    if " delete " in f" {args} " and os.environ.get("FAKE_DELETE_SLEEP"):
+        time.sleep(float(os.environ["FAKE_DELETE_SLEEP"]))
+    if "delete jobs" in args and os.environ.get("FAKE_DELETE_JOBS_FAIL_AFTER") is not None:
+        count = os.path.join(fake, "delete-jobs-count")
+        done = int(open(count).read()) if os.path.exists(count) else 0
+        open(count, "w").write(str(done + 1))
+        if done >= int(os.environ["FAKE_DELETE_JOBS_FAIL_AFTER"]):
+            sys.exit("Error from server (InternalError): an error on the server has prevented the request")
     sys.exit(0)
 if "get jobs" in args:
     sys.stdout.write(open(os.path.join(os.environ["FAKE_DIR"], "jobs.json")).read())
@@ -107,6 +141,20 @@ elif args[0] == "exec":
                 sys.stdout.write(open(output).read())
                 break
         sys.exit(int(os.environ.get("FAKE_ANNOUNCE_RC", "0")))
+    if rest[1:2] == ["printenv"]:
+        print("fake_" + rest[2].lower())
+        sys.exit(0)
+    if "psql" in rest:
+        with open(os.path.join(fake, "docker-calls.jsonl"), "a") as calls:
+            calls.write(json.dumps({"argv": args}) + "\n")
+        sql = rest[rest.index("-c") + 1]
+        for name, marker in (("deployments.json", "FROM deployments"), ("tasks.json", "FROM task_tracker")):
+            path = os.path.join(fake, name)
+            if marker in sql and os.path.exists(path):
+                sys.stdout.write(open(path).read())
+                sys.exit(0)
+        print("[]")
+        sys.exit(0)
     command = [part.replace("/tmp/", logs) for part in rest[1:]]
     if "redis-cli" in command:
         sys.stdin.read()

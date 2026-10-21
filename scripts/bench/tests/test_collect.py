@@ -50,3 +50,81 @@ def test_a_pause_in_sampling_during_the_run_is_recorded():
         trigger_ts=at(0), done_ts=at(405), samples=m.read_samples(lines), idle_window=None,
         streams_before={}, streams_after={})
     assert result["max_sample_gap_s"] == 395
+
+
+def test_a_rep_reports_retry_turnaround_overlap_and_messages_per_attempt():
+    jobs = {"items": [job("r1", "n00_0000", 2, 6, failed=True, name="j0"), job("r1", "n00_0000", 9, 12, name="j0-r1"),
+                      job("r1", "n01_0000", 14, 16)]}
+    result = collect.build_result(
+        scenario="s", rep=1, operation="run", run_id="r1", payload=PAYLOAD, jobs_doc=jobs,
+        trigger_ts=at(0), done_ts=at(20), samples=[], idle_window=None,
+        streams_before={"x": 0}, streams_after={"x": 12}, extra={"final_status": "succeeded"})
+    assert result["attempts"] == 3
+    assert result["retries"] == 1
+    assert result["retry_turnaround_p50_s"] == 3
+    assert result["overlapping_attempts"] == 0
+    assert result["messages_per_attempt"] == 4
+
+
+def test_a_failed_run_whose_jobs_are_all_gone_still_reports():
+    result = collect.build_result(
+        scenario="s", rep=1, operation="run", run_id="r1", payload=PAYLOAD, jobs_doc={"items": []},
+        trigger_ts=at(0), done_ts=at(150), samples=[], idle_window=None,
+        streams_before={}, streams_after={}, extra={"final_status": "failed"})
+    assert result["attempts"] == 0
+    assert result["wall_s"] is None
+    assert result["observed_done_s"] == 150
+    assert result["overlapping_attempts"] == 0
+
+
+def test_a_run_whose_jobs_never_finished_counts_its_retries_and_has_no_wall_time():
+    jobs = {"items": [job("r1", "n00_0000", 1, name="j0"), job("r1", "n00_0000", 3, name="j0-r1"),
+                      job("r1", "n00_0000", 5, name="j0-r2")]}
+    result = collect.build_result(
+        scenario="s", rep=1, operation="run", run_id="r1", payload=PAYLOAD, jobs_doc=jobs,
+        trigger_ts=at(0), done_ts=at(20), samples=[], idle_window=None,
+        streams_before={}, streams_after={}, extra={"final_status": "failed"})
+    assert result["retries"] == 2
+    assert result["retry_turnaround_p50_s"] is None
+    assert result["overlapping_attempts"] == 2
+    assert result["wall_s"] is None
+    assert result["idle_s"] is None
+    assert result["finalize_s"] is None
+
+
+def test_a_succeeded_run_without_jobs_is_a_harness_error():
+    import pytest
+    with pytest.raises(ValueError, match="no Jobs found for run r1"):
+        collect.build_result(
+            scenario="s", rep=1, operation="run", run_id="r1", payload=PAYLOAD, jobs_doc={"items": []},
+            trigger_ts=at(0), done_ts=at(5), samples=[], idle_window=None,
+            streams_before={}, streams_after={}, extra={"final_status": "succeeded"})
+
+
+def test_a_rep_reports_the_p50_of_every_handoff_step():
+    jobs = {"items": [job("r1", "n00_0000", 2, 6), job("r1", "n01_0000", 9, 12)]}
+    deployment_rows = [
+        {"table": "n00_0000", "queued": at(1).isoformat(), "created": at(2).isoformat(), "recorded": at(6.5).isoformat()},
+        {"table": "n01_0000", "queued": at(8).isoformat(), "created": at(9).isoformat(), "recorded": at(12.5).isoformat()},
+    ]
+    task_rows = [{"table": "n00_0000", "dispatched": at(0.5).isoformat()},
+                 {"table": "n01_0000", "dispatched": at(7.5).isoformat()}]
+    result = collect.build_result(
+        scenario="s", rep=1, operation="run", run_id="r1", payload=PAYLOAD, jobs_doc=jobs,
+        trigger_ts=at(0), done_ts=at(15), samples=[], idle_window=None,
+        streams_before={}, streams_after={}, extra={"final_status": "succeeded"},
+        deployment_rows=deployment_rows, task_rows=task_rows)
+    assert result["observe_p50_s"] == 0.5
+    assert result["round_trip_p50_s"] == 1.5
+    assert result["to_dispatch_p50_s"] == 1.0
+    assert result["to_queue_p50_s"] == 0.5
+    assert result["admit_p50_s"] == 1.0
+
+
+def test_a_rep_without_rows_leaves_the_breakdown_empty():
+    jobs = {"items": [job("r1", "n00_0000", 2, 6), job("r1", "n01_0000", 9, 12)]}
+    result = collect.build_result(
+        scenario="s", rep=1, operation="run", run_id="r1", payload=PAYLOAD, jobs_doc=jobs,
+        trigger_ts=at(0), done_ts=at(15), samples=[], idle_window=None,
+        streams_before={}, streams_after={}, extra={"final_status": "succeeded"})
+    assert result["round_trip_p50_s"] is None
