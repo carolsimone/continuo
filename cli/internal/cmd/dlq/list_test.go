@@ -82,3 +82,30 @@ func TestList_OutputSchemaMatchesEmittedKeys(t *testing.T) {
 	out, _, _ := run(t, NewListCommand, f, nil, "")
 	assertSchemaMatches(t, NewListCommand, out)
 }
+
+func TestList_SaysWhyADeadLetterCannotBeRedriven(t *testing.T) {
+	f := &fakeDLQ{listResp: &deadletterv1.ListDeadLettersResponse{TotalOpen: 1,
+		DeadLetters: []*deadletterv1.DeadLetter{{Id: "a", Stream: "s:v1", Redrivable: false,
+			NotRedrivableReason: "stream s:v1 is retired"}}}}
+	out, _, exit := run(t, NewListCommand, f, nil, "")
+	require.Equal(t, 0, exit)
+	var p struct {
+		DeadLetters []map[string]any `json:"dead_letters"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &p))
+	require.Len(t, p.DeadLetters, 1)
+	assert.Equal(t, false, p.DeadLetters[0]["redrivable"])
+	assert.Equal(t, "stream s:v1 is retired", p.DeadLetters[0]["not_redrivable_reason"])
+}
+
+func TestList_HumanLineSaysWhyNotRedrivable(t *testing.T) {
+	f := &fakeDLQ{listResp: &deadletterv1.ListDeadLettersResponse{TotalOpen: 2,
+		DeadLetters: []*deadletterv1.DeadLetter{
+			{Id: "a", Source: "consumer", FailureKind: "permanent", Stream: "s:v1", Error: "boom",
+				NotRedrivableReason: "stream s:v1 is retired"},
+			{Id: "b", Source: "consumer", FailureKind: "permanent", Stream: "t:v1", Error: "bang", Redrivable: true}}}}
+	_, errb, exit := runWith(t, NewListCommand, f, nil, &config.Config{Timeout: 2 * time.Second, Human: true})
+	require.Equal(t, 0, exit)
+	assert.Contains(t, errb, "boom  (not redrivable: stream s:v1 is retired)")
+	assert.NotContains(t, errb, "bang  (not redrivable")
+}

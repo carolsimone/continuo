@@ -66,21 +66,23 @@ func humanOutput(cmd *cobra.Command) bool {
 
 // deadLetterJSON is one dead letter on stdout.
 type deadLetterJSON struct {
-	ID                string       `json:"id"`
-	Source            string       `json:"source"`
-	FailureKind       string       `json:"failure_kind"`
-	Stream            string       `json:"stream"`
-	Group             string       `json:"group"`
-	OriginalMessageID string       `json:"original_message_id"`
-	Producer          string       `json:"producer"`
-	Error             string       `json:"error"`
-	DeliveryCount     int64        `json:"delivery_count"`
-	OriginalAt        string       `json:"original_at"`
-	RecordedAt        string       `json:"recorded_at"`
-	ExpiresAt         string       `json:"expires_at"`
-	Status            string       `json:"status"`
-	Redrivable        bool         `json:"redrivable"`
-	Redrive           *redriveJSON `json:"redrive"`
+	ID                string `json:"id"`
+	Source            string `json:"source"`
+	FailureKind       string `json:"failure_kind"`
+	Stream            string `json:"stream"`
+	Group             string `json:"group"`
+	OriginalMessageID string `json:"original_message_id"`
+	Producer          string `json:"producer"`
+	Error             string `json:"error"`
+	DeliveryCount     int64  `json:"delivery_count"`
+	OriginalAt        string `json:"original_at"`
+	RecordedAt        string `json:"recorded_at"`
+	ExpiresAt         string `json:"expires_at"`
+	Status            string `json:"status"`
+	Redrivable        bool   `json:"redrivable"`
+	// NotRedrivableReason says why Redrivable is false; empty when it is true.
+	NotRedrivableReason string       `json:"not_redrivable_reason"`
+	Redrive             *redriveJSON `json:"redrive"`
 }
 
 // redriveJSON records who redrove a dead letter, why and when.
@@ -96,6 +98,7 @@ func toJSON(d *deadletterv1.DeadLetter) deadLetterJSON {
 		Group: d.GetConsumerGroup(), OriginalMessageID: d.GetOriginalMessageId(), Producer: d.GetProducer(), Error: d.GetError(),
 		DeliveryCount: d.GetDeliveryCount(), OriginalAt: d.GetOriginalAt(), RecordedAt: d.GetRecordedAt(),
 		ExpiresAt: d.GetExpiresAt(), Status: d.GetStatus(), Redrivable: d.GetRedrivable(),
+		NotRedrivableReason: d.GetNotRedrivableReason(),
 	}
 	if r := d.GetRedrive(); r != nil {
 		out.Redrive = &redriveJSON{Actor: r.GetActor(), Reason: r.GetReason(), At: r.GetAt()}
@@ -113,13 +116,18 @@ func toJSONList(items []*deadletterv1.DeadLetter) []deadLetterJSON {
 	return out
 }
 
-// humanLine renders one dead letter as a single stderr line.
+// humanLine renders one dead letter as a single stderr line, ending with why
+// it cannot be redriven when it cannot.
 func humanLine(d *deadletterv1.DeadLetter) string {
 	where := d.GetStream()
 	if g := d.GetConsumerGroup(); g != "" {
 		where += " [" + g + "]"
 	}
-	return fmt.Sprintf("%s  %s/%s  %s  %s", d.GetId(), d.GetSource(), d.GetFailureKind(), where, d.GetError())
+	line := fmt.Sprintf("%s  %s/%s  %s  %s", d.GetId(), d.GetSource(), d.GetFailureKind(), where, d.GetError())
+	if reason := d.GetNotRedrivableReason(); reason != "" {
+		line += "  (not redrivable: " + reason + ")"
+	}
+	return line
 }
 
 // optionalArg returns args[i], "" when it is absent, or a usage error when it

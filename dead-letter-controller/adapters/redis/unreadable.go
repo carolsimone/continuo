@@ -47,7 +47,7 @@ func unreadable(source deadletter.Source, stream, group string, msg goredis.XMes
 	return deadletter.DeadLetter{
 		ID: uuid.New(), DedupKey: deadletter.UnreadableKey(stream, msg.ID), Source: source,
 		FailureKind: model.DeadLetterKindPermanent, Stream: stream, Group: group, OriginalMessageID: msg.ID,
-		Error: "unreadable dead letter: " + cause.Error(), Fields: stringFields(msg.Values), Redrivable: false,
+		Error: "unreadable dead letter: " + cause.Error(), Fields: stringFields(msg.Values), Publishable: false,
 		OriginalAt: idTimeOr(msg.ID, now), RecordedAt: now, Status: deadletter.StatusOpen,
 	}
 }

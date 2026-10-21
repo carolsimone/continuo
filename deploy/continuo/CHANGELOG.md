@@ -12,6 +12,9 @@ shipped in those.
 
 ## [Unreleased]
 
+### Fixed
+- dead-letter-controller lists a dead letter as not redrivable, and says why in `not_redrivable_reason` (shown by `continuo dlq list` and `dlq show`), when its stream is retired or the streams contract does not name its stream or consumer group, and refuses to redrive it (gRPC `FAILED_PRECONDITION`, `continuo dlq redrive` exit 4). A redrive into a retired stream reported success and lost the message. No values change. PATCH.
+
 ### Security
 - Service and CLI images are built with Go 1.27.3, and every Go module requires Go 1.26.10: both fix GO-2026-6809 in `crypto/x509` certificate verification (compromised intermediate certificates are distrusted). No values change. PATCH.
 

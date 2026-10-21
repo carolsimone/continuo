@@ -40,9 +40,9 @@ var _ repository.DeadLetterRepository = (*fakeRepo)(nil)
 func (r *fakeRepo) putOpen(originalAt time.Time) deadletter.DeadLetter {
 	dl := deadletter.DeadLetter{
 		ID: uuid.New(), DedupKey: uuid.NewString(), Source: deadletter.SourceConsumer,
-		FailureKind: model.DeadLetterKind("permanent"), Stream: "node.updated:v1", Group: "orchestrator-group",
+		FailureKind: model.DeadLetterKind("permanent"), Stream: "orders.changed:v1", Group: "billing",
 		OriginalMessageID: "1-0", Producer: "state", Error: "boom", DeliveryCount: 3,
-		Fields: map[string]string{"k": "v"}, Redrivable: true,
+		Fields: map[string]string{"k": "v"}, Publishable: true,
 		OriginalAt: originalAt, RecordedAt: originalAt.Add(time.Minute), Status: deadletter.StatusOpen,
 	}
 	r.rows[dl.ID] = dl
@@ -144,6 +144,10 @@ func (noopObserver) Recorded(deadletter.DeadLetter) {}
 func (noopObserver) Redriven(deadletter.DeadLetter) {}
 func (noopObserver) Expired(deadletter.DeadLetter)  {}
 
+// testContract declares orders.changed:v1, read by the group billing, and the
+// retired stream orders.created:v1.
+var testContract = deadletter.NewContract(map[string][]string{"orders.changed:v1": {"billing"}}, []string{"orders.created:v1"})
+
 func newTestClient(t *testing.T) (deadletterv1.DeadLetterServiceClient, *fakeRepo) {
 	return newTestClientWithMaintenance(t, false)
 }
@@ -155,8 +159,8 @@ func newTestClientWithMaintenance(t *testing.T, maintenanceOn bool) (deadletterv
 	t.Helper()
 	repo := &fakeRepo{rows: map[uuid.UUID]deadletter.DeadLetter{}}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	query := handlers.NewQuery(repo)
-	redriver := handlers.NewRedriver(func() uow.UnitOfWork { return &fakeUoW{repo: repo} }, clock{}, noopObserver{}, logger)
+	query := handlers.NewQuery(repo, testContract)
+	redriver := handlers.NewRedriver(func() uow.UnitOfWork { return &fakeUoW{repo: repo} }, clock{}, noopObserver{}, testContract, logger)
 
 	lis := bufconn.Listen(1 << 20)
 	srv := newServer(lis, query, redriver, logger, maintenanceOn)
@@ -197,8 +201,11 @@ func TestRedrive_ConflictAndNotFoundCodes(t *testing.T) {
 	c, repo := newTestClient(t)
 	expired := repo.putOpen(time.Now().Add(-model.ReplayHorizon - time.Hour))
 	unreadable := repo.putOpen(time.Now().Add(-time.Hour))
-	unreadable.Redrivable = false
+	unreadable.Publishable = false
 	repo.rows[unreadable.ID] = unreadable
+	retired := repo.putOpen(time.Now().Add(-time.Hour))
+	retired.Stream = "orders.created:v1"
+	repo.rows[retired.ID] = retired
 
 	cases := []struct {
 		name string
@@ -207,6 +214,7 @@ func TestRedrive_ConflictAndNotFoundCodes(t *testing.T) {
 	}{
 		{"expired", &deadletterv1.RedriveDeadLettersRequest{Ids: []string{expired.ID.String()}, Reason: "r"}, codes.FailedPrecondition},
 		{"not redrivable", &deadletterv1.RedriveDeadLettersRequest{Ids: []string{unreadable.ID.String()}, Reason: "r"}, codes.FailedPrecondition},
+		{"retired stream", &deadletterv1.RedriveDeadLettersRequest{Ids: []string{retired.ID.String()}, Reason: "r"}, codes.FailedPrecondition},
 		{"unknown id", &deadletterv1.RedriveDeadLettersRequest{Ids: []string{uuid.NewString()}, Reason: "r"}, codes.NotFound},
 		{"malformed id", &deadletterv1.RedriveDeadLettersRequest{Ids: []string{"not-a-uuid"}, Reason: "r"}, codes.InvalidArgument},
 		{"blank reason", &deadletterv1.RedriveDeadLettersRequest{Ids: []string{expired.ID.String()}, Reason: " "}, codes.InvalidArgument},
@@ -258,8 +266,32 @@ func TestList_ReturnsOpenRowsAndTotal(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, resp.DeadLetters, 1)
 	assert.Equal(t, dl.ID.String(), resp.DeadLetters[0].Id)
-	assert.Equal(t, "orchestrator-group", resp.DeadLetters[0].ConsumerGroup)
+	assert.Equal(t, "billing", resp.DeadLetters[0].ConsumerGroup)
 	assert.Equal(t, int64(1), resp.TotalOpen)
+}
+
+// A dead letter of a retired stream is listed, and shown, as not redrivable,
+// with the reason.
+func TestList_RetiredStreamIsNotRedrivable(t *testing.T) {
+	c, repo := newTestClient(t)
+	live := repo.putOpen(time.Now().Add(-time.Hour))
+	retired := repo.putOpen(time.Now().Add(-time.Hour))
+	retired.Stream = "orders.created:v1"
+	repo.rows[retired.ID] = retired
+
+	resp, err := c.ListDeadLetters(context.Background(), &deadletterv1.ListDeadLettersRequest{})
+	require.NoError(t, err)
+	redrivable, reasons := map[string]bool{}, map[string]string{}
+	for _, d := range resp.DeadLetters {
+		redrivable[d.Id], reasons[d.Id] = d.Redrivable, d.NotRedrivableReason
+	}
+	assert.Equal(t, map[string]bool{live.ID.String(): true, retired.ID.String(): false}, redrivable)
+	assert.Equal(t, map[string]string{live.ID.String(): "", retired.ID.String(): "stream orders.created:v1 is retired"}, reasons)
+
+	got, err := c.GetDeadLetter(context.Background(), &deadletterv1.GetDeadLetterRequest{Id: retired.ID.String()})
+	require.NoError(t, err)
+	assert.False(t, got.DeadLetter.Redrivable)
+	assert.Equal(t, "stream orders.created:v1 is retired", got.DeadLetter.NotRedrivableReason)
 }
 
 func TestGet_ReturnsFieldsAndExpiry(t *testing.T) {
@@ -304,7 +336,7 @@ func TestToStatus_MapsEveryDomainError(t *testing.T) {
 func TestNewServer_ListensAndShutsDown(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	repo := &fakeRepo{rows: map[uuid.UUID]deadletter.DeadLetter{}}
-	srv, err := NewServer(0, handlers.NewQuery(repo), nil, logger, false)
+	srv, err := NewServer(0, handlers.NewQuery(repo, testContract), nil, logger, false)
 	require.NoError(t, err)
 	assert.NotEmpty(t, srv.Addr())
 
