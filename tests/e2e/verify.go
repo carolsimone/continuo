@@ -267,7 +267,7 @@ func verifyTasksSkipped(t *testing.T, ctx context.Context, clients *testClients,
 	t.Logf("✅ %v skipped", tables)
 }
 
-// verifyNodeExhaustedRetries polls state DB until the given node has retry_count = 2
+// verifyNodeExhaustedRetries polls state DB until the given node has attempt = 2
 // and status = 'failed', confirming all 2 retries were exhausted (3 total attempts).
 func verifyNodeExhaustedRetries(
 	t *testing.T,
@@ -278,17 +278,17 @@ func verifyNodeExhaustedRetries(
 ) {
 	t.Helper()
 	pollUntil(t, ctx, 10*time.Minute, 5*time.Second, func() (bool, error) {
-		var retryCount int
+		var attempt int
 		var status string
 		err := clients.stateDB.QueryRow(`
-			SELECT retry_count, status
+			SELECT attempt, status
 			FROM task_tracker
 			WHERE schedule_id = $1 AND table_name = $2
-		`, schedulerID, tableName).Scan(&retryCount, &status)
+		`, schedulerID, tableName).Scan(&attempt, &status)
 		if err != nil {
 			return false, err
 		}
-		return retryCount == 2 && status == "failed", nil
+		return attempt == 2 && status == "failed", nil
 	}, fmt.Sprintf("Timeout waiting for %s to exhaust 2 retries and reach failed status", tableName))
 
 	t.Logf("✅ %s exhausted 2 retries and is permanently failed (3 total attempts)", tableName)

@@ -195,7 +195,7 @@ func domainToProtoTask(t *postgres.TaskTracker) *statev1.Task {
 		TableName:   t.TableName,
 		JobName:     t.JobName,
 		Status:      domainToProtoTaskStatus(t.Status),
-		RetryCount:  num.ClampInt32(t.RetryCount),
+		RetryCount:  num.ClampInt32(t.Attempt),
 		MaxRetries:  num.ClampInt32(t.MaxRetries),
 	}
 

@@ -67,7 +67,7 @@ func TestRebaseFromFailure(t *testing.T) {
 	require.NoError(t, err)
 	srcID := trig.ScheduleId
 	_, err = stateDB.Exec(`
-		UPDATE task_tracker SET status = CASE node_key WHEN 'mart.rff_z' THEN 'failed' ELSE 'succeeded' END, retry_count = 2
+		UPDATE task_tracker SET status = CASE node_key WHEN 'mart.rff_z' THEN 'failed' ELSE 'succeeded' END, attempt = 2
 		WHERE schedule_id = $1`, srcID)
 	require.NoError(t, err)
 	finishRun(t, srcID)
@@ -162,7 +162,7 @@ func TestRebaseFromFailure(t *testing.T) {
 	// built it with the live rff_y, and so still offers the fix.
 	t.Run("a rebase of a rebase compares an inherited success with the release that built it", func(t *testing.T) {
 		require.NotEmpty(t, activeID, "the rebase without the option is the source")
-		_, err := stateDB.Exec(`UPDATE task_tracker SET status = 'failed', retry_count = 2 WHERE schedule_id = $1 AND node_key = 'mart.rff_z'`, activeID)
+		_, err := stateDB.Exec(`UPDATE task_tracker SET status = 'failed', attempt = 2 WHERE schedule_id = $1 AND node_key = 'mart.rff_z'`, activeID)
 		require.NoError(t, err)
 
 		pv, err := stateClient.PreviewRebase(ctx, &statev1.PreviewRebaseRequest{SourceRunId: activeID, IncludeChangedUpstream: true})

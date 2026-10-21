@@ -119,7 +119,7 @@ func restoreRun(tb testing.TB, db *sqlx.DB, runID uuid.UUID) {
 	tb.Helper()
 	_, err := db.Exec(`
 		UPDATE task_tracker
-		SET status = 'pending', retry_count = 0,
+		SET status = 'pending', attempt = 0,
 		    dispatched_at = CASE WHEN dispatched_at = created_at THEN dispatched_at END
 		WHERE schedule_id = $1`, runID)
 	require.NoError(tb, err)

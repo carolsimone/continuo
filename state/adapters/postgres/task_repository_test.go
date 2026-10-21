@@ -23,7 +23,7 @@ func createTask(t *testing.T, repo postgres.TaskTrackerRepository, scheduleID uu
 		TableName:   "tbl_" + uuid.New().String()[:8],
 		JobName:     "job",
 		Status:      run.TaskStatusFailed,
-		RetryCount:  3,
+		Attempt:     3,
 		MaxRetries:  5,
 		CreatedAt:   time.Now(),
 	}
@@ -57,7 +57,7 @@ func TestTaskRepository_HasRetryableFailedTaskTx(t *testing.T) {
 			TableName:   "tbl_" + uuid.New().String()[:8],
 			JobName:     "job",
 			Status:      status,
-			RetryCount:  retryCount,
+			Attempt:     retryCount,
 			MaxRetries:  maxRetries,
 			CreatedAt:   time.Now(),
 		}
@@ -85,19 +85,19 @@ func TestTaskRepository_HasRetryableFailedTaskTx(t *testing.T) {
 		assert.False(t, runCheck(t, s.ScheduleID))
 	})
 
-	t.Run("failed task with retry_count < max_retries returns true", func(t *testing.T) {
+	t.Run("failed task with attempt < max_retries returns true", func(t *testing.T) {
 		s := newScheduler(t)
 		insertTask(t, s.ScheduleID, run.TaskStatusFailed, 1, 3)
 		assert.True(t, runCheck(t, s.ScheduleID))
 	})
 
-	t.Run("failed task with retry_count equal to max_retries returns false", func(t *testing.T) {
+	t.Run("failed task with attempt equal to max_retries returns false", func(t *testing.T) {
 		s := newScheduler(t)
 		insertTask(t, s.ScheduleID, run.TaskStatusFailed, 3, 3)
 		assert.False(t, runCheck(t, s.ScheduleID))
 	})
 
-	t.Run("failed task with retry_count greater than max_retries returns false", func(t *testing.T) {
+	t.Run("failed task with attempt greater than max_retries returns false", func(t *testing.T) {
 		s := newScheduler(t)
 		insertTask(t, s.ScheduleID, run.TaskStatusFailed, 5, 3)
 		assert.False(t, runCheck(t, s.ScheduleID))
@@ -249,7 +249,7 @@ func TestTaskTrackerRepository_CreateAndGet_RoundTripsImageTag(t *testing.T) {
 		TableName:   "daily_metrics",
 		JobName:     "job-x",
 		Status:      run.TaskStatusPending,
-		RetryCount:  0,
+		Attempt:     0,
 		MaxRetries:  3,
 		ImageTag:    "registry/img:abcdef",
 	}
@@ -301,7 +301,7 @@ func TestTaskTrackerRepository_CreateAndGet_RoundTripsInheritedFromTaskID(t *tes
 		TableName:           "inherited_table",
 		JobName:             "job-i",
 		Status:              run.TaskStatusSucceeded,
-		RetryCount:          0,
+		Attempt:             0,
 		MaxRetries:          0,
 		ImageTag:            "img:OLD",
 		InheritedFromTaskID: &rootTaskID,
@@ -324,7 +324,7 @@ func TestTaskTrackerRepository_CreateAndGet_RoundTripsInheritedFromTaskID(t *tes
 		TableName:   "real_table",
 		JobName:     "job-r",
 		Status:      run.TaskStatusPending,
-		RetryCount:  0,
+		Attempt:     0,
 		MaxRetries:  3,
 		ImageTag:    "img:NEW",
 		// InheritedFromTaskID intentionally nil
@@ -372,7 +372,7 @@ func TestTaskRepository_SetStatusAndAttemptTx_DoesNotReviveCancelledTask(t *test
 
 // TestTaskRepository_SetStatusAndAttemptTx_AdvancesAttemptOnSameStatus guards the
 // SQL-layer fix: a newer attempt's terminal carrying the same status (failed→failed
-// at a higher retry_count) must still advance retry_count. The previous status-only
+// at a higher attempt) must still advance attempt. The previous status-only
 // gate dropped this write, leaving the stored attempt stale and corrupting the
 // attempt-monotonic comparison in the Run aggregate.
 func TestTaskRepository_SetStatusAndAttemptTx_AdvancesAttemptOnSameStatus(t *testing.T) {
@@ -409,7 +409,7 @@ func TestTaskRepository_SetStatusAndAttemptTx_AdvancesAttemptOnSameStatus(t *tes
 	require.NoError(t, err)
 	require.True(t, found)
 	assert.Equal(t, "failed", row.Status)
-	assert.Equal(t, int32(2), row.RetryCount, "retry_count must advance to the newer attempt")
+	assert.Equal(t, int32(2), row.Attempt, "attempt must advance to the newer attempt")
 }
 
 // TestTaskTrackerRepository_BulkCreateTx_CopiesTenThousandTasks covers a run

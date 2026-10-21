@@ -245,7 +245,7 @@ func TestBuiltVersions(t *testing.T) {
 	t.Run("a rerun records the content hash of its source's release", func(t *testing.T) {
 		source := promoteRelease(t, db, scheduledNode("raw", "rerun_orders", "dbt-model", "built-rerun"))
 		sourceID := h.trigger(t, "built-rerun", model.OperationRun)
-		_, err := db.Exec(`UPDATE task_tracker SET status = 'failed', retry_count = 2 WHERE schedule_id = $1`, sourceID)
+		_, err := db.Exec(`UPDATE task_tracker SET status = 'failed', attempt = 2 WHERE schedule_id = $1`, sourceID)
 		require.NoError(t, err)
 		_, err = db.Exec(`UPDATE scheduler_tracker SET status = 'failed', completed_at = now() WHERE schedule_id = $1`, sourceID)
 		require.NoError(t, err)

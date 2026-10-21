@@ -18,7 +18,7 @@ import (
 // inside its own method bodies.
 type TaskCollection interface {
 	// LoadAttemptState returns what a status update needs of one task: its
-	// status, its stored retry_count (the attempt number), its retry budget
+	// status, its stored attempt number, its retry budget
 	// and its node key, locking the row FOR UPDATE so concurrent
 	// task.status.updated deliveries for the same task serialize. The attempt
 	// is the discriminator the aggregate uses to order updates: a strictly
@@ -34,7 +34,7 @@ type TaskCollection interface {
 	HasFailed(ctx context.Context, runID uuid.UUID) (bool, error)
 
 	// HasRetryableFailed reports whether any task in the given run is
-	// FAILED and still has retries left (retry_count < max_retries).
+	// FAILED and still has retries left (attempt < max_retries).
 	HasRetryableFailed(ctx context.Context, runID uuid.UUID) (bool, error)
 
 	// HasNonSucceeded reports whether any task in the given run is in a
@@ -57,7 +57,7 @@ type TaskCollection interface {
 	// matches.
 	GetByID(ctx context.Context, taskID uuid.UUID) (Task, error)
 
-	// SetStatusAndAttempt writes status and retry_count for one task. It does
+	// SetStatusAndAttempt writes status and attempt for one task. It does
 	// not overwrite a cancelled task. Returns rowsAffected (0 if the task is
 	// cancelled or the row is missing). It applies no attempt logic — the Run
 	// aggregate decides when a write is warranted; this just persists it.

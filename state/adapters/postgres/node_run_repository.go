@@ -53,7 +53,7 @@ func NewNodeRunRepository(db *sqlx.DB, logger *slog.Logger) NodeRunRepository {
 //
 // Each row carries:
 //   - run-level: run_id, schedule_name, kind, terminal_status
-//   - task-level: task_status, retry_count, image_tag
+//   - task-level: task_status, attempt, image_tag
 //   - exec-level (latest execution per task): started_at, completed_at,
 //     error_message, log_s3_key, run_results_uri
 //
@@ -77,7 +77,7 @@ func (r *nodeRunRepository) List(
 	const query = `
 		WITH target_tasks AS (
 			SELECT t.task_id, t.schedule_id, t.status AS task_status,
-			       t.retry_count, t.image_tag, t.operation, t.node_key
+			       t.attempt, t.image_tag, t.operation, t.node_key
 			FROM task_tracker t
 			WHERE t.service_name = $1
 			  AND t.schema_name  = $2
@@ -98,7 +98,7 @@ func (r *nodeRunRepository) List(
 		       s.status             AS terminal_status,
 		       tt.task_id           AS task_id,
 		       tt.task_status       AS task_status,
-		       tt.retry_count       AS retry_count,
+		       tt.attempt           AS attempt,
 		       tt.image_tag         AS image_tag,
 		       s.created_at         AS created_at,
 		       le.started_at        AS started_at,
@@ -142,7 +142,7 @@ type nodeRunRow struct {
 	TerminalStatus string         `db:"terminal_status"`
 	TaskID         uuid.UUID      `db:"task_id"`
 	TaskStatus     run.TaskStatus `db:"task_status"`
-	RetryCount     int            `db:"retry_count"`
+	Attempt        int            `db:"attempt"`
 	ImageTag       string         `db:"image_tag"`
 	CreatedAt      time.Time      `db:"created_at"`
 	StartedAt      *time.Time     `db:"started_at"`
@@ -162,7 +162,7 @@ func toNodeRun(row nodeRunRow) *projection.NodeRun {
 		TerminalStatus: row.TerminalStatus,
 		TaskID:         row.TaskID,
 		TaskStatus:     row.TaskStatus,
-		RetryCount:     row.RetryCount,
+		RetryCount:     row.Attempt,
 		ImageTag:       row.ImageTag,
 		CreatedAt:      row.CreatedAt,
 		StartedAt:      row.StartedAt,
@@ -234,7 +234,7 @@ func (r *nodeRunRepository) ListNodes(
 	const rankedWindowedCTE = `
 		WITH ranked AS (
 			SELECT t.task_id, t.service_name, t.schema_name, t.table_name,
-			       t.retry_count, t.status AS run_status, s.created_at,
+			       t.attempt, t.status AS run_status, s.created_at,
 			       CASE WHEN t.operation = 'full_refresh' THEN 'run' ELSE t.operation END AS operation,
 			       ROW_NUMBER() OVER (
 			         PARTITION BY t.service_name, t.schema_name, t.table_name
@@ -271,7 +271,7 @@ func (r *nodeRunRepository) ListNodes(
 			  PERCENTILE_CONT(0.95) WITHIN GROUP (
 			     ORDER BY EXTRACT(EPOCH FROM (le.completed_at - le.started_at)))
 			     FILTER (WHERE le.completed_at IS NOT NULL AND le.started_at IS NOT NULL) AS p95_dur,
-			  COUNT(*) FILTER (WHERE w.retry_count > 0) AS flaky_count,
+			  COUNT(*) FILTER (WHERE w.attempt > 0) AS flaky_count,
 			  -- [1] = most-recent run_status
 			  (ARRAY_AGG(w.run_status ORDER BY w.created_at DESC))[1] AS last_status,
 			  MAX(w.created_at) AS last_run_at,

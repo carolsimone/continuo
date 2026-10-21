@@ -68,7 +68,7 @@ type TaskTracker struct {
 	TableName           string         `json:"table_name" db:"table_name"`
 	JobName             string         `json:"job_name" db:"job_name"`
 	Status              run.TaskStatus `json:"status" db:"status"`
-	RetryCount          int            `json:"retry_count" db:"retry_count"`
+	Attempt             int            `json:"attempt" db:"attempt"`
 	MaxRetries          int            `json:"max_retries" db:"max_retries"`
 	CancelledAt         *time.Time     `json:"cancelled_at,omitempty" db:"cancelled_at"`
 	CancelledBy         *string        `json:"cancelled_by,omitempty" db:"cancelled_by"`

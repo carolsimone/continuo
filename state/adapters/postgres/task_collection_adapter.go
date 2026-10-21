@@ -35,7 +35,7 @@ func (a *TaskCollectionAdapter) LoadAttemptState(ctx context.Context, taskID uui
 	}
 	return run.TaskAttemptState{
 		Status:     status,
-		RetryCount: row.RetryCount,
+		RetryCount: row.Attempt,
 		MaxRetries: row.MaxRetries,
 		NodeKey:    topology.NodeKey(row.NodeKey),
 	}, true, nil
@@ -109,7 +109,7 @@ func taskFromRow(t *TaskTracker) run.Task {
 		TableName:           t.TableName,
 		JobName:             t.JobName,
 		Status:              t.Status,
-		RetryCount:          t.RetryCount,
+		RetryCount:          t.Attempt,
 		MaxRetries:          t.MaxRetries,
 		CancelledAt:         t.CancelledAt,
 		CancelledBy:         t.CancelledBy,
@@ -138,7 +138,7 @@ func (a *TaskCollectionAdapter) BulkCreate(ctx context.Context, tasks []run.Task
 			TableName:           t.TableName,
 			JobName:             t.JobName,
 			Status:              t.Status,
-			RetryCount:          t.RetryCount,
+			Attempt:             t.RetryCount,
 			MaxRetries:          t.MaxRetries,
 			CancelledAt:         t.CancelledAt,
 			CancelledBy:         t.CancelledBy,

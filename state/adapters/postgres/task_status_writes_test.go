@@ -44,7 +44,7 @@ func TestTaskCollection_LoadAttemptStateReadsTheTask(t *testing.T) {
 	tenant := storeFailureSchedule(t, db)
 	r := startScheduleRun(t, db, tenant, "e2e-schedule-failure", model.OperationRun)
 	id := run.TaskIDFor(tenant, r.ScheduleID(), "e2e_schema.ftable_e")
-	_, err := db.Exec(`UPDATE task_tracker SET status = 'failed', retry_count = 1 WHERE task_id = $1`, id)
+	_, err := db.Exec(`UPDATE task_tracker SET status = 'failed', attempt = 1 WHERE task_id = $1`, id)
 	require.NoError(t, err)
 
 	inTaskTx(t, db, func(tasks run.TaskCollection) {
