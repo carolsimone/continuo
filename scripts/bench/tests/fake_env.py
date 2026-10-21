@@ -9,8 +9,11 @@ The fakes keep their state in FAKE_DIR:
   jobs.json          what `kubectl get jobs` prints
   events             one line per `schedule cancel` ("cancel <reason>") and per `kubectl apply` or `kubectl
                      delete` ("kubectl <arguments>"), in call order; `delete jobs` fails once
-                     FAKE_DELETE_JOBS_FAIL_AFTER calls of it have succeeded, `schedule status` fails when
-                     FAKE_STATUS_FAIL is set and `schedule cancel` when FAKE_CANCEL_FAIL is set
+                     FAKE_DELETE_JOBS_FAIL_AFTER calls of it have succeeded, and every `kubectl delete` takes
+                     FAKE_DELETE_SLEEP seconds. Like the real CLI, a failing call prints an error envelope on
+                     stdout and exits 5: `schedule status` fails when FAKE_STATUS_FAIL is set or the file
+                     FAKE_STATUS_FAIL_WHEN_EXISTS names exists, and `schedule cancel` when FAKE_CANCEL_FAIL is
+                     set; with FAKE_CANCEL_NOOP a cancel is accepted and the run stays live
   deployments.json, tasks.json  what psql prints in a `docker exec` for a query of deployments or task_tracker
                      (`[]` when absent); docker-calls.jsonl records the argv of every such psql call, and
                      `docker exec <container> printenv VAR` prints fake_<var>
@@ -31,6 +34,9 @@ d = Path(os.environ["FAKE_DIR"])
 def read(name, default=""):
     p = d / name
     return p.read_text().strip() if p.exists() else default
+def unavailable():
+    print(json.dumps({"error": {"code": "unavailable", "message": "connection refused", "retryable": True}}))
+    sys.exit(5)
 cmd = sys.argv[1:3]
 if cmd == ["schedule", "trigger"]:
     if read("state") == "running":
@@ -46,17 +52,19 @@ if cmd == ["schedule", "trigger"]:
             log.write(extra.read_text())
     print(json.dumps({"schedule_id": run_id, "schedule_name": sys.argv[3], "triggered_at": "2026-10-03T09:00:00Z"}))
 elif cmd == ["schedule", "status"]:
-    if os.environ.get("FAKE_STATUS_FAIL"):
-        sys.exit("rpc error: code = Unavailable desc = connection refused")
+    marker = os.environ.get("FAKE_STATUS_FAIL_WHEN_EXISTS")
+    if os.environ.get("FAKE_STATUS_FAIL") or (marker and os.path.exists(marker)):
+        unavailable()
     state = read("state")
     print(json.dumps({"schedule_name": sys.argv[3], "run_id": read("current"), "is_running": state == "running",
                       "last_run_status": state}))
 elif cmd == ["schedule", "cancel"]:
     if os.environ.get("FAKE_CANCEL_FAIL"):
-        sys.exit("rpc error: code = Unavailable desc = connection refused")
+        unavailable()
     with open(d / "events", "a") as events:
         events.write(f"cancel {sys.argv[4]}\n")
-    (d / "state").write_text("cancelled")
+    if not os.environ.get("FAKE_CANCEL_NOOP"):
+        (d / "state").write_text("cancelled")
     with open(d / "calls", "a") as calls:
         calls.write(f"cancel {sys.argv[4]}\n")
     print(json.dumps({"schedule_id": read("current"), "cancelled_at": "2026-10-03T09:00:05Z"}))
@@ -65,7 +73,7 @@ else:
 '''
 
 FAKE_KUBECTL = r'''#!/usr/bin/env python3
-import json, os, sys
+import json, os, sys, time
 args = " ".join(sys.argv[1:])
 if " exec " in f" {args} " and os.environ.get("FAKE_EXEC_FAIL"):
     sys.exit("Unable to connect to the server: net/http: TLS handshake timeout")
@@ -89,6 +97,8 @@ if " apply " in f" {args} " or " delete " in f" {args} ":
     fake = os.environ["FAKE_DIR"]
     with open(os.path.join(fake, "events"), "a") as events:
         events.write("kubectl " + args + "\n")
+    if " delete " in f" {args} " and os.environ.get("FAKE_DELETE_SLEEP"):
+        time.sleep(float(os.environ["FAKE_DELETE_SLEEP"]))
     if "delete jobs" in args and os.environ.get("FAKE_DELETE_JOBS_FAIL_AFTER") is not None:
         count = os.path.join(fake, "delete-jobs-count")
         done = int(open(count).read()) if os.path.exists(count) else 0

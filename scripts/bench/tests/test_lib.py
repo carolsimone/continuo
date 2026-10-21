@@ -378,3 +378,108 @@ def test_the_dev_exit_handler_restores_even_when_stopping_the_scenario_fails(tmp
     result = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=60)
     assert (tmp_path / "restored").exists(), result.stderr
     assert result.returncode == 1, "a scenario that could not be stopped is reported by the exit status"
+
+
+def runner_script(tmp_path, then=""):
+    """A scenario runner as bash 3.2 behaves when it waits on its run: it ignores TERM and exits once the
+    schedule's run is no longer running (giving up after 15 s), then runs THEN."""
+    script = tmp_path / "runner.sh"
+    script.write_text('trap "" TERM\n: > "$FAKE_DIR/runner-ready"\nfor _ in $(seq 150); do\n'
+                      '  [ "$(cat "$FAKE_DIR/state")" = running ] || break\n  sleep 0.1\ndone\n' + then + "\n")
+    return script
+
+
+# Starts the runner and waits until it ignores TERM, so a stop cannot end it before it does.
+START_RUNNER = 'bash "{runner}" & c=$!; while [ ! -e "$FAKE_DIR/runner-ready" ]; do sleep 0.05; done; '
+
+
+
+def live_run(fake, run_id="run-7"):
+    (fake / "state").write_text("running")
+    (fake / "current").write_text(run_id)
+    (fake / "n").write_text(run_id.split("-")[-1])
+
+
+def test_stopping_a_scenario_cancels_its_run_before_waiting_for_its_runner(tmp_path):
+    import fake_env
+    env = fake_env.make(tmp_path, [])
+    fake = Path(env["FAKE_DIR"])
+    live_run(fake)
+    out = run_lib(env, START_RUNNER.format(runner=runner_script(tmp_path)) +
+                  'if bench_stop_scenario "$c" bench-s; then echo stopped; else echo failed; fi; '
+                  'if kill -0 "$c" 2>/dev/null; then echo alive; else echo gone; fi')
+    assert out.stdout.split() == ["stopped", "gone"], out.stderr
+    assert (fake / "state").read_text() == "cancelled"
+
+
+def test_stopping_a_scenario_that_cannot_cancel_its_run_does_not_wait_for_its_runner(tmp_path):
+    import fake_env
+    env = fake_env.make(tmp_path, [])
+    env["FAKE_CANCEL_FAIL"] = "1"
+    fake = Path(env["FAKE_DIR"])
+    live_run(fake)
+    out = run_lib(env, START_RUNNER.format(runner=runner_script(tmp_path)) + 'start=$SECONDS; '
+                  'if bench_stop_scenario "$c" bench-s; then echo stopped; else echo failed; fi; '
+                  'echo "took $((SECONDS - start))"; kill -KILL "$c" 2>/dev/null || true')
+    assert out.stdout.split()[0] == "failed", out.stderr
+    assert int(out.stdout.split()[-1]) < 5, "a stop that could not cancel the run does not wait for the runner"
+    assert "could not cancel bench-s's run run-7" in out.stderr
+
+
+def test_stopping_a_scenario_cancels_a_run_its_runner_triggered_meanwhile(tmp_path):
+    import fake_env
+    env = fake_env.make(tmp_path, [])
+    fake = Path(env["FAKE_DIR"])
+    live_run(fake)
+    runner = runner_script(tmp_path, then="continuo schedule trigger bench-s >/dev/null")
+    out = run_lib(env, START_RUNNER.format(runner=runner) +
+                  'if bench_stop_scenario "$c" bench-s; then echo stopped; else echo failed; fi')
+    assert out.stdout.strip() == "stopped", out.stderr
+    assert (fake / "current").read_text() == "run-8", "the runner triggered a run while it was being stopped"
+    assert (fake / "state").read_text() == "cancelled"
+    assert (fake / "events").read_text().splitlines() == ["cancel benchmark interrupted"] * 2
+
+
+def test_stopping_a_scenario_reports_a_run_still_live_after_the_cancel(tmp_path):
+    import fake_env
+    env = fake_env.make(tmp_path, [])
+    env.update(FAKE_CANCEL_NOOP="1", BENCH_CANCEL_WAIT_S="1")
+    live_run(Path(env["FAKE_DIR"]))
+    out = run_lib(env, 'if bench_stop_scenario "" bench-s; then echo stopped; else echo failed; fi')
+    assert out.stdout.strip() == "failed"
+    assert "bench-s's run run-7 was still live 1 s after it was cancelled" in out.stderr
+
+
+def test_an_interrupted_start_failure_finishes_its_cleanup_despite_a_second_signal(tmp_path):
+    import signal
+    import time
+    import fake_env
+    env = fake_env.make(tmp_path, [])
+    env.update(BENCH_IDLE_S="0", BENCH_SETTLE_S="0", FAKE_DELETE_SLEEP="2")
+    fake, quota = Path(env["FAKE_DIR"]), quota_file(tmp_path)
+    proc, _ = start_failure(env, tmp_path, quota)
+    deadline = time.time() + 60
+    while not (fake / "current").exists() and time.time() < deadline:
+        time.sleep(0.2)
+    proc.send_signal(signal.SIGTERM)
+    while time.time() < deadline and "cancel benchmark interrupted" not in (
+            (fake / "events").read_text() if (fake / "events").exists() else ""):
+        time.sleep(0.1)
+    proc.send_signal(signal.SIGTERM)
+    _, stderr = proc.communicate(timeout=60)
+
+    assert proc.returncode == 143, stderr
+    assert after_the_cancel(fake)[-1].endswith(f"delete -f {quota} --ignore-not-found"), "the quota is still removed"
+
+
+def test_a_start_failure_whose_last_stop_fails_fails(tmp_path):
+    import fake_env
+    env = fake_env.make(tmp_path, [])
+    env.update(BENCH_IDLE_S="0", BENCH_SETTLE_S="0", FAKE_RUN_RESULT="failed",
+               FAKE_STATUS_FAIL_WHEN_EXISTS=str(tmp_path / "out" / "rep3.json"))
+    proc, out = start_failure(env, tmp_path, quota_file(tmp_path))
+    _, stderr = proc.communicate(timeout=120)
+
+    assert (out / "rep3.json").exists(), "every rep ran"
+    assert proc.returncode != 0, "a cleanup that could not read the run's state fails the scenario"
+    assert "could not read bench-sq's run state" in stderr

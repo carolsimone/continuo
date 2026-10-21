@@ -199,40 +199,53 @@ bench_finish_run() {
   echo "${status}"
 }
 
+# bench_cancel_live_run SCHEDULE: cancels SCHEDULE's run when one is live and
+# waits up to BENCH_CANCEL_WAIT_S (default 300) seconds for it to stop. Returns
+# non-zero, with a message, when the run's state cannot be read (the CLI exits
+# non-zero, printing its error envelope on stdout), the cancel fails, or the run
+# is still live after the wait.
+bench_cancel_live_run() {
+  local schedule="$1" wait_s="${BENCH_CANCEL_WAIT_S:-300}" status_json run_id running ended
+  if ! status_json="$(bench_cli_run schedule status "${schedule}" 2>/dev/null)" \
+     || ! read -r run_id running _ < <(printf '%s' "${status_json}" \
+          | python3 "$(bench_here)/cli_json.py" run-state 2>/dev/null); then
+    echo "bench: could not read ${schedule}'s run state; cancel its live run by hand" >&2
+    return 1
+  fi
+  [ "${running}" = "true" ] || return 0
+  if ! bench_cli_run schedule cancel "${schedule}" "benchmark interrupted" >/dev/null; then
+    echo "bench: could not cancel ${schedule}'s run ${run_id}; cancel it by hand" >&2
+    return 1
+  fi
+  ended="$(bench_wait_run "${schedule}" "${run_id}" "${wait_s}")"
+  if [ "${ended}" = "timeout" ]; then
+    echo "bench: ${schedule}'s run ${run_id} was still live ${wait_s} s after it was cancelled" >&2
+    return 1
+  fi
+}
+
 # Stops a scenario that is still running and returns non-zero, with a message,
 # when its run may still be live. It signals the runner CHILD (a process this
-# shell started; empty when none), cancels SCHEDULE's run if it is live and waits
-# up to 300 s for it to stop, then waits for CHILD to exit. The cancel comes
-# before the wait for CHILD: bash 3.2 (macOS) defers a signal until a command
-# substitution ends, so a runner waiting for its run to end exits only once the
-# run has stopped.
+# shell started; empty when none) and cancels SCHEDULE's live run, then waits for
+# CHILD to exit and cancels a run CHILD triggered meanwhile. The cancel comes
+# before the wait: bash 3.2 (macOS) defers a signal until a command substitution
+# ends, so a runner waiting on its run exits only once the run has stopped. When
+# the run could not be stopped, CHILD is not waited for: it exits once its own
+# wait on the run ends, and triggers nothing more.
 bench_stop_scenario() {
-  local child="$1" schedule="$2" run_id running ended rc=0
+  local child="$1" schedule="$2"
   if [ -n "${child}" ]; then
     kill "${child}" 2>/dev/null || true
   fi
   if [ -n "${schedule}" ]; then
-    if ! read -r run_id running _ < <(bench_cli_run schedule status "${schedule}" 2>/dev/null \
-         | python3 "$(bench_here)/cli_json.py" run-state 2>/dev/null); then
-      echo "bench: could not read ${schedule}'s run state; cancel its live run by hand" >&2
-      rc=1
-    elif [ "${running}" = "true" ]; then
-      if ! bench_cli_run schedule cancel "${schedule}" "benchmark interrupted" >/dev/null; then
-        echo "bench: could not cancel ${schedule}'s run ${run_id}; cancel it by hand" >&2
-        rc=1
-      else
-        ended="$(bench_wait_run "${schedule}" "${run_id}" 300)"
-        if [ "${ended}" = "timeout" ]; then
-          echo "bench: ${schedule}'s run ${run_id} was still live 300 s after it was cancelled" >&2
-          rc=1
-        fi
-      fi
-    fi
+    bench_cancel_live_run "${schedule}" || return 1
   fi
   if [ -n "${child}" ]; then
     wait "${child}" 2>/dev/null || true
+    if [ -n "${schedule}" ]; then
+      bench_cancel_live_run "${schedule}" || return 1
+    fi
   fi
-  return "${rc}"
 }
 
 # bench_start_failure NAME PAYLOAD SCHEDULE OUT_DIR [QUOTA_FILE]: runs a

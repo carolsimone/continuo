@@ -35,6 +35,7 @@ Environment knobs:
 | `BENCH_SETTLE_S` | `15` | Pause before each later rep and after each run |
 | `BENCH_RUN_TIMEOUT_S` | `3600` (`2700` in `outage.sh`) | Longest wait for one run; a run still live then is cancelled and waited for before anything else starts |
 | `BENCH_SECOND_RUN_S` | `90` | How long the cancel scenario's second run lives before it is cancelled |
+| `BENCH_CANCEL_WAIT_S` | `300` | How long an interrupted scenario waits for its cancelled run to stop before it reports the run as still live |
 | `BENCH_START_TIMEOUT_S` | `120` | Start timeout `start_local_services.sh` gives execution-controller (`compose`), in seconds; a version without a start timeout ignores it |
 
 `discover.sh` prints what the harness reads from a `k8s` install and lists the candidate datastore pods; secrets are reported only as resolved or missing.
