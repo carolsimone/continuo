@@ -128,3 +128,20 @@ func TestRecordTaskExecution_LocksTheTaskBeforeTheAttempt(t *testing.T) {
 
 	assert.Equal(t, []string{"task " + id.String(), "attempt " + id.String() + "/1"}, tc.lockOrder)
 }
+
+// A record for a task that was cancelled before its attempt had a row creates
+// the attempt cancelled, with the record's facts, so a cancelled run is left
+// with no open attempt.
+func TestRecordTaskExecution_ARecordForACancelledTaskCreatesACancelledAttempt(t *testing.T) {
+	tc, id := heldTask()
+	tc.statuses[id] = run.TaskStatusCancelled
+	rec := executionRecord(id, "job-x-r1")
+
+	require.NoError(t, run.RecordTaskExecution(context.Background(), tc, rec))
+
+	a, ok := tc.attemptRows[attemptKey{id, 1}]
+	require.True(t, ok)
+	assert.Equal(t, run.AttemptCancelled, a.Status)
+	assert.Equal(t, "job-x-r1", a.JobName)
+	assertFacts(t, rec, a)
+}

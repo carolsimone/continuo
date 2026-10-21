@@ -213,3 +213,38 @@ func TestTaskExecutionRecorded_ARecordWaitingOnTheTaskLockDoesNotDeadlockTheStat
 	require.Len(t, rows, 1)
 	assertRecorded(t, evt, rows[0])
 }
+
+// A record that lands after its run was cancelled, for a dispatched attempt
+// that had no row yet, leaves the cancelled run with no open attempt: the
+// attempt it creates is cancelled and carries the record's facts.
+func TestTaskExecutionRecorded_ARecordAfterTheRunWasCancelledLeavesNoOpenAttempt(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	tenant := storeFailureSchedule(t, db)
+	f := statusFlow{db: db, tenant: tenant, r: startScheduleRun(t, db, tenant, "e2e-schedule-failure", model.OperationRun)}
+	job, _, _ := f.task(t, recordFlowKey)
+	require.Empty(t, f.recordedAttempts(t, recordFlowKey))
+
+	u := newPlanningUoW(db)
+	require.NoError(t, u.Begin(ctx))
+	defer u.Rollback()
+	r, err := u.Run().LoadRunForUpdate(ctx, f.r.ScheduleID())
+	require.NoError(t, err)
+	_, err = r.Cancel(ctx, u.TaskCollection(), "watchdog", "stalled", u.Clock().Now())
+	require.NoError(t, err)
+	require.NoError(t, u.Run().SaveRun(ctx, r))
+	require.NoError(t, u.Commit())
+
+	evt := f.executionRecordOf(recordFlowKey, job, "logs/"+job+".log")
+	f.record(t, evt)
+
+	var open int
+	require.NoError(t, db.Get(&open, `
+		SELECT count(*) FROM task_attempts
+		WHERE task_id = $1 AND status IN ('dispatched', 'queued', 'running')`, f.taskID(recordFlowKey)))
+	assert.Zero(t, open)
+	rows := f.recordedAttempts(t, recordFlowKey)
+	require.Len(t, rows, 1)
+	assert.Equal(t, "cancelled", rows[0].Status)
+	assert.Equal(t, evt.LogS3Key, rows[0].LogS3Key)
+}
