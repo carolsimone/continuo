@@ -80,8 +80,10 @@ type TaskTracker struct {
 }
 
 // taskAttemptRow is the storage row carrier for the task_attempts table. It
-// mirrors the columns attempts read and write, one-to-one; the scheduling
-// columns (next_check_at, checks_sent) are written by their own statements.
+// mirrors the columns attempts read and write, one-to-one. It leaves out the
+// scheduling columns (next_check_at, checks_sent), which nothing sets: state
+// only clears next_check_at, when saveAttempt saves a final status and when
+// cancelOpenAttempts cancels an attempt.
 type taskAttemptRow struct {
 	TaskID           uuid.UUID  `db:"task_id"`
 	Attempt          int32      `db:"attempt"`

@@ -49,8 +49,10 @@ type Attempt struct {
 	FailureClass  *string
 	FailureReason *string
 
-	// DispatchedAt is nil until the attempt is first saved, when the database
-	// clock stamps it.
+	// DispatchedAt is when the attempt was dispatched. Attempt 0 takes the
+	// task's dispatch time, which state's own clock stamped when it dispatched
+	// the task. A later attempt, or attempt 0 of a task with no dispatch
+	// time, is nil until it is first saved, when the database clock stamps it.
 	DispatchedAt *time.Time
 	QueuedAt     *time.Time
 	StartedAt    *time.Time
