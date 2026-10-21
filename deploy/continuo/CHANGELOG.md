@@ -12,6 +12,9 @@ shipped in those.
 
 ## [Unreleased]
 
+### Security
+- Service and CLI images are built with Go 1.27.3, and every Go module requires Go 1.26.10: both fix GO-2026-6809 in `crypto/x509` certificate verification (compromised intermediate certificates are distrusted). No values change. PATCH.
+
 ## [0.12.0] - 2026-10-16
 
 `llm.baseUrl` is new, with an empty default that keeps each provider's public address; an unmodified values file upgrades unchanged, including with `--reuse-values`, unless it sets `LLM_BASE_URL` through `services[].env` or `services[].secretEnv` (see Breaking). **MINOR.**

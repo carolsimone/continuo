@@ -1,4 +1,4 @@
-FROM golang:1.27.1
+FROM golang:1.27.3
 
 # Install system dependencies. docker.io is the daemon; Debian trixie ships
 # the client binary in the separate docker-cli package, and the e2e suite

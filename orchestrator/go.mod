@@ -1,6 +1,6 @@
 module github.com/carolsimone/continuo/orchestrator
 
-go 1.26.9
+go 1.26.10
 
 replace (
 	github.com/carolsimone/continuo/pkg => ../pkg
