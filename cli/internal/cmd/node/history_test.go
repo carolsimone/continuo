@@ -146,7 +146,8 @@ func TestHistory_SuccessMapsAllFields(t *testing.T) {
 	fake := &fakeNodeState{runsResp: &statev1.ListNodeRunsResponse{Runs: []*statev1.NodeRun{{
 		RunId: "run_1", ScheduleName: "single-node-run-abcd1234", Kind: "single_node_run",
 		TerminalStatus: "succeeded", TaskId: "task_1", TaskStatus: "succeeded",
-		Attempt: 0, ImageTag: "img:v9", CreatedAt: "2026-07-10T10:00:00Z", CompletedAt: "2026-07-10T10:05:00Z",
+		Attempt: 1, FailureClass: "task", FailureReason: "exit_code",
+		ImageTag: "img:v9", CreatedAt: "2026-07-10T10:00:00Z", CompletedAt: "2026-07-10T10:05:00Z",
 		RunResultsUri: "run-results/task-executions/finance/analytics/orders/e1.json",
 	}}}}
 
@@ -171,6 +172,11 @@ func TestHistory_SuccessMapsAllFields(t *testing.T) {
 	assert.Equal(t, "succeeded", r["terminal_status"])
 	assert.Equal(t, "img:v9", r["image_tag"])
 	assert.NotContains(t, r, "manifest_version")
+	// The attempt number is reported as "attempt"; the retry_count key does not exist.
+	assert.EqualValues(t, 1, r["attempt"])
+	assert.NotContains(t, r, "retry_count")
+	assert.Equal(t, "task", r["failure_class"])
+	assert.Equal(t, "exit_code", r["failure_reason"])
 	// The structured result key must reach the CLI payload: it is vendored
 	// through this module.s own proto copy, so a state-side addition is invisible
 	// here until that copy is regenerated.
@@ -221,6 +227,8 @@ func TestHistory_OmitsEmptyOptionalFields(t *testing.T) {
 	assert.NotContains(t, stdout, "error_message")
 	assert.NotContains(t, stdout, "log_s3_key")
 	assert.NotContains(t, stdout, "run_results_uri")
+	assert.NotContains(t, stdout, "failure_class")
+	assert.NotContains(t, stdout, "failure_reason")
 }
 
 func TestHistory_WrongArgCountExits2(t *testing.T) {

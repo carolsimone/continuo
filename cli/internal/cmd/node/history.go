@@ -20,15 +20,20 @@ type nodeRun struct {
 	TerminalStatus string `json:"terminal_status,omitempty"`
 	TaskID         string `json:"task_id"`
 	TaskStatus     string `json:"task_status"`
-	RetryCount     int32  `json:"retry_count"`
-	ImageTag       string `json:"image_tag"`
-	CreatedAt      string `json:"created_at"`
-	StartedAt      string `json:"started_at,omitempty"`
-	CompletedAt    string `json:"completed_at,omitempty"`
-	ErrorMessage   string `json:"error_message,omitempty"`
-	LogS3Key       string `json:"log_s3_key,omitempty"`
-	RunResultsURI  string `json:"run_results_uri,omitempty"`
-	Operation      string `json:"operation"`
+	// Attempt is the zero-based number of the task's current attempt.
+	Attempt      int32  `json:"attempt"`
+	ImageTag     string `json:"image_tag"`
+	CreatedAt    string `json:"created_at"`
+	StartedAt    string `json:"started_at,omitempty"`
+	CompletedAt  string `json:"completed_at,omitempty"`
+	ErrorMessage string `json:"error_message,omitempty"`
+	// FailureClass and FailureReason say why the task's latest attempt failed;
+	// both are empty unless it failed.
+	FailureClass  string `json:"failure_class,omitempty"`
+	FailureReason string `json:"failure_reason,omitempty"`
+	LogS3Key      string `json:"log_s3_key,omitempty"`
+	RunResultsURI string `json:"run_results_uri,omitempty"`
+	Operation     string `json:"operation"`
 	// ContentHash is the node's content hash in the release the run ran on, as
 	// the state service records it. Empty for runs that name no release.
 	ContentHash string `json:"content_hash,omitempty"`
@@ -70,15 +75,18 @@ Flags:
 Output (stdout, JSON): up to 50 runs, newest first.
   {"runs":[{"run_id":string,"schedule_name":string,"kind":string,
    "terminal_status":string,"task_id":string,"task_status":string,
-   "retry_count":number,"image_tag":string,
+   "attempt":number,"image_tag":string,
    "created_at":string,"started_at":string,"completed_at":string,
-   "error_message":string,"log_s3_key":string,"operation":string,
+   "error_message":string,"failure_class":string,"failure_reason":string,
+   "log_s3_key":string,"operation":string,
    "run_results_uri":string,"content_hash":string}]}
-  terminal_status, started_at, completed_at, error_message, log_s3_key,
-  run_results_uri, and content_hash are omitted when empty. run_results_uri
-  points at the structured result block the run's container printed —
-  python-family nodes (python-node, python-csv, python-api) always emit one, dbt
-  nodes never do. An unknown node returns {"runs":[]}, not an error.
+  attempt is the zero-based number of the task's current attempt (0 on the
+  first try). failure_class and failure_reason say why the latest attempt
+  failed. terminal_status, started_at, completed_at, error_message,
+  failure_class, failure_reason, log_s3_key, run_results_uri, and content_hash
+  are omitted when empty. run_results_uri points at the structured result
+  block the run's container printed — python-family nodes (python-node,
+  python-csv, python-api) always emit one, dbt nodes never do. An unknown node returns {"runs":[]}, not an error.
 
 content_hash is the node's content hash in the release the run ran on, as
 the state service records it; it is omitted for runs that name no release.
@@ -145,12 +153,14 @@ func toHistoryPayload(runs []*statev1.NodeRun) historyPayload {
 			TerminalStatus: r.GetTerminalStatus(),
 			TaskID:         r.GetTaskId(),
 			TaskStatus:     r.GetTaskStatus(),
-			RetryCount:     r.GetAttempt(),
+			Attempt:        r.GetAttempt(),
 			ImageTag:       r.GetImageTag(),
 			CreatedAt:      r.GetCreatedAt(),
 			StartedAt:      r.GetStartedAt(),
 			CompletedAt:    r.GetCompletedAt(),
 			ErrorMessage:   r.GetErrorMessage(),
+			FailureClass:   r.GetFailureClass(),
+			FailureReason:  r.GetFailureReason(),
 			LogS3Key:       r.GetLogS3Key(),
 			RunResultsURI:  r.GetRunResultsUri(),
 			Operation:      r.GetOperation(),
