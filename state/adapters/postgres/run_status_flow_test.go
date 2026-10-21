@@ -220,6 +220,39 @@ func TestCancel_CancelsTheOpenAttemptInTheCancelTransaction(t *testing.T) {
 	assert.Equal(t, run.SchedulerStatusCancelled, status)
 }
 
+// ftable_a reports RUNNING for attempts 0 and 1 and SUCCEEDED for attempt 1;
+// every other task succeeds and the run finalizes succeeded. Attempt 0's
+// FAILED, delayed past all of them, then closes attempt 0's row in its own
+// status transaction, and the task and the run stay as they ended.
+func TestTaskStatusUpdated_ALateFailureClosesItsAttemptAfterTheRunEnded(t *testing.T) {
+	db := newTestDB(t)
+	tenant := storeFailureSchedule(t, db)
+	f := statusFlow{db: db, tenant: tenant, r: startScheduleRun(t, db, tenant, "e2e-schedule-failure", model.OperationRun)}
+	const key = "e2e_schema.ftable_a"
+
+	f.deliver(t, key, run.TaskStatusRunning, 0)
+	f.deliver(t, key, run.TaskStatusRunning, 1)
+	f.deliver(t, key, run.TaskStatusSucceeded, 1)
+	for _, table := range []string{"ftable_b", "ftable_c", "ftable_d", "ftable_e", "ftable_f", "ftable_g", "ftable_h"} {
+		f.deliver(t, "e2e_schema."+table, run.TaskStatusSucceeded, 0)
+	}
+	status, terminal := f.run(t)
+	require.Equal(t, run.SchedulerStatusSucceeded, status)
+
+	f.deliver(t, key, run.TaskStatusFailed, 0)
+
+	job, taskStatus, attempt := f.task(t, key)
+	assert.Equal(t, []attemptRow{
+		{Attempt: 0, JobName: job, Status: "failed"},
+		{Attempt: 1, JobName: job + "-r1", Status: "succeeded"},
+	}, f.attempts(t, key))
+	assert.Equal(t, run.TaskStatusSucceeded, taskStatus)
+	assert.Equal(t, int32(1), attempt)
+	after, afterTerminal := f.run(t)
+	assert.Equal(t, run.SchedulerStatusSucceeded, after)
+	assert.Equal(t, terminal, afterTerminal)
+}
+
 // A failure that reports the exhausted budget for a retry Job Kubernetes
 // refused is recorded at the refused retry, and the attempt before it keeps
 // its row.

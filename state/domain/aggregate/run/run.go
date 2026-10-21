@@ -538,7 +538,8 @@ func (r *Run) Cancel(
 // can be read from them.
 //
 // Returns no events when:
-//   - the run is already terminal (stale event)
+//   - the run is already terminal (a late report: only its attempt row is
+//     written)
 //   - the task row exists but the status did not change (replay)
 //   - the incoming RUNNING is a stale duplicate of an attempt that already
 //     reached terminal (see the attempt-monotonic guard below)
@@ -554,7 +555,8 @@ func (r *Run) Cancel(
 // delivery that made it. It does not depend on finalization: an accepted
 // success that leaves other tasks open returns no events and true.
 //
-// Returns ErrTaskNotHeld when the run holds no task with taskID.
+// Returns ErrTaskNotHeld when a run that has not ended holds no task with
+// taskID.
 //
 // task.status.updated:v1 carries up to two messages per attempt:
 // execution-controller's observer announces RUNNING once, when the attempt's
@@ -572,11 +574,14 @@ func (r *Run) Cancel(
 // (last_heartbeat_at) with now. A replay, a superseded attempt, or a write the
 // task row refused (affected == 0) leaves the clock where it was.
 //
-// Before the task's own update, a running, succeeded or failed report on a run
-// that is not terminal is written to the row of the attempt it describes (see
-// recordAttempt), whatever the attempt order then decides for the task: a
-// report for an older attempt updates that attempt's row and leaves the task
-// as its newer attempt put it.
+// Before the task's own update, a running, succeeded or failed report is
+// written to the row of the attempt it describes (see recordAttempt), whatever
+// the attempt order then decides for the task: a report for an older attempt
+// updates that attempt's row and leaves the task as its newer attempt put it.
+// That holds on a terminal run too, so an older attempt's report delayed past
+// the delivery that finalized the run still closes its attempt; on a terminal
+// run the attempt row is the only thing a report writes (see
+// recordEndedRunAttempt).
 func (r *Run) RecordTaskStatus(
 	ctx context.Context,
 	tasks TaskCollection,
@@ -587,7 +592,7 @@ func (r *Run) RecordTaskStatus(
 	now time.Time,
 ) ([]DomainEvent, bool, error) {
 	if r.IsTerminal() {
-		return nil, false, nil
+		return nil, false, r.recordEndedRunAttempt(ctx, tasks, taskID, newStatus, retryCount)
 	}
 	attempt, exists, err := tasks.LoadAttemptState(ctx, taskID)
 	if err != nil {
@@ -690,14 +695,42 @@ func (r *Run) RecordTaskStatus(
 	}
 }
 
+// recordEndedRunAttempt writes a status report delivered after r ended to the
+// row of the attempt it describes, the way recordAttempt does for a running
+// run, and changes nothing else: not the task, the run, its counters or its
+// events. It locks the task row before the attempt row. A report of a status
+// that describes no attempt locks nothing, and a report for a task no run
+// holds is ignored without an error, as the rest of a report on an ended run
+// is.
+func (r *Run) recordEndedRunAttempt(
+	ctx context.Context,
+	tasks TaskCollection,
+	taskID uuid.UUID,
+	status TaskStatus,
+	retryCount int32,
+) error {
+	if _, ok := attemptStatusOfReport(status); !ok {
+		return nil
+	}
+	task, exists, err := tasks.LoadAttemptState(ctx, taskID)
+	if err != nil {
+		return fmt.Errorf("load task attempt: %w", err)
+	}
+	if !exists {
+		return nil
+	}
+	return r.recordAttempt(ctx, tasks, taskID, status, retryCount, task)
+}
+
 // recordAttempt writes a status report to the row of the attempt it describes,
 // after the task row is locked. The attempt is the report's retry count, except
 // for a failure that reports the exhausted retry budget with no row at that
 // count (Kubernetes refused the Job), which belongs to the attempt that was
-// refused (attemptOfReport). A missing row is created dispatched: attempt 0
-// with the task's Job name and dispatch time, a later attempt with its
-// numbered Job name and no dispatch time, which the database clock stamps. The
-// status then only moves forward, so a final status is never lowered, and the
+// refused (attemptOfReport). A missing row is created dispatched, when
+// createsMissingAttempt allows it: attempt 0 with the task's Job name and
+// dispatch time, a later attempt with its numbered Job name and no dispatch
+// time, which the database clock stamps. The status then only moves forward,
+// so a final status (a cancelled attempt included) is never changed, and the
 // row is saved when it is new or its status changed. A report of a status that
 // describes no attempt writes nothing.
 func (r *Run) recordAttempt(
@@ -724,6 +757,9 @@ func (r *Run) recordAttempt(
 		}
 	}
 	if !held {
+		if !r.createsMissingAttempt(target) {
+			return nil
+		}
 		a = Attempt{TaskID: taskID, Number: n, Status: AttemptDispatched}
 		if n == 0 {
 			a.JobName = task.JobName
@@ -743,6 +779,21 @@ func (r *Run) recordAttempt(
 		return fmt.Errorf("save attempt %d: %w", a.Number, err)
 	}
 	return nil
+}
+
+// createsMissingAttempt reports whether a report that moves an attempt with no
+// row to status s creates the row. A run that has not ended creates every
+// attempt it hears of. A run that ended succeeded or failed creates only a
+// final one: an attempt created running after the run ended has nothing left
+// to close it. A run that ended any other way creates none: a cancelled run
+// already closed every attempt it had (Cancel), and a skipped run holds no
+// tasks.
+func (r *Run) createsMissingAttempt(s AttemptStatus) bool {
+	switch r.status {
+	case SchedulerStatusSucceeded, SchedulerStatusFailed:
+		return s.IsFinal()
+	}
+	return !r.IsTerminal()
 }
 
 // recordProgress stamps the run's progress clock with now. The clock reads the

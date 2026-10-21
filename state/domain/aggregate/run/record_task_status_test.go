@@ -368,18 +368,158 @@ func TestRecordTaskStatus_ARefusedFirstJobIsRecordedAtAttemptZero(t *testing.T) 
 	assert.Len(t, tc.attemptRows, 1)
 }
 
-// A report for a run that has ended reads and writes no attempt.
-func TestRecordTaskStatus_ATerminalRunWritesNoAttempt(t *testing.T) {
-	r, tc, g := startedFailureRun(t)
-	_, err := r.Cancel(context.Background(), tc, "tester", "stop", startNow)
+// endedRun holds one task with a retry budget of 1, Job name "job-t" and a
+// dispatch time, in a run that is still running.
+func endedRun(t *testing.T) (*run.Run, *fakeTaskCollection, uuid.UUID) {
+	t.Helper()
+	tc := newFakeTaskCollection()
+	tc.derived = true
+	id := uuid.New()
+	r := dispatchedRun(t, tc, startNow, id)
+	c := tc.created[id]
+	c.JobName = "job-t"
+	at := startNow
+	c.DispatchedAt = &at
+	tc.created[id] = c
+	tc.maxRetries[id] = 1
+	return r, tc, id
+}
+
+// deliver applies one status for task id of r and returns its events.
+func deliver(t *testing.T, r *run.Run, tc *fakeTaskCollection, id uuid.UUID, status run.TaskStatus, attempt int32) []run.DomainEvent {
+	t.Helper()
+	events, _, err := r.RecordTaskStatus(context.Background(), tc, nil, id, status, attempt, startNow.Add(time.Minute))
 	require.NoError(t, err)
+	return events
+}
+
+// The run's task reports RUNNING for attempts 0 and 1 and SUCCEEDED for
+// attempt 1, which finalizes the run; attempt 0's FAILED, delayed past them,
+// then closes attempt 0's row. The task, the run and its counters stay as the
+// success left them, and the late report emits nothing.
+func TestRecordTaskStatus_ALateFailureClosesItsAttemptAfterTheRunSucceeded(t *testing.T) {
+	r, tc, id := endedRun(t)
+	deliver(t, r, tc, id, run.TaskStatusRunning, 0)
+	deliver(t, r, tc, id, run.TaskStatusRunning, 1)
+	require.Len(t, deliver(t, r, tc, id, run.TaskStatusSucceeded, 1), 1)
+	require.Equal(t, run.SchedulerStatusSucceeded, r.Status())
+	r.ResetChanges()
+	heartbeat := *r.LastHeartbeatAt()
+
+	events, applied, err := r.RecordTaskStatus(context.Background(), tc, nil, id, run.TaskStatusFailed, 0, startNow.Add(time.Hour))
+
+	require.NoError(t, err)
+	assert.Empty(t, events)
+	assert.False(t, applied)
+	first, ok := tc.attemptRows[attemptKey{id, 0}]
+	require.True(t, ok)
+	assert.Equal(t, run.AttemptFailed, first.Status)
+	assert.Equal(t, run.AttemptSucceeded, tc.attemptRows[attemptKey{id, 1}].Status)
+	assert.Equal(t, run.TaskStatusSucceeded, tc.statuses[id])
+	assert.Equal(t, int32(1), tc.attempts[id])
+	assert.Equal(t, run.SchedulerStatusSucceeded, r.Status())
+	assert.Equal(t, int32(1), r.TerminalTaskCount())
+	assert.Equal(t, heartbeat, *r.LastHeartbeatAt())
+	assert.False(t, r.Changes().IsStatusDirty() || r.Changes().IsTerminalTaskCountDirty() || r.Changes().IsHeartbeatDirty(),
+		"the late report changes nothing on the run")
+}
+
+// After a run ended succeeded or failed, a late report for an attempt that
+// has no row creates the row only when the report is final: a RUNNING would
+// leave an open attempt nothing closes. The created row carries the task's Job
+// name and dispatch time.
+func TestRecordTaskStatus_AnEndedRunCreatesOnlyAFinalAttempt(t *testing.T) {
+	for _, outcome := range []run.SchedulerStatus{run.SchedulerStatusSucceeded, run.SchedulerStatusFailed} {
+		t.Run(string(outcome), func(t *testing.T) {
+			r, tc, id := endedRun(t)
+			if outcome == run.SchedulerStatusSucceeded {
+				deliver(t, r, tc, id, run.TaskStatusSucceeded, 1)
+			} else {
+				deliver(t, r, tc, id, run.TaskStatusRunning, 1)
+				deliver(t, r, tc, id, run.TaskStatusFailed, 1)
+			}
+			require.Equal(t, outcome, r.Status())
+			tc.saves = nil
+
+			deliver(t, r, tc, id, run.TaskStatusRunning, 0)
+			_, ok := tc.attemptRows[attemptKey{id, 0}]
+			assert.False(t, ok, "a late RUNNING creates no attempt")
+			assert.Empty(t, tc.saves)
+
+			deliver(t, r, tc, id, run.TaskStatusFailed, 0)
+			a, ok := tc.attemptRows[attemptKey{id, 0}]
+			require.True(t, ok)
+			assert.Equal(t, run.Attempt{
+				TaskID: id, Number: 0, JobName: "job-t", Status: run.AttemptFailed, DispatchedAt: tc.created[id].DispatchedAt,
+			}, a)
+			assert.Equal(t, outcome, r.Status())
+		})
+	}
+}
+
+// A cancelled run's attempts were closed by the cancel: a late report never
+// creates an attempt for it, and never changes a cancelled one.
+func TestRecordTaskStatus_ACancelledRunGainsAndChangesNoAttempt(t *testing.T) {
+	t.Run("no row", func(t *testing.T) {
+		for _, status := range []run.TaskStatus{run.TaskStatusRunning, run.TaskStatusSucceeded, run.TaskStatusFailed} {
+			t.Run(string(status), func(t *testing.T) {
+				r, tc, id := endedRun(t)
+				_, err := r.Cancel(context.Background(), tc, "tester", "stop", startNow)
+				require.NoError(t, err)
+
+				deliver(t, r, tc, id, status, 0)
+
+				assert.Empty(t, tc.attemptRows)
+				assert.Empty(t, tc.saves)
+			})
+		}
+	})
+	t.Run("a cancelled row", func(t *testing.T) {
+		for _, status := range []run.TaskStatus{run.TaskStatusRunning, run.TaskStatusFailed} {
+			t.Run(string(status), func(t *testing.T) {
+				r, tc, id := endedRun(t)
+				deliver(t, r, tc, id, run.TaskStatusRunning, 0)
+				_, err := r.Cancel(context.Background(), tc, "tester", "stop", startNow)
+				require.NoError(t, err)
+				require.Equal(t, run.AttemptCancelled, tc.attemptRows[attemptKey{id, 0}].Status)
+				tc.saves = nil
+
+				deliver(t, r, tc, id, status, 0)
+
+				assert.Equal(t, run.AttemptCancelled, tc.attemptRows[attemptKey{id, 0}].Status)
+				assert.Empty(t, tc.saves)
+			})
+		}
+	})
+}
+
+// A report on an ended run for a task no run holds is ignored without an
+// error, as every report on an ended run is.
+func TestRecordTaskStatus_AnEndedRunIgnoresAnUnknownTask(t *testing.T) {
+	r, tc, id := endedRun(t)
+	deliver(t, r, tc, id, run.TaskStatusSucceeded, 0)
+	require.True(t, r.IsTerminal())
+
+	events, applied, err := r.RecordTaskStatus(context.Background(), tc, nil, uuid.New(), run.TaskStatusFailed, 0, startNow)
+
+	require.NoError(t, err)
+	assert.Empty(t, events)
+	assert.False(t, applied)
+	assert.Len(t, tc.attemptRows, 1)
+}
+
+// On an ended run too, the task row is locked before its attempt row.
+func TestRecordTaskStatus_AnEndedRunLocksTheTaskBeforeItsAttempt(t *testing.T) {
+	r, tc, id := endedRun(t)
+	deliver(t, r, tc, id, run.TaskStatusSucceeded, 1)
+	require.True(t, r.IsTerminal())
 	tc.lockOrder = nil
 
-	record(t, r, tc, g, "ftable_a", run.TaskStatusFailed, 0)
+	deliver(t, r, tc, id, run.TaskStatusFailed, 0)
 
-	assert.Empty(t, tc.attemptRows)
-	assert.Empty(t, tc.saves)
-	assert.Empty(t, tc.lockOrder)
+	require.NotEmpty(t, tc.lockOrder)
+	assert.Equal(t, "task "+id.String(), tc.lockOrder[0])
+	assert.Contains(t, tc.lockOrder, "attempt "+id.String()+"/0")
 }
 
 // The task row is locked before any of its attempt rows.
