@@ -5,10 +5,14 @@
 -- task_tracker keeps the task's own status and the number of its current
 -- attempt (0-based; the last attempt allowed is max_retries).
 --
--- Every timestamp written by the database (dispatched_at, last_report_at,
--- next_check_at) is on the database clock, and every comparison state makes
--- uses that clock. queued_at, started_at and finished_at are stored as
--- reported by execution-controller and only displayed.
+-- dispatched_at of attempt 0 is the task's task_tracker.dispatched_at, which
+-- state's own clock stamped when it dispatched the task; a later attempt, or
+-- attempt 0 of a task with no dispatch time, takes the database clock when it
+-- is first recorded. last_report_at is on the database clock. next_check_at
+-- and checks_sent are set by nothing: state only clears next_check_at, when an
+-- attempt's final status is saved and when its run cancels it. queued_at,
+-- started_at and finished_at are stored as reported by execution-controller
+-- and only displayed.
 
 CREATE TABLE task_attempts (
     task_id            uuid          NOT NULL,
@@ -42,7 +46,7 @@ CREATE INDEX idx_task_attempts_due ON task_attempts (next_check_at)
 
 COMMENT ON TABLE task_attempts IS 'One row per attempt of a task: its job, status, times, failure and logs';
 COMMENT ON COLUMN task_attempts.attempt IS '0-based attempt number; task_tracker.attempt names the current one';
-COMMENT ON COLUMN task_attempts.next_check_at IS 'Database clock; when state next asks about the attempt; NULL once final';
+COMMENT ON COLUMN task_attempts.next_check_at IS 'Set by nothing; state clears it when the attempt''s final status is saved and when the attempt is cancelled';
 
 ALTER TABLE task_tracker RENAME COLUMN retry_count TO attempt;
 
