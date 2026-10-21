@@ -163,6 +163,14 @@ func main() {
 		return db.Close()
 	})
 
+	// state reads columns a state database not yet migrated lacks, so it
+	// refuses to start until the migration has applied; the pod restarts until
+	// it has. Nothing else has started yet.
+	if err := svchandlers.CheckSchema(ctx, postgres.NewSchemaColumns(db)); err != nil {
+		logger.Error("Refusing to start: the state database is not migrated", "error", err)
+		os.Exit(1)
+	}
+
 	// Initialize repositories
 	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
 	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
