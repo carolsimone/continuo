@@ -54,7 +54,6 @@ func cleanupPostgres(t *testing.T, ctx context.Context, clients *testClients, sc
 	}
 
 	// Clean state tables (do last to preserve scheduler_id)
-	_, _ = clients.stateDB.Exec("DELETE FROM task_execution WHERE task_id IN (SELECT id FROM task_tracker WHERE schedule_id = $1)", schedulerID)
 	_, _ = clients.stateDB.Exec("DELETE FROM task_tracker WHERE schedule_id = $1", schedulerID)
 	_, _ = clients.stateDB.Exec("DELETE FROM scheduler_tracker WHERE schedule_name = $1", scheduleName)
 }

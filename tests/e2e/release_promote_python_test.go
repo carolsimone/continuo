@@ -326,18 +326,18 @@ func TestE2E_PythonNodeRun_MaterializesAndReportsFailures(t *testing.T) {
 		var runResultsURI string
 		pollUntil(t, ctx, 3*time.Minute, 2*time.Second, func() (bool, error) {
 			err := clients.stateDB.QueryRowContext(ctx, `
-				SELECT COALESCE(te.run_results_uri, '')
-				FROM task_execution te
-				JOIN task_tracker t ON t.task_id = te.task_id
+				SELECT COALESCE(a.run_results_uri, '')
+				FROM task_attempts a
+				JOIN task_tracker t ON t.task_id = a.task_id
 				WHERE t.schedule_id = $1
-				ORDER BY te.created_at DESC
+				ORDER BY a.last_report_at DESC NULLS LAST
 				LIMIT 1
 			`, runID).Scan(&runResultsURI)
 			if err != nil {
 				return false, nil
 			}
 			return runResultsURI != "", nil
-		}, "task_execution never recorded a run_results_uri for the failed python node")
+		}, "task_attempts never recorded a run_results_uri for the failed python node")
 
 		body := getS3Object(t, ctx, clients, runResultsURI)
 		assert.Contains(t, string(body), `"status":"error"`)

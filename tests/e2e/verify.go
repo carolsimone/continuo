@@ -3,6 +3,7 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -268,7 +269,10 @@ func verifyTasksSkipped(t *testing.T, ctx context.Context, clients *testClients,
 }
 
 // verifyNodeExhaustedRetries polls state DB until the given node has attempt = 2
-// and status = 'failed', confirming all 2 retries were exhausted (3 total attempts).
+// and status = 'failed' and its task_attempts rows are exactly (0, failed),
+// (1, failed), (2, failed), confirming all 2 retries were exhausted (3 total
+// attempts, each recorded once as failed). The attempt rows seen are logged
+// whenever they change, so a timeout shows what the poll last observed.
 func verifyNodeExhaustedRetries(
 	t *testing.T,
 	ctx context.Context,
@@ -277,19 +281,36 @@ func verifyNodeExhaustedRetries(
 	tableName string,
 ) {
 	t.Helper()
+	const wantAttempts = "0:failed,1:failed,2:failed"
+	lastSeen := ""
 	pollUntil(t, ctx, 10*time.Minute, 5*time.Second, func() (bool, error) {
+		var taskID uuid.UUID
 		var attempt int
 		var status string
-		err := clients.stateDB.QueryRow(`
-			SELECT attempt, status
+		err := clients.stateDB.QueryRowContext(ctx, `
+			SELECT task_id, attempt, status
 			FROM task_tracker
 			WHERE schedule_id = $1 AND table_name = $2
-		`, schedulerID, tableName).Scan(&attempt, &status)
+		`, schedulerID, tableName).Scan(&taskID, &attempt, &status)
 		if err != nil {
 			return false, err
 		}
-		return attempt == 2 && status == "failed", nil
-	}, fmt.Sprintf("Timeout waiting for %s to exhaust 2 retries and reach failed status", tableName))
+		var rows []string
+		if err := clients.stateDB.SelectContext(ctx, &rows, `
+			SELECT attempt::text || ':' || status
+			FROM task_attempts
+			WHERE task_id = $1
+			ORDER BY attempt
+		`, taskID); err != nil {
+			return false, err
+		}
+		seen := fmt.Sprintf("task_tracker attempt=%d status=%s; task_attempts [%s]", attempt, status, strings.Join(rows, ","))
+		if seen != lastSeen {
+			t.Logf("%s attempts: %s", tableName, seen)
+			lastSeen = seen
+		}
+		return attempt == 2 && status == "failed" && strings.Join(rows, ",") == wantAttempts, nil
+	}, fmt.Sprintf("Timeout waiting for %s to exhaust 2 retries and reach failed status with attempt rows %s (see the last logged attempts line)", tableName, wantAttempts))
 
 	t.Logf("✅ %s exhausted 2 retries and is permanently failed (3 total attempts)", tableName)
 }
