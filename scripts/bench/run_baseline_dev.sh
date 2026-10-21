@@ -70,18 +70,21 @@ bench fail-once bench-fail-once --nodes 250 --levels 5 --fan-in 2 --fail-once
 
 # scenario NAME FILE SCHEDULE ARGS... : refuses to publish when a release was
 # promoted since the export, then publishes the union and runs the scenario as a
-# child process that the exit handler can stop.
+# child process in a process group of its own (bench_spawn), which the exit
+# handler can stop. The exit handler cancels SCHEDULE's live run only from the
+# moment the schedule is published until its scenario has ended.
 scenario() {
   local name="$1" file="$2" schedule="$3"
   shift 3
   bench_check_release "${out}"
   injected=1
-  current_schedule="${schedule}"
   "${here}/inject.sh" "${p}/${file}" "${schedule}"
-  "${here}/run_scenario.sh" "${name}" "${p}/${file}" "${schedule}" "$@" &
+  current_schedule="${schedule}"
+  bench_spawn "${here}/run_scenario.sh" "${name}" "${p}/${file}" "${schedule}" "$@"
   child=$!
   wait "${child}"
   child=""
+  current_schedule=""
 }
 
 if bench_wanted smoke; then
