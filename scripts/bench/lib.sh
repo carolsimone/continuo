@@ -199,24 +199,60 @@ bench_finish_run() {
   echo "${status}"
 }
 
-# Stops a scenario that is still running: ends its runner CHILD (a process this
-# shell started; empty when none), then cancels SCHEDULE's run if it is live and
-# waits up to 300 s for it to stop, so nothing the benchmark started keeps running.
+# Stops a scenario that is still running and returns non-zero, with a message,
+# when its run may still be live. It signals the runner CHILD (a process this
+# shell started; empty when none), cancels SCHEDULE's run if it is live and waits
+# up to 300 s for it to stop, then waits for CHILD to exit. The cancel comes
+# before the wait for CHILD: bash 3.2 (macOS) defers a signal until a command
+# substitution ends, so a runner waiting for its run to end exits only once the
+# run has stopped.
+bench_stop_scenario() {
+  local child="$1" schedule="$2" run_id running ended rc=0
+  if [ -n "${child}" ]; then
+    kill "${child}" 2>/dev/null || true
+  fi
+  if [ -n "${schedule}" ]; then
+    if ! read -r run_id running _ < <(bench_cli_run schedule status "${schedule}" 2>/dev/null \
+         | python3 "$(bench_here)/cli_json.py" run-state 2>/dev/null); then
+      echo "bench: could not read ${schedule}'s run state; cancel its live run by hand" >&2
+      rc=1
+    elif [ "${running}" = "true" ]; then
+      if ! bench_cli_run schedule cancel "${schedule}" "benchmark interrupted" >/dev/null; then
+        echo "bench: could not cancel ${schedule}'s run ${run_id}; cancel it by hand" >&2
+        rc=1
+      else
+        ended="$(bench_wait_run "${schedule}" "${run_id}" 300)"
+        if [ "${ended}" = "timeout" ]; then
+          echo "bench: ${schedule}'s run ${run_id} was still live 300 s after it was cancelled" >&2
+          rc=1
+        fi
+      fi
+    fi
+  fi
+  if [ -n "${child}" ]; then
+    wait "${child}" 2>/dev/null || true
+  fi
+  return "${rc}"
+}
+
 # bench_start_failure NAME PAYLOAD SCHEDULE OUT_DIR [QUOTA_FILE]: runs a
 # start-failure scenario, three reps of run_scenario.sh (BENCH_IDLE_S default
 # 30, BENCH_RUN_TIMEOUT_S default 900), as a child process, with QUOTA_FILE's
 # ResourceQuota applied to the Job namespace for its length when given. However
 # the scenario ends, normally or on INT, TERM or HUP, it is cleaned up: the
-# child is stopped, the schedule's live run is cancelled, so no next attempt is
-# queued, the schedule's Jobs are deleted, and the quota is removed. A cleanup
-# step that fails is reported and the next one still runs; the function then
-# fails. A signal exits the shell with 130 or 143 once the cleanup has run.
+# schedule's live run is cancelled, so no next attempt is queued, the child is
+# stopped, the schedule's Jobs are deleted, and the quota is removed; further
+# INT, TERM and HUP are ignored until the cleanup has run. A cleanup step that
+# fails is reported and the next one still runs; the function then fails, and a
+# signal still exits the shell with 130 or 143. It replaces the caller's EXIT,
+# INT, TERM and HUP traps while it runs and resets them to the default when it
+# returns.
 bench_start_failure() {
   local name="$1" payload="$2" schedule="$3" out="$4" rc=0
   bench_start_failure_child=""
   bench_start_failure_schedule="${schedule}"
   bench_start_failure_quota="${5:-}"
-  trap bench_start_failure_cleanup EXIT
+  trap 'bench_start_failure_cleanup || true' EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM HUP
   if [ -n "${bench_start_failure_quota}" ]; then
@@ -227,17 +263,18 @@ bench_start_failure() {
   bench_start_failure_child=$!
   wait "${bench_start_failure_child}" || rc=$?
   bench_start_failure_child=""
+  trap - EXIT
   bench_start_failure_cleanup || rc=1
-  trap - EXIT INT TERM HUP
+  trap - INT TERM HUP
   return "${rc}"
 }
 
-# bench_start_failure_cleanup: bench_start_failure's cleanup; returns 1 when a
-# step failed.
+# bench_start_failure_cleanup: bench_start_failure's cleanup, which INT, TERM
+# and HUP do not interrupt; returns 1 when a step failed.
 bench_start_failure_cleanup() {
   local schedule="${bench_start_failure_schedule}" quota="${bench_start_failure_quota}" failed=0
-  bench_stop_scenario "${bench_start_failure_child}" "${schedule}" \
-    || { echo "bench: could not stop ${schedule}'s scenario and cancel its run" >&2; failed=1; }
+  trap '' INT TERM HUP
+  bench_stop_scenario "${bench_start_failure_child}" "${schedule}" || failed=1
   bench_kubectl delete jobs -l "schedule=${schedule}" --ignore-not-found --wait=true >/dev/null \
     || { echo "bench: could not delete ${schedule}'s Jobs" >&2; failed=1; }
   if [ -n "${quota}" ]; then
@@ -245,20 +282,6 @@ bench_start_failure_cleanup() {
       || { echo "bench: could not remove the quota of ${quota}; delete it by hand (README)" >&2; failed=1; }
   fi
   return "${failed}"
-}
-
-bench_stop_scenario() {
-  local child="$1" schedule="$2" run_id running
-  if [ -n "${child}" ]; then
-    kill "${child}" 2>/dev/null || true
-    wait "${child}" 2>/dev/null || true
-  fi
-  [ -n "${schedule}" ] || return 0
-  if read -r run_id running _ < <(bench_cli_run schedule status "${schedule}" 2>/dev/null \
-       | python3 "$(bench_here)/cli_json.py" run-state) && [ "${running}" = "true" ]; then
-    bench_cli_run schedule cancel "${schedule}" "benchmark interrupted" >/dev/null || true
-    bench_wait_run "${schedule}" "${run_id}" 300 >/dev/null
-  fi
 }
 
 # k8s only: release-controller's current production release id.

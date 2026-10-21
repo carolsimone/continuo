@@ -105,7 +105,7 @@ python3 scripts/bench/compare.py BEFORE_DIR AFTER_DIR [--labels A,B] > compariso
 | `start-image` | 10 nodes on an image tag that does not exist (local stack only) | A pod that cannot pull its image: attempts, overlapping attempts, how the run ends |
 | `start-quota` | 10 nodes while a `pods: 0` ResourceQuota (`k8s/no-pods-quota.yaml`) holds the Job namespace (local stack only) | A Job that never gets a pod: whether the start timeout ends it, and how the run ends |
 
-However a start failure ends, normally or on INT, TERM or HUP, `bench_start_failure` stops its runner, cancels its live run, deletes its Jobs and then removes the start-quota scenario's quota, reporting a step that fails and still running the next. If the machine running the harness dies during start-quota, remove the Jobs and the quota by hand: `kubectl --context kind-continuo -n default delete jobs -l schedule=bench-start-quota`, then `kubectl --context kind-continuo -n default delete resourcequota bench-no-pods`; until then the `pods: 0` quota blocks every Job of the local stack.
+However a start failure ends, normally or on INT, TERM or HUP, `bench_start_failure` cancels its live run, stops its runner, deletes its Jobs and then removes the start-quota scenario's quota; further INT, TERM and HUP are ignored until it has, and a step that fails is reported without skipping the next. If the machine running the harness dies during start-quota, remove the Jobs and the quota by hand: `kubectl --context kind-continuo -n default delete jobs -l schedule=bench-start-quota`, then `kubectl --context kind-continuo -n default delete resourcequota bench-no-pods`; until then the `pods: 0` quota blocks every Job of the local stack.
 
 ## Metric definitions
 

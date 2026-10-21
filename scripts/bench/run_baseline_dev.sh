@@ -30,8 +30,11 @@ child=""
 current_schedule=""
 restore_on_exit() {
   local rc=$?
-  trap - INT TERM HUP
-  bench_stop_scenario "${child}" "${current_schedule}"
+  # Every step runs whatever an earlier one did: errexit is off from here on,
+  # and further INT, TERM and HUP are ignored until the restore has run.
+  set +e
+  trap '' INT TERM HUP
+  bench_stop_scenario "${child}" "${current_schedule}" || rc=1
   if [ "${injected}" = "1" ]; then
     if ! "${here}/restore.sh" "${out}"; then
       echo "run_baseline_dev.sh: RESTORE FAILED — run: BENCH_TARGET=k8s BENCH_KUBECONFIG=${BENCH_KUBECONFIG} ${here}/restore.sh ${out}" >&2

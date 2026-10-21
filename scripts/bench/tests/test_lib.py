@@ -259,52 +259,122 @@ def test_sql_on_k8s_without_a_postgres_pod_fails_the_read_not_the_script(tmp_pat
     assert "BENCH_PG_POD is not set" in out.stderr
 
 
+
 def quota_file(tmp_path):
     quota = tmp_path / "quota.yaml"
     quota.write_text("kind: ResourceQuota\n")
     return quota
 
 
-def test_an_interrupted_start_failure_stops_its_runner_cancels_its_run_and_cleans_up(tmp_path):
-    import signal
-    import time
+def start_failure(env, tmp_path, quota):
+    """bench_start_failure for schedule bench-sq, as a shell of its own with errexit on."""
     import fake_env
-    env = fake_env.make(tmp_path, [])
-    env.update(BENCH_IDLE_S="0", BENCH_SETTLE_S="0")
-    fake = Path(env["FAKE_DIR"])
-    out, quota = tmp_path / "out", quota_file(tmp_path)
+    out = tmp_path / "out"
     proc = subprocess.Popen(
         ["bash", "-c", f'set -euo pipefail; . "{BENCH}/lib.sh"; '
                        f'bench_start_failure start-quota "{fake_env.write_payload(tmp_path)}" bench-sq "{out}" "{quota}"'],
         env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    return proc, out
+
+
+def interrupt_once_triggered(proc, fake):
+    import signal
+    import time
     deadline = time.time() + 60
     while not (fake / "current").exists() and time.time() < deadline:
         time.sleep(0.2)
     assert (fake / "current").exists(), "the scenario triggered its run"
-
     proc.send_signal(signal.SIGTERM)
-    proc.wait(timeout=60)
-
-    assert proc.returncode == 143
-    assert fake_env.wait_until_gone(str(out)) == [], "the scenario runner is stopped"
-    assert (fake / "calls").read_text().splitlines() == ["cancel benchmark interrupted"]
-    assert (fake / "state").read_text() == "cancelled"
-    calls = (fake / "kubectl-calls").read_text().splitlines()
-    assert calls[0].endswith(f"apply -f {quota}")
-    assert "delete jobs -l schedule=bench-sq" in calls[-2], "the cleanup deletes the Jobs, then the quota"
-    assert calls[-1].endswith(f"delete -f {quota} --ignore-not-found")
+    _, stderr = proc.communicate(timeout=60)
+    return stderr
 
 
-def test_a_start_failure_removes_its_quota_even_when_its_jobs_cannot_be_deleted(tmp_path):
+def after_the_cancel(fake):
+    events = (fake / "events").read_text().splitlines()
+    assert "cancel benchmark interrupted" in events, events
+    return events[events.index("cancel benchmark interrupted") + 1:]
+
+
+def test_an_interrupted_start_failure_cancels_its_run_then_deletes_its_jobs_and_its_quota(tmp_path):
     import fake_env
     env = fake_env.make(tmp_path, [])
-    env.update(BENCH_IDLE_S="0", BENCH_SETTLE_S="0", FAKE_RUN_RESULT="failed", FAKE_DELETE_JOBS_FAIL="1")
-    fake = Path(env["FAKE_DIR"])
-    out, quota = tmp_path / "out", quota_file(tmp_path)
-    result = run_lib(env, f'set -euo pipefail; bench_start_failure start-quota "{fake_env.write_payload(tmp_path)}" '
-                          f'bench-sq "{out}" "{quota}"; echo "returned $?"')
+    env.update(BENCH_IDLE_S="0", BENCH_SETTLE_S="0")
+    fake, quota = Path(env["FAKE_DIR"]), quota_file(tmp_path)
+    proc, out = start_failure(env, tmp_path, quota)
 
-    assert result.returncode != 0, "the failed cleanup step is reported as a failure"
-    assert "could not delete bench-sq's Jobs" in result.stderr
-    calls = (fake / "kubectl-calls").read_text().splitlines()
-    assert calls[-1].endswith(f"delete -f {quota} --ignore-not-found"), "the quota is removed anyway"
+    stderr = interrupt_once_triggered(proc, fake)
+
+    assert proc.returncode == 143, stderr
+    assert fake_env.wait_until_gone(str(out)) == [], "the scenario runner is stopped"
+    assert (fake / "state").read_text() == "cancelled"
+    after = after_the_cancel(fake)
+    assert len(after) == 2, after
+    assert "delete jobs -l schedule=bench-sq" in after[0], "the cleanup deletes the Jobs after the cancel"
+    assert after[1].endswith(f"delete -f {quota} --ignore-not-found"), "and then the quota"
+
+
+def test_an_interrupted_start_failure_removes_its_quota_when_its_jobs_cannot_be_deleted(tmp_path):
+    import fake_env
+    env = fake_env.make(tmp_path, [])
+    env.update(BENCH_IDLE_S="0", BENCH_SETTLE_S="0", FAKE_DELETE_JOBS_FAIL_AFTER="1")
+    fake, quota = Path(env["FAKE_DIR"]), quota_file(tmp_path)
+    proc, _ = start_failure(env, tmp_path, quota)
+
+    stderr = interrupt_once_triggered(proc, fake)
+
+    assert proc.returncode == 143, "a failed cleanup step keeps the signal's exit status"
+    assert "could not delete bench-sq's Jobs" in stderr
+    assert after_the_cancel(fake)[-1].endswith(f"delete -f {quota} --ignore-not-found")
+
+
+def test_a_start_failure_whose_cleanup_fails_fails_once_its_reps_are_done(tmp_path):
+    import fake_env
+    env = fake_env.make(tmp_path, [])
+    env.update(BENCH_IDLE_S="0", BENCH_SETTLE_S="0", FAKE_RUN_RESULT="failed", FAKE_DELETE_JOBS_FAIL_AFTER="3")
+    fake, quota = Path(env["FAKE_DIR"]), quota_file(tmp_path)
+    proc, out = start_failure(env, tmp_path, quota)
+    _, stderr = proc.communicate(timeout=120)
+
+    assert (out / "rep3.json").exists(), "the runner's own three deletions succeeded and every rep ran"
+    assert proc.returncode != 0, "the cleanup's failed deletion fails the scenario"
+    assert "could not delete bench-sq's Jobs" in stderr
+    events = (fake / "events").read_text().splitlines()
+    assert events[-1].endswith(f"delete -f {quota} --ignore-not-found"), "the quota is removed anyway"
+
+
+def test_stopping_a_scenario_reports_a_run_it_could_not_cancel(tmp_path):
+    import fake_env
+    env = fake_env.make(tmp_path, [])
+    env["FAKE_CANCEL_FAIL"] = "1"
+    fake = Path(env["FAKE_DIR"])
+    (fake / "state").write_text("running")
+    (fake / "current").write_text("run-7")
+    out = run_lib(env, 'if bench_stop_scenario "" bench-s; then echo stopped; else echo failed; fi')
+    assert out.stdout.strip() == "failed"
+    assert "could not cancel bench-s's run run-7" in out.stderr
+
+
+def test_stopping_a_scenario_reports_a_run_state_it_could_not_read(tmp_path):
+    import fake_env
+    env = fake_env.make(tmp_path, [])
+    env["FAKE_STATUS_FAIL"] = "1"
+    out = run_lib(env, 'if bench_stop_scenario "" bench-s; then echo stopped; else echo failed; fi')
+    assert out.stdout.strip() == "failed"
+    assert "could not read bench-s's run state" in out.stderr
+
+
+def test_the_dev_exit_handler_restores_even_when_stopping_the_scenario_fails(tmp_path):
+    source = (BENCH / "run_baseline_dev.sh").read_text()
+    start = source.index("restore_on_exit() {")
+    handler = source[start:source.index("\n}\n", start) + 2]
+    here = tmp_path / "here"
+    here.mkdir()
+    restore = here / "restore.sh"
+    restore.write_text('#!/usr/bin/env bash\necho restored > "$1/restored"\n')
+    restore.chmod(0o755)
+    script = (f'set -euo pipefail\nhere="{here}"; out="{tmp_path}"; injected=1; child=""; '
+              f'current_schedule=bench-s; BENCH_KUBECONFIG=k\nbench_stop_scenario() {{ return 1; }}\n'
+              f'{handler}\ntrap restore_on_exit EXIT\n')
+    result = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=60)
+    assert (tmp_path / "restored").exists(), result.stderr
+    assert result.returncode == 1, "a scenario that could not be stopped is reported by the exit status"

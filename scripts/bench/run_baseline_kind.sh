@@ -67,7 +67,7 @@ if bench_wanted fail-once; then
   BENCH_IDLE_S=30 "${here}/run_scenario.sh" fail-once "${p}/fail-once.json" bench-fail-once run 3 "${out}/fail-once"
 fi
 # The start failures never succeed: each rep ends when its run fails, or is
-# cancelled after 15 minutes. bench_start_failure cleans up however a scenario
+# cancelled after BENCH_RUN_TIMEOUT_S (15 minutes unless set). bench_start_failure cleans up however a scenario
 # ends (its runner, its live run, its Jobs, the quota), so no pod stuck on its
 # image and no pods: 0 quota outlives it.
 if bench_wanted start-image; then

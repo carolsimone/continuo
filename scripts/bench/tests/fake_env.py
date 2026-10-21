@@ -7,8 +7,10 @@ The fakes keep their state in FAKE_DIR:
                      what they print, announce-output (when present) what an announce-topology call prints instead,
                      and FAKE_ANNOUNCE_RC the announce-topology exit code
   jobs.json          what `kubectl get jobs` prints
-  kubectl-calls      one line per `kubectl apply` or `kubectl delete` call (its arguments); `delete jobs`
-                     fails when FAKE_DELETE_JOBS_FAIL is set
+  events             one line per `schedule cancel` ("cancel <reason>") and per `kubectl apply` or `kubectl
+                     delete` ("kubectl <arguments>"), in call order; `delete jobs` fails once
+                     FAKE_DELETE_JOBS_FAIL_AFTER calls of it have succeeded, `schedule status` fails when
+                     FAKE_STATUS_FAIL is set and `schedule cancel` when FAKE_CANCEL_FAIL is set
   deployments.json, tasks.json  what psql prints in a `docker exec` for a query of deployments or task_tracker
                      (`[]` when absent); docker-calls.jsonl records the argv of every such psql call, and
                      `docker exec <container> printenv VAR` prints fake_<var>
@@ -44,10 +46,16 @@ if cmd == ["schedule", "trigger"]:
             log.write(extra.read_text())
     print(json.dumps({"schedule_id": run_id, "schedule_name": sys.argv[3], "triggered_at": "2026-10-03T09:00:00Z"}))
 elif cmd == ["schedule", "status"]:
+    if os.environ.get("FAKE_STATUS_FAIL"):
+        sys.exit("rpc error: code = Unavailable desc = connection refused")
     state = read("state")
     print(json.dumps({"schedule_name": sys.argv[3], "run_id": read("current"), "is_running": state == "running",
                       "last_run_status": state}))
 elif cmd == ["schedule", "cancel"]:
+    if os.environ.get("FAKE_CANCEL_FAIL"):
+        sys.exit("rpc error: code = Unavailable desc = connection refused")
+    with open(d / "events", "a") as events:
+        events.write(f"cancel {sys.argv[4]}\n")
     (d / "state").write_text("cancelled")
     with open(d / "calls", "a") as calls:
         calls.write(f"cancel {sys.argv[4]}\n")
@@ -78,10 +86,15 @@ if "get deploy" in args:
     print(json.dumps({"spec": {"template": {"spec": {"containers": [{"name": "svc", "env": env}]}}}}))
     sys.exit(0)
 if " apply " in f" {args} " or " delete " in f" {args} ":
-    with open(os.path.join(os.environ["FAKE_DIR"], "kubectl-calls"), "a") as calls:
-        calls.write(args + "\n")
-    if "delete jobs" in args and os.environ.get("FAKE_DELETE_JOBS_FAIL"):
-        sys.exit("Error from server (InternalError): an error on the server has prevented the request")
+    fake = os.environ["FAKE_DIR"]
+    with open(os.path.join(fake, "events"), "a") as events:
+        events.write("kubectl " + args + "\n")
+    if "delete jobs" in args and os.environ.get("FAKE_DELETE_JOBS_FAIL_AFTER") is not None:
+        count = os.path.join(fake, "delete-jobs-count")
+        done = int(open(count).read()) if os.path.exists(count) else 0
+        open(count, "w").write(str(done + 1))
+        if done >= int(os.environ["FAKE_DELETE_JOBS_FAIL_AFTER"]):
+            sys.exit("Error from server (InternalError): an error on the server has prevented the request")
     sys.exit(0)
 if "get jobs" in args:
     sys.stdout.write(open(os.path.join(os.environ["FAKE_DIR"], "jobs.json")).read())
