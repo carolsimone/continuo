@@ -3,6 +3,8 @@ package run
 import (
 	"context"
 	"fmt"
+
+	"github.com/carolsimone/continuo/pkg/domain"
 )
 
 // RecordTaskExecution applies an execution record to the attempt its Job name
@@ -25,7 +27,7 @@ func RecordTaskExecution(ctx context.Context, tasks TaskCollection, rec Executio
 	if !exists {
 		return ErrTaskNotHeld
 	}
-	n := AttemptFromJobName(rec.JobName)
+	n := domain.AttemptFromJobName(rec.JobName)
 	a, held, err := tasks.LoadAttempt(ctx, rec.TaskID, n)
 	if err != nil {
 		return fmt.Errorf("load attempt %d: %w", n, err)

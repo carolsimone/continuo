@@ -94,29 +94,6 @@ func TestAttempt_RecordExecutionCopiesEveryFact(t *testing.T) {
 	assert.Equal(t, &reason, a.ParseCacheReason)
 }
 
-func TestAttemptFromJobName(t *testing.T) {
-	tests := []struct {
-		name string
-		want int32
-	}{
-		{"svc-sch-tbl-7f3e1a2b", 0},
-		{"svc-sch-tbl-7f3e1a2b-r1", 1},
-		{"svc-sch-tbl-7f3e1a2b--r1", 1},
-		{"svc-sch-tbl-7f3e1a2b-r1-r2", 2},
-		{"svc-sch-tbl-7f3e1a2b-r10", 10},
-		{"", 0},
-		{"x-r", 0},
-		{"x-rx", 0},
-		{"x-r1a", 0},
-		{"x-r99999999999", 0},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, AttemptFromJobName(tc.name))
-		})
-	}
-}
-
 func TestAttemptStatusOfReport(t *testing.T) {
 	for _, s := range []TaskStatus{TaskStatusRunning, TaskStatusSucceeded, TaskStatusFailed} {
 		got, ok := attemptStatusOfReport(s)

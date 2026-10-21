@@ -5,12 +5,14 @@ import (
 	"encoding/hex"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
 var (
 	reInvalidChars       = regexp.MustCompile(`[^a-z0-9-]`)
 	reConsecutiveHyphens = regexp.MustCompile(`-+`)
+	reAttemptSuffix      = regexp.MustCompile(`-r(\d+)$`)
 )
 
 // retryHashLen is how many hex characters of the full prefix's SHA-256 a retry
@@ -91,4 +93,20 @@ func ComputeJobName(serviceName, schemaName, tableName, scheduleID string, attem
 	}
 
 	return sanitized + attemptSuffix, nil
+}
+
+// AttemptFromJobName returns the attempt number a Job name ComputeJobName
+// built carries: the digits of its trailing "-r<digits>", else 0, the first
+// attempt, whose name has no attempt suffix. A suffix too large for an int32
+// also yields 0.
+func AttemptFromJobName(name string) int32 {
+	m := reAttemptSuffix.FindStringSubmatch(name)
+	if m == nil {
+		return 0
+	}
+	n, err := strconv.ParseInt(m[1], 10, 32)
+	if err != nil {
+		return 0
+	}
+	return int32(n)
 }

@@ -1,8 +1,6 @@
 package run
 
 import (
-	"regexp"
-	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -125,23 +123,6 @@ func (a *Attempt) RecordExecution(rec ExecutionRecord) {
 	if rec.ParseCacheReason != nil {
 		a.ParseCacheReason = rec.ParseCacheReason
 	}
-}
-
-// jobAttemptSuffix matches the retry suffix a Job name ends with.
-var jobAttemptSuffix = regexp.MustCompile(`-r(\d+)$`)
-
-// AttemptFromJobName returns the attempt number encoded in a Job name: the
-// digits of a trailing "-r<digits>", else 0.
-func AttemptFromJobName(name string) int32 {
-	m := jobAttemptSuffix.FindStringSubmatch(name)
-	if m == nil {
-		return 0
-	}
-	n, err := strconv.ParseInt(m[1], 10, 32)
-	if err != nil {
-		return 0
-	}
-	return int32(n)
 }
 
 // attemptStatusOfReport maps a task status a report carries to the status of
