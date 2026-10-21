@@ -147,6 +147,12 @@ func TestAttemptOfReport(t *testing.T) {
 		{"failed at the budget, task failed at 1", TaskStatusFailed, 2, TaskAttemptState{Status: TaskStatusFailed, RetryCount: 1, MaxRetries: 2}, false, 2},
 		{"failed at the budget, task running at 1", TaskStatusFailed, 2, TaskAttemptState{Status: TaskStatusRunning, RetryCount: 1, MaxRetries: 2}, false, 1},
 		{"never above the reported count", TaskStatusFailed, 2, TaskAttemptState{Status: TaskStatusFailed, RetryCount: 2, MaxRetries: 2}, false, 2},
+		{"running at the budget reports its own attempt", TaskStatusRunning, 2, TaskAttemptState{Status: TaskStatusFailed, RetryCount: 1, MaxRetries: 2}, false, 2},
+		{"succeeded past the budget reports its own attempt", TaskStatusSucceeded, 3, TaskAttemptState{Status: TaskStatusFailed, RetryCount: 0, MaxRetries: 2}, false, 3},
+		{"failed past the budget, task failed at 0, is the attempt after it", TaskStatusFailed, 3, TaskAttemptState{Status: TaskStatusFailed, RetryCount: 0, MaxRetries: 2}, false, 1},
+		{"no retry budget, task pending at 0", TaskStatusFailed, 0, TaskAttemptState{Status: TaskStatusPending, RetryCount: 0, MaxRetries: 0}, false, 0},
+		{"no retry budget, task failed at 0", TaskStatusFailed, 0, TaskAttemptState{Status: TaskStatusFailed, RetryCount: 0, MaxRetries: 0}, false, 0},
+		{"stale report, task running past the reported count", TaskStatusFailed, 2, TaskAttemptState{Status: TaskStatusRunning, RetryCount: 3, MaxRetries: 2}, false, 2},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

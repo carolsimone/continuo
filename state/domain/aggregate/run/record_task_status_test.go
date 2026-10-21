@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/domain"
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/runplan"
@@ -249,4 +250,155 @@ func TestRecordTaskStatus_ARunStateDidNotPlanReadsNoGraph(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, events, 1)
 	assert.Equal(t, run.SchedulerStatusFailed, r.Status())
+}
+
+// attemptOf returns the stored attempt n of the task of r at table.
+func attemptOf(t *testing.T, tc *fakeTaskCollection, r *run.Run, table string, n int32) (run.Attempt, bool) {
+	t.Helper()
+	a, ok := tc.attemptRows[attemptKey{taskOf(r, table), n}]
+	return a, ok
+}
+
+// A RUNNING report creates the attempt's row running, named with the task's
+// Job name and dispatched when the task was.
+func TestRecordTaskStatus_RunningCreatesTheAttemptRow(t *testing.T) {
+	r, tc, g := startedFailureRun(t)
+	task := createdByKey(tc)[fkey("ftable_a")]
+	require.NotNil(t, task.DispatchedAt)
+
+	record(t, r, tc, g, "ftable_a", run.TaskStatusRunning, 0)
+
+	a, ok := attemptOf(t, tc, r, "ftable_a", 0)
+	require.True(t, ok)
+	assert.Equal(t, run.Attempt{
+		TaskID: task.TaskID, Number: 0, JobName: task.JobName, Status: run.AttemptRunning, DispatchedAt: task.DispatchedAt,
+	}, a)
+}
+
+// A retry's attempt is named with its number and carries no dispatch time,
+// which the database clock stamps when the row is first saved.
+func TestRecordTaskStatus_ARetryAttemptIsNamedWithItsNumber(t *testing.T) {
+	r, tc, g := startedFailureRun(t)
+	task := createdByKey(tc)[fkey("ftable_a")]
+
+	record(t, r, tc, g, "ftable_a", run.TaskStatusRunning, 1)
+
+	a, ok := attemptOf(t, tc, r, "ftable_a", 1)
+	require.True(t, ok)
+	want, err := domain.ComputeJobName(task.ServiceName, task.SchemaName, task.TableName, r.ScheduleID().String(), 1)
+	require.NoError(t, err)
+	assert.Equal(t, want, a.JobName)
+	assert.Nil(t, a.DispatchedAt)
+	assert.Equal(t, run.AttemptRunning, a.Status)
+}
+
+// A RUNNING delivered after its attempt's FAILED does not lower the attempt,
+// and nothing is saved for it.
+func TestRecordTaskStatus_AFinalStatusIsNeverLowered(t *testing.T) {
+	r, tc, g := startedFailureRun(t)
+
+	record(t, r, tc, g, "ftable_a", run.TaskStatusFailed, 0)
+	record(t, r, tc, g, "ftable_a", run.TaskStatusRunning, 0)
+
+	a, ok := attemptOf(t, tc, r, "ftable_a", 0)
+	require.True(t, ok)
+	assert.Equal(t, run.AttemptFailed, a.Status)
+	assert.Len(t, tc.saves, 1)
+}
+
+// A report for an attempt older than the task's current one updates that
+// attempt's row; the task stays where its newer attempt put it.
+func TestRecordTaskStatus_AnOlderAttemptsReportUpdatesOnlyItsRow(t *testing.T) {
+	r, tc, g := startedFailureRun(t)
+	record(t, r, tc, g, "ftable_a", run.TaskStatusRunning, 1)
+
+	record(t, r, tc, g, "ftable_a", run.TaskStatusFailed, 0)
+
+	a, ok := attemptOf(t, tc, r, "ftable_a", 0)
+	require.True(t, ok)
+	assert.Equal(t, run.AttemptFailed, a.Status)
+	latest, ok := attemptOf(t, tc, r, "ftable_a", 1)
+	require.True(t, ok)
+	assert.Equal(t, run.AttemptRunning, latest.Status)
+	assert.Equal(t, run.TaskStatusRunning, tc.statuses[taskOf(r, "ftable_a")])
+	assert.Equal(t, int32(1), tc.attempts[taskOf(r, "ftable_a")])
+}
+
+// A FAILED that reports the exhausted budget for a retry Job Kubernetes
+// refused (no row at the reported count) is recorded at the refused retry;
+// the attempt that failed before it is unchanged, and the task takes the
+// reported count, so its last failure skips what it blocks.
+func TestRecordTaskStatus_ARefusedRetryJobIsRecordedAtTheRetry(t *testing.T) {
+	r, tc, g := startedFailureRun(t)
+	record(t, r, tc, g, "ftable_a", run.TaskStatusSucceeded, 0)
+	record(t, r, tc, g, "ftable_g", run.TaskStatusFailed, 0)
+	first, ok := attemptOf(t, tc, r, "ftable_g", 0)
+	require.True(t, ok)
+	task := createdByKey(tc)[fkey("ftable_g")]
+	require.Equal(t, 2, task.MaxRetries)
+
+	record(t, r, tc, g, "ftable_g", run.TaskStatusFailed, 2)
+
+	retry, ok := attemptOf(t, tc, r, "ftable_g", 1)
+	require.True(t, ok)
+	assert.Equal(t, run.AttemptFailed, retry.Status)
+	want, err := domain.ComputeJobName(task.ServiceName, task.SchemaName, task.TableName, r.ScheduleID().String(), 1)
+	require.NoError(t, err)
+	assert.Equal(t, want, retry.JobName)
+	unchanged, _ := attemptOf(t, tc, r, "ftable_g", 0)
+	assert.Equal(t, first, unchanged)
+	_, ok = attemptOf(t, tc, r, "ftable_g", 2)
+	assert.False(t, ok, "no attempt 2 ran")
+	assert.Equal(t, int32(2), tc.attempts[task.TaskID])
+	assert.Equal(t, []uuid.UUID{taskOf(r, "ftable_h")}, tc.skipped)
+}
+
+// A FAILED that reports the exhausted budget for a task whose first Job was
+// refused is recorded at attempt 0.
+func TestRecordTaskStatus_ARefusedFirstJobIsRecordedAtAttemptZero(t *testing.T) {
+	r, tc, g := startedFailureRun(t)
+	task := createdByKey(tc)[fkey("ftable_a")]
+
+	record(t, r, tc, g, "ftable_a", run.TaskStatusFailed, 2)
+
+	a, ok := attemptOf(t, tc, r, "ftable_a", 0)
+	require.True(t, ok)
+	assert.Equal(t, run.AttemptFailed, a.Status)
+	assert.Equal(t, task.JobName, a.JobName)
+	assert.Len(t, tc.attemptRows, 1)
+}
+
+// A report for a run that has ended reads and writes no attempt.
+func TestRecordTaskStatus_ATerminalRunWritesNoAttempt(t *testing.T) {
+	r, tc, g := startedFailureRun(t)
+	_, err := r.Cancel(context.Background(), tc, "tester", "stop", startNow)
+	require.NoError(t, err)
+	tc.lockOrder = nil
+
+	record(t, r, tc, g, "ftable_a", run.TaskStatusFailed, 0)
+
+	assert.Empty(t, tc.attemptRows)
+	assert.Empty(t, tc.saves)
+	assert.Empty(t, tc.lockOrder)
+}
+
+// The task row is locked before any of its attempt rows.
+func TestRecordTaskStatus_LocksTheTaskBeforeItsAttempt(t *testing.T) {
+	r, tc, g := startedFailureRun(t)
+	id := taskOf(r, "ftable_a")
+
+	record(t, r, tc, g, "ftable_a", run.TaskStatusRunning, 0)
+
+	require.NotEmpty(t, tc.lockOrder)
+	assert.Equal(t, "task "+id.String(), tc.lockOrder[0])
+	assert.Contains(t, tc.lockOrder, "attempt "+id.String()+"/0")
+}
+
+// A PENDING report describes no attempt and writes none.
+func TestRecordTaskStatus_APendingReportWritesNoAttempt(t *testing.T) {
+	r, tc, g := startedFailureRun(t)
+
+	record(t, r, tc, g, "ftable_a", run.TaskStatusPending, 0)
+
+	assert.Empty(t, tc.attemptRows)
 }

@@ -163,8 +163,9 @@ func attemptStatusOfReport(s TaskStatus) (AttemptStatus, bool) {
 // is the retry count the report carries. A failure that reports the exhausted
 // budget (retryCount >= MaxRetries) when no attempt row exists at that count
 // belongs to the task's current attempt, or the one after it when the task has
-// already failed; it is never above the reported count. heldAtRetryCount says
-// an attempt row exists at the reported count.
+// already failed; it is never above the reported count, because the count is
+// the newest attempt the reporter knows of and no later attempt can have run.
+// heldAtRetryCount says an attempt row exists at the reported count.
 func attemptOfReport(status TaskStatus, retryCount int32, task TaskAttemptState, heldAtRetryCount bool) int32 {
 	if status != TaskStatusFailed || retryCount < task.MaxRetries || heldAtRetryCount {
 		return retryCount

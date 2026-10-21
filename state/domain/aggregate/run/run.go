@@ -473,8 +473,9 @@ func (r *Run) Start(
 }
 
 // Cancel marks r as cancelled (a terminal transition), bulk-cancels its child
-// tasks, and records RunCancelled (work-suppression guard) plus RunFinalized
-// (terminal projection). Returns ErrAlreadyTerminal when r is already terminal.
+// tasks and their open attempts, and records RunCancelled (work-suppression
+// guard) plus RunFinalized (terminal projection). Returns ErrAlreadyTerminal
+// when r is already terminal.
 func (r *Run) Cancel(
 	ctx context.Context,
 	tasks TaskCollection,
@@ -506,6 +507,9 @@ func (r *Run) Cancel(
 
 	if _, err := tasks.BulkCancel(ctx, r.scheduleID, by, now); err != nil {
 		return nil, fmt.Errorf("bulk cancel tasks: %w", err)
+	}
+	if _, err := tasks.CancelOpenAttempts(ctx, r.scheduleID); err != nil {
+		return nil, fmt.Errorf("cancel open attempts: %w", err)
 	}
 
 	cancelledEvt := RunCancelled{ID: r.scheduleID, Name: r.scheduleName, By: by, CancellationReason: reason}
@@ -563,6 +567,12 @@ func (r *Run) Cancel(
 // Every task write that takes effect stamps the run's progress clock
 // (last_heartbeat_at) with now. A replay, a superseded attempt, or a write the
 // task row refused (affected == 0) leaves the clock where it was.
+//
+// Before the task's own update, a running, succeeded or failed report on a run
+// that is not terminal is written to the row of the attempt it describes (see
+// recordAttempt), whatever the attempt order then decides for the task: a
+// report for an older attempt updates that attempt's row and leaves the task
+// as its newer attempt put it.
 func (r *Run) RecordTaskStatus(
 	ctx context.Context,
 	tasks TaskCollection,
@@ -590,13 +600,16 @@ func (r *Run) RecordTaskStatus(
 	if !exists {
 		return nil, false, ErrTaskNotHeld
 	}
+	if err := r.recordAttempt(ctx, tasks, taskID, newStatus, retryCount, attempt); err != nil {
+		return nil, false, err
+	}
 
 	prevKnown := prev != ""
 	isTerminal := newStatus.IsTerminal()
 	prevWasTerminal := prevKnown && prev.IsTerminal()
 
-	// Order the update by attempt (retry_count). Deliveries of
-	// task.status.updated:v1 for one task can be processed in any order (a
+	// Order the update by attempt: the event's retry_count field. Deliveries
+	// of task.status.updated:v1 for one task can be processed in any order (a
 	// redelivery can repeat an earlier one); the attempt number makes the
 	// result order-independent.
 
@@ -671,6 +684,61 @@ func (r *Run) RecordTaskStatus(
 		// slot was empty and stays empty.
 		return nil, false, nil
 	}
+}
+
+// recordAttempt writes a status report to the row of the attempt it describes,
+// after the task row is locked. The attempt is the report's retry count, except
+// for a failure that reports the exhausted retry budget with no row at that
+// count (Kubernetes refused the Job), which belongs to the attempt that was
+// refused (attemptOfReport). A missing row is created dispatched: attempt 0
+// with the task's Job name and dispatch time, a later attempt with its
+// numbered Job name and no dispatch time, which the database clock stamps. The
+// status then only moves forward, so a final status is never lowered, and the
+// row is saved when it is new or its status changed. A report of a status that
+// describes no attempt writes nothing.
+func (r *Run) recordAttempt(
+	ctx context.Context,
+	tasks TaskCollection,
+	taskID uuid.UUID,
+	status TaskStatus,
+	retryCount int32,
+	task TaskAttemptState,
+) error {
+	target, ok := attemptStatusOfReport(status)
+	if !ok {
+		return nil
+	}
+	a, held, err := tasks.LoadAttempt(ctx, taskID, retryCount)
+	if err != nil {
+		return fmt.Errorf("load attempt %d: %w", retryCount, err)
+	}
+	n := attemptOfReport(status, retryCount, task, held)
+	if n != retryCount {
+		a, held, err = tasks.LoadAttempt(ctx, taskID, n)
+		if err != nil {
+			return fmt.Errorf("load attempt %d: %w", n, err)
+		}
+	}
+	if !held {
+		a = Attempt{TaskID: taskID, Number: n, Status: AttemptDispatched}
+		if n == 0 {
+			a.JobName = task.JobName
+			a.DispatchedAt = task.DispatchedAt
+		} else {
+			name, err := domain.ComputeJobName(task.ServiceName, task.SchemaName, task.TableName, r.scheduleID.String(), int(n))
+			if err != nil {
+				return fmt.Errorf("name attempt %d: %w", n, err)
+			}
+			a.JobName = name
+		}
+	}
+	if changed := a.Advance(target); held && !changed {
+		return nil
+	}
+	if err := tasks.SaveAttempt(ctx, a); err != nil {
+		return fmt.Errorf("save attempt %d: %w", a.Number, err)
+	}
+	return nil
 }
 
 // recordProgress stamps the run's progress clock with now. The clock reads the
