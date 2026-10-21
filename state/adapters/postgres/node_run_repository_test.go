@@ -9,6 +9,7 @@ import (
 
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
+	"github.com/carolsimone/continuo/state/domain/projection"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
@@ -235,8 +236,9 @@ type storedAttempt struct {
 	FailureReason    *string
 }
 
-// insertAttemptRow stores row, named after its task and attempt, and removes
-// it with its task when the test ends.
+// insertAttemptRow stores row, named after its task and attempt. It registers
+// no cleanup of its own: the row is deleted with its task through the
+// task_attempts foreign key's ON DELETE CASCADE.
 func insertAttemptRow(t testing.TB, db *sqlx.DB, row storedAttempt) {
 	t.Helper()
 	_, err := db.Exec(`
@@ -322,26 +324,64 @@ func TestNodeRunRepository_List_CarriesTheLatestAttemptsFacts(t *testing.T) {
 	assert.Equal(t, boom, *gotY[0].ErrorMessage)
 }
 
-// Node durations read the succeeded attempt only: a task that failed after
-// 100 s adds no duration, one that succeeded in 10 s adds 10.
+// Node durations read each task's succeeded attempt only: a task that failed
+// after 100 s adds no duration, a task whose 100 s attempt failed before a
+// 10 s attempt succeeded adds 10, and a task with two succeeded attempts adds
+// one duration.
 func TestNodeRunRepository_ListNodes_DurationsCountOnlySucceededAttempts(t *testing.T) {
-	db := newTestDB(t)
-	svc, sch, tbl := "svc-dur-"+uuid.NewString()[:8], "sch", "orders"
 	start := time.Now().UTC().Add(-time.Hour)
+	attempt := func(task uuid.UUID, n int, status string, sec int) storedAttempt {
+		return storedAttempt{TaskID: task, Attempt: n, Status: status,
+			StartedAt: ptrTime(start), FinishedAt: ptrTime(start.Add(time.Duration(sec) * time.Second))}
+	}
+	listOne := func(t *testing.T, db *sqlx.DB, svc string) *projection.NodeSummary {
+		t.Helper()
+		nodes, _, err := postgres.NewNodeRunRepository(db, discardLogger()).ListNodes(context.Background(), "", svc, "", 50, 0)
+		require.NoError(t, err)
+		require.Len(t, nodes, 1)
+		return nodes[0]
+	}
 
-	failed := nodeRunTask(t, db, svc, sch, tbl, run.TaskStatusFailed, 0, 20)
-	insertAttemptRow(t, db, storedAttempt{TaskID: failed, Status: "failed",
-		StartedAt: ptrTime(start), FinishedAt: ptrTime(start.Add(100 * time.Second))})
-	succeeded := nodeRunTask(t, db, svc, sch, tbl, run.TaskStatusSucceeded, 0, 10)
-	insertAttemptRow(t, db, storedAttempt{TaskID: succeeded, Status: "succeeded",
-		StartedAt: ptrTime(start), FinishedAt: ptrTime(start.Add(10 * time.Second))})
+	t.Run("a failed task contributes nothing", func(t *testing.T) {
+		db := newTestDB(t)
+		svc, sch, tbl := "svc-dur-"+uuid.NewString()[:8], "sch", "orders"
+		failed := nodeRunTask(t, db, svc, sch, tbl, run.TaskStatusFailed, 0, 20)
+		insertAttemptRow(t, db, attempt(failed, 0, "failed", 100))
+		succeeded := nodeRunTask(t, db, svc, sch, tbl, run.TaskStatusSucceeded, 0, 10)
+		insertAttemptRow(t, db, attempt(succeeded, 0, "succeeded", 10))
 
-	nodes, _, err := postgres.NewNodeRunRepository(db, discardLogger()).ListNodes(context.Background(), "", svc, "", 50, 0)
+		n := listOne(t, db, svc)
+		assert.Equal(t, 10, n.AvgDurationSec)
+		assert.Equal(t, 10, n.P95DurationSec)
+	})
 
-	require.NoError(t, err)
-	require.Len(t, nodes, 1)
-	assert.Equal(t, 10, nodes[0].AvgDurationSec)
-	assert.Equal(t, 10, nodes[0].P95DurationSec)
+	t.Run("a task that failed then succeeded contributes its succeeded attempt", func(t *testing.T) {
+		db := newTestDB(t)
+		svc, sch, tbl := "svc-dur-"+uuid.NewString()[:8], "sch", "orders"
+		task := nodeRunTask(t, db, svc, sch, tbl, run.TaskStatusSucceeded, 1, 10)
+		insertAttemptRow(t, db, attempt(task, 0, "failed", 100))
+		insertAttemptRow(t, db, attempt(task, 1, "succeeded", 10))
+
+		n := listOne(t, db, svc)
+		assert.Equal(t, 10, n.AvgDurationSec)
+		assert.Equal(t, 10, n.P95DurationSec)
+	})
+
+	t.Run("a task with two succeeded attempts counts once", func(t *testing.T) {
+		db := newTestDB(t)
+		svc, sch, tbl := "svc-dur-"+uuid.NewString()[:8], "sch", "orders"
+		once := nodeRunTask(t, db, svc, sch, tbl, run.TaskStatusSucceeded, 0, 20)
+		insertAttemptRow(t, db, attempt(once, 0, "succeeded", 10))
+		twice := nodeRunTask(t, db, svc, sch, tbl, run.TaskStatusSucceeded, 1, 10)
+		insertAttemptRow(t, db, attempt(twice, 0, "succeeded", 30))
+		insertAttemptRow(t, db, attempt(twice, 1, "succeeded", 30))
+
+		// Two durations, 10 s and 30 s: counting the second task twice would
+		// make the average 23 and the 95th percentile 30.
+		n := listOne(t, db, svc)
+		assert.Equal(t, 20, n.AvgDurationSec)
+		assert.Equal(t, 29, n.P95DurationSec)
+	})
 }
 
 // TestNodeRunRepository_ListNodes_AggregatesAndFilters seeds two nodes under the

@@ -66,13 +66,15 @@ func (f *fakeNodeRunRepo) ListNodeServices(_ context.Context) ([]string, error) 
 
 func TestNodeRunHandler_ListNodeRuns_HappyPath(t *testing.T) {
 	now := time.Now().UTC()
+	class, reason := "task", "exit_code"
 	repo := &fakeNodeRunRepo{
 		rows: []*projection.NodeRun{
 			{
 				ScheduleID: uuid.New(), ScheduleName: "daily", Kind: "cron",
 				TerminalStatus: "succeeded",
 				TaskID:         uuid.New(), TaskStatus: run.TaskStatusSucceeded,
-				Attempt: 0, ImageTag: "v1", CreatedAt: now,
+				Attempt: 2, ImageTag: "v1", CreatedAt: now,
+				FailureClass: &class, FailureReason: &reason,
 			},
 		},
 	}
@@ -92,6 +94,15 @@ func TestNodeRunHandler_ListNodeRuns_HappyPath(t *testing.T) {
 	}
 	if resp.Runs[0].ImageTag != "v1" {
 		t.Errorf("ImageTag = %q, want v1", resp.Runs[0].ImageTag)
+	}
+	if got := resp.Runs[0].GetAttempt(); got != 2 {
+		t.Errorf("Attempt = %d, want 2", got)
+	}
+	if got := resp.Runs[0].GetFailureClass(); got != class {
+		t.Errorf("FailureClass = %q, want %q", got, class)
+	}
+	if got := resp.Runs[0].GetFailureReason(); got != reason {
+		t.Errorf("FailureReason = %q, want %q", got, reason)
 	}
 }
 
