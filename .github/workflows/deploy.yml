@@ -26,6 +26,10 @@ permissions:
 jobs:
   detect-changes:
     runs-on: self-hosted
+    # actions: read lets the last-deployed-commit step list this workflow's runs.
+    permissions:
+      contents: read
+      actions: read
     outputs:
       release: ${{ steps.filter.outputs.release }}
       base: ${{ steps.filter.outputs.base }}
@@ -36,10 +40,25 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Find the last deployed commit
+        # Changes are detected since the last commit a push run deployed, not
+        # since the previous push: a deploy run that was cancelled while it
+        # waited behind another would otherwise take its commits' changes with
+        # it, and those services would keep running their older images.
+        id: since
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          sha="$(bash scripts/deploy/last-deployed-commit.sh)"
+          echo "Detecting changes between ${sha} and ${GITHUB_SHA}"
+          echo "sha=${sha}" >> "${GITHUB_OUTPUT}"
+
       - name: Detect changed paths
         id: filter
         uses: dorny/paths-filter@v4
         with:
+          base: ${{ steps.since.outputs.sha }}
+          ref: ${{ github.sha }}
           filters: |
             base:
               - 'Dockerfile.base'
