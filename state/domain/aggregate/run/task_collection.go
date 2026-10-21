@@ -95,10 +95,14 @@ type TaskCollection interface {
 	// pending and undispatched, and returns how many tasks it changed.
 	MarkSkipped(ctx context.Context, taskIDs []uuid.UUID) (int, error)
 
-	// BulkCancel marks every non-terminal task of the given run as
-	// CANCELLED, stamping cancelled_by and cancelled_at with cancelledAt — the
-	// same authoritative instant the Run aggregate used for the run-level
-	// cancellation. Returns the number of rows updated.
+	// BulkCancel marks CANCELLED every task of the given run that is pending,
+	// running, or FAILED with a retry left (attempt < max_retries), whose
+	// retry can no longer run once the run is cancelled, stamping
+	// cancelled_by and cancelled_at with cancelledAt — the same authoritative
+	// instant the Run aggregate used for the run-level cancellation. A task
+	// that succeeded, was skipped or failed its last allowed attempt is left
+	// as it is. Each task it cancels stays locked until the transaction ends.
+	// Returns the number of rows updated.
 	BulkCancel(ctx context.Context, runID uuid.UUID, cancelledBy string, cancelledAt time.Time) (rowsAffected int, err error)
 }
 

@@ -10,6 +10,7 @@ import (
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	pkgdb "github.com/carolsimone/continuo/pkg/db"
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/events"
 	"github.com/carolsimone/continuo/state/domain/topology"
@@ -232,4 +233,116 @@ func TestTaskExecutionRecorded_ARecordAfterTheRunWasCancelledLeavesNoOpenAttempt
 	require.Len(t, rows, 1)
 	assert.Equal(t, "cancelled", rows[0].Status)
 	assert.Equal(t, evt.LogS3Key, rows[0].LogS3Key)
+}
+
+// cancelIn cancels f's run inside u's open transaction, leaving the commit to
+// the caller.
+func (f statusFlow) cancelIn(t *testing.T, u *postgres.PostgresUnitOfWork) {
+	t.Helper()
+	ctx := context.Background()
+	r, err := u.Run().LoadRunForUpdate(ctx, f.r.ScheduleID())
+	require.NoError(t, err)
+	_, err = r.Cancel(ctx, u.TaskCollection(), "watchdog", "stalled", u.Clock().Now())
+	require.NoError(t, err)
+	require.NoError(t, u.Run().SaveRun(ctx, r))
+}
+
+// openAttempts counts the dispatched, queued and running attempts of the task
+// at key.
+func (f statusFlow) openAttempts(t *testing.T, key string) int {
+	t.Helper()
+	var open int
+	require.NoError(t, f.db.Get(&open, `
+		SELECT count(*) FROM task_attempts
+		WHERE task_id = $1 AND status IN ('dispatched', 'queued', 'running')`, f.taskID(key)))
+	return open
+}
+
+// A task that failed with a retry left is cancelled with its run, so the
+// record of its retry Job, landing after the cancel, creates the retry's
+// attempt cancelled and the run keeps no open attempt.
+func TestTaskExecutionRecorded_ARetryRecordAfterTheRunWasCancelledLeavesNoOpenAttempt(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	tenant := storeFailureSchedule(t, db)
+	f := statusFlow{db: db, tenant: tenant, r: startScheduleRun(t, db, tenant, "e2e-schedule-failure", model.OperationRun)}
+	job, _, _ := f.task(t, recordFlowKey)
+	f.deliver(t, recordFlowKey, run.TaskStatusFailed, 0)
+	_, status, attempt := f.task(t, recordFlowKey)
+	require.Equal(t, run.TaskStatusFailed, status)
+	require.Equal(t, int32(0), attempt)
+
+	u := newPlanningUoW(db)
+	require.NoError(t, u.Begin(ctx))
+	defer u.Rollback()
+	f.cancelIn(t, u)
+	require.NoError(t, u.Commit())
+	_, status, _ = f.task(t, recordFlowKey)
+	assert.Equal(t, run.TaskStatusCancelled, status, "a failed task with a retry left is cancelled with its run")
+
+	evt := f.executionRecordOf(recordFlowKey, job+"-r1", "logs/"+job+"-r1.log")
+	f.record(t, evt)
+
+	assert.Zero(t, f.openAttempts(t, recordFlowKey))
+	rows := f.recordedAttempts(t, recordFlowKey)
+	require.Len(t, rows, 2)
+	assert.Equal(t, "failed", rows[0].Status)
+	assert.Equal(t, int32(1), rows[1].Attempt)
+	assert.Equal(t, "cancelled", rows[1].Status)
+	assert.Equal(t, evt.LogS3Key, rows[1].LogS3Key)
+}
+
+// A retry record that arrives while the cancel transaction is open waits on
+// the task lock the cancel took on the failed task, then reads the task
+// cancelled and creates the retry's attempt cancelled.
+func TestTaskExecutionRecorded_ARetryRecordRacingTheCancelWaitsForItAndLandsCancelled(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	tenant := storeFailureSchedule(t, db)
+	f := statusFlow{db: db, tenant: tenant, r: startScheduleRun(t, db, tenant, "e2e-schedule-failure", model.OperationRun)}
+	job, _, _ := f.task(t, recordFlowKey)
+	f.deliver(t, recordFlowKey, run.TaskStatusFailed, 0)
+	evt := f.executionRecordOf(recordFlowKey, job+"-r1", "logs/"+job+"-r1.log")
+
+	a := newPlanningUoW(db)
+	require.NoError(t, a.Begin(ctx))
+	defer a.Rollback()
+	f.cancelIn(t, a)
+
+	dbB, pidB := singleConnDB(t)
+	done := make(chan error, 1)
+	go func() {
+		b := newPlanningUoW(dbB)
+		if err := b.Begin(ctx); err != nil {
+			done <- err
+			return
+		}
+		defer b.Rollback()
+		if err := handlers.NewTaskExecutionRecordedHandler(discardLogger()).Handle(ctx, b, evt, uuid.Nil); err != nil {
+			done <- err
+			return
+		}
+		done <- b.Commit()
+	}()
+
+	require.Eventually(t, func() bool {
+		var waiting string
+		if err := db.Get(&waiting, `SELECT COALESCE(wait_event_type, '') FROM pg_stat_activity WHERE pid = $1`, pidB); err != nil {
+			return false
+		}
+		return waiting == "Lock"
+	}, 5*time.Second, 10*time.Millisecond, "the record never waited on the task lock the cancel holds")
+	require.NoError(t, a.Commit())
+
+	select {
+	case err := <-done:
+		require.NoError(t, err, "the record's transaction commits")
+	case <-time.After(10 * time.Second):
+		t.Fatal("the record's transaction never finished")
+	}
+	assert.Zero(t, f.openAttempts(t, recordFlowKey))
+	rows := f.recordedAttempts(t, recordFlowKey)
+	require.Len(t, rows, 2)
+	assert.Equal(t, int32(1), rows[1].Attempt)
+	assert.Equal(t, "cancelled", rows[1].Status)
 }

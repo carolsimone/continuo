@@ -472,10 +472,14 @@ func (r *Run) Start(
 	return events, nil
 }
 
-// Cancel marks r as cancelled (a terminal transition), bulk-cancels its child
-// tasks and their open attempts, and records RunCancelled (work-suppression
-// guard) plus RunFinalized (terminal projection). Returns ErrAlreadyTerminal
-// when r is already terminal.
+// Cancel marks r as cancelled (a terminal transition), cancels its pending
+// and running tasks, its failed tasks with a retry left and the open attempts
+// of its tasks, and records RunCancelled (work-suppression guard) plus
+// RunFinalized (terminal projection). A failed task with a retry left is
+// cancelled because its retry can no longer run: an execution record of that
+// retry, landing after the cancel or waiting on the task row the cancel
+// locked, then creates its attempt cancelled. Returns ErrAlreadyTerminal when
+// r is already terminal.
 func (r *Run) Cancel(
 	ctx context.Context,
 	tasks TaskCollection,

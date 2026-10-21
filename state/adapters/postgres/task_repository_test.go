@@ -174,17 +174,25 @@ func TestTaskTrackerRepository_BulkCancelByScheduleIDTx(t *testing.T) {
 	}))
 	defer db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", schedID)
 
-	// Create tasks in different states
+	// One task per status; the failed ones differ by whether a retry is left.
 	pendingID := uuid.New()
 	runningID := uuid.New()
+	retryLeftID := uuid.New()
+	exhaustedID := uuid.New()
 	succeededID := uuid.New()
+	skippedID := uuid.New()
 	for _, tt := range []struct {
-		id     uuid.UUID
-		status run.TaskStatus
+		id         uuid.UUID
+		status     run.TaskStatus
+		attempt    int
+		maxRetries int
 	}{
-		{pendingID, run.TaskStatusPending},
-		{runningID, run.TaskStatusRunning},
-		{succeededID, run.TaskStatusSucceeded},
+		{pendingID, run.TaskStatusPending, 0, 2},
+		{runningID, run.TaskStatusRunning, 0, 2},
+		{retryLeftID, run.TaskStatusFailed, 1, 2},
+		{exhaustedID, run.TaskStatusFailed, 2, 2},
+		{succeededID, run.TaskStatusSucceeded, 0, 2},
+		{skippedID, run.TaskStatusSkipped, 0, 2},
 	} {
 		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskTracker{
 			TaskID:      tt.id,
@@ -194,7 +202,8 @@ func TestTaskTrackerRepository_BulkCancelByScheduleIDTx(t *testing.T) {
 			TableName:   "t-" + tt.id.String()[:8],
 			JobName:     "j-" + tt.id.String()[:8],
 			Status:      tt.status,
-			MaxRetries:  0,
+			Attempt:     tt.attempt,
+			MaxRetries:  tt.maxRetries,
 			CreatedAt:   time.Now(),
 		}))
 	}
@@ -207,20 +216,29 @@ func TestTaskTrackerRepository_BulkCancelByScheduleIDTx(t *testing.T) {
 	n, err := taskRepo.BulkCancelByScheduleIDTx(ctx, tx, schedID, "user1", time.Now().UTC())
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
-	assert.EqualValues(t, 2, n) // pending + running; succeeded untouched
+	assert.EqualValues(t, 3, n) // pending, running and the failed task with a retry left
 
-	for _, id := range []uuid.UUID{pendingID, runningID} {
+	for _, id := range []uuid.UUID{pendingID, runningID, retryLeftID} {
 		got, err := taskRepo.GetByID(ctx, id)
 		require.NoError(t, err)
 		assert.Equal(t, run.TaskStatusCancelled, got.Status)
 		assert.NotNil(t, got.CancelledAt)
+		require.NotNil(t, got.CancelledBy)
 		assert.Equal(t, "user1", *got.CancelledBy)
 	}
 
-	// succeeded task must be untouched
-	got, err := taskRepo.GetByID(ctx, succeededID)
-	require.NoError(t, err)
-	assert.Equal(t, run.TaskStatusSucceeded, got.Status)
+	// A task that ended — a failure with no retry left, a success, a skip — is untouched.
+	for id, want := range map[uuid.UUID]run.TaskStatus{
+		exhaustedID: run.TaskStatusFailed,
+		succeededID: run.TaskStatusSucceeded,
+		skippedID:   run.TaskStatusSkipped,
+	} {
+		got, err := taskRepo.GetByID(ctx, id)
+		require.NoError(t, err)
+		assert.Equal(t, want, got.Status)
+		assert.Nil(t, got.CancelledAt)
+		assert.Nil(t, got.CancelledBy)
+	}
 }
 
 func TestTaskTrackerRepository_CreateAndGet_RoundTripsImageTag(t *testing.T) {
