@@ -58,8 +58,9 @@ func NewHistoryCommand(factory StateClientFactory, cfg *config.Config, stdout, s
 		Long: `List the recent run history of one model node.
 
 Use when the user wants to see the last runs of a specific dbt model, including
-whether each run succeeded, which image and manifest version it used, any
-error message, and the exact code it executed.
+whether each run succeeded, which attempt the task reached, why its latest
+attempt failed (failure class, reason and error message), which image it ran,
+its log and result locations, and the content hash of the code it executed.
 
 Arguments:
   <service>  The owning service name.
@@ -78,8 +79,8 @@ Output (stdout, JSON): up to 50 runs, newest first.
    "attempt":number,"image_tag":string,
    "created_at":string,"started_at":string,"completed_at":string,
    "error_message":string,"failure_class":string,"failure_reason":string,
-   "log_s3_key":string,"operation":string,
-   "run_results_uri":string,"content_hash":string}]}
+   "log_s3_key":string,"run_results_uri":string,"operation":string,
+   "content_hash":string}]}
   attempt is the zero-based number of the task's current attempt (0 on the
   first try). failure_class and failure_reason say why the latest attempt
   failed. terminal_status, started_at, completed_at, error_message,
