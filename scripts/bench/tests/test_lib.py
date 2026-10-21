@@ -259,7 +259,6 @@ def test_sql_on_k8s_without_a_postgres_pod_fails_the_read_not_the_script(tmp_pat
     assert "BENCH_PG_POD is not set" in out.stderr
 
 
-
 def quota_file(tmp_path):
     quota = tmp_path / "quota.yaml"
     quota.write_text("kind: ResourceQuota\n")
@@ -393,7 +392,6 @@ def runner_script(tmp_path, then=""):
 START_RUNNER = 'bash "{runner}" & c=$!; while [ ! -e "$FAKE_DIR/runner-ready" ]; do sleep 0.05; done; '
 
 
-
 def live_run(fake, run_id="run-7"):
     (fake / "state").write_text("running")
     (fake / "current").write_text(run_id)
@@ -405,11 +403,47 @@ def test_stopping_a_scenario_cancels_its_run_before_waiting_for_its_runner(tmp_p
     env = fake_env.make(tmp_path, [])
     fake = Path(env["FAKE_DIR"])
     live_run(fake)
-    out = run_lib(env, START_RUNNER.format(runner=runner_script(tmp_path)) +
+    runner = runner_script(tmp_path, then='echo "runner exits" >> "$FAKE_DIR/events"')
+    out = run_lib(env, START_RUNNER.format(runner=runner) +
                   'if bench_stop_scenario "$c" bench-s; then echo stopped; else echo failed; fi; '
                   'if kill -0 "$c" 2>/dev/null; then echo alive; else echo gone; fi')
     assert out.stdout.split() == ["stopped", "gone"], out.stderr
     assert (fake / "state").read_text() == "cancelled"
+    assert (fake / "events").read_text().splitlines() == ["cancel benchmark interrupted", "runner exits"]
+
+
+def test_stopping_a_scenario_reports_a_run_state_it_could_not_read_after_its_runner_exits(tmp_path):
+    import fake_env
+    env = fake_env.make(tmp_path, [])
+    fake = Path(env["FAKE_DIR"])
+    env["FAKE_STATUS_FAIL_WHEN_EXISTS"] = str(fake / "runner-done")
+    live_run(fake)
+    runner = runner_script(tmp_path, then=': > "$FAKE_DIR/runner-done"')
+    out = run_lib(env, START_RUNNER.format(runner=runner) +
+                  'if bench_stop_scenario "$c" bench-s; then echo stopped; else echo failed; fi')
+    assert out.stdout.strip() == "failed", out.stderr
+    assert "could not read bench-s's run state" in out.stderr
+
+
+def test_a_spawned_runner_runs_in_a_process_group_of_its_own(tmp_path):
+    out = subprocess.run(["bash", "-c", f'. "{BENCH}/lib.sh"; bench_spawn sleep 30; c=$!; sleep 0.5; '
+                                        'python3 -c "import os, sys; print(os.getpgid(int(sys.argv[1])))" "$c"; '
+                                        'echo "$c"; kill "$c"'],
+                         capture_output=True, text=True, timeout=60)
+    group, pid = out.stdout.split()
+    assert group == pid, out.stderr
+
+
+def test_stopping_a_spawned_runner_ends_every_process_it_started(tmp_path):
+    import fake_env
+    env = fake_env.make(tmp_path, [])
+    marker = f"bench-grandchild-{tmp_path.name}"
+    out = run_lib(env, f'bench_spawn bash -c \'python3 -c "import time; time.sleep(60)" {marker} & '
+                       ': > "$FAKE_DIR/grandchild"; wait\'; c=$!; '
+                       'while [ ! -e "$FAKE_DIR/grandchild" ]; do sleep 0.05; done; '
+                       'bench_stop_scenario "$c" ""; echo stopped')
+    assert out.stdout.strip() == "stopped", out.stderr
+    assert fake_env.wait_until_gone(marker) == [], "the runner's own child ends with it"
 
 
 def test_stopping_a_scenario_that_cannot_cancel_its_run_does_not_wait_for_its_runner(tmp_path):
@@ -470,6 +504,82 @@ def test_an_interrupted_start_failure_finishes_its_cleanup_despite_a_second_sign
 
     assert proc.returncode == 143, stderr
     assert after_the_cancel(fake)[-1].endswith(f"delete -f {quota} --ignore-not-found"), "the quota is still removed"
+
+
+def test_an_interrupted_start_failure_that_cannot_cancel_its_run_leaves_no_process_behind(tmp_path):
+    import signal
+    import time
+    import fake_env
+    env = fake_env.make(tmp_path, [])
+    env.update(BENCH_IDLE_S="0", BENCH_SETTLE_S="0", FAKE_CANCEL_FAIL="1")
+    fake, quota = Path(env["FAKE_DIR"]), quota_file(tmp_path)
+    proc, out = start_failure(env, tmp_path, quota)
+    deadline = time.time() + 60
+    while not (fake / "current").exists() and time.time() < deadline:
+        time.sleep(0.2)
+    time.sleep(2)  # the runner is waiting on its run
+    proc.send_signal(signal.SIGTERM)
+    _, stderr = proc.communicate(timeout=60)
+
+    assert proc.returncode == 143, stderr
+    assert "could not cancel bench-sq's run" in stderr
+    assert fake_env.wait_until_gone(str(out)) == [], "the runner and everything it started are stopped"
+
+
+def test_the_dev_harness_runs_a_scenario_in_a_process_group_of_its_own(tmp_path):
+    source = (BENCH / "run_baseline_dev.sh").read_text()
+    start = source.index("scenario() {")
+    scenario = source[start:source.index("\n}\n", start) + 2]
+    here = tmp_path / "here"
+    here.mkdir()
+    inject = here / "inject.sh"
+    inject.write_text('#!/usr/bin/env bash\nprintf "%s" "${current_schedule}" > "$OUT/during-inject"\n')
+    runner = here / "run_scenario.sh"
+    runner.write_text('#!/usr/bin/env bash\nprintf "%s" "${current_schedule}" > "$OUT/during-run"\n'
+                      'python3 -c "import os, sys; print(os.getpgid(0) == int(sys.argv[1]))" "$$" > "$OUT/own-group"\n')
+    for script in (inject, runner):
+        script.chmod(0o755)
+    script = (f'set -euo pipefail\n. "{BENCH}/lib.sh"\nexport OUT="{tmp_path}"\n'
+              f'here="{here}"; p="{tmp_path}"; out="{tmp_path}"; injected=0; child=""\n'
+              'current_schedule=""; export current_schedule\nbench_check_release() { :; }\n'
+              f'{scenario}\nscenario n n.json bench-s run 1 "{tmp_path}/n"\n'
+              'echo "after=${current_schedule} child=${child}"\n')
+    result = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "own-group").read_text().strip() == "True"
+    assert (tmp_path / "during-inject").read_text() == "", "no run to cancel until the schedule is published"
+    assert (tmp_path / "during-run").read_text() == "bench-s"
+    assert result.stdout.strip() == "after= child=", "nothing to stop once the scenario has ended"
+
+
+def test_the_dev_exit_handler_finishes_its_restore_despite_a_second_signal(tmp_path):
+    import signal
+    import time
+    source = (BENCH / "run_baseline_dev.sh").read_text()
+    start = source.index("restore_on_exit() {")
+    handler = source[start:source.index("\n}\n", start) + 2]
+    here = tmp_path / "here"
+    here.mkdir()
+    restore = here / "restore.sh"
+    restore.write_text('#!/usr/bin/env bash\necho restored > "$1/restored"\n')
+    restore.chmod(0o755)
+    script = (f'set -euo pipefail\nhere="{here}"; out="{tmp_path}"; injected=1; child=""; '
+              f'current_schedule=bench-s; BENCH_KUBECONFIG=k\n'
+              'bench_stop_scenario() { : > "$out/stopping"; sleep 2 & wait $!; }\n'
+              f'{handler}\ntrap restore_on_exit EXIT\ntrap "exit 130" INT\ntrap "exit 143" TERM HUP\n'
+              ': > "$out/started"; sleep 30 & wait $!\n')
+    proc = subprocess.Popen(["bash", "-c", script], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    deadline = time.time() + 30
+    while not (tmp_path / "started").exists() and time.time() < deadline:
+        time.sleep(0.05)
+    proc.send_signal(signal.SIGTERM)
+    while not (tmp_path / "stopping").exists() and time.time() < deadline:
+        time.sleep(0.05)
+    proc.send_signal(signal.SIGTERM)
+    _, stderr = proc.communicate(timeout=30)
+
+    assert (tmp_path / "restored").exists(), stderr
+    assert proc.returncode == 143
 
 
 def test_a_start_failure_whose_last_stop_fails_fails(tmp_path):

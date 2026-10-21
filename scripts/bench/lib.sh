@@ -224,18 +224,28 @@ bench_cancel_live_run() {
   fi
 }
 
+# bench_spawn COMMAND [ARG...]: starts COMMAND in the background in a process
+# group of its own; $! is then both its PID and the group's id, which
+# bench_stop_scenario signals.
+bench_spawn() {
+  python3 -c 'import os, sys; os.setpgid(0, 0); os.execvp(sys.argv[1], sys.argv[1:])' "$@" &
+}
+
 # Stops a scenario that is still running and returns non-zero, with a message,
 # when its run may still be live. It signals the runner CHILD (a process this
 # shell started; empty when none) and cancels SCHEDULE's live run, then waits for
-# CHILD to exit and cancels a run CHILD triggered meanwhile. The cancel comes
-# before the wait: bash 3.2 (macOS) defers a signal until a command substitution
-# ends, so a runner waiting on its run exits only once the run has stopped. When
-# the run could not be stopped, CHILD is not waited for: it exits once its own
-# wait on the run ends, and triggers nothing more.
+# CHILD to exit and cancels a run whose trigger reached state meanwhile. A CHILD
+# started with bench_spawn is signalled with its whole process group, so its
+# subshells, its sampler and any CLI call in flight end with it, a trigger call
+# included; any other CHILD is signalled alone. The cancel comes before the
+# wait: bash 3.2 (macOS) defers a signal until a command substitution ends, so a
+# runner waiting on its run exits only once that substitution has. When the run
+# could not be stopped, CHILD is not waited for: the signal has already ended
+# the subshells of a spawned runner, which then exits.
 bench_stop_scenario() {
   local child="$1" schedule="$2"
   if [ -n "${child}" ]; then
-    kill "${child}" 2>/dev/null || true
+    kill -TERM -- "-${child}" 2>/dev/null || kill "${child}" 2>/dev/null || true
   fi
   if [ -n "${schedule}" ]; then
     bench_cancel_live_run "${schedule}" || return 1
@@ -250,7 +260,8 @@ bench_stop_scenario() {
 
 # bench_start_failure NAME PAYLOAD SCHEDULE OUT_DIR [QUOTA_FILE]: runs a
 # start-failure scenario, three reps of run_scenario.sh (BENCH_IDLE_S default
-# 30, BENCH_RUN_TIMEOUT_S default 900), as a child process, with QUOTA_FILE's
+# 30, BENCH_RUN_TIMEOUT_S default 900), as a child process in a process group of
+# its own (bench_spawn), with QUOTA_FILE's
 # ResourceQuota applied to the Job namespace for its length when given. However
 # the scenario ends, normally or on INT, TERM or HUP, it is cleaned up: the
 # schedule's live run is cancelled, so no next attempt is queued, the child is
@@ -272,7 +283,7 @@ bench_start_failure() {
     bench_kubectl apply -f "${bench_start_failure_quota}" >/dev/null
   fi
   BENCH_IDLE_S="${BENCH_IDLE_S:-30}" BENCH_RUN_TIMEOUT_S="${BENCH_RUN_TIMEOUT_S:-900}" \
-    "$(bench_here)/run_scenario.sh" "${name}" "${payload}" "${schedule}" run 3 "${out}" &
+    bench_spawn "$(bench_here)/run_scenario.sh" "${name}" "${payload}" "${schedule}" run 3 "${out}"
   bench_start_failure_child=$!
   wait "${bench_start_failure_child}" || rc=$?
   bench_start_failure_child=""
