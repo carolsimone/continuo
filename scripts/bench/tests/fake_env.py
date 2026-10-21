@@ -11,7 +11,8 @@ The fakes keep their state in FAKE_DIR:
                      delete` ("kubectl <arguments>"), in call order; `delete jobs` fails once
                      FAKE_DELETE_JOBS_FAIL_AFTER calls of it have succeeded, and every `kubectl delete` takes
                      FAKE_DELETE_SLEEP seconds. Like the real CLI, a failing call prints an error envelope on
-                     stdout and exits 5: `schedule status` fails when FAKE_STATUS_FAIL is set or the file
+                     stdout and exits 5: `schedule status` (one line in status-calls per call, failed or not)
+                     fails when FAKE_STATUS_FAIL is set or the file
                      FAKE_STATUS_FAIL_WHEN_EXISTS names exists, and `schedule cancel` when FAKE_CANCEL_FAIL is
                      set; with FAKE_CANCEL_NOOP a cancel is accepted and the run stays live
   deployments.json, tasks.json  what psql prints in a `docker exec` for a query of deployments or task_tracker
@@ -52,6 +53,8 @@ if cmd == ["schedule", "trigger"]:
             log.write(extra.read_text())
     print(json.dumps({"schedule_id": run_id, "schedule_name": sys.argv[3], "triggered_at": "2026-10-03T09:00:00Z"}))
 elif cmd == ["schedule", "status"]:
+    with open(d / "status-calls", "a") as calls:
+        calls.write("status\n")
     marker = os.environ.get("FAKE_STATUS_FAIL_WHEN_EXISTS")
     if os.environ.get("FAKE_STATUS_FAIL") or (marker and os.path.exists(marker)):
         unavailable()
