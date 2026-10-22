@@ -232,6 +232,7 @@ same transaction as the observation) → validation.result:v1 (kind=complete)
 | `TestE2E_ReleasePromote_GatedIntraServiceUpstream` | A changed node with a changed **intra-service** upstream (`rel_probe_down` → `rel_probe_up`): the upstream builds into the candidate schema first (topological gating), the dependent validates against it, then the candidate schema is torn down. |
 | `TestE2E_ReleasePromote_GatedCrossServiceUpstream` | A clean **cross-service** chain (`xprobe_down`@service-2 → `xprobe_up`@service-3) validates self-contained — the changed node and its cross-service upstream are both built empty in the candidate schema. |
 | `TestE2E_ReleasePromote_BootstrapSkipsValidation` | `bootstrap:true` promotes directly, skipping validation, and seeds `current_prod`. |
+| `TestE2E_ReleasePromote_ATimeoutOnlyChangePromotesWithoutValidation` (`node_timeout_test.go`) | A release that changes only a node's `meta.timeout_minutes` promotes without validation: no node is in the changed set, no `validation.requested:v1` is published and no validation Job runs, and state's live release stores the timeout (`topology_nodes.timeout_seconds`) on the declaring node only. |
 
 These tests read the dbt manifests that `setup.sh` uploads to MinIO S3 and use the content-addressed image tags loaded into kind, so they need no setup beyond the standard blank-state harness. Compile and seed-build run real dbt, and each validation job runs a real `continuo-python-runtime-<engine>` Job — allow up to ~10 minutes per test, and expect a cold kind run to be slower than a warm one.
 
