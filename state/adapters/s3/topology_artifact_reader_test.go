@@ -72,7 +72,7 @@ func artifactDoc(releaseID string) topologyartifact.Document {
 				ContentHash: "sha256:seed", ImageTag: "svc:1", Schedule: "daily", UpstreamUniqueIDs: []string{}},
 			{UniqueID: "stg.orders", SchemaName: "stg", TableName: "orders", ServiceName: "svc", NodeType: "dbt-model",
 				TestCount: 2, ContentHash: "sha256:model", ImageTag: "svc:1", Schedule: "hourly",
-				UpstreamUniqueIDs: []string{"raw.orders"}},
+				TimeoutSeconds: 7200, UpstreamUniqueIDs: []string{"raw.orders"}},
 		},
 	}
 }
@@ -98,12 +98,13 @@ func TestTopologyArtifactReader_ReturnsTheArtifactAsNodeSpecs(t *testing.T) {
 	assert.Equal(t, "default", art.TenantID)
 	assert.Equal(t, "rel-1", art.ReleaseID)
 	require.Len(t, art.Nodes, 2)
-	two := 2
+	two, timeout := 2, 7200
 	assert.Equal(t, topology.NodeSpec{
 		UniqueID: "stg.orders", ServiceName: "svc", SchemaName: "stg", TableName: "orders", NodeType: "dbt-model",
 		TestCount: &two, ContentHash: "sha256:model", ImageTag: "svc:1", ScheduleName: "hourly",
-		UpstreamUniqueIDs: []string{"raw.orders"},
+		TimeoutSeconds: &timeout, UpstreamUniqueIDs: []string{"raw.orders"},
 	}, art.Nodes[1])
+	assert.Nil(t, art.Nodes[0].TimeoutSeconds, "a node that declares no timeout has none")
 	require.NotNil(t, art.Nodes[0].TestCount, "the artifact always states a test count")
 	assert.Equal(t, int64(topologyartifact.MaxObjectBytes), objects.maxBytes, "the read is capped at the artifact size limit")
 }

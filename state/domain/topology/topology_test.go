@@ -119,6 +119,22 @@ func TestNewRelease_CopiesTheTestCount(t *testing.T) {
 	assert.Equal(t, 3, *rel.Nodes[1].TestCount)
 }
 
+// A declared timeout is copied onto the stored node, an undeclared one stays
+// nil, and the stored value is not shared with the caller's spec.
+func TestNewRelease_CopiesTheTimeout(t *testing.T) {
+	undeclared := spec("raw", "a", "dbt-seed")
+	declared := spec("raw", "b", "dbt-seed")
+	declared.TimeoutSeconds = count(28800)
+
+	rel, err := topology.NewRelease("default", "rel-1", 1, "u", "s", []topology.NodeSpec{undeclared, declared})
+	require.NoError(t, err)
+	*declared.TimeoutSeconds = 1
+
+	assert.Nil(t, rel.Nodes[0].TimeoutSeconds)
+	require.NotNil(t, rel.Nodes[1].TimeoutSeconds)
+	assert.Equal(t, 28800, *rel.Nodes[1].TimeoutSeconds)
+}
+
 func TestPointer_IsZero(t *testing.T) {
 	assert.True(t, topology.Pointer{}.IsZero())
 	assert.False(t, topology.Pointer{ReleaseID: "rel-1", PromotionSeq: 1}.IsZero())

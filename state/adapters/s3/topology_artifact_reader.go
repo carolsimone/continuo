@@ -102,11 +102,17 @@ func (r *TopologyArtifactReader) Load(ctx context.Context, uri, sha256Hex string
 }
 
 // artifactOf maps a decoded document onto the port's node specs. The document
-// states every node's test count, so none is unknown.
+// states every node's test count, so none is unknown; a timeout of 0 means the
+// node declares none.
 func artifactOf(doc topologyartifact.Document) ports.TopologyArtifact {
 	nodes := make([]topology.NodeSpec, 0, len(doc.Nodes))
 	for _, n := range doc.Nodes {
 		testCount := n.TestCount
+		var timeout *int
+		if n.TimeoutSeconds > 0 {
+			seconds := n.TimeoutSeconds
+			timeout = &seconds
+		}
 		nodes = append(nodes, topology.NodeSpec{
 			UniqueID:          n.UniqueID,
 			ServiceName:       n.ServiceName,
@@ -118,6 +124,7 @@ func artifactOf(doc topologyartifact.Document) ports.TopologyArtifact {
 			ImageTag:          n.ImageTag,
 			SecretRef:         n.SecretRef,
 			ScheduleName:      n.Schedule,
+			TimeoutSeconds:    timeout,
 			UpstreamUniqueIDs: append([]string(nil), n.UpstreamUniqueIDs...),
 		})
 	}

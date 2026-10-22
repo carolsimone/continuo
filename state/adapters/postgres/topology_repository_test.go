@@ -137,6 +137,8 @@ func TestTopologyRepository_ReleaseNodesRoundTripsEveryColumnInKeyOrder(t *testi
 		UniqueID: "raw.ab", ServiceName: "svc-2", SchemaName: "raw", TableName: "ab", NodeType: "python-api",
 		TestCount: &three, ContentHash: "h-ab", ImageTag: "svc-2:7", SecretRef: "continuo-api-weather", ScheduleName: "hourly",
 	}
+	eightHours := 28800
+	rich.TimeoutSeconds = &eightHours
 	unknown := topology.NodeSpec{
 		UniqueID: "raw.a_b", ServiceName: "svc", SchemaName: "raw", TableName: "a_b", NodeType: "dbt-seed", ContentHash: "h-a_b",
 	}
@@ -155,11 +157,38 @@ func TestTopologyRepository_ReleaseNodesRoundTripsEveryColumnInKeyOrder(t *testi
 	require.Len(t, seedsOnly, 2)
 	assert.Equal(t, topology.NodeKey("raw.a_b"), seedsOnly[0].Key)
 	assert.Nil(t, seedsOnly[0].TestCount)
+	assert.Nil(t, seedsOnly[0].TimeoutSeconds)
 	assert.Equal(t, topology.NodeKey("raw.aa"), seedsOnly[1].Key)
 
 	none, err := repo.ReleaseNodes(ctx, tenant, "rel-unknown", "")
 	require.NoError(t, err)
 	assert.Empty(t, none)
+}
+
+// A stored release is immutable: a later release that declares another timeout
+// for the same node leaves the earlier release's timeout as it was.
+func TestTopologyRepository_AReleaseKeepsItsOwnTimeouts(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	tenant := newTopoTenant(t, db)
+	withTimeout := func(seconds int) topology.NodeSpec {
+		s := topoSpec("mart", "orders_full", "dbt-model", "h")
+		s.TimeoutSeconds = &seconds
+		return s
+	}
+	_, err := saveTopoRelease(t, db, topoRelease(t, tenant, "rel-1", 1, "aa", withTimeout(28800)))
+	require.NoError(t, err)
+	_, err = saveTopoRelease(t, db, topoRelease(t, tenant, "rel-2", 2, "bb", withTimeout(7200)))
+	require.NoError(t, err)
+	repo := postgres.NewTopologyRepository(db, nil)
+
+	for releaseID, want := range map[string]int{"rel-1": 28800, "rel-2": 7200} {
+		nodes, err := repo.ReleaseNodes(ctx, tenant, releaseID, "")
+		require.NoError(t, err)
+		require.Len(t, nodes, 1)
+		require.NotNil(t, nodes[0].TimeoutSeconds, releaseID)
+		assert.Equal(t, want, *nodes[0].TimeoutSeconds, releaseID)
+	}
 }
 
 func TestTopologyRepository_SaveReleaseRejectsAnotherChecksum(t *testing.T) {
