@@ -44,7 +44,7 @@ type harness struct {
 	now   time.Time
 }
 
-func newHarness(t *testing.T) *harness {
+func newHarness(t testing.TB) *harness {
 	t.Helper()
 	db, cleanup := executortest.SetupPostgres(t)
 	t.Cleanup(cleanup)
@@ -67,7 +67,7 @@ func newHarness(t *testing.T) *harness {
 
 // started stores a production deployment of attempt attempt of a new task
 // whose Job was created at deployedAt.
-func (h *harness) started(t *testing.T, attempt int, deployedAt time.Time) *model.Deployment {
+func (h *harness) started(t testing.TB, attempt int, deployedAt time.Time) *model.Deployment {
 	t.Helper()
 	runID := uuid.New().String()
 	cmd := command.DeployTask{TaskID: uuid.New().String(), ScheduleID: runID, ScheduleName: "daily",

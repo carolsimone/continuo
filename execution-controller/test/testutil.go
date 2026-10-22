@@ -17,7 +17,7 @@ import (
 // Every executor DB suite shares a session advisory lock, so each test owns
 // all rows inserted after its empty-table check. A database containing rows
 // is refused rather than clearing data belonging to another process.
-func SetupPostgres(t *testing.T) (*sqlx.DB, func()) {
+func SetupPostgres(t testing.TB) (*sqlx.DB, func()) {
 	t.Helper()
 	cfg := pkgconfig.LoadPostgres(&pkgconfig.Validator{})
 	if cfg.Host == "" {

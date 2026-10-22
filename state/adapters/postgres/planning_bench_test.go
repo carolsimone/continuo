@@ -8,7 +8,9 @@ import (
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/events"
 	"github.com/carolsimone/continuo/state/domain/topology"
+	"github.com/carolsimone/continuo/state/service/attemptreconcile"
 	"github.com/carolsimone/continuo/state/service/handlers"
+	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/require"
@@ -17,7 +19,7 @@ import (
 // The benchmarks below measure the run-planning hot paths on synthetic
 // releases stored in the test database the state migrations built:
 //
-//	go test -tags integration -run '^$' -bench 'StartRun|TaskSucceeded|FinalFailure' -benchtime 20x ./adapters/postgres/
+//	go test -tags integration -run '^$' -bench 'StartRun|TaskSucceeded|TaskFailedRetry|FinalFailure|ReconcileDue' -benchtime 20x ./adapters/postgres/
 
 // The synthetic release shapes the benchmarks run on, besides cascade2000.
 var (
@@ -28,7 +30,8 @@ var (
 
 // BenchmarkStartRun measures a schedule run's creating transaction: read the
 // schedule's graph, select its tasks, store the run row, start it (one COPY of
-// every task), save it, write one outbox row per ready task and commit.
+// every task and one INSERT of the first attempt of every ready task), save
+// it, write one outbox row per ready task and commit.
 func BenchmarkStartRun(b *testing.B) {
 	for _, shape := range []releaseShape{dag2000, chain500, test2000, cascade2000} {
 		b.Run(shape.name, func(b *testing.B) {
@@ -63,6 +66,19 @@ func BenchmarkTaskSucceeded(b *testing.B) {
 			})
 		})
 	}
+}
+
+// BenchmarkTaskFailedRetry measures the same transaction for a retryable
+// failure with budget left: it stores the failed attempt, adds the next one
+// and writes its dispatch. The failures cycle through the tasks dag-2000
+// dispatched at creation, its first level.
+func BenchmarkTaskFailedRetry(b *testing.B) {
+	roots := dag2000.nodes / dag2000.levels
+	b.Run(dag2000.name, func(b *testing.B) {
+		benchmarkReports(b, dag2000, func(keys []string, i int) (string, run.AttemptStatus, model.FailureReason) {
+			return keys[i%roots], run.AttemptFailed, model.FailureReasonExitCode
+		})
+	})
 }
 
 // BenchmarkFinalFailure measures the same transaction for the cascade root
@@ -112,6 +128,52 @@ func benchmarkReports(b *testing.B, shape releaseShape, next func(keys []string,
 		require.NoError(b, u.Commit())
 	}
 }
+
+// BenchmarkReconcileDue measures one pass of the attempt reconcile with 2,000
+// attempts in flight and every one of them due: it asks about the oldest
+// DueLimit, each in a transaction of its own that locks the attempt, writes
+// its dispatch and moves its next check. Before each pass every attempt is
+// made due again, outside the timer.
+func BenchmarkReconcileDue(b *testing.B) {
+	ctx := context.Background()
+	db := newTestDB(b)
+	tenant := storeShape(b, db, dag2000)
+	r := startScheduleRun(b, db, tenant, dag2000.schedule(), model.OperationRun)
+	_, err := db.Exec(`
+		INSERT INTO task_attempts (task_id, attempt, job_name, status, dispatched_at, next_check_at)
+		SELECT task_id, 0, job_name, 'dispatched', now(), now() FROM task_tracker WHERE schedule_id = $1
+		ON CONFLICT (task_id, attempt) DO NOTHING`, r.ScheduleID())
+	require.NoError(b, err)
+	_, err = db.Exec(`UPDATE task_tracker SET status = 'dispatched', dispatched_at = coalesce(dispatched_at, now())
+		WHERE schedule_id = $1`, r.ScheduleID())
+	require.NoError(b, err)
+	loop := attemptreconcile.New(func() uow.UnitOfWork { return newPlanningUoW(db) }, tenant, testTaskDefaults,
+		noRunMetrics{}, discardLogger())
+
+	b.ResetTimer()
+	for range b.N {
+		b.StopTimer()
+		_, err := db.Exec(`
+			UPDATE task_attempts a SET next_check_at = now() - interval '1 second'
+			FROM task_tracker t WHERE a.task_id = t.task_id AND t.schedule_id = $1`, r.ScheduleID())
+		require.NoError(b, err)
+		_, err = db.Exec(`DELETE FROM state_outbox WHERE aggregate_id = $1`, r.ScheduleID())
+		require.NoError(b, err)
+		b.StartTimer()
+		require.NoError(b, loop.Pass(ctx))
+		b.StopTimer()
+		var asked int
+		require.NoError(b, db.Get(&asked, `SELECT count(*) FROM state_outbox WHERE aggregate_id = $1`, r.ScheduleID()))
+		require.Equalf(b, attemptreconcile.DueLimit, asked,
+			"with %d attempts due, a pass must ask about exactly DueLimit (%d) of them, one dispatch each; it asked about %d",
+			dag2000.nodes, attemptreconcile.DueLimit, asked)
+	}
+}
+
+// noRunMetrics counts nothing.
+type noRunMetrics struct{}
+
+func (noRunMetrics) RunStalled() {}
 
 // restoreRun returns a started run to how Start stored it: the tasks it
 // dispatched at creation (their dispatched_at equals their created_at)
