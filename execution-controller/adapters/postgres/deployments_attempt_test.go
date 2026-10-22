@@ -64,7 +64,8 @@ func TestRepo_TheAttemptColumnIsTheCommandsAttempt(t *testing.T) {
 	assert.False(t, legAttempt.Valid)
 }
 
-// A task's attempt is found by its number, and a later attempt is seen.
+// A task's attempt is found by its number, an attempt it does not hold is
+// reported not found, and a later attempt is seen.
 func TestRepo_LoadByTaskAttemptAndHasAttemptAfter(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
@@ -79,11 +80,14 @@ func TestRepo_LoadByTaskAttemptAndHasAttemptAfter(t *testing.T) {
 	tx, err := db.BeginTxx(ctx, nil)
 	require.NoError(t, err)
 	defer tx.Rollback() //nolint:errcheck
-	got, err := postgres.NewDeploymentsRepository(tx, testLogger()).LoadByTaskAttempt(ctx, cmd.TaskID, 1)
+	got, found, err := postgres.NewDeploymentsRepository(tx, testLogger()).LoadByTaskAttempt(ctx, cmd.TaskID, 1)
 	require.NoError(t, err)
+	require.True(t, found)
 	assert.Equal(t, d.ID(), got.ID())
-	_, err = postgres.NewDeploymentsRepository(tx, testLogger()).LoadByTaskAttempt(ctx, cmd.TaskID, 0)
-	assert.ErrorIs(t, err, sql.ErrNoRows)
+	got, found, err = postgres.NewDeploymentsRepository(tx, testLogger()).LoadByTaskAttempt(ctx, cmd.TaskID, 0)
+	require.NoError(t, err, "an attempt the task does not hold is not an error")
+	assert.False(t, found)
+	assert.Nil(t, got)
 
 	for attempt, want := range map[int]bool{0: true, 1: false, 2: false} {
 		later, err := repo.HasAttemptAfter(ctx, cmd.TaskID, attempt)
@@ -109,8 +113,9 @@ func TestRepo_TheLastReportRoundTrips(t *testing.T) {
 	require.NoError(t, err)
 	defer tx.Rollback() //nolint:errcheck
 	txRepo := postgres.NewDeploymentsRepository(tx, testLogger())
-	got, err := txRepo.LoadByTaskAttempt(ctx, cmd.TaskID, 0)
+	got, found, err := txRepo.LoadByTaskAttempt(ctx, cmd.TaskID, 0)
 	require.NoError(t, err)
+	require.True(t, found)
 	require.NotNil(t, got.LastReport())
 	assert.Equal(t, pkgmodel.AttemptStatusQueued, got.LastReport().Status)
 	assert.True(t, accepted.Equal(*got.LastReport().QueuedAt))

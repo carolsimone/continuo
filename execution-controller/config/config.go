@@ -119,21 +119,23 @@ func maxConcurrentJobs(v *pkgconfig.Validator) int {
 
 // jobStartTimeout reads JOB_START_TIMEOUT_SECONDS, a whole number of seconds
 // from MinJobStartTimeout to MaxJobStartTimeout; unset selects the default. Any
-// other value is a validation failure naming the key.
+// other value is a validation failure naming the key. The seconds are compared
+// with the range before they become a duration, so a value too large for one
+// is refused rather than wrapped into the range.
 func jobStartTimeout(v *pkgconfig.Validator) time.Duration {
 	const key = "JOB_START_TIMEOUT_SECONDS"
 	raw := os.Getenv(key)
 	if raw == "" {
 		return defaultJobStartTimeout
 	}
+	minSecs, maxSecs := int(MinJobStartTimeout.Seconds()), int(MaxJobStartTimeout.Seconds())
 	n, err := strconv.Atoi(raw)
-	d := time.Duration(n) * time.Second
-	if err != nil || d < MinJobStartTimeout || d > MaxJobStartTimeout {
+	if err != nil || n < minSecs || n > maxSecs {
 		v.Add(fmt.Sprintf("%s (invalid value %q: expected whole seconds from %d to %d)",
-			key, raw, int(MinJobStartTimeout.Seconds()), int(MaxJobStartTimeout.Seconds())))
+			key, raw, minSecs, maxSecs))
 		return defaultJobStartTimeout
 	}
-	return d
+	return time.Duration(n) * time.Second
 }
 
 func envInt(key string, fallback int) int { return pkgconfig.EnvIntOrDefault(key, fallback) }

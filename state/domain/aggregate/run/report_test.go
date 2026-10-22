@@ -116,6 +116,27 @@ func TestAttempt_ApplySetsTheNextCheckOfAnOpenAttempt(t *testing.T) {
 	assert.Equal(t, 30*time.Minute, a.NextCheckIn)
 }
 
+// A declared timeout is the timeout, even when it equals the install's
+// default; a node that declares none gets the default.
+func TestEffectiveTimeout_IsTheDeclaredTimeoutElseTheDefault(t *testing.T) {
+	d := TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}
+	eightHours, oneDay := 28800, 86400
+	cases := map[string]struct {
+		declared     *int
+		want         time.Duration
+		wantDeclared bool
+	}{
+		"declared":                      {&eightHours, 8 * time.Hour, true},
+		"undeclared":                    {nil, 24 * time.Hour, false},
+		"declared equal to the default": {&oneDay, 24 * time.Hour, true},
+	}
+	for name, c := range cases {
+		timeout, declared := EffectiveTimeout(c.declared, d)
+		assert.Equal(t, c.want, timeout, name)
+		assert.Equal(t, c.wantDeclared, declared, name)
+	}
+}
+
 func TestTaskTimeout_IsTheNodesDeclaredTimeoutElseTheDefault(t *testing.T) {
 	d := TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}
 	declared := 7200

@@ -163,7 +163,7 @@ func (r *modeScopedDepRepo) ListValidationByRelease(_ context.Context, _ string,
 func (*modeScopedDepRepo) AddAttempt(context.Context, *model.Deployment) (bool, error) {
 	panic("AddAttempt not used by these tests")
 }
-func (*modeScopedDepRepo) LoadByTaskAttempt(context.Context, string, int) (*model.Deployment, error) {
+func (*modeScopedDepRepo) LoadByTaskAttempt(context.Context, string, int) (*model.Deployment, bool, error) {
 	panic("LoadByTaskAttempt not used by these tests")
 }
 func (*modeScopedDepRepo) HasAttemptAfter(context.Context, string, int) (bool, error) {

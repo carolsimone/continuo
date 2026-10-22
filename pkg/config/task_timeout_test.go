@@ -19,6 +19,9 @@ func TestLoadTaskTimeout(t *testing.T) {
 		{raw: "3599"},
 		{raw: "604801"},
 		{raw: "24h"},
+		// 18446747674 s is 2^64 ns plus about an hour: refused, though its
+		// nanoseconds would wrap into the range.
+		{raw: "18446747674"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.raw, func(t *testing.T) {

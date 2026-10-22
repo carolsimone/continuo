@@ -1,11 +1,12 @@
 // Package serialization holds the wire- and persistence-facing DTOs for
 // execution-controller's json-tagged boundary types, keeping the domain packages
-// (command, event) free of struct tags. It sits outside adapters/ so the
-// application layer (service/deployer, which writes outbox payloads) may map
-// through it without importing an adapter, and outside domain/ so the tags live
-// away from the domain types. The postgres repository (deployments.job_params
-// JSONB), the dispatcher (execution_outbox payloads it writes), and the publisher
-// (payloads it reads) all map through these DTOs, fixing the byte shapes here.
+// (command, model) free of struct tags. It sits outside adapters/ so the
+// application layer (service/reports, which writes the task.status.updated:v2
+// report payloads to the outbox) may map through it without importing an
+// adapter, and outside domain/ so the tags live away from the domain types.
+// service/reports and the postgres repository (the deployments columns
+// job_params, facts and last_report) map through it, fixing the byte shapes
+// here.
 package serialization
 
 import (

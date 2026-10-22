@@ -137,6 +137,29 @@ func TestDeploy_AJobCreatedDuringTheCreationIsJudgedLikeAnExistingOne(t *testing
 	}
 }
 
+// A Job of the name that Kubernetes reports as existing when the creation is
+// refused, but that is gone when it is read back, fails the creation with a
+// plain error: neither a collision nor permanent, so the creation is tried
+// again.
+func TestDeploy_AJobGoneBetweenTheRefusedCreationAndTheReadIsRetried(t *testing.T) {
+	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "warehouse-conn")
+	t.Setenv("DOCKERHUB_USERNAME", "")
+	spec := attemptSpec(pkg_model.NodeTypeDbtModel, "v42")
+	cs := fake.NewSimpleClientset()
+	cs.PrependReactor("create", "jobs", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, k8serrors.NewAlreadyExists(batchv1.Resource("jobs"), spec.JobName)
+	})
+	client := newValidationTestClient()
+	client.setClientsetForTest(cs)
+
+	err := NewDeployer(client, "default", 15*time.Minute, 24*time.Hour).Deploy(context.Background(), spec)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), spec.JobName)
+	assert.NotErrorIs(t, err, deploy.ErrJobNameCollision)
+	assert.NotErrorIs(t, err, pkgevents.ErrPermanent)
+}
+
 // A dispatch of a node type the vocabulary does not declare cannot run.
 func TestDeploy_AnUndeclaredNodeTypeIsInvalid(t *testing.T) {
 	spec := attemptSpec("dbt-macro", "v42")

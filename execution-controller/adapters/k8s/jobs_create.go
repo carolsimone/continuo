@@ -30,6 +30,14 @@ const (
 	annotationNodeID    = "continuo.dev/node-id"
 )
 
+// The label keys that name the attempt a task's Job runs, on the Job and its
+// pod: the task's id and the attempt's number. The watch reads them back to
+// tell which attempt a Job runs.
+const (
+	LabelTaskID  = "task-id"
+	LabelAttempt = "attempt"
+)
+
 // CreateQueryJob builds and creates the K8s Job of one attempt of a task. A
 // Job of the name that carries the same task-id and attempt labels was
 // created by an earlier launch of this attempt and counts as created; one
@@ -41,11 +49,11 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 		return err
 	}
 
-	// Step 2: Build Job spec. Python-family nodes (python-node, python-csv) run
-	// the domain repository's own image under the runtime harness's
-	// environment; every other node type runs the team's dbt image under a
-	// resolved dbt command. The Job metadata below is shared, so both kinds
-	// route through the production lifecycle identically.
+	// Python-family nodes (python-node, python-csv) run the domain
+	// repository's own image under the runtime harness's environment; every
+	// other node type runs the team's dbt image under a resolved dbt command.
+	// The Job metadata below is shared, so both kinds route through the
+	// production lifecycle identically.
 	var podSpec corev1.PodSpec
 	if params.NodeType.IsPython() {
 		podSpec, err = buildPythonPodSpec(params)
@@ -63,8 +71,8 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 	backoffLimit := int32(0)
 	jobLabels := map[string]string{
 		"app":          "dbt-job",
-		"task-id":      params.TaskID,
-		"attempt":      strconv.Itoa(params.Attempt),
+		LabelTaskID:    params.TaskID,
+		LabelAttempt:   strconv.Itoa(params.Attempt),
 		"schedule-id":  params.ScheduleID,
 		"schedule":     params.ScheduleName,
 		"table_name":   sanitizeK8sLabel(params.TableName),
@@ -101,13 +109,15 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 		return err
 	}
 	// A Job of the name appeared after the check above, so it is read and
-	// judged like one that was there before.
+	// judged like one that was there before. One that disappeared between the
+	// refused creation and the read is a plain error, so the creation is tried
+	// again.
 	adopted, err = c.adoptAttemptJob(ctx, params)
 	if err != nil {
 		return err
 	}
 	if !adopted {
-		return fmt.Errorf("job %s was deleted as its creation was refused", params.JobName)
+		return fmt.Errorf("job %s disappeared between its refused creation and the read of it", params.JobName)
 	}
 	return nil
 }
@@ -123,10 +133,10 @@ func (c *K8sClient) adoptAttemptJob(ctx context.Context, params JobParams) (bool
 	if err != nil {
 		return false, fmt.Errorf("failed to check if job exists: %w", err)
 	}
-	if existing.Labels["task-id"] != params.TaskID || existing.Labels["attempt"] != strconv.Itoa(params.Attempt) {
+	if existing.Labels[LabelTaskID] != params.TaskID || existing.Labels[LabelAttempt] != strconv.Itoa(params.Attempt) {
 		return false, fmt.Errorf("%w: Job %s carries task %q attempt %q, not task %s attempt %d",
 			errors.Join(deploy.ErrJobNameCollision, events.ErrPermanent), params.JobName,
-			existing.Labels["task-id"], existing.Labels["attempt"], params.TaskID, params.Attempt)
+			existing.Labels[LabelTaskID], existing.Labels[LabelAttempt], params.TaskID, params.Attempt)
 	}
 	c.logger.Info("K8s job of the attempt already exists; adopting it",
 		"namespace", params.Namespace, "job_name", params.JobName, "attempt", params.Attempt)

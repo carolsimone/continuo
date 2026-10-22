@@ -3,6 +3,7 @@ package handlers_test
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"sync"
 
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
@@ -11,10 +12,21 @@ import (
 )
 
 // stubDeploymentsRepo captures Add calls for assertion without a real DB.
+// stored holds the production deployments by "<task>/<attempt>": AddAttempt
+// stores into it and LoadByTaskAttempt and HasAttemptAfter read it. A
+// deployment in storedByRace is stored by another transaction when
+// AddAttempt is called for its attempt, so that call stores nothing and
+// reports false.
 type stubDeploymentsRepo struct {
-	mu    sync.Mutex
-	added []*model.Deployment
+	mu           sync.Mutex
+	added        []*model.Deployment
+	stored       map[string]*model.Deployment
+	storedByRace map[string]*model.Deployment
+	addAttempts  int
+	saved        []*model.Deployment
 }
+
+func attemptKey(taskID string, attempt int) string { return fmt.Sprintf("%s/%d", taskID, attempt) }
 
 func (r *stubDeploymentsRepo) Add(_ context.Context, d *model.Deployment) error {
 	r.mu.Lock()
@@ -26,7 +38,12 @@ func (r *stubDeploymentsRepo) LoadByJobName(context.Context, string) (*model.Dep
 	return nil, sql.ErrNoRows
 }
 
-func (r *stubDeploymentsRepo) Save(_ context.Context, _ *model.Deployment) error { return nil }
+func (r *stubDeploymentsRepo) Save(_ context.Context, d *model.Deployment) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.saved = append(r.saved, d)
+	return nil
+}
 func (r *stubDeploymentsRepo) GetByReleaseNode(_ context.Context, _, _ string, _ model.Mode) (*model.Deployment, error) {
 	return nil, nil
 }
@@ -40,14 +57,39 @@ func (r *stubDeploymentsRepo) ListValidationByRelease(_ context.Context, _ strin
 	return nil, nil
 }
 
-func (*stubDeploymentsRepo) AddAttempt(context.Context, *model.Deployment) (bool, error) {
-	panic("AddAttempt not used by these tests")
+func (r *stubDeploymentsRepo) AddAttempt(_ context.Context, d *model.Deployment) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.addAttempts++
+	if r.stored == nil {
+		r.stored = map[string]*model.Deployment{}
+	}
+	key := attemptKey(d.Command().TaskID, d.Command().Attempt)
+	if other, ok := r.storedByRace[key]; ok {
+		r.stored[key] = other
+		delete(r.storedByRace, key)
+	}
+	if _, ok := r.stored[key]; ok {
+		return false, nil
+	}
+	r.stored[key] = d
+	return true, nil
 }
-func (*stubDeploymentsRepo) LoadByTaskAttempt(context.Context, string, int) (*model.Deployment, error) {
-	panic("LoadByTaskAttempt not used by these tests")
+func (r *stubDeploymentsRepo) LoadByTaskAttempt(_ context.Context, taskID string, attempt int) (*model.Deployment, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	d, ok := r.stored[attemptKey(taskID, attempt)]
+	return d, ok, nil
 }
-func (*stubDeploymentsRepo) HasAttemptAfter(context.Context, string, int) (bool, error) {
-	panic("HasAttemptAfter not used by these tests")
+func (r *stubDeploymentsRepo) HasAttemptAfter(_ context.Context, taskID string, attempt int) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, d := range r.stored {
+		if d.Command().TaskID == taskID && d.Command().Attempt > attempt {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func newFakeUoW(depl repository.DeploymentRepository, cancelled repository.CancelledSchedulesRepository) *fakes.FakeUnitOfWork {

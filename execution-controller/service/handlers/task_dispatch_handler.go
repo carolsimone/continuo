@@ -2,8 +2,6 @@ package handlers
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -51,12 +49,12 @@ func (h *TaskDispatchHandler) Handle(ctx context.Context, u uow.UnitOfWork, evt 
 	}
 	cmd := evt.Command()
 	repo := u.DeploymentsRepo()
-	held, err := repo.LoadByTaskAttempt(ctx, cmd.TaskID, cmd.Attempt)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	held, found, err := repo.LoadByTaskAttempt(ctx, cmd.TaskID, cmd.Attempt)
+	if err != nil {
 		return err
 	}
 	laterHeld := false
-	if held == nil {
+	if !found {
 		if laterHeld, err = repo.HasAttemptAfter(ctx, cmd.TaskID, cmd.Attempt); err != nil {
 			return err
 		}
@@ -69,7 +67,7 @@ func (h *TaskDispatchHandler) Handle(ctx context.Context, u uow.UnitOfWork, evt 
 	}
 	now := h.now()
 
-	action := model.DecideDispatch(held != nil, laterHeld, problem, jobOfAttempt, evt.KnownStatus)
+	action := model.DecideDispatch(found, laterHeld, problem, jobOfAttempt, evt.KnownStatus)
 	switch action {
 	case model.ResendReport:
 		if err := reports.Resend(ctx, u.OutboxRepo(), held); err != nil {
@@ -107,9 +105,12 @@ func (h *TaskDispatchHandler) add(ctx context.Context, u uow.UnitOfWork, d *mode
 		return fmt.Errorf("add attempt %d of task %s: %w", d.Command().Attempt, d.Command().TaskID, err)
 	}
 	if !added {
-		held, err := u.DeploymentsRepo().LoadByTaskAttempt(ctx, d.Command().TaskID, d.Command().Attempt)
+		held, found, err := u.DeploymentsRepo().LoadByTaskAttempt(ctx, d.Command().TaskID, d.Command().Attempt)
 		if err != nil {
 			return err
+		}
+		if !found {
+			return fmt.Errorf("attempt %d of task %s is stored, yet it cannot be loaded", d.Command().Attempt, d.Command().TaskID)
 		}
 		return reports.Resend(ctx, u.OutboxRepo(), held)
 	}

@@ -388,7 +388,7 @@ func TestSettleNodeTerminal_PerNodeUsesDistinctAggregateID(t *testing.T) {
 func (*chainDepRepo) AddAttempt(context.Context, *model.Deployment) (bool, error) {
 	panic("AddAttempt not used by these tests")
 }
-func (*chainDepRepo) LoadByTaskAttempt(context.Context, string, int) (*model.Deployment, error) {
+func (*chainDepRepo) LoadByTaskAttempt(context.Context, string, int) (*model.Deployment, bool, error) {
 	panic("LoadByTaskAttempt not used by these tests")
 }
 func (*chainDepRepo) HasAttemptAfter(context.Context, string, int) (bool, error) {

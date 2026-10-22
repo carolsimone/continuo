@@ -13,9 +13,10 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-// AttemptRepository implements repository.AttemptRepository for one tenant:
-// its lists read through the autocommit db, its lock and write through the
-// unit of work's transaction.
+// AttemptRepository implements repository.AttemptRepository: the attempt
+// questions for one tenant, the stalled runs for the whole install. Its lists
+// read through the autocommit db, its lock and write through the unit of
+// work's transaction.
 type AttemptRepository struct {
 	db       *sqlx.DB
 	tx       *sqlx.Tx
@@ -60,8 +61,9 @@ func (r *AttemptRepository) DueAttempts(ctx context.Context, limit int) ([]repos
 }
 
 // StalledRuns reads the active runs with an old progress clock and no task
-// in flight; the run scan filters scheduler_tracker by status, which holds
-// few active rows, and the in-flight check probes idx_task_tracker_schedule_id.
+// in flight, of every tenant: scheduler_tracker has no tenant column. The run
+// scan filters scheduler_tracker by status, which holds few active rows, and
+// the in-flight check probes idx_task_tracker_schedule_id.
 func (r *AttemptRepository) StalledRuns(ctx context.Context, idle time.Duration, limit int) ([]uuid.UUID, error) {
 	var ids []uuid.UUID
 	if err := r.db.SelectContext(ctx, &ids, `

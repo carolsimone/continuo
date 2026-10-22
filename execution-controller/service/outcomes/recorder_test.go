@@ -225,7 +225,7 @@ func TestRecord_CompileOutcomeCarriesFailedContainer(t *testing.T) {
 func (*stubDeploymentsRepo) AddAttempt(context.Context, *model.Deployment) (bool, error) {
 	panic("AddAttempt not used by these tests")
 }
-func (*stubDeploymentsRepo) LoadByTaskAttempt(context.Context, string, int) (*model.Deployment, error) {
+func (*stubDeploymentsRepo) LoadByTaskAttempt(context.Context, string, int) (*model.Deployment, bool, error) {
 	panic("LoadByTaskAttempt not used by these tests")
 }
 func (*stubDeploymentsRepo) HasAttemptAfter(context.Context, string, int) (bool, error) {

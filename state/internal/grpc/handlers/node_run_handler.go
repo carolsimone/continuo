@@ -7,6 +7,7 @@ import (
 
 	"github.com/carolsimone/continuo/pkg/num"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -99,12 +100,10 @@ func (h *NodeRunHandler) ListNodes(
 		return nil, status.Errorf(codes.Internal, "ListNodes: %v", err)
 	}
 
+	defaults := run.TaskDefaults{Timeout: h.defaultTimeout}
 	out := make([]*statev1.NodeSummary, 0, len(rows))
 	for _, r := range rows {
-		timeout, declared := int(h.defaultTimeout/time.Second), r.TimeoutSeconds > 0
-		if declared {
-			timeout = r.TimeoutSeconds
-		}
+		timeout, declared := run.EffectiveTimeout(r.TimeoutSeconds, defaults)
 		out = append(out, &statev1.NodeSummary{
 			ServiceName:     r.ServiceName,
 			SchemaName:      r.SchemaName,
@@ -117,7 +116,7 @@ func (h *NodeRunHandler) ListNodes(
 			LastStatus:      r.LastStatus,
 			LastRunAt:       r.LastRunAt.UTC().Format(time.RFC3339),
 			Operation:       r.Operation,
-			TimeoutSeconds:  num.ClampInt32(timeout),
+			TimeoutSeconds:  num.ClampInt32(int64(timeout / time.Second)),
 			TimeoutDeclared: declared,
 		})
 	}

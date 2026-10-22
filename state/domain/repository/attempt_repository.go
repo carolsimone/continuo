@@ -17,7 +17,9 @@ type AttemptKey struct {
 // AttemptRepository serves state's attempt reconcile: the attempts due to be
 // asked about, the runs that stalled, and, inside the unit of work's
 // transaction, the lock and the record of one question. Due times compare
-// against the database clock.
+// against the database clock. The attempt questions (DueAttempts,
+// LockQuestion) belong to the tenant the repository is bound to; StalledRuns
+// reads every run of the install.
 type AttemptRepository interface {
 	// DueAttempts returns up to limit attempts that are dispatched, queued
 	// or running, whose next check is due and whose run has not ended, the
@@ -26,7 +28,8 @@ type AttemptRepository interface {
 
 	// StalledRuns returns up to limit pending or running runs that have no
 	// task dispatched, queued or running and whose progress clock is older
-	// than idle, the oldest first.
+	// than idle, the oldest first. It reads the runs of every tenant: a run
+	// names no tenant, and failing a stalled run reads no tenant's topology.
 	StalledRuns(ctx context.Context, idle time.Duration, limit int) ([]uuid.UUID, error)
 
 	// LockQuestion locks the attempt FOR UPDATE SKIP LOCKED and returns what

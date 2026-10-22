@@ -138,13 +138,14 @@ func TestNodeRunHandler_ListNodeRuns_RepoError(t *testing.T) {
 
 func TestNodeRunHandler_ListNodes_MapsRowsAndClampsPaging(t *testing.T) {
 	when := time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC)
+	twoHours := 7200
 	repo := &fakeNodeRunRepo{
 		nodeTotal: 7,
 		nodeRows: []*projection.NodeSummary{{
 			ServiceName: "svc", SchemaName: "an", TableName: "fct_orders",
 			RunCount: 48, SuccessRatePct: -1, AvgDurationSec: -1, P95DurationSec: 21,
 			FlakyRatePct: 4, LastStatus: "succeeded", LastRunAt: when,
-			TimeoutSeconds: 7200,
+			TimeoutSeconds: &twoHours,
 		}},
 	}
 	h := NewNodeRunHandler(repo, 24*time.Hour, nil)
@@ -233,8 +234,9 @@ func TestNodeRunHandler_ListNodeServices_Error(t *testing.T) {
 // A node's tasks get its declared timeout, else the install default; the
 // catalog says which.
 func TestNodeRunHandler_ListNodes_TimeoutIsDeclaredOrTheInstallDefault(t *testing.T) {
+	eightHours := 28800
 	repo := &fakeNodeRunRepo{nodeRows: []*projection.NodeSummary{
-		{ServiceName: "svc", SchemaName: "sch", TableName: "orders_full", TimeoutSeconds: 28800},
+		{ServiceName: "svc", SchemaName: "sch", TableName: "orders_full", TimeoutSeconds: &eightHours},
 		{ServiceName: "svc", SchemaName: "sch", TableName: "fx_rates"},
 	}}
 	h := NewNodeRunHandler(repo, 24*time.Hour, nil)

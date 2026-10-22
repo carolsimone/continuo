@@ -434,19 +434,20 @@ func (r *deploymentsRepository) AddAttempt(ctx context.Context, d *model.Deploym
 	return n == 1, nil
 }
 
-// LoadByTaskAttempt locks the production deployment of the task's attempt.
-func (r *deploymentsRepository) LoadByTaskAttempt(ctx context.Context, taskID string, attempt int) (*model.Deployment, error) {
+// LoadByTaskAttempt locks the production deployment of the task's attempt;
+// found is false when the task has none.
+func (r *deploymentsRepository) LoadByTaskAttempt(ctx context.Context, taskID string, attempt int) (*model.Deployment, bool, error) {
 	var rows []*deploymentRow
 	if err := r.exec.SelectContext(ctx, &rows, `SELECT`+validationSelectColumns+`
 		FROM deployments
 		WHERE task_id = $1 AND mode = $2 AND attempt = $3
 		FOR UPDATE`, taskID, string(model.ModeProduction), attempt); err != nil {
-		return nil, fmt.Errorf("load attempt %d of task %s: %w", attempt, taskID, err)
+		return nil, false, fmt.Errorf("load attempt %d of task %s: %w", attempt, taskID, err)
 	}
 	if len(rows) == 0 {
-		return nil, sql.ErrNoRows
+		return nil, false, nil
 	}
-	return r.toAggregate(rows[0]), nil
+	return r.toAggregate(rows[0]), true, nil
 }
 
 // HasAttemptAfter reports whether the task has a production deployment of a

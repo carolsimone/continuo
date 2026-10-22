@@ -25,10 +25,19 @@ type TaskDefaults struct {
 // TaskTimeout is how long the container of an attempt of the task at node may
 // run: the node's declared timeout, else the install's default.
 func TaskTimeout(node topology.Node, d TaskDefaults) time.Duration {
-	if node.TimeoutSeconds != nil {
-		return time.Duration(*node.TimeoutSeconds) * time.Second
+	timeout, _ := EffectiveTimeout(node.TimeoutSeconds, d)
+	return timeout
+}
+
+// EffectiveTimeout resolves a node's task timeout from the seconds it
+// declares, nil when it declares none: the declared timeout, else the
+// install's default. declared reports whether the node declares one, even
+// when it equals the default.
+func EffectiveTimeout(declaredSeconds *int, d TaskDefaults) (timeout time.Duration, declared bool) {
+	if declaredSeconds != nil {
+		return time.Duration(*declaredSeconds) * time.Second, true
 	}
-	return d.Timeout
+	return d.Timeout, false
 }
 
 // Retryable reports whether a failed attempt of class may be followed by

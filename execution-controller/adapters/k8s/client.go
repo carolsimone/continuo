@@ -93,11 +93,13 @@ func NewK8sClient(logger *slog.Logger, commands ports.CommandResolver) (*K8sClie
 
 	logger.Info("K8s client initialized successfully")
 
-	return &K8sClient{
-		clientset: clientset,
-		logger:    logger,
-		commands:  commands,
-	}, nil
+	return NewK8sClientFor(clientset, logger, commands), nil
+}
+
+// NewK8sClientFor creates a K8sClient over clientset; commands resolves the
+// per-service dbt command dialect for every Job it builds.
+func NewK8sClientFor(clientset kubernetes.Interface, logger *slog.Logger, commands ports.CommandResolver) *K8sClient {
+	return &K8sClient{clientset: clientset, logger: logger, commands: commands}
 }
 
 // Clientset is the Kubernetes clientset the client uses, for the Job watch.

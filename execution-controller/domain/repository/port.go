@@ -19,8 +19,9 @@ type DeploymentRepository interface {
 	// one of the same attempt, and reports whether it did.
 	AddAttempt(ctx context.Context, d *model.Deployment) (added bool, err error)
 	// LoadByTaskAttempt returns the production deployment of the task's
-	// attempt, locked for the rest of the transaction, or sql.ErrNoRows.
-	LoadByTaskAttempt(ctx context.Context, taskID string, attempt int) (*model.Deployment, error)
+	// attempt, locked for the rest of the transaction. found is false, with no
+	// error, when the task has no production deployment of that attempt.
+	LoadByTaskAttempt(ctx context.Context, taskID string, attempt int) (d *model.Deployment, found bool, err error)
 	// HasAttemptAfter reports whether the task has a production deployment of
 	// a later attempt than attempt.
 	HasAttemptAfter(ctx context.Context, taskID string, attempt int) (bool, error)

@@ -754,7 +754,7 @@ func TestDispatcher_NormalProduction_NonDeployable_ReportsTheAttemptFailed(t *te
 func (*fakeDeploymentRepo) AddAttempt(context.Context, *model.Deployment) (bool, error) {
 	panic("AddAttempt not used by these tests")
 }
-func (*fakeDeploymentRepo) LoadByTaskAttempt(context.Context, string, int) (*model.Deployment, error) {
+func (*fakeDeploymentRepo) LoadByTaskAttempt(context.Context, string, int) (*model.Deployment, bool, error) {
 	panic("LoadByTaskAttempt not used by these tests")
 }
 func (*fakeDeploymentRepo) HasAttemptAfter(context.Context, string, int) (bool, error) {
@@ -764,7 +764,7 @@ func (*fakeDeploymentRepo) HasAttemptAfter(context.Context, string, int) (bool, 
 func (*chainDeploymentRepo) AddAttempt(context.Context, *model.Deployment) (bool, error) {
 	panic("AddAttempt not used by these tests")
 }
-func (*chainDeploymentRepo) LoadByTaskAttempt(context.Context, string, int) (*model.Deployment, error) {
+func (*chainDeploymentRepo) LoadByTaskAttempt(context.Context, string, int) (*model.Deployment, bool, error) {
 	panic("LoadByTaskAttempt not used by these tests")
 }
 func (*chainDeploymentRepo) HasAttemptAfter(context.Context, string, int) (bool, error) {

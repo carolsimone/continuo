@@ -23,18 +23,20 @@ const (
 
 // LoadTaskTimeout reads TASK_TIMEOUT_SECONDS, a whole number of seconds from
 // MinTaskTimeout to MaxTaskTimeout; unset selects DefaultTaskTimeout. Any other
-// value is recorded on v, so the service refuses to start.
+// value is recorded on v, so the service refuses to start. The seconds are
+// compared with the range before they become a duration, so a value too large
+// for one is refused rather than wrapped into the range.
 func LoadTaskTimeout(v *Validator) time.Duration {
 	raw := os.Getenv(TaskTimeoutEnvKey)
 	if raw == "" {
 		return DefaultTaskTimeout
 	}
+	minSecs, maxSecs := int(MinTaskTimeout.Seconds()), int(MaxTaskTimeout.Seconds())
 	n, err := strconv.Atoi(raw)
-	d := time.Duration(n) * time.Second
-	if err != nil || d < MinTaskTimeout || d > MaxTaskTimeout {
+	if err != nil || n < minSecs || n > maxSecs {
 		v.Add(fmt.Sprintf("%s (invalid value %q: expected whole seconds from %d to %d)",
-			TaskTimeoutEnvKey, raw, int(MinTaskTimeout.Seconds()), int(MaxTaskTimeout.Seconds())))
+			TaskTimeoutEnvKey, raw, minSecs, maxSecs))
 		return DefaultTaskTimeout
 	}
-	return d
+	return time.Duration(n) * time.Second
 }

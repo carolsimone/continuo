@@ -147,6 +147,9 @@ func TestLoad_JobStartTimeout(t *testing.T) {
 		{"59", 0, true},
 		{"7201", 0, true},
 		{"3m", 0, true},
+		// 18446744674 s is 2^64 ns plus about ten minutes: refused, though its
+		// nanoseconds would wrap into the range.
+		{"18446744674", 0, true},
 	}
 	for _, c := range cases {
 		t.Run(c.raw, func(t *testing.T) {
