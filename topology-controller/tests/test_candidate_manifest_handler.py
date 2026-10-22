@@ -961,10 +961,11 @@ def test_a_malformed_python_contract_fails_the_whole_release(tmp_path):
     assert publisher.publish_failed.call_args.kwargs["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
 
 
-def test_a_malformed_python_timeout_fails_the_whole_release(tmp_path):
+@pytest.mark.parametrize("value", ["2h", 0, 10081])
+def test_a_malformed_python_timeout_fails_the_whole_release(tmp_path, value):
     publisher = MagicMock()
     source = _source_of(ManifestFile(
-        path=_python_contract(tmp_path, _python_entry(timeout_minutes="2h")),
+        path=_python_contract(tmp_path, _python_entry(timeout_minutes=value)),
         declared_service="service-py", kind=ManifestKind.PYTHON,
     ))
 
@@ -973,6 +974,7 @@ def test_a_malformed_python_timeout_fails_the_whole_release(tmp_path):
     publisher.publish_ok.assert_not_called()
     kwargs = publisher.publish_failed.call_args.kwargs
     assert kwargs["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
+    assert "test_schema.py_metrics" in kwargs["detail"]
     assert "timeout_minutes" in kwargs["detail"]
 
 
