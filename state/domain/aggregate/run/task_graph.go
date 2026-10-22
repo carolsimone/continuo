@@ -46,4 +46,8 @@ type TaskGraph interface {
 	// for good, none of them can run. Each is returned once, however many
 	// paths reach it.
 	PendingDescendants(ctx context.Context, runID uuid.UUID, releaseID string, key topology.NodeKey) ([]uuid.UUID, error)
+
+	// Node returns the node at key as releaseID holds it; found is false when
+	// the release holds no such node.
+	Node(ctx context.Context, releaseID string, key topology.NodeKey) (node topology.Node, found bool, err error)
 }

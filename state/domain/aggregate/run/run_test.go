@@ -101,8 +101,10 @@ type fakeTaskCollection struct {
 	attemptRows   map[attemptKey]run.Attempt
 	cancelledRuns []uuid.UUID
 	lockOrder     []string
-	// saves holds every attempt SaveAttempt was given, in call order.
+	// saves holds every attempt SaveAttempt was given, in call order; added
+	// every attempt AddAttempts inserted.
 	saves []run.Attempt
+	added []run.Attempt
 	// created holds each task BulkCreate stored, with the dispatch time
 	// BulkCreate or MarkDispatched stamped on it.
 	created map[uuid.UUID]run.Task
@@ -144,6 +146,41 @@ func (f *fakeTaskCollection) SaveAttempt(_ context.Context, a run.Attempt) error
 	f.attemptRows[attemptKey{a.TaskID, a.Number}] = a
 	f.saves = append(f.saves, a)
 	return nil
+}
+
+// AddAttempts stores the attempts as the real adapter inserts them; a second
+// attempt of one number is an error, as the primary key makes it.
+func (f *fakeTaskCollection) AddAttempts(_ context.Context, attempts []run.Attempt) error {
+	for _, a := range attempts {
+		k := attemptKey{a.TaskID, a.Number}
+		if _, ok := f.attemptRows[k]; ok {
+			return fmt.Errorf("attempt %d of task %s already stored", a.Number, a.TaskID)
+		}
+		f.attemptRows[k] = a
+		f.added = append(f.added, a)
+	}
+	return nil
+}
+
+func (f *fakeTaskCollection) HasInFlight(_ context.Context, _ uuid.UUID) (bool, error) {
+	for _, s := range f.statuses {
+		if s == run.TaskStatusDispatched || s == run.TaskStatusQueued || s == run.TaskStatusRunning {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (f *fakeTaskCollection) SkipPending(_ context.Context, _ uuid.UUID) (int, error) {
+	n := 0
+	for id, s := range f.statuses {
+		if s == run.TaskStatusPending && !slices.Contains(f.dispatched, id) {
+			f.statuses[id] = run.TaskStatusSkipped
+			f.skipped = append(f.skipped, id)
+			n++
+		}
+	}
+	return n, nil
 }
 
 // CancelOpenAttempts cancels every open attempt the fake holds: a test builds
@@ -247,6 +284,7 @@ func (f *fakeTaskCollection) MarkDispatched(_ context.Context, ids []uuid.UUID, 
 	for _, id := range ids {
 		if f.statuses[id] == run.TaskStatusPending && !slices.Contains(f.dispatched, id) {
 			f.dispatched = append(f.dispatched, id)
+			f.statuses[id] = run.TaskStatusDispatched
 			if c, ok := f.created[id]; ok {
 				stampedAt := at
 				c.DispatchedAt = &stampedAt

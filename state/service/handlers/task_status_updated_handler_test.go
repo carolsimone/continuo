@@ -144,6 +144,20 @@ func (f *fakeTaskStatusTaskCollection) SaveAttempt(_ context.Context, a run.Atte
 	f.attemptRows[statusAttemptKey{a.TaskID, a.Number}] = a
 	return nil
 }
+func (f *fakeTaskStatusTaskCollection) AddAttempts(ctx context.Context, attempts []run.Attempt) error {
+	for _, a := range attempts {
+		if err := f.SaveAttempt(ctx, a); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+func (f *fakeTaskStatusTaskCollection) HasInFlight(context.Context, uuid.UUID) (bool, error) {
+	return false, nil
+}
+func (f *fakeTaskStatusTaskCollection) SkipPending(context.Context, uuid.UUID) (int, error) {
+	return 0, nil
+}
 
 // CancelOpenAttempts cancels every open attempt the fake holds and records the
 // run it was called for.
@@ -248,6 +262,10 @@ func (unconnectedTasks) ReadyCandidates(context.Context, uuid.UUID, string, topo
 
 func (unconnectedTasks) PendingDescendants(context.Context, uuid.UUID, string, topology.NodeKey) ([]uuid.UUID, error) {
 	return nil, nil
+}
+
+func (unconnectedTasks) Node(context.Context, string, topology.NodeKey) (topology.Node, bool, error) {
+	return topology.Node{}, false, nil
 }
 
 // newRunningTaskStatusRun builds a RUNNING Run with non-zero counters for

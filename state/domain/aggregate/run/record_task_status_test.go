@@ -41,6 +41,11 @@ func (m *memTaskGraph) waiting(k topology.NodeKey) (run.Task, bool) {
 	return t, true
 }
 
+func (m *memTaskGraph) Node(_ context.Context, _ string, key topology.NodeKey) (topology.Node, bool, error) {
+	n, ok := m.g.Node(key)
+	return n, ok, nil
+}
+
 func (m *memTaskGraph) ReadyCandidates(_ context.Context, _ uuid.UUID, _ string, key topology.NodeKey) ([]run.ReadyCandidate, error) {
 	m.reads++
 	var out []run.ReadyCandidate
@@ -229,6 +234,10 @@ func (panicTaskGraph) ReadyCandidates(context.Context, uuid.UUID, string, topolo
 
 func (panicTaskGraph) PendingDescendants(context.Context, uuid.UUID, string, topology.NodeKey) ([]uuid.UUID, error) {
 	panic("PendingDescendants read for a run state did not plan")
+}
+
+func (panicTaskGraph) Node(context.Context, string, topology.NodeKey) (topology.Node, bool, error) {
+	panic("Node read for a run state did not plan")
 }
 
 // A run whose tasks state did not plan records its statuses and finalizes,

@@ -43,12 +43,18 @@ type TaskTrackerRepository interface {
 	// found is false when the row does not exist. attempt is the
 	// discriminator the Run aggregate orders updates by.
 	LoadAttemptStateTx(ctx context.Context, tx *sqlx.Tx, taskID uuid.UUID) (row TaskAttemptRow, found bool, err error)
-	// MarkDispatchedTx stamps dispatched_at on the pending, undispatched tasks
-	// among taskIDs and returns the ids it stamped.
+	// MarkDispatchedTx makes the pending, undispatched tasks among taskIDs
+	// dispatched, stamping dispatched_at, and returns the ids it changed.
 	MarkDispatchedTx(ctx context.Context, tx *sqlx.Tx, taskIDs []uuid.UUID, at time.Time) ([]uuid.UUID, error)
 	// MarkSkippedTx sets status 'skipped' on the pending, undispatched tasks
 	// among taskIDs and returns how many it changed.
 	MarkSkippedTx(ctx context.Context, tx *sqlx.Tx, taskIDs []uuid.UUID) (int64, error)
+	// SkipPendingTx sets status 'skipped' on the run's pending, undispatched
+	// tasks and returns how many it changed.
+	SkipPendingTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID) (int64, error)
+	// HasInFlightTaskTx reports whether any task of the schedule is
+	// dispatched, queued or running.
+	HasInFlightTaskTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID) (bool, error)
 	// HasFailedTaskTx reports whether any task for the given schedule has status
 	// 'failed' or 'cancelled'.
 	HasFailedTaskTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID) (bool, error)
@@ -59,11 +65,11 @@ type TaskTrackerRepository interface {
 	// has a status other than 'succeeded'. Used by rebase eligibility: a source run is
 	// visible as a rebase candidate iff it is terminal AND has ≥1 non-succeeded task.
 	HasNonSucceededTask(ctx context.Context, scheduleID uuid.UUID) (bool, error)
-	// BulkCancelByScheduleIDTx sets status='cancelled' on the schedule's pending
-	// and running tasks and on its failed tasks with a retry left (attempt <
-	// max_retries), stamping cancelled_by and cancelled_at with cancelledAt (the
-	// run's authoritative cancellation instant). Returns the number of rows
-	// updated.
+	// BulkCancelByScheduleIDTx sets status='cancelled' on the schedule's pending,
+	// dispatched, queued and running tasks and on its failed tasks with a retry
+	// left (attempt < max_retries), stamping cancelled_by and cancelled_at with
+	// cancelledAt (the run's authoritative cancellation instant). Returns the
+	// number of rows updated.
 	BulkCancelByScheduleIDTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID, cancelledBy string, cancelledAt time.Time) (int64, error)
 }
 
@@ -389,8 +395,9 @@ func (r *taskTrackerRepository) LoadAttemptStateTx(ctx context.Context, tx *sqlx
 	return row, true, nil
 }
 
-// MarkDispatchedTx stamps dispatched_at = at on the tasks of taskIDs that are
-// still pending and undispatched, and returns the ids it stamped.
+// MarkDispatchedTx makes the tasks of taskIDs that are still pending and
+// undispatched dispatched, with dispatched_at = at, and returns the ids it
+// changed.
 func (r *taskTrackerRepository) MarkDispatchedTx(ctx context.Context, tx *sqlx.Tx, taskIDs []uuid.UUID, at time.Time) ([]uuid.UUID, error) {
 	if len(taskIDs) == 0 {
 		return nil, nil
@@ -398,7 +405,7 @@ func (r *taskTrackerRepository) MarkDispatchedTx(ctx context.Context, tx *sqlx.T
 	var stamped []uuid.UUID
 	err := tx.SelectContext(ctx, &stamped, `
 		UPDATE task_tracker
-		SET dispatched_at = $2
+		SET dispatched_at = $2, status = 'dispatched'
 		WHERE task_id = ANY($1) AND status = 'pending' AND dispatched_at IS NULL
 		RETURNING task_id`,
 		pq.Array(taskIDs), at)
@@ -427,6 +434,37 @@ func (r *taskTrackerRepository) MarkSkippedTx(ctx context.Context, tx *sqlx.Tx, 
 		return 0, fmt.Errorf("mark %d tasks skipped: %w", len(taskIDs), err)
 	}
 	return n, nil
+}
+
+// SkipPendingTx sets status = 'skipped' on the run's tasks that are still
+// pending and undispatched, and returns how many it changed.
+func (r *taskTrackerRepository) SkipPendingTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID) (int64, error) {
+	res, err := tx.ExecContext(ctx, `
+		UPDATE task_tracker
+		SET status = 'skipped'
+		WHERE schedule_id = $1 AND status = 'pending' AND dispatched_at IS NULL`, scheduleID)
+	if err != nil {
+		return 0, fmt.Errorf("skip the pending tasks of schedule_id %s: %w", scheduleID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("skip the pending tasks of schedule_id %s: %w", scheduleID, err)
+	}
+	return n, nil
+}
+
+// HasInFlightTaskTx reports whether any task of the schedule is dispatched,
+// queued or running.
+func (r *taskTrackerRepository) HasInFlightTaskTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID) (bool, error) {
+	var exists bool
+	err := tx.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM task_tracker WHERE schedule_id = $1 AND status IN ('dispatched', 'queued', 'running'))`,
+		scheduleID,
+	).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("has in-flight task check for schedule_id %s: %w", scheduleID, err)
+	}
+	return exists, nil
 }
 
 // HasFailedTaskTx reports whether any task_tracker row for the given schedule
@@ -481,12 +519,12 @@ func (r *taskTrackerRepository) HasNonSucceededTask(ctx context.Context, schedul
 	return exists, nil
 }
 
-// BulkCancelByScheduleIDTx sets status='cancelled' on the schedule's pending and
-// running tasks and on its failed tasks with a retry left, within the given
-// transaction: the retry of such a task can no longer run once its run is
-// cancelled. The update locks each row it changes until tx ends, so an
-// execution record of that task's retry waits for the cancel and then reads
-// the task cancelled. Returns the number of rows updated.
+// BulkCancelByScheduleIDTx sets status='cancelled' on the schedule's pending,
+// dispatched, queued and running tasks and on its failed tasks with a retry
+// left, within the given transaction: the retry of such a task can no longer
+// run once its run is cancelled. The update locks each row it changes until tx
+// ends, so an execution record of that task's retry waits for the cancel and
+// then reads the task cancelled. Returns the number of rows updated.
 func (r *taskTrackerRepository) BulkCancelByScheduleIDTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID, cancelledBy string, cancelledAt time.Time) (int64, error) {
 	result, err := tx.ExecContext(ctx, `
 		UPDATE task_tracker
@@ -494,7 +532,7 @@ func (r *taskTrackerRepository) BulkCancelByScheduleIDTx(ctx context.Context, tx
 		    cancelled_at = $2,
 		    cancelled_by = $3
 		WHERE schedule_id = $4
-		  AND (status IN ('pending', 'running')
+		  AND (status IN ('pending', 'dispatched', 'queued', 'running')
 		       OR (status = 'failed' AND attempt < max_retries))
 	`, run.TaskStatusCancelled, cancelledAt, cancelledBy, scheduleID)
 	if err != nil {

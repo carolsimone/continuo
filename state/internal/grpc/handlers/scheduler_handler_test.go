@@ -776,6 +776,20 @@ func (f *cancelFakeTaskCollection) SaveAttempt(_ context.Context, a run.Attempt)
 	f.attemptRows[cancelAttemptKey{a.TaskID, a.Number}] = a
 	return nil
 }
+func (f *cancelFakeTaskCollection) AddAttempts(ctx context.Context, attempts []run.Attempt) error {
+	for _, a := range attempts {
+		if err := f.SaveAttempt(ctx, a); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+func (f *cancelFakeTaskCollection) HasInFlight(context.Context, uuid.UUID) (bool, error) {
+	panic("HasInFlight not used by the cancel tests")
+}
+func (f *cancelFakeTaskCollection) SkipPending(context.Context, uuid.UUID) (int, error) {
+	panic("SkipPending not used by the cancel tests")
+}
 
 // CancelOpenAttempts cancels every open attempt the fake holds and records the
 // run it was called for.

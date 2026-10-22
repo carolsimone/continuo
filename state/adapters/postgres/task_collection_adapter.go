@@ -57,6 +57,10 @@ func (a *TaskCollectionAdapter) SaveAttempt(ctx context.Context, at run.Attempt)
 	return saveAttempt(ctx, a.tx, at)
 }
 
+func (a *TaskCollectionAdapter) AddAttempts(ctx context.Context, attempts []run.Attempt) error {
+	return addAttempts(ctx, a.tx, attempts)
+}
+
 func (a *TaskCollectionAdapter) CancelOpenAttempts(ctx context.Context, runID uuid.UUID) (int, error) {
 	return cancelOpenAttempts(ctx, a.tx, runID)
 }
@@ -67,6 +71,10 @@ func (a *TaskCollectionAdapter) HasFailed(ctx context.Context, runID uuid.UUID) 
 
 func (a *TaskCollectionAdapter) HasRetryableFailed(ctx context.Context, runID uuid.UUID) (bool, error) {
 	return a.repo.HasRetryableFailedTaskTx(ctx, a.tx, runID)
+}
+
+func (a *TaskCollectionAdapter) HasInFlight(ctx context.Context, runID uuid.UUID) (bool, error) {
+	return a.repo.HasInFlightTaskTx(ctx, a.tx, runID)
 }
 
 func (a *TaskCollectionAdapter) HasNonSucceeded(ctx context.Context, runID uuid.UUID) (bool, error) {
@@ -178,6 +186,11 @@ func (a *TaskCollectionAdapter) MarkDispatched(ctx context.Context, taskIDs []uu
 
 func (a *TaskCollectionAdapter) MarkSkipped(ctx context.Context, taskIDs []uuid.UUID) (int, error) {
 	n, err := a.repo.MarkSkippedTx(ctx, a.tx, taskIDs)
+	return int(n), err
+}
+
+func (a *TaskCollectionAdapter) SkipPending(ctx context.Context, runID uuid.UUID) (int, error) {
+	n, err := a.repo.SkipPendingTx(ctx, a.tx, runID)
 	return int(n), err
 }
 
