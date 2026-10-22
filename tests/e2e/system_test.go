@@ -38,10 +38,10 @@ func TestE2E_HappyPath_FullDAGExecution(t *testing.T) {
 	// Cleanup any existing data
 	cleanupTestData(t, ctx, clients, testScheduleName)
 
-	// Tap query.model:v1 before anything is triggered: execution-controller consumes it
+	// Tap task.dispatch:v1 before anything is triggered: execution-controller consumes it
 	// and the trim loop removes consumed entries, so the checks below read what
 	// the tap recorded rather than the stream's history.
-	queryModelTap := startStreamTap(t, ctx, clients.redisClient, streams.QueryModelV1)
+	dispatchTap := startStreamTap(t, ctx, clients.redisClient, streams.TaskDispatchV1)
 
 	// Seed the full e2e topology by announcing it through announce-topology.
 	t.Log("Seeding topology via announce-topology...")
@@ -53,13 +53,13 @@ func TestE2E_HappyPath_FullDAGExecution(t *testing.T) {
 	schedulerID, err := uuid.Parse(schedulerIDStr)
 	require.NoError(t, err, "Invalid schedule_id returned from ActivateSchedule")
 
-	// Verify state dispatched the root nodes to query.model:v1
+	// Verify state dispatched the root nodes to task.dispatch:v1
 	t.Log("Verifying state dispatched the root nodes...")
-	verifyRootNodesDispatched(t, ctx, queryModelTap, schedulerID, []string{"seed_table_1", "seed_table_2", "seed_table_3"})
+	verifyRootNodesDispatched(t, ctx, dispatchTap, schedulerID, []string{"seed_table_1", "seed_table_2", "seed_table_3"})
 
 	// Verify complete DAG execution
 	t.Log("Verifying full DAG execution...")
-	verifyFullDAGExecution(t, ctx, clients, queryModelTap, schedulerID)
+	verifyFullDAGExecution(t, ctx, clients, dispatchTap, schedulerID)
 
 	// Verify service-1 Jobs actually ran through the customname-dbt dialect and
 	// service-2/3 Jobs through the built-in dialect (pins the dbt-commands

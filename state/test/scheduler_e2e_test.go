@@ -14,6 +14,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
@@ -25,7 +26,7 @@ import (
 	"github.com/carolsimone/continuo/state/service/uow"
 )
 
-// dispatchEvent holds the fields of a query.model:v1 dispatch read back from
+// dispatchEvent holds the fields of a task.dispatch:v1 dispatch read back from
 // the Redis stream.
 type dispatchEvent struct {
 	RunID        string
@@ -204,7 +205,7 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 	// Allow outbox processor a moment to publish any remaining entries
 	time.Sleep(2 * time.Second)
 
-	streamName := streams.QueryModelV1
+	streamName := streams.TaskDispatchV1
 
 	// Read all messages from stream
 	readCtx, readCancel := context.WithTimeout(ctx, 5*time.Second)
@@ -221,16 +222,18 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 	var events []dispatchEvent
 	for _, stream := range messages {
 		for _, msg := range stream.Messages {
-			runID, ok := msg.Values["schedule_id"].(string)
-			require.True(t, ok, "schedule_id field missing or not a string in Redis message %v", msg.Values)
-			scheduleName, ok := msg.Values["schedule_name"].(string)
-			require.True(t, ok, "schedule_name field missing or not a string in Redis message %v", msg.Values)
+			fields := make(map[string]string, len(msg.Values))
+			for k, v := range msg.Values {
+				fields[k], _ = v.(string)
+			}
+			_, dispatch, err := pkgevents.DecodeTaskDispatch(fields)
+			require.NoError(t, err, "Redis message %v is not a task.dispatch:v1 entry", msg.Values)
 			event := dispatchEvent{
-				RunID:        runID,
-				ScheduleName: scheduleName,
+				RunID:        dispatch.RunID,
+				ScheduleName: dispatch.ScheduleName,
 			}
 			events = append(events, event)
-			t.Logf("Read Redis event: schedule_id=%s, schedule_name=%s", event.RunID, event.ScheduleName)
+			t.Logf("Read Redis event: run_id=%s, schedule_name=%s", event.RunID, event.ScheduleName)
 		}
 	}
 

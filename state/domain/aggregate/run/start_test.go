@@ -95,10 +95,10 @@ func TestStart_StoresEveryTaskAndDispatchesTheReadyOnes(t *testing.T) {
 	assert.Equal(t, []run.DomainEvent{
 		run.TaskDispatched{ID: r.ScheduleID(), ScheduleName: "e2e-schedule-failure", TaskID: a.TaskID, Attempt: 0,
 			KnownStatus: run.AttemptDispatched, Node: nodeA, JobName: a.JobName, Operation: model.OperationRun,
-			MaxRetries: 2, Timeout: 24 * time.Hour},
+			Timeout: 24 * time.Hour},
 		run.TaskDispatched{ID: r.ScheduleID(), ScheduleName: "e2e-schedule-failure", TaskID: b.TaskID, Attempt: 0,
 			KnownStatus: run.AttemptDispatched, Node: nodeB, JobName: b.JobName, Operation: model.OperationRun,
-			MaxRetries: 2, Timeout: 24 * time.Hour},
+			Timeout: 24 * time.Hour},
 	}, events)
 	for _, task := range []run.Task{a, b} {
 		assert.Equal(t, run.TaskStatusDispatched, task.Status, "a ready task is stored dispatched")

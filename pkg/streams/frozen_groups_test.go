@@ -12,7 +12,7 @@ import (
 // trimmed) against an empty dedup table. These strings therefore never change,
 // whatever the owning service is called.
 var frozenGroups = []string{
-	"executor-query-model", "executor-schedule-cancelled",
+	"executor-task-dispatch", "executor-schedule-cancelled",
 	"executor-validation-requested",
 	"executor-seed-build-requested",
 	"executor-compile-requested",

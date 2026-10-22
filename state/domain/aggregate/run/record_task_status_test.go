@@ -62,7 +62,7 @@ func (m *memTaskGraph) ReadyCandidates(_ context.Context, _ uuid.UUID, _ string,
 		}
 		n, _ := m.g.Node(d)
 		out = append(out, run.ReadyCandidate{
-			TaskID: t.TaskID, Node: n, JobName: t.JobName, MaxRetries: int32(t.MaxRetries), //nolint:gosec // G115: test fixture; MaxRetries is a small literal.
+			TaskID: t.TaskID, Node: n, JobName: t.JobName,
 			UpstreamStatuses: upstream,
 		})
 	}
@@ -148,7 +148,7 @@ func TestRecordTaskStatus_ASuccessDispatchesTheTasksItMakesReady(t *testing.T) {
 	node, _ := failureSchedule().Node(fkey("ftable_g"))
 	assert.Equal(t, run.TaskDispatched{
 		ID: r.ScheduleID(), ScheduleName: "e2e-schedule-failure", TaskID: created.TaskID, KnownStatus: run.AttemptDispatched,
-		Node: node, JobName: created.JobName, Operation: model.OperationRun, MaxRetries: 2,
+		Node: node, JobName: created.JobName, Operation: model.OperationRun,
 	}, d)
 
 	events = record(t, r, tc, g, "ftable_b", run.TaskStatusSucceeded, 0)

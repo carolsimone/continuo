@@ -74,7 +74,7 @@ these are the ones that most often trip people up:
 - **Stream names are generated, never inlined.** Every Redis stream and consumer group is
   declared in `pkg/streams/contract.yaml`. Add yours there, run
   `go generate ./pkg/streams/...`, and commit the regenerated files. Writing
-  `"query.model:v1"` as a literal anywhere — including in tests — fails CI.
+  `"task.dispatch:v1"` as a literal anywhere — including in tests — fails CI.
 - **Shared logic goes in `pkg/`.** Service-specific logic stays in the owning service.
 - **Python services use the standard `logging` module**, never `print`, except for
   machine-parsed stdout protocols.

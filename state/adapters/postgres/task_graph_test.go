@@ -7,7 +7,6 @@ import (
 
 	"github.com/carolsimone/continuo/pkg/domain"
 	"github.com/carolsimone/continuo/pkg/domain/model"
-	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/topology"
@@ -117,7 +116,6 @@ func TestTaskGraph_ReadyCandidatesOfTheExampleRun(t *testing.T) {
 		jobName, err := domain.ComputeJobName("service-1", "e2e_schema", "ftable_g", r.ScheduleID().String(), 0)
 		require.NoError(t, err)
 		assert.Equal(t, jobName, got[1].JobName)
-		assert.Equal(t, pkgevents.DefaultTaskMaxRetries, got[1].MaxRetries)
 		assert.Equal(t, []run.TaskStatus{run.TaskStatusSucceeded}, got[1].UpstreamStatuses)
 		assert.True(t, got[1].Ready())
 	})

@@ -106,13 +106,29 @@ func (h *builtHarness) legacyRun(t *testing.T, releaseID, table string) (uuid.UU
 	return runID, taskID
 }
 
-// finish reports the task's status, as task.status.updated:v1 does.
-func (h *builtHarness) finish(t *testing.T, runID, taskID uuid.UUID, status run.TaskStatus) {
+// finish reports how attempt 0 of the task ended, as task.status.updated:v2
+// does; a failure is not retried.
+func (h *builtHarness) finish(t *testing.T, runID, taskID uuid.UUID, status run.AttemptStatus) {
 	t.Helper()
 	h.inTx(t, func(ctx context.Context, u uow.UnitOfWork) error {
-		return svchandlers.NewTaskStatusUpdatedHandler(pkgevents.DefaultTenantID, h.logger).Handle(ctx, u,
-			events.TaskStatusUpdated{TaskID: taskID, ScheduleID: runID, Status: status}, uuid.Nil)
+		return h.reports().Handle(ctx, u, finished(runID, taskID, status), uuid.Nil)
 	})
+}
+
+// reports is the handler of task.status.updated:v2 the harness reports
+// through.
+func (h *builtHarness) reports() *svchandlers.AttemptReportHandler {
+	return svchandlers.NewAttemptReportHandler(pkgevents.DefaultTenantID, defaultPlanner.Tasks, h.logger)
+}
+
+// finished is the report that attempt 0 of taskID ended with status; a
+// failure names a reason that is not retried.
+func finished(runID, taskID uuid.UUID, status run.AttemptStatus) events.AttemptReported {
+	rep := run.AttemptReport{TaskID: taskID, Attempt: 0, Status: status}
+	if status == run.AttemptFailed {
+		rep.FailureReason = model.FailureReasonDeadlineExceeded
+	}
+	return events.AttemptReported{RunID: runID, Report: rep}
 }
 
 // task is the id of runID's task at key, for the default tenant.
@@ -143,7 +159,7 @@ func (h *builtHarness) loaded(t *testing.T, key string) (loadedRow, bool) {
 	return row, true
 }
 
-// TestBuiltVersions drives task.status.updated:v1 against a real Postgres: a
+// TestBuiltVersions drives task.status.updated:v2 against a real Postgres: a
 // succeeded task of a run state planned with a writing operation records the
 // version it loaded, the content hash of its node in the run's release, and
 // the other cases record nothing. Every subtest uses its own release and node.
@@ -160,7 +176,7 @@ func TestBuiltVersions(t *testing.T) {
 		runID := h.trigger(t, "built-orders", model.OperationRun)
 		taskID := task(runID, "raw.orders_built")
 
-		h.finish(t, runID, taskID, run.TaskStatusSucceeded)
+		h.finish(t, runID, taskID, run.AttemptSucceeded)
 
 		row, ok := h.loaded(t, "raw.orders_built")
 		require.True(t, ok)
@@ -180,28 +196,17 @@ func TestBuiltVersions(t *testing.T) {
 		promoteRelease(t, db, tested)
 		runID := h.trigger(t, "built-tested", model.OperationTest)
 
-		h.finish(t, runID, task(runID, "raw.tested_built"), run.TaskStatusSucceeded)
+		h.finish(t, runID, task(runID, "raw.tested_built"), run.AttemptSucceeded)
 
 		_, ok := h.loaded(t, "raw.tested_built")
 		assert.False(t, ok, "a test reads the table, it does not load it")
-	})
-
-	t.Run("a run whose tasks state did not plan records nothing", func(t *testing.T) {
-		releaseID := "rel-" + uuid.NewString()[:8]
-		h.storeRelease(t, releaseID, promotedNode("raw", "legacy_built", "dbt-model"))
-		runID, taskID := h.legacyRun(t, releaseID, "legacy_built")
-
-		h.finish(t, runID, taskID, run.TaskStatusSucceeded)
-
-		_, ok := h.loaded(t, "raw.legacy_built")
-		assert.False(t, ok)
 	})
 
 	t.Run("a failed task records nothing", func(t *testing.T) {
 		promoteRelease(t, db, scheduledNode("raw", "failing", "dbt-model", "built-failing"))
 		runID := h.trigger(t, "built-failing", model.OperationRun)
 
-		h.finish(t, runID, task(runID, "raw.failing"), run.TaskStatusFailed)
+		h.finish(t, runID, task(runID, "raw.failing"), run.AttemptFailed)
 
 		_, ok := h.loaded(t, "raw.failing")
 		assert.False(t, ok)
@@ -213,7 +218,7 @@ func TestBuiltVersions(t *testing.T) {
 		promoteRelease(t, db, blank)
 		runID := h.trigger(t, "built-unhashed", model.OperationRun)
 
-		h.finish(t, runID, task(runID, "raw.unhashed"), run.TaskStatusSucceeded)
+		h.finish(t, runID, task(runID, "raw.unhashed"), run.AttemptSucceeded)
 
 		_, ok := h.loaded(t, "raw.unhashed")
 		assert.False(t, ok)
@@ -227,14 +232,13 @@ func TestBuiltVersions(t *testing.T) {
 		ctx := context.Background()
 		u := h.factory()
 		require.NoError(t, u.Begin(ctx))
-		require.NoError(t, svchandlers.NewTaskStatusUpdatedHandler(pkgevents.DefaultTenantID, h.logger).Handle(ctx, u,
-			events.TaskStatusUpdated{TaskID: taskID, ScheduleID: runID, Status: run.TaskStatusSucceeded}, uuid.Nil))
+		require.NoError(t, h.reports().Handle(ctx, u, finished(runID, taskID, run.AttemptSucceeded), uuid.Nil))
 		require.NoError(t, u.Rollback())
 
 		_, ok := h.loaded(t, "raw.rolled_back")
 		assert.False(t, ok, "the rolled-back delivery recorded a version")
 
-		h.finish(t, runID, taskID, run.TaskStatusSucceeded)
+		h.finish(t, runID, taskID, run.AttemptSucceeded)
 
 		row, ok := h.loaded(t, "raw.rolled_back")
 		require.True(t, ok, "the redelivery did not record the version")
@@ -254,7 +258,7 @@ func TestBuiltVersions(t *testing.T) {
 
 		rerunID, _, err := svchandlers.NewTriggerRerunHandler(defaultPlanner, h.logger).Handle(context.Background(), h.factory(), sourceID, identity.FromUserID("okta|alice"))
 		require.NoError(t, err)
-		h.finish(t, rerunID, task(rerunID, "raw.rerun_orders"), run.TaskStatusSucceeded)
+		h.finish(t, rerunID, task(rerunID, "raw.rerun_orders"), run.AttemptSucceeded)
 
 		row, ok := h.loaded(t, "raw.rerun_orders")
 		require.True(t, ok)

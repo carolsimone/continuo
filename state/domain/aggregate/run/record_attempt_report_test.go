@@ -76,7 +76,7 @@ func TestRecordAttemptReport_ASuccessDispatchesAttemptZeroOfTheTasksItMakesReady
 	assert.Equal(t, run.TaskDispatched{
 		ID: r.ScheduleID(), ScheduleName: "e2e-schedule-failure", TaskID: created.TaskID, Attempt: 0,
 		KnownStatus: run.AttemptDispatched, Node: node, JobName: created.JobName, Operation: model.OperationRun,
-		MaxRetries: 2, Timeout: 24 * time.Hour,
+		Timeout: 24 * time.Hour,
 	}, events[0])
 	a, ok := attemptOf(t, tc, r, "ftable_g", 0)
 	require.True(t, ok)
@@ -102,7 +102,7 @@ func TestRecordAttemptReport_ARetryableFailureDispatchesTheNextAttempt(t *testin
 	assert.Equal(t, []run.DomainEvent{run.TaskDispatched{
 		ID: r.ScheduleID(), ScheduleName: "e2e-schedule-failure", TaskID: id, Attempt: 1,
 		KnownStatus: run.AttemptDispatched, Node: node, JobName: jobName, Operation: model.OperationRun,
-		MaxRetries: 2, Timeout: 24 * time.Hour,
+		Timeout: 24 * time.Hour,
 	}}, events)
 	first, _ := attemptOf(t, tc, r, "ftable_a", 0)
 	assert.Equal(t, run.AttemptFailed, first.Status)

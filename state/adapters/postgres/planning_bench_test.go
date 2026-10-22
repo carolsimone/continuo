@@ -49,36 +49,38 @@ func BenchmarkStartRun(b *testing.B) {
 	}
 }
 
-// BenchmarkTaskSucceeded measures the whole task.status.updated transaction
-// for a task's first success, as TaskStatusUpdatedHandler runs it: lock the
-// run, apply the status, save the run, write its events, commit. Tasks
-// succeed in key order, which is level order; once every task has succeeded
-// the run is restored to how it was created, outside the timer.
+// BenchmarkTaskSucceeded measures the whole task.status.updated:v2
+// transaction for a task's success, as AttemptReportHandler runs it: lock the
+// run, the task and the attempt, apply the report, save the run, write its
+// dispatches, commit. Tasks succeed in key order, which is level order; once
+// every task has succeeded the run is restored to how it was created, outside
+// the timer.
 func BenchmarkTaskSucceeded(b *testing.B) {
 	for _, shape := range []releaseShape{dag2000, chain500} {
 		b.Run(shape.name, func(b *testing.B) {
-			benchmarkStatusUpdates(b, shape, func(keys []string, i int) (string, run.TaskStatus, int32) {
-				return keys[i%len(keys)], run.TaskStatusSucceeded, 0
+			benchmarkReports(b, shape, func(keys []string, i int) (string, run.AttemptStatus, model.FailureReason) {
+				return keys[i%len(keys)], run.AttemptSucceeded, ""
 			})
 		})
 	}
 }
 
-// BenchmarkFinalFailure measures the same transaction for the cascade root's
-// last allowed attempt failing: every other task of the run descends from it.
+// BenchmarkFinalFailure measures the same transaction for the cascade root
+// failing in a way that is not retried: every other task of the run descends
+// from it, so the transaction skips them all and finalizes the run.
 func BenchmarkFinalFailure(b *testing.B) {
 	b.Run(cascade2000.name, func(b *testing.B) {
-		benchmarkStatusUpdates(b, cascade2000, func([]string, int) (string, run.TaskStatus, int32) {
-			return "bench.fail_root", run.TaskStatusFailed, 2
+		benchmarkReports(b, cascade2000, func([]string, int) (string, run.AttemptStatus, model.FailureReason) {
+			return "bench.fail_root", run.AttemptFailed, model.FailureReasonDeadlineExceeded
 		})
 	})
 }
 
-// benchmarkStatusUpdates starts a run of shape and times one status update per
-// iteration; next names the task, status and attempt of iteration i. The run
-// is restored to how it was created before an iteration that would repeat a
-// task, outside the timer.
-func benchmarkStatusUpdates(b *testing.B, shape releaseShape, next func(keys []string, i int) (string, run.TaskStatus, int32)) {
+// benchmarkReports starts a run of shape and times one report of attempt 0
+// per iteration; next names the task, status and failure reason of iteration
+// i. The run is restored to how it was created before an iteration that would
+// repeat a task, outside the timer.
+func benchmarkReports(b *testing.B, shape releaseShape, next func(keys []string, i int) (string, run.AttemptStatus, model.FailureReason)) {
 	ctx := context.Background()
 	db := newTestDB(b)
 	tenant := storeShape(b, db, shape)
@@ -86,40 +88,51 @@ func benchmarkStatusUpdates(b *testing.B, shape releaseShape, next func(keys []s
 	var keys []string
 	require.NoError(b, db.Select(&keys,
 		`SELECT node_key FROM task_tracker WHERE schedule_id = $1 ORDER BY node_key COLLATE "C"`, r.ScheduleID()))
-	handler := handlers.NewTaskStatusUpdatedHandler(tenant, discardLogger())
+	handler := handlers.NewAttemptReportHandler(tenant, testTaskDefaults, discardLogger())
 	u := newPlanningUoW(db)
-	updated := map[string]bool{}
+	reported := map[string]bool{}
 
 	b.ResetTimer()
 	for i := range b.N {
-		key, status, attempt := next(keys, i)
-		if updated[key] {
+		key, status, reason := next(keys, i)
+		if reported[key] {
 			b.StopTimer()
 			restoreRun(b, db, r.ScheduleID())
-			clear(updated)
+			clear(reported)
 			b.StartTimer()
 		}
-		updated[key] = true
+		reported[key] = true
 		require.NoError(b, u.Begin(ctx))
-		require.NoError(b, handler.Handle(ctx, u, events.TaskStatusUpdated{
-			TaskID:     run.TaskIDFor(tenant, r.ScheduleID(), topology.NodeKey(key)),
-			ScheduleID: r.ScheduleID(),
-			Status:     status,
-			RetryCount: attempt,
-		}, uuid.Nil))
+		require.NoError(b, handler.Handle(ctx, u, events.AttemptReported{RunID: r.ScheduleID(), Report: run.AttemptReport{
+			TaskID:        run.TaskIDFor(tenant, r.ScheduleID(), topology.NodeKey(key)),
+			Attempt:       0,
+			Status:        status,
+			FailureReason: reason,
+		}}, uuid.Nil))
 		require.NoError(b, u.Commit())
 	}
 }
 
-// restoreRun returns a started run to how Start stored it: every task pending
-// at attempt 0, dispatched only if it was dispatched at creation (its
-// dispatched_at equals its created_at), and the run running with no terminal
-// task. The run's outbox rows are deleted; no relay publishes them here.
+// restoreRun returns a started run to how Start stored it: the tasks it
+// dispatched at creation (their dispatched_at equals their created_at)
+// dispatched at attempt 0 with only their attempt 0, dispatched; every other
+// task pending with no attempt; and the run running with no terminal task.
+// The run's outbox rows are deleted; no relay publishes them here.
 func restoreRun(tb testing.TB, db *sqlx.DB, runID uuid.UUID) {
 	tb.Helper()
 	_, err := db.Exec(`
+		DELETE FROM task_attempts a USING task_tracker t
+		WHERE a.task_id = t.task_id AND t.schedule_id = $1
+		  AND (a.attempt > 0 OR t.dispatched_at IS DISTINCT FROM t.created_at)`, runID)
+	require.NoError(tb, err)
+	_, err = db.Exec(`
+		UPDATE task_attempts a SET status = 'dispatched', finished_at = NULL, failure_class = NULL, failure_reason = NULL,
+		       next_check_at = now() + interval '5 minutes', last_report_at = NULL
+		FROM task_tracker t WHERE a.task_id = t.task_id AND t.schedule_id = $1`, runID)
+	require.NoError(tb, err)
+	_, err = db.Exec(`
 		UPDATE task_tracker
-		SET status = 'pending', attempt = 0,
+		SET status = CASE WHEN dispatched_at = created_at THEN 'dispatched' ELSE 'pending' END, attempt = 0,
 		    dispatched_at = CASE WHEN dispatched_at = created_at THEN dispatched_at END
 		WHERE schedule_id = $1`, runID)
 	require.NoError(tb, err)

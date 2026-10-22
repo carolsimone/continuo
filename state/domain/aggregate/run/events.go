@@ -53,8 +53,9 @@ func (e RunCancelled) ScheduleID() uuid.UUID { return e.ID }
 // next question waits for the next window. It carries the run, the task and
 // the attempt's number, state's view of the attempt (KnownStatus: dispatched
 // until execution-controller acknowledged it), the node it builds as the run's
-// release holds it, the attempt's Kubernetes Job name, the dbt verb, the
-// task's retry budget and how long the attempt's container may run.
+// release holds it, the attempt's Kubernetes Job name, the dbt verb and how
+// long the attempt's container may run. No retry budget travels: state decides
+// every retry.
 type TaskDispatched struct {
 	ID           uuid.UUID
 	ScheduleName string
@@ -64,7 +65,6 @@ type TaskDispatched struct {
 	Node         topology.Node
 	JobName      string
 	Operation    model.Operation
-	MaxRetries   int32
 	Timeout      time.Duration
 }
 

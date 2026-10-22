@@ -47,7 +47,7 @@ func (h *builtHarness) created(t *testing.T, id uuid.UUID) createdRun {
 		SELECT t.node_key FROM state_outbox o
 		JOIN task_tracker t ON t.task_id = (o.payload->>'task_id')::uuid
 		WHERE o.aggregate_id = $1 AND o.stream_name = $2
-		ORDER BY t.node_key COLLATE "C"`, id, streams.QueryModelV1))
+		ORDER BY t.node_key COLLATE "C"`, id, streams.TaskDispatchV1))
 	return out
 }
 

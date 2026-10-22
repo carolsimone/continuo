@@ -152,10 +152,9 @@ func TestDedup_InsertErrorPropagates(t *testing.T) {
 }
 
 // TestDedup_SameMessageIDDifferentStreamBothInsertSuccessfully is the
-// regression guard for the bug where execution-controller's outbox-processor
-// publishes task.status.updated:v1 and task.execution.recorded:v1 in the
-// same millisecond, producing identical Redis message IDs across the two
-// streams. With a per-message-only UNIQUE constraint, the second insert
+// regression guard for the bug where an outbox processor publishes entries
+// of two streams in the same millisecond, producing identical Redis message
+// IDs across the two streams. With a per-message-only UNIQUE constraint, the second insert
 // false-dedupped against the first. The fix includes stream_name in the
 // uniqueness key; this test asserts that.
 func TestDedup_SameMessageIDDifferentStreamBothInsertSuccessfully(t *testing.T) {

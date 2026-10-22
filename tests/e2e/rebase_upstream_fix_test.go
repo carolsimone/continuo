@@ -95,8 +95,9 @@ func TestRebase_ReRunsAChangedUpstreamNode(t *testing.T) {
 	wantChanged := []rebaseChangedNode{{Service: "service-3", Schema: seedSchemaName, Table: "ftable_c", Downstream: 3}}
 
 	// ── Preview with the changed upstream nodes ─────────────────────────────
-	// ftable_c's duration is recorded from task.execution.recorded:v1, after
-	// its status, so the preview is read until it carries one.
+	// ftable_c's duration is recorded from its attempt's final report, which
+	// can land after the run is read, so the preview is read until it carries
+	// one.
 	t.Log("Previewing the rebase with the changed upstream nodes...")
 	var withUpstream *statev1.PreviewRebaseResponse
 	var lastSeen string

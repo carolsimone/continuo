@@ -82,11 +82,11 @@ def test_the_detector_flags_the_shapes_it_is_meant_to_reject():
 
 def test_the_detector_leaves_docstrings_and_unrelated_strings_alone():
     documented = '"""Module reading release.requested:v1."""\n' \
-        'class A:\n    """Handles query.model:v1."""\n' \
+        'class A:\n    """Handles task.dispatch:v1."""\n' \
         '    def f(self):\n        """Emits run.finalized:v1."""\n'
     assert _stream_literals(documented) == []
     # Only the first expression of a body is a docstring: a later bare string is code.
-    assert _stream_literals('def f():\n    """doc"""\n    "query.model:v1"\n') == ["query.model:v1"]
+    assert _stream_literals('def f():\n    """doc"""\n    "task.dispatch:v1"\n') == ["task.dispatch:v1"]
     assert _stream_literals('x = "topology-controller"') == []
     assert _stream_literals('x = "no version here"') == []
     assert _stream_literals('x = "12:30"') == []

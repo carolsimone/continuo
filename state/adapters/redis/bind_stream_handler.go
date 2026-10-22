@@ -2,7 +2,6 @@ package redis
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -37,10 +36,8 @@ type streamBinding[E any] struct {
 	// opens. Its error is returned as it is: a permanent one is dead-lettered,
 	// an outage pauses the consumer, and any other is retried.
 	load func(ctx context.Context, evt E) (E, error)
-	// payload derives the bytes stored in the dedup row's payload column. Two
-	// shapes exist: the explicit "payload" stream field, and a JSON encoding of
-	// the whole Values map for flat-field streams. defaultPayload / valuesPayload
-	// cover both.
+	// payload derives the bytes stored in the dedup row's payload column:
+	// defaultPayload reads the explicit "payload" stream field.
 	payload func(msg goredis.XMessage) []byte
 	// handle invokes the domain handler. msgProcID is the dedup row id; handlers
 	// that emit no follow-on outbox entry ignore it (the binding passes uuid.Nil
@@ -54,18 +51,6 @@ type streamBinding[E any] struct {
 func defaultPayload(msg goredis.XMessage) []byte {
 	payload, _ := msg.Values["payload"].(string)
 	return []byte(payload)
-}
-
-// valuesPayload JSON-encodes the whole Values map, used by flat-field streams
-// that carry no single "payload" blob. message_processing.payload is JSONB NOT
-// NULL, so a marshal failure collapses to "{}" rather than aborting the message:
-// the payload is forensic only.
-func valuesPayload(msg goredis.XMessage) []byte {
-	payload, err := json.Marshal(msg.Values)
-	if err != nil {
-		return []byte("{}")
-	}
-	return payload
 }
 
 // bindStreamHandler builds the pkg/redis.MessageHandler for a streamBinding.

@@ -3,14 +3,15 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/lib/pq"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/google/uuid"
-	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -83,36 +84,24 @@ func verifyJobsCompleted(
 	t.Logf("✅ All %d jobs completed successfully", len(tables))
 }
 
-// verifyNextLevelDispatched checks that the next level nodes were dispatched on query.model:v1
+// verifyNextLevelDispatched checks that the next level nodes were dispatched on task.dispatch:v1
 func verifyNextLevelDispatched(
 	t *testing.T,
 	ctx context.Context,
-	queryModelTap *streamTap,
+	dispatchTap *streamTap,
 	nextLevelTables []string,
 	scheduleID uuid.UUID,
 ) {
-	// Wait for query.model:v1 to contain messages for next level. The tap saw every
-	// entry since before the run was triggered, so a trim of consumed entries
-	// cannot hide one.
+	// Wait for task.dispatch:v1 to contain the next level's dispatches. The tap
+	// saw every entry since before the run was triggered, so a trim of consumed
+	// entries cannot hide one.
 	pollUntil(t, ctx, 60*time.Second, 1*time.Second, func() (bool, error) {
-		messages := queryModelTap.Entries()
-
-		// Count messages matching next level tables for this specific schedule
 		matchCount := 0
-		for _, msg := range messages {
-			if msg.Values["schedule_id"] != scheduleID.String() {
-				continue
-			}
-			if tableName, ok := msg.Values["table_name"].(string); ok {
-				for _, expectedTable := range nextLevelTables {
-					if tableName == expectedTable {
-						matchCount++
-						break
-					}
-				}
+		for _, d := range dispatchTap.Dispatches(t) {
+			if d.RunID == scheduleID.String() && slices.Contains(nextLevelTables, d.TableName) {
+				matchCount++
 			}
 		}
-
 		return matchCount >= len(nextLevelTables), nil
 	}, fmt.Sprintf("Timeout waiting for state to dispatch %d nodes", len(nextLevelTables)))
 
@@ -135,7 +124,7 @@ func verifyFullDAGExecution(
 	t *testing.T,
 	ctx context.Context,
 	clients *testClients,
-	queryModelTap *streamTap,
+	dispatchTap *streamTap,
 	scheduleID uuid.UUID,
 ) {
 	levels := getDAGLevels()
@@ -151,7 +140,7 @@ func verifyFullDAGExecution(
 
 		// If not last level, verify state dispatched the next level
 		if i < len(levels)-1 {
-			verifyNextLevelDispatched(t, ctx, queryModelTap, levels[i+1], scheduleID)
+			verifyNextLevelDispatched(t, ctx, dispatchTap, levels[i+1], scheduleID)
 		}
 	}
 
@@ -199,55 +188,50 @@ func verifyDialectRouting(t *testing.T, ctx context.Context) {
 	t.Log("✅ dialect routing verified: service-1 jobs run customname-dbt, service-2/3 jobs run built-in dbt")
 }
 
-// verifyRootNodesDispatched verifies that state dispatched the expected root
-// nodes to query.model:v1 when it created the run.
+// verifyRootNodesDispatched verifies that state dispatched attempt 0 of each
+// expected root node to task.dispatch:v1 when it created the run, once.
 func verifyRootNodesDispatched(
 	t *testing.T,
 	ctx context.Context,
-	queryModelTap *streamTap,
+	dispatchTap *streamTap,
 	schedulerID uuid.UUID,
 	expectedRootNodes []string,
 ) {
 	t.Helper()
 	expectedCount := len(expectedRootNodes)
-
-	// Wait for query.model:v1 to contain the expected messages. The tap saw every
-	// entry since before the run was triggered, so a trim of consumed entries
-	// cannot hide one.
-	pollUntil(t, ctx, 60*time.Second, 500*time.Millisecond, func() (bool, error) {
-		messages := queryModelTap.Entries()
-		count := 0
-		for _, msg := range messages {
-			if msg.Values["schedule_id"] == schedulerID.String() {
-				count++
+	ofRun := func() []tappedDispatch {
+		var out []tappedDispatch
+		for _, d := range dispatchTap.Dispatches(t) {
+			if d.RunID == schedulerID.String() {
+				out = append(out, d)
 			}
 		}
-		return count >= expectedCount, nil
-	}, fmt.Sprintf("Timeout waiting for %d messages in query.model:v1", expectedCount))
-
-	// Assert Redis message content and no duplicates
-	messages := queryModelTap.Entries()
-
-	var scheduleMessages []goredis.XMessage
-	for _, msg := range messages {
-		if msg.Values["schedule_id"] == schedulerID.String() {
-			scheduleMessages = append(scheduleMessages, msg)
-		}
+		return out
 	}
-	require.Len(t, scheduleMessages, expectedCount, "Expected exactly %d messages for this schedule in query.model:v1", expectedCount)
 
+	// Wait for task.dispatch:v1 to contain the expected dispatches. The tap saw
+	// every entry since before the run was triggered, so a trim of consumed
+	// entries cannot hide one.
+	pollUntil(t, ctx, 60*time.Second, 500*time.Millisecond, func() (bool, error) {
+		return len(ofRun()) >= expectedCount, nil
+	}, fmt.Sprintf("Timeout waiting for %d dispatches in task.dispatch:v1", expectedCount))
+
+	dispatches := ofRun()
+	require.Len(t, dispatches, expectedCount, "Expected exactly %d dispatches of this run in task.dispatch:v1", expectedCount)
 	seenStreamTables := make(map[string]bool)
-	for _, msg := range scheduleMessages {
-		tableName, _ := msg.Values["table_name"].(string)
-		assert.NotEmpty(t, msg.Values["task_id"], "task_id must be present")
-		assert.NotEmpty(t, msg.Values["job_name"], "job_name must be present")
-		assert.NotEmpty(t, msg.Values["outbox_entry_id"], "outbox_entry_id must be present")
-		assert.Contains(t, expectedRootNodes, tableName, "stream table_name must be a root node")
-		assert.False(t, seenStreamTables[tableName], "Duplicate Redis message for table: %s", tableName)
-		seenStreamTables[tableName] = true
+	for _, d := range dispatches {
+		assert.NotEmpty(t, d.TaskID, "task_id must be present")
+		assert.NotEmpty(t, d.JobName, "job_name must be present")
+		assert.NotEmpty(t, d.OutboxEntryID, "outbox_entry_id must be present")
+		assert.Equal(t, int32(0), d.Attempt, "a root node's first dispatch is its attempt 0")
+		assert.Equal(t, pkgevents.AttemptDispatched, d.KnownStatus)
+		assert.Positive(t, d.TimeoutSeconds, "every dispatch carries its task timeout")
+		assert.Contains(t, expectedRootNodes, d.TableName, "stream table_name must be a root node")
+		assert.False(t, seenStreamTables[d.TableName], "Duplicate dispatch for table: %s", d.TableName)
+		seenStreamTables[d.TableName] = true
 	}
 
-	t.Logf("✅ state dispatched %d root node messages to query.model:v1", expectedCount)
+	t.Logf("✅ state dispatched %d root nodes to task.dispatch:v1", expectedCount)
 }
 
 // verifyTasksSkipped polls state DB until every task of schedulerID at one of

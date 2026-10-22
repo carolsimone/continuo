@@ -7,7 +7,9 @@ import (
 	"testing"
 	"time"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	goredis "github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/require"
 )
 
 // streamTap records every entry appended to a stream from the moment it starts.
@@ -57,4 +59,29 @@ func (s *streamTap) Entries() []goredis.XMessage {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]goredis.XMessage(nil), s.entries...)
+}
+
+// tappedDispatch is one task.dispatch:v1 entry a tap recorded: its payload and
+// the outbox row that carried it.
+type tappedDispatch struct {
+	pkgevents.TaskDispatch
+	OutboxEntryID string
+}
+
+// Dispatches decodes the task.dispatch:v1 entries recorded so far, in stream
+// order. An entry that does not decode fails the test.
+func (s *streamTap) Dispatches(t *testing.T) []tappedDispatch {
+	t.Helper()
+	entries := s.Entries()
+	out := make([]tappedDispatch, 0, len(entries))
+	for _, msg := range entries {
+		fields := make(map[string]string, len(msg.Values))
+		for k, v := range msg.Values {
+			fields[k], _ = v.(string)
+		}
+		_, d, err := pkgevents.DecodeTaskDispatch(fields)
+		require.NoError(t, err, "entry %s is not a task.dispatch:v1 entry", msg.ID)
+		out = append(out, tappedDispatch{TaskDispatch: d, OutboxEntryID: fields["outbox_entry_id"]})
+	}
+	return out
 }

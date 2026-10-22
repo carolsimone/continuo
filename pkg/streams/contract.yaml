@@ -4,7 +4,7 @@
 # Naming policy:
 #   - Stream name: lowercase, dot-separated, ends with `:vN`. Frozen contract.
 #   - Group name: lowercase kebab-case, no underscores. Frozen per consumer.
-#   - Stream const: PascalCase including version suffix (TaskStatusUpdatedV1).
+#   - Stream const: PascalCase including version suffix (TaskStatusUpdatedV2).
 #   - Consumer const: PascalCase, service-prefixed (StateTaskStatusUpdated).
 
 streams:
@@ -19,33 +19,6 @@ streams:
         group: state-schedule-catalog
         const: StateScheduleCatalog
 
-  - name: query.model:v1
-    const: QueryModelV1
-    description: One dispatch per ready task, written by state to its outbox in the transaction that makes the task ready (the run's creation, or the success of the task's last upstream); execution-controller runs the task as a Kubernetes Job.
-    producers: [state]
-    consumers:
-      - service: execution-controller
-        group: executor-query-model
-        const: ExecutorQueryModel
-
-  - name: task.status.updated:v1
-    const: TaskStatusUpdatedV1
-    description: Per-task status transitions (RUNNING, SUCCEEDED and FAILED) from execution-controller. state records each in its run's transaction, dispatches the tasks a success makes ready, skips the pending descendants of a final failure and finalizes the run.
-    producers: [execution-controller]
-    consumers:
-      - service: state
-        group: state-task-status-updated
-        const: StateTaskStatusUpdated
-
-  - name: task.execution.recorded:v1
-    const: TaskExecutionRecordedV1
-    description: Completed task executions emitted by execution-controller's outbox processor.
-    producers: [execution-controller]
-    consumers:
-      - service: state
-        group: state-task-execution-recorded
-        const: StateTaskExecutionRecorded
-
   - name: task.dispatch:v1
     const: TaskDispatchV1
     description: One attempt of a task, from state to execution-controller, written in the transaction that decides the attempt (the run's creation, the success that makes the task ready, or the failure that retries it) and again whenever state asks about an attempt that has gone quiet, with state's view of it as known_status. execution-controller accepts each (task, attempt) once and answers a repeated dispatch with the attempt's latest report.
@@ -59,7 +32,10 @@ streams:
     const: TaskStatusUpdatedV2
     description: What execution-controller knows of one attempt of a task — queued, running, succeeded, or failed with a failure class and reason — each report carrying every fact known so far. state applies a report only when it ranks higher than the attempt's current status, and on a failure decides in the same transaction whether to dispatch the next attempt.
     producers: [execution-controller]
-    consumers: []
+    consumers:
+      - service: state
+        group: state-task-status-updated
+        const: StateTaskStatusUpdated
 
   # ---------------- execution-controller streams ----------------
 
@@ -267,6 +243,7 @@ retired_streams:
   - name: manifest.loaded:v1
   - name: node.deployed:v1
   - name: node.updated:v1
+  - name: query.model:v1
   - name: release.promoted:v1
   - name: release.seeds.pending:v1
   - name: remediation.requested:v1
@@ -278,7 +255,9 @@ retired_streams:
   - name: run.initialized:v1
   - name: scheduler.started:v1
   - name: seed.build.node.completed:v1
+  - name: task.execution.recorded:v1
   - name: task.failed:v1
+  - name: task.status.updated:v1
   - name: trigger.promoted_seeds:v1
   - name: trigger.rebase:v1
   - name: trigger.rerun:v1

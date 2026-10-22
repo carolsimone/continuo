@@ -49,15 +49,15 @@ func TestMetrics_GoServicesServePrometheusMetrics(t *testing.T) {
 // last-success gauge from Prometheus exposition text.
 var trimLastSuccessPattern = regexp.MustCompile(`(?m)^continuo_stream_trim_last_success_timestamp_seconds\{[^}]*\} (\S+)$`)
 
-// queryModelLengthPattern matches the stream-length sample for query.model:v1,
-// e.g. continuo_stream_length{service="dead-letter-controller",stream="query.model:v1"} 12.
-var queryModelLengthPattern = regexp.MustCompile(
-	`(?m)^continuo_stream_length\{[^}]*stream="` + regexp.QuoteMeta(streams.QueryModelV1) + `"[^}]*\} \S+$`)
+// dispatchLengthPattern matches the stream-length sample for task.dispatch:v1,
+// e.g. continuo_stream_length{service="dead-letter-controller",stream="task.dispatch:v1"} 12.
+var dispatchLengthPattern = regexp.MustCompile(
+	`(?m)^continuo_stream_length\{[^}]*stream="` + regexp.QuoteMeta(streams.TaskDispatchV1) + `"[^}]*\} \S+$`)
 
 // TestMetrics_DeadLetterControllerReportsStreamTrimming asserts the trim loop
 // dead-letter-controller runs is observable: the loop runs once at startup, so
 // its last-success gauge is positive, and every stream it bounds reports a
-// length, query.model:v1 among them.
+// length, task.dispatch:v1 among them.
 func TestMetrics_DeadLetterControllerReportsStreamTrimming(t *testing.T) {
 	host := getEnv("DEAD_LETTER_HOST", "dead-letter-controller")
 	var body string
@@ -76,7 +76,7 @@ func TestMetrics_DeadLetterControllerReportsStreamTrimming(t *testing.T) {
 	}, 2*time.Minute, 2*time.Second,
 		"continuo_stream_trim_last_success_timestamp_seconds must be positive once the trim loop has run")
 
-	assert.Regexp(t, queryModelLengthPattern, body, "no continuo_stream_length sample for %s", streams.QueryModelV1)
+	assert.Regexp(t, dispatchLengthPattern, body, "no continuo_stream_length sample for %s", streams.TaskDispatchV1)
 }
 
 // scrapeMetrics returns the Prometheus exposition text served by host.

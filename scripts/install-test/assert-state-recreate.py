@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The state Deployment must roll with strategy Recreate.
 
-Every state pod consumes task.status.updated:v1 through one consumer group and,
+Every state pod consumes task.status.updated:v2 through one consumer group and,
 in the status transaction, dispatches the tasks a success makes ready. During a
 RollingUpdate the previous release's pod and the new one consume the same group,
 so a success of a run the new pod planned can reach the old pod, which records

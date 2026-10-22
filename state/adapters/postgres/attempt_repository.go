@@ -88,7 +88,6 @@ type questionRow struct {
 	ChecksSent   int       `db:"checks_sent"`
 	JobName      string    `db:"job_name"`
 	Operation    string    `db:"operation"`
-	MaxRetries   int32     `db:"max_retries"`
 	topologyNodeRow
 }
 
@@ -102,7 +101,7 @@ func (r *AttemptRepository) LockQuestion(ctx context.Context, key repository.Att
 	var row questionRow
 	err := r.tx.GetContext(ctx, &row, `
 		SELECT s.schedule_id, s.schedule_name AS run_schedule_name, a.task_id, a.attempt, a.status, a.checks_sent, a.job_name,
-		       t.operation, t.max_retries,
+		       t.operation,
 		       n.node_key, n.unique_id, n.service_name, n.schema_name, n.table_name, n.node_type, n.test_count,
 		       n.content_hash, n.image_tag, n.secret_ref, n.schedule_name, n.timeout_seconds
 		FROM task_attempts a
@@ -129,7 +128,6 @@ func (r *AttemptRepository) LockQuestion(ctx context.Context, key repository.Att
 		JobName:      row.JobName,
 		Node:         row.toDomain(),
 		Operation:    operationFromColumn(row.Operation),
-		MaxRetries:   row.MaxRetries,
 	}, true, nil
 }
 

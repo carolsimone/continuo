@@ -98,7 +98,7 @@ func TestAttemptRepository_LockQuestionCarriesTheAttemptsDispatch(t *testing.T) 
 		require.True(t, found)
 		assert.Equal(t, run.Question{
 			RunID: f.r.ScheduleID(), ScheduleName: "e2e-schedule-failure", TaskID: f.keyOf("e2e_schema.ftable_a", 0).TaskID,
-			Attempt: 0, Status: run.AttemptQueued, JobName: jobName, Operation: model.OperationRun, MaxRetries: 2,
+			Attempt: 0, Status: run.AttemptQueued, JobName: jobName, Operation: model.OperationRun,
 			Node: topology.Node{Key: "e2e_schema.ftable_a", UniqueID: "e2e_schema.ftable_a", ServiceName: "service-1",
 				SchemaName: "e2e_schema", TableName: "ftable_a", NodeType: "dbt-model", ContentHash: "h-ftable_a",
 				ImageTag: "service-1:5", ScheduleName: "e2e-schedule-failure"},

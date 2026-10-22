@@ -61,7 +61,7 @@ func cleanupPostgres(t *testing.T, ctx context.Context, clients *testClients, sc
 // cleanupRedis removes test streams from Redis
 func cleanupRedis(t *testing.T, ctx context.Context, clients *testClients) {
 	testStreams := []string{
-		streams.QueryModelV1,
+		streams.TaskDispatchV1,
 		streams.SchedulesLoadedV1,
 		streams.ScheduleCancelledV1,
 	}

@@ -34,7 +34,9 @@ func NewAttemptReportHandler(tenantID string, tasks run.TaskDefaults, logger *sl
 
 // Handle applies evt inside u's transaction; the caller commits.
 // run.ErrTaskNotHeld and run.ErrAttemptNotIssued propagate as they are: a
-// report either names can never be applied, so retrying it cannot succeed.
+// report either names can never be applied, so the stream binding marks both
+// permanent (permanentWhenNeverValid) and the consumer dead-letters the report
+// at once.
 func (h *AttemptReportHandler) Handle(ctx context.Context, u uow.UnitOfWork, evt events.AttemptReported, msgProcID uuid.UUID) error {
 	r, err := u.Run().LoadRunForUpdate(ctx, evt.RunID)
 	if err != nil {
@@ -55,7 +57,7 @@ func (h *AttemptReportHandler) Handle(ctx context.Context, u uow.UnitOfWork, evt
 			return err
 		}
 	}
-	h.logger.Info("task.status.updated: report applied",
+	h.logger.Info("task.status.updated: report processed",
 		"run_id", evt.RunID, "task_id", evt.Report.TaskID, "attempt", evt.Report.Attempt,
 		"status", evt.Report.Status, "failure_reason", evt.Report.FailureReason)
 	return nil

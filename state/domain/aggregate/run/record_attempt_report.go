@@ -30,8 +30,11 @@ import (
 //
 // Every move of a task stamps the run's progress clock. A task that has ended
 // counts terminal once, and the run finalizes when every task has ended:
-// failed if any failed or was cancelled, succeeded otherwise. Dispatching and
-// skipping read the run's graph only on a run whose tasks state planned.
+// failed if any failed or was cancelled, succeeded otherwise. Dispatching the
+// tasks a success makes ready and skipping the tasks a final failure blocks
+// read the run's graph only on a run whose tasks state planned; the next
+// attempt of a retryable failure reads its node from the run's release on
+// every run.
 //
 // A report for a run that has ended changes nothing: every attempt of such a
 // run has ended. The boolean result reports whether the report made the task
@@ -155,9 +158,7 @@ func (r *Run) dispatchNextAttempt(ctx context.Context, tasks TaskCollection, gra
 	if err := r.moveTask(ctx, tasks, taskID, TaskStatusDispatched, next, now); err != nil {
 		return nil, err
 	}
-	e := r.dispatchEvent(taskID, next, node, jobName, d)
-	e.MaxRetries = task.MaxRetries
-	return []DomainEvent{e}, nil
+	return []DomainEvent{r.dispatchEvent(taskID, next, node, jobName, d)}, nil
 }
 
 // finalizeWhenEveryTaskEnded finalizes r when every task has ended, the plan

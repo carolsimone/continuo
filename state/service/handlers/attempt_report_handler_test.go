@@ -25,7 +25,7 @@ import (
 )
 
 // fakeTaskStatusRunRepo is an in-memory RunRepository for
-// TaskStatusUpdated handler tests. LoadRunForUpdate returns the stored run;
+// AttemptReportHandler tests. LoadRunForUpdate returns the stored run;
 // SaveRun records the call and stores the updated aggregate. Other methods
 // panic on accidental use.
 type fakeTaskStatusRunRepo struct {
@@ -93,21 +93,18 @@ func (f *fakeTaskStatusOutboxPub) Append(_ context.Context, evts []run.DomainEve
 
 // fakeTaskStatusTaskCollection is an in-memory TaskCollection for handler
 // unit tests. It controls the responses of every method called by
-// Run.RecordTaskStatus; unused methods panic on accidental use.
+// Run.RecordAttemptReport; unused methods panic on accidental use.
 type fakeTaskStatusTaskCollection struct {
 	// GetStatus / LoadAttemptState response
 	prevStatus   run.TaskStatus
 	prevAttempt  int32
+	maxRetries   int32
 	prevExists   bool
 	getStatusErr error
 
 	// SetStatusAndAttempt response (rowsAffected)
 	updateAffected int
 	updateErr      error
-
-	// HasRetryableFailed response
-	hasRetryable    bool
-	hasRetryableErr error
 
 	// HasFailed response
 	hasFailed    bool
@@ -188,7 +185,8 @@ func (f *fakeTaskStatusTaskCollection) GetStatus(_ context.Context, _ uuid.UUID)
 
 func (f *fakeTaskStatusTaskCollection) LoadAttemptState(_ context.Context, id uuid.UUID) (run.TaskAttemptState, bool, error) {
 	f.lockOrder = append(f.lockOrder, "task "+id.String())
-	return run.TaskAttemptState{Status: f.prevStatus, RetryCount: f.prevAttempt}, f.prevExists, f.getStatusErr
+	return run.TaskAttemptState{Status: f.prevStatus, RetryCount: f.prevAttempt, MaxRetries: f.maxRetries,
+		NodeKey: "raw.orders", ServiceName: "svc", SchemaName: "raw", TableName: "orders"}, f.prevExists, f.getStatusErr
 }
 
 func (f *fakeTaskStatusTaskCollection) MarkDispatched(_ context.Context, _ []uuid.UUID, _ time.Time) ([]uuid.UUID, error) {
@@ -211,8 +209,8 @@ func (f *fakeTaskStatusTaskCollection) SetStatusAndAttempt(_ context.Context, _ 
 	return f.updateAffected, f.updateErr
 }
 
-func (f *fakeTaskStatusTaskCollection) HasRetryableFailed(_ context.Context, _ uuid.UUID) (bool, error) {
-	return f.hasRetryable, f.hasRetryableErr
+func (f *fakeTaskStatusTaskCollection) HasRetryableFailed(context.Context, uuid.UUID) (bool, error) {
+	return false, nil
 }
 
 func (f *fakeTaskStatusTaskCollection) HasFailed(_ context.Context, _ uuid.UUID) (bool, error) {
@@ -240,7 +238,7 @@ func taskStatusTestLogger() *slog.Logger {
 }
 
 // newTaskStatusHandlerUoW wires a FakeUnitOfWork with the three fakes needed
-// by the TaskStatusUpdated handler.
+// by AttemptReportHandler.
 func newTaskStatusHandlerUoW(
 	runRepo *fakeTaskStatusRunRepo,
 	outbox *fakeTaskStatusOutboxPub,
@@ -319,201 +317,188 @@ func newTerminalTaskStatusRunOfKind(kind run.Kind, id uuid.UUID, name string, st
 	)
 }
 
-// TestTaskStatusUpdated_NonTerminalStatusNoEvents verifies the happy path
-// where a RUNNING status update produces no domain events: RecordTaskStatus
-// returns nil events, SaveRun is called, Outbox.Append receives nil/empty.
-func TestTaskStatusUpdated_NonTerminalStatusNoEvents(t *testing.T) {
-	scheduleID := uuid.New()
-	taskID := uuid.New()
-
-	runRepo := &fakeTaskStatusRunRepo{stored: newRunningTaskStatusRun(scheduleID, "daily", 2, 0)}
-	outbox := &fakeTaskStatusOutboxPub{}
-	taskColl := &fakeTaskStatusTaskCollection{
-		prevStatus:     run.TaskStatusPending,
-		prevExists:     true,
-		updateAffected: 1,
+// held stores attempt n of taskID in status, as the transaction that
+// dispatched it wrote it.
+func (f *fakeTaskStatusTaskCollection) held(taskID uuid.UUID, n int32, status run.AttemptStatus) *fakeTaskStatusTaskCollection {
+	if f.attemptRows == nil {
+		f.attemptRows = map[statusAttemptKey]run.Attempt{}
 	}
-	u := newTaskStatusHandlerUoW(runRepo, outbox, taskColl)
-
-	h := handlers.NewTaskStatusUpdatedHandler(pkgevents.DefaultTenantID, taskStatusTestLogger())
-	require.NoError(t, h.Handle(context.Background(), u, events.TaskStatusUpdated{
-		TaskID:     taskID,
-		ScheduleID: scheduleID,
-		Status:     run.TaskStatusRunning,
-		RetryCount: 1,
-	}, uuid.New()))
-
-	assert.True(t, runRepo.saveCalled, "SaveRun must be called")
-	assert.Empty(t, outbox.appended, "non-terminal update must not emit events")
+	f.attemptRows[statusAttemptKey{taskID, n}] = run.Attempt{TaskID: taskID, Number: n, Status: status}
+	return f
 }
 
-// TestTaskStatusUpdated_TerminalStatusFinalizesRun verifies that when
-// RecordTaskStatus reaches the finalization condition it emits a RunFinalized
-// event, SaveRun is called, and Outbox.Append receives the event.
-func TestTaskStatusUpdated_TerminalStatusFinalizesRun(t *testing.T) {
-	scheduleID := uuid.New()
-	taskID := uuid.New()
-	msgProcID := uuid.New()
+// report is a report of attempt n of taskID in runID.
+func report(runID, taskID uuid.UUID, n int32, status run.AttemptStatus) events.AttemptReported {
+	r := events.AttemptReported{RunID: runID, Report: run.AttemptReport{TaskID: taskID, Attempt: n, Status: status}}
+	if status == run.AttemptFailed {
+		r.Report.FailureReason = model.FailureReasonExitCode
+	}
+	return r
+}
 
-	// Two tasks total, one already terminal: this event makes terminal==total.
+func newAttemptReportHandler() *handlers.AttemptReportHandler {
+	return handlers.NewAttemptReportHandler(pkgevents.DefaultTenantID, run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}, taskStatusTestLogger())
+}
+
+// A queued or running report moves the task and records nothing to send.
+func TestAttemptReport_AReportThatStartsTheAttemptSendsNothing(t *testing.T) {
+	for _, status := range []run.AttemptStatus{run.AttemptQueued, run.AttemptRunning} {
+		t.Run(string(status), func(t *testing.T) {
+			scheduleID, taskID := uuid.New(), uuid.New()
+			runRepo := &fakeTaskStatusRunRepo{stored: newRunningTaskStatusRun(scheduleID, "daily", 2, 0)}
+			outbox := &fakeTaskStatusOutboxPub{}
+			taskColl := (&fakeTaskStatusTaskCollection{prevStatus: run.TaskStatusDispatched, prevExists: true, updateAffected: 1}).
+				held(taskID, 0, run.AttemptDispatched)
+			u := newTaskStatusHandlerUoW(runRepo, outbox, taskColl)
+
+			require.NoError(t, newAttemptReportHandler().Handle(context.Background(), u, report(scheduleID, taskID, 0, status), uuid.New()))
+
+			assert.True(t, runRepo.saveCalled, "SaveRun must be called")
+			assert.Empty(t, outbox.appended)
+			assert.Equal(t, status, taskColl.attemptRows[statusAttemptKey{taskID, 0}].Status)
+		})
+	}
+}
+
+// The success of the last open task finalizes the run, and the dispatches it
+// writes carry the report's dedup row as their provenance.
+func TestAttemptReport_TheLastSuccessFinalizesTheRun(t *testing.T) {
+	scheduleID, taskID, msgProcID := uuid.New(), uuid.New(), uuid.New()
 	runRepo := &fakeTaskStatusRunRepo{stored: newRunningTaskStatusRun(scheduleID, "daily", 2, 1)}
 	outbox := &fakeTaskStatusOutboxPub{}
-	taskColl := &fakeTaskStatusTaskCollection{
-		prevStatus:     run.TaskStatusRunning,
-		prevExists:     true,
-		updateAffected: 1,
-		hasRetryable:   false,
-		hasFailed:      false,
-	}
+	taskColl := (&fakeTaskStatusTaskCollection{prevStatus: run.TaskStatusRunning, prevExists: true, updateAffected: 1}).
+		held(taskID, 0, run.AttemptRunning)
 	u := newTaskStatusHandlerUoW(runRepo, outbox, taskColl)
 
-	h := handlers.NewTaskStatusUpdatedHandler(pkgevents.DefaultTenantID, taskStatusTestLogger())
-	require.NoError(t, h.Handle(context.Background(), u, events.TaskStatusUpdated{
-		TaskID:     taskID,
-		ScheduleID: scheduleID,
-		Status:     run.TaskStatusSucceeded,
-		RetryCount: 0,
-	}, msgProcID))
+	require.NoError(t, newAttemptReportHandler().Handle(context.Background(), u, report(scheduleID, taskID, 0, run.AttemptSucceeded), msgProcID))
 
-	assert.True(t, runRepo.saveCalled, "SaveRun must be called")
 	require.Len(t, outbox.appended, 1, "finalization must emit exactly one RunFinalized event")
 	assert.Equal(t, msgProcID, outbox.msgProcID, "msgProcID must be forwarded to Append")
-
 	finalized, ok := outbox.appended[0].(run.RunFinalized)
 	require.True(t, ok, "event must be RunFinalized")
 	assert.Equal(t, scheduleID, finalized.ID)
-	assert.Equal(t, "daily", finalized.Name)
 	assert.Equal(t, run.SchedulerStatusSucceeded, finalized.Outcome)
 }
 
-// TestTaskStatusUpdated_AlreadyTerminalRunIsNoop verifies that when the Run
-// is already in a terminal status, RecordTaskStatus returns nil events and
-// SaveRun is still called (aggregate handles the guard internally).
-func TestTaskStatusUpdated_AlreadyTerminalRunIsNoop(t *testing.T) {
-	for _, status := range []run.SchedulerStatus{
-		run.SchedulerStatusSucceeded,
-		run.SchedulerStatusFailed,
-		run.SchedulerStatusCancelled,
-	} {
-		t.Run(string(status), func(t *testing.T) {
-			scheduleID := uuid.New()
+// nodeGraph is a run.TaskGraph holding one node and no edges.
+type nodeGraph struct {
+	unconnectedTasks
+	node topology.Node
+}
 
+func (g nodeGraph) Node(context.Context, string, topology.NodeKey) (topology.Node, bool, error) {
+	return g.node, true, nil
+}
+
+// A retryable failure below the task's budget writes the dispatch of the next
+// attempt, with the install's timeout for a node that declares none.
+func TestAttemptReport_ARetryableFailureDispatchesTheNextAttempt(t *testing.T) {
+	scheduleID, taskID := uuid.New(), uuid.New()
+	runRepo := &fakeTaskStatusRunRepo{stored: newReleaseTaskStatusRun(scheduleID, "rel-1")}
+	outbox := &fakeTaskStatusOutboxPub{}
+	taskColl := (&fakeTaskStatusTaskCollection{prevStatus: run.TaskStatusRunning, maxRetries: 2, prevExists: true, updateAffected: 1}).
+		held(taskID, 0, run.AttemptRunning)
+	u := newTaskStatusHandlerUoW(runRepo, outbox, taskColl)
+	u.Graph = nodeGraph{node: topology.Node{Key: "raw.orders", ServiceName: "svc", SchemaName: "raw", TableName: "orders"}}
+
+	require.NoError(t, newAttemptReportHandler().Handle(context.Background(), u, report(scheduleID, taskID, 0, run.AttemptFailed), uuid.New()))
+
+	require.Len(t, outbox.appended, 1)
+	d, ok := outbox.appended[0].(run.TaskDispatched)
+	require.True(t, ok, "the next attempt is dispatched")
+	assert.Equal(t, int32(1), d.Attempt)
+	assert.Equal(t, run.AttemptDispatched, d.KnownStatus)
+	assert.Equal(t, 24*time.Hour, d.Timeout)
+	assert.Equal(t, run.AttemptDispatched, taskColl.attemptRows[statusAttemptKey{taskID, 1}].Status)
+}
+
+// A report for a run that has ended changes nothing: every attempt of such a
+// run has ended.
+func TestAttemptReport_ARunThatEndedChangesNothing(t *testing.T) {
+	for _, status := range []run.SchedulerStatus{run.SchedulerStatusSucceeded, run.SchedulerStatusFailed, run.SchedulerStatusCancelled} {
+		t.Run(string(status), func(t *testing.T) {
+			scheduleID, taskID := uuid.New(), uuid.New()
 			runRepo := &fakeTaskStatusRunRepo{stored: newTerminalTaskStatusRun(scheduleID, "terminal-guard", status)}
 			outbox := &fakeTaskStatusOutboxPub{}
 			taskColl := &fakeTaskStatusTaskCollection{}
 			u := newTaskStatusHandlerUoW(runRepo, outbox, taskColl)
 
-			h := handlers.NewTaskStatusUpdatedHandler(pkgevents.DefaultTenantID, taskStatusTestLogger())
-			require.NoError(t, h.Handle(context.Background(), u, events.TaskStatusUpdated{
-				TaskID:     uuid.New(),
-				ScheduleID: scheduleID,
-				Status:     run.TaskStatusFailed,
-				RetryCount: 0,
-			}, uuid.New()))
+			require.NoError(t, newAttemptReportHandler().Handle(context.Background(), u, report(scheduleID, taskID, 0, run.AttemptFailed), uuid.New()))
 
-			assert.True(t, runRepo.saveCalled, "SaveRun is called even for already-terminal runs")
-			assert.Empty(t, outbox.appended, "terminal run must not emit domain events")
+			assert.Empty(t, outbox.appended)
+			assert.Empty(t, taskColl.lockOrder, "neither the task nor an attempt is read")
 		})
 	}
 }
 
-// TestTaskStatusUpdated_ATaskTheRunDoesNotHoldFailsTheMessage verifies that a
-// status for a task the run does not hold surfaces run.ErrTaskNotHeld: the
-// handler propagates it (the binding marks it permanent) and SaveRun is not
-// called.
-func TestTaskStatusUpdated_ATaskTheRunDoesNotHoldFailsTheMessage(t *testing.T) {
-	scheduleID := uuid.New()
+// A report for a task the run does not hold, or for an attempt state never
+// dispatched, surfaces its error, which the binding marks permanent; the run
+// is not saved.
+func TestAttemptReport_AReportThatCanNeverApplyFailsTheMessage(t *testing.T) {
+	cases := map[string]struct {
+		taskColl *fakeTaskStatusTaskCollection
+		want     error
+	}{
+		"a task the run does not hold":  {&fakeTaskStatusTaskCollection{prevExists: false}, run.ErrTaskNotHeld},
+		"an attempt state never issued": {&fakeTaskStatusTaskCollection{prevStatus: run.TaskStatusRunning, prevExists: true}, run.ErrAttemptNotIssued},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			scheduleID := uuid.New()
+			runRepo := &fakeTaskStatusRunRepo{stored: newRunningTaskStatusRun(scheduleID, "no-row", 2, 0)}
+			outbox := &fakeTaskStatusOutboxPub{}
+			u := newTaskStatusHandlerUoW(runRepo, outbox, tc.taskColl)
 
-	runRepo := &fakeTaskStatusRunRepo{stored: newRunningTaskStatusRun(scheduleID, "no-row", 2, 0)}
-	outbox := &fakeTaskStatusOutboxPub{}
-	taskColl := &fakeTaskStatusTaskCollection{prevExists: false}
-	u := newTaskStatusHandlerUoW(runRepo, outbox, taskColl)
+			err := newAttemptReportHandler().Handle(context.Background(), u, report(scheduleID, uuid.New(), 0, run.AttemptSucceeded), uuid.New())
 
-	h := handlers.NewTaskStatusUpdatedHandler(pkgevents.DefaultTenantID, taskStatusTestLogger())
-	err := h.Handle(context.Background(), u, events.TaskStatusUpdated{
-		TaskID:     uuid.New(),
-		ScheduleID: scheduleID,
-		Status:     run.TaskStatusSucceeded,
-	}, uuid.New())
-
-	require.Error(t, err)
-	assert.ErrorIs(t, err, run.ErrTaskNotHeld)
-	assert.False(t, runRepo.saveCalled, "SaveRun must not be called when RecordTaskStatus errors")
-	assert.Empty(t, outbox.appended)
+			require.ErrorIs(t, err, tc.want)
+			assert.False(t, runRepo.saveCalled, "SaveRun must not be called when RecordAttemptReport errors")
+			assert.Empty(t, outbox.appended)
+		})
+	}
 }
 
-// TestTaskStatusUpdated_LoadRunErrorPropagates verifies that a
-// LoadRunForUpdate failure short-circuits the handler before any mutation.
-func TestTaskStatusUpdated_LoadRunErrorPropagates(t *testing.T) {
+// A LoadRunForUpdate failure short-circuits the handler before any mutation.
+func TestAttemptReport_LoadRunErrorPropagates(t *testing.T) {
 	runRepo := &fakeTaskStatusRunRepo{loadErr: errors.New("row lock failed")}
 	outbox := &fakeTaskStatusOutboxPub{}
-	taskColl := &fakeTaskStatusTaskCollection{}
-	u := newTaskStatusHandlerUoW(runRepo, outbox, taskColl)
+	u := newTaskStatusHandlerUoW(runRepo, outbox, &fakeTaskStatusTaskCollection{})
 
-	h := handlers.NewTaskStatusUpdatedHandler(pkgevents.DefaultTenantID, taskStatusTestLogger())
-	err := h.Handle(context.Background(), u, events.TaskStatusUpdated{
-		TaskID:     uuid.New(),
-		ScheduleID: uuid.New(),
-		Status:     run.TaskStatusSucceeded,
-	}, uuid.New())
+	err := newAttemptReportHandler().Handle(context.Background(), u, report(uuid.New(), uuid.New(), 0, run.AttemptSucceeded), uuid.New())
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "load run")
-	assert.False(t, runRepo.saveCalled, "SaveRun must not be called after load failure")
+	assert.False(t, runRepo.saveCalled)
 	assert.Empty(t, outbox.appended)
 }
 
-// TestTaskStatusUpdated_SaveRunErrorPropagates verifies that a SaveRun
-// failure surfaces an error and prevents the outbox append.
-func TestTaskStatusUpdated_SaveRunErrorPropagates(t *testing.T) {
-	scheduleID := uuid.New()
-	runRepo := &fakeTaskStatusRunRepo{
-		stored:  newRunningTaskStatusRun(scheduleID, "save-error", 2, 0),
-		saveErr: errors.New("db down"),
-	}
+// A SaveRun failure surfaces an error and prevents the outbox append.
+func TestAttemptReport_SaveRunErrorPropagates(t *testing.T) {
+	scheduleID, taskID := uuid.New(), uuid.New()
+	runRepo := &fakeTaskStatusRunRepo{stored: newRunningTaskStatusRun(scheduleID, "save-error", 1, 0), saveErr: errors.New("db down")}
 	outbox := &fakeTaskStatusOutboxPub{}
-	taskColl := &fakeTaskStatusTaskCollection{
-		prevStatus:     run.TaskStatusPending,
-		prevExists:     true,
-		updateAffected: 1,
-	}
+	taskColl := (&fakeTaskStatusTaskCollection{prevStatus: run.TaskStatusRunning, prevExists: true, updateAffected: 1}).
+		held(taskID, 0, run.AttemptRunning)
 	u := newTaskStatusHandlerUoW(runRepo, outbox, taskColl)
 
-	h := handlers.NewTaskStatusUpdatedHandler(pkgevents.DefaultTenantID, taskStatusTestLogger())
-	err := h.Handle(context.Background(), u, events.TaskStatusUpdated{
-		TaskID:     uuid.New(),
-		ScheduleID: scheduleID,
-		Status:     run.TaskStatusRunning,
-	}, uuid.New())
+	err := newAttemptReportHandler().Handle(context.Background(), u, report(scheduleID, taskID, 0, run.AttemptSucceeded), uuid.New())
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "save run")
 	assert.Empty(t, outbox.appended, "save failure must short-circuit the outbox append")
 }
 
-// TestTaskStatusUpdated_AppendErrorPropagates verifies that an outbox Append
-// failure on the finalize branch surfaces an error after SaveRun, so the
-// binding rolls back the entire transaction.
-func TestTaskStatusUpdated_AppendErrorPropagates(t *testing.T) {
-	scheduleID := uuid.New()
-	// terminal==total: triggers finalization so Append receives actual events.
+// An outbox Append failure surfaces after SaveRun, so the binding rolls the
+// whole transaction back.
+func TestAttemptReport_AppendErrorPropagates(t *testing.T) {
+	scheduleID, taskID := uuid.New(), uuid.New()
 	runRepo := &fakeTaskStatusRunRepo{stored: newRunningTaskStatusRun(scheduleID, "outbox-error", 1, 0)}
 	outbox := &fakeTaskStatusOutboxPub{err: errors.New("outbox down")}
-	taskColl := &fakeTaskStatusTaskCollection{
-		prevStatus:     run.TaskStatusRunning,
-		prevExists:     true,
-		updateAffected: 1,
-		hasRetryable:   false,
-		hasFailed:      false,
-	}
+	taskColl := (&fakeTaskStatusTaskCollection{prevStatus: run.TaskStatusRunning, prevExists: true, updateAffected: 1}).
+		held(taskID, 0, run.AttemptRunning)
 	u := newTaskStatusHandlerUoW(runRepo, outbox, taskColl)
 
-	h := handlers.NewTaskStatusUpdatedHandler(pkgevents.DefaultTenantID, taskStatusTestLogger())
-	err := h.Handle(context.Background(), u, events.TaskStatusUpdated{
-		TaskID:     uuid.New(),
-		ScheduleID: scheduleID,
-		Status:     run.TaskStatusSucceeded,
-	}, uuid.New())
+	err := newAttemptReportHandler().Handle(context.Background(), u, report(scheduleID, taskID, 0, run.AttemptSucceeded), uuid.New())
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "append outbox")
@@ -588,22 +573,21 @@ func newReleaseTaskStatusRun(id uuid.UUID, releaseID string) *run.Run {
 
 // A succeeded task of a run state planned records the version it loaded: the
 // node's content hash in the run's release and the task's image.
-func TestTaskStatusUpdated_RecordsTheVersionAPlannedRunLoaded(t *testing.T) {
+func TestAttemptReport_RecordsTheVersionAPlannedRunLoaded(t *testing.T) {
 	scheduleID, taskID := uuid.New(), uuid.New()
 	at := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
 	runRepo := &fakeTaskStatusRunRepo{stored: newReleaseTaskStatusRun(scheduleID, "rel-1")}
-	taskColl := &fakeTaskStatusTaskCollection{
+	taskColl := (&fakeTaskStatusTaskCollection{
 		prevStatus: run.TaskStatusRunning, prevExists: true, updateAffected: 1,
 		task: run.Task{TaskID: taskID, ScheduleID: scheduleID, ServiceName: "svc", SchemaName: "RAW", TableName: "Orders", ImageTag: "svc:7"},
-	}
+	}).held(taskID, 0, run.AttemptRunning)
 	topo := &hashTopology{hashes: map[string]string{"rel-1/raw.orders": "h-orders"}}
 	mats := &builtRecorder{}
 	u := newTaskStatusHandlerUoW(runRepo, &fakeTaskStatusOutboxPub{}, taskColl)
 	u.TopologyRepo, u.MaterializationRepo = topo, mats
 	u.SetClock(taskStatusClock{at: at})
 
-	require.NoError(t, handlers.NewTaskStatusUpdatedHandler(pkgevents.DefaultTenantID, taskStatusTestLogger()).Handle(context.Background(), u,
-		events.TaskStatusUpdated{TaskID: taskID, ScheduleID: scheduleID, Status: run.TaskStatusSucceeded}, uuid.New()))
+	require.NoError(t, newAttemptReportHandler().Handle(context.Background(), u, report(scheduleID, taskID, 0, run.AttemptSucceeded), uuid.New()))
 
 	assert.Equal(t, []string{"default/rel-1/raw.orders"}, topo.asked)
 	assert.Equal(t, []string{"default"}, mats.tenants)
@@ -617,7 +601,7 @@ func TestTaskStatusUpdated_RecordsTheVersionAPlannedRunLoaded(t *testing.T) {
 // writes the table: run, build and full refresh. A test only reads the table,
 // and a run whose tasks state did not plan may have built another release's
 // version, so neither records.
-func TestTaskStatusUpdated_RecordsBuiltVersionsForPlannedWritingRuns(t *testing.T) {
+func TestAttemptReport_RecordsBuiltVersionsForPlannedWritingRuns(t *testing.T) {
 	scheduleID, taskID := uuid.New(), uuid.New()
 	orders := run.Task{TaskID: taskID, ScheduleID: scheduleID, ServiceName: "svc", SchemaName: "raw", TableName: "orders", ImageTag: "svc:7"}
 	unplanned := newRunningTaskStatusRun(scheduleID, "daily", 1, 0)
@@ -636,16 +620,15 @@ func TestTaskStatusUpdated_RecordsBuiltVersionsForPlannedWritingRuns(t *testing.
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			taskColl := &fakeTaskStatusTaskCollection{
+			taskColl := (&fakeTaskStatusTaskCollection{
 				prevStatus: run.TaskStatusRunning, prevExists: true, updateAffected: 1, task: orders,
-			}
+			}).held(taskID, 0, run.AttemptRunning)
 			topo := &hashTopology{hashes: map[string]string{"rel-1/raw.orders": "h-orders"}}
 			mats := &builtRecorder{}
 			u := newTaskStatusHandlerUoW(&fakeTaskStatusRunRepo{stored: tc.run}, &fakeTaskStatusOutboxPub{}, taskColl)
 			u.TopologyRepo, u.MaterializationRepo = topo, mats
 
-			require.NoError(t, handlers.NewTaskStatusUpdatedHandler(pkgevents.DefaultTenantID, taskStatusTestLogger()).Handle(context.Background(), u,
-				events.TaskStatusUpdated{TaskID: taskID, ScheduleID: scheduleID, Status: run.TaskStatusSucceeded}, uuid.New()))
+			require.NoError(t, newAttemptReportHandler().Handle(context.Background(), u, report(scheduleID, taskID, 0, run.AttemptSucceeded), uuid.New()))
 
 			if tc.records {
 				assert.Len(t, mats.built, 1)
@@ -660,42 +643,41 @@ func TestTaskStatusUpdated_RecordsBuiltVersionsForPlannedWritingRuns(t *testing.
 // Nothing is recorded for a run that names no release, for a task that did
 // not succeed, for a task whose row is gone, or for a node the run's release
 // lacks or holds without a content hash.
-func TestTaskStatusUpdated_RecordsNothingWithoutAVersion(t *testing.T) {
+func TestAttemptReport_RecordsNothingWithoutAVersion(t *testing.T) {
 	scheduleID, taskID := uuid.New(), uuid.New()
 	orders := run.Task{TaskID: taskID, ScheduleID: scheduleID, ServiceName: "svc", SchemaName: "raw", TableName: "orders", ImageTag: "svc:7"}
 	cases := []struct {
 		name    string
 		run     *run.Run
-		status  run.TaskStatus
+		status  run.AttemptStatus
 		getErr  error
 		hashes  map[string]string
 		lookups int
 	}{
-		{"a run without a release", newRunningTaskStatusRun(scheduleID, "daily", 1, 0), run.TaskStatusSucceeded, nil,
+		{"a run without a release", newRunningTaskStatusRun(scheduleID, "daily", 1, 0), run.AttemptSucceeded, nil,
 			map[string]string{"rel-1/raw.orders": "h-orders"}, 0},
-		{"a failed task", newReleaseTaskStatusRun(scheduleID, "rel-1"), run.TaskStatusFailed, nil,
+		{"a failed task", newReleaseTaskStatusRun(scheduleID, "rel-1"), run.AttemptFailed, nil,
 			map[string]string{"rel-1/raw.orders": "h-orders"}, 0},
-		{"a task row that is gone", newReleaseTaskStatusRun(scheduleID, "rel-1"), run.TaskStatusSucceeded, run.ErrTaskNotFound,
+		{"a task row that is gone", newReleaseTaskStatusRun(scheduleID, "rel-1"), run.AttemptSucceeded, run.ErrTaskNotFound,
 			map[string]string{"rel-1/raw.orders": "h-orders"}, 0},
-		{"a node the release lacks", newReleaseTaskStatusRun(scheduleID, "rel-1"), run.TaskStatusSucceeded, nil,
+		{"a node the release lacks", newReleaseTaskStatusRun(scheduleID, "rel-1"), run.AttemptSucceeded, nil,
 			map[string]string{}, 1},
-		{"a node without a content hash", newReleaseTaskStatusRun(scheduleID, "rel-1"), run.TaskStatusSucceeded, nil,
+		{"a node without a content hash", newReleaseTaskStatusRun(scheduleID, "rel-1"), run.AttemptSucceeded, nil,
 			map[string]string{"rel-1/raw.orders": ""}, 1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			runRepo := &fakeTaskStatusRunRepo{stored: tc.run}
-			taskColl := &fakeTaskStatusTaskCollection{
-				prevStatus: run.TaskStatusRunning, prevExists: true, updateAffected: 1, hasFailed: tc.status == run.TaskStatusFailed,
+			taskColl := (&fakeTaskStatusTaskCollection{
+				prevStatus: run.TaskStatusRunning, prevExists: true, updateAffected: 1, hasFailed: tc.status == run.AttemptFailed,
 				task: orders, getErr: tc.getErr,
-			}
+			}).held(taskID, 0, run.AttemptRunning)
 			topo := &hashTopology{hashes: tc.hashes}
 			mats := &builtRecorder{}
 			u := newTaskStatusHandlerUoW(runRepo, &fakeTaskStatusOutboxPub{}, taskColl)
 			u.TopologyRepo, u.MaterializationRepo = topo, mats
 
-			require.NoError(t, handlers.NewTaskStatusUpdatedHandler(pkgevents.DefaultTenantID, taskStatusTestLogger()).Handle(context.Background(), u,
-				events.TaskStatusUpdated{TaskID: taskID, ScheduleID: scheduleID, Status: tc.status}, uuid.New()))
+			require.NoError(t, newAttemptReportHandler().Handle(context.Background(), u, report(scheduleID, taskID, 0, tc.status), uuid.New()))
 
 			assert.Len(t, topo.asked, tc.lookups)
 			assert.Empty(t, mats.built)
@@ -703,12 +685,12 @@ func TestTaskStatusUpdated_RecordsNothingWithoutAVersion(t *testing.T) {
 	}
 }
 
-// A version is recorded only when this delivery applied the task's success. A
-// success the run ignores — the run is already over, the attempt was
-// superseded, the task already finished that attempt, or the task row refused
-// the write — loads nothing and records nothing, while a success the run
-// accepts records even when other tasks keep the run open.
-func TestTaskStatusUpdated_RecordsAVersionOnlyForAnAppliedSuccess(t *testing.T) {
+// A version is recorded only when this report made the task succeeded. A
+// success the run does not apply — the run is already over, the report is
+// for an older attempt, or the attempt already succeeded — loads nothing and
+// records nothing, while an applied success records even when other tasks keep
+// the run open.
+func TestAttemptReport_RecordsAVersionOnlyForAnAppliedSuccess(t *testing.T) {
 	scheduleID, taskID := uuid.New(), uuid.New()
 	orders := run.Task{TaskID: taskID, ScheduleID: scheduleID, ServiceName: "svc", SchemaName: "raw", TableName: "orders", ImageTag: "svc:7"}
 	releaseRun := func(total, terminal int32) func() *run.Run {
@@ -728,34 +710,31 @@ func TestTaskStatusUpdated_RecordsAVersionOnlyForAnAppliedSuccess(t *testing.T) 
 	cases := []struct {
 		name        string
 		run         func() *run.Run
-		prev        run.TaskStatus
 		prevAttempt int32
 		attempt     int32
-		affected    int
+		held        run.AttemptStatus
 		recorded    bool
 	}{
-		{"a run that is already over", cancelledRun, run.TaskStatusRunning, 0, 0, 1, false},
-		{"a superseded attempt", releaseRun(2, 0), run.TaskStatusRunning, 2, 1, 1, false},
-		{"a replay of a finished attempt", releaseRun(2, 1), run.TaskStatusSucceeded, 0, 0, 1, false},
-		{"a task row that refuses the write", releaseRun(2, 0), run.TaskStatusRunning, 0, 0, 0, false},
-		{"a success that leaves the run open", releaseRun(2, 0), run.TaskStatusRunning, 0, 0, 1, true},
-		{"a success that finishes the run", releaseRun(1, 0), run.TaskStatusRunning, 0, 0, 1, true},
-		{"a retry that succeeds after a failed attempt", releaseRun(2, 1), run.TaskStatusFailed, 0, 1, 1, true},
-		{"a success with no running status before it", releaseRun(2, 0), run.TaskStatusPending, 0, 0, 1, true},
+		{"a run that is already over", cancelledRun, 0, 0, run.AttemptRunning, false},
+		{"an older attempt", releaseRun(2, 0), 2, 1, run.AttemptFailed, false},
+		{"a replay of a finished attempt", releaseRun(2, 1), 0, 0, run.AttemptSucceeded, false},
+		{"a success that leaves the run open", releaseRun(2, 0), 0, 0, run.AttemptRunning, true},
+		{"a success that finishes the run", releaseRun(1, 0), 0, 0, run.AttemptRunning, true},
+		{"a retry that succeeds after a failed attempt", releaseRun(2, 0), 1, 1, run.AttemptRunning, true},
+		{"a success with no running report before it", releaseRun(2, 0), 0, 0, run.AttemptDispatched, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			taskColl := &fakeTaskStatusTaskCollection{
-				prevStatus: tc.prev, prevAttempt: tc.prevAttempt, prevExists: true,
-				updateAffected: tc.affected, task: orders,
-			}
+			taskColl := (&fakeTaskStatusTaskCollection{
+				prevStatus: run.TaskStatusRunning, prevAttempt: tc.prevAttempt, prevExists: true,
+				updateAffected: 1, task: orders,
+			}).held(taskID, tc.attempt, tc.held)
 			topo := &hashTopology{hashes: map[string]string{"rel-1/raw.orders": "h-orders"}}
 			mats := &builtRecorder{}
 			u := newTaskStatusHandlerUoW(&fakeTaskStatusRunRepo{stored: tc.run()}, &fakeTaskStatusOutboxPub{}, taskColl)
 			u.TopologyRepo, u.MaterializationRepo = topo, mats
 
-			require.NoError(t, handlers.NewTaskStatusUpdatedHandler(pkgevents.DefaultTenantID, taskStatusTestLogger()).Handle(context.Background(), u,
-				events.TaskStatusUpdated{TaskID: taskID, ScheduleID: scheduleID, Status: run.TaskStatusSucceeded, RetryCount: tc.attempt}, uuid.New()))
+			require.NoError(t, newAttemptReportHandler().Handle(context.Background(), u, report(scheduleID, taskID, tc.attempt, run.AttemptSucceeded), uuid.New()))
 
 			if tc.recorded {
 				require.Len(t, mats.built, 1)
@@ -769,17 +748,16 @@ func TestTaskStatusUpdated_RecordsAVersionOnlyForAnAppliedSuccess(t *testing.T) 
 }
 
 // A failure to read the task fails the message, so it is redelivered.
-func TestTaskStatusUpdated_TaskReadFailureFailsTheMessage(t *testing.T) {
-	scheduleID := uuid.New()
+func TestAttemptReport_TaskReadFailureFailsTheMessage(t *testing.T) {
+	scheduleID, taskID := uuid.New(), uuid.New()
 	boom := errors.New("connection reset by peer")
 	u := newTaskStatusHandlerUoW(&fakeTaskStatusRunRepo{stored: newReleaseTaskStatusRun(scheduleID, "rel-1")},
-		&fakeTaskStatusOutboxPub{}, &fakeTaskStatusTaskCollection{
+		&fakeTaskStatusOutboxPub{}, (&fakeTaskStatusTaskCollection{
 			prevStatus: run.TaskStatusRunning, prevExists: true, updateAffected: 1, getErr: boom,
-		})
+		}).held(taskID, 0, run.AttemptRunning))
 	u.TopologyRepo, u.MaterializationRepo = &hashTopology{}, &builtRecorder{}
 
-	err := handlers.NewTaskStatusUpdatedHandler(pkgevents.DefaultTenantID, taskStatusTestLogger()).Handle(context.Background(), u,
-		events.TaskStatusUpdated{TaskID: uuid.New(), ScheduleID: scheduleID, Status: run.TaskStatusSucceeded}, uuid.New())
+	err := newAttemptReportHandler().Handle(context.Background(), u, report(scheduleID, taskID, 0, run.AttemptSucceeded), uuid.New())
 	require.Error(t, err)
 	assert.ErrorIs(t, err, boom)
 }

@@ -102,11 +102,9 @@ func TestSingleNodeRunLatest(t *testing.T) {
 	// row for the target node, with the right kind, image_tag,
 	// and non-nil timings.
 	//
-	// task.status.updated:v1 and task.execution.recorded:v1 are delivered on
-	// separate Redis streams, so the scheduler can flip to SUCCEEDED before the
-	// execution consumer has inserted started_at/finished_at on task_attempts.
-	// Poll ListNodeRuns until the execution-level fields appear before asserting,
-	// to avoid timestamp-vs-status race flakiness.
+	// The attempt's final report carries its times, but the run can be read
+	// before state has applied it: poll ListNodeRuns until the run appears with
+	// its started_at and completed_at before asserting.
 	t.Log("Polling state.ListNodeRuns until the new run appears with execution timestamps...")
 	var top *statev1.NodeRun
 	pollUntil(t, ctx, 30*time.Second, 500*time.Millisecond, func() (bool, error) {
@@ -131,7 +129,7 @@ func TestSingleNodeRunLatest(t *testing.T) {
 		}
 		top = row
 		return true, nil
-	}, "ListNodeRuns never returned the new run with populated started_at/completed_at — task.execution.recorded:v1 consumer may have lagged")
+	}, "ListNodeRuns never returned the new run with populated started_at/completed_at — the task.status.updated:v2 consumer may have lagged")
 
 	require.NotNil(t, top, "ListNodeRuns must return the new run before the timeout")
 	assert.Equal(t, runID.String(), top.RunId, "ListNodeRuns[0].run_id must match the run we just triggered")

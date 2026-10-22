@@ -372,7 +372,7 @@ func TestTaskRepository_SetStatusAndAttemptTx_DoesNotReviveCancelledTask(t *test
 	)
 	require.NoError(t, err)
 
-	// A late task.status.updated:v1 event tries to flip it to 'succeeded'.
+	// A late report tries to flip it to 'succeeded'.
 	tx, err := db.BeginTxx(context.Background(), nil)
 	require.NoError(t, err)
 	defer tx.Rollback()

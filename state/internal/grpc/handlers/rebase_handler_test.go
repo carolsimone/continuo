@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/pkg/testdeps"
 
@@ -157,19 +158,21 @@ func TestRebaseHandler_HappyPath_FailedSource(t *testing.T) {
 	requireDispatched(t, fx.DB, newID, run.TaskIDFor(fx.Tenant, newID, "s.t"), scheduleName)
 }
 
-// requireDispatched asserts run runID wrote one query.model:v1 dispatch, of
-// taskID.
+// requireDispatched asserts run runID wrote one task.dispatch:v1 dispatch, of
+// attempt 0 of taskID.
 func requireDispatched(t *testing.T, db *sqlx.DB, runID, taskID uuid.UUID, scheduleName string) {
 	t.Helper()
 	var payloads [][]byte
 	require.NoError(t, db.SelectContext(context.Background(), &payloads,
-		`SELECT payload FROM state_outbox WHERE aggregate_id = $1 AND stream_name = $2`, runID, streams.QueryModelV1))
+		`SELECT payload FROM state_outbox WHERE aggregate_id = $1 AND stream_name = $2`, runID, streams.TaskDispatchV1))
 	require.Len(t, payloads, 1)
-	var payload map[string]string
+	var payload pkgevents.TaskDispatch
 	require.NoError(t, json.Unmarshal(payloads[0], &payload))
-	require.Equal(t, runID.String(), payload["schedule_id"])
-	require.Equal(t, scheduleName, payload["schedule_name"])
-	require.Equal(t, taskID.String(), payload["task_id"])
+	require.Equal(t, runID.String(), payload.RunID)
+	require.Equal(t, scheduleName, payload.ScheduleName)
+	require.Equal(t, taskID.String(), payload.TaskID)
+	require.Equal(t, int32(0), payload.Attempt)
+	require.Equal(t, pkgevents.AttemptDispatched, payload.KnownStatus)
 }
 
 func TestRebaseHandler_HappyPath_CancelledSource(t *testing.T) {

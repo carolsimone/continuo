@@ -84,7 +84,7 @@ var (
 	// ErrAttemptNotIssued is returned by Run.RecordAttemptReport when the task
 	// has no row for the reported attempt: state never dispatched it. state
 	// writes an attempt's row in the transaction that dispatches it, so such a
-	// report never becomes valid: retrying it cannot succeed.
+	// report never becomes valid; the stream binding dead-letters it at once.
 	ErrAttemptNotIssued = errors.New("state never dispatched the reported attempt")
 
 	// ErrTaskNotFound is returned by Run.HasTaskAt and by TaskCollection

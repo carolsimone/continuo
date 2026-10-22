@@ -903,9 +903,7 @@ func (r *Run) dispatchReady(ctx context.Context, tasks TaskCollection, graph Tas
 			continue
 		}
 		attempts = append(attempts, firstAttempt(c.TaskID, c.JobName, &at))
-		e := r.dispatchEvent(c.TaskID, 0, c.Node, c.JobName, d)
-		e.MaxRetries = c.MaxRetries
-		events = append(events, e)
+		events = append(events, r.dispatchEvent(c.TaskID, 0, c.Node, c.JobName, d))
 	}
 	if err := tasks.AddAttempts(ctx, attempts); err != nil {
 		return nil, fmt.Errorf("add the first attempts of the tasks %s's success made ready: %w", key, err)
@@ -921,7 +919,7 @@ func firstAttempt(taskID uuid.UUID, jobName string, at *time.Time) Attempt {
 }
 
 // dispatchEvent records the first send of attempt n of the task at node, in
-// r's run, with the task's budget from d and its node's timeout.
+// r's run, with its node's timeout (d's when the node declares none).
 func (r *Run) dispatchEvent(taskID uuid.UUID, n int32, node topology.Node, jobName string, d TaskDefaults) TaskDispatched {
 	return TaskDispatched{
 		ID:           r.scheduleID,
@@ -932,7 +930,6 @@ func (r *Run) dispatchEvent(taskID uuid.UUID, n int32, node topology.Node, jobNa
 		Node:         node,
 		JobName:      jobName,
 		Operation:    r.operation,
-		MaxRetries:   d.MaxRetries,
 		Timeout:      TaskTimeout(node, d),
 	}
 }

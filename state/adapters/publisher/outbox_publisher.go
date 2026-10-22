@@ -8,8 +8,12 @@ import (
 
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 	goredis "github.com/redis/go-redis/v9"
 )
+
+// producer names state as the producer of the enveloped streams it writes.
+const producer = "state"
 
 // OutboxPublisher publishes state's outbox entries to Redis streams.
 // Each outbox row represents one event: its Payload JSONB is unmarshaled into
@@ -72,16 +76,29 @@ var _ outbox.Renderer = (*OutboxPublisher)(nil)
 
 // Render returns the field map Publish XADDs for entry, without
 // outbox_entry_id. A dead-letter row renders through outbox.DeadLetterValues;
-// every other row's JSON payload is flattened to scalar fields, with nested
-// values JSON-encoded. Every call returns a fresh map.
+// a task.dispatch:v1 row's payload is the dispatch, under an envelope that
+// names the row as the event and the time it was written; every other row's
+// JSON payload is flattened to scalar fields, with nested values JSON-encoded.
+// Every call returns a fresh map.
 func (p *OutboxPublisher) Render(entry *outbox.Entry) (map[string]any, error) {
-	if entry.EventType == outbox.DeadLetterEventType {
+	switch entry.EventType {
+	case outbox.DeadLetterEventType:
 		values, err := outbox.DeadLetterValues(entry)
 		if err != nil {
 			// Our own payload; a decode failure here is deterministic, never transient.
 			return nil, fmt.Errorf("%w: dead-letter values: %v", pkgevents.ErrPermanent, err)
 		}
 		delete(values, "outbox_entry_id")
+		return values, nil
+	case streams.TaskDispatchV1:
+		var d pkgevents.TaskDispatch
+		if err := json.Unmarshal(entry.Payload, &d); err != nil {
+			return nil, fmt.Errorf("%w: unmarshal %s: %v", pkgevents.ErrPermanent, streams.TaskDispatchV1, err)
+		}
+		values, err := pkgevents.TaskDispatchFields(entry.ID.String(), pkgevents.DefaultTenantID, producer, entry.CreatedAt, d)
+		if err != nil {
+			return nil, fmt.Errorf("%w: render %s: %v", pkgevents.ErrPermanent, streams.TaskDispatchV1, err)
+		}
 		return values, nil
 	}
 	var fields map[string]interface{}

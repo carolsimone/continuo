@@ -22,7 +22,6 @@ type Question struct {
 	JobName      string
 	Node         topology.Node
 	Operation    model.Operation
-	MaxRetries   int32
 }
 
 // Dispatch is the question as a dispatch of the attempt, its known status the
@@ -40,7 +39,6 @@ func (q Question) Dispatch(d TaskDefaults) (TaskDispatched, time.Duration) {
 		Node:         q.Node,
 		JobName:      q.JobName,
 		Operation:    q.Operation,
-		MaxRetries:   q.MaxRetries,
 		Timeout:      TaskTimeout(q.Node, d),
 	}, NextCheckAfter(q.Status, q.ChecksSent+1)
 }
