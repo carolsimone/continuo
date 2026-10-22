@@ -36,7 +36,7 @@ func taskState(t *testing.T, db *sqlx.DB, id uuid.UUID) (run.TaskStatus, *time.T
 	return row.Status, row.DispatchedAt
 }
 
-// A status update reads the task's attempt, retry budget and node; a task
+// An attempt report reads the task's attempt, retry budget and node; a task
 // that is not stored reads as absent.
 func TestTaskCollection_LoadAttemptStateReadsTheTask(t *testing.T) {
 	ctx := context.Background()
@@ -52,7 +52,7 @@ func TestTaskCollection_LoadAttemptStateReadsTheTask(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, found)
 		assert.Equal(t, run.TaskStatusFailed, got.Status)
-		assert.Equal(t, int32(1), got.RetryCount)
+		assert.Equal(t, int32(1), got.Attempt)
 		assert.Equal(t, int32(2), got.MaxRetries)
 		assert.Equal(t, topology.NodeKey("e2e_schema.ftable_e"), got.NodeKey)
 		assert.NotEmpty(t, got.JobName)

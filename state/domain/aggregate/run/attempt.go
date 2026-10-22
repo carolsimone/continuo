@@ -73,24 +73,6 @@ type Attempt struct {
 	NextCheckIn time.Duration
 }
 
-// ExecutionRecord is the facts one execution record reports about an attempt,
-// in the aggregate's own vocabulary. A nil fact is one the record does not
-// carry.
-type ExecutionRecord struct {
-	TaskID               uuid.UUID
-	JobName              string
-	StartedAt            *time.Time
-	CompletedAt          *time.Time
-	ExecutionTimeSeconds *float64
-	ErrorMessage         *string
-	LogS3Key             *string
-	// RunResultsURI is the S3 object key of the structured result block the
-	// pod printed, when it printed one.
-	RunResultsURI    *string
-	ParseCache       *string
-	ParseCacheReason *string
-}
-
 // Advance moves the status to s only when s ranks higher than the current one,
 // so a late or replayed report never walks an attempt backwards. It reports
 // whether the status changed.
@@ -100,67 +82,4 @@ func (a *Attempt) Advance(s AttemptStatus) bool {
 	}
 	a.Status = s
 	return true
-}
-
-// RecordExecution copies every fact the record carries onto the attempt. A fact
-// the record omits leaves the stored value untouched; the attempt's identity
-// and status are never changed by a record.
-func (a *Attempt) RecordExecution(rec ExecutionRecord) {
-	if rec.StartedAt != nil {
-		a.StartedAt = rec.StartedAt
-	}
-	if rec.CompletedAt != nil {
-		a.FinishedAt = rec.CompletedAt
-	}
-	if rec.ExecutionTimeSeconds != nil {
-		a.ExecutionSeconds = rec.ExecutionTimeSeconds
-	}
-	if rec.ErrorMessage != nil {
-		a.ErrorMessage = rec.ErrorMessage
-	}
-	if rec.LogS3Key != nil {
-		a.LogS3Key = rec.LogS3Key
-	}
-	if rec.RunResultsURI != nil {
-		a.RunResultsURI = rec.RunResultsURI
-	}
-	if rec.ParseCache != nil {
-		a.ParseCache = rec.ParseCache
-	}
-	if rec.ParseCacheReason != nil {
-		a.ParseCacheReason = rec.ParseCacheReason
-	}
-}
-
-// attemptStatusOfReport maps a task status a report carries to the status of
-// the attempt it describes. Only running, succeeded and failed describe an
-// attempt.
-func attemptStatusOfReport(s TaskStatus) (AttemptStatus, bool) {
-	switch s {
-	case TaskStatusRunning:
-		return AttemptRunning, true
-	case TaskStatusSucceeded:
-		return AttemptSucceeded, true
-	case TaskStatusFailed:
-		return AttemptFailed, true
-	}
-	return "", false
-}
-
-// attemptOfReport returns the attempt a status report belongs to. Normally that
-// is the retry count the report carries. A failure that reports the exhausted
-// budget (retryCount >= MaxRetries) when no attempt row exists at that count
-// belongs to the task's current attempt, or the one after it when the task has
-// already failed; it is never above the reported count, because the count is
-// the newest attempt the reporter knows of and no later attempt can have run.
-// heldAtRetryCount says an attempt row exists at the reported count.
-func attemptOfReport(status TaskStatus, retryCount int32, task TaskAttemptState, heldAtRetryCount bool) int32 {
-	if status != TaskStatusFailed || retryCount < task.MaxRetries || heldAtRetryCount {
-		return retryCount
-	}
-	attempt := task.RetryCount
-	if task.Status == TaskStatusFailed {
-		attempt++
-	}
-	return min(attempt, retryCount)
 }

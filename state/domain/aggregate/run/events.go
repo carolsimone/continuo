@@ -19,10 +19,10 @@ type DomainEvent interface {
 	ScheduleID() uuid.UUID
 }
 
-// RunFinalized is recorded by Run.RecordTaskStatus when the run reaches its
-// terminal status through the finalization decision, by Run.Start when the
-// plan holds no pending task, by Run.Cancel and by Run.MarkDispatchTerminal.
-// It maps to no stream: the run's terminal status is its row.
+// RunFinalized is recorded by Run.RecordAttemptReport when every task of the
+// run has ended, by Run.Start when the plan holds no pending task, by
+// Run.Cancel, by Run.FailStalled and by Run.MarkDispatchTerminal. It maps to
+// no stream: the run's terminal status is its row.
 type RunFinalized struct {
 	ID      uuid.UUID
 	Name    string
@@ -44,9 +44,8 @@ func (RunCancelled) runDomainEvent()         {}
 func (e RunCancelled) ScheduleID() uuid.UUID { return e.ID }
 
 // TaskDispatched is recorded for each attempt of a task state dispatches: by
-// Run.Start for each ready task, by Run.RecordAttemptReport and
-// Run.RecordTaskStatus for each task a success makes ready, and by
-// Run.RecordAttemptReport for the next attempt of a task a retryable failure
+// Run.Start for each ready task, by Run.RecordAttemptReport for each task a
+// success makes ready and for the next attempt of a task a retryable failure
 // leaves with retries left. The attempt reconcile produces one too, through
 // Question.Dispatch, each time state asks about an attempt that has gone
 // quiet: it carries the status state knows the attempt in, and the attempt's

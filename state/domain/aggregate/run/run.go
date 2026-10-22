@@ -480,14 +480,11 @@ func (r *Run) Start(
 	return events, nil
 }
 
-// Cancel marks r as cancelled (a terminal transition), cancels its pending
-// and running tasks, its failed tasks with a retry left and the open attempts
-// of its tasks, and records RunCancelled (work-suppression guard) plus
-// RunFinalized (terminal projection). A failed task with a retry left is
-// cancelled because its retry can no longer run: an execution record of that
-// retry, landing after the cancel or waiting on the task row the cancel
-// locked, then creates its attempt cancelled. Returns ErrAlreadyTerminal when
-// r is already terminal.
+// Cancel marks r as cancelled (a terminal transition), cancels its tasks that
+// have not ended (pending, dispatched, queued and running) and the open
+// attempts of its tasks, and records RunCancelled (work-suppression guard)
+// plus RunFinalized (terminal projection). Returns ErrAlreadyTerminal when r
+// is already terminal.
 func (r *Run) Cancel(
 	ctx context.Context,
 	tasks TaskCollection,
@@ -529,284 +526,8 @@ func (r *Run) Cancel(
 	return []DomainEvent{cancelledEvt, finalizedEvt}, nil
 }
 
-// RecordTaskStatus is the hot-path mutator driven by task.status.updated:v1.
-//
-// On a run whose tasks state planned (planned_at set), a terminal status that
-// takes effect also moves the rest of the run, reading how its tasks connect
-// through graph:
-//   - a success dispatches every pending, undispatched task it makes ready
-//     (each of its in-run upstreams succeeded), stamping dispatched_at and
-//     recording a TaskDispatched per task, in key order;
-//   - a failure on the task's last allowed attempt (retryCount >= the task's
-//     max_retries) skips every pending, undispatched task below it in the run,
-//     which can no longer run, and counts them terminal.
-//
-// A run whose tasks state did not plan reads nothing through graph: its tasks
-// do not record when they were dispatched, so neither readiness nor a cascade
-// can be read from them.
-//
-// Returns no events when:
-//   - the run is already terminal (a late report: only its attempt row is
-//     written)
-//   - the task row exists but the status did not change (replay)
-//   - the incoming RUNNING is a stale duplicate of an attempt that already
-//     reached terminal (see the attempt-monotonic guard below)
-//   - the new status is non-terminal (running) — handler ACKs, no finalize
-//   - the new status is terminal but terminal_task_count != total_task_count
-//     or retryable-failed remains, so finalize is deferred
-//
-// The boolean result reports whether this call persisted a terminal SUCCEEDED
-// for the task: the status write took effect and newStatus is SUCCEEDED. It is
-// false for every ignored delivery (a run already terminal, a superseded
-// attempt, a replay of a finished attempt, a write the task row refused) and for
-// any other status, so a caller that acts on a task's success acts only on the
-// delivery that made it. It does not depend on finalization: an accepted
-// success that leaves other tasks open returns no events and true.
-//
-// Returns ErrTaskNotHeld when a run that has not ended holds no task with
-// taskID.
-//
-// task.status.updated:v1 carries up to two messages per attempt:
-// execution-controller's observer announces RUNNING once, when the attempt's
-// main container starts, then the terminal status once the attempt ends (only
-// the terminal status when it ends before it was seen running). Both are
-// written for the same task aggregate, so the per-aggregate FIFO outbox
-// publishes them in creation order, but they still arrive here as separate
-// consumer deliveries and a redelivery can repeat one of them. retry_count
-// carries the attempt number and is stamped identically on a RUNNING and the
-// terminal of the same attempt; a genuine retry is a strictly newer attempt.
-// The aggregate uses that to honor a real retry's un-fill while ignoring a
-// stale RUNNING re-delivered after its own terminal.
-//
-// Every task write that takes effect stamps the run's progress clock
-// (last_heartbeat_at) with now. A replay, a superseded attempt, or a write the
-// task row refused (affected == 0) leaves the clock where it was.
-//
-// Before the task's own update, a running, succeeded or failed report is
-// written to the row of the attempt it describes (see recordAttempt), whatever
-// the attempt order then decides for the task: a report for an older attempt
-// updates that attempt's row and leaves the task as its newer attempt put it.
-// That holds on a terminal run too, so an older attempt's report delayed past
-// the delivery that finalized the run still closes its attempt; on a terminal
-// run the attempt row is the only thing a report writes (see
-// recordEndedRunAttempt).
-func (r *Run) RecordTaskStatus(
-	ctx context.Context,
-	tasks TaskCollection,
-	graph TaskGraph,
-	taskID uuid.UUID,
-	newStatus TaskStatus,
-	retryCount int32,
-	now time.Time,
-) ([]DomainEvent, bool, error) {
-	if r.IsTerminal() {
-		return nil, false, r.recordEndedRunAttempt(ctx, tasks, taskID, newStatus, retryCount)
-	}
-	attempt, exists, err := tasks.LoadAttemptState(ctx, taskID)
-	if err != nil {
-		// LoadAttemptState locks the row FOR UPDATE; a failure here is a
-		// transient I/O error, not "no prior status". Swallowing it would let
-		// the newer-attempt branch below adopt this delivery and overwrite a
-		// newer terminal already recorded for the task, defeating the
-		// attempt-monotonic guard. Propagate so the consumer redelivers once
-		// the read recovers.
-		return nil, false, fmt.Errorf("load task attempt: %w", err)
-	}
-	prev, prevAttempt := attempt.Status, attempt.RetryCount
-
-	if !exists {
-		return nil, false, ErrTaskNotHeld
-	}
-	if err := r.recordAttempt(ctx, tasks, taskID, newStatus, retryCount, attempt); err != nil {
-		return nil, false, err
-	}
-
-	prevKnown := prev != ""
-	isTerminal := newStatus.IsTerminal()
-	prevWasTerminal := prevKnown && prev.IsTerminal()
-
-	// Order the update by attempt: the event's retry_count field. Deliveries
-	// of task.status.updated:v1 for one task can be processed in any order (a
-	// redelivery can repeat an earlier one); the attempt number makes the
-	// result order-independent.
-
-	// Older attempt — superseded. Covers both a stale RUNNING and a stale
-	// terminal left over from an attempt newer state has already moved past.
-	if prevKnown && retryCount < prevAttempt {
-		return nil, false, nil
-	}
-
-	// Same attempt as the stored row.
-	if prevKnown && retryCount == prevAttempt {
-		if prevWasTerminal {
-			// Terminal already recorded for this attempt: a replayed terminal,
-			// or a RUNNING re-delivered after its own terminal. No-op — do not
-			// regress status or un-fill the slot.
-			return nil, false, nil
-		}
-		if !isTerminal {
-			// Non-terminal progress within the attempt (e.g. PENDING→RUNNING).
-			// Persist the status change; the slot is unaffected.
-			if newStatus == prev {
-				return nil, false, nil
-			}
-			affected, err := tasks.SetStatusAndAttempt(ctx, taskID, newStatus, retryCount)
-			if err != nil {
-				return nil, false, fmt.Errorf("set task status: %w", err)
-			}
-			if affected > 0 {
-				r.recordProgress(now)
-			}
-			return nil, false, nil
-		}
-		// First terminal for this attempt — fill the slot.
-		affected, err := tasks.SetStatusAndAttempt(ctx, taskID, newStatus, retryCount)
-		if err != nil {
-			return nil, false, fmt.Errorf("set task status: %w", err)
-		}
-		if affected == 0 {
-			return nil, false, nil // cancelled or vanished — leave counters untouched.
-		}
-		r.recordProgress(now)
-		r.fillSlot()
-		return r.applyTerminal(ctx, tasks, graph, attempt, newStatus, retryCount, now)
-	}
-
-	// Newer attempt (retryCount > prevAttempt) or no prior status — adopt it.
-	affected, err := tasks.SetStatusAndAttempt(ctx, taskID, newStatus, retryCount)
-	if err != nil {
-		return nil, false, fmt.Errorf("set task status: %w", err)
-	}
-	if affected == 0 {
-		return nil, false, nil // cancelled or vanished — leave counters untouched.
-	}
-	r.recordProgress(now)
-	switch {
-	case prevWasTerminal && !isTerminal:
-		// Genuine retry running again — un-fill the slot.
-		r.unfillSlot()
-		return nil, false, nil
-	case !prevWasTerminal && isTerminal:
-		// Terminal of a running/new attempt — fill the slot.
-		r.fillSlot()
-		return r.applyTerminal(ctx, tasks, graph, attempt, newStatus, retryCount, now)
-	case prevWasTerminal && isTerminal:
-		// A newer attempt's terminal arriving after an older attempt's terminal
-		// (e.g. the retry also failed, or it succeeded). The slot stays filled —
-		// no count change — but the task's retryability may have flipped, so
-		// re-check finalization with the now-current attempt persisted.
-		return r.applyTerminal(ctx, tasks, graph, attempt, newStatus, retryCount, now)
-	default:
-		// Non-terminal after non-terminal (newer attempt already running) — the
-		// slot was empty and stays empty.
-		return nil, false, nil
-	}
-}
-
-// recordEndedRunAttempt writes a status report delivered after r ended to the
-// row of the attempt it describes, the way recordAttempt does for a running
-// run, and changes nothing else: not the task, the run, its counters or its
-// events. It locks the task row before the attempt row. A report of a status
-// that describes no attempt locks nothing, and a report for a task no run
-// holds is ignored without an error, as the rest of a report on an ended run
-// is.
-func (r *Run) recordEndedRunAttempt(
-	ctx context.Context,
-	tasks TaskCollection,
-	taskID uuid.UUID,
-	status TaskStatus,
-	retryCount int32,
-) error {
-	if _, ok := attemptStatusOfReport(status); !ok {
-		return nil
-	}
-	task, exists, err := tasks.LoadAttemptState(ctx, taskID)
-	if err != nil {
-		return fmt.Errorf("load task attempt: %w", err)
-	}
-	if !exists {
-		return nil
-	}
-	return r.recordAttempt(ctx, tasks, taskID, status, retryCount, task)
-}
-
-// recordAttempt writes a status report to the row of the attempt it describes,
-// after the task row is locked. The attempt is the report's retry count, except
-// for a failure that reports the exhausted retry budget with no row at that
-// count (Kubernetes refused the Job), which belongs to the attempt that was
-// refused (attemptOfReport). A missing row is created dispatched, when
-// createsMissingAttempt allows it: attempt 0 with the task's Job name and
-// dispatch time, a later attempt with its numbered Job name and no dispatch
-// time, which the database clock stamps. The status then only moves forward,
-// so a final status (a cancelled attempt included) is never changed, and the
-// row is saved when it is new or its status changed. A report of a status that
-// describes no attempt writes nothing.
-func (r *Run) recordAttempt(
-	ctx context.Context,
-	tasks TaskCollection,
-	taskID uuid.UUID,
-	status TaskStatus,
-	retryCount int32,
-	task TaskAttemptState,
-) error {
-	target, ok := attemptStatusOfReport(status)
-	if !ok {
-		return nil
-	}
-	a, held, err := tasks.LoadAttempt(ctx, taskID, retryCount)
-	if err != nil {
-		return fmt.Errorf("load attempt %d: %w", retryCount, err)
-	}
-	n := attemptOfReport(status, retryCount, task, held)
-	if n != retryCount {
-		a, held, err = tasks.LoadAttempt(ctx, taskID, n)
-		if err != nil {
-			return fmt.Errorf("load attempt %d: %w", n, err)
-		}
-	}
-	if !held {
-		if !r.createsMissingAttempt(target) {
-			return nil
-		}
-		a = Attempt{TaskID: taskID, Number: n, Status: AttemptDispatched}
-		if n == 0 {
-			a.JobName = task.JobName
-			a.DispatchedAt = task.DispatchedAt
-		} else {
-			name, err := domain.ComputeJobName(task.ServiceName, task.SchemaName, task.TableName, r.scheduleID.String(), int(n))
-			if err != nil {
-				return fmt.Errorf("name attempt %d: %w", n, err)
-			}
-			a.JobName = name
-		}
-	}
-	if changed := a.Advance(target); held && !changed {
-		return nil
-	}
-	if err := tasks.SaveAttempt(ctx, a); err != nil {
-		return fmt.Errorf("save attempt %d: %w", a.Number, err)
-	}
-	return nil
-}
-
-// createsMissingAttempt reports whether a report that moves an attempt with no
-// row to status s creates the row. A run that has not ended creates every
-// attempt it hears of. A run that ended succeeded or failed creates only a
-// final one: an attempt created running after the run ended has nothing left
-// to close it. A run that ended any other way creates none: a cancelled run
-// already closed every attempt it had (Cancel), and a skipped run holds no
-// tasks.
-func (r *Run) createsMissingAttempt(s AttemptStatus) bool {
-	switch r.status {
-	case SchedulerStatusSucceeded, SchedulerStatusFailed:
-		return s.IsFinal()
-	}
-	return !r.IsTerminal()
-}
-
 // recordProgress stamps the run's progress clock with now. The clock reads the
-// last dispatch or applied task status change; the dispatch watchdog measures a
-// stall from it.
+// last dispatch or move of a task; FailStalled measures StallAfter from it.
 func (r *Run) recordProgress(now time.Time) {
 	at := now
 	r.lastHeartbeatAt = &at
@@ -817,53 +538,6 @@ func (r *Run) recordProgress(now time.Time) {
 func (r *Run) fillSlot() {
 	r.terminalTaskCount++
 	r.changes.terminalTaskCountDirty = true
-}
-
-// unfillSlot reverses fillSlot when a terminal task starts a new attempt,
-// clamping at zero defensively.
-func (r *Run) unfillSlot() {
-	r.terminalTaskCount--
-	if r.terminalTaskCount < 0 {
-		r.terminalTaskCount = 0
-	}
-	r.changes.terminalTaskCountDirty = true
-}
-
-// applyTerminal follows a terminal status that took effect for the task whose
-// stored state was attempt: on a run whose tasks state planned, a success
-// dispatches what it makes ready and a failure on the last allowed attempt
-// skips what it blocks; then the run finalizes when its tasks are complete.
-// The success flag it returns is applied being SUCCEEDED, independent of
-// whether the run finalized.
-func (r *Run) applyTerminal(
-	ctx context.Context,
-	tasks TaskCollection,
-	graph TaskGraph,
-	attempt TaskAttemptState,
-	applied TaskStatus,
-	retryCount int32,
-	now time.Time,
-) ([]DomainEvent, bool, error) {
-	var events []DomainEvent
-	if r.plannedAt != nil {
-		switch {
-		case applied == TaskStatusSucceeded:
-			dispatched, err := r.dispatchReady(ctx, tasks, graph, attempt.NodeKey, TaskDefaults{MaxRetries: attempt.MaxRetries}, now)
-			if err != nil {
-				return nil, false, err
-			}
-			events = dispatched
-		case applied == TaskStatusFailed && retryCount >= attempt.MaxRetries:
-			if err := r.skipBlocked(ctx, tasks, graph, attempt.NodeKey); err != nil {
-				return nil, false, err
-			}
-		}
-	}
-	finalized, err := r.finalizeIfComplete(ctx, tasks, now)
-	if err != nil {
-		return nil, false, err
-	}
-	return append(events, finalized...), applied == TaskStatusSucceeded, nil
 }
 
 // dispatchReady dispatches the tasks of r that the success of the task at key
@@ -952,47 +626,18 @@ func (r *Run) skipBlocked(ctx context.Context, tasks TaskCollection, graph TaskG
 	return nil
 }
 
-// finalizeIfComplete finalizes the scheduler when every task is terminal, the
-// graph has finished loading, the run is still RUNNING, and no failed task is
-// still retryable. The outcome is failed when any task is failed or cancelled,
-// succeeded otherwise (every task succeeded or skipped). Returns the
-// RunFinalized event(s), or nil when finalization is deferred.
-func (r *Run) finalizeIfComplete(ctx context.Context, tasks TaskCollection, now time.Time) ([]DomainEvent, error) {
-	if r.totalTaskCount == nil || r.terminalTaskCount != *r.totalTaskCount {
-		return nil, nil
-	}
-	if r.initStatus != InitStatusCompleted {
-		return nil, nil
-	}
-	if r.status != SchedulerStatusRunning {
-		return nil, nil
-	}
-	hasRetryable, err := tasks.HasRetryableFailed(ctx, r.scheduleID)
-	if err != nil {
-		return nil, fmt.Errorf("has retryable failed: %w", err)
-	}
-	if hasRetryable {
-		return nil, nil
-	}
-	anyFailed, err := tasks.HasFailed(ctx, r.scheduleID)
-	if err != nil {
-		return nil, fmt.Errorf("has failed: %w", err)
-	}
-
-	outcome := SchedulerStatusSucceeded
-	if anyFailed {
-		outcome = SchedulerStatusFailed
-	}
-	return r.finalize(outcome, now), nil
-}
-
 // MarkDispatchTerminal finalizes a run that was created without tasks: a cron
 // run whose selection was refused. A benign outcome (no work to do — a test
 // run over nodes with no data tests) finalizes the run as `skipped`; any other
 // finalizes it as `failed`, with failure as its failure reason. reason is
-// recorded on the RunDispatchTerminal side event regardless of outcome. No-op
-// when r is already terminal.
+// recorded on the RunDispatchTerminal side event regardless of outcome. A
+// failed run needs a failure reason RunFailureReasons lists: any other is
+// refused with ErrInvalidRunFailureReason and r is left as it is. No-op when r
+// is already terminal.
 func (r *Run) MarkDispatchTerminal(benign bool, failure RunFailureReason, reason string, now time.Time) ([]DomainEvent, error) {
+	if !benign && !failure.IsValid() {
+		return nil, fmt.Errorf("%w: %q", ErrInvalidRunFailureReason, failure)
+	}
 	if r.IsTerminal() {
 		return nil, nil
 	}

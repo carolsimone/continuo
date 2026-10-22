@@ -17,16 +17,14 @@ import (
 // Write methods are targeted SQL operations the aggregate orchestrates
 // inside its own method bodies.
 type TaskCollection interface {
-	// LoadAttemptState returns what a status update needs of one task: its
-	// status, its stored attempt number, its retry budget, its node key, its
+	// LoadAttemptState returns what an attempt report needs of one task: its
+	// status, the attempt it is at, its retry budget, its node key, its
 	// identity (job name and node) and its first dispatch time, locking the
-	// row FOR UPDATE so concurrent
-	// task.status.updated deliveries for the same task serialize. The attempt
-	// is the discriminator the aggregate uses to order updates: a strictly
-	// newer attempt supersedes, an older one is stale, and the same attempt
-	// distinguishes a first terminal from a replay/late duplicate. The second
-	// return is false when the row does not exist; err is non-nil only for
-	// genuine I/O failures.
+	// row FOR UPDATE so concurrent writers of the task serialize. The attempt
+	// is what the aggregate compares a report's attempt with: a report for the
+	// task's current attempt moves the task, one for an older attempt moves
+	// only that attempt's row. The second return is false when the row does
+	// not exist; err is non-nil only for genuine I/O failures.
 	LoadAttemptState(ctx context.Context, taskID uuid.UUID) (state TaskAttemptState, exists bool, err error)
 
 	// LoadAttempt returns attempt number attempt of the task, locking its row
@@ -59,10 +57,6 @@ type TaskCollection interface {
 	// not match. The run's finalized outcome is failed when it is true.
 	HasFailed(ctx context.Context, runID uuid.UUID) (bool, error)
 
-	// HasRetryableFailed reports whether any task in the given run is
-	// FAILED and still has retries left (attempt < max_retries).
-	HasRetryableFailed(ctx context.Context, runID uuid.UUID) (bool, error)
-
 	// HasInFlight reports whether any task of the given run is dispatched,
 	// queued or running: an attempt of it is in flight.
 	HasInFlight(ctx context.Context, runID uuid.UUID) (bool, error)
@@ -91,7 +85,7 @@ type TaskCollection interface {
 	// not overwrite a cancelled task. Returns rowsAffected (0 if the task is
 	// cancelled or the row is missing). It applies no attempt logic — the Run
 	// aggregate decides when a write is warranted; this just persists it.
-	SetStatusAndAttempt(ctx context.Context, taskID uuid.UUID, status TaskStatus, retryCount int32) (rowsAffected int, err error)
+	SetStatusAndAttempt(ctx context.Context, taskID uuid.UUID, status TaskStatus, attempt int32) (rowsAffected int, err error)
 
 	// BulkCreate inserts every task of a run inside the caller's
 	// transaction, so the whole set commits or rolls back together.
@@ -110,25 +104,24 @@ type TaskCollection interface {
 	// still pending and undispatched, and returns how many tasks it changed.
 	SkipPending(ctx context.Context, runID uuid.UUID) (int, error)
 
-	// BulkCancel marks CANCELLED every task of the given run that is pending,
-	// dispatched, queued, running, or FAILED with a retry left (attempt <
-	// max_retries), whose retry can no longer run once the run is cancelled,
-	// stamping cancelled_by and cancelled_at with cancelledAt — the same
-	// authoritative instant the Run aggregate used for the run-level
-	// cancellation. A task that succeeded, was skipped or failed its last
-	// allowed attempt is left as it is. Each task it cancels stays locked until
-	// the transaction ends. Returns the number of rows updated.
+	// BulkCancel marks CANCELLED every task of the given run that has not
+	// ended (pending, dispatched, queued or running), stamping cancelled_by
+	// and cancelled_at with cancelledAt — the same authoritative instant the
+	// Run aggregate used for the run-level cancellation. A task that
+	// succeeded, failed or was skipped is final and is left as it is. Each
+	// task it cancels stays locked until the transaction ends. Returns the
+	// number of rows updated.
 	BulkCancel(ctx context.Context, runID uuid.UUID, cancelledBy string, cancelledAt time.Time) (rowsAffected int, err error)
 }
 
-// TaskAttemptState is one task as a status update reads it: its status, the
+// TaskAttemptState is one task as an attempt report reads it: its status, the
 // attempt it is at, its retry budget, its node in the run's release, its
 // identity (the job name and node it was planned with) and when it was first
 // dispatched. NodeKey is empty on a task whose run names no release;
 // DispatchedAt is nil on a task that was never dispatched.
 type TaskAttemptState struct {
 	Status       TaskStatus
-	RetryCount   int32
+	Attempt      int32
 	MaxRetries   int32
 	NodeKey      topology.NodeKey
 	JobName      string

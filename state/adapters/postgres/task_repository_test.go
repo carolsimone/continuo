@@ -32,83 +32,6 @@ func createTask(t *testing.T, repo postgres.TaskTrackerRepository, scheduleID uu
 	return task
 }
 
-func TestTaskRepository_HasRetryableFailedTaskTx(t *testing.T) {
-	db := newTestDB(t)
-	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
-	ctx := context.Background()
-
-	newScheduler := func(t *testing.T) *postgres.SchedulerTracker {
-		t.Helper()
-		s := createScheduler(t, schedulerRepo, "test-schedule-"+uuid.New().String())
-		t.Cleanup(func() {
-			db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", s.ScheduleID)
-		})
-		return s
-	}
-
-	insertTask := func(t *testing.T, scheduleID uuid.UUID, status run.TaskStatus, retryCount, maxRetries int) *postgres.TaskTracker {
-		t.Helper()
-		task := &postgres.TaskTracker{
-			TaskID:      uuid.New(),
-			ScheduleID:  scheduleID,
-			ServiceName: "svc",
-			SchemaName:  "schema",
-			TableName:   "tbl_" + uuid.New().String()[:8],
-			JobName:     "job",
-			Status:      status,
-			Attempt:     retryCount,
-			MaxRetries:  maxRetries,
-			CreatedAt:   time.Now(),
-		}
-		require.NoError(t, taskRepo.Create(ctx, task))
-		t.Cleanup(func() {
-			db.ExecContext(ctx, "DELETE FROM task_tracker WHERE task_id = $1", task.TaskID)
-		})
-		return task
-	}
-
-	runCheck := func(t *testing.T, scheduleID uuid.UUID) bool {
-		t.Helper()
-		tx, err := db.BeginTxx(ctx, nil)
-		require.NoError(t, err)
-		defer tx.Rollback()
-		result, err := taskRepo.HasRetryableFailedTaskTx(ctx, tx, scheduleID)
-		require.NoError(t, err)
-		return result
-	}
-
-	t.Run("no failed tasks returns false", func(t *testing.T) {
-		s := newScheduler(t)
-		// Insert a pending task (not failed)
-		insertTask(t, s.ScheduleID, run.TaskStatusPending, 0, 3)
-		assert.False(t, runCheck(t, s.ScheduleID))
-	})
-
-	t.Run("failed task with attempt < max_retries returns true", func(t *testing.T) {
-		s := newScheduler(t)
-		insertTask(t, s.ScheduleID, run.TaskStatusFailed, 1, 3)
-		assert.True(t, runCheck(t, s.ScheduleID))
-	})
-
-	t.Run("failed task with attempt equal to max_retries returns false", func(t *testing.T) {
-		s := newScheduler(t)
-		insertTask(t, s.ScheduleID, run.TaskStatusFailed, 3, 3)
-		assert.False(t, runCheck(t, s.ScheduleID))
-	})
-
-	t.Run("failed task with attempt greater than max_retries returns false", func(t *testing.T) {
-		s := newScheduler(t)
-		insertTask(t, s.ScheduleID, run.TaskStatusFailed, 5, 3)
-		assert.False(t, runCheck(t, s.ScheduleID))
-	})
-
-	t.Run("empty schedule returns false", func(t *testing.T) {
-		s := newScheduler(t)
-		assert.False(t, runCheck(t, s.ScheduleID))
-	})
-}
-
 // TestTaskRepository_HasFailedTaskTx_CountsCancelledTasks pins the finalize
 // predicate: a run with a failed or a cancelled task did not succeed, while
 // succeeded and skipped tasks never make it fail.
@@ -174,10 +97,13 @@ func TestTaskTrackerRepository_BulkCancelByScheduleIDTx(t *testing.T) {
 	}))
 	defer db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", schedID)
 
-	// One task per status; the failed ones differ by whether a retry is left.
+	// One task per status; a failed task is final whether or not its budget
+	// is spent.
 	pendingID := uuid.New()
+	dispatchedID := uuid.New()
+	queuedID := uuid.New()
 	runningID := uuid.New()
-	retryLeftID := uuid.New()
+	budgetLeftID := uuid.New()
 	exhaustedID := uuid.New()
 	succeededID := uuid.New()
 	skippedID := uuid.New()
@@ -188,8 +114,10 @@ func TestTaskTrackerRepository_BulkCancelByScheduleIDTx(t *testing.T) {
 		maxRetries int
 	}{
 		{pendingID, run.TaskStatusPending, 0, 2},
+		{dispatchedID, run.TaskStatusDispatched, 0, 2},
+		{queuedID, run.TaskStatusQueued, 1, 2},
 		{runningID, run.TaskStatusRunning, 0, 2},
-		{retryLeftID, run.TaskStatusFailed, 1, 2},
+		{budgetLeftID, run.TaskStatusFailed, 1, 2},
 		{exhaustedID, run.TaskStatusFailed, 2, 2},
 		{succeededID, run.TaskStatusSucceeded, 0, 2},
 		{skippedID, run.TaskStatusSkipped, 0, 2},
@@ -216,9 +144,9 @@ func TestTaskTrackerRepository_BulkCancelByScheduleIDTx(t *testing.T) {
 	n, err := taskRepo.BulkCancelByScheduleIDTx(ctx, tx, schedID, "user1", time.Now().UTC())
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
-	assert.EqualValues(t, 3, n) // pending, running and the failed task with a retry left
+	assert.EqualValues(t, 4, n) // pending, dispatched, queued and running
 
-	for _, id := range []uuid.UUID{pendingID, runningID, retryLeftID} {
+	for _, id := range []uuid.UUID{pendingID, dispatchedID, queuedID, runningID} {
 		got, err := taskRepo.GetByID(ctx, id)
 		require.NoError(t, err)
 		assert.Equal(t, run.TaskStatusCancelled, got.Status)
@@ -227,11 +155,13 @@ func TestTaskTrackerRepository_BulkCancelByScheduleIDTx(t *testing.T) {
 		assert.Equal(t, "user1", *got.CancelledBy)
 	}
 
-	// A task that ended — a failure with no retry left, a success, a skip — is untouched.
+	// A task that ended — a failure, with or without budget left, a success, a
+	// skip — is untouched.
 	for id, want := range map[uuid.UUID]run.TaskStatus{
-		exhaustedID: run.TaskStatusFailed,
-		succeededID: run.TaskStatusSucceeded,
-		skippedID:   run.TaskStatusSkipped,
+		budgetLeftID: run.TaskStatusFailed,
+		exhaustedID:  run.TaskStatusFailed,
+		succeededID:  run.TaskStatusSucceeded,
+		skippedID:    run.TaskStatusSkipped,
 	} {
 		got, err := taskRepo.GetByID(ctx, id)
 		require.NoError(t, err)
@@ -391,7 +321,7 @@ func TestTaskRepository_SetStatusAndAttemptTx_DoesNotReviveCancelledTask(t *test
 // TestTaskRepository_SetStatusAndAttemptTx_AdvancesAttemptOnSameStatus asserts
 // that a newer attempt's terminal carrying the same status (failed→failed at a
 // higher attempt) still writes the higher attempt, so the stored attempt the
-// Run aggregate orders status updates by stays current.
+// Run aggregate compares a report's attempt with stays current.
 func TestTaskRepository_SetStatusAndAttemptTx_AdvancesAttemptOnSameStatus(t *testing.T) {
 	db := newTestDB(t)
 	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())

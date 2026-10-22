@@ -160,8 +160,8 @@ func verifySchedulerCancelled(t *testing.T, ctx context.Context, clients *testCl
 }
 
 // verifyTasksCancelled asserts that at least some non-seed tasks were cancelled.
-// CancelSchedule atomically sets every pending and running task, and every
-// failed task with a retry left, to 'cancelled', so any task still in flight
+// CancelSchedule atomically sets every task that has not ended (pending,
+// dispatched, queued or running) to 'cancelled', so any task still in flight
 // before the cancel call must be cancelled.
 func verifyTasksCancelled(t *testing.T, ctx context.Context, clients *testClients, schedulerID uuid.UUID) {
 	t.Helper()

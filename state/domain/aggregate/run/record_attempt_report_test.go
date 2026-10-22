@@ -2,6 +2,7 @@ package run_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -265,6 +266,43 @@ func TestRecordAttemptReport_TheExampleRunFinalizesFailed(t *testing.T) {
 	assert.Equal(t, int32(8), r.TerminalTaskCount())
 	assert.Nil(t, r.FailureReason(), "a run whose task failed records no run failure reason")
 	assert.ElementsMatch(t, []uuid.UUID{taskOf(r, "ftable_f"), taskOf(r, "ftable_h")}, tc.skipped)
+}
+
+// Every task succeeding, in level order, dispatches each level as its
+// upstreams succeed, and the last success finalizes the run succeeded.
+func TestRecordAttemptReport_TheLastSuccessFinalizesTheRunSucceeded(t *testing.T) {
+	r, tc, g := startedFailureRun(t)
+	tables := []string{"ftable_a", "ftable_b", "ftable_c", "ftable_d", "ftable_e", "ftable_f", "ftable_g", "ftable_h"}
+	for i, table := range tables {
+		events, succeeded, err := r.RecordAttemptReport(context.Background(), tc, g,
+			run.AttemptReport{TaskID: taskOf(r, table), Attempt: 0, Status: run.AttemptSucceeded}, taskDefaults, reportAt)
+		require.NoError(t, err, table)
+		assert.True(t, succeeded, "%s: the report made the task succeeded", table)
+		if i < len(tables)-1 {
+			assert.False(t, r.IsTerminal(), "%s: tasks are left", table)
+			continue
+		}
+		require.NotEmpty(t, events)
+		fin, ok := events[len(events)-1].(run.RunFinalized)
+		require.True(t, ok, "%T", events[len(events)-1])
+		assert.Equal(t, run.SchedulerStatusSucceeded, fin.Outcome)
+	}
+	assert.Equal(t, int32(8), r.TerminalTaskCount())
+}
+
+// A failed read of the task fails the report and changes nothing, so the
+// consumer redelivers it.
+func TestRecordAttemptReport_PropagatesALoadError(t *testing.T) {
+	r, tc, g := startedFailureRun(t)
+	tc.loadErr = errors.New("read replica unavailable")
+
+	events, _, err := r.RecordAttemptReport(context.Background(), tc, g,
+		run.AttemptReport{TaskID: taskOf(r, "ftable_a"), Attempt: 0, Status: run.AttemptSucceeded}, taskDefaults, reportAt)
+
+	require.ErrorIs(t, err, tc.loadErr)
+	assert.Empty(t, events)
+	assert.Equal(t, int32(0), r.TerminalTaskCount())
+	assert.Equal(t, run.TaskStatusDispatched, tc.statuses[taskOf(r, "ftable_a")])
 }
 
 // A task that fails for good with budget left does not hold the run open.

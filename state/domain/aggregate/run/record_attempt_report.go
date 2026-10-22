@@ -72,7 +72,7 @@ func (r *Run) RecordAttemptReport(
 	if err := tasks.SaveAttempt(ctx, a); err != nil {
 		return nil, false, fmt.Errorf("save attempt %d: %w", a.Number, err)
 	}
-	if !changed || rep.Attempt != task.RetryCount {
+	if !changed || rep.Attempt != task.Attempt {
 		return nil, false, nil
 	}
 
@@ -108,7 +108,7 @@ func (r *Run) moveTask(ctx context.Context, tasks TaskCollection, taskID uuid.UU
 // and the run finalizes once every task has ended.
 func (r *Run) endTask(ctx context.Context, tasks TaskCollection, graph TaskGraph, taskID uuid.UUID, task TaskAttemptState,
 	status TaskStatus, d TaskDefaults, now time.Time) ([]DomainEvent, error) {
-	if err := r.moveTask(ctx, tasks, taskID, status, task.RetryCount, now); err != nil {
+	if err := r.moveTask(ctx, tasks, taskID, status, task.Attempt, now); err != nil {
 		return nil, err
 	}
 	r.fillSlot()
@@ -146,7 +146,7 @@ func (r *Run) dispatchNextAttempt(ctx context.Context, tasks TaskCollection, gra
 	if !found {
 		return nil, fmt.Errorf("retry task %s: release %s holds no node %s", taskID, r.release.ReleaseID, task.NodeKey)
 	}
-	next := task.RetryCount + 1
+	next := task.Attempt + 1
 	jobName, err := domain.ComputeJobName(task.ServiceName, task.SchemaName, task.TableName, r.scheduleID.String(), int(next))
 	if err != nil {
 		return nil, fmt.Errorf("name attempt %d of task %s: %w", next, taskID, err)

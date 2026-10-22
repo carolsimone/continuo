@@ -185,7 +185,7 @@ func (f *fakeTaskStatusTaskCollection) GetStatus(_ context.Context, _ uuid.UUID)
 
 func (f *fakeTaskStatusTaskCollection) LoadAttemptState(_ context.Context, id uuid.UUID) (run.TaskAttemptState, bool, error) {
 	f.lockOrder = append(f.lockOrder, "task "+id.String())
-	return run.TaskAttemptState{Status: f.prevStatus, RetryCount: f.prevAttempt, MaxRetries: f.maxRetries,
+	return run.TaskAttemptState{Status: f.prevStatus, Attempt: f.prevAttempt, MaxRetries: f.maxRetries,
 		NodeKey: "raw.orders", ServiceName: "svc", SchemaName: "raw", TableName: "orders"}, f.prevExists, f.getStatusErr
 }
 
@@ -207,10 +207,6 @@ func (f *fakeTaskStatusTaskCollection) MarkSkipped(_ context.Context, _ []uuid.U
 
 func (f *fakeTaskStatusTaskCollection) SetStatusAndAttempt(_ context.Context, _ uuid.UUID, _ run.TaskStatus, _ int32) (int, error) {
 	return f.updateAffected, f.updateErr
-}
-
-func (f *fakeTaskStatusTaskCollection) HasRetryableFailed(context.Context, uuid.UUID) (bool, error) {
-	return false, nil
 }
 
 func (f *fakeTaskStatusTaskCollection) HasFailed(_ context.Context, _ uuid.UUID) (bool, error) {

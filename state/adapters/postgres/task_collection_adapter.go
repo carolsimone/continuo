@@ -35,7 +35,7 @@ func (a *TaskCollectionAdapter) LoadAttemptState(ctx context.Context, taskID uui
 	}
 	return run.TaskAttemptState{
 		Status:       status,
-		RetryCount:   row.Attempt,
+		Attempt:      row.Attempt,
 		MaxRetries:   row.MaxRetries,
 		NodeKey:      topology.NodeKey(row.NodeKey),
 		JobName:      row.JobName,
@@ -67,10 +67,6 @@ func (a *TaskCollectionAdapter) CancelOpenAttempts(ctx context.Context, runID uu
 
 func (a *TaskCollectionAdapter) HasFailed(ctx context.Context, runID uuid.UUID) (bool, error) {
 	return a.repo.HasFailedTaskTx(ctx, a.tx, runID)
-}
-
-func (a *TaskCollectionAdapter) HasRetryableFailed(ctx context.Context, runID uuid.UUID) (bool, error) {
-	return a.repo.HasRetryableFailedTaskTx(ctx, a.tx, runID)
 }
 
 func (a *TaskCollectionAdapter) HasInFlight(ctx context.Context, runID uuid.UUID) (bool, error) {
@@ -137,7 +133,7 @@ func taskFromRow(t *TaskTracker) run.Task {
 		TableName:           t.TableName,
 		JobName:             t.JobName,
 		Status:              t.Status,
-		RetryCount:          t.Attempt,
+		Attempt:             t.Attempt,
 		MaxRetries:          t.MaxRetries,
 		CancelledAt:         t.CancelledAt,
 		CancelledBy:         t.CancelledBy,
@@ -149,8 +145,8 @@ func taskFromRow(t *TaskTracker) run.Task {
 	}
 }
 
-func (a *TaskCollectionAdapter) SetStatusAndAttempt(ctx context.Context, taskID uuid.UUID, status run.TaskStatus, retryCount int32) (int, error) {
-	n, err := a.repo.SetStatusAndAttemptTx(ctx, a.tx, taskID, string(status), retryCount)
+func (a *TaskCollectionAdapter) SetStatusAndAttempt(ctx context.Context, taskID uuid.UUID, status run.TaskStatus, attempt int32) (int, error) {
+	n, err := a.repo.SetStatusAndAttemptTx(ctx, a.tx, taskID, string(status), attempt)
 	return int(n), err
 }
 
@@ -166,7 +162,7 @@ func (a *TaskCollectionAdapter) BulkCreate(ctx context.Context, tasks []run.Task
 			TableName:           t.TableName,
 			JobName:             t.JobName,
 			Status:              t.Status,
-			Attempt:             t.RetryCount,
+			Attempt:             t.Attempt,
 			MaxRetries:          t.MaxRetries,
 			CancelledAt:         t.CancelledAt,
 			CancelledBy:         t.CancelledBy,

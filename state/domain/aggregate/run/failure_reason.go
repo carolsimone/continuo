@@ -1,5 +1,7 @@
 package run
 
+import "slices"
+
 // RunFailureReason says why a run failed when no task of it failed. A run that
 // failed because a task failed records none.
 type RunFailureReason string
@@ -14,6 +16,11 @@ const (
 	// type the node_type vocabulary does not declare.
 	RunFailureInvalidNodeType RunFailureReason = "invalid_node_type"
 )
+
+// IsValid reports whether f is one of RunFailureReasons.
+func (f RunFailureReason) IsValid() bool {
+	return slices.Contains(RunFailureReasons(), f)
+}
 
 // RunFailureReasons lists every RunFailureReason. The CHECK constraint on
 // scheduler_tracker.failure_reason lists exactly these.

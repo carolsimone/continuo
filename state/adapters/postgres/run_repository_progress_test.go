@@ -73,7 +73,8 @@ func TestRunRepository_SaveRun_PersistsProgressClock(t *testing.T) {
 
 	runningAt := time.Now().UTC().Truncate(time.Microsecond)
 	saveIn(func(rn *run.Run, tasks run.TaskCollection) {
-		_, _, err := rn.RecordTaskStatus(ctx, tasks, nil, taskID, run.TaskStatusRunning, 0, runningAt)
+		_, _, err := rn.RecordAttemptReport(ctx, tasks, nil,
+			run.AttemptReport{TaskID: taskID, Attempt: 0, Status: run.AttemptRunning}, testTaskDefaults, runningAt)
 		require.NoError(t, err)
 	})
 	got = heartbeat()
