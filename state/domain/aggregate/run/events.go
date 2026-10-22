@@ -47,9 +47,12 @@ func (e RunCancelled) ScheduleID() uuid.UUID { return e.ID }
 // Run.Start for each ready task, by Run.RecordAttemptReport and
 // Run.RecordTaskStatus for each task a success makes ready, and by
 // Run.RecordAttemptReport for the next attempt of a task a retryable failure
-// leaves with retries left. It carries the run, the task and the attempt's
-// number, state's view of the attempt (KnownStatus: dispatched until
-// execution-controller acknowledged it), the node it builds as the run's
+// leaves with retries left. The attempt reconcile produces one too, through
+// Question.Dispatch, each time state asks about an attempt that has gone
+// quiet: it carries the status state knows the attempt in, and the attempt's
+// next question waits for the next window. It carries the run, the task and
+// the attempt's number, state's view of the attempt (KnownStatus: dispatched
+// until execution-controller acknowledged it), the node it builds as the run's
 // release holds it, the attempt's Kubernetes Job name, the dbt verb, the
 // task's retry budget and how long the attempt's container may run.
 type TaskDispatched struct {

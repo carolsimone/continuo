@@ -20,6 +20,7 @@ import (
 // application packages exist under a service's tree.
 var handlerDirs = []string{
 	"orchestrator/service",
+	"state/service/attemptreconcile",
 	"state/service/handlers",
 	"state/service/runreads",
 	"state/service/runsettle",

@@ -141,5 +141,11 @@ func (u *PostgresUnitOfWork) TaskGraph(tenantID string) run.TaskGraph {
 	return NewTaskGraph(u.tx, tenantID)
 }
 
+// Attempts returns the attempt reconcile's repository for tenantID, bound to
+// the current transaction.
+func (u *PostgresUnitOfWork) Attempts(tenantID string) repository.AttemptRepository {
+	return NewAttemptRepository(u.db, u.tx, tenantID)
+}
+
 // Compile-time interface assertion.
 var _ uow.UnitOfWork = (*PostgresUnitOfWork)(nil)
