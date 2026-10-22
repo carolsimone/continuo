@@ -220,6 +220,33 @@ func TestRecordAttemptReport_AReportForAnAttemptStateNeverIssuedIsRefused(t *tes
 	assert.ErrorIs(t, err, run.ErrTaskNotHeld)
 }
 
+// A report naming this run for a task another run holds is refused before
+// the attempt is read: the task, its attempts and the run stay as they are.
+func TestRecordAttemptReport_ATaskOfAnotherRunIsNotHeld(t *testing.T) {
+	r, tc, g := startedFailureRun(t)
+	id := taskOf(r, "ftable_a")
+	other := tc.created[id]
+	other.ScheduleID = uuid.New()
+	tc.created[id] = other
+	tc.lockOrder, tc.saves, tc.added = nil, nil, nil
+	heartbeat := *r.LastHeartbeatAt()
+
+	events, succeeded, err := r.RecordAttemptReport(context.Background(), tc, g,
+		run.AttemptReport{TaskID: id, Attempt: 0, Status: run.AttemptSucceeded}, taskDefaults, reportAt)
+
+	require.ErrorIs(t, err, run.ErrTaskNotHeld)
+	assert.Empty(t, events)
+	assert.False(t, succeeded)
+	assert.Equal(t, []string{"task " + id.String()}, tc.lockOrder, "the attempt is not read")
+	assert.Empty(t, tc.saves, "no attempt is saved")
+	assert.Empty(t, tc.added, "no attempt is added")
+	assert.Equal(t, run.TaskStatusDispatched, tc.statuses[id])
+	a, _ := attemptOf(t, tc, r, "ftable_a", 0)
+	assert.Equal(t, run.AttemptDispatched, a.Status)
+	assert.Zero(t, r.TerminalTaskCount())
+	assert.Equal(t, heartbeat, *r.LastHeartbeatAt())
+}
+
 // A report for a run that has ended writes nothing: every attempt of it has
 // ended.
 func TestRecordAttemptReport_ATerminalRunWritesNothing(t *testing.T) {

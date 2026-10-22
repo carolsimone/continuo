@@ -95,7 +95,9 @@ func (f *fakeTaskStatusOutboxPub) Append(_ context.Context, evts []run.DomainEve
 // unit tests. It controls the responses of every method called by
 // Run.RecordAttemptReport; unused methods panic on accidental use.
 type fakeTaskStatusTaskCollection struct {
-	// GetStatus / LoadAttemptState response
+	// GetStatus / LoadAttemptState response; runID is the run that holds the
+	// task, the run the unit of work loads unless a test sets another.
+	runID        uuid.UUID
 	prevStatus   run.TaskStatus
 	prevAttempt  int32
 	maxRetries   int32
@@ -185,7 +187,7 @@ func (f *fakeTaskStatusTaskCollection) GetStatus(_ context.Context, _ uuid.UUID)
 
 func (f *fakeTaskStatusTaskCollection) LoadAttemptState(_ context.Context, id uuid.UUID) (run.TaskAttemptState, bool, error) {
 	f.lockOrder = append(f.lockOrder, "task "+id.String())
-	return run.TaskAttemptState{Status: f.prevStatus, Attempt: f.prevAttempt, MaxRetries: f.maxRetries,
+	return run.TaskAttemptState{RunID: f.runID, Status: f.prevStatus, Attempt: f.prevAttempt, MaxRetries: f.maxRetries,
 		NodeKey: "raw.orders", ServiceName: "svc", SchemaName: "raw", TableName: "orders"}, f.prevExists, f.getStatusErr
 }
 
@@ -234,12 +236,16 @@ func taskStatusTestLogger() *slog.Logger {
 }
 
 // newTaskStatusHandlerUoW wires a FakeUnitOfWork with the three fakes needed
-// by AttemptReportHandler.
+// by AttemptReportHandler. A task collection that names no run holds its task
+// in the run runRepo stores.
 func newTaskStatusHandlerUoW(
 	runRepo *fakeTaskStatusRunRepo,
 	outbox *fakeTaskStatusOutboxPub,
 	taskColl *fakeTaskStatusTaskCollection,
 ) *uow.FakeUnitOfWork {
+	if taskColl.runID == uuid.Nil && runRepo.stored != nil {
+		taskColl.runID = runRepo.stored.ScheduleID()
+	}
 	u := &uow.FakeUnitOfWork{Graph: unconnectedTasks{}}
 	u.SetRunRepo(runRepo)
 	u.SetOutboxPublisher(outbox)

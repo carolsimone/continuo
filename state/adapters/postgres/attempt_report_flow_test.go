@@ -145,6 +145,53 @@ func TestAttemptReport_AnEqualRankReportMovesOnlyTheNextCheck(t *testing.T) {
 	assert.InDelta(t, (30 * time.Minute).Seconds(), f.dueIn(t, "e2e_schema.ftable_a", 0).Seconds(), 5)
 }
 
+// flowSnapshot is what a run's reports write: its status and terminal count,
+// each task's status and attempt rows by node key, and its outbox rows.
+type flowSnapshot struct {
+	status   run.SchedulerStatus
+	terminal int32
+	statuses map[string]run.TaskStatus
+	attempts map[string][]attemptRow
+	outbox   int
+}
+
+func (f statusFlow) snapshot(t *testing.T) flowSnapshot {
+	t.Helper()
+	s := flowSnapshot{statuses: f.statuses(t), attempts: map[string][]attemptRow{}, outbox: f.outboxRows(t)}
+	s.status, s.terminal = f.run(t)
+	for key := range s.statuses {
+		s.attempts[key] = f.attempts(t, key)
+	}
+	return s
+}
+
+// A report naming one run for a task another run holds is refused, and the
+// transaction it ran in holds no write: committed anyway, neither run, none
+// of their tasks or attempts and none of their outbox rows has changed.
+func TestAttemptReport_AReportNamingAnotherRunIsRefused(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	tenantA := storeFailureSchedule(t, db)
+	a := statusFlow{db: db, tenant: tenantA, r: startScheduleRun(t, db, tenantA, "e2e-schedule-failure", model.OperationRun)}
+	tenantB := storeEdges(t, db, "e2e-schedule-other-run", [][2]string{{"ftable_a", "ftable_g"}}, "ftable_a", "ftable_g")
+	b := statusFlow{db: db, tenant: tenantB, r: startScheduleRun(t, db, tenantB, "e2e-schedule-other-run", model.OperationRun)}
+	beforeA, beforeB := a.snapshot(t), b.snapshot(t)
+
+	u := newPlanningUoW(db)
+	require.NoError(t, u.Begin(ctx))
+	defer u.Rollback()
+	err := handlers.NewAttemptReportHandler(tenantA, testTaskDefaults, discardLogger()).Handle(ctx, u,
+		events.AttemptReported{RunID: a.r.ScheduleID(), Report: run.AttemptReport{
+			TaskID:  run.TaskIDFor(tenantB, b.r.ScheduleID(), "e2e_schema.ftable_a"),
+			Attempt: 0, Status: run.AttemptSucceeded,
+		}}, uuid.Nil)
+	require.ErrorIs(t, err, run.ErrTaskNotHeld)
+	require.NoError(t, u.Commit())
+
+	assert.Equal(t, beforeA, a.snapshot(t), "the run the report names")
+	assert.Equal(t, beforeB, b.snapshot(t), "the run that holds the task")
+}
+
 // The example run, report by report: ftable_e and ftable_g fail three times
 // each, every failure but the last dispatching the next attempt, and the
 // run finalizes failed once every task has ended.

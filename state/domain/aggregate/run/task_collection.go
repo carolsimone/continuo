@@ -17,14 +17,15 @@ import (
 // Write methods are targeted SQL operations the aggregate orchestrates
 // inside its own method bodies.
 type TaskCollection interface {
-	// LoadAttemptState returns what an attempt report needs of one task: its
-	// status, the attempt it is at, its retry budget, its node key, its
-	// identity (job name and node) and its first dispatch time, locking the
-	// row FOR UPDATE so concurrent writers of the task serialize. The attempt
-	// is what the aggregate compares a report's attempt with: a report for the
-	// task's current attempt moves the task, one for an older attempt moves
-	// only that attempt's row. The second return is false when the row does
-	// not exist; err is non-nil only for genuine I/O failures.
+	// LoadAttemptState returns what an attempt report needs of one task: the
+	// run that holds it, its status, the attempt it is at, its retry budget,
+	// its node key, its identity (job name and node) and its first dispatch
+	// time, locking the row FOR UPDATE so concurrent writers of the task
+	// serialize. The attempt is what the aggregate compares a report's
+	// attempt with: a report for the task's current attempt moves the task,
+	// one for an older attempt moves only that attempt's row. The second
+	// return is false when the row does not exist; err is non-nil only for
+	// genuine I/O failures.
 	LoadAttemptState(ctx context.Context, taskID uuid.UUID) (state TaskAttemptState, exists bool, err error)
 
 	// LoadAttempt returns attempt number attempt of the task, locking its row
@@ -114,12 +115,13 @@ type TaskCollection interface {
 	BulkCancel(ctx context.Context, runID uuid.UUID, cancelledBy string, cancelledAt time.Time) (rowsAffected int, err error)
 }
 
-// TaskAttemptState is one task as an attempt report reads it: its status, the
-// attempt it is at, its retry budget, its node in the run's release, its
-// identity (the job name and node it was planned with) and when it was first
-// dispatched. NodeKey is empty on a task whose run names no release;
-// DispatchedAt is nil on a task that was never dispatched.
+// TaskAttemptState is one task as an attempt report reads it: the run that
+// holds it, its status, the attempt it is at, its retry budget, its node in
+// the run's release, its identity (the job name and node it was planned with)
+// and when it was first dispatched. NodeKey is empty on a task whose run names
+// no release; DispatchedAt is nil on a task that was never dispatched.
 type TaskAttemptState struct {
+	RunID        uuid.UUID
 	Status       TaskStatus
 	Attempt      int32
 	MaxRetries   int32

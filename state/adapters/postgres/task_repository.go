@@ -356,8 +356,9 @@ func (r *taskTrackerRepository) SetStatusAndAttemptTx(ctx context.Context, tx *s
 }
 
 // TaskAttemptRow is the part of a task_tracker row an attempt report reads.
-// NodeKey is empty when the row has none.
+// RunID is the row's schedule_id; NodeKey is empty when the row has none.
 type TaskAttemptRow struct {
+	RunID        uuid.UUID  `db:"schedule_id"`
 	Status       string     `db:"status"`
 	Attempt      int32      `db:"attempt"`
 	MaxRetries   int32      `db:"max_retries"`
@@ -369,15 +370,15 @@ type TaskAttemptRow struct {
 	DispatchedAt *time.Time `db:"dispatched_at"`
 }
 
-// LoadAttemptStateTx reads the status, attempt, max_retries, node_key (empty
-// when NULL), job_name, service_name, schema_name, table_name and
-// dispatched_at of the task_tracker row of taskID with FOR UPDATE, so
+// LoadAttemptStateTx reads the schedule_id, status, attempt, max_retries,
+// node_key (empty when NULL), job_name, service_name, schema_name, table_name
+// and dispatched_at of the task_tracker row of taskID with FOR UPDATE, so
 // concurrent writers of the same task serialize within their transactions. A
 // missing row yields found == false and no error.
 func (r *taskTrackerRepository) LoadAttemptStateTx(ctx context.Context, tx *sqlx.Tx, taskID uuid.UUID) (TaskAttemptRow, bool, error) {
 	var row TaskAttemptRow
 	err := tx.GetContext(ctx, &row,
-		`SELECT status, attempt, max_retries, COALESCE(node_key, '') AS node_key,
+		`SELECT schedule_id, status, attempt, max_retries, COALESCE(node_key, '') AS node_key,
 		        job_name, service_name, schema_name, table_name, dispatched_at
 		 FROM task_tracker WHERE task_id = $1 FOR UPDATE`,
 		taskID,

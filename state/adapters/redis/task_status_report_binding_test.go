@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/events"
 	"github.com/carolsimone/continuo/state/service/uow"
@@ -14,9 +15,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// A report for a task its run does not hold, or for an attempt state never
-// dispatched, is permanent, so the consumer dead-letters it at once; every
-// other handler result keeps its class.
+// A report for a run state never created, for a task its run does not hold,
+// or for an attempt state never dispatched, is permanent, so the consumer
+// dead-letters it at once; every other handler result keeps its class.
 func TestPermanentWhenNeverValid(t *testing.T) {
 	cases := map[string]struct {
 		err       error
@@ -24,6 +25,7 @@ func TestPermanentWhenNeverValid(t *testing.T) {
 	}{
 		"a task the run does not hold":  {fmt.Errorf("record attempt report: %w", run.ErrTaskNotHeld), true},
 		"an attempt state never issued": {fmt.Errorf("record attempt report: %w", run.ErrAttemptNotIssued), true},
+		"a run state never created":     {fmt.Errorf("load run: %w", postgres.ErrNotFound), true},
 		"any other failure":             {errors.New("connection reset"), false},
 		"no failure":                    {nil, false},
 	}

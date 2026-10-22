@@ -34,6 +34,7 @@ func (a *TaskCollectionAdapter) LoadAttemptState(ctx context.Context, taskID uui
 		return run.TaskAttemptState{}, true, err
 	}
 	return run.TaskAttemptState{
+		RunID:        row.RunID,
 		Status:       status,
 		Attempt:      row.Attempt,
 		MaxRetries:   row.MaxRetries,

@@ -38,8 +38,9 @@ import (
 //
 // A report for a run that has ended changes nothing: every attempt of such a
 // run has ended. The boolean result reports whether the report made the task
-// succeeded. Returns ErrTaskNotHeld when the run holds no such task, and
-// ErrAttemptNotIssued when the task has no such attempt.
+// succeeded. Returns ErrTaskNotHeld when the run holds no such task (no task
+// has the report's id, or another run holds it), before the attempt is read,
+// and ErrAttemptNotIssued when the task has no such attempt.
 func (r *Run) RecordAttemptReport(
 	ctx context.Context,
 	tasks TaskCollection,
@@ -57,6 +58,9 @@ func (r *Run) RecordAttemptReport(
 	}
 	if !exists {
 		return nil, false, ErrTaskNotHeld
+	}
+	if task.RunID != r.scheduleID {
+		return nil, false, fmt.Errorf("%w: task %s belongs to run %s", ErrTaskNotHeld, rep.TaskID, task.RunID)
 	}
 	a, held, err := tasks.LoadAttempt(ctx, rep.TaskID, rep.Attempt)
 	if err != nil {
