@@ -1,12 +1,12 @@
 import { useState } from 'react';
-import type { Task, TaskExecution, GraphEdge } from './types';
+import type { Task, TaskAttempt, GraphEdge } from './types';
 import { groupTasksByService, type ServiceGroup } from './NodesPanel';
-import { taskNodeId } from './detail-page-helpers';
+import { latestAttempt, taskNodeId } from './detail-page-helpers';
 import NodeTableBody from './NodeTableBody';
 
 interface Props {
   tasks: Task[];
-  executions: TaskExecution[];
+  attemptsByTask: Map<string, TaskAttempt[]>; // each task's attempts in attempt order
   edges: GraphEdge[]; // run graph edges, for intra-service order
   expandedServices: Set<string>;
   onServiceToggle: (service: string) => void;
@@ -25,7 +25,7 @@ function matchesFilter(status: string, filter: Filter): boolean {
 
 export default function RunNodeTable({
   tasks,
-  executions,
+  attemptsByTask,
   edges,
   expandedServices,
   onServiceToggle,
@@ -33,10 +33,9 @@ export default function RunNodeTable({
   const [filter, setFilter] = useState<Filter>('all');
   const [query, setQuery] = useState('');
 
-  const execByTaskId = new Map(executions.map((e) => [e.task_id, e]));
   const startedAt: Record<string, string | null | undefined> = {};
   for (const t of tasks) {
-    startedAt[taskNodeId(t)] = execByTaskId.get(t.task_id)?.started_at ?? null;
+    startedAt[taskNodeId(t)] = latestAttempt(attemptsByTask.get(t.task_id))?.started_at ?? null;
   }
 
   const normalizedQuery = query.trim().toLowerCase();
@@ -44,7 +43,7 @@ export default function RunNodeTable({
     (t) => matchesFilter(t.status, filter)
       && (!normalizedQuery || t.table_name.toLowerCase().includes(normalizedQuery)),
   );
-  const groups: ServiceGroup[] = groupTasksByService(filteredTasks, execByTaskId);
+  const groups: ServiceGroup[] = groupTasksByService(filteredTasks, attemptsByTask);
   const isFiltering = filter !== 'all' || normalizedQuery !== '';
 
   const runningCount = tasks.filter((t) => t.status === 'running').length;
@@ -82,7 +81,7 @@ export default function RunNodeTable({
       </div>
       <NodeTableBody
         groups={groups}
-        execByTaskId={execByTaskId}
+        attemptsByTask={attemptsByTask}
         edges={edges}
         startedAt={startedAt}
         forceExpanded={isFiltering}

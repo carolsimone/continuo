@@ -164,7 +164,7 @@ describe('DAGPanel viewport', () => {
             table_name: 'a',
             job_name: '',
             status: 'failed',
-            retry_count: 0,
+            attempt: 0,
             max_retries: 0,
             created_at: null,
           },

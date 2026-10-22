@@ -36,10 +36,9 @@ func newBuiltHarness(db *sqlx.DB) *builtHarness {
 	logger := slog.New(slog.NewTextHandler(nopWriter{}, nil))
 	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
 	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
-	execRepo := postgres.NewTaskExecutionRepository(db, logger)
 	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
 	return &builtHarness{db: db, logger: logger, factory: func() uow.UnitOfWork {
-		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, execRepo, catalogRepo, svcports.SystemClock{}, logger)
+		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, catalogRepo, svcports.SystemClock{}, logger)
 	}}
 }
 
@@ -245,7 +244,7 @@ func TestBuiltVersions(t *testing.T) {
 	t.Run("a rerun records the content hash of its source's release", func(t *testing.T) {
 		source := promoteRelease(t, db, scheduledNode("raw", "rerun_orders", "dbt-model", "built-rerun"))
 		sourceID := h.trigger(t, "built-rerun", model.OperationRun)
-		_, err := db.Exec(`UPDATE task_tracker SET status = 'failed', retry_count = 2 WHERE schedule_id = $1`, sourceID)
+		_, err := db.Exec(`UPDATE task_tracker SET status = 'failed', attempt = 2 WHERE schedule_id = $1`, sourceID)
 		require.NoError(t, err)
 		_, err = db.Exec(`UPDATE scheduler_tracker SET status = 'failed', completed_at = now() WHERE schedule_id = $1`, sourceID)
 		require.NoError(t, err)

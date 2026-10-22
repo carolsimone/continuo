@@ -20,7 +20,7 @@ func newWedgeTestUoW(t *testing.T) (*PostgresUnitOfWork, sqlmock.Sqlmock, func()
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	sqlxDB := sqlx.NewDb(db, "sqlmock")
-	u := NewPostgresUnitOfWork(sqlxDB, nil, nil, nil, nil, nil, slog.Default())
+	u := NewPostgresUnitOfWork(sqlxDB, nil, nil, nil, nil, slog.Default())
 	return u, mock, func() { _ = db.Close() }
 }
 

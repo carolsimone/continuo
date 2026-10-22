@@ -163,12 +163,20 @@ func main() {
 		return db.Close()
 	})
 
+	// state reads columns a state database not yet migrated lacks, so it
+	// refuses to start until the migration has applied; the pod restarts until
+	// it has. Nothing else has started yet.
+	if err := svchandlers.CheckSchema(ctx, postgres.NewSchemaColumns(db)); err != nil {
+		logger.Error("Refusing to start: the state database is not migrated", "error", err)
+		os.Exit(1)
+	}
+
 	// Initialize repositories
 	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
 	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
 	logger.Info("Schedule catalog repository initialized")
 	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
-	taskExecutionRepo := postgres.NewTaskExecutionRepository(db, logger)
+	taskAttemptReadRepo := postgres.NewTaskAttemptReadRepository(db)
 
 	// Initialize Redis client
 	redisClient := goredis.NewClient(&goredis.Options{
@@ -254,9 +262,9 @@ func main() {
 	// returns a fresh PostgresUnitOfWork over the same low-level repos and
 	// *sqlx.DB so concurrent message handlers do not share transaction state.
 	// The UoW builds tx-bound aggregate adapters (Run, Catalog, Outbox,
-	// TaskExecutions) per accessor call.
+	// TaskCollection) per accessor call.
 	uowFactory := func() uow.UnitOfWork {
-		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, taskExecutionRepo, catalogRepo, clk, logger)
+		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, catalogRepo, clk, logger)
 	}
 
 	// A run whose tasks state did not plan cannot move on: no status update
@@ -405,7 +413,7 @@ func main() {
 	// Initialize gRPC handlers
 	schedulerHandler := handlers.NewSchedulerHandler(schedulerRepo, activateHandler, catalogRepo, schedulesConfig, uowFactory, logger)
 	taskHandler := handlers.NewTaskHandler(taskRepo, logger)
-	taskExecutionHandler := handlers.NewTaskExecutionHandler(taskExecutionRepo, logger)
+	taskAttemptHandler := handlers.NewTaskAttemptHandler(taskAttemptReadRepo, logger)
 	rerunUC := svchandlers.NewTriggerRerunHandler(planner, logger)
 	rerunHandler := handlers.NewRerunHandler(rerunUC, uowFactory, logger)
 	rebaseUC := svchandlers.NewTriggerRebaseHandler(planner, logger)
@@ -419,7 +427,7 @@ func main() {
 	runReadHandler := handlers.NewRunReadHandler(runreads.New(runReadRepo), logger)
 
 	// Create gRPC server
-	grpcServer, err := grpcserver.NewServer(cfg.GRPCPort, schedulerHandler, taskHandler, taskExecutionHandler, rerunHandler, singleNodeRunHandler, rebaseHandler, previewRebaseHandler, nodeRunHandler, runReadHandler, logger, cfg.Maintenance)
+	grpcServer, err := grpcserver.NewServer(cfg.GRPCPort, schedulerHandler, taskHandler, taskAttemptHandler, rerunHandler, singleNodeRunHandler, rebaseHandler, previewRebaseHandler, nodeRunHandler, runReadHandler, logger, cfg.Maintenance)
 	if err != nil {
 		logger.Error("Failed to create gRPC server", "error", err)
 		os.Exit(1)

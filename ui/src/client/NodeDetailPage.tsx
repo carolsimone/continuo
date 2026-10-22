@@ -69,7 +69,7 @@ function NodeRunRow({ run: r }: { run: NodeRun }) {
           </div>
         )}
       </td>
-      <td>{r.retry_count + 1}</td>
+      <td>{r.attempt + 1}</td>
       <td>{formatDuration(durationSec(r))}</td>
       <td><code>{r.image_tag || '—'}</code></td>
       <td>

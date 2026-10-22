@@ -20,8 +20,8 @@ import (
 // MessageProcessingRepo returns a fresh repo bound to the current tx (or
 // the autocommit DB if no tx is active), mirroring orchestrator's pattern.
 //
-// The aggregate-level accessors (Run, Catalog, Outbox, TaskCollection, Clock,
-// TaskExecutions) are used by handlers that operate on domain aggregates.
+// The aggregate-level accessors (Run, Catalog, Outbox, TaskCollection, Clock)
+// are used by handlers that operate on domain aggregates.
 // Topology serves the promoted-topology tables and the live-release pointer;
 // Materializations serves the record of what each node last loaded; TaskGraph
 // serves a run's ready candidates and pending descendants.
@@ -34,7 +34,6 @@ type UnitOfWork interface {
 	Outbox() ports.OutboxPublisher
 	TaskCollection() run.TaskCollection
 	Clock() ports.Clock
-	TaskExecutions() repository.TaskExecutionWriter
 	Topology() repository.TopologyRepository
 	Materializations() repository.MaterializationRepository
 	// TaskGraph reads how the tasks of a run of tenantID connect over the

@@ -144,9 +144,12 @@ service StateService {
   // under (0 when it names no release).
   rpc ListActiveRunDrifts(ListActiveRunDriftsRequest) returns (ListActiveRunDriftsResponse);
 
-  // TaskExecution operations
-  rpc GetTaskExecution(GetTaskExecutionRequest) returns (TaskExecutionResponse);
-  rpc ListTaskExecutions(ListTaskExecutionsRequest) returns (ListTaskExecutionsResponse);
+  // ListTaskAttempts returns one page of a run's task attempts, or of one of
+  // its tasks when task_id is set, ordered by task_id then attempt.
+  // page_size is clamped to [1, 200], 0 meaning 50; a negative page_offset is
+  // 0. total_count counts every attempt the filter matches. An empty or
+  // malformed run_id, or a malformed task_id, is INVALID_ARGUMENT.
+  rpc ListTaskAttempts(ListTaskAttemptsRequest) returns (ListTaskAttemptsResponse);
 }
 
 // ============================================================================
@@ -200,27 +203,32 @@ message Task {
   string table_name = 6;
   string job_name = 7;  // K8s job identifier (computed from service-schema-table)
   TaskStatus status = 8;
-  int32 retry_count = 9;
+  int32 attempt = 9;  // 0-based number of the task's current attempt
   int32 max_retries = 10;
   google.protobuf.Timestamp cancelled_at = 11;
   string cancelled_by = 12;
 }
 
-message TaskExecution {
-  string id = 1;
-  string task_id = 2;
-  google.protobuf.Timestamp created_at = 3;
-  google.protobuf.Timestamp started_at = 4;
-  google.protobuf.Timestamp completed_at = 5;
-  double execution_time_seconds = 6;
-  string executor_id = 7;
-  string k8s_job_name = 8;
-  string error_message = 9;
-  google.protobuf.Timestamp cancelled_at = 10;
-  string cancelled_by = 11;
-  string cancellation_reason = 12;
-  string log_s3_key = 13;              // S3 object key for full pod log; empty if upload failed
-  string run_results_uri = 14;         // S3 object key for the structured result block; empty when the container emitted none
+// TaskAttempt is one attempt of a task: one dispatch of its Kubernetes Job.
+message TaskAttempt {
+  string task_id = 1;
+  int32 attempt = 2;                              // 0-based attempt number
+  string job_name = 3;                            // Kubernetes Job of this attempt
+  string status = 4;                              // dispatched | queued | running | succeeded | failed | cancelled
+  string failure_class = 5;                       // why the attempt failed; "" unless failed
+  string failure_reason = 6;                      // the specific failure within failure_class; "" unless failed
+  // exit_code is the container's exit code, 0 when unknown: a 0 is a clean
+  // exit only for a succeeded attempt, so read it together with status and
+  // failure_reason.
+  int32 exit_code = 7;
+  google.protobuf.Timestamp dispatched_at = 8;    // when state dispatched the attempt
+  google.protobuf.Timestamp queued_at = 9;        // unset until reported
+  google.protobuf.Timestamp started_at = 10;      // unset until reported
+  google.protobuf.Timestamp finished_at = 11;     // unset until the attempt finished
+  double execution_seconds = 12;                  // 0 until recorded
+  string error_message = 13;                      // "" when none
+  string log_s3_key = 14;                         // S3 object key of the pod log; "" when none
+  string run_results_uri = 15;                    // S3 object key of the structured result block; "" when none
 }
 
 // ============================================================================
@@ -273,32 +281,19 @@ message TaskResponse {
 }
 
 // ============================================================================
-// TASK EXECUTION REQUESTS/RESPONSES
+// TASK ATTEMPT REQUESTS/RESPONSES
 // ============================================================================
 
-message GetTaskExecutionRequest {
-  string id = 1;                                    // Required: execution ID
+message ListTaskAttemptsRequest {
+  string run_id = 1;       // Required
+  string task_id = 2;      // Optional: "" lists every task of the run
+  int32  page_size = 3;    // Clamped to [1, 200]; 0 means 50
+  int32  page_offset = 4;  // Negative values are treated as 0
 }
 
-message TaskExecutionResponse {
-  TaskExecution task_execution = 1;
-}
-
-// ============================================================================
-// LIST TASK EXECUTIONS BY SCHEDULE
-// ============================================================================
-
-message ListTaskExecutionsRequest {
-  string schedule_id = 1;  // Required
-  // page_size bounds the rows returned. Server clamps to [1, 200]; 0 (unset)
-  // defaults to 50.
-  int32  page_size   = 2;
-  int32  page_offset = 3;  // Negative values are treated as 0.
-}
-
-message ListTaskExecutionsResponse {
-  repeated TaskExecution task_executions = 1;
-  int32 total_count = 2;
+message ListTaskAttemptsResponse {
+  repeated TaskAttempt attempts = 1;
+  int32 total_count = 2;   // attempts matching the filter, ignoring paging
 }
 
 // ============================================================================
@@ -464,7 +459,7 @@ message NodeRun {
   string terminal_status  = 4;  // "" while in flight
   string task_id          = 5;
   string task_status      = 6;  // pending | running | succeeded | failed | cancelled
-  int32  retry_count      = 7;
+  int32  attempt          = 7;  // 0-based number of the task's current attempt
   string image_tag        = 8;
   reserved 9;
   reserved "manifest_version";
@@ -476,6 +471,8 @@ message NodeRun {
   string operation        = 15; // run | test | build | full_refresh
   string run_results_uri  = 16; // "" when none
   string content_hash     = 17; // node's content hash in the run's release; "" when the run names no release
+  string failure_class    = 18; // why the latest attempt failed; "" unless it failed
+  string failure_reason   = 19; // the specific failure within failure_class; "" unless it failed
 }
 
 message ListNodesRequest {
@@ -499,7 +496,7 @@ message NodeSummary {
   int32  success_rate_pct = 5;   // -1 when no terminal runs in window
   int32  avg_duration_sec = 6;   // -1 when no measurable run
   int32  p95_duration_sec = 7;   // -1 when no measurable run
-  int32  flaky_rate_pct   = 8;   // % of window runs with retry_count > 0; 0 when none
+  int32  flaky_rate_pct   = 8;   // % of window runs with attempt > 0; 0 when none
   string last_status      = 9;   // succeeded|failed|running|cancelled|pending
   string last_run_at      = 10;  // RFC3339 of the most recent run's created_at
   string operation        = 11;  // run | test | build

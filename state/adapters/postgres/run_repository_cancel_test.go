@@ -78,10 +78,15 @@ func TestRunRepositoryAdapter_SaveRun_CancelPersistsAggregateInstant(t *testing.
 	}
 }
 
-// noopCancelTaskCollection is a TaskCollection whose BulkCancel is a no-op;
-// only BulkCancel is invoked by run.Cancel in this test.
+// noopCancelTaskCollection is a TaskCollection whose BulkCancel and
+// CancelOpenAttempts are no-ops; only those are invoked by run.Cancel in this
+// test.
 type noopCancelTaskCollection struct{ run.TaskCollection }
 
 func (n *noopCancelTaskCollection) BulkCancel(_ context.Context, _ uuid.UUID, _ string, _ time.Time) (int, error) {
+	return 0, nil
+}
+
+func (n *noopCancelTaskCollection) CancelOpenAttempts(_ context.Context, _ uuid.UUID) (int, error) {
 	return 0, nil
 }

@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"testing"
@@ -748,6 +749,48 @@ type cancelFakeTaskCollection struct {
 	bulkCancelCalled bool
 	bulkCancelN      int
 	bulkCancelErr    error
+
+	// attemptRows holds the stored attempts; cancelledRuns the runs
+	// CancelOpenAttempts was called for; lockOrder the LoadAttemptState
+	// ("task <id>") and LoadAttempt ("attempt <id>/<n>") calls in call order.
+	attemptRows   map[cancelAttemptKey]run.Attempt
+	cancelledRuns []uuid.UUID
+	lockOrder     []string
+}
+
+// cancelAttemptKey identifies one stored attempt.
+type cancelAttemptKey struct {
+	task    uuid.UUID
+	attempt int32
+}
+
+func (f *cancelFakeTaskCollection) LoadAttempt(_ context.Context, id uuid.UUID, attempt int32) (run.Attempt, bool, error) {
+	f.lockOrder = append(f.lockOrder, fmt.Sprintf("attempt %s/%d", id, attempt))
+	a, ok := f.attemptRows[cancelAttemptKey{id, attempt}]
+	return a, ok, nil
+}
+func (f *cancelFakeTaskCollection) SaveAttempt(_ context.Context, a run.Attempt) error {
+	if f.attemptRows == nil {
+		f.attemptRows = map[cancelAttemptKey]run.Attempt{}
+	}
+	f.attemptRows[cancelAttemptKey{a.TaskID, a.Number}] = a
+	return nil
+}
+
+// CancelOpenAttempts cancels every open attempt the fake holds and records the
+// run it was called for.
+func (f *cancelFakeTaskCollection) CancelOpenAttempts(_ context.Context, runID uuid.UUID) (int, error) {
+	f.cancelledRuns = append(f.cancelledRuns, runID)
+	n := 0
+	for k, a := range f.attemptRows {
+		if a.Status.IsFinal() {
+			continue
+		}
+		a.Status = run.AttemptCancelled
+		f.attemptRows[k] = a
+		n++
+	}
+	return n, nil
 }
 
 func (f *cancelFakeTaskCollection) BulkCancel(_ context.Context, _ uuid.UUID, _ string, _ time.Time) (int, error) {

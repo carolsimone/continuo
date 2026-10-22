@@ -22,7 +22,7 @@ type Server struct {
 	logger               *slog.Logger
 	schedulerHandler     *handlers.SchedulerHandler
 	taskHandler          *handlers.TaskHandler
-	taskExecutionHandler *handlers.TaskExecutionHandler
+	taskAttemptHandler   *handlers.TaskAttemptHandler
 	rerunHandler         *handlers.RerunHandler
 	singleNodeRunHandler *handlers.SingleNodeRunHandler
 	rebaseHandler        *handlers.RebaseHandler
@@ -47,7 +47,7 @@ func NewServer(
 	port int,
 	schedulerHandler *handlers.SchedulerHandler,
 	taskHandler *handlers.TaskHandler,
-	taskExecutionHandler *handlers.TaskExecutionHandler,
+	taskAttemptHandler *handlers.TaskAttemptHandler,
 	rerunHandler *handlers.RerunHandler,
 	singleNodeRunHandler *handlers.SingleNodeRunHandler,
 	rebaseHandler *handlers.RebaseHandler,
@@ -80,7 +80,7 @@ func NewServer(
 		logger:               logger,
 		schedulerHandler:     schedulerHandler,
 		taskHandler:          taskHandler,
-		taskExecutionHandler: taskExecutionHandler,
+		taskAttemptHandler:   taskAttemptHandler,
 		rerunHandler:         rerunHandler,
 		singleNodeRunHandler: singleNodeRunHandler,
 		rebaseHandler:        rebaseHandler,
@@ -177,14 +177,9 @@ func (s *Server) GetSchedulerInitStatus(ctx context.Context, req *statev1.GetSch
 	return s.schedulerHandler.GetSchedulerInitStatus(ctx, req)
 }
 
-// GetTaskExecution delegates to task execution handler
-func (s *Server) GetTaskExecution(ctx context.Context, req *statev1.GetTaskExecutionRequest) (*statev1.TaskExecutionResponse, error) {
-	return s.taskExecutionHandler.GetTaskExecution(ctx, req)
-}
-
-// ListTaskExecutions delegates to task execution handler
-func (s *Server) ListTaskExecutions(ctx context.Context, req *statev1.ListTaskExecutionsRequest) (*statev1.ListTaskExecutionsResponse, error) {
-	return s.taskExecutionHandler.ListTaskExecutions(ctx, req)
+// ListTaskAttempts delegates to the task attempt handler
+func (s *Server) ListTaskAttempts(ctx context.Context, req *statev1.ListTaskAttemptsRequest) (*statev1.ListTaskAttemptsResponse, error) {
+	return s.taskAttemptHandler.ListTaskAttempts(ctx, req)
 }
 
 // TriggerRerun delegates to rerun handler

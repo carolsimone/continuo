@@ -68,7 +68,7 @@ type TaskTracker struct {
 	TableName           string         `json:"table_name" db:"table_name"`
 	JobName             string         `json:"job_name" db:"job_name"`
 	Status              run.TaskStatus `json:"status" db:"status"`
-	RetryCount          int            `json:"retry_count" db:"retry_count"`
+	Attempt             int            `json:"attempt" db:"attempt"`
 	MaxRetries          int            `json:"max_retries" db:"max_retries"`
 	CancelledAt         *time.Time     `json:"cancelled_at,omitempty" db:"cancelled_at"`
 	CancelledBy         *string        `json:"cancelled_by,omitempty" db:"cancelled_by"`
@@ -79,24 +79,27 @@ type TaskTracker struct {
 	DispatchedAt        *time.Time     `json:"dispatched_at,omitempty" db:"dispatched_at"`
 }
 
-// TaskExecution is the storage row carrier for the task_execution table.
-// It mirrors the table schema one-to-one and is used exclusively within this
-// package by the repository implementations.
-type TaskExecution struct {
-	ID                   uuid.UUID  `json:"id" db:"id"`
-	TaskID               uuid.UUID  `json:"task_id" db:"task_id"`
-	CreatedAt            time.Time  `json:"created_at" db:"created_at"`
-	StartedAt            *time.Time `json:"started_at,omitempty" db:"started_at"`
-	CompletedAt          *time.Time `json:"completed_at,omitempty" db:"completed_at"`
-	ExecutionTimeSeconds *float64   `json:"execution_time_seconds,omitempty" db:"execution_time_seconds"`
-	ExecutorID           *string    `json:"executor_id,omitempty" db:"executor_id"`
-	K8sJobName           *string    `json:"k8s_job_name,omitempty" db:"k8s_job_name"`
-	ErrorMessage         *string    `json:"error_message,omitempty" db:"error_message"`
-	CancelledAt          *time.Time `json:"cancelled_at,omitempty" db:"cancelled_at"`
-	CancelledBy          *string    `json:"cancelled_by,omitempty" db:"cancelled_by"`
-	CancellationReason   *string    `json:"cancellation_reason,omitempty" db:"cancellation_reason"`
-	LogS3Key             *string    `json:"log_s3_key,omitempty" db:"log_s3_key"`
-	RunResultsURI        *string    `json:"run_results_uri,omitempty" db:"run_results_uri"`
-	ParseCache           *string    `json:"parse_cache,omitempty" db:"parse_cache"`
-	ParseCacheReason     *string    `json:"parse_cache_reason,omitempty" db:"parse_cache_reason"`
+// taskAttemptRow is the storage row carrier for the task_attempts table. It
+// mirrors the columns attempts read and write, one-to-one. It leaves out the
+// scheduling columns (next_check_at, checks_sent), which nothing sets: state
+// only clears next_check_at, when saveAttempt saves a final status and when
+// cancelOpenAttempts cancels an attempt.
+type taskAttemptRow struct {
+	TaskID           uuid.UUID  `db:"task_id"`
+	Attempt          int32      `db:"attempt"`
+	JobName          string     `db:"job_name"`
+	Status           string     `db:"status"`
+	FailureClass     *string    `db:"failure_class"`
+	FailureReason    *string    `db:"failure_reason"`
+	DispatchedAt     time.Time  `db:"dispatched_at"`
+	QueuedAt         *time.Time `db:"queued_at"`
+	StartedAt        *time.Time `db:"started_at"`
+	FinishedAt       *time.Time `db:"finished_at"`
+	ExecutionSeconds *float64   `db:"execution_seconds"`
+	ExitCode         *int32     `db:"exit_code"`
+	ErrorMessage     *string    `db:"error_message"`
+	LogS3Key         *string    `db:"log_s3_key"`
+	RunResultsURI    *string    `db:"run_results_uri"`
+	ParseCache       *string    `db:"parse_cache"`
+	ParseCacheReason *string    `db:"parse_cache_reason"`
 }

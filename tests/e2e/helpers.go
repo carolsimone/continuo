@@ -162,11 +162,12 @@ func pollUntil(
 	}
 }
 
-// waitForParseCache polls state's task_execution rows for the given
-// schedule's latest execution until parse_cache equals want ("hydrated" or
-// "degraded"). task_execution has no schedule_id column of its own — it joins
-// through task_tracker (task_execution.task_id -> task_tracker.task_id ->
-// task_tracker.schedule_id) to scope the query to a single triggered run.
+// waitForParseCache polls state's task_attempts rows for the given
+// schedule's most recently reported attempt until parse_cache equals want
+// ("hydrated" or "degraded"). task_attempts has no schedule_id column of its
+// own — it joins through task_tracker (task_attempts.task_id ->
+// task_tracker.task_id -> task_tracker.schedule_id) to scope the query to a
+// single triggered run.
 // parse_cache_reason (only ever populated alongside "degraded") is polled
 // alongside parse_cache and logged on every change and in the timeout failure
 // message, so a degrade's cause is visible in CI output without a manual DB
@@ -193,15 +194,15 @@ func waitForParseCache(t *testing.T, ctx context.Context, db *sqlx.DB, scheduleI
 		case <-ticker.C:
 			var got, reason sql.NullString
 			err := db.QueryRowx(`
-				SELECT te.parse_cache, te.parse_cache_reason
-				  FROM task_execution te
-				  JOIN task_tracker t ON t.task_id = te.task_id
+				SELECT a.parse_cache, a.parse_cache_reason
+				  FROM task_attempts a
+				  JOIN task_tracker t ON t.task_id = a.task_id
 				 WHERE t.schedule_id = $1
-				 ORDER BY te.created_at DESC
+				 ORDER BY a.last_report_at DESC NULLS LAST
 				 LIMIT 1`, scheduleID).Scan(&got, &reason)
 			if err != nil {
 				if err == sql.ErrNoRows {
-					// No task_execution row written yet — keep polling.
+					// No task_attempts row written yet — keep polling.
 					continue
 				}
 				t.Logf("Poll condition error (will retry): %v", err)

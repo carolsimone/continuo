@@ -49,14 +49,14 @@ func NewTaskStatusUpdatedBinding(
 	})
 }
 
-// permanentWhenTaskNotHeld wraps handle so that a status for a task its run
-// does not hold (run.ErrTaskNotHeld) is permanent: a run's tasks are stored in
-// the transaction that creates it, before any is dispatched, so a redelivery
-// can never find the task, and the consumer dead-letters the message at once.
-func permanentWhenTaskNotHeld(
-	handle func(context.Context, uow.UnitOfWork, events.TaskStatusUpdated, uuid.UUID) error,
-) func(context.Context, uow.UnitOfWork, events.TaskStatusUpdated, uuid.UUID) error {
-	return func(ctx context.Context, u uow.UnitOfWork, evt events.TaskStatusUpdated, msgProcID uuid.UUID) error {
+// permanentWhenTaskNotHeld wraps handle so that a report for a task no run
+// holds (run.ErrTaskNotHeld) is permanent: a run's tasks are stored in the
+// transaction that creates it, before any is dispatched, so a redelivery can
+// never find the task, and the consumer dead-letters the message at once.
+func permanentWhenTaskNotHeld[E any](
+	handle func(context.Context, uow.UnitOfWork, E, uuid.UUID) error,
+) func(context.Context, uow.UnitOfWork, E, uuid.UUID) error {
+	return func(ctx context.Context, u uow.UnitOfWork, evt E, msgProcID uuid.UUID) error {
 		err := handle(ctx, u, evt, msgProcID)
 		if errors.Is(err, run.ErrTaskNotHeld) {
 			return fmt.Errorf("%w: %w", pkgevents.ErrPermanent, err)

@@ -40,10 +40,9 @@ func setupRerunFixture(t *testing.T) *rerunFixture {
 	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
 	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
 	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
-	taskExecutionRepo := postgres.NewTaskExecutionRepository(db, logger)
 	clk := ports.SystemClock{}
 	factory := func() uow.UnitOfWork {
-		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, taskExecutionRepo, catalogRepo, clk, logger)
+		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, catalogRepo, clk, logger)
 	}
 	tenant := fixtureTenant(t, db)
 	useCase := svchandlers.NewTriggerRerunHandler(runstart.Planner{TenantID: tenant}, logger)

@@ -1,12 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
+  attemptClassReason,
+  attemptPillClass,
+  attemptWaitSeconds,
+  formatAttemptSeconds,
+  groupAttemptsByTask,
   headerDriftLabel,
   parseNodeId,
   resolveActiveGraph,
   resolveNodeStatus,
   toScheduleGraph,
 } from '../../src/client/detail-page-helpers';
-import { GraphNode, RunGraph, ScheduleGraph, Task } from '../../src/client/types';
+import { GraphNode, RunGraph, ScheduleGraph, Task, TaskAttempt } from '../../src/client/types';
 
 describe('detail page graph helpers', () => {
   it('converts a run graph into a schedule graph payload', () => {
@@ -116,7 +121,7 @@ describe('detail page graph helpers', () => {
       table_name: 'orders',
       job_name: '',
       status: 'running',
-      retry_count: 0,
+      attempt: 0,
       max_retries: 0,
       created_at: null,
     };
@@ -153,5 +158,78 @@ describe('detail page graph helpers', () => {
   it('returns null when there is no drift to display', () => {
     expect(headerDriftLabel({ mode: 'run', driftLabel: null })).toBeNull();
     expect(headerDriftLabel({ mode: 'latest', driftLabel: null })).toBeNull();
+  });
+});
+
+function attempt(task_id: string, n: number, overrides: Partial<TaskAttempt> = {}): TaskAttempt {
+  return {
+    task_id, attempt: n, job_name: `${task_id}-${n}`, status: 'succeeded',
+    failure_class: null, failure_reason: null,
+    dispatched_at: null, queued_at: null, started_at: null, finished_at: null,
+    execution_seconds: null, error_message: null, log_s3_key: null, run_results_uri: null,
+    ...overrides,
+  };
+}
+
+describe('task attempt helpers', () => {
+  it('groups attempts per task in attempt order', () => {
+    const grouped = groupAttemptsByTask([
+      attempt('b', 0), attempt('a', 1), attempt('a', 0), attempt('a', 2),
+    ]);
+    expect([...grouped.keys()].sort()).toEqual(['a', 'b']);
+    expect(grouped.get('a')!.map(a => a.attempt)).toEqual([0, 1, 2]);
+    expect(grouped.get('b')!.map(a => a.attempt)).toEqual([0]);
+  });
+
+  it('keeps one row per (task, attempt) when a page boundary repeats a row', () => {
+    // Offset paging over a set that grows between two page reads shifts every
+    // later row down by one, so the last row of one page comes back as the
+    // first row of the next. The later copy is the fresher read and wins.
+    const grouped = groupAttemptsByTask([
+      attempt('a', 0, { status: 'running' }),
+      attempt('a', 0, { status: 'failed' }),
+      attempt('a', 1, { status: 'running' }),
+    ]);
+    expect(grouped.get('a')!.map(a => [a.attempt, a.status])).toEqual([[0, 'failed'], [1, 'running']]);
+  });
+
+  it('gives dispatched and queued attempts the pending pill and every other status its own', () => {
+    expect(attemptPillClass('dispatched')).toBe('pill-sm--pending');
+    expect(attemptPillClass('queued')).toBe('pill-sm--pending');
+    expect(attemptPillClass('running')).toBe('pill-sm--running');
+    expect(attemptPillClass('succeeded')).toBe('pill-sm--succeeded');
+    expect(attemptPillClass('failed')).toBe('pill-sm--failed');
+    expect(attemptPillClass('cancelled')).toBe('pill-sm--cancelled');
+  });
+
+  it('joins class and reason, shows either alone, and a dash when both are absent', () => {
+    expect(attemptClassReason(attempt('a', 0, { failure_class: 'user_code', failure_reason: 'compile_error' })))
+      .toBe('user_code · compile_error');
+    expect(attemptClassReason(attempt('a', 0, { failure_class: 'infra' }))).toBe('infra');
+    expect(attemptClassReason(attempt('a', 0, { failure_reason: 'oom' }))).toBe('oom');
+    expect(attemptClassReason(attempt('a', 0))).toBe('—');
+  });
+
+  it('measures the wait from queued to started, null when either is missing', () => {
+    expect(attemptWaitSeconds(attempt('a', 0, {
+      queued_at: '2026-01-01T10:00:00Z', started_at: '2026-01-01T10:01:05Z',
+    }))).toBe(65);
+    expect(attemptWaitSeconds(attempt('a', 0, { queued_at: '2026-01-01T10:00:00Z' }))).toBeNull();
+    expect(attemptWaitSeconds(attempt('a', 0, { started_at: '2026-01-01T10:00:00Z' }))).toBeNull();
+  });
+
+  it('reads a start stamped before its queue time as no wait', () => {
+    // queued_at and started_at are separate status reports, stamped by
+    // separate clocks; a start a few milliseconds "before" the queue time is
+    // clock skew, not a negative wait.
+    expect(attemptWaitSeconds(attempt('a', 0, {
+      queued_at: '2026-01-01T10:00:00.050Z', started_at: '2026-01-01T10:00:00.010Z',
+    }))).toBe(0);
+  });
+
+  it('formats fractional seconds as whole seconds', () => {
+    expect(formatAttemptSeconds(75.3)).toBe('1m 15s');
+    expect(formatAttemptSeconds(19.5)).toBe('20s');
+    expect(formatAttemptSeconds(null)).toBe('—');
   });
 });

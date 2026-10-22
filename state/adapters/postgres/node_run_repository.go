@@ -1,7 +1,7 @@
 // Package postgres provides PostgreSQL-backed repository implementations.
 //
 // NodeRunRepository is the read-only audit projection of the per-node history
-// surface. It joins scheduler_tracker × task_tracker × task_execution filtered
+// surface. It joins scheduler_tracker × task_tracker × task_attempts filtered
 // by node identity and emits a flat NodeRun row per task instance.
 //
 // Why a separate repo (not a method on TaskTrackerRepository):
@@ -53,11 +53,12 @@ func NewNodeRunRepository(db *sqlx.DB, logger *slog.Logger) NodeRunRepository {
 //
 // Each row carries:
 //   - run-level: run_id, schedule_name, kind, terminal_status
-//   - task-level: task_status, retry_count, image_tag
-//   - exec-level (latest execution per task): started_at, completed_at,
-//     error_message, log_s3_key, run_results_uri
+//   - task-level: task_status, attempt, image_tag
+//   - attempt-level (latest attempt per task): started_at, completed_at
+//     (the attempt's finished_at), error_message, log_s3_key, run_results_uri,
+//     failure_class, failure_reason
 //
-// Tasks with no execution row yield rows with nil timings.
+// Tasks with no attempt row yield rows with nil timings.
 // limit is clamped to (0, 50]; non-positive or oversized values default to 50.
 // operation defaults to "run" when empty; the run dimension includes
 // full_refresh tasks, since a full refresh materializes the node just as a
@@ -77,20 +78,22 @@ func (r *nodeRunRepository) List(
 	const query = `
 		WITH target_tasks AS (
 			SELECT t.task_id, t.schedule_id, t.status AS task_status,
-			       t.retry_count, t.image_tag, t.operation, t.node_key
+			       t.attempt, t.image_tag, t.operation, t.node_key
 			FROM task_tracker t
 			WHERE t.service_name = $1
 			  AND t.schema_name  = $2
 			  AND t.table_name   = $3
 			  AND (t.operation = $4 OR ($4 = 'run' AND t.operation = 'full_refresh'))
 		),
-		latest_exec AS (
-			SELECT DISTINCT ON (te.task_id)
-			       te.task_id, te.started_at, te.completed_at,
-			       te.error_message, te.log_s3_key, te.run_results_uri
-			FROM task_execution te
-			JOIN target_tasks tt ON tt.task_id = te.task_id
-			ORDER BY te.task_id, te.created_at DESC
+		-- latest attempt per task; DISTINCT ON is satisfied by task_attempts_pkey
+		latest_attempt AS (
+			SELECT DISTINCT ON (a.task_id)
+			       a.task_id, a.started_at, a.finished_at AS completed_at,
+			       a.error_message, a.log_s3_key, a.run_results_uri,
+			       a.failure_class, a.failure_reason
+			FROM task_attempts a
+			JOIN target_tasks tt ON tt.task_id = a.task_id
+			ORDER BY a.task_id, a.attempt DESC
 		)
 		SELECT s.schedule_id        AS run_id,
 		       s.schedule_name      AS schedule_name,
@@ -98,7 +101,7 @@ func (r *nodeRunRepository) List(
 		       s.status             AS terminal_status,
 		       tt.task_id           AS task_id,
 		       tt.task_status       AS task_status,
-		       tt.retry_count       AS retry_count,
+		       tt.attempt           AS attempt,
 		       tt.image_tag         AS image_tag,
 		       s.created_at         AS created_at,
 		       le.started_at        AS started_at,
@@ -106,11 +109,13 @@ func (r *nodeRunRepository) List(
 		       le.error_message     AS error_message,
 		       le.log_s3_key        AS log_s3_key,
 		       le.run_results_uri   AS run_results_uri,
+		       le.failure_class     AS failure_class,
+		       le.failure_reason    AS failure_reason,
 		       tt.operation         AS operation,
 		       COALESCE(n.content_hash, '') AS content_hash
 		FROM target_tasks tt
 		JOIN scheduler_tracker s ON s.schedule_id = tt.schedule_id
-		LEFT JOIN latest_exec le ON le.task_id = tt.task_id
+		LEFT JOIN latest_attempt le ON le.task_id = tt.task_id
 		LEFT JOIN topology_nodes n
 		  ON n.tenant_id = $6 AND n.release_id = s.release_id AND n.node_key = tt.node_key
 		ORDER BY s.created_at DESC
@@ -142,7 +147,7 @@ type nodeRunRow struct {
 	TerminalStatus string         `db:"terminal_status"`
 	TaskID         uuid.UUID      `db:"task_id"`
 	TaskStatus     run.TaskStatus `db:"task_status"`
-	RetryCount     int            `db:"retry_count"`
+	Attempt        int            `db:"attempt"`
 	ImageTag       string         `db:"image_tag"`
 	CreatedAt      time.Time      `db:"created_at"`
 	StartedAt      *time.Time     `db:"started_at"`
@@ -150,6 +155,8 @@ type nodeRunRow struct {
 	ErrorMessage   *string        `db:"error_message"`
 	LogS3Key       *string        `db:"log_s3_key"`
 	RunResultsURI  *string        `db:"run_results_uri"`
+	FailureClass   *string        `db:"failure_class"`
+	FailureReason  *string        `db:"failure_reason"`
 	Operation      string         `db:"operation"`
 	ContentHash    string         `db:"content_hash"`
 }
@@ -162,7 +169,7 @@ func toNodeRun(row nodeRunRow) *projection.NodeRun {
 		TerminalStatus: row.TerminalStatus,
 		TaskID:         row.TaskID,
 		TaskStatus:     row.TaskStatus,
-		RetryCount:     row.RetryCount,
+		Attempt:        row.Attempt,
 		ImageTag:       row.ImageTag,
 		CreatedAt:      row.CreatedAt,
 		StartedAt:      row.StartedAt,
@@ -170,6 +177,8 @@ func toNodeRun(row nodeRunRow) *projection.NodeRun {
 		ErrorMessage:   row.ErrorMessage,
 		LogS3Key:       row.LogS3Key,
 		RunResultsURI:  row.RunResultsURI,
+		FailureClass:   row.FailureClass,
+		FailureReason:  row.FailureReason,
 		Operation:      row.Operation,
 		ContentHash:    row.ContentHash,
 	}
@@ -234,7 +243,7 @@ func (r *nodeRunRepository) ListNodes(
 	const rankedWindowedCTE = `
 		WITH ranked AS (
 			SELECT t.task_id, t.service_name, t.schema_name, t.table_name,
-			       t.retry_count, t.status AS run_status, s.created_at,
+			       t.attempt, t.status AS run_status, s.created_at,
 			       CASE WHEN t.operation = 'full_refresh' THEN 'run' ELSE t.operation END AS operation,
 			       ROW_NUMBER() OVER (
 			         PARTITION BY t.service_name, t.schema_name, t.table_name
@@ -252,13 +261,15 @@ func (r *nodeRunRepository) ListNodes(
 	// paging, so each returned row carries the true match count and a single
 	// scan covers both the page and the total.
 	pageQuery := rankedWindowedCTE + `,
-		-- latest execution per task; DISTINCT ON is satisfied by idx_task_execution_task_id
-		latest_exec AS (
-			SELECT DISTINCT ON (te.task_id)
-			       te.task_id, te.started_at, te.completed_at
-			FROM task_execution te
-			JOIN windowed w ON w.task_id = te.task_id
-			ORDER BY te.task_id, te.created_at DESC
+		-- each windowed task's succeeded attempt, probed through task_attempts_pkey;
+		-- only a succeeded attempt contributes a duration
+		succeeded_attempt AS (
+			SELECT DISTINCT ON (a.task_id)
+			       a.task_id, a.started_at, a.finished_at
+			FROM task_attempts a
+			JOIN windowed w ON w.task_id = a.task_id
+			WHERE a.status = 'succeeded'
+			ORDER BY a.task_id, a.attempt DESC
 		),
 		agg AS (
 			SELECT
@@ -266,18 +277,18 @@ func (r *nodeRunRepository) ListNodes(
 			  COUNT(*) AS run_count,
 			  COUNT(*) FILTER (WHERE w.run_status IN ('succeeded','failed','cancelled','skipped')) AS terminal_count,
 			  COUNT(*) FILTER (WHERE w.run_status = 'succeeded') AS succeeded_count,
-			  AVG(EXTRACT(EPOCH FROM (le.completed_at - le.started_at)))
-			     FILTER (WHERE le.completed_at IS NOT NULL AND le.started_at IS NOT NULL) AS avg_dur,
+			  AVG(EXTRACT(EPOCH FROM (sa.finished_at - sa.started_at)))
+			     FILTER (WHERE sa.finished_at IS NOT NULL AND sa.started_at IS NOT NULL) AS avg_dur,
 			  PERCENTILE_CONT(0.95) WITHIN GROUP (
-			     ORDER BY EXTRACT(EPOCH FROM (le.completed_at - le.started_at)))
-			     FILTER (WHERE le.completed_at IS NOT NULL AND le.started_at IS NOT NULL) AS p95_dur,
-			  COUNT(*) FILTER (WHERE w.retry_count > 0) AS flaky_count,
+			     ORDER BY EXTRACT(EPOCH FROM (sa.finished_at - sa.started_at)))
+			     FILTER (WHERE sa.finished_at IS NOT NULL AND sa.started_at IS NOT NULL) AS p95_dur,
+			  COUNT(*) FILTER (WHERE w.attempt > 0) AS flaky_count,
 			  -- [1] = most-recent run_status
 			  (ARRAY_AGG(w.run_status ORDER BY w.created_at DESC))[1] AS last_status,
 			  MAX(w.created_at) AS last_run_at,
 			  w.operation
 			FROM windowed w
-			LEFT JOIN latest_exec le ON le.task_id = w.task_id
+			LEFT JOIN succeeded_attempt sa ON sa.task_id = w.task_id
 			GROUP BY w.service_name, w.schema_name, w.table_name, w.operation
 		)
 		SELECT service_name, schema_name, table_name, run_count, terminal_count,

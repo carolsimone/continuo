@@ -10,14 +10,13 @@ import (
 )
 
 // NodeRun is one row in a node's execution history — the audit-loud projection
-// of a (scheduler_tracker × task_tracker × task_execution) join filtered by
+// of a (scheduler_tracker × task_tracker × task_attempts) join filtered by
 // node identity (service_name, schema_name, table_name). Returned by the
 // ListNodeRuns gRPC method.
 //
-// One NodeRun corresponds to one task_tracker row, not one scheduler run. Per-
-// task timing comes from the latest task_execution row for that task_id; rows
-// with no execution yet carry nil timings and empty ErrorMessage / LogS3Key /
-// RunResultsURI.
+// One NodeRun corresponds to one task_tracker row, not one scheduler run. The
+// timings, error, log, results and failure fields come from the task's latest
+// attempt; a task with no attempt yet carries nil for all of them.
 type NodeRun struct {
 	ScheduleID     uuid.UUID
 	ScheduleName   string
@@ -25,15 +24,20 @@ type NodeRun struct {
 	TerminalStatus string
 	TaskID         uuid.UUID
 	TaskStatus     run.TaskStatus
-	RetryCount     int
-	ImageTag       string
-	CreatedAt      time.Time
-	StartedAt      *time.Time
-	CompletedAt    *time.Time
-	ErrorMessage   *string
-	LogS3Key       *string
-	RunResultsURI  *string
-	Operation      string
+	// Attempt is the number of the task's current attempt, 0-based.
+	Attempt       int
+	ImageTag      string
+	CreatedAt     time.Time
+	StartedAt     *time.Time
+	CompletedAt   *time.Time
+	ErrorMessage  *string
+	LogS3Key      *string
+	RunResultsURI *string
+	// FailureClass and FailureReason say why the latest attempt failed; nil
+	// while it has not failed.
+	FailureClass  *string
+	FailureReason *string
+	Operation     string
 	// ContentHash is the node's content hash in the run's release; empty when
 	// the run names no release.
 	ContentHash string

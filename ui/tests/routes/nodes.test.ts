@@ -47,7 +47,8 @@ describe('nodes router', () => {
           {
             run_id: 'r1', schedule_name: 'daily', kind: 'cron',
             terminal_status: 'succeeded', task_id: 't1',
-            task_status: 'succeeded', retry_count: 0,
+            task_status: 'failed', attempt: 2,
+            failure_class: 'user_code', failure_reason: 'compile_error',
             image_tag: 'v1',
             created_at: '2026-05-10T10:00:00Z',
             started_at: '2026-05-10T10:00:05Z',
@@ -68,7 +69,10 @@ describe('nodes router', () => {
     // rebuilds each run field by field, so a new state field is dropped unless
     // it is mapped explicitly.
     expect(res.body.runs[0].run_results_uri).toBe('run-results/task-executions/svc/schema/tbl/e1.json');
-    expect(res.body.runs[0].retry_count).toBe(0);
+    expect(res.body.runs[0].attempt).toBe(2);
+    expect(Object.keys(res.body.runs[0]).filter(k => k.startsWith('retry'))).toEqual([]);
+    expect(res.body.runs[0].failure_class).toBe('user_code');
+    expect(res.body.runs[0].failure_reason).toBe('compile_error');
     expect(res.body.runs[0].operation).toBe('run');
     expect(mockListNodeRuns).toHaveBeenCalledWith(
       { service_name: 'svc', schema_name: 'schema', table_name: 'tbl', limit: 50, operation: 'run' },

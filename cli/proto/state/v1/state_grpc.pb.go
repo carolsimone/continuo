@@ -41,8 +41,7 @@ const (
 	StateService_GetRunGraph_FullMethodName              = "/state.v1.StateService/GetRunGraph"
 	StateService_ListRuns_FullMethodName                 = "/state.v1.StateService/ListRuns"
 	StateService_ListActiveRunDrifts_FullMethodName      = "/state.v1.StateService/ListActiveRunDrifts"
-	StateService_GetTaskExecution_FullMethodName         = "/state.v1.StateService/GetTaskExecution"
-	StateService_ListTaskExecutions_FullMethodName       = "/state.v1.StateService/ListTaskExecutions"
+	StateService_ListTaskAttempts_FullMethodName         = "/state.v1.StateService/ListTaskAttempts"
 )
 
 // StateServiceClient is the client API for StateService service.
@@ -172,9 +171,12 @@ type StateServiceClient interface {
 	// newest pending or running run with the promotion seq its release was live
 	// under (0 when it names no release).
 	ListActiveRunDrifts(ctx context.Context, in *ListActiveRunDriftsRequest, opts ...grpc.CallOption) (*ListActiveRunDriftsResponse, error)
-	// TaskExecution operations
-	GetTaskExecution(ctx context.Context, in *GetTaskExecutionRequest, opts ...grpc.CallOption) (*TaskExecutionResponse, error)
-	ListTaskExecutions(ctx context.Context, in *ListTaskExecutionsRequest, opts ...grpc.CallOption) (*ListTaskExecutionsResponse, error)
+	// ListTaskAttempts returns one page of a run's task attempts, or of one of
+	// its tasks when task_id is set, ordered by task_id then attempt.
+	// page_size is clamped to [1, 200], 0 meaning 50; a negative page_offset is
+	// 0. total_count counts every attempt the filter matches. An empty or
+	// malformed run_id, or a malformed task_id, is INVALID_ARGUMENT.
+	ListTaskAttempts(ctx context.Context, in *ListTaskAttemptsRequest, opts ...grpc.CallOption) (*ListTaskAttemptsResponse, error)
 }
 
 type stateServiceClient struct {
@@ -405,20 +407,10 @@ func (c *stateServiceClient) ListActiveRunDrifts(ctx context.Context, in *ListAc
 	return out, nil
 }
 
-func (c *stateServiceClient) GetTaskExecution(ctx context.Context, in *GetTaskExecutionRequest, opts ...grpc.CallOption) (*TaskExecutionResponse, error) {
+func (c *stateServiceClient) ListTaskAttempts(ctx context.Context, in *ListTaskAttemptsRequest, opts ...grpc.CallOption) (*ListTaskAttemptsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(TaskExecutionResponse)
-	err := c.cc.Invoke(ctx, StateService_GetTaskExecution_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *stateServiceClient) ListTaskExecutions(ctx context.Context, in *ListTaskExecutionsRequest, opts ...grpc.CallOption) (*ListTaskExecutionsResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ListTaskExecutionsResponse)
-	err := c.cc.Invoke(ctx, StateService_ListTaskExecutions_FullMethodName, in, out, cOpts...)
+	out := new(ListTaskAttemptsResponse)
+	err := c.cc.Invoke(ctx, StateService_ListTaskAttempts_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -552,9 +544,12 @@ type StateServiceServer interface {
 	// newest pending or running run with the promotion seq its release was live
 	// under (0 when it names no release).
 	ListActiveRunDrifts(context.Context, *ListActiveRunDriftsRequest) (*ListActiveRunDriftsResponse, error)
-	// TaskExecution operations
-	GetTaskExecution(context.Context, *GetTaskExecutionRequest) (*TaskExecutionResponse, error)
-	ListTaskExecutions(context.Context, *ListTaskExecutionsRequest) (*ListTaskExecutionsResponse, error)
+	// ListTaskAttempts returns one page of a run's task attempts, or of one of
+	// its tasks when task_id is set, ordered by task_id then attempt.
+	// page_size is clamped to [1, 200], 0 meaning 50; a negative page_offset is
+	// 0. total_count counts every attempt the filter matches. An empty or
+	// malformed run_id, or a malformed task_id, is INVALID_ARGUMENT.
+	ListTaskAttempts(context.Context, *ListTaskAttemptsRequest) (*ListTaskAttemptsResponse, error)
 	mustEmbedUnimplementedStateServiceServer()
 }
 
@@ -631,11 +626,8 @@ func (UnimplementedStateServiceServer) ListRuns(context.Context, *ListRunsReques
 func (UnimplementedStateServiceServer) ListActiveRunDrifts(context.Context, *ListActiveRunDriftsRequest) (*ListActiveRunDriftsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListActiveRunDrifts not implemented")
 }
-func (UnimplementedStateServiceServer) GetTaskExecution(context.Context, *GetTaskExecutionRequest) (*TaskExecutionResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method GetTaskExecution not implemented")
-}
-func (UnimplementedStateServiceServer) ListTaskExecutions(context.Context, *ListTaskExecutionsRequest) (*ListTaskExecutionsResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method ListTaskExecutions not implemented")
+func (UnimplementedStateServiceServer) ListTaskAttempts(context.Context, *ListTaskAttemptsRequest) (*ListTaskAttemptsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListTaskAttempts not implemented")
 }
 func (UnimplementedStateServiceServer) mustEmbedUnimplementedStateServiceServer() {}
 func (UnimplementedStateServiceServer) testEmbeddedByValue()                      {}
@@ -1054,38 +1046,20 @@ func _StateService_ListActiveRunDrifts_Handler(srv interface{}, ctx context.Cont
 	return interceptor(ctx, in, info, handler)
 }
 
-func _StateService_GetTaskExecution_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetTaskExecutionRequest)
+func _StateService_ListTaskAttempts_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListTaskAttemptsRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(StateServiceServer).GetTaskExecution(ctx, in)
+		return srv.(StateServiceServer).ListTaskAttempts(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: StateService_GetTaskExecution_FullMethodName,
+		FullMethod: StateService_ListTaskAttempts_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(StateServiceServer).GetTaskExecution(ctx, req.(*GetTaskExecutionRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _StateService_ListTaskExecutions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ListTaskExecutionsRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(StateServiceServer).ListTaskExecutions(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: StateService_ListTaskExecutions_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(StateServiceServer).ListTaskExecutions(ctx, req.(*ListTaskExecutionsRequest))
+		return srv.(StateServiceServer).ListTaskAttempts(ctx, req.(*ListTaskAttemptsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1186,12 +1160,8 @@ var StateService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _StateService_ListActiveRunDrifts_Handler,
 		},
 		{
-			MethodName: "GetTaskExecution",
-			Handler:    _StateService_GetTaskExecution_Handler,
-		},
-		{
-			MethodName: "ListTaskExecutions",
-			Handler:    _StateService_ListTaskExecutions_Handler,
+			MethodName: "ListTaskAttempts",
+			Handler:    _StateService_ListTaskAttempts_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

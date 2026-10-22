@@ -95,6 +95,17 @@ type fakeTaskCollection struct {
 	loadErr       error
 	maxRetries    map[uuid.UUID]int32
 	keys          map[uuid.UUID]topology.NodeKey
+	// attemptRows holds the stored attempts; cancelledRuns the runs
+	// CancelOpenAttempts was called for; lockOrder the LoadAttemptState
+	// ("task <id>") and LoadAttempt ("attempt <id>/<n>") calls in call order.
+	attemptRows   map[attemptKey]run.Attempt
+	cancelledRuns []uuid.UUID
+	lockOrder     []string
+	// saves holds every attempt SaveAttempt was given, in call order.
+	saves []run.Attempt
+	// created holds each task BulkCreate stored, with the dispatch time
+	// BulkCreate or MarkDispatched stamped on it.
+	created map[uuid.UUID]run.Task
 	// dispatched holds the tasks stamped dispatched, by BulkCreate or
 	// MarkDispatched; skipped the tasks MarkSkipped changed, in call order.
 	dispatched []uuid.UUID
@@ -113,7 +124,42 @@ func newFakeTaskCollection() *fakeTaskCollection {
 		updateApplied: map[uuid.UUID]int{},
 		maxRetries:    map[uuid.UUID]int32{},
 		keys:          map[uuid.UUID]topology.NodeKey{},
+		attemptRows:   map[attemptKey]run.Attempt{},
+		created:       map[uuid.UUID]run.Task{},
 	}
+}
+
+// attemptKey identifies one stored attempt.
+type attemptKey struct {
+	task    uuid.UUID
+	attempt int32
+}
+
+func (f *fakeTaskCollection) LoadAttempt(_ context.Context, id uuid.UUID, attempt int32) (run.Attempt, bool, error) {
+	f.lockOrder = append(f.lockOrder, fmt.Sprintf("attempt %s/%d", id, attempt))
+	a, ok := f.attemptRows[attemptKey{id, attempt}]
+	return a, ok, nil
+}
+func (f *fakeTaskCollection) SaveAttempt(_ context.Context, a run.Attempt) error {
+	f.attemptRows[attemptKey{a.TaskID, a.Number}] = a
+	f.saves = append(f.saves, a)
+	return nil
+}
+
+// CancelOpenAttempts cancels every open attempt the fake holds: a test builds
+// one run, so every stored attempt belongs to it.
+func (f *fakeTaskCollection) CancelOpenAttempts(_ context.Context, runID uuid.UUID) (int, error) {
+	f.cancelledRuns = append(f.cancelledRuns, runID)
+	n := 0
+	for k, a := range f.attemptRows {
+		if a.Status.IsFinal() {
+			continue
+		}
+		a.Status = run.AttemptCancelled
+		f.attemptRows[k] = a
+		n++
+	}
+	return n, nil
 }
 
 func (f *fakeTaskCollection) GetStatus(_ context.Context, id uuid.UUID) (run.TaskStatus, bool, error) {
@@ -121,11 +167,17 @@ func (f *fakeTaskCollection) GetStatus(_ context.Context, id uuid.UUID) (run.Tas
 	return s, ok, nil
 }
 func (f *fakeTaskCollection) LoadAttemptState(_ context.Context, id uuid.UUID) (run.TaskAttemptState, bool, error) {
+	f.lockOrder = append(f.lockOrder, "task "+id.String())
 	if f.loadErr != nil {
 		return run.TaskAttemptState{}, false, f.loadErr
 	}
 	s, ok := f.statuses[id]
-	return run.TaskAttemptState{Status: s, RetryCount: f.attempts[id], MaxRetries: f.maxRetries[id], NodeKey: f.keys[id]}, ok, nil
+	c := f.created[id]
+	return run.TaskAttemptState{
+		Status: s, RetryCount: f.attempts[id], MaxRetries: f.maxRetries[id], NodeKey: f.keys[id],
+		JobName: c.JobName, ServiceName: c.ServiceName, SchemaName: c.SchemaName, TableName: c.TableName,
+		DispatchedAt: c.DispatchedAt,
+	}, ok, nil
 }
 func (f *fakeTaskCollection) HasFailed(_ context.Context, _ uuid.UUID) (bool, error) {
 	if !f.derived {
@@ -183,17 +235,23 @@ func (f *fakeTaskCollection) BulkCreate(_ context.Context, tasks []run.Task) err
 		f.attempts[t.TaskID] = int32(t.RetryCount)   //nolint:gosec // G115: test fixture; RetryCount is a small literal set by the test table, never attacker-controlled input.
 		f.maxRetries[t.TaskID] = int32(t.MaxRetries) //nolint:gosec // G115: test fixture; MaxRetries is a small literal set by the test, never attacker-controlled input.
 		f.keys[t.TaskID] = t.NodeKey
+		f.created[t.TaskID] = t
 		if t.DispatchedAt != nil {
 			f.dispatched = append(f.dispatched, t.TaskID)
 		}
 	}
 	return nil
 }
-func (f *fakeTaskCollection) MarkDispatched(_ context.Context, ids []uuid.UUID, _ time.Time) ([]uuid.UUID, error) {
+func (f *fakeTaskCollection) MarkDispatched(_ context.Context, ids []uuid.UUID, at time.Time) ([]uuid.UUID, error) {
 	var stamped []uuid.UUID
 	for _, id := range ids {
 		if f.statuses[id] == run.TaskStatusPending && !slices.Contains(f.dispatched, id) {
 			f.dispatched = append(f.dispatched, id)
+			if c, ok := f.created[id]; ok {
+				stampedAt := at
+				c.DispatchedAt = &stampedAt
+				f.created[id] = c
+			}
 			stamped = append(stamped, id)
 		}
 	}
@@ -830,6 +888,37 @@ func TestRun_Cancel_FinalizesAndEmitsBothEvents(t *testing.T) {
 	}
 	if r.CancelledAt() == nil {
 		t.Fatal("CancelledAt must remain set on cancel")
+	}
+}
+
+// Cancelling a run cancels its open attempts in the same call; an attempt
+// that has ended keeps its status.
+func TestCancel_CancelsTheRunsOpenAttempts(t *testing.T) {
+	ctx := context.Background()
+	tc := newFakeTaskCollection()
+	id1, id2 := uuid.New(), uuid.New()
+	r := runningRunWithProjection(t, tc, id1, id2)
+	_, _, err := r.RecordTaskStatus(ctx, tc, nil, id1, run.TaskStatusRunning, 0, time.Now())
+	if err != nil {
+		t.Fatalf("RecordTaskStatus: %v", err)
+	}
+	_, _, err = r.RecordTaskStatus(ctx, tc, nil, id2, run.TaskStatusSucceeded, 0, time.Now())
+	if err != nil {
+		t.Fatalf("RecordTaskStatus: %v", err)
+	}
+
+	if _, err := r.Cancel(ctx, tc, "tester", "drift", time.Now()); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+
+	if len(tc.cancelledRuns) != 1 || tc.cancelledRuns[0] != r.ScheduleID() {
+		t.Fatalf("CancelOpenAttempts calls = %v, want [%s]", tc.cancelledRuns, r.ScheduleID())
+	}
+	if got := tc.attemptRows[attemptKey{id1, 0}].Status; got != run.AttemptCancelled {
+		t.Fatalf("running attempt status = %q, want %q", got, run.AttemptCancelled)
+	}
+	if got := tc.attemptRows[attemptKey{id2, 0}].Status; got != run.AttemptSucceeded {
+		t.Fatalf("ended attempt status = %q, want %q", got, run.AttemptSucceeded)
 	}
 }
 

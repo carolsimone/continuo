@@ -24,7 +24,10 @@ const taskExecutionRecordedStreamName = streams.TaskExecutionRecordedV1
 // JSON payload, so the dedup row's payload is the JSON-encoded Values map
 // (valuesPayload); the payload is observability-only and dedup correctness
 // rides on message_id. The handler writes no outbox entry, so it ignores the
-// dedup row ID. See bindStreamHandler for the shared pipeline and ACK-policy
+// dedup row ID. A record without a Job name fails to parse, which
+// bindStreamHandler makes permanent; a record of a task no run holds fails the
+// handler with run.ErrTaskNotHeld, which permanentWhenTaskNotHeld makes
+// permanent. See bindStreamHandler for the shared pipeline and ACK-policy
 // semantics.
 func NewTaskExecutionRecordedBinding(
 	uowFactory func() uow.UnitOfWork,
@@ -36,6 +39,6 @@ func NewTaskExecutionRecordedBinding(
 		streamName: taskExecutionRecordedStreamName,
 		parse:      ParseTaskExecutionRecorded,
 		payload:    valuesPayload,
-		handle:     handler.Handle,
+		handle:     permanentWhenTaskNotHeld(handler.Handle),
 	})
 }

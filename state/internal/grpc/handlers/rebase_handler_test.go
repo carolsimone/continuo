@@ -60,10 +60,9 @@ func setupRebaseFixture(t *testing.T) *rebaseFixture {
 	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
 	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
 	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
-	taskExecutionRepo := postgres.NewTaskExecutionRepository(db, logger)
 	clk := ports.SystemClock{}
 	factory := func() uow.UnitOfWork {
-		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, taskExecutionRepo, catalogRepo, clk, logger)
+		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, catalogRepo, clk, logger)
 	}
 	tenant := fixtureTenant(t, db)
 	useCase := svchandlers.NewTriggerRebaseHandler(runstart.Planner{TenantID: tenant}, logger)
@@ -113,7 +112,7 @@ func seedTerminalRunWithFailedTask(t *testing.T, fx *rebaseFixture, scheduleName
 	require.NoError(t, err)
 
 	_, err = fx.DB.ExecContext(context.Background(), `
-		INSERT INTO task_tracker (task_id, schedule_id, created_at, service_name, schema_name, table_name, job_name, status, retry_count, max_retries, image_tag, node_key)
+		INSERT INTO task_tracker (task_id, schedule_id, created_at, service_name, schema_name, table_name, job_name, status, attempt, max_retries, image_tag, node_key)
 		VALUES ($1, $2, NOW(), 'svc', 's', 't', 'job', 'failed', 0, 2, 'img:1', 's.t')`,
 		uuid.New(), id,
 	)
@@ -214,7 +213,7 @@ func seedRunWithTaskStatus(t *testing.T, fx *rebaseFixture, scheduleName string,
 	require.NoError(t, err)
 
 	_, err = fx.DB.ExecContext(context.Background(), `
-		INSERT INTO task_tracker (task_id, schedule_id, created_at, service_name, schema_name, table_name, job_name, status, retry_count, max_retries, image_tag)
+		INSERT INTO task_tracker (task_id, schedule_id, created_at, service_name, schema_name, table_name, job_name, status, attempt, max_retries, image_tag)
 		VALUES ($1, $2, NOW(), 'svc', 's', 't', 'job', $3, 0, 2, 'img:1')`,
 		uuid.New(), id, string(taskStatus),
 	)

@@ -44,7 +44,7 @@ export interface GrpcClient {
   listAllSchedules: (request: any, callback: (err: any, res: any) => void) => void;
   listTasks: (request: any, callback: (err: any, res: any) => void) => void;
   getScheduler: (request: any, callback: (err: any, res: any) => void) => void;
-  listTaskExecutions: (request: any, callback: (err: any, res: any) => void) => void;
+  listTaskAttempts: (request: any, callback: (err: any, res: any) => void) => void;
   triggerRerun: (request: any, metadata: grpc.Metadata, callback: (err: any) => void) => void;
   triggerSchedule: (request: any, metadata: grpc.Metadata, callback: (err: any, res: any) => void) => void;
   cancelSchedule: (request: any, metadata: grpc.Metadata, callback: (err: any, res: any) => void) => void;

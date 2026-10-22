@@ -104,7 +104,7 @@ func TestSingleNodeRunLatest(t *testing.T) {
 	//
 	// task.status.updated:v1 and task.execution.recorded:v1 are delivered on
 	// separate Redis streams, so the scheduler can flip to SUCCEEDED before the
-	// execution consumer has inserted started_at/completed_at on task_execution.
+	// execution consumer has inserted started_at/finished_at on task_attempts.
 	// Poll ListNodeRuns until the execution-level fields appear before asserting,
 	// to avoid timestamp-vs-status race flakiness.
 	t.Log("Polling state.ListNodeRuns until the new run appears with execution timestamps...")
@@ -299,11 +299,8 @@ func cleanupSingleNodeRun(t *testing.T, ctx context.Context, clients *testClient
 	t.Helper()
 	t.Logf("Cleaning up single-node run: run_id=%s schedule_name=%s", runID, scheduleName)
 
-	// Postgres: remove task_execution → task_tracker → scheduler_tracker.
-	_, _ = clients.stateDB.Exec(
-		`DELETE FROM task_execution WHERE task_id IN (SELECT id FROM task_tracker WHERE schedule_id = $1)`,
-		runID,
-	)
+	// Postgres: remove task_tracker (its task_attempts go with it through the
+	// foreign key's cascade) → scheduler_tracker.
 	_, _ = clients.stateDB.Exec(`DELETE FROM task_tracker WHERE schedule_id = $1`, runID)
 	_, _ = clients.stateDB.Exec(`DELETE FROM scheduler_tracker WHERE schedule_id = $1`, runID)
 

@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router';
 import DetailPage from '../../src/client/DetailPage';
-import { TaskExecution } from '../../src/client/types';
+import { TaskAttempt } from '../../src/client/types';
 
 // The `url` argument lets a route handler inspect query params (e.g. `offset`)
 // to serve a distinct page per request. Existing handlers that ignore the
@@ -78,13 +78,13 @@ function freshRoutes() {
           table_name: 'orders',
           job_name: 'orders',
           status: 'failed',
-          retry_count: 0,
+          attempt: 0,
           max_retries: 0,
           created_at: null,
         },
       ],
     }),
-    [`/api/schedulers/${RUN_ID}/executions`]: async () => ({ executions: [] }),
+    [`/api/schedulers/${RUN_ID}/attempts`]: async () => ({ attempts: [], total_count: 0 }),
     [`/api/schedules/${SCHED}/runs`]: async () => ({ runs: [] }),
     [`/api/schedulers/${RUN_ID}/rerun`]: async () => ({ ok: true }),
     [`/api/schedulers/${RUN_ID}`]: async () => ({
@@ -673,13 +673,13 @@ function latestRoutes() {
           table_name: 'a',
           job_name: '',
           status: 'succeeded',
-          retry_count: 0,
+          attempt: 0,
           max_retries: 0,
           created_at: null,
         },
       ],
     }),
-    [`/api/schedulers/${LATEST_RUN_ID}/executions`]: async () => ({ executions: [] }),
+    [`/api/schedulers/${LATEST_RUN_ID}/attempts`]: async () => ({ attempts: [], total_count: 0 }),
   };
 }
 
@@ -713,15 +713,17 @@ describe('DetailPage in latest mode', () => {
     }
   });
 
-  it('does not poll /tasks or /executions in latest mode', async () => {
+  it('does not poll /tasks or /attempts in latest mode', async () => {
     const fetchMock = mockFetchSequence(latestRoutes());
     vi.stubGlobal('fetch', fetchMock);
     try {
       render(withLatestRouter());
       await waitFor(() => screen.getByText('catalog'));
       const urls = fetchMock.mock.calls.map(c => String(c[0]));
-      expect(urls.some(u => /\/api\/schedulers\/[^/]+\/tasks$/.test(u))).toBe(false);
-      expect(urls.some(u => /\/api\/schedulers\/[^/]+\/executions$/.test(u))).toBe(false);
+      // fetchAllPages appends ?limit=&offset=, so the patterns are not
+      // end-anchored: an anchored one could never match a paged request.
+      expect(urls.some(u => /\/api\/schedulers\/[^/]+\/tasks/.test(u))).toBe(false);
+      expect(urls.some(u => /\/api\/schedulers\/[^/]+\/attempts/.test(u))).toBe(false);
     } finally {
       vi.unstubAllGlobals();
     }
@@ -736,6 +738,132 @@ describe('DetailPage in latest mode', () => {
       expect(chip).toHaveTextContent('promotion 5');
       expect(chip.closest('.info-strip--info')).toBeInTheDocument();
       expect(screen.queryByText(/topology v/)).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe('DetailPage — Run tab polling', () => {
+  // Only setInterval is faked: the page polls through it, while waitFor and
+  // the mocked fetches keep running on real timers and microtasks.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const schedulerAt = (id: string, status: string) => ({
+    scheduler: {
+      schedule_id: id, schedule_name: SCHED, status,
+      created_at: null, started_at: null, completed_at: null, cancelled_at: null, cancelled_by: '',
+    },
+  });
+  const taskAt = (status: string) => ({
+    tasks: [{
+      task_id: 't1', service_name: 'svc1', schema_name: 'public', table_name: 'orders',
+      job_name: 'orders', status, attempt: 0, max_retries: 0, created_at: null,
+    }],
+  });
+  const attemptAt = (status: string) => ({
+    total_count: 1,
+    attempts: [{
+      task_id: 't1', attempt: 0, job_name: 'orders', status,
+      failure_class: null, failure_reason: null,
+      dispatched_at: null, queued_at: null, started_at: null, finished_at: null,
+      execution_seconds: null, error_message: null, log_s3_key: null, run_results_uri: null,
+    } satisfies TaskAttempt],
+  });
+  const rowStatus = () => screen.getByText('orders').closest('tr')?.querySelector('.pill-sm')?.textContent;
+  const callsTo = (fetchMock: ReturnType<typeof vi.fn>, path: string) =>
+    fetchMock.mock.calls.map(c => String(c[0])).filter(u => u.startsWith(path)).length;
+
+  it('reads the tasks and attempts once more after the poll that sees the run end', async () => {
+    // The run ends between the poll's row reads and its scheduler read: that
+    // poll sees the run succeeded but rows that still say running. Only a
+    // read after it returns the settled rows.
+    let ended = false;
+    let staleTasks = true;
+    let staleAttempts = true;
+    const fetchMock = mockFetchSequence({
+      ...freshRoutes(),
+      [`/api/schedulers/${RUN_ID}/tasks`]: async () => {
+        if (ended && !staleTasks) return taskAt('succeeded');
+        if (ended) staleTasks = false;
+        return taskAt('running');
+      },
+      [`/api/schedulers/${RUN_ID}/attempts`]: async () => {
+        if (ended && !staleAttempts) return attemptAt('succeeded');
+        if (ended) staleAttempts = false;
+        return attemptAt('running');
+      },
+      [`/api/schedulers/${RUN_ID}`]: async () => schedulerAt(RUN_ID, ended ? 'succeeded' : 'running'),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      render(withRouter({ last_run_id: RUN_ID }));
+      await waitFor(() => expect(rowStatus()).toBe('running'));
+      const before = callsTo(fetchMock, `/api/schedulers/${RUN_ID}/tasks`);
+
+      ended = true;
+      await vi.advanceTimersByTimeAsync(5000);
+
+      await waitFor(() => expect(rowStatus()).toBe('succeeded'));
+      expect(callsTo(fetchMock, `/api/schedulers/${RUN_ID}/tasks`)).toBe(before + 2);
+
+      // The run is terminal: the poll has stopped.
+      await vi.advanceTimersByTimeAsync(15000);
+      expect(callsTo(fetchMock, `/api/schedulers/${RUN_ID}/tasks`)).toBe(before + 2);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('does not poll a selected past run', async () => {
+    const OLD_RUN_ID = 'run-old';
+    const fetchMock = mockFetchSequence({
+      ...freshRoutes(),
+      [`/api/schedulers/${RUN_ID}/tasks`]: async () => taskAt('running'),
+      [`/api/schedulers/${RUN_ID}`]: async () => schedulerAt(RUN_ID, 'running'),
+      [`/api/schedules/${SCHED}/runs`]: async () => ({
+        runs: [
+          { run_id: OLD_RUN_ID, schedule_name: SCHED, terminal_status: 'failed', created_at: '2026-09-01T10:00:00Z', completed_at: '2026-09-01T10:05:00Z' },
+        ],
+      }),
+      [`/api/runs/${OLD_RUN_ID}/graph`]: async () => ({ nodes: [], edges: [], run_promotion_seq: 6, latest_promotion_seq: 7 }),
+      [`/api/schedulers/${OLD_RUN_ID}/tasks`]: async () => ({
+        total_count: 1,
+        tasks: [{
+          task_id: 'old-t1', service_name: 'svc1', schema_name: 'public', table_name: 'old_orders',
+          job_name: '', status: 'failed', attempt: 0, max_retries: 0, created_at: null,
+        }],
+      }),
+      [`/api/schedulers/${OLD_RUN_ID}/attempts`]: async () => ({ attempts: [], total_count: 0 }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const { container } = render(withRouter({ last_run_id: RUN_ID }));
+      expect(await screen.findByText('orders')).toBeInTheDocument();
+
+      // The live run heads the list; the past run follows it.
+      fireEvent.click(await screen.findByRole('tab', { name: /past runs/i }));
+      await waitFor(() => expect(container.querySelectorAll('.run-row')).toHaveLength(2));
+      fireEvent.click(container.querySelectorAll('.run-row')[1]);
+      fireEvent.click(screen.getByRole('tab', { name: /^run$/i }));
+      expect(await screen.findByText('old_orders')).toBeInTheDocument();
+
+      const rowReads = () => [
+        callsTo(fetchMock, `/api/schedulers/${OLD_RUN_ID}/tasks`),
+        callsTo(fetchMock, `/api/schedulers/${OLD_RUN_ID}/attempts`),
+        callsTo(fetchMock, `/api/schedulers/${RUN_ID}/tasks`),
+        callsTo(fetchMock, `/api/schedulers/${RUN_ID}/attempts`),
+      ];
+      const before = rowReads();
+      expect(before.slice(0, 2)).toEqual([1, 1]);
+
+      await vi.advanceTimersByTimeAsync(15000);
+      expect(rowReads()).toEqual(before);
     } finally {
       vi.unstubAllGlobals();
     }
@@ -766,72 +894,69 @@ describe('DetailPage — header drift chip', () => {
   });
 });
 
-describe('DetailPage — executions pagination regression (Task 7)', () => {
-  // The executions endpoint pages at 200 rows. Regression: DetailPage used to
-  // issue a single raw fetch and silently dropped any execution past row 200.
-  // This fixture serves 412 executions across three pages (200/200/12) for a
-  // single task, with the execution holding the true latest `started_at` (and
-  // therefore the one NodesPanel should render) sitting at index 400 — deep
-  // into the third page. A mock that ignored `offset` would defeat this test,
-  // so the handler below slices the full list by the requested offset/limit.
-  const TOTAL_EXECUTIONS = 412;
+describe('DetailPage — attempts pagination regression', () => {
+  // The attempts endpoint pages at 200 rows. Regression: DetailPage once
+  // issued a single raw fetch and silently dropped every row past 200. This
+  // fixture serves 412 attempts across three pages (200/200/12) in state's
+  // (task_id, attempt) order: t1's attempts 0..400 fill indices 0..400 and a
+  // second task fills the rest, so t1's highest-numbered attempt — the one
+  // its row reads — sits at index 400, deep into the third page. A mock that
+  // ignored `offset` would defeat this test, so the handler slices the full
+  // list by the requested offset/limit.
+  const TOTAL_ATTEMPTS = 412;
   const LATEST_INDEX = 400;
   const LATEST_ERROR_MESSAGE = 'DISTINCT_ERROR_BEYOND_PAGE_1';
-  const LATEST_LOG_S3_KEY = 'logs/task-t1-exec-400.log';
+  const LATEST_LOG_S3_KEY = 'logs/task-t1-attempt-400.log';
 
-  function buildExecutions(): TaskExecution[] {
-    const execs: TaskExecution[] = [];
-    for (let i = 0; i < TOTAL_EXECUTIONS; i++) {
-      if (i === LATEST_INDEX) {
-        execs.push({
-          id: `exec-${i}`,
-          task_id: 't1',
-          error_message: LATEST_ERROR_MESSAGE,
-          execution_time_seconds: 12,
-          started_at: '2026-01-01T10:00:00Z', // strictly later than every other row below
-          completed_at: '2026-01-01T10:01:00Z',
-          log_s3_key: LATEST_LOG_S3_KEY,
-        });
-      } else {
-        execs.push({
-          id: `exec-${i}`,
-          task_id: 't1',
-          error_message: `stale-error-${i}`,
-          execution_time_seconds: 1,
-          started_at: '2026-01-01T00:00:00Z',
-          completed_at: '2026-01-01T00:01:00Z',
-          log_s3_key: `logs/task-t1-exec-${i}.log`,
-        });
-      }
+  function buildAttempts(): TaskAttempt[] {
+    const rows: TaskAttempt[] = [];
+    for (let i = 0; i < TOTAL_ATTEMPTS; i++) {
+      const isT1 = i <= LATEST_INDEX;
+      rows.push({
+        task_id: isT1 ? 't1' : 't9',
+        attempt: isT1 ? i : i - LATEST_INDEX - 1,
+        job_name: `job-${i}`,
+        status: 'failed',
+        failure_class: null,
+        failure_reason: null,
+        dispatched_at: null,
+        queued_at: null,
+        started_at: '2026-01-01T00:00:00Z',
+        finished_at: '2026-01-01T00:01:00Z',
+        execution_seconds: 60,
+        error_message: i === LATEST_INDEX ? LATEST_ERROR_MESSAGE : `stale-error-${i}`,
+        log_s3_key: i === LATEST_INDEX ? LATEST_LOG_S3_KEY : `logs/attempt-${i}.log`,
+        run_results_uri: null,
+      });
     }
-    return execs;
+    return rows;
   }
 
-  function pagedExecutionsHandler(url: string) {
+  function pagedAttemptsHandler(url: string) {
     const parsed = new URL(url, 'http://localhost');
     const offset = Number(parsed.searchParams.get('offset') ?? '0');
     const limit = Number(parsed.searchParams.get('limit') ?? '200');
-    const all = buildExecutions();
+    const all = buildAttempts();
     return Promise.resolve({
-      executions: all.slice(offset, offset + limit),
+      attempts: all.slice(offset, offset + limit),
       total_count: all.length,
     });
   }
 
-  it('renders the error message and log link of an execution beyond page 1 (index 400 of 412)', async () => {
+  it('renders the error message and log link of an attempt beyond page 1 (index 400 of 412)', async () => {
     const fetchMock = mockFetchSequence({
       ...failedRoutes(),
-      [`/api/schedulers/${RUN_ID}/executions`]: pagedExecutionsHandler,
+      [`/api/schedulers/${RUN_ID}/attempts`]: pagedAttemptsHandler,
     });
     vi.stubGlobal('fetch', fetchMock);
 
     render(withRouter({ last_run_id: RUN_ID }));
 
-    // The true latest execution lives on page 3 (offset=400); if DetailPage
-    // regressed to a single fetch, only the stale page-1 execution would ever
-    // be considered "latest" for task t1, and this text would never appear.
-    // (ErrorCell renders the message twice — a truncated span plus a
-    // full-text div revealed via CSS on "more" — hence findAllByText.)
+    // t1's highest-numbered attempt lives on page 3 (offset=400); if
+    // DetailPage regressed to a single fetch, only page 1's attempts would
+    // ever be grouped for t1, and this text would never appear. (ErrorCell
+    // renders the message twice — a truncated span plus a full-text div
+    // revealed via CSS on "more" — hence findAllByText.)
     expect((await screen.findAllByText(LATEST_ERROR_MESSAGE)).length).toBeGreaterThan(0);
 
     const logLink = screen.getByRole('link', { name: /logs/i });
@@ -841,9 +966,111 @@ describe('DetailPage — executions pagination regression (Task 7)', () => {
     // against a broken single-fetch implementation): assert the component
     // actually requested pages 2 and 3.
     const calls = fetchMock.mock.calls.map(c => String(c[0]));
-    const executionCalls = calls.filter(u => u.includes(`/api/schedulers/${RUN_ID}/executions`));
-    expect(executionCalls.some(u => u.includes('offset=200'))).toBe(true);
-    expect(executionCalls.some(u => u.includes('offset=400'))).toBe(true);
+    const attemptCalls = calls.filter(u => u.includes(`/api/schedulers/${RUN_ID}/attempts`));
+    expect(attemptCalls.some(u => u.includes('offset=200'))).toBe(true);
+    expect(attemptCalls.some(u => u.includes('offset=400'))).toBe(true);
+  });
+});
+
+describe('DetailPage — historical run attempts', () => {
+  const OLD_RUN_ID = 'run-old';
+
+  function historicalRoutes() {
+    return {
+      ...failedRoutes(),
+      [`/api/schedules/${SCHED}/runs`]: async () => ({
+        runs: [
+          { run_id: OLD_RUN_ID, schedule_name: SCHED, terminal_status: 'failed', created_at: '2026-09-01T10:00:00Z', completed_at: '2026-09-01T10:05:00Z' },
+        ],
+      }),
+      [`/api/runs/${OLD_RUN_ID}/graph`]: async () => ({
+        nodes: [
+          { node_id: 'svc1.public.old_orders', node_type: 'dbt-model', schedule_name: SCHED, status: 'failed' },
+        ],
+        edges: [],
+        run_promotion_seq: 6,
+        latest_promotion_seq: 7,
+      }),
+      [`/api/schedulers/${OLD_RUN_ID}/tasks`]: async () => ({
+        total_count: 1,
+        tasks: [
+          {
+            task_id: 'old-t1', service_name: 'svc1', schema_name: 'public', table_name: 'old_orders',
+            job_name: '', status: 'failed', attempt: 1, max_retries: 1, created_at: null,
+          },
+        ],
+      }),
+      [`/api/schedulers/${OLD_RUN_ID}/attempts`]: async () => ({
+        total_count: 2,
+        attempts: [0, 1].map((n): TaskAttempt => ({
+          task_id: 'old-t1', attempt: n, job_name: `old-t1-${n}`, status: 'failed',
+          failure_class: 'user_code', failure_reason: n === 0 ? 'timeout' : 'compile_error',
+          dispatched_at: null, queued_at: null, started_at: null, finished_at: null,
+          execution_seconds: null, error_message: `old failure ${n}`,
+          log_s3_key: `logs/old-t1-${n}.log`, run_results_uri: null,
+        })),
+      }),
+    };
+  }
+
+  it('shows the attempts of a historical run', async () => {
+    const fetchMock = mockFetchSequence(historicalRoutes());
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const { container } = render(withRouter({ last_run_id: RUN_ID }));
+      expect(await screen.findByText('orders')).toBeInTheDocument();
+
+      fireEvent.click(await screen.findByRole('tab', { name: /past runs/i }));
+      await waitFor(() => expect(container.querySelectorAll('.run-row')).toHaveLength(1));
+      fireEvent.click(container.querySelector('.run-row')!);
+      fireEvent.click(screen.getByRole('tab', { name: /^run$/i }));
+
+      // The past run's rows come from state, not from its graph snapshot:
+      // the task carries its own attempt, read as attempt+1 / max_retries+1.
+      const nameCell = await screen.findByText('old_orders');
+      const row = nameCell.closest('tr')!;
+      expect(row.querySelector('.nodes-attempt')?.textContent).toBe('2 / 2');
+      expect(screen.queryByText('orders')).toBeNull();
+
+      fireEvent.click(row);
+      const block = container.querySelector('.remediation-attempts') as HTMLElement;
+      expect(block).toBeTruthy();
+      const rows = within(block).getAllByRole('row').slice(1);
+      expect(rows.map(r => r.querySelector('td')?.textContent)).toEqual(['1', '2']);
+      expect(within(block).getByText('user_code · compile_error')).toBeInTheDocument();
+      expect(within(rows[0]).getByRole('link', { name: 'open log ↗' }).getAttribute('href'))
+        .toContain(encodeURIComponent('logs/old-t1-0.log'));
+
+      const urls = fetchMock.mock.calls.map(c => String(c[0]));
+      expect(urls.some(u => u.startsWith(`/api/schedulers/${OLD_RUN_ID}/tasks`))).toBe(true);
+      expect(urls.some(u => u.startsWith(`/api/schedulers/${OLD_RUN_ID}/attempts`))).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('never shows the latest run\'s rows while a chosen past run is still loading', async () => {
+    // The past run's tasks never arrive: the Run tab must read as loading,
+    // not keep the latest run's rows under the past run's snapshot strip.
+    const fetchMock = mockFetchSequence({
+      ...historicalRoutes(),
+      [`/api/schedulers/${OLD_RUN_ID}/tasks`]: () => new Promise(() => {}),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const { container } = render(withRouter({ last_run_id: RUN_ID }));
+      expect(await screen.findByText('orders')).toBeInTheDocument();
+
+      fireEvent.click(await screen.findByRole('tab', { name: /past runs/i }));
+      await waitFor(() => expect(container.querySelectorAll('.run-row')).toHaveLength(1));
+      fireEvent.click(container.querySelector('.run-row')!);
+      fireEvent.click(screen.getByRole('tab', { name: /^run$/i }));
+
+      expect(await screen.findByText('Loading run…')).toBeInTheDocument();
+      expect(screen.queryByText('orders')).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 
@@ -867,11 +1094,11 @@ describe('DetailPage — Run List service grouping', () => {
         tasks: [
           {
             task_id: 't1', service_name: 'svc1', schema_name: 'public', table_name: 'orders',
-            job_name: '', status: 'succeeded', retry_count: 0, max_retries: 0, created_at: null,
+            job_name: '', status: 'succeeded', attempt: 0, max_retries: 0, created_at: null,
           },
           {
             task_id: 't2', service_name: 'svc2', schema_name: 'public', table_name: 'payments',
-            job_name: '', status: 'failed', retry_count: 0, max_retries: 0, created_at: null,
+            job_name: '', status: 'failed', attempt: 0, max_retries: 0, created_at: null,
           },
         ],
       }),

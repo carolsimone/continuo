@@ -20,7 +20,7 @@ func newReleaseRunUoW(db *sqlx.DB) *postgres.PostgresUnitOfWork {
 	logger := discardLogger()
 	return postgres.NewPostgresUnitOfWork(db,
 		postgres.NewSchedulerTrackerRepository(db, logger), postgres.NewTaskTrackerRepository(db, logger),
-		postgres.NewTaskExecutionRepository(db, logger), postgres.NewScheduleCatalogRepository(db, logger),
+		postgres.NewScheduleCatalogRepository(db, logger),
 		ports.SystemClock{}, logger)
 }
 

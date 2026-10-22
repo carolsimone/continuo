@@ -8,7 +8,7 @@ const mockStateClient = {
   listAllSchedules: vi.fn(),
   listTasks: vi.fn(),
   getScheduler: vi.fn(),
-  listTaskExecutions: vi.fn(),
+  listTaskAttempts: vi.fn(),
 };
 
 const mockGraphClient = {

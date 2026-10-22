@@ -38,7 +38,7 @@ describe('GET /api/schedulers/:id/tasks', () => {
             table_name: 'users',
             job_name: 'dbt-analytics-users',
             status: 'TASK_STATUS_SUCCEEDED',
-            retry_count: 0,
+            attempt: 2,
             max_retries: 3,
             created_at: { seconds: '1740268805', nanos: 0 },
           },
@@ -54,7 +54,8 @@ describe('GET /api/schedulers/:id/tasks', () => {
     const t = res.body.tasks[0];
     expect(t.task_id).toBe('task-456');
     expect(t.status).toBe('succeeded');
-    expect(t.retry_count).toBe(0);
+    expect(t.attempt).toBe(2);
+    expect(Object.keys(t).filter(k => k.startsWith('retry'))).toEqual([]);
     expect(t.max_retries).toBe(3);
     expect(t.created_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });

@@ -114,18 +114,18 @@ func TestMain(m *testing.M) {
 	// ---- Build repositories ----
 	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
 	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
-	execRepo := postgres.NewTaskExecutionRepository(db, logger)
+	attemptRepo := postgres.NewTaskAttemptReadRepository(db)
 
 	// ---- Build handlers ----
 	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
 	clk := ports.SystemClock{}
 	integrationUoWFactory := func() uow.UnitOfWork {
-		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, execRepo, catalogRepo, clk, logger)
+		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, catalogRepo, clk, logger)
 	}
 	activateHandler := svchandlers.NewActivateScheduleHandler(defaultPlanner, logger)
 	schedulerHandler := handlers.NewSchedulerHandler(schedulerRepo, activateHandler, nil, nil, integrationUoWFactory, logger)
 	taskHandler := handlers.NewTaskHandler(taskRepo, logger)
-	execHandler := handlers.NewTaskExecutionHandler(execRepo, logger)
+	attemptHandler := handlers.NewTaskAttemptHandler(attemptRepo, logger)
 	rerunUC := svchandlers.NewTriggerRerunHandler(defaultPlanner, logger)
 	rerunHandler := handlers.NewRerunHandler(rerunUC, integrationUoWFactory, logger)
 	singleNodeRunUC := svchandlers.NewTriggerSingleNodeRunHandler(defaultPlanner, logger)
@@ -139,7 +139,7 @@ func TestMain(m *testing.M) {
 	runReadHandler := handlers.NewRunReadHandler(runreads.New(runReadRepo), logger)
 
 	// ---- Create gRPC server on a random port ----
-	stateServer, err = grpcserver.NewServer(0, schedulerHandler, taskHandler, execHandler, rerunHandler, singleNodeRunHandler, rebaseHandler, previewRebaseHandler, nodeRunHandler, runReadHandler, logger, false)
+	stateServer, err = grpcserver.NewServer(0, schedulerHandler, taskHandler, attemptHandler, rerunHandler, singleNodeRunHandler, rebaseHandler, previewRebaseHandler, nodeRunHandler, runReadHandler, logger, false)
 	if err != nil {
 		logger.Error("Failed to create gRPC server", "error", err)
 		os.Exit(1)

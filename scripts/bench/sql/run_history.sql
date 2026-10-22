@@ -13,11 +13,11 @@ WITH runs AS (
     AND created_at > now() - make_interval(days => :days)
 ),
 ex AS (
-  SELECT t.schedule_id, te.started_at, te.completed_at
+  SELECT t.schedule_id, a.started_at, a.finished_at AS completed_at
   FROM task_tracker t
-  JOIN task_execution te ON te.task_id = t.task_id
+  JOIN task_attempts a ON a.task_id = t.task_id
   JOIN runs r ON r.schedule_id = t.schedule_id
-  WHERE te.started_at IS NOT NULL AND te.completed_at IS NOT NULL
+  WHERE a.started_at IS NOT NULL AND a.finished_at IS NOT NULL
 ),
 ordered AS (
   SELECT schedule_id, started_at, completed_at,

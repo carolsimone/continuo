@@ -76,7 +76,7 @@ func TestWatchdog_TerminatesStuckSchedule(t *testing.T) {
 		INSERT INTO task_tracker (
 		  task_id, schedule_id, created_at,
 		  service_name, schema_name, table_name, job_name,
-		  status, retry_count, max_retries
+		  status, attempt, max_retries
 		) VALUES ($1, $2, $3, 'svc-watchdog', 'raw', 'users',
 		          'job-svc-watchdog-raw-users', 'pending', 0, 3)`,
 		uuid.New(), progressingID, createdAt)

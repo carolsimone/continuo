@@ -11,27 +11,27 @@ import (
 )
 
 // lastSuccessDurationsQuery reads, for each node identity of the arrays $1
-// (service), $2 (schema) and $3 (table), the duration of its latest execution
-// without an error and with a positive duration, of a succeeded task that is
-// not a test. Each identity is one probe of idx_task_tracker_node_identity and
-// its tasks' executions one probe each of idx_task_execution_task_id; a node
-// without such an execution yields no row. An inherited task records no
-// execution, so it never answers.
+// (service), $2 (schema) and $3 (table), the duration of the latest succeeded
+// attempt with a positive duration, of a succeeded task that is not a test.
+// Each identity is one probe of idx_task_tracker_node_identity and its tasks'
+// attempts one probe each of task_attempts_pkey; a node without such an
+// attempt yields no row. An inherited task records no attempt, so it never
+// answers.
 const lastSuccessDurationsQuery = `
-	SELECT n.service_name, n.schema_name, n.table_name, last.execution_time_seconds
+	SELECT n.service_name, n.schema_name, n.table_name, last.execution_seconds
 	FROM unnest($1::text[], $2::text[], $3::text[]) AS n(service_name, schema_name, table_name)
 	CROSS JOIN LATERAL (
-		SELECT te.execution_time_seconds
+		SELECT a.execution_seconds
 		FROM task_tracker t
-		JOIN task_execution te ON te.task_id = t.task_id
+		JOIN task_attempts a ON a.task_id = t.task_id
 		WHERE t.service_name = n.service_name
 		  AND t.schema_name = n.schema_name
 		  AND t.table_name = n.table_name
 		  AND t.status = 'succeeded'
 		  AND t.operation <> 'test'
-		  AND te.error_message IS NULL
-		  AND te.execution_time_seconds > 0
-		ORDER BY te.created_at DESC
+		  AND a.status = 'succeeded'
+		  AND a.execution_seconds > 0
+		ORDER BY a.finished_at DESC NULLS LAST
 		LIMIT 1
 	) AS last`
 
@@ -39,7 +39,7 @@ type lastSuccessRow struct {
 	ServiceName string  `db:"service_name"`
 	SchemaName  string  `db:"schema_name"`
 	TableName   string  `db:"table_name"`
-	Seconds     float64 `db:"execution_time_seconds"`
+	Seconds     float64 `db:"execution_seconds"`
 }
 
 // LastSuccessDurations implements repository.RunReadRepository in one round

@@ -5,13 +5,14 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/events"
 	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/google/uuid"
 )
 
-// TaskExecutionRecordedHandler persists a task_execution row for each
-// task.execution.recorded:v1 event.
+// TaskExecutionRecordedHandler applies each task.execution.recorded:v1 event to
+// the attempt of the task it describes.
 type TaskExecutionRecordedHandler struct {
 	logger *slog.Logger
 }
@@ -21,11 +22,13 @@ func NewTaskExecutionRecordedHandler(logger *slog.Logger) *TaskExecutionRecorded
 	return &TaskExecutionRecordedHandler{logger: logger}
 }
 
-// Handle inserts a TaskExecution row inside the caller-managed transaction.
-// The msgProcID parameter is unused — this handler writes no outbox entries
-// and therefore has no need to thread message_processing provenance through
-// to a child row. It is accepted to keep a uniform Handle signature across
-// every state stream handler.
+// Handle records the execution on the attempt its Job name names, through the
+// run's tasks, inside the caller-managed transaction. run.ErrTaskNotHeld
+// propagates as it is; the stream binding marks it permanent. The msgProcID
+// parameter is unused — this handler writes no outbox entries and therefore
+// has no need to thread message_processing provenance through to a child row.
+// It is accepted to keep a uniform Handle signature across every state stream
+// handler.
 //
 // Caller contract: u.Begin(ctx) has been invoked; the handler MUST NOT call
 // Commit or Rollback. The binding owns transaction lifecycle.
@@ -35,12 +38,13 @@ func (h *TaskExecutionRecordedHandler) Handle(
 	evt events.TaskExecutionRecorded,
 	_ uuid.UUID,
 ) error {
-	if err := u.TaskExecutions().CreateRecord(ctx, evt); err != nil {
-		return fmt.Errorf("create task_execution: %w", err)
+	if err := run.RecordTaskExecution(ctx, u.TaskCollection(), evt.Record()); err != nil {
+		return fmt.Errorf("record execution of %s: %w", evt.JobName, err)
 	}
 	h.logger.Info("task.execution.recorded: processed",
 		"execution_id", evt.ExecutionID,
 		"task_id", evt.TaskID,
+		"job_name", evt.JobName,
 	)
 	return nil
 }

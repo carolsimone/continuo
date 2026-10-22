@@ -2,13 +2,16 @@ package postgres_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
+	"github.com/carolsimone/continuo/state/domain/projection"
 	"github.com/google/uuid"
+	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -23,7 +26,6 @@ func TestNodeRunRepository_List(t *testing.T) {
 
 	schedRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
 	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
-	execRepo := postgres.NewTaskExecutionRepository(db, discardLogger())
 	nodeRunRepo := postgres.NewNodeRunRepository(db, discardLogger())
 
 	svc := "svc-nr-" + uuid.New().String()[:8]
@@ -54,7 +56,7 @@ func TestNodeRunRepository_List(t *testing.T) {
 		TableName:   tbl,
 		JobName:     "job-1",
 		Status:      run.TaskStatusSucceeded,
-		RetryCount:  0,
+		Attempt:     0,
 		MaxRetries:  3,
 		ImageTag:    "v1",
 		CreatedAt:   time.Now().Add(-2 * time.Minute),
@@ -62,16 +64,13 @@ func TestNodeRunRepository_List(t *testing.T) {
 	require.NoError(t, taskRepo.Create(ctx, task1))
 	defer db.ExecContext(ctx, "DELETE FROM task_tracker WHERE task_id = $1", task1ID)
 
-	// execution for task1
-	exec1 := &postgres.TaskExecution{
-		ID:          uuid.New(),
-		TaskID:      task1ID,
-		CreatedAt:   time.Now().Add(-2 * time.Minute),
-		StartedAt:   ptrTime(time.Now().Add(-90 * time.Second)),
-		CompletedAt: ptrTime(time.Now().Add(-60 * time.Second)),
-	}
-	require.NoError(t, execRepo.Create(ctx, exec1))
-	defer db.ExecContext(ctx, "DELETE FROM task_execution WHERE id = $1", exec1.ID)
+	// attempt 0 of task1
+	insertAttemptRow(t, db, storedAttempt{
+		TaskID:     task1ID,
+		Status:     "succeeded",
+		StartedAt:  ptrTime(time.Now().Add(-90 * time.Second)),
+		FinishedAt: ptrTime(time.Now().Add(-60 * time.Second)),
+	})
 
 	// extra task on (svc, sch, other) — must NOT appear in results
 	taskExtraID := uuid.New()
@@ -83,7 +82,7 @@ func TestNodeRunRepository_List(t *testing.T) {
 		TableName:   other,
 		JobName:     "job-extra",
 		Status:      run.TaskStatusSucceeded,
-		RetryCount:  0,
+		Attempt:     0,
 		MaxRetries:  3,
 		ImageTag:    "vx",
 		CreatedAt:   time.Now().Add(-2 * time.Minute),
@@ -116,7 +115,7 @@ func TestNodeRunRepository_List(t *testing.T) {
 		TableName:   tbl,
 		JobName:     "job-2",
 		Status:      run.TaskStatusFailed,
-		RetryCount:  1,
+		Attempt:     1,
 		MaxRetries:  3,
 		ImageTag:    "v2",
 		CreatedAt:   time.Now().Add(-1 * time.Minute),
@@ -124,17 +123,15 @@ func TestNodeRunRepository_List(t *testing.T) {
 	require.NoError(t, taskRepo.Create(ctx, task2))
 	defer db.ExecContext(ctx, "DELETE FROM task_tracker WHERE task_id = $1", task2ID)
 
-	// execution for task2 (with error_message)
-	exec2 := &postgres.TaskExecution{
-		ID:           uuid.New(),
+	// attempt 1 of task2 (with error_message)
+	insertAttemptRow(t, db, storedAttempt{
 		TaskID:       task2ID,
-		CreatedAt:    time.Now().Add(-1 * time.Minute),
+		Attempt:      1,
+		Status:       "failed",
 		StartedAt:    ptrTime(time.Now().Add(-50 * time.Second)),
-		CompletedAt:  ptrTime(time.Now().Add(-30 * time.Second)),
+		FinishedAt:   ptrTime(time.Now().Add(-30 * time.Second)),
 		ErrorMessage: &errMsg,
-	}
-	require.NoError(t, execRepo.Create(ctx, exec2))
-	defer db.ExecContext(ctx, "DELETE FROM task_execution WHERE id = $1", exec2.ID)
+	})
 
 	// --- query ---
 	rows, err := nodeRunRepo.List(ctx, svc, sch, tbl, "run", 50)
@@ -149,13 +146,14 @@ func TestNodeRunRepository_List(t *testing.T) {
 	assert.NotNil(t, rows[0].CompletedAt)
 	require.NotNil(t, rows[0].ErrorMessage)
 	assert.Equal(t, "boom", *rows[0].ErrorMessage)
+	assert.Equal(t, 1, rows[0].Attempt)
 
 	assert.Equal(t, sched1ID, rows[1].ScheduleID)
 	assert.Equal(t, "cron", rows[1].Kind)
 }
 
 // TestNodeRunRepository_List_TaskWithoutExecution verifies that a task with no
-// corresponding task_execution row produces a NodeRun with nil StartedAt and
+// corresponding task_attempts row produces a NodeRun with nil StartedAt and
 // nil CompletedAt (LEFT JOIN semantics).
 func TestNodeRunRepository_List_TaskWithoutExecution(t *testing.T) {
 	db := newTestDB(t)
@@ -190,7 +188,7 @@ func TestNodeRunRepository_List_TaskWithoutExecution(t *testing.T) {
 		TableName:   tbl,
 		JobName:     "job-pending",
 		Status:      run.TaskStatusPending,
-		RetryCount:  0,
+		Attempt:     0,
 		MaxRetries:  3,
 		ImageTag:    "v1",
 		CreatedAt:   time.Now(),
@@ -198,7 +196,7 @@ func TestNodeRunRepository_List_TaskWithoutExecution(t *testing.T) {
 	require.NoError(t, taskRepo.Create(ctx, task))
 	defer db.ExecContext(ctx, "DELETE FROM task_tracker WHERE task_id = $1", taskID)
 
-	// No task_execution row inserted.
+	// No task_attempts row inserted.
 
 	rows, err := nodeRunRepo.List(ctx, svc, sch, tbl, "run", 50)
 	require.NoError(t, err)
@@ -222,6 +220,170 @@ func TestNodeRunRepository_List_NoMatch(t *testing.T) {
 
 func ptrTime(t time.Time) *time.Time { return &t }
 
+// storedAttempt is one task_attempts row a test stores. Attempt is the 0-based
+// attempt number; unset facts stay NULL.
+type storedAttempt struct {
+	TaskID           uuid.UUID
+	Attempt          int
+	Status           string
+	StartedAt        *time.Time
+	FinishedAt       *time.Time
+	ExecutionSeconds *float64
+	ErrorMessage     *string
+	LogS3Key         *string
+	RunResultsURI    *string
+	FailureClass     *string
+	FailureReason    *string
+}
+
+// insertAttemptRow stores row, named after its task and attempt. It registers
+// no cleanup of its own: the row is deleted with its task through the
+// task_attempts foreign key's ON DELETE CASCADE.
+func insertAttemptRow(t testing.TB, db *sqlx.DB, row storedAttempt) {
+	t.Helper()
+	_, err := db.Exec(`
+		INSERT INTO task_attempts (task_id, attempt, job_name, status, started_at, finished_at, execution_seconds,
+		                           error_message, log_s3_key, run_results_uri, failure_class, failure_reason)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+		row.TaskID, row.Attempt, fmt.Sprintf("job-%s-%d", row.TaskID.String()[:8], row.Attempt), row.Status,
+		row.StartedAt, row.FinishedAt, row.ExecutionSeconds,
+		row.ErrorMessage, row.LogS3Key, row.RunResultsURI, row.FailureClass, row.FailureReason)
+	require.NoError(t, err)
+}
+
+// nodeRunTask stores a run created ageMin minutes ago holding one task of
+// svc.sch.tbl in status at attempt, and returns the task's id.
+func nodeRunTask(t *testing.T, db *sqlx.DB, svc, sch, tbl string, status run.TaskStatus, attempt, ageMin int) uuid.UUID {
+	t.Helper()
+	ctx := context.Background()
+	at := time.Now().Add(-time.Duration(ageMin) * time.Minute)
+	sid, tid := uuid.New(), uuid.New()
+	require.NoError(t, postgres.NewSchedulerTrackerRepository(db, discardLogger()).Create(ctx, &postgres.SchedulerTracker{
+		ScheduleID: sid, ScheduleName: sch, Status: run.SchedulerStatusSucceeded, Kind: "cron",
+		CreatedAt: at, InitializationStatus: "completed",
+	}))
+	t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", sid) })
+	require.NoError(t, postgres.NewTaskTrackerRepository(db, discardLogger()).Create(ctx, &postgres.TaskTracker{
+		TaskID: tid, ScheduleID: sid, ServiceName: svc, SchemaName: sch, TableName: tbl,
+		JobName: "j", Status: status, Attempt: attempt, MaxRetries: 3, ImageTag: "v1", CreatedAt: at,
+	}))
+	return tid
+}
+
+// A task's run shows its latest attempt: the attempt number, that attempt's
+// facts and, for a failed attempt, its failure class and reason; an earlier
+// attempt's facts never show.
+func TestNodeRunRepository_List_CarriesTheLatestAttemptsFacts(t *testing.T) {
+	db := newTestDB(t)
+	svc, sch := "svc-la-"+uuid.NewString()[:8], "sch"
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	logA, logB, logFailed := "logs/a", "logs/b", "logs/failed"
+	results, boom := "s3://results/b", "boom"
+	class, reason := "task", "exit_code"
+
+	// X: attempt 0 failed, attempt 1 succeeded.
+	x := nodeRunTask(t, db, svc, sch, "x", run.TaskStatusSucceeded, 1, 10)
+	insertAttemptRow(t, db, storedAttempt{TaskID: x, Attempt: 0, Status: "failed", LogS3Key: &logA,
+		StartedAt: ptrTime(now.Add(-9 * time.Minute)), FinishedAt: ptrTime(now.Add(-8 * time.Minute)),
+		ErrorMessage: &boom, FailureClass: &class, FailureReason: &reason})
+	insertAttemptRow(t, db, storedAttempt{TaskID: x, Attempt: 1, Status: "succeeded", LogS3Key: &logB, RunResultsURI: &results,
+		StartedAt: ptrTime(now.Add(-6 * time.Minute)), FinishedAt: ptrTime(now.Add(-5 * time.Minute))})
+	// Y: its latest (only) attempt failed with a class and a reason.
+	y := nodeRunTask(t, db, svc, sch, "y", run.TaskStatusFailed, 0, 5)
+	insertAttemptRow(t, db, storedAttempt{TaskID: y, Attempt: 0, Status: "failed", LogS3Key: &logFailed,
+		StartedAt: ptrTime(now.Add(-4 * time.Minute)), FinishedAt: ptrTime(now.Add(-3 * time.Minute)),
+		ErrorMessage: &boom, FailureClass: &class, FailureReason: &reason})
+
+	repo := postgres.NewNodeRunRepository(db, discardLogger())
+
+	gotX, err := repo.List(context.Background(), svc, sch, "x", "run", 50)
+	require.NoError(t, err)
+	require.Len(t, gotX, 1)
+	assert.Equal(t, 1, gotX[0].Attempt)
+	require.NotNil(t, gotX[0].LogS3Key)
+	assert.Equal(t, logB, *gotX[0].LogS3Key)
+	require.NotNil(t, gotX[0].RunResultsURI)
+	assert.Equal(t, results, *gotX[0].RunResultsURI)
+	require.NotNil(t, gotX[0].StartedAt)
+	assert.True(t, now.Add(-6*time.Minute).Equal(*gotX[0].StartedAt), "started at attempt 1's start: %v", gotX[0].StartedAt)
+	require.NotNil(t, gotX[0].CompletedAt)
+	assert.True(t, now.Add(-5*time.Minute).Equal(*gotX[0].CompletedAt), "completed at attempt 1's finish: %v", gotX[0].CompletedAt)
+	assert.Nil(t, gotX[0].ErrorMessage)
+	assert.Nil(t, gotX[0].FailureClass)
+	assert.Nil(t, gotX[0].FailureReason)
+
+	gotY, err := repo.List(context.Background(), svc, sch, "y", "run", 50)
+	require.NoError(t, err)
+	require.Len(t, gotY, 1)
+	assert.Equal(t, 0, gotY[0].Attempt)
+	require.NotNil(t, gotY[0].FailureClass)
+	assert.Equal(t, class, *gotY[0].FailureClass)
+	require.NotNil(t, gotY[0].FailureReason)
+	assert.Equal(t, reason, *gotY[0].FailureReason)
+	require.NotNil(t, gotY[0].ErrorMessage)
+	assert.Equal(t, boom, *gotY[0].ErrorMessage)
+}
+
+// Node durations read each task's succeeded attempt only: a task that failed
+// after 100 s adds no duration, a task whose 100 s attempt failed before a
+// 10 s attempt succeeded adds 10, and a task with two succeeded attempts adds
+// one duration.
+func TestNodeRunRepository_ListNodes_DurationsCountOnlySucceededAttempts(t *testing.T) {
+	start := time.Now().UTC().Add(-time.Hour)
+	attempt := func(task uuid.UUID, n int, status string, sec int) storedAttempt {
+		return storedAttempt{TaskID: task, Attempt: n, Status: status,
+			StartedAt: ptrTime(start), FinishedAt: ptrTime(start.Add(time.Duration(sec) * time.Second))}
+	}
+	listOne := func(t *testing.T, db *sqlx.DB, svc string) *projection.NodeSummary {
+		t.Helper()
+		nodes, _, err := postgres.NewNodeRunRepository(db, discardLogger()).ListNodes(context.Background(), "", svc, "", 50, 0)
+		require.NoError(t, err)
+		require.Len(t, nodes, 1)
+		return nodes[0]
+	}
+
+	t.Run("a failed task contributes nothing", func(t *testing.T) {
+		db := newTestDB(t)
+		svc, sch, tbl := "svc-dur-"+uuid.NewString()[:8], "sch", "orders"
+		failed := nodeRunTask(t, db, svc, sch, tbl, run.TaskStatusFailed, 0, 20)
+		insertAttemptRow(t, db, attempt(failed, 0, "failed", 100))
+		succeeded := nodeRunTask(t, db, svc, sch, tbl, run.TaskStatusSucceeded, 0, 10)
+		insertAttemptRow(t, db, attempt(succeeded, 0, "succeeded", 10))
+
+		n := listOne(t, db, svc)
+		assert.Equal(t, 10, n.AvgDurationSec)
+		assert.Equal(t, 10, n.P95DurationSec)
+	})
+
+	t.Run("a task that failed then succeeded contributes its succeeded attempt", func(t *testing.T) {
+		db := newTestDB(t)
+		svc, sch, tbl := "svc-dur-"+uuid.NewString()[:8], "sch", "orders"
+		task := nodeRunTask(t, db, svc, sch, tbl, run.TaskStatusSucceeded, 1, 10)
+		insertAttemptRow(t, db, attempt(task, 0, "failed", 100))
+		insertAttemptRow(t, db, attempt(task, 1, "succeeded", 10))
+
+		n := listOne(t, db, svc)
+		assert.Equal(t, 10, n.AvgDurationSec)
+		assert.Equal(t, 10, n.P95DurationSec)
+	})
+
+	t.Run("a task with two succeeded attempts counts once", func(t *testing.T) {
+		db := newTestDB(t)
+		svc, sch, tbl := "svc-dur-"+uuid.NewString()[:8], "sch", "orders"
+		once := nodeRunTask(t, db, svc, sch, tbl, run.TaskStatusSucceeded, 0, 20)
+		insertAttemptRow(t, db, attempt(once, 0, "succeeded", 10))
+		twice := nodeRunTask(t, db, svc, sch, tbl, run.TaskStatusSucceeded, 1, 10)
+		insertAttemptRow(t, db, attempt(twice, 0, "succeeded", 30))
+		insertAttemptRow(t, db, attempt(twice, 1, "succeeded", 30))
+
+		// Two durations, 10 s and 30 s: counting the second task twice would
+		// make the average 23 and the 95th percentile 30.
+		n := listOne(t, db, svc)
+		assert.Equal(t, 20, n.AvgDurationSec)
+		assert.Equal(t, 29, n.P95DurationSec)
+	})
+}
+
 // TestNodeRunRepository_ListNodes_AggregatesAndFilters seeds two nodes under the
 // same service and asserts the catalog aggregates, ordering (newest last_run_at
 // first), the service filter, and the exact table-name search filter.
@@ -231,7 +393,6 @@ func TestNodeRunRepository_ListNodes_AggregatesAndFilters(t *testing.T) {
 
 	schedRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
 	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
-	execRepo := postgres.NewTaskExecutionRepository(db, discardLogger())
 	repo := postgres.NewNodeRunRepository(db, discardLogger())
 
 	svc := "svc-ln-" + uuid.New().String()[:8]
@@ -250,19 +411,19 @@ func TestNodeRunRepository_ListNodes_AggregatesAndFilters(t *testing.T) {
 		tid := uuid.New()
 		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskTracker{
 			TaskID: tid, ScheduleID: sid, ServiceName: svc, SchemaName: sch, TableName: table,
-			JobName: "j", Status: taskStatus, RetryCount: retry, MaxRetries: 3,
+			JobName: "j", Status: taskStatus, Attempt: retry, MaxRetries: 3,
 			ImageTag:  "v1",
 			CreatedAt: time.Now().Add(-time.Duration(ageMin) * time.Minute),
 		}))
 		start := time.Now().Add(-time.Duration(ageMin) * time.Minute)
 		end := start.Add(time.Duration(durSec) * time.Second)
-		require.NoError(t, execRepo.Create(ctx, &postgres.TaskExecution{
-			ID: uuid.New(), TaskID: tid, CreatedAt: start,
-			StartedAt: ptrTime(start), CompletedAt: ptrTime(end),
-		}))
+		insertAttemptRow(t, db, storedAttempt{
+			TaskID: tid, Attempt: retry, Status: string(taskStatus),
+			StartedAt: ptrTime(start), FinishedAt: ptrTime(end),
+		})
 	}
 
-	// node A: 2 runs, 1 succeeded + 1 failed (50% success), one flaky (retry>0), durations 10s & 30s
+	// node A: 2 runs, 1 succeeded + 1 failed (50% success), one flaky (attempt>0); durations count the succeeded attempt only (10s)
 	seed(tblA, run.SchedulerStatusSucceeded, run.TaskStatusSucceeded, 0, 30, 10)
 	seed(tblA, run.SchedulerStatusFailed, run.TaskStatusFailed, 1, 5, 30) // most recent for A
 	// node B: 1 run, succeeded, duration 4s — most recent overall
@@ -279,9 +440,9 @@ func TestNodeRunRepository_ListNodes_AggregatesAndFilters(t *testing.T) {
 	a := nodes[1]
 	assert.Equal(t, 2, a.RunCount)
 	assert.Equal(t, 50, a.SuccessRatePct)
-	assert.Equal(t, 20, a.AvgDurationSec) // (10+30)/2
-	assert.Equal(t, 29, a.P95DurationSec) // PERCENTILE_CONT(0.95) of {10,30} interpolates: 10 + 0.95*(30-10) = 29
-	assert.Equal(t, 50, a.FlakyRatePct)   // 1 of 2 runs had retry>0
+	assert.Equal(t, 10, a.AvgDurationSec) // only the succeeded task's 10s counts; the failed task's 30s does not
+	assert.Equal(t, 10, a.P95DurationSec)
+	assert.Equal(t, 50, a.FlakyRatePct) // 1 of 2 runs had attempt>0
 	assert.Equal(t, "failed", a.LastStatus)
 
 	none, total2, err := repo.ListNodes(ctx, "", "no-such-svc", "", 50, 0)

@@ -851,8 +851,8 @@ Rules:
   row is tinted the same and drops its divider — so the block reads as the
   group row's continuation.
 - The inner column labels are a **muted sub-label** of the block (10px,
-  lighter than `.nodes-table thead th`, never sticky, no background), not a
-  peer header. Inner rows keep the table row contract (hover, selected,
+  lighter than `.nodes-table thead th`, never sticky, no background, never
+  wrapped onto a second line), not a peer header. Inner rows keep the table row contract (hover, selected,
   static) and use `.pill-sm` for status.
 - Per-item detail lines under a row (a verification run, say) are a
   `.remediation-verif` sub-row: a 10px uppercase label followed by compact
@@ -871,6 +871,66 @@ Rules:
   `verifying` → running, `generating` → pending, `failed`/`escalated` →
   failed, `skipped` → skipped. Do not map a new lifecycle vocabulary through
   the release fallback and let everything land on grey.
+
+The run page's node table uses the same block for the attempts of one
+task. Its node row is the parent, and the expansion row spans the node
+table's seven columns:
+
+```jsx
+<tr className="remediation-group remediation-group--open nodes-row--no-border" role="button" tabIndex={0} aria-expanded>
+  <td>
+    <div className="nodes-node-toggle">
+      <span className="remediation-chevron remediation-chevron--open" aria-hidden="true">▸</span>
+      <div>
+        <div className="nodes-node-name">orders</div>
+        <div className="nodes-node-schema">core · sales</div>
+      </div>
+    </div>
+  </td>
+  {/* … Status · Attempt (2 / 3) · Error · Started · Completed · Logs */}
+</tr>
+<tr className="remediation-group__body nodes-row--static">
+  <td colSpan={7}>
+    <div className="remediation-attempts">
+      <table className="nodes-table remediation-attempts__table">
+        {/* # · Status · Class · reason · Wait · Run time · Log */}
+      </table>
+    </div>
+  </td>
+</tr>
+```
+
+Rules:
+
+- The expander chevron sits in the Node cell, before the node name
+  (`.nodes-node-toggle`), not in a column of its own: the node table keeps
+  its seven columns, and the expansion row has `colSpan={7}`. The block's
+  indent lines it up under the node name.
+- The inner columns are `#`, `Status`, `Class · reason`, `Wait`,
+  `Run time` and `Log`. `#` is the 1-based attempt number; `Class · reason`
+  joins the failure class and reason (`.nodes-reason`, either alone when
+  only one is known, `.nodes-dash` when neither is); `Wait` is
+  `started_at − queued_at` and `—` when either is unknown; `Run time` is the
+  attempt's recorded run time; `Log` is an `open log ↗` link-out
+  (`.nodes-log-link`) when the attempt has a log, `—` otherwise. Inner rows
+  are `nodes-row--static`: nothing in the block is a click target except
+  its links.
+- Status pills for task attempts come from `attemptPillClass`
+  (`detail-page-helpers.ts`): `dispatched` and `queued` get the pending
+  pill; `running`, `succeeded`, `failed` and `cancelled` get their own.
+- The node row's own cells stay the task's summary: its Attempt cell reads
+  `attempt + 1 / max_retries + 1`, and its Error, Started, Completed and
+  Logs cells come from the task's highest-numbered attempt. A task whose
+  `max_retries` is 0 shows the attempt number alone (`1`, not `1 / 1`):
+  0 is what a task with no stored retry budget, or the default one,
+  carries, so a denominator would claim a single allowed attempt it may
+  not have.
+- A task without attempts (pending, or skipped before it ran) has no
+  expander: no chevron, no `role="button"`, no click or keyboard handler.
+  Its Node cell keeps a chevron-wide spacer so node names stay aligned.
+- A node row whose click already selects the node (the nodes panel beside
+  a graph) never doubles as an attempts toggle; only the run page's node
+  table, whose rows select nothing, expands into attempts.
 
 ### Inline actionable rows
 

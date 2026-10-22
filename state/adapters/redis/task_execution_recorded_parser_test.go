@@ -29,8 +29,7 @@ func TestParseTaskExecutionRecorded_HappyPath(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, execID, evt.ExecutionID)
 	assert.Equal(t, taskID, evt.TaskID)
-	require.NotNil(t, evt.JobName)
-	assert.Equal(t, "j1", *evt.JobName)
+	assert.Equal(t, "j1", evt.JobName)
 	require.NotNil(t, evt.StartedAt)
 	require.NotNil(t, evt.ExecutionTimeSeconds)
 	assert.InDelta(t, 60.5, *evt.ExecutionTimeSeconds, 0.0001)
@@ -48,6 +47,7 @@ func TestParseTaskExecutionRecorded_ParseCacheAbsent(t *testing.T) {
 	msg := goredis.XMessage{ID: "1-0", Values: map[string]interface{}{
 		"execution_id": execID.String(),
 		"task_id":      taskID.String(),
+		"job_name":     "j1",
 	}}
 	evt, err := ParseTaskExecutionRecorded(msg)
 	require.NoError(t, err)
@@ -55,15 +55,40 @@ func TestParseTaskExecutionRecorded_ParseCacheAbsent(t *testing.T) {
 	assert.Nil(t, evt.ParseCacheReason)
 }
 
+// A record without an execution id, a task id or a Job name is rejected, and
+// the error names the missing field. The Job name is the only key to the
+// attempt the record describes.
 func TestParseTaskExecutionRecorded_MissingRequired(t *testing.T) {
-	_, err := ParseTaskExecutionRecorded(goredis.XMessage{ID: "1-0", Values: map[string]interface{}{"task_id": uuid.New().String()}})
-	require.Error(t, err)
+	full := func() map[string]interface{} {
+		return map[string]interface{}{
+			"execution_id": uuid.New().String(),
+			"task_id":      uuid.New().String(),
+			"job_name":     "j1",
+		}
+	}
+	for _, field := range []string{"execution_id", "task_id", "job_name"} {
+		t.Run(field, func(t *testing.T) {
+			values := full()
+			delete(values, field)
+			_, err := ParseTaskExecutionRecorded(goredis.XMessage{ID: "1-0", Values: values})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), field)
+		})
+	}
+	t.Run("empty job_name", func(t *testing.T) {
+		values := full()
+		values["job_name"] = ""
+		_, err := ParseTaskExecutionRecorded(goredis.XMessage{ID: "1-0", Values: values})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "job_name")
+	})
 }
 
 func TestParseTaskExecutionRecorded_BadStartedAt(t *testing.T) {
 	msg := goredis.XMessage{ID: "1-0", Values: map[string]interface{}{
 		"execution_id": uuid.New().String(),
 		"task_id":      uuid.New().String(),
+		"job_name":     "j1",
 		"started_at":   "not-a-time",
 	}}
 	_, err := ParseTaskExecutionRecorded(msg)
@@ -79,6 +104,7 @@ func TestParseTaskExecutionRecorded_RunResultsURI(t *testing.T) {
 	present := goredis.XMessage{ID: "1-0", Values: map[string]interface{}{
 		"execution_id":    uuid.New().String(),
 		"task_id":         uuid.New().String(),
+		"job_name":        "j1",
 		"run_results_uri": key,
 	}}
 	evt, err := ParseTaskExecutionRecorded(present)
@@ -89,6 +115,7 @@ func TestParseTaskExecutionRecorded_RunResultsURI(t *testing.T) {
 	absent := goredis.XMessage{ID: "1-1", Values: map[string]interface{}{
 		"execution_id": uuid.New().String(),
 		"task_id":      uuid.New().String(),
+		"job_name":     "j1",
 	}}
 	evt, err = ParseTaskExecutionRecorded(absent)
 	require.NoError(t, err)

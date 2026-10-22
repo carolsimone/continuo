@@ -73,10 +73,11 @@ var (
 	// named schedule has no active row in schedule_catalog.
 	ErrScheduleNotInCatalog = errors.New("schedule not found in catalog")
 
-	// ErrTaskNotHeld is returned by Run.RecordTaskStatus when the run holds no
-	// task with the status's task id. A run's tasks are stored in the
-	// transaction that creates it, before any of them is dispatched, so such a
-	// status never becomes valid; the stream binding dead-letters it at once.
+	// ErrTaskNotHeld is returned by Run.RecordTaskStatus and
+	// RecordTaskExecution when no run holds a task with the report's task id.
+	// A run's tasks are stored in the transaction that creates it, before any
+	// of them is dispatched, so such a report never becomes valid; the stream
+	// binding dead-letters it at once.
 	ErrTaskNotHeld = errors.New("the run holds no such task")
 
 	// ErrTaskNotFound is returned by Run.HasTaskAt and by TaskCollection

@@ -44,16 +44,21 @@ func TestTaskCollection_LoadAttemptStateReadsTheTask(t *testing.T) {
 	tenant := storeFailureSchedule(t, db)
 	r := startScheduleRun(t, db, tenant, "e2e-schedule-failure", model.OperationRun)
 	id := run.TaskIDFor(tenant, r.ScheduleID(), "e2e_schema.ftable_e")
-	_, err := db.Exec(`UPDATE task_tracker SET status = 'failed', retry_count = 1 WHERE task_id = $1`, id)
+	_, err := db.Exec(`UPDATE task_tracker SET status = 'failed', attempt = 1 WHERE task_id = $1`, id)
 	require.NoError(t, err)
 
 	inTaskTx(t, db, func(tasks run.TaskCollection) {
 		got, found, err := tasks.LoadAttemptState(ctx, id)
 		require.NoError(t, err)
 		require.True(t, found)
-		assert.Equal(t, run.TaskAttemptState{
-			Status: run.TaskStatusFailed, RetryCount: 1, MaxRetries: 2, NodeKey: "e2e_schema.ftable_e",
-		}, got)
+		assert.Equal(t, run.TaskStatusFailed, got.Status)
+		assert.Equal(t, int32(1), got.RetryCount)
+		assert.Equal(t, int32(2), got.MaxRetries)
+		assert.Equal(t, topology.NodeKey("e2e_schema.ftable_e"), got.NodeKey)
+		assert.NotEmpty(t, got.JobName)
+		assert.NotEmpty(t, got.ServiceName)
+		assert.Equal(t, "e2e_schema", got.SchemaName)
+		assert.Equal(t, "ftable_e", got.TableName)
 
 		_, found, err = tasks.LoadAttemptState(ctx, uuid.New())
 		require.NoError(t, err)

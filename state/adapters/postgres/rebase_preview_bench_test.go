@@ -73,7 +73,7 @@ func failedRunWithChangedAncestors(tb testing.TB, db *sqlx.DB, shape releaseShap
 	ctx := context.Background()
 	tenant := storeShape(tb, db, shape)
 	r := startScheduleRun(tb, db, tenant, shape.schedule(), model.OperationRun)
-	succeedWithExecutions(tb, db, r.ScheduleID())
+	succeedWithAttempts(tb, db, r.ScheduleID())
 
 	rel := shape.release(tb, tenant, "rel-2")
 	g := topology.NewGraph(rel.Nodes, rel.Edges)
@@ -107,7 +107,7 @@ func failedRunWithChangedAncestors(tb testing.TB, db *sqlx.DB, shape releaseShap
 	require.NoError(tb, err)
 	require.NoError(tb, topo.SetLivePointer(ctx, tenant, topology.Pointer{ReleaseID: "rel-2", PromotionSeq: 2}, time.Now()))
 	require.NoError(tb, tx.Commit())
-	_, err = db.ExecContext(ctx, `ANALYZE topology_nodes, topology_edges, task_tracker, task_execution`)
+	_, err = db.ExecContext(ctx, `ANALYZE topology_nodes, topology_edges, task_tracker, task_attempts`)
 	require.NoError(tb, err)
 	return tenant, r.ScheduleID(), len(changed)
 }

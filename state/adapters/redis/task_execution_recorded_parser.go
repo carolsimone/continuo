@@ -12,8 +12,9 @@ import (
 
 // ParseTaskExecutionRecorded translates a task.execution.recorded:v1 XMessage
 // into a typed domain event. Fields are read as flat string values from
-// msg.Values. execution_id and task_id are required and must be valid UUIDs.
-// Optional fields (job_name, started_at, completed_at, execution_seconds,
+// msg.Values. execution_id and task_id are required and must be valid UUIDs;
+// job_name is required, because it is the only key to the attempt the record
+// describes. Optional fields (started_at, completed_at, execution_seconds,
 // error_message, log_s3_key, run_results_uri, parse_cache, parse_cache_reason)
 // are nil when their wire value is empty.
 // Malformed RFC3339 timestamps produce an error, matching the existing
@@ -22,9 +23,10 @@ import (
 func ParseTaskExecutionRecorded(msg goredis.XMessage) (events.TaskExecutionRecorded, error) {
 	executionIDStr, _ := msg.Values["execution_id"].(string)
 	taskIDStr, _ := msg.Values["task_id"].(string)
-	if executionIDStr == "" || taskIDStr == "" {
+	jobName, _ := msg.Values["job_name"].(string)
+	if executionIDStr == "" || taskIDStr == "" || jobName == "" {
 		return events.TaskExecutionRecorded{},
-			fmt.Errorf("missing required fields (execution_id=%q task_id=%q)", executionIDStr, taskIDStr)
+			fmt.Errorf("missing required fields (execution_id=%q task_id=%q job_name=%q)", executionIDStr, taskIDStr, jobName)
 	}
 	executionID, err := uuid.Parse(executionIDStr)
 	if err != nil {
@@ -34,11 +36,8 @@ func ParseTaskExecutionRecorded(msg goredis.XMessage) (events.TaskExecutionRecor
 	if err != nil {
 		return events.TaskExecutionRecorded{}, fmt.Errorf("invalid task_id: %w", err)
 	}
-	out := events.TaskExecutionRecorded{ExecutionID: executionID, TaskID: taskID}
+	out := events.TaskExecutionRecorded{ExecutionID: executionID, TaskID: taskID, JobName: jobName}
 
-	if v, _ := msg.Values["job_name"].(string); v != "" {
-		out.JobName = &v
-	}
 	if v, _ := msg.Values["started_at"].(string); v != "" {
 		t, err := time.Parse(time.RFC3339, v)
 		if err != nil {

@@ -33,7 +33,7 @@ export interface Task {
   table_name: string;
   job_name: string;
   status: string;
-  retry_count: number;
+  attempt: number;  // 0-based number of the task's current attempt
   max_retries: number;
   created_at: string | null;
 }
@@ -84,13 +84,21 @@ export interface RunGraph {
   latest_promotion_seq: number;
 }
 
-export interface TaskExecution {
-  id: string;
+// One attempt of one task, from /api/schedulers/:id/attempts. `attempt` is
+// 0-based; a value state has not recorded yet is null.
+export interface TaskAttempt {
   task_id: string;
-  error_message: string | null;
-  execution_time_seconds: number | null;
+  attempt: number;
+  job_name: string;
+  status: string;  // dispatched | queued | running | succeeded | failed | cancelled
+  failure_class: string | null;
+  failure_reason: string | null;
+  dispatched_at: string | null;
+  queued_at: string | null;
   started_at: string | null;
-  completed_at: string | null;
+  finished_at: string | null;
+  execution_seconds: number | null;
+  error_message: string | null;
   log_s3_key: string | null;
   run_results_uri: string | null;
 }
@@ -102,7 +110,9 @@ export interface NodeRun {
   terminal_status: string;  // "" if in flight
   task_id: string;
   task_status: string;      // pending | running | succeeded | failed | cancelled
-  retry_count: number;
+  attempt: number;          // 0-based number of the task's current attempt
+  failure_class: string | null;   // why the latest attempt failed
+  failure_reason: string | null;  // the specific failure within failure_class
   image_tag: string;
   operation: WireOperation;
   created_at: string | null;
