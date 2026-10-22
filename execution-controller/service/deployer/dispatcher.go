@@ -19,6 +19,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	"github.com/carolsimone/continuo/execution-controller/domain/repository"
 	"github.com/carolsimone/continuo/execution-controller/service/validation"
+	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/num"
 	"github.com/carolsimone/continuo/pkg/outbox"
@@ -244,6 +245,8 @@ func (d *Dispatcher) dispatchOne(ctx context.Context, repo repository.Deployment
 		if _, err := dep.RegisterFailure(now, true, "deployment job_params not deployable", d.backoff); err != nil {
 			return err
 		}
+		dep.Observe(model.AttemptFacts{Reason: pkgmodel.FailureReasonMalformedDispatch,
+			Message: "the dispatch's fields could not be read"})
 		if err := d.writeFailedAnnouncements(ctx, outboxRepo, dep); err != nil {
 			return err
 		}
@@ -264,7 +267,9 @@ func (d *Dispatcher) dispatchOne(ctx context.Context, repo repository.Deployment
 		return err
 	}
 	if terminal {
-		d.logger.Error("Deploy terminal failure", "deployment_id", dep.ID(), "cause", deployErr)
+		reason := creationFailureReason(deployErr)
+		dep.Observe(model.AttemptFacts{Reason: reason, Message: deployErr.Error()})
+		d.logger.Error("Deploy terminal failure", "deployment_id", dep.ID(), "failure_reason", reason, "cause", deployErr)
 		if err := d.writeFailedAnnouncements(ctx, outboxRepo, dep); err != nil {
 			return err
 		}
@@ -482,6 +487,22 @@ func (d *Dispatcher) settleFailedCompile(ctx context.Context, repo repository.De
 	return validation.SettleCompileNodeTerminal(
 		ctx, repo, outboxRepo, aggRepo,
 		dep.ReleaseID(), dep.NodeID(), "failed", now)
+}
+
+// creationFailureReason is why the Job of a production attempt could not be
+// created: the dispatch cannot run (a name another task's or attempt's Job
+// holds, an undeclared node type, or another field), or Kubernetes refused
+// the Job on every try.
+func creationFailureReason(err error) pkgmodel.FailureReason {
+	switch {
+	case errors.Is(err, deploy.ErrJobNameCollision):
+		return pkgmodel.FailureReasonJobNameCollision
+	case errors.Is(err, deploy.ErrInvalidNodeType):
+		return pkgmodel.FailureReasonInvalidNodeType
+	case errors.Is(err, pkgevents.ErrPermanent):
+		return pkgmodel.FailureReasonMalformedDispatch
+	}
+	return pkgmodel.FailureReasonCreateFailed
 }
 
 // writeFailedAnnouncements announces a production task whose deploy failed

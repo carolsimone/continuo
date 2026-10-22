@@ -57,6 +57,7 @@ func TestBuildPodSpec_HydratesProdParseCache(t *testing.T) {
 	// warehouse connection arrives via the warehouse-Secret envFrom.
 	wantEnv := []corev1.EnvVar{
 		{Name: "TASK_ID", Value: params.TaskID},
+		{Name: "TASK_ATTEMPT", Value: "0"},
 		{Name: "SCHEDULE_ID", Value: params.ScheduleID},
 		{Name: "SCHEDULE_NAME", Value: params.ScheduleName},
 		{Name: "SERVICE_NAME", Value: params.ServiceName},
@@ -102,7 +103,8 @@ func TestBuildPodSpec_HydratesProdParseCache(t *testing.T) {
 	assert.Equal(t, "parse-cache", spec.Containers[0].VolumeMounts[0].Name)
 	assert.Equal(t, "/project/target", spec.Containers[0].VolumeMounts[0].MountPath)
 
-	// Team container command/env unchanged from today's pre-feature spec.
+	// The team container's command and env are those of a pod without the
+	// parse cache.
 	assert.Equal(t, wantCommand, spec.Containers[0].Command)
 	assert.Equal(t, wantEnv, spec.Containers[0].Env)
 	assert.Equal(t, wantWarehouseEnvFrom(), spec.Containers[0].EnvFrom,
@@ -193,7 +195,8 @@ func TestBuildSeedBuildPodSpec_HydratesCandidateParseCache(t *testing.T) {
 	assert.Equal(t, "parse-cache", spec.Containers[0].VolumeMounts[0].Name)
 	assert.Equal(t, "/project/target", spec.Containers[0].VolumeMounts[0].MountPath)
 
-	// Team container command/env unchanged from today's pre-feature spec.
+	// The team container's command and env are those of a pod without the
+	// parse cache.
 	assert.Equal(t, wantCommand, spec.Containers[0].Command)
 	assert.Equal(t, wantEnv, spec.Containers[0].Env)
 	assert.Equal(t, wantWarehouseEnvFrom(), spec.Containers[0].EnvFrom,

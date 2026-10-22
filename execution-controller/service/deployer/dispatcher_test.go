@@ -278,6 +278,9 @@ func TestDispatcher_CorruptedJobParamsMarksFailedWithRowIdentity(t *testing.T) {
 	require.NoError(t, newTestDispatcher(db, fk, 50).ProcessBatch(context.Background()))
 
 	assert.Equal(t, 0, fk.calls(), "deploy never attempted when payload is corrupt")
+	var reason string
+	require.NoError(t, db.Get(&reason, `SELECT facts->>'failure_reason' FROM deployments WHERE task_id = $1`, taskID))
+	assert.Equal(t, "malformed_dispatch", reason, "a dispatch that does not decode cannot run")
 
 	var status string
 	require.NoError(t, db.QueryRow(`SELECT status FROM deployments WHERE id=$1`,
@@ -513,4 +516,33 @@ func TestDispatcher_WakesWithoutWaitingForTheTick(t *testing.T) {
 
 	w <- struct{}{}
 	require.Eventually(t, func() bool { return countStatusOf(t, db, id) == "starting" }, 5*time.Second, 50*time.Millisecond)
+}
+
+// A deployment whose Job cannot be created records why: Kubernetes refused it
+// on every try, or the dispatch itself cannot run.
+func TestDispatcher_RecordsWhyTheJobCouldNotBeCreated(t *testing.T) {
+	for name, c := range map[string]struct {
+		err        error
+		retryCount int
+		want       string
+	}{
+		"refused on every try": {err: errors.New("apiserver down"), retryCount: 2, want: "create_failed"},
+		"a name collision":     {err: errors.Join(deploy.ErrJobNameCollision, pkgevents.ErrPermanent), want: "job_name_collision"},
+		"an undeclared type":   {err: errors.Join(deploy.ErrInvalidNodeType, pkgevents.ErrPermanent), want: "invalid_node_type"},
+		"no timeout":           {err: errors.Join(deploy.ErrMalformedDispatch, pkgevents.ErrPermanent), want: "malformed_dispatch"},
+		"another field":        {err: errors.Join(errors.New("image_tag missing"), pkgevents.ErrPermanent), want: "malformed_dispatch"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			db, cleanup := setupPostgres(t)
+			defer cleanup()
+			id := seedJob(t, db, 3, c.retryCount)
+
+			require.NoError(t, newTestDispatcher(db, &fakeDeployer{deployErr: c.err}, 50).ProcessBatch(context.Background()))
+
+			var reason string
+			require.NoError(t, db.Get(&reason, `SELECT facts->>'failure_reason' FROM deployments WHERE id = $1`, id))
+			assert.Equal(t, c.want, reason)
+			assert.Equal(t, "failed", countStatusOf(t, db, id))
+		})
+	}
 }

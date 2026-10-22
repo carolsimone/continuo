@@ -307,7 +307,9 @@ func main() {
 	newAdmissionRepo := func(exec pkgoutbox.Executor) repository.AdmissionRepository {
 		return postgres.NewAdmissionRepository(exec, logger)
 	}
-	k8sDeployer := k8s.NewDeployer(k8sClient, cfg.K8sNamespace)
+	// A task's Job runs up to the start timeout plus the task's own timeout,
+	// a release leg's up to the start timeout plus the install's task timeout.
+	k8sDeployer := k8s.NewDeployer(k8sClient, cfg.K8sNamespace, cfg.JobStartTimeout, cfg.TaskTimeout)
 
 	deployDispatcher := deployer.NewDispatcher(
 		pgDB, k8sDeployer,

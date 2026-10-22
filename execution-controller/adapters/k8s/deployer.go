@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/carolsimone/continuo/execution-controller/domain/deploy"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
@@ -15,27 +16,48 @@ import (
 const JobSelector = "app=dbt-job"
 
 // Deployer adapts the K8sClient to the domain deploy.Deployer port. It holds
-// the namespace so that infrastructure concern stays out of the domain and
-// application layers.
+// the namespace and the deadlines of the Jobs it creates, so those
+// infrastructure concerns stay out of the domain and application layers.
 type Deployer struct {
 	client    *K8sClient
 	namespace string
+	// startTimeout is the start timeout every Job's deadline includes, since
+	// Kubernetes counts it from the Job's start; legTimeout is how long a
+	// release leg's container may run.
+	startTimeout time.Duration
+	legTimeout   time.Duration
 }
 
 // NewDeployer wires a domain Deployer to the given K8s client and namespace.
-func NewDeployer(client *K8sClient, namespace string) *Deployer {
-	return &Deployer{client: client, namespace: namespace}
+// A task's Job runs up to startTimeout plus the task's own timeout, a release
+// leg's up to startTimeout plus legTimeout.
+func NewDeployer(client *K8sClient, namespace string, startTimeout, legTimeout time.Duration) *Deployer {
+	return &Deployer{client: client, namespace: namespace, startTimeout: startTimeout, legTimeout: legTimeout}
 }
 
-// Deploy maps the domain JobSpec to K8s job params and creates the Job
-// (idempotent by job name). An unparseable node type can never succeed, so it
-// is reported as a permanent error.
+// Deploy maps the domain JobSpec to K8s job params and creates the Job of
+// the attempt. A node type the vocabulary does not declare is
+// deploy.ErrInvalidNodeType and a dispatch without a timeout
+// deploy.ErrMalformedDispatch; neither can ever succeed.
 func (d *Deployer) Deploy(ctx context.Context, spec deploy.JobSpec) error {
 	nodeType, err := pkg_model.ParseNodeType(spec.NodeType)
 	if err != nil {
-		return fmt.Errorf("invalid node type %q: %w", spec.NodeType, errors.Join(err, pkgevents.ErrPermanent))
+		return fmt.Errorf("%w %q: %w", deploy.ErrInvalidNodeType, spec.NodeType, errors.Join(err, pkgevents.ErrPermanent))
 	}
-	return d.client.CreateQueryJob(ctx, jobParamsFromSpec(spec, nodeType, d.namespace))
+	if spec.TimeoutSeconds <= 0 {
+		return fmt.Errorf("%w: timeout_seconds %d for Job %s", errors.Join(deploy.ErrMalformedDispatch, pkgevents.ErrPermanent),
+			spec.TimeoutSeconds, spec.JobName)
+	}
+	params := jobParamsFromSpec(spec, nodeType, d.namespace)
+	params.ActiveDeadlineSeconds = d.deadline(time.Duration(spec.TimeoutSeconds) * time.Second)
+	return d.client.CreateQueryJob(ctx, params)
+}
+
+// deadline is a Job's activeDeadlineSeconds for a container that may run for
+// timeout: Kubernetes counts from the Job's start, so the start timeout is
+// added.
+func (d *Deployer) deadline(timeout time.Duration) int64 {
+	return int64((d.startTimeout + timeout).Seconds())
 }
 
 // jobParamsFromSpec maps the domain JobSpec onto the K8s query-job params.
@@ -53,6 +75,7 @@ func jobParamsFromSpec(spec deploy.JobSpec, nodeType pkg_model.NodeType, namespa
 		ImageTag:     spec.ImageTag,
 		SecretRef:    spec.SecretRef,
 		Operation:    pkg_model.Operation(spec.Operation),
+		Attempt:      spec.Attempt,
 	}
 }
 
@@ -65,19 +88,20 @@ func (d *Deployer) DeployValidation(ctx context.Context, spec deploy.ValidationJ
 		return fmt.Errorf("invalid node type %q: %w", spec.NodeType, errors.Join(err, pkgevents.ErrPermanent))
 	}
 	return d.client.CreateValidationJob(ctx, ValidationJobParams{
-		JobName:              spec.JobName,
-		ReleaseID:            spec.ReleaseID,
-		NodeID:               spec.NodeID,
-		ServiceName:          spec.ServiceName,
-		SchemaName:           spec.SchemaName,
-		TableName:            spec.TableName,
-		NodeType:             nodeType,
-		ImageTag:             spec.ImageTag,
-		CandidateSchema:      spec.CandidateSchema,
-		CandidateArtifactURI: spec.CandidateArtifactURI,
-		ValidationOp:         spec.ValidationOp,
-		ProdSchema:           spec.ProdSchema,
-		Namespace:            d.namespace,
+		JobName:               spec.JobName,
+		ReleaseID:             spec.ReleaseID,
+		NodeID:                spec.NodeID,
+		ServiceName:           spec.ServiceName,
+		SchemaName:            spec.SchemaName,
+		TableName:             spec.TableName,
+		NodeType:              nodeType,
+		ImageTag:              spec.ImageTag,
+		CandidateSchema:       spec.CandidateSchema,
+		CandidateArtifactURI:  spec.CandidateArtifactURI,
+		ValidationOp:          spec.ValidationOp,
+		ProdSchema:            spec.ProdSchema,
+		ActiveDeadlineSeconds: d.deadline(d.legTimeout),
+		Namespace:             d.namespace,
 	})
 }
 
@@ -93,17 +117,18 @@ func (d *Deployer) DeploySeedBuild(ctx context.Context, spec deploy.ValidationJo
 		return fmt.Errorf("invalid node type %q: %w", spec.NodeType, errors.Join(err, pkgevents.ErrPermanent))
 	}
 	return d.client.CreateSeedBuildJob(ctx, ValidationJobParams{
-		JobName:          spec.JobName,
-		ReleaseID:        spec.ReleaseID,
-		NodeID:           spec.NodeID,
-		ServiceName:      spec.ServiceName,
-		SchemaName:       spec.SchemaName,
-		TableName:        spec.TableName,
-		NodeType:         nodeType,
-		ImageTag:         spec.ImageTag,
-		CandidateSchema:  spec.CandidateSchema,
-		SourceOverlayURI: spec.SourceOverlayURI,
-		Namespace:        d.namespace,
+		JobName:               spec.JobName,
+		ReleaseID:             spec.ReleaseID,
+		NodeID:                spec.NodeID,
+		ServiceName:           spec.ServiceName,
+		SchemaName:            spec.SchemaName,
+		TableName:             spec.TableName,
+		NodeType:              nodeType,
+		ImageTag:              spec.ImageTag,
+		CandidateSchema:       spec.CandidateSchema,
+		SourceOverlayURI:      spec.SourceOverlayURI,
+		ActiveDeadlineSeconds: d.deadline(d.legTimeout),
+		Namespace:             d.namespace,
 	})
 }
 
@@ -116,6 +141,7 @@ func (d *Deployer) DeployCompile(ctx context.Context, spec deploy.ValidationJobS
 	if err != nil {
 		return err
 	}
+	params.ActiveDeadlineSeconds = d.deadline(d.legTimeout)
 	return d.client.CreateCompileJob(ctx, params)
 }
 

@@ -106,17 +106,19 @@ func (ValidationDeployTask) isCommand() {}
 // port consumes. The mapping is a pure field copy — no infrastructure concern.
 func (c DeployTask) ToJobSpec() deploy.JobSpec {
 	return deploy.JobSpec{
-		JobName:      c.JobName,
-		TaskID:       c.TaskID,
-		ScheduleID:   c.ScheduleID,
-		ScheduleName: c.ScheduleName,
-		ServiceName:  c.ServiceName,
-		SchemaName:   c.SchemaName,
-		TableName:    c.TableName,
-		NodeType:     c.NodeType,
-		ImageTag:     c.ImageTag,
-		SecretRef:    c.SecretRef,
-		Operation:    c.Operation,
+		JobName:        c.JobName,
+		TaskID:         c.TaskID,
+		ScheduleID:     c.ScheduleID,
+		ScheduleName:   c.ScheduleName,
+		ServiceName:    c.ServiceName,
+		SchemaName:     c.SchemaName,
+		TableName:      c.TableName,
+		NodeType:       c.NodeType,
+		ImageTag:       c.ImageTag,
+		SecretRef:      c.SecretRef,
+		Operation:      c.Operation,
+		Attempt:        c.Attempt,
+		TimeoutSeconds: c.TimeoutSeconds,
 	}
 }
 
