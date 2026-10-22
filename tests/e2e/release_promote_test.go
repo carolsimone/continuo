@@ -1065,9 +1065,9 @@ func assertCandidateSchemaDropped(t *testing.T, ctx context.Context, clients *te
 }
 
 // assertNoValidationJobsDispatched confirms no mode=validation K8s Job was ever
-// created for releaseID. A bootstrap release never emits validation.requested:v1,
-// so the executor never dispatches a job. A short grace window absorbs any
-// in-flight dispatch race before the final assertion.
+// created for releaseID. A release that skips validation never emits
+// validation.requested:v1, so the executor never dispatches a job. A short
+// grace window absorbs any in-flight dispatch race before the final assertion.
 func assertNoValidationJobsDispatched(t *testing.T, ctx context.Context, clients *testClients, releaseID string) {
 	t.Helper()
 	selector := fmt.Sprintf("mode=validation,release-id=%s", releaseID)
@@ -1076,14 +1076,14 @@ func assertNoValidationJobsDispatched(t *testing.T, ctx context.Context, clients
 		jobs, err := getK8sJobs(ctx, selector)
 		require.NoError(t, err, "list validation jobs for release %s", releaseID)
 		require.Empty(t, jobs.Items,
-			"expected no validation jobs for bootstrap release %s, found %d", releaseID, len(jobs.Items))
+			"expected no validation jobs for release %s, found %d", releaseID, len(jobs.Items))
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(2 * time.Second):
 		}
 	}
-	t.Logf("✅ no validation jobs dispatched for bootstrap release %s", releaseID)
+	t.Logf("✅ no validation jobs dispatched for release %s", releaseID)
 }
 
 // sanitizeReleaseSchemaSuffix mirrors release-controller's sanitizeSchemaSuffix:

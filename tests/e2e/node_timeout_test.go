@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -141,21 +142,48 @@ func TestE2E_ReleasePromote_ATimeoutOnlyChangePromotesWithoutValidation(t *testi
 		}
 	}
 
-	// State's live release carries the declared timeout on that node.
-	var declared sql.NullInt64
-	pollUntil(t, ctx, 2*time.Minute, 2*time.Second, func() (bool, error) {
+	// State's live release carries the declared timeout on that node. The poll
+	// retries a missing row (the release is not stored yet) silently; any other
+	// error and the last observed value are kept for the failure message.
+	var (
+		declared sql.NullInt64
+		lastErr  error
+		observed = "no row yet"
+	)
+	deadline := time.Now().Add(2 * time.Minute)
+poll:
+	for {
 		err := clients.stateDB.GetContext(ctx, &declared, `
 			SELECT n.timeout_seconds
 			  FROM live_release l
 			  JOIN topology_nodes n ON n.tenant_id = l.tenant_id AND n.release_id = l.release_id
 			 WHERE l.tenant_id = $1 AND l.release_id = $2 AND n.node_key = $3`,
 			events.DefaultTenantID, releaseID, timeoutOnlyNodeKey)
-		if err != nil {
-			return false, nil
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+		case err != nil:
+			lastErr = err
+		default:
+			lastErr = nil
+			observed = "timeout_seconds=NULL"
+			if declared.Valid {
+				observed = fmt.Sprintf("timeout_seconds=%d", declared.Int64)
+			}
+			if declared.Valid && declared.Int64 == timeoutOnlySeconds {
+				break poll
+			}
 		}
-		return declared.Valid && declared.Int64 == timeoutOnlySeconds, nil
-	}, fmt.Sprintf("timeout waiting for state's live release %s to carry timeout_seconds=%d on %s",
-		releaseID, timeoutOnlySeconds, timeoutOnlyNodeKey))
+		if time.Now().After(deadline) {
+			require.FailNow(t, fmt.Sprintf(
+				"timeout waiting for state's live release %s to carry timeout_seconds=%d on %s: last observed %s, last query error: %v",
+				releaseID, timeoutOnlySeconds, timeoutOnlyNodeKey, observed, lastErr))
+		}
+		select {
+		case <-ctx.Done():
+			require.FailNow(t, "context done while waiting for the declared timeout: "+ctx.Err().Error())
+		case <-time.After(2 * time.Second):
+		}
+	}
 
 	// Every other node declared nothing.
 	var others int

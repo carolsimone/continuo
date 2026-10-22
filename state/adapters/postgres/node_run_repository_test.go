@@ -946,8 +946,7 @@ func TestNodeRunRepository_ListNodes_CarriesTheLiveReleasesTimeout(t *testing.T)
 	assert.Equal(t, map[string]int{tblA: 7200, tblB: 0}, timeoutOf(rows))
 }
 
-// A node the live release does not hold reports no timeout, and so does every
-// node when the tenant has no live release.
+// A node the live release does not hold reports no timeout.
 func TestNodeRunRepository_ListNodes_ANodeOutsideTheLiveReleaseHasNoTimeout(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
