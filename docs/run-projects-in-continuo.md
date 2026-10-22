@@ -100,7 +100,8 @@ in it, deliberately:
    — `FROM analytics.fx_transactions_eur`. continuo finds that edge in the SQL
    and sequences the cross-project build itself.
 3. **Every node needs `meta.owner`** (set once in `dbt_project.yml`). Nodes
-   without it are skipped.
+   without it are skipped. `meta` also carries an optional per-node task
+   timeout; see [Set how long a node may run](#set-how-long-a-node-may-run).
 4. **Every model needs a tag naming its schedule** — `{{ config(tags=['daily'])
    }}`. continuo reads the **first tag as the schedule the node belongs to**; an
    untagged model is skipped. Seeds are exempt and default to build-on-release.
@@ -108,6 +109,47 @@ in it, deliberately:
 The full contract, including the `generate_schema_name` macro each project
 carries, is in
 [deploy/dbt-image-contract.md](../deploy/dbt-image-contract.md).
+
+### Set how long a node may run
+
+A node can declare how many minutes its task may run. In a dbt project it is the
+`timeout_minutes` key of the node's `meta`. Set it once for the whole project in
+`dbt_project.yml`, and override it on a single model:
+
+```yaml
+# dbt_project.yml
+models:
+  +meta:
+    owner: finance
+    timeout_minutes: 60
+```
+
+```sql
+-- models/fx_transactions_eur.sql
+{{ config(meta={'timeout_minutes': 240}) }}
+```
+
+dbt resolves project, folder and model `meta` into each node's `config.meta`, so
+a model inherits the project value and a model-level `timeout_minutes` replaces
+it; the other `meta` keys, such as `owner`, still come from the project.
+
+A python node declares it as `timeout_minutes` on its contract entry, which
+needs `continuo-python-runtime` 0.10.0 or later:
+
+```yaml
+# services/service-py/contracts/py_daily_kpis.yml
+    timeout_minutes: 30
+```
+
+The value is an integer from 1 to 10,080 minutes (seven days). Anything else, a
+string such as `"2h"`, zero, a negative number or a larger one, rejects the
+release as `invalid_artifact`, and the rejection names the node and the key.
+
+The timeout is not part of a node's content hash, so a release that changes only
+timeouts promotes without validation. Each release keeps its own timeouts, and a
+run uses the timeouts of the release it runs on. The node page shows a node's
+timeout, and `continuo node list` reports it as `timeout_seconds` (0 means the
+node declares none). A node that declares none gets the install default.
 
 ### If your project already has its own `generate_schema_name`
 
@@ -448,7 +490,7 @@ Now build the contract from the service's `contracts/` directory, using the
 runtime CLI the release gate uses:
 
 ```bash
-uv tool install continuo-python-runtime==0.7.0
+uv tool install continuo-python-runtime==0.10.0
 
 continuo-runtime validate services/service-py/contracts --dialect postgres
 
