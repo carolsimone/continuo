@@ -858,3 +858,144 @@ func TestNodeRunRepository_ContentHashComesFromTheRunsRelease(t *testing.T) {
 	}
 	assert.Equal(t, map[uuid.UUID]string{stamped: "sha256:h1", legacy: ""}, hashes)
 }
+
+// declaredNode is one node a stored release declares: its service, schema and
+// table, and the task timeout in seconds it declares (nil when it declares
+// none).
+type declaredNode struct {
+	service, schema, table string
+	timeoutSeconds         *int
+}
+
+// storeRelease stores a release holding nodes and removes it (with its nodes)
+// when the test ends.
+func storeRelease(t *testing.T, db *sqlx.DB, release string, promotionSeq int64, nodes ...declaredNode) {
+	t.Helper()
+	const tenant = "default"
+	_, err := db.Exec(`INSERT INTO topology_releases (tenant_id, release_id, promotion_seq, topology_uri, topology_sha256) VALUES ($1, $2, $3, 's3://b/k', 'x')`, tenant, release, promotionSeq)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = db.Exec(`DELETE FROM topology_releases WHERE tenant_id = $1 AND release_id = $2`, tenant, release)
+	})
+	for _, n := range nodes {
+		key := n.schema + "." + n.table
+		_, err = db.Exec(`INSERT INTO topology_nodes (tenant_id, release_id, node_key, unique_id, service_name, schema_name, table_name, node_type, timeout_seconds)
+			VALUES ($1, $2, $3, $3, $4, $5, $6, 'dbt-model', $7)`, tenant, release, key, n.service, n.schema, n.table, n.timeoutSeconds)
+		require.NoError(t, err)
+	}
+}
+
+// makeLive points the default tenant's live_release at release and puts back
+// whatever it pointed at when the test ends.
+func makeLive(t *testing.T, db *sqlx.DB, release string, promotionSeq int64) {
+	t.Helper()
+	const tenant = "default"
+	var prior struct {
+		ReleaseID    string `db:"release_id"`
+		PromotionSeq int64  `db:"promotion_seq"`
+	}
+	hadPrior := db.GetContext(context.Background(), &prior, `SELECT release_id, promotion_seq FROM live_release WHERE tenant_id = $1`, tenant) == nil
+	_, err := db.Exec(`
+		INSERT INTO live_release (tenant_id, release_id, promotion_seq, updated_at) VALUES ($1, $2, $3, now())
+		ON CONFLICT (tenant_id) DO UPDATE SET release_id = EXCLUDED.release_id, promotion_seq = EXCLUDED.promotion_seq`,
+		tenant, release, promotionSeq)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if hadPrior {
+			_, _ = db.Exec(`UPDATE live_release SET release_id = $2, promotion_seq = $3 WHERE tenant_id = $1`, tenant, prior.ReleaseID, prior.PromotionSeq)
+			return
+		}
+		_, _ = db.Exec(`DELETE FROM live_release WHERE tenant_id = $1`, tenant)
+	})
+}
+
+func timeoutOf(rows []*projection.NodeSummary) map[string]int {
+	out := map[string]int{}
+	for _, r := range rows {
+		out[r.TableName] = r.TimeoutSeconds
+	}
+	return out
+}
+
+// A node's catalog row carries the timeout the live release declares for it:
+// an older release's value never shows, and a node declaring none reports 0.
+func TestNodeRunRepository_ListNodes_CarriesTheLiveReleasesTimeout(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	repo := postgres.NewNodeRunRepository(db, discardLogger())
+
+	svc := "svc-to-" + uuid.NewString()[:8]
+	sch := "an"
+	tblA, tblB := "tmo_a", "tmo_b"
+	base := time.Now().UnixMicro()
+	oldRelease, liveRelease := "rel-"+uuid.NewString(), "rel-"+uuid.NewString()
+
+	ptr := func(v int) *int { return &v }
+	storeRelease(t, db, oldRelease, base,
+		declaredNode{svc, sch, tblA, ptr(600)}, declaredNode{svc, sch, tblB, ptr(900)})
+	storeRelease(t, db, liveRelease, base+1,
+		declaredNode{svc, sch, tblA, ptr(7200)}, declaredNode{svc, sch, tblB, nil})
+	makeLive(t, db, liveRelease, base+1)
+
+	nodeRunTask(t, db, svc, sch, tblA, run.TaskStatusSucceeded, 0, 5)
+	nodeRunTask(t, db, svc, sch, tblB, run.TaskStatusSucceeded, 0, 6)
+
+	rows, total, err := repo.ListNodes(ctx, "", svc, "", 50, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 2, total, "joining the live release must not change the catalog count")
+	assert.Equal(t, map[string]int{tblA: 7200, tblB: 0}, timeoutOf(rows))
+}
+
+// A node the live release does not hold reports no timeout, and so does every
+// node when the tenant has no live release.
+func TestNodeRunRepository_ListNodes_ANodeOutsideTheLiveReleaseHasNoTimeout(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	repo := postgres.NewNodeRunRepository(db, discardLogger())
+
+	svc := "svc-to-" + uuid.NewString()[:8]
+	sch := "an"
+	held, outside := "tmo_held", "tmo_outside"
+	base := time.Now().UnixMicro()
+	oldRelease, liveRelease := "rel-"+uuid.NewString(), "rel-"+uuid.NewString()
+
+	ptr := func(v int) *int { return &v }
+	storeRelease(t, db, oldRelease, base, declaredNode{svc, sch, outside, ptr(1800)})
+	storeRelease(t, db, liveRelease, base+1, declaredNode{svc, sch, held, ptr(300)})
+	makeLive(t, db, liveRelease, base+1)
+
+	nodeRunTask(t, db, svc, sch, held, run.TaskStatusSucceeded, 0, 5)
+	nodeRunTask(t, db, svc, sch, outside, run.TaskStatusSucceeded, 0, 6)
+
+	rows, total, err := repo.ListNodes(ctx, "", svc, "", 50, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 2, total)
+	assert.Equal(t, map[string]int{held: 300, outside: 0}, timeoutOf(rows))
+}
+
+// Two nodes of the live release that share a service, schema and table (they
+// differ only in node key) still make one catalog row.
+func TestNodeRunRepository_ListNodes_NodesSharingATableStayOneRow(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	repo := postgres.NewNodeRunRepository(db, discardLogger())
+
+	svc := "svc-to-" + uuid.NewString()[:8]
+	sch, tbl := "an", "tmo_shared"
+	base := time.Now().UnixMicro()
+	liveRelease := "rel-" + uuid.NewString()
+
+	storeRelease(t, db, liveRelease, base, declaredNode{svc, sch, tbl, nil})
+	_, err := db.Exec(`INSERT INTO topology_nodes (tenant_id, release_id, node_key, unique_id, service_name, schema_name, table_name, node_type, timeout_seconds)
+		VALUES ('default', $1, 'seed.shared', 'seed.shared', $2, $3, $4, 'dbt-seed', 1200)`, liveRelease, svc, sch, tbl)
+	require.NoError(t, err)
+	makeLive(t, db, liveRelease, base)
+
+	nodeRunTask(t, db, svc, sch, tbl, run.TaskStatusSucceeded, 0, 5)
+
+	rows, total, err := repo.ListNodes(ctx, "", svc, "", 50, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 1, total)
+	require.Len(t, rows, 1)
+	assert.Equal(t, 1200, rows[0].TimeoutSeconds)
+}

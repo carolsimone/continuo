@@ -47,7 +47,11 @@ func TestList_SuccessMapsAllFieldsAndTotalCount(t *testing.T) {
 			ServiceName: "finance", SchemaName: "analytics", TableName: "orders",
 			RunCount: 12, SuccessRatePct: 92, AvgDurationSec: 34, P95DurationSec: 80,
 			FlakyRatePct: 8, LastStatus: "succeeded", LastRunAt: "2026-09-18T10:00:00Z",
-			Operation: "run",
+			Operation: "run", TimeoutSeconds: 7200,
+		}, {
+			ServiceName: "finance", SchemaName: "analytics", TableName: "customers",
+			RunCount: 3, SuccessRatePct: 100, AvgDurationSec: 5, P95DurationSec: 6,
+			LastStatus: "succeeded", LastRunAt: "2026-09-18T09:00:00Z", Operation: "run",
 		}},
 	}}
 
@@ -70,11 +74,12 @@ func TestList_SuccessMapsAllFieldsAndTotalCount(t *testing.T) {
 			LastStatus     string `json:"last_status"`
 			LastRunAt      string `json:"last_run_at"`
 			Operation      string `json:"operation"`
+			TimeoutSeconds int    `json:"timeout_seconds"`
 		} `json:"nodes"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(stdout), &payload))
 	assert.Equal(t, 7, payload.TotalCount)
-	require.Len(t, payload.Nodes, 1)
+	require.Len(t, payload.Nodes, 2)
 	n := payload.Nodes[0]
 	assert.Equal(t, "finance", n.ServiceName)
 	assert.Equal(t, "analytics", n.SchemaName)
@@ -87,6 +92,11 @@ func TestList_SuccessMapsAllFieldsAndTotalCount(t *testing.T) {
 	assert.Equal(t, "succeeded", n.LastStatus)
 	assert.Equal(t, "2026-09-18T10:00:00Z", n.LastRunAt)
 	assert.Equal(t, "run", n.Operation)
+	assert.Equal(t, 7200, n.TimeoutSeconds)
+	assert.Contains(t, stdout, `"timeout_seconds":7200`)
+	// A node declaring no timeout still emits the field, as 0.
+	assert.Contains(t, stdout, `"timeout_seconds":0`)
+	assert.Equal(t, 0, payload.Nodes[1].TimeoutSeconds)
 
 	// Every flag is forwarded to the RPC verbatim.
 	assert.Equal(t, "orders", fake.gotListSearch)

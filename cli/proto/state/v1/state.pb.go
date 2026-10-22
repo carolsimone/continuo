@@ -2839,6 +2839,7 @@ type NodeSummary struct {
 	LastStatus     string                 `protobuf:"bytes,9,opt,name=last_status,json=lastStatus,proto3" json:"last_status,omitempty"`                // succeeded|failed|running|cancelled|pending
 	LastRunAt      string                 `protobuf:"bytes,10,opt,name=last_run_at,json=lastRunAt,proto3" json:"last_run_at,omitempty"`                // RFC3339 of the most recent run's created_at
 	Operation      string                 `protobuf:"bytes,11,opt,name=operation,proto3" json:"operation,omitempty"`                                   // run | test | build
+	TimeoutSeconds int32                  `protobuf:"varint,12,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`  // the live release's declared task timeout; 0 when the node declares none and its tasks get the install default
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -2948,6 +2949,13 @@ func (x *NodeSummary) GetOperation() string {
 		return x.Operation
 	}
 	return ""
+}
+
+func (x *NodeSummary) GetTimeoutSeconds() int32 {
+	if x != nil {
+		return x.TimeoutSeconds
+	}
+	return 0
 }
 
 type ListNodeNamesRequest struct {
@@ -3956,7 +3964,7 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"\x11ListNodesResponse\x12+\n" +
 	"\x05nodes\x18\x01 \x03(\v2\x15.state.v1.NodeSummaryR\x05nodes\x12\x1f\n" +
 	"\vtotal_count\x18\x02 \x01(\x05R\n" +
-	"totalCount\"\x90\x03\n" +
+	"totalCount\"\xb9\x03\n" +
 	"\vNodeSummary\x12!\n" +
 	"\fservice_name\x18\x01 \x01(\tR\vserviceName\x12\x1f\n" +
 	"\vschema_name\x18\x02 \x01(\tR\n" +
@@ -3972,7 +3980,8 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"lastStatus\x12\x1e\n" +
 	"\vlast_run_at\x18\n" +
 	" \x01(\tR\tlastRunAt\x12\x1c\n" +
-	"\toperation\x18\v \x01(\tR\toperation\"9\n" +
+	"\toperation\x18\v \x01(\tR\toperation\x12'\n" +
+	"\x0ftimeout_seconds\x18\f \x01(\x05R\x0etimeoutSeconds\"9\n" +
 	"\x14ListNodeNamesRequest\x12!\n" +
 	"\fservice_name\x18\x01 \x01(\tR\vserviceName\"8\n" +
 	"\x15ListNodeNamesResponse\x12\x1f\n" +

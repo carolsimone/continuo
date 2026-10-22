@@ -500,6 +500,7 @@ message NodeSummary {
   string last_status      = 9;   // succeeded|failed|running|cancelled|pending
   string last_run_at      = 10;  // RFC3339 of the most recent run's created_at
   string operation        = 11;  // run | test | build
+  int32  timeout_seconds  = 12;  // the live release's declared task timeout; 0 when the node declares none and its tasks get the install default
 }
 
 message ListNodeNamesRequest {

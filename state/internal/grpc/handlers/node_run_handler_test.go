@@ -142,6 +142,7 @@ func TestNodeRunHandler_ListNodes_MapsRowsAndClampsPaging(t *testing.T) {
 			ServiceName: "svc", SchemaName: "an", TableName: "fct_orders",
 			RunCount: 48, SuccessRatePct: -1, AvgDurationSec: -1, P95DurationSec: 21,
 			FlakyRatePct: 4, LastStatus: "succeeded", LastRunAt: when,
+			TimeoutSeconds: 7200,
 		}},
 	}
 	h := NewNodeRunHandler(repo, nil)
@@ -163,6 +164,9 @@ func TestNodeRunHandler_ListNodes_MapsRowsAndClampsPaging(t *testing.T) {
 	}
 	if resp.Nodes[0].SuccessRatePct != -1 {
 		t.Errorf("SuccessRatePct = %d, want -1 (sentinel passthrough)", resp.Nodes[0].SuccessRatePct)
+	}
+	if resp.Nodes[0].TimeoutSeconds != 7200 {
+		t.Errorf("TimeoutSeconds = %d, want 7200", resp.Nodes[0].TimeoutSeconds)
 	}
 	if resp.Nodes[0].LastRunAt != "2026-06-08T10:00:00Z" {
 		t.Errorf("LastRunAt = %q, want RFC3339", resp.Nodes[0].LastRunAt)
