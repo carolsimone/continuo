@@ -38,8 +38,8 @@ func (r *recordingSchemaCreator) EnsureCandidateSchema(_ context.Context, schema
 }
 
 // buildValidationBinding constructs a ValidationRequestedBinding backed by the
-// given *sqlx.DB, mirroring buildBinding for the query.model path. The returned
-// recordingSchemaCreator captures the candidate-schema pre-create calls.
+// given *sqlx.DB. The returned recordingSchemaCreator captures the
+// candidate-schema pre-create calls.
 func buildValidationBinding(db *sqlx.DB) (func(ctx context.Context, msg goredis.XMessage) error, *recordingSchemaCreator) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	uowFactory := func() uow.UnitOfWork {

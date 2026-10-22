@@ -32,13 +32,6 @@ func TestRender_CandidateLegEventIsPayloadField(t *testing.T) {
 	}
 }
 
-func TestRender_CheckDelayedIsNotRenderable(t *testing.T) {
-	p := NewOutboxPublisher(nil, nil)
-	if _, err := p.Render(&outbox.Entry{ID: uuid.New(), EventType: event.EventTypeCheckDelayed}); err == nil {
-		t.Fatal("want an error: check_delayed has no stream fields")
-	}
-}
-
 func TestRender_DeadLetterRowOmitsOutboxEntryID(t *testing.T) {
 	p := NewOutboxPublisher(nil, nil)
 	values, err := p.Render(&outbox.Entry{
@@ -53,8 +46,7 @@ func TestRender_DeadLetterRowOmitsOutboxEntryID(t *testing.T) {
 func TestRender_TypedEventsAreAcceptedByStringifyFields(t *testing.T) {
 	p := NewOutboxPublisher(nil, nil)
 	for _, entry := range []*outbox.Entry{
-		{ID: uuid.New(), EventType: event.EventTypeTaskStatusUpdated, Payload: []byte(`{"task_id":"t1","schedule_id":"s1","status":"RUNNING"}`)},
-		{ID: uuid.New(), EventType: event.EventTypeTaskExecutionRecorded, Payload: []byte(`{"execution_id":"e1","task_id":"t1","execution_seconds":1.5}`)},
+		{ID: uuid.New(), EventType: event.EventTypeTaskStatusReport, Payload: []byte(`{"run_id":"s1","task_id":"t1","attempt":0,"status":"running"}`)},
 	} {
 		values, err := p.Render(entry)
 		require.NoError(t, err)
@@ -66,13 +58,13 @@ func TestRender_TypedEventsAreAcceptedByStringifyFields(t *testing.T) {
 
 func TestRender_ReturnsAFreshMapEachCall(t *testing.T) {
 	p := NewOutboxPublisher(nil, nil)
-	entry := &outbox.Entry{ID: uuid.New(), EventType: event.EventTypeTaskStatusUpdated, Payload: []byte(`{"task_id":"t1"}`)}
+	entry := &outbox.Entry{ID: uuid.New(), EventType: event.EventTypeTaskStatusReport, Payload: []byte(`{"run_id":"s1","task_id":"t1","status":"queued"}`)}
 	first, err := p.Render(entry)
 	require.NoError(t, err)
-	first["task_id"] = "mutated"
+	first["event_id"] = "mutated"
 	second, err := p.Render(entry)
 	require.NoError(t, err)
-	require.Equal(t, "t1", second["task_id"])
+	require.Equal(t, entry.ID.String(), second["event_id"])
 }
 
 // TestPublish_XAddsExactlyRenderPlusOutboxEntryID guards against Publish
@@ -85,8 +77,8 @@ func TestPublish_XAddsExactlyRenderPlusOutboxEntryID(t *testing.T) {
 	defer rdb.Close()
 	p := NewOutboxPublisher(rdb, nil)
 	entry := &outbox.Entry{
-		ID: uuid.New(), EventType: event.EventTypeTaskStatusUpdated, StreamName: streams.TaskStatusUpdatedV1,
-		Payload: []byte(`{"task_id":"t1","schedule_id":"s1","status":"RUNNING","retry_count":2}`),
+		ID: uuid.New(), EventType: event.EventTypeTaskStatusReport, StreamName: streams.TaskStatusUpdatedV2,
+		Payload: []byte(`{"run_id":"s1","task_id":"t1","attempt":2,"status":"running"}`),
 	}
 	rendered, err := p.Render(entry)
 	require.NoError(t, err)
@@ -95,7 +87,7 @@ func TestPublish_XAddsExactlyRenderPlusOutboxEntryID(t *testing.T) {
 	want["outbox_entry_id"] = entry.ID.String()
 
 	require.NoError(t, p.Publish(context.Background(), entry))
-	res, err := rdb.XRange(context.Background(), streams.TaskStatusUpdatedV1, "-", "+").Result()
+	res, err := rdb.XRange(context.Background(), streams.TaskStatusUpdatedV2, "-", "+").Result()
 	require.NoError(t, err)
 	require.Len(t, res, 1)
 	got := map[string]string{}

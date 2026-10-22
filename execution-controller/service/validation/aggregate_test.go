@@ -162,8 +162,6 @@ func TestEmitValidationAggregate_CarriesDecisionOnly(t *testing.T) {
 	require.NotContains(t, payload, "run_results_uri", "per-node URIs travel on the projection stream, not the terminal event")
 }
 
-func (*fakeDepRepo) HasAttemptFrom(context.Context, string, int) (bool, error) { return false, nil }
-
 func (*fakeDepRepo) AddAttempt(context.Context, *model.Deployment) (bool, error) {
 	panic("AddAttempt not used by these tests")
 }

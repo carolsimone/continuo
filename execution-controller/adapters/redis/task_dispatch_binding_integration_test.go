@@ -16,6 +16,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	"github.com/carolsimone/continuo/execution-controller/service/handlers"
 	"github.com/carolsimone/continuo/execution-controller/service/uow"
+	executortest "github.com/carolsimone/continuo/execution-controller/test"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
@@ -223,3 +224,26 @@ func testDispatchLogger() *slog.Logger {
 func msgID(seq int) string { return fmt.Sprintf("%d-0", 1700000000000+seq) }
 
 func nowUTC() time.Time { return time.Now().UTC() }
+
+// setupPostgres connects to the externally migrated, empty executor test database.
+func setupPostgres(t *testing.T) (*sqlx.DB, func()) {
+	return executortest.SetupPostgres(t)
+}
+
+// countRows executes a COUNT(*) query and returns the result.
+func countRows(t *testing.T, db *sqlx.DB, query string, args ...any) int {
+	t.Helper()
+	var n int
+	require.NoError(t, db.QueryRowContext(context.Background(), query, args...).Scan(&n))
+	return n
+}
+
+// dedupState returns the state of the single message_processing row a binding
+// wrote under streamName.
+func dedupState(t *testing.T, db *sqlx.DB, streamName string) string {
+	t.Helper()
+	var state string
+	require.NoError(t, db.QueryRowContext(context.Background(),
+		`SELECT state FROM message_processing WHERE stream_name = $1`, streamName).Scan(&state))
+	return state
+}

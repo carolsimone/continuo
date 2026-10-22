@@ -59,21 +59,21 @@ func newHarness(t *testing.T) *harness {
 	h.o = New(Config{StartTimeout: 15 * time.Minute, ErrorMessageMaxLen: 4096, LogTailLines: 50}, Deps{
 		NewUoW:   func() uow.UnitOfWork { return postgres.NewPostgresUnitOfWork(db, logger) },
 		Observed: postgres.NewObservedDeployments(db, logger), Cache: h.cache, Lookup: h.look, Terminator: h.term,
-		Logs: h.logs, Uploader: h.up, Queue: h.q, Legacy: &fakeLegacy{}, Outcomes: outcomes.NewRecorder(logger), Metrics: h.m, Logger: logger,
+		Logs: h.logs, Uploader: h.up, Queue: h.q, Outcomes: outcomes.NewRecorder(logger), Metrics: h.m, Logger: logger,
 	})
 	h.o.now = func() time.Time { return h.now }
 	return h
 }
 
-// started stores a production deployment of a new task at attempt retry
-// (budget 2) whose Job was created at deployedAt.
-func (h *harness) started(t *testing.T, retry int, deployedAt time.Time) *model.Deployment {
+// started stores a production deployment of attempt attempt of a new task
+// whose Job was created at deployedAt.
+func (h *harness) started(t *testing.T, attempt int, deployedAt time.Time) *model.Deployment {
 	t.Helper()
 	runID := uuid.New().String()
 	cmd := command.DeployTask{TaskID: uuid.New().String(), ScheduleID: runID, ScheduleName: "daily",
 		ServiceName: "service-1", SchemaName: "e2e_schema", TableName: "ftable_e",
-		NodeType: "dbt-model", ImageTag: "v42", Operation: "run", Attempt: retry, TaskMaxRetries: 2}
-	name, err := domain.ComputeJobName(cmd.ServiceName, cmd.SchemaName, cmd.TableName, runID, retry)
+		NodeType: "dbt-model", ImageTag: "v42", Operation: "run", Attempt: attempt}
+	name, err := domain.ComputeJobName(cmd.ServiceName, cmd.SchemaName, cmd.TableName, runID, attempt)
 	require.NoError(t, err)
 	cmd.JobName = name
 	dep := model.NewDeployment(cmd, nil, deployedAt)
@@ -106,6 +106,22 @@ func (h *harness) outbox(t *testing.T, eventType string) []map[string]any {
 	return out
 }
 
+// reports returns the task.status.updated:v2 reports written so far, oldest
+// first.
+func (h *harness) reports(t *testing.T) []map[string]any {
+	t.Helper()
+	return h.outbox(t, event.EventTypeTaskStatusReport)
+}
+
+// attempts counts the deployments of taskID: execution-controller never
+// queues an attempt of its own.
+func (h *harness) attempts(t *testing.T, taskID string) int {
+	t.Helper()
+	var n int
+	require.NoError(t, h.db.Get(&n, `SELECT count(*) FROM deployments WHERE task_id = $1`, taskID))
+	return n
+}
+
 func ts(t time.Time) *time.Time { return &t }
 
 func runningPod(started time.Time) model.PodObservation {
@@ -127,10 +143,12 @@ func TestProcess_TheMainContainerStartingIsReportedRunningOnce(t *testing.T) {
 	require.NoError(t, h.o.Process(context.Background(), dep.JobName()))
 
 	assert.Equal(t, model.StatusRunning, h.reload(t, dep.JobName()).Status())
-	running := h.outbox(t, event.EventTypeTaskStatusUpdated)
-	require.Len(t, running, 1, "RUNNING is reported once per attempt")
-	assert.Equal(t, "RUNNING", running[0]["status"])
+	running := h.reports(t)
+	require.Len(t, running, 1, "running is reported once per attempt")
+	assert.Equal(t, "running", running[0]["status"])
 	assert.Equal(t, dep.Command().TaskID, running[0]["task_id"])
+	assert.EqualValues(t, 0, running[0]["attempt"])
+	assert.NotEmpty(t, running[0]["started_at"], "a report carries every fact seen so far")
 }
 
 func TestProcess_ASucceededAttemptReportsItsResultAndLog(t *testing.T) {
@@ -150,18 +168,19 @@ func TestProcess_ASucceededAttemptReportsItsResultAndLog(t *testing.T) {
 	assert.Equal(t, logKey, got.Facts().LogKey)
 	assert.Equal(t, h.logs.full, h.up.uploaded[logKey])
 
-	status := h.outbox(t, event.EventTypeTaskStatusUpdated)
+	status := h.reports(t)
 	require.Len(t, status, 1)
-	assert.Equal(t, "SUCCEEDED", status[0]["status"])
-	exec := h.outbox(t, event.EventTypeTaskExecutionRecorded)
-	require.Len(t, exec, 1)
-	assert.Equal(t, dep.ID().String(), exec[0]["execution_id"], "the execution is named after the attempt's deployment")
-	assert.Equal(t, logKey, exec[0]["log_s3_key"])
-	assert.InDelta(t, 30.0, exec[0]["execution_seconds"], 0.001)
-	assert.Nil(t, exec[0]["error_message"], "a success carries no error message")
+	assert.Equal(t, "succeeded", status[0]["status"])
+	assert.Equal(t, dep.JobName(), status[0]["job_name"])
+	assert.Equal(t, logKey, status[0]["log_s3_key"])
+	assert.InDelta(t, 30.0, status[0]["execution_seconds"], 0.001)
+	assert.Nil(t, status[0]["error_message"], "a success carries no error message")
+	assert.Nil(t, status[0]["failure_class"])
+	require.NotNil(t, got.LastReport(), "the row keeps the report it sent")
+	assert.Equal(t, model.ReportSucceeded, got.LastReport().Status)
 }
 
-func TestProcess_AFailedAttemptWithRetriesLeftQueuesTheNextAttempt(t *testing.T) {
+func TestProcess_AFailedAttemptIsReportedWithItsClassAndQueuesNothing(t *testing.T) {
 	h := newHarness(t)
 	dep := h.started(t, 0, h.now.Add(-time.Minute))
 	h.cache.set(dep.JobName(), model.JobObservation{JobPresent: true, JobFailed: true, JobFailureReason: "BackoffLimitExceeded",
@@ -174,21 +193,18 @@ func TestProcess_AFailedAttemptWithRetriesLeftQueuesTheNextAttempt(t *testing.T)
 	assert.Equal(t, "failed", got.Outcome())
 	assert.Equal(t, pkgmodel.FailureReasonOOMKilled, got.Facts().Reason)
 	assert.Equal(t, pkgmodel.FailureClassResource, got.Facts().Class())
-	status := h.outbox(t, event.EventTypeTaskStatusUpdated)
+	status := h.reports(t)
 	require.Len(t, status, 1)
-	assert.Equal(t, "FAILED", status[0]["status"])
-	assert.EqualValues(t, 0, status[0]["retry_count"], "the failure is stamped with the attempt that ran")
-	exec := h.outbox(t, event.EventTypeTaskExecutionRecorded)
-	require.Len(t, exec, 1)
-	assert.Equal(t, "Killed", exec[0]["error_message"])
-
-	next := h.reload(t, dep.JobName()+"-r1")
-	assert.Equal(t, model.StatusPending, next.Status(), "the next attempt is queued")
-	assert.Equal(t, 1, next.Command().Attempt)
-	assert.Equal(t, dep.Command().TaskID, next.Command().TaskID)
+	assert.Equal(t, "failed", status[0]["status"])
+	assert.EqualValues(t, 0, status[0]["attempt"], "the failure is reported at the attempt that ran")
+	assert.Equal(t, "resource", status[0]["failure_class"])
+	assert.Equal(t, "oom_killed", status[0]["failure_reason"])
+	assert.EqualValues(t, 137, status[0]["exit_code"])
+	assert.Equal(t, "Killed", status[0]["error_message"])
+	assert.Equal(t, 1, h.attempts(t, dep.Command().TaskID), "state decides whether the task runs again")
 }
 
-func TestProcess_AFailedAttemptAtItsBudgetIsFinal(t *testing.T) {
+func TestProcess_ALaterAttemptIsReportedAtItsOwnNumber(t *testing.T) {
 	h := newHarness(t)
 	dep := h.started(t, 2, h.now.Add(-time.Minute))
 	h.cache.set(dep.JobName(), model.JobObservation{JobPresent: true, JobFailed: true,
@@ -197,12 +213,11 @@ func TestProcess_AFailedAttemptAtItsBudgetIsFinal(t *testing.T) {
 	require.NoError(t, h.o.Process(context.Background(), dep.JobName()))
 
 	assert.Equal(t, pkgmodel.FailureReasonExitCode, h.reload(t, dep.JobName()).Facts().Reason)
-	status := h.outbox(t, event.EventTypeTaskStatusUpdated)
+	status := h.reports(t)
 	require.Len(t, status, 1)
-	assert.EqualValues(t, 2, status[0]["retry_count"])
-	var pending int
-	require.NoError(t, h.db.Get(&pending, `SELECT count(*) FROM deployments WHERE status = 'pending'`))
-	assert.Zero(t, pending, "no attempt is left")
+	assert.EqualValues(t, 2, status[0]["attempt"])
+	assert.Equal(t, "task", status[0]["failure_class"])
+	assert.Equal(t, dep.JobName(), status[0]["job_name"])
 }
 
 func TestProcess_AStartErrorEndsTheAttemptAndReportsItOnceItsPodsAreGone(t *testing.T) {
@@ -218,26 +233,26 @@ func TestProcess_AStartErrorEndsTheAttemptAndReportsItOnceItsPodsAreGone(t *test
 	assert.Equal(t, model.StatusTerminating, got.Status(), "the slot is held while the pod goes")
 	assert.Equal(t, pkgmodel.FailureReasonImagePull, got.Facts().Reason)
 	assert.Equal(t, []string{dep.JobName()}, h.term.deleted)
-	assert.Empty(t, h.outbox(t, event.EventTypeTaskStatusUpdated), "nothing is reported while the pod exists")
+	assert.Empty(t, h.reports(t), "nothing is reported while the pod exists")
 
 	deletingPod := pulling
 	deletingPod.DeletingSince = ts(h.now)
 	h.cache.set(dep.JobName(), model.JobObservation{JobPresent: true, JobDeleting: true, Pods: []model.PodObservation{deletingPod}})
 	require.NoError(t, h.o.Process(context.Background(), dep.JobName()))
-	assert.Empty(t, h.outbox(t, event.EventTypeTaskStatusUpdated), "a pod being deleted has not ended the attempt")
+	assert.Empty(t, h.reports(t), "a pod being deleted has not ended the attempt")
 	assert.Equal(t, 0, h.logs.reads, "a pod that never ran has no log to read")
 
 	h.cache.set(dep.JobName(), model.JobObservation{JobPresent: true, JobDeleting: true})
 	require.NoError(t, h.o.Process(context.Background(), dep.JobName()))
 
 	assert.Equal(t, model.StatusDone, h.reload(t, dep.JobName()).Status())
-	status := h.outbox(t, event.EventTypeTaskStatusUpdated)
+	status := h.reports(t)
 	require.Len(t, status, 1)
-	assert.Equal(t, "FAILED", status[0]["status"])
-	exec := h.outbox(t, event.EventTypeTaskExecutionRecorded)
-	require.Len(t, exec, 1)
-	assert.Equal(t, "ErrImagePull: pull access denied for service-1", exec[0]["error_message"])
-	assert.Equal(t, model.StatusPending, h.reload(t, dep.JobName()+"-r1").Status(), "a start error is retried")
+	assert.Equal(t, "failed", status[0]["status"])
+	assert.Equal(t, "start", status[0]["failure_class"])
+	assert.Equal(t, "image_pull", status[0]["failure_reason"])
+	assert.Equal(t, "ErrImagePull: pull access denied for service-1", status[0]["error_message"])
+	assert.Equal(t, 1, h.attempts(t, dep.Command().TaskID))
 	assert.Len(t, h.term.deleted, 1, "a Job already deleting is not deleted again")
 }
 
@@ -288,7 +303,9 @@ func TestProcess_AJobAbsentFromTheCacheIsMissingOnlyAfterTheGraceAndALiveRead(t 
 	delete(h.look.live, dep.JobName())
 	h.cache.set(dep.JobName(), model.JobObservation{Pods: []model.PodObservation{runningPod(h.now.Add(-time.Minute))}})
 	require.NoError(t, h.o.Process(context.Background(), dep.JobName()))
-	assert.Empty(t, h.outbox(t, event.EventTypeTaskExecutionRecorded), "a pod of the missing Job is left: nothing is reported")
+	left := h.reports(t)
+	require.Len(t, left, 1, "a pod of the missing Job is left: only its start is reported")
+	assert.Equal(t, "running", left[0]["status"])
 
 	assert.Equal(t, model.StatusRunning, h.reload(t, dep.JobName()).Status(), "its pod's facts are recorded")
 	_, err = h.db.Exec(`UPDATE deployments SET state_changed_at = NOW() - interval '3 minutes' WHERE id = $1`, dep.ID())
@@ -298,10 +315,12 @@ func TestProcess_AJobAbsentFromTheCacheIsMissingOnlyAfterTheGraceAndALiveRead(t 
 	got := h.reload(t, dep.JobName())
 	assert.Equal(t, "failed", got.Outcome())
 	assert.Equal(t, pkgmodel.FailureReasonJobMissing, got.Facts().Reason, "the Job is gone and no pod of it is left")
-	status := h.outbox(t, event.EventTypeTaskStatusUpdated)
+	status := h.reports(t)
 	require.Len(t, status, 2)
-	assert.Equal(t, "FAILED", status[1]["status"])
-	assert.Equal(t, model.StatusPending, h.reload(t, dep.JobName()+"-r1").Status(), "an infra failure is retried")
+	assert.Equal(t, "running", status[0]["status"])
+	assert.Equal(t, "failed", status[1]["status"])
+	assert.Equal(t, "infra", status[1]["failure_class"])
+	assert.Equal(t, "job_missing", status[1]["failure_reason"])
 }
 
 func TestProcess_APodBeingDeletedHasItsLogReadAtOnceAndRaisesTheAlertAfter15Minutes(t *testing.T) {
@@ -343,11 +362,7 @@ func TestProcess_ACancelledRunIsObservedSilently(t *testing.T) {
 	require.NoError(t, h.o.Process(context.Background(), dep.JobName()))
 
 	assert.Equal(t, model.StatusDone, h.reload(t, dep.JobName()).Status(), "the slot is released")
-	assert.Empty(t, h.outbox(t, event.EventTypeTaskStatusUpdated))
-	assert.Empty(t, h.outbox(t, event.EventTypeTaskExecutionRecorded))
-	var pending int
-	require.NoError(t, h.db.Get(&pending, `SELECT count(*) FROM deployments WHERE status = 'pending'`))
-	assert.Zero(t, pending, "a cancelled run's task is not retried")
+	assert.Empty(t, h.reports(t), "nothing is reported for a cancelled run")
 }
 
 func TestProcess_AValidationNodeRecordsItsOutcome(t *testing.T) {
@@ -373,7 +388,7 @@ func TestProcess_AValidationNodeRecordsItsOutcome(t *testing.T) {
 	assert.NotNil(t, got.Facts().FinishedAt, "the facts are kept with the outcome")
 	assert.Len(t, h.outbox(t, validation.EventTypeValidationNodeResult), 1)
 	assert.Len(t, h.outbox(t, validation.EventTypeValidationCompleted), 1, "its only node settled, so the leg completes")
-	assert.Empty(t, h.outbox(t, event.EventTypeTaskStatusUpdated), "a release leg reports no task status")
+	assert.Empty(t, h.reports(t), "a release leg reports no task status")
 }
 
 func TestProcess_AReleaseLegWhosePodNeverStartsIsRecordedFailed(t *testing.T) {
@@ -425,7 +440,7 @@ func TestProcess_ATerminatingAttemptIsNotSettledWhileTheAPIStillShowsItsPod(t *t
 	delete(h.q.after, dep.JobName())
 	require.NoError(t, h.o.Process(ctx, dep.JobName()))
 	assert.Equal(t, model.StatusTerminating, h.reload(t, dep.JobName()).Status(), "its pod still runs")
-	assert.Empty(t, h.outbox(t, event.EventTypeTaskStatusUpdated), "nothing is reported")
+	assert.Empty(t, h.reports(t), "nothing is reported")
 	assert.Greater(t, h.q.after[dep.JobName()], time.Duration(0), "it is checked again")
 
 	h.look.live[dep.JobName()] = model.JobObservation{}
@@ -449,9 +464,9 @@ func TestProcess_AFailedJobIsSettledOnlyOnceTheAPIShowsItsPodFinished(t *testing
 	h.look.live[dep.JobName()] = model.JobObservation{JobPresent: true, JobFailed: true, Pods: []model.PodObservation{stopping}}
 	require.NoError(t, h.o.Process(ctx, dep.JobName()))
 	assert.False(t, h.reload(t, dep.JobName()).HasOutcome(), "its pod is still stopping")
-	status := h.outbox(t, event.EventTypeTaskStatusUpdated)
+	status := h.reports(t)
 	require.Len(t, status, 1)
-	assert.Equal(t, "RUNNING", status[0]["status"], "the live read shows its main container started; no result yet")
+	assert.Equal(t, "running", status[0]["status"], "the live read shows its main container started; no result yet")
 
 	h.look.live[dep.JobName()] = model.JobObservation{JobPresent: true, JobFailed: true,
 		Pods: []model.PodObservation{endedPod(model.PodFailed, h.now.Add(-50*time.Second), h.now.Add(-time.Second), 1, "Error")}}
@@ -463,7 +478,7 @@ func TestProcess_AFailedJobIsSettledOnlyOnceTheAPIShowsItsPodFinished(t *testing
 
 // A Job deleted without its pods (cascade=orphan) whose pods have all finished
 // is settled from their facts once the grace and a live read confirm the Job
-// is gone: it is not reported missing, and a failure is retried.
+// is gone: it is not reported missing.
 func TestProcess_AMissingJobWhosePodsAllFinishedIsSettledFromThem(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
@@ -486,9 +501,7 @@ func TestProcess_AMissingJobWhosePodsAllFinishedIsSettledFromThem(t *testing.T) 
 	got := h.reload(t, failed.JobName())
 	assert.Equal(t, "failed", got.Outcome())
 	assert.Equal(t, pkgmodel.FailureReasonExitCode, got.Facts().Reason, "settled from its pod, not reported missing")
-	var attempts int
-	require.NoError(t, h.db.Get(&attempts, `SELECT count(*) FROM deployments WHERE task_id = $1`, failed.Command().TaskID))
-	assert.Equal(t, 2, attempts, "the failure is retried")
+	assert.Len(t, h.reports(t), 2)
 }
 
 func TestProcess_AMissingJobWhoseFinishedPodShowsNoExitCodeIsJobMissing(t *testing.T) {
@@ -506,7 +519,9 @@ func TestProcess_AMissingJobWhoseFinishedPodShowsNoExitCodeIsJobMissing(t *testi
 	assert.Equal(t, "failed", got.Outcome(), "its only pod has finished, so the attempt is settled rather than waited for")
 	assert.Equal(t, pkgmodel.FailureReasonJobMissing, got.Facts().Reason)
 	assert.Equal(t, "the Job is gone from Kubernetes and nothing seen of the attempt shows how it ended", got.Facts().Message)
-	assert.Equal(t, model.StatusPending, h.reload(t, dep.JobName()+"-r1").Status(), "an infra failure is retried")
+	status := h.reports(t)
+	require.Len(t, status, 1)
+	assert.Equal(t, "job_missing", status[0]["failure_reason"])
 }
 
 // A missing Job whose finished pod only the cache still shows (the API has
@@ -525,12 +540,9 @@ func TestProcess_AMissingJobIsSettledFromAPodOnlyTheCacheStillShows(t *testing.T
 	got := h.reload(t, dep.JobName())
 	assert.Equal(t, "ok", got.Outcome(), "the cache shows the pod exited 0")
 	assert.Empty(t, got.Facts().Reason)
-	status := h.outbox(t, event.EventTypeTaskStatusUpdated)
+	status := h.reports(t)
 	require.Len(t, status, 1)
-	assert.Equal(t, "SUCCEEDED", status[0]["status"])
-	var attempts int
-	require.NoError(t, h.db.Get(&attempts, `SELECT count(*) FROM deployments WHERE task_id = $1`, dep.Command().TaskID))
-	assert.Equal(t, 1, attempts, "a success queues no next attempt")
+	assert.Equal(t, "succeeded", status[0]["status"])
 }
 
 // Whether a missing Job's attempt is job_missing is decided on the locked row,
@@ -566,8 +578,7 @@ func TestProcess_AnEndedAttemptIsSettledOnce(t *testing.T) {
 	require.NoError(t, h.o.Process(context.Background(), dep.JobName()))
 	require.NoError(t, h.o.Process(context.Background(), dep.JobName()))
 
-	assert.Len(t, h.outbox(t, event.EventTypeTaskStatusUpdated), 1)
-	assert.Len(t, h.outbox(t, event.EventTypeTaskExecutionRecorded), 1)
+	assert.Len(t, h.reports(t), 1)
 }
 
 func TestResync_QueuesTheJobOfEveryStartedDeployment(t *testing.T) {
@@ -576,118 +587,6 @@ func TestResync_QueuesTheJobOfEveryStartedDeployment(t *testing.T) {
 	b := h.started(t, 1, h.now)
 	require.NoError(t, h.o.Resync(context.Background()))
 	assert.ElementsMatch(t, []string{a.JobName(), b.JobName()}, h.q.added)
-}
-
-// A row an older version released without recording its outcome is found
-// through the watch, which lists every existing Job when it starts, not
-// through the resync; it is reported once its Job is seen ended.
-func TestProcess_ARowReleasedWithoutItsOutcomeIsReportedFromItsJob(t *testing.T) {
-	h := newHarness(t)
-	dep := h.started(t, 0, h.now.Add(-time.Hour))
-	_, err := h.db.Exec(`UPDATE deployments SET status = 'done' WHERE id = $1`, dep.ID())
-	require.NoError(t, err)
-	h.cache.set(dep.JobName(), model.JobObservation{JobPresent: true, JobSucceeded: true,
-		Pods: []model.PodObservation{endedPod(model.PodSucceeded, h.now.Add(-50*time.Minute), h.now.Add(-49*time.Minute), 0, "Completed")}})
-
-	require.NoError(t, h.o.Resync(context.Background()))
-	assert.NotContains(t, h.q.added, dep.JobName(), "the resync queues only started deployments")
-	require.NoError(t, h.o.Process(context.Background(), dep.JobName()))
-
-	assert.Equal(t, "ok", h.reload(t, dep.JobName()).Outcome())
-	status := h.outbox(t, event.EventTypeTaskStatusUpdated)
-	require.Len(t, status, 1)
-	assert.Equal(t, "SUCCEEDED", status[0]["status"])
-}
-
-// A row released without its outcome whose Job is gone has no result left to
-// learn. However recently the row changed state (a migration may have stamped
-// every old row just now), the observer leaves it alone: it reports nothing and
-// queues no next attempt, so a historical task never runs again.
-func TestProcess_ARowReleasedWithoutItsOutcomeWhoseJobIsGoneIsLeftAlone(t *testing.T) {
-	h := newHarness(t)
-	dep := h.started(t, 0, h.now.Add(-72*time.Hour))
-	_, err := h.db.Exec(`UPDATE deployments SET status = 'done', state_changed_at = NOW() - INTERVAL '5 minutes' WHERE id = $1`, dep.ID())
-	require.NoError(t, err)
-	h.look.live[dep.JobName()] = model.JobObservation{}
-
-	require.NoError(t, h.o.Process(context.Background(), dep.JobName()))
-
-	got := h.reload(t, dep.JobName())
-	assert.Equal(t, model.StatusDone, got.Status())
-	assert.False(t, got.HasOutcome(), "nothing is recorded for it")
-	assert.Empty(t, h.outbox(t, event.EventTypeTaskStatusUpdated), "nothing is reported")
-	assert.Empty(t, h.outbox(t, event.EventTypeTaskExecutionRecorded), "no execution record")
-	var attempts int
-	require.NoError(t, h.db.Get(&attempts, `SELECT count(*) FROM deployments WHERE task_id = $1`, dep.Command().TaskID))
-	assert.Equal(t, 1, attempts, "no next attempt is queued")
-}
-
-// A failed attempt whose next attempt already exists queues no other, however
-// that attempt's Job was named: older versions named a retry by appending
-// -r<attempt> to the failed attempt's own name (attempt 2 of a task was
-// <job>-r1-r2), so the existing attempt is found by task and attempt number.
-func TestProcess_AFailedAttemptWhoseNextAttemptExistsQueuesNoOther(t *testing.T) {
-	h := newHarness(t)
-	dep := h.started(t, 1, h.now.Add(-time.Hour))
-	next, err := dep.Command().NextAttempt()
-	require.NoError(t, err)
-	next.JobName = dep.JobName() + "-r2"
-	require.NoError(t, h.repo.Add(context.Background(), model.NewDeployment(next, nil, h.now)))
-	_, err = h.db.Exec(`UPDATE deployments SET status = 'done' WHERE id = $1`, dep.ID())
-	require.NoError(t, err)
-	h.cache.set(dep.JobName(), model.JobObservation{JobPresent: true, JobFailed: true,
-		Pods: []model.PodObservation{endedPod(model.PodFailed, h.now.Add(-50*time.Minute), h.now.Add(-49*time.Minute), 1, "Error")}})
-
-	require.NoError(t, h.o.Process(context.Background(), dep.JobName()))
-
-	assert.Equal(t, "failed", h.reload(t, dep.JobName()).Outcome())
-	var attempts int
-	require.NoError(t, h.db.Get(&attempts, `SELECT count(*) FROM deployments WHERE task_id = $1`, dep.Command().TaskID))
-	assert.Equal(t, 2, attempts, "the existing next attempt is the only one")
-}
-
-// A row released without its outcome is never ended by the observer, whatever
-// its Job shows: its slot is already free. A Job of it that cannot start (a
-// start error, or nothing started past the start timeout) is recorded and left
-// to run; nothing is reported, deleted or retried, and processing succeeds.
-func TestProcess_ARowReleasedWithoutItsOutcomeIsNeverEnded(t *testing.T) {
-	h := newHarness(t)
-	ctx := context.Background()
-	pulling := h.started(t, 0, h.now.Add(-time.Hour))
-	stuck := h.started(t, 0, h.now.Add(-time.Hour))
-	for _, d := range []*model.Deployment{pulling, stuck} {
-		_, err := h.db.Exec(`UPDATE deployments SET status = 'done' WHERE id = $1`, d.ID())
-		require.NoError(t, err)
-	}
-	h.cache.set(pulling.JobName(), model.JobObservation{JobPresent: true, Pods: []model.PodObservation{{
-		Name: "pod-p", Phase: model.PodPending,
-		Main: model.ContainerObservation{Name: "dbt-job", WaitingReason: "ErrImagePull", WaitingMessage: "not found"}}}})
-	h.cache.set(stuck.JobName(), model.JobObservation{JobPresent: true,
-		Pods: []model.PodObservation{{Name: "pod-s", Phase: model.PodPending}}})
-
-	for _, d := range []*model.Deployment{pulling, stuck} {
-		require.NoError(t, h.o.Process(ctx, d.JobName()))
-		got := h.reload(t, d.JobName())
-		assert.Equal(t, model.StatusDone, got.Status())
-		assert.False(t, got.HasOutcome())
-		assert.NotContains(t, h.term.deleted, d.JobName())
-	}
-	assert.Empty(t, h.outbox(t, event.EventTypeTaskStatusUpdated))
-}
-
-func TestProcess_AFailedAttemptProcessedTwiceQueuesOneRetry(t *testing.T) {
-	h := newHarness(t)
-	dep := h.started(t, 0, h.now.Add(-time.Minute))
-	h.cache.set(dep.JobName(), model.JobObservation{JobPresent: true, JobFailed: true,
-		Pods: []model.PodObservation{endedPod(model.PodFailed, h.now.Add(-40*time.Second), h.now.Add(-10*time.Second), 1, "Error")}})
-
-	require.NoError(t, h.o.Process(context.Background(), dep.JobName()))
-	require.NoError(t, h.o.Process(context.Background(), dep.JobName()))
-
-	var retries int
-	require.NoError(t, h.db.Get(&retries, `SELECT count(*) FROM deployments WHERE job_name = $1`, dep.JobName()+"-r1"))
-	assert.Equal(t, 1, retries)
-	assert.Len(t, h.outbox(t, event.EventTypeTaskStatusUpdated), 1)
 }
 
 // commitProbe is a unit of work that runs check, on another connection,
@@ -702,9 +601,9 @@ func (c *commitProbe) Commit() error {
 	return c.UnitOfWork.Commit()
 }
 
-// A production failure's FAILED report, its execution record, the row's
-// outcome and the next attempt commit in one transaction.
-func TestSettle_AFailureAndItsRetryCommitTogether(t *testing.T) {
+// A production failure's report and the row's outcome commit in one
+// transaction.
+func TestSettle_AFailureAndItsReportCommitTogether(t *testing.T) {
 	h := newHarness(t)
 	dep := h.started(t, 0, h.now.Add(-time.Minute))
 	h.cache.set(dep.JobName(), model.JobObservation{JobPresent: true, JobFailed: true,
@@ -714,21 +613,21 @@ func TestSettle_AFailureAndItsRetryCommitTogether(t *testing.T) {
 	h.o.deps.NewUoW = func() uow.UnitOfWork {
 		return &commitProbe{UnitOfWork: postgres.NewPostgresUnitOfWork(h.db, logger), check: func() {
 			probed = true
-			assert.Empty(t, h.outbox(t, event.EventTypeTaskStatusUpdated), "nothing is visible before the commit")
-			assert.Empty(t, h.outbox(t, event.EventTypeTaskExecutionRecorded))
-			var retries int
-			require.NoError(t, h.db.Get(&retries, `SELECT count(*) FROM deployments WHERE job_name = $1`, dep.JobName()+"-r1"))
-			assert.Zero(t, retries)
+			assert.Empty(t, h.reports(t), "nothing is visible before the commit")
+			var status string
+			require.NoError(t, h.db.Get(&status, `SELECT status FROM deployments WHERE id = $1`, dep.ID()))
+			assert.Equal(t, string(model.StatusStarting), status, "the row's outcome is not visible either")
 		}}
 	}
 
 	require.NoError(t, h.o.Process(context.Background(), dep.JobName()))
 
 	require.True(t, probed)
-	assert.Len(t, h.outbox(t, event.EventTypeTaskStatusUpdated), 1)
-	assert.Len(t, h.outbox(t, event.EventTypeTaskExecutionRecorded), 1)
-	assert.Equal(t, "failed", h.reload(t, dep.JobName()).Outcome())
-	assert.Equal(t, model.StatusPending, h.reload(t, dep.JobName()+"-r1").Status())
+	assert.Len(t, h.reports(t), 1)
+	got := h.reload(t, dep.JobName())
+	assert.Equal(t, "failed", got.Outcome())
+	require.NotNil(t, got.LastReport())
+	assert.Equal(t, model.ReportFailed, got.LastReport().Status)
 }
 
 // failingOutbox fails its nth Create.
@@ -745,21 +644,21 @@ func (f *failingOutbox) Create(ctx context.Context, e *pkgoutbox.Entry) error {
 	return f.Repository.Create(ctx, e)
 }
 
-// failOnSecondCreate is a unit of work whose outbox fails its second Create.
-type failOnSecondCreate struct {
+// failOnFirstCreate is a unit of work whose outbox fails its first Create.
+type failOnFirstCreate struct {
 	uow.UnitOfWork
 	outbox *failingOutbox
 }
 
-func (u *failOnSecondCreate) OutboxRepo() pkgoutbox.Repository {
+func (u *failOnFirstCreate) OutboxRepo() pkgoutbox.Repository {
 	if u.outbox == nil {
-		u.outbox = &failingOutbox{Repository: u.UnitOfWork.OutboxRepo(), n: 2}
+		u.outbox = &failingOutbox{Repository: u.UnitOfWork.OutboxRepo(), n: 1}
 	}
 	return u.outbox
 }
 
-// A failure partway through settling leaves nothing behind: no report, no
-// execution record, and the row still awaits its result.
+// A failure partway through settling leaves nothing behind: no report, and
+// the row still awaits its result.
 func TestSettle_AFailedWriteRollsEverythingBack(t *testing.T) {
 	h := newHarness(t)
 	dep := h.started(t, 0, h.now.Add(-time.Minute))
@@ -767,12 +666,11 @@ func TestSettle_AFailedWriteRollsEverythingBack(t *testing.T) {
 		Pods: []model.PodObservation{endedPod(model.PodSucceeded, h.now.Add(-40*time.Second), h.now.Add(-10*time.Second), 0, "Completed")}})
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	h.o.deps.NewUoW = func() uow.UnitOfWork {
-		return &failOnSecondCreate{UnitOfWork: postgres.NewPostgresUnitOfWork(h.db, logger)}
+		return &failOnFirstCreate{UnitOfWork: postgres.NewPostgresUnitOfWork(h.db, logger)}
 	}
 
 	require.ErrorIs(t, h.o.Process(context.Background(), dep.JobName()), errBoom)
 
-	assert.Empty(t, h.outbox(t, event.EventTypeTaskStatusUpdated))
-	assert.Empty(t, h.outbox(t, event.EventTypeTaskExecutionRecorded))
+	assert.Empty(t, h.reports(t))
 	assert.True(t, h.reload(t, dep.JobName()).AwaitingResult(), "the attempt is settled again on the next try")
 }

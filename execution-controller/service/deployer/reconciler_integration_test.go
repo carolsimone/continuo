@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/execution-controller/adapters/postgres"
+	"github.com/carolsimone/continuo/execution-controller/domain/event"
 	"github.com/carolsimone/continuo/execution-controller/domain/repository"
 	"github.com/carolsimone/continuo/execution-controller/service/deployer"
 	"github.com/carolsimone/continuo/pkg/outbox"
@@ -43,5 +44,5 @@ func TestReconciler_ReturnsStaleReservationsToPending(t *testing.T) {
 
 	assert.Equal(t, "pending", countStatusOf(t, db, stale), "a reservation whose launcher is gone gives its slot back; the claim re-admits it")
 	assert.Equal(t, "reserved", countStatusOf(t, db, fresh), "a fresh reservation belongs to a live launcher")
-	assert.Equal(t, 0, outboxCountByType(t, db, "task_status_updated"), "the reconciler reports nothing")
+	assert.Equal(t, 0, outboxCountByType(t, db, event.EventTypeTaskStatusReport), "the reconciler reports nothing")
 }

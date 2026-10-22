@@ -43,7 +43,7 @@ func TestStartupWaitsForTheJobWatchBeforeItsWorkersStart(t *testing.T) {
 	if synced < 0 {
 		t.Fatal("main.go must wait for jobWatch.WaitForCacheSync")
 	}
-	for _, later := range []string{`runWorker("deploy_dispatcher"`, `runWorker("observer"`, `runConsumer("query_model"`, `runConsumer("task_dispatch"`} {
+	for _, later := range []string{`runWorker("deploy_dispatcher"`, `runWorker("observer"`, `runConsumer("task_dispatch"`} {
 		at := strings.Index(body, later)
 		if at < 0 {
 			t.Fatalf("expected main.go to contain %q", later)

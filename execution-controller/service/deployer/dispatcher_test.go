@@ -13,6 +13,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/execution-controller/domain/command"
 	"github.com/carolsimone/continuo/execution-controller/domain/deploy"
+	"github.com/carolsimone/continuo/execution-controller/domain/event"
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	"github.com/carolsimone/continuo/execution-controller/domain/repository"
 	"github.com/carolsimone/continuo/execution-controller/serialization"
@@ -103,7 +104,7 @@ func seedJobNamed(t *testing.T, db *sqlx.DB, name string, maxRetries, retryCount
 		TaskID: uuid.New().String(), ScheduleID: uuid.New().String(),
 		ScheduleName: "daily", ServiceName: "dbt", SchemaName: "public",
 		TableName: "orders", JobName: name, NodeType: "dbt-model",
-		ImageTag: "sha-abc", Attempt: 0, TaskMaxRetries: 2,
+		ImageTag: "sha-abc", Attempt: 0,
 	}))
 	require.NoError(t, err)
 	_, err = db.Exec(
@@ -114,16 +115,16 @@ func seedJobNamed(t *testing.T, db *sqlx.DB, name string, maxRetries, retryCount
 	return id
 }
 
-// failedAnnouncementRetryCount decodes the retry_count of the
-// task_status_updated row the dispatcher wrote for a terminal deploy failure.
-func failedAnnouncementRetryCount(t *testing.T, db *sqlx.DB) int32 {
+// failedReport decodes the task.status.updated:v2 report the dispatcher wrote
+// for an attempt whose Job could not be created.
+func failedReport(t *testing.T, db *sqlx.DB) pkgevents.TaskStatusReport {
 	t.Helper()
 	var payload []byte
 	require.NoError(t, db.QueryRow(
-		`SELECT payload FROM execution_outbox WHERE event_type='task_status_updated' LIMIT 1`).Scan(&payload))
-	var got pkgevents.TaskStatusUpdated
+		`SELECT payload FROM execution_outbox WHERE event_type = $1 LIMIT 1`, event.EventTypeTaskStatusReport).Scan(&payload))
+	var got pkgevents.TaskStatusReport
 	require.NoError(t, json.Unmarshal(payload, &got))
-	return got.RetryCount
+	return got
 }
 
 // seedRunning inserts a deployable row already holding a slot.
@@ -190,10 +191,10 @@ func TestDispatcher_TransientErrorReschedules(t *testing.T) {
 	assert.Equal(t, "pending", status)
 	assert.Equal(t, 1, rc)
 	assert.True(t, na.After(time.Now()), "next_attempt_at pushed into the future")
-	assert.Equal(t, 0, outboxCountByType(t, db, "task_status_updated"), "no announcement on transient retry")
+	assert.Equal(t, 0, outboxCountByType(t, db, event.EventTypeTaskStatusReport), "no announcement on transient retry")
 }
 
-func TestDispatcher_BudgetExhaustedWritesFailed(t *testing.T) {
+func TestDispatcher_BudgetExhaustedReportsCreateFailed(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 	id := seedJob(t, db, 3, 2)
@@ -204,11 +205,14 @@ func TestDispatcher_BudgetExhaustedWritesFailed(t *testing.T) {
 	var status string
 	require.NoError(t, db.QueryRow(`SELECT status FROM deployments WHERE id=$1`, id).Scan(&status))
 	assert.Equal(t, "failed", status)
-	assert.Equal(t, 1, outboxCountByType(t, db, "task_status_updated"))
-	assert.Equal(t, 0, outboxCountByType(t, db, "node_updated"), "a deploy failure announces task_status_updated only")
+	assert.Equal(t, 1, outboxCountByType(t, db, event.EventTypeTaskStatusReport))
+	assert.Equal(t, 0, outboxCountByType(t, db, "node_updated"), "a deploy failure writes its report only")
 
-	// seedJob's task budget is 2; a deploy failure spends it.
-	assert.Equal(t, int32(2), failedAnnouncementRetryCount(t, db), "the FAILED status reports the task budget as spent")
+	got := failedReport(t, db)
+	assert.Equal(t, "failed", got.Status)
+	assert.Equal(t, "infra", got.FailureClass, "Kubernetes refused the Job on every try: state may retry it")
+	assert.Equal(t, "create_failed", got.FailureReason)
+	assert.Equal(t, "apiserver down", got.ErrorMessage)
 }
 
 func TestDispatcher_PermanentErrorWritesFailedImmediately(t *testing.T) {
@@ -222,7 +226,9 @@ func TestDispatcher_PermanentErrorWritesFailedImmediately(t *testing.T) {
 	var status string
 	require.NoError(t, db.QueryRow(`SELECT status FROM deployments WHERE id=$1`, id).Scan(&status))
 	assert.Equal(t, "failed", status, "permanent error skips the retry budget")
-	assert.Equal(t, int32(2), failedAnnouncementRetryCount(t, db), "the FAILED status reports the task budget as spent")
+	got := failedReport(t, db)
+	assert.Equal(t, "invalid", got.FailureClass, "a dispatch that cannot run is not retried")
+	assert.Equal(t, "malformed_dispatch", got.FailureReason)
 }
 
 func TestDispatcher_CapZeroHeadroomDeploysNothing(t *testing.T) {
@@ -287,25 +293,15 @@ func TestDispatcher_CorruptedJobParamsMarksFailedWithRowIdentity(t *testing.T) {
 		// the row id differs from taskID; look it up by task_id
 		mustDeploymentID(t, db, taskID)).Scan(&status))
 	assert.Equal(t, "failed", status)
-	assert.Equal(t, 1, outboxCountByType(t, db, "task_status_updated"))
-	assert.Equal(t, 0, outboxCountByType(t, db, "node_updated"), "a deploy failure announces task_status_updated only")
+	assert.Equal(t, 1, outboxCountByType(t, db, event.EventTypeTaskStatusReport))
+	assert.Equal(t, 0, outboxCountByType(t, db, "node_updated"), "a deploy failure writes its report only")
 
-	// The FAILED announcement must carry the row's task_id (identity fallback).
-	var payload []byte
-	require.NoError(t, db.QueryRow(
-		`SELECT payload FROM execution_outbox WHERE event_type='task_status_updated' LIMIT 1`).Scan(&payload))
-	var got struct {
-		TaskID     string `json:"task_id"`
-		ScheduleID string `json:"schedule_id"`
-		Status     string `json:"status"`
-	}
-	require.NoError(t, json.Unmarshal(payload, &got))
-	assert.Equal(t, taskID.String(), got.TaskID, "FAILED announcement uses the row's task_id")
-	assert.Equal(t, scheduleID.String(), got.ScheduleID)
-	assert.Equal(t, "FAILED", got.Status)
-
-	// Corrupt job_params carry no task budget, so the default budget is reported spent.
-	assert.Equal(t, pkgevents.DefaultTaskMaxRetries, failedAnnouncementRetryCount(t, db))
+	// The report carries the row's task_id and run (identity fallback).
+	got := failedReport(t, db)
+	assert.Equal(t, taskID.String(), got.TaskID, "the report uses the row's task_id")
+	assert.Equal(t, scheduleID.String(), got.RunID)
+	assert.Equal(t, "failed", got.Status)
+	assert.Equal(t, "malformed_dispatch", got.FailureReason)
 }
 
 func mustDeploymentID(t *testing.T, db *sqlx.DB, taskID uuid.UUID) uuid.UUID {
@@ -323,7 +319,7 @@ func seedDeployableAt(t *testing.T, db *sqlx.DB, nextAttempt time.Time) uuid.UUI
 		TaskID: uuid.New().String(), ScheduleID: uuid.New().String(),
 		ScheduleName: "daily", ServiceName: "dbt", SchemaName: "public",
 		TableName: "orders", JobName: "dbt-public-orders", NodeType: "dbt-model",
-		ImageTag: "sha-abc", TaskMaxRetries: 2,
+		ImageTag: "sha-abc",
 	}))
 	require.NoError(t, err)
 	_, err = db.Exec(

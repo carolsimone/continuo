@@ -12,6 +12,7 @@ import (
 
 	"github.com/carolsimone/continuo/execution-controller/domain/command"
 	"github.com/carolsimone/continuo/execution-controller/domain/deploy"
+	"github.com/carolsimone/continuo/execution-controller/domain/event"
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	"github.com/carolsimone/continuo/execution-controller/domain/repository"
 	"github.com/carolsimone/continuo/execution-controller/service/validation"
@@ -727,7 +728,7 @@ func TestDispatcher_DispatchOne_CompileMode_NotDeployable_SavesFailedBeforeGate(
 	assert.Equal(t, streams.CompileCompletedV1, outboxRepo.created[0].StreamName)
 }
 
-func TestDispatcher_NormalProduction_NonDeployable_EmitsFailedAnnouncements(t *testing.T) {
+func TestDispatcher_NormalProduction_NonDeployable_ReportsTheAttemptFailed(t *testing.T) {
 	d := silentDispatcher(&fakeValidationDeployer{})
 	repo := &fakeDeploymentRepo{}
 	outboxRepo := &fakeOutboxRepo{}
@@ -742,20 +743,12 @@ func TestDispatcher_NormalProduction_NonDeployable_EmitsFailedAnnouncements(t *t
 	require.NoError(t, dep.Reserve())
 	require.NoError(t, d.dispatchOne(context.Background(), repo, outboxRepo, &fakeAggRepo{}, dep))
 
-	assert.NotEmpty(t, outboxRepo.created, "normal production must emit failure announcements")
+	assert.NotEmpty(t, outboxRepo.created, "normal production must report the failed attempt")
 	eventTypes := make([]string, 0, len(outboxRepo.created))
 	for _, e := range outboxRepo.created {
 		eventTypes = append(eventTypes, e.EventType)
 	}
-	assert.Equal(t, []string{"task_status_updated"}, eventTypes, "production failure emits task_status_updated only")
-}
-
-func (*fakeDeploymentRepo) HasAttemptFrom(context.Context, string, int) (bool, error) {
-	return false, nil
-}
-
-func (*chainDeploymentRepo) HasAttemptFrom(context.Context, string, int) (bool, error) {
-	return false, nil
+	assert.Equal(t, []string{event.EventTypeTaskStatusReport}, eventTypes, "production failure writes its report only")
 }
 
 func (*fakeDeploymentRepo) AddAttempt(context.Context, *model.Deployment) (bool, error) {

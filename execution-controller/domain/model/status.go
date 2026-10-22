@@ -23,9 +23,7 @@ const (
 	// StatusTerminating holds a slot; execution-controller deleted the Job to
 	// end the attempt itself and waits for its pods to be gone.
 	StatusTerminating Status = "terminating"
-	// StatusDone holds no slot: the attempt ended. Its outcome is unset only on
-	// a row an older version released before recording the result; the
-	// observer records it from the Job while the Job exists.
+	// StatusDone holds no slot: the attempt ended and its outcome is recorded.
 	StatusDone    Status = "done"
 	StatusFailed  Status = "failed"
 	StatusSkipped Status = "skipped"

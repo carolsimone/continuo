@@ -8,22 +8,19 @@ package deployer
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/carolsimone/continuo/execution-controller/domain/deploy"
-	"github.com/carolsimone/continuo/execution-controller/domain/event"
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	"github.com/carolsimone/continuo/execution-controller/domain/repository"
+	"github.com/carolsimone/continuo/execution-controller/service/reports"
 	"github.com/carolsimone/continuo/execution-controller/service/validation"
 	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
-	"github.com/carolsimone/continuo/pkg/num"
 	"github.com/carolsimone/continuo/pkg/outbox"
-	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 )
@@ -240,14 +237,14 @@ func (d *Dispatcher) dispatchOne(ctx context.Context, repo repository.Deployment
 	now := d.now()
 
 	// A row whose job_params could not be deserialized is unrunnable; fail it
-	// permanently with a routable announcement built from its recovered identity.
+	// permanently and report it from its recovered identity.
 	if !dep.IsDeployable() {
 		if _, err := dep.RegisterFailure(now, true, "deployment job_params not deployable", d.backoff); err != nil {
 			return err
 		}
 		dep.Observe(model.AttemptFacts{Reason: pkgmodel.FailureReasonMalformedDispatch,
 			Message: "the dispatch's fields could not be read"})
-		if err := d.writeFailedAnnouncements(ctx, outboxRepo, dep); err != nil {
+		if err := d.reportCreationFailure(ctx, outboxRepo, dep); err != nil {
 			return err
 		}
 		return repo.Save(ctx, dep)
@@ -270,7 +267,7 @@ func (d *Dispatcher) dispatchOne(ctx context.Context, repo repository.Deployment
 		reason := creationFailureReason(deployErr)
 		dep.Observe(model.AttemptFacts{Reason: reason, Message: deployErr.Error()})
 		d.logger.Error("Deploy terminal failure", "deployment_id", dep.ID(), "failure_reason", reason, "cause", deployErr)
-		if err := d.writeFailedAnnouncements(ctx, outboxRepo, dep); err != nil {
+		if err := d.reportCreationFailure(ctx, outboxRepo, dep); err != nil {
 			return err
 		}
 	} else {
@@ -505,41 +502,12 @@ func creationFailureReason(err error) pkgmodel.FailureReason {
 	return pkgmodel.FailureReasonCreateFailed
 }
 
-// writeFailedAnnouncements announces a production task whose deploy failed
-// terminally with a task_status_updated (FAILED) row. A deploy failure gets no
-// retry Job, so the FAILED status reports the task's retry budget as spent:
-// state finalizes a run only once no failed task has attempts left
-// (retry_count < max_retries). A command decoded from corrupt job_params
-// carries no budget, so the default budget applies.
-func (d *Dispatcher) writeFailedAnnouncements(ctx context.Context, outboxRepo outbox.Repository, dep *model.Deployment) error {
-	cmd := dep.Command()
-	budget := cmd.TaskMaxRetries
-	if budget <= 0 {
-		budget = int(pkgevents.DefaultTaskMaxRetries)
-	}
-	retryCount, err := num.Int32(max(cmd.Attempt, budget), "task_retry_count")
-	if err != nil {
-		return fmt.Errorf("write FAILED task_status announcement: %w", err)
-	}
-	if err := d.createOutbox(ctx, outboxRepo, dep, event.EventTypeTaskStatusUpdated, streams.TaskStatusUpdatedV1,
-		pkgevents.TaskStatusUpdated{TaskID: cmd.TaskID, ScheduleID: cmd.ScheduleID, Status: "FAILED", RetryCount: retryCount}); err != nil {
-		return fmt.Errorf("write FAILED task_status announcement: %w", err)
+// reportCreationFailure reports a production attempt whose Job could not
+// be created as failed, with the reason recorded in its facts; state decides
+// whether the task runs again. The caller saves dep.
+func (d *Dispatcher) reportCreationFailure(ctx context.Context, outboxRepo outbox.Repository, dep *model.Deployment) error {
+	if err := reports.Write(ctx, outboxRepo, dep, model.ReportFailed, dep.Facts().Message); err != nil {
+		return fmt.Errorf("report the failed attempt: %w", err)
 	}
 	return nil
-}
-
-func (d *Dispatcher) createOutbox(ctx context.Context, outboxRepo outbox.Repository, dep *model.Deployment, eventType, stream string, payload interface{}) error {
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("marshal %s payload: %w", eventType, err)
-	}
-	aggregateID, _ := uuid.Parse(dep.Command().TaskID)
-	return outboxRepo.Create(ctx, &outbox.Entry{
-		MessageProcessingID: dep.MessageProcessingID(),
-		AggregateType:       "task",
-		AggregateID:         aggregateID,
-		EventType:           eventType,
-		Payload:             body,
-		StreamName:          stream,
-	})
 }

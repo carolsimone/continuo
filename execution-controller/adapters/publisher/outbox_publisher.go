@@ -36,15 +36,10 @@ func NewOutboxPublisher(r *goredis.Client, l *slog.Logger) *OutboxPublisher {
 	return &OutboxPublisher{redis: r, logger: l}
 }
 
-// Publish routes an outbox row to Redis. Every event type XADDs a field map to
+// Publish routes an outbox row to Redis: every event type XADDs a field map to
 // entry.StreamName without a length cap (the dead-letter-controller's trim loop
-// bounds every stream), except check_delayed: a status-check ticket a previous
-// version wrote, which is published nowhere and so marked processed, since the
-// observer follows every Job without it.
+// bounds every stream).
 func (p *OutboxPublisher) Publish(ctx context.Context, entry *outbox.Entry) error {
-	if entry.EventType == event.EventTypeCheckDelayed {
-		return nil
-	}
 	values, err := p.Render(entry)
 	if err != nil {
 		return err
@@ -67,12 +62,8 @@ func (p *OutboxPublisher) xaddArgs(entry *outbox.Entry, values map[string]any) *
 }
 
 // Render returns the field map Publish XADDs for entry, without
-// outbox_entry_id. A check_delayed row is published nowhere, so it has no
-// fields to render and returns an error. Every call returns a fresh map.
+// outbox_entry_id. Every call returns a fresh map.
 func (p *OutboxPublisher) Render(entry *outbox.Entry) (map[string]any, error) {
-	if entry.EventType == event.EventTypeCheckDelayed {
-		return nil, fmt.Errorf("%s rows are published nowhere", event.EventTypeCheckDelayed)
-	}
 	values, err := p.toValues(entry)
 	if err != nil {
 		return nil, err
@@ -93,20 +84,6 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 			return nil, fmt.Errorf("%w: dead-letter values: %v", pkgevents.ErrPermanent, err)
 		}
 		return values, nil
-
-	case event.EventTypeTaskStatusUpdated:
-		var e pkgevents.TaskStatusUpdated
-		if err := json.Unmarshal(entry.Payload, &e); err != nil {
-			return nil, fmt.Errorf("%w: unmarshal task_status_updated: %v", pkgevents.ErrPermanent, err)
-		}
-		return e.ToMap(), nil
-
-	case event.EventTypeTaskExecutionRecorded:
-		var e pkgevents.TaskExecutionRecorded
-		if err := json.Unmarshal(entry.Payload, &e); err != nil {
-			return nil, fmt.Errorf("%w: unmarshal task_execution_recorded: %v", pkgevents.ErrPermanent, err)
-		}
-		return e.ToMap(), nil
 
 	case event.EventTypeTaskStatusReport:
 		// The row's payload is the report; the envelope names the row as the

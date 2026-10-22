@@ -26,7 +26,6 @@ type DeployTaskDTO struct {
 	ImageTag       string `json:"image_tag"`
 	SecretRef      string `json:"secret_ref,omitempty"`
 	Attempt        int    `json:"attempt"`
-	TaskMaxRetries int    `json:"task_max_retries"`
 	Operation      string `json:"operation"`
 	TimeoutSeconds int64  `json:"timeout_seconds,omitempty"`
 }
@@ -45,7 +44,6 @@ func DeployTaskFromDomain(c command.DeployTask) DeployTaskDTO {
 		ImageTag:       c.ImageTag,
 		SecretRef:      c.SecretRef,
 		Attempt:        c.Attempt,
-		TaskMaxRetries: c.TaskMaxRetries,
 		Operation:      c.Operation,
 		TimeoutSeconds: c.TimeoutSeconds,
 	}
@@ -65,7 +63,6 @@ func (d DeployTaskDTO) ToDomain() command.DeployTask {
 		ImageTag:       d.ImageTag,
 		SecretRef:      d.SecretRef,
 		Attempt:        d.Attempt,
-		TaskMaxRetries: d.TaskMaxRetries,
 		Operation:      d.Operation,
 		TimeoutSeconds: d.TimeoutSeconds,
 	}

@@ -391,18 +391,6 @@ func commandIDs(cmd command.DeployTask) (uuid.UUID, uuid.UUID, error) {
 	return taskID, scheduleID, nil
 }
 
-// HasAttemptFrom reads each production deployment's attempt, so attempts
-// named under any Job-naming scheme count.
-func (r *deploymentsRepository) HasAttemptFrom(ctx context.Context, taskID string, attempt int) (bool, error) {
-	var found []bool
-	if err := r.exec.SelectContext(ctx, &found, `SELECT true FROM deployments
-		WHERE task_id = $1 AND mode = $2 AND attempt >= $3
-		LIMIT 1`, taskID, string(model.ModeProduction), attempt); err != nil {
-		return false, fmt.Errorf("look up attempt %d of task %s: %w", attempt, taskID, err)
-	}
-	return len(found) > 0, nil
-}
-
 // AddAttempt inserts a production deployment unless its task already has a
 // deployment of the same attempt (uq_deployments_task_attempt), and reports
 // whether it did.

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/carolsimone/continuo/execution-controller/adapters/publisher"
@@ -29,17 +30,6 @@ func newRedis(t *testing.T) *goredis.Client {
 	return goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
 }
 
-// newTestRedis starts an in-process miniredis instance and returns both the
-// server handle (for asserting on keys/streams directly) and a client
-// connected to it. Callers close mr themselves (defer mr.Close()) rather than
-// relying on t.Cleanup, so a test can assert post-close state if it needs to.
-func newTestRedis(t *testing.T) (*miniredis.Miniredis, *goredis.Client) {
-	t.Helper()
-	mr, err := miniredis.Run()
-	require.NoError(t, err)
-	return mr, goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
-}
-
 func lastEntryFields(t *testing.T, r *goredis.Client, stream string) map[string]interface{} {
 	t.Helper()
 	res, err := r.XRange(context.Background(), stream, "-", "+").Result()
@@ -48,24 +38,26 @@ func lastEntryFields(t *testing.T, r *goredis.Client, stream string) map[string]
 	return res[0].Values
 }
 
-func TestPublisher_TaskStatusUpdated(t *testing.T) {
+// A report row is published as one task.status.updated:v2 entry: the
+// envelope names the row, the payload is the report.
+func TestPublisher_TaskStatusReport(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	r := newRedis(t)
 	pub := publisher.NewOutboxPublisher(r, logger)
 
-	payload, err := json.Marshal(pkgevents.TaskStatusUpdated{
-		TaskID: "t1", ScheduleID: "s1", Status: "RUNNING", RetryCount: 0,
-	})
+	payload, err := json.Marshal(pkgevents.TaskStatusReport{RunID: "s1", TaskID: "t1", Attempt: 1, Status: "running"})
 	require.NoError(t, err)
 
 	id := uuid.New()
 	require.NoError(t, pub.Publish(context.Background(), &outbox.Entry{
-		ID: id, EventType: "task_status_updated", StreamName: streams.TaskStatusUpdatedV1, Payload: payload,
+		ID: id, EventType: event.EventTypeTaskStatusReport, StreamName: streams.TaskStatusUpdatedV2, Payload: payload,
+		CreatedAt: time.Now(),
 	}))
 
-	v := lastEntryFields(t, r, streams.TaskStatusUpdatedV1)
-	assert.Equal(t, "t1", v["task_id"])
-	assert.Equal(t, "RUNNING", v["status"])
+	v := lastEntryFields(t, r, streams.TaskStatusUpdatedV2)
+	assert.Equal(t, id.String(), v["event_id"])
+	assert.Equal(t, "execution-controller", v["producer"])
+	assert.JSONEq(t, string(payload), v["payload"].(string))
 	assert.Equal(t, id.String(), v["outbox_entry_id"])
 }
 
@@ -177,19 +169,9 @@ func TestPublisher_ContractAllHandledEventTypes(t *testing.T) {
 		payload    []byte
 	}{
 		{
-			eventType:  "task_status_updated",
-			streamName: streams.TaskStatusUpdatedV1,
-			payload:    mustMarshal(t, pkgevents.TaskStatusUpdated{TaskID: "t1", ScheduleID: "s1", Status: "SUCCEEDED", RetryCount: 0}),
-		},
-		{
-			eventType:  event.EventTypeTaskExecutionRecorded,
-			streamName: streams.TaskExecutionRecordedV1,
-			payload:    mustMarshal(t, pkgevents.TaskExecutionRecorded{TaskID: "t1", JobName: "j1"}),
-		},
-		{
-			eventType:  event.EventTypeCheckDelayed,
-			streamName: "",
-			payload:    []byte(`{"task_id":"t1","job_name":"j1"}`),
+			eventType:  event.EventTypeTaskStatusReport,
+			streamName: streams.TaskStatusUpdatedV2,
+			payload:    mustMarshal(t, pkgevents.TaskStatusReport{RunID: "s1", TaskID: "t1", Status: "succeeded"}),
 		},
 		{
 			// Uses the shared constant — the single source of truth for this wire string.
@@ -241,36 +223,6 @@ func mustMarshal(t *testing.T, v any) []byte {
 	return b
 }
 
-// TestPublish_LeftoverCheckDelayedRowIsPublishedNowhere proves a status-check
-// ticket a previous version wrote is marked processed without reaching Redis:
-// no stream entry and no delay-queue key.
-func TestPublish_LeftoverCheckDelayedRowIsPublishedNowhere(t *testing.T) {
-	mr, client := newTestRedis(t)
-	defer mr.Close()
-	p := publisher.NewOutboxPublisher(client, slog.Default())
-	entry := &outbox.Entry{ID: uuid.New(), EventType: event.EventTypeCheckDelayed,
-		Payload: []byte(`{"task_id":"t1","job_name":"job-a","check_after":1700000000}`)}
-	require.NoError(t, p.Publish(context.Background(), entry))
-	assert.Empty(t, mr.Keys(), "nothing is written to Redis")
-}
-
-// TestPublish_TaskExecutionRecordedUsesTypedMap proves task_execution_recorded,
-// emitted by the observer, is XADDed via its typed ToMap(), not dropped as
-// unknown.
-func TestPublish_TaskExecutionRecordedUsesTypedMap(t *testing.T) {
-	mr, client := newTestRedis(t)
-	defer mr.Close()
-	p := publisher.NewOutboxPublisher(client, slog.Default())
-	payload, _ := json.Marshal(pkgevents.TaskExecutionRecorded{TaskID: uuid.New().String(), JobName: "job-a"})
-	entry := &outbox.Entry{ID: uuid.New(), EventType: event.EventTypeTaskExecutionRecorded, Payload: payload, StreamName: streams.TaskExecutionRecordedV1}
-	require.NoError(t, p.Publish(context.Background(), entry))
-	msgs, err := client.XRange(context.Background(), streams.TaskExecutionRecordedV1, "-", "+").Result()
-	require.NoError(t, err)
-	require.Len(t, msgs, 1)
-	require.Equal(t, "job-a", msgs[0].Values["job_name"])
-	require.Equal(t, entry.ID.String(), msgs[0].Values["outbox_entry_id"])
-}
-
 // TestPublisher_BadPayloadReturnsError verifies a malformed payload for a known
 // event_type surfaces the unmarshal error rather than silently swallowing it.
 func TestPublisher_BadPayloadReturnsError(t *testing.T) {
@@ -279,36 +231,10 @@ func TestPublisher_BadPayloadReturnsError(t *testing.T) {
 	pub := publisher.NewOutboxPublisher(r, logger)
 
 	err := pub.Publish(context.Background(), &outbox.Entry{
-		ID: uuid.New(), EventType: "task_status_updated", Payload: []byte(`not json`), StreamName: "x:v1",
+		ID: uuid.New(), EventType: event.EventTypeTaskStatusReport, Payload: []byte(`not json`), StreamName: "x:v1",
 	})
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "unmarshal task_status_updated")
-}
-
-// TestPublisher_PayloadShapesUnmarshalSuccessfully verifies that each switch
-// case's typed struct round-trips correctly via JSON, ensuring the struct
-// shapes match what writers will produce.
-func TestPublisher_PayloadShapesUnmarshalSuccessfully(t *testing.T) {
-	cases := []struct {
-		eventType string
-		payload   any
-	}{
-		{
-			"task_status_updated",
-			pkgevents.TaskStatusUpdated{TaskID: "t1", ScheduleID: "s1", Status: "SUCCEEDED", RetryCount: 1},
-		},
-		{
-			"task_execution_recorded",
-			pkgevents.TaskExecutionRecorded{TaskID: "t1", JobName: "j1", ExecutionSeconds: 12.5},
-		},
-	}
-	for _, c := range cases {
-		t.Run(c.eventType, func(t *testing.T) {
-			raw, err := json.Marshal(c.payload)
-			require.NoError(t, err)
-			require.NotEmpty(t, raw)
-		})
-	}
+	require.Contains(t, err.Error(), "unmarshal task_status_report")
 }
 
 // TestPublisher_NodeUpdatedRowIsUnknown pins that execution-controller

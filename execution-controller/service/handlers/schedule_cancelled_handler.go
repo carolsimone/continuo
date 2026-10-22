@@ -10,10 +10,10 @@ import (
 	"github.com/google/uuid"
 )
 
-// ScheduleCancelledHandler inserts a row into cancelled_schedules so the
-// deploy bindings can drop subsequent query.model messages, and the observer
-// can absorb subsequent Job results, whose schedule_id matches. Operation is idempotent (UPSERT semantics), so the binding does
-// not need messageprocessing dedup.
+// ScheduleCancelledHandler inserts a row into cancelled_schedules, so a later
+// task.dispatch of the run is dropped and the observer reports nothing more of
+// the run's attempts. The operation is idempotent (UPSERT semantics), so the
+// binding does not need messageprocessing dedup.
 type ScheduleCancelledHandler struct {
 	logger *slog.Logger
 }

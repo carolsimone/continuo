@@ -13,7 +13,7 @@ import (
 
 func unitObserver(q *fakeQueue, observed *fakeObserved) *Observer {
 	return New(Config{StartTimeout: time.Minute, Workers: 1}, Deps{
-		Observed: observed, Cache: &fakeCache{}, Queue: q, Legacy: &fakeLegacy{}, Metrics: &fakeMetrics{},
+		Observed: observed, Cache: &fakeCache{}, Queue: q, Metrics: &fakeMetrics{},
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 }
@@ -58,15 +58,4 @@ func TestProcess_WaitsForTheCacheToSync(t *testing.T) {
 	o.deps.Cache = &fakeCache{notSynced: true}
 	require.NoError(t, o.Process(context.Background(), "job-a"), "nothing is read before the cache syncs")
 	assert.Equal(t, time.Second, q.after["job-a"], "the name is queued again a second later")
-}
-
-func TestResync_DeletesTheLegacyDelayQueue(t *testing.T) {
-	legacy := &fakeLegacy{n: 2}
-	o := unitObserver(&fakeQueue{}, &fakeObserved{})
-	o.deps.Legacy = legacy
-	require.NoError(t, o.Resync(context.Background()))
-	assert.Equal(t, 1, legacy.clears)
-
-	legacy.err = errBoom
-	require.ErrorIs(t, o.Resync(context.Background()), errBoom)
 }

@@ -15,18 +15,18 @@ import (
 // dead-letter-controller's trim loop is the only thing that bounds them.
 func TestXAddArgs_DoNotTrim(t *testing.T) {
 	p := NewOutboxPublisher(nil, nil)
-	payload, err := json.Marshal(pkgevents.TaskStatusUpdated{TaskID: "t1", ScheduleID: "s1", Status: "SUCCEEDED"})
+	payload, err := json.Marshal(pkgevents.TaskStatusReport{RunID: "s1", TaskID: "t1", Status: "succeeded"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	entry := &outbox.Entry{ID: uuid.New(), StreamName: streams.TaskStatusUpdatedV1, EventType: event.EventTypeTaskStatusUpdated, Payload: payload}
+	entry := &outbox.Entry{ID: uuid.New(), StreamName: streams.TaskStatusUpdatedV2, EventType: event.EventTypeTaskStatusReport, Payload: payload}
 	values, err := p.Render(entry)
 	if err != nil {
 		t.Fatal(err)
 	}
 	args := p.xaddArgs(entry, values)
-	if args.Stream != streams.TaskStatusUpdatedV1 {
-		t.Fatalf("stream = %q, want %q", args.Stream, streams.TaskStatusUpdatedV1)
+	if args.Stream != streams.TaskStatusUpdatedV2 {
+		t.Fatalf("stream = %q, want %q", args.Stream, streams.TaskStatusUpdatedV2)
 	}
 	if args.MaxLen != 0 || args.MinID != "" || args.Approx {
 		t.Fatalf("publisher trims: MaxLen=%d MinID=%q Approx=%v", args.MaxLen, args.MinID, args.Approx)

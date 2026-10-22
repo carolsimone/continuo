@@ -16,7 +16,7 @@ func deployableCmd() command.DeployTask {
 	return command.DeployTask{
 		TaskID: uuid.New().String(), ScheduleID: uuid.New().String(),
 		JobName: "dbt-public-orders", NodeType: "dbt-model",
-		Attempt: 0, TaskMaxRetries: 2,
+		Attempt: 0,
 	}
 }
 
@@ -379,18 +379,6 @@ func TestDeployment_SlotLifecycle(t *testing.T) {
 	require.Error(t, d.Finish("failed", now), "an outcome is recorded once")
 }
 
-func TestDeployment_FinishAcceptsADoneRowWithoutOutcome(t *testing.T) {
-	now := time.Now()
-	d := productionDeployment(t)
-	released := model.ReconstituteProduction(d.ID(), nil, d.Command(), model.StatusDone, 0, 3, now, now, &now, nil,
-		"", nil, model.AttemptFacts{})
-	assert.False(t, released.HasOutcome())
-
-	require.NoError(t, released.Finish("failed", now), "a row released before its result was recorded still records it")
-	assert.Equal(t, "failed", released.Outcome())
-	assert.Equal(t, model.StatusDone, released.Status())
-}
-
 func TestDeployment_FinishRejections(t *testing.T) {
 	now := time.Now()
 	d := productionDeployment(t)
@@ -418,7 +406,7 @@ func TestDeployment_TransientFailureReturnsTheSlot(t *testing.T) {
 	assert.True(t, d.NextAttemptAt().After(now))
 }
 
-func TestDeployment_RecordOutcomeFromInFlightOrReleased(t *testing.T) {
+func TestDeployment_RecordOutcomeFromInFlight(t *testing.T) {
 	now := time.Now()
 	v := model.NewValidationDeployment(command.ValidationDeployTask{
 		ReleaseID: "r", NodeID: "n", JobName: "j", NodeType: "dbt-model", ImageTag: "i",
@@ -491,8 +479,4 @@ func TestDeployment_AwaitingResult(t *testing.T) {
 	assert.True(t, d.AwaitingResult(), "terminating")
 	require.NoError(t, d.Finish("failed", now))
 	assert.False(t, d.AwaitingResult(), "done with its outcome recorded")
-
-	released := model.ReconstituteProduction(d.ID(), nil, d.Command(), model.StatusDone, 0, 3, now, now, &now, nil,
-		"", nil, model.AttemptFacts{})
-	assert.True(t, released.AwaitingResult(), "a slot released before the result was recorded still awaits it")
 }

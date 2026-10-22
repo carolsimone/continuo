@@ -29,8 +29,8 @@ func probe(t *testing.T, srv *HealthServer, path string) int {
 // heartbeat, both /ready and /livez answer 200.
 func TestReadyAndLivezHealthyWhenRegistryHealthy(t *testing.T) {
 	reg := liveness.NewRegistry()
-	reg.RegisterWorker("query_model")
-	reg.AddWorkerProbe("query_model_heartbeat", 0, func(context.Context) error { return nil })
+	reg.RegisterWorker("task_dispatch")
+	reg.AddWorkerProbe("task_dispatch_heartbeat", 0, func(context.Context) error { return nil })
 	srv := NewHealthServer(0, reg, discardLogger())
 
 	if code := probe(t, srv, "/ready"); code != http.StatusOK {
@@ -47,7 +47,7 @@ func TestReadyAndLivezHealthyWhenRegistryHealthy(t *testing.T) {
 // already retrying would just turn a recoverable outage into CrashLoopBackOff).
 func TestDependencyOutageFailsReadinessNotLiveness(t *testing.T) {
 	reg := liveness.NewRegistry()
-	reg.RegisterWorker("query_model")
+	reg.RegisterWorker("task_dispatch")
 	reg.AddDependencyProbe("redis", 0, func(context.Context) error { return errors.New("connection refused") })
 	srv := NewHealthServer(0, reg, discardLogger())
 
@@ -64,8 +64,8 @@ func TestDependencyOutageFailsReadinessNotLiveness(t *testing.T) {
 // liveness is what restarts the pod.
 func TestConsumerExitFailsBothProbes(t *testing.T) {
 	reg := liveness.NewRegistry()
-	reg.RegisterWorker("query_model")
-	reg.WorkerExited("query_model", errors.New("permanent bootstrap failure: WRONGTYPE"))
+	reg.RegisterWorker("task_dispatch")
+	reg.WorkerExited("task_dispatch", errors.New("permanent bootstrap failure: WRONGTYPE"))
 	srv := NewHealthServer(0, reg, discardLogger())
 
 	if code := probe(t, srv, "/ready"); code != http.StatusServiceUnavailable {
@@ -80,8 +80,8 @@ func TestConsumerExitFailsBothProbes(t *testing.T) {
 // a stale worker heartbeat and must fail BOTH probes.
 func TestStaleHeartbeatFailsBothProbes(t *testing.T) {
 	reg := liveness.NewRegistry()
-	reg.RegisterWorker("query_model")
-	reg.AddWorkerProbe("query_model_heartbeat", 0, func(context.Context) error {
+	reg.RegisterWorker("task_dispatch")
+	reg.AddWorkerProbe("task_dispatch_heartbeat", 0, func(context.Context) error {
 		return errors.New("read loop stalled — no activity for 5m0s")
 	})
 	srv := NewHealthServer(0, reg, discardLogger())
@@ -97,8 +97,8 @@ func TestStaleHeartbeatFailsBothProbes(t *testing.T) {
 // TestHealthAlwaysHealthy: /health stays a pure "process is up" probe.
 func TestHealthAlwaysHealthy(t *testing.T) {
 	reg := liveness.NewRegistry()
-	reg.RegisterWorker("query_model")
-	reg.WorkerExited("query_model", errors.New("dead"))
+	reg.RegisterWorker("task_dispatch")
+	reg.WorkerExited("task_dispatch", errors.New("dead"))
 	srv := NewHealthServer(0, reg, discardLogger())
 
 	if code := probe(t, srv, "/health"); code != http.StatusOK {
