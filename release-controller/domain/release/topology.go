@@ -30,6 +30,9 @@ type Node struct {
 	// SecretRef is the continuo-api-* Secret a python-api node's pod receives
 	// as env vars; empty for every other node.
 	SecretRef string
+	// TimeoutSeconds is the node's declared task timeout; 0 when it declares
+	// none.
+	TimeoutSeconds int
 }
 
 // WithoutTests returns a copy of the topology without dbt-test nodes. A test

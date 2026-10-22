@@ -210,6 +210,7 @@ func readTopology(r io.Reader) (release.Topology, error) {
 			Schedule:           n.Schedule,
 			OriginalFilePath:   n.OriginalFilePath,
 			SecretRef:          n.SecretRef,
+			TimeoutSeconds:     n.TimeoutSeconds,
 		})
 	}
 	// Orchestrator strips every dbt-test node before it applies a promotion, so
@@ -239,6 +240,7 @@ func fromTopology(topo release.Topology) []topologyartifact.Node {
 			UpstreamUniqueIDs:  n.UpstreamUniqueIDs,
 			Schedule:           n.Schedule,
 			SecretRef:          n.SecretRef,
+			TimeoutSeconds:     n.TimeoutSeconds,
 		})
 	}
 	return nodes

@@ -134,6 +134,7 @@ func documentFromTopology(releaseID string, topo release.Topology) topologyartif
 			UpstreamUniqueIDs:  n.UpstreamUniqueIDs,
 			Schedule:           n.Schedule,
 			SecretRef:          n.SecretRef,
+			TimeoutSeconds:     n.TimeoutSeconds,
 		}
 	}
 	return topologyartifact.Document{
@@ -161,6 +162,7 @@ func topologyFromDocument(doc topologyartifact.Document) release.Topology {
 			Schedule:           n.Schedule,
 			OriginalFilePath:   n.OriginalFilePath,
 			SecretRef:          n.SecretRef,
+			TimeoutSeconds:     n.TimeoutSeconds,
 		}
 	}
 	return topo
