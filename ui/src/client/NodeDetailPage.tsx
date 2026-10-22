@@ -4,6 +4,7 @@ import { useLocation, useNavigate, useParams } from 'react-router';
 import PageHeader from './PageHeader';
 import type { NodeRun, NodeRunsResponse, NodeDetailFrom, NodesResponse } from './types';
 import { kindLabel, computeNodeStats, formatDuration, formatRelative, formatTimeout } from './node-helpers';
+import { taskStatusTitle } from './detail-page-helpers';
 import NodeTypeIcon from './NodeTypeIcon';
 import RunSourcePickerDialog from './RunSourcePickerDialog';
 import FullRefreshConfirmDialog from './FullRefreshConfirmDialog';
@@ -46,7 +47,10 @@ function NodeRunRow({ run: r }: { run: NodeRun }) {
       <td>{formatTime(r.created_at)}</td>
       <td>{kindLabel(r.kind)}</td>
       <td>
-        <span className={`pill-sm pill-sm--${r.task_status}`}>{r.task_status || '—'}</span>
+        <span className={`pill-sm pill-sm--${r.task_status}`} title={taskStatusTitle(r.task_status)}>{r.task_status || '—'}</span>
+        {(r.failure_class || r.failure_reason) && (
+          <div className="nodes-reason">{[r.failure_class, r.failure_reason].filter(Boolean).join(' · ')}</div>
+        )}
         {r.operation === 'full_refresh' && <span className="pill-sm pill-sm--muted">Full refresh</span>}
         {r.error_message && (
           <div className="nodes-error-text">
@@ -109,9 +113,10 @@ export default function NodeDetailPage() {
   const [nodeType, setNodeType] = useState('');
   const [sourceUri, setSourceUri] = useState('');
   const [inactive, setInactive] = useState(false);
-  // The live release's declared task timeout in seconds (0 = install default);
-  // null while unknown or when the node has no catalog row.
-  const [timeoutSeconds, setTimeoutSeconds] = useState<number | null>(null);
+  // The task timeout the node's tasks get and whether the live release
+  // declares it (else it is the install default); null while unknown or when
+  // the node has no catalog row.
+  const [taskTimeout, setTaskTimeout] = useState<{ seconds: number; declared: boolean } | null>(null);
   const genRef = useRef(0);
 
   const parts = (fqn ?? '').split('.');
@@ -164,7 +169,7 @@ export default function NodeDetailPage() {
   // the service), so rows of other schemas sharing the table name can come
   // back: the schema is matched client-side.
   useEffect(() => {
-    setTimeoutSeconds(null);
+    setTaskTimeout(null);
     if (!service || !schema || !table) return;
     let cancelled = false;
     fetch(`/api/nodes?service=${encodeURIComponent(service)}&search=${encodeURIComponent(table)}&operation=run`)
@@ -172,10 +177,12 @@ export default function NodeDetailPage() {
       .then((data: NodesResponse | null) => {
         if (cancelled) return;
         const row = (data?.nodes ?? []).find(n => n.schema_name === schema);
-        setTimeoutSeconds(row && typeof row.timeout_seconds === 'number' ? row.timeout_seconds : null);
+        setTaskTimeout(row && typeof row.timeout_seconds === 'number' && row.timeout_seconds > 0
+          ? { seconds: row.timeout_seconds, declared: !!row.timeout_declared }
+          : null);
       })
       .catch(() => {
-        if (!cancelled) setTimeoutSeconds(null);
+        if (!cancelled) setTaskTimeout(null);
       });
     return () => { cancelled = true; };
   }, [service, schema, table]);
@@ -298,11 +305,9 @@ export default function NodeDetailPage() {
             {nodeType && (
               <span className="info-strip info-strip--neutral info-strip--inline">{nodeType}</span>
             )}
-            {timeoutSeconds !== null && (
+            {taskTimeout !== null && (
               <span className="info-strip info-strip--neutral info-strip--inline">
-                {timeoutSeconds > 0
-                  ? `task timeout ${formatTimeout(timeoutSeconds)} · declared`
-                  : 'task timeout · install default'}
+                {`task timeout ${formatTimeout(taskTimeout.seconds)} · ${taskTimeout.declared ? 'declared' : 'install default'}`}
               </span>
             )}
           </div>

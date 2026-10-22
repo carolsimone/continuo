@@ -37,6 +37,8 @@ const EMPTY_SERVICES = new Set<string>();
 type FocusRole = 'selected' | 'parent' | 'child' | 'dim' | null;
 
 const STATUS_BG: Record<string, string> = {
+  dispatched: '#fff',
+  queued: '#f8fafc',
   running: '#eef2ff',
   succeeded: '#f0fdf4',
   failed: '#fef2f2',
@@ -46,6 +48,8 @@ const STATUS_BG: Record<string, string> = {
   external: '#fafafa',
 };
 const STATUS_BORDER: Record<string, string> = {
+  dispatched: '#cbd5e1',
+  queued: '#94a3b8',
   running: '#a5b4fc',
   succeeded: '#86efac',
   failed: '#fca5a5',

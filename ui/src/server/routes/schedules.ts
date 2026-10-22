@@ -81,6 +81,7 @@ export function createSchedulesRouter(stateClient: GrpcClient, graphClient: Grpc
         terminal_status: r.terminal_status,
         created_at: r.created_at || null,
         completed_at: r.completed_at || null,
+        failure_reason: r.failure_reason || null,
       }));
       res.json({ runs });
     });

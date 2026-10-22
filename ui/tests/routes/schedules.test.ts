@@ -76,15 +76,23 @@ describe('GET /api/schedules/:name/runs', () => {
   it('lists completed runs from the state service', async () => {
     mockListRuns.mockImplementation((req: any, cb: any) => {
       expect(req).toEqual({ schedule_name: 'daily' });
-      cb(null, { runs: [{ run_id: 'r1', schedule_name: 'daily', terminal_status: 'succeeded',
-        created_at: '2026-10-14T23:00:00Z', completed_at: '2026-10-14T23:03:00Z' }], total_count: 1 });
+      cb(null, { runs: [
+        { run_id: 'r1', schedule_name: 'daily', terminal_status: 'succeeded',
+          created_at: '2026-10-14T23:00:00Z', completed_at: '2026-10-14T23:03:00Z', failure_reason: '' },
+        { run_id: 'r2', schedule_name: 'daily', terminal_status: 'failed',
+          created_at: '2026-10-13T23:00:00Z', completed_at: '2026-10-13T23:09:00Z', failure_reason: 'stalled' },
+      ], total_count: 2 });
     });
 
     const res = await request(app).get('/api/schedules/daily/runs');
 
     expect(res.status).toBe(200);
-    expect(res.body.runs).toEqual([{ run_id: 'r1', schedule_name: 'daily', terminal_status: 'succeeded',
-      created_at: '2026-10-14T23:00:00Z', completed_at: '2026-10-14T23:03:00Z' }]);
+    expect(res.body.runs).toEqual([
+      { run_id: 'r1', schedule_name: 'daily', terminal_status: 'succeeded',
+        created_at: '2026-10-14T23:00:00Z', completed_at: '2026-10-14T23:03:00Z', failure_reason: null },
+      { run_id: 'r2', schedule_name: 'daily', terminal_status: 'failed',
+        created_at: '2026-10-13T23:00:00Z', completed_at: '2026-10-13T23:09:00Z', failure_reason: 'stalled' },
+    ]);
   });
 });
 

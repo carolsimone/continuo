@@ -166,7 +166,7 @@ describe('nodes router', () => {
             run_count: 48, success_rate_pct: -1, avg_duration_sec: -1,
             p95_duration_sec: 21, flaky_rate_pct: 4,
             last_status: 'succeeded', last_run_at: '2026-06-08T10:00:00Z',
-            operation: 'run', timeout_seconds: 28800,
+            operation: 'run', timeout_seconds: 28800, timeout_declared: true,
           },
           {
             service_name: 'svc', schema_name: 'an', table_name: 'dim',
@@ -188,7 +188,9 @@ describe('nodes router', () => {
     expect(res.body.nodes[0].flaky_rate_pct).toBeUndefined(); // route no longer forwards it
     expect(res.body.nodes[0].operation).toBe('run');
     expect(res.body.nodes[0].timeout_seconds).toBe(28800);
-    expect(res.body.nodes[1].timeout_seconds).toBe(0);     // unset -> 0 (install default)
+    expect(res.body.nodes[0].timeout_declared).toBe(true);
+    expect(res.body.nodes[1].timeout_seconds).toBe(0);     // unset -> 0
+    expect(res.body.nodes[1].timeout_declared).toBe(false); // unset -> false (install default)
     expect(res.body.nodes[1].last_status).toBeNull();      // '' -> null
     expect(res.body.nodes[1].last_run_at).toBeNull();
     expect(res.body.nodes[1].operation).toBe('test');

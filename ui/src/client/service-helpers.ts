@@ -49,10 +49,12 @@ export function buildServiceColors(services: string[]): Map<string, string> {
   return new Map(sorted.map((svc, i) => [svc, SERVICE_PALETTE[i % SERVICE_PALETTE.length]]));
 }
 
-// Most-severe-first, matching the row-sort precedence used by the nodes table.
-// `skipped` (cascade-skipped downstream of a failure) outranks `succeeded` so
-// a partially- or fully-skipped service is flagged rather than reading green.
-const ROLLUP_PRECEDENCE = ['failed', 'running', 'pending', 'skipped', 'succeeded', 'cancelled'];
+// Most-severe-first. A service with a running task reads running; one whose
+// tasks wait for a slot (queued) or for execution-controller (dispatched)
+// reads that before pending. `skipped` (cascade-skipped downstream of a
+// failure) outranks `succeeded` so a partially- or fully-skipped service is
+// flagged rather than reading green.
+const ROLLUP_PRECEDENCE = ['failed', 'running', 'queued', 'dispatched', 'pending', 'skipped', 'succeeded', 'cancelled'];
 
 export function rollupStatus(statuses: string[]): string {
   for (const status of ROLLUP_PRECEDENCE) {

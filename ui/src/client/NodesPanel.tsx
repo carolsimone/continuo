@@ -14,8 +14,10 @@ interface Props {
   serviceColors: Map<string, string>;
 }
 
+// Dispatched and queued tasks, which wait for execution-controller or for a
+// slot, are listed just before the running ones.
 const STATUS_ORDER: Record<string, number> = {
-  failed: 0, running: 1, pending: 2, skipped: 3, succeeded: 4, cancelled: 5,
+  failed: 0, dispatched: 1, queued: 2, running: 3, pending: 4, skipped: 5, succeeded: 6, cancelled: 7,
 };
 
 // A task finished when its highest-numbered attempt finished.
@@ -30,7 +32,7 @@ function completedAtMs(task: Task, attemptsByTask: Map<string, TaskAttempt[]>): 
 // their incoming order.
 function sortTasks(tasks: Task[], attemptsByTask: Map<string, TaskAttempt[]>): Task[] {
   return [...tasks].sort((a, b) =>
-    (STATUS_ORDER[a.status] ?? 5) - (STATUS_ORDER[b.status] ?? 5) ||
+    (STATUS_ORDER[a.status] ?? 7) - (STATUS_ORDER[b.status] ?? 7) ||
     completedAtMs(b, attemptsByTask) - completedAtMs(a, attemptsByTask)
   );
 }
@@ -57,7 +59,7 @@ export function groupTasksByService(tasks: Task[], attemptsByTask: Map<string, T
       tasks: sortTasks(groupTasks, attemptsByTask),
     }))
     .sort((a, b) =>
-      (STATUS_ORDER[a.status] ?? 5) - (STATUS_ORDER[b.status] ?? 5) ||
+      (STATUS_ORDER[a.status] ?? 7) - (STATUS_ORDER[b.status] ?? 7) ||
       a.service.localeCompare(b.service),
     );
 }

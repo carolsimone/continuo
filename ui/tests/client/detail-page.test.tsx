@@ -175,6 +175,20 @@ describe('DetailPage — run-level Rerun button', () => {
     expect(await screen.findByRole('button', { name: /rerun failed/i })).toBeInTheDocument();
   });
 
+  it('says why a run that failed without a failed task failed', async () => {
+    const routes = failedRoutes();
+    const base = routes[`/api/schedulers/${RUN_ID}`];
+    routes[`/api/schedulers/${RUN_ID}`] = async (url: string) => {
+      const body = (await base(url)) as { scheduler: Record<string, unknown> };
+      return { scheduler: { ...body.scheduler, failure_reason: 'stalled' } };
+    };
+    vi.stubGlobal('fetch', mockFetchSequence(routes));
+
+    render(withRouter({ last_run_id: RUN_ID }));
+
+    expect(await screen.findByText('failed: stalled')).toBeInTheDocument();
+  });
+
   it('hides Rerun failed button when latest run is SUCCEEDED', async () => {
     const routes = {
       ...freshRoutes(),

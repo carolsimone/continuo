@@ -135,6 +135,7 @@ export function createSchedulersRouter(client: GrpcClient) {
         started_at: toISO(s.started_at),
         completed_at: toISO(s.completed_at),
         cancelled_at: toISO(s.cancelled_at),
+        failure_reason: s.failure_reason || null,
       });
     });
   });
