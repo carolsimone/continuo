@@ -12,6 +12,10 @@ const (
 	TaskStatusUpdatedV1 = "task.status.updated:v1"
 	// TaskExecutionRecordedV1 — Completed task executions emitted by execution-controller's outbox processor.
 	TaskExecutionRecordedV1 = "task.execution.recorded:v1"
+	// TaskDispatchV1 — One attempt of a task, from state to execution-controller, written in the transaction that decides the attempt (the run's creation, the success that makes the task ready, or the failure that retries it) and again whenever state asks about an attempt that has gone quiet, with state's view of it as known_status. execution-controller accepts each (task, attempt) once and answers a repeated dispatch with the attempt's latest report.
+	TaskDispatchV1 = "task.dispatch:v1"
+	// TaskStatusUpdatedV2 — What execution-controller knows of one attempt of a task — queued, running, succeeded, or failed with a failure class and reason — each report carrying every fact known so far. state applies a report only when it ranks higher than the attempt's current status, and on a failure decides in the same transaction whether to dispatch the next attempt.
+	TaskStatusUpdatedV2 = "task.status.updated:v2"
 	// OutboxDeadLetterV1 — Terminal outbox publish failures (permanent payload errors, or transient errors that exhausted their backoff budget), emitted by every service's outbox processor with the fields the row would have published. dead-letter-controller stores them for listing and redrive.
 	OutboxDeadLetterV1 = "outbox.dead_letter:v1"
 	// ConsumerDeadLetterV1 — Messages a stream consumer gave up on (a permanent error, or a transient error on its fifth delivery), written before the original is acknowledged. dead-letter-controller stores them for listing and redrive.
@@ -62,6 +66,8 @@ const (
 	StateTaskStatusUpdated = "state-task-status-updated"
 	// StateTaskExecutionRecorded — state consumer group on task.execution.recorded:v1.
 	StateTaskExecutionRecorded = "state-task-execution-recorded"
+	// ExecutorTaskDispatch — execution-controller consumer group on task.dispatch:v1.
+	ExecutorTaskDispatch = "executor-task-dispatch"
 	// DeadLetterControllerOutboxDeadLetters — dead-letter-controller consumer group on outbox.dead_letter:v1.
 	DeadLetterControllerOutboxDeadLetters = "dead-letter-controller-outbox-dead-letters"
 	// DeadLetterControllerConsumerDeadLetters — dead-letter-controller consumer group on consumer.dead_letter:v1.
@@ -119,6 +125,8 @@ var All = []string{
 	QueryModelV1,
 	TaskStatusUpdatedV1,
 	TaskExecutionRecordedV1,
+	TaskDispatchV1,
+	TaskStatusUpdatedV2,
 	OutboxDeadLetterV1,
 	ConsumerDeadLetterV1,
 	ScheduleCancelledV1,
@@ -148,6 +156,8 @@ var Groups = map[string][]string{
 	QueryModelV1:                {ExecutorQueryModel},
 	TaskStatusUpdatedV1:         {StateTaskStatusUpdated},
 	TaskExecutionRecordedV1:     {StateTaskExecutionRecorded},
+	TaskDispatchV1:              {ExecutorTaskDispatch},
+	TaskStatusUpdatedV2:         {},
 	OutboxDeadLetterV1:          {DeadLetterControllerOutboxDeadLetters},
 	ConsumerDeadLetterV1:        {DeadLetterControllerConsumerDeadLetters},
 	ScheduleCancelledV1:         {ExecutorScheduleCancelled},

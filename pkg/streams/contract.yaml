@@ -46,6 +46,21 @@ streams:
         group: state-task-execution-recorded
         const: StateTaskExecutionRecorded
 
+  - name: task.dispatch:v1
+    const: TaskDispatchV1
+    description: One attempt of a task, from state to execution-controller, written in the transaction that decides the attempt (the run's creation, the success that makes the task ready, or the failure that retries it) and again whenever state asks about an attempt that has gone quiet, with state's view of it as known_status. execution-controller accepts each (task, attempt) once and answers a repeated dispatch with the attempt's latest report.
+    producers: [state]
+    consumers:
+      - service: execution-controller
+        group: executor-task-dispatch
+        const: ExecutorTaskDispatch
+
+  - name: task.status.updated:v2
+    const: TaskStatusUpdatedV2
+    description: What execution-controller knows of one attempt of a task — queued, running, succeeded, or failed with a failure class and reason — each report carrying every fact known so far. state applies a report only when it ranks higher than the attempt's current status, and on a failure decides in the same transaction whether to dispatch the next attempt.
+    producers: [execution-controller]
+    consumers: []
+
   # ---------------- execution-controller streams ----------------
 
   - name: outbox.dead_letter:v1
