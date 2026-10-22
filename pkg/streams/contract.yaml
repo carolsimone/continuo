@@ -434,9 +434,9 @@ vocabularies:
   - name: failure_class
     const: FailureClass
     description: >-
-      What kind of failure ended an attempt of a task. execution-controller's
-      observer classifies each attempt it watches end in failure and records
-      the class with the attempt's facts.
+      What kind of failure ended an attempt of a task. execution-controller
+      classifies each attempt that fails and records the class with the
+      attempt's facts.
     values:
       - value: task
         const: Task
@@ -446,7 +446,7 @@ vocabularies:
         description: the pod ran out of a node resource; it was killed for memory or evicted.
       - value: infra
         const: Infra
-        description: the attempt was lost to the platform; its node or its Job is gone.
+        description: the attempt was lost to the platform; its node, its Job or its record is gone, or Kubernetes refused its Job.
       - value: start
         const: Start
         description: the pod could not start its containers (an image pull, a missing Secret or ConfigMap, a container the runtime could not create).
@@ -455,7 +455,7 @@ vocabularies:
         description: the attempt ran out of time, before any container of its pod started or before it finished.
       - value: invalid
         const: Invalid
-        description: the task as dispatched cannot produce its result; dbt found nothing to build.
+        description: the task as dispatched cannot produce its result; dbt found nothing to build, or the dispatch cannot run.
 
   - name: failure_reason
     const: FailureReason
@@ -485,6 +485,14 @@ vocabularies:
         const: JobMissing
         class: infra
         description: the attempt's Job is gone from Kubernetes and nothing seen of the attempt shows how it ended.
+      - value: attempt_lost
+        const: AttemptLost
+        class: infra
+        description: state asked about an attempt execution-controller acknowledged, and execution-controller holds neither its row nor its Job.
+      - value: create_failed
+        const: CreateFailed
+        class: infra
+        description: Kubernetes refused the attempt's Job on every one of execution-controller's creation tries.
       - value: image_pull
         const: ImagePull
         class: start
@@ -513,3 +521,15 @@ vocabularies:
         const: DbtNothingToDo
         class: invalid
         description: dbt exited 0 having matched no node ("Nothing to do"), so nothing was built.
+      - value: invalid_node_type
+        const: InvalidNodeType
+        class: invalid
+        description: the dispatch names a node type the node_type vocabulary does not declare.
+      - value: malformed_dispatch
+        const: MalformedDispatch
+        class: invalid
+        description: a field of the dispatch cannot run (its operation, image, Job name, timeout or known status), or no command builds the node.
+      - value: job_name_collision
+        const: JobNameCollision
+        class: invalid
+        description: a Job of the dispatched name already exists for another task or attempt.
