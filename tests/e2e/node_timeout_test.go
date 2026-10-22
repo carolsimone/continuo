@@ -11,8 +11,10 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/streams"
+	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
@@ -197,18 +199,137 @@ func waitForNodeTimeoutSeconds(t *testing.T, ctx context.Context, clients *testC
 }
 
 // requireNoOtherNodeTimeout asserts that, in state's copy of releaseID, no node
-// other than nodeKey carries a timeout.
+// other than nodeKey carries a timeout, but for the deadline fixture: service-1's
+// ftable_deadline declares deadlineTimeoutMinutes in its model, so a release
+// that holds service-1's models carries that timeout on it.
 func requireNoOtherNodeTimeout(t *testing.T, ctx context.Context, clients *testClients, releaseID, nodeKey string) {
 	t.Helper()
-	var others int
-	require.NoError(t, clients.stateDB.GetContext(ctx, &others, `
-		SELECT count(*)
+	var others []string
+	require.NoError(t, clients.stateDB.SelectContext(ctx, &others, `
+		SELECT n.node_key || '=' || n.timeout_seconds
 		  FROM live_release l
 		  JOIN topology_nodes n ON n.tenant_id = l.tenant_id AND n.release_id = l.release_id
 		 WHERE l.tenant_id = $1 AND l.release_id = $2
-		   AND n.node_key <> $3 AND n.timeout_seconds IS NOT NULL`,
+		   AND n.node_key <> $3 AND n.timeout_seconds IS NOT NULL
+		 ORDER BY n.node_key`,
 		events.DefaultTenantID, releaseID, nodeKey))
-	require.Zero(t, others, "no node other than %s declares a timeout", nodeKey)
+	deadlineFixture := fmt.Sprintf("%s.%s=%d", seedSchemaName, deadlineTable, deadlineTimeoutMinutes*60)
+	for _, other := range others {
+		require.Equal(t, deadlineFixture, other,
+			"no node other than %s declares a timeout, but the deadline fixture its model declares", nodeKey)
+	}
+}
+
+const (
+	// deadlineScheduleName is the schedule of the deadline fixture and its
+	// downstream, and nothing else.
+	deadlineScheduleName = "e2e-deadline"
+	// deadlineTable is service-1's ftable_deadline: it declares a task timeout
+	// of deadlineTimeoutMinutes and sleeps for ten minutes.
+	deadlineTable = "ftable_deadline"
+	// deadlineDownTable is service-1's ftable_deadline_down, which reads
+	// ftable_deadline.
+	deadlineDownTable = "ftable_deadline_down"
+	// deadlineTimeoutMinutes is the meta.timeout_minutes ftable_deadline's model
+	// declares; e2eTopology gives the node the same timeout in seconds.
+	deadlineTimeoutMinutes = 1
+
+	// clockTolerance absorbs the second-granular Kubernetes timestamps and the
+	// skew between the clocks of the containers the e2e stack runs in.
+	clockTolerance = 5 * time.Second
+)
+
+// TestE2E_NodeTimeout_ATaskPastItsDeadlineFailsWithoutARetry proves that a
+// task's timeout stops it and that a timeout is not retried:
+//
+//	ftable_deadline declares a one-minute task timeout and sleeps for ten
+//	→ TriggerSchedule(e2e-deadline) → state dispatches attempt 0 with the
+//	  node's timeout
+//	→ execution-controller gives its Job an activeDeadlineSeconds of the start
+//	  timeout plus that minute
+//	→ Kubernetes stops the Job at that deadline (DeadlineExceeded)
+//	→ execution-controller reports attempt 0 failed (timeout,
+//	  deadline_exceeded)
+//	→ state fails the task without a retry, skips ftable_deadline_down and
+//	  fails the run.
+func TestE2E_NodeTimeout_ATaskPastItsDeadlineFailsWithoutARetry(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping E2E test in short mode")
+	}
+
+	// Topology (2m) + the Job's deadline (start timeout + 1m) + the pod's stop
+	// and the report (6m) + the run's finalization, with headroom.
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	defer cancel()
+
+	clients := setupClients(t, ctx)
+	defer clients.close(ctx)
+	defer cleanupTestData(t, ctx, clients, deadlineScheduleName)
+	// Kubernetes kills the pod at the deadline, but the warehouse runs a query
+	// whose client is gone until the query ends: end the sleep with the test.
+	defer endDeadlineQuery(t, clients)
+
+	verifyServicesHealthy(t)
+	verifyK8sAvailable(t, ctx)
+	cleanupTestData(t, ctx, clients, deadlineScheduleName)
+	startTimeout := jobStartTimeout(t, ctx)
+
+	waitForStateLiveRelease(t, ctx, clients, seedTopology(t, ctx, clients))
+
+	resp, err := clients.stateClient.TriggerSchedule(ctx, &statev1.TriggerScheduleRequest{ScheduleName: deadlineScheduleName})
+	require.NoError(t, err, "TriggerSchedule(%s)", deadlineScheduleName)
+	runID, err := uuid.Parse(resp.ScheduleId)
+	require.NoError(t, err, "TriggerSchedule must return the run's id")
+	t.Logf("run %s of %s triggered", runID, deadlineScheduleName)
+	taskID := taskOfRun(t, ctx, clients, runID, deadlineTable)
+
+	// The Job's deadline is the start timeout plus the node's own timeout.
+	deadline := startTimeout + deadlineTimeoutMinutes*time.Minute
+	job := waitForAttemptJob(t, ctx, taskID, 0, 3*time.Minute)
+	require.NotNil(t, job.Spec.ActiveDeadlineSeconds, "Job %s must carry an active deadline", job.Metadata.Name)
+	require.Equal(t, int64(deadline.Seconds()), *job.Spec.ActiveDeadlineSeconds,
+		"Job %s runs up to the start timeout (%s) plus the node's task timeout (%d min)",
+		job.Metadata.Name, startTimeout, deadlineTimeoutMinutes)
+
+	ended := waitForTaskEnded(t, ctx, clients, taskID, deadlineTable, deadline+6*time.Minute)
+	require.Equal(t, []string{
+		fmt.Sprintf("0:failed:%s:%s", model.FailureClassTimeout, model.FailureReasonDeadlineExceeded),
+	}, ended.attempts, "attempt 0 fails at its deadline and no attempt follows it")
+	require.Equal(t, "failed", ended.status)
+	require.Equal(t, 0, ended.attempt)
+
+	// It failed at the Job's deadline, counted from the Job's creation: not
+	// sooner, and not much later than the pod takes to stop.
+	elapsed := attemptReportedAt(t, ctx, clients, taskID, 0).Sub(job.Metadata.CreationTimestamp)
+	t.Logf("attempt 0 reported failed %s after its Job was created (deadline %s)", elapsed.Round(time.Second), deadline)
+	require.GreaterOrEqual(t, elapsed, deadline-clockTolerance,
+		"the attempt must not fail before its Job's deadline")
+	require.Less(t, elapsed, deadline+3*time.Minute,
+		"the attempt fails once its pod has stopped after the deadline")
+
+	verifyTasksSkipped(t, ctx, clients, runID, []string{deadlineDownTable})
+	verifyNoJobsDeployed(t, ctx, []string{deadlineDownTable})
+	verifySchedulerFailed(t, ctx, clients, runID)
+	t.Logf("✅ %s failed at its deadline without a retry; %s skipped", deadlineTable, deadlineDownTable)
+}
+
+// endDeadlineQuery terminates the warehouse backends still running
+// ftable_deadline's sleep, and logs how many it ended.
+func endDeadlineQuery(t *testing.T, clients *testClients) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	var ended []bool
+	err := clients.dbtDB.SelectContext(ctx, &ended, `
+		SELECT pg_terminate_backend(pid)
+		  FROM pg_stat_activity
+		 WHERE datname = current_database() AND pid <> pg_backend_pid()
+		   AND query LIKE '%' || $1 || '%' AND query LIKE '%pg_sleep%'`, deadlineTable)
+	if err != nil {
+		t.Logf("Warning: failed to end the warehouse query of %s: %v", deadlineTable, err)
+		return
+	}
+	t.Logf("ended %d warehouse queries of %s", len(ended), deadlineTable)
 }
 
 // manifestDeclaringTimeout returns body, a dbt manifest.json, re-encoded with

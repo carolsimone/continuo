@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os/exec"
+	"strconv"
 	"testing"
 	"time"
 
@@ -245,31 +246,36 @@ func containsAll(slice, elements []string) bool {
 	return true
 }
 
+// k8sJob is one Job of kubectl get jobs JSON output.
+type k8sJob struct {
+	Metadata struct {
+		Name              string            `json:"name"`
+		Labels            map[string]string `json:"labels"`
+		CreationTimestamp time.Time         `json:"creationTimestamp"`
+	} `json:"metadata"`
+	Status struct {
+		Succeeded int `json:"succeeded"`
+	} `json:"status"`
+	Spec struct {
+		ActiveDeadlineSeconds *int64 `json:"activeDeadlineSeconds"`
+		Template              struct {
+			Spec struct {
+				Containers []struct {
+					Command []string `json:"command"`
+				} `json:"containers"`
+			} `json:"spec"`
+		} `json:"template"`
+	} `json:"spec"`
+}
+
 // k8sJobList represents kubectl get jobs JSON output
 type k8sJobList struct {
-	Items []struct {
-		Metadata struct {
-			Name   string            `json:"name"`
-			Labels map[string]string `json:"labels"`
-		} `json:"metadata"`
-		Status struct {
-			Succeeded int `json:"succeeded"`
-		} `json:"status"`
-		Spec struct {
-			Template struct {
-				Spec struct {
-					Containers []struct {
-						Command []string `json:"command"`
-					} `json:"containers"`
-				} `json:"spec"`
-			} `json:"template"`
-		} `json:"spec"`
-	} `json:"items"`
+	Items []k8sJob `json:"items"`
 }
 
 // getK8sJobs retrieves jobs from k8s cluster
 func getK8sJobs(ctx context.Context, labelSelector string) (*k8sJobList, error) {
-	cmd := exec.CommandContext(ctx, "kubectl", "get", "jobs", //nolint:gosec // labelSelector is always a fixed literal ("app=dbt-job") or an internally-built "table_name=<const>" string, not external input
+	cmd := exec.CommandContext(ctx, "kubectl", "get", "jobs", //nolint:gosec // labelSelector is built by the tests from fixed label keys and values they generate or read from state, not external input
 		"-n", "default",
 		"-l", labelSelector,
 		"-o", "json")
@@ -283,6 +289,107 @@ func getK8sJobs(ctx context.Context, labelSelector string) (*k8sJobList, error) 
 		return nil, err
 	}
 	return &jobList, nil
+}
+
+// k8sPodList is the part of kubectl get pods JSON output the tests read.
+type k8sPodList struct {
+	Items []struct {
+		Metadata struct {
+			Name   string            `json:"name"`
+			Labels map[string]string `json:"labels"`
+		} `json:"metadata"`
+		Status struct {
+			Phase string `json:"phase"`
+		} `json:"status"`
+	} `json:"items"`
+}
+
+// getK8sPods lists the pods matching labelSelector in the namespace the Jobs
+// run in, those being deleted included.
+func getK8sPods(ctx context.Context, labelSelector string) (*k8sPodList, error) {
+	cmd := exec.CommandContext(ctx, "kubectl", "get", "pods", //nolint:gosec // labelSelector is built by the tests from fixed label keys and values they read from state, not external input
+		"-n", "default",
+		"-l", labelSelector,
+		"-o", "json")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	var podList k8sPodList
+	if err := json.Unmarshal(output, &podList); err != nil {
+		return nil, err
+	}
+	return &podList, nil
+}
+
+// attemptLabel returns the attempt number execution-controller labels a Job
+// and its pods with, or -1 when the label is absent or not a number.
+func attemptLabel(labels map[string]string) int {
+	n, err := strconv.Atoi(labels["attempt"])
+	if err != nil {
+		return -1
+	}
+	return n
+}
+
+// waitForAttemptJob waits until the Job of attempt n of taskID exists and
+// returns it.
+func waitForAttemptJob(t *testing.T, ctx context.Context, taskID uuid.UUID, n int, timeout time.Duration) k8sJob {
+	t.Helper()
+	selector := fmt.Sprintf("task-id=%s,attempt=%d", taskID, n)
+	var job k8sJob
+	pollUntil(t, ctx, timeout, time.Second, func() (bool, error) {
+		jobs, err := getK8sJobs(ctx, selector)
+		if err != nil {
+			return false, err
+		}
+		if len(jobs.Items) == 0 {
+			return false, nil
+		}
+		job = jobs.Items[0]
+		return true, nil
+	}, fmt.Sprintf("Timeout waiting for the Job of attempt %d of task %s", n, taskID))
+	t.Logf("Job %s runs attempt %d of task %s (created %s)", job.Metadata.Name, n, taskID, job.Metadata.CreationTimestamp.Format(time.RFC3339))
+	return job
+}
+
+// jobStartTimeout returns the start timeout the cluster's execution-controller
+// runs with: how long a Job's pod may take, after the Job is created, to start
+// a container. It is the Deployment's JOB_START_TIMEOUT_SECONDS
+// (tests/e2e/k8s/execution-controller-deployment.yaml); a Deployment without it
+// fails the test rather than leave it to wait out the service's default.
+func jobStartTimeout(t *testing.T, ctx context.Context) time.Duration {
+	t.Helper()
+	out, err := exec.CommandContext(ctx, "kubectl", "get", "deployment", "execution-controller",
+		"-n", "default", "-o", "json").Output()
+	require.NoError(t, err, "read the execution-controller Deployment")
+	var deployment struct {
+		Spec struct {
+			Template struct {
+				Spec struct {
+					Containers []struct {
+						Env []struct {
+							Name  string `json:"name"`
+							Value string `json:"value"`
+						} `json:"env"`
+					} `json:"containers"`
+				} `json:"spec"`
+			} `json:"template"`
+		} `json:"spec"`
+	}
+	require.NoError(t, json.Unmarshal(out, &deployment), "decode the execution-controller Deployment")
+	for _, c := range deployment.Spec.Template.Spec.Containers {
+		for _, e := range c.Env {
+			if e.Name != "JOB_START_TIMEOUT_SECONDS" {
+				continue
+			}
+			seconds, err := strconv.Atoi(e.Value)
+			require.NoError(t, err, "JOB_START_TIMEOUT_SECONDS=%q is not a whole number of seconds", e.Value)
+			return time.Duration(seconds) * time.Second
+		}
+	}
+	require.FailNow(t, "the execution-controller Deployment sets no JOB_START_TIMEOUT_SECONDS")
+	return 0
 }
 
 // queryPostgresTrackerKind returns scheduler_tracker.kind for a run identified by

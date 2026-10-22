@@ -43,9 +43,19 @@ var e2eDAG = []topoNode{
 	{"ftable_g", "service-3", "e2e-schedule-failure", []string{"ftable_a"}},
 	{"ftable_h", "service-2", "e2e-schedule-failure", []string{"ftable_g"}},
 	{"rel_probe", "service-1", "rel-probe", nil},
+	{retryTable, "service-1", retryScheduleName, nil},
+	{deadlineTable, "service-1", deadlineScheduleName, nil},
+	{deadlineDownTable, "service-1", deadlineScheduleName, []string{deadlineTable}},
 }
 
 const seedSchemaName = "e2e_schema"
+
+// e2eTimeoutSeconds is the task timeout, in seconds, a node of the DAG declares
+// (its model's meta.timeout_minutes): only the deadline fixture declares one.
+// Every other node gets the install's default.
+var e2eTimeoutSeconds = map[string]int{
+	deadlineTable: deadlineTimeoutMinutes * 60,
+}
 
 // e2eTestCounts assigns a per-node dbt test count to selected nodes so the
 // test-operation flows have topology to exercise: seed_table_1 and seed_table_3
@@ -100,6 +110,7 @@ func e2eTopology(t *testing.T, ctx context.Context, clients *testClients) ([]top
 			Schedule:           n.schedule,
 			UpstreamUniqueIDs:  ups,
 			TestCount:          e2eTestCounts[n.table],
+			TimeoutSeconds:     e2eTimeoutSeconds[n.table],
 		})
 	}
 	schedules := make([]string, 0, len(scheduleSet))
