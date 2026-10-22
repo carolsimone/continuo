@@ -83,10 +83,11 @@ type TaskTracker struct {
 // taskAttemptRow is the storage row carrier for the task_attempts table. It
 // mirrors the columns attempts read and write, one-to-one. It leaves out the
 // scheduling columns (next_check_at, checks_sent), which the attempt SQL
-// writes itself: addAttempts and saveAttempt set next_check_at when an attempt
-// is dispatched, saveAttempt and cancelOpenAttempts clear it once the attempt
-// has ended, and AttemptRepository.MarkQuestioned counts each question about
-// the attempt in checks_sent and moves next_check_at to the next window.
+// writes itself: addAttempts sets next_check_at when an attempt is dispatched,
+// saveAttempt moves it with each non-final report and clears it once the
+// attempt has ended, cancelOpenAttempts clears it when it cancels an attempt,
+// and AttemptRepository.MarkQuestioned counts each question about the attempt
+// in checks_sent and moves next_check_at to the next window.
 type taskAttemptRow struct {
 	TaskID           uuid.UUID  `db:"task_id"`
 	Attempt          int32      `db:"attempt"`
