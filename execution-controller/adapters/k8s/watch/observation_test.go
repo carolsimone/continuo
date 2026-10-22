@@ -32,6 +32,7 @@ func TestObservation_MapsTheJobAndItsPods(t *testing.T) {
 	obs := observation(j, []*corev1.Pod{p})
 
 	assert.True(t, obs.JobPresent)
+	assert.Equal(t, "t1", obs.JobTaskID, "the Job's task-id label")
 	assert.True(t, obs.JobDeleting)
 	assert.True(t, obs.JobFailed, "FailureTarget counts as the Job's failure")
 	assert.Equal(t, "DeadlineExceeded", obs.JobFailureReason)
@@ -55,4 +56,17 @@ func TestObservation_NoJobAndPodsInNameOrder(t *testing.T) {
 	require.Len(t, obs.Pods, 2)
 	assert.Equal(t, "a", obs.Pods[0].Name)
 	assert.Equal(t, "b", obs.Pods[1].Name)
+}
+
+// A Job runs the attempt its task-id and attempt labels name.
+func TestObservation_TheJobsLabelsNameItsAttempt(t *testing.T) {
+	j := job("j")
+	j.Labels["attempt"] = "2"
+
+	obs := observation(j, nil)
+
+	assert.True(t, obs.RunsAttempt("t1", 2))
+	assert.False(t, obs.RunsAttempt("t1", 1))
+	assert.False(t, obs.RunsAttempt("t2", 2))
+	assert.False(t, observation(nil, nil).RunsAttempt("t1", 2), "no Job runs no attempt")
 }

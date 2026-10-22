@@ -13,6 +13,10 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
+// producer names execution-controller as the producer of the enveloped
+// events it publishes.
+const producer = "execution-controller"
+
 // OutboxPublisher implements pkg/outbox.Publisher. Each execution_outbox row
 // publishes exactly one event to entry.StreamName; the typed payload depends on
 // entry.EventType. Multi-effect operations are modelled as several rows written
@@ -103,6 +107,19 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 			return nil, fmt.Errorf("%w: unmarshal task_execution_recorded: %v", pkgevents.ErrPermanent, err)
 		}
 		return e.ToMap(), nil
+
+	case event.EventTypeTaskStatusReport:
+		// The row's payload is the report; the envelope names the row as the
+		// event and the time it was written.
+		var r pkgevents.TaskStatusReport
+		if err := json.Unmarshal(entry.Payload, &r); err != nil {
+			return nil, fmt.Errorf("%w: unmarshal task_status_report: %v", pkgevents.ErrPermanent, err)
+		}
+		values, err := pkgevents.TaskStatusReportFields(entry.ID.String(), pkgevents.DefaultTenantID, producer, entry.CreatedAt, r)
+		if err != nil {
+			return nil, fmt.Errorf("%w: render task_status_report: %v", pkgevents.ErrPermanent, err)
+		}
+		return values, nil
 
 	case validation.EventTypeValidationCompleted, validation.EventTypeSeedBuildCompleted, validation.EventTypeCompileCompleted,
 		validation.EventTypeValidationNodeResult:

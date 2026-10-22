@@ -1,6 +1,7 @@
 package model
 
 import (
+	"strconv"
 	"strings"
 	"time"
 
@@ -57,6 +58,10 @@ func (p PodObservation) Finished() bool { return p.Phase == PodSucceeded || p.Ph
 // cache holds it, and every pod the Job created that the cache holds.
 type JobObservation struct {
 	JobPresent bool
+	// JobTaskID and JobAttempt are the task-id and attempt labels of the Job:
+	// which attempt of which task it runs.
+	JobTaskID  string
+	JobAttempt string
 	// JobDeleting is true once the Job carries a deletion timestamp.
 	JobDeleting bool
 	// JobSucceeded and JobFailed report the Job's success and failure
@@ -65,6 +70,12 @@ type JobObservation struct {
 	JobFailed        bool
 	JobFailureReason string
 	Pods             []PodObservation
+}
+
+// RunsAttempt reports whether the Job is present and labelled with taskID
+// and attempt.
+func (o JobObservation) RunsAttempt(taskID string, attempt int) bool {
+	return o.JobPresent && o.JobTaskID == taskID && o.JobAttempt == strconv.Itoa(attempt)
 }
 
 // MainStarted reports whether the main container of a pod has started.
