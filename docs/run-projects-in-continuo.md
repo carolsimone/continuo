@@ -101,7 +101,7 @@ in it, deliberately:
    and sequences the cross-project build itself.
 3. **Every node needs `meta.owner`** (set once in `dbt_project.yml`). Nodes
    without it are skipped. `meta` also carries an optional per-node task
-   timeout; see [Set how long a node may run](#set-how-long-a-node-may-run).
+   timeout; see [Declare the task timeout of a node](#declare-the-task-timeout-of-a-node).
 4. **Every model needs a tag naming its schedule** — `{{ config(tags=['daily'])
    }}`. continuo reads the **first tag as the schedule the node belongs to**; an
    untagged model is skipped. Seeds are exempt and default to build-on-release.
@@ -110,9 +110,9 @@ The full contract, including the `generate_schema_name` macro each project
 carries, is in
 [deploy/dbt-image-contract.md](../deploy/dbt-image-contract.md).
 
-### Set how long a node may run
+### Declare the task timeout of a node
 
-A node can declare how many minutes its task may run. In a dbt project it is the
+A node can declare its task timeout in minutes. In a dbt project it is the
 `timeout_minutes` key of the node's `meta`. Set it once for the whole project in
 `dbt_project.yml`, and override it on a single model:
 
@@ -138,18 +138,29 @@ needs `continuo-python-runtime` 0.10.0 or later:
 
 ```yaml
 # services/service-py/contracts/py_daily_kpis.yml
+nodes:
+  - schema: analytics
+    table: py_daily_kpis
+    kind: python-api
+    owner: data-team
+    schedule: daily
+    criticality: SECONDARY
+    script: scripts/py_daily_kpis.py
     timeout_minutes: 30
+    output_columns:
+      - {name: kpi_date, type: DATE, nullable: false}
 ```
 
-The value is an integer from 1 to 10,080 minutes (seven days). Anything else, a
-string such as `"2h"`, zero, a negative number or a larger one, rejects the
-release as `invalid_artifact`, and the rejection names the node and the key.
+The value is an integer from 1 to 10,080 minutes (seven days). continuo
+validates it at release time: anything else, a string such as `"2h"`, zero, a
+negative number or a larger one, rejects the release as `invalid_artifact`, and
+the rejection names the node and the key.
 
-The timeout is not part of a node's content hash, so a release that changes only
-timeouts promotes without validation. Each release keeps its own timeouts, and a
-run uses the timeouts of the release it runs on. The node page shows a node's
-timeout, and `continuo node list` reports it as `timeout_seconds` (0 means the
-node declares none). A node that declares none gets the install default.
+continuo records the timeout with each release, and a run keeps the timeouts of
+the release it runs on. The timeout is not part of a node's content hash, so a
+release that changes only timeouts promotes without validation. The node page
+shows a node's declared timeout, and `continuo node list` reports it as
+`timeout_seconds` (0 means the node declares none).
 
 ### If your project already has its own `generate_schema_name`
 
