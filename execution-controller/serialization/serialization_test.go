@@ -36,8 +36,8 @@ func TestDeployTaskDTORoundTrip(t *testing.T) {
 	}
 }
 
-// A row queued by an older version may still hold a mode in its job_params;
-// it decodes, and the mode is dropped.
+// A stored job_params that holds a "mode" key still decodes, and the mode is
+// dropped: the DTO has no mode field, so it does not survive a re-encode.
 func TestDeployTaskDTO_StoredModeIsIgnored(t *testing.T) {
 	var dto DeployTaskDTO
 	if err := json.Unmarshal([]byte(`{"task_id":"t","job_name":"j","mode":"promote_seed"}`), &dto); err != nil {

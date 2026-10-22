@@ -267,7 +267,7 @@ func main() {
 
 	// ---- background workers ----
 
-	// Task status announcements and release-leg results flow through this
+	// Task status reports and release-leg results flow through this
 	// outbox; the relay wakes on the notification a committed insert sends, so
 	// a result reaches its stream without waiting for a poll.
 	outboxWaker, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN(), postgres.OutboxTable, logger)

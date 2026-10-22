@@ -133,7 +133,7 @@ func TestRepo_Save_StampsStateChangedAtOnStatusChangeOnly(t *testing.T) {
 	require.Less(t, age(), time.Minute, "a status change restarts the clock")
 }
 
-func TestRepo_PendingValidationCount_CountsReleasedRowsWithoutOutcome(t *testing.T) {
+func TestRepo_PendingValidationCount_CountsDoneRowsWithoutOutcome(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 	repo := postgres.NewDeploymentsRepository(db, testLogger())

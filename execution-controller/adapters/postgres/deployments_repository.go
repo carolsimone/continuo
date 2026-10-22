@@ -212,8 +212,8 @@ func (r *deploymentsRepository) ListValidationByRelease(ctx context.Context, rel
 // toAggregate reconstitutes a Deployment from a row. If job_params cannot be
 // deserialized (data corruption — it is written from a valid command) the
 // task/schedule identity is recovered from the dedicated columns so the
-// dispatcher can still fail the deployment with a routable announcement; the
-// aggregate's IsDeployable() will report false.
+// dispatcher can still fail the deployment and report the failure under that
+// identity; the aggregate's IsDeployable() will report false.
 func (r *deploymentsRepository) toAggregate(row *deploymentRow) *model.Deployment {
 	facts := r.decodeFacts(row)
 	if row.Mode == string(model.ModeValidation) {

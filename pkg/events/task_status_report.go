@@ -16,9 +16,9 @@ const TaskStatusReportSchemaVersion = 1
 // queue and start times even when the reports before it were lost. Status is
 // a value of the attempt_status vocabulary: queued (execution-controller
 // accepted the attempt), running (its main container started), succeeded or
-// failed; a failed report names its
-// FailureReason and the FailureClass that reason is filed under. Times are
-// execution-controller's clock and only displayed.
+// failed; a failed report names its FailureReason and the FailureClass that
+// reason is filed under. Times are execution-controller's clock and only
+// displayed.
 type TaskStatusReport struct {
 	RunID            string              `json:"run_id"`
 	TaskID           string              `json:"task_id"`

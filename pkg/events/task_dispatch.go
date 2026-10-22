@@ -14,9 +14,9 @@ const TaskDispatchSchemaVersion = 1
 // attempt when it wrote the entry, a value of the attempt_status vocabulary:
 // dispatched on the first send and on every send before execution-controller
 // acknowledged it, queued or running on a question about an acknowledged
-// attempt. TimeoutSeconds is how long the
-// attempt's container may run once its Job has started its pod. No retry
-// budget travels: state decides every retry.
+// attempt. TimeoutSeconds is how long the attempt's container may run once
+// its Job has started its pod. No retry budget travels: state decides every
+// retry.
 type TaskDispatch struct {
 	RunID          string              `json:"run_id"`
 	TaskID         string              `json:"task_id"`

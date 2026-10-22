@@ -283,8 +283,6 @@ func keys(m map[string]json.RawMessage) []string {
 	return out
 }
 
-// The command's help names every status a node can report, so a caller never
-// meets one the help did not describe.
 // The help's list of the statuses a task can carry ("status is one of: ...")
 // is exactly the task statuses state serves.
 func TestStatus_LongNamesEveryTaskStatus(t *testing.T) {
