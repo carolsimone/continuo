@@ -88,6 +88,27 @@ func TestTopologyArtifactStore_WriteThenLoadRoundTrips(t *testing.T) {
 	assert.True(t, sort.StringsAreSorted(ids), "an artifact's nodes come back in unique_id order")
 }
 
+// A node's declared timeout survives a write and a read through the store, and
+// a node that declares none reads back as undeclared.
+func TestTopologyArtifactStore_RoundTripKeepsEveryNodesTimeout(t *testing.T) {
+	topo := release.Topology{
+		{UniqueID: "svc.slow", SchemaName: "svc", TableName: "slow", ServiceName: "svc", NodeType: "dbt-model",
+			ImageTag: "img:1", UpstreamUniqueIDs: []string{}, Schedule: "daily", TimeoutSeconds: 7200},
+		{UniqueID: "svc.plain", SchemaName: "svc", TableName: "plain", ServiceName: "svc", NodeType: "dbt-model",
+			ImageTag: "img:1", UpstreamUniqueIDs: []string{}, Schedule: "daily"},
+	}
+	mem := objectstoretest.NewMemory(bucket)
+	ref, err := NewTopologyArtifactStore(mem, bucket, 4).Write(context.Background(), "r1", topo)
+	require.NoError(t, err)
+
+	// A second store has an empty cache, so this decodes the stored object.
+	got, err := NewTopologyArtifactStore(mem, bucket, 4).Load(context.Background(), ref)
+	require.NoError(t, err)
+	byID := byUniqueID(got)
+	assert.Equal(t, 7200, byID["svc.slow"].TimeoutSeconds)
+	assert.Zero(t, byID["svc.plain"].TimeoutSeconds)
+}
+
 // A write repeated for the same topology produces the same object and
 // reference, so a retry after a crash between writing an artifact and
 // recording its reference leaves the stored bytes and checksum unchanged.

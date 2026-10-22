@@ -126,6 +126,13 @@ export function formatRelative(iso: string | null, now: Date = new Date()): stri
   return `${Math.floor(sec / 86400)}d ago`;
 }
 
+// A declared task timeout: whole hours when it is a multiple of an hour,
+// otherwise minutes.
+export function formatTimeout(sec: number): string {
+  if (sec >= 3600 && sec % 3600 === 0) return `${sec / 3600} h`;
+  return `${Math.max(1, Math.round(sec / 60))} min`;
+}
+
 export function formatDuration(sec: number | null): string {
   if (sec === null || sec === undefined) return '—';
   if (sec < 60) return `${sec}s`;

@@ -123,12 +123,24 @@ func TestTopologyRoundTrip(t *testing.T) {
 		UniqueID: "a", SchemaName: "s", TableName: "t", ResolvedRelationID: "s.t", ServiceName: "svc",
 		NodeType: "python-api", ContentHash: "h", TestCount: 2, ImageTag: "img",
 		UpstreamUniqueIDs: []string{"b"}, Schedule: "daily", OriginalFilePath: "p.py", SecretRef: "continuo-api-x",
+		TimeoutSeconds: 7200,
 	}}
 	raw, err := json.Marshal(fromTopology(topo))
 	require.NoError(t, err)
 	got, err := readTopology(bytes.NewReader(raw))
 	require.NoError(t, err)
 	assert.Equal(t, topo, got)
+}
+
+// A node's declared timeout in the input array reaches the announced topology.
+func TestReadTopology_KeepsTheTimeout(t *testing.T) {
+	in := `[{"unique_id":"a","service_name":"svc","node_type":"dbt-model","upstream_unique_ids":[],"timeout_seconds":7200},
+	 {"unique_id":"b","service_name":"svc","node_type":"dbt-model","upstream_unique_ids":["a"]}]`
+	topo, err := readTopology(strings.NewReader(in))
+	require.NoError(t, err)
+	require.Len(t, topo, 2)
+	assert.Equal(t, 7200, topo[0].TimeoutSeconds)
+	assert.Zero(t, topo[1].TimeoutSeconds)
 }
 
 // A topology of only dbt-test nodes is refused: orchestrator strips every

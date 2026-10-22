@@ -9,6 +9,9 @@ below — the harness, the baked contract files, output conformance, the result
 block — lives in
 [`continuo-python-runtime`](https://github.com/carolsimone/continuo-python-runtime)
 under `docs/boundary-contract.md`. Where the two disagree, that document wins.
+That contract defines the keys of a node's contract entry, among them
+`timeout_minutes`, the node's task timeout in minutes (1 to 10,080; runtime 0.10.0
+or later).
 
 For dbt nodes, whose images are resolved and configured differently, see
 [`dbt-image-contract.md`](dbt-image-contract.md).

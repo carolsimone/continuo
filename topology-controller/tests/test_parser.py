@@ -2,6 +2,7 @@ import hashlib
 import json
 from pathlib import Path
 import pytest
+from domain.exceptions import InvalidNodeSettingError
 from service.parser import parse_manifest
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -483,3 +484,60 @@ def test_parse_falls_back_to_name_when_alias_absent(tmp_path):
     assert len(nodes) == 1
     assert nodes[0].resolved_relation == "orders"
     assert nodes[0].resolved_relation_id == "analytics.orders"
+
+
+def _timeout_node(**meta):
+    return _node(config={"meta": {"owner": "o", **meta}, "materialized": "table"})
+
+
+def test_parse_reads_the_timeout_dbt_resolved_into_config_meta(tmp_path):
+    path = _manifest_path(tmp_path, {"model.svc.revenue": _timeout_node(timeout_minutes=480)})
+    (node,), _ = parse_manifest(path, "v1")
+    assert node.timeout_seconds == 28800
+
+
+def test_parse_leaves_an_undeclared_timeout_unset(tmp_path):
+    path = _manifest_path(tmp_path, {"model.svc.revenue": _timeout_node()})
+    (node,), _ = parse_manifest(path, "v1")
+    assert node.timeout_seconds is None
+
+
+@pytest.mark.parametrize("value", [0, 10081, -5, "2h", "120", 1.5, True, []])
+def test_parse_rejects_a_bad_timeout(tmp_path, value):
+    path = _manifest_path(tmp_path, {"model.svc.revenue": _timeout_node(timeout_minutes=value)})
+    with pytest.raises(InvalidNodeSettingError) as excinfo:
+        parse_manifest(path, "v1")
+    assert "analytics.revenue" in str(excinfo.value)
+    assert "meta.timeout_minutes" in str(excinfo.value)
+
+
+def test_parse_ignores_a_bad_timeout_on_a_node_it_drops(tmp_path):
+    dropped = _node(
+        tags=["local_stub"],
+        config={"meta": {"owner": "o", "timeout_minutes": "2h"}, "materialized": "table"},
+    )
+    path = _manifest_path(tmp_path, {"model.svc.revenue": dropped})
+    nodes, _ = parse_manifest(path, "v1")
+    assert nodes == []
+
+
+def test_a_timeout_change_keeps_the_content_hash(tmp_path):
+    hashes = []
+    for name, meta in (("a", {"timeout_minutes": 120}), ("b", {"timeout_minutes": 480}), ("c", {})):
+        path = _manifest_path(
+            tmp_path, {"model.svc.revenue": _timeout_node(**meta)}, name=f"{name}.json"
+        )
+        (node,), _ = parse_manifest(path, "v1")
+        hashes.append(node.content_hash)
+    assert hashes[0] == hashes[1] == hashes[2]
+
+
+@pytest.mark.parametrize("meta", [None, {}])
+def test_parse_skips_node_without_meta_owner_whether_meta_is_null_or_empty(tmp_path, meta):
+    # dbt serialises an unset meta as an explicit null in some versions; it must
+    # read as "no owner" (the node is skipped), not raise a non-retryable error.
+    node = _node()
+    node["config"]["meta"] = meta
+    path = _manifest_path(tmp_path, {"model.svc.revenue": node})
+    nodes, _ = parse_manifest(path, "v1")
+    assert nodes == []

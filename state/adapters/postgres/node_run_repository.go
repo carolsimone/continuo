@@ -197,6 +197,9 @@ type nodeSummaryRow struct {
 	LastStatus     string    `db:"last_status"`
 	LastRunAt      time.Time `db:"last_run_at"`
 	Operation      string    `db:"operation"`
+	// TimeoutSeconds is the live release's declared task timeout for the node;
+	// 0 when it declares none.
+	TimeoutSeconds int `db:"timeout_seconds"`
 	// TotalCount is COUNT(*) OVER () — the same match count on every page row.
 	// Only populated by the ListNodes page query.
 	TotalCount int `db:"total_count"`
@@ -290,16 +293,33 @@ func (r *nodeRunRepository) ListNodes(
 			FROM windowed w
 			LEFT JOIN succeeded_attempt sa ON sa.task_id = w.task_id
 			GROUP BY w.service_name, w.schema_name, w.table_name, w.operation
+		),
+		-- the task timeout each node declares in the live release, one row per
+		-- service, schema and table so the join never multiplies catalog rows
+		live_timeouts AS (
+			SELECT n.service_name, n.schema_name, n.table_name,
+			       MAX(n.timeout_seconds) AS timeout_seconds
+			FROM live_release l
+			JOIN topology_nodes n
+			  ON n.tenant_id = l.tenant_id AND n.release_id = l.release_id
+			WHERE l.tenant_id = $6
+			GROUP BY n.service_name, n.schema_name, n.table_name
 		)
-		SELECT service_name, schema_name, table_name, run_count, terminal_count,
-		       succeeded_count, avg_dur, p95_dur, flaky_count, last_status, last_run_at,
-		       operation, COUNT(*) OVER () AS total_count
+		SELECT agg.service_name, agg.schema_name, agg.table_name, agg.run_count,
+		       agg.terminal_count, agg.succeeded_count, agg.avg_dur, agg.p95_dur,
+		       agg.flaky_count, agg.last_status, agg.last_run_at, agg.operation,
+		       COALESCE(lt.timeout_seconds, 0) AS timeout_seconds,
+		       COUNT(*) OVER () AS total_count
 		FROM agg
-		ORDER BY last_run_at DESC, service_name, schema_name, table_name
+		LEFT JOIN live_timeouts lt
+		  ON lt.service_name = agg.service_name
+		 AND lt.schema_name = agg.schema_name
+		 AND lt.table_name = agg.table_name
+		ORDER BY agg.last_run_at DESC, agg.service_name, agg.schema_name, agg.table_name
 		LIMIT $4 OFFSET $5`
 
 	rows := []nodeSummaryRow{}
-	if err := r.db.SelectContext(ctx, &rows, pageQuery, search, serviceName, operation, limit, offset); err != nil {
+	if err := r.db.SelectContext(ctx, &rows, pageQuery, search, serviceName, operation, limit, offset, pkgevents.DefaultTenantID); err != nil {
 		r.logger.Error("Failed to list nodes", "search", search, "service", serviceName, "error", err)
 		return nil, 0, fmt.Errorf("failed to list nodes: %w", err)
 	}
@@ -391,5 +411,6 @@ func toNodeSummary(row nodeSummaryRow) *projection.NodeSummary {
 		LastStatus:     row.LastStatus,
 		LastRunAt:      row.LastRunAt,
 		Operation:      row.Operation,
+		TimeoutSeconds: row.TimeoutSeconds,
 	}
 }

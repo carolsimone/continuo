@@ -28,3 +28,8 @@ class MalformedContractError(ValueError):
     def __init__(self, detail: str) -> None:
         self.detail = detail
         super().__init__(f"Malformed python contract: {detail}")
+
+
+class InvalidNodeSettingError(ValueError):
+    """A node declares a setting the system cannot honour (a bad value for one
+    of its `meta` keys). The detail names the node and the key."""

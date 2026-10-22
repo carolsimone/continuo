@@ -234,6 +234,9 @@ export interface NodeSummary {
   last_status: string | null;
   last_run_at: string | null;
   operation: WireOperation;
+  // The live release's declared task timeout in seconds; 0 when the node
+  // declares none and its tasks get the install default.
+  timeout_seconds: number;
 }
 
 export interface NodesResponse {

@@ -110,6 +110,7 @@ func (h *NodeRunHandler) ListNodes(
 			LastStatus:     r.LastStatus,
 			LastRunAt:      r.LastRunAt.UTC().Format(time.RFC3339),
 			Operation:      r.Operation,
+			TimeoutSeconds: num.ClampInt32(r.TimeoutSeconds),
 		})
 	}
 	return &statev1.ListNodesResponse{Nodes: out, TotalCount: num.ClampInt32(total)}, nil

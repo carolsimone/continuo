@@ -17,6 +17,7 @@ import yaml
 
 from domain.exceptions import MalformedContractError
 from domain.model import ManifestNode, Runtime
+from domain.node_timeout import timeout_seconds
 from domain.secret_ref import validate_secret_ref
 from service.content_hash import content_hash_fold
 from service.python_kind_rules import RULES, resolve_kind
@@ -33,7 +34,9 @@ _REQUIRED_ENTRY_KEYS = {
     "reads", "output_columns",
     "source_hash", "shared_code_hash", "config_hash", "content_hash",
 }
-_OPTIONAL_ENTRY_KEYS = {"description", "extra_columns", "config", "kind", "secret_ref"}
+_OPTIONAL_ENTRY_KEYS = {
+    "description", "extra_columns", "config", "kind", "secret_ref", "timeout_minutes",
+}
 _COLUMN_REQUIRED_KEYS = {"name", "type"}
 _COLUMN_ALLOWED_KEYS = {"name", "type", "nullable"}
 
@@ -137,6 +140,11 @@ def _parse_entry(
             _fail(f"{label}: secret_ref is not allowed for kind {node_type}")
         secret_ref = validate_secret_ref(entry["secret_ref"], label)
 
+    try:
+        task_timeout_seconds = timeout_seconds(entry.get("timeout_minutes"))
+    except ValueError as exc:
+        _fail(f"{label}: timeout_minutes {exc}")
+
     parsed = rules.reads.parse(entry["reads"], label)
     columns = _parse_columns(entry["output_columns"], label)
 
@@ -209,6 +217,7 @@ def _parse_entry(
         runtime=Runtime.PYTHON,
         csv_source=parsed.csv_source,
         secret_ref=secret_ref,
+        timeout_seconds=task_timeout_seconds,
     )
 
 

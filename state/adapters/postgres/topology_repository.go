@@ -22,7 +22,7 @@ const topologyLockKey int64 = 0x544F_504F // "TOPO"
 // copyTopologyNodes and copyTopologyEdges stream a release's rows with COPY …
 // FROM STDIN, one round trip per table.
 const (
-	copyTopologyNodes = `COPY topology_nodes (tenant_id, release_id, node_key, unique_id, service_name, schema_name, table_name, node_type, test_count, content_hash, image_tag, secret_ref, schedule_name) FROM STDIN`
+	copyTopologyNodes = `COPY topology_nodes (tenant_id, release_id, node_key, unique_id, service_name, schema_name, table_name, node_type, test_count, content_hash, image_tag, secret_ref, schedule_name, timeout_seconds) FROM STDIN`
 	copyTopologyEdges = `COPY topology_edges (tenant_id, release_id, upstream_key, downstream_key) FROM STDIN`
 )
 
@@ -141,9 +141,13 @@ func nodeRows(rel topology.Release) [][]any {
 		if n.TestCount != nil {
 			testCount = int64(*n.TestCount)
 		}
+		var timeout any
+		if n.TimeoutSeconds != nil {
+			timeout = int64(*n.TimeoutSeconds)
+		}
 		rows = append(rows, []any{
 			rel.TenantID, rel.ReleaseID, string(n.Key), n.UniqueID, n.ServiceName, n.SchemaName, n.TableName,
-			n.NodeType, testCount, n.ContentHash, n.ImageTag, n.SecretRef, n.ScheduleName,
+			n.NodeType, testCount, n.ContentHash, n.ImageTag, n.SecretRef, n.ScheduleName, timeout,
 		})
 	}
 	return rows
@@ -214,17 +218,18 @@ func (r *TopologyRepository) SetLivePointer(ctx context.Context, tenantID string
 }
 
 type topologyNodeRow struct {
-	NodeKey      string        `db:"node_key"`
-	UniqueID     string        `db:"unique_id"`
-	ServiceName  string        `db:"service_name"`
-	SchemaName   string        `db:"schema_name"`
-	TableName    string        `db:"table_name"`
-	NodeType     string        `db:"node_type"`
-	TestCount    sql.NullInt32 `db:"test_count"`
-	ContentHash  string        `db:"content_hash"`
-	ImageTag     string        `db:"image_tag"`
-	SecretRef    string        `db:"secret_ref"`
-	ScheduleName string        `db:"schedule_name"`
+	NodeKey        string        `db:"node_key"`
+	UniqueID       string        `db:"unique_id"`
+	ServiceName    string        `db:"service_name"`
+	SchemaName     string        `db:"schema_name"`
+	TableName      string        `db:"table_name"`
+	NodeType       string        `db:"node_type"`
+	TestCount      sql.NullInt32 `db:"test_count"`
+	ContentHash    string        `db:"content_hash"`
+	ImageTag       string        `db:"image_tag"`
+	SecretRef      string        `db:"secret_ref"`
+	ScheduleName   string        `db:"schedule_name"`
+	TimeoutSeconds sql.NullInt32 `db:"timeout_seconds"`
 }
 
 func (row topologyNodeRow) toDomain() topology.Node {
@@ -233,18 +238,24 @@ func (row topologyNodeRow) toDomain() topology.Node {
 		n := int(row.TestCount.Int32)
 		testCount = &n
 	}
+	var timeout *int
+	if row.TimeoutSeconds.Valid {
+		n := int(row.TimeoutSeconds.Int32)
+		timeout = &n
+	}
 	return topology.Node{
-		Key:          topology.NodeKey(row.NodeKey),
-		UniqueID:     row.UniqueID,
-		ServiceName:  row.ServiceName,
-		SchemaName:   row.SchemaName,
-		TableName:    row.TableName,
-		NodeType:     row.NodeType,
-		TestCount:    testCount,
-		ContentHash:  row.ContentHash,
-		ImageTag:     row.ImageTag,
-		SecretRef:    row.SecretRef,
-		ScheduleName: row.ScheduleName,
+		Key:            topology.NodeKey(row.NodeKey),
+		UniqueID:       row.UniqueID,
+		ServiceName:    row.ServiceName,
+		SchemaName:     row.SchemaName,
+		TableName:      row.TableName,
+		NodeType:       row.NodeType,
+		TestCount:      testCount,
+		ContentHash:    row.ContentHash,
+		ImageTag:       row.ImageTag,
+		SecretRef:      row.SecretRef,
+		ScheduleName:   row.ScheduleName,
+		TimeoutSeconds: timeout,
 	}
 }
 
@@ -252,8 +263,7 @@ func (row topologyNodeRow) toDomain() topology.Node {
 func (r *TopologyRepository) ReleaseNodes(ctx context.Context, tenantID, releaseID, nodeType string) ([]topology.Node, error) {
 	var rows []topologyNodeRow
 	if err := sqlx.SelectContext(ctx, r.conn(), &rows, `
-		SELECT node_key, unique_id, service_name, schema_name, table_name, node_type, test_count,
-		       content_hash, image_tag, secret_ref, schedule_name
+		SELECT `+topologyNodeColumns+`
 		FROM topology_nodes
 		WHERE tenant_id = $1 AND release_id = $2 AND ($3::text = '' OR node_type = $3::text)
 		ORDER BY node_key COLLATE "C"`, tenantID, releaseID, nodeType); err != nil {
@@ -268,7 +278,7 @@ func (r *TopologyRepository) ReleaseNodes(ctx context.Context, tenantID, release
 
 // topologyNodeColumns lists the topology_nodes columns topologyNodeRow scans.
 const topologyNodeColumns = `node_key, unique_id, service_name, schema_name, table_name, node_type, test_count,
-		       content_hash, image_tag, secret_ref, schedule_name`
+		       content_hash, image_tag, secret_ref, schedule_name, timeout_seconds`
 
 // ScheduleGraph reads the schedule's nodes through idx_topology_nodes_schedule
 // and the edges into them, then the dbt-seed nodes among the upstreams those

@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate, useParams } from 'react-router';
 import PageHeader from './PageHeader';
-import type { NodeRun, NodeRunsResponse, NodeDetailFrom } from './types';
-import { kindLabel, computeNodeStats, formatDuration, formatRelative } from './node-helpers';
+import type { NodeRun, NodeRunsResponse, NodeDetailFrom, NodesResponse } from './types';
+import { kindLabel, computeNodeStats, formatDuration, formatRelative, formatTimeout } from './node-helpers';
 import NodeTypeIcon from './NodeTypeIcon';
 import RunSourcePickerDialog from './RunSourcePickerDialog';
 import FullRefreshConfirmDialog from './FullRefreshConfirmDialog';
@@ -109,6 +109,9 @@ export default function NodeDetailPage() {
   const [nodeType, setNodeType] = useState('');
   const [sourceUri, setSourceUri] = useState('');
   const [inactive, setInactive] = useState(false);
+  // The live release's declared task timeout in seconds (0 = install default);
+  // null while unknown or when the node has no catalog row.
+  const [timeoutSeconds, setTimeoutSeconds] = useState<number | null>(null);
   const genRef = useRef(0);
 
   const parts = (fqn ?? '').split('.');
@@ -155,6 +158,26 @@ export default function NodeDetailPage() {
         setSourceUri('');
         setInactive(false);
       });
+  }, [service, schema, table]);
+
+  // The catalog search filters on the table name only (an exact match within
+  // the service), so rows of other schemas sharing the table name can come
+  // back: the schema is matched client-side.
+  useEffect(() => {
+    setTimeoutSeconds(null);
+    if (!service || !schema || !table) return;
+    let cancelled = false;
+    fetch(`/api/nodes?service=${encodeURIComponent(service)}&search=${encodeURIComponent(table)}&operation=run`)
+      .then(r => (r.ok ? r.json() : null))
+      .then((data: NodesResponse | null) => {
+        if (cancelled) return;
+        const row = (data?.nodes ?? []).find(n => n.schema_name === schema);
+        setTimeoutSeconds(row && typeof row.timeout_seconds === 'number' ? row.timeout_seconds : null);
+      })
+      .catch(() => {
+        if (!cancelled) setTimeoutSeconds(null);
+      });
+    return () => { cancelled = true; };
   }, [service, schema, table]);
 
   const canFullRefresh = FULL_REFRESH_NODE_TYPES.has(nodeType);
@@ -274,6 +297,13 @@ export default function NodeDetailPage() {
             {fqn}
             {nodeType && (
               <span className="info-strip info-strip--neutral info-strip--inline">{nodeType}</span>
+            )}
+            {timeoutSeconds !== null && (
+              <span className="info-strip info-strip--neutral info-strip--inline">
+                {timeoutSeconds > 0
+                  ? `task timeout ${formatTimeout(timeoutSeconds)} · declared`
+                  : 'task timeout · install default'}
+              </span>
             )}
           </div>
           {nodeType === PYTHON_CSV && sourceUri && (

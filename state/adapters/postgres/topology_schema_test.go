@@ -153,3 +153,17 @@ func TestTopologySchema_SchedulerTrackerReleaseIDIsOptional(t *testing.T) {
 		SELECT release_id FROM scheduler_tracker WHERE schedule_id IN ($1, $2) ORDER BY release_id NULLS FIRST`, without, with))
 	assert.Equal(t, []sql.NullString{{}, {String: "rel-x", Valid: true}}, got)
 }
+
+// topology_nodes.timeout_seconds is optional: a node inserted without it reads
+// NULL, the form of a node that declares no timeout.
+func TestTopologySchema_TimeoutSecondsIsOptional(t *testing.T) {
+	db := newTestDB(t)
+	tenant := schemaTenant(t, db)
+	insertSchemaRelease(t, db, tenant, "rel-1", "raw.a")
+
+	var got sql.NullInt32
+	require.NoError(t, db.Get(&got, `
+		SELECT timeout_seconds FROM topology_nodes
+		WHERE tenant_id = $1 AND release_id = 'rel-1' AND node_key = 'raw.a'`, tenant))
+	assert.False(t, got.Valid)
+}

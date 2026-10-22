@@ -100,7 +100,8 @@ in it, deliberately:
    — `FROM analytics.fx_transactions_eur`. continuo finds that edge in the SQL
    and sequences the cross-project build itself.
 3. **Every node needs `meta.owner`** (set once in `dbt_project.yml`). Nodes
-   without it are skipped.
+   without it are skipped. `meta` also carries an optional per-node task
+   timeout; see [Declare the task timeout of a node](#declare-the-task-timeout-of-a-node).
 4. **Every model needs a tag naming its schedule** — `{{ config(tags=['daily'])
    }}`. continuo reads the **first tag as the schedule the node belongs to**; an
    untagged model is skipped. Seeds are exempt and default to build-on-release.
@@ -108,6 +109,61 @@ in it, deliberately:
 The full contract, including the `generate_schema_name` macro each project
 carries, is in
 [deploy/dbt-image-contract.md](../deploy/dbt-image-contract.md).
+
+### Declare the task timeout of a node
+
+A node can declare its task timeout in minutes. In a dbt project it is the
+`timeout_minutes` key of the node's `meta`. Set it once for the whole project in
+`dbt_project.yml`, and override it on a single model:
+
+```yaml
+# dbt_project.yml
+models:
+  +meta:
+    owner: finance
+    timeout_minutes: 60
+```
+
+```sql
+-- models/fx_transactions_eur.sql
+{{ config(meta={'timeout_minutes': 240}) }}
+```
+
+dbt resolves project, folder and model `meta` into each node's `config.meta`, so
+a model inherits the project value and a model-level `timeout_minutes` replaces
+it; the other `meta` keys, such as `owner`, still come from the project.
+
+A python node declares it as `timeout_minutes` on its contract entry. It may do
+so only when both the CLI that builds the contract and the image base the
+service's nodes run in (`FROM ghcr.io/carolsimone/continuo-python-runtime-<engine>:v0.10.0`
+or later) are `continuo-python-runtime` 0.10.0 or later. With an older image base,
+every run of every node of that service fails when it loads its contracts.
+
+```yaml
+# services/service-py/contracts/py_daily_kpis.yml
+nodes:
+  - schema: analytics
+    table: py_daily_kpis
+    kind: python-api
+    owner: data-team
+    schedule: daily
+    criticality: SECONDARY
+    script: scripts/py_daily_kpis.py
+    timeout_minutes: 30
+    output_columns:
+      - {name: kpi_date, type: DATE, nullable: false}
+```
+
+The value is an integer from 1 to 10,080 minutes (seven days). continuo
+validates it at release time: anything else, a string such as `"2h"`, zero, a
+negative number or a larger one, rejects the release as `invalid_artifact`, and
+the rejection names the node and the key.
+
+continuo records the timeout with each release, and a run keeps the timeouts of
+the release it runs on. The timeout is not part of a node's content hash, so a
+release that changes only timeouts promotes without validation. The node page
+shows a node's declared timeout, and `continuo node list` reports it as
+`timeout_seconds` (0 means the node declares none).
 
 ### If your project already has its own `generate_schema_name`
 
@@ -445,10 +501,11 @@ aws --endpoint-url http://localhost:9000 \
 ```
 
 Now build the contract from the service's `contracts/` directory, using the
-runtime CLI the release gate uses:
+runtime CLI the release gate uses (a service's image base must be on the same
+runtime release or later to run a contract that declares `timeout_minutes`):
 
 ```bash
-uv tool install continuo-python-runtime==0.7.0
+uv tool install continuo-python-runtime==0.10.0
 
 continuo-runtime validate services/service-py/contracts --dialect postgres
 

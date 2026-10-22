@@ -362,6 +362,36 @@ def test_handle_publishes_failed_on_node_with_empty_fqn(tmp_path):
     publisher.publish_ok.assert_not_called()
 
 
+def test_a_bad_dbt_timeout_fails_the_whole_release_as_invalid_artifact(tmp_path):
+    bad = tmp_path / "bad_timeout.json"
+    bad.write_text(json.dumps({
+        "macros": {},
+        "nodes": {
+            "model.svc.t": {
+                "resource_type": "model",
+                "name": "t",
+                "schema": "s",
+                "fqn": ["svc", "t"],
+                "config": {"meta": {"owner": "team", "timeout_minutes": "2h"}},
+                "tags": ["daily"],
+            }
+        },
+    }))
+
+    source = create_autospec(ManifestSourcePort)
+    source.list_manifests.return_value = [ManifestFile(path=str(bad), image_tag="")]
+    publisher = MagicMock()
+
+    handler = _handler(source, publisher, _make_uploader())
+    handler.handle(release_id="rel-bad-timeout")  # must NOT raise
+
+    kw = _failed_kwargs(publisher)
+    assert kw["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
+    assert "s.t" in kw["detail"]
+    assert "meta.timeout_minutes" in kw["detail"]
+    publisher.publish_ok.assert_not_called()
+
+
 def test_handle_propagates_transient_redis_error():
     source = _make_source("manifest_service1.json")
     publisher = MagicMock()
@@ -931,6 +961,23 @@ def test_a_malformed_python_contract_fails_the_whole_release(tmp_path):
     assert publisher.publish_failed.call_args.kwargs["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
 
 
+@pytest.mark.parametrize("value", ["2h", 0, 10081])
+def test_a_malformed_python_timeout_fails_the_whole_release(tmp_path, value):
+    publisher = MagicMock()
+    source = _source_of(ManifestFile(
+        path=_python_contract(tmp_path, _python_entry(timeout_minutes=value)),
+        declared_service="service-py", kind=ManifestKind.PYTHON,
+    ))
+
+    _dispatch_handler(source, publisher).handle(release_id="rel-1")
+
+    publisher.publish_ok.assert_not_called()
+    kwargs = publisher.publish_failed.call_args.kwargs
+    assert kwargs["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
+    assert "test_schema.py_metrics" in kwargs["detail"]
+    assert "timeout_minutes" in kwargs["detail"]
+
+
 def test_an_empty_python_contract_fails_the_release(tmp_path):
     """An artifact declaring no nodes would silently retire every node of that
     service on promote — the same hazard as an empty dbt manifest, so the same
@@ -1030,6 +1077,17 @@ def test_a_node_without_a_secret_ref_publishes_no_secret_ref_key(tmp_path):
     entry = _python_entry(kind="python-api", reads={})
     (node,) = _published_python_topology(tmp_path, entry)
     assert "secret_ref" not in node
+
+
+def test_a_declared_timeout_is_published_on_its_topology_entry(tmp_path):
+    entry = _python_entry(kind="python-api", reads={}, timeout_minutes=480)
+    (node,) = _published_python_topology(tmp_path, entry)
+    assert node["timeout_seconds"] == 28800
+
+
+def test_a_node_without_a_timeout_publishes_no_timeout_seconds_key(tmp_path):
+    (node,) = _published_python_topology(tmp_path, _python_entry(kind="python-api", reads={}))
+    assert "timeout_seconds" not in node
 
 
 def test_a_release_mixing_old_and_new_python_contracts_publishes_python_node(tmp_path):

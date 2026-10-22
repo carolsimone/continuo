@@ -105,8 +105,11 @@ name into the `<service> <schema> <table>` triple every other `node`
 subcommand takes. Success prints a JSON object to stdout:
 
 ```json
-{"total_count":7,"nodes":[{"service_name":"finance","schema_name":"analytics","table_name":"orders","run_count":12,"success_rate_pct":92,"avg_duration_sec":34,"p95_duration_sec":80,"flaky_rate_pct":8,"last_status":"succeeded","last_run_at":"2026-09-18T10:00:00Z","operation":"run"}]}
+{"total_count":7,"nodes":[{"service_name":"finance","schema_name":"analytics","table_name":"orders","run_count":12,"success_rate_pct":92,"avg_duration_sec":34,"p95_duration_sec":80,"flaky_rate_pct":8,"last_status":"succeeded","last_run_at":"2026-09-18T10:00:00Z","operation":"run","timeout_seconds":7200}]}
 ```
+
+`timeout_seconds` is the task timeout the live release declares for the node;
+`0` means the node declares none and its tasks get the install default.
 
 | Flag          | Default | Meaning                                                                 |
 |---------------|---------|-------------------------------------------------------------------------|

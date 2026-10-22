@@ -34,23 +34,26 @@ type NodeSpec struct {
 	ImageTag          string
 	SecretRef         string
 	ScheduleName      string
+	TimeoutSeconds    *int
 	UpstreamUniqueIDs []string
 }
 
 // Node is one node as stored for a release. TestCount is nil when the number
-// of data tests on the node is unknown.
+// of data tests on the node is unknown; TimeoutSeconds is nil when the node
+// declares no task timeout.
 type Node struct {
-	Key          NodeKey
-	UniqueID     string
-	ServiceName  string
-	SchemaName   string
-	TableName    string
-	NodeType     string
-	TestCount    *int
-	ContentHash  string
-	ImageTag     string
-	SecretRef    string
-	ScheduleName string
+	Key            NodeKey
+	UniqueID       string
+	ServiceName    string
+	SchemaName     string
+	TableName      string
+	NodeType       string
+	TestCount      *int
+	ContentHash    string
+	ImageTag       string
+	SecretRef      string
+	ScheduleName   string
+	TimeoutSeconds *int
 }
 
 // Edge records that Downstream reads Upstream. Both nodes belong to the same
@@ -100,17 +103,18 @@ func NewRelease(tenantID, releaseID string, seq int64, uri, sha256 string, specs
 			keyByUniqueID[s.UniqueID] = key
 		}
 		nodes = append(nodes, Node{
-			Key:          key,
-			UniqueID:     s.UniqueID,
-			ServiceName:  s.ServiceName,
-			SchemaName:   s.SchemaName,
-			TableName:    s.TableName,
-			NodeType:     s.NodeType,
-			TestCount:    cloneCount(s.TestCount),
-			ContentHash:  s.ContentHash,
-			ImageTag:     s.ImageTag,
-			SecretRef:    s.SecretRef,
-			ScheduleName: s.ScheduleName,
+			Key:            key,
+			UniqueID:       s.UniqueID,
+			ServiceName:    s.ServiceName,
+			SchemaName:     s.SchemaName,
+			TableName:      s.TableName,
+			NodeType:       s.NodeType,
+			TestCount:      cloneCount(s.TestCount),
+			ContentHash:    s.ContentHash,
+			ImageTag:       s.ImageTag,
+			SecretRef:      s.SecretRef,
+			ScheduleName:   s.ScheduleName,
+			TimeoutSeconds: cloneCount(s.TimeoutSeconds),
 		})
 	}
 
