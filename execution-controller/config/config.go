@@ -63,11 +63,10 @@ type Config struct {
 	// ShutdownGrace bounds the graceful-shutdown drain + infra teardown.
 	ShutdownGrace time.Duration
 
-	// IgnoredRetryKeys names DEFAULT_TASK_MAX_RETRIES when it is set.
-	// execution-controller does not read it: each task's retry budget arrives
-	// on its query.model:v1 dispatch, and pkg/events.DefaultTaskMaxRetries
-	// applies to a dispatch that carries none.
-	IgnoredRetryKeys []string
+	// TaskTimeout is TASK_TIMEOUT_SECONDS: how long the container of every
+	// validation, seed-build and compile Job may run. A task's own timeout
+	// arrives on its dispatch.
+	TaskTimeout time.Duration
 
 	// MetricsPort is the port the Prometheus /metrics listener binds (METRICS_PORT).
 	MetricsPort int
@@ -102,7 +101,7 @@ func Load(v *pkgconfig.Validator) Config {
 
 		ShutdownGrace: pkgconfig.EnvDurationOrDefault("SHUTDOWN_GRACE", defaultShutdownGrace),
 
-		IgnoredRetryKeys: setKeys("DEFAULT_TASK_MAX_RETRIES"),
+		TaskTimeout: pkgconfig.LoadTaskTimeout(v),
 
 		MetricsPort: pkgconfig.LoadMetricsPort(v),
 	}
@@ -135,17 +134,6 @@ func jobStartTimeout(v *pkgconfig.Validator) time.Duration {
 		return defaultJobStartTimeout
 	}
 	return d
-}
-
-// setKeys returns the keys among keys that are set to a non-empty value.
-func setKeys(keys ...string) []string {
-	var set []string
-	for _, key := range keys {
-		if os.Getenv(key) != "" {
-			set = append(set, key)
-		}
-	}
-	return set
 }
 
 func envInt(key string, fallback int) int { return pkgconfig.EnvIntOrDefault(key, fallback) }

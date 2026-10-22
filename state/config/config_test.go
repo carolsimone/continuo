@@ -1,11 +1,16 @@
 package config
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // state sizes its pool from DB_MAX_OPEN_CONNS / DB_MAX_IDLE_CONNS. Load names
@@ -69,4 +74,63 @@ func TestLoad_ReadsS3(t *testing.T) {
 	cfg := Load(v)
 	assert.Equal(t, pkgconfig.S3Config{EndpointURL: "http://minio:9000", Bucket: "continuo", Region: "us-east-1"}, cfg.S3)
 	assert.NotContains(t, strings.Join(v.Missing(), ","), "AWS_ACCESS_KEY_ID")
+}
+
+func TestLoad_TaskMaxRetries(t *testing.T) {
+	cases := []struct {
+		raw   string
+		want  int
+		valid bool
+	}{
+		{raw: "", want: 2, valid: true},
+		{raw: "0", want: 0, valid: true},
+		{raw: "10", want: 10, valid: true},
+		{raw: "-1"},
+		{raw: "11"},
+		{raw: "two"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.raw, func(t *testing.T) {
+			t.Setenv("TASK_MAX_RETRIES", tc.raw)
+			v := &pkgconfig.Validator{}
+			cfg := Load(v)
+			invalid := strings.Contains(strings.Join(v.Missing(), " "), "TASK_MAX_RETRIES")
+			if tc.valid {
+				assert.False(t, invalid)
+				assert.Equal(t, tc.want, cfg.TaskMaxRetries)
+				return
+			}
+			assert.True(t, invalid, "TASK_MAX_RETRIES=%q must be refused", tc.raw)
+		})
+	}
+}
+
+func TestLoad_TaskTimeout(t *testing.T) {
+	t.Setenv("TASK_TIMEOUT_SECONDS", "")
+	assert.Equal(t, 24*time.Hour, Load(&pkgconfig.Validator{}).TaskTimeout)
+	t.Setenv("TASK_TIMEOUT_SECONDS", "10800")
+	assert.Equal(t, 3*time.Hour, Load(&pkgconfig.Validator{}).TaskTimeout)
+}
+
+// The chart's runs.taskMaxRetries is the range state accepts: a value the chart
+// allows but state refused would render and then stop state at startup.
+func TestTaskMaxRetriesRangeMatchesTheChart(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "deploy", "continuo", "values.schema.json"))
+	require.NoError(t, err)
+	var schema struct {
+		Properties struct {
+			Runs struct {
+				Properties struct {
+					TaskMaxRetries struct {
+						Minimum int `json:"minimum"`
+						Maximum int `json:"maximum"`
+					} `json:"taskMaxRetries"`
+				} `json:"properties"`
+			} `json:"runs"`
+		} `json:"properties"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &schema))
+	got := schema.Properties.Runs.Properties.TaskMaxRetries
+	assert.Equal(t, MinTaskMaxRetries, got.Minimum)
+	assert.Equal(t, MaxTaskMaxRetries, got.Maximum)
 }

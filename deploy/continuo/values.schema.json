@@ -340,6 +340,25 @@
       }
     },
 
+    "runs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "taskMaxRetries": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10,
+          "description": "Retries a task gets after its first attempt, stamped on each task when its run is created. Attempts that fail by timing out or because the dispatch cannot run are never retried."
+        },
+        "taskTimeoutHours": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 168,
+          "description": "How long a task's container may run when its node declares no timeout_minutes, and how long every validation, seed-build and compile Job's container may run."
+        }
+      }
+    },
+
     "maintenance": {
       "type": "object",
       "additionalProperties": false,

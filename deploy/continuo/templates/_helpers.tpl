@@ -699,6 +699,36 @@ upgrade --reuse-values from an older chart), gets 15 minutes; a value outside
 {{- end -}}
 
 {{/*
+TASK_MAX_RETRIES for the shared ConfigMap: runs.taskMaxRetries. A release
+without a runs block, or without the key (helm upgrade --reuse-values from an
+older chart), gets 2; a value outside 0-10 fails the render.
+*/ -}}
+{{- define "continuo.runs.taskMaxRetries" -}}
+{{- $r := .Values.runs | default dict -}}
+{{- $n := 2 -}}
+{{- if hasKey $r "taskMaxRetries" -}}{{- $n = int $r.taskMaxRetries -}}{{- end -}}
+{{- if or (lt $n 0) (gt $n 10) -}}
+{{- fail (printf "runs.taskMaxRetries=%v must be a whole number from 0 to 10" $r.taskMaxRetries) -}}
+{{- end -}}
+{{- $n -}}
+{{- end -}}
+
+{{/*
+TASK_TIMEOUT_SECONDS for the shared ConfigMap: runs.taskTimeoutHours in
+seconds. A release without a runs block, or without the key, gets 24 hours; a
+value outside 1-168 fails the render.
+*/ -}}
+{{- define "continuo.runs.taskTimeoutSeconds" -}}
+{{- $r := .Values.runs | default dict -}}
+{{- $h := 24 -}}
+{{- if hasKey $r "taskTimeoutHours" -}}{{- $h = int $r.taskTimeoutHours -}}{{- end -}}
+{{- if or (lt $h 1) (gt $h 168) -}}
+{{- fail (printf "runs.taskTimeoutHours=%v must be a whole number of hours from 1 to 168" $r.taskTimeoutHours) -}}
+{{- end -}}
+{{- mul $h 3600 -}}
+{{- end -}}
+
+{{/*
 MAINTENANCE_ENABLED for the shared ConfigMap: "true" or "false". A release
 without a maintenance block (helm upgrade --reuse-values from an older chart)
 renders "false"; the schema refuses a non-boolean value.

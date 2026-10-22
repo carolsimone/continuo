@@ -69,10 +69,6 @@ func main() {
 		os.Exit(1)
 	}
 	logger.Info("Starting execution-controller service")
-	if len(cfg.IgnoredRetryKeys) > 0 {
-		logger.Warn("Ignoring task retry setting execution-controller does not read; each task's retry budget comes from its query.model:v1 dispatch, falling back to pkg/events.DefaultTaskMaxRetries",
-			"ignored", strings.Join(cfg.IgnoredRetryKeys, ", "))
-	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

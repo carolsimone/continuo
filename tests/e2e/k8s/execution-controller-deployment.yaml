@@ -140,6 +140,10 @@ spec:
             # A pod has 3 minutes to start a container; the chart default is 15.
             - name: JOB_START_TIMEOUT_SECONDS
               value: "180"
+            # Validation, seed-build and compile Jobs run up to the chart's
+            # default runs.taskTimeoutHours.
+            - name: TASK_TIMEOUT_SECONDS
+              value: "86400"
             - name: LOG_TAIL_LINES
               value: "50"
             - name: ERROR_MESSAGE_MAX_LENGTH
