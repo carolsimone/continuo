@@ -72,7 +72,7 @@ func (h *harness) started(t *testing.T, retry int, deployedAt time.Time) *model.
 	runID := uuid.New().String()
 	cmd := command.DeployTask{TaskID: uuid.New().String(), ScheduleID: runID, ScheduleName: "daily",
 		ServiceName: "service-1", SchemaName: "e2e_schema", TableName: "ftable_e",
-		NodeType: "dbt-model", ImageTag: "v42", Operation: "run", TaskRetryCount: retry, TaskMaxRetries: 2}
+		NodeType: "dbt-model", ImageTag: "v42", Operation: "run", Attempt: retry, TaskMaxRetries: 2}
 	name, err := domain.ComputeJobName(cmd.ServiceName, cmd.SchemaName, cmd.TableName, runID, retry)
 	require.NoError(t, err)
 	cmd.JobName = name
@@ -184,7 +184,7 @@ func TestProcess_AFailedAttemptWithRetriesLeftQueuesTheNextAttempt(t *testing.T)
 
 	next := h.reload(t, dep.JobName()+"-r1")
 	assert.Equal(t, model.StatusPending, next.Status(), "the next attempt is queued")
-	assert.Equal(t, 1, next.Command().TaskRetryCount)
+	assert.Equal(t, 1, next.Command().Attempt)
 	assert.Equal(t, dep.Command().TaskID, next.Command().TaskID)
 }
 

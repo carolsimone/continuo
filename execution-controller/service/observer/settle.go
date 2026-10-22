@@ -54,7 +54,7 @@ func (o *Observer) settle(ctx context.Context, u uow.UnitOfWork, d *model.Deploy
 	}
 	o.deps.Logger.Info("Attempt ended", "task_id", cmd.TaskID, "job_name", cmd.JobName, "status", status,
 		"failure_class", d.Facts().Class(), "failure_reason", d.Facts().Reason)
-	if v.Succeeded || cmd.TaskRetryCount >= retryBudget(cmd.TaskMaxRetries) {
+	if v.Succeeded || cmd.Attempt >= retryBudget(cmd.TaskMaxRetries) {
 		return nil
 	}
 	next, err := cmd.NextAttempt()
@@ -64,12 +64,12 @@ func (o *Observer) settle(ctx context.Context, u uow.UnitOfWork, d *model.Deploy
 	// An older version may have queued the next attempt, under its own Job
 	// name, when it reported this failure; a task never gets two attempts of
 	// one number.
-	queued, err := u.DeploymentsRepo().HasAttemptFrom(ctx, cmd.TaskID, next.TaskRetryCount)
+	queued, err := u.DeploymentsRepo().HasAttemptFrom(ctx, cmd.TaskID, next.Attempt)
 	if err != nil {
 		return err
 	}
 	if queued {
-		o.deps.Logger.Info("Next attempt already queued", "task_id", cmd.TaskID, "attempt", next.TaskRetryCount)
+		o.deps.Logger.Info("Next attempt already queued", "task_id", cmd.TaskID, "attempt", next.Attempt)
 		return nil
 	}
 	if err := u.DeploymentsRepo().Add(ctx, model.NewDeployment(next, nil, now)); err != nil {
@@ -141,7 +141,7 @@ func writeTaskStatus(ctx context.Context, repo pkgoutbox.Repository, cmd command
 	if err != nil {
 		return fmt.Errorf("task_id %q: %w", cmd.TaskID, err)
 	}
-	retryCount, err := num.Int32(cmd.TaskRetryCount, "task_retry_count")
+	retryCount, err := num.Int32(cmd.Attempt, "task_retry_count")
 	if err != nil {
 		return err
 	}

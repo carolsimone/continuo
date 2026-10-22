@@ -25,9 +25,10 @@ type DeployTaskDTO struct {
 	NodeType       string `json:"node_type"`
 	ImageTag       string `json:"image_tag"`
 	SecretRef      string `json:"secret_ref,omitempty"`
-	TaskRetryCount int    `json:"task_retry_count"`
+	Attempt        int    `json:"attempt"`
 	TaskMaxRetries int    `json:"task_max_retries"`
 	Operation      string `json:"operation"`
+	TimeoutSeconds int64  `json:"timeout_seconds,omitempty"`
 }
 
 // DeployTaskFromDomain maps a domain command to its DTO.
@@ -43,9 +44,10 @@ func DeployTaskFromDomain(c command.DeployTask) DeployTaskDTO {
 		NodeType:       c.NodeType,
 		ImageTag:       c.ImageTag,
 		SecretRef:      c.SecretRef,
-		TaskRetryCount: c.TaskRetryCount,
+		Attempt:        c.Attempt,
 		TaskMaxRetries: c.TaskMaxRetries,
 		Operation:      c.Operation,
+		TimeoutSeconds: c.TimeoutSeconds,
 	}
 }
 
@@ -62,9 +64,10 @@ func (d DeployTaskDTO) ToDomain() command.DeployTask {
 		NodeType:       d.NodeType,
 		ImageTag:       d.ImageTag,
 		SecretRef:      d.SecretRef,
-		TaskRetryCount: d.TaskRetryCount,
+		Attempt:        d.Attempt,
 		TaskMaxRetries: d.TaskMaxRetries,
 		Operation:      d.Operation,
+		TimeoutSeconds: d.TimeoutSeconds,
 	}
 }
 

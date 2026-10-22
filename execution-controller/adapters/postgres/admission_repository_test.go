@@ -195,6 +195,9 @@ func TestRepo_LoadByJobName_NewestRow(t *testing.T) {
 	cmd := validCmd()
 	cmd.JobName = "dbt-public-orders-r1"
 	older := model.NewDeployment(cmd, nil, time.Now().Add(-time.Minute))
+	// Each attempt of a task is accepted once, so two rows of one Job name
+	// belong to two tasks.
+	cmd.TaskID = uuid.NewString()
 	newer := model.NewDeployment(cmd, nil, time.Now())
 	require.NoError(t, repo.Add(ctx, older))
 	require.NoError(t, repo.Add(ctx, newer))

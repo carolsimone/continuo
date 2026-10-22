@@ -15,6 +15,15 @@ import (
 type DeploymentRepository interface {
 	// Add inserts a new pending Deployment.
 	Add(ctx context.Context, d *model.Deployment) error
+	// AddAttempt inserts a production Deployment unless its task already has
+	// one of the same attempt, and reports whether it did.
+	AddAttempt(ctx context.Context, d *model.Deployment) (added bool, err error)
+	// LoadByTaskAttempt returns the production deployment of the task's
+	// attempt, locked for the rest of the transaction, or sql.ErrNoRows.
+	LoadByTaskAttempt(ctx context.Context, taskID string, attempt int) (*model.Deployment, error)
+	// HasAttemptAfter reports whether the task has a production deployment of
+	// a later attempt than attempt.
+	HasAttemptAfter(ctx context.Context, taskID string, attempt int) (bool, error)
 	// LoadByJobName returns the most recently created deployment whose Job is
 	// jobName, locked for the rest of the transaction, or sql.ErrNoRows when
 	// none exists.

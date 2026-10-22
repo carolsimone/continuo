@@ -37,7 +37,7 @@ func validCmd() command.DeployTask {
 		TaskID: uuid.New().String(), ScheduleID: uuid.New().String(),
 		ScheduleName: "daily", ServiceName: "dbt", SchemaName: "public", TableName: "orders",
 		JobName: "dbt-public-orders", NodeType: "dbt-model", ImageTag: "sha-abc",
-		TaskRetryCount: 0, TaskMaxRetries: 2,
+		Attempt: 0, TaskMaxRetries: 2,
 	}
 }
 
@@ -736,16 +736,16 @@ func TestRepo_HasAttemptFrom_CountsTheTasksProductionAttemptsOnly(t *testing.T) 
 	first := validCmd()
 	require.NoError(t, repo.Add(ctx, model.NewDeployment(first, nil, time.Now())))
 	retry := first
-	retry.TaskRetryCount, retry.JobName = 2, first.JobName+"-r1-r2"
+	retry.Attempt, retry.JobName = 2, first.JobName+"-r1-r2"
 	require.NoError(t, repo.Add(ctx, model.NewDeployment(retry, nil, time.Now())))
 
 	other := validCmd()
-	other.TaskRetryCount = 3
+	other.Attempt = 3
 	require.NoError(t, repo.Add(ctx, model.NewDeployment(other, nil, time.Now())))
 
 	leg := model.NewValidationDeployment(validValidationCmd("rel-"+uuid.NewString()[:8], "public.orders"), nil, time.Now(), false)
 	require.NoError(t, repo.Add(ctx, leg))
-	_, err := db.Exec(`UPDATE deployments SET task_id = $1, job_params = jsonb_set(job_params, '{task_retry_count}', '5')
+	_, err := db.Exec(`UPDATE deployments SET task_id = $1, job_params = jsonb_set(job_params, '{attempt}', '5')
 		WHERE id = $2`, first.TaskID, leg.ID())
 	require.NoError(t, err)
 

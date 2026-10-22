@@ -16,7 +16,7 @@ func deployableCmd() command.DeployTask {
 	return command.DeployTask{
 		TaskID: uuid.New().String(), ScheduleID: uuid.New().String(),
 		JobName: "dbt-public-orders", NodeType: "dbt-model",
-		TaskRetryCount: 0, TaskMaxRetries: 2,
+		Attempt: 0, TaskMaxRetries: 2,
 	}
 }
 

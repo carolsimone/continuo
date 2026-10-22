@@ -41,3 +41,13 @@ func (r *stubDeploymentsRepo) ListValidationByRelease(_ context.Context, _ strin
 func (*stubDeploymentsRepo) HasAttemptFrom(context.Context, string, int) (bool, error) {
 	return false, nil
 }
+
+func (*stubDeploymentsRepo) AddAttempt(context.Context, *model.Deployment) (bool, error) {
+	panic("AddAttempt not used by these tests")
+}
+func (*stubDeploymentsRepo) LoadByTaskAttempt(context.Context, string, int) (*model.Deployment, error) {
+	panic("LoadByTaskAttempt not used by these tests")
+}
+func (*stubDeploymentsRepo) HasAttemptAfter(context.Context, string, int) (bool, error) {
+	panic("HasAttemptAfter not used by these tests")
+}

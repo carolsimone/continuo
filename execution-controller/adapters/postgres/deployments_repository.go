@@ -12,6 +12,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	"github.com/carolsimone/continuo/execution-controller/domain/repository"
 	"github.com/carolsimone/continuo/execution-controller/serialization"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/google/uuid"
 )
@@ -56,6 +57,7 @@ type deploymentRow struct {
 	FailedContainer     *string    `db:"failed_container"`
 	OutcomeAt           *time.Time `db:"outcome_at"`
 	Facts               []byte     `db:"facts"`
+	LastReport          []byte     `db:"last_report"`
 }
 
 func (r *deploymentsRepository) Add(ctx context.Context, d *model.Deployment) error {
@@ -107,17 +109,21 @@ func (r *deploymentsRepository) Save(ctx context.Context, d *model.Deployment) e
 	if err != nil {
 		return fmt.Errorf("save deployment %s: %w", d.ID(), err)
 	}
+	report, err := encodeReport(d)
+	if err != nil {
+		return fmt.Errorf("save deployment %s: %w", d.ID(), err)
+	}
 	const query = `
 		UPDATE deployments
 		SET status = $2, retry_count = $3, next_attempt_at = $4, deployed_at = $5, error_message = $6,
 		    outcome = $7, dbt_log_uri = $8, outcome_at = $9, run_results_uri = $10, failed_container = $11,
-		    facts = $12,
+		    facts = $12, last_report = $13,
 		    state_changed_at = CASE WHEN status <> $2 THEN NOW() ELSE state_changed_at END
 		WHERE id = $1`
 	res, err := r.exec.ExecContext(ctx, query,
 		d.ID(), string(d.Status()), d.RetryCount(), d.NextAttemptAt(), d.DeployedAt(), d.ErrorMessage(),
 		nullableStr(d.Outcome()), nullableStr(d.DBTLogURI()), d.OutcomeAt(), nullableStr(d.DBTRunResultsURI()),
-		nullableStr(d.FailedContainer()), facts,
+		nullableStr(d.FailedContainer()), facts, report,
 	)
 	if err != nil {
 		return fmt.Errorf("save deployment %s: %w", d.ID(), err)
@@ -134,7 +140,7 @@ const validationSelectColumns = `
 	id, message_processing_id, task_id, schedule_id, job_params,
 	status, retry_count, max_retries, next_attempt_at,
 	created_at, deployed_at, error_message,
-	mode, release_id, node_id, outcome, dbt_log_uri, outcome_at, run_results_uri, failed_container, facts`
+	mode, release_id, node_id, outcome, dbt_log_uri, outcome_at, run_results_uri, failed_container, facts, last_report`
 
 func (r *deploymentsRepository) GetByReleaseNode(ctx context.Context, releaseID, nodeID string, mode model.Mode) (*model.Deployment, error) {
 	const query = `
@@ -147,7 +153,7 @@ func (r *deploymentsRepository) GetByReleaseNode(ctx context.Context, releaseID,
 		&row.Status, &row.RetryCount, &row.MaxRetries, &row.NextAttemptAt,
 		&row.CreatedAt, &row.DeployedAt, &row.ErrorMessage,
 		&row.Mode, &row.ReleaseID, &row.NodeID, &row.Outcome, &row.DBTLogURI, &row.OutcomeAt, &row.RunResultsURI,
-		&row.FailedContainer, &row.Facts,
+		&row.FailedContainer, &row.Facts, &row.LastReport,
 	); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, sql.ErrNoRows
@@ -285,12 +291,45 @@ func (r *deploymentsRepository) toAggregate(row *deploymentRow) *model.Deploymen
 	} else {
 		cmd = cmdDTO.ToDomain()
 	}
-	return model.ReconstituteProduction(
+	d := model.ReconstituteProduction(
 		row.ID, row.MessageProcessingID, cmd, model.Status(row.Status),
 		row.RetryCount, row.MaxRetries, row.NextAttemptAt, row.CreatedAt,
 		row.DeployedAt, row.ErrorMessage,
 		derefStr(row.Outcome), row.OutcomeAt, facts,
 	)
+	d.HydrateLastReport(r.decodeReport(row))
+	return d
+}
+
+// decodeReport reads a production row's last_report. A row that reported
+// nothing yet has none; a column that does not decode (data corruption: it is
+// written from a valid report) is logged and read as none, so the attempt is
+// reported afresh.
+func (r *deploymentsRepository) decodeReport(row *deploymentRow) *model.Report {
+	if len(row.LastReport) == 0 {
+		return nil
+	}
+	var p pkgevents.TaskStatusReport
+	if err := json.Unmarshal(row.LastReport, &p); err != nil {
+		r.logger.Error("deployment last_report unparseable — reading it as none", "deployment_id", row.ID, "error", err)
+		return nil
+	}
+	rep := serialization.ReportToDomain(p)
+	return &rep
+}
+
+// encodeReport renders d's last report for the last_report column: the
+// task.status.updated:v2 payload it was emitted as, NULL before any.
+func encodeReport(d *model.Deployment) (any, error) {
+	rep := d.LastReport()
+	if rep == nil {
+		return nil, nil
+	}
+	b, err := json.Marshal(serialization.ReportFromDomain(d.Command(), *rep))
+	if err != nil {
+		return nil, fmt.Errorf("encode last report: %w", err)
+	}
+	return b, nil
 }
 
 // decodeFacts reads a row's facts column. A row never observed has none; a
@@ -352,15 +391,84 @@ func commandIDs(cmd command.DeployTask) (uuid.UUID, uuid.UUID, error) {
 	return taskID, scheduleID, nil
 }
 
-// HasAttemptFrom reads each production deployment's attempt from job_params
-// (task_retry_count), which every version writes, so attempts named under any
-// Job-naming scheme count.
+// HasAttemptFrom reads each production deployment's attempt, so attempts
+// named under any Job-naming scheme count.
 func (r *deploymentsRepository) HasAttemptFrom(ctx context.Context, taskID string, attempt int) (bool, error) {
 	var found []bool
 	if err := r.exec.SelectContext(ctx, &found, `SELECT true FROM deployments
-		WHERE task_id = $1 AND mode = $2 AND (job_params->>'task_retry_count')::int >= $3
+		WHERE task_id = $1 AND mode = $2 AND attempt >= $3
 		LIMIT 1`, taskID, string(model.ModeProduction), attempt); err != nil {
 		return false, fmt.Errorf("look up attempt %d of task %s: %w", attempt, taskID, err)
+	}
+	return len(found) > 0, nil
+}
+
+// AddAttempt inserts a production deployment unless its task already has a
+// deployment of the same attempt (uq_deployments_task_attempt), and reports
+// whether it did.
+func (r *deploymentsRepository) AddAttempt(ctx context.Context, d *model.Deployment) (bool, error) {
+	if d.Mode() != model.ModeProduction {
+		return false, fmt.Errorf("AddAttempt called on %s deployment %s", d.Mode(), d.ID())
+	}
+	jobParams, err := json.Marshal(serialization.DeployTaskFromDomain(d.Command()))
+	if err != nil {
+		return false, fmt.Errorf("marshal deploy command: %w", err)
+	}
+	taskID, scheduleID, err := commandIDs(d.Command())
+	if err != nil {
+		return false, err
+	}
+	report, err := encodeReport(d)
+	if err != nil {
+		return false, err
+	}
+	facts, err := encodeFacts(d.Facts())
+	if err != nil {
+		return false, err
+	}
+	res, err := r.exec.ExecContext(ctx, `
+		INSERT INTO deployments (
+			id, message_processing_id, task_id, schedule_id, job_params,
+			status, retry_count, max_retries, next_attempt_at, created_at,
+			mode, deployed_at, error_message, outcome, outcome_at, facts, last_report
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+		ON CONFLICT (task_id, attempt) WHERE mode = 'production' AND attempt IS NOT NULL DO NOTHING`,
+		d.ID(), d.MessageProcessingID(), taskID, scheduleID, jobParams,
+		string(d.Status()), d.RetryCount(), d.MaxRetries(), d.NextAttemptAt(), d.CreatedAt(),
+		string(d.Mode()), d.DeployedAt(), d.ErrorMessage(), nullableStr(d.Outcome()), d.OutcomeAt(), facts, report)
+	if err != nil {
+		return false, fmt.Errorf("insert attempt %d of task %s: %w", d.Command().Attempt, taskID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
+}
+
+// LoadByTaskAttempt locks the production deployment of the task's attempt.
+func (r *deploymentsRepository) LoadByTaskAttempt(ctx context.Context, taskID string, attempt int) (*model.Deployment, error) {
+	var rows []*deploymentRow
+	if err := r.exec.SelectContext(ctx, &rows, `SELECT`+validationSelectColumns+`
+		FROM deployments
+		WHERE task_id = $1 AND mode = $2 AND attempt = $3
+		FOR UPDATE`, taskID, string(model.ModeProduction), attempt); err != nil {
+		return nil, fmt.Errorf("load attempt %d of task %s: %w", attempt, taskID, err)
+	}
+	if len(rows) == 0 {
+		return nil, sql.ErrNoRows
+	}
+	return r.toAggregate(rows[0]), nil
+}
+
+// HasAttemptAfter reports whether the task has a production deployment of a
+// later attempt.
+func (r *deploymentsRepository) HasAttemptAfter(ctx context.Context, taskID string, attempt int) (bool, error) {
+	var found []bool
+	if err := r.exec.SelectContext(ctx, &found, `SELECT true FROM deployments
+		WHERE task_id = $1 AND mode = $2 AND attempt > $3
+		LIMIT 1`, taskID, string(model.ModeProduction), attempt); err != nil {
+		return false, fmt.Errorf("look up the attempts of task %s after %d: %w", taskID, attempt, err)
 	}
 	return len(found) > 0, nil
 }

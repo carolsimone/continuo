@@ -757,3 +757,23 @@ func (*fakeDeploymentRepo) HasAttemptFrom(context.Context, string, int) (bool, e
 func (*chainDeploymentRepo) HasAttemptFrom(context.Context, string, int) (bool, error) {
 	return false, nil
 }
+
+func (*fakeDeploymentRepo) AddAttempt(context.Context, *model.Deployment) (bool, error) {
+	panic("AddAttempt not used by these tests")
+}
+func (*fakeDeploymentRepo) LoadByTaskAttempt(context.Context, string, int) (*model.Deployment, error) {
+	panic("LoadByTaskAttempt not used by these tests")
+}
+func (*fakeDeploymentRepo) HasAttemptAfter(context.Context, string, int) (bool, error) {
+	panic("HasAttemptAfter not used by these tests")
+}
+
+func (*chainDeploymentRepo) AddAttempt(context.Context, *model.Deployment) (bool, error) {
+	panic("AddAttempt not used by these tests")
+}
+func (*chainDeploymentRepo) LoadByTaskAttempt(context.Context, string, int) (*model.Deployment, error) {
+	panic("LoadByTaskAttempt not used by these tests")
+}
+func (*chainDeploymentRepo) HasAttemptAfter(context.Context, string, int) (bool, error) {
+	panic("HasAttemptAfter not used by these tests")
+}

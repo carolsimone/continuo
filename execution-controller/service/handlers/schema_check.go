@@ -10,8 +10,10 @@ import (
 )
 
 // RequiredColumns are the columns execution-controller's code reads that an
-// execution database not yet migrated lacks: deployments.facts (V10).
-var RequiredColumns = []string{"deployments.facts"}
+// execution database not yet migrated lacks: what each attempt showed
+// (deployments.facts), which attempt a deployment runs and the report last
+// emitted for it.
+var RequiredColumns = []string{"deployments.facts", "deployments.attempt", "deployments.last_report"}
 
 // ErrSchemaNotReady reports an execution database that lacks a column the
 // running code reads.

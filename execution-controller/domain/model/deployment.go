@@ -69,6 +69,8 @@ type Deployment struct {
 
 	// facts is what has been observed of the attempt's Job so far.
 	facts AttemptFacts
+	// lastReport is the report last emitted for a production attempt.
+	lastReport *Report
 }
 
 // NewDeployment starts a fresh pending Deployment due immediately.

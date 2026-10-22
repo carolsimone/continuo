@@ -103,7 +103,7 @@ func seedJobNamed(t *testing.T, db *sqlx.DB, name string, maxRetries, retryCount
 		TaskID: uuid.New().String(), ScheduleID: uuid.New().String(),
 		ScheduleName: "daily", ServiceName: "dbt", SchemaName: "public",
 		TableName: "orders", JobName: name, NodeType: "dbt-model",
-		ImageTag: "sha-abc", TaskRetryCount: 0, TaskMaxRetries: 2,
+		ImageTag: "sha-abc", Attempt: 0, TaskMaxRetries: 2,
 	}))
 	require.NoError(t, err)
 	_, err = db.Exec(

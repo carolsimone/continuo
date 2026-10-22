@@ -29,13 +29,17 @@ type DeployTask struct {
 	ImageTag     string
 	// SecretRef names the continuo-api-* Secret a python-api node's pod
 	// receives as env vars; empty for every other node.
-	SecretRef      string
-	TaskRetryCount int
+	SecretRef string
+	// Attempt is which attempt of the task this is, as state numbered it.
+	Attempt        int
 	TaskMaxRetries int
 	// Operation selects the dbt verb the executor runs for this node. Empty
 	// (pkg_model.OperationRun) is the default: dbt run/seed/snapshot by
 	// NodeType. "test" runs `dbt test --select <node>`.
 	Operation string
+	// TimeoutSeconds is how long the attempt's container may run once its
+	// Job has started its pod.
+	TimeoutSeconds int64
 }
 
 func (DeployTask) isCommand() {}
@@ -44,10 +48,10 @@ func (DeployTask) isCommand() {}
 // its retry count one higher and the Job name of that attempt.
 func (c DeployTask) NextAttempt() (DeployTask, error) {
 	next := c
-	next.TaskRetryCount++
-	name, err := domain.ComputeJobName(c.ServiceName, c.SchemaName, c.TableName, c.ScheduleID, next.TaskRetryCount)
+	next.Attempt++
+	name, err := domain.ComputeJobName(c.ServiceName, c.SchemaName, c.TableName, c.ScheduleID, next.Attempt)
 	if err != nil {
-		return DeployTask{}, fmt.Errorf("name attempt %d of task %s: %w", next.TaskRetryCount, c.TaskID, err)
+		return DeployTask{}, fmt.Errorf("name attempt %d of task %s: %w", next.Attempt, c.TaskID, err)
 	}
 	next.JobName = name
 	return next, nil

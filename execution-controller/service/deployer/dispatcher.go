@@ -496,7 +496,7 @@ func (d *Dispatcher) writeFailedAnnouncements(ctx context.Context, outboxRepo ou
 	if budget <= 0 {
 		budget = int(pkgevents.DefaultTaskMaxRetries)
 	}
-	retryCount, err := num.Int32(max(cmd.TaskRetryCount, budget), "task_retry_count")
+	retryCount, err := num.Int32(max(cmd.Attempt, budget), "task_retry_count")
 	if err != nil {
 		return fmt.Errorf("write FAILED task_status announcement: %w", err)
 	}

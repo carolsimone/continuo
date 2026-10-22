@@ -62,7 +62,7 @@ func TestQueryModelHandler_EnqueuesDeployment(t *testing.T) {
 	assert.Equal(t, scheduleID.String(), cmd.ScheduleID)
 	assert.Equal(t, "dbt-public-orders", cmd.JobName)
 	assert.Empty(t, cmd.SecretRef)
-	assert.Equal(t, 0, cmd.TaskRetryCount)
+	assert.Equal(t, 0, cmd.Attempt)
 	assert.Equal(t, int(pkgevents.DefaultTaskMaxRetries), cmd.TaskMaxRetries,
 		"a dispatch without max_retries takes the default budget")
 	assert.True(t, dep.IsDeployable())
