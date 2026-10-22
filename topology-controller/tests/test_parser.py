@@ -530,3 +530,14 @@ def test_a_timeout_change_keeps_the_content_hash(tmp_path):
         (node,), _ = parse_manifest(path, "v1")
         hashes.append(node.content_hash)
     assert hashes[0] == hashes[1] == hashes[2]
+
+
+@pytest.mark.parametrize("meta", [None, {}])
+def test_parse_skips_node_without_meta_owner_whether_meta_is_null_or_empty(tmp_path, meta):
+    # dbt serialises an unset meta as an explicit null in some versions; it must
+    # read as "no owner" (the node is skipped), not raise a non-retryable error.
+    node = _node()
+    node["config"]["meta"] = meta
+    path = _manifest_path(tmp_path, {"model.svc.revenue": node})
+    nodes, _ = parse_manifest(path, "v1")
+    assert nodes == []

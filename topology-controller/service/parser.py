@@ -130,7 +130,7 @@ def parse_manifest(
                          extra={"node_id": node_id, "resource_type": resource_type})
             continue
 
-        owner = node.get("config", {}).get("meta", {}).get("owner")
+        owner = (node.get("config", {}).get("meta") or {}).get("owner")
         if not owner:
             logger.warning("Skipping node missing required meta.owner",
                            extra={"node_id": node_id})
@@ -148,7 +148,7 @@ def parse_manifest(
 
         schedule_name = tags[0] if tags else default_schedule
 
-        meta = node.get("config", {}).get("meta", {})
+        meta = node.get("config", {}).get("meta") or {}
         criticality = meta.get("criticality", "SECONDARY")
 
         direct_unit_ids = list(node.get("depends_on", {}).get("macros", []))
