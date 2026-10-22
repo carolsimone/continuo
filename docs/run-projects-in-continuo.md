@@ -133,8 +133,11 @@ dbt resolves project, folder and model `meta` into each node's `config.meta`, so
 a model inherits the project value and a model-level `timeout_minutes` replaces
 it; the other `meta` keys, such as `owner`, still come from the project.
 
-A python node declares it as `timeout_minutes` on its contract entry, which
-needs `continuo-python-runtime` 0.10.0 or later:
+A python node declares it as `timeout_minutes` on its contract entry. It may do
+so only when both the CLI that builds the contract and the image base the
+service's nodes run in (`FROM ghcr.io/carolsimone/continuo-python-runtime-<engine>:v0.10.0`
+or later) are `continuo-python-runtime` 0.10.0 or later. With an older image base,
+every run of every node of that service fails when it loads its contracts.
 
 ```yaml
 # services/service-py/contracts/py_daily_kpis.yml
@@ -498,7 +501,8 @@ aws --endpoint-url http://localhost:9000 \
 ```
 
 Now build the contract from the service's `contracts/` directory, using the
-runtime CLI the release gate uses:
+runtime CLI the release gate uses (a service's image base must be on the same
+runtime release or later to run a contract that declares `timeout_minutes`):
 
 ```bash
 uv tool install continuo-python-runtime==0.10.0

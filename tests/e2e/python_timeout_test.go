@@ -4,12 +4,14 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"database/sql"
 	"embed"
 	"io/fs"
 	"os/exec"
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
@@ -33,6 +35,7 @@ const (
 	// domain repository (contracts/ and scripts/) read on stdin, exactly as a
 	// domain repository's CI runs `continuo-runtime merge`, and writes the
 	// merged contract to stdout. The CLI logs to stderr. $1 is the service name.
+	// --dialect postgres matches the e2e stack's warehouse engine.
 	mergeContractScript = `set -eu
 work="$(mktemp -d)"
 tar -x -C "$work"
@@ -88,6 +91,7 @@ func TestE2E_PythonNodeTimeout_ReachesStateThroughTheRuntimeCLI(t *testing.T) {
 
 	waitForNodeTimeoutSeconds(t, ctx, clients, releaseID, pyTimeoutUniqueID, pyTimeoutSeconds)
 	requireNoOtherNodeTimeout(t, ctx, clients, releaseID, pyTimeoutUniqueID)
+	requireNodeWithoutTimeout(t, ctx, clients, releaseID, pyNoTimeoutUniqueID)
 	t.Logf("✅ release %s promoted; %s carries timeout_seconds=%d, every other node NULL",
 		releaseID, pyTimeoutUniqueID, pyTimeoutSeconds)
 }
@@ -160,4 +164,18 @@ func requireWireEntryTimeout(t *testing.T, contract []byte, uniqueID string, wan
 		return
 	}
 	require.Failf(t, "node missing", "%s is not in the merged contract", uniqueID)
+}
+
+// requireNodeWithoutTimeout asserts that state's copy of releaseID holds nodeKey
+// with no timeout, so the absence of a timeout elsewhere is not an absent node.
+func requireNodeWithoutTimeout(t *testing.T, ctx context.Context, clients *testClients, releaseID, nodeKey string) {
+	t.Helper()
+	var timeout sql.NullInt64
+	require.NoError(t, clients.stateDB.GetContext(ctx, &timeout, `
+		SELECT n.timeout_seconds
+		  FROM live_release l
+		  JOIN topology_nodes n ON n.tenant_id = l.tenant_id AND n.release_id = l.release_id
+		 WHERE l.tenant_id = $1 AND l.release_id = $2 AND n.node_key = $3`,
+		events.DefaultTenantID, releaseID, nodeKey), "%s must be stored in release %s", nodeKey, releaseID)
+	require.False(t, timeout.Valid, "%s declares no timeout", nodeKey)
 }
