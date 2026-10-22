@@ -167,6 +167,15 @@ unless your operator changed it). The node page shows the timeout a node's tasks
 get and whether it is declared or the default, and `continuo node list` reports
 it as `timeout_seconds` with `timeout_declared`.
 
+When a task runs past its timeout, Kubernetes stops its Job and the attempt fails
+as `timeout deadline_exceeded`. A timed-out task is not retried: it fails, and
+the tasks below it in the run are skipped. The deadline adds the time a pod may
+take to start (`execution.startTimeoutMinutes`, 15 minutes unless your operator
+changed it) to the timeout, so a container always gets at least its whole
+timeout, however long its pod waited to be scheduled. A pod that starts no
+container within that start time fails as `timeout start_timeout`, also without
+a retry.
+
 ### If your project already has its own `generate_schema_name`
 
 The four demo projects each ship continuo's `generate_schema_name` unchanged, so
