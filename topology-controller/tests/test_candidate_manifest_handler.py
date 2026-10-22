@@ -362,6 +362,36 @@ def test_handle_publishes_failed_on_node_with_empty_fqn(tmp_path):
     publisher.publish_ok.assert_not_called()
 
 
+def test_a_bad_dbt_timeout_fails_the_whole_release_as_invalid_artifact(tmp_path):
+    bad = tmp_path / "bad_timeout.json"
+    bad.write_text(json.dumps({
+        "macros": {},
+        "nodes": {
+            "model.svc.t": {
+                "resource_type": "model",
+                "name": "t",
+                "schema": "s",
+                "fqn": ["svc", "t"],
+                "config": {"meta": {"owner": "team", "timeout_minutes": "2h"}},
+                "tags": ["daily"],
+            }
+        },
+    }))
+
+    source = create_autospec(ManifestSourcePort)
+    source.list_manifests.return_value = [ManifestFile(path=str(bad), image_tag="")]
+    publisher = MagicMock()
+
+    handler = _handler(source, publisher, _make_uploader())
+    handler.handle(release_id="rel-bad-timeout")  # must NOT raise
+
+    kw = _failed_kwargs(publisher)
+    assert kw["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
+    assert "s.t" in kw["detail"]
+    assert "meta.timeout_minutes" in kw["detail"]
+    publisher.publish_ok.assert_not_called()
+
+
 def test_handle_propagates_transient_redis_error():
     source = _make_source("manifest_service1.json")
     publisher = MagicMock()

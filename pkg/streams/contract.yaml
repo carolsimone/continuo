@@ -294,7 +294,7 @@ vocabularies:
       - value: invalid_artifact
         const: InvalidArtifact
         healable: false
-        description: the uploaded manifest or contract is unreadable, empty, of unknown kind, or names another service.
+        description: the uploaded manifest or contract is unreadable, empty, of unknown kind, names another service, or declares an invalid node setting.
       - value: internal
         const: Internal
         healable: false
@@ -332,7 +332,7 @@ vocabularies:
       - value: invalid_artifact
         const: InvalidArtifact
         healable: false
-        description: a manifest or python contract in the release is unreadable, empty, of unknown kind, or names another service.
+        description: a manifest or python contract in the release is unreadable, empty, of unknown kind, names another service, or declares an invalid node setting.
       - value: internal_error
         const: InternalError
         healable: false

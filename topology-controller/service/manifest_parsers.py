@@ -9,7 +9,7 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from domain.exceptions import MalformedContractError
+from domain.exceptions import InvalidNodeSettingError, MalformedContractError
 from domain.model import ManifestKind, ManifestNode
 from service.parser import parse_manifest
 from service.python_contract_parser import parse_python_contract
@@ -33,7 +33,7 @@ class ManifestParser:
 _PARSERS: dict[str, ManifestParser] = {
     ManifestKind.DBT: ManifestParser(
         parse=parse_manifest,
-        permanent_errors=(json.JSONDecodeError, KeyError, IndexError),
+        permanent_errors=(json.JSONDecodeError, KeyError, IndexError, InvalidNodeSettingError),
         empty_detail="manifest contains no model/seed nodes",
     ),
     ManifestKind.PYTHON: ManifestParser(

@@ -16,7 +16,7 @@ const (
 	ParseFailureKindInvalidSQL ParseFailureKind = "invalid_sql"
 	// ParseFailureKindUnqualifiedReference — a node references a relation without a schema qualifier.
 	ParseFailureKindUnqualifiedReference ParseFailureKind = "unqualified_reference"
-	// ParseFailureKindInvalidArtifact — the uploaded manifest or contract is unreadable, empty, of unknown kind, or names another service.
+	// ParseFailureKindInvalidArtifact — the uploaded manifest or contract is unreadable, empty, of unknown kind, names another service, or declares an invalid node setting.
 	ParseFailureKindInvalidArtifact ParseFailureKind = "invalid_artifact"
 	// ParseFailureKindInternal — continuo's own wiring or an S3 write failed; no change to the user's source will fix it.
 	ParseFailureKindInternal ParseFailureKind = "internal"
@@ -75,7 +75,7 @@ const (
 	RejectReasonInvalidSQL RejectReason = "invalid_sql"
 	// RejectReasonUnqualifiedReference — a node references a relation without a schema qualifier.
 	RejectReasonUnqualifiedReference RejectReason = "unqualified_reference"
-	// RejectReasonInvalidArtifact — a manifest or python contract in the release is unreadable, empty, of unknown kind, or names another service.
+	// RejectReasonInvalidArtifact — a manifest or python contract in the release is unreadable, empty, of unknown kind, names another service, or declares an invalid node setting.
 	RejectReasonInvalidArtifact RejectReason = "invalid_artifact"
 	// RejectReasonInternalError — continuo's own wiring or an S3 access failed while resolving the release.
 	RejectReasonInternalError RejectReason = "internal_error"

@@ -117,6 +117,8 @@ class ManifestNode:
     # NOT schema-rewritten, it is a file location, not a warehouse reference.
     secret_ref: str = ""  # the continuo-api-* Secret a python-api node's pod
     # receives as env vars; empty when the node names none.
+    timeout_seconds: int | None = None  # the node's declared task timeout in
+    # seconds (dbt meta.timeout_minutes); None when the node declares none.
     identity: str = ""  # explicit unique_id for a node that is not a relation
     # (a dbt test): dbt's own manifest unique_id. Empty for every relation
     # node, whose identity is "<schema>.<table>".

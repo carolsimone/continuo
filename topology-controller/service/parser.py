@@ -1,7 +1,9 @@
 import hashlib
 import json
 import logging
+from domain.exceptions import InvalidNodeSettingError
 from domain.model import ManifestNode, NodeType
+from domain.node_timeout import timeout_seconds
 from service.content_hash import content_hash_fold
 
 logger = logging.getLogger(__name__)
@@ -146,7 +148,8 @@ def parse_manifest(
 
         schedule_name = tags[0] if tags else default_schedule
 
-        criticality = node.get("config", {}).get("meta", {}).get("criticality", "SECONDARY")
+        meta = node.get("config", {}).get("meta", {})
+        criticality = meta.get("criticality", "SECONDARY")
 
         direct_unit_ids = list(node.get("depends_on", {}).get("macros", []))
         transitive_ids = _transitive_macro_ids(direct_unit_ids, macros)
@@ -176,6 +179,12 @@ def parse_manifest(
             config_hash=config_hash,
             code_unit_ids=direct_unit_ids,
         )
+        try:
+            manifest_node.timeout_seconds = timeout_seconds(meta.get("timeout_minutes"))
+        except ValueError as exc:
+            raise InvalidNodeSettingError(
+                f"{manifest_node.unique_id}: meta.timeout_minutes {exc}"
+            ) from exc
         nodes.append(manifest_node)
         node_by_id[node_id] = manifest_node
 
