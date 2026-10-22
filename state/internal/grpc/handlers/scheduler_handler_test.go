@@ -31,12 +31,11 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // TestEffectiveCancelledBy pins how the cancelling actor is resolved: the
 // authenticated metadata user wins; a system caller keeps a request-supplied
-// label (e.g. the watchdog); and a system caller with no label falls back to
+// label (e.g. a maintenance job); and a system caller with no label falls back to
 // the system sentinel so the persisted row never goes blank.
 func TestEffectiveCancelledBy(t *testing.T) {
 	// ctxWithUser threads userID through the real identity interceptor so
@@ -57,7 +56,7 @@ func TestEffectiveCancelledBy(t *testing.T) {
 		want      string
 	}{
 		{"authenticated user is authoritative", ctxWithUser("okta|alice"), "ignored-body", "okta|alice"},
-		{"system caller keeps request label", context.Background(), "watchdog", "watchdog"},
+		{"system caller keeps request label", context.Background(), "maintenance", "maintenance"},
 		{"system caller with empty request defaults to system", context.Background(), "", identity.SystemUserID},
 	}
 	for _, tc := range cases {
@@ -136,14 +135,6 @@ type stubSchedulerRepo struct {
 	cancelErr       error
 	getByIDResult   *postgres.SchedulerTracker
 	getByIDErr      error
-	stuckCandidates []postgres.StuckCandidate
-	stuckErr        error
-	lastStuckCutoff time.Time
-}
-
-func (s *stubSchedulerRepo) ListStuckCandidates(_ context.Context, cutoff time.Time) ([]postgres.StuckCandidate, error) {
-	s.lastStuckCutoff = cutoff
-	return s.stuckCandidates, s.stuckErr
 }
 
 func (s *stubSchedulerRepo) Create(_ context.Context, _ *postgres.SchedulerTracker) error { return nil }
@@ -576,33 +567,6 @@ func TestListAllSchedules_Empty(t *testing.T) {
 	resp, err := h.ListAllSchedules(context.Background(), &statev1.ListAllSchedulesRequest{})
 	require.NoError(t, err)
 	assert.Empty(t, resp.Schedules)
-}
-
-func TestListStuckCandidates_RequiresCutoff(t *testing.T) {
-	repo := &stubSchedulerRepo{}
-	h := NewSchedulerHandler(repo, nil, nil, nil, noopUoWFactory(), newTestLogger())
-
-	_, err := h.ListStuckCandidates(context.Background(), &statev1.ListStuckCandidatesRequest{})
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestListStuckCandidates_ForwardsCutoffAndMapsCandidates(t *testing.T) {
-	id := uuid.New()
-	cutoff := time.Now().Add(-30 * time.Minute)
-	repo := &stubSchedulerRepo{
-		stuckCandidates: []postgres.StuckCandidate{{ScheduleName: "stuck", ScheduleID: id}},
-	}
-	h := NewSchedulerHandler(repo, nil, nil, nil, noopUoWFactory(), newTestLogger())
-
-	resp, err := h.ListStuckCandidates(context.Background(), &statev1.ListStuckCandidatesRequest{
-		Cutoff: timestamppb.New(cutoff),
-	})
-	require.NoError(t, err)
-	assert.WithinDuration(t, cutoff, repo.lastStuckCutoff, time.Millisecond)
-	require.Len(t, resp.Candidates, 1)
-	assert.Equal(t, "stuck", resp.Candidates[0].ScheduleName)
-	assert.Equal(t, id.String(), resp.Candidates[0].ScheduleId)
 }
 
 func TestListAllSchedules_MergesData(t *testing.T) {

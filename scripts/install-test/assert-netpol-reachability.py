@@ -13,6 +13,9 @@ Usage: assert-netpol-reachability.py <rendered-manifest.yaml> [release-name]
 Extend REQUIRED_EDGES whenever a service begins reaching another over the
 network. Each edge is (source service, destination service, port, why): the
 destination pod must admit ingress from the source pod on that port.
+CLOSED_EDGES lists edges, in the same form, that no service needs: the
+destination pod must not admit them, so an allow rule nothing uses does not
+linger.
 """
 import sys
 
@@ -31,6 +34,11 @@ REQUIRED_EDGES = [
      "operator dashboard reads the topology and run projections over gRPC"),
     ("agent-chat", "dead-letter-controller", 50055,
      "continuo dlq list/show/redrive read and redrive dead letters over gRPC"),
+]
+
+CLOSED_EDGES = [
+    ("orchestrator", "state", 50051,
+     "orchestrator calls no state RPC: state fails a stalled run itself"),
 ]
 
 
@@ -133,7 +141,21 @@ def main():
         )
         sys.exit(1)
 
-    print(f"NetworkPolicy reachability OK: {len(REQUIRED_EDGES)} required edges permitted.")
+    open_edges = [
+        f"  {source} -> {dest}:{port}  ({why})"
+        for source, dest, port, why in CLOSED_EDGES
+        if edge_permitted(policies, instance, source, dest, port)
+    ]
+    if open_edges:
+        sys.stderr.write(
+            "FAIL: the rendered NetworkPolicy set permits these edges no service needs:\n"
+            + "\n".join(open_edges)
+            + "\n\nRemove the ingress rule that admits them in deploy/continuo/templates/networkpolicy.yaml.\n"
+        )
+        sys.exit(1)
+
+    print(f"NetworkPolicy reachability OK: {len(REQUIRED_EDGES)} required edges permitted, "
+          f"{len(CLOSED_EDGES)} unused edges closed.")
 
 
 if __name__ == "__main__":

@@ -13,7 +13,7 @@ import (
 // must not import any adapters/* package, nor any gRPC/proto wire types. The
 // dependency arrow runs adapter → port, never application → adapter. This covers
 // request handlers as well as other application services — dispatchers,
-// domain-service helpers, the dispatch watchdog — that orchestrate via ports.
+// domain-service helpers, reconcile loops — that orchestrate via ports.
 //
 // Whole `service` subtrees are listed where the entire application layer is
 // guarded (orchestrator); narrower entries are used where only specific

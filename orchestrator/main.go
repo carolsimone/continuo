@@ -19,7 +19,6 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/internal/sweeper"
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	"github.com/carolsimone/continuo/orchestrator/service/queries"
-	"github.com/carolsimone/continuo/orchestrator/service/watchdog"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	pkgdb "github.com/carolsimone/continuo/pkg/db"
 	"github.com/carolsimone/continuo/pkg/domain/model"
@@ -31,10 +30,7 @@ import (
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
-	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	goredis "github.com/redis/go-redis/v9"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 // topologyHandlerTimeout bounds the consumers whose one message covers a whole
@@ -310,35 +306,6 @@ func main() {
 
 	runSweeper := sweeper.New(runHistoryRepo, cfg.RunHistoryRetentionDays, cfg.RunSweeperIntervalMinutes, logger)
 	go runSweeper.Start(ctx)
-
-	// ========================================================================
-	// START DISPATCH WATCHDOG
-	// ========================================================================
-
-	stateConn, err := grpc.NewClient(cfg.StateGRPCAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		logger.Error("Failed to dial state gRPC", "endpoint", cfg.StateGRPCAddr, "error", err)
-		os.Exit(1)
-	}
-	defer func() { _ = stateConn.Close() }()
-	stateGRPCClient := statev1.NewStateServiceClient(stateConn)
-
-	stuckScheduleAdapter := grpcinfra.NewStuckScheduleAdapter(stateGRPCClient)
-	watchdogInstance := watchdog.NewWatchdog(
-		watchdog.Config{
-			Enabled:       cfg.WatchdogEnabled,
-			Interval:      time.Duration(cfg.WatchdogIntervalSecs) * time.Second,
-			NoProgressFor: time.Duration(cfg.WatchdogNoProgressMins) * time.Minute,
-		},
-		stuckScheduleAdapter,
-		stuckScheduleAdapter,
-		logger,
-	)
-	go func() {
-		if err := watchdogInstance.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-			logger.Error("Watchdog Run exited with error", "error", err)
-		}
-	}()
 
 	// ========================================================================
 	// INITIALIZE REDIS CONSUMERS

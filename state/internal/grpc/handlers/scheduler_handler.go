@@ -106,11 +106,11 @@ func (h *SchedulerHandler) CancelScheduler(ctx context.Context, req *statev1.Can
 // effectiveCancelledBy resolves who to record as the cancelling user. The
 // authenticated initiator carried in gRPC metadata is authoritative when it is
 // a real user; an unauthenticated/system caller (no metadata) falls back to the
-// request's cancelled_by so internal callers (e.g. the stuck-run watchdog) that
-// supply their own label keep recording it. When neither is present — a
-// platform cancel with no metadata and no request label — it resolves to the
-// system sentinel so the authoritative scheduler_tracker.cancelled_by row keeps
-// provenance rather than going blank.
+// request's cancelled_by so internal callers that supply their own label keep
+// recording it. When neither is present — a platform cancel with no metadata
+// and no request label — it resolves to the system sentinel so the
+// authoritative scheduler_tracker.cancelled_by row keeps provenance rather
+// than going blank.
 func effectiveCancelledBy(ctx context.Context, requestCancelledBy string) string {
 	id := identity.FromContext(ctx)
 	if !id.IsSystem() {
@@ -379,29 +379,6 @@ func (h *SchedulerHandler) ListAllSchedules(
 	}
 
 	return &statev1.ListAllSchedulesResponse{Schedules: summaries}, nil
-}
-
-// ListStuckCandidates returns the active runs that have made no lifecycle
-// progress since cutoff and have no RUNNING task.
-func (h *SchedulerHandler) ListStuckCandidates(
-	ctx context.Context,
-	req *statev1.ListStuckCandidatesRequest,
-) (*statev1.ListStuckCandidatesResponse, error) {
-	if req.GetCutoff() == nil {
-		return nil, status.Errorf(codes.InvalidArgument, "cutoff is required")
-	}
-	candidates, err := h.repo.ListStuckCandidates(ctx, req.GetCutoff().AsTime())
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "list stuck candidates: %v", err)
-	}
-	out := make([]*statev1.StuckCandidate, 0, len(candidates))
-	for _, c := range candidates {
-		out = append(out, &statev1.StuckCandidate{
-			ScheduleName: c.ScheduleName,
-			ScheduleId:   c.ScheduleID.String(),
-		})
-	}
-	return &statev1.ListStuckCandidatesResponse{Candidates: out}, nil
 }
 
 // TriggerSchedule manually triggers a schedule run. Returns FailedPrecondition

@@ -60,11 +60,6 @@ type SchedulerTrackerRepository interface {
 	// GetActiveScheduler returns the most recently created PENDING or RUNNING run for a schedule.
 	// Returns nil, nil when no active run exists (never returns ErrNotFound).
 	GetActiveScheduler(ctx context.Context, scheduleName string) (*SchedulerTracker, error)
-	// ListStuckCandidates returns active (pending|running) runs that have made no
-	// lifecycle progress since cutoff and have no task in 'running'. A run's
-	// progress time is last_heartbeat_at, or created_at when it has never
-	// progressed, so a run with zero tasks is returned too.
-	ListStuckCandidates(ctx context.Context, cutoff time.Time) ([]StuckCandidate, error)
 	// New: tx-accepting variants for atomic HTTP handler
 	UpdateInitializationStatusTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID, status string) error
 	CreateTx(ctx context.Context, tx *sqlx.Tx, tracker *SchedulerTracker) error
@@ -82,12 +77,6 @@ type SchedulerTrackerRepository interface {
 	// GetByIDForUpdateTx retrieves and row-locks the scheduler_tracker row for the given id
 	// using SELECT ... FOR UPDATE. Must be called within a transaction.
 	GetByIDForUpdateTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID) (*SchedulerTracker, error)
-}
-
-// StuckCandidate identifies one active run that has stopped making progress.
-type StuckCandidate struct {
-	ScheduleName string
-	ScheduleID   uuid.UUID
 }
 
 // LastRunData holds the summary of the most recent run for a schedule.
@@ -667,39 +656,4 @@ func (r *schedulerTrackerRepository) GetLastRunPerSchedule(ctx context.Context) 
 		result[d.ScheduleName] = d
 	}
 	return result, rows.Err()
-}
-
-// ListStuckCandidates returns one row per active (pending|running) run whose
-// progress time is strictly older than cutoff and none of whose tasks is in
-// 'running'. The progress time is last_heartbeat_at, which the Run aggregate
-// stamps on dispatch and on every applied task status change, or created_at for
-// a run that has never progressed, so a run whose dispatch never arrived (zero
-// tasks) qualifies. A run with a running task never qualifies: a long task
-// reports nothing until it ends.
-func (r *schedulerTrackerRepository) ListStuckCandidates(ctx context.Context, cutoff time.Time) ([]StuckCandidate, error) {
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT st.schedule_name, st.schedule_id
-		FROM scheduler_tracker st
-		WHERE st.status IN ('pending', 'running')
-		  AND COALESCE(st.last_heartbeat_at, st.created_at) < $1
-		  AND NOT EXISTS (
-		      SELECT 1 FROM task_tracker tt
-		      WHERE tt.schedule_id = st.schedule_id
-		        AND tt.status = 'running'
-		  )
-	`, cutoff)
-	if err != nil {
-		return nil, fmt.Errorf("list stuck candidates: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	var out []StuckCandidate
-	for rows.Next() {
-		var c StuckCandidate
-		if err := rows.Scan(&c.ScheduleName, &c.ScheduleID); err != nil {
-			return nil, fmt.Errorf("scan stuck candidate: %w", err)
-		}
-		out = append(out, c)
-	}
-	return out, rows.Err()
 }

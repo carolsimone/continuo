@@ -22,16 +22,6 @@ service StateService {
   // Errors: INVALID_ARGUMENT (empty name), FAILED_PRECONDITION (no active run or run not cancellable).
   rpc CancelSchedule(CancelScheduleRequest) returns (CancelScheduleResponse);
 
-  // ListStuckCandidates returns the active (pending|running) runs that have made
-  // no lifecycle progress since `cutoff` and have no task in TASK_STATUS_RUNNING.
-  // A run's progress time is Scheduler.last_heartbeat_at, stamped when the run is
-  // dispatched and whenever a task status change is applied, or its created_at
-  // when it has never progressed, so a run whose dispatch never arrived (zero
-  // tasks) is returned. A run with a RUNNING task is never returned: a long task
-  // reports no progress until it ends. One server-side query over every task of
-  // every active run. Empty `cutoff` is INVALID_ARGUMENT.
-  rpc ListStuckCandidates(ListStuckCandidatesRequest) returns (ListStuckCandidatesResponse);
-
   // Task operations
   rpc GetTask(GetTaskRequest) returns (TaskResponse);
   rpc GetTaskByScheduleAndNode(GetTaskByScheduleAndNodeRequest) returns (TaskResponse);
@@ -353,22 +343,6 @@ message CancelScheduleRequest {
 
 message CancelScheduleResponse {
   string schedule_id = 1;  // schedule_id of the cancelled run
-}
-
-message ListStuckCandidatesRequest {
-  // A run whose progress time (last_heartbeat_at, or created_at before its first
-  // progress) is at or after this instant is not a candidate. Required.
-  google.protobuf.Timestamp cutoff = 1;
-}
-
-// StuckCandidate identifies one active run the watchdog should consider cancelling.
-message StuckCandidate {
-  string schedule_name = 1;  // the schedule whose active run is stuck
-  string schedule_id   = 2;  // schedule_id (run id) of the active run
-}
-
-message ListStuckCandidatesResponse {
-  repeated StuckCandidate candidates = 1;
 }
 
 message GetSchedulerInitStatusRequest {

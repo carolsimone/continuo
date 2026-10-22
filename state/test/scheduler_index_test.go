@@ -7,9 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
-	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -166,7 +164,7 @@ func TestActiveScheduleLookupUsesIndex(t *testing.T) {
 }
 
 // TestGetLastRunPerSchedule_UsesIndex asserts the DISTINCT ON last-run scan,
-// hit by ListAllSchedules and the watchdog, walks the schedule_name index.
+// hit by ListAllSchedules, walks the schedule_name index.
 func TestGetLastRunPerSchedule_UsesIndex(t *testing.T) {
 	if testing.Short() {
 		t.Skip("integration test")
@@ -191,134 +189,4 @@ func TestGetLastRunPerSchedule_UsesIndex(t *testing.T) {
 	`)
 	assert.Contains(t, plan, "idx_scheduler_tracker_schedule_name_created",
 		"DISTINCT ON last-run scan must be able to use the schedule_name index; plan was:\n%s", plan)
-}
-
-// TestListStuckCandidates_ConsidersAllTasksBeyondFiftyRows is the regression
-// for the watchdog false-stuck bug: the prior watchdog only saw the newest 50
-// tasks (ListTasks default page), so a RUNNING task at position 51 of a wide
-// run made a healthy schedule falsely stuck-eligible. The server-side
-// aggregation considers ALL tasks, so a single RUNNING task anywhere excludes
-// the run regardless of how many tasks precede it.
-func TestListStuckCandidates_ConsidersAllTasksBeyondFiftyRows(t *testing.T) {
-	if testing.Short() {
-		t.Skip("integration test")
-	}
-	rawDB, cleanup := setupPostgres(t)
-	defer cleanup()
-	logger := slog.New(slog.NewTextHandler(nopWriter{}, nil))
-	repo := postgres.NewSchedulerTrackerRepository(rawDB, logger)
-
-	scheduleID := uuid.New()
-	_, err := rawDB.Exec(`
-		INSERT INTO scheduler_tracker (schedule_id, schedule_name, status, created_at)
-		VALUES ($1, 'wide', 'running', NOW() - INTERVAL '90 minutes')
-	`, scheduleID)
-	require.NoError(t, err)
-
-	// 60 stale non-running tasks (older than the cutoff) ...
-	old := time.Now().Add(-60 * time.Minute)
-	for i := 0; i < 60; i++ {
-		_, err := rawDB.Exec(`
-			INSERT INTO task_tracker (task_id, schedule_id, created_at, service_name, schema_name, table_name, job_name, status, max_retries)
-			VALUES (gen_random_uuid(), $1, $2, 'svc', 'sch', $3, $3, 'succeeded', 3)
-		`, scheduleID, old.Add(time.Duration(i)*time.Second), fmt.Sprintf("t%d", i))
-		require.NoError(t, err)
-	}
-	// ... plus ONE running task, newer than all the others — the "51st+" row the
-	// old paged watchdog could not see.
-	_, err = rawDB.Exec(`
-		INSERT INTO task_tracker (task_id, schedule_id, created_at, service_name, schema_name, table_name, job_name, status, max_retries)
-		VALUES (gen_random_uuid(), $1, $2, 'svc', 'sch', 'running-one', 'running-one', 'running', 3)
-	`, scheduleID, time.Now().Add(-1*time.Minute))
-	require.NoError(t, err)
-
-	cutoff := time.Now().Add(-30 * time.Minute)
-	got, err := repo.ListStuckCandidates(context.Background(), cutoff)
-	require.NoError(t, err)
-	assert.Empty(t, got, "a RUNNING task anywhere in the run means it is not stuck, even past 50 tasks")
-}
-
-// TestListStuckCandidates_StalledRunsAreCandidates confirms that an active run
-// whose progress time is older than the cutoff is reported whether or not it has
-// tasks: a run with only stale non-running tasks, and a run whose dispatch never
-// arrived (zero tasks). With no last_heartbeat_at, created_at is the progress
-// time.
-func TestListStuckCandidates_StalledRunsAreCandidates(t *testing.T) {
-	if testing.Short() {
-		t.Skip("integration test")
-	}
-	rawDB, cleanup := setupPostgres(t)
-	defer cleanup()
-	logger := slog.New(slog.NewTextHandler(nopWriter{}, nil))
-	repo := postgres.NewSchedulerTrackerRepository(rawDB, logger)
-
-	stalled := uuid.New()
-	_, err := rawDB.Exec(`
-		INSERT INTO scheduler_tracker (schedule_id, schedule_name, status, created_at)
-		VALUES ($1, 'stalled', 'running', NOW() - INTERVAL '90 minutes')
-	`, stalled)
-	require.NoError(t, err)
-	_, err = rawDB.Exec(`
-		INSERT INTO task_tracker (task_id, schedule_id, created_at, service_name, schema_name, table_name, job_name, status, max_retries)
-		VALUES (gen_random_uuid(), $1, $2, 'svc', 'sch', 'pending-one', 'pending-one', 'pending', 3)
-	`, stalled, time.Now().Add(-45*time.Minute))
-	require.NoError(t, err)
-
-	neverDispatched := uuid.New()
-	_, err = rawDB.Exec(`
-		INSERT INTO scheduler_tracker (schedule_id, schedule_name, status, created_at)
-		VALUES ($1, 'never-dispatched', 'pending', NOW() - INTERVAL '90 minutes')
-	`, neverDispatched)
-	require.NoError(t, err)
-
-	cutoff := time.Now().Add(-30 * time.Minute)
-	got, err := repo.ListStuckCandidates(context.Background(), cutoff)
-	require.NoError(t, err)
-	assert.ElementsMatch(t, []postgres.StuckCandidate{
-		{ScheduleName: "stalled", ScheduleID: stalled},
-		{ScheduleName: "never-dispatched", ScheduleID: neverDispatched},
-	}, got)
-}
-
-// TestListStuckCandidates_RecentProgressIsNotCandidate confirms the progress
-// clock, not task creation, decides staleness: a run whose tasks were created
-// long ago but whose last_heartbeat_at is recent is not reported, nor is a
-// zero-task run created inside the window, nor a terminal run.
-func TestListStuckCandidates_RecentProgressIsNotCandidate(t *testing.T) {
-	if testing.Short() {
-		t.Skip("integration test")
-	}
-	rawDB, cleanup := setupPostgres(t)
-	defer cleanup()
-	logger := slog.New(slog.NewTextHandler(nopWriter{}, nil))
-	repo := postgres.NewSchedulerTrackerRepository(rawDB, logger)
-
-	progressing := uuid.New()
-	_, err := rawDB.Exec(`
-		INSERT INTO scheduler_tracker (schedule_id, schedule_name, status, created_at, last_heartbeat_at)
-		VALUES ($1, 'progressing', 'running', NOW() - INTERVAL '90 minutes', NOW() - INTERVAL '5 minutes')
-	`, progressing)
-	require.NoError(t, err)
-	_, err = rawDB.Exec(`
-		INSERT INTO task_tracker (task_id, schedule_id, created_at, service_name, schema_name, table_name, job_name, status, max_retries)
-		VALUES (gen_random_uuid(), $1, NOW() - INTERVAL '90 minutes', 'svc', 'sch', 'waiting', 'waiting', 'pending', 3)
-	`, progressing)
-	require.NoError(t, err)
-
-	_, err = rawDB.Exec(`
-		INSERT INTO scheduler_tracker (schedule_id, schedule_name, status, created_at)
-		VALUES (gen_random_uuid(), 'just-created', 'pending', NOW() - INTERVAL '5 minutes')
-	`)
-	require.NoError(t, err)
-
-	_, err = rawDB.Exec(`
-		INSERT INTO scheduler_tracker (schedule_id, schedule_name, status, created_at, completed_at)
-		VALUES (gen_random_uuid(), 'finished', 'failed', NOW() - INTERVAL '90 minutes', NOW() - INTERVAL '80 minutes')
-	`)
-	require.NoError(t, err)
-
-	cutoff := time.Now().Add(-30 * time.Minute)
-	got, err := repo.ListStuckCandidates(context.Background(), cutoff)
-	require.NoError(t, err)
-	assert.Empty(t, got, "recent progress, a run inside its window and a terminal run are never candidates")
 }

@@ -263,8 +263,6 @@ services:
         condition: service_started
       redis:
         condition: service_started
-      state:
-        condition: service_started
       flyway-orchestrator:
         condition: service_started
       neo4j:
@@ -281,18 +279,6 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=continuo
-      # State gRPC (for watchdog) — same name the Helm chart exposes globally
-      - STATE_GRPC_ADDR=state:50051
-      # Dispatch watchdog — explicit at production defaults (also the
-      # config.go fallback). Do NOT lower NO_PROGRESS_MINUTES here: a
-      # value below the longest realistic gap between two progress stamps
-      # (dispatch to first RUNNING includes image pull + pod schedule on a
-      # fresh kind cluster) cancels real e2e runs.
-      # TestWatchdog_TerminatesStuckSchedule seeds runs whose progress
-      # clock is already 31 minutes old instead.
-      - ORCHESTRATOR_WATCHDOG_ENABLED=true
-      - ORCHESTRATOR_WATCHDOG_INTERVAL_SECONDS=60
-      - ORCHESTRATOR_WATCHDOG_NO_PROGRESS_MINUTES=30
       # PostgreSQL
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432

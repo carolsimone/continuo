@@ -2,15 +2,11 @@ module github.com/carolsimone/continuo/orchestrator
 
 go 1.26.10
 
-replace (
-	github.com/carolsimone/continuo/pkg => ../pkg
-	github.com/carolsimone/continuo/state => ../state
-)
+replace github.com/carolsimone/continuo/pkg => ../pkg
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/carolsimone/continuo/pkg v0.0.0-00010101000000-000000000000
-	github.com/carolsimone/continuo/state v0.0.0-00010101000000-000000000000
 	github.com/google/uuid v1.6.0
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/lib/pq v1.12.3

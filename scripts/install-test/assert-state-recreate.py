@@ -6,8 +6,8 @@ in the status transaction, dispatches the tasks a success makes ready. During a
 RollingUpdate the previous release's pod and the new one consume the same group,
 so a success of a run the new pod planned can reach the old pod, which records
 it without dispatching what it unblocks: the downstream tasks stay pending until
-the dispatch watchdog cancels the run. Recreate stops the old pod before the new
-one consumes anything.
+the run fails as stalled. Recreate stops the old pod before the new one
+consumes anything.
 
 Usage: assert-state-recreate.py <rendered-manifest.yaml>
 """

@@ -162,7 +162,7 @@ spec:
             matchExpressions:
               - key: app.kubernetes.io/name
                 operator: In
-                values: [orchestrator, agent-chat, ui]
+                values: [agent-chat, ui]
       ports:
         - port: 50051
 ---

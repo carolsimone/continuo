@@ -285,35 +285,6 @@ func getK8sJobs(ctx context.Context, labelSelector string) (*k8sJobList, error) 
 	return &jobList, nil
 }
 
-// scheduleState captures the fields the watchdog test asserts on.
-type scheduleState struct {
-	Status             string `db:"status"`
-	CancellationReason string `db:"cancellation_reason"`
-	CancelledBy        string `db:"cancelled_by"`
-}
-
-// readScheduleState returns the most-recently-created scheduler_tracker row
-// for a schedule matched by name. Returns an empty scheduleState if no row
-// matches (so callers can poll without distinguishing "not found" from "found
-// in non-terminal state").
-func readScheduleState(t *testing.T, ctx context.Context, clients *testClients, scheduleName string) scheduleState {
-	t.Helper()
-	var st scheduleState
-	err := clients.stateDB.GetContext(ctx, &st,
-		`SELECT
-		    coalesce(status, '') AS status,
-		    coalesce(cancellation_reason, '') AS cancellation_reason,
-		    coalesce(cancelled_by, '') AS cancelled_by
-		   FROM scheduler_tracker
-		  WHERE schedule_name = $1
-		  ORDER BY created_at DESC
-		  LIMIT 1`, scheduleName)
-	if err != nil {
-		return scheduleState{}
-	}
-	return st
-}
-
 // queryPostgresTrackerKind returns scheduler_tracker.kind for a run identified by
 // its schedule_id.
 func queryPostgresTrackerKind(t *testing.T, db *sqlx.DB, scheduleID uuid.UUID) string {
