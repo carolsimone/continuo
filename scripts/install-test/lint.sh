@@ -289,9 +289,27 @@ helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set runs=null >
   || { echo "FAIL: rendering with runs=null failed; helm upgrade --reuse-values from a chart without runs would fail"; exit 1; }
 grep -q 'TASK_MAX_RETRIES: "2"' "${tmp}/runs-null.yaml" && grep -q 'TASK_TIMEOUT_SECONDS: "86400"' "${tmp}/runs-null.yaml" \
   || { echo "FAIL: a release without runs values must get the default retry budget and task timeout"; exit 1; }
+# deployment_env_entries prints each env entry named like the ERE $3 in the
+# whole Deployment document named $1 of the rendered manifest $2, one
+# "- name: ..." line each. It exits 3 when the manifest has no such Deployment,
+# so a renamed Deployment cannot make a caller's check pass on nothing.
+deployment_env_entries() {
+  awk -v dep="$1" -v pattern="$3" '
+    function flush() {
+      if (isDeployment && named) { found = 1; printf "%s", hits }
+      isDeployment = 0; named = 0; hits = ""
+    }
+    /^---$/ { flush(); next }
+    /^kind: Deployment$/ { isDeployment = 1 }
+    ($0 == "  name: " dep) { named = 1 }
+    $0 ~ ("^ +- name: (" pattern ")$") { hits = hits $0 "\n" }
+    END { flush(); if (!found) exit 3 }' "$2"
+}
 for svc in state execution-controller; do
-  if grep -A40 "name: ${svc}\$" "${tmp}/defaults.yaml" | grep -qE 'name: TASK_(MAX_RETRIES|TIMEOUT_SECONDS)'; then
-    echo "FAIL: ${svc}'s own env must not shadow the ConfigMap's TASK_MAX_RETRIES or TASK_TIMEOUT_SECONDS"; exit 1
+  shadows="$(deployment_env_entries "$svc" "${tmp}/defaults.yaml" 'TASK_MAX_RETRIES|TASK_TIMEOUT_SECONDS')" \
+    || { echo "FAIL: the default render has no Deployment named ${svc}"; exit 1; }
+  if [ -n "$shadows" ]; then
+    echo "FAIL: ${svc}'s own env must not shadow the ConfigMap's TASK_MAX_RETRIES or TASK_TIMEOUT_SECONDS:"; echo "$shadows"; exit 1
   fi
 done
 
