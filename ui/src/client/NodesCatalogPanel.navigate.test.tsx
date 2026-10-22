@@ -17,6 +17,7 @@ function node(over: Partial<NodeSummary> = {}): NodeSummary {
     last_status: 'succeeded',
     last_run_at: '2026-05-10T10:00:00Z',
     operation: 'run',
+    timeout_seconds: 0,
     ...over,
   };
 }

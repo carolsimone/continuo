@@ -55,6 +55,7 @@ export function createNodesRouter(stateClient: GrpcClient, graphClient: GrpcGrap
           last_status:      r.last_status || null,
           last_run_at:      r.last_run_at || null,
           operation:        operationFromWire(r.operation),
+          timeout_seconds:  Number(r.timeout_seconds ?? 0),
         })),
       });
     });

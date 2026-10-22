@@ -385,6 +385,87 @@ describe('NodeDetailPage — foundations', () => {
   });
 });
 
+describe('NodeDetailPage — task timeout', () => {
+  const mkSummary = (over: Partial<{ schema_name: string; timeout_seconds: number }>) => ({
+    service_name: 'svc', schema_name: 'schema', table_name: 'tbl',
+    run_count: 1, success_rate_pct: null, avg_duration_sec: null, p95_duration_sec: null,
+    last_status: null, last_run_at: null, operation: 'run', timeout_seconds: 0,
+    ...over,
+  });
+
+  function serve(summary: () => Promise<Response>) {
+    mockFetch.mockImplementation((input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.startsWith('/api/nodes?')) return summary();
+      if (url.endsWith('/meta')) return jsonResp({ node_type: 'dbt-model' });
+      return jsonResp({ runs: [] });
+    });
+  }
+
+  it('shows the declared task timeout', async () => {
+    serve(() => jsonResp({ total_count: 1, nodes: [mkSummary({ timeout_seconds: 28800 })] }));
+    renderPage();
+    expect(await screen.findByText('task timeout 8 h · declared')).toBeInTheDocument();
+    const calls = mockFetch.mock.calls as unknown as [string][];
+    expect(calls.some(c => c[0] === '/api/nodes?service=svc&search=svc.schema.tbl&operation=run')).toBe(true);
+  });
+
+  it('shows a declared timeout below one hour in minutes', async () => {
+    serve(() => jsonResp({ total_count: 1, nodes: [mkSummary({ timeout_seconds: 1800 })] }));
+    renderPage();
+    expect(await screen.findByText('task timeout 30 min · declared')).toBeInTheDocument();
+  });
+
+  it('says the install default applies when none is declared', async () => {
+    serve(() => jsonResp({ total_count: 1, nodes: [mkSummary({ timeout_seconds: 0 })] }));
+    renderPage();
+    expect(await screen.findByText('task timeout · install default')).toBeInTheDocument();
+  });
+
+  it('shows no task timeout when the node has no summary', async () => {
+    serve(() => jsonResp({ total_count: 0, nodes: [] }));
+    renderPage();
+    await screen.findByText('dbt-model');
+    expect(screen.queryByText(/task timeout/)).not.toBeInTheDocument();
+  });
+
+  it('shows no task timeout, and still renders the page, when the summary fetch fails', async () => {
+    serve(() => Promise.reject(new Error('network down')));
+    renderPage();
+    await screen.findByText('dbt-model');
+    expect(screen.queryByText(/task timeout/)).not.toBeInTheDocument();
+  });
+
+  it('shows no task timeout when the summary request is rejected by the server', async () => {
+    serve(() => jsonResp({ error: 'boom' }, 502));
+    renderPage();
+    await screen.findByText('dbt-model');
+    expect(screen.queryByText(/task timeout/)).not.toBeInTheDocument();
+  });
+
+  it('ignores a summary of another schema with the same table name', async () => {
+    serve(() => jsonResp({ total_count: 1, nodes: [mkSummary({ schema_name: 'other', timeout_seconds: 28800 })] }));
+    renderPage();
+    await screen.findByText('dbt-model');
+    expect(screen.queryByText(/task timeout/)).not.toBeInTheDocument();
+  });
+
+  it('ignores a same-schema node whose table name merely starts with this one', async () => {
+    serve(() => jsonResp({ total_count: 1, nodes: [{ ...mkSummary({ timeout_seconds: 3600 }), table_name: 'tbl_2' }, mkSummary({ timeout_seconds: 28800 })] }));
+    renderPage();
+    expect(await screen.findByText('task timeout 8 h · declared')).toBeInTheDocument();
+  });
+
+  it('picks the matching schema when several nodes share the table name', async () => {
+    serve(() => jsonResp({ total_count: 2, nodes: [
+      mkSummary({ schema_name: 'other', timeout_seconds: 28800 }),
+      mkSummary({ schema_name: 'schema', timeout_seconds: 7200 }),
+    ] }));
+    renderPage();
+    expect(await screen.findByText('task timeout 2 h · declared')).toBeInTheDocument();
+  });
+});
+
 describe('NodeDetailPage back link', () => {
   it('returns to the schedule (run mode) when from = schedule/run', async () => {
     mockFetch.mockImplementation((input: RequestInfo | URL) => {
