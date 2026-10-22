@@ -17,6 +17,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/service/handlers"
 	"github.com/carolsimone/continuo/execution-controller/service/uow"
 	executortest "github.com/carolsimone/continuo/execution-controller/test"
+	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
@@ -64,7 +65,7 @@ func (f *dispatchFlow) rebind() {
 
 // dispatch delivers one task.dispatch:v1 entry of attempt n, as a new outbox
 // row of state, with the given known status and payload edits.
-func (f *dispatchFlow) dispatch(n int32, known string, edit func(*pkgevents.TaskDispatch)) {
+func (f *dispatchFlow) dispatch(n int32, known pkgmodel.AttemptStatus, edit func(*pkgevents.TaskDispatch)) {
 	f.t.Helper()
 	f.seq++
 	p := pkgevents.TaskDispatch{RunID: f.runID.String(), TaskID: f.taskID.String(), Attempt: n, KnownStatus: known,
@@ -135,7 +136,7 @@ func TestTaskDispatch_AnAttemptIsAcceptedOnceAndARepeatIsAnsweredFromIt(t *testi
 	reps := f.reports()
 	require.Len(t, reps, 3, "the first answer and two repeats")
 	for _, r := range reps {
-		assert.Equal(t, "queued", r.Status)
+		assert.Equal(t, pkgmodel.AttemptStatusQueued, r.Status)
 		assert.Equal(t, int32(0), r.Attempt)
 		assert.Equal(t, reps[0].QueuedAt, r.QueuedAt, "a repeat is the stored report")
 	}
@@ -168,7 +169,7 @@ func TestTaskDispatch_AnAcknowledgedAttemptWithNoTraceIsLost(t *testing.T) {
 	reps := f.reports()
 	require.Len(t, reps, 2)
 	for _, r := range reps {
-		assert.Equal(t, "failed", r.Status)
+		assert.Equal(t, pkgmodel.AttemptStatusFailed, r.Status)
 		assert.Equal(t, "infra", r.FailureClass)
 		assert.Equal(t, "attempt_lost", r.FailureReason)
 	}
@@ -187,7 +188,7 @@ func TestTaskDispatch_TheJobOfTheAttemptRebuildsItsRecord(t *testing.T) {
 
 	assert.Equal(t, []attemptRow{{Attempt: 1, Status: "starting"}}, f.rows())
 	require.Len(t, f.reports(), 1)
-	assert.Equal(t, "queued", f.reports()[0].Status)
+	assert.Equal(t, pkgmodel.AttemptStatusQueued, f.reports()[0].Status)
 }
 
 // A dispatch that cannot run is recorded failed with why; it is never retried.

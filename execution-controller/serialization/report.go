@@ -14,7 +14,7 @@ import (
 func ReportFromDomain(cmd command.DeployTask, r model.Report) pkgevents.TaskStatusReport {
 	p := pkgevents.TaskStatusReport{
 		RunID: cmd.ScheduleID, TaskID: cmd.TaskID, Attempt: num.ClampInt32(cmd.Attempt), JobName: cmd.JobName,
-		Status: string(r.Status), QueuedAt: r.QueuedAt, StartedAt: r.StartedAt, FinishedAt: r.FinishedAt,
+		Status: r.Status, QueuedAt: r.QueuedAt, StartedAt: r.StartedAt, FinishedAt: r.FinishedAt,
 		ExecutionSeconds: r.ExecutionSeconds, ExitCode: r.ExitCode,
 		ErrorMessage: r.ErrorMessage, LogS3Key: r.LogKey, RunResultsURI: r.RunResultsKey,
 		ParseCache: r.ParseCache, ParseCacheReason: r.ParseCacheReason,
@@ -28,7 +28,7 @@ func ReportFromDomain(cmd command.DeployTask, r model.Report) pkgevents.TaskStat
 // ReportToDomain reads a stored report back.
 func ReportToDomain(p pkgevents.TaskStatusReport) model.Report {
 	return model.Report{
-		Status: model.ReportStatus(p.Status), QueuedAt: p.QueuedAt, StartedAt: p.StartedAt, FinishedAt: p.FinishedAt,
+		Status: p.Status, QueuedAt: p.QueuedAt, StartedAt: p.StartedAt, FinishedAt: p.FinishedAt,
 		ExecutionSeconds: p.ExecutionSeconds, ExitCode: p.ExitCode, FailureReason: pkgmodel.FailureReason(p.FailureReason),
 		ErrorMessage: p.ErrorMessage, LogKey: p.LogS3Key, RunResultsKey: p.RunResultsURI,
 		ParseCache: p.ParseCache, ParseCacheReason: p.ParseCacheReason,

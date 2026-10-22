@@ -9,6 +9,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/service/outcomes"
 	"github.com/carolsimone/continuo/execution-controller/service/reports"
 	"github.com/carolsimone/continuo/execution-controller/service/uow"
+	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/google/uuid"
 )
 
@@ -20,9 +21,9 @@ func (o *Observer) settle(ctx context.Context, u uow.UnitOfWork, d *model.Deploy
 	if d.Mode() != model.ModeProduction {
 		return o.settleCandidate(ctx, u, d, v)
 	}
-	outcome, status, message := "ok", model.ReportSucceeded, ""
+	outcome, status, message := "ok", pkgmodel.AttemptStatusSucceeded, ""
 	if !v.Succeeded {
-		outcome, status, message = "failed", model.ReportFailed, o.errorMessage(d.Facts())
+		outcome, status, message = "failed", pkgmodel.AttemptStatusFailed, o.errorMessage(d.Facts())
 	}
 	if err := d.Finish(outcome, now); err != nil {
 		return fmt.Errorf("finish deployment %s: %w", d.ID(), err)
@@ -72,7 +73,7 @@ func (o *Observer) reportRunning(ctx context.Context, u uow.UnitOfWork, d *model
 	if err != nil || cancelled {
 		return err
 	}
-	return reports.Write(ctx, u.OutboxRepo(), d, model.ReportRunning, "")
+	return reports.Write(ctx, u.OutboxRepo(), d, pkgmodel.AttemptStatusRunning, "")
 }
 
 // cancelled reports whether d's run was cancelled; its attempt is then

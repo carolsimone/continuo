@@ -177,7 +177,7 @@ func TestProcess_ASucceededAttemptReportsItsResultAndLog(t *testing.T) {
 	assert.Nil(t, status[0]["error_message"], "a success carries no error message")
 	assert.Nil(t, status[0]["failure_class"])
 	require.NotNil(t, got.LastReport(), "the row keeps the report it sent")
-	assert.Equal(t, model.ReportSucceeded, got.LastReport().Status)
+	assert.Equal(t, pkgmodel.AttemptStatusSucceeded, got.LastReport().Status)
 }
 
 func TestProcess_AFailedAttemptIsReportedWithItsClassAndQueuesNothing(t *testing.T) {
@@ -627,7 +627,7 @@ func TestSettle_AFailureAndItsReportCommitTogether(t *testing.T) {
 	got := h.reload(t, dep.JobName())
 	assert.Equal(t, "failed", got.Outcome())
 	require.NotNil(t, got.LastReport())
-	assert.Equal(t, model.ReportFailed, got.LastReport().Status)
+	assert.Equal(t, pkgmodel.AttemptStatusFailed, got.LastReport().Status)
 }
 
 // failingOutbox fails its nth Create.

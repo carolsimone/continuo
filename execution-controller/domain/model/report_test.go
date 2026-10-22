@@ -14,9 +14,9 @@ func TestReportOf_AQueuedAttemptIsQueuedWhenItWasAccepted(t *testing.T) {
 	accepted := time.Date(2026, 10, 20, 23, 1, 20, 0, time.UTC)
 	d := NewDeployment(command.DeployTask{TaskID: uuid.NewString(), Attempt: 1}, nil, accepted)
 
-	r := d.ReportOf(ReportQueued, "ignored")
+	r := d.ReportOf(pkgmodel.AttemptStatusQueued, "ignored")
 
-	assert.Equal(t, Report{Status: ReportQueued, QueuedAt: &accepted}, r, "only a failure carries an error message")
+	assert.Equal(t, Report{Status: pkgmodel.AttemptStatusQueued, QueuedAt: &accepted}, r, "only a failure carries an error message")
 }
 
 // A report carries every fact seen of the attempt: a failure its reason and
@@ -29,10 +29,10 @@ func TestReportOf_CarriesEveryFactSeenOfTheAttempt(t *testing.T) {
 	d.Observe(AttemptFacts{StartedAt: &started, FinishedAt: &finished, ExitCode: &code, LogKey: "logs/k",
 		RunResultsKey: "results/k", ParseCache: "degraded", ParseCacheReason: "missing", Reason: pkgmodel.FailureReasonOOMKilled})
 
-	r := d.ReportOf(ReportFailed, "OOMKilled")
+	r := d.ReportOf(pkgmodel.AttemptStatusFailed, "OOMKilled")
 
 	secs := 27.0
-	assert.Equal(t, Report{Status: ReportFailed, QueuedAt: &accepted, StartedAt: &started, FinishedAt: &finished,
+	assert.Equal(t, Report{Status: pkgmodel.AttemptStatusFailed, QueuedAt: &accepted, StartedAt: &started, FinishedAt: &finished,
 		ExecutionSeconds: &secs, ExitCode: &code, FailureReason: pkgmodel.FailureReasonOOMKilled, ErrorMessage: "OOMKilled",
 		LogKey: "logs/k", RunResultsKey: "results/k", ParseCache: "degraded", ParseCacheReason: "missing"}, r)
 }
@@ -41,7 +41,7 @@ func TestReportOf_CarriesEveryFactSeenOfTheAttempt(t *testing.T) {
 func TestDeployment_RecordReportKeepsTheLastReport(t *testing.T) {
 	d := NewDeployment(command.DeployTask{TaskID: uuid.NewString()}, nil, time.Now())
 	assert.Nil(t, d.LastReport())
-	d.RecordReport(Report{Status: ReportQueued})
-	d.RecordReport(Report{Status: ReportRunning})
-	assert.Equal(t, &Report{Status: ReportRunning}, d.LastReport())
+	d.RecordReport(Report{Status: pkgmodel.AttemptStatusQueued})
+	d.RecordReport(Report{Status: pkgmodel.AttemptStatusRunning})
+	assert.Equal(t, &Report{Status: pkgmodel.AttemptStatusRunning}, d.LastReport())
 }

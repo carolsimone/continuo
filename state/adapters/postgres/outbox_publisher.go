@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/identity"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
@@ -96,7 +97,7 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Ent
 			RunID:          e.ID.String(),
 			TaskID:         e.TaskID.String(),
 			Attempt:        e.Attempt,
-			KnownStatus:    string(e.KnownStatus),
+			KnownStatus:    model.AttemptStatus(e.KnownStatus),
 			ScheduleName:   e.ScheduleName,
 			NodeKey:        string(e.Node.Key),
 			ServiceName:    e.Node.ServiceName,

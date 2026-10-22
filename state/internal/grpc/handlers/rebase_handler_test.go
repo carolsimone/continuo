@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/pkg/testdeps"
@@ -172,7 +173,7 @@ func requireDispatched(t *testing.T, db *sqlx.DB, runID, taskID uuid.UUID, sched
 	require.Equal(t, scheduleName, payload.ScheduleName)
 	require.Equal(t, taskID.String(), payload.TaskID)
 	require.Equal(t, int32(0), payload.Attempt)
-	require.Equal(t, pkgevents.AttemptDispatched, payload.KnownStatus)
+	require.Equal(t, model.AttemptStatusDispatched, payload.KnownStatus)
 }
 
 func TestRebaseHandler_HappyPath_CancelledSource(t *testing.T) {

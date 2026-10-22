@@ -101,7 +101,7 @@ func TestRepo_TheLastReportRoundTrips(t *testing.T) {
 	cmd := validCmd()
 	accepted := time.Now().UTC().Truncate(time.Microsecond)
 	d := model.NewDeployment(cmd, nil, accepted)
-	d.RecordReport(d.ReportOf(model.ReportQueued, ""))
+	d.RecordReport(d.ReportOf(pkgmodel.AttemptStatusQueued, ""))
 	_, err := repo.AddAttempt(ctx, d)
 	require.NoError(t, err)
 
@@ -112,12 +112,12 @@ func TestRepo_TheLastReportRoundTrips(t *testing.T) {
 	got, err := txRepo.LoadByTaskAttempt(ctx, cmd.TaskID, 0)
 	require.NoError(t, err)
 	require.NotNil(t, got.LastReport())
-	assert.Equal(t, model.ReportQueued, got.LastReport().Status)
+	assert.Equal(t, pkgmodel.AttemptStatusQueued, got.LastReport().Status)
 	assert.True(t, accepted.Equal(*got.LastReport().QueuedAt))
 
 	code := int32(1)
 	got.Observe(model.AttemptFacts{ExitCode: &code, Reason: pkgmodel.FailureReasonExitCode})
-	got.RecordReport(got.ReportOf(model.ReportFailed, "boom"))
+	got.RecordReport(got.ReportOf(pkgmodel.AttemptStatusFailed, "boom"))
 	require.NoError(t, txRepo.Save(ctx, got))
 	var class string
 	require.NoError(t, tx.Get(&class, `SELECT last_report->>'failure_class' FROM deployments WHERE id = $1`, got.ID()))

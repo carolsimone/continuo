@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
@@ -42,7 +43,7 @@ func TestParseTaskDispatch_ReadsTheGoldenEntry(t *testing.T) {
 	assert.Equal(t, uuid.MustParse("7f3e1a2b-4c5d-4e6f-8a9b-0c1d2e3f4a5b"), evt.RunID)
 	assert.Equal(t, uuid.MustParse("3e8d7c6b-5a49-4382-9170-6f5e4d3c2b1a"), evt.TaskID)
 	assert.Equal(t, 1, evt.Attempt)
-	assert.Equal(t, "dispatched", evt.KnownStatus)
+	assert.Equal(t, pkgmodel.AttemptStatusDispatched, evt.KnownStatus)
 	assert.Equal(t, "service-1-e2e-schema-ftable-e-7f3e1a2b-r1", evt.JobName)
 	assert.Equal(t, int64(86400), evt.TimeoutSeconds)
 	assert.Equal(t, "dbt-model", evt.NodeType)

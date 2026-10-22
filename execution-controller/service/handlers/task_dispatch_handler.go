@@ -81,18 +81,18 @@ func (h *TaskDispatchHandler) Handle(ctx context.Context, u uow.UnitOfWork, evt 
 			"task_id", cmd.TaskID, "attempt", cmd.Attempt)
 		return nil
 	case model.RefuseInvalid:
-		return h.add(ctx, u, model.NewRefusedDeployment(cmd, procID, problem, message, now), model.ReportFailed, message)
+		return h.add(ctx, u, model.NewRefusedDeployment(cmd, procID, problem, message, now), pkgmodel.AttemptStatusFailed, message)
 	case model.AdoptJob:
 		h.logger.Warn("No record of the attempt, but its Job exists — the record is rebuilt from it",
 			"task_id", cmd.TaskID, "attempt", cmd.Attempt, "job_name", cmd.JobName)
-		return h.add(ctx, u, model.NewAdoptedDeployment(cmd, procID, now), model.ReportQueued, "")
+		return h.add(ctx, u, model.NewAdoptedDeployment(cmd, procID, now), pkgmodel.AttemptStatusQueued, "")
 	case model.CreateAttempt:
-		return h.add(ctx, u, model.NewDeployment(cmd, procID, now), model.ReportQueued, "")
+		return h.add(ctx, u, model.NewDeployment(cmd, procID, now), pkgmodel.AttemptStatusQueued, "")
 	case model.ReportLost:
 		message := fmt.Sprintf("state knows attempt %d as %s, and execution-controller holds neither its record nor its Job",
 			cmd.Attempt, evt.KnownStatus)
 		h.logger.Error("An acknowledged attempt is lost", "task_id", cmd.TaskID, "attempt", cmd.Attempt, "known_status", evt.KnownStatus)
-		return h.add(ctx, u, model.NewRefusedDeployment(cmd, procID, pkgmodel.FailureReasonAttemptLost, message, now), model.ReportFailed, message)
+		return h.add(ctx, u, model.NewRefusedDeployment(cmd, procID, pkgmodel.FailureReasonAttemptLost, message, now), pkgmodel.AttemptStatusFailed, message)
 	}
 	return fmt.Errorf("dispatch of attempt %d of task %s: no action %d", cmd.Attempt, cmd.TaskID, action)
 }
@@ -100,7 +100,7 @@ func (h *TaskDispatchHandler) Handle(ctx context.Context, u uow.UnitOfWork, evt 
 // add stores d, the record of a new attempt, with its first report, and
 // writes the report. A record of the attempt stored meanwhile (another
 // replica's delivery of the same attempt) is answered instead.
-func (h *TaskDispatchHandler) add(ctx context.Context, u uow.UnitOfWork, d *model.Deployment, status model.ReportStatus, message string) error {
+func (h *TaskDispatchHandler) add(ctx context.Context, u uow.UnitOfWork, d *model.Deployment, status pkgmodel.AttemptStatus, message string) error {
 	d.RecordReport(d.ReportOf(status, message))
 	added, err := u.DeploymentsRepo().AddAttempt(ctx, d)
 	if err != nil {

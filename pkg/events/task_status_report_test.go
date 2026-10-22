@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/events"
 )
 
@@ -68,7 +69,7 @@ func TestTaskStatusReportFields_WritesTimesInUTC(t *testing.T) {
 	at := time.Date(2026, 10, 21, 1, 1, 20, 0, cest)
 	got, err := events.TaskStatusReportFields("e", "default", "execution-controller", at, events.TaskStatusReport{
 		RunID: "7f3e1a2b-4c5d-4e6f-8a9b-0c1d2e3f4a5b", TaskID: "3e8d7c6b-5a49-4382-9170-6f5e4d3c2b1a",
-		Status: events.AttemptQueued, QueuedAt: &at,
+		Status: model.AttemptStatusQueued, QueuedAt: &at,
 	})
 	require.NoError(t, err)
 	assert.Contains(t, got["payload"], `"queued_at":"2026-10-20T23:01:20Z"`)

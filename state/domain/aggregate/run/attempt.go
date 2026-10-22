@@ -3,19 +3,24 @@ package run
 import (
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/google/uuid"
 )
 
-// AttemptStatus is the lifecycle status of one execution attempt of a task.
+// AttemptStatus is the lifecycle status of one execution attempt of a task:
+// a value of the contract's attempt_status vocabulary, which the two task
+// streams carry, or cancelled, which only state records.
 type AttemptStatus string
 
 const (
-	AttemptDispatched AttemptStatus = "dispatched"
-	AttemptQueued     AttemptStatus = "queued"
-	AttemptRunning    AttemptStatus = "running"
-	AttemptSucceeded  AttemptStatus = "succeeded"
-	AttemptFailed     AttemptStatus = "failed"
-	AttemptCancelled  AttemptStatus = "cancelled"
+	AttemptDispatched = AttemptStatus(model.AttemptStatusDispatched)
+	AttemptQueued     = AttemptStatus(model.AttemptStatusQueued)
+	AttemptRunning    = AttemptStatus(model.AttemptStatusRunning)
+	AttemptSucceeded  = AttemptStatus(model.AttemptStatusSucceeded)
+	AttemptFailed     = AttemptStatus(model.AttemptStatusFailed)
+	// AttemptCancelled is an attempt of a run that was cancelled while the
+	// attempt was open. It never travels on a stream.
+	AttemptCancelled AttemptStatus = "cancelled"
 )
 
 // Rank orders the statuses along an attempt's life: dispatched 0, queued 1,

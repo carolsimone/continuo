@@ -9,13 +9,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// The statuses a dispatch's known_status can name.
-const (
-	KnownDispatched = "dispatched"
-	KnownQueued     = "queued"
-	KnownRunning    = "running"
-)
-
 // DispatchAction is what execution-controller does with one dispatch of an
 // attempt.
 type DispatchAction int
@@ -46,7 +39,7 @@ const (
 // attempt exists, and state's known status. Only a dispatch state still
 // knows as dispatched creates an attempt: an acknowledged attempt is never
 // run again because of a question.
-func DecideDispatch(held, laterHeld bool, problem pkgmodel.FailureReason, jobOfAttempt bool, knownStatus string) DispatchAction {
+func DecideDispatch(held, laterHeld bool, problem pkgmodel.FailureReason, jobOfAttempt bool, knownStatus pkgmodel.AttemptStatus) DispatchAction {
 	switch {
 	case held:
 		return ResendReport
@@ -56,23 +49,25 @@ func DecideDispatch(held, laterHeld bool, problem pkgmodel.FailureReason, jobOfA
 		return RefuseInvalid
 	case jobOfAttempt:
 		return AdoptJob
-	case knownStatus == KnownDispatched:
+	case knownStatus == pkgmodel.AttemptStatusDispatched:
 		return CreateAttempt
 	}
 	return ReportLost
 }
 
 // DispatchProblem returns the reason and message of what stops cmd, the
-// command of a dispatch state knows in knownStatus, from running; an empty
+// command of a dispatch state knows in knownStatus (dispatched, queued or
+// running; any other value cannot run), from running; an empty
 // reason when nothing does. The Job itself may still be refused when it is
 // built (deploy.ErrMalformedDispatch).
-func DispatchProblem(cmd command.DeployTask, knownStatus string) (pkgmodel.FailureReason, string) {
+func DispatchProblem(cmd command.DeployTask, knownStatus pkgmodel.AttemptStatus) (pkgmodel.FailureReason, string) {
 	if _, err := pkgmodel.ParseNodeType(cmd.NodeType); err != nil {
 		return pkgmodel.FailureReasonInvalidNodeType, err.Error()
 	}
 	problem := ""
 	switch {
-	case knownStatus != KnownDispatched && knownStatus != KnownQueued && knownStatus != KnownRunning:
+	case knownStatus != pkgmodel.AttemptStatusDispatched && knownStatus != pkgmodel.AttemptStatusQueued &&
+		knownStatus != pkgmodel.AttemptStatusRunning:
 		problem = fmt.Sprintf("known_status %q is not dispatched, queued or running", knownStatus)
 	case cmd.JobName == "" || len(cmd.JobName) > 63:
 		problem = fmt.Sprintf("job_name %q is not a Kubernetes name of 1 to 63 characters", cmd.JobName)

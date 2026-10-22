@@ -10,6 +10,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/domain/event"
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	"github.com/carolsimone/continuo/execution-controller/serialization"
+	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
@@ -18,7 +19,7 @@ import (
 // Write reports d's attempt with status, from everything observed of it and,
 // for a failure, errorMessage: it keeps the report as d's last report, which
 // the caller saves with d, and writes it to the outbox.
-func Write(ctx context.Context, repo outbox.Repository, d *model.Deployment, status model.ReportStatus, errorMessage string) error {
+func Write(ctx context.Context, repo outbox.Repository, d *model.Deployment, status pkgmodel.AttemptStatus, errorMessage string) error {
 	r := d.ReportOf(status, errorMessage)
 	d.RecordReport(r)
 	return write(ctx, repo, d, r)
@@ -31,7 +32,7 @@ func Resend(ctx context.Context, repo outbox.Repository, d *model.Deployment) er
 	if last := d.LastReport(); last != nil {
 		return write(ctx, repo, d, *last)
 	}
-	return Write(ctx, repo, d, model.ReportQueued, "")
+	return Write(ctx, repo, d, pkgmodel.AttemptStatusQueued, "")
 }
 
 func write(ctx context.Context, repo outbox.Repository, d *model.Deployment, r model.Report) error {

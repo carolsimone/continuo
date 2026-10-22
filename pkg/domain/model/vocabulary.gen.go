@@ -331,6 +331,52 @@ func (v NodeType) Runtime() NodeRuntime {
 	return ""
 }
 
+// AttemptStatus — Where one attempt of a task stands, on the two task streams. state sends dispatched, queued or running as a dispatch's known_status on task.dispatch:v1; execution-controller reports queued, running, succeeded or failed as a report's status on task.status.updated:v2.
+// Values come from the vocabulary "attempt_status" in contract.yaml, in
+// declaration order.
+type AttemptStatus string
+
+const (
+	// AttemptStatusDispatched — state dispatched the attempt and has no report of it yet.
+	AttemptStatusDispatched AttemptStatus = "dispatched"
+	// AttemptStatusQueued — execution-controller accepted the attempt; it waits for a slot or its Job.
+	AttemptStatusQueued AttemptStatus = "queued"
+	// AttemptStatusRunning — the main container of the attempt's pod started.
+	AttemptStatusRunning AttemptStatus = "running"
+	// AttemptStatusSucceeded — the attempt ended successfully and no pod of it can run again.
+	AttemptStatusSucceeded AttemptStatus = "succeeded"
+	// AttemptStatusFailed — the attempt ended with a failure_reason and no pod of it can run again.
+	AttemptStatusFailed AttemptStatus = "failed"
+)
+
+// AttemptStatuses returns every value in contract.yaml declaration order.
+func AttemptStatuses() []AttemptStatus {
+	return []AttemptStatus{
+		AttemptStatusDispatched,
+		AttemptStatusQueued,
+		AttemptStatusRunning,
+		AttemptStatusSucceeded,
+		AttemptStatusFailed,
+	}
+}
+
+// IsValid reports whether v is a value declared in contract.yaml.
+func (v AttemptStatus) IsValid() bool {
+	switch v {
+	case AttemptStatusDispatched:
+		return true
+	case AttemptStatusQueued:
+		return true
+	case AttemptStatusRunning:
+		return true
+	case AttemptStatusSucceeded:
+		return true
+	case AttemptStatusFailed:
+		return true
+	}
+	return false
+}
+
 // FailureClass — What kind of failure ended an attempt of a task. execution-controller classifies each attempt that fails and records the class with the attempt's facts.
 // Values come from the vocabulary "failure_class" in contract.yaml, in
 // declaration order.

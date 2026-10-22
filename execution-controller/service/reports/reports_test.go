@@ -9,6 +9,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/domain/command"
 	"github.com/carolsimone/continuo/execution-controller/domain/event"
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
+	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -41,7 +42,7 @@ func TestWrite_KeepsTheReportAndWritesItsPayload(t *testing.T) {
 	d := model.NewDeployment(cmd, nil, time.Now())
 	out := &recordingOutbox{}
 
-	require.NoError(t, Write(context.Background(), out, d, model.ReportQueued, ""))
+	require.NoError(t, Write(context.Background(), out, d, pkgmodel.AttemptStatusQueued, ""))
 
 	require.Len(t, out.created, 1)
 	e := out.created[0]
@@ -49,22 +50,22 @@ func TestWrite_KeepsTheReportAndWritesItsPayload(t *testing.T) {
 	assert.Equal(t, streams.TaskStatusUpdatedV2, e.StreamName)
 	assert.Equal(t, cmd.TaskID, e.AggregateID.String(), "a task's reports are published in the order they were written")
 	p := payloadOf(t, e)
-	assert.Equal(t, "queued", p.Status)
+	assert.Equal(t, pkgmodel.AttemptStatusQueued, p.Status)
 	assert.Equal(t, int32(1), p.Attempt)
 	assert.Equal(t, cmd.ScheduleID, p.RunID)
 	require.NotNil(t, d.LastReport())
-	assert.Equal(t, model.ReportQueued, d.LastReport().Status)
+	assert.Equal(t, pkgmodel.AttemptStatusQueued, d.LastReport().Status)
 }
 
 // A repeated dispatch is answered with the attempt's last report, unchanged.
 func TestResend_WritesTheLastReportAgain(t *testing.T) {
 	cmd := command.DeployTask{TaskID: uuid.NewString(), ScheduleID: uuid.NewString()}
 	d := model.NewDeployment(cmd, nil, time.Now())
-	d.RecordReport(model.Report{Status: model.ReportRunning})
+	d.RecordReport(model.Report{Status: pkgmodel.AttemptStatusRunning})
 	out := &recordingOutbox{}
 
 	require.NoError(t, Resend(context.Background(), out, d))
 
 	require.Len(t, out.created, 1)
-	assert.Equal(t, "running", payloadOf(t, out.created[0]).Status)
+	assert.Equal(t, pkgmodel.AttemptStatusRunning, payloadOf(t, out.created[0]).Status)
 }

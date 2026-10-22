@@ -22,6 +22,9 @@ export const NODE_TYPES_SUPPORTING_FULL_REFRESH: readonly NodeType[] = ['dbt-mod
 export const NODE_TYPES_WITH_SECRET_REF: readonly NodeType[] = ['python-api'];
 export const NODE_TYPE_RUNTIME: Readonly<Record<NodeType, NodeRuntime>> = { 'dbt-model': 'dbt', 'dbt-seed': 'dbt', 'dbt-snapshot': 'dbt', 'python-node': 'python', 'python-csv': 'python', 'python-api': 'python', 'dbt-test': 'dbt' };
 
+export type AttemptStatus = 'dispatched' | 'queued' | 'running' | 'succeeded' | 'failed';
+export const ATTEMPT_STATUSES: readonly AttemptStatus[] = ['dispatched', 'queued', 'running', 'succeeded', 'failed'];
+
 export type FailureClass = 'task' | 'resource' | 'infra' | 'start' | 'timeout' | 'invalid';
 export const FAILURE_CLASSES: readonly FailureClass[] = ['task', 'resource', 'infra', 'start', 'timeout', 'invalid'];
 

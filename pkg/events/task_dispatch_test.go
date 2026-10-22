@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/events"
 )
 
@@ -82,7 +83,7 @@ func TestDecodeTaskDispatch_RejectsAnEntryWithoutAnAttemptIdentity(t *testing.T)
 func TestDecodeTaskDispatch_KeepsUnjudgedFieldsAsWritten(t *testing.T) {
 	_, p, err := events.DecodeTaskDispatch(validDispatchFields(`"attempt":2,"known_status":"lost","node_type":"dbt-macro"`))
 	require.NoError(t, err)
-	assert.Equal(t, "lost", p.KnownStatus)
+	assert.Equal(t, model.AttemptStatus("lost"), p.KnownStatus)
 	assert.Equal(t, "dbt-macro", p.NodeType)
 }
 

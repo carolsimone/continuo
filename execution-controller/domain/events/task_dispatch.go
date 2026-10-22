@@ -2,6 +2,7 @@ package events
 
 import (
 	"github.com/carolsimone/continuo/execution-controller/domain/command"
+	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/google/uuid"
 )
 
@@ -13,7 +14,7 @@ type TaskDispatch struct {
 	RunID          uuid.UUID
 	TaskID         uuid.UUID
 	Attempt        int
-	KnownStatus    string
+	KnownStatus    pkgmodel.AttemptStatus
 	ScheduleName   string
 	ServiceName    string
 	SchemaName     string

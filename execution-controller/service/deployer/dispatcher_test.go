@@ -18,6 +18,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/domain/repository"
 	"github.com/carolsimone/continuo/execution-controller/serialization"
 	"github.com/carolsimone/continuo/execution-controller/service/deployer"
+	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/google/uuid"
@@ -209,7 +210,7 @@ func TestDispatcher_BudgetExhaustedReportsCreateFailed(t *testing.T) {
 	assert.Equal(t, 0, outboxCountByType(t, db, "node_updated"), "a deploy failure writes its report only")
 
 	got := failedReport(t, db)
-	assert.Equal(t, "failed", got.Status)
+	assert.Equal(t, pkgmodel.AttemptStatusFailed, got.Status)
 	assert.Equal(t, "infra", got.FailureClass, "Kubernetes refused the Job on every try: state may retry it")
 	assert.Equal(t, "create_failed", got.FailureReason)
 	assert.Equal(t, "apiserver down", got.ErrorMessage)
@@ -300,7 +301,7 @@ func TestDispatcher_CorruptedJobParamsMarksFailedWithRowIdentity(t *testing.T) {
 	got := failedReport(t, db)
 	assert.Equal(t, taskID.String(), got.TaskID, "the report uses the row's task_id")
 	assert.Equal(t, scheduleID.String(), got.RunID)
-	assert.Equal(t, "failed", got.Status)
+	assert.Equal(t, pkgmodel.AttemptStatusFailed, got.Status)
 	assert.Equal(t, "malformed_dispatch", got.FailureReason)
 }
 

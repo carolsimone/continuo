@@ -425,6 +425,30 @@ vocabularies:
         runtime: dbt
         description: a dbt data test; exists only in candidate and current_prod topologies, where validation bind-checks its compiled SQL; never promoted to the orchestrator's graph and never scheduled.
 
+  - name: attempt_status
+    const: AttemptStatus
+    description: >-
+      Where one attempt of a task stands, on the two task streams. state sends
+      dispatched, queued or running as a dispatch's known_status on
+      task.dispatch:v1; execution-controller reports queued, running,
+      succeeded or failed as a report's status on task.status.updated:v2.
+    values:
+      - value: dispatched
+        const: Dispatched
+        description: state dispatched the attempt and has no report of it yet.
+      - value: queued
+        const: Queued
+        description: execution-controller accepted the attempt; it waits for a slot or its Job.
+      - value: running
+        const: Running
+        description: the main container of the attempt's pod started.
+      - value: succeeded
+        const: Succeeded
+        description: the attempt ended successfully and no pod of it can run again.
+      - value: failed
+        const: Failed
+        description: the attempt ended with a failure_reason and no pod of it can run again.
+
   - name: failure_class
     const: FailureClass
     description: >-

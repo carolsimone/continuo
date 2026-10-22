@@ -506,7 +506,7 @@ func creationFailureReason(err error) pkgmodel.FailureReason {
 // be created as failed, with the reason recorded in its facts; state decides
 // whether the task runs again. The caller saves dep.
 func (d *Dispatcher) reportCreationFailure(ctx context.Context, outboxRepo outbox.Repository, dep *model.Deployment) error {
-	if err := reports.Write(ctx, outboxRepo, dep, model.ReportFailed, dep.Facts().Message); err != nil {
+	if err := reports.Write(ctx, outboxRepo, dep, pkgmodel.AttemptStatusFailed, dep.Facts().Message); err != nil {
 		return fmt.Errorf("report the failed attempt: %w", err)
 	}
 	return nil

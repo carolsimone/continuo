@@ -10,7 +10,7 @@ import (
 
 	"github.com/lib/pq"
 
-	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -224,7 +224,7 @@ func verifyRootNodesDispatched(
 		assert.NotEmpty(t, d.JobName, "job_name must be present")
 		assert.NotEmpty(t, d.OutboxEntryID, "outbox_entry_id must be present")
 		assert.Equal(t, int32(0), d.Attempt, "a root node's first dispatch is its attempt 0")
-		assert.Equal(t, pkgevents.AttemptDispatched, d.KnownStatus)
+		assert.Equal(t, model.AttemptStatusDispatched, d.KnownStatus)
 		assert.Positive(t, d.TimeoutSeconds, "every dispatch carries its task timeout")
 		assert.Contains(t, expectedRootNodes, d.TableName, "stream table_name must be a root node")
 		assert.False(t, seenStreamTables[d.TableName], "Duplicate dispatch for table: %s", d.TableName)

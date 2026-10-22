@@ -44,25 +44,26 @@ func DecodeTaskStatusReport(fields map[string]string) (Envelope, TaskStatusRepor
 	return env, p, nil
 }
 
-// validReportOutcome checks a report's status and, for a failure, that its
+// validReportOutcome checks a report's status, a declared attempt_status
+// other than dispatched (which only state sends), and, for a failure, that its
 // reason is declared and its class is the reason's.
 func validReportOutcome(p TaskStatusReport) error {
-	switch p.Status {
-	case AttemptQueued, AttemptRunning, AttemptSucceeded:
+	if !p.Status.IsValid() || p.Status == model.AttemptStatusDispatched {
+		return fmt.Errorf("%w: status %q of task %s", ErrMalformedEnvelope, p.Status, p.TaskID)
+	}
+	if p.Status != model.AttemptStatusFailed {
 		if p.FailureClass != "" || p.FailureReason != "" {
 			return fmt.Errorf("%w: a %s report of task %s names a failure", ErrMalformedEnvelope, p.Status, p.TaskID)
 		}
 		return nil
-	case AttemptFailed:
-		reason := model.FailureReason(p.FailureReason)
-		if !reason.IsValid() {
-			return fmt.Errorf("%w: failure_reason %q of task %s", ErrMalformedEnvelope, p.FailureReason, p.TaskID)
-		}
-		if class := reason.Class(); string(class) != p.FailureClass {
-			return fmt.Errorf("%w: failure_class %q of task %s, but %s is a %s failure",
-				ErrMalformedEnvelope, p.FailureClass, p.TaskID, reason, class)
-		}
-		return nil
 	}
-	return fmt.Errorf("%w: status %q of task %s", ErrMalformedEnvelope, p.Status, p.TaskID)
+	reason := model.FailureReason(p.FailureReason)
+	if !reason.IsValid() {
+		return fmt.Errorf("%w: failure_reason %q of task %s", ErrMalformedEnvelope, p.FailureReason, p.TaskID)
+	}
+	if class := reason.Class(); string(class) != p.FailureClass {
+		return fmt.Errorf("%w: failure_class %q of task %s, but %s is a %s failure",
+			ErrMalformedEnvelope, p.FailureClass, p.TaskID, reason, class)
+	}
+	return nil
 }

@@ -13,6 +13,7 @@ func VocabularyValuesForTest() map[string][]string {
 		"DeadLetterKind": {"permanent", "transient_exhausted", "trimmed"},
 		"NodeRuntime": {"dbt", "python"},
 		"NodeType": {"dbt-model", "dbt-seed", "dbt-snapshot", "python-node", "python-csv", "python-api", "dbt-test"},
+		"AttemptStatus": {"dispatched", "queued", "running", "succeeded", "failed"},
 		"FailureClass": {"task", "resource", "infra", "start", "timeout", "invalid"},
 		"FailureReason": {"exit_code", "oom_killed", "evicted", "node_lost", "job_missing", "attempt_lost", "create_failed", "image_pull", "invalid_image", "missing_config", "create_container", "start_timeout", "deadline_exceeded", "dbt_nothing_to_do", "invalid_node_type", "malformed_dispatch", "job_name_collision"},
 	}

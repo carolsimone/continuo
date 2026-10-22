@@ -6,26 +6,14 @@ import (
 	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 )
 
-// ReportStatus is the status execution-controller reports of a production
-// attempt.
-type ReportStatus string
-
-const (
-	// ReportQueued: the attempt was accepted and waits for a slot or its Job.
-	ReportQueued ReportStatus = "queued"
-	// ReportRunning: the attempt's main container started.
-	ReportRunning ReportStatus = "running"
-	// ReportSucceeded and ReportFailed: the attempt ended and no pod of it can
-	// run again.
-	ReportSucceeded ReportStatus = "succeeded"
-	ReportFailed    ReportStatus = "failed"
-)
-
 // Report is what execution-controller reported of one production attempt:
-// its status and every fact known of it when the report was written. A report
-// is cumulative, so the last one stands for all before it.
+// its status and every fact known of it when the report was written. Status
+// is a value of the attempt_status vocabulary: queued once the attempt was
+// accepted and waits for a slot or its Job, running once its main container
+// started, succeeded or failed once it ended and no pod of it can run again.
+// A report is cumulative, so the last one stands for all before it.
 type Report struct {
-	Status           ReportStatus
+	Status           pkgmodel.AttemptStatus
 	QueuedAt         *time.Time
 	StartedAt        *time.Time
 	FinishedAt       *time.Time
@@ -44,7 +32,7 @@ type Report struct {
 // container's start and end and the time between them, its exit code, the
 // log and result keys and the parse cache, and, for a failure, its reason
 // and errorMessage.
-func (d *Deployment) ReportOf(status ReportStatus, errorMessage string) Report {
+func (d *Deployment) ReportOf(status pkgmodel.AttemptStatus, errorMessage string) Report {
 	f := d.facts
 	queued := d.createdAt
 	r := Report{
@@ -55,7 +43,7 @@ func (d *Deployment) ReportOf(status ReportStatus, errorMessage string) Report {
 		secs := f.FinishedAt.Sub(*f.StartedAt).Seconds()
 		r.ExecutionSeconds = &secs
 	}
-	if status == ReportFailed {
+	if status == pkgmodel.AttemptStatusFailed {
 		r.FailureReason, r.ErrorMessage = f.Reason, errorMessage
 	}
 	return r
