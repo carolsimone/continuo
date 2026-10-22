@@ -142,23 +142,33 @@ func TestE2E_ReleasePromote_ATimeoutOnlyChangePromotesWithoutValidation(t *testi
 		}
 	}
 
-	// State's live release carries the declared timeout on that node. The poll
-	// retries a missing row (the release is not stored yet) silently; any other
-	// error and the last observed value are kept for the failure message.
+	// State's live release carries the declared timeout on that node and no
+	// other node declares one.
+	waitForNodeTimeoutSeconds(t, ctx, clients, releaseID, timeoutOnlyNodeKey, timeoutOnlySeconds)
+	requireNoOtherNodeTimeout(t, ctx, clients, releaseID, timeoutOnlyNodeKey)
+	t.Logf("✅ timeout-only release %s promoted without validation; %s carries timeout_seconds=%d",
+		releaseID, timeoutOnlyNodeKey, timeoutOnlySeconds)
+}
+
+// waitForNodeTimeoutSeconds polls state until its live release is releaseID and
+// nodeKey carries timeout_seconds = want. The poll retries a missing row (the
+// release is not stored yet) silently; any other error and the last observed
+// value are kept for the failure message.
+func waitForNodeTimeoutSeconds(t *testing.T, ctx context.Context, clients *testClients, releaseID, nodeKey string, want int64) {
+	t.Helper()
 	var (
 		declared sql.NullInt64
 		lastErr  error
 		observed = "no row yet"
 	)
 	deadline := time.Now().Add(2 * time.Minute)
-poll:
 	for {
 		err := clients.stateDB.GetContext(ctx, &declared, `
 			SELECT n.timeout_seconds
 			  FROM live_release l
 			  JOIN topology_nodes n ON n.tenant_id = l.tenant_id AND n.release_id = l.release_id
 			 WHERE l.tenant_id = $1 AND l.release_id = $2 AND n.node_key = $3`,
-			events.DefaultTenantID, releaseID, timeoutOnlyNodeKey)
+			events.DefaultTenantID, releaseID, nodeKey)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 		case err != nil:
@@ -169,14 +179,14 @@ poll:
 			if declared.Valid {
 				observed = fmt.Sprintf("timeout_seconds=%d", declared.Int64)
 			}
-			if declared.Valid && declared.Int64 == timeoutOnlySeconds {
-				break poll
+			if declared.Valid && declared.Int64 == want {
+				return
 			}
 		}
 		if time.Now().After(deadline) {
 			require.FailNow(t, fmt.Sprintf(
 				"timeout waiting for state's live release %s to carry timeout_seconds=%d on %s: last observed %s, last query error: %v",
-				releaseID, timeoutOnlySeconds, timeoutOnlyNodeKey, observed, lastErr))
+				releaseID, want, nodeKey, observed, lastErr))
 		}
 		select {
 		case <-ctx.Done():
@@ -184,8 +194,12 @@ poll:
 		case <-time.After(2 * time.Second):
 		}
 	}
+}
 
-	// Every other node declared nothing.
+// requireNoOtherNodeTimeout asserts that, in state's copy of releaseID, no node
+// other than nodeKey carries a timeout.
+func requireNoOtherNodeTimeout(t *testing.T, ctx context.Context, clients *testClients, releaseID, nodeKey string) {
+	t.Helper()
 	var others int
 	require.NoError(t, clients.stateDB.GetContext(ctx, &others, `
 		SELECT count(*)
@@ -193,10 +207,8 @@ poll:
 		  JOIN topology_nodes n ON n.tenant_id = l.tenant_id AND n.release_id = l.release_id
 		 WHERE l.tenant_id = $1 AND l.release_id = $2
 		   AND n.node_key <> $3 AND n.timeout_seconds IS NOT NULL`,
-		events.DefaultTenantID, releaseID, timeoutOnlyNodeKey))
-	require.Zero(t, others, "no node other than %s declares a timeout", timeoutOnlyNodeKey)
-	t.Logf("✅ timeout-only release %s promoted without validation; %s carries timeout_seconds=%d",
-		releaseID, timeoutOnlyNodeKey, timeoutOnlySeconds)
+		events.DefaultTenantID, releaseID, nodeKey))
+	require.Zero(t, others, "no node other than %s declares a timeout", nodeKey)
 }
 
 // manifestDeclaringTimeout returns body, a dbt manifest.json, re-encoded with

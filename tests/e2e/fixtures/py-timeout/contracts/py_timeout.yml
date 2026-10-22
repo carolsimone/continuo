@@ -1,0 +1,27 @@
+nodes:
+  # Declares a task timeout: 90 minutes, which the topology carries as 5400 seconds.
+  - schema: e2e_schema
+    table: py_timeout
+    owner: e2e
+    schedule: daily
+    criticality: SECONDARY
+    script: scripts/py_timeout.py
+    timeout_minutes: 90
+    description: "python node that declares a task timeout"
+    reads:
+      tables: select schemaname from pg_catalog.pg_tables
+    output_columns:
+      - {name: id, type: INTEGER, nullable: false}
+
+  # Declares no timeout, so its topology entry carries none.
+  - schema: e2e_schema
+    table: py_no_timeout
+    owner: e2e
+    schedule: daily
+    criticality: SECONDARY
+    script: scripts/py_timeout.py
+    description: "python node that declares no task timeout"
+    reads:
+      tables: select schemaname from pg_catalog.pg_tables
+    output_columns:
+      - {name: id, type: INTEGER, nullable: false}

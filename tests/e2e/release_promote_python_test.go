@@ -201,12 +201,29 @@ func TestE2E_ReleasePromote_PythonContractSkipsCompileAndPromotes(t *testing.T) 
 	t.Log("✅ python release skipped compile, validated via build_from_columns, promoted, and swapped topology")
 }
 
-// promotePythonFixtureRelease drives the python fixture service through a full
-// release: it seeds the baseline pointers, uploads the merged contract to S3
-// before the POST (the ordering a domain repository's CI must honour), posts
-// kind=python naming the side-loaded fixture image, waits for promotion, and
-// waits for the topology swap. It returns the release id and a cleanup the
-// caller MUST defer.
+// promotePythonFixtureRelease promotes the python fixture service's merged
+// contract (see pythonContractYAML): it seeds the csv object the py_csv node
+// reads, then drives the release through promotePythonContractRelease. The
+// caller MUST defer the returned cleanup.
+func promotePythonFixtureRelease(t *testing.T, ctx context.Context, clients *testClients, validationTap *streamTap) (string, func()) {
+	t.Helper()
+
+	// The py_csv node's contract names this exact key; seeded before the
+	// release posts so both the validation runner's header-only fetch and (on
+	// a later run) the harness's full fetch resolve against real content.
+	putS3Object(t, ctx, clients, pyCsvSourceKey, pyCsvFixtureData)
+
+	return promotePythonContractRelease(t, ctx, clients, validationTap, pythonContractYAML(t),
+		[]string{pyProbeUniqueID, pyBadShapeUniqueID, pyCsvUniqueID, pyAPIUniqueID}, pyProbeUniqueID)
+}
+
+// promotePythonContractRelease drives pyE2EService through a full release of
+// the given merged contract: it seeds the baseline pointers, uploads the
+// contract to S3 before the POST (the ordering a domain repository's CI must
+// honour), posts kind=python naming the side-loaded fixture image, checks the
+// validation request names exactly validationNodes, waits for promotion, and
+// waits for swapNode to appear in the swapped topology. It returns the release
+// id and a cleanup the caller MUST defer.
 //
 // The cleanup is returned rather than deferred here because it must run while
 // releaseDB is still open: the caller registers it after `defer
@@ -214,7 +231,8 @@ func TestE2E_ReleasePromote_PythonContractSkipsCompileAndPromotes(t *testing.T) 
 // would instead run after every deferred call, against a closed pool. A
 // leftover service_prod pointer would drag this service's contract into every
 // later test's assembled manifest set.
-func promotePythonFixtureRelease(t *testing.T, ctx context.Context, clients *testClients, validationTap *streamTap) (string, func()) {
+func promotePythonContractRelease(t *testing.T, ctx context.Context, clients *testClients, validationTap *streamTap,
+	contractYAML string, validationNodes []string, swapNode string) (string, func()) {
 	t.Helper()
 
 	releaseID := "e2e-py-" + uuid.NewString()[:8]
@@ -243,22 +261,16 @@ func promotePythonFixtureRelease(t *testing.T, ctx context.Context, clients *tes
 	}
 
 	contractKey := fmt.Sprintf("%s/%s/contract.yaml", pyE2EService, releaseID)
-	putS3Object(t, ctx, clients, contractKey, []byte(pythonContractYAML(t)))
-
-	// The py_csv node's contract names this exact key; seeded before the
-	// release posts so both the validation runner's header-only fetch and (on
-	// a later run) the harness's full fetch resolve against real content.
-	putS3Object(t, ctx, clients, pyCsvSourceKey, pyCsvFixtureData)
+	putS3Object(t, ctx, clients, contractKey, []byte(contractYAML))
 
 	postPythonRelease(t, clients, pyE2EService, releaseID, pyFixtureImage)
 
-	assertValidationRequestedNodes(t, ctx, validationTap, releaseID,
-		[]string{pyProbeUniqueID, pyBadShapeUniqueID, pyCsvUniqueID, pyAPIUniqueID})
+	assertValidationRequestedNodes(t, ctx, validationTap, releaseID, validationNodes)
 
 	// Real build_from_columns Jobs run in kind against the published runner
 	// image; on success the release promotes and the topology swaps.
 	waitForReleasePromoted(t, ctx, clients, releaseID, 10*time.Minute)
-	waitForTopologySwap(t, ctx, clients, releaseID, pyProbeUniqueID, 2*time.Minute)
+	waitForTopologySwap(t, ctx, clients, releaseID, swapNode, 2*time.Minute)
 
 	return releaseID, cleanup
 }
