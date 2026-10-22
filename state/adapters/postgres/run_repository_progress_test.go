@@ -64,7 +64,7 @@ func TestRunRepository_SaveRun_PersistsProgressClock(t *testing.T) {
 	plan, err := runplan.SingleNode{Key: "public.tbl", ServiceName: "svc"}.Select(g)
 	require.NoError(t, err)
 	saveIn(func(rn *run.Run, tasks run.TaskCollection) {
-		_, err := rn.Start(ctx, tasks, "default", plan, g, 2, dispatchedAt)
+		_, err := rn.Start(ctx, tasks, "default", plan, g, testTaskDefaults, dispatchedAt)
 		require.NoError(t, err)
 	})
 	taskID := run.TaskIDFor("default", scheduleID, "public.tbl")

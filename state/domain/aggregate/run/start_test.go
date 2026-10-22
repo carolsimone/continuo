@@ -70,7 +70,7 @@ func TestStart_StoresEveryTaskAndDispatchesTheReadyOnes(t *testing.T) {
 	r := newCronRun(t, model.OperationRun)
 	tc := newFakeTaskCollection()
 
-	events, err := r.Start(context.Background(), tc, "default", plan, g, 2, startNow)
+	events, err := r.Start(context.Background(), tc, "default", plan, g, taskDefaults, startNow)
 	require.NoError(t, err)
 
 	require.Len(t, tc.bulkCreated, 8)
@@ -93,11 +93,21 @@ func TestStart_StoresEveryTaskAndDispatchesTheReadyOnes(t *testing.T) {
 	nodeA, _ := g.Node(fkey("ftable_a"))
 	nodeB, _ := g.Node(fkey("ftable_b"))
 	assert.Equal(t, []run.DomainEvent{
-		run.TaskDispatched{ID: r.ScheduleID(), ScheduleName: "e2e-schedule-failure", TaskID: a.TaskID, Node: nodeA,
-			JobName: a.JobName, Operation: model.OperationRun, MaxRetries: 2},
-		run.TaskDispatched{ID: r.ScheduleID(), ScheduleName: "e2e-schedule-failure", TaskID: b.TaskID, Node: nodeB,
-			JobName: b.JobName, Operation: model.OperationRun, MaxRetries: 2},
+		run.TaskDispatched{ID: r.ScheduleID(), ScheduleName: "e2e-schedule-failure", TaskID: a.TaskID, Attempt: 0,
+			KnownStatus: run.AttemptDispatched, Node: nodeA, JobName: a.JobName, Operation: model.OperationRun,
+			MaxRetries: 2, Timeout: 24 * time.Hour},
+		run.TaskDispatched{ID: r.ScheduleID(), ScheduleName: "e2e-schedule-failure", TaskID: b.TaskID, Attempt: 0,
+			KnownStatus: run.AttemptDispatched, Node: nodeB, JobName: b.JobName, Operation: model.OperationRun,
+			MaxRetries: 2, Timeout: 24 * time.Hour},
 	}, events)
+	for _, task := range []run.Task{a, b} {
+		assert.Equal(t, run.TaskStatusDispatched, task.Status, "a ready task is stored dispatched")
+	}
+	at := startNow
+	assert.Equal(t, []run.Attempt{
+		{TaskID: a.TaskID, Number: 0, JobName: a.JobName, Status: run.AttemptDispatched, DispatchedAt: &at, NextCheckIn: 5 * time.Minute},
+		{TaskID: b.TaskID, Number: 0, JobName: b.JobName, Status: run.AttemptDispatched, DispatchedAt: &at, NextCheckIn: 5 * time.Minute},
+	}, tc.added, "each ready task's attempt 0 is stored dispatched, due for its first check in 5 minutes")
 
 	assert.Equal(t, run.SchedulerStatusRunning, r.Status())
 	assert.Equal(t, run.InitStatusCompleted, r.InitializationStatus())
@@ -134,7 +144,7 @@ func TestStart_InheritedTasksAreSucceededAndNeverDispatched(t *testing.T) {
 	require.NoError(t, err)
 	tc := newFakeTaskCollection()
 
-	events, err := r.Start(context.Background(), tc, "default", plan, g, 2, startNow)
+	events, err := r.Start(context.Background(), tc, "default", plan, g, taskDefaults, startNow)
 	require.NoError(t, err)
 
 	tasks := createdByKey(tc)
@@ -163,7 +173,7 @@ func TestStart_APlanWithoutPendingTasksFinalizesSucceeded(t *testing.T) {
 	plan := runplan.Plan{Tasks: []runplan.PlannedTask{{Key: fkey("ftable_a"), Inherited: true, InheritedFrom: root}}}
 	r := newCronRun(t, model.OperationRun)
 
-	events, err := r.Start(context.Background(), newFakeTaskCollection(), "default", plan, g, 2, startNow)
+	events, err := r.Start(context.Background(), newFakeTaskCollection(), "default", plan, g, taskDefaults, startNow)
 	require.NoError(t, err)
 
 	assert.Equal(t, []run.DomainEvent{
@@ -184,7 +194,7 @@ func TestStart_StampsTheRunsOperation(t *testing.T) {
 	r := newCronRun(t, model.OperationBuild)
 	tc := newFakeTaskCollection()
 
-	events, err := r.Start(context.Background(), tc, "default", plan, g, 2, startNow)
+	events, err := r.Start(context.Background(), tc, "default", plan, g, taskDefaults, startNow)
 	require.NoError(t, err)
 	for _, task := range tc.bulkCreated {
 		assert.Equal(t, model.OperationBuild, task.Operation, task.NodeKey)
@@ -201,14 +211,14 @@ func TestStart_IsRefusedWithoutStoringAnything(t *testing.T) {
 
 	t.Run("an empty plan", func(t *testing.T) {
 		tc := newFakeTaskCollection()
-		_, err := newCronRun(t, model.OperationRun).Start(context.Background(), tc, "default", runplan.Plan{}, g, 2, startNow)
+		_, err := newCronRun(t, model.OperationRun).Start(context.Background(), tc, "default", runplan.Plan{}, g, taskDefaults, startNow)
 		assert.ErrorIs(t, err, run.ErrNoNodes)
 		assert.Empty(t, tc.bulkCreated)
 	})
 	t.Run("a node outside the graph", func(t *testing.T) {
 		tc := newFakeTaskCollection()
 		ghost := runplan.Plan{Tasks: append(slices.Clone(plan.Tasks), runplan.PlannedTask{Key: "e2e_schema.ghost"})}
-		_, err := newCronRun(t, model.OperationRun).Start(context.Background(), tc, "default", ghost, g, 2, startNow)
+		_, err := newCronRun(t, model.OperationRun).Start(context.Background(), tc, "default", ghost, g, taskDefaults, startNow)
 		require.ErrorIs(t, err, run.ErrPlanNodeNotInGraph)
 		assert.Contains(t, err.Error(), "e2e_schema.ghost")
 		assert.Empty(t, tc.bulkCreated)
@@ -216,7 +226,7 @@ func TestStart_IsRefusedWithoutStoringAnything(t *testing.T) {
 	t.Run("a ready task outside the plan", func(t *testing.T) {
 		tc := newFakeTaskCollection()
 		bad := runplan.Plan{Tasks: slices.Clone(plan.Tasks), Ready: append(slices.Clone(plan.Ready), "e2e_schema.ghost")}
-		_, err := newCronRun(t, model.OperationRun).Start(context.Background(), tc, "default", bad, g, 2, startNow)
+		_, err := newCronRun(t, model.OperationRun).Start(context.Background(), tc, "default", bad, g, taskDefaults, startNow)
 		require.ErrorIs(t, err, run.ErrPlanReadyNotPending)
 		assert.Contains(t, err.Error(), "e2e_schema.ghost")
 		assert.Empty(t, tc.bulkCreated)
@@ -226,26 +236,26 @@ func TestStart_IsRefusedWithoutStoringAnything(t *testing.T) {
 		bad := runplan.Plan{Tasks: slices.Clone(plan.Tasks), Ready: slices.Clone(plan.Ready)}
 		bad.Tasks[0].Inherited, bad.Tasks[0].InheritedFrom = true, uuid.New()
 		bad.Ready = append(bad.Ready, bad.Tasks[0].Key)
-		_, err := newCronRun(t, model.OperationRun).Start(context.Background(), tc, "default", bad, g, 2, startNow)
+		_, err := newCronRun(t, model.OperationRun).Start(context.Background(), tc, "default", bad, g, taskDefaults, startNow)
 		require.ErrorIs(t, err, run.ErrPlanReadyNotPending)
 		assert.Contains(t, err.Error(), string(bad.Tasks[0].Key))
 		assert.Empty(t, tc.bulkCreated)
 	})
 	t.Run("a run already planned", func(t *testing.T) {
 		r := newCronRun(t, model.OperationRun)
-		_, err := r.Start(context.Background(), newFakeTaskCollection(), "default", plan, g, 2, startNow)
+		_, err := r.Start(context.Background(), newFakeTaskCollection(), "default", plan, g, taskDefaults, startNow)
 		require.NoError(t, err)
 		tc := newFakeTaskCollection()
-		_, err = r.Start(context.Background(), tc, "default", plan, g, 2, startNow)
+		_, err = r.Start(context.Background(), tc, "default", plan, g, taskDefaults, startNow)
 		assert.ErrorIs(t, err, run.ErrAlreadyPlanned)
 		assert.Empty(t, tc.bulkCreated)
 	})
 	t.Run("a terminal run", func(t *testing.T) {
 		r := newCronRun(t, model.OperationRun)
-		_, err := r.MarkDispatchTerminal(false, "test", startNow)
+		_, err := r.MarkDispatchTerminal(false, run.RunFailureEmptySelection, "test", startNow)
 		require.NoError(t, err)
 		tc := newFakeTaskCollection()
-		_, err = r.Start(context.Background(), tc, "default", plan, g, 2, startNow)
+		_, err = r.Start(context.Background(), tc, "default", plan, g, taskDefaults, startNow)
 		assert.ErrorIs(t, err, run.ErrAlreadyTerminal)
 		assert.Empty(t, tc.bulkCreated)
 	})

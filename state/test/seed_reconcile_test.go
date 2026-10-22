@@ -57,7 +57,7 @@ func newReconcileHarness(db *sqlx.DB) *reconcileHarness {
 		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, catalogRepo, svcports.SystemClock{}, logger)
 	}
 	tenant := "t-" + uuid.NewString()
-	reconciler := seedreconcile.New(factory, false, tenant, logger)
+	reconciler := seedreconcile.New(factory, false, tenant, run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}, logger)
 	artifacts := &memoryArtifacts{byRef: map[string]svcports.TopologyArtifact{}}
 	handler := svchandlers.NewReleasePromotedHandler(artifacts, reconciler, logger)
 	return &reconcileHarness{

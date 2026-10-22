@@ -87,7 +87,7 @@ func TestStartedRun_StoresItsTasksPlanAndDispatches(t *testing.T) {
 	u := newPlanningUoW(db)
 	require.NoError(t, u.Begin(ctx))
 	require.NoError(t, u.Run().SaveRun(ctx, r))
-	events, err := r.Start(ctx, u.TaskCollection(), pkgevents.DefaultTenantID, plan, g, pkgevents.DefaultTaskMaxRetries, now)
+	events, err := r.Start(ctx, u.TaskCollection(), pkgevents.DefaultTenantID, plan, g, testTaskDefaults, now)
 	require.NoError(t, err)
 	require.NoError(t, u.Run().SaveRun(ctx, r))
 	require.NoError(t, u.Outbox().Append(ctx, events, uuid.Nil))
@@ -150,7 +150,7 @@ func TestStartedRun_TasksNeedTheRunRowFirst(t *testing.T) {
 	u := newPlanningUoW(db)
 	require.NoError(t, u.Begin(ctx))
 	defer u.Rollback()
-	_, err = r.Start(ctx, u.TaskCollection(), pkgevents.DefaultTenantID, plan, g, pkgevents.DefaultTaskMaxRetries, now)
+	_, err = r.Start(ctx, u.TaskCollection(), pkgevents.DefaultTenantID, plan, g, testTaskDefaults, now)
 	require.Error(t, err)
 	assert.Equal(t, "23503", pqCode(t, err))
 }
@@ -210,3 +210,7 @@ func TestOutboxPublisher_TaskDispatchedMatchesTheGoldenFixture(t *testing.T) {
 	}
 	assert.Equal(t, want, rendered)
 }
+
+// testTaskDefaults are the task settings the adapter tests plan with: the
+// chart's defaults.
+var testTaskDefaults = run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}

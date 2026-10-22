@@ -47,6 +47,9 @@ type Run struct {
 	// plannedAt is when Start chose and stored the run's tasks; nil on a run
 	// whose tasks state did not choose.
 	plannedAt *time.Time
+	// failureReason says why the run failed when no task of it failed; nil
+	// otherwise.
+	failureReason *RunFailureReason
 
 	// totalTaskCount is nil until the run's child set is known (it is stamped by
 	// Start). nil mirrors a NULL total_task_count column.
@@ -122,6 +125,10 @@ func (r *Run) HydrateRelease(s ReleaseStamp) { r.release = s }
 // HydratePlannedAt restores planned_at read from scheduler_tracker.
 // Adapter-only: domain code plans a run through Start.
 func (r *Run) HydratePlannedAt(at *time.Time) { r.plannedAt = at }
+
+// HydrateFailureReason restores failure_reason read from scheduler_tracker.
+// Adapter-only: domain code sets it when the run fails without a failed task.
+func (r *Run) HydrateFailureReason(reason *RunFailureReason) { r.failureReason = reason }
 
 // NewPendingRun creates a fresh PENDING Run of a schedule, fired by cron or
 // triggered. Caller flow: SchedulePolicy.ScheduleExistsInCatalog →
@@ -307,6 +314,7 @@ func (r *Run) CancelledAt() *time.Time          { return r.cancelledAt }
 func (r *Run) CancelledBy() *string             { return r.cancelledBy }
 func (r *Run) CancellationReason() *string      { return r.cancellationReason }
 func (r *Run) PlannedAt() *time.Time            { return r.plannedAt }
+func (r *Run) FailureReason() *RunFailureReason { return r.failureReason }
 func (r *Run) TotalTaskCount() *int32           { return r.totalTaskCount }
 func (r *Run) TerminalTaskCount() int32         { return r.terminalTaskCount }
 func (r *Run) ServiceMetadata() map[string]ServiceMetadata {
@@ -351,11 +359,13 @@ func (c changeSet) IsPlannedDirty() bool           { return c.plannedDirty }
 //
 // Each planned task gets the id TaskIDFor derives for tenantID, r and its node,
 // its node's Job name, r's operation and the node's image. A pending task gets
-// status pending and maxRetries; an inherited task gets status succeeded, no
-// retry budget and the task it inherits from, and is never dispatched. Each
-// ready task is stamped dispatched at now and recorded as a TaskDispatched, in
-// key order. The run records the plan: planned_at, the total task count, the
-// inherited tasks as terminal, init status completed, status running,
+// status pending and the retry budget of d; an inherited task gets status
+// succeeded, no retry budget and the task it inherits from, and is never
+// dispatched. Each ready task is made dispatched at now, with its attempt 0
+// stored dispatched and due for its first check (NextCheckAfter), and recorded
+// as a TaskDispatched of attempt 0, in key order, with its node's timeout
+// (TaskTimeout). The run records the plan: planned_at, the total task count,
+// the inherited tasks as terminal, init status completed, status running,
 // started_at and its progress clock. A plan without a pending task leaves
 // nothing to run, so the run finalizes succeeded at once.
 //
@@ -370,7 +380,7 @@ func (r *Run) Start(
 	tenantID string,
 	plan runplan.Plan,
 	g topology.Graph,
-	maxRetries int32,
+	d TaskDefaults,
 	now time.Time,
 ) ([]DomainEvent, error) {
 	if r.IsTerminal() {
@@ -398,6 +408,7 @@ func (r *Run) Start(
 
 	built := make([]Task, 0, len(plan.Tasks))
 	var events []DomainEvent
+	var attempts []Attempt
 	inherited := int32(0)
 	for _, p := range plan.Tasks {
 		n, ok := g.Node(p.Key)
@@ -418,7 +429,7 @@ func (r *Run) Start(
 			NodeKey:     p.Key,
 			JobName:     jobName,
 			Status:      TaskStatusPending,
-			MaxRetries:  int(maxRetries),
+			MaxRetries:  int(d.MaxRetries),
 			ImageTag:    n.ImageTag,
 			Operation:   r.operation,
 		}
@@ -431,22 +442,19 @@ func (r *Run) Start(
 			inherited++
 		case ready[p.Key]:
 			at := now
+			t.Status = TaskStatusDispatched
 			t.DispatchedAt = &at
-			events = append(events, TaskDispatched{
-				ID:           r.scheduleID,
-				ScheduleName: r.scheduleName,
-				TaskID:       t.TaskID,
-				Node:         n,
-				JobName:      jobName,
-				Operation:    r.operation,
-				MaxRetries:   maxRetries,
-			})
+			attempts = append(attempts, firstAttempt(t.TaskID, jobName, &at))
+			events = append(events, r.dispatchEvent(t.TaskID, 0, n, jobName, d))
 		}
 		built = append(built, t)
 	}
 
 	if err := tasks.BulkCreate(ctx, built); err != nil {
 		return nil, fmt.Errorf("bulk create tasks: %w", err)
+	}
+	if err := tasks.AddAttempts(ctx, attempts); err != nil {
+		return nil, fmt.Errorf("add the first attempts: %w", err)
 	}
 
 	total := num.ClampInt32(len(built))
@@ -840,7 +848,7 @@ func (r *Run) applyTerminal(
 	if r.plannedAt != nil {
 		switch {
 		case applied == TaskStatusSucceeded:
-			dispatched, err := r.dispatchReady(ctx, tasks, graph, attempt.NodeKey, now)
+			dispatched, err := r.dispatchReady(ctx, tasks, graph, attempt.NodeKey, TaskDefaults{MaxRetries: attempt.MaxRetries}, now)
 			if err != nil {
 				return nil, false, err
 			}
@@ -860,9 +868,10 @@ func (r *Run) applyTerminal(
 
 // dispatchReady dispatches the tasks of r that the success of the task at key
 // makes ready: its pending, undispatched downstream tasks whose every in-run
-// upstream has succeeded. Each one MarkDispatched stamps records a
-// TaskDispatched, in key order.
-func (r *Run) dispatchReady(ctx context.Context, tasks TaskCollection, graph TaskGraph, key topology.NodeKey, now time.Time) ([]DomainEvent, error) {
+// upstream has succeeded. Each one MarkDispatched makes dispatched gets its
+// attempt 0, stored dispatched and due for its first check, and records a
+// TaskDispatched of attempt 0, in key order, with its node's timeout.
+func (r *Run) dispatchReady(ctx context.Context, tasks TaskCollection, graph TaskGraph, key topology.NodeKey, d TaskDefaults, now time.Time) ([]DomainEvent, error) {
 	candidates, err := graph.ReadyCandidates(ctx, r.scheduleID, r.release.ReleaseID, key)
 	if err != nil {
 		return nil, fmt.Errorf("read the tasks %s's success may make ready: %w", key, err)
@@ -887,21 +896,45 @@ func (r *Run) dispatchReady(ctx context.Context, tasks TaskCollection, graph Tas
 		isStamped[id] = true
 	}
 	events := make([]DomainEvent, 0, len(stamped))
+	attempts := make([]Attempt, 0, len(stamped))
+	at := now
 	for _, c := range ready {
 		if !isStamped[c.TaskID] {
 			continue
 		}
-		events = append(events, TaskDispatched{
-			ID:           r.scheduleID,
-			ScheduleName: r.scheduleName,
-			TaskID:       c.TaskID,
-			Node:         c.Node,
-			JobName:      c.JobName,
-			Operation:    r.operation,
-			MaxRetries:   c.MaxRetries,
-		})
+		attempts = append(attempts, firstAttempt(c.TaskID, c.JobName, &at))
+		e := r.dispatchEvent(c.TaskID, 0, c.Node, c.JobName, d)
+		e.MaxRetries = c.MaxRetries
+		events = append(events, e)
+	}
+	if err := tasks.AddAttempts(ctx, attempts); err != nil {
+		return nil, fmt.Errorf("add the first attempts of the tasks %s's success made ready: %w", key, err)
 	}
 	return events, nil
+}
+
+// firstAttempt is attempt 0 of a task state dispatches at at: dispatched, due
+// for its first check.
+func firstAttempt(taskID uuid.UUID, jobName string, at *time.Time) Attempt {
+	return Attempt{TaskID: taskID, Number: 0, JobName: jobName, Status: AttemptDispatched,
+		DispatchedAt: at, NextCheckIn: NextCheckAfter(AttemptDispatched, 0)}
+}
+
+// dispatchEvent records the first send of attempt n of the task at node, in
+// r's run, with the task's budget from d and its node's timeout.
+func (r *Run) dispatchEvent(taskID uuid.UUID, n int32, node topology.Node, jobName string, d TaskDefaults) TaskDispatched {
+	return TaskDispatched{
+		ID:           r.scheduleID,
+		ScheduleName: r.scheduleName,
+		TaskID:       taskID,
+		Attempt:      n,
+		KnownStatus:  AttemptDispatched,
+		Node:         node,
+		JobName:      jobName,
+		Operation:    r.operation,
+		MaxRetries:   d.MaxRetries,
+		Timeout:      TaskTimeout(node, d),
+	}
 }
 
 // skipBlocked skips the pending, undispatched tasks of r below the task at
@@ -959,15 +992,18 @@ func (r *Run) finalizeIfComplete(ctx context.Context, tasks TaskCollection, now 
 // MarkDispatchTerminal finalizes a run that was created without tasks: a cron
 // run whose selection was refused. A benign outcome (no work to do — a test
 // run over nodes with no data tests) finalizes the run as `skipped`; any other
-// reason finalizes it as `failed`. reason is recorded on the RunDispatchTerminal
-// side event regardless of outcome. No-op when r is already terminal.
-func (r *Run) MarkDispatchTerminal(benign bool, reason string, now time.Time) ([]DomainEvent, error) {
+// finalizes it as `failed`, with failure as its failure reason. reason is
+// recorded on the RunDispatchTerminal side event regardless of outcome. No-op
+// when r is already terminal.
+func (r *Run) MarkDispatchTerminal(benign bool, failure RunFailureReason, reason string, now time.Time) ([]DomainEvent, error) {
 	if r.IsTerminal() {
 		return nil, nil
 	}
 	outcome := SchedulerStatusFailed
 	if benign {
 		outcome = SchedulerStatusSkipped
+	} else {
+		r.failureReason = &failure
 	}
 	evts := r.finalize(outcome, now)
 	side := RunDispatchTerminal{ID: r.scheduleID, Name: r.scheduleName, Reason: reason}

@@ -17,7 +17,7 @@ import (
 )
 
 // defaultPlanner plans the runs of the default tenant, as state's main does.
-var defaultPlanner = runstart.Planner{TenantID: pkgevents.DefaultTenantID}
+var defaultPlanner = runstart.Planner{TenantID: pkgevents.DefaultTenantID, Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}}
 
 // scheduledNode is promotedNode in schedule.
 func scheduledNode(schema, table, nodeType, schedule string, upstream ...string) topology.NodeSpec {

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/service/runsettle"
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
@@ -320,7 +321,10 @@ func main() {
 	// does not hold. It runs inside every release.promoted:v2 transaction that
 	// moves the live release, and every seedReconcileInterval from the loop
 	// started below; maintenance mode stops it creating runs.
-	seedReconciler := seedreconcile.New(uowFactory, cfg.Maintenance, pkgevents.DefaultTenantID, logger)
+	// Every task state plans gets the install's retry budget, and each
+	// dispatch its node's timeout, else the install's.
+	taskDefaults := run.TaskDefaults{MaxRetries: int32(cfg.TaskMaxRetries), Timeout: cfg.TaskTimeout} //nolint:gosec // G115: TASK_MAX_RETRIES is 0-10, checked at startup.
+	seedReconciler := seedreconcile.New(uowFactory, cfg.Maintenance, pkgevents.DefaultTenantID, taskDefaults, logger)
 	releasePromotedHandler := svchandlers.NewReleasePromotedHandler(s3adapter.NewTopologyArtifactReader(objectStore), seedReconciler, logger)
 
 	// Every state consumer is the same shape: a domain handler wrapped by a
@@ -376,7 +380,7 @@ func main() {
 
 	// The cron loop and the gRPC entry points plan their runs for the default
 	// tenant; the seed reconcile builds its own planner for each pass.
-	planner := runstart.Planner{TenantID: pkgevents.DefaultTenantID}
+	planner := runstart.Planner{TenantID: pkgevents.DefaultTenantID, Tasks: taskDefaults}
 
 	// Initialize activation handler shared by the cron loop and gRPC methods.
 	activateHandler := svchandlers.NewActivateScheduleHandler(planner, logger)

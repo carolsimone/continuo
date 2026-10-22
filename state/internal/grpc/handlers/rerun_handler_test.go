@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/carolsimone/continuo/pkg/testdeps"
 
@@ -45,7 +46,7 @@ func setupRerunFixture(t *testing.T) *rerunFixture {
 		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, catalogRepo, clk, logger)
 	}
 	tenant := fixtureTenant(t, db)
-	useCase := svchandlers.NewTriggerRerunHandler(runstart.Planner{TenantID: tenant}, logger)
+	useCase := svchandlers.NewTriggerRerunHandler(runstart.Planner{TenantID: tenant, Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}}, logger)
 	handler := NewRerunHandler(useCase, factory, logger)
 	return &rerunFixture{Handler: handler, SchedulerRepo: schedulerRepo, TaskRepo: taskRepo, DB: db, Tenant: tenant, Cleanup: func() { db.Close() }}
 }

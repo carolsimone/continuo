@@ -105,7 +105,8 @@ func TestTaskGraph_ReadyCandidatesOfTheExampleRun(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, got, 2)
 		assert.Equal(t, topology.NodeKey("e2e_schema.ftable_c"), got[0].Node.Key)
-		assert.Equal(t, []run.TaskStatus{run.TaskStatusSucceeded, run.TaskStatusPending}, got[0].UpstreamStatuses)
+		assert.Equal(t, []run.TaskStatus{run.TaskStatusSucceeded, run.TaskStatusDispatched}, got[0].UpstreamStatuses,
+			"ftable_b was dispatched with the run")
 		assert.False(t, got[0].Ready())
 		assert.Equal(t, run.TaskIDFor(tenant, r.ScheduleID(), "e2e_schema.ftable_g"), got[1].TaskID)
 		assert.Equal(t, topology.Node{

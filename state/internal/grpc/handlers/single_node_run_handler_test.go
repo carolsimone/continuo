@@ -83,7 +83,7 @@ func setupSingleNodeRunFixture(t *testing.T) *singleNodeRunFixture {
 	}
 	tenant := fixtureTenant(t, db)
 	promoteUsers(t, db, tenant)
-	useCase := svchandlers.NewTriggerSingleNodeRunHandler(runstart.Planner{TenantID: tenant}, logger)
+	useCase := svchandlers.NewTriggerSingleNodeRunHandler(runstart.Planner{TenantID: tenant, Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}}, logger)
 	handler := NewSingleNodeRunHandler(useCase, factory, logger)
 
 	// Register the DB close via t.Cleanup (not a bare defer in the calling

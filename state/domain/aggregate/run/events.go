@@ -1,6 +1,8 @@
 package run
 
 import (
+	"time"
+
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/state/domain/topology"
 	"github.com/google/uuid"
@@ -41,19 +43,26 @@ type RunCancelled struct {
 func (RunCancelled) runDomainEvent()         {}
 func (e RunCancelled) ScheduleID() uuid.UUID { return e.ID }
 
-// TaskDispatched is recorded by Run.Start for each task it dispatches, and by
-// Run.RecordTaskStatus for each task a success makes ready: the
-// run, the task, the node it builds as the run's release holds it, its
-// Kubernetes Job name, the dbt verb and the task's retry budget. Translated to
-// query.model:v1.
+// TaskDispatched is recorded for each attempt of a task state dispatches: by
+// Run.Start for each ready task, by Run.RecordAttemptReport and
+// Run.RecordTaskStatus for each task a success makes ready, and by
+// Run.RecordAttemptReport for the next attempt of a task a retryable failure
+// leaves with retries left. It carries the run, the task and the attempt's
+// number, state's view of the attempt (KnownStatus: dispatched until
+// execution-controller acknowledged it), the node it builds as the run's
+// release holds it, the attempt's Kubernetes Job name, the dbt verb, the
+// task's retry budget and how long the attempt's container may run.
 type TaskDispatched struct {
 	ID           uuid.UUID
 	ScheduleName string
 	TaskID       uuid.UUID
+	Attempt      int32
+	KnownStatus  AttemptStatus
 	Node         topology.Node
 	JobName      string
 	Operation    model.Operation
 	MaxRetries   int32
+	Timeout      time.Duration
 }
 
 func (TaskDispatched) runDomainEvent()         {}

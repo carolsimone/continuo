@@ -86,43 +86,49 @@ func recordsBuiltVersions(r *run.Run) bool {
 }
 
 // recordLoaded records the version a succeeded task of a run that names a
-// release loaded into the warehouse: its node's content hash in that release,
-// the image the task ran, and the run and task. A task whose row is gone, or
-// whose node the release lacks or holds without a content hash, records
-// nothing.
+// release loaded into the warehouse; see recordLoadedVersion.
 func (h *TaskStatusUpdatedHandler) recordLoaded(ctx context.Context, u uow.UnitOfWork, r *run.Run, evt events.TaskStatusUpdated) error {
-	task, err := u.TaskCollection().GetByID(ctx, evt.TaskID)
+	return recordLoadedVersion(ctx, u, h.tenantID, h.logger, r, evt.TaskID)
+}
+
+// recordLoadedVersion records the version a succeeded task of a run that names
+// a release loaded into the warehouse: its node's content hash in that
+// release, the image the task ran, and the run and task. A task whose row is
+// gone, or whose node the release lacks or holds without a content hash,
+// records nothing.
+func recordLoadedVersion(ctx context.Context, u uow.UnitOfWork, tenantID string, logger *slog.Logger, r *run.Run, taskID uuid.UUID) error {
+	task, err := u.TaskCollection().GetByID(ctx, taskID)
 	if errors.Is(err, run.ErrTaskNotFound) {
-		h.logger.Warn("task.status.updated: task row not found; no loaded version recorded",
-			"task_id", evt.TaskID, "schedule_id", evt.ScheduleID, "release_id", r.ReleaseID())
+		logger.Warn("task status: task row not found; no loaded version recorded",
+			"task_id", taskID, "schedule_id", r.ScheduleID(), "release_id", r.ReleaseID())
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("read task %s: %w", evt.TaskID, err)
+		return fmt.Errorf("read task %s: %w", taskID, err)
 	}
 	key := topology.KeyOf(task.SchemaName, task.TableName)
-	hash, found, err := u.Topology().NodeContentHash(ctx, h.tenantID, r.ReleaseID(), key)
+	hash, found, err := u.Topology().NodeContentHash(ctx, tenantID, r.ReleaseID(), key)
 	if err != nil {
 		return fmt.Errorf("read the content hash of %s in release %s: %w", key, r.ReleaseID(), err)
 	}
 	if !found || hash == "" {
-		h.logger.Info("task.status.updated: node has no content hash in the run's release; no loaded version recorded",
-			"task_id", evt.TaskID, "node_key", key, "release_id", r.ReleaseID(), "in_release", found)
+		logger.Info("task status: node has no content hash in the run's release; no loaded version recorded",
+			"task_id", taskID, "node_key", key, "release_id", r.ReleaseID(), "in_release", found)
 		return nil
 	}
-	if err := u.Materializations().RecordBuilt(ctx, h.tenantID, seeds.Built{
+	if err := u.Materializations().RecordBuilt(ctx, tenantID, seeds.Built{
 		Key:         key,
 		ContentHash: hash,
 		ImageTag:    task.ImageTag,
 		ReleaseID:   r.ReleaseID(),
 		RunID:       r.ScheduleID(),
-		TaskID:      evt.TaskID,
+		TaskID:      taskID,
 		At:          u.Clock().Now(),
 		Source:      seeds.SourceBuild,
 	}); err != nil {
 		return fmt.Errorf("record the loaded version of %s: %w", key, err)
 	}
-	h.logger.Info("task.status.updated: loaded version recorded",
-		"task_id", evt.TaskID, "node_key", key, "release_id", r.ReleaseID(), "content_hash", hash)
+	logger.Info("task status: loaded version recorded",
+		"task_id", taskID, "node_key", key, "release_id", r.ReleaseID(), "content_hash", hash)
 	return nil
 }

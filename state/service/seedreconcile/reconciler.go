@@ -38,6 +38,7 @@ type Reconciler struct {
 	uowFactory  func() uow.UnitOfWork
 	maintenance bool
 	tenantID    string
+	tasks       run.TaskDefaults
 	logger      *slog.Logger
 }
 
@@ -49,8 +50,8 @@ var _ handlers.SeedReconciler = (*Reconciler)(nil)
 // AfterPromotion reconciles the promotion's tenant. While maintenance is true
 // no pass runs, so no run is created; the first promotion's adoption is still
 // recorded, since it starts no work.
-func New(uowFactory func() uow.UnitOfWork, maintenance bool, tenantID string, logger *slog.Logger) *Reconciler {
-	return &Reconciler{uowFactory: uowFactory, maintenance: maintenance, tenantID: tenantID, logger: logger}
+func New(uowFactory func() uow.UnitOfWork, maintenance bool, tenantID string, tasks run.TaskDefaults, logger *slog.Logger) *Reconciler {
+	return &Reconciler{uowFactory: uowFactory, maintenance: maintenance, tenantID: tenantID, tasks: tasks, logger: logger}
 }
 
 // AfterPromotion runs in the release.promoted:v2 transaction, after the
@@ -195,7 +196,7 @@ func (r *Reconciler) pass(ctx context.Context, u uow.UnitOfWork, tenantID string
 	for _, d := range toBuild {
 		keys = append(keys, d.Key)
 	}
-	planner := runstart.Planner{TenantID: tenantID}
+	planner := runstart.Planner{TenantID: tenantID, Tasks: r.tasks}
 	sel, err := planner.Seeds(ctx, u, live, keys)
 	if err != nil {
 		return fmt.Errorf("select the seeds of release %s: %w", live.ReleaseID, err)

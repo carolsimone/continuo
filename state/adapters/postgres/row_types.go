@@ -34,6 +34,7 @@ type SchedulerTracker struct {
 	ReleaseID            *string                        `json:"release_id,omitempty" db:"release_id"`
 	PromotionSeq         *int64                         `json:"promotion_seq,omitempty" db:"promotion_seq"`
 	PlannedAt            *time.Time                     `json:"planned_at,omitempty" db:"planned_at"`
+	FailureReason        *string                        `json:"failure_reason,omitempty" db:"failure_reason"`
 	ServiceMetadata      map[string]run.ServiceMetadata `json:"service_metadata"`
 	ServiceMetadataRaw   []byte                         `json:"-" db:"service_metadata"`
 }

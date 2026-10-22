@@ -119,8 +119,8 @@ func TestTaskExecutionRecorded_StatusAndRecordInEitherOrderLeaveOneAttempt(t *te
 			}
 
 			rows := f.recordedAttempts(t, recordFlowKey)
-			require.Len(t, rows, 1)
-			assertRecorded(t, evt, rows[0])
+			require.Len(t, rows, 2, "attempt 0, stored when the task was dispatched, and attempt 1")
+			assertRecorded(t, evt, rows[1])
 		})
 	}
 }
@@ -196,20 +196,20 @@ func TestTaskExecutionRecorded_ARecordWaitingOnTheTaskLockDoesNotDeadlockTheStat
 		t.Fatal("the record's transaction never finished")
 	}
 	rows := f.recordedAttempts(t, recordFlowKey)
-	require.Len(t, rows, 1)
-	assertRecorded(t, evt, rows[0])
+	require.Len(t, rows, 2, "attempt 0, stored when the task was dispatched, and attempt 1")
+	assertRecorded(t, evt, rows[1])
 }
 
-// A record that lands after its run was cancelled, for a dispatched attempt
-// that had no row yet, leaves the cancelled run with no open attempt: the
-// attempt it creates is cancelled and carries the record's facts.
+// A record that lands after its run was cancelled leaves the cancelled run
+// with no open attempt: the attempt the cancel closed stays cancelled and
+// carries the record's facts.
 func TestTaskExecutionRecorded_ARecordAfterTheRunWasCancelledLeavesNoOpenAttempt(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	tenant := storeFailureSchedule(t, db)
 	f := statusFlow{db: db, tenant: tenant, r: startScheduleRun(t, db, tenant, "e2e-schedule-failure", model.OperationRun)}
 	job, _, _ := f.task(t, recordFlowKey)
-	require.Empty(t, f.recordedAttempts(t, recordFlowKey))
+	require.Len(t, f.recordedAttempts(t, recordFlowKey), 1, "attempt 0 is stored when the task is dispatched")
 
 	u := newPlanningUoW(db)
 	require.NoError(t, u.Begin(ctx))

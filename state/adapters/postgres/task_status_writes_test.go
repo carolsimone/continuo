@@ -118,7 +118,7 @@ func TestTaskCollection_MarkSkippedSkipsOnlyPendingUndispatchedTasks(t *testing.
 	})
 
 	for table, want := range map[string]run.TaskStatus{
-		"ftable_a": run.TaskStatusPending, "ftable_d": run.TaskStatusSkipped,
+		"ftable_a": run.TaskStatusDispatched, "ftable_d": run.TaskStatusSkipped,
 		"ftable_f": run.TaskStatusSkipped, "ftable_h": run.TaskStatusSucceeded,
 	} {
 		status, _ := taskState(t, db, id(table))

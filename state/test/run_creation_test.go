@@ -25,19 +25,23 @@ type createdRun struct {
 	Tasks     int
 	Dispatch  []string
 	Completed bool
+	// FailureReason is the run's failure_reason; empty when it has none.
+	FailureReason run.RunFailureReason
 }
 
 func (h *builtHarness) created(t *testing.T, id uuid.UUID) createdRun {
 	t.Helper()
 	var row struct {
-		Status    run.SchedulerStatus `db:"status"`
-		Planned   bool                `db:"planned"`
-		Completed bool                `db:"completed"`
+		Status        run.SchedulerStatus  `db:"status"`
+		Planned       bool                 `db:"planned"`
+		Completed     bool                 `db:"completed"`
+		FailureReason run.RunFailureReason `db:"failure_reason"`
 	}
 	require.NoError(t, h.db.Get(&row, `
-		SELECT status, planned_at IS NOT NULL AS planned, completed_at IS NOT NULL AS completed
+		SELECT status, planned_at IS NOT NULL AS planned, completed_at IS NOT NULL AS completed,
+		       COALESCE(failure_reason, '') AS failure_reason
 		FROM scheduler_tracker WHERE schedule_id = $1`, id))
-	out := createdRun{Status: row.Status, Planned: row.Planned, Completed: row.Completed}
+	out := createdRun{Status: row.Status, Planned: row.Planned, Completed: row.Completed, FailureReason: row.FailureReason}
 	require.NoError(t, h.db.Get(&out.Tasks, `SELECT count(*) FROM task_tracker WHERE schedule_id = $1`, id))
 	require.NoError(t, h.db.Select(&out.Dispatch, `
 		SELECT t.node_key FROM state_outbox o
@@ -102,7 +106,8 @@ func TestRunCreation(t *testing.T) {
 		id, _, err := activate.Handle(ctx, h.factory(), "creation-empty", run.KindCron, nil, identity.System(), model.OperationRun)
 		require.NoError(t, err)
 
-		assert.Equal(t, createdRun{Status: run.SchedulerStatusFailed, Completed: true}, h.created(t, id))
+		assert.Equal(t, createdRun{Status: run.SchedulerStatusFailed, Completed: true, FailureReason: run.RunFailureEmptySelection},
+			h.created(t, id), "the run failed with no failed task, so it records why")
 	})
 
 	t.Run("a trigger of a schedule with no node in the live release creates no run, whatever its operation", func(t *testing.T) {

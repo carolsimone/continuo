@@ -80,6 +80,10 @@ func TestNewPendingRun_RejectsInvalidKind(t *testing.T) {
 	}
 }
 
+// taskDefaults are the task settings the aggregate tests plan with: the
+// chart's defaults.
+var taskDefaults = run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}
+
 // fakeTaskCollection is the in-memory test double used by every aggregate
 // unit test in this file. Tests set fields per scenario.
 type fakeTaskCollection struct {
@@ -786,7 +790,7 @@ func TestRecordTaskStatus_ATaskTheRunDoesNotHoldIsRefused(t *testing.T) {
 func TestMarkDispatchTerminal_BenignFinalizesSkipped(t *testing.T) {
 	tc := newFakeTaskCollection()
 	r := runningRunWithProjection(t, tc, uuid.New())
-	evts, err := r.MarkDispatchTerminal(true, "no_tests", time.Now())
+	evts, err := r.MarkDispatchTerminal(true, "", "no_tests", time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -802,7 +806,7 @@ func TestMarkDispatchTerminal_BenignFinalizesSkipped(t *testing.T) {
 func TestMarkDispatchTerminal_NonBenignFinalizesFailed(t *testing.T) {
 	tc := newFakeTaskCollection()
 	r := runningRunWithProjection(t, tc, uuid.New())
-	evts, err := r.MarkDispatchTerminal(false, "empty_projection", time.Now())
+	evts, err := r.MarkDispatchTerminal(false, run.RunFailureEmptySelection, "empty_projection", time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -819,7 +823,7 @@ func TestCanBeRerunSource_AcceptsFailedTerminalWithWork(t *testing.T) {
 	ctx := context.Background()
 	tc := newFakeTaskCollection()
 	r := runningRunWithProjection(t, tc, uuid.New())
-	_, _ = r.MarkDispatchTerminal(false, "orchestrator empty", time.Now())
+	_, _ = r.MarkDispatchTerminal(false, run.RunFailureEmptySelection, "orchestrator empty", time.Now())
 	tc.hasNonSucc = true
 
 	if err := r.CanBeRerunSource(ctx, tc); err != nil {
@@ -842,7 +846,7 @@ func TestCanBeRerunSource_RejectsWhenAllSucceeded(t *testing.T) {
 	ctx := context.Background()
 	tc := newFakeTaskCollection()
 	r := runningRunWithProjection(t, tc, uuid.New())
-	_, _ = r.MarkDispatchTerminal(false, "any reason", time.Now())
+	_, _ = r.MarkDispatchTerminal(false, run.RunFailureEmptySelection, "any reason", time.Now())
 	tc.hasNonSucc = false
 
 	if err := r.CanBeRerunSource(ctx, tc); err != run.ErrNothingToRerun {
@@ -1198,7 +1202,7 @@ func TestRun_Cancel_SkippedRun_ErrAlreadyTerminal(t *testing.T) {
 	ctx := context.Background()
 	tc := newFakeTaskCollection()
 	r := runningRunWithProjection(t, tc, uuid.New())
-	if _, err := r.MarkDispatchTerminal(true, "no_tests", time.Now()); err != nil {
+	if _, err := r.MarkDispatchTerminal(true, "", "no_tests", time.Now()); err != nil {
 		t.Fatalf("MarkDispatchTerminal: %v", err)
 	}
 	events, err := r.Cancel(ctx, tc, "tester", "late", time.Now())

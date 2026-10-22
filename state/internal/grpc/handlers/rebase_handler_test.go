@@ -65,7 +65,7 @@ func setupRebaseFixture(t *testing.T) *rebaseFixture {
 		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, catalogRepo, clk, logger)
 	}
 	tenant := fixtureTenant(t, db)
-	useCase := svchandlers.NewTriggerRebaseHandler(runstart.Planner{TenantID: tenant}, logger)
+	useCase := svchandlers.NewTriggerRebaseHandler(runstart.Planner{TenantID: tenant, Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}}, logger)
 	handler := NewRebaseHandler(useCase, factory, logger)
 	return &rebaseFixture{
 		Handler: handler, SchedulerRepo: schedulerRepo, TaskRepo: taskRepo,

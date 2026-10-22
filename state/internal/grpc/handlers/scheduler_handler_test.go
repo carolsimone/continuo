@@ -191,7 +191,7 @@ func (s *stubSchedulerRepo) CancelTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID,
 }
 
 // defaultPlanner plans the runs of the default tenant, as state's main does.
-var defaultPlanner = runstart.Planner{TenantID: pkgevents.DefaultTenantID}
+var defaultPlanner = runstart.Planner{TenantID: pkgevents.DefaultTenantID, Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}}
 
 // ---- fake run repo for activation tests ----
 
@@ -282,11 +282,17 @@ func (s *scheduleTopology) ScheduleGraph(_ context.Context, _, _, schedule strin
 // startedTasks accepts the tasks a run starts with.
 type startedTasks struct {
 	run.TaskCollection
-	created []run.Task
+	attempts []run.Attempt
+	created  []run.Task
 }
 
 func (s *startedTasks) BulkCreate(_ context.Context, tasks []run.Task) error {
 	s.created = append(s.created, tasks...)
+	return nil
+}
+
+func (s *startedTasks) AddAttempts(_ context.Context, attempts []run.Attempt) error {
+	s.attempts = append(s.attempts, attempts...)
 	return nil
 }
 

@@ -106,7 +106,7 @@ func startedFailureRun(t *testing.T) (*run.Run, *fakeTaskCollection, *memTaskGra
 	r := newCronRun(t, model.OperationRun)
 	tc := newFakeTaskCollection()
 	tc.derived = true
-	_, err = r.Start(context.Background(), tc, "default", plan, g, 2, startNow)
+	_, err = r.Start(context.Background(), tc, "default", plan, g, taskDefaults, startNow)
 	require.NoError(t, err)
 	return r, tc, &memTaskGraph{g: g, tc: tc}
 }
@@ -147,8 +147,8 @@ func TestRecordTaskStatus_ASuccessDispatchesTheTasksItMakesReady(t *testing.T) {
 	created := createdByKey(tc)[fkey("ftable_g")]
 	node, _ := failureSchedule().Node(fkey("ftable_g"))
 	assert.Equal(t, run.TaskDispatched{
-		ID: r.ScheduleID(), ScheduleName: "e2e-schedule-failure", TaskID: created.TaskID, Node: node,
-		JobName: created.JobName, Operation: model.OperationRun, MaxRetries: 2,
+		ID: r.ScheduleID(), ScheduleName: "e2e-schedule-failure", TaskID: created.TaskID, KnownStatus: run.AttemptDispatched,
+		Node: node, JobName: created.JobName, Operation: model.OperationRun, MaxRetries: 2,
 	}, d)
 
 	events = record(t, r, tc, g, "ftable_b", run.TaskStatusSucceeded, 0)
@@ -281,6 +281,7 @@ func TestRecordTaskStatus_RunningCreatesTheAttemptRow(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, run.Attempt{
 		TaskID: task.TaskID, Number: 0, JobName: task.JobName, Status: run.AttemptRunning, DispatchedAt: task.DispatchedAt,
+		NextCheckIn: 5 * time.Minute,
 	}, a)
 }
 
@@ -374,7 +375,10 @@ func TestRecordTaskStatus_ARefusedFirstJobIsRecordedAtAttemptZero(t *testing.T) 
 	require.True(t, ok)
 	assert.Equal(t, run.AttemptFailed, a.Status)
 	assert.Equal(t, task.JobName, a.JobName)
-	assert.Len(t, tc.attemptRows, 1)
+	for _, n := range []int32{1, 2} {
+		_, ok := attemptOf(t, tc, r, "ftable_a", n)
+		assert.False(t, ok, "no attempt %d ran", n)
+	}
 }
 
 // endedRun holds one task with a retry budget of 1, Job name "job-t" and a
@@ -549,5 +553,5 @@ func TestRecordTaskStatus_APendingReportWritesNoAttempt(t *testing.T) {
 
 	record(t, r, tc, g, "ftable_a", run.TaskStatusPending, 0)
 
-	assert.Empty(t, tc.attemptRows)
+	assert.Empty(t, tc.saves)
 }
