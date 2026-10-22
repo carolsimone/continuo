@@ -65,4 +65,17 @@ describe('scheduler card helpers', () => {
 
     expect(getRunningCount(tasks)).toBe(0);
   });
+
+  it('counts a dispatched or queued node as neither completed nor running', () => {
+    const tasks = [
+      makeTask('succeeded', 'a'),
+      makeTask('dispatched', 'b'),
+      makeTask('queued', 'c'),
+      makeTask('running', 'd'),
+    ];
+
+    expect(getScheduleProgressLabel(tasks)).toBe('Completed: 1/4');
+    expect(getScheduleProgressPercent(tasks)).toBe(25);
+    expect(getRunningCount(tasks)).toBe(1);
+  });
 });

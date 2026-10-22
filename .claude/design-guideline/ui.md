@@ -929,8 +929,8 @@ Rules:
   like pending: nothing of the task runs yet. A `queued` pill carries the
   title "waiting for a slot" (`taskStatusTitle`). Wherever task statuses are
   ordered or counted (the nodes table, the run-progress header, the swimlane
-  legend, a service's rolled-up status) dispatched and queued come just
-  before running.
+  legend, a service's rolled-up status, the dashboard run card's summary
+  row) dispatched and queued come just before running.
 - A node page's run row shows the failure class and reason of its latest
   attempt (`.nodes-reason`, joined with ` · `) under its status pill.
 - The node row's own cells stay the task's summary: its Attempt cell reads
