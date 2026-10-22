@@ -393,37 +393,47 @@ describe('NodeDetailPage — task timeout', () => {
     ...over,
   });
 
-  function serve(summary: () => Promise<Response>) {
+  // Answers the catalog search like state does: the search term is a
+  // case-insensitive exact match on the table name, and nothing else.
+  function serveRows(rows: ReturnType<typeof mkSummary>[]) {
+    serve(url => {
+      const search = (new URL(url, 'http://x').searchParams.get('search') ?? '').toLowerCase();
+      const nodes = rows.filter(r => r.table_name.toLowerCase() === search);
+      return jsonResp({ total_count: nodes.length, nodes });
+    });
+  }
+
+  function serve(summary: (url: string) => Promise<Response>) {
     mockFetch.mockImplementation((input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString();
-      if (url.startsWith('/api/nodes?')) return summary();
+      if (url.startsWith('/api/nodes?')) return summary(url);
       if (url.endsWith('/meta')) return jsonResp({ node_type: 'dbt-model' });
       return jsonResp({ runs: [] });
     });
   }
 
   it('shows the declared task timeout', async () => {
-    serve(() => jsonResp({ total_count: 1, nodes: [mkSummary({ timeout_seconds: 28800 })] }));
+    serveRows([mkSummary({ timeout_seconds: 28800 })]);
     renderPage();
     expect(await screen.findByText('task timeout 8 h · declared')).toBeInTheDocument();
     const calls = mockFetch.mock.calls as unknown as [string][];
-    expect(calls.some(c => c[0] === '/api/nodes?service=svc&search=svc.schema.tbl&operation=run')).toBe(true);
+    expect(calls.some(c => c[0] === '/api/nodes?service=svc&search=tbl&operation=run')).toBe(true);
   });
 
   it('shows a declared timeout below one hour in minutes', async () => {
-    serve(() => jsonResp({ total_count: 1, nodes: [mkSummary({ timeout_seconds: 1800 })] }));
+    serveRows([mkSummary({ timeout_seconds: 1800 })]);
     renderPage();
     expect(await screen.findByText('task timeout 30 min · declared')).toBeInTheDocument();
   });
 
   it('says the install default applies when none is declared', async () => {
-    serve(() => jsonResp({ total_count: 1, nodes: [mkSummary({ timeout_seconds: 0 })] }));
+    serveRows([mkSummary({ timeout_seconds: 0 })]);
     renderPage();
     expect(await screen.findByText('task timeout · install default')).toBeInTheDocument();
   });
 
   it('shows no task timeout when the node has no summary', async () => {
-    serve(() => jsonResp({ total_count: 0, nodes: [] }));
+    serveRows([]);
     renderPage();
     await screen.findByText('dbt-model');
     expect(screen.queryByText(/task timeout/)).not.toBeInTheDocument();
@@ -444,23 +454,17 @@ describe('NodeDetailPage — task timeout', () => {
   });
 
   it('ignores a summary of another schema with the same table name', async () => {
-    serve(() => jsonResp({ total_count: 1, nodes: [mkSummary({ schema_name: 'other', timeout_seconds: 28800 })] }));
+    serveRows([mkSummary({ schema_name: 'other', timeout_seconds: 28800 })]);
     renderPage();
     await screen.findByText('dbt-model');
     expect(screen.queryByText(/task timeout/)).not.toBeInTheDocument();
   });
 
-  it('ignores a same-schema node whose table name merely starts with this one', async () => {
-    serve(() => jsonResp({ total_count: 1, nodes: [{ ...mkSummary({ timeout_seconds: 3600 }), table_name: 'tbl_2' }, mkSummary({ timeout_seconds: 28800 })] }));
-    renderPage();
-    expect(await screen.findByText('task timeout 8 h · declared')).toBeInTheDocument();
-  });
-
   it('picks the matching schema when several nodes share the table name', async () => {
-    serve(() => jsonResp({ total_count: 2, nodes: [
+    serveRows([
       mkSummary({ schema_name: 'other', timeout_seconds: 28800 }),
       mkSummary({ schema_name: 'schema', timeout_seconds: 7200 }),
-    ] }));
+    ]);
     renderPage();
     expect(await screen.findByText('task timeout 2 h · declared')).toBeInTheDocument();
   });

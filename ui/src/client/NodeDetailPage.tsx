@@ -160,18 +160,18 @@ export default function NodeDetailPage() {
       });
   }, [service, schema, table]);
 
-  // The catalog search matches a substring of "service.schema.table", so the
-  // fully qualified name narrows the page to this node and its name-prefix
-  // neighbours; the row for this exact schema and table is the one kept.
+  // The catalog search filters on the table name only (an exact match within
+  // the service), so rows of other schemas sharing the table name can come
+  // back: the schema is matched client-side.
   useEffect(() => {
     setTimeoutSeconds(null);
     if (!service || !schema || !table) return;
     let cancelled = false;
-    fetch(`/api/nodes?service=${encodeURIComponent(service)}&search=${encodeURIComponent(`${service}.${schema}.${table}`)}&operation=run`)
+    fetch(`/api/nodes?service=${encodeURIComponent(service)}&search=${encodeURIComponent(table)}&operation=run`)
       .then(r => (r.ok ? r.json() : null))
       .then((data: NodesResponse | null) => {
         if (cancelled) return;
-        const row = (data?.nodes ?? []).find(n => n.schema_name === schema && n.table_name === table);
+        const row = (data?.nodes ?? []).find(n => n.schema_name === schema);
         setTimeoutSeconds(row && typeof row.timeout_seconds === 'number' ? row.timeout_seconds : null);
       })
       .catch(() => {
