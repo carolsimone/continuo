@@ -961,6 +961,21 @@ def test_a_malformed_python_contract_fails_the_whole_release(tmp_path):
     assert publisher.publish_failed.call_args.kwargs["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
 
 
+def test_a_malformed_python_timeout_fails_the_whole_release(tmp_path):
+    publisher = MagicMock()
+    source = _source_of(ManifestFile(
+        path=_python_contract(tmp_path, _python_entry(timeout_minutes="2h")),
+        declared_service="service-py", kind=ManifestKind.PYTHON,
+    ))
+
+    _dispatch_handler(source, publisher).handle(release_id="rel-1")
+
+    publisher.publish_ok.assert_not_called()
+    kwargs = publisher.publish_failed.call_args.kwargs
+    assert kwargs["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
+    assert "timeout_minutes" in kwargs["detail"]
+
+
 def test_an_empty_python_contract_fails_the_release(tmp_path):
     """An artifact declaring no nodes would silently retire every node of that
     service on promote — the same hazard as an empty dbt manifest, so the same

@@ -487,3 +487,29 @@ def test_bad_secret_ref_rejects_the_artifact(tmp_path):
 def test_python_api_with_reads_rejects_the_artifact(tmp_path):
     with pytest.raises(MalformedContractError, match="declares no reads"):
         _parse_one(tmp_path, make_api_entry(reads={"x": "select 1 from analytics.a"}))
+
+
+def test_python_timeout_minutes_reaches_the_node(tmp_path):
+    node = _parse_one(tmp_path, make_entry(timeout_minutes=90))
+    assert node.timeout_seconds == 5400
+
+
+def test_an_entry_without_timeout_minutes_has_none(tmp_path):
+    assert _parse_one(tmp_path, make_entry()).timeout_seconds is None
+
+
+@pytest.mark.parametrize("value", [0, 10081, -5, "2h", "120", 1.5, True, []])
+def test_bad_timeout_minutes_rejects_the_artifact(tmp_path, value):
+    with pytest.raises(MalformedContractError) as excinfo:
+        _parse_one(tmp_path, make_entry(timeout_minutes=value))
+    assert "analytics.table_test" in str(excinfo.value)
+    assert "timeout_minutes" in str(excinfo.value)
+
+
+def test_a_null_timeout_minutes_is_undeclared(tmp_path):
+    assert _parse_one(tmp_path, make_entry(timeout_minutes=None)).timeout_seconds is None
+
+
+def test_timeout_minutes_is_not_in_raw_code(tmp_path):
+    node = _parse_one(tmp_path, make_entry(timeout_minutes=90))
+    assert "timeout_minutes" not in json.loads(node.raw_code)
