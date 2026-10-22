@@ -33,13 +33,17 @@ def _artifact_node(node: Mapping) -> dict:
     """The fields of one node the artifact keeps, defaulted the way the Go
     document's zero values are: a key outside the artifact's node shape is
     dropped, a missing string is "", a missing test_count 0, missing or null
-    upstreams an empty list (upstreams sorted), and an empty secret_ref is left out."""
+    upstreams an empty list (upstreams sorted), and an empty secret_ref or an
+    undeclared timeout_seconds is left out."""
     out = {name: str(node.get(name) or "") for name in _STRING_FIELDS}
     out["test_count"] = int(node.get("test_count") or 0)
     out["upstream_unique_ids"] = sorted(str(u) for u in node.get("upstream_unique_ids") or [])
     secret_ref = node.get("secret_ref") or ""
     if secret_ref:
         out["secret_ref"] = str(secret_ref)
+    timeout_seconds = int(node.get("timeout_seconds") or 0)
+    if timeout_seconds > 0:
+        out["timeout_seconds"] = timeout_seconds
     return out
 
 

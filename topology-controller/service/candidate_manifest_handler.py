@@ -314,6 +314,8 @@ class CandidateManifestHandler:
             }
             if node.secret_ref:
                 entry["secret_ref"] = node.secret_ref
+            if node.timeout_seconds:
+                entry["timeout_seconds"] = node.timeout_seconds
             topology.append(entry)
 
         bundle = build_code_bundle(

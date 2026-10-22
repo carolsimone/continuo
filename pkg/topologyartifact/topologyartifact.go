@@ -51,6 +51,8 @@ type Node struct {
 	UpstreamUniqueIDs  []string `json:"upstream_unique_ids"`
 	Schedule           string   `json:"schedule"`
 	SecretRef          string   `json:"secret_ref,omitempty"`
+	// TimeoutSeconds is the node's declared task timeout; 0 when it declares none.
+	TimeoutSeconds int `json:"timeout_seconds,omitempty"`
 }
 
 // Document is the whole artifact of one release.
@@ -80,7 +82,7 @@ func Key(tenantID, releaseID string) string {
 // ordered by unique_id (a stable sort, so equal ids keep their input order),
 // each node's upstream ids sorted, object keys sorted, compact separators,
 // UTF-8 text without HTML escaping, secret_ref omitted when empty,
-// schema_version set to SchemaVersion, no trailing newline.
+// timeout_seconds omitted when not above 0, schema_version set to SchemaVersion, no trailing newline.
 // encoding/json writes the line and paragraph separators U+2028 and U+2029 as
 // six-character escape sequences, so a writer in another language must too.
 func CanonicalJSON(d Document) ([]byte, error) {
@@ -107,6 +109,9 @@ func CanonicalJSON(d Document) ([]byte, error) {
 		}
 		if n.SecretRef != "" {
 			node["secret_ref"] = n.SecretRef
+		}
+		if n.TimeoutSeconds > 0 {
+			node["timeout_seconds"] = n.TimeoutSeconds
 		}
 		nodes = append(nodes, node)
 	}

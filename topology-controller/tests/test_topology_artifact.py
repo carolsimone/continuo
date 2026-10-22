@@ -111,6 +111,19 @@ def test_null_upstreams_become_an_empty_list_and_an_empty_secret_ref_is_left_out
     assert second["secret_ref"] == "continuo-api-fx"
 
 
+def test_a_declared_timeout_is_kept_and_an_undeclared_one_leaves_no_key():
+    raw = canonical_topology_json(
+        tenant_id="default", release_id="rel-1",
+        nodes=[_node("a.x"), _node("b.y", timeout_seconds=28800), _node("c.z", timeout_seconds=None)],
+    )
+
+    first, second, third = _decode(raw)["nodes"]
+    assert "timeout_seconds" not in first
+    assert second["timeout_seconds"] == 28800
+    assert isinstance(second["timeout_seconds"], int)
+    assert "timeout_seconds" not in third
+
+
 def test_upstreams_are_sorted():
     """Edges are a set: the canonical form sorts each node's upstreams, as Go's
     CanonicalJSON does, so resolution order never changes the bytes."""

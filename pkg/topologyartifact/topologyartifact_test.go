@@ -94,6 +94,14 @@ func TestEncode_IsDeterministicAndDecodesBack(t *testing.T) {
 	again, err := topologyartifact.CanonicalJSON(doc)
 	require.NoError(t, err)
 	assert.Equal(t, fx.Canonical, string(again))
+
+	for _, n := range doc.Nodes {
+		if n.UniqueID == "staging.orders" {
+			assert.Equal(t, 28800, n.TimeoutSeconds)
+		} else {
+			assert.Zero(t, n.TimeoutSeconds, n.UniqueID)
+		}
+	}
 }
 
 func TestDecode_AcceptsAnUppercaseChecksum(t *testing.T) {

@@ -1077,6 +1077,17 @@ def test_a_node_without_a_secret_ref_publishes_no_secret_ref_key(tmp_path):
     assert "secret_ref" not in node
 
 
+def test_a_declared_timeout_is_published_on_its_topology_entry(tmp_path):
+    entry = _python_entry(kind="python-api", reads={}, timeout_minutes=480)
+    (node,) = _published_python_topology(tmp_path, entry)
+    assert node["timeout_seconds"] == 28800
+
+
+def test_a_node_without_a_timeout_publishes_no_timeout_seconds_key(tmp_path):
+    (node,) = _published_python_topology(tmp_path, _python_entry(kind="python-api", reads={}))
+    assert "timeout_seconds" not in node
+
+
 def test_a_release_mixing_old_and_new_python_contracts_publishes_python_node(tmp_path):
     """Every release re-parses every service's stored production contract, so a
     contract written by an older runtime (kind python-model) sits beside a new
