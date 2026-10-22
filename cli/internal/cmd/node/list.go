@@ -94,10 +94,10 @@ Output (stdout, JSON):
   run in the window; avg_duration_sec and p95_duration_sec are omitted when
   no run in the window was timed; last_run_at is omitted when the node has
   never run. last_status is one of succeeded, failed, running, queued,
-  dispatched, cancelled, pending. timeout_seconds is the task timeout the
-  node's tasks get, always present: its declared timeout in the live release
-  when timeout_declared is true, else the install default. No match returns
-  {"total_count":0,"nodes":[]}, not an error.
+  dispatched, cancelled, skipped, pending. timeout_seconds is the task
+  timeout the node's tasks get, always present: its declared timeout in the
+  live release when timeout_declared is true, else the install default. No
+  match returns {"total_count":0,"nodes":[]}, not an error.
 
 Errors:
   usage      (exit 2)  a positional argument was given, --operation is not

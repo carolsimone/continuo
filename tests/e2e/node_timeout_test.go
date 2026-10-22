@@ -50,7 +50,8 @@ const (
 //	  is changed and the release promotes with no validation.requested:v1 and
 //	  no validation Job
 //	→ release.promoted:v2 → state stores the release's nodes, ftable_e carrying
-//	  28800 and every other node NULL.
+//	  28800 and every other node NULL but service-1's ftable_deadline, which
+//	  declares its own 60 seconds.
 //
 // meta is outside the content hash, so the seeded current_prod holds the
 // baseline's own hashes for every node.

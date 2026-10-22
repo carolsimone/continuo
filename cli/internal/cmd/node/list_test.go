@@ -238,3 +238,22 @@ func TestList_HumanModeEmptyPageSummary(t *testing.T) {
 	require.Equal(t, 0, exit)
 	assert.True(t, strings.HasSuffix(stderr, "showing 0 of 0\n"), "got: %q", stderr)
 }
+
+// The help's list of the statuses last_status can carry is exactly the task
+// statuses state serves.
+func TestList_LongNamesEveryTaskStatus(t *testing.T) {
+	long := strings.Join(strings.Fields(NewListCommand(nil, nil, nil, nil).Long), " ")
+	const prefix = "last_status is one of "
+	i := strings.Index(long, prefix)
+	require.GreaterOrEqual(t, i, 0, "the help has no %q sentence", prefix)
+	sentence, _, _ := strings.Cut(long[i+len(prefix):], ".")
+	listed := strings.Split(sentence, ", ")
+	var served []string
+	for v, name := range statev1.TaskStatus_name {
+		if statev1.TaskStatus(v) == statev1.TaskStatus_TASK_STATUS_UNSPECIFIED {
+			continue
+		}
+		served = append(served, strings.ToLower(strings.TrimPrefix(name, "TASK_STATUS_")))
+	}
+	assert.ElementsMatch(t, served, listed)
+}

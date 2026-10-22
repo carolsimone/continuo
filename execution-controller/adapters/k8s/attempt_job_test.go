@@ -29,8 +29,8 @@ func attemptSpec(nodeType pkg_model.NodeType, image string) deploy.JobSpec {
 }
 
 // A production Job names its attempt on the Job and its pod, the pod's
-// container reads it as TASK_ATTEMPT, and Kubernetes stops the Job once its pod
-// has been alive for the start timeout plus the task's timeout.
+// container reads it as TASK_ATTEMPT, and Kubernetes stops the Job once the
+// start timeout plus the task's timeout has passed since the Job started.
 func TestDeploy_TheJobCarriesItsAttemptAndItsDeadline(t *testing.T) {
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "warehouse-conn")
 	t.Setenv("DOCKERHUB_USERNAME", "")
@@ -169,8 +169,8 @@ func TestDeploy_AnUndeclaredNodeTypeIsInvalid(t *testing.T) {
 	require.ErrorIs(t, err, deploy.ErrInvalidNodeType)
 }
 
-// Every release-leg Job is stopped once its pod has been alive for the start
-// timeout plus the install's task timeout.
+// Every release-leg Job is stopped once the start timeout plus the install's
+// task timeout has passed since the Job started.
 func TestDeployLegs_TheJobGetsTheInstallsTaskTimeout(t *testing.T) {
 	ctx := context.Background()
 	leg := deploy.ValidationJobSpec{

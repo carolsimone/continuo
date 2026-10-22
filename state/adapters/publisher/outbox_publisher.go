@@ -15,11 +15,12 @@ import (
 // producer names state as the producer of the enveloped streams it writes.
 const producer = "state"
 
-// OutboxPublisher publishes state's outbox entries to Redis streams.
-// Each outbox row represents one event: its Payload JSONB is unmarshaled into
-// a field map and written via XADD to the stream named by StreamName.
-// Nested non-scalar values (e.g. service_metadata maps) are re-encoded as JSON
-// strings so that every Redis field is a plain scalar.
+// OutboxPublisher publishes state's outbox entries to Redis streams. Each
+// outbox row represents one event, rendered as a field map (Render) and
+// written via XADD to the stream named by StreamName: a task.dispatch:v1 row
+// under an envelope, a dead-letter row as its dead-letter fields, and every
+// other row's JSON payload flattened to scalar fields, its nested values (e.g.
+// service_metadata maps) re-encoded as JSON strings.
 type OutboxPublisher struct {
 	redis  *goredis.Client
 	logger *slog.Logger
@@ -30,8 +31,8 @@ func NewOutboxPublisher(redis *goredis.Client, logger *slog.Logger) *OutboxPubli
 	return &OutboxPublisher{redis: redis, logger: logger}
 }
 
-// Publish unmarshals the entry's JSONB payload into a field map, normalizes
-// any nested structures to scalar strings, and XADDs them to entry.StreamName.
+// Publish renders the entry as its field map (Render), adds the entry's
+// outbox_entry_id and XADDs it to entry.StreamName.
 func (p *OutboxPublisher) Publish(ctx context.Context, entry *outbox.Entry) error {
 	args, err := p.xaddArgs(entry)
 	if err != nil {

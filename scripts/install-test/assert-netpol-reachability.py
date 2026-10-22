@@ -13,9 +13,10 @@ Usage: assert-netpol-reachability.py <rendered-manifest.yaml> [release-name]
 Extend REQUIRED_EDGES whenever a service begins reaching another over the
 network. Each edge is (source service, destination service, port, why): the
 destination pod must admit ingress from the source pod on that port.
+
 CLOSED_EDGES lists edges, in the same form, that no service needs: the
-destination pod must not admit them, so an allow rule nothing uses does not
-linger.
+destination pod must not admit ingress from the source pod on that port, so
+an allow rule nothing uses does not linger.
 """
 import sys
 

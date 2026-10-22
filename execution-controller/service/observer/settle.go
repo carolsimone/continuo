@@ -101,8 +101,5 @@ func (o *Observer) errorMessage(f model.AttemptFacts) string {
 
 // truncate cuts msg to ErrorMessageMaxLen.
 func (o *Observer) truncate(msg string) string {
-	if o.cfg.ErrorMessageMaxLen > 0 && len(msg) > o.cfg.ErrorMessageMaxLen {
-		return msg[:o.cfg.ErrorMessageMaxLen] + "...[truncated]"
-	}
-	return msg
+	return reports.TruncateMessage(msg, o.cfg.ErrorMessageMaxLen)
 }

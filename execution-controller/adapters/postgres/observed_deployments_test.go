@@ -55,7 +55,7 @@ func TestObserved_ListsTheJobsOfStartedDeployments(t *testing.T) {
 	names, err := postgres.NewObservedDeployments(db, testLogger()).ListObservedJobNames(ctx)
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"job-starting", "job-running", "job-terminating"}, names,
-		"a row done without its outcome is found through its Job, not listed")
+		"only started deployments are listed; a done row is not, with or without its outcome")
 }
 
 func TestObserved_GetByJobNameDoesNotWaitForALockedRow(t *testing.T) {

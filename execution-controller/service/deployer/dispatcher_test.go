@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -192,7 +193,7 @@ func TestDispatcher_TransientErrorReschedules(t *testing.T) {
 	assert.Equal(t, "pending", status)
 	assert.Equal(t, 1, rc)
 	assert.True(t, na.After(time.Now()), "next_attempt_at pushed into the future")
-	assert.Equal(t, 0, outboxCountByType(t, db, event.EventTypeTaskStatusReport), "no announcement on transient retry")
+	assert.Equal(t, 0, outboxCountByType(t, db, event.EventTypeTaskStatusReport), "no report on transient retry")
 }
 
 func TestDispatcher_BudgetExhaustedReportsCreateFailed(t *testing.T) {
@@ -214,6 +215,23 @@ func TestDispatcher_BudgetExhaustedReportsCreateFailed(t *testing.T) {
 	assert.Equal(t, "infra", got.FailureClass, "Kubernetes refused the Job on every try: state may retry it")
 	assert.Equal(t, "create_failed", got.FailureReason)
 	assert.Equal(t, "apiserver down", got.ErrorMessage)
+}
+
+// The error message reported for an attempt whose Job could not be created is
+// cut to ErrorMessageMaxLen, as the observer cuts a failed attempt's.
+func TestDispatcher_ACreationFailureReportsATruncatedMessage(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	seedJob(t, db, 3, 2)
+	long := strings.Repeat("apiserver down ", 10)
+	fk := &fakeDeployer{deployErr: errors.New(long)}
+	disp := newTestDispatcherWith(db, fk, 50, deployer.DispatcherConfig{ErrorMessageMaxLen: 64}, admissionFactory)
+
+	require.NoError(t, disp.ProcessBatch(context.Background()))
+
+	got := failedReport(t, db)
+	assert.Equal(t, "create_failed", got.FailureReason)
+	assert.Equal(t, long[:64]+"...[truncated]", got.ErrorMessage)
 }
 
 func TestDispatcher_PermanentErrorWritesFailedImmediately(t *testing.T) {

@@ -15,10 +15,9 @@ import (
 
 // readyCandidatesQuery reads the pending, undispatched tasks of run $2 that
 // read node $4 directly over release $3's edges, with their Job names and the
-// statuses of their upstream tasks in the run. Each
-// lookup is an index probe: topology_edges by its primary key prefix (tenant,
-// release, upstream) or by idx_topology_edges_downstream, task_tracker by
-// uq_task_tracker_run_node.
+// statuses of their upstream tasks in the run. Each lookup is an index probe:
+// topology_edges by its primary key prefix (tenant, release, upstream) or by
+// idx_topology_edges_downstream, task_tracker by uq_task_tracker_run_node.
 const readyCandidatesQuery = `
 	SELECT t.task_id, t.job_name,
 	       n.node_key, n.unique_id, n.service_name, n.schema_name, n.table_name, n.node_type, n.test_count,

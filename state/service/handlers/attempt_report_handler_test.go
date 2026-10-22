@@ -342,7 +342,8 @@ func newAttemptReportHandler() *handlers.AttemptReportHandler {
 	return handlers.NewAttemptReportHandler(pkgevents.DefaultTenantID, run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}, taskStatusTestLogger())
 }
 
-// A queued or running report moves the task and records nothing to send.
+// A queued or running report moves its attempt to that status, saves the run
+// and writes nothing to the outbox.
 func TestAttemptReport_AReportThatStartsTheAttemptSendsNothing(t *testing.T) {
 	for _, status := range []run.AttemptStatus{run.AttemptQueued, run.AttemptRunning} {
 		t.Run(string(status), func(t *testing.T) {
@@ -362,8 +363,8 @@ func TestAttemptReport_AReportThatStartsTheAttemptSendsNothing(t *testing.T) {
 	}
 }
 
-// The success of the last open task finalizes the run, and the dispatches it
-// writes carry the report's dedup row as their provenance.
+// The success of the last open task finalizes the run: its RunFinalized event
+// is appended to the outbox with the report's dedup row as its provenance.
 func TestAttemptReport_TheLastSuccessFinalizesTheRun(t *testing.T) {
 	scheduleID, taskID, msgProcID := uuid.New(), uuid.New(), uuid.New()
 	runRepo := &fakeTaskStatusRunRepo{stored: newRunningTaskStatusRun(scheduleID, "daily", 2, 1)}

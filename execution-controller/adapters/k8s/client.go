@@ -53,8 +53,8 @@ type JobParams struct {
 	// Attempt is which attempt of the task the Job runs; it labels the Job
 	// and its pod and reaches the container as TASK_ATTEMPT.
 	Attempt int
-	// ActiveDeadlineSeconds is how long Kubernetes lets the Job run once it
-	// has started its pod.
+	// ActiveDeadlineSeconds is how long Kubernetes lets the Job run, counted
+	// from the Job's start.
 	ActiveDeadlineSeconds int64
 }
 

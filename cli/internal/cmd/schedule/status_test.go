@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -284,13 +285,23 @@ func keys(m map[string]json.RawMessage) []string {
 
 // The command's help names every status a node can report, so a caller never
 // meets one the help did not describe.
+// The help's list of the statuses a task can carry ("status is one of: ...")
+// is exactly the task statuses state serves.
 func TestStatus_LongNamesEveryTaskStatus(t *testing.T) {
 	long := NewStatusCommand(nil, nil, io.Discard, io.Discard).Long
-	for v := range statev1.TaskStatus_name {
-		s := taskStatusString(statev1.TaskStatus(v))
-		if s == "" {
-			continue
+	const prefix = "status is one of: "
+	var listed []string
+	for _, line := range strings.Split(long, "\n") {
+		if i := strings.Index(line, prefix); i >= 0 {
+			listed = strings.Split(strings.TrimSuffix(strings.TrimSpace(line[i+len(prefix):]), "."), "|")
 		}
-		assert.Contains(t, long, s, "status %q is not in the help", s)
 	}
+	require.NotEmpty(t, listed, "the help has no %q line", prefix)
+	var served []string
+	for v := range statev1.TaskStatus_name {
+		if s := taskStatusString(statev1.TaskStatus(v)); s != "" {
+			served = append(served, s)
+		}
+	}
+	assert.ElementsMatch(t, served, listed)
 }

@@ -38,11 +38,10 @@ type DeploymentRepository interface {
 	// ModeSeedBuild, or ModeCompile).
 	GetByReleaseNode(ctx context.Context, releaseID, nodeID string, mode model.Mode) (*model.Deployment, error)
 	// PendingValidationCount counts rows of the given mode for releaseID whose
-	// outcome is not yet recorded (pending, blocked, in flight, or done without an
-	// observed outcome). 'blocked' rows are waiting for in-set upstreams to
-	// complete before they can be dispatched, and a done row without an outcome was
-	// released by an older version before its Job's result was recorded; counting
-	// both prevents the aggregate-emit gate from firing before every node has
+	// outcome is not yet recorded, whatever their status (pending, blocked, in
+	// flight or done). 'blocked' rows are waiting for in-set upstreams to
+	// complete before they can be dispatched; counting every row without an
+	// outcome keeps the aggregate-emit gate from firing before every node has
 	// settled.
 	// mode scopes the count so a release's validation and seed-build legs are
 	// counted independently.

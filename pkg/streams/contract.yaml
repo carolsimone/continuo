@@ -546,7 +546,7 @@ vocabularies:
       - value: malformed_dispatch
         const: MalformedDispatch
         class: invalid
-        description: a field of the dispatch cannot run (its operation, image, Job name, timeout or known status), or no command builds the node.
+        description: "a field of the dispatch holds a value execution-controller cannot run: an operation it does not know, no image, a Job name that is not a Kubernetes name, a timeout below one second, or a known_status other than dispatched, queued or running; or no command builds the node."
       - value: job_name_collision
         const: JobNameCollision
         class: invalid

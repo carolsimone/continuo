@@ -400,10 +400,10 @@ execution:
 # attempt (0 to 10), stamped on each task when its run is created. A task's
 # container may run for its node's declared timeout_minutes; a node that
 # declares none, and every validation, seed-build and compile Job, gets
-# taskTimeoutHours (1 to 168). Kubernetes stops a Job once its pod has been
-# alive for the start timeout plus that time, and the attempt fails with
-# deadline_exceeded. A value outside its range fails the install, and state
-# and execution-controller refuse to start on it.
+# taskTimeoutHours (1 to 168). Kubernetes stops a Job once the start timeout
+# plus that time has passed since the Job started (its activeDeadlineSeconds),
+# and the attempt fails with deadline_exceeded. A value outside its range
+# fails the install, and state and execution-controller refuse to start on it.
 runs:
   taskMaxRetries: 2
   taskTimeoutHours: 24

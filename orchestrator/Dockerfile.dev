@@ -8,10 +8,10 @@ RUN ARCH=$(dpkg --print-architecture) && \
 
 WORKDIR /app
 
-# Layer 1: Workspace stub. The go.mod / go.sum files of the workspace modules
-# this image keeps are copied so `go mod download` can satisfy every
-# dependency they cite, but only the modules this image builds against (pkg
-# and orchestrator) get their source trees later.
+# Layer 1: Workspace stub. go.work and the go.mod / go.sum files of pkg,
+# orchestrator and the other workspace modules listed below are copied;
+# Layer 2 drops every module but pkg and orchestrator from the workspace, so
+# only those two are built against and get their source trees later.
 # Limiting the source-copy layers to the dirs this service actually
 # touches means a change to execution-controller does not invalidate
 # this image's cache.

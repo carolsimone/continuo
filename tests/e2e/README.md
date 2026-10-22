@@ -248,7 +248,7 @@ docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator \
 
 ## Failure Path Test
 
-`TestE2E_FailurePath_NodeFailureDrainsSchedule` uses the 6-node `ftable_*` DAG. It verifies:
+`TestE2E_FailurePath_RerunRebasesBothFailureSubtrees` uses the 6-node `ftable_*` DAG. It verifies:
 
 - `ftable_e` fails every attempt its budget allows (`max_retries` + 1, so 3 with the default `runs.taskMaxRetries` of 2), each recorded in `task_attempts` with failure class `task`, and reaches `failed` status
 - Downstream node (`ftable_f`) is never deployed and is recorded `skipped`
@@ -292,7 +292,9 @@ The failure model `ftable_e` runs in the `service-2` Docker image but JOINs `pub
 
 - Happy path: ~1 minute
 - Failure path: ~1 minute (3 attempts, each retry dispatched at once)
-- Whole suite: ~39 minutes warm (76 test functions), slower on a cold stack
+- Whole suite: ~39 minutes warm, measured without the retry, start-failure, start-timeout and deadline
+  scenarios (`TestE2E_Retry_*`, `TestE2E_StartFailure_*`, `TestE2E_NodeTimeout_*`); the CI e2e job
+  measures the whole suite on every run. A cold stack is slower.
 - Timeout: 125 minutes for the whole `tests/e2e/...` package (`go test -timeout`).
   Derived, not measured: the two longest per-test context ceilings (35m each)
   wedging in one run, plus 55m for the rest of the suite. Every per-test

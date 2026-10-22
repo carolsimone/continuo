@@ -1,6 +1,6 @@
 // Package deployer holds the application service that drains the deployments
 // command queue: it admits queued deployments to execution slots under a
-// concurrency cap and creates their K8s Jobs, and writes the announcement of a
+// concurrency cap and creates their K8s Jobs, and writes the report of a
 // deployment that cannot be deployed. The observer follows each created Job to
 // its end. It depends only on domain ports.
 package deployer
@@ -51,6 +51,9 @@ type DispatcherConfig struct {
 	// notifications lost while the listener reconnects. Without a Waker the
 	// dispatcher runs only on Tick.
 	Waker outbox.Waker
+	// ErrorMessageMaxLen truncates the error message reported for an attempt
+	// whose Job could not be created; 0 keeps it whole.
+	ErrorMessageMaxLen int
 }
 
 // Dispatcher admits deployments under a concurrency cap. The K8s deploy is a
@@ -64,6 +67,7 @@ type Dispatcher struct {
 	newAdmission  AdmissionRepoFactory
 	waker         outbox.Waker
 	maxConcurrent int
+	maxMessageLen int
 	logger        *slog.Logger
 	tick          time.Duration
 	batchSize     int
@@ -101,6 +105,7 @@ func NewDispatcher(
 		newAdmission:  newAdmission,
 		waker:         cfg.Waker,
 		maxConcurrent: maxConcurrent,
+		maxMessageLen: cfg.ErrorMessageMaxLen,
 		logger:        logger,
 		tick:          cfg.Tick,
 		batchSize:     cfg.BatchSize,
@@ -503,10 +508,12 @@ func creationFailureReason(err error) pkgmodel.FailureReason {
 }
 
 // reportCreationFailure reports a production attempt whose Job could not
-// be created as failed, with the reason recorded in its facts; state decides
-// whether the task runs again. The caller saves dep.
+// be created as failed, with the reason recorded in its facts and its message
+// cut to ErrorMessageMaxLen; state decides whether the task runs again. The
+// caller saves dep.
 func (d *Dispatcher) reportCreationFailure(ctx context.Context, outboxRepo outbox.Repository, dep *model.Deployment) error {
-	if err := reports.Write(ctx, outboxRepo, dep, pkgmodel.AttemptStatusFailed, dep.Facts().Message); err != nil {
+	message := reports.TruncateMessage(dep.Facts().Message, d.maxMessageLen)
+	if err := reports.Write(ctx, outboxRepo, dep, pkgmodel.AttemptStatusFailed, message); err != nil {
 		return fmt.Errorf("report the failed attempt: %w", err)
 	}
 	return nil

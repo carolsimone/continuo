@@ -2396,7 +2396,7 @@ type NodeRun struct {
 	Kind           string                 `protobuf:"bytes,3,opt,name=kind,proto3" json:"kind,omitempty"`                                           // cron | trigger | rerun | rebase | single_node_run
 	TerminalStatus string                 `protobuf:"bytes,4,opt,name=terminal_status,json=terminalStatus,proto3" json:"terminal_status,omitempty"` // "" while in flight
 	TaskId         string                 `protobuf:"bytes,5,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
-	TaskStatus     string                 `protobuf:"bytes,6,opt,name=task_status,json=taskStatus,proto3" json:"task_status,omitempty"` // pending | running | succeeded | failed | cancelled
+	TaskStatus     string                 `protobuf:"bytes,6,opt,name=task_status,json=taskStatus,proto3" json:"task_status,omitempty"` // pending | dispatched | queued | running | succeeded | failed | cancelled | skipped
 	Attempt        int32                  `protobuf:"varint,7,opt,name=attempt,proto3" json:"attempt,omitempty"`                        // 0-based number of the task's current attempt
 	ImageTag       string                 `protobuf:"bytes,8,opt,name=image_tag,json=imageTag,proto3" json:"image_tag,omitempty"`
 	CreatedAt      string                 `protobuf:"bytes,10,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`               // RFC3339
@@ -2707,7 +2707,7 @@ type NodeSummary struct {
 	AvgDurationSec  int32                  `protobuf:"varint,6,opt,name=avg_duration_sec,json=avgDurationSec,proto3" json:"avg_duration_sec,omitempty"`   // -1 when no measurable run
 	P95DurationSec  int32                  `protobuf:"varint,7,opt,name=p95_duration_sec,json=p95DurationSec,proto3" json:"p95_duration_sec,omitempty"`   // -1 when no measurable run
 	FlakyRatePct    int32                  `protobuf:"varint,8,opt,name=flaky_rate_pct,json=flakyRatePct,proto3" json:"flaky_rate_pct,omitempty"`         // % of window runs with attempt > 0; 0 when none
-	LastStatus      string                 `protobuf:"bytes,9,opt,name=last_status,json=lastStatus,proto3" json:"last_status,omitempty"`                  // succeeded|failed|running|cancelled|pending
+	LastStatus      string                 `protobuf:"bytes,9,opt,name=last_status,json=lastStatus,proto3" json:"last_status,omitempty"`                  // succeeded|failed|running|queued|dispatched|cancelled|skipped|pending
 	LastRunAt       string                 `protobuf:"bytes,10,opt,name=last_run_at,json=lastRunAt,proto3" json:"last_run_at,omitempty"`                  // RFC3339 of the most recent run's created_at
 	Operation       string                 `protobuf:"bytes,11,opt,name=operation,proto3" json:"operation,omitempty"`                                     // run | test | build
 	TimeoutSeconds  int32                  `protobuf:"varint,12,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`    // the task timeout the node's tasks get: its declared timeout in the live release, else the install default
@@ -3012,7 +3012,7 @@ type RunGraphNode struct {
 	TableName     string                 `protobuf:"bytes,3,opt,name=table_name,json=tableName,proto3" json:"table_name,omitempty"`
 	ScheduleName  string                 `protobuf:"bytes,4,opt,name=schedule_name,json=scheduleName,proto3" json:"schedule_name,omitempty"` // the node's schedule in the run's release; "" when unknown
 	NodeType      string                 `protobuf:"bytes,5,opt,name=node_type,json=nodeType,proto3" json:"node_type,omitempty"`             // "" when the run names no release
-	Status        string                 `protobuf:"bytes,6,opt,name=status,proto3" json:"status,omitempty"`                                 // the task's status: pending | running | succeeded | failed | cancelled | skipped
+	Status        string                 `protobuf:"bytes,6,opt,name=status,proto3" json:"status,omitempty"`                                 // the task's status: pending | dispatched | queued | running | succeeded | failed | cancelled | skipped
 	TaskId        string                 `protobuf:"bytes,7,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

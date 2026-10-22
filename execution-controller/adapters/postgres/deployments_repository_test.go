@@ -146,7 +146,7 @@ func TestRepo_PendingValidationCount_CountsReleasedRowsWithoutOutcome(t *testing
 
 	n, err := repo.PendingValidationCount(ctx, "rel-count", model.ModeValidation)
 	require.NoError(t, err)
-	require.Equal(t, 1, n, "a node whose slot was released without an outcome still holds the leg open")
+	require.Equal(t, 1, n, "a done row without an outcome still holds the leg open")
 }
 
 func TestRepo_Save_RescheduleAndFail(t *testing.T) {

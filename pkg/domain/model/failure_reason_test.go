@@ -19,7 +19,9 @@ func TestFailureReason_EveryReasonNamesADeclaredClass(t *testing.T) {
 }
 
 // The reasons execution-controller reports for an attempt it could not run as
-// dispatched: two the platform lost, three the dispatch itself made impossible.
+// dispatched: two infra failures (an acknowledged attempt it lost, a Job
+// Kubernetes refused on every try) and three the dispatch itself made
+// impossible.
 func TestFailureReason_DispatchSideReasonsAndTheirClasses(t *testing.T) {
 	for reason, class := range map[FailureReason]FailureClass{
 		FailureReasonAttemptLost:       FailureClassInfra,

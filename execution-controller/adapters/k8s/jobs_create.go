@@ -193,8 +193,8 @@ type ValidationJobParams struct {
 	// run.
 	SourceOverlayURI string
 
-	// ActiveDeadlineSeconds is how long Kubernetes lets the leg's Job run once
-	// it has started its pod.
+	// ActiveDeadlineSeconds is how long Kubernetes lets the leg's Job run,
+	// counted from the Job's start.
 	ActiveDeadlineSeconds int64
 
 	Namespace string

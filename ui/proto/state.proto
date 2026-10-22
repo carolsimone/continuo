@@ -435,7 +435,7 @@ message NodeRun {
   string kind             = 3;  // cron | trigger | rerun | rebase | single_node_run
   string terminal_status  = 4;  // "" while in flight
   string task_id          = 5;
-  string task_status      = 6;  // pending | running | succeeded | failed | cancelled
+  string task_status      = 6;  // pending | dispatched | queued | running | succeeded | failed | cancelled | skipped
   int32  attempt          = 7;  // 0-based number of the task's current attempt
   string image_tag        = 8;
   reserved 9;
@@ -474,7 +474,7 @@ message NodeSummary {
   int32  avg_duration_sec = 6;   // -1 when no measurable run
   int32  p95_duration_sec = 7;   // -1 when no measurable run
   int32  flaky_rate_pct   = 8;   // % of window runs with attempt > 0; 0 when none
-  string last_status      = 9;   // succeeded|failed|running|cancelled|pending
+  string last_status      = 9;   // succeeded|failed|running|queued|dispatched|cancelled|skipped|pending
   string last_run_at      = 10;  // RFC3339 of the most recent run's created_at
   string operation        = 11;  // run | test | build
   int32  timeout_seconds  = 12;  // the task timeout the node's tasks get: its declared timeout in the live release, else the install default
@@ -501,7 +501,7 @@ message RunGraphNode {
   string table_name    = 3;
   string schedule_name = 4;  // the node's schedule in the run's release; "" when unknown
   string node_type     = 5;  // "" when the run names no release
-  string status        = 6;  // the task's status: pending | running | succeeded | failed | cancelled | skipped
+  string status        = 6;  // the task's status: pending | dispatched | queued | running | succeeded | failed | cancelled | skipped
   string task_id       = 7;
 }
 

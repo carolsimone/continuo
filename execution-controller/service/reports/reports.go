@@ -25,6 +25,15 @@ func Write(ctx context.Context, repo outbox.Repository, d *model.Deployment, sta
 	return write(ctx, repo, d, r)
 }
 
+// TruncateMessage cuts message to maxLen bytes and marks the cut with
+// "...[truncated]"; a maxLen of 0 or less keeps message whole.
+func TruncateMessage(message string, maxLen int) string {
+	if maxLen > 0 && len(message) > maxLen {
+		return message[:maxLen] + "...[truncated]"
+	}
+	return message
+}
+
 // Resend writes d's last report to the outbox again, as the answer to a
 // repeated dispatch of its attempt. An attempt with none yet is reported
 // queued.

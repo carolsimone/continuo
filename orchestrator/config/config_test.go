@@ -7,8 +7,7 @@ import (
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 )
 
-// orchestrator reads nothing from state: it starts without state's address,
-// and nothing configures a run watchdog.
+// orchestrator reads nothing from state: it starts without state's address.
 func TestLoad_NeedsNothingFromState(t *testing.T) {
 	t.Setenv("STATE_GRPC_ADDR", "")
 	var v pkgconfig.Validator

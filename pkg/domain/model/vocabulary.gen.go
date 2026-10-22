@@ -464,7 +464,7 @@ const (
 	FailureReasonDbtNothingToDo FailureReason = "dbt_nothing_to_do"
 	// FailureReasonInvalidNodeType — the dispatch names a node type the node_type vocabulary does not declare.
 	FailureReasonInvalidNodeType FailureReason = "invalid_node_type"
-	// FailureReasonMalformedDispatch — a field of the dispatch cannot run (its operation, image, Job name, timeout or known status), or no command builds the node.
+	// FailureReasonMalformedDispatch — a field of the dispatch holds a value execution-controller cannot run: an operation it does not know, no image, a Job name that is not a Kubernetes name, a timeout below one second, or a known_status other than dispatched, queued or running; or no command builds the node.
 	FailureReasonMalformedDispatch FailureReason = "malformed_dispatch"
 	// FailureReasonJobNameCollision — a Job of the dispatched name already exists for another task or attempt.
 	FailureReasonJobNameCollision FailureReason = "job_name_collision"

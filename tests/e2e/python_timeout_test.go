@@ -62,7 +62,8 @@ var pyTimeoutFixture embed.FS
 //	  repository's CI does
 //	→ topology-controller publishes timeout_seconds = 5400 on that node
 //	→ the release validates, promotes and state stores it: that node carries
-//	  5400 and every other node NULL.
+//	  5400 and every other node NULL but service-1's ftable_deadline, which
+//	  declares its own 60 seconds.
 func TestE2E_PythonNodeTimeout_ReachesStateThroughTheRuntimeCLI(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -92,7 +93,7 @@ func TestE2E_PythonNodeTimeout_ReachesStateThroughTheRuntimeCLI(t *testing.T) {
 	waitForNodeTimeoutSeconds(t, ctx, clients, releaseID, pyTimeoutUniqueID, pyTimeoutSeconds)
 	requireNoOtherNodeTimeout(t, ctx, clients, releaseID, pyTimeoutUniqueID)
 	requireNodeWithoutTimeout(t, ctx, clients, releaseID, pyNoTimeoutUniqueID)
-	t.Logf("✅ release %s promoted; %s carries timeout_seconds=%d, every other node NULL",
+	t.Logf("✅ release %s promoted; %s carries timeout_seconds=%d, every other node NULL but the deadline fixture",
 		releaseID, pyTimeoutUniqueID, pyTimeoutSeconds)
 }
 

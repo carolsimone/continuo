@@ -106,9 +106,11 @@ func (l *Loop) ask(ctx context.Context, key repository.AttemptKey) error {
 	})
 }
 
-// failStalled fails one run as stalled, once its lock confirms it still is.
+// failStalled fails one run as stalled, once its lock confirms it still is,
+// and counts and logs it once the transaction that failed it has committed.
 func (l *Loop) failStalled(ctx context.Context, runID uuid.UUID) error {
-	return l.inTx(ctx, func(u uow.UnitOfWork) error {
+	var failed *run.Run
+	if err := l.inTx(ctx, func(u uow.UnitOfWork) error {
 		r, err := u.Run().LoadRunForUpdate(ctx, runID)
 		if err != nil {
 			return fmt.Errorf("load run %s: %w", runID, err)
@@ -123,11 +125,15 @@ func (l *Loop) failStalled(ctx context.Context, runID uuid.UUID) error {
 		if err := u.Outbox().Append(ctx, events, uuid.Nil); err != nil {
 			return fmt.Errorf("append the events of stalled run %s: %w", runID, err)
 		}
-		l.metrics.RunStalled()
-		l.logger.Error("Failed a stalled run: it had no attempt in flight and no progress for five minutes, which a defect in state causes",
-			"run_id", runID, "schedule_name", r.ScheduleName(), "last_progress", r.LastHeartbeatAt())
+		failed = r
 		return nil
-	})
+	}); err != nil || failed == nil {
+		return err
+	}
+	l.metrics.RunStalled()
+	l.logger.Error("Failed a stalled run: it had no attempt in flight and no progress for five minutes, which a defect in state causes",
+		"run_id", runID, "schedule_name", failed.ScheduleName(), "last_progress", failed.LastHeartbeatAt())
+	return nil
 }
 
 // inTx runs fn in a transaction of its own and commits it when fn succeeds.

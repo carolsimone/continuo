@@ -26,7 +26,8 @@ const (
 // as a Job of its own that knows its attempt number:
 //
 //	TriggerSchedule(e2e-retry) → state dispatches attempt 0 of ftable_retry
-//	→ its Job runs with TASK_ATTEMPT=0, the model's cast fails, dbt exits 1
+//	→ its Job runs with TASK_ATTEMPT=0, the model's cast fails ("invalid input
+//	  syntax for type integer"), dbt exits 1
 //	→ execution-controller reports attempt 0 failed (task, exit_code)
 //	→ state records it and, in the same transaction, dispatches attempt 1
 //	→ its Job, <attempt 0's name>-r1, runs with TASK_ATTEMPT=1 and succeeds
@@ -63,6 +64,11 @@ func TestE2E_Retry_AFailOnceModelSucceedsOnItsSecondAttempt(t *testing.T) {
 		fmt.Sprintf("0:failed:%s:%s", model.FailureClassTask, model.FailureReasonExitCode),
 		"1:succeeded",
 	}, ended.attempts, "attempt 0 fails on the model's own error and attempt 1 succeeds")
+	var firstError string
+	require.NoError(t, clients.stateDB.GetContext(ctx, &firstError,
+		`SELECT COALESCE(error_message, '') FROM task_attempts WHERE task_id = $1 AND attempt = 0`, taskID))
+	require.Contains(t, firstError, "invalid input syntax for type integer",
+		"attempt 0 fails on the model's cast, which Postgres refuses once the row is produced")
 	require.Equal(t, "succeeded", ended.status, "the task succeeds on its second attempt")
 	require.Equal(t, 1, ended.attempt, "the task's current attempt is the one that succeeded")
 	verifySchedulerSucceeded(t, ctx, clients, runID)

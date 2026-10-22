@@ -69,3 +69,11 @@ func TestResend_WritesTheLastReportAgain(t *testing.T) {
 	require.Len(t, out.created, 1)
 	assert.Equal(t, pkgmodel.AttemptStatusRunning, payloadOf(t, out.created[0]).Status)
 }
+
+// A message longer than the limit is cut to it and marked; a shorter one, or
+// any message without a limit, is kept whole.
+func TestTruncateMessage(t *testing.T) {
+	assert.Equal(t, "abcd...[truncated]", TruncateMessage("abcdefgh", 4))
+	assert.Equal(t, "abcd", TruncateMessage("abcd", 4))
+	assert.Equal(t, "abcdefgh", TruncateMessage("abcdefgh", 0))
+}

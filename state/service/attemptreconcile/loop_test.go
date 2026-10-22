@@ -2,6 +2,7 @@ package attemptreconcile_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"testing"
@@ -156,6 +157,30 @@ func TestPass_FailsAStalledRunAndCountsIt(t *testing.T) {
 	assert.Equal(t, 1, metrics.stalled)
 	require.Len(t, outbox.events, 1)
 	assert.IsType(t, run.RunFinalized{}, outbox.events[0])
+}
+
+// failingCommit is a unit of work whose commit fails.
+type failingCommit struct{ *uow.FakeUnitOfWork }
+
+func (failingCommit) Commit() error { return errors.New("commit failed") }
+
+// A stalled run whose transaction fails to commit is not counted: it is
+// still active, and the next pass fails and counts it.
+func TestPass_DoesNotCountAStalledRunWhoseCommitFails(t *testing.T) {
+	stale := now.Add(-run.StallAfter - time.Minute)
+	total := int32(2)
+	r := run.HydrateRun(uuid.New(), "daily", run.SchedulerStatusRunning, run.InitStatusCompleted, run.KindCron, nil, "system",
+		model.OperationRun, stale, &stale, nil, &stale, nil, nil, nil, &total, 1, nil)
+	f := newFake(&fakeAttempts{stalled: []uuid.UUID{r.ScheduleID()}}, &recordingOutbox{})
+	f.SetRunRepo(&runs{r: r})
+	f.SetTaskCollection(&idleTasks{})
+	metrics := &countingMetrics{}
+	loop := attemptreconcile.New(func() uow.UnitOfWork { return failingCommit{f} }, "default", defaults, metrics,
+		slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	require.Error(t, loop.Pass(context.Background()))
+
+	assert.Zero(t, metrics.stalled)
 }
 
 // A run listed as stalled that has an attempt in flight by the time its lock

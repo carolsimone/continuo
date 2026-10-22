@@ -499,9 +499,10 @@ func (r *taskTrackerRepository) HasNonSucceededTask(ctx context.Context, schedul
 // BulkCancelByScheduleIDTx sets status='cancelled' on the schedule's pending,
 // dispatched, queued and running tasks within the given transaction: a task
 // that has ended (succeeded, failed or skipped) keeps its status. The update
-// locks each row it changes until tx ends, so a report of that task's attempt
-// waits for the cancel and then reads the task cancelled. Returns the number
-// of rows updated.
+// locks each row it changes until tx ends. A report of an attempt of the run
+// does not reach these rows first: it locks the run, so it waits for the
+// transaction that cancels the run, then finds the run ended and returns
+// before it reads the task. Returns the number of rows updated.
 func (r *taskTrackerRepository) BulkCancelByScheduleIDTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID, cancelledBy string, cancelledAt time.Time) (int64, error) {
 	result, err := tx.ExecContext(ctx, `
 		UPDATE task_tracker
