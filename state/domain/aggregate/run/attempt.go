@@ -66,6 +66,11 @@ type Attempt struct {
 	RunResultsURI    *string
 	ParseCache       *string
 	ParseCacheReason *string
+
+	// NextCheckIn is when, from now on the database clock, state next asks
+	// execution-controller about the attempt; zero when saving it leaves the
+	// stored next check as it is. A final attempt is never asked about.
+	NextCheckIn time.Duration
 }
 
 // ExecutionRecord is the facts one execution record reports about an attempt,
