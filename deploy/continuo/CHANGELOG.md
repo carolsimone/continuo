@@ -13,6 +13,7 @@ shipped in those.
 ## [Unreleased]
 
 ### Added
+- Domain teams declare a node's task timeout: `meta.timeout_minutes` on a dbt node (inherited from `dbt_project.yml`), `timeout_minutes` on a Python contract entry (continuo-python-runtime 0.10.0 or later). The value must be an integer from 1 to 10,080 minutes, or the release is rejected as `invalid_artifact` naming the node. It is outside the content hash, so a release that changes only a timeout promotes without validation. state stores it per release (`topology_nodes.timeout_seconds`, migration V46); the node page and `continuo node list` show the live release's value (`timeout_seconds`). Tasks are not yet stopped at their timeout. No values change. MINOR.
 - `execution.startTimeoutMinutes` (default 15, 1–120; `JOB_START_TIMEOUT_SECONDS` on the shared ConfigMap): how long a Job's pod may take, after the Job is created, to start any container (init or main) — waiting for a node, pulling images, mounting Secrets. Past it execution-controller deletes the Job and fails the attempt as `start_timeout`; work a container does once it runs does not count. A value outside the range fails the render, and execution-controller refuses to start on one. MINOR.
 
 ### Changed
