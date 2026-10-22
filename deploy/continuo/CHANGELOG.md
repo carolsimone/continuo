@@ -22,6 +22,7 @@ shipped in those.
 - The run page shows each task's attempts, for the latest run and for historical runs alike.
 - `continuo node history` and state's gRPC rename `retry_count` to `attempt` (same field numbers) and carry `failure_class` and `failure_reason`, which stay empty until a later release reports them. gRPC `ListTaskAttempts` replaces `ListTaskExecutions` and `GetTaskExecution`.
 - Node duration statistics count succeeded attempts only. No values change. MINOR.
+- The default `validation.imageTag` moves from `v0.7.0` to `v0.10.0` (continuo-python-runtime 0.10.0), the first runtime that accepts `timeout_minutes` on a Python node. An install that leaves `validation.imageTag` unset pulls the new image on `helm upgrade`; an install that pins its own `imageTag` is unaffected, and no values key changes. A Python domain repository declares `timeout_minutes` only after it builds its contract with continuo-python-runtime 0.10.0 or later. MINOR.
 
 ### Removed
 - execution-controller's default `env` drops `K8S_CHECK_DELAY_SECONDS` and `K8S_FIRST_CHECK_DELAY_SECONDS`, which nothing reads any more; a values file that still sets them keeps working. The `check.k8s:v1` stream is retired: dead-letter-controller deletes it, and its open dead letters are listed as not redrivable.
