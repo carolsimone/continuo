@@ -11,8 +11,11 @@ import (
 
 // RequiredColumns are the columns state's code reads that a state database not
 // yet migrated lacks: the per-attempt rows (task_attempts), the attempt counter
-// on task_tracker and the timeout a release stores for each node.
-var RequiredColumns = []string{"task_attempts.attempt", "task_tracker.attempt", "topology_nodes.timeout_seconds"}
+// on task_tracker, the timeout a release stores for each node, and why a run
+// failed when no task of it failed. A migration applies whole, so the last
+// stands for the task statuses the same migration adds.
+var RequiredColumns = []string{"task_attempts.attempt", "task_tracker.attempt", "topology_nodes.timeout_seconds",
+	"scheduler_tracker.failure_reason"}
 
 // ErrSchemaNotReady reports a state database that lacks a column the running
 // code reads.
