@@ -47,11 +47,12 @@ func TestList_SuccessMapsAllFieldsAndTotalCount(t *testing.T) {
 			ServiceName: "finance", SchemaName: "analytics", TableName: "orders",
 			RunCount: 12, SuccessRatePct: 92, AvgDurationSec: 34, P95DurationSec: 80,
 			FlakyRatePct: 8, LastStatus: "succeeded", LastRunAt: "2026-09-18T10:00:00Z",
-			Operation: "run", TimeoutSeconds: 7200,
+			Operation: "run", TimeoutSeconds: 7200, TimeoutDeclared: true,
 		}, {
 			ServiceName: "finance", SchemaName: "analytics", TableName: "customers",
 			RunCount: 3, SuccessRatePct: 100, AvgDurationSec: 5, P95DurationSec: 6,
 			LastStatus: "succeeded", LastRunAt: "2026-09-18T09:00:00Z", Operation: "run",
+			TimeoutSeconds: 86400,
 		}},
 	}}
 
@@ -63,18 +64,19 @@ func TestList_SuccessMapsAllFieldsAndTotalCount(t *testing.T) {
 	var payload struct {
 		TotalCount int `json:"total_count"`
 		Nodes      []struct {
-			ServiceName    string `json:"service_name"`
-			SchemaName     string `json:"schema_name"`
-			TableName      string `json:"table_name"`
-			RunCount       int    `json:"run_count"`
-			SuccessRatePct int    `json:"success_rate_pct"`
-			AvgDurationSec int    `json:"avg_duration_sec"`
-			P95DurationSec int    `json:"p95_duration_sec"`
-			FlakyRatePct   int    `json:"flaky_rate_pct"`
-			LastStatus     string `json:"last_status"`
-			LastRunAt      string `json:"last_run_at"`
-			Operation      string `json:"operation"`
-			TimeoutSeconds int    `json:"timeout_seconds"`
+			ServiceName     string `json:"service_name"`
+			SchemaName      string `json:"schema_name"`
+			TableName       string `json:"table_name"`
+			RunCount        int    `json:"run_count"`
+			SuccessRatePct  int    `json:"success_rate_pct"`
+			AvgDurationSec  int    `json:"avg_duration_sec"`
+			P95DurationSec  int    `json:"p95_duration_sec"`
+			FlakyRatePct    int    `json:"flaky_rate_pct"`
+			LastStatus      string `json:"last_status"`
+			LastRunAt       string `json:"last_run_at"`
+			Operation       string `json:"operation"`
+			TimeoutSeconds  int    `json:"timeout_seconds"`
+			TimeoutDeclared *bool  `json:"timeout_declared"`
 		} `json:"nodes"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(stdout), &payload))
@@ -93,10 +95,12 @@ func TestList_SuccessMapsAllFieldsAndTotalCount(t *testing.T) {
 	assert.Equal(t, "2026-09-18T10:00:00Z", n.LastRunAt)
 	assert.Equal(t, "run", n.Operation)
 	assert.Equal(t, 7200, n.TimeoutSeconds)
-	assert.Contains(t, stdout, `"timeout_seconds":7200`)
-	// A node declaring no timeout still emits the field, as 0.
-	assert.Contains(t, stdout, `"timeout_seconds":0`)
-	assert.Equal(t, 0, payload.Nodes[1].TimeoutSeconds)
+	require.NotNil(t, n.TimeoutDeclared, "timeout_declared is always present")
+	assert.True(t, *n.TimeoutDeclared)
+	// A node declaring no timeout gets the install default, and says so.
+	assert.Equal(t, 86400, payload.Nodes[1].TimeoutSeconds)
+	require.NotNil(t, payload.Nodes[1].TimeoutDeclared, "timeout_declared is always present")
+	assert.False(t, *payload.Nodes[1].TimeoutDeclared)
 
 	// Every flag is forwarded to the RPC verbatim.
 	assert.Equal(t, "orders", fake.gotListSearch)

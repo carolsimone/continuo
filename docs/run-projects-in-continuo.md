@@ -161,9 +161,11 @@ the rejection names the node and the key.
 
 continuo records the timeout with each release, and a run keeps the timeouts of
 the release it runs on. The timeout is not part of a node's content hash, so a
-release that changes only timeouts promotes without validation. The node page
-shows a node's declared timeout, and `continuo node list` reports it as
-`timeout_seconds` (0 means the node declares none).
+release that changes only timeouts promotes without validation. A node that
+declares none gets the install's default, `runs.taskTimeoutHours` (24 hours
+unless your operator changed it). The node page shows the timeout a node's tasks
+get and whether it is declared or the default, and `continuo node list` reports
+it as `timeout_seconds` with `timeout_declared`.
 
 ### If your project already has its own `generate_schema_name`
 

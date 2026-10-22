@@ -28,10 +28,11 @@ type nodeSummary struct {
 	LastStatus     string `json:"last_status"`
 	LastRunAt      string `json:"last_run_at,omitempty"`
 	Operation      string `json:"operation"`
-	// TimeoutSeconds is the task timeout the live release declares for the
-	// node; 0 means the node declares none and its tasks get the install
-	// default. Always present.
-	TimeoutSeconds int32 `json:"timeout_seconds"`
+	// TimeoutSeconds is the task timeout the node's tasks get: its declared
+	// timeout in the live release, else the install default. TimeoutDeclared
+	// says which. Both are always present.
+	TimeoutSeconds  int32 `json:"timeout_seconds"`
+	TimeoutDeclared bool  `json:"timeout_declared"`
 }
 
 type listPayload struct {
@@ -85,16 +86,18 @@ Output (stdout, JSON):
    "nodes":[{"service_name":string,"schema_name":string,"table_name":string,
    "run_count":number,"success_rate_pct":number,"avg_duration_sec":number,
    "p95_duration_sec":number,"flaky_rate_pct":number,"last_status":string,
-   "last_run_at":string,"operation":string,"timeout_seconds":number}]}
+   "last_run_at":string,"operation":string,"timeout_seconds":number,
+   "timeout_declared":bool}]}
   total_count is the number of nodes matching the filters regardless of
   paging; when it exceeds offset + len(nodes), request the next page with a
   larger --offset. success_rate_pct is omitted when the node has no terminal
   run in the window; avg_duration_sec and p95_duration_sec are omitted when
   no run in the window was timed; last_run_at is omitted when the node has
-  never run. last_status is one of succeeded, failed, running, cancelled,
-  pending. timeout_seconds is the task timeout the live release declares for
-  the node, always present; 0 means the node declares none and its tasks get
-  the install default. No match returns {"total_count":0,"nodes":[]}, not an error.
+  never run. last_status is one of succeeded, failed, running, queued,
+  dispatched, cancelled, pending. timeout_seconds is the task timeout the
+  node's tasks get, always present: its declared timeout in the live release
+  when timeout_declared is true, else the install default. No match returns
+  {"total_count":0,"nodes":[]}, not an error.
 
 Errors:
   usage      (exit 2)  a positional argument was given, --operation is not
@@ -176,18 +179,19 @@ func toListPayload(resp *statev1.ListNodesResponse) listPayload {
 	out := make([]nodeSummary, 0, len(resp.GetNodes()))
 	for _, n := range resp.GetNodes() {
 		out = append(out, nodeSummary{
-			ServiceName:    n.GetServiceName(),
-			SchemaName:     n.GetSchemaName(),
-			TableName:      n.GetTableName(),
-			RunCount:       n.GetRunCount(),
-			SuccessRatePct: optionalStat(n.GetSuccessRatePct()),
-			AvgDurationSec: optionalStat(n.GetAvgDurationSec()),
-			P95DurationSec: optionalStat(n.GetP95DurationSec()),
-			FlakyRatePct:   n.GetFlakyRatePct(),
-			LastStatus:     n.GetLastStatus(),
-			LastRunAt:      n.GetLastRunAt(),
-			Operation:      n.GetOperation(),
-			TimeoutSeconds: n.GetTimeoutSeconds(),
+			ServiceName:     n.GetServiceName(),
+			SchemaName:      n.GetSchemaName(),
+			TableName:       n.GetTableName(),
+			RunCount:        n.GetRunCount(),
+			SuccessRatePct:  optionalStat(n.GetSuccessRatePct()),
+			AvgDurationSec:  optionalStat(n.GetAvgDurationSec()),
+			P95DurationSec:  optionalStat(n.GetP95DurationSec()),
+			FlakyRatePct:    n.GetFlakyRatePct(),
+			LastStatus:      n.GetLastStatus(),
+			LastRunAt:       n.GetLastRunAt(),
+			Operation:       n.GetOperation(),
+			TimeoutSeconds:  n.GetTimeoutSeconds(),
+			TimeoutDeclared: n.GetTimeoutDeclared(),
 		})
 	}
 	return listPayload{TotalCount: resp.GetTotalCount(), Nodes: out}

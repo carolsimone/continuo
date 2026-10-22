@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"testing"
 	"time"
 
@@ -279,4 +280,17 @@ func keys(m map[string]json.RawMessage) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// The command's help names every status a node can report, so a caller never
+// meets one the help did not describe.
+func TestStatus_LongNamesEveryTaskStatus(t *testing.T) {
+	long := NewStatusCommand(nil, nil, io.Discard, io.Discard).Long
+	for v := range statev1.TaskStatus_name {
+		s := taskStatusString(statev1.TaskStatus(v))
+		if s == "" {
+			continue
+		}
+		assert.Contains(t, long, s, "status %q is not in the help", s)
+	}
 }
