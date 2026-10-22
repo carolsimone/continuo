@@ -434,7 +434,7 @@ func main() {
 	singleNodeRunUC := svchandlers.NewTriggerSingleNodeRunHandler(planner, logger)
 	singleNodeRunHandler := handlers.NewSingleNodeRunHandler(singleNodeRunUC, uowFactory, logger)
 	nodeRunRepo := postgres.NewNodeRunRepository(db, logger)
-	nodeRunHandler := handlers.NewNodeRunHandler(nodeRunRepo, logger)
+	nodeRunHandler := handlers.NewNodeRunHandler(nodeRunRepo, taskDefaults.Timeout, logger)
 	runReadHandler := handlers.NewRunReadHandler(runreads.New(runReadRepo), logger)
 
 	// Create gRPC server

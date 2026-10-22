@@ -164,6 +164,8 @@ enum TaskStatus {
   TASK_STATUS_FAILED = 4;
   TASK_STATUS_CANCELLED = 5;
   TASK_STATUS_SKIPPED = 6;
+  TASK_STATUS_DISPATCHED = 7;  // an attempt was sent to execution-controller, which has not acknowledged it
+  TASK_STATUS_QUEUED = 8;      // execution-controller accepted the attempt; it waits for a slot
 }
 
 // ============================================================================
@@ -182,6 +184,7 @@ message Scheduler {
   string cancelled_by = 9;
   string cancellation_reason = 10;
   string initialization_status = 11;  // 'pending', 'in_progress', 'completed', 'failed'
+  string failure_reason = 12;  // why a failed run failed when no task of it did: stalled | empty_selection | invalid_node_type; empty otherwise
 }
 
 message Task {
@@ -474,7 +477,8 @@ message NodeSummary {
   string last_status      = 9;   // succeeded|failed|running|cancelled|pending
   string last_run_at      = 10;  // RFC3339 of the most recent run's created_at
   string operation        = 11;  // run | test | build
-  int32  timeout_seconds  = 12;  // the live release's declared task timeout; 0 when the node declares none and its tasks get the install default
+  int32  timeout_seconds  = 12;  // the task timeout the node's tasks get: its declared timeout in the live release, else the install default
+  bool   timeout_declared = 13;  // true when the live release declares the node's timeout; false when its tasks get the install default
 }
 
 message ListNodeNamesRequest {
@@ -527,6 +531,7 @@ message RunSummary {
   string terminal_status = 3;  // succeeded | failed | cancelled | skipped
   string created_at      = 4;  // RFC3339, UTC, seconds
   string completed_at    = 5;  // RFC3339, UTC, seconds
+  string failure_reason  = 6;  // stalled | empty_selection | invalid_node_type when the run failed without a failed task; empty otherwise
 }
 
 message ListRunsResponse {

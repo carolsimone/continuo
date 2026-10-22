@@ -106,14 +106,19 @@ func TestRunReadRepository_ListsCompletedRunsNewestFirst(t *testing.T) {
 	_, err := db.Exec(`UPDATE scheduler_tracker SET created_at = created_at - interval '1 hour' WHERE schedule_id = $1`, first)
 	require.NoError(t, err)
 	second := readRun(t, db, schedule, nil, nil, "failed", true)
+	_, err = db.Exec(`UPDATE scheduler_tracker SET failure_reason = 'stalled' WHERE schedule_id = $1`, second)
+	require.NoError(t, err)
 	readRun(t, db, schedule, nil, nil, "running", false)
 
-	runs, total, err := postgres.NewRunReadRepository(db).ListCompletedRuns(context.Background(), schedule, 1, 0)
+	runs, total, err := postgres.NewRunReadRepository(db).ListCompletedRuns(context.Background(), schedule, 2, 0)
 	require.NoError(t, err)
 	assert.Equal(t, 2, total)
-	require.Len(t, runs, 1)
+	require.Len(t, runs, 2)
 	assert.Equal(t, second, runs[0].RunID)
 	assert.Equal(t, run.SchedulerStatusFailed, runs[0].TerminalStatus)
+	assert.Equal(t, run.RunFailureStalled, runs[0].FailureReason, "a run that failed without a failed task says why")
+	assert.Equal(t, first, runs[1].RunID)
+	assert.Empty(t, runs[1].FailureReason)
 }
 
 func TestRunReadRepository_DriftsAreTheNewestActiveRunPerSchedule(t *testing.T) {

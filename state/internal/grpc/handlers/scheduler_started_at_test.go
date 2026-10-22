@@ -59,3 +59,20 @@ func TestRunToProto_PopulatesStartedAt(t *testing.T) {
 	require.NotNil(t, got.StartedAt, "proto StartedAt must be populated from Run.StartedAt()")
 	assert.WithinDuration(t, started, got.StartedAt.AsTime(), time.Second)
 }
+
+// A run that failed without a failed task says why, on both mappers.
+func TestSchedulerMappers_CarryTheRunFailureReason(t *testing.T) {
+	reason := "stalled"
+	tracker := &postgres.SchedulerTracker{ScheduleID: uuid.New(), ScheduleName: "s", Status: run.SchedulerStatusFailed,
+		CreatedAt: time.Now(), FailureReason: &reason}
+	assert.Equal(t, "stalled", domainToProtoScheduler(tracker).GetFailureReason())
+
+	total := int32(1)
+	rn := run.HydrateRun(uuid.New(), "s", run.SchedulerStatusFailed, run.InitStatusCompleted, run.KindCron, nil,
+		identity.SystemUserID, model.OperationRun, time.Now(), nil, nil, nil, nil, nil, nil, &total, 1,
+		map[string]run.ServiceMetadata{})
+	assert.Empty(t, runToProto(rn).GetFailureReason(), "a run whose task failed names no run failure reason")
+	stalled := run.RunFailureStalled
+	rn.HydrateFailureReason(&stalled)
+	assert.Equal(t, "stalled", runToProto(rn).GetFailureReason())
+}

@@ -12,7 +12,7 @@ import (
 // cascade-skipped node was reported to clients as UNSPECIFIED: the proto
 // TaskStatus enum lacked a SKIPPED member, so domainToProtoTaskStatus fell
 // through to the default. Every domain status must survive the round trip.
-func TestTaskStatusConversion_SkippedRoundTrips(t *testing.T) {
+func TestTaskStatusConversion_EveryStatusRoundTrips(t *testing.T) {
 	cases := []struct {
 		domain run.TaskStatus
 		proto  statev1.TaskStatus
@@ -23,6 +23,8 @@ func TestTaskStatusConversion_SkippedRoundTrips(t *testing.T) {
 		{run.TaskStatusFailed, statev1.TaskStatus_TASK_STATUS_FAILED},
 		{run.TaskStatusCancelled, statev1.TaskStatus_TASK_STATUS_CANCELLED},
 		{run.TaskStatusSkipped, statev1.TaskStatus_TASK_STATUS_SKIPPED},
+		{run.TaskStatusDispatched, statev1.TaskStatus_TASK_STATUS_DISPATCHED},
+		{run.TaskStatusQueued, statev1.TaskStatus_TASK_STATUS_QUEUED},
 	}
 	for _, c := range cases {
 		assert.Equal(t, c.proto, domainToProtoTaskStatus(c.domain),

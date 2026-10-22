@@ -73,7 +73,7 @@ func TestRunReadHandler_ListRuns(t *testing.T) {
 	runID := uuid.New()
 	at := time.Date(2026, 10, 14, 23, 0, 0, 0, time.UTC)
 	f := &fakeRunReader{runs: []projection.RunSummary{{RunID: runID, ScheduleName: "daily",
-		TerminalStatus: run.SchedulerStatusSucceeded, CreatedAt: at, CompletedAt: at.Add(3 * time.Minute)}}, total: 7}
+		TerminalStatus: run.SchedulerStatusFailed, FailureReason: "stalled", CreatedAt: at, CompletedAt: at.Add(3 * time.Minute)}}, total: 7}
 	h := NewRunReadHandler(f, newTestLogger())
 
 	resp, err := h.ListRuns(context.Background(), &statev1.ListRunsRequest{ScheduleName: "daily", PageSize: 20, PageOffset: 40})
@@ -81,8 +81,8 @@ func TestRunReadHandler_ListRuns(t *testing.T) {
 	assert.Equal(t, 20, f.gotSize)
 	assert.Equal(t, 40, f.gotOff)
 	assert.Equal(t, int32(7), resp.TotalCount)
-	assert.Equal(t, &statev1.RunSummary{RunId: runID.String(), ScheduleName: "daily", TerminalStatus: "succeeded",
-		CreatedAt: "2026-10-14T23:00:00Z", CompletedAt: "2026-10-14T23:03:00Z"}, resp.Runs[0])
+	assert.Equal(t, &statev1.RunSummary{RunId: runID.String(), ScheduleName: "daily", TerminalStatus: "failed",
+		CreatedAt: "2026-10-14T23:00:00Z", CompletedAt: "2026-10-14T23:03:00Z", FailureReason: "stalled"}, resp.Runs[0])
 
 	_, err = h.ListRuns(context.Background(), &statev1.ListRunsRequest{})
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))

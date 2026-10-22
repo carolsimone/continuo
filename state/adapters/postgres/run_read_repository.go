@@ -105,6 +105,7 @@ type runSummaryRow struct {
 	RunID        uuid.UUID `db:"schedule_id"`
 	ScheduleName string    `db:"schedule_name"`
 	Status       string    `db:"status"`
+	FailReason   *string   `db:"failure_reason"`
 	CreatedAt    time.Time `db:"created_at"`
 	CompletedAt  time.Time `db:"completed_at"`
 }
@@ -119,7 +120,7 @@ func (r *RunReadRepository) ListCompletedRuns(ctx context.Context, scheduleName 
 	}
 	var rows []runSummaryRow
 	if err := r.db.SelectContext(ctx, &rows, `
-		SELECT schedule_id, schedule_name, status, created_at, completed_at
+		SELECT schedule_id, schedule_name, status, failure_reason, created_at, completed_at
 		FROM scheduler_tracker
 		WHERE schedule_name = $1 AND completed_at IS NOT NULL
 		ORDER BY created_at DESC, schedule_id
@@ -128,11 +129,15 @@ func (r *RunReadRepository) ListCompletedRuns(ctx context.Context, scheduleName 
 	}
 	runs := make([]projection.RunSummary, 0, len(rows))
 	for _, row := range rows {
-		runs = append(runs, projection.RunSummary{
+		s := projection.RunSummary{
 			RunID: row.RunID, ScheduleName: row.ScheduleName,
 			TerminalStatus: run.SchedulerStatus(row.Status),
 			CreatedAt:      row.CreatedAt, CompletedAt: row.CompletedAt,
-		})
+		}
+		if row.FailReason != nil {
+			s.FailureReason = run.RunFailureReason(*row.FailReason)
+		}
+		runs = append(runs, s)
 	}
 	return runs, total, nil
 }

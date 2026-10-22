@@ -86,6 +86,7 @@ func (h *RunReadHandler) ListRuns(ctx context.Context, req *statev1.ListRunsRequ
 			TerminalStatus: string(r.TerminalStatus),
 			CreatedAt:      r.CreatedAt.UTC().Format(runSummaryTimeLayout),
 			CompletedAt:    r.CompletedAt.UTC().Format(runSummaryTimeLayout),
+			FailureReason:  string(r.FailureReason),
 		})
 	}
 	return resp, nil

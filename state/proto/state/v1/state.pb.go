@@ -93,6 +93,8 @@ const (
 	TaskStatus_TASK_STATUS_FAILED      TaskStatus = 4
 	TaskStatus_TASK_STATUS_CANCELLED   TaskStatus = 5
 	TaskStatus_TASK_STATUS_SKIPPED     TaskStatus = 6
+	TaskStatus_TASK_STATUS_DISPATCHED  TaskStatus = 7 // an attempt was sent to execution-controller, which has not acknowledged it
+	TaskStatus_TASK_STATUS_QUEUED      TaskStatus = 8 // execution-controller accepted the attempt; it waits for a slot
 )
 
 // Enum value maps for TaskStatus.
@@ -105,6 +107,8 @@ var (
 		4: "TASK_STATUS_FAILED",
 		5: "TASK_STATUS_CANCELLED",
 		6: "TASK_STATUS_SKIPPED",
+		7: "TASK_STATUS_DISPATCHED",
+		8: "TASK_STATUS_QUEUED",
 	}
 	TaskStatus_value = map[string]int32{
 		"TASK_STATUS_UNSPECIFIED": 0,
@@ -114,6 +118,8 @@ var (
 		"TASK_STATUS_FAILED":      4,
 		"TASK_STATUS_CANCELLED":   5,
 		"TASK_STATUS_SKIPPED":     6,
+		"TASK_STATUS_DISPATCHED":  7,
+		"TASK_STATUS_QUEUED":      8,
 	}
 )
 
@@ -157,6 +163,7 @@ type Scheduler struct {
 	CancelledBy          string                 `protobuf:"bytes,9,opt,name=cancelled_by,json=cancelledBy,proto3" json:"cancelled_by,omitempty"`
 	CancellationReason   string                 `protobuf:"bytes,10,opt,name=cancellation_reason,json=cancellationReason,proto3" json:"cancellation_reason,omitempty"`
 	InitializationStatus string                 `protobuf:"bytes,11,opt,name=initialization_status,json=initializationStatus,proto3" json:"initialization_status,omitempty"` // 'pending', 'in_progress', 'completed', 'failed'
+	FailureReason        string                 `protobuf:"bytes,12,opt,name=failure_reason,json=failureReason,proto3" json:"failure_reason,omitempty"`                      // why a failed run failed when no task of it did: stalled | empty_selection | invalid_node_type; empty otherwise
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
@@ -264,6 +271,13 @@ func (x *Scheduler) GetCancellationReason() string {
 func (x *Scheduler) GetInitializationStatus() string {
 	if x != nil {
 		return x.InitializationStatus
+	}
+	return ""
+}
+
+func (x *Scheduler) GetFailureReason() string {
+	if x != nil {
+		return x.FailureReason
 	}
 	return ""
 }
@@ -2684,21 +2698,22 @@ func (x *ListNodesResponse) GetTotalCount() int32 {
 }
 
 type NodeSummary struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	ServiceName    string                 `protobuf:"bytes,1,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"`
-	SchemaName     string                 `protobuf:"bytes,2,opt,name=schema_name,json=schemaName,proto3" json:"schema_name,omitempty"`
-	TableName      string                 `protobuf:"bytes,3,opt,name=table_name,json=tableName,proto3" json:"table_name,omitempty"`
-	RunCount       int32                  `protobuf:"varint,4,opt,name=run_count,json=runCount,proto3" json:"run_count,omitempty"`                     // task instances in the stats window (<= 50)
-	SuccessRatePct int32                  `protobuf:"varint,5,opt,name=success_rate_pct,json=successRatePct,proto3" json:"success_rate_pct,omitempty"` // -1 when no terminal runs in window
-	AvgDurationSec int32                  `protobuf:"varint,6,opt,name=avg_duration_sec,json=avgDurationSec,proto3" json:"avg_duration_sec,omitempty"` // -1 when no measurable run
-	P95DurationSec int32                  `protobuf:"varint,7,opt,name=p95_duration_sec,json=p95DurationSec,proto3" json:"p95_duration_sec,omitempty"` // -1 when no measurable run
-	FlakyRatePct   int32                  `protobuf:"varint,8,opt,name=flaky_rate_pct,json=flakyRatePct,proto3" json:"flaky_rate_pct,omitempty"`       // % of window runs with attempt > 0; 0 when none
-	LastStatus     string                 `protobuf:"bytes,9,opt,name=last_status,json=lastStatus,proto3" json:"last_status,omitempty"`                // succeeded|failed|running|cancelled|pending
-	LastRunAt      string                 `protobuf:"bytes,10,opt,name=last_run_at,json=lastRunAt,proto3" json:"last_run_at,omitempty"`                // RFC3339 of the most recent run's created_at
-	Operation      string                 `protobuf:"bytes,11,opt,name=operation,proto3" json:"operation,omitempty"`                                   // run | test | build
-	TimeoutSeconds int32                  `protobuf:"varint,12,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`  // the live release's declared task timeout; 0 when the node declares none and its tasks get the install default
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	ServiceName     string                 `protobuf:"bytes,1,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"`
+	SchemaName      string                 `protobuf:"bytes,2,opt,name=schema_name,json=schemaName,proto3" json:"schema_name,omitempty"`
+	TableName       string                 `protobuf:"bytes,3,opt,name=table_name,json=tableName,proto3" json:"table_name,omitempty"`
+	RunCount        int32                  `protobuf:"varint,4,opt,name=run_count,json=runCount,proto3" json:"run_count,omitempty"`                       // task instances in the stats window (<= 50)
+	SuccessRatePct  int32                  `protobuf:"varint,5,opt,name=success_rate_pct,json=successRatePct,proto3" json:"success_rate_pct,omitempty"`   // -1 when no terminal runs in window
+	AvgDurationSec  int32                  `protobuf:"varint,6,opt,name=avg_duration_sec,json=avgDurationSec,proto3" json:"avg_duration_sec,omitempty"`   // -1 when no measurable run
+	P95DurationSec  int32                  `protobuf:"varint,7,opt,name=p95_duration_sec,json=p95DurationSec,proto3" json:"p95_duration_sec,omitempty"`   // -1 when no measurable run
+	FlakyRatePct    int32                  `protobuf:"varint,8,opt,name=flaky_rate_pct,json=flakyRatePct,proto3" json:"flaky_rate_pct,omitempty"`         // % of window runs with attempt > 0; 0 when none
+	LastStatus      string                 `protobuf:"bytes,9,opt,name=last_status,json=lastStatus,proto3" json:"last_status,omitempty"`                  // succeeded|failed|running|cancelled|pending
+	LastRunAt       string                 `protobuf:"bytes,10,opt,name=last_run_at,json=lastRunAt,proto3" json:"last_run_at,omitempty"`                  // RFC3339 of the most recent run's created_at
+	Operation       string                 `protobuf:"bytes,11,opt,name=operation,proto3" json:"operation,omitempty"`                                     // run | test | build
+	TimeoutSeconds  int32                  `protobuf:"varint,12,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`    // the task timeout the node's tasks get: its declared timeout in the live release, else the install default
+	TimeoutDeclared bool                   `protobuf:"varint,13,opt,name=timeout_declared,json=timeoutDeclared,proto3" json:"timeout_declared,omitempty"` // true when the live release declares the node's timeout; false when its tasks get the install default
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *NodeSummary) Reset() {
@@ -2813,6 +2828,13 @@ func (x *NodeSummary) GetTimeoutSeconds() int32 {
 		return x.TimeoutSeconds
 	}
 	return 0
+}
+
+func (x *NodeSummary) GetTimeoutDeclared() bool {
+	if x != nil {
+		return x.TimeoutDeclared
+	}
+	return false
 }
 
 type ListNodeNamesRequest struct {
@@ -3306,6 +3328,7 @@ type RunSummary struct {
 	TerminalStatus string                 `protobuf:"bytes,3,opt,name=terminal_status,json=terminalStatus,proto3" json:"terminal_status,omitempty"` // succeeded | failed | cancelled | skipped
 	CreatedAt      string                 `protobuf:"bytes,4,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`                // RFC3339, UTC, seconds
 	CompletedAt    string                 `protobuf:"bytes,5,opt,name=completed_at,json=completedAt,proto3" json:"completed_at,omitempty"`          // RFC3339, UTC, seconds
+	FailureReason  string                 `protobuf:"bytes,6,opt,name=failure_reason,json=failureReason,proto3" json:"failure_reason,omitempty"`    // stalled | empty_selection | invalid_node_type when the run failed without a failed task; empty otherwise
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -3371,6 +3394,13 @@ func (x *RunSummary) GetCreatedAt() string {
 func (x *RunSummary) GetCompletedAt() string {
 	if x != nil {
 		return x.CompletedAt
+	}
+	return ""
+}
+
+func (x *RunSummary) GetFailureReason() string {
+	if x != nil {
+		return x.FailureReason
 	}
 	return ""
 }
@@ -3579,7 +3609,7 @@ var File_proto_state_v1_state_proto protoreflect.FileDescriptor
 
 const file_proto_state_v1_state_proto_rawDesc = "" +
 	"\n" +
-	"\x1aproto/state/v1/state.proto\x12\bstate.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xc9\x04\n" +
+	"\x1aproto/state/v1/state.proto\x12\bstate.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xf0\x04\n" +
 	"\tScheduler\x12\x1f\n" +
 	"\vschedule_id\x18\x01 \x01(\tR\n" +
 	"scheduleId\x12#\n" +
@@ -3595,7 +3625,8 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"\fcancelled_by\x18\t \x01(\tR\vcancelledBy\x12/\n" +
 	"\x13cancellation_reason\x18\n" +
 	" \x01(\tR\x12cancellationReason\x123\n" +
-	"\x15initialization_status\x18\v \x01(\tR\x14initializationStatus\"\xc4\x03\n" +
+	"\x15initialization_status\x18\v \x01(\tR\x14initializationStatus\x12%\n" +
+	"\x0efailure_reason\x18\f \x01(\tR\rfailureReason\"\xc4\x03\n" +
 	"\x04Task\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x1f\n" +
 	"\vschedule_id\x18\x02 \x01(\tR\n" +
@@ -3811,7 +3842,7 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"\x11ListNodesResponse\x12+\n" +
 	"\x05nodes\x18\x01 \x03(\v2\x15.state.v1.NodeSummaryR\x05nodes\x12\x1f\n" +
 	"\vtotal_count\x18\x02 \x01(\x05R\n" +
-	"totalCount\"\xb9\x03\n" +
+	"totalCount\"\xe4\x03\n" +
 	"\vNodeSummary\x12!\n" +
 	"\fservice_name\x18\x01 \x01(\tR\vserviceName\x12\x1f\n" +
 	"\vschema_name\x18\x02 \x01(\tR\n" +
@@ -3828,7 +3859,8 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"\vlast_run_at\x18\n" +
 	" \x01(\tR\tlastRunAt\x12\x1c\n" +
 	"\toperation\x18\v \x01(\tR\toperation\x12'\n" +
-	"\x0ftimeout_seconds\x18\f \x01(\x05R\x0etimeoutSeconds\"9\n" +
+	"\x0ftimeout_seconds\x18\f \x01(\x05R\x0etimeoutSeconds\x12)\n" +
+	"\x10timeout_declared\x18\r \x01(\bR\x0ftimeoutDeclared\"9\n" +
 	"\x14ListNodeNamesRequest\x12!\n" +
 	"\fservice_name\x18\x01 \x01(\tR\vserviceName\"8\n" +
 	"\x15ListNodeNamesResponse\x12\x1f\n" +
@@ -3863,7 +3895,7 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"\rschedule_name\x18\x01 \x01(\tR\fscheduleName\x12\x1b\n" +
 	"\tpage_size\x18\x02 \x01(\x05R\bpageSize\x12\x1f\n" +
 	"\vpage_offset\x18\x03 \x01(\x05R\n" +
-	"pageOffset\"\xb3\x01\n" +
+	"pageOffset\"\xda\x01\n" +
 	"\n" +
 	"RunSummary\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12#\n" +
@@ -3871,7 +3903,8 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"\x0fterminal_status\x18\x03 \x01(\tR\x0eterminalStatus\x12\x1d\n" +
 	"\n" +
 	"created_at\x18\x04 \x01(\tR\tcreatedAt\x12!\n" +
-	"\fcompleted_at\x18\x05 \x01(\tR\vcompletedAt\"]\n" +
+	"\fcompleted_at\x18\x05 \x01(\tR\vcompletedAt\x12%\n" +
+	"\x0efailure_reason\x18\x06 \x01(\tR\rfailureReason\"]\n" +
 	"\x10ListRunsResponse\x12(\n" +
 	"\x04runs\x18\x01 \x03(\v2\x14.state.v1.RunSummaryR\x04runs\x12\x1f\n" +
 	"\vtotal_count\x18\x02 \x01(\x05R\n" +
@@ -3892,7 +3925,7 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"\x1aSCHEDULER_STATUS_SUCCEEDED\x10\x03\x12\x1b\n" +
 	"\x17SCHEDULER_STATUS_FAILED\x10\x04\x12\x1e\n" +
 	"\x1aSCHEDULER_STATUS_CANCELLED\x10\x05\x12\x1c\n" +
-	"\x18SCHEDULER_STATUS_SKIPPED\x10\x06*\xc2\x01\n" +
+	"\x18SCHEDULER_STATUS_SKIPPED\x10\x06*\xf6\x01\n" +
 	"\n" +
 	"TaskStatus\x12\x1b\n" +
 	"\x17TASK_STATUS_UNSPECIFIED\x10\x00\x12\x17\n" +
@@ -3901,7 +3934,9 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"\x15TASK_STATUS_SUCCEEDED\x10\x03\x12\x16\n" +
 	"\x12TASK_STATUS_FAILED\x10\x04\x12\x19\n" +
 	"\x15TASK_STATUS_CANCELLED\x10\x05\x12\x17\n" +
-	"\x13TASK_STATUS_SKIPPED\x10\x062\xc8\x0e\n" +
+	"\x13TASK_STATUS_SKIPPED\x10\x06\x12\x1a\n" +
+	"\x16TASK_STATUS_DISPATCHED\x10\a\x12\x16\n" +
+	"\x12TASK_STATUS_QUEUED\x10\b2\xc8\x0e\n" +
 	"\fStateService\x12J\n" +
 	"\fGetScheduler\x12\x1d.state.v1.GetSchedulerRequest\x1a\x1b.state.v1.SchedulerResponse\x12P\n" +
 	"\x0fCancelScheduler\x12 .state.v1.CancelSchedulerRequest\x1a\x1b.state.v1.SchedulerResponse\x12Y\n" +

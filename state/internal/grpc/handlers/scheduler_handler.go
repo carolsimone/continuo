@@ -273,6 +273,9 @@ func domainToProtoScheduler(t *postgres.SchedulerTracker) *statev1.Scheduler {
 	if t.CancellationReason != nil {
 		s.CancellationReason = *t.CancellationReason
 	}
+	if t.FailureReason != nil {
+		s.FailureReason = *t.FailureReason
+	}
 
 	return s
 }
@@ -304,6 +307,9 @@ func runToProto(r *run.Run) *statev1.Scheduler {
 	}
 	if r.CancellationReason() != nil {
 		s.CancellationReason = *r.CancellationReason()
+	}
+	if r.FailureReason() != nil {
+		s.FailureReason = string(*r.FailureReason())
 	}
 	return s
 }
