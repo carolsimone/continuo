@@ -12,6 +12,22 @@ shipped in those.
 
 ## [Unreleased]
 
+### Breaking
+
+- A cancel is asynchronous. state moves the run to `cancelling` and its tasks in flight to `stopping`; execution-controller deletes each attempt's Job and reports the attempt `stopped` once its pods are gone; the run then ends `cancelled`. While a run is `cancelling` it holds its schedule: no cron fire and no manual trigger creates a second run, and a rerun or rebase of it is refused until it is `cancelled`. A cancel of a run with nothing in flight still ends it `cancelled` at once, and a second cancel of a `cancelling` run succeeds and changes nothing. A client that treats the answer of a cancel, or the `cancelled` status, as "the run's work has stopped" must wait for `cancelled`: `continuo schedule cancel` now reports `cancelling`, and the ui shows a `cancelling` run and its `stopping` tasks. A warehouse statement a pod sent may outlive the pod, so `cancelled` means no pod of the run can run again, not that the warehouse has stopped. MINOR.
+- The `schedule.cancelled:v1` stream is replaced by `run.cancelled:v1` (consumer group `executor-run-cancelled`), which names the attempts state still waits on and is sent again for them at 5, 10, 20, 40 and 60 minutes and then every 60. dead-letter-controller deletes the retired stream, and its open dead letters are listed as not redrivable. execution-controller keeps a fence per cancelled run (`cancelled_runs`, 30 days): a dispatch of a fenced run creates no Job and is answered `stopped`, and the fence deletes the Jobs of the run it holds no record of. MINOR.
+- Runs in flight when this release deploys are not carried over: cancel every pending or running run once it has deployed, including a run that was started before state planned runs and is still mid-flight. The attempt status `cancelled` is `stopped`, and the migrations rename it in place: state V50 (`cancelling` runs, `stopping` tasks, `stopped` attempts, `task_attempts.stop_requested_at`) and execution V13 (`cancelled_schedules` becomes `cancelled_runs`; the `stopped` outcome). MINOR.
+
+### Added
+
+- `continuo_runs_cancelling` and `continuo_runs_cancelling_overdue` (state, gauges): runs in `cancelling`, and those that have waited more than 15 minutes for their attempts to stop (state also logs the attempts it waits for). `continuo_run_cancel_seconds` (state, histogram): seconds from a run's cancel to its end as `cancelled`.
+- `continuo_attempts_stopped_total` (execution-controller): attempts reported `stopped` because their run was cancelled. `continuo_fenced_jobs_deleted_total{reason}` (execution-controller): Jobs deleted because no row deploys them, with reason `fenced_run` (their run is fenced) or `ended_undeployed` (their row ended before it was deployed, for example after a failed create call).
+- gRPC `SCHEDULER_STATUS_CANCELLING` and `TASK_STATUS_STOPPING`, and the attempt status `stopped`; the run page and `continuo schedule status` show them. No values change.
+
+### Removed
+
+- execution-controller's `CANCELLED_SCHEDULES_TTL_HOURS` and `CANCELLED_SCHEDULES_SWEEP_INTERVAL_MINUTES`: a run's fence is kept 30 days and swept hourly. The chart never set them; a `services[].env` override that still does is ignored.
+
 ## [0.13.0] - 2026-10-23
 
 state decides every attempt of every task and execution-controller runs exactly one attempt per dispatch: a failed attempt is retried by its failure class, each task's Job is stopped at its timeout, and a run left with nothing in flight fails as `stalled`. `runs.taskMaxRetries`, `runs.taskTimeoutHours` and `execution.startTimeoutMinutes` are new with defaults, and an existing values file keeps working. **MINOR.**
