@@ -16,9 +16,10 @@ import (
 
 // PostgresUnitOfWork implements uow.UnitOfWork against a *sqlx.DB.
 type PostgresUnitOfWork struct {
-	db     *sqlx.DB
-	tx     *sqlx.Tx
-	logger *slog.Logger
+	db          *sqlx.DB
+	tx          *sqlx.Tx
+	logger      *slog.Logger
+	afterCommit []func()
 }
 
 // NewPostgresUnitOfWork constructs a PostgresUnitOfWork over the given
@@ -83,6 +84,7 @@ func (u *PostgresUnitOfWork) Begin(ctx context.Context) error {
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	u.tx = tx
+	u.afterCommit = nil
 	return nil
 }
 
@@ -92,10 +94,21 @@ func (u *PostgresUnitOfWork) Commit() error {
 	}
 	err := u.tx.Commit()
 	u.tx = nil
+	hooks := u.afterCommit
+	u.afterCommit = nil
 	if err != nil {
 		return fmt.Errorf("commit tx: %w", err)
 	}
+	for _, fn := range hooks {
+		fn()
+	}
 	return nil
+}
+
+// AfterCommit registers fn to run once the current transaction commits; a
+// rollback, or a commit that fails, discards it.
+func (u *PostgresUnitOfWork) AfterCommit(fn func()) {
+	u.afterCommit = append(u.afterCommit, fn)
 }
 
 // Rollback rolls back the current transaction. A deferred Rollback that runs
@@ -107,6 +120,7 @@ func (u *PostgresUnitOfWork) Rollback() error {
 	}
 	tx := u.tx
 	u.tx = nil
+	u.afterCommit = nil
 	if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
 		return err
 	}

@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"time"
 
 	"github.com/carolsimone/continuo/execution-controller/domain/repository"
@@ -34,6 +35,22 @@ func (r *cancelledRunsRepository) Insert(ctx context.Context, runID uuid.UUID) e
 	_, err := r.executor.ExecContext(ctx,
 		`INSERT INTO cancelled_runs (run_id) VALUES ($1) ON CONFLICT DO NOTHING`, runID)
 	return err
+}
+
+// runLockSpace is the first key of a run's advisory lock (the two-key form,
+// apart from every one-key advisory lock); the second is a hash of the run
+// id. Two runs whose hashes collide share a lock, which only serialises them.
+const runLockSpace = 0x52554e46
+
+func (r *cancelledRunsRepository) LockRun(ctx context.Context, runID uuid.UUID, exclusive bool) error {
+	q := `SELECT pg_advisory_xact_lock_shared($1, hashtext($2))`
+	if exclusive {
+		q = `SELECT pg_advisory_xact_lock($1, hashtext($2))`
+	}
+	if _, err := r.executor.ExecContext(ctx, q, runLockSpace, runID.String()); err != nil {
+		return fmt.Errorf("lock run %s: %w", runID, err)
+	}
+	return nil
 }
 
 func (r *cancelledRunsRepository) Exists(ctx context.Context, runID uuid.UUID) (bool, error) {

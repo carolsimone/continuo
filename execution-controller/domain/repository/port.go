@@ -99,6 +99,15 @@ type CancelledRunsRepository interface {
 	Insert(ctx context.Context, runID uuid.UUID) error
 	// Exists reports whether runID is fenced.
 	Exists(ctx context.Context, runID uuid.UUID) (bool, error)
+	// LockRun takes runID's lock for the rest of the current transaction:
+	// shared (exclusive false) by a dispatch before it reads the fence and may
+	// store an attempt of the run, exclusive by the fence before it inserts
+	// the fence and stops the run's rows. The fence therefore sees every
+	// attempt a dispatch stored without meeting it, and a dispatch that waits
+	// for a fence meets it. Call it as its own statement, before the read it
+	// guards: under READ COMMITTED that read then sees what the other
+	// transaction committed.
+	LockRun(ctx context.Context, runID uuid.UUID, exclusive bool) error
 	// DeleteOlderThan removes the fences set more than age ago, by the
 	// database clock, and returns how many it removed.
 	DeleteOlderThan(ctx context.Context, age time.Duration) (int64, error)

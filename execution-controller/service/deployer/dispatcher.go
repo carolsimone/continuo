@@ -60,6 +60,9 @@ type DispatcherConfig struct {
 	// ErrorMessageMaxLen truncates the error message reported for an attempt
 	// whose Job could not be created; 0 keeps it whole.
 	ErrorMessageMaxLen int
+	// StopMetrics counts the attempts a launch reports stopped; nil counts
+	// nothing.
+	StopMetrics ports.StopMetrics
 }
 
 // Dispatcher admits deployments under a concurrency cap. The K8s deploy is a
@@ -74,6 +77,7 @@ type Dispatcher struct {
 	newAdmission  AdmissionRepoFactory
 	newCancelled  CancelledRepoFactory
 	waker         outbox.Waker
+	stopMetrics   ports.StopMetrics
 	maxConcurrent int
 	maxMessageLen int
 	logger        *slog.Logger
@@ -119,6 +123,7 @@ func NewDispatcher(
 		newAdmission:  newAdmission,
 		newCancelled:  newCancelled,
 		waker:         cfg.Waker,
+		stopMetrics:   cfg.StopMetrics,
 		maxConcurrent: maxConcurrent,
 		maxMessageLen: cfg.ErrorMessageMaxLen,
 		logger:        logger,
@@ -219,8 +224,9 @@ func (d *Dispatcher) claim(ctx context.Context) ([]uuid.UUID, error) {
 // and an existing Job counts as created, so launching a deployment whose Job
 // an interrupted launch already created is safe. A task's attempt whose run
 // is fenced, read under the row lock, creates no Job: it ends stopped and is
-// reported stopped. A fence taken while the launch holds the row waits for
-// the row, and stops it and its Job once the launch commits.
+// reported stopped, and is counted once the launch commits. A fence taken
+// while the launch holds the row waits for the row, and stops it and its Job
+// once the launch commits.
 func (d *Dispatcher) launch(ctx context.Context, id uuid.UUID) error {
 	tx, err := d.db.BeginTxx(ctx, nil)
 	if err != nil {
@@ -251,6 +257,9 @@ func (d *Dispatcher) launch(ctx context.Context, id uuid.UUID) error {
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit launch: %w", err)
+	}
+	if fenced && d.stopMetrics != nil {
+		d.stopMetrics.AttemptStopped()
 	}
 	return nil
 }

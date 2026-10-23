@@ -42,6 +42,13 @@ type noStopMetrics struct{}
 func (noStopMetrics) AttemptStopped()  {}
 func (noStopMetrics) JobReaped(string) {}
 
+// countedStops is a ports.StopMetrics that counts the attempts reported
+// stopped.
+type countedStops struct{ stopped int }
+
+func (c *countedStops) AttemptStopped() { c.stopped++ }
+func (*countedStops) JobReaped(string)  {}
+
 // runCancelledMessage is one run.cancelled:v1 entry of runID, as a new outbox
 // row of state.
 func runCancelledMessage(t *testing.T, id string, runID uuid.UUID, attempts ...pkgevents.CancelledAttempt) goredis.XMessage {

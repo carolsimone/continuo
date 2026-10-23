@@ -846,6 +846,13 @@ func (f fencingAdmission) ReserveNext(ctx context.Context, limit int) ([]uuid.UU
 	return ids, nil
 }
 
+// countedStops is a ports.StopMetrics that counts the attempts reported
+// stopped.
+type countedStops struct{ stopped int }
+
+func (c *countedStops) AttemptStopped() { c.stopped++ }
+func (*countedStops) JobReaped(string)  {}
+
 // The launch reads the fence under the row lock: a reserved row of a run
 // fenced after it was claimed creates no Job, ends done with the outcome
 // stopped and is reported stopped, so it never stays reserved.
@@ -866,9 +873,11 @@ func TestLaunch_AFencedReservedRowEndsStoppedWithoutAJob(t *testing.T) {
 		return fencingAdmission{AdmissionRepository: admissionFactory(exec), db: db, run: runID}
 	}
 
-	require.NoError(t, newTestDispatcherWith(db, fk, 50, deployer.DispatcherConfig{}, fencing).ProcessBatch(ctx))
+	stops := &countedStops{}
+	require.NoError(t, newTestDispatcherWith(db, fk, 50, deployer.DispatcherConfig{StopMetrics: stops}, fencing).ProcessBatch(ctx))
 
 	assert.Zero(t, fk.calls(), "no Job is created for a fenced run")
+	assert.Equal(t, 1, stops.stopped, "the stopped attempt is counted once its launch commits")
 	got, found, err := repoFactory(db).LoadByTaskAttempt(ctx, cmd.TaskID, 0)
 	require.NoError(t, err)
 	require.True(t, found)

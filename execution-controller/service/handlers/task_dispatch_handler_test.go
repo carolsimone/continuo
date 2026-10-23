@@ -29,6 +29,12 @@ func (noJobs) ObserveLive(context.Context, string) (model.JobObservation, error)
 	return model.JobObservation{}, nil
 }
 
+// noStops is a ports.StopMetrics that counts nothing.
+type noStops struct{}
+
+func (noStops) AttemptStopped()  {}
+func (noStops) JobReaped(string) {}
+
 // recordingOutbox keeps every outbox entry written.
 type recordingOutbox struct {
 	outbox.Repository
@@ -62,7 +68,7 @@ func TestTaskDispatch_ALostInsertRaceResendsTheStoredReport(t *testing.T) {
 	u.Outbox = out
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
-	require.NoError(t, handlers.NewTaskDispatchHandler(noJobs{}, noJobs{}, logger).Handle(context.Background(), u, evt, uuid.New()))
+	require.NoError(t, handlers.NewTaskDispatchHandler(noJobs{}, noJobs{}, noStops{}, logger).Handle(context.Background(), u, evt, uuid.New()))
 
 	require.Len(t, out.created, 1, "exactly one report is written")
 	want, err := json.Marshal(serialization.ReportFromDomain(cmd, *winner.LastReport()))
@@ -116,7 +122,7 @@ func TestTaskDispatch_AnAcknowledgedAttemptsJobMissingFromTheCacheIsAdoptedFromA
 	u.Outbox = out
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
-	require.NoError(t, handlers.NewTaskDispatchHandler(noJobs{}, live, logger).Handle(context.Background(), u, evt, uuid.New()))
+	require.NoError(t, handlers.NewTaskDispatchHandler(noJobs{}, live, noStops{}, logger).Handle(context.Background(), u, evt, uuid.New()))
 
 	assert.Equal(t, 1, live.reads)
 	stored := repo.stored[attemptKey(evt.TaskID.String(), 1)]
@@ -141,7 +147,7 @@ func TestTaskDispatch_AnAcknowledgedAttemptIsLostOnlyOnceALiveReadFindsNoJob(t *
 			u.Outbox = out
 			logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
-			require.NoError(t, handlers.NewTaskDispatchHandler(noJobs{}, live, logger).Handle(context.Background(), u, evt, uuid.New()))
+			require.NoError(t, handlers.NewTaskDispatchHandler(noJobs{}, live, noStops{}, logger).Handle(context.Background(), u, evt, uuid.New()))
 
 			assert.Equal(t, 1, live.reads)
 			stored := repo.stored[attemptKey(evt.TaskID.String(), 1)]
@@ -168,7 +174,7 @@ func TestTaskDispatch_AnUnreadableJobLeavesAnAcknowledgedAttemptUnanswered(t *te
 	u.Outbox = out
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
-	err := handlers.NewTaskDispatchHandler(noJobs{}, live, logger).Handle(context.Background(), u, evt, uuid.New())
+	err := handlers.NewTaskDispatchHandler(noJobs{}, live, noStops{}, logger).Handle(context.Background(), u, evt, uuid.New())
 
 	require.Error(t, err)
 	assert.Equal(t, 1, live.reads)
@@ -187,7 +193,7 @@ func TestTaskDispatch_OnlyAnAttemptAboutToBeReportedLostIsReadLive(t *testing.T)
 	u.Outbox = &recordingOutbox{}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
-	require.NoError(t, handlers.NewTaskDispatchHandler(noJobs{}, live, logger).Handle(context.Background(), u, evt, uuid.New()))
+	require.NoError(t, handlers.NewTaskDispatchHandler(noJobs{}, live, noStops{}, logger).Handle(context.Background(), u, evt, uuid.New()))
 
 	assert.Zero(t, live.reads)
 	assert.Equal(t, model.StatusPending, repo.stored[attemptKey(evt.TaskID.String(), 1)].Status())
@@ -207,9 +213,33 @@ func TestTaskDispatch_AnAcknowledgedAttemptWithAnOrphanPodIsNotReportedLost(t *t
 	u.Outbox = out
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1}))
 
-	require.NoError(t, handlers.NewTaskDispatchHandler(noJobs{}, live, logger).Handle(context.Background(), u, evt, uuid.New()))
+	require.NoError(t, handlers.NewTaskDispatchHandler(noJobs{}, live, noStops{}, logger).Handle(context.Background(), u, evt, uuid.New()))
 
 	assert.Equal(t, 1, live.reads)
 	assert.Zero(t, repo.addAttempts, "nothing is stored")
 	assert.Empty(t, out.created, "nothing is reported")
+}
+
+// A dispatch of a fenced run with neither a record nor a Job of the attempt,
+// but a pod of it a live read shows running, is not answered stopped while
+// the pod can still write: nothing is stored or reported, and state's next
+// cancel names the attempt again.
+func TestTaskDispatch_AFencedRunsAttemptWithAnOrphanPodIsLeftUnanswered(t *testing.T) {
+	evt := acknowledgedDispatch()
+	started := time.Now()
+	live := &liveJobs{job: model.JobObservation{Pods: []model.PodObservation{{Name: "pod-1", Phase: model.PodRunning,
+		Main: model.ContainerObservation{Name: "dbt-job", StartedAt: &started}}}}}
+	repo := &stubDeploymentsRepo{}
+	out := &recordingOutbox{}
+	cancelled := &recordingCancelledRepo{fenced: true}
+	u := newFakeUoW(repo, cancelled)
+	u.Outbox = out
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1}))
+
+	require.NoError(t, handlers.NewTaskDispatchHandler(noJobs{}, live, noStops{}, logger).Handle(context.Background(), u, evt, uuid.New()))
+
+	assert.Equal(t, 1, live.reads)
+	assert.Zero(t, repo.addAttempts, "nothing is stored")
+	assert.Empty(t, out.created, "nothing is reported")
+	assert.Equal(t, []bool{false}, cancelled.locks, "the dispatch took the run lock shared before it read the fence")
 }

@@ -16,9 +16,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// recordingCancelledRepo records the fences inserted and the run locks taken
+// (true for exclusive); Exists answers fenced.
 type recordingCancelledRepo struct {
 	mu       sync.Mutex
 	inserted []uuid.UUID
+	locks    []bool
+	fenced   bool
+}
+
+func (r *recordingCancelledRepo) LockRun(_ context.Context, _ uuid.UUID, exclusive bool) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.locks = append(r.locks, exclusive)
+	return nil
 }
 
 func (r *recordingCancelledRepo) Insert(_ context.Context, id uuid.UUID) error {
@@ -28,7 +39,7 @@ func (r *recordingCancelledRepo) Insert(_ context.Context, id uuid.UUID) error {
 	return nil
 }
 func (r *recordingCancelledRepo) Exists(_ context.Context, _ uuid.UUID) (bool, error) {
-	return false, nil
+	return r.fenced, nil
 }
 func (r *recordingCancelledRepo) DeleteOlderThan(_ context.Context, _ time.Duration) (int64, error) {
 	return 0, nil

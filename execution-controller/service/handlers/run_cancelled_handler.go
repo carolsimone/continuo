@@ -17,15 +17,19 @@ import (
 )
 
 // RunCancelledHandler fences a run state cancelled and stops the run's work.
-// In one transaction it inserts the fence, which every gate that starts work
-// reads, then stops each production row of the run that has not ended,
-// waiting for a row a launch holds: a row with no Job yet (pending or
-// reserved) ends stopped and is reported stopped; a row whose Job exists
-// moves to terminating, and its Job is deleted once the transaction commits.
-// Each attempt the cancel names is answered too: a row that has ended has its
-// last report sent again; an attempt with no row but a Job has its record
-// rebuilt and moved to terminating; one with neither is stored stopped and
-// reported stopped.
+// In one transaction it takes the run's lock exclusively, waiting for every
+// dispatch of the run that may be storing an attempt, inserts the fence,
+// which every gate that starts work reads, then stops each production row of
+// the run that has not ended, waiting for a row a launch holds: a row with no
+// Job yet (pending or reserved) ends stopped and is reported stopped; a row
+// whose Job exists moves to terminating, and its Job is deleted once the
+// transaction commits. Each attempt the cancel names is answered too: a row
+// that has ended has its last report sent again; an attempt with no row but a
+// Job has its record rebuilt and moved to terminating; one with neither is
+// stored stopped and reported stopped, unless a pod of it has not finished,
+// in which case nothing is written for it and state's next cancel names it
+// again. Each attempt reported stopped is counted once the transaction
+// commits.
 type RunCancelledHandler struct {
 	jobs       ports.JobCache
 	lookup     ports.JobLookup
@@ -49,7 +53,11 @@ func NewRunCancelledHandler(jobs ports.JobCache, lookup ports.JobLookup, termina
 // Job of every row the transaction moved to terminating. msgProcID is the
 // dedup row's id, kept on a row the cancel creates for provenance.
 func (h *RunCancelledHandler) Handle(ctx context.Context, u uow.UnitOfWork, evt events.RunCancelled, msgProcID uuid.UUID) (deleteJobs []string, err error) {
-	if err := u.CancelledRunsRepo().Insert(ctx, evt.RunID); err != nil {
+	fence := u.CancelledRunsRepo()
+	if err := fence.LockRun(ctx, evt.RunID, true); err != nil {
+		return nil, err
+	}
+	if err := fence.Insert(ctx, evt.RunID); err != nil {
 		return nil, fmt.Errorf("fence run %s: %w", evt.RunID, err)
 	}
 	open, err := u.DeploymentsRepo().LockOpenOfRun(ctx, evt.RunID.String())
@@ -131,7 +139,7 @@ func (h *RunCancelledHandler) stopRow(ctx context.Context, u uow.UnitOfWork, d *
 		if err := reports.Write(ctx, u.OutboxRepo(), d, pkgmodel.AttemptStatusStopped, ""); err != nil {
 			return "", err
 		}
-		h.metrics.AttemptStopped()
+		u.AfterCommit(h.metrics.AttemptStopped)
 	case model.StopTerminate:
 		job = d.JobName()
 	}
@@ -142,9 +150,10 @@ func (h *RunCancelledHandler) stopRow(ctx context.Context, u uow.UnitOfWork, d *
 // open rows. A row of it that has ended has its last report sent again. With
 // no row, a Job of the attempt (the cache, then a live read) has its record
 // rebuilt and moved to terminating, and its name is returned for deletion;
-// with neither, the attempt is stored stopped and reported stopped. A row of
-// the attempt another transaction stores meanwhile is stopped as a row of the
-// run.
+// with neither, the attempt is stored stopped and reported stopped, unless a
+// pod of it has not finished (its Job was deleted with orphan propagation):
+// nothing is written while that pod can still run. A row of the attempt
+// another transaction stores meanwhile is stopped as a row of the run.
 func (h *RunCancelledHandler) stopNamed(ctx context.Context, u uow.UnitOfWork, cmd command.DeployTask, procID *uuid.UUID, now time.Time) (string, error) {
 	repo := u.DeploymentsRepo()
 	held, found, err := repo.LoadByTaskAttempt(ctx, cmd.TaskID, cmd.Attempt)
@@ -154,9 +163,15 @@ func (h *RunCancelledHandler) stopNamed(ctx context.Context, u uow.UnitOfWork, c
 	if found {
 		return h.stopRow(ctx, u, held, now)
 	}
-	job, err := jobOfAttempt(ctx, h.jobs, h.lookup, cmd)
+	job, obs, err := jobOfAttempt(ctx, h.jobs, h.lookup, cmd)
 	if err != nil {
 		return "", err
+	}
+	if !job && obs.HasUnfinishedPod() {
+		h.logger.Error("A named attempt of a cancelled run has no record and no Job, but a pod of it has not finished — "+
+			"nothing is reported until the pod is gone; state asks again",
+			"run_id", cmd.ScheduleID, "task_id", cmd.TaskID, "attempt", cmd.Attempt, "job_name", cmd.JobName)
+		return "", nil
 	}
 	var d *model.Deployment
 	if job {
@@ -187,6 +202,6 @@ func (h *RunCancelledHandler) stopNamed(ctx context.Context, u uow.UnitOfWork, c
 			"run_id", cmd.ScheduleID, "task_id", cmd.TaskID, "attempt", cmd.Attempt, "job_name", cmd.JobName)
 		return cmd.JobName, nil
 	}
-	h.metrics.AttemptStopped()
+	u.AfterCommit(h.metrics.AttemptStopped)
 	return "", reports.Resend(ctx, u.OutboxRepo(), d)
 }

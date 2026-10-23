@@ -232,9 +232,13 @@ func main() {
 	// A fresh unit of work per inbound message keeps concurrent handlers isolated.
 	uowFactory := func() uow.UnitOfWork { return postgres.NewPostgresUnitOfWork(pgDB, logger) }
 
+	// The observer's series: attempts awaiting a pod stop, attempts reported
+	// stopped, and Jobs deleted because no row deploys them.
+	observerMetrics := ecmetrics.NewObserver(metricsReg)
+
 	// ---- handlers and bindings ----
 
-	taskDispatchHandler := handlers.NewTaskDispatchHandler(jobWatch, jobWatch, logger)
+	taskDispatchHandler := handlers.NewTaskDispatchHandler(jobWatch, jobWatch, observerMetrics, logger)
 	scheduleCancelledHandler := handlers.NewScheduleCancelledHandler(logger)
 	validationReqHandler := handlers.NewValidationRequestedHandler(logger)
 	seedBuildReqHandler := handlers.NewSeedBuildRequestedHandler(logger)
@@ -323,7 +327,7 @@ func main() {
 		},
 		cfg.MaxConcurrentJobs, logger,
 		deployer.DispatcherConfig{Tick: 5 * time.Second, BatchSize: 50, Waker: dispatcherWaker,
-			ErrorMessageMaxLen: cfg.ErrorMessageMaxLength},
+			ErrorMessageMaxLen: cfg.ErrorMessageMaxLength, StopMetrics: observerMetrics},
 	)
 
 	// Nothing creates or observes a Job until both caches have listed every
@@ -339,7 +343,6 @@ func main() {
 	// its pods are finished or gone. Every minute it queues every started
 	// deployment again.
 	jobControl := k8s.NewJobControl(k8sClient, cfg.K8sNamespace)
-	observerMetrics := ecmetrics.NewObserver(metricsReg)
 	attemptObserver := observer.New(observer.Config{
 		StartTimeout:       cfg.JobStartTimeout,
 		ErrorMessageMaxLen: cfg.ErrorMessageMaxLength,

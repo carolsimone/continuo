@@ -479,3 +479,175 @@ func TestRunCancelled_IsIdempotent(t *testing.T) {
 	assert.Equal(t, model.StatusTerminating, f.reload(running.Command().TaskID, 0).Status())
 	assert.Equal(t, 1, f.metrics.stopped)
 }
+
+// dispatchOf is state's dispatch of attempt 0 of a new task of the run.
+func (f *fenceFlow) dispatchOf() events.TaskDispatch {
+	cmd := f.command(0)
+	return events.TaskDispatch{RunID: f.runID, TaskID: uuid.MustParse(cmd.TaskID), Attempt: 0,
+		KnownStatus: pkgmodel.AttemptStatusDispatched, ScheduleName: cmd.ScheduleName, ServiceName: cmd.ServiceName,
+		SchemaName: cmd.SchemaName, TableName: cmd.TableName, NodeType: cmd.NodeType, Operation: cmd.Operation,
+		ImageTag: cmd.ImageTag, JobName: cmd.JobName, TimeoutSeconds: cmd.TimeoutSeconds}
+}
+
+// waitForAdvisoryWaiter reports whether a backend of the test database comes
+// to wait on an advisory lock within a few seconds.
+func (f *fenceFlow) waitForAdvisoryWaiter() bool {
+	f.t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		var n int
+		require.NoError(f.t, f.db.Get(&n, `SELECT count(*) FROM pg_stat_activity
+			WHERE datname = current_database() AND wait_event_type = 'Lock' AND wait_event = 'advisory'`))
+		if n > 0 {
+			return true
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return false
+}
+
+// inTx runs fn in its own transaction on another connection and sends what
+// it returned once the transaction committed (or fn failed).
+func (f *fenceFlow) inTx(fn func(u *postgres.PostgresUnitOfWork) error) <-chan error {
+	done := make(chan error, 1)
+	go func() {
+		ctx := context.Background()
+		u := postgres.NewPostgresUnitOfWork(f.db, f.logger)
+		if err := u.Begin(ctx); err != nil {
+			done <- err
+			return
+		}
+		if err := fn(u); err != nil {
+			_ = u.Rollback()
+			done <- err
+			return
+		}
+		done <- u.Commit()
+	}()
+	return done
+}
+
+// waitOrNot returns what done sends within 200 ms, and whether it sent.
+func waitOrNot(done <-chan error) (error, bool) {
+	select {
+	case err := <-done:
+		return err, true
+	case <-time.After(200 * time.Millisecond):
+		return nil, false
+	}
+}
+
+// A cancel that meets a dispatch of the run whose transaction has read no
+// fence and stored the attempt pending, uncommitted, waits for it: the fence
+// then sees the committed row and ends it stopped, so no pending row of a
+// fenced run is left for state's next cancel to find.
+func TestRunCancelled_WaitsForADispatchThatMayStoreAnAttemptOfTheRun(t *testing.T) {
+	f := newFenceFlow(t)
+	ctx := context.Background()
+	evt := f.dispatchOf()
+	u := postgres.NewPostgresUnitOfWork(f.db, f.logger)
+	require.NoError(t, u.Begin(ctx))
+	t.Cleanup(func() { _ = u.Rollback() })
+	require.NoError(t, handlers.NewTaskDispatchHandler(noJobs{}, noJobs{}, f.metrics, f.logger).Handle(ctx, u, evt, uuid.Nil))
+
+	fenced := f.inTx(func(fu *postgres.PostgresUnitOfWork) error {
+		_, err := f.handler(noJobs{}, noJobs{}).Handle(ctx, fu, f.event(), uuid.Nil)
+		return err
+	})
+	assert.True(t, f.waitForAdvisoryWaiter(), "the fence waits for the dispatch's run lock")
+	fenceErr, early := waitOrNot(fenced)
+	assert.False(t, early, "the fence did not wait for the dispatch")
+
+	require.NoError(t, u.Commit())
+	if !early {
+		fenceErr = <-fenced
+	}
+	require.NoError(t, fenceErr)
+
+	got := f.reload(evt.TaskID.String(), 0)
+	assert.Equal(t, model.StatusDone, got.Status(), "the fence ended the row the dispatch stored")
+	assert.Equal(t, model.OutcomeStopped, got.Outcome())
+	reps := f.reports(evt.TaskID.String())
+	require.Len(t, reps, 2)
+	assert.Equal(t, pkgmodel.AttemptStatusQueued, reps[0].Status)
+	assert.Equal(t, pkgmodel.AttemptStatusStopped, reps[1].Status)
+}
+
+// A dispatch of a run whose fence is being written, uncommitted, waits for
+// the fence and then meets it: the attempt is stored stopped and no Job is
+// requested.
+func TestTaskDispatch_WaitsForAFenceInProgressAndMeetsIt(t *testing.T) {
+	f := newFenceFlow(t)
+	ctx := context.Background()
+	u := postgres.NewPostgresUnitOfWork(f.db, f.logger)
+	require.NoError(t, u.Begin(ctx))
+	t.Cleanup(func() { _ = u.Rollback() })
+	_, err := f.handler(noJobs{}, noJobs{}).Handle(ctx, u, f.event(), uuid.Nil)
+	require.NoError(t, err)
+
+	evt := f.dispatchOf()
+	dispatched := f.inTx(func(du *postgres.PostgresUnitOfWork) error {
+		return handlers.NewTaskDispatchHandler(noJobs{}, noJobs{}, f.metrics, f.logger).Handle(ctx, du, evt, uuid.Nil)
+	})
+	assert.True(t, f.waitForAdvisoryWaiter(), "the dispatch waits for the fence's run lock")
+	dispatchErr, early := waitOrNot(dispatched)
+	assert.False(t, early, "the dispatch did not wait for the fence")
+
+	require.NoError(t, u.Commit())
+	if !early {
+		dispatchErr = <-dispatched
+	}
+	require.NoError(t, dispatchErr)
+
+	got := f.reload(evt.TaskID.String(), 0)
+	assert.Equal(t, model.StatusDone, got.Status(), "the dispatch met the fence")
+	assert.Equal(t, model.OutcomeStopped, got.Outcome())
+	assert.Nil(t, got.DeployedAt())
+	reps := f.reports(evt.TaskID.String())
+	require.Len(t, reps, 1)
+	assert.Equal(t, pkgmodel.AttemptStatusStopped, reps[0].Status)
+	assert.Equal(t, 1, f.metrics.stopped)
+}
+
+// An attempt the cancel names that has neither a row nor a Job, but whose pod
+// a live read shows still running (its Job was deleted with orphan
+// propagation), is not reported stopped while the pod can still write:
+// nothing is stored or reported for it, and state's next cancel names it
+// again. The run is fenced all the same.
+func TestRunCancelled_LeavesANamedAttemptWithAnOrphanPodUnanswered(t *testing.T) {
+	f := newFenceFlow(t)
+	cmd := f.command(0)
+	started := f.now.Add(-time.Minute)
+	live := jobsOf{cmd.JobName: {Pods: []model.PodObservation{{Name: "pod-1", Phase: model.PodRunning,
+		Main: model.ContainerObservation{Name: "dbt-job", StartedAt: &started}}}}}
+
+	names := f.cancel(f.handler(noJobs{}, live), f.event(ref(cmd)))
+
+	assert.Empty(t, names)
+	assert.True(t, f.fenced())
+	_, found, err := f.repo.LoadByTaskAttempt(context.Background(), cmd.TaskID, 0)
+	require.NoError(t, err)
+	assert.False(t, found, "nothing is stored for the attempt")
+	assert.Empty(t, f.reports(cmd.TaskID), "nothing is reported for the attempt")
+	assert.Zero(t, f.metrics.stopped)
+}
+
+// An attempt is counted stopped once the transaction that reports it stopped
+// commits: a fence that rolls back counts nothing, and its redelivery counts
+// the attempt once.
+func TestRunCancelled_CountsAStopOnlyOnceItCommits(t *testing.T) {
+	f := newFenceFlow(t)
+	ctx := context.Background()
+	f.attempt(model.StatusPending)
+	h := f.handler(noJobs{}, noJobs{})
+	u := postgres.NewPostgresUnitOfWork(f.db, f.logger)
+	require.NoError(t, u.Begin(ctx))
+	_, err := h.Handle(ctx, u, f.event(), uuid.Nil)
+	require.NoError(t, err)
+	require.NoError(t, u.Rollback())
+	assert.Zero(t, f.metrics.stopped, "a rolled-back stop is not counted")
+
+	f.cancel(h, f.event())
+
+	assert.Equal(t, 1, f.metrics.stopped)
+}

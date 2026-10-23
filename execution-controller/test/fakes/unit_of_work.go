@@ -26,7 +26,8 @@ type FakeUnitOfWork struct {
 	CommitCalled   int
 	RollbackCalled int
 
-	inTx bool
+	inTx        bool
+	afterCommit []func()
 }
 
 func (f *FakeUnitOfWork) OutboxRepo() pkgoutbox.Repository                 { return f.Outbox }
@@ -56,14 +57,23 @@ func (f *FakeUnitOfWork) Commit() error {
 	}
 	f.inTx = false
 	f.CommitCalled++
+	hooks := f.afterCommit
+	f.afterCommit = nil
+	for _, fn := range hooks {
+		fn()
+	}
 	return nil
 }
+
+// AfterCommit registers fn to run at the next Commit; Rollback discards it.
+func (f *FakeUnitOfWork) AfterCommit(fn func()) { f.afterCommit = append(f.afterCommit, fn) }
 
 func (f *FakeUnitOfWork) Rollback() error {
 	if !f.inTx {
 		return nil
 	}
 	f.inTx = false
+	f.afterCommit = nil
 	f.RollbackCalled++
 	return nil
 }

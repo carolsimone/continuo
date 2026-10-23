@@ -52,12 +52,13 @@ type dispatchFlow struct {
 	runID   uuid.UUID
 	taskID  uuid.UUID
 	jobs    jobsHolding
+	stops   *countedStops
 	seq     int
 	handler func(context.Context, goredis.XMessage) error
 }
 
 func newDispatchFlow(t *testing.T, db *sqlx.DB) *dispatchFlow {
-	f := &dispatchFlow{t: t, db: db, runID: uuid.New(), taskID: uuid.New()}
+	f := &dispatchFlow{t: t, db: db, runID: uuid.New(), taskID: uuid.New(), stops: &countedStops{}}
 	f.rebind()
 	return f
 }
@@ -65,7 +66,7 @@ func newDispatchFlow(t *testing.T, db *sqlx.DB) *dispatchFlow {
 func (f *dispatchFlow) rebind() {
 	logger := testDispatchLogger()
 	newUoW := func() uow.UnitOfWork { return postgres.NewPostgresUnitOfWork(f.db, logger) }
-	f.handler = executorredis.NewTaskDispatchBinding(newUoW, handlers.NewTaskDispatchHandler(f.jobs, f.jobs, logger), logger)
+	f.handler = executorredis.NewTaskDispatchBinding(newUoW, handlers.NewTaskDispatchHandler(f.jobs, f.jobs, f.stops, logger), logger)
 }
 
 // dispatch delivers one task.dispatch:v1 entry of attempt n, as a new outbox
@@ -289,6 +290,7 @@ func TestTaskDispatch_AFencedRunsDispatchIsStoredStopped(t *testing.T) {
 		assert.Empty(t, r.FailureReason)
 	}
 	assert.Equal(t, reps[0].QueuedAt, reps[1].QueuedAt, "a repeat is the stored report")
+	assert.Equal(t, 1, f.stops.stopped, "the attempt is counted stopped once, not again for the repeat")
 }
 
 // A dispatch of a fenced run whose Job exists adopts the Job as terminating

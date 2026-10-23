@@ -424,6 +424,7 @@ func TestSettle_ReportsAStoppedAttemptOfACancelledRun(t *testing.T) {
 	assert.NotContains(t, reports[1], "failure_reason")
 	assert.NotContains(t, reports[1], "failure_class")
 	assert.Empty(t, got.Facts().Reason, "a stop is no failure")
+	assert.Equal(t, 1, h.stop.stopped, "the stopped attempt is counted")
 }
 
 func TestProcess_AValidationNodeRecordsItsOutcome(t *testing.T) {
@@ -893,4 +894,5 @@ func TestObserver_ReportsStoppedOnlyOnceThePodIsGone(t *testing.T) {
 	got := h.reload(t, dep.JobName())
 	assert.Equal(t, model.StatusDone, got.Status())
 	assert.Equal(t, model.OutcomeStopped, got.Outcome())
+	assert.Equal(t, 1, h.stop.stopped, "the stop is counted once")
 }
