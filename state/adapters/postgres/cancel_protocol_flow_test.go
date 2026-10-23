@@ -208,3 +208,46 @@ func TestAttemptReport_AStoppingSuccessRecordsTheLoadedVersion(t *testing.T) {
 	status, _ := f.run(t)
 	assert.Equal(t, run.SchedulerStatusCancelled, status, "the run ends cancelled though a task succeeded")
 }
+
+// A cancelling run still holds its schedule: it blocks a new run of the
+// schedule, is the schedule's active run, shows as running in the schedule
+// list, is an active run of the live release's drift report and, with tasks
+// state did not plan, is listed among the unplanned active runs.
+func TestActiveRunQueriesCoverCancelling(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	tenant := newTopoTenant(t, db)
+	id := insertSeedRun(t, db, run.SchedulerStatusCancelling)
+	var schedule string
+	require.NoError(t, db.Get(&schedule, `SELECT schedule_name FROM scheduler_tracker WHERE schedule_id = $1`, id))
+	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
+
+	blocked, err := repo.HasActiveSchedule(ctx, schedule)
+	require.NoError(t, err)
+	assert.True(t, blocked, "a cancelling run blocks its schedule")
+
+	active, err := repo.GetActiveScheduler(ctx, schedule)
+	require.NoError(t, err)
+	require.NotNil(t, active)
+	assert.Equal(t, id, active.ScheduleID)
+	assert.Equal(t, run.SchedulerStatusCancelling, active.Status)
+
+	last, err := repo.GetLastRunPerSchedule(ctx)
+	require.NoError(t, err)
+	require.Contains(t, last, schedule)
+	assert.True(t, last[schedule].IsRunning, "a cancelling run is still running")
+
+	_, drifts, err := postgres.NewRunReadRepository(db).ListActiveRunDrifts(ctx, tenant)
+	require.NoError(t, err)
+	var driftRuns []uuid.UUID
+	for _, d := range drifts {
+		driftRuns = append(driftRuns, d.RunID)
+	}
+	assert.Contains(t, driftRuns, id)
+
+	inUoW(t, db, func(u *postgres.PostgresUnitOfWork) {
+		unplanned, err := u.Run().ListUnplannedActive(ctx)
+		require.NoError(t, err)
+		assert.Contains(t, unplanned, id)
+	})
+}

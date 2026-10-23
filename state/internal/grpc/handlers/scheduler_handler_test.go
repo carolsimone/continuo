@@ -1077,6 +1077,79 @@ func TestCancelSchedule_AlreadyTerminal(t *testing.T) {
 	assert.Equal(t, codes.FailedPrecondition, st.Code())
 }
 
+// newCancellingRun builds a run a cancel by by at cancelledAt already moved to
+// cancelling.
+func newCancellingRun(scheduleID uuid.UUID, name, by string, cancelledAt time.Time) *run.Run {
+	return run.HydrateRun(
+		scheduleID, name,
+		run.SchedulerStatusCancelling,
+		run.InitStatusCompleted,
+		run.Kind("cron"),
+		nil,
+		identity.SystemUserID,
+		model.OperationRun,
+		cancelledAt.Add(-time.Hour),
+		nil, nil, nil, &cancelledAt,
+		&by, nil,
+		nil,
+		0,
+		nil,
+	)
+}
+
+// A cancel of a run that is already cancelling writes nothing, sends nothing
+// and succeeds: the caller gets the run as it was, with the cancel's first
+// time and author.
+func TestCancelSchedule_ASecondCancelReturnsTheCancellingRun(t *testing.T) {
+	id := uuid.New()
+	first := time.Date(2026, 10, 23, 9, 0, 0, 0, time.UTC)
+	runRepo := &cancelFakeRunRepo{stored: newCancellingRun(id, "daily", "alice", first)}
+	outbox := &cancelFakeOutbox{}
+	tasks := &cancelFakeTaskCollection{}
+	_, factory := newCancelUoWFactory(runRepo, outbox, tasks)
+	h := NewSchedulerHandler(nil, nil, nil, nil, factory, newTestLogger())
+
+	resp, err := h.CancelSchedule(context.Background(), &statev1.CancelScheduleRequest{
+		ScheduleName: "daily",
+		CancelledBy:  "bob",
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, id.String(), resp.ScheduleId)
+	assert.False(t, runRepo.saveCalled, "a second cancel saves nothing")
+	assert.False(t, tasks.beginStopCalled, "a second cancel stops nothing")
+	assert.Empty(t, outbox.appended, "a second cancel sends nothing")
+	assert.Equal(t, run.SchedulerStatusCancelling, runRepo.stored.Status())
+	require.NotNil(t, runRepo.stored.CancelledAt())
+	assert.True(t, runRepo.stored.CancelledAt().Equal(first))
+	require.NotNil(t, runRepo.stored.CancelledBy())
+	assert.Equal(t, "alice", *runRepo.stored.CancelledBy())
+}
+
+// CancelScheduler answers a second cancel with the run as stored: its first
+// cancel's time and author, and no write.
+func TestCancelScheduler_ASecondCancelReturnsTheCancellingRun(t *testing.T) {
+	id := uuid.New()
+	first := time.Date(2026, 10, 23, 9, 0, 0, 0, time.UTC)
+	runRepo := &cancelFakeRunRepo{stored: newCancellingRun(id, "daily", "alice", first)}
+	outbox := &cancelFakeOutbox{}
+	_, factory := newCancelUoWFactory(runRepo, outbox, &cancelFakeTaskCollection{})
+	h := NewSchedulerHandler(nil, nil, nil, nil, factory, newTestLogger())
+
+	resp, err := h.CancelScheduler(context.Background(), &statev1.CancelSchedulerRequest{
+		ScheduleId:  id.String(),
+		CancelledBy: "bob",
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, id.String(), resp.Scheduler.ScheduleId)
+	assert.Equal(t, "alice", resp.Scheduler.CancelledBy)
+	assert.True(t, resp.Scheduler.CancelledAt.AsTime().Equal(first))
+	assert.Nil(t, resp.Scheduler.CompletedAt, "a cancelling run has not ended")
+	assert.False(t, runRepo.saveCalled)
+	assert.Empty(t, outbox.appended)
+}
+
 func TestCancelSchedule_OutboxError(t *testing.T) {
 	id := uuid.New()
 	pendingRun := newPendingRun(id, "daily")

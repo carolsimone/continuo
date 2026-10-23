@@ -33,10 +33,11 @@ func NewAttemptReportHandler(tenantID string, tasks run.TaskDefaults, logger *sl
 }
 
 // Handle applies evt inside u's transaction; the caller commits. The error of
-// locking a run with no row, run.ErrTaskNotHeld and run.ErrAttemptNotIssued
-// propagate wrapped: a report naming a run state never created, a task the run
-// does not hold or an attempt state never dispatched can never be applied, so
-// the stream binding marks them permanent (permanentWhenNeverValid) and the
+// locking a run with no row, run.ErrTaskNotHeld, run.ErrAttemptNotIssued and
+// run.ErrStopNotRequested propagate wrapped: a report naming a run state never
+// created, a task the run does not hold, an attempt state never dispatched or
+// a stopped attempt state never asked to stop can never be applied, so the
+// stream binding marks them permanent (permanentWhenNeverValid) and the
 // consumer dead-letters the report at once.
 func (h *AttemptReportHandler) Handle(ctx context.Context, u uow.UnitOfWork, evt events.AttemptReported, msgProcID uuid.UUID) error {
 	r, err := u.Run().LoadRunForUpdate(ctx, evt.RunID)

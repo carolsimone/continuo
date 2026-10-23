@@ -140,7 +140,9 @@ type cancelParams struct {
 
 // cancelRunTx runs the shared cancel transaction: begin → LoadRunForUpdate →
 // Run.Cancel → SaveRun → Outbox.Append → commit. It returns the cancelled Run
-// aggregate or a ready-to-return gRPC status error. The only behaviour that
+// aggregate or a ready-to-return gRPC status error. A run that is already
+// cancelling is answered as it was loaded: the transaction rolls back, so the
+// repeated cancel writes nothing and sends nothing. The only behaviour that
 // varies between the two cancel RPCs is captured in cancelParams.
 func (h *SchedulerHandler) cancelRunTx(ctx context.Context, p cancelParams) (*run.Run, error) {
 	u := h.uowFactory()
@@ -165,6 +167,9 @@ func (h *SchedulerHandler) cancelRunTx(ctx context.Context, p cancelParams) (*ru
 	if err != nil {
 		if errors.Is(err, run.ErrAlreadyTerminal) {
 			return nil, status.Errorf(codes.FailedPrecondition, "%s", p.terminalMsg)
+		}
+		if errors.Is(err, run.ErrAlreadyCancelling) {
+			return r, nil
 		}
 		return nil, status.Errorf(codes.Internal, "cancel: %v", err)
 	}

@@ -7,10 +7,12 @@ package runsettle
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
 	"github.com/carolsimone/continuo/pkg/identity"
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/google/uuid"
 )
@@ -54,7 +56,8 @@ func listUnplanned(ctx context.Context, u uow.UnitOfWork) ([]uuid.UUID, error) {
 }
 
 // cancel cancels run id in u's transaction when it is still active and
-// unplanned, and reports whether it did.
+// unplanned, and reports whether it did. A run that is already cancelling has
+// had its cancel written: it is left as it is.
 func cancel(ctx context.Context, u uow.UnitOfWork, id uuid.UUID) (bool, error) {
 	if err := u.Begin(ctx); err != nil {
 		return false, fmt.Errorf("begin the cancel of run %s: %w", id, err)
@@ -73,6 +76,9 @@ func cancel(ctx context.Context, u uow.UnitOfWork, id uuid.UUID) (bool, error) {
 		return false, nil
 	}
 	events, err := r.Cancel(ctx, u.TaskCollection(), identity.SystemUserID, Reason, u.Clock().Now())
+	if errors.Is(err, run.ErrAlreadyCancelling) {
+		return false, nil
+	}
 	if err != nil {
 		return false, fmt.Errorf("cancel run %s: %w", id, err)
 	}

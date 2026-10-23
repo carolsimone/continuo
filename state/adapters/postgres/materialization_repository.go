@@ -125,11 +125,13 @@ func (r *MaterializationRepository) RecordBuilt(ctx context.Context, tenantID st
 }
 
 // DeleteAbsentFrom deletes the tenant's rows whose node the release lacks,
-// except a row whose build request names a run that is still pending or
-// running: that row is the only record of the load in flight, and a release
+// except a row whose build request names a run that has not ended (pending,
+// running or cancelling): that row is the only record of the load in flight, and a release
 // that brings the node back before the run ends must find it there.
 func (r *MaterializationRepository) DeleteAbsentFrom(ctx context.Context, tenantID, releaseID string) (int64, error) {
-	unfinished := pq.Array([]string{string(run.SchedulerStatusPending), string(run.SchedulerStatusRunning)})
+	unfinished := pq.Array([]string{
+		string(run.SchedulerStatusPending), string(run.SchedulerStatusRunning), string(run.SchedulerStatusCancelling),
+	})
 	res, err := r.conn().ExecContext(ctx, `
 		DELETE FROM node_materializations m
 		WHERE m.tenant_id = $1

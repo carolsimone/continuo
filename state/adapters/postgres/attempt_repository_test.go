@@ -176,6 +176,53 @@ func TestAttemptRepository_StalledRunsHaveNothingInFlightAndNoRecentProgress(t *
 	assert.NotContains(t, got, idle.ScheduleID(), "a run that moved within the idle time is not stalled")
 }
 
+// An attempt a stop was requested of is never asked about with a dispatch,
+// whether it is handed out by DueAttempts or locked by LockQuestion; the
+// run's other due attempts still are.
+func TestAttemptRepository_DueAttemptsSkipStopRequestedAttempts(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	tenant := storeFailureSchedule(t, db)
+	f := statusFlow{db: db, tenant: tenant, r: startScheduleRun(t, db, tenant, "e2e-schedule-failure", model.OperationRun)}
+	f.makeDue(t)
+	asked, other := f.keyOf("e2e_schema.ftable_a", 0), f.keyOf("e2e_schema.ftable_b", 0)
+	_, err := db.Exec(`UPDATE task_attempts SET stop_requested_at = now() WHERE task_id = $1 AND attempt = $2`, asked.TaskID, asked.Attempt)
+	require.NoError(t, err)
+
+	due, err := postgres.NewAttemptRepository(db, nil, tenant).DueAttempts(ctx, 500)
+	require.NoError(t, err)
+	assert.NotContains(t, due, asked)
+	assert.Contains(t, due, other)
+
+	inUoW(t, db, func(u *postgres.PostgresUnitOfWork) {
+		_, found, err := u.Attempts(tenant).LockQuestion(ctx, asked)
+		require.NoError(t, err)
+		assert.False(t, found, "a stop-requested attempt cannot be locked for a dispatch question")
+		_, found, err = u.Attempts(tenant).LockQuestion(ctx, other)
+		require.NoError(t, err)
+		assert.True(t, found)
+	})
+}
+
+// A cancelling run with nothing in flight and an old progress clock is
+// stalled; one with a task still stopping never is.
+func TestAttemptRepository_StalledRunsCoverACancellingRunWithNothingStopping(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	tenant := storeFailureSchedule(t, db)
+	nothingStopping, _ := insertTasks(t, db, map[string]run.TaskStatus{"ftable_a": run.TaskStatusCancelled, "ftable_b": run.TaskStatusSucceeded})
+	stillStopping, _ := insertTasks(t, db, map[string]run.TaskStatus{"ftable_a": run.TaskStatusStopping, "ftable_b": run.TaskStatusCancelled})
+	_, err := db.Exec(`UPDATE scheduler_tracker SET status = 'cancelling', last_heartbeat_at = now() - interval '10 minutes'
+		WHERE schedule_id = ANY($1)`, pq.Array([]uuid.UUID{nothingStopping, stillStopping}))
+	require.NoError(t, err)
+
+	got, err := postgres.NewAttemptRepository(db, nil, tenant).StalledRuns(ctx, 5*time.Minute, 500)
+	require.NoError(t, err)
+
+	assert.Contains(t, got, nothingStopping)
+	assert.NotContains(t, got, stillStopping, "a stopping task is in flight until its attempt reports")
+}
+
 // inUoW runs fn inside a unit of work's transaction and commits it.
 func inUoW(t *testing.T, db *sqlx.DB, fn func(u *postgres.PostgresUnitOfWork)) {
 	t.Helper()

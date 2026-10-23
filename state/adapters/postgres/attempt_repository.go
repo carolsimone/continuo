@@ -32,9 +32,9 @@ func NewAttemptRepository(db *sqlx.DB, tx *sqlx.Tx, tenantID string) *AttemptRep
 }
 
 // DueAttempts reads the open attempts whose next check is due, through
-// idx_task_attempts_due, keeping those whose run has not ended and whose task's
-// node the run's release holds for the tenant: exactly the attempts
-// LockQuestion can lock, so one it never could cannot hold the head of the
+// idx_task_attempts_due, keeping those that no stop was requested of, whose run
+// is pending or running and whose task's node the run's release holds for the
+// tenant: exactly the attempts LockQuestion can lock, so one it never could cannot hold the head of the
 // due order.
 func (r *AttemptRepository) DueAttempts(ctx context.Context, limit int) ([]repository.AttemptKey, error) {
 	var rows []struct {
@@ -48,6 +48,7 @@ func (r *AttemptRepository) DueAttempts(ctx context.Context, limit int) ([]repos
 		JOIN scheduler_tracker s ON s.schedule_id = t.schedule_id
 		JOIN topology_nodes n ON n.tenant_id = $2 AND n.release_id = s.release_id AND n.node_key = t.node_key
 		WHERE a.status IN ('dispatched', 'queued', 'running') AND a.next_check_at <= now()
+		  AND a.stop_requested_at IS NULL
 		  AND s.status IN ('pending', 'running')
 		ORDER BY a.next_check_at, a.task_id, a.attempt
 		LIMIT $1`, limit, r.tenantID); err != nil {
@@ -60,8 +61,8 @@ func (r *AttemptRepository) DueAttempts(ctx context.Context, limit int) ([]repos
 	return out, nil
 }
 
-// StalledRuns reads the active runs with an old progress clock and no task
-// in flight, of every tenant: scheduler_tracker has no tenant column. The run
+// StalledRuns reads the active runs (pending, running or cancelling) with an
+// old progress clock and no task in flight (a stopping task is in flight), of every tenant: scheduler_tracker has no tenant column. The run
 // scan filters scheduler_tracker by status, which holds few active rows, and
 // the in-flight check probes idx_task_tracker_schedule_id.
 func (r *AttemptRepository) StalledRuns(ctx context.Context, idle time.Duration, limit int) ([]uuid.UUID, error) {
@@ -69,11 +70,11 @@ func (r *AttemptRepository) StalledRuns(ctx context.Context, idle time.Duration,
 	if err := r.db.SelectContext(ctx, &ids, `
 		SELECT s.schedule_id
 		FROM scheduler_tracker s
-		WHERE s.status IN ('pending', 'running')
+		WHERE s.status IN ('pending', 'running', 'cancelling')
 		  AND s.last_heartbeat_at < now() - make_interval(secs => $1::float8)
 		  AND NOT EXISTS (
 		      SELECT 1 FROM task_tracker t
-		      WHERE t.schedule_id = s.schedule_id AND t.status IN ('dispatched', 'queued', 'running'))
+		      WHERE t.schedule_id = s.schedule_id AND t.status IN ('dispatched', 'queued', 'running', 'stopping'))
 		ORDER BY s.last_heartbeat_at, s.schedule_id
 		LIMIT $2`, idle.Seconds(), limit); err != nil {
 		return nil, fmt.Errorf("read the stalled runs: %w", err)
@@ -95,7 +96,8 @@ type questionRow struct {
 
 // LockQuestion locks the attempt row, skipping one another transaction holds,
 // and reads its task, run and the node of the run's release, re-checking that
-// the attempt is still open and due and its run active.
+// the attempt is still open, due and not asked to stop and its run pending or
+// running.
 func (r *AttemptRepository) LockQuestion(ctx context.Context, key repository.AttemptKey) (run.Question, bool, error) {
 	if r.tx == nil {
 		return run.Question{}, false, errors.New("LockQuestion requires an active transaction")
@@ -112,6 +114,7 @@ func (r *AttemptRepository) LockQuestion(ctx context.Context, key repository.Att
 		JOIN topology_nodes n ON n.tenant_id = $3 AND n.release_id = s.release_id AND n.node_key = t.node_key
 		WHERE a.task_id = $1 AND a.attempt = $2
 		  AND a.status IN ('dispatched', 'queued', 'running') AND a.next_check_at <= now()
+		  AND a.stop_requested_at IS NULL
 		  AND s.status IN ('pending', 'running')
 		FOR UPDATE OF a SKIP LOCKED`, key.TaskID, key.Attempt, r.tenantID)
 	if errors.Is(err, sql.ErrNoRows) {

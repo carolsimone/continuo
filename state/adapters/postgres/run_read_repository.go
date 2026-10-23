@@ -158,7 +158,7 @@ func (r *RunReadRepository) ListActiveRunDrifts(ctx context.Context, tenantID st
 	if err := r.db.SelectContext(ctx, &rows, `
 		SELECT DISTINCT ON (schedule_name) schedule_name, schedule_id, promotion_seq
 		FROM scheduler_tracker
-		WHERE status IN ('pending', 'running')
+		WHERE status IN ('pending', 'running', 'cancelling')
 		ORDER BY schedule_name, created_at DESC`); err != nil {
 		return 0, nil, fmt.Errorf("list active runs: %w", err)
 	}

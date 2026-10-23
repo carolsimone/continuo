@@ -325,14 +325,15 @@ func terminalSchedulerStatuses() []string {
 	return out
 }
 
-// HasActiveSchedule checks if there's a running or pending schedule with the given name
+// HasActiveSchedule checks if there's a pending, running or cancelling run of the
+// schedule with the given name: a cancelling run still holds the schedule.
 // Returns true if schedule is blocked (active run exists), false if can proceed
 func (r *schedulerTrackerRepository) HasActiveSchedule(ctx context.Context, scheduleName string) (bool, error) {
 	query := `
 		SELECT EXISTS(
 			SELECT 1 FROM scheduler_tracker
 			WHERE schedule_name = $1
-			  AND status IN ('pending', 'running')
+			  AND status IN ('pending', 'running', 'cancelling')
 			ORDER BY created_at DESC
 			LIMIT 1
 		)
@@ -356,7 +357,7 @@ func (r *schedulerTrackerRepository) HasActiveSchedule(ctx context.Context, sche
 	return exists, nil
 }
 
-// GetActiveScheduler returns the most recently created PENDING or RUNNING run for the given schedule name.
+// GetActiveScheduler returns the most recently created PENDING, RUNNING or CANCELLING run for the given schedule name.
 // Returns nil, nil when no active run exists — never returns ErrNotFound.
 func (r *schedulerTrackerRepository) GetActiveScheduler(ctx context.Context, scheduleName string) (*SchedulerTracker, error) {
 	query := `
@@ -369,7 +370,7 @@ func (r *schedulerTrackerRepository) GetActiveScheduler(ctx context.Context, sch
 			kind, source_run_id, initiated_by, operation, release_id, promotion_seq, planned_at, failure_reason
 		FROM scheduler_tracker
 		WHERE schedule_name = $1
-		  AND status IN ('pending', 'running')
+		  AND status IN ('pending', 'running', 'cancelling')
 		ORDER BY created_at DESC
 		LIMIT 1
 	`
@@ -647,7 +648,7 @@ func (r *schedulerTrackerRepository) GetLastRunPerSchedule(ctx context.Context) 
 		  schedule_id,
 		  status,
 		  created_at,
-		  (status IN ('pending', 'running')) AS is_running
+		  (status IN ('pending', 'running', 'cancelling')) AS is_running
 		FROM scheduler_tracker
 		ORDER BY schedule_name, created_at DESC
 	`)
