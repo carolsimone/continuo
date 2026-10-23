@@ -377,20 +377,44 @@ func TestProcess_APodBeingDeletedHasItsLogReadAtOnceAndRaisesTheAlertAfter15Minu
 	assert.Equal(t, pkgmodel.FailureReasonNodeLost, h.reload(t, dep.JobName()).Facts().Reason)
 }
 
-func TestProcess_ACancelledRunIsObservedSilently(t *testing.T) {
+// An attempt of a cancelled run is reported like any other: running once its
+// main container starts, and, once it was asked to stop and its pods are gone
+// without it succeeding, stopped, with the log it left and no failure. The
+// row ends done with the outcome stopped.
+func TestSettle_ReportsAStoppedAttemptOfACancelledRun(t *testing.T) {
 	h := newHarness(t)
+	ctx := context.Background()
 	dep := h.started(t, 0, h.now.Add(-time.Minute))
 	_, err := h.db.Exec(`INSERT INTO cancelled_runs (run_id) VALUES ($1)`, dep.Command().ScheduleID)
 	require.NoError(t, err)
+	h.cache.set(dep.JobName(), model.JobObservation{JobPresent: true, Pods: []model.PodObservation{runningPod(h.now.Add(-30 * time.Second))}})
+	require.NoError(t, h.o.Process(ctx, dep.JobName()))
+	stopping := h.reload(t, dep.JobName())
+	effect, err := stopping.Stop(h.now)
+	require.NoError(t, err)
+	require.Equal(t, model.StopTerminate, effect)
+	require.NoError(t, h.repo.Save(ctx, stopping))
+	h.logs.full = "Running with dbt\nreceived SIGTERM"
+	deleting := runningPod(h.now.Add(-30 * time.Second))
+	deleting.DeletingSince = ts(h.now)
+	h.cache.set(dep.JobName(), model.JobObservation{JobPresent: true, JobDeleting: true, Pods: []model.PodObservation{deleting}})
+	require.NoError(t, h.o.Process(ctx, dep.JobName()))
+	require.Len(t, h.reports(t), 1, "nothing more is reported while the pod is still being deleted")
 
-	h.cache.set(dep.JobName(), model.JobObservation{JobPresent: true, Pods: []model.PodObservation{runningPod(h.now)}})
-	require.NoError(t, h.o.Process(context.Background(), dep.JobName()))
-	h.cache.set(dep.JobName(), model.JobObservation{JobPresent: true, JobFailed: true,
-		Pods: []model.PodObservation{endedPod(model.PodFailed, h.now, h.now, 1, "Error")}})
-	require.NoError(t, h.o.Process(context.Background(), dep.JobName()))
+	h.cache.set(dep.JobName(), model.JobObservation{JobPresent: true, JobDeleting: true})
+	require.NoError(t, h.o.Process(ctx, dep.JobName()))
 
-	assert.Equal(t, model.StatusDone, h.reload(t, dep.JobName()).Status(), "the slot is released")
-	assert.Empty(t, h.reports(t), "nothing is reported for a cancelled run")
+	got := h.reload(t, dep.JobName())
+	assert.Equal(t, model.StatusDone, got.Status())
+	assert.Equal(t, model.OutcomeStopped, got.Outcome())
+	reports := h.reports(t)
+	require.Len(t, reports, 2)
+	assert.Equal(t, "running", reports[0]["status"])
+	assert.Equal(t, "stopped", reports[1]["status"])
+	assert.NotEmpty(t, reports[1]["log_s3_key"], "the log the attempt left is kept")
+	assert.NotContains(t, reports[1], "failure_reason")
+	assert.NotContains(t, reports[1], "failure_class")
+	assert.Empty(t, got.Facts().Reason, "a stop is no failure")
 }
 
 func TestProcess_AValidationNodeRecordsItsOutcome(t *testing.T) {

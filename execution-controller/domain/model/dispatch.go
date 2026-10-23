@@ -30,17 +30,25 @@ const (
 	// CreateAttempt: the dispatch is new; the attempt is queued for its Job.
 	CreateAttempt
 	// ReportLost: state knows the attempt as acknowledged, yet neither its
-	// record nor its Job is held; it is reported failed as attempt_lost.
+	// record nor its Job is held, and no pod of it is left; it is reported
+	// failed as attempt_lost.
 	ReportLost
+	// AwaitOrphanPod: state knows the attempt as acknowledged and neither its
+	// record nor its Job is held, but a pod of it has not finished (its Job
+	// was deleted without its pods). Nothing is written: the pod may still
+	// write the table, and state asks again.
+	AwaitOrphanPod
 )
 
 // DecideDispatch decides what a dispatch leads to, from whether the attempt's
 // record is held, whether a later attempt's is, the problem (if any) that
 // stops the dispatch from running, whether a Job carrying the task and
-// attempt exists, and state's known status. Only a dispatch state still
-// knows as dispatched creates an attempt: an acknowledged attempt is never
-// run again because of a question.
-func DecideDispatch(held, laterHeld bool, problem pkgmodel.FailureReason, jobOfAttempt bool, knownStatus pkgmodel.AttemptStatus) DispatchAction {
+// attempt exists, whether a pod of the attempt has not finished, and state's
+// known status. Only a dispatch state still knows as dispatched creates an
+// attempt: an acknowledged attempt is never run again because of a question,
+// and is reported lost only once no pod of it can run.
+func DecideDispatch(held, laterHeld bool, problem pkgmodel.FailureReason, jobOfAttempt, podOfAttemptRunning bool,
+	knownStatus pkgmodel.AttemptStatus) DispatchAction {
 	switch {
 	case held:
 		return ResendReport
@@ -52,6 +60,8 @@ func DecideDispatch(held, laterHeld bool, problem pkgmodel.FailureReason, jobOfA
 		return AdoptJob
 	case knownStatus == pkgmodel.AttemptStatusDispatched:
 		return CreateAttempt
+	case podOfAttemptRunning:
+		return AwaitOrphanPod
 	}
 	return ReportLost
 }

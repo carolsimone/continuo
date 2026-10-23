@@ -140,6 +140,10 @@ type modeScopedDepRepo struct {
 }
 
 func (r *modeScopedDepRepo) Add(context.Context, *model.Deployment) error { return nil }
+func (r *modeScopedDepRepo) LockOpenOfRun(context.Context, string) ([]*model.Deployment, error) {
+	return nil, nil
+}
+
 func (r *modeScopedDepRepo) LoadByJobName(context.Context, string) (*model.Deployment, error) {
 	return nil, sql.ErrNoRows
 }

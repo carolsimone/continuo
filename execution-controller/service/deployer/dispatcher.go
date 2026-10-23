@@ -41,6 +41,11 @@ type ValidationAggRepoFactory func(exec outbox.Executor) repository.ValidationAg
 // this package.
 type AdmissionRepoFactory func(exec outbox.Executor) repository.AdmissionRepository
 
+// CancelledRepoFactory builds the run fence's repository bound to the
+// executor of a launch transaction, keeping the concrete Postgres adapter out
+// of this package.
+type CancelledRepoFactory func(exec outbox.Executor) repository.CancelledRunsRepository
+
 // DispatcherConfig groups the optional knobs.
 type DispatcherConfig struct {
 	Tick        time.Duration // fallback poll interval; default 5s
@@ -67,6 +72,7 @@ type Dispatcher struct {
 	newRepo       RepoFactory
 	newAggRepo    ValidationAggRepoFactory
 	newAdmission  AdmissionRepoFactory
+	newCancelled  CancelledRepoFactory
 	waker         outbox.Waker
 	maxConcurrent int
 	maxMessageLen int
@@ -78,7 +84,8 @@ type Dispatcher struct {
 }
 
 // NewDispatcher builds a Dispatcher; jobs reads a Job from the Kubernetes API
-// when the last try to create it failed without a sure answer.
+// when the last try to create it failed without a sure answer, and
+// newCancelled reads the run fence a launch checks under its row lock.
 func NewDispatcher(
 	db *sqlx.DB,
 	deployer deploy.Deployer,
@@ -86,6 +93,7 @@ func NewDispatcher(
 	newRepo RepoFactory,
 	newAggRepo ValidationAggRepoFactory,
 	newAdmission AdmissionRepoFactory,
+	newCancelled CancelledRepoFactory,
 	maxConcurrent int,
 	logger *slog.Logger,
 	cfg DispatcherConfig,
@@ -109,6 +117,7 @@ func NewDispatcher(
 		newRepo:       newRepo,
 		newAggRepo:    newAggRepo,
 		newAdmission:  newAdmission,
+		newCancelled:  newCancelled,
 		waker:         cfg.Waker,
 		maxConcurrent: maxConcurrent,
 		maxMessageLen: cfg.ErrorMessageMaxLen,
@@ -208,7 +217,10 @@ func (d *Dispatcher) claim(ctx context.Context) ([]uuid.UUID, error) {
 // call holds only that row's lock. It returns nil when the deployment is no
 // longer reserved or another launcher holds it. Job names are deterministic
 // and an existing Job counts as created, so launching a deployment whose Job
-// an interrupted launch already created is safe.
+// an interrupted launch already created is safe. A task's attempt whose run
+// is fenced, read under the row lock, creates no Job: it ends stopped and is
+// reported stopped. A fence taken while the launch holds the row waits for
+// the row, and stops it and its Job once the launch commits.
 func (d *Dispatcher) launch(ctx context.Context, id uuid.UUID) error {
 	tx, err := d.db.BeginTxx(ctx, nil)
 	if err != nil {
@@ -225,13 +237,53 @@ func (d *Dispatcher) launch(ctx context.Context, id uuid.UUID) error {
 	}
 	repo := d.newRepo(tx)
 	outboxRepo := outbox.NewPostgresRepository(tx, "execution_outbox", d.logger)
-	if err := d.dispatchOne(ctx, repo, outboxRepo, d.newAggRepo(tx), dep); err != nil {
+	fenced, err := d.fenced(ctx, tx, dep)
+	if err != nil {
+		return err
+	}
+	if fenced {
+		err = d.stopFenced(ctx, repo, outboxRepo, dep)
+	} else {
+		err = d.dispatchOne(ctx, repo, outboxRepo, d.newAggRepo(tx), dep)
+	}
+	if err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit launch: %w", err)
 	}
 	return nil
+}
+
+// fenced reports whether dep is a task's attempt whose run is fenced.
+func (d *Dispatcher) fenced(ctx context.Context, tx outbox.Executor, dep *model.Deployment) (bool, error) {
+	if dep.Mode() != model.ModeProduction {
+		return false, nil
+	}
+	runID, err := uuid.Parse(dep.Command().ScheduleID)
+	if err != nil {
+		return false, fmt.Errorf("deployment %s: run id %q: %w", dep.ID(), dep.Command().ScheduleID, err)
+	}
+	fenced, err := d.newCancelled(tx).Exists(ctx, runID)
+	if err != nil {
+		return false, fmt.Errorf("read the fence of run %s: %w", runID, err)
+	}
+	return fenced, nil
+}
+
+// stopFenced ends a reserved attempt of a fenced run without creating its
+// Job: done with the outcome stopped, reported stopped.
+func (d *Dispatcher) stopFenced(ctx context.Context, repo repository.DeploymentRepository, outboxRepo outbox.Repository, dep *model.Deployment) error {
+	if _, err := dep.Stop(d.now()); err != nil {
+		return err
+	}
+	if err := reports.Write(ctx, outboxRepo, dep, pkgmodel.AttemptStatusStopped, ""); err != nil {
+		return fmt.Errorf("report the stopped attempt: %w", err)
+	}
+	cmd := dep.Command()
+	d.logger.Info("A reserved attempt of a cancelled run is stopped and creates no Job",
+		"deployment_id", dep.ID(), "run_id", cmd.ScheduleID, "task_id", cmd.TaskID, "attempt", cmd.Attempt)
+	return repo.Save(ctx, dep)
 }
 
 func (d *Dispatcher) dispatchOne(ctx context.Context, repo repository.DeploymentRepository, outboxRepo outbox.Repository, aggRepo repository.ValidationAggregateRepository, dep *model.Deployment) error {

@@ -37,6 +37,9 @@ func (r *stubDeploymentsRepo) Add(_ context.Context, d *model.Deployment) error 
 func (r *stubDeploymentsRepo) LoadByJobName(context.Context, string) (*model.Deployment, error) {
 	return nil, sql.ErrNoRows
 }
+func (r *stubDeploymentsRepo) LockOpenOfRun(context.Context, string) ([]*model.Deployment, error) {
+	return nil, nil
+}
 
 func (r *stubDeploymentsRepo) Save(_ context.Context, d *model.Deployment) error {
 	r.mu.Lock()
@@ -92,6 +95,6 @@ func (r *stubDeploymentsRepo) HasAttemptAfter(_ context.Context, taskID string, 
 	return false, nil
 }
 
-func newFakeUoW(depl repository.DeploymentRepository, cancelled repository.CancelledSchedulesRepository) *fakes.FakeUnitOfWork {
+func newFakeUoW(depl repository.DeploymentRepository, cancelled repository.CancelledRunsRepository) *fakes.FakeUnitOfWork {
 	return &fakes.FakeUnitOfWork{Deployments: depl, Cancelled: cancelled}
 }

@@ -19,7 +19,7 @@ type FakeUnitOfWork struct {
 	Outbox              pkgoutbox.Repository
 	Deployments         repository.DeploymentRepository
 	ValidationAggregate repository.ValidationAggregateRepository
-	Cancelled           repository.CancelledSchedulesRepository
+	Cancelled           repository.CancelledRunsRepository
 	MessageProcessing   messageprocessing.Repository
 
 	BeginCalled    int
@@ -34,7 +34,7 @@ func (f *FakeUnitOfWork) DeploymentsRepo() repository.DeploymentRepository { ret
 func (f *FakeUnitOfWork) ValidationAggregateRepo() repository.ValidationAggregateRepository {
 	return f.ValidationAggregate
 }
-func (f *FakeUnitOfWork) CancelledSchedulesRepo() repository.CancelledSchedulesRepository {
+func (f *FakeUnitOfWork) CancelledRunsRepo() repository.CancelledRunsRepository {
 	return f.Cancelled
 }
 func (f *FakeUnitOfWork) MessageProcessingRepo() messageprocessing.Repository {

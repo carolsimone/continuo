@@ -66,6 +66,10 @@ type fakeDeploymentRepo struct {
 }
 
 func (r *fakeDeploymentRepo) Add(context.Context, *model.Deployment) error { return nil }
+func (r *fakeDeploymentRepo) LockOpenOfRun(context.Context, string) ([]*model.Deployment, error) {
+	return nil, nil
+}
+
 func (r *fakeDeploymentRepo) LoadByJobName(context.Context, string) (*model.Deployment, error) {
 	return nil, sql.ErrNoRows
 }
@@ -291,6 +295,10 @@ func newChainDeploymentRepo(chain ...*model.Deployment) *chainDeploymentRepo {
 }
 
 func (r *chainDeploymentRepo) Add(context.Context, *model.Deployment) error { return nil }
+func (r *chainDeploymentRepo) LockOpenOfRun(context.Context, string) ([]*model.Deployment, error) {
+	return nil, nil
+}
+
 func (r *chainDeploymentRepo) LoadByJobName(context.Context, string) (*model.Deployment, error) {
 	return nil, sql.ErrNoRows
 }

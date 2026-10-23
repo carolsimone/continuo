@@ -10,36 +10,33 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/service/reports"
 	"github.com/carolsimone/continuo/execution-controller/service/uow"
 	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
-	"github.com/google/uuid"
 )
 
 // settle records how an attempt ended on its deployment, which releases the
 // slot. A release leg's node settles through outcomes.Recorder. A production
-// attempt is reported succeeded or failed with every fact seen of it, unless
-// its run was cancelled; state decides what follows.
+// attempt is reported succeeded, stopped (it was asked to stop because its
+// run was cancelled, and did not succeed first) or failed, with every fact
+// seen of it; state decides what follows.
 func (o *Observer) settle(ctx context.Context, u uow.UnitOfWork, d *model.Deployment, v model.Verdict, now time.Time) error {
 	if d.Mode() != model.ModeProduction {
 		return o.settleCandidate(ctx, u, d, v)
 	}
 	outcome, status, message := "ok", pkgmodel.AttemptStatusSucceeded, ""
-	if !v.Succeeded {
+	switch {
+	case v.Stopped:
+		outcome, status = model.OutcomeStopped, pkgmodel.AttemptStatusStopped
+	case !v.Succeeded:
 		outcome, status, message = "failed", pkgmodel.AttemptStatusFailed, o.errorMessage(d.Facts())
 	}
 	if err := d.Finish(outcome, now); err != nil {
 		return fmt.Errorf("finish deployment %s: %w", d.ID(), err)
 	}
-	cancelled, err := o.cancelled(ctx, u, d)
-	if err != nil {
+	if err := reports.Write(ctx, u.OutboxRepo(), d, status, message); err != nil {
 		return err
-	}
-	if !cancelled {
-		if err := reports.Write(ctx, u.OutboxRepo(), d, status, message); err != nil {
-			return err
-		}
 	}
 	cmd := d.Command()
 	o.deps.Logger.Info("Attempt ended", "task_id", cmd.TaskID, "attempt", cmd.Attempt, "job_name", cmd.JobName,
-		"status", status, "failure_class", d.Facts().Class(), "failure_reason", d.Facts().Reason, "run_cancelled", cancelled)
+		"status", status, "failure_class", d.Facts().Class(), "failure_reason", d.Facts().Reason)
 	return u.DeploymentsRepo().Save(ctx, d)
 }
 
@@ -63,31 +60,13 @@ func (o *Observer) settleCandidate(ctx context.Context, u uow.UnitOfWork, d *mod
 	return o.deps.Outcomes.Record(ctx, u, in)
 }
 
-// reportRunning reports that a production attempt's main container started,
-// unless its run was cancelled. The caller saves d.
+// reportRunning reports that a production attempt's main container started.
+// The caller saves d.
 func (o *Observer) reportRunning(ctx context.Context, u uow.UnitOfWork, d *model.Deployment) error {
 	if d.Mode() != model.ModeProduction {
 		return nil
 	}
-	cancelled, err := o.cancelled(ctx, u, d)
-	if err != nil || cancelled {
-		return err
-	}
 	return reports.Write(ctx, u.OutboxRepo(), d, pkgmodel.AttemptStatusRunning, "")
-}
-
-// cancelled reports whether d's run was cancelled; its attempt is then
-// observed to its end without announcing anything.
-func (o *Observer) cancelled(ctx context.Context, u uow.UnitOfWork, d *model.Deployment) (bool, error) {
-	runID, err := uuid.Parse(d.Command().ScheduleID)
-	if err != nil {
-		return false, fmt.Errorf("deployment %s: schedule_id %q: %w", d.ID(), d.Command().ScheduleID, err)
-	}
-	cancelled, err := u.CancelledSchedulesRepo().Exists(ctx, runID)
-	if err != nil {
-		return false, fmt.Errorf("cancelled schedules check: %w", err)
-	}
-	return cancelled, nil
 }
 
 // errorMessage is the message a failed attempt reports: the log's (its result

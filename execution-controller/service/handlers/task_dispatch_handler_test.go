@@ -192,3 +192,24 @@ func TestTaskDispatch_OnlyAnAttemptAboutToBeReportedLostIsReadLive(t *testing.T)
 	assert.Zero(t, live.reads)
 	assert.Equal(t, model.StatusPending, repo.stored[attemptKey(evt.TaskID.String(), 1)].Status())
 }
+
+// An acknowledged attempt with neither a record nor a Job, whose pod a live
+// read still shows running (its Job was deleted with orphan propagation), is
+// not reported lost: nothing is stored or reported, and state asks again.
+func TestTaskDispatch_AnAcknowledgedAttemptWithAnOrphanPodIsNotReportedLost(t *testing.T) {
+	evt := acknowledgedDispatch()
+	started := time.Now()
+	live := &liveJobs{job: model.JobObservation{Pods: []model.PodObservation{{Name: "pod-1", Phase: model.PodRunning,
+		Main: model.ContainerObservation{Name: "dbt-job", StartedAt: &started}}}}}
+	repo := &stubDeploymentsRepo{}
+	out := &recordingOutbox{}
+	u := newFakeUoW(repo, &recordingCancelledRepo{})
+	u.Outbox = out
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1}))
+
+	require.NoError(t, handlers.NewTaskDispatchHandler(noJobs{}, live, logger).Handle(context.Background(), u, evt, uuid.New()))
+
+	assert.Equal(t, 1, live.reads)
+	assert.Zero(t, repo.addAttempts, "nothing is stored")
+	assert.Empty(t, out.created, "nothing is reported")
+}

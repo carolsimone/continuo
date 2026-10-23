@@ -22,7 +22,7 @@ type UnitOfWork interface {
 	OutboxRepo() pkgoutbox.Repository
 	DeploymentsRepo() repository.DeploymentRepository
 	ValidationAggregateRepo() repository.ValidationAggregateRepository
-	CancelledSchedulesRepo() repository.CancelledSchedulesRepository
+	CancelledRunsRepo() repository.CancelledRunsRepository
 	MessageProcessingRepo() messageprocessing.Repository
 
 	Begin(ctx context.Context) error

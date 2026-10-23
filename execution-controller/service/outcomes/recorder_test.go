@@ -41,6 +41,10 @@ func depKey(releaseID, nodeID string, mode model.Mode) string {
 }
 
 func (r *stubDeploymentsRepo) Add(context.Context, *model.Deployment) error { return nil }
+func (r *stubDeploymentsRepo) LockOpenOfRun(context.Context, string) ([]*model.Deployment, error) {
+	return nil, nil
+}
+
 func (r *stubDeploymentsRepo) LoadByJobName(context.Context, string) (*model.Deployment, error) {
 	return nil, sql.ErrNoRows
 }

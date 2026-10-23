@@ -32,6 +32,12 @@ type DeploymentRepository interface {
 	// not created yet — is never returned, so it never stands for the Job of
 	// another.
 	LoadByJobName(ctx context.Context, jobName string) (*model.Deployment, error)
+	// LockOpenOfRun returns the production deployments of runID that have not
+	// ended (pending, reserved, starting, running or terminating), ordered by
+	// id, each locked for the rest of the transaction. A row another
+	// transaction holds, such as a launch creating its Job, is waited for and
+	// returned as that transaction left it, or not at all once it has ended.
+	LockOpenOfRun(ctx context.Context, runID string) ([]*model.Deployment, error)
 	// Save persists the mutated state of an existing Deployment.
 	Save(ctx context.Context, d *model.Deployment) error
 	// GetByReleaseNode returns the (mode, release_id, node_id) Deployment, or
@@ -85,11 +91,15 @@ type ValidationAggregateRepository interface {
 	ClaimEmission(ctx context.Context, releaseID string, mode model.Mode, now time.Time) (bool, error)
 }
 
-// CancelledSchedulesRepository tracks schedule IDs whose deploys should be
-// dropped on receipt. Implementations operate against the cancelled_runs
-// table (run_id, cancelled_at).
-type CancelledSchedulesRepository interface {
-	Insert(ctx context.Context, scheduleID uuid.UUID) error
-	Exists(ctx context.Context, scheduleID uuid.UUID) (bool, error)
-	DeleteExpired(ctx context.Context, ttl time.Duration) (int64, error)
+// CancelledRunsRepository holds the run fence: every run state cancelled,
+// in cancelled_runs. No attempt of a fenced run starts, and every Job of it is
+// deleted.
+type CancelledRunsRepository interface {
+	// Insert fences runID; fencing a fenced run changes nothing.
+	Insert(ctx context.Context, runID uuid.UUID) error
+	// Exists reports whether runID is fenced.
+	Exists(ctx context.Context, runID uuid.UUID) (bool, error)
+	// DeleteOlderThan removes the fences set more than age ago, by the
+	// database clock, and returns how many it removed.
+	DeleteOlderThan(ctx context.Context, age time.Duration) (int64, error)
 }

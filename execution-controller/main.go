@@ -227,7 +227,7 @@ func main() {
 	}
 	logUploader := s3adapter.NewLogUploader(objectStore)
 
-	cancelledSchedulesRepo := postgres.NewCancelledSchedulesRepository(pgDB)
+	cancelledRunsRepo := postgres.NewCancelledRunsRepository(pgDB)
 
 	// A fresh unit of work per inbound message keeps concurrent handlers isolated.
 	uowFactory := func() uow.UnitOfWork { return postgres.NewPostgresUnitOfWork(pgDB, logger) }
@@ -318,6 +318,9 @@ func main() {
 			return postgres.NewValidationAggregateRepository(exec)
 		},
 		newAdmissionRepo,
+		func(exec pkgoutbox.Executor) repository.CancelledRunsRepository {
+			return postgres.NewCancelledRunsRepository(exec)
+		},
 		cfg.MaxConcurrentJobs, logger,
 		deployer.DispatcherConfig{Tick: 5 * time.Second, BatchSize: 50, Waker: dispatcherWaker,
 			ErrorMessageMaxLen: cfg.ErrorMessageMaxLength},
@@ -367,7 +370,7 @@ func main() {
 		for {
 			select {
 			case <-ticker.C:
-				if n, err := cancelledSchedulesRepo.DeleteExpired(ctx, ttl); err != nil {
+				if n, err := cancelledRunsRepo.DeleteOlderThan(ctx, ttl); err != nil {
 					logger.Error("cancelled_runs sweep failed", "error", err)
 				} else if n > 0 {
 					logger.Info("Swept expired cancelled_runs rows", "count", n)

@@ -129,6 +129,9 @@ func newCapturingDispatcher(db *sqlx.DB, dep deploy.Deployer) *deployer.Dispatch
 		func(exec outbox.Executor) repository.AdmissionRepository {
 			return executorpg.NewAdmissionRepository(exec, logger)
 		},
+		func(exec outbox.Executor) repository.CancelledRunsRepository {
+			return executorpg.NewCancelledRunsRepository(exec)
+		},
 		50, logger, deployer.DispatcherConfig{},
 	)
 }

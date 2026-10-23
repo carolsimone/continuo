@@ -30,7 +30,7 @@ func (r *recordingCancelledRepo) Insert(_ context.Context, id uuid.UUID) error {
 func (r *recordingCancelledRepo) Exists(_ context.Context, _ uuid.UUID) (bool, error) {
 	return false, nil
 }
-func (r *recordingCancelledRepo) DeleteExpired(_ context.Context, _ time.Duration) (int64, error) {
+func (r *recordingCancelledRepo) DeleteOlderThan(_ context.Context, _ time.Duration) (int64, error) {
 	return 0, nil
 }
 

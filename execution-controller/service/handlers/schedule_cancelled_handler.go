@@ -10,10 +10,11 @@ import (
 	"github.com/google/uuid"
 )
 
-// ScheduleCancelledHandler inserts a row into cancelled_runs, so a later
-// task.dispatch of the run is dropped and the observer reports nothing more of
-// the run's attempts. The operation is idempotent (UPSERT semantics), so the
-// binding does not need messageprocessing dedup.
+// ScheduleCancelledHandler fences the run in cancelled_runs: a later
+// task.dispatch of the run is stored stopped and creates no Job, its pending
+// rows are never claimed and a reserved row is stopped at its launch. The
+// operation is idempotent (UPSERT semantics), so the binding does not need
+// messageprocessing dedup.
 type ScheduleCancelledHandler struct {
 	logger *slog.Logger
 }
@@ -32,5 +33,5 @@ func (h *ScheduleCancelledHandler) Handle(
 	evt events.ScheduleCancelled,
 	_ uuid.UUID,
 ) error {
-	return u.CancelledSchedulesRepo().Insert(ctx, evt.ScheduleID)
+	return u.CancelledRunsRepo().Insert(ctx, evt.ScheduleID)
 }

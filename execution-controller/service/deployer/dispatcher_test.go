@@ -88,6 +88,10 @@ func admissionFactory(exec outbox.Executor) repository.AdmissionRepository {
 	return postgres.NewAdmissionRepository(exec, testLogger())
 }
 
+func cancelledFactory(exec outbox.Executor) repository.CancelledRunsRepository {
+	return postgres.NewCancelledRunsRepository(exec)
+}
+
 // newTestDispatcher builds a Dispatcher whose repo factories are the real
 // Postgres adapters bound to the claim or launch tx, with a fake Deployer.
 func newTestDispatcher(db *sqlx.DB, fk *fakeDeployer, maxConcurrent int) *deployer.Dispatcher {
@@ -97,7 +101,7 @@ func newTestDispatcher(db *sqlx.DB, fk *fakeDeployer, maxConcurrent int) *deploy
 // newTestDispatcherWith builds a Dispatcher with an explicit config and
 // admission repository factory.
 func newTestDispatcherWith(db *sqlx.DB, fk *fakeDeployer, maxConcurrent int, cfg deployer.DispatcherConfig, admission deployer.AdmissionRepoFactory) *deployer.Dispatcher {
-	return deployer.NewDispatcher(db, fk, absentJobs{}, repoFactory, aggRepoFactory, admission, maxConcurrent, testLogger(), cfg)
+	return deployer.NewDispatcher(db, fk, absentJobs{}, repoFactory, aggRepoFactory, admission, cancelledFactory, maxConcurrent, testLogger(), cfg)
 }
 
 // seedJob inserts a deployable pending row (valid command in job_params) with a
@@ -394,7 +398,7 @@ func TestDispatcher_PerRowTransaction_FailureDoesNotRollBackOthers(t *testing.T)
 		}
 	}
 	fk := &fakeDeployer{}
-	disp := deployer.NewDispatcher(db, fk, absentJobs{}, factory, aggRepoFactory, admissionFactory, 50, testLogger(), deployer.DispatcherConfig{})
+	disp := deployer.NewDispatcher(db, fk, absentJobs{}, factory, aggRepoFactory, admissionFactory, cancelledFactory, 50, testLogger(), deployer.DispatcherConfig{})
 
 	require.Error(t, disp.ProcessBatch(context.Background()), "second row's Save error surfaces")
 
@@ -702,7 +706,7 @@ func TestDispatcher_ALostCreationAnswerIsReconciledUntilTheJobIsRead(t *testing.
 	ctx := context.Background()
 	id, cmd := seedAttempt(t, db, 0)
 	api := newLossyAPI()
-	disp := deployer.NewDispatcher(db, api, api, repoFactory, aggRepoFactory, admissionFactory, 50, testLogger(), deployer.DispatcherConfig{})
+	disp := deployer.NewDispatcher(db, api, api, repoFactory, aggRepoFactory, admissionFactory, cancelledFactory, 50, testLogger(), deployer.DispatcherConfig{})
 
 	// The first try creates the Job, but its answer is lost.
 	require.NoError(t, disp.ProcessBatch(ctx))
@@ -743,7 +747,7 @@ func TestDispatcher_TheLastFailedTryAdoptsTheJobALiveReadFinds(t *testing.T) {
 	api.setJob(cmd.JobName, cmd.TaskID, cmd.Attempt)
 	api.set(func(a *lossyAPI) { a.failReads = 1 }) // the try's own read of the Job times out
 
-	require.NoError(t, deployer.NewDispatcher(db, api, api, repoFactory, aggRepoFactory, admissionFactory, 50,
+	require.NoError(t, deployer.NewDispatcher(db, api, api, repoFactory, aggRepoFactory, admissionFactory, cancelledFactory, 50,
 		testLogger(), deployer.DispatcherConfig{}).ProcessBatch(context.Background()))
 
 	assert.Equal(t, 1, api.liveReads)
@@ -782,7 +786,7 @@ func TestDispatcher_TheLastFailedTryIsReportedFromALiveRead(t *testing.T) {
 			api := newLossyAPI()
 			c.setup(api, cmd)
 
-			require.NoError(t, deployer.NewDispatcher(db, api, api, repoFactory, aggRepoFactory, admissionFactory, 50,
+			require.NoError(t, deployer.NewDispatcher(db, api, api, repoFactory, aggRepoFactory, admissionFactory, cancelledFactory, 50,
 				testLogger(), deployer.DispatcherConfig{}).ProcessBatch(context.Background()))
 
 			assert.Equal(t, 1, api.liveReads, "the Job is read before the attempt is reported")
@@ -820,4 +824,61 @@ func TestDispatcher_ACollidingAttemptLeavesTheJobToItsOwner(t *testing.T) {
 	got, err = postgres.NewObservedDeployments(db, testLogger()).GetByJobName(ctx, name)
 	require.NoError(t, err)
 	assert.Equal(t, owner, got.ID())
+}
+
+// fencingAdmission fences run, on another connection, once the claim has
+// reserved its rows and before the claim commits: the launch then finds a
+// reserved row of a fenced run whose fence never ended it.
+type fencingAdmission struct {
+	repository.AdmissionRepository
+	db  *sqlx.DB
+	run uuid.UUID
+}
+
+func (f fencingAdmission) ReserveNext(ctx context.Context, limit int) ([]uuid.UUID, error) {
+	ids, err := f.AdmissionRepository.ReserveNext(ctx, limit)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := f.db.ExecContext(ctx, `INSERT INTO cancelled_runs (run_id) VALUES ($1)`, f.run); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// The launch reads the fence under the row lock: a reserved row of a run
+// fenced after it was claimed creates no Job, ends done with the outcome
+// stopped and is reported stopped, so it never stays reserved.
+func TestLaunch_AFencedReservedRowEndsStoppedWithoutAJob(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	ctx := context.Background()
+	runID := uuid.New()
+	cmd := command.DeployTask{TaskID: uuid.NewString(), ScheduleID: runID.String(), ScheduleName: "daily",
+		ServiceName: "dbt", SchemaName: "public", TableName: "orders", JobName: "dbt-public-orders-" + runID.String()[:8],
+		NodeType: "dbt-model", ImageTag: "sha-abc", Operation: "run", TimeoutSeconds: 3600}
+	dep := model.NewDeployment(cmd, nil, time.Now().Add(-time.Minute))
+	added, err := repoFactory(db).AddAttempt(ctx, dep)
+	require.NoError(t, err)
+	require.True(t, added)
+	fk := &fakeDeployer{}
+	fencing := func(exec outbox.Executor) repository.AdmissionRepository {
+		return fencingAdmission{AdmissionRepository: admissionFactory(exec), db: db, run: runID}
+	}
+
+	require.NoError(t, newTestDispatcherWith(db, fk, 50, deployer.DispatcherConfig{}, fencing).ProcessBatch(ctx))
+
+	assert.Zero(t, fk.calls(), "no Job is created for a fenced run")
+	got, found, err := repoFactory(db).LoadByTaskAttempt(ctx, cmd.TaskID, 0)
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, model.StatusDone, got.Status())
+	assert.Equal(t, model.OutcomeStopped, got.Outcome())
+	assert.NotNil(t, got.Facts().StopRequestedAt)
+	assert.Nil(t, got.DeployedAt())
+	require.Equal(t, 1, outboxCountByType(t, db, event.EventTypeTaskStatusReport))
+	report := failedReport(t, db)
+	assert.Equal(t, pkgmodel.AttemptStatusStopped, report.Status)
+	assert.Empty(t, report.FailureReason)
+	assert.Equal(t, cmd.JobName, report.JobName)
 }

@@ -353,7 +353,7 @@ func (o *Observer) settleEnded(ctx context.Context, dep *model.Deployment, obs, 
 			d.Observe(unexplained)
 		}
 		verdict := model.Classify(d.Facts())
-		if !verdict.Succeeded {
+		if !verdict.Succeeded && !verdict.Stopped {
 			d.Observe(model.AttemptFacts{Reason: verdict.Reason, Message: fallbackMessage(verdict.Reason)})
 		}
 		return o.settle(ctx, u, d, verdict, now)

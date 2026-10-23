@@ -21,3 +21,21 @@ func TestObserver_GaugeCountsTheAttemptsAwaitingAPodStop(t *testing.T) {
 		t.Fatalf("gauge = %v, want 1", got)
 	}
 }
+
+func TestObserver_CountsStoppedAttemptsAndReapedJobsByReason(t *testing.T) {
+	o := NewObserver(pkgmetrics.New("execution-controller"))
+	o.AttemptStopped()
+	o.AttemptStopped()
+	o.JobReaped("fenced_run")
+	o.JobReaped("ended_undeployed")
+	o.JobReaped("fenced_run")
+	if got := testutil.ToFloat64(o.stopped); got != 2 {
+		t.Fatalf("stopped = %v, want 2", got)
+	}
+	if got := testutil.ToFloat64(o.reaped.WithLabelValues("fenced_run")); got != 2 {
+		t.Fatalf("fenced_run = %v, want 2", got)
+	}
+	if got := testutil.ToFloat64(o.reaped.WithLabelValues("ended_undeployed")); got != 1 {
+		t.Fatalf("ended_undeployed = %v, want 1", got)
+	}
+}

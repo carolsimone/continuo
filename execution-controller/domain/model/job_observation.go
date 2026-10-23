@@ -114,6 +114,17 @@ func (o JobObservation) Ended() bool {
 	return !o.JobPresent || o.JobDeleting || o.JobSucceeded || o.JobFailed
 }
 
+// HasUnfinishedPod reports whether a pod of the attempt can still run, with
+// or without its Job.
+func (o JobObservation) HasUnfinishedPod() bool {
+	for _, p := range o.Pods {
+		if !p.Finished() {
+			return true
+		}
+	}
+	return false
+}
+
 // AwaitingStop reports whether a pod that has not finished is being deleted,
 // or sits on a node that stopped reporting (phase Unknown). Its container may
 // still be running, so the attempt waits for it, and its log is read at once

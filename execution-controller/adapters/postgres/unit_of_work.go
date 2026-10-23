@@ -60,11 +60,11 @@ func (u *PostgresUnitOfWork) ValidationAggregateRepo() repository.ValidationAggr
 	return NewValidationAggregateRepository(u.db)
 }
 
-func (u *PostgresUnitOfWork) CancelledSchedulesRepo() repository.CancelledSchedulesRepository {
+func (u *PostgresUnitOfWork) CancelledRunsRepo() repository.CancelledRunsRepository {
 	if u.tx != nil {
-		return NewCancelledSchedulesRepository(u.tx)
+		return NewCancelledRunsRepository(u.tx)
 	}
-	return NewCancelledSchedulesRepository(u.db)
+	return NewCancelledRunsRepository(u.db)
 }
 
 func (u *PostgresUnitOfWork) MessageProcessingRepo() messageprocessing.Repository {

@@ -32,8 +32,23 @@ func TestDecideDispatch(t *testing.T) {
 		{"a question about a running attempt it lost", false, false, false, "", pkgmodel.AttemptStatusRunning, ReportLost},
 	}
 	for _, c := range cases {
-		assert.Equal(t, c.want, DecideDispatch(c.held, c.later, c.problem, c.job, c.known), c.name)
+		assert.Equal(t, c.want, DecideDispatch(c.held, c.later, c.problem, c.job, false, c.known), c.name)
 	}
+}
+
+// An acknowledged attempt with neither a record nor a Job, but with a pod of
+// it that has not finished (its Job was deleted with orphan propagation), is
+// not reported lost: the pod may still write the table. Nothing is decided
+// until the pod is gone, and an attempt with a record or a Job is decided as
+// before.
+func TestDecideDispatch_AnOrphanPodIsAwaitedNotReportedLost(t *testing.T) {
+	for _, known := range []pkgmodel.AttemptStatus{pkgmodel.AttemptStatusQueued, pkgmodel.AttemptStatusRunning} {
+		assert.Equal(t, AwaitOrphanPod, DecideDispatch(false, false, "", false, true, known), known)
+		assert.Equal(t, ReportLost, DecideDispatch(false, false, "", false, false, known), known)
+	}
+	assert.Equal(t, ResendReport, DecideDispatch(true, false, "", false, true, pkgmodel.AttemptStatusRunning))
+	assert.Equal(t, AdoptJob, DecideDispatch(false, false, "", true, true, pkgmodel.AttemptStatusRunning))
+	assert.Equal(t, CreateAttempt, DecideDispatch(false, false, "", false, true, pkgmodel.AttemptStatusDispatched))
 }
 
 func validDispatch() command.DeployTask {

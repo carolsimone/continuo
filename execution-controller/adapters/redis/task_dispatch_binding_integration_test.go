@@ -14,6 +14,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/adapters/postgres"
 	executorredis "github.com/carolsimone/continuo/execution-controller/adapters/redis"
 	"github.com/carolsimone/continuo/execution-controller/domain/command"
+	"github.com/carolsimone/continuo/execution-controller/domain/events"
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	"github.com/carolsimone/continuo/execution-controller/service/handlers"
 	"github.com/carolsimone/continuo/execution-controller/service/uow"
@@ -246,18 +247,90 @@ func TestTaskDispatch_ARefusedDispatchOfARunningJobsNameLeavesTheJobToItsOwner(t
 	assert.Equal(t, owner.ID(), got.ID())
 }
 
-// Dispatches of a cancelled run are dropped.
-func TestTaskDispatch_ACancelledRunsDispatchIsDropped(t *testing.T) {
+// fence fences the flow's run as the run.cancelled:v1 consumer does, in one
+// committed transaction.
+func (f *dispatchFlow) fence() {
+	f.t.Helper()
+	ctx := context.Background()
+	logger := testDispatchLogger()
+	u := postgres.NewPostgresUnitOfWork(f.db, logger)
+	require.NoError(f.t, u.Begin(ctx))
+	_, err := handlers.NewRunCancelledHandler(f.jobs, f.jobs, &committedDeletes{t: f.t, db: f.db, statuses: map[string]string{}},
+		noStopMetrics{}, logger).Handle(ctx, u, events.RunCancelled{RunID: f.runID}, uuid.Nil)
+	if err != nil {
+		_ = u.Rollback()
+		require.NoError(f.t, err)
+	}
+	require.NoError(f.t, u.Commit())
+}
+
+// A dispatch of a fenced run creates no Job: the attempt is stored done with
+// the outcome stopped and reported stopped, and a repeated dispatch is
+// answered with that report.
+func TestTaskDispatch_AFencedRunsDispatchIsStoredStopped(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 	f := newDispatchFlow(t, db)
-	_, err := db.Exec(`INSERT INTO cancelled_runs (run_id) VALUES ($1)`, f.runID)
+	f.fence()
+
+	f.dispatch(0, "dispatched", nil)
+	f.dispatch(0, "dispatched", nil)
+
+	assert.Equal(t, []attemptRow{{Attempt: 0, Status: "done"}}, f.rows())
+	got, found, err := postgres.NewDeploymentsRepository(db, testDispatchLogger()).LoadByTaskAttempt(context.Background(), f.taskID.String(), 0)
 	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, model.OutcomeStopped, got.Outcome())
+	assert.Nil(t, got.DeployedAt(), "no Job was created")
+	reps := f.reports()
+	require.Len(t, reps, 2, "the answer and the repeat")
+	for _, r := range reps {
+		assert.Equal(t, pkgmodel.AttemptStatusStopped, r.Status)
+		assert.Empty(t, r.FailureReason)
+	}
+	assert.Equal(t, reps[0].QueuedAt, reps[1].QueuedAt, "a repeat is the stored report")
+}
+
+// A dispatch of a fenced run whose Job exists adopts the Job as terminating
+// with the stop recorded: the observer deletes it and reports the attempt
+// stopped once its pods are gone. The dispatch is answered queued meanwhile.
+func TestTaskDispatch_AFencedRunsDispatchWithALiveJobIsAdoptedTerminating(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	f := newDispatchFlow(t, db)
+	f.fence()
+	f.jobs = jobsHolding{name: jobNameOf(f.runID, 0), taskID: f.taskID.String(), attempt: "0"}
+	f.rebind()
+
+	f.dispatch(0, "running", nil)
+
+	assert.Equal(t, []attemptRow{{Attempt: 0, Status: "terminating"}}, f.rows())
+	got, err := postgres.NewDeploymentsRepository(db, testDispatchLogger()).LoadByJobName(context.Background(), jobNameOf(f.runID, 0))
+	require.NoError(t, err)
+	assert.NotNil(t, got.Facts().StopRequestedAt)
+	reps := f.reports()
+	require.Len(t, reps, 1)
+	assert.Equal(t, pkgmodel.AttemptStatusQueued, reps[0].Status)
+}
+
+// A dispatch that was accepted before its run was fenced keeps its row; the
+// fence ends the row stopped, and the dispatch delivered again after it is
+// answered with that last report and creates nothing.
+func TestTaskDispatch_AHeldRowStillAnswersWithItsLastReport(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	f := newDispatchFlow(t, db)
+	f.dispatch(0, "dispatched", nil)
+	f.fence()
 
 	f.dispatch(0, "dispatched", nil)
 
-	assert.Empty(t, f.rows())
-	assert.Empty(t, f.reports())
+	assert.Equal(t, []attemptRow{{Attempt: 0, Status: "done"}}, f.rows())
+	reps := f.reports()
+	require.Len(t, reps, 3, "queued, then stopped by the fence, then the answer to the redelivery")
+	assert.Equal(t, pkgmodel.AttemptStatusQueued, reps[0].Status)
+	assert.Equal(t, pkgmodel.AttemptStatusStopped, reps[1].Status)
+	assert.Equal(t, reps[1], reps[2], "the redelivery is answered with the last report")
 }
 
 func testDispatchLogger() *slog.Logger {

@@ -17,7 +17,7 @@ import (
 
 // NewScheduleCancelledBinding wires ParseScheduleCancelled into the
 // ScheduleCancelledHandler. No messageprocessing.Dedup is required —
-// CancelledSchedulesRepository.Insert is INSERT … ON CONFLICT DO NOTHING,
+// CancelledRunsRepository.Insert is INSERT … ON CONFLICT DO NOTHING,
 // so duplicate deliveries are naturally idempotent. The binding does
 // not call uow.Begin: a single autocommit INSERT is correct and
 // avoids needless transaction overhead.
