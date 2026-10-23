@@ -62,6 +62,9 @@ type JobObservation struct {
 	// which attempt of which task it runs.
 	JobTaskID  string
 	JobAttempt string
+	// JobRunID is the schedule-id label of a task's Job: the run the attempt
+	// belongs to. A release leg's Job carries none.
+	JobRunID string
 	// JobDeleting is true once the Job carries a deletion timestamp.
 	JobDeleting bool
 	// JobSucceeded and JobFailed report the Job's success and failure

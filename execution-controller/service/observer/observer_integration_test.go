@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/execution-controller/adapters/k8s"
+	"github.com/carolsimone/continuo/execution-controller/adapters/k8s/watch"
 	"github.com/carolsimone/continuo/execution-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/execution-controller/domain/command"
 	"github.com/carolsimone/continuo/execution-controller/domain/event"
@@ -26,6 +28,11 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 // harness wires an Observer to the executor test database and fake
@@ -41,6 +48,7 @@ type harness struct {
 	up    *fakeUploader
 	q     *fakeQueue
 	m     *fakeMetrics
+	stop  *fakeStopMetrics
 	now   time.Time
 }
 
@@ -52,14 +60,15 @@ func newHarness(t testing.TB) *harness {
 	cache := &fakeCache{}
 	h := &harness{db: db, repo: postgres.NewDeploymentsRepository(db, logger), cache: cache,
 		look: &fakeLookup{cache: cache, live: map[string]model.JobObservation{}}, term: &fakeTerminator{}, logs: &fakeLogs{},
-		up: &fakeUploader{}, q: &fakeQueue{}, m: &fakeMetrics{},
+		up: &fakeUploader{}, q: &fakeQueue{}, m: &fakeMetrics{}, stop: &fakeStopMetrics{},
 		// Postgres keeps timestamps to the microsecond; a clock finer than that
 		// would make a duration read back from a stored time miss by nanoseconds.
 		now: time.Now().UTC().Truncate(time.Microsecond)}
 	h.o = New(Config{StartTimeout: 15 * time.Minute, ErrorMessageMaxLen: 4096, LogTailLines: 50}, Deps{
 		NewUoW:   func() uow.UnitOfWork { return postgres.NewPostgresUnitOfWork(db, logger) },
 		Observed: postgres.NewObservedDeployments(db, logger), Cache: h.cache, Lookup: h.look, Terminator: h.term,
-		Logs: h.logs, Uploader: h.up, Queue: h.q, Outcomes: outcomes.NewRecorder(logger), Metrics: h.m, Logger: logger,
+		Logs: h.logs, Uploader: h.up, Queue: h.q, Outcomes: outcomes.NewRecorder(logger), Metrics: h.m,
+		Cancelled: postgres.NewCancelledRunsRepository(db), StopMetrics: h.stop, Logger: logger,
 	})
 	h.o.now = func() time.Time { return h.now }
 	return h
@@ -725,4 +734,163 @@ func TestSettle_AFailedWriteRollsEverythingBack(t *testing.T) {
 
 	assert.Empty(t, h.reports(t))
 	assert.True(t, h.reload(t, dep.JobName()).AwaitingResult(), "the attempt is settled again on the next try")
+}
+
+// liveJobOf is what the cache shows of a live Job of attempt 0 of a task of
+// runID, with its pod running.
+func liveJobOf(runID string, now time.Time) model.JobObservation {
+	return model.JobObservation{JobPresent: true, JobTaskID: uuid.NewString(), JobAttempt: "0", JobRunID: runID,
+		Pods: []model.PodObservation{runningPod(now.Add(-time.Minute))}}
+}
+
+// unstartedRow stores a production deployment of jobName for runID that never
+// created its Job: reserved, or failed for good when failed is set.
+func (h *harness) unstartedRow(t *testing.T, runID, jobName string, failed bool) *model.Deployment {
+	t.Helper()
+	ctx := context.Background()
+	cmd := command.DeployTask{TaskID: uuid.NewString(), ScheduleID: runID, ScheduleName: "daily",
+		ServiceName: "service-1", SchemaName: "e2e_schema", TableName: "ftable_e", JobName: jobName,
+		NodeType: "dbt-model", ImageTag: "v42", Operation: "run"}
+	dep := model.NewDeployment(cmd, nil, h.now.Add(-time.Minute))
+	require.NoError(t, h.repo.Add(ctx, dep))
+	require.NoError(t, dep.Reserve())
+	if failed {
+		_, err := dep.RegisterFailure(h.now, true, "the API refused the Job", model.BackoffPolicy{Base: time.Second, Cap: time.Minute})
+		require.NoError(t, err)
+	}
+	require.NoError(t, h.repo.Save(ctx, dep))
+	return dep
+}
+
+// A live Job of a fenced run that no started row deploys is deleted, with the
+// warning and the count: it has no row at all, or its row never deployed it
+// (a launch that read no fence created it). A Job already being deleted is
+// left to finish.
+func TestObserver_DeletesALiveJobOfAFencedRunWithNoStartedRow(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	runID := uuid.NewString()
+	_, err := h.db.Exec(`INSERT INTO cancelled_runs (run_id) VALUES ($1)`, runID)
+	require.NoError(t, err)
+	h.cache.set("job-no-row", liveJobOf(runID, h.now))
+	h.unstartedRow(t, runID, "job-reserved-row", false)
+	h.cache.set("job-reserved-row", liveJobOf(runID, h.now))
+	deleting := liveJobOf(runID, h.now)
+	deleting.JobDeleting = true
+	h.cache.set("job-deleting", deleting)
+
+	for _, name := range []string{"job-no-row", "job-reserved-row", "job-deleting"} {
+		require.NoError(t, h.o.Process(ctx, name))
+	}
+
+	assert.Equal(t, []string{"job-no-row", "job-reserved-row"}, h.term.deleted)
+	assert.Equal(t, []string{"fenced_run", "fenced_run"}, h.stop.reaped)
+	assert.Empty(t, h.reports(t), "the Jobs had no attempt to report")
+}
+
+// A Job Kubernetes created although its create call failed, whose row then
+// ended failed without deploying it, is deleted when the watch sees it, in a
+// run that is not fenced: the attempt was reported failed, and state may be
+// running the task's next attempt.
+func TestObserver_DeletesAJobWhoseRowFailedBeforeItWasDeployed(t *testing.T) {
+	h := newHarness(t)
+	runID := uuid.NewString()
+	failed := h.unstartedRow(t, runID, "job-created-late", true)
+	obs := liveJobOf(runID, h.now)
+	obs.JobTaskID = failed.Command().TaskID
+	h.cache.set("job-created-late", obs)
+
+	require.NoError(t, h.o.Process(context.Background(), "job-created-late"))
+
+	assert.Equal(t, []string{"job-created-late"}, h.term.deleted)
+	assert.Equal(t, []string{"ended_undeployed"}, h.stop.reaped)
+	var status string
+	require.NoError(t, h.db.Get(&status, `SELECT status FROM deployments WHERE id = $1`, failed.ID()))
+	assert.Equal(t, string(model.StatusFailed), status, "the row keeps how it ended")
+	assert.Empty(t, h.reports(t))
+}
+
+// A live Job of a run that is not fenced, with no row, or with a row that has
+// not deployed it yet, is left alone: a dispatch of its attempt adopts it, or
+// the launch in progress records it.
+func TestObserver_LeavesAnUnfencedJobWithNoRowForAdoption(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	h.cache.set("job-orphan", liveJobOf(uuid.NewString(), h.now))
+	runID := uuid.NewString()
+	h.unstartedRow(t, runID, "job-launching", false)
+	h.cache.set("job-launching", liveJobOf(runID, h.now))
+	h.cache.set("job-of-a-release-leg", model.JobObservation{JobPresent: true})
+
+	for _, name := range []string{"job-orphan", "job-launching", "job-of-a-release-leg"} {
+		require.NoError(t, h.o.Process(ctx, name))
+	}
+
+	assert.Empty(t, h.term.deleted)
+	assert.Empty(t, h.stop.reaped)
+}
+
+// The stop of a running attempt is reported only once its pod is gone, read
+// through the watch over a Kubernetes API: while the pod is being deleted
+// nothing is reported and its log is kept; once it is gone the attempt is
+// reported stopped, once, with that log.
+func TestObserver_ReportsStoppedOnlyOnceThePodIsGone(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	dep := h.started(t, 0, h.now.Add(-time.Minute))
+	_, err := dep.MarkRunning()
+	require.NoError(t, err)
+	effect, err := dep.Stop(h.now)
+	require.NoError(t, err)
+	require.Equal(t, model.StopTerminate, effect)
+	require.NoError(t, h.repo.Save(ctx, dep))
+	require.NotNil(t, h.reload(t, dep.JobName()).Facts().StopRequestedAt)
+
+	const ns = "jobs"
+	cmd := dep.Command()
+	labels := map[string]string{"app": "dbt-job", "task-id": cmd.TaskID, "attempt": "0", "schedule-id": cmd.ScheduleID}
+	deletingSince := metav1.NewTime(h.now.Add(-5 * time.Second))
+	cs := fake.NewClientset(
+		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: dep.JobName(), Namespace: ns, Labels: labels}},
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: dep.JobName() + "-x7k2p", Namespace: ns, DeletionTimestamp: &deletingSince,
+				Finalizers: []string{"batch.kubernetes.io/job-tracking"},
+				Labels:     map[string]string{"app": "dbt-job", batchv1.JobNameLabel: dep.JobName(), "job-name": dep.JobName()}},
+			Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "dbt-job", Image: "service-1:v42"}}},
+			Status: corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{Name: "dbt-job",
+				State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{StartedAt: metav1.NewTime(h.now.Add(-40 * time.Second))}}}}},
+		})
+	w, err := watch.New(cs, ns, h.q)
+	require.NoError(t, err)
+	watchCtx, stopWatch := context.WithCancel(ctx)
+	t.Cleanup(stopWatch)
+	w.Start(watchCtx)
+	require.True(t, w.WaitForCacheSync(watchCtx))
+	jobs := k8s.NewJobControl(k8s.NewK8sClientFor(cs, slog.New(slog.NewTextHandler(io.Discard, nil)), nil), ns)
+	h.o.deps.Cache, h.o.deps.Lookup, h.o.deps.Terminator, h.o.deps.Logs = w, w, jobs, jobs
+
+	require.NoError(t, h.o.Process(ctx, dep.JobName()))
+
+	assert.Empty(t, h.reports(t), "nothing is reported while the pod is being deleted")
+	kept := h.reload(t, dep.JobName())
+	assert.Equal(t, model.StatusTerminating, kept.Status())
+	assert.NotEmpty(t, kept.Facts().LogKey, "the log of the pod awaiting its stop is kept at once")
+	_, err = cs.BatchV1().Jobs(ns).Get(ctx, dep.JobName(), metav1.GetOptions{})
+	assert.True(t, apierrors.IsNotFound(err), "the Job of the terminating row is deleted")
+
+	require.NoError(t, cs.CoreV1().Pods(ns).Delete(ctx, dep.JobName()+"-x7k2p", metav1.DeleteOptions{}))
+	require.Eventually(t, func() bool {
+		o := w.Observe(dep.JobName())
+		return !o.JobPresent && len(o.Pods) == 0
+	}, 5*time.Second, 10*time.Millisecond, "the watch sees the pod gone")
+	require.NoError(t, h.o.Process(ctx, dep.JobName()))
+	require.NoError(t, h.o.Process(ctx, dep.JobName()))
+
+	reports := h.reports(t)
+	require.Len(t, reports, 1, "the stop is reported once")
+	assert.Equal(t, "stopped", reports[0]["status"])
+	assert.Equal(t, kept.Facts().LogKey, reports[0]["log_s3_key"])
+	got := h.reload(t, dep.JobName())
+	assert.Equal(t, model.StatusDone, got.Status())
+	assert.Equal(t, model.OutcomeStopped, got.Outcome())
 }

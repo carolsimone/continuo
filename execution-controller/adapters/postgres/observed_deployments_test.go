@@ -97,6 +97,65 @@ func TestObserved_StateAgeIsReadByTheDatabaseClock(t *testing.T) {
 	assert.Less(t, age, 4*time.Minute)
 }
 
+// A Job name ended undeployed when its newest row is failed and never
+// created or adopted the Job: the creation failed for good, or the dispatch
+// was refused. A row that is waiting, holding a slot or done, or that is
+// followed by a newer row of the name that has not failed, does not count.
+func TestObservedDeployments_EndedUndeployed(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	ctx := context.Background()
+	repo := postgres.NewDeploymentsRepository(db, testLogger())
+	backoff := model.BackoffPolicy{Base: time.Second, Cap: time.Minute}
+	at := time.Now().Add(-time.Hour)
+	add := func(jobName string, created time.Time, status model.Status) {
+		t.Helper()
+		cmd := validCmd()
+		cmd.JobName = jobName
+		d := model.NewDeployment(cmd, nil, created)
+		require.NoError(t, repo.Add(ctx, d))
+		switch status {
+		case model.StatusPending:
+		case model.StatusReserved:
+			require.NoError(t, d.Reserve())
+		case model.StatusFailed:
+			require.NoError(t, d.Reserve())
+			_, err := d.RegisterFailure(created, true, "the API refused the Job", backoff)
+			require.NoError(t, err)
+		case model.StatusDone:
+			require.NoError(t, d.Reserve())
+			require.NoError(t, d.MarkStarted(created))
+			require.NoError(t, d.Finish("ok", created))
+		}
+		require.NoError(t, repo.Save(ctx, d))
+	}
+	add("job-failed", at, model.StatusFailed)
+	add("job-pending", at, model.StatusPending)
+	add("job-reserved", at, model.StatusReserved)
+	add("job-done", at, model.StatusDone)
+	add("job-requeued", at, model.StatusFailed)
+	add("job-requeued", at.Add(time.Minute), model.StatusPending)
+	add("job-failed-again", at, model.StatusDone)
+	add("job-failed-again", at.Add(time.Minute), model.StatusFailed)
+	refusedCmd := validCmd()
+	refusedCmd.JobName = "job-refused"
+	refused := model.NewRefusedDeployment(refusedCmd, nil, pkgmodel.FailureReasonAttemptLost, "lost", at)
+	refused.RecordReport(refused.ReportOf(pkgmodel.AttemptStatusFailed, "lost"))
+	added, err := repo.AddAttempt(ctx, refused)
+	require.NoError(t, err)
+	require.True(t, added)
+
+	observed := postgres.NewObservedDeployments(db, testLogger())
+	for name, want := range map[string]bool{
+		"job-failed": true, "job-refused": true, "job-failed-again": true,
+		"job-pending": false, "job-reserved": false, "job-done": false, "job-requeued": false, "no-such-job": false,
+	} {
+		got, err := observed.EndedUndeployed(ctx, name)
+		require.NoError(t, err)
+		assert.Equal(t, want, got, name)
+	}
+}
+
 // A deployment that never created or adopted a Job, though it carries the
 // Job's name — a refused dispatch, an attempt whose creation failed on the
 // name, one not created yet — never stands for the Job: both lookups by Job

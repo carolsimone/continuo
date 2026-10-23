@@ -62,6 +62,20 @@ func (r *observedDeployments) ListObservedJobNames(ctx context.Context) ([]strin
 	return names, nil
 }
 
+func (r *observedDeployments) EndedUndeployed(ctx context.Context, jobName string) (bool, error) {
+	var ended bool
+	if err := r.exec.QueryRowContext(ctx, `
+		SELECT COALESCE((
+			SELECT status = $2 AND deployed_at IS NULL
+			FROM deployments
+			WHERE job_name = $1
+			ORDER BY created_at DESC
+			LIMIT 1), false)`, jobName, string(model.StatusFailed)).Scan(&ended); err != nil {
+		return false, fmt.Errorf("read how the deployment of job %s ended: %w", jobName, err)
+	}
+	return ended, nil
+}
+
 func (r *observedDeployments) StateAge(ctx context.Context, id uuid.UUID) (time.Duration, error) {
 	var seconds float64
 	if err := r.exec.QueryRowContext(ctx,

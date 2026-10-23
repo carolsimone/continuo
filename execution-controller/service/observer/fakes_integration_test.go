@@ -4,6 +4,7 @@ package observer
 
 import (
 	"context"
+	"sync"
 
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 )
@@ -77,4 +78,19 @@ func (u *fakeUploader) UploadLog(_ context.Context, key, content string) error {
 	}
 	u.uploaded[key] = content
 	return nil
+}
+
+// fakeStopMetrics counts the attempts reported stopped and the Jobs reaped,
+// by reason.
+type fakeStopMetrics struct {
+	mu      sync.Mutex
+	stopped int
+	reaped  []string
+}
+
+func (m *fakeStopMetrics) AttemptStopped() { m.mu.Lock(); m.stopped++; m.mu.Unlock() }
+func (m *fakeStopMetrics) JobReaped(reason string) {
+	m.mu.Lock()
+	m.reaped = append(m.reaped, reason)
+	m.mu.Unlock()
 }

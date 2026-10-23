@@ -102,5 +102,6 @@ func (f *fakeObserved) GetByJobName(_ context.Context, jobName string) (*model.D
 	}
 	return nil, sql.ErrNoRows
 }
+func (f *fakeObserved) EndedUndeployed(context.Context, string) (bool, error)      { return false, f.err }
 func (f *fakeObserved) ListObservedJobNames(context.Context) ([]string, error)     { return f.names, f.err }
 func (f *fakeObserved) StateAge(context.Context, uuid.UUID) (time.Duration, error) { return 0, f.err }
