@@ -110,6 +110,18 @@ func NewAdoptedDeployment(cmd command.DeployTask, msgProcID *uuid.UUID, now time
 	return d
 }
 
+// NewStoppedDeployment records an attempt dispatched after it was asked to
+// stop: done at once with the outcome stopped and no Job, so a repeated
+// dispatch finds it and is answered with its report.
+func NewStoppedDeployment(cmd command.DeployTask, msgProcID *uuid.UUID, now time.Time) *Deployment {
+	d := NewDeployment(cmd, msgProcID, now)
+	d.status = StatusDone
+	d.outcome = OutcomeStopped
+	d.outcomeAt = &now
+	d.recordStopRequest(now)
+	return d
+}
+
 // NewRefusedDeployment records an attempt that cannot run as dispatched:
 // failed at once with reason and message, its outcome recorded, so a repeated
 // dispatch finds it and is answered with its report.

@@ -49,6 +49,9 @@ type AttemptFacts struct {
 	// AwaitingStopSince is when a pod of the attempt was first seen
 	// terminating, or on a node that stopped reporting.
 	AwaitingStopSince *time.Time
+	// StopRequestedAt is when state asked for the attempt to stop because its
+	// run was cancelled.
+	StopRequestedAt *time.Time
 	// Reason is why the attempt failed; empty until decided.
 	Reason pkgmodel.FailureReason
 }
@@ -63,6 +66,7 @@ func (f AttemptFacts) Merge(next AttemptFacts) (AttemptFacts, bool) {
 	fillTime(&f.StartedAt, next.StartedAt, &changed)
 	fillTime(&f.FinishedAt, next.FinishedAt, &changed)
 	fillTime(&f.AwaitingStopSince, next.AwaitingStopSince, &changed)
+	fillTime(&f.StopRequestedAt, next.StopRequestedAt, &changed)
 	if f.ExitCode == nil && next.ExitCode != nil {
 		c := *next.ExitCode
 		f.ExitCode, changed = &c, true

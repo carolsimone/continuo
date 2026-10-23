@@ -2,10 +2,14 @@ package model
 
 import pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 
-// Verdict is how an attempt ended: succeeded, or failed for Reason.
+// Verdict is how an attempt ended: succeeded, stopped on request, or failed
+// for Reason.
 type Verdict struct {
 	Succeeded bool
-	Reason    pkgmodel.FailureReason
+	// Stopped is true when the attempt was asked to stop and did not succeed
+	// first; it carries no Reason.
+	Stopped bool
+	Reason  pkgmodel.FailureReason
 }
 
 // Kubernetes reasons Classify reads.
@@ -21,7 +25,19 @@ const (
 // deadline, a memory kill, an eviction and the exit code are read in that
 // order. An attempt whose pods are gone without the main container having
 // terminated, and without the Job reporting success, was lost with its node.
+// An attempt that was asked to stop and did not succeed is stopped, whatever
+// the pod showed of the deletion; a reason decided before the stop stands.
 func Classify(f AttemptFacts) Verdict {
+	if f.Reason == "" && f.StopRequestedAt != nil {
+		if v := classifyObserved(f); !v.Succeeded {
+			return Verdict{Stopped: true}
+		}
+	}
+	return classifyObserved(f)
+}
+
+// classifyObserved reads the verdict off the facts, ignoring any stop request.
+func classifyObserved(f AttemptFacts) Verdict {
 	switch {
 	case f.Reason != "":
 		return Verdict{Reason: f.Reason}

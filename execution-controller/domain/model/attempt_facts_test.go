@@ -49,3 +49,12 @@ func TestAttemptFacts_ATrueFlagStaysTrue(t *testing.T) {
 	assert.True(t, merged.JobSucceeded)
 	assert.True(t, merged.NothingToDo)
 }
+
+func TestAttemptFacts_AStopRequestIsKeptOnceMade(t *testing.T) {
+	merged, changed := model.AttemptFacts{}.Merge(model.AttemptFacts{StopRequestedAt: at(5)})
+	assert.True(t, changed)
+	assert.Equal(t, at(5), merged.StopRequestedAt)
+	merged, changed = merged.Merge(model.AttemptFacts{StopRequestedAt: at(9)})
+	assert.False(t, changed)
+	assert.Equal(t, at(5), merged.StopRequestedAt, "the first stop request stands")
+}

@@ -368,6 +368,9 @@ func (d *Deployment) settle(outcome string, now time.Time) error {
 	if d.outcomeAt != nil {
 		return fmt.Errorf("outcome already recorded for deployment %s", d.id)
 	}
+	if !d.AwaitingResult() {
+		return fmt.Errorf("deployment %s has no Job to settle in status %q", d.id, d.status)
+	}
 	if err := d.moveTo(StatusDone); err != nil {
 		return err
 	}
@@ -377,14 +380,14 @@ func (d *Deployment) settle(outcome string, now time.Time) error {
 	return nil
 }
 
-// Finish records a production Job's terminal outcome ("ok" or "failed") and
-// releases its slot. A recorded outcome marks the Job's result as reported, so
-// observing the same Job again writes nothing.
+// Finish records a production Job's terminal outcome ("ok", "failed" or
+// "stopped") and releases its slot. A recorded outcome marks the Job's result
+// as reported, so observing the same Job again writes nothing.
 func (d *Deployment) Finish(outcome string, now time.Time) error {
 	if d.mode != ModeProduction {
 		return fmt.Errorf("Finish called on %s deployment %s; candidates record through RecordOutcome", d.mode, d.id)
 	}
-	if outcome != "ok" && outcome != "failed" {
+	if outcome != "ok" && outcome != "failed" && outcome != OutcomeStopped {
 		return fmt.Errorf("invalid outcome %q", outcome)
 	}
 	return d.settle(outcome, now)
@@ -425,6 +428,62 @@ func (d *Deployment) BeginTermination(reason pkgmodel.FailureReason, message str
 	}
 	d.facts, _ = d.facts.Merge(AttemptFacts{Reason: reason, Message: message})
 	return nil
+}
+
+// OutcomeStopped is the outcome of an attempt that was stopped on request.
+const OutcomeStopped = "stopped"
+
+// StopEffect is what execution-controller does next after a deployment was
+// asked to stop.
+type StopEffect int
+
+const (
+	// StopNone: the deployment is already ending, or has ended; the stop adds
+	// nothing beyond being recorded on an open row.
+	StopNone StopEffect = iota
+	// StopEnded: a pending or reserved deployment, which has no Job, ended
+	// done with the outcome stopped; report it now.
+	StopEnded
+	// StopTerminate: a starting or running deployment moved to terminating;
+	// delete its Job once the change is committed.
+	StopTerminate
+)
+
+// Stop records that state asked the attempt to stop, as the time of the first
+// request. A deployment with no Job (pending or reserved) ends done, outcome
+// stopped, at once; one whose Job exists (starting or running) moves to
+// terminating, where it keeps its slot until its pods are gone; a terminating
+// one stays as it is, keeping the reason it was ended for. A deployment that
+// has ended records nothing. Only a production deployment, which is one
+// attempt of a task, can be stopped.
+func (d *Deployment) Stop(now time.Time) (StopEffect, error) {
+	if d.mode != ModeProduction {
+		return StopNone, fmt.Errorf("Stop called on %s deployment %s; only a task's attempt is stopped", d.mode, d.id)
+	}
+	switch d.status {
+	case StatusPending, StatusReserved:
+		if err := d.moveTo(StatusDone); err != nil {
+			return StopNone, err
+		}
+		d.recordStopRequest(now)
+		d.outcome = OutcomeStopped
+		ts := now
+		d.outcomeAt = &ts
+		return StopEnded, nil
+	case StatusStarting, StatusRunning:
+		if err := d.moveTo(StatusTerminating); err != nil {
+			return StopNone, err
+		}
+		d.recordStopRequest(now)
+		return StopTerminate, nil
+	case StatusTerminating:
+		d.recordStopRequest(now)
+	}
+	return StopNone, nil
+}
+
+func (d *Deployment) recordStopRequest(now time.Time) {
+	d.facts, _ = d.facts.Merge(AttemptFacts{StopRequestedAt: &now})
 }
 
 // JobName is the name of the Kubernetes Job the deployment creates.

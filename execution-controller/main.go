@@ -360,7 +360,7 @@ func main() {
 	admissionReconciler := deployer.NewReconciler(pgDB, newAdmissionRepo, logger, deployer.ReconcilerConfig{})
 	runWorker("admission_reconciler", admissionReconciler.Run)
 
-	runWorker("cancelled_schedules_sweeper", func(ctx context.Context) error {
+	runWorker("cancelled_runs_sweeper", func(ctx context.Context) error {
 		ticker := time.NewTicker(time.Duration(cfg.CancelledSchedulesSweepIntervalMin) * time.Minute)
 		defer ticker.Stop()
 		ttl := time.Duration(cfg.CancelledSchedulesTTLHours) * time.Hour
@@ -368,9 +368,9 @@ func main() {
 			select {
 			case <-ticker.C:
 				if n, err := cancelledSchedulesRepo.DeleteExpired(ctx, ttl); err != nil {
-					logger.Error("cancelled_schedules sweep failed", "error", err)
+					logger.Error("cancelled_runs sweep failed", "error", err)
 				} else if n > 0 {
-					logger.Info("Swept expired cancelled_schedules rows", "count", n)
+					logger.Info("Swept expired cancelled_runs rows", "count", n)
 				}
 			case <-ctx.Done():
 				return ctx.Err()

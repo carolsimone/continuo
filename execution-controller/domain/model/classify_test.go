@@ -47,3 +47,32 @@ func TestClassify(t *testing.T) {
 		}
 	}
 }
+
+func stopped(f model.AttemptFacts) model.AttemptFacts {
+	f.StopRequestedAt = at(60)
+	return f
+}
+
+func TestClassify_AStoppedAttemptThatExited0Succeeded(t *testing.T) {
+	got := model.Classify(stopped(model.AttemptFacts{ExitCode: code(0)}))
+	assert.Equal(t, model.Verdict{Succeeded: true}, got)
+	got = model.Classify(stopped(model.AttemptFacts{JobSucceeded: true}))
+	assert.Equal(t, model.Verdict{Succeeded: true}, got)
+}
+
+func TestClassify_AStoppedAttemptKilledBySIGTERMIsStopped(t *testing.T) {
+	got := model.Classify(stopped(model.AttemptFacts{StartedAt: at(4), ExitCode: code(143), FailedContainer: "dbt-job"}))
+	assert.Equal(t, model.Verdict{Stopped: true}, got)
+}
+
+func TestClassify_AStoppedAttemptWhosePodVanishedIsStopped(t *testing.T) {
+	got := model.Classify(stopped(model.AttemptFacts{StartedAt: at(4)}))
+	assert.Equal(t, model.Verdict{Stopped: true}, got, "a deleted Job's pod is not a lost node")
+	got = model.Classify(stopped(model.AttemptFacts{}))
+	assert.Equal(t, model.Verdict{Stopped: true}, got, "an attempt that never started")
+}
+
+func TestClassify_AReasonRecordedBeforeTheStopStands(t *testing.T) {
+	got := model.Classify(stopped(model.AttemptFacts{Reason: pkgmodel.FailureReasonStartTimeout}))
+	assert.Equal(t, model.Verdict{Reason: pkgmodel.FailureReasonStartTimeout}, got)
+}

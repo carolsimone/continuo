@@ -48,7 +48,7 @@ func SetupPostgres(t testing.TB) (*sqlx.DB, func()) {
 	_, err = lockConn.ExecContext(lockCtx, `SELECT pg_advisory_lock(861248012)`)
 	require.NoError(t, err, "serialize executor database tests")
 
-	for _, table := range []string{"execution_outbox", "deployments", "validation_aggregates", "cancelled_schedules", "message_processing"} {
+	for _, table := range []string{"execution_outbox", "deployments", "validation_aggregates", "cancelled_runs", "message_processing"} {
 		var present bool
 		require.NoError(t, db.Get(&present, `SELECT to_regclass($1) IS NOT NULL`, table))
 		require.True(t, present, "%s missing: run Flyway migrations from db/migration/execution before testing", table)
@@ -62,7 +62,7 @@ func SetupPostgres(t testing.TB) (*sqlx.DB, func()) {
 		once.Do(func() {
 			cleanCtx, cleanCancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cleanCancel()
-			_, cleanErr := db.ExecContext(cleanCtx, `TRUNCATE execution_outbox, deployments, validation_aggregates, cancelled_schedules, message_processing`)
+			_, cleanErr := db.ExecContext(cleanCtx, `TRUNCATE execution_outbox, deployments, validation_aggregates, cancelled_runs, message_processing`)
 			if cleanErr != nil {
 				t.Errorf("clean executor test-owned rows: %v", cleanErr)
 			}

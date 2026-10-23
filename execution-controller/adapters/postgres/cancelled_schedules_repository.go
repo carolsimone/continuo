@@ -32,20 +32,20 @@ var _ repository.CancelledSchedulesRepository = (*cancelledSchedulesRepository)(
 
 func (r *cancelledSchedulesRepository) Insert(ctx context.Context, id uuid.UUID) error {
 	_, err := r.executor.ExecContext(ctx,
-		`INSERT INTO cancelled_schedules (schedule_id) VALUES ($1) ON CONFLICT DO NOTHING`, id)
+		`INSERT INTO cancelled_runs (run_id) VALUES ($1) ON CONFLICT DO NOTHING`, id)
 	return err
 }
 
 func (r *cancelledSchedulesRepository) Exists(ctx context.Context, id uuid.UUID) (bool, error) {
 	var exists bool
 	err := r.executor.QueryRowContext(ctx,
-		`SELECT EXISTS(SELECT 1 FROM cancelled_schedules WHERE schedule_id = $1)`, id).Scan(&exists)
+		`SELECT EXISTS(SELECT 1 FROM cancelled_runs WHERE run_id = $1)`, id).Scan(&exists)
 	return exists, err
 }
 
 func (r *cancelledSchedulesRepository) DeleteExpired(ctx context.Context, ttl time.Duration) (int64, error) {
 	res, err := r.executor.ExecContext(ctx,
-		`DELETE FROM cancelled_schedules WHERE cancelled_at < $1`, time.Now().Add(-ttl))
+		`DELETE FROM cancelled_runs WHERE cancelled_at < $1`, time.Now().Add(-ttl))
 	if err != nil {
 		return 0, err
 	}

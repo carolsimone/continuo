@@ -6,7 +6,7 @@ import "slices"
 // pending (or blocked, for a candidate node whose in-set upstreams have not all
 // succeeded) for as long as it takes. It holds an execution slot while
 // reserved, starting, running or terminating, and ends done (its attempt
-// ended), failed (it could not be deployed) or skipped (an in-set upstream
+// ended, or was stopped before it could start), failed (it could not be deployed) or skipped (an in-set upstream
 // failed). reserved is not a waiting state: it lasts from the claim that took
 // the slot to the launch that creates the Job.
 type Status string
@@ -51,11 +51,13 @@ func (s Status) InFlight() bool { return slices.Contains(InFlightStatuses(), s) 
 // a deployment may move to. A status with no entry is terminal.
 //
 //	pending     → reserved                   the claim takes a slot
+//	pending     → done                       the attempt was stopped before its claim
 //	blocked     → pending | skipped          in-set upstreams succeeded | one failed
 //	reserved    → starting                   the Job was created
 //	reserved    → pending                    a transient deploy failure, or a stale
 //	                                         reservation, gives the slot back
 //	reserved    → failed                     the deployment cannot be deployed
+//	reserved    → done                       the attempt was stopped before its Job was created
 //	starting    → running                    the main container started
 //	starting    → terminating                a start error or the start timeout:
 //	                                         execution-controller deleted the Job
@@ -63,9 +65,9 @@ func (s Status) InFlight() bool { return slices.Contains(InFlightStatuses(), s) 
 //	running     → terminating | done         the Job was deleted | the attempt ended
 //	terminating → done                       the attempt's pods are gone
 var transitions = map[Status][]Status{
-	StatusPending:     {StatusReserved},
+	StatusPending:     {StatusReserved, StatusDone},
 	StatusBlocked:     {StatusPending, StatusSkipped},
-	StatusReserved:    {StatusStarting, StatusPending, StatusFailed},
+	StatusReserved:    {StatusStarting, StatusPending, StatusFailed, StatusDone},
 	StatusStarting:    {StatusRunning, StatusTerminating, StatusDone},
 	StatusRunning:     {StatusTerminating, StatusDone},
 	StatusTerminating: {StatusDone},

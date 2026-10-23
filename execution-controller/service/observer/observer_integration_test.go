@@ -380,7 +380,7 @@ func TestProcess_APodBeingDeletedHasItsLogReadAtOnceAndRaisesTheAlertAfter15Minu
 func TestProcess_ACancelledRunIsObservedSilently(t *testing.T) {
 	h := newHarness(t)
 	dep := h.started(t, 0, h.now.Add(-time.Minute))
-	_, err := h.db.Exec(`INSERT INTO cancelled_schedules (schedule_id) VALUES ($1)`, dep.Command().ScheduleID)
+	_, err := h.db.Exec(`INSERT INTO cancelled_runs (run_id) VALUES ($1)`, dep.Command().ScheduleID)
 	require.NoError(t, err)
 
 	h.cache.set(dep.JobName(), model.JobObservation{JobPresent: true, Pods: []model.PodObservation{runningPod(h.now)}})

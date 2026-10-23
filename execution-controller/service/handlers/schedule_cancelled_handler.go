@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// ScheduleCancelledHandler inserts a row into cancelled_schedules, so a later
+// ScheduleCancelledHandler inserts a row into cancelled_runs, so a later
 // task.dispatch of the run is dropped and the observer reports nothing more of
 // the run's attempts. The operation is idempotent (UPSERT semantics), so the
 // binding does not need messageprocessing dedup.

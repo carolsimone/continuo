@@ -251,7 +251,7 @@ func TestTaskDispatch_ACancelledRunsDispatchIsDropped(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 	f := newDispatchFlow(t, db)
-	_, err := db.Exec(`INSERT INTO cancelled_schedules (schedule_id) VALUES ($1)`, f.runID)
+	_, err := db.Exec(`INSERT INTO cancelled_runs (run_id) VALUES ($1)`, f.runID)
 	require.NoError(t, err)
 
 	f.dispatch(0, "dispatched", nil)
