@@ -379,6 +379,13 @@ if ! helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set llm.ba
   echo "FAIL: a release without llm.baseUrl must render"; exit 1
 fi
 
+# The egress-proxy allowlist follows the LLM, GitHub and S3 settings, so a
+# company that switches provider never edits it by hand. Every egress.* entry
+# is validated as written; a bad one fails the render naming the key and the
+# entry, and a release without an egress block renders the proxy with defaults.
+echo "--- egress-proxy: the allowlist follows the LLM, GitHub and S3 settings; bad entries fail the render"
+python3 scripts/install-test/assert-egress-allowlist.py "$CHART" "$KUBE_VERSION"
+
 echo "--- bash -n (release scripts)"
 bash -n scripts/release/retag-images.sh
 

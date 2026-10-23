@@ -206,7 +206,7 @@ jobs:
           source scripts/lib/common.sh
           for c in state orchestrator execution-controller \
                    topology-controller release-controller remediation agent-remediation agent-chat \
-                   dead-letter-controller; do
+                   dead-letter-controller egress-proxy; do
             wait_for_container_running "$c"
           done
 
