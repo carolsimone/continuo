@@ -234,7 +234,7 @@ func main() {
 
 	// ---- handlers and bindings ----
 
-	taskDispatchHandler := handlers.NewTaskDispatchHandler(jobWatch, logger)
+	taskDispatchHandler := handlers.NewTaskDispatchHandler(jobWatch, jobWatch, logger)
 	scheduleCancelledHandler := handlers.NewScheduleCancelledHandler(logger)
 	validationReqHandler := handlers.NewValidationRequestedHandler(logger)
 	seedBuildReqHandler := handlers.NewSeedBuildRequestedHandler(logger)

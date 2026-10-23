@@ -21,18 +21,21 @@ import (
 // run is recorded failed; a dispatch whose Job exists without a record has
 // its record rebuilt; a new dispatch state still knows as dispatched is
 // queued for its Job; and an attempt state knows as acknowledged that it
-// holds no trace of is reported attempt_lost. Dispatches of a cancelled run
-// are dropped.
+// holds no trace of, neither a record nor a Job the cache or a live read of
+// the API shows, is reported attempt_lost. Dispatches of a cancelled run are
+// dropped.
 type TaskDispatchHandler struct {
 	jobs   ports.JobCache
+	lookup ports.JobLookup
 	logger *slog.Logger
 	now    func() time.Time
 }
 
 // NewTaskDispatchHandler constructs the handler; jobs is the watch's cache,
-// read for a Job of the attempt.
-func NewTaskDispatchHandler(jobs ports.JobCache, logger *slog.Logger) *TaskDispatchHandler {
-	return &TaskDispatchHandler{jobs: jobs, logger: logger, now: time.Now}
+// read for a Job of the attempt, and lookup reads the Job from the Kubernetes
+// API before an attempt is reported lost.
+func NewTaskDispatchHandler(jobs ports.JobCache, lookup ports.JobLookup, logger *slog.Logger) *TaskDispatchHandler {
+	return &TaskDispatchHandler{jobs: jobs, lookup: lookup, logger: logger, now: time.Now}
 }
 
 // Handle applies one task.dispatch:v1 message inside u's transaction; the
@@ -68,6 +71,17 @@ func (h *TaskDispatchHandler) Handle(ctx context.Context, u uow.UnitOfWork, evt 
 	now := h.now()
 
 	action := model.DecideDispatch(found, laterHeld, problem, jobOfAttempt, evt.KnownStatus)
+	if action == model.ReportLost {
+		// The cache can trail the API, so a Job it does not hold may still
+		// run: the attempt is reported lost only once a live read finds no Job
+		// of it. A read that fails leaves the dispatch unanswered, and its
+		// message is delivered again.
+		live, err := h.lookup.ObserveLive(ctx, cmd.JobName)
+		if err != nil {
+			return fmt.Errorf("read Job %s of attempt %d of task %s: %w", cmd.JobName, cmd.Attempt, cmd.TaskID, err)
+		}
+		action = model.DecideDispatch(found, laterHeld, problem, live.RunsAttempt(cmd.TaskID, cmd.Attempt), evt.KnownStatus)
+	}
 	switch action {
 	case model.ResendReport:
 		if err := reports.Resend(ctx, u.OutboxRepo(), held); err != nil {

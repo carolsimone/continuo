@@ -28,8 +28,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// jobsHolding is a Job cache holding one Job, labelled with a task and an
-// attempt.
+// jobsHolding is a Job cache, and the Kubernetes API behind it, holding one
+// Job, labelled with a task and an attempt.
 type jobsHolding struct {
 	name, taskID, attempt string
 }
@@ -40,6 +40,9 @@ func (j jobsHolding) Observe(name string) model.JobObservation {
 		return model.JobObservation{}
 	}
 	return model.JobObservation{JobPresent: true, JobTaskID: j.taskID, JobAttempt: j.attempt}
+}
+func (j jobsHolding) ObserveLive(_ context.Context, name string) (model.JobObservation, error) {
+	return j.Observe(name), nil
 }
 
 type dispatchFlow struct {
@@ -61,7 +64,7 @@ func newDispatchFlow(t *testing.T, db *sqlx.DB) *dispatchFlow {
 func (f *dispatchFlow) rebind() {
 	logger := testDispatchLogger()
 	newUoW := func() uow.UnitOfWork { return postgres.NewPostgresUnitOfWork(f.db, logger) }
-	f.handler = executorredis.NewTaskDispatchBinding(newUoW, handlers.NewTaskDispatchHandler(f.jobs, logger), logger)
+	f.handler = executorredis.NewTaskDispatchBinding(newUoW, handlers.NewTaskDispatchHandler(f.jobs, f.jobs, logger), logger)
 }
 
 // dispatch delivers one task.dispatch:v1 entry of attempt n, as a new outbox
