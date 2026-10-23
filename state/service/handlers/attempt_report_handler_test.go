@@ -342,28 +342,52 @@ type fixedClock struct{ t time.Time }
 
 func (c fixedClock) Now() time.Time { return c.t }
 
-// The stopped report that ends a cancelling run's last task finalizes the run
-// cancelled and observes the time from its cancel to now; a run that ends any
-// other way observes nothing.
-func TestAttemptReportHandler_ObservesTheCancelDurationWhenARunEndsCancelled(t *testing.T) {
-	cancelledAt := time.Date(2026, 10, 23, 10, 0, 0, 0, time.UTC)
+// cancellingRunReport is a cancelling run of one task, cancelled at
+// cancelledAt, whose running attempt reports stopped, in a unit of work whose
+// clock reads 90 s after the cancel.
+func cancellingRunReport(cancelledAt time.Time) (*fakeTaskStatusRunRepo, *uow.FakeUnitOfWork, events.AttemptReported) {
 	scheduleID, taskID := uuid.New(), uuid.New()
 	total, by := int32(1), "alice"
 	cancelling := run.HydrateRun(scheduleID, "daily", run.SchedulerStatusCancelling, run.InitStatusCompleted, run.KindCron, nil,
 		identity.SystemUserID, model.OperationRun, cancelledAt.Add(-time.Hour), nil, nil, &cancelledAt, &cancelledAt, &by, nil,
 		&total, 0, map[string]run.ServiceMetadata{})
 	runRepo := &fakeTaskStatusRunRepo{stored: cancelling}
-	outbox := &fakeTaskStatusOutboxPub{}
 	taskColl := (&fakeTaskStatusTaskCollection{prevStatus: run.TaskStatusStopping, prevExists: true, updateAffected: 1}).
 		held(taskID, 0, run.AttemptRunning)
-	u := newTaskStatusHandlerUoW(runRepo, outbox, taskColl)
+	u := newTaskStatusHandlerUoW(runRepo, &fakeTaskStatusOutboxPub{}, taskColl)
 	u.SetClock(fixedClock{cancelledAt.Add(90 * time.Second)})
-	metrics := &fakeRunMetrics{}
+	return runRepo, u, report(scheduleID, taskID, 0, run.AttemptStopped)
+}
 
-	require.NoError(t, newAttemptReportHandlerWith(metrics).Handle(context.Background(), u, report(scheduleID, taskID, 0, run.AttemptStopped), uuid.New()))
+// The stopped report that ends a cancelling run's last task finalizes the run
+// cancelled and observes the time from its cancel to now once its transaction
+// commits; a run that ends any other way observes nothing.
+func TestAttemptReportHandler_ObservesTheCancelDurationWhenARunEndsCancelled(t *testing.T) {
+	cancelledAt := time.Date(2026, 10, 23, 10, 0, 0, 0, time.UTC)
+	runRepo, u, rep := cancellingRunReport(cancelledAt)
+	metrics := &fakeRunMetrics{}
+	require.NoError(t, u.Begin(context.Background()))
+
+	require.NoError(t, newAttemptReportHandlerWith(metrics).Handle(context.Background(), u, rep, uuid.New()))
 
 	assert.Equal(t, run.SchedulerStatusCancelled, runRepo.stored.Status())
+	assert.Empty(t, metrics.cancelled, "nothing is observed before the commit")
+	require.NoError(t, u.Commit())
 	assert.Equal(t, []time.Duration{90 * time.Second}, metrics.cancelled)
+
+	t.Run("a report whose transaction rolls back observes nothing", func(t *testing.T) {
+		_, u, rep := cancellingRunReport(cancelledAt)
+		m := &fakeRunMetrics{}
+		require.NoError(t, u.Begin(context.Background()))
+
+		require.NoError(t, newAttemptReportHandlerWith(m).Handle(context.Background(), u, rep, uuid.New()))
+		require.NoError(t, u.Rollback())
+
+		assert.Empty(t, m.cancelled)
+		require.NoError(t, u.Begin(context.Background()))
+		require.NoError(t, u.Commit())
+		assert.Empty(t, m.cancelled, "the next transaction commits nothing of the rolled-back one")
+	})
 
 	t.Run("a run that succeeds observes nothing", func(t *testing.T) {
 		id, task := uuid.New(), uuid.New()
@@ -371,8 +395,11 @@ func TestAttemptReportHandler_ObservesTheCancelDurationWhenARunEndsCancelled(t *
 		coll := (&fakeTaskStatusTaskCollection{prevStatus: run.TaskStatusRunning, prevExists: true, updateAffected: 1}).held(task, 0, run.AttemptRunning)
 		m := &fakeRunMetrics{}
 
-		require.NoError(t, newAttemptReportHandlerWith(m).Handle(context.Background(), newTaskStatusHandlerUoW(repo, &fakeTaskStatusOutboxPub{}, coll),
-			report(id, task, 0, run.AttemptSucceeded), uuid.New()))
+		u := newTaskStatusHandlerUoW(repo, &fakeTaskStatusOutboxPub{}, coll)
+		require.NoError(t, u.Begin(context.Background()))
+
+		require.NoError(t, newAttemptReportHandlerWith(m).Handle(context.Background(), u, report(id, task, 0, run.AttemptSucceeded), uuid.New()))
+		require.NoError(t, u.Commit())
 
 		assert.Equal(t, run.SchedulerStatusSucceeded, repo.stored.Status())
 		assert.Empty(t, m.cancelled)

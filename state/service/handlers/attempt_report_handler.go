@@ -22,7 +22,8 @@ import (
 // task of a run state planned with an operation that writes the table
 // succeeded, it also records the version the task loaded into the warehouse,
 // which the seed reconcile compares with the live release. When the report
-// ends a cancelling run, it observes how long the cancel took.
+// ends a cancelling run, it observes how long the cancel took once the
+// transaction commits.
 type AttemptReportHandler struct {
 	tenantID string
 	tasks    run.TaskDefaults
@@ -58,7 +59,7 @@ func (h *AttemptReportHandler) Handle(ctx context.Context, u uow.UnitOfWork, evt
 	if err := u.Outbox().Append(ctx, domainEvents, msgProcID); err != nil {
 		return fmt.Errorf("append outbox: %w", err)
 	}
-	h.observeCancel(r, domainEvents, u.Clock().Now())
+	h.observeCancel(u, r, domainEvents, u.Clock().Now())
 	if succeeded && recordsBuiltVersions(r) {
 		if err := recordLoadedVersion(ctx, u, h.tenantID, h.logger, r, evt.Report.TaskID); err != nil {
 			return err
@@ -71,14 +72,16 @@ func (h *AttemptReportHandler) Handle(ctx context.Context, u uow.UnitOfWork, evt
 }
 
 // observeCancel observes the time from the cancel to now when events end r
-// cancelled.
-func (h *AttemptReportHandler) observeCancel(r *run.Run, events []run.DomainEvent, now time.Time) {
+// cancelled, once u's transaction commits: a report whose transaction rolls
+// back, and is redelivered, counts once.
+func (h *AttemptReportHandler) observeCancel(u uow.UnitOfWork, r *run.Run, events []run.DomainEvent, now time.Time) {
 	if r.CancelledAt() == nil {
 		return
 	}
 	for _, evt := range events {
 		if fin, ok := evt.(run.RunFinalized); ok && fin.Outcome == run.SchedulerStatusCancelled {
-			h.metrics.RunCancelled(now.Sub(*r.CancelledAt()))
+			d := now.Sub(*r.CancelledAt())
+			u.AfterCommit(func() { h.metrics.RunCancelled(d) })
 			return
 		}
 	}

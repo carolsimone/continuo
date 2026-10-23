@@ -25,6 +25,9 @@ type FakeUnitOfWork struct {
 	RollbackCalled int
 
 	inTx bool
+	// afterCommit holds the functions AfterCommit registered in the current
+	// transaction.
+	afterCommit []func()
 
 	runRepo     repository.RunRepository
 	catalogRepo repository.ScheduleCatalogRepository
@@ -56,24 +59,37 @@ func (f *FakeUnitOfWork) Begin(_ context.Context) error {
 		return errors.New("transaction already in progress")
 	}
 	f.inTx = true
+	f.afterCommit = nil
 	f.BeginCalled++
 	return nil
 }
 
+// Commit ends the transaction and runs the functions AfterCommit registered
+// in it, in registration order.
 func (f *FakeUnitOfWork) Commit() error {
 	if !f.inTx {
 		return errors.New("no transaction in progress")
 	}
 	f.inTx = false
 	f.CommitCalled++
+	hooks := f.afterCommit
+	f.afterCommit = nil
+	for _, fn := range hooks {
+		fn()
+	}
 	return nil
 }
+
+// AfterCommit registers fn to run at the next Commit; Begin and Rollback
+// discard it.
+func (f *FakeUnitOfWork) AfterCommit(fn func()) { f.afterCommit = append(f.afterCommit, fn) }
 
 func (f *FakeUnitOfWork) Rollback() error {
 	if !f.inTx {
 		return nil
 	}
 	f.inTx = false
+	f.afterCommit = nil
 	f.RollbackCalled++
 	return nil
 }

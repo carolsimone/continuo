@@ -57,3 +57,43 @@ func TestPostgresUnitOfWork_RollbackSwallowsErrTxDone(t *testing.T) {
 	require.Error(t, u.Commit())
 	require.NoError(t, u.Rollback())
 }
+
+// AfterCommit's functions run once the transaction commits, in registration
+// order; a rollback, or a commit that fails, runs none of them, and the next
+// transaction starts with none registered.
+func TestPostgresUnitOfWork_AfterCommitRunsOnlyOnACommit(t *testing.T) {
+	u, mock, cleanup := newWedgeTestUoW(t)
+	defer cleanup()
+	var ran []string
+	register := func(name string) { u.AfterCommit(func() { ran = append(ran, name) }) }
+
+	mock.ExpectBegin()
+	mock.ExpectRollback()
+	require.NoError(t, u.Begin(context.Background()))
+	register("rolled back")
+	require.NoError(t, u.Rollback())
+	require.Empty(t, ran, "a rollback discards what was registered")
+
+	mock.ExpectBegin()
+	mock.ExpectCommit().WillReturnError(errors.New("commit boom"))
+	require.NoError(t, u.Begin(context.Background()))
+	register("failed commit")
+	require.Error(t, u.Commit())
+	require.Empty(t, ran, "a commit that fails runs nothing")
+
+	mock.ExpectBegin()
+	mock.ExpectCommit()
+	require.NoError(t, u.Begin(context.Background()))
+	register("first")
+	register("second")
+	require.NoError(t, u.Commit())
+	require.Equal(t, []string{"first", "second"}, ran)
+
+	mock.ExpectBegin()
+	mock.ExpectCommit()
+	require.NoError(t, u.Begin(context.Background()))
+	require.NoError(t, u.Commit())
+	require.Equal(t, []string{"first", "second"}, ran, "a committed function runs once")
+
+	require.NoError(t, mock.ExpectationsWereMet())
+}
