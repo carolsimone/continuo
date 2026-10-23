@@ -1,8 +1,14 @@
 {{- if .Values.networkPolicy.enabled }}
 {{- $instance := .Release.Name }}
 # Default-deny ingress for every pod in the release; the documents below
-# re-open exactly the edges the service graph needs. Egress stays open
-# (DNS, the Kubernetes API, external datastores, GitHub/Anthropic).
+# re-open exactly the edges the service graph needs. With egress.enabled the
+# egress documents at the end also restrict outbound traffic: agent-chat and
+# agent-remediation reach DNS, the pods of this namespace (egress-proxy among
+# them), an external Postgres or Redis on a private network, and their direct
+# destinations, and nothing else; egress-proxy reaches DNS, public addresses on
+# its allowlisted ports and private ones only for entries that allow them.
+# Every other pod's egress stays open (DNS, the Kubernetes API, external
+# datastores, GitHub).
 # In-cluster encryption in transit is a service mesh's job — this chart is
 # mesh-compatible and enforces reachability only.
 apiVersion: networking.k8s.io/v1
@@ -390,5 +396,145 @@ spec:
             {{- toYaml . | nindent 12 }}
       ports:
         - port: {{ include "continuo.metrics.port" $ }}
+{{- end }}
+{{- if eq (include "continuo.egress.enabled" .) "true" }}
+---
+# agent-chat and agent-remediation send their outbound calls through
+# egress-proxy while it renders (the chart sets their proxy variables). They
+# may resolve names; reach every pod in this namespace on any port (the proxy,
+# the services and the bundled datastores); reach an external Postgres or
+# Redis on a private network on its configured port; and reach their direct
+# destinations ("continuo.egress.directDestinations": egress.directDestinations
+# and the IP address of every URL they call) on their ports. Every other
+# connection is dropped. The policy renders whenever egress.enabled is true,
+# also when no proxy renders because every destination is an IP address. A
+# NetworkPolicy port is the pod's port, after a Service has translated the
+# address.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "continuo.fullname" . }}-agents-egress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "continuo.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ $instance }}
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: [agent-chat, agent-remediation]
+  policyTypes: ["Egress"]
+  egress:
+    {{- include "continuo.egress.dnsRule" . | nindent 4 }}
+    - to:
+        - podSelector: {}
+    {{- with include "continuo.egress.externalDatastorePorts" . | fromJsonArray }}
+    - to:
+        {{- include "continuo.egress.privatePeers" $ | nindent 8 }}
+      ports:
+        {{- range . }}
+        - protocol: TCP
+          port: {{ int . }}
+        {{- end }}
+    {{- end }}
+    {{- range $direct := include "continuo.egress.directDestinations" . | fromJsonArray }}
+    {{- with $direct.ports }}
+    - to:
+        - ipBlock:
+            cidr: {{ if contains ":" $direct.cidr }}{{ $direct.cidr | quote }}{{ else }}{{ $direct.cidr }}{{ end }}
+      ports:
+        {{- range . }}
+        - protocol: TCP
+          port: {{ int . }}
+        {{- end }}
+    {{- end }}
+    {{- end }}
+{{- end }}
+{{- if eq (include "continuo.egress.proxyEnabled" .) "true" }}
+{{- $publicPorts := list }}
+{{- $privatePorts := list }}
+{{- range include "continuo.egress.allowlist" . | fromJsonArray }}
+{{- $publicPorts = append $publicPorts (int .port) }}
+{{- if .allowPrivate }}{{ $privatePorts = append $privatePorts (int .port) }}{{ end }}
+{{- end }}
+---
+# egress-proxy may resolve names; reach public addresses on every port its
+# allowlist names (an entry may resolve to public addresses whether or not it
+# allows private ones); and reach private addresses, and pods in any namespace,
+# only on the ports of the entries that allow private addresses. Loopback,
+# link-local (169.254.169.254 among it) except for DNS on port 53, the other
+# cloud metadata addresses and every other port stay unreachable. The proxy
+# checks each address itself as well; this policy holds if it fails to. A
+# NetworkPolicy port is the pod's port, after a Service has translated the
+# address, so an entry reached through a Service whose targetPort differs from
+# its port is dropped.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "continuo.fullname" . }}-egress-proxy-egress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "continuo.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ $instance }}
+      app.kubernetes.io/name: egress-proxy
+  policyTypes: ["Egress"]
+  egress:
+    {{- include "continuo.egress.dnsRule" . | nindent 4 }}
+    {{- with uniq $publicPorts }}
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: [10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 168.63.129.16/32, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16]
+        - ipBlock:
+            cidr: "::/0"
+            except: ["::1/128", "fc00::/7", "fe80::/10"]
+      ports:
+        {{- range . }}
+        - protocol: TCP
+          port: {{ . }}
+        {{- end }}
+    {{- end }}
+    {{- with uniq $privatePorts }}
+    - to:
+        {{- include "continuo.egress.privatePeers" $ | nindent 8 }}
+        - namespaceSelector: {}
+      ports:
+        {{- range . }}
+        - protocol: TCP
+          port: {{ . }}
+        {{- end }}
+    {{- end }}
+---
+# Only agent-chat and agent-remediation may use egress-proxy, on its proxy
+# port.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "continuo.fullname" . }}-allow-egress-proxy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "continuo.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ $instance }}
+      app.kubernetes.io/name: egress-proxy
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ $instance }}
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values: [agent-chat, agent-remediation]
+      ports:
+        - port: 3128
 {{- end }}
 {{- end }}

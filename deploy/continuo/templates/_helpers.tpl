@@ -1026,6 +1026,67 @@ only the hosts and ports on its allowlist, so it lists, comma-separated:
 {{- uniq $entries | join "," -}}
 {{- end -}}
 
+{{/* NetworkPolicy egress rule for name resolution: port 53, UDP and TCP, to
+any pod in any namespace (the cluster DNS) and to link-local addresses (a
+node-local DNS cache, or a cloud resolver at 169.254.169.254). Emits one YAML
+list item with no indentation. */}}
+{{- define "continuo.egress.dnsRule" -}}
+- to:
+    - namespaceSelector: {}
+    - ipBlock:
+        cidr: 169.254.0.0/16
+  ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+{{- end -}}
+
+{{/* The private address ranges as NetworkPolicy peers (10.0.0.0/8,
+100.64.0.0/10, 172.16.0.0/12, 192.168.0.0/16 and fc00::/7), less the cloud
+metadata addresses inside them (100.100.100.200, fd00:ec2::/32 and
+fd20:ce::254), which egress-proxy refuses too. Emits YAML list items with no
+indentation. */}}
+{{- define "continuo.egress.privatePeers" -}}
+- ipBlock:
+    cidr: 10.0.0.0/8
+- ipBlock:
+    cidr: 100.64.0.0/10
+    except: [100.100.100.200/32]
+- ipBlock:
+    cidr: 172.16.0.0/12
+- ipBlock:
+    cidr: 192.168.0.0/16
+- ipBlock:
+    cidr: "fc00::/7"
+    except: ["fd00:ec2::/32", "fd20:ce::254/128"]
+{{- end -}}
+
+{{/* The ports of the external Postgres (externalDatabase.port, with
+postgresql.enabled=false) and the external Redis (externalRedis.port, with
+redis.enabled=false), as a JSON list of numbers without duplicates; empty while
+both are bundled, as pods of the release namespace. The agents' NetworkPolicy
+admits them to the private ranges. The render fails on a port that is not a
+whole number from 1 to 65535, written in decimal. */}}
+{{- define "continuo.egress.externalDatastorePorts" -}}
+{{- $given := list -}}
+{{- if not .Values.postgresql.enabled -}}
+{{- $given = append $given (dict "key" "externalDatabase.port" "port" (.Values.externalDatabase | default dict).port) -}}
+{{- end -}}
+{{- if not .Values.redis.enabled -}}
+{{- $given = append $given (dict "key" "externalRedis.port" "port" (.Values.externalRedis | default dict).port) -}}
+{{- end -}}
+{{- $ports := list -}}
+{{- range $given -}}
+{{- $text := toString .port -}}
+{{- if or (not (has (kindOf .port) (list "int" "int64" "float64"))) (not (regexMatch "^[1-9][0-9]{0,4}$" $text)) (gt (atoi $text) 65535) -}}
+{{- fail (printf "%s=%s is not a port: the agents' NetworkPolicy admits the external datastore on it, so it must be a whole number from 1 to 65535" .key (toJson .port)) -}}
+{{- end -}}
+{{- $ports = append $ports (atoi $text) -}}
+{{- end -}}
+{{- uniq $ports | toJson -}}
+{{- end -}}
+
 {{- define "continuo.redis.host" -}}
 {{- if .Values.redis.enabled -}}
 {{- include "continuo.redis.fullname" . -}}

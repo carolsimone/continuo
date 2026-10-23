@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Chart lint gate for deploy/continuo: helm lint + helm template across every
 # supported values topology, then kube-linter over each rendered manifest, a
-# NetworkPolicy reachability check on the default render, plus a bash -n syntax
+# NetworkPolicy reachability check on each topology and on the egress
+# variants, plus a bash -n syntax
 # check on the release-flow scripts (they have no other CI gate). Runs
 # identically in CI (install-test.yml) and locally; needs helm, Go, and
 # Python 3 with PyYAML (both preinstalled on the CI runner).
@@ -46,11 +47,16 @@ done
 
 # The chart default-denies ingress and re-opens exactly the edges the service
 # graph needs. A service that starts calling another without its allow rule
-# ships a platform that is "up" but silently unreachable on that path. Assert
-# the required cross-service edges are present in the default render (which has
-# networkPolicy.enabled=true).
-echo "--- network policy reachability (defaults)"
-python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/defaults.yaml" continuo
+# ships a platform that is "up" but silently unreachable on that path. With
+# egress on, the agents reach the outside only through egress-proxy, and the
+# proxy only what its allowlist names. Assert both, in each topology (each has
+# networkPolicy.enabled=true); the checker reads what to expect from the
+# render's allowlist and datastores. The egress variants are checked with the
+# egress renders below.
+for f in defaults byo-example byo-inline byo-secret; do
+  echo "--- network policy reachability (${f})"
+  python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/${f}.yaml" continuo
+done
 
 # A service reads its HTTP port under one specific env name. The chart sets a
 # differently named variable that works only while the default happens to equal
@@ -401,13 +407,17 @@ helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set egress=null
 grep -q 'name: HTTPS_PROXY$' "${tmp}/egress-null.yaml" \
   || { echo "FAIL: a release without egress values must run the agents through the proxy"; exit 1; }
 python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-null.yaml"
+python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/egress-null.yaml" continuo
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set egress.enabled=false > "${tmp}/egress-off.yaml"
-if grep -qE 'name: (HTTP_PROXY|HTTPS_PROXY|NO_PROXY)$|-agents-egress$|-egress-proxy-egress$' "${tmp}/egress-off.yaml"; then
+if grep -qE 'name: (HTTP_PROXY|HTTPS_PROXY|NO_PROXY)$|-agents-egress$|-egress-proxy-egress$|-allow-egress-proxy$' "${tmp}/egress-off.yaml"; then
   echo "FAIL: egress.enabled=false must render no proxy variables and no egress policy"; exit 1
 fi
 python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-off.yaml"
+python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/egress-off.yaml" continuo
 # Every URL the agents call is at an IP address and no domain is listed: the
 # allowlist is empty, no proxy renders, and the agents get no proxy variables.
+# Their egress policy still renders, admitting those addresses directly, and
+# neither egress-proxy policy does: with no proxy pod they would select nothing.
 egress_all_ip=(--set llm.provider=openai-compatible --set llm.baseUrl=http://10.0.0.7:8000
   --set-json 'services=[{"name":"agent-chat","enabled":true},{"name":"agent-remediation","enabled":true,"env":{"GITHUB_BASE_URL":"http://10.0.0.8:8080"}}]')
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" "${egress_all_ip[@]}" > "${tmp}/egress-no-proxy.yaml"
@@ -415,6 +425,43 @@ if grep -q '^  name: continuo-egress-proxy$' "${tmp}/egress-no-proxy.yaml"; then
   echo "FAIL: an install whose every destination is an IP address must render no egress-proxy"; exit 1
 fi
 python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-no-proxy.yaml"
+grep -q '^  name: continuo-agents-egress$' "${tmp}/egress-no-proxy.yaml" \
+  || { echo "FAIL: with egress on and no proxy, the agents' egress policy must still render"; exit 1; }
+if grep -qE -- '-egress-proxy-egress$|-allow-egress-proxy$' "${tmp}/egress-no-proxy.yaml"; then
+  echo "FAIL: with no proxy, neither egress-proxy NetworkPolicy may render"; exit 1
+fi
+python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/egress-no-proxy.yaml" continuo \
+  --direct 10.0.0.7/32=8000 --direct 10.0.0.8/32=8080
+# networkPolicy.enabled=false renders no NetworkPolicy, the egress ones
+# included, while the agents still use the proxy.
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set networkPolicy.enabled=false > "${tmp}/netpol-off.yaml"
+if grep -q '^kind: NetworkPolicy$' "${tmp}/netpol-off.yaml"; then
+  echo "FAIL: networkPolicy.enabled=false must render no NetworkPolicy"; exit 1
+fi
+python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/netpol-off.yaml"
+# The agents reach an external Postgres or Redis on its configured port, which
+# the checker reads from the shared ConfigMap; egress-proxy reaches private
+# addresses only on the ports of allowPrivate entries, here 8443 while public
+# addresses take 443, 8080 and 8443. A datastore port that is not one fails the
+# render while the agents' egress policy renders, and only then.
+echo "--- egress: the agents reach an external datastore on its port; the proxy reaches private addresses on allowPrivate ports"
+egress_byo=(--set postgresql.enabled=false --set externalDatabase.host=pg.example.internal
+  --set externalDatabase.password=probe --set redis.enabled=false
+  --set externalRedis.host=redis.example.internal --set externalRedis.password=probe)
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" "${egress_byo[@]}" \
+  --set externalDatabase.port=6543 --set-json 'externalRedis.port=6380' \
+  --set-json 'egress.privateDomains=["git.corp.example:8443"]' --set-json 'egress.allowedDomains=["api.example.com:8080"]' \
+  > "${tmp}/egress-ports.yaml"
+python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/egress-ports.yaml" continuo
+refuse_render 'externalDatabase.port=0 is not a port' "${egress_byo[@]}" --set externalDatabase.port=0
+refuse_render 'externalRedis.port=70000 is not a port' "${egress_byo[@]}" --set externalRedis.port=70000
+refuse_render 'externalDatabase.port="5432" is not a port' --skip-schema-validation "${egress_byo[@]}" \
+  --set-string externalDatabase.port=5432
+for off in networkPolicy.enabled=false egress.enabled=false; do
+  helm template continuo "$CHART" --kube-version "$KUBE_VERSION" "${egress_byo[@]}" --set externalDatabase.port=0 \
+    --set "${off}" > /dev/null \
+    || { echo "FAIL: with ${off} no egress policy renders and externalDatabase.port=0 must render as before"; exit 1; }
+done
 # NO_PROXY covers every in-cluster address the agents are given, however it is
 # written: a global.*GrpcAddr in another namespace, an agent env URL at a .svc
 # name, and the namespace-qualified forms of a release Service. Such an address
@@ -504,15 +551,22 @@ helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set egress.enab
   || { echo "FAIL: with egress off, the allowlist is not built and llm.baseUrl must render"; exit 1; }
 
 # A URL host that is an IP address is reached directly: it stays out of the
-# allowlist and is in NO_PROXY, like every egress.directDestinations entry. A
-# loopback one needs nothing; one in link-local or a cloud metadata range fails.
-echo "--- egress: an IP address the agents reach directly is in NO_PROXY; loopback needs nothing; metadata fails"
+# allowlist, is in NO_PROXY and gets a rule on its port in the agents' egress
+# policy, like every egress.directDestinations entry. A loopback one needs
+# nothing; one in link-local or a cloud metadata range fails.
+echo "--- egress: an IP address the agents reach directly is in NO_PROXY and their egress policy; loopback needs nothing; metadata fails"
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
   --set llm.provider=openai-compatible --set llm.baseUrl=http://10.0.0.7:8000 \
   --set-json 'egress.directDestinations=[{"cidr":"203.0.113.10/32","ports":[5432]}]' > "${tmp}/egress-direct.yaml"
+grep -q 'cidr: 10.0.0.7/32' "${tmp}/egress-direct.yaml" \
+  || { echo "FAIL: an llm.baseUrl at an IP address must be a direct destination"; exit 1; }
+grep -q 'cidr: 203.0.113.10/32' "${tmp}/egress-direct.yaml" \
+  || { echo "FAIL: egress.directDestinations must reach the agents' egress policy"; exit 1; }
 grep -A1 'name: NO_PROXY' "${tmp}/egress-direct.yaml" | grep -q '10\.0\.0\.7' \
   || { echo "FAIL: an IP the agents reach directly must be in NO_PROXY"; exit 1; }
 python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-direct.yaml"
+python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/egress-direct.yaml" continuo \
+  --direct 10.0.0.7/32=8000 --direct 203.0.113.10/32=5432
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
   --set llm.provider=openai-compatible --set 'llm.baseUrl=http://[2001:DB8::1]:8000' > "${tmp}/egress-direct6.yaml"
 grep -A1 'name: NO_PROXY' "${tmp}/egress-direct6.yaml" | grep -q ',2001:db8::1[,"]' \
@@ -532,7 +586,7 @@ refuse_render 'services[name=agent-remediation].env.GITHUB_BASE_URL="https://[fe
 # outside loopback, link-local and cloud metadata ranges) and ports (whole
 # numbers 1-65535). The templates refuse a bad entry naming it; the schema
 # refuses most of them first.
-echo "--- egress.directDestinations: accepted entries reach NO_PROXY; bad entries fail the render"
+echo "--- egress.directDestinations: accepted entries reach NO_PROXY and the agents' egress policy; bad entries fail the render"
 direct_ok='[{"cidr":"203.0.113.10/32","ports":[5432]},{"cidr":"10.0.0.0/8","ports":[5432,6379]},{"cidr":"2001:db8::1/128","ports":[443]},{"cidr":"2001:DB8:0:0:0:0:0:0/32","ports":[1,65535]},{"cidr":"198.51.100.0/24","ports":[443.0]},{"cidr":"64:ff9b::cb00:710a/128","ports":[443]},{"cidr":"1.0.0.0/8","ports":[443]}]'
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set-json "egress.directDestinations=${direct_ok}" > "${tmp}/egress-direct-ok.yaml" \
   || { echo "FAIL: accepted egress.directDestinations entries must render"; exit 1; }
@@ -541,6 +595,10 @@ for cidr in 203.0.113.10/32 10.0.0.0/8 2001:db8::1/128 2001:db8:0:0:0:0:0:0/32 1
     || { echo "FAIL: egress.directDestinations entry ${cidr} must reach both agents' NO_PROXY"; exit 1; }
 done
 python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-direct-ok.yaml"
+python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/egress-direct-ok.yaml" continuo \
+  --direct 203.0.113.10/32=5432 --direct 10.0.0.0/8=5432,6379 --direct 2001:db8::1/128=443 \
+  --direct 2001:db8::/32=1,65535 --direct 198.51.100.0/24=443 --direct 64:ff9b::cb00:710a/128=443 \
+  --direct 1.0.0.0/8=443
 # S: the schema refuses the entry before any template runs, and the templates
 # refuse it too when the schema is skipped. T: the entry passes the schema and
 # the templates refuse it.
