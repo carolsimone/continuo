@@ -45,11 +45,23 @@ func (r *cancelledRunsRepository) Insert(ctx context.Context, runID uuid.UUID) e
 // id. Two runs whose hashes collide share a lock, which only serialises them.
 const runLockSpace = 0x52554e46
 
-func (r *cancelledRunsRepository) LockRun(ctx context.Context, runID uuid.UUID, exclusive bool) error {
-	q := `SELECT pg_advisory_xact_lock_shared($1, hashtext($2))`
-	if exclusive {
-		q = `SELECT pg_advisory_xact_lock($1, hashtext($2))`
-	}
+// HoldRunForDispatch takes runID's advisory lock shared for the rest of the
+// transaction, and HoldRunForFence takes it exclusive: dispatches share it,
+// and a fence excludes every dispatch. Each runs as its own statement before
+// the statement it guards (the fence read, or the fence insert and the lock
+// of the run's rows). Under READ COMMITTED every statement reads a snapshot
+// taken when it starts, so a statement that follows a granted lock sees
+// whatever the transaction that held the lock committed.
+func (r *cancelledRunsRepository) HoldRunForDispatch(ctx context.Context, runID uuid.UUID) error {
+	return r.lockRun(ctx, `SELECT pg_advisory_xact_lock_shared($1, hashtext($2))`, runID)
+}
+
+func (r *cancelledRunsRepository) HoldRunForFence(ctx context.Context, runID uuid.UUID) error {
+	return r.lockRun(ctx, `SELECT pg_advisory_xact_lock($1, hashtext($2))`, runID)
+}
+
+// lockRun runs the advisory lock query q on runID's lock key.
+func (r *cancelledRunsRepository) lockRun(ctx context.Context, q string, runID uuid.UUID) error {
 	if _, err := r.executor.ExecContext(ctx, q, runLockSpace, runID.String()); err != nil {
 		return fmt.Errorf("lock run %s: %w", runID, err)
 	}

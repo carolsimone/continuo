@@ -101,19 +101,26 @@ func newFakeUoW(depl repository.DeploymentRepository, cancelled repository.Cance
 	return &fakes.FakeUnitOfWork{Deployments: depl, Cancelled: cancelled}
 }
 
-// recordingCancelledRepo records the fences inserted and the run locks taken
-// (true for exclusive); Exists answers fenced.
+// recordingCancelledRepo records the fences inserted and the holds of a run
+// taken ("dispatch" or "fence"); Exists answers fenced.
 type recordingCancelledRepo struct {
 	mu       sync.Mutex
 	inserted []uuid.UUID
-	locks    []bool
+	holds    []string
 	fenced   bool
 }
 
-func (r *recordingCancelledRepo) LockRun(_ context.Context, _ uuid.UUID, exclusive bool) error {
+func (r *recordingCancelledRepo) HoldRunForDispatch(_ context.Context, _ uuid.UUID) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.locks = append(r.locks, exclusive)
+	r.holds = append(r.holds, "dispatch")
+	return nil
+}
+
+func (r *recordingCancelledRepo) HoldRunForFence(_ context.Context, _ uuid.UUID) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.holds = append(r.holds, "fence")
 	return nil
 }
 

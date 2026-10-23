@@ -242,5 +242,5 @@ func TestTaskDispatch_AFencedRunsAttemptWithAnOrphanPodIsLeftUnanswered(t *testi
 	assert.Equal(t, 1, live.reads)
 	assert.Zero(t, repo.addAttempts, "nothing is stored")
 	assert.Empty(t, out.created, "nothing is reported")
-	assert.Equal(t, []bool{false}, cancelled.locks, "the dispatch took the run lock shared before it read the fence")
+	assert.Equal(t, []string{"dispatch"}, cancelled.holds, "the dispatch held the run before it read the fence")
 }

@@ -68,7 +68,7 @@ func (h *TaskDispatchHandler) Handle(ctx context.Context, u uow.UnitOfWork, evt 
 	now := h.now()
 	if !found && !laterHeld {
 		fence := u.CancelledRunsRepo()
-		if err := fence.LockRun(ctx, evt.RunID, false); err != nil {
+		if err := fence.HoldRunForDispatch(ctx, evt.RunID); err != nil {
 			return err
 		}
 		fenced, err := fence.Exists(ctx, evt.RunID)

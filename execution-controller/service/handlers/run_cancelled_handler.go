@@ -54,7 +54,7 @@ func NewRunCancelledHandler(jobs ports.JobCache, lookup ports.JobLookup, termina
 // dedup row's id, kept on a row the cancel creates for provenance.
 func (h *RunCancelledHandler) Handle(ctx context.Context, u uow.UnitOfWork, evt events.RunCancelled, msgProcID uuid.UUID) (deleteJobs []string, err error) {
 	fence := u.CancelledRunsRepo()
-	if err := fence.LockRun(ctx, evt.RunID, true); err != nil {
+	if err := fence.HoldRunForFence(ctx, evt.RunID); err != nil {
 		return nil, err
 	}
 	if err := fence.Insert(ctx, evt.RunID); err != nil {
