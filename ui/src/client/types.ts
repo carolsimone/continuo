@@ -7,7 +7,7 @@ export interface ScheduleSummary {
   timezone: string;
   is_running: boolean;
   last_run_at: string | null;
-  last_run_status: string;  // "succeeded"/"failed"/"cancelled"/""
+  last_run_status: string;  // "succeeded"/"failed"/"cancelling"/"cancelled"/""; with is_running, "cancelling" marks a run being stopped
   last_run_id: string | null;  // null means never run
 }
 
@@ -18,7 +18,7 @@ export interface SchedulesResponse {
 export interface Scheduler {
   schedule_id: string;
   schedule_name: string;
-  status: string;
+  status: string;  // pending | running | cancelling | succeeded | failed | cancelled | skipped
   created_at: string | null;
   started_at: string | null;
   completed_at: string | null;
@@ -35,7 +35,7 @@ export interface Task {
   schema_name: string;
   table_name: string;
   job_name: string;
-  status: string;
+  status: string;  // pending | dispatched | queued | running | stopping | succeeded | failed | cancelled | skipped
   attempt: number;  // 0-based number of the task's current attempt
   max_retries: number;
   created_at: string | null;
@@ -95,7 +95,7 @@ export interface TaskAttempt {
   task_id: string;
   attempt: number;
   job_name: string;
-  status: string;  // dispatched | queued | running | succeeded | failed | cancelled
+  status: string;  // dispatched | queued | running | succeeded | failed | cancelled | stopped
   failure_class: string | null;
   failure_reason: string | null;
   dispatched_at: string | null;
@@ -114,7 +114,7 @@ export interface NodeRun {
   kind: string;             // cron | trigger | rerun | rebase | single_node_run
   terminal_status: string;  // "" if in flight
   task_id: string;
-  task_status: string;      // pending | dispatched | queued | running | succeeded | failed | cancelled | skipped
+  task_status: string;      // pending | dispatched | queued | running | stopping | succeeded | failed | cancelled | skipped
   attempt: number;          // 0-based number of the task's current attempt
   failure_class: string | null;   // why the latest attempt failed
   failure_reason: string | null;  // the specific failure within failure_class

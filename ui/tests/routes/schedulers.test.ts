@@ -60,6 +60,17 @@ describe('GET /api/schedulers/:id/tasks', () => {
     expect(t.created_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
+  it('reads a stopping task as stopping', async () => {
+    mockListTasks.mockImplementation((_req: any, callback: any) => {
+      callback(null, {
+        tasks: [{ task_id: 't1', schedule_id: 'abc-123', status: 'TASK_STATUS_STOPPING', attempt: 0, max_retries: 0 }],
+        total_count: 1,
+      });
+    });
+    const res = await request(app).get('/api/schedulers/abc-123/tasks');
+    expect(res.body.tasks[0].status).toBe('stopping');
+  });
+
   it('passes schedule_id to gRPC call', async () => {
     mockListTasks.mockImplementation((_req: any, callback: any) => {
       callback(null, { tasks: [], total_count: 0 });
@@ -449,6 +460,14 @@ describe('GET /api/schedulers/:id/rebase-preview', () => {
 
 describe('GET /api/schedulers/:id', () => {
   beforeEach(() => vi.clearAllMocks());
+
+  it('reads a cancelling run as cancelling', async () => {
+    mockGetScheduler.mockImplementation((_req: any, cb: any) => cb(null, { scheduler: {
+      schedule_id: 'run-3', schedule_name: 'daily', status: 'SCHEDULER_STATUS_CANCELLING', failure_reason: '',
+    } }));
+    const res = await request(app).get('/api/schedulers/run-3');
+    expect(res.body.status).toBe('cancelling');
+  });
 
   it("returns the run's failure reason, null when it has none", async () => {
     mockGetScheduler.mockImplementation((_req: any, cb: any) => cb(null, { scheduler: {

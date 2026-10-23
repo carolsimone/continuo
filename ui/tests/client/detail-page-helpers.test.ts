@@ -9,6 +9,8 @@ import {
   parseNodeId,
   resolveActiveGraph,
   resolveNodeStatus,
+  taskPillClass,
+  taskStatusTitle,
   toScheduleGraph,
 } from '../../src/client/detail-page-helpers';
 import { GraphNode, RunGraph, ScheduleGraph, Task, TaskAttempt } from '../../src/client/types';
@@ -200,6 +202,24 @@ describe('task attempt helpers', () => {
     expect(attemptPillClass('succeeded')).toBe('pill-sm--succeeded');
     expect(attemptPillClass('failed')).toBe('pill-sm--failed');
     expect(attemptPillClass('cancelled')).toBe('pill-sm--cancelled');
+  });
+
+  it('gives a stopped attempt its own pill, not the pending default', () => {
+    expect(attemptPillClass('stopped')).toBe('pill-sm--stopped');
+  });
+
+  it('gives a cancelling run and a stopping task their own pill classes', () => {
+    expect(taskPillClass('cancelling')).toBe('pill-sm--cancelling');
+    expect(taskPillClass('stopping')).toBe('pill-sm--stopping');
+    expect(taskPillClass('cancelled')).toBe('pill-sm--cancelled');
+    expect(taskPillClass('skipped')).toBe('pill-sm--skipped');
+    expect(taskPillClass('dispatched')).toBe('pill-sm--dispatched');
+    expect(taskPillClass('something-new')).toBe('pill-sm--pending');
+  });
+
+  it('titles a cancelling run and a stopping task by what they wait for', () => {
+    expect(taskStatusTitle('cancelling')).toBe('cancelling — waiting for its Jobs to stop');
+    expect(taskStatusTitle('stopping')).toBe('stopping — its Job is being deleted');
   });
 
   it('joins class and reason, shows either alone, and a dash when both are absent', () => {

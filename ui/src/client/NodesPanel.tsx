@@ -15,10 +15,12 @@ interface Props {
 }
 
 // Dispatched and queued tasks, which wait for execution-controller or for a
-// slot, are listed just before the running ones.
+// slot, are listed just before the running ones, and stopping tasks (a cancel is
+// deleting their Job) between the two. A status not listed sorts last.
 const STATUS_ORDER: Record<string, number> = {
-  failed: 0, dispatched: 1, queued: 2, running: 3, pending: 4, skipped: 5, succeeded: 6, cancelled: 7,
+  failed: 0, dispatched: 1, queued: 2, stopping: 3, running: 4, pending: 5, skipped: 6, succeeded: 7, cancelled: 8,
 };
+const UNLISTED_STATUS_RANK = 8;
 
 // A task finished when its highest-numbered attempt finished.
 function completedAtMs(task: Task, attemptsByTask: Map<string, TaskAttempt[]>): number {
@@ -32,7 +34,7 @@ function completedAtMs(task: Task, attemptsByTask: Map<string, TaskAttempt[]>): 
 // their incoming order.
 function sortTasks(tasks: Task[], attemptsByTask: Map<string, TaskAttempt[]>): Task[] {
   return [...tasks].sort((a, b) =>
-    (STATUS_ORDER[a.status] ?? 7) - (STATUS_ORDER[b.status] ?? 7) ||
+    (STATUS_ORDER[a.status] ?? UNLISTED_STATUS_RANK) - (STATUS_ORDER[b.status] ?? UNLISTED_STATUS_RANK) ||
     completedAtMs(b, attemptsByTask) - completedAtMs(a, attemptsByTask)
   );
 }
@@ -59,7 +61,7 @@ export function groupTasksByService(tasks: Task[], attemptsByTask: Map<string, T
       tasks: sortTasks(groupTasks, attemptsByTask),
     }))
     .sort((a, b) =>
-      (STATUS_ORDER[a.status] ?? 7) - (STATUS_ORDER[b.status] ?? 7) ||
+      (STATUS_ORDER[a.status] ?? UNLISTED_STATUS_RANK) - (STATUS_ORDER[b.status] ?? UNLISTED_STATUS_RANK) ||
       a.service.localeCompare(b.service),
     );
 }

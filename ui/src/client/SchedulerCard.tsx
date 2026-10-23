@@ -17,7 +17,7 @@ function formatTime(iso: string | null): string {
 }
 
 function cardBorderClass(status: string): string {
-  if (status === 'running' || status === 'succeeded') return 'card-border-green';
+  if (status === 'running' || status === 'cancelling' || status === 'succeeded') return 'card-border-green';
   if (status === 'failed') return 'card-border-red';
   return 'card-border-grey';
 }
@@ -78,10 +78,12 @@ export default function SchedulerCard({ schedule }: Props) {
     if (!schedule.is_running) setCancelDialogOpen(false);
   }, [schedule.is_running]);
 
+  // A cancelling run is active (is_running) but not running: it reads
+  // cancelling, and its Cancel button stays available.
   const displayStatus = neverRun
     ? 'never run'
     : schedule.is_running
-    ? 'running'
+    ? (schedule.last_run_status.toLowerCase() === 'cancelling' ? 'cancelling' : 'running')
     : schedule.last_run_status;
 
   // A schedule is "active" when its name matches an entry in schedules.yaml:
@@ -95,6 +97,7 @@ export default function SchedulerCard({ schedule }: Props) {
   const failed = tasks.filter(t => t.status === 'failed').length;
   const dispatched = tasks.filter(t => t.status === 'dispatched').length;
   const queued = tasks.filter(t => t.status === 'queued').length;
+  const stopping = tasks.filter(t => t.status === 'stopping').length;
   const running = tasks.filter(t => t.status === 'running').length;
   const pending = tasks.filter(t => t.status === 'pending').length;
   const pct = getScheduleProgressPercent(tasks);
@@ -246,6 +249,7 @@ export default function SchedulerCard({ schedule }: Props) {
               <span><span aria-hidden="true">❌</span> {failed} failed</span>
               <span><span aria-hidden="true">📤</span> {dispatched} dispatched</span>
               <span><span aria-hidden="true">🕒</span> {queued} queued</span>
+              <span><span aria-hidden="true">✋</span> {stopping} stopping</span>
               <span><span aria-hidden="true">🏃</span> {running} running</span>
               <span><span aria-hidden="true">⏳</span> {pending} pending</span>
             </div>

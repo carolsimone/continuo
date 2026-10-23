@@ -51,10 +51,11 @@ export function buildServiceColors(services: string[]): Map<string, string> {
 
 // Most-severe-first. A service with a running task reads running; one whose
 // tasks wait for a slot (queued) or for execution-controller (dispatched)
-// reads that before pending. `skipped` (cascade-skipped downstream of a
+// reads that before pending. A service with a stopping task (a cancel is
+// deleting its Job) reads stopping, above running. `skipped` (cascade-skipped downstream of a
 // failure) outranks `succeeded` so a partially- or fully-skipped service is
 // flagged rather than reading green.
-const ROLLUP_PRECEDENCE = ['failed', 'running', 'queued', 'dispatched', 'pending', 'skipped', 'succeeded', 'cancelled'];
+const ROLLUP_PRECEDENCE = ['failed', 'stopping', 'running', 'queued', 'dispatched', 'pending', 'skipped', 'succeeded', 'cancelled'];
 
 export function rollupStatus(statuses: string[]): string {
   for (const status of ROLLUP_PRECEDENCE) {

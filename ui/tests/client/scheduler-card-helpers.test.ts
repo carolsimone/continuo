@@ -21,6 +21,11 @@ function makeTask(status: string, table: string): Task {
 }
 
 describe('scheduler card helpers', () => {
+  it('does not count a stopping task as completed: its Job is still being deleted', () => {
+    const tasks = [makeTask('succeeded', 'a'), makeTask('stopping', 'b'), makeTask('cancelled', 'c')];
+    expect(getScheduleProgressLabel(tasks)).toBe('Completed: 2/3');
+  });
+
   it('shows completed nodes out of total instead of running nodes', () => {
     const tasks = [
       makeTask('succeeded', 'a'),

@@ -150,6 +150,38 @@ describe('SchedulerCard — cancel button uses .btn', () => {
   });
 });
 
+describe('SchedulerCard — a cancelling run', () => {
+  it('reads cancelling, counts as active and keeps Cancel available', () => {
+    const { container } = renderCard(baseSchedule({ is_running: true, last_run_status: 'cancelling', last_run_id: 'r1' }));
+    const badge = container.querySelector('.status-badge')!;
+    expect(badge).toHaveTextContent('cancelling');
+    expect(badge.className).toMatch(/\bstatus-cancelling\b/);
+    expect(container.querySelector('.card-border-grey')).toBeNull();
+    expect(screen.getByTitle('Cancel the active run')).toBeInTheDocument();
+    expect(screen.getByTitle('A run is already active')).toBeDisabled();
+  });
+
+  it('still reads running for a run that is not cancelling', () => {
+    const { container } = renderCard(baseSchedule({ is_running: true, last_run_status: 'running', last_run_id: 'r1' }));
+    expect(container.querySelector('.status-badge')).toHaveTextContent('running');
+  });
+
+  it('counts stopping tasks in the summary row', async () => {
+    const tasks = ['stopping', 'stopping', 'running', 'succeeded'].map((status, i) => ({
+      task_id: `t${i}`, service_name: 's', schema_name: 'a', table_name: `t${i}`, job_name: '',
+      status, attempt: 0, max_retries: 0, created_at: null,
+    }));
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      const body = url.includes('/tasks') ? { total_count: tasks.length, tasks } : {};
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(body) } as Response);
+    }));
+    const { container } = renderCard(baseSchedule({ is_running: true, last_run_status: 'cancelling', last_run_id: 'r1' }));
+    await waitFor(() => expect(container.querySelector('.summary-row')).not.toBeNull());
+    expect(container.querySelector('.summary-row')!.textContent).toMatch(/2 stopping/);
+  });
+});
+
 describe('SchedulerCard — drift strip', () => {
   it('renders the stale strip when /api/runs/:id/graph reports stale (in-flight run)', async () => {
     installFetch({ graph: { run_promotion_seq: 5, latest_promotion_seq: 7 } });
@@ -238,9 +270,9 @@ describe('SchedulerCard — task counts', () => {
     job_name: 'job', status, attempt: 0, max_retries: 0, created_at: null,
   });
 
-  it('counts dispatched and queued tasks before running and pending, and the counts add up to the total', async () => {
+  it('counts dispatched, queued and stopping tasks before running and pending, and the counts add up to the total', async () => {
     const statuses = [
-      'succeeded', 'succeeded', 'failed', 'dispatched', 'queued', 'queued', 'running', 'pending', 'pending', 'pending',
+      'succeeded', 'succeeded', 'failed', 'dispatched', 'queued', 'queued', 'stopping', 'running', 'pending', 'pending', 'pending',
     ];
     const tasks = statuses.map((s, i) => mkTask(i, s));
     installFetch({ tasks: { tasks, total_count: tasks.length } });
@@ -254,7 +286,7 @@ describe('SchedulerCard — task counts', () => {
       return [m?.[2], Number(m?.[1])] as const;
     });
     expect(counts).toEqual([
-      ['succeeded', 2], ['failed', 1], ['dispatched', 1], ['queued', 2], ['running', 1], ['pending', 3],
+      ['succeeded', 2], ['failed', 1], ['dispatched', 1], ['queued', 2], ['stopping', 1], ['running', 1], ['pending', 3],
     ]);
     expect(counts.reduce((sum, [, n]) => sum + n, 0)).toBe(tasks.length);
   });

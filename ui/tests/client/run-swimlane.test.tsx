@@ -76,6 +76,18 @@ describe('RunSwimlane', () => {
     expect(container.querySelector('.swim-node.pend')).toBeNull();
   });
 
+  it('paints a stopping node with the stop class, not pending, and names it in the legend', () => {
+    const g = { nodes: [node('core.a.stopping')], edges: [] as GraphEdge[] };
+    const { container } = render(
+      <RunSwimlane graph={g} tasks={[task('core.a.stopping', 'stopping')]} serviceOrder={['core']} collapsed={new Set()} onLaneToggle={vi.fn()} />,
+    );
+    expect(container.querySelector('.swim-node.stop')).toBeTruthy();
+    expect(container.querySelector('.swim-node.pend')).toBeNull();
+    const text = container.querySelector('.swim-legend')!.textContent ?? '';
+    expect(text).toContain('stopping');
+    expect(text.indexOf('stopping')).toBeLessThan(text.indexOf('running'));
+  });
+
   it('anchors an edge to a collapsed source cell, not 120px past it where the box would be', () => {
     const g = {
       nodes: [node('core.a.up'), node('finance.a.down')],
