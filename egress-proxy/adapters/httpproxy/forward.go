@@ -245,7 +245,9 @@ func (p *Proxy) forwardFailed(w http.ResponseWriter, r *http.Request, err error)
 		// past; the reply gets one idle timeout to be written.
 		_ = http.NewResponseController(rec.ResponseWriter).SetWriteDeadline(time.Now().Add(p.opts.IdleTimeout))
 		rec.Header().Set("Connection", "close")
-		p.refuse(rec, r, host, port, http.StatusGatewayTimeout, ReasonUpstreamError,
+		// The idle timeout set the read deadline in the past, which ends any read
+		// of what is left of the request body at once; refuse would replace it.
+		p.deny(rec, r, host, port, http.StatusGatewayTimeout, ReasonUpstreamError,
 			fmt.Sprintf("no byte moved either way for %s", p.opts.IdleTimeout))
 		return
 	}

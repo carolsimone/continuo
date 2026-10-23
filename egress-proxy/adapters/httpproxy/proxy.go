@@ -213,8 +213,21 @@ func (p *Proxy) releaseSlot() { <-p.slots }
 
 // refuse answers a request the proxy will not carry, records it and logs it.
 // The client sees only the reason; the detail, which may hold resolved
-// addresses, goes only to the log.
+// addresses, goes only to the log. A request whose body has not been read is
+// answered at once and its connection closed afterwards, and net/http's read
+// of what is left of that body is bounded by the header timeout: a client
+// cannot hold a socket by promising a body it never sends.
 func (p *Proxy) refuse(w http.ResponseWriter, r *http.Request, host string, port uint16, status int, reason, detail string) {
+	if r.Body != nil && r.Body != http.NoBody {
+		w.Header().Set("Connection", "close")
+		_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(p.opts.HeaderTimeout))
+	}
+	p.deny(w, r, host, port, status, reason, detail)
+}
+
+// deny records and logs a refusal and writes its answer. Callers that have
+// already bounded the client connection's reads use it directly.
+func (p *Proxy) deny(w http.ResponseWriter, r *http.Request, host string, port uint16, status int, reason, detail string) {
 	p.obs.Request(false, reason)
 	p.logger.Warn("egress denied",
 		slog.String("host", host),
