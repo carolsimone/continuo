@@ -41,3 +41,32 @@ func TestCancelledRuns_DeleteOlderThanKeepsTheReplayHorizon(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, fenced)
 }
+
+// Fencing a fenced run again, as each re-send of its cancel does, restarts
+// the fence's age: a fence state keeps re-sending is never swept, however
+// long ago the first cancel was.
+func TestCancelledRuns_AReInsertRefreshesTheFence(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	ctx := context.Background()
+	repo := postgres.NewCancelledRunsRepository(db)
+	runID := uuid.New()
+	require.NoError(t, repo.Insert(ctx, runID))
+	_, err := db.Exec(`UPDATE cancelled_runs SET cancelled_at = NOW() - interval '30 days 1 hour' WHERE run_id = $1`, runID)
+	require.NoError(t, err)
+
+	require.NoError(t, repo.Insert(ctx, runID))
+
+	var fresh bool
+	require.NoError(t, db.Get(&fresh, `SELECT cancelled_at > NOW() - interval '1 minute' FROM cancelled_runs WHERE run_id = $1`, runID))
+	assert.True(t, fresh, "the re-insert stamps the fence with the database clock")
+	n, err := repo.DeleteOlderThan(ctx, pkgmodel.ReplayHorizon)
+	require.NoError(t, err)
+	assert.Zero(t, n)
+	fenced, err := repo.Exists(ctx, runID)
+	require.NoError(t, err)
+	assert.True(t, fenced)
+	var rows int
+	require.NoError(t, db.Get(&rows, `SELECT count(*) FROM cancelled_runs WHERE run_id = $1`, runID))
+	assert.Equal(t, 1, rows)
+}

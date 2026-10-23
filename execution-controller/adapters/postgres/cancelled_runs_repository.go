@@ -31,9 +31,12 @@ func NewCancelledRunsRepository(executor cancelledExecutor) repository.Cancelled
 
 var _ repository.CancelledRunsRepository = (*cancelledRunsRepository)(nil)
 
+// Insert fences runID, stamping cancelled_at with the database clock; a fence
+// already set is stamped again, so its age counts from the latest cancel.
 func (r *cancelledRunsRepository) Insert(ctx context.Context, runID uuid.UUID) error {
-	_, err := r.executor.ExecContext(ctx,
-		`INSERT INTO cancelled_runs (run_id) VALUES ($1) ON CONFLICT DO NOTHING`, runID)
+	_, err := r.executor.ExecContext(ctx, `
+		INSERT INTO cancelled_runs (run_id) VALUES ($1)
+		ON CONFLICT (run_id) DO UPDATE SET cancelled_at = now()`, runID)
 	return err
 }
 
