@@ -3,6 +3,7 @@ package postgres_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
@@ -104,7 +105,7 @@ func benchmarkReports(b *testing.B, shape releaseShape, next func(keys []string,
 	var keys []string
 	require.NoError(b, db.Select(&keys,
 		`SELECT node_key FROM task_tracker WHERE schedule_id = $1 ORDER BY node_key COLLATE "C"`, r.ScheduleID()))
-	handler := handlers.NewAttemptReportHandler(tenant, testTaskDefaults, discardLogger())
+	handler := handlers.NewAttemptReportHandler(tenant, testTaskDefaults, noRunMetrics{}, discardLogger())
 	u := newPlanningUoW(db)
 	reported := map[string]bool{}
 
@@ -173,7 +174,9 @@ func BenchmarkReconcileDue(b *testing.B) {
 // noRunMetrics counts nothing.
 type noRunMetrics struct{}
 
-func (noRunMetrics) RunStalled() {}
+func (noRunMetrics) RunStalled()                {}
+func (noRunMetrics) RunsCancelling(_, _ int)    {}
+func (noRunMetrics) RunCancelled(time.Duration) {}
 
 // restoreRun returns a started run to how Start stored it: the tasks it
 // dispatched at creation (their dispatched_at equals their created_at)

@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/events"
+	"github.com/carolsimone/continuo/state/service/ports"
 	"github.com/carolsimone/continuo/state/service/uow"
 	"github.com/google/uuid"
 )
@@ -19,17 +21,19 @@ import (
 // writes the dispatches it recorded to the outbox. When the report makes a
 // task of a run state planned with an operation that writes the table
 // succeeded, it also records the version the task loaded into the warehouse,
-// which the seed reconcile compares with the live release.
+// which the seed reconcile compares with the live release. When the report
+// ends a cancelling run, it observes how long the cancel took.
 type AttemptReportHandler struct {
 	tenantID string
 	tasks    run.TaskDefaults
+	metrics  ports.RunMetrics
 	logger   *slog.Logger
 }
 
 // NewAttemptReportHandler constructs the handler for the runs of tenantID;
 // tasks names the timeout of a dispatch whose node declares none.
-func NewAttemptReportHandler(tenantID string, tasks run.TaskDefaults, logger *slog.Logger) *AttemptReportHandler {
-	return &AttemptReportHandler{tenantID: tenantID, tasks: tasks, logger: logger}
+func NewAttemptReportHandler(tenantID string, tasks run.TaskDefaults, metrics ports.RunMetrics, logger *slog.Logger) *AttemptReportHandler {
+	return &AttemptReportHandler{tenantID: tenantID, tasks: tasks, metrics: metrics, logger: logger}
 }
 
 // Handle applies evt inside u's transaction; the caller commits. The error of
@@ -54,6 +58,7 @@ func (h *AttemptReportHandler) Handle(ctx context.Context, u uow.UnitOfWork, evt
 	if err := u.Outbox().Append(ctx, domainEvents, msgProcID); err != nil {
 		return fmt.Errorf("append outbox: %w", err)
 	}
+	h.observeCancel(r, domainEvents, u.Clock().Now())
 	if succeeded && recordsBuiltVersions(r) {
 		if err := recordLoadedVersion(ctx, u, h.tenantID, h.logger, r, evt.Report.TaskID); err != nil {
 			return err
@@ -63,4 +68,18 @@ func (h *AttemptReportHandler) Handle(ctx context.Context, u uow.UnitOfWork, evt
 		"run_id", evt.RunID, "task_id", evt.Report.TaskID, "attempt", evt.Report.Attempt,
 		"status", evt.Report.Status, "failure_reason", evt.Report.FailureReason)
 	return nil
+}
+
+// observeCancel observes the time from the cancel to now when events end r
+// cancelled.
+func (h *AttemptReportHandler) observeCancel(r *run.Run, events []run.DomainEvent, now time.Time) {
+	if r.CancelledAt() == nil {
+		return
+	}
+	for _, evt := range events {
+		if fin, ok := evt.(run.RunFinalized); ok && fin.Outcome == run.SchedulerStatusCancelled {
+			h.metrics.RunCancelled(now.Sub(*r.CancelledAt()))
+			return
+		}
+	}
 }

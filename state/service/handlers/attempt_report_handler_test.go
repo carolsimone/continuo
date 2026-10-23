@@ -324,7 +324,59 @@ func report(runID, taskID uuid.UUID, n int32, status run.AttemptStatus) events.A
 }
 
 func newAttemptReportHandler() *handlers.AttemptReportHandler {
-	return handlers.NewAttemptReportHandler(pkgevents.DefaultTenantID, run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}, taskStatusTestLogger())
+	return newAttemptReportHandlerWith(&fakeRunMetrics{})
+}
+
+func newAttemptReportHandlerWith(metrics *fakeRunMetrics) *handlers.AttemptReportHandler {
+	return handlers.NewAttemptReportHandler(pkgevents.DefaultTenantID, run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}, metrics, taskStatusTestLogger())
+}
+
+// fakeRunMetrics records the cancel durations the handler observes.
+type fakeRunMetrics struct{ cancelled []time.Duration }
+
+func (*fakeRunMetrics) RunStalled()                    {}
+func (*fakeRunMetrics) RunsCancelling(_, _ int)        {}
+func (m *fakeRunMetrics) RunCancelled(d time.Duration) { m.cancelled = append(m.cancelled, d) }
+
+type fixedClock struct{ t time.Time }
+
+func (c fixedClock) Now() time.Time { return c.t }
+
+// The stopped report that ends a cancelling run's last task finalizes the run
+// cancelled and observes the time from its cancel to now; a run that ends any
+// other way observes nothing.
+func TestAttemptReportHandler_ObservesTheCancelDurationWhenARunEndsCancelled(t *testing.T) {
+	cancelledAt := time.Date(2026, 10, 23, 10, 0, 0, 0, time.UTC)
+	scheduleID, taskID := uuid.New(), uuid.New()
+	total, by := int32(1), "alice"
+	cancelling := run.HydrateRun(scheduleID, "daily", run.SchedulerStatusCancelling, run.InitStatusCompleted, run.KindCron, nil,
+		identity.SystemUserID, model.OperationRun, cancelledAt.Add(-time.Hour), nil, nil, &cancelledAt, &cancelledAt, &by, nil,
+		&total, 0, map[string]run.ServiceMetadata{})
+	runRepo := &fakeTaskStatusRunRepo{stored: cancelling}
+	outbox := &fakeTaskStatusOutboxPub{}
+	taskColl := (&fakeTaskStatusTaskCollection{prevStatus: run.TaskStatusStopping, prevExists: true, updateAffected: 1}).
+		held(taskID, 0, run.AttemptRunning)
+	u := newTaskStatusHandlerUoW(runRepo, outbox, taskColl)
+	u.SetClock(fixedClock{cancelledAt.Add(90 * time.Second)})
+	metrics := &fakeRunMetrics{}
+
+	require.NoError(t, newAttemptReportHandlerWith(metrics).Handle(context.Background(), u, report(scheduleID, taskID, 0, run.AttemptStopped), uuid.New()))
+
+	assert.Equal(t, run.SchedulerStatusCancelled, runRepo.stored.Status())
+	assert.Equal(t, []time.Duration{90 * time.Second}, metrics.cancelled)
+
+	t.Run("a run that succeeds observes nothing", func(t *testing.T) {
+		id, task := uuid.New(), uuid.New()
+		repo := &fakeTaskStatusRunRepo{stored: newRunningTaskStatusRun(id, "daily", 1, 0)}
+		coll := (&fakeTaskStatusTaskCollection{prevStatus: run.TaskStatusRunning, prevExists: true, updateAffected: 1}).held(task, 0, run.AttemptRunning)
+		m := &fakeRunMetrics{}
+
+		require.NoError(t, newAttemptReportHandlerWith(m).Handle(context.Background(), newTaskStatusHandlerUoW(repo, &fakeTaskStatusOutboxPub{}, coll),
+			report(id, task, 0, run.AttemptSucceeded), uuid.New()))
+
+		assert.Equal(t, run.SchedulerStatusSucceeded, repo.stored.Status())
+		assert.Empty(t, m.cancelled)
+	})
 }
 
 // A queued or running report moves its attempt to that status, saves the run

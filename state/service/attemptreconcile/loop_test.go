@@ -1,10 +1,12 @@
 package attemptreconcile_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,6 +33,12 @@ type fakeAttempts struct {
 	stalled   []uuid.UUID
 	questions map[repository.AttemptKey]run.Question
 	marked    map[repository.AttemptKey]time.Duration
+
+	dueStops      []uuid.UUID
+	stops         map[uuid.UUID]run.StopQuestion
+	cancelling    [2]int
+	overdueAfter  time.Duration
+	lockQuestions int
 }
 
 func (f *fakeAttempts) DueAttempts(context.Context, int) ([]repository.AttemptKey, error) {
@@ -43,12 +51,23 @@ func (f *fakeAttempts) StalledRuns(_ context.Context, idle time.Duration, _ int)
 	return f.stalled, nil
 }
 func (f *fakeAttempts) LockQuestion(_ context.Context, key repository.AttemptKey) (run.Question, bool, error) {
+	f.lockQuestions++
 	q, ok := f.questions[key]
 	return q, ok, nil
 }
 func (f *fakeAttempts) MarkQuestioned(_ context.Context, key repository.AttemptKey, next time.Duration) error {
 	f.marked[key] = next
 	return nil
+}
+
+func (f *fakeAttempts) DueStops(context.Context, int) ([]uuid.UUID, error) { return f.dueStops, nil }
+func (f *fakeAttempts) LockStops(_ context.Context, id uuid.UUID) (run.StopQuestion, bool, error) {
+	q, ok := f.stops[id]
+	return q, ok, nil
+}
+func (f *fakeAttempts) CountCancelling(_ context.Context, overdueAfter time.Duration) (int, int, error) {
+	f.overdueAfter = overdueAfter
+	return f.cancelling[0], f.cancelling[1], nil
 }
 
 type recordingOutbox struct{ events []run.DomainEvent }
@@ -62,9 +81,19 @@ type fixedClock struct{}
 
 func (fixedClock) Now() time.Time { return now }
 
-type countingMetrics struct{ stalled int }
+type countingMetrics struct {
+	stalled                       int
+	cancelling, overdue, observed int
+	cancelDurations               []time.Duration
+}
 
 func (m *countingMetrics) RunStalled() { m.stalled++ }
+func (m *countingMetrics) RunsCancelling(total, overdue int) {
+	m.cancelling, m.overdue, m.observed = total, overdue, m.observed+1
+}
+func (m *countingMetrics) RunCancelled(after time.Duration) {
+	m.cancelDurations = append(m.cancelDurations, after)
+}
 
 // runs serves one run for update and records saves.
 type runs struct {
@@ -157,6 +186,107 @@ func TestPass_FailsAStalledRunAndCountsIt(t *testing.T) {
 	assert.Equal(t, 1, metrics.stalled)
 	require.Len(t, outbox.events, 1)
 	assert.IsType(t, run.RunFinalized{}, outbox.events[0])
+}
+
+// The cancel of a cancelling run is sent again naming the attempts that have
+// not answered, in a transaction of its own, and each attempt's next check
+// moves to the stop's next window.
+func TestPass_ResendsTheCancelNamingTheUnansweredAttempts(t *testing.T) {
+	runID := uuid.New()
+	a := repository.AttemptKey{TaskID: uuid.New(), Attempt: 0}
+	b := repository.AttemptKey{TaskID: uuid.New(), Attempt: 2}
+	targets := []run.StopTarget{
+		{TaskID: a.TaskID, Attempt: a.Attempt, JobName: "job-a", ChecksSent: 0},
+		{TaskID: b.TaskID, Attempt: b.Attempt, JobName: "job-b", ChecksSent: 2},
+	}
+	attempts := &fakeAttempts{marked: map[repository.AttemptKey]time.Duration{}, dueStops: []uuid.UUID{runID},
+		stops: map[uuid.UUID]run.StopQuestion{runID: {RunID: runID, ScheduleName: "daily", CancelledBy: "alice", Reason: "bad data",
+			CancelledAt: now.Add(-6 * time.Minute), Attempts: targets}}}
+	outbox := &recordingOutbox{}
+	f := newFake(attempts, outbox)
+
+	require.NoError(t, newLoop(f, &countingMetrics{}).Pass(context.Background()))
+
+	require.Len(t, outbox.events, 1)
+	assert.Equal(t, run.RunCancelled{ID: runID, Name: "daily", By: "alice", CancellationReason: "bad data", Attempts: targets}, outbox.events[0])
+	assert.Equal(t, map[repository.AttemptKey]time.Duration{a: run.NextStopCheckAfter(1), b: run.NextStopCheckAfter(3)}, attempts.marked)
+	assert.Equal(t, 10*time.Minute, attempts.marked[a])
+	assert.Equal(t, 1, f.CommitCalled, "one transaction per cancelling run")
+}
+
+// A cancelling run another pass holds, or whose stops answered since it was
+// listed, is left alone.
+func TestPass_LeavesACancelItCannotLock(t *testing.T) {
+	attempts := &fakeAttempts{marked: map[repository.AttemptKey]time.Duration{}, dueStops: []uuid.UUID{uuid.New()},
+		stops: map[uuid.UUID]run.StopQuestion{}}
+	outbox := &recordingOutbox{}
+
+	require.NoError(t, newLoop(newFake(attempts, outbox), &countingMetrics{}).Pass(context.Background()))
+
+	assert.Empty(t, outbox.events)
+	assert.Empty(t, attempts.marked)
+}
+
+// A stop-requested attempt is only ever asked about by the cancel: the pass
+// locks it through LockStops, never LockQuestion, and a dispatch question is
+// not appended for it.
+func TestPass_AsksNoDispatchQuestionAboutAStopRequestedAttempt(t *testing.T) {
+	runID := uuid.New()
+	stopped := repository.AttemptKey{TaskID: uuid.New(), Attempt: 0}
+	attempts := &fakeAttempts{marked: map[repository.AttemptKey]time.Duration{}, dueStops: []uuid.UUID{runID},
+		questions: map[repository.AttemptKey]run.Question{},
+		stops: map[uuid.UUID]run.StopQuestion{runID: {RunID: runID, ScheduleName: "daily",
+			Attempts: []run.StopTarget{{TaskID: stopped.TaskID, Attempt: 0, JobName: "job"}}}}}
+	outbox := &recordingOutbox{}
+
+	require.NoError(t, newLoop(newFake(attempts, outbox), &countingMetrics{}).Pass(context.Background()))
+
+	require.Len(t, outbox.events, 1)
+	assert.IsType(t, run.RunCancelled{}, outbox.events[0], "the attempt is asked about with the cancel, not a dispatch")
+	assert.Zero(t, attempts.lockQuestions)
+}
+
+// Every pass sets the cancelling gauges from the database's counts, with the
+// overdue limit the loop owns.
+func TestPass_SetsTheCancellingGauges(t *testing.T) {
+	attempts := &fakeAttempts{cancelling: [2]int{3, 1}}
+	metrics := &countingMetrics{}
+
+	require.NoError(t, newLoop(newFake(attempts, &recordingOutbox{}), metrics).Pass(context.Background()))
+
+	assert.Equal(t, 15*time.Minute, attemptreconcile.CancelOverdueAfter)
+	assert.Equal(t, attemptreconcile.CancelOverdueAfter, attempts.overdueAfter)
+	assert.Equal(t, 3, metrics.cancelling)
+	assert.Equal(t, 1, metrics.overdue)
+	assert.Equal(t, 1, metrics.observed)
+}
+
+// A cancelling run past the overdue limit is logged at error level, naming
+// the attempts it waits for.
+func TestPass_LogsAnOverdueCancelNamingItsAttempts(t *testing.T) {
+	runID, taskID := uuid.New(), uuid.New()
+	overdue := run.StopQuestion{RunID: runID, ScheduleName: "daily", CancelledAt: now.Add(-attemptreconcile.CancelOverdueAfter - time.Minute),
+		Attempts: []run.StopTarget{{TaskID: taskID, Attempt: 1, JobName: "job-x"}}}
+	young := run.StopQuestion{RunID: uuid.New(), ScheduleName: "weekly", CancelledAt: now.Add(-time.Minute),
+		Attempts: []run.StopTarget{{TaskID: uuid.New(), Attempt: 0, JobName: "job-y"}}}
+	attempts := &fakeAttempts{marked: map[repository.AttemptKey]time.Duration{}, dueStops: []uuid.UUID{runID, young.RunID},
+		stops: map[uuid.UUID]run.StopQuestion{runID: overdue, young.RunID: young}}
+	var logs bytes.Buffer
+	loop := attemptreconcile.New(func() uow.UnitOfWork { return newFake(attempts, &recordingOutbox{}) }, "default", defaults, &countingMetrics{},
+		slog.New(slog.NewTextHandler(&logs, nil)))
+
+	require.NoError(t, loop.Pass(context.Background()))
+
+	var errorLines []string
+	for _, line := range strings.Split(logs.String(), "\n") {
+		if strings.Contains(line, "level=ERROR") {
+			errorLines = append(errorLines, line)
+		}
+	}
+	require.Len(t, errorLines, 1, "only the run past the limit is logged as an error")
+	assert.Contains(t, errorLines[0], runID.String())
+	assert.Contains(t, errorLines[0], taskID.String())
+	assert.Contains(t, errorLines[0], "job-x")
 }
 
 // failingCommit is a unit of work whose commit fails.

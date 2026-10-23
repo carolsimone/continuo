@@ -52,7 +52,9 @@ type StopQuestion struct {
 	ScheduleName string
 	CancelledBy  string
 	Reason       string
-	Attempts     []StopTarget
+	// CancelledAt is when the run was cancelled.
+	CancelledAt time.Time
+	Attempts    []StopTarget
 }
 
 // Cancel is the question as the run's cancel, naming every attempt it waits
