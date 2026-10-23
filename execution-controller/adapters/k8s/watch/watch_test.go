@@ -150,3 +150,29 @@ func TestWatch_JobNamesListsEveryCachedJob(t *testing.T) {
 	require.Eventually(t, func() bool { return len(w.JobNames()) == 2 }, 5*time.Second, 10*time.Millisecond)
 	assert.ElementsMatch(t, []string{"svc-s-t-1a2b3c4d", "svc-s-t-7f3e1a2b"}, w.JobNames())
 }
+
+// JobNames leaves out a Job that has finished (Complete or Failed) or is being
+// deleted: no pod of it runs again, so the resync has nothing of it to stop.
+// A Job whose failure is only targeted still has pods terminating and stays.
+func TestWatch_JobNamesLeavesOutFinishedAndDeletingJobs(t *testing.T) {
+	withCondition := func(name string, c batchv1.JobConditionType, s corev1.ConditionStatus) *batchv1.Job {
+		j := job(name)
+		j.Status.Conditions = []batchv1.JobCondition{{Type: c, Status: s}}
+		return j
+	}
+	deleting := job("svc-s-deleting-1a2b3c4d")
+	now := metav1.NewTime(time.Unix(100, 0))
+	deleting.DeletionTimestamp = &now
+	deleting.Finalizers = []string{"batch.kubernetes.io/job-tracking"}
+	cs := fake.NewClientset(
+		job("svc-s-live-1a2b3c4d"),
+		withCondition("svc-s-complete-1a2b3c4d", batchv1.JobComplete, corev1.ConditionTrue),
+		withCondition("svc-s-failed-1a2b3c4d", batchv1.JobFailed, corev1.ConditionTrue),
+		withCondition("svc-s-not-failed-1a2b3c4d", batchv1.JobFailed, corev1.ConditionFalse),
+		withCondition("svc-s-failing-1a2b3c4d", batchv1.JobFailureTarget, corev1.ConditionTrue),
+		deleting,
+	)
+	w, _ := startWatch(t, cs)
+
+	assert.ElementsMatch(t, []string{"svc-s-live-1a2b3c4d", "svc-s-not-failed-1a2b3c4d", "svc-s-failing-1a2b3c4d"}, w.JobNames())
+}

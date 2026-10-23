@@ -146,9 +146,10 @@ func (o *Observer) Run(ctx context.Context) error {
 }
 
 // Resync queues the Job of every started deployment and every Job the cache
-// holds, each name once, so no attempt waits on a watch event that was
-// missed, and a Job no deployment deploys is judged again: one of a run
-// fenced since the watch last saw it is deleted.
+// holds that can still run a pod (ports.JobCache.JobNames), each name once,
+// so no attempt waits on a watch event that was missed, and a Job no
+// deployment deploys is judged again: one of a run fenced since the watch
+// last saw it is deleted.
 func (o *Observer) Resync(ctx context.Context) error {
 	names, err := o.deps.Observed.ListObservedJobNames(ctx)
 	if err != nil {

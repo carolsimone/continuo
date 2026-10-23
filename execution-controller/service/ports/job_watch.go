@@ -13,7 +13,9 @@ type JobCache interface {
 	Synced() bool
 	// Observe returns what the cache holds of jobName's Job and its pods.
 	Observe(jobName string) model.JobObservation
-	// JobNames returns the name of every Job the cache holds.
+	// JobNames returns the name of every Job the cache holds that can still
+	// run a pod: one that has not finished (Complete or Failed) and is not
+	// being deleted.
 	JobNames() []string
 }
 

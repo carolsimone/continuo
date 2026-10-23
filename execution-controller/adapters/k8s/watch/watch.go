@@ -95,7 +95,9 @@ func (w *Watch) WaitForCacheSync(ctx context.Context) bool {
 // Synced reports whether both caches have listed every object once.
 func (w *Watch) Synced() bool { return w.jobsSynced() && w.podsSynced() }
 
-// JobNames returns the name of every Job the cache holds.
+// JobNames returns the name of every Job the cache holds that can still run
+// a pod: one with no true Complete or Failed condition and no deletion
+// timestamp.
 func (w *Watch) JobNames() []string {
 	jobs, err := w.jobs.Jobs(w.namespace).List(labels.Everything())
 	if err != nil {
@@ -103,9 +105,22 @@ func (w *Watch) JobNames() []string {
 	}
 	names := make([]string, 0, len(jobs))
 	for _, j := range jobs {
-		names = append(names, j.Name)
+		if j.DeletionTimestamp == nil && !jobFinished(j) {
+			names = append(names, j.Name)
+		}
 	}
 	return names
+}
+
+// jobFinished reports whether Kubernetes has marked j Complete or Failed: no
+// pod of it runs again.
+func jobFinished(j *batchv1.Job) bool {
+	for _, c := range j.Status.Conditions {
+		if c.Status == corev1.ConditionTrue && (c.Type == batchv1.JobComplete || c.Type == batchv1.JobFailed) {
+			return true
+		}
+	}
+	return false
 }
 
 // Observe returns what the cache holds of jobName's Job and pods.

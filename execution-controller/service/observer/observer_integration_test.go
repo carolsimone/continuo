@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"slices"
 	"testing"
 	"time"
 
@@ -908,8 +909,9 @@ func TestObserver_ReportsStoppedOnlyOnceThePodIsGone(t *testing.T) {
 
 // A Job with no record, of a run that is not fenced when the watch first sees
 // it, is left for adoption; once the run is fenced, the next resync queues it
-// with every Job the cache holds, each name once, and the Job is deleted. A
-// started deployment's Job the cache also holds is queued once.
+// with every Job the cache holds that can still run a pod, each name once, and
+// the Job is deleted. A started deployment's Job the cache also holds is
+// queued once; a finished Job and one being deleted are not queued.
 func TestResync_QueuesEveryCachedJobSoAFencedRunsRecordlessJobIsDeleted(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
@@ -920,9 +922,26 @@ func TestResync_QueuesEveryCachedJobSoAFencedRunsRecordlessJobIsDeleted(t *testi
 		return &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Labels: map[string]string{
 			"app": "dbt-job", "task-id": task, "attempt": "0", "schedule-id": run}}}
 	}
+	completed := jobOf("job-completed", uuid.NewString(), runID)
+	completed.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}
+	failed := jobOf("job-failed", uuid.NewString(), runID)
+	failed.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue}}
+	deleting := jobOf("job-deleting", uuid.NewString(), runID)
+	deletedAt := metav1.NewTime(h.now)
+	deleting.DeletionTimestamp, deleting.Finalizers = &deletedAt, []string{"batch.kubernetes.io/job-tracking"}
 	cs := fake.NewClientset(jobOf("job-created-anyway", taskID, runID),
-		jobOf(started.JobName(), started.Command().TaskID, started.Command().ScheduleID))
+		jobOf(started.JobName(), started.Command().TaskID, started.Command().ScheduleID), completed, failed, deleting)
 	h.watchOver(t, cs, ns)
+	queued := func() []string {
+		h.q.mu.Lock()
+		defer h.q.mu.Unlock()
+		return slices.Clone(h.q.added)
+	}
+	require.Eventually(t, func() bool {
+		got := queued()
+		return slices.Contains(got, "job-created-anyway") && slices.Contains(got, started.JobName()) &&
+			slices.Contains(got, "job-completed") && slices.Contains(got, "job-failed") && slices.Contains(got, "job-deleting")
+	}, 5*time.Second, 10*time.Millisecond, "the watch queues every Job it lists")
 	require.NoError(t, h.o.Process(ctx, "job-created-anyway"))
 	require.Empty(t, h.term.deleted, "a Job of a run that is not fenced is left for adoption")
 
@@ -933,8 +952,8 @@ func TestResync_QueuesEveryCachedJobSoAFencedRunsRecordlessJobIsDeleted(t *testi
 	h.q.mu.Unlock()
 	require.NoError(t, h.o.Resync(ctx))
 
-	assert.ElementsMatch(t, []string{"job-created-anyway", started.JobName()}, h.q.added,
-		"every cached Job and every started deployment, each once")
+	assert.ElementsMatch(t, []string{"job-created-anyway", started.JobName()}, queued(),
+		"every cached Job that can run a pod and every started deployment, each once")
 	require.NoError(t, h.o.Process(ctx, "job-created-anyway"))
 	assert.Equal(t, []string{"fenced_run"}, h.stop.reaped)
 	_, err = cs.BatchV1().Jobs(ns).Get(ctx, "job-created-anyway", metav1.GetOptions{})
