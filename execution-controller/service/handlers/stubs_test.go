@@ -5,10 +5,12 @@ import (
 	"database/sql"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	"github.com/carolsimone/continuo/execution-controller/domain/repository"
 	"github.com/carolsimone/continuo/execution-controller/test/fakes"
+	"github.com/google/uuid"
 )
 
 // stubDeploymentsRepo captures Add calls for assertion without a real DB.
@@ -97,4 +99,33 @@ func (r *stubDeploymentsRepo) HasAttemptAfter(_ context.Context, taskID string, 
 
 func newFakeUoW(depl repository.DeploymentRepository, cancelled repository.CancelledRunsRepository) *fakes.FakeUnitOfWork {
 	return &fakes.FakeUnitOfWork{Deployments: depl, Cancelled: cancelled}
+}
+
+// recordingCancelledRepo records the fences inserted and the run locks taken
+// (true for exclusive); Exists answers fenced.
+type recordingCancelledRepo struct {
+	mu       sync.Mutex
+	inserted []uuid.UUID
+	locks    []bool
+	fenced   bool
+}
+
+func (r *recordingCancelledRepo) LockRun(_ context.Context, _ uuid.UUID, exclusive bool) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.locks = append(r.locks, exclusive)
+	return nil
+}
+
+func (r *recordingCancelledRepo) Insert(_ context.Context, id uuid.UUID) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.inserted = append(r.inserted, id)
+	return nil
+}
+func (r *recordingCancelledRepo) Exists(_ context.Context, _ uuid.UUID) (bool, error) {
+	return r.fenced, nil
+}
+func (r *recordingCancelledRepo) DeleteOlderThan(_ context.Context, _ time.Duration) (int64, error) {
+	return 0, nil
 }

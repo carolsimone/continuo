@@ -2,12 +2,15 @@ package postgres_test
 
 import (
 	"context"
+	"encoding/json"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	repository "github.com/carolsimone/continuo/state/domain/repository"
@@ -429,6 +432,53 @@ func TestAttemptReconcile_AResentCancelMovesEachStopToItsNextWindow(t *testing.T
 
 	require.NoError(t, loop.Pass(ctx))
 	assert.Equal(t, before+1, outboxRows(), "the stops are not due again until their window passes")
+}
+
+// The re-sent cancel is stored as a run.cancelled:v1 row that names every
+// attempt of the run asked to stop that has not answered, each with its Job,
+// so execution-controller can stop an attempt it holds no row for.
+func TestAttemptReconcile_AResentCancelRowNamesTheUnansweredAttempts(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	tenant := storeFailureSchedule(t, db)
+	f := statusFlow{db: db, tenant: tenant, r: startScheduleRun(t, db, tenant, "e2e-schedule-failure", model.OperationRun)}
+	cancelRun(t, db, f.r)
+	f.makeStopsDue(t, time.Second)
+	var requested []struct {
+		TaskID  string `db:"task_id"`
+		Attempt int32  `db:"attempt"`
+		JobName string `db:"job_name"`
+	}
+	require.NoError(t, db.Select(&requested, `
+		SELECT a.task_id::text AS task_id, a.attempt, a.job_name FROM task_attempts a
+		JOIN task_tracker t ON t.task_id = a.task_id
+		WHERE t.schedule_id = $1 AND a.stop_requested_at IS NOT NULL
+		ORDER BY a.task_id::text`, f.r.ScheduleID()))
+	require.Len(t, requested, 2, "both running attempts were asked to stop")
+	stops := make([]pkgevents.CancelledAttempt, 0, len(requested))
+	for _, a := range requested {
+		stops = append(stops, pkgevents.CancelledAttempt{TaskID: a.TaskID, Attempt: a.Attempt, JobName: a.JobName})
+	}
+	loop := attemptreconcile.New(func() uow.UnitOfWork { return newPlanningUoW(db) }, tenant, testTaskDefaults, noRunMetrics{}, discardLogger())
+
+	require.NoError(t, loop.Pass(ctx))
+
+	var rows []struct {
+		EventType string `db:"event_type"`
+		Payload   []byte `db:"payload"`
+	}
+	require.NoError(t, db.Select(&rows, `SELECT event_type, payload FROM state_outbox WHERE aggregate_id = $1 AND stream_name = $2`,
+		f.r.ScheduleID(), streams.RunCancelledV1))
+	require.Len(t, rows, 1, "one re-sent cancel")
+	assert.Equal(t, streams.RunCancelledV1, rows[0].EventType)
+	var cancel pkgevents.RunCancelled
+	require.NoError(t, json.Unmarshal(rows[0].Payload, &cancel))
+	assert.Equal(t, f.r.ScheduleID().String(), cancel.RunID)
+	assert.Equal(t, "user", cancel.CancelledBy)
+	assert.Equal(t, stops, cancel.Attempts)
+	for _, a := range cancel.Attempts {
+		assert.NotEmpty(t, a.JobName, "each attempt names its Job")
+	}
 }
 
 // inUoW runs fn inside a unit of work's transaction and commits it.

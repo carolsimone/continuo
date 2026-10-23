@@ -63,7 +63,7 @@ func cleanupRedis(t *testing.T, ctx context.Context, clients *testClients) {
 	testStreams := []string{
 		streams.TaskDispatchV1,
 		streams.SchedulesLoadedV1,
-		streams.ScheduleCancelledV1,
+		streams.RunCancelledV1,
 	}
 
 	for _, stream := range testStreams {

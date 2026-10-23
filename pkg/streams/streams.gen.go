@@ -8,15 +8,13 @@ const (
 	SchedulesLoadedV1 = "schedules.loaded:v1"
 	// TaskDispatchV1 — One attempt of a task, from state to execution-controller, written in the transaction that decides the attempt (the run's creation, the success that makes the task ready, or the failure that retries it) and again whenever state asks about an attempt that has gone quiet, with state's view of it as known_status. execution-controller accepts each (task, attempt) once and answers a repeated dispatch with the attempt's latest report.
 	TaskDispatchV1 = "task.dispatch:v1"
-	// TaskStatusUpdatedV2 — What execution-controller knows of one attempt of a task — queued, running, succeeded, or failed with a failure class and reason — each report carrying every fact known so far. state applies a report only when it ranks higher than the attempt's current status, and on a failure decides in the same transaction whether to dispatch the next attempt.
+	// TaskStatusUpdatedV2 — What execution-controller knows of one attempt of a task — queued, running, succeeded, failed with a failure class and reason, or stopped once a cancel stopped it and no pod of it can run again — each report carrying every fact known so far. state applies a report only when it ranks higher than the attempt's current status, and on a failure decides in the same transaction whether to dispatch the next attempt.
 	TaskStatusUpdatedV2 = "task.status.updated:v2"
 	// OutboxDeadLetterV1 — Terminal outbox publish failures (permanent payload errors, or transient errors that exhausted their backoff budget), emitted by every service's outbox processor with the fields the row would have published. dead-letter-controller stores them for listing and redrive.
 	OutboxDeadLetterV1 = "outbox.dead_letter:v1"
 	// ConsumerDeadLetterV1 — Messages a stream consumer gave up on (a permanent error, or a transient error on its fifth delivery), written before the original is acknowledged. dead-letter-controller stores them for listing and redrive.
 	ConsumerDeadLetterV1 = "consumer.dead_letter:v1"
-	// ScheduleCancelledV1 — A run's cancellation, written by state; execution-controller records it and drops the run's dispatches and Job results that arrive afterwards.
-	ScheduleCancelledV1 = "schedule.cancelled:v1"
-	// RunCancelledV1 — A run's cancellation, written by state in the transaction that moves the run to cancelling, with every attempt of the run that has been dispatched and not ended, each with the name of its Job.
+	// RunCancelledV1 — A run's cancel, from state to execution-controller, with who cancelled it, why, and the attempts to stop, each with the name of its Job. state writes it with no attempt in the transaction that moves the run to cancelling, and again for each window in which attempts it asked to stop have not answered, naming those attempts. execution-controller fences the run, so no gate starts work for it, stops every attempt of the run it holds and every attempt the cancel names, and answers each with a stopped report once no pod of it can run again.
 	RunCancelledV1 = "run.cancelled:v1"
 	// ReleaseRequestedV1 — Candidate release accepted by release-controller; triggers manifest load for validation.
 	ReleaseRequestedV1 = "release.requested:v1"
@@ -64,8 +62,8 @@ const (
 	DeadLetterControllerOutboxDeadLetters = "dead-letter-controller-outbox-dead-letters"
 	// DeadLetterControllerConsumerDeadLetters — dead-letter-controller consumer group on consumer.dead_letter:v1.
 	DeadLetterControllerConsumerDeadLetters = "dead-letter-controller-consumer-dead-letters"
-	// ExecutorScheduleCancelled — execution-controller consumer group on schedule.cancelled:v1.
-	ExecutorScheduleCancelled = "executor-schedule-cancelled"
+	// ExecutorRunCancelled — execution-controller consumer group on run.cancelled:v1.
+	ExecutorRunCancelled = "executor-run-cancelled"
 	// TopologyControllerReleaseRequested — topology-controller consumer group on release.requested:v1.
 	TopologyControllerReleaseRequested = "topology-controller-release-requested"
 	// ReleaseControllerManifestLoadedCandidate — release-controller consumer group on manifest.loaded.candidate:v2.
@@ -118,7 +116,6 @@ var All = []string{
 	TaskStatusUpdatedV2,
 	OutboxDeadLetterV1,
 	ConsumerDeadLetterV1,
-	ScheduleCancelledV1,
 	RunCancelledV1,
 	ReleaseRequestedV1,
 	ManifestLoadedCandidateV2,
@@ -147,8 +144,7 @@ var Groups = map[string][]string{
 	TaskStatusUpdatedV2:         {StateTaskStatusUpdated},
 	OutboxDeadLetterV1:          {DeadLetterControllerOutboxDeadLetters},
 	ConsumerDeadLetterV1:        {DeadLetterControllerConsumerDeadLetters},
-	ScheduleCancelledV1:         {ExecutorScheduleCancelled},
-	RunCancelledV1:              {},
+	RunCancelledV1:              {ExecutorRunCancelled},
 	ReleaseRequestedV1:          {TopologyControllerReleaseRequested},
 	ManifestLoadedCandidateV2:   {ReleaseControllerManifestLoadedCandidate},
 	ValidationRequestedV1:       {ExecutorValidationRequested},
@@ -187,6 +183,7 @@ var Retired = []string{
 	"run.entries.dispatched:v1",
 	"run.finalized:v1",
 	"run.initialized:v1",
+	"schedule.cancelled:v1",
 	"scheduler.started:v1",
 	"seed.build.node.completed:v1",
 	"task.execution.recorded:v1",

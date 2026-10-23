@@ -36,7 +36,7 @@ func (e RunFinalized) ScheduleID() uuid.UUID { return e.ID }
 // RunCancelled is the cancel of a run: who cancelled it, why, and the
 // attempts state still waits for. Run.Cancel records it naming no attempt;
 // StopQuestion.Cancel re-sends it naming each attempt asked to stop that has
-// not answered. Translated to schedule.cancelled:v1.
+// not answered. Translated to run.cancelled:v1.
 type RunCancelled struct {
 	ID                 uuid.UUID
 	Name               string

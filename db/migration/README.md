@@ -7,7 +7,7 @@ Migrations are organized by service ownership:
 ```
 db/migration/
 ├── state/         State service (scheduler_tracker, task_tracker, task_attempts)
-├── execution/     Execution-controller (message_processing, execution_outbox, cancelled_schedules, deployments, validation_aggregates)
+├── execution/     Execution-controller (message_processing, execution_outbox, cancelled_runs, deployments, validation_aggregates)
 ├── dependency/    Dependency-controller (outbox, message_processing, published_messages)
 ├── dead_letter/   Dead-letter-controller (dead_letters, dead_letter_outbox)
 ```
@@ -17,7 +17,7 @@ db/migration/
 | Service | Database | Tables |
 |---------|----------|--------|
 | State | continuo_state | scheduler_tracker, task_tracker, task_attempts |
-| Execution-controller | continuo_execution | message_processing, execution_outbox, cancelled_schedules, deployments, validation_aggregates |
+| Execution-controller | continuo_execution | message_processing, execution_outbox, cancelled_runs, deployments, validation_aggregates |
 | Dependency-controller | continuo_dependency | outbox, message_processing, published_messages |
 | Dead-letter-controller | continuo_dead_letter | dead_letters, dead_letter_outbox |
 

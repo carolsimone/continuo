@@ -76,7 +76,7 @@ func TestSettle(t *testing.T) {
 	require.NoError(t, db.Get(&taskStatus, `SELECT status FROM task_tracker WHERE task_id = $1`, unplannedTask))
 	assert.Equal(t, "cancelled", taskStatus)
 	assert.Equal(t, 1, countOf(t, db, `SELECT count(*) FROM state_outbox WHERE aggregate_id = $1 AND stream_name = $2`,
-		unplanned, streams.ScheduleCancelledV1), "execution-controller is told to suppress the run's Jobs")
+		unplanned, streams.RunCancelledV1), "execution-controller is told to fence the run and stop its Jobs")
 
 	var plannedStatus string
 	require.NoError(t, db.Get(&plannedStatus, `SELECT status FROM scheduler_tracker WHERE schedule_id = $1`, planned))

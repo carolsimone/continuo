@@ -693,7 +693,7 @@ func (f *cancelFakeOutbox) Append(_ context.Context, evts []run.DomainEvent, _ u
 }
 
 // assertCancelEvents verifies a cancel emits exactly two domain events:
-// RunCancelled (the work-suppression guard, → schedule.cancelled:v1) and
+// RunCancelled (the run's fence and stop, → run.cancelled:v1) and
 // RunFinalized{cancelled}, which writes no row.
 func assertCancelEvents(t *testing.T, evts []run.DomainEvent, by string) {
 	t.Helper()

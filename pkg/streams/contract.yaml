@@ -30,7 +30,7 @@ streams:
 
   - name: task.status.updated:v2
     const: TaskStatusUpdatedV2
-    description: What execution-controller knows of one attempt of a task — queued, running, succeeded, or failed with a failure class and reason — each report carrying every fact known so far. state applies a report only when it ranks higher than the attempt's current status, and on a failure decides in the same transaction whether to dispatch the next attempt.
+    description: What execution-controller knows of one attempt of a task — queued, running, succeeded, failed with a failure class and reason, or stopped once a cancel stopped it and no pod of it can run again — each report carrying every fact known so far. state applies a report only when it ranks higher than the attempt's current status, and on a failure decides in the same transaction whether to dispatch the next attempt.
     producers: [execution-controller]
     consumers:
       - service: state
@@ -59,20 +59,14 @@ streams:
 
   # ---------------- cross-service fanout ----------------
 
-  - name: schedule.cancelled:v1
-    const: ScheduleCancelledV1
-    description: A run's cancellation, written by state; execution-controller records it and drops the run's dispatches and Job results that arrive afterwards.
+  - name: run.cancelled:v1
+    const: RunCancelledV1
+    description: A run's cancel, from state to execution-controller, with who cancelled it, why, and the attempts to stop, each with the name of its Job. state writes it with no attempt in the transaction that moves the run to cancelling, and again for each window in which attempts it asked to stop have not answered, naming those attempts. execution-controller fences the run, so no gate starts work for it, stops every attempt of the run it holds and every attempt the cancel names, and answers each with a stopped report once no pod of it can run again.
     producers: [state]
     consumers:
       - service: execution-controller
-        group: executor-schedule-cancelled
-        const: ExecutorScheduleCancelled
-
-  - name: run.cancelled:v1
-    const: RunCancelledV1
-    description: A run's cancellation, written by state in the transaction that moves the run to cancelling, with every attempt of the run that has been dispatched and not ended, each with the name of its Job.
-    producers: [state]
-    consumers: []
+        group: executor-run-cancelled
+        const: ExecutorRunCancelled
 
   # ---------------- release-controller streams (dbt blue/green) ----------------
 
@@ -259,6 +253,7 @@ retired_streams:
   - name: run.entries.dispatched:v1
   - name: run.finalized:v1
   - name: run.initialized:v1
+  - name: schedule.cancelled:v1
   - name: scheduler.started:v1
   - name: seed.build.node.completed:v1
   - name: task.execution.recorded:v1

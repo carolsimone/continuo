@@ -2,7 +2,8 @@
 // state did not plan. Such a run's tasks record neither when they were
 // dispatched nor which of them wait on which, so no status update can move it
 // on; cancelling it ends it, or stops the work it has in flight (Run.Cancel),
-// and schedule.cancelled:v1 tells execution-controller to suppress its Jobs.
+// and run.cancelled:v1 tells execution-controller to fence the run and stop
+// its Jobs.
 package runsettle
 
 import (

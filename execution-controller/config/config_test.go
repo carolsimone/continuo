@@ -2,8 +2,10 @@ package config
 
 import (
 	"encoding/json"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -190,4 +192,44 @@ func TestJobStartTimeoutRangeMatchesTheChart(t *testing.T) {
 	got := schema.Properties.Execution.Properties.StartTimeoutMinutes
 	assert.Equal(t, MinJobStartTimeout, time.Duration(got.Minimum)*time.Minute)
 	assert.Equal(t, MaxJobStartTimeout, time.Duration(got.Maximum)*time.Minute)
+}
+
+// Every environment variable the compose service and the e2e manifest set for
+// execution-controller is one its code reads, by name, in execution-controller
+// or pkg: a setting no code reads looks configurable while it changes
+// nothing.
+func TestDeploymentsSetOnlySettingsTheServiceReads(t *testing.T) {
+	root := filepath.Join("..", "..")
+	read := func(rel ...string) string {
+		raw, err := os.ReadFile(filepath.Join(append([]string{root}, rel...)...)) //nolint:gosec // G304: fixed repository paths
+		require.NoError(t, err)
+		return string(raw)
+	}
+	block := regexp.MustCompile(`(?ms)^  execution-controller:\n(.*?)(?:^  \S|\z)`).FindStringSubmatch(read("docker-compose.yml"))
+	require.NotNil(t, block, "docker-compose.yml has an execution-controller service")
+	set := map[string][]string{}
+	for _, m := range regexp.MustCompile(`(?m)^\s+- ([A-Z][A-Z0-9_]*)=`).FindAllStringSubmatch(block[1], -1) {
+		set[m[1]] = append(set[m[1]], "docker-compose.yml")
+	}
+	manifest := filepath.Join("tests", "e2e", "k8s", "execution-controller-deployment.yaml")
+	for _, m := range regexp.MustCompile(`(?m)^\s+- name: ([A-Z][A-Z0-9_]*)\s*$`).FindAllStringSubmatch(read(manifest), -1) {
+		set[m[1]] = append(set[m[1]], manifest)
+	}
+	require.NotEmpty(t, set)
+
+	var code strings.Builder
+	for _, dir := range []string{filepath.Join(root, "execution-controller"), filepath.Join(root, "pkg")} {
+		require.NoError(t, filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return err
+			}
+			raw, err := os.ReadFile(path) //nolint:gosec // G304: a Go file under the repository
+			code.Write(raw)
+			return err
+		}))
+	}
+	src := code.String()
+	for key, where := range set {
+		assert.True(t, strings.Contains(src, `"`+key+`"`), "%s, set by %v, is read by no code", key, where)
+	}
 }

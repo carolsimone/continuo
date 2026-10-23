@@ -17,10 +17,10 @@ const producer = "state"
 
 // OutboxPublisher publishes state's outbox entries to Redis streams. Each
 // outbox row represents one event, rendered as a field map (Render) and
-// written via XADD to the stream named by StreamName: a task.dispatch:v1 row
-// under an envelope, a dead-letter row as its dead-letter fields, and every
-// other row's JSON payload flattened to scalar fields, its nested values (e.g.
-// service_metadata maps) re-encoded as JSON strings.
+// written via XADD to the stream named by StreamName: a task.dispatch:v1 or
+// run.cancelled:v1 row under an envelope, a dead-letter row as its dead-letter
+// fields, and every other row's JSON payload flattened to scalar fields, its
+// nested values re-encoded as JSON strings.
 type OutboxPublisher struct {
 	redis  *goredis.Client
 	logger *slog.Logger
@@ -77,9 +77,10 @@ var _ outbox.Renderer = (*OutboxPublisher)(nil)
 
 // Render returns the field map Publish XADDs for entry, without
 // outbox_entry_id. A dead-letter row renders through outbox.DeadLetterValues;
-// a task.dispatch:v1 row's payload is the dispatch, under an envelope that
-// names the row as the event and the time it was written; every other row's
-// JSON payload is flattened to scalar fields, with nested values JSON-encoded.
+// a task.dispatch:v1 row's payload is the dispatch and a run.cancelled:v1
+// row's the cancel, each under an envelope that names the row as the event
+// and the time it was written; every other row's JSON payload is flattened to
+// scalar fields, with nested values JSON-encoded.
 // Every call returns a fresh map.
 func (p *OutboxPublisher) Render(entry *outbox.Entry) (map[string]any, error) {
 	switch entry.EventType {
@@ -99,6 +100,16 @@ func (p *OutboxPublisher) Render(entry *outbox.Entry) (map[string]any, error) {
 		values, err := pkgevents.TaskDispatchFields(entry.ID.String(), pkgevents.DefaultTenantID, producer, entry.CreatedAt, d)
 		if err != nil {
 			return nil, fmt.Errorf("%w: render %s: %v", pkgevents.ErrPermanent, streams.TaskDispatchV1, err)
+		}
+		return values, nil
+	case streams.RunCancelledV1:
+		var c pkgevents.RunCancelled
+		if err := json.Unmarshal(entry.Payload, &c); err != nil {
+			return nil, fmt.Errorf("%w: unmarshal %s: %v", pkgevents.ErrPermanent, streams.RunCancelledV1, err)
+		}
+		values, err := pkgevents.RunCancelledFields(entry.ID.String(), pkgevents.DefaultTenantID, producer, entry.CreatedAt, c)
+		if err != nil {
+			return nil, fmt.Errorf("%w: render %s: %v", pkgevents.ErrPermanent, streams.RunCancelledV1, err)
 		}
 		return values, nil
 	}
