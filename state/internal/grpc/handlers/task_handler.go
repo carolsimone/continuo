@@ -163,6 +163,8 @@ func protoToDomainTaskStatus(s statev1.TaskStatus) run.TaskStatus {
 		return run.TaskStatusDispatched
 	case statev1.TaskStatus_TASK_STATUS_QUEUED:
 		return run.TaskStatusQueued
+	case statev1.TaskStatus_TASK_STATUS_STOPPING:
+		return run.TaskStatusStopping
 	default:
 		return run.TaskStatusPending
 	}
@@ -187,6 +189,8 @@ func domainToProtoTaskStatus(s run.TaskStatus) statev1.TaskStatus {
 		return statev1.TaskStatus_TASK_STATUS_DISPATCHED
 	case run.TaskStatusQueued:
 		return statev1.TaskStatus_TASK_STATUS_QUEUED
+	case run.TaskStatusStopping:
+		return statev1.TaskStatus_TASK_STATUS_STOPPING
 	default:
 		return statev1.TaskStatus_TASK_STATUS_UNSPECIFIED
 	}
@@ -207,12 +211,15 @@ func domainToProtoTask(t *postgres.TaskTracker) *statev1.Task {
 		MaxRetries:  num.ClampInt32(t.MaxRetries),
 	}
 
-	if t.CancelledAt != nil {
-		task.CancelledAt = timestamppb.New(*t.CancelledAt)
-	}
-
-	if t.CancelledBy != nil {
-		task.CancelledBy = *t.CancelledBy
+	// A cancel stamps every task it asks to stop, so a stopping task that then
+	// succeeds or fails still holds the stamps; only a cancelled task was cancelled.
+	if t.Status == run.TaskStatusCancelled {
+		if t.CancelledAt != nil {
+			task.CancelledAt = timestamppb.New(*t.CancelledAt)
+		}
+		if t.CancelledBy != nil {
+			task.CancelledBy = *t.CancelledBy
+		}
 	}
 
 	return task

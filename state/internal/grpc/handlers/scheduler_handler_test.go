@@ -1120,6 +1120,7 @@ func TestCancelSchedule_ASecondCancelReturnsTheCancellingRun(t *testing.T) {
 	assert.False(t, tasks.beginStopCalled, "a second cancel stops nothing")
 	assert.Empty(t, outbox.appended, "a second cancel sends nothing")
 	assert.Equal(t, run.SchedulerStatusCancelling, runRepo.stored.Status())
+	assert.Equal(t, statev1.SchedulerStatus_SCHEDULER_STATUS_CANCELLING, domainToProtoSchedulerStatus(runRepo.stored.Status()))
 	require.NotNil(t, runRepo.stored.CancelledAt())
 	assert.True(t, runRepo.stored.CancelledAt().Equal(first))
 	require.NotNil(t, runRepo.stored.CancelledBy())
@@ -1143,11 +1144,99 @@ func TestCancelScheduler_ASecondCancelReturnsTheCancellingRun(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, id.String(), resp.Scheduler.ScheduleId)
+	assert.Equal(t, statev1.SchedulerStatus_SCHEDULER_STATUS_CANCELLING, resp.Scheduler.Status)
 	assert.Equal(t, "alice", resp.Scheduler.CancelledBy)
 	assert.True(t, resp.Scheduler.CancelledAt.AsTime().Equal(first))
 	assert.Nil(t, resp.Scheduler.CompletedAt, "a cancelling run has not ended")
 	assert.False(t, runRepo.saveCalled)
 	assert.Empty(t, outbox.appended)
+}
+
+// A cancel of a run with an attempt in flight answers CANCELLING: the run has
+// not ended, so the response must not say CANCELLED.
+func TestCancelScheduler_AFirstCancelWithAttemptsInFlightAnswersCancelling(t *testing.T) {
+	id := uuid.New()
+	runRepo := &cancelFakeRunRepo{stored: newPendingRun(id, "daily")}
+	tasks := &cancelFakeTaskCollection{beginStopCounts: run.StopCounts{Stopping: 2, Cancelled: 1}}
+	_, factory := newCancelUoWFactory(runRepo, &cancelFakeOutbox{}, tasks)
+	h := NewSchedulerHandler(nil, nil, nil, nil, factory, newTestLogger())
+
+	resp, err := h.CancelScheduler(context.Background(), &statev1.CancelSchedulerRequest{
+		ScheduleId:  id.String(),
+		CancelledBy: "ops-user",
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, statev1.SchedulerStatus_SCHEDULER_STATUS_CANCELLING, resp.Scheduler.Status)
+	assert.Nil(t, resp.Scheduler.CompletedAt, "a cancelling run has not ended")
+	assert.Equal(t, run.SchedulerStatusCancelling, runRepo.stored.Status())
+}
+
+// CancelSchedule answers with the run's id only; the run it cancelled is
+// cancelling while an attempt is in flight.
+func TestCancelSchedule_AFirstCancelWithAttemptsInFlightLeavesTheRunCancelling(t *testing.T) {
+	id := uuid.New()
+	runRepo := &cancelFakeRunRepo{stored: newPendingRun(id, "daily")}
+	tasks := &cancelFakeTaskCollection{beginStopCounts: run.StopCounts{Stopping: 1}}
+	_, factory := newCancelUoWFactory(runRepo, &cancelFakeOutbox{}, tasks)
+	h := NewSchedulerHandler(nil, nil, nil, nil, factory, newTestLogger())
+
+	resp, err := h.CancelSchedule(context.Background(), &statev1.CancelScheduleRequest{ScheduleName: "daily"})
+
+	require.NoError(t, err)
+	assert.Equal(t, id.String(), resp.ScheduleId)
+	assert.Equal(t, run.SchedulerStatusCancelling, runRepo.stored.Status())
+	assert.Equal(t, statev1.SchedulerStatus_SCHEDULER_STATUS_CANCELLING, domainToProtoSchedulerStatus(runRepo.stored.Status()))
+}
+
+// A cancelling run is reported CANCELLING by every read that carries a run's
+// status as the enum: GetScheduler (tracker) and the cancel responses (aggregate).
+func TestGetScheduler_ACancellingRunIsCancelling(t *testing.T) {
+	id := uuid.New()
+	at := time.Date(2026, 10, 23, 9, 0, 0, 0, time.UTC)
+	by := "alice"
+	repo := &stubSchedulerRepo{getByIDResult: &postgres.SchedulerTracker{
+		ScheduleID: id, ScheduleName: "daily", Status: run.SchedulerStatusCancelling,
+		CreatedAt: at.Add(-time.Hour), CancelledAt: &at, CancelledBy: &by, InitializationStatus: "completed",
+	}}
+	h := NewSchedulerHandler(repo, nil, nil, nil, noopUoWFactory(), newTestLogger())
+
+	resp, err := h.GetScheduler(context.Background(), &statev1.GetSchedulerRequest{ScheduleId: id.String()})
+
+	require.NoError(t, err)
+	assert.Equal(t, statev1.SchedulerStatus_SCHEDULER_STATUS_CANCELLING, resp.Scheduler.Status)
+	assert.Equal(t, "alice", resp.Scheduler.CancelledBy)
+	assert.Nil(t, resp.Scheduler.CompletedAt)
+}
+
+// ListAllSchedules carries the last run's status as a string and counts a
+// cancelling run as running.
+func TestListAllSchedules_ACancellingLastRunIsRunning(t *testing.T) {
+	catalogRepo := &stubCatalogRepo{existsActive: map[string]bool{"daily": true}}
+	repo := &stubSchedulerRepo{lastRunData: map[string]postgres.LastRunData{
+		"daily": {ScheduleName: "daily", ScheduleID: uuid.New(), Status: run.SchedulerStatusCancelling, CreatedAt: time.Now(), IsRunning: true},
+	}}
+	h := NewSchedulerHandler(repo, nil, catalogRepo, nil, noopUoWFactory(), newTestLogger())
+
+	resp, err := h.ListAllSchedules(context.Background(), &statev1.ListAllSchedulesRequest{})
+
+	require.NoError(t, err)
+	require.Len(t, resp.Schedules, 1)
+	assert.Equal(t, "cancelling", resp.Schedules[0].LastRunStatus)
+	assert.True(t, resp.Schedules[0].IsRunning)
+}
+
+func TestDomainToProtoSchedulerStatus_Cancelling(t *testing.T) {
+	assert.Equal(t, statev1.SchedulerStatus_SCHEDULER_STATUS_CANCELLING,
+		domainToProtoSchedulerStatus(run.SchedulerStatusCancelling))
+}
+
+// Every domain run status maps to its own proto status; none falls to UNSPECIFIED.
+func TestDomainToProtoSchedulerStatus_EveryStatusIsMapped(t *testing.T) {
+	for _, s := range run.SchedulerStatuses() {
+		assert.NotEqual(t, statev1.SchedulerStatus_SCHEDULER_STATUS_UNSPECIFIED, domainToProtoSchedulerStatus(s),
+			"run status %q must map to a proto status", s)
+	}
 }
 
 func TestCancelSchedule_OutboxError(t *testing.T) {

@@ -149,3 +149,13 @@ func TestListTaskAttempts_MapsEveryField(t *testing.T) {
 	assert.Empty(t, empty.GetLogS3Key())
 	assert.Empty(t, empty.GetRunResultsUri())
 }
+
+// A stopped attempt is reported with the status word "stopped".
+func TestListTaskAttempts_ReportsAStoppedAttempt(t *testing.T) {
+	stopped := projection.TaskAttempt{TaskID: uuid.New(), Attempt: 0, JobName: "job-orders", Status: "stopped",
+		DispatchedAt: time.Date(2026, 10, 23, 9, 0, 0, 0, time.UTC)}
+	resp, err := newAttemptHandler(&fakeAttemptReader{rows: []projection.TaskAttempt{stopped}, totalCount: 1}).
+		ListTaskAttempts(context.Background(), &statev1.ListTaskAttemptsRequest{RunId: uuid.NewString()})
+	require.NoError(t, err)
+	assert.Equal(t, "stopped", resp.GetAttempts()[0].GetStatus())
+}

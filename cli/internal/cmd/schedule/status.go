@@ -50,9 +50,10 @@ Output (stdout, JSON):
    "last_run_status":string,
    "nodes":[{"service_name":string,"schema_name":string,
              "table_name":string,"status":string}]}
-  status is one of: pending|dispatched|queued|running|succeeded|failed|cancelled|skipped.
+  status is one of: pending|dispatched|queued|running|stopping|succeeded|failed|cancelled|skipped.
   dispatched: an attempt was sent and not yet accepted; queued: the attempt
-  was accepted and waits for a slot to run in.
+  was accepted and waits for a slot to run in; stopping: a stop was requested
+  and the task waits for its attempt to stop.
   A schedule that has never run returns run_id:"" and nodes:[].
 
 Errors:

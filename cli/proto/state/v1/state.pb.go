@@ -32,6 +32,7 @@ const (
 	SchedulerStatus_SCHEDULER_STATUS_FAILED      SchedulerStatus = 4
 	SchedulerStatus_SCHEDULER_STATUS_CANCELLED   SchedulerStatus = 5
 	SchedulerStatus_SCHEDULER_STATUS_SKIPPED     SchedulerStatus = 6
+	SchedulerStatus_SCHEDULER_STATUS_CANCELLING  SchedulerStatus = 7 // a cancel was requested; the run waits for its attempts to stop
 )
 
 // Enum value maps for SchedulerStatus.
@@ -44,6 +45,7 @@ var (
 		4: "SCHEDULER_STATUS_FAILED",
 		5: "SCHEDULER_STATUS_CANCELLED",
 		6: "SCHEDULER_STATUS_SKIPPED",
+		7: "SCHEDULER_STATUS_CANCELLING",
 	}
 	SchedulerStatus_value = map[string]int32{
 		"SCHEDULER_STATUS_UNSPECIFIED": 0,
@@ -53,6 +55,7 @@ var (
 		"SCHEDULER_STATUS_FAILED":      4,
 		"SCHEDULER_STATUS_CANCELLED":   5,
 		"SCHEDULER_STATUS_SKIPPED":     6,
+		"SCHEDULER_STATUS_CANCELLING":  7,
 	}
 )
 
@@ -95,6 +98,7 @@ const (
 	TaskStatus_TASK_STATUS_SKIPPED     TaskStatus = 6
 	TaskStatus_TASK_STATUS_DISPATCHED  TaskStatus = 7 // an attempt was sent to execution-controller, which has not acknowledged it
 	TaskStatus_TASK_STATUS_QUEUED      TaskStatus = 8 // execution-controller accepted the attempt; it waits for a slot
+	TaskStatus_TASK_STATUS_STOPPING    TaskStatus = 9 // a stop was requested; the task waits for its attempt to stop
 )
 
 // Enum value maps for TaskStatus.
@@ -109,6 +113,7 @@ var (
 		6: "TASK_STATUS_SKIPPED",
 		7: "TASK_STATUS_DISPATCHED",
 		8: "TASK_STATUS_QUEUED",
+		9: "TASK_STATUS_STOPPING",
 	}
 	TaskStatus_value = map[string]int32{
 		"TASK_STATUS_UNSPECIFIED": 0,
@@ -120,6 +125,7 @@ var (
 		"TASK_STATUS_SKIPPED":     6,
 		"TASK_STATUS_DISPATCHED":  7,
 		"TASK_STATUS_QUEUED":      8,
+		"TASK_STATUS_STOPPING":    9,
 	}
 )
 
@@ -294,8 +300,8 @@ type Task struct {
 	Status        TaskStatus             `protobuf:"varint,8,opt,name=status,proto3,enum=state.v1.TaskStatus" json:"status,omitempty"`
 	Attempt       int32                  `protobuf:"varint,9,opt,name=attempt,proto3" json:"attempt,omitempty"` // 0-based number of the task's current attempt
 	MaxRetries    int32                  `protobuf:"varint,10,opt,name=max_retries,json=maxRetries,proto3" json:"max_retries,omitempty"`
-	CancelledAt   *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=cancelled_at,json=cancelledAt,proto3" json:"cancelled_at,omitempty"`
-	CancelledBy   string                 `protobuf:"bytes,12,opt,name=cancelled_by,json=cancelledBy,proto3" json:"cancelled_by,omitempty"`
+	CancelledAt   *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=cancelled_at,json=cancelledAt,proto3" json:"cancelled_at,omitempty"` // set only while status is CANCELLED
+	CancelledBy   string                 `protobuf:"bytes,12,opt,name=cancelled_by,json=cancelledBy,proto3" json:"cancelled_by,omitempty"` // set only while status is CANCELLED
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -420,7 +426,7 @@ type TaskAttempt struct {
 	TaskId        string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
 	Attempt       int32                  `protobuf:"varint,2,opt,name=attempt,proto3" json:"attempt,omitempty"`                                 // 0-based attempt number
 	JobName       string                 `protobuf:"bytes,3,opt,name=job_name,json=jobName,proto3" json:"job_name,omitempty"`                   // Kubernetes Job of this attempt
-	Status        string                 `protobuf:"bytes,4,opt,name=status,proto3" json:"status,omitempty"`                                    // dispatched | queued | running | succeeded | failed | cancelled
+	Status        string                 `protobuf:"bytes,4,opt,name=status,proto3" json:"status,omitempty"`                                    // dispatched | queued | running | succeeded | failed | stopped
 	FailureClass  string                 `protobuf:"bytes,5,opt,name=failure_class,json=failureClass,proto3" json:"failure_class,omitempty"`    // why the attempt failed; "" unless failed
 	FailureReason string                 `protobuf:"bytes,6,opt,name=failure_reason,json=failureReason,proto3" json:"failure_reason,omitempty"` // the specific failure within failure_class; "" unless failed
 	// exit_code is the container's exit code, 0 when unknown: a 0 is a clean
@@ -1243,7 +1249,7 @@ func (*ListAllSchedulesRequest) Descriptor() ([]byte, []int) {
 }
 
 // ScheduleSummary merges catalog data, last-run data, and cron config.
-// last_run_status uses lowercase strings ("succeeded", "failed", "cancelled")
+// last_run_status uses lowercase strings ("succeeded", "failed", "cancelling", "cancelled")
 // matching the domain model — intentionally not the SchedulerStatus enum
 // to decouple this message from scheduler_tracker internals.
 type ScheduleSummary struct {
@@ -1254,7 +1260,7 @@ type ScheduleSummary struct {
 	Timezone       string                 `protobuf:"bytes,4,opt,name=timezone,proto3" json:"timezone,omitempty"`                                   // top-level timezone from schedules.yaml
 	IsRunning      bool                   `protobuf:"varint,5,opt,name=is_running,json=isRunning,proto3" json:"is_running,omitempty"`
 	LastRunAt      *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=last_run_at,json=lastRunAt,proto3" json:"last_run_at,omitempty"`             // null if never run
-	LastRunStatus  string                 `protobuf:"bytes,7,opt,name=last_run_status,json=lastRunStatus,proto3" json:"last_run_status,omitempty"` // "succeeded"/"failed"/"cancelled"; empty if never run
+	LastRunStatus  string                 `protobuf:"bytes,7,opt,name=last_run_status,json=lastRunStatus,proto3" json:"last_run_status,omitempty"` // "succeeded"/"failed"/"cancelling"/"cancelled"; empty if never run
 	LastRunId      string                 `protobuf:"bytes,8,opt,name=last_run_id,json=lastRunId,proto3" json:"last_run_id,omitempty"`             // schedule_id of most recent run; empty string if never run
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
@@ -2394,9 +2400,9 @@ type NodeRun struct {
 	RunId          string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
 	ScheduleName   string                 `protobuf:"bytes,2,opt,name=schedule_name,json=scheduleName,proto3" json:"schedule_name,omitempty"`
 	Kind           string                 `protobuf:"bytes,3,opt,name=kind,proto3" json:"kind,omitempty"`                                           // cron | trigger | rerun | rebase | single_node_run
-	TerminalStatus string                 `protobuf:"bytes,4,opt,name=terminal_status,json=terminalStatus,proto3" json:"terminal_status,omitempty"` // "" while in flight
+	TerminalStatus string                 `protobuf:"bytes,4,opt,name=terminal_status,json=terminalStatus,proto3" json:"terminal_status,omitempty"` // the run's status: pending | running | cancelling | succeeded | failed | cancelled | skipped
 	TaskId         string                 `protobuf:"bytes,5,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
-	TaskStatus     string                 `protobuf:"bytes,6,opt,name=task_status,json=taskStatus,proto3" json:"task_status,omitempty"` // pending | dispatched | queued | running | succeeded | failed | cancelled | skipped
+	TaskStatus     string                 `protobuf:"bytes,6,opt,name=task_status,json=taskStatus,proto3" json:"task_status,omitempty"` // pending | dispatched | queued | running | stopping | succeeded | failed | cancelled | skipped
 	Attempt        int32                  `protobuf:"varint,7,opt,name=attempt,proto3" json:"attempt,omitempty"`                        // 0-based number of the task's current attempt
 	ImageTag       string                 `protobuf:"bytes,8,opt,name=image_tag,json=imageTag,proto3" json:"image_tag,omitempty"`
 	CreatedAt      string                 `protobuf:"bytes,10,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`               // RFC3339
@@ -2707,7 +2713,7 @@ type NodeSummary struct {
 	AvgDurationSec  int32                  `protobuf:"varint,6,opt,name=avg_duration_sec,json=avgDurationSec,proto3" json:"avg_duration_sec,omitempty"`   // -1 when no measurable run
 	P95DurationSec  int32                  `protobuf:"varint,7,opt,name=p95_duration_sec,json=p95DurationSec,proto3" json:"p95_duration_sec,omitempty"`   // -1 when no measurable run
 	FlakyRatePct    int32                  `protobuf:"varint,8,opt,name=flaky_rate_pct,json=flakyRatePct,proto3" json:"flaky_rate_pct,omitempty"`         // % of window runs with attempt > 0; 0 when none
-	LastStatus      string                 `protobuf:"bytes,9,opt,name=last_status,json=lastStatus,proto3" json:"last_status,omitempty"`                  // succeeded|failed|running|queued|dispatched|cancelled|skipped|pending
+	LastStatus      string                 `protobuf:"bytes,9,opt,name=last_status,json=lastStatus,proto3" json:"last_status,omitempty"`                  // succeeded|failed|running|stopping|queued|dispatched|cancelled|skipped|pending
 	LastRunAt       string                 `protobuf:"bytes,10,opt,name=last_run_at,json=lastRunAt,proto3" json:"last_run_at,omitempty"`                  // RFC3339 of the most recent run's created_at
 	Operation       string                 `protobuf:"bytes,11,opt,name=operation,proto3" json:"operation,omitempty"`                                     // run | test | build
 	TimeoutSeconds  int32                  `protobuf:"varint,12,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`    // the task timeout the node's tasks get: its declared timeout in the live release, else the install default
@@ -3012,7 +3018,7 @@ type RunGraphNode struct {
 	TableName     string                 `protobuf:"bytes,3,opt,name=table_name,json=tableName,proto3" json:"table_name,omitempty"`
 	ScheduleName  string                 `protobuf:"bytes,4,opt,name=schedule_name,json=scheduleName,proto3" json:"schedule_name,omitempty"` // the node's schedule in the run's release; "" when unknown
 	NodeType      string                 `protobuf:"bytes,5,opt,name=node_type,json=nodeType,proto3" json:"node_type,omitempty"`             // "" when the run names no release
-	Status        string                 `protobuf:"bytes,6,opt,name=status,proto3" json:"status,omitempty"`                                 // the task's status: pending | dispatched | queued | running | succeeded | failed | cancelled | skipped
+	Status        string                 `protobuf:"bytes,6,opt,name=status,proto3" json:"status,omitempty"`                                 // the task's status: pending | dispatched | queued | running | stopping | succeeded | failed | cancelled | skipped
 	TaskId        string                 `protobuf:"bytes,7,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -3917,7 +3923,7 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"\x1bListActiveRunDriftsResponse\x120\n" +
 	"\x14latest_promotion_seq\x18\x01 \x01(\x03R\x12latestPromotionSeq\x129\n" +
 	"\vactive_runs\x18\x02 \x03(\v2\x18.state.v1.ActiveRunDriftR\n" +
-	"activeRuns*\xea\x01\n" +
+	"activeRuns*\x8b\x02\n" +
 	"\x0fSchedulerStatus\x12 \n" +
 	"\x1cSCHEDULER_STATUS_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x18SCHEDULER_STATUS_PENDING\x10\x01\x12\x1c\n" +
@@ -3925,7 +3931,8 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"\x1aSCHEDULER_STATUS_SUCCEEDED\x10\x03\x12\x1b\n" +
 	"\x17SCHEDULER_STATUS_FAILED\x10\x04\x12\x1e\n" +
 	"\x1aSCHEDULER_STATUS_CANCELLED\x10\x05\x12\x1c\n" +
-	"\x18SCHEDULER_STATUS_SKIPPED\x10\x06*\xf6\x01\n" +
+	"\x18SCHEDULER_STATUS_SKIPPED\x10\x06\x12\x1f\n" +
+	"\x1bSCHEDULER_STATUS_CANCELLING\x10\a*\x90\x02\n" +
 	"\n" +
 	"TaskStatus\x12\x1b\n" +
 	"\x17TASK_STATUS_UNSPECIFIED\x10\x00\x12\x17\n" +
@@ -3936,7 +3943,8 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"\x15TASK_STATUS_CANCELLED\x10\x05\x12\x17\n" +
 	"\x13TASK_STATUS_SKIPPED\x10\x06\x12\x1a\n" +
 	"\x16TASK_STATUS_DISPATCHED\x10\a\x12\x16\n" +
-	"\x12TASK_STATUS_QUEUED\x10\b2\xc8\x0e\n" +
+	"\x12TASK_STATUS_QUEUED\x10\b\x12\x18\n" +
+	"\x14TASK_STATUS_STOPPING\x10\t2\xc8\x0e\n" +
 	"\fStateService\x12J\n" +
 	"\fGetScheduler\x12\x1d.state.v1.GetSchedulerRequest\x1a\x1b.state.v1.SchedulerResponse\x12P\n" +
 	"\x0fCancelScheduler\x12 .state.v1.CancelSchedulerRequest\x1a\x1b.state.v1.SchedulerResponse\x12Y\n" +
