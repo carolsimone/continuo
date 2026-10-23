@@ -107,7 +107,7 @@ func TestTaskAttempts_AFinalAttemptHasNoNextCheck(t *testing.T) {
 		require.NoError(t, tasks.SaveAttempt(ctx, open))
 		assert.Nil(t, dueIn(t, tx, ids[1], 0), "a window on an ending attempt is ignored")
 
-		for _, status := range []run.AttemptStatus{run.AttemptSucceeded, run.AttemptFailed, run.AttemptCancelled} {
+		for _, status := range []run.AttemptStatus{run.AttemptSucceeded, run.AttemptFailed, run.AttemptStopped} {
 			for n, in := range []time.Duration{0, 10 * time.Minute} {
 				fresh := run.Attempt{TaskID: ids[2], Number: int32(n), JobName: "job-c", Status: status, NextCheckIn: in}
 				require.NoError(t, tasks.SaveAttempt(ctx, fresh))

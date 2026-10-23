@@ -42,7 +42,7 @@ func TestAttempt_ApplyRanksTheReport(t *testing.T) {
 		{"a late queued after running", AttemptRunning, AttemptQueued, false, false, AttemptRunning},
 		{"a replayed final", AttemptFailed, AttemptFailed, false, false, AttemptFailed},
 		{"a final after another final", AttemptSucceeded, AttemptFailed, false, false, AttemptSucceeded},
-		{"a report for a cancelled attempt", AttemptCancelled, AttemptRunning, false, false, AttemptCancelled},
+		{"a report for a stopped attempt", AttemptStopped, AttemptRunning, false, false, AttemptStopped},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -105,7 +105,7 @@ func TestNextCheckAfter(t *testing.T) {
 		assert.Equal(t, 30*time.Minute, NextCheckAfter(s, 0), s)
 		assert.Equal(t, 30*time.Minute, NextCheckAfter(s, 7), s)
 	}
-	for _, s := range []AttemptStatus{AttemptSucceeded, AttemptFailed, AttemptCancelled} {
+	for _, s := range []AttemptStatus{AttemptSucceeded, AttemptFailed, AttemptStopped} {
 		assert.Zero(t, NextCheckAfter(s, 0), s)
 	}
 }

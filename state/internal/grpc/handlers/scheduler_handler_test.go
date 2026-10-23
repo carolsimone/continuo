@@ -770,7 +770,7 @@ func (f *cancelFakeTaskCollection) CancelOpenAttempts(_ context.Context, runID u
 		if a.Status.IsFinal() {
 			continue
 		}
-		a.Status = run.AttemptCancelled
+		a.Status = run.AttemptStopped
 		f.attemptRows[k] = a
 		n++
 	}

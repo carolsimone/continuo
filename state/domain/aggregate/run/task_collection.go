@@ -49,7 +49,7 @@ type TaskCollection interface {
 	AddAttempts(ctx context.Context, attempts []Attempt) error
 
 	// CancelOpenAttempts marks every dispatched, queued and running attempt of
-	// the tasks of the given run as cancelled, with no next check, and returns
+	// the tasks of the given run as stopped, with no next check, and returns
 	// how many it changed. Attempts that have ended are left as they are.
 	CancelOpenAttempts(ctx context.Context, runID uuid.UUID) (int, error)
 

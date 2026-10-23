@@ -327,7 +327,8 @@ func (r *Run) ServiceMetadata() map[string]ServiceMetadata {
 
 func (r *Run) IsTerminal() bool { return r.status.IsTerminal() }
 func (r *Run) IsActive() bool {
-	return r.status == SchedulerStatusPending || r.status == SchedulerStatusRunning
+	return r.status == SchedulerStatusPending || r.status == SchedulerStatusRunning ||
+		r.status == SchedulerStatusCancelling
 }
 
 // ============================================================================

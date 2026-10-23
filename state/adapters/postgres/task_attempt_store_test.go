@@ -236,8 +236,8 @@ func TestTaskAttempts_CancelOpenAttemptsLeavesFinalOnesAlone(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, 2, n)
 		statuses := attemptStatuses(t, tx, ids[0], ids[1], ids[2], others[0])
-		assert.Equal(t, "cancelled", statuses[ids[0].String()+"/0"])
-		assert.Equal(t, "cancelled", statuses[ids[1].String()+"/0"])
+		assert.Equal(t, "stopped", statuses[ids[0].String()+"/0"])
+		assert.Equal(t, "stopped", statuses[ids[1].String()+"/0"])
 		assert.Equal(t, "failed", statuses[ids[2].String()+"/0"])
 		assert.Equal(t, "running", statuses[others[0].String()+"/0"])
 		var due int

@@ -167,7 +167,7 @@ func (f *fakeTaskStatusTaskCollection) CancelOpenAttempts(_ context.Context, run
 		if a.Status.IsFinal() {
 			continue
 		}
-		a.Status = run.AttemptCancelled
+		a.Status = run.AttemptStopped
 		f.attemptRows[k] = a
 		n++
 	}

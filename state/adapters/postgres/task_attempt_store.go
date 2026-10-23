@@ -93,7 +93,7 @@ func saveAttempt(ctx context.Context, tx *sqlx.Tx, a run.Attempt) error {
 			parse_cache        = EXCLUDED.parse_cache,
 			parse_cache_reason = EXCLUDED.parse_cache_reason,
 			last_report_at     = GREATEST(task_attempts.last_report_at, EXCLUDED.last_report_at),
-			next_check_at      = CASE WHEN EXCLUDED.status IN ('succeeded', 'failed', 'cancelled') THEN NULL
+			next_check_at      = CASE WHEN EXCLUDED.status IN ('succeeded', 'failed', 'stopped') THEN NULL
 			                          WHEN $18::float8 > 0 THEN EXCLUDED.next_check_at
 			                          ELSE task_attempts.next_check_at END`,
 		a.TaskID, a.Number, a.JobName, string(a.Status), a.FailureClass, a.FailureReason,
@@ -138,12 +138,12 @@ func addAttempts(ctx context.Context, tx *sqlx.Tx, attempts []run.Attempt) error
 }
 
 // cancelOpenAttempts marks the dispatched, queued and running attempts of the
-// run's tasks cancelled, clears their next check, and returns how many it
+// run's tasks stopped, clears their next check, and returns how many it
 // changed.
 func cancelOpenAttempts(ctx context.Context, tx *sqlx.Tx, runID uuid.UUID) (int, error) {
 	res, err := tx.ExecContext(ctx, `
 		UPDATE task_attempts ta
-		SET status = 'cancelled', next_check_at = NULL
+		SET status = 'stopped', next_check_at = NULL
 		FROM task_tracker tt
 		WHERE ta.task_id = tt.task_id
 		  AND tt.schedule_id = $1

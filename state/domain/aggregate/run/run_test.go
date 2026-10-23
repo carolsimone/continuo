@@ -195,7 +195,7 @@ func (f *fakeTaskCollection) CancelOpenAttempts(_ context.Context, runID uuid.UU
 		if a.Status.IsFinal() {
 			continue
 		}
-		a.Status = run.AttemptCancelled
+		a.Status = run.AttemptStopped
 		f.attemptRows[k] = a
 		n++
 	}
@@ -524,8 +524,8 @@ func TestCancel_CancelsTheRunsOpenAttempts(t *testing.T) {
 	if len(tc.cancelledRuns) != 1 || tc.cancelledRuns[0] != r.ScheduleID() {
 		t.Fatalf("CancelOpenAttempts calls = %v, want [%s]", tc.cancelledRuns, r.ScheduleID())
 	}
-	if got := tc.attemptRows[attemptKey{id1, 0}].Status; got != run.AttemptCancelled {
-		t.Fatalf("running attempt status = %q, want %q", got, run.AttemptCancelled)
+	if got := tc.attemptRows[attemptKey{id1, 0}].Status; got != run.AttemptStopped {
+		t.Fatalf("running attempt status = %q, want %q", got, run.AttemptStopped)
 	}
 	if got := tc.attemptRows[attemptKey{id2, 0}].Status; got != run.AttemptSucceeded {
 		t.Fatalf("ended attempt status = %q, want %q", got, run.AttemptSucceeded)

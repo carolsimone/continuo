@@ -141,13 +141,13 @@ func TestCancel_CancelsTheOpenAttemptInTheCancelTransaction(t *testing.T) {
 
 	rows := f.attempts(t, key)
 	require.Len(t, rows, 1)
-	assert.Equal(t, "cancelled", rows[0].Status)
+	assert.Equal(t, "stopped", rows[0].Status)
 
 	f.report(t, key, 0, run.AttemptFailed, model.FailureReasonExitCode)
 
 	rows = f.attempts(t, key)
 	require.Len(t, rows, 1)
-	assert.Equal(t, "cancelled", rows[0].Status)
+	assert.Equal(t, "stopped", rows[0].Status)
 	status, _ := f.run(t)
 	assert.Equal(t, run.SchedulerStatusCancelled, status)
 }

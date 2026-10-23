@@ -9,7 +9,7 @@ import (
 
 // AttemptStatus is the lifecycle status of one execution attempt of a task:
 // a value of the contract's attempt_status vocabulary, which the two task
-// streams carry, or cancelled, which only state records.
+// streams carry.
 type AttemptStatus string
 
 const (
@@ -18,9 +18,9 @@ const (
 	AttemptRunning    = AttemptStatus(model.AttemptStatusRunning)
 	AttemptSucceeded  = AttemptStatus(model.AttemptStatusSucceeded)
 	AttemptFailed     = AttemptStatus(model.AttemptStatusFailed)
-	// AttemptCancelled is an attempt of a run that was cancelled while the
-	// attempt was open. It never travels on a stream.
-	AttemptCancelled AttemptStatus = "cancelled"
+	// AttemptStopped is an attempt that was stopped on request: its run was
+	// cancelled and no pod of it can run again.
+	AttemptStopped = AttemptStatus(model.AttemptStatusStopped)
 )
 
 // Rank orders the statuses along an attempt's life: dispatched 0, queued 1,
@@ -33,7 +33,7 @@ func (s AttemptStatus) Rank() int {
 		return 1
 	case AttemptRunning:
 		return 2
-	case AttemptSucceeded, AttemptFailed, AttemptCancelled:
+	case AttemptSucceeded, AttemptFailed, AttemptStopped:
 		return 3
 	}
 	return -1
