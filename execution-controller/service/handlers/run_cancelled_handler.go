@@ -167,21 +167,23 @@ func (h *RunCancelledHandler) stopNamed(ctx context.Context, u uow.UnitOfWork, c
 	if err != nil {
 		return "", err
 	}
-	if !job && obs.HasUnfinishedPod() {
+	action := model.DecideFenced(job, obs.HasUnfinishedPod())
+	var d *model.Deployment
+	switch action {
+	case model.StopAdopted:
+		if d, err = stoppedAdoption(cmd, procID, now); err != nil {
+			return "", err
+		}
+	case model.AwaitFencedPod:
 		h.logger.Error("A named attempt of a cancelled run has no record and no Job, but a pod of it has not finished — "+
 			"nothing is reported until the pod is gone; state asks again",
 			"run_id", cmd.ScheduleID, "task_id", cmd.TaskID, "attempt", cmd.Attempt, "job_name", cmd.JobName)
 		return "", nil
-	}
-	var d *model.Deployment
-	if job {
-		d = model.NewAdoptedDeployment(cmd, procID, now)
-		if _, err := d.Stop(now); err != nil {
-			return "", err
-		}
-	} else {
+	case model.StoreStopped:
 		d = model.NewStoppedDeployment(cmd, procID, now)
 		d.RecordReport(d.ReportOf(pkgmodel.AttemptStatusStopped, ""))
+	default:
+		return "", fmt.Errorf("named attempt %d of task %s: no fenced action %d", cmd.Attempt, cmd.TaskID, action)
 	}
 	added, err := repo.AddAttempt(ctx, d)
 	if err != nil {
@@ -197,7 +199,7 @@ func (h *RunCancelledHandler) stopNamed(ctx context.Context, u uow.UnitOfWork, c
 		}
 		return h.stopRow(ctx, u, held, now)
 	}
-	if job {
+	if action == model.StopAdopted {
 		h.logger.Info("A named attempt of a cancelled run has no record but its Job exists — the Job is stopped",
 			"run_id", cmd.ScheduleID, "task_id", cmd.TaskID, "attempt", cmd.Attempt, "job_name", cmd.JobName)
 		return cmd.JobName, nil

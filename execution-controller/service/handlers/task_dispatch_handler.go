@@ -142,24 +142,39 @@ func (h *TaskDispatchHandler) acceptFenced(ctx context.Context, u uow.UnitOfWork
 	if err != nil {
 		return err
 	}
-	if job {
-		d := model.NewAdoptedDeployment(cmd, procID, now)
-		if _, err := d.Stop(now); err != nil {
+	switch action := model.DecideFenced(job, obs.HasUnfinishedPod()); action {
+	case model.StopAdopted:
+		d, err := stoppedAdoption(cmd, procID, now)
+		if err != nil {
 			return err
 		}
 		h.logger.Info("A dispatch of a cancelled run found its Job — the Job is stopped",
 			"run_id", cmd.ScheduleID, "task_id", cmd.TaskID, "attempt", cmd.Attempt, "job_name", cmd.JobName)
 		return h.add(ctx, u, d, pkgmodel.AttemptStatusQueued, "")
-	}
-	if obs.HasUnfinishedPod() {
+	case model.AwaitFencedPod:
 		h.logger.Error("A dispatch of a cancelled run has no record and no Job, but a pod of it has not finished — "+
 			"nothing is reported until the pod is gone; state asks again",
 			"run_id", cmd.ScheduleID, "task_id", cmd.TaskID, "attempt", cmd.Attempt, "job_name", cmd.JobName)
 		return nil
+	case model.StoreStopped:
+		h.logger.Info("A dispatch of a cancelled run is stored stopped and creates no Job",
+			"run_id", cmd.ScheduleID, "task_id", cmd.TaskID, "attempt", cmd.Attempt)
+		return h.add(ctx, u, model.NewStoppedDeployment(cmd, procID, now), pkgmodel.AttemptStatusStopped, "")
+	default:
+		return fmt.Errorf("fenced dispatch of attempt %d of task %s: no action %d", cmd.Attempt, cmd.TaskID, action)
 	}
-	h.logger.Info("A dispatch of a cancelled run is stored stopped and creates no Job",
-		"run_id", cmd.ScheduleID, "task_id", cmd.TaskID, "attempt", cmd.Attempt)
-	return h.add(ctx, u, model.NewStoppedDeployment(cmd, procID, now), pkgmodel.AttemptStatusStopped, "")
+}
+
+// stoppedAdoption is the record of cmd's attempt rebuilt from the command for
+// its existing Job, with the stop recorded at now: it is terminating, so the
+// observer deletes the Job and reports the attempt stopped once its pods are
+// gone.
+func stoppedAdoption(cmd command.DeployTask, procID *uuid.UUID, now time.Time) (*model.Deployment, error) {
+	d := model.NewAdoptedDeployment(cmd, procID, now)
+	if _, err := d.Stop(now); err != nil {
+		return nil, err
+	}
+	return d, nil
 }
 
 // jobOfAttempt reports whether a Job carrying cmd's task and attempt exists:

@@ -66,6 +66,40 @@ func DecideDispatch(held, laterHeld bool, problem pkgmodel.FailureReason, jobOfA
 	return ReportLost
 }
 
+// FencedAction is what execution-controller does with an attempt of a fenced
+// run that it holds no record of: one a dispatch of the run carries, or one
+// the run's cancel names. No such attempt starts.
+type FencedAction int
+
+const (
+	// StopAdopted: a Job of the attempt exists; its record is rebuilt from
+	// the command and moved to terminating with the stop recorded, so the Job
+	// is deleted and the attempt reported stopped once its pods are gone.
+	StopAdopted FencedAction = iota + 1
+	// AwaitFencedPod: no Job of the attempt exists, but a pod of it has not
+	// finished (its Job was deleted without its pods). Nothing is written
+	// while the pod can still run; state's next cancel names the attempt
+	// again.
+	AwaitFencedPod
+	// StoreStopped: neither a Job nor an unfinished pod of the attempt
+	// exists; the attempt is stored done with the outcome stopped and
+	// reported stopped.
+	StoreStopped
+)
+
+// DecideFenced decides what an attempt of a fenced run with no record leads
+// to, from whether a Job carrying its task and attempt exists and whether a
+// pod of it has not finished.
+func DecideFenced(jobOfAttempt, podOfAttemptUnfinished bool) FencedAction {
+	switch {
+	case jobOfAttempt:
+		return StopAdopted
+	case podOfAttemptUnfinished:
+		return AwaitFencedPod
+	}
+	return StoreStopped
+}
+
 // maxJobNameLen is the longest name of a Kubernetes Job: the Job controller
 // copies it into a label value, which holds at most 63 characters.
 const maxJobNameLen = 63
