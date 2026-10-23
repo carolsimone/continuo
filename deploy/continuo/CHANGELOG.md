@@ -12,6 +12,10 @@ shipped in those.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-10-23
+
+state decides every attempt of every task and execution-controller runs exactly one attempt per dispatch: a failed attempt is retried by its failure class, each task's Job is stopped at its timeout, and a run left with nothing in flight fails as `stalled`. `runs.taskMaxRetries`, `runs.taskTimeoutHours` and `execution.startTimeoutMinutes` are new with defaults, and an existing values file keeps working. **MINOR.**
+
 ### Added
 - Domain teams declare a node's task timeout: `meta.timeout_minutes` on a dbt node (inherited from `dbt_project.yml`), `timeout_minutes` on a Python contract entry (only when both the CLI that builds the contract and the image base the service's nodes run in are continuo-python-runtime 0.10.0 or later; with an older image base every run of every node of that service fails when it loads its contracts). The value must be an integer from 1 to 10,080 minutes, or the release is rejected as `invalid_artifact` naming the node. It is outside the content hash, so a release that changes only a timeout promotes without validation. state stores it per release (`topology_nodes.timeout_seconds`, migration V46); the node page and `continuo node list` show the timeout a node's tasks get and whether it is declared or the install default (`timeout_seconds`, `timeout_declared`). Each task's Job is stopped at its timeout (see `runs.taskTimeoutHours`). MINOR.
 - `runs.taskMaxRetries` (default 2, 0–10; `TASK_MAX_RETRIES` on the shared ConfigMap): how many retries a task gets after its first attempt, stamped on each task when its run is created. state retries a failed attempt at once while its task has retries left, unless the attempt failed by timing out or because its dispatch cannot run (failure classes `timeout` and `invalid`). A budget of 0 fails a task on its first failure. A value outside the range fails the render, and state refuses to start on one. MINOR.
