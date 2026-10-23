@@ -101,12 +101,14 @@ type TaskCollection interface {
 	SkipPending(ctx context.Context, runID uuid.UUID) (int, error)
 
 	// BeginStop stops every task of the given run that has not ended: a
-	// pending task is cancelled, and a dispatched, queued or running one
-	// becomes stopping. Each one is stamped cancelled_by and cancelled_at with
-	// cancelledAt, the instant the Run aggregate cancelled the run at, and
-	// stays locked until the transaction ends. A task that succeeded, failed,
-	// was skipped or was cancelled is left as it is. It returns how many tasks
-	// it cancelled and how many it made stopping.
+	// dispatched, queued or running task whose current attempt is open
+	// (dispatched, queued or running) becomes stopping, and every other one,
+	// a pending task or a task with no open current attempt, is cancelled, as
+	// no attempt of it can answer a stop. Each one is stamped cancelled_by and
+	// cancelled_at with cancelledAt, the instant the Run aggregate cancelled
+	// the run at, and stays locked until the transaction ends. A task that
+	// succeeded, failed, was skipped or was cancelled is left as it is. It
+	// returns how many tasks it cancelled and how many it made stopping.
 	BeginStop(ctx context.Context, runID uuid.UUID, cancelledBy string, cancelledAt time.Time) (StopCounts, error)
 
 	// RequestStops asks the current attempt of each stopping task of the

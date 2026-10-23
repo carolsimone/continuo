@@ -497,23 +497,34 @@ func (r *taskTrackerRepository) HasNonSucceededTask(ctx context.Context, schedul
 }
 
 // BeginStopTx stops the schedule's tasks that have not ended, in one
-// statement within the given transaction: a pending task becomes cancelled, a
-// dispatched, queued or running one stopping, and each is stamped with
-// cancelled_at and cancelled_by. A task that has ended (succeeded, failed,
-// skipped or cancelled) or is already stopping keeps its status. The update
-// locks each row it changes until tx ends; a report of an attempt of the run
-// locks the run first, so it reads these rows only after the cancel commits.
-// It returns how many tasks it cancelled and how many it made stopping.
+// statement within the given transaction: a dispatched, queued or running
+// task whose current attempt is open (dispatched, queued or running) becomes
+// stopping, and every other one of them, a pending task or a task with no
+// open current attempt, becomes cancelled, since no attempt of it can answer
+// a stop. Each is stamped with cancelled_at and cancelled_by. A task that has
+// ended (succeeded, failed, skipped or cancelled) or is already stopping keeps
+// its status. The update locks each row it changes until tx ends; a report of
+// an attempt of the run locks the run first, so it reads these rows only after
+// the cancel commits. It returns how many tasks it cancelled and how many it
+// made stopping.
 func (r *taskTrackerRepository) BeginStopTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID, cancelledBy string, cancelledAt time.Time) (run.StopCounts, error) {
 	var statuses []string
 	err := tx.SelectContext(ctx, &statuses, `
-		UPDATE task_tracker
-		SET status       = CASE WHEN status = 'pending' THEN 'cancelled' ELSE 'stopping' END,
+		UPDATE task_tracker t
+		SET status       = CASE
+		                     WHEN t.status = 'pending' OR NOT EXISTS (
+		                       SELECT 1 FROM task_attempts a
+		                       WHERE a.task_id = t.task_id
+		                         AND a.attempt = t.attempt
+		                         AND a.status IN ('dispatched', 'queued', 'running'))
+		                     THEN 'cancelled'
+		                     ELSE 'stopping'
+		                   END,
 		    cancelled_at = $2,
 		    cancelled_by = $3
-		WHERE schedule_id = $1
-		  AND status IN ('pending', 'dispatched', 'queued', 'running')
-		RETURNING status
+		WHERE t.schedule_id = $1
+		  AND t.status IN ('pending', 'dispatched', 'queued', 'running')
+		RETURNING t.status
 	`, scheduleID, cancelledAt, cancelledBy)
 	if err != nil {
 		return run.StopCounts{}, fmt.Errorf("stop the tasks of schedule_id %s: %w", scheduleID, err)

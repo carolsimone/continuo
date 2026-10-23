@@ -96,8 +96,10 @@ type fakeTaskCollection struct {
 	stopsBegun   []uuid.UUID
 	cancelledBy  map[uuid.UUID]string
 	stopRequests []uuid.UUID
-	// stopRequested holds the attempts RequestStops asked to stop.
-	stopRequested map[attemptKey]bool
+	// stopRequested holds the attempts RequestStops asked to stop;
+	// unansweredStops makes RequestStops ask none.
+	stopRequested   map[attemptKey]bool
+	unansweredStops bool
 	statuses      map[uuid.UUID]run.TaskStatus
 	attempts      map[uuid.UUID]int32
 	hasFailed     bool
@@ -195,30 +197,36 @@ func (f *fakeTaskCollection) SkipPending(_ context.Context, _ uuid.UUID) (int, e
 	return n, nil
 }
 
-// BeginStop cancels the pending tasks the fake holds and makes the dispatched,
-// queued and running ones stopping: a test builds one run, so every stored
+// BeginStop makes the dispatched, queued and running tasks the fake holds
+// whose current attempt is open stopping, and cancels the pending ones and
+// those with no open current attempt: a test builds one run, so every stored
 // task belongs to it.
 func (f *fakeTaskCollection) BeginStop(_ context.Context, runID uuid.UUID, by string, _ time.Time) (run.StopCounts, error) {
 	f.stopsBegun = append(f.stopsBegun, runID)
 	var counts run.StopCounts
 	for id, s := range f.statuses {
 		switch s {
-		case run.TaskStatusPending:
+		case run.TaskStatusPending, run.TaskStatusDispatched, run.TaskStatusQueued, run.TaskStatusRunning:
+			if a, ok := f.attemptRows[attemptKey{id, f.attempts[id]}]; s != run.TaskStatusPending && ok && !a.Status.IsFinal() {
+				f.statuses[id] = run.TaskStatusStopping
+				counts.Stopping++
+				continue
+			}
 			f.statuses[id] = run.TaskStatusCancelled
 			f.cancelledBy[id] = by
 			counts.Cancelled++
-		case run.TaskStatusDispatched, run.TaskStatusQueued, run.TaskStatusRunning:
-			f.statuses[id] = run.TaskStatusStopping
-			counts.Stopping++
 		}
 	}
 	return counts, nil
 }
 
 // RequestStops asks the current attempt of each stopping task to stop when it
-// is open, and returns those attempts.
+// is open, and returns those attempts; with unansweredStops it asks none.
 func (f *fakeTaskCollection) RequestStops(_ context.Context, runID uuid.UUID) ([]run.StopTarget, error) {
 	f.stopRequests = append(f.stopRequests, runID)
+	if f.unansweredStops {
+		return nil, nil
+	}
 	var targets []run.StopTarget
 	for id, s := range f.statuses {
 		if s != run.TaskStatusStopping {
@@ -635,6 +643,43 @@ func TestCancel_ARunWithNothingInFlightIsCancelledAtOnce(t *testing.T) {
 	for _, task := range tc.bulkCreated {
 		assert.Equal(t, run.TaskStatusCancelled, tc.statuses[task.TaskID])
 	}
+}
+
+// A task in flight whose current attempt has ended has no attempt to answer a
+// stop: the cancel cancels it with the pending tasks, and a run with nothing
+// else in flight ends cancelled at once.
+func TestCancel_ATaskInFlightWithNoOpenAttemptIsCancelled(t *testing.T) {
+	r, tc, g := startedFailureRun(t)
+	report(t, r, tc, g, "ftable_a", 0, run.AttemptRunning, "")
+	report(t, r, tc, g, "ftable_b", 0, run.AttemptRunning, "")
+	delete(tc.attemptRows, attemptKey{taskOf(r, "ftable_b"), 0})
+	cancelAt := reportAt.Add(time.Minute)
+
+	_, err := r.Cancel(context.Background(), tc, "alice", "bad data", cancelAt)
+
+	require.NoError(t, err)
+	assert.Equal(t, run.SchedulerStatusCancelling, r.Status(), "ftable_a's attempt is open")
+	assert.Equal(t, run.TaskStatusStopping, tc.statuses[taskOf(r, "ftable_a")])
+	assert.Equal(t, run.TaskStatusCancelled, tc.statuses[taskOf(r, "ftable_b")], "no attempt of it is open")
+	assert.Equal(t, map[attemptKey]bool{{taskOf(r, "ftable_a"), 0}: true}, tc.stopRequested)
+	assert.Equal(t, int32(7), r.TerminalTaskCount(), "ftable_b and the six pending tasks")
+}
+
+// A cancel that makes a task stopping without asking an attempt of it to stop
+// would leave a run no report ever ends: it fails, so its transaction rolls
+// back, and the run is left as it was.
+func TestCancel_AStoppingTaskWithNoStopRequestedFailsTheCancel(t *testing.T) {
+	r, tc, g := startedFailureRun(t)
+	report(t, r, tc, g, "ftable_a", 0, run.AttemptRunning, "")
+	tc.unansweredStops = true
+
+	events, err := r.Cancel(context.Background(), tc, "alice", "bad data", reportAt.Add(time.Minute))
+
+	require.ErrorIs(t, err, run.ErrStopUnanswerable)
+	assert.Empty(t, events)
+	assert.Equal(t, run.SchedulerStatusRunning, r.Status())
+	assert.Nil(t, r.CancelledAt())
+	assert.False(t, r.Changes().IsCancelDirty())
 }
 
 // A second cancel of a cancelling run is refused before it touches a task:

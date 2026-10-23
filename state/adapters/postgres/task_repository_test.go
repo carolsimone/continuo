@@ -107,6 +107,10 @@ func TestTaskTrackerRepository_BeginStopTx(t *testing.T) {
 	exhaustedID := uuid.New()
 	succeededID := uuid.New()
 	skippedID := uuid.New()
+	// A running task with no attempt row, and a dispatched task at attempt 1
+	// whose open attempt is attempt 0: neither has an open current attempt.
+	noAttemptID := uuid.New()
+	staleAttemptID := uuid.New()
 	for _, tt := range []struct {
 		id         uuid.UUID
 		status     run.TaskStatus
@@ -121,6 +125,8 @@ func TestTaskTrackerRepository_BeginStopTx(t *testing.T) {
 		{exhaustedID, run.TaskStatusFailed, 2, 2},
 		{succeededID, run.TaskStatusSucceeded, 0, 2},
 		{skippedID, run.TaskStatusSkipped, 0, 2},
+		{noAttemptID, run.TaskStatusRunning, 0, 2},
+		{staleAttemptID, run.TaskStatusDispatched, 1, 2},
 	} {
 		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskTracker{
 			TaskID:      tt.id,
@@ -136,6 +142,12 @@ func TestTaskTrackerRepository_BeginStopTx(t *testing.T) {
 		}))
 	}
 	defer db.ExecContext(ctx, "DELETE FROM task_tracker WHERE schedule_id = $1", schedID)
+	// The dispatched, queued and running tasks' current attempts are open.
+	require.NoError(t, insertAttempt(db, dispatchedID, 0, "dispatched"))
+	require.NoError(t, insertAttempt(db, queuedID, 0, "failed"))
+	require.NoError(t, insertAttempt(db, queuedID, 1, "queued"))
+	require.NoError(t, insertAttempt(db, runningID, 0, "running"))
+	require.NoError(t, insertAttempt(db, staleAttemptID, 0, "running"))
 
 	tx, err := db.BeginTxx(ctx, nil)
 	require.NoError(t, err)
@@ -144,15 +156,19 @@ func TestTaskTrackerRepository_BeginStopTx(t *testing.T) {
 	counts, err := taskRepo.BeginStopTx(ctx, tx, schedID, "user1", time.Now().UTC())
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
-	assert.Equal(t, run.StopCounts{Cancelled: 1, Stopping: 3}, counts)
+	assert.Equal(t, run.StopCounts{Cancelled: 3, Stopping: 3}, counts)
 
-	// The pending task is cancelled; the dispatched, queued and running ones
-	// are stopping until their attempts answer.
+	// The dispatched, queued and running tasks with an open current attempt
+	// are stopping until their attempts answer; the pending task and the
+	// tasks with no open current attempt are cancelled, as nothing of them
+	// can answer a stop.
 	for id, want := range map[uuid.UUID]run.TaskStatus{
-		pendingID:    run.TaskStatusCancelled,
-		dispatchedID: run.TaskStatusStopping,
-		queuedID:     run.TaskStatusStopping,
-		runningID:    run.TaskStatusStopping,
+		pendingID:      run.TaskStatusCancelled,
+		dispatchedID:   run.TaskStatusStopping,
+		queuedID:       run.TaskStatusStopping,
+		runningID:      run.TaskStatusStopping,
+		noAttemptID:    run.TaskStatusCancelled,
+		staleAttemptID: run.TaskStatusCancelled,
 	} {
 		got, err := taskRepo.GetByID(ctx, id)
 		require.NoError(t, err)

@@ -764,8 +764,13 @@ func (f *cancelFakeTaskCollection) BeginStop(_ context.Context, _ uuid.UUID, _ s
 	f.beginStopCalled = true
 	return f.beginStopCounts, f.beginStopErr
 }
+// RequestStops asks one attempt to stop per task BeginStop made stopping.
 func (f *cancelFakeTaskCollection) RequestStops(_ context.Context, _ uuid.UUID) ([]run.StopTarget, error) {
-	return nil, nil
+	targets := make([]run.StopTarget, f.beginStopCounts.Stopping)
+	for i := range targets {
+		targets[i] = run.StopTarget{TaskID: uuid.New(), JobName: fmt.Sprintf("job-%d", i)}
+	}
+	return targets, nil
 }
 func (f *cancelFakeTaskCollection) BulkCreate(_ context.Context, _ []run.Task) error {
 	panic("BulkCreate not used in cancel tests")

@@ -4,6 +4,7 @@ import (
 	"context"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -85,6 +86,43 @@ func TestSettle(t *testing.T) {
 	n, err = runsettle.Settle(ctx, newUoW, h.logger)
 	require.NoError(t, err)
 	assert.Zero(t, n, "a second settle finds nothing to cancel")
+}
+
+// An unplanned run whose task is running has no attempt row of it: no attempt
+// can answer a stop, so Settle cancels the task and the run ends cancelled at
+// once, rather than cancelling forever.
+func TestSettle_AnUnplannedRunWithATaskInFlightEndsCancelledAtOnce(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test")
+	}
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	h := newBuiltHarness(db)
+	ctx := context.Background()
+
+	releaseID := "rel-" + uuid.NewString()[:8]
+	h.storeRelease(t, releaseID, promotedNode("raw", "settle_inflight", "dbt-model"))
+	unplanned, task := h.legacyRun(t, releaseID, "settle_inflight")
+	_, err := db.Exec(`UPDATE task_tracker SET status = 'running', dispatched_at = now() WHERE task_id = $1`, task)
+	require.NoError(t, err)
+	newUoW := func() uow.UnitOfWork { return ownRuns{UnitOfWork: h.factory(), ids: []uuid.UUID{unplanned}} }
+
+	n, err := runsettle.Settle(ctx, newUoW, h.logger)
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+	var row struct {
+		Status      string     `db:"status"`
+		CompletedAt *time.Time `db:"completed_at"`
+	}
+	require.NoError(t, db.Get(&row, `SELECT status, completed_at FROM scheduler_tracker WHERE schedule_id = $1`, unplanned))
+	assert.Equal(t, "cancelled", row.Status)
+	assert.NotNil(t, row.CompletedAt)
+	var taskStatus string
+	require.NoError(t, db.Get(&taskStatus, `SELECT status FROM task_tracker WHERE task_id = $1`, task))
+	assert.Equal(t, "cancelled", taskStatus)
+	assert.Equal(t, 1, countOf(t, db, `SELECT count(*) FROM state_outbox WHERE aggregate_id = $1 AND stream_name = $2`,
+		unplanned, streams.RunCancelledV1), "execution-controller is told to fence the run and stop its Jobs")
 }
 
 // An unplanned run that is already cancelling is listed among the active

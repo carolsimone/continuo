@@ -481,11 +481,12 @@ func (r *Run) Start(
 	return events, nil
 }
 
-// Cancel cancels r at now, by by for reason, and stops its work. Its pending
-// tasks are cancelled and count terminal; its tasks in flight (dispatched,
-// queued or running) become stopping, and the current attempt of each is asked
-// to stop. r records cancelled_at, cancelled_by and cancellation_reason, and
-// RunCancelled, naming no attempt, is recorded.
+// Cancel cancels r at now, by by for reason, and stops its work. Its tasks in
+// flight (dispatched, queued or running) whose current attempt is open become
+// stopping, and that attempt of each is asked to stop; its other unended
+// tasks, the pending ones and those with no open attempt, are cancelled and
+// count terminal. r records cancelled_at, cancelled_by and
+// cancellation_reason, and RunCancelled, naming no attempt, is recorded.
 //
 // With a task stopping, r becomes cancelling: it stays active, starts nothing
 // more, and ends cancelled on the report that ends its last task
@@ -493,7 +494,10 @@ func (r *Run) Start(
 // completed at now, and RunFinalized is recorded with it.
 //
 // Cancel refuses a run that has ended (ErrAlreadyTerminal) and a run that is
-// already cancelling (ErrAlreadyCancelling), before it touches a task.
+// already cancelling (ErrAlreadyCancelling), before it touches a task. It
+// fails with ErrStopUnanswerable when a task it made stopping has no attempt
+// it could ask to stop, so the caller rolls the cancel back rather than leave
+// a run that no report would ever end.
 func (r *Run) Cancel(
 	ctx context.Context,
 	tasks TaskCollection,
@@ -511,8 +515,13 @@ func (r *Run) Cancel(
 		return nil, fmt.Errorf("stop the tasks of run %s: %w", r.scheduleID, err)
 	}
 	if counts.Stopping > 0 {
-		if _, err := tasks.RequestStops(ctx, r.scheduleID); err != nil {
+		targets, err := tasks.RequestStops(ctx, r.scheduleID)
+		if err != nil {
 			return nil, fmt.Errorf("ask the attempts of run %s to stop: %w", r.scheduleID, err)
+		}
+		if len(targets) != counts.Stopping {
+			return nil, fmt.Errorf("run %s: %d tasks stopping, %d attempts asked to stop: %w",
+				r.scheduleID, counts.Stopping, len(targets), ErrStopUnanswerable)
 		}
 	}
 	if counts.Cancelled > 0 {

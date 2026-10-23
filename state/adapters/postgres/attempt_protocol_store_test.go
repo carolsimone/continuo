@@ -161,24 +161,33 @@ func TestTaskCollection_HasInFlight(t *testing.T) {
 }
 
 // A cancel stops a run's tasks that wait for or run an attempt: a pending task
-// is cancelled, a dispatched, queued or running one stopping; an ended task
-// and a task of another run are left as they are.
+// is cancelled, a dispatched, queued or running one with an open current
+// attempt stopping, and one with no open current attempt (no attempt row, or
+// an ended one) cancelled; an ended task and a task of another run are left
+// as they are.
 func TestTaskCollection_BeginStopCancelsPendingTasksAndStopsTasksInFlight(t *testing.T) {
 	db := newTestDB(t)
 	storeFailureSchedule(t, db)
 	runID, ids := insertTasks(t, db, map[string]run.TaskStatus{
 		"ftable_a": run.TaskStatusDispatched, "ftable_b": run.TaskStatusQueued, "ftable_c": run.TaskStatusPending,
 		"ftable_d": run.TaskStatusSucceeded, "ftable_e": run.TaskStatusRunning,
+		"ftable_f": run.TaskStatusRunning, "ftable_g": run.TaskStatusQueued,
 	})
 	_, others := insertTasks(t, db, map[string]run.TaskStatus{"ftable_a": run.TaskStatusRunning})
+	require.NoError(t, insertAttempt(db, ids["ftable_a"], 0, "dispatched"))
+	require.NoError(t, insertAttempt(db, ids["ftable_b"], 0, "queued"))
+	require.NoError(t, insertAttempt(db, ids["ftable_e"], 0, "running"))
+	require.NoError(t, insertAttempt(db, ids["ftable_g"], 0, "succeeded"))
+	require.NoError(t, insertAttempt(db, others["ftable_a"], 0, "running"))
 
 	attemptTx(t, db, func(ctx context.Context, tx *sqlx.Tx, tasks run.TaskCollection) {
 		counts, err := tasks.BeginStop(ctx, runID, "user", time.Now())
 		require.NoError(t, err)
-		assert.Equal(t, run.StopCounts{Cancelled: 1, Stopping: 3}, counts)
+		assert.Equal(t, run.StopCounts{Cancelled: 3, Stopping: 3}, counts)
 		for table, want := range map[string]run.TaskStatus{
 			"ftable_a": run.TaskStatusStopping, "ftable_b": run.TaskStatusStopping, "ftable_c": run.TaskStatusCancelled,
 			"ftable_d": run.TaskStatusSucceeded, "ftable_e": run.TaskStatusStopping,
+			"ftable_f": run.TaskStatusCancelled, "ftable_g": run.TaskStatusCancelled,
 		} {
 			var got run.TaskStatus
 			require.NoError(t, tx.Get(&got, `SELECT status FROM task_tracker WHERE task_id = $1`, ids[table]))
@@ -191,6 +200,10 @@ func TestTaskCollection_BeginStopCancelsPendingTasksAndStopsTasksInFlight(t *tes
 		counts, err = tasks.BeginStop(ctx, runID, "user", time.Now())
 		require.NoError(t, err)
 		assert.Zero(t, counts, "a second stop finds nothing left to stop")
+
+		targets, err := tasks.RequestStops(ctx, runID)
+		require.NoError(t, err)
+		assert.Len(t, targets, 3, "every stopping task has an attempt asked to stop")
 	})
 }
 

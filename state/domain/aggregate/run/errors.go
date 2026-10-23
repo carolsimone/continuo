@@ -14,6 +14,12 @@ var (
 	// nothing.
 	ErrAlreadyCancelling = errors.New("run is already cancelling")
 
+	// ErrStopUnanswerable is returned by Run.Cancel when it made more tasks
+	// stopping than it asked attempts to stop: a stopping task with no open
+	// attempt would never be answered and its run would stay cancelling, so
+	// the cancel fails and its transaction is rolled back.
+	ErrStopUnanswerable = errors.New("a stopping task has no open attempt to stop")
+
 	// ErrSourceMustBeTerminallyFailedOrCancelled is returned by
 	// CanBeRerunSource / CanBeRebaseSource when the source run is not in
 	// {FAILED, CANCELLED}.
