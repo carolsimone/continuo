@@ -394,6 +394,233 @@ Call: include "continuo.agent.assertEnv" (dict "root" $ "svc" $svc) */}}
 {{- end -}}
 {{- end -}}
 
+{{/* "true" unless egress.enabled is false. A release installed before egress
+existed has no egress block and runs the proxy with its defaults. */}}
+{{- define "continuo.egress.enabled" -}}
+{{- $e := .Values.egress | default dict -}}
+{{- if and (hasKey $e "enabled") (kindIs "bool" $e.enabled) (not $e.enabled) -}}false{{- else -}}true{{- end -}}
+{{- end -}}
+
+{{/* The name of the ConfigMap that holds the egress-proxy allowlist. */}}
+{{- define "continuo.egressProxy.configMapName" -}}
+{{- printf "%s-egress-proxy" (include "continuo.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{/* "true" when the argument, a host name without a port, is an IP address
+literal: dotted IPv4, or IPv6 with or without brackets. Otherwise empty.
+Call: include "continuo.egress.isIP" $host */}}
+{{- define "continuo.egress.isIP" -}}
+{{- $h := . | toString -}}
+{{- if or (contains ":" $h) (hasPrefix "[" $h) (regexMatch "^[0-9]+(\\.[0-9]+){3}$" $h) -}}true{{- end -}}
+{{- end -}}
+
+{{/* "true" when the last label of the argument, a host name without a port, is
+all digits or "0x" followed by hex digits. Resolvers read such a name as part of
+a numeric IPv4 address (127.1, 2130706433, 0x7f.1), so it is no host name.
+Otherwise empty. Call: include "continuo.egress.numericHost" $host */}}
+{{- define "continuo.egress.numericHost" -}}
+{{- $last := . | toString | lower | trimSuffix "." | splitList "." | last -}}
+{{- if or (regexMatch "^[0-9]+$" $last) (regexMatch "^0x[0-9a-f]*$" $last) -}}true{{- end -}}
+{{- end -}}
+
+{{/* The GITHUB_BASE_URL of the agent-remediation entry in `services`, or the
+public GitHub API when there is none. It reads the entry's `env` only; a value
+supplied through `secretEnv` is not seen. */}}
+{{- define "continuo.egress.githubBaseUrl" -}}
+{{- $url := "https://api.github.com" -}}
+{{- range .Values.services -}}
+{{- if and (eq .name "agent-remediation") .env .env.GITHUB_BASE_URL -}}
+{{- $url = .env.GITHUB_BASE_URL | toString -}}
+{{- end -}}
+{{- end -}}
+{{- $url -}}
+{{- end -}}
+
+{{/* Why a host name is no entry the proxy takes, or empty when it is one. The
+argument is a dict with "host" (lower- or mixed-case, one trailing dot already
+removed, no port) and "wildcard" (whether a "*" first label is allowed). The
+reason reads as the rest of a sentence that starts with the entry. It never
+fails the render: callers either fail with the reason (egress.allowedDomains,
+egress.privateDomains) or drop the entry (URLs). The rules are the proxy's: at
+most 253 characters in labels of 1-63 letters, digits and inner hyphens; a "*"
+first label needs at least two labels after it; no IP address and no name whose
+last label is all digits or "0x" and hex digits (127.1, 2130706433).
+Call: include "continuo.egress.hostProblem" (dict "host" $h "wildcard" true) */}}
+{{- define "continuo.egress.hostProblem" -}}
+{{- $host := .host | toString -}}
+{{- $reason := "" -}}
+{{- if not $host -}}
+{{- $reason = "has no host" -}}
+{{- else if gt (len $host) 253 -}}
+{{- $reason = "is a host name longer than 253 characters" -}}
+{{- else if or (include "continuo.egress.isIP" $host) (include "continuo.egress.numericHost" $host) -}}
+{{- $reason = "is an IP address or reads as one (its last label is all digits or 0x and hex digits); entries name hosts" -}}
+{{- else if eq $host "*" -}}
+{{- $reason = "is a bare wildcard, which would admit every host" -}}
+{{- else if and (contains "*" $host) (not .wildcard) -}}
+{{- $reason = "holds a wildcard, which a host name here cannot" -}}
+{{- else if and (contains "*" $host) (not (hasPrefix "*." $host)) -}}
+{{- $reason = "uses \"*\" other than as the whole first label" -}}
+{{- else -}}
+{{- $names := trimPrefix "*." $host -}}
+{{- if and (hasPrefix "*." $host) (lt (len (splitList "." $names)) 2) -}}
+{{- $reason = "is a wildcard with fewer than two labels after it, which would admit a whole top-level domain" -}}
+{{- else -}}
+{{- range $label := splitList "." $names -}}
+{{- if and (not $reason) (not (regexMatch "^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$" $label)) -}}
+{{- $reason = printf "holds the label %q, which is not 1-63 letters, digits and inner hyphens" $label -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $reason -}}
+{{- end -}}
+
+{{/* One allowlist entry, as JSON, from a URL: the host lower-cased and without
+its brackets, port or one trailing dot; the URL's port, read in base 10 as
+written (443 for https and 80 for http when it names none); allowPrivate; and
+"usable", false for an entry the proxy would refuse: a host that is an IP address
+or no host name by the rules of "continuo.egress.hostProblem" (an underscore, a
+missing host as in a URL without a scheme, a wildcard), or a port outside
+1-65535. The URL itself is not checked here: the callers check what they read,
+and the allowlist leaves out an entry that is not usable. Call:
+include "continuo.egress.urlEntry" (dict "url" $u "allowPrivate" true) | fromJson */}}
+{{- define "continuo.egress.urlEntry" -}}
+{{- $u := urlParse (.url | toString) -}}
+{{- $host := $u.host -}}
+{{- $port := ternary 443 80 (eq $u.scheme "https") -}}
+{{- if regexMatch ":[0-9]+$" $host -}}
+{{- $port = regexFind "[0-9]+$" $host | atoi -}}
+{{- $host = regexReplaceAll ":[0-9]+$" $host "" -}}
+{{- end -}}
+{{- $host = lower $host | trimSuffix "." -}}
+{{- $usable := and (ge $port 1) (le $port 65535) (not (include "continuo.egress.hostProblem" (dict "host" $host "wildcard" false))) -}}
+{{- dict "host" $host "port" $port "allowPrivate" .allowPrivate "usable" $usable | toJson -}}
+{{- end -}}
+
+{{/* One allowlist entry, as JSON, from an egress.allowedDomains or
+egress.privateDomains entry: "host" or "host:port" (port 443 when omitted). The
+entry is checked as written, and the render fails naming the key and the entry
+unless it is a string holding a DNS name (by the rules of
+"continuo.egress.hostProblem", with a trailing dot allowed) and an optional
+port, with no scheme, path, query, fragment, user:password@ or whitespace. The
+port is a whole number from 1 to 65535 without a leading zero: ":0443" is
+refused rather than read in a base the writer did not mean. Case is folded after the
+check.
+Call: include "continuo.egress.domainEntry" (dict "value" . "key" "allowedDomains" "allowPrivate" false) */}}
+{{- define "continuo.egress.domainEntry" -}}
+{{- $key := printf "egress.%s" .key -}}
+{{- $shown := toJson .value -}}
+{{- $hint := "Write a host name, optionally with a port: api.example.com, api.example.com:8443 or *.example.com." -}}
+{{- if not (kindIs "string" .value) -}}
+{{- fail (printf "%s entry %s is not a string. %s" $key $shown $hint) -}}
+{{- end -}}
+{{- $raw := .value -}}
+{{- if not $raw -}}
+{{- fail (printf "%s entry %s is empty. %s" $key $shown $hint) -}}
+{{- end -}}
+{{- if regexMatch "\\s" $raw -}}
+{{- fail (printf "%s entry %s holds whitespace. %s" $key $shown $hint) -}}
+{{- end -}}
+{{- if regexMatch "[/?#@\\\\]" $raw -}}
+{{- fail (printf "%s entry %s holds a scheme, path, query, fragment or user:password@, which an entry names none of. %s" $key $shown $hint) -}}
+{{- end -}}
+{{- if or (hasPrefix "[" $raw) (gt (len (splitList ":" $raw)) 2) -}}
+{{- fail (printf "%s entry %s has more than one colon or is an IPv6 address; entries name hosts, not IP addresses. %s" $key $shown $hint) -}}
+{{- end -}}
+{{- $parts := splitList ":" $raw -}}
+{{- $host := first $parts -}}
+{{- $port := 443 -}}
+{{- if eq (len $parts) 2 -}}
+{{- $p := last $parts -}}
+{{- if not (regexMatch "^[0-9]{1,5}$" $p) -}}
+{{- fail (printf "%s entry %s has a port that is not a whole number from 1 to 65535. %s" $key $shown $hint) -}}
+{{- end -}}
+{{- if and (gt (len $p) 1) (hasPrefix "0" $p) -}}
+{{- fail (printf "%s entry %s has a port with a leading zero, which other tools read as octal; write the port without one. %s" $key $shown $hint) -}}
+{{- end -}}
+{{- $port = atoi $p -}}
+{{- if or (lt $port 1) (gt $port 65535) -}}
+{{- fail (printf "%s entry %s has a port outside 1-65535. %s" $key $shown $hint) -}}
+{{- end -}}
+{{- end -}}
+{{- $host = $host | trimSuffix "." -}}
+{{- $problem := include "continuo.egress.hostProblem" (dict "host" $host "wildcard" true) -}}
+{{- if $problem -}}
+{{- fail (printf "%s entry %s %s. %s" $key $shown $problem $hint) -}}
+{{- end -}}
+{{- dict "host" (lower $host) "port" $port "allowPrivate" .allowPrivate | toJson -}}
+{{- end -}}
+
+{{/* The egress-proxy allowlist, a JSON list of {host, port, allowPrivate}
+ordered by host and then port (the order of the key "<host>:<port, zero-padded
+to five digits>"), so that equal settings render equal lists. It holds what the
+agents call: the LLM (llm.baseUrl, else the provider's public API), the
+GITHUB_BASE_URL of agent-remediation's `services` entry with the codeload host
+archive downloads redirect to, s3.endpointUrl when the bundled MinIO is off, and
+the entries of egress.allowedDomains and egress.privateDomains. The hosts an
+operator configured (llm.baseUrl, a GitHub Enterprise host, s3.endpointUrl) and
+egress.privateDomains may resolve to private addresses. An entry derived from a
+URL is left out when the proxy would refuse it: an IP address, a name that is no
+host name, or a port outside 1-65535. Two entries for one host and port merge,
+allowing private addresses if either does. The list is empty when nothing is
+left. */}}
+{{- define "continuo.egress.allowlist" -}}
+{{- $e := .Values.egress | default dict -}}
+{{- $entries := list -}}
+{{- $llm := .Values.llm | default dict -}}
+{{- $base := include "continuo.llm.baseUrl" . -}}
+{{- if $base -}}
+{{- $entry := include "continuo.egress.urlEntry" (dict "url" $base "allowPrivate" true) | fromJson -}}
+{{- if $entry.usable }}{{ $entries = append $entries $entry }}{{ end -}}
+{{- else if eq ($llm.provider | default "anthropic") "openai" -}}
+{{- $entries = append $entries (dict "host" "api.openai.com" "port" 443 "allowPrivate" false) -}}
+{{- else -}}
+{{- $entries = append $entries (dict "host" "api.anthropic.com" "port" 443 "allowPrivate" false) -}}
+{{- end -}}
+{{- $gh := include "continuo.egress.urlEntry" (dict "url" (include "continuo.egress.githubBaseUrl" .) "allowPrivate" true) | fromJson -}}
+{{- if and (eq $gh.host "api.github.com") (eq (int $gh.port) 443) -}}
+{{- $entries = append $entries (dict "host" "api.github.com" "port" 443 "allowPrivate" false) -}}
+{{- $entries = append $entries (dict "host" "codeload.github.com" "port" 443 "allowPrivate" false) -}}
+{{- else -}}
+{{- if $gh.usable -}}
+{{- $entries = append $entries $gh -}}
+{{- $codeloadHost := printf "codeload.%s" $gh.host -}}
+{{- if not (include "continuo.egress.hostProblem" (dict "host" $codeloadHost "wildcard" false)) }}{{ $entries = append $entries (dict "host" $codeloadHost "port" $gh.port "allowPrivate" true) }}{{ end -}}
+{{- end -}}
+{{- end -}}
+{{- if not .Values.minio.enabled -}}
+{{- $s3 := include "continuo.egress.urlEntry" (dict "url" (include "continuo.s3.endpointUrl" .) "allowPrivate" true) | fromJson -}}
+{{- if $s3.usable }}{{ $entries = append $entries $s3 }}{{ end -}}
+{{- end -}}
+{{- range ($e.allowedDomains | default list) -}}
+{{- $entries = append $entries (include "continuo.egress.domainEntry" (dict "value" . "key" "allowedDomains" "allowPrivate" false) | fromJson) -}}
+{{- end -}}
+{{- range ($e.privateDomains | default list) -}}
+{{- $entries = append $entries (include "continuo.egress.domainEntry" (dict "value" . "key" "privateDomains" "allowPrivate" true) | fromJson) -}}
+{{- end -}}
+{{- $merged := dict -}}
+{{- range $entries -}}
+{{- $port := int .port -}}
+{{- $key := printf "%s:%05d" .host $port -}}
+{{- $allow := .allowPrivate -}}
+{{- with get $merged $key }}{{ $allow = or $allow .allowPrivate }}{{ end -}}
+{{- $_ := set $merged $key (dict "host" .host "port" $port "allowPrivate" $allow) -}}
+{{- end -}}
+{{- $out := list -}}
+{{- range $key := keys $merged | sortAlpha -}}
+{{- $out = append $out (get $merged $key) -}}
+{{- end -}}
+{{- $out | toJson -}}
+{{- end -}}
+
+{{/* "true" when the proxy renders: egress.enabled is not false and the
+allowlist holds at least one entry, because the proxy refuses to start on an
+empty one. The setting alone is "continuo.egress.enabled". */}}
+{{- define "continuo.egress.proxyEnabled" -}}
+{{- if and (eq (include "continuo.egress.enabled" .) "true") (include "continuo.egress.allowlist" . | fromJsonArray) -}}true{{- else -}}false{{- end -}}
+{{- end -}}
+
 {{- define "continuo.redis.host" -}}
 {{- if .Values.redis.enabled -}}
 {{- include "continuo.redis.fullname" . -}}
@@ -648,13 +875,14 @@ scripts/install-test/assert-metrics.py pins this list to the services whose
 source imports pkg/metrics.
 */ -}}
 {{- define "continuo.metrics.services" -}}
-["state","orchestrator","execution-controller","release-controller","remediation","agent-remediation","agent-chat","dead-letter-controller"]
+["state","orchestrator","execution-controller","release-controller","remediation","agent-remediation","agent-chat","dead-letter-controller","egress-proxy"]
 {{- end -}}
 
 {{/*
 The port every Go service serves /metrics on (default 9464, also when the
 metrics block is absent from stored values). Rendering fails when it equals a
-service's httpPort or grpcPort, which that service could then not bind.
+service's httpPort or grpcPort, which that service could then not bind, or, with
+the egress proxy rendered, the proxy's listen port (3128) or health port (8093).
 */ -}}
 {{- define "continuo.metrics.port" -}}
 {{- $m := .Values.metrics | default dict -}}
@@ -663,6 +891,9 @@ service's httpPort or grpcPort, which that service could then not bind.
 {{- if or (eq (int (default 0 $svc.httpPort)) $port) (eq (int (default 0 $svc.grpcPort)) $port) -}}
 {{- fail (printf "metrics.port %d is service %s's httpPort or grpcPort; choose a free port" $port $svc.name) -}}
 {{- end -}}
+{{- end -}}
+{{- if and (eq (include "continuo.egress.proxyEnabled" .) "true") (has $port (list 3128 8093)) -}}
+{{- fail (printf "metrics.port %d is egress-proxy's proxy or health port; choose a free port" $port) -}}
 {{- end -}}
 {{- $port -}}
 {{- end -}}

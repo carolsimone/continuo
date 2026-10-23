@@ -17,6 +17,17 @@ app changes can still be a `PATCH`.
 
 ---
 
+## 0.13.0 · 2026-10-23 · `MINOR`
+
+- **Retries are decided by failure class.** The state service decides every attempt of every task and retries a failed one at once while the task has retries left (`runs.taskMaxRetries`, default 2); a failure by timeout, or a dispatch that cannot run, is never retried. A task shows `dispatched` and `queued` before it runs, and a run that fails without a failed task says why, for example `stalled` when nothing was in flight for 5 minutes.
+- **Every task has a timeout.** Domain teams declare a node's timeout (`meta.timeout_minutes` on a dbt node, `timeout_minutes` on a Python contract entry, 1 to 10,080 minutes); a node that declares none gets `runs.taskTimeoutHours` (default 24). Kubernetes stops the Job at its timeout. A Python domain repository declares it only once both its CLI and its image base are continuo-python-runtime 0.10.0 or later, and the default `validation.imageTag` moves to `v0.10.0`. `execution.startTimeoutMinutes` (default 15) bounds how long a pod may take to start a container.
+- **Attempts are visible.** The run page shows every attempt of every task, `continuo node history` carries each attempt's failure class and reason, and the node page and `continuo node list` show a node's task timeout and whether the node declares it.
+- A pod that cannot start (an image it cannot pull, a missing Secret or ConfigMap) has its Job deleted and its attempt fails as a start failure, so a retry never runs beside it.
+- The orchestrator's dispatch watchdog is gone: the state service fails a stalled run itself, and a healthy run waiting for a slot is no longer cancelled.
+- Upgrade with no run active: runs in flight when this release deploys are not carried over, because their tasks were dispatched on a stream nothing reads any more. Turn maintenance mode on and wait for running work to finish first.
+
+[Changelog](https://github.com/carolsimone/continuo/blob/main/deploy/continuo/CHANGELOG.md#0130---2026-10-23) · [Release](https://github.com/carolsimone/continuo/releases/tag/v0.13.0)
+
 ## 0.12.0 · 2026-10-16 · `MINOR`
 
 - **Rerun failed nodes → Latest snapshot** (a rebase) restarts a failed run from its failure on the live release. It re-runs what did not succeed, the nodes the release added and everything below them and, by default, the changed nodes upstream of what it re-runs, so a fix to the node that caused the failure is picked up. A change to a node's image alone does not count. The dialog previews the selection before you confirm: how many nodes run and why, and each changed upstream node with its last run time.

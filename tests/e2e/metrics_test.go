@@ -30,6 +30,7 @@ func TestMetrics_GoServicesServePrometheusMetrics(t *testing.T) {
 		{getEnv("AGENT_REMEDIATION_HOST", "agent-remediation"), withConsumersAndOutbox},
 		{getEnv("DEAD_LETTER_HOST", "dead-letter-controller"), withConsumersAndOutbox},
 		{getEnv("AGENT_CHAT_HOST", "agent-chat"), []string{"go_sql_open_connections{"}},
+		{getEnv("EGRESS_PROXY_HOST", "egress-proxy"), []string{"continuo_egress_active_tunnels{"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.host, func(t *testing.T) {

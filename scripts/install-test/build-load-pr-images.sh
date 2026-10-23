@@ -71,6 +71,7 @@ agent-chat|agent-chat/|agent-chat/Dockerfile.prod|.|1
 remediation|remediation/|remediation/Dockerfile.prod|.|1
 agent-remediation|agent-remediation/|agent-remediation/Dockerfile.prod|.|1
 dead-letter-controller|dead-letter-controller/|dead-letter-controller/Dockerfile.prod|.|1
+egress-proxy|egress-proxy/|egress-proxy/Dockerfile.prod|.|1
 migrations|db/|db/Dockerfile.migrate|db|0
 s3-sidecar|s3-sidecar/|s3-sidecar/Dockerfile|s3-sidecar|0"
 

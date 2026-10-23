@@ -17,6 +17,7 @@ updates:
       - /agent-chat
       - /cli
       - /dead-letter-controller
+      - /egress-proxy
       - /execution-controller
       - /orchestrator
       - /pkg

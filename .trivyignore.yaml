@@ -43,6 +43,7 @@ misconfigurations:
       - "agent-chat/Dockerfile.dev"
       - "agent-remediation/Dockerfile.dev"
       - "dead-letter-controller/Dockerfile.dev"
+      - "egress-proxy/Dockerfile.dev"
       - "execution-controller/Dockerfile.dev"
       - "orchestrator/Dockerfile.dev"
       - "release-controller/Dockerfile.dev"
