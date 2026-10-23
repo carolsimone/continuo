@@ -191,3 +191,76 @@ func TestJobStartTimeoutRangeMatchesTheChart(t *testing.T) {
 	assert.Equal(t, MinJobStartTimeout, time.Duration(got.Minimum)*time.Minute)
 	assert.Equal(t, MaxJobStartTimeout, time.Duration(got.Maximum)*time.Minute)
 }
+
+func TestKubeClientRateLimit(t *testing.T) {
+	cases := []struct {
+		name        string
+		qps, burst  string
+		wantQPS     int
+		wantBurst   int
+		wantInvalid []string
+	}{
+		{name: "unset selects the defaults", wantQPS: 50, wantBurst: 100},
+		{name: "both set", qps: "20", burst: "40", wantQPS: 20, wantBurst: 40},
+		{name: "lowest values", qps: "1", burst: "1", wantQPS: 1, wantBurst: 1},
+		{name: "highest values", qps: "1000", burst: "2000", wantQPS: 1000, wantBurst: 2000},
+		{name: "burst equal to qps", qps: "30", burst: "30", wantQPS: 30, wantBurst: 30},
+		{name: "qps zero", qps: "0", burst: "100", wantInvalid: []string{"K8S_CLIENT_QPS"}},
+		{name: "qps above the range", qps: "1001", burst: "2000", wantInvalid: []string{"K8S_CLIENT_QPS"}},
+		{name: "qps not a whole number", qps: "2.5", burst: "100", wantInvalid: []string{"K8S_CLIENT_QPS"}},
+		{name: "qps not a number", qps: "fast", burst: "100", wantInvalid: []string{"K8S_CLIENT_QPS"}},
+		{name: "burst zero", qps: "10", burst: "0", wantInvalid: []string{"K8S_CLIENT_BURST"}},
+		{name: "burst above the range", qps: "10", burst: "2001", wantInvalid: []string{"K8S_CLIENT_BURST"}},
+		{name: "burst below qps", qps: "50", burst: "49", wantInvalid: []string{"K8S_CLIENT_BURST"}},
+		// An explicit qps above the default burst needs an explicit burst.
+		{name: "qps above the default burst", qps: "200", wantInvalid: []string{"K8S_CLIENT_BURST"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			setRequiredEnv(t)
+			t.Setenv("K8S_CLIENT_QPS", c.qps)
+			t.Setenv("K8S_CLIENT_BURST", c.burst)
+			v := &pkgconfig.Validator{}
+			cfg := Load(v)
+			if len(c.wantInvalid) > 0 {
+				require.NotEmpty(t, v.Missing(), "a rate limit the service cannot honour stops it at boot")
+				for _, key := range c.wantInvalid {
+					assert.Contains(t, strings.Join(v.Missing(), ","), key)
+				}
+				return
+			}
+			require.Empty(t, v.Missing())
+			assert.Equal(t, c.wantQPS, cfg.K8sClientQPS)
+			assert.Equal(t, c.wantBurst, cfg.K8sClientBurst)
+		})
+	}
+}
+
+// The chart's execution.kubeClientQPS and execution.kubeClientBurst accept
+// the ranges the service accepts: a value the chart allows but the service
+// refused would render and then stop execution-controller at startup.
+func TestKubeClientRateLimitRangesMatchTheChart(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "deploy", "continuo", "values.schema.json"))
+	require.NoError(t, err)
+	type bounds struct {
+		Minimum int `json:"minimum"`
+		Maximum int `json:"maximum"`
+	}
+	var schema struct {
+		Properties struct {
+			Execution struct {
+				Properties struct {
+					KubeClientQPS   bounds `json:"kubeClientQPS"`
+					KubeClientBurst bounds `json:"kubeClientBurst"`
+				} `json:"properties"`
+			} `json:"execution"`
+		} `json:"properties"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &schema))
+	qps := schema.Properties.Execution.Properties.KubeClientQPS
+	burst := schema.Properties.Execution.Properties.KubeClientBurst
+	assert.Equal(t, MinK8sClientQPS, qps.Minimum)
+	assert.Equal(t, MaxK8sClientQPS, qps.Maximum)
+	assert.Equal(t, MinK8sClientBurst, burst.Minimum)
+	assert.Equal(t, MaxK8sClientBurst, burst.Maximum)
+}

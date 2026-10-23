@@ -140,6 +140,11 @@ spec:
             # A pod has 3 minutes to start a container; the chart default is 15.
             - name: JOB_START_TIMEOUT_SECONDS
               value: "180"
+            # The chart's execution.kubeClientQPS and execution.kubeClientBurst defaults.
+            - name: K8S_CLIENT_QPS
+              value: "50"
+            - name: K8S_CLIENT_BURST
+              value: "100"
             # Validation, seed-build and compile Jobs run up to the chart's
             # default runs.taskTimeoutHours.
             - name: TASK_TIMEOUT_SECONDS

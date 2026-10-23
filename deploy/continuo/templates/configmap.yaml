@@ -38,6 +38,8 @@ data:
   STREAM_RETENTION: {{ .Values.streamReaper.retention | quote }}
   MAX_CONCURRENT_JOBS: {{ include "continuo.execution.maxConcurrentJobs" . | quote }}
   JOB_START_TIMEOUT_SECONDS: {{ include "continuo.execution.startTimeoutSeconds" . | quote }}
+  K8S_CLIENT_QPS: {{ include "continuo.execution.kubeClientQPS" . | quote }}
+  K8S_CLIENT_BURST: {{ include "continuo.execution.kubeClientBurst" . | quote }}
   TASK_MAX_RETRIES: {{ include "continuo.runs.taskMaxRetries" . | quote }}
   TASK_TIMEOUT_SECONDS: {{ include "continuo.runs.taskTimeoutSeconds" . | quote }}
   MAINTENANCE_ENABLED: {{ include "continuo.maintenance.enabled" . | quote }}

@@ -12,6 +12,9 @@ shipped in those.
 
 ## [Unreleased]
 
+### Added
+- `execution.kubeClientQPS` (default 50, 1–1000; `K8S_CLIENT_QPS` on the shared ConfigMap) and `execution.kubeClientBurst` (default 100, 1–2000, at least `kubeClientQPS`; `K8S_CLIENT_BURST`): the request rate limit of execution-controller's Kubernetes client, which every Job it creates, watches and reads goes through. The client library's own limit of 5 requests per second (burst 10) held back the reads that record how an attempt ended, so a wide level waited about 30 seconds for each result and sent fewer `running` reports; the new defaults lift it. Each request is load on the cluster's API server, so size both to what it can take. A value outside its range, or a burst below the QPS, fails the render, and execution-controller refuses to start on one. An existing values file keeps working and gets the defaults. MINOR.
+
 ## [0.13.0] - 2026-10-23
 
 state decides every attempt of every task and execution-controller runs exactly one attempt per dispatch: a failed attempt is retried by its failure class, each task's Job is stopped at its timeout, and a run left with nothing in flight fails as `stalled`. `runs.taskMaxRetries`, `runs.taskTimeoutHours` and `execution.startTimeoutMinutes` are new with defaults, and an existing values file keeps working. **MINOR.**
