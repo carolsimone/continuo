@@ -129,9 +129,7 @@ func (r *MaterializationRepository) RecordBuilt(ctx context.Context, tenantID st
 // running or cancelling): that row is the only record of the load in flight, and a release
 // that brings the node back before the run ends must find it there.
 func (r *MaterializationRepository) DeleteAbsentFrom(ctx context.Context, tenantID, releaseID string) (int64, error) {
-	unfinished := pq.Array([]string{
-		string(run.SchedulerStatusPending), string(run.SchedulerStatusRunning), string(run.SchedulerStatusCancelling),
-	})
+	unfinished := pq.Array(activeSchedulerStatuses())
 	res, err := r.conn().ExecContext(ctx, `
 		DELETE FROM node_materializations m
 		WHERE m.tenant_id = $1

@@ -455,8 +455,8 @@ func (r *taskTrackerRepository) SkipPendingTx(ctx context.Context, tx *sqlx.Tx, 
 func (r *taskTrackerRepository) HasInFlightTaskTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID) (bool, error) {
 	var exists bool
 	err := tx.QueryRowContext(ctx,
-		`SELECT EXISTS(SELECT 1 FROM task_tracker WHERE schedule_id = $1 AND status IN ('dispatched', 'queued', 'running', 'stopping'))`,
-		scheduleID,
+		`SELECT EXISTS(SELECT 1 FROM task_tracker WHERE schedule_id = $1 AND status = ANY($2::text[]))`,
+		scheduleID, pq.Array(inFlightTaskStatuses()),
 	).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("has in-flight task check for schedule_id %s: %w", scheduleID, err)

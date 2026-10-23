@@ -13,6 +13,7 @@ import (
 	repository "github.com/carolsimone/continuo/state/domain/repository"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 )
 
 // AttemptRepository implements repository.AttemptRepository: the attempt
@@ -64,7 +65,8 @@ func (r *AttemptRepository) DueAttempts(ctx context.Context, limit int) ([]repos
 }
 
 // StalledRuns reads the active runs (pending, running or cancelling) with an
-// old progress clock and no task in flight (a stopping task is in flight), of every tenant: scheduler_tracker has no tenant column. The run
+// old progress clock and no task in flight (dispatched, queued, running or
+// stopping), of every tenant: scheduler_tracker has no tenant column. The run
 // scan filters scheduler_tracker by status, which holds few active rows, and
 // the in-flight check probes idx_task_tracker_schedule_id.
 func (r *AttemptRepository) StalledRuns(ctx context.Context, idle time.Duration, limit int) ([]uuid.UUID, error) {
@@ -72,13 +74,14 @@ func (r *AttemptRepository) StalledRuns(ctx context.Context, idle time.Duration,
 	if err := r.db.SelectContext(ctx, &ids, `
 		SELECT s.schedule_id
 		FROM scheduler_tracker s
-		WHERE s.status IN ('pending', 'running', 'cancelling')
+		WHERE s.status = ANY($3::text[])
 		  AND s.last_heartbeat_at < now() - make_interval(secs => $1::float8)
 		  AND NOT EXISTS (
 		      SELECT 1 FROM task_tracker t
-		      WHERE t.schedule_id = s.schedule_id AND t.status IN ('dispatched', 'queued', 'running', 'stopping'))
+		      WHERE t.schedule_id = s.schedule_id AND t.status = ANY($4::text[]))
 		ORDER BY s.last_heartbeat_at, s.schedule_id
-		LIMIT $2`, idle.Seconds(), limit); err != nil {
+		LIMIT $2`, idle.Seconds(), limit,
+		pq.Array(activeSchedulerStatuses()), pq.Array(inFlightTaskStatuses())); err != nil {
 		return nil, fmt.Errorf("read the stalled runs: %w", err)
 	}
 	return ids, nil

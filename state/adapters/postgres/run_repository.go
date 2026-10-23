@@ -11,6 +11,7 @@ import (
 	repository "github.com/carolsimone/continuo/state/domain/repository"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 )
 
 // RunRepositoryAdapter implements repository.RunRepository by composing the
@@ -207,8 +208,8 @@ func (r *RunRepositoryAdapter) ListUnplannedActive(ctx context.Context) ([]uuid.
 	var ids []uuid.UUID
 	if err := r.tx.SelectContext(ctx, &ids, `
 		SELECT schedule_id FROM scheduler_tracker
-		WHERE status IN ('pending', 'running', 'cancelling') AND planned_at IS NULL
-		ORDER BY created_at, schedule_id`); err != nil {
+		WHERE status = ANY($1::text[]) AND planned_at IS NULL
+		ORDER BY created_at, schedule_id`, pq.Array(activeSchedulerStatuses())); err != nil {
 		return nil, fmt.Errorf("list the active runs state did not plan: %w", err)
 	}
 	return ids, nil

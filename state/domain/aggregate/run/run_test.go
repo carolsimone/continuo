@@ -177,8 +177,7 @@ func (f *fakeTaskCollection) AddAttempts(_ context.Context, attempts []run.Attem
 
 func (f *fakeTaskCollection) HasInFlight(_ context.Context, _ uuid.UUID) (bool, error) {
 	for _, s := range f.statuses {
-		if s == run.TaskStatusDispatched || s == run.TaskStatusQueued || s == run.TaskStatusRunning ||
-			s == run.TaskStatusStopping {
+		if s.IsInFlight() {
 			return true, nil
 		}
 	}

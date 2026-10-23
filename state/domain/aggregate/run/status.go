@@ -41,6 +41,16 @@ func (s SchedulerStatus) IsTerminal() bool {
 	return false
 }
 
+// IsActive reports whether a run in status s holds its schedule: it is
+// pending, running or cancelling, so no other run of the schedule starts.
+func (s SchedulerStatus) IsActive() bool {
+	switch s {
+	case SchedulerStatusPending, SchedulerStatusRunning, SchedulerStatusCancelling:
+		return true
+	}
+	return false
+}
+
 // schedulerStatuses lists every SchedulerStatus value.
 var schedulerStatuses = []SchedulerStatus{
 	SchedulerStatusPending, SchedulerStatusRunning, SchedulerStatusCancelling, SchedulerStatusSucceeded,
@@ -58,6 +68,19 @@ func TerminalSchedulerStatuses() []SchedulerStatus {
 	out := make([]SchedulerStatus, 0, len(schedulerStatuses))
 	for _, s := range schedulerStatuses {
 		if s.IsTerminal() {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// ActiveSchedulerStatuses returns every SchedulerStatus for which IsActive
+// reports true, so a query for the active runs names the same set the
+// aggregate checks.
+func ActiveSchedulerStatuses() []SchedulerStatus {
+	out := make([]SchedulerStatus, 0, len(schedulerStatuses))
+	for _, s := range schedulerStatuses {
+		if s.IsActive() {
 			out = append(out, s)
 		}
 	}
@@ -105,6 +128,30 @@ func (t TaskStatus) IsTerminal() bool {
 		return true
 	}
 	return false
+}
+
+// IsInFlight reports whether a task in status t has an attempt in flight: it
+// is dispatched, queued, running or stopping.
+func (t TaskStatus) IsInFlight() bool {
+	switch t {
+	case TaskStatusDispatched, TaskStatusQueued, TaskStatusRunning, TaskStatusStopping:
+		return true
+	}
+	return false
+}
+
+// InFlightTaskStatuses returns every TaskStatus for which IsInFlight reports
+// true, so a query for the tasks in flight names the same set the aggregate
+// checks.
+func InFlightTaskStatuses() []TaskStatus {
+	all := TaskStatuses()
+	out := make([]TaskStatus, 0, len(all))
+	for _, t := range all {
+		if t.IsInFlight() {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // ParseTaskStatus converts a wire-format status string to a TaskStatus. Returns

@@ -92,3 +92,42 @@ func TestTaskStatus_StoppingIsNotTerminal(t *testing.T) {
 		t.Errorf("wire value=%q, want %q", run.TaskStatusStopping, "stopping")
 	}
 }
+
+// ActiveSchedulerStatuses is exactly the statuses of the runs Run.IsActive
+// reports active: pending, running and cancelling.
+func TestActiveSchedulerStatuses_AreTheStatusesOfTheActiveRuns(t *testing.T) {
+	var want []run.SchedulerStatus
+	for _, s := range run.SchedulerStatuses() {
+		r := run.HydrateRun(uuid.New(), "daily", s, run.InitStatusCompleted, run.KindCron, nil, "", "",
+			time.Now(), nil, nil, nil, nil, nil, nil, nil, 0, nil)
+		if r.IsActive() {
+			want = append(want, s)
+		}
+	}
+	if got := run.ActiveSchedulerStatuses(); !slices.Equal(got, want) {
+		t.Fatalf("ActiveSchedulerStatuses() = %v, want %v", got, want)
+	}
+	if want := []run.SchedulerStatus{run.SchedulerStatusPending, run.SchedulerStatusRunning, run.SchedulerStatusCancelling}; !slices.Equal(run.ActiveSchedulerStatuses(), want) {
+		t.Fatalf("ActiveSchedulerStatuses() = %v, want %v", run.ActiveSchedulerStatuses(), want)
+	}
+}
+
+// InFlightTaskStatuses is exactly the task statuses with an attempt in
+// flight, none of them terminal: dispatched, queued, running and stopping.
+func TestInFlightTaskStatuses_AreTheStatusesWithAnAttemptInFlight(t *testing.T) {
+	var want []run.TaskStatus
+	for _, s := range run.TaskStatuses() {
+		if s.IsInFlight() {
+			if s.IsTerminal() {
+				t.Errorf("%s is in flight and terminal", s)
+			}
+			want = append(want, s)
+		}
+	}
+	if got := run.InFlightTaskStatuses(); !slices.Equal(got, want) {
+		t.Fatalf("InFlightTaskStatuses() = %v, want %v", got, want)
+	}
+	if want := []run.TaskStatus{run.TaskStatusDispatched, run.TaskStatusQueued, run.TaskStatusRunning, run.TaskStatusStopping}; !slices.Equal(run.InFlightTaskStatuses(), want) {
+		t.Fatalf("InFlightTaskStatuses() = %v, want %v", run.InFlightTaskStatuses(), want)
+	}
+}

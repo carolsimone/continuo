@@ -317,7 +317,23 @@ func (r *schedulerTrackerRepository) CancelTx(ctx context.Context, tx *sqlx.Tx, 
 // terminalSchedulerStatuses returns the domain's terminal run statuses as
 // column values.
 func terminalSchedulerStatuses() []string {
-	statuses := run.TerminalSchedulerStatuses()
+	return columnValues(run.TerminalSchedulerStatuses())
+}
+
+// activeSchedulerStatuses returns the domain's active run statuses (pending,
+// running and cancelling) as column values.
+func activeSchedulerStatuses() []string {
+	return columnValues(run.ActiveSchedulerStatuses())
+}
+
+// inFlightTaskStatuses returns the domain's statuses of a task with an attempt
+// in flight (dispatched, queued, running and stopping) as column values.
+func inFlightTaskStatuses() []string {
+	return columnValues(run.InFlightTaskStatuses())
+}
+
+// columnValues returns statuses as the text values their column stores.
+func columnValues[S ~string](statuses []S) []string {
 	out := make([]string, len(statuses))
 	for i, s := range statuses {
 		out[i] = string(s)
@@ -333,14 +349,14 @@ func (r *schedulerTrackerRepository) HasActiveSchedule(ctx context.Context, sche
 		SELECT EXISTS(
 			SELECT 1 FROM scheduler_tracker
 			WHERE schedule_name = $1
-			  AND status IN ('pending', 'running', 'cancelling')
+			  AND status = ANY($2::text[])
 			ORDER BY created_at DESC
 			LIMIT 1
 		)
 	`
 
 	var exists bool
-	err := r.db.GetContext(ctx, &exists, query, scheduleName)
+	err := r.db.GetContext(ctx, &exists, query, scheduleName, pq.Array(activeSchedulerStatuses()))
 	if err != nil {
 		r.logger.Error("Failed to check active schedule",
 			"schedule_name", scheduleName,
@@ -370,13 +386,13 @@ func (r *schedulerTrackerRepository) GetActiveScheduler(ctx context.Context, sch
 			kind, source_run_id, initiated_by, operation, release_id, promotion_seq, planned_at, failure_reason
 		FROM scheduler_tracker
 		WHERE schedule_name = $1
-		  AND status IN ('pending', 'running', 'cancelling')
+		  AND status = ANY($2::text[])
 		ORDER BY created_at DESC
 		LIMIT 1
 	`
 
 	var tracker SchedulerTracker
-	err := r.db.GetContext(ctx, &tracker, query, scheduleName)
+	err := r.db.GetContext(ctx, &tracker, query, scheduleName, pq.Array(activeSchedulerStatuses()))
 	if err != nil {
 		if err == sql.ErrNoRows {
 			r.logger.Debug("No active scheduler found", "schedule_name", scheduleName)
@@ -648,10 +664,10 @@ func (r *schedulerTrackerRepository) GetLastRunPerSchedule(ctx context.Context) 
 		  schedule_id,
 		  status,
 		  created_at,
-		  (status IN ('pending', 'running', 'cancelling')) AS is_running
+		  (status = ANY($1::text[])) AS is_running
 		FROM scheduler_tracker
 		ORDER BY schedule_name, created_at DESC
-	`)
+	`, pq.Array(activeSchedulerStatuses()))
 	if err != nil {
 		return nil, fmt.Errorf("get last run per schedule: %w", err)
 	}

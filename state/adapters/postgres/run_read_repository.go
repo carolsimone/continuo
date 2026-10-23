@@ -13,6 +13,7 @@ import (
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/projection"
 	"github.com/carolsimone/continuo/state/domain/repository"
+	"github.com/lib/pq"
 )
 
 // RunReadRepository reads run graphs, run lists and drift from Postgres. A
@@ -158,8 +159,8 @@ func (r *RunReadRepository) ListActiveRunDrifts(ctx context.Context, tenantID st
 	if err := r.db.SelectContext(ctx, &rows, `
 		SELECT DISTINCT ON (schedule_name) schedule_name, schedule_id, promotion_seq
 		FROM scheduler_tracker
-		WHERE status IN ('pending', 'running', 'cancelling')
-		ORDER BY schedule_name, created_at DESC`); err != nil {
+		WHERE status = ANY($1::text[])
+		ORDER BY schedule_name, created_at DESC`, pq.Array(activeSchedulerStatuses())); err != nil {
 		return 0, nil, fmt.Errorf("list active runs: %w", err)
 	}
 	drifts := make([]projection.ActiveRunDrift, 0, len(rows))
