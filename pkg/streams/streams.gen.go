@@ -16,6 +16,8 @@ const (
 	ConsumerDeadLetterV1 = "consumer.dead_letter:v1"
 	// ScheduleCancelledV1 — A run's cancellation, written by state; execution-controller records it and drops the run's dispatches and Job results that arrive afterwards.
 	ScheduleCancelledV1 = "schedule.cancelled:v1"
+	// RunCancelledV1 — A run's cancellation, written by state in the transaction that moves the run to cancelling, with every attempt of the run that has been dispatched and not ended, each with the name of its Job.
+	RunCancelledV1 = "run.cancelled:v1"
 	// ReleaseRequestedV1 — Candidate release accepted by release-controller; triggers manifest load for validation.
 	ReleaseRequestedV1 = "release.requested:v1"
 	// ManifestLoadedCandidateV2 — How resolving a candidate release ended, from topology-controller back to release-controller. On success it carries the URI and SHA-256 of the release's topology artifact in S3 and the code bundle URI; on failure the parse failure kind, a detail and the failed nodes. Carries the event envelope; the topology itself is never on the stream.
@@ -117,6 +119,7 @@ var All = []string{
 	OutboxDeadLetterV1,
 	ConsumerDeadLetterV1,
 	ScheduleCancelledV1,
+	RunCancelledV1,
 	ReleaseRequestedV1,
 	ManifestLoadedCandidateV2,
 	ValidationRequestedV1,
@@ -145,6 +148,7 @@ var Groups = map[string][]string{
 	OutboxDeadLetterV1:          {DeadLetterControllerOutboxDeadLetters},
 	ConsumerDeadLetterV1:        {DeadLetterControllerConsumerDeadLetters},
 	ScheduleCancelledV1:         {ExecutorScheduleCancelled},
+	RunCancelledV1:              {},
 	ReleaseRequestedV1:          {TopologyControllerReleaseRequested},
 	ManifestLoadedCandidateV2:   {ReleaseControllerManifestLoadedCandidate},
 	ValidationRequestedV1:       {ExecutorValidationRequested},

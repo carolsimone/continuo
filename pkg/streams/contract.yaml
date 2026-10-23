@@ -68,6 +68,12 @@ streams:
         group: executor-schedule-cancelled
         const: ExecutorScheduleCancelled
 
+  - name: run.cancelled:v1
+    const: RunCancelledV1
+    description: A run's cancellation, written by state in the transaction that moves the run to cancelling, with every attempt of the run that has been dispatched and not ended, each with the name of its Job.
+    producers: [state]
+    consumers: []
+
   # ---------------- release-controller streams (dbt blue/green) ----------------
 
   - name: release.requested:v1
@@ -431,7 +437,8 @@ vocabularies:
       Where one attempt of a task stands, on the two task streams. state sends
       dispatched, queued or running as a dispatch's known_status on
       task.dispatch:v1; execution-controller reports queued, running,
-      succeeded or failed as a report's status on task.status.updated:v2.
+      succeeded, failed or stopped as a report's status on
+      task.status.updated:v2.
     values:
       - value: dispatched
         const: Dispatched
@@ -448,6 +455,9 @@ vocabularies:
       - value: failed
         const: Failed
         description: the attempt ended with a failure_reason and no pod of it can run again.
+      - value: stopped
+        const: Stopped
+        description: "the attempt was stopped on request: its run was cancelled, and no pod of it can run again."
 
   - name: failure_class
     const: FailureClass
