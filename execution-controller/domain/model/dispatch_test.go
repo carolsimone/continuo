@@ -1,6 +1,7 @@
 package model
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -62,6 +63,60 @@ func TestDispatchProblem(t *testing.T) {
 		reason, message := DispatchProblem(cmd, c.known)
 		assert.Equal(t, c.want, reason, name)
 		assert.NotEmpty(t, message, name)
+	}
+}
+
+// A job_name the Kubernetes API cannot read as a Job name (and so as a label
+// selector value) is refused up front: every live read of it would fail, and
+// the attempt would never end. The reason names the field.
+func TestDispatchProblemRefusesAJobNameKubernetesCannotRead(t *testing.T) {
+	for name, jobName := range map[string]string{
+		"upper case":          "Svc-sch-tbl-7f3e1a2b",
+		"underscore":          "svc_sch-tbl-7f3e1a2b",
+		"slash":               "svc/sch-tbl-7f3e1a2b",
+		"percent sign":        "svc%sch-tbl-7f3e1a2b",
+		"dot":                 "svc.sch-tbl-7f3e1a2b",
+		"space":               "svc sch-tbl-7f3e1a2b",
+		"leading dash":        "-svc-sch-tbl-7f3e1a2b",
+		"trailing dash":       "svc-sch-tbl-7f3e1a2b-",
+		"a dash alone":        "-",
+		"non-ASCII letter":    "svc-sch-tbl-7f3e1a2é",
+		"64 valid characters": strings.Repeat("a", 64),
+	} {
+		cmd := validDispatch()
+		cmd.JobName = jobName
+		reason, message := DispatchProblem(cmd, pkgmodel.AttemptStatusDispatched)
+		assert.Equal(t, pkgmodel.FailureReasonMalformedDispatch, reason, name)
+		assert.Contains(t, message, "job_name", name)
+	}
+
+	cmd := validDispatch()
+	cmd.JobName = ""
+	reason, message := DispatchProblem(cmd, pkgmodel.AttemptStatusDispatched)
+	assert.Equal(t, pkgmodel.FailureReasonMalformedDispatch, reason, "no job name")
+	assert.Contains(t, message, "job_name", "no job name")
+}
+
+// Every name state gives an attempt (pkg/domain.ComputeJobName: a DNS-1123
+// label of at most 63 characters, with the -r{attempt} suffix after the
+// first attempt) is accepted. The names are those the function returns for
+// service-1 / analytics / int_customer_orders_aggregated_daily and
+// service-1 / analytics / orders in run 3f2a9c1e-..., at the attempts shown.
+func TestDispatchProblemAcceptsTheJobNamesStateComputes(t *testing.T) {
+	for name, jobName := range map[string]string{
+		"a short name":                             "service-1-analytics-orders-3f2a9c1e",
+		"a short retry":                            "service-1-analytics-orders-3f2a9c1e-r1",
+		"a retry from attempt 10":                  "service-1-analytics-orders-3f2a9c1e-r10",
+		"the longest first attempt, 63 characters": "service-1-analytics-int-customer-orders-aggregated-dai-3f2a9c1e",
+		"a cut retry, 63 characters":               "service-1-analytics-int-customer-orders-aggr-3c1270-3f2a9c1e-r1",
+		"a cut retry from attempt 10":              "service-1-analytics-int-customer-orders-agg-3c1270-3f2a9c1e-r10",
+		"a single character":                       "a",
+		"63 characters":                            strings.Repeat("a", 63),
+	} {
+		cmd := validDispatch()
+		cmd.JobName = jobName
+		reason, message := DispatchProblem(cmd, pkgmodel.AttemptStatusDispatched)
+		assert.Empty(t, reason, "%s: %s", name, message)
 	}
 }
 

@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"regexp"
 	"time"
 
 	"github.com/carolsimone/continuo/execution-controller/domain/command"
@@ -55,11 +56,23 @@ func DecideDispatch(held, laterHeld bool, problem pkgmodel.FailureReason, jobOfA
 	return ReportLost
 }
 
+// maxJobNameLen is the longest name of a Kubernetes Job: the Job controller
+// copies it into a label value, which holds at most 63 characters.
+const maxJobNameLen = 63
+
+// jobNamePattern is a DNS-1123 label: lowercase alphanumerics and hyphens,
+// starting and ending alphanumeric. It is the form of every job_name state
+// computes, and the only one the Kubernetes API can look up by name or by the
+// Job-name label selector.
+var jobNamePattern = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
+
 // DispatchProblem returns the reason and message of what stops cmd, the
 // command of a dispatch state knows in knownStatus (dispatched, queued or
 // running; any other value cannot run), from running; an empty
-// reason when nothing does. The Job itself may still be refused when it is
-// built (deploy.ErrMalformedDispatch).
+// reason when nothing does. A job_name that is not a DNS-1123 label of 1 to 63
+// characters stops it: Kubernetes can never read such a Job, so no lookup of
+// the attempt's Job could ever answer. The Job itself may still be refused
+// when it is built (deploy.ErrMalformedDispatch).
 func DispatchProblem(cmd command.DeployTask, knownStatus pkgmodel.AttemptStatus) (pkgmodel.FailureReason, string) {
 	if _, err := pkgmodel.ParseNodeType(cmd.NodeType); err != nil {
 		return pkgmodel.FailureReasonInvalidNodeType, err.Error()
@@ -69,8 +82,9 @@ func DispatchProblem(cmd command.DeployTask, knownStatus pkgmodel.AttemptStatus)
 	case knownStatus != pkgmodel.AttemptStatusDispatched && knownStatus != pkgmodel.AttemptStatusQueued &&
 		knownStatus != pkgmodel.AttemptStatusRunning:
 		problem = fmt.Sprintf("known_status %q is not dispatched, queued or running", knownStatus)
-	case cmd.JobName == "" || len(cmd.JobName) > 63:
-		problem = fmt.Sprintf("job_name %q is not a Kubernetes name of 1 to 63 characters", cmd.JobName)
+	case len(cmd.JobName) > maxJobNameLen || !jobNamePattern.MatchString(cmd.JobName):
+		problem = fmt.Sprintf("job_name %q is not a Kubernetes name: 1 to %d lowercase letters, digits or dashes, starting and ending with a letter or digit",
+			cmd.JobName, maxJobNameLen)
 	case cmd.ImageTag == "":
 		problem = "image_tag is empty"
 	case cmd.TimeoutSeconds < 1:
