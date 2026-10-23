@@ -48,18 +48,13 @@ type TaskCollection interface {
 	// report yet, and its first check NextCheckIn after the database clock.
 	AddAttempts(ctx context.Context, attempts []Attempt) error
 
-	// CancelOpenAttempts marks every dispatched, queued and running attempt of
-	// the tasks of the given run as stopped, with no next check, and returns
-	// how many it changed. Attempts that have ended are left as they are.
-	CancelOpenAttempts(ctx context.Context, runID uuid.UUID) (int, error)
-
 	// HasFailed reports whether any task in the given run ended FAILED or
 	// CANCELLED — a terminal unsuccessful task. Pending and running tasks do
 	// not match. The run's finalized outcome is failed when it is true.
 	HasFailed(ctx context.Context, runID uuid.UUID) (bool, error)
 
 	// HasInFlight reports whether any task of the given run is dispatched,
-	// queued or running: an attempt of it is in flight.
+	// queued, running or stopping: an attempt of it is in flight.
 	HasInFlight(ctx context.Context, runID uuid.UUID) (bool, error)
 
 	// HasNonSucceeded reports whether any task in the given run is in a
@@ -105,14 +100,21 @@ type TaskCollection interface {
 	// still pending and undispatched, and returns how many tasks it changed.
 	SkipPending(ctx context.Context, runID uuid.UUID) (int, error)
 
-	// BulkCancel marks CANCELLED every task of the given run that has not
-	// ended (pending, dispatched, queued or running), stamping cancelled_by
-	// and cancelled_at with cancelledAt — the same authoritative instant the
-	// Run aggregate used for the run-level cancellation. A task that
-	// succeeded, failed or was skipped is final and is left as it is. Each
-	// task it cancels stays locked until the transaction ends. Returns the
-	// number of rows updated.
-	BulkCancel(ctx context.Context, runID uuid.UUID, cancelledBy string, cancelledAt time.Time) (rowsAffected int, err error)
+	// BeginStop stops every task of the given run that has not ended: a
+	// pending task is cancelled, and a dispatched, queued or running one
+	// becomes stopping. Each one is stamped cancelled_by and cancelled_at with
+	// cancelledAt, the instant the Run aggregate cancelled the run at, and
+	// stays locked until the transaction ends. A task that succeeded, failed,
+	// was skipped or was cancelled is left as it is. It returns how many tasks
+	// it cancelled and how many it made stopping.
+	BeginStop(ctx context.Context, runID uuid.UUID, cancelledBy string, cancelledAt time.Time) (StopCounts, error)
+
+	// RequestStops asks the current attempt of each stopping task of the
+	// given run to stop, when that attempt is open (dispatched, queued or
+	// running): it is stamped stop_requested_at with the database clock, its
+	// re-send count restarts at 0 and its next check is NextStopCheckAfter(0)
+	// after the database clock. It returns those attempts.
+	RequestStops(ctx context.Context, runID uuid.UUID) ([]StopTarget, error)
 }
 
 // TaskAttemptState is one task as an attempt report reads it: the run that
@@ -131,4 +133,21 @@ type TaskAttemptState struct {
 	SchemaName   string
 	TableName    string
 	DispatchedAt *time.Time
+}
+
+// StopCounts is what BeginStop changed: the pending tasks it cancelled and the
+// tasks in flight it made stopping.
+type StopCounts struct {
+	Cancelled int
+	Stopping  int
+}
+
+// StopTarget is an attempt state asked to stop: its task, its number, the
+// Kubernetes Job that runs it, and how often state has re-sent the cancel for
+// it.
+type StopTarget struct {
+	TaskID     uuid.UUID
+	Attempt    int32
+	JobName    string
+	ChecksSent int
 }

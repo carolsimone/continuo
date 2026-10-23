@@ -481,11 +481,19 @@ func (r *Run) Start(
 	return events, nil
 }
 
-// Cancel marks r as cancelled (a terminal transition), cancels its tasks that
-// have not ended (pending, dispatched, queued and running) and the open
-// attempts of its tasks, and records RunCancelled (work-suppression guard)
-// plus RunFinalized (terminal projection). Returns ErrAlreadyTerminal when r
-// is already terminal.
+// Cancel cancels r at now, by by for reason, and stops its work. Its pending
+// tasks are cancelled and count terminal; its tasks in flight (dispatched,
+// queued or running) become stopping, and the current attempt of each is asked
+// to stop. r records cancelled_at, cancelled_by and cancellation_reason, and
+// RunCancelled, naming no attempt, is recorded.
+//
+// With a task stopping, r becomes cancelling: it stays active, starts nothing
+// more, and ends cancelled on the report that ends its last task
+// (RecordAttemptReport). With nothing in flight, r ends cancelled at once,
+// completed at now, and RunFinalized is recorded with it.
+//
+// Cancel refuses a run that has ended (ErrAlreadyTerminal) and a run that is
+// already cancelling (ErrAlreadyCancelling), before it touches a task.
 func (r *Run) Cancel(
 	ctx context.Context,
 	tasks TaskCollection,
@@ -495,15 +503,25 @@ func (r *Run) Cancel(
 	if r.IsTerminal() {
 		return nil, ErrAlreadyTerminal
 	}
-	r.status = SchedulerStatusCancelled
+	if r.status == SchedulerStatusCancelling {
+		return nil, ErrAlreadyCancelling
+	}
+	counts, err := tasks.BeginStop(ctx, r.scheduleID, by, now)
+	if err != nil {
+		return nil, fmt.Errorf("stop the tasks of run %s: %w", r.scheduleID, err)
+	}
+	if counts.Stopping > 0 {
+		if _, err := tasks.RequestStops(ctx, r.scheduleID); err != nil {
+			return nil, fmt.Errorf("ask the attempts of run %s to stop: %w", r.scheduleID, err)
+		}
+	}
+	if counts.Cancelled > 0 {
+		r.terminalTaskCount += num.ClampInt32(counts.Cancelled)
+		r.changes.terminalTaskCountDirty = true
+	}
+
 	cancelledAt := now
 	r.cancelledAt = &cancelledAt
-	// Cancellation is terminal, so stamp completed_at just as SUCCEEDED/FAILED do.
-	// The cancel path persists through cancelDirty -> CancelTx (which writes
-	// cancelled_at and completed_at together), not completedDirty/FinalizeRunTx;
-	// this in-memory value keeps CompletedAt() consistent and feeds RunFinalized.
-	completedAt := now
-	r.completedAt = &completedAt
 	if by != "" {
 		b := by
 		r.cancelledBy = &b
@@ -514,17 +532,19 @@ func (r *Run) Cancel(
 	}
 	r.changes.cancelDirty = true
 	r.changes.statusDirty = true
+	events := []DomainEvent{RunCancelled{ID: r.scheduleID, Name: r.scheduleName, By: by, CancellationReason: reason}}
 
-	if _, err := tasks.BulkCancel(ctx, r.scheduleID, by, now); err != nil {
-		return nil, fmt.Errorf("bulk cancel tasks: %w", err)
+	if counts.Stopping > 0 {
+		r.status = SchedulerStatusCancelling
+		r.recordProgress(now)
+		return events, nil
 	}
-	if _, err := tasks.CancelOpenAttempts(ctx, r.scheduleID); err != nil {
-		return nil, fmt.Errorf("cancel open attempts: %w", err)
-	}
-
-	cancelledEvt := RunCancelled{ID: r.scheduleID, Name: r.scheduleName, By: by, CancellationReason: reason}
-	finalizedEvt := RunFinalized{ID: r.scheduleID, Name: r.scheduleName, Outcome: SchedulerStatusCancelled}
-	return []DomainEvent{cancelledEvt, finalizedEvt}, nil
+	// The cancel path persists the run through cancelDirty (Changes), which
+	// writes completed_at with the status; completedDirty stays clear.
+	r.status = SchedulerStatusCancelled
+	completedAt := now
+	r.completedAt = &completedAt
+	return append(events, RunFinalized{ID: r.scheduleID, Name: r.scheduleName, Outcome: SchedulerStatusCancelled}), nil
 }
 
 // recordProgress stamps the run's progress clock with now. The clock reads the
@@ -545,8 +565,12 @@ func (r *Run) fillSlot() {
 // makes ready: its pending, undispatched downstream tasks whose every in-run
 // upstream has succeeded. Each one MarkDispatched makes dispatched gets its
 // attempt 0, stored dispatched and due for its first check, and records a
-// TaskDispatched of attempt 0, in key order, with its node's timeout.
+// TaskDispatched of attempt 0, in key order, with its node's timeout. Only a
+// running run dispatches: a cancelling one starts nothing.
 func (r *Run) dispatchReady(ctx context.Context, tasks TaskCollection, graph TaskGraph, key topology.NodeKey, d TaskDefaults, now time.Time) ([]DomainEvent, error) {
+	if r.status != SchedulerStatusRunning {
+		return nil, nil
+	}
 	candidates, err := graph.ReadyCandidates(ctx, r.scheduleID, r.release.ReleaseID, key)
 	if err != nil {
 		return nil, fmt.Errorf("read the tasks %s's success may make ready: %w", key, err)

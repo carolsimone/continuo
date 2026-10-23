@@ -48,11 +48,12 @@ func isUniqueViolation(err error) bool {
 type SchedulerTrackerRepository interface {
 	Create(ctx context.Context, tracker *SchedulerTracker) error
 	GetByID(ctx context.Context, scheduleID uuid.UUID) (*SchedulerTracker, error)
-	// CancelTx cancels a scheduler within an existing transaction. cancelledAt is
-	// the authoritative cancellation instant produced by the Run aggregate; it is
-	// persisted to both cancelled_at and completed_at so the row matches the value
-	// the gRPC response reports.
-	CancelTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID, cancelledBy, reason string, cancelledAt time.Time) error
+	// CancelTx writes the cancel of a run within an existing transaction:
+	// status (cancelling or cancelled), cancelled_at, cancelled_by and
+	// cancellation_reason, and completed_at when the status is cancelled.
+	// cancelledAt is the cancellation instant the Run aggregate produced, so
+	// the row matches the value the gRPC response reports.
+	CancelTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID, status run.SchedulerStatus, cancelledBy, reason string, cancelledAt time.Time) error
 	HasActiveSchedule(ctx context.Context, scheduleName string) (bool, error)
 	// GetLastRunPerSchedule returns the most recent scheduler_tracker row per schedule name.
 	// Only returns schedules that have at least one run.
@@ -276,23 +277,33 @@ func (r *schedulerTrackerRepository) GetByID(ctx context.Context, scheduleID uui
 	return &tracker, nil
 }
 
-// CancelTx cancels a scheduler within an existing transaction.
-// Cancellation is terminal, so both cancelled_at and completed_at are stamped
-// with cancelledAt — the single authoritative instant the aggregate produced —
-// keeping the persisted row equal to the value returned to the caller. A run in
-// any terminal status (run.TerminalSchedulerStatuses) is left untouched and
+// CancelTx writes the cancel of a run within an existing transaction. status
+// is cancelling (the run waits for its stops) or cancelled (the run has ended,
+// so completed_at is stamped too); any other status is refused. Every instant
+// it writes is cancelledAt, the one the aggregate produced, keeping the
+// persisted row equal to the value returned to the caller. A run in any
+// terminal status (run.TerminalSchedulerStatuses) is left untouched and
 // reported as ErrNotCancellable.
-func (r *schedulerTrackerRepository) CancelTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID, cancelledBy, reason string, cancelledAt time.Time) error {
+func (r *schedulerTrackerRepository) CancelTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID, status run.SchedulerStatus,
+	cancelledBy, reason string, cancelledAt time.Time) error {
+	var completedAt *time.Time
+	switch status {
+	case run.SchedulerStatusCancelling:
+	case run.SchedulerStatusCancelled:
+		completedAt = &cancelledAt
+	default:
+		return fmt.Errorf("cancel run %s: status %q is not a cancel", scheduleID, status)
+	}
 	result, err := tx.ExecContext(ctx, `
 		UPDATE scheduler_tracker
 		SET status              = $1,
 		    cancelled_at        = $2,
-		    completed_at        = $2,
-		    cancelled_by        = $3,
-		    cancellation_reason = $4
-		WHERE schedule_id = $5
-		  AND NOT (status = ANY($6::text[]))
-	`, run.SchedulerStatusCancelled, cancelledAt, cancelledBy, reason, scheduleID, pq.Array(terminalSchedulerStatuses()))
+		    completed_at        = $3,
+		    cancelled_by        = $4,
+		    cancellation_reason = $5
+		WHERE schedule_id = $6
+		  AND NOT (status = ANY($7::text[]))
+	`, status, cancelledAt, completedAt, cancelledBy, reason, scheduleID, pq.Array(terminalSchedulerStatuses()))
 	if err != nil {
 		return fmt.Errorf("failed to cancel scheduler tx: %w", err)
 	}

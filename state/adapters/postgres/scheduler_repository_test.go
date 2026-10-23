@@ -273,7 +273,7 @@ func TestSchedulerTrackerRepository_CancelTx(t *testing.T) {
 	defer tx.Rollback()
 
 	cancelledAt := time.Now().UTC().Truncate(time.Microsecond)
-	require.NoError(t, repo.CancelTx(ctx, tx, id, "test-user", "test reason", cancelledAt))
+	require.NoError(t, repo.CancelTx(ctx, tx, id, run.SchedulerStatusCancelled, "test-user", "test reason", cancelledAt))
 	require.NoError(t, tx.Commit())
 
 	got, err := repo.GetByID(ctx, id)
@@ -294,7 +294,39 @@ func TestSchedulerTrackerRepository_CancelTx(t *testing.T) {
 	tx2, err := db.BeginTxx(ctx, nil)
 	require.NoError(t, err)
 	defer tx2.Rollback()
-	assert.ErrorIs(t, repo.CancelTx(ctx, tx2, id, "test-user", "duplicate", time.Now().UTC()), postgres.ErrNotCancellable)
+	assert.ErrorIs(t, repo.CancelTx(ctx, tx2, id, run.SchedulerStatusCancelled, "test-user", "duplicate", time.Now().UTC()), postgres.ErrNotCancellable)
+}
+
+// A cancel that waits for its stops writes the run cancelling with who
+// cancelled it, why and when, and no completed_at: the run has not ended.
+func TestSchedulerTrackerRepository_CancelTx_CancellingLeavesCompletedAtNull(t *testing.T) {
+	db := newTestDB(t)
+	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
+	ctx := context.Background()
+	id := uuid.New()
+	require.NoError(t, repo.Create(ctx, &postgres.SchedulerTracker{
+		ScheduleID: id, ScheduleName: "cxl-cancelling-" + id.String()[:8], Status: run.SchedulerStatusRunning,
+		CreatedAt: time.Now(), InitializationStatus: "completed",
+	}))
+	t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", id) })
+
+	tx, err := db.BeginTxx(ctx, nil)
+	require.NoError(t, err)
+	defer tx.Rollback()
+	cancelledAt := time.Now().UTC().Truncate(time.Microsecond)
+	require.NoError(t, repo.CancelTx(ctx, tx, id, run.SchedulerStatusCancelling, "test-user", "test reason", cancelledAt))
+	assert.Error(t, repo.CancelTx(ctx, tx, id, run.SchedulerStatusFailed, "test-user", "", cancelledAt),
+		"a cancel writes only cancelling or cancelled")
+	require.NoError(t, tx.Commit())
+
+	got, err := repo.GetByID(ctx, id)
+	require.NoError(t, err)
+	assert.Equal(t, run.SchedulerStatusCancelling, got.Status)
+	require.NotNil(t, got.CancelledAt)
+	assert.True(t, got.CancelledAt.Equal(cancelledAt))
+	assert.Equal(t, "test-user", *got.CancelledBy)
+	assert.Equal(t, "test reason", *got.CancellationReason)
+	assert.Nil(t, got.CompletedAt, "a cancelling run has not ended")
 }
 
 // TestSchedulerTrackerRepository_CancelTx_RefusesEveryTerminalStatus drives
@@ -330,7 +362,7 @@ func TestSchedulerTrackerRepository_CancelTx_RefusesEveryTerminalStatus(t *testi
 			tx, err := db.BeginTxx(ctx, nil)
 			require.NoError(t, err)
 			defer tx.Rollback()
-			err = repo.CancelTx(ctx, tx, id, "test-user", "table test", time.Now().UTC())
+			err = repo.CancelTx(ctx, tx, id, run.SchedulerStatusCancelled, "test-user", "table test", time.Now().UTC())
 			require.NoError(t, tx.Commit())
 
 			got, getErr := repo.GetByID(ctx, id)

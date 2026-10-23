@@ -1,7 +1,6 @@
 package postgres_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
@@ -115,39 +114,4 @@ func TestAttemptReport_EveryAttemptOfAThreeAttemptTaskHasItsRow(t *testing.T) {
 	}, f.attempts(t, key))
 	assert.Equal(t, run.TaskStatusFailed, status)
 	assert.Equal(t, int32(2), attempt)
-}
-
-// Cancelling a run cancels its running attempt in the cancel transaction; a
-// failure reported afterwards finds the run ended and changes nothing.
-func TestCancel_CancelsTheOpenAttemptInTheCancelTransaction(t *testing.T) {
-	db := newTestDB(t)
-	tenant := storeFailureSchedule(t, db)
-	f := statusFlow{db: db, tenant: tenant, r: startScheduleRun(t, db, tenant, "e2e-schedule-failure", model.OperationRun)}
-	const key = "e2e_schema.ftable_a"
-	f.report(t, key, 0, run.AttemptRunning, "")
-	job, _, _ := f.task(t, key)
-	require.Equal(t, []attemptRow{{Attempt: 0, JobName: job, Status: "running"}}, f.attempts(t, key))
-
-	ctx := context.Background()
-	u := newPlanningUoW(db)
-	require.NoError(t, u.Begin(ctx))
-	defer u.Rollback()
-	r, err := u.Run().LoadRunForUpdate(ctx, f.r.ScheduleID())
-	require.NoError(t, err)
-	_, err = r.Cancel(ctx, u.TaskCollection(), "tester", "stop", u.Clock().Now())
-	require.NoError(t, err)
-	require.NoError(t, u.Run().SaveRun(ctx, r))
-	require.NoError(t, u.Commit())
-
-	rows := f.attempts(t, key)
-	require.Len(t, rows, 1)
-	assert.Equal(t, "stopped", rows[0].Status)
-
-	f.report(t, key, 0, run.AttemptFailed, model.FailureReasonExitCode)
-
-	rows = f.attempts(t, key)
-	require.Len(t, rows, 1)
-	assert.Equal(t, "stopped", rows[0].Status)
-	status, _ := f.run(t)
-	assert.Equal(t, run.SchedulerStatusCancelled, status)
 }

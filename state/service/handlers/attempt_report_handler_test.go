@@ -116,12 +116,10 @@ type fakeTaskStatusTaskCollection struct {
 	task   run.Task
 	getErr error
 
-	// attemptRows holds the stored attempts; cancelledRuns the runs
-	// CancelOpenAttempts was called for; lockOrder the LoadAttemptState
+	// attemptRows holds the stored attempts; lockOrder the LoadAttemptState
 	// ("task <id>") and LoadAttempt ("attempt <id>/<n>") calls in call order.
-	attemptRows   map[statusAttemptKey]run.Attempt
-	cancelledRuns []uuid.UUID
-	lockOrder     []string
+	attemptRows map[statusAttemptKey]run.Attempt
+	lockOrder   []string
 }
 
 // statusAttemptKey identifies one stored attempt.
@@ -156,22 +154,6 @@ func (f *fakeTaskStatusTaskCollection) HasInFlight(context.Context, uuid.UUID) (
 }
 func (f *fakeTaskStatusTaskCollection) SkipPending(context.Context, uuid.UUID) (int, error) {
 	return 0, nil
-}
-
-// CancelOpenAttempts cancels every open attempt the fake holds and records the
-// run it was called for.
-func (f *fakeTaskStatusTaskCollection) CancelOpenAttempts(_ context.Context, runID uuid.UUID) (int, error) {
-	f.cancelledRuns = append(f.cancelledRuns, runID)
-	n := 0
-	for k, a := range f.attemptRows {
-		if a.Status.IsFinal() {
-			continue
-		}
-		a.Status = run.AttemptStopped
-		f.attemptRows[k] = a
-		n++
-	}
-	return n, nil
 }
 
 func (f *fakeTaskStatusTaskCollection) GetByID(_ context.Context, _ uuid.UUID) (run.Task, error) {
@@ -221,8 +203,11 @@ func (f *fakeTaskStatusTaskCollection) BulkCreate(_ context.Context, _ []run.Tas
 func (f *fakeTaskStatusTaskCollection) GetByNode(_ context.Context, _ uuid.UUID, _ run.NodeID) (run.Task, error) {
 	panic("GetByNode not implemented in fake")
 }
-func (f *fakeTaskStatusTaskCollection) BulkCancel(_ context.Context, _ uuid.UUID, _ string, _ time.Time) (int, error) {
-	panic("BulkCancel not implemented in fake")
+func (f *fakeTaskStatusTaskCollection) BeginStop(_ context.Context, _ uuid.UUID, _ string, _ time.Time) (run.StopCounts, error) {
+	panic("BeginStop not implemented in fake")
+}
+func (f *fakeTaskStatusTaskCollection) RequestStops(_ context.Context, _ uuid.UUID) ([]run.StopTarget, error) {
+	panic("RequestStops not implemented in fake")
 }
 func (f *fakeTaskStatusTaskCollection) Update(_ context.Context, _ run.Task) error {
 	panic("Update not implemented in fake")

@@ -177,7 +177,7 @@ func (s *stubSchedulerRepo) FinalizeRunTx(_ context.Context, _ *sqlx.Tx, _ uuid.
 func (s *stubSchedulerRepo) UpdateRunRowTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ postgres.RunRowUpdate) error {
 	return nil
 }
-func (s *stubSchedulerRepo) CancelTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _, _ string, _ time.Time) error {
+func (s *stubSchedulerRepo) CancelTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ run.SchedulerStatus, _, _ string, _ time.Time) error {
 	return s.cancelErr
 }
 
@@ -713,19 +713,18 @@ func assertCancelEvents(t *testing.T, evts []run.DomainEvent, by string) {
 	assert.True(t, sawFinalized, "RunFinalized must be appended")
 }
 
-// cancelFakeTaskCollection is an in-memory TaskCollection for cancel handler tests.
-// BulkCancel is the only method called during Run.Cancel.
+// cancelFakeTaskCollection is an in-memory TaskCollection for cancel handler
+// tests. BeginStop, and RequestStops when it reports a task stopping, are the
+// only methods Run.Cancel calls.
 type cancelFakeTaskCollection struct {
-	bulkCancelCalled bool
-	bulkCancelN      int
-	bulkCancelErr    error
+	beginStopCalled bool
+	beginStopCounts run.StopCounts
+	beginStopErr    error
 
-	// attemptRows holds the stored attempts; cancelledRuns the runs
-	// CancelOpenAttempts was called for; lockOrder the LoadAttemptState
+	// attemptRows holds the stored attempts; lockOrder the LoadAttemptState
 	// ("task <id>") and LoadAttempt ("attempt <id>/<n>") calls in call order.
-	attemptRows   map[cancelAttemptKey]run.Attempt
-	cancelledRuns []uuid.UUID
-	lockOrder     []string
+	attemptRows map[cancelAttemptKey]run.Attempt
+	lockOrder   []string
 }
 
 // cancelAttemptKey identifies one stored attempt.
@@ -761,25 +760,12 @@ func (f *cancelFakeTaskCollection) SkipPending(context.Context, uuid.UUID) (int,
 	panic("SkipPending not used by the cancel tests")
 }
 
-// CancelOpenAttempts cancels every open attempt the fake holds and records the
-// run it was called for.
-func (f *cancelFakeTaskCollection) CancelOpenAttempts(_ context.Context, runID uuid.UUID) (int, error) {
-	f.cancelledRuns = append(f.cancelledRuns, runID)
-	n := 0
-	for k, a := range f.attemptRows {
-		if a.Status.IsFinal() {
-			continue
-		}
-		a.Status = run.AttemptStopped
-		f.attemptRows[k] = a
-		n++
-	}
-	return n, nil
+func (f *cancelFakeTaskCollection) BeginStop(_ context.Context, _ uuid.UUID, _ string, _ time.Time) (run.StopCounts, error) {
+	f.beginStopCalled = true
+	return f.beginStopCounts, f.beginStopErr
 }
-
-func (f *cancelFakeTaskCollection) BulkCancel(_ context.Context, _ uuid.UUID, _ string, _ time.Time) (int, error) {
-	f.bulkCancelCalled = true
-	return f.bulkCancelN, f.bulkCancelErr
+func (f *cancelFakeTaskCollection) RequestStops(_ context.Context, _ uuid.UUID) ([]run.StopTarget, error) {
+	return nil, nil
 }
 func (f *cancelFakeTaskCollection) BulkCreate(_ context.Context, _ []run.Task) error {
 	panic("BulkCreate not used in cancel tests")
@@ -935,7 +921,7 @@ func TestCancelScheduler_Success(t *testing.T) {
 	assert.Equal(t, id.String(), resp.Scheduler.ScheduleId)
 	assert.Equal(t, statev1.SchedulerStatus_SCHEDULER_STATUS_CANCELLED, resp.Scheduler.Status)
 	assert.True(t, runRepo.saveCalled, "SaveRun must be called")
-	assert.True(t, tasks.bulkCancelCalled, "BulkCancel must be called")
+	assert.True(t, tasks.beginStopCalled, "BeginStop must be called")
 	assertCancelEvents(t, outbox.appended, "ops-user")
 }
 
@@ -1058,7 +1044,7 @@ func TestCancelSchedule_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, id.String(), resp.ScheduleId)
 	assert.True(t, runRepo.saveCalled, "SaveRun must be called")
-	assert.True(t, tasks.bulkCancelCalled, "BulkCancel must be called")
+	assert.True(t, tasks.beginStopCalled, "BeginStop must be called")
 	assertCancelEvents(t, outbox.appended, "ops-user")
 }
 

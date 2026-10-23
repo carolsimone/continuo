@@ -21,8 +21,9 @@ type DomainEvent interface {
 
 // RunFinalized is recorded by Run.RecordAttemptReport when every task of the
 // run has ended, by Run.Start when the plan holds no pending task, by
-// Run.Cancel, by Run.FailStalled and by Run.MarkDispatchTerminal. It maps to
-// no stream: the run's terminal status is its row.
+// Run.Cancel of a run with nothing in flight, by Run.FailStalled and by
+// Run.MarkDispatchTerminal. It maps to no stream: the run's terminal status is
+// its row.
 type RunFinalized struct {
 	ID      uuid.UUID
 	Name    string
@@ -32,12 +33,16 @@ type RunFinalized struct {
 func (RunFinalized) runDomainEvent()         {}
 func (e RunFinalized) ScheduleID() uuid.UUID { return e.ID }
 
-// RunCancelled is recorded by Run.Cancel. Translated to schedule.cancelled:v1.
+// RunCancelled is the cancel of a run: who cancelled it, why, and the
+// attempts state still waits for. Run.Cancel records it naming no attempt;
+// StopQuestion.Cancel re-sends it naming each attempt asked to stop that has
+// not answered. Translated to schedule.cancelled:v1.
 type RunCancelled struct {
 	ID                 uuid.UUID
 	Name               string
 	By                 string
 	CancellationReason string
+	Attempts           []StopTarget
 }
 
 func (RunCancelled) runDomainEvent()         {}

@@ -81,7 +81,7 @@ func TestTaskRepository_HasFailedTaskTx_CountsCancelledTasks(t *testing.T) {
 	}
 }
 
-func TestTaskTrackerRepository_BulkCancelByScheduleIDTx(t *testing.T) {
+func TestTaskTrackerRepository_BeginStopTx(t *testing.T) {
 	db := newTestDB(t)
 	schedRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
 	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
@@ -90,7 +90,7 @@ func TestTaskTrackerRepository_BulkCancelByScheduleIDTx(t *testing.T) {
 	schedID := uuid.New()
 	require.NoError(t, schedRepo.Create(ctx, &postgres.SchedulerTracker{
 		ScheduleID:           schedID,
-		ScheduleName:         "bulk-cancel-" + schedID.String(),
+		ScheduleName:         "begin-stop-" + schedID.String(),
 		Status:               run.SchedulerStatusRunning,
 		CreatedAt:            time.Now(),
 		InitializationStatus: "completed",
@@ -141,15 +141,22 @@ func TestTaskTrackerRepository_BulkCancelByScheduleIDTx(t *testing.T) {
 	require.NoError(t, err)
 	defer tx.Rollback()
 
-	n, err := taskRepo.BulkCancelByScheduleIDTx(ctx, tx, schedID, "user1", time.Now().UTC())
+	counts, err := taskRepo.BeginStopTx(ctx, tx, schedID, "user1", time.Now().UTC())
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
-	assert.EqualValues(t, 4, n) // pending, dispatched, queued and running
+	assert.Equal(t, run.StopCounts{Cancelled: 1, Stopping: 3}, counts)
 
-	for _, id := range []uuid.UUID{pendingID, dispatchedID, queuedID, runningID} {
+	// The pending task is cancelled; the dispatched, queued and running ones
+	// are stopping until their attempts answer.
+	for id, want := range map[uuid.UUID]run.TaskStatus{
+		pendingID:    run.TaskStatusCancelled,
+		dispatchedID: run.TaskStatusStopping,
+		queuedID:     run.TaskStatusStopping,
+		runningID:    run.TaskStatusStopping,
+	} {
 		got, err := taskRepo.GetByID(ctx, id)
 		require.NoError(t, err)
-		assert.Equal(t, run.TaskStatusCancelled, got.Status)
+		assert.Equal(t, want, got.Status)
 		assert.NotNil(t, got.CancelledAt)
 		require.NotNil(t, got.CancelledBy)
 		assert.Equal(t, "user1", *got.CancelledBy)
@@ -295,7 +302,7 @@ func TestTaskRepository_SetStatusAndAttemptTx_DoesNotReviveCancelledTask(t *test
 	task := createTask(t, taskRepo, scheduler.ScheduleID)
 	defer db.ExecContext(context.Background(), "DELETE FROM task_tracker WHERE task_id = $1", task.TaskID)
 
-	// Mark the task cancelled (simulating BulkCancelByScheduleIDTx).
+	// Mark the task cancelled, as BeginStopTx cancels a pending task.
 	_, err := db.ExecContext(context.Background(),
 		`UPDATE task_tracker SET status = 'cancelled', cancelled_at = NOW(), cancelled_by = 'test' WHERE task_id = $1`,
 		task.TaskID,

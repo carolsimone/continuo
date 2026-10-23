@@ -199,12 +199,18 @@ func TestStateService(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, schedID, resp.ScheduleId)
 
+		// The trigger dispatched the schedule's task, so the run is cancelling
+		// until that attempt reports stopped.
+		var stored string
+		require.NoError(t, stateDB.GetContext(ctx, &stored,
+			`SELECT status FROM scheduler_tracker WHERE schedule_id = $1`, schedID))
+		assert.Equal(t, "cancelling", stored)
+
 		// Verify via GetScheduler
 		getResp, err := stateClient.GetScheduler(ctx, &statev1.GetSchedulerRequest{
 			ScheduleId: resp.ScheduleId,
 		})
 		require.NoError(t, err)
-		assert.Equal(t, statev1.SchedulerStatus_SCHEDULER_STATUS_CANCELLED, getResp.Scheduler.Status)
 		assert.Equal(t, "user", getResp.Scheduler.CancelledBy)
 		assert.Equal(t, "manual stop", getResp.Scheduler.CancellationReason)
 		assert.NotNil(t, getResp.Scheduler.CancelledAt)

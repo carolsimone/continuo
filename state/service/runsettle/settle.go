@@ -1,8 +1,8 @@
 // Package runsettle cancels, when state starts, every active run whose tasks
 // state did not plan. Such a run's tasks record neither when they were
 // dispatched nor which of them wait on which, so no status update can move it
-// on; cancelling it ends it now, and schedule.cancelled:v1 tells
-// execution-controller to suppress its Jobs.
+// on; cancelling it ends it, or stops the work it has in flight (Run.Cancel),
+// and schedule.cancelled:v1 tells execution-controller to suppress its Jobs.
 package runsettle
 
 import (

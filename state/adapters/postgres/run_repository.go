@@ -85,10 +85,11 @@ func (r *RunRepositoryAdapter) SaveRun(ctx context.Context, rn *run.Run) error {
 		return nil
 	}
 
-	// Cancellation is a guarded terminal transition (WHERE status NOT IN
-	// terminal, mapped to ErrAlreadyTerminal). It writes cancelled_at,
-	// completed_at, cancelled_by, cancellation_reason and status together, so it
-	// stays on its own dedicated statement rather than the consolidated UPDATE.
+	// A cancel is a guarded transition (WHERE status NOT IN terminal, mapped to
+	// ErrAlreadyTerminal) to cancelling or cancelled. It writes the status,
+	// cancelled_at, cancelled_by and cancellation_reason, and completed_at with
+	// cancelled, on its own statement; the other columns the cancel moved (the
+	// terminal count, the progress clock) follow in the consolidated UPDATE.
 	if ch.IsCancelDirty() {
 		by := ""
 		reason := ""
@@ -98,23 +99,19 @@ func (r *RunRepositoryAdapter) SaveRun(ctx context.Context, rn *run.Run) error {
 		if rn.CancellationReason() != nil {
 			reason = *rn.CancellationReason()
 		}
-		// The aggregate stamped cancelled_at and completed_at to the same
-		// authoritative instant; persist that value so the row matches the
-		// gRPC response built from the same aggregate. Run.Cancel always sets
-		// cancelled_at when it marks the change set cancelDirty, so a nil here is
-		// a programming error rather than a missing-value default to paper over.
+		// Run.Cancel always sets cancelled_at when it marks the change set
+		// cancelDirty, so a nil here is a programming error rather than a
+		// missing-value default to paper over.
 		at := rn.CancelledAt()
 		if at == nil {
 			return fmt.Errorf("cancel save: aggregate marked cancel-dirty without a cancelled_at")
 		}
-		if err := r.schedRepo.CancelTx(ctx, r.tx, rn.ScheduleID(), by, reason, *at); err != nil {
+		if err := r.schedRepo.CancelTx(ctx, r.tx, rn.ScheduleID(), rn.Status(), by, reason, *at); err != nil {
 			if errors.Is(err, ErrNotCancellable) {
 				return run.ErrAlreadyTerminal
 			}
 			return fmt.Errorf("cancel: %w", err)
 		}
-		rn.ResetChanges()
-		return nil
 	}
 
 	// Every other dirty column is collected into a single UPDATE so SaveRun
@@ -147,7 +144,8 @@ func (r *RunRepositoryAdapter) SaveRun(ctx context.Context, rn *run.Run) error {
 	if ch.IsPlannedDirty() {
 		fields.PlannedAt = rn.PlannedAt()
 	}
-	if ch.IsStatusDirty() {
+	// The cancel's statement already wrote the status it moved.
+	if ch.IsStatusDirty() && !ch.IsCancelDirty() {
 		v := string(rn.Status())
 		fields.Status = &v
 	}

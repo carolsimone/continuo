@@ -55,7 +55,7 @@ func TestAttemptRepository_DueAttemptsAreTheOpenDueAttemptsOfActiveRuns(t *testi
 	cancelRun(t, db, f.r)
 	due, err = repo.DueAttempts(ctx, 500)
 	require.NoError(t, err)
-	assert.NotContains(t, due, f.keyOf("e2e_schema.ftable_a", 0), "nothing of a run that ended is asked about")
+	assert.NotContains(t, due, f.keyOf("e2e_schema.ftable_a", 0), "nothing of a cancelled run is asked about with a dispatch")
 }
 
 // A tenant's loop is handed only the due attempts it can ask about: those of

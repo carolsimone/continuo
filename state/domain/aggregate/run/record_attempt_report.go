@@ -28,13 +28,23 @@ import (
 //     TaskDispatched, with the timeout the run's release gives the node;
 //     otherwise the task fails and the pending tasks below it are skipped.
 //
+// A cancelling run starts nothing: its tasks in flight are stopping, and a
+// report of a stopping task's current attempt ends the task with what really
+// happened. Queued or running moves only the attempt's facts: the task stays
+// stopping and the attempt keeps the next check its stop set. Stopped cancels
+// the task, succeeded makes it succeeded and failed fails it, never retried;
+// nothing is dispatched and nothing skipped. A stopped report of an open
+// attempt state never asked to stop is refused with ErrStopNotRequested
+// before anything is written.
+//
 // Every move of a task stamps the run's progress clock. A task that has ended
-// counts terminal once, and the run finalizes when every task has ended:
-// failed if any failed or was cancelled, succeeded otherwise. Dispatching the
-// tasks a success makes ready and skipping the tasks a final failure blocks
-// read the run's graph only on a run whose tasks state planned; the next
-// attempt of a retryable failure reads its node from the run's release on
-// every run.
+// counts terminal once, and the run finalizes when every task has ended: a
+// cancelling run cancelled, a running one failed if any task failed or was
+// cancelled and succeeded otherwise. Dispatching the tasks a success makes
+// ready and skipping the tasks a final failure blocks read the run's graph
+// only on a running run whose tasks state planned; the next attempt of a
+// retryable failure reads its node from the run's release on every running
+// run.
 //
 // A report for a run that has ended changes nothing: every attempt of such a
 // run has ended. The boolean result reports whether the report made the task
@@ -69,9 +79,18 @@ func (r *Run) RecordAttemptReport(
 	if !held {
 		return nil, false, fmt.Errorf("%w: attempt %d of task %s", ErrAttemptNotIssued, rep.Attempt, rep.TaskID)
 	}
+	stopping := task.Status == TaskStatusStopping && rep.Attempt == task.Attempt
+	if rep.Status == AttemptStopped && !a.Status.IsFinal() && !stopping {
+		return nil, false, fmt.Errorf("%w: attempt %d of task %s", ErrStopNotRequested, rep.Attempt, rep.TaskID)
+	}
 	applied, changed := a.Apply(rep)
 	if !applied {
 		return nil, false, nil
+	}
+	if stopping && !a.Status.IsFinal() {
+		// The attempt is asked about on the stop's schedule, which the cancel
+		// and each re-send of it set.
+		a.NextCheckIn = 0
 	}
 	if err := tasks.SaveAttempt(ctx, a); err != nil {
 		return nil, false, fmt.Errorf("save attempt %d: %w", a.Number, err)
@@ -82,16 +101,22 @@ func (r *Run) RecordAttemptReport(
 
 	switch a.Status {
 	case AttemptQueued, AttemptRunning:
+		if stopping {
+			return nil, false, nil
+		}
 		return nil, false, r.moveTask(ctx, tasks, rep.TaskID, TaskStatus(a.Status), a.Number, now)
 	case AttemptSucceeded:
 		events, err := r.endTask(ctx, tasks, graph, rep.TaskID, task, TaskStatusSucceeded, d, now)
 		return events, err == nil, err
 	case AttemptFailed:
-		if Retryable(rep.FailureReason.Class()) && a.Number < task.MaxRetries {
+		if r.status == SchedulerStatusRunning && Retryable(rep.FailureReason.Class()) && a.Number < task.MaxRetries {
 			events, err := r.dispatchNextAttempt(ctx, tasks, graph, rep.TaskID, task, d, now)
 			return events, false, err
 		}
 		events, err := r.endTask(ctx, tasks, graph, rep.TaskID, task, TaskStatusFailed, d, now)
+		return events, false, err
+	case AttemptStopped:
+		events, err := r.endTask(ctx, tasks, graph, rep.TaskID, task, TaskStatusCancelled, d, now)
 		return events, false, err
 	}
 	return nil, false, nil
@@ -107,9 +132,9 @@ func (r *Run) moveTask(ctx context.Context, tasks TaskCollection, taskID uuid.UU
 	return nil
 }
 
-// endTask makes the task final with status and moves the run: a success
-// dispatches what it makes ready, a failure skips the pending tasks it blocks,
-// and the run finalizes once every task has ended.
+// endTask makes the task final with status and moves the run: on a running
+// run a success dispatches what it makes ready and a failure skips the pending
+// tasks it blocks, and the run finalizes once every task has ended.
 func (r *Run) endTask(ctx context.Context, tasks TaskCollection, graph TaskGraph, taskID uuid.UUID, task TaskAttemptState,
 	status TaskStatus, d TaskDefaults, now time.Time) ([]DomainEvent, error) {
 	if err := r.moveTask(ctx, tasks, taskID, status, task.Attempt, now); err != nil {
@@ -117,7 +142,7 @@ func (r *Run) endTask(ctx context.Context, tasks TaskCollection, graph TaskGraph
 	}
 	r.fillSlot()
 	var events []DomainEvent
-	if r.plannedAt != nil {
+	if r.plannedAt != nil && r.status == SchedulerStatusRunning {
 		switch status {
 		case TaskStatusSucceeded:
 			dispatched, err := r.dispatchReady(ctx, tasks, graph, task.NodeKey, d, now)
@@ -166,11 +191,16 @@ func (r *Run) dispatchNextAttempt(ctx context.Context, tasks TaskCollection, gra
 }
 
 // finalizeWhenEveryTaskEnded finalizes r when every task has ended, the plan
-// is stored and r is still running: failed when any task failed or was
-// cancelled, succeeded otherwise.
+// is stored and r has not ended: a cancelling run cancelled; a running one
+// failed when any task failed or was cancelled, succeeded otherwise.
 func (r *Run) finalizeWhenEveryTaskEnded(ctx context.Context, tasks TaskCollection, now time.Time) ([]DomainEvent, error) {
-	if r.totalTaskCount == nil || r.terminalTaskCount != *r.totalTaskCount ||
-		r.initStatus != InitStatusCompleted || r.status != SchedulerStatusRunning {
+	if r.totalTaskCount == nil || r.terminalTaskCount != *r.totalTaskCount || r.initStatus != InitStatusCompleted {
+		return nil, nil
+	}
+	if r.status == SchedulerStatusCancelling {
+		return r.finalize(SchedulerStatusCancelled, now), nil
+	}
+	if r.status != SchedulerStatusRunning {
 		return nil, nil
 	}
 	anyFailed, err := tasks.HasFailed(ctx, r.scheduleID)
@@ -184,11 +214,13 @@ func (r *Run) finalizeWhenEveryTaskEnded(ctx context.Context, tasks TaskCollecti
 	return r.finalize(outcome, now), nil
 }
 
-// FailStalled fails r as stalled when it is active, has no attempt in flight
-// and has made no progress for StallAfter: only a defect in state leaves a run
-// so. Its pending tasks are skipped and count terminal. It reports whether it
-// failed the run; a run that has ended, has an attempt in flight or moved
-// within StallAfter is left as it is.
+// FailStalled ends r when it is active, has no attempt in flight (no task
+// dispatched, queued, running or stopping) and has made no progress for
+// StallAfter: only a defect in state leaves a run so. A cancelling run ends
+// cancelled, with no failure reason: its cancel asked for nothing more. Any
+// other run fails as stalled, its pending tasks skipped and counted terminal.
+// It reports whether it ended the run; a run that has ended, has an attempt in
+// flight or moved within StallAfter is left as it is.
 func (r *Run) FailStalled(ctx context.Context, tasks TaskCollection, now time.Time) ([]DomainEvent, bool, error) {
 	if !r.IsActive() || r.lastHeartbeatAt == nil || now.Sub(*r.lastHeartbeatAt) < StallAfter {
 		return nil, false, nil
@@ -199,6 +231,9 @@ func (r *Run) FailStalled(ctx context.Context, tasks TaskCollection, now time.Ti
 	}
 	if inFlight {
 		return nil, false, nil
+	}
+	if r.status == SchedulerStatusCancelling {
+		return r.finalize(SchedulerStatusCancelled, now), true, nil
 	}
 	skipped, err := tasks.SkipPending(ctx, r.scheduleID)
 	if err != nil {
