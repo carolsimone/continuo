@@ -11,7 +11,8 @@ import (
 )
 
 // NewCancelCommand builds `continuo schedule cancel <schedule-name> <reason>`.
-// It stops the active run of the named schedule via the state service. reason is
+// It asks the state service to cancel the active run of the named schedule: the
+// run becomes cancelling and ends cancelled once its Jobs have stopped. reason is
 // a required positional recorded for audit. The cancelling identity is not a
 // command argument: it comes from cfg.Actor (the CONTINUO_ACTOR env var) so that
 // a caller such as the chat agent stamps a fixed identity without a flag. When
@@ -19,10 +20,18 @@ import (
 func NewCancelCommand(factory StateClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cancel <schedule-name> <reason>",
-		Short: "Cancel the active run of the named schedule",
+		Short: "Cancel the active run of the named schedule; it ends cancelled once its Jobs have stopped",
 		Long: `Cancel the active run of the named schedule.
 
 Use when the user asks to stop, cancel, or kill a schedule that is running now.
+
+A successful cancel means the run is now cancelling, not that it has stopped:
+the state service stops handing out work, and the run ends cancelled once
+execution-controller has stopped every Job of it. Until then the run's status
+is cancelling and its tasks that were running show as stopping; read
+"schedule status <schedule-name>" to see when the run has ended.
+A second cancel of a cancelling run succeeds and changes nothing: it returns the same
+run and keeps the first cancel's time, author and reason.
 
 Arguments:
   <schedule-name>  The schedule whose active run should be cancelled.
@@ -35,10 +44,12 @@ system identity.
 
 Output (stdout, JSON):
   {"schedule_id":string,"schedule_name":string,"cancelled_at":string}
+  schedule_id is the id of the run that is cancelling. cancelled_at is the
+  time this command received the answer, not the time of the first cancel.
 
 Errors:
   usage      (exit 2)  wrong number of arguments, or a blank reason
-  conflict   (exit 4)  no active run for the schedule, or it already finished
+  conflict   (exit 4)  the schedule has no pending, running or cancelling run, or the run ended before the cancel reached it
   unavailable(exit 5)  the state service is unreachable
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo schedule cancel daily-revenue \"bad upstream data\"",
@@ -75,7 +86,7 @@ Errors:
 			}
 
 			if cfg.Human {
-				return output.HumanSuccess(stderr, "Cancelled run "+resp.ScheduleId+" for schedule '"+scheduleName+"'")
+				return output.HumanSuccess(stderr, "Cancelling run "+resp.ScheduleId+" for schedule '"+scheduleName+"'; it ends cancelled once its Jobs have stopped")
 			}
 			payload := map[string]string{
 				"schedule_id":   resp.ScheduleId,

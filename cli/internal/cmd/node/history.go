@@ -82,7 +82,9 @@ Output (stdout, JSON): up to 50 runs, newest first.
    "log_s3_key":string,"run_results_uri":string,"operation":string,
    "content_hash":string}]}
   attempt is the zero-based number of the task's current attempt (0 on the
-  first try). failure_class and failure_reason say why the latest attempt
+  first try). terminal_status is the run's status: pending|running|cancelling|succeeded|failed|cancelled|skipped.
+  task_status is one of: pending|dispatched|queued|running|stopping|succeeded|failed|cancelled|skipped.
+  failure_class and failure_reason say why the latest attempt
   failed. terminal_status, started_at, completed_at, error_message,
   failure_class, failure_reason, log_s3_key, run_results_uri, and content_hash
   are omitted when empty. run_results_uri points at the structured result
