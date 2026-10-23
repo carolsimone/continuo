@@ -134,6 +134,21 @@ func pollUntil(
 	condition func() (bool, error),
 	timeoutMsg string,
 ) {
+	t.Helper()
+	pollUntilDescribed(t, ctx, timeout, interval, condition, func() string { return timeoutMsg })
+}
+
+// pollUntilDescribed is pollUntil with a message built when it is printed, so
+// a timeout can name what the condition last observed.
+func pollUntilDescribed(
+	t *testing.T,
+	ctx context.Context,
+	timeout time.Duration,
+	interval time.Duration,
+	condition func() (bool, error),
+	describe func() string,
+) {
+	t.Helper()
 	deadline := time.After(timeout)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -145,7 +160,7 @@ func pollUntil(
 	for {
 		select {
 		case <-deadline:
-			t.Fatal(timeoutMsg)
+			t.Fatal(describe())
 		case <-ticker.C:
 			success, err := condition()
 			if err != nil {
@@ -156,7 +171,7 @@ func pollUntil(
 				return
 			}
 			if time.Since(lastProgress) >= progressInterval {
-				t.Logf("Still waiting... (%.0fs elapsed) — %s", time.Since(start).Seconds(), timeoutMsg)
+				t.Logf("Still waiting... (%.0fs elapsed) — %s", time.Since(start).Seconds(), describe())
 				lastProgress = time.Now()
 			}
 		}

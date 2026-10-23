@@ -99,7 +99,7 @@ func TestCancelMidwayAndRetrigger(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, cancelledID, freshID, "retrigger must produce a new run_id")
 
-	t.Logf("Phase 3 complete: fresh run triggered (schedule_id=%s)", freshID)
+	t.Logf("Phase 3 complete: fresh run triggered (run_id=%s)", freshID)
 
 	// ── Phase 4: Verify fresh run completes ───────────────────────────────────
 	// Verify by schedule_id — two runs share the same schedule_name in the DB,
@@ -154,7 +154,11 @@ func callCancelEndpoint(t *testing.T, ctx context.Context, scheduleName, cancell
 // stopped, which takes up to 3 minutes.
 func verifySchedulerCancelled(t *testing.T, ctx context.Context, clients *testClients, schedulerID uuid.UUID) {
 	t.Helper()
-	pollUntil(t, ctx, 3*time.Minute, 500*time.Millisecond, func() (bool, error) {
+	// lastStatus is what the poll saw last: 'cancelling' on a timeout means the
+	// run is still waiting for its Jobs to stop, 'running' that the cancel
+	// never took hold.
+	lastStatus := "(not read)"
+	pollUntilDescribed(t, ctx, 3*time.Minute, 500*time.Millisecond, func() (bool, error) {
 		var status string
 		err := clients.stateDB.Get(&status, `
 			SELECT status FROM scheduler_tracker WHERE schedule_id = $1
@@ -162,8 +166,11 @@ func verifySchedulerCancelled(t *testing.T, ctx context.Context, clients *testCl
 		if err != nil {
 			return false, err
 		}
+		lastStatus = status
 		return status == "cancelled", nil
-	}, "Timeout waiting for scheduler to reach 'cancelled' status")
+	}, func() string {
+		return fmt.Sprintf("run %s did not reach 'cancelled' within 3m; last status %q", schedulerID, lastStatus)
+	})
 
 	t.Log("✅ scheduler_tracker.status = 'cancelled'")
 }
