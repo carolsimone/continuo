@@ -435,13 +435,18 @@ func (d *Deployment) JobName() string {
 	return d.validationCmd.JobName
 }
 
+// RetriesLeft reports whether a transient failure of the current deploy try
+// leaves another try in the budget: RegisterFailure then returns the
+// deployment to pending rather than failing it.
+func (d *Deployment) RetriesLeft() bool { return d.retryCount+1 < d.maxRetries }
+
 // RegisterFailure records a failed deploy attempt of a reserved deployment and
 // applies the retry policy. A transient failure with attempts left returns the
 // deployment to pending (freeing its slot), bumps retryCount and pushes
 // nextAttemptAt, and reports terminal=false. Otherwise the deployment fails and
 // terminal=true.
 func (d *Deployment) RegisterFailure(now time.Time, permanent bool, reason string, backoff BackoffPolicy) (terminal bool, err error) {
-	if !permanent && d.retryCount+1 < d.maxRetries {
+	if !permanent && d.RetriesLeft() {
 		if err := d.moveTo(StatusPending); err != nil {
 			return false, err
 		}

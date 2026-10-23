@@ -84,6 +84,15 @@ func TestRegisterFailure_FailsWhenBudgetExhausted(t *testing.T) {
 	assert.Equal(t, 2, d.RetryCount(), "no further retry once exhausted")
 }
 
+// A transient failure leaves another try only while the budget has one.
+func TestRetriesLeft_FollowsTheBudget(t *testing.T) {
+	now := time.Now()
+	for retryCount, want := range map[int]bool{0: true, 1: true, 2: false} {
+		d := model.Reconstitute(uuid.New(), nil, deployableCmd(), model.StatusReserved, retryCount, 3, now, now, nil, nil)
+		assert.Equal(t, want, d.RetriesLeft(), "retry_count %d of a budget of 3", retryCount)
+	}
+}
+
 func TestRegisterFailure_PermanentFailsImmediately(t *testing.T) {
 	now := time.Now()
 	d := model.NewDeployment(deployableCmd(), nil, now) // budget remains

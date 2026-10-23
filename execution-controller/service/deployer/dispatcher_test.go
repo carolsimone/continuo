@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -67,6 +69,13 @@ func (f *fakeDeployer) calls() int {
 	return f.deployCalls + f.validationDeployCalls
 }
 
+// absentJobs is a JobLookup that finds no Job of any name.
+type absentJobs struct{}
+
+func (absentJobs) ObserveLive(context.Context, string) (model.JobObservation, error) {
+	return model.JobObservation{}, nil
+}
+
 func repoFactory(exec outbox.Executor) repository.DeploymentRepository {
 	return postgres.NewDeploymentsRepository(exec, testLogger())
 }
@@ -88,7 +97,7 @@ func newTestDispatcher(db *sqlx.DB, fk *fakeDeployer, maxConcurrent int) *deploy
 // newTestDispatcherWith builds a Dispatcher with an explicit config and
 // admission repository factory.
 func newTestDispatcherWith(db *sqlx.DB, fk *fakeDeployer, maxConcurrent int, cfg deployer.DispatcherConfig, admission deployer.AdmissionRepoFactory) *deployer.Dispatcher {
-	return deployer.NewDispatcher(db, fk, repoFactory, aggRepoFactory, admission, maxConcurrent, testLogger(), cfg)
+	return deployer.NewDispatcher(db, fk, absentJobs{}, repoFactory, aggRepoFactory, admission, maxConcurrent, testLogger(), cfg)
 }
 
 // seedJob inserts a deployable pending row (valid command in job_params) with a
@@ -385,7 +394,7 @@ func TestDispatcher_PerRowTransaction_FailureDoesNotRollBackOthers(t *testing.T)
 		}
 	}
 	fk := &fakeDeployer{}
-	disp := deployer.NewDispatcher(db, fk, factory, aggRepoFactory, admissionFactory, 50, testLogger(), deployer.DispatcherConfig{})
+	disp := deployer.NewDispatcher(db, fk, absentJobs{}, factory, aggRepoFactory, admissionFactory, 50, testLogger(), deployer.DispatcherConfig{})
 
 	require.Error(t, disp.ProcessBatch(context.Background()), "second row's Save error surfaces")
 
@@ -558,6 +567,229 @@ func TestDispatcher_RecordsWhyTheJobCouldNotBeCreated(t *testing.T) {
 			require.NoError(t, db.Get(&reason, `SELECT facts->>'failure_reason' FROM deployments WHERE id = $1`, id))
 			assert.Equal(t, c.want, reason)
 			assert.Equal(t, "failed", countStatusOf(t, db, id))
+		})
+	}
+}
+
+// errAPITimeout is how the Kubernetes API answers a request whose answer is
+// lost: the request may still have been carried out.
+var errAPITimeout = errors.New("the server was unable to return a response in the time allotted, but may still be processing the request")
+
+// lossyAPI is a Kubernetes API whose answers can be lost, serving as both the
+// Deployer and the JobLookup. Deploy acts as the k8s adapter does: it reads
+// the Job of the name first, adopts it when it runs the same task and
+// attempt, refuses it as a collision when it runs another, and otherwise
+// creates it. A creation stores the Job yet answers with a timeout, unless
+// refuseCreates is set, when it stores nothing. Every read times out while
+// readsDown is set, and so do the next failReads reads.
+type lossyAPI struct {
+	mu            sync.Mutex
+	jobs          map[string]model.JobObservation
+	refuseCreates bool
+	readsDown     bool
+	failReads     int
+	liveReads     int
+}
+
+func newLossyAPI() *lossyAPI { return &lossyAPI{jobs: map[string]model.JobObservation{}} }
+
+func (a *lossyAPI) read(jobName string) (model.JobObservation, error) {
+	if a.failReads > 0 {
+		a.failReads--
+		return model.JobObservation{}, errAPITimeout
+	}
+	if a.readsDown {
+		return model.JobObservation{}, errAPITimeout
+	}
+	return a.jobs[jobName], nil
+}
+
+func (a *lossyAPI) Deploy(_ context.Context, spec deploy.JobSpec) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	job, err := a.read(spec.JobName)
+	if err != nil {
+		return fmt.Errorf("failed to check if job exists: %w", err)
+	}
+	if job.JobPresent {
+		if job.RunsAttempt(spec.TaskID, spec.Attempt) {
+			return nil
+		}
+		return errors.Join(deploy.ErrJobNameCollision, pkgevents.ErrPermanent)
+	}
+	if a.refuseCreates {
+		return errors.New("admission webhook unavailable")
+	}
+	a.jobs[spec.JobName] = model.JobObservation{JobPresent: true, JobTaskID: spec.TaskID, JobAttempt: strconv.Itoa(spec.Attempt)}
+	return errAPITimeout
+}
+
+func (a *lossyAPI) DeployValidation(context.Context, deploy.ValidationJobSpec) error {
+	return errors.New("lossyAPI creates no release leg")
+}
+func (a *lossyAPI) DeploySeedBuild(context.Context, deploy.ValidationJobSpec) error {
+	return errors.New("lossyAPI creates no release leg")
+}
+func (a *lossyAPI) DeployCompile(context.Context, deploy.ValidationJobSpec) error {
+	return errors.New("lossyAPI creates no release leg")
+}
+
+func (a *lossyAPI) ObserveLive(_ context.Context, jobName string) (model.JobObservation, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.liveReads++
+	return a.read(jobName)
+}
+
+// setJob puts a Job of jobName running taskID's attempt in the API.
+func (a *lossyAPI) setJob(jobName, taskID string, attempt int) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.jobs[jobName] = model.JobObservation{JobPresent: true, JobTaskID: taskID, JobAttempt: strconv.Itoa(attempt)}
+}
+
+func (a *lossyAPI) set(f func(*lossyAPI)) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	f(a)
+}
+
+// seedAttempt inserts a pending row of attempt 1 of a new task, due one minute
+// ago, that has already failed retryCount creation tries of its budget of 3,
+// and returns its id and command.
+func seedAttempt(t *testing.T, db *sqlx.DB, retryCount int) (uuid.UUID, command.DeployTask) {
+	t.Helper()
+	id := uuid.New()
+	cmd := command.DeployTask{
+		TaskID: uuid.NewString(), ScheduleID: uuid.NewString(),
+		ScheduleName: "daily", ServiceName: "dbt", SchemaName: "public",
+		TableName: "orders", JobName: "dbt-public-orders-" + uuid.NewString()[:8] + "-r1", NodeType: "dbt-model",
+		ImageTag: "sha-abc", Operation: "run", Attempt: 1, TimeoutSeconds: 3600,
+	}
+	payload, err := json.Marshal(serialization.DeployTaskFromDomain(cmd))
+	require.NoError(t, err)
+	_, err = db.Exec(
+		`INSERT INTO deployments (id, task_id, schedule_id, job_params, max_retries, retry_count, next_attempt_at)
+		 VALUES ($1, $2, $3, $4, 3, $5, NOW() - interval '1 minute')`,
+		id, cmd.TaskID, cmd.ScheduleID, payload, retryCount)
+	require.NoError(t, err)
+	return id, cmd
+}
+
+// dueNow makes a row rescheduled after a transient failure due again.
+func dueNow(t *testing.T, db *sqlx.DB, id uuid.UUID) {
+	t.Helper()
+	_, err := db.Exec(`UPDATE deployments SET next_attempt_at = NOW() - interval '1 minute' WHERE id = $1`, id)
+	require.NoError(t, err)
+}
+
+// retryCountOf reads a row's retry_count.
+func retryCountOf(t *testing.T, db *sqlx.DB, id uuid.UUID) int {
+	t.Helper()
+	var n int
+	require.NoError(t, db.Get(&n, `SELECT retry_count FROM deployments WHERE id = $1`, id))
+	return n
+}
+
+// A creation whose answer is lost may have created the Job. While the Job
+// cannot be read, the last failed try reports nothing: the deployment stays
+// reserved, as it was, and the reconciler returns it to the queue. Once the
+// API answers again, the Job the lost creation made is adopted and no second
+// Job is created.
+func TestDispatcher_ALostCreationAnswerIsReconciledUntilTheJobIsRead(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	ctx := context.Background()
+	id, cmd := seedAttempt(t, db, 0)
+	api := newLossyAPI()
+	disp := deployer.NewDispatcher(db, api, api, repoFactory, aggRepoFactory, admissionFactory, 50, testLogger(), deployer.DispatcherConfig{})
+
+	// The first try creates the Job, but its answer is lost.
+	require.NoError(t, disp.ProcessBatch(ctx))
+	require.Equal(t, "pending", countStatusOf(t, db, id))
+	require.True(t, api.jobs[cmd.JobName].RunsAttempt(cmd.TaskID, cmd.Attempt), "the lost creation stored the Job")
+
+	// The API stops answering reads: the second and the last try fail.
+	api.set(func(a *lossyAPI) { a.readsDown = true })
+	dueNow(t, db, id)
+	require.NoError(t, disp.ProcessBatch(ctx))
+	require.Equal(t, 2, retryCountOf(t, db, id))
+	dueNow(t, db, id)
+	require.Error(t, disp.ProcessBatch(ctx), "the last try cannot tell whether the Job exists")
+
+	assert.Equal(t, "reserved", countStatusOf(t, db, id), "the deployment stays as it was")
+	assert.Equal(t, 2, retryCountOf(t, db, id), "the unconfirmed failure is not registered")
+	assert.Zero(t, outboxCountByType(t, db, event.EventTypeTaskStatusReport), "no failure is reported while the Job may exist")
+
+	// The reconciler returns the reservation; the API answers again.
+	_, err := db.Exec(`UPDATE deployments SET state_changed_at = NOW() - interval '5 minutes' WHERE id = $1`, id)
+	require.NoError(t, err)
+	require.NoError(t, deployer.NewReconciler(db, admissionFactory, testLogger(), deployer.ReconcilerConfig{}).ReconcileOnce(ctx))
+	api.set(func(a *lossyAPI) { a.readsDown = false })
+	require.NoError(t, disp.ProcessBatch(ctx))
+
+	assert.Equal(t, "starting", countStatusOf(t, db, id), "the Job the lost creation made is adopted")
+	assert.Zero(t, outboxCountByType(t, db, event.EventTypeTaskStatusReport))
+	assert.Len(t, api.jobs, 1, "no second Job is created")
+}
+
+// When the last try fails but the live read that follows finds the attempt's
+// Job, the Job is adopted instead of the attempt being reported failed.
+func TestDispatcher_TheLastFailedTryAdoptsTheJobALiveReadFinds(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	id, cmd := seedAttempt(t, db, 2)
+	api := newLossyAPI()
+	api.setJob(cmd.JobName, cmd.TaskID, cmd.Attempt)
+	api.set(func(a *lossyAPI) { a.failReads = 1 }) // the try's own read of the Job times out
+
+	require.NoError(t, deployer.NewDispatcher(db, api, api, repoFactory, aggRepoFactory, admissionFactory, 50,
+		testLogger(), deployer.DispatcherConfig{}).ProcessBatch(context.Background()))
+
+	assert.Equal(t, 1, api.liveReads)
+	assert.Equal(t, "starting", countStatusOf(t, db, id))
+	var deployed bool
+	require.NoError(t, db.Get(&deployed, `SELECT deployed_at IS NOT NULL FROM deployments WHERE id = $1`, id))
+	assert.True(t, deployed)
+	assert.Zero(t, outboxCountByType(t, db, event.EventTypeTaskStatusReport))
+}
+
+// The last failed try reports the attempt failed once a live read shows what
+// holds the Job's name: create_failed when no Job exists, job_name_collision
+// when another task's or attempt's Job does.
+func TestDispatcher_TheLastFailedTryIsReportedFromALiveRead(t *testing.T) {
+	for name, c := range map[string]struct {
+		setup      func(api *lossyAPI, cmd command.DeployTask)
+		wantReason string
+		wantClass  string
+	}{
+		"no Job": {
+			setup:      func(api *lossyAPI, _ command.DeployTask) { api.set(func(a *lossyAPI) { a.refuseCreates = true }) },
+			wantReason: "create_failed", wantClass: "infra",
+		},
+		"another task's Job": {
+			setup: func(api *lossyAPI, cmd command.DeployTask) {
+				api.setJob(cmd.JobName, uuid.NewString(), cmd.Attempt)
+				api.set(func(a *lossyAPI) { a.failReads = 1 })
+			},
+			wantReason: "job_name_collision", wantClass: "invalid",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			db, cleanup := setupPostgres(t)
+			defer cleanup()
+			id, cmd := seedAttempt(t, db, 2)
+			api := newLossyAPI()
+			c.setup(api, cmd)
+
+			require.NoError(t, deployer.NewDispatcher(db, api, api, repoFactory, aggRepoFactory, admissionFactory, 50,
+				testLogger(), deployer.DispatcherConfig{}).ProcessBatch(context.Background()))
+
+			assert.Equal(t, 1, api.liveReads, "the Job is read before the attempt is reported")
+			assert.Equal(t, "failed", countStatusOf(t, db, id))
+			got := failedReport(t, db)
+			assert.Equal(t, c.wantReason, got.FailureReason)
+			assert.Equal(t, c.wantClass, got.FailureClass)
 		})
 	}
 }

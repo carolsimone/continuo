@@ -312,7 +312,7 @@ func main() {
 	k8sDeployer := k8s.NewDeployer(k8sClient, cfg.K8sNamespace, cfg.JobStartTimeout, cfg.TaskTimeout)
 
 	deployDispatcher := deployer.NewDispatcher(
-		pgDB, k8sDeployer,
+		pgDB, k8sDeployer, jobWatch,
 		newDeploymentRepo,
 		func(exec pkgoutbox.Executor) repository.ValidationAggregateRepository {
 			return postgres.NewValidationAggregateRepository(exec)

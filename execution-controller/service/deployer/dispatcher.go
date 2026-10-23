@@ -16,6 +16,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/domain/deploy"
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	"github.com/carolsimone/continuo/execution-controller/domain/repository"
+	"github.com/carolsimone/continuo/execution-controller/service/ports"
 	"github.com/carolsimone/continuo/execution-controller/service/reports"
 	"github.com/carolsimone/continuo/execution-controller/service/validation"
 	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
@@ -62,6 +63,7 @@ type DispatcherConfig struct {
 type Dispatcher struct {
 	db            *sqlx.DB
 	deployer      deploy.Deployer
+	jobs          ports.JobLookup
 	newRepo       RepoFactory
 	newAggRepo    ValidationAggRepoFactory
 	newAdmission  AdmissionRepoFactory
@@ -75,9 +77,12 @@ type Dispatcher struct {
 	now           func() time.Time
 }
 
+// NewDispatcher builds a Dispatcher; jobs reads a Job from the Kubernetes API
+// when the last try to create it failed without a sure answer.
 func NewDispatcher(
 	db *sqlx.DB,
 	deployer deploy.Deployer,
+	jobs ports.JobLookup,
 	newRepo RepoFactory,
 	newAggRepo ValidationAggRepoFactory,
 	newAdmission AdmissionRepoFactory,
@@ -100,6 +105,7 @@ func NewDispatcher(
 	return &Dispatcher{
 		db:            db,
 		deployer:      deployer,
+		jobs:          jobs,
 		newRepo:       newRepo,
 		newAggRepo:    newAggRepo,
 		newAdmission:  newAdmission,
@@ -264,6 +270,34 @@ func (d *Dispatcher) dispatchOne(ctx context.Context, repo repository.Deployment
 	}
 
 	permanent := errors.Is(deployErr, pkgevents.ErrPermanent)
+	if !permanent && !dep.RetriesLeft() {
+		// The last try failed without a sure answer, and Kubernetes may have
+		// created the Job although its answer was lost: a live read decides
+		// before the attempt is reported failed. While the Job cannot be read
+		// nothing is saved, so the deployment stays reserved, as it was, until
+		// the reconciler returns it to the queue and it is tried again.
+		live, err := d.jobs.ObserveLive(ctx, dep.JobName())
+		if err != nil {
+			d.logger.Warn("The last creation try failed and the Job cannot be read — the deployment is tried again",
+				"deployment_id", dep.ID(), "job_name", dep.JobName(), "cause", deployErr, "error", err)
+			return fmt.Errorf("read Job %s after its last creation try failed: %w", dep.JobName(), err)
+		}
+		cmd := dep.Command()
+		switch {
+		case live.RunsAttempt(cmd.TaskID, cmd.Attempt):
+			d.logger.Warn("The last creation try failed, yet the Job of the attempt exists — adopting it",
+				"deployment_id", dep.ID(), "job_name", dep.JobName(), "cause", deployErr)
+			if err := dep.MarkStarted(now); err != nil {
+				return err
+			}
+			return repo.Save(ctx, dep)
+		case live.JobPresent:
+			deployErr = fmt.Errorf("%w: Job %s carries task %q attempt %q, not task %s attempt %d",
+				errors.Join(deploy.ErrJobNameCollision, pkgevents.ErrPermanent), dep.JobName(),
+				live.JobTaskID, live.JobAttempt, cmd.TaskID, cmd.Attempt)
+			permanent = true
+		}
+	}
 	terminal, err := dep.RegisterFailure(now, permanent, deployErr.Error(), d.backoff)
 	if err != nil {
 		return err

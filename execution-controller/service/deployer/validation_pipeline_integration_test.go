@@ -119,7 +119,7 @@ func recordNodeOutcome(t *testing.T, db *sqlx.DB, releaseID, nodeID, outcome str
 func newCapturingDispatcher(db *sqlx.DB, dep deploy.Deployer) *deployer.Dispatcher {
 	logger := pipelineLogger()
 	return deployer.NewDispatcher(
-		db, dep,
+		db, dep, absentJobs{},
 		func(exec outbox.Executor) repository.DeploymentRepository {
 			return executorpg.NewDeploymentsRepository(exec, logger)
 		},
