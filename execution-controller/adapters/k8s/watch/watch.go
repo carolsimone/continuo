@@ -15,6 +15,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	batchlisters "k8s.io/client-go/listers/batch/v1"
@@ -93,6 +94,19 @@ func (w *Watch) WaitForCacheSync(ctx context.Context) bool {
 
 // Synced reports whether both caches have listed every object once.
 func (w *Watch) Synced() bool { return w.jobsSynced() && w.podsSynced() }
+
+// JobNames returns the name of every Job the cache holds.
+func (w *Watch) JobNames() []string {
+	jobs, err := w.jobs.Jobs(w.namespace).List(labels.Everything())
+	if err != nil {
+		return nil
+	}
+	names := make([]string, 0, len(jobs))
+	for _, j := range jobs {
+		names = append(names, j.Name)
+	}
+	return names
+}
 
 // Observe returns what the cache holds of jobName's Job and pods.
 func (w *Watch) Observe(jobName string) model.JobObservation {

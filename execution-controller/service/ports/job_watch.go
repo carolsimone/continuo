@@ -13,6 +13,8 @@ type JobCache interface {
 	Synced() bool
 	// Observe returns what the cache holds of jobName's Job and its pods.
 	Observe(jobName string) model.JobObservation
+	// JobNames returns the name of every Job the cache holds.
+	JobNames() []string
 }
 
 // JobLookup reads a Job and its pods from the Kubernetes API, past the cache.

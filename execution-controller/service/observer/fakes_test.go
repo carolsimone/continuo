@@ -20,6 +20,15 @@ type fakeCache struct {
 }
 
 func (c *fakeCache) Synced() bool { return !c.notSynced }
+func (c *fakeCache) JobNames() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	names := make([]string, 0, len(c.obs))
+	for name := range c.obs {
+		names = append(names, name)
+	}
+	return names
+}
 func (c *fakeCache) Observe(jobName string) model.JobObservation {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -102,6 +111,11 @@ func (f *fakeObserved) GetByJobName(_ context.Context, jobName string) (*model.D
 	}
 	return nil, sql.ErrNoRows
 }
-func (f *fakeObserved) EndedUndeployed(context.Context, string) (bool, error)      { return false, f.err }
+func (f *fakeObserved) EndedUndeployed(context.Context, uuid.UUID, int) (bool, error) {
+	return false, f.err
+}
+func (f *fakeObserved) NameEndedUndeployed(context.Context, string) (bool, error) {
+	return false, f.err
+}
 func (f *fakeObserved) ListObservedJobNames(context.Context) ([]string, error)     { return f.names, f.err }
 func (f *fakeObserved) StateAge(context.Context, uuid.UUID) (time.Duration, error) { return 0, f.err }

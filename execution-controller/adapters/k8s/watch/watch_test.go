@@ -138,3 +138,15 @@ func TestWatch_ObserveLiveReadsTheAPIPastTheCache(t *testing.T) {
 	assert.False(t, gone.JobPresent)
 	assert.Empty(t, gone.Pods)
 }
+
+// JobNames lists every Job the cache holds, the ones that exist when it
+// starts and the ones created since; the observer's resync queues them all.
+func TestWatch_JobNamesListsEveryCachedJob(t *testing.T) {
+	cs := fake.NewClientset(job("svc-s-t-1a2b3c4d"))
+	w, _ := startWatch(t, cs)
+	_, err := cs.BatchV1().Jobs(ns).Create(context.Background(), job("svc-s-t-7f3e1a2b"), metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool { return len(w.JobNames()) == 2 }, 5*time.Second, 10*time.Millisecond)
+	assert.ElementsMatch(t, []string{"svc-s-t-1a2b3c4d", "svc-s-t-7f3e1a2b"}, w.JobNames())
+}

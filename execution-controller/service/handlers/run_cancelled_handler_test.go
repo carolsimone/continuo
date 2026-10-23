@@ -66,6 +66,13 @@ type jobsOf map[string]model.JobObservation
 
 func (jobsOf) Synced() bool                               { return true }
 func (j jobsOf) Observe(name string) model.JobObservation { return j[name] }
+func (j jobsOf) JobNames() []string {
+	names := make([]string, 0, len(j))
+	for name := range j {
+		names = append(names, name)
+	}
+	return names
+}
 func (j jobsOf) ObserveLive(_ context.Context, name string) (model.JobObservation, error) {
 	return j[name], nil
 }

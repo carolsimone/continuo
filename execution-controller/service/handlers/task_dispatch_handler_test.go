@@ -25,6 +25,7 @@ type noJobs struct{}
 
 func (noJobs) Synced() bool                        { return true }
 func (noJobs) Observe(string) model.JobObservation { return model.JobObservation{} }
+func (noJobs) JobNames() []string                  { return nil }
 func (noJobs) ObserveLive(context.Context, string) (model.JobObservation, error) {
 	return model.JobObservation{}, nil
 }

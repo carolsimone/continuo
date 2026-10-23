@@ -831,6 +831,22 @@ func TestObserver_LeavesAnUnfencedJobWithNoRowForAdoption(t *testing.T) {
 	assert.Empty(t, h.stop.reaped)
 }
 
+// watchOver points the observer's cache, live reads, deletions and log reads
+// at cs's namespace ns, through the real watch and Job control, once the
+// watch has synced.
+func (h *harness) watchOver(t *testing.T, cs *fake.Clientset, ns string) *watch.Watch {
+	t.Helper()
+	w, err := watch.New(cs, ns, h.q)
+	require.NoError(t, err)
+	watchCtx, stopWatch := context.WithCancel(context.Background())
+	t.Cleanup(stopWatch)
+	w.Start(watchCtx)
+	require.True(t, w.WaitForCacheSync(watchCtx))
+	jobs := k8s.NewJobControl(k8s.NewK8sClientFor(cs, slog.New(slog.NewTextHandler(io.Discard, nil)), nil), ns)
+	h.o.deps.Cache, h.o.deps.Lookup, h.o.deps.Terminator, h.o.deps.Logs = w, w, jobs, jobs
+	return w
+}
+
 // The stop of a running attempt is reported only once its pod is gone, read
 // through the watch over a Kubernetes API: while the pod is being deleted
 // nothing is reported and its log is kept; once it is gone the attempt is
@@ -861,14 +877,7 @@ func TestObserver_ReportsStoppedOnlyOnceThePodIsGone(t *testing.T) {
 			Status: corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{Name: "dbt-job",
 				State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{StartedAt: metav1.NewTime(h.now.Add(-40 * time.Second))}}}}},
 		})
-	w, err := watch.New(cs, ns, h.q)
-	require.NoError(t, err)
-	watchCtx, stopWatch := context.WithCancel(ctx)
-	t.Cleanup(stopWatch)
-	w.Start(watchCtx)
-	require.True(t, w.WaitForCacheSync(watchCtx))
-	jobs := k8s.NewJobControl(k8s.NewK8sClientFor(cs, slog.New(slog.NewTextHandler(io.Discard, nil)), nil), ns)
-	h.o.deps.Cache, h.o.deps.Lookup, h.o.deps.Terminator, h.o.deps.Logs = w, w, jobs, jobs
+	w := h.watchOver(t, cs, ns)
 
 	require.NoError(t, h.o.Process(ctx, dep.JobName()))
 
@@ -895,4 +904,72 @@ func TestObserver_ReportsStoppedOnlyOnceThePodIsGone(t *testing.T) {
 	assert.Equal(t, model.StatusDone, got.Status())
 	assert.Equal(t, model.OutcomeStopped, got.Outcome())
 	assert.Equal(t, 1, h.stop.stopped, "the stop is counted once")
+}
+
+// A Job with no record, of a run that is not fenced when the watch first sees
+// it, is left for adoption; once the run is fenced, the next resync queues it
+// with every Job the cache holds, each name once, and the Job is deleted. A
+// started deployment's Job the cache also holds is queued once.
+func TestResync_QueuesEveryCachedJobSoAFencedRunsRecordlessJobIsDeleted(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	const ns = "jobs"
+	runID, taskID := uuid.NewString(), uuid.NewString()
+	started := h.started(t, 0, h.now.Add(-time.Minute))
+	jobOf := func(name, task, run string) *batchv1.Job {
+		return &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Labels: map[string]string{
+			"app": "dbt-job", "task-id": task, "attempt": "0", "schedule-id": run}}}
+	}
+	cs := fake.NewClientset(jobOf("job-created-anyway", taskID, runID),
+		jobOf(started.JobName(), started.Command().TaskID, started.Command().ScheduleID))
+	h.watchOver(t, cs, ns)
+	require.NoError(t, h.o.Process(ctx, "job-created-anyway"))
+	require.Empty(t, h.term.deleted, "a Job of a run that is not fenced is left for adoption")
+
+	_, err := h.db.Exec(`INSERT INTO cancelled_runs (run_id) VALUES ($1)`, runID)
+	require.NoError(t, err)
+	h.q.mu.Lock()
+	h.q.added = nil
+	h.q.mu.Unlock()
+	require.NoError(t, h.o.Resync(ctx))
+
+	assert.ElementsMatch(t, []string{"job-created-anyway", started.JobName()}, h.q.added,
+		"every cached Job and every started deployment, each once")
+	require.NoError(t, h.o.Process(ctx, "job-created-anyway"))
+	assert.Equal(t, []string{"fenced_run"}, h.stop.reaped)
+	_, err = cs.BatchV1().Jobs(ns).Get(ctx, "job-created-anyway", metav1.GetOptions{})
+	assert.True(t, apierrors.IsNotFound(err), "the fenced run's Job is deleted")
+}
+
+// Two nodes of one run can share a truncated Job name. A live Job is judged
+// by the attempt its labels name, not by the newest row of its name: another
+// attempt's row refused on the name collision does not get this Job deleted,
+// while the Job of an attempt whose own row failed undeployed is. A Job with
+// no attempt labels (a release leg's) is judged by its name.
+func TestObserver_JudgesAnUndeployedJobByTheAttemptItRuns(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	runID := uuid.NewString()
+	collided := h.unstartedRow(t, runID, "job-shared-name", true)
+	h.cache.set("job-shared-name", liveJobOf(runID, h.now))
+
+	failed := h.unstartedRow(t, runID, "job-own-failure", true)
+	own := liveJobOf(runID, h.now)
+	own.JobTaskID = failed.Command().TaskID
+	h.cache.set("job-own-failure", own)
+	newer := h.unstartedRow(t, runID, "job-own-failure", false)
+	_, err := h.db.Exec(`UPDATE deployments SET created_at = created_at + interval '1 second' WHERE id = $1`, newer.ID())
+	require.NoError(t, err, "another attempt's row of the name is the newest")
+
+	h.unstartedRow(t, uuid.NewString(), "job-of-a-leg", true)
+	h.cache.set("job-of-a-leg", model.JobObservation{JobPresent: true})
+
+	for _, name := range []string{"job-shared-name", "job-own-failure", "job-of-a-leg"} {
+		require.NoError(t, h.o.Process(ctx, name))
+	}
+
+	assert.Equal(t, []string{"job-own-failure", "job-of-a-leg"}, h.term.deleted,
+		"the row of attempt %d of task %s, refused on the shared name, does not get another attempt's Job deleted",
+		collided.Command().Attempt, collided.Command().TaskID)
+	assert.Equal(t, []string{"ended_undeployed", "ended_undeployed"}, h.stop.reaped)
 }

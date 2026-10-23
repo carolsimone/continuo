@@ -36,6 +36,12 @@ type jobsHolding struct {
 }
 
 func (jobsHolding) Synced() bool { return true }
+func (j jobsHolding) JobNames() []string {
+	if j.name == "" {
+		return nil
+	}
+	return []string{j.name}
+}
 func (j jobsHolding) Observe(name string) model.JobObservation {
 	if name != j.name || j.name == "" {
 		return model.JobObservation{}

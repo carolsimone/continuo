@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"sync"
 	"time"
 
@@ -144,15 +145,21 @@ func (o *Observer) Run(ctx context.Context) error {
 	}
 }
 
-// Resync queues the Job of every started deployment, so no attempt waits on a
-// watch event that was missed.
+// Resync queues the Job of every started deployment and every Job the cache
+// holds, each name once, so no attempt waits on a watch event that was
+// missed, and a Job no deployment deploys is judged again: one of a run
+// fenced since the watch last saw it is deleted.
 func (o *Observer) Resync(ctx context.Context) error {
 	names, err := o.deps.Observed.ListObservedJobNames(ctx)
 	if err != nil {
 		return err
 	}
-	for _, name := range names {
-		o.deps.Queue.Add(name)
+	queued := make(map[string]bool, len(names))
+	for _, name := range append(names, o.deps.Cache.JobNames()...) {
+		if !queued[name] {
+			queued[name] = true
+			o.deps.Queue.Add(name)
+		}
 	}
 	return nil
 }
@@ -231,10 +238,13 @@ const (
 
 // reapUnowned judges a Job that no deployment created or adopted. A Job that
 // is present and not being deleted is deleted when its run is fenced (its
-// schedule-id label names a cancelled run), or when the deployment carrying
-// its name ended failed before deploying it, so Kubernetes created it after
-// the create call reported failure. Any other such Job is left alone: a
-// dispatch of its attempt adopts it, or the launch creating it records it.
+// schedule-id label names a cancelled run), or when its deployment ended
+// failed before deploying it, so Kubernetes created it after the create call
+// reported failure. A Job's deployment is the one of the attempt its labels
+// name, since two nodes of one run can share a truncated Job name; a Job with
+// no attempt labels (a release leg's) is judged by the newest deployment of
+// its name. Any other such Job is left alone: a dispatch of its attempt
+// adopts it, or the launch creating it records it.
 func (o *Observer) reapUnowned(ctx context.Context, jobName string, obs model.JobObservation) error {
 	if !obs.JobPresent || obs.JobDeleting {
 		return nil
@@ -250,7 +260,7 @@ func (o *Observer) reapUnowned(ctx context.Context, jobName string, obs model.Jo
 		}
 	}
 	if reason == "" {
-		ended, err := o.deps.Observed.EndedUndeployed(ctx, jobName)
+		ended, err := o.endedUndeployed(ctx, jobName, obs)
 		if err != nil {
 			return err
 		}
@@ -266,6 +276,25 @@ func (o *Observer) reapUnowned(ctx context.Context, jobName string, obs model.Jo
 		"run_id", obs.JobRunID, "task_id", obs.JobTaskID, "attempt", obs.JobAttempt)
 	o.deps.StopMetrics.JobReaped(reason)
 	return nil
+}
+
+// endedUndeployed reports whether the deployment of the Job obs shows ended
+// failed before deploying it: the attempt its task-id and attempt labels
+// name, or, for a Job with neither label, the newest deployment of jobName. A
+// Job whose labels name no readable attempt is not judged ended.
+func (o *Observer) endedUndeployed(ctx context.Context, jobName string, obs model.JobObservation) (bool, error) {
+	if obs.JobTaskID == "" && obs.JobAttempt == "" {
+		return o.deps.Observed.NameEndedUndeployed(ctx, jobName)
+	}
+	taskID, err := uuid.Parse(obs.JobTaskID)
+	if err != nil {
+		return false, nil
+	}
+	attempt, err := strconv.Atoi(obs.JobAttempt)
+	if err != nil {
+		return false, nil
+	}
+	return o.deps.Observed.EndedUndeployed(ctx, taskID, attempt)
 }
 
 // processTerminating waits for the pods of an attempt execution-controller

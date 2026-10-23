@@ -21,12 +21,16 @@ type ObservedDeployments interface {
 	// ListObservedJobNames returns the Job names of every started deployment:
 	// starting, running or terminating.
 	ListObservedJobNames(ctx context.Context) ([]string, error)
-	// EndedUndeployed reports whether the newest deployment carrying jobName
-	// ended failed without ever creating or adopting its Job (its DeployedAt
-	// is unset): the Job's creation failed for good, or the dispatch was
-	// refused. A Job of the name that exists was created by Kubernetes after
-	// the create call reported failure.
-	EndedUndeployed(ctx context.Context, jobName string) (bool, error)
+	// EndedUndeployed reports whether the production deployment of attempt
+	// attempt of taskID ended failed without ever creating or adopting its
+	// Job (its DeployedAt is unset): the Job's creation failed for good, or
+	// the dispatch was refused. A Job of that attempt that exists was created
+	// by Kubernetes after the create call reported failure. False when no
+	// deployment of the attempt exists.
+	EndedUndeployed(ctx context.Context, taskID uuid.UUID, attempt int) (bool, error)
+	// NameEndedUndeployed is EndedUndeployed for a Job that names no attempt
+	// (a release leg's): it judges the newest deployment carrying jobName.
+	NameEndedUndeployed(ctx context.Context, jobName string) (bool, error)
 	// StateAge returns how long ago deployment id last changed status, by the
 	// database's clock.
 	StateAge(ctx context.Context, id uuid.UUID) (time.Duration, error)
