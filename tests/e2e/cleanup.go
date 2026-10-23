@@ -43,7 +43,7 @@ func cleanupPostgres(t *testing.T, ctx context.Context, clients *testClients, sc
 	_, _ = clients.executionDB.Exec("DELETE FROM execution_outbox")
 	_, _ = clients.executionDB.Exec("DELETE FROM deployments")
 	_, _ = clients.executionDB.Exec("DELETE FROM validation_aggregates")
-	_, _ = clients.executionDB.Exec("DELETE FROM cancelled_schedules")
+	_, _ = clients.executionDB.Exec("DELETE FROM cancelled_runs")
 	for _, db := range []*sqlx.DB{clients.stateDB, clients.orchestratorDB, clients.executionDB} {
 		_, _ = db.Exec("DELETE FROM message_processing")
 	}

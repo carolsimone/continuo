@@ -22,13 +22,16 @@ import (
 // Phase 1: Load graph, trigger schedule via UI HTTP endpoint, let level 0 (seeds) complete.
 // Phase 2: Cancel mid-way — before level 1 can finish.
 //
-//	Assert scheduler + tasks reach 'cancelled' and execution-controller's
-//	guard (its cancelled_schedules table) is armed via the Redis event.
+//	The run moves to 'cancelling'; execution-controller fences it (its
+//	cancelled_runs table), deletes its Jobs and reports each attempt
+//	'stopped' once the pods are gone; the run then ends 'cancelled'. Assert
+//	the run reaches 'cancelled', its in-flight tasks are 'cancelled', the
+//	fence is armed and no Job of the run, nor any pod of one, is still live.
 //
-// Phase 3: Retrigger immediately via UI HTTP endpoint — no cleanup.
+// Phase 3: Retrigger once the run is 'cancelled' — no cleanup.
 //
-//	The system self-stabilises: the guard rejects late events for the old
-//	schedule_id; TriggerSchedule creates a fresh schedule_id.
+//	The fence rejects late dispatches for the old run_id; TriggerSchedule
+//	creates a fresh run_id.
 //
 // Phase 4: Assert the fresh run completes fully to 'succeeded'.
 func TestCancelMidwayAndRetrigger(t *testing.T) {
@@ -77,21 +80,24 @@ func TestCancelMidwayAndRetrigger(t *testing.T) {
 	t.Log("Phase 2: cancelling schedule mid-way...")
 	callCancelEndpoint(t, ctx, testScheduleName, "e2e-test", "cancel-mid-run e2e test")
 
+	// The run ends 'cancelled' only after execution-controller reported every
+	// attempt stopped, i.e. once its Jobs were deleted and their pods gone.
 	verifySchedulerCancelled(t, ctx, clients, cancelledID)
 	verifyTasksCancelled(t, ctx, clients, cancelledID)
-	verifyCancelledSchedulesGuardArmed(t, ctx, clients, cancelledID)
+	verifyRunFenced(t, ctx, clients, cancelledID)
+	verifyNoLiveJobOfRun(t, ctx, clients, cancelledID)
 	verifyRunNotActive(t, ctx, clients, cancelledID)
 
-	t.Log("Phase 2 complete: schedule cancelled, guard armed")
+	t.Log("Phase 2 complete: run cancelled, fenced, no live Job")
 
 	// ── Phase 3: Retrigger — no cleanup ──────────────────────────────────────
-	// The guard is armed; the system rejects any late events for cancelledID.
-	// TriggerSchedule creates a brand-new schedule_id for the fresh run.
+	// The run is 'cancelled' and fenced; the system rejects any late dispatch
+	// for cancelledID. TriggerSchedule creates a brand-new run_id.
 	t.Log("Phase 3: retriggering via UI endpoint (no cleanup)...")
 	freshIDStr := triggerScheduleHTTP(t, clients.uiBase, testScheduleName)
 	freshID, err := uuid.Parse(freshIDStr)
 	require.NoError(t, err)
-	require.NotEqual(t, cancelledID, freshID, "retrigger must produce a new schedule_id")
+	require.NotEqual(t, cancelledID, freshID, "retrigger must produce a new run_id")
 
 	t.Logf("Phase 3 complete: fresh run triggered (schedule_id=%s)", freshID)
 
@@ -143,9 +149,12 @@ func callCancelEndpoint(t *testing.T, ctx context.Context, scheduleName, cancell
 }
 
 // verifySchedulerCancelled polls scheduler_tracker until status = 'cancelled'.
+// A cancel first moves the run to 'cancelling'; it ends 'cancelled' once
+// execution-controller has deleted the run's Jobs and reported every attempt
+// stopped, which takes up to 3 minutes.
 func verifySchedulerCancelled(t *testing.T, ctx context.Context, clients *testClients, schedulerID uuid.UUID) {
 	t.Helper()
-	pollUntil(t, ctx, 30*time.Second, 500*time.Millisecond, func() (bool, error) {
+	pollUntil(t, ctx, 3*time.Minute, 500*time.Millisecond, func() (bool, error) {
 		var status string
 		err := clients.stateDB.Get(&status, `
 			SELECT status FROM scheduler_tracker WHERE schedule_id = $1
@@ -198,18 +207,49 @@ func verifyRunNotActive(t *testing.T, ctx context.Context, clients *testClients,
 	t.Logf("✅ state no longer reports run %s as active", want)
 }
 
-// verifyCancelledSchedulesGuardArmed polls execution-controller's database
-// until it has a row in cancelled_schedules for the given schedule_id,
-// confirming that the schedule.cancelled:v1 Redis event was consumed.
-func verifyCancelledSchedulesGuardArmed(t *testing.T, ctx context.Context, clients *testClients, schedulerID uuid.UUID) {
+// verifyRunFenced polls execution-controller's database until it has a row in
+// cancelled_runs for the given run_id, confirming that the run.cancelled:v1
+// Redis event was consumed and the run is fenced at every gate that starts work.
+func verifyRunFenced(t *testing.T, ctx context.Context, clients *testClients, runID uuid.UUID) {
 	t.Helper()
 	pollUntil(t, ctx, 30*time.Second, 500*time.Millisecond, func() (bool, error) {
 		var exists bool
 		err := clients.executionDB.QueryRowContext(ctx,
-			"SELECT EXISTS(SELECT 1 FROM cancelled_schedules WHERE schedule_id = $1)",
-			schedulerID,
+			"SELECT EXISTS(SELECT 1 FROM cancelled_runs WHERE run_id = $1)",
+			runID,
 		).Scan(&exists)
 		return exists, err
-	}, "Timeout waiting for cancelled_schedules guard in execution-controller")
-	t.Log("✅ cancelled_schedules guard armed in execution-controller")
+	}, "Timeout waiting for the cancelled_runs fence in execution-controller")
+	t.Log("✅ cancelled_runs fence armed in execution-controller")
+}
+
+// verifyNoLiveJobOfRun asserts that a cancelled run holds no Job that can still
+// run work: every Job labelled schedule-id=<run> is terminal (Complete or
+// Failed) or being deleted, and no pod of the run has a phase other than
+// Succeeded or Failed. A Job that finished before the cancel stays on the
+// cluster until its TTL, so a terminal Job does not count as live.
+func verifyNoLiveJobOfRun(t *testing.T, ctx context.Context, clients *testClients, runID uuid.UUID) {
+	t.Helper()
+	selector := "schedule-id=" + runID.String()
+
+	jobs, err := getK8sJobs(ctx, selector)
+	require.NoError(t, err)
+	for _, job := range jobs.Items {
+		if job.Metadata.DeletionTimestamp != nil || job.finished() {
+			continue
+		}
+		assert.Failf(t, "live Job of a cancelled run",
+			"Job %s of run %s has no deletion timestamp and has not finished", job.Metadata.Name, runID)
+	}
+
+	pods, err := getK8sPods(ctx, selector)
+	require.NoError(t, err)
+	for _, pod := range pods.Items {
+		if pod.Status.Phase == "Succeeded" || pod.Status.Phase == "Failed" {
+			continue
+		}
+		assert.Failf(t, "unfinished pod of a cancelled run",
+			"pod %s of run %s is %s", pod.Metadata.Name, runID, pod.Status.Phase)
+	}
+	t.Logf("✅ no live Job or unfinished pod of run %s (%d Jobs, %d pods listed)", runID, len(jobs.Items), len(pods.Items))
 }
