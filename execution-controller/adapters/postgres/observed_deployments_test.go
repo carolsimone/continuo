@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/execution-controller/adapters/postgres"
+	"github.com/carolsimone/continuo/execution-controller/domain/command"
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
+	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -93,4 +95,48 @@ func TestObserved_StateAgeIsReadByTheDatabaseClock(t *testing.T) {
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, age, 3*time.Minute)
 	assert.Less(t, age, 4*time.Minute)
+}
+
+// A deployment that never created or adopted a Job, though it carries the
+// Job's name — a refused dispatch, an attempt whose creation failed on the
+// name, one not created yet — never stands for the Job: both lookups by Job
+// name return the deployment whose Job it is, so the observer keeps following
+// it.
+func TestJobNameLookups_ReturnTheDeploymentThatOwnsTheJob(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	ctx := context.Background()
+	repo := postgres.NewDeploymentsRepository(db, testLogger())
+	owner := addAt(t, ctx, repo, "job-owned", model.StatusRunning)
+
+	later := time.Now().Add(time.Minute)
+	ofAnotherTask := func() command.DeployTask {
+		cmd := validCmd()
+		cmd.JobName = "job-owned"
+		return cmd
+	}
+	for _, reason := range []pkgmodel.FailureReason{pkgmodel.FailureReasonInvalidNodeType, pkgmodel.FailureReasonAttemptLost} {
+		refused := model.NewRefusedDeployment(ofAnotherTask(), nil, reason, string(reason), later)
+		refused.RecordReport(refused.ReportOf(pkgmodel.AttemptStatusFailed, string(reason)))
+		added, err := repo.AddAttempt(ctx, refused)
+		require.NoError(t, err)
+		require.True(t, added)
+	}
+	collided := model.NewDeployment(ofAnotherTask(), nil, later)
+	require.NoError(t, repo.Add(ctx, collided))
+	require.NoError(t, collided.Reserve())
+	_, err := collided.RegisterFailure(later, true, "a Job of the name exists for another task or attempt",
+		model.BackoffPolicy{Base: time.Second, Cap: time.Minute})
+	require.NoError(t, err)
+	collided.Observe(model.AttemptFacts{Reason: pkgmodel.FailureReasonJobNameCollision})
+	require.NoError(t, repo.Save(ctx, collided))
+	require.NoError(t, repo.Add(ctx, model.NewDeployment(ofAnotherTask(), nil, later)))
+
+	got, err := repo.LoadByJobName(ctx, "job-owned")
+	require.NoError(t, err)
+	assert.Equal(t, owner.ID(), got.ID(), "the locked lookup returns the Job's owner")
+	got, err = postgres.NewObservedDeployments(db, testLogger()).GetByJobName(ctx, "job-owned")
+	require.NoError(t, err)
+	assert.Equal(t, owner.ID(), got.ID(), "the observer's lookup returns the Job's owner")
+	assert.True(t, got.AwaitingResult())
 }

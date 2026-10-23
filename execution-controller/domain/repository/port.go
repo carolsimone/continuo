@@ -25,9 +25,12 @@ type DeploymentRepository interface {
 	// HasAttemptAfter reports whether the task has a production deployment of
 	// a later attempt than attempt.
 	HasAttemptAfter(ctx context.Context, taskID string, attempt int) (bool, error)
-	// LoadByJobName returns the most recently created deployment whose Job is
-	// jobName, locked for the rest of the transaction, or sql.ErrNoRows when
-	// none exists.
+	// LoadByJobName returns the most recently created deployment that created
+	// or adopted a Job of jobName (its DeployedAt is set), locked for the rest
+	// of the transaction, or sql.ErrNoRows when none exists. A deployment that
+	// only carries the name — refused, failed before its Job was created, or
+	// not created yet — is never returned, so it never stands for the Job of
+	// another.
 	LoadByJobName(ctx context.Context, jobName string) (*model.Deployment, error)
 	// Save persists the mutated state of an existing Deployment.
 	Save(ctx context.Context, d *model.Deployment) error

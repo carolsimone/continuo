@@ -13,6 +13,7 @@ import (
 
 	"github.com/carolsimone/continuo/execution-controller/adapters/postgres"
 	executorredis "github.com/carolsimone/continuo/execution-controller/adapters/redis"
+	"github.com/carolsimone/continuo/execution-controller/domain/command"
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	"github.com/carolsimone/continuo/execution-controller/service/handlers"
 	"github.com/carolsimone/continuo/execution-controller/service/uow"
@@ -202,6 +203,44 @@ func TestTaskDispatch_ADispatchThatCannotRunIsRecordedFailed(t *testing.T) {
 	assert.Equal(t, []attemptRow{{Attempt: 0, Status: "failed", Reason: "invalid_node_type"}}, f.rows())
 	require.Len(t, f.reports(), 1)
 	assert.Equal(t, "invalid", f.reports()[0].FailureClass)
+}
+
+// A dispatch refused while it carries the name of another task's running Job
+// is answered from its own stored report when repeated, and the Job stays its
+// owner's: both lookups by the name return the running deployment.
+func TestTaskDispatch_ARefusedDispatchOfARunningJobsNameLeavesTheJobToItsOwner(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	ctx := context.Background()
+	f := newDispatchFlow(t, db)
+	name := jobNameOf(f.runID, 0)
+	repo := postgres.NewDeploymentsRepository(db, testDispatchLogger())
+	owner := model.NewDeployment(command.DeployTask{TaskID: uuid.NewString(), ScheduleID: uuid.NewString(),
+		ScheduleName: "daily", ServiceName: "dbt", SchemaName: "public", TableName: "orders", JobName: name,
+		NodeType: "dbt-model", Operation: "run", ImageTag: "sha-abc", TimeoutSeconds: 3600}, nil, time.Now().Add(-time.Minute))
+	require.NoError(t, repo.Add(ctx, owner))
+	require.NoError(t, owner.Reserve())
+	require.NoError(t, owner.MarkStarted(time.Now().Add(-time.Minute)))
+	_, err := owner.MarkRunning()
+	require.NoError(t, err)
+	require.NoError(t, repo.Save(ctx, owner))
+
+	undeclared := func(p *pkgevents.TaskDispatch) { p.NodeType = "dbt-macro" }
+	f.dispatch(0, "dispatched", undeclared)
+	f.dispatch(0, "dispatched", undeclared)
+
+	assert.Equal(t, []attemptRow{{Attempt: 0, Status: "failed", Reason: "invalid_node_type"}}, f.rows())
+	reps := f.reports()
+	require.Len(t, reps, 2)
+	assert.Equal(t, reps[0], reps[1], "the repeat is answered from the stored report")
+	assert.Equal(t, "invalid_node_type", reps[0].FailureReason)
+	assert.Equal(t, name, reps[0].JobName, "the report names the dispatch's Job")
+	got, err := repo.LoadByJobName(ctx, name)
+	require.NoError(t, err)
+	assert.Equal(t, owner.ID(), got.ID())
+	got, err = postgres.NewObservedDeployments(db, testDispatchLogger()).GetByJobName(ctx, name)
+	require.NoError(t, err)
+	assert.Equal(t, owner.ID(), got.ID())
 }
 
 // Dispatches of a cancelled run are dropped.

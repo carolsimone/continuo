@@ -220,6 +220,34 @@ func TestProcess_ALaterAttemptIsReportedAtItsOwnNumber(t *testing.T) {
 	assert.Equal(t, dep.JobName(), status[0]["job_name"])
 }
 
+// A dispatch refused while it carries the name of a running attempt's Job
+// leaves that attempt observed: it is settled from its Job and reported.
+func TestProcess_ARefusedDispatchOfTheJobsNameLeavesItsOwnerObserved(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	dep := h.started(t, 0, h.now.Add(-time.Minute))
+	cmd := dep.Command()
+	cmd.TaskID = uuid.NewString()
+	cmd.NodeType = "dbt-macro"
+	refused := model.NewRefusedDeployment(cmd, nil, pkgmodel.FailureReasonInvalidNodeType, "node type dbt-macro is not declared", h.now)
+	refused.RecordReport(refused.ReportOf(pkgmodel.AttemptStatusFailed, "node type dbt-macro is not declared"))
+	added, err := h.repo.AddAttempt(ctx, refused)
+	require.NoError(t, err)
+	require.True(t, added)
+	h.cache.set(dep.JobName(), model.JobObservation{JobPresent: true, JobSucceeded: true,
+		Pods: []model.PodObservation{endedPod(model.PodSucceeded, h.now.Add(-50*time.Second), h.now.Add(-20*time.Second), 0, "Completed")}})
+
+	require.NoError(t, h.o.Process(ctx, dep.JobName()))
+
+	var status string
+	require.NoError(t, h.db.Get(&status, `SELECT status FROM deployments WHERE id = $1`, dep.ID()))
+	assert.Equal(t, "done", status, "the attempt is settled and its slot released")
+	reports := h.reports(t)
+	require.Len(t, reports, 1)
+	assert.Equal(t, "succeeded", reports[0]["status"])
+	assert.Equal(t, dep.Command().TaskID, reports[0]["task_id"])
+}
+
 func TestProcess_AStartErrorEndsTheAttemptAndReportsItOnceItsPodsAreGone(t *testing.T) {
 	h := newHarness(t)
 	dep := h.started(t, 0, h.now.Add(-30*time.Second))

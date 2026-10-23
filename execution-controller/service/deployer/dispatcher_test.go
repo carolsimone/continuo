@@ -793,3 +793,31 @@ func TestDispatcher_TheLastFailedTryIsReportedFromALiveRead(t *testing.T) {
 		})
 	}
 }
+
+// An attempt whose Job name another task's running Job holds fails as
+// job_name_collision without standing for that Job: both lookups by the name
+// still return the deployment whose Job it is.
+func TestDispatcher_ACollidingAttemptLeavesTheJobToItsOwner(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	ctx := context.Background()
+	name := "dbt-public-orders-" + uuid.NewString()[:8]
+	owner := seedJobNamed(t, db, name, 3, 0)
+	_, err := db.Exec(`UPDATE deployments SET status = 'running', deployed_at = NOW() - interval '1 minute',
+		created_at = NOW() - interval '1 minute' WHERE id = $1`, owner)
+	require.NoError(t, err)
+	colliding := seedJobNamed(t, db, name, 3, 0)
+
+	require.NoError(t, newTestDispatcher(db, &fakeDeployer{deployErr: errors.Join(deploy.ErrJobNameCollision, pkgevents.ErrPermanent)}, 50).
+		ProcessBatch(ctx))
+
+	var reason string
+	require.NoError(t, db.Get(&reason, `SELECT facts->>'failure_reason' FROM deployments WHERE id = $1`, colliding))
+	require.Equal(t, "job_name_collision", reason)
+	got, err := postgres.NewDeploymentsRepository(db, testLogger()).LoadByJobName(ctx, name)
+	require.NoError(t, err)
+	assert.Equal(t, owner, got.ID())
+	got, err = postgres.NewObservedDeployments(db, testLogger()).GetByJobName(ctx, name)
+	require.NoError(t, err)
+	assert.Equal(t, owner, got.ID())
+}

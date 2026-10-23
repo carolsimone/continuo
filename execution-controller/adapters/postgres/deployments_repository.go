@@ -462,10 +462,13 @@ func (r *deploymentsRepository) HasAttemptAfter(ctx context.Context, taskID stri
 	return len(found) > 0, nil
 }
 
+// LoadByJobName reads only rows whose deployed_at is set: MarkStarted and an
+// adoption set it, while a refused row, a row failed before its Job was
+// created and a row not created yet keep it NULL.
 func (r *deploymentsRepository) LoadByJobName(ctx context.Context, jobName string) (*model.Deployment, error) {
 	const query = `SELECT` + validationSelectColumns + `
 		FROM deployments
-		WHERE job_name = $1
+		WHERE job_name = $1 AND deployed_at IS NOT NULL
 		ORDER BY created_at DESC
 		LIMIT 1
 		FOR UPDATE`

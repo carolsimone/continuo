@@ -39,7 +39,7 @@ func (r *observedDeployments) GetByJobName(ctx context.Context, jobName string) 
 	var rows []*deploymentRow
 	if err := r.exec.SelectContext(ctx, &rows, `SELECT`+validationSelectColumns+`
 		FROM deployments
-		WHERE job_name = $1
+		WHERE job_name = $1 AND deployed_at IS NOT NULL
 		ORDER BY created_at DESC
 		LIMIT 1`, jobName); err != nil {
 		return nil, fmt.Errorf("get deployment for job %s: %w", jobName, err)

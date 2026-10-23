@@ -186,6 +186,10 @@ func TestAdmission_ReturnStaleReserved_SkipsAReservationBeingLaunched(t *testing
 	assert.Empty(t, returned, "a reservation a launcher holds is not taken from it")
 }
 
+// Of the deployments that created a Job of the name, the newest is returned:
+// each attempt of a task is accepted once, so two of one Job name belong to
+// two tasks, the older one's Job gone before the newer one's was created. A
+// name no deployment created a Job of is not found.
 func TestRepo_LoadByJobName_NewestRow(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
@@ -195,18 +199,25 @@ func TestRepo_LoadByJobName_NewestRow(t *testing.T) {
 	cmd := validCmd()
 	cmd.JobName = "dbt-public-orders-r1"
 	older := model.NewDeployment(cmd, nil, time.Now().Add(-time.Minute))
-	// Each attempt of a task is accepted once, so two rows of one Job name
-	// belong to two tasks.
 	cmd.TaskID = uuid.NewString()
 	newer := model.NewDeployment(cmd, nil, time.Now())
-	require.NoError(t, repo.Add(ctx, older))
-	require.NoError(t, repo.Add(ctx, newer))
+	for _, d := range []*model.Deployment{older, newer} {
+		require.NoError(t, repo.Add(ctx, d))
+		require.NoError(t, d.Reserve())
+		require.NoError(t, d.MarkStarted(d.CreatedAt()))
+		require.NoError(t, repo.Save(ctx, d))
+	}
 
 	got, err := repo.LoadByJobName(ctx, "dbt-public-orders-r1")
 	require.NoError(t, err)
 	assert.Equal(t, newer.ID(), got.ID())
 	assert.Equal(t, "dbt-public-orders-r1", got.JobName())
 
+	queued := validCmd()
+	queued.JobName = "dbt-public-orders-queued"
+	require.NoError(t, repo.Add(ctx, model.NewDeployment(queued, nil, time.Now())))
+	_, err = repo.LoadByJobName(ctx, "dbt-public-orders-queued")
+	require.ErrorIs(t, err, sql.ErrNoRows, "a deployment that has not created its Job does not stand for it")
 	_, err = repo.LoadByJobName(ctx, "no-such-job")
 	require.ErrorIs(t, err, sql.ErrNoRows)
 }
