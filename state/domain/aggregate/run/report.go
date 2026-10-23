@@ -82,8 +82,7 @@ func NextStopCheckAfter(checksSent int) time.Duration {
 // AttemptReport is what execution-controller reported of one attempt of a
 // task: its status and every fact known of it so far. Status is queued,
 // running, succeeded, failed or stopped; a failed report carries its
-// FailureReason. A
-// nil fact is one the report does not carry.
+// FailureReason. A nil fact is one the report does not carry.
 type AttemptReport struct {
 	TaskID           uuid.UUID
 	Attempt          int32

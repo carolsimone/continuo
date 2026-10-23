@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -1112,7 +1113,8 @@ func TestCancelSchedule_ASecondCancelReturnsTheCancellingRun(t *testing.T) {
 	outbox := &cancelFakeOutbox{}
 	tasks := &cancelFakeTaskCollection{}
 	_, factory := newCancelUoWFactory(runRepo, outbox, tasks)
-	h := NewSchedulerHandler(nil, nil, nil, nil, factory, newTestLogger())
+	var logs bytes.Buffer
+	h := NewSchedulerHandler(nil, nil, nil, nil, factory, slog.New(slog.NewTextHandler(&logs, nil)))
 
 	resp, err := h.CancelSchedule(context.Background(), &statev1.CancelScheduleRequest{
 		ScheduleName: "daily",
@@ -1121,6 +1123,8 @@ func TestCancelSchedule_ASecondCancelReturnsTheCancellingRun(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, id.String(), resp.ScheduleId)
+	assert.Contains(t, logs.String(), "Schedule already cancelling")
+	assert.NotContains(t, logs.String(), `msg="Schedule cancelled"`, "a second cancel cancelled nothing")
 	assert.False(t, runRepo.saveCalled, "a second cancel saves nothing")
 	assert.False(t, tasks.beginStopCalled, "a second cancel stops nothing")
 	assert.Empty(t, outbox.appended, "a second cancel sends nothing")
