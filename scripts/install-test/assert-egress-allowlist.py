@@ -3,10 +3,12 @@
 what the agents reach: the LLM (llm.baseUrl, else the provider's public API),
 the GitHub API (agent-remediation's GITHUB_BASE_URL) and the S3 endpoint
 (s3.endpointUrl, when MinIO is off), plus egress.allowedDomains and
-egress.privateDomains. A URL whose host is an IP address, or any name the proxy
-would refuse, or whose port is outside 1-65535, is left out of the list: the
-proxy admits host names only. When nothing is left, no egress-proxy object
-renders, because the proxy refuses to start on an empty allowlist.
+egress.privateDomains. A URL whose host is an IP address is left out of the
+list, because the proxy admits host names only and the agents reach that address
+directly; a URL whose host is no host name the proxy admits, or whose port is
+outside 1-65535, fails the render naming the key and the value. When nothing is
+left, no egress-proxy object renders, because the proxy refuses to start on an
+empty allowlist.
 
 The script renders the chart with each settings combination in CASES and
 compares the allowlist in the egress-proxy ConfigMap with the expected one. It
@@ -94,9 +96,6 @@ CASES = [
     ("model at an IPv6 address without a port",
      ["--set", "llm.provider=openai-compatible", "--set", "llm.baseUrl=http://[fd00::7]"],
      GITHUB),
-    ("model at a legacy numeric IPv4 address",
-     ["--set", "llm.provider=openai-compatible", "--set", "llm.baseUrl=http://2130706433:8000"],
-     GITHUB),
     ("external S3", S3_EXTERNAL, ANTHROPIC | GITHUB | {("s3.eu-central-1.amazonaws.com", 443, True)}),
     ("external S3 at an IP address", S3_EXTERNAL_IP, ANTHROPIC | GITHUB),
     ("extra domains",
@@ -127,27 +126,16 @@ CASES = [
      ["--set-json", 'services=[{"name":"state","enabled":true}]'], ANTHROPIC | GITHUB),
     # Ports of URLs are read in base 10, as written.
     ("URL port with a leading zero", llm_url("http://gpu:08080"), {("gpu", 8080, True)} | GITHUB),
-    ("URL port 0 is dropped", llm_url("http://gpu:0"), GITHUB),
-    ("URL port above 65535 is dropped", llm_url("http://gpu:65536"), GITHUB),
-    ("URL port far above 65535 is dropped", llm_url("http://gpu:99999999999999999999"), GITHUB),
     ("GitHub Enterprise port with a leading zero",
      agent_remediation_github("http://ghe.corp.example:08080/api/v3"),
      ANTHROPIC | {("ghe.corp.example", 8080, True), ("codeload.ghe.corp.example", 8080, True)}),
-    # URL hosts the proxy would refuse are dropped, like IP addresses.
-    ("scheme-less GITHUB_BASE_URL", agent_remediation_github("ghe.corp.example/api/v3"), ANTHROPIC),
-    ("GITHUB_BASE_URL without a host", agent_remediation_github("https://"), ANTHROPIC),
-    ("underscore host in llm.baseUrl", llm_url("http://vllm_x:8000"), GITHUB),
-    ("underscore host in GITHUB_BASE_URL", agent_remediation_github("https://gh_e.example"), ANTHROPIC),
-    ("underscore host in s3.endpointUrl", s3_url("http://my_minio:9000"), ANTHROPIC | GITHUB),
-    ("wildcard host in llm.baseUrl", llm_url("https://*.example.com"), GITHUB),
+    ("URL with an empty port takes the scheme's", llm_url("http://gpu:"), {("gpu", 80, True)} | GITHUB),
     ("single-label URL host with a trailing dot", llm_url("http://gpu-box.:8000"), {("gpu-box", 8000, True)} | GITHUB),
     ("GitHub Enterprise host whose codeload name is too long",
      agent_remediation_github(f"https://{LONG_HOST}/api/v3"), ANTHROPIC | {(LONG_HOST, 443, True)}),
     # Nothing left to allow: no proxy object renders.
     ("every URL is an IP address and no domain is listed",
      [*llm_url("http://10.0.0.7:8000"), *agent_remediation_github("http://10.0.0.8:8080")], None),
-    ("every URL is unusable and no domain is listed",
-     [*llm_url("http://vllm_x:8000"), *agent_remediation_github("https://")], None),
     ("every URL is an IP address, one domain is listed",
      [*llm_url("http://10.0.0.7:8000"), *agent_remediation_github("http://10.0.0.8:8080"),
       *values("allowedDomains", ["api.example.com"])], {("api.example.com", 443, False)}),
@@ -258,6 +246,34 @@ for _label, _entry in BAD_TYPES:
 REFUSED.append(("one bad entry among good ones",
                 values("allowedDomains", ["api.example.com", "https://x.example.com", "b.example.com"]),
                 "allowedDomains", as_json("https://x.example.com")))
+# URLs the agents call whose host is no host name the proxy admits and no IP
+# address, or whose port is outside 1-65535: the render fails naming the key and
+# the value rather than leaving the agent pointed at a proxy that refuses it.
+LLM_KEY = "llm.baseUrl"
+GITHUB_KEY = "services[name=agent-remediation].env.GITHUB_BASE_URL"
+S3_KEY = "s3.endpointUrl"
+BAD_URLS = [
+    ("URL port 0", LLM_KEY, "http://gpu:0", llm_url),
+    ("URL port above 65535", LLM_KEY, "http://gpu:65536", llm_url),
+    ("URL port far above 65535", LLM_KEY, "http://gpu:99999999999999999999", llm_url),
+    ("legacy numeric IPv4 host", LLM_KEY, "http://2130706433:8000", llm_url),
+    ("short numeric IPv4 host", LLM_KEY, "http://127.1:8000", llm_url),
+    ("hex host", LLM_KEY, "http://0x7f000001:8000", llm_url),
+    ("underscore host in llm.baseUrl", LLM_KEY, "http://vllm_x:8000", llm_url),
+    ("wildcard host in llm.baseUrl", LLM_KEY, "https://*.example.com", llm_url),
+    ("scheme-less GITHUB_BASE_URL", GITHUB_KEY, "ghe.corp.example/api/v3", agent_remediation_github),
+    ("GITHUB_BASE_URL without a host", GITHUB_KEY, "https://", agent_remediation_github),
+    ("underscore host in GITHUB_BASE_URL", GITHUB_KEY, "https://gh_e.example", agent_remediation_github),
+    ("GITHUB_BASE_URL port above 65535", GITHUB_KEY, "https://ghe.corp.example:70000/api/v3", agent_remediation_github),
+    ("underscore host in s3.endpointUrl", S3_KEY, "http://my_minio:9000", s3_url),
+    ("s3.endpointUrl port 0", S3_KEY, "http://minio.storage:0", s3_url),
+    ("scheme-less s3.endpointUrl", S3_KEY, "minio.storage:9000", s3_url),
+]
+for _label, _key, _url, _args in BAD_URLS:
+    REFUSED.append((_label, _args(_url), _key, f"{_key}={json.dumps(_url)}"))
+REFUSED.append(("every URL is unusable and no domain is listed",
+                [*llm_url("http://vllm_x:8000"), *agent_remediation_github("https://")],
+                LLM_KEY, f'{LLM_KEY}="http://vllm_x:8000"'))
 REFUSED.append(("metrics.port equal to the proxy port", ["--set", "metrics.port=3128"], "metrics.port", None))
 REFUSED.append(("metrics.port equal to the health port", ["--set", "metrics.port=8093"], "metrics.port", None))
 REFUSED.append(("a services entry named egress-proxy",
