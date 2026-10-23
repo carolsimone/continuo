@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/service/runsettle"
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
@@ -23,6 +24,7 @@ import (
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/state/adapters/http"
+	statemetrics "github.com/carolsimone/continuo/state/adapters/metrics"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	statepublisher "github.com/carolsimone/continuo/state/adapters/publisher"
 	"github.com/carolsimone/continuo/state/adapters/redis"
@@ -31,6 +33,7 @@ import (
 	grpcserver "github.com/carolsimone/continuo/state/internal/grpc"
 	"github.com/carolsimone/continuo/state/internal/grpc/handlers"
 	"github.com/carolsimone/continuo/state/internal/scheduler"
+	"github.com/carolsimone/continuo/state/service/attemptreconcile"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 	ports "github.com/carolsimone/continuo/state/service/ports"
 	"github.com/carolsimone/continuo/state/service/runreads"
@@ -54,6 +57,9 @@ const releasePromotedHandlerTimeout = 5 * time.Minute
 
 // seedReconcileInterval is how often the periodic seed reconcile runs.
 const seedReconcileInterval = 60 * time.Second
+
+// attemptReconcileInterval is how often the attempt reconcile passes.
+const attemptReconcileInterval = 60 * time.Second
 
 // dbPool bounds the Postgres pool when DB_MAX_OPEN_CONNS / DB_MAX_IDLE_CONNS
 // are unset: two connections per stream consumer (a handler's transaction and
@@ -320,7 +326,10 @@ func main() {
 	// does not hold. It runs inside every release.promoted:v2 transaction that
 	// moves the live release, and every seedReconcileInterval from the loop
 	// started below; maintenance mode stops it creating runs.
-	seedReconciler := seedreconcile.New(uowFactory, cfg.Maintenance, pkgevents.DefaultTenantID, logger)
+	// Every task state plans gets the install's retry budget, and each
+	// dispatch its node's timeout, else the install's.
+	taskDefaults := run.TaskDefaults{MaxRetries: int32(cfg.TaskMaxRetries), Timeout: cfg.TaskTimeout} //nolint:gosec // G115: TASK_MAX_RETRIES is 0-10, checked at startup.
+	seedReconciler := seedreconcile.New(uowFactory, cfg.Maintenance, pkgevents.DefaultTenantID, taskDefaults, logger)
 	releasePromotedHandler := svchandlers.NewReleasePromotedHandler(s3adapter.NewTopologyArtifactReader(objectStore), seedReconciler, logger)
 
 	// Every state consumer is the same shape: a domain handler wrapped by a
@@ -345,15 +354,9 @@ func main() {
 		},
 		{
 			name:    "task_status_updated",
-			stream:  streams.TaskStatusUpdatedV1,
+			stream:  streams.TaskStatusUpdatedV2,
 			group:   streams.StateTaskStatusUpdated,
-			binding: redis.NewTaskStatusUpdatedBinding(uowFactory, svchandlers.NewTaskStatusUpdatedHandler(pkgevents.DefaultTenantID, logger), logger),
-		},
-		{
-			name:    "task_execution_recorded",
-			stream:  streams.TaskExecutionRecordedV1,
-			group:   streams.StateTaskExecutionRecorded,
-			binding: redis.NewTaskExecutionRecordedBinding(uowFactory, svchandlers.NewTaskExecutionRecordedHandler(logger), logger),
+			binding: redis.NewTaskStatusReportBinding(uowFactory, svchandlers.NewAttemptReportHandler(pkgevents.DefaultTenantID, taskDefaults, logger), logger),
 		},
 		{
 			name:    "release_promoted",
@@ -374,9 +377,17 @@ func main() {
 	// goroutine is tracked, so shutdown waits for a pass in progress.
 	lifecycleManager.Go(func() { seedReconciler.Loop(ctx, seedReconcileInterval) })
 
+	// The attempt reconcile asks execution-controller about every attempt
+	// nothing was heard of within its window and fails every run left with
+	// nothing in flight as stalled. Its goroutine is tracked, so shutdown
+	// waits for a pass in progress.
+	attemptReconciler := attemptreconcile.New(uowFactory, pkgevents.DefaultTenantID, taskDefaults,
+		statemetrics.NewRunMetrics(metricsReg), logger)
+	lifecycleManager.Go(func() { attemptReconciler.Run(ctx, attemptReconcileInterval) })
+
 	// The cron loop and the gRPC entry points plan their runs for the default
 	// tenant; the seed reconcile builds its own planner for each pass.
-	planner := runstart.Planner{TenantID: pkgevents.DefaultTenantID}
+	planner := runstart.Planner{TenantID: pkgevents.DefaultTenantID, Tasks: taskDefaults}
 
 	// Initialize activation handler shared by the cron loop and gRPC methods.
 	activateHandler := svchandlers.NewActivateScheduleHandler(planner, logger)
@@ -423,7 +434,7 @@ func main() {
 	singleNodeRunUC := svchandlers.NewTriggerSingleNodeRunHandler(planner, logger)
 	singleNodeRunHandler := handlers.NewSingleNodeRunHandler(singleNodeRunUC, uowFactory, logger)
 	nodeRunRepo := postgres.NewNodeRunRepository(db, logger)
-	nodeRunHandler := handlers.NewNodeRunHandler(nodeRunRepo, logger)
+	nodeRunHandler := handlers.NewNodeRunHandler(nodeRunRepo, taskDefaults.Timeout, logger)
 	runReadHandler := handlers.NewRunReadHandler(runreads.New(runReadRepo), logger)
 
 	// Create gRPC server

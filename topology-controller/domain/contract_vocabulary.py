@@ -77,8 +77,17 @@ NODE_TYPE_RUNTIME: dict[NodeType, NodeRuntime] = {NodeType.DBT_MODEL: NodeRuntim
 """Which toolchain builds each NodeType."""
 
 
+class AttemptStatus(StrEnum):
+    """Where one attempt of a task stands, on the two task streams. state sends dispatched, queued or running as a dispatch's known_status on task.dispatch:v1; execution-controller reports queued, running, succeeded or failed as a report's status on task.status.updated:v2."""
+    DISPATCHED = "dispatched"
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
 class FailureClass(StrEnum):
-    """What kind of failure ended an attempt of a task. execution-controller's observer classifies each attempt it watches end in failure and records the class with the attempt's facts."""
+    """What kind of failure ended an attempt of a task. execution-controller classifies each attempt that fails and records the class with the attempt's facts."""
     TASK = "task"
     RESOURCE = "resource"
     INFRA = "infra"
@@ -94,6 +103,8 @@ class FailureReason(StrEnum):
     EVICTED = "evicted"
     NODE_LOST = "node_lost"
     JOB_MISSING = "job_missing"
+    ATTEMPT_LOST = "attempt_lost"
+    CREATE_FAILED = "create_failed"
     IMAGE_PULL = "image_pull"
     INVALID_IMAGE = "invalid_image"
     MISSING_CONFIG = "missing_config"
@@ -101,7 +112,10 @@ class FailureReason(StrEnum):
     START_TIMEOUT = "start_timeout"
     DEADLINE_EXCEEDED = "deadline_exceeded"
     DBT_NOTHING_TO_DO = "dbt_nothing_to_do"
+    INVALID_NODE_TYPE = "invalid_node_type"
+    MALFORMED_DISPATCH = "malformed_dispatch"
+    JOB_NAME_COLLISION = "job_name_collision"
 
 
-FAILURE_REASON_CLASS: dict[FailureReason, FailureClass] = {FailureReason.EXIT_CODE: FailureClass.TASK, FailureReason.OOM_KILLED: FailureClass.RESOURCE, FailureReason.EVICTED: FailureClass.RESOURCE, FailureReason.NODE_LOST: FailureClass.INFRA, FailureReason.JOB_MISSING: FailureClass.INFRA, FailureReason.IMAGE_PULL: FailureClass.START, FailureReason.INVALID_IMAGE: FailureClass.START, FailureReason.MISSING_CONFIG: FailureClass.START, FailureReason.CREATE_CONTAINER: FailureClass.START, FailureReason.START_TIMEOUT: FailureClass.TIMEOUT, FailureReason.DEADLINE_EXCEEDED: FailureClass.TIMEOUT, FailureReason.DBT_NOTHING_TO_DO: FailureClass.INVALID}
+FAILURE_REASON_CLASS: dict[FailureReason, FailureClass] = {FailureReason.EXIT_CODE: FailureClass.TASK, FailureReason.OOM_KILLED: FailureClass.RESOURCE, FailureReason.EVICTED: FailureClass.RESOURCE, FailureReason.NODE_LOST: FailureClass.INFRA, FailureReason.JOB_MISSING: FailureClass.INFRA, FailureReason.ATTEMPT_LOST: FailureClass.INFRA, FailureReason.CREATE_FAILED: FailureClass.INFRA, FailureReason.IMAGE_PULL: FailureClass.START, FailureReason.INVALID_IMAGE: FailureClass.START, FailureReason.MISSING_CONFIG: FailureClass.START, FailureReason.CREATE_CONTAINER: FailureClass.START, FailureReason.START_TIMEOUT: FailureClass.TIMEOUT, FailureReason.DEADLINE_EXCEEDED: FailureClass.TIMEOUT, FailureReason.DBT_NOTHING_TO_DO: FailureClass.INVALID, FailureReason.INVALID_NODE_TYPE: FailureClass.INVALID, FailureReason.MALFORMED_DISPATCH: FailureClass.INVALID, FailureReason.JOB_NAME_COLLISION: FailureClass.INVALID}
 """The FailureClass each FailureReason is filed under."""

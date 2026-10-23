@@ -18,7 +18,6 @@ ENV PATH="/root/.local/bin:${PATH}"
 # source-copy layers to the service-owned dirs means a change to another
 # service does not invalidate this image's cache.
 COPY go.work go.work.sum* ./
-COPY state/go.mod state/go.sum ./state/
 COPY pkg/go.mod pkg/go.sum ./pkg/
 COPY orchestrator/go.mod orchestrator/go.sum ./orchestrator/
 COPY execution-controller/go.mod execution-controller/go.sum ./execution-controller/

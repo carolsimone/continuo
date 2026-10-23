@@ -134,7 +134,7 @@ func newPreviewFixture(t *testing.T, status run.SchedulerStatus) *previewFixture
 // schedule's active run does not refuse it.
 func TestRebasePreviewer_PreviewsTheRebaseAndWritesNothing(t *testing.T) {
 	f := newPreviewFixture(t, run.SchedulerStatusFailed)
-	p := runreads.NewRebasePreviewer(runstart.Planner{TenantID: "default"}, f.newUoW, f.reads)
+	p := runreads.NewRebasePreviewer(runstart.Planner{TenantID: "default", Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}}, f.newUoW, f.reads)
 
 	got, err := p.Preview(context.Background(), f.runs.source.ScheduleID(), true)
 
@@ -166,7 +166,7 @@ func TestRebasePreviewer_PreviewsTheRebaseAndWritesNothing(t *testing.T) {
 // transaction begins.
 func TestRebasePreviewer_RefusesASourceThatCannotBeRebased(t *testing.T) {
 	f := newPreviewFixture(t, run.SchedulerStatusSucceeded)
-	p := runreads.NewRebasePreviewer(runstart.Planner{TenantID: "default"}, f.newUoW, f.reads)
+	p := runreads.NewRebasePreviewer(runstart.Planner{TenantID: "default", Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}}, f.newUoW, f.reads)
 
 	_, err := p.Preview(context.Background(), f.runs.source.ScheduleID(), true)
 
@@ -179,7 +179,7 @@ func TestRebasePreviewer_RefusesASourceThatCannotBeRebased(t *testing.T) {
 func TestRebasePreviewer_ReturnsTheSelectionsRefusal(t *testing.T) {
 	f := newPreviewFixture(t, run.SchedulerStatusFailed)
 	f.u.TopologyRepo = &releaseGraphs{}
-	p := runreads.NewRebasePreviewer(runstart.Planner{TenantID: "default"}, f.newUoW, f.reads)
+	p := runreads.NewRebasePreviewer(runstart.Planner{TenantID: "default", Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}}, f.newUoW, f.reads)
 
 	_, err := p.Preview(context.Background(), f.runs.source.ScheduleID(), true)
 

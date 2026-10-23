@@ -3,7 +3,23 @@
 // this port; the k8s adapter implements it. No infrastructure types leak here.
 package deploy
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// Errors a Deployer returns for a dispatch it can never run. Each wraps
+// pkg/events.ErrPermanent, so no creation try is repeated.
+var (
+	// ErrInvalidNodeType: the node type is not one the vocabulary declares.
+	ErrInvalidNodeType = errors.New("the dispatch names an undeclared node type")
+	// ErrMalformedDispatch: another field of the dispatch cannot run (its
+	// operation, image, timeout, or a node no command builds).
+	ErrMalformedDispatch = errors.New("the dispatch cannot run")
+	// ErrJobNameCollision: a Job of the name exists for another task or
+	// attempt.
+	ErrJobNameCollision = errors.New("a Job of the name exists for another task or attempt")
+)
 
 // JobSpec is the domain description of a single deploy operation. It carries
 // only what the domain knows about the work — never adapter concerns such as
@@ -25,6 +41,11 @@ type JobSpec struct {
 	// is the default: dbt run/seed/snapshot by NodeType. "test" runs
 	// `dbt test --select <node>`.
 	Operation string
+	// Attempt is which attempt of the task the Job runs.
+	Attempt int
+	// TimeoutSeconds is how long the attempt's container may run once the
+	// Job has started its pod.
+	TimeoutSeconds int64
 }
 
 // ValidationJobSpec is the domain description of a single validation deploy.
@@ -64,8 +85,10 @@ type ValidationJobSpec struct {
 
 // Deployer is the driven port the dispatcher uses to create Jobs.
 type Deployer interface {
-	// Deploy executes the job described by spec. Implementations must be
-	// idempotent by job name so a redelivery is a no-op.
+	// Deploy executes the job described by spec. A Job of the name that
+	// carries the same task and attempt counts as created, so a repeated
+	// launch is a no-op; one of another task or attempt is
+	// ErrJobNameCollision.
 	Deploy(ctx context.Context, spec JobSpec) error
 	// DeployValidation executes the mode=validation job described by spec.
 	// Implementations must be idempotent by job name so a redelivery is a

@@ -2,11 +2,14 @@ package k8s
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 
+	"github.com/carolsimone/continuo/execution-controller/domain/deploy"
 	validationmodel "github.com/carolsimone/continuo/execution-controller/domain/model"
 	"github.com/carolsimone/continuo/execution-controller/service/artifacts"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
@@ -14,6 +17,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/parsecache"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -26,27 +30,30 @@ const (
 	annotationNodeID    = "continuo.dev/node-id"
 )
 
-// CreateQueryJob builds and creates a K8s Job for query execution (idempotent)
+// The label keys that name the attempt a task's Job runs, on the Job and its
+// pod: the task's id and the attempt's number. The watch reads them back to
+// tell which attempt a Job runs.
+const (
+	LabelTaskID  = "task-id"
+	LabelAttempt = "attempt"
+)
+
+// CreateQueryJob builds and creates the K8s Job of one attempt of a task. A
+// Job of the name that carries the same task-id and attempt labels was
+// created by an earlier launch of this attempt and counts as created; one
+// that carries others belongs to another task or attempt, and creating this
+// attempt is refused as deploy.ErrJobNameCollision.
 func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error {
-	// Step 1: Check if job already exists (idempotent operation)
-	exists, err := c.JobExists(ctx, params.Namespace, params.JobName)
-	if err != nil {
+	adopted, err := c.adoptAttemptJob(ctx, params)
+	if err != nil || adopted {
 		return err
 	}
 
-	if exists {
-		c.logger.Info("K8s job already exists, skipping creation",
-			"namespace", params.Namespace,
-			"job_name", params.JobName,
-		)
-		return nil
-	}
-
-	// Step 2: Build Job spec. Python-family nodes (python-node, python-csv) run
-	// the domain repository's own image under the runtime harness's
-	// environment; every other node type runs the team's dbt image under a
-	// resolved dbt command. The Job metadata below is shared, so both kinds
-	// route through the production lifecycle identically.
+	// Python-family nodes (python-node, python-csv) run the domain
+	// repository's own image under the runtime harness's environment; every
+	// other node type runs the team's dbt image under a resolved dbt command.
+	// The Job metadata below is shared, so both kinds route through the
+	// production lifecycle identically.
 	var podSpec corev1.PodSpec
 	if params.NodeType.IsPython() {
 		podSpec, err = buildPythonPodSpec(params)
@@ -64,7 +71,8 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 	backoffLimit := int32(0)
 	jobLabels := map[string]string{
 		"app":          "dbt-job",
-		"task-id":      params.TaskID,
+		LabelTaskID:    params.TaskID,
+		LabelAttempt:   strconv.Itoa(params.Attempt),
 		"schedule-id":  params.ScheduleID,
 		"schedule":     params.ScheduleName,
 		"table_name":   sanitizeK8sLabel(params.TableName),
@@ -86,6 +94,7 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 		Spec: batchv1.JobSpec{
 			BackoffLimit:            &backoffLimit,
 			TTLSecondsAfterFinished: &ttl,
+			ActiveDeadlineSeconds:   activeDeadline(params.ActiveDeadlineSeconds),
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: jobLabels,
@@ -95,8 +104,52 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 		},
 	}
 
-	// Step 3: Create the job
-	return c.CreateJob(ctx, job)
+	existed, err := c.createJob(ctx, job)
+	if err != nil || !existed {
+		return err
+	}
+	// A Job of the name appeared after the check above, so it is read and
+	// judged like one that was there before. One that disappeared between the
+	// refused creation and the read is a plain error, so the creation is tried
+	// again.
+	adopted, err = c.adoptAttemptJob(ctx, params)
+	if err != nil {
+		return err
+	}
+	if !adopted {
+		return fmt.Errorf("job %s disappeared between its refused creation and the read of it", params.JobName)
+	}
+	return nil
+}
+
+// adoptAttemptJob reports whether a Job of params' name exists for the same
+// task and attempt, and returns deploy.ErrJobNameCollision when one exists for
+// another.
+func (c *K8sClient) adoptAttemptJob(ctx context.Context, params JobParams) (bool, error) {
+	existing, err := c.clientset.BatchV1().Jobs(params.Namespace).Get(ctx, params.JobName, metav1.GetOptions{})
+	if k8serrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("failed to check if job exists: %w", err)
+	}
+	if existing.Labels[LabelTaskID] != params.TaskID || existing.Labels[LabelAttempt] != strconv.Itoa(params.Attempt) {
+		return false, fmt.Errorf("%w: Job %s carries task %q attempt %q, not task %s attempt %d",
+			errors.Join(deploy.ErrJobNameCollision, events.ErrPermanent), params.JobName,
+			existing.Labels[LabelTaskID], existing.Labels[LabelAttempt], params.TaskID, params.Attempt)
+	}
+	c.logger.Info("K8s job of the attempt already exists; adopting it",
+		"namespace", params.Namespace, "job_name", params.JobName, "attempt", params.Attempt)
+	return true, nil
+}
+
+// activeDeadline is a Job's activeDeadlineSeconds: nil, no deadline, when
+// seconds is not positive.
+func activeDeadline(seconds int64) *int64 {
+	if seconds <= 0 {
+		return nil
+	}
+	return &seconds
 }
 
 // ValidationJobParams represents the parameters needed to create a
@@ -139,6 +192,10 @@ type ValidationJobParams struct {
 	// only for mode=compile and mode=seed_build dispatches of a verification
 	// run.
 	SourceOverlayURI string
+
+	// ActiveDeadlineSeconds is how long Kubernetes lets the leg's Job run,
+	// counted from the Job's start.
+	ActiveDeadlineSeconds int64
 
 	Namespace string
 }
@@ -192,6 +249,7 @@ func (c *K8sClient) CreateValidationJob(ctx context.Context, params ValidationJo
 		Spec: batchv1.JobSpec{
 			BackoffLimit:            &backoffLimit,
 			TTLSecondsAfterFinished: &ttl,
+			ActiveDeadlineSeconds:   activeDeadline(params.ActiveDeadlineSeconds),
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels, Annotations: annotations},
 				Spec:       podSpec,
@@ -374,6 +432,7 @@ func (c *K8sClient) CreateSeedBuildJob(ctx context.Context, params ValidationJob
 		Spec: batchv1.JobSpec{
 			BackoffLimit:            &backoffLimit,
 			TTLSecondsAfterFinished: &ttl,
+			ActiveDeadlineSeconds:   activeDeadline(params.ActiveDeadlineSeconds),
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels, Annotations: annotations},
 				Spec:       podSpec,
@@ -555,6 +614,7 @@ func (c *K8sClient) CreateCompileJob(ctx context.Context, params ValidationJobPa
 		Spec: batchv1.JobSpec{
 			BackoffLimit:            &backoffLimit,
 			TTLSecondsAfterFinished: &ttl,
+			ActiveDeadlineSeconds:   activeDeadline(params.ActiveDeadlineSeconds),
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels, Annotations: annotations},
 				Spec:       podSpec,
@@ -755,6 +815,7 @@ func buildPodSpec(params JobParams, command []string, partialParsePath string) (
 
 	envVars := []corev1.EnvVar{
 		{Name: "TASK_ID", Value: params.TaskID},
+		{Name: "TASK_ATTEMPT", Value: strconv.Itoa(params.Attempt)},
 		{Name: "SCHEDULE_ID", Value: params.ScheduleID},
 		{Name: "SCHEDULE_NAME", Value: params.ScheduleName},
 		{Name: "SERVICE_NAME", Value: params.ServiceName},
@@ -795,9 +856,10 @@ func buildPodSpec(params JobParams, command []string, partialParsePath string) (
 }
 
 // pythonKindEnv is the env each python node type adds to its run pod on top of
-// NODE_ID, TABLE_NAME and TARGET_SCHEMA. A python-csv harness fetches its own
-// source, so it receives the S3 credential env regardless of the uri scheme;
-// the executor knows only the node type and never parses the contract's uri.
+// NODE_ID, TABLE_NAME, TARGET_SCHEMA and TASK_ATTEMPT. A python-csv harness
+// fetches its own source, so it receives the S3 credential env regardless of
+// the uri scheme; the executor knows only the node type and never parses the
+// contract's uri.
 var pythonKindEnv = map[pkg_model.NodeType]func() []corev1.EnvVar{
 	pkg_model.NodeTypePythonNode: func() []corev1.EnvVar { return nil },
 	pkg_model.NodeTypePythonCsv:  s3CredEnvVars,
@@ -813,21 +875,22 @@ var pythonKindEnv = map[pkg_model.NodeType]func() []corev1.EnvVar{
 // files baked inside it. The executor therefore sets no command and resolves no
 // dbt command dialect.
 //
-// The environment is exactly the three variables the harness requires: NODE_ID
-// (whose trailing schema.table segments select the node), TABLE_NAME, and
-// TARGET_SCHEMA. These deliberately differ from the dbt Job env — the harness
-// recognizes no SCHEMA/DBT_TARGET_SCHEMA fallback — and CONTRACT_DIR and
-// APP_ROOT are left to the image, which declares its own layout. The warehouse
-// connection arrives via envFrom of the same operator-owned Secret dbt Jobs
-// attach; its engine-native keys are what the image's baked runtime adapter
-// reads.
+// The environment is exactly four variables: the three the harness requires,
+// NODE_ID (whose trailing schema.table segments select the node), TABLE_NAME
+// and TARGET_SCHEMA, and TASK_ATTEMPT, the attempt of the task the pod runs,
+// which the harness does not read. They deliberately differ from the dbt Job
+// env — the harness recognizes no SCHEMA/DBT_TARGET_SCHEMA fallback — and
+// CONTRACT_DIR and APP_ROOT are left to the image, which declares its own
+// layout. The warehouse connection arrives via envFrom of the same
+// operator-owned Secret dbt Jobs attach; its engine-native keys are what the
+// image's baked runtime adapter reads.
 //
 // None of the dbt Job's pod plumbing applies: no parse-cache hydrate
 // initContainer and no shared volume. A domain image never receives S3
 // credentials — its contract files travel inside the image itself — except a
 // python-csv node, whose harness fetches its own source and so gets the same
 // four S3 credential env vars the validation pods use. Which env each python
-// kind gets on top of the three normative variables is declared in
+// kind gets on top of the four normative variables is declared in
 // pythonKindEnv.
 func buildPythonPodSpec(p JobParams) (corev1.PodSpec, error) {
 	switch p.Operation {
@@ -869,6 +932,7 @@ func buildPythonPodSpec(p JobParams) (corev1.PodSpec, error) {
 		{Name: "NODE_ID", Value: p.SchemaName + "." + p.TableName},
 		{Name: "TABLE_NAME", Value: p.TableName},
 		{Name: "TARGET_SCHEMA", Value: p.SchemaName},
+		{Name: "TASK_ATTEMPT", Value: strconv.Itoa(p.Attempt)},
 	}
 	kindEnv, ok := pythonKindEnv[p.NodeType]
 	if !ok {

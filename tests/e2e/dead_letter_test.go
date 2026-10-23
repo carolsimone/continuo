@@ -43,7 +43,7 @@ func TestDeadLetter_MalformedMessagesAreDeadLetteredNotDropped(t *testing.T) {
 	t.Cleanup(func() { clients.close(ctx) })
 
 	cases := []struct{ producer, stream, group string }{
-		{"state", streams.TaskStatusUpdatedV1, streams.StateTaskStatusUpdated},
+		{"state", streams.TaskStatusUpdatedV2, streams.StateTaskStatusUpdated},
 		{"topology-controller", streams.ReleaseRequestedV1, streams.TopologyControllerReleaseRequested},
 	}
 	for _, tc := range cases {
@@ -244,8 +244,8 @@ func TestDeadLetter_BacklogMetricIsExposed(t *testing.T) {
 	clients := setupClients(t, ctx)
 	t.Cleanup(func() { clients.close(ctx) })
 
-	id := publishMalformed(ctx, t, clients, streams.TaskStatusUpdatedV1)
-	dl := awaitConsumerDeadLetter(ctx, t, clients, streams.TaskStatusUpdatedV1, streams.StateTaskStatusUpdated, id, "open")
+	id := publishMalformed(ctx, t, clients, streams.TaskStatusUpdatedV2)
+	dl := awaitConsumerDeadLetter(ctx, t, clients, streams.TaskStatusUpdatedV2, streams.StateTaskStatusUpdated, id, "open")
 	t.Cleanup(func() { deleteDeadLetterRows(t, clients, dl.GetId()) })
 
 	body := scrapeMetrics(t, getEnv("DEAD_LETTER_HOST", "dead-letter-controller"))

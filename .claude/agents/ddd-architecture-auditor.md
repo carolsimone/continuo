@@ -73,7 +73,7 @@ Treat each as a concrete check:
    `pkg/streams/handler_imports_test.go`.)
 
 3. **No inlined stream / consumer-group names.** Versioned stream names
-   (e.g. `"query.model:v1"`) and service-prefixed consumer-group names must
+   (e.g. `"task.dispatch:v1"`) and service-prefixed consumer-group names must
    reference constants from `pkg/streams` (Go) or `streams_contract` (Python) —
    in production code, integration tests, unit fixtures, and adapter bindings
    (`message_processing.stream_name`). Flag any string literal of this shape.

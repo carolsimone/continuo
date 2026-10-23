@@ -109,7 +109,7 @@ func TestRebaseFromFailure(t *testing.T) {
 			{"mart.rff_p", "succeeded", true},
 			{"mart.rff_q", "succeeded", true},
 			{"mart.rff_x", "succeeded", true},
-			{"mart.rff_y", "pending", false},
+			{"mart.rff_y", "dispatched", false},
 			{"mart.rff_z", "pending", false},
 		}, rebaseTasks(t, resp.RunId))
 		assert.Equal(t, []string{"mart.rff_y"}, h.created(t, uuid.MustParse(resp.RunId)).Dispatch)
@@ -138,7 +138,7 @@ func TestRebaseFromFailure(t *testing.T) {
 			{"mart.rff_q", "succeeded", true},
 			{"mart.rff_x", "succeeded", true},
 			{"mart.rff_y", "succeeded", true},
-			{"mart.rff_z", "pending", false},
+			{"mart.rff_z", "dispatched", false},
 		}, rebaseTasks(t, resp.RunId))
 		assert.Equal(t, []string{"mart.rff_z"}, h.created(t, uuid.MustParse(resp.RunId)).Dispatch)
 	})
@@ -181,7 +181,7 @@ func TestRebaseFromFailure(t *testing.T) {
 			{"mart.rff_p", "succeeded", true},
 			{"mart.rff_q", "succeeded", true},
 			{"mart.rff_x", "succeeded", true},
-			{"mart.rff_y", "pending", false},
+			{"mart.rff_y", "dispatched", false},
 			{"mart.rff_z", "pending", false},
 		}, rebaseTasks(t, resp.RunId))
 		assert.Equal(t, []string{"mart.rff_y"}, h.created(t, uuid.MustParse(resp.RunId)).Dispatch)

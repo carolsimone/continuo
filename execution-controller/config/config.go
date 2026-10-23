@@ -63,11 +63,10 @@ type Config struct {
 	// ShutdownGrace bounds the graceful-shutdown drain + infra teardown.
 	ShutdownGrace time.Duration
 
-	// IgnoredRetryKeys names DEFAULT_TASK_MAX_RETRIES when it is set.
-	// execution-controller does not read it: each task's retry budget arrives
-	// on its query.model:v1 dispatch, and pkg/events.DefaultTaskMaxRetries
-	// applies to a dispatch that carries none.
-	IgnoredRetryKeys []string
+	// TaskTimeout is TASK_TIMEOUT_SECONDS: how long the container of every
+	// validation, seed-build and compile Job may run. A task's own timeout
+	// arrives on its dispatch.
+	TaskTimeout time.Duration
 
 	// MetricsPort is the port the Prometheus /metrics listener binds (METRICS_PORT).
 	MetricsPort int
@@ -102,7 +101,7 @@ func Load(v *pkgconfig.Validator) Config {
 
 		ShutdownGrace: pkgconfig.EnvDurationOrDefault("SHUTDOWN_GRACE", defaultShutdownGrace),
 
-		IgnoredRetryKeys: setKeys("DEFAULT_TASK_MAX_RETRIES"),
+		TaskTimeout: pkgconfig.LoadTaskTimeout(v),
 
 		MetricsPort: pkgconfig.LoadMetricsPort(v),
 	}
@@ -120,32 +119,23 @@ func maxConcurrentJobs(v *pkgconfig.Validator) int {
 
 // jobStartTimeout reads JOB_START_TIMEOUT_SECONDS, a whole number of seconds
 // from MinJobStartTimeout to MaxJobStartTimeout; unset selects the default. Any
-// other value is a validation failure naming the key.
+// other value is a validation failure naming the key. The seconds are compared
+// with the range before they become a duration, so a value too large for one
+// is refused rather than wrapped into the range.
 func jobStartTimeout(v *pkgconfig.Validator) time.Duration {
 	const key = "JOB_START_TIMEOUT_SECONDS"
 	raw := os.Getenv(key)
 	if raw == "" {
 		return defaultJobStartTimeout
 	}
+	minSecs, maxSecs := int(MinJobStartTimeout.Seconds()), int(MaxJobStartTimeout.Seconds())
 	n, err := strconv.Atoi(raw)
-	d := time.Duration(n) * time.Second
-	if err != nil || d < MinJobStartTimeout || d > MaxJobStartTimeout {
+	if err != nil || n < minSecs || n > maxSecs {
 		v.Add(fmt.Sprintf("%s (invalid value %q: expected whole seconds from %d to %d)",
-			key, raw, int(MinJobStartTimeout.Seconds()), int(MaxJobStartTimeout.Seconds())))
+			key, raw, minSecs, maxSecs))
 		return defaultJobStartTimeout
 	}
-	return d
-}
-
-// setKeys returns the keys among keys that are set to a non-empty value.
-func setKeys(keys ...string) []string {
-	var set []string
-	for _, key := range keys {
-		if os.Getenv(key) != "" {
-			set = append(set, key)
-		}
-	}
-	return set
+	return time.Duration(n) * time.Second
 }
 
 func envInt(key string, fallback int) int { return pkgconfig.EnvIntOrDefault(key, fallback) }

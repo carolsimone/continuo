@@ -195,9 +195,11 @@ The controller in kind connects to docker-compose services via docker bridge net
 | `single_node_run_test.go` | `TestSingleNodeRunLatest`, `TestSingleNodeRunStale`, `TestSingleNodeRunTargetNotFound` — a target the live release does not hold is refused with `NotFound` and creates no run |
 | `cancel_test.go` | `TestCancelMidwayAndRetrigger` — cancel an in-flight schedule, then re-trigger |
 | `empty_dag_test.go` | `TestEmptyCronDAG_FinalisesAsFailed` — a cron activation of a schedule with no node in the live release records its run `failed`; a trigger of it, whatever its operation, is refused with `FailedPrecondition` and creates no run |
+| `retry_test.go` | `TestE2E_Retry_AFailOnceModelSucceedsOnItsSecondAttempt` — `ftable_retry` (schedule `e2e-retry`) fails its first attempt and succeeds its second: its model reads the `TASK_ATTEMPT` env var and fails the build on attempt 0. The test asserts the attempt rows are exactly `0:failed:task:exit_code` and `1:succeeded`, the task and the run succeed, attempt 1's Job is named after attempt 0's with `-r1`, and the task's Kubernetes Jobs carry the `attempt` labels 0 and 1 |
+| `start_failure_test.go` | `TestE2E_StartFailure_AMissingImageIsRetriedWithoutOverlap` — a single-node run of a node whose image tag does not exist: every attempt (`max_retries` + 1) fails `start:image_pull`, the task and the run fail, and no pod of an earlier attempt is still pending or running once a later attempt's Job or pod is seen. `TestE2E_StartFailure_APodThatNeverStartsTimesOutWithoutARetry` — the test applies a ResourceQuota `e2e-no-pods` (`pods: "0"`) to the Jobs' `default` namespace, so no pod can be created: the attempt fails `timeout:start_timeout` about one start timeout (`JOB_START_TIMEOUT_SECONDS`, read from the live execution-controller Deployment) after its Job was created, no pod of the task ever exists, and the task is not retried. The quota stands only for the test: `t.Cleanup` deletes it, and `deploy-k8s-controllers.sh`, `provision-k8s-test-env.sh` and `cleanup-k8s-controllers.sh` delete it too, so a test binary killed while it stands cannot leave the reused kind cluster unable to create pods. While it stands, no pod can be created in `default`, so it must not run in parallel with another test |
+| `node_timeout_test.go` | `TestE2E_NodeTimeout_ATaskPastItsDeadlineFailsWithoutARetry` — `ftable_deadline` (schedule `e2e-deadline`) declares `timeout_minutes: 1` and sleeps for ten minutes; the announced topology gives it 60 s. The test asserts its Job carries `activeDeadlineSeconds` = the start timeout + 60, the attempt fails `timeout:deadline_exceeded` about at that deadline and is the only attempt, `ftable_deadline_down` is skipped and never deployed, and the run fails. The blue/green timeout-only test in this file is described under [Blue/Green Release Tests](#bluegreen-release-tests) |
 | `dag_latest_snapshot_test.go` | `TestE2E_DAGLatestSnapshot` |
 | `topology_versioning_test.go` | `TestTopologyVersioning_MidRunIsolation` — lazy generation switch (in-flight runs immutable) |
-| `watchdog_termination_test.go` | `TestWatchdog_TerminatesStuckSchedule` — a pending run with zero tasks and no progress for 31 minutes is cancelled by the watchdog by run id (`cancelled_by=watchdog`, reason `watchdog: …`); a run whose task is 31 minutes old but whose progress clock is fresh stays active |
 | `release_promote_test.go` | dbt blue/green release tests — see [Blue/Green Release Tests](#bluegreen-release-tests) |
 | `release_promote_python_test.go` | `TestE2E_ReleasePromote_PythonContractSkipsCompileAndPromotes`, `TestE2E_PythonNodeRun_MaterializesAndReportsFailures` — a python-contract release skips the compile leg, validates via `build_from_columns`, promotes; then each node runs in its own image. The contract's mixed DAG includes a `python-csv` node (`py_csv`, no script) whose source csv is seeded into MinIO S3 before the release posts: the validation runner range-fetches its header and checks it against `output_columns`, and the run path fetches the full object and lands its rows in the warehouse. A `python-api` node (`py_api`) names Secret `continuo-api-probe`: the run test creates that Secret in the Jobs' `default` namespace and checks the script received its key as an env var, then deletes it and checks the run fails instead of hanging |
 | `python_timeout_test.go` | `TestE2E_PythonNodeTimeout_ReachesStateThroughTheRuntimeCLI` — a python contract (`fixtures/py-timeout`) declares `timeout_minutes: 90` on one of two nodes. The test streams the fixture into the fixture image and runs the image's own `continuo-runtime merge` (`docker run`, no bind mount) to build the wire contract, so the key is written by the runtime release the chart defaults to, not by the test. The contract is uploaded and a python release posted; once it promotes, state's live release carries `timeout_seconds = 5400` on that node and NULL on every other node. The image must be built on a runtime that accepts `timeout_minutes` (0.10.0 or later); `scripts/setup.sh` rebuilds it |
@@ -233,7 +235,7 @@ same transaction as the observation) → validation.result:v1 (kind=complete)
 | `TestE2E_ReleasePromote_GatedIntraServiceUpstream` | A changed node with a changed **intra-service** upstream (`rel_probe_down` → `rel_probe_up`): the upstream builds into the candidate schema first (topological gating), the dependent validates against it, then the candidate schema is torn down. |
 | `TestE2E_ReleasePromote_GatedCrossServiceUpstream` | A clean **cross-service** chain (`xprobe_down`@service-2 → `xprobe_up`@service-3) validates self-contained — the changed node and its cross-service upstream are both built empty in the candidate schema. |
 | `TestE2E_ReleasePromote_BootstrapSkipsValidation` | `bootstrap:true` promotes directly, skipping validation, and seeds `current_prod`. |
-| `TestE2E_ReleasePromote_ATimeoutOnlyChangePromotesWithoutValidation` (`node_timeout_test.go`) | A release that changes only a node's `meta.timeout_minutes` promotes without validation: no node is in the changed set, no `validation.requested:v1` is published and no validation Job runs, and state's live release stores the timeout (`topology_nodes.timeout_seconds`) on the declaring node only. |
+| `TestE2E_ReleasePromote_ATimeoutOnlyChangePromotesWithoutValidation` (`node_timeout_test.go`) | A release that changes only a node's `meta.timeout_minutes` promotes without validation: no node is in the changed set, no `validation.requested:v1` is published and no validation Job runs, and state's live release stores the timeout (`topology_nodes.timeout_seconds`) on the declaring node only. `requireNoOtherNodeTimeout` checks the other nodes and tolerates exactly one timeout besides it: the 60 s that service-1's `e2e_schema.ftable_deadline` model declares for itself (the Python timeout test uses the same check). |
 
 These tests read the dbt manifests that `setup.sh` uploads to MinIO S3 and use the content-addressed image tags loaded into kind, so they need no setup beyond the standard blank-state harness. Compile and seed-build run real dbt, and each validation job runs a real `continuo-python-runtime-<engine>` Job — allow up to ~10 minutes per test, and expect a cold kind run to be slower than a warm one.
 
@@ -246,9 +248,9 @@ docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator \
 
 ## Failure Path Test
 
-`TestE2E_FailurePath_NodeFailureDrainsSchedule` uses the 6-node `ftable_*` DAG. It verifies:
+`TestE2E_FailurePath_RerunRebasesBothFailureSubtrees` uses the 6-node `ftable_*` DAG. It verifies:
 
-- `ftable_e` exhausts 2 retries (3 total attempts) and reaches `failed` status
+- `ftable_e` fails every attempt its budget allows (`max_retries` + 1, so 3 with the default `runs.taskMaxRetries` of 2), each recorded in `task_attempts` with failure class `task`, and reaches `failed` status
 - Downstream node (`ftable_f`) is never deployed and is recorded `skipped`
 - The scheduler is finalised as `FAILED`
 
@@ -281,7 +283,7 @@ The failure model `ftable_e` runs in the `service-2` Docker image but JOINs `pub
 3. **Trigger** - `ActivateSchedule` gRPC call
 4. **Verify Level 0** - Root nodes (`ftable_a`, `ftable_b`) complete successfully
 5. **Verify Level 1** - `ftable_c` executes; `ftable_d` and `ftable_e` are deployed
-6. **Wait for ftable_e failure** - Poll until `attempt = 2` and `status = 'failed'` in `task_tracker`; `ftable_d` succeeds
+6. **Wait for ftable_e failure** - Poll until `task_tracker` holds `attempt = max_retries` and `status = 'failed'` and `task_attempts` holds one failed row of class `task` for each attempt from 0 to `max_retries`; `ftable_d` succeeds
 7. **Verify the cascade** - Confirm `ftable_f` is never deployed and is recorded `skipped`
 8. **Verify scheduler FAILED** - Poll `scheduler_tracker` until `status = 'failed'`
 9. **Cleanup** - Remove all test data
@@ -289,8 +291,10 @@ The failure model `ftable_e` runs in the `service-2` Docker image but JOINs `pub
 ## Expected Duration
 
 - Happy path: ~1 minute
-- Failure path: ~1 minute (3 retries + retry delay)
-- Whole suite: ~39 minutes warm (71 test functions), slower on a cold stack
+- Failure path: ~1 minute (3 attempts, each retry dispatched at once)
+- Whole suite: ~39 minutes warm, measured without the retry, start-failure, start-timeout and deadline
+  scenarios (`TestE2E_Retry_*`, `TestE2E_StartFailure_*`, `TestE2E_NodeTimeout_*`); the CI e2e job
+  measures the whole suite on every run. A cold stack is slower.
 - Timeout: 125 minutes for the whole `tests/e2e/...` package (`go test -timeout`).
   Derived, not measured: the two longest per-test context ceilings (35m each)
   wedging in one run, plus 55m for the rest of the suite. Every per-test
@@ -328,6 +332,9 @@ colima start --disk 100  # 100GB
 **Test times out waiting for jobs:**
 - Check k8s jobs: `kubectl get jobs -l schedule=e2e-schedule`
 - Check job logs: `kubectl logs -l schedule=e2e-schedule`
+
+**No pod is created in `default` (Jobs sit without pods):**
+- A killed test binary can leave the start-timeout test's ResourceQuota behind: `kubectl get resourcequota -n default`. Remove it with `kubectl delete resourcequota e2e-no-pods -n default`; `bash tests/e2e/provision-k8s-test-env.sh` does the same.
 
 **Test fails at k8s controller health check:**
 - Check pod status: `kubectl get pods -n default | grep controller`

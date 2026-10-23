@@ -4,7 +4,7 @@
 # Naming policy:
 #   - Stream name: lowercase, dot-separated, ends with `:vN`. Frozen contract.
 #   - Group name: lowercase kebab-case, no underscores. Frozen per consumer.
-#   - Stream const: PascalCase including version suffix (TaskStatusUpdatedV1).
+#   - Stream const: PascalCase including version suffix (TaskStatusUpdatedV2).
 #   - Consumer const: PascalCase, service-prefixed (StateTaskStatusUpdated).
 
 streams:
@@ -19,32 +19,23 @@ streams:
         group: state-schedule-catalog
         const: StateScheduleCatalog
 
-  - name: query.model:v1
-    const: QueryModelV1
-    description: One dispatch per ready task, written by state to its outbox in the transaction that makes the task ready (the run's creation, or the success of the task's last upstream); execution-controller runs the task as a Kubernetes Job.
+  - name: task.dispatch:v1
+    const: TaskDispatchV1
+    description: One attempt of a task, from state to execution-controller, written in the transaction that decides the attempt (the run's creation, the success that makes the task ready, or the failure that retries it) and again whenever state asks about an attempt that has gone quiet, with state's view of it as known_status. execution-controller accepts each (task, attempt) once and answers a repeated dispatch with the attempt's latest report.
     producers: [state]
     consumers:
       - service: execution-controller
-        group: executor-query-model
-        const: ExecutorQueryModel
+        group: executor-task-dispatch
+        const: ExecutorTaskDispatch
 
-  - name: task.status.updated:v1
-    const: TaskStatusUpdatedV1
-    description: Per-task status transitions (RUNNING, SUCCEEDED and FAILED) from execution-controller. state records each in its run's transaction, dispatches the tasks a success makes ready, skips the pending descendants of a final failure and finalizes the run.
+  - name: task.status.updated:v2
+    const: TaskStatusUpdatedV2
+    description: What execution-controller knows of one attempt of a task — queued, running, succeeded, or failed with a failure class and reason — each report carrying every fact known so far. state applies a report only when it ranks higher than the attempt's current status, and on a failure decides in the same transaction whether to dispatch the next attempt.
     producers: [execution-controller]
     consumers:
       - service: state
         group: state-task-status-updated
         const: StateTaskStatusUpdated
-
-  - name: task.execution.recorded:v1
-    const: TaskExecutionRecordedV1
-    description: Completed task executions emitted by execution-controller's outbox processor.
-    producers: [execution-controller]
-    consumers:
-      - service: state
-        group: state-task-execution-recorded
-        const: StateTaskExecutionRecorded
 
   # ---------------- execution-controller streams ----------------
 
@@ -252,6 +243,7 @@ retired_streams:
   - name: manifest.loaded:v1
   - name: node.deployed:v1
   - name: node.updated:v1
+  - name: query.model:v1
   - name: release.promoted:v1
   - name: release.seeds.pending:v1
   - name: remediation.requested:v1
@@ -263,7 +255,9 @@ retired_streams:
   - name: run.initialized:v1
   - name: scheduler.started:v1
   - name: seed.build.node.completed:v1
+  - name: task.execution.recorded:v1
   - name: task.failed:v1
+  - name: task.status.updated:v1
   - name: trigger.promoted_seeds:v1
   - name: trigger.rebase:v1
   - name: trigger.rerun:v1
@@ -431,12 +425,36 @@ vocabularies:
         runtime: dbt
         description: a dbt data test; exists only in candidate and current_prod topologies, where validation bind-checks its compiled SQL; never promoted to the orchestrator's graph and never scheduled.
 
+  - name: attempt_status
+    const: AttemptStatus
+    description: >-
+      Where one attempt of a task stands, on the two task streams. state sends
+      dispatched, queued or running as a dispatch's known_status on
+      task.dispatch:v1; execution-controller reports queued, running,
+      succeeded or failed as a report's status on task.status.updated:v2.
+    values:
+      - value: dispatched
+        const: Dispatched
+        description: state dispatched the attempt and has no report of it yet.
+      - value: queued
+        const: Queued
+        description: execution-controller accepted the attempt; it waits for a slot or its Job.
+      - value: running
+        const: Running
+        description: the main container of the attempt's pod started.
+      - value: succeeded
+        const: Succeeded
+        description: the attempt ended successfully and no pod of it can run again.
+      - value: failed
+        const: Failed
+        description: the attempt ended with a failure_reason and no pod of it can run again.
+
   - name: failure_class
     const: FailureClass
     description: >-
-      What kind of failure ended an attempt of a task. execution-controller's
-      observer classifies each attempt it watches end in failure and records
-      the class with the attempt's facts.
+      What kind of failure ended an attempt of a task. execution-controller
+      classifies each attempt that fails and records the class with the
+      attempt's facts.
     values:
       - value: task
         const: Task
@@ -446,7 +464,7 @@ vocabularies:
         description: the pod ran out of a node resource; it was killed for memory or evicted.
       - value: infra
         const: Infra
-        description: the attempt was lost to the platform; its node or its Job is gone.
+        description: the attempt was lost to the platform; its node, its Job or its record is gone, or Kubernetes refused its Job.
       - value: start
         const: Start
         description: the pod could not start its containers (an image pull, a missing Secret or ConfigMap, a container the runtime could not create).
@@ -455,7 +473,7 @@ vocabularies:
         description: the attempt ran out of time, before any container of its pod started or before it finished.
       - value: invalid
         const: Invalid
-        description: the task as dispatched cannot produce its result; dbt found nothing to build.
+        description: the task as dispatched cannot produce its result; dbt found nothing to build, or the dispatch cannot run.
 
   - name: failure_reason
     const: FailureReason
@@ -485,6 +503,14 @@ vocabularies:
         const: JobMissing
         class: infra
         description: the attempt's Job is gone from Kubernetes and nothing seen of the attempt shows how it ended.
+      - value: attempt_lost
+        const: AttemptLost
+        class: infra
+        description: state asked about an attempt execution-controller acknowledged, and execution-controller holds neither its row nor its Job.
+      - value: create_failed
+        const: CreateFailed
+        class: infra
+        description: Kubernetes refused the attempt's Job on every one of execution-controller's creation tries.
       - value: image_pull
         const: ImagePull
         class: start
@@ -513,3 +539,15 @@ vocabularies:
         const: DbtNothingToDo
         class: invalid
         description: dbt exited 0 having matched no node ("Nothing to do"), so nothing was built.
+      - value: invalid_node_type
+        const: InvalidNodeType
+        class: invalid
+        description: the dispatch names a node type the node_type vocabulary does not declare.
+      - value: malformed_dispatch
+        const: MalformedDispatch
+        class: invalid
+        description: "a field of the dispatch holds a value execution-controller cannot run: an operation it does not know, no image, a Job name that is not a Kubernetes name, a timeout below one second, or a known_status other than dispatched, queued or running; or no command builds the node."
+      - value: job_name_collision
+        const: JobNameCollision
+        class: invalid
+        description: a Job of the dispatched name already exists for another task or attempt.

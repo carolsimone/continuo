@@ -42,8 +42,9 @@ func TestBuildPythonPodSpec_InjectsExactlyTheNormativeEnv(t *testing.T) {
 		"NODE_ID":       "analytics.py_probe",
 		"TABLE_NAME":    "py_probe",
 		"TARGET_SCHEMA": "analytics",
+		"TASK_ATTEMPT":  "0",
 	}, envMap(spec.Containers[0].Env),
-		"the python pod env is exactly the three normative variables")
+		"the python pod env is exactly the four normative variables")
 }
 
 // TestBuildPythonPodSpec_OmitsDbtEnvNames is the negative half of the contract.

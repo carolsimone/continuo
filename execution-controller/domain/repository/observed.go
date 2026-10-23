@@ -9,12 +9,14 @@ import (
 )
 
 // ObservedDeployments reads, outside any transaction, the deployments whose
-// attempt the observer follows: the started ones, and a row an older version
-// released before recording its result while its Job exists
-// (model.Deployment.AwaitingResult).
+// attempt the observer follows: the started ones, whose result is not
+// recorded yet (model.Deployment.AwaitingResult).
 type ObservedDeployments interface {
-	// GetByJobName returns the most recently created deployment whose Job is
-	// jobName, without locking it, or sql.ErrNoRows when none exists.
+	// GetByJobName returns the most recently created deployment that created
+	// or adopted a Job of jobName (its DeployedAt is set), without locking it,
+	// or sql.ErrNoRows when none exists. As with
+	// DeploymentRepository.LoadByJobName, a deployment that only carries the
+	// name is never returned.
 	GetByJobName(ctx context.Context, jobName string) (*model.Deployment, error)
 	// ListObservedJobNames returns the Job names of every started deployment:
 	// starting, running or terminating.

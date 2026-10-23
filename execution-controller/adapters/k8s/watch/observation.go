@@ -3,6 +3,7 @@ package watch
 import (
 	"sort"
 
+	"github.com/carolsimone/continuo/execution-controller/adapters/k8s"
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -16,6 +17,7 @@ func observation(job *batchv1.Job, pods []*corev1.Pod) model.JobObservation {
 	var o model.JobObservation
 	if job != nil {
 		o.JobPresent = true
+		o.JobTaskID, o.JobAttempt = job.Labels[k8s.LabelTaskID], job.Labels[k8s.LabelAttempt]
 		o.JobDeleting = job.DeletionTimestamp != nil
 		for _, c := range job.Status.Conditions {
 			if c.Status != corev1.ConditionTrue {

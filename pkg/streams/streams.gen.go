@@ -6,12 +6,10 @@ package streams
 const (
 	// SchedulesLoadedV1 — Schedule names and service metadata of a promoted release, emitted by orchestrator in the topology-swap transaction; state reconciles its schedule catalog from it.
 	SchedulesLoadedV1 = "schedules.loaded:v1"
-	// QueryModelV1 — One dispatch per ready task, written by state to its outbox in the transaction that makes the task ready (the run's creation, or the success of the task's last upstream); execution-controller runs the task as a Kubernetes Job.
-	QueryModelV1 = "query.model:v1"
-	// TaskStatusUpdatedV1 — Per-task status transitions (RUNNING, SUCCEEDED and FAILED) from execution-controller. state records each in its run's transaction, dispatches the tasks a success makes ready, skips the pending descendants of a final failure and finalizes the run.
-	TaskStatusUpdatedV1 = "task.status.updated:v1"
-	// TaskExecutionRecordedV1 — Completed task executions emitted by execution-controller's outbox processor.
-	TaskExecutionRecordedV1 = "task.execution.recorded:v1"
+	// TaskDispatchV1 — One attempt of a task, from state to execution-controller, written in the transaction that decides the attempt (the run's creation, the success that makes the task ready, or the failure that retries it) and again whenever state asks about an attempt that has gone quiet, with state's view of it as known_status. execution-controller accepts each (task, attempt) once and answers a repeated dispatch with the attempt's latest report.
+	TaskDispatchV1 = "task.dispatch:v1"
+	// TaskStatusUpdatedV2 — What execution-controller knows of one attempt of a task — queued, running, succeeded, or failed with a failure class and reason — each report carrying every fact known so far. state applies a report only when it ranks higher than the attempt's current status, and on a failure decides in the same transaction whether to dispatch the next attempt.
+	TaskStatusUpdatedV2 = "task.status.updated:v2"
 	// OutboxDeadLetterV1 — Terminal outbox publish failures (permanent payload errors, or transient errors that exhausted their backoff budget), emitted by every service's outbox processor with the fields the row would have published. dead-letter-controller stores them for listing and redrive.
 	OutboxDeadLetterV1 = "outbox.dead_letter:v1"
 	// ConsumerDeadLetterV1 — Messages a stream consumer gave up on (a permanent error, or a transient error on its fifth delivery), written before the original is acknowledged. dead-letter-controller stores them for listing and redrive.
@@ -56,12 +54,10 @@ const (
 const (
 	// StateScheduleCatalog — state consumer group on schedules.loaded:v1.
 	StateScheduleCatalog = "state-schedule-catalog"
-	// ExecutorQueryModel — execution-controller consumer group on query.model:v1.
-	ExecutorQueryModel = "executor-query-model"
-	// StateTaskStatusUpdated — state consumer group on task.status.updated:v1.
+	// ExecutorTaskDispatch — execution-controller consumer group on task.dispatch:v1.
+	ExecutorTaskDispatch = "executor-task-dispatch"
+	// StateTaskStatusUpdated — state consumer group on task.status.updated:v2.
 	StateTaskStatusUpdated = "state-task-status-updated"
-	// StateTaskExecutionRecorded — state consumer group on task.execution.recorded:v1.
-	StateTaskExecutionRecorded = "state-task-execution-recorded"
 	// DeadLetterControllerOutboxDeadLetters — dead-letter-controller consumer group on outbox.dead_letter:v1.
 	DeadLetterControllerOutboxDeadLetters = "dead-letter-controller-outbox-dead-letters"
 	// DeadLetterControllerConsumerDeadLetters — dead-letter-controller consumer group on consumer.dead_letter:v1.
@@ -116,9 +112,8 @@ const (
 // that must operate over all streams (e.g. dead-letter-controller's trim loop).
 var All = []string{
 	SchedulesLoadedV1,
-	QueryModelV1,
-	TaskStatusUpdatedV1,
-	TaskExecutionRecordedV1,
+	TaskDispatchV1,
+	TaskStatusUpdatedV2,
 	OutboxDeadLetterV1,
 	ConsumerDeadLetterV1,
 	ScheduleCancelledV1,
@@ -145,9 +140,8 @@ var All = []string{
 // (dead-letter-controller's trim loop and the contract it redrives under).
 var Groups = map[string][]string{
 	SchedulesLoadedV1:           {StateScheduleCatalog},
-	QueryModelV1:                {ExecutorQueryModel},
-	TaskStatusUpdatedV1:         {StateTaskStatusUpdated},
-	TaskExecutionRecordedV1:     {StateTaskExecutionRecorded},
+	TaskDispatchV1:              {ExecutorTaskDispatch},
+	TaskStatusUpdatedV2:         {StateTaskStatusUpdated},
 	OutboxDeadLetterV1:          {DeadLetterControllerOutboxDeadLetters},
 	ConsumerDeadLetterV1:        {DeadLetterControllerConsumerDeadLetters},
 	ScheduleCancelledV1:         {ExecutorScheduleCancelled},
@@ -179,6 +173,7 @@ var Retired = []string{
 	"manifest.loaded:v1",
 	"node.deployed:v1",
 	"node.updated:v1",
+	"query.model:v1",
 	"release.promoted:v1",
 	"release.seeds.pending:v1",
 	"remediation.requested:v1",
@@ -190,7 +185,9 @@ var Retired = []string{
 	"run.initialized:v1",
 	"scheduler.started:v1",
 	"seed.build.node.completed:v1",
+	"task.execution.recorded:v1",
 	"task.failed:v1",
+	"task.status.updated:v1",
 	"trigger.promoted_seeds:v1",
 	"trigger.rebase:v1",
 	"trigger.rerun:v1",

@@ -51,9 +51,9 @@ func TestCancelMidwayAndRetrigger(t *testing.T) {
 
 	cleanupTestData(t, ctx, clients, testScheduleName)
 
-	// Tap query.model:v1 before anything is triggered: the trim loop removes
+	// Tap task.dispatch:v1 before anything is triggered: the trim loop removes
 	// consumed entries, so the root-node checks read what the tap recorded.
-	queryModelTap := startStreamTap(t, ctx, clients.redisClient, streams.QueryModelV1)
+	dispatchTap := startStreamTap(t, ctx, clients.redisClient, streams.TaskDispatchV1)
 
 	// ── Phase 1: Seed topology + trigger via UI endpoint ─────────────────────────
 	t.Log("Phase 1: seeding topology and triggering schedule via UI...")
@@ -63,7 +63,7 @@ func TestCancelMidwayAndRetrigger(t *testing.T) {
 	cancelledID, err := uuid.Parse(cancelledIDStr)
 	require.NoError(t, err)
 
-	verifyRootNodesDispatched(t, ctx, queryModelTap, cancelledID, []string{"seed_table_1", "seed_table_2", "seed_table_3"})
+	verifyRootNodesDispatched(t, ctx, dispatchTap, cancelledID, []string{"seed_table_1", "seed_table_2", "seed_table_3"})
 
 	level0 := []string{"seed_table_1", "seed_table_2", "seed_table_3"}
 	verifyExecutorDeployedJobs(t, ctx, clients, level0, testScheduleName)
@@ -99,7 +99,7 @@ func TestCancelMidwayAndRetrigger(t *testing.T) {
 	// Verify by schedule_id — two runs share the same schedule_name in the DB,
 	// so schedule_name-scoped queries would be ambiguous.
 	t.Log("Phase 4: verifying fresh run completes to SUCCEEDED...")
-	verifyRootNodesDispatched(t, ctx, queryModelTap, freshID, []string{"seed_table_1", "seed_table_2", "seed_table_3"})
+	verifyRootNodesDispatched(t, ctx, dispatchTap, freshID, []string{"seed_table_1", "seed_table_2", "seed_table_3"})
 
 	allTables := []string{
 		"seed_table_1", "seed_table_2", "seed_table_3",
@@ -160,8 +160,8 @@ func verifySchedulerCancelled(t *testing.T, ctx context.Context, clients *testCl
 }
 
 // verifyTasksCancelled asserts that at least some non-seed tasks were cancelled.
-// CancelSchedule atomically sets every pending and running task, and every
-// failed task with a retry left, to 'cancelled', so any task still in flight
+// CancelSchedule atomically sets every task that has not ended (pending,
+// dispatched, queued or running) to 'cancelled', so any task still in flight
 // before the cancel call must be cancelled.
 func verifyTasksCancelled(t *testing.T, ctx context.Context, clients *testClients, schedulerID uuid.UUID) {
 	t.Helper()

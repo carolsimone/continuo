@@ -36,7 +36,7 @@ func taskState(t *testing.T, db *sqlx.DB, id uuid.UUID) (run.TaskStatus, *time.T
 	return row.Status, row.DispatchedAt
 }
 
-// A status update reads the task's attempt, retry budget and node; a task
+// An attempt report reads the task's attempt, retry budget and node; a task
 // that is not stored reads as absent.
 func TestTaskCollection_LoadAttemptStateReadsTheTask(t *testing.T) {
 	ctx := context.Background()
@@ -52,7 +52,7 @@ func TestTaskCollection_LoadAttemptStateReadsTheTask(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, found)
 		assert.Equal(t, run.TaskStatusFailed, got.Status)
-		assert.Equal(t, int32(1), got.RetryCount)
+		assert.Equal(t, int32(1), got.Attempt)
 		assert.Equal(t, int32(2), got.MaxRetries)
 		assert.Equal(t, topology.NodeKey("e2e_schema.ftable_e"), got.NodeKey)
 		assert.NotEmpty(t, got.JobName)
@@ -66,9 +66,10 @@ func TestTaskCollection_LoadAttemptStateReadsTheTask(t *testing.T) {
 	})
 }
 
-// MarkDispatched stamps only the tasks still pending and undispatched and
-// names them; stamping them again stamps nothing.
-func TestTaskCollection_MarkDispatchedStampsOnlyPendingUndispatchedTasks(t *testing.T) {
+// MarkDispatched makes only the tasks still pending and undispatched
+// dispatched, stamps them and names them; dispatching them again changes
+// nothing.
+func TestTaskCollection_MarkDispatchedDispatchesOnlyPendingUndispatchedTasks(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	tenant := storeFailureSchedule(t, db)
@@ -90,7 +91,7 @@ func TestTaskCollection_MarkDispatchedStampsOnlyPendingUndispatchedTasks(t *test
 	})
 
 	status, dispatched := taskState(t, db, id("ftable_c"))
-	assert.Equal(t, run.TaskStatusPending, status)
+	assert.Equal(t, run.TaskStatusDispatched, status)
 	require.NotNil(t, dispatched)
 	assert.True(t, at.Equal(*dispatched))
 	_, dispatched = taskState(t, db, id("ftable_h"))
@@ -117,7 +118,7 @@ func TestTaskCollection_MarkSkippedSkipsOnlyPendingUndispatchedTasks(t *testing.
 	})
 
 	for table, want := range map[string]run.TaskStatus{
-		"ftable_a": run.TaskStatusPending, "ftable_d": run.TaskStatusSkipped,
+		"ftable_a": run.TaskStatusDispatched, "ftable_d": run.TaskStatusSkipped,
 		"ftable_f": run.TaskStatusSkipped, "ftable_h": run.TaskStatusSucceeded,
 	} {
 		status, _ := taskState(t, db, id(table))

@@ -57,7 +57,7 @@ func newReconcileHarness(db *sqlx.DB) *reconcileHarness {
 		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, catalogRepo, svcports.SystemClock{}, logger)
 	}
 	tenant := "t-" + uuid.NewString()
-	reconciler := seedreconcile.New(factory, false, tenant, logger)
+	reconciler := seedreconcile.New(factory, false, tenant, run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}, logger)
 	artifacts := &memoryArtifacts{byRef: map[string]svcports.TopologyArtifact{}}
 	handler := svchandlers.NewReleasePromotedHandler(artifacts, reconciler, logger)
 	return &reconcileHarness{
@@ -176,10 +176,10 @@ func TestSeedReconcile(t *testing.T) {
 			Payload    []byte `db:"payload"`
 		}
 		require.NoError(t, db.Get(&outbox, `SELECT stream_name, payload FROM state_outbox WHERE aggregate_id = $1`, runID))
-		assert.Equal(t, streams.QueryModelV1, outbox.StreamName, "the run dispatches the seed as it is created")
+		assert.Equal(t, streams.TaskDispatchV1, outbox.StreamName, "the run dispatches the seed as it is created")
 		var payload map[string]any
 		require.NoError(t, json.Unmarshal(outbox.Payload, &payload))
-		assert.Equal(t, runID.String(), payload["schedule_id"])
+		assert.Equal(t, runID.String(), payload["run_id"])
 		assert.Equal(t, run.TaskIDFor(h.tenant, runID, "raw.orders").String(), payload["task_id"])
 		assert.Equal(t, "orders", payload["table_name"])
 		assert.Equal(t, "dbt-seed", payload["node_type"])
@@ -306,23 +306,23 @@ func seedAt(table, hash string) topology.NodeSpec {
 	return n
 }
 
-// seedDispatches counts the query.model:v1 rows of the runs that name
+// seedDispatches counts the task.dispatch:v1 rows of the runs that name
 // releaseID.
 func (h *reconcileHarness) seedDispatches(t *testing.T, releaseID string) int {
 	t.Helper()
 	return countOf(t, h.db, `
 		SELECT count(*) FROM state_outbox o JOIN scheduler_tracker s ON s.schedule_id = o.aggregate_id
-		WHERE o.stream_name = $1 AND s.release_id = $2`, streams.QueryModelV1, releaseID)
+		WHERE o.stream_name = $1 AND s.release_id = $2`, streams.TaskDispatchV1, releaseID)
 }
 
 // promotedSeedNodes lists the tables a promote-seed run dispatched to load, one
-// query.model:v1 row each, in table order.
+// task.dispatch:v1 row each, in table order.
 func (h *reconcileHarness) promotedSeedNodes(t *testing.T, runID uuid.UUID) []string {
 	t.Helper()
 	var tables []string
 	require.NoError(t, h.db.Select(&tables, `
 		SELECT payload->>'table_name' FROM state_outbox
-		WHERE aggregate_id = $1 AND stream_name = $2 ORDER BY payload->>'table_name'`, runID, streams.QueryModelV1))
+		WHERE aggregate_id = $1 AND stream_name = $2 ORDER BY payload->>'table_name'`, runID, streams.TaskDispatchV1))
 	return tables
 }
 
@@ -355,7 +355,7 @@ func TestSeedReconcile_ReplayOfSeveralRetainedPromotions(t *testing.T) {
 	assert.Equal(t, []string{"orders"}, h.promotedSeedNodes(t, runA))
 	assert.Equal(t, []string{"users"}, h.promotedSeedNodes(t, runC))
 	assert.Equal(t, 2, countOf(t, db, `SELECT count(*) FROM state_outbox WHERE stream_name = $1 AND aggregate_id IN ($2, $3)`,
-		streams.QueryModelV1, runA, runC), "one dispatch per build")
+		streams.TaskDispatchV1, runA, runC), "one dispatch per build")
 
 	orders := h.materialization(t, "raw.orders")
 	assert.Empty(t, orders.ContentHash, "nothing is recorded as loaded for orders yet")

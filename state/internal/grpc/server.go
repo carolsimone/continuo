@@ -152,11 +152,6 @@ func (s *Server) CancelSchedule(ctx context.Context, req *statev1.CancelSchedule
 	return s.schedulerHandler.CancelSchedule(ctx, req)
 }
 
-// ListStuckCandidates delegates to scheduler handler
-func (s *Server) ListStuckCandidates(ctx context.Context, req *statev1.ListStuckCandidatesRequest) (*statev1.ListStuckCandidatesResponse, error) {
-	return s.schedulerHandler.ListStuckCandidates(ctx, req)
-}
-
 // GetTask delegates to task handler
 func (s *Server) GetTask(ctx context.Context, req *statev1.GetTaskRequest) (*statev1.TaskResponse, error) {
 	return s.taskHandler.GetTask(ctx, req)

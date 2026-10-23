@@ -50,6 +50,12 @@ type JobParams struct {
 	// pkg_model.OperationFullRefresh rebuilds a model (full_refresh command)
 	// or seed (seed_full_refresh command) from scratch.
 	Operation pkg_model.Operation
+	// Attempt is which attempt of the task the Job runs; it labels the Job
+	// and its pod and reaches the container as TASK_ATTEMPT.
+	Attempt int
+	// ActiveDeadlineSeconds is how long Kubernetes lets the Job run, counted
+	// from the Job's start.
+	ActiveDeadlineSeconds int64
 }
 
 // K8sClient provides methods to interact with Kubernetes
@@ -87,11 +93,13 @@ func NewK8sClient(logger *slog.Logger, commands ports.CommandResolver) (*K8sClie
 
 	logger.Info("K8s client initialized successfully")
 
-	return &K8sClient{
-		clientset: clientset,
-		logger:    logger,
-		commands:  commands,
-	}, nil
+	return NewK8sClientFor(clientset, logger, commands), nil
+}
+
+// NewK8sClientFor creates a K8sClient over clientset; commands resolves the
+// per-service dbt command dialect for every Job it builds.
+func NewK8sClientFor(clientset kubernetes.Interface, logger *slog.Logger, commands ports.CommandResolver) *K8sClient {
+	return &K8sClient{clientset: clientset, logger: logger, commands: commands}
 }
 
 // Clientset is the Kubernetes clientset the client uses, for the Job watch.
@@ -115,13 +123,21 @@ func (c *K8sClient) JobExists(ctx context.Context, namespace, jobName string) (b
 	return true, nil
 }
 
-// CreateJob creates a K8s Job
+// CreateJob creates a K8s Job; a Job of the same name that already exists
+// counts as created.
 func (c *K8sClient) CreateJob(ctx context.Context, job *batchv1.Job) error {
-	_, err := c.clientset.BatchV1().Jobs(job.Namespace).Create(ctx, job, metav1.CreateOptions{})
+	_, err := c.createJob(ctx, job)
+	return err
+}
+
+// createJob creates a K8s Job and reports whether a Job of its name already
+// existed, in which case it created nothing.
+func (c *K8sClient) createJob(ctx context.Context, job *batchv1.Job) (existed bool, err error) {
+	_, err = c.clientset.BatchV1().Jobs(job.Namespace).Create(ctx, job, metav1.CreateOptions{})
 	if errors.IsAlreadyExists(err) {
-		c.logger.Info("K8s job already exists, treating its creation as done",
+		c.logger.Info("K8s job already exists, creating nothing",
 			"namespace", job.Namespace, "job_name", job.Name)
-		return nil
+		return true, nil
 	}
 	if err != nil {
 		c.logger.Error("Failed to create K8s job",
@@ -129,7 +145,7 @@ func (c *K8sClient) CreateJob(ctx context.Context, job *batchv1.Job) error {
 			"job_name", job.Name,
 			"error", err,
 		)
-		return fmt.Errorf("failed to create k8s job: %w", err)
+		return false, fmt.Errorf("failed to create k8s job: %w", err)
 	}
 
 	c.logger.Info("Created K8s job",
@@ -137,7 +153,7 @@ func (c *K8sClient) CreateJob(ctx context.Context, job *batchv1.Job) error {
 		"job_name", job.Name,
 	)
 
-	return nil
+	return false, nil
 }
 
 func (c *K8sClient) deleteJob(ctx context.Context, namespace, jobName string) error {

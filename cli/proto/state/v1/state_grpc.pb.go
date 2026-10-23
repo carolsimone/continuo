@@ -25,7 +25,6 @@ const (
 	StateService_ListAllSchedules_FullMethodName         = "/state.v1.StateService/ListAllSchedules"
 	StateService_TriggerSchedule_FullMethodName          = "/state.v1.StateService/TriggerSchedule"
 	StateService_CancelSchedule_FullMethodName           = "/state.v1.StateService/CancelSchedule"
-	StateService_ListStuckCandidates_FullMethodName      = "/state.v1.StateService/ListStuckCandidates"
 	StateService_GetTask_FullMethodName                  = "/state.v1.StateService/GetTask"
 	StateService_GetTaskByScheduleAndNode_FullMethodName = "/state.v1.StateService/GetTaskByScheduleAndNode"
 	StateService_ListTasks_FullMethodName                = "/state.v1.StateService/ListTasks"
@@ -61,15 +60,6 @@ type StateServiceClient interface {
 	// CancelSchedule cancels the active run of a named schedule.
 	// Errors: INVALID_ARGUMENT (empty name), FAILED_PRECONDITION (no active run or run not cancellable).
 	CancelSchedule(ctx context.Context, in *CancelScheduleRequest, opts ...grpc.CallOption) (*CancelScheduleResponse, error)
-	// ListStuckCandidates returns the active (pending|running) runs that have made
-	// no lifecycle progress since `cutoff` and have no task in TASK_STATUS_RUNNING.
-	// A run's progress time is Scheduler.last_heartbeat_at, stamped when the run is
-	// dispatched and whenever a task status change is applied, or its created_at
-	// when it has never progressed, so a run whose dispatch never arrived (zero
-	// tasks) is returned. A run with a RUNNING task is never returned: a long task
-	// reports no progress until it ends. One server-side query over every task of
-	// every active run. Empty `cutoff` is INVALID_ARGUMENT.
-	ListStuckCandidates(ctx context.Context, in *ListStuckCandidatesRequest, opts ...grpc.CallOption) (*ListStuckCandidatesResponse, error)
 	// Task operations
 	GetTask(ctx context.Context, in *GetTaskRequest, opts ...grpc.CallOption) (*TaskResponse, error)
 	GetTaskByScheduleAndNode(ctx context.Context, in *GetTaskByScheduleAndNodeRequest, opts ...grpc.CallOption) (*TaskResponse, error)
@@ -241,16 +231,6 @@ func (c *stateServiceClient) CancelSchedule(ctx context.Context, in *CancelSched
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(CancelScheduleResponse)
 	err := c.cc.Invoke(ctx, StateService_CancelSchedule_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *stateServiceClient) ListStuckCandidates(ctx context.Context, in *ListStuckCandidatesRequest, opts ...grpc.CallOption) (*ListStuckCandidatesResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ListStuckCandidatesResponse)
-	err := c.cc.Invoke(ctx, StateService_ListStuckCandidates_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -434,15 +414,6 @@ type StateServiceServer interface {
 	// CancelSchedule cancels the active run of a named schedule.
 	// Errors: INVALID_ARGUMENT (empty name), FAILED_PRECONDITION (no active run or run not cancellable).
 	CancelSchedule(context.Context, *CancelScheduleRequest) (*CancelScheduleResponse, error)
-	// ListStuckCandidates returns the active (pending|running) runs that have made
-	// no lifecycle progress since `cutoff` and have no task in TASK_STATUS_RUNNING.
-	// A run's progress time is Scheduler.last_heartbeat_at, stamped when the run is
-	// dispatched and whenever a task status change is applied, or its created_at
-	// when it has never progressed, so a run whose dispatch never arrived (zero
-	// tasks) is returned. A run with a RUNNING task is never returned: a long task
-	// reports no progress until it ends. One server-side query over every task of
-	// every active run. Empty `cutoff` is INVALID_ARGUMENT.
-	ListStuckCandidates(context.Context, *ListStuckCandidatesRequest) (*ListStuckCandidatesResponse, error)
 	// Task operations
 	GetTask(context.Context, *GetTaskRequest) (*TaskResponse, error)
 	GetTaskByScheduleAndNode(context.Context, *GetTaskByScheduleAndNodeRequest) (*TaskResponse, error)
@@ -577,9 +548,6 @@ func (UnimplementedStateServiceServer) TriggerSchedule(context.Context, *Trigger
 }
 func (UnimplementedStateServiceServer) CancelSchedule(context.Context, *CancelScheduleRequest) (*CancelScheduleResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CancelSchedule not implemented")
-}
-func (UnimplementedStateServiceServer) ListStuckCandidates(context.Context, *ListStuckCandidatesRequest) (*ListStuckCandidatesResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method ListStuckCandidates not implemented")
 }
 func (UnimplementedStateServiceServer) GetTask(context.Context, *GetTaskRequest) (*TaskResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetTask not implemented")
@@ -754,24 +722,6 @@ func _StateService_CancelSchedule_Handler(srv interface{}, ctx context.Context, 
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(StateServiceServer).CancelSchedule(ctx, req.(*CancelScheduleRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _StateService_ListStuckCandidates_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ListStuckCandidatesRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(StateServiceServer).ListStuckCandidates(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: StateService_ListStuckCandidates_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(StateServiceServer).ListStuckCandidates(ctx, req.(*ListStuckCandidatesRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1094,10 +1044,6 @@ var StateService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CancelSchedule",
 			Handler:    _StateService_CancelSchedule_Handler,
-		},
-		{
-			MethodName: "ListStuckCandidates",
-			Handler:    _StateService_ListStuckCandidates_Handler,
 		},
 		{
 			MethodName: "GetTask",

@@ -8,9 +8,8 @@ package streams
 func PkgConstantsForTest() map[string]string {
 	return map[string]string{
 		"SchedulesLoadedV1": SchedulesLoadedV1,
-		"QueryModelV1": QueryModelV1,
-		"TaskStatusUpdatedV1": TaskStatusUpdatedV1,
-		"TaskExecutionRecordedV1": TaskExecutionRecordedV1,
+		"TaskDispatchV1": TaskDispatchV1,
+		"TaskStatusUpdatedV2": TaskStatusUpdatedV2,
 		"OutboxDeadLetterV1": OutboxDeadLetterV1,
 		"ConsumerDeadLetterV1": ConsumerDeadLetterV1,
 		"ScheduleCancelledV1": ScheduleCancelledV1,
@@ -31,9 +30,8 @@ func PkgConstantsForTest() map[string]string {
 		"RemediationPrOpenedV1": RemediationPrOpenedV1,
 		"RemediationPrClosedV1": RemediationPrClosedV1,
 		"StateScheduleCatalog": StateScheduleCatalog,
-		"ExecutorQueryModel": ExecutorQueryModel,
+		"ExecutorTaskDispatch": ExecutorTaskDispatch,
 		"StateTaskStatusUpdated": StateTaskStatusUpdated,
-		"StateTaskExecutionRecorded": StateTaskExecutionRecorded,
 		"DeadLetterControllerOutboxDeadLetters": DeadLetterControllerOutboxDeadLetters,
 		"DeadLetterControllerConsumerDeadLetters": DeadLetterControllerConsumerDeadLetters,
 		"ExecutorScheduleCancelled": ExecutorScheduleCancelled,

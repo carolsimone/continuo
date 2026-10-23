@@ -8,14 +8,19 @@ import (
 
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// OutboxPublisher publishes state's outbox entries to Redis streams.
-// Each outbox row represents one event: its Payload JSONB is unmarshaled into
-// a field map and written via XADD to the stream named by StreamName.
-// Nested non-scalar values (e.g. service_metadata maps) are re-encoded as JSON
-// strings so that every Redis field is a plain scalar.
+// producer names state as the producer of the enveloped streams it writes.
+const producer = "state"
+
+// OutboxPublisher publishes state's outbox entries to Redis streams. Each
+// outbox row represents one event, rendered as a field map (Render) and
+// written via XADD to the stream named by StreamName: a task.dispatch:v1 row
+// under an envelope, a dead-letter row as its dead-letter fields, and every
+// other row's JSON payload flattened to scalar fields, its nested values (e.g.
+// service_metadata maps) re-encoded as JSON strings.
 type OutboxPublisher struct {
 	redis  *goredis.Client
 	logger *slog.Logger
@@ -26,8 +31,8 @@ func NewOutboxPublisher(redis *goredis.Client, logger *slog.Logger) *OutboxPubli
 	return &OutboxPublisher{redis: redis, logger: logger}
 }
 
-// Publish unmarshals the entry's JSONB payload into a field map, normalizes
-// any nested structures to scalar strings, and XADDs them to entry.StreamName.
+// Publish renders the entry as its field map (Render), adds the entry's
+// outbox_entry_id and XADDs it to entry.StreamName.
 func (p *OutboxPublisher) Publish(ctx context.Context, entry *outbox.Entry) error {
 	args, err := p.xaddArgs(entry)
 	if err != nil {
@@ -72,16 +77,29 @@ var _ outbox.Renderer = (*OutboxPublisher)(nil)
 
 // Render returns the field map Publish XADDs for entry, without
 // outbox_entry_id. A dead-letter row renders through outbox.DeadLetterValues;
-// every other row's JSON payload is flattened to scalar fields, with nested
-// values JSON-encoded. Every call returns a fresh map.
+// a task.dispatch:v1 row's payload is the dispatch, under an envelope that
+// names the row as the event and the time it was written; every other row's
+// JSON payload is flattened to scalar fields, with nested values JSON-encoded.
+// Every call returns a fresh map.
 func (p *OutboxPublisher) Render(entry *outbox.Entry) (map[string]any, error) {
-	if entry.EventType == outbox.DeadLetterEventType {
+	switch entry.EventType {
+	case outbox.DeadLetterEventType:
 		values, err := outbox.DeadLetterValues(entry)
 		if err != nil {
 			// Our own payload; a decode failure here is deterministic, never transient.
 			return nil, fmt.Errorf("%w: dead-letter values: %v", pkgevents.ErrPermanent, err)
 		}
 		delete(values, "outbox_entry_id")
+		return values, nil
+	case streams.TaskDispatchV1:
+		var d pkgevents.TaskDispatch
+		if err := json.Unmarshal(entry.Payload, &d); err != nil {
+			return nil, fmt.Errorf("%w: unmarshal %s: %v", pkgevents.ErrPermanent, streams.TaskDispatchV1, err)
+		}
+		values, err := pkgevents.TaskDispatchFields(entry.ID.String(), pkgevents.DefaultTenantID, producer, entry.CreatedAt, d)
+		if err != nil {
+			return nil, fmt.Errorf("%w: render %s: %v", pkgevents.ErrPermanent, streams.TaskDispatchV1, err)
+		}
 		return values, nil
 	}
 	var fields map[string]interface{}

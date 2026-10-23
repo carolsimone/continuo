@@ -230,6 +230,13 @@ Row 2: actions                                        [Action]  [Action]  [Actio
 
 - Identity row is `PageHeader`: the brand, then back navigation, page
   title, status pill, *compact* info-strips (chips), then the user menu.
+- A run that failed without a failed task says why in an inline
+  `.info-strip--error` right after its status pill: `failed: stalled`,
+  `failed: empty selection`, `failed: invalid node type`
+  (`runFailureLabel`). A run whose task failed shows no such chip.
+- A node page's task-timeout chip is `.info-strip--neutral` and always names
+  the length and its source: `task timeout 8 h · declared` or
+  `task timeout 24 h · install default`.
 - Action row sits below it, right-aligned, containing only `.btn`
   elements.
 - Errors from any action button render full-width directly below row 2
@@ -918,6 +925,14 @@ Rules:
 - Status pills for task attempts come from `attemptPillClass`
   (`detail-page-helpers.ts`): `dispatched` and `queued` get the pending
   pill; `running`, `succeeded`, `failed` and `cancelled` get their own.
+- Task status pills (`.pill-sm--dispatched`, `.pill-sm--queued`) are neutral,
+  like pending: nothing of the task runs yet. A `queued` pill carries the
+  title "waiting for a slot" (`taskStatusTitle`). Wherever task statuses are
+  ordered or counted (the nodes table, the run-progress header, the swimlane
+  legend, a service's rolled-up status, the dashboard run card's summary
+  row) dispatched and queued come just before running.
+- A node page's run row shows the failure class and reason of its latest
+  attempt (`.nodes-reason`, joined with ` · `) under its status pill.
 - The node row's own cells stay the task's summary: its Attempt cell reads
   `attempt + 1 / max_retries + 1`, and its Error, Started, Completed and
   Logs cells come from the task's highest-numbered attempt. A task whose

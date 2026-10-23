@@ -24,6 +24,9 @@ export interface Scheduler {
   completed_at: string | null;
   cancelled_at: string | null;
   cancelled_by: string;
+  // Why the run failed when no task of it failed (stalled, empty_selection,
+  // invalid_node_type); null otherwise.
+  failure_reason?: string | null;
 }
 
 export interface Task {
@@ -66,6 +69,8 @@ export interface RunSummary {
   terminal_status: string;
   created_at: string | null;
   completed_at: string | null;
+  // Why the run failed when no task of it failed; null otherwise.
+  failure_reason?: string | null;
 }
 
 export interface RunGraphNode {
@@ -109,7 +114,7 @@ export interface NodeRun {
   kind: string;             // cron | trigger | rerun | rebase | single_node_run
   terminal_status: string;  // "" if in flight
   task_id: string;
-  task_status: string;      // pending | running | succeeded | failed | cancelled
+  task_status: string;      // pending | dispatched | queued | running | succeeded | failed | cancelled | skipped
   attempt: number;          // 0-based number of the task's current attempt
   failure_class: string | null;   // why the latest attempt failed
   failure_reason: string | null;  // the specific failure within failure_class
@@ -234,9 +239,10 @@ export interface NodeSummary {
   last_status: string | null;
   last_run_at: string | null;
   operation: WireOperation;
-  // The live release's declared task timeout in seconds; 0 when the node
-  // declares none and its tasks get the install default.
+  // The task timeout in seconds the node's tasks get: its declared timeout in
+  // the live release, else the install default (timeout_declared false).
   timeout_seconds: number;
+  timeout_declared: boolean;
 }
 
 export interface NodesResponse {

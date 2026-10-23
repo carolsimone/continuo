@@ -17,3 +17,24 @@ func TestFailureReason_EveryReasonNamesADeclaredClass(t *testing.T) {
 		t.Fatalf("an undeclared reason has class %q, want none", got)
 	}
 }
+
+// The reasons execution-controller reports for an attempt it could not run as
+// dispatched: two infra failures (an acknowledged attempt it lost, a Job
+// Kubernetes refused on every try) and three the dispatch itself made
+// impossible.
+func TestFailureReason_DispatchSideReasonsAndTheirClasses(t *testing.T) {
+	for reason, class := range map[FailureReason]FailureClass{
+		FailureReasonAttemptLost:       FailureClassInfra,
+		FailureReasonCreateFailed:      FailureClassInfra,
+		FailureReasonInvalidNodeType:   FailureClassInvalid,
+		FailureReasonMalformedDispatch: FailureClassInvalid,
+		FailureReasonJobNameCollision:  FailureClassInvalid,
+	} {
+		if !reason.IsValid() {
+			t.Errorf("%s is not a declared failure reason", reason)
+		}
+		if got := reason.Class(); got != class {
+			t.Errorf("%s class = %q, want %q", reason, got, class)
+		}
+	}
+}

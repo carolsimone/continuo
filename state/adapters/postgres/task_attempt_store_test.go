@@ -251,7 +251,7 @@ func TestTaskAttempts_CancelOpenAttemptsLeavesFinalOnesAlone(t *testing.T) {
 	})
 }
 
-// The state a status update locks names the task: its job, node and first
+// The state an attempt report locks names the task: its job, node and first
 // dispatch.
 func TestTaskAttempts_LoadAttemptStateCarriesTheTasksIdentity(t *testing.T) {
 	db := newTestDB(t)
@@ -271,7 +271,7 @@ func TestTaskAttempts_LoadAttemptStateCarriesTheTasksIdentity(t *testing.T) {
 		assert.Equal(t, "tbla", got.TableName)
 		require.NotNil(t, got.DispatchedAt)
 		assert.True(t, dispatched.Equal(*got.DispatchedAt))
-		assert.Equal(t, int32(1), got.RetryCount)
+		assert.Equal(t, int32(1), got.Attempt)
 		assert.Equal(t, int32(2), got.MaxRetries)
 	})
 }

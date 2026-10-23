@@ -151,9 +151,14 @@ func (r *RunRepositoryAdapter) SaveRun(ctx context.Context, rn *run.Run) error {
 		v := string(rn.Status())
 		fields.Status = &v
 	}
-	// A completed transition stamps completed_at = NOW() alongside the new status.
+	// A completed transition stamps completed_at = NOW() alongside the new
+	// status, and the reason a run failed without a failed task.
 	if ch.IsCompletedDirty() {
 		fields.CompletedAtNow = true
+		if reason := rn.FailureReason(); reason != nil {
+			v := string(*reason)
+			fields.FailureReason = &v
+		}
 	}
 
 	if err := r.schedRepo.UpdateRunRowTx(ctx, r.tx, rn.ScheduleID(), fields); err != nil {
@@ -268,6 +273,10 @@ func hydrateRun(tr *SchedulerTracker) (*run.Run, error) {
 	)
 	rn.HydrateRelease(run.ReleaseStamp{ReleaseID: stringOrEmpty(tr.ReleaseID), PromotionSeq: int64OrZero(tr.PromotionSeq)})
 	rn.HydratePlannedAt(tr.PlannedAt)
+	if tr.FailureReason != nil {
+		reason := run.RunFailureReason(*tr.FailureReason)
+		rn.HydrateFailureReason(&reason)
+	}
 	return rn, nil
 }
 

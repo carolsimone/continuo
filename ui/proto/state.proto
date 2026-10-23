@@ -22,16 +22,6 @@ service StateService {
   // Errors: INVALID_ARGUMENT (empty name), FAILED_PRECONDITION (no active run or run not cancellable).
   rpc CancelSchedule(CancelScheduleRequest) returns (CancelScheduleResponse);
 
-  // ListStuckCandidates returns the active (pending|running) runs that have made
-  // no lifecycle progress since `cutoff` and have no task in TASK_STATUS_RUNNING.
-  // A run's progress time is Scheduler.last_heartbeat_at, stamped when the run is
-  // dispatched and whenever a task status change is applied, or its created_at
-  // when it has never progressed, so a run whose dispatch never arrived (zero
-  // tasks) is returned. A run with a RUNNING task is never returned: a long task
-  // reports no progress until it ends. One server-side query over every task of
-  // every active run. Empty `cutoff` is INVALID_ARGUMENT.
-  rpc ListStuckCandidates(ListStuckCandidatesRequest) returns (ListStuckCandidatesResponse);
-
   // Task operations
   rpc GetTask(GetTaskRequest) returns (TaskResponse);
   rpc GetTaskByScheduleAndNode(GetTaskByScheduleAndNodeRequest) returns (TaskResponse);
@@ -174,6 +164,8 @@ enum TaskStatus {
   TASK_STATUS_FAILED = 4;
   TASK_STATUS_CANCELLED = 5;
   TASK_STATUS_SKIPPED = 6;
+  TASK_STATUS_DISPATCHED = 7;  // an attempt was sent to execution-controller, which has not acknowledged it
+  TASK_STATUS_QUEUED = 8;      // execution-controller accepted the attempt; it waits for a slot
 }
 
 // ============================================================================
@@ -192,6 +184,7 @@ message Scheduler {
   string cancelled_by = 9;
   string cancellation_reason = 10;
   string initialization_status = 11;  // 'pending', 'in_progress', 'completed', 'failed'
+  string failure_reason = 12;  // why a failed run failed when no task of it did: stalled | empty_selection | invalid_node_type; empty otherwise
 }
 
 message Task {
@@ -355,22 +348,6 @@ message CancelScheduleResponse {
   string schedule_id = 1;  // schedule_id of the cancelled run
 }
 
-message ListStuckCandidatesRequest {
-  // A run whose progress time (last_heartbeat_at, or created_at before its first
-  // progress) is at or after this instant is not a candidate. Required.
-  google.protobuf.Timestamp cutoff = 1;
-}
-
-// StuckCandidate identifies one active run the watchdog should consider cancelling.
-message StuckCandidate {
-  string schedule_name = 1;  // the schedule whose active run is stuck
-  string schedule_id   = 2;  // schedule_id (run id) of the active run
-}
-
-message ListStuckCandidatesResponse {
-  repeated StuckCandidate candidates = 1;
-}
-
 message GetSchedulerInitStatusRequest {
   string schedule_id = 1;
 }
@@ -458,7 +435,7 @@ message NodeRun {
   string kind             = 3;  // cron | trigger | rerun | rebase | single_node_run
   string terminal_status  = 4;  // "" while in flight
   string task_id          = 5;
-  string task_status      = 6;  // pending | running | succeeded | failed | cancelled
+  string task_status      = 6;  // pending | dispatched | queued | running | succeeded | failed | cancelled | skipped
   int32  attempt          = 7;  // 0-based number of the task's current attempt
   string image_tag        = 8;
   reserved 9;
@@ -497,10 +474,11 @@ message NodeSummary {
   int32  avg_duration_sec = 6;   // -1 when no measurable run
   int32  p95_duration_sec = 7;   // -1 when no measurable run
   int32  flaky_rate_pct   = 8;   // % of window runs with attempt > 0; 0 when none
-  string last_status      = 9;   // succeeded|failed|running|cancelled|pending
+  string last_status      = 9;   // succeeded|failed|running|queued|dispatched|cancelled|skipped|pending
   string last_run_at      = 10;  // RFC3339 of the most recent run's created_at
   string operation        = 11;  // run | test | build
-  int32  timeout_seconds  = 12;  // the live release's declared task timeout; 0 when the node declares none and its tasks get the install default
+  int32  timeout_seconds  = 12;  // the task timeout the node's tasks get: its declared timeout in the live release, else the install default
+  bool   timeout_declared = 13;  // true when the live release declares the node's timeout; false when its tasks get the install default
 }
 
 message ListNodeNamesRequest {
@@ -523,7 +501,7 @@ message RunGraphNode {
   string table_name    = 3;
   string schedule_name = 4;  // the node's schedule in the run's release; "" when unknown
   string node_type     = 5;  // "" when the run names no release
-  string status        = 6;  // the task's status: pending | running | succeeded | failed | cancelled | skipped
+  string status        = 6;  // the task's status: pending | dispatched | queued | running | succeeded | failed | cancelled | skipped
   string task_id       = 7;
 }
 
@@ -553,6 +531,7 @@ message RunSummary {
   string terminal_status = 3;  // succeeded | failed | cancelled | skipped
   string created_at      = 4;  // RFC3339, UTC, seconds
   string completed_at    = 5;  // RFC3339, UTC, seconds
+  string failure_reason  = 6;  // stalled | empty_selection | invalid_node_type when the run failed without a failed task; empty otherwise
 }
 
 message ListRunsResponse {

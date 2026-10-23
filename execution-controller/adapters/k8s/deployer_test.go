@@ -3,6 +3,7 @@ package k8s
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/carolsimone/continuo/execution-controller/domain/deploy"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
@@ -16,16 +17,17 @@ import (
 func TestDeploy_PythonNode_CreatesTheJob(t *testing.T) {
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "warehouse-conn")
 	client := newValidationTestClient()
-	d := NewDeployer(client, "default")
+	d := NewDeployer(client, "default", 15*time.Minute, 24*time.Hour)
 
 	err := d.Deploy(context.Background(), deploy.JobSpec{
-		JobName:     "run-py-probe",
-		TaskID:      "task-1",
-		ServiceName: "svc-py",
-		SchemaName:  "analytics",
-		TableName:   "py_probe",
-		NodeType:    string(pkg_model.NodeTypePythonNode),
-		ImageTag:    "ghcr.io/acme/marketing-py:12-abc1234",
+		JobName:        "run-py-probe",
+		TaskID:         "task-1",
+		ServiceName:    "svc-py",
+		SchemaName:     "analytics",
+		TableName:      "py_probe",
+		NodeType:       string(pkg_model.NodeTypePythonNode),
+		ImageTag:       "ghcr.io/acme/marketing-py:12-abc1234",
+		TimeoutSeconds: 3600,
 	})
 	require.NoError(t, err)
 
@@ -43,7 +45,7 @@ func TestDeploy_PythonNode_CreatesTheJob(t *testing.T) {
 // would fail here.
 func TestDeployValidation_PythonNode_BuildsTheValidationPod(t *testing.T) {
 	client := newValidationTestClient()
-	d := NewDeployer(client, "default")
+	d := NewDeployer(client, "default", 15*time.Minute, 24*time.Hour)
 
 	spec := deploy.ValidationJobSpec{
 		JobName:              "validate-py-rel123",
@@ -156,7 +158,7 @@ func TestCompileParamsFromSpec_InvalidNodeTypeErrors(t *testing.T) {
 func TestDeployCompile_CreatesJobWithMappedFields(t *testing.T) {
 	t.Setenv("DOCKERHUB_USERNAME", "carolsimone")
 	client := newValidationTestClient()
-	d := NewDeployer(client, "default")
+	d := NewDeployer(client, "default", 15*time.Minute, 24*time.Hour)
 
 	spec := deploy.ValidationJobSpec{
 		JobName:             "compile-svc-rel123",
@@ -189,7 +191,7 @@ func TestDeploySeedBuild_ThreadsSourceOverlayURI(t *testing.T) {
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh-secret")
 	t.Setenv("S3_BUCKET", "")
 	client := newValidationTestClient()
-	d := NewDeployer(client, "default")
+	d := NewDeployer(client, "default", 15*time.Minute, 24*time.Hour)
 
 	err := d.DeploySeedBuild(context.Background(), deploy.ValidationJobSpec{
 		JobName:          "seedbuild-verify-fx",

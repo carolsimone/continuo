@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/carolsimone/continuo/execution-controller/adapters/publisher"
+	"github.com/carolsimone/continuo/execution-controller/domain/event"
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -24,7 +25,7 @@ func TestPublisher_PublishesDeadLetterRow(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	r := newRedis(t)
 	pub := publisher.NewOutboxPublisher(r, logger)
-	payload, err := json.Marshal(outbox.DeadLetterPayload{FailureKind: model.DeadLetterKindPermanent, OriginalEventType: "check_delayed"})
+	payload, err := json.Marshal(outbox.DeadLetterPayload{FailureKind: model.DeadLetterKindPermanent, OriginalEventType: event.EventTypeTaskStatusReport})
 	require.NoError(t, err)
 
 	entry := &outbox.Entry{

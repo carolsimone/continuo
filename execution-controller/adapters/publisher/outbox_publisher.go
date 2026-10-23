@@ -13,6 +13,10 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
+// producer names execution-controller as the producer of the enveloped
+// events it publishes.
+const producer = "execution-controller"
+
 // OutboxPublisher implements pkg/outbox.Publisher. Each execution_outbox row
 // publishes exactly one event to entry.StreamName; the typed payload depends on
 // entry.EventType. Multi-effect operations are modelled as several rows written
@@ -32,15 +36,10 @@ func NewOutboxPublisher(r *goredis.Client, l *slog.Logger) *OutboxPublisher {
 	return &OutboxPublisher{redis: r, logger: l}
 }
 
-// Publish routes an outbox row to Redis. Every event type XADDs a field map to
+// Publish routes an outbox row to Redis: every event type XADDs a field map to
 // entry.StreamName without a length cap (the dead-letter-controller's trim loop
-// bounds every stream), except check_delayed: a status-check ticket a previous
-// version wrote, which is published nowhere and so marked processed, since the
-// observer follows every Job without it.
+// bounds every stream).
 func (p *OutboxPublisher) Publish(ctx context.Context, entry *outbox.Entry) error {
-	if entry.EventType == event.EventTypeCheckDelayed {
-		return nil
-	}
 	values, err := p.Render(entry)
 	if err != nil {
 		return err
@@ -63,12 +62,8 @@ func (p *OutboxPublisher) xaddArgs(entry *outbox.Entry, values map[string]any) *
 }
 
 // Render returns the field map Publish XADDs for entry, without
-// outbox_entry_id. A check_delayed row is published nowhere, so it has no
-// fields to render and returns an error. Every call returns a fresh map.
+// outbox_entry_id. Every call returns a fresh map.
 func (p *OutboxPublisher) Render(entry *outbox.Entry) (map[string]any, error) {
-	if entry.EventType == event.EventTypeCheckDelayed {
-		return nil, fmt.Errorf("%s rows are published nowhere", event.EventTypeCheckDelayed)
-	}
 	values, err := p.toValues(entry)
 	if err != nil {
 		return nil, err
@@ -90,19 +85,18 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 		}
 		return values, nil
 
-	case event.EventTypeTaskStatusUpdated:
-		var e pkgevents.TaskStatusUpdated
-		if err := json.Unmarshal(entry.Payload, &e); err != nil {
-			return nil, fmt.Errorf("%w: unmarshal task_status_updated: %v", pkgevents.ErrPermanent, err)
+	case event.EventTypeTaskStatusReport:
+		// The row's payload is the report; the envelope names the row as the
+		// event and the time it was written.
+		var r pkgevents.TaskStatusReport
+		if err := json.Unmarshal(entry.Payload, &r); err != nil {
+			return nil, fmt.Errorf("%w: unmarshal task_status_report: %v", pkgevents.ErrPermanent, err)
 		}
-		return e.ToMap(), nil
-
-	case event.EventTypeTaskExecutionRecorded:
-		var e pkgevents.TaskExecutionRecorded
-		if err := json.Unmarshal(entry.Payload, &e); err != nil {
-			return nil, fmt.Errorf("%w: unmarshal task_execution_recorded: %v", pkgevents.ErrPermanent, err)
+		values, err := pkgevents.TaskStatusReportFields(entry.ID.String(), pkgevents.DefaultTenantID, producer, entry.CreatedAt, r)
+		if err != nil {
+			return nil, fmt.Errorf("%w: render task_status_report: %v", pkgevents.ErrPermanent, err)
 		}
-		return e.ToMap(), nil
+		return values, nil
 
 	case validation.EventTypeValidationCompleted, validation.EventTypeSeedBuildCompleted, validation.EventTypeCompileCompleted,
 		validation.EventTypeValidationNodeResult:

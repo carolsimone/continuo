@@ -11,7 +11,7 @@ import {
   Task,
   TaskAttempt,
 } from './types';
-import { resolveActiveGraph, headerDriftLabel, groupAttemptsByTask } from './detail-page-helpers';
+import { resolveActiveGraph, headerDriftLabel, groupAttemptsByTask, runFailureLabel } from './detail-page-helpers';
 import { buildServiceColors, listServices, serviceOfNode } from './service-helpers';
 import { fetchAllPages } from './fetch-all-pages';
 import { getDriftState, getDriftBadge } from './drift-helpers';
@@ -546,6 +546,11 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
         <span className={`pill ${pillClass(selectedRun ? selectedRun.terminal_status : schedulerStatus)}`}>
           {selectedRun ? formatStatusLabel(selectedRun.terminal_status) : formatStatusLabel(schedulerStatus)}
         </span>
+        {runFailureLabel(selectedRun ? selectedRun.failure_reason : scheduler?.failure_reason) && (
+          <span className="info-strip info-strip--error info-strip--inline" aria-label="run failure reason">
+            {runFailureLabel(selectedRun ? selectedRun.failure_reason : scheduler?.failure_reason)}
+          </span>
+        )}
         {headerDriftLabel({ mode, driftLabel }) && (
           <span className="info-strip info-strip--warning info-strip--inline">
             <span className="info-strip__icon">⚠</span>

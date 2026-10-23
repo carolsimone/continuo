@@ -11,7 +11,7 @@ import (
 
 // goldenDeployTask is the exact JSON a fully-populated command.DeployTask is
 // stored as in deployments.job_params. Every tagged field is present.
-const goldenDeployTask = `{"task_id":"t","schedule_id":"s","schedule_name":"sn","service_name":"svc","schema_name":"sch","table_name":"tbl","job_name":"j","node_type":"dbt-model","image_tag":"v1","task_retry_count":1,"task_max_retries":3,"operation":"test"}`
+const goldenDeployTask = `{"task_id":"t","schedule_id":"s","schedule_name":"sn","service_name":"svc","schema_name":"sch","table_name":"tbl","job_name":"j","node_type":"dbt-model","image_tag":"v1","attempt":1,"operation":"test","timeout_seconds":86400}`
 
 func TestDeployTaskDTORoundTrip(t *testing.T) {
 	var dto DeployTaskDTO
@@ -22,7 +22,7 @@ func TestDeployTaskDTORoundTrip(t *testing.T) {
 	want := command.DeployTask{
 		TaskID: "t", ScheduleID: "s", ScheduleName: "sn", ServiceName: "svc",
 		SchemaName: "sch", TableName: "tbl", JobName: "j", NodeType: "dbt-model",
-		ImageTag: "v1", TaskRetryCount: 1, TaskMaxRetries: 3, Operation: "test",
+		ImageTag: "v1", Attempt: 1, Operation: "test", TimeoutSeconds: 86400,
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("toDomain:\n got %+v\nwant %+v", got, want)
@@ -36,8 +36,8 @@ func TestDeployTaskDTORoundTrip(t *testing.T) {
 	}
 }
 
-// A row queued by an older version may still hold a mode in its job_params;
-// it decodes, and the mode is dropped.
+// A stored job_params that holds a "mode" key still decodes, and the mode is
+// dropped: the DTO has no mode field, so it does not survive a re-encode.
 func TestDeployTaskDTO_StoredModeIsIgnored(t *testing.T) {
 	var dto DeployTaskDTO
 	if err := json.Unmarshal([]byte(`{"task_id":"t","job_name":"j","mode":"promote_seed"}`), &dto); err != nil {

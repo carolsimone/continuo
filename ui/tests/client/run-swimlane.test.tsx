@@ -125,8 +125,10 @@ describe('RunSwimlane', () => {
     );
     const legend = container.querySelector('.swim-legend')!;
     expect(legend).toBeTruthy();
-    for (const label of ['succeeded', 'running', 'failed', 'skipped', 'cancelled', 'pending']) {
+    for (const label of ['succeeded', 'dispatched', 'queued', 'running', 'failed', 'skipped', 'cancelled', 'pending']) {
       expect(legend.textContent).toContain(label);
     }
+    const text = legend.textContent ?? '';
+    expect(text.indexOf('queued')).toBeLessThan(text.indexOf('running'));
   });
 });

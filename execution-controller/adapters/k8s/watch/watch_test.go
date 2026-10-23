@@ -64,9 +64,8 @@ func startWatch(t *testing.T, cs *fake.Clientset) (*Watch, *Queue) {
 	return w, q
 }
 
-// The watch queues every Job that exists when it starts: the observer relies on
-// it to find a Job whose deployment it does not resync, such as a row an older
-// version released before recording its result.
+// The watch queues every Job that exists when it starts, so the observer
+// judges every Job, including one whose deployment it does not resync.
 func TestWatch_AJobThatExistsWhenItStartsIsQueued(t *testing.T) {
 	cs := fake.NewClientset(job("svc-s-t-1a2b3c4d"))
 	_, q := startWatch(t, cs)

@@ -7,7 +7,6 @@ import (
 
 	"github.com/carolsimone/continuo/pkg/domain"
 	"github.com/carolsimone/continuo/pkg/domain/model"
-	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/topology"
@@ -105,7 +104,8 @@ func TestTaskGraph_ReadyCandidatesOfTheExampleRun(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, got, 2)
 		assert.Equal(t, topology.NodeKey("e2e_schema.ftable_c"), got[0].Node.Key)
-		assert.Equal(t, []run.TaskStatus{run.TaskStatusSucceeded, run.TaskStatusPending}, got[0].UpstreamStatuses)
+		assert.Equal(t, []run.TaskStatus{run.TaskStatusSucceeded, run.TaskStatusDispatched}, got[0].UpstreamStatuses,
+			"ftable_b was dispatched with the run")
 		assert.False(t, got[0].Ready())
 		assert.Equal(t, run.TaskIDFor(tenant, r.ScheduleID(), "e2e_schema.ftable_g"), got[1].TaskID)
 		assert.Equal(t, topology.Node{
@@ -116,7 +116,6 @@ func TestTaskGraph_ReadyCandidatesOfTheExampleRun(t *testing.T) {
 		jobName, err := domain.ComputeJobName("service-1", "e2e_schema", "ftable_g", r.ScheduleID().String(), 0)
 		require.NoError(t, err)
 		assert.Equal(t, jobName, got[1].JobName)
-		assert.Equal(t, pkgevents.DefaultTaskMaxRetries, got[1].MaxRetries)
 		assert.Equal(t, []run.TaskStatus{run.TaskStatusSucceeded}, got[1].UpstreamStatuses)
 		assert.True(t, got[1].Ready())
 	})

@@ -62,6 +62,7 @@ func (g *graphTopology) Graph(_ context.Context, tenant, releaseID string, keys 
 // for, and BulkCreate records the tasks a run starts with.
 type sourceTasks struct {
 	run.TaskCollection
+	attempts []run.Attempt
 	tasks    []run.Task
 	releases map[uuid.UUID]string
 	asked    [][]uuid.UUID
@@ -85,6 +86,11 @@ func (s *sourceTasks) RunReleasesOf(_ context.Context, taskIDs []uuid.UUID) (map
 
 func (s *sourceTasks) BulkCreate(_ context.Context, tasks []run.Task) error {
 	s.created = append(s.created, tasks...)
+	return nil
+}
+
+func (s *sourceTasks) AddAttempts(_ context.Context, attempts []run.Attempt) error {
+	s.attempts = append(s.attempts, attempts...)
 	return nil
 }
 
@@ -142,7 +148,7 @@ func fakeUoW(live topology.Pointer, tasks []run.Task) (*uow.FakeUnitOfWork, *gra
 	return u, topo
 }
 
-var planner = runstart.Planner{TenantID: "default"}
+var planner = runstart.Planner{TenantID: "default", Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}}
 
 // The topology lock is taken before the live release is read, so the release a
 // run names cannot be pruned before the run commits.

@@ -15,13 +15,23 @@ import (
 type DeploymentRepository interface {
 	// Add inserts a new pending Deployment.
 	Add(ctx context.Context, d *model.Deployment) error
-	// LoadByJobName returns the most recently created deployment whose Job is
-	// jobName, locked for the rest of the transaction, or sql.ErrNoRows when
-	// none exists.
+	// AddAttempt inserts a production Deployment unless its task already has
+	// one of the same attempt, and reports whether it did.
+	AddAttempt(ctx context.Context, d *model.Deployment) (added bool, err error)
+	// LoadByTaskAttempt returns the production deployment of the task's
+	// attempt, locked for the rest of the transaction. found is false, with no
+	// error, when the task has no production deployment of that attempt.
+	LoadByTaskAttempt(ctx context.Context, taskID string, attempt int) (d *model.Deployment, found bool, err error)
+	// HasAttemptAfter reports whether the task has a production deployment of
+	// a later attempt than attempt.
+	HasAttemptAfter(ctx context.Context, taskID string, attempt int) (bool, error)
+	// LoadByJobName returns the most recently created deployment that created
+	// or adopted a Job of jobName (its DeployedAt is set), locked for the rest
+	// of the transaction, or sql.ErrNoRows when none exists. A deployment that
+	// only carries the name — refused, failed before its Job was created, or
+	// not created yet — is never returned, so it never stands for the Job of
+	// another.
 	LoadByJobName(ctx context.Context, jobName string) (*model.Deployment, error)
-	// HasAttemptFrom reports whether a production deployment of taskID exists at
-	// attempt or later, however its Job is named.
-	HasAttemptFrom(ctx context.Context, taskID string, attempt int) (bool, error)
 	// Save persists the mutated state of an existing Deployment.
 	Save(ctx context.Context, d *model.Deployment) error
 	// GetByReleaseNode returns the (mode, release_id, node_id) Deployment, or
@@ -31,11 +41,10 @@ type DeploymentRepository interface {
 	// ModeSeedBuild, or ModeCompile).
 	GetByReleaseNode(ctx context.Context, releaseID, nodeID string, mode model.Mode) (*model.Deployment, error)
 	// PendingValidationCount counts rows of the given mode for releaseID whose
-	// outcome is not yet recorded (pending, blocked, in flight, or done without an
-	// observed outcome). 'blocked' rows are waiting for in-set upstreams to
-	// complete before they can be dispatched, and a done row without an outcome was
-	// released by an older version before its Job's result was recorded; counting
-	// both prevents the aggregate-emit gate from firing before every node has
+	// outcome is not yet recorded, whatever their status (pending, blocked, in
+	// flight or done). 'blocked' rows are waiting for in-set upstreams to
+	// complete before they can be dispatched; counting every row without an
+	// outcome keeps the aggregate-emit gate from firing before every node has
 	// settled.
 	// mode scopes the count so a release's validation and seed-build legs are
 	// counted independently.

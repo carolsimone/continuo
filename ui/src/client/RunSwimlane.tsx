@@ -4,11 +4,14 @@ import { buildSwimlaneLayout, laneLabelColumnWidth } from './run-graph-helpers';
 import { serviceOfNode, buildServiceColors, rollupStatus } from './service-helpers';
 import { resolveNodeStatus, parseNodeId } from './detail-page-helpers';
 
-const CLS: Record<string, string> = { succeeded: 'ok', running: 'run', failed: 'fail', skipped: 'skip', cancelled: 'cancel', pending: 'pend' };
+const CLS: Record<string, string> = {
+  succeeded: 'ok', dispatched: 'disp', queued: 'queue', running: 'run', failed: 'fail', skipped: 'skip', cancelled: 'cancel', pending: 'pend',
+};
 const clsOf = (s: string) => CLS[s] ?? 'pend';
 // Legend order mirrors the run-progress header counts so the two read as one.
 const LEGEND: [string, string][] = [
-  ['ok', 'succeeded'], ['run', 'running'], ['fail', 'failed'], ['skip', 'skipped'], ['cancel', 'cancelled'], ['pend', 'pending'],
+  ['ok', 'succeeded'], ['disp', 'dispatched'], ['queue', 'queued'], ['run', 'running'], ['fail', 'failed'],
+  ['skip', 'skipped'], ['cancel', 'cancelled'], ['pend', 'pending'],
 ];
 
 // Rendered node-box vs collapsed status-cell dimensions. Edge endpoints are

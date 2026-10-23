@@ -10,6 +10,8 @@ import (
 	"github.com/carolsimone/continuo/state/domain/projection"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -78,7 +80,7 @@ func TestNodeRunHandler_ListNodeRuns_HappyPath(t *testing.T) {
 			},
 		},
 	}
-	h := NewNodeRunHandler(repo, nil)
+	h := NewNodeRunHandler(repo, 24*time.Hour, nil)
 
 	resp, err := h.ListNodeRuns(context.Background(), &statev1.ListNodeRunsRequest{
 		ServiceName: "svc", SchemaName: "sch", TableName: "tbl", Limit: 50,
@@ -107,7 +109,7 @@ func TestNodeRunHandler_ListNodeRuns_HappyPath(t *testing.T) {
 }
 
 func TestNodeRunHandler_ListNodeRuns_RejectsEmptyIdentity(t *testing.T) {
-	h := NewNodeRunHandler(&fakeNodeRunRepo{}, nil)
+	h := NewNodeRunHandler(&fakeNodeRunRepo{}, 24*time.Hour, nil)
 
 	_, err := h.ListNodeRuns(context.Background(), &statev1.ListNodeRunsRequest{
 		ServiceName: "", SchemaName: "sch", TableName: "tbl",
@@ -121,7 +123,7 @@ func TestNodeRunHandler_ListNodeRuns_RejectsEmptyIdentity(t *testing.T) {
 }
 
 func TestNodeRunHandler_ListNodeRuns_RepoError(t *testing.T) {
-	h := NewNodeRunHandler(&fakeNodeRunRepo{err: errors.New("boom")}, nil)
+	h := NewNodeRunHandler(&fakeNodeRunRepo{err: errors.New("boom")}, 24*time.Hour, nil)
 
 	_, err := h.ListNodeRuns(context.Background(), &statev1.ListNodeRunsRequest{
 		ServiceName: "svc", SchemaName: "sch", TableName: "tbl",
@@ -136,16 +138,17 @@ func TestNodeRunHandler_ListNodeRuns_RepoError(t *testing.T) {
 
 func TestNodeRunHandler_ListNodes_MapsRowsAndClampsPaging(t *testing.T) {
 	when := time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC)
+	twoHours := 7200
 	repo := &fakeNodeRunRepo{
 		nodeTotal: 7,
 		nodeRows: []*projection.NodeSummary{{
 			ServiceName: "svc", SchemaName: "an", TableName: "fct_orders",
 			RunCount: 48, SuccessRatePct: -1, AvgDurationSec: -1, P95DurationSec: 21,
 			FlakyRatePct: 4, LastStatus: "succeeded", LastRunAt: when,
-			TimeoutSeconds: 7200,
+			TimeoutSeconds: &twoHours,
 		}},
 	}
-	h := NewNodeRunHandler(repo, nil)
+	h := NewNodeRunHandler(repo, 24*time.Hour, nil)
 
 	resp, err := h.ListNodes(context.Background(), &statev1.ListNodesRequest{
 		Search: "fct", ServiceName: "svc", Limit: 0, Offset: -5, // 0 -> default 50, -5 -> 0
@@ -184,7 +187,7 @@ func TestNodeRunHandler_ListNodes_MapsRowsAndClampsPaging(t *testing.T) {
 
 func TestNodeRunHandler_ListNodes_ClampsLimitTo200(t *testing.T) {
 	repo := &fakeNodeRunRepo{}
-	h := NewNodeRunHandler(repo, nil)
+	h := NewNodeRunHandler(repo, 24*time.Hour, nil)
 	if _, err := h.ListNodes(context.Background(), &statev1.ListNodesRequest{Limit: 9999}); err != nil {
 		t.Fatalf("ListNodes: %v", err)
 	}
@@ -195,7 +198,7 @@ func TestNodeRunHandler_ListNodes_ClampsLimitTo200(t *testing.T) {
 
 func TestNodeRunHandler_ListNodeNames(t *testing.T) {
 	repo := &fakeNodeRunRepo{nodeNames: []string{"customers", "orders"}}
-	h := NewNodeRunHandler(repo, nil)
+	h := NewNodeRunHandler(repo, 24*time.Hour, nil)
 	resp, err := h.ListNodeNames(context.Background(), &statev1.ListNodeNamesRequest{ServiceName: "svc"})
 	if err != nil {
 		t.Fatalf("ListNodeNames: %v", err)
@@ -210,7 +213,7 @@ func TestNodeRunHandler_ListNodeNames(t *testing.T) {
 
 func TestNodeRunHandler_ListNodeServices(t *testing.T) {
 	repo := &fakeNodeRunRepo{nodeServices: []string{"billing", "ledger"}}
-	h := NewNodeRunHandler(repo, nil)
+	h := NewNodeRunHandler(repo, 24*time.Hour, nil)
 	resp, err := h.ListNodeServices(context.Background(), &statev1.ListNodeServicesRequest{})
 	if err != nil {
 		t.Fatalf("ListNodeServices: %v", err)
@@ -222,8 +225,27 @@ func TestNodeRunHandler_ListNodeServices(t *testing.T) {
 
 func TestNodeRunHandler_ListNodeServices_Error(t *testing.T) {
 	repo := &fakeNodeRunRepo{nodeServicesErr: errors.New("boom")}
-	h := NewNodeRunHandler(repo, nil)
+	h := NewNodeRunHandler(repo, 24*time.Hour, nil)
 	if _, err := h.ListNodeServices(context.Background(), &statev1.ListNodeServicesRequest{}); err == nil {
 		t.Fatal("expected error")
 	}
+}
+
+// A node's tasks get its declared timeout, else the install default; the
+// catalog says which.
+func TestNodeRunHandler_ListNodes_TimeoutIsDeclaredOrTheInstallDefault(t *testing.T) {
+	eightHours := 28800
+	repo := &fakeNodeRunRepo{nodeRows: []*projection.NodeSummary{
+		{ServiceName: "svc", SchemaName: "sch", TableName: "orders_full", TimeoutSeconds: &eightHours},
+		{ServiceName: "svc", SchemaName: "sch", TableName: "fx_rates"},
+	}}
+	h := NewNodeRunHandler(repo, 24*time.Hour, nil)
+
+	resp, err := h.ListNodes(context.Background(), &statev1.ListNodesRequest{})
+	require.NoError(t, err)
+	require.Len(t, resp.Nodes, 2)
+	assert.Equal(t, int32(28800), resp.Nodes[0].GetTimeoutSeconds())
+	assert.True(t, resp.Nodes[0].GetTimeoutDeclared())
+	assert.Equal(t, int32(86400), resp.Nodes[1].GetTimeoutSeconds(), "a node that declares none gets the install default")
+	assert.False(t, resp.Nodes[1].GetTimeoutDeclared())
 }

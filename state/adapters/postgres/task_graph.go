@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 
@@ -13,15 +14,14 @@ import (
 )
 
 // readyCandidatesQuery reads the pending, undispatched tasks of run $2 that
-// read node $4 directly over release $3's edges, with their Job names and
-// retry budgets and the statuses of their upstream tasks in the run. Each
-// lookup is an index probe: topology_edges by its primary key prefix (tenant,
-// release, upstream) or by idx_topology_edges_downstream, task_tracker by
-// uq_task_tracker_run_node.
+// read node $4 directly over release $3's edges, with their Job names and the
+// statuses of their upstream tasks in the run. Each lookup is an index probe:
+// topology_edges by its primary key prefix (tenant, release, upstream) or by
+// idx_topology_edges_downstream, task_tracker by uq_task_tracker_run_node.
 const readyCandidatesQuery = `
-	SELECT t.task_id, t.job_name, t.max_retries,
+	SELECT t.task_id, t.job_name,
 	       n.node_key, n.unique_id, n.service_name, n.schema_name, n.table_name, n.node_type, n.test_count,
-	       n.content_hash, n.image_tag, n.secret_ref, n.schedule_name,
+	       n.content_hash, n.image_tag, n.secret_ref, n.schedule_name, n.timeout_seconds,
 	       ARRAY(
 	           SELECT ut.status::text
 	           FROM topology_edges ue
@@ -79,9 +79,8 @@ func NewTaskGraph(tx *sqlx.Tx, tenantID string) *TaskGraph {
 }
 
 type readyCandidateRow struct {
-	TaskID     uuid.UUID `db:"task_id"`
-	JobName    string    `db:"job_name"`
-	MaxRetries int32     `db:"max_retries"`
+	TaskID  uuid.UUID `db:"task_id"`
+	JobName string    `db:"job_name"`
 	topologyNodeRow
 	UpstreamStatuses pq.StringArray `db:"upstream_statuses"`
 }
@@ -109,7 +108,6 @@ func (g *TaskGraph) ReadyCandidates(ctx context.Context, runID uuid.UUID, releas
 			TaskID:           row.TaskID,
 			Node:             row.toDomain(),
 			JobName:          row.JobName,
-			MaxRetries:       row.MaxRetries,
 			UpstreamStatuses: statuses,
 		})
 	}
@@ -126,4 +124,23 @@ func (g *TaskGraph) PendingDescendants(ctx context.Context, runID uuid.UUID, rel
 		return nil, fmt.Errorf("read the pending descendants of %s in run %s: %w", key, runID, err)
 	}
 	return ids, nil
+}
+
+// Node reads one node of a release by its primary key.
+func (g *TaskGraph) Node(ctx context.Context, releaseID string, key topology.NodeKey) (topology.Node, bool, error) {
+	if g.tx == nil {
+		return topology.Node{}, false, errors.New("Node requires an active transaction")
+	}
+	var row topologyNodeRow
+	err := g.tx.GetContext(ctx, &row, `
+		SELECT `+topologyNodeColumns+`
+		FROM topology_nodes
+		WHERE tenant_id = $1 AND release_id = $2 AND node_key = $3`, g.tenantID, releaseID, string(key))
+	if errors.Is(err, sql.ErrNoRows) {
+		return topology.Node{}, false, nil
+	}
+	if err != nil {
+		return topology.Node{}, false, fmt.Errorf("read node %s of release %s: %w", key, releaseID, err)
+	}
+	return row.toDomain(), true, nil
 }

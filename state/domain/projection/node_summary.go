@@ -29,6 +29,7 @@ type NodeSummary struct {
 	// to when queried: "run" | "test" | "build".
 	Operation string
 	// TimeoutSeconds is the task timeout the live release declares for the
-	// node; 0 when the node declares none or the live release does not hold it.
-	TimeoutSeconds int
+	// node; nil when the node declares none or the live release does not hold
+	// it.
+	TimeoutSeconds *int
 }

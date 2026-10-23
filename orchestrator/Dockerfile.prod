@@ -28,7 +28,6 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # Copy source code
 COPY orchestrator/ ./orchestrator/
 COPY pkg/ ./pkg/
-COPY state/ ./state/
 
 # Build static binary
 WORKDIR /app/orchestrator

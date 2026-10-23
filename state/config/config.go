@@ -1,7 +1,9 @@
 package config
 
 import (
+	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
@@ -10,6 +12,17 @@ import (
 // ServiceName names this service as the producer of the dead letters its
 // stream consumers write.
 const ServiceName = "state"
+
+// The retry budget's default and the range state accepts: the chart's
+// runs.taskMaxRetries, 0 to 10.
+const (
+	DefaultTaskMaxRetries = 2
+	MinTaskMaxRetries     = 0
+	MaxTaskMaxRetries     = 10
+)
+
+// taskMaxRetriesKey names the retry budget stamped on each task state plans.
+const taskMaxRetriesKey = "TASK_MAX_RETRIES"
 
 // defaultShutdownGrace bounds the graceful-shutdown sequence: the in-flight
 // drain plus the infra-close handlers. It is a safe default so no required env
@@ -58,6 +71,15 @@ type Config struct {
 
 	// MetricsPort is the port the Prometheus /metrics listener binds (METRICS_PORT).
 	MetricsPort int
+
+	// TaskMaxRetries is TASK_MAX_RETRIES: how many retries each task state
+	// plans gets after its first attempt, stamped on the task when its run is
+	// created.
+	TaskMaxRetries int
+
+	// TaskTimeout is TASK_TIMEOUT_SECONDS: how long the container of a task
+	// whose node declares no timeout may run, sent on each such dispatch.
+	TaskTimeout time.Duration
 }
 
 // Load reads configuration from environment variables.
@@ -82,7 +104,27 @@ func Load(v *pkgconfig.Validator) Config {
 		Maintenance: pkgconfig.LoadMaintenance(v),
 
 		MetricsPort: pkgconfig.LoadMetricsPort(v),
+
+		TaskMaxRetries: taskMaxRetries(v),
+		TaskTimeout:    pkgconfig.LoadTaskTimeout(v),
 	}
+}
+
+// taskMaxRetries reads TASK_MAX_RETRIES, a whole number from MinTaskMaxRetries
+// to MaxTaskMaxRetries; unset selects DefaultTaskMaxRetries. Any other value
+// is recorded on v, so state refuses to start.
+func taskMaxRetries(v *pkgconfig.Validator) int {
+	raw := os.Getenv(taskMaxRetriesKey)
+	if raw == "" {
+		return DefaultTaskMaxRetries
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < MinTaskMaxRetries || n > MaxTaskMaxRetries {
+		v.Add(fmt.Sprintf("%s (invalid value %q: expected a whole number from %d to %d)",
+			taskMaxRetriesKey, raw, MinTaskMaxRetries, MaxTaskMaxRetries))
+		return DefaultTaskMaxRetries
+	}
+	return n
 }
 
 // setKeys returns the keys among keys that are set to a non-empty value.

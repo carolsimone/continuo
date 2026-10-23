@@ -5,51 +5,19 @@ import (
 	"testing"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
-	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
-	"github.com/carolsimone/continuo/state/domain/events"
 	"github.com/carolsimone/continuo/state/domain/topology"
-	"github.com/carolsimone/continuo/state/service/handlers"
-	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// statusFlow delivers task.status.updated:v1 for one started run through
-// TaskStatusUpdatedHandler and a real unit of work, one transaction each.
+// statusFlow drives one started run through its reports, each in a
+// transaction of its own, and reads back what they wrote.
 type statusFlow struct {
 	db     *sqlx.DB
 	tenant string
 	r      *run.Run
-}
-
-func (f statusFlow) deliver(t *testing.T, table string, status run.TaskStatus, attempt int32) {
-	t.Helper()
-	ctx := context.Background()
-	u := newPlanningUoW(f.db)
-	require.NoError(t, u.Begin(ctx))
-	defer u.Rollback()
-	require.NoError(t, handlers.NewTaskStatusUpdatedHandler(f.tenant, discardLogger()).Handle(ctx, u, events.TaskStatusUpdated{
-		TaskID:     run.TaskIDFor(f.tenant, f.r.ScheduleID(), topology.NodeKey(table)),
-		ScheduleID: f.r.ScheduleID(),
-		Status:     status,
-		RetryCount: attempt,
-	}, uuid.Nil))
-	require.NoError(t, u.Commit())
-}
-
-// dispatched lists the node keys of the run's query.model:v1 rows, in
-// node-key order.
-func (f statusFlow) dispatched(t *testing.T) []string {
-	t.Helper()
-	var keys []string
-	require.NoError(t, f.db.Select(&keys, `
-		SELECT t.node_key FROM state_outbox o
-		JOIN task_tracker t ON t.task_id = (o.payload->>'task_id')::uuid
-		WHERE o.aggregate_id = $1 AND o.stream_name = $2
-		ORDER BY t.node_key COLLATE "C"`, f.r.ScheduleID(), streams.QueryModelV1))
-	return keys
 }
 
 func (f statusFlow) statuses(t *testing.T) map[string]run.TaskStatus {
@@ -76,50 +44,15 @@ func (f statusFlow) run(t *testing.T) (run.SchedulerStatus, int32) {
 	return row.Status, row.Terminal
 }
 
-// The e2e-schedule-failure run, one status update at a time: each success
-// writes the dispatches it makes ready in its own transaction, a redelivered
-// success writes none, the two last failures skip ftable_f and ftable_h, and
-// the last terminal status finalizes the run failed.
-func TestTaskStatusUpdated_TheExampleRunMovesInItsStatusTransactions(t *testing.T) {
-	db := newTestDB(t)
-	tenant := storeFailureSchedule(t, db)
-	f := statusFlow{db: db, tenant: tenant, r: startScheduleRun(t, db, tenant, "e2e-schedule-failure", model.OperationRun)}
-	assert.Equal(t, []string{"e2e_schema.ftable_a", "e2e_schema.ftable_b"}, f.dispatched(t))
-
-	f.deliver(t, "e2e_schema.ftable_a", run.TaskStatusSucceeded, 0)
-	f.deliver(t, "e2e_schema.ftable_a", run.TaskStatusSucceeded, 0)
-	assert.Equal(t, []string{"e2e_schema.ftable_a", "e2e_schema.ftable_b", "e2e_schema.ftable_g"}, f.dispatched(t))
-
-	f.deliver(t, "e2e_schema.ftable_b", run.TaskStatusSucceeded, 0)
-	f.deliver(t, "e2e_schema.ftable_c", run.TaskStatusSucceeded, 0)
-	f.deliver(t, "e2e_schema.ftable_d", run.TaskStatusSucceeded, 0)
-	f.deliver(t, "e2e_schema.ftable_e", run.TaskStatusFailed, 0)
-	f.deliver(t, "e2e_schema.ftable_e", run.TaskStatusFailed, 2)
-	f.deliver(t, "e2e_schema.ftable_g", run.TaskStatusFailed, 2)
-
-	assert.Equal(t, []string{
-		"e2e_schema.ftable_a", "e2e_schema.ftable_b", "e2e_schema.ftable_c", "e2e_schema.ftable_d",
-		"e2e_schema.ftable_e", "e2e_schema.ftable_g",
-	}, f.dispatched(t))
-	assert.Equal(t, map[string]run.TaskStatus{
-		"e2e_schema.ftable_a": run.TaskStatusSucceeded, "e2e_schema.ftable_b": run.TaskStatusSucceeded,
-		"e2e_schema.ftable_c": run.TaskStatusSucceeded, "e2e_schema.ftable_d": run.TaskStatusSucceeded,
-		"e2e_schema.ftable_e": run.TaskStatusFailed, "e2e_schema.ftable_f": run.TaskStatusSkipped,
-		"e2e_schema.ftable_g": run.TaskStatusFailed, "e2e_schema.ftable_h": run.TaskStatusSkipped,
-	}, f.statuses(t))
-	status, terminal := f.run(t)
-	assert.Equal(t, run.SchedulerStatusFailed, status)
-	assert.Equal(t, int32(8), terminal)
-}
-
-// cascade-2000: the root's last failure skips its 1,999 descendants and
-// finalizes the run in one status transaction.
-func TestTaskStatusUpdated_TheCascadeRootsFailureFinishesTheRun(t *testing.T) {
+// cascade-2000: the root's failure, of a class that is not retried, skips its
+// 1,999 descendants and finalizes the run in one report transaction, its
+// retries unspent.
+func TestAttemptReport_TheCascadeRootsFailureFinishesTheRun(t *testing.T) {
 	db := newTestDB(t)
 	tenant := storeShape(t, db, cascade2000)
 	f := statusFlow{db: db, tenant: tenant, r: startScheduleRun(t, db, tenant, cascade2000.schedule(), model.OperationRun)}
 
-	f.deliver(t, "bench.fail_root", run.TaskStatusFailed, 2)
+	f.report(t, "bench.fail_root", 0, run.AttemptFailed, model.FailureReasonDeadlineExceeded)
 
 	var skipped int
 	require.NoError(t, db.Get(&skipped, `SELECT count(*) FROM task_tracker WHERE schedule_id = $1 AND status = 'skipped'`, f.r.ScheduleID()))
@@ -163,15 +96,15 @@ func (f statusFlow) task(t *testing.T, key string) (string, run.TaskStatus, int3
 
 // A task that runs and fails three times has one row per attempt, each named
 // with its attempt number, and the task ends failed at its last attempt.
-func TestTaskStatusUpdated_EveryAttemptOfAThreeAttemptTaskHasItsRow(t *testing.T) {
+func TestAttemptReport_EveryAttemptOfAThreeAttemptTaskHasItsRow(t *testing.T) {
 	db := newTestDB(t)
 	tenant := storeFailureSchedule(t, db)
 	f := statusFlow{db: db, tenant: tenant, r: startScheduleRun(t, db, tenant, "e2e-schedule-failure", model.OperationRun)}
 	const key = "e2e_schema.ftable_a"
 
 	for attempt := int32(0); attempt <= 2; attempt++ {
-		f.deliver(t, key, run.TaskStatusRunning, attempt)
-		f.deliver(t, key, run.TaskStatusFailed, attempt)
+		f.report(t, key, attempt, run.AttemptRunning, "")
+		f.report(t, key, attempt, run.AttemptFailed, model.FailureReasonExitCode)
 	}
 
 	job, status, attempt := f.task(t, key)
@@ -185,14 +118,13 @@ func TestTaskStatusUpdated_EveryAttemptOfAThreeAttemptTaskHasItsRow(t *testing.T
 }
 
 // Cancelling a run cancels its running attempt in the cancel transaction; a
-// failure reported afterwards finds the run ended and leaves the attempt
-// cancelled.
+// failure reported afterwards finds the run ended and changes nothing.
 func TestCancel_CancelsTheOpenAttemptInTheCancelTransaction(t *testing.T) {
 	db := newTestDB(t)
 	tenant := storeFailureSchedule(t, db)
 	f := statusFlow{db: db, tenant: tenant, r: startScheduleRun(t, db, tenant, "e2e-schedule-failure", model.OperationRun)}
 	const key = "e2e_schema.ftable_a"
-	f.deliver(t, key, run.TaskStatusRunning, 0)
+	f.report(t, key, 0, run.AttemptRunning, "")
 	job, _, _ := f.task(t, key)
 	require.Equal(t, []attemptRow{{Attempt: 0, JobName: job, Status: "running"}}, f.attempts(t, key))
 
@@ -211,66 +143,11 @@ func TestCancel_CancelsTheOpenAttemptInTheCancelTransaction(t *testing.T) {
 	require.Len(t, rows, 1)
 	assert.Equal(t, "cancelled", rows[0].Status)
 
-	f.deliver(t, key, run.TaskStatusFailed, 0)
+	f.report(t, key, 0, run.AttemptFailed, model.FailureReasonExitCode)
 
 	rows = f.attempts(t, key)
 	require.Len(t, rows, 1)
 	assert.Equal(t, "cancelled", rows[0].Status)
 	status, _ := f.run(t)
 	assert.Equal(t, run.SchedulerStatusCancelled, status)
-}
-
-// ftable_a reports RUNNING for attempts 0 and 1 and SUCCEEDED for attempt 1;
-// every other task succeeds and the run finalizes succeeded. Attempt 0's
-// FAILED, delayed past all of them, then closes attempt 0's row in its own
-// status transaction, and the task and the run stay as they ended.
-func TestTaskStatusUpdated_ALateFailureClosesItsAttemptAfterTheRunEnded(t *testing.T) {
-	db := newTestDB(t)
-	tenant := storeFailureSchedule(t, db)
-	f := statusFlow{db: db, tenant: tenant, r: startScheduleRun(t, db, tenant, "e2e-schedule-failure", model.OperationRun)}
-	const key = "e2e_schema.ftable_a"
-
-	f.deliver(t, key, run.TaskStatusRunning, 0)
-	f.deliver(t, key, run.TaskStatusRunning, 1)
-	f.deliver(t, key, run.TaskStatusSucceeded, 1)
-	for _, table := range []string{"ftable_b", "ftable_c", "ftable_d", "ftable_e", "ftable_f", "ftable_g", "ftable_h"} {
-		f.deliver(t, "e2e_schema."+table, run.TaskStatusSucceeded, 0)
-	}
-	status, terminal := f.run(t)
-	require.Equal(t, run.SchedulerStatusSucceeded, status)
-
-	f.deliver(t, key, run.TaskStatusFailed, 0)
-
-	job, taskStatus, attempt := f.task(t, key)
-	assert.Equal(t, []attemptRow{
-		{Attempt: 0, JobName: job, Status: "failed"},
-		{Attempt: 1, JobName: job + "-r1", Status: "succeeded"},
-	}, f.attempts(t, key))
-	assert.Equal(t, run.TaskStatusSucceeded, taskStatus)
-	assert.Equal(t, int32(1), attempt)
-	after, afterTerminal := f.run(t)
-	assert.Equal(t, run.SchedulerStatusSucceeded, after)
-	assert.Equal(t, terminal, afterTerminal)
-}
-
-// A failure that reports the exhausted budget for a retry Job Kubernetes
-// refused is recorded at the refused retry, and the attempt before it keeps
-// its row.
-func TestTaskStatusUpdated_ARefusedRetryJobIsRecordedAtTheRetry(t *testing.T) {
-	db := newTestDB(t)
-	tenant := storeFailureSchedule(t, db)
-	f := statusFlow{db: db, tenant: tenant, r: startScheduleRun(t, db, tenant, "e2e-schedule-failure", model.OperationRun)}
-	const key = "e2e_schema.ftable_a"
-
-	f.deliver(t, key, run.TaskStatusRunning, 0)
-	f.deliver(t, key, run.TaskStatusFailed, 0)
-	f.deliver(t, key, run.TaskStatusFailed, 2)
-
-	job, status, attempt := f.task(t, key)
-	assert.Equal(t, []attemptRow{
-		{Attempt: 0, JobName: job, Status: "failed"},
-		{Attempt: 1, JobName: job + "-r1", Status: "failed"},
-	}, f.attempts(t, key))
-	assert.Equal(t, run.TaskStatusFailed, status)
-	assert.Equal(t, int32(2), attempt)
 }

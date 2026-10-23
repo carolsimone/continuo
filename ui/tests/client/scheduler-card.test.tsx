@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router';
 import SchedulerCard from '../../src/client/SchedulerCard';
-import { ScheduleSummary } from '../../src/client/types';
+import { ScheduleSummary, Task } from '../../src/client/types';
 
 function baseSchedule(overrides: Partial<ScheduleSummary> = {}): ScheduleSummary {
   return {
@@ -229,5 +229,33 @@ describe('SchedulerCard — activity badge', () => {
     expect(screen.getByText('Inactive')).toBeInTheDocument();
     expect(screen.queryByText('Active')).toBeNull();
     expect(container.querySelector('.schedule-cron')).toBeNull();
+  });
+});
+
+describe('SchedulerCard — task counts', () => {
+  const mkTask = (i: number, status: string): Task => ({
+    task_id: `t-${i}`, service_name: 'svc', schema_name: 'schema', table_name: `tbl${i}`,
+    job_name: 'job', status, attempt: 0, max_retries: 0, created_at: null,
+  });
+
+  it('counts dispatched and queued tasks before running and pending, and the counts add up to the total', async () => {
+    const statuses = [
+      'succeeded', 'succeeded', 'failed', 'dispatched', 'queued', 'queued', 'running', 'pending', 'pending', 'pending',
+    ];
+    const tasks = statuses.map((s, i) => mkTask(i, s));
+    installFetch({ tasks: { tasks, total_count: tasks.length } });
+    const { container } = renderCard(baseSchedule({ is_running: true, last_run_id: 'r1' }));
+
+    await waitFor(() => {
+      expect(container.querySelector('.summary-row')).not.toBeNull();
+    });
+    const counts = [...container.querySelectorAll('.summary-row > span')].map((el) => {
+      const m = /(\d+)\s+(\w+)/.exec(el.textContent ?? '');
+      return [m?.[2], Number(m?.[1])] as const;
+    });
+    expect(counts).toEqual([
+      ['succeeded', 2], ['failed', 1], ['dispatched', 1], ['queued', 2], ['running', 1], ['pending', 3],
+    ]);
+    expect(counts.reduce((sum, [, n]) => sum + n, 0)).toBe(tasks.length);
   });
 });

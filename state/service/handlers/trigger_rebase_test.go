@@ -42,8 +42,9 @@ func (r *rebaseRuns) SaveRun(_ context.Context, rn *run.Run) error {
 // starts with.
 type rebaseTasks struct {
 	run.TaskCollection
-	tasks   []run.Task
-	created []run.Task
+	attempts []run.Attempt
+	tasks    []run.Task
+	created  []run.Task
 }
 
 func (t *rebaseTasks) HasNonSucceeded(context.Context, uuid.UUID) (bool, error) { return true, nil }
@@ -52,6 +53,11 @@ func (t *rebaseTasks) ListRunTasks(context.Context, uuid.UUID) ([]run.Task, erro
 }
 func (t *rebaseTasks) BulkCreate(_ context.Context, tasks []run.Task) error {
 	t.created = append(t.created, tasks...)
+	return nil
+}
+
+func (t *rebaseTasks) AddAttempts(_ context.Context, attempts []run.Attempt) error {
+	t.attempts = append(t.attempts, attempts...)
 	return nil
 }
 
@@ -114,7 +120,7 @@ func newRebaseFixture(t *testing.T) *rebaseFixture {
 			{TaskID: uuid.New(), NodeKey: "mart.c", Status: run.TaskStatusSkipped},
 			{TaskID: uuid.New(), NodeKey: "raw.a", Status: run.TaskStatusSucceeded},
 		}},
-		planner: runstart.Planner{TenantID: "default"},
+		planner: runstart.Planner{TenantID: "default", Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}},
 	}
 	f.u.TopologyRepo = &releaseGraphs{
 		LiveReleaseOnly: uow.LiveReleaseOnly{Live: topology.Pointer{ReleaseID: "rel-7", PromotionSeq: 12}},

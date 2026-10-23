@@ -3,10 +3,7 @@
 package command
 
 import (
-	"fmt"
-
 	"github.com/carolsimone/continuo/execution-controller/domain/deploy"
-	"github.com/carolsimone/continuo/pkg/domain"
 )
 
 // Command is a marker interface for all commands.
@@ -14,9 +11,9 @@ type Command interface {
 	isCommand()
 }
 
-// DeployTask is the command to deploy one task's dbt job. It is the payload of
-// a queued deployment and carries everything needed both to perform the deploy
-// and to report the attempt's RUNNING and final status afterwards.
+// DeployTask is the command to run one attempt of one task as a Kubernetes
+// Job. It is the payload of a queued deployment and carries everything needed
+// both to create the Job and to report the attempt afterwards.
 type DeployTask struct {
 	TaskID       string
 	ScheduleID   string
@@ -29,29 +26,19 @@ type DeployTask struct {
 	ImageTag     string
 	// SecretRef names the continuo-api-* Secret a python-api node's pod
 	// receives as env vars; empty for every other node.
-	SecretRef      string
-	TaskRetryCount int
-	TaskMaxRetries int
+	SecretRef string
+	// Attempt is which attempt of the task this is, as state numbered it.
+	Attempt int
 	// Operation selects the dbt verb the executor runs for this node. Empty
 	// (pkg_model.OperationRun) is the default: dbt run/seed/snapshot by
 	// NodeType. "test" runs `dbt test --select <node>`.
 	Operation string
+	// TimeoutSeconds is how long the attempt's container may run once its
+	// Job has started its pod.
+	TimeoutSeconds int64
 }
 
 func (DeployTask) isCommand() {}
-
-// NextAttempt is the command for the task's next attempt: the same task with
-// its retry count one higher and the Job name of that attempt.
-func (c DeployTask) NextAttempt() (DeployTask, error) {
-	next := c
-	next.TaskRetryCount++
-	name, err := domain.ComputeJobName(c.ServiceName, c.SchemaName, c.TableName, c.ScheduleID, next.TaskRetryCount)
-	if err != nil {
-		return DeployTask{}, fmt.Errorf("name attempt %d of task %s: %w", next.TaskRetryCount, c.TaskID, err)
-	}
-	next.JobName = name
-	return next, nil
-}
 
 // ValidationDeployTask is the command to deploy one validation node's dbt
 // --empty job. Parallel to DeployTask: production fields stay on DeployTask;
@@ -102,17 +89,19 @@ func (ValidationDeployTask) isCommand() {}
 // port consumes. The mapping is a pure field copy — no infrastructure concern.
 func (c DeployTask) ToJobSpec() deploy.JobSpec {
 	return deploy.JobSpec{
-		JobName:      c.JobName,
-		TaskID:       c.TaskID,
-		ScheduleID:   c.ScheduleID,
-		ScheduleName: c.ScheduleName,
-		ServiceName:  c.ServiceName,
-		SchemaName:   c.SchemaName,
-		TableName:    c.TableName,
-		NodeType:     c.NodeType,
-		ImageTag:     c.ImageTag,
-		SecretRef:    c.SecretRef,
-		Operation:    c.Operation,
+		JobName:        c.JobName,
+		TaskID:         c.TaskID,
+		ScheduleID:     c.ScheduleID,
+		ScheduleName:   c.ScheduleName,
+		ServiceName:    c.ServiceName,
+		SchemaName:     c.SchemaName,
+		TableName:      c.TableName,
+		NodeType:       c.NodeType,
+		ImageTag:       c.ImageTag,
+		SecretRef:      c.SecretRef,
+		Operation:      c.Operation,
+		Attempt:        c.Attempt,
+		TimeoutSeconds: c.TimeoutSeconds,
 	}
 }
 

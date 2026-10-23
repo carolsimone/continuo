@@ -81,7 +81,7 @@ func seqScansOf(scans []planScan) []string {
 	return out
 }
 
-// The hot queries of a run's status updates read topology_edges and
+// The hot queries of a run's attempt reports read topology_edges and
 // task_tracker through their indexes only, on an analysed 2,000-node release
 // and its run: a success's ready candidates, and a final failure's pending
 // descendants.

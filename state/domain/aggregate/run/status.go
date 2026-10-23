@@ -2,6 +2,7 @@ package run
 
 import (
 	"fmt"
+	"slices"
 )
 
 // SchedulerStatus is the lifecycle status of a Run.
@@ -55,25 +56,34 @@ func TerminalSchedulerStatuses() []SchedulerStatus {
 	return out
 }
 
-// TaskStatus is the lifecycle status of one task within a Run.
+// TaskStatus is the lifecycle status of one task within a Run. A task waits
+// pending until it is ready; once state dispatches an attempt of it the task
+// is dispatched, then queued while execution-controller waits for a slot,
+// then running once the attempt's main container starts. A failed attempt
+// with retries left dispatches the next one, so the task is failed only once
+// it will not run again.
 type TaskStatus string
 
 const (
-	TaskStatusPending   TaskStatus = "pending"
-	TaskStatusRunning   TaskStatus = "running"
-	TaskStatusSucceeded TaskStatus = "succeeded"
-	TaskStatusFailed    TaskStatus = "failed"
-	TaskStatusCancelled TaskStatus = "cancelled"
-	TaskStatusSkipped   TaskStatus = "skipped"
+	TaskStatusPending    TaskStatus = "pending"
+	TaskStatusDispatched TaskStatus = "dispatched"
+	TaskStatusQueued     TaskStatus = "queued"
+	TaskStatusRunning    TaskStatus = "running"
+	TaskStatusSucceeded  TaskStatus = "succeeded"
+	TaskStatusFailed     TaskStatus = "failed"
+	TaskStatusCancelled  TaskStatus = "cancelled"
+	TaskStatusSkipped    TaskStatus = "skipped"
 )
 
+// TaskStatuses lists every TaskStatus. The CHECK constraint on
+// task_tracker.status lists exactly these.
+func TaskStatuses() []TaskStatus {
+	return []TaskStatus{TaskStatusPending, TaskStatusDispatched, TaskStatusQueued, TaskStatusRunning,
+		TaskStatusSucceeded, TaskStatusFailed, TaskStatusCancelled, TaskStatusSkipped}
+}
+
 func (t TaskStatus) IsValid() bool {
-	switch t {
-	case TaskStatusPending, TaskStatusRunning, TaskStatusSucceeded,
-		TaskStatusFailed, TaskStatusCancelled, TaskStatusSkipped:
-		return true
-	}
-	return false
+	return slices.Contains(TaskStatuses(), t)
 }
 
 // IsTerminal reports whether a task in status t will not run again in its

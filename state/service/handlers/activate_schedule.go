@@ -136,10 +136,10 @@ func (h *ActivateScheduleHandler) Handle(
 }
 
 // finishRefused finishes r, whose selection was refused, without tasks:
-// skipped when the refusal is benign, failed otherwise, with the refusal as
-// the reason it logs.
+// skipped when the refusal is benign, failed otherwise with the run failure
+// reason the refusal names, and with the refusal as the reason it logs.
 func (h *ActivateScheduleHandler) finishRefused(ctx context.Context, u uow.UnitOfWork, r *run.Run, benign bool, refusal error, now time.Time) error {
-	events, err := r.MarkDispatchTerminal(benign, refusal.Error(), now)
+	events, err := r.MarkDispatchTerminal(benign, refusalFailureReason(refusal), refusal.Error(), now)
 	if err != nil {
 		return err
 	}
@@ -151,6 +151,15 @@ func (h *ActivateScheduleHandler) finishRefused(ctx context.Context, u uow.UnitO
 	}
 	logDispatchTerminal(h.logger, "activate", r.ScheduleID(), events)
 	return nil
+}
+
+// refusalFailureReason is the run failure reason of a schedule refusal that
+// fails its run.
+func refusalFailureReason(refusal error) run.RunFailureReason {
+	if errors.Is(refusal, runplan.ErrInvalidNodeType) {
+		return run.RunFailureInvalidNodeType
+	}
+	return run.RunFailureEmptySelection
 }
 
 // scheduleRefusal returns err when it is a refusal a schedule's selection can

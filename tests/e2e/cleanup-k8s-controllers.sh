@@ -38,4 +38,10 @@ kubectl delete rolebinding execution-controller -n default --ignore-not-found=tr
 log_info "Deleting test jobs..."
 kubectl delete jobs -n default -l schedule=e2e-schedule --ignore-not-found=true || true
 
+# The start-timeout e2e test applies this ResourceQuota, which forbids every new
+# pod in the namespace, and deletes it when it ends; a killed test run leaves it
+# behind.
+log_info "Deleting the e2e-no-pods ResourceQuota..."
+kubectl delete resourcequota e2e-no-pods -n default --ignore-not-found=true || true
+
 log_info "Cleanup complete!"

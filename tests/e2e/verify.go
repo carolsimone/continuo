@@ -3,14 +3,15 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/lib/pq"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/google/uuid"
-	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -83,36 +84,24 @@ func verifyJobsCompleted(
 	t.Logf("✅ All %d jobs completed successfully", len(tables))
 }
 
-// verifyNextLevelDispatched checks that the next level nodes were dispatched on query.model:v1
+// verifyNextLevelDispatched checks that the next level nodes were dispatched on task.dispatch:v1
 func verifyNextLevelDispatched(
 	t *testing.T,
 	ctx context.Context,
-	queryModelTap *streamTap,
+	dispatchTap *streamTap,
 	nextLevelTables []string,
 	scheduleID uuid.UUID,
 ) {
-	// Wait for query.model:v1 to contain messages for next level. The tap saw every
-	// entry since before the run was triggered, so a trim of consumed entries
-	// cannot hide one.
+	// Wait for task.dispatch:v1 to contain the next level's dispatches. The tap
+	// saw every entry since before the run was triggered, so a trim of consumed
+	// entries cannot hide one.
 	pollUntil(t, ctx, 60*time.Second, 1*time.Second, func() (bool, error) {
-		messages := queryModelTap.Entries()
-
-		// Count messages matching next level tables for this specific schedule
 		matchCount := 0
-		for _, msg := range messages {
-			if msg.Values["schedule_id"] != scheduleID.String() {
-				continue
-			}
-			if tableName, ok := msg.Values["table_name"].(string); ok {
-				for _, expectedTable := range nextLevelTables {
-					if tableName == expectedTable {
-						matchCount++
-						break
-					}
-				}
+		for _, d := range dispatchTap.Dispatches(t) {
+			if d.RunID == scheduleID.String() && slices.Contains(nextLevelTables, d.TableName) {
+				matchCount++
 			}
 		}
-
 		return matchCount >= len(nextLevelTables), nil
 	}, fmt.Sprintf("Timeout waiting for state to dispatch %d nodes", len(nextLevelTables)))
 
@@ -135,7 +124,7 @@ func verifyFullDAGExecution(
 	t *testing.T,
 	ctx context.Context,
 	clients *testClients,
-	queryModelTap *streamTap,
+	dispatchTap *streamTap,
 	scheduleID uuid.UUID,
 ) {
 	levels := getDAGLevels()
@@ -151,7 +140,7 @@ func verifyFullDAGExecution(
 
 		// If not last level, verify state dispatched the next level
 		if i < len(levels)-1 {
-			verifyNextLevelDispatched(t, ctx, queryModelTap, levels[i+1], scheduleID)
+			verifyNextLevelDispatched(t, ctx, dispatchTap, levels[i+1], scheduleID)
 		}
 	}
 
@@ -199,55 +188,50 @@ func verifyDialectRouting(t *testing.T, ctx context.Context) {
 	t.Log("✅ dialect routing verified: service-1 jobs run customname-dbt, service-2/3 jobs run built-in dbt")
 }
 
-// verifyRootNodesDispatched verifies that state dispatched the expected root
-// nodes to query.model:v1 when it created the run.
+// verifyRootNodesDispatched verifies that state dispatched attempt 0 of each
+// expected root node to task.dispatch:v1 when it created the run, once.
 func verifyRootNodesDispatched(
 	t *testing.T,
 	ctx context.Context,
-	queryModelTap *streamTap,
+	dispatchTap *streamTap,
 	schedulerID uuid.UUID,
 	expectedRootNodes []string,
 ) {
 	t.Helper()
 	expectedCount := len(expectedRootNodes)
-
-	// Wait for query.model:v1 to contain the expected messages. The tap saw every
-	// entry since before the run was triggered, so a trim of consumed entries
-	// cannot hide one.
-	pollUntil(t, ctx, 60*time.Second, 500*time.Millisecond, func() (bool, error) {
-		messages := queryModelTap.Entries()
-		count := 0
-		for _, msg := range messages {
-			if msg.Values["schedule_id"] == schedulerID.String() {
-				count++
+	ofRun := func() []tappedDispatch {
+		var out []tappedDispatch
+		for _, d := range dispatchTap.Dispatches(t) {
+			if d.RunID == schedulerID.String() {
+				out = append(out, d)
 			}
 		}
-		return count >= expectedCount, nil
-	}, fmt.Sprintf("Timeout waiting for %d messages in query.model:v1", expectedCount))
-
-	// Assert Redis message content and no duplicates
-	messages := queryModelTap.Entries()
-
-	var scheduleMessages []goredis.XMessage
-	for _, msg := range messages {
-		if msg.Values["schedule_id"] == schedulerID.String() {
-			scheduleMessages = append(scheduleMessages, msg)
-		}
+		return out
 	}
-	require.Len(t, scheduleMessages, expectedCount, "Expected exactly %d messages for this schedule in query.model:v1", expectedCount)
 
+	// Wait for task.dispatch:v1 to contain the expected dispatches. The tap saw
+	// every entry since before the run was triggered, so a trim of consumed
+	// entries cannot hide one.
+	pollUntil(t, ctx, 60*time.Second, 500*time.Millisecond, func() (bool, error) {
+		return len(ofRun()) >= expectedCount, nil
+	}, fmt.Sprintf("Timeout waiting for %d dispatches in task.dispatch:v1", expectedCount))
+
+	dispatches := ofRun()
+	require.Len(t, dispatches, expectedCount, "Expected exactly %d dispatches of this run in task.dispatch:v1", expectedCount)
 	seenStreamTables := make(map[string]bool)
-	for _, msg := range scheduleMessages {
-		tableName, _ := msg.Values["table_name"].(string)
-		assert.NotEmpty(t, msg.Values["task_id"], "task_id must be present")
-		assert.NotEmpty(t, msg.Values["job_name"], "job_name must be present")
-		assert.NotEmpty(t, msg.Values["outbox_entry_id"], "outbox_entry_id must be present")
-		assert.Contains(t, expectedRootNodes, tableName, "stream table_name must be a root node")
-		assert.False(t, seenStreamTables[tableName], "Duplicate Redis message for table: %s", tableName)
-		seenStreamTables[tableName] = true
+	for _, d := range dispatches {
+		assert.NotEmpty(t, d.TaskID, "task_id must be present")
+		assert.NotEmpty(t, d.JobName, "job_name must be present")
+		assert.NotEmpty(t, d.OutboxEntryID, "outbox_entry_id must be present")
+		assert.Equal(t, int32(0), d.Attempt, "a root node's first dispatch is its attempt 0")
+		assert.Equal(t, model.AttemptStatusDispatched, d.KnownStatus)
+		assert.Positive(t, d.TimeoutSeconds, "every dispatch carries its task timeout")
+		assert.Contains(t, expectedRootNodes, d.TableName, "stream table_name must be a root node")
+		assert.False(t, seenStreamTables[d.TableName], "Duplicate dispatch for table: %s", d.TableName)
+		seenStreamTables[d.TableName] = true
 	}
 
-	t.Logf("✅ state dispatched %d root node messages to query.model:v1", expectedCount)
+	t.Logf("✅ state dispatched %d root nodes to task.dispatch:v1", expectedCount)
 }
 
 // verifyTasksSkipped polls state DB until every task of schedulerID at one of
@@ -268,11 +252,10 @@ func verifyTasksSkipped(t *testing.T, ctx context.Context, clients *testClients,
 	t.Logf("✅ %v skipped", tables)
 }
 
-// verifyNodeExhaustedRetries polls state DB until the given node has attempt = 2
-// and status = 'failed' and its task_attempts rows are exactly (0, failed),
-// (1, failed), (2, failed), confirming all 2 retries were exhausted (3 total
-// attempts, each recorded once as failed). The attempt rows seen are logged
-// whenever they change, so a timeout shows what the poll last observed.
+// verifyNodeExhaustedRetries waits until tableName's task of schedulerID has
+// failed for good: every attempt its budget allowed (max_retries + 1) failed
+// with a failure of class task, each the next attempt state dispatched, and
+// the task ended failed at its last attempt.
 func verifyNodeExhaustedRetries(
 	t *testing.T,
 	ctx context.Context,
@@ -281,38 +264,141 @@ func verifyNodeExhaustedRetries(
 	tableName string,
 ) {
 	t.Helper()
-	const wantAttempts = "0:failed,1:failed,2:failed"
 	lastSeen := ""
+	var maxRetries int
 	pollUntil(t, ctx, 10*time.Minute, 5*time.Second, func() (bool, error) {
 		var taskID uuid.UUID
 		var attempt int
 		var status string
 		err := clients.stateDB.QueryRowContext(ctx, `
-			SELECT task_id, attempt, status
+			SELECT task_id, attempt, max_retries, status
 			FROM task_tracker
 			WHERE schedule_id = $1 AND table_name = $2
-		`, schedulerID, tableName).Scan(&taskID, &attempt, &status)
+		`, schedulerID, tableName).Scan(&taskID, &attempt, &maxRetries, &status)
 		if err != nil {
 			return false, err
 		}
 		var rows []string
 		if err := clients.stateDB.SelectContext(ctx, &rows, `
-			SELECT attempt::text || ':' || status
+			SELECT attempt::text || ':' || status || ':' || coalesce(failure_class, '')
 			FROM task_attempts
 			WHERE task_id = $1
 			ORDER BY attempt
 		`, taskID); err != nil {
 			return false, err
 		}
-		seen := fmt.Sprintf("task_tracker attempt=%d status=%s; task_attempts [%s]", attempt, status, strings.Join(rows, ","))
+		want := make([]string, 0, maxRetries+1)
+		for n := 0; n <= maxRetries; n++ {
+			want = append(want, fmt.Sprintf("%d:failed:task", n))
+		}
+		seen := fmt.Sprintf("task_tracker attempt=%d max_retries=%d status=%s; task_attempts [%s]",
+			attempt, maxRetries, status, strings.Join(rows, ","))
 		if seen != lastSeen {
 			t.Logf("%s attempts: %s", tableName, seen)
 			lastSeen = seen
 		}
-		return attempt == 2 && status == "failed" && strings.Join(rows, ",") == wantAttempts, nil
-	}, fmt.Sprintf("Timeout waiting for %s to exhaust 2 retries and reach failed status with attempt rows %s (see the last logged attempts line)", tableName, wantAttempts))
+		return attempt == maxRetries && status == "failed" && strings.Join(rows, ",") == strings.Join(want, ","), nil
+	}, fmt.Sprintf("Timeout waiting for %s to fail every attempt its budget allows with class task (see the last logged attempts line)", tableName))
 
-	t.Logf("✅ %s exhausted 2 retries and is permanently failed (3 total attempts)", tableName)
+	t.Logf("✅ %s failed all %d attempts its budget allows", tableName, maxRetries+1)
+}
+
+// taskOfRun returns the task_id of tableName's task in runID. state writes
+// every task of a run in the transaction that creates the run, so the row is
+// there once the trigger has returned.
+func taskOfRun(t *testing.T, ctx context.Context, clients *testClients, runID uuid.UUID, tableName string) uuid.UUID {
+	t.Helper()
+	var taskID uuid.UUID
+	require.NoError(t, clients.stateDB.GetContext(ctx, &taskID,
+		`SELECT task_id FROM task_tracker WHERE schedule_id = $1 AND table_name = $2`, runID, tableName),
+		"run %s holds no task at %s", runID, tableName)
+	return taskID
+}
+
+// attemptRows lists taskID's task_attempts rows in attempt order, each as
+// "attempt:status", followed by ":class:reason" for a failed attempt.
+func attemptRows(ctx context.Context, clients *testClients, taskID uuid.UUID) ([]string, error) {
+	rows := []string{}
+	err := clients.stateDB.SelectContext(ctx, &rows, `
+		SELECT attempt::text || ':' || status
+		       || coalesce(':' || failure_class || ':' || failure_reason, '')
+		  FROM task_attempts
+		 WHERE task_id = $1
+		 ORDER BY attempt`, taskID)
+	return rows, err
+}
+
+// endedTask is a task that has ended, with its attempts as attemptRows lists
+// them.
+type endedTask struct {
+	status     string
+	attempt    int
+	maxRetries int
+	attempts   []string
+}
+
+// taskEnded reports whether taskID's task has ended: succeeded, failed,
+// cancelled or skipped.
+func taskEnded(ctx context.Context, clients *testClients, taskID uuid.UUID) (bool, error) {
+	var status string
+	if err := clients.stateDB.GetContext(ctx, &status,
+		`SELECT status FROM task_tracker WHERE task_id = $1`, taskID); err != nil {
+		return false, err
+	}
+	switch status {
+	case "succeeded", "failed", "cancelled", "skipped":
+		return true, nil
+	}
+	return false, nil
+}
+
+// waitForTaskEnded waits until taskID's task has ended and returns it. The task
+// and its attempt rows are logged under label whenever they change, so a
+// timeout shows what the poll last saw. state records a failed attempt and
+// dispatches the next one in the same transaction, so the rows read once the
+// task has ended are all the attempts it will ever have.
+func waitForTaskEnded(t *testing.T, ctx context.Context, clients *testClients, taskID uuid.UUID, label string, timeout time.Duration) endedTask {
+	t.Helper()
+	var ended endedTask
+	lastSeen := ""
+	pollUntil(t, ctx, timeout, 2*time.Second, func() (bool, error) {
+		var cur endedTask
+		if err := clients.stateDB.QueryRowContext(ctx,
+			`SELECT status, attempt, max_retries FROM task_tracker WHERE task_id = $1`, taskID).
+			Scan(&cur.status, &cur.attempt, &cur.maxRetries); err != nil {
+			return false, err
+		}
+		rows, err := attemptRows(ctx, clients, taskID)
+		if err != nil {
+			return false, err
+		}
+		cur.attempts = rows
+		seen := fmt.Sprintf("task_tracker status=%s attempt=%d max_retries=%d; task_attempts [%s]",
+			cur.status, cur.attempt, cur.maxRetries, strings.Join(rows, ","))
+		if seen != lastSeen {
+			t.Logf("%s: %s", label, seen)
+			lastSeen = seen
+		}
+		switch cur.status {
+		case "succeeded", "failed", "cancelled", "skipped":
+			ended = cur
+			return true, nil
+		}
+		return false, nil
+	}, fmt.Sprintf("Timeout waiting for the task of %s to end (see the last logged line)", label))
+	return ended
+}
+
+// attemptReportedAt returns when state recorded the last report of attempt n of
+// taskID: task_attempts.last_report_at, on the database clock. For an attempt
+// that has ended it is when state learned how it ended.
+func attemptReportedAt(t *testing.T, ctx context.Context, clients *testClients, taskID uuid.UUID, n int) time.Time {
+	t.Helper()
+	var at time.Time
+	require.NoError(t, clients.stateDB.GetContext(ctx, &at,
+		`SELECT last_report_at FROM task_attempts WHERE task_id = $1 AND attempt = $2`, taskID, n),
+		"attempt %d of task %s has no report time", n, taskID)
+	return at
 }
 
 // verifyNoJobsDeployed asserts that none of the given tables have K8s jobs.

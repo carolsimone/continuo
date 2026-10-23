@@ -222,6 +222,12 @@ func TestRecord_CompileOutcomeCarriesFailedContainer(t *testing.T) {
 	assert.Contains(t, string(captured.Payload), `"failed_container":"parse-prod"`)
 }
 
-func (*stubDeploymentsRepo) HasAttemptFrom(context.Context, string, int) (bool, error) {
-	return false, nil
+func (*stubDeploymentsRepo) AddAttempt(context.Context, *model.Deployment) (bool, error) {
+	panic("AddAttempt not used by these tests")
+}
+func (*stubDeploymentsRepo) LoadByTaskAttempt(context.Context, string, int) (*model.Deployment, bool, error) {
+	panic("LoadByTaskAttempt not used by these tests")
+}
+func (*stubDeploymentsRepo) HasAttemptAfter(context.Context, string, int) (bool, error) {
+	panic("HasAttemptAfter not used by these tests")
 }

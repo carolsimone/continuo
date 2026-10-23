@@ -266,6 +266,53 @@ done
 grep -q 'JOB_START_TIMEOUT_SECONDS: "900"' "${tmp}/execution-null.yaml" \
   || { echo "FAIL: a release without execution values must get the default start timeout"; exit 1; }
 
+# runs.taskMaxRetries and runs.taskTimeoutHours reach state and
+# execution-controller through the shared ConfigMap, the timeout in seconds; a
+# value outside its range fails the render, and a release without a runs block
+# (helm upgrade --reuse-values from an older chart) renders the defaults.
+echo "--- runs.taskMaxRetries and runs.taskTimeoutHours reach the ConfigMap; values outside their ranges are refused"
+grep -q 'TASK_MAX_RETRIES: "2"' "${tmp}/defaults.yaml" \
+  || { echo "FAIL: the default render does not set TASK_MAX_RETRIES to 2"; exit 1; }
+grep -q 'TASK_TIMEOUT_SECONDS: "86400"' "${tmp}/defaults.yaml" \
+  || { echo "FAIL: the default render does not set TASK_TIMEOUT_SECONDS to 86400"; exit 1; }
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set runs.taskMaxRetries=0 --set runs.taskTimeoutHours=3 > "${tmp}/runs-set.yaml"
+grep -q 'TASK_MAX_RETRIES: "0"' "${tmp}/runs-set.yaml" \
+  || { echo "FAIL: runs.taskMaxRetries=0 does not reach the shared ConfigMap"; exit 1; }
+grep -q 'TASK_TIMEOUT_SECONDS: "10800"' "${tmp}/runs-set.yaml" \
+  || { echo "FAIL: runs.taskTimeoutHours does not reach the shared ConfigMap in seconds"; exit 1; }
+for bad in "runs.taskMaxRetries=-1" "runs.taskMaxRetries=11" "runs.taskTimeoutHours=0" "runs.taskTimeoutHours=169"; do
+  if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set "${bad}" > /dev/null 2>&1; then
+    echo "FAIL: ${bad} must fail the render"; exit 1
+  fi
+done
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set runs=null > "${tmp}/runs-null.yaml" \
+  || { echo "FAIL: rendering with runs=null failed; helm upgrade --reuse-values from a chart without runs would fail"; exit 1; }
+grep -q 'TASK_MAX_RETRIES: "2"' "${tmp}/runs-null.yaml" && grep -q 'TASK_TIMEOUT_SECONDS: "86400"' "${tmp}/runs-null.yaml" \
+  || { echo "FAIL: a release without runs values must get the default retry budget and task timeout"; exit 1; }
+# deployment_env_entries prints each env entry named like the ERE $3 in the
+# whole Deployment document named $1 of the rendered manifest $2, one
+# "- name: ..." line each. It exits 3 when the manifest has no such Deployment,
+# so a renamed Deployment cannot make a caller's check pass on nothing.
+deployment_env_entries() {
+  awk -v dep="$1" -v pattern="$3" '
+    function flush() {
+      if (isDeployment && named) { found = 1; printf "%s", hits }
+      isDeployment = 0; named = 0; hits = ""
+    }
+    /^---$/ { flush(); next }
+    /^kind: Deployment$/ { isDeployment = 1 }
+    ($0 == "  name: " dep) { named = 1 }
+    $0 ~ ("^ +- name: (" pattern ")$") { hits = hits $0 "\n" }
+    END { flush(); if (!found) exit 3 }' "$2"
+}
+for svc in state execution-controller; do
+  shadows="$(deployment_env_entries "$svc" "${tmp}/defaults.yaml" 'TASK_MAX_RETRIES|TASK_TIMEOUT_SECONDS')" \
+    || { echo "FAIL: the default render has no Deployment named ${svc}"; exit 1; }
+  if [ -n "$shadows" ]; then
+    echo "FAIL: ${svc}'s own env must not shadow the ConfigMap's TASK_MAX_RETRIES or TASK_TIMEOUT_SECONDS:"; echo "$shadows"; exit 1
+  fi
+done
+
 # maintenance.enabled reaches every service through the shared ConfigMap as
 # exactly "true" or "false"; a non-boolean value fails the render, and a release
 # without a maintenance block (helm upgrade --reuse-values from an older chart)

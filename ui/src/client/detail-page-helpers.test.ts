@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveActiveGraph, headerDriftLabel } from './detail-page-helpers';
+import { resolveActiveGraph, headerDriftLabel, taskStatusTitle, runFailureLabel } from './detail-page-helpers';
 
 describe('resolveActiveGraph mode=latest', () => {
   const scheduleGraph = { nodes: [{ node_id: 't', node_type: 'model', schedule_name: 's' }], edges: [] };
@@ -40,5 +40,21 @@ describe('headerDriftLabel', () => {
   it('treats undefined mode as run (backwards compatible)', () => {
     expect(headerDriftLabel({ driftLabel: 'source 2 releases behind latest' } as any))
       .toBe('source 2 releases behind latest');
+  });
+});
+
+describe('taskStatusTitle', () => {
+  it('says a queued task waits for a slot and titles no other status', () => {
+    expect(taskStatusTitle('queued')).toBe('waiting for a slot');
+    for (const s of ['dispatched', 'running', 'pending', 'failed']) expect(taskStatusTitle(s)).toBeUndefined();
+  });
+});
+
+describe('runFailureLabel', () => {
+  it('names why a run failed without a failed task, and nothing otherwise', () => {
+    expect(runFailureLabel('stalled')).toBe('failed: stalled');
+    expect(runFailureLabel('empty_selection')).toBe('failed: empty selection');
+    expect(runFailureLabel(null)).toBeNull();
+    expect(runFailureLabel('')).toBeNull();
   });
 });

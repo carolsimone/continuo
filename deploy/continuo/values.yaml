@@ -393,6 +393,21 @@ execution:
   # install, and execution-controller refuses to start on it.
   startTimeoutMinutes: 15
 
+# Task runs. state decides every attempt of every task. A failed attempt is
+# retried at once, while its task has retries left, unless it failed by
+# timing out or because the dispatch cannot run (failure classes timeout and
+# invalid); taskMaxRetries is how many retries a task gets after its first
+# attempt (0 to 10), stamped on each task when its run is created. A task's
+# container may run for its node's declared timeout_minutes; a node that
+# declares none, and every validation, seed-build and compile Job, gets
+# taskTimeoutHours (1 to 168). Kubernetes stops a Job once the start timeout
+# plus that time has passed since the Job started (its activeDeadlineSeconds),
+# and the attempt fails with deadline_exceeded. A value outside its range
+# fails the install, and state and execution-controller refuse to start on it.
+runs:
+  taskMaxRetries: 2
+  taskTimeoutHours: 24
+
 # Maintenance mode. While enabled, continuo starts no new work and lets the
 # work already running finish: ui, the public release API and the CLI refuse new
 # runs, triggers, releases, remediation retries and dead-letter redrives with

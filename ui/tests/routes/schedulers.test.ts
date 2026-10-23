@@ -446,3 +446,23 @@ describe('GET /api/schedulers/:id/rebase-preview', () => {
     expect(res.status).toBe(500);
   });
 });
+
+describe('GET /api/schedulers/:id', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("returns the run's failure reason, null when it has none", async () => {
+    mockGetScheduler.mockImplementation((_req: any, cb: any) => cb(null, { scheduler: {
+      schedule_id: 'run-1', schedule_name: 'daily', status: 'SCHEDULER_STATUS_FAILED', failure_reason: 'stalled',
+    } }));
+    const res = await request(app).get('/api/schedulers/run-1');
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('failed');
+    expect(res.body.failure_reason).toBe('stalled');
+
+    mockGetScheduler.mockImplementation((_req: any, cb: any) => cb(null, { scheduler: {
+      schedule_id: 'run-2', schedule_name: 'daily', status: 'SCHEDULER_STATUS_SUCCEEDED', failure_reason: '',
+    } }));
+    const ok = await request(app).get('/api/schedulers/run-2');
+    expect(ok.body.failure_reason).toBeNull();
+  });
+});

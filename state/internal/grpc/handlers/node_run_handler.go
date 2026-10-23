@@ -7,23 +7,27 @@ import (
 
 	"github.com/carolsimone/continuo/pkg/num"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-// NodeRunHandler exposes per-node run history via ListNodeRuns.
+// NodeRunHandler exposes per-node run history via ListNodeRuns and the node
+// catalog via ListNodes.
 type NodeRunHandler struct {
-	repo   postgres.NodeRunRepository
-	logger *slog.Logger
+	repo           postgres.NodeRunRepository
+	defaultTimeout time.Duration
+	logger         *slog.Logger
 }
 
-// NewNodeRunHandler constructs a NodeRunHandler.
-func NewNodeRunHandler(repo postgres.NodeRunRepository, logger *slog.Logger) *NodeRunHandler {
+// NewNodeRunHandler constructs a NodeRunHandler; defaultTimeout is the task
+// timeout of a node whose live release declares none.
+func NewNodeRunHandler(repo postgres.NodeRunRepository, defaultTimeout time.Duration, logger *slog.Logger) *NodeRunHandler {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &NodeRunHandler{repo: repo, logger: logger}
+	return &NodeRunHandler{repo: repo, defaultTimeout: defaultTimeout, logger: logger}
 }
 
 // ListNodeRuns returns the most recent task instances for a node, ordered by
@@ -96,21 +100,24 @@ func (h *NodeRunHandler) ListNodes(
 		return nil, status.Errorf(codes.Internal, "ListNodes: %v", err)
 	}
 
+	defaults := run.TaskDefaults{Timeout: h.defaultTimeout}
 	out := make([]*statev1.NodeSummary, 0, len(rows))
 	for _, r := range rows {
+		timeout, declared := run.EffectiveTimeout(r.TimeoutSeconds, defaults)
 		out = append(out, &statev1.NodeSummary{
-			ServiceName:    r.ServiceName,
-			SchemaName:     r.SchemaName,
-			TableName:      r.TableName,
-			RunCount:       num.ClampInt32(r.RunCount),
-			SuccessRatePct: num.ClampInt32(r.SuccessRatePct),
-			AvgDurationSec: num.ClampInt32(r.AvgDurationSec),
-			P95DurationSec: num.ClampInt32(r.P95DurationSec),
-			FlakyRatePct:   num.ClampInt32(r.FlakyRatePct),
-			LastStatus:     r.LastStatus,
-			LastRunAt:      r.LastRunAt.UTC().Format(time.RFC3339),
-			Operation:      r.Operation,
-			TimeoutSeconds: num.ClampInt32(r.TimeoutSeconds),
+			ServiceName:     r.ServiceName,
+			SchemaName:      r.SchemaName,
+			TableName:       r.TableName,
+			RunCount:        num.ClampInt32(r.RunCount),
+			SuccessRatePct:  num.ClampInt32(r.SuccessRatePct),
+			AvgDurationSec:  num.ClampInt32(r.AvgDurationSec),
+			P95DurationSec:  num.ClampInt32(r.P95DurationSec),
+			FlakyRatePct:    num.ClampInt32(r.FlakyRatePct),
+			LastStatus:      r.LastStatus,
+			LastRunAt:       r.LastRunAt.UTC().Format(time.RFC3339),
+			Operation:       r.Operation,
+			TimeoutSeconds:  num.ClampInt32(int64(timeout / time.Second)),
+			TimeoutDeclared: declared,
 		})
 	}
 	return &statev1.ListNodesResponse{Nodes: out, TotalCount: num.ClampInt32(total)}, nil

@@ -31,12 +31,11 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // TestEffectiveCancelledBy pins how the cancelling actor is resolved: the
 // authenticated metadata user wins; a system caller keeps a request-supplied
-// label (e.g. the watchdog); and a system caller with no label falls back to
+// label (e.g. a maintenance job); and a system caller with no label falls back to
 // the system sentinel so the persisted row never goes blank.
 func TestEffectiveCancelledBy(t *testing.T) {
 	// ctxWithUser threads userID through the real identity interceptor so
@@ -57,7 +56,7 @@ func TestEffectiveCancelledBy(t *testing.T) {
 		want      string
 	}{
 		{"authenticated user is authoritative", ctxWithUser("okta|alice"), "ignored-body", "okta|alice"},
-		{"system caller keeps request label", context.Background(), "watchdog", "watchdog"},
+		{"system caller keeps request label", context.Background(), "maintenance", "maintenance"},
 		{"system caller with empty request defaults to system", context.Background(), "", identity.SystemUserID},
 	}
 	for _, tc := range cases {
@@ -136,14 +135,6 @@ type stubSchedulerRepo struct {
 	cancelErr       error
 	getByIDResult   *postgres.SchedulerTracker
 	getByIDErr      error
-	stuckCandidates []postgres.StuckCandidate
-	stuckErr        error
-	lastStuckCutoff time.Time
-}
-
-func (s *stubSchedulerRepo) ListStuckCandidates(_ context.Context, cutoff time.Time) ([]postgres.StuckCandidate, error) {
-	s.lastStuckCutoff = cutoff
-	return s.stuckCandidates, s.stuckErr
 }
 
 func (s *stubSchedulerRepo) Create(_ context.Context, _ *postgres.SchedulerTracker) error { return nil }
@@ -191,7 +182,7 @@ func (s *stubSchedulerRepo) CancelTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID,
 }
 
 // defaultPlanner plans the runs of the default tenant, as state's main does.
-var defaultPlanner = runstart.Planner{TenantID: pkgevents.DefaultTenantID}
+var defaultPlanner = runstart.Planner{TenantID: pkgevents.DefaultTenantID, Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}}
 
 // ---- fake run repo for activation tests ----
 
@@ -282,11 +273,17 @@ func (s *scheduleTopology) ScheduleGraph(_ context.Context, _, _, schedule strin
 // startedTasks accepts the tasks a run starts with.
 type startedTasks struct {
 	run.TaskCollection
-	created []run.Task
+	attempts []run.Attempt
+	created  []run.Task
 }
 
 func (s *startedTasks) BulkCreate(_ context.Context, tasks []run.Task) error {
 	s.created = append(s.created, tasks...)
+	return nil
+}
+
+func (s *startedTasks) AddAttempts(_ context.Context, attempts []run.Attempt) error {
+	s.attempts = append(s.attempts, attempts...)
 	return nil
 }
 
@@ -572,33 +569,6 @@ func TestListAllSchedules_Empty(t *testing.T) {
 	assert.Empty(t, resp.Schedules)
 }
 
-func TestListStuckCandidates_RequiresCutoff(t *testing.T) {
-	repo := &stubSchedulerRepo{}
-	h := NewSchedulerHandler(repo, nil, nil, nil, noopUoWFactory(), newTestLogger())
-
-	_, err := h.ListStuckCandidates(context.Background(), &statev1.ListStuckCandidatesRequest{})
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestListStuckCandidates_ForwardsCutoffAndMapsCandidates(t *testing.T) {
-	id := uuid.New()
-	cutoff := time.Now().Add(-30 * time.Minute)
-	repo := &stubSchedulerRepo{
-		stuckCandidates: []postgres.StuckCandidate{{ScheduleName: "stuck", ScheduleID: id}},
-	}
-	h := NewSchedulerHandler(repo, nil, nil, nil, noopUoWFactory(), newTestLogger())
-
-	resp, err := h.ListStuckCandidates(context.Background(), &statev1.ListStuckCandidatesRequest{
-		Cutoff: timestamppb.New(cutoff),
-	})
-	require.NoError(t, err)
-	assert.WithinDuration(t, cutoff, repo.lastStuckCutoff, time.Millisecond)
-	require.Len(t, resp.Candidates, 1)
-	assert.Equal(t, "stuck", resp.Candidates[0].ScheduleName)
-	assert.Equal(t, id.String(), resp.Candidates[0].ScheduleId)
-}
-
 func TestListAllSchedules_MergesData(t *testing.T) {
 	catalogRepo := &stubCatalogRepo{existsActive: map[string]bool{"daily": true}}
 	repo := &stubSchedulerRepo{
@@ -776,6 +746,20 @@ func (f *cancelFakeTaskCollection) SaveAttempt(_ context.Context, a run.Attempt)
 	f.attemptRows[cancelAttemptKey{a.TaskID, a.Number}] = a
 	return nil
 }
+func (f *cancelFakeTaskCollection) AddAttempts(ctx context.Context, attempts []run.Attempt) error {
+	for _, a := range attempts {
+		if err := f.SaveAttempt(ctx, a); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+func (f *cancelFakeTaskCollection) HasInFlight(context.Context, uuid.UUID) (bool, error) {
+	panic("HasInFlight not used by the cancel tests")
+}
+func (f *cancelFakeTaskCollection) SkipPending(context.Context, uuid.UUID) (int, error) {
+	panic("SkipPending not used by the cancel tests")
+}
 
 // CancelOpenAttempts cancels every open attempt the fake holds and records the
 // run it was called for.
@@ -823,9 +807,6 @@ func (f *cancelFakeTaskCollection) MarkSkipped(_ context.Context, _ []uuid.UUID)
 }
 func (f *cancelFakeTaskCollection) SetStatusAndAttempt(_ context.Context, _ uuid.UUID, _ run.TaskStatus, _ int32) (int, error) {
 	panic("SetStatusAndAttempt not used in cancel tests")
-}
-func (f *cancelFakeTaskCollection) HasRetryableFailed(_ context.Context, _ uuid.UUID) (bool, error) {
-	panic("HasRetryableFailed not used in cancel tests")
 }
 func (f *cancelFakeTaskCollection) HasFailed(_ context.Context, _ uuid.UUID) (bool, error) {
 	panic("HasFailed not used in cancel tests")

@@ -21,7 +21,7 @@ type Task struct {
 	NodeKey             topology.NodeKey
 	JobName             string
 	Status              TaskStatus
-	RetryCount          int
+	Attempt             int
 	MaxRetries          int
 	CancelledAt         *time.Time
 	CancelledBy         *string

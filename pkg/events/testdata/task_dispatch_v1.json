@@ -1,0 +1,49 @@
+{
+  "input": {
+    "event_id": "5b1f2d0e-8c3a-4f7e-9a61-2d4c8e1b7f30",
+    "tenant_id": "default",
+    "producer": "state",
+    "occurred_at": "2026-10-20T23:01:52.000412Z",
+    "payload": {
+      "run_id": "7f3e1a2b-4c5d-4e6f-8a9b-0c1d2e3f4a5b",
+      "task_id": "3e8d7c6b-5a49-4382-9170-6f5e4d3c2b1a",
+      "attempt": 1,
+      "known_status": "dispatched",
+      "schedule_name": "e2e-schedule-failure",
+      "node_key": "e2e_schema.ftable_e",
+      "service_name": "service-1",
+      "schema_name": "e2e_schema",
+      "table_name": "ftable_e",
+      "node_type": "dbt-model",
+      "operation": "run",
+      "image_tag": "v42",
+      "secret_ref": "",
+      "job_name": "service-1-e2e-schema-ftable-e-7f3e1a2b-r1",
+      "timeout_seconds": 86400
+    }
+  },
+  "fields": {
+    "event_id": "5b1f2d0e-8c3a-4f7e-9a61-2d4c8e1b7f30",
+    "tenant_id": "default",
+    "occurred_at": "2026-10-20T23:01:52.000412Z",
+    "producer": "state",
+    "schema_version": "1",
+    "payload": {
+      "run_id": "7f3e1a2b-4c5d-4e6f-8a9b-0c1d2e3f4a5b",
+      "task_id": "3e8d7c6b-5a49-4382-9170-6f5e4d3c2b1a",
+      "attempt": 1,
+      "known_status": "dispatched",
+      "schedule_name": "e2e-schedule-failure",
+      "node_key": "e2e_schema.ftable_e",
+      "service_name": "service-1",
+      "schema_name": "e2e_schema",
+      "table_name": "ftable_e",
+      "node_type": "dbt-model",
+      "operation": "run",
+      "image_tag": "v42",
+      "secret_ref": "",
+      "job_name": "service-1-e2e-schema-ftable-e-7f3e1a2b-r1",
+      "timeout_seconds": 86400
+    }
+  }
+}

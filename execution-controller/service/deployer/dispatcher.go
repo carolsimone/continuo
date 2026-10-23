@@ -1,6 +1,6 @@
 // Package deployer holds the application service that drains the deployments
 // command queue: it admits queued deployments to execution slots under a
-// concurrency cap and creates their K8s Jobs, and writes the announcement of a
+// concurrency cap and creates their K8s Jobs, and writes the report of a
 // deployment that cannot be deployed. The observer follows each created Job to
 // its end. It depends only on domain ports.
 package deployer
@@ -8,21 +8,20 @@ package deployer
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/carolsimone/continuo/execution-controller/domain/deploy"
-	"github.com/carolsimone/continuo/execution-controller/domain/event"
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	"github.com/carolsimone/continuo/execution-controller/domain/repository"
+	"github.com/carolsimone/continuo/execution-controller/service/ports"
+	"github.com/carolsimone/continuo/execution-controller/service/reports"
 	"github.com/carolsimone/continuo/execution-controller/service/validation"
+	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
-	"github.com/carolsimone/continuo/pkg/num"
 	"github.com/carolsimone/continuo/pkg/outbox"
-	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 )
@@ -53,6 +52,9 @@ type DispatcherConfig struct {
 	// notifications lost while the listener reconnects. Without a Waker the
 	// dispatcher runs only on Tick.
 	Waker outbox.Waker
+	// ErrorMessageMaxLen truncates the error message reported for an attempt
+	// whose Job could not be created; 0 keeps it whole.
+	ErrorMessageMaxLen int
 }
 
 // Dispatcher admits deployments under a concurrency cap. The K8s deploy is a
@@ -61,11 +63,13 @@ type DispatcherConfig struct {
 type Dispatcher struct {
 	db            *sqlx.DB
 	deployer      deploy.Deployer
+	jobs          ports.JobLookup
 	newRepo       RepoFactory
 	newAggRepo    ValidationAggRepoFactory
 	newAdmission  AdmissionRepoFactory
 	waker         outbox.Waker
 	maxConcurrent int
+	maxMessageLen int
 	logger        *slog.Logger
 	tick          time.Duration
 	batchSize     int
@@ -73,9 +77,12 @@ type Dispatcher struct {
 	now           func() time.Time
 }
 
+// NewDispatcher builds a Dispatcher; jobs reads a Job from the Kubernetes API
+// when the last try to create it failed without a sure answer.
 func NewDispatcher(
 	db *sqlx.DB,
 	deployer deploy.Deployer,
+	jobs ports.JobLookup,
 	newRepo RepoFactory,
 	newAggRepo ValidationAggRepoFactory,
 	newAdmission AdmissionRepoFactory,
@@ -98,11 +105,13 @@ func NewDispatcher(
 	return &Dispatcher{
 		db:            db,
 		deployer:      deployer,
+		jobs:          jobs,
 		newRepo:       newRepo,
 		newAggRepo:    newAggRepo,
 		newAdmission:  newAdmission,
 		waker:         cfg.Waker,
 		maxConcurrent: maxConcurrent,
+		maxMessageLen: cfg.ErrorMessageMaxLen,
 		logger:        logger,
 		tick:          cfg.Tick,
 		batchSize:     cfg.BatchSize,
@@ -239,12 +248,14 @@ func (d *Dispatcher) dispatchOne(ctx context.Context, repo repository.Deployment
 	now := d.now()
 
 	// A row whose job_params could not be deserialized is unrunnable; fail it
-	// permanently with a routable announcement built from its recovered identity.
+	// permanently and report it from its recovered identity.
 	if !dep.IsDeployable() {
 		if _, err := dep.RegisterFailure(now, true, "deployment job_params not deployable", d.backoff); err != nil {
 			return err
 		}
-		if err := d.writeFailedAnnouncements(ctx, outboxRepo, dep); err != nil {
+		dep.Observe(model.AttemptFacts{Reason: pkgmodel.FailureReasonMalformedDispatch,
+			Message: "the dispatch's fields could not be read"})
+		if err := d.reportCreationFailure(ctx, outboxRepo, dep); err != nil {
 			return err
 		}
 		return repo.Save(ctx, dep)
@@ -259,13 +270,43 @@ func (d *Dispatcher) dispatchOne(ctx context.Context, repo repository.Deployment
 	}
 
 	permanent := errors.Is(deployErr, pkgevents.ErrPermanent)
+	if !permanent && !dep.RetriesLeft() {
+		// The last try failed without a sure answer, and Kubernetes may have
+		// created the Job although its answer was lost: a live read decides
+		// before the attempt is reported failed. While the Job cannot be read
+		// nothing is saved, so the deployment stays reserved, as it was, until
+		// the reconciler returns it to the queue and it is tried again.
+		live, err := d.jobs.ObserveLive(ctx, dep.JobName())
+		if err != nil {
+			d.logger.Warn("The last creation try failed and the Job cannot be read — the deployment is tried again",
+				"deployment_id", dep.ID(), "job_name", dep.JobName(), "cause", deployErr, "error", err)
+			return fmt.Errorf("read Job %s after its last creation try failed: %w", dep.JobName(), err)
+		}
+		cmd := dep.Command()
+		switch {
+		case live.RunsAttempt(cmd.TaskID, cmd.Attempt):
+			d.logger.Warn("The last creation try failed, yet the Job of the attempt exists — adopting it",
+				"deployment_id", dep.ID(), "job_name", dep.JobName(), "cause", deployErr)
+			if err := dep.MarkStarted(now); err != nil {
+				return err
+			}
+			return repo.Save(ctx, dep)
+		case live.JobPresent:
+			deployErr = fmt.Errorf("%w: Job %s carries task %q attempt %q, not task %s attempt %d",
+				errors.Join(deploy.ErrJobNameCollision, pkgevents.ErrPermanent), dep.JobName(),
+				live.JobTaskID, live.JobAttempt, cmd.TaskID, cmd.Attempt)
+			permanent = true
+		}
+	}
 	terminal, err := dep.RegisterFailure(now, permanent, deployErr.Error(), d.backoff)
 	if err != nil {
 		return err
 	}
 	if terminal {
-		d.logger.Error("Deploy terminal failure", "deployment_id", dep.ID(), "cause", deployErr)
-		if err := d.writeFailedAnnouncements(ctx, outboxRepo, dep); err != nil {
+		reason := creationFailureReason(deployErr)
+		dep.Observe(model.AttemptFacts{Reason: reason, Message: deployErr.Error()})
+		d.logger.Error("Deploy terminal failure", "deployment_id", dep.ID(), "failure_reason", reason, "cause", deployErr)
+		if err := d.reportCreationFailure(ctx, outboxRepo, dep); err != nil {
 			return err
 		}
 	} else {
@@ -484,41 +525,30 @@ func (d *Dispatcher) settleFailedCompile(ctx context.Context, repo repository.De
 		dep.ReleaseID(), dep.NodeID(), "failed", now)
 }
 
-// writeFailedAnnouncements announces a production task whose deploy failed
-// terminally with a task_status_updated (FAILED) row. A deploy failure gets no
-// retry Job, so the FAILED status reports the task's retry budget as spent:
-// state finalizes a run only once no failed task has attempts left
-// (retry_count < max_retries). A command decoded from corrupt job_params
-// carries no budget, so the default budget applies.
-func (d *Dispatcher) writeFailedAnnouncements(ctx context.Context, outboxRepo outbox.Repository, dep *model.Deployment) error {
-	cmd := dep.Command()
-	budget := cmd.TaskMaxRetries
-	if budget <= 0 {
-		budget = int(pkgevents.DefaultTaskMaxRetries)
+// creationFailureReason is why the Job of a production attempt could not be
+// created: the dispatch cannot run (a name another task's or attempt's Job
+// holds, an undeclared node type, or another field), or Kubernetes refused
+// the Job on every try.
+func creationFailureReason(err error) pkgmodel.FailureReason {
+	switch {
+	case errors.Is(err, deploy.ErrJobNameCollision):
+		return pkgmodel.FailureReasonJobNameCollision
+	case errors.Is(err, deploy.ErrInvalidNodeType):
+		return pkgmodel.FailureReasonInvalidNodeType
+	case errors.Is(err, pkgevents.ErrPermanent):
+		return pkgmodel.FailureReasonMalformedDispatch
 	}
-	retryCount, err := num.Int32(max(cmd.TaskRetryCount, budget), "task_retry_count")
-	if err != nil {
-		return fmt.Errorf("write FAILED task_status announcement: %w", err)
-	}
-	if err := d.createOutbox(ctx, outboxRepo, dep, event.EventTypeTaskStatusUpdated, streams.TaskStatusUpdatedV1,
-		pkgevents.TaskStatusUpdated{TaskID: cmd.TaskID, ScheduleID: cmd.ScheduleID, Status: "FAILED", RetryCount: retryCount}); err != nil {
-		return fmt.Errorf("write FAILED task_status announcement: %w", err)
-	}
-	return nil
+	return pkgmodel.FailureReasonCreateFailed
 }
 
-func (d *Dispatcher) createOutbox(ctx context.Context, outboxRepo outbox.Repository, dep *model.Deployment, eventType, stream string, payload interface{}) error {
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("marshal %s payload: %w", eventType, err)
+// reportCreationFailure reports a production attempt whose Job could not
+// be created as failed, with the reason recorded in its facts and its message
+// cut to ErrorMessageMaxLen; state decides whether the task runs again. The
+// caller saves dep.
+func (d *Dispatcher) reportCreationFailure(ctx context.Context, outboxRepo outbox.Repository, dep *model.Deployment) error {
+	message := reports.TruncateMessage(dep.Facts().Message, d.maxMessageLen)
+	if err := reports.Write(ctx, outboxRepo, dep, pkgmodel.AttemptStatusFailed, message); err != nil {
+		return fmt.Errorf("report the failed attempt: %w", err)
 	}
-	aggregateID, _ := uuid.Parse(dep.Command().TaskID)
-	return outboxRepo.Create(ctx, &outbox.Entry{
-		MessageProcessingID: dep.MessageProcessingID(),
-		AggregateType:       "task",
-		AggregateID:         aggregateID,
-		EventType:           eventType,
-		Payload:             body,
-		StreamName:          stream,
-	})
+	return nil
 }

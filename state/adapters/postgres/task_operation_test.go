@@ -45,7 +45,7 @@ func TestStart_StampsTaskOperation(t *testing.T) {
 	}}, nil)
 	plan, err := runplan.SingleNode{Key: "analytics.tbl_op", ServiceName: "svc", Operation: model.OperationTest}.Select(g)
 	require.NoError(t, err)
-	_, err = r.Start(ctx, tasks, "default", plan, g, 2, time.Now())
+	_, err = r.Start(ctx, tasks, "default", plan, g, testTaskDefaults, time.Now())
 	require.NoError(t, err)
 	taskID := run.TaskIDFor("default", r.ScheduleID(), "analytics.tbl_op")
 

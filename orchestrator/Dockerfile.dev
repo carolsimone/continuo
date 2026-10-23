@@ -8,15 +8,14 @@ RUN ARCH=$(dpkg --print-architecture) && \
 
 WORKDIR /app
 
-# Layer 1: Workspace stub. All go.mod / go.sum files are copied so
-# `go mod download` can satisfy every dependency cited by go.work, but
-# only the modules this image builds against (pkg, orchestrator, and
-# state/proto for the gRPC client stubs) get their source trees later.
+# Layer 1: Workspace stub. go.work and the go.mod / go.sum files of pkg,
+# orchestrator and the other workspace modules listed below are copied;
+# Layer 2 drops every module but pkg and orchestrator from the workspace, so
+# only those two are built against and get their source trees later.
 # Limiting the source-copy layers to the dirs this service actually
 # touches means a change to execution-controller does not invalidate
 # this image's cache.
 COPY go.work go.work.sum* ./
-COPY state/go.mod state/go.sum ./state/
 COPY pkg/go.mod pkg/go.sum ./pkg/
 COPY orchestrator/go.mod orchestrator/go.sum ./orchestrator/
 COPY execution-controller/go.mod execution-controller/go.sum ./execution-controller/
@@ -27,10 +26,9 @@ COPY agent-remediation/go.mod agent-remediation/go.sum ./agent-remediation/
 COPY dead-letter-controller/go.mod dead-letter-controller/go.sum ./dead-letter-controller/
 
 # Layer 2: Drop unused use-directives so `go build` does not require the
-# other services' source trees to be present in this image. `./state`
-# stays because orchestrator imports state/proto/state/v1 (gRPC client
-# stubs); only state/proto/ source is copied below.
-RUN go work edit -dropuse=./execution-controller \
+# other services' source trees to be present in this image.
+RUN go work edit -dropuse=./state \
+    && go work edit -dropuse=./execution-controller \
     && go work edit -dropuse=./agent-chat \
     && go work edit -dropuse=./release-controller \
     && go work edit -dropuse=./remediation \
@@ -42,12 +40,10 @@ RUN go work edit -dropuse=./execution-controller \
 RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download
 
-# Layer 4: Source. pkg/ and state/proto/ are lower-churn dependencies of
-# orchestrator (state/proto/ is the gRPC client stubs imported by the
-# watchdog and main.go). orchestrator/ comes last so changes here do not
-# invalidate the earlier layers.
+# Layer 4: Source. pkg/ is a lower-churn dependency of orchestrator;
+# orchestrator/ comes last so changes here do not invalidate the earlier
+# layers.
 COPY pkg/ ./pkg/
-COPY state/proto/ ./state/proto/
 COPY orchestrator/ ./orchestrator/
 
 WORKDIR /app/orchestrator

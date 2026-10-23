@@ -120,23 +120,18 @@ func TestLoad_UnionOfDispatchAndObserveSettings(t *testing.T) {
 	require.Equal(t, "require", cfg.Postgres.SSLMode)
 }
 
-// Each task's retry budget arrives on its query.model:v1 dispatch. Load names
-// DEFAULT_TASK_MAX_RETRIES when it is set, so main can warn that it is ignored.
-func TestLoad_NamesTheIgnoredRetryKey(t *testing.T) {
-	cases := []struct {
-		name, maxRetries string
-		want             []string
-	}{
-		{name: "not set"},
-		{name: "set", maxRetries: "3", want: []string{"DEFAULT_TASK_MAX_RETRIES"}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("DEFAULT_TASK_MAX_RETRIES", tc.maxRetries)
-			cfg := Load(&pkgconfig.Validator{})
-			assert.Equal(t, tc.want, cfg.IgnoredRetryKeys)
-		})
-	}
+// Validation, seed-build and compile Jobs run up to TASK_TIMEOUT_SECONDS; unset
+// selects the chart's default.
+func TestLoad_TaskTimeout(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("TASK_TIMEOUT_SECONDS", "")
+	v := &pkgconfig.Validator{}
+	require.Equal(t, 24*time.Hour, Load(v).TaskTimeout)
+	t.Setenv("TASK_TIMEOUT_SECONDS", "7200")
+	require.Equal(t, 2*time.Hour, Load(v).TaskTimeout)
+	t.Setenv("TASK_TIMEOUT_SECONDS", "60")
+	Load(v)
+	assert.Contains(t, strings.Join(v.Missing(), " "), "TASK_TIMEOUT_SECONDS")
 }
 
 func TestLoad_JobStartTimeout(t *testing.T) {
@@ -152,6 +147,9 @@ func TestLoad_JobStartTimeout(t *testing.T) {
 		{"59", 0, true},
 		{"7201", 0, true},
 		{"3m", 0, true},
+		// 18446744674 s is 2^64 ns plus about ten minutes: refused, though its
+		// nanoseconds would wrap into the range.
+		{"18446744674", 0, true},
 	}
 	for _, c := range cases {
 		t.Run(c.raw, func(t *testing.T) {

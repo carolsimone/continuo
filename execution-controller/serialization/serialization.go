@@ -1,11 +1,12 @@
 // Package serialization holds the wire- and persistence-facing DTOs for
 // execution-controller's json-tagged boundary types, keeping the domain packages
-// (command, event) free of struct tags. It sits outside adapters/ so the
-// application layer (service/deployer, which writes outbox payloads) may map
-// through it without importing an adapter, and outside domain/ so the tags live
-// away from the domain types. The postgres repository (deployments.job_params
-// JSONB), the dispatcher (execution_outbox payloads it writes), and the publisher
-// (payloads it reads) all map through these DTOs, fixing the byte shapes here.
+// (command, model) free of struct tags. It sits outside adapters/ so the
+// application layer (service/reports, which writes the task.status.updated:v2
+// report payloads to the outbox) may map through it without importing an
+// adapter, and outside domain/ so the tags live away from the domain types.
+// service/reports and the postgres repository (the deployments columns
+// job_params, facts and last_report) map through it, fixing the byte shapes
+// here.
 package serialization
 
 import (
@@ -25,9 +26,9 @@ type DeployTaskDTO struct {
 	NodeType       string `json:"node_type"`
 	ImageTag       string `json:"image_tag"`
 	SecretRef      string `json:"secret_ref,omitempty"`
-	TaskRetryCount int    `json:"task_retry_count"`
-	TaskMaxRetries int    `json:"task_max_retries"`
+	Attempt        int    `json:"attempt"`
 	Operation      string `json:"operation"`
+	TimeoutSeconds int64  `json:"timeout_seconds,omitempty"`
 }
 
 // DeployTaskFromDomain maps a domain command to its DTO.
@@ -43,9 +44,9 @@ func DeployTaskFromDomain(c command.DeployTask) DeployTaskDTO {
 		NodeType:       c.NodeType,
 		ImageTag:       c.ImageTag,
 		SecretRef:      c.SecretRef,
-		TaskRetryCount: c.TaskRetryCount,
-		TaskMaxRetries: c.TaskMaxRetries,
+		Attempt:        c.Attempt,
 		Operation:      c.Operation,
+		TimeoutSeconds: c.TimeoutSeconds,
 	}
 }
 
@@ -62,9 +63,9 @@ func (d DeployTaskDTO) ToDomain() command.DeployTask {
 		NodeType:       d.NodeType,
 		ImageTag:       d.ImageTag,
 		SecretRef:      d.SecretRef,
-		TaskRetryCount: d.TaskRetryCount,
-		TaskMaxRetries: d.TaskMaxRetries,
+		Attempt:        d.Attempt,
 		Operation:      d.Operation,
+		TimeoutSeconds: d.TimeoutSeconds,
 	}
 }
 

@@ -4,8 +4,7 @@ import "testing"
 
 func TestEventTypesAreDistinctAndComplete(t *testing.T) {
 	all := []string{
-		EventTypeTaskStatusUpdated, EventTypeTaskExecutionRecorded,
-		EventTypeCheckDelayed,
+		EventTypeTaskStatusReport,
 	}
 	seen := map[string]bool{}
 	for _, v := range all {

@@ -60,11 +60,6 @@ type SchedulerTrackerRepository interface {
 	// GetActiveScheduler returns the most recently created PENDING or RUNNING run for a schedule.
 	// Returns nil, nil when no active run exists (never returns ErrNotFound).
 	GetActiveScheduler(ctx context.Context, scheduleName string) (*SchedulerTracker, error)
-	// ListStuckCandidates returns active (pending|running) runs that have made no
-	// lifecycle progress since cutoff and have no task in 'running'. A run's
-	// progress time is last_heartbeat_at, or created_at when it has never
-	// progressed, so a run with zero tasks is returned too.
-	ListStuckCandidates(ctx context.Context, cutoff time.Time) ([]StuckCandidate, error)
 	// New: tx-accepting variants for atomic HTTP handler
 	UpdateInitializationStatusTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID, status string) error
 	CreateTx(ctx context.Context, tx *sqlx.Tx, tracker *SchedulerTracker) error
@@ -82,12 +77,6 @@ type SchedulerTrackerRepository interface {
 	// GetByIDForUpdateTx retrieves and row-locks the scheduler_tracker row for the given id
 	// using SELECT ... FOR UPDATE. Must be called within a transaction.
 	GetByIDForUpdateTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID) (*SchedulerTracker, error)
-}
-
-// StuckCandidate identifies one active run that has stopped making progress.
-type StuckCandidate struct {
-	ScheduleName string
-	ScheduleID   uuid.UUID
 }
 
 // LastRunData holds the summary of the most recent run for a schedule.
@@ -252,7 +241,7 @@ func (r *schedulerTrackerRepository) GetByID(ctx context.Context, scheduleID uui
 			cancelled_at, cancelled_by, cancellation_reason,
 			initialization_status, service_metadata,
 			total_task_count, terminal_task_count,
-			kind, source_run_id, initiated_by, operation, release_id, promotion_seq, planned_at
+			kind, source_run_id, initiated_by, operation, release_id, promotion_seq, planned_at, failure_reason
 		FROM scheduler_tracker
 		WHERE schedule_id = $1
 	`
@@ -366,7 +355,7 @@ func (r *schedulerTrackerRepository) GetActiveScheduler(ctx context.Context, sch
 			cancelled_at, cancelled_by, cancellation_reason,
 			initialization_status, service_metadata,
 			total_task_count, terminal_task_count,
-			kind, source_run_id, initiated_by, operation, release_id, promotion_seq, planned_at
+			kind, source_run_id, initiated_by, operation, release_id, promotion_seq, planned_at, failure_reason
 		FROM scheduler_tracker
 		WHERE schedule_name = $1
 		  AND status IN ('pending', 'running')
@@ -475,7 +464,7 @@ func (r *schedulerTrackerRepository) GetByIDForUpdateTx(ctx context.Context, tx 
 			cancelled_at, cancelled_by, cancellation_reason,
 			initialization_status, service_metadata,
 			total_task_count, terminal_task_count,
-			kind, source_run_id, initiated_by, operation, release_id, promotion_seq, planned_at
+			kind, source_run_id, initiated_by, operation, release_id, promotion_seq, planned_at, failure_reason
 		FROM scheduler_tracker
 		WHERE schedule_id = $1
 		FOR UPDATE
@@ -548,6 +537,8 @@ type RunRowUpdate struct {
 	LastHeartbeatAt *time.Time
 	// PlannedAt is when state chose and stored the run's tasks.
 	PlannedAt *time.Time
+	// FailureReason is why the run failed when no task of it failed.
+	FailureReason *string
 	// CompletedAtNow, when true, sets completed_at = NOW() (terminal transition).
 	CompletedAtNow bool
 }
@@ -585,6 +576,9 @@ func (r *schedulerTrackerRepository) UpdateRunRowTx(ctx context.Context, tx *sql
 	}
 	if fields.PlannedAt != nil {
 		add("planned_at", *fields.PlannedAt)
+	}
+	if fields.FailureReason != nil {
+		add("failure_reason", *fields.FailureReason)
 	}
 	if fields.CompletedAtNow {
 		setClauses = append(setClauses, "completed_at = NOW()")
@@ -662,39 +656,4 @@ func (r *schedulerTrackerRepository) GetLastRunPerSchedule(ctx context.Context) 
 		result[d.ScheduleName] = d
 	}
 	return result, rows.Err()
-}
-
-// ListStuckCandidates returns one row per active (pending|running) run whose
-// progress time is strictly older than cutoff and none of whose tasks is in
-// 'running'. The progress time is last_heartbeat_at, which the Run aggregate
-// stamps on dispatch and on every applied task status change, or created_at for
-// a run that has never progressed, so a run whose dispatch never arrived (zero
-// tasks) qualifies. A run with a running task never qualifies: a long task
-// reports nothing until it ends.
-func (r *schedulerTrackerRepository) ListStuckCandidates(ctx context.Context, cutoff time.Time) ([]StuckCandidate, error) {
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT st.schedule_name, st.schedule_id
-		FROM scheduler_tracker st
-		WHERE st.status IN ('pending', 'running')
-		  AND COALESCE(st.last_heartbeat_at, st.created_at) < $1
-		  AND NOT EXISTS (
-		      SELECT 1 FROM task_tracker tt
-		      WHERE tt.schedule_id = st.schedule_id
-		        AND tt.status = 'running'
-		  )
-	`, cutoff)
-	if err != nil {
-		return nil, fmt.Errorf("list stuck candidates: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	var out []StuckCandidate
-	for rows.Next() {
-		var c StuckCandidate
-		if err := rows.Scan(&c.ScheduleName, &c.ScheduleID); err != nil {
-			return nil, fmt.Errorf("scan stuck candidate: %w", err)
-		}
-		out = append(out, c)
-	}
-	return out, rows.Err()
 }

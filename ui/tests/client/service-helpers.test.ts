@@ -50,6 +50,12 @@ describe('rollupStatus', () => {
     expect(rollupStatus(['cancelled', 'cancelled'])).toBe('cancelled');
   });
 
+  it('ranks queued and dispatched below running and above pending', () => {
+    expect(rollupStatus(['queued', 'running'])).toBe('running');
+    expect(rollupStatus(['succeeded', 'queued', 'dispatched'])).toBe('queued');
+    expect(rollupStatus(['pending', 'dispatched'])).toBe('dispatched');
+  });
+
   it('reports a fully cascade-skipped service as skipped, not external', () => {
     expect(rollupStatus(['skipped', 'skipped'])).toBe('skipped');
   });

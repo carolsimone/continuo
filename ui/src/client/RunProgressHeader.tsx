@@ -5,8 +5,10 @@ import type { Task } from './types';
 // completion — never folded into `pending`, which would make a finished run
 // look like it still has outstanding work. Any status not in this closed set
 // (e.g. a value the backend has not yet reported) is treated as "pending" so
-// the header never silently drops a task from its counts.
-const BUCKETS = ['succeeded', 'running', 'failed', 'skipped', 'cancelled', 'pending'] as const;
+// the header never silently drops a task from its counts. Dispatched (sent,
+// not yet acknowledged) and queued (accepted, waiting for a slot) come just
+// before running and do not count toward completion.
+const BUCKETS = ['succeeded', 'dispatched', 'queued', 'running', 'failed', 'skipped', 'cancelled', 'pending'] as const;
 type Bucket = (typeof BUCKETS)[number];
 
 function bucketOf(status: string): Bucket {
@@ -18,7 +20,9 @@ function bucketOf(status: string): Bucket {
 // caller supplies the current Task[] (e.g. from a polling/live feed) and this
 // component only aggregates and renders it.
 export default function RunProgressHeader({ tasks }: { tasks: Task[] }) {
-  const counts: Record<Bucket, number> = { succeeded: 0, running: 0, failed: 0, skipped: 0, cancelled: 0, pending: 0 };
+  const counts: Record<Bucket, number> = {
+    succeeded: 0, dispatched: 0, queued: 0, running: 0, failed: 0, skipped: 0, cancelled: 0, pending: 0,
+  };
   for (const task of tasks) counts[bucketOf(task.status)] += 1;
   const total = tasks.length || 1;
   const done = counts.succeeded + counts.failed + counts.skipped + counts.cancelled;

@@ -153,11 +153,17 @@ var _ repository.RunRepository = (*fakeRuns)(nil)
 // fakeTasks records the tasks a run starts with.
 type fakeTasks struct {
 	run.TaskCollection
-	created []run.Task
+	attempts []run.Attempt
+	created  []run.Task
 }
 
 func (f *fakeTasks) BulkCreate(_ context.Context, tasks []run.Task) error {
 	f.created = append(f.created, tasks...)
+	return nil
+}
+
+func (f *fakeTasks) AddAttempts(_ context.Context, attempts []run.Attempt) error {
+	f.attempts = append(f.attempts, attempts...)
 	return nil
 }
 
@@ -257,7 +263,7 @@ func (w *world) newUoW() *uow.FakeUnitOfWork {
 }
 
 func (w *world) reconciler(maintenance bool) *seedreconcile.Reconciler {
-	return seedreconcile.New(func() uow.UnitOfWork { return w.newUoW() }, maintenance, "default",
+	return seedreconcile.New(func() uow.UnitOfWork { return w.newUoW() }, maintenance, "default", run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour},
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 

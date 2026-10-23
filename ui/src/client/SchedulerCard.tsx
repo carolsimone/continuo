@@ -93,8 +93,10 @@ export default function SchedulerCard({ schedule }: Props) {
   const total = tasks.length;
   const succeeded = tasks.filter(t => t.status === 'succeeded').length;
   const failed = tasks.filter(t => t.status === 'failed').length;
-  const pending = tasks.filter(t => t.status === 'pending').length;
+  const dispatched = tasks.filter(t => t.status === 'dispatched').length;
+  const queued = tasks.filter(t => t.status === 'queued').length;
   const running = tasks.filter(t => t.status === 'running').length;
+  const pending = tasks.filter(t => t.status === 'pending').length;
   const pct = getScheduleProgressPercent(tasks);
 
   const driftState = drift ? getDriftState(drift.run, drift.latest) : 'fresh';
@@ -242,8 +244,10 @@ export default function SchedulerCard({ schedule }: Props) {
             <div className="summary-row">
               <span><span aria-hidden="true">✅</span> {succeeded} succeeded</span>
               <span><span aria-hidden="true">❌</span> {failed} failed</span>
-              <span><span aria-hidden="true">⏳</span> {pending} pending</span>
+              <span><span aria-hidden="true">📤</span> {dispatched} dispatched</span>
+              <span><span aria-hidden="true">🕒</span> {queued} queued</span>
               <span><span aria-hidden="true">🏃</span> {running} running</span>
+              <span><span aria-hidden="true">⏳</span> {pending} pending</span>
             </div>
           </div>
         )}

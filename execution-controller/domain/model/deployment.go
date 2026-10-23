@@ -13,10 +13,9 @@ import (
 // defaultMaxRetries is the deploy-attempt budget for a new Deployment.
 const defaultMaxRetries = 3
 
-// Mode is the dispatch path that produced this Deployment. Production deploys
-// originate from query.model:v1 or from the observer's retry of a failed
-// attempt (queued in the same unit of work as its FAILED announcement);
-// validation deploys originate from the candidate-release flow and carry a
+// Mode is the dispatch path that produced this Deployment. A production
+// deploy is one attempt of a task, from task.dispatch:v1; validation, seed-build
+// and compile deploys originate from the candidate-release flow and carry a
 // per-node terminal outcome.
 type Mode string
 
@@ -69,6 +68,8 @@ type Deployment struct {
 
 	// facts is what has been observed of the attempt's Job so far.
 	facts AttemptFacts
+	// lastReport is the report last emitted for a production attempt.
+	lastReport *Report
 }
 
 // NewDeployment starts a fresh pending Deployment due immediately.
@@ -361,18 +362,14 @@ func (d *Deployment) MarkRunning() (bool, error) {
 	return true, nil
 }
 
-// settle records a terminal outcome and ends the deployment done. The Job
-// exists (starting, running or terminating), or the row is done without an
-// outcome (an older version released its slot before recording the result):
-// recording on a done row is not a status move.
+// settle records a terminal outcome and ends the deployment done; its Job
+// exists (starting, running or terminating).
 func (d *Deployment) settle(outcome string, now time.Time) error {
 	if d.outcomeAt != nil {
 		return fmt.Errorf("outcome already recorded for deployment %s", d.id)
 	}
-	if d.status != StatusDone {
-		if err := d.moveTo(StatusDone); err != nil {
-			return err
-		}
+	if err := d.moveTo(StatusDone); err != nil {
+		return err
 	}
 	d.outcome = outcome
 	ts := now
@@ -397,15 +394,11 @@ func (d *Deployment) Finish(outcome string, now time.Time) error {
 func (d *Deployment) HasOutcome() bool { return d.outcomeAt != nil }
 
 // AwaitingResult reports whether the deployment's attempt was started and its
-// result is not recorded yet: it is starting, running or terminating, or done
-// without an outcome (a row an older version released before recording the
-// result).
+// result is not recorded yet: it is starting, running or terminating.
 func (d *Deployment) AwaitingResult() bool {
 	switch d.status {
 	case StatusStarting, StatusRunning, StatusTerminating:
 		return true
-	case StatusDone:
-		return d.outcomeAt == nil
 	default:
 		return false
 	}
@@ -442,13 +435,18 @@ func (d *Deployment) JobName() string {
 	return d.validationCmd.JobName
 }
 
+// RetriesLeft reports whether a transient failure of the current deploy try
+// leaves another try in the budget: RegisterFailure then returns the
+// deployment to pending rather than failing it.
+func (d *Deployment) RetriesLeft() bool { return d.retryCount+1 < d.maxRetries }
+
 // RegisterFailure records a failed deploy attempt of a reserved deployment and
 // applies the retry policy. A transient failure with attempts left returns the
 // deployment to pending (freeing its slot), bumps retryCount and pushes
 // nextAttemptAt, and reports terminal=false. Otherwise the deployment fails and
 // terminal=true.
 func (d *Deployment) RegisterFailure(now time.Time, permanent bool, reason string, backoff BackoffPolicy) (terminal bool, err error) {
-	if !permanent && d.retryCount+1 < d.maxRetries {
+	if !permanent && d.RetriesLeft() {
 		if err := d.moveTo(StatusPending); err != nil {
 			return false, err
 		}
@@ -469,8 +467,8 @@ func (d *Deployment) setError(reason string) {
 	d.errorMessage = &msg
 }
 
-// RecordOutcome attaches the terminal outcome to a started (starting, running,
-// terminating, or done-without-outcome) validation, seed-build, OR compile
+// RecordOutcome attaches the terminal outcome to a started (starting, running
+// or terminating) validation, seed-build, OR compile
 // deployment and releases its slot — all three legs report a per-node terminal
 // status the same way: the observer sees the attempt end and records it here
 // via outcomes.Recorder. Production deployments announce their result through a

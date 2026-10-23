@@ -331,7 +331,53 @@ func (v NodeType) Runtime() NodeRuntime {
 	return ""
 }
 
-// FailureClass — What kind of failure ended an attempt of a task. execution-controller's observer classifies each attempt it watches end in failure and records the class with the attempt's facts.
+// AttemptStatus — Where one attempt of a task stands, on the two task streams. state sends dispatched, queued or running as a dispatch's known_status on task.dispatch:v1; execution-controller reports queued, running, succeeded or failed as a report's status on task.status.updated:v2.
+// Values come from the vocabulary "attempt_status" in contract.yaml, in
+// declaration order.
+type AttemptStatus string
+
+const (
+	// AttemptStatusDispatched — state dispatched the attempt and has no report of it yet.
+	AttemptStatusDispatched AttemptStatus = "dispatched"
+	// AttemptStatusQueued — execution-controller accepted the attempt; it waits for a slot or its Job.
+	AttemptStatusQueued AttemptStatus = "queued"
+	// AttemptStatusRunning — the main container of the attempt's pod started.
+	AttemptStatusRunning AttemptStatus = "running"
+	// AttemptStatusSucceeded — the attempt ended successfully and no pod of it can run again.
+	AttemptStatusSucceeded AttemptStatus = "succeeded"
+	// AttemptStatusFailed — the attempt ended with a failure_reason and no pod of it can run again.
+	AttemptStatusFailed AttemptStatus = "failed"
+)
+
+// AttemptStatuses returns every value in contract.yaml declaration order.
+func AttemptStatuses() []AttemptStatus {
+	return []AttemptStatus{
+		AttemptStatusDispatched,
+		AttemptStatusQueued,
+		AttemptStatusRunning,
+		AttemptStatusSucceeded,
+		AttemptStatusFailed,
+	}
+}
+
+// IsValid reports whether v is a value declared in contract.yaml.
+func (v AttemptStatus) IsValid() bool {
+	switch v {
+	case AttemptStatusDispatched:
+		return true
+	case AttemptStatusQueued:
+		return true
+	case AttemptStatusRunning:
+		return true
+	case AttemptStatusSucceeded:
+		return true
+	case AttemptStatusFailed:
+		return true
+	}
+	return false
+}
+
+// FailureClass — What kind of failure ended an attempt of a task. execution-controller classifies each attempt that fails and records the class with the attempt's facts.
 // Values come from the vocabulary "failure_class" in contract.yaml, in
 // declaration order.
 type FailureClass string
@@ -341,13 +387,13 @@ const (
 	FailureClassTask FailureClass = "task"
 	// FailureClassResource — the pod ran out of a node resource; it was killed for memory or evicted.
 	FailureClassResource FailureClass = "resource"
-	// FailureClassInfra — the attempt was lost to the platform; its node or its Job is gone.
+	// FailureClassInfra — the attempt was lost to the platform; its node, its Job or its record is gone, or Kubernetes refused its Job.
 	FailureClassInfra FailureClass = "infra"
 	// FailureClassStart — the pod could not start its containers (an image pull, a missing Secret or ConfigMap, a container the runtime could not create).
 	FailureClassStart FailureClass = "start"
 	// FailureClassTimeout — the attempt ran out of time, before any container of its pod started or before it finished.
 	FailureClassTimeout FailureClass = "timeout"
-	// FailureClassInvalid — the task as dispatched cannot produce its result; dbt found nothing to build.
+	// FailureClassInvalid — the task as dispatched cannot produce its result; dbt found nothing to build, or the dispatch cannot run.
 	FailureClassInvalid FailureClass = "invalid"
 )
 
@@ -398,6 +444,10 @@ const (
 	FailureReasonNodeLost FailureReason = "node_lost"
 	// FailureReasonJobMissing — the attempt's Job is gone from Kubernetes and nothing seen of the attempt shows how it ended.
 	FailureReasonJobMissing FailureReason = "job_missing"
+	// FailureReasonAttemptLost — state asked about an attempt execution-controller acknowledged, and execution-controller holds neither its row nor its Job.
+	FailureReasonAttemptLost FailureReason = "attempt_lost"
+	// FailureReasonCreateFailed — Kubernetes refused the attempt's Job on every one of execution-controller's creation tries.
+	FailureReasonCreateFailed FailureReason = "create_failed"
 	// FailureReasonImagePull — the pod could not pull an image (ErrImagePull, ImagePullBackOff).
 	FailureReasonImagePull FailureReason = "image_pull"
 	// FailureReasonInvalidImage — an image reference of the pod is malformed (InvalidImageName).
@@ -412,6 +462,12 @@ const (
 	FailureReasonDeadlineExceeded FailureReason = "deadline_exceeded"
 	// FailureReasonDbtNothingToDo — dbt exited 0 having matched no node ("Nothing to do"), so nothing was built.
 	FailureReasonDbtNothingToDo FailureReason = "dbt_nothing_to_do"
+	// FailureReasonInvalidNodeType — the dispatch names a node type the node_type vocabulary does not declare.
+	FailureReasonInvalidNodeType FailureReason = "invalid_node_type"
+	// FailureReasonMalformedDispatch — a field of the dispatch holds a value execution-controller cannot run: an operation it does not know, no image, a Job name that is not a Kubernetes name, a timeout below one second, or a known_status other than dispatched, queued or running; or no command builds the node.
+	FailureReasonMalformedDispatch FailureReason = "malformed_dispatch"
+	// FailureReasonJobNameCollision — a Job of the dispatched name already exists for another task or attempt.
+	FailureReasonJobNameCollision FailureReason = "job_name_collision"
 )
 
 // FailureReasons returns every value in contract.yaml declaration order.
@@ -422,6 +478,8 @@ func FailureReasons() []FailureReason {
 		FailureReasonEvicted,
 		FailureReasonNodeLost,
 		FailureReasonJobMissing,
+		FailureReasonAttemptLost,
+		FailureReasonCreateFailed,
 		FailureReasonImagePull,
 		FailureReasonInvalidImage,
 		FailureReasonMissingConfig,
@@ -429,6 +487,9 @@ func FailureReasons() []FailureReason {
 		FailureReasonStartTimeout,
 		FailureReasonDeadlineExceeded,
 		FailureReasonDbtNothingToDo,
+		FailureReasonInvalidNodeType,
+		FailureReasonMalformedDispatch,
+		FailureReasonJobNameCollision,
 	}
 }
 
@@ -445,6 +506,10 @@ func (v FailureReason) IsValid() bool {
 		return true
 	case FailureReasonJobMissing:
 		return true
+	case FailureReasonAttemptLost:
+		return true
+	case FailureReasonCreateFailed:
+		return true
 	case FailureReasonImagePull:
 		return true
 	case FailureReasonInvalidImage:
@@ -458,6 +523,12 @@ func (v FailureReason) IsValid() bool {
 	case FailureReasonDeadlineExceeded:
 		return true
 	case FailureReasonDbtNothingToDo:
+		return true
+	case FailureReasonInvalidNodeType:
+		return true
+	case FailureReasonMalformedDispatch:
+		return true
+	case FailureReasonJobNameCollision:
 		return true
 	}
 	return false
@@ -476,6 +547,10 @@ func (v FailureReason) Class() FailureClass {
 		return FailureClassInfra
 	case FailureReasonJobMissing:
 		return FailureClassInfra
+	case FailureReasonAttemptLost:
+		return FailureClassInfra
+	case FailureReasonCreateFailed:
+		return FailureClassInfra
 	case FailureReasonImagePull:
 		return FailureClassStart
 	case FailureReasonInvalidImage:
@@ -489,6 +564,12 @@ func (v FailureReason) Class() FailureClass {
 	case FailureReasonDeadlineExceeded:
 		return FailureClassTimeout
 	case FailureReasonDbtNothingToDo:
+		return FailureClassInvalid
+	case FailureReasonInvalidNodeType:
+		return FailureClassInvalid
+	case FailureReasonMalformedDispatch:
+		return FailureClassInvalid
+	case FailureReasonJobNameCollision:
 		return FailureClassInvalid
 	}
 	return ""

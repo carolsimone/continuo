@@ -198,8 +198,8 @@ type nodeSummaryRow struct {
 	LastRunAt      time.Time `db:"last_run_at"`
 	Operation      string    `db:"operation"`
 	// TimeoutSeconds is the live release's declared task timeout for the node;
-	// 0 when it declares none.
-	TimeoutSeconds int `db:"timeout_seconds"`
+	// nil when it declares none or the live release does not hold the node.
+	TimeoutSeconds *int `db:"timeout_seconds"`
 	// TotalCount is COUNT(*) OVER () — the same match count on every page row.
 	// Only populated by the ListNodes page query.
 	TotalCount int `db:"total_count"`
@@ -308,7 +308,7 @@ func (r *nodeRunRepository) ListNodes(
 		SELECT agg.service_name, agg.schema_name, agg.table_name, agg.run_count,
 		       agg.terminal_count, agg.succeeded_count, agg.avg_dur, agg.p95_dur,
 		       agg.flaky_count, agg.last_status, agg.last_run_at, agg.operation,
-		       COALESCE(lt.timeout_seconds, 0) AS timeout_seconds,
+		       lt.timeout_seconds,
 		       COUNT(*) OVER () AS total_count
 		FROM agg
 		LEFT JOIN live_timeouts lt

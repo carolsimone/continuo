@@ -9,13 +9,12 @@ import (
 
 // ReadyCandidate is a pending, undispatched task of a run that reads, directly,
 // a task of the run that has just succeeded: its id, its node as the run's
-// release holds it, its Job name and retry budget as its row stores them, and
-// the status of every task of the run it reads.
+// release holds it, its Job name as its row stores it, and the status of every
+// task of the run it reads.
 type ReadyCandidate struct {
 	TaskID           uuid.UUID
 	Node             topology.Node
 	JobName          string
-	MaxRetries       int32
 	UpstreamStatuses []TaskStatus
 }
 
@@ -46,4 +45,8 @@ type TaskGraph interface {
 	// for good, none of them can run. Each is returned once, however many
 	// paths reach it.
 	PendingDescendants(ctx context.Context, runID uuid.UUID, releaseID string, key topology.NodeKey) ([]uuid.UUID, error)
+
+	// Node returns the node at key as releaseID holds it; found is false when
+	// the release holds no such node.
+	Node(ctx context.Context, releaseID string, key topology.NodeKey) (node topology.Node, found bool, err error)
 }

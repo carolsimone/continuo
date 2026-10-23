@@ -44,8 +44,11 @@ type RunSummary struct {
 	RunID          uuid.UUID
 	ScheduleName   string
 	TerminalStatus run.SchedulerStatus
-	CreatedAt      time.Time
-	CompletedAt    time.Time
+	// FailureReason is why the run failed when no task of it failed; empty
+	// otherwise.
+	FailureReason run.RunFailureReason
+	CreatedAt     time.Time
+	CompletedAt   time.Time
 }
 
 // ActiveRunDrift is the newest active run of a schedule and the promotion seq

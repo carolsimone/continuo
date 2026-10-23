@@ -34,3 +34,17 @@ models:
       +tags: ["rel-probe"]
     rel_probe_down:
       +tags: ["rel-probe"]
+    # The execution-protocol fixtures. A model with no tag is dropped by
+    # topology-controller, so each needs one to exist in the topology; each
+    # scenario gets a schedule of its own, so no run of a shared schedule
+    # builds them. ftable_retry fails its first attempt (TASK_ATTEMPT 0) and
+    # succeeds on its second.
+    ftable_retry:
+      +tags: ["e2e-retry"]
+    # ftable_deadline declares a one-minute task timeout and sleeps for ten, so
+    # its Job runs past its deadline; ftable_deadline_down reads it and is
+    # skipped when it fails.
+    ftable_deadline:
+      +tags: ["e2e-deadline"]
+    ftable_deadline_down:
+      +tags: ["e2e-deadline"]

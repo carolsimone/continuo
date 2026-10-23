@@ -28,7 +28,7 @@ queue, or whether any messages were lost.
 Arguments:
   [source]  Optional. consumer, outbox, quarantine, or all. Omit (or give
             all) to list every source; an empty value is a usage error.
-  [stream]  Optional. Only dead letters of this stream, e.g. task.status.updated:v1.
+  [stream]  Optional. Only dead letters of this stream, e.g. task.status.updated:v2.
             Omit to list every stream; an empty value is a usage error. To
             filter by stream alone, give all as the source.
 
@@ -49,7 +49,7 @@ Errors:
   usage      (exit 2)  more than two arguments, a blank argument, or an unknown source
   unavailable(exit 5)  dead-letter-controller is unreachable
   internal   (exit 6)  unexpected server error`,
-		Example: "  continuo dlq list\n  continuo dlq list consumer\n  continuo dlq list all query.model:v1",
+		Example: "  continuo dlq list\n  continuo dlq list consumer\n  continuo dlq list all task.dispatch:v1",
 		Annotations: map[string]string{
 			"output_schema": `{"total_open":"number","dead_letters":"array"}`,
 			"exit_codes":    `[0,2,5,6]`,

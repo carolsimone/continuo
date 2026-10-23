@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"time"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/identity"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
@@ -91,27 +93,31 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Ent
 		return buildEntry(e.ID, "scheduler", "schedule_cancelled", streams.ScheduleCancelledV1, payload, msgProcPtr), false, nil
 
 	case run.TaskDispatched:
-		payload, err := json.Marshal(pkgevents.QueryModel{
-			ScheduleID:   e.ID.String(),
-			ScheduleName: e.ScheduleName,
-			TaskID:       e.TaskID.String(),
-			ServiceName:  e.Node.ServiceName,
-			SchemaName:   e.Node.SchemaName,
-			TableName:    e.Node.TableName,
-			JobName:      e.JobName,
-			NodeType:     e.Node.NodeType,
-			ImageTag:     e.Node.ImageTag,
-			SecretRef:    e.Node.SecretRef,
-			Operation:    string(e.Operation),
-			MaxRetries:   e.MaxRetries,
-		}.Fields())
+		payload, err := json.Marshal(pkgevents.TaskDispatch{
+			RunID:          e.ID.String(),
+			TaskID:         e.TaskID.String(),
+			Attempt:        e.Attempt,
+			KnownStatus:    model.AttemptStatus(e.KnownStatus),
+			ScheduleName:   e.ScheduleName,
+			NodeKey:        string(e.Node.Key),
+			ServiceName:    e.Node.ServiceName,
+			SchemaName:     e.Node.SchemaName,
+			TableName:      e.Node.TableName,
+			NodeType:       e.Node.NodeType,
+			Operation:      string(e.Operation),
+			ImageTag:       e.Node.ImageTag,
+			SecretRef:      e.Node.SecretRef,
+			JobName:        e.JobName,
+			TimeoutSeconds: int64(e.Timeout / time.Second),
+		})
 		if err != nil {
 			return nil, false, err
 		}
-		// The row's event_type is the stream name; every dispatch of a run
-		// shares the run as its aggregate, so the relay publishes them in the
-		// order they were written.
-		return buildEntry(e.ID, "scheduler", streams.QueryModelV1, streams.QueryModelV1, payload, msgProcPtr), false, nil
+		// The row's event_type is the stream name; the publisher renders the
+		// envelope from the row. Every dispatch of a run shares the run as its
+		// aggregate, so the relay publishes them in the order they were
+		// written.
+		return buildEntry(e.ID, "scheduler", streams.TaskDispatchV1, streams.TaskDispatchV1, payload, msgProcPtr), false, nil
 	case run.RunDispatchTerminal:
 		// RunDispatchTerminal is informational and maps to no stream.
 		// The activation handler logs its reason.

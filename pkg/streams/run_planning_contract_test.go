@@ -25,8 +25,18 @@ var runPlanningRetired = []string{
 	"trigger.single_node_run:v1",
 }
 
+// executionProtocolRetired are the streams nothing produces or consumes once
+// state dispatches each attempt on task.dispatch:v1 and execution-controller
+// reports it on task.status.updated:v2, watching every Job itself.
+var executionProtocolRetired = []string{
+	"check.k8s:v1",
+	"query.model:v1",
+	"task.execution.recorded:v1",
+	"task.status.updated:v1",
+}
+
 func TestRunPlanningStreams_AreRetired(t *testing.T) {
-	for _, name := range runPlanningRetired {
+	for _, name := range slices.Concat(runPlanningRetired, executionProtocolRetired) {
 		if _, live := streams.Groups[name]; live {
 			t.Errorf("%s is still a live stream", name)
 		}
@@ -55,8 +65,8 @@ func TestRunDispatchStreams_HaveOneProducer(t *testing.T) {
 		t.Fatalf("parse contract.yaml: %v", err)
 	}
 	want := map[string][]string{
-		streams.QueryModelV1:        {"state"},
-		streams.TaskStatusUpdatedV1: {"execution-controller"},
+		streams.TaskDispatchV1:      {"state"},
+		streams.TaskStatusUpdatedV2: {"execution-controller"},
 	}
 	for _, s := range c.Streams {
 		w, ok := want[s.Name]

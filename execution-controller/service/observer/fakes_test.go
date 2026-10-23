@@ -104,15 +104,3 @@ func (f *fakeObserved) GetByJobName(_ context.Context, jobName string) (*model.D
 }
 func (f *fakeObserved) ListObservedJobNames(context.Context) ([]string, error)     { return f.names, f.err }
 func (f *fakeObserved) StateAge(context.Context, uuid.UUID) (time.Duration, error) { return 0, f.err }
-
-// fakeLegacy counts Clear calls and reports n keys deleted.
-type fakeLegacy struct {
-	clears int
-	n      int64
-	err    error
-}
-
-func (l *fakeLegacy) Clear(context.Context) (int64, error) {
-	l.clears++
-	return l.n, l.err
-}

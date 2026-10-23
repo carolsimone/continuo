@@ -73,7 +73,7 @@ func newStartRun(t *testing.T, db *sqlx.DB, now time.Time) *run.Run {
 }
 
 // A run is created, started and saved in one transaction: its row first, then
-// its tasks, its plan and one query.model:v1 outbox row per ready task, all
+// its tasks, its plan and one task.dispatch:v1 outbox row per ready task, all
 // committed together.
 func TestStartedRun_StoresItsTasksPlanAndDispatches(t *testing.T) {
 	ctx := context.Background()
@@ -87,7 +87,7 @@ func TestStartedRun_StoresItsTasksPlanAndDispatches(t *testing.T) {
 	u := newPlanningUoW(db)
 	require.NoError(t, u.Begin(ctx))
 	require.NoError(t, u.Run().SaveRun(ctx, r))
-	events, err := r.Start(ctx, u.TaskCollection(), pkgevents.DefaultTenantID, plan, g, pkgevents.DefaultTaskMaxRetries, now)
+	events, err := r.Start(ctx, u.TaskCollection(), pkgevents.DefaultTenantID, plan, g, testTaskDefaults, now)
 	require.NoError(t, err)
 	require.NoError(t, u.Run().SaveRun(ctx, r))
 	require.NoError(t, u.Outbox().Append(ctx, events, uuid.Nil))
@@ -123,7 +123,7 @@ func TestStartedRun_StoresItsTasksPlanAndDispatches(t *testing.T) {
 	require.NoError(t, db.Select(&taskIDs, `
 		SELECT payload->>'task_id' FROM state_outbox
 		WHERE aggregate_id = $1 AND stream_name = $2 ORDER BY payload->>'table_name'`,
-		r.ScheduleID(), streams.QueryModelV1))
+		r.ScheduleID(), streams.TaskDispatchV1))
 	assert.Equal(t, []string{
 		run.TaskIDFor(pkgevents.DefaultTenantID, r.ScheduleID(), "e2e_schema.ftable_a").String(),
 		run.TaskIDFor(pkgevents.DefaultTenantID, r.ScheduleID(), "e2e_schema.ftable_b").String(),
@@ -150,25 +150,30 @@ func TestStartedRun_TasksNeedTheRunRowFirst(t *testing.T) {
 	u := newPlanningUoW(db)
 	require.NoError(t, u.Begin(ctx))
 	defer u.Rollback()
-	_, err = r.Start(ctx, u.TaskCollection(), pkgevents.DefaultTenantID, plan, g, pkgevents.DefaultTaskMaxRetries, now)
+	_, err = r.Start(ctx, u.TaskCollection(), pkgevents.DefaultTenantID, plan, g, testTaskDefaults, now)
 	require.Error(t, err)
 	assert.Equal(t, "23503", pqCode(t, err))
 }
 
-// A TaskDispatched is stored as the query.model:v1 row whose published fields
-// are the golden fixture's.
+// A TaskDispatched is stored as the task.dispatch:v1 row whose payload is the
+// golden fixture's, and which the publisher renders, under the envelope of the
+// row, as the fixture's fields.
 func TestOutboxPublisher_TaskDispatchedMatchesTheGoldenFixture(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
-	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "pkg", "events", "testdata", "query_model_v1.json"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "pkg", "events", "testdata", "task_dispatch_v1.json"))
 	require.NoError(t, err)
 	var fixture struct {
-		Input  pkgevents.QueryModel `json:"input"`
-		Fields map[string]string    `json:"fields"`
+		Input struct {
+			EventID    string                 `json:"event_id"`
+			OccurredAt time.Time              `json:"occurred_at"`
+			Payload    pkgevents.TaskDispatch `json:"payload"`
+		} `json:"input"`
+		Fields map[string]json.RawMessage `json:"fields"`
 	}
 	require.NoError(t, json.Unmarshal(raw, &fixture))
-	in := fixture.Input
-	runID := uuid.MustParse(in.ScheduleID)
+	in := fixture.Input.Payload
+	runID := uuid.MustParse(in.RunID)
 	t.Cleanup(func() { _, _ = db.ExecContext(ctx, `DELETE FROM state_outbox WHERE aggregate_id = $1`, runID) })
 
 	tx, err := db.BeginTxx(ctx, nil)
@@ -178,13 +183,15 @@ func TestOutboxPublisher_TaskDispatchedMatchesTheGoldenFixture(t *testing.T) {
 		ID:           runID,
 		ScheduleName: in.ScheduleName,
 		TaskID:       uuid.MustParse(in.TaskID),
+		Attempt:      in.Attempt,
+		KnownStatus:  run.AttemptStatus(in.KnownStatus),
 		Node: topology.Node{
-			Key: topology.KeyOf(in.SchemaName, in.TableName), ServiceName: in.ServiceName, SchemaName: in.SchemaName,
+			Key: topology.NodeKey(in.NodeKey), ServiceName: in.ServiceName, SchemaName: in.SchemaName,
 			TableName: in.TableName, NodeType: in.NodeType, ImageTag: in.ImageTag, SecretRef: in.SecretRef,
 		},
-		JobName:    in.JobName,
-		Operation:  model.Operation(in.Operation),
-		MaxRetries: in.MaxRetries,
+		JobName:   in.JobName,
+		Operation: model.Operation(in.Operation),
+		Timeout:   time.Duration(in.TimeoutSeconds) * time.Second,
 	}}, uuid.Nil))
 	require.NoError(t, tx.Commit())
 
@@ -196,17 +203,33 @@ func TestOutboxPublisher_TaskDispatchedMatchesTheGoldenFixture(t *testing.T) {
 	}
 	require.NoError(t, db.Get(&stored, `
 		SELECT stream_name, aggregate_type, event_type, payload FROM state_outbox WHERE aggregate_id = $1`, runID))
-	assert.Equal(t, streams.QueryModelV1, stored.StreamName)
+	assert.Equal(t, streams.TaskDispatchV1, stored.StreamName)
 	assert.Equal(t, "scheduler", stored.AggregateType)
-	assert.Equal(t, streams.QueryModelV1, stored.EventType)
+	assert.Equal(t, streams.TaskDispatchV1, stored.EventType)
+	var payload pkgevents.TaskDispatch
+	require.NoError(t, json.Unmarshal(stored.Payload, &payload))
+	assert.Equal(t, in, payload, "the row's payload is the dispatch")
 
 	rendered, err := publisher.NewOutboxPublisher(nil, discardLogger()).Render(&pkgoutbox.Entry{
+		ID: uuid.MustParse(fixture.Input.EventID), CreatedAt: fixture.Input.OccurredAt,
 		StreamName: stored.StreamName, EventType: stored.EventType, Payload: stored.Payload,
 	})
 	require.NoError(t, err)
-	want := make(map[string]any, len(fixture.Fields))
-	for k, v := range fixture.Fields {
-		want[k] = v
+	require.Len(t, rendered, len(fixture.Fields))
+	for key, want := range fixture.Fields {
+		if key == "payload" {
+			var w, g any
+			require.NoError(t, json.Unmarshal(want, &w))
+			require.NoError(t, json.Unmarshal([]byte(rendered[key].(string)), &g))
+			assert.Equal(t, w, g)
+			continue
+		}
+		var w string
+		require.NoError(t, json.Unmarshal(want, &w))
+		assert.Equal(t, w, rendered[key], key)
 	}
-	assert.Equal(t, want, rendered)
 }
+
+// testTaskDefaults are the task settings the adapter tests plan with: the
+// chart's defaults.
+var testTaskDefaults = run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}

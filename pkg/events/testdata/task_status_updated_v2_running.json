@@ -1,0 +1,35 @@
+{
+  "input": {
+    "event_id": "9c2e4a61-7b3d-4f58-a0e1-6d2c8b4f9a17",
+    "tenant_id": "default",
+    "producer": "execution-controller",
+    "occurred_at": "2026-10-20T23:01:52.120000Z",
+    "payload": {
+      "run_id": "7f3e1a2b-4c5d-4e6f-8a9b-0c1d2e3f4a5b",
+      "task_id": "3e8d7c6b-5a49-4382-9170-6f5e4d3c2b1a",
+      "attempt": 0,
+      "job_name": "service-1-e2e-schema-ftable-e-7f3e1a2b",
+      "status": "running",
+      "queued_at": "2026-10-20T23:01:20.412Z",
+      "started_at": "2026-10-20T23:01:24.105Z",
+      "parse_cache": "hydrated"
+    }
+  },
+  "fields": {
+    "event_id": "9c2e4a61-7b3d-4f58-a0e1-6d2c8b4f9a17",
+    "tenant_id": "default",
+    "occurred_at": "2026-10-20T23:01:52.120000Z",
+    "producer": "execution-controller",
+    "schema_version": "1",
+    "payload": {
+      "run_id": "7f3e1a2b-4c5d-4e6f-8a9b-0c1d2e3f4a5b",
+      "task_id": "3e8d7c6b-5a49-4382-9170-6f5e4d3c2b1a",
+      "attempt": 0,
+      "job_name": "service-1-e2e-schema-ftable-e-7f3e1a2b",
+      "status": "running",
+      "queued_at": "2026-10-20T23:01:20.412Z",
+      "started_at": "2026-10-20T23:01:24.105Z",
+      "parse_cache": "hydrated"
+    }
+  }
+}

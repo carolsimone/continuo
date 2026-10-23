@@ -128,6 +128,13 @@ for old in executor-controller k8s-controller; do
         -n default --ignore-not-found --wait --timeout=60s || true
 done
 
+# The start-timeout e2e test applies the e2e-no-pods ResourceQuota, which
+# forbids every new pod in the namespace, and deletes it when it ends. Delete
+# one a killed test run left behind, or no pod could start here, this
+# Deployment's included.
+log_info "Removing any e2e-no-pods ResourceQuota left behind..."
+kubectl delete resourcequota e2e-no-pods -n default --ignore-not-found=true
+
 # Apply execution-controller
 log_info "Deploying execution-controller..."
 envsubst < execution-controller-deployment.yaml | kubectl apply -f - || {

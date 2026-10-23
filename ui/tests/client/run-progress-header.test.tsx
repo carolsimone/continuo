@@ -20,6 +20,17 @@ describe('RunProgressHeader', () => {
     expect(screen.getByTestId('run-progress-pct')).toHaveTextContent('60%');
   });
 
+  it('counts dispatched and queued tasks on their own, before running, and not toward completion', () => {
+    const { container } = render(<RunProgressHeader tasks={[t('dispatched'), t('queued'), t('queued'), t('running'), t('succeeded')]} />);
+    expect(screen.getByTestId('count-dispatched')).toHaveTextContent('1');
+    expect(screen.getByTestId('count-queued')).toHaveTextContent('2');
+    expect(screen.getByTestId('count-pending')).toHaveTextContent('0');
+    expect(screen.getByTestId('run-progress-pct')).toHaveTextContent('20%');
+    const order = [...container.querySelectorAll('.rp-count b')].map((b) => b.getAttribute('data-testid'));
+    expect(order.indexOf('count-queued')).toBe(order.indexOf('count-running') - 1);
+    expect(order.indexOf('count-dispatched')).toBe(order.indexOf('count-queued') - 1);
+  });
+
   it('counts cancelled separately and toward completion, not as pending', () => {
     render(<RunProgressHeader tasks={[t('succeeded'), t('cancelled')]} />);
     expect(screen.getByTestId('count-cancelled')).toHaveTextContent('1');

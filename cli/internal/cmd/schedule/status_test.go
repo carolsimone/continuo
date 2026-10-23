@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -279,4 +281,25 @@ func keys(m map[string]json.RawMessage) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// The help's list of the statuses a task can carry ("status is one of: ...")
+// is exactly the task statuses state serves.
+func TestStatus_LongNamesEveryTaskStatus(t *testing.T) {
+	long := NewStatusCommand(nil, nil, io.Discard, io.Discard).Long
+	const prefix = "status is one of: "
+	var listed []string
+	for _, line := range strings.Split(long, "\n") {
+		if i := strings.Index(line, prefix); i >= 0 {
+			listed = strings.Split(strings.TrimSuffix(strings.TrimSpace(line[i+len(prefix):]), "."), "|")
+		}
+	}
+	require.NotEmpty(t, listed, "the help has no %q line", prefix)
+	var served []string
+	for v := range statev1.TaskStatus_name {
+		if s := taskStatusString(statev1.TaskStatus(v)); s != "" {
+			served = append(served, s)
+		}
+	}
+	assert.ElementsMatch(t, served, listed)
 }

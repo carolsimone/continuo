@@ -77,7 +77,6 @@ type Deps struct {
 	Logs       ports.PodLogReader
 	Uploader   ports.LogUploader
 	Queue      ports.ObservationQueue
-	Legacy     ports.LegacyCheckQueue
 	Outcomes   *outcomes.Recorder
 	Metrics    ports.ObserverMetrics
 	Logger     *slog.Logger
@@ -139,10 +138,7 @@ func (o *Observer) Run(ctx context.Context) error {
 }
 
 // Resync queues the Job of every started deployment, so no attempt waits on a
-// watch event that was missed, and deletes the status-check delay queue a
-// previous version's pod may have written. A row done without its outcome is
-// not listed: only its Job can still tell its result, and the watch delivers
-// every existing Job when it starts.
+// watch event that was missed.
 func (o *Observer) Resync(ctx context.Context) error {
 	names, err := o.deps.Observed.ListObservedJobNames(ctx)
 	if err != nil {
@@ -150,13 +146,6 @@ func (o *Observer) Resync(ctx context.Context) error {
 	}
 	for _, name := range names {
 		o.deps.Queue.Add(name)
-	}
-	n, err := o.deps.Legacy.Clear(ctx)
-	if err != nil {
-		return err
-	}
-	if n > 0 {
-		o.deps.Logger.Info("Deleted the status-check delay queue a previous version wrote", "keys", n)
 	}
 	return nil
 }
@@ -181,9 +170,7 @@ func (o *Observer) processNext(ctx context.Context) bool {
 }
 
 // Process observes the attempt of jobName's deployment once. A name whose
-// deployment awaits no result is ignored, and so is a row done without its
-// outcome whose Job is gone: its result can no longer be learned, so nothing is
-// reported and no next attempt is queued. Until the cache has synced, the
+// deployment awaits no result is ignored. Until the cache has synced, the
 // name is queued again a second later: an absence from it means nothing yet.
 func (o *Observer) Process(ctx context.Context, jobName string) error {
 	if !o.deps.Cache.Synced() {
@@ -206,22 +193,6 @@ func (o *Observer) Process(ctx context.Context, jobName string) error {
 	}
 	obs := o.deps.Cache.Observe(jobName)
 	now := o.now()
-	if dep.Status() == model.StatusDone {
-		// An older version released this row before recording its result. Its
-		// slot is free, so it is never ended here: it settles once its Job has
-		// ended, records what the Job shows meanwhile, and is left alone once
-		// the Job is gone with the result.
-		switch {
-		case !obs.JobPresent:
-			o.deps.Metrics.AwaitingPodStop(jobName, false)
-			return nil
-		case obs.Ended():
-			return o.finish(ctx, dep, obs, now)
-		default:
-			return o.record(ctx, dep, obs, now)
-		}
-	}
-
 	switch {
 	case dep.Status() == model.StatusTerminating:
 		return o.processTerminating(ctx, dep, obs, now)
@@ -292,8 +263,8 @@ func (o *Observer) processAbsent(ctx context.Context, dep *model.Deployment, obs
 
 // record stores what obs shows of an attempt that has not ended. A starting
 // deployment whose main container started moves to running and, for a
-// production task, is reported running. The log of a pod awaiting its stop is
-// read at once, since the pod may vanish.
+// production attempt, is reported running. The log of a pod awaiting its stop
+// is read at once, since the pod may vanish.
 func (o *Observer) record(ctx context.Context, dep *model.Deployment, obs model.JobObservation, now time.Time) error {
 	var logFacts model.AttemptFacts
 	if obs.AwaitingStop() && dep.Facts().LogKey == "" && obs.Started() {

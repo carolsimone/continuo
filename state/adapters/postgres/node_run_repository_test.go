@@ -909,8 +909,8 @@ func makeLive(t *testing.T, db *sqlx.DB, release string, promotionSeq int64) {
 	})
 }
 
-func timeoutOf(rows []*projection.NodeSummary) map[string]int {
-	out := map[string]int{}
+func timeoutOf(rows []*projection.NodeSummary) map[string]*int {
+	out := map[string]*int{}
 	for _, r := range rows {
 		out[r.TableName] = r.TimeoutSeconds
 	}
@@ -918,7 +918,8 @@ func timeoutOf(rows []*projection.NodeSummary) map[string]int {
 }
 
 // A node's catalog row carries the timeout the live release declares for it:
-// an older release's value never shows, and a node declaring none reports 0.
+// an older release's value never shows, and a node declaring none reports
+// none.
 func TestNodeRunRepository_ListNodes_CarriesTheLiveReleasesTimeout(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
@@ -943,7 +944,7 @@ func TestNodeRunRepository_ListNodes_CarriesTheLiveReleasesTimeout(t *testing.T)
 	rows, total, err := repo.ListNodes(ctx, "", svc, "", 50, 0)
 	require.NoError(t, err)
 	assert.Equal(t, 2, total, "joining the live release must not change the catalog count")
-	assert.Equal(t, map[string]int{tblA: 7200, tblB: 0}, timeoutOf(rows))
+	assert.Equal(t, map[string]*int{tblA: ptr(7200), tblB: nil}, timeoutOf(rows))
 }
 
 // A node the live release does not hold reports no timeout.
@@ -969,7 +970,7 @@ func TestNodeRunRepository_ListNodes_ANodeOutsideTheLiveReleaseHasNoTimeout(t *t
 	rows, total, err := repo.ListNodes(ctx, "", svc, "", 50, 0)
 	require.NoError(t, err)
 	assert.Equal(t, 2, total)
-	assert.Equal(t, map[string]int{held: 300, outside: 0}, timeoutOf(rows))
+	assert.Equal(t, map[string]*int{held: ptr(300), outside: nil}, timeoutOf(rows))
 }
 
 // Two nodes of the live release that share a service, schema and table (they
@@ -996,5 +997,6 @@ func TestNodeRunRepository_ListNodes_NodesSharingATableStayOneRow(t *testing.T) 
 	require.NoError(t, err)
 	assert.Equal(t, 1, total)
 	require.Len(t, rows, 1)
-	assert.Equal(t, 1200, rows[0].TimeoutSeconds)
+	require.NotNil(t, rows[0].TimeoutSeconds)
+	assert.Equal(t, 1200, *rows[0].TimeoutSeconds)
 }

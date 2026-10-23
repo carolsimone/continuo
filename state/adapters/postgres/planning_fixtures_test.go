@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
-	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
@@ -145,7 +144,7 @@ func startScheduleRun(tb testing.TB, db *sqlx.DB, tenant, schedule string, op mo
 	plan, err := runplan.WholeDAG{Operation: op}.Select(g)
 	require.NoError(tb, err)
 	require.NoError(tb, u.Run().SaveRun(ctx, r))
-	events, err := r.Start(ctx, u.TaskCollection(), tenant, plan, g, pkgevents.DefaultTaskMaxRetries, now)
+	events, err := r.Start(ctx, u.TaskCollection(), tenant, plan, g, testTaskDefaults, now)
 	require.NoError(tb, err)
 	require.NoError(tb, u.Run().SaveRun(ctx, r))
 	require.NoError(tb, u.Outbox().Append(ctx, events, uuid.Nil))
@@ -165,7 +164,8 @@ func setTaskStatus(tb testing.TB, db *sqlx.DB, r *run.Run, nodeKey string, statu
 }
 
 // succeedWithAttempts marks every task of runID succeeded, each with one
-// succeeded attempt whose duration grows with its position in key order.
+// succeeded attempt whose duration grows with its position in key order; a
+// dispatched task's attempt 0 becomes that attempt.
 func succeedWithAttempts(tb testing.TB, db *sqlx.DB, runID uuid.UUID) {
 	tb.Helper()
 	_, err := db.Exec(`UPDATE task_tracker SET status = 'succeeded' WHERE schedule_id = $1`, runID)
@@ -173,6 +173,8 @@ func succeedWithAttempts(tb testing.TB, db *sqlx.DB, runID uuid.UUID) {
 	_, err = db.Exec(`
 		INSERT INTO task_attempts (task_id, attempt, job_name, status, started_at, finished_at, execution_seconds)
 		SELECT task_id, 0, job_name, 'succeeded', now(), now(), 1 + row_number() OVER (ORDER BY node_key)
-		FROM task_tracker WHERE schedule_id = $1`, runID)
+		FROM task_tracker WHERE schedule_id = $1
+		ON CONFLICT (task_id, attempt) DO UPDATE SET status = EXCLUDED.status, started_at = EXCLUDED.started_at,
+			finished_at = EXCLUDED.finished_at, execution_seconds = EXCLUDED.execution_seconds, next_check_at = NULL`, runID)
 	require.NoError(tb, err)
 }

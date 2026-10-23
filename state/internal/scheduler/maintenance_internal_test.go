@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"log/slog"
 	"testing"
+	"time"
 
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 
+	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/service/runstart"
 	"github.com/carolsimone/continuo/state/service/uow"
@@ -32,4 +34,4 @@ func TestActivateSchedule_SkippedDuringMaintenance(t *testing.T) {
 }
 
 // defaultPlanner plans the runs of the default tenant, as state's main does.
-var defaultPlanner = runstart.Planner{TenantID: pkgevents.DefaultTenantID}
+var defaultPlanner = runstart.Planner{TenantID: pkgevents.DefaultTenantID, Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}}

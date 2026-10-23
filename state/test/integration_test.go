@@ -135,7 +135,7 @@ func TestMain(m *testing.M) {
 	runReadRepo := postgres.NewRunReadRepository(db)
 	previewRebaseHandler := handlers.NewPreviewRebaseHandler(runreads.NewRebasePreviewer(defaultPlanner, integrationUoWFactory, runReadRepo), logger)
 	nodeRunRepo := postgres.NewNodeRunRepository(db, logger)
-	nodeRunHandler := handlers.NewNodeRunHandler(nodeRunRepo, logger)
+	nodeRunHandler := handlers.NewNodeRunHandler(nodeRunRepo, 24*time.Hour, logger)
 	runReadHandler := handlers.NewRunReadHandler(runreads.New(runReadRepo), logger)
 
 	// ---- Create gRPC server on a random port ----

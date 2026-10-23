@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
@@ -17,7 +18,7 @@ var _ outbox.Renderer = (*OutboxPublisher)(nil)
 func TestRender_ReturnsPublishedFieldsWithoutOutboxEntryID(t *testing.T) {
 	p := NewOutboxPublisher(nil, nil)
 	body, _ := json.Marshal(map[string]any{"schedule_id": "s1", "nested": map[string]any{"a": 1}})
-	values, err := p.Render(&outbox.Entry{ID: uuid.New(), EventType: "query_model", StreamName: "query.model:v1", Payload: body})
+	values, err := p.Render(&outbox.Entry{ID: uuid.New(), EventType: "schedule_cancelled", StreamName: streams.ScheduleCancelledV1, Payload: body})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +49,7 @@ func TestRender_DeadLetterRowOmitsOutboxEntryID(t *testing.T) {
 
 func TestRender_ReturnsAFreshMapEachCall(t *testing.T) {
 	p := NewOutboxPublisher(nil, nil)
-	entry := &outbox.Entry{ID: uuid.New(), EventType: "query_model", StreamName: "query.model:v1", Payload: []byte(`{"schedule_id":"s1"}`)}
+	entry := &outbox.Entry{ID: uuid.New(), EventType: "schedule_cancelled", StreamName: streams.ScheduleCancelledV1, Payload: []byte(`{"schedule_id":"s1"}`)}
 	first, err := p.Render(entry)
 	require.NoError(t, err)
 	first["schedule_id"] = "mutated"
@@ -59,7 +60,7 @@ func TestRender_ReturnsAFreshMapEachCall(t *testing.T) {
 
 func TestRender_ValuesAreAcceptedByStringifyFields(t *testing.T) {
 	p := NewOutboxPublisher(nil, nil)
-	values, err := p.Render(&outbox.Entry{ID: uuid.New(), EventType: "query_model", StreamName: "query.model:v1", Payload: []byte(`{"n":3,"ok":true,"gone":null,"nested":[1,2]}`)})
+	values, err := p.Render(&outbox.Entry{ID: uuid.New(), EventType: "schedule_cancelled", StreamName: streams.ScheduleCancelledV1, Payload: []byte(`{"n":3,"ok":true,"gone":null,"nested":[1,2]}`)})
 	require.NoError(t, err)
 	_, err = outbox.StringifyFields(values)
 	require.NoError(t, err)
@@ -71,7 +72,7 @@ func TestPublish_XAddsExactlyRenderPlusOutboxEntryID(t *testing.T) {
 	rdb, cleanup := newTestRedis(t)
 	defer cleanup()
 	p := NewOutboxPublisher(rdb, newTestLogger())
-	entry := &outbox.Entry{ID: uuid.New(), EventType: "query_model", StreamName: streams.QueryModelV1, Payload: []byte(`{"schedule_id":"s1","nested":{"a":1}}`)}
+	entry := &outbox.Entry{ID: uuid.New(), EventType: "schedule_cancelled", StreamName: streams.ScheduleCancelledV1, Payload: []byte(`{"schedule_id":"s1","nested":{"a":1}}`)}
 
 	rendered, err := p.Render(entry)
 	require.NoError(t, err)
@@ -80,7 +81,7 @@ func TestPublish_XAddsExactlyRenderPlusOutboxEntryID(t *testing.T) {
 	want["outbox_entry_id"] = entry.ID.String()
 
 	require.NoError(t, p.Publish(context.Background(), entry))
-	res, err := rdb.XRange(context.Background(), streams.QueryModelV1, "-", "+").Result()
+	res, err := rdb.XRange(context.Background(), streams.ScheduleCancelledV1, "-", "+").Result()
 	require.NoError(t, err)
 	require.Len(t, res, 1)
 	got := map[string]string{}
@@ -88,4 +89,19 @@ func TestPublish_XAddsExactlyRenderPlusOutboxEntryID(t *testing.T) {
 		got[k] = v.(string)
 	}
 	require.Equal(t, want, got)
+}
+
+// A task.dispatch:v1 row whose payload does not decode as a dispatch can never
+// publish: the error is permanent, so the relay dead-letters the row.
+func TestRender_ADispatchThatDoesNotDecodeIsPermanent(t *testing.T) {
+	for name, payload := range map[string]string{
+		"not an object":           `"not a dispatch"`,
+		"an attempt not a number": `{"run_id":"r1","task_id":"t1","attempt":"zero"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := NewOutboxPublisher(nil, nil).Render(&outbox.Entry{ID: uuid.New(), EventType: streams.TaskDispatchV1,
+				StreamName: streams.TaskDispatchV1, Payload: []byte(payload)})
+			require.ErrorIs(t, err, pkgevents.ErrPermanent)
+		})
+	}
 }

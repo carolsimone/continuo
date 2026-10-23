@@ -30,7 +30,7 @@ function renderPage(from?: NodeDetailFrom, navOperation?: string) {
   );
 }
 
-const mkRun = (over: Partial<{ run_id: string; task_id: string; kind: string; task_status: string; created_at: string; started_at: string | null; completed_at: string | null; error_message: string | null }>) => ({
+const mkRun = (over: Partial<{ run_id: string; task_id: string; kind: string; task_status: string; created_at: string; started_at: string | null; completed_at: string | null; error_message: string | null; failure_class: string | null; failure_reason: string | null }>) => ({
   run_id: 'r1', schedule_name: 'daily', kind: 'cron',
   terminal_status: 'succeeded', task_id: 't1',
   task_status: 'succeeded', attempt: 0, failure_class: null, failure_reason: null,
@@ -79,6 +79,20 @@ describe('NodeDetailPage', () => {
       expect(postCall).toBeDefined();
       expect(postCall![1]).toMatchObject({ method: 'POST', body: JSON.stringify({ operation: '' }) });
     });
+  });
+
+  it("shows a failed run's failure class and reason under its status", async () => {
+    mockFetch.mockImplementation(() => jsonResp({
+      runs: [mkRun({ run_id: 'r1', task_id: 't1', task_status: 'failed', failure_class: 'task', failure_reason: 'exit_code' })],
+    }));
+    renderPage();
+    expect(await screen.findByText('task · exit_code')).toBeInTheDocument();
+  });
+
+  it('titles a queued run "waiting for a slot"', async () => {
+    mockFetch.mockImplementation(() => jsonResp({ runs: [mkRun({ run_id: 'r1', task_id: 't1', task_status: 'queued' })] }));
+    renderPage();
+    expect(await screen.findByTitle('waiting for a slot')).toHaveTextContent('queued');
   });
 
   it('shows node-history table with kindLabel and computed stats', async () => {
@@ -386,10 +400,10 @@ describe('NodeDetailPage — foundations', () => {
 });
 
 describe('NodeDetailPage — task timeout', () => {
-  const mkSummary = (over: Partial<{ schema_name: string; timeout_seconds: number }>) => ({
+  const mkSummary = (over: Partial<{ schema_name: string; timeout_seconds: number; timeout_declared: boolean }>) => ({
     service_name: 'svc', schema_name: 'schema', table_name: 'tbl',
     run_count: 1, success_rate_pct: null, avg_duration_sec: null, p95_duration_sec: null,
-    last_status: null, last_run_at: null, operation: 'run', timeout_seconds: 0,
+    last_status: null, last_run_at: null, operation: 'run', timeout_seconds: 86400, timeout_declared: false,
     ...over,
   });
 
@@ -413,7 +427,7 @@ describe('NodeDetailPage — task timeout', () => {
   }
 
   it('shows the declared task timeout', async () => {
-    serveRows([mkSummary({ timeout_seconds: 28800 })]);
+    serveRows([mkSummary({ timeout_seconds: 28800, timeout_declared: true })]);
     renderPage();
     expect(await screen.findByText('task timeout 8 h · declared')).toBeInTheDocument();
     const calls = mockFetch.mock.calls as unknown as [string][];
@@ -421,15 +435,15 @@ describe('NodeDetailPage — task timeout', () => {
   });
 
   it('shows a declared timeout below one hour in minutes', async () => {
-    serveRows([mkSummary({ timeout_seconds: 1800 })]);
+    serveRows([mkSummary({ timeout_seconds: 1800, timeout_declared: true })]);
     renderPage();
     expect(await screen.findByText('task timeout 30 min · declared')).toBeInTheDocument();
   });
 
-  it('says the install default applies when none is declared', async () => {
-    serveRows([mkSummary({ timeout_seconds: 0 })]);
+  it('shows the install default, with its length, when none is declared', async () => {
+    serveRows([mkSummary({ timeout_seconds: 86400, timeout_declared: false })]);
     renderPage();
-    expect(await screen.findByText('task timeout · install default')).toBeInTheDocument();
+    expect(await screen.findByText('task timeout 24 h · install default')).toBeInTheDocument();
   });
 
   it('shows no task timeout when the node has no summary', async () => {
@@ -462,8 +476,8 @@ describe('NodeDetailPage — task timeout', () => {
 
   it('picks the matching schema when several nodes share the table name', async () => {
     serveRows([
-      mkSummary({ schema_name: 'other', timeout_seconds: 28800 }),
-      mkSummary({ schema_name: 'schema', timeout_seconds: 7200 }),
+      mkSummary({ schema_name: 'other', timeout_seconds: 28800, timeout_declared: true }),
+      mkSummary({ schema_name: 'schema', timeout_seconds: 7200, timeout_declared: true }),
     ]);
     renderPage();
     expect(await screen.findByText('task timeout 2 h · declared')).toBeInTheDocument();

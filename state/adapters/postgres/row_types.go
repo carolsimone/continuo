@@ -34,6 +34,7 @@ type SchedulerTracker struct {
 	ReleaseID            *string                        `json:"release_id,omitempty" db:"release_id"`
 	PromotionSeq         *int64                         `json:"promotion_seq,omitempty" db:"promotion_seq"`
 	PlannedAt            *time.Time                     `json:"planned_at,omitempty" db:"planned_at"`
+	FailureReason        *string                        `json:"failure_reason,omitempty" db:"failure_reason"`
 	ServiceMetadata      map[string]run.ServiceMetadata `json:"service_metadata"`
 	ServiceMetadataRaw   []byte                         `json:"-" db:"service_metadata"`
 }
@@ -81,9 +82,12 @@ type TaskTracker struct {
 
 // taskAttemptRow is the storage row carrier for the task_attempts table. It
 // mirrors the columns attempts read and write, one-to-one. It leaves out the
-// scheduling columns (next_check_at, checks_sent), which nothing sets: state
-// only clears next_check_at, when saveAttempt saves a final status and when
-// cancelOpenAttempts cancels an attempt.
+// scheduling columns (next_check_at, checks_sent), which the attempt SQL
+// writes itself: addAttempts sets next_check_at when an attempt is dispatched,
+// saveAttempt moves it with each non-final report and clears it once the
+// attempt has ended, cancelOpenAttempts clears it when it cancels an attempt,
+// and AttemptRepository.MarkQuestioned counts each question about the attempt
+// in checks_sent and moves next_check_at to the next window.
 type taskAttemptRow struct {
 	TaskID           uuid.UUID  `db:"task_id"`
 	Attempt          int32      `db:"attempt"`

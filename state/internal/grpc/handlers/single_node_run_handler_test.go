@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/state/domain/topology"
 	"github.com/carolsimone/continuo/state/service/runstart"
@@ -83,7 +84,7 @@ func setupSingleNodeRunFixture(t *testing.T) *singleNodeRunFixture {
 	}
 	tenant := fixtureTenant(t, db)
 	promoteUsers(t, db, tenant)
-	useCase := svchandlers.NewTriggerSingleNodeRunHandler(runstart.Planner{TenantID: tenant}, logger)
+	useCase := svchandlers.NewTriggerSingleNodeRunHandler(runstart.Planner{TenantID: tenant, Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}}, logger)
 	handler := NewSingleNodeRunHandler(useCase, factory, logger)
 
 	// Register the DB close via t.Cleanup (not a bare defer in the calling
@@ -155,21 +156,22 @@ func TestSingleNodeRunHandler_Latest_HappyPath(t *testing.T) {
 	require.Equal(t, run.SchedulerStatusRunning, tracker.Status)
 
 	// The run's one task is dispatched on the live release: the outbox row is
-	// its query.model:v1 dispatch, read directly by aggregate_id rather than
+	// its task.dispatch:v1 dispatch, read directly by aggregate_id rather than
 	// ListPending(10), because the shared test DB can accumulate stale pending
 	// rows from prior runs that overflow the small limit.
 	found := getOutboxByAggregate(t, fx.DB, scheduleID)
 	require.NotNil(t, found, "expected outbox entry for schedule %s", scheduleID)
-	require.Equal(t, streams.QueryModelV1, found.StreamName)
+	require.Equal(t, streams.TaskDispatchV1, found.StreamName)
 
-	var payload map[string]string
+	var payload pkgevents.TaskDispatch
 	require.NoError(t, json.Unmarshal(found.Payload, &payload))
-	require.Equal(t, run.TaskIDFor(fx.Tenant, scheduleID, "public.users").String(), payload["task_id"])
-	require.Equal(t, "svcA", payload["service_name"])
-	require.Equal(t, "public", payload["schema_name"])
-	require.Equal(t, "users", payload["table_name"])
-	require.Equal(t, "svcA:3", payload["image_tag"])
-	require.Equal(t, "", payload["operation"], "absent operation defaults to run (empty)")
+	require.Equal(t, run.TaskIDFor(fx.Tenant, scheduleID, "public.users").String(), payload.TaskID)
+	require.Equal(t, int32(0), payload.Attempt)
+	require.Equal(t, "svcA", payload.ServiceName)
+	require.Equal(t, "public", payload.SchemaName)
+	require.Equal(t, "users", payload.TableName)
+	require.Equal(t, "svcA:3", payload.ImageTag)
+	require.Equal(t, "", payload.Operation, "absent operation defaults to run (empty)")
 
 	// Cleanup seeded rows.
 	t.Cleanup(func() {
@@ -194,9 +196,9 @@ func TestSingleNodeRunHandler_Operation_HappyPath(t *testing.T) {
 	found := getOutboxByAggregate(t, fx.DB, scheduleID)
 	require.NotNil(t, found, "expected outbox entry for schedule %s", scheduleID)
 
-	var payload map[string]string
+	var payload pkgevents.TaskDispatch
 	require.NoError(t, json.Unmarshal(found.Payload, &payload))
-	require.Equal(t, "test", payload["operation"])
+	require.Equal(t, "test", payload.Operation)
 
 	t.Cleanup(func() {
 		fx.DB.ExecContext(context.Background(), `DELETE FROM state_outbox WHERE aggregate_id = $1`, scheduleID)
@@ -220,9 +222,9 @@ func TestSingleNodeRunHandler_Operation_Build(t *testing.T) {
 	found := getOutboxByAggregate(t, fx.DB, scheduleID)
 	require.NotNil(t, found, "expected outbox entry for schedule %s", scheduleID)
 
-	var payload map[string]string
+	var payload pkgevents.TaskDispatch
 	require.NoError(t, json.Unmarshal(found.Payload, &payload))
-	require.Equal(t, string(model.OperationBuild), payload["operation"])
+	require.Equal(t, string(model.OperationBuild), payload.Operation)
 
 	t.Cleanup(func() {
 		fx.DB.ExecContext(context.Background(), `DELETE FROM state_outbox WHERE aggregate_id = $1`, scheduleID)
@@ -246,9 +248,9 @@ func TestSingleNodeRunHandler_Operation_FullRefresh(t *testing.T) {
 	found := getOutboxByAggregate(t, fx.DB, scheduleID)
 	require.NotNil(t, found, "expected outbox entry for schedule %s", scheduleID)
 
-	var payload map[string]string
+	var payload pkgevents.TaskDispatch
 	require.NoError(t, json.Unmarshal(found.Payload, &payload))
-	require.Equal(t, string(model.OperationFullRefresh), payload["operation"])
+	require.Equal(t, string(model.OperationFullRefresh), payload.Operation)
 
 	var stored string
 	require.NoError(t, fx.DB.QueryRowContext(context.Background(),
@@ -314,7 +316,7 @@ func TestSingleNodeRunHandler_Stale_HappyPath(t *testing.T) {
 	require.Equal(t, "rel-svca", *tracker.ReleaseID, "a run of a node as a run built it runs on that run's release")
 	stale := getOutboxByAggregate(t, fx.DB, scheduleID)
 	require.NotNil(t, stale, "expected outbox entry for schedule %s", scheduleID)
-	require.Equal(t, streams.QueryModelV1, stale.StreamName)
+	require.Equal(t, streams.TaskDispatchV1, stale.StreamName)
 
 	// Cleanup seeded rows.
 	t.Cleanup(func() {

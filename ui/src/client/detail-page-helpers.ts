@@ -106,6 +106,18 @@ export function attemptPillClass(status: string): string {
   return 'pill-sm--pending';
 }
 
+// taskStatusTitle is the hover title of a task status pill: a queued task has
+// been accepted and waits for a slot to start in. Other statuses need none.
+export function taskStatusTitle(status: string | null | undefined): string | undefined {
+  return status === 'queued' ? 'waiting for a slot' : undefined;
+}
+
+// runFailureLabel names why a run failed when no task of it failed (stalled,
+// empty_selection, invalid_node_type), or null when the run names no reason.
+export function runFailureLabel(reason: string | null | undefined): string | null {
+  return reason ? `failed: ${reason.replace(/_/g, ' ')}` : null;
+}
+
 // attemptClassReason joins an attempt's failure class and reason, shows
 // whichever one is known alone, and a dash when neither is.
 export function attemptClassReason(a: TaskAttempt): string {

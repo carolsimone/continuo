@@ -12,7 +12,6 @@ import (
 	"fmt"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
-	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/runplan"
 	"github.com/carolsimone/continuo/state/domain/topology"
@@ -33,10 +32,12 @@ type Selection struct {
 	Plan  runplan.Plan
 }
 
-// Planner chooses and starts the runs of one tenant. Every task it plans has
-// the retry budget pkgevents.DefaultTaskMaxRetries.
+// Planner chooses and starts the runs of one tenant. Every task it plans gets
+// the retry budget of Tasks, and each dispatch the timeout of its node, else
+// that of Tasks.
 type Planner struct {
 	TenantID string
+	Tasks    run.TaskDefaults
 }
 
 // LiveStamp takes the topology lock in u's transaction and reads the tenant's
@@ -125,7 +126,7 @@ func (p Planner) Seeds(ctx context.Context, u uow.UnitOfWork, live topology.Poin
 // Start stores sel's tasks on r, which u's transaction has already saved,
 // saves r again and appends r's events to the outbox under msgProcID.
 func (p Planner) Start(ctx context.Context, u uow.UnitOfWork, r *run.Run, sel Selection, msgProcID uuid.UUID) error {
-	events, err := r.Start(ctx, u.TaskCollection(), p.TenantID, sel.Plan, sel.Graph, pkgevents.DefaultTaskMaxRetries, u.Clock().Now())
+	events, err := r.Start(ctx, u.TaskCollection(), p.TenantID, sel.Plan, sel.Graph, p.Tasks, u.Clock().Now())
 	if err != nil {
 		return fmt.Errorf("start run %s: %w", r.ScheduleID(), err)
 	}

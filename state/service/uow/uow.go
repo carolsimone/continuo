@@ -39,6 +39,10 @@ type UnitOfWork interface {
 	// TaskGraph reads how the tasks of a run of tenantID connect over the
 	// edges of the run's release, inside the transaction.
 	TaskGraph(tenantID string) run.TaskGraph
+	// Attempts serves the attempt reconcile of tenantID: the due attempts and
+	// stalled runs, and the lock and record of one question inside the
+	// transaction.
+	Attempts(tenantID string) repository.AttemptRepository
 
 	Begin(ctx context.Context) error
 	Commit() error
