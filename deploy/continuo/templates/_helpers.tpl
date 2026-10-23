@@ -391,10 +391,12 @@ no indentation; empty when nothing is set. */}}
 {{/* Fails the render when an agent's `services[].env` or `services[].secretEnv`
 names a variable the chart manages for it, which would render a second entry for
 the same variable or route the agent around the chart's settings: LLM_BASE_URL
-always, and while egress.enabled is true the proxy variables HTTP_PROXY,
-HTTPS_PROXY and NO_PROXY in upper or lower case. While egress.enabled is true a
-GITHUB_BASE_URL in secretEnv fails it too: the egress-proxy allowlist is built
-from the `env` value ("continuo.egress.githubBaseUrl") and cannot read a Secret.
+always; while egress.enabled is true the proxy variables HTTP_PROXY,
+HTTPS_PROXY and NO_PROXY in upper or lower case, and S3_ENDPOINT_URL, which
+would replace the shared ConfigMap's value that the egress-proxy allowlist and
+NO_PROXY are built from. While egress.enabled is true a GITHUB_BASE_URL in
+secretEnv fails it too: the allowlist is built from the `env` value
+("continuo.egress.githubBaseUrl") and cannot read a Secret.
 Call: include "continuo.agent.assertEnv" (dict "root" $ "svc" $svc) */}}
 {{- define "continuo.agent.assertEnv" -}}
 {{- $svc := .svc -}}
@@ -404,6 +406,7 @@ Call: include "continuo.agent.assertEnv" (dict "root" $ "svc" $svc) */}}
 {{- range (list "HTTP_PROXY" "HTTPS_PROXY" "NO_PROXY" "http_proxy" "https_proxy" "no_proxy") -}}
 {{- $_ := set $reserved . "while egress.enabled is true the chart manages the agents' proxy variables and their outbound traffic goes through egress-proxy; remove it, or set egress.enabled=false to manage their proxy yourself" -}}
 {{- end -}}
+{{- $_ := set $reserved "S3_ENDPOINT_URL" "while egress.enabled is true the chart sets it for every service from s3.endpointUrl (or the bundled MinIO), and egress-proxy's allowlist is built from that value; set s3.endpointUrl instead" -}}
 {{- $_ := set $secretReserved "GITHUB_BASE_URL" "the egress-proxy allowlist is built from services[name=agent-remediation].env.GITHUB_BASE_URL and cannot read a Secret; set it in env instead, or set egress.enabled=false" -}}
 {{- end -}}
 {{- range $key, $_ := ($svc.env | default dict) -}}
@@ -632,7 +635,9 @@ archive downloads redirect to, s3.endpointUrl when the bundled MinIO is off, and
 the entries of egress.allowedDomains and egress.privateDomains. The hosts an
 operator configured (llm.baseUrl, a GitHub Enterprise host, s3.endpointUrl) and
 egress.privateDomains may resolve to private addresses. A URL whose host is an
-IP address is left out: the agents reach it directly. A URL whose host the proxy
+IP address is left out: the agents reach it directly. So is one on localhost,
+which is loopback: the agents never send it to a proxy, and egress-proxy never
+connects to loopback. A URL whose host the proxy
 would refuse as a name, or whose port is outside 1-65535, fails the render
 ("continuo.egress.assertUrlHost"). A codeload host that is no valid name (the
 GitHub Enterprise name is too long to prefix) is left out. Two entries for one
@@ -655,7 +660,7 @@ empty when nothing is left. */}}
 {{- if and $github (eq $entry.host "api.github.com") (eq (int $entry.port) 443) -}}
 {{- $entries = append $entries (dict "host" "api.github.com" "port" 443 "allowPrivate" false) -}}
 {{- $entries = append $entries (dict "host" "codeload.github.com" "port" 443 "allowPrivate" false) -}}
-{{- else -}}
+{{- else if ne $entry.host "localhost" -}}
 {{- include "continuo.egress.assertUrlHost" (dict "key" $source.key "url" $source.url "entry" $entry) -}}
 {{- if $entry.usable -}}
 {{- $entries = append $entries (dict "host" $entry.host "port" (int $entry.port) "allowPrivate" true) -}}
@@ -931,90 +936,88 @@ Call: include "continuo.egress.directDestinations" $ | fromJsonArray */}}
 {{- uniq $out | toJson -}}
 {{- end -}}
 
-{{/* The host, lower-cased, of an address an agent is given: an http or https
-URL (without its user:password@ and port) or a host:port value. Empty for any
+{{/* The lower-cased host and the port of an address an agent is given, as
+"host:port": an http or https URL (without its user:password@; port 443 for
+https and 80 for http when it names none) or a host:port value. Empty for any
 other value, and for a URL whose host is a bracketed IPv6 address.
-Call: include "continuo.egress.addressHost" $value */}}
-{{- define "continuo.egress.addressHost" -}}
+Call: include "continuo.egress.addressHostPort" $value */}}
+{{- define "continuo.egress.addressHostPort" -}}
 {{- $v := . | toString -}}
 {{- if regexMatch "^https?://" $v -}}
 {{- $authority := regexReplaceAll "^https?://([^/?#]*).*$" $v "${1}" -}}
 {{- $hostport := regexReplaceAll "^.*@" $authority "" -}}
-{{- if not (hasPrefix "[" $hostport) }}{{ regexReplaceAll ":[0-9]*$" $hostport "" | lower }}{{ end -}}
+{{- $host := regexReplaceAll ":[0-9]*$" $hostport "" | lower -}}
+{{- $port := regexFind "[0-9]+$" (regexFind ":[0-9]+$" $hostport) | default (ternary "443" "80" (hasPrefix "https:" $v)) -}}
+{{- if and $host (not (hasPrefix "[" $host)) }}{{ printf "%s:%s" $host $port }}{{ end -}}
 {{- else if regexMatch "^[A-Za-z0-9.-]+:[0-9]+$" $v -}}
-{{- regexReplaceAll ":[0-9]+$" $v "" | lower -}}
+{{- lower $v -}}
 {{- end -}}
 {{- end -}}
 
-{{/* "true" when the NO_PROXY entry "name" would cover a host the allowlist
-admits, by Go's rule (an entry matches the name itself and every name below
-it; an allowlist entry "*.d" admits every name below d). Otherwise empty.
-Call: include "continuo.egress.coversAllowlisted" (dict "name" $n "allowlist" $allowlist) */}}
-{{- define "continuo.egress.coversAllowlisted" -}}
-{{- $n := lower .name -}}
+{{/* "true" when the allowlist admits "host" on "port" as egress-proxy matches
+it: an entry naming the host, or a "*.d" entry for a host below d, on the same
+port. Otherwise empty. The port is read in base 10.
+Call: include "continuo.egress.allowlistAdmits" (dict "host" $h "port" $p "allowlist" $allowlist) */}}
+{{- define "continuo.egress.allowlistAdmits" -}}
+{{- $host := lower .host -}}
+{{- $port := .port | toString | atoi -}}
 {{- $hit := false -}}
 {{- range .allowlist -}}
-{{- $h := .host -}}
-{{- if hasPrefix "*." $h -}}
-{{- $d := trimPrefix "*." $h -}}
-{{- if or (eq $n $d) (hasSuffix (printf ".%s" $d) $n) (hasSuffix (printf ".%s" $n) $d) }}{{ $hit = true }}{{ end -}}
-{{- else if or (eq $n $h) (hasSuffix (printf ".%s" $n) $h) -}}
-{{- $hit = true -}}
-{{- end -}}
+{{- if and (eq (int .port) $port) (or (eq .host $host) (and (hasPrefix "*." .host) (hasSuffix (trimPrefix "*" .host) $host))) }}{{ $hit = true }}{{ end -}}
 {{- end -}}
 {{- if $hit }}true{{ end -}}
 {{- end -}}
 
 {{/* NO_PROXY for the agents while egress-proxy renders. Their Go HTTP and gRPC
-clients send every host it does not cover to egress-proxy, which admits only the
-hosts on its allowlist, so it lists, comma-separated:
+clients send every host and port it does not cover to egress-proxy, which admits
+only the hosts and ports on its allowlist, so it lists, comma-separated:
 - localhost, 127.0.0.1 and ::1;
 - every Service the chart can render for a workload (each `services` entry,
   egress-proxy, and the bundled Postgres, Redis, Neo4j, MinIO and Dex) as
   <name>, <name>.<namespace>, <name>.<namespace>.svc and
-  <name>.<namespace>.svc.cluster.local;
-- the host of every in-cluster address the agents are given: the global.*GrpcAddr
-  values, and the http(s) URL or host:port values in their `services` env whose
-  host has no dot or ends in .svc or .svc.cluster.local (a dotless host gets the
-  four forms above);
+  <name>.<namespace>.svc.cluster.local, on every port. These are in the
+  release's namespace and a direct connection reaches them on any port, so they
+  stay here whatever the allowlist says;
+- every other in-cluster address the agents are given, as "host:port", which Go
+  matches on that port only: the global.*GrpcAddr values, and the http(s) URL or
+  host:port values in the agents' `services` env whose host has no dot or ends
+  in .svc or .svc.cluster.local. One the allowlist admits on that port
+  ("continuo.egress.allowlistAdmits") is left out, so the proxy carries it;
 - the addresses they reach directly ("continuo.egress.directDestinations"): the
   IP address of a URL, and the CIDR of each egress.directDestinations entry,
-  which Go matches as a range.
-A name that would cover a host on the allowlist is left out
-("continuo.egress.coversAllowlisted"), so a call the allowlist admits always
-goes through the proxy. */}}
+  which Go matches as a range. */}}
 {{- define "continuo.egress.noProxy" -}}
 {{- $ns := .Release.Namespace -}}
 {{- $allowlist := include "continuo.egress.allowlist" . | fromJsonArray -}}
-{{- $names := list "egress-proxy" -}}
-{{- range .Values.services }}{{ $names = append $names (.name | toString | lower) }}{{ end -}}
-{{- $names = concat $names (list (include "continuo.postgresql.fullname" .) (include "continuo.redis.fullname" .) (include "continuo.neo4j.fullname" .) (include "continuo.minio.fullname" .) (include "continuo.dex.fullname" .)) -}}
+{{- $services := list "egress-proxy" -}}
+{{- range .Values.services }}{{ $services = append $services (.name | toString | lower) }}{{ end -}}
+{{- $services = concat $services (list (include "continuo.postgresql.fullname" .) (include "continuo.redis.fullname" .) (include "continuo.neo4j.fullname" .) (include "continuo.minio.fullname" .) (include "continuo.dex.fullname" .)) -}}
+{{- $local := list -}}
+{{- range uniq $services -}}
+{{- $local = concat $local (list . (printf "%s.%s" . $ns) (printf "%s.%s.svc" . $ns) (printf "%s.%s.svc.cluster.local" . $ns)) -}}
+{{- end -}}
+{{- $addresses := list -}}
 {{- $g := .Values.global | default dict -}}
 {{- range (list $g.stateGrpcAddr $g.orchestratorGrpcAddr $g.agentRemediationGrpcAddr $g.agentChatGrpcAddr $g.deadLetterControllerGrpcAddr) -}}
-{{- with include "continuo.egress.addressHost" . }}{{ $names = append $names . }}{{ end -}}
+{{- with include "continuo.egress.addressHostPort" . }}{{ $addresses = append $addresses . }}{{ end -}}
 {{- end -}}
 {{- range .Values.services -}}
 {{- if has .name (list "agent-chat" "agent-remediation") -}}
 {{- range $_, $val := (.env | default dict) -}}
-{{- $host := include "continuo.egress.addressHost" $val -}}
-{{- if and $host (or (not (contains "." $host)) (regexMatch "\\.svc(\\.cluster\\.local)?$" $host)) -}}
-{{- $names = append $names $host -}}
+{{- $hostPort := include "continuo.egress.addressHostPort" $val -}}
+{{- $host := regexReplaceAll ":[0-9]+$" $hostPort "" -}}
+{{- if and $hostPort (or (not (contains "." $host)) (regexMatch "\\.svc(\\.cluster\\.local)?$" $host)) -}}
+{{- $addresses = append $addresses $hostPort -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
-{{- $candidates := list -}}
-{{- range uniq $names -}}
-{{- if contains "." . -}}
-{{- $candidates = append $candidates . -}}
-{{- else -}}
-{{- $candidates = concat $candidates (list . (printf "%s.%s" . $ns) (printf "%s.%s.svc" . $ns) (printf "%s.%s.svc.cluster.local" . $ns)) -}}
-{{- end -}}
-{{- end -}}
-{{- $entries := list "localhost" "127.0.0.1" "::1" -}}
-{{- range $name := $candidates -}}
-{{- if not (include "continuo.egress.coversAllowlisted" (dict "name" $name "allowlist" $allowlist)) -}}
-{{- $entries = append $entries $name -}}
+{{- $entries := concat (list "localhost" "127.0.0.1" "::1") $local -}}
+{{- range uniq $addresses -}}
+{{- $host := regexReplaceAll ":[0-9]+$" . "" -}}
+{{- $port := regexFind "[0-9]+$" . -}}
+{{- if not (or (has $host $local) (include "continuo.egress.allowlistAdmits" (dict "host" $host "port" $port "allowlist" $allowlist))) -}}
+{{- $entries = append $entries . -}}
 {{- end -}}
 {{- end -}}
 {{- range include "continuo.egress.directDestinations" . | fromJsonArray -}}

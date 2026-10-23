@@ -415,25 +415,51 @@ if grep -q '^  name: continuo-egress-proxy$' "${tmp}/egress-no-proxy.yaml"; then
   echo "FAIL: an install whose every destination is an IP address must render no egress-proxy"; exit 1
 fi
 python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-no-proxy.yaml"
-# An in-cluster host the allowlist admits is left out of NO_PROXY, so the call
-# goes through the proxy: a GitHub Enterprise at a namespace-local name (whose
-# codeload.<name> NO_PROXY would also cover), and a wildcard allowlist entry
-# over the cluster domain, which the namespace-qualified Service names fall under.
+# NO_PROXY covers every in-cluster address the agents are given, however it is
+# written: a global.*GrpcAddr in another namespace, an agent env URL at a .svc
+# name, and the namespace-qualified forms of a release Service. Such an address
+# is listed with its port, so the same host on a port the allowlist admits (a
+# GitHub Enterprise on 443 here) still goes through the proxy.
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set global.stateGrpcAddr=state.other.svc:50051 > "${tmp}/egress-np-global.yaml"
+python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-np-global.yaml"
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"FOO_URL":"http://foo.tools.svc:80"}},{"name":"foo","enabled":true,"httpPort":80},{"name":"agent-remediation","enabled":true,"env":{"GITHUB_BASE_URL":"https://foo.tools.svc/api/v3"}}]' \
+  > "${tmp}/egress-np-env.yaml"
+python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-np-env.yaml"
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"CONTINUO_STATE_ADDR":"state.default:50051","CONTINUO_ORCHESTRATOR_ADDR":"orchestrator.default.svc.cluster.local:50052"}},{"name":"state","enabled":true,"httpPort":8082},{"name":"orchestrator","enabled":true,"httpPort":8087},{"name":"agent-remediation","enabled":true}]' \
+  > "${tmp}/egress-np-forms.yaml"
+python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-np-forms.yaml"
+# An in-cluster address the allowlist admits on the port the agents use is left
+# out of NO_PROXY, so the call goes through the proxy: a GitHub Enterprise at a
+# namespace-local name (whose codeload.<name> a bare NO_PROXY name would also
+# cover). The release's own Services stay in NO_PROXY in every form, also when
+# a wildcard allowlist entry over the cluster domain matches them on another
+# port; an llm.baseUrl on localhost needs no allowlist entry.
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
   --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"CONTINUO_STATE_ADDR":"state:50051"}},{"name":"agent-remediation","enabled":true,"env":{"GITHUB_BASE_URL":"http://ghe:8080/api/v3","CONTINUO_ORCHESTRATOR_ADDR":"orchestrator:50052"}}]' \
   > "${tmp}/egress-allowlisted-local.yaml"
 python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-allowlisted-local.yaml"
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
   --set-json 'egress.privateDomains=["*.svc.cluster.local"]' \
-  --set-json 'services=[{"name":"agent-chat","enabled":true},{"name":"agent-remediation","enabled":true,"env":{"GITHUB_BASE_URL":"https://ghe.tools.svc/api/v3"}}]' \
+  --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"CONTINUO_STATE_ADDR":"state.default.svc.cluster.local:50051"}},{"name":"state","enabled":true,"httpPort":8082},{"name":"agent-remediation","enabled":true,"env":{"GITHUB_BASE_URL":"https://ghe.tools.svc/api/v3"}}]' \
   > "${tmp}/egress-allowlisted-wildcard.yaml"
 python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-allowlisted-wildcard.yaml"
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set llm.provider=openai-compatible --set llm.baseUrl=http://localhost:8000 > "${tmp}/egress-llm-localhost.yaml"
+if grep -q 'host: "localhost"' "${tmp}/egress-llm-localhost.yaml"; then
+  echo "FAIL: an llm.baseUrl on localhost must not reach the allowlist; egress-proxy never connects to loopback"; exit 1
+fi
+python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-llm-localhost.yaml"
 
 # While egress is on, an agent's own proxy variable, through env or secretEnv,
-# fails the render, as does a GITHUB_BASE_URL in secretEnv, which the allowlist
-# cannot read; LLM_BASE_URL fails it either way. With egress off the proxy
-# variables and a GITHUB_BASE_URL in secretEnv render.
-echo "--- egress: an agent's own proxy variables, and GITHUB_BASE_URL in secretEnv, fail the render while egress is on"
+# fails the render, as do an S3_ENDPOINT_URL of its own, which would replace the
+# s3.endpointUrl the allowlist is built from, and a GITHUB_BASE_URL in
+# secretEnv, which the allowlist cannot read; LLM_BASE_URL fails it either way.
+# With egress off the proxy variables, S3_ENDPOINT_URL and a GITHUB_BASE_URL in
+# secretEnv render.
+echo "--- egress: an agent's own proxy variables, S3_ENDPOINT_URL, and GITHUB_BASE_URL in secretEnv, fail the render while egress is on"
 i=0
 for var in HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy; do
   agents=(agent-chat agent-remediation)
@@ -447,13 +473,17 @@ refuse_render 'services[name=agent-chat].env sets HTTPS_PROXY' "${egress_all_ip[
   --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"HTTPS_PROXY":"http://corp-proxy:8080"}},{"name":"agent-remediation","enabled":true,"env":{"GITHUB_BASE_URL":"http://10.0.0.8:8080"}}]'
 refuse_render 'services[name=agent-remediation].secretEnv sets GITHUB_BASE_URL' \
   --set-json 'services=[{"name":"agent-remediation","enabled":true,"secretEnv":[{"name":"GITHUB_BASE_URL","ref":"githubToken"}]}]'
+refuse_render 'services[name=agent-remediation].env sets S3_ENDPOINT_URL: ' \
+  --set-json 'services=[{"name":"agent-chat","enabled":true},{"name":"agent-remediation","enabled":true,"env":{"S3_ENDPOINT_URL":"https://my_store.example.com"}}]'
+refuse_render 'services[name=agent-chat].secretEnv sets S3_ENDPOINT_URL: ' \
+  --set-json 'services=[{"name":"agent-chat","enabled":true,"secretEnv":[{"name":"S3_ENDPOINT_URL","ref":"llm"}]}]'
 refuse_render 'services[name=agent-chat].env sets LLM_BASE_URL' --set egress.enabled=false \
   --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"LLM_BASE_URL":"http://x:1"}}]'
 refuse_render 'services[name=agent-remediation].secretEnv sets LLM_BASE_URL' --set egress.enabled=false \
   --set-json 'services=[{"name":"agent-remediation","enabled":true,"secretEnv":[{"name":"LLM_BASE_URL","ref":"llm"}]}]'
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set egress.enabled=false \
-  --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"HTTP_PROXY":"http://corp-proxy:8080","no_proxy":"internal"},"secretEnv":[{"name":"HTTPS_PROXY","ref":"llm"}]},{"name":"agent-remediation","enabled":true,"env":{"NO_PROXY":"internal","https_proxy":"http://corp-proxy:8080"},"secretEnv":[{"name":"http_proxy","ref":"llm"},{"name":"GITHUB_BASE_URL","ref":"githubToken"}]}]' > /dev/null \
-  || { echo "FAIL: with egress off, an agent's own proxy variables and a GITHUB_BASE_URL in secretEnv must render"; exit 1; }
+  --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"HTTP_PROXY":"http://corp-proxy:8080","no_proxy":"internal"},"secretEnv":[{"name":"HTTPS_PROXY","ref":"llm"}]},{"name":"agent-remediation","enabled":true,"env":{"NO_PROXY":"internal","https_proxy":"http://corp-proxy:8080","S3_ENDPOINT_URL":"https://store.example.com"},"secretEnv":[{"name":"http_proxy","ref":"llm"},{"name":"GITHUB_BASE_URL","ref":"githubToken"}]}]' > /dev/null \
+  || { echo "FAIL: with egress off, an agent's own proxy variables, S3_ENDPOINT_URL and a GITHUB_BASE_URL in secretEnv must render"; exit 1; }
 
 # A URL the agents call (llm.baseUrl, agent-remediation's GITHUB_BASE_URL,
 # s3.endpointUrl with MinIO off) whose host is neither a host name the proxy
@@ -511,101 +541,118 @@ for cidr in 203.0.113.10/32 10.0.0.0/8 2001:db8::1/128 2001:db8:0:0:0:0:0:0/32 1
     || { echo "FAIL: egress.directDestinations entry ${cidr} must reach both agents' NO_PROXY"; exit 1; }
 done
 python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-direct-ok.yaml"
-while IFS= read -r entry; do
+# S: the schema refuses the entry before any template runs, and the templates
+# refuse it too when the schema is skipped. T: the entry passes the schema and
+# the templates refuse it.
+while IFS='|' read -r by entry; do
   [ -n "$entry" ] || continue
-  refuse_render "egress.directDestinations entry ${entry}" --skip-schema-validation --set-json "egress.directDestinations=[${entry}]"
-  refuse_render 'directDestinations' --set-json "egress.directDestinations=[${entry}]"
+  if [ "$by" = S ]; then
+    refuse_render "egress.directDestinations entry ${entry}" --skip-schema-validation --set-json "egress.directDestinations=[${entry}]"
+    refuse_render 'directDestinations' --set-json "egress.directDestinations=[${entry}]"
+    if grep -qF 'egress.directDestinations entry' "${tmp}/refused.err"; then
+      echo "FAIL: values.schema.json must refuse egress.directDestinations entry ${entry} before the templates do"; exit 1
+    fi
+  else
+    refuse_render "egress.directDestinations entry ${entry}" --set-json "egress.directDestinations=[${entry}]"
+  fi
 done <<'EOF'
-{"cidr":"0.0.0.0/0","ports":[443]}
-{"cidr":"::/0","ports":[443]}
-{"cidr":"203.0.113.10","ports":[443]}
-{"cidr":"203.0.113.10/","ports":[443]}
-{"cidr":"203.0.113.10/33","ports":[443]}
-{"cidr":"2001:db8::1/129","ports":[443]}
-{"cidr":"203.0.113.10/032","ports":[443]}
-{"cidr":"203.0.113.10/+32","ports":[443]}
-{"cidr":"203.0.113.010/32","ports":[443]}
-{"cidr":"256.0.0.1/32","ports":[443]}
-{"cidr":"10.0.0/24","ports":[443]}
-{"cidr":"10.0.0.0.0/24","ports":[443]}
-{"cidr":"10.0.0.1/8","ports":[443]}
-{"cidr":"2001:db8::1/64","ports":[443]}
-{"cidr":"127.0.0.1/32","ports":[443]}
-{"cidr":"126.0.0.0/7","ports":[443]}
-{"cidr":"0.0.0.0/8","ports":[443]}
-{"cidr":"169.254.169.254/32","ports":[80]}
-{"cidr":"169.254.0.0/15","ports":[80]}
-{"cidr":"100.64.0.0/10","ports":[80]}
-{"cidr":"168.63.129.16/32","ports":[80]}
-{"cidr":"::1/128","ports":[443]}
-{"cidr":"::/128","ports":[443]}
-{"cidr":"fe80::1/128","ports":[443]}
-{"cidr":"fe80::/9","ports":[443]}
-{"cidr":"fd00:ec2::254/128","ports":[443]}
-{"cidr":"fd00::/8","ports":[443]}
-{"cidr":"fd20:ce::254/128","ports":[443]}
-{"cidr":"::ffff:a00:1/128","ports":[443]}
-{"cidr":"::ffff:10.0.0.1/128","ports":[443]}
-{"cidr":"64:ff9b::7f00:1/128","ports":[443]}
-{"cidr":"64:ff9b::a9fe:a9fe/128","ports":[443]}
-{"cidr":"64:ff9b::/64","ports":[443]}
-{"cidr":"fe80::1%eth0/128","ports":[443]}
-{"cidr":"2001:db8::1::2/128","ports":[443]}
-{"cidr":"2001:db8:0:0:0:0:0:0:1/128","ports":[443]}
-{"cidr":"2001:db8::12345/128","ports":[443]}
-{"cidr":":2001:db8::1/128","ports":[443]}
-{"cidr":"2001:db8::1:/128","ports":[443]}
-{"cidr":"[2001:db8::1]/128","ports":[443]}
-{"cidr":"example.com/32","ports":[443]}
-{"cidr":" 10.0.0.0/8","ports":[443]}
-{"cidr":"10.0.0.0/8 ","ports":[443]}
-{"cidr":"","ports":[443]}
-{"cidr":10,"ports":[443]}
-{"cidr":["10.0.0.0/8"],"ports":[443]}
-{"cidr":"10.0.0.0/8"}
-{"ports":[443]}
-{"cidr":"10.0.0.0/8","host":"10.0.0.1","ports":[443]}
-{"cidr":"10.0.0.0/8","ports":[]}
-{"cidr":"10.0.0.0/8","ports":443}
-{"cidr":"10.0.0.0/8","ports":null}
-{"cidr":"10.0.0.0/8","ports":[0]}
-{"cidr":"10.0.0.0/8","ports":[65536]}
-{"cidr":"10.0.0.0/8","ports":[-1]}
-{"cidr":"10.0.0.0/8","ports":[443.5]}
-{"cidr":"10.0.0.0/8","ports":[1e+21]}
-{"cidr":"10.0.0.0/8","ports":["443"]}
-{"cidr":"10.0.0.0/8","ports":["0443"]}
-{"cidr":"10.0.0.0/8","ports":[true]}
-{"cidr":"10.0.0.0/8","ports":[null]}
-{"cidr":"10.0.0.0/8","ports":[[443]]}
-"10.0.0.0/8"
-null
+S|{"cidr":"0.0.0.0/0","ports":[443]}
+S|{"cidr":"::/0","ports":[443]}
+S|{"cidr":"203.0.113.10","ports":[443]}
+S|{"cidr":"203.0.113.10/","ports":[443]}
+S|{"cidr":"203.0.113.10/33","ports":[443]}
+S|{"cidr":"2001:db8::1/129","ports":[443]}
+S|{"cidr":"203.0.113.10/032","ports":[443]}
+S|{"cidr":"203.0.113.10/+32","ports":[443]}
+S|{"cidr":"203.0.113.010/32","ports":[443]}
+S|{"cidr":"256.0.0.1/32","ports":[443]}
+S|{"cidr":"10.0.0/24","ports":[443]}
+S|{"cidr":"10.0.0.0.0/24","ports":[443]}
+T|{"cidr":"10.0.0.1/8","ports":[443]}
+T|{"cidr":"2001:db8::1/64","ports":[443]}
+T|{"cidr":"127.0.0.1/32","ports":[443]}
+T|{"cidr":"126.0.0.0/7","ports":[443]}
+T|{"cidr":"0.0.0.0/8","ports":[443]}
+T|{"cidr":"169.254.169.254/32","ports":[80]}
+T|{"cidr":"169.254.0.0/15","ports":[80]}
+T|{"cidr":"100.64.0.0/10","ports":[80]}
+T|{"cidr":"168.63.129.16/32","ports":[80]}
+T|{"cidr":"::1/128","ports":[443]}
+T|{"cidr":"::/128","ports":[443]}
+T|{"cidr":"fe80::1/128","ports":[443]}
+T|{"cidr":"fe80::/9","ports":[443]}
+T|{"cidr":"fd00:ec2::254/128","ports":[443]}
+T|{"cidr":"fd00::/8","ports":[443]}
+T|{"cidr":"fd20:ce::254/128","ports":[443]}
+T|{"cidr":"::ffff:a00:1/128","ports":[443]}
+S|{"cidr":"::ffff:10.0.0.1/128","ports":[443]}
+T|{"cidr":"64:ff9b::7f00:1/128","ports":[443]}
+T|{"cidr":"64:ff9b::a9fe:a9fe/128","ports":[443]}
+T|{"cidr":"64:ff9b::/64","ports":[443]}
+S|{"cidr":"fe80::1%eth0/128","ports":[443]}
+T|{"cidr":"2001:db8::1::2/128","ports":[443]}
+T|{"cidr":"2001:db8:0:0:0:0:0:0:1/128","ports":[443]}
+T|{"cidr":"2001:db8::12345/128","ports":[443]}
+T|{"cidr":":2001:db8::1/128","ports":[443]}
+T|{"cidr":"2001:db8::1:/128","ports":[443]}
+S|{"cidr":"[2001:db8::1]/128","ports":[443]}
+S|{"cidr":"example.com/32","ports":[443]}
+S|{"cidr":" 10.0.0.0/8","ports":[443]}
+S|{"cidr":"10.0.0.0/8 ","ports":[443]}
+S|{"cidr":"","ports":[443]}
+S|{"cidr":10,"ports":[443]}
+S|{"cidr":["10.0.0.0/8"],"ports":[443]}
+S|{"cidr":"10.0.0.0/8"}
+S|{"ports":[443]}
+S|{"cidr":"10.0.0.0/8","host":"10.0.0.1","ports":[443]}
+S|{"cidr":"10.0.0.0/8","ports":[]}
+S|{"cidr":"10.0.0.0/8","ports":443}
+S|{"cidr":"10.0.0.0/8","ports":null}
+S|{"cidr":"10.0.0.0/8","ports":[0]}
+S|{"cidr":"10.0.0.0/8","ports":[65536]}
+S|{"cidr":"10.0.0.0/8","ports":[-1]}
+S|{"cidr":"10.0.0.0/8","ports":[443.5]}
+S|{"cidr":"10.0.0.0/8","ports":[1e+21]}
+S|{"cidr":"10.0.0.0/8","ports":["443"]}
+S|{"cidr":"10.0.0.0/8","ports":["0443"]}
+S|{"cidr":"10.0.0.0/8","ports":[true]}
+S|{"cidr":"10.0.0.0/8","ports":[null]}
+S|{"cidr":"10.0.0.0/8","ports":[[443]]}
+S|"10.0.0.0/8"
+S|null
 EOF
-# Each refusal says why: ENTRY|REASON.
-while IFS='|' read -r entry why; do
+# Each refusal says why: S|ENTRY|REASON or T|ENTRY|REASON, as above.
+while IFS='|' read -r by entry why; do
   [ -n "$entry" ] || continue
-  refuse_render "$why" --skip-schema-validation --set-json "egress.directDestinations=[${entry}]"
+  if [ "$by" = S ]; then
+    refuse_render "$why" --skip-schema-validation --set-json "egress.directDestinations=[${entry}]"
+  else
+    refuse_render "$why" --set-json "egress.directDestinations=[${entry}]"
+  fi
 done <<'EOF'
-{"cidr":"0.0.0.0/0","ports":[443]}|has a prefix length of 0
-{"cidr":"::/0","ports":[443]}|has a prefix length of 0
-{"cidr":"10.0.0.1/8","ports":[443]}|has address bits set past its prefix length
-{"cidr":"203.0.113.010/32","ports":[443]}|has the octet "010"
-{"cidr":"2001:db8::1/129","ports":[443]}|has a prefix length above 128
-{"cidr":"126.0.0.0/7","ports":[443]}|overlaps 127.0.0.0/8 (loopback)
-{"cidr":"169.254.169.254/32","ports":[80]}|overlaps 169.254.0.0/16
-{"cidr":"fd00::/8","ports":[443]}|overlaps fd00:ec2::/32
-{"cidr":"::ffff:a00:1/128","ports":[443]}|overlaps ::ffff:0:0/96
-{"cidr":"64:ff9b::7f00:1/128","ports":[443]}|NAT64, here of 127.0.0.0/8
-{"cidr":"10.0.0.0/8","host":"10.0.0.1","ports":[443]}|must have exactly the keys cidr and ports
-{"cidr":10,"ports":[443]}|has a cidr that is not a string
-{"cidr":"10.0.0.0/8","ports":[]}|has an empty ports list
-{"cidr":"10.0.0.0/8","ports":443}|has ports that are not a list
-{"cidr":"10.0.0.0/8","ports":["443"]}|has the port "443", which is not a whole number from 1 to 65535
-{"cidr":"10.0.0.0/8","ports":[65536]}|has the port 65536, which is not a whole number from 1 to 65535
+S|{"cidr":"0.0.0.0/0","ports":[443]}|has a prefix length of 0
+S|{"cidr":"::/0","ports":[443]}|has a prefix length of 0
+T|{"cidr":"10.0.0.1/8","ports":[443]}|has address bits set past its prefix length
+S|{"cidr":"203.0.113.010/32","ports":[443]}|has the octet "010"
+S|{"cidr":"2001:db8::1/129","ports":[443]}|has a prefix length above 128
+T|{"cidr":"126.0.0.0/7","ports":[443]}|overlaps 127.0.0.0/8 (loopback)
+T|{"cidr":"169.254.169.254/32","ports":[80]}|overlaps 169.254.0.0/16
+T|{"cidr":"fd00::/8","ports":[443]}|overlaps fd00:ec2::/32
+T|{"cidr":"::ffff:a00:1/128","ports":[443]}|overlaps ::ffff:0:0/96
+T|{"cidr":"64:ff9b::7f00:1/128","ports":[443]}|NAT64, here of 127.0.0.0/8
+S|{"cidr":"10.0.0.0/8","host":"10.0.0.1","ports":[443]}|must have exactly the keys cidr and ports
+S|{"cidr":10,"ports":[443]}|has a cidr that is not a string
+S|{"cidr":"10.0.0.0/8","ports":[]}|has an empty ports list
+S|{"cidr":"10.0.0.0/8","ports":443}|has ports that are not a list
+S|{"cidr":"10.0.0.0/8","ports":["443"]}|has the port "443", which is not a whole number from 1 to 65535
+S|{"cidr":"10.0.0.0/8","ports":[65536]}|has the port 65536, which is not a whole number from 1 to 65535
 EOF
 refuse_render 'egress.directDestinations must be a list' --skip-schema-validation \
   --set-json 'egress.directDestinations={"cidr":"10.0.0.0/8","ports":[443]}'
 refuse_render 'directDestinations' --set-json 'egress.directDestinations={"cidr":"10.0.0.0/8","ports":[443]}'
+if grep -qF 'egress.directDestinations must be a list' "${tmp}/refused.err"; then
+  echo "FAIL: values.schema.json must refuse a non-list egress.directDestinations before the templates do"; exit 1
+fi
 # The check runs whenever egress is on, also when no proxy renders (every
 # destination an IP address); with egress off it does not run.
 refuse_render 'egress.directDestinations entry {"cidr":"0.0.0.0/0","ports":[443]}' --skip-schema-validation \

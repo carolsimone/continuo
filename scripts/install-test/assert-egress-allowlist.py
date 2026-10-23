@@ -131,6 +131,10 @@ CASES = [
      ANTHROPIC | {("ghe.corp.example", 8080, True), ("codeload.ghe.corp.example", 8080, True)}),
     ("URL with an empty port takes the scheme's", llm_url("http://gpu:"), {("gpu", 80, True)} | GITHUB),
     ("single-label URL host with a trailing dot", llm_url("http://gpu-box.:8000"), {("gpu-box", 8000, True)} | GITHUB),
+    # localhost is loopback, which the proxy never connects to and the agents
+    # reach without it: no entry.
+    ("model on localhost", llm_url("http://localhost:8000"), GITHUB),
+    ("GitHub Enterprise on localhost, upper case", agent_remediation_github("http://LOCALHOST:8080/api/v3"), ANTHROPIC),
     ("GitHub Enterprise host whose codeload name is too long",
      agent_remediation_github(f"https://{LONG_HOST}/api/v3"), ANTHROPIC | {(LONG_HOST, 443, True)}),
     # Nothing left to allow: no proxy object renders.
