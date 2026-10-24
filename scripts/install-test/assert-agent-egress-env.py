@@ -15,9 +15,10 @@ ConfigMap:
     are exempt: a direct connection reaches them on any port, so NO_PROXY
     lists every Service of the release in those forms, whatever the allowlist
     says.
-An address counts as in-cluster when the first label of its host names a
-Service in the render. A URL without a port uses its scheme's (443 for https,
-80 for http).
+An address counts as in-cluster when cluster DNS gives its host a Service:
+the host has no dot, ends in .svc or .svc.cluster.local, or is a release
+Service's <name>.<namespace>. An address with any other host goes through the
+proxy. A URL without a port uses its scheme's (443 for https, 80 for http).
 
 In a render without the egress-proxy ConfigMap (egress.enabled=false, or an
 allowlist with nothing in it) neither agent carries a proxy variable, in upper
@@ -152,6 +153,14 @@ def release_forms(services: set, namespace: str) -> set:
     return forms
 
 
+def in_cluster(host: str, services: set, namespace: str) -> bool:
+    """Whether cluster DNS gives the host a Service: no dot, a name ending in
+    .svc or .svc.cluster.local, or a release Service's <name>.<namespace>."""
+    host = host.lower().rstrip(".")
+    return ("." not in host or re.search(r"\.svc(\.cluster\.local)?$", host) is not None
+            or host in release_forms(services, namespace))
+
+
 def check_proxy_absent(name: str, env: dict, failures: list) -> None:
     for var in PROXY_VARS:
         if var in env:
@@ -178,7 +187,7 @@ def check_proxy_present(name: str, env: dict, shared: dict, services: set, workl
     addresses |= {k: v for k, v in shared.items() if k.endswith("_GRPC_ADDR") or k == "S3_ENDPOINT_URL"}
     for key, value in sorted(addresses.items()):
         target = address(str(value))
-        if not target or target[0].split(".")[0] not in services:
+        if not target or not in_cluster(target[0], services, namespace):
             continue
         host, port = target
         if not no_proxy.covers(host, port) and not admits(allowlist, host, port, private_only=True):

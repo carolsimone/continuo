@@ -490,7 +490,9 @@ egress:
   # its `secretEnv` fails the render), s3.endpointUrl when
   # minio.enabled=false, and the two lists below, and sets HTTP_PROXY,
   # HTTPS_PROXY and NO_PROXY on both agents. NO_PROXY covers the release's own
-  # Services and the in-cluster addresses the agents are given; a services
+  # Services and the in-cluster addresses the agents are given (a host with no
+  # dot, or ending in .svc or .svc.cluster.local, in a global.*GrpcAddr or in
+  # their `services` env); any other host goes through the proxy. A services
   # entry that sets a proxy variable for either agent fails the render.
   # A URL whose host is an IP address stays out of the allowlist: the agents
   # reach it directly (see directDestinations). A URL whose host is no DNS
@@ -501,12 +503,14 @@ egress:
   # <release>-egress-proxy.
   # With networkPolicy.enabled, the agents' NetworkPolicy drops every
   # connection except DNS, the pods of the release namespace, an external
-  # Postgres or Redis on a private network on its configured port, and the
-  # direct destinations (also when no proxy renders); egress-proxy's reaches
-  # public addresses on its allowlisted ports, and private ones only on the
-  # ports of entries that allow them. A NetworkPolicy port is the pod's port,
-  # after a Service has translated the address. Without
-  # networkPolicy.enabled nothing stops a connection that skips the proxy.
+  # Postgres or Redis on its configured port (on a private network, or a pod
+  # of any namespace), the pods of another namespace on the port of each
+  # <name>.<namespace>.svc address there in NO_PROXY, and the direct
+  # destinations (also when no proxy renders); egress-proxy's reaches public
+  # addresses on its allowlisted ports, and private ones only on the ports of
+  # entries that allow them. A NetworkPolicy port is the pod's port, after a
+  # Service has translated the address. Without networkPolicy.enabled nothing
+  # stops a connection that skips the proxy.
   # false runs no proxy, sets no proxy variable and renders no egress
   # NetworkPolicy: the agents' egress is open.
   enabled: true
@@ -540,8 +544,9 @@ egress:
   # fd00:ec2::/32, so list the narrower ranges you need. A URL whose host is an
   # IP address (llm.baseUrl, GITHUB_BASE_URL, s3.endpointUrl) is added here for
   # you, on its port, and both reach NO_PROXY and, on their ports, the agents'
-  # NetworkPolicy. An external Postgres or Redis on a private network needs no
-  # entry: that policy admits the private ranges on its configured port.
+  # NetworkPolicy. An external Postgres or Redis on a private network, or
+  # running as a pod of another namespace, needs no entry: that policy admits
+  # the private ranges and the pods of every namespace on its configured port.
   directDestinations: []
   proxy:
     # Two replicas keep the proxy up while one pod restarts.

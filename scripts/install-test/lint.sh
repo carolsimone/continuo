@@ -453,6 +453,12 @@ helm template continuo "$CHART" --kube-version "$KUBE_VERSION" "${egress_byo[@]}
   --set-json 'egress.privateDomains=["git.corp.example:8443"]' --set-json 'egress.allowedDomains=["api.example.com:8080"]' \
   > "${tmp}/egress-ports.yaml"
 python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/egress-ports.yaml" continuo
+# An external Postgres running as a pod of another namespace: the agents reach
+# the pods of every namespace on its port, which a network plugin that matches
+# no pod by ipBlock still admits.
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set postgresql.enabled=false \
+  --set externalDatabase.host=pg-rw.databases.svc --set externalDatabase.password=probe > "${tmp}/egress-pg-pod.yaml"
+python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/egress-pg-pod.yaml" continuo
 refuse_render 'externalDatabase.port=0 is not a port' "${egress_byo[@]}" --set externalDatabase.port=0
 refuse_render 'externalRedis.port=70000 is not a port' "${egress_byo[@]}" --set externalRedis.port=70000
 refuse_render 'externalDatabase.port="5432" is not a port' --skip-schema-validation "${egress_byo[@]}" \
@@ -499,6 +505,29 @@ if grep -q 'host: "localhost"' "${tmp}/egress-llm-localhost.yaml"; then
   echo "FAIL: an llm.baseUrl on localhost must not reach the allowlist; egress-proxy never connects to loopback"; exit 1
 fi
 python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-llm-localhost.yaml"
+# An in-cluster address in another namespace that the agents reach without the
+# proxy (a global.*GrpcAddr or an agent env URL at <name>.<namespace>.svc) gets
+# a rule in their egress policy for that namespace and port; the checker reads
+# which from their NO_PROXY and env. A global.*GrpcAddr whose host is no
+# in-cluster name goes through the proxy, which logs its refusal, instead of
+# NO_PROXY sending it straight into the policy that drops it.
+echo "--- egress: the agents reach in-cluster addresses of other namespaces they are given; other hosts go through the proxy"
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set global.deadLetterControllerGrpcAddr=dead-letter-controller.ops.svc:50055 > "${tmp}/egress-np-dlc.yaml"
+python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-np-dlc.yaml"
+grep -q 'kubernetes.io/metadata.name: ops$' "${tmp}/egress-np-dlc.yaml" \
+  || { echo "FAIL: a global.*GrpcAddr in another namespace must reach the agents' egress policy"; exit 1; }
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set global.deadLetterControllerGrpcAddr=dlc.corp.example:50055 \
+  --set global.stateGrpcAddr=state.corp.example:50051 > "${tmp}/egress-np-fqdn.yaml"
+if grep -A1 'name: NO_PROXY' "${tmp}/egress-np-fqdn.yaml" | grep -qE 'dlc\.corp\.example|state\.corp\.example'; then
+  echo "FAIL: a global.*GrpcAddr whose host is no in-cluster name must go through the proxy, not NO_PROXY"; exit 1
+fi
+python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-np-fqdn.yaml"
+for f in egress-np-global egress-np-env egress-np-forms egress-np-dlc egress-np-fqdn egress-allowlisted-local \
+  egress-allowlisted-wildcard egress-llm-localhost; do
+  python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/${f}.yaml" continuo
+done
 
 # While egress is on, an agent's own proxy variable, through env or secretEnv,
 # fails the render, as do an S3_ENDPOINT_URL of its own, which would replace the

@@ -6,29 +6,42 @@ Ingress: the chart default-denies ingress and re-opens exactly the edges the
 service graph needs. A service that starts calling another without its allow
 rule renders the platform "up" but silently unreachable on that path, so
 REQUIRED_EDGES must be admitted; CLOSED_EDGES, edges no service needs, must
-not be.
+not be. While the render holds egress-proxy, every source its ingress rules
+admit (sampled as below) must be agent-chat or agent-remediation of this
+release, in its namespace, on the proxy port.
 
 Egress: what each pod may reach is derived from facts the render holds
 independently of its NetworkPolicy documents, and the policies are then
 checked against it in both directions: every expected connection in a probe
-set is allowed, and every address and port a rule admits (sampled at the
-edges of each ipBlock, at its exceptions and at the probe addresses inside
-it) is one the facts allow.
+set is allowed, and every address, pod and port a rule admits is one the facts
+allow. A rule is sampled at the edges of each ipBlock, at the edges of its
+exceptions and at the probe addresses inside it, and at the probe pods its
+selectors match, which include, for every pod or namespace selector of every
+policy in the render, a pod made to satisfy it.
   - agent-chat and agent-remediation, when the render holds the
     `<fullname>-agents-egress` policy, may reach cluster DNS (any pod, or a
-    link-local node cache, on port 53), every pod in the release namespace on
-    any port, the private ranges on the port of an external Postgres or Redis
-    (the shared ConfigMap's POSTGRES_PORT and REDIS_PORT, when the render holds
-    no bundled one), and the direct destinations given with --direct; nothing
-    else. Without that policy their egress must be open: no egress policy may
-    select them. A render that holds egress-proxy always holds that policy.
+    link-local node cache, on port 53); every pod in the release namespace on
+    any port; an external Postgres or Redis on its port (the shared
+    ConfigMap's POSTGRES_PORT and REDIS_PORT, when the render holds no bundled
+    one), in the private ranges or as a pod of any namespace; the pods of
+    another namespace on the port of each address there they connect to
+    without the proxy; and the direct destinations given with --direct;
+    nothing else. Without that policy their egress must be open: no egress
+    policy may select them. A render that holds egress-proxy always holds
+    that policy.
   - egress-proxy, when the render holds its Deployment, may reach cluster DNS,
     public addresses on every port its allowlist (the `<fullname>-egress-proxy`
     ConfigMap) names, and private addresses and pods in any namespace only on
     the ports of entries with allowPrivate; never loopback, link-local
-    (except DNS on port 53) or a cloud metadata address. It must admit ingress
-    on its proxy port from the two agents only.
+    (except DNS on port 53) or a cloud metadata address.
   - no egress policy selects any other workload: their egress stays open.
+The addresses an agent connects to without the proxy are the http(s) URL and
+host:port values of its env and of the shared ConfigMap's *_GRPC_ADDR and
+S3_ENDPOINT_URL that its NO_PROXY covers by Go's rules, or all of them when it
+has no proxy variable. Each must be one the policy admits: an IP address, a
+name with no dot or ending in .svc or .svc.cluster.local, or a release
+Service's <name>.<namespace>. A host <name>.<namespace>.svc puts that
+namespace and port in the facts above.
 A pod is never matched by an ipBlock here, so a rule reaches pods only through
 its pod and namespace selectors.
 
@@ -45,17 +58,35 @@ destination must admit ingress from the source on that port, and a source
 whose egress is restricted must be allowed to send it.
 """
 import argparse
+import importlib.util
 import ipaddress
 import logging
+import os
 import sys
 
 import yaml
 
 logger = logging.getLogger("assert-netpol-reachability")
 
+
+def load_env_checker():
+    """assert-agent-egress-env.py, beside this script: Go's NO_PROXY rules
+    (NoProxy) and how an agent reads the host and port of a value (address)."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assert-agent-egress-env.py")
+    spec = importlib.util.spec_from_file_location("assert_agent_egress_env", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+ENV_CHECKER = load_env_checker()
+
 AGENTS = ("agent-chat", "agent-remediation")
 PROXY = "egress-proxy"
 PROXY_PORT = 3128
+INSTANCE = "app.kubernetes.io/instance"
+NAME = "app.kubernetes.io/name"
+NAMESPACE_NAME = "kubernetes.io/metadata.name"
 
 REQUIRED_EDGES = [
     ("agent-remediation", "release-controller", 8088,
@@ -138,10 +169,11 @@ OTHER_NAMESPACE = "tools"
 
 
 class Pod:
-    def __init__(self, namespace, labels, name):
+    def __init__(self, namespace, labels, name, namespace_labels=None):
         self.namespace = namespace
         self.labels = labels
         self.name = name
+        self.namespace_labels = {**(namespace_labels or {}), NAMESPACE_NAME: namespace}
 
     def __str__(self):
         return self.name
@@ -183,6 +215,18 @@ def selector_matches(selector, labels):
         if op == "DoesNotExist" and present:
             return False
     return True
+
+
+def satisfying_labels(selector):
+    """Labels a selector matches: its matchLabels, the first value of each In
+    expression and a value for each Exists key."""
+    labels = dict(selector.get("matchLabels") or {})
+    for expr in selector.get("matchExpressions") or []:
+        if expr.get("operator") == "In" and expr.get("values"):
+            labels.setdefault(expr["key"], expr["values"][0])
+        elif expr.get("operator") == "Exists":
+            labels.setdefault(expr["key"], "x")
+    return labels
 
 
 def policy_types(spec):
@@ -242,7 +286,7 @@ def peer_admits(peer, target, policy_namespace):
     if namespaces is None:
         in_namespace = target.namespace == policy_namespace
     else:
-        in_namespace = selector_matches(namespaces, {"kubernetes.io/metadata.name": target.namespace})
+        in_namespace = selector_matches(namespaces, target.namespace_labels)
     return in_namespace and selector_matches(pods, target.labels)
 
 
@@ -284,8 +328,9 @@ class Facts:
         for d in docs:
             if d.get("kind") in ("Deployment", "StatefulSet", "Job"):
                 labels = ((d["spec"].get("template") or {}).get("metadata") or {}).get("labels") or {}
-                name = labels.get("app.kubernetes.io/name", d["metadata"]["name"])
+                name = labels.get(NAME, d["metadata"]["name"])
                 self.workloads[name] = labels
+        self.services = {d["metadata"]["name"] for d in docs if d.get("kind") == "Service"}
         self.proxy = any(d.get("kind") == "Deployment" and d["metadata"]["name"] == PROXY for d in docs)
         self.allowlist = None
         for d in docs:
@@ -298,23 +343,76 @@ class Facts:
         # must be locked whether or not the policy that locks them rendered.
         self.agents_policy = any(p["metadata"]["name"].endswith("-agents-egress") for p in self.policies)
         self.agents_locked = self.agents_policy or self.proxy
-        shared = next((d.get("data") or {} for d in docs
-                       if d.get("kind") == "ConfigMap" and "METRICS_PORT" in (d.get("data") or {})), {})
+        self.shared = next((d.get("data") or {} for d in docs
+                            if d.get("kind") == "ConfigMap" and "METRICS_PORT" in (d.get("data") or {})), {})
+        self.metrics_port = int(self.shared.get("METRICS_PORT") or 0)
         self.datastore_ports = set()
         for name, key in (("postgresql", "POSTGRES_PORT"), ("redis", "REDIS_PORT")):
             if name not in self.workloads:
-                if key not in shared:
+                if key not in self.shared:
                     raise SystemExit(f"FAIL: the render holds no {name} workload and its shared ConfigMap "
                                      f"(the one with METRICS_PORT) has no {key}")
-                self.datastore_ports.add(int(shared[key]))
+                self.datastore_ports.add(int(self.shared[key]))
         self.directs = directs
-        self.ports = None
+        self.agent_env = {}
+        for d in docs:
+            if d.get("kind") == "Deployment" and d["metadata"]["name"] in AGENTS:
+                container = d["spec"]["template"]["spec"]["containers"][0]
+                self.agent_env[d["metadata"]["name"]] = {e["name"]: e.get("value") for e in container.get("env", [])}
+        self.unproxied = self.unproxied_addresses()
+        self.namespace_ports = {}
+        for _agent, _key, _value, host, port in self.unproxied:
+            kind, where = self.place(host)
+            if kind == "pod" and where != self.namespace:
+                self.namespace_ports.setdefault(where, set()).add(port)
+        self.ports = compute_probe_ports(self)
+
+    def unproxied_addresses(self):
+        """The addresses each agent is given and connects to without the proxy,
+        as (agent, key, value, host, port): the http(s) URL and host:port values
+        of its env, over the shared ConfigMap's *_GRPC_ADDR and S3_ENDPOINT_URL,
+        that its NO_PROXY covers, or all of them when it has no proxy variable."""
+        shared = {k: v for k, v in self.shared.items() if k.endswith("_GRPC_ADDR") or k == "S3_ENDPOINT_URL"}
+        out = []
+        for agent, env in sorted(self.agent_env.items()):
+            proxied = bool(env.get("HTTP_PROXY") or env.get("HTTPS_PROXY"))
+            no_proxy = ENV_CHECKER.NoProxy(env.get("NO_PROXY") or "")
+            values = {**shared, **{k: v for k, v in env.items() if v and k != "NO_PROXY"}}
+            for key, value in sorted(values.items()):
+                target = ENV_CHECKER.address(str(value))
+                if not target:
+                    continue
+                host, port = target[0].lower().rstrip("."), target[1]
+                if proxied and not no_proxy.covers(host, port):
+                    continue
+                out.append((agent, key, value, host, int(port)))
+        return out
+
+    def place(self, host):
+        """Where a host an agent connects to without the proxy is: ("loopback",
+        None); ("ip", address); ("pod", namespace) for a name cluster DNS gives a
+        Service (no dot, a release Service's <name>.<namespace>, or a name
+        ending in <namespace>.svc or <namespace>.svc.cluster.local); or ("name",
+        None) for any other name, which no NetworkPolicy rule can admit."""
+        if host == "localhost":
+            return "loopback", None
+        try:
+            ip = ipaddress.ip_address(host.strip("[]"))
+        except ValueError:
+            ip = None
+        if ip is not None:
+            return ("loopback", None) if ip.is_loopback else ("ip", ip)
+        if "." not in host:
+            return "pod", self.namespace
+        labels = (host[:-len(".cluster.local")] if host.endswith(".cluster.local") else host).split(".")
+        if len(labels) >= 3 and labels[-1] == "svc":
+            return "pod", labels[-2]
+        if len(labels) == 2 and labels[0] in self.services and labels[1] == self.namespace:
+            return "pod", self.namespace
+        return "name", None
 
     def pod(self, service):
-        labels = self.workloads.get(service) or {
-            "app.kubernetes.io/instance": self.instance,
-            "app.kubernetes.io/name": service,
-        }
+        labels = self.workloads.get(service) or {INSTANCE: self.instance, NAME: service}
         return Pod(self.namespace, labels, service)
 
     def expected(self, source, target, port, protocol):
@@ -327,7 +425,8 @@ class Facts:
             if isinstance(target, Pod):
                 if target.namespace == self.namespace or dns:
                     return True
-                return False
+                return protocol == TCP and (port in self.datastore_ports
+                                            or port in self.namespace_ports.get(target.namespace, ()))
             ip = target.ip
             if dns and in_any(ip, DNS_LINK_LOCAL):
                 return True
@@ -353,17 +452,23 @@ class Facts:
             return port in self.public_ports
         return True
 
-
-def probe_ports(facts):
-    if facts.ports is None:
-        facts.ports = compute_probe_ports(facts)
-    return facts.ports
+    def expected_proxy_ingress(self, source, port, protocol):
+        """Whether egress-proxy may admit `source` on `port`: agent-chat or
+        agent-remediation of this release, in its namespace, on the proxy port.
+        The metrics port is the metrics scrape rule's concern."""
+        if port == self.metrics_port:
+            return None
+        return (isinstance(source, Pod) and source.namespace == self.namespace
+                and source.labels.get(INSTANCE) == self.instance and source.labels.get(NAME) in AGENTS
+                and port == PROXY_PORT and protocol == TCP)
 
 
 def compute_probe_ports(facts):
     extra = set(facts.public_ports) | facts.datastore_ports
     for _, ports in facts.directs:
         extra |= set(ports)
+    for ports in facts.namespace_ports.values():
+        extra |= ports
     ports = set(PROBE_PORTS)
     for p in extra:
         for q in (p - 1, p, p + 1):
@@ -391,35 +496,69 @@ def edge_addresses(net):
 
 
 def probe_pods(facts):
+    """Every workload of the render, the release pods the agents use, a dbt
+    Job pod, cluster DNS, a pod in another namespace and one in each namespace
+    the agents connect to without the proxy, and, for every pod or namespace
+    selector of every policy, a pod that satisfies it."""
     pods = [facts.pod(name) for name in sorted(set(facts.workloads) | {"postgresql", "redis", "minio"})]
     pods.append(Pod(facts.namespace, {"app": "dbt-job"}, "a dbt Job pod"))
     pods.append(Pod(DNS_NAMESPACE, DNS_POD_LABELS, "cluster DNS"))
     pods.append(Pod(OTHER_NAMESPACE, {"app": "other"}, f"a pod in namespace {OTHER_NAMESPACE}"))
+    for ns in sorted(facts.namespace_ports):
+        pods.append(Pod(ns, {"app": "other"}, f"a pod in namespace {ns}"))
+    seen = set()
+    for policy in facts.policies:
+        spec = policy["spec"]
+        for rule in (spec.get("egress") or []) + (spec.get("ingress") or []):
+            for peer in (rule.get("to") or []) + (rule.get("from") or []):
+                if "ipBlock" in peer:
+                    continue
+                pod = satisfying_pod(peer, policy["metadata"].get("namespace", facts.namespace))
+                key = (pod.namespace, tuple(sorted(pod.labels.items())), tuple(sorted(pod.namespace_labels.items())))
+                if key not in seen:
+                    seen.add(key)
+                    pods.append(pod)
     return pods
+
+
+def satisfying_pod(peer, policy_namespace):
+    """A pod a pod or namespace selector peer matches: in the namespace its
+    namespaceSelector names (kubernetes.io/metadata.name, from matchLabels or
+    an In expression), in another namespace when it names none, or in the
+    policy's namespace when it has no namespaceSelector."""
+    namespaces = peer.get("namespaceSelector")
+    labels = satisfying_labels(peer.get("podSelector") or {})
+    if namespaces is None:
+        namespace, namespace_labels = policy_namespace, {}
+    else:
+        namespace_labels = satisfying_labels(namespaces)
+        namespace = namespace_labels.get(NAMESPACE_NAME) or OTHER_NAMESPACE
+    shown = ",".join(f"{k}={v}" for k, v in sorted(labels.items())) or "any labels"
+    return Pod(namespace, labels, f"a pod ({shown}) in namespace {namespace}", namespace_labels)
 
 
 def describe(target, port, protocol):
     return f"{target}:{port}" + ("" if protocol == TCP else f"/{protocol}")
 
 
-def rule_samples(rule, facts, pods):
-    """The (target, port, protocol) points an egress rule admits that the
-    checks look at: the edges of each ipBlock and of its exceptions and the
-    probe addresses inside it, and the probe pods its selectors match, on each
-    port the rule names (both ends of a range), or on every probe port when it
-    names none."""
+def rule_samples(rule, facts, pods, peers_key):
+    """The (target, port, protocol) points a rule admits that the checks look
+    at: the edges of each ipBlock and of its exceptions and the probe addresses
+    inside it, and the probe pods its selectors match, on each port the rule
+    names (both ends of a range), or on every probe port when it names none.
+    `peers_key` is "to" for an egress rule and "from" for an ingress one."""
     ranges = rule_ports(rule)
     if ranges is None:
-        ports = probe_ports(facts)
+        ports = facts.ports
     else:
         ports = []
         for lo, hi, proto in ranges:
             if (lo, hi) == (1, 65535):
-                ports += [(p, q) for p, q in probe_ports(facts) if q == proto]
+                ports += [(p, q) for p, q in facts.ports if q == proto]
             else:
                 ports += [(lo, proto), (hi, proto)]
-    peers = rule.get("to") or [{"ipBlock": {"cidr": "0.0.0.0/0"}}, {"ipBlock": {"cidr": "::/0"}},
-                               {"namespaceSelector": {}}]
+    peers = rule.get(peers_key) or [{"ipBlock": {"cidr": "0.0.0.0/0"}}, {"ipBlock": {"cidr": "::/0"}},
+                                    {"namespaceSelector": {}}]
     targets = []
     for peer in peers:
         if "ipBlock" in peer:
@@ -477,8 +616,11 @@ def main(argv):
     if not facts.proxy:
         for p in policies:
             labels = (p["spec"].get("podSelector") or {}).get("matchLabels") or {}
-            if labels.get("app.kubernetes.io/name") == PROXY:
+            if labels.get(NAME) == PROXY:
                 failures.append(f"policy {p['metadata']['name']} selects {PROXY}, which this render does not hold")
+
+    pods = probe_pods(facts)
+    addresses = [Address(a) for a in probe_addresses(facts)]
 
     # Ingress edges, and the source side of each when its egress is restricted.
     edges = REQUIRED_EDGES + (PROXY_EDGES if facts.proxy else [])
@@ -494,11 +636,24 @@ def main(argv):
         if ingress_allowed(policies, facts.pod(source), facts.pod(dest), port):
             failures.append(f"ingress {source} -> {dest}:{port} is admitted, want refused  ({why})")
     if facts.proxy:
-        checks["edges"] += 1
-        outsider = Pod(OTHER_NAMESPACE, {"app": "other"}, f"a pod in namespace {OTHER_NAMESPACE}")
-        if ingress_allowed(policies, outsider, facts.pod(PROXY), PROXY_PORT):
-            failures.append(f"ingress {outsider} -> {PROXY}:{PROXY_PORT} is admitted, want refused  "
-                            "(only agent-chat and agent-remediation use the proxy)")
+        proxy_pod = facts.pod(PROXY)
+        outsiders = [Pod(OTHER_NAMESPACE, {INSTANCE: facts.instance, NAME: agent},
+                         f"a pod labelled as {agent} in namespace {OTHER_NAMESPACE}") for agent in AGENTS]
+        for outsider in outsiders:
+            checks["edges"] += 1
+            if ingress_allowed(policies, outsider, proxy_pod, PROXY_PORT):
+                failures.append(f"ingress {outsider} -> {PROXY}:{PROXY_PORT} is admitted, want refused  "
+                                "(only agent-chat and agent-remediation of this release use the proxy)")
+        # Reverse: every source and port an ingress rule of the proxy admits
+        # must be one of the two agents on the proxy port.
+        for spec in selecting(policies, proxy_pod, "Ingress"):
+            for rule in spec.get("ingress") or []:
+                for source, port, protocol in rule_samples(rule, facts, pods + outsiders, "from"):
+                    checks["edges"] += 1
+                    if facts.expected_proxy_ingress(source, port, protocol) is False:
+                        failures.append(f"ingress {source} -> {describe(PROXY, port, protocol)} is admitted, "
+                                        "want refused  (only agent-chat and agent-remediation of this release "
+                                        f"use the proxy, on port {PROXY_PORT})")
 
     # Every workload but the agents and the proxy keeps open egress, and the
     # agents keep it while the render holds no agents-egress policy.
@@ -508,8 +663,6 @@ def main(argv):
             failures.append(f"an egress policy selects {name}, whose egress must stay open")
 
     sources = [s for s in AGENTS if facts.agents_locked] + ([PROXY] if facts.proxy else [])
-    pods = probe_pods(facts)
-    addresses = [Address(a) for a in probe_addresses(facts)]
     for source in sources:
         src = facts.pod(source)
         if source in AGENTS:
@@ -526,18 +679,34 @@ def main(argv):
               egress_allowed(policies, src, node_dns, 53, UDP), True, "name resolution through a node-local cache")
         # Forward: the probe set, against the facts.
         for target in pods + addresses:
-            for port, protocol in probe_ports(facts):
+            for port, protocol in facts.ports:
                 want = facts.expected(source, target, port, protocol)
                 got = egress_allowed(policies, src, target, port, protocol)
                 check("external", source, target, port, protocol, got, want, why_for(facts, source, target, port))
         # Reverse: every point a rule admits must be one the facts allow.
         for spec in selecting(policies, src, "Egress"):
             for rule in spec.get("egress") or []:
-                for target, port, protocol in rule_samples(rule, facts, pods):
+                for target, port, protocol in rule_samples(rule, facts, pods, "to"):
                     want = facts.expected(source, target, port, protocol)
                     check("external", source, target, port, protocol, True, want,
                           why_for(facts, source, target, port))
-    if not facts.agents_locked:
+    if facts.agents_locked:
+        # Every address an agent connects to without the proxy must be one its
+        # egress policy admits, or that call is dropped without a trace.
+        for agent, key, value, host, port in facts.unproxied:
+            kind, where = facts.place(host)
+            checks["agent"] += 1
+            if kind == "loopback":
+                continue
+            if kind == "name":
+                failures.append(f"{agent}: {key}={value} is reached without the proxy, but {host} is neither an "
+                                "in-cluster name nor an IP address, so no NetworkPolicy rule admits it")
+                continue
+            target = Address(str(where)) if kind == "ip" else Pod(where, {"app": host.split(".")[0]}, host)
+            if not egress_allowed(policies, facts.pod(agent), target, port, TCP):
+                failures.append(f"{agent}: {key}={value} is reached without the proxy, but the agents' egress "
+                                f"policy drops {describe(target, port, TCP)}")
+    else:
         for agent in AGENTS:
             if selecting(policies, facts.pod(agent), "Egress"):
                 failures.append(f"an egress policy selects {agent} although the render holds no "
@@ -558,6 +727,8 @@ def main(argv):
         "agents locked" if facts.agents_locked else "agents' egress open",
         f"external datastore ports {sorted(facts.datastore_ports)}" if facts.datastore_ports else "bundled datastores",
         f"{len(facts.directs)} direct destinations",
+        ("other namespaces " + ", ".join(f"{ns}:{sorted(p)}" for ns, p in sorted(facts.namespace_ports.items())))
+        if facts.namespace_ports else "no other namespace",
     ])
     logger.info("NetworkPolicy reachability OK: %d edges, %d agent egress paths, %d external checks (%s).",
                 checks["edges"], checks["agent"], checks["external"], mode)
@@ -568,7 +739,8 @@ def why_for(facts, source, target, port):
     if source in AGENTS:
         if isinstance(target, Pod):
             return ("the agents reach every pod of the release namespace" if target.namespace == facts.namespace
-                    else "the agents reach other namespaces only for DNS")
+                    else "the agents reach another namespace only for DNS, an external datastore's port and "
+                         "the addresses there they reach without the proxy")
         return ("outside the cluster the agents reach only link-local DNS, an external Postgres or Redis "
                 "on its port and their direct destinations")
     if isinstance(target, Pod):

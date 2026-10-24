@@ -4,9 +4,10 @@
 # re-open exactly the edges the service graph needs. With egress.enabled the
 # egress documents at the end also restrict outbound traffic: agent-chat and
 # agent-remediation reach DNS, the pods of this namespace (egress-proxy among
-# them), an external Postgres or Redis on a private network, and their direct
-# destinations, and nothing else; egress-proxy reaches DNS, public addresses on
-# its allowlisted ports and private ones only for entries that allow them.
+# them), an external Postgres or Redis, the in-cluster addresses of other
+# namespaces they are given, and their direct destinations, and nothing else;
+# egress-proxy reaches DNS, public addresses on its allowlisted ports and
+# private ones only for entries that allow them.
 # Every other pod's egress stays open (DNS, the Kubernetes API, external
 # datastores, GitHub).
 # In-cluster encryption in transit is a service mesh's job — this chart is
@@ -403,13 +404,19 @@ spec:
 # egress-proxy while it renders (the chart sets their proxy variables). They
 # may resolve names; reach every pod in this namespace on any port (the proxy,
 # the services and the bundled datastores); reach an external Postgres or
-# Redis on a private network on its configured port; and reach their direct
+# Redis on its configured port, on a private network or as a pod of any
+# namespace; reach the pods of another namespace on the port of each in-cluster
+# address in that namespace that they reach without the proxy
+# ("continuo.egress.otherNamespaceDestinations": a <name>.<namespace>.svc host
+# in a global.*GrpcAddr or in their `services` env that the allowlist does not
+# admit); and reach their direct
 # destinations ("continuo.egress.directDestinations": egress.directDestinations
 # and the IP address of every URL they call) on their ports. Every other
 # connection is dropped. The policy renders whenever egress.enabled is true,
 # also when no proxy renders because every destination is an IP address. A
 # NetworkPolicy port is the pod's port, after a Service has translated the
-# address.
+# address, so an address whose Service maps it to another targetPort is
+# dropped.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -433,11 +440,25 @@ spec:
     {{- with include "continuo.egress.externalDatastorePorts" . | fromJsonArray }}
     - to:
         {{- include "continuo.egress.privatePeers" $ | nindent 8 }}
+        - namespaceSelector: {}
       ports:
         {{- range . }}
         - protocol: TCP
           port: {{ int . }}
         {{- end }}
+    {{- end }}
+    {{- range $other := include "continuo.egress.otherNamespaceDestinations" . | fromJsonArray }}
+    {{- with $other.ports }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $other.namespace }}
+      ports:
+        {{- range . }}
+        - protocol: TCP
+          port: {{ int . }}
+        {{- end }}
+    {{- end }}
     {{- end }}
     {{- range $direct := include "continuo.egress.directDestinations" . | fromJsonArray }}
     {{- with $direct.ports }}

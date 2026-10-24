@@ -904,11 +904,10 @@ Call: include "continuo.egress.directDestinations" $ | fromJsonArray */}}
 {{- end -}}
 {{- $ports := list -}}
 {{- range $p := $entry.ports -}}
-{{- $text := toString $p -}}
-{{- if or (not (has (kindOf $p) (list "int" "int64" "float64"))) (not (regexMatch "^[1-9][0-9]{0,4}$" $text)) (gt (atoi $text) 65535) -}}
+{{- if not (include "continuo.egress.isPort" $p) -}}
 {{- fail (printf "%s has the port %s, which is not a whole number from 1 to 65535. %s" $shown (toJson $p) $hint) -}}
 {{- end -}}
-{{- $ports = append $ports (atoi $text) -}}
+{{- $ports = append $ports (atoi (toString $p)) -}}
 {{- end -}}
 {{- $out = append $out (dict "cidr" (lower $entry.cidr) "ports" (uniq $ports)) -}}
 {{- end -}}
@@ -968,27 +967,13 @@ Call: include "continuo.egress.allowlistAdmits" (dict "host" $h "port" $p "allow
 {{- if $hit }}true{{ end -}}
 {{- end -}}
 
-{{/* NO_PROXY for the agents while egress-proxy renders. Their Go HTTP and gRPC
-clients send every host and port it does not cover to egress-proxy, which admits
-only the hosts and ports on its allowlist, so it lists, comma-separated:
-- localhost, 127.0.0.1 and ::1;
-- every Service the chart can render for a workload (each `services` entry,
-  egress-proxy, and the bundled Postgres, Redis, Neo4j, MinIO and Dex) as
-  <name>, <name>.<namespace>, <name>.<namespace>.svc and
-  <name>.<namespace>.svc.cluster.local, on every port. These are in the
-  release's namespace and a direct connection reaches them on any port, so they
-  stay here whatever the allowlist says;
-- every other in-cluster address the agents are given, as "host:port", which Go
-  matches on that port only: the global.*GrpcAddr values, and the http(s) URL or
-  host:port values in the agents' `services` env whose host has no dot or ends
-  in .svc or .svc.cluster.local. One the allowlist admits on that port
-  ("continuo.egress.allowlistAdmits") is left out, so the proxy carries it;
-- the addresses they reach directly ("continuo.egress.directDestinations"): the
-  IP address of a URL, and the CIDR of each egress.directDestinations entry,
-  which Go matches as a range. */}}
-{{- define "continuo.egress.noProxy" -}}
+{{/* The names of every Service the chart can render for a workload (each
+`services` entry, egress-proxy, and the bundled Postgres, Redis, Neo4j, MinIO
+and Dex) in the forms a client may use: <name>, <name>.<namespace>,
+<name>.<namespace>.svc and <name>.<namespace>.svc.cluster.local, as a JSON list.
+They are pods of the release's namespace. */}}
+{{- define "continuo.egress.releaseServiceHosts" -}}
 {{- $ns := .Release.Namespace -}}
-{{- $allowlist := include "continuo.egress.allowlist" . | fromJsonArray -}}
 {{- $services := list "egress-proxy" -}}
 {{- range .Values.services }}{{ $services = append $services (.name | toString | lower) }}{{ end -}}
 {{- $services = concat $services (list (include "continuo.postgresql.fullname" .) (include "continuo.redis.fullname" .) (include "continuo.neo4j.fullname" .) (include "continuo.minio.fullname" .) (include "continuo.dex.fullname" .)) -}}
@@ -996,34 +981,107 @@ only the hosts and ports on its allowlist, so it lists, comma-separated:
 {{- range uniq $services -}}
 {{- $local = concat $local (list . (printf "%s.%s" . $ns) (printf "%s.%s.svc" . $ns) (printf "%s.%s.svc.cluster.local" . $ns)) -}}
 {{- end -}}
-{{- $addresses := list -}}
+{{- $local | toJson -}}
+{{- end -}}
+
+{{/* The in-cluster addresses the agents are given and reach directly, other
+than the release's own Services ("continuo.egress.releaseServiceHosts"), as a
+JSON list of {key, host, port}, "port" the digits as written and "key" the
+setting that gave it. An address is in-cluster when its host has no dot or ends
+in .svc or .svc.cluster.local; it comes from a global.*GrpcAddr value, or from an
+http(s) URL or host:port value in the `services` env of agent-chat or
+agent-remediation. One the allowlist admits on that port
+("continuo.egress.allowlistAdmits") is left out: the proxy carries it. An
+address with another host goes through the proxy, which admits it only when the
+allowlist does. */}}
+{{- define "continuo.egress.inClusterDirect" -}}
+{{- $local := include "continuo.egress.releaseServiceHosts" . | fromJsonArray -}}
+{{- $allowlist := include "continuo.egress.allowlist" . | fromJsonArray -}}
+{{- $given := list -}}
 {{- $g := .Values.global | default dict -}}
-{{- range (list $g.stateGrpcAddr $g.orchestratorGrpcAddr $g.agentRemediationGrpcAddr $g.agentChatGrpcAddr $g.deadLetterControllerGrpcAddr) -}}
-{{- with include "continuo.egress.addressHostPort" . }}{{ $addresses = append $addresses . }}{{ end -}}
+{{- range $key := list "stateGrpcAddr" "orchestratorGrpcAddr" "agentRemediationGrpcAddr" "agentChatGrpcAddr" "deadLetterControllerGrpcAddr" -}}
+{{- $given = append $given (dict "key" (printf "global.%s" $key) "value" (get $g $key)) -}}
 {{- end -}}
-{{- range .Values.services -}}
-{{- if has .name (list "agent-chat" "agent-remediation") -}}
-{{- range $_, $val := (.env | default dict) -}}
-{{- $hostPort := include "continuo.egress.addressHostPort" $val -}}
+{{- range $svc := .Values.services -}}
+{{- if has $svc.name (list "agent-chat" "agent-remediation") -}}
+{{- range $key, $val := ($svc.env | default dict) -}}
+{{- $given = append $given (dict "key" (printf "services[name=%s].env.%s" $svc.name $key) "value" $val) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $out := list -}}
+{{- $seen := dict -}}
+{{- range $given -}}
+{{- $hostPort := include "continuo.egress.addressHostPort" .value -}}
 {{- $host := regexReplaceAll ":[0-9]+$" $hostPort "" -}}
-{{- if and $hostPort (or (not (contains "." $host)) (regexMatch "\\.svc(\\.cluster\\.local)?$" $host)) -}}
-{{- $addresses = append $addresses $hostPort -}}
-{{- end -}}
-{{- end -}}
-{{- end -}}
-{{- end -}}
-{{- $entries := concat (list "localhost" "127.0.0.1" "::1") $local -}}
-{{- range uniq $addresses -}}
-{{- $host := regexReplaceAll ":[0-9]+$" . "" -}}
-{{- $port := regexFind "[0-9]+$" . -}}
+{{- $port := regexFind "[0-9]+$" $hostPort -}}
+{{- if and $hostPort (not (hasKey $seen $hostPort)) (or (not (contains "." $host)) (regexMatch "\\.svc(\\.cluster\\.local)?$" $host)) -}}
+{{- $_ := set $seen $hostPort true -}}
 {{- if not (or (has $host $local) (include "continuo.egress.allowlistAdmits" (dict "host" $host "port" $port "allowlist" $allowlist))) -}}
-{{- $entries = append $entries . -}}
+{{- $out = append $out (dict "key" .key "host" $host "port" $port) -}}
 {{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $out | toJson -}}
+{{- end -}}
+
+{{/* The namespaces other than the release's that hold an address of
+"continuo.egress.inClusterDirect" (a host <name>.<namespace>.svc, optionally
+followed by .cluster.local), as a JSON list of {namespace, ports} ordered by
+namespace, the ports numbers without duplicates. The agents' NetworkPolicy
+admits the pods of each such namespace on those ports. The render fails on a
+port that is not from 1 to 65535. */}}
+{{- define "continuo.egress.otherNamespaceDestinations" -}}
+{{- $byNamespace := dict -}}
+{{- range include "continuo.egress.inClusterDirect" . | fromJsonArray -}}
+{{- $name := trimSuffix ".cluster.local" .host -}}
+{{- $labels := splitList "." (trimSuffix ".svc" $name) -}}
+{{- $ns := last $labels -}}
+{{- if and (hasSuffix ".svc" $name) (ge (len $labels) 2) (ne $ns $.Release.Namespace) (regexMatch "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$" $ns) -}}
+{{- $port := atoi .port -}}
+{{- if or (lt $port 1) (gt $port 65535) -}}
+{{- fail (printf "%s gives the agents the in-cluster address %s:%s, whose port is not from 1 to 65535" .key .host .port) -}}
+{{- end -}}
+{{- $_ := set $byNamespace $ns (append (get $byNamespace $ns | default list) $port | uniq) -}}
+{{- end -}}
+{{- end -}}
+{{- $out := list -}}
+{{- range $ns := keys $byNamespace | sortAlpha -}}
+{{- $out = append $out (dict "namespace" $ns "ports" (get $byNamespace $ns)) -}}
+{{- end -}}
+{{- $out | toJson -}}
+{{- end -}}
+
+{{/* NO_PROXY for the agents while egress-proxy renders. Their Go HTTP and gRPC
+clients send every host and port it does not cover to egress-proxy, which admits
+only the hosts and ports on its allowlist, so it lists, comma-separated:
+- localhost, 127.0.0.1 and ::1;
+- the release's own Services in every form ("continuo.egress.releaseServiceHosts"),
+  on every port. These are in the release's namespace and a direct connection
+  reaches them on any port, so they stay here whatever the allowlist says;
+- every other in-cluster address the agents reach directly
+  ("continuo.egress.inClusterDirect"), as "host:port", which Go matches on that
+  port only;
+- the addresses they reach directly ("continuo.egress.directDestinations"): the
+  IP address of a URL, and the CIDR of each egress.directDestinations entry,
+  which Go matches as a range. */}}
+{{- define "continuo.egress.noProxy" -}}
+{{- $entries := concat (list "localhost" "127.0.0.1" "::1") (include "continuo.egress.releaseServiceHosts" . | fromJsonArray) -}}
+{{- range include "continuo.egress.inClusterDirect" . | fromJsonArray -}}
+{{- $entries = append $entries (printf "%s:%s" .host .port) -}}
 {{- end -}}
 {{- range include "continuo.egress.directDestinations" . | fromJsonArray -}}
 {{- $entries = append $entries (.host | default .cidr) -}}
 {{- end -}}
 {{- uniq $entries | join "," -}}
+{{- end -}}
+
+{{/* "true" when the argument is a port as values hold one: a number (not a
+string) whose decimal text is a whole number from 1 to 65535 without a leading
+zero. Otherwise empty. Call: include "continuo.egress.isPort" $value */}}
+{{- define "continuo.egress.isPort" -}}
+{{- $text := toString . -}}
+{{- if and (has (kindOf .) (list "int" "int64" "float64")) (regexMatch "^[1-9][0-9]{0,4}$" $text) (le (atoi $text) 65535) -}}true{{- end -}}
 {{- end -}}
 
 {{/* NetworkPolicy egress rule for name resolution: port 53, UDP and TCP, to
@@ -1066,8 +1124,8 @@ indentation. */}}
 postgresql.enabled=false) and the external Redis (externalRedis.port, with
 redis.enabled=false), as a JSON list of numbers without duplicates; empty while
 both are bundled, as pods of the release namespace. The agents' NetworkPolicy
-admits them to the private ranges. The render fails on a port that is not a
-whole number from 1 to 65535, written in decimal. */}}
+admits them to the private ranges and to the pods of every namespace. The
+render fails on a port that is not one by "continuo.egress.isPort". */}}
 {{- define "continuo.egress.externalDatastorePorts" -}}
 {{- $given := list -}}
 {{- if not .Values.postgresql.enabled -}}
@@ -1078,11 +1136,10 @@ whole number from 1 to 65535, written in decimal. */}}
 {{- end -}}
 {{- $ports := list -}}
 {{- range $given -}}
-{{- $text := toString .port -}}
-{{- if or (not (has (kindOf .port) (list "int" "int64" "float64"))) (not (regexMatch "^[1-9][0-9]{0,4}$" $text)) (gt (atoi $text) 65535) -}}
+{{- if not (include "continuo.egress.isPort" .port) -}}
 {{- fail (printf "%s=%s is not a port: the agents' NetworkPolicy admits the external datastore on it, so it must be a whole number from 1 to 65535" .key (toJson .port)) -}}
 {{- end -}}
-{{- $ports = append $ports (atoi $text) -}}
+{{- $ports = append $ports (atoi (toString .port)) -}}
 {{- end -}}
 {{- uniq $ports | toJson -}}
 {{- end -}}
