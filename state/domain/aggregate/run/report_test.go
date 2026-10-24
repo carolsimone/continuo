@@ -42,7 +42,7 @@ func TestAttempt_ApplyRanksTheReport(t *testing.T) {
 		{"a late queued after running", AttemptRunning, AttemptQueued, false, false, AttemptRunning},
 		{"a replayed final", AttemptFailed, AttemptFailed, false, false, AttemptFailed},
 		{"a final after another final", AttemptSucceeded, AttemptFailed, false, false, AttemptSucceeded},
-		{"a report for a cancelled attempt", AttemptCancelled, AttemptRunning, false, false, AttemptCancelled},
+		{"a report for a stopped attempt", AttemptStopped, AttemptRunning, false, false, AttemptStopped},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -105,8 +105,19 @@ func TestNextCheckAfter(t *testing.T) {
 		assert.Equal(t, 30*time.Minute, NextCheckAfter(s, 0), s)
 		assert.Equal(t, 30*time.Minute, NextCheckAfter(s, 7), s)
 	}
-	for _, s := range []AttemptStatus{AttemptSucceeded, AttemptFailed, AttemptCancelled} {
+	for _, s := range []AttemptStatus{AttemptSucceeded, AttemptFailed, AttemptStopped} {
 		assert.Zero(t, NextCheckAfter(s, 0), s)
+	}
+}
+
+// state re-sends the cancel for an attempt it asked to stop after 5 minutes,
+// then 10, 20, 40 and every 60.
+func TestNextStopCheckAfter(t *testing.T) {
+	for checks, want := range map[int]time.Duration{
+		0: 5 * time.Minute, 1: 10 * time.Minute, 2: 20 * time.Minute, 3: 40 * time.Minute,
+		4: 60 * time.Minute, 9: 60 * time.Minute,
+	} {
+		assert.Equal(t, want, NextStopCheckAfter(checks), "%d re-sends", checks)
 	}
 }
 

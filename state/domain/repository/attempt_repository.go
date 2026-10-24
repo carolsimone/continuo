@@ -40,6 +40,24 @@ type AttemptRepository interface {
 	LockQuestion(ctx context.Context, key AttemptKey) (q run.Question, found bool, err error)
 
 	// MarkQuestioned records one more question about the attempt, due again
-	// next after the database clock.
+	// next after the database clock. It serves a dispatch question and a
+	// re-sent cancel alike.
 	MarkQuestioned(ctx context.Context, key AttemptKey, next time.Duration) error
+
+	// DueStops returns up to limit cancelling runs that have an open attempt
+	// state asked to stop whose next check is due, the longest due first. It
+	// reads the runs of every tenant: a cancel names no tenant.
+	DueStops(ctx context.Context, limit int) ([]uuid.UUID, error)
+
+	// LockStops locks, FOR UPDATE SKIP LOCKED, every open attempt of the
+	// cancelling run that state asked to stop, and returns them with the
+	// run's cancelled_by and cancellation_reason: the cancel to send again,
+	// naming each attempt that has not answered. found is false, and nothing
+	// is held, when the run is no longer cancelling, another transaction holds
+	// its attempts, none is open or none is due any more.
+	LockStops(ctx context.Context, runID uuid.UUID) (q run.StopQuestion, found bool, err error)
+
+	// CountCancelling returns how many runs are cancelling and how many of
+	// them were cancelled more than overdueAfter ago on the database clock.
+	CountCancelling(ctx context.Context, overdueAfter time.Duration) (total, overdue int, err error)
 }

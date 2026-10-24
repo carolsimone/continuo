@@ -1,6 +1,7 @@
 package run
 
 import (
+	"slices"
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
@@ -41,4 +42,30 @@ func (q Question) Dispatch(d TaskDefaults) (TaskDispatched, time.Duration) {
 		Operation:    q.Operation,
 		Timeout:      TaskTimeout(q.Node, d),
 	}, NextCheckAfter(q.Status, q.ChecksSent+1)
+}
+
+// StopQuestion is the cancel of a cancelling run state sends again because
+// attempts it asked to stop have not answered within their window: the run,
+// who cancelled it and why, and those attempts.
+type StopQuestion struct {
+	RunID        uuid.UUID
+	ScheduleName string
+	CancelledBy  string
+	Reason       string
+	// CancelledAt is when the run was cancelled.
+	CancelledAt time.Time
+	Attempts    []StopTarget
+}
+
+// Cancel is the question as the run's cancel, naming every attempt it waits
+// for. execution-controller answers each with the attempt's stopped report
+// once no pod of it can run again.
+func (q StopQuestion) Cancel() RunCancelled {
+	return RunCancelled{
+		ID:                 q.RunID,
+		Name:               q.ScheduleName,
+		By:                 q.CancelledBy,
+		CancellationReason: q.Reason,
+		Attempts:           slices.Clone(q.Attempts),
+	}
 }

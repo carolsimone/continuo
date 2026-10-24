@@ -40,6 +40,14 @@ check_health "release-controller" 8088 "/healthz" || exit 1
 start_service "remediation" "remediation" "remediation"
 check_health "remediation" 8090 "/healthz" || exit 1
 
+# egress-proxy carries the outbound HTTP of agent-remediation and agent-chat
+# (HTTP_PROXY in docker-compose.yml), so it listens before either starts. Its
+# health port answers once the allowlist is loaded; the proxy port is awaited
+# separately because that is the one the agents dial.
+start_service "egress-proxy" "egress-proxy" "egress-proxy"
+check_health "egress-proxy" 8093 "/ready" || exit 1
+wait_for_tcp_port egress-proxy 3128 || exit 1
+
 start_service "agent-remediation" "agent-remediation" "agent-remediation"
 check_health "agent-remediation" 8092 "/healthz" || exit 1
 

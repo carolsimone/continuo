@@ -4,7 +4,7 @@ import { useLocation, useNavigate, useParams } from 'react-router';
 import PageHeader from './PageHeader';
 import type { NodeRun, NodeRunsResponse, NodeDetailFrom, NodesResponse } from './types';
 import { kindLabel, computeNodeStats, formatDuration, formatRelative, formatTimeout } from './node-helpers';
-import { taskStatusTitle } from './detail-page-helpers';
+import { taskPillClass, taskStatusTitle } from './detail-page-helpers';
 import NodeTypeIcon from './NodeTypeIcon';
 import RunSourcePickerDialog from './RunSourcePickerDialog';
 import FullRefreshConfirmDialog from './FullRefreshConfirmDialog';
@@ -47,7 +47,7 @@ function NodeRunRow({ run: r }: { run: NodeRun }) {
       <td>{formatTime(r.created_at)}</td>
       <td>{kindLabel(r.kind)}</td>
       <td>
-        <span className={`pill-sm pill-sm--${r.task_status}`} title={taskStatusTitle(r.task_status)}>{r.task_status || '—'}</span>
+        <span className={`pill-sm ${taskPillClass(r.task_status)}`} title={taskStatusTitle(r.task_status)}>{r.task_status || '—'}</span>
         {(r.failure_class || r.failure_reason) && (
           <div className="nodes-reason">{[r.failure_class, r.failure_reason].filter(Boolean).join(' · ')}</div>
         )}

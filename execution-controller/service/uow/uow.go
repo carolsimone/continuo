@@ -22,10 +22,14 @@ type UnitOfWork interface {
 	OutboxRepo() pkgoutbox.Repository
 	DeploymentsRepo() repository.DeploymentRepository
 	ValidationAggregateRepo() repository.ValidationAggregateRepository
-	CancelledSchedulesRepo() repository.CancelledSchedulesRepository
+	CancelledRunsRepo() repository.CancelledRunsRepository
 	MessageProcessingRepo() messageprocessing.Repository
 
 	Begin(ctx context.Context) error
 	Commit() error
 	Rollback() error
+	// AfterCommit registers fn to run once the current transaction commits;
+	// a rollback discards it. It records effects outside the database, such
+	// as a metric, that must count only what committed.
+	AfterCommit(fn func())
 }

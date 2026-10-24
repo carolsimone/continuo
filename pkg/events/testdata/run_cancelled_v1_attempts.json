@@ -1,0 +1,49 @@
+{
+  "input": {
+    "event_id": "d7b2f3a9-6e15-4c80-9b24-5f8a1c3e7d60",
+    "tenant_id": "default",
+    "producer": "state",
+    "occurred_at": "2026-10-23T09:14:07.000231Z",
+    "payload": {
+      "run_id": "7f3e1a2b-4c5d-4e6f-8a9b-0c1d2e3f4a5b",
+      "cancelled_by": "alice@example.com",
+      "reason": "bad upstream data",
+      "attempts": [
+        {
+          "task_id": "3e41c7d2-5a98-4b36-8f10-2d7e9a4c6b15",
+          "attempt": 0,
+          "job_name": "service-1-e2e-schema-table-a-7f3e1a2b"
+        },
+        {
+          "task_id": "9b07e5a3-1c64-4d82-b9f7-3a5c8e0d2f46",
+          "attempt": 1,
+          "job_name": "service-1-e2e-schema-table-b-7f3e1a2b-r1"
+        }
+      ]
+    }
+  },
+  "fields": {
+    "event_id": "d7b2f3a9-6e15-4c80-9b24-5f8a1c3e7d60",
+    "tenant_id": "default",
+    "occurred_at": "2026-10-23T09:14:07.000231Z",
+    "producer": "state",
+    "schema_version": "1",
+    "payload": {
+      "run_id": "7f3e1a2b-4c5d-4e6f-8a9b-0c1d2e3f4a5b",
+      "cancelled_by": "alice@example.com",
+      "reason": "bad upstream data",
+      "attempts": [
+        {
+          "task_id": "3e41c7d2-5a98-4b36-8f10-2d7e9a4c6b15",
+          "attempt": 0,
+          "job_name": "service-1-e2e-schema-table-a-7f3e1a2b"
+        },
+        {
+          "task_id": "9b07e5a3-1c64-4d82-b9f7-3a5c8e0d2f46",
+          "attempt": 1,
+          "job_name": "service-1-e2e-schema-table-b-7f3e1a2b-r1"
+        }
+      ]
+    }
+  }
+}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -304,4 +305,13 @@ func TestHistory_HumanModeRendersExecutedHashColumn(t *testing.T) {
 	lines := strings.Split(strings.TrimRight(stderr, "\n"), "\n")
 	require.Len(t, lines, 3, "header + two run rows")
 	assert.True(t, strings.HasSuffix(lines[2], "  -"), "run_2 names no release: hash column renders as '-', got %q", lines[2])
+}
+
+// The help names the values of both status fields, including the run's
+// cancelling status and the task's stopping status.
+func TestHistory_LongNamesTheRunAndTaskStatuses(t *testing.T) {
+	long := NewHistoryCommand(nil, nil, io.Discard, io.Discard).Long
+
+	assert.Contains(t, long, "terminal_status is the run's status: pending|running|cancelling|succeeded|failed|cancelled|skipped.")
+	assert.Contains(t, long, "task_status is one of: pending|dispatched|queued|running|stopping|succeeded|failed|cancelled|skipped.")
 }

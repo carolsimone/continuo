@@ -1,0 +1,27 @@
+{
+  "input": {
+    "event_id": "c4a8e1f6-2b7d-4d93-8e05-1a6f3b9c7d24",
+    "tenant_id": "default",
+    "producer": "state",
+    "occurred_at": "2026-10-23T09:14:07.000231Z",
+    "payload": {
+      "run_id": "7f3e1a2b-4c5d-4e6f-8a9b-0c1d2e3f4a5b",
+      "cancelled_by": "alice@example.com",
+      "reason": "bad upstream data",
+      "attempts": []
+    }
+  },
+  "fields": {
+    "event_id": "c4a8e1f6-2b7d-4d93-8e05-1a6f3b9c7d24",
+    "tenant_id": "default",
+    "occurred_at": "2026-10-23T09:14:07.000231Z",
+    "producer": "state",
+    "schema_version": "1",
+    "payload": {
+      "run_id": "7f3e1a2b-4c5d-4e6f-8a9b-0c1d2e3f4a5b",
+      "cancelled_by": "alice@example.com",
+      "reason": "bad upstream data",
+      "attempts": []
+    }
+  }
+}

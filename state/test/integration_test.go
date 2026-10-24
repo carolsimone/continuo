@@ -199,15 +199,65 @@ func TestStateService(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, schedID, resp.ScheduleId)
 
+		// The trigger dispatched the schedule's task, so the run is cancelling
+		// until that attempt reports stopped.
+		var stored string
+		require.NoError(t, stateDB.GetContext(ctx, &stored,
+			`SELECT status FROM scheduler_tracker WHERE schedule_id = $1`, schedID))
+		assert.Equal(t, "cancelling", stored)
+
 		// Verify via GetScheduler
 		getResp, err := stateClient.GetScheduler(ctx, &statev1.GetSchedulerRequest{
 			ScheduleId: resp.ScheduleId,
 		})
 		require.NoError(t, err)
-		assert.Equal(t, statev1.SchedulerStatus_SCHEDULER_STATUS_CANCELLED, getResp.Scheduler.Status)
 		assert.Equal(t, "user", getResp.Scheduler.CancelledBy)
 		assert.Equal(t, "manual stop", getResp.Scheduler.CancellationReason)
 		assert.NotNil(t, getResp.Scheduler.CancelledAt)
+	})
+
+	t.Run("CancelSchedule/a_second_cancel_returns_the_cancelling_run", func(t *testing.T) {
+		ctx := context.Background()
+
+		seedActiveSchedule(t, "daily-cancel-twice")
+		promoteSchedules(t, stateDB, "daily-cancel-twice")
+		trigResp, err := stateClient.TriggerSchedule(ctx, &statev1.TriggerScheduleRequest{ScheduleName: "daily-cancel-twice"})
+		require.NoError(t, err)
+		_, err = stateClient.CancelSchedule(ctx, &statev1.CancelScheduleRequest{
+			ScheduleName: "daily-cancel-twice", CancelledBy: "alice", CancellationReason: "first",
+		})
+		require.NoError(t, err)
+		type cancelRow struct {
+			Status      string     `db:"status"`
+			CancelledAt *time.Time `db:"cancelled_at"`
+			CancelledBy *string    `db:"cancelled_by"`
+			Reason      *string    `db:"cancellation_reason"`
+		}
+		var before cancelRow
+		require.NoError(t, stateDB.GetContext(ctx, &before,
+			`SELECT status, cancelled_at, cancelled_by, cancellation_reason FROM scheduler_tracker WHERE schedule_id = $1`, trigResp.ScheduleId))
+		require.Equal(t, "cancelling", before.Status)
+		var outboxBefore int
+		require.NoError(t, stateDB.GetContext(ctx, &outboxBefore,
+			`SELECT count(*) FROM state_outbox WHERE aggregate_id = $1`, trigResp.ScheduleId))
+
+		second, err := stateClient.CancelSchedule(ctx, &statev1.CancelScheduleRequest{
+			ScheduleName: "daily-cancel-twice", CancelledBy: "bob", CancellationReason: "second",
+		})
+		require.NoError(t, err)
+		assert.Equal(t, trigResp.ScheduleId, second.ScheduleId)
+		byID, err := stateClient.CancelScheduler(ctx, &statev1.CancelSchedulerRequest{ScheduleId: trigResp.ScheduleId, CancelledBy: "bob"})
+		require.NoError(t, err)
+		assert.Equal(t, "alice", byID.Scheduler.CancelledBy, "the answer is the run as the first cancel left it")
+
+		var after cancelRow
+		require.NoError(t, stateDB.GetContext(ctx, &after,
+			`SELECT status, cancelled_at, cancelled_by, cancellation_reason FROM scheduler_tracker WHERE schedule_id = $1`, trigResp.ScheduleId))
+		assert.Equal(t, before, after, "a second cancel changes nothing")
+		var outboxAfter int
+		require.NoError(t, stateDB.GetContext(ctx, &outboxAfter,
+			`SELECT count(*) FROM state_outbox WHERE aggregate_id = $1`, trigResp.ScheduleId))
+		assert.Equal(t, outboxBefore, outboxAfter, "a second cancel writes no outbox row")
 	})
 
 	t.Run("CancelSchedule/no_active_run", func(t *testing.T) {

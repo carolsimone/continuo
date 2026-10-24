@@ -12,6 +12,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/domain/command"
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -95,6 +96,85 @@ func TestObserved_StateAgeIsReadByTheDatabaseClock(t *testing.T) {
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, age, 3*time.Minute)
 	assert.Less(t, age, 4*time.Minute)
+}
+
+// An attempt ended undeployed when its row is failed and never created or
+// adopted its Job: the creation failed for good, or the dispatch was refused.
+// A row that is waiting, holding a slot or done does not count, nor does an
+// attempt with no row. Judged by name (a Job with no attempt labels), the
+// newest row of the name decides. Two attempts can share a truncated name:
+// the one refused on it ended undeployed, the other did not.
+func TestObservedDeployments_EndedUndeployed(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	ctx := context.Background()
+	repo := postgres.NewDeploymentsRepository(db, testLogger())
+	backoff := model.BackoffPolicy{Base: time.Second, Cap: time.Minute}
+	at := time.Now().Add(-time.Hour)
+	add := func(jobName string, created time.Time, status model.Status) *model.Deployment {
+		t.Helper()
+		cmd := validCmd()
+		cmd.JobName = jobName
+		d := model.NewDeployment(cmd, nil, created)
+		require.NoError(t, repo.Add(ctx, d))
+		switch status {
+		case model.StatusPending:
+		case model.StatusReserved:
+			require.NoError(t, d.Reserve())
+		case model.StatusFailed:
+			require.NoError(t, d.Reserve())
+			_, err := d.RegisterFailure(created, true, "the API refused the Job", backoff)
+			require.NoError(t, err)
+		case model.StatusDone:
+			require.NoError(t, d.Reserve())
+			require.NoError(t, d.MarkStarted(created))
+			require.NoError(t, d.Finish("ok", created))
+		}
+		require.NoError(t, repo.Save(ctx, d))
+		return d
+	}
+	failed := add("job-failed", at, model.StatusFailed)
+	pending := add("job-pending", at, model.StatusPending)
+	reserved := add("job-reserved", at, model.StatusReserved)
+	done := add("job-done", at, model.StatusDone)
+	add("job-requeued", at, model.StatusFailed)
+	add("job-requeued", at.Add(time.Minute), model.StatusPending)
+	owner := add("job-shared", at, model.StatusReserved)
+	collided := add("job-shared", at.Add(time.Minute), model.StatusFailed)
+	refusedCmd := validCmd()
+	refusedCmd.JobName = "job-refused"
+	refused := model.NewRefusedDeployment(refusedCmd, nil, pkgmodel.FailureReasonAttemptLost, "lost", at)
+	refused.RecordReport(refused.ReportOf(pkgmodel.AttemptStatusFailed, "lost"))
+	added, err := repo.AddAttempt(ctx, refused)
+	require.NoError(t, err)
+	require.True(t, added)
+
+	observed := postgres.NewObservedDeployments(db, testLogger())
+	for _, c := range []struct {
+		name string
+		d    *model.Deployment
+		want bool
+	}{
+		{"failed", failed, true}, {"refused", refused, true}, {"collided", collided, true},
+		{"pending", pending, false}, {"reserved", reserved, false}, {"done", done, false},
+		{"the other attempt of a shared name", owner, false},
+	} {
+		got, err := observed.EndedUndeployed(ctx, uuid.MustParse(c.d.Command().TaskID), c.d.Command().Attempt)
+		require.NoError(t, err)
+		assert.Equal(t, c.want, got, c.name)
+	}
+	got, err := observed.EndedUndeployed(ctx, uuid.New(), 0)
+	require.NoError(t, err)
+	assert.False(t, got, "an attempt with no row")
+
+	for name, want := range map[string]bool{
+		"job-failed": true, "job-refused": true, "job-shared": true,
+		"job-pending": false, "job-reserved": false, "job-done": false, "job-requeued": false, "no-such-job": false,
+	} {
+		got, err := observed.NameEndedUndeployed(ctx, name)
+		require.NoError(t, err)
+		assert.Equal(t, want, got, name)
+	}
 }
 
 // A deployment that never created or adopted a Job, though it carries the

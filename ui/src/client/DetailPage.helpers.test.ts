@@ -9,11 +9,22 @@ describe('isTerminalStatus', () => {
   it('treats running as non-terminal', () => {
     expect(isTerminalStatus('running')).toBe(false);
   });
+
+  it('treats a cancelling run as non-terminal: it is still being stopped', () => {
+    expect(isTerminalStatus('cancelling')).toBe(false);
+    expect(isTerminalStatus('SCHEDULER_STATUS_CANCELLING')).toBe(false);
+    expect(isTerminalStatus('cancelled')).toBe(true);
+  });
 });
 
 describe('pillClass', () => {
   it('maps skipped to its own pill class', () => {
     expect(pillClass('skipped')).toBe('pill--skipped');
+  });
+
+  it('maps cancelling to its own pill class, apart from cancelled', () => {
+    expect(pillClass('cancelling')).toBe('pill--cancelling');
+    expect(pillClass('cancelled')).toBe('pill--cancelled');
   });
 });
 
@@ -24,6 +35,10 @@ describe('isRerunnableStatus', () => {
 
   it('treats cancelled as rerunnable', () => {
     expect(isRerunnableStatus('cancelled')).toBe(true);
+  });
+
+  it('treats a cancelling run as not rerunnable: it has not ended', () => {
+    expect(isRerunnableStatus('cancelling')).toBe(false);
   });
 
   it('treats skipped as not rerunnable', () => {

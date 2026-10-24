@@ -13,6 +13,10 @@ type JobCache interface {
 	Synced() bool
 	// Observe returns what the cache holds of jobName's Job and its pods.
 	Observe(jobName string) model.JobObservation
+	// JobNames returns the name of every Job the cache holds that can still
+	// run a pod: one that has not finished (Complete or Failed) and is not
+	// being deleted.
+	JobNames() []string
 }
 
 // JobLookup reads a Job and its pods from the Kubernetes API, past the cache.
@@ -20,6 +24,16 @@ type JobLookup interface {
 	// ObserveLive returns what the API holds now of jobName's Job and its pods;
 	// JobPresent is false when the Job does not exist.
 	ObserveLive(ctx context.Context, jobName string) (model.JobObservation, error)
+}
+
+// RunJobLookup reads every Job and pod of one run from the Kubernetes API,
+// past the cache.
+type RunJobLookup interface {
+	// ObserveRun returns what the API holds now of the Jobs labelled with
+	// runID and of their pods, in one read whose cost does not grow with the
+	// number of the run's attempts: one LIST of the Jobs and one LIST of the
+	// pods, each selected by the run's label.
+	ObserveRun(ctx context.Context, runID string) (model.RunObservation, error)
 }
 
 // JobTerminator deletes a Job and its pods.

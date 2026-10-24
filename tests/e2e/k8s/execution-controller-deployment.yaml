@@ -183,10 +183,6 @@ spec:
               value: "minioadmin"
             - name: AWS_DEFAULT_REGION
               value: "us-east-1"
-            - name: CANCELLED_SCHEDULES_TTL_HOURS
-              value: "24"
-            - name: CANCELLED_SCHEDULES_SWEEP_INTERVAL_MINUTES
-              value: "60"
             - name: HTTP_PORT
               value: "8084"
             - name: METRICS_PORT

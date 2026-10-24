@@ -44,6 +44,7 @@ build-prod: build-base
 	DOCKER_BUILDKIT=1 docker build -t continuo-remediation:prod -f remediation/Dockerfile.prod .
 	DOCKER_BUILDKIT=1 docker build -t continuo-agent-remediation:prod -f agent-remediation/Dockerfile.prod .
 	DOCKER_BUILDKIT=1 docker build -t continuo-dead-letter-controller:prod -f dead-letter-controller/Dockerfile.prod .
+	DOCKER_BUILDKIT=1 docker build -t continuo-egress-proxy:prod -f egress-proxy/Dockerfile.prod .
 
 # Build single production service
 .PHONY: build-prod-service
@@ -140,7 +141,7 @@ e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start
 
 # ── CI contract: SINGLE entrypoints used identically by local dev and CI jobs.
 GO_SERVICES := state orchestrator execution-controller release-controller \
-               remediation agent-remediation agent-chat dead-letter-controller
+               remediation agent-remediation agent-chat dead-letter-controller egress-proxy
 FLYWAY_JOBS := flyway-state flyway-execution flyway-orchestrator flyway-release \
                flyway-agent-chat flyway-remediation flyway-agent-remediation \
                flyway-dead-letter
@@ -205,6 +206,7 @@ test-go: test-deps-up
 	    dead-letter-controller) db=continuo_dead_letter; \
 	      extra="REDIS_ADDR=$(CI_HOST_IP):6379 REDIS_PASSWORD=continuo GOFLAGS=-p=1";; \
 	    agent-remediation) db=continuo_agent_remediation;; agent-chat) db=continuo_agent_chat;; \
+	    egress-proxy) db=;; \
 	    pkg) db=continuo_execution; pkgs=./...; \
 	      extra="REDIS_ADDR=$(CI_HOST_IP):6379 REDIS_PASSWORD=continuo GOFLAGS=-p=1";; \
 	    *) echo "unknown service $$s" >&2; exit 2;; \

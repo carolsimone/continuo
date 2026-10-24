@@ -95,21 +95,42 @@ export function latestAttempt(attempts: TaskAttempt[] | undefined): TaskAttempt 
 
 // attemptPillClass maps a task attempt's status to a .pill-sm variant. An
 // attempt that is dispatched or queued has not started yet, so both read as
-// pending; running, succeeded, failed and cancelled have pills of their own.
+// pending; running, succeeded, failed, cancelled and stopped (its Job is gone
+// after a cancel) have pills of their own.
 export function attemptPillClass(status: string): string {
   switch (status) {
     case 'running':   return 'pill-sm--running';
     case 'succeeded': return 'pill-sm--succeeded';
     case 'failed':    return 'pill-sm--failed';
     case 'cancelled': return 'pill-sm--cancelled';
+    case 'stopped':   return 'pill-sm--stopped';
   }
   return 'pill-sm--pending';
 }
 
-// taskStatusTitle is the hover title of a task status pill: a queued task has
-// been accepted and waits for a slot to start in. Other statuses need none.
+// TASK_PILL_STATUSES are the task and run statuses that have a .pill-sm
+// variant of their own; any other value reads as pending.
+const TASK_PILL_STATUSES = new Set([
+  'running', 'succeeded', 'failed', 'pending', 'cancelled', 'skipped',
+  'dispatched', 'queued', 'stopping', 'cancelling',
+]);
+
+// taskPillClass maps a task's (or a run's) status to its .pill-sm variant.
+export function taskPillClass(status: string): string {
+  return TASK_PILL_STATUSES.has(status) ? `pill-sm--${status}` : 'pill-sm--pending';
+}
+
+// taskStatusTitle is the hover title of a status pill: a queued task has been
+// accepted and waits for a slot to start in; a cancelling run waits for its
+// Jobs to stop and a stopping task for its Job to be deleted. Other statuses
+// need none.
 export function taskStatusTitle(status: string | null | undefined): string | undefined {
-  return status === 'queued' ? 'waiting for a slot' : undefined;
+  switch (status) {
+    case 'queued':     return 'waiting for a slot';
+    case 'cancelling': return 'cancelling — waiting for its Jobs to stop';
+    case 'stopping':   return 'stopping — its Job is being deleted';
+  }
+  return undefined;
 }
 
 // runFailureLabel names why a run failed when no task of it failed (stalled,

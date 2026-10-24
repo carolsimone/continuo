@@ -5,10 +5,12 @@ import (
 	"database/sql"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	"github.com/carolsimone/continuo/execution-controller/domain/repository"
 	"github.com/carolsimone/continuo/execution-controller/test/fakes"
+	"github.com/google/uuid"
 )
 
 // stubDeploymentsRepo captures Add calls for assertion without a real DB.
@@ -36,6 +38,9 @@ func (r *stubDeploymentsRepo) Add(_ context.Context, d *model.Deployment) error 
 }
 func (r *stubDeploymentsRepo) LoadByJobName(context.Context, string) (*model.Deployment, error) {
 	return nil, sql.ErrNoRows
+}
+func (r *stubDeploymentsRepo) LockOpenOfRun(context.Context, string) ([]*model.Deployment, error) {
+	return nil, nil
 }
 
 func (r *stubDeploymentsRepo) Save(_ context.Context, d *model.Deployment) error {
@@ -92,6 +97,42 @@ func (r *stubDeploymentsRepo) HasAttemptAfter(_ context.Context, taskID string, 
 	return false, nil
 }
 
-func newFakeUoW(depl repository.DeploymentRepository, cancelled repository.CancelledSchedulesRepository) *fakes.FakeUnitOfWork {
+func newFakeUoW(depl repository.DeploymentRepository, cancelled repository.CancelledRunsRepository) *fakes.FakeUnitOfWork {
 	return &fakes.FakeUnitOfWork{Deployments: depl, Cancelled: cancelled}
+}
+
+// recordingCancelledRepo records the fences inserted and the holds of a run
+// taken ("dispatch" or "fence"); Exists answers fenced.
+type recordingCancelledRepo struct {
+	mu       sync.Mutex
+	inserted []uuid.UUID
+	holds    []string
+	fenced   bool
+}
+
+func (r *recordingCancelledRepo) HoldRunForDispatch(_ context.Context, _ uuid.UUID) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.holds = append(r.holds, "dispatch")
+	return nil
+}
+
+func (r *recordingCancelledRepo) HoldRunForFence(_ context.Context, _ uuid.UUID) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.holds = append(r.holds, "fence")
+	return nil
+}
+
+func (r *recordingCancelledRepo) Insert(_ context.Context, id uuid.UUID) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.inserted = append(r.inserted, id)
+	return nil
+}
+func (r *recordingCancelledRepo) Exists(_ context.Context, _ uuid.UUID) (bool, error) {
+	return r.fenced, nil
+}
+func (r *recordingCancelledRepo) DeleteOlderThan(_ context.Context, _ time.Duration) (int64, error) {
+	return 0, nil
 }

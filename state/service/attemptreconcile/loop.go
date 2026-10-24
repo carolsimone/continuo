@@ -25,6 +25,12 @@ const (
 	DueLimit = 500
 	// StalledLimit is how many stalled runs one pass fails.
 	StalledLimit = 100
+	// StopLimit is how many cancelling runs one pass sends the cancel of
+	// again.
+	StopLimit = 100
+	// CancelOverdueAfter is how long a cancelling run may wait for its
+	// attempts to stop before it counts as overdue and is logged.
+	CancelOverdueAfter = 15 * time.Minute
 )
 
 // Loop runs the attempt reconcile of one tenant.
@@ -58,9 +64,11 @@ func (l *Loop) Run(ctx context.Context, interval time.Duration) {
 	}
 }
 
-// Pass asks about every due attempt and fails every stalled run, each in a
-// transaction of its own. Two passes at once cost at most a repeated
-// question, which execution-controller answers twice.
+// Pass asks about every due attempt, sends the cancel again for every
+// cancelling run whose stops are unanswered, fails every stalled run and sets
+// the cancelling gauges, each question and failure in a transaction of its
+// own. Two passes at once cost at most a repeated question, which
+// execution-controller answers twice.
 func (l *Loop) Pass(ctx context.Context) error {
 	reader := l.newUoW().Attempts(l.tenantID)
 	due, err := reader.DueAttempts(ctx, DueLimit)
@@ -73,6 +81,10 @@ func (l *Loop) Pass(ctx context.Context) error {
 			errs = append(errs, err)
 		}
 	}
+	stops, err := reader.DueStops(ctx, StopLimit)
+	if err != nil {
+		return errors.Join(append(errs, err)...)
+	}
 	stalled, err := reader.StalledRuns(ctx, run.StallAfter, StalledLimit)
 	if err != nil {
 		return errors.Join(append(errs, err)...)
@@ -82,6 +94,16 @@ func (l *Loop) Pass(ctx context.Context) error {
 			errs = append(errs, err)
 		}
 	}
+	for _, id := range stops {
+		if err := l.resendStop(ctx, id); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	total, overdue, err := reader.CountCancelling(ctx, CancelOverdueAfter)
+	if err != nil {
+		return errors.Join(append(errs, err)...)
+	}
+	l.metrics.RunsCancelling(total, overdue)
 	return errors.Join(errs...)
 }
 
@@ -104,6 +126,45 @@ func (l *Loop) ask(ctx context.Context, key repository.AttemptKey) error {
 			"known_status", q.Status, "checks_sent", q.ChecksSent+1, "next_check_in", next.String())
 		return nil
 	})
+}
+
+// resendStop sends the cancel of one cancelling run again, naming each attempt
+// asked to stop that has not answered, and moves each of those attempts to its
+// next stop window. A run past CancelOverdueAfter is also logged as an error,
+// with the attempts it waits for.
+func (l *Loop) resendStop(ctx context.Context, runID uuid.UUID) error {
+	return l.inTx(ctx, func(u uow.UnitOfWork) error {
+		q, found, err := u.Attempts(l.tenantID).LockStops(ctx, runID)
+		if err != nil || !found {
+			return err
+		}
+		for _, t := range q.Attempts {
+			key := repository.AttemptKey{TaskID: t.TaskID, Attempt: t.Attempt}
+			if err := u.Attempts(l.tenantID).MarkQuestioned(ctx, key, run.NextStopCheckAfter(t.ChecksSent+1)); err != nil {
+				return err
+			}
+		}
+		if err := u.Outbox().Append(ctx, []run.DomainEvent{q.Cancel()}, uuid.Nil); err != nil {
+			return fmt.Errorf("append the cancel of run %s again: %w", runID, err)
+		}
+		waiting := stopTargets(q.Attempts)
+		if waited := u.Clock().Now().Sub(q.CancelledAt); waited > CancelOverdueAfter {
+			l.logger.Error("A cancelling run is still waiting for attempts to stop",
+				"run_id", runID, "schedule_name", q.ScheduleName, "waiting", waited.String(), "attempts", waiting)
+			return nil
+		}
+		l.logger.Info("Sent the cancel again", "run_id", runID, "schedule_name", q.ScheduleName, "attempts", waiting)
+		return nil
+	})
+}
+
+// stopTargets renders the attempts a cancel waits for as "task/attempt (job)".
+func stopTargets(targets []run.StopTarget) []string {
+	out := make([]string, 0, len(targets))
+	for _, t := range targets {
+		out = append(out, fmt.Sprintf("%s/%d (%s)", t.TaskID, t.Attempt, t.JobName))
+	}
+	return out
 }
 
 // failStalled fails one run as stalled, once its lock confirms it still is,

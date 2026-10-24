@@ -9,6 +9,17 @@ var (
 	// whose status is terminal: SUCCEEDED, FAILED, CANCELLED or SKIPPED.
 	ErrAlreadyTerminal = errors.New("run is already in a terminal state")
 
+	// ErrAlreadyCancelling is returned by Run.Cancel on a run that is already
+	// cancelling: the first cancel's stops stand, and the second writes
+	// nothing.
+	ErrAlreadyCancelling = errors.New("run is already cancelling")
+
+	// ErrStopUnanswerable is returned by Run.Cancel when it made more tasks
+	// stopping than it asked attempts to stop: a stopping task with no open
+	// attempt would never be answered and its run would stay cancelling, so
+	// the cancel fails and its transaction is rolled back.
+	ErrStopUnanswerable = errors.New("a stopping task has no open attempt to stop")
+
 	// ErrSourceMustBeTerminallyFailedOrCancelled is returned by
 	// CanBeRerunSource / CanBeRebaseSource when the source run is not in
 	// {FAILED, CANCELLED}.
@@ -86,6 +97,12 @@ var (
 	// writes an attempt's row in the transaction that dispatches it, so such a
 	// report never becomes valid; the stream binding dead-letters it at once.
 	ErrAttemptNotIssued = errors.New("state never dispatched the reported attempt")
+
+	// ErrStopNotRequested is returned by Run.RecordAttemptReport for a stopped
+	// report of an open attempt state never asked to stop: only the current
+	// attempt of a stopping task is stopped on request, so such a report never
+	// becomes valid.
+	ErrStopNotRequested = errors.New("state never asked the reported attempt to stop")
 
 	// ErrInvalidRunFailureReason is returned by Run.MarkDispatchTerminal when
 	// it is asked to fail a run with no failure reason or one that

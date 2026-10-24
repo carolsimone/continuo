@@ -303,3 +303,12 @@ func TestStatus_LongNamesEveryTaskStatus(t *testing.T) {
 	}
 	assert.ElementsMatch(t, served, listed)
 }
+
+// A cancelled run passes through cancelling, and a cancelling run still counts
+// as running; the help says both so a caller does not read it as finished.
+func TestStatus_LongNamesTheCancellingRunStatus(t *testing.T) {
+	long := NewStatusCommand(nil, nil, io.Discard, io.Discard).Long
+
+	assert.Contains(t, long, "last_run_status is one of pending|running|cancelling|succeeded|failed|cancelled|skipped.")
+	assert.Contains(t, long, "is_running is true while the run is pending, running or cancelling")
+}

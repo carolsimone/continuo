@@ -37,6 +37,7 @@ function pillClass(status: string): string {
   const s = status.toLowerCase().replace(/\s+/g, '-');
   if (s.includes('succeed')) return 'pill-sm--succeeded';
   if (s.includes('fail')) return 'pill-sm--failed';
+  if (s.includes('cancelling')) return 'pill-sm--cancelling';
   if (s.includes('cancel')) return 'pill-sm--cancelled';
   if (s.includes('skip')) return 'pill-sm--skipped';
   return 'pill-sm--pending';

@@ -51,6 +51,9 @@ const (
 type StateServiceClient interface {
 	// Scheduler operations
 	GetScheduler(ctx context.Context, in *GetSchedulerRequest, opts ...grpc.CallOption) (*SchedulerResponse, error)
+	// CancelScheduler cancels a run. The response carries the run as the cancel
+	// left it: CANCELLING while an attempt is still being stopped, CANCELLED once
+	// nothing was in flight. A run that is already CANCELLING is returned as it is.
 	CancelScheduler(ctx context.Context, in *CancelSchedulerRequest, opts ...grpc.CallOption) (*SchedulerResponse, error)
 	// Trigger operations
 	ActivateSchedule(ctx context.Context, in *ActivateScheduleRequest, opts ...grpc.CallOption) (*ActivateScheduleResponse, error)
@@ -405,6 +408,9 @@ func (c *stateServiceClient) ListTaskAttempts(ctx context.Context, in *ListTaskA
 type StateServiceServer interface {
 	// Scheduler operations
 	GetScheduler(context.Context, *GetSchedulerRequest) (*SchedulerResponse, error)
+	// CancelScheduler cancels a run. The response carries the run as the cancel
+	// left it: CANCELLING while an attempt is still being stopped, CANCELLED once
+	// nothing was in flight. A run that is already CANCELLING is returned as it is.
 	CancelScheduler(context.Context, *CancelSchedulerRequest) (*SchedulerResponse, error)
 	// Trigger operations
 	ActivateSchedule(context.Context, *ActivateScheduleRequest) (*ActivateScheduleResponse, error)

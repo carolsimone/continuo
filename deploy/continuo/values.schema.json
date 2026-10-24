@@ -423,6 +423,26 @@
       }
     },
 
+    "egress": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional: a release installed before egress existed has none and runs the proxy with these defaults. The entries of allowedDomains and privateDomains are checked by the chart's templates as written, including their type, so that the error names the entry.",
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "allowedDomains": {"type": "array", "items": {"description": "A host name with an optional port, as host or host:port; checked by the chart's templates"}},
+        "privateDomains": {"type": "array", "items": {"description": "A host name with an optional port, as host or host:port; checked by the chart's templates"}},
+        "proxy": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "replicas": {"type": "integer", "minimum": 1},
+            "maxTunnels": {"type": "integer", "minimum": 1},
+            "resources": {"$ref": "#/definitions/resourceSpec"}
+          }
+        }
+      }
+    },
+
     "metrics": {
       "type": "object",
       "additionalProperties": false,

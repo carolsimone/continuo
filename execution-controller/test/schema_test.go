@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
+	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/require"
 )
 
@@ -42,7 +43,8 @@ func TestExecutionSchemaMatchesContract(t *testing.T) {
 
 	require.ElementsMatch(t, []string{"id", "message_id", "stream_name", "state", "payload", "error", "created_at", "updated_at", "outbox_entry_id"}, names(columns("message_processing")))
 	require.ElementsMatch(t, []string{"id", "message_processing_id", "aggregate_type", "aggregate_id", "event_type", "payload", "stream_name", "status", "retry_count", "max_retries", "created_at", "processed_at", "error_message", "next_attempt_at"}, names(columns("execution_outbox")))
-	require.ElementsMatch(t, []string{"schedule_id", "cancelled_at"}, names(columns("cancelled_schedules")))
+	require.ElementsMatch(t, []string{"run_id", "cancelled_at"}, names(columns("cancelled_runs")))
+	require.Empty(t, columns("cancelled_schedules"), "the guard table is cancelled_runs")
 	require.ElementsMatch(t, []string{"id", "message_processing_id", "task_id", "schedule_id", "job_params", "status", "retry_count", "max_retries", "next_attempt_at", "created_at", "deployed_at", "error_message", "mode", "release_id", "node_id", "outcome", "dbt_log_uri", "outcome_at", "run_results_uri", "failed_container", "state_changed_at", "job_name", "facts", "attempt", "last_report"}, names(columns("deployments")))
 	require.ElementsMatch(t, []string{"scope", "created_at"}, names(columns("admission_capacity")))
 	require.ElementsMatch(t, []string{"release_id", "aggregate_emitted_at", "mode"}, names(columns("validation_aggregates")))
@@ -64,7 +66,7 @@ func TestExecutionSchemaMatchesContract(t *testing.T) {
 		"idx_message_processing_outbox_entry_id_stream", "message_processing_message_id_stream_name_key",
 		"idx_deployments_due", "idx_deployments_candidate_release", "uq_deployments_candidate_release_node_mode",
 		"idx_deployments_message_processing_id", "idx_execution_outbox_message_processing_id",
-		"idx_deployments_job_name", "idx_deployments_in_flight", "uq_deployments_task_attempt",
+		"idx_deployments_job_name", "idx_deployments_in_flight", "uq_deployments_task_attempt", "idx_deployments_open_by_run",
 	})
 	require.NotContains(t, indexes, "idx_deployments_task_id", "uq_deployments_task_attempt serves a task's lookups")
 
@@ -119,6 +121,13 @@ func TestExecutionSchemaMatchesContract(t *testing.T) {
 	require.ElementsMatch(t, model.StatusStrings(model.AllStatuses()), valuesIn(statusCheck),
 		"deployments_status_check lists exactly model.AllStatuses()")
 
+	// The index that serves a run's stop covers what can still hold work: the
+	// waiting status and every in-flight one.
+	var openByRunIndex string
+	require.NoError(t, db.QueryRow(`SELECT pg_get_indexdef('idx_deployments_open_by_run'::regclass)`).Scan(&openByRunIndex))
+	require.ElementsMatch(t, append(model.StatusStrings(model.InFlightStatuses()), string(model.StatusPending), string(model.ModeProduction)), valuesIn(openByRunIndex),
+		"idx_deployments_open_by_run covers 'production' rows that are pending or in flight: %s", openByRunIndex)
+
 	var inFlightIndex string
 	require.NoError(t, db.QueryRow(`SELECT pg_get_indexdef('idx_deployments_in_flight'::regclass)`).Scan(&inFlightIndex))
 	require.ElementsMatch(t, model.StatusStrings(model.InFlightStatuses()), valuesIn(inFlightIndex),
@@ -135,4 +144,27 @@ func TestExecutionSchemaMatchesContract(t *testing.T) {
 	}
 	require.ElementsMatch(t, want, valuesIn(triggerDef),
 		"deployments_admission_notify wakes on 'pending' and on leaving exactly model.InFlightStatuses(): %s", triggerDef)
+}
+
+// A stopped attempt records the outcome "stopped"; the constraint refuses a
+// value no code writes.
+func TestExecutionSchema_DeploymentOutcomeAcceptsStopped(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+
+	insert := func(tx *sqlx.Tx, outcome string) error {
+		_, err := tx.Exec(`INSERT INTO deployments (task_id, schedule_id, job_params, status, outcome)
+			VALUES (gen_random_uuid(), gen_random_uuid(), '{}', 'done', $1)`, outcome)
+		return err
+	}
+	for _, outcome := range []string{"ok", "failed", "skipped", "stopped"} {
+		tx, err := db.Beginx()
+		require.NoError(t, err)
+		require.NoError(t, insert(tx, outcome), outcome)
+		require.NoError(t, tx.Rollback())
+	}
+	tx, err := db.Beginx()
+	require.NoError(t, err)
+	require.Error(t, insert(tx, "cancelled"))
+	require.NoError(t, tx.Rollback())
 }

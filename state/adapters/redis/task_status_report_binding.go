@@ -25,8 +25,8 @@ import (
 // to it.
 //
 // A report for a run state never created, for a task its run does not hold,
-// or for an attempt state never dispatched, is permanent
-// (permanentWhenNeverValid); every other handler error keeps its class. See
+// for an attempt state never dispatched, or a stopped report of an attempt
+// state never asked to stop, is permanent (permanentWhenNeverValid); every other handler error keeps its class. See
 // bindStreamHandler for the shared pipeline and ACK-policy semantics.
 func NewTaskStatusReportBinding(
 	uowFactory func() uow.UnitOfWork,
@@ -44,18 +44,21 @@ func NewTaskStatusReportBinding(
 
 // permanentWhenNeverValid wraps handle so that a report for a run with no row
 // (postgres.ErrNotFound, which the run's lock returns), for a task its run
-// does not hold (run.ErrTaskNotHeld) or for an attempt the task was never
-// dispatched (run.ErrAttemptNotIssued) is permanent: a run's row and tasks
-// are stored in the transaction that creates it, before any task is
-// dispatched, and each attempt's row in the transaction that dispatches it,
-// so a redelivery can never find any of them, and the consumer dead-letters
-// the message at once.
+// does not hold (run.ErrTaskNotHeld), for an attempt the task was never
+// dispatched (run.ErrAttemptNotIssued) or a stopped report of an open attempt
+// state never asked to stop (run.ErrStopNotRequested) is permanent: a run's
+// row and tasks are stored in the transaction that creates it, before any
+// task is dispatched, each attempt's row in the transaction that dispatches
+// it, and a stop is requested in the transaction that cancels the run, so a
+// redelivery can never find any of them, and the consumer dead-letters the
+// message at once.
 func permanentWhenNeverValid[E any](
 	handle func(context.Context, uow.UnitOfWork, E, uuid.UUID) error,
 ) func(context.Context, uow.UnitOfWork, E, uuid.UUID) error {
 	return func(ctx context.Context, u uow.UnitOfWork, evt E, msgProcID uuid.UUID) error {
 		err := handle(ctx, u, evt, msgProcID)
-		if errors.Is(err, postgres.ErrNotFound) || errors.Is(err, run.ErrTaskNotHeld) || errors.Is(err, run.ErrAttemptNotIssued) {
+		if errors.Is(err, postgres.ErrNotFound) || errors.Is(err, run.ErrTaskNotHeld) || errors.Is(err, run.ErrAttemptNotIssued) ||
+			errors.Is(err, run.ErrStopNotRequested) {
 			return fmt.Errorf("%w: %w", pkgevents.ErrPermanent, err)
 		}
 		return err

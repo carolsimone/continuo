@@ -128,3 +128,41 @@ func TestRepo_TheLastReportRoundTrips(t *testing.T) {
 	require.NoError(t, tx.Get(&class, `SELECT last_report->>'failure_class' FROM deployments WHERE id = $1`, got.ID()))
 	assert.Equal(t, "task", class, "the stored report is the payload it was emitted as")
 }
+
+// A stopped attempt is stored done with its outcome, and a started one that was
+// asked to stop keeps the request with its facts.
+func TestRepo_AStoppedAttemptRoundTrips(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	ctx := context.Background()
+	repo := postgres.NewDeploymentsRepository(db, testLogger())
+	now := time.Date(2026, 10, 23, 9, 0, 0, 0, time.UTC)
+
+	cmd := validCmd()
+	cmd.Attempt = 1
+	added, err := repo.AddAttempt(ctx, model.NewStoppedDeployment(cmd, nil, now))
+	require.NoError(t, err)
+	require.True(t, added)
+	got, found, err := repo.LoadByTaskAttempt(ctx, cmd.TaskID, 1)
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, model.StatusDone, got.Status())
+	assert.Equal(t, "stopped", got.Outcome())
+	require.NotNil(t, got.Facts().StopRequestedAt)
+	assert.True(t, now.Equal(*got.Facts().StopRequestedAt))
+
+	running := validCmd()
+	running.Attempt = 1
+	d := model.NewAdoptedDeployment(running, nil, now)
+	_, err = repo.AddAttempt(ctx, d)
+	require.NoError(t, err)
+	effect, err := d.Stop(now.Add(time.Minute))
+	require.NoError(t, err)
+	require.Equal(t, model.StopTerminate, effect)
+	require.NoError(t, repo.Save(ctx, d))
+	got, _, err = repo.LoadByTaskAttempt(ctx, running.TaskID, 1)
+	require.NoError(t, err)
+	assert.Equal(t, model.StatusTerminating, got.Status())
+	require.NotNil(t, got.Facts().StopRequestedAt)
+	assert.True(t, now.Add(time.Minute).Equal(*got.Facts().StopRequestedAt))
+}

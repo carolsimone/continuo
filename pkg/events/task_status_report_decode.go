@@ -18,9 +18,9 @@ type taskStatusReportWire struct {
 // wraps ErrMalformedEnvelope: an unreadable envelope, another schema_version,
 // a payload that is not JSON, a run_id or task_id that is not a UUID, an
 // attempt that is missing, not an integer or negative, a status other than
-// queued, running, succeeded or failed, a failed report without a declared
-// failure_reason or whose failure_class is not that reason's class, and any
-// other report that names a class or reason.
+// queued, running, succeeded, failed or stopped, a failed report without a
+// declared failure_reason or whose failure_class is not that reason's class,
+// and any other report, a stopped one included, that names a class or reason.
 func DecodeTaskStatusReport(fields map[string]string) (Envelope, TaskStatusReport, error) {
 	env, payload, err := ParseEnvelope(fields)
 	if err != nil {

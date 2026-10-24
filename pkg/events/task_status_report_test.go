@@ -113,6 +113,33 @@ func TestDecodeTaskStatusReport_ReadsAFailureWhoseClassIsTheReasons(t *testing.T
 	assert.Equal(t, "oom_killed", p.FailureReason)
 }
 
+// A stopped report says the attempt was stopped on request; it keeps the
+// attempt's facts and names no failure.
+func TestDecodeTaskStatusReport_ReadsAStoppedReport(t *testing.T) {
+	_, p, err := events.DecodeTaskStatusReport(reportFields(`"attempt":2,"job_name":"j-r2","status":"stopped","queued_at":"2026-10-23T09:00:00Z","started_at":"2026-10-23T09:01:00Z","finished_at":"2026-10-23T09:14:09Z"`))
+	require.NoError(t, err)
+	assert.Equal(t, model.AttemptStatusStopped, p.Status)
+	assert.Equal(t, int32(2), p.Attempt)
+	assert.Equal(t, "j-r2", p.JobName)
+	require.NotNil(t, p.StartedAt)
+	require.NotNil(t, p.FinishedAt)
+	assert.Empty(t, p.FailureClass)
+	assert.Empty(t, p.FailureReason)
+}
+
+func TestDecodeTaskStatusReport_RejectsAStoppedReportNamingAFailure(t *testing.T) {
+	for name, extra := range map[string]string{
+		"class":  `"failure_class":"task"`,
+		"reason": `"failure_reason":"exit_code"`,
+		"both":   `"failure_class":"task","failure_reason":"exit_code"`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, _, err := events.DecodeTaskStatusReport(reportFields(`"attempt":0,"status":"stopped",` + extra))
+			require.ErrorIs(t, err, events.ErrMalformedEnvelope)
+		})
+	}
+}
+
 // reportFields is a task.status.updated:v2 entry of execution-controller for
 // the run and task of validDispatchFields, with extra payload members.
 func reportFields(extra string) map[string]string {

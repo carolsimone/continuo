@@ -30,17 +30,25 @@ const (
 	// CreateAttempt: the dispatch is new; the attempt is queued for its Job.
 	CreateAttempt
 	// ReportLost: state knows the attempt as acknowledged, yet neither its
-	// record nor its Job is held; it is reported failed as attempt_lost.
+	// record nor its Job is held, and no pod of it is left; it is reported
+	// failed as attempt_lost.
 	ReportLost
+	// AwaitOrphanPod: state knows the attempt as acknowledged and neither its
+	// record nor its Job is held, but a pod of it has not finished (its Job
+	// was deleted without its pods). Nothing is written: the pod may still
+	// write the table, and state asks again.
+	AwaitOrphanPod
 )
 
 // DecideDispatch decides what a dispatch leads to, from whether the attempt's
 // record is held, whether a later attempt's is, the problem (if any) that
 // stops the dispatch from running, whether a Job carrying the task and
-// attempt exists, and state's known status. Only a dispatch state still
-// knows as dispatched creates an attempt: an acknowledged attempt is never
-// run again because of a question.
-func DecideDispatch(held, laterHeld bool, problem pkgmodel.FailureReason, jobOfAttempt bool, knownStatus pkgmodel.AttemptStatus) DispatchAction {
+// attempt exists, whether a pod of the attempt has not finished, and state's
+// known status. Only a dispatch state still knows as dispatched creates an
+// attempt: an acknowledged attempt is never run again because of a question,
+// and is reported lost only once no pod of it can run.
+func DecideDispatch(held, laterHeld bool, problem pkgmodel.FailureReason, jobOfAttempt, podOfAttemptRunning bool,
+	knownStatus pkgmodel.AttemptStatus) DispatchAction {
 	switch {
 	case held:
 		return ResendReport
@@ -52,8 +60,46 @@ func DecideDispatch(held, laterHeld bool, problem pkgmodel.FailureReason, jobOfA
 		return AdoptJob
 	case knownStatus == pkgmodel.AttemptStatusDispatched:
 		return CreateAttempt
+	case podOfAttemptRunning:
+		return AwaitOrphanPod
 	}
 	return ReportLost
+}
+
+// FencedAction is what execution-controller does with an attempt of a fenced
+// run whose Job no record holds: one it holds no record of (a dispatch of the
+// run carries it, or the run's cancel names it), or one whose record awaits
+// its launch (pending or reserved). No such attempt starts.
+type FencedAction int
+
+const (
+	// StopAdopted: a Job of the attempt exists; the record, rebuilt from the
+	// command when there is none, adopts it and moves to terminating with the
+	// stop recorded, so the Job is deleted and the attempt reported stopped
+	// once its pods are gone.
+	StopAdopted FencedAction = iota + 1
+	// AwaitFencedPod: no Job of the attempt exists, but a pod of it has not
+	// finished (its Job was deleted without its pods). Nothing is written
+	// while the pod can still run; state's next cancel names the attempt
+	// again.
+	AwaitFencedPod
+	// StoreStopped: neither a Job nor an unfinished pod of the attempt
+	// exists; the attempt is stored, or its waiting record ends, done with
+	// the outcome stopped, and it is reported stopped.
+	StoreStopped
+)
+
+// DecideFenced decides what an attempt of a fenced run whose Job no record
+// holds leads to, from whether a Job carrying its task and attempt exists and
+// whether a pod of it has not finished.
+func DecideFenced(jobOfAttempt, podOfAttemptUnfinished bool) FencedAction {
+	switch {
+	case jobOfAttempt:
+		return StopAdopted
+	case podOfAttemptUnfinished:
+		return AwaitFencedPod
+	}
+	return StoreStopped
 }
 
 // maxJobNameLen is the longest name of a Kubernetes Job: the Job controller
@@ -107,6 +153,18 @@ func NewAdoptedDeployment(cmd command.DeployTask, msgProcID *uuid.UUID, now time
 	d := NewDeployment(cmd, msgProcID, now)
 	d.status = StatusStarting
 	d.deployedAt = &now
+	return d
+}
+
+// NewStoppedDeployment records an attempt dispatched after it was asked to
+// stop: done at once with the outcome stopped and no Job, so a repeated
+// dispatch finds it and is answered with its report.
+func NewStoppedDeployment(cmd command.DeployTask, msgProcID *uuid.UUID, now time.Time) *Deployment {
+	d := NewDeployment(cmd, msgProcID, now)
+	d.status = StatusDone
+	d.outcome = OutcomeStopped
+	d.outcomeAt = &now
+	d.recordStopRequest(now)
 	return d
 }
 

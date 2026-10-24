@@ -331,7 +331,7 @@ func (v NodeType) Runtime() NodeRuntime {
 	return ""
 }
 
-// AttemptStatus — Where one attempt of a task stands, on the two task streams. state sends dispatched, queued or running as a dispatch's known_status on task.dispatch:v1; execution-controller reports queued, running, succeeded or failed as a report's status on task.status.updated:v2.
+// AttemptStatus — Where one attempt of a task stands, on the two task streams. state sends dispatched, queued or running as a dispatch's known_status on task.dispatch:v1; execution-controller reports queued, running, succeeded, failed or stopped as a report's status on task.status.updated:v2.
 // Values come from the vocabulary "attempt_status" in contract.yaml, in
 // declaration order.
 type AttemptStatus string
@@ -347,6 +347,8 @@ const (
 	AttemptStatusSucceeded AttemptStatus = "succeeded"
 	// AttemptStatusFailed — the attempt ended with a failure_reason and no pod of it can run again.
 	AttemptStatusFailed AttemptStatus = "failed"
+	// AttemptStatusStopped — the attempt was stopped on request: its run was cancelled, and no pod of it can run again.
+	AttemptStatusStopped AttemptStatus = "stopped"
 )
 
 // AttemptStatuses returns every value in contract.yaml declaration order.
@@ -357,6 +359,7 @@ func AttemptStatuses() []AttemptStatus {
 		AttemptStatusRunning,
 		AttemptStatusSucceeded,
 		AttemptStatusFailed,
+		AttemptStatusStopped,
 	}
 }
 
@@ -372,6 +375,8 @@ func (v AttemptStatus) IsValid() bool {
 	case AttemptStatusSucceeded:
 		return true
 	case AttemptStatusFailed:
+		return true
+	case AttemptStatusStopped:
 		return true
 	}
 	return false

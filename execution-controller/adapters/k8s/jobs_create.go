@@ -31,11 +31,12 @@ const (
 )
 
 // The label keys that name the attempt a task's Job runs, on the Job and its
-// pod: the task's id and the attempt's number. The watch reads them back to
-// tell which attempt a Job runs.
+// pod: the task's id, the attempt's number and the run's id. The watch reads
+// them back to tell which attempt, of which run, a Job runs.
 const (
-	LabelTaskID  = "task-id"
-	LabelAttempt = "attempt"
+	LabelTaskID     = "task-id"
+	LabelAttempt    = "attempt"
+	LabelScheduleID = "schedule-id"
 )
 
 // CreateQueryJob builds and creates the K8s Job of one attempt of a task. A
@@ -70,14 +71,14 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 
 	backoffLimit := int32(0)
 	jobLabels := map[string]string{
-		"app":          "dbt-job",
-		LabelTaskID:    params.TaskID,
-		LabelAttempt:   strconv.Itoa(params.Attempt),
-		"schedule-id":  params.ScheduleID,
-		"schedule":     params.ScheduleName,
-		"table_name":   sanitizeK8sLabel(params.TableName),
-		"schema_name":  params.SchemaName,
-		"service_name": params.ServiceName,
+		"app":           "dbt-job",
+		LabelTaskID:     params.TaskID,
+		LabelAttempt:    strconv.Itoa(params.Attempt),
+		LabelScheduleID: params.ScheduleID,
+		"schedule":      params.ScheduleName,
+		"table_name":    sanitizeK8sLabel(params.TableName),
+		"schema_name":   params.SchemaName,
+		"service_name":  params.ServiceName,
 	}
 	// The runtime label distinguishes python pods for operators without
 	// changing the app selector every executor Job carries.

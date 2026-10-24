@@ -50,6 +50,9 @@ Output (stdout, JSON):
    "description":string,"timezone":string,"is_running":bool,
    "last_run_id":string,"last_run_status":string,"last_run_at":string}]}
   description and last_run_at are omitted when empty (e.g. never run).
+  last_run_status is one of pending|running|cancelling|succeeded|failed|cancelled|skipped;
+  cancelling means a cancel was accepted and the run waits for its Jobs to
+  stop. is_running is true while the last run is pending, running or cancelling.
 
 Errors:
   unavailable(exit 5)  the state service is unreachable

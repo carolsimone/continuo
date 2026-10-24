@@ -29,11 +29,15 @@ func TestAllStatuses(t *testing.T) {
 func TestTransitions(t *testing.T) {
 	legal := map[[2]model.Status]bool{
 		{model.StatusPending, model.StatusReserved}:     true, // claim
+		{model.StatusPending, model.StatusDone}:         true, // stopped before its claim
+		{model.StatusPending, model.StatusTerminating}:  true, // stopped, and a Job of its attempt exists
 		{model.StatusBlocked, model.StatusPending}:      true, // upstreams succeeded
 		{model.StatusBlocked, model.StatusSkipped}:      true, // an upstream failed
 		{model.StatusReserved, model.StatusStarting}:    true, // Job created
 		{model.StatusReserved, model.StatusPending}:     true, // transient failure, or stale reservation
 		{model.StatusReserved, model.StatusFailed}:      true, // could not be deployed
+		{model.StatusReserved, model.StatusDone}:        true, // stopped before its Job was created
+		{model.StatusReserved, model.StatusTerminating}: true, // stopped, and a Job of its attempt exists
 		{model.StatusStarting, model.StatusRunning}:     true, // main container started
 		{model.StatusStarting, model.StatusTerminating}: true, // start error or start timeout: Job deleted
 		{model.StatusStarting, model.StatusDone}:        true, // ended before it was seen running
@@ -46,4 +50,10 @@ func TestTransitions(t *testing.T) {
 			assert.Equal(t, legal[[2]model.Status{from, to}], model.CanMove(from, to), "%s → %s", from, to)
 		}
 	}
+}
+
+func TestCanMove_PendingAndReservedCanEndDone(t *testing.T) {
+	assert.True(t, model.CanMove(model.StatusPending, model.StatusDone))
+	assert.True(t, model.CanMove(model.StatusReserved, model.StatusDone))
+	assert.False(t, model.CanMove(model.StatusBlocked, model.StatusDone), "a blocked row belongs to a release leg")
 }

@@ -5,12 +5,12 @@ import { serviceOfNode, buildServiceColors, rollupStatus } from './service-helpe
 import { resolveNodeStatus, parseNodeId } from './detail-page-helpers';
 
 const CLS: Record<string, string> = {
-  succeeded: 'ok', dispatched: 'disp', queued: 'queue', running: 'run', failed: 'fail', skipped: 'skip', cancelled: 'cancel', pending: 'pend',
+  succeeded: 'ok', dispatched: 'disp', queued: 'queue', stopping: 'stop', running: 'run', failed: 'fail', skipped: 'skip', cancelled: 'cancel', pending: 'pend',
 };
 const clsOf = (s: string) => CLS[s] ?? 'pend';
 // Legend order mirrors the run-progress header counts so the two read as one.
 const LEGEND: [string, string][] = [
-  ['ok', 'succeeded'], ['disp', 'dispatched'], ['queue', 'queued'], ['run', 'running'], ['fail', 'failed'],
+  ['ok', 'succeeded'], ['disp', 'dispatched'], ['queue', 'queued'], ['stop', 'stopping'], ['run', 'running'], ['fail', 'failed'],
   ['skip', 'skipped'], ['cancel', 'cancelled'], ['pend', 'pending'],
 ];
 

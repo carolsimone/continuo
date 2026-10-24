@@ -104,3 +104,14 @@ func TestRunReadHandler_ReadFailureIsInternal(t *testing.T) {
 	_, err := h.ListActiveRunDrifts(context.Background(), &statev1.ListActiveRunDriftsRequest{})
 	assert.Equal(t, codes.Internal, status.Code(err))
 }
+
+// The run graph carries a stopping task's status as the word the domain uses.
+func TestRunReadHandler_GetRunGraph_ReportsAStoppingTask(t *testing.T) {
+	h := NewRunReadHandler(&fakeRunReader{graph: projection.RunGraph{
+		Nodes: []projection.RunGraphNode{{ServiceName: "svc", SchemaName: "raw", TableName: "b", Status: run.TaskStatusStopping, TaskID: uuid.New()}},
+	}}, newTestLogger())
+
+	resp, err := h.GetRunGraph(context.Background(), &statev1.GetRunGraphRequest{RunId: uuid.NewString()})
+	require.NoError(t, err)
+	assert.Equal(t, "stopping", resp.Nodes[0].Status)
+}

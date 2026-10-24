@@ -228,6 +228,33 @@ func TestMaterializationRepository_DeleteAbsentFromKeepsARowWhoseBuildIsInFlight
 	}
 }
 
+// The build request of an absent node survives while its run is cancelling:
+// the run has not ended, and its attempt may still load the table. The row
+// goes once the run is cancelled.
+func TestMaterializations_DeleteAbsentFromKeepsACancellingRunsRequest(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	tenant := newTopoTenant(t, db)
+	_, err := saveTopoRelease(t, db, topoRelease(t, tenant, "rel-2", 2, "bb", topoSpec("raw", "users", "dbt-seed", "h2")))
+	require.NoError(t, err)
+	repo := postgres.NewMaterializationRepository(db, nil)
+	runID := insertSeedRun(t, db, run.SchedulerStatusCancelling)
+	require.NoError(t, repo.RecordAttempt(ctx, tenant, "raw.orders", "h1", runID, materializedAt))
+
+	deleted, err := repo.DeleteAbsentFrom(ctx, tenant, "rel-2")
+	require.NoError(t, err)
+	assert.Zero(t, deleted)
+	got, err := repo.List(ctx, tenant)
+	require.NoError(t, err)
+	assert.Contains(t, got, topology.NodeKey("raw.orders"))
+
+	_, err = db.Exec(`UPDATE scheduler_tracker SET status = 'cancelled', completed_at = now() WHERE schedule_id = $1`, runID)
+	require.NoError(t, err)
+	deleted, err = repo.DeleteAbsentFrom(ctx, tenant, "rel-2")
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), deleted)
+}
+
 // The unit of work's Materializations() writes inside its transaction.
 func TestPostgresUnitOfWork_MaterializationWritesRollBackWithTheTransaction(t *testing.T) {
 	ctx := context.Background()

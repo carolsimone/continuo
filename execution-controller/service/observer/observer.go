@@ -4,7 +4,10 @@
 // every started deployment each minute.
 // Workers take names off the queue, record what the cache shows of the
 // attempt, end an attempt that cannot start, and report the attempt's result
-// once every pod of it is finished or gone.
+// once every pod of it is finished or gone. A live Job that no started
+// deployment deploys is deleted when its run is fenced, or when its
+// deployment ended failed before deploying it; any other such Job is left
+// for a dispatch of its attempt to adopt.
 package observer
 
 import (
@@ -13,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"sync"
 	"time"
 
@@ -22,6 +26,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/service/ports"
 	"github.com/carolsimone/continuo/execution-controller/service/uow"
 	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/google/uuid"
 )
 
 // Defaults for the zero fields of Config.
@@ -67,19 +72,22 @@ type Config struct {
 	LogIOTimeout time.Duration
 }
 
-// Deps are the observer's collaborators.
+// Deps are the observer's collaborators. Cancelled reads the run fence
+// outside any transaction.
 type Deps struct {
-	NewUoW     func() uow.UnitOfWork
-	Observed   repository.ObservedDeployments
-	Cache      ports.JobCache
-	Lookup     ports.JobLookup
-	Terminator ports.JobTerminator
-	Logs       ports.PodLogReader
-	Uploader   ports.LogUploader
-	Queue      ports.ObservationQueue
-	Outcomes   *outcomes.Recorder
-	Metrics    ports.ObserverMetrics
-	Logger     *slog.Logger
+	NewUoW      func() uow.UnitOfWork
+	Observed    repository.ObservedDeployments
+	Cancelled   repository.CancelledRunsRepository
+	Cache       ports.JobCache
+	Lookup      ports.JobLookup
+	Terminator  ports.JobTerminator
+	Logs        ports.PodLogReader
+	Uploader    ports.LogUploader
+	Queue       ports.ObservationQueue
+	Outcomes    *outcomes.Recorder
+	Metrics     ports.ObserverMetrics
+	StopMetrics ports.StopMetrics
+	Logger      *slog.Logger
 }
 
 // Observer follows attempts to their end; see the package documentation.
@@ -137,15 +145,22 @@ func (o *Observer) Run(ctx context.Context) error {
 	}
 }
 
-// Resync queues the Job of every started deployment, so no attempt waits on a
-// watch event that was missed.
+// Resync queues the Job of every started deployment and every Job the cache
+// holds that can still run a pod (ports.JobCache.JobNames), each name once,
+// so no attempt waits on a watch event that was missed, and a Job no
+// deployment deploys is judged again: one of a run fenced since the watch
+// last saw it is deleted.
 func (o *Observer) Resync(ctx context.Context) error {
 	names, err := o.deps.Observed.ListObservedJobNames(ctx)
 	if err != nil {
 		return err
 	}
-	for _, name := range names {
-		o.deps.Queue.Add(name)
+	queued := make(map[string]bool, len(names))
+	for _, name := range append(names, o.deps.Cache.JobNames()...) {
+		if !queued[name] {
+			queued[name] = true
+			o.deps.Queue.Add(name)
+		}
 	}
 	return nil
 }
@@ -170,8 +185,9 @@ func (o *Observer) processNext(ctx context.Context) bool {
 }
 
 // Process observes the attempt of jobName's deployment once. A name whose
-// deployment awaits no result is ignored. Until the cache has synced, the
-// name is queued again a second later: an absence from it means nothing yet.
+// deployment awaits no result is ignored; a name no deployment deployed is
+// judged by reapUnowned. Until the cache has synced, the name is queued again
+// a second later: an absence from it means nothing yet.
 func (o *Observer) Process(ctx context.Context, jobName string) error {
 	if !o.deps.Cache.Synced() {
 		o.deps.Queue.AddAfter(jobName, time.Second)
@@ -182,7 +198,7 @@ func (o *Observer) Process(ctx context.Context, jobName string) error {
 
 	dep, err := o.deps.Observed.GetByJobName(ctx, jobName)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil
+		return o.reapUnowned(ctx, jobName, o.deps.Cache.Observe(jobName))
 	}
 	if err != nil {
 		return err
@@ -213,6 +229,73 @@ func (o *Observer) Process(ctx context.Context, jobName string) error {
 		o.deps.Queue.AddAfter(jobName, o.cfg.StartTimeout-waited)
 	}
 	return o.record(ctx, dep, obs, now)
+}
+
+// Reasons a Job no deployment deployed is deleted for.
+const (
+	reapFencedRun       = "fenced_run"
+	reapEndedUndeployed = "ended_undeployed"
+)
+
+// reapUnowned judges a Job that no deployment created or adopted. A Job that
+// is present and not being deleted is deleted when its run is fenced (its
+// schedule-id label names a cancelled run), or when its deployment ended
+// failed before deploying it, so Kubernetes created it after the create call
+// reported failure. A Job's deployment is the one of the attempt its labels
+// name, since two nodes of one run can share a truncated Job name; a Job with
+// no attempt labels (a release leg's) is judged by the newest deployment of
+// its name. Any other such Job is left alone: a dispatch of its attempt
+// adopts it, or the launch creating it records it.
+func (o *Observer) reapUnowned(ctx context.Context, jobName string, obs model.JobObservation) error {
+	if !obs.JobPresent || obs.JobDeleting {
+		return nil
+	}
+	reason := ""
+	if runID, err := uuid.Parse(obs.JobRunID); err == nil {
+		fenced, err := o.deps.Cancelled.Exists(ctx, runID)
+		if err != nil {
+			return fmt.Errorf("read the fence of run %s: %w", runID, err)
+		}
+		if fenced {
+			reason = reapFencedRun
+		}
+	}
+	if reason == "" {
+		ended, err := o.endedUndeployed(ctx, jobName, obs)
+		if err != nil {
+			return err
+		}
+		if !ended {
+			return nil
+		}
+		reason = reapEndedUndeployed
+	}
+	if err := o.deps.Terminator.DeleteJob(ctx, jobName); err != nil {
+		return err
+	}
+	o.deps.Logger.Warn("Deleted a Job no deployment deploys", "job_name", jobName, "reason", reason,
+		"run_id", obs.JobRunID, "task_id", obs.JobTaskID, "attempt", obs.JobAttempt)
+	o.deps.StopMetrics.JobReaped(reason)
+	return nil
+}
+
+// endedUndeployed reports whether the deployment of the Job obs shows ended
+// failed before deploying it: the attempt its task-id and attempt labels
+// name, or, for a Job with neither label, the newest deployment of jobName. A
+// Job whose labels name no readable attempt is not judged ended.
+func (o *Observer) endedUndeployed(ctx context.Context, jobName string, obs model.JobObservation) (bool, error) {
+	if obs.JobTaskID == "" && obs.JobAttempt == "" {
+		return o.deps.Observed.NameEndedUndeployed(ctx, jobName)
+	}
+	taskID, err := uuid.Parse(obs.JobTaskID)
+	if err != nil {
+		return false, nil
+	}
+	attempt, err := strconv.Atoi(obs.JobAttempt)
+	if err != nil {
+		return false, nil
+	}
+	return o.deps.Observed.EndedUndeployed(ctx, taskID, attempt)
 }
 
 // processTerminating waits for the pods of an attempt execution-controller
@@ -353,7 +436,7 @@ func (o *Observer) settleEnded(ctx context.Context, dep *model.Deployment, obs, 
 			d.Observe(unexplained)
 		}
 		verdict := model.Classify(d.Facts())
-		if !verdict.Succeeded {
+		if !verdict.Succeeded && !verdict.Stopped {
 			d.Observe(model.AttemptFacts{Reason: verdict.Reason, Message: fallbackMessage(verdict.Reason)})
 		}
 		return o.settle(ctx, u, d, verdict, now)

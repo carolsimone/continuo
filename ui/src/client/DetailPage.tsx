@@ -56,6 +56,7 @@ export function pillClass(status: string | null | undefined): string {
   const normalized = normalizeStatus(status);
   if (normalized.includes('succeed')) return 'pill--succeeded';
   if (normalized.includes('fail')) return 'pill--failed';
+  if (normalized.includes('cancelling')) return 'pill--cancelling';
   if (normalized.includes('cancel')) return 'pill--cancelled';
   if (normalized.includes('skip')) return 'pill--skipped';
   if (normalized.includes('run') || normalized.includes('current')) return 'pill--running';
@@ -68,8 +69,11 @@ function formatDate(value: string | null | undefined): string {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
 
+// A cancelling run has not ended: its Jobs are still being stopped, so the
+// page keeps polling it until it reads cancelled.
 export function isTerminalStatus(status: string | null | undefined): boolean {
   const normalized = normalizeStatus(status);
+  if (normalized.includes('cancelling')) return false;
   return normalized.includes('succeed') || normalized.includes('fail')
     || normalized.includes('cancel') || normalized.includes('skip');
 }
@@ -81,6 +85,7 @@ function extractScheduler(data: { scheduler?: Scheduler } | Scheduler): Schedule
 export function isRerunnableStatus(status: string | null | undefined): boolean {
   if (!status) return false;
   const s = status.toLowerCase();
+  if (s.includes('cancelling')) return false;
   return s.includes('fail') || s.includes('cancel');
 }
 

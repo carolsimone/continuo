@@ -38,6 +38,10 @@ func newChainDepRepo(log *callLog, chain ...*model.Deployment) *chainDepRepo {
 }
 
 func (r *chainDepRepo) Add(context.Context, *model.Deployment) error { return nil }
+func (r *chainDepRepo) LockOpenOfRun(context.Context, string) ([]*model.Deployment, error) {
+	return nil, nil
+}
+
 func (r *chainDepRepo) LoadByJobName(context.Context, string) (*model.Deployment, error) {
 	return nil, sql.ErrNoRows
 }

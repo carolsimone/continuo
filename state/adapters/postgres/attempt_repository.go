@@ -5,12 +5,15 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	repository "github.com/carolsimone/continuo/state/domain/repository"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 )
 
 // AttemptRepository implements repository.AttemptRepository: the attempt
@@ -32,9 +35,9 @@ func NewAttemptRepository(db *sqlx.DB, tx *sqlx.Tx, tenantID string) *AttemptRep
 }
 
 // DueAttempts reads the open attempts whose next check is due, through
-// idx_task_attempts_due, keeping those whose run has not ended and whose task's
-// node the run's release holds for the tenant: exactly the attempts
-// LockQuestion can lock, so one it never could cannot hold the head of the
+// idx_task_attempts_due, keeping those that no stop was requested of, whose run
+// is pending or running and whose task's node the run's release holds for the
+// tenant: exactly the attempts LockQuestion can lock, so one it never could cannot hold the head of the
 // due order.
 func (r *AttemptRepository) DueAttempts(ctx context.Context, limit int) ([]repository.AttemptKey, error) {
 	var rows []struct {
@@ -48,6 +51,7 @@ func (r *AttemptRepository) DueAttempts(ctx context.Context, limit int) ([]repos
 		JOIN scheduler_tracker s ON s.schedule_id = t.schedule_id
 		JOIN topology_nodes n ON n.tenant_id = $2 AND n.release_id = s.release_id AND n.node_key = t.node_key
 		WHERE a.status IN ('dispatched', 'queued', 'running') AND a.next_check_at <= now()
+		  AND a.stop_requested_at IS NULL
 		  AND s.status IN ('pending', 'running')
 		ORDER BY a.next_check_at, a.task_id, a.attempt
 		LIMIT $1`, limit, r.tenantID); err != nil {
@@ -60,8 +64,9 @@ func (r *AttemptRepository) DueAttempts(ctx context.Context, limit int) ([]repos
 	return out, nil
 }
 
-// StalledRuns reads the active runs with an old progress clock and no task
-// in flight, of every tenant: scheduler_tracker has no tenant column. The run
+// StalledRuns reads the active runs (pending, running or cancelling) with an
+// old progress clock and no task in flight (dispatched, queued, running or
+// stopping), of every tenant: scheduler_tracker has no tenant column. The run
 // scan filters scheduler_tracker by status, which holds few active rows, and
 // the in-flight check probes idx_task_tracker_schedule_id.
 func (r *AttemptRepository) StalledRuns(ctx context.Context, idle time.Duration, limit int) ([]uuid.UUID, error) {
@@ -69,13 +74,14 @@ func (r *AttemptRepository) StalledRuns(ctx context.Context, idle time.Duration,
 	if err := r.db.SelectContext(ctx, &ids, `
 		SELECT s.schedule_id
 		FROM scheduler_tracker s
-		WHERE s.status IN ('pending', 'running')
+		WHERE s.status = ANY($3::text[])
 		  AND s.last_heartbeat_at < now() - make_interval(secs => $1::float8)
 		  AND NOT EXISTS (
 		      SELECT 1 FROM task_tracker t
-		      WHERE t.schedule_id = s.schedule_id AND t.status IN ('dispatched', 'queued', 'running'))
+		      WHERE t.schedule_id = s.schedule_id AND t.status = ANY($4::text[]))
 		ORDER BY s.last_heartbeat_at, s.schedule_id
-		LIMIT $2`, idle.Seconds(), limit); err != nil {
+		LIMIT $2`, idle.Seconds(), limit,
+		pq.Array(activeSchedulerStatuses()), pq.Array(inFlightTaskStatuses())); err != nil {
 		return nil, fmt.Errorf("read the stalled runs: %w", err)
 	}
 	return ids, nil
@@ -95,7 +101,8 @@ type questionRow struct {
 
 // LockQuestion locks the attempt row, skipping one another transaction holds,
 // and reads its task, run and the node of the run's release, re-checking that
-// the attempt is still open and due and its run active.
+// the attempt is still open, due and not asked to stop and its run pending or
+// running.
 func (r *AttemptRepository) LockQuestion(ctx context.Context, key repository.AttemptKey) (run.Question, bool, error) {
 	if r.tx == nil {
 		return run.Question{}, false, errors.New("LockQuestion requires an active transaction")
@@ -112,6 +119,7 @@ func (r *AttemptRepository) LockQuestion(ctx context.Context, key repository.Att
 		JOIN topology_nodes n ON n.tenant_id = $3 AND n.release_id = s.release_id AND n.node_key = t.node_key
 		WHERE a.task_id = $1 AND a.attempt = $2
 		  AND a.status IN ('dispatched', 'queued', 'running') AND a.next_check_at <= now()
+		  AND a.stop_requested_at IS NULL
 		  AND s.status IN ('pending', 'running')
 		FOR UPDATE OF a SKIP LOCKED`, key.TaskID, key.Attempt, r.tenantID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -145,4 +153,101 @@ func (r *AttemptRepository) MarkQuestioned(ctx context.Context, key repository.A
 		return fmt.Errorf("record a question about attempt %d of task %s: %w", key.Attempt, key.TaskID, err)
 	}
 	return nil
+}
+
+// DueStops reads the cancelling runs that have an open attempt asked to stop
+// whose next check is due, through idx_task_attempts_due, the longest due
+// first.
+func (r *AttemptRepository) DueStops(ctx context.Context, limit int) ([]uuid.UUID, error) {
+	var ids []uuid.UUID
+	if err := r.db.SelectContext(ctx, &ids, `
+		SELECT s.schedule_id
+		FROM task_attempts a
+		JOIN task_tracker t ON t.task_id = a.task_id
+		JOIN scheduler_tracker s ON s.schedule_id = t.schedule_id
+		WHERE a.status IN ('dispatched', 'queued', 'running') AND a.next_check_at <= now()
+		  AND a.stop_requested_at IS NOT NULL
+		  AND s.status = 'cancelling'
+		GROUP BY s.schedule_id
+		ORDER BY min(a.next_check_at), s.schedule_id
+		LIMIT $1`, limit); err != nil {
+		return nil, fmt.Errorf("read the cancelling runs with a quiet stop: %w", err)
+	}
+	return ids, nil
+}
+
+type stopRow struct {
+	RunID        uuid.UUID  `db:"schedule_id"`
+	ScheduleName string     `db:"schedule_name"`
+	CancelledBy  *string    `db:"cancelled_by"`
+	Reason       *string    `db:"cancellation_reason"`
+	CancelledAt  *time.Time `db:"cancelled_at"`
+	TaskID       uuid.UUID  `db:"task_id"`
+	Attempt      int32      `db:"attempt"`
+	JobName      string     `db:"job_name"`
+	ChecksSent   int        `db:"checks_sent"`
+	Due          bool       `db:"due"`
+}
+
+// LockStops locks every open attempt of the cancelling run that was asked to
+// stop, skipping one another transaction holds, and reads the run's cancel
+// with them. It finds nothing when none of the attempts it locked is due.
+func (r *AttemptRepository) LockStops(ctx context.Context, runID uuid.UUID) (run.StopQuestion, bool, error) {
+	if r.tx == nil {
+		return run.StopQuestion{}, false, errors.New("LockStops requires an active transaction")
+	}
+	var rows []stopRow
+	if err := r.tx.SelectContext(ctx, &rows, `
+		SELECT s.schedule_id, s.schedule_name, s.cancelled_by, s.cancellation_reason, s.cancelled_at,
+		       a.task_id, a.attempt, a.job_name, a.checks_sent, a.next_check_at <= now() AS due
+		FROM task_attempts a
+		JOIN task_tracker t ON t.task_id = a.task_id
+		JOIN scheduler_tracker s ON s.schedule_id = t.schedule_id
+		WHERE s.schedule_id = $1 AND s.status = 'cancelling'
+		  AND a.status IN ('dispatched', 'queued', 'running')
+		  AND a.stop_requested_at IS NOT NULL
+		FOR UPDATE OF a SKIP LOCKED`, runID); err != nil {
+		return run.StopQuestion{}, false, fmt.Errorf("lock the stops of run %s: %w", runID, err)
+	}
+	anyDue := false
+	for _, row := range rows {
+		anyDue = anyDue || row.Due
+	}
+	if !anyDue {
+		return run.StopQuestion{}, false, nil
+	}
+	head := rows[0]
+	q := run.StopQuestion{RunID: head.RunID, ScheduleName: head.ScheduleName}
+	if head.CancelledBy != nil {
+		q.CancelledBy = *head.CancelledBy
+	}
+	if head.Reason != nil {
+		q.Reason = *head.Reason
+	}
+	if head.CancelledAt != nil {
+		q.CancelledAt = *head.CancelledAt
+	}
+	q.Attempts = make([]run.StopTarget, 0, len(rows))
+	for _, row := range rows {
+		q.Attempts = append(q.Attempts, run.StopTarget{TaskID: row.TaskID, Attempt: row.Attempt, JobName: row.JobName, ChecksSent: row.ChecksSent})
+	}
+	slices.SortFunc(q.Attempts, func(x, y run.StopTarget) int { return strings.Compare(x.TaskID.String(), y.TaskID.String()) })
+	return q, true, nil
+}
+
+// CountCancelling counts the cancelling runs of every tenant and those whose
+// cancel is older than overdueAfter on the database clock.
+func (r *AttemptRepository) CountCancelling(ctx context.Context, overdueAfter time.Duration) (int, int, error) {
+	var counts struct {
+		Total   int `db:"total"`
+		Overdue int `db:"overdue"`
+	}
+	if err := r.db.GetContext(ctx, &counts, `
+		SELECT count(*) AS total,
+		       count(*) FILTER (WHERE cancelled_at < now() - make_interval(secs => $1::float8)) AS overdue
+		FROM scheduler_tracker
+		WHERE status = 'cancelling'`, overdueAfter.Seconds()); err != nil {
+		return 0, 0, fmt.Errorf("count the cancelling runs: %w", err)
+	}
+	return counts.Total, counts.Overdue, nil
 }

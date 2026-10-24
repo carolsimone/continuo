@@ -85,9 +85,10 @@ type TaskTracker struct {
 // scheduling columns (next_check_at, checks_sent), which the attempt SQL
 // writes itself: addAttempts sets next_check_at when an attempt is dispatched,
 // saveAttempt moves it with each non-final report and clears it once the
-// attempt has ended, cancelOpenAttempts clears it when it cancels an attempt,
-// and AttemptRepository.MarkQuestioned counts each question about the attempt
-// in checks_sent and moves next_check_at to the next window.
+// attempt has ended, requestStops restarts checks_sent and sets next_check_at
+// to the stop's first window when the attempt is asked to stop, and
+// AttemptRepository.MarkQuestioned counts each question about the attempt in
+// checks_sent and moves next_check_at to the next window.
 type taskAttemptRow struct {
 	TaskID           uuid.UUID  `db:"task_id"`
 	Attempt          int32      `db:"attempt"`

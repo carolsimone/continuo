@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
@@ -93,7 +95,7 @@ func saveAttempt(ctx context.Context, tx *sqlx.Tx, a run.Attempt) error {
 			parse_cache        = EXCLUDED.parse_cache,
 			parse_cache_reason = EXCLUDED.parse_cache_reason,
 			last_report_at     = GREATEST(task_attempts.last_report_at, EXCLUDED.last_report_at),
-			next_check_at      = CASE WHEN EXCLUDED.status IN ('succeeded', 'failed', 'cancelled') THEN NULL
+			next_check_at      = CASE WHEN EXCLUDED.status IN ('succeeded', 'failed', 'stopped') THEN NULL
 			                          WHEN $18::float8 > 0 THEN EXCLUDED.next_check_at
 			                          ELSE task_attempts.next_check_at END`,
 		a.TaskID, a.Number, a.JobName, string(a.Status), a.FailureClass, a.FailureReason,
@@ -137,23 +139,37 @@ func addAttempts(ctx context.Context, tx *sqlx.Tx, attempts []run.Attempt) error
 	return nil
 }
 
-// cancelOpenAttempts marks the dispatched, queued and running attempts of the
-// run's tasks cancelled, clears their next check, and returns how many it
-// changed.
-func cancelOpenAttempts(ctx context.Context, tx *sqlx.Tx, runID uuid.UUID) (int, error) {
-	res, err := tx.ExecContext(ctx, `
-		UPDATE task_attempts ta
-		SET status = 'cancelled', next_check_at = NULL
-		FROM task_tracker tt
-		WHERE ta.task_id = tt.task_id
-		  AND tt.schedule_id = $1
-		  AND ta.status IN ('dispatched', 'queued', 'running')`, runID)
-	if err != nil {
-		return 0, fmt.Errorf("cancel the open attempts of run %s: %w", runID, err)
+// requestStops asks the current attempt of each stopping task of the run to
+// stop when that attempt is open: stop_requested_at is the database clock,
+// checks_sent restarts at 0 so the re-sends of the cancel count from the stop,
+// and next_check_at is run.NextStopCheckAfter(0) after the database clock. It
+// returns those attempts, in task id order.
+func requestStops(ctx context.Context, tx *sqlx.Tx, runID uuid.UUID) ([]run.StopTarget, error) {
+	var rows []struct {
+		TaskID     uuid.UUID `db:"task_id"`
+		Attempt    int32     `db:"attempt"`
+		JobName    string    `db:"job_name"`
+		ChecksSent int       `db:"checks_sent"`
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("cancel the open attempts of run %s: %w", runID, err)
+	if err := tx.SelectContext(ctx, &rows, `
+		UPDATE task_attempts a
+		SET stop_requested_at = now(),
+		    checks_sent       = 0,
+		    next_check_at     = now() + make_interval(secs => $2::float8)
+		FROM task_tracker t
+		WHERE a.task_id = t.task_id
+		  AND a.attempt = t.attempt
+		  AND t.schedule_id = $1
+		  AND t.status = 'stopping'
+		  AND a.status IN ('dispatched', 'queued', 'running')
+		RETURNING a.task_id, a.attempt, a.job_name, a.checks_sent`,
+		runID, run.NextStopCheckAfter(0).Seconds()); err != nil {
+		return nil, fmt.Errorf("request the stops of run %s: %w", runID, err)
 	}
-	return int(n), nil
+	targets := make([]run.StopTarget, 0, len(rows))
+	for _, r := range rows {
+		targets = append(targets, run.StopTarget{TaskID: r.TaskID, Attempt: r.Attempt, JobName: r.JobName, ChecksSent: r.ChecksSent})
+	}
+	slices.SortFunc(targets, func(x, y run.StopTarget) int { return strings.Compare(x.TaskID.String(), y.TaskID.String()) })
+	return targets, nil
 }

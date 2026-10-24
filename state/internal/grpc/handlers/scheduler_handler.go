@@ -89,7 +89,7 @@ func (h *SchedulerHandler) CancelScheduler(ctx context.Context, req *statev1.Can
 		return nil, status.Errorf(codes.InvalidArgument, "invalid schedule_id format")
 	}
 
-	r, gerr := h.cancelRunTx(ctx, cancelParams{
+	r, _, gerr := h.cancelRunTx(ctx, cancelParams{
 		scheduleID:         scheduleID,
 		cancelledBy:        effectiveCancelledBy(ctx, req.CancelledBy),
 		cancellationReason: req.CancellationReason,
@@ -140,12 +140,15 @@ type cancelParams struct {
 
 // cancelRunTx runs the shared cancel transaction: begin → LoadRunForUpdate →
 // Run.Cancel → SaveRun → Outbox.Append → commit. It returns the cancelled Run
-// aggregate or a ready-to-return gRPC status error. The only behaviour that
-// varies between the two cancel RPCs is captured in cancelParams.
-func (h *SchedulerHandler) cancelRunTx(ctx context.Context, p cancelParams) (*run.Run, error) {
+// aggregate and true, or a ready-to-return gRPC status error. A run that is
+// already cancelling is answered as it was loaded, with false: the
+// transaction rolls back, so the repeated cancel writes nothing and sends
+// nothing. The only behaviour that varies between the two cancel RPCs is
+// captured in cancelParams.
+func (h *SchedulerHandler) cancelRunTx(ctx context.Context, p cancelParams) (*run.Run, bool, error) {
 	u := h.uowFactory()
 	if err := u.Begin(ctx); err != nil {
-		return nil, status.Errorf(codes.Internal, "begin tx: %v", err)
+		return nil, false, status.Errorf(codes.Internal, "begin tx: %v", err)
 	}
 	committed := false
 	defer func() {
@@ -157,28 +160,31 @@ func (h *SchedulerHandler) cancelRunTx(ctx context.Context, p cancelParams) (*ru
 	r, err := u.Run().LoadRunForUpdate(ctx, p.scheduleID)
 	if err != nil {
 		if errors.Is(err, postgres.ErrNotFound) {
-			return nil, status.Errorf(p.loadNotFoundCode, "%s", p.loadNotFoundMsg)
+			return nil, false, status.Errorf(p.loadNotFoundCode, "%s", p.loadNotFoundMsg)
 		}
-		return nil, status.Errorf(codes.Internal, "load: %v", err)
+		return nil, false, status.Errorf(codes.Internal, "load: %v", err)
 	}
 	domainEvents, err := r.Cancel(ctx, u.TaskCollection(), p.cancelledBy, p.cancellationReason, u.Clock().Now())
 	if err != nil {
 		if errors.Is(err, run.ErrAlreadyTerminal) {
-			return nil, status.Errorf(codes.FailedPrecondition, "%s", p.terminalMsg)
+			return nil, false, status.Errorf(codes.FailedPrecondition, "%s", p.terminalMsg)
 		}
-		return nil, status.Errorf(codes.Internal, "cancel: %v", err)
+		if errors.Is(err, run.ErrAlreadyCancelling) {
+			return r, false, nil
+		}
+		return nil, false, status.Errorf(codes.Internal, "cancel: %v", err)
 	}
 	if err := u.Run().SaveRun(ctx, r); err != nil {
-		return nil, status.Errorf(codes.Internal, "save: %v", err)
+		return nil, false, status.Errorf(codes.Internal, "save: %v", err)
 	}
 	if err := u.Outbox().Append(ctx, domainEvents, uuid.Nil); err != nil {
-		return nil, status.Errorf(codes.Internal, "outbox: %v", err)
+		return nil, false, status.Errorf(codes.Internal, "outbox: %v", err)
 	}
 	if err := u.Commit(); err != nil {
-		return nil, status.Errorf(codes.Internal, "commit: %v", err)
+		return nil, false, status.Errorf(codes.Internal, "commit: %v", err)
 	}
 	committed = true
-	return r, nil
+	return r, true, nil
 }
 
 // CancelSchedule cancels the active run of a named schedule. It looks up the
@@ -203,7 +209,7 @@ func (h *SchedulerHandler) CancelSchedule(
 		return nil, status.Errorf(codes.FailedPrecondition, "no active run for schedule %q", req.ScheduleName)
 	}
 
-	r, gerr := h.cancelRunTx(ctx, cancelParams{
+	r, wrote, gerr := h.cancelRunTx(ctx, cancelParams{
 		scheduleID:         active.ScheduleID(),
 		cancelledBy:        effectiveCancelledBy(ctx, req.CancelledBy),
 		cancellationReason: req.CancellationReason,
@@ -215,7 +221,12 @@ func (h *SchedulerHandler) CancelSchedule(
 		return nil, gerr
 	}
 
-	h.logger.Info("Schedule cancelled", "schedule_name", req.ScheduleName, "schedule_id", r.ScheduleID())
+	if wrote {
+		h.logger.Info("Schedule cancelled", "schedule_name", req.ScheduleName, "schedule_id", r.ScheduleID())
+	} else {
+		h.logger.Info("Schedule already cancelling; the repeated cancel wrote nothing",
+			"schedule_name", req.ScheduleName, "schedule_id", r.ScheduleID())
+	}
 	return &statev1.CancelScheduleResponse{ScheduleId: r.ScheduleID().String()}, nil
 }
 
@@ -238,6 +249,8 @@ func domainToProtoSchedulerStatus(s run.SchedulerStatus) statev1.SchedulerStatus
 		return statev1.SchedulerStatus_SCHEDULER_STATUS_CANCELLED
 	case run.SchedulerStatusSkipped:
 		return statev1.SchedulerStatus_SCHEDULER_STATUS_SKIPPED
+	case run.SchedulerStatusCancelling:
+		return statev1.SchedulerStatus_SCHEDULER_STATUS_CANCELLING
 	default:
 		return statev1.SchedulerStatus_SCHEDULER_STATUS_UNSPECIFIED
 	}

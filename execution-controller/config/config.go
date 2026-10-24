@@ -47,10 +47,6 @@ type Config struct {
 	// S3 is where terminal Jobs' logs and structured results are uploaded.
 	S3 pkgconfig.S3Config
 
-	// Schedule cancellation guard table: rows older than the TTL are swept.
-	CancelledSchedulesTTLHours         int
-	CancelledSchedulesSweepIntervalMin int
-
 	// Retention sweeper: processed execution_outbox rows are deleted after
 	// RetentionDays, message_processing dedup rows after the longer of
 	// RetentionDays and the 30-day replay horizon. Both have safe defaults.
@@ -103,9 +99,6 @@ func Load(v *pkgconfig.Validator) Config {
 		Redis:    pkgconfig.LoadRedis(v),
 		Postgres: pkgconfig.LoadPostgres(v),
 		S3:       pkgconfig.LoadS3(v),
-
-		CancelledSchedulesTTLHours:         envInt("CANCELLED_SCHEDULES_TTL_HOURS", 24),
-		CancelledSchedulesSweepIntervalMin: envInt("CANCELLED_SCHEDULES_SWEEP_INTERVAL_MINUTES", 60),
 
 		RetentionDays:             envInt("RETENTION_DAYS", 7),
 		RetentionSweepIntervalMin: envInt("RETENTION_SWEEP_INTERVAL_MINUTES", 60),

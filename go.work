@@ -4,6 +4,7 @@ use (
 	./agent-chat
 	./agent-remediation
 	./dead-letter-controller
+	./egress-proxy
 	./execution-controller
 	./orchestrator
 	./pkg

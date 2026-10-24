@@ -82,15 +82,23 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Ent
 		// A run's terminal status is its row; no stream carries it.
 		return nil, true, nil
 	case run.RunCancelled:
-		payload, err := json.Marshal(map[string]string{
-			"schedule_id":   e.ID.String(),
-			"schedule_name": e.Name,
-			"cancelled_by":  identity.OrSystem(e.By),
+		attempts := make([]pkgevents.CancelledAttempt, 0, len(e.Attempts))
+		for _, a := range e.Attempts {
+			attempts = append(attempts, pkgevents.CancelledAttempt{TaskID: a.TaskID.String(), Attempt: a.Attempt, JobName: a.JobName})
+		}
+		payload, err := json.Marshal(pkgevents.RunCancelled{
+			RunID:       e.ID.String(),
+			CancelledBy: identity.OrSystem(e.By),
+			Reason:      e.CancellationReason,
+			Attempts:    attempts,
 		})
 		if err != nil {
 			return nil, false, err
 		}
-		return buildEntry(e.ID, "scheduler", "schedule_cancelled", streams.ScheduleCancelledV1, payload, msgProcPtr), false, nil
+		// Like a dispatch, the row's event_type is the stream name and its
+		// aggregate is the run, so the relay publishes it after every dispatch
+		// of the run written before it.
+		return buildEntry(e.ID, "scheduler", streams.RunCancelledV1, streams.RunCancelledV1, payload, msgProcPtr), false, nil
 
 	case run.TaskDispatched:
 		payload, err := json.Marshal(pkgevents.TaskDispatch{

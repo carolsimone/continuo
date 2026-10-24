@@ -70,10 +70,19 @@ func NextCheckAfter(s AttemptStatus, checksSent int) time.Duration {
 	return 0
 }
 
+// NextStopCheckAfter is how long state waits, from now, before it re-sends
+// the cancel of a run for an attempt it asked to stop and has re-sent the
+// cancel for checksSent times: 5 minutes, then 10, 20, 40 and every 60,
+// whatever status the attempt last reported.
+func NextStopCheckAfter(checksSent int) time.Duration {
+	// 5 minutes doubled once per re-send, at most an hour.
+	return min(5*time.Minute<<min(checksSent, 4), time.Hour)
+}
+
 // AttemptReport is what execution-controller reported of one attempt of a
 // task: its status and every fact known of it so far. Status is queued,
-// running, succeeded or failed; a failed report carries its FailureReason. A
-// nil fact is one the report does not carry.
+// running, succeeded, failed or stopped; a failed report carries its
+// FailureReason. A nil fact is one the report does not carry.
 type AttemptReport struct {
 	TaskID           uuid.UUID
 	Attempt          int32

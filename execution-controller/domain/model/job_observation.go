@@ -62,6 +62,9 @@ type JobObservation struct {
 	// which attempt of which task it runs.
 	JobTaskID  string
 	JobAttempt string
+	// JobRunID is the schedule-id label of a task's Job: the run the attempt
+	// belongs to. A release leg's Job carries none.
+	JobRunID string
 	// JobDeleting is true once the Job carries a deletion timestamp.
 	JobDeleting bool
 	// JobSucceeded and JobFailed report the Job's success and failure
@@ -112,6 +115,17 @@ func (o JobObservation) Ended() bool {
 		}
 	}
 	return !o.JobPresent || o.JobDeleting || o.JobSucceeded || o.JobFailed
+}
+
+// HasUnfinishedPod reports whether a pod of the attempt can still run, with
+// or without its Job.
+func (o JobObservation) HasUnfinishedPod() bool {
+	for _, p := range o.Pods {
+		if !p.Finished() {
+			return true
+		}
+	}
+	return false
 }
 
 // AwaitingStop reports whether a pod that has not finished is being deleted,
@@ -226,3 +240,23 @@ func joinReason(reason, message string) string {
 		return reason + ": " + message
 	}
 }
+
+// RunObservation is what one read of the Kubernetes API showed of every Job
+// of a run and every pod of those Jobs, by Job name. A pod whose Job was gone
+// is held under the Job name its labels carry.
+type RunObservation struct {
+	jobs map[string]JobObservation
+}
+
+// NewRunObservation holds jobs, what the read showed by Job name.
+func NewRunObservation(jobs map[string]JobObservation) RunObservation {
+	held := make(map[string]JobObservation, len(jobs))
+	for name, o := range jobs {
+		held[name] = o
+	}
+	return RunObservation{jobs: held}
+}
+
+// Of returns what the read showed of jobName's Job and its pods; JobPresent
+// is false and Pods empty when it showed neither.
+func (r RunObservation) Of(jobName string) JobObservation { return r.jobs[jobName] }

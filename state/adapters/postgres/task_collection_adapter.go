@@ -47,9 +47,9 @@ func (a *TaskCollectionAdapter) LoadAttemptState(ctx context.Context, taskID uui
 	}, true, nil
 }
 
-// LoadAttempt, SaveAttempt and CancelOpenAttempts run through the unit of
-// work's transaction: the attempt row is locked after the task row and
-// written in the same commit.
+// LoadAttempt, SaveAttempt and RequestStops run through the unit of work's
+// transaction: the attempt row is locked after the task row and written in
+// the same commit.
 func (a *TaskCollectionAdapter) LoadAttempt(ctx context.Context, taskID uuid.UUID, attempt int32) (run.Attempt, bool, error) {
 	return loadAttempt(ctx, a.tx, taskID, attempt)
 }
@@ -62,8 +62,8 @@ func (a *TaskCollectionAdapter) AddAttempts(ctx context.Context, attempts []run.
 	return addAttempts(ctx, a.tx, attempts)
 }
 
-func (a *TaskCollectionAdapter) CancelOpenAttempts(ctx context.Context, runID uuid.UUID) (int, error) {
-	return cancelOpenAttempts(ctx, a.tx, runID)
+func (a *TaskCollectionAdapter) RequestStops(ctx context.Context, runID uuid.UUID) ([]run.StopTarget, error) {
+	return requestStops(ctx, a.tx, runID)
 }
 
 func (a *TaskCollectionAdapter) HasFailed(ctx context.Context, runID uuid.UUID) (bool, error) {
@@ -191,9 +191,8 @@ func (a *TaskCollectionAdapter) SkipPending(ctx context.Context, runID uuid.UUID
 	return int(n), err
 }
 
-func (a *TaskCollectionAdapter) BulkCancel(ctx context.Context, runID uuid.UUID, cancelledBy string, cancelledAt time.Time) (int, error) {
-	n, err := a.repo.BulkCancelByScheduleIDTx(ctx, a.tx, runID, cancelledBy, cancelledAt)
-	return int(n), err
+func (a *TaskCollectionAdapter) BeginStop(ctx context.Context, runID uuid.UUID, cancelledBy string, cancelledAt time.Time) (run.StopCounts, error) {
+	return a.repo.BeginStopTx(ctx, a.tx, runID, cancelledBy, cancelledAt)
 }
 
 // Compile-time interface assertion.
