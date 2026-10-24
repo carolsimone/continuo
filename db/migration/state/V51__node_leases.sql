@@ -24,19 +24,25 @@ COMMENT ON COLUMN node_leases.acquired_at IS 'When the task took the lease';
 
 -- Releasing leases wakes the tasks that wait for them. The trigger is
 -- statement-level, so a statement that releases many leases sends one
--- notification, delivered when its transaction commits.
+-- notification, delivered when its transaction commits. Postgres runs a
+-- statement-level trigger even for a statement that deletes no row; the
+-- function reads the statement's deleted rows (released_leases) and notifies
+-- only when there is one, so a delete that releases nothing wakes no one.
 CREATE FUNCTION notify_node_leases_released() RETURNS trigger
     LANGUAGE plpgsql AS $$
 BEGIN
-    PERFORM pg_notify('node_leases', '');
+    IF EXISTS (SELECT 1 FROM released_leases) THEN
+        PERFORM pg_notify('node_leases', '');
+    END IF;
     RETURN NULL;
 END;
 $$;
 COMMENT ON FUNCTION notify_node_leases_released() IS
-    'Notifies the node_leases channel after a statement has deleted leases';
+    'Notifies the node_leases channel after a statement has deleted at least one lease';
 
 CREATE TRIGGER node_leases_released
     AFTER DELETE ON node_leases
+    REFERENCING OLD TABLE AS released_leases
     FOR EACH STATEMENT EXECUTE FUNCTION notify_node_leases_released();
 
 ALTER TABLE task_tracker

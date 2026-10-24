@@ -84,43 +84,108 @@ func TestNodeLeasesSchema_DeletingATaskReleasesItsLease(t *testing.T) {
 // Releasing leases notifies the node_leases channel once per statement, after
 // the transaction commits, however many leases the statement deletes.
 func TestNodeLeasesSchema_ReleaseNotifies(t *testing.T) {
+	ctx := context.Background()
 	db := newTestDB(t)
 	tenant := "schema-" + uuid.NewString()
 	first, second := newSchemaTask(t, db), newSchemaTask(t, db)
 	require.NoError(t, insertLease(db, tenant, "raw.orders", first, schemaTaskRun(t, db, first)))
 	require.NoError(t, insertLease(db, tenant, "raw.customers", second, schemaTaskRun(t, db, second)))
+	listener := listenForReleases(t)
 
+	tx, err := db.BeginTxx(ctx, nil)
+	require.NoError(t, err)
+	defer tx.Rollback()
+	var pid int
+	require.NoError(t, tx.GetContext(ctx, &pid, `SELECT pg_backend_pid()`))
+	_, err = tx.Exec(`DELETE FROM node_leases WHERE tenant_id = $1`, tenant)
+	require.NoError(t, err)
+	assertNoNotificationFrom(t, listener, pid, "before the delete commits")
+	require.NoError(t, tx.Commit())
+
+	awaitNotificationFrom(t, listener, pid, "after the release committed")
+	assertNoNotificationFrom(t, listener, pid, "after the one notification")
+}
+
+// A statement that deletes no lease sends no notification, so only a release
+// wakes the tasks that wait. A delete of no row and then a release commit on
+// one connection; notifications arrive in commit order, so the release's is
+// the only one that connection sends.
+func TestNodeLeasesSchema_ADeleteOfNoRowDoesNotNotify(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	tenant := "schema-" + uuid.NewString()
+	taskID := newSchemaTask(t, db)
+	require.NoError(t, insertLease(db, tenant, "raw.orders", taskID, schemaTaskRun(t, db, taskID)))
+	listener := listenForReleases(t)
+	conn, err := db.Connx(ctx)
+	require.NoError(t, err)
+	defer conn.Close()
+	var pid int
+	require.NoError(t, conn.GetContext(ctx, &pid, `SELECT pg_backend_pid()`))
+	deleteAndCommit := func(nodeKey string) int64 {
+		tx, err := conn.BeginTxx(ctx, nil)
+		require.NoError(t, err)
+		defer tx.Rollback()
+		res, err := tx.Exec(`DELETE FROM node_leases WHERE tenant_id = $1 AND node_key = $2`, tenant, nodeKey)
+		require.NoError(t, err)
+		n, err := res.RowsAffected()
+		require.NoError(t, err)
+		require.NoError(t, tx.Commit())
+		return n
+	}
+
+	require.Zero(t, deleteAndCommit("raw.absent"), "the first delete matches no lease")
+	require.Equal(t, int64(1), deleteAndCommit("raw.orders"), "the second releases one")
+
+	awaitNotificationFrom(t, listener, pid, "after the release committed")
+	assertNoNotificationFrom(t, listener, pid, "besides the release's")
+}
+
+// listenForReleases returns a listener on the node_leases channel, closed when
+// the test ends.
+func listenForReleases(t *testing.T) *pq.Listener {
+	t.Helper()
 	listener := pq.NewListener(pkgconfig.LoadPostgres(&pkgconfig.Validator{}).DSN(), 10*time.Millisecond, time.Second, nil)
 	t.Cleanup(func() { _ = listener.Close() })
 	require.NoError(t, listener.Listen("node_leases"))
-
-	tx, err := db.BeginTxx(context.Background(), nil)
-	require.NoError(t, err)
-	_, err = tx.Exec(`DELETE FROM node_leases WHERE tenant_id = $1`, tenant)
-	require.NoError(t, err)
-	assertNoNotification(t, listener, "before the delete commits")
-	require.NoError(t, tx.Commit())
-
-	select {
-	case n := <-listener.Notify:
-		require.NotNil(t, n)
-		assert.Equal(t, "node_leases", n.Channel)
-	case <-time.After(5 * time.Second):
-		t.Fatal("no notification after the release committed")
-	}
-	assertNoNotification(t, listener, "after the one notification")
+	return listener
 }
 
-// assertNoNotification fails when listener receives a notification within a
-// short window.
-func assertNoNotification(t *testing.T, listener *pq.Listener, when string) {
+// awaitNotificationFrom fails unless listener receives a node_leases
+// notification sent by the backend pid within five seconds. Notifications
+// other backends send, as tests of other packages release leases on the same
+// database, are passed over.
+func awaitNotificationFrom(t *testing.T, listener *pq.Listener, pid int, when string) {
 	t.Helper()
-	select {
-	case n := <-listener.Notify:
-		if n != nil {
-			t.Fatalf("unexpected notification %s: %+v", when, n)
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case n := <-listener.Notify:
+			if n != nil && n.BePid == pid {
+				assert.Equal(t, "node_leases", n.Channel)
+				return
+			}
+		case <-deadline:
+			t.Fatalf("no notification %s", when)
 		}
-	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+// assertNoNotificationFrom fails when listener receives, within a short
+// window, a notification sent by the backend pid; notifications other backends
+// send are passed over.
+func assertNoNotificationFrom(t *testing.T, listener *pq.Listener, pid int, when string) {
+	t.Helper()
+	window := time.After(300 * time.Millisecond)
+	for {
+		select {
+		case n := <-listener.Notify:
+			if n != nil && n.BePid == pid {
+				t.Fatalf("unexpected notification %s: %+v", when, n)
+			}
+		case <-window:
+			return
+		}
 	}
 }
 
