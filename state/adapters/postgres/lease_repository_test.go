@@ -17,6 +17,7 @@ import (
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	repository "github.com/carolsimone/continuo/state/domain/repository"
 	"github.com/carolsimone/continuo/state/domain/topology"
+	"github.com/carolsimone/continuo/state/service/attemptreconcile"
 	"github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/service/leasewaker"
 	"github.com/carolsimone/continuo/state/service/runstart"
@@ -455,6 +456,51 @@ func TestFailStalled_AWaitOnANodeGrantedToAnotherRunAfterTheListingIsNotFailed(t
 	status, _ := younger.run(t)
 	assert.Equal(t, run.SchedulerStatusRunning, status)
 	requireWaiting(t, db, younger.taskID(lf.tableA), "the waiting task is not skipped")
+}
+
+// A single-node run has waited longer than run.StallAfter behind the cron run's
+// table_a. The cron task's success releases the node, and no notification
+// drives a waker pass (no listener runs), so the stall listing names the
+// waiting run. The attempt reconcile runs the lease waker's pass before it
+// looks for stalled runs: the pass grants table_a to the waiting task and
+// dispatches it, so the run is not failed.
+func TestAttemptReconcile_GrantsAFreedNodeBeforeItLooksForStalledRuns(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	lf := newLeaseFlow(t, db)
+	keyA := string(leaseKey(lf.tableA))
+	cron := lf.cronHoldingTableA(t)
+	single := lf.triggerSingleNode(t, lf.tableA)
+	singleTask := single.taskID(lf.tableA)
+	requireWaiting(t, db, singleTask, "the single-node task waits for the cron task's lease")
+	_, err := db.Exec(`UPDATE scheduler_tracker SET last_heartbeat_at = now() - interval '10 minutes' WHERE schedule_id = $1`,
+		single.r.ScheduleID())
+	require.NoError(t, err)
+	_, err = db.Exec(`UPDATE task_tracker SET lease_wait_since = now() - interval '10 minutes' WHERE task_id = $1`, singleTask)
+	require.NoError(t, err)
+	cron.report(t, keyA, 0, run.AttemptSucceeded, "")
+	_, held := leaseOn(t, db, lf.tenant, lf.tableA)
+	require.False(t, held, "the cron task's success released table_a")
+	listed, err := postgres.NewAttemptRepository(db, nil, lf.tenant).StalledRuns(ctx, run.StallAfter, 500)
+	require.NoError(t, err)
+	require.Contains(t, listed, single.r.ScheduleID(), "with table_a free and not yet granted, the run waits on nothing in flight")
+	metrics := &leaseMetrics{}
+	loop := attemptreconcile.New(func() uow.UnitOfWork { return newPlanningUoW(db) }, lf.tenant, testTaskDefaults, metrics,
+		lf.waker(metrics, discardLogger()).Pass, discardLogger())
+
+	require.NoError(t, loop.Pass(ctx))
+
+	status, _ := single.run(t)
+	assert.Equal(t, run.SchedulerStatusRunning, status, "the waiting run is not failed as stalled")
+	assert.Equal(t, leaseWait{Status: run.TaskStatusDispatched}, waitOf(t, db, singleTask), "the waker's pass dispatched the task")
+	lease, held := leaseOn(t, db, lf.tenant, lf.tableA)
+	require.True(t, held)
+	assert.Equal(t, heldLease{TaskID: singleTask, RunID: single.r.ScheduleID()}, lease)
+	dispatches := single.dispatches(t)
+	require.Len(t, dispatches, 1)
+	assert.Equal(t, singleTask.String(), dispatches[0].TaskID)
+	assert.Equal(t, int32(0), dispatches[0].Attempt)
+	assert.Len(t, metrics.granted, 1)
 }
 
 // A pass deletes the lease of a task that ended without releasing it, counts

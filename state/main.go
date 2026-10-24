@@ -383,19 +383,25 @@ func main() {
 	// goroutine is tracked, so shutdown waits for a pass in progress.
 	lifecycleManager.Go(func() { seedReconciler.Loop(ctx, seedReconcileInterval) })
 
-	// The attempt reconcile asks execution-controller about every attempt
-	// nothing was heard of within its window and fails every run left with
-	// nothing in flight as stalled. Its goroutine is tracked, so shutdown
-	// waits for a pass in progress.
-	attemptReconciler := attemptreconcile.New(uowFactory, pkgevents.DefaultTenantID, taskDefaults, runMetrics, logger)
-	lifecycleManager.Go(func() { attemptReconciler.Run(ctx, attemptReconcileInterval) })
-
 	// The lease waker grants each node whose write lease is free to the task
 	// that has waited longest for it, and deletes the leases of tasks that
-	// ended without releasing them. It passes on every notification
-	// node_leases' trigger sends when a committed transaction released a
-	// lease, and every leaseWakerInterval. Its goroutine is tracked, so
-	// shutdown waits for a pass in progress.
+	// ended without releasing them.
+	leaseWaker := leasewaker.New(uowFactory, pkgevents.DefaultTenantID, taskDefaults, runMetrics, logger)
+
+	// The attempt reconcile asks execution-controller about every attempt
+	// nothing was heard of within its window and fails every run left with
+	// nothing in flight as stalled. It runs a lease waker pass before each
+	// stall scan, so a node released since the waker's last pass is granted to
+	// its waiter before the scan, and only a wait on a node the waker cannot
+	// grant reads as stalled. Its goroutine is tracked, so shutdown waits for
+	// a pass in progress.
+	attemptReconciler := attemptreconcile.New(uowFactory, pkgevents.DefaultTenantID, taskDefaults, runMetrics, leaseWaker.Pass, logger)
+	lifecycleManager.Go(func() { attemptReconciler.Run(ctx, attemptReconcileInterval) })
+
+	// The lease waker passes at startup, on every notification node_leases'
+	// trigger sends when a committed transaction released a lease, and every
+	// leaseWakerInterval. Its goroutine is tracked, so shutdown waits for a
+	// pass in progress.
 	leaseListener, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN(), postgres.NodeLeasesChannel, logger)
 	if errors.Is(err, context.Canceled) {
 		logger.Info("Shutdown requested while waiting for the node lease listener")
@@ -408,7 +414,6 @@ func main() {
 	// Closing the listener can wait on a connection attempt in progress, so
 	// the handler stops waiting at the shutdown deadline.
 	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error { return leaseListener.CloseContext(ctx) })
-	leaseWaker := leasewaker.New(uowFactory, pkgevents.DefaultTenantID, taskDefaults, runMetrics, logger)
 	lifecycleManager.Go(func() { leaseWaker.Run(ctx, leaseListener.Wake(), leaseWakerInterval) })
 
 	// The cron loop and the gRPC entry points plan their runs for the default

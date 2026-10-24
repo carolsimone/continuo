@@ -1,7 +1,10 @@
 // Package attemptreconcile is state's attempt reconcile: every pass it asks
 // execution-controller about each attempt nothing was heard of within its
 // window, by dispatching the attempt again with its known status, and fails
-// each run left with nothing in flight and no progress as stalled.
+// each run left with nothing in flight and no progress as stalled. Before it
+// looks for stalled runs it runs a hook, which state wires to a lease waker
+// pass, so a node released since the waker's last pass is granted to its
+// waiter first and that waiter's run does not read as stalled.
 package attemptreconcile
 
 import (
@@ -35,17 +38,20 @@ const (
 
 // Loop runs the attempt reconcile of one tenant.
 type Loop struct {
-	newUoW   func() uow.UnitOfWork
-	tenantID string
-	tasks    run.TaskDefaults
-	metrics  ports.RunMetrics
-	logger   *slog.Logger
+	newUoW      func() uow.UnitOfWork
+	tenantID    string
+	tasks       run.TaskDefaults
+	metrics     ports.RunMetrics
+	beforeStall func(context.Context) error
+	logger      *slog.Logger
 }
 
 // New builds the loop; tasks names the timeout of a dispatch whose node
-// declares none.
-func New(newUoW func() uow.UnitOfWork, tenantID string, tasks run.TaskDefaults, metrics ports.RunMetrics, logger *slog.Logger) *Loop {
-	return &Loop{newUoW: newUoW, tenantID: tenantID, tasks: tasks, metrics: metrics, logger: logger}
+// declares none, and beforeStall runs at the start of every stall scan (nil
+// runs nothing).
+func New(newUoW func() uow.UnitOfWork, tenantID string, tasks run.TaskDefaults, metrics ports.RunMetrics,
+	beforeStall func(context.Context) error, logger *slog.Logger) *Loop {
+	return &Loop{newUoW: newUoW, tenantID: tenantID, tasks: tasks, metrics: metrics, beforeStall: beforeStall, logger: logger}
 }
 
 // Run passes now and every interval until ctx ends.
@@ -65,9 +71,10 @@ func (l *Loop) Run(ctx context.Context, interval time.Duration) {
 }
 
 // Pass asks about every due attempt, sends the cancel again for every
-// cancelling run whose stops are unanswered, fails every stalled run and sets
-// the cancelling gauges, each question and failure in a transaction of its
-// own. Two passes at once cost at most a repeated question, which
+// cancelling run whose stops are unanswered, runs beforeStall and then fails
+// every stalled run, and sets the cancelling gauges, each question and failure
+// in a transaction of its own. A failed beforeStall is logged and the stall
+// scan still runs. Two passes at once cost at most a repeated question, which
 // execution-controller answers twice.
 func (l *Loop) Pass(ctx context.Context) error {
 	reader := l.newUoW().Attempts(l.tenantID)
@@ -85,6 +92,7 @@ func (l *Loop) Pass(ctx context.Context) error {
 	if err != nil {
 		return errors.Join(append(errs, err)...)
 	}
+	l.runBeforeStall(ctx)
 	stalled, err := reader.StalledRuns(ctx, run.StallAfter, StalledLimit)
 	if err != nil {
 		return errors.Join(append(errs, err)...)
@@ -105,6 +113,17 @@ func (l *Loop) Pass(ctx context.Context) error {
 	}
 	l.metrics.RunsCancelling(total, overdue)
 	return errors.Join(errs...)
+}
+
+// runBeforeStall runs the beforeStall hook and logs its failure; a failure
+// does not stop the pass.
+func (l *Loop) runBeforeStall(ctx context.Context) {
+	if l.beforeStall == nil {
+		return
+	}
+	if err := l.beforeStall(ctx); err != nil && ctx.Err() == nil {
+		l.logger.Error("The hook before the stall scan failed; the stall scan still runs", "error", err)
+	}
 }
 
 // ask dispatches one due attempt again, with its known status, and moves its

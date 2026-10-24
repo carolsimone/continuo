@@ -149,7 +149,7 @@ func BenchmarkReconcileDue(b *testing.B) {
 		WHERE schedule_id = $1`, r.ScheduleID())
 	require.NoError(b, err)
 	loop := attemptreconcile.New(func() uow.UnitOfWork { return newPlanningUoW(db) }, tenant, testTaskDefaults,
-		noRunMetrics{}, discardLogger())
+		noRunMetrics{}, nil, discardLogger())
 
 	b.ResetTimer()
 	for range b.N {

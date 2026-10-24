@@ -1,8 +1,8 @@
 // Package leasewaker is state's lease waker: it grants the write lease on each
 // node no task holds to the task that has waited longest for it, dispatching
 // that task, and deletes the leases whose holder task has ended without
-// releasing them. A pass runs on every notification that leases were released
-// and every interval.
+// releasing them. A pass runs on every notification that leases were released,
+// every interval, and before each stall scan of the attempt reconcile.
 package leasewaker
 
 import (

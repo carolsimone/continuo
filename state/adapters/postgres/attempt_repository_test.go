@@ -475,7 +475,7 @@ func TestAttemptReconcile_AResentCancelMovesEachStopToItsNextWindow(t *testing.T
 	f := statusFlow{db: db, tenant: tenant, r: startScheduleRun(t, db, tenant, "e2e-schedule-failure", model.OperationRun)}
 	cancelRun(t, db, f.r)
 	f.makeStopsDue(t, time.Second)
-	loop := attemptreconcile.New(func() uow.UnitOfWork { return newPlanningUoW(db) }, tenant, testTaskDefaults, noRunMetrics{}, discardLogger())
+	loop := attemptreconcile.New(func() uow.UnitOfWork { return newPlanningUoW(db) }, tenant, testTaskDefaults, noRunMetrics{}, nil, discardLogger())
 	outboxRows := func() int {
 		var n int
 		require.NoError(t, db.Get(&n, `SELECT count(*) FROM state_outbox WHERE aggregate_id = $1`, f.r.ScheduleID()))
@@ -524,7 +524,7 @@ func TestAttemptReconcile_AResentCancelRowNamesTheUnansweredAttempts(t *testing.
 	for _, a := range requested {
 		stops = append(stops, pkgevents.CancelledAttempt{TaskID: a.TaskID, Attempt: a.Attempt, JobName: a.JobName})
 	}
-	loop := attemptreconcile.New(func() uow.UnitOfWork { return newPlanningUoW(db) }, tenant, testTaskDefaults, noRunMetrics{}, discardLogger())
+	loop := attemptreconcile.New(func() uow.UnitOfWork { return newPlanningUoW(db) }, tenant, testTaskDefaults, noRunMetrics{}, nil, discardLogger())
 
 	require.NoError(t, loop.Pass(ctx))
 
