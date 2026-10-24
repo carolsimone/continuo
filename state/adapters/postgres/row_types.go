@@ -58,9 +58,10 @@ func (s *SchedulerTracker) GetServiceMetadata() (map[string]run.ServiceMetadata,
 
 // TaskTracker is the storage row carrier for the task_tracker table.
 // It mirrors the table schema one-to-one, plus WaitingOnRunID, which the task
-// reads join from node_leases, and is used exclusively within this package by
-// the repository implementations. Domain logic operates on run.Task values;
-// the adapters translate between the two.
+// reads join from node_leases. The repository implementations read and write
+// it, and the gRPC task handler maps the rows the task reads return; domain
+// logic operates on run.Task values, and the adapters translate between the
+// two.
 type TaskTracker struct {
 	TaskID              uuid.UUID      `json:"task_id" db:"task_id"`
 	ScheduleID          uuid.UUID      `json:"schedule_id" db:"schedule_id"`

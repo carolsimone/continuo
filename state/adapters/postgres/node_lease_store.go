@@ -21,6 +21,13 @@ import (
 // nodes from deadlocking: the later one waits for the earlier one on the
 // first node they share, before it holds any node the earlier one still
 // needs, and skips each node the earlier one committed.
+//
+// The waiter check spans tenants: task_tracker has no tenant column, so a
+// pending task of any tenant waiting on the same node key leaves the node to
+// that waiter. On an install with one tenant this is the node's own queue;
+// with several, another tenant's waiter can leave a claiming task waiting
+// until the lease waker's next pass, which grants each free node of a tenant
+// to that tenant's oldest waiter.
 const takeLeasesQuery = `
 WITH taken AS (
 	INSERT INTO node_leases (tenant_id, node_key, task_id, run_id)

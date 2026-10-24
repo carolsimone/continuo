@@ -18,7 +18,8 @@ import (
 //
 // The command reports acceptance, not completion. A node the live release does
 // not hold is refused (not_found) and a node that is not a dbt model or seed is
-// refused (usage); neither creates a run.
+// refused (usage); neither creates a run. A task whose node another run is
+// writing waits for that run's write before it is dispatched.
 func NewFullRefreshCommand(factory StateClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "full-refresh <service> <schema> <table> [source-run-id]",
@@ -50,8 +51,12 @@ planned and durably recorded with its first dispatches. A node the live
 release does not hold is refused (not_found), and a node that is not a dbt
 model or seed is refused (usage); neither creates a run. If the node's service
 governing command block defines no full_refresh (model) or seed_full_refresh
-(seed) command, the run is accepted and fails when it executes. Check the
-outcome of an accepted run with "node history".
+(seed) command, the run is accepted and fails when it executes.
+A task whose node another run is writing waits for that run to finish
+writing it before it is dispatched: "node history" and "schedule status" show
+the task pending, with wait_reason "node_lease" and the run it waits on
+(waiting_on_run_id).
+Check the outcome of an accepted run with "node history".
 
 Output (stdout, JSON):
   {"run_id":string,"schedule_name":string}

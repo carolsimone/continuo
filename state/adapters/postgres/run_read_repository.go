@@ -18,8 +18,8 @@ import (
 
 // RunReadRepository reads run graphs, run lists and drift from Postgres. A
 // run's graph joins its task rows to the nodes and edges of the run's own
-// release, so a later promotion never changes a past run's graph, and a task
-// waiting for its node's lease to the lease held on that node now.
+// release, so a later promotion never changes a past run's graph, and joins a
+// task waiting for its node's lease to the lease held on that node now.
 type RunReadRepository struct {
 	db *sqlx.DB
 }

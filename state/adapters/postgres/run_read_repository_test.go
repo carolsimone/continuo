@@ -71,8 +71,8 @@ func TestGetRunGraph_ShowsALeaseWaitAndItsHolder(t *testing.T) {
 	since := time.Date(2026, 10, 24, 10, 5, 0, 0, time.UTC)
 	waitForLease(t, db, waiter, since)
 	readTask(t, db, waitingRun, "b", "pending")
-	granted := readTask(t, db, waitingRun, "c", "pending")
-	waitForLease(t, db, granted, since)
+	freedWaiter := readTask(t, db, waitingRun, "c", "pending")
+	waitForLease(t, db, freedWaiter, since)
 
 	g, err := postgres.NewRunReadRepository(db).GetRunGraph(ctx, tenant, waitingRun)
 	require.NoError(t, err)

@@ -33,9 +33,10 @@ type PostgresUnitOfWork struct {
 }
 
 // NewPostgresUnitOfWork constructs a PostgresUnitOfWork over the autocommit db
-// and the low-level repositories its aggregate accessors compose. The
-// Run(), Catalog(), Outbox() and TaskCollection() accessors
-// each return an adapter bound to the current transaction.
+// and the low-level repositories its aggregate accessors compose. Run(),
+// Catalog(), Outbox() and TaskCollection(tenantID) each return an adapter
+// bound to the current transaction; TaskCollection's takes the node leases of
+// tenantID.
 func NewPostgresUnitOfWork(
 	db *sqlx.DB,
 	schedulerRepo SchedulerTrackerRepository,

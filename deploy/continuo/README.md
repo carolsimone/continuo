@@ -137,11 +137,18 @@ Notes that matter before you commit to this path:
 - **The Postgres connection must be session-mode.** Each outbox relay (state,
   orchestrator, execution-controller, release-controller, remediation,
   agent-remediation, dead-letter-controller) wakes on a Postgres `LISTEN`/`NOTIFY` notification sent
-  when a row is committed, over one dedicated connection per pod. `LISTEN`
+  when a row is committed, over one dedicated connection per pod. Two services
+  hold a second such connection per pod: execution-controller's dispatcher
+  wakes when a deployment is accepted or a slot is released, and state's lease
+  waker wakes when a task releases the write lease on its node. `LISTEN`
   needs a session-mode connection: behind a transaction-mode pooler (for
-  example PgBouncer in transaction mode) it does not work, and delivery
-  continues on each relay's 5 s poll instead of immediately. Point
-  `externalDatabase.host` at Postgres directly or at a session-mode pooler.
+  example PgBouncer in transaction mode) it does not work. Delivery then
+  continues on each relay's 5 s poll instead of immediately, the dispatcher
+  starts queued work on its 5 s poll, and state grants a freed node to the
+  task waiting for it on the lease waker's 60 s pass or the attempt
+  reconcile's pass, which grants freed nodes before it looks for stalled runs.
+  Point `externalDatabase.host` at Postgres directly or at a session-mode
+  pooler.
 - **In-cluster encryption is your responsibility.** The chart does not
   configure mTLS (mutual TLS) between pods; service-to-service traffic inside
   the cluster is plaintext unless you run a service mesh (Istio, Linkerd) or

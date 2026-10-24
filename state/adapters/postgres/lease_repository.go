@@ -18,9 +18,9 @@ import (
 // commits.
 const NodeLeasesChannel = "node_leases"
 
-// LeaseRepository implements repository.LeaseRepository for one tenant. Its
-// statements run in the unit of work's transaction when one is open, else on
-// the autocommit db.
+// LeaseRepository implements repository.LeaseRepository for one tenant. Each
+// method is one statement, which runs in the unit of work's transaction when
+// one is open, else on the autocommit db.
 type LeaseRepository struct {
 	db       *sqlx.DB
 	tx       *sqlx.Tx

@@ -21,11 +21,11 @@ type TaskCollection interface {
 	// of one task: the run that holds it, its status, the attempt it is at,
 	// its retry budget, its node key, its identity (job name and node), its
 	// first dispatch time and its wait reason, locking the row FOR UPDATE so
-	// concurrent writers of the task serialize. The attempt is what the aggregate compares a report's
-	// attempt with: a report for the task's current attempt moves the task,
-	// one for an older attempt moves only that attempt's row. The second
-	// return is false when the row does not exist; err is non-nil only for
-	// genuine I/O failures.
+	// concurrent writers of the task serialize. The attempt is what the
+	// aggregate compares a report's attempt with: a report for the task's
+	// current attempt moves the task, one for an older attempt moves only
+	// that attempt's row. The second return is false when the row does not
+	// exist; err is non-nil only for genuine I/O failures.
 	LoadAttemptState(ctx context.Context, taskID uuid.UUID) (state TaskAttemptState, exists bool, err error)
 
 	// LoadAttempt returns attempt number attempt of the task, locking its row
