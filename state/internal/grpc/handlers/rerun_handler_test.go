@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/testdeps"
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
@@ -39,7 +40,7 @@ func setupRerunFixture(t *testing.T) *rerunFixture {
 	}
 	logger := newTestLogger()
 	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
-	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
+	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, logger)
 	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
 	clk := ports.SystemClock{}
 	factory := func() uow.UnitOfWork {

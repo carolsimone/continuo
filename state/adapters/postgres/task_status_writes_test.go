@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/topology"
@@ -21,7 +22,7 @@ func inTaskTx(t *testing.T, db *sqlx.DB, fn func(tasks run.TaskCollection)) {
 	tx, err := db.BeginTxx(context.Background(), nil)
 	require.NoError(t, err)
 	defer tx.Rollback()
-	fn(postgres.NewTaskCollectionAdapter(postgres.NewTaskTrackerRepository(db, discardLogger()), tx, "default"))
+	fn(postgres.NewTaskCollectionAdapter(postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, discardLogger()), tx, "default"))
 	require.NoError(t, tx.Commit())
 }
 

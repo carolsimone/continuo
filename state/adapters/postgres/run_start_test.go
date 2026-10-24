@@ -30,7 +30,7 @@ func newPlanningUoW(db *sqlx.DB) *postgres.PostgresUnitOfWork {
 	logger := discardLogger()
 	return postgres.NewPostgresUnitOfWork(db,
 		postgres.NewSchedulerTrackerRepository(db, logger),
-		postgres.NewTaskTrackerRepository(db, logger),
+		postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, logger),
 		postgres.NewScheduleCatalogRepository(db, logger),
 		ports.SystemClock{}, logger)
 }

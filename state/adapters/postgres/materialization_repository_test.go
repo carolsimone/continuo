@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/seeds"
@@ -262,7 +263,7 @@ func TestPostgresUnitOfWork_MaterializationWritesRollBackWithTheTransaction(t *t
 	tenant := newTopoTenant(t, db)
 	logger := discardLogger()
 	u := postgres.NewPostgresUnitOfWork(db,
-		postgres.NewSchedulerTrackerRepository(db, logger), postgres.NewTaskTrackerRepository(db, logger),
+		postgres.NewSchedulerTrackerRepository(db, logger), postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, logger),
 		postgres.NewScheduleCatalogRepository(db, logger),
 		ports.SystemClock{}, logger)
 

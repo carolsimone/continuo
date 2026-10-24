@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	stateredis "github.com/carolsimone/continuo/state/adapters/redis"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
@@ -33,7 +34,7 @@ func TestScheduleCatalogBinding_OlderPromotionLeavesTheCatalogUnchanged(t *testi
 	logger := slog.New(slog.NewTextHandler(nopWriter{}, nil))
 
 	schedulerRepo := postgres.NewSchedulerTrackerRepository(rawDB, logger)
-	taskRepo := postgres.NewTaskTrackerRepository(rawDB, logger)
+	taskRepo := postgres.NewTaskTrackerRepository(rawDB, pkgevents.DefaultTenantID, logger)
 	catalogRepo := postgres.NewScheduleCatalogRepository(rawDB, logger)
 	factory := func() uow.UnitOfWork {
 		return postgres.NewPostgresUnitOfWork(rawDB, schedulerRepo, taskRepo, catalogRepo, svcports.SystemClock{}, logger)

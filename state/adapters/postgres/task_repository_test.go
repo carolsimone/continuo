@@ -39,7 +39,7 @@ func createTask(t *testing.T, repo postgres.TaskTrackerRepository, scheduleID uu
 func TestTaskRepository_HasFailedTaskTx_CountsCancelledTasks(t *testing.T) {
 	db := newTestDB(t)
 	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, discardLogger())
 	ctx := context.Background()
 
 	cases := []struct {
@@ -85,7 +85,7 @@ func TestTaskRepository_HasFailedTaskTx_CountsCancelledTasks(t *testing.T) {
 func TestTaskTrackerRepository_BeginStopTx(t *testing.T) {
 	db := newTestDB(t)
 	schedRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, discardLogger())
 	ctx := context.Background()
 
 	schedID := uuid.New()
@@ -198,7 +198,7 @@ func TestTaskTrackerRepository_BeginStopTx(t *testing.T) {
 func TestTaskTrackerRepository_CreateAndGet_RoundTripsImageTag(t *testing.T) {
 	db := newTestDB(t)
 	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
-	repo := postgres.NewTaskTrackerRepository(db, discardLogger())
+	repo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, discardLogger())
 
 	ctx := context.Background()
 	parent := &postgres.SchedulerTracker{
@@ -248,7 +248,7 @@ func TestTaskTracker_ManifestVersionColumnIsDropped(t *testing.T) {
 func TestTaskTrackerRepository_CreateAndGet_RoundTripsInheritedFromTaskID(t *testing.T) {
 	db := newTestDB(t)
 	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
-	repo := postgres.NewTaskTrackerRepository(db, discardLogger())
+	repo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, discardLogger())
 
 	ctx := context.Background()
 	parent := &postgres.SchedulerTracker{
@@ -315,7 +315,7 @@ func TestTaskRepository_SetStatusAndAttemptTx_DoesNotReviveCancelledTask(t *test
 	scheduler := createScheduler(t, schedulerRepo, "test-schedule-"+uuid.New().String())
 	defer db.ExecContext(context.Background(), "DELETE FROM scheduler_tracker WHERE schedule_id = $1", scheduler.ScheduleID)
 
-	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, discardLogger())
 	task := createTask(t, taskRepo, scheduler.ScheduleID)
 	defer db.ExecContext(context.Background(), "DELETE FROM task_tracker WHERE task_id = $1", task.TaskID)
 
@@ -352,7 +352,7 @@ func TestTaskRepository_SetStatusAndAttemptTx_AdvancesAttemptOnSameStatus(t *tes
 	scheduler := createScheduler(t, schedulerRepo, "test-schedule-"+uuid.New().String())
 	defer db.ExecContext(context.Background(), "DELETE FROM scheduler_tracker WHERE schedule_id = $1", scheduler.ScheduleID)
 
-	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, discardLogger())
 	task := createTask(t, taskRepo, scheduler.ScheduleID)
 	defer db.ExecContext(context.Background(), "DELETE FROM task_tracker WHERE task_id = $1", task.TaskID)
 
@@ -390,7 +390,7 @@ func TestTaskRepository_SetStatusAndAttemptTx_AdvancesAttemptOnSameStatus(t *tes
 func TestTaskTrackerRepository_BulkCreateTx_CopiesTenThousandTasks(t *testing.T) {
 	db := newTestDB(t)
 	schedRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, discardLogger())
 	ctx := context.Background()
 
 	sched := createScheduler(t, schedRepo, "bulk-create-"+uuid.New().String())
@@ -449,7 +449,7 @@ func TestTaskRepository_DispatchedAtRoundTrips(t *testing.T) {
 	db := newTestDB(t)
 	logger := discardLogger()
 	runs := postgres.NewSchedulerTrackerRepository(db, logger)
-	tasks := postgres.NewTaskTrackerRepository(db, logger)
+	tasks := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, logger)
 	tracker := createScheduler(t, runs, "dispatched-"+uuid.NewString()[:8])
 	t.Cleanup(func() { _, _ = db.Exec(`DELETE FROM scheduler_tracker WHERE schedule_id = $1`, tracker.ScheduleID) })
 
@@ -493,7 +493,7 @@ func TestTaskRepository_NodeKeyRoundTrips(t *testing.T) {
 	db := newTestDB(t)
 	logger := discardLogger()
 	runs := postgres.NewSchedulerTrackerRepository(db, logger)
-	tasks := postgres.NewTaskTrackerRepository(db, logger)
+	tasks := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, logger)
 	tracker := createScheduler(t, runs, "nodekey-"+uuid.NewString()[:8])
 	t.Cleanup(func() { _, _ = db.Exec(`DELETE FROM scheduler_tracker WHERE schedule_id = $1`, tracker.ScheduleID) })
 	key := "raw.orders"
@@ -516,16 +516,21 @@ func TestTaskRepository_NodeKeyRoundTrips(t *testing.T) {
 
 // The task reads (ListByScheduleID, GetByID, GetByScheduleAndNode) carry a
 // pending task's wait for its node's lease: the reason, when it began waiting
-// and the run whose task holds the node in the install's tenant. A task that
-// waits for nothing, or whose node no task holds, names no holder run.
+// and the run whose task holds the node in the tenant the repository reads. A
+// task that waits for nothing, or whose node no task of that tenant holds,
+// names no holder run, whatever another tenant holds on the same node key.
 func TestListByScheduleID_ShowsALeaseWaitAndItsHolder(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
-	tasks := postgres.NewTaskTrackerRepository(db, discardLogger())
+	tenant, otherTenant := leaseTenant(t, db), leaseTenant(t, db)
+	tasks := postgres.NewTaskTrackerRepository(db, tenant, discardLogger())
 	held, free := "w"+uuid.NewString()[:8], "f"+uuid.NewString()[:8]
 	holderRun := readRun(t, db, "cron-"+uuid.NewString()[:8], nil, nil, "running", false)
 	holder := readTask(t, db, holderRun, held, "running")
-	require.NoError(t, insertLease(db, pkgevents.DefaultTenantID, "raw."+held, holder, holderRun))
+	require.NoError(t, insertLease(db, tenant, "raw."+held, holder, holderRun))
+	otherRun := readRun(t, db, "other-"+uuid.NewString()[:8], nil, nil, "running", false)
+	otherHolder := readTask(t, db, otherRun, free, "running")
+	require.NoError(t, insertLease(db, otherTenant, "raw."+free, otherHolder, otherRun))
 
 	waitingRun := readRun(t, db, "single-"+uuid.NewString()[:8], nil, nil, "running", false)
 	waiter := readTask(t, db, waitingRun, held, "pending")
@@ -571,7 +576,7 @@ func TestListByScheduleID_ShowsALeaseWaitAndItsHolder(t *testing.T) {
 func TestListByScheduleID_FiltersByStatusAndPages(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
-	tasks := postgres.NewTaskTrackerRepository(db, discardLogger())
+	tasks := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, discardLogger())
 	runID := readRun(t, db, "list-"+uuid.NewString()[:8], nil, nil, "running", false)
 	oldest := readTask(t, db, runID, "a", "pending")
 	middle := readTask(t, db, runID, "b", "running")

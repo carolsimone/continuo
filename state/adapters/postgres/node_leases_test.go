@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
@@ -68,7 +69,7 @@ func inLeaseTx(t *testing.T, db *sqlx.DB, tenant string, fn func(tasks run.TaskC
 	tx, err := db.BeginTxx(context.Background(), nil)
 	require.NoError(t, err)
 	defer tx.Rollback()
-	fn(postgres.NewTaskCollectionAdapter(postgres.NewTaskTrackerRepository(db, discardLogger()), tx, tenant))
+	fn(postgres.NewTaskCollectionAdapter(postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, discardLogger()), tx, tenant))
 	require.NoError(t, tx.Commit())
 }
 
@@ -234,7 +235,7 @@ func TestNodeLeases_OverlappingTakesInOppositeOrdersDoNotDeadlock(t *testing.T) 
 	a, b := tables[0], tables[1]
 	firstRun, first := pendingTasks(t, db, a, b)
 	secondRun, second := pendingTasks(t, db, a, b)
-	repo := postgres.NewTaskTrackerRepository(db, discardLogger())
+	repo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, discardLogger())
 	orders := [2][]run.LeaseClaim{
 		{claim(firstRun, first[a], a), claim(firstRun, first[b], b)},
 		{claim(secondRun, second[b], b), claim(secondRun, second[a], a)},
@@ -448,7 +449,7 @@ func takeAfter(ctx context.Context, db *sqlx.DB, tenant string, claims []run.Lea
 	case <-start:
 	case <-stop:
 	}
-	taken, err := postgres.NewTaskCollectionAdapter(postgres.NewTaskTrackerRepository(db, discardLogger()), tx, tenant).TakeLeases(ctx, claims)
+	taken, err := postgres.NewTaskCollectionAdapter(postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, discardLogger()), tx, tenant).TakeLeases(ctx, claims)
 	if err != nil {
 		return nil, fmt.Errorf("take: %w", err)
 	}

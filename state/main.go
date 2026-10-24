@@ -186,7 +186,7 @@ func main() {
 	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
 	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
 	logger.Info("Schedule catalog repository initialized")
-	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
+	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, logger)
 	taskAttemptReadRepo := postgres.NewTaskAttemptReadRepository(db)
 
 	// Initialize Redis client
@@ -464,7 +464,7 @@ func main() {
 	previewRebaseHandler := handlers.NewPreviewRebaseHandler(runreads.NewRebasePreviewer(planner, uowFactory, runReadRepo), logger)
 	singleNodeRunUC := svchandlers.NewTriggerSingleNodeRunHandler(planner, logger)
 	singleNodeRunHandler := handlers.NewSingleNodeRunHandler(singleNodeRunUC, uowFactory, logger)
-	nodeRunRepo := postgres.NewNodeRunRepository(db, logger)
+	nodeRunRepo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, logger)
 	nodeRunHandler := handlers.NewNodeRunHandler(nodeRunRepo, taskDefaults.Timeout, logger)
 	runReadHandler := handlers.NewRunReadHandler(runreads.New(runReadRepo), logger)
 

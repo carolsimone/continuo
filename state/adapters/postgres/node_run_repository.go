@@ -21,7 +21,6 @@ import (
 	"math"
 	"time"
 
-	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/projection"
 	"github.com/google/uuid"
@@ -37,15 +36,18 @@ type NodeRunRepository interface {
 }
 
 type nodeRunRepository struct {
-	db     *sqlx.DB
-	logger *slog.Logger
+	db *sqlx.DB
+	// tenantID is the tenant whose topology and node leases the reads join.
+	tenantID string
+	logger   *slog.Logger
 }
 
 var _ NodeRunRepository = (*nodeRunRepository)(nil)
 
-// NewNodeRunRepository constructs a NodeRunRepository backed by Postgres.
-func NewNodeRunRepository(db *sqlx.DB, logger *slog.Logger) NodeRunRepository {
-	return &nodeRunRepository{db: db, logger: logger}
+// NewNodeRunRepository constructs a NodeRunRepository backed by Postgres that
+// reads the topology and node leases of tenantID.
+func NewNodeRunRepository(db *sqlx.DB, tenantID string, logger *slog.Logger) NodeRunRepository {
+	return &nodeRunRepository{db: db, tenantID: tenantID, logger: logger}
 }
 
 // List returns the most recent task instances for the given node identity,
@@ -55,7 +57,7 @@ func NewNodeRunRepository(db *sqlx.DB, logger *slog.Logger) NodeRunRepository {
 //   - run-level: run_id, schedule_name, kind, terminal_status
 //   - task-level: task_status, attempt, image_tag, and, while the task waits
 //     for the node's lease, wait_reason, lease_wait_since and the run whose
-//     task holds the lease in the install's tenant
+//     task holds the lease in the repository's tenant
 //   - attempt-level (latest attempt per task): started_at, completed_at
 //     (the attempt's finished_at), error_message, log_s3_key, run_results_uri,
 //     failure_class, failure_reason
@@ -135,7 +137,7 @@ func (r *nodeRunRepository) List(
 
 	rows := []nodeRunRow{}
 	if err := r.db.SelectContext(ctx, &rows, query,
-		serviceName, schemaName, tableName, operation, limit, pkgevents.DefaultTenantID); err != nil {
+		serviceName, schemaName, tableName, operation, limit, r.tenantID); err != nil {
 		r.logger.Error("Failed to list node runs",
 			"service", serviceName, "schema", schemaName, "table", tableName,
 			"error", err)
@@ -336,7 +338,7 @@ func (r *nodeRunRepository) ListNodes(
 		LIMIT $4 OFFSET $5`
 
 	rows := []nodeSummaryRow{}
-	if err := r.db.SelectContext(ctx, &rows, pageQuery, search, serviceName, operation, limit, offset, pkgevents.DefaultTenantID); err != nil {
+	if err := r.db.SelectContext(ctx, &rows, pageQuery, search, serviceName, operation, limit, offset, r.tenantID); err != nil {
 		r.logger.Error("Failed to list nodes", "search", search, "service", serviceName, "error", err)
 		return nil, 0, fmt.Errorf("failed to list nodes: %w", err)
 	}

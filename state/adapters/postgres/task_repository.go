@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/num"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/google/uuid"
@@ -76,15 +75,20 @@ type TaskTrackerRepository interface {
 }
 
 type taskTrackerRepository struct {
-	db     *sqlx.DB
-	logger *slog.Logger
+	db *sqlx.DB
+	// tenantID is the tenant whose node leases the task reads join: a waiting
+	// task's waiting_on_run_id is read from this tenant's leases.
+	tenantID string
+	logger   *slog.Logger
 }
 
-// NewTaskTrackerRepository creates a new TaskTrackerRepository
-func NewTaskTrackerRepository(db *sqlx.DB, logger *slog.Logger) TaskTrackerRepository {
+// NewTaskTrackerRepository creates a TaskTrackerRepository whose task reads
+// read node leases of tenantID.
+func NewTaskTrackerRepository(db *sqlx.DB, tenantID string, logger *slog.Logger) TaskTrackerRepository {
 	return &taskTrackerRepository{
-		db:     db,
-		logger: logger,
+		db:       db,
+		tenantID: tenantID,
+		logger:   logger,
 	}
 }
 
@@ -149,10 +153,10 @@ const taskReadQuery = `
 	 AND l.node_key = t.node_key AND l.task_id <> t.task_id`
 
 // GetByID retrieves a task_tracker by task_id, with the run holding the node
-// lease it waits for read from the install's tenant.
+// lease it waits for read from the repository's tenant.
 func (r *taskTrackerRepository) GetByID(ctx context.Context, taskID uuid.UUID) (*TaskTracker, error) {
 	var task TaskTracker
-	err := r.db.GetContext(ctx, &task, taskReadQuery+` WHERE t.task_id = $2`, pkgevents.DefaultTenantID, taskID)
+	err := r.db.GetContext(ctx, &task, taskReadQuery+` WHERE t.task_id = $2`, r.tenantID, taskID)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			r.logger.Debug("Task tracker not found",
@@ -221,7 +225,7 @@ func (r *taskTrackerRepository) RunReleasesTx(ctx context.Context, tx *sqlx.Tx, 
 
 // GetByScheduleAndNode retrieves a task_tracker by schedule_id and node
 // information, with the run holding the node lease it waits for read from the
-// install's tenant.
+// repository's tenant.
 func (r *taskTrackerRepository) GetByScheduleAndNode(ctx context.Context, scheduleID uuid.UUID, serviceName, schemaName, tableName string) (*TaskTracker, error) {
 	var task TaskTracker
 	err := r.db.GetContext(ctx, &task, taskReadQuery+`
@@ -229,7 +233,7 @@ func (r *taskTrackerRepository) GetByScheduleAndNode(ctx context.Context, schedu
 		  AND t.service_name = $3
 		  AND t.schema_name = $4
 		  AND t.table_name = $5`,
-		pkgevents.DefaultTenantID, scheduleID, serviceName, schemaName, tableName)
+		r.tenantID, scheduleID, serviceName, schemaName, tableName)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			r.logger.Debug("Task tracker not found by schedule and node",
@@ -260,7 +264,7 @@ func (r *taskTrackerRepository) GetByScheduleAndNode(ctx context.Context, schedu
 // ListByScheduleID retrieves one page of a schedule's tasks, newest first,
 // with an optional status filter, and the number of tasks the filter matches.
 // Each task carries the run holding the node lease it waits for, read from the
-// install's tenant.
+// repository's tenant.
 func (r *taskTrackerRepository) ListByScheduleID(ctx context.Context, scheduleID uuid.UUID, status *run.TaskStatus, limit, offset int) ([]*TaskTracker, int, error) {
 	var statusFilter sql.NullString
 	if status != nil {
@@ -280,7 +284,7 @@ func (r *taskTrackerRepository) ListByScheduleID(ctx context.Context, scheduleID
 		WHERE t.schedule_id = $2 AND ($3::text IS NULL OR t.status = $3)
 		ORDER BY t.created_at DESC
 		LIMIT $4 OFFSET $5`,
-		pkgevents.DefaultTenantID, scheduleID, statusFilter, limit, offset); err != nil {
+		r.tenantID, scheduleID, statusFilter, limit, offset); err != nil {
 		r.logger.Error("Failed to list tasks by schedule",
 			"schedule_id", scheduleID,
 			"error", err,

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/google/uuid"
@@ -19,7 +20,7 @@ func TestTaskCollectionAdapter_GetByID(t *testing.T) {
 	db := newTestDB(t)
 	logger := discardLogger()
 	schedRepo := postgres.NewSchedulerTrackerRepository(db, logger)
-	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
+	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, logger)
 	sched := createScheduler(t, schedRepo, "get-by-id-"+uuid.NewString()[:8])
 	taskID := uuid.New()
 	t.Cleanup(func() {
@@ -53,7 +54,7 @@ func TestTaskCollectionAdapter_RunReleasesOf(t *testing.T) {
 	db := newTestDB(t)
 	logger := discardLogger()
 	schedRepo := postgres.NewSchedulerTrackerRepository(db, logger)
-	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
+	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, logger)
 	suffix := uuid.NewString()[:8]
 	release := "rel-" + suffix
 	stamped := createScheduler(t, schedRepo, "run-releases-stamped-"+suffix)
