@@ -487,7 +487,7 @@ egress:
   # host and port on its allowlist. The chart renders the allowlist from llm.*
   # (llm.baseUrl, else the provider's public API), the GITHUB_BASE_URL of
   # agent-remediation's `services` entry (its `env`; while egress is on, one in
-  # its `secretEnv` fails the render), s3.endpointUrl when
+  # either agent's `secretEnv` fails the render), s3.endpointUrl when
   # minio.enabled=false, and the two lists below, and sets HTTP_PROXY,
   # HTTPS_PROXY and NO_PROXY on both agents. NO_PROXY covers the release's own
   # Services and the in-cluster addresses the agents are given (a host with no
@@ -535,7 +535,8 @@ egress:
   #   - {cidr: 203.0.113.10/32, ports: [5432]}
   # cidr is an IPv4 or IPv6 range with its prefix length (1 or more) and no
   # address bit set past it; ports are whole numbers 1-65535, written without a
-  # leading zero (YAML reads 0443 as the octal number 291). The render fails
+  # leading zero (YAML reads an unquoted 0443 as the octal number 291, which
+  # the chart cannot detect). The render fails
   # on a malformed entry and on a range that overlaps any of: 0.0.0.0/8 and
   # ::/128 (unspecified), 127.0.0.0/8 and ::1 (loopback), 169.254.0.0/16 and
   # fe80::/10 (link-local), the cloud metadata addresses 100.100.100.200,

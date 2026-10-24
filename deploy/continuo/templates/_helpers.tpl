@@ -423,8 +423,9 @@ Call: include "continuo.agent.assertEnv" (dict "root" $ "svc" $svc) */}}
 {{- end -}}
 {{- end -}}
 
-{{/* "true" unless egress.enabled is false. A release installed before egress
-existed has no egress block and runs the proxy with its defaults. */}}
+{{/* "true" unless egress.enabled is false. A values file without an egress
+block (for example after helm upgrade --reuse-values) runs the proxy with its
+defaults. */}}
 {{- define "continuo.egress.enabled" -}}
 {{- $e := .Values.egress | default dict -}}
 {{- if and (hasKey $e "enabled") (kindIs "bool" $e.enabled) (not $e.enabled) -}}false{{- else -}}true{{- end -}}
@@ -1423,7 +1424,7 @@ the egress proxy rendered, the proxy's listen port (3128) or health port (8093).
 
 {{/*
 The admission cap execution-controller enforces. A release without an
-execution block (helm upgrade --reuse-values from an older chart) gets the
+execution block (for example after helm upgrade --reuse-values) gets the
 default; a value below 1 fails the render.
 */ -}}
 {{- define "continuo.execution.maxConcurrentJobs" -}}
@@ -1439,7 +1440,7 @@ default; a value below 1 fails the render.
 {{/*
 JOB_START_TIMEOUT_SECONDS for the shared ConfigMap: execution.startTimeoutMinutes
 in seconds. A release without an execution block, or without the key (helm
-upgrade --reuse-values from an older chart), gets 15 minutes; a value outside
+upgrade --reuse-values), gets 15 minutes; a value outside
 1-120 fails the render.
 */ -}}
 {{- define "continuo.execution.startTimeoutSeconds" -}}
@@ -1454,8 +1455,8 @@ upgrade --reuse-values from an older chart), gets 15 minutes; a value outside
 
 {{/*
 TASK_MAX_RETRIES for the shared ConfigMap: runs.taskMaxRetries. A release
-without a runs block, or without the key (helm upgrade --reuse-values from an
-older chart), gets 2; a value outside 0-10 fails the render.
+without a runs block, or without the key (for example after helm upgrade
+--reuse-values), gets 2; a value outside 0-10 fails the render.
 */ -}}
 {{- define "continuo.runs.taskMaxRetries" -}}
 {{- $r := .Values.runs | default dict -}}
@@ -1484,7 +1485,7 @@ value outside 1-168 fails the render.
 
 {{/*
 MAINTENANCE_ENABLED for the shared ConfigMap: "true" or "false". A release
-without a maintenance block (helm upgrade --reuse-values from an older chart)
+without a maintenance block (for example after helm upgrade --reuse-values)
 renders "false"; the schema refuses a non-boolean value.
 */ -}}
 {{- define "continuo.maintenance.enabled" -}}

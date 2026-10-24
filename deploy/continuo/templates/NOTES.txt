@@ -154,20 +154,17 @@ If the agents reach anything else:
   * to keep their outbound traffic open: set egress.enabled=false.
 {{- if eq (include "continuo.egress.proxyEnabled" .) "true" }}
 egress-proxy logs every refused connection with its host, port and reason:
-  kubectl -n {{ .Release.Namespace }} logs deploy/egress-proxy | grep "egress denied"
+  kubectl -n {{ .Release.Namespace }} logs -l app.kubernetes.io/name=egress-proxy --tail=-1 | grep "egress denied"
 {{- end }}
-A render failure that names llm.baseUrl, GITHUB_BASE_URL or s3.endpointUrl
-means that URL's host is no DNS host name egress-proxy accepts (for example it
-holds an underscore, as in http://vllm_x:8000): use a DNS-valid host name, or
-the IP address, which the agents then reach directly.
 {{- end }}
 {{- if not .Values.networkPolicy.enabled }}
 
 EGRESS NOT ENFORCED: networkPolicy.enabled is false.
-{{- if eq (include "continuo.egress.proxyEnabled" .) "true" }} The agents send
-their traffic through egress-proxy, but nothing stops a connection that skips
-it.
-{{- else }} Nothing restricts the agents' outbound traffic.
+{{- if eq (include "continuo.egress.proxyEnabled" .) "true" }}
+The agents send their traffic through egress-proxy, but nothing stops a
+connection that skips it.
+{{- else }}
+Nothing restricts the agents' outbound traffic.
 {{- end }}
 {{- end }}
 {{- end }}

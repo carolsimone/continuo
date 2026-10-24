@@ -224,9 +224,8 @@ one read every few seconds.
   `token.actions.githubusercontent.com` (or your GitHub Enterprise Server host)
   on port 443. The chart's NetworkPolicies restrict the `ui`'s ingress only, so
   this works by default; a cluster-wide egress policy or a forced proxy must
-  allow it. While
-  the issuer is unreachable, bearer calls answer `503` `auth_unavailable` and
-  the browser login is unaffected.
+  allow it. While the issuer is unreachable, bearer calls answer `503`
+  `auth_unavailable` and the browser login is unaffected.
 - Where egress must go through a proxy, add `HTTPS_PROXY` together with
   `NODE_USE_ENV_PROXY=1` to the `ui` entry's `env` in `services`, plus
   `NO_PROXY` covering the in-cluster service names the `ui` calls
@@ -316,10 +315,15 @@ llm:
 A host name goes through the proxy and may resolve to a private address. An IP
 address (`http://10.0.0.7:8000`) is reached directly: the chart leaves it out of
 the allowlist, adds it to `NO_PROXY` and admits it, on its port, in the agents'
-NetworkPolicy. A NetworkPolicy sees a connection after a Service has translated
-it, as the **pod's** address and port. So an IP address is for a machine or a
-pod, not for a Service, and a port in a URL must be one the pod listens on: a
-Service that maps port 80 to a pod port 8000 is not reachable on port 80.
+NetworkPolicy.
+
+A NetworkPolicy sees a connection after a Service has translated it, as the
+**pod's** address and port. So a port you configure must be one the pod listens
+on, whether the address is reached directly or through the proxy: a Service
+that maps port 80 to a pod port 8000 is not reachable on port 80, because the
+proxy reaches private addresses only on the port of the allowlist entry, and
+the agents only on the port of the direct destination. An IP address is for a
+machine or a pod, not for a Service.
 
 A host must be a DNS name of letters, digits and inner hyphens, or an IP
 address. A `llm.baseUrl`, `GITHUB_BASE_URL` or `s3.endpointUrl` whose host is
@@ -353,12 +357,15 @@ entry. Each entry is checked as written, and the render fails naming it unless:
   of those. A whole `100.64.0.0/10` and a whole `fc00::/7` are refused because
   they contain metadata addresses (`100.100.100.200`, `fd00:ec2::/32`): list the
   narrower ranges you need.
-- `ports` is a non-empty list of whole numbers from 1 to 65535, written without a
-  leading zero: YAML reads `0443` as the octal number 291.
+- `ports` is a non-empty list of whole numbers from 1 to 65535. Write them
+  without a leading zero: YAML reads an unquoted `0443` as the octal number 291,
+  which the chart cannot tell from `291`, so it opens port 291 and renders
+  silently. A quoted `"0443"` is not a number and fails the render.
 
 **How the agents are kept to those rules.** `NO_PROXY` lists, so that the
 agents reach them directly:
 
+- `localhost`, `127.0.0.1` and `::1`;
 - the release's own Services, in every form (`name`, `name.<namespace>`,
   `name.<namespace>.svc`, `name.<namespace>.svc.cluster.local`) and on every port;
 - every other in-cluster address the agents are given (a `global.*GrpcAddr`, or a
@@ -402,7 +409,7 @@ host, port, client address, method and reason, and counts it in
 `continuo_egress_requests_total{decision="denied"}`:
 
 ```bash
-kubectl -n <namespace> logs deploy/egress-proxy | grep "egress denied"
+kubectl -n <namespace> logs -l app.kubernetes.io/name=egress-proxy --tail=-1 | grep "egress denied"
 ```
 
 | Reason | Meaning |
@@ -415,7 +422,7 @@ kubectl -n <namespace> logs deploy/egress-proxy | grep "egress denied"
 | `upstream_error` | The exchange with the destination failed other than while connecting. |
 | `capacity` | The replica holds its maximum number of open tunnels and forwarded requests (`egress.proxy.maxTunnels`). |
 | `bad_request` | The destination host and port of the request cannot be read. |
-| `unsupported` | The method is neither `CONNECT` nor an absolute-form HTTP request. |
+| `unsupported` | The method is neither `CONNECT` nor an absolute-form HTTP request, or the request asks for a protocol upgrade, which is not forwarded. |
 
 **Your own egress controls.** On Cilium or GKE Dataplane V2 you can write
 host-name rules natively. Set `egress.enabled: false` to run no proxy and manage
