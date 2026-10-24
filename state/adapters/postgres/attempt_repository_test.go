@@ -273,7 +273,8 @@ func TestStalledRuns_ALeaseWaitBehindAnInFlightHolderIsNotStalled(t *testing.T) 
 
 // A run whose task waits for the lease of a node no task holds, or one held by
 // a task that has ended (a lease the repair deletes), waits on nothing in
-// flight: once its progress clock is old it is stalled.
+// flight: once its progress clock is old it is stalled, and the re-check under
+// the run's lock fails it.
 func TestStalledRuns_ALeaseWaitOnAFreeNodeIsStalled(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
@@ -290,6 +291,8 @@ func TestStalledRuns_ALeaseWaitOnAFreeNodeIsStalled(t *testing.T) {
 
 	assert.Contains(t, got, waitingOnFree, "a wait on a node no task holds is a wait on nothing in flight")
 	assert.Contains(t, got, waitingOnEnded, "a lease whose holder has ended keeps nothing in flight")
+	assert.True(t, failStalledUnderLock(t, db, tenant, waitingOnFree), "the re-check under the lock fails a wait on a free node")
+	assert.True(t, failStalledUnderLock(t, db, tenant, waitingOnEnded), "and a wait behind a holder that has ended")
 }
 
 // makeStopsDue moves the next check of every attempt of the run into the past.

@@ -32,8 +32,8 @@ type RepairedLease struct {
 // LeaseRepository serves state's lease waker for the tenant it is bound to:
 // the waiters a free node can be granted to, the repair of leases whose holder
 // has ended, and the count of tasks waiting. A waiter belongs to the tenant
-// whose topology holds its node in its run's release. Each method is one
-// statement.
+// whose topology holds its node in its run's release, which assumes release
+// ids are unique across tenants. Each method is one statement.
 type LeaseRepository interface {
 	// Grantable returns, for each of the tenant's nodes no task holds, its
 	// oldest waiter (the earliest lease_wait_since, then the lowest task id)

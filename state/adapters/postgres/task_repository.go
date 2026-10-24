@@ -56,7 +56,8 @@ type TaskTrackerRepository interface {
 	// changed.
 	SkipPendingTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID) (int64, error)
 	// HasInFlightTaskTx reports whether any task of the schedule is
-	// dispatched, queued, running or stopping.
+	// dispatched, queued, running or stopping, or is pending and waits for a
+	// node lease whose holder is one of those.
 	HasInFlightTaskTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID) (bool, error)
 	// HasFailedTaskTx reports whether any task for the given schedule has status
 	// 'failed' or 'cancelled'.
@@ -459,13 +460,34 @@ func (r *taskTrackerRepository) SkipPendingTx(ctx context.Context, tx *sqlx.Tx, 
 	return n, nil
 }
 
-// HasInFlightTaskTx reports whether any task of the schedule is dispatched,
-// queued, running or stopping: an attempt of it is in flight.
+// runWorkInFlight holds for the scheduler_tracker row s when the run has work
+// in flight: a task of it is in flight, or a pending task of it waits for a
+// node lease whose holder is in flight, so it waits on that holder's attempt.
+// $1 names the in-flight task statuses (dispatched, queued, running and
+// stopping). task_tracker has no tenant column, so a lease on the waiting
+// task's node in any tenant counts. The task checks probe
+// idx_task_tracker_schedule_id; node_leases holds one row per node being
+// written. StalledRuns lists a run only when this is false, and
+// HasInFlightTaskTx re-checks it under the run's lock.
+const runWorkInFlight = `(
+	EXISTS (
+		SELECT 1 FROM task_tracker t
+		WHERE t.schedule_id = s.schedule_id AND t.status = ANY($1::text[]))
+	OR EXISTS (
+		SELECT 1 FROM task_tracker w
+		JOIN node_leases l ON l.node_key = w.node_key
+		JOIN task_tracker h ON h.task_id = l.task_id
+		WHERE w.schedule_id = s.schedule_id AND w.status = 'pending' AND w.wait_reason = 'node_lease'
+		  AND h.status = ANY($1::text[])))`
+
+// HasInFlightTaskTx reports whether the schedule has work in flight: a task of
+// it is dispatched, queued, running or stopping, or a pending task of it waits
+// for a node lease whose holder is (runWorkInFlight).
 func (r *taskTrackerRepository) HasInFlightTaskTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID) (bool, error) {
 	var exists bool
 	err := tx.QueryRowContext(ctx,
-		`SELECT EXISTS(SELECT 1 FROM task_tracker WHERE schedule_id = $1 AND status = ANY($2::text[]))`,
-		scheduleID, pq.Array(inFlightTaskStatuses()),
+		`SELECT EXISTS (SELECT 1 FROM scheduler_tracker s WHERE s.schedule_id = $2 AND `+runWorkInFlight+`)`,
+		pq.Array(inFlightTaskStatuses()), scheduleID,
 	).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("has in-flight task check for schedule_id %s: %w", scheduleID, err)

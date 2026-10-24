@@ -53,8 +53,10 @@ type TaskCollection interface {
 	// not match. The run's finalized outcome is failed when it is true.
 	HasFailed(ctx context.Context, runID uuid.UUID) (bool, error)
 
-	// HasInFlight reports whether any task of the given run is dispatched,
-	// queued, running or stopping: an attempt of it is in flight.
+	// HasInFlight reports whether the given run has work in flight: a task of
+	// it is dispatched, queued, running or stopping, or a pending task of it
+	// waits for a node lease whose holder is one of those, so an attempt it
+	// waits on is in flight.
 	HasInFlight(ctx context.Context, runID uuid.UUID) (bool, error)
 
 	// HasNonSucceeded reports whether any task in the given run is in a

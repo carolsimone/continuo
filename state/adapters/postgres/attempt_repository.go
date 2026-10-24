@@ -65,34 +65,24 @@ func (r *AttemptRepository) DueAttempts(ctx context.Context, limit int) ([]repos
 }
 
 // StalledRuns reads the active runs (pending, running or cancelling) with an
-// old progress clock, no task in flight (dispatched, queued, running or
-// stopping) and no task waiting for a node lease whose holder is in flight, of
-// every tenant: scheduler_tracker has no tenant column. task_tracker has none
-// either, so a lease on the waiting task's node in any tenant counts: a match
-// in another tenant can delay noticing a stalled run, never fail a waiting
-// one. The run scan
-// filters scheduler_tracker by status, which holds few active rows, the
-// in-flight and waiting checks probe idx_task_tracker_schedule_id, and
-// node_leases holds one row per node being written.
+// old progress clock and no work in flight (runWorkInFlight: no task
+// dispatched, queued, running or stopping, and no task waiting for a node
+// lease whose holder is), of every tenant: scheduler_tracker has no tenant
+// column. A lease in another tenant on the waiting task's node key also
+// counts, which can delay noticing a stalled run but never fails a waiting
+// one. The run scan filters scheduler_tracker by status, which holds few
+// active rows.
 func (r *AttemptRepository) StalledRuns(ctx context.Context, idle time.Duration, limit int) ([]uuid.UUID, error) {
 	var ids []uuid.UUID
 	if err := r.db.SelectContext(ctx, &ids, `
 		SELECT s.schedule_id
 		FROM scheduler_tracker s
-		WHERE s.status = ANY($3::text[])
-		  AND s.last_heartbeat_at < now() - make_interval(secs => $1::float8)
-		  AND NOT EXISTS (
-		      SELECT 1 FROM task_tracker t
-		      WHERE t.schedule_id = s.schedule_id AND t.status = ANY($4::text[]))
-		  AND NOT EXISTS (
-		      SELECT 1 FROM task_tracker w
-		      JOIN node_leases l ON l.node_key = w.node_key
-		      JOIN task_tracker h ON h.task_id = l.task_id
-		      WHERE w.schedule_id = s.schedule_id AND w.status = 'pending' AND w.wait_reason = 'node_lease'
-		        AND h.status = ANY($4::text[]))
+		WHERE s.status = ANY($4::text[])
+		  AND s.last_heartbeat_at < now() - make_interval(secs => $2::float8)
+		  AND NOT `+runWorkInFlight+`
 		ORDER BY s.last_heartbeat_at, s.schedule_id
-		LIMIT $2`, idle.Seconds(), limit,
-		pq.Array(activeSchedulerStatuses()), pq.Array(inFlightTaskStatuses())); err != nil {
+		LIMIT $3`, pq.Array(inFlightTaskStatuses()), idle.Seconds(), limit,
+		pq.Array(activeSchedulerStatuses())); err != nil {
 		return nil, fmt.Errorf("read the stalled runs: %w", err)
 	}
 	return ids, nil

@@ -394,6 +394,69 @@ func TestLeaseWaker_SkipsARunThatIsNotRunning(t *testing.T) {
 	assert.Equal(t, []int{1}, metrics.waiters, "the cancelling run's task still waits")
 }
 
+// failStalledUnderLock does for runID what the attempt reconcile does for a
+// run it listed as stalled: in one transaction it locks the run, fails it as
+// stalled when the re-check finds it still is, and saves it with its events.
+// It reports whether the run was failed.
+func failStalledUnderLock(t *testing.T, db *sqlx.DB, tenant string, runID uuid.UUID) bool {
+	t.Helper()
+	ctx := context.Background()
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(context.Background(), `DELETE FROM state_outbox WHERE aggregate_id = $1`, runID)
+	})
+	var stalled bool
+	inUoW(t, db, func(u *postgres.PostgresUnitOfWork) {
+		r, err := u.Run().LoadRunForUpdate(ctx, runID)
+		require.NoError(t, err)
+		var events []run.DomainEvent
+		events, stalled, err = r.FailStalled(ctx, u.TaskCollection(tenant), u.Clock().Now())
+		require.NoError(t, err)
+		if !stalled {
+			return
+		}
+		require.NoError(t, u.Run().SaveRun(ctx, r))
+		require.NoError(t, u.Outbox().Append(ctx, events, uuid.Nil))
+	})
+	return stalled
+}
+
+// The stall listing names a run whose task waits on a node no task holds at
+// that moment; before the reconcile takes the run's lock, the lease waker
+// grants the node to an older waiter of another run. The re-check under the
+// lock counts the waiting task as in flight, as the listing would now, so the
+// run is not failed and its task keeps waiting.
+func TestFailStalled_AWaitOnANodeGrantedToAnotherRunAfterTheListingIsNotFailed(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	lf := newLeaseFlow(t, db)
+	cron := lf.cronHoldingTableA(t)
+	older := lf.triggerSingleNode(t, lf.tableA)
+	younger := lf.triggerSingleNode(t, lf.tableA)
+	_, err := db.Exec(`UPDATE scheduler_tracker SET last_heartbeat_at = now() - interval '10 minutes' WHERE schedule_id = $1`,
+		younger.r.ScheduleID())
+	require.NoError(t, err)
+	attempts := postgres.NewAttemptRepository(db, nil, lf.tenant)
+	listed, err := attempts.StalledRuns(ctx, run.StallAfter, 500)
+	require.NoError(t, err)
+	require.NotContains(t, listed, younger.r.ScheduleID(), "the cron task holding table_a is in flight")
+
+	cron.report(t, string(leaseKey(lf.tableA)), 0, run.AttemptSucceeded, "")
+	listed, err = attempts.StalledRuns(ctx, run.StallAfter, 500)
+	require.NoError(t, err)
+	require.Contains(t, listed, younger.r.ScheduleID(), "with table_a free, the younger run waits on nothing in flight")
+	require.NoError(t, lf.waker(&leaseMetrics{}, discardLogger()).Pass(ctx))
+	lease, held := leaseOn(t, db, lf.tenant, lf.tableA)
+	require.True(t, held)
+	require.Equal(t, heldLease{TaskID: older.taskID(lf.tableA), RunID: older.r.ScheduleID()}, lease,
+		"the waker granted table_a to the older waiter")
+
+	assert.False(t, failStalledUnderLock(t, db, lf.tenant, younger.r.ScheduleID()),
+		"under the lock the younger run waits behind the older run's task in flight")
+	status, _ := younger.run(t)
+	assert.Equal(t, run.SchedulerStatusRunning, status)
+	requireWaiting(t, db, younger.taskID(lf.tableA), "the waiting task is not skipped")
+}
+
 // A pass deletes the lease of a task that ended without releasing it, counts
 // and logs the repair as an error, and grants the freed node to its oldest
 // waiter in the same pass; the waiter gauge counts the task still waiting. A

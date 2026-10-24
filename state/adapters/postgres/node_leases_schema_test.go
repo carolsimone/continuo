@@ -6,6 +6,7 @@ import (
 	"time"
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
@@ -141,13 +142,14 @@ func TestNodeLeasesSchema_ADeleteOfNoRowDoesNotNotify(t *testing.T) {
 	assertNoNotificationFrom(t, listener, pid, "besides the release's")
 }
 
-// listenForReleases returns a listener on the node_leases channel, closed when
-// the test ends.
+// listenForReleases returns a listener on NodeLeasesChannel, the channel the
+// lease waker listens on, closed when the test ends. The trigger's notification
+// arriving there pins the channel name to the trigger's pg_notify.
 func listenForReleases(t *testing.T) *pq.Listener {
 	t.Helper()
 	listener := pq.NewListener(pkgconfig.LoadPostgres(&pkgconfig.Validator{}).DSN(), 10*time.Millisecond, time.Second, nil)
 	t.Cleanup(func() { _ = listener.Close() })
-	require.NoError(t, listener.Listen("node_leases"))
+	require.NoError(t, listener.Listen(postgres.NodeLeasesChannel))
 	return listener
 }
 
@@ -162,7 +164,7 @@ func awaitNotificationFrom(t *testing.T, listener *pq.Listener, pid int, when st
 		select {
 		case n := <-listener.Notify:
 			if n != nil && n.BePid == pid {
-				assert.Equal(t, "node_leases", n.Channel)
+				assert.Equal(t, postgres.NodeLeasesChannel, n.Channel)
 				return
 			}
 		case <-deadline:

@@ -228,13 +228,14 @@ func (r *Run) finalizeWhenEveryTaskEnded(ctx context.Context, tasks TaskCollecti
 	return r.finalize(outcome, now), nil
 }
 
-// FailStalled ends r when it is active, has no attempt in flight (no task
-// dispatched, queued, running or stopping) and has made no progress for
-// StallAfter: only a defect in state leaves a run so. A cancelling run ends
-// cancelled, with no failure reason: its cancel asked for nothing more. Any
-// other run fails as stalled, its pending tasks skipped and counted terminal.
-// It reports whether it ended the run; a run that has ended, has an attempt in
-// flight or moved within StallAfter is left as it is.
+// FailStalled ends r when it is active, has no work in flight (HasInFlight: no
+// task dispatched, queued, running or stopping, and no task waiting for a node
+// lease whose holder is) and has made no progress for StallAfter: only a
+// defect in state leaves a run so. A cancelling run ends cancelled, with no
+// failure reason: its cancel asked for nothing more. Any other run fails as
+// stalled, its pending tasks skipped and counted terminal. It reports whether
+// it ended the run; a run that has ended, has work in flight or moved within
+// StallAfter is left as it is.
 func (r *Run) FailStalled(ctx context.Context, tasks TaskCollection, now time.Time) ([]DomainEvent, bool, error) {
 	if !r.IsActive() || r.lastHeartbeatAt == nil || now.Sub(*r.lastHeartbeatAt) < StallAfter {
 		return nil, false, nil
