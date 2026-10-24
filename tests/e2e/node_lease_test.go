@@ -3,6 +3,8 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -33,20 +35,23 @@ const (
 //
 //	TriggerSchedule(e2e-schedule) → the cron run's table_a takes the node's
 //	write lease when it is dispatched, and runs
-//	→ TriggerSingleNodeRun(table_a) while it runs → the single-node run's task
-//	  is pending: GetTaskByScheduleAndNode and GetRunGraph show wait_reason
-//	  node_lease, the cron run as the run it waits on, and since when
+//	→ TriggerSingleNodeRun(table_a) while it holds the lease → the single-node
+//	  run's task is pending: GetTaskByScheduleAndNode and GetRunGraph show
+//	  wait_reason node_lease, the cron run as the run it waits on, and since
+//	  when
 //	→ the cron run's table_a succeeds and releases the lease in that report's
 //	  transaction → the lease waker grants the node to the waiting task and
 //	  dispatches it
-//	→ the single-node run succeeds, and the pod of its table_a started only
-//	  once the cron run's pod of table_a had finished.
+//	→ the single-node run succeeds and releases the lease in turn, and the pod
+//	  of its table_a started only once the cron run's pod of table_a had
+//	  finished. Neither lease is left for the waker's repair to delete.
 //
-// The single-node run is created while the cron run's table_a is running, so
-// the test depends on that task running for longer than the trigger and the
-// two reads take: a dbt model's container runs for several seconds, the reads
-// a few milliseconds. When the cron run's table_a has already ended by then,
-// the failure says so.
+// The single-node run is created while the cron run's table_a holds the
+// node's lease (from its dispatch until the report that ends it), so the test
+// depends on that task holding it for longer than the trigger and the two
+// reads take: a dbt model's container runs for several seconds, the reads a
+// few milliseconds. When the cron run's table_a has already ended by then, the
+// failure says so.
 func TestE2E_NodeLease_ASingleNodeRunWaitsForTheScheduledWriter(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -68,6 +73,7 @@ func TestE2E_NodeLease_ASingleNodeRunWaitsForTheScheduledWriter(t *testing.T) {
 
 	waitForStateLiveRelease(t, ctx, clients, seedTopology(t, ctx, clients))
 	waitForNodeUnleased(t, ctx, clients, leaseNodeKey)
+	repairedBefore := leasesRepaired(t)
 
 	// ── The cron run's table_a takes the lease and runs ──────────────────────
 	cronResp, err := clients.stateClient.TriggerSchedule(ctx, &statev1.TriggerScheduleRequest{ScheduleName: testScheduleName})
@@ -77,10 +83,8 @@ func TestE2E_NodeLease_ASingleNodeRunWaitsForTheScheduledWriter(t *testing.T) {
 	t.Logf("cron run %s of %s triggered", cronID, testScheduleName)
 	cronTaskID := taskOfRun(t, ctx, clients, cronID, leaseTable)
 
-	cronStatus := waitForTaskRunningOrEnded(t, ctx, clients, cronTaskID, "the cron run's "+leaseTable, 8*time.Minute)
-	require.Equal(t, "running", cronStatus,
-		"the cron run's %s ended before the test saw it running, so no run could be created while it wrote the node", leaseTable)
-	t.Logf("the cron run's %s is running", leaseTable)
+	cronStatus := waitForLeaseHeldBy(t, ctx, clients, leaseNodeKey, cronTaskID, "the cron run's "+leaseTable, 8*time.Minute)
+	t.Logf("the cron run's %s holds the node's lease (task status %s)", leaseTable, cronStatus)
 
 	// ── A single-node run of the same node waits for it ──────────────────────
 	snResp, err := clients.stateClient.TriggerSingleNodeRun(ctx, &statev1.TriggerSingleNodeRunRequest{
@@ -127,6 +131,7 @@ func TestE2E_NodeLease_ASingleNodeRunWaitsForTheScheduledWriter(t *testing.T) {
 	// ── The cron run's success frees the node; the waiting task dispatches ──
 	cronEnded := waitForTaskEnded(t, ctx, clients, cronTaskID, "the cron run's "+leaseTable, 3*time.Minute)
 	require.Equal(t, "succeeded", cronEnded.status, "the cron run's %s succeeds", leaseTable)
+	requireNoLeaseOf(t, ctx, clients, cronTaskID, "the report that ended the cron run's "+leaseTable+" released its lease")
 
 	// The report that ended the cron task released the lease, and the waker,
 	// woken by that release or by its pass every 60 s, grants the node.
@@ -151,6 +156,7 @@ func TestE2E_NodeLease_ASingleNodeRunWaitsForTheScheduledWriter(t *testing.T) {
 	require.NoError(t, err, "the single-node run's task carries its id")
 	snEnded := waitForTaskEnded(t, ctx, clients, snTaskID, "the single-node run's "+leaseTable, 5*time.Minute)
 	require.Equal(t, "succeeded", snEnded.status, "the single-node run's %s succeeds", leaseTable)
+	requireNoLeaseOf(t, ctx, clients, snTaskID, "the report that ended the single-node run's "+leaseTable+" released its lease")
 	verifySchedulerSucceeded(t, ctx, clients, snID)
 
 	// ── The two Jobs ran one after the other ─────────────────────────────────
@@ -177,7 +183,33 @@ func TestE2E_NodeLease_ASingleNodeRunWaitsForTheScheduledWriter(t *testing.T) {
 	require.NoError(t, clients.stateDB.GetContext(ctx, &held,
 		`SELECT count(*) FROM node_leases WHERE tenant_id = $1 AND node_key = $2`, events.DefaultTenantID, leaseNodeKey))
 	require.Zero(t, held, "both tasks of %s released the node's lease when they ended", leaseTable)
+	require.Equal(t, repairedBefore, leasesRepaired(t),
+		"the lease waker repaired no lease: every task released its own in the report that ended it")
 	t.Logf("✅ both runs succeeded and no task holds %s's lease", leaseTable)
+}
+
+// leasesRepairedPattern captures the value of state's
+// continuo_node_leases_repaired_total, with or without labels.
+var leasesRepairedPattern = regexp.MustCompile(`(?m)^continuo_node_leases_repaired_total(?:\{[^}]*\})? (\S+)$`)
+
+// leasesRepaired returns state's continuo_node_leases_repaired_total: how many
+// leases its lease waker has deleted because their task ended without
+// releasing them.
+func leasesRepaired(t *testing.T) float64 {
+	t.Helper()
+	m := leasesRepairedPattern.FindStringSubmatch(scrapeMetrics(t, getEnv("STATE_HOST", "state")))
+	require.NotNil(t, m, "state exposes no continuo_node_leases_repaired_total")
+	v, err := strconv.ParseFloat(m[1], 64)
+	require.NoError(t, err, "parse continuo_node_leases_repaired_total %q", m[1])
+	return v
+}
+
+// requireNoLeaseOf fails the test when taskID holds a node lease.
+func requireNoLeaseOf(t *testing.T, ctx context.Context, clients *testClients, taskID uuid.UUID, msg string) {
+	t.Helper()
+	var held int
+	require.NoError(t, clients.stateDB.GetContext(ctx, &held, `SELECT count(*) FROM node_leases WHERE task_id = $1`, taskID))
+	require.Zero(t, held, msg)
 }
 
 // waitForNodeUnleased waits until no task holds the write lease on nodeKey, so
@@ -208,26 +240,43 @@ func taskStatus(ctx context.Context, clients *testClients, taskID uuid.UUID) (st
 	return status, err
 }
 
-// waitForTaskRunningOrEnded waits until taskID's task is running or has ended,
-// and returns its status. The task is read four times a second, so a task that
-// runs for a few seconds is seen running.
-func waitForTaskRunningOrEnded(t *testing.T, ctx context.Context, clients *testClients, taskID uuid.UUID, label string, timeout time.Duration) string {
+// waitForLeaseHeldBy waits until taskID holds the write lease on nodeKey while
+// it is dispatched, queued or running, and returns its status then. The task
+// takes the lease in the transaction that dispatches it, so it holds it from
+// dispatched on, whether or not a read ever sees it running. A task that ends
+// first fails the test: no run could then be created while it writes the node.
+func waitForLeaseHeldBy(t *testing.T, ctx context.Context, clients *testClients, nodeKey string, taskID uuid.UUID, label string, timeout time.Duration) string {
 	t.Helper()
-	status := "(not read)"
+	status, holder := "(not read)", "(not read)"
+	ended := false
 	pollUntilDescribed(t, ctx, timeout, 250*time.Millisecond, func() (bool, error) {
-		cur, err := taskStatus(ctx, clients, taskID)
-		if err != nil {
+		var row struct {
+			Status string `db:"status"`
+			Holder string `db:"holder"`
+		}
+		if err := clients.stateDB.GetContext(ctx, &row, `
+			SELECT t.status, COALESCE(l.task_id::text, '') AS holder
+			  FROM task_tracker t
+			  LEFT JOIN node_leases l ON l.tenant_id = $2 AND l.node_key = $3
+			 WHERE t.task_id = $1`, taskID, events.DefaultTenantID, nodeKey); err != nil {
 			return false, err
 		}
-		status = cur
-		switch cur {
-		case "running", "succeeded", "failed", "cancelled", "skipped":
+		status, holder = row.Status, row.Holder
+		switch status {
+		case "succeeded", "failed", "cancelled", "skipped":
+			ended = true
 			return true, nil
+		case "dispatched", "queued", "running":
+			return holder == taskID.String(), nil
 		}
 		return false, nil
 	}, func() string {
-		return fmt.Sprintf("%s (task %s) did not start running within %s; last status %q", label, taskID, timeout, status)
+		return fmt.Sprintf("%s (task %s) did not hold the lease on %s within %s; last status %q, lease holder %q",
+			label, taskID, nodeKey, timeout, status, holder)
 	})
+	require.False(t, ended,
+		"%s (task %s) ended %s before the test saw it hold the lease on %s, so no run could be created while it wrote the node",
+		label, taskID, status, nodeKey)
 	return status
 }
 
@@ -270,8 +319,10 @@ type podInterval struct {
 }
 
 // taskPodInterval waits until every pod of taskID has stopped for good (phase
-// Succeeded or Failed) and returns the interval they ran in. A container that
-// never ran has no termination time and does not extend the interval.
+// Succeeded or Failed) and each Succeeded pod reports a terminated container
+// with its finish time, and returns the interval they ran in. A container of a
+// Failed pod that never ran has no termination time and does not extend the
+// interval.
 func taskPodInterval(t *testing.T, ctx context.Context, taskID uuid.UUID, label string) podInterval {
 	t.Helper()
 	selector := "task-id=" + taskID.String()
@@ -299,17 +350,22 @@ func taskPodInterval(t *testing.T, ctx context.Context, taskID uuid.UUID, label 
 			if cur.start.IsZero() || pod.Status.StartTime.Before(cur.start) {
 				cur.start = *pod.Status.StartTime
 			}
+			var podFinish time.Time
 			for _, statuses := range [][]k8sContainerStatus{pod.Status.InitContainerStatuses, pod.Status.ContainerStatuses} {
 				for _, c := range statuses {
-					if c.State.Terminated != nil && c.State.Terminated.FinishedAt.After(cur.finish) {
-						cur.finish = c.State.Terminated.FinishedAt
+					if c.State.Terminated != nil && c.State.Terminated.FinishedAt.After(podFinish) {
+						podFinish = c.State.Terminated.FinishedAt
 					}
 				}
 			}
+			if pod.Status.Phase == "Succeeded" && podFinish.IsZero() {
+				lastSeen = fmt.Sprintf("pod %s succeeded but reports no terminated container with a finish time", pod.Metadata.Name)
+				return false, nil
+			}
+			if podFinish.After(cur.finish) {
+				cur.finish = podFinish
+			}
 			cur.pods = append(cur.pods, pod.Metadata.Name)
-		}
-		if cur.finish.Before(cur.start) {
-			cur.finish = cur.start
 		}
 		interval = cur
 		return true, nil
