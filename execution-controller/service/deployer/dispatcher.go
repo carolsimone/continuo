@@ -63,6 +63,10 @@ type DispatcherConfig struct {
 	// StopMetrics counts the attempts a launch reports stopped; nil counts
 	// nothing.
 	StopMetrics ports.StopMetrics
+	// Terminator deletes the Job a launch of a fenced run's attempt adopted,
+	// once the launch commits; nil leaves it to the observer, which deletes
+	// the Job of a terminating deployment on its next observation of it.
+	Terminator ports.JobTerminator
 }
 
 // Dispatcher admits deployments under a concurrency cap. The K8s deploy is a
@@ -78,6 +82,7 @@ type Dispatcher struct {
 	newCancelled  CancelledRepoFactory
 	waker         outbox.Waker
 	stopMetrics   ports.StopMetrics
+	terminator    ports.JobTerminator
 	maxConcurrent int
 	maxMessageLen int
 	logger        *slog.Logger
@@ -88,8 +93,9 @@ type Dispatcher struct {
 }
 
 // NewDispatcher builds a Dispatcher; jobs reads a Job from the Kubernetes API
-// when the last try to create it failed without a sure answer, and
-// newCancelled reads the run fence a launch checks under its row lock.
+// when the last try to create it failed without a sure answer, and before a
+// fenced run's attempt is stopped, and newCancelled reads the run fence a
+// launch checks under its row lock.
 func NewDispatcher(
 	db *sqlx.DB,
 	deployer deploy.Deployer,
@@ -124,6 +130,7 @@ func NewDispatcher(
 		newCancelled:  newCancelled,
 		waker:         cfg.Waker,
 		stopMetrics:   cfg.StopMetrics,
+		terminator:    cfg.Terminator,
 		maxConcurrent: maxConcurrent,
 		maxMessageLen: cfg.ErrorMessageMaxLen,
 		logger:        logger,
@@ -223,10 +230,9 @@ func (d *Dispatcher) claim(ctx context.Context) ([]uuid.UUID, error) {
 // longer reserved or another launcher holds it. Job names are deterministic
 // and an existing Job counts as created, so launching a deployment whose Job
 // an interrupted launch already created is safe. A task's attempt whose run
-// is fenced, read under the row lock, creates no Job: it ends stopped and is
-// reported stopped, and is counted once the launch commits. A fence taken
-// while the launch holds the row waits for the row, and stops it and its Job
-// once the launch commits.
+// is fenced, read under the row lock, creates no Job (stopFenced). A fence
+// taken while the launch holds the row waits for the row, and stops it and
+// its Job once the launch commits.
 func (d *Dispatcher) launch(ctx context.Context, id uuid.UUID) error {
 	tx, err := d.db.BeginTxx(ctx, nil)
 	if err != nil {
@@ -247,8 +253,9 @@ func (d *Dispatcher) launch(ctx context.Context, id uuid.UUID) error {
 	if err != nil {
 		return err
 	}
+	effect := model.StopNone
 	if fenced {
-		err = d.stopFenced(ctx, repo, outboxRepo, dep)
+		effect, err = d.stopFenced(ctx, repo, outboxRepo, dep)
 	} else {
 		err = d.dispatchOne(ctx, repo, outboxRepo, d.newAggRepo(tx), dep)
 	}
@@ -258,10 +265,29 @@ func (d *Dispatcher) launch(ctx context.Context, id uuid.UUID) error {
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit launch: %w", err)
 	}
-	if fenced && d.stopMetrics != nil {
-		d.stopMetrics.AttemptStopped()
-	}
+	d.afterFencedLaunch(ctx, dep, effect)
 	return nil
+}
+
+// afterFencedLaunch acts, once a fenced launch committed, on what its stop
+// did: an attempt reported stopped is counted, and the Job an attempt adopted
+// is deleted. A failed deletion is logged and left to the observer, which
+// deletes the Job of a terminating deployment again on its next observation.
+func (d *Dispatcher) afterFencedLaunch(ctx context.Context, dep *model.Deployment, effect model.StopEffect) {
+	switch effect {
+	case model.StopEnded:
+		if d.stopMetrics != nil {
+			d.stopMetrics.AttemptStopped()
+		}
+	case model.StopTerminate:
+		if d.terminator == nil {
+			return
+		}
+		if err := d.terminator.DeleteJob(ctx, dep.JobName()); err != nil {
+			d.logger.Warn("Deleting the Job a cancelled run's attempt adopted failed — the observer deletes it again",
+				"deployment_id", dep.ID(), "job_name", dep.JobName(), "error", err)
+		}
+	}
 }
 
 // fenced reports whether dep is a task's attempt whose run is fenced.
@@ -280,19 +306,42 @@ func (d *Dispatcher) fenced(ctx context.Context, tx outbox.Executor, dep *model.
 	return fenced, nil
 }
 
-// stopFenced ends a reserved attempt of a fenced run without creating its
-// Job: done with the outcome stopped, reported stopped.
-func (d *Dispatcher) stopFenced(ctx context.Context, repo repository.DeploymentRepository, outboxRepo outbox.Repository, dep *model.Deployment) error {
-	if _, err := dep.Stop(d.now()); err != nil {
-		return err
-	}
-	if err := reports.Write(ctx, outboxRepo, dep, pkgmodel.AttemptStatusStopped, ""); err != nil {
-		return fmt.Errorf("report the stopped attempt: %w", err)
-	}
+// stopFenced stops a reserved attempt of a fenced run without creating its
+// Job. The row records no Job, yet a launch lost before its commit may have
+// created one, so the attempt's Job is read from the Kubernetes API first: a
+// Job that exists is adopted and the row moves to terminating, its Job to be
+// deleted once the launch commits and the attempt reported stopped by the
+// observer once its pods are gone; with neither a Job nor an unfinished pod
+// the row ends done with the outcome stopped and is reported stopped; an
+// unfinished pod without its Job leaves the row reserved and unsaved while
+// the pod can still run, and the fence that state's next cancel sends stops
+// it. A read that fails fails the launch, which leaves the row reserved.
+func (d *Dispatcher) stopFenced(ctx context.Context, repo repository.DeploymentRepository, outboxRepo outbox.Repository, dep *model.Deployment) (model.StopEffect, error) {
 	cmd := dep.Command()
-	d.logger.Info("A reserved attempt of a cancelled run is stopped and creates no Job",
-		"deployment_id", dep.ID(), "run_id", cmd.ScheduleID, "task_id", cmd.TaskID, "attempt", cmd.Attempt)
-	return repo.Save(ctx, dep)
+	live, err := d.jobs.ObserveLive(ctx, dep.JobName())
+	if err != nil {
+		return model.StopNone, fmt.Errorf("read Job %s of a cancelled run's attempt: %w", dep.JobName(), err)
+	}
+	effect, err := dep.StopBeforeLaunch(d.now(), model.DecideFenced(live.RunsAttempt(cmd.TaskID, cmd.Attempt), live.HasUnfinishedPod()))
+	if err != nil {
+		return model.StopNone, err
+	}
+	logArgs := []any{"deployment_id", dep.ID(), "run_id", cmd.ScheduleID, "task_id", cmd.TaskID, "attempt", cmd.Attempt,
+		"job_name", dep.JobName()}
+	switch effect {
+	case model.StopEnded:
+		if err := reports.Write(ctx, outboxRepo, dep, pkgmodel.AttemptStatusStopped, ""); err != nil {
+			return model.StopNone, fmt.Errorf("report the stopped attempt: %w", err)
+		}
+		d.logger.Info("A reserved attempt of a cancelled run is stopped and creates no Job", logArgs...)
+	case model.StopTerminate:
+		d.logger.Warn("A reserved attempt of a cancelled run already has its Job — the Job is adopted and stopped", logArgs...)
+	case model.StopAwaitPod:
+		d.logger.Error("A reserved attempt of a cancelled run has no Job, but a pod of it has not finished — "+
+			"nothing is reported until the pod is gone; state asks again", logArgs...)
+		return effect, nil
+	}
+	return effect, repo.Save(ctx, dep)
 }
 
 func (d *Dispatcher) dispatchOne(ctx context.Context, repo repository.DeploymentRepository, outboxRepo outbox.Repository, aggRepo repository.ValidationAggregateRepository, dep *model.Deployment) error {

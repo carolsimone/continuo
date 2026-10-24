@@ -335,7 +335,7 @@ func main() {
 		},
 		cfg.MaxConcurrentJobs, logger,
 		deployer.DispatcherConfig{Tick: 5 * time.Second, BatchSize: 50, Waker: dispatcherWaker,
-			ErrorMessageMaxLen: cfg.ErrorMessageMaxLength, StopMetrics: observerMetrics},
+			ErrorMessageMaxLen: cfg.ErrorMessageMaxLength, StopMetrics: observerMetrics, Terminator: jobControl},
 	)
 
 	// Nothing creates or observes a Job until both caches have listed every

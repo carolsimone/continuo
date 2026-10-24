@@ -416,12 +416,15 @@ func (d *Deployment) Observe(f AttemptFacts) bool {
 }
 
 // BeginTermination records why execution-controller ends the attempt itself
-// (a start error or the start timeout) and moves the deployment to
-// terminating, where it keeps its slot until the attempt's pods are gone. A
-// terminating deployment stays as it is: the first reason stands.
+// (a start error or the start timeout) and moves the starting or running
+// deployment to terminating, where it keeps its slot until the attempt's pods
+// are gone. A terminating deployment stays as it is: the first reason stands.
 func (d *Deployment) BeginTermination(reason pkgmodel.FailureReason, message string) error {
 	if d.status == StatusTerminating {
 		return nil
+	}
+	if d.status != StatusStarting && d.status != StatusRunning {
+		return fmt.Errorf("deployment %s has no Job to end in status %q", d.id, d.status)
 	}
 	if err := d.moveTo(StatusTerminating); err != nil {
 		return err
@@ -441,35 +444,43 @@ const (
 	// StopNone: the deployment is already ending, or has ended; the stop adds
 	// nothing beyond being recorded on an open row.
 	StopNone StopEffect = iota
-	// StopEnded: a pending or reserved deployment, which has no Job, ended
-	// done with the outcome stopped; report it now.
+	// StopEnded: a pending or reserved deployment whose attempt has neither a
+	// Job nor a pod left ended done with the outcome stopped; report it now.
 	StopEnded
-	// StopTerminate: a starting or running deployment moved to terminating;
+	// StopTerminate: a deployment whose Job exists (starting, running, or
+	// pending or reserved with a Job no launch recorded) moved to terminating;
 	// delete its Job once the change is committed.
 	StopTerminate
+	// StopAwaitPod: a pending or reserved deployment whose attempt has no Job
+	// but a pod that has not finished is left as it is: nothing is recorded or
+	// reported while the pod can still run, and the next stop request looks
+	// again.
+	StopAwaitPod
 )
 
+// AwaitsLaunch reports whether the deployment waits for the launch that
+// creates its Job: it is pending or reserved, and records no Job. A Job of
+// its attempt may exist all the same, created by a launch that was lost
+// before it committed.
+func (d *Deployment) AwaitsLaunch() bool {
+	return d.status == StatusPending || d.status == StatusReserved
+}
+
 // Stop records that state asked the attempt to stop, as the time of the first
-// request. A deployment with no Job (pending or reserved) ends done, outcome
-// stopped, at once; one whose Job exists (starting or running) moves to
+// request. A deployment whose Job exists (starting or running) moves to
 // terminating, where it keeps its slot until its pods are gone; a terminating
 // one stays as it is, keeping the reason it was ended for. A deployment that
-// has ended records nothing. Only a production deployment, which is one
-// attempt of a task, can be stopped.
+// has ended records nothing. A deployment that awaits its launch is refused:
+// whether a Job of its attempt exists is not recorded, so StopBeforeLaunch
+// stops it from a look for that Job. Only a production deployment, which is
+// one attempt of a task, can be stopped.
 func (d *Deployment) Stop(now time.Time) (StopEffect, error) {
 	if d.mode != ModeProduction {
 		return StopNone, fmt.Errorf("Stop called on %s deployment %s; only a task's attempt is stopped", d.mode, d.id)
 	}
 	switch d.status {
 	case StatusPending, StatusReserved:
-		if err := d.moveTo(StatusDone); err != nil {
-			return StopNone, err
-		}
-		d.recordStopRequest(now)
-		d.outcome = OutcomeStopped
-		ts := now
-		d.outcomeAt = &ts
-		return StopEnded, nil
+		return StopNone, fmt.Errorf("deployment %s awaits its launch; StopBeforeLaunch stops it once its Job is looked for", d.id)
 	case StatusStarting, StatusRunning:
 		if err := d.moveTo(StatusTerminating); err != nil {
 			return StopNone, err
@@ -480,6 +491,46 @@ func (d *Deployment) Stop(now time.Time) (StopEffect, error) {
 		d.recordStopRequest(now)
 	}
 	return StopNone, nil
+}
+
+// StopBeforeLaunch stops a deployment that awaits its launch from found, what
+// a look for its attempt's Job and pods showed (DecideFenced). A Job of the
+// attempt exists (StopAdopted): the deployment adopts it, recorded as
+// deployed now, and moves to terminating with the stop recorded, keeping a
+// slot until the Job's pods are gone. Neither a Job nor an unfinished pod
+// (StoreStopped): it ends done, outcome stopped, at once. An unfinished pod
+// without its Job (AwaitFencedPod): nothing is recorded. Only a production
+// deployment that awaits its launch is stopped here.
+func (d *Deployment) StopBeforeLaunch(now time.Time, found FencedAction) (StopEffect, error) {
+	if d.mode != ModeProduction {
+		return StopNone, fmt.Errorf("StopBeforeLaunch called on %s deployment %s; only a task's attempt is stopped", d.mode, d.id)
+	}
+	if !d.AwaitsLaunch() {
+		return StopNone, fmt.Errorf("deployment %s is %q; only one that awaits its launch is stopped before it", d.id, d.status)
+	}
+	switch found {
+	case StopAdopted:
+		if err := d.moveTo(StatusTerminating); err != nil {
+			return StopNone, err
+		}
+		ts := now
+		d.deployedAt = &ts
+		d.errorMessage = nil
+		d.recordStopRequest(now)
+		return StopTerminate, nil
+	case AwaitFencedPod:
+		return StopAwaitPod, nil
+	case StoreStopped:
+		if err := d.moveTo(StatusDone); err != nil {
+			return StopNone, err
+		}
+		d.recordStopRequest(now)
+		d.outcome = OutcomeStopped
+		ts := now
+		d.outcomeAt = &ts
+		return StopEnded, nil
+	}
+	return StopNone, fmt.Errorf("deployment %s: no fenced action %d", d.id, found)
 }
 
 func (d *Deployment) recordStopRequest(now time.Time) {

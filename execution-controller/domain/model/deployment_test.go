@@ -490,28 +490,118 @@ func TestDeployment_AwaitingResult(t *testing.T) {
 	assert.False(t, d.AwaitingResult(), "done with its outcome recorded")
 }
 
-// A stop on a row that has not created its Job ends it at once: the attempt
-// never ran, so it is done with the outcome stopped and holds no slot.
-func TestDeployment_StopEndsAPendingOrReservedRow(t *testing.T) {
+// A row waiting for its launch, pending or reserved, records no Job, yet one
+// of its attempt may exist (a launch that created it was lost before its
+// commit), so Stop refuses it: StopBeforeLaunch stops it from a look for that
+// Job.
+func TestDeployment_StopRefusesARowWaitingForItsLaunch(t *testing.T) {
 	now := time.Date(2026, 10, 23, 9, 0, 0, 0, time.UTC)
+	for _, reserve := range []bool{false, true} {
+		d := productionDeployment(t)
+		if reserve {
+			require.NoError(t, d.Reserve())
+		}
+		want := d.Status()
+		assert.True(t, d.AwaitsLaunch())
 
-	pending := productionDeployment(t)
-	effect, err := pending.Stop(now)
-	require.NoError(t, err)
-	assert.Equal(t, model.StopEnded, effect)
-	assert.Equal(t, model.StatusDone, pending.Status())
-	assert.Equal(t, "stopped", pending.Outcome())
-	assert.True(t, pending.HasOutcome())
-	assert.Equal(t, &now, pending.Facts().StopRequestedAt)
-	assert.False(t, pending.Status().InFlight())
+		_, err := d.Stop(now)
 
-	reserved := productionDeployment(t)
-	require.NoError(t, reserved.Reserve())
-	effect, err = reserved.Stop(now)
-	require.NoError(t, err)
-	assert.Equal(t, model.StopEnded, effect)
-	assert.Equal(t, model.StatusDone, reserved.Status())
-	assert.Equal(t, "stopped", reserved.Outcome())
+		require.Error(t, err, "reserved=%v", reserve)
+		assert.Equal(t, want, d.Status())
+		assert.Nil(t, d.Facts().StopRequestedAt)
+	}
+}
+
+// A row waiting for its launch whose attempt has neither a Job nor a pod
+// left ends at once: the attempt never ran, so it is done with the outcome
+// stopped and holds no slot.
+func TestDeployment_StopBeforeLaunchEndsARowWithNoJob(t *testing.T) {
+	now := time.Date(2026, 10, 23, 9, 0, 0, 0, time.UTC)
+	for _, reserve := range []bool{false, true} {
+		d := productionDeployment(t)
+		if reserve {
+			require.NoError(t, d.Reserve())
+		}
+
+		effect, err := d.StopBeforeLaunch(now, model.StoreStopped)
+
+		require.NoError(t, err)
+		assert.Equal(t, model.StopEnded, effect, "reserved=%v", reserve)
+		assert.Equal(t, model.StatusDone, d.Status())
+		assert.Equal(t, "stopped", d.Outcome())
+		assert.True(t, d.HasOutcome())
+		assert.Equal(t, &now, d.Facts().StopRequestedAt)
+		assert.False(t, d.Status().InFlight())
+		assert.Nil(t, d.DeployedAt())
+	}
+}
+
+// A row waiting for its launch whose attempt's Job exists adopts the Job: it
+// moves to terminating with the stop recorded and the Job recorded as
+// deployed, holding a slot until the Job's pods are gone, and the Job is to
+// be deleted.
+func TestDeployment_StopBeforeLaunchAdoptsAnExistingJob(t *testing.T) {
+	now := time.Date(2026, 10, 23, 9, 0, 0, 0, time.UTC)
+	for _, reserve := range []bool{false, true} {
+		d := productionDeployment(t)
+		if reserve {
+			require.NoError(t, d.Reserve())
+		}
+
+		effect, err := d.StopBeforeLaunch(now, model.StopAdopted)
+
+		require.NoError(t, err)
+		assert.Equal(t, model.StopTerminate, effect, "reserved=%v", reserve)
+		assert.Equal(t, model.StatusTerminating, d.Status())
+		assert.True(t, d.Status().InFlight(), "it holds a slot until its pods are gone")
+		assert.True(t, d.AwaitingResult(), "the observer follows the Job to its end")
+		assert.Equal(t, &now, d.DeployedAt())
+		assert.Equal(t, &now, d.Facts().StopRequestedAt)
+		assert.False(t, d.HasOutcome(), "the outcome is recorded once the pods are gone")
+		assert.Empty(t, d.Facts().Reason, "a stop is not a failure reason")
+	}
+}
+
+// A row waiting for its launch whose attempt has no Job but a pod that has
+// not finished changes nothing: no stop can be reported while the pod may
+// still run.
+func TestDeployment_StopBeforeLaunchAwaitsAnUnfinishedPod(t *testing.T) {
+	now := time.Date(2026, 10, 23, 9, 0, 0, 0, time.UTC)
+	for _, reserve := range []bool{false, true} {
+		d := productionDeployment(t)
+		if reserve {
+			require.NoError(t, d.Reserve())
+		}
+		want := d.Status()
+
+		effect, err := d.StopBeforeLaunch(now, model.AwaitFencedPod)
+
+		require.NoError(t, err)
+		assert.Equal(t, model.StopAwaitPod, effect, "reserved=%v", reserve)
+		assert.Equal(t, want, d.Status())
+		assert.Nil(t, d.Facts().StopRequestedAt, "nothing is recorded")
+		assert.False(t, d.HasOutcome())
+	}
+}
+
+// StopBeforeLaunch stops only a task's attempt that waits for its launch.
+func TestDeployment_StopBeforeLaunchRefusesAnyOtherRow(t *testing.T) {
+	now := time.Date(2026, 10, 23, 9, 0, 0, 0, time.UTC)
+	started := productionDeployment(t)
+	require.NoError(t, started.Reserve())
+	require.NoError(t, started.MarkStarted(now))
+	assert.False(t, started.AwaitsLaunch())
+	_, err := started.StopBeforeLaunch(now, model.StoreStopped)
+	require.Error(t, err)
+	assert.Equal(t, model.StatusStarting, started.Status())
+
+	v := model.NewValidationDeployment(command.ValidationDeployTask{ReleaseID: "r", NodeID: "n", JobName: "j", ImageTag: "i"}, nil, now, false)
+	_, err = v.StopBeforeLaunch(now, model.StoreStopped)
+	require.Error(t, err)
+	assert.Equal(t, model.StatusPending, v.Status())
+
+	_, err = productionDeployment(t).StopBeforeLaunch(now, model.FencedAction(0))
+	require.Error(t, err, "an unknown action is refused")
 }
 
 // A started row keeps its slot until its pods are gone, so the stop moves it

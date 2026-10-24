@@ -67,14 +67,16 @@ func DecideDispatch(held, laterHeld bool, problem pkgmodel.FailureReason, jobOfA
 }
 
 // FencedAction is what execution-controller does with an attempt of a fenced
-// run that it holds no record of: one a dispatch of the run carries, or one
-// the run's cancel names. No such attempt starts.
+// run whose Job no record holds: one it holds no record of (a dispatch of the
+// run carries it, or the run's cancel names it), or one whose record awaits
+// its launch (pending or reserved). No such attempt starts.
 type FencedAction int
 
 const (
-	// StopAdopted: a Job of the attempt exists; its record is rebuilt from
-	// the command and moved to terminating with the stop recorded, so the Job
-	// is deleted and the attempt reported stopped once its pods are gone.
+	// StopAdopted: a Job of the attempt exists; the record, rebuilt from the
+	// command when there is none, adopts it and moves to terminating with the
+	// stop recorded, so the Job is deleted and the attempt reported stopped
+	// once its pods are gone.
 	StopAdopted FencedAction = iota + 1
 	// AwaitFencedPod: no Job of the attempt exists, but a pod of it has not
 	// finished (its Job was deleted without its pods). Nothing is written
@@ -82,14 +84,14 @@ const (
 	// again.
 	AwaitFencedPod
 	// StoreStopped: neither a Job nor an unfinished pod of the attempt
-	// exists; the attempt is stored done with the outcome stopped and
-	// reported stopped.
+	// exists; the attempt is stored, or its waiting record ends, done with
+	// the outcome stopped, and it is reported stopped.
 	StoreStopped
 )
 
-// DecideFenced decides what an attempt of a fenced run with no record leads
-// to, from whether a Job carrying its task and attempt exists and whether a
-// pod of it has not finished.
+// DecideFenced decides what an attempt of a fenced run whose Job no record
+// holds leads to, from whether a Job carrying its task and attempt exists and
+// whether a pod of it has not finished.
 func DecideFenced(jobOfAttempt, podOfAttemptUnfinished bool) FencedAction {
 	switch {
 	case jobOfAttempt:

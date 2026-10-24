@@ -16,8 +16,10 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/execution-controller/domain/command"
 	"github.com/carolsimone/continuo/execution-controller/domain/event"
+	"github.com/carolsimone/continuo/execution-controller/domain/events"
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	"github.com/carolsimone/continuo/execution-controller/domain/repository"
+	"github.com/carolsimone/continuo/execution-controller/service/handlers"
 	"github.com/carolsimone/continuo/execution-controller/service/outcomes"
 	"github.com/carolsimone/continuo/execution-controller/service/uow"
 	"github.com/carolsimone/continuo/execution-controller/service/validation"
@@ -940,6 +942,68 @@ func TestObserver_ReportsStoppedOnlyOnceThePodIsGone(t *testing.T) {
 	assert.Equal(t, model.StatusDone, got.Status())
 	assert.Equal(t, model.OutcomeStopped, got.Outcome())
 	assert.Equal(t, 1, h.stop.stopped, "the stop is counted once")
+}
+
+// A reserved row whose launch created its Job and was lost before its commit
+// records no Job. The run's cancel, reading the watch over a Kubernetes API,
+// finds the Job, adopts it as terminating and deletes it after its commit;
+// the attempt is reported stopped only once its pod is gone, through the
+// observer.
+func TestObserver_ReportsAFencedReservedRowsJobStoppedOnlyOnceItsPodIsGone(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	runID := uuid.New()
+	const name, ns = "dbt-service-1-ftable-e-launched", "jobs"
+	dep := h.unstartedRow(t, runID.String(), name, false)
+	cmd := dep.Command()
+	labels := map[string]string{"app": "dbt-job", "task-id": cmd.TaskID, "attempt": "0", "schedule-id": cmd.ScheduleID}
+	cs := fake.NewClientset(
+		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Labels: labels}},
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: name + "-q4m8z", Namespace: ns,
+				Labels: map[string]string{"app": "dbt-job", batchv1.JobNameLabel: name, "job-name": name}},
+			Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "dbt-job", Image: "service-1:v42"}}},
+			Status: corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{Name: "dbt-job",
+				State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{StartedAt: metav1.NewTime(h.now.Add(-40 * time.Second))}}}}},
+		})
+	w := h.watchOver(t, cs, ns)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	fence := handlers.NewRunCancelledHandler(w, w, h.o.deps.Terminator, h.stop, logger)
+
+	u := postgres.NewPostgresUnitOfWork(h.db, logger)
+	require.NoError(t, u.Begin(ctx))
+	names, err := fence.Handle(ctx, u, events.RunCancelled{RunID: runID, CancelledBy: "alice"}, uuid.Nil)
+	if err != nil {
+		_ = u.Rollback()
+		require.NoError(t, err)
+	}
+	require.NoError(t, u.Commit())
+	fence.DeleteJobs(ctx, names)
+
+	assert.Equal(t, []string{name}, names)
+	adopted := h.reload(t, name)
+	assert.Equal(t, model.StatusTerminating, adopted.Status())
+	assert.NotNil(t, adopted.Facts().StopRequestedAt)
+	_, err = cs.BatchV1().Jobs(ns).Get(ctx, name, metav1.GetOptions{})
+	assert.True(t, apierrors.IsNotFound(err), "the adopted Job is deleted after the fence commits")
+	require.Eventually(t, func() bool { return !w.Observe(name).JobPresent }, 5*time.Second, 10*time.Millisecond)
+	require.NoError(t, h.o.Process(ctx, name))
+	assert.Empty(t, h.reports(t), "nothing is reported while the pod still runs")
+	assert.Equal(t, model.StatusTerminating, h.reload(t, name).Status())
+
+	require.NoError(t, cs.CoreV1().Pods(ns).Delete(ctx, name+"-q4m8z", metav1.DeleteOptions{}))
+	require.Eventually(t, func() bool { return len(w.Observe(name).Pods) == 0 }, 5*time.Second, 10*time.Millisecond,
+		"the watch sees the pod gone")
+	require.NoError(t, h.o.Process(ctx, name))
+	require.NoError(t, h.o.Process(ctx, name))
+
+	reports := h.reports(t)
+	require.Len(t, reports, 1, "the stop is reported once")
+	assert.Equal(t, "stopped", reports[0]["status"])
+	got := h.reload(t, name)
+	assert.Equal(t, model.StatusDone, got.Status())
+	assert.Equal(t, model.OutcomeStopped, got.Outcome())
+	assert.Equal(t, 1, h.stop.stopped, "the stop is counted once, when it is reported")
 }
 
 // A Job with no record, of a run that is not fenced when the watch first sees

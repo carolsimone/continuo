@@ -20,10 +20,14 @@ import (
 // In one transaction it takes the run's lock exclusively, waiting for every
 // dispatch of the run that may be storing an attempt, inserts the fence,
 // which every gate that starts work reads, then stops each production row of
-// the run that has not ended, waiting for a row a launch holds: a row with no
-// Job yet (pending or reserved) ends stopped and is reported stopped; a row
-// whose Job exists moves to terminating, and its Job is deleted once the
-// transaction commits. Each attempt the cancel names is answered too: a row
+// the run that has not ended, waiting for a row a launch holds. A row whose
+// Job exists moves to terminating, and its Job is deleted once the
+// transaction commits: a starting or running row, or a pending or reserved
+// one whose attempt's Job a look at the cache, then the API, finds (a launch
+// created it and was lost before its commit). A pending or reserved row with
+// neither a Job nor an unfinished pod ends stopped and is reported stopped;
+// one with an unfinished pod but no Job is left for state's next cancel. Each
+// attempt the cancel names is answered too: a row
 // that has ended has its last report sent again; an attempt with no row but a
 // Job has its record rebuilt and moved to terminating; one with neither is
 // stored stopped and reported stopped, unless a pod of it has not finished,
@@ -40,8 +44,9 @@ type RunCancelledHandler struct {
 }
 
 // NewRunCancelledHandler constructs the handler; jobs is the watch's cache and
-// lookup the Kubernetes API behind it, read for the Job of a named attempt
-// that has no row, and terminator deletes the Jobs of the stopped rows.
+// lookup the Kubernetes API behind it, read for the Job of a row that awaits
+// its launch and of a named attempt that has no row, and terminator deletes
+// the Jobs of the stopped rows.
 func NewRunCancelledHandler(jobs ports.JobCache, lookup ports.JobLookup, terminator ports.JobTerminator,
 	metrics ports.StopMetrics, logger *slog.Logger) *RunCancelledHandler {
 	return &RunCancelledHandler{jobs: jobs, lookup: lookup, terminator: terminator, metrics: metrics, logger: logger,
@@ -117,11 +122,17 @@ type attemptOf struct {
 	attempt int
 }
 
-// stopRow stops d, a locked row of the run, and saves it. A row that has not
-// ended is stopped: one with no Job ends stopped and is reported stopped, one
-// whose Job exists moves to terminating and its Job's name is returned for
-// deletion, one terminating keeps its reason and gains the stop. A row that
-// has ended has its last report sent again.
+// stopRow stops d, a locked row of the run, and saves it. A row that awaits
+// its launch (pending or reserved) records no Job, yet a launch lost before
+// its commit may have created one, so its attempt's Job is looked for first
+// (the cache, then a live read): a Job that exists is adopted, the row moves
+// to terminating and the Job's name is returned for deletion; with neither a
+// Job nor an unfinished pod the row ends stopped and is reported stopped; an
+// unfinished pod without its Job leaves the row as it is, unsaved, while the
+// pod can still run, and state's next cancel stops it. A row whose Job exists
+// (starting or running) moves to terminating and its Job's name is returned
+// for deletion; one terminating keeps its reason and gains the stop. A row
+// that has ended has its last report sent again.
 func (h *RunCancelledHandler) stopRow(ctx context.Context, u uow.UnitOfWork, d *model.Deployment, now time.Time) (string, error) {
 	if !d.Status().InFlight() && d.Status() != model.StatusPending {
 		if err := reports.Resend(ctx, u.OutboxRepo(), d); err != nil {
@@ -129,10 +140,21 @@ func (h *RunCancelledHandler) stopRow(ctx context.Context, u uow.UnitOfWork, d *
 		}
 		return "", u.DeploymentsRepo().Save(ctx, d)
 	}
-	effect, err := d.Stop(now)
+	var effect model.StopEffect
+	var err error
+	if d.AwaitsLaunch() {
+		job, obs, lookErr := jobOfAttempt(ctx, h.jobs, h.lookup, d.Command())
+		if lookErr != nil {
+			return "", lookErr
+		}
+		effect, err = d.StopBeforeLaunch(now, model.DecideFenced(job, obs.HasUnfinishedPod()))
+	} else {
+		effect, err = d.Stop(now)
+	}
 	if err != nil {
 		return "", err
 	}
+	cmd := d.Command()
 	job := ""
 	switch effect {
 	case model.StopEnded:
@@ -142,6 +164,11 @@ func (h *RunCancelledHandler) stopRow(ctx context.Context, u uow.UnitOfWork, d *
 		u.AfterCommit(h.metrics.AttemptStopped)
 	case model.StopTerminate:
 		job = d.JobName()
+	case model.StopAwaitPod:
+		h.logger.Error("A row of a cancelled run awaits its launch and has no Job, but a pod of its attempt has not finished — "+
+			"nothing is reported until the pod is gone; state asks again",
+			"run_id", cmd.ScheduleID, "task_id", cmd.TaskID, "attempt", cmd.Attempt, "job_name", d.JobName(), "status", d.Status())
+		return "", nil
 	}
 	return job, u.DeploymentsRepo().Save(ctx, d)
 }

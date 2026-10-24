@@ -52,12 +52,16 @@ func (s Status) InFlight() bool { return slices.Contains(InFlightStatuses(), s) 
 //
 //	pending     → reserved                   the claim takes a slot
 //	pending     → done                       the attempt was stopped before its claim
+//	pending     → terminating                the attempt was stopped, and a Job of it
+//	                                         that no launch recorded exists
 //	blocked     → pending | skipped          in-set upstreams succeeded | one failed
 //	reserved    → starting                   the Job was created
 //	reserved    → pending                    a transient deploy failure, or a stale
 //	                                         reservation, gives the slot back
 //	reserved    → failed                     the deployment cannot be deployed
 //	reserved    → done                       the attempt was stopped before its Job was created
+//	reserved    → terminating                the attempt was stopped, and a Job of it
+//	                                         that no launch recorded exists
 //	starting    → running                    the main container started
 //	starting    → terminating                a start error or the start timeout:
 //	                                         execution-controller deleted the Job
@@ -65,9 +69,9 @@ func (s Status) InFlight() bool { return slices.Contains(InFlightStatuses(), s) 
 //	running     → terminating | done         the Job was deleted | the attempt ended
 //	terminating → done                       the attempt's pods are gone
 var transitions = map[Status][]Status{
-	StatusPending:     {StatusReserved, StatusDone},
+	StatusPending:     {StatusReserved, StatusDone, StatusTerminating},
 	StatusBlocked:     {StatusPending, StatusSkipped},
-	StatusReserved:    {StatusStarting, StatusPending, StatusFailed, StatusDone},
+	StatusReserved:    {StatusStarting, StatusPending, StatusFailed, StatusDone, StatusTerminating},
 	StatusStarting:    {StatusRunning, StatusTerminating, StatusDone},
 	StatusRunning:     {StatusTerminating, StatusDone},
 	StatusTerminating: {StatusDone},

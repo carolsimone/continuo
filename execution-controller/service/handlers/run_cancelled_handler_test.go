@@ -3,11 +3,13 @@
 package handlers_test
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"io"
 	"log/slog"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -187,15 +189,18 @@ func (f *fenceFlow) fenced() bool {
 	return n == 1
 }
 
-// A row that has no Job yet, pending or reserved, ends done with the outcome
-// stopped, and its stopped report commits with the fence.
+// A row that has no Job yet, pending or reserved, and whose attempt has no Job
+// in the cache or the API, ends done with the outcome stopped, and its stopped
+// report commits with the fence.
 func TestRunCancelled_EndsPendingRowsAndReportsThemStopped(t *testing.T) {
 	f := newFenceFlow(t)
 	pending, reserved := f.attempt(model.StatusPending), f.attempt(model.StatusReserved)
+	live := &liveJobs{}
 
-	names := f.cancel(f.handler(noJobs{}, noJobs{}), f.event())
+	names := f.cancel(f.handler(noJobs{}, live), f.event())
 
 	assert.Empty(t, names, "no Job to delete")
+	assert.Equal(t, 2, live.reads, "the API is read for each row before it ends stopped")
 	assert.True(t, f.fenced())
 	for _, d := range []*model.Deployment{pending, reserved} {
 		got := f.reload(d.Command().TaskID, 0)
@@ -657,4 +662,116 @@ func TestRunCancelled_CountsAStopOnlyOnceItCommits(t *testing.T) {
 	f.cancel(h, f.event())
 
 	assert.Equal(t, 1, f.metrics.stopped)
+}
+
+// liveJobOfCmd is what the API shows of a live Job of cmd's attempt, its pod
+// running.
+func (f *fenceFlow) liveJobOf(cmd command.DeployTask) model.JobObservation {
+	started := f.now.Add(-time.Minute)
+	return model.JobObservation{JobPresent: true, JobTaskID: cmd.TaskID, JobAttempt: strconv.Itoa(cmd.Attempt),
+		JobRunID: cmd.ScheduleID, Pods: []model.PodObservation{{Name: "pod-1", Phase: model.PodRunning,
+			Main: model.ContainerObservation{Name: "dbt-job", StartedAt: &started}}}}
+}
+
+// A reserved row whose Job exists although the row never recorded it (its
+// launch created the Job and was lost before its commit) adopts the Job: it
+// moves to terminating with the stop recorded, its Job is returned for
+// deletion after the commit, and nothing is reported until its pods are
+// gone. Only a live read shows the Job here.
+func TestRunCancelled_AdoptsTheJobOfAReservedRowThatNeverRecordedIt(t *testing.T) {
+	f := newFenceFlow(t)
+	d := f.attempt(model.StatusReserved)
+	live := jobsOf{d.JobName(): f.liveJobOf(d.Command())}
+
+	names := f.cancel(f.handler(noJobs{}, live), f.event())
+
+	assert.Equal(t, []string{d.JobName()}, names, "the Job is deleted once the fence commits")
+	got := f.reload(d.Command().TaskID, 0)
+	assert.Equal(t, model.StatusTerminating, got.Status())
+	assert.NotNil(t, got.DeployedAt(), "the observer follows the adopted Job")
+	assert.NotNil(t, got.Facts().StopRequestedAt)
+	assert.False(t, got.HasOutcome())
+	assert.Empty(t, f.reports(d.Command().TaskID), "stopped is reported only once the pods are gone")
+	assert.Zero(t, f.metrics.stopped)
+	adopted, err := f.repo.LoadByJobName(context.Background(), d.JobName())
+	require.NoError(t, err)
+	assert.Equal(t, got.ID(), adopted.ID(), "the observer finds the row by the Job's name")
+}
+
+// A pending row whose Job exists (a reserved row the reconciler returned to
+// pending after its launch was lost) adopts the Job the same way; here the
+// watch's cache already holds it, so no live read is needed.
+func TestRunCancelled_AdoptsTheJobOfAPendingRowThatNeverRecordedIt(t *testing.T) {
+	f := newFenceFlow(t)
+	d := f.attempt(model.StatusPending)
+	cache := jobsOf{d.JobName(): f.liveJobOf(d.Command())}
+	live := &liveJobs{}
+
+	names := f.cancel(f.handler(cache, live), f.event())
+
+	assert.Equal(t, []string{d.JobName()}, names)
+	assert.Zero(t, live.reads, "the cache showed the Job")
+	got := f.reload(d.Command().TaskID, 0)
+	assert.Equal(t, model.StatusTerminating, got.Status())
+	assert.NotNil(t, got.DeployedAt())
+	assert.NotNil(t, got.Facts().StopRequestedAt)
+	assert.Empty(t, f.reports(d.Command().TaskID))
+	assert.Zero(t, f.metrics.stopped)
+}
+
+// A pending row whose attempt has no Job but a pod that has not finished (its
+// Job was deleted with orphan propagation) is left as it is, with an error
+// logged: no stop is reported while the pod can still write, and state's
+// next cancel names the attempt again. The run is fenced all the same.
+func TestRunCancelled_LeavesAPendingRowWithAnUnfinishedPodAndNoJob(t *testing.T) {
+	f := newFenceFlow(t)
+	d := f.attempt(model.StatusPending)
+	orphan := f.liveJobOf(d.Command())
+	orphan.JobPresent = false
+	live := jobsOf{d.JobName(): orphan}
+	var logs bytes.Buffer
+	h := handlers.NewRunCancelledHandler(noJobs{}, live, f.term, f.metrics, slog.New(slog.NewTextHandler(&logs, nil)))
+
+	names := f.cancel(h, f.event())
+
+	assert.Empty(t, names)
+	assert.True(t, f.fenced())
+	got := f.reload(d.Command().TaskID, 0)
+	assert.Equal(t, model.StatusPending, got.Status(), "nothing is written for the row")
+	assert.Nil(t, got.Facts().StopRequestedAt)
+	assert.Empty(t, f.reports(d.Command().TaskID), "nothing is reported")
+	assert.Zero(t, f.metrics.stopped)
+	assert.Contains(t, logs.String(), "level=ERROR")
+	assert.Contains(t, logs.String(), "a pod of its attempt has not finished")
+	assert.Contains(t, logs.String(), d.JobName())
+}
+
+// A cancel delivered again over rows that waited for their launch answers
+// each once: an adopted row's Job is not returned again and nothing is
+// reported for it until its pods are gone; a row left for its unfinished pod
+// ends stopped once the pod is gone; a row that ended stopped is not reported
+// again.
+func TestRunCancelled_AReSentCancelOverRowsWaitingForTheirLaunch(t *testing.T) {
+	f := newFenceFlow(t)
+	withJob, withPod, withNothing := f.attempt(model.StatusReserved), f.attempt(model.StatusPending), f.attempt(model.StatusPending)
+	orphan := f.liveJobOf(withPod.Command())
+	orphan.JobPresent = false
+	live := jobsOf{withJob.JobName(): f.liveJobOf(withJob.Command()), withPod.JobName(): orphan}
+
+	first := f.cancel(f.handler(noJobs{}, live), f.event())
+	assert.Equal(t, []string{withJob.JobName()}, first)
+	assert.Equal(t, model.StatusPending, f.reload(withPod.Command().TaskID, 0).Status())
+
+	delete(live, withPod.JobName())
+	second := f.cancel(f.handler(noJobs{}, live), f.event(ref(withJob.Command()), ref(withPod.Command())))
+
+	assert.Empty(t, second, "the adopted row's Job is not returned again")
+	assert.Equal(t, model.StatusTerminating, f.reload(withJob.Command().TaskID, 0).Status())
+	assert.Empty(t, f.reports(withJob.Command().TaskID))
+	got := f.reload(withPod.Command().TaskID, 0)
+	assert.Equal(t, model.StatusDone, got.Status(), "the pod is gone, so the row ends stopped")
+	assert.Equal(t, model.OutcomeStopped, got.Outcome())
+	require.Len(t, f.reports(withPod.Command().TaskID), 1)
+	require.Len(t, f.reports(withNothing.Command().TaskID), 1, "the stopped report is written once")
+	assert.Equal(t, 2, f.metrics.stopped)
 }
