@@ -49,6 +49,9 @@ type FakeUnitOfWork struct {
 
 	// AttemptRepo backs Attempts().
 	AttemptRepo repository.AttemptRepository
+
+	// LeaseRepo backs Leases().
+	LeaseRepo repository.LeaseRepository
 }
 
 func (f *FakeUnitOfWork) MessageProcessingRepo() messageprocessing.Repository {
@@ -122,6 +125,9 @@ func (f *FakeUnitOfWork) TaskGraph(tenantID string) run.TaskGraph {
 // Attempts returns the repository.AttemptRepository set via the AttemptRepo
 // field.
 func (f *FakeUnitOfWork) Attempts(string) repository.AttemptRepository { return f.AttemptRepo }
+
+// Leases returns the repository.LeaseRepository set via the LeaseRepo field.
+func (f *FakeUnitOfWork) Leases(string) repository.LeaseRepository { return f.LeaseRepo }
 
 // Clock returns the configured clock, falling back to ports.SystemClock{} when
 // no override has been set.

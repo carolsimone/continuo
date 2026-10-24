@@ -177,6 +177,9 @@ type noRunMetrics struct{}
 func (noRunMetrics) RunStalled()                {}
 func (noRunMetrics) RunsCancelling(_, _ int)    {}
 func (noRunMetrics) RunCancelled(time.Duration) {}
+func (noRunMetrics) LeaseWaiters(int)           {}
+func (noRunMetrics) LeaseGranted(time.Duration) {}
+func (noRunMetrics) LeaseRepaired()             {}
 
 // restoreRun returns a started run to how Start stored it: the tasks it
 // dispatched at creation (their dispatched_at equals their created_at)

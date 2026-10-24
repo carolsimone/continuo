@@ -35,6 +35,7 @@ import (
 	"github.com/carolsimone/continuo/state/internal/scheduler"
 	"github.com/carolsimone/continuo/state/service/attemptreconcile"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
+	"github.com/carolsimone/continuo/state/service/leasewaker"
 	ports "github.com/carolsimone/continuo/state/service/ports"
 	"github.com/carolsimone/continuo/state/service/runreads"
 	"github.com/carolsimone/continuo/state/service/runstart"
@@ -60,6 +61,10 @@ const seedReconcileInterval = 60 * time.Second
 
 // attemptReconcileInterval is how often the attempt reconcile passes.
 const attemptReconcileInterval = 60 * time.Second
+
+// leaseWakerInterval is how often the lease waker passes when no release of a
+// node lease wakes it sooner.
+const leaseWakerInterval = 60 * time.Second
 
 // dbPool bounds the Postgres pool when DB_MAX_OPEN_CONNS / DB_MAX_IDLE_CONNS
 // are unset: two connections per stream consumer (a handler's transaction and
@@ -384,6 +389,27 @@ func main() {
 	// waits for a pass in progress.
 	attemptReconciler := attemptreconcile.New(uowFactory, pkgevents.DefaultTenantID, taskDefaults, runMetrics, logger)
 	lifecycleManager.Go(func() { attemptReconciler.Run(ctx, attemptReconcileInterval) })
+
+	// The lease waker grants each node whose write lease is free to the task
+	// that has waited longest for it, and deletes the leases of tasks that
+	// ended without releasing them. It passes on every notification
+	// node_leases' trigger sends when a committed transaction released a
+	// lease, and every leaseWakerInterval. Its goroutine is tracked, so
+	// shutdown waits for a pass in progress.
+	leaseListener, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN(), postgres.NodeLeasesChannel, logger)
+	if errors.Is(err, context.Canceled) {
+		logger.Info("Shutdown requested while waiting for the node lease listener")
+		os.Exit(0)
+	}
+	if err != nil {
+		logger.Error("Failed to listen for node lease releases", "error", err)
+		os.Exit(1)
+	}
+	// Closing the listener can wait on a connection attempt in progress, so
+	// the handler stops waiting at the shutdown deadline.
+	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error { return leaseListener.CloseContext(ctx) })
+	leaseWaker := leasewaker.New(uowFactory, pkgevents.DefaultTenantID, taskDefaults, runMetrics, logger)
+	lifecycleManager.Go(func() { leaseWaker.Run(ctx, leaseListener.Wake(), leaseWakerInterval) })
 
 	// The cron loop and the gRPC entry points plan their runs for the default
 	// tenant; the seed reconcile builds its own planner for each pass.

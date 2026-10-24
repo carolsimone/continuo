@@ -352,6 +352,9 @@ type fakeRunMetrics struct{ cancelled []time.Duration }
 func (*fakeRunMetrics) RunStalled()                    {}
 func (*fakeRunMetrics) RunsCancelling(_, _ int)        {}
 func (m *fakeRunMetrics) RunCancelled(d time.Duration) { m.cancelled = append(m.cancelled, d) }
+func (*fakeRunMetrics) LeaseWaiters(int)               {}
+func (*fakeRunMetrics) LeaseGranted(time.Duration)     {}
+func (*fakeRunMetrics) LeaseRepaired()                 {}
 
 type fixedClock struct{ t time.Time }
 

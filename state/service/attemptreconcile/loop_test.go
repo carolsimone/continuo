@@ -94,6 +94,9 @@ func (m *countingMetrics) RunsCancelling(total, overdue int) {
 func (m *countingMetrics) RunCancelled(after time.Duration) {
 	m.cancelDurations = append(m.cancelDurations, after)
 }
+func (*countingMetrics) LeaseWaiters(int)           {}
+func (*countingMetrics) LeaseGranted(time.Duration) {}
+func (*countingMetrics) LeaseRepaired()             {}
 
 // runs serves one run for update and records saves.
 type runs struct {

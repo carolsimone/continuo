@@ -45,6 +45,10 @@ type UnitOfWork interface {
 	// stalled runs, and the lock and record of one question inside the
 	// transaction.
 	Attempts(tenantID string) repository.AttemptRepository
+	// Leases serves the lease waker of tenantID: the waiters a free node can
+	// be granted to, the repair of leases whose holder task has ended, and
+	// the count of tasks waiting for a lease.
+	Leases(tenantID string) repository.LeaseRepository
 
 	Begin(ctx context.Context) error
 	Commit() error

@@ -230,6 +230,68 @@ func TestAttemptRepository_StalledRunsCoverACancellingRunWithNothingStopping(t *
 	assert.NotContains(t, got, stillStopping, "a stopping task is in flight until its attempt reports")
 }
 
+// leaseWaitRun stores a running run whose only task, at table, is pending and
+// waits for its node's write lease, with a progress clock ten minutes old, and
+// returns the run id.
+func leaseWaitRun(t *testing.T, db *sqlx.DB, table string) uuid.UUID {
+	t.Helper()
+	runID, ids := pendingTasks(t, db, table)
+	_, err := db.Exec(`UPDATE task_tracker SET wait_reason = 'node_lease', lease_wait_since = now() - interval '10 minutes'
+		WHERE task_id = $1`, ids[table])
+	require.NoError(t, err)
+	_, err = db.Exec(`UPDATE scheduler_tracker SET last_heartbeat_at = now() - interval '10 minutes' WHERE schedule_id = $1`, runID)
+	require.NoError(t, err)
+	return runID
+}
+
+// A run whose task waits for a node lease held by a task in flight
+// (dispatched, queued, running or stopping) is waiting on that task, not
+// stalled, however old its progress clock; the same run is stalled while no
+// task holds the node.
+func TestStalledRuns_ALeaseWaitBehindAnInFlightHolderIsNotStalled(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	tenant := leaseTenant(t, db)
+	repo := postgres.NewAttemptRepository(db, nil, tenant)
+	for _, status := range run.InFlightTaskStatuses() {
+		t.Run(string(status), func(t *testing.T) {
+			table := leaseTables("held")[0]
+			waiting := leaseWaitRun(t, db, table)
+			got, err := repo.StalledRuns(ctx, 5*time.Minute, 500)
+			require.NoError(t, err)
+			require.Contains(t, got, waiting, "no task holds the node yet")
+
+			holderRun, holder := insertTasks(t, db, map[string]run.TaskStatus{table: status})
+			require.NoError(t, insertLease(db, tenant, "e2e_schema."+table, holder[table], holderRun))
+
+			got, err = repo.StalledRuns(ctx, 5*time.Minute, 500)
+			require.NoError(t, err)
+			assert.NotContains(t, got, waiting, "a task waiting behind a %s holder counts as in flight", status)
+		})
+	}
+}
+
+// A run whose task waits for the lease of a node no task holds, or one held by
+// a task that has ended (a lease the repair deletes), waits on nothing in
+// flight: once its progress clock is old it is stalled.
+func TestStalledRuns_ALeaseWaitOnAFreeNodeIsStalled(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	tenant := leaseTenant(t, db)
+	tables := leaseTables("free", "ended")
+	free, ended := tables[0], tables[1]
+	waitingOnFree := leaseWaitRun(t, db, free)
+	holderRun, holder := insertTasks(t, db, map[string]run.TaskStatus{ended: run.TaskStatusSucceeded})
+	require.NoError(t, insertLease(db, tenant, "e2e_schema."+ended, holder[ended], holderRun))
+	waitingOnEnded := leaseWaitRun(t, db, ended)
+
+	got, err := postgres.NewAttemptRepository(db, nil, tenant).StalledRuns(ctx, 5*time.Minute, 500)
+	require.NoError(t, err)
+
+	assert.Contains(t, got, waitingOnFree, "a wait on a node no task holds is a wait on nothing in flight")
+	assert.Contains(t, got, waitingOnEnded, "a lease whose holder has ended keeps nothing in flight")
+}
+
 // makeStopsDue moves the next check of every attempt of the run into the past.
 func (f statusFlow) makeStopsDue(t *testing.T, ago time.Duration) {
 	t.Helper()

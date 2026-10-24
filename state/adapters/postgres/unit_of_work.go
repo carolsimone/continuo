@@ -165,5 +165,11 @@ func (u *PostgresUnitOfWork) Attempts(tenantID string) repository.AttemptReposit
 	return NewAttemptRepository(u.db, u.tx, tenantID)
 }
 
+// Leases returns the lease waker's repository for tenantID, bound to the
+// current transaction.
+func (u *PostgresUnitOfWork) Leases(tenantID string) repository.LeaseRepository {
+	return NewLeaseRepository(u.db, u.tx, tenantID)
+}
+
 // Compile-time interface assertion.
 var _ uow.UnitOfWork = (*PostgresUnitOfWork)(nil)

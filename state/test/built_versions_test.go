@@ -276,3 +276,6 @@ type noRunMetrics struct{}
 func (noRunMetrics) RunStalled()                {}
 func (noRunMetrics) RunsCancelling(_, _ int)    {}
 func (noRunMetrics) RunCancelled(time.Duration) {}
+func (noRunMetrics) LeaseWaiters(int)           {}
+func (noRunMetrics) LeaseGranted(time.Duration) {}
+func (noRunMetrics) LeaseRepaired()             {}
