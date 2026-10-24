@@ -428,6 +428,41 @@ func TestSettle_ReportsAStoppedAttemptOfACancelledRun(t *testing.T) {
 	assert.Equal(t, 1, h.stop.stopped, "the stopped attempt is counted")
 }
 
+// An attempt whose container failed before its run was cancelled, but which
+// the observer had not settled yet when the stop was recorded, is reported
+// failed with its own class and reason, not stopped: state then ends the
+// stopping task failed. The row ends done with the outcome failed.
+func TestSettle_AFailureReachedBeforeTheStopIsReportedAsItself(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	dep := h.started(t, 0, h.now.Add(-time.Minute))
+	_, err := dep.MarkRunning()
+	require.NoError(t, err)
+	failed := endedPod(model.PodFailed, h.now.Add(-50*time.Second), h.now.Add(-30*time.Second).Truncate(time.Second), 1, "Error")
+	h.cache.set(dep.JobName(), model.JobObservation{JobPresent: true, Pods: []model.PodObservation{failed}})
+	effect, err := dep.Stop(h.now)
+	require.NoError(t, err)
+	require.Equal(t, model.StopTerminate, effect)
+	require.NoError(t, h.repo.Save(ctx, dep))
+	h.logs.full = "Database Error in model ftable_e\n  relation \"missing\" does not exist"
+
+	h.cache.set(dep.JobName(), model.JobObservation{JobPresent: true, JobFailed: true, Pods: []model.PodObservation{failed}})
+	require.NoError(t, h.o.Process(ctx, dep.JobName()))
+
+	got := h.reload(t, dep.JobName())
+	assert.Equal(t, model.StatusDone, got.Status())
+	assert.Equal(t, "failed", got.Outcome())
+	assert.Equal(t, pkgmodel.FailureReasonExitCode, got.Facts().Reason)
+	assert.NotNil(t, got.Facts().StopRequestedAt, "the stop stays recorded beside the failure")
+	reports := h.reports(t)
+	require.Len(t, reports, 1)
+	assert.Equal(t, "failed", reports[0]["status"])
+	assert.Equal(t, "task", reports[0]["failure_class"])
+	assert.Equal(t, "exit_code", reports[0]["failure_reason"])
+	assert.EqualValues(t, 1, reports[0]["exit_code"])
+	assert.Zero(t, h.stop.stopped, "a failure is not counted as a stop")
+}
+
 func TestProcess_AValidationNodeRecordsItsOutcome(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
