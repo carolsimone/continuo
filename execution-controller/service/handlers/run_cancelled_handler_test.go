@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/execution-controller/adapters/k8s/watch"
 	"github.com/carolsimone/continuo/execution-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/execution-controller/domain/command"
 	"github.com/carolsimone/continuo/execution-controller/domain/deploy"
@@ -78,6 +79,21 @@ func (j jobsOf) JobNames() []string {
 func (j jobsOf) ObserveLive(_ context.Context, name string) (model.JobObservation, error) {
 	return j[name], nil
 }
+func (j jobsOf) ObserveRun(context.Context, string) (model.RunObservation, error) {
+	return model.NewRunObservation(j), nil
+}
+
+// runReads is a RunJobLookup answering with the Jobs it maps by name and
+// counting its reads.
+type runReads struct {
+	jobs  jobsOf
+	reads int
+}
+
+func (r *runReads) ObserveRun(context.Context, string) (model.RunObservation, error) {
+	r.reads++
+	return model.NewRunObservation(r.jobs), nil
+}
 
 // fenceFlow drives the fence of one run against the executor test database.
 type fenceFlow struct {
@@ -136,8 +152,8 @@ func (f *fenceFlow) attempt(status model.Status) *model.Deployment {
 	return d
 }
 
-func (f *fenceFlow) handler(jobs ports.JobCache, lookup ports.JobLookup) *handlers.RunCancelledHandler {
-	return handlers.NewRunCancelledHandler(jobs, lookup, f.term, f.metrics, f.logger)
+func (f *fenceFlow) handler(runJobs ports.RunJobLookup) *handlers.RunCancelledHandler {
+	return handlers.NewRunCancelledHandler(runJobs, f.term, f.metrics, f.logger)
 }
 
 func (f *fenceFlow) event(attempts ...events.AttemptRef) events.RunCancelled {
@@ -195,12 +211,12 @@ func (f *fenceFlow) fenced() bool {
 func TestRunCancelled_EndsPendingRowsAndReportsThemStopped(t *testing.T) {
 	f := newFenceFlow(t)
 	pending, reserved := f.attempt(model.StatusPending), f.attempt(model.StatusReserved)
-	live := &liveJobs{}
+	live := &runReads{}
 
-	names := f.cancel(f.handler(noJobs{}, live), f.event())
+	names := f.cancel(f.handler(live), f.event())
 
 	assert.Empty(t, names, "no Job to delete")
-	assert.Equal(t, 2, live.reads, "the API is read for each row before it ends stopped")
+	assert.Equal(t, 1, live.reads, "the run's Jobs and pods are read once, for every row, before the rows end stopped")
 	assert.True(t, f.fenced())
 	for _, d := range []*model.Deployment{pending, reserved} {
 		got := f.reload(d.Command().TaskID, 0)
@@ -228,7 +244,7 @@ func TestRunCancelled_MovesStartedRowsToTerminatingAndReturnsTheirJobs(t *testin
 	untouched := f.attempt(model.StatusRunning)
 	f.runID = mine
 
-	names := f.cancel(f.handler(noJobs{}, noJobs{}), f.event())
+	names := f.cancel(f.handler(noJobs{}), f.event())
 
 	assert.ElementsMatch(t, []string{starting.JobName(), running.JobName()}, names)
 	for _, d := range []*model.Deployment{starting, running, terminating} {
@@ -333,7 +349,7 @@ func TestRunCancelled_WaitsForALaunchThatHoldsTheRow(t *testing.T) {
 			fenced <- result{err: err}
 			return
 		}
-		names, err := f.handler(noJobs{}, noJobs{}).Handle(ctx, u, f.event(), uuid.Nil)
+		names, err := f.handler(noJobs{}).Handle(ctx, u, f.event(), uuid.Nil)
 		if err != nil {
 			_ = u.Rollback()
 			fenced <- result{err: err}
@@ -371,7 +387,7 @@ func TestRunCancelled_EndsAReservedRowItLocksFirst(t *testing.T) {
 	u := postgres.NewPostgresUnitOfWork(f.db, f.logger)
 	require.NoError(t, u.Begin(ctx))
 	defer func() { _ = u.Rollback() }()
-	names, err := f.handler(noJobs{}, noJobs{}).Handle(ctx, u, f.event(), uuid.Nil)
+	names, err := f.handler(noJobs{}).Handle(ctx, u, f.event(), uuid.Nil)
 	require.NoError(t, err)
 	assert.Empty(t, names)
 
@@ -406,9 +422,9 @@ func ref(cmd command.DeployTask) events.AttemptRef {
 func TestRunCancelled_StoresANamedAttemptItNeverReceivedAsStopped(t *testing.T) {
 	f := newFenceFlow(t)
 	cmd := f.command(1)
-	live := &liveJobs{}
+	live := &runReads{}
 
-	names := f.cancel(f.handler(noJobs{}, live), f.event(ref(cmd)))
+	names := f.cancel(f.handler(live), f.event(ref(cmd)))
 
 	assert.Empty(t, names)
 	assert.Equal(t, 1, live.reads, "the API is read before the attempt is stored stopped")
@@ -433,7 +449,7 @@ func TestRunCancelled_AdoptsAndStopsANamedAttemptsJobWithNoRow(t *testing.T) {
 	cmd := f.command(0)
 	live := jobsOf{cmd.JobName: {JobPresent: true, JobTaskID: cmd.TaskID, JobAttempt: "0"}}
 
-	names := f.cancel(f.handler(noJobs{}, live), f.event(ref(cmd)))
+	names := f.cancel(f.handler(live), f.event(ref(cmd)))
 
 	assert.Equal(t, []string{cmd.JobName}, names)
 	got := f.reload(cmd.TaskID, 0)
@@ -460,7 +476,7 @@ func TestRunCancelled_ResendsTheReportOfANamedAttemptThatEnded(t *testing.T) {
 	d.RecordReport(d.ReportOf(pkgmodel.AttemptStatusSucceeded, ""))
 	require.NoError(t, f.repo.Save(ctx, d))
 
-	names := f.cancel(f.handler(noJobs{}, noJobs{}), f.event(ref(d.Command())))
+	names := f.cancel(f.handler(noJobs{}), f.event(ref(d.Command())))
 
 	assert.Empty(t, names)
 	reps := f.reports(d.Command().TaskID)
@@ -478,7 +494,7 @@ func TestRunCancelled_ResendsTheReportOfANamedAttemptThatEnded(t *testing.T) {
 func TestRunCancelled_IsIdempotent(t *testing.T) {
 	f := newFenceFlow(t)
 	pending, running := f.attempt(model.StatusPending), f.attempt(model.StatusRunning)
-	h := f.handler(noJobs{}, noJobs{})
+	h := f.handler(noJobs{})
 
 	first := f.cancel(h, f.event())
 	second := f.cancel(h, f.event())
@@ -563,7 +579,7 @@ func TestRunCancelled_WaitsForADispatchThatMayStoreAnAttemptOfTheRun(t *testing.
 	require.NoError(t, handlers.NewTaskDispatchHandler(noJobs{}, noJobs{}, f.metrics, f.logger).Handle(ctx, u, evt, uuid.Nil))
 
 	fenced := f.inTx(func(fu *postgres.PostgresUnitOfWork) error {
-		_, err := f.handler(noJobs{}, noJobs{}).Handle(ctx, fu, f.event(), uuid.Nil)
+		_, err := f.handler(noJobs{}).Handle(ctx, fu, f.event(), uuid.Nil)
 		return err
 	})
 	assert.True(t, f.waitForAdvisoryWaiter(), "the fence waits for the dispatch's run lock")
@@ -594,7 +610,7 @@ func TestTaskDispatch_WaitsForAFenceInProgressAndMeetsIt(t *testing.T) {
 	u := postgres.NewPostgresUnitOfWork(f.db, f.logger)
 	require.NoError(t, u.Begin(ctx))
 	t.Cleanup(func() { _ = u.Rollback() })
-	_, err := f.handler(noJobs{}, noJobs{}).Handle(ctx, u, f.event(), uuid.Nil)
+	_, err := f.handler(noJobs{}).Handle(ctx, u, f.event(), uuid.Nil)
 	require.NoError(t, err)
 
 	evt := f.dispatchOf()
@@ -633,7 +649,7 @@ func TestRunCancelled_LeavesANamedAttemptWithAnOrphanPodUnanswered(t *testing.T)
 	live := jobsOf{cmd.JobName: {Pods: []model.PodObservation{{Name: "pod-1", Phase: model.PodRunning,
 		Main: model.ContainerObservation{Name: "dbt-job", StartedAt: &started}}}}}
 
-	names := f.cancel(f.handler(noJobs{}, live), f.event(ref(cmd)))
+	names := f.cancel(f.handler(live), f.event(ref(cmd)))
 
 	assert.Empty(t, names)
 	assert.True(t, f.fenced())
@@ -651,7 +667,7 @@ func TestRunCancelled_CountsAStopOnlyOnceItCommits(t *testing.T) {
 	f := newFenceFlow(t)
 	ctx := context.Background()
 	f.attempt(model.StatusPending)
-	h := f.handler(noJobs{}, noJobs{})
+	h := f.handler(noJobs{})
 	u := postgres.NewPostgresUnitOfWork(f.db, f.logger)
 	require.NoError(t, u.Begin(ctx))
 	_, err := h.Handle(ctx, u, f.event(), uuid.Nil)
@@ -683,7 +699,7 @@ func TestRunCancelled_AdoptsTheJobOfAReservedRowThatNeverRecordedIt(t *testing.T
 	d := f.attempt(model.StatusReserved)
 	live := jobsOf{d.JobName(): f.liveJobOf(d.Command())}
 
-	names := f.cancel(f.handler(noJobs{}, live), f.event())
+	names := f.cancel(f.handler(live), f.event())
 
 	assert.Equal(t, []string{d.JobName()}, names, "the Job is deleted once the fence commits")
 	got := f.reload(d.Command().TaskID, 0)
@@ -699,18 +715,16 @@ func TestRunCancelled_AdoptsTheJobOfAReservedRowThatNeverRecordedIt(t *testing.T
 }
 
 // A pending row whose Job exists (a reserved row the reconciler returned to
-// pending after its launch was lost) adopts the Job the same way; here the
-// watch's cache already holds it, so no live read is needed.
+// pending after its launch was lost) adopts the Job the same way.
 func TestRunCancelled_AdoptsTheJobOfAPendingRowThatNeverRecordedIt(t *testing.T) {
 	f := newFenceFlow(t)
 	d := f.attempt(model.StatusPending)
-	cache := jobsOf{d.JobName(): f.liveJobOf(d.Command())}
-	live := &liveJobs{}
+	live := &runReads{jobs: jobsOf{d.JobName(): f.liveJobOf(d.Command())}}
 
-	names := f.cancel(f.handler(cache, live), f.event())
+	names := f.cancel(f.handler(live), f.event())
 
 	assert.Equal(t, []string{d.JobName()}, names)
-	assert.Zero(t, live.reads, "the cache showed the Job")
+	assert.Equal(t, 1, live.reads)
 	got := f.reload(d.Command().TaskID, 0)
 	assert.Equal(t, model.StatusTerminating, got.Status())
 	assert.NotNil(t, got.DeployedAt())
@@ -730,7 +744,7 @@ func TestRunCancelled_LeavesAPendingRowWithAnUnfinishedPodAndNoJob(t *testing.T)
 	orphan.JobPresent = false
 	live := jobsOf{d.JobName(): orphan}
 	var logs bytes.Buffer
-	h := handlers.NewRunCancelledHandler(noJobs{}, live, f.term, f.metrics, slog.New(slog.NewTextHandler(&logs, nil)))
+	h := handlers.NewRunCancelledHandler(live, f.term, f.metrics, slog.New(slog.NewTextHandler(&logs, nil)))
 
 	names := f.cancel(h, f.event())
 
@@ -758,12 +772,12 @@ func TestRunCancelled_AReSentCancelOverRowsWaitingForTheirLaunch(t *testing.T) {
 	orphan.JobPresent = false
 	live := jobsOf{withJob.JobName(): f.liveJobOf(withJob.Command()), withPod.JobName(): orphan}
 
-	first := f.cancel(f.handler(noJobs{}, live), f.event())
+	first := f.cancel(f.handler(live), f.event())
 	assert.Equal(t, []string{withJob.JobName()}, first)
 	assert.Equal(t, model.StatusPending, f.reload(withPod.Command().TaskID, 0).Status())
 
 	delete(live, withPod.JobName())
-	second := f.cancel(f.handler(noJobs{}, live), f.event(ref(withJob.Command()), ref(withPod.Command())))
+	second := f.cancel(f.handler(live), f.event(ref(withJob.Command()), ref(withPod.Command())))
 
 	assert.Empty(t, second, "the adopted row's Job is not returned again")
 	assert.Equal(t, model.StatusTerminating, f.reload(withJob.Command().TaskID, 0).Status())
@@ -774,4 +788,9 @@ func TestRunCancelled_AReSentCancelOverRowsWaitingForTheirLaunch(t *testing.T) {
 	require.Len(t, f.reports(withPod.Command().TaskID), 1)
 	require.Len(t, f.reports(withNothing.Command().TaskID), 1, "the stopped report is written once")
 	assert.Equal(t, 2, f.metrics.stopped)
+}
+
+// newRunCancelledHandlerOver builds the fence handler over the watch w.
+func newRunCancelledHandlerOver(w *watch.Watch, f *fenceFlow, logger *slog.Logger) *handlers.RunCancelledHandler {
+	return handlers.NewRunCancelledHandler(w, f.term, f.metrics, logger)
 }

@@ -176,3 +176,49 @@ func TestWatch_JobNamesLeavesOutFinishedAndDeletingJobs(t *testing.T) {
 
 	assert.ElementsMatch(t, []string{"svc-s-live-1a2b3c4d", "svc-s-not-failed-1a2b3c4d", "svc-s-failing-1a2b3c4d"}, w.JobNames())
 }
+
+// inRun labels o with the run runID.
+func inRun[T metav1.Object](o T, runID string) T {
+	labels := o.GetLabels()
+	labels["schedule-id"] = runID
+	o.SetLabels(labels)
+	return o
+}
+
+// ObserveRun reads a run's Jobs and pods with one LIST of each, by the run's
+// label: each Job with its pods, a pod whose Job is gone under the Job name
+// its labels carry (the legacy job-name label included), and nothing of
+// another run.
+func TestWatch_ObserveRunReadsTheRunsJobsAndPodsInOnePass(t *testing.T) {
+	legacy := pod("p-legacy", "")
+	legacy.Labels["job-name"] = "j-legacy"
+	delete(legacy.Labels, batchv1.JobNameLabel)
+	cs := fake.NewClientset(
+		inRun(job("j-live"), "run-1"), inRun(pod("p-live", "j-live"), "run-1"),
+		inRun(pod("p-orphan", "j-gone"), "run-1"),
+		inRun(legacy, "run-1"),
+		inRun(job("j-other"), "run-2"), inRun(pod("p-other", "j-other"), "run-2"),
+	)
+	w, err := New(cs, ns, NewQueue())
+	require.NoError(t, err)
+	cs.ClearActions()
+
+	got, err := w.ObserveRun(context.Background(), "run-1")
+	require.NoError(t, err)
+
+	actions := cs.Actions()
+	require.Len(t, actions, 2, "one LIST of the Jobs and one of the pods")
+	for _, a := range actions {
+		assert.Equal(t, "list", a.GetVerb())
+	}
+	live := got.Of("j-live")
+	assert.True(t, live.JobPresent)
+	assert.Equal(t, "run-1", live.JobRunID)
+	require.Len(t, live.Pods, 1)
+	orphan := got.Of("j-gone")
+	assert.False(t, orphan.JobPresent)
+	require.Len(t, orphan.Pods, 1)
+	assert.True(t, orphan.HasUnfinishedPod())
+	assert.Len(t, got.Of("j-legacy").Pods, 1, "a pod carrying only the legacy label is held under its Job")
+	assert.Equal(t, model.JobObservation{}, got.Of("j-other"), "another run's Job is not read")
+}

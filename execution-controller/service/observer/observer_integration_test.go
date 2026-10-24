@@ -961,14 +961,15 @@ func TestObserver_ReportsAFencedReservedRowsJobStoppedOnlyOnceItsPodIsGone(t *te
 		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Labels: labels}},
 		&corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{Name: name + "-q4m8z", Namespace: ns,
-				Labels: map[string]string{"app": "dbt-job", batchv1.JobNameLabel: name, "job-name": name}},
+				Labels: map[string]string{"app": "dbt-job", "task-id": cmd.TaskID, "attempt": "0", "schedule-id": cmd.ScheduleID,
+					batchv1.JobNameLabel: name, "job-name": name}},
 			Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "dbt-job", Image: "service-1:v42"}}},
 			Status: corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{Name: "dbt-job",
 				State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{StartedAt: metav1.NewTime(h.now.Add(-40 * time.Second))}}}}},
 		})
 	w := h.watchOver(t, cs, ns)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	fence := handlers.NewRunCancelledHandler(w, w, h.o.deps.Terminator, h.stop, logger)
+	fence := handlers.NewRunCancelledHandler(w, h.o.deps.Terminator, h.stop, logger)
 
 	u := postgres.NewPostgresUnitOfWork(h.db, logger)
 	require.NoError(t, u.Begin(ctx))

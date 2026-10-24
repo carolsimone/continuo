@@ -247,7 +247,7 @@ func main() {
 	jobControl := k8s.NewJobControl(k8sClient, cfg.K8sNamespace)
 
 	taskDispatchHandler := handlers.NewTaskDispatchHandler(jobWatch, jobWatch, observerMetrics, logger)
-	runCancelledHandler := handlers.NewRunCancelledHandler(jobWatch, jobWatch, jobControl, observerMetrics, logger)
+	runCancelledHandler := handlers.NewRunCancelledHandler(jobWatch, jobControl, observerMetrics, logger)
 	validationReqHandler := handlers.NewValidationRequestedHandler(logger)
 	seedBuildReqHandler := handlers.NewSeedBuildRequestedHandler(logger)
 	compileReqHandler := handlers.NewCompileRequestedHandler(logger)

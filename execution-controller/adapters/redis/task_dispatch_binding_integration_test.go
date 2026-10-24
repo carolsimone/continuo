@@ -51,6 +51,12 @@ func (j jobsHolding) Observe(name string) model.JobObservation {
 func (j jobsHolding) ObserveLive(_ context.Context, name string) (model.JobObservation, error) {
 	return j.Observe(name), nil
 }
+func (j jobsHolding) ObserveRun(context.Context, string) (model.RunObservation, error) {
+	if j.name == "" {
+		return model.RunObservation{}, nil
+	}
+	return model.NewRunObservation(map[string]model.JobObservation{j.name: j.Observe(j.name)}), nil
+}
 
 type dispatchFlow struct {
 	t       *testing.T
@@ -262,7 +268,7 @@ func (f *dispatchFlow) fence() {
 	logger := testDispatchLogger()
 	u := postgres.NewPostgresUnitOfWork(f.db, logger)
 	require.NoError(f.t, u.Begin(ctx))
-	_, err := handlers.NewRunCancelledHandler(f.jobs, f.jobs, &committedDeletes{t: f.t, db: f.db, statuses: map[string]string{}},
+	_, err := handlers.NewRunCancelledHandler(f.jobs, &committedDeletes{t: f.t, db: f.db, statuses: map[string]string{}},
 		noStopMetrics{}, logger).Handle(ctx, u, events.RunCancelled{RunID: f.runID}, uuid.Nil)
 	if err != nil {
 		_ = u.Rollback()

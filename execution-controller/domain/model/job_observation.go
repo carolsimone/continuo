@@ -240,3 +240,23 @@ func joinReason(reason, message string) string {
 		return reason + ": " + message
 	}
 }
+
+// RunObservation is what one read of the Kubernetes API showed of every Job
+// of a run and every pod of those Jobs, by Job name. A pod whose Job was gone
+// is held under the Job name its labels carry.
+type RunObservation struct {
+	jobs map[string]JobObservation
+}
+
+// NewRunObservation holds jobs, what the read showed by Job name.
+func NewRunObservation(jobs map[string]JobObservation) RunObservation {
+	held := make(map[string]JobObservation, len(jobs))
+	for name, o := range jobs {
+		held[name] = o
+	}
+	return RunObservation{jobs: held}
+}
+
+// Of returns what the read showed of jobName's Job and its pods; JobPresent
+// is false and Pods empty when it showed neither.
+func (r RunObservation) Of(jobName string) JobObservation { return r.jobs[jobName] }

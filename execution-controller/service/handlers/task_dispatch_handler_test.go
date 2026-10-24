@@ -29,6 +29,9 @@ func (noJobs) JobNames() []string                  { return nil }
 func (noJobs) ObserveLive(context.Context, string) (model.JobObservation, error) {
 	return model.JobObservation{}, nil
 }
+func (noJobs) ObserveRun(context.Context, string) (model.RunObservation, error) {
+	return model.RunObservation{}, nil
+}
 
 // noStops is a ports.StopMetrics that counts nothing.
 type noStops struct{}

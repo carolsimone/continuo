@@ -26,6 +26,16 @@ type JobLookup interface {
 	ObserveLive(ctx context.Context, jobName string) (model.JobObservation, error)
 }
 
+// RunJobLookup reads every Job and pod of one run from the Kubernetes API,
+// past the cache.
+type RunJobLookup interface {
+	// ObserveRun returns what the API holds now of the Jobs labelled with
+	// runID and of their pods, in one read whose cost does not grow with the
+	// number of the run's attempts: one LIST of the Jobs and one LIST of the
+	// pods, each selected by the run's label.
+	ObserveRun(ctx context.Context, runID string) (model.RunObservation, error)
+}
+
 // JobTerminator deletes a Job and its pods.
 type JobTerminator interface {
 	// DeleteJob deletes jobName with foreground propagation: the Job object
