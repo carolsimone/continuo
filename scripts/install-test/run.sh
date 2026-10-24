@@ -130,9 +130,12 @@ grep -q "\"issuer\": *\"http://${RELEASE}-dex:5556/dex\"" \
 # The agents reach the outside world only through egress-proxy, and the kind
 # cluster enforces NetworkPolicy, so check it from the agent pods: the proxy
 # admits an allowlisted host and refuses another, and a direct connection to a
-# public address never completes. Skipped for a fixture that renders no
-# egress-proxy Service or no agents egress policy (egress.enabled=false, an
-# allowlist of IP addresses only, networkPolicy.enabled=false).
+# public address never completes. The check is skipped only when the
+# install's own values set egress.enabled=false or networkPolicy.enabled=false.
+# Otherwise the release's rendered manifest must hold the agents' egress policy
+# and the cluster must hold every egress object the manifest renders; the proxy
+# checks run when the manifest renders egress-proxy (it renders none when its
+# allowlist would be empty, which no mode of this script produces).
 #
 # Every probe prints a sentinel and the check requires it, so a probe that
 # itself fails (a missing tool, a failed exec) is reported as such and never
@@ -146,11 +149,12 @@ probe_failed() {
 # proxy_status <host:port>: the status code egress-proxy answers a CONNECT from
 # agent-chat. The request is followed by a sleep that keeps stdin open: when it
 # closes, nc half-closes the socket at once, egress-proxy sees the client go
-# and abandons the dial before it can answer 200 for an admitted host.
+# and abandons the dial before it can answer 200 for an admitted host. The
+# sleep (8 s) leaves the proxy most of its 10 s dial timeout.
 proxy_status() {
   local out
   out="$(kubectl -n "$NS" exec deploy/agent-chat -- sh -c \
-    "(printf 'CONNECT $1 HTTP/1.1\r\nHost: $1\r\n\r\n'; sleep 3) | nc -w 10 egress-proxy 3128 | head -n1")" \
+    "(printf 'CONNECT $1 HTTP/1.1\r\nHost: $1\r\n\r\n'; sleep 8) | nc -w 10 egress-proxy 3128 | head -n1")" \
     || probe_failed "kubectl exec into agent-chat for CONNECT $1" ""
   awk '{print $2}' <<<"$out"
 }
@@ -172,22 +176,77 @@ except OSError:
     print("blocked")' "$1" "$2"
 }
 
-if ! kubectl -n "$NS" get service egress-proxy >/dev/null 2>&1 \
-  || ! kubectl -n "$NS" get networkpolicy "${RELEASE}-agents-egress" >/dev/null 2>&1; then
-  log_info "no egress-proxy Service or ${RELEASE}-agents-egress NetworkPolicy in this install: skipping the egress enforcement check"
-else
-  log_info "checking agent egress enforcement..."
-  status="$(proxy_status api.github.com:443)" || exit 1
-  [ "$status" = 200 ] \
-    || { log_error "egress-proxy answered '${status}' for api.github.com:443, which is on the default allowlist (want 200)"; exit 1; }
-  status="$(proxy_status example.com:443)" || exit 1
-  [ "$status" = 403 ] \
-    || { log_error "egress-proxy answered '${status}' for example.com:443, which is not on the allowlist (want 403)"; exit 1; }
+# egress_values_off: prints "off" when the install's own values (helm get
+# values: the -f files and --set flags this script passed) set
+# egress.enabled=false or networkPolicy.enabled=false, else "on".
+egress_values_off() {
+  helm get values "$RELEASE" -n "$NS" -o json | python3 -c '
+import json, sys
+values = json.load(sys.stdin) or {}
+off = (values.get("egress") or {}).get("enabled") is False \
+    or (values.get("networkPolicy") or {}).get("enabled") is False
+print("off" if off else "on")'
+}
 
+# rendered <kind> <name>: whether the release's rendered manifest ($manifest)
+# holds that object.
+rendered() {
+  awk -v kind="$1" -v name="$2" '
+    /^---/ { k = 0; n = 0; next }
+    $0 == "kind: " kind { k = 1 }
+    $0 == "  name: " name { n = 1 }
+    k && n { found = 1 }
+    END { exit found ? 0 : 1 }' "$manifest"
+}
+
+# require_object <kind> <name>: the object exists in the namespace. A read that
+# fails for another reason than NotFound is retried; NotFound, or a read that
+# keeps failing, fails the run.
+require_object() {
+  local err attempt
+  for attempt in 1 2 3 4 5; do
+    if err="$(kubectl -n "$NS" get "$1" "$2" -o name 2>&1 >/dev/null)"; then
+      return 0
+    fi
+    if grep -q NotFound <<<"$err"; then
+      log_error "the release renders $1/$2 but the cluster holds none: ${err}"
+      exit 1
+    fi
+    log_info "reading $1/$2 failed (try ${attempt}/5): ${err}"
+    sleep 3
+  done
+  log_error "could not read $1/$2 after 5 tries: ${err}"
+  exit 1
+}
+
+if [ "$(egress_values_off)" = off ]; then
+  log_info "this install's values set egress.enabled=false or networkPolicy.enabled=false: skipping the egress enforcement check"
+else
+  manifest="$(mktemp)"
+  helm get manifest "$RELEASE" -n "$NS" > "$manifest"
+  rendered NetworkPolicy "${RELEASE}-agents-egress" \
+    || { log_error "egress and networkPolicy are on, but the release renders no ${RELEASE}-agents-egress NetworkPolicy"; exit 1; }
+  require_object networkpolicy "${RELEASE}-agents-egress"
+  log_info "checking agent egress enforcement..."
   # Positive control: the python probe reaches an address inside the release,
   # so a "blocked" below means a drop and not a broken python3 or exec.
-  got="$(agent_remediation_dial egress-proxy 3128)" || probe_failed "kubectl exec into agent-remediation" ""
-  [ "$got" = connected ] || probe_failed "agent-remediation could not reach egress-proxy:3128 in the release" "$got"
+  control_host=release-controller control_port=8088
+  if rendered Service egress-proxy; then
+    require_object service egress-proxy
+    require_object networkpolicy "${RELEASE}-egress-proxy-egress"
+    require_object networkpolicy "${RELEASE}-allow-egress-proxy"
+    status="$(proxy_status api.github.com:443)" || exit 1
+    [ "$status" = 200 ] \
+      || { log_error "egress-proxy answered '${status}' for api.github.com:443, which is on the default allowlist (want 200)"; exit 1; }
+    status="$(proxy_status example.com:443)" || exit 1
+    [ "$status" = 403 ] \
+      || { log_error "egress-proxy answered '${status}' for example.com:443, which is not on the allowlist (want 403)"; exit 1; }
+    control_host=egress-proxy control_port=3128
+  else
+    log_info "the release renders no egress-proxy (its allowlist is empty): checking only that direct connections are dropped"
+  fi
+  got="$(agent_remediation_dial "$control_host" "$control_port")" || probe_failed "kubectl exec into agent-remediation" ""
+  [ "$got" = connected ] || probe_failed "agent-remediation could not reach ${control_host}:${control_port} in the release" "$got"
 
   got="$(agent_chat_dial 1.1.1.1 443)" || probe_failed "kubectl exec into agent-chat for a direct dial" ""
   case "$got" in
@@ -201,6 +260,7 @@ else
     connected) log_error "agent-remediation opened a direct connection to a public address (1.1.1.1:443)"; exit 1 ;;
     *) probe_failed "agent-remediation direct dial" "$got" ;;
   esac
+  rm -f "$manifest"
 fi
 
 log_info "install-test (${MODE}) OK"
