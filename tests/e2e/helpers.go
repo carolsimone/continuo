@@ -331,8 +331,25 @@ type k8sPodList struct {
 		} `json:"metadata"`
 		Status struct {
 			Phase string `json:"phase"`
+			// StartTime is when the kubelet accepted the pod, before any of its
+			// containers started; nil until then.
+			StartTime             *time.Time           `json:"startTime"`
+			InitContainerStatuses []k8sContainerStatus `json:"initContainerStatuses"`
+			ContainerStatuses     []k8sContainerStatus `json:"containerStatuses"`
 		} `json:"status"`
 	} `json:"items"`
+}
+
+// k8sContainerStatus is the part of a pod's container status the tests read:
+// when the container ran, once it has terminated.
+type k8sContainerStatus struct {
+	Name  string `json:"name"`
+	State struct {
+		Terminated *struct {
+			StartedAt  time.Time `json:"startedAt"`
+			FinishedAt time.Time `json:"finishedAt"`
+		} `json:"terminated"`
+	} `json:"state"`
 }
 
 // getK8sPods lists the pods matching labelSelector in the namespace the Jobs
