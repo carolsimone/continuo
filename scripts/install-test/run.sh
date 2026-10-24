@@ -127,4 +127,33 @@ wait_for_http_host http://127.0.0.1:15556/dex/.well-known/openid-configuration 1
 grep -q "\"issuer\": *\"http://${RELEASE}-dex:5556/dex\"" \
   <<<"$(curl -sf http://127.0.0.1:15556/dex/.well-known/openid-configuration)"
 
+# The agents reach the outside world only through egress-proxy, and the kind
+# cluster enforces NetworkPolicy, so check it from an agent pod: the proxy
+# admits an allowlisted host and refuses another, and a direct connection to a
+# public address never completes. agent-chat's alpine image carries busybox nc;
+# agent-remediation's python image has no nc, so its direct-connection probe
+# uses python3 sockets.
+# The request is followed by a sleep that holds stdin open: busybox nc stops
+# reading once stdin closes, and the proxy answers 200 only after it has dialled
+# the host, so without it the status line of an admitted host is lost.
+proxy_status() {
+  kubectl -n "$NS" exec deploy/agent-chat -- sh -c \
+    "(printf 'CONNECT $1 HTTP/1.1\r\nHost: $1\r\n\r\n'; sleep 4) | nc -w 10 egress-proxy 3128 | head -n1" \
+    | awk '{print $2}'
+}
+log_info "checking agent egress enforcement..."
+status="$(proxy_status api.github.com:443)"
+[ "$status" = 200 ] \
+  || { log_error "egress-proxy answered '${status}' for api.github.com:443, which is on the default allowlist (want 200)"; exit 1; }
+status="$(proxy_status example.com:443)"
+[ "$status" = 403 ] \
+  || { log_error "egress-proxy answered '${status}' for example.com:443, which is not on the allowlist (want 403)"; exit 1; }
+if kubectl -n "$NS" exec deploy/agent-chat -- sh -c 'nc -w 5 1.1.1.1 443 </dev/null' >/dev/null 2>&1; then
+  log_error "agent-chat opened a direct connection to a public address"; exit 1
+fi
+if kubectl -n "$NS" exec deploy/agent-remediation -- python3 -c \
+  'import socket; socket.create_connection(("1.1.1.1", 443), timeout=5).close()' >/dev/null 2>&1; then
+  log_error "agent-remediation opened a direct connection to a public address"; exit 1
+fi
+
 log_info "install-test (${MODE}) OK"
