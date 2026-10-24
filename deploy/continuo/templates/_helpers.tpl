@@ -930,6 +930,39 @@ upgrade --reuse-values from an older chart), gets 15 minutes; a value outside
 {{- end -}}
 
 {{/*
+K8S_CLIENT_QPS for the shared ConfigMap: execution.kubeClientQPS. A release
+without an execution block, or without the key (helm upgrade --reuse-values
+from an older chart), gets 50; a value outside 1-1000 fails the render.
+*/ -}}
+{{- define "continuo.execution.kubeClientQPS" -}}
+{{- $e := .Values.execution | default dict -}}
+{{- $q := 50 -}}
+{{- if hasKey $e "kubeClientQPS" -}}{{- $q = int $e.kubeClientQPS -}}{{- end -}}
+{{- if or (lt $q 1) (gt $q 1000) -}}
+{{- fail (printf "execution.kubeClientQPS=%v must be a whole number from 1 to 1000" $e.kubeClientQPS) -}}
+{{- end -}}
+{{- $q -}}
+{{- end -}}
+
+{{/*
+K8S_CLIENT_BURST for the shared ConfigMap: execution.kubeClientBurst. A
+release without an execution block, or without the key, gets 100; a value
+outside 1-2000, or below the QPS, fails the render.
+*/ -}}
+{{- define "continuo.execution.kubeClientBurst" -}}
+{{- $e := .Values.execution | default dict -}}
+{{- $b := 100 -}}
+{{- if hasKey $e "kubeClientBurst" -}}{{- $b = int $e.kubeClientBurst -}}{{- end -}}
+{{- if or (lt $b 1) (gt $b 2000) -}}
+{{- fail (printf "execution.kubeClientBurst=%v must be a whole number from 1 to 2000" $e.kubeClientBurst) -}}
+{{- end -}}
+{{- if lt $b (int (include "continuo.execution.kubeClientQPS" .)) -}}
+{{- fail (printf "execution.kubeClientBurst=%v must be at least execution.kubeClientQPS=%v" $b (include "continuo.execution.kubeClientQPS" .)) -}}
+{{- end -}}
+{{- $b -}}
+{{- end -}}
+
+{{/*
 TASK_MAX_RETRIES for the shared ConfigMap: runs.taskMaxRetries. A release
 without a runs block, or without the key (helm upgrade --reuse-values from an
 older chart), gets 2; a value outside 0-10 fails the render.

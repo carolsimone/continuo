@@ -336,6 +336,18 @@
           "minimum": 1,
           "maximum": 120,
           "description": "How long a Job's pod may take, after the Job is created, to start any container (init or main). Past it execution-controller deletes the Job and fails the attempt with start_timeout."
+        },
+        "kubeClientQPS": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000,
+          "description": "Requests per second execution-controller's Kubernetes client sends once running steadily."
+        },
+        "kubeClientBurst": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2000,
+          "description": "Requests execution-controller's Kubernetes client may send at once in a spike; at least kubeClientQPS."
         }
       }
     },

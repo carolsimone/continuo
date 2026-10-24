@@ -17,6 +17,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/rest"
 )
 
 func TestBuildPodSpec_CommandPerNodeType(t *testing.T) {
@@ -240,4 +241,11 @@ func TestEveryJobKindCarriesTheLabelTheWatchSelects(t *testing.T) {
 		assert.True(t, sel.Matches(labels.Set(j.Labels)), "Job %s", j.Name)
 		assert.True(t, sel.Matches(labels.Set(j.Spec.Template.Labels)), "pod template of Job %s", j.Name)
 	}
+}
+
+func TestRateLimit_AppliesToTheRestConfig(t *testing.T) {
+	rc := &rest.Config{}
+	RateLimit{QPS: 50, Burst: 100}.apply(rc)
+	assert.InDelta(t, 50, rc.QPS, 0)
+	assert.Equal(t, 100, rc.Burst)
 }
