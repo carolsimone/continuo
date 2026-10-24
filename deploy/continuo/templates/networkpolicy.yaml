@@ -410,8 +410,9 @@ spec:
 # ("continuo.egress.otherNamespaceDestinations": a <name>.<namespace>.svc host
 # in a global.*GrpcAddr or in their `services` env that the allowlist does not
 # admit); and reach their direct
-# destinations ("continuo.egress.directDestinations": egress.directDestinations
-# and the IP address of every URL they call) on their ports. Every other
+# destinations ("continuo.egress.directDestinations": egress.directDestinations,
+# every IP address they are given and an external Postgres or Redis at a
+# public IP address) on their ports. Every other
 # connection is dropped. The policy renders whenever egress.enabled is true,
 # also when no proxy renders because every destination is an IP address. A
 # NetworkPolicy port is the pod's port, after a Service has translated the

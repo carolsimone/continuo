@@ -506,7 +506,7 @@ egress:
   # Postgres or Redis on its configured port (on a private network, or a pod
   # of any namespace), the pods of another namespace on the port of each
   # <name>.<namespace>.svc address there in NO_PROXY, and the direct
-  # destinations (also when no proxy renders); egress-proxy's reaches public
+  # destinations (also when no proxy renders); egress-proxy reaches public
   # addresses on its allowlisted ports, and private ones only on the ports of
   # entries that allow them. A NetworkPolicy port is the pod's port, after a
   # Service has translated the address. Without networkPolicy.enabled nothing
@@ -544,12 +544,15 @@ egress:
   # write the IPv4 address), and a NAT64 64:ff9b::/96 address standing for one
   # of those IPv4 ranges. A whole private range can therefore fail:
   # 100.64.0.0/10 contains 100.100.100.200 and fc00::/7 contains
-  # fd00:ec2::/32, so list the narrower ranges you need. A URL whose host is an
-  # IP address (llm.baseUrl, GITHUB_BASE_URL, s3.endpointUrl) is added here for
-  # you, on its port, and both reach NO_PROXY and, on their ports, the agents'
-  # NetworkPolicy. An external Postgres or Redis on a private network, or
-  # running as a pod of another namespace, needs no entry: that policy admits
-  # the private ranges and the pods of every namespace on its configured port.
+  # fd00:ec2::/32, so list the narrower ranges you need. Every IP address the
+  # agents are given (the host of llm.baseUrl, GITHUB_BASE_URL, s3.endpointUrl,
+  # or of a URL or host:port in their env or a global.*GrpcAddr), and an
+  # externalDatabase.host or externalRedis.host that is a public IP address,
+  # is added here for you, on its port, and both reach NO_PROXY and, on their
+  # ports, the agents' NetworkPolicy. An external Postgres or Redis on a private
+  # network, or running as a pod of another namespace, needs no entry: that
+  # policy admits the private ranges and the pods of every namespace on its
+  # configured port. One at a host name that resolves to a public address does.
   directDestinations: []
   proxy:
     # Two replicas keep the proxy up while one pod restarts.

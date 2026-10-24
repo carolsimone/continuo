@@ -25,8 +25,10 @@ policy in the render, a pod made to satisfy it.
     ConfigMap's POSTGRES_PORT and REDIS_PORT, when the render holds no bundled
     one), in the private ranges or as a pod of any namespace; the pods of
     another namespace on the port of each address there they connect to
-    without the proxy; and the direct destinations given with --direct;
-    nothing else. Without that policy their egress must be open: no egress
+    without the proxy; the direct destinations given with --direct; and an
+    external Postgres or Redis whose host (the shared ConfigMap's
+    POSTGRES_HOST or REDIS_HOST) is an IP address outside the private ranges,
+    on its port; nothing else. Without that policy their egress must be open: no egress
     policy may select them. A render that holds egress-proxy always holds
     that policy.
   - egress-proxy, when the render holds its Deployment, may reach cluster DNS,
@@ -41,7 +43,9 @@ S3_ENDPOINT_URL that its NO_PROXY covers by Go's rules, or all of them when it
 has no proxy variable. Each must be one the policy admits: an IP address, a
 name with no dot or ending in .svc or .svc.cluster.local, or a release
 Service's <name>.<namespace>. A host <name>.<namespace>.svc puts that
-namespace and port in the facts above.
+namespace and port in the facts above. An address whose host is an IP address
+(other than loopback, or the unspecified address of a listen address) must be
+one its NO_PROXY covers, because egress-proxy never admits an IP address.
 A pod is never matched by an ipBlock here, so a rule reaches pods only through
 its pod and namespace selectors.
 
@@ -347,18 +351,24 @@ class Facts:
                             if d.get("kind") == "ConfigMap" and "METRICS_PORT" in (d.get("data") or {})), {})
         self.metrics_port = int(self.shared.get("METRICS_PORT") or 0)
         self.datastore_ports = set()
-        for name, key in (("postgresql", "POSTGRES_PORT"), ("redis", "REDIS_PORT")):
+        self.directs = list(directs)
+        for name, key, host_key in (("postgresql", "POSTGRES_PORT", "POSTGRES_HOST"),
+                                    ("redis", "REDIS_PORT", "REDIS_HOST")):
             if name not in self.workloads:
                 if key not in self.shared:
                     raise SystemExit(f"FAIL: the render holds no {name} workload and its shared ConfigMap "
                                      f"(the one with METRICS_PORT) has no {key}")
-                self.datastore_ports.add(int(self.shared[key]))
-        self.directs = directs
+                port = int(self.shared[key])
+                self.datastore_ports.add(port)
+                ip = ENV_CHECKER.ip_literal(str(self.shared.get(host_key) or "").strip("[]"))
+                if ip is not None and not ip.is_loopback and not in_any(ip, PRIVATE):
+                    self.directs.append((ipaddress.ip_network(ip), frozenset({port})))
         self.agent_env = {}
         for d in docs:
             if d.get("kind") == "Deployment" and d["metadata"]["name"] in AGENTS:
                 container = d["spec"]["template"]["spec"]["containers"][0]
                 self.agent_env[d["metadata"]["name"]] = {e["name"]: e.get("value") for e in container.get("env", [])}
+        self.proxied_ips = []
         self.unproxied = self.unproxied_addresses()
         self.namespace_ports = {}
         for _agent, _key, _value, host, port in self.unproxied:
@@ -384,6 +394,9 @@ class Facts:
                     continue
                 host, port = target[0].lower().rstrip("."), target[1]
                 if proxied and not no_proxy.covers(host, port):
+                    ip = ENV_CHECKER.ip_literal(host)
+                    if ip is not None and not (ip.is_loopback or ip.is_unspecified):
+                        self.proxied_ips.append((agent, key, value))
                     continue
                 out.append((agent, key, value, host, int(port)))
         return out
@@ -690,6 +703,9 @@ def main(argv):
                     want = facts.expected(source, target, port, protocol)
                     check("external", source, target, port, protocol, True, want,
                           why_for(facts, source, target, port))
+    for agent, key, value in facts.proxied_ips:
+        failures.append(f"{agent}: {key}={value} names an IP address but NO_PROXY does not cover it, so the call "
+                        "goes to egress-proxy, which never admits an IP address")
     if facts.agents_locked:
         # Every address an agent connects to without the proxy must be one its
         # egress policy admits, or that call is dropped without a trace.

@@ -149,9 +149,27 @@ in-cluster address the agents are given there, and those direct destinations.
 If the agents reach anything else:
   * another host name: add it to egress.allowedDomains (egress.privateDomains
     when it resolves to a private address);
-  * a Postgres or Redis on a PUBLIC address, or any address reached without
-    the proxy: add it to egress.directDestinations ({cidr, ports});
+  * a Postgres or Redis at a host name that resolves to a PUBLIC address, or
+    any other address reached without the proxy: add the address to
+    egress.directDestinations ({cidr, ports}). An IP address in
+    externalDatabase.host, externalRedis.host, a URL or address the agents
+    are given is added for you;
   * to keep their outbound traffic open: set egress.enabled=false.
+{{- if .Values.networkPolicy.enabled }}
+{{- $datastores := list }}
+{{- if not .Values.postgresql.enabled }}{{ $datastores = append $datastores (dict "key" "externalDatabase" "what" "Postgres" "values" (.Values.externalDatabase | default dict)) }}{{ end }}
+{{- if not .Values.redis.enabled }}{{ $datastores = append $datastores (dict "key" "externalRedis" "what" "Redis" "values" (.Values.externalRedis | default dict)) }}{{ end }}
+{{- range $ds := $datastores }}
+{{- $host := $ds.values.host | default "" | toString }}
+{{- if and $host (not (include "continuo.egress.isIP" $host)) }}
+The external {{ $ds.what }} is {{ $ds.key }}.host={{ $host }}, a host name.
+The agents' NetworkPolicy admits it on port {{ $ds.values.port }} at a private
+address or as a pod of the cluster. If {{ $host }} resolves to a PUBLIC address,
+add that address to egress.directDestinations before the agents restart, or
+they cannot reach their {{ $ds.what }}.
+{{- end }}
+{{- end }}
+{{- end }}
 {{- if eq (include "continuo.egress.proxyEnabled" .) "true" }}
 egress-proxy logs every refused connection with its host, port and reason:
   kubectl -n {{ .Release.Namespace }} logs -l app.kubernetes.io/name=egress-proxy --tail=-1 | grep "egress denied"

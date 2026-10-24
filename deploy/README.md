@@ -303,7 +303,7 @@ the proxy, and signs its requests with the static keys the chart gives it
 (`s3.accessKeyId` and `s3.secretKey`, or `s3.existingSecret`; an external bucket
 requires them), so it makes no call to STS or the instance metadata service.
 
-**A model you host.** Point the chart at it; nothing else needs configuring:
+**A model you host.** Point the chart at its root URL:
 
 ```yaml
 llm:
@@ -315,7 +315,8 @@ llm:
 A host name goes through the proxy and may resolve to a private address. An IP
 address (`http://10.0.0.7:8000`) is reached directly: the chart leaves it out of
 the allowlist, adds it to `NO_PROXY` and admits it, on its port, in the agents'
-NetworkPolicy.
+NetworkPolicy. Either way nothing else needs configuring, as long as the port is
+one the model's pod listens on:
 
 A NetworkPolicy sees a connection after a Service has translated it, as the
 **pod's** address and port. So a port you configure must be one the pod listens
@@ -347,8 +348,12 @@ egress:
 Postgres and Redis speak their own protocols and ignore the proxy. With
 `networkPolicy.enabled`, an external Postgres or Redis on a private network, or
 running as a pod of any namespace, is already admitted on its configured port
-(`externalDatabase.port`, `externalRedis.port`); one on a public address needs an
-entry. Each entry is checked as written, and the render fails naming it unless:
+(`externalDatabase.port`, `externalRedis.port`), and one whose
+`externalDatabase.host` or `externalRedis.host` is a public IP address is added
+for you. One whose host is a name that resolves to a public address needs an
+entry: the chart cannot know where the name points, and `helm upgrade` prints
+the configured host as a reminder. Each entry is checked as written, and the
+render fails naming it unless:
 
 - `cidr` is an IPv4 or IPv6 range with a prefix length of 1 or more and no address
   bit set past it. `0.0.0.0/0` and `::/0` are refused.
@@ -372,7 +377,13 @@ agents reach them directly:
   URL or `host:port` in their `env`) as `host:port`, when its host has no dot or
   ends in `.svc` or `.svc.cluster.local`, unless the allowlist admits that host
   and port, in which case the proxy carries it;
-- the IP address of a URL and each `egress.directDestinations` range.
+- every IP address the agents are given (the host of a URL, or of a URL or
+  `host:port` in their `env` or a `global.*GrpcAddr`, which egress-proxy would
+  refuse because it admits host names only), an external Postgres or Redis at a
+  public IP address, and each `egress.directDestinations` range. A loopback
+  address needs no entry, nor does a listen address (`0.0.0.0`) in their `env`;
+  one in link-local or a cloud metadata range fails the render, naming the
+  setting.
 
 Every other address goes through the proxy. A `<name>.<namespace>` address in
 another namespace written without `.svc`, and a name with a trailing dot, are not
@@ -389,8 +400,8 @@ With `networkPolicy.enabled`, the agents may reach:
 - every pod of another namespace on the port of each in-cluster address the
   agents are given there (`foo.tools.svc:80` admits every pod of `tools` on port
   80, not only the target pods);
-- the `egress.directDestinations` ranges and the IP address of each URL, on their
-  ports.
+- the `egress.directDestinations` ranges and every IP address they are given,
+  including an external Postgres or Redis at a public IP address, on their ports.
 
 egress-proxy itself may resolve names, reach public addresses on its allowlisted
 ports, and reach private addresses and pods of any namespace only on the ports of
@@ -414,7 +425,7 @@ kubectl -n <namespace> logs -l app.kubernetes.io/name=egress-proxy --tail=-1 | g
 
 | Reason | Meaning |
 |---|---|
-| `not_allowed` | The host and port are not on the allowlist. |
+| `not_allowed` | The host and port are not on the allowlist. An IP address, which the proxy never admits, belongs in `egress.directDestinations`. |
 | `private_address` | The name resolved to a loopback, unspecified or link-local address, or to a private address its entry does not allow. |
 | `metadata` | The name resolved to a cloud metadata address. |
 | `resolve_failed` | The name did not resolve. |

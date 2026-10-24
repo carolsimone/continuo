@@ -9,16 +9,23 @@ ConfigMap:
     ConfigMap's *_GRPC_ADDR and S3_ENDPOINT_URL), unless the allowlist admits
     that host on that port with private addresses, in which case the proxy
     carries the call;
+  - NO_PROXY covers the IP address of every address either agent is given
+    whose host is an IP address, because egress-proxy admits host names only;
+    loopback, which no proxy is used for, and the unspecified address, which
+    names a listen address, are exempt;
   - NO_PROXY covers no host on the port the allowlist admits it on, so an
     allowlisted call never goes around the proxy. The names of the release's
     own Services and workloads, in their short and namespace-qualified forms,
     are exempt: a direct connection reaches them on any port, so NO_PROXY
     lists every Service of the release in those forms, whatever the allowlist
-    says.
+    says. So is an in-cluster name on an entry that does not allow private
+    addresses: the proxy would refuse the private address it resolves to.
 An address counts as in-cluster when cluster DNS gives its host a Service:
 the host has no dot, ends in .svc or .svc.cluster.local, or is a release
-Service's <name>.<namespace>. An address with any other host goes through the
-proxy. A URL without a port uses its scheme's (443 for https, 80 for http).
+Service's <name>.<namespace>; a name with a trailing dot does not. An address
+with any other host goes through the proxy. A URL without a port uses its
+scheme's (443 for https, 80 for http); a port is compared as written, as Go
+does.
 
 In a render without the egress-proxy ConfigMap (egress.enabled=false, or an
 allowlist with nothing in it) neither agent carries a proxy variable, in upper
@@ -40,6 +47,7 @@ AGENTS = ("agent-chat", "agent-remediation")
 PROXY = "http://egress-proxy:3128"
 PROXY_VARS = ("HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy")
 HOST_PORT = re.compile(r"^([A-Za-z0-9.-]+):(\d+)$")
+BRACKETED_HOST_PORT = re.compile(r"^\[([^\]]*)\]:(\d+)$")
 
 
 class NoProxy:
@@ -106,15 +114,15 @@ class NoProxy:
                     return True
         return False
 
-    def meets_wildcard(self, domain: str, port: str, exempt: set) -> bool:
+    def meets_wildcard(self, domain: str, port: str, exempt) -> bool:
         """Whether some name strictly below `domain` is covered on `port`, so
         that an allowlist entry "*.<domain>" on that port shares a host with
-        NO_PROXY. Entries named in `exempt` are not counted."""
+        NO_PROXY. Entries for which `exempt` returns True are not counted."""
         if self.everything:
             return True
         for suffix, p, _match_host in self.domains:
             entry = suffix[1:]
-            if entry in exempt or (p and p != port):
+            if exempt(entry) or (p and p != port):
                 continue
             if entry == domain or entry.endswith("." + domain) or domain.endswith("." + entry):
                 return True
@@ -123,14 +131,24 @@ class NoProxy:
 
 def address(value: str):
     """The (host, port) an agent connects to for an http(s) URL or a
-    host:port value, or None for any other value."""
+    host:port value, an IPv6 host without its brackets, or None for any other
+    value. The port is the digits as written, which is what Go compares."""
     if value.startswith(("http://", "https://")):
         parts = urlsplit(value)
         if not parts.hostname:
             return None
-        return parts.hostname, str(parts.port or (443 if parts.scheme == "https" else 80))
-    m = HOST_PORT.match(value)
+        written = re.search(r":(\d+)$", parts.netloc.rpartition("@")[2])
+        return parts.hostname, written.group(1) if written else ("443" if parts.scheme == "https" else "80")
+    m = HOST_PORT.match(value) or BRACKETED_HOST_PORT.match(value)
     return (m.group(1).lower(), m.group(2)) if m else None
+
+
+def ip_literal(host: str):
+    """The host as an IP address, or None when it is a name."""
+    try:
+        return ipaddress.ip_address(host)
+    except ValueError:
+        return None
 
 
 def admits(allowlist: list, host: str, port: str, private_only: bool) -> bool:
@@ -156,7 +174,7 @@ def release_forms(services: set, namespace: str) -> set:
 def in_cluster(host: str, services: set, namespace: str) -> bool:
     """Whether cluster DNS gives the host a Service: no dot, a name ending in
     .svc or .svc.cluster.local, or a release Service's <name>.<namespace>."""
-    host = host.lower().rstrip(".")
+    host = host.lower()
     return ("." not in host or re.search(r"\.svc(\.cluster\.local)?$", host) is not None
             or host in release_forms(services, namespace))
 
@@ -187,19 +205,32 @@ def check_proxy_present(name: str, env: dict, shared: dict, services: set, workl
     addresses |= {k: v for k, v in shared.items() if k.endswith("_GRPC_ADDR") or k == "S3_ENDPOINT_URL"}
     for key, value in sorted(addresses.items()):
         target = address(str(value))
-        if not target or not in_cluster(target[0], services, namespace):
+        if not target:
             continue
         host, port = target
+        ip = ip_literal(host)
+        if ip is not None:
+            if not (ip.is_loopback or ip.is_unspecified or no_proxy.covers(host, port)):
+                failures.append(f"{name}: {key}={value} names the IP address {host}, which egress-proxy never "
+                                "admits, but NO_PROXY does not cover it, so the call would go to the proxy and be "
+                                "refused")
+            continue
+        if not in_cluster(host, services, namespace):
+            continue
         if not no_proxy.covers(host, port) and not admits(allowlist, host, port, private_only=True):
             failures.append(f"{name}: {key}={value} is in-cluster, but NO_PROXY does not cover {host}:{port} "
                             "and the allowlist does not admit it with private addresses; the call would go to "
                             "egress-proxy and be refused")
     for entry in allowlist:
         host, port = entry["host"], str(entry["port"])
+
+        def exempt(n, private=entry["allowPrivate"]):
+            return n in local or (not private and in_cluster(n, services, namespace))
+
         if host.startswith("*."):
-            shared_name = no_proxy.meets_wildcard(host[2:], port, local)
+            shared_name = no_proxy.meets_wildcard(host[2:], port, exempt)
         else:
-            shared_name = host not in local and no_proxy.covers(host, port)
+            shared_name = not exempt(host) and no_proxy.covers(host, port)
         if shared_name:
             failures.append(f"{name}: NO_PROXY covers {host}:{port}, which the allowlist admits, so that call "
                             "would skip the proxy")
