@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/num"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/google/uuid"
@@ -130,18 +131,28 @@ func (r *taskTrackerRepository) Create(ctx context.Context, task *TaskTracker) e
 	return nil
 }
 
-// GetByID retrieves a task_tracker by task_id
-func (r *taskTrackerRepository) GetByID(ctx context.Context, taskID uuid.UUID) (*TaskTracker, error) {
-	query := `
-		SELECT task_id, schedule_id, created_at, service_name, schema_name,
-		       table_name, job_name, status, attempt, max_retries, cancelled_at, cancelled_by,
-		       image_tag, inherited_from_task_id, operation, node_key, dispatched_at
-		FROM task_tracker
-		WHERE task_id = $1
-	`
+// taskReadQuery selects the task_tracker rows (aliased t) a task read returns,
+// each with waiting_on_run_id: the run whose task holds the node lease the task
+// waits for. $1 is the tenant whose leases are read; the caller appends its
+// WHERE clause, whose parameters start at $2. A node has at most one lease per
+// tenant, so the join adds at most one row to a task, and a task never reads
+// its own lease as the one it waits for. A task waiting for a node no task
+// holds (its grant is on the way) reads a NULL waiting_on_run_id.
+const taskReadQuery = `
+	SELECT t.task_id, t.schedule_id, t.created_at, t.service_name, t.schema_name,
+	       t.table_name, t.job_name, t.status, t.attempt, t.max_retries, t.cancelled_at, t.cancelled_by,
+	       t.image_tag, t.inherited_from_task_id, t.operation, t.node_key, t.dispatched_at,
+	       t.wait_reason, t.lease_wait_since, l.run_id AS waiting_on_run_id
+	FROM task_tracker t
+	LEFT JOIN node_leases l
+	  ON t.wait_reason = 'node_lease' AND l.tenant_id = $1
+	 AND l.node_key = t.node_key AND l.task_id <> t.task_id`
 
+// GetByID retrieves a task_tracker by task_id, with the run holding the node
+// lease it waits for read from the install's tenant.
+func (r *taskTrackerRepository) GetByID(ctx context.Context, taskID uuid.UUID) (*TaskTracker, error) {
 	var task TaskTracker
-	err := r.db.GetContext(ctx, &task, query, taskID)
+	err := r.db.GetContext(ctx, &task, taskReadQuery+` WHERE t.task_id = $2`, pkgevents.DefaultTenantID, taskID)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			r.logger.Debug("Task tracker not found",
@@ -208,21 +219,17 @@ func (r *taskTrackerRepository) RunReleasesTx(ctx context.Context, tx *sqlx.Tx, 
 	return out, nil
 }
 
-// GetByScheduleAndNode retrieves a task_tracker by schedule_id and node information
+// GetByScheduleAndNode retrieves a task_tracker by schedule_id and node
+// information, with the run holding the node lease it waits for read from the
+// install's tenant.
 func (r *taskTrackerRepository) GetByScheduleAndNode(ctx context.Context, scheduleID uuid.UUID, serviceName, schemaName, tableName string) (*TaskTracker, error) {
-	query := `
-		SELECT task_id, schedule_id, created_at, service_name, schema_name,
-		       table_name, job_name, status, attempt, max_retries, cancelled_at, cancelled_by,
-		       image_tag, inherited_from_task_id, operation, node_key, dispatched_at
-		FROM task_tracker
-		WHERE schedule_id = $1
-		  AND service_name = $2
-		  AND schema_name = $3
-		  AND table_name = $4
-	`
-
 	var task TaskTracker
-	err := r.db.GetContext(ctx, &task, query, scheduleID, serviceName, schemaName, tableName)
+	err := r.db.GetContext(ctx, &task, taskReadQuery+`
+		WHERE t.schedule_id = $2
+		  AND t.service_name = $3
+		  AND t.schema_name = $4
+		  AND t.table_name = $5`,
+		pkgevents.DefaultTenantID, scheduleID, serviceName, schemaName, tableName)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			r.logger.Debug("Task tracker not found by schedule and node",
@@ -250,56 +257,30 @@ func (r *taskTrackerRepository) GetByScheduleAndNode(ctx context.Context, schedu
 	return &task, nil
 }
 
-// ListByScheduleID retrieves all tasks for a specific schedule with optional status filter
+// ListByScheduleID retrieves one page of a schedule's tasks, newest first,
+// with an optional status filter, and the number of tasks the filter matches.
+// Each task carries the run holding the node lease it waits for, read from the
+// install's tenant.
 func (r *taskTrackerRepository) ListByScheduleID(ctx context.Context, scheduleID uuid.UUID, status *run.TaskStatus, limit, offset int) ([]*TaskTracker, int, error) {
-	whereClauses := []string{"schedule_id = :schedule_id"}
-	args := map[string]interface{}{
-		"schedule_id": scheduleID,
-	}
-
+	var statusFilter sql.NullString
 	if status != nil {
-		whereClauses = append(whereClauses, "status = :status")
-		args["status"] = *status
+		statusFilter = sql.NullString{String: string(*status), Valid: true}
 	}
 
-	whereClause := strings.Join(whereClauses, " AND ")
-
-	// Count total matching records
-	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM task_tracker WHERE %s", whereClause)
 	var total int
-
-	countStmt, err := r.db.PrepareNamedContext(ctx, countQuery)
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to prepare count query: %w", err)
-	}
-	defer func() { _ = countStmt.Close() }()
-
-	if err := countStmt.GetContext(ctx, &total, args); err != nil {
+	if err := r.db.GetContext(ctx, &total, `
+		SELECT COUNT(*) FROM task_tracker
+		WHERE schedule_id = $1 AND ($2::text IS NULL OR status = $2)`,
+		scheduleID, statusFilter); err != nil {
 		return nil, 0, fmt.Errorf("failed to count tasks: %w", err)
 	}
 
-	// Fetch paginated results
-	args["limit"] = limit
-	args["offset"] = offset
-
-	query := fmt.Sprintf(`
-		SELECT task_id, schedule_id, created_at, service_name, schema_name,
-		       table_name, job_name, status, attempt, max_retries, cancelled_at, cancelled_by,
-		       image_tag, inherited_from_task_id
-		FROM task_tracker
-		WHERE %s
-		ORDER BY created_at DESC
-		LIMIT :limit OFFSET :offset
-	`, whereClause)
-
-	stmt, err := r.db.PrepareNamedContext(ctx, query)
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to prepare query: %w", err)
-	}
-	defer func() { _ = stmt.Close() }()
-
 	var tasks []*TaskTracker
-	if err := stmt.SelectContext(ctx, &tasks, args); err != nil {
+	if err := r.db.SelectContext(ctx, &tasks, taskReadQuery+`
+		WHERE t.schedule_id = $2 AND ($3::text IS NULL OR t.status = $3)
+		ORDER BY t.created_at DESC
+		LIMIT $4 OFFSET $5`,
+		pkgevents.DefaultTenantID, scheduleID, statusFilter, limit, offset); err != nil {
 		r.logger.Error("Failed to list tasks by schedule",
 			"schedule_id", scheduleID,
 			"error", err,

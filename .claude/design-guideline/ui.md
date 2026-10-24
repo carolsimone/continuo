@@ -944,6 +944,21 @@ Rules:
   muted `.pill-sm--stopped`, like cancelled. Map task and run statuses to pills
   with `taskPillClass`, never a template string, so an unknown status reads
   pending instead of an unstyled pill.
+- A pending task that waits for another run to finish writing its node
+  (`wait_reason` `node_lease`) carries a "waiting for node" pill
+  (`LeaseWaitPill`, `.pill-sm--waiting`) beside its `pending` pill, never in
+  place of it: the status stays what is counted and filtered, the pill says
+  why. It is neutral like queued (`#f1f5f9` fill, `#475569` text) with a
+  1px dashed `#94a3b8` border, the pending node's dash. Its title is
+  `leaseWaitTitle`: "waiting for run <first 8 characters of the run id> to
+  finish writing this node since <time>", or "waiting for its turn to write
+  this node since <time>" while no run holds the node. While a run holds the
+  node the pill is a link to `/run/<run id>` (`runPagePath`), which opens
+  that run on its schedule's run page; its click never reaches the row
+  beneath. On the node table the two pills share the status cell
+  (`.nodes-pills`, 4px gap); on the swimlane the pill (`.swim-wait`, 9.5px)
+  sits on the node's top border, right-aligned, and a collapsed lane puts
+  the same title on the node's cell.
 - A node page's run row shows the failure class and reason of its latest
   attempt (`.nodes-reason`, joined with ` · `) under its status pill.
 - The node row's own cells stay the task's summary: its Attempt cell reads

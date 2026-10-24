@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/carolsimone/continuo/cli/internal/config"
 	"github.com/carolsimone/continuo/cli/internal/output"
 	statev1 "github.com/carolsimone/continuo/cli/proto/state/v1"
 	"github.com/spf13/cobra"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // statusPageSize is the ListTasks page size used while paging through a run.
@@ -20,6 +22,12 @@ type statusNode struct {
 	SchemaName  string `json:"schema_name"`
 	TableName   string `json:"table_name"`
 	Status      string `json:"status"`
+	// WaitReason, WaitingOnRunID and WaitingSince say why a pending task
+	// waits besides its upstreams, on which run and since when; each is
+	// omitted when the state service leaves it empty.
+	WaitReason     string `json:"wait_reason,omitempty"`
+	WaitingOnRunID string `json:"waiting_on_run_id,omitempty"`
+	WaitingSince   string `json:"waiting_since,omitempty"`
 }
 
 type statusPayload struct {
@@ -49,11 +57,18 @@ Output (stdout, JSON):
   {"schedule_name":string,"run_id":string,"is_running":bool,
    "last_run_status":string,
    "nodes":[{"service_name":string,"schema_name":string,
-             "table_name":string,"status":string}]}
+             "table_name":string,"status":string,
+             "wait_reason":string,"waiting_on_run_id":string,"waiting_since":string}]}
   status is one of: pending|dispatched|queued|running|stopping|succeeded|failed|cancelled|skipped.
   dispatched: an attempt was sent and not yet accepted; queued: the attempt
   was accepted and waits for a slot to run in; stopping: a stop was requested
   and the task waits for its attempt to stop.
+  wait_reason is node_lease while the task waits for another run to release its node:
+  another run's task is writing the same node, and this pending task starts
+  once that write ends. waiting_on_run_id is the run writing the node (empty
+  for a moment when the node has just been freed and the task is about to be
+  granted it); waiting_since is when the wait began (RFC3339). The three are
+  omitted when the task waits for nothing besides its upstreams.
   last_run_status is one of pending|running|cancelling|succeeded|failed|cancelled|skipped.
   cancelling: a cancel was accepted and the run waits for its Jobs to stop.
   is_running is true while the run is pending, running or cancelling.
@@ -66,7 +81,7 @@ Errors:
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo schedule status daily-revenue",
 		Annotations: map[string]string{
-			"output_schema": `{"schedule_name":"string","run_id":"string","is_running":"bool","last_run_status":"string","nodes":"array"}`,
+			"output_schema": `{"schedule_name":"string","run_id":"string","is_running":"bool","last_run_status":"string","nodes":[{"service_name":"string","schema_name":"string","table_name":"string","status":"string","wait_reason":"string","waiting_on_run_id":"string","waiting_since":"string"}]}`,
 			"exit_codes":    `[0,2,3,5,6]`,
 		},
 		Args: func(cmd *cobra.Command, args []string) error {
@@ -131,10 +146,13 @@ Errors:
 				tasks := resp.GetTasks()
 				for _, t := range tasks {
 					payload.Nodes = append(payload.Nodes, statusNode{
-						ServiceName: t.GetServiceName(),
-						SchemaName:  t.GetSchemaName(),
-						TableName:   t.GetTableName(),
-						Status:      taskStatusString(t.GetStatus()),
+						ServiceName:    t.GetServiceName(),
+						SchemaName:     t.GetSchemaName(),
+						TableName:      t.GetTableName(),
+						Status:         taskStatusString(t.GetStatus()),
+						WaitReason:     t.GetWaitReason(),
+						WaitingOnRunID: t.GetWaitingOnRunId(),
+						WaitingSince:   timestampString(t.GetWaitingSince()),
 					})
 				}
 				// Widen TotalCount (int32) to int rather than narrow len() down,
@@ -170,6 +188,14 @@ func emitStatus(stdout, stderr io.Writer, human bool, p statusPayload) error {
 		return nil
 	}
 	return output.EmitSuccess(stdout, p)
+}
+
+// timestampString renders ts as RFC3339 in UTC, or "" when it is unset.
+func timestampString(ts *timestamppb.Timestamp) string {
+	if ts == nil {
+		return ""
+	}
+	return ts.AsTime().UTC().Format(time.RFC3339)
 }
 
 // taskStatusString maps the proto TaskStatus enum to its lowercase short form

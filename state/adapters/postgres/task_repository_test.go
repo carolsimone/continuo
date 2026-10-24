@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/google/uuid"
@@ -511,4 +512,85 @@ func TestTaskRepository_NodeKeyRoundTrips(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, read.NodeKey)
 	assert.Equal(t, key, *read.NodeKey)
+}
+
+// The task reads (ListByScheduleID, GetByID, GetByScheduleAndNode) carry a
+// pending task's wait for its node's lease: the reason, when it began waiting
+// and the run whose task holds the node in the install's tenant. A task that
+// waits for nothing, or whose node no task holds, names no holder run.
+func TestListByScheduleID_ShowsALeaseWaitAndItsHolder(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	tasks := postgres.NewTaskTrackerRepository(db, discardLogger())
+	held, free := "w"+uuid.NewString()[:8], "f"+uuid.NewString()[:8]
+	holderRun := readRun(t, db, "cron-"+uuid.NewString()[:8], nil, nil, "running", false)
+	holder := readTask(t, db, holderRun, held, "running")
+	require.NoError(t, insertLease(db, pkgevents.DefaultTenantID, "raw."+held, holder, holderRun))
+
+	waitingRun := readRun(t, db, "single-"+uuid.NewString()[:8], nil, nil, "running", false)
+	waiter := readTask(t, db, waitingRun, held, "pending")
+	since := time.Date(2026, 10, 24, 10, 5, 0, 0, time.UTC)
+	waitForLease(t, db, waiter, since)
+	freed := readTask(t, db, waitingRun, free, "pending")
+	waitForLease(t, db, freed, since)
+
+	list, total, err := tasks.ListByScheduleID(ctx, waitingRun, nil, 10, 0)
+	require.NoError(t, err)
+	require.Equal(t, 2, total)
+	byID := map[uuid.UUID]*postgres.TaskTracker{}
+	for _, task := range list {
+		byID[task.TaskID] = task
+	}
+	assertWaitsOn := func(t *testing.T, task *postgres.TaskTracker, holderRun *uuid.UUID) {
+		t.Helper()
+		require.NotNil(t, task.WaitReason)
+		assert.Equal(t, string(run.WaitReasonNodeLease), *task.WaitReason)
+		require.NotNil(t, task.LeaseWaitSince)
+		assert.True(t, since.Equal(*task.LeaseWaitSince))
+		assert.Equal(t, holderRun, task.WaitingOnRunID)
+	}
+	assertWaitsOn(t, byID[waiter], &holderRun)
+	assertWaitsOn(t, byID[freed], nil)
+
+	got, err := tasks.GetByID(ctx, waiter)
+	require.NoError(t, err)
+	assertWaitsOn(t, got, &holderRun)
+	got, err = tasks.GetByScheduleAndNode(ctx, waitingRun, "svc", "raw", held)
+	require.NoError(t, err)
+	assertWaitsOn(t, got, &holderRun)
+
+	got, err = tasks.GetByID(ctx, holder)
+	require.NoError(t, err)
+	assert.Nil(t, got.WaitReason)
+	assert.Nil(t, got.LeaseWaitSince)
+	assert.Nil(t, got.WaitingOnRunID, "the holder waits on no run")
+}
+
+// ListByScheduleID pages a schedule's tasks newest first and counts the tasks
+// its status filter matches; no filter lists every task.
+func TestListByScheduleID_FiltersByStatusAndPages(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	tasks := postgres.NewTaskTrackerRepository(db, discardLogger())
+	runID := readRun(t, db, "list-"+uuid.NewString()[:8], nil, nil, "running", false)
+	oldest := readTask(t, db, runID, "a", "pending")
+	middle := readTask(t, db, runID, "b", "running")
+	newest := readTask(t, db, runID, "c", "pending")
+	for i, id := range []uuid.UUID{oldest, middle, newest} {
+		_, err := db.Exec(`UPDATE task_tracker SET created_at = now() - make_interval(mins => $2) WHERE task_id = $1`, id, 10-i)
+		require.NoError(t, err)
+	}
+
+	all, total, err := tasks.ListByScheduleID(ctx, runID, nil, 10, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 3, total)
+	require.Len(t, all, 3)
+	assert.Equal(t, []uuid.UUID{newest, middle, oldest}, []uuid.UUID{all[0].TaskID, all[1].TaskID, all[2].TaskID})
+
+	pending := run.TaskStatusPending
+	page, total, err := tasks.ListByScheduleID(ctx, runID, &pending, 1, 1)
+	require.NoError(t, err)
+	assert.Equal(t, 2, total, "the count is of the filter's matches, not of the page")
+	require.Len(t, page, 1)
+	assert.Equal(t, oldest, page[0].TaskID)
 }

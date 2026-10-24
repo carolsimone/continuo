@@ -249,3 +249,29 @@ func TestNodeRunHandler_ListNodes_TimeoutIsDeclaredOrTheInstallDefault(t *testin
 	assert.Equal(t, int32(86400), resp.Nodes[1].GetTimeoutSeconds(), "a node that declares none gets the install default")
 	assert.False(t, resp.Nodes[1].GetTimeoutDeclared())
 }
+
+// A node's run whose task waits for the node's lease carries the reason, the
+// holder's run and when it began waiting; a run that waits for nothing carries
+// none of the three.
+func TestNodeRunHandler_ListNodeRuns_ReportsALeaseWaitAndItsHolder(t *testing.T) {
+	holderRun := uuid.New()
+	since := time.Date(2026, 10, 24, 10, 5, 0, 0, time.UTC)
+	repo := &fakeNodeRunRepo{rows: []*projection.NodeRun{
+		{ScheduleID: uuid.New(), TaskID: uuid.New(), TaskStatus: run.TaskStatusPending, CreatedAt: since,
+			WaitReason: run.WaitReasonNodeLease, WaitingOnRunID: &holderRun, WaitingSince: &since},
+		{ScheduleID: holderRun, TaskID: uuid.New(), TaskStatus: run.TaskStatusRunning, CreatedAt: since},
+	}}
+	h := NewNodeRunHandler(repo, 24*time.Hour, nil)
+
+	resp, err := h.ListNodeRuns(context.Background(), &statev1.ListNodeRunsRequest{
+		ServiceName: "svc", SchemaName: "sch", TableName: "tbl",
+	})
+	require.NoError(t, err)
+	require.Len(t, resp.Runs, 2)
+	assert.Equal(t, "node_lease", resp.Runs[0].GetWaitReason())
+	assert.Equal(t, holderRun.String(), resp.Runs[0].GetWaitingOnRunId())
+	assert.Equal(t, "2026-10-24T10:05:00Z", resp.Runs[0].GetWaitingSince())
+	assert.Empty(t, resp.Runs[1].GetWaitReason())
+	assert.Empty(t, resp.Runs[1].GetWaitingOnRunId())
+	assert.Empty(t, resp.Runs[1].GetWaitingSince())
+}

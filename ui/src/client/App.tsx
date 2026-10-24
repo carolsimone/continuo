@@ -4,6 +4,7 @@ import DashboardPage from './DashboardPage';
 import DetailPage from './DetailPage';
 import NodeDetailPage from './NodeDetailPage';
 import ReleaseDetailPage from './ReleaseDetailPage';
+import RunRedirect from './RunRedirect';
 import VerificationDetailPage from './VerificationDetailPage';
 import ChatContainer from './chat/ChatContainer';
 import { useAuth } from './auth/useAuth';
@@ -47,6 +48,7 @@ export default function App() {
               <Route path="/schedule/:name" element={<DetailPage />} />
               <Route path="/schedule/:name/latest" element={<DetailPage mode="latest" />} />
               <Route path="/node/:fqn" element={<NodeDetailPage />} />
+              <Route path="/run/:id" element={<RunRedirect />} />
               <Route path="/releases/:id" element={<ReleaseDetailPage />} />
               <Route path="/verifications/:id" element={<VerificationDetailPage />} />
             </Routes>

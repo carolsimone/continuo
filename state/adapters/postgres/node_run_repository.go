@@ -53,7 +53,9 @@ func NewNodeRunRepository(db *sqlx.DB, logger *slog.Logger) NodeRunRepository {
 //
 // Each row carries:
 //   - run-level: run_id, schedule_name, kind, terminal_status
-//   - task-level: task_status, attempt, image_tag
+//   - task-level: task_status, attempt, image_tag, and, while the task waits
+//     for the node's lease, wait_reason, lease_wait_since and the run whose
+//     task holds the lease in the install's tenant
 //   - attempt-level (latest attempt per task): started_at, completed_at
 //     (the attempt's finished_at), error_message, log_s3_key, run_results_uri,
 //     failure_class, failure_reason
@@ -78,7 +80,8 @@ func (r *nodeRunRepository) List(
 	const query = `
 		WITH target_tasks AS (
 			SELECT t.task_id, t.schedule_id, t.status AS task_status,
-			       t.attempt, t.image_tag, t.operation, t.node_key
+			       t.attempt, t.image_tag, t.operation, t.node_key,
+			       t.wait_reason, t.lease_wait_since
 			FROM task_tracker t
 			WHERE t.service_name = $1
 			  AND t.schema_name  = $2
@@ -112,12 +115,20 @@ func (r *nodeRunRepository) List(
 		       le.failure_class     AS failure_class,
 		       le.failure_reason    AS failure_reason,
 		       tt.operation         AS operation,
-		       COALESCE(n.content_hash, '') AS content_hash
+		       COALESCE(n.content_hash, '') AS content_hash,
+		       COALESCE(tt.wait_reason, '') AS wait_reason,
+		       tt.lease_wait_since  AS waiting_since,
+		       l.run_id             AS waiting_on_run_id
 		FROM target_tasks tt
 		JOIN scheduler_tracker s ON s.schedule_id = tt.schedule_id
 		LEFT JOIN latest_attempt le ON le.task_id = tt.task_id
 		LEFT JOIN topology_nodes n
 		  ON n.tenant_id = $6 AND n.release_id = s.release_id AND n.node_key = tt.node_key
+		-- the lease another task holds on the node a waiting task waits for: at
+		-- most one per tenant and node, and never the task's own
+		LEFT JOIN node_leases l
+		  ON tt.wait_reason = 'node_lease' AND l.tenant_id = $6
+		 AND l.node_key = tt.node_key AND l.task_id <> tt.task_id
 		ORDER BY s.created_at DESC
 		LIMIT $5
 	`
@@ -159,6 +170,9 @@ type nodeRunRow struct {
 	FailureReason  *string        `db:"failure_reason"`
 	Operation      string         `db:"operation"`
 	ContentHash    string         `db:"content_hash"`
+	WaitReason     string         `db:"wait_reason"`
+	WaitingSince   *time.Time     `db:"waiting_since"`
+	WaitingOnRunID *uuid.UUID     `db:"waiting_on_run_id"`
 }
 
 func toNodeRun(row nodeRunRow) *projection.NodeRun {
@@ -181,6 +195,9 @@ func toNodeRun(row nodeRunRow) *projection.NodeRun {
 		FailureReason:  row.FailureReason,
 		Operation:      row.Operation,
 		ContentHash:    row.ContentHash,
+		WaitReason:     run.WaitReason(row.WaitReason),
+		WaitingSince:   row.WaitingSince,
+		WaitingOnRunID: row.WaitingOnRunID,
 	}
 }
 

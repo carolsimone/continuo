@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // fakeStateStatus implements client.StateClient for status tests.
@@ -311,4 +312,90 @@ func TestStatus_LongNamesTheCancellingRunStatus(t *testing.T) {
 
 	assert.Contains(t, long, "last_run_status is one of pending|running|cancelling|succeeded|failed|cancelled|skipped.")
 	assert.Contains(t, long, "is_running is true while the run is pending, running or cancelling")
+}
+
+// A node whose task waits for its node's lease says why, on which run and since
+// when; a node that waits for nothing omits all three.
+func TestStatus_ReportsALeaseWaitAndItsHolder(t *testing.T) {
+	since := time.Date(2026, 10, 24, 10, 5, 0, 0, time.UTC)
+	fake := &fakeStateStatus{
+		schedules: &statev1.ListAllSchedulesResponse{Schedules: []*statev1.ScheduleSummary{
+			{ScheduleName: "single", LastRunId: "run-2", IsRunning: true, LastRunStatus: "running"},
+		}},
+		pages: []*statev1.ListTasksResponse{{
+			TotalCount: 2,
+			Tasks: []*statev1.Task{
+				{ServiceName: "svc", SchemaName: "raw", TableName: "a", Status: statev1.TaskStatus_TASK_STATUS_PENDING,
+					WaitReason: "node_lease", WaitingOnRunId: "run-1", WaitingSince: timestamppb.New(since)},
+				{ServiceName: "svc", SchemaName: "raw", TableName: "b", Status: statev1.TaskStatus_TASK_STATUS_PENDING},
+			},
+		}},
+	}
+
+	stdout, _, exit := runStatus(t, fake, []string{"single"}, false)
+
+	require.Equal(t, 0, exit)
+	var payload struct {
+		Nodes []map[string]any `json:"nodes"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(stdout), &payload))
+	require.Len(t, payload.Nodes, 2)
+	assert.Equal(t, "node_lease", payload.Nodes[0]["wait_reason"])
+	assert.Equal(t, "run-1", payload.Nodes[0]["waiting_on_run_id"])
+	assert.Equal(t, "2026-10-24T10:05:00Z", payload.Nodes[0]["waiting_since"])
+	for _, k := range []string{"wait_reason", "waiting_on_run_id", "waiting_since"} {
+		assert.NotContains(t, payload.Nodes[1], k, "a node that waits for nothing omits %s", k)
+	}
+}
+
+// The output_schema annotation declares every field a node can carry: a node
+// with every field set emits exactly the keys its nodes item declares.
+func TestStatus_OutputSchemaDeclaresEveryNodeField(t *testing.T) {
+	fake := &fakeStateStatus{
+		schedules: &statev1.ListAllSchedulesResponse{Schedules: []*statev1.ScheduleSummary{
+			{ScheduleName: "single", LastRunId: "run-2", IsRunning: true},
+		}},
+		pages: []*statev1.ListTasksResponse{{
+			TotalCount: 1,
+			Tasks: []*statev1.Task{{ServiceName: "svc", SchemaName: "raw", TableName: "a",
+				Status: statev1.TaskStatus_TASK_STATUS_PENDING, WaitReason: "node_lease", WaitingOnRunId: "run-1",
+				WaitingSince: timestamppb.New(time.Date(2026, 10, 24, 10, 5, 0, 0, time.UTC))}},
+		}},
+	}
+	stdout, _, exit := runStatus(t, fake, []string{"single"}, false)
+	require.Equal(t, 0, exit)
+
+	var emitted struct {
+		Nodes []map[string]json.RawMessage `json:"nodes"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(stdout), &emitted))
+	require.Len(t, emitted.Nodes, 1)
+
+	var schema struct {
+		Nodes []map[string]string `json:"nodes"`
+	}
+	cmd := NewStatusCommand(nil, &config.Config{}, io.Discard, io.Discard)
+	require.NoError(t, json.Unmarshal([]byte(cmd.Annotations["output_schema"]), &schema))
+	require.Len(t, schema.Nodes, 1, "output_schema declares the fields of one nodes item")
+
+	assert.ElementsMatch(t, keys(emitted.Nodes[0]), keysOf(schema.Nodes[0]))
+	assert.Equal(t, "string", schema.Nodes[0]["wait_reason"])
+	assert.Equal(t, "string", schema.Nodes[0]["waiting_on_run_id"])
+	assert.Equal(t, "string", schema.Nodes[0]["waiting_since"])
+}
+
+// The help says when the wait fields are set and what they name.
+func TestStatus_LongExplainsALeaseWait(t *testing.T) {
+	long := NewStatusCommand(nil, nil, io.Discard, io.Discard).Long
+
+	assert.Contains(t, long, `"wait_reason":string,"waiting_on_run_id":string,"waiting_since":string`)
+	assert.Contains(t, long, "wait_reason is node_lease while the task waits for another run to release its node")
+}
+
+func keysOf(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }

@@ -37,6 +37,12 @@ type nodeRun struct {
 	// ContentHash is the node's content hash in the release the run ran on, as
 	// the state service records it. Empty for runs that name no release.
 	ContentHash string `json:"content_hash,omitempty"`
+	// WaitReason, WaitingOnRunID and WaitingSince say why the run's pending
+	// task waits besides its upstreams, on which run and since when; each is
+	// omitted when the state service leaves it empty.
+	WaitReason     string `json:"wait_reason,omitempty"`
+	WaitingOnRunID string `json:"waiting_on_run_id,omitempty"`
+	WaitingSince   string `json:"waiting_since,omitempty"`
 }
 
 type historyPayload struct {
@@ -80,7 +86,8 @@ Output (stdout, JSON): up to 50 runs, newest first.
    "created_at":string,"started_at":string,"completed_at":string,
    "error_message":string,"failure_class":string,"failure_reason":string,
    "log_s3_key":string,"run_results_uri":string,"operation":string,
-   "content_hash":string}]}
+   "content_hash":string,
+   "wait_reason":string,"waiting_on_run_id":string,"waiting_since":string}]}
   attempt is the zero-based number of the task's current attempt (0 on the
   first try). terminal_status is the run's status: pending|running|cancelling|succeeded|failed|cancelled|skipped.
   task_status is one of: pending|dispatched|queued|running|stopping|succeeded|failed|cancelled|skipped.
@@ -94,6 +101,13 @@ Output (stdout, JSON): up to 50 runs, newest first.
 content_hash is the node's content hash in the release the run ran on, as
 the state service records it; it is omitted for runs that name no release.
 
+wait_reason is node_lease while the task waits for another run to release its node:
+another run's task is writing this node, and this run's pending task starts
+once that write ends. waiting_on_run_id is the run writing the node (empty
+for a moment when the node has just been freed and the task is about to be
+granted it); waiting_since is when the wait began (RFC3339). The three are
+omitted when the task waits for nothing besides its upstreams.
+
 In --human mode, content_hash is rendered too: each line ends with an
 EXECUTED_HASH column (the first 12 characters of content_hash, or "-" when
 it is unavailable).
@@ -104,7 +118,7 @@ Errors:
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo node history finance analytics orders --operation test",
 		Annotations: map[string]string{
-			"output_schema": `{"runs":"array"}`,
+			"output_schema": `{"runs":[{"run_id":"string","schedule_name":"string","kind":"string","terminal_status":"string","task_id":"string","task_status":"string","attempt":"number","image_tag":"string","created_at":"string","started_at":"string","completed_at":"string","error_message":"string","failure_class":"string","failure_reason":"string","log_s3_key":"string","run_results_uri":"string","operation":"string","content_hash":"string","wait_reason":"string","waiting_on_run_id":"string","waiting_since":"string"}]}`,
 			"exit_codes":    `[0,2,5,6]`,
 		},
 		Args: func(cmd *cobra.Command, args []string) error {
@@ -168,6 +182,9 @@ func toHistoryPayload(runs []*statev1.NodeRun) historyPayload {
 			RunResultsURI:  r.GetRunResultsUri(),
 			Operation:      r.GetOperation(),
 			ContentHash:    r.GetContentHash(),
+			WaitReason:     r.GetWaitReason(),
+			WaitingOnRunID: r.GetWaitingOnRunId(),
+			WaitingSince:   r.GetWaitingSince(),
 		})
 	}
 	return historyPayload{Runs: out}

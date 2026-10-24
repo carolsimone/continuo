@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/projection"
@@ -999,4 +1000,39 @@ func TestNodeRunRepository_ListNodes_NodesSharingATableStayOneRow(t *testing.T) 
 	require.Len(t, rows, 1)
 	require.NotNil(t, rows[0].TimeoutSeconds)
 	assert.Equal(t, 1200, *rows[0].TimeoutSeconds)
+}
+
+// A node's history shows, on a run whose task waits for the node's lease, the
+// reason, when it began waiting and the run whose task holds the node in the
+// install's tenant; the holding run's own row waits on no run.
+func TestNodeRunRepository_List_ShowsALeaseWaitAndItsHolder(t *testing.T) {
+	db := newTestDB(t)
+	tbl := "w" + uuid.NewString()[:8]
+	holderRun := readRun(t, db, "cron-"+uuid.NewString()[:8], nil, nil, "running", false)
+	holder := readTask(t, db, holderRun, tbl, "running")
+	require.NoError(t, insertLease(db, pkgevents.DefaultTenantID, "raw."+tbl, holder, holderRun))
+	waitingRun := readRun(t, db, "single-"+uuid.NewString()[:8], nil, nil, "running", false)
+	waiter := readTask(t, db, waitingRun, tbl, "pending")
+	since := time.Date(2026, 10, 24, 10, 5, 0, 0, time.UTC)
+	waitForLease(t, db, waiter, since)
+
+	rows, err := postgres.NewNodeRunRepository(db, discardLogger()).List(context.Background(), "svc", "raw", tbl, "run", 50)
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	byTask := map[uuid.UUID]*projection.NodeRun{}
+	for _, r := range rows {
+		byTask[r.TaskID] = r
+	}
+
+	waiting := byTask[waiter]
+	assert.Equal(t, run.WaitReasonNodeLease, waiting.WaitReason)
+	require.NotNil(t, waiting.WaitingOnRunID)
+	assert.Equal(t, holderRun, *waiting.WaitingOnRunID)
+	require.NotNil(t, waiting.WaitingSince)
+	assert.True(t, since.Equal(*waiting.WaitingSince))
+
+	holding := byTask[holder]
+	assert.Empty(t, holding.WaitReason)
+	assert.Nil(t, holding.WaitingOnRunID, "the holder waits on no run")
+	assert.Nil(t, holding.WaitingSince)
 }

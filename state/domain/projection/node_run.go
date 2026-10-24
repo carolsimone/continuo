@@ -41,4 +41,13 @@ type NodeRun struct {
 	// ContentHash is the node's content hash in the run's release; empty when
 	// the run names no release.
 	ContentHash string
+	// WaitReason is what the pending task waits for besides its upstreams;
+	// empty when it waits for nothing else. WaitingSince is when it began
+	// waiting, nil without a reason.
+	WaitReason   run.WaitReason
+	WaitingSince *time.Time
+	// WaitingOnRunID is the run whose task holds the node the task waits to
+	// write, read from the node's lease when the history is read; nil when the
+	// task waits for no lease or no task holds the node.
+	WaitingOnRunID *uuid.UUID
 }

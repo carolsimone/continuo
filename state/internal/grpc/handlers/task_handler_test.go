@@ -126,3 +126,37 @@ func TestTaskHandler_ASucceededTaskThatWasAskedToStopShowsNoCancel(t *testing.T)
 	assert.Empty(t, got.Task.CancelledBy)
 	assert.Nil(t, got.Task.CancelledAt)
 }
+
+// A task waiting for its node's lease carries the reason, the holder's run and
+// when it began waiting, through ListTasks and GetTask; a waiter whose node no
+// task holds names no run, and a task that waits for nothing carries none.
+func TestTaskHandler_ReportsALeaseWaitAndItsHolder(t *testing.T) {
+	holderRun := uuid.New()
+	since := time.Date(2026, 10, 24, 10, 5, 0, 0, time.UTC)
+	reason := string(run.WaitReasonNodeLease)
+	waiting := &postgres.TaskTracker{TaskID: uuid.New(), ScheduleID: uuid.New(), Status: run.TaskStatusPending,
+		WaitReason: &reason, LeaseWaitSince: &since, WaitingOnRunID: &holderRun}
+	freed := &postgres.TaskTracker{TaskID: uuid.New(), ScheduleID: waiting.ScheduleID, Status: run.TaskStatusPending,
+		WaitReason: &reason, LeaseWaitSince: &since}
+	idle := &postgres.TaskTracker{TaskID: uuid.New(), ScheduleID: waiting.ScheduleID, Status: run.TaskStatusPending}
+	h := NewTaskHandler(&fakeTaskRepo{tasks: []*postgres.TaskTracker{waiting, freed, idle}}, newTestLogger())
+
+	list, err := h.ListTasks(context.Background(), &statev1.ListTasksRequest{ScheduleId: waiting.ScheduleID.String()})
+	require.NoError(t, err)
+	require.Len(t, list.Tasks, 3)
+	assert.Equal(t, "node_lease", list.Tasks[0].WaitReason)
+	assert.Equal(t, holderRun.String(), list.Tasks[0].WaitingOnRunId)
+	require.NotNil(t, list.Tasks[0].WaitingSince)
+	assert.True(t, since.Equal(list.Tasks[0].WaitingSince.AsTime()))
+	assert.Equal(t, "node_lease", list.Tasks[1].WaitReason)
+	assert.Empty(t, list.Tasks[1].WaitingOnRunId, "no task holds its node")
+	assert.NotNil(t, list.Tasks[1].WaitingSince)
+	assert.Empty(t, list.Tasks[2].WaitReason)
+	assert.Empty(t, list.Tasks[2].WaitingOnRunId)
+	assert.Nil(t, list.Tasks[2].WaitingSince)
+
+	got, err := h.GetTask(context.Background(), &statev1.GetTaskRequest{TaskId: waiting.TaskID.String()})
+	require.NoError(t, err)
+	assert.Equal(t, "node_lease", got.Task.WaitReason)
+	assert.Equal(t, holderRun.String(), got.Task.WaitingOnRunId)
+}

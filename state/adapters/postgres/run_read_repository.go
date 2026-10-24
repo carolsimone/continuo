@@ -18,7 +18,8 @@ import (
 
 // RunReadRepository reads run graphs, run lists and drift from Postgres. A
 // run's graph joins its task rows to the nodes and edges of the run's own
-// release, so a later promotion never changes a past run's graph.
+// release, so a later promotion never changes a past run's graph, and a task
+// waiting for its node's lease to the lease held on that node now.
 type RunReadRepository struct {
 	db *sqlx.DB
 }
@@ -31,13 +32,16 @@ func NewRunReadRepository(db *sqlx.DB) *RunReadRepository {
 }
 
 type runGraphNodeRow struct {
-	TaskID       uuid.UUID `db:"task_id"`
-	ServiceName  string    `db:"service_name"`
-	SchemaName   string    `db:"schema_name"`
-	TableName    string    `db:"table_name"`
-	Status       string    `db:"status"`
-	ScheduleName string    `db:"schedule_name"`
-	NodeType     string    `db:"node_type"`
+	TaskID         uuid.UUID  `db:"task_id"`
+	ServiceName    string     `db:"service_name"`
+	SchemaName     string     `db:"schema_name"`
+	TableName      string     `db:"table_name"`
+	Status         string     `db:"status"`
+	ScheduleName   string     `db:"schedule_name"`
+	NodeType       string     `db:"node_type"`
+	WaitReason     string     `db:"wait_reason"`
+	WaitingSince   *time.Time `db:"lease_wait_since"`
+	WaitingOnRunID *uuid.UUID `db:"waiting_on_run_id"`
 }
 
 type runGraphEdgeRow struct {
@@ -63,15 +67,25 @@ func (r *RunReadRepository) GetRunGraph(ctx context.Context, tenantID string, ru
 	}
 	g.RunPromotionSeq = seq.Int64
 
+	// A task waiting for its node's lease is joined to the lease another task
+	// of the tenant holds on that node, which names the holder's run. A node
+	// has at most one lease per tenant, so the join adds at most one row to a
+	// task, and a task never reads its own lease as the one it waits for.
 	var nodes []runGraphNodeRow
 	if err := r.db.SelectContext(ctx, &nodes, `
 		SELECT t.task_id, t.service_name, t.schema_name, t.table_name, t.status,
 		       COALESCE(n.schedule_name, '') AS schedule_name,
-		       COALESCE(n.node_type, '')     AS node_type
+		       COALESCE(n.node_type, '')     AS node_type,
+		       COALESCE(t.wait_reason, '')   AS wait_reason,
+		       t.lease_wait_since,
+		       l.run_id                      AS waiting_on_run_id
 		FROM task_tracker t
 		JOIN scheduler_tracker s ON s.schedule_id = t.schedule_id
 		LEFT JOIN topology_nodes n
 		  ON n.tenant_id = $2 AND n.release_id = s.release_id AND n.node_key = t.node_key
+		LEFT JOIN node_leases l
+		  ON t.wait_reason = 'node_lease' AND l.tenant_id = $2
+		 AND l.node_key = t.node_key AND l.task_id <> t.task_id
 		WHERE t.schedule_id = $1
 		ORDER BY t.service_name, t.schema_name, t.table_name`, runID, tenantID); err != nil {
 		return projection.RunGraph{}, fmt.Errorf("read tasks of run %s: %w", runID, err)
@@ -81,6 +95,8 @@ func (r *RunReadRepository) GetRunGraph(ctx context.Context, tenantID string, ru
 			ServiceName: n.ServiceName, SchemaName: n.SchemaName, TableName: n.TableName,
 			ScheduleName: n.ScheduleName, NodeType: n.NodeType,
 			Status: run.TaskStatus(n.Status), TaskID: n.TaskID,
+			WaitReason: run.WaitReason(n.WaitReason), WaitingSince: n.WaitingSince,
+			WaitingOnRunID: n.WaitingOnRunID,
 		})
 	}
 

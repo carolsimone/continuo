@@ -205,6 +205,9 @@ message Task {
   int32 max_retries = 10;
   google.protobuf.Timestamp cancelled_at = 11;  // set only while status is CANCELLED
   string cancelled_by = 12;                     // set only while status is CANCELLED
+  string wait_reason = 13;                      // node_lease while the task waits for another run to release its node; empty otherwise
+  string waiting_on_run_id = 14;                // the run whose task holds the node the task waits for; empty when it waits for nothing or no task holds the node
+  google.protobuf.Timestamp waiting_since = 15; // when the task began waiting for wait_reason; unset when it has none
 }
 
 // TaskAttempt is one attempt of a task: one dispatch of its Kubernetes Job.
@@ -455,6 +458,9 @@ message NodeRun {
   string content_hash     = 17; // node's content hash in the run's release; "" when the run names no release
   string failure_class    = 18; // why the latest attempt failed; "" unless it failed
   string failure_reason   = 19; // the specific failure within failure_class; "" unless it failed
+  string wait_reason      = 20; // node_lease while the task waits for another run to release its node; empty otherwise
+  string waiting_on_run_id = 21; // the run whose task holds the node the task waits for; "" when it waits for nothing or no task holds the node
+  string waiting_since    = 22; // RFC3339, when the task began waiting for wait_reason; "" when it has none
 }
 
 message ListNodesRequest {
@@ -501,13 +507,16 @@ message ListNodeServicesResponse {
 }
 
 message RunGraphNode {
-  string service_name  = 1;
-  string schema_name   = 2;
-  string table_name    = 3;
-  string schedule_name = 4;  // the node's schedule in the run's release; "" when unknown
-  string node_type     = 5;  // "" when the run names no release
-  string status        = 6;  // the task's status: pending | dispatched | queued | running | stopping | succeeded | failed | cancelled | skipped
-  string task_id       = 7;
+  string service_name      = 1;
+  string schema_name       = 2;
+  string table_name        = 3;
+  string schedule_name     = 4;  // the node's schedule in the run's release; "" when unknown
+  string node_type         = 5;  // "" when the run names no release
+  string status            = 6;  // the task's status: pending | dispatched | queued | running | stopping | succeeded | failed | cancelled | skipped
+  string task_id           = 7;
+  string wait_reason       = 8;  // node_lease while the task waits for another run to release its node; empty otherwise
+  string waiting_on_run_id = 9;  // the run whose task holds the node the task waits for; "" when it waits for nothing or no task holds the node
+  string waiting_since     = 10; // RFC3339, when the task began waiting for wait_reason; "" when it has none
 }
 
 message RunGraphEdge {

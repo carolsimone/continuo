@@ -19,6 +19,15 @@ type RunGraphNode struct {
 	NodeType     string
 	Status       run.TaskStatus
 	TaskID       uuid.UUID
+	// WaitReason is what the pending task waits for besides its upstreams;
+	// empty when it waits for nothing else. WaitingSince is when it began
+	// waiting, nil without a reason.
+	WaitReason   run.WaitReason
+	WaitingSince *time.Time
+	// WaitingOnRunID is the run whose task holds the node the task waits to
+	// write, read from the node's lease when the graph is read; nil when the
+	// task waits for no lease or no task holds its node.
+	WaitingOnRunID *uuid.UUID
 }
 
 // RunGraphEdge is one dependency between two tasks of a run, read from the
