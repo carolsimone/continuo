@@ -326,7 +326,7 @@ func (r *Run) ServiceMetadata() map[string]ServiceMetadata {
 }
 
 func (r *Run) IsTerminal() bool { return r.status.IsTerminal() }
-func (r *Run) IsActive() bool { return r.status.IsActive() }
+func (r *Run) IsActive() bool   { return r.status.IsActive() }
 
 // ============================================================================
 // Change tracking exposed to the repository adapter
@@ -359,13 +359,17 @@ func (c changeSet) IsPlannedDirty() bool           { return c.plannedDirty }
 // its node's Job name, r's operation and the node's image. A pending task gets
 // status pending and the retry budget of d; an inherited task gets status
 // succeeded, no retry budget and the task it inherits from, and is never
-// dispatched. Each ready task is made dispatched at now, with its attempt 0
-// stored dispatched and due for its first check (NextCheckAfter), and recorded
-// as a TaskDispatched of attempt 0, in key order, with its node's timeout
-// (TaskTimeout). The run records the plan: planned_at, the total task count,
-// the inherited tasks as terminal, init status completed, status running,
-// started_at and its progress clock. A plan without a pending task leaves
-// nothing to run, so the run finalizes succeeded at once.
+// dispatched. Every task is stored first; then, on a run that writes its nodes
+// (every operation but test), each ready task claims its node's write lease,
+// and a ready task whose node another task holds or waits for stays pending,
+// waiting for the lease, undispatched. Each other ready task is made
+// dispatched at now, with its attempt 0 stored dispatched and due for its
+// first check (NextCheckAfter), and recorded as a TaskDispatched of attempt 0,
+// in key order, with its node's timeout (TaskTimeout). The run records the
+// plan: planned_at, the total task count, the inherited tasks as terminal,
+// init status completed, status running, started_at and its progress clock. A
+// plan without a pending task leaves nothing to run, so the run finalizes
+// succeeded at once.
 //
 // Start refuses, before it stores anything: a terminal run (ErrAlreadyTerminal),
 // a run whose tasks are already stored (ErrAlreadyPlanned), a plan without
@@ -405,8 +409,7 @@ func (r *Run) Start(
 	}
 
 	built := make([]Task, 0, len(plan.Tasks))
-	var events []DomainEvent
-	var attempts []Attempt
+	var toDispatch []readyTask
 	inherited := int32(0)
 	for _, p := range plan.Tasks {
 		n, ok := g.Node(p.Key)
@@ -439,11 +442,7 @@ func (r *Run) Start(
 			t.InheritedFromTaskID = &root
 			inherited++
 		case ready[p.Key]:
-			at := now
-			t.Status = TaskStatusDispatched
-			t.DispatchedAt = &at
-			attempts = append(attempts, firstAttempt(t.TaskID, jobName, &at))
-			events = append(events, r.dispatchEvent(t.TaskID, 0, n, jobName, d))
+			toDispatch = append(toDispatch, readyTask{taskID: t.TaskID, node: n, jobName: jobName})
 		}
 		built = append(built, t)
 	}
@@ -451,8 +450,9 @@ func (r *Run) Start(
 	if err := tasks.BulkCreate(ctx, built); err != nil {
 		return nil, fmt.Errorf("bulk create tasks: %w", err)
 	}
-	if err := tasks.AddAttempts(ctx, attempts); err != nil {
-		return nil, fmt.Errorf("add the first attempts: %w", err)
+	events, err := r.dispatch(ctx, tasks, toDispatch, d, now)
+	if err != nil {
+		return nil, fmt.Errorf("dispatch the ready tasks: %w", err)
 	}
 
 	total := num.ClampInt32(len(built))
@@ -569,10 +569,8 @@ func (r *Run) fillSlot() {
 
 // dispatchReady dispatches the tasks of r that the success of the task at key
 // makes ready: its pending, undispatched downstream tasks whose every in-run
-// upstream has succeeded. Each one MarkDispatched makes dispatched gets its
-// attempt 0, stored dispatched and due for its first check, and records a
-// TaskDispatched of attempt 0, in key order, with its node's timeout. Only a
-// running run dispatches: a cancelling one starts nothing.
+// upstream has succeeded, in key order (dispatch). Only a running run
+// dispatches: a cancelling one starts nothing.
 func (r *Run) dispatchReady(ctx context.Context, tasks TaskCollection, graph TaskGraph, key topology.NodeKey, d TaskDefaults, now time.Time) ([]DomainEvent, error) {
 	if r.status != SchedulerStatusRunning {
 		return nil, nil
@@ -581,20 +579,60 @@ func (r *Run) dispatchReady(ctx context.Context, tasks TaskCollection, graph Tas
 	if err != nil {
 		return nil, fmt.Errorf("read the tasks %s's success may make ready: %w", key, err)
 	}
-	var ready []ReadyCandidate
-	ids := make([]uuid.UUID, 0, len(candidates))
+	var ready []readyTask
 	for _, c := range candidates {
 		if c.Ready() {
-			ready = append(ready, c)
-			ids = append(ids, c.TaskID)
+			ready = append(ready, readyTask{taskID: c.TaskID, node: c.Node, jobName: c.JobName})
 		}
 	}
+	events, err := r.dispatch(ctx, tasks, ready, d, now)
+	if err != nil {
+		return nil, fmt.Errorf("dispatch the tasks %s's success made ready: %w", key, err)
+	}
+	return events, nil
+}
+
+// readyTask is a pending, undispatched task of a run that is ready to
+// dispatch: its id, its node as the run's release holds it, and its Job name.
+type readyTask struct {
+	taskID  uuid.UUID
+	node    topology.Node
+	jobName string
+}
+
+// dispatch dispatches attempt 0 of each ready task of r, in the order given.
+// On a writing run each task first claims its node's write lease, and a task
+// that gets none waits for it and is not dispatched (takeLeases); a test run
+// claims none. Each remaining task is dispatched as dispatchAttemptZero does.
+func (r *Run) dispatch(ctx context.Context, tasks TaskCollection, ready []readyTask, d TaskDefaults, now time.Time) ([]DomainEvent, error) {
 	if len(ready) == 0 {
 		return nil, nil
 	}
+	if r.writes() {
+		leased, err := r.takeLeases(ctx, tasks, ready)
+		if err != nil {
+			return nil, err
+		}
+		ready = leased
+	}
+	return r.dispatchAttemptZero(ctx, tasks, ready, d, now)
+}
+
+// dispatchAttemptZero makes each task of ready dispatched at now
+// (MarkDispatched). Each one it makes dispatched gets its attempt 0, stored
+// dispatched and due for its first check, and records a TaskDispatched of
+// attempt 0, in the order given, with its node's timeout.
+func (r *Run) dispatchAttemptZero(ctx context.Context, tasks TaskCollection, ready []readyTask, d TaskDefaults, now time.Time) ([]DomainEvent, error) {
+	if len(ready) == 0 {
+		return nil, nil
+	}
+	ids := make([]uuid.UUID, 0, len(ready))
+	for _, t := range ready {
+		ids = append(ids, t.taskID)
+	}
 	stamped, err := tasks.MarkDispatched(ctx, ids, now)
 	if err != nil {
-		return nil, fmt.Errorf("mark the tasks %s's success made ready dispatched: %w", key, err)
+		return nil, fmt.Errorf("mark %d ready tasks dispatched: %w", len(ids), err)
 	}
 	isStamped := make(map[uuid.UUID]bool, len(stamped))
 	for _, id := range stamped {
@@ -603,15 +641,15 @@ func (r *Run) dispatchReady(ctx context.Context, tasks TaskCollection, graph Tas
 	events := make([]DomainEvent, 0, len(stamped))
 	attempts := make([]Attempt, 0, len(stamped))
 	at := now
-	for _, c := range ready {
-		if !isStamped[c.TaskID] {
+	for _, t := range ready {
+		if !isStamped[t.taskID] {
 			continue
 		}
-		attempts = append(attempts, firstAttempt(c.TaskID, c.JobName, &at))
-		events = append(events, r.dispatchEvent(c.TaskID, 0, c.Node, c.JobName, d))
+		attempts = append(attempts, firstAttempt(t.taskID, t.jobName, &at))
+		events = append(events, r.dispatchEvent(t.taskID, 0, t.node, t.jobName, d))
 	}
 	if err := tasks.AddAttempts(ctx, attempts); err != nil {
-		return nil, fmt.Errorf("add the first attempts of the tasks %s's success made ready: %w", key, err)
+		return nil, fmt.Errorf("add the first attempts of %d ready tasks: %w", len(attempts), err)
 	}
 	return events, nil
 }

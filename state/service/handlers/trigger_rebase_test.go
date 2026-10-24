@@ -39,7 +39,7 @@ func (r *rebaseRuns) SaveRun(_ context.Context, rn *run.Run) error {
 }
 
 // rebaseTasks holds the source run's tasks and records the tasks a new run
-// starts with.
+// starts with; every ready task gets its node's lease and is dispatched.
 type rebaseTasks struct {
 	run.TaskCollection
 	attempts []run.Attempt
@@ -59,6 +59,18 @@ func (t *rebaseTasks) BulkCreate(_ context.Context, tasks []run.Task) error {
 func (t *rebaseTasks) AddAttempts(_ context.Context, attempts []run.Attempt) error {
 	t.attempts = append(t.attempts, attempts...)
 	return nil
+}
+
+func (t *rebaseTasks) TakeLeases(_ context.Context, claims []run.LeaseClaim) ([]uuid.UUID, error) {
+	ids := make([]uuid.UUID, 0, len(claims))
+	for _, c := range claims {
+		ids = append(ids, c.TaskID)
+	}
+	return ids, nil
+}
+
+func (t *rebaseTasks) MarkDispatched(_ context.Context, ids []uuid.UUID, _ time.Time) ([]uuid.UUID, error) {
+	return ids, nil
 }
 
 // releaseGraphs serves each release's graph as every slice of it.

@@ -59,7 +59,8 @@ func (g *graphTopology) Graph(_ context.Context, tenant, releaseID string, keys 
 
 // sourceTasks is a TaskCollection holding one run's tasks and the release of
 // each other task's run in releases; RunReleasesOf records the ids it is asked
-// for, and BulkCreate records the tasks a run starts with.
+// for, BulkCreate records the tasks a run starts with, and every ready task
+// gets its node's lease and is dispatched.
 type sourceTasks struct {
 	run.TaskCollection
 	attempts []run.Attempt
@@ -92,6 +93,18 @@ func (s *sourceTasks) BulkCreate(_ context.Context, tasks []run.Task) error {
 func (s *sourceTasks) AddAttempts(_ context.Context, attempts []run.Attempt) error {
 	s.attempts = append(s.attempts, attempts...)
 	return nil
+}
+
+func (s *sourceTasks) TakeLeases(_ context.Context, claims []run.LeaseClaim) ([]uuid.UUID, error) {
+	ids := make([]uuid.UUID, 0, len(claims))
+	for _, c := range claims {
+		ids = append(ids, c.TaskID)
+	}
+	return ids, nil
+}
+
+func (s *sourceTasks) MarkDispatched(_ context.Context, ids []uuid.UUID, _ time.Time) ([]uuid.UUID, error) {
+	return ids, nil
 }
 
 // savedRuns records SaveRun.

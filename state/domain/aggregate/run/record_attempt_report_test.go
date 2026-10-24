@@ -10,6 +10,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/runplan"
+	"github.com/carolsimone/continuo/state/domain/topology"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -85,6 +86,37 @@ func TestRecordAttemptReport_ASuccessDispatchesAttemptZeroOfTheTasksItMakesReady
 	assert.Equal(t, run.TaskStatusDispatched, tc.statuses[created.TaskID])
 	assert.Equal(t, run.TaskStatusSucceeded, tc.statuses[taskOf(r, "ftable_a")])
 	assert.Equal(t, int32(1), r.TerminalTaskCount())
+	assert.Equal(t, []uuid.UUID{taskOf(r, "ftable_a")}, tc.releases, "the task that ended releases its lease")
+	assert.Equal(t, created.TaskID, tc.leases[fkey("ftable_g")], "the task dispatched holds its node's lease")
+}
+
+// A success claims the leases of the tasks it makes ready, in the transaction
+// that records it: a task whose node is free is dispatched holding the node's
+// lease; one whose node another run's task holds waits for it, undispatched.
+func TestDispatchReady_TakesTheLeasesOfTheTasksItMakesReady(t *testing.T) {
+	r, tc, g := startedFailureRun(t)
+	tc.leases[fkey("ftable_g")] = otherRunsTask
+
+	afterA := report(t, r, tc, g, "ftable_a", 0, run.AttemptSucceeded, "")
+	afterB := report(t, r, tc, g, "ftable_b", 0, run.AttemptSucceeded, "")
+
+	gTask, cTask := taskOf(r, "ftable_g"), taskOf(r, "ftable_c")
+	assert.Empty(t, afterA, "ftable_g waits for its node")
+	assert.Equal(t, run.TaskStatusPending, tc.statuses[gTask])
+	assert.Equal(t, map[uuid.UUID]run.WaitReason{gTask: run.WaitReasonNodeLease}, tc.waits)
+	_, issued := attemptOf(t, tc, r, "ftable_g", 0)
+	assert.False(t, issued, "a task waiting for its node has no attempt")
+
+	require.Len(t, afterB, 1)
+	assert.Equal(t, cTask, afterB[0].(run.TaskDispatched).TaskID)
+	assert.Equal(t, run.TaskStatusDispatched, tc.statuses[cTask])
+	assert.Equal(t, [][]run.LeaseClaim{
+		{claimOf(r, "ftable_a"), claimOf(r, "ftable_b")},
+		{claimOf(r, "ftable_g")},
+		{claimOf(r, "ftable_c")},
+	}, tc.leaseTakes)
+	assert.Equal(t, map[topology.NodeKey]uuid.UUID{fkey("ftable_g"): otherRunsTask, fkey("ftable_c"): cTask}, tc.leases,
+		"ftable_a and ftable_b released theirs as they ended")
 }
 
 // A retryable failure with budget left dispatches the next attempt in the

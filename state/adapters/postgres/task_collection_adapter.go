@@ -44,6 +44,7 @@ func (a *TaskCollectionAdapter) LoadAttemptState(ctx context.Context, taskID uui
 		SchemaName:   row.SchemaName,
 		TableName:    row.TableName,
 		DispatchedAt: row.DispatchedAt,
+		WaitReason:   run.WaitReason(row.WaitReason),
 	}, true, nil
 }
 
@@ -193,6 +194,38 @@ func (a *TaskCollectionAdapter) SkipPending(ctx context.Context, runID uuid.UUID
 
 func (a *TaskCollectionAdapter) BeginStop(ctx context.Context, runID uuid.UUID, cancelledBy string, cancelledAt time.Time) (run.StopCounts, error) {
 	return a.repo.BeginStopTx(ctx, a.tx, runID, cancelledBy, cancelledAt)
+}
+
+// errLeasesNotStored is returned by the lease calls that act on a waiting
+// task: the adapter stores no lease, so no task ever waits for one.
+var errLeasesNotStored = errors.New("node leases are not stored, so no task waits for one")
+
+// TakeLeases reports every claiming task as holding its node's lease and
+// writes nothing: the adapter stores no lease, so no node is ever held or
+// waited for.
+func (a *TaskCollectionAdapter) TakeLeases(_ context.Context, claims []run.LeaseClaim) ([]uuid.UUID, error) {
+	taken := make([]uuid.UUID, 0, len(claims))
+	for _, c := range claims {
+		taken = append(taken, c.TaskID)
+	}
+	return taken, nil
+}
+
+// WaitForLeases refuses with errLeasesNotStored: TakeLeases takes every claim,
+// so no task is left to wait.
+func (a *TaskCollectionAdapter) WaitForLeases(context.Context, []uuid.UUID) error {
+	return errLeasesNotStored
+}
+
+// ReleaseLease has nothing to delete: the adapter stores no lease.
+func (a *TaskCollectionAdapter) ReleaseLease(context.Context, uuid.UUID) error {
+	return nil
+}
+
+// TakeLeaseForWaiter refuses with errLeasesNotStored: no task waits for a
+// lease.
+func (a *TaskCollectionAdapter) TakeLeaseForWaiter(context.Context, run.LeaseClaim) (bool, error) {
+	return false, errLeasesNotStored
 }
 
 // Compile-time interface assertion.

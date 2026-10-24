@@ -89,7 +89,8 @@ var (
 	// or another run does. A run's tasks are stored in the transaction that
 	// creates it, before any of them is dispatched, and a task never moves to
 	// another run, so such a report never becomes valid; the stream binding
-	// dead-letters it at once.
+	// dead-letters it at once. Run.GrantLease returns it in the same case for
+	// the task it is asked to grant a lease to.
 	ErrTaskNotHeld = errors.New("the run holds no such task")
 
 	// ErrAttemptNotIssued is returned by Run.RecordAttemptReport when the task

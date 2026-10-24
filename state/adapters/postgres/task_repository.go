@@ -355,8 +355,9 @@ func (r *taskTrackerRepository) SetStatusAndAttemptTx(ctx context.Context, tx *s
 	return num.ClampInt32(n), nil
 }
 
-// TaskAttemptRow is the part of a task_tracker row an attempt report reads.
-// RunID is the row's schedule_id; NodeKey is empty when the row has none.
+// TaskAttemptRow is the part of a task_tracker row an attempt report or a
+// lease grant reads. RunID is the row's schedule_id; NodeKey and WaitReason are
+// empty when the row has none.
 type TaskAttemptRow struct {
 	RunID        uuid.UUID  `db:"schedule_id"`
 	Status       string     `db:"status"`
@@ -368,18 +369,20 @@ type TaskAttemptRow struct {
 	SchemaName   string     `db:"schema_name"`
 	TableName    string     `db:"table_name"`
 	DispatchedAt *time.Time `db:"dispatched_at"`
+	WaitReason   string     `db:"wait_reason"`
 }
 
 // LoadAttemptStateTx reads the schedule_id, status, attempt, max_retries,
-// node_key (empty when NULL), job_name, service_name, schema_name, table_name
-// and dispatched_at of the task_tracker row of taskID with FOR UPDATE, so
-// concurrent writers of the same task serialize within their transactions. A
-// missing row yields found == false and no error.
+// node_key (empty when NULL), job_name, service_name, schema_name, table_name,
+// dispatched_at and wait_reason (empty when NULL) of the task_tracker row of
+// taskID with FOR UPDATE, so concurrent writers of the same task serialize
+// within their transactions. A missing row yields found == false and no error.
 func (r *taskTrackerRepository) LoadAttemptStateTx(ctx context.Context, tx *sqlx.Tx, taskID uuid.UUID) (TaskAttemptRow, bool, error) {
 	var row TaskAttemptRow
 	err := tx.GetContext(ctx, &row,
 		`SELECT schedule_id, status, attempt, max_retries, COALESCE(node_key, '') AS node_key,
-		        job_name, service_name, schema_name, table_name, dispatched_at
+		        job_name, service_name, schema_name, table_name, dispatched_at,
+		        COALESCE(wait_reason, '') AS wait_reason
 		 FROM task_tracker WHERE task_id = $1 FOR UPDATE`,
 		taskID,
 	)

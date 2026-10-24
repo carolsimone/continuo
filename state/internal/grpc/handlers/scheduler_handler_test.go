@@ -271,7 +271,8 @@ func (s *scheduleTopology) ScheduleGraph(_ context.Context, _, _, schedule strin
 	return topology.NewGraph(nodes, nil), nil
 }
 
-// startedTasks accepts the tasks a run starts with.
+// startedTasks accepts the tasks a run starts with: every ready task gets its
+// node's lease and is dispatched.
 type startedTasks struct {
 	run.TaskCollection
 	attempts []run.Attempt
@@ -281,6 +282,23 @@ type startedTasks struct {
 func (s *startedTasks) BulkCreate(_ context.Context, tasks []run.Task) error {
 	s.created = append(s.created, tasks...)
 	return nil
+}
+
+func (s *startedTasks) TakeLeases(_ context.Context, claims []run.LeaseClaim) ([]uuid.UUID, error) {
+	return leasedTasks(claims), nil
+}
+
+func (s *startedTasks) MarkDispatched(_ context.Context, ids []uuid.UUID, _ time.Time) ([]uuid.UUID, error) {
+	return ids, nil
+}
+
+// leasedTasks is every claiming task: no node is held by another task.
+func leasedTasks(claims []run.LeaseClaim) []uuid.UUID {
+	ids := make([]uuid.UUID, 0, len(claims))
+	for _, c := range claims {
+		ids = append(ids, c.TaskID)
+	}
+	return ids
 }
 
 func (s *startedTasks) AddAttempts(_ context.Context, attempts []run.Attempt) error {
@@ -765,6 +783,7 @@ func (f *cancelFakeTaskCollection) BeginStop(_ context.Context, _ uuid.UUID, _ s
 	f.beginStopCalled = true
 	return f.beginStopCounts, f.beginStopErr
 }
+
 // RequestStops asks one attempt to stop per task BeginStop made stopping.
 func (f *cancelFakeTaskCollection) RequestStops(_ context.Context, _ uuid.UUID) ([]run.StopTarget, error) {
 	targets := make([]run.StopTarget, f.beginStopCounts.Stopping)
@@ -811,6 +830,18 @@ func (f *cancelFakeTaskCollection) HasNonSucceeded(_ context.Context, _ uuid.UUI
 }
 func (f *cancelFakeTaskCollection) GetByID(_ context.Context, _ uuid.UUID) (run.Task, error) {
 	panic("GetByID not used in cancel tests")
+}
+func (f *cancelFakeTaskCollection) TakeLeases(context.Context, []run.LeaseClaim) ([]uuid.UUID, error) {
+	panic("TakeLeases not used in cancel tests")
+}
+func (f *cancelFakeTaskCollection) WaitForLeases(context.Context, []uuid.UUID) error {
+	panic("WaitForLeases not used in cancel tests")
+}
+func (f *cancelFakeTaskCollection) ReleaseLease(context.Context, uuid.UUID) error {
+	panic("ReleaseLease not used in cancel tests")
+}
+func (f *cancelFakeTaskCollection) TakeLeaseForWaiter(context.Context, run.LeaseClaim) (bool, error) {
+	panic("TakeLeaseForWaiter not used in cancel tests")
 }
 
 // newCancelUoWFactory wires a FakeUnitOfWork with the three fakes needed by the

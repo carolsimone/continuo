@@ -37,6 +37,13 @@ import (
 // attempt state never asked to stop is refused with ErrStopNotRequested
 // before anything is written.
 //
+// A task of a run that writes its nodes holds the write lease on its node from
+// its dispatch until the report that ends it: that report releases the lease,
+// whether it ends the task succeeded, failed or cancelled; a retry keeps the
+// lease, and a stopping task keeps it until its report ends it. Each task a
+// success makes ready claims its own node's lease as it is dispatched, as
+// Start describes.
+//
 // Every move of a task stamps the run's progress clock. A task that has ended
 // counts terminal once, and the run finalizes when every task has ended: a
 // cancelling run cancelled, a running one failed if any task failed or was
@@ -132,13 +139,19 @@ func (r *Run) moveTask(ctx context.Context, tasks TaskCollection, taskID uuid.UU
 	return nil
 }
 
-// endTask makes the task final with status and moves the run: on a running
-// run a success dispatches what it makes ready and a failure skips the pending
-// tasks it blocks, and the run finalizes once every task has ended.
+// endTask makes the task final with status, releases the write lease it holds
+// on its node, and moves the run: on a running run a success dispatches what
+// it makes ready and a failure skips the pending tasks it blocks, and the run
+// finalizes once every task has ended. The run releases a task's lease nowhere
+// else, so a task keeps its lease across every retry and while it is
+// stopping, until the report that ends it.
 func (r *Run) endTask(ctx context.Context, tasks TaskCollection, graph TaskGraph, taskID uuid.UUID, task TaskAttemptState,
 	status TaskStatus, d TaskDefaults, now time.Time) ([]DomainEvent, error) {
 	if err := r.moveTask(ctx, tasks, taskID, status, task.Attempt, now); err != nil {
 		return nil, err
+	}
+	if err := tasks.ReleaseLease(ctx, taskID); err != nil {
+		return nil, fmt.Errorf("release the lease of task %s: %w", taskID, err)
 	}
 	r.fillSlot()
 	var events []DomainEvent
@@ -165,7 +178,8 @@ func (r *Run) endTask(ctx context.Context, tasks TaskCollection, graph TaskGraph
 
 // dispatchNextAttempt adds the attempt after the task's current one,
 // dispatched and due for its first check, makes the task dispatched at it and
-// records its TaskDispatched, built from the node the run's release holds.
+// records its TaskDispatched, built from the node the run's release holds. The
+// task keeps the write lease it holds on its node.
 func (r *Run) dispatchNextAttempt(ctx context.Context, tasks TaskCollection, graph TaskGraph, taskID uuid.UUID,
 	task TaskAttemptState, d TaskDefaults, now time.Time) ([]DomainEvent, error) {
 	node, found, err := graph.Node(ctx, r.release.ReleaseID, task.NodeKey)
