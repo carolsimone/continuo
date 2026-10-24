@@ -511,8 +511,10 @@ egress:
   # entries that allow them. A NetworkPolicy port is the pod's port, after a
   # Service has translated the address. Without networkPolicy.enabled nothing
   # stops a connection that skips the proxy.
-  # false runs no proxy, sets no proxy variable and renders no egress
-  # NetworkPolicy: the agents' egress is open.
+  # Setting it to false runs no proxy, sets no proxy variable and renders no
+  # egress NetworkPolicy, so the agents' egress is open; set HTTP_PROXY,
+  # HTTPS_PROXY and NO_PROXY in their `env` to route them through a proxy of
+  # your own.
   enabled: true
   # Extra hosts the proxy admits: "host" or "host:port" (port 443 when
   # omitted), or "*.example.com" for every name below example.com. An entry is

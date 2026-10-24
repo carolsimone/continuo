@@ -123,6 +123,55 @@ entries for either old service, replace them with one execution-controller
 entry (see values.yaml). Consumer-group names are unchanged; do not delete any.
 {{- end }}
 
+{{- if eq (include "continuo.egress.enabled" .) "true" }}
+{{- if .Release.IsUpgrade }}
+
+BREAKING: agent-chat and agent-remediation reach the outside world only
+through egress-proxy, which admits a connection only to a host and port on its
+allowlist. An install upgraded from a chart that left their outbound traffic
+open fails every call to a destination that is not on the list.
+{{- if eq (include "continuo.egress.proxyEnabled" .) "true" }}
+The allowlist holds your LLM provider (llm.provider / llm.baseUrl), GitHub,
+with an external bucket your S3 endpoint, and egress.allowedDomains and
+egress.privateDomains:
+  kubectl -n {{ .Release.Namespace }} get configmap {{ include "continuo.egressProxy.configMapName" . }} -o yaml
+{{- else }}
+Every destination of this install is an IP address, and egress.allowedDomains
+and egress.privateDomains are empty, so the allowlist is empty: no
+egress-proxy object renders and the agents get no proxy variable. They reach
+those addresses directly.
+{{- if .Values.networkPolicy.enabled }} Their NetworkPolicy still drops every
+connection except DNS, the pods of this namespace, an external Postgres or
+Redis on its configured port, the pods of another namespace on the port of each
+in-cluster address the agents are given there, and those direct destinations.
+{{- end }}
+{{- end }}
+If the agents reach anything else:
+  * another host name: add it to egress.allowedDomains (egress.privateDomains
+    when it resolves to a private address);
+  * a Postgres or Redis on a PUBLIC address, or any address reached without
+    the proxy: add it to egress.directDestinations ({cidr, ports});
+  * to keep their outbound traffic open: set egress.enabled=false.
+{{- if eq (include "continuo.egress.proxyEnabled" .) "true" }}
+egress-proxy logs every refused connection with its host, port and reason:
+  kubectl -n {{ .Release.Namespace }} logs deploy/egress-proxy | grep "egress denied"
+{{- end }}
+A render failure that names llm.baseUrl, GITHUB_BASE_URL or s3.endpointUrl
+means that URL's host is no DNS host name egress-proxy accepts (for example it
+holds an underscore, as in http://vllm_x:8000): use a DNS-valid host name, or
+the IP address, which the agents then reach directly.
+{{- end }}
+{{- if not .Values.networkPolicy.enabled }}
+
+EGRESS NOT ENFORCED: networkPolicy.enabled is false.
+{{- if eq (include "continuo.egress.proxyEnabled" .) "true" }} The agents send
+their traffic through egress-proxy, but nothing stops a connection that skips
+it.
+{{- else }} Nothing restricts the agents' outbound traffic.
+{{- end }}
+{{- end }}
+{{- end }}
+
 {{- $uiPort := 8090 }}
 {{- range .Values.services }}
 {{- if eq .name "ui" }}

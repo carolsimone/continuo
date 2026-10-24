@@ -176,6 +176,11 @@ the assistant answers live. This is the same `llm.apiKey` chapter 8 of
 the [Run dbt and Python projects in continuo](run-projects-in-continuo.md) guide
 uses, so setting it here covers both.
 
+The assistant reaches your provider through continuo's egress proxy, which
+admits only the hosts your settings name, so no extra configuration is needed;
+see [deploy/README.md](../deploy/README.md#outbound-traffic) for what it allows
+and how to add a host.
+
 ---
 
 ## Troubleshooting
