@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -361,6 +362,191 @@ func TestNodeLeases_ReleasedInTheReportTransactionThatEndsTheTask(t *testing.T) 
 	_, status, _ = f.task(t, "e2e_schema.ftable_b")
 	assert.Equal(t, run.TaskStatusFailed, status)
 	assert.False(t, leaseOf(t, db, taskB), "the failure that spent the retries released the lease")
+}
+
+// leaseWriteGate wraps the task collection of a report's transaction to order
+// a concurrent take against the report's lease writes (its takes and
+// releases): right after the first it closes first, and before the second it
+// runs beforeNext.
+type leaseWriteGate struct {
+	run.TaskCollection
+	writes     int
+	first      chan struct{}
+	beforeNext func()
+}
+
+func (g *leaseWriteGate) write(fn func() error) error {
+	g.writes++
+	if g.writes == 2 {
+		g.beforeNext()
+	}
+	err := fn()
+	if g.writes == 1 {
+		close(g.first)
+	}
+	return err
+}
+
+func (g *leaseWriteGate) TakeLeases(ctx context.Context, claims []run.LeaseClaim) ([]uuid.UUID, error) {
+	var taken []uuid.UUID
+	err := g.write(func() error {
+		var err error
+		taken, err = g.TaskCollection.TakeLeases(ctx, claims)
+		return err
+	})
+	return taken, err
+}
+
+func (g *leaseWriteGate) ReleaseLease(ctx context.Context, taskID uuid.UUID) error {
+	return g.write(func() error { return g.TaskCollection.ReleaseLease(ctx, taskID) })
+}
+
+// gatedUoW is a unit of work whose task collection goes through gate.
+type gatedUoW struct {
+	*postgres.PostgresUnitOfWork
+	gate *leaseWriteGate
+}
+
+func (u gatedUoW) TaskCollection(tenantID string) run.TaskCollection {
+	u.gate.TaskCollection = u.PostgresUnitOfWork.TaskCollection(tenantID)
+	return u.gate
+}
+
+// reportThrough delivers one report through AttemptReportHandler, with its
+// unit of work's task collection going through gate, and commits.
+func reportThrough(ctx context.Context, db *sqlx.DB, gate *leaseWriteGate, tenant string, runID uuid.UUID, rep run.AttemptReport) error {
+	u := newPlanningUoW(db)
+	if err := u.Begin(ctx); err != nil {
+		return err
+	}
+	defer func() { _ = u.Rollback() }()
+	if err := handlers.NewAttemptReportHandler(tenant, testTaskDefaults, noRunMetrics{}, discardLogger()).Handle(ctx,
+		gatedUoW{PostgresUnitOfWork: u, gate: gate}, events.AttemptReported{RunID: runID, Report: rep}, uuid.Nil); err != nil {
+		return err
+	}
+	return u.Commit()
+}
+
+// takeAfter begins a transaction, sends its backend's pid (0 when it has
+// none), waits for start, or for stop when the report it races ends first,
+// then takes the leases of claims for tenant and commits.
+func takeAfter(ctx context.Context, db *sqlx.DB, tenant string, claims []run.LeaseClaim, pids chan<- int,
+	start, stop <-chan struct{}) ([]uuid.UUID, error) {
+	tx, err := db.BeginTxx(ctx, nil)
+	if err != nil {
+		pids <- 0
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var pid int
+	if err := tx.GetContext(ctx, &pid, `SELECT pg_backend_pid()`); err != nil {
+		pids <- 0
+		return nil, err
+	}
+	pids <- pid
+	select {
+	case <-start:
+	case <-stop:
+	}
+	taken, err := postgres.NewTaskCollectionAdapter(postgres.NewTaskTrackerRepository(db, discardLogger()), tx, tenant).TakeLeases(ctx, claims)
+	if err != nil {
+		return nil, fmt.Errorf("take: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit: %w", err)
+	}
+	return taken, nil
+}
+
+// awaitLockWait waits until the backend pid waits on a lock, or done is
+// closed, and fails the test after five seconds of neither.
+func awaitLockWait(t *testing.T, db *sqlx.DB, pid int, done <-chan struct{}) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		select {
+		case <-done:
+			return
+		default:
+		}
+		var waiting bool
+		require.NoError(t, db.Get(&waiting,
+			`SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = $1 AND wait_event_type = 'Lock')`, pid))
+		if waiting {
+			return
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Fatalf("backend %d neither waited on a lock nor ended", pid)
+}
+
+// isDeadlock reports whether Postgres aborted the transaction behind err as a
+// deadlock (40P01).
+func isDeadlock(err error) bool {
+	var pqErr *pq.Error
+	return errors.As(err, &pqErr) && pqErr.Code == "40P01" || err != nil && strings.Contains(err.Error(), "deadlock detected")
+}
+
+// A report ends the task that holds node Y and makes ready a task of node X
+// while another transaction takes X and Y in node-key order (X sorts first),
+// as a run's start does. The take begins right after the report's first lease
+// write, and the report's second lease write waits until the take waits on a
+// lock. A report that released Y before it took X would hold Y's row while
+// the take held X and waited for Y, then wait for X itself: a deadlock. The
+// report takes X before it releases Y, so the take waits for the report and
+// both commit: X goes to the report's ready task and Y, once released, to the
+// take. Each round has a release, a run and node keys of its own.
+func TestNodeLeases_AReportAndAStartTakingTheSameNodesDoNotDeadlock(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	for i := range 10 {
+		tables := leaseTables("x_down", "y_up")
+		down, up := tables[0], tables[1]
+		schedule := "lease-order-" + uuid.NewString()[:8]
+		tenant := storeEdges(t, db, schedule, [][2]string{{up, down}}, up, down)
+		t.Cleanup(func() {
+			_, _ = db.ExecContext(context.Background(), `DELETE FROM node_leases WHERE tenant_id = $1`, tenant)
+			_, _ = db.ExecContext(context.Background(), `DELETE FROM node_materializations WHERE tenant_id = $1`, tenant)
+		})
+		f := statusFlow{db: db, tenant: tenant, r: startScheduleRun(t, db, tenant, schedule, model.OperationRun)}
+		upTask, downTask := f.taskID(up), f.taskID(down)
+		held, ok := leaseOn(t, db, tenant, up)
+		require.True(t, ok)
+		require.Equal(t, heldLease{TaskID: upTask, RunID: f.r.ScheduleID()}, held, "round %d: the run's start took Y", i)
+		otherRun, other := pendingTasks(t, db, down, up)
+		claims := []run.LeaseClaim{claim(otherRun, other[down], down), claim(otherRun, other[up], up)}
+
+		var (
+			first      = make(chan struct{})
+			reportDone = make(chan struct{})
+			takeDone   = make(chan struct{})
+			pids       = make(chan int, 1)
+			taken      []uuid.UUID
+			takeErr    error
+		)
+		go func() {
+			defer close(takeDone)
+			taken, takeErr = takeAfter(ctx, db, tenant, claims, pids, first, reportDone)
+		}()
+		pid := <-pids
+		gate := &leaseWriteGate{first: first, beforeNext: func() { awaitLockWait(t, db, pid, takeDone) }}
+		reportErr := reportThrough(ctx, db, gate, tenant, f.r.ScheduleID(),
+			run.AttemptReport{TaskID: upTask, Attempt: 0, Status: run.AttemptSucceeded})
+		close(reportDone)
+		<-takeDone
+
+		require.False(t, isDeadlock(reportErr), "round %d: the report was aborted as a deadlock: %v", i, reportErr)
+		require.False(t, isDeadlock(takeErr), "round %d: the take was aborted as a deadlock: %v", i, takeErr)
+		require.NoError(t, reportErr, "round %d: the report commits", i)
+		require.NoError(t, takeErr, "round %d: the take commits", i)
+		x, ok := leaseOn(t, db, tenant, down)
+		require.True(t, ok, "round %d: X is held", i)
+		assert.Equal(t, heldLease{TaskID: downTask, RunID: f.r.ScheduleID()}, x, "round %d: the report took X first", i)
+		y, ok := leaseOn(t, db, tenant, up)
+		require.True(t, ok, "round %d: Y is held", i)
+		assert.Equal(t, heldLease{TaskID: other[up], RunID: otherRun}, y, "round %d: the take got Y once the report released it", i)
+		assert.Equal(t, []uuid.UUID{other[up]}, taken, "round %d", i)
+	}
 }
 
 // A cancel releases the lease of each task it cancels, a task in flight with

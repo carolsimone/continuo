@@ -81,6 +81,24 @@ func TestLease_HeldAcrossARetryAndReleasedOnlyWhenTheTaskEnds(t *testing.T) {
 	}
 }
 
+// A report that ends a task takes the leases of the tasks it makes ready
+// before it releases the ended task's own lease, so its transaction inserts
+// every lease it takes before it deletes one, as a run's start does; two
+// transactions that take overlapping nodes then never wait on each other in a
+// cycle.
+func TestLease_AReportTakesTheLeasesOfWhatItMakesReadyBeforeItReleasesItsOwn(t *testing.T) {
+	r, tc, g := startedFailureRun(t)
+	tc.leaseWrites = nil
+
+	report(t, r, tc, g, "ftable_a", 0, run.AttemptSucceeded, "")
+	report(t, r, tc, g, "ftable_b", 0, run.AttemptSucceeded, "")
+
+	assert.Equal(t, []string{
+		"take " + string(fkey("ftable_g")), "release " + string(fkey("ftable_a")),
+		"take " + string(fkey("ftable_c")), "release " + string(fkey("ftable_b")),
+	}, tc.leaseWrites)
+}
+
 // A stopping task keeps its node's lease while its attempt runs on, and
 // releases it with the report that ends it: stopped, or the failure its
 // container reached first.

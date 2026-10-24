@@ -131,12 +131,15 @@ type fakeTaskCollection struct {
 	// leases holds the task that holds each node's write lease; waits the
 	// tasks waiting for one. leaseTakes holds the claims of each TakeLeases
 	// call, waiterTakes the claim of each TakeLeaseForWaiter call and
-	// releases the task of each ReleaseLease call, in call order.
+	// releases the task of each ReleaseLease call, in call order. leaseWrites
+	// holds every TakeLeases ("take <node keys>") and ReleaseLease ("release
+	// <node key>") call in one list, in call order.
 	leases      map[topology.NodeKey]uuid.UUID
 	waits       map[uuid.UUID]run.WaitReason
 	leaseTakes  [][]run.LeaseClaim
 	waiterTakes []run.LeaseClaim
 	releases    []uuid.UUID
+	leaseWrites []string
 }
 
 func newFakeTaskCollection() *fakeTaskCollection {
@@ -161,6 +164,11 @@ func newFakeTaskCollection() *fakeTaskCollection {
 // node's lease afterwards, as the real adapter does.
 func (f *fakeTaskCollection) TakeLeases(_ context.Context, claims []run.LeaseClaim) ([]uuid.UUID, error) {
 	f.leaseTakes = append(f.leaseTakes, slices.Clone(claims))
+	keys := make([]string, 0, len(claims))
+	for _, c := range claims {
+		keys = append(keys, string(c.NodeKey))
+	}
+	f.leaseWrites = append(f.leaseWrites, "take "+strings.Join(keys, ","))
 	ordered := slices.Clone(claims)
 	slices.SortFunc(ordered, func(a, b run.LeaseClaim) int { return strings.Compare(string(a.NodeKey), string(b.NodeKey)) })
 	var taken []uuid.UUID
@@ -199,6 +207,7 @@ func (f *fakeTaskCollection) WaitForLeases(_ context.Context, ids []uuid.UUID) e
 // ReleaseLease deletes the lease the task holds, if any.
 func (f *fakeTaskCollection) ReleaseLease(_ context.Context, id uuid.UUID) error {
 	f.releases = append(f.releases, id)
+	f.leaseWrites = append(f.leaseWrites, "release "+string(f.keys[id]))
 	for k, holder := range f.leases {
 		if holder == id {
 			delete(f.leases, k)
