@@ -35,7 +35,7 @@ func TestStart_StampsTaskOperation(t *testing.T) {
 	defer tx.Rollback()
 
 	runRepo := postgres.NewRunRepository(tx, schedRepo)
-	tasks := postgres.NewTaskCollectionAdapter(taskRepo, tx)
+	tasks := postgres.NewTaskCollectionAdapter(taskRepo, tx, "default")
 
 	require.NoError(t, runRepo.SaveRun(ctx, r))
 

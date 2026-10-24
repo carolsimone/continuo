@@ -274,8 +274,8 @@ func (f *fakeTaskCollection) SkipPending(_ context.Context, _ uuid.UUID) (int, e
 
 // BeginStop makes the dispatched, queued and running tasks the fake holds
 // whose current attempt is open stopping, and cancels the pending ones and
-// those with no open current attempt: a test builds one run, so every stored
-// task belongs to it.
+// those with no open current attempt, ending their waits and releasing their
+// leases: a test builds one run, so every stored task belongs to it.
 func (f *fakeTaskCollection) BeginStop(_ context.Context, runID uuid.UUID, by string, _ time.Time) (run.StopCounts, error) {
 	f.stopsBegun = append(f.stopsBegun, runID)
 	var counts run.StopCounts
@@ -289,6 +289,11 @@ func (f *fakeTaskCollection) BeginStop(_ context.Context, runID uuid.UUID, by st
 			}
 			f.statuses[id] = run.TaskStatusCancelled
 			delete(f.waits, id)
+			for k, holder := range f.leases {
+				if holder == id {
+					delete(f.leases, k)
+				}
+			}
 			f.cancelledBy[id] = by
 			counts.Cancelled++
 		}

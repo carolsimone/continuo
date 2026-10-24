@@ -135,6 +135,7 @@ func TestRunCreation(t *testing.T) {
 		require.NoError(t, err)
 		_, err = db.Exec(`UPDATE scheduler_tracker SET status = 'failed', completed_at = now() WHERE schedule_id = $1`, srcID)
 		require.NoError(t, err)
+		releaseLeasesOf(t, db, srcID)
 		live := promoteRelease(t, db,
 			scheduledNode("raw", "derived_a", "dbt-model", "creation-derived"),
 			scheduledNode("mart", "derived_b", "dbt-model", "creation-derived", "raw.derived_a"),
@@ -146,6 +147,7 @@ func TestRunCreation(t *testing.T) {
 		assert.Equal(t, createdRun{Status: run.SchedulerStatusRunning, Planned: true, Tasks: 2, Dispatch: []string{"mart.derived_b"}}, h.created(t, rerunID))
 		_, err = db.Exec(`UPDATE scheduler_tracker SET status = 'failed', completed_at = now() WHERE schedule_id = $1`, rerunID)
 		require.NoError(t, err)
+		releaseLeasesOf(t, db, rerunID)
 
 		rebaseID, _, err := svchandlers.NewTriggerRebaseHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), svchandlers.TriggerRebaseInput{
 			SourceRunID: srcID, IncludeChangedUpstream: true, Initiator: alice,
@@ -198,6 +200,7 @@ func TestRunCreation_DerivedRunsNeedOneConnection(t *testing.T) {
 	require.NoError(t, err)
 	_, err = db.Exec(`UPDATE scheduler_tracker SET status = 'failed', completed_at = now() WHERE schedule_id = $1`, srcID)
 	require.NoError(t, err)
+	releaseLeasesOf(t, db, srcID)
 	changedA := scheduledNode("raw", "pool_a", "dbt-model", "pool-derived")
 	changedA.ContentHash += "-changed"
 	promoteRelease(t, db, changedA, scheduledNode("mart", "pool_b", "dbt-model", "pool-derived", "raw.pool_a"))
@@ -212,6 +215,7 @@ func TestRunCreation_DerivedRunsNeedOneConnection(t *testing.T) {
 		require.NoError(t, err)
 		_, err = db.Exec(`UPDATE scheduler_tracker SET status = 'failed', completed_at = now() WHERE schedule_id = $1`, rerunID)
 		require.NoError(t, err)
+		releaseLeasesOf(t, db, rerunID)
 	})
 	var rebaseID uuid.UUID
 	t.Run("rebase", func(t *testing.T) {
@@ -224,6 +228,7 @@ func TestRunCreation_DerivedRunsNeedOneConnection(t *testing.T) {
 		require.NoError(t, err)
 		_, err = db.Exec(`UPDATE scheduler_tracker SET status = 'failed', completed_at = now() WHERE schedule_id = $1`, rebaseID)
 		require.NoError(t, err)
+		releaseLeasesOf(t, db, rebaseID)
 	})
 	t.Run("preview", func(t *testing.T) {
 		require.NotEqual(t, uuid.Nil, rebaseID, "the rebase subtest created the source")

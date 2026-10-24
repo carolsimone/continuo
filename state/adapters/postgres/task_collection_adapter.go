@@ -17,11 +17,15 @@ import (
 type TaskCollectionAdapter struct {
 	repo TaskTrackerRepository
 	tx   *sqlx.Tx
+	// tenantID is the tenant whose runs the tasks belong to: the node write
+	// leases the adapter takes are this tenant's.
+	tenantID string
 }
 
-// NewTaskCollectionAdapter constructs the adapter bound to the given tx.
-func NewTaskCollectionAdapter(repo TaskTrackerRepository, tx *sqlx.Tx) *TaskCollectionAdapter {
-	return &TaskCollectionAdapter{repo: repo, tx: tx}
+// NewTaskCollectionAdapter constructs the adapter bound to the given tx, for
+// the runs of tenantID.
+func NewTaskCollectionAdapter(repo TaskTrackerRepository, tx *sqlx.Tx, tenantID string) *TaskCollectionAdapter {
+	return &TaskCollectionAdapter{repo: repo, tx: tx, tenantID: tenantID}
 }
 
 func (a *TaskCollectionAdapter) LoadAttemptState(ctx context.Context, taskID uuid.UUID) (run.TaskAttemptState, bool, error) {
@@ -196,36 +200,23 @@ func (a *TaskCollectionAdapter) BeginStop(ctx context.Context, runID uuid.UUID, 
 	return a.repo.BeginStopTx(ctx, a.tx, runID, cancelledBy, cancelledAt)
 }
 
-// errLeasesNotStored is returned by the lease calls that act on a waiting
-// task: the adapter stores no lease, so no task ever waits for one.
-var errLeasesNotStored = errors.New("node leases are not stored, so no task waits for one")
-
-// TakeLeases reports every claiming task as holding its node's lease and
-// writes nothing: the adapter stores no lease, so no node is ever held or
-// waited for.
-func (a *TaskCollectionAdapter) TakeLeases(_ context.Context, claims []run.LeaseClaim) ([]uuid.UUID, error) {
-	taken := make([]uuid.UUID, 0, len(claims))
-	for _, c := range claims {
-		taken = append(taken, c.TaskID)
-	}
-	return taken, nil
+// TakeLeases, WaitForLeases, ReleaseLease and TakeLeaseForWaiter run through
+// the unit of work's transaction, so a lease is taken or released, and a wait
+// begins, in the commit that dispatches, makes wait or ends the task.
+func (a *TaskCollectionAdapter) TakeLeases(ctx context.Context, claims []run.LeaseClaim) ([]uuid.UUID, error) {
+	return takeLeases(ctx, a.tx, a.tenantID, claims)
 }
 
-// WaitForLeases refuses with errLeasesNotStored: TakeLeases takes every claim,
-// so no task is left to wait.
-func (a *TaskCollectionAdapter) WaitForLeases(context.Context, []uuid.UUID) error {
-	return errLeasesNotStored
+func (a *TaskCollectionAdapter) WaitForLeases(ctx context.Context, taskIDs []uuid.UUID) error {
+	return waitForLeases(ctx, a.tx, taskIDs)
 }
 
-// ReleaseLease has nothing to delete: the adapter stores no lease.
-func (a *TaskCollectionAdapter) ReleaseLease(context.Context, uuid.UUID) error {
-	return nil
+func (a *TaskCollectionAdapter) ReleaseLease(ctx context.Context, taskID uuid.UUID) error {
+	return releaseLeases(ctx, a.tx, []uuid.UUID{taskID})
 }
 
-// TakeLeaseForWaiter refuses with errLeasesNotStored: no task waits for a
-// lease.
-func (a *TaskCollectionAdapter) TakeLeaseForWaiter(context.Context, run.LeaseClaim) (bool, error) {
-	return false, errLeasesNotStored
+func (a *TaskCollectionAdapter) TakeLeaseForWaiter(ctx context.Context, claim run.LeaseClaim) (bool, error) {
+	return takeLeaseForWaiter(ctx, a.tx, a.tenantID, claim)
 }
 
 // Compile-time interface assertion.

@@ -45,7 +45,7 @@ func (c derivedRunCreation) create(ctx context.Context, u uow.UnitOfWork, source
 	if err != nil {
 		return uuid.Nil, "", fmt.Errorf("get source: %w", err)
 	}
-	if err := c.eligible(ctx, src, u.TaskCollection()); err != nil {
+	if err := c.eligible(ctx, src, u.TaskCollection(c.planner.TenantID)); err != nil {
 		return uuid.Nil, "", err
 	}
 	if err := c.policy.IsScheduleAvailable(ctx, u.Run(), src.ScheduleName()); err != nil {

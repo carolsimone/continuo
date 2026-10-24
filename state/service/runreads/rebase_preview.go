@@ -60,7 +60,7 @@ func (p *RebasePreviewer) Preview(ctx context.Context, sourceID uuid.UUID, inclu
 	if err != nil {
 		return RebasePreview{}, fmt.Errorf("get source: %w", err)
 	}
-	if err := src.CanBeRebaseSource(ctx, u.TaskCollection()); err != nil {
+	if err := src.CanBeRebaseSource(ctx, u.TaskCollection(p.planner.TenantID)); err != nil {
 		return RebasePreview{}, err
 	}
 

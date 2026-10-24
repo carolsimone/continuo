@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/topology"
@@ -24,7 +25,7 @@ func cancelByID(t *testing.T, db *sqlx.DB, id uuid.UUID, by, reason string) {
 	inUoW(t, db, func(u *postgres.PostgresUnitOfWork) {
 		r, err := u.Run().LoadRunForUpdate(ctx, id)
 		require.NoError(t, err)
-		events, err := r.Cancel(ctx, u.TaskCollection(), by, reason, u.Clock().Now())
+		events, err := r.Cancel(ctx, u.TaskCollection(pkgevents.DefaultTenantID), by, reason, u.Clock().Now())
 		require.NoError(t, err)
 		require.NoError(t, u.Run().SaveRun(ctx, r))
 		require.NoError(t, u.Outbox().Append(ctx, events, uuid.Nil))

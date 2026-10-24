@@ -480,10 +480,11 @@ func (r *Run) Start(
 
 // Cancel cancels r at now, by by for reason, and stops its work. Its tasks in
 // flight (dispatched, queued or running) whose current attempt is open become
-// stopping, and that attempt of each is asked to stop; its other unended
-// tasks, the pending ones and those with no open attempt, are cancelled and
-// count terminal. r records cancelled_at, cancelled_by and
-// cancellation_reason, and RunCancelled, naming no attempt, is recorded.
+// stopping, and that attempt of each is asked to stop, each keeping its node's
+// write lease until the report that ends it; its other unended tasks, the
+// pending ones and those with no open attempt, are cancelled, release their
+// leases (BeginStop) and count terminal. r records cancelled_at, cancelled_by
+// and cancellation_reason, and RunCancelled, naming no attempt, is recorded.
 //
 // With a task stopping, r becomes cancelling: it stays active, starts nothing
 // more, and ends cancelled on the report that ends its last task

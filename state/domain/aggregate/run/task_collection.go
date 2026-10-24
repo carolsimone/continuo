@@ -107,11 +107,13 @@ type TaskCollection interface {
 	// (dispatched, queued or running) becomes stopping, and every other one,
 	// a pending task or a task with no open current attempt, is cancelled, as
 	// no attempt of it can answer a stop; a pending task's wait for a lease
-	// ends. Each one is stamped cancelled_by and cancelled_at with
-	// cancelledAt, the instant the Run aggregate cancelled the run at, and
-	// stays locked until the transaction ends. A task that succeeded, failed,
-	// was skipped or was cancelled is left as it is. It returns how many tasks
-	// it cancelled and how many it made stopping.
+	// ends, and the write lease of each task it cancels is released, since
+	// the cancel ends that task (a stopping task keeps its lease). Each one is
+	// stamped cancelled_by and cancelled_at with cancelledAt, the instant the
+	// Run aggregate cancelled the run at, and stays locked until the
+	// transaction ends. A task that succeeded, failed, was skipped or was
+	// cancelled is left as it is. It returns how many tasks it cancelled and
+	// how many it made stopping.
 	BeginStop(ctx context.Context, runID uuid.UUID, cancelledBy string, cancelledAt time.Time) (StopCounts, error)
 
 	// TakeLeases takes the write lease on the node of each claim, in node-key
@@ -121,9 +123,10 @@ type TaskCollection interface {
 	// waiter; a claiming task that already holds its node's lease keeps it.
 	TakeLeases(ctx context.Context, claims []LeaseClaim) (taken []uuid.UUID, err error)
 
-	// WaitForLeases marks each task of taskIDs as waiting for its node's
-	// write lease: wait_reason node_lease, lease_wait_since the database
-	// clock.
+	// WaitForLeases marks each pending task of taskIDs as waiting for its
+	// node's write lease: wait_reason node_lease, lease_wait_since the
+	// database clock. A task already waiting keeps the time it began to wait,
+	// and with it its place among the node's waiters.
 	WaitForLeases(ctx context.Context, taskIDs []uuid.UUID) error
 
 	// ReleaseLease deletes the write lease the task holds; a task that holds

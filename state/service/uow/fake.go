@@ -96,9 +96,9 @@ func (f *FakeUnitOfWork) Rollback() error {
 
 // Aggregate-level accessors. Return whatever was set via the setter methods.
 
-func (f *FakeUnitOfWork) Run() repository.RunRepository      { return f.runRepo }
-func (f *FakeUnitOfWork) Outbox() ports.OutboxPublisher      { return f.outboxPub }
-func (f *FakeUnitOfWork) TaskCollection() run.TaskCollection { return f.taskColl }
+func (f *FakeUnitOfWork) Run() repository.RunRepository            { return f.runRepo }
+func (f *FakeUnitOfWork) Outbox() ports.OutboxPublisher            { return f.outboxPub }
+func (f *FakeUnitOfWork) TaskCollection(string) run.TaskCollection { return f.taskColl }
 
 // Catalog returns the aggregate-level repository.ScheduleCatalogRepository set via SetCatalogRepo.
 func (f *FakeUnitOfWork) Catalog() repository.ScheduleCatalogRepository { return f.catalogRepo }

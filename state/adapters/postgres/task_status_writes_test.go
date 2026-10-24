@@ -21,7 +21,7 @@ func inTaskTx(t *testing.T, db *sqlx.DB, fn func(tasks run.TaskCollection)) {
 	tx, err := db.BeginTxx(context.Background(), nil)
 	require.NoError(t, err)
 	defer tx.Rollback()
-	fn(postgres.NewTaskCollectionAdapter(postgres.NewTaskTrackerRepository(db, discardLogger()), tx))
+	fn(postgres.NewTaskCollectionAdapter(postgres.NewTaskTrackerRepository(db, discardLogger()), tx, "default"))
 	require.NoError(t, tx.Commit())
 }
 

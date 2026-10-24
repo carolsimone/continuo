@@ -244,7 +244,7 @@ func TestPlanner_RebaseReadsTheSourceScheduleOnTheLiveRelease(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, run.ReleaseStamp{ReleaseID: "rel-7", PromotionSeq: 12}, sel.Stamp)
 	assert.Equal(t, []string{"lock", "live default", "graph default rel-3", "schedule default rel-7 daily"}, topo.calls)
-	assert.Empty(t, u.TaskCollection().(*sourceTasks).asked, "a source that inherited nothing reads no other run's release")
+	assert.Empty(t, u.TaskCollection(planner.TenantID).(*sourceTasks).asked, "a source that inherited nothing reads no other run's release")
 	assert.Equal(t, []topology.NodeKey{"raw.a"}, sel.Plan.Ready, "mart.b waits for the changed raw.a; mart.c is new and waits for mart.b")
 	assert.Len(t, sel.Plan.Tasks, 3)
 	assert.Equal(t, pv.Plan, sel.Plan)
@@ -274,7 +274,7 @@ func TestPlanner_RebaseComparesAnInheritedSuccessWithTheReleaseThatBuiltIt(t *te
 	root := uuid.New()
 	u, topo := fakeUoW(topology.Pointer{ReleaseID: "rel-7", PromotionSeq: 12},
 		[]run.Task{task("mart.b", run.TaskStatusFailed), inheritedTask("raw.a", root)})
-	tasks := u.TaskCollection().(*sourceTasks)
+	tasks := u.TaskCollection(planner.TenantID).(*sourceTasks)
 	tasks.releases = map[uuid.UUID]string{root: "rel-3"}
 	topo.releases = map[string]topology.Graph{"rel-3": threeNodes(), "rel-5": withRawAChanged(), "rel-7": withRawAChanged()}
 	source := sourceRun(t, run.ReleaseStamp{ReleaseID: "rel-5", PromotionSeq: 10})
@@ -300,7 +300,7 @@ func TestPlanner_RebaseComparesAnInheritedSuccessWithoutAKnownRootWithTheSourceR
 	sel, pv, err := planner.Rebase(context.Background(), u, source, runstart.RebaseOptions{IncludeChangedUpstream: true})
 
 	require.NoError(t, err)
-	assert.Equal(t, [][]uuid.UUID{{root}}, u.TaskCollection().(*sourceTasks).asked)
+	assert.Equal(t, [][]uuid.UUID{{root}}, u.TaskCollection(planner.TenantID).(*sourceTasks).asked)
 	assert.Equal(t, []string{"lock", "live default", "graph default rel-5", "schedule default rel-7 daily"}, topo.calls)
 	assert.Equal(t, []topology.NodeKey{"mart.b"}, sel.Plan.Ready)
 	assert.Empty(t, pv.Changed)
@@ -405,7 +405,7 @@ func TestPlanner_StartStoresTheTasksAndWritesTheDispatches(t *testing.T) {
 	require.NoError(t, planner.Start(ctx, u, r, sel, uuid.Nil))
 
 	assert.Equal(t, 1, runs.saved)
-	assert.Len(t, u.TaskCollection().(*sourceTasks).created, 3)
+	assert.Len(t, u.TaskCollection(planner.TenantID).(*sourceTasks).created, 3)
 	require.Len(t, outbox.events, 1)
 	d, ok := outbox.events[0].(run.TaskDispatched)
 	require.True(t, ok, "%T", outbox.events[0])

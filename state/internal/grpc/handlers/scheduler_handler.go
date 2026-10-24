@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
@@ -164,7 +165,9 @@ func (h *SchedulerHandler) cancelRunTx(ctx context.Context, p cancelParams) (*ru
 		}
 		return nil, false, status.Errorf(codes.Internal, "load: %v", err)
 	}
-	domainEvents, err := r.Cancel(ctx, u.TaskCollection(), p.cancelledBy, p.cancellationReason, u.Clock().Now())
+	// The cancel takes no node lease, so the tenant its tasks are bound to,
+	// the install's single tenant, changes nothing it writes.
+	domainEvents, err := r.Cancel(ctx, u.TaskCollection(pkgevents.DefaultTenantID), p.cancelledBy, p.cancellationReason, u.Clock().Now())
 	if err != nil {
 		if errors.Is(err, run.ErrAlreadyTerminal) {
 			return nil, false, status.Errorf(codes.FailedPrecondition, "%s", p.terminalMsg)

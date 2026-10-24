@@ -44,13 +44,16 @@ type TaskTrackerRepository interface {
 	// report's attempt with.
 	LoadAttemptStateTx(ctx context.Context, tx *sqlx.Tx, taskID uuid.UUID) (row TaskAttemptRow, found bool, err error)
 	// MarkDispatchedTx makes the pending, undispatched tasks among taskIDs
-	// dispatched, stamping dispatched_at, and returns the ids it changed.
+	// dispatched, stamping dispatched_at and ending their wait for a node
+	// lease, and returns the ids it changed.
 	MarkDispatchedTx(ctx context.Context, tx *sqlx.Tx, taskIDs []uuid.UUID, at time.Time) ([]uuid.UUID, error)
 	// MarkSkippedTx sets status 'skipped' on the pending, undispatched tasks
-	// among taskIDs and returns how many it changed.
+	// among taskIDs, ending their wait for a node lease, and returns how many
+	// it changed.
 	MarkSkippedTx(ctx context.Context, tx *sqlx.Tx, taskIDs []uuid.UUID) (int64, error)
 	// SkipPendingTx sets status 'skipped' on the run's pending, undispatched
-	// tasks and returns how many it changed.
+	// tasks, ending their wait for a node lease, and returns how many it
+	// changed.
 	SkipPendingTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID) (int64, error)
 	// HasInFlightTaskTx reports whether any task of the schedule is
 	// dispatched, queued, running or stopping.
@@ -64,8 +67,9 @@ type TaskTrackerRepository interface {
 	HasNonSucceededTask(ctx context.Context, scheduleID uuid.UUID) (bool, error)
 	// BeginStopTx cancels the schedule's pending tasks and makes its
 	// dispatched, queued and running tasks stopping, stamping each with
-	// cancelled_by and cancelled_at (the run's cancellation instant), and
-	// returns how many it moved to each status.
+	// cancelled_by and cancelled_at (the run's cancellation instant); it ends
+	// the wait of each pending task and releases the node lease of each task
+	// it cancels, and returns how many it moved to each status.
 	BeginStopTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID, cancelledBy string, cancelledAt time.Time) (run.StopCounts, error)
 }
 
@@ -396,8 +400,8 @@ func (r *taskTrackerRepository) LoadAttemptStateTx(ctx context.Context, tx *sqlx
 }
 
 // MarkDispatchedTx makes the tasks of taskIDs that are still pending and
-// undispatched dispatched, with dispatched_at = at, and returns the ids it
-// changed.
+// undispatched dispatched, with dispatched_at = at, clears what each waited
+// for (wait_reason, lease_wait_since), and returns the ids it changed.
 func (r *taskTrackerRepository) MarkDispatchedTx(ctx context.Context, tx *sqlx.Tx, taskIDs []uuid.UUID, at time.Time) ([]uuid.UUID, error) {
 	if len(taskIDs) == 0 {
 		return nil, nil
@@ -405,7 +409,7 @@ func (r *taskTrackerRepository) MarkDispatchedTx(ctx context.Context, tx *sqlx.T
 	var stamped []uuid.UUID
 	err := tx.SelectContext(ctx, &stamped, `
 		UPDATE task_tracker
-		SET dispatched_at = $2, status = 'dispatched'
+		SET dispatched_at = $2, status = 'dispatched', wait_reason = NULL, lease_wait_since = NULL
 		WHERE task_id = ANY($1) AND status = 'pending' AND dispatched_at IS NULL
 		RETURNING task_id`,
 		pq.Array(taskIDs), at)
@@ -416,14 +420,15 @@ func (r *taskTrackerRepository) MarkDispatchedTx(ctx context.Context, tx *sqlx.T
 }
 
 // MarkSkippedTx sets status = 'skipped' on the tasks of taskIDs that are still
-// pending and undispatched, and returns how many it changed.
+// pending and undispatched, clears what each waited for (wait_reason,
+// lease_wait_since), and returns how many it changed.
 func (r *taskTrackerRepository) MarkSkippedTx(ctx context.Context, tx *sqlx.Tx, taskIDs []uuid.UUID) (int64, error) {
 	if len(taskIDs) == 0 {
 		return 0, nil
 	}
 	res, err := tx.ExecContext(ctx, `
 		UPDATE task_tracker
-		SET status = 'skipped'
+		SET status = 'skipped', wait_reason = NULL, lease_wait_since = NULL
 		WHERE task_id = ANY($1) AND status = 'pending' AND dispatched_at IS NULL`,
 		pq.Array(taskIDs))
 	if err != nil {
@@ -437,11 +442,12 @@ func (r *taskTrackerRepository) MarkSkippedTx(ctx context.Context, tx *sqlx.Tx, 
 }
 
 // SkipPendingTx sets status = 'skipped' on the run's tasks that are still
-// pending and undispatched, and returns how many it changed.
+// pending and undispatched, clears what each waited for (wait_reason,
+// lease_wait_since), and returns how many it changed.
 func (r *taskTrackerRepository) SkipPendingTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID) (int64, error) {
 	res, err := tx.ExecContext(ctx, `
 		UPDATE task_tracker
-		SET status = 'skipped'
+		SET status = 'skipped', wait_reason = NULL, lease_wait_since = NULL
 		WHERE schedule_id = $1 AND status = 'pending' AND dispatched_at IS NULL`, scheduleID)
 	if err != nil {
 		return 0, fmt.Errorf("skip the pending tasks of schedule_id %s: %w", scheduleID, err)
@@ -499,47 +505,60 @@ func (r *taskTrackerRepository) HasNonSucceededTask(ctx context.Context, schedul
 	return exists, nil
 }
 
-// BeginStopTx stops the schedule's tasks that have not ended, in one
-// statement within the given transaction: a dispatched, queued or running
-// task whose current attempt is open (dispatched, queued or running) becomes
-// stopping, and every other one of them, a pending task or a task with no
-// open current attempt, becomes cancelled, since no attempt of it can answer
-// a stop. Each is stamped with cancelled_at and cancelled_by. A task that has
-// ended (succeeded, failed, skipped or cancelled) or is already stopping keeps
-// its status. The update locks each row it changes until tx ends; a report of
-// an attempt of the run locks the run first, so it reads these rows only after
-// the cancel commits. It returns how many tasks it cancelled and how many it
-// made stopping.
+// BeginStopTx stops the schedule's tasks that have not ended, within the given
+// transaction: a dispatched, queued or running task whose current attempt is
+// open (dispatched, queued or running) becomes stopping, and every other one
+// of them, a pending task or a task with no open current attempt, becomes
+// cancelled, since no attempt of it can answer a stop. Each is stamped with
+// cancelled_at and cancelled_by, and stops waiting for a node lease
+// (wait_reason and lease_wait_since are cleared). A task that has ended
+// (succeeded, failed, skipped or cancelled) or is already stopping keeps its
+// status. The update locks each row it changes until tx ends; a report of an
+// attempt of the run locks the run first, so it reads these rows only after
+// the cancel commits. The node lease of each task it cancels is released in
+// the same transaction, since the cancel ends that task; a stopping task keeps
+// its lease until the report that ends it. It returns how many tasks it
+// cancelled and how many it made stopping.
 func (r *taskTrackerRepository) BeginStopTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID, cancelledBy string, cancelledAt time.Time) (run.StopCounts, error) {
-	var statuses []string
-	err := tx.SelectContext(ctx, &statuses, `
+	var stopped []struct {
+		TaskID uuid.UUID      `db:"task_id"`
+		Status run.TaskStatus `db:"status"`
+	}
+	err := tx.SelectContext(ctx, &stopped, `
 		UPDATE task_tracker t
-		SET status       = CASE
-		                     WHEN t.status = 'pending' OR NOT EXISTS (
-		                       SELECT 1 FROM task_attempts a
-		                       WHERE a.task_id = t.task_id
-		                         AND a.attempt = t.attempt
-		                         AND a.status IN ('dispatched', 'queued', 'running'))
-		                     THEN 'cancelled'
-		                     ELSE 'stopping'
-		                   END,
-		    cancelled_at = $2,
-		    cancelled_by = $3
+		SET status           = CASE
+		                         WHEN t.status = 'pending' OR NOT EXISTS (
+		                           SELECT 1 FROM task_attempts a
+		                           WHERE a.task_id = t.task_id
+		                             AND a.attempt = t.attempt
+		                             AND a.status IN ('dispatched', 'queued', 'running'))
+		                         THEN 'cancelled'
+		                         ELSE 'stopping'
+		                       END,
+		    cancelled_at     = $2,
+		    cancelled_by     = $3,
+		    wait_reason      = NULL,
+		    lease_wait_since = NULL
 		WHERE t.schedule_id = $1
 		  AND t.status IN ('pending', 'dispatched', 'queued', 'running')
-		RETURNING t.status
+		RETURNING t.task_id, t.status
 	`, scheduleID, cancelledAt, cancelledBy)
 	if err != nil {
 		return run.StopCounts{}, fmt.Errorf("stop the tasks of schedule_id %s: %w", scheduleID, err)
 	}
 	var counts run.StopCounts
-	for _, s := range statuses {
-		switch run.TaskStatus(s) {
+	var cancelled []uuid.UUID
+	for _, s := range stopped {
+		switch s.Status {
 		case run.TaskStatusCancelled:
 			counts.Cancelled++
+			cancelled = append(cancelled, s.TaskID)
 		case run.TaskStatusStopping:
 			counts.Stopping++
 		}
+	}
+	if err := releaseLeases(ctx, tx, cancelled); err != nil {
+		return run.StopCounts{}, fmt.Errorf("stop the tasks of schedule_id %s: %w", scheduleID, err)
 	}
 	return counts, nil
 }

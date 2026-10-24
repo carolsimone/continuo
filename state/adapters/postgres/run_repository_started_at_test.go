@@ -66,7 +66,7 @@ func TestRunRepository_SaveRun_PersistsStartedAtOnStart(t *testing.T) {
 	defer tx.Rollback()
 
 	runRepo := postgres.NewRunRepository(tx, schedRepo)
-	tasks := postgres.NewTaskCollectionAdapter(taskRepo, tx)
+	tasks := postgres.NewTaskCollectionAdapter(taskRepo, tx, "default")
 
 	rn, err := runRepo.LoadRunForUpdate(ctx, scheduleID)
 	require.NoError(t, err)
@@ -117,7 +117,7 @@ func TestRunRepository_SaveRun_SingleUpdateForDirtyColumns(t *testing.T) {
 	defer tx.Rollback()
 
 	runRepo := postgres.NewRunRepository(tx, schedRepo)
-	tasks := postgres.NewTaskCollectionAdapter(taskRepo, tx)
+	tasks := postgres.NewTaskCollectionAdapter(taskRepo, tx, "default")
 
 	rn, err := runRepo.LoadRunForUpdate(ctx, scheduleID)
 	require.NoError(t, err)

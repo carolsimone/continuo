@@ -19,6 +19,15 @@ import (
 // defaultPlanner plans the runs of the default tenant, as state's main does.
 var defaultPlanner = runstart.Planner{TenantID: pkgevents.DefaultTenantID, Tasks: run.TaskDefaults{MaxRetries: 2, Timeout: 24 * time.Hour}}
 
+// releaseLeasesOf deletes the node write leases the tasks of runID hold, as
+// the transactions that end those tasks do. A fixture that ends a run or its
+// tasks by SQL calls it, so a later run of the same nodes can take them.
+func releaseLeasesOf(t *testing.T, db *sqlx.DB, runID uuid.UUID) {
+	t.Helper()
+	_, err := db.Exec(`DELETE FROM node_leases WHERE task_id IN (SELECT task_id FROM task_tracker WHERE schedule_id = $1)`, runID)
+	require.NoError(t, err)
+}
+
 // scheduledNode is promotedNode in schedule.
 func scheduledNode(schema, table, nodeType, schedule string, upstream ...string) topology.NodeSpec {
 	n := promotedNode(schema, table, nodeType, upstream...)

@@ -136,11 +136,11 @@ func (u *PostgresUnitOfWork) Outbox() ports.OutboxPublisher {
 
 func (u *PostgresUnitOfWork) Clock() ports.Clock { return u.clock }
 
-// TaskCollection returns a TaskCollectionAdapter bound to the current
-// transaction (or nil tx if no transaction is in progress). Each call
+// TaskCollection returns a TaskCollectionAdapter of tenantID bound to the
+// current transaction (or nil tx if no transaction is in progress). Each call
 // returns a fresh adapter so callers always see the active tx.
-func (u *PostgresUnitOfWork) TaskCollection() run.TaskCollection {
-	return NewTaskCollectionAdapter(u.taskRepo, u.tx)
+func (u *PostgresUnitOfWork) TaskCollection(tenantID string) run.TaskCollection {
+	return NewTaskCollectionAdapter(u.taskRepo, u.tx, tenantID)
 }
 
 // Topology returns a TopologyRepository bound to the current transaction.

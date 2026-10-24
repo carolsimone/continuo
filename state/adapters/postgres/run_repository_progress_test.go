@@ -45,7 +45,7 @@ func TestRunRepository_SaveRun_PersistsProgressClock(t *testing.T) {
 		runRepo := postgres.NewRunRepository(tx, schedRepo)
 		rn, err := runRepo.LoadRunForUpdate(ctx, scheduleID)
 		require.NoError(t, err)
-		mutate(rn, postgres.NewTaskCollectionAdapter(taskRepo, tx))
+		mutate(rn, postgres.NewTaskCollectionAdapter(taskRepo, tx, "default"))
 		require.NoError(t, runRepo.SaveRun(ctx, rn))
 		require.NoError(t, tx.Commit())
 	}

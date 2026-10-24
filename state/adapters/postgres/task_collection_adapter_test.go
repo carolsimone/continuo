@@ -31,7 +31,7 @@ func TestTaskCollectionAdapter_GetByID(t *testing.T) {
 		SchemaName: "raw", TableName: "orders", JobName: "job-orders", Status: run.TaskStatusSucceeded,
 		ImageTag: "service-1:v3",
 	}))
-	adapter := postgres.NewTaskCollectionAdapter(taskRepo, nil)
+	adapter := postgres.NewTaskCollectionAdapter(taskRepo, nil, "default")
 
 	got, err := adapter.GetByID(ctx, taskID)
 	require.NoError(t, err)
@@ -78,7 +78,7 @@ func TestTaskCollectionAdapter_RunReleasesOf(t *testing.T) {
 	tx, err := db.BeginTxx(ctx, nil)
 	require.NoError(t, err)
 	defer tx.Rollback() //nolint:errcheck
-	adapter := postgres.NewTaskCollectionAdapter(taskRepo, tx)
+	adapter := postgres.NewTaskCollectionAdapter(taskRepo, tx, "default")
 
 	got, err := adapter.RunReleasesOf(ctx, []uuid.UUID{stampedTask, legacyTask, uuid.New()})
 

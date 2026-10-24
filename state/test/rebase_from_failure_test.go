@@ -32,11 +32,13 @@ func rebaseTasks(t *testing.T, runID string) []rebaseTask {
 	return out
 }
 
-// finishRun records runID failed, so its schedule has no active run.
+// finishRun records runID failed, so its schedule has no active run, and
+// releases its tasks' node leases.
 func finishRun(t *testing.T, runID string) {
 	t.Helper()
 	_, err := stateDB.Exec(`UPDATE scheduler_tracker SET status = 'failed', completed_at = now() WHERE schedule_id = $1`, runID)
 	require.NoError(t, err)
+	releaseLeasesOf(t, stateDB, uuid.MustParse(runID))
 }
 
 // TestRebaseFromFailure previews and rebases a failed run through state's

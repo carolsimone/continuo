@@ -176,7 +176,7 @@ func (l *Loop) failStalled(ctx context.Context, runID uuid.UUID) error {
 		if err != nil {
 			return fmt.Errorf("load run %s: %w", runID, err)
 		}
-		events, stalled, err := r.FailStalled(ctx, u.TaskCollection(), u.Clock().Now())
+		events, stalled, err := r.FailStalled(ctx, u.TaskCollection(l.tenantID), u.Clock().Now())
 		if err != nil || !stalled {
 			return err
 		}

@@ -126,7 +126,7 @@ func (p Planner) Seeds(ctx context.Context, u uow.UnitOfWork, live topology.Poin
 // Start stores sel's tasks on r, which u's transaction has already saved,
 // saves r again and appends r's events to the outbox under msgProcID.
 func (p Planner) Start(ctx context.Context, u uow.UnitOfWork, r *run.Run, sel Selection, msgProcID uuid.UUID) error {
-	events, err := r.Start(ctx, u.TaskCollection(), p.TenantID, sel.Plan, sel.Graph, p.Tasks, u.Clock().Now())
+	events, err := r.Start(ctx, u.TaskCollection(p.TenantID), p.TenantID, sel.Plan, sel.Graph, p.Tasks, u.Clock().Now())
 	if err != nil {
 		return fmt.Errorf("start run %s: %w", r.ScheduleID(), err)
 	}
@@ -173,7 +173,7 @@ func (p Planner) source(ctx context.Context, u uow.UnitOfWork, source *run.Run) 
 	if source.ReleaseID() == "" {
 		return runplan.Source{}, nil, fmt.Errorf("%w: run %s", ErrSourceHasNoRelease, source.ScheduleID())
 	}
-	tasks, err := u.TaskCollection().ListRunTasks(ctx, source.ScheduleID())
+	tasks, err := u.TaskCollection(p.TenantID).ListRunTasks(ctx, source.ScheduleID())
 	if err != nil {
 		return runplan.Source{}, nil, fmt.Errorf("read the tasks of run %s: %w", source.ScheduleID(), err)
 	}

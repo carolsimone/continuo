@@ -253,6 +253,7 @@ func TestBuiltVersions(t *testing.T) {
 		require.NoError(t, err)
 		_, err = db.Exec(`UPDATE scheduler_tracker SET status = 'failed', completed_at = now() WHERE schedule_id = $1`, sourceID)
 		require.NoError(t, err)
+		releaseLeasesOf(t, db, sourceID)
 		changed := scheduledNode("raw", "rerun_orders", "dbt-model", "built-rerun")
 		changed.ContentHash = "sha256:rerun_orders-changed"
 		promoteRelease(t, db, changed)

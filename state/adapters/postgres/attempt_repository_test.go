@@ -498,7 +498,7 @@ func cancelRun(t *testing.T, db *sqlx.DB, r *run.Run) {
 	inUoW(t, db, func(u *postgres.PostgresUnitOfWork) {
 		loaded, err := u.Run().LoadRunForUpdate(ctx, r.ScheduleID())
 		require.NoError(t, err)
-		_, err = loaded.Cancel(ctx, u.TaskCollection(), "user", "", u.Clock().Now())
+		_, err = loaded.Cancel(ctx, u.TaskCollection(pkgevents.DefaultTenantID), "user", "", u.Clock().Now())
 		require.NoError(t, err)
 		require.NoError(t, u.Run().SaveRun(ctx, loaded))
 	})

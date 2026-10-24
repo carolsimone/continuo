@@ -81,7 +81,7 @@ func TestStart_StoresAttemptZeroOfEveryReadyTaskDueInFiveMinutes(t *testing.T) {
 	u := newPlanningUoW(db)
 	require.NoError(t, u.Begin(ctx))
 	defer u.Rollback()
-	inFlight, err := u.TaskCollection().HasInFlight(ctx, f.r.ScheduleID())
+	inFlight, err := u.TaskCollection(f.tenant).HasInFlight(ctx, f.r.ScheduleID())
 	require.NoError(t, err)
 	assert.True(t, inFlight, "the tasks the run dispatched when it was created are in flight")
 }
@@ -242,7 +242,7 @@ func TestFailStalled_SavesTheRunFailedAsStalled(t *testing.T) {
 	defer u.Rollback()
 	r, err := u.Run().LoadRunForUpdate(ctx, f.r.ScheduleID())
 	require.NoError(t, err)
-	_, stalled, err := r.FailStalled(ctx, u.TaskCollection(), time.Now().Add(run.StallAfter+time.Minute))
+	_, stalled, err := r.FailStalled(ctx, u.TaskCollection(f.tenant), time.Now().Add(run.StallAfter+time.Minute))
 	require.NoError(t, err)
 	require.True(t, stalled)
 	require.NoError(t, u.Run().SaveRun(ctx, r))
