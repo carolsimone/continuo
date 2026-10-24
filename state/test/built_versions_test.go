@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
@@ -118,7 +119,7 @@ func (h *builtHarness) finish(t *testing.T, runID, taskID uuid.UUID, status run.
 // reports is the handler of task.status.updated:v2 the harness reports
 // through.
 func (h *builtHarness) reports() *svchandlers.AttemptReportHandler {
-	return svchandlers.NewAttemptReportHandler(pkgevents.DefaultTenantID, defaultPlanner.Tasks, h.logger)
+	return svchandlers.NewAttemptReportHandler(pkgevents.DefaultTenantID, defaultPlanner.Tasks, noRunMetrics{}, h.logger)
 }
 
 // finished is the report that attempt 0 of taskID ended with status; a
@@ -267,3 +268,10 @@ func TestBuiltVersions(t *testing.T) {
 		assert.Equal(t, uuid.NullUUID{UUID: rerunID, Valid: true}, row.RunID)
 	})
 }
+
+// noRunMetrics counts nothing.
+type noRunMetrics struct{}
+
+func (noRunMetrics) RunStalled()                {}
+func (noRunMetrics) RunsCancelling(_, _ int)    {}
+func (noRunMetrics) RunCancelled(time.Duration) {}

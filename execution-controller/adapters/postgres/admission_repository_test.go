@@ -78,6 +78,28 @@ func TestAdmission_ReserveNext_FairOrder(t *testing.T) {
 	assert.Equal(t, "pending", statusOf(t, db, notDue), "a row whose next attempt is not due waits")
 }
 
+// A fenced run's pending rows are never due: the claim takes no slot for
+// them, and the rows of every other run and release are claimed as before.
+func TestReserveNext_SkipsAFencedRunsRows(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	now := time.Now()
+	fenced, open := uuid.New(), uuid.New()
+	f1 := seedProduction(t, db, fenced, now.Add(-10*time.Minute))
+	f2 := seedProduction(t, db, fenced, now.Add(-9*time.Minute))
+	o1 := seedProduction(t, db, open, now.Add(-time.Minute))
+	c1 := seedCandidate(t, db, "rel-fence", now.Add(-time.Minute))
+	_, err := db.Exec(`INSERT INTO cancelled_runs (run_id) VALUES ($1)`, fenced)
+	require.NoError(t, err)
+
+	ids, err := postgres.NewAdmissionRepository(db, testLogger()).ReserveNext(context.Background(), 10)
+
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []uuid.UUID{o1, c1}, ids)
+	assert.Equal(t, "pending", statusOf(t, db, f1))
+	assert.Equal(t, "pending", statusOf(t, db, f2))
+}
+
 func TestAdmission_CountInFlight(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()

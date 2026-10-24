@@ -19,14 +19,15 @@ type FakeUnitOfWork struct {
 	Outbox              pkgoutbox.Repository
 	Deployments         repository.DeploymentRepository
 	ValidationAggregate repository.ValidationAggregateRepository
-	Cancelled           repository.CancelledSchedulesRepository
+	Cancelled           repository.CancelledRunsRepository
 	MessageProcessing   messageprocessing.Repository
 
 	BeginCalled    int
 	CommitCalled   int
 	RollbackCalled int
 
-	inTx bool
+	inTx        bool
+	afterCommit []func()
 }
 
 func (f *FakeUnitOfWork) OutboxRepo() pkgoutbox.Repository                 { return f.Outbox }
@@ -34,7 +35,7 @@ func (f *FakeUnitOfWork) DeploymentsRepo() repository.DeploymentRepository { ret
 func (f *FakeUnitOfWork) ValidationAggregateRepo() repository.ValidationAggregateRepository {
 	return f.ValidationAggregate
 }
-func (f *FakeUnitOfWork) CancelledSchedulesRepo() repository.CancelledSchedulesRepository {
+func (f *FakeUnitOfWork) CancelledRunsRepo() repository.CancelledRunsRepository {
 	return f.Cancelled
 }
 func (f *FakeUnitOfWork) MessageProcessingRepo() messageprocessing.Repository {
@@ -56,14 +57,23 @@ func (f *FakeUnitOfWork) Commit() error {
 	}
 	f.inTx = false
 	f.CommitCalled++
+	hooks := f.afterCommit
+	f.afterCommit = nil
+	for _, fn := range hooks {
+		fn()
+	}
 	return nil
 }
+
+// AfterCommit registers fn to run at the next Commit; Rollback discards it.
+func (f *FakeUnitOfWork) AfterCommit(fn func()) { f.afterCommit = append(f.afterCommit, fn) }
 
 func (f *FakeUnitOfWork) Rollback() error {
 	if !f.inTx {
 		return nil
 	}
 	f.inTx = false
+	f.afterCommit = nil
 	f.RollbackCalled++
 	return nil
 }

@@ -9,17 +9,9 @@ import {
   formatAttemptSeconds,
   latestAttempt,
   taskNodeId,
+  taskPillClass,
   taskStatusTitle,
 } from './detail-page-helpers';
-
-function pillClass(status: string): string {
-  const map: Record<string, string> = {
-    running: 'pill-sm--running', succeeded: 'pill-sm--succeeded',
-    failed: 'pill-sm--failed', pending: 'pill-sm--pending', cancelled: 'pill-sm--cancelled',
-    skipped: 'pill-sm--skipped', dispatched: 'pill-sm--dispatched', queued: 'pill-sm--queued',
-  };
-  return map[status] ?? 'pill-sm--pending';
-}
 
 interface Props {
   groups: ServiceGroup[];
@@ -135,7 +127,7 @@ export default function NodeTableBody({
                     />
                     <span className="nodes-group-name">{group.service}</span>
                     <span className="nodes-group-count">{group.tasks.length}</span>
-                    <span className={`pill-sm ${pillClass(group.status)}`}>{group.status}</span>
+                    <span className={`pill-sm ${taskPillClass(group.status)}`}>{group.status}</span>
                   </div>
                 </td>
               </tr>
@@ -208,7 +200,7 @@ export default function NodeTableBody({
                         )}
                       </td>
                       <td>
-                        <span className={`pill-sm ${pillClass(task.status)}`} title={taskStatusTitle(task.status)}>{task.status}</span>
+                        <span className={`pill-sm ${taskPillClass(task.status)}`} title={taskStatusTitle(task.status)}>{task.status}</span>
                       </td>
                       <td>
                         <span className="nodes-attempt">

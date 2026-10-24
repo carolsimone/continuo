@@ -10,6 +10,9 @@ import "google/protobuf/timestamp.proto";
 service StateService {
   // Scheduler operations
   rpc GetScheduler(GetSchedulerRequest) returns (SchedulerResponse);
+  // CancelScheduler cancels a run. The response carries the run as the cancel
+  // left it: CANCELLING while an attempt is still being stopped, CANCELLED once
+  // nothing was in flight. A run that is already CANCELLING is returned as it is.
   rpc CancelScheduler(CancelSchedulerRequest) returns (SchedulerResponse);
 
   // Trigger operations
@@ -154,6 +157,7 @@ enum SchedulerStatus {
   SCHEDULER_STATUS_FAILED = 4;
   SCHEDULER_STATUS_CANCELLED = 5;
   SCHEDULER_STATUS_SKIPPED = 6;
+  SCHEDULER_STATUS_CANCELLING = 7;  // a cancel was requested; the run waits for its attempts to stop
 }
 
 enum TaskStatus {
@@ -166,6 +170,7 @@ enum TaskStatus {
   TASK_STATUS_SKIPPED = 6;
   TASK_STATUS_DISPATCHED = 7;  // an attempt was sent to execution-controller, which has not acknowledged it
   TASK_STATUS_QUEUED = 8;      // execution-controller accepted the attempt; it waits for a slot
+  TASK_STATUS_STOPPING = 9;    // a stop was requested; the task waits for its attempt to stop
 }
 
 // ============================================================================
@@ -198,8 +203,8 @@ message Task {
   TaskStatus status = 8;
   int32 attempt = 9;  // 0-based number of the task's current attempt
   int32 max_retries = 10;
-  google.protobuf.Timestamp cancelled_at = 11;
-  string cancelled_by = 12;
+  google.protobuf.Timestamp cancelled_at = 11;  // set only while status is CANCELLED
+  string cancelled_by = 12;                     // set only while status is CANCELLED
 }
 
 // TaskAttempt is one attempt of a task: one dispatch of its Kubernetes Job.
@@ -207,7 +212,7 @@ message TaskAttempt {
   string task_id = 1;
   int32 attempt = 2;                              // 0-based attempt number
   string job_name = 3;                            // Kubernetes Job of this attempt
-  string status = 4;                              // dispatched | queued | running | succeeded | failed | cancelled
+  string status = 4;                              // dispatched | queued | running | succeeded | failed | stopped
   string failure_class = 5;                       // why the attempt failed; "" unless failed
   string failure_reason = 6;                      // the specific failure within failure_class; "" unless failed
   // exit_code is the container's exit code, 0 when unknown: a 0 is a clean
@@ -309,7 +314,7 @@ message ActivateScheduleResponse {
 message ListAllSchedulesRequest {}
 
 // ScheduleSummary merges catalog data, last-run data, and cron config.
-// last_run_status uses lowercase strings ("succeeded", "failed", "cancelled")
+// last_run_status uses lowercase strings ("succeeded", "failed", "cancelling", "cancelled")
 // matching the domain model — intentionally not the SchedulerStatus enum
 // to decouple this message from scheduler_tracker internals.
 message ScheduleSummary {
@@ -319,7 +324,7 @@ message ScheduleSummary {
   string timezone        = 4;  // top-level timezone from schedules.yaml
   bool   is_running      = 5;
   google.protobuf.Timestamp last_run_at = 6;  // null if never run
-  string last_run_status = 7;  // "succeeded"/"failed"/"cancelled"; empty if never run
+  string last_run_status = 7;  // "succeeded"/"failed"/"cancelling"/"cancelled"; empty if never run
   string last_run_id = 8;  // schedule_id of most recent run; empty string if never run
 }
 
@@ -433,9 +438,9 @@ message NodeRun {
   string run_id           = 1;
   string schedule_name    = 2;
   string kind             = 3;  // cron | trigger | rerun | rebase | single_node_run
-  string terminal_status  = 4;  // "" while in flight
+  string terminal_status  = 4;  // the run's status: pending | running | cancelling | succeeded | failed | cancelled | skipped
   string task_id          = 5;
-  string task_status      = 6;  // pending | dispatched | queued | running | succeeded | failed | cancelled | skipped
+  string task_status      = 6;  // pending | dispatched | queued | running | stopping | succeeded | failed | cancelled | skipped
   int32  attempt          = 7;  // 0-based number of the task's current attempt
   string image_tag        = 8;
   reserved 9;
@@ -474,7 +479,7 @@ message NodeSummary {
   int32  avg_duration_sec = 6;   // -1 when no measurable run
   int32  p95_duration_sec = 7;   // -1 when no measurable run
   int32  flaky_rate_pct   = 8;   // % of window runs with attempt > 0; 0 when none
-  string last_status      = 9;   // succeeded|failed|running|queued|dispatched|cancelled|skipped|pending
+  string last_status      = 9;   // succeeded|failed|running|stopping|queued|dispatched|cancelled|skipped|pending
   string last_run_at      = 10;  // RFC3339 of the most recent run's created_at
   string operation        = 11;  // run | test | build
   int32  timeout_seconds  = 12;  // the task timeout the node's tasks get: its declared timeout in the live release, else the install default
@@ -501,7 +506,7 @@ message RunGraphNode {
   string table_name    = 3;
   string schedule_name = 4;  // the node's schedule in the run's release; "" when unknown
   string node_type     = 5;  // "" when the run names no release
-  string status        = 6;  // the task's status: pending | dispatched | queued | running | succeeded | failed | cancelled | skipped
+  string status        = 6;  // the task's status: pending | dispatched | queued | running | stopping | succeeded | failed | cancelled | skipped
   string task_id       = 7;
 }
 

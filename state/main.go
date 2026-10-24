@@ -329,6 +329,7 @@ func main() {
 	// Every task state plans gets the install's retry budget, and each
 	// dispatch its node's timeout, else the install's.
 	taskDefaults := run.TaskDefaults{MaxRetries: int32(cfg.TaskMaxRetries), Timeout: cfg.TaskTimeout} //nolint:gosec // G115: TASK_MAX_RETRIES is 0-10, checked at startup.
+	runMetrics := statemetrics.NewRunMetrics(metricsReg)
 	seedReconciler := seedreconcile.New(uowFactory, cfg.Maintenance, pkgevents.DefaultTenantID, taskDefaults, logger)
 	releasePromotedHandler := svchandlers.NewReleasePromotedHandler(s3adapter.NewTopologyArtifactReader(objectStore), seedReconciler, logger)
 
@@ -356,7 +357,7 @@ func main() {
 			name:    "task_status_updated",
 			stream:  streams.TaskStatusUpdatedV2,
 			group:   streams.StateTaskStatusUpdated,
-			binding: redis.NewTaskStatusReportBinding(uowFactory, svchandlers.NewAttemptReportHandler(pkgevents.DefaultTenantID, taskDefaults, logger), logger),
+			binding: redis.NewTaskStatusReportBinding(uowFactory, svchandlers.NewAttemptReportHandler(pkgevents.DefaultTenantID, taskDefaults, runMetrics, logger), logger),
 		},
 		{
 			name:    "release_promoted",
@@ -381,8 +382,7 @@ func main() {
 	// nothing was heard of within its window and fails every run left with
 	// nothing in flight as stalled. Its goroutine is tracked, so shutdown
 	// waits for a pass in progress.
-	attemptReconciler := attemptreconcile.New(uowFactory, pkgevents.DefaultTenantID, taskDefaults,
-		statemetrics.NewRunMetrics(metricsReg), logger)
+	attemptReconciler := attemptreconcile.New(uowFactory, pkgevents.DefaultTenantID, taskDefaults, runMetrics, logger)
 	lifecycleManager.Go(func() { attemptReconciler.Run(ctx, attemptReconcileInterval) })
 
 	// The cron loop and the gRPC entry points plan their runs for the default

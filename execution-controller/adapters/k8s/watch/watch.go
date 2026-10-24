@@ -15,6 +15,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	batchlisters "k8s.io/client-go/listers/batch/v1"
@@ -29,7 +30,8 @@ const legacyJobNameLabel = "job-name"
 const byJob = "job"
 
 // Watch is the ports.JobCache over shared Job and pod informers, and the
-// ports.JobLookup that reads the same Jobs and pods from the API directly.
+// ports.JobLookup and ports.RunJobLookup that read the same Jobs and pods
+// from the API directly.
 type Watch struct {
 	cs         kubernetes.Interface
 	factory    informers.SharedInformerFactory
@@ -41,8 +43,9 @@ type Watch struct {
 }
 
 var (
-	_ ports.JobCache  = (*Watch)(nil)
-	_ ports.JobLookup = (*Watch)(nil)
+	_ ports.JobCache     = (*Watch)(nil)
+	_ ports.JobLookup    = (*Watch)(nil)
+	_ ports.RunJobLookup = (*Watch)(nil)
 )
 
 // New builds a Watch on namespace whose changes queue Job names on q. Start
@@ -94,6 +97,34 @@ func (w *Watch) WaitForCacheSync(ctx context.Context) bool {
 // Synced reports whether both caches have listed every object once.
 func (w *Watch) Synced() bool { return w.jobsSynced() && w.podsSynced() }
 
+// JobNames returns the name of every Job the cache holds that can still run
+// a pod: one with no true Complete or Failed condition and no deletion
+// timestamp.
+func (w *Watch) JobNames() []string {
+	jobs, err := w.jobs.Jobs(w.namespace).List(labels.Everything())
+	if err != nil {
+		return nil
+	}
+	names := make([]string, 0, len(jobs))
+	for _, j := range jobs {
+		if j.DeletionTimestamp == nil && !jobFinished(j) {
+			names = append(names, j.Name)
+		}
+	}
+	return names
+}
+
+// jobFinished reports whether Kubernetes has marked j Complete or Failed: no
+// pod of it runs again.
+func jobFinished(j *batchv1.Job) bool {
+	for _, c := range j.Status.Conditions {
+		if c.Status == corev1.ConditionTrue && (c.Type == batchv1.JobComplete || c.Type == batchv1.JobFailed) {
+			return true
+		}
+	}
+	return false
+}
+
 // Observe returns what the cache holds of jobName's Job and pods.
 func (w *Watch) Observe(jobName string) model.JobObservation {
 	job, err := w.jobs.Jobs(w.namespace).Get(jobName)
@@ -130,6 +161,43 @@ func (w *Watch) ObserveLive(ctx context.Context, jobName string) (model.JobObser
 		return model.JobObservation{}, fmt.Errorf("list the pods of Job %s: %w", jobName, err)
 	}
 	return observation(job, pods), nil
+}
+
+// ObserveRun reads every Job and pod of runID from the API, past the cache:
+// one LIST of the Jobs and one LIST of the pods carrying the run's
+// schedule-id label, which a task's Job and its pod template both carry. Each
+// pod is held under the Job its job-name label names (the current label, else
+// the legacy one), whether or not that Job is still present.
+func (w *Watch) ObserveRun(ctx context.Context, runID string) (model.RunObservation, error) {
+	selector := metav1.ListOptions{LabelSelector: labels.Set{k8s.LabelScheduleID: runID}.String()}
+	jobList, err := w.cs.BatchV1().Jobs(w.namespace).List(ctx, selector)
+	if err != nil {
+		return model.RunObservation{}, fmt.Errorf("list the Jobs of run %s: %w", runID, err)
+	}
+	podList, err := w.cs.CoreV1().Pods(w.namespace).List(ctx, selector)
+	if err != nil {
+		return model.RunObservation{}, fmt.Errorf("list the pods of run %s: %w", runID, err)
+	}
+	jobs := make(map[string]*batchv1.Job, len(jobList.Items))
+	for i := range jobList.Items {
+		jobs[jobList.Items[i].Name] = &jobList.Items[i]
+	}
+	pods := map[string][]*corev1.Pod{}
+	for i := range podList.Items {
+		if name := jobNameOfPod(&podList.Items[i]); name != "" {
+			pods[name] = append(pods[name], &podList.Items[i])
+		}
+	}
+	out := make(map[string]model.JobObservation, len(jobs)+len(pods))
+	for name, job := range jobs {
+		out[name] = observation(job, pods[name])
+	}
+	for name, ps := range pods {
+		if _, ok := jobs[name]; !ok {
+			out[name] = observation(nil, ps)
+		}
+	}
+	return model.NewRunObservation(out), nil
 }
 
 // livePods lists the pods whose label names jobName.

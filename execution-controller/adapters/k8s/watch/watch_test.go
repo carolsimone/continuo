@@ -138,3 +138,87 @@ func TestWatch_ObserveLiveReadsTheAPIPastTheCache(t *testing.T) {
 	assert.False(t, gone.JobPresent)
 	assert.Empty(t, gone.Pods)
 }
+
+// JobNames lists every Job the cache holds, the ones that exist when it
+// starts and the ones created since; the observer's resync queues them all.
+func TestWatch_JobNamesListsEveryCachedJob(t *testing.T) {
+	cs := fake.NewClientset(job("svc-s-t-1a2b3c4d"))
+	w, _ := startWatch(t, cs)
+	_, err := cs.BatchV1().Jobs(ns).Create(context.Background(), job("svc-s-t-7f3e1a2b"), metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool { return len(w.JobNames()) == 2 }, 5*time.Second, 10*time.Millisecond)
+	assert.ElementsMatch(t, []string{"svc-s-t-1a2b3c4d", "svc-s-t-7f3e1a2b"}, w.JobNames())
+}
+
+// JobNames leaves out a Job that has finished (Complete or Failed) or is being
+// deleted: no pod of it runs again, so the resync has nothing of it to stop.
+// A Job whose failure is only targeted still has pods terminating and stays.
+func TestWatch_JobNamesLeavesOutFinishedAndDeletingJobs(t *testing.T) {
+	withCondition := func(name string, c batchv1.JobConditionType, s corev1.ConditionStatus) *batchv1.Job {
+		j := job(name)
+		j.Status.Conditions = []batchv1.JobCondition{{Type: c, Status: s}}
+		return j
+	}
+	deleting := job("svc-s-deleting-1a2b3c4d")
+	now := metav1.NewTime(time.Unix(100, 0))
+	deleting.DeletionTimestamp = &now
+	deleting.Finalizers = []string{"batch.kubernetes.io/job-tracking"}
+	cs := fake.NewClientset(
+		job("svc-s-live-1a2b3c4d"),
+		withCondition("svc-s-complete-1a2b3c4d", batchv1.JobComplete, corev1.ConditionTrue),
+		withCondition("svc-s-failed-1a2b3c4d", batchv1.JobFailed, corev1.ConditionTrue),
+		withCondition("svc-s-not-failed-1a2b3c4d", batchv1.JobFailed, corev1.ConditionFalse),
+		withCondition("svc-s-failing-1a2b3c4d", batchv1.JobFailureTarget, corev1.ConditionTrue),
+		deleting,
+	)
+	w, _ := startWatch(t, cs)
+
+	assert.ElementsMatch(t, []string{"svc-s-live-1a2b3c4d", "svc-s-not-failed-1a2b3c4d", "svc-s-failing-1a2b3c4d"}, w.JobNames())
+}
+
+// inRun labels o with the run runID.
+func inRun[T metav1.Object](o T, runID string) T {
+	labels := o.GetLabels()
+	labels["schedule-id"] = runID
+	o.SetLabels(labels)
+	return o
+}
+
+// ObserveRun reads a run's Jobs and pods with one LIST of each, by the run's
+// label: each Job with its pods, a pod whose Job is gone under the Job name
+// its labels carry (the legacy job-name label included), and nothing of
+// another run.
+func TestWatch_ObserveRunReadsTheRunsJobsAndPodsInOnePass(t *testing.T) {
+	legacy := pod("p-legacy", "")
+	legacy.Labels["job-name"] = "j-legacy"
+	delete(legacy.Labels, batchv1.JobNameLabel)
+	cs := fake.NewClientset(
+		inRun(job("j-live"), "run-1"), inRun(pod("p-live", "j-live"), "run-1"),
+		inRun(pod("p-orphan", "j-gone"), "run-1"),
+		inRun(legacy, "run-1"),
+		inRun(job("j-other"), "run-2"), inRun(pod("p-other", "j-other"), "run-2"),
+	)
+	w, err := New(cs, ns, NewQueue())
+	require.NoError(t, err)
+	cs.ClearActions()
+
+	got, err := w.ObserveRun(context.Background(), "run-1")
+	require.NoError(t, err)
+
+	actions := cs.Actions()
+	require.Len(t, actions, 2, "one LIST of the Jobs and one of the pods")
+	for _, a := range actions {
+		assert.Equal(t, "list", a.GetVerb())
+	}
+	live := got.Of("j-live")
+	assert.True(t, live.JobPresent)
+	assert.Equal(t, "run-1", live.JobRunID)
+	require.Len(t, live.Pods, 1)
+	orphan := got.Of("j-gone")
+	assert.False(t, orphan.JobPresent)
+	require.Len(t, orphan.Pods, 1)
+	assert.True(t, orphan.HasUnfinishedPod())
+	assert.Len(t, got.Of("j-legacy").Pods, 1, "a pod carrying only the legacy label is held under its Job")
+	assert.Equal(t, model.JobObservation{}, got.Of("j-other"), "another run's Job is not read")
+}

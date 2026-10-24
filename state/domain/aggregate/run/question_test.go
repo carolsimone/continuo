@@ -29,3 +29,16 @@ func TestQuestion_DispatchCarriesTheKnownStatusAndTheNextWindow(t *testing.T) {
 	assert.Equal(t, AttemptRunning, d.KnownStatus)
 	assert.Equal(t, 30*time.Minute, next)
 }
+
+// A stop question is the run's cancel again, naming every attempt state still
+// waits for.
+func TestStopQuestion_CancelNamesEveryAttempt(t *testing.T) {
+	attempts := []StopTarget{
+		{TaskID: uuid.New(), Attempt: 0, JobName: "service-1-e2e-schema-table-a-7f3e1a2b", ChecksSent: 1},
+		{TaskID: uuid.New(), Attempt: 1, JobName: "service-1-e2e-schema-table-b-7f3e1a2b-r1", ChecksSent: 1},
+	}
+	q := StopQuestion{RunID: uuid.New(), ScheduleName: "daily", CancelledBy: "alice", Reason: "bad data", Attempts: attempts}
+
+	assert.Equal(t, RunCancelled{ID: q.RunID, Name: "daily", By: "alice", CancellationReason: "bad data", Attempts: attempts},
+		q.Cancel())
+}

@@ -134,6 +134,21 @@ func pollUntil(
 	condition func() (bool, error),
 	timeoutMsg string,
 ) {
+	t.Helper()
+	pollUntilDescribed(t, ctx, timeout, interval, condition, func() string { return timeoutMsg })
+}
+
+// pollUntilDescribed is pollUntil with a message built when it is printed, so
+// a timeout can name what the condition last observed.
+func pollUntilDescribed(
+	t *testing.T,
+	ctx context.Context,
+	timeout time.Duration,
+	interval time.Duration,
+	condition func() (bool, error),
+	describe func() string,
+) {
+	t.Helper()
 	deadline := time.After(timeout)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -145,7 +160,7 @@ func pollUntil(
 	for {
 		select {
 		case <-deadline:
-			t.Fatal(timeoutMsg)
+			t.Fatal(describe())
 		case <-ticker.C:
 			success, err := condition()
 			if err != nil {
@@ -156,7 +171,7 @@ func pollUntil(
 				return
 			}
 			if time.Since(lastProgress) >= progressInterval {
-				t.Logf("Still waiting... (%.0fs elapsed) — %s", time.Since(start).Seconds(), timeoutMsg)
+				t.Logf("Still waiting... (%.0fs elapsed) — %s", time.Since(start).Seconds(), describe())
 				lastProgress = time.Now()
 			}
 		}
@@ -252,9 +267,14 @@ type k8sJob struct {
 		Name              string            `json:"name"`
 		Labels            map[string]string `json:"labels"`
 		CreationTimestamp time.Time         `json:"creationTimestamp"`
+		DeletionTimestamp *time.Time        `json:"deletionTimestamp"`
 	} `json:"metadata"`
 	Status struct {
-		Succeeded int `json:"succeeded"`
+		Succeeded  int `json:"succeeded"`
+		Conditions []struct {
+			Type   string `json:"type"`
+			Status string `json:"status"`
+		} `json:"conditions"`
 	} `json:"status"`
 	Spec struct {
 		ActiveDeadlineSeconds *int64 `json:"activeDeadlineSeconds"`
@@ -266,6 +286,17 @@ type k8sJob struct {
 			} `json:"spec"`
 		} `json:"template"`
 	} `json:"spec"`
+}
+
+// finished reports whether the Job is terminal: Kubernetes marked it Complete
+// or Failed, so it runs no further pod.
+func (j k8sJob) finished() bool {
+	for _, c := range j.Status.Conditions {
+		if (c.Type == "Complete" || c.Type == "Failed") && c.Status == "True" {
+			return true
+		}
+	}
+	return false
 }
 
 // k8sJobList represents kubectl get jobs JSON output

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/carolsimone/continuo/execution-controller/domain/command"
@@ -480,4 +481,41 @@ func (r *deploymentsRepository) LoadByJobName(ctx context.Context, jobName strin
 		return nil, sql.ErrNoRows
 	}
 	return r.toAggregate(rows[0]), nil
+}
+
+// openStatusesSQL lists, as SQL literals, the statuses of a deployment that
+// has not ended: pending and every status that holds a slot. LockOpenOfRun
+// names them as literals so the planner can use idx_deployments_open_by_run,
+// whose predicate lists the same set (TestExecutionSchemaMatchesContract pins
+// the index to it).
+var openStatusesSQL = func() string {
+	statuses := append([]model.Status{model.StatusPending}, model.InFlightStatuses()...)
+	quoted := make([]string, len(statuses))
+	for i, s := range statuses {
+		quoted[i] = "'" + string(s) + "'"
+	}
+	return strings.Join(quoted, ", ")
+}()
+
+// LockOpenOfRun locks the run's production rows that have not ended, in id
+// order, waiting for a row another transaction holds. A row that transaction
+// ended is not returned: the status is read again once its lock is released.
+func (r *deploymentsRepository) LockOpenOfRun(ctx context.Context, runID string) ([]*model.Deployment, error) {
+	id, err := uuid.Parse(runID)
+	if err != nil {
+		return nil, fmt.Errorf("run_id %q: %w", runID, err)
+	}
+	var rows []*deploymentRow
+	if err := r.exec.SelectContext(ctx, &rows, `SELECT`+validationSelectColumns+`
+		FROM deployments
+		WHERE schedule_id = $1 AND mode = $2 AND status IN (`+openStatusesSQL+`)
+		ORDER BY id
+		FOR UPDATE`, id, string(model.ModeProduction)); err != nil {
+		return nil, fmt.Errorf("lock the open deployments of run %s: %w", runID, err)
+	}
+	out := make([]*model.Deployment, len(rows))
+	for i, row := range rows {
+		out[i] = r.toAggregate(row)
+	}
+	return out, nil
 }

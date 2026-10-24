@@ -27,6 +27,9 @@ type PostgresUnitOfWork struct {
 	catalogRepo   ScheduleCatalogRepository
 	clock         ports.Clock
 	logger        *slog.Logger
+	// afterCommit holds the functions AfterCommit registered in the current
+	// transaction.
+	afterCommit []func()
 }
 
 // NewPostgresUnitOfWork constructs a PostgresUnitOfWork over the autocommit db
@@ -67,22 +70,36 @@ func (u *PostgresUnitOfWork) Begin(ctx context.Context) error {
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	u.tx = tx
+	u.afterCommit = nil
 	return nil
 }
 
-// Commit commits the current transaction. The transaction state is cleared
-// unconditionally, even when the commit fails, so a failed commit never wedges
-// the instance: the next Begin starts cleanly.
+// Commit commits the current transaction, then runs the functions
+// AfterCommit registered in it, in registration order. The transaction state
+// and those functions are cleared unconditionally, even when the commit
+// fails, so a failed commit never wedges the instance and runs none of them:
+// the next Begin starts cleanly.
 func (u *PostgresUnitOfWork) Commit() error {
 	if u.tx == nil {
 		return fmt.Errorf("no transaction in progress")
 	}
 	tx := u.tx
 	u.tx = nil
+	hooks := u.afterCommit
+	u.afterCommit = nil
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit tx: %w", err)
 	}
+	for _, fn := range hooks {
+		fn()
+	}
 	return nil
+}
+
+// AfterCommit registers fn to run once the current transaction commits; a
+// rollback, or a commit that fails, discards it.
+func (u *PostgresUnitOfWork) AfterCommit(fn func()) {
+	u.afterCommit = append(u.afterCommit, fn)
 }
 
 // Rollback rolls back the current transaction. A deferred Rollback that runs
@@ -94,6 +111,7 @@ func (u *PostgresUnitOfWork) Rollback() error {
 	}
 	tx := u.tx
 	u.tx = nil
+	u.afterCommit = nil
 	if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
 		return err
 	}

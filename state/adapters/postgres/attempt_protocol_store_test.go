@@ -107,7 +107,7 @@ func TestTaskAttempts_AFinalAttemptHasNoNextCheck(t *testing.T) {
 		require.NoError(t, tasks.SaveAttempt(ctx, open))
 		assert.Nil(t, dueIn(t, tx, ids[1], 0), "a window on an ending attempt is ignored")
 
-		for _, status := range []run.AttemptStatus{run.AttemptSucceeded, run.AttemptFailed, run.AttemptCancelled} {
+		for _, status := range []run.AttemptStatus{run.AttemptSucceeded, run.AttemptFailed, run.AttemptStopped} {
 			for n, in := range []time.Duration{0, 10 * time.Minute} {
 				fresh := run.Attempt{TaskID: ids[2], Number: int32(n), JobName: "job-c", Status: status, NextCheckIn: in}
 				require.NoError(t, tasks.SaveAttempt(ctx, fresh))
@@ -140,14 +140,16 @@ func TestTaskCollection_SkipPendingSkipsOnlyTheRunsPendingTasks(t *testing.T) {
 	})
 }
 
-// A run has an attempt in flight while a task of it is dispatched, queued or
-// running.
+// A run has an attempt in flight while a task of it is dispatched, queued,
+// running or stopping.
 func TestTaskCollection_HasInFlight(t *testing.T) {
 	db := newTestDB(t)
 	storeFailureSchedule(t, db)
 	for status, want := range map[run.TaskStatus]bool{
 		run.TaskStatusDispatched: true, run.TaskStatusQueued: true, run.TaskStatusRunning: true,
-		run.TaskStatusPending: false, run.TaskStatusSucceeded: false, run.TaskStatusFailed: false,
+		run.TaskStatusStopping: true,
+		run.TaskStatusPending:  false, run.TaskStatusSucceeded: false, run.TaskStatusFailed: false,
+		run.TaskStatusCancelled: false, run.TaskStatusSkipped: false,
 	} {
 		runID, _ := insertTasks(t, db, map[string]run.TaskStatus{"ftable_a": run.TaskStatusSucceeded, "ftable_c": status})
 		attemptTx(t, db, func(ctx context.Context, tx *sqlx.Tx, tasks run.TaskCollection) {
@@ -158,19 +160,50 @@ func TestTaskCollection_HasInFlight(t *testing.T) {
 	}
 }
 
-// Cancelling a run cancels its tasks that wait for or run an attempt.
-func TestTaskCollection_BulkCancelCancelsDispatchedAndQueuedTasks(t *testing.T) {
+// A cancel stops a run's tasks that wait for or run an attempt: a pending task
+// is cancelled, a dispatched, queued or running one with an open current
+// attempt stopping, and one with no open current attempt (no attempt row, or
+// an ended one) cancelled; an ended task and a task of another run are left
+// as they are.
+func TestTaskCollection_BeginStopCancelsPendingTasksAndStopsTasksInFlight(t *testing.T) {
 	db := newTestDB(t)
 	storeFailureSchedule(t, db)
-	runID, _ := insertTasks(t, db, map[string]run.TaskStatus{
+	runID, ids := insertTasks(t, db, map[string]run.TaskStatus{
 		"ftable_a": run.TaskStatusDispatched, "ftable_b": run.TaskStatusQueued, "ftable_c": run.TaskStatusPending,
-		"ftable_d": run.TaskStatusSucceeded,
+		"ftable_d": run.TaskStatusSucceeded, "ftable_e": run.TaskStatusRunning,
+		"ftable_f": run.TaskStatusRunning, "ftable_g": run.TaskStatusQueued,
 	})
+	_, others := insertTasks(t, db, map[string]run.TaskStatus{"ftable_a": run.TaskStatusRunning})
+	require.NoError(t, insertAttempt(db, ids["ftable_a"], 0, "dispatched"))
+	require.NoError(t, insertAttempt(db, ids["ftable_b"], 0, "queued"))
+	require.NoError(t, insertAttempt(db, ids["ftable_e"], 0, "running"))
+	require.NoError(t, insertAttempt(db, ids["ftable_g"], 0, "succeeded"))
+	require.NoError(t, insertAttempt(db, others["ftable_a"], 0, "running"))
 
 	attemptTx(t, db, func(ctx context.Context, tx *sqlx.Tx, tasks run.TaskCollection) {
-		n, err := tasks.BulkCancel(ctx, runID, "user", time.Now())
+		counts, err := tasks.BeginStop(ctx, runID, "user", time.Now())
 		require.NoError(t, err)
-		assert.Equal(t, 3, n)
+		assert.Equal(t, run.StopCounts{Cancelled: 3, Stopping: 3}, counts)
+		for table, want := range map[string]run.TaskStatus{
+			"ftable_a": run.TaskStatusStopping, "ftable_b": run.TaskStatusStopping, "ftable_c": run.TaskStatusCancelled,
+			"ftable_d": run.TaskStatusSucceeded, "ftable_e": run.TaskStatusStopping,
+			"ftable_f": run.TaskStatusCancelled, "ftable_g": run.TaskStatusCancelled,
+		} {
+			var got run.TaskStatus
+			require.NoError(t, tx.Get(&got, `SELECT status FROM task_tracker WHERE task_id = $1`, ids[table]))
+			assert.Equal(t, want, got, table)
+		}
+		var other run.TaskStatus
+		require.NoError(t, tx.Get(&other, `SELECT status FROM task_tracker WHERE task_id = $1`, others["ftable_a"]))
+		assert.Equal(t, run.TaskStatusRunning, other, "another run's task")
+
+		counts, err = tasks.BeginStop(ctx, runID, "user", time.Now())
+		require.NoError(t, err)
+		assert.Zero(t, counts, "a second stop finds nothing left to stop")
+
+		targets, err := tasks.RequestStops(ctx, runID)
+		require.NoError(t, err)
+		assert.Len(t, targets, 3, "every stopping task has an attempt asked to stop")
 	})
 }
 

@@ -10,7 +10,7 @@ func TestAttemptStatus_RanksDispatchedQueuedRunningThenFinal(t *testing.T) {
 	assert.Equal(t, 0, AttemptDispatched.Rank())
 	assert.Equal(t, 1, AttemptQueued.Rank())
 	assert.Equal(t, 2, AttemptRunning.Rank())
-	for _, s := range []AttemptStatus{AttemptSucceeded, AttemptFailed, AttemptCancelled} {
+	for _, s := range []AttemptStatus{AttemptSucceeded, AttemptFailed, AttemptStopped} {
 		assert.Equal(t, 3, s.Rank(), s)
 		assert.True(t, s.IsFinal(), s)
 	}
@@ -31,7 +31,7 @@ func TestAttempt_AdvanceMovesOnlyToAHigherRank(t *testing.T) {
 		{AttemptRunning, AttemptFailed, true, AttemptFailed},
 		{AttemptFailed, AttemptRunning, false, AttemptFailed},
 		{AttemptFailed, AttemptSucceeded, false, AttemptFailed},
-		{AttemptCancelled, AttemptFailed, false, AttemptCancelled},
+		{AttemptStopped, AttemptFailed, false, AttemptStopped},
 		{AttemptRunning, AttemptRunning, false, AttemptRunning},
 	}
 	for _, tc := range tests {

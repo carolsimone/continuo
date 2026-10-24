@@ -9,11 +9,15 @@ import (
 type SchedulerStatus string
 
 const (
-	SchedulerStatusPending   SchedulerStatus = "pending"
-	SchedulerStatusRunning   SchedulerStatus = "running"
-	SchedulerStatusSucceeded SchedulerStatus = "succeeded"
-	SchedulerStatusFailed    SchedulerStatus = "failed"
-	SchedulerStatusCancelled SchedulerStatus = "cancelled"
+	SchedulerStatusPending SchedulerStatus = "pending"
+	SchedulerStatusRunning SchedulerStatus = "running"
+	// SchedulerStatusCancelling is a run whose cancel has been requested and
+	// whose work is still being stopped. It is active, not terminal: it ends
+	// cancelled once every attempt of it has ended.
+	SchedulerStatusCancelling SchedulerStatus = "cancelling"
+	SchedulerStatusSucceeded  SchedulerStatus = "succeeded"
+	SchedulerStatusFailed     SchedulerStatus = "failed"
+	SchedulerStatusCancelled  SchedulerStatus = "cancelled"
 	// SchedulerStatusSkipped is the terminal status for a run that had no work
 	// to do — a Test run over nodes with no dbt tests. It is a benign non-failure.
 	SchedulerStatusSkipped SchedulerStatus = "skipped"
@@ -21,7 +25,7 @@ const (
 
 func (s SchedulerStatus) IsValid() bool {
 	switch s {
-	case SchedulerStatusPending, SchedulerStatusRunning, SchedulerStatusSucceeded,
+	case SchedulerStatusPending, SchedulerStatusRunning, SchedulerStatusCancelling, SchedulerStatusSucceeded,
 		SchedulerStatusFailed, SchedulerStatusCancelled, SchedulerStatusSkipped:
 		return true
 	}
@@ -37,11 +41,25 @@ func (s SchedulerStatus) IsTerminal() bool {
 	return false
 }
 
+// IsActive reports whether a run in status s holds its schedule: it is
+// pending, running or cancelling, so no other run of the schedule starts.
+func (s SchedulerStatus) IsActive() bool {
+	switch s {
+	case SchedulerStatusPending, SchedulerStatusRunning, SchedulerStatusCancelling:
+		return true
+	}
+	return false
+}
+
 // schedulerStatuses lists every SchedulerStatus value.
 var schedulerStatuses = []SchedulerStatus{
-	SchedulerStatusPending, SchedulerStatusRunning, SchedulerStatusSucceeded,
+	SchedulerStatusPending, SchedulerStatusRunning, SchedulerStatusCancelling, SchedulerStatusSucceeded,
 	SchedulerStatusFailed, SchedulerStatusCancelled, SchedulerStatusSkipped,
 }
+
+// SchedulerStatuses returns every SchedulerStatus. The CHECK constraint on
+// scheduler_tracker.status lists exactly these.
+func SchedulerStatuses() []SchedulerStatus { return slices.Clone(schedulerStatuses) }
 
 // TerminalSchedulerStatuses returns every SchedulerStatus for which IsTerminal
 // reports true, so a storage guard against terminal runs names the same set the
@@ -56,12 +74,26 @@ func TerminalSchedulerStatuses() []SchedulerStatus {
 	return out
 }
 
+// ActiveSchedulerStatuses returns every SchedulerStatus for which IsActive
+// reports true, so a query for the active runs names the same set the
+// aggregate checks.
+func ActiveSchedulerStatuses() []SchedulerStatus {
+	out := make([]SchedulerStatus, 0, len(schedulerStatuses))
+	for _, s := range schedulerStatuses {
+		if s.IsActive() {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 // TaskStatus is the lifecycle status of one task within a Run. A task waits
 // pending until it is ready; once state dispatches an attempt of it the task
 // is dispatched, then queued while execution-controller waits for a slot,
 // then running once the attempt's main container starts. A failed attempt
 // with retries left dispatches the next one, so the task is failed only once
-// it will not run again.
+// it will not run again. A task whose run is being cancelled is stopping while
+// its attempt is still open, and cancelled once the attempt has stopped.
 type TaskStatus string
 
 const (
@@ -69,6 +101,7 @@ const (
 	TaskStatusDispatched TaskStatus = "dispatched"
 	TaskStatusQueued     TaskStatus = "queued"
 	TaskStatusRunning    TaskStatus = "running"
+	TaskStatusStopping   TaskStatus = "stopping"
 	TaskStatusSucceeded  TaskStatus = "succeeded"
 	TaskStatusFailed     TaskStatus = "failed"
 	TaskStatusCancelled  TaskStatus = "cancelled"
@@ -79,7 +112,7 @@ const (
 // task_tracker.status lists exactly these.
 func TaskStatuses() []TaskStatus {
 	return []TaskStatus{TaskStatusPending, TaskStatusDispatched, TaskStatusQueued, TaskStatusRunning,
-		TaskStatusSucceeded, TaskStatusFailed, TaskStatusCancelled, TaskStatusSkipped}
+		TaskStatusStopping, TaskStatusSucceeded, TaskStatusFailed, TaskStatusCancelled, TaskStatusSkipped}
 }
 
 func (t TaskStatus) IsValid() bool {
@@ -87,13 +120,38 @@ func (t TaskStatus) IsValid() bool {
 }
 
 // IsTerminal reports whether a task in status t will not run again in its
-// current attempt. A cancelled task is terminal: it never runs again.
+// current attempt. A cancelled task is terminal: it never runs again. A
+// stopping task is not: its attempt is still open.
 func (t TaskStatus) IsTerminal() bool {
 	switch t {
 	case TaskStatusSucceeded, TaskStatusFailed, TaskStatusCancelled, TaskStatusSkipped:
 		return true
 	}
 	return false
+}
+
+// IsInFlight reports whether a task in status t has an attempt in flight: it
+// is dispatched, queued, running or stopping.
+func (t TaskStatus) IsInFlight() bool {
+	switch t {
+	case TaskStatusDispatched, TaskStatusQueued, TaskStatusRunning, TaskStatusStopping:
+		return true
+	}
+	return false
+}
+
+// InFlightTaskStatuses returns every TaskStatus for which IsInFlight reports
+// true, so a query for the tasks in flight names the same set the aggregate
+// checks.
+func InFlightTaskStatuses() []TaskStatus {
+	all := TaskStatuses()
+	out := make([]TaskStatus, 0, len(all))
+	for _, t := range all {
+		if t.IsInFlight() {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // ParseTaskStatus converts a wire-format status string to a TaskStatus. Returns

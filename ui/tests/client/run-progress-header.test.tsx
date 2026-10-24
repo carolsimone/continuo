@@ -27,8 +27,19 @@ describe('RunProgressHeader', () => {
     expect(screen.getByTestId('count-pending')).toHaveTextContent('0');
     expect(screen.getByTestId('run-progress-pct')).toHaveTextContent('20%');
     const order = [...container.querySelectorAll('.rp-count b')].map((b) => b.getAttribute('data-testid'));
-    expect(order.indexOf('count-queued')).toBe(order.indexOf('count-running') - 1);
+    expect(order.indexOf('count-queued')).toBe(order.indexOf('count-stopping') - 1);
     expect(order.indexOf('count-dispatched')).toBe(order.indexOf('count-queued') - 1);
+  });
+
+  it('counts a stopping task in its own bucket, just before running, and not toward completion', () => {
+    const { container } = render(<RunProgressHeader tasks={[t('stopping'), t('stopping'), t('running'), t('cancelled'), t('succeeded')]} />);
+    expect(screen.getByTestId('count-stopping')).toHaveTextContent('2');
+    expect(screen.getByTestId('count-pending')).toHaveTextContent('0');
+    // done = cancelled + succeeded = 2 of 5 = 40%
+    expect(screen.getByTestId('run-progress-pct')).toHaveTextContent('40%');
+    const order = [...container.querySelectorAll('.rp-count b')].map((b) => b.getAttribute('data-testid'));
+    expect(order.indexOf('count-stopping')).toBe(order.indexOf('count-running') - 1);
+    expect(container.querySelectorAll('.rp-stopping').length).toBeGreaterThan(0);
   });
 
   it('counts cancelled separately and toward completion, not as pending', () => {

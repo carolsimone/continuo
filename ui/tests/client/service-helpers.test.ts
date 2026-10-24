@@ -56,6 +56,13 @@ describe('rollupStatus', () => {
     expect(rollupStatus(['pending', 'dispatched'])).toBe('dispatched');
   });
 
+  it('ranks stopping above running: a service being stopped reads stopping', () => {
+    expect(rollupStatus(['running', 'stopping'])).toBe('stopping');
+    expect(rollupStatus(['failed', 'stopping'])).toBe('failed');
+    expect(rollupStatus(['succeeded', 'stopping'])).toBe('stopping');
+    expect(rollupStatus(['queued', 'stopping'])).toBe('stopping');
+  });
+
   it('reports a fully cascade-skipped service as skipped, not external', () => {
     expect(rollupStatus(['skipped', 'skipped'])).toBe('skipped');
   });

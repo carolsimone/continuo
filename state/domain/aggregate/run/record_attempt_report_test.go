@@ -251,7 +251,7 @@ func TestRecordAttemptReport_ATaskOfAnotherRunIsNotHeld(t *testing.T) {
 // ended.
 func TestRecordAttemptReport_ATerminalRunWritesNothing(t *testing.T) {
 	r, tc, g := startedFailureRun(t)
-	_, err := r.Cancel(context.Background(), tc, "user", "", reportAt)
+	_, err := r.MarkDispatchTerminal(false, run.RunFailureEmptySelection, "ended", reportAt)
 	require.NoError(t, err)
 	tc.lockOrder = nil
 
@@ -395,6 +395,177 @@ func TestMarkDispatchTerminal_RecordsTheRunFailureReason(t *testing.T) {
 	_, err = skipped.MarkDispatchTerminal(true, "", "no tests", startNow)
 	require.NoError(t, err)
 	assert.Nil(t, skipped.FailureReason(), "a skipped run records no failure reason")
+}
+
+// cancellingFailureRun starts the e2e-schedule-failure run and cancels it at
+// reportAt: ftable_a and ftable_b, dispatched with the run, are stopping with
+// a stop requested of attempt 0; every other task is cancelled.
+func cancellingFailureRun(t *testing.T) (*run.Run, *fakeTaskCollection, *memTaskGraph) {
+	t.Helper()
+	r, tc, g := startedFailureRun(t)
+	_, err := r.Cancel(context.Background(), tc, "alice", "bad data", reportAt)
+	require.NoError(t, err)
+	require.Equal(t, run.SchedulerStatusCancelling, r.Status())
+	return r, tc, g
+}
+
+// A stopped report of a stopping task's attempt cancels the task and counts
+// it terminal; the run waits for its other stopping task.
+func TestRecordAttemptReport_AStoppedReportCancelsTheStoppingTask(t *testing.T) {
+	r, tc, g := cancellingFailureRun(t)
+
+	assert.Empty(t, report(t, r, tc, g, "ftable_a", 0, run.AttemptStopped, ""))
+
+	assert.Equal(t, run.TaskStatusCancelled, tc.statuses[taskOf(r, "ftable_a")])
+	a, _ := attemptOf(t, tc, r, "ftable_a", 0)
+	assert.Equal(t, run.AttemptStopped, a.Status)
+	assert.Equal(t, int32(7), r.TerminalTaskCount())
+	assert.Equal(t, run.SchedulerStatusCancelling, r.Status(), "ftable_b is still stopping")
+}
+
+// A stopping task whose container exited 0 before it was stopped wrote its
+// table: the task ends succeeded and the report says so, so the handler
+// records the version it loaded; nothing it would make ready is dispatched.
+func TestRecordAttemptReport_AStoppingTaskThatSucceedsEndsSucceeded(t *testing.T) {
+	r, tc, g := cancellingFailureRun(t)
+	added, reads := len(tc.added), g.reads
+
+	events, succeeded, err := r.RecordAttemptReport(context.Background(), tc, g,
+		run.AttemptReport{TaskID: taskOf(r, "ftable_a"), Attempt: 0, Status: run.AttemptSucceeded}, taskDefaults, reportAt)
+
+	require.NoError(t, err)
+	assert.True(t, succeeded, "the report made the task succeeded")
+	assert.Empty(t, events)
+	assert.Equal(t, run.TaskStatusSucceeded, tc.statuses[taskOf(r, "ftable_a")])
+	assert.Equal(t, run.TaskStatusCancelled, tc.statuses[taskOf(r, "ftable_g")], "ftable_g stays cancelled")
+	assert.Len(t, tc.added, added, "no attempt is dispatched")
+	assert.Equal(t, reads, g.reads, "the run's graph is not read")
+	assert.Equal(t, int32(7), r.TerminalTaskCount())
+}
+
+// A stopping task whose attempt failed fails, whatever the failure's class
+// and the task's budget: a cancelling run starts no attempt.
+func TestRecordAttemptReport_AStoppingTaskThatFailsIsNotRetried(t *testing.T) {
+	r, tc, g := cancellingFailureRun(t)
+
+	assert.Empty(t, report(t, r, tc, g, "ftable_a", 0, run.AttemptFailed, model.FailureReasonOOMKilled))
+
+	assert.Equal(t, run.TaskStatusFailed, tc.statuses[taskOf(r, "ftable_a")])
+	_, retried := attemptOf(t, tc, r, "ftable_a", 1)
+	assert.False(t, retried)
+	assert.Empty(t, tc.skipped, "the tasks below it are already cancelled")
+	assert.Equal(t, int32(7), r.TerminalTaskCount())
+}
+
+// A stopping task's attempt that reports running moves only the attempt: the
+// task stays stopping, the run's progress clock stays where the cancel left
+// it, and the attempt's next check stays the one the stop set.
+func TestRecordAttemptReport_ARunningReportLeavesTheTaskStopping(t *testing.T) {
+	r, tc, g := cancellingFailureRun(t)
+	heartbeat := *r.LastHeartbeatAt()
+	saves := len(tc.saves)
+
+	_, _, err := r.RecordAttemptReport(context.Background(), tc, g,
+		run.AttemptReport{TaskID: taskOf(r, "ftable_a"), Attempt: 0, Status: run.AttemptRunning}, taskDefaults, reportAt.Add(time.Minute))
+	require.NoError(t, err)
+
+	assert.Equal(t, run.TaskStatusStopping, tc.statuses[taskOf(r, "ftable_a")])
+	require.Len(t, tc.saves, saves+1)
+	assert.Equal(t, run.AttemptRunning, tc.saves[saves].Status)
+	assert.Zero(t, tc.saves[saves].NextCheckIn, "the attempt's next check stays the one the stop set")
+	assert.Equal(t, heartbeat, *r.LastHeartbeatAt())
+}
+
+// A cancelling run dispatches nothing: no task a success makes ready, no
+// retry of a retryable failure; the last report ends the run.
+func TestRecordAttemptReport_ACancellingRunDispatchesNothing(t *testing.T) {
+	r, tc, g := cancellingFailureRun(t)
+	added, reads := len(tc.added), g.reads
+
+	first := report(t, r, tc, g, "ftable_a", 0, run.AttemptSucceeded, "")
+	last := report(t, r, tc, g, "ftable_b", 0, run.AttemptFailed, model.FailureReasonOOMKilled)
+
+	assert.Empty(t, first)
+	assert.Equal(t, []run.DomainEvent{run.RunFinalized{ID: r.ScheduleID(), Name: "e2e-schedule-failure",
+		Outcome: run.SchedulerStatusCancelled}}, last)
+	assert.Len(t, tc.added, added, "no attempt is dispatched")
+	assert.Equal(t, reads, g.reads, "the run's graph is not read")
+}
+
+// The run ends cancelled once its last stopping task ends, even when another
+// stopping task failed.
+func TestRecordAttemptReport_TheLastStoppedTaskEndsTheRunCancelled(t *testing.T) {
+	r, tc, g := cancellingFailureRun(t)
+	assert.Empty(t, report(t, r, tc, g, "ftable_a", 0, run.AttemptFailed, model.FailureReasonExitCode))
+
+	events := report(t, r, tc, g, "ftable_b", 0, run.AttemptStopped, "")
+
+	assert.Equal(t, []run.DomainEvent{run.RunFinalized{ID: r.ScheduleID(), Name: "e2e-schedule-failure",
+		Outcome: run.SchedulerStatusCancelled}}, events)
+	assert.Equal(t, run.SchedulerStatusCancelled, r.Status())
+	require.NotNil(t, r.CompletedAt())
+	assert.Equal(t, reportAt, *r.CompletedAt())
+	assert.Nil(t, r.FailureReason())
+	assert.Equal(t, int32(8), r.TerminalTaskCount())
+	assert.Equal(t, run.TaskStatusFailed, tc.statuses[taskOf(r, "ftable_a")])
+	assert.Equal(t, run.TaskStatusCancelled, tc.statuses[taskOf(r, "ftable_b")])
+}
+
+// A stopped report of an attempt state never asked to stop is refused before
+// anything is written.
+func TestRecordAttemptReport_AStoppedReportForATaskNotStoppingIsRefused(t *testing.T) {
+	r, tc, g := startedFailureRun(t)
+	saves := len(tc.saves)
+
+	events, succeeded, err := r.RecordAttemptReport(context.Background(), tc, g,
+		run.AttemptReport{TaskID: taskOf(r, "ftable_a"), Attempt: 0, Status: run.AttemptStopped}, taskDefaults, reportAt)
+
+	require.ErrorIs(t, err, run.ErrStopNotRequested)
+	assert.Empty(t, events)
+	assert.False(t, succeeded)
+	assert.Len(t, tc.saves, saves, "nothing is saved")
+	a, _ := attemptOf(t, tc, r, "ftable_a", 0)
+	assert.Equal(t, run.AttemptDispatched, a.Status)
+	assert.Equal(t, run.TaskStatusDispatched, tc.statuses[taskOf(r, "ftable_a")])
+}
+
+// A stopped report delivered again after it cancelled its task changes
+// nothing and is not refused: the attempt has ended.
+func TestRecordAttemptReport_ARepeatedStoppedReportChangesNothing(t *testing.T) {
+	r, tc, g := cancellingFailureRun(t)
+	report(t, r, tc, g, "ftable_a", 0, run.AttemptStopped, "")
+	saves, terminal := len(tc.saves), r.TerminalTaskCount()
+
+	assert.Empty(t, report(t, r, tc, g, "ftable_a", 0, run.AttemptStopped, ""))
+
+	assert.Len(t, tc.saves, saves)
+	assert.Equal(t, terminal, r.TerminalTaskCount())
+}
+
+// A cancelling run left with no task stopping and no progress for five
+// minutes ends cancelled, with no failure reason; one with a task stopping
+// waits for it.
+func TestFailStalled_EndsACancellingRunWithNothingInFlightCancelled(t *testing.T) {
+	r, tc, _ := cancellingFailureRun(t)
+	_, stalled, err := r.FailStalled(context.Background(), tc, reportAt.Add(time.Hour))
+	require.NoError(t, err)
+	assert.False(t, stalled, "ftable_a and ftable_b are stopping")
+
+	// A defect ends both stopping tasks without moving the run.
+	tc.statuses[taskOf(r, "ftable_a")] = run.TaskStatusCancelled
+	tc.statuses[taskOf(r, "ftable_b")] = run.TaskStatusCancelled
+	_, stalled, err = r.FailStalled(context.Background(), tc, reportAt.Add(run.StallAfter-time.Second))
+	require.NoError(t, err)
+	assert.False(t, stalled, "the run moved under five minutes ago")
+
+	events, stalled, err := r.FailStalled(context.Background(), tc, reportAt.Add(run.StallAfter))
+
+	require.NoError(t, err)
+	assert.True(t, stalled)
+	assert.Equal(t, []run.DomainEvent{run.RunFinalized{ID: r.ScheduleID(), Name: "e2e-schedule-failure",
+		Outcome: run.SchedulerStatusCancelled}}, events)
+	assert.Equal(t, run.SchedulerStatusCancelled, r.Status())
+	assert.Nil(t, r.FailureReason())
 }
 
 func ptrTo[T any](v T) *T { return &v }

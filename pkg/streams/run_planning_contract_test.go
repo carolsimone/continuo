@@ -83,12 +83,12 @@ func TestRunDispatchStreams_HaveOneProducer(t *testing.T) {
 	}
 }
 
-// TestScheduleCancelledV1_ExecutionControllerIsTheOnlyConsumer pins that a
-// cancellation reaches only execution-controller, which drops the run's
-// dispatches and Job results.
-func TestScheduleCancelledV1_ExecutionControllerIsTheOnlyConsumer(t *testing.T) {
-	got := streams.Groups[streams.ScheduleCancelledV1]
-	if want := []string{streams.ExecutorScheduleCancelled}; !slices.Equal(got, want) {
-		t.Fatalf("schedule.cancelled:v1 groups = %v, want %v", got, want)
+// TestRunCancelledV1_ExecutionControllerIsTheOnlyConsumer pins that a run's
+// cancel reaches only execution-controller, which fences the run and stops its
+// attempts.
+func TestRunCancelledV1_ExecutionControllerIsTheOnlyConsumer(t *testing.T) {
+	got := streams.Groups[streams.RunCancelledV1]
+	if want := []string{streams.ExecutorRunCancelled}; !slices.Equal(got, want) {
+		t.Fatalf("%s groups = %v, want %v", streams.RunCancelledV1, got, want)
 	}
 }

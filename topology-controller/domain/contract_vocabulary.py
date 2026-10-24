@@ -78,12 +78,13 @@ NODE_TYPE_RUNTIME: dict[NodeType, NodeRuntime] = {NodeType.DBT_MODEL: NodeRuntim
 
 
 class AttemptStatus(StrEnum):
-    """Where one attempt of a task stands, on the two task streams. state sends dispatched, queued or running as a dispatch's known_status on task.dispatch:v1; execution-controller reports queued, running, succeeded or failed as a report's status on task.status.updated:v2."""
+    """Where one attempt of a task stands, on the two task streams. state sends dispatched, queued or running as a dispatch's known_status on task.dispatch:v1; execution-controller reports queued, running, succeeded, failed or stopped as a report's status on task.status.updated:v2."""
     DISPATCHED = "dispatched"
     QUEUED = "queued"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
+    STOPPED = "stopped"
 
 
 class FailureClass(StrEnum):

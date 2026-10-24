@@ -45,3 +45,19 @@ func TestDeployment_RecordReportKeepsTheLastReport(t *testing.T) {
 	d.RecordReport(Report{Status: pkgmodel.AttemptStatusRunning})
 	assert.Equal(t, &Report{Status: pkgmodel.AttemptStatusRunning}, d.LastReport())
 }
+
+// A stopped attempt reports what was seen of it and no failure.
+func TestReportOf_AStoppedAttemptCarriesItsFactsButNoFailure(t *testing.T) {
+	accepted := time.Date(2026, 10, 23, 9, 0, 0, 0, time.UTC)
+	started, finished := accepted.Add(4*time.Second), accepted.Add(31*time.Second)
+	stop := accepted.Add(30 * time.Second)
+	code := int32(143)
+	d := NewDeployment(command.DeployTask{TaskID: uuid.NewString()}, nil, accepted)
+	d.Observe(AttemptFacts{StartedAt: &started, FinishedAt: &finished, ExitCode: &code, LogKey: "logs/k", StopRequestedAt: &stop})
+
+	r := d.ReportOf(pkgmodel.AttemptStatusStopped, "ignored")
+
+	secs := 27.0
+	assert.Equal(t, Report{Status: pkgmodel.AttemptStatusStopped, QueuedAt: &accepted, StartedAt: &started, FinishedAt: &finished,
+		ExecutionSeconds: &secs, ExitCode: &code, LogKey: "logs/k"}, r)
+}

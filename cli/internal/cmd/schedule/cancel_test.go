@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"testing"
 	"time"
 
@@ -141,5 +142,16 @@ func TestCancel_HumanModeUsesStderrAndEmptyStdout(t *testing.T) {
 
 	assert.Equal(t, 0, exit)
 	assert.Empty(t, stdout)
-	assert.Contains(t, stderr, "Cancelled run sched_123 for schedule 'daily_ingest'")
+	assert.Contains(t, stderr, "Cancelling run sched_123 for schedule 'daily_ingest'")
+}
+
+// The help tells the caller what a successful cancel means: the run is
+// cancelling, not yet cancelled, and a repeated cancel is harmless.
+func TestCancel_LongSaysTheRunIsCancelling(t *testing.T) {
+	long := NewCancelCommand(nil, nil, io.Discard, io.Discard).Long
+
+	assert.Contains(t, long, "cancelling")
+	assert.Contains(t, long, "execution-controller has stopped every Job")
+	assert.Contains(t, long, "A second cancel of a cancelling run succeeds and changes nothing")
+	assert.NotContains(t, long, "already finished", "a cancelling run is not a conflict")
 }

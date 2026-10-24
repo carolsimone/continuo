@@ -16,10 +16,11 @@ type Filter = 'all' | 'running' | 'failed';
 
 // `failed` also surfaces `skipped` rows: a node cascade-skipped downstream of
 // a failure is part of the same "something needs attention" story as the
-// failure itself.
+// failure itself. `running` also surfaces `stopping` rows: a stopping task's
+// container is still alive until its Job is deleted.
 function matchesFilter(status: string, filter: Filter): boolean {
   return filter === 'all'
-    || (filter === 'running' && status === 'running')
+    || (filter === 'running' && (status === 'running' || status === 'stopping'))
     || (filter === 'failed' && (status === 'failed' || status === 'skipped'));
 }
 
@@ -46,7 +47,7 @@ export default function RunNodeTable({
   const groups: ServiceGroup[] = groupTasksByService(filteredTasks, attemptsByTask);
   const isFiltering = filter !== 'all' || normalizedQuery !== '';
 
-  const runningCount = tasks.filter((t) => t.status === 'running').length;
+  const runningCount = tasks.filter((t) => t.status === 'running' || t.status === 'stopping').length;
   // The Failed filter reveals failed AND skipped rows (see matchesFilter), so
   // its badge counts both — the number matches what clicking it shows.
   const failedCount = tasks.filter((t) => t.status === 'failed' || t.status === 'skipped').length;

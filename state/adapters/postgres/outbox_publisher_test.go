@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
@@ -65,13 +66,70 @@ func TestOutboxPublisher_RunCancelledPair(t *testing.T) {
 		id,
 	)
 	require.NoError(t, err)
-	require.Len(t, rows, 1, "a cancel writes schedule.cancelled:v1 only; its RunFinalized writes no row")
-	assert.Equal(t, streams.ScheduleCancelledV1, rows[0].StreamName)
+	require.Len(t, rows, 1, "a cancel writes its run.cancelled:v1 row only; its RunFinalized writes no row")
+	assert.Equal(t, streams.RunCancelledV1, rows[0].StreamName)
 
-	// The schedule.cancelled:v1 row carries the cancelling user (provenance).
-	var cancelled map[string]string
+	// The row carries the cancelling user (provenance).
+	var cancelled pkgevents.RunCancelled
 	require.NoError(t, json.Unmarshal(rows[0].Payload, &cancelled))
-	assert.Equal(t, "tester", cancelled["cancelled_by"], "schedule.cancelled:v1 must carry cancelled_by")
+	assert.Equal(t, "tester", cancelled.CancelledBy, "the cancel must carry cancelled_by")
+}
+
+// A RunCancelled is stored as one run.cancelled:v1 row of the run, the
+// stream name as its event type and the run as its aggregate, like the run's
+// dispatches, so the relay publishes it after every dispatch written before
+// it. Its payload is the cancel: the run, who cancelled it, why, and each
+// attempt it names with the attempt's Job; a cancel naming none carries an
+// empty list.
+func TestTranslateRunEvent_RunCancelledIsARunCancelledV1Row(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	taskA, taskB := uuid.New(), uuid.New()
+	for name, tc := range map[string]struct {
+		attempts []run.StopTarget
+		want     []pkgevents.CancelledAttempt
+	}{
+		"the first send names no attempt": {want: []pkgevents.CancelledAttempt{}},
+		"a re-send names the unanswered attempts": {
+			attempts: []run.StopTarget{
+				{TaskID: taskA, Attempt: 0, JobName: "service-1-e2e-schema-table-a-7f3e1a2b", ChecksSent: 2},
+				{TaskID: taskB, Attempt: 1, JobName: "service-1-e2e-schema-table-b-7f3e1a2b-r1", ChecksSent: 2},
+			},
+			want: []pkgevents.CancelledAttempt{
+				{TaskID: taskA.String(), Attempt: 0, JobName: "service-1-e2e-schema-table-a-7f3e1a2b"},
+				{TaskID: taskB.String(), Attempt: 1, JobName: "service-1-e2e-schema-table-b-7f3e1a2b-r1"},
+			},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			id := uuid.New()
+			t.Cleanup(func() { _, _ = db.ExecContext(ctx, "DELETE FROM state_outbox WHERE aggregate_id = $1", id) })
+			tx, err := db.BeginTxx(ctx, nil)
+			require.NoError(t, err)
+			defer tx.Rollback()
+			require.NoError(t, postgres.NewOutboxPublisher(tx, discardLogger()).Append(ctx, []run.DomainEvent{
+				run.RunCancelled{ID: id, Name: "daily", By: "alice@example.com", CancellationReason: "bad upstream data", Attempts: tc.attempts},
+			}, uuid.Nil))
+			require.NoError(t, tx.Commit())
+
+			var stored struct {
+				StreamName    string `db:"stream_name"`
+				EventType     string `db:"event_type"`
+				AggregateType string `db:"aggregate_type"`
+				Payload       []byte `db:"payload"`
+			}
+			require.NoError(t, db.GetContext(ctx, &stored,
+				`SELECT stream_name, event_type, aggregate_type, payload FROM state_outbox WHERE aggregate_id = $1`, id))
+			assert.Equal(t, streams.RunCancelledV1, stored.StreamName)
+			assert.Equal(t, streams.RunCancelledV1, stored.EventType, "the row's event type is the stream name")
+			assert.Equal(t, "scheduler", stored.AggregateType, "the run's dispatches share its aggregate")
+			var payload pkgevents.RunCancelled
+			require.NoError(t, json.Unmarshal(stored.Payload, &payload))
+			assert.Equal(t, pkgevents.RunCancelled{
+				RunID: id.String(), CancelledBy: "alice@example.com", Reason: "bad upstream data", Attempts: tc.want,
+			}, payload)
+		})
+	}
 }
 
 // TestOutboxPublisher_CancelledBy_EmptyBecomesSystem verifies a cancellation
@@ -96,11 +154,11 @@ func TestOutboxPublisher_CancelledBy_EmptyBecomesSystem(t *testing.T) {
 	var raw []byte
 	require.NoError(t, db.GetContext(ctx, &raw,
 		`SELECT payload FROM state_outbox WHERE aggregate_id = $1 AND stream_name = $2 LIMIT 1`,
-		id, streams.ScheduleCancelledV1,
+		id, streams.RunCancelledV1,
 	))
-	var payload map[string]string
+	var payload pkgevents.RunCancelled
 	require.NoError(t, json.Unmarshal(raw, &payload))
-	assert.Equal(t, "system", payload["cancelled_by"])
+	assert.Equal(t, "system", payload.CancelledBy)
 }
 
 func TestOutboxPublisher_AllEventTypes(t *testing.T) {
@@ -120,8 +178,8 @@ func TestOutboxPublisher_AllEventTypes(t *testing.T) {
 		{
 			name:          "RunCancelled",
 			event:         run.RunCancelled{ID: scheduleID, Name: "sched"},
-			wantStream:    "schedule.cancelled:v1",
-			wantEventType: "schedule_cancelled",
+			wantStream:    streams.RunCancelledV1,
+			wantEventType: streams.RunCancelledV1,
 			wantAggType:   "scheduler",
 			wantRows:      1,
 		},

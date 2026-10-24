@@ -15,8 +15,9 @@ const TaskStatusReportSchemaVersion = 1
 // carries every fact known of the attempt so far, so a final report holds the
 // queue and start times even when the reports before it were lost. Status is
 // a value of the attempt_status vocabulary: queued (execution-controller
-// accepted the attempt), running (its main container started), succeeded or
-// failed; a failed report names its FailureReason and the FailureClass that
+// accepted the attempt), running (its main container started), succeeded,
+// stopped (its run was cancelled and no pod of it can run again) or failed; a
+// failed report names its FailureReason and the FailureClass that
 // reason is filed under. Times are execution-controller's clock and only
 // displayed.
 type TaskStatusReport struct {

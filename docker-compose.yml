@@ -194,8 +194,6 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=continuo
-      - CANCELLED_SCHEDULES_TTL_HOURS=24
-      - CANCELLED_SCHEDULES_SWEEP_INTERVAL_MINUTES=60
       # PostgreSQL
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432

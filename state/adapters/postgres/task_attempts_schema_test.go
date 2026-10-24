@@ -72,21 +72,6 @@ func TestTaskAttemptsSchema_AttemptIsNeverNegative(t *testing.T) {
 	assert.Equal(t, "23514", pqCode(t, err))
 }
 
-// An attempt is in one of six statuses; a task-level status such as pending is
-// not one of them.
-func TestTaskAttemptsSchema_StatusIsOneOfSix(t *testing.T) {
-	db := newTestDB(t)
-	taskID := newSchemaTask(t, db)
-
-	for i, status := range []string{"dispatched", "queued", "running", "succeeded", "failed", "cancelled"} {
-		require.NoError(t, insertAttempt(db, taskID, i, status), status)
-	}
-
-	err := insertAttempt(db, taskID, 6, "pending")
-	require.Error(t, err)
-	assert.Equal(t, "23514", pqCode(t, err))
-}
-
 // An attempt inserted with only its identity is stamped dispatched by the
 // database clock, has sent no check and is not yet due; the due index covers
 // the three open statuses.

@@ -4,6 +4,8 @@ package postgres_test
 
 import (
 	"context"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -211,43 +213,78 @@ func TestTaskAttempts_LoadOfAnAbsentAttemptReportsNone(t *testing.T) {
 	})
 }
 
-// Cancelling a run's open attempts touches the dispatched, queued and running
-// ones of that run and nothing else.
-func TestTaskAttempts_CancelOpenAttemptsLeavesFinalOnesAlone(t *testing.T) {
-	db := newTestDB(t)
-	runID, ids := newRunWithTasks(t, db, 3)
-	_, others := newRunWithTasks(t, db, 1)
+// A cancel asks the current attempt of each stopping task of its run to stop,
+// when that attempt is open: it is stamped stop_requested_at, its re-send
+// count restarts and its next check is five minutes after the database clock.
+// The attempt keeps the status it last reported. An ended attempt, the attempt
+// of a task that is not stopping and an attempt of another run are left as
+// they are.
+func TestTaskAttempts_RequestStopsAsksTheCurrentOpenAttemptOfEachStoppingTask(t *testing.T) {
+	conn := newTestDB(t)
+	runID, ids := newRunWithTasks(t, conn, 4)
+	_, others := newRunWithTasks(t, conn, 1)
+	_, err := conn.Exec(`UPDATE task_tracker SET status = 'stopping' WHERE task_id = ANY($1)`,
+		pq.Array([]uuid.UUID{ids[0], ids[1], ids[3], others[0]}))
+	require.NoError(t, err)
+	_, err = conn.Exec(`UPDATE task_tracker SET attempt = 1 WHERE task_id = $1`, ids[0])
+	require.NoError(t, err)
 
-	attemptTx(t, db, func(ctx context.Context, tx *sqlx.Tx, tasks run.TaskCollection) {
+	attemptTx(t, conn, func(ctx context.Context, tx *sqlx.Tx, tasks run.TaskCollection) {
 		for _, a := range []run.Attempt{
-			{TaskID: ids[0], Number: 0, JobName: "j0", Status: run.AttemptRunning},
+			{TaskID: ids[0], Number: 0, JobName: "j0", Status: run.AttemptFailed},
+			{TaskID: ids[0], Number: 1, JobName: "j0-r1", Status: run.AttemptRunning},
 			{TaskID: ids[1], Number: 0, JobName: "j1", Status: run.AttemptDispatched},
-			{TaskID: ids[2], Number: 0, JobName: "j2", Status: run.AttemptFailed},
-			{TaskID: others[0], Number: 0, JobName: "j3", Status: run.AttemptRunning},
+			{TaskID: ids[2], Number: 0, JobName: "j2", Status: run.AttemptRunning},
+			{TaskID: ids[3], Number: 0, JobName: "j3", Status: run.AttemptSucceeded},
+			{TaskID: others[0], Number: 0, JobName: "j4", Status: run.AttemptRunning},
 		} {
 			require.NoError(t, tasks.SaveAttempt(ctx, a))
 		}
-		_, err := tx.Exec(`UPDATE task_attempts SET next_check_at = now() WHERE task_id = ANY($1)`,
-			pq.Array([]uuid.UUID{ids[0], ids[1], others[0]}))
+		all := []uuid.UUID{ids[0], ids[1], ids[2], ids[3], others[0]}
+		_, err := tx.Exec(`UPDATE task_attempts SET next_check_at = now() - interval '1 hour', checks_sent = 3
+			WHERE task_id = ANY($1) AND status NOT IN ('succeeded', 'failed', 'stopped')`, pq.Array(all))
 		require.NoError(t, err)
 
-		n, err := tasks.CancelOpenAttempts(ctx, runID)
+		targets, err := tasks.RequestStops(ctx, runID)
 
 		require.NoError(t, err)
-		assert.Equal(t, 2, n)
-		statuses := attemptStatuses(t, tx, ids[0], ids[1], ids[2], others[0])
-		assert.Equal(t, "cancelled", statuses[ids[0].String()+"/0"])
-		assert.Equal(t, "cancelled", statuses[ids[1].String()+"/0"])
-		assert.Equal(t, "failed", statuses[ids[2].String()+"/0"])
-		assert.Equal(t, "running", statuses[others[0].String()+"/0"])
-		var due int
-		require.NoError(t, tx.Get(&due, `SELECT count(*) FROM task_attempts WHERE task_id = ANY($1) AND status = 'cancelled' AND next_check_at IS NOT NULL`,
-			pq.Array([]uuid.UUID{ids[0], ids[1]})))
-		assert.Zero(t, due, "a cancelled attempt has no next check")
+		want := []run.StopTarget{
+			{TaskID: ids[0], Attempt: 1, JobName: "j0-r1"},
+			{TaskID: ids[1], Attempt: 0, JobName: "j1"},
+		}
+		slices.SortFunc(want, func(x, y run.StopTarget) int { return strings.Compare(x.TaskID.String(), y.TaskID.String()) })
+		assert.Equal(t, want, targets)
 
-		n, err = tasks.CancelOpenAttempts(ctx, runID)
-		require.NoError(t, err)
-		assert.Zero(t, n, "a second cancel finds nothing open")
+		var rows []struct {
+			Key       string   `db:"key"`
+			Status    string   `db:"status"`
+			Requested bool     `db:"requested"`
+			DueIn     *float64 `db:"due_in"`
+			Checks    int      `db:"checks_sent"`
+		}
+		require.NoError(t, tx.Select(&rows, `
+			SELECT task_id::text || '/' || attempt AS key, status, stop_requested_at IS NOT NULL AS requested,
+			       EXTRACT(EPOCH FROM next_check_at - now())::float8 AS due_in, checks_sent
+			FROM task_attempts WHERE task_id = ANY($1)`, pq.Array(all)))
+		require.Len(t, rows, 6)
+		requested := map[string]bool{ids[0].String() + "/1": true, ids[1].String() + "/0": true}
+		for _, r := range rows {
+			if requested[r.Key] {
+				assert.True(t, r.Requested, "%s is asked to stop", r.Key)
+				require.NotNil(t, r.DueIn, r.Key)
+				assert.InDelta(t, (5 * time.Minute).Seconds(), *r.DueIn, 1, "%s is next asked about five minutes after the database clock", r.Key)
+				assert.Zero(t, r.Checks, "%s counts its re-sends from the stop", r.Key)
+				continue
+			}
+			assert.False(t, r.Requested, "%s is not asked to stop", r.Key)
+			if r.DueIn != nil {
+				assert.Less(t, *r.DueIn, 0.0, "%s keeps its next check", r.Key)
+				assert.Equal(t, 3, r.Checks, "%s keeps its question count", r.Key)
+			}
+		}
+		statuses := attemptStatuses(t, tx, ids[0], ids[1])
+		assert.Equal(t, "running", statuses[ids[0].String()+"/1"], "a stop is not a report")
+		assert.Equal(t, "dispatched", statuses[ids[1].String()+"/0"])
 	})
 }
 

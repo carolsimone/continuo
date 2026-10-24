@@ -62,6 +62,33 @@ func (r *observedDeployments) ListObservedJobNames(ctx context.Context) ([]strin
 	return names, nil
 }
 
+func (r *observedDeployments) EndedUndeployed(ctx context.Context, taskID uuid.UUID, attempt int) (bool, error) {
+	var ended bool
+	if err := r.exec.QueryRowContext(ctx, `
+		SELECT COALESCE((
+			SELECT status = $3 AND deployed_at IS NULL
+			FROM deployments
+			WHERE task_id = $1 AND attempt = $2 AND mode = $4), false)`,
+		taskID, attempt, string(model.StatusFailed), string(model.ModeProduction)).Scan(&ended); err != nil {
+		return false, fmt.Errorf("read how attempt %d of task %s ended: %w", attempt, taskID, err)
+	}
+	return ended, nil
+}
+
+func (r *observedDeployments) NameEndedUndeployed(ctx context.Context, jobName string) (bool, error) {
+	var ended bool
+	if err := r.exec.QueryRowContext(ctx, `
+		SELECT COALESCE((
+			SELECT status = $2 AND deployed_at IS NULL
+			FROM deployments
+			WHERE job_name = $1
+			ORDER BY created_at DESC, id DESC
+			LIMIT 1), false)`, jobName, string(model.StatusFailed)).Scan(&ended); err != nil {
+		return false, fmt.Errorf("read how the deployment of job %s ended: %w", jobName, err)
+	}
+	return ended, nil
+}
+
 func (r *observedDeployments) StateAge(ctx context.Context, id uuid.UUID) (time.Duration, error) {
 	var seconds float64
 	if err := r.exec.QueryRowContext(ctx,

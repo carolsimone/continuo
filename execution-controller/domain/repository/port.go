@@ -32,6 +32,12 @@ type DeploymentRepository interface {
 	// not created yet — is never returned, so it never stands for the Job of
 	// another.
 	LoadByJobName(ctx context.Context, jobName string) (*model.Deployment, error)
+	// LockOpenOfRun returns the production deployments of runID that have not
+	// ended (pending, reserved, starting, running or terminating), ordered by
+	// id, each locked for the rest of the transaction. A row another
+	// transaction holds, such as a launch creating its Job, is waited for and
+	// returned as that transaction left it, or not at all once it has ended.
+	LockOpenOfRun(ctx context.Context, runID string) ([]*model.Deployment, error)
 	// Save persists the mutated state of an existing Deployment.
 	Save(ctx context.Context, d *model.Deployment) error
 	// GetByReleaseNode returns the (mode, release_id, node_id) Deployment, or
@@ -85,11 +91,28 @@ type ValidationAggregateRepository interface {
 	ClaimEmission(ctx context.Context, releaseID string, mode model.Mode, now time.Time) (bool, error)
 }
 
-// CancelledSchedulesRepository tracks schedule IDs whose deploys should be
-// dropped on receipt. Implementations operate against the cancelled_schedules
-// table (id, schedule_id UNIQUE, cancelled_at).
-type CancelledSchedulesRepository interface {
-	Insert(ctx context.Context, scheduleID uuid.UUID) error
-	Exists(ctx context.Context, scheduleID uuid.UUID) (bool, error)
-	DeleteExpired(ctx context.Context, ttl time.Duration) (int64, error)
+// CancelledRunsRepository holds the run fence: every run state cancelled,
+// in cancelled_runs. No attempt of a fenced run starts, and every Job of it is
+// deleted.
+type CancelledRunsRepository interface {
+	// Insert fences runID. Fencing a fenced run again keeps one fence and
+	// restarts its age, so a fence outlives the last cancel state sent for
+	// the run by DeleteOlderThan's age.
+	Insert(ctx context.Context, runID uuid.UUID) error
+	// Exists reports whether runID is fenced.
+	Exists(ctx context.Context, runID uuid.UUID) (bool, error)
+	// HoldRunForDispatch holds runID for a dispatch that may store an
+	// attempt of the run, until the current transaction ends. Any number of
+	// dispatches hold a run at once. A dispatch waits while a fence of the
+	// run is being set, so a fence committed before its hold is granted is
+	// one its fence read (Exists) then sees. Call it before that read.
+	HoldRunForDispatch(ctx context.Context, runID uuid.UUID) error
+	// HoldRunForFence holds runID for the fence about to be set, until the
+	// current transaction ends. It waits for every dispatch holding the run,
+	// so the fence then sees every attempt those dispatches stored, and every
+	// later dispatch waits for the fence. Call it before Insert.
+	HoldRunForFence(ctx context.Context, runID uuid.UUID) error
+	// DeleteOlderThan removes the fences set more than age ago, by the
+	// database clock, and returns how many it removed.
+	DeleteOlderThan(ctx context.Context, age time.Duration) (int64, error)
 }

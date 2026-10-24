@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import type { NodeSummary, NodesResponse } from './types';
 import { formatDuration, formatRelative } from './node-helpers';
+import { taskPillClass } from './detail-page-helpers';
 
 const PAGE = 50;
 
@@ -149,7 +150,7 @@ export default function NodesCatalogPanel() {
                         <div className="nodes-node-schema">{n.service_name} · {n.schema_name}</div>
                       </td>
                       <td>
-                        <span className={`pill-sm pill-sm--${n.last_status ?? 'pending'}`}>{n.last_status ?? '—'}</span>
+                        <span className={`pill-sm ${taskPillClass(n.last_status ?? 'pending')}`}>{n.last_status ?? '—'}</span>
                         {' '}<span className="nodes-ts nodes-ts--dim">{formatRelative(n.last_run_at)}</span>
                       </td>
                       <td>{pct(n.success_rate_pct)}</td>

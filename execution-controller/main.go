@@ -50,6 +50,10 @@ const consumerHandlerTimeout = 60 * time.Second
 // sit above that wait.
 const schemaOpHandlerTimeout = k8s.SchemaOpJobTimeout + time.Minute
 
+// cancelledRunsSweepInterval is how often the fences of runs cancelled longer
+// ago than the replay horizon are deleted.
+const cancelledRunsSweepInterval = time.Hour
+
 // dbPool bounds the Postgres pool when DB_MAX_OPEN_CONNS / DB_MAX_IDLE_CONNS
 // are unset: two connections per stream consumer (a handler's transaction and
 // a read outside it), plus the outbox relay, background loops and request
@@ -227,15 +231,23 @@ func main() {
 	}
 	logUploader := s3adapter.NewLogUploader(objectStore)
 
-	cancelledSchedulesRepo := postgres.NewCancelledSchedulesRepository(pgDB)
+	cancelledRunsRepo := postgres.NewCancelledRunsRepository(pgDB)
 
 	// A fresh unit of work per inbound message keeps concurrent handlers isolated.
 	uowFactory := func() uow.UnitOfWork { return postgres.NewPostgresUnitOfWork(pgDB, logger) }
 
+	// The observer's series: attempts awaiting a pod stop, attempts reported
+	// stopped, and Jobs deleted because no row deploys them.
+	observerMetrics := ecmetrics.NewObserver(metricsReg)
+
 	// ---- handlers and bindings ----
 
-	taskDispatchHandler := handlers.NewTaskDispatchHandler(jobWatch, jobWatch, logger)
-	scheduleCancelledHandler := handlers.NewScheduleCancelledHandler(logger)
+	// The Job control deletes the Jobs of stopped attempts and reads the logs
+	// of finished ones.
+	jobControl := k8s.NewJobControl(k8sClient, cfg.K8sNamespace)
+
+	taskDispatchHandler := handlers.NewTaskDispatchHandler(jobWatch, jobWatch, observerMetrics, logger)
+	runCancelledHandler := handlers.NewRunCancelledHandler(jobWatch, jobControl, observerMetrics, logger)
 	validationReqHandler := handlers.NewValidationRequestedHandler(logger)
 	seedBuildReqHandler := handlers.NewSeedBuildRequestedHandler(logger)
 	compileReqHandler := handlers.NewCompileRequestedHandler(logger)
@@ -248,8 +260,8 @@ func main() {
 
 	taskDispatchConsumer := newConsumer(streams.TaskDispatchV1, streams.ExecutorTaskDispatch,
 		redis.NewTaskDispatchBinding(uowFactory, taskDispatchHandler, logger))
-	scheduleCancelledConsumer := newConsumer(streams.ScheduleCancelledV1, streams.ExecutorScheduleCancelled,
-		redis.NewScheduleCancelledBinding(uowFactory, scheduleCancelledHandler, logger))
+	runCancelledConsumer := newConsumer(streams.RunCancelledV1, streams.ExecutorRunCancelled,
+		redis.NewRunCancelledBinding(uowFactory, runCancelledHandler, logger))
 	validationReqConsumer := newConsumer(streams.ValidationRequestedV1, streams.ExecutorValidationRequested,
 		redis.NewValidationRequestedBinding(uowFactory, validationReqHandler, candidateSchemaCreator, logger))
 	seedBuildReqConsumer := newConsumer(streams.SeedBuildRequestedV1, streams.ExecutorSeedBuildRequested,
@@ -318,9 +330,12 @@ func main() {
 			return postgres.NewValidationAggregateRepository(exec)
 		},
 		newAdmissionRepo,
+		func(exec pkgoutbox.Executor) repository.CancelledRunsRepository {
+			return postgres.NewCancelledRunsRepository(exec)
+		},
 		cfg.MaxConcurrentJobs, logger,
 		deployer.DispatcherConfig{Tick: 5 * time.Second, BatchSize: 50, Waker: dispatcherWaker,
-			ErrorMessageMaxLen: cfg.ErrorMessageMaxLength},
+			ErrorMessageMaxLen: cfg.ErrorMessageMaxLength, StopMetrics: observerMetrics, Terminator: jobControl},
 	)
 
 	// Nothing creates or observes a Job until both caches have listed every
@@ -335,23 +350,24 @@ func main() {
 	// attempt shows, ends one that cannot start, and reports its result once
 	// its pods are finished or gone. Every minute it queues every started
 	// deployment again.
-	jobControl := k8s.NewJobControl(k8sClient, cfg.K8sNamespace)
 	attemptObserver := observer.New(observer.Config{
 		StartTimeout:       cfg.JobStartTimeout,
 		ErrorMessageMaxLen: cfg.ErrorMessageMaxLength,
 		LogTailLines:       int64(cfg.LogTailLines),
 	}, observer.Deps{
-		NewUoW:     uowFactory,
-		Observed:   postgres.NewObservedDeployments(pgDB, logger),
-		Cache:      jobWatch,
-		Lookup:     jobWatch,
-		Terminator: jobControl,
-		Logs:       jobControl,
-		Uploader:   logUploader,
-		Queue:      observations,
-		Outcomes:   outcomes.NewRecorder(logger),
-		Metrics:    ecmetrics.NewObserver(metricsReg),
-		Logger:     logger,
+		NewUoW:      uowFactory,
+		Observed:    postgres.NewObservedDeployments(pgDB, logger),
+		Cancelled:   cancelledRunsRepo,
+		Cache:       jobWatch,
+		Lookup:      jobWatch,
+		Terminator:  jobControl,
+		Logs:        jobControl,
+		Uploader:    logUploader,
+		Queue:       observations,
+		Outcomes:    outcomes.NewRecorder(logger),
+		Metrics:     observerMetrics,
+		StopMetrics: observerMetrics,
+		Logger:      logger,
 	})
 	runWorker("observer", attemptObserver.Run)
 
@@ -360,17 +376,18 @@ func main() {
 	admissionReconciler := deployer.NewReconciler(pgDB, newAdmissionRepo, logger, deployer.ReconcilerConfig{})
 	runWorker("admission_reconciler", admissionReconciler.Run)
 
-	runWorker("cancelled_schedules_sweeper", func(ctx context.Context) error {
-		ticker := time.NewTicker(time.Duration(cfg.CancelledSchedulesSweepIntervalMin) * time.Minute)
+	// Every hour, the fences of runs cancelled longer ago than the replay
+	// horizon are deleted: no message of such a run is replayed any more.
+	runWorker("cancelled_runs_sweeper", func(ctx context.Context) error {
+		ticker := time.NewTicker(cancelledRunsSweepInterval)
 		defer ticker.Stop()
-		ttl := time.Duration(cfg.CancelledSchedulesTTLHours) * time.Hour
 		for {
 			select {
 			case <-ticker.C:
-				if n, err := cancelledSchedulesRepo.DeleteExpired(ctx, ttl); err != nil {
-					logger.Error("cancelled_schedules sweep failed", "error", err)
+				if n, err := cancelledRunsRepo.DeleteOlderThan(ctx, model.ReplayHorizon); err != nil {
+					logger.Error("cancelled_runs sweep failed", "error", err)
 				} else if n > 0 {
-					logger.Info("Swept expired cancelled_schedules rows", "count", n)
+					logger.Info("Swept expired cancelled_runs rows", "count", n)
 				}
 			case <-ctx.Done():
 				return ctx.Err()
@@ -408,7 +425,7 @@ func main() {
 	// ---- consumers ----
 
 	runConsumer("task_dispatch", taskDispatchConsumer)
-	runConsumer("schedule_cancelled", scheduleCancelledConsumer)
+	runConsumer("run_cancelled", runCancelledConsumer)
 	runSchemaOpConsumer("validation_requested", validationReqConsumer)
 	runSchemaOpConsumer("seed_build_requested", seedBuildReqConsumer)
 	runConsumer("compile_requested", compileReqConsumer)

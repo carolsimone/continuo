@@ -13,19 +13,27 @@ import (
 )
 
 // cancelCapturingSchedRepo is a SchedulerTrackerRepository test double that
-// records the timestamp passed to CancelTx so a unit test can assert the
-// adapter persists the aggregate's authoritative cancellation instant. Only
-// CancelTx is exercised; the other methods are unreachable in this test and
-// fail loudly if called.
+// records what the adapter passes to CancelTx and UpdateRunRowTx, so a unit
+// test can assert the adapter persists the aggregate's cancellation instant
+// and status. Only those two are exercised; the other methods are unreachable
+// in this test and fail loudly if called.
 type cancelCapturingSchedRepo struct {
 	SchedulerTrackerRepository
 	gotCancelledAt time.Time
+	gotStatus      run.SchedulerStatus
 	called         bool
+	gotFields      RunRowUpdate
 }
 
-func (r *cancelCapturingSchedRepo) CancelTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _, _ string, cancelledAt time.Time) error {
+func (r *cancelCapturingSchedRepo) CancelTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, status run.SchedulerStatus, _, _ string, cancelledAt time.Time) error {
 	r.called = true
+	r.gotStatus = status
 	r.gotCancelledAt = cancelledAt
+	return nil
+}
+
+func (r *cancelCapturingSchedRepo) UpdateRunRowTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, fields RunRowUpdate) error {
+	r.gotFields = fields
 	return nil
 }
 
@@ -76,17 +84,22 @@ func TestRunRepositoryAdapter_SaveRun_CancelPersistsAggregateInstant(t *testing.
 		t.Fatalf("persisted cancel instant %v must equal aggregate completed_at %v",
 			sched.gotCancelledAt, r.CompletedAt())
 	}
+	if sched.gotStatus != run.SchedulerStatusCancelled {
+		t.Fatalf("CancelTx got status %q, want cancelled: nothing was in flight", sched.gotStatus)
+	}
+	if sched.gotFields.Status != nil || sched.gotFields.CompletedAtNow {
+		t.Fatalf("the consolidated update rewrote what CancelTx wrote: %+v", sched.gotFields)
+	}
+	if sched.gotFields.TerminalTaskCount == nil || *sched.gotFields.TerminalTaskCount != 2 {
+		t.Fatalf("terminal count = %v, want the two pending tasks the cancel ended", sched.gotFields.TerminalTaskCount)
+	}
 }
 
-// noopCancelTaskCollection is a TaskCollection whose BulkCancel and
-// CancelOpenAttempts are no-ops; only those are invoked by run.Cancel in this
-// test.
+// noopCancelTaskCollection is a TaskCollection whose BeginStop reports two
+// pending tasks cancelled and nothing in flight; only BeginStop is invoked by
+// run.Cancel in this test.
 type noopCancelTaskCollection struct{ run.TaskCollection }
 
-func (n *noopCancelTaskCollection) BulkCancel(_ context.Context, _ uuid.UUID, _ string, _ time.Time) (int, error) {
-	return 0, nil
-}
-
-func (n *noopCancelTaskCollection) CancelOpenAttempts(_ context.Context, _ uuid.UUID) (int, error) {
-	return 0, nil
+func (n *noopCancelTaskCollection) BeginStop(_ context.Context, _ uuid.UUID, _ string, _ time.Time) (run.StopCounts, error) {
+	return run.StopCounts{Cancelled: 2}, nil
 }

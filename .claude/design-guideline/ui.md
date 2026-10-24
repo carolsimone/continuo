@@ -924,13 +924,26 @@ Rules:
   its links.
 - Status pills for task attempts come from `attemptPillClass`
   (`detail-page-helpers.ts`): `dispatched` and `queued` get the pending
-  pill; `running`, `succeeded`, `failed` and `cancelled` get their own.
+  pill; `running`, `succeeded`, `failed`, `cancelled` and `stopped` get their own.
 - Task status pills (`.pill-sm--dispatched`, `.pill-sm--queued`) are neutral,
   like pending: nothing of the task runs yet. A `queued` pill carries the
   title "waiting for a slot" (`taskStatusTitle`). Wherever task statuses are
   ordered or counted (the nodes table, the run-progress header, the swimlane
   legend, a service's rolled-up status, the dashboard run card's summary
   row) dispatched and queued come just before running.
+- Two statuses mean a cancel is in progress, and both are neutral-warning
+  (`#fef3c7` fill, `#92400e` text, the `.info-strip--warning` palette): a run
+  is `cancelling` (title "cancelling — waiting for its Jobs to stop") and a
+  task is `stopping` (title "stopping — its Job is being deleted"). Neither has
+  ended: a cancelling run counts as active (the run page keeps polling it, the
+  dashboard card keeps its Cancel button and is not offered a rerun), and a
+  stopping task is not counted complete. Wherever tasks are ordered or counted
+  `stopping` comes between queued and running (a service containing one rolls
+  up to `stopping`, above running); on the swimlane it is a dashed amber node.
+  An attempt whose Job is gone after a cancel is `stopped` and reads with the
+  muted `.pill-sm--stopped`, like cancelled. Map task and run statuses to pills
+  with `taskPillClass`, never a template string, so an unknown status reads
+  pending instead of an unstyled pill.
 - A node page's run row shows the failure class and reason of its latest
   attempt (`.nodes-reason`, joined with ` · `) under its status pill.
 - The node row's own cells stay the task's summary: its Attempt cell reads

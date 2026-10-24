@@ -27,6 +27,7 @@ type AttemptFactsDTO struct {
 	ParseCache        string     `json:"parse_cache,omitempty"`
 	ParseCacheReason  string     `json:"parse_cache_reason,omitempty"`
 	AwaitingStopSince *time.Time `json:"awaiting_stop_since,omitempty"`
+	StopRequestedAt   *time.Time `json:"stop_requested_at,omitempty"`
 	FailureClass      string     `json:"failure_class,omitempty"`
 	FailureReason     string     `json:"failure_reason,omitempty"`
 }
@@ -40,8 +41,8 @@ func AttemptFactsFromDomain(f model.AttemptFacts) AttemptFactsDTO {
 		Message: f.Message, NothingToDo: f.NothingToDo,
 		LogKey: f.LogKey, RunResultsKey: f.RunResultsKey, LogMessage: f.LogMessage,
 		ParseCache: f.ParseCache, ParseCacheReason: f.ParseCacheReason,
-		AwaitingStopSince: f.AwaitingStopSince,
-		FailureClass:      string(f.Class()), FailureReason: string(f.Reason),
+		AwaitingStopSince: f.AwaitingStopSince, StopRequestedAt: f.StopRequestedAt,
+		FailureClass: string(f.Class()), FailureReason: string(f.Reason),
 	}
 }
 
@@ -54,7 +55,7 @@ func (d AttemptFactsDTO) ToDomain() model.AttemptFacts {
 		Message: d.Message, NothingToDo: d.NothingToDo,
 		LogKey: d.LogKey, RunResultsKey: d.RunResultsKey, LogMessage: d.LogMessage,
 		ParseCache: d.ParseCache, ParseCacheReason: d.ParseCacheReason,
-		AwaitingStopSince: d.AwaitingStopSince,
-		Reason:            pkgmodel.FailureReason(d.FailureReason),
+		AwaitingStopSince: d.AwaitingStopSince, StopRequestedAt: d.StopRequestedAt,
+		Reason: pkgmodel.FailureReason(d.FailureReason),
 	}
 }
