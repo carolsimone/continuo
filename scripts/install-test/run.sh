@@ -128,32 +128,79 @@ grep -q "\"issuer\": *\"http://${RELEASE}-dex:5556/dex\"" \
   <<<"$(curl -sf http://127.0.0.1:15556/dex/.well-known/openid-configuration)"
 
 # The agents reach the outside world only through egress-proxy, and the kind
-# cluster enforces NetworkPolicy, so check it from an agent pod: the proxy
+# cluster enforces NetworkPolicy, so check it from the agent pods: the proxy
 # admits an allowlisted host and refuses another, and a direct connection to a
-# public address never completes. agent-chat's alpine image carries busybox nc;
-# agent-remediation's python image has no nc, so its direct-connection probe
-# uses python3 sockets.
-# The request is followed by a sleep that holds stdin open: busybox nc stops
-# reading once stdin closes, and the proxy answers 200 only after it has dialled
-# the host, so without it the status line of an admitted host is lost.
-proxy_status() {
-  kubectl -n "$NS" exec deploy/agent-chat -- sh -c \
-    "(printf 'CONNECT $1 HTTP/1.1\r\nHost: $1\r\n\r\n'; sleep 4) | nc -w 10 egress-proxy 3128 | head -n1" \
-    | awk '{print $2}'
+# public address never completes. Skipped for a fixture that renders no
+# egress-proxy Service or no agents egress policy (egress.enabled=false, an
+# allowlist of IP addresses only, networkPolicy.enabled=false).
+#
+# Every probe prints a sentinel and the check requires it, so a probe that
+# itself fails (a missing tool, a failed exec) is reported as such and never
+# counts as a blocked connection. agent-chat's alpine image carries busybox nc;
+# agent-remediation's python image has no nc, so it probes with python3 sockets.
+probe_failed() {
+  log_error "egress probe failed: $1 (got '${2}'); the probe itself did not run"
+  exit 1
 }
-log_info "checking agent egress enforcement..."
-status="$(proxy_status api.github.com:443)"
-[ "$status" = 200 ] \
-  || { log_error "egress-proxy answered '${status}' for api.github.com:443, which is on the default allowlist (want 200)"; exit 1; }
-status="$(proxy_status example.com:443)"
-[ "$status" = 403 ] \
-  || { log_error "egress-proxy answered '${status}' for example.com:443, which is not on the allowlist (want 403)"; exit 1; }
-if kubectl -n "$NS" exec deploy/agent-chat -- sh -c 'nc -w 5 1.1.1.1 443 </dev/null' >/dev/null 2>&1; then
-  log_error "agent-chat opened a direct connection to a public address"; exit 1
-fi
-if kubectl -n "$NS" exec deploy/agent-remediation -- python3 -c \
-  'import socket; socket.create_connection(("1.1.1.1", 443), timeout=5).close()' >/dev/null 2>&1; then
-  log_error "agent-remediation opened a direct connection to a public address"; exit 1
+
+# proxy_status <host:port>: the status code egress-proxy answers a CONNECT from
+# agent-chat. The request is followed by a sleep that keeps stdin open: when it
+# closes, nc half-closes the socket at once, egress-proxy sees the client go
+# and abandons the dial before it can answer 200 for an admitted host.
+proxy_status() {
+  local out
+  out="$(kubectl -n "$NS" exec deploy/agent-chat -- sh -c \
+    "(printf 'CONNECT $1 HTTP/1.1\r\nHost: $1\r\n\r\n'; sleep 3) | nc -w 10 egress-proxy 3128 | head -n1")" \
+    || probe_failed "kubectl exec into agent-chat for CONNECT $1" ""
+  awk '{print $2}' <<<"$out"
+}
+
+# agent_chat_dial <host> <port>: connected|blocked, from agent-chat.
+agent_chat_dial() {
+  kubectl -n "$NS" exec deploy/agent-chat -- sh -c \
+    "nc -w 5 $1 $2 </dev/null >/dev/null 2>&1 && echo connected || echo blocked"
+}
+
+# agent_remediation_dial <host> <port>: connected|blocked, from agent-remediation.
+agent_remediation_dial() {
+  kubectl -n "$NS" exec deploy/agent-remediation -- python3 -c '
+import socket, sys
+try:
+    socket.create_connection((sys.argv[1], int(sys.argv[2])), 5).close()
+    print("connected")
+except OSError:
+    print("blocked")' "$1" "$2"
+}
+
+if ! kubectl -n "$NS" get service egress-proxy >/dev/null 2>&1 \
+  || ! kubectl -n "$NS" get networkpolicy "${RELEASE}-agents-egress" >/dev/null 2>&1; then
+  log_info "no egress-proxy Service or ${RELEASE}-agents-egress NetworkPolicy in this install: skipping the egress enforcement check"
+else
+  log_info "checking agent egress enforcement..."
+  status="$(proxy_status api.github.com:443)" || exit 1
+  [ "$status" = 200 ] \
+    || { log_error "egress-proxy answered '${status}' for api.github.com:443, which is on the default allowlist (want 200)"; exit 1; }
+  status="$(proxy_status example.com:443)" || exit 1
+  [ "$status" = 403 ] \
+    || { log_error "egress-proxy answered '${status}' for example.com:443, which is not on the allowlist (want 403)"; exit 1; }
+
+  # Positive control: the python probe reaches an address inside the release,
+  # so a "blocked" below means a drop and not a broken python3 or exec.
+  got="$(agent_remediation_dial egress-proxy 3128)" || probe_failed "kubectl exec into agent-remediation" ""
+  [ "$got" = connected ] || probe_failed "agent-remediation could not reach egress-proxy:3128 in the release" "$got"
+
+  got="$(agent_chat_dial 1.1.1.1 443)" || probe_failed "kubectl exec into agent-chat for a direct dial" ""
+  case "$got" in
+    blocked) ;;
+    connected) log_error "agent-chat opened a direct connection to a public address (1.1.1.1:443)"; exit 1 ;;
+    *) probe_failed "agent-chat direct dial" "$got" ;;
+  esac
+  got="$(agent_remediation_dial 1.1.1.1 443)" || probe_failed "kubectl exec into agent-remediation for a direct dial" ""
+  case "$got" in
+    blocked) ;;
+    connected) log_error "agent-remediation opened a direct connection to a public address (1.1.1.1:443)"; exit 1 ;;
+    *) probe_failed "agent-remediation direct dial" "$got" ;;
+  esac
 fi
 
 log_info "install-test (${MODE}) OK"
