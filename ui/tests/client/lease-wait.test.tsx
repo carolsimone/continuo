@@ -1,13 +1,16 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+import NodeTableBody from '../../src/client/NodeTableBody';
 import RunNodeTable from '../../src/client/RunNodeTable';
 import RunSwimlane from '../../src/client/RunSwimlane';
 import {
   leaseWaitOf,
   leaseWaitTitle,
+  resolveNodeStatus,
   resolveNodeWait,
   runPagePath,
+  tasksByNodeId,
   toScheduleGraph,
 } from '../../src/client/detail-page-helpers';
 import type { GraphEdge, GraphNode, RunGraph, Task, TaskAttempt } from '../../src/client/types';
@@ -57,6 +60,24 @@ describe('lease wait helpers', () => {
     expect(resolveNodeWait(graphNode, [task('x', 'dispatched')])).toBeNull();
   });
 
+  it('resolves a node\'s status and wait the same from the tasks indexed by node', () => {
+    const graphNode: GraphNode = {
+      node_id: 'core.a.x', node_type: 'dbt-model', schedule_name: 's', status: 'succeeded',
+      wait_reason: 'node_lease', waiting_on_run_id: 'graph-holder', waiting_since: SINCE,
+    };
+    const tasks = [task('y', 'running'), waiting('x'), task('x', 'dispatched')];
+    const byNode = tasksByNodeId(tasks);
+    expect([...byNode.keys()]).toEqual(['core.a.y', 'core.a.x']);
+    expect(byNode.get('core.a.x')).toBe(tasks[1]);
+    expect(resolveNodeStatus(graphNode, byNode)).toBe(resolveNodeStatus(graphNode, tasks));
+    expect(resolveNodeStatus(graphNode, byNode)).toBe('pending');
+    expect(resolveNodeWait(graphNode, byNode)).toEqual(resolveNodeWait(graphNode, tasks));
+    expect(resolveNodeWait(graphNode, byNode)).toEqual({ holderRunId: HOLDER, since: SINCE });
+    const empty = tasksByNodeId([]);
+    expect(resolveNodeStatus(graphNode, empty)).toBe('succeeded');
+    expect(resolveNodeWait(graphNode, empty)).toEqual({ holderRunId: 'graph-holder', since: SINCE });
+  });
+
   it('carries a run graph node\'s wait into the graph the run page draws', () => {
     const runGraph: RunGraph = {
       nodes: [{ node_id: 'core.a.x', node_type: 'dbt-model', schedule_name: 's', status: 'pending',
@@ -96,17 +117,26 @@ describe('the waiting for node pill', () => {
     expect(pill.getAttribute('title')).toBe(leaseWaitTitle({ holderRunId: null, since: SINCE }));
   });
 
-  it('opening the holder run does not toggle the row', () => {
-    const attempts = new Map<string, TaskAttempt[]>();
+  it('opening the holder run does not select the row', () => {
+    const onNodeSelect = vi.fn();
     render(
-      <RunNodeTable tasks={[waiting('orders')]} attemptsByTask={attempts}
-        edges={[]} expandedServices={new Set(['core'])} onServiceToggle={vi.fn()} />,
+      <NodeTableBody groups={[{ service: 'core', status: 'pending', tasks: [waiting('orders')] }]}
+        attemptsByTask={noAttempts} edges={[]} startedAt={{}} forceExpanded expandedServices={new Set(['core'])}
+        onServiceToggle={vi.fn()} onNodeSelect={onNodeSelect} />,
     );
-    const pill = screen.getByText('waiting for node');
-    const click = new MouseEvent('click', { bubbles: true, cancelable: true });
-    const stop = vi.spyOn(click, 'stopPropagation');
-    fireEvent(pill, click);
-    expect(stop).toHaveBeenCalled();
+    // jsdom cannot open another page; a capture listener cancels the link's
+    // navigation before React handles the click.
+    const noNavigation = (e: Event) => e.preventDefault();
+    document.addEventListener('click', noNavigation, true);
+    try {
+      fireEvent.click(screen.getByText('waiting for node'));
+    } finally {
+      document.removeEventListener('click', noNavigation, true);
+    }
+    expect(onNodeSelect).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByText('orders'));
+    expect(onNodeSelect).toHaveBeenCalledWith('core.a.orders');
   });
 
   it('marks a waiting node on the run graph, linking the holder run', () => {

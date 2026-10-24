@@ -37,7 +37,7 @@ export default function RunRedirect() {
       <main className="page-content">
         {error ? (
           <div className="info-strip info-strip--error">
-            <span className="info-strip__icon">⚠</span>Run {id} could not be opened: {error}
+            <span className="info-strip__icon" aria-hidden="true">⚠</span>Run {id} could not be opened: {error}
           </div>
         ) : (
           <p className="empty">Opening run…</p>

@@ -2,7 +2,7 @@ import { Fragment, useMemo } from 'react';
 import type { GraphNode, GraphEdge, Task } from './types';
 import { buildSwimlaneLayout, laneLabelColumnWidth } from './run-graph-helpers';
 import { serviceOfNode, buildServiceColors, rollupStatus } from './service-helpers';
-import { resolveNodeStatus, resolveNodeWait, leaseWaitTitle, parseNodeId, type LeaseWait } from './detail-page-helpers';
+import { resolveNodeStatus, resolveNodeWait, leaseWaitTitle, parseNodeId, tasksByNodeId, type LeaseWait } from './detail-page-helpers';
 import LeaseWaitPill from './LeaseWaitPill';
 
 const CLS: Record<string, string> = {
@@ -45,12 +45,14 @@ export default function RunSwimlane({
   const colors = buildServiceColors(serviceOrder);
   // Status, lane roll-ups and the whole layout depend only on the graph, the
   // tasks, the service order and the collapse state; they are memoised so a
-  // large DAG is laid out once per poll rather than on every render.
+  // large DAG is laid out once per poll rather than on every render. Each
+  // node's status and wait are read through one index of the tasks by node.
   const { statusById, waitById, rollups, layout, pos } = useMemo(() => {
-    const statusById = new Map(graph.nodes.map((n) => [n.node_id, resolveNodeStatus(n, tasks)]));
+    const taskByNode = tasksByNodeId(tasks);
+    const statusById = new Map(graph.nodes.map((n) => [n.node_id, resolveNodeStatus(n, taskByNode)]));
     const waitById = new Map<string, LeaseWait>();
     for (const n of graph.nodes) {
-      const wait = resolveNodeWait(n, tasks);
+      const wait = resolveNodeWait(n, taskByNode);
       if (wait) waitById.set(n.node_id, wait);
     }
     const laneRollup = (service: string) => {
