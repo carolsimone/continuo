@@ -473,14 +473,14 @@
         "required": ["name", "enabled"],
         "properties": {
           "name": {"type": "string"},
-          "enabled": {"type": "boolean"},
+          "enabled": {"type": "boolean", "description": "False omits this service Deployment, Service and RBAC resources."},
           "image": {
             "type": "string",
             "description": "Full image ref override, e.g. for a custom build. Empty/absent = derived via the continuo.image helper (registry/prefix/continuo-<name>:tag)."
           },
-          "replicas": {"type": "integer", "minimum": 0},
-          "httpPort": {"type": "integer"},
-          "grpcPort": {"type": "integer"},
+          "replicas": {"type": "integer", "minimum": 0, "description": "Deployment replicas; omitted defaults to one and zero scales the service down."},
+          "httpPort": {"type": "integer", "description": "Optional HTTP Service port, independent of grpcPort."},
+          "grpcPort": {"type": "integer", "description": "Optional gRPC Service port; no httpPort is required."},
           "readinessPath": {"type": "string"},
           "livenessPath": {"type": "string"},
           "probePath": {"type": "string"},

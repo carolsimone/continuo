@@ -15,7 +15,7 @@
       "agent-remediation" (dict "name" "continuo.serviceReposConfigMapName" "checksum" "service-repos" "template" "service-repos-configmap.yaml")
       "ui" (dict "name" "continuo.cancelConfigMapName") }}
 {{- range $svc := .Values.services }}
-{{- if ($svc.enabled | default true) }}
+{{- if $svc.enabled }}
 {{- $servesMetrics := has $svc.name (include "continuo.metrics.services" $ | fromJsonArray) }}
 {{- $mounted := default (dict) (get $mountedConfigMaps $svc.name) }}
 {{- $isAgent := has $svc.name (list "agent-chat" "agent-remediation") }}
@@ -37,7 +37,7 @@ metadata:
     {{- include "continuo.labels" $ | nindent 4 }}
     app.kubernetes.io/name: {{ $svc.name }}
 spec:
-  replicas: {{ default 1 $svc.replicas }}
+  replicas: {{ dig "replicas" 1 $svc }}
   {{- if eq $svc.name "state" }}
   # Every state pod consumes the task status group and dispatches what a
   # success unblocks, so a pod of the previous release must be gone before the

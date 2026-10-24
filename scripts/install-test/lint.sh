@@ -44,6 +44,9 @@ for entry in "${renders[@]}"; do
   "${KUBE_LINTER[@]}" lint --config "${CHART}/.kube-linter.yaml" "${tmp}/${name}.yaml"
 done
 
+echo "--- service enablement, replica counts and independent application ports"
+python3 scripts/install-test/test-service-controls.py -v
+
 # The chart default-denies ingress and re-opens exactly the edges the service
 # graph needs. A service that starts calling another without its allow rule
 # ships a platform that is "up" but silently unreachable on that path. Assert

@@ -271,6 +271,34 @@ With your own IdP, the token is an ID token it issues for the `ui`'s client id;
 how a script obtains one depends on the IdP. An operator token may also
 bootstrap a service (`"bootstrap": true`).
 
+## Service deployment controls
+
+Each `services` entry requires `name` and `enabled`. Setting `enabled: false`
+omits that entry's Deployment, Service, ServiceAccount, Role and RoleBinding.
+An enabled entry defaults to one replica when `replicas` is omitted; an explicit
+`replicas: 0` keeps its resources and scales its Deployment to zero.
+
+`httpPort` and `grpcPort` are independent optional Service ports. Either one
+creates a Service exposing only the configured ports. An entry with neither
+port still creates its Deployment and requested RBAC, without a Service.
+
+### Validating service controls
+
+The standard `bash scripts/install-test/lint.sh` gate includes render regressions
+for enablement, replica counts, ports and RBAC. The optional live test uses the
+production service templates in an isolated Helm release, without starting the
+full Continuo dependency stack. It checks scale-to-zero, TCP routing through a
+gRPC-only Service, and resource removal on disable. It deletes its test namespace.
+
+With Helm, kubectl and a disposable current cluster configured, build the fixture
+and make the image available to the cluster (for kind, load it with `kind load
+docker-image continuo-chart-echo:test --name <cluster>`), then run:
+
+```bash
+docker build -t continuo-chart-echo:test scripts/install-test/fixtures/service-controls
+python3 scripts/install-test/test-service-controls-live.py continuo-chart-echo:test
+```
+
 ## Requirements at a glance
 
 - Kubernetes `>=1.27`, Helm 3.14+.
