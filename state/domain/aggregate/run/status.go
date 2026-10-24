@@ -154,6 +154,22 @@ func InFlightTaskStatuses() []TaskStatus {
 	return out
 }
 
+// WaitReason says what a pending task is waiting for besides its upstream
+// tasks. A task that waits for nothing has no reason.
+type WaitReason string
+
+const (
+	// WaitReasonNodeLease is a ready task waiting for the write lease on its
+	// node, which another task holds.
+	WaitReasonNodeLease WaitReason = "node_lease"
+)
+
+// WaitReasons lists every WaitReason. The CHECK constraint on
+// task_tracker.wait_reason lists exactly these.
+func WaitReasons() []WaitReason { return []WaitReason{WaitReasonNodeLease} }
+
+func (w WaitReason) IsValid() bool { return slices.Contains(WaitReasons(), w) }
+
 // ParseTaskStatus converts a wire-format status string to a TaskStatus. Returns
 // an error for unknown values. Called at adapter boundaries.
 func ParseTaskStatus(s string) (TaskStatus, error) {
