@@ -386,12 +386,13 @@ func TestFailStalled_FailsARunWithNothingInFlight(t *testing.T) {
 		tc.dispatched = removeID(tc.dispatched, taskOf(r, table))
 	}
 
-	events, stalled, err := r.FailStalled(context.Background(), tc, reportAt.Add(run.StallAfter))
+	check, err := r.FailStalled(context.Background(), tc, g, taskDefaults, reportAt.Add(run.StallAfter))
 
 	require.NoError(t, err)
-	assert.True(t, stalled)
-	require.Len(t, events, 1)
-	assert.Equal(t, run.SchedulerStatusFailed, events[0].(run.RunFinalized).Outcome)
+	assert.True(t, check.Stalled)
+	assert.Empty(t, check.Granted)
+	require.Len(t, check.Events, 1)
+	assert.Equal(t, run.SchedulerStatusFailed, check.Events[0].(run.RunFinalized).Outcome)
 	require.NotNil(t, r.FailureReason())
 	assert.Equal(t, run.RunFailureStalled, *r.FailureReason())
 	assert.Len(t, tc.skipped, 6, "every task left pending is skipped")
@@ -401,17 +402,20 @@ func TestFailStalled_FailsARunWithNothingInFlight(t *testing.T) {
 // A run with an attempt in flight, or that moved within five minutes, is
 // never stalled: every legitimate wait has its own clock.
 func TestFailStalled_LeavesARunWithWorkInFlightOrRecentProgress(t *testing.T) {
-	r, tc, _ := startedFailureRun(t)
-	_, stalled, err := r.FailStalled(context.Background(), tc, startNow.Add(time.Hour))
+	r, tc, g := startedFailureRun(t)
+	check, err := r.FailStalled(context.Background(), tc, g, taskDefaults, startNow.Add(time.Hour))
 	require.NoError(t, err)
-	assert.False(t, stalled, "ftable_a and ftable_b are dispatched")
+	assert.False(t, check.Stalled, "ftable_a and ftable_b are dispatched")
+	assert.Empty(t, check.Events)
 
 	for id := range tc.statuses {
 		tc.statuses[id] = run.TaskStatusPending
 	}
-	_, stalled, err = r.FailStalled(context.Background(), tc, startNow.Add(run.StallAfter-time.Second))
+	tc.grantableReads = nil
+	check, err = r.FailStalled(context.Background(), tc, g, taskDefaults, startNow.Add(run.StallAfter-time.Second))
 	require.NoError(t, err)
-	assert.False(t, stalled, "the run moved under five minutes ago")
+	assert.False(t, check.Stalled, "the run moved under five minutes ago")
+	assert.Empty(t, tc.grantableReads, "a run that moved within five minutes is not read")
 	assert.Equal(t, run.SchedulerStatusRunning, r.Status())
 }
 
@@ -578,24 +582,25 @@ func TestRecordAttemptReport_ARepeatedStoppedReportChangesNothing(t *testing.T) 
 // minutes ends cancelled, with no failure reason; one with a task stopping
 // waits for it.
 func TestFailStalled_EndsACancellingRunWithNothingInFlightCancelled(t *testing.T) {
-	r, tc, _ := cancellingFailureRun(t)
-	_, stalled, err := r.FailStalled(context.Background(), tc, reportAt.Add(time.Hour))
+	r, tc, g := cancellingFailureRun(t)
+	check, err := r.FailStalled(context.Background(), tc, g, taskDefaults, reportAt.Add(time.Hour))
 	require.NoError(t, err)
-	assert.False(t, stalled, "ftable_a and ftable_b are stopping")
+	assert.False(t, check.Stalled, "ftable_a and ftable_b are stopping")
 
 	// A defect ends both stopping tasks without moving the run.
 	tc.statuses[taskOf(r, "ftable_a")] = run.TaskStatusCancelled
 	tc.statuses[taskOf(r, "ftable_b")] = run.TaskStatusCancelled
-	_, stalled, err = r.FailStalled(context.Background(), tc, reportAt.Add(run.StallAfter-time.Second))
+	check, err = r.FailStalled(context.Background(), tc, g, taskDefaults, reportAt.Add(run.StallAfter-time.Second))
 	require.NoError(t, err)
-	assert.False(t, stalled, "the run moved under five minutes ago")
+	assert.False(t, check.Stalled, "the run moved under five minutes ago")
 
-	events, stalled, err := r.FailStalled(context.Background(), tc, reportAt.Add(run.StallAfter))
+	check, err = r.FailStalled(context.Background(), tc, g, taskDefaults, reportAt.Add(run.StallAfter))
 
 	require.NoError(t, err)
-	assert.True(t, stalled)
+	assert.True(t, check.Stalled)
 	assert.Equal(t, []run.DomainEvent{run.RunFinalized{ID: r.ScheduleID(), Name: "e2e-schedule-failure",
-		Outcome: run.SchedulerStatusCancelled}}, events)
+		Outcome: run.SchedulerStatusCancelled}}, check.Events)
+	assert.Empty(t, tc.grantableReads, "a cancelling run is granted nothing")
 	assert.Equal(t, run.SchedulerStatusCancelled, r.Status())
 	assert.Nil(t, r.FailureReason())
 }

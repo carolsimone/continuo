@@ -844,6 +844,10 @@ func (f *cancelFakeTaskCollection) TakeLeaseForWaiter(context.Context, run.Lease
 	panic("TakeLeaseForWaiter not used in cancel tests")
 }
 
+func (f *cancelFakeTaskCollection) GrantableWaits(context.Context, uuid.UUID) ([]run.LeaseWait, error) {
+	panic("GrantableWaits not used in cancel tests")
+}
+
 // newCancelUoWFactory wires a FakeUnitOfWork with the three fakes needed by the
 // cancel handler methods and returns a factory that always returns the same
 // instance so tests can inspect its state after the call.

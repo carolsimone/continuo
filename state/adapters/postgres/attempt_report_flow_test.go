@@ -242,9 +242,10 @@ func TestFailStalled_SavesTheRunFailedAsStalled(t *testing.T) {
 	defer u.Rollback()
 	r, err := u.Run().LoadRunForUpdate(ctx, f.r.ScheduleID())
 	require.NoError(t, err)
-	_, stalled, err := r.FailStalled(ctx, u.TaskCollection(f.tenant), time.Now().Add(run.StallAfter+time.Minute))
+	check, err := r.FailStalled(ctx, u.TaskCollection(f.tenant), u.TaskGraph(f.tenant), testTaskDefaults,
+		time.Now().Add(run.StallAfter+time.Minute))
 	require.NoError(t, err)
-	require.True(t, stalled)
+	require.True(t, check.Stalled)
 	require.NoError(t, u.Run().SaveRun(ctx, r))
 	require.NoError(t, u.Commit())
 

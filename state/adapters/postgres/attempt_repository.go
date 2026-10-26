@@ -66,12 +66,15 @@ func (r *AttemptRepository) DueAttempts(ctx context.Context, limit int) ([]repos
 
 // StalledRuns reads the active runs (pending, running or cancelling) with an
 // old progress clock and no work in flight (runWorkInFlight: no task
-// dispatched, queued, running or stopping, and no task waiting for a node
-// lease whose holder is), of every tenant: scheduler_tracker has no tenant
-// column. A lease in another tenant on the waiting task's node key also
-// counts, which can delay noticing a stalled run but never fails a waiting
-// one. The run scan filters scheduler_tracker by status, which holds few
-// active rows.
+// dispatched, queued, running or stopping, no task waiting for a node lease
+// whose holder is, and none waiting behind an older waiter of a running run),
+// of every tenant: scheduler_tracker has no tenant column. A lease or an older
+// waiter in another tenant on the waiting task's node key also counts, which
+// can delay noticing a stalled run but never fails a waiting one. A run it
+// lists may hold the oldest waiter of a free node; the attempt reconcile
+// grants that node under the run's lock (run.Run.FailStalled) rather than
+// failing the run. The run scan filters scheduler_tracker by status, which
+// holds few active rows.
 func (r *AttemptRepository) StalledRuns(ctx context.Context, idle time.Duration, limit int) ([]uuid.UUID, error) {
 	var ids []uuid.UUID
 	if err := r.db.SelectContext(ctx, &ids, `

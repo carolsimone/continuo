@@ -53,16 +53,27 @@ const tenantWaitersFrom = `
 	JOIN topology_nodes n ON n.tenant_id = $1 AND n.release_id = s.release_id AND n.node_key = w.node_key
 	WHERE w.wait_reason = 'node_lease' AND w.status = 'pending'`
 
-// grantableQuery keeps, for each node of the tenant no task holds, the oldest
-// waiter whose run is running, then orders those by how long they have waited
-// and keeps the first $2.
-const grantableQuery = `
-SELECT task_id, run_id, node_key, waiting_since FROM (
+// nextWaiters selects, with nextWaitersOrder closing it, for each node of the
+// tenant ($1) no task holds, its oldest waiter whose run is running: the
+// earliest lease_wait_since, then the lowest task id. That waiter is the one a
+// grant serves; runWorkInFlight queues a node's waiters in the same order. A
+// query may add a condition on w between the two.
+const nextWaiters = `
 	SELECT DISTINCT ON (w.node_key) w.task_id, w.schedule_id AS run_id, w.node_key, w.lease_wait_since AS waiting_since` +
 	tenantWaitersFrom + `
 	  AND s.status = 'running'
-	  AND NOT EXISTS (SELECT 1 FROM node_leases l WHERE l.tenant_id = $1 AND l.node_key = w.node_key)
-	ORDER BY w.node_key, w.lease_wait_since, w.task_id
+	  AND NOT EXISTS (SELECT 1 FROM node_leases l WHERE l.tenant_id = $1 AND l.node_key = w.node_key)`
+
+// nextWaitersOrder closes nextWaiters: DISTINCT ON keeps the first row of each
+// node in this order.
+const nextWaitersOrder = `
+	ORDER BY w.node_key, w.lease_wait_since, w.task_id`
+
+// grantableQuery keeps the next waiter of each free node of the tenant
+// (nextWaiters), then orders those by how long they have waited and keeps the
+// first $2.
+const grantableQuery = `
+SELECT task_id, run_id, node_key, waiting_since FROM (` + nextWaiters + nextWaitersOrder + `
 ) oldest
 ORDER BY waiting_since, task_id
 LIMIT $2`

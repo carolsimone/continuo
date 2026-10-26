@@ -390,11 +390,11 @@ func main() {
 
 	// The attempt reconcile asks execution-controller about every attempt
 	// nothing was heard of within its window and fails every run left with
-	// nothing in flight as stalled. It runs a lease waker pass before each
-	// stall scan, so a node released since the waker's last pass is granted to
-	// its waiter before the scan, and only a wait on a node the waker cannot
-	// grant reads as stalled. Its goroutine is tracked, so shutdown waits for
-	// a pass in progress.
+	// nothing in flight as stalled. Under the lock of a run it would fail, it
+	// first grants each free node the run's waiting task is next in line for,
+	// so a lease wait a grant can serve is never failed; the lease waker pass
+	// it runs before each stall scan grants most freed nodes before the scan.
+	// Its goroutine is tracked, so shutdown waits for a pass in progress.
 	attemptReconciler := attemptreconcile.New(uowFactory, pkgevents.DefaultTenantID, taskDefaults, runMetrics, leaseWaker.Pass, logger)
 	lifecycleManager.Go(func() { attemptReconciler.Run(ctx, attemptReconcileInterval) })
 

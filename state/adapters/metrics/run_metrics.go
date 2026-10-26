@@ -11,8 +11,8 @@ import (
 
 // RunMetrics counts the runs state's reconcile loop failed as stalled, gauges
 // the runs that are cancelling, times how long a cancel takes, and records
-// the node write leases the lease waker serves: the tasks waiting, how long
-// each granted task waited, and the leases it repaired.
+// the node write leases state grants: the tasks waiting, how long each
+// granted task waited, and the leases the lease waker repaired.
 type RunMetrics struct {
 	stalled           prometheus.Counter
 	cancelling        prometheus.Gauge
@@ -54,7 +54,7 @@ func NewRunMetrics(reg *pkgmetrics.Registry) *RunMetrics {
 		}),
 		leaseWaitSeconds: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Name:    "continuo_node_lease_wait_seconds",
-			Help:    "Seconds a task waited for the write lease on its node before the lease waker granted it.",
+			Help:    "Seconds a task waited for the write lease on its node before state granted it.",
 			Buckets: []float64{1, 5, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 14400},
 		}),
 		leasesRepaired: prometheus.NewCounter(prometheus.CounterOpts{

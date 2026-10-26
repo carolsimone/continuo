@@ -20,6 +20,14 @@ type LeaseClaim struct {
 	NodeKey topology.NodeKey
 }
 
+// LeaseWait is a task waiting for the write lease on its node: the task, the
+// node, and when it began to wait.
+type LeaseWait struct {
+	TaskID       uuid.UUID
+	NodeKey      topology.NodeKey
+	WaitingSince time.Time
+}
+
 // writes reports whether r's tasks write their nodes: every operation but test
 // does, so each task of r holds its node's write lease while it runs. A
 // promote-seed run, which names no operation, writes.
@@ -122,4 +130,33 @@ func (r *Run) GrantLease(
 	}
 	r.recordProgress(now)
 	return events, true, nil
+}
+
+// grantWaitingTasks grants each task of r that is next in line for a free
+// node (GrantableWaits) that node's write lease and dispatches it
+// (GrantLease), in the transaction that locked r, and returns the dispatches
+// and the waits it ended. A run that is not running grants nothing, and a task
+// whose node another task took after GrantableWaits read it keeps waiting.
+func (r *Run) grantWaitingTasks(ctx context.Context, tasks TaskCollection, graph TaskGraph, d TaskDefaults,
+	now time.Time) ([]DomainEvent, []LeaseWait, error) {
+	if r.status != SchedulerStatusRunning {
+		return nil, nil, nil
+	}
+	waits, err := tasks.GrantableWaits(ctx, r.scheduleID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("read the lease waits of run %s next in line: %w", r.scheduleID, err)
+	}
+	var events []DomainEvent
+	var granted []LeaseWait
+	for _, w := range waits {
+		dispatched, ok, err := r.GrantLease(ctx, tasks, graph, w.TaskID, d, now)
+		if err != nil {
+			return nil, nil, fmt.Errorf("grant the lease of %s to task %s of run %s: %w", w.NodeKey, w.TaskID, r.scheduleID, err)
+		}
+		if ok {
+			events = append(events, dispatched...)
+			granted = append(granted, w)
+		}
+	}
+	return events, granted, nil
 }

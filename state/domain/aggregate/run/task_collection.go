@@ -54,9 +54,12 @@ type TaskCollection interface {
 	HasFailed(ctx context.Context, runID uuid.UUID) (bool, error)
 
 	// HasInFlight reports whether the given run has work in flight: a task of
-	// it is dispatched, queued, running or stopping, or a pending task of it
+	// it is dispatched, queued, running or stopping; a pending task of it
 	// waits for a node lease whose holder is one of those, so an attempt it
-	// waits on is in flight.
+	// waits on is in flight; or a pending task of it waits for a node lease
+	// behind an older waiter of a running run (the earlier lease wait, then
+	// the lower task id: the order the lease waker grants in), which the
+	// node's next grant serves first.
 	HasInFlight(ctx context.Context, runID uuid.UUID) (bool, error)
 
 	// HasNonSucceeded reports whether any task in the given run is in a
@@ -140,6 +143,15 @@ type TaskCollection interface {
 	// holds it; unlike TakeLeases it does not look at the node's other
 	// waiters. It reports whether the claiming task holds the lease.
 	TakeLeaseForWaiter(ctx context.Context, claim LeaseClaim) (bool, error)
+
+	// GrantableWaits returns the tasks of the given run that wait for their
+	// node's write lease and are next in line for it: no task holds the node
+	// for the collection's tenant, and the task is the node's oldest waiter
+	// (the earliest lease wait, then the lowest task id) among the waiters
+	// whose run is running and whose node the tenant holds in their run's
+	// release, the waiter the lease waker grants the node to. They come in
+	// node-key order, the order every take of leases follows.
+	GrantableWaits(ctx context.Context, runID uuid.UUID) ([]LeaseWait, error)
 
 	// RequestStops asks the current attempt of each stopping task of the
 	// given run to stop, when that attempt is open (dispatched, queued or

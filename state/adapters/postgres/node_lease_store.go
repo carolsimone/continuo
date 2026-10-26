@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
+	"github.com/carolsimone/continuo/state/domain/topology"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
@@ -92,6 +93,34 @@ func takeLeaseForWaiter(ctx context.Context, tx *sqlx.Tx, tenantID string, c run
 		return false, fmt.Errorf("take the lease of %s for task %s: %w", c.NodeKey, c.TaskID, err)
 	}
 	return holds, nil
+}
+
+// runGrantableWaitsQuery keeps, among the nodes the run $2's waiting tasks
+// wait for, the next waiter of each free one (nextWaiters) when it is a task
+// of the run, in node-key order: the order takeLeasesQuery inserts in, so a
+// transaction that grants several of them takes their leases in that order
+// too.
+const runGrantableWaitsQuery = `
+SELECT task_id, run_id, node_key, waiting_since FROM (` + nextWaiters + `
+	  AND w.node_key IN (
+		SELECT m.node_key FROM task_tracker m
+		WHERE m.schedule_id = $2 AND m.status = 'pending' AND m.wait_reason = 'node_lease')` + nextWaitersOrder + `
+) oldest
+WHERE run_id = $2
+ORDER BY node_key`
+
+// grantableWaitsOf returns the tasks of runID that are the next waiter of a
+// node tenantID's lease leaves free, in node-key order.
+func grantableWaitsOf(ctx context.Context, tx *sqlx.Tx, tenantID string, runID uuid.UUID) ([]run.LeaseWait, error) {
+	var rows []leaseWaiterRow
+	if err := tx.SelectContext(ctx, &rows, runGrantableWaitsQuery, tenantID, runID); err != nil {
+		return nil, fmt.Errorf("read the lease waits of run %s next in line: %w", runID, err)
+	}
+	out := make([]run.LeaseWait, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, run.LeaseWait{TaskID: row.TaskID, NodeKey: topology.NodeKey(row.NodeKey), WaitingSince: row.WaitingSince})
+	}
+	return out, nil
 }
 
 // waitForLeases makes each pending task of taskIDs wait for its node's write

@@ -231,31 +231,65 @@ func (r *Run) finalizeWhenEveryTaskEnded(ctx context.Context, tasks TaskCollecti
 	return r.finalize(outcome, now), nil
 }
 
-// FailStalled ends r when it is active, has no work in flight (HasInFlight: no
-// task dispatched, queued, running or stopping, and no task waiting for a node
-// lease whose holder is) and has made no progress for StallAfter: only a
-// defect in state leaves a run so. A cancelling run ends cancelled, with no
-// failure reason: its cancel asked for nothing more. Any other run fails as
-// stalled, its pending tasks skipped and counted terminal. It reports whether
-// it ended the run; a run that has ended, has work in flight or moved within
-// StallAfter is left as it is.
-func (r *Run) FailStalled(ctx context.Context, tasks TaskCollection, now time.Time) ([]DomainEvent, bool, error) {
+// StallCheck is what FailStalled did to a run.
+type StallCheck struct {
+	// Events are what the run recorded: the dispatch of each waiting task it
+	// granted its node's lease, or the run's end.
+	Events []DomainEvent
+	// Granted are the waits it ended by granting the task its node's write
+	// lease and dispatching it; a run granted any is not stalled.
+	Granted []LeaseWait
+	// Stalled reports whether it ended the run.
+	Stalled bool
+}
+
+// FailStalled ends r when it is active, has made no progress for StallAfter
+// and has no work in flight: only a defect in state leaves a run so.
+//
+// A running run's task that waits for a node lease and is next in line for a
+// free node (GrantableWaits: no task holds the node, and the task is its
+// oldest waiter among the waiters of running runs) is first granted that
+// node's lease and dispatched (GrantLease), as the lease waker would grant it,
+// so a node released after the waker's last pass, or one a waker pass left for
+// its next, is served under r's lock instead of reading as a stall. A run
+// granted any task is not stalled.
+//
+// Work in flight (HasInFlight) is a task dispatched, queued, running or
+// stopping, a task waiting for a node lease whose holder is one of those, and
+// a task waiting behind an older waiter of a running run for its node, which
+// the node's next grant serves first. A lease wait therefore ends its run only
+// when no grant can serve it: its node is held by a task that has ended
+// without releasing it, or the run's release holds no such node for the
+// tenant, which only a defect in state causes.
+//
+// A cancelling run ends cancelled, with no failure reason: its cancel asked
+// for nothing more. Any other run fails as stalled, its pending tasks skipped
+// and counted terminal. A run that has ended, has work in flight or moved
+// within StallAfter is left as it is.
+func (r *Run) FailStalled(ctx context.Context, tasks TaskCollection, graph TaskGraph, d TaskDefaults, now time.Time) (StallCheck, error) {
 	if !r.IsActive() || r.lastHeartbeatAt == nil || now.Sub(*r.lastHeartbeatAt) < StallAfter {
-		return nil, false, nil
+		return StallCheck{}, nil
+	}
+	events, granted, err := r.grantWaitingTasks(ctx, tasks, graph, d, now)
+	if err != nil {
+		return StallCheck{}, err
+	}
+	if len(granted) > 0 {
+		return StallCheck{Events: events, Granted: granted}, nil
 	}
 	inFlight, err := tasks.HasInFlight(ctx, r.scheduleID)
 	if err != nil {
-		return nil, false, fmt.Errorf("has in flight: %w", err)
+		return StallCheck{}, fmt.Errorf("has in flight: %w", err)
 	}
 	if inFlight {
-		return nil, false, nil
+		return StallCheck{}, nil
 	}
 	if r.status == SchedulerStatusCancelling {
-		return r.finalize(SchedulerStatusCancelled, now), true, nil
+		return StallCheck{Events: r.finalize(SchedulerStatusCancelled, now), Stalled: true}, nil
 	}
 	skipped, err := tasks.SkipPending(ctx, r.scheduleID)
 	if err != nil {
-		return nil, false, fmt.Errorf("skip the pending tasks of stalled run %s: %w", r.scheduleID, err)
+		return StallCheck{}, fmt.Errorf("skip the pending tasks of stalled run %s: %w", r.scheduleID, err)
 	}
 	if skipped > 0 {
 		r.terminalTaskCount += num.ClampInt32(skipped)
@@ -263,5 +297,5 @@ func (r *Run) FailStalled(ctx context.Context, tasks TaskCollection, now time.Ti
 	}
 	reason := RunFailureStalled
 	r.failureReason = &reason
-	return r.finalize(SchedulerStatusFailed, now), true, nil
+	return StallCheck{Events: r.finalize(SchedulerStatusFailed, now), Stalled: true}, nil
 }

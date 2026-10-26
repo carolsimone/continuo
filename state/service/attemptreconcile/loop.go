@@ -1,10 +1,12 @@
 // Package attemptreconcile is state's attempt reconcile: every pass it asks
 // execution-controller about each attempt nothing was heard of within its
 // window, by dispatching the attempt again with its known status, and fails
-// each run left with nothing in flight and no progress as stalled. Before it
-// looks for stalled runs it runs a hook, which state wires to a lease waker
-// pass, so a node released since the waker's last pass is granted to its
-// waiter first and that waiter's run does not read as stalled.
+// each run left with nothing in flight and no progress as stalled. Under the
+// lock of each run it would fail, it first grants every free node the run's
+// waiting task is next in line for (run.Run.FailStalled), so a run waiting for
+// a node lease is never failed while a grant can serve it. Before it looks for
+// stalled runs it runs a hook, which state wires to a lease waker pass, so
+// most freed nodes are granted before the scan lists their waiters.
 package attemptreconcile
 
 import (
@@ -72,10 +74,11 @@ func (l *Loop) Run(ctx context.Context, interval time.Duration) {
 
 // Pass asks about every due attempt, sends the cancel again for every
 // cancelling run whose stops are unanswered, runs beforeStall and then fails
-// every stalled run, and sets the cancelling gauges, each question and failure
-// in a transaction of its own. A failed beforeStall is logged and the stall
-// scan still runs. Two passes at once cost at most a repeated question, which
-// execution-controller answers twice.
+// every stalled run, or grants its waiting tasks their free nodes, and sets
+// the cancelling gauges, each question and stall check in a transaction of its
+// own. A failed beforeStall is logged and the stall scan still runs. Two
+// passes at once cost at most a repeated question, which execution-controller
+// answers twice.
 func (l *Loop) Pass(ctx context.Context) error {
 	reader := l.newUoW().Attempts(l.tenantID)
 	due, err := reader.DueAttempts(ctx, DueLimit)
@@ -186,33 +189,54 @@ func stopTargets(targets []run.StopTarget) []string {
 	return out
 }
 
-// failStalled fails one run as stalled, once its lock confirms it still is,
-// and counts and logs it once the transaction that failed it has committed.
+// failStalled locks one run the scan listed and checks it under the lock
+// (run.Run.FailStalled): a task of it next in line for a free node is granted
+// that node's lease and dispatched, and a run granted none that is still
+// stalled is failed. It saves the run with its events, then, once the
+// transaction has committed, observes and logs each grant as the lease waker
+// does, and counts and logs a failed run.
 func (l *Loop) failStalled(ctx context.Context, runID uuid.UUID) error {
-	var failed *run.Run
+	var (
+		r     *run.Run
+		check run.StallCheck
+		now   time.Time
+	)
 	if err := l.inTx(ctx, func(u uow.UnitOfWork) error {
-		r, err := u.Run().LoadRunForUpdate(ctx, runID)
-		if err != nil {
+		var err error
+		if r, err = u.Run().LoadRunForUpdate(ctx, runID); err != nil {
 			return fmt.Errorf("load run %s: %w", runID, err)
 		}
-		events, stalled, err := r.FailStalled(ctx, u.TaskCollection(l.tenantID), u.Clock().Now())
-		if err != nil || !stalled {
-			return err
+		now = u.Clock().Now()
+		if check, err = r.FailStalled(ctx, u.TaskCollection(l.tenantID), u.TaskGraph(l.tenantID), l.tasks, now); err != nil {
+			return fmt.Errorf("check run %s for a stall: %w", runID, err)
+		}
+		if !check.Stalled && len(check.Granted) == 0 {
+			return nil
 		}
 		if err := u.Run().SaveRun(ctx, r); err != nil {
-			return fmt.Errorf("save stalled run %s: %w", runID, err)
+			return fmt.Errorf("save run %s: %w", runID, err)
 		}
-		if err := u.Outbox().Append(ctx, events, uuid.Nil); err != nil {
-			return fmt.Errorf("append the events of stalled run %s: %w", runID, err)
+		if err := u.Outbox().Append(ctx, check.Events, uuid.Nil); err != nil {
+			return fmt.Errorf("append the events of run %s: %w", runID, err)
 		}
-		failed = r
 		return nil
-	}); err != nil || failed == nil {
+	}); err != nil {
 		return err
+	}
+	for _, w := range check.Granted {
+		// The wait began on the database clock; a clock behind it reads as no
+		// wait rather than a negative one.
+		waited := max(now.Sub(w.WaitingSince), 0)
+		l.metrics.LeaseGranted(waited)
+		l.logger.Info("Granted a node lease to the task next in line for it, under the lock of a run idle for five minutes",
+			"node_key", w.NodeKey, "task_id", w.TaskID, "run_id", runID, "waited", waited.String())
+	}
+	if !check.Stalled {
+		return nil
 	}
 	l.metrics.RunStalled()
 	l.logger.Error("Failed a stalled run: it had no attempt in flight and no progress for five minutes, which a defect in state causes",
-		"run_id", runID, "schedule_name", failed.ScheduleName(), "last_progress", failed.LastHeartbeatAt())
+		"run_id", runID, "schedule_name", r.ScheduleName(), "last_progress", r.LastHeartbeatAt())
 	return nil
 }
 

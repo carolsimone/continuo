@@ -231,6 +231,97 @@ func TestGrantLease_LeavesATaskWhoseNodeIsStillHeld(t *testing.T) {
 	assert.Len(t, tc.added, added)
 }
 
+// idleWaitingRun is waitingFailureRun once ftable_b has succeeded: the run has
+// nothing in flight, ftable_a still waits for the node the other run's task
+// holds (since startNow), and the run's last progress is at reportAt.
+func idleWaitingRun(t *testing.T) (*run.Run, *fakeTaskCollection, *memTaskGraph) {
+	t.Helper()
+	r, tc, g := waitingFailureRun(t)
+	tc.waitSince[taskOf(r, "ftable_a")] = startNow
+	report(t, r, tc, g, "ftable_b", 0, run.AttemptSucceeded, "")
+	r.ResetChanges()
+	return r, tc, g
+}
+
+// A running run idle for run.StallAfter whose waiting task is next in line for
+// a node no task holds any more is not stalled: under the run's lock the task
+// is granted the node's lease and dispatched, as the lease waker would grant
+// it, and the run keeps running with nothing skipped.
+func TestFailStalled_GrantsAWaitingTaskItsFreedNodeInsteadOfFailingTheRun(t *testing.T) {
+	r, tc, g := idleWaitingRun(t)
+	a := taskOf(r, "ftable_a")
+	// The other run's task released ftable_a after the lease waker's last pass.
+	delete(tc.leases, fkey("ftable_a"))
+	now := reportAt.Add(run.StallAfter)
+
+	check, err := r.FailStalled(context.Background(), tc, g, taskDefaults, now)
+
+	require.NoError(t, err)
+	assert.False(t, check.Stalled)
+	assert.Equal(t, []run.LeaseWait{{TaskID: a, NodeKey: fkey("ftable_a"), WaitingSince: startNow}}, check.Granted)
+	task := createdByKey(tc)[fkey("ftable_a")]
+	node, _ := failureSchedule().Node(fkey("ftable_a"))
+	assert.Equal(t, []run.DomainEvent{run.TaskDispatched{
+		ID: r.ScheduleID(), ScheduleName: "e2e-schedule-failure", TaskID: a, Attempt: 0,
+		KnownStatus: run.AttemptDispatched, Node: node, JobName: task.JobName, Operation: model.OperationRun,
+		Timeout: 24 * time.Hour,
+	}}, check.Events)
+	assert.Equal(t, a, tc.leases[fkey("ftable_a")])
+	assert.Equal(t, run.TaskStatusDispatched, tc.statuses[a])
+	assert.Empty(t, tc.waits, "the task waits no more")
+	assert.Empty(t, tc.skipped)
+	assert.Equal(t, run.SchedulerStatusRunning, r.Status())
+	assert.Nil(t, r.FailureReason())
+	assert.Equal(t, now, *r.LastHeartbeatAt(), "the grant is progress")
+}
+
+// A run idle for run.StallAfter whose waiting task's node is held by a task
+// that has ended without releasing it (a defect the lease waker's repair
+// deletes) has nothing to grant and nothing in flight: it fails as stalled,
+// its waiting task skipped.
+func TestFailStalled_FailsARunWhoseWaitNoGrantCanServe(t *testing.T) {
+	r, tc, g := idleWaitingRun(t)
+	a := taskOf(r, "ftable_a")
+
+	check, err := r.FailStalled(context.Background(), tc, g, taskDefaults, reportAt.Add(run.StallAfter))
+
+	require.NoError(t, err)
+	assert.True(t, check.Stalled)
+	assert.Empty(t, check.Granted)
+	assert.Equal(t, []uuid.UUID{r.ScheduleID()}, tc.grantableReads, "the waits next in line are read before the run is failed")
+	assert.Empty(t, tc.waiterTakes, "no lease is taken")
+	assert.Equal(t, run.TaskStatusSkipped, tc.statuses[a])
+	assert.Equal(t, run.SchedulerStatusFailed, r.Status())
+	require.NotNil(t, r.FailureReason())
+	assert.Equal(t, run.RunFailureStalled, *r.FailureReason())
+}
+
+// A waiting task read as next in line for a free node whose lease another
+// transaction takes first keeps waiting: the take under the run's lock finds
+// the node held, and the run, whose task now waits behind a holder in flight,
+// is left running.
+func TestFailStalled_AWaitWhoseNodeAnotherTaskTookFirstIsNotFailed(t *testing.T) {
+	r, tc, g := idleWaitingRun(t)
+	a := taskOf(r, "ftable_a")
+	tc.nextInLine = []run.LeaseWait{{TaskID: a, NodeKey: fkey("ftable_a"), WaitingSince: startNow}}
+	tc.statuses[otherRunsTask] = run.TaskStatusDispatched
+	added := len(tc.added)
+
+	check, err := r.FailStalled(context.Background(), tc, g, taskDefaults, reportAt.Add(run.StallAfter))
+
+	require.NoError(t, err)
+	assert.False(t, check.Stalled)
+	assert.Empty(t, check.Granted)
+	assert.Empty(t, check.Events)
+	assert.Equal(t, []run.LeaseClaim{claimOf(r, "ftable_a")}, tc.waiterTakes, "the take finds the node held")
+	assert.Equal(t, otherRunsTask, tc.leases[fkey("ftable_a")])
+	assert.Equal(t, run.TaskStatusPending, tc.statuses[a])
+	assert.Equal(t, run.WaitReasonNodeLease, tc.waits[a])
+	assert.Len(t, tc.added, added, "no attempt is dispatched")
+	assert.Empty(t, tc.skipped)
+	assert.Equal(t, run.SchedulerStatusRunning, r.Status())
+}
+
 // A grant for a task the run does not hold is refused before a lease is
 // taken: no task has the id, or another run holds it.
 func TestGrantLease_RefusesATaskTheRunDoesNotHold(t *testing.T) {

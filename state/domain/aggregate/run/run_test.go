@@ -140,6 +140,13 @@ type fakeTaskCollection struct {
 	waiterTakes []run.LeaseClaim
 	releases    []uuid.UUID
 	leaseWrites []string
+	// waitSince holds when each waiting task began to wait, and
+	// grantableReads the runs GrantableWaits was called for. nextInLine, when
+	// set, is what GrantableWaits returns, as a read taken before another
+	// transaction took the node would.
+	waitSince      map[uuid.UUID]time.Time
+	grantableReads []uuid.UUID
+	nextInLine     []run.LeaseWait
 }
 
 func newFakeTaskCollection() *fakeTaskCollection {
@@ -156,7 +163,28 @@ func newFakeTaskCollection() *fakeTaskCollection {
 		created:       map[uuid.UUID]run.Task{},
 		leases:        map[topology.NodeKey]uuid.UUID{},
 		waits:         map[uuid.UUID]run.WaitReason{},
+		waitSince:     map[uuid.UUID]time.Time{},
 	}
+}
+
+// GrantableWaits returns the pending tasks of runID that wait for a node no
+// task holds, in node-key order; a test builds one run, so each such task is
+// its node's oldest waiter. With nextInLine set it returns that.
+func (f *fakeTaskCollection) GrantableWaits(_ context.Context, runID uuid.UUID) ([]run.LeaseWait, error) {
+	f.grantableReads = append(f.grantableReads, runID)
+	if f.nextInLine != nil {
+		return f.nextInLine, nil
+	}
+	var out []run.LeaseWait
+	for id, w := range f.waits {
+		if _, held := f.leases[f.keys[id]]; held || w != run.WaitReasonNodeLease ||
+			f.statuses[id] != run.TaskStatusPending || f.created[id].ScheduleID != runID {
+			continue
+		}
+		out = append(out, run.LeaseWait{TaskID: id, NodeKey: f.keys[id], WaitingSince: f.waitSince[id]})
+	}
+	slices.SortFunc(out, func(a, b run.LeaseWait) int { return strings.Compare(string(a.NodeKey), string(b.NodeKey)) })
+	return out, nil
 }
 
 // TakeLeases takes, in node-key order, each claimed node no task holds and no

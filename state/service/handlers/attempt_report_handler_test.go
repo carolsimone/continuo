@@ -231,6 +231,10 @@ func (f *fakeTaskStatusTaskCollection) TakeLeaseForWaiter(context.Context, run.L
 	panic("TakeLeaseForWaiter not implemented in fake")
 }
 
+func (f *fakeTaskStatusTaskCollection) GrantableWaits(context.Context, uuid.UUID) ([]run.LeaseWait, error) {
+	panic("GrantableWaits not implemented in fake")
+}
+
 func taskStatusTestLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 }

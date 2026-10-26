@@ -200,9 +200,11 @@ func (a *TaskCollectionAdapter) BeginStop(ctx context.Context, runID uuid.UUID, 
 	return a.repo.BeginStopTx(ctx, a.tx, runID, cancelledBy, cancelledAt)
 }
 
-// TakeLeases, WaitForLeases, ReleaseLease and TakeLeaseForWaiter run through
-// the unit of work's transaction, so a lease is taken or released, and a wait
-// begins, in the commit that dispatches, makes wait or ends the task.
+// TakeLeases, WaitForLeases, ReleaseLease, TakeLeaseForWaiter and
+// GrantableWaits run through the unit of work's transaction, so a lease is
+// taken or released, and a wait begins, in the commit that dispatches, makes
+// wait or ends the task, and the waits a grant serves are read under the lock
+// of the run it grants.
 func (a *TaskCollectionAdapter) TakeLeases(ctx context.Context, claims []run.LeaseClaim) ([]uuid.UUID, error) {
 	return takeLeases(ctx, a.tx, a.tenantID, claims)
 }
@@ -217,6 +219,10 @@ func (a *TaskCollectionAdapter) ReleaseLease(ctx context.Context, taskID uuid.UU
 
 func (a *TaskCollectionAdapter) TakeLeaseForWaiter(ctx context.Context, claim run.LeaseClaim) (bool, error) {
 	return takeLeaseForWaiter(ctx, a.tx, a.tenantID, claim)
+}
+
+func (a *TaskCollectionAdapter) GrantableWaits(ctx context.Context, runID uuid.UUID) ([]run.LeaseWait, error) {
+	return grantableWaitsOf(ctx, a.tx, a.tenantID, runID)
 }
 
 // Compile-time interface assertion.

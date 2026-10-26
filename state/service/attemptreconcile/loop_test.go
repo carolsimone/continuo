@@ -123,6 +123,11 @@ type idleTasks struct {
 func (t *idleTasks) HasInFlight(context.Context, uuid.UUID) (bool, error) { return t.inFlight, nil }
 func (t *idleTasks) SkipPending(context.Context, uuid.UUID) (int, error)  { return 1, nil }
 
+// GrantableWaits finds no task of the run next in line for a free node.
+func (t *idleTasks) GrantableWaits(context.Context, uuid.UUID) ([]run.LeaseWait, error) {
+	return nil, nil
+}
+
 func newLoop(f *uow.FakeUnitOfWork, metrics *countingMetrics) *attemptreconcile.Loop {
 	return attemptreconcile.New(func() uow.UnitOfWork { return f }, "default", defaults, metrics, nil,
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
