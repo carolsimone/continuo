@@ -281,6 +281,28 @@ done
 grep -q 'JOB_START_TIMEOUT_SECONDS: "900"' "${tmp}/execution-null.yaml" \
   || { echo "FAIL: a release without execution values must get the default start timeout"; exit 1; }
 
+# execution.kubeClientQPS and execution.kubeClientBurst reach
+# execution-controller through the shared ConfigMap; a QPS outside 1-1000, a
+# burst outside 1-2000 or a burst below the QPS fails the render, and a release
+# without the keys (helm upgrade --reuse-values from an older chart) renders
+# the defaults.
+echo "--- execution.kubeClientQPS and execution.kubeClientBurst reach the ConfigMap; values outside their ranges are refused"
+grep -q 'K8S_CLIENT_QPS: "50"' "${tmp}/defaults.yaml" \
+  || { echo "FAIL: the default render does not set K8S_CLIENT_QPS to 50"; exit 1; }
+grep -q 'K8S_CLIENT_BURST: "100"' "${tmp}/defaults.yaml" \
+  || { echo "FAIL: the default render does not set K8S_CLIENT_BURST to 100"; exit 1; }
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set execution.kubeClientQPS=200 --set execution.kubeClientBurst=400 > "${tmp}/rate-set.yaml"
+grep -q 'K8S_CLIENT_QPS: "200"' "${tmp}/rate-set.yaml" && grep -q 'K8S_CLIENT_BURST: "400"' "${tmp}/rate-set.yaml" \
+  || { echo "FAIL: execution.kubeClientQPS and execution.kubeClientBurst do not reach the shared ConfigMap"; exit 1; }
+for bad in "kubeClientQPS=0" "kubeClientQPS=1001" "kubeClientBurst=0" "kubeClientBurst=2001" "kubeClientBurst=49" "kubeClientQPS=200"; do
+  if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set "execution.${bad}" > /dev/null 2>&1; then
+    echo "FAIL: execution.${bad} must fail the render"; exit 1
+  fi
+done
+grep -q 'K8S_CLIENT_QPS: "50"' "${tmp}/execution-null.yaml" && grep -q 'K8S_CLIENT_BURST: "100"' "${tmp}/execution-null.yaml" \
+  || { echo "FAIL: a release without execution values must get the default rate limit"; exit 1; }
+
 # runs.taskMaxRetries and runs.taskTimeoutHours reach state and
 # execution-controller through the shared ConfigMap, the timeout in seconds; a
 # value outside its range fails the render, and values without a runs block
