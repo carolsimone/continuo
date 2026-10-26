@@ -4,9 +4,11 @@
 // each run left with nothing in flight and no progress as stalled. Under the
 // lock of each run it would fail, it first grants every free node the run's
 // waiting task is next in line for (run.Run.FailStalled), so a run waiting for
-// a node lease is never failed while a grant can serve it. Before it looks for
-// stalled runs it runs a hook, which state wires to a lease waker pass, so
-// most freed nodes are granted before the scan lists their waiters.
+// a node lease is never failed while a grant can serve it; a grant that keeps
+// failing ends its run once the run has been idle for
+// run.StallAfterFailedGrant. Before it looks for stalled runs it runs a hook,
+// which state wires to a lease waker pass, so most freed nodes are granted
+// before the scan lists their waiters.
 package attemptreconcile
 
 import (
@@ -192,52 +194,96 @@ func stopTargets(targets []run.StopTarget) []string {
 // failStalled locks one run the scan listed and checks it under the lock
 // (run.Run.FailStalled): a task of it next in line for a free node is granted
 // that node's lease and dispatched, and a run granted none that is still
-// stalled is failed. It saves the run with its events, then, once the
-// transaction has committed, observes and logs each grant as the lease waker
-// does, and counts and logs a failed run.
+// stalled is failed. A check whose grant fails (run.ErrGrantFailed) is rolled
+// back and tried once more at once, in a transaction of its own, since a
+// transient error rarely repeats; when the grant fails again the run is
+// checked without its grant (run.Run.FailStalledWithoutGrants), which fails a
+// run idle for run.StallAfterFailedGrant, so a grant that keeps failing ends
+// its run and leaves the node's queue to the next waiter. A run idle for less
+// is left for the next pass, and the grant's error is returned. Once a check
+// has committed, it observes and logs each grant as the lease waker does, and
+// counts and logs a failed run.
 func (l *Loop) failStalled(ctx context.Context, runID uuid.UUID) error {
-	var (
-		r     *run.Run
-		check run.StallCheck
-		now   time.Time
-	)
-	if err := l.inTx(ctx, func(u uow.UnitOfWork) error {
-		var err error
-		if r, err = u.Run().LoadRunForUpdate(ctx, runID); err != nil {
-			return fmt.Errorf("load run %s: %w", runID, err)
+	c, err := l.checkStall(ctx, runID, true)
+	if errors.Is(err, run.ErrGrantFailed) {
+		c, err = l.checkStall(ctx, runID, true)
+	}
+	var grantErr error
+	if errors.Is(err, run.ErrGrantFailed) {
+		grantErr = err
+		if c, err = l.checkStall(ctx, runID, false); err != nil {
+			return errors.Join(grantErr, err)
 		}
-		now = u.Clock().Now()
-		if check, err = r.FailStalled(ctx, u.TaskCollection(l.tenantID), u.TaskGraph(l.tenantID), l.tasks, now); err != nil {
-			return fmt.Errorf("check run %s for a stall: %w", runID, err)
+		if !c.check.Stalled {
+			return grantErr
 		}
-		if !check.Stalled && len(check.Granted) == 0 {
-			return nil
-		}
-		if err := u.Run().SaveRun(ctx, r); err != nil {
-			return fmt.Errorf("save run %s: %w", runID, err)
-		}
-		if err := u.Outbox().Append(ctx, check.Events, uuid.Nil); err != nil {
-			return fmt.Errorf("append the events of run %s: %w", runID, err)
-		}
-		return nil
-	}); err != nil {
+	}
+	if err != nil {
 		return err
 	}
-	for _, w := range check.Granted {
+	for _, w := range c.check.Granted {
 		// The wait began on the database clock; a clock behind it reads as no
 		// wait rather than a negative one.
-		waited := max(now.Sub(w.WaitingSince), 0)
+		waited := max(c.now.Sub(w.WaitingSince), 0)
 		l.metrics.LeaseGranted(waited)
 		l.logger.Info("Granted a node lease to the task next in line for it, under the lock of a run idle for five minutes",
 			"node_key", w.NodeKey, "task_id", w.TaskID, "run_id", runID, "waited", waited.String())
 	}
-	if !check.Stalled {
+	if !c.check.Stalled {
 		return nil
 	}
 	l.metrics.RunStalled()
+	if grantErr != nil {
+		l.logger.Error("Failed a stalled run whose waiting task could not be granted its node's lease, which a defect in state causes",
+			"run_id", runID, "schedule_name", c.r.ScheduleName(), "last_progress", c.r.LastHeartbeatAt(),
+			"idle_for_at_least", run.StallAfterFailedGrant.String(), "grant_error", grantErr)
+		return nil
+	}
 	l.logger.Error("Failed a stalled run: it had no attempt in flight and no progress for five minutes, which a defect in state causes",
-		"run_id", runID, "schedule_name", r.ScheduleName(), "last_progress", r.LastHeartbeatAt())
+		"run_id", runID, "schedule_name", c.r.ScheduleName(), "last_progress", c.r.LastHeartbeatAt())
 	return nil
+}
+
+// stallCheck is one committed check of a run: the run as the check left it,
+// what the check did, and the clock it read.
+type stallCheck struct {
+	r     *run.Run
+	check run.StallCheck
+	now   time.Time
+}
+
+// checkStall locks the run and checks it, with its grant step
+// (run.Run.FailStalled) or without it (run.Run.FailStalledWithoutGrants), in
+// a transaction of its own; a run the check granted a task or ended is saved
+// with its events.
+func (l *Loop) checkStall(ctx context.Context, runID uuid.UUID, grant bool) (stallCheck, error) {
+	var c stallCheck
+	err := l.inTx(ctx, func(u uow.UnitOfWork) error {
+		var err error
+		if c.r, err = u.Run().LoadRunForUpdate(ctx, runID); err != nil {
+			return fmt.Errorf("load run %s: %w", runID, err)
+		}
+		c.now = u.Clock().Now()
+		if grant {
+			c.check, err = c.r.FailStalled(ctx, u.TaskCollection(l.tenantID), u.TaskGraph(l.tenantID), l.tasks, c.now)
+		} else {
+			c.check, err = c.r.FailStalledWithoutGrants(ctx, u.TaskCollection(l.tenantID), c.now)
+		}
+		if err != nil {
+			return fmt.Errorf("check run %s for a stall: %w", runID, err)
+		}
+		if !c.check.Stalled && len(c.check.Granted) == 0 {
+			return nil
+		}
+		if err := u.Run().SaveRun(ctx, c.r); err != nil {
+			return fmt.Errorf("save run %s: %w", runID, err)
+		}
+		if err := u.Outbox().Append(ctx, c.check.Events, uuid.Nil); err != nil {
+			return fmt.Errorf("append the events of run %s: %w", runID, err)
+		}
+		return nil
+	})
+	return c, err
 }
 
 // inTx runs fn in a transaction of its own and commits it when fn succeeds.

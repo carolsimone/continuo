@@ -14,6 +14,12 @@ var (
 	// nothing.
 	ErrAlreadyCancelling = errors.New("run is already cancelling")
 
+	// ErrGrantFailed is returned, wrapping the cause, by Run.FailStalled when
+	// it could not grant a waiting task of the run its node's lease. The
+	// caller rolls the check back; FailStalledWithoutGrants ends a run whose
+	// grant keeps failing.
+	ErrGrantFailed = errors.New("a waiting task could not be granted its node's lease")
+
 	// ErrStopUnanswerable is returned by Run.Cancel when it made more tasks
 	// stopping than it asked attempts to stop: a stopping task with no open
 	// attempt would never be answered and its run would stay cancelling, so

@@ -2,6 +2,7 @@ package run_test
 
 import (
 	"context"
+	"errors"
 	"maps"
 	"slices"
 	"testing"
@@ -320,6 +321,54 @@ func TestFailStalled_AWaitWhoseNodeAnotherTaskTookFirstIsNotFailed(t *testing.T)
 	assert.Len(t, tc.added, added, "no attempt is dispatched")
 	assert.Empty(t, tc.skipped)
 	assert.Equal(t, run.SchedulerStatusRunning, r.Status())
+}
+
+// A grant that fails makes the stall check fail with ErrGrantFailed, wrapping
+// the cause, before it looks for work in flight: the caller rolls the check
+// back, and the run is neither failed nor its tasks skipped.
+func TestFailStalled_AFailedGrantIsErrGrantFailed(t *testing.T) {
+	r, tc, g := idleWaitingRun(t)
+	delete(tc.leases, fkey("ftable_a"))
+	cause := errors.New("connection reset")
+	tc.loadErr = cause
+
+	check, err := r.FailStalled(context.Background(), tc, g, taskDefaults, reportAt.Add(run.StallAfter))
+
+	require.ErrorIs(t, err, run.ErrGrantFailed)
+	require.ErrorIs(t, err, cause)
+	assert.Equal(t, run.StallCheck{}, check)
+	assert.Empty(t, tc.skipped)
+	assert.Equal(t, run.SchedulerStatusRunning, r.Status())
+}
+
+// Without its grant step the check ends a run only once it has made no
+// progress for run.StallAfterFailedGrant: then the run, with nothing in
+// flight, fails as stalled and its waiting task is skipped, though its node is
+// free, so the task leaves the node's queue. It reads no waits and takes no
+// lease.
+func TestFailStalledWithoutGrants_EndsARunIdleForTheBound(t *testing.T) {
+	r, tc, _ := idleWaitingRun(t)
+	a := taskOf(r, "ftable_a")
+	delete(tc.leases, fkey("ftable_a"))
+
+	check, err := r.FailStalledWithoutGrants(context.Background(), tc, reportAt.Add(run.StallAfterFailedGrant-time.Second))
+	require.NoError(t, err)
+	assert.Equal(t, run.StallCheck{}, check, "a run idle for less is left for the next check")
+	assert.Equal(t, run.SchedulerStatusRunning, r.Status())
+
+	check, err = r.FailStalledWithoutGrants(context.Background(), tc, reportAt.Add(run.StallAfterFailedGrant))
+
+	require.NoError(t, err)
+	assert.True(t, check.Stalled)
+	assert.Empty(t, check.Granted)
+	assert.Equal(t, run.TaskStatusSkipped, tc.statuses[a])
+	assert.Empty(t, tc.waits, "the skipped task waits no more")
+	assert.Empty(t, tc.grantableReads)
+	assert.Empty(t, tc.waiterTakes)
+	assert.Equal(t, run.SchedulerStatusFailed, r.Status())
+	require.NotNil(t, r.FailureReason())
+	assert.Equal(t, run.RunFailureStalled, *r.FailureReason())
+	assert.Equal(t, 2*run.StallAfter, run.StallAfterFailedGrant)
 }
 
 // A grant for a task the run does not hold is refused before a lease is

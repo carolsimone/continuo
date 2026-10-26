@@ -14,6 +14,15 @@ import (
 // an operator setting.
 const StallAfter = 5 * time.Minute
 
+// StallAfterFailedGrant is how long a run may go without progress while the
+// grant of a waiting task of it fails before state fails the run as stalled
+// without that grant (FailStalledWithoutGrants). A grant that fails on every
+// try, which only a defect in state causes, would otherwise keep the run
+// active and every task queued behind its waiting task waiting for ever; a
+// run idle for less is left for the next pass to grant again, so a grant that
+// failed on a transient error is retried.
+const StallAfterFailedGrant = 2 * StallAfter
+
 // TaskDefaults are the install's settings for the tasks state plans: the
 // retry budget stamped on each task when its run is created, and the timeout
 // of a task whose node declares none.

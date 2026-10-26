@@ -714,10 +714,15 @@ func TestStalledRuns_AWaitQueuedBehindAnOlderWaiterOfARunningRunIsNotStalled(t *
 			})
 			firstRun, firstTask := staleWaitOn(t, db, table, since)
 			secondRun, secondTask := staleWaitOn(t, db, table, since.Add(gap))
-			olderRun, youngerRun, youngerTask := firstRun, secondRun, secondTask
+			olderRun, olderTask, youngerRun, youngerTask := firstRun, firstTask, secondRun, secondTask
 			if gap == 0 && secondTask.String() < firstTask.String() {
-				olderRun, youngerRun, youngerTask = secondRun, firstRun, firstTask
+				olderRun, olderTask, youngerRun, youngerTask = secondRun, secondTask, firstRun, firstTask
 			}
+			head, err := postgres.NewLeaseRepository(db, nil, tenant).Grantable(ctx, 100)
+			require.NoError(t, err)
+			require.Len(t, head, 1)
+			require.Equal(t, olderTask, head[0].TaskID, "the lease waker grants the node to the waiter the in-flight check calls older")
+			require.Equal(t, olderRun, head[0].RunID)
 
 			listed, err := postgres.NewAttemptRepository(db, nil, tenant).StalledRuns(ctx, run.StallAfter, 500)
 			require.NoError(t, err)
@@ -780,6 +785,119 @@ func hydrated(t *testing.T, db *sqlx.DB, runID uuid.UUID) *run.Run {
 	r, err := newPlanningUoW(db).Run().GetRun(context.Background(), runID)
 	require.NoError(t, err)
 	return r
+}
+
+// grantFailingQueue is a node of its own tenant whose oldest waiter cannot be
+// granted the node: a defect stored an attempt 0 of the never-dispatched task,
+// so every dispatch of it collides with that row. A younger waiter of another
+// running run queues behind it.
+type grantFailingQueue struct {
+	tenant, table     string
+	headRun, headTask uuid.UUID
+	nextRun, nextTask uuid.UUID
+}
+
+// newGrantFailingQueue stores the queue, with the head's run idle for idle.
+func newGrantFailingQueue(t *testing.T, db *sqlx.DB, idle time.Duration) grantFailingQueue {
+	t.Helper()
+	q := grantFailingQueue{table: leaseTables("grant_fails")[0]}
+	q.tenant = storeEdges(t, db, "grant-fails-"+q.table, nil, q.table)
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(context.Background(), `DELETE FROM node_leases WHERE tenant_id = $1`, q.tenant)
+	})
+	since := time.Now().UTC().Add(-time.Hour)
+	q.headRun, q.headTask = staleWaitOn(t, db, q.table, since)
+	_, err := db.Exec(`INSERT INTO task_attempts (task_id, attempt, job_name, status) VALUES ($1, 0, $2, 'failed')`, q.headTask, q.table)
+	require.NoError(t, err)
+	_, err = db.Exec(`UPDATE scheduler_tracker SET last_heartbeat_at = now() - make_interval(secs => $2::float8) WHERE schedule_id = $1`,
+		q.headRun, idle.Seconds())
+	require.NoError(t, err)
+	q.nextRun, q.nextTask = staleWaitOn(t, db, q.table, since.Add(time.Minute))
+	return q
+}
+
+// runStatusOf reads the run's status and failure reason.
+func runStatusOf(t *testing.T, db *sqlx.DB, runID uuid.UUID) (string, *string) {
+	t.Helper()
+	var row struct {
+		Status string  `db:"status"`
+		Reason *string `db:"failure_reason"`
+	}
+	require.NoError(t, db.Get(&row, `SELECT status, failure_reason FROM scheduler_tracker WHERE schedule_id = $1`, runID))
+	return row.Status, row.Reason
+}
+
+// A defect makes the grant of a node's oldest waiter fail on every try. The
+// waker's pass fails on it and serves no one behind it, and under the run's
+// lock the stall check's grant fails too. Once the run has made no progress
+// for twice run.StallAfter the reconcile checks it again without the grant and
+// fails it as stalled, logging the grant's error: its waiting task is skipped
+// and leaves the node's queue, and the next waker pass grants the node to the
+// younger waiter.
+func TestAttemptReconcile_FailsAWaiterWhoseGrantKeepsFailingSoItsQueueMoves(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	q := newGrantFailingQueue(t, db, 2*run.StallAfter+time.Minute)
+	metrics := &leaseMetrics{}
+	waker := leasewaker.New(func() uow.UnitOfWork { return newPlanningUoW(db) }, q.tenant, testTaskDefaults, metrics, discardLogger())
+	var logs bytes.Buffer
+	loop := attemptreconcile.New(func() uow.UnitOfWork { return newPlanningUoW(db) }, q.tenant, testTaskDefaults, metrics,
+		waker.Pass, slog.New(slog.NewTextHandler(&logs, nil)))
+
+	require.NoError(t, loop.Pass(ctx))
+
+	status, reason := runStatusOf(t, db, q.headRun)
+	assert.Equal(t, string(run.SchedulerStatusFailed), status)
+	require.NotNil(t, reason)
+	assert.Equal(t, string(run.RunFailureStalled), *reason)
+	assert.Equal(t, leaseWait{Status: run.TaskStatusSkipped}, waitOf(t, db, q.headTask), "the head leaves the node's queue")
+	_, held := leaseOn(t, db, q.tenant, q.table)
+	assert.False(t, held, "no grant committed")
+	requireWaiting(t, db, q.nextTask, "the younger waiter waits for the next grant")
+	var failedLines []string
+	for _, line := range strings.Split(logs.String(), "\n") {
+		if strings.Contains(line, "level=ERROR") && strings.Contains(line, q.headRun.String()) && strings.Contains(line, "grant_error=") {
+			failedLines = append(failedLines, line)
+		}
+	}
+	assert.Len(t, failedLines, 1, "the failure is logged once, with the grant's error")
+
+	require.NoError(t, waker.Pass(ctx))
+
+	assert.Equal(t, leaseWait{Status: run.TaskStatusDispatched}, waitOf(t, db, q.nextTask), "the queue moved to the younger waiter")
+	lease, held := leaseOn(t, db, q.tenant, q.table)
+	require.True(t, held)
+	assert.Equal(t, heldLease{TaskID: q.nextTask, RunID: q.nextRun}, lease)
+	status, _ = runStatusOf(t, db, q.nextRun)
+	assert.Equal(t, string(run.SchedulerStatusRunning), status)
+}
+
+// A run idle for more than run.StallAfter but less than twice that whose
+// waiting task's grant fails is left as it is: the stall listing names it and
+// the check under its lock tries the grant, but a failed grant ends a run only
+// once it has been idle for twice run.StallAfter, so a grant that failed on a
+// transient error is tried again by the next pass. The pass returns the
+// grant's error.
+func TestAttemptReconcile_AFailedGrantLeavesARunIdleForLessThanTheBound(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	q := newGrantFailingQueue(t, db, run.StallAfter+time.Minute)
+	loop := attemptreconcile.New(func() uow.UnitOfWork { return newPlanningUoW(db) }, q.tenant, testTaskDefaults, &leaseMetrics{},
+		nil, discardLogger())
+	listed, err := postgres.NewAttemptRepository(db, nil, q.tenant).StalledRuns(ctx, run.StallAfter, 500)
+	require.NoError(t, err)
+	require.Contains(t, listed, q.headRun)
+
+	err = loop.Pass(ctx)
+
+	require.ErrorIs(t, err, run.ErrGrantFailed)
+	status, reason := runStatusOf(t, db, q.headRun)
+	assert.Equal(t, string(run.SchedulerStatusRunning), status)
+	assert.Nil(t, reason)
+	requireWaiting(t, db, q.headTask, "the head keeps waiting")
+	requireWaiting(t, db, q.nextTask, "and so does the waiter behind it")
+	_, held := leaseOn(t, db, q.tenant, q.table)
+	assert.False(t, held)
 }
 
 // A pass deletes the lease of a task that ended without releasing it, counts

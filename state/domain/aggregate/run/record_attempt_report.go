@@ -252,31 +252,60 @@ type StallCheck struct {
 // node's lease and dispatched (GrantLease), as the lease waker would grant it,
 // so a node released after the waker's last pass, or one a waker pass left for
 // its next, is served under r's lock instead of reading as a stall. A run
-// granted any task is not stalled.
+// granted any task is not stalled. A grant that fails returns its error
+// wrapped in ErrGrantFailed, and the caller rolls the check back.
 //
 // Work in flight (HasInFlight) is a task dispatched, queued, running or
 // stopping, a task waiting for a node lease whose holder is one of those, and
 // a task waiting behind an older waiter of a running run for its node, which
 // the node's next grant serves first. A lease wait therefore ends its run only
-// when no grant can serve it: its node is held by a task that has ended
-// without releasing it, or the run's release holds no such node for the
-// tenant, which only a defect in state causes.
+// when no grant serves it, which only a defect in state causes: its node is
+// held by a task that has ended without releasing it, the run's release holds
+// no such node for the tenant, or its grant keeps failing
+// (FailStalledWithoutGrants).
 //
 // A cancelling run ends cancelled, with no failure reason: its cancel asked
 // for nothing more. Any other run fails as stalled, its pending tasks skipped
 // and counted terminal. A run that has ended, has work in flight or moved
 // within StallAfter is left as it is.
 func (r *Run) FailStalled(ctx context.Context, tasks TaskCollection, graph TaskGraph, d TaskDefaults, now time.Time) (StallCheck, error) {
-	if !r.IsActive() || r.lastHeartbeatAt == nil || now.Sub(*r.lastHeartbeatAt) < StallAfter {
+	if !r.idleFor(StallAfter, now) {
 		return StallCheck{}, nil
 	}
 	events, granted, err := r.grantWaitingTasks(ctx, tasks, graph, d, now)
 	if err != nil {
-		return StallCheck{}, err
+		return StallCheck{}, fmt.Errorf("%w: %w", ErrGrantFailed, err)
 	}
 	if len(granted) > 0 {
 		return StallCheck{Events: events, Granted: granted}, nil
 	}
+	return r.endWhenNothingInFlight(ctx, tasks, now)
+}
+
+// FailStalledWithoutGrants is FailStalled without its grant step, for a run
+// whose grant failed (ErrGrantFailed): it ends r, as FailStalled ends a run
+// with nothing to grant, once r is active, has made no progress for
+// StallAfterFailedGrant and has no work in flight. Its pending tasks are
+// skipped, so a waiting task whose grant keeps failing leaves its node's queue
+// to the next waiter. A run that moved within StallAfterFailedGrant, or has
+// work in flight, is left as it is, for the next check to grant again.
+func (r *Run) FailStalledWithoutGrants(ctx context.Context, tasks TaskCollection, now time.Time) (StallCheck, error) {
+	if !r.idleFor(StallAfterFailedGrant, now) {
+		return StallCheck{}, nil
+	}
+	return r.endWhenNothingInFlight(ctx, tasks, now)
+}
+
+// idleFor reports whether r is active and has made no progress for idle at
+// now.
+func (r *Run) idleFor(idle time.Duration, now time.Time) bool {
+	return r.IsActive() && r.lastHeartbeatAt != nil && now.Sub(*r.lastHeartbeatAt) >= idle
+}
+
+// endWhenNothingInFlight ends r when it has no work in flight (HasInFlight): a
+// cancelling run cancelled, any other run failed as stalled with its pending
+// tasks skipped and counted terminal.
+func (r *Run) endWhenNothingInFlight(ctx context.Context, tasks TaskCollection, now time.Time) (StallCheck, error) {
 	inFlight, err := tasks.HasInFlight(ctx, r.scheduleID)
 	if err != nil {
 		return StallCheck{}, fmt.Errorf("has in flight: %w", err)

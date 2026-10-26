@@ -114,17 +114,26 @@ type runs struct {
 func (s *runs) LoadRunForUpdate(context.Context, uuid.UUID) (*run.Run, error) { return s.r, nil }
 func (s *runs) SaveRun(context.Context, *run.Run) error                       { s.saved++; return nil }
 
-// idleTasks is a run with no task in flight and one pending task.
+// idleTasks is a run with no task in flight and one pending task. The first
+// grantFailures reads of the waits next in line fail; grantReads counts the
+// reads.
 type idleTasks struct {
 	run.TaskCollection
-	inFlight bool
+	inFlight      bool
+	grantFailures int
+	grantReads    int
 }
 
 func (t *idleTasks) HasInFlight(context.Context, uuid.UUID) (bool, error) { return t.inFlight, nil }
 func (t *idleTasks) SkipPending(context.Context, uuid.UUID) (int, error)  { return 1, nil }
 
-// GrantableWaits finds no task of the run next in line for a free node.
+// GrantableWaits fails while grantFailures allows, then finds no task of the
+// run next in line for a free node.
 func (t *idleTasks) GrantableWaits(context.Context, uuid.UUID) ([]run.LeaseWait, error) {
+	t.grantReads++
+	if t.grantReads <= t.grantFailures {
+		return nil, errors.New("grant failed: duplicate attempt")
+	}
 	return nil, nil
 }
 
@@ -348,11 +357,104 @@ func TestPass_LeavesARunThatIsNoLongerStalled(t *testing.T) {
 }
 
 // staleRun is a running run whose progress clock is older than run.StallAfter.
-func staleRun() *run.Run {
-	stale := now.Add(-run.StallAfter - time.Minute)
+func staleRun() *run.Run { return idleRun(run.StallAfter + time.Minute) }
+
+// idleRun is a running run that has made no progress for idle.
+func idleRun(idle time.Duration) *run.Run {
+	stale := now.Add(-idle)
 	total := int32(2)
 	return run.HydrateRun(uuid.New(), "daily", run.SchedulerStatusRunning, run.InitStatusCompleted, run.KindCron, nil, "system",
 		model.OperationRun, stale, &stale, nil, &stale, nil, nil, nil, &total, 1, nil)
+}
+
+// errorLines returns the lines of logs logged at error level.
+func errorLines(logs *bytes.Buffer) []string {
+	var out []string
+	for _, line := range strings.Split(logs.String(), "\n") {
+		if strings.Contains(line, "level=ERROR") {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+// A stall check whose grant fails is rolled back and tried once more at once:
+// a grant that fails only once is not taken for a defect, and the run, with
+// nothing to grant and nothing in flight, fails as stalled on the retry.
+func TestPass_RetriesAFailedGrantOnceAtOnce(t *testing.T) {
+	r := staleRun()
+	tasks := &idleTasks{grantFailures: 1}
+	f := newFake(&fakeAttempts{stalled: []uuid.UUID{r.ScheduleID()}}, &recordingOutbox{})
+	f.SetRunRepo(&runs{r: r})
+	f.SetTaskCollection(tasks)
+	metrics := &countingMetrics{}
+	var logs bytes.Buffer
+	loop := attemptreconcile.New(func() uow.UnitOfWork { return f }, "default", defaults, metrics, nil,
+		slog.New(slog.NewTextHandler(&logs, nil)))
+
+	require.NoError(t, loop.Pass(context.Background()))
+
+	assert.Equal(t, 2, tasks.grantReads, "the grant is tried twice")
+	assert.Equal(t, run.SchedulerStatusFailed, r.Status())
+	assert.Equal(t, 1, metrics.stalled)
+	lines := errorLines(&logs)
+	require.Len(t, lines, 1)
+	assert.NotContains(t, lines[0], "grant_error", "the retry's check failed the run with nothing to grant")
+}
+
+// A grant that fails on every try ends its run once the run has made no
+// progress for run.StallAfterFailedGrant: after the grant fails twice the run
+// is checked without it and failed as stalled, counted, and logged at error
+// level with the grant's error. The pass itself succeeds.
+func TestPass_FailsARunWhoseGrantKeepsFailingOnceItIsIdleForTheBound(t *testing.T) {
+	r := idleRun(run.StallAfterFailedGrant + time.Minute)
+	runRepo := &runs{r: r}
+	tasks := &idleTasks{grantFailures: 100}
+	outbox := &recordingOutbox{}
+	f := newFake(&fakeAttempts{stalled: []uuid.UUID{r.ScheduleID()}}, outbox)
+	f.SetRunRepo(runRepo)
+	f.SetTaskCollection(tasks)
+	metrics := &countingMetrics{}
+	var logs bytes.Buffer
+	loop := attemptreconcile.New(func() uow.UnitOfWork { return f }, "default", defaults, metrics, nil,
+		slog.New(slog.NewTextHandler(&logs, nil)))
+
+	require.NoError(t, loop.Pass(context.Background()))
+
+	assert.Equal(t, 2, tasks.grantReads, "the check without the grant reads no waits")
+	assert.Equal(t, run.SchedulerStatusFailed, r.Status())
+	require.NotNil(t, r.FailureReason())
+	assert.Equal(t, run.RunFailureStalled, *r.FailureReason())
+	assert.Equal(t, 1, runRepo.saved)
+	assert.Equal(t, 1, metrics.stalled)
+	require.Len(t, outbox.events, 1)
+	assert.IsType(t, run.RunFinalized{}, outbox.events[0])
+	lines := errorLines(&logs)
+	require.Len(t, lines, 1)
+	assert.Contains(t, lines[0], r.ScheduleID().String())
+	assert.Contains(t, lines[0], "grant_error=")
+	assert.Contains(t, lines[0], "duplicate attempt")
+}
+
+// A run idle for less than run.StallAfterFailedGrant whose grant fails is left
+// running for the next pass, which tries the grant again; the pass returns the
+// grant's error.
+func TestPass_LeavesARunWhoseGrantFailsWhileItIsIdleForLessThanTheBound(t *testing.T) {
+	r := idleRun(run.StallAfterFailedGrant - time.Minute)
+	runRepo := &runs{r: r}
+	tasks := &idleTasks{grantFailures: 100}
+	f := newFake(&fakeAttempts{stalled: []uuid.UUID{r.ScheduleID()}}, &recordingOutbox{})
+	f.SetRunRepo(runRepo)
+	f.SetTaskCollection(tasks)
+	metrics := &countingMetrics{}
+
+	err := newLoop(f, metrics).Pass(context.Background())
+
+	require.ErrorIs(t, err, run.ErrGrantFailed)
+	assert.Equal(t, run.SchedulerStatusRunning, r.Status())
+	assert.Zero(t, runRepo.saved)
+	assert.Zero(t, metrics.stalled)
+	assert.Equal(t, 2, tasks.grantReads)
 }
 
 // The pass runs its beforeStall hook once, before it lists the stalled runs.
