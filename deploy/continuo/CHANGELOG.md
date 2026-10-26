@@ -12,6 +12,8 @@ shipped in those.
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-26
+
 agent-chat and agent-remediation reach the outside world only through egress-proxy, on by default, and with `networkPolicy.enabled` a NetworkPolicy drops every connection that skips it. An install whose agents reach a host that is not on the proxy's allowlist, or a Postgres or Redis at a host name that resolves to a public address, needs `egress.allowedDomains`, `egress.privateDomains` or `egress.directDestinations` (or `egress.enabled=false`) before it upgrades; apart from the render failures listed under Breaking, an unmodified values file keeps working. **MINOR.**
 
 ### Breaking
