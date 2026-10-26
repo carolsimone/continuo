@@ -12,6 +12,11 @@ shipped in those.
 
 ## [Unreleased]
 
+### Added
+- `execution.kubeClientQPS` (default 50, 1–1000; `K8S_CLIENT_QPS` on the shared ConfigMap) and `execution.kubeClientBurst` (default 100, 1–2000, at least `kubeClientQPS`; `K8S_CLIENT_BURST`): the request rate limit of execution-controller's Kubernetes client, which every Job it creates, watches and reads goes through. The client library's own limit of 5 requests per second (burst 10) held back the reads that record how an attempt ended, so a wide level waited about 30 seconds for each result and sent fewer `running` reports; the new defaults lift it. Each request is load on the cluster's API server, so size both to what it can take. A value outside its range, or a burst below the QPS, fails the render, and execution-controller refuses to start on one. An existing values file keeps working and gets the defaults. MINOR.
+
+## [0.15.0] - 2026-10-26
+
 agent-chat and agent-remediation reach the outside world only through egress-proxy, on by default, and with `networkPolicy.enabled` a NetworkPolicy drops every connection that skips it. An install whose agents reach a host that is not on the proxy's allowlist, or a Postgres or Redis at a host name that resolves to a public address, needs `egress.allowedDomains`, `egress.privateDomains` or `egress.directDestinations` (or `egress.enabled=false`) before it upgrades; apart from the render failures listed under Breaking, an unmodified values file keeps working. **MINOR.**
 
 ### Breaking
