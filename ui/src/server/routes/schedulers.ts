@@ -117,6 +117,9 @@ export function createSchedulersRouter(client: GrpcClient) {
           attempt: t.attempt,
           max_retries: t.max_retries,
           created_at: toISO(t.created_at),
+          wait_reason: t.wait_reason || null,
+          waiting_on_run_id: t.waiting_on_run_id || null,
+          waiting_since: toISO(t.waiting_since),
         }));
         res.json({ total_count: Number(response.total_count ?? 0), tasks });
       }

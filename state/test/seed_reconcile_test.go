@@ -51,7 +51,7 @@ type reconcileHarness struct {
 func newReconcileHarness(db *sqlx.DB) *reconcileHarness {
 	logger := slog.New(slog.NewTextHandler(nopWriter{}, nil))
 	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
-	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
+	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, logger)
 	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
 	factory := func() uow.UnitOfWork {
 		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, catalogRepo, svcports.SystemClock{}, logger)
@@ -275,6 +275,7 @@ func TestSeedReconcile(t *testing.T) {
 		// Once that build ends, the next pass loads the live content.
 		_, err := db.Exec(`UPDATE scheduler_tracker SET status = 'succeeded', completed_at = now() WHERE schedule_id = $1`, run1)
 		require.NoError(t, err)
+		releaseLeasesOf(t, db, run1)
 		require.NoError(t, h.reconciler.RunOnce(ctx))
 		require.Len(t, h.promoteSeedRuns(t, rel3), 1, "orders is loaded at its live content once the earlier build is over")
 		assert.Equal(t, []string{"orders"}, h.promotedSeedNodes(t, h.promoteSeedRuns(t, rel3)[0]))
@@ -375,6 +376,7 @@ func TestSeedReconcile_ReplayOfSeveralRetainedPromotions(t *testing.T) {
 	// version it loaded, as a task's success does.
 	_, err := db.Exec(`UPDATE scheduler_tracker SET status = 'succeeded', completed_at = now() WHERE schedule_id = $1`, runA)
 	require.NoError(t, err)
+	releaseLeasesOf(t, db, runA)
 	require.NoError(t, postgres.NewMaterializationRepository(db, nil).RecordBuilt(ctx, h.tenant, seeds.Built{
 		Key: "raw.orders", ContentHash: "sha256:orders-a", ImageTag: "service-1:v1", ReleaseID: relA,
 		RunID: runA, At: time.Now(), Source: seeds.SourceBuild,

@@ -17,11 +17,15 @@ import (
 type TaskCollectionAdapter struct {
 	repo TaskTrackerRepository
 	tx   *sqlx.Tx
+	// tenantID is the tenant whose runs the tasks belong to: the node write
+	// leases the adapter takes are this tenant's.
+	tenantID string
 }
 
-// NewTaskCollectionAdapter constructs the adapter bound to the given tx.
-func NewTaskCollectionAdapter(repo TaskTrackerRepository, tx *sqlx.Tx) *TaskCollectionAdapter {
-	return &TaskCollectionAdapter{repo: repo, tx: tx}
+// NewTaskCollectionAdapter constructs the adapter bound to the given tx, for
+// the runs of tenantID.
+func NewTaskCollectionAdapter(repo TaskTrackerRepository, tx *sqlx.Tx, tenantID string) *TaskCollectionAdapter {
+	return &TaskCollectionAdapter{repo: repo, tx: tx, tenantID: tenantID}
 }
 
 func (a *TaskCollectionAdapter) LoadAttemptState(ctx context.Context, taskID uuid.UUID) (run.TaskAttemptState, bool, error) {
@@ -44,6 +48,7 @@ func (a *TaskCollectionAdapter) LoadAttemptState(ctx context.Context, taskID uui
 		SchemaName:   row.SchemaName,
 		TableName:    row.TableName,
 		DispatchedAt: row.DispatchedAt,
+		WaitReason:   run.WaitReason(row.WaitReason),
 	}, true, nil
 }
 
@@ -193,6 +198,31 @@ func (a *TaskCollectionAdapter) SkipPending(ctx context.Context, runID uuid.UUID
 
 func (a *TaskCollectionAdapter) BeginStop(ctx context.Context, runID uuid.UUID, cancelledBy string, cancelledAt time.Time) (run.StopCounts, error) {
 	return a.repo.BeginStopTx(ctx, a.tx, runID, cancelledBy, cancelledAt)
+}
+
+// TakeLeases, WaitForLeases, ReleaseLease, TakeLeaseForWaiter and
+// GrantableWaits run through the unit of work's transaction, so a lease is
+// taken or released, and a wait begins, in the commit that dispatches, makes
+// wait or ends the task, and the waits a grant serves are read under the lock
+// of the run it grants.
+func (a *TaskCollectionAdapter) TakeLeases(ctx context.Context, claims []run.LeaseClaim) ([]uuid.UUID, error) {
+	return takeLeases(ctx, a.tx, a.tenantID, claims)
+}
+
+func (a *TaskCollectionAdapter) WaitForLeases(ctx context.Context, taskIDs []uuid.UUID) error {
+	return waitForLeases(ctx, a.tx, taskIDs)
+}
+
+func (a *TaskCollectionAdapter) ReleaseLease(ctx context.Context, taskID uuid.UUID) error {
+	return releaseLeases(ctx, a.tx, []uuid.UUID{taskID})
+}
+
+func (a *TaskCollectionAdapter) TakeLeaseForWaiter(ctx context.Context, claim run.LeaseClaim) (bool, error) {
+	return takeLeaseForWaiter(ctx, a.tx, a.tenantID, claim)
+}
+
+func (a *TaskCollectionAdapter) GrantableWaits(ctx context.Context, runID uuid.UUID) ([]run.LeaseWait, error) {
+	return grantableWaitsOf(ctx, a.tx, a.tenantID, runID)
 }
 
 // Compile-time interface assertion.

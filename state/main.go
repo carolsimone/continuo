@@ -35,6 +35,7 @@ import (
 	"github.com/carolsimone/continuo/state/internal/scheduler"
 	"github.com/carolsimone/continuo/state/service/attemptreconcile"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
+	"github.com/carolsimone/continuo/state/service/leasewaker"
 	ports "github.com/carolsimone/continuo/state/service/ports"
 	"github.com/carolsimone/continuo/state/service/runreads"
 	"github.com/carolsimone/continuo/state/service/runstart"
@@ -60,6 +61,10 @@ const seedReconcileInterval = 60 * time.Second
 
 // attemptReconcileInterval is how often the attempt reconcile passes.
 const attemptReconcileInterval = 60 * time.Second
+
+// leaseWakerInterval is how often the lease waker passes when no release of a
+// node lease wakes it sooner.
+const leaseWakerInterval = 60 * time.Second
 
 // dbPool bounds the Postgres pool when DB_MAX_OPEN_CONNS / DB_MAX_IDLE_CONNS
 // are unset: two connections per stream consumer (a handler's transaction and
@@ -181,7 +186,7 @@ func main() {
 	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
 	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
 	logger.Info("Schedule catalog repository initialized")
-	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
+	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, logger)
 	taskAttemptReadRepo := postgres.NewTaskAttemptReadRepository(db)
 
 	// Initialize Redis client
@@ -378,12 +383,38 @@ func main() {
 	// goroutine is tracked, so shutdown waits for a pass in progress.
 	lifecycleManager.Go(func() { seedReconciler.Loop(ctx, seedReconcileInterval) })
 
+	// The lease waker grants each node whose write lease is free to the task
+	// that has waited longest for it, and deletes the leases of tasks that
+	// ended without releasing them.
+	leaseWaker := leasewaker.New(uowFactory, pkgevents.DefaultTenantID, taskDefaults, runMetrics, logger)
+
 	// The attempt reconcile asks execution-controller about every attempt
 	// nothing was heard of within its window and fails every run left with
-	// nothing in flight as stalled. Its goroutine is tracked, so shutdown
-	// waits for a pass in progress.
-	attemptReconciler := attemptreconcile.New(uowFactory, pkgevents.DefaultTenantID, taskDefaults, runMetrics, logger)
+	// nothing in flight as stalled. Under the lock of a run it would fail, it
+	// first grants each free node the run's waiting task is next in line for,
+	// so a lease wait a grant can serve is never failed; the lease waker pass
+	// it runs before each stall scan grants most freed nodes before the scan.
+	// Its goroutine is tracked, so shutdown waits for a pass in progress.
+	attemptReconciler := attemptreconcile.New(uowFactory, pkgevents.DefaultTenantID, taskDefaults, runMetrics, leaseWaker.Pass, logger)
 	lifecycleManager.Go(func() { attemptReconciler.Run(ctx, attemptReconcileInterval) })
+
+	// The lease waker passes at startup, on every notification node_leases'
+	// trigger sends when a committed transaction released a lease, and every
+	// leaseWakerInterval. Its goroutine is tracked, so shutdown waits for a
+	// pass in progress.
+	leaseListener, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN(), postgres.NodeLeasesChannel, logger)
+	if errors.Is(err, context.Canceled) {
+		logger.Info("Shutdown requested while waiting for the node lease listener")
+		os.Exit(0)
+	}
+	if err != nil {
+		logger.Error("Failed to listen for node lease releases", "error", err)
+		os.Exit(1)
+	}
+	// Closing the listener can wait on a connection attempt in progress, so
+	// the handler stops waiting at the shutdown deadline.
+	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error { return leaseListener.CloseContext(ctx) })
+	lifecycleManager.Go(func() { leaseWaker.Run(ctx, leaseListener.Wake(), leaseWakerInterval) })
 
 	// The cron loop and the gRPC entry points plan their runs for the default
 	// tenant; the seed reconcile builds its own planner for each pass.
@@ -433,7 +464,7 @@ func main() {
 	previewRebaseHandler := handlers.NewPreviewRebaseHandler(runreads.NewRebasePreviewer(planner, uowFactory, runReadRepo), logger)
 	singleNodeRunUC := svchandlers.NewTriggerSingleNodeRunHandler(planner, logger)
 	singleNodeRunHandler := handlers.NewSingleNodeRunHandler(singleNodeRunUC, uowFactory, logger)
-	nodeRunRepo := postgres.NewNodeRunRepository(db, logger)
+	nodeRunRepo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, logger)
 	nodeRunHandler := handlers.NewNodeRunHandler(nodeRunRepo, taskDefaults.Timeout, logger)
 	runReadHandler := handlers.NewRunReadHandler(runreads.New(runReadRepo), logger)
 

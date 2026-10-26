@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/projection"
@@ -25,8 +26,8 @@ func TestNodeRunRepository_List(t *testing.T) {
 	ctx := context.Background()
 
 	schedRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
-	nodeRunRepo := postgres.NewNodeRunRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, discardLogger())
+	nodeRunRepo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 
 	svc := "svc-nr-" + uuid.New().String()[:8]
 	sch := "sch-" + uuid.New().String()[:8]
@@ -160,8 +161,8 @@ func TestNodeRunRepository_List_TaskWithoutExecution(t *testing.T) {
 	ctx := context.Background()
 
 	schedRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
-	nodeRunRepo := postgres.NewNodeRunRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, discardLogger())
+	nodeRunRepo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 
 	svc := "svc-noe-" + uuid.New().String()[:8]
 	sch := "sch-" + uuid.New().String()[:8]
@@ -211,7 +212,7 @@ func TestNodeRunRepository_List_NoMatch(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 
-	nodeRunRepo := postgres.NewNodeRunRepository(db, discardLogger())
+	nodeRunRepo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 
 	rows, err := nodeRunRepo.List(ctx, "nonexistent-svc", "nonexistent-sch", "nonexistent-tbl", "run", 50)
 	require.NoError(t, err)
@@ -263,7 +264,7 @@ func nodeRunTask(t *testing.T, db *sqlx.DB, svc, sch, tbl string, status run.Tas
 		CreatedAt: at, InitializationStatus: "completed",
 	}))
 	t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", sid) })
-	require.NoError(t, postgres.NewTaskTrackerRepository(db, discardLogger()).Create(ctx, &postgres.TaskTracker{
+	require.NoError(t, postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, discardLogger()).Create(ctx, &postgres.TaskTracker{
 		TaskID: tid, ScheduleID: sid, ServiceName: svc, SchemaName: sch, TableName: tbl,
 		JobName: "j", Status: status, Attempt: attempt, MaxRetries: 3, ImageTag: "v1", CreatedAt: at,
 	}))
@@ -294,7 +295,7 @@ func TestNodeRunRepository_List_CarriesTheLatestAttemptsFacts(t *testing.T) {
 		StartedAt: ptrTime(now.Add(-4 * time.Minute)), FinishedAt: ptrTime(now.Add(-3 * time.Minute)),
 		ErrorMessage: &boom, FailureClass: &class, FailureReason: &reason})
 
-	repo := postgres.NewNodeRunRepository(db, discardLogger())
+	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 
 	gotX, err := repo.List(context.Background(), svc, sch, "x", "run", 50)
 	require.NoError(t, err)
@@ -336,7 +337,7 @@ func TestNodeRunRepository_ListNodes_DurationsCountOnlySucceededAttempts(t *test
 	}
 	listOne := func(t *testing.T, db *sqlx.DB, svc string) *projection.NodeSummary {
 		t.Helper()
-		nodes, _, err := postgres.NewNodeRunRepository(db, discardLogger()).ListNodes(context.Background(), "", svc, "", 50, 0)
+		nodes, _, err := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger()).ListNodes(context.Background(), "", svc, "", 50, 0)
 		require.NoError(t, err)
 		require.Len(t, nodes, 1)
 		return nodes[0]
@@ -392,8 +393,8 @@ func TestNodeRunRepository_ListNodes_AggregatesAndFilters(t *testing.T) {
 	ctx := context.Background()
 
 	schedRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
-	repo := postgres.NewNodeRunRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, discardLogger())
+	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 
 	svc := "svc-ln-" + uuid.New().String()[:8]
 	sch := "an"
@@ -463,8 +464,8 @@ func TestNodeRunRepository_ListNodes_PerNodeStatusIsolation(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	schedRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
-	repo := postgres.NewNodeRunRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, discardLogger())
+	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 
 	svc := "svc-iso-" + uuid.New().String()[:8]
 	sid := uuid.New()
@@ -492,8 +493,8 @@ func TestNodeRunRepository_ListNodes_Paging(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	schedRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
-	repo := postgres.NewNodeRunRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, discardLogger())
+	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 
 	svc := "svc-pg-" + uuid.New().String()[:8]
 	for i := 0; i < 3; i++ {
@@ -534,8 +535,8 @@ func TestNodeRunRepository_ListNodes_StablePagingOnTiedLastRun(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	schedRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
-	repo := postgres.NewNodeRunRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, discardLogger())
+	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 
 	svc := "svc-tie-" + uuid.New().String()[:8]
 	sid := uuid.New()
@@ -573,8 +574,8 @@ func TestNodeRunRepository_ListNodes_SkippedCountsTerminal(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	schedRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
-	repo := postgres.NewNodeRunRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, discardLogger())
+	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 	svc := "svc-skip-" + uuid.New().String()[:8]
 	mk := func(taskStatus run.TaskStatus, ageMin int) {
 		sid := uuid.New()
@@ -605,8 +606,8 @@ func TestNodeRunRepository_ListNodes_ExactTableMatch(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	schedRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
-	repo := postgres.NewNodeRunRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, discardLogger())
+	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 	svc := "svc-exact-" + uuid.New().String()[:8]
 	mk := func(table string) {
 		sid := uuid.New()
@@ -645,8 +646,8 @@ func TestNodeRunRepository_ListNodeNames(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	schedRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
-	repo := postgres.NewNodeRunRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, discardLogger())
+	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 
 	svcA := "svc-names-a-" + uuid.New().String()[:8]
 	svcB := "svc-names-b-" + uuid.New().String()[:8]
@@ -689,8 +690,8 @@ func TestNodeRunRepository_ListNodeServices(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	schedRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
-	repo := postgres.NewNodeRunRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, discardLogger())
+	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 
 	svcA := "svc-list-a-" + uuid.New().String()[:8]
 	svcB := "svc-list-b-" + uuid.New().String()[:8]
@@ -737,8 +738,8 @@ func TestNodeRunRepository_ListNodeServices_ByteOrderRegardlessOfLocale(t *testi
 	db := newTestDB(t)
 	ctx := context.Background()
 	schedRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
-	repo := postgres.NewNodeRunRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, discardLogger())
+	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 
 	suffix := uuid.New().String()[:8]
 	hyphenated := "svc-z" + suffix
@@ -776,8 +777,8 @@ func TestNodeRunRepository_ListNodes_EmptyPageKeepsTotal(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	schedRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
-	repo := postgres.NewNodeRunRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, discardLogger())
+	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 	svc := "svc-emp-" + uuid.New().String()[:8]
 	for i := 0; i < 3; i++ {
 		sid := uuid.New()
@@ -850,7 +851,7 @@ func TestNodeRunRepository_ContentHashComesFromTheRunsRelease(t *testing.T) {
 	readTask(t, db, stamped, table, "succeeded")
 	readTask(t, db, legacy, table, "succeeded")
 
-	rows, err := postgres.NewNodeRunRepository(db, discardLogger()).List(ctx, "svc", "raw", table, "run", 50)
+	rows, err := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger()).List(ctx, "svc", "raw", table, "run", 50)
 	require.NoError(t, err)
 	hashes := map[uuid.UUID]string{}
 	for _, r := range rows {
@@ -923,7 +924,7 @@ func timeoutOf(rows []*projection.NodeSummary) map[string]*int {
 func TestNodeRunRepository_ListNodes_CarriesTheLiveReleasesTimeout(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
-	repo := postgres.NewNodeRunRepository(db, discardLogger())
+	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 
 	svc := "svc-to-" + uuid.NewString()[:8]
 	sch := "an"
@@ -951,7 +952,7 @@ func TestNodeRunRepository_ListNodes_CarriesTheLiveReleasesTimeout(t *testing.T)
 func TestNodeRunRepository_ListNodes_ANodeOutsideTheLiveReleaseHasNoTimeout(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
-	repo := postgres.NewNodeRunRepository(db, discardLogger())
+	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 
 	svc := "svc-to-" + uuid.NewString()[:8]
 	sch := "an"
@@ -978,7 +979,7 @@ func TestNodeRunRepository_ListNodes_ANodeOutsideTheLiveReleaseHasNoTimeout(t *t
 func TestNodeRunRepository_ListNodes_NodesSharingATableStayOneRow(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
-	repo := postgres.NewNodeRunRepository(db, discardLogger())
+	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 
 	svc := "svc-to-" + uuid.NewString()[:8]
 	sch, tbl := "an", "tmo_shared"
@@ -999,4 +1000,46 @@ func TestNodeRunRepository_ListNodes_NodesSharingATableStayOneRow(t *testing.T) 
 	require.Len(t, rows, 1)
 	require.NotNil(t, rows[0].TimeoutSeconds)
 	assert.Equal(t, 1200, *rows[0].TimeoutSeconds)
+}
+
+// A node's history shows, on a run whose task waits for the node's lease, the
+// reason, when it began waiting and the run whose task holds the node in the
+// tenant the repository reads; the holding run's own row waits on no run. A
+// lease on the same node key in another tenant is not read.
+func TestNodeRunRepository_List_ShowsALeaseWaitAndItsHolder(t *testing.T) {
+	db := newTestDB(t)
+	tenant, otherTenant := leaseTenant(t, db), leaseTenant(t, db)
+	tbl := "w" + uuid.NewString()[:8]
+	holderRun := readRun(t, db, "cron-"+uuid.NewString()[:8], nil, nil, "running", false)
+	holder := readTask(t, db, holderRun, tbl, "running")
+	require.NoError(t, insertLease(db, tenant, "raw."+tbl, holder, holderRun))
+	waitingRun := readRun(t, db, "single-"+uuid.NewString()[:8], nil, nil, "running", false)
+	waiter := readTask(t, db, waitingRun, tbl, "pending")
+	since := time.Date(2026, 10, 24, 10, 5, 0, 0, time.UTC)
+	waitForLease(t, db, waiter, since)
+
+	rows, err := postgres.NewNodeRunRepository(db, tenant, discardLogger()).List(context.Background(), "svc", "raw", tbl, "run", 50)
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	other, err := postgres.NewNodeRunRepository(db, otherTenant, discardLogger()).List(context.Background(), "svc", "raw", tbl, "run", 50)
+	require.NoError(t, err)
+	for _, r := range other {
+		assert.Nil(t, r.WaitingOnRunID, "another tenant's repository reads none of this tenant's leases")
+	}
+	byTask := map[uuid.UUID]*projection.NodeRun{}
+	for _, r := range rows {
+		byTask[r.TaskID] = r
+	}
+
+	waiting := byTask[waiter]
+	assert.Equal(t, run.WaitReasonNodeLease, waiting.WaitReason)
+	require.NotNil(t, waiting.WaitingOnRunID)
+	assert.Equal(t, holderRun, *waiting.WaitingOnRunID)
+	require.NotNil(t, waiting.WaitingSince)
+	assert.True(t, since.Equal(*waiting.WaitingSince))
+
+	holding := byTask[holder]
+	assert.Empty(t, holding.WaitReason)
+	assert.Nil(t, holding.WaitingOnRunID, "the holder waits on no run")
+	assert.Nil(t, holding.WaitingSince)
 }

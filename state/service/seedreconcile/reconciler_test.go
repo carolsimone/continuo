@@ -150,7 +150,8 @@ type fakeRuns struct {
 
 var _ repository.RunRepository = (*fakeRuns)(nil)
 
-// fakeTasks records the tasks a run starts with.
+// fakeTasks records the tasks a run starts with; every ready task gets its
+// node's lease and is dispatched.
 type fakeTasks struct {
 	run.TaskCollection
 	attempts []run.Attempt
@@ -165,6 +166,18 @@ func (f *fakeTasks) BulkCreate(_ context.Context, tasks []run.Task) error {
 func (f *fakeTasks) AddAttempts(_ context.Context, attempts []run.Attempt) error {
 	f.attempts = append(f.attempts, attempts...)
 	return nil
+}
+
+func (f *fakeTasks) TakeLeases(_ context.Context, claims []run.LeaseClaim) ([]uuid.UUID, error) {
+	ids := make([]uuid.UUID, 0, len(claims))
+	for _, c := range claims {
+		ids = append(ids, c.TaskID)
+	}
+	return ids, nil
+}
+
+func (f *fakeTasks) MarkDispatched(_ context.Context, ids []uuid.UUID, _ time.Time) ([]uuid.UUID, error) {
+	return ids, nil
 }
 
 func (f *fakeRuns) SaveRun(_ context.Context, r *run.Run) error {

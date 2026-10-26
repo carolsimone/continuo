@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -100,15 +101,15 @@ type fakeTaskCollection struct {
 	// unansweredStops makes RequestStops ask none.
 	stopRequested   map[attemptKey]bool
 	unansweredStops bool
-	statuses      map[uuid.UUID]run.TaskStatus
-	attempts      map[uuid.UUID]int32
-	hasFailed     bool
-	hasNonSucc    bool
-	byNode        map[run.NodeID]run.Task
-	updateApplied map[uuid.UUID]int
-	loadErr       error
-	maxRetries    map[uuid.UUID]int32
-	keys          map[uuid.UUID]topology.NodeKey
+	statuses        map[uuid.UUID]run.TaskStatus
+	attempts        map[uuid.UUID]int32
+	hasFailed       bool
+	hasNonSucc      bool
+	byNode          map[run.NodeID]run.Task
+	updateApplied   map[uuid.UUID]int
+	loadErr         error
+	maxRetries      map[uuid.UUID]int32
+	keys            map[uuid.UUID]topology.NodeKey
 	// attemptRows holds the stored attempts; lockOrder the LoadAttemptState
 	// ("task <id>") and LoadAttempt ("attempt <id>/<n>") calls in call order.
 	attemptRows map[attemptKey]run.Attempt
@@ -117,8 +118,8 @@ type fakeTaskCollection struct {
 	// every attempt AddAttempts inserted.
 	saves []run.Attempt
 	added []run.Attempt
-	// created holds each task BulkCreate stored, with the dispatch time
-	// BulkCreate or MarkDispatched stamped on it.
+	// created holds each task BulkCreate stored, with the status and dispatch
+	// time MarkDispatched stamped on it.
 	created map[uuid.UUID]run.Task
 	// dispatched holds the tasks stamped dispatched, by BulkCreate or
 	// MarkDispatched; skipped the tasks MarkSkipped changed, in call order.
@@ -127,6 +128,25 @@ type fakeTaskCollection struct {
 	// derived makes HasFailed read the stored statuses instead of
 	// hasFailed.
 	derived bool
+	// leases holds the task that holds each node's write lease; waits the
+	// tasks waiting for one. leaseTakes holds the claims of each TakeLeases
+	// call, waiterTakes the claim of each TakeLeaseForWaiter call and
+	// releases the task of each ReleaseLease call, in call order. leaseWrites
+	// holds every TakeLeases ("take <node keys>") and ReleaseLease ("release
+	// <node key>") call in one list, in call order.
+	leases      map[topology.NodeKey]uuid.UUID
+	waits       map[uuid.UUID]run.WaitReason
+	leaseTakes  [][]run.LeaseClaim
+	waiterTakes []run.LeaseClaim
+	releases    []uuid.UUID
+	leaseWrites []string
+	// waitSince holds when each waiting task began to wait, and
+	// grantableReads the runs GrantableWaits was called for. nextInLine, when
+	// set, is what GrantableWaits returns, as a read taken before another
+	// transaction took the node would.
+	waitSince      map[uuid.UUID]time.Time
+	grantableReads []uuid.UUID
+	nextInLine     []run.LeaseWait
 }
 
 func newFakeTaskCollection() *fakeTaskCollection {
@@ -141,7 +161,99 @@ func newFakeTaskCollection() *fakeTaskCollection {
 		keys:          map[uuid.UUID]topology.NodeKey{},
 		attemptRows:   map[attemptKey]run.Attempt{},
 		created:       map[uuid.UUID]run.Task{},
+		leases:        map[topology.NodeKey]uuid.UUID{},
+		waits:         map[uuid.UUID]run.WaitReason{},
+		waitSince:     map[uuid.UUID]time.Time{},
 	}
+}
+
+// GrantableWaits returns the pending tasks of runID that wait for a node no
+// task holds, in node-key order; a test builds one run, so each such task is
+// its node's oldest waiter. With nextInLine set it returns that.
+func (f *fakeTaskCollection) GrantableWaits(_ context.Context, runID uuid.UUID) ([]run.LeaseWait, error) {
+	f.grantableReads = append(f.grantableReads, runID)
+	if f.nextInLine != nil {
+		return f.nextInLine, nil
+	}
+	var out []run.LeaseWait
+	for id, w := range f.waits {
+		if _, held := f.leases[f.keys[id]]; held || w != run.WaitReasonNodeLease ||
+			f.statuses[id] != run.TaskStatusPending || f.created[id].ScheduleID != runID {
+			continue
+		}
+		out = append(out, run.LeaseWait{TaskID: id, NodeKey: f.keys[id], WaitingSince: f.waitSince[id]})
+	}
+	slices.SortFunc(out, func(a, b run.LeaseWait) int { return strings.Compare(string(a.NodeKey), string(b.NodeKey)) })
+	return out, nil
+}
+
+// TakeLeases takes, in node-key order, each claimed node no task holds and no
+// other pending task waits for, and returns the claiming tasks that hold their
+// node's lease afterwards, as the real adapter does.
+func (f *fakeTaskCollection) TakeLeases(_ context.Context, claims []run.LeaseClaim) ([]uuid.UUID, error) {
+	f.leaseTakes = append(f.leaseTakes, slices.Clone(claims))
+	keys := make([]string, 0, len(claims))
+	for _, c := range claims {
+		keys = append(keys, string(c.NodeKey))
+	}
+	f.leaseWrites = append(f.leaseWrites, "take "+strings.Join(keys, ","))
+	ordered := slices.Clone(claims)
+	slices.SortFunc(ordered, func(a, b run.LeaseClaim) int { return strings.Compare(string(a.NodeKey), string(b.NodeKey)) })
+	var taken []uuid.UUID
+	for _, c := range ordered {
+		holder, held := f.leases[c.NodeKey]
+		switch {
+		case held && holder == c.TaskID:
+			taken = append(taken, c.TaskID)
+		case !held && !f.othersWaitFor(c.NodeKey, c.TaskID):
+			f.leases[c.NodeKey] = c.TaskID
+			taken = append(taken, c.TaskID)
+		}
+	}
+	return taken, nil
+}
+
+// othersWaitFor reports whether a pending task other than self waits for the
+// lease on key.
+func (f *fakeTaskCollection) othersWaitFor(key topology.NodeKey, self uuid.UUID) bool {
+	for id, w := range f.waits {
+		if id != self && w == run.WaitReasonNodeLease && f.keys[id] == key && f.statuses[id] == run.TaskStatusPending {
+			return true
+		}
+	}
+	return false
+}
+
+// WaitForLeases marks each task waiting for its node's lease.
+func (f *fakeTaskCollection) WaitForLeases(_ context.Context, ids []uuid.UUID) error {
+	for _, id := range ids {
+		f.waits[id] = run.WaitReasonNodeLease
+	}
+	return nil
+}
+
+// ReleaseLease deletes the lease the task holds, if any.
+func (f *fakeTaskCollection) ReleaseLease(_ context.Context, id uuid.UUID) error {
+	f.releases = append(f.releases, id)
+	f.leaseWrites = append(f.leaseWrites, "release "+string(f.keys[id]))
+	for k, holder := range f.leases {
+		if holder == id {
+			delete(f.leases, k)
+		}
+	}
+	return nil
+}
+
+// TakeLeaseForWaiter takes the claimed node for its task when no task holds
+// it, without looking at the node's other waiters.
+func (f *fakeTaskCollection) TakeLeaseForWaiter(_ context.Context, c run.LeaseClaim) (bool, error) {
+	f.waiterTakes = append(f.waiterTakes, c)
+	holder, held := f.leases[c.NodeKey]
+	if held {
+		return holder == c.TaskID, nil
+	}
+	f.leases[c.NodeKey] = c.TaskID
+	return true, nil
 }
 
 // attemptKey identifies one stored attempt.
@@ -189,6 +301,7 @@ func (f *fakeTaskCollection) SkipPending(_ context.Context, _ uuid.UUID) (int, e
 	for id, s := range f.statuses {
 		if s == run.TaskStatusPending && !slices.Contains(f.dispatched, id) {
 			f.statuses[id] = run.TaskStatusSkipped
+			delete(f.waits, id)
 			f.skipped = append(f.skipped, id)
 			n++
 		}
@@ -198,8 +311,8 @@ func (f *fakeTaskCollection) SkipPending(_ context.Context, _ uuid.UUID) (int, e
 
 // BeginStop makes the dispatched, queued and running tasks the fake holds
 // whose current attempt is open stopping, and cancels the pending ones and
-// those with no open current attempt: a test builds one run, so every stored
-// task belongs to it.
+// those with no open current attempt, ending their waits and releasing their
+// leases: a test builds one run, so every stored task belongs to it.
 func (f *fakeTaskCollection) BeginStop(_ context.Context, runID uuid.UUID, by string, _ time.Time) (run.StopCounts, error) {
 	f.stopsBegun = append(f.stopsBegun, runID)
 	var counts run.StopCounts
@@ -212,6 +325,12 @@ func (f *fakeTaskCollection) BeginStop(_ context.Context, runID uuid.UUID, by st
 				continue
 			}
 			f.statuses[id] = run.TaskStatusCancelled
+			delete(f.waits, id)
+			for k, holder := range f.leases {
+				if holder == id {
+					delete(f.leases, k)
+				}
+			}
 			f.cancelledBy[id] = by
 			counts.Cancelled++
 		}
@@ -257,7 +376,7 @@ func (f *fakeTaskCollection) LoadAttemptState(_ context.Context, id uuid.UUID) (
 		RunID:  c.ScheduleID,
 		Status: s, Attempt: f.attempts[id], MaxRetries: f.maxRetries[id], NodeKey: f.keys[id],
 		JobName: c.JobName, ServiceName: c.ServiceName, SchemaName: c.SchemaName, TableName: c.TableName,
-		DispatchedAt: c.DispatchedAt,
+		DispatchedAt: c.DispatchedAt, WaitReason: f.waits[id],
 	}, ok, nil
 }
 func (f *fakeTaskCollection) HasFailed(_ context.Context, _ uuid.UUID) (bool, error) {
@@ -318,9 +437,11 @@ func (f *fakeTaskCollection) MarkDispatched(_ context.Context, ids []uuid.UUID, 
 		if f.statuses[id] == run.TaskStatusPending && !slices.Contains(f.dispatched, id) {
 			f.dispatched = append(f.dispatched, id)
 			f.statuses[id] = run.TaskStatusDispatched
+			delete(f.waits, id)
 			if c, ok := f.created[id]; ok {
 				stampedAt := at
 				c.DispatchedAt = &stampedAt
+				c.Status = run.TaskStatusDispatched
 				f.created[id] = c
 			}
 			stamped = append(stamped, id)
@@ -339,6 +460,7 @@ func (f *fakeTaskCollection) MarkSkipped(_ context.Context, ids []uuid.UUID) (in
 	for _, id := range ids {
 		if f.statuses[id] == run.TaskStatusPending && !slices.Contains(f.dispatched, id) {
 			f.statuses[id] = run.TaskStatusSkipped
+			delete(f.waits, id)
 			f.skipped = append(f.skipped, id)
 			n++
 		}

@@ -32,7 +32,9 @@ type UnitOfWork interface {
 	Run() repository.RunRepository
 	Catalog() repository.ScheduleCatalogRepository
 	Outbox() ports.OutboxPublisher
-	TaskCollection() run.TaskCollection
+	// TaskCollection serves the tasks of the runs of tenantID inside the
+	// transaction; the node write leases it takes are tenantID's.
+	TaskCollection(tenantID string) run.TaskCollection
 	Clock() ports.Clock
 	Topology() repository.TopologyRepository
 	Materializations() repository.MaterializationRepository
@@ -43,6 +45,10 @@ type UnitOfWork interface {
 	// stalled runs, and the lock and record of one question inside the
 	// transaction.
 	Attempts(tenantID string) repository.AttemptRepository
+	// Leases serves the lease waker of tenantID: the waiters a free node can
+	// be granted to, the repair of leases whose holder task has ended, and
+	// the count of tasks waiting for a lease.
+	Leases(tenantID string) repository.LeaseRepository
 
 	Begin(ctx context.Context) error
 	Commit() error

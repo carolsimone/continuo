@@ -57,9 +57,11 @@ func (s *SchedulerTracker) GetServiceMetadata() (map[string]run.ServiceMetadata,
 }
 
 // TaskTracker is the storage row carrier for the task_tracker table.
-// It mirrors the table schema one-to-one and is used exclusively within this
-// package by the repository implementations. Domain logic operates on
-// run.Task values; the adapters translate between the two.
+// It mirrors the table schema one-to-one, plus WaitingOnRunID, which the task
+// reads join from node_leases. The repository implementations read and write
+// it, and the gRPC task handler maps the rows the task reads return; domain
+// logic operates on run.Task values, and the adapters translate between the
+// two.
 type TaskTracker struct {
 	TaskID              uuid.UUID      `json:"task_id" db:"task_id"`
 	ScheduleID          uuid.UUID      `json:"schedule_id" db:"schedule_id"`
@@ -78,6 +80,13 @@ type TaskTracker struct {
 	Operation           string         `json:"operation" db:"operation"`
 	NodeKey             *string        `json:"node_key,omitempty" db:"node_key"`
 	DispatchedAt        *time.Time     `json:"dispatched_at,omitempty" db:"dispatched_at"`
+	WaitReason          *string        `json:"wait_reason,omitempty" db:"wait_reason"`
+	LeaseWaitSince      *time.Time     `json:"lease_wait_since,omitempty" db:"lease_wait_since"`
+	// WaitingOnRunID is not a column: it is the run whose task holds the node
+	// lease this task waits for, read by the task reads (GetByID,
+	// GetByScheduleAndNode, ListByScheduleID); nil when the task waits for no
+	// lease, no task holds its node, or the row was read by any other query.
+	WaitingOnRunID *uuid.UUID `json:"waiting_on_run_id,omitempty" db:"waiting_on_run_id"`
 }
 
 // taskAttemptRow is the storage row carrier for the task_attempts table. It

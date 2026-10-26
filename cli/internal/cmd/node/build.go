@@ -19,7 +19,9 @@ import (
 //
 // The command reports acceptance, not completion: the state service plans the
 // build run and durably records it with its first dispatches. A node the live
-// release does not hold is refused (not_found) and no run is created.
+// release does not hold is refused (not_found) and no run is created. A task
+// whose node another run is writing waits for that run's write before it is
+// dispatched.
 //
 // The initiating identity is not an argument: it comes from cfg.Actor (the
 // CONTINUO_ACTOR env var) and is forwarded as gRPC metadata. When empty, the
@@ -49,8 +51,12 @@ system identity.
 
 This command reports acceptance, not completion. On success the new run is
 planned and durably recorded with its first dispatches; a node the live
-release does not hold is refused (not_found) and no run is created. Check the
-outcome of an accepted run with "node history".
+release does not hold is refused (not_found) and no run is created.
+A task whose node another run is writing waits for that run to finish
+writing it before it is dispatched: "node history" and "schedule status" show
+the task pending, with wait_reason "node_lease" and the run it waits on
+(waiting_on_run_id).
+Check the outcome of an accepted run with "node history".
 
 Output (stdout, JSON):
   {"run_id":string,"schedule_name":string}

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/domain/runplan"
 	"github.com/carolsimone/continuo/state/domain/topology"
 
@@ -41,7 +42,7 @@ func TestRunRepository_SaveRun_PersistsStartedAtOnStart(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	schedRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, discardLogger())
 
 	scheduleID := uuid.New()
 	createdAt := time.Now().Add(-time.Minute)
@@ -66,7 +67,7 @@ func TestRunRepository_SaveRun_PersistsStartedAtOnStart(t *testing.T) {
 	defer tx.Rollback()
 
 	runRepo := postgres.NewRunRepository(tx, schedRepo)
-	tasks := postgres.NewTaskCollectionAdapter(taskRepo, tx)
+	tasks := postgres.NewTaskCollectionAdapter(taskRepo, tx, "default")
 
 	rn, err := runRepo.LoadRunForUpdate(ctx, scheduleID)
 	require.NoError(t, err)
@@ -98,7 +99,7 @@ func TestRunRepository_SaveRun_SingleUpdateForDirtyColumns(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	schedRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, discardLogger())
 
 	scheduleID := uuid.New()
 	require.NoError(t, schedRepo.Create(ctx, &postgres.SchedulerTracker{
@@ -117,7 +118,7 @@ func TestRunRepository_SaveRun_SingleUpdateForDirtyColumns(t *testing.T) {
 	defer tx.Rollback()
 
 	runRepo := postgres.NewRunRepository(tx, schedRepo)
-	tasks := postgres.NewTaskCollectionAdapter(taskRepo, tx)
+	tasks := postgres.NewTaskCollectionAdapter(taskRepo, tx, "default")
 
 	rn, err := runRepo.LoadRunForUpdate(ctx, scheduleID)
 	require.NoError(t, err)

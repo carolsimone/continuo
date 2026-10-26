@@ -230,6 +230,95 @@ func TestAttemptRepository_StalledRunsCoverACancellingRunWithNothingStopping(t *
 	assert.NotContains(t, got, stillStopping, "a stopping task is in flight until its attempt reports")
 }
 
+// leaseWaitRun stores a running run whose only task, at table, is pending and
+// waits for its node's write lease, with a progress clock ten minutes old, and
+// returns the run id.
+func leaseWaitRun(t *testing.T, db *sqlx.DB, table string) uuid.UUID {
+	t.Helper()
+	runID, ids := pendingTasks(t, db, table)
+	_, err := db.Exec(`UPDATE task_tracker SET wait_reason = 'node_lease', lease_wait_since = now() - interval '10 minutes'
+		WHERE task_id = $1`, ids[table])
+	require.NoError(t, err)
+	_, err = db.Exec(`UPDATE scheduler_tracker SET last_heartbeat_at = now() - interval '10 minutes' WHERE schedule_id = $1`, runID)
+	require.NoError(t, err)
+	return runID
+}
+
+// A run whose task waits for a node lease held by a task in flight
+// (dispatched, queued, running or stopping) is waiting on that task, not
+// stalled, however old its progress clock; the same run is stalled while no
+// task holds the node.
+func TestStalledRuns_ALeaseWaitBehindAnInFlightHolderIsNotStalled(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	tenant := leaseTenant(t, db)
+	repo := postgres.NewAttemptRepository(db, nil, tenant)
+	for _, status := range run.InFlightTaskStatuses() {
+		t.Run(string(status), func(t *testing.T) {
+			table := leaseTables("held")[0]
+			waiting := leaseWaitRun(t, db, table)
+			got, err := repo.StalledRuns(ctx, 5*time.Minute, 500)
+			require.NoError(t, err)
+			require.Contains(t, got, waiting, "no task holds the node yet")
+
+			holderRun, holder := insertTasks(t, db, map[string]run.TaskStatus{table: status})
+			require.NoError(t, insertLease(db, tenant, "e2e_schema."+table, holder[table], holderRun))
+
+			got, err = repo.StalledRuns(ctx, 5*time.Minute, 500)
+			require.NoError(t, err)
+			assert.NotContains(t, got, waiting, "a task waiting behind a %s holder counts as in flight", status)
+		})
+	}
+}
+
+// onlyTask returns the id of the run's one task.
+func onlyTask(t *testing.T, db *sqlx.DB, runID uuid.UUID) uuid.UUID {
+	t.Helper()
+	var id uuid.UUID
+	require.NoError(t, db.Get(&id, `SELECT task_id FROM task_tracker WHERE schedule_id = $1`, runID))
+	return id
+}
+
+// A run whose task waits for the lease of a node no task holds, or of one held
+// by a task that has ended (a lease the repair deletes), waits on nothing in
+// flight: once its progress clock is old the stall listing names it. Under the
+// run's lock the two differ. The task waiting on the free node is that node's
+// next waiter, so the re-check grants it the node and dispatches it rather
+// than failing the run. No grant can serve the wait behind the ended holder,
+// which only a defect in state leaves, so the re-check fails that run.
+func TestStalledRuns_ALeaseWaitOnAFreeNodeIsListedAndGrantedUnderTheLock(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	tables := leaseTables("free", "ended")
+	free, ended := tables[0], tables[1]
+	tenant := storeEdges(t, db, "free-"+free, nil, free, ended)
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(context.Background(), `DELETE FROM node_leases WHERE tenant_id = $1`, tenant)
+	})
+	waitingOnFree := leaseWaitRun(t, db, free)
+	holderRun, holder := insertTasks(t, db, map[string]run.TaskStatus{ended: run.TaskStatusSucceeded})
+	require.NoError(t, insertLease(db, tenant, "e2e_schema."+ended, holder[ended], holderRun))
+	waitingOnEnded := leaseWaitRun(t, db, ended)
+
+	got, err := postgres.NewAttemptRepository(db, nil, tenant).StalledRuns(ctx, 5*time.Minute, 500)
+	require.NoError(t, err)
+
+	assert.Contains(t, got, waitingOnFree, "a wait on a node no task holds is a wait on nothing in flight")
+	assert.Contains(t, got, waitingOnEnded, "a lease whose holder has ended keeps nothing in flight")
+
+	assert.False(t, failStalledUnderLock(t, db, tenant, waitingOnFree), "the re-check under the lock grants the free node")
+	freeTask := onlyTask(t, db, waitingOnFree)
+	assert.Equal(t, leaseWait{Status: run.TaskStatusDispatched}, waitOf(t, db, freeTask))
+	lease, held := leaseOn(t, db, tenant, free)
+	require.True(t, held)
+	assert.Equal(t, heldLease{TaskID: freeTask, RunID: waitingOnFree}, lease)
+	var status string
+	require.NoError(t, db.Get(&status, `SELECT status FROM scheduler_tracker WHERE schedule_id = $1`, waitingOnFree))
+	assert.Equal(t, string(run.SchedulerStatusRunning), status)
+
+	assert.True(t, failStalledUnderLock(t, db, tenant, waitingOnEnded), "the re-check fails a wait behind a holder that has ended")
+}
+
 // makeStopsDue moves the next check of every attempt of the run into the past.
 func (f statusFlow) makeStopsDue(t *testing.T, ago time.Duration) {
 	t.Helper()
@@ -410,7 +499,7 @@ func TestAttemptReconcile_AResentCancelMovesEachStopToItsNextWindow(t *testing.T
 	f := statusFlow{db: db, tenant: tenant, r: startScheduleRun(t, db, tenant, "e2e-schedule-failure", model.OperationRun)}
 	cancelRun(t, db, f.r)
 	f.makeStopsDue(t, time.Second)
-	loop := attemptreconcile.New(func() uow.UnitOfWork { return newPlanningUoW(db) }, tenant, testTaskDefaults, noRunMetrics{}, discardLogger())
+	loop := attemptreconcile.New(func() uow.UnitOfWork { return newPlanningUoW(db) }, tenant, testTaskDefaults, noRunMetrics{}, nil, discardLogger())
 	outboxRows := func() int {
 		var n int
 		require.NoError(t, db.Get(&n, `SELECT count(*) FROM state_outbox WHERE aggregate_id = $1`, f.r.ScheduleID()))
@@ -459,7 +548,7 @@ func TestAttemptReconcile_AResentCancelRowNamesTheUnansweredAttempts(t *testing.
 	for _, a := range requested {
 		stops = append(stops, pkgevents.CancelledAttempt{TaskID: a.TaskID, Attempt: a.Attempt, JobName: a.JobName})
 	}
-	loop := attemptreconcile.New(func() uow.UnitOfWork { return newPlanningUoW(db) }, tenant, testTaskDefaults, noRunMetrics{}, discardLogger())
+	loop := attemptreconcile.New(func() uow.UnitOfWork { return newPlanningUoW(db) }, tenant, testTaskDefaults, noRunMetrics{}, nil, discardLogger())
 
 	require.NoError(t, loop.Pass(ctx))
 
@@ -498,7 +587,7 @@ func cancelRun(t *testing.T, db *sqlx.DB, r *run.Run) {
 	inUoW(t, db, func(u *postgres.PostgresUnitOfWork) {
 		loaded, err := u.Run().LoadRunForUpdate(ctx, r.ScheduleID())
 		require.NoError(t, err)
-		_, err = loaded.Cancel(ctx, u.TaskCollection(), "user", "", u.Clock().Now())
+		_, err = loaded.Cancel(ctx, u.TaskCollection(pkgevents.DefaultTenantID), "user", "", u.Clock().Now())
 		require.NoError(t, err)
 		require.NoError(t, u.Run().SaveRun(ctx, loaded))
 	})

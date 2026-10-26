@@ -305,10 +305,7 @@ func TestForward_DefaultsToPort80(t *testing.T) {
 	defer refused.Body.Close()
 	assert.Equal(t, http.StatusForbidden, refused.StatusCode)
 
-	require.Eventually(t, func() bool {
-		s := obs.snapshot().requests
-		return len(s) == 2 && s[0] == "allowed:ok" && s[1] == "denied:not_allowed"
-	}, 2*time.Second, 10*time.Millisecond)
+	obs.awaitRequests(t, "allowed:ok", "denied:not_allowed")
 	assert.Equal(t, int32(1), auth.connects.Load())
 }
 
@@ -443,10 +440,7 @@ func TestForward_UserinfoNeitherChangesTheCheckNorAddsCredentials(t *testing.T) 
 	assert.Equal(t, "/v1/models", got[0].RequestURI)
 	assert.Equal(t, "allowed.internal:8000", got[0].Host)
 	assert.Equal(t, []string{"Bearer agent-token"}, got[1].Header.Values("Authorization"))
-	require.Eventually(t, func() bool {
-		s := obs.snapshot().requests
-		return len(s) == 3 && s[0] == "allowed:ok" && s[1] == "allowed:ok" && s[2] == "denied:not_allowed"
-	}, 2*time.Second, 10*time.Millisecond)
+	obs.awaitRequests(t, "allowed:ok", "allowed:ok", "denied:not_allowed")
 }
 
 // A request that asks to switch protocols is refused before anything is sent
@@ -1190,9 +1184,10 @@ func TestForward_SharesTheCapWithTunnels(t *testing.T) {
 	_, refused := exchange(t, addr, get("http://model.internal:8000/", "model.internal:8000", ""))
 	assert.Equal(t, http.StatusServiceUnavailable, refused.StatusCode, "a tunnel holds the slot")
 
-	s := obs.snapshot()
-	assert.Equal(t, []string{"denied:capacity", "denied:capacity", "allowed:ok", "denied:capacity"}, s.requests)
-	assert.Equal(t, 1, s.opened, "the open-tunnels count includes tunnels alone")
+	obs.awaitRequests(t, "denied:capacity", "denied:capacity", "allowed:ok", "denied:capacity")
+	// The tunnel's handler counts it open right after recording it.
+	require.Eventually(t, func() bool { return obs.snapshot().opened == 1 }, 2*time.Second, 10*time.Millisecond,
+		"the open-tunnels count includes tunnels alone")
 }
 
 // Shutdown waits for a forwarded request in flight that finishes within the

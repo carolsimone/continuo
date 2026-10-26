@@ -243,6 +243,12 @@ body {
    .info-strip--warning palette. */
 .pill--cancelling, .pill-sm--cancelling,
 .pill--stopping,   .pill-sm--stopping   { background: #fef3c7; color: #92400e; }
+/* A pending task waiting for another run to finish writing its node: neutral
+   like queued (nothing of it runs yet), dashed like a pending node, and a link
+   to the run writing the node. The 1px border replaces 1px of padding so it
+   stands as tall as the status pill beside it. */
+.pill-sm--waiting { background: #f1f5f9; color: #475569; border: 1px dashed #94a3b8; padding: 1px 8px; text-decoration: none; }
+a.pill-sm--waiting:hover { background: #e2e8f0; color: #334155; }
 .pill--current,   .pill-sm--current   { background: #ede9fe; color: #6d28d9; }
 .pill--skipped, .pill-sm--skipped { background: #e2e8f0; color: #475569; }
 .pill--verification, .pill-sm--verification { background: #eef2ff; color: #4338ca; }
@@ -608,6 +614,8 @@ a.release-author:hover { text-decoration: underline; }
    Present only on some rows; absent values use .nodes-dash, never a coloured
    info-strip. */
 .nodes-reason { font-size: 12px; color: #64748b; }
+/* A status cell holding more than one pill (a task's status and why it waits). */
+.nodes-pills { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 .nodes-attempt    { font-size: 12px; color: #64748b; white-space: nowrap; }
 .nodes-ts         { font-size: 12px; color: #64748b; white-space: nowrap; }
 .nodes-ts--dim    { color: #d1d5db; }
@@ -1797,6 +1805,18 @@ a.release-author:hover { text-decoration: underline; }
 .swim-sd.stop { background: #fcd34d; }
 @keyframes swim-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 @media (prefers-reduced-motion: reduce) { .swim-sd.run { animation: none; } }
+
+/* On the run graph a "waiting for node" pill sits on its node's top border,
+   ending a few px in from the node's right edge: RunSwimlane anchors it there
+   and this shifts it left by its own width and up by half its height. */
+.swim-wait {
+  transform: translate(-100%, -50%);
+  font-size: 9.5px;
+  line-height: 12px;
+  padding: 0 6px;
+  z-index: 1;
+  box-shadow: 0 0 0 2px #fff;
+}
 
 /* Status legend under the graph, in the same order and colours as the
    run-progress header counts. */

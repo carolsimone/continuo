@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/domain/runplan"
 	"github.com/carolsimone/continuo/state/domain/topology"
 
@@ -22,7 +23,7 @@ func TestRunRepository_SaveRun_PersistsProgressClock(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	schedRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, discardLogger())
 
 	scheduleID := uuid.New()
 	require.NoError(t, schedRepo.Create(ctx, &postgres.SchedulerTracker{
@@ -45,7 +46,7 @@ func TestRunRepository_SaveRun_PersistsProgressClock(t *testing.T) {
 		runRepo := postgres.NewRunRepository(tx, schedRepo)
 		rn, err := runRepo.LoadRunForUpdate(ctx, scheduleID)
 		require.NoError(t, err)
-		mutate(rn, postgres.NewTaskCollectionAdapter(taskRepo, tx))
+		mutate(rn, postgres.NewTaskCollectionAdapter(taskRepo, tx, "default"))
 		require.NoError(t, runRepo.SaveRun(ctx, rn))
 		require.NoError(t, tx.Commit())
 	}

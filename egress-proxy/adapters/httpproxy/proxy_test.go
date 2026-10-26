@@ -120,6 +120,20 @@ func (o *fakeObserver) snapshot() observed {
 	return observed{append([]string(nil), o.requests...), o.up, o.down, o.opened, o.closed}
 }
 
+// awaitRequests waits until the recorded requests are want, in any order. A
+// refusal is recorded before its answer is written, but an allowed request
+// can be recorded after its client has the whole answer: a forwarded reply
+// reaches the client as it is relayed and the request is recorded once its
+// handler has finished relaying it, and a tunnel is recorded after its 200 is
+// written. A client that has read one answer and sent its next request on
+// another connection can find that request recorded first, or alone.
+func (o *fakeObserver) awaitRequests(t *testing.T, want ...string) {
+	t.Helper()
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.ElementsMatch(c, want, o.snapshot().requests)
+	}, 2*time.Second, 10*time.Millisecond)
+}
+
 // syncBuffer collects log output written by the proxy's goroutines while the
 // test reads it.
 type syncBuffer struct {

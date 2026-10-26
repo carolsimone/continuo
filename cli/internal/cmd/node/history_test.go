@@ -315,3 +315,76 @@ func TestHistory_LongNamesTheRunAndTaskStatuses(t *testing.T) {
 	assert.Contains(t, long, "terminal_status is the run's status: pending|running|cancelling|succeeded|failed|cancelled|skipped.")
 	assert.Contains(t, long, "task_status is one of: pending|dispatched|queued|running|stopping|succeeded|failed|cancelled|skipped.")
 }
+
+// A run whose task waits for the node's lease says why, on which run and since
+// when; a run that waits for nothing omits all three.
+func TestHistory_ReportsALeaseWaitAndItsHolder(t *testing.T) {
+	fake := &fakeNodeState{runsResp: &statev1.ListNodeRunsResponse{Runs: []*statev1.NodeRun{
+		{RunId: "run_2", TaskStatus: "pending", WaitReason: "node_lease", WaitingOnRunId: "run_1", WaitingSince: "2026-10-24T10:05:00Z"},
+		{RunId: "run_1", TaskStatus: "running"},
+	}}}
+
+	stdout, _, exit := runHistory(t, fake, []string{"finance", "analytics", "orders"}, false)
+
+	require.Equal(t, 0, exit)
+	var payload struct {
+		Runs []map[string]any `json:"runs"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(stdout), &payload))
+	require.Len(t, payload.Runs, 2)
+	assert.Equal(t, "node_lease", payload.Runs[0]["wait_reason"])
+	assert.Equal(t, "run_1", payload.Runs[0]["waiting_on_run_id"])
+	assert.Equal(t, "2026-10-24T10:05:00Z", payload.Runs[0]["waiting_since"])
+	for _, k := range []string{"wait_reason", "waiting_on_run_id", "waiting_since"} {
+		assert.NotContains(t, payload.Runs[1], k, "a run that waits for nothing omits %s", k)
+	}
+}
+
+// The output_schema annotation declares every field a run can carry: a run
+// with every field set emits exactly the keys its runs item declares.
+func TestHistory_OutputSchemaDeclaresEveryRunField(t *testing.T) {
+	fake := &fakeNodeState{runsResp: &statev1.ListNodeRunsResponse{Runs: []*statev1.NodeRun{{
+		RunId: "run_2", ScheduleName: "single-node-run-abcd1234", Kind: "single_node_run",
+		TerminalStatus: "running", TaskId: "task_2", TaskStatus: "pending", Attempt: 1,
+		ImageTag: "img:v9", CreatedAt: "2026-10-24T10:00:00Z", StartedAt: "2026-10-24T10:01:00Z",
+		CompletedAt: "2026-10-24T10:02:00Z", ErrorMessage: "boom", FailureClass: "task", FailureReason: "exit_code",
+		LogS3Key: "logs/k", RunResultsUri: "results/k", Operation: "run", ContentHash: "c1",
+		WaitReason: "node_lease", WaitingOnRunId: "run_1", WaitingSince: "2026-10-24T10:05:00Z",
+	}}}}
+	stdout, _, exit := runHistory(t, fake, []string{"finance", "analytics", "orders"}, false)
+	require.Equal(t, 0, exit)
+
+	var emitted struct {
+		Runs []map[string]json.RawMessage `json:"runs"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(stdout), &emitted))
+	require.Len(t, emitted.Runs, 1)
+
+	var schema struct {
+		Runs []map[string]string `json:"runs"`
+	}
+	cmd := NewHistoryCommand(nil, &config.Config{}, io.Discard, io.Discard)
+	require.NoError(t, json.Unmarshal([]byte(cmd.Annotations["output_schema"]), &schema))
+	require.Len(t, schema.Runs, 1, "output_schema declares the fields of one runs item")
+
+	assert.ElementsMatch(t, mapKeys(emitted.Runs[0]), mapKeys(schema.Runs[0]))
+	assert.Equal(t, "string", schema.Runs[0]["wait_reason"])
+	assert.Equal(t, "string", schema.Runs[0]["waiting_on_run_id"])
+	assert.Equal(t, "string", schema.Runs[0]["waiting_since"])
+}
+
+// The help says when the wait fields are set and what they name.
+func TestHistory_LongExplainsALeaseWait(t *testing.T) {
+	long := NewHistoryCommand(nil, nil, io.Discard, io.Discard).Long
+
+	assert.Contains(t, long, `"wait_reason":string,"waiting_on_run_id":string,"waiting_since":string`)
+	assert.Contains(t, long, "wait_reason is node_lease while the task waits for another run to release its node")
+}
+
+func mapKeys[V any](m map[string]V) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}

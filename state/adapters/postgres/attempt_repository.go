@@ -65,23 +65,27 @@ func (r *AttemptRepository) DueAttempts(ctx context.Context, limit int) ([]repos
 }
 
 // StalledRuns reads the active runs (pending, running or cancelling) with an
-// old progress clock and no task in flight (dispatched, queued, running or
-// stopping), of every tenant: scheduler_tracker has no tenant column. The run
-// scan filters scheduler_tracker by status, which holds few active rows, and
-// the in-flight check probes idx_task_tracker_schedule_id.
+// old progress clock and no work in flight (runWorkInFlight: no task
+// dispatched, queued, running or stopping, no task waiting for a node lease
+// whose holder is, and none waiting behind an older waiter of a running run),
+// of every tenant: scheduler_tracker has no tenant column. A lease or an older
+// waiter in another tenant on the waiting task's node key also counts, which
+// can delay noticing a stalled run but never fails a waiting one. A run it
+// lists may hold the oldest waiter of a free node; the attempt reconcile
+// grants that node under the run's lock (run.Run.FailStalled) rather than
+// failing the run. The run scan filters scheduler_tracker by status, which
+// holds few active rows.
 func (r *AttemptRepository) StalledRuns(ctx context.Context, idle time.Duration, limit int) ([]uuid.UUID, error) {
 	var ids []uuid.UUID
 	if err := r.db.SelectContext(ctx, &ids, `
 		SELECT s.schedule_id
 		FROM scheduler_tracker s
-		WHERE s.status = ANY($3::text[])
-		  AND s.last_heartbeat_at < now() - make_interval(secs => $1::float8)
-		  AND NOT EXISTS (
-		      SELECT 1 FROM task_tracker t
-		      WHERE t.schedule_id = s.schedule_id AND t.status = ANY($4::text[]))
+		WHERE s.status = ANY($4::text[])
+		  AND s.last_heartbeat_at < now() - make_interval(secs => $2::float8)
+		  AND NOT `+runWorkInFlight+`
 		ORDER BY s.last_heartbeat_at, s.schedule_id
-		LIMIT $2`, idle.Seconds(), limit,
-		pq.Array(activeSchedulerStatuses()), pq.Array(inFlightTaskStatuses())); err != nil {
+		LIMIT $3`, pq.Array(inFlightTaskStatuses()), idle.Seconds(), limit,
+		pq.Array(activeSchedulerStatuses())); err != nil {
 		return nil, fmt.Errorf("read the stalled runs: %w", err)
 	}
 	return ids, nil

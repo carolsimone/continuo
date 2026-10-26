@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/topology"
@@ -21,7 +22,7 @@ func inTaskTx(t *testing.T, db *sqlx.DB, fn func(tasks run.TaskCollection)) {
 	tx, err := db.BeginTxx(context.Background(), nil)
 	require.NoError(t, err)
 	defer tx.Rollback()
-	fn(postgres.NewTaskCollectionAdapter(postgres.NewTaskTrackerRepository(db, discardLogger()), tx))
+	fn(postgres.NewTaskCollectionAdapter(postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, discardLogger()), tx, "default"))
 	require.NoError(t, tx.Commit())
 }
 
@@ -63,6 +64,31 @@ func TestTaskCollection_LoadAttemptStateReadsTheTask(t *testing.T) {
 		_, found, err = tasks.LoadAttemptState(ctx, uuid.New())
 		require.NoError(t, err)
 		assert.False(t, found)
+	})
+}
+
+// A lease grant reads what a pending task waits for: node_lease while it waits
+// for its node's lease, nothing while it waits only for its upstreams.
+func TestTaskCollection_LoadAttemptStateReadsTheLeaseWait(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	tenant := storeFailureSchedule(t, db)
+	r := startScheduleRun(t, db, tenant, "e2e-schedule-failure", model.OperationRun)
+	waiting := run.TaskIDFor(tenant, r.ScheduleID(), "e2e_schema.ftable_c")
+	upstreams := run.TaskIDFor(tenant, r.ScheduleID(), "e2e_schema.ftable_d")
+	_, err := db.Exec(`UPDATE task_tracker SET wait_reason = 'node_lease', lease_wait_since = now() WHERE task_id = $1`, waiting)
+	require.NoError(t, err)
+
+	inTaskTx(t, db, func(tasks run.TaskCollection) {
+		got, found, err := tasks.LoadAttemptState(ctx, waiting)
+		require.NoError(t, err)
+		require.True(t, found)
+		assert.Equal(t, run.WaitReasonNodeLease, got.WaitReason)
+
+		got, found, err = tasks.LoadAttemptState(ctx, upstreams)
+		require.NoError(t, err)
+		require.True(t, found)
+		assert.Empty(t, got.WaitReason)
 	})
 }
 

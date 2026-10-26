@@ -216,6 +216,25 @@ func (f *fakeTaskStatusTaskCollection) HasNonSucceeded(_ context.Context, _ uuid
 	panic("HasNonSucceeded not implemented in fake")
 }
 
+// ReleaseLease accepts the release a final report makes; no task in these
+// tests holds a lease.
+func (f *fakeTaskStatusTaskCollection) ReleaseLease(context.Context, uuid.UUID) error {
+	return nil
+}
+func (f *fakeTaskStatusTaskCollection) TakeLeases(context.Context, []run.LeaseClaim) ([]uuid.UUID, error) {
+	panic("TakeLeases not implemented in fake")
+}
+func (f *fakeTaskStatusTaskCollection) WaitForLeases(context.Context, []uuid.UUID) error {
+	panic("WaitForLeases not implemented in fake")
+}
+func (f *fakeTaskStatusTaskCollection) TakeLeaseForWaiter(context.Context, run.LeaseClaim) (bool, error) {
+	panic("TakeLeaseForWaiter not implemented in fake")
+}
+
+func (f *fakeTaskStatusTaskCollection) GrantableWaits(context.Context, uuid.UUID) ([]run.LeaseWait, error) {
+	panic("GrantableWaits not implemented in fake")
+}
+
 func taskStatusTestLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 }
@@ -337,6 +356,9 @@ type fakeRunMetrics struct{ cancelled []time.Duration }
 func (*fakeRunMetrics) RunStalled()                    {}
 func (*fakeRunMetrics) RunsCancelling(_, _ int)        {}
 func (m *fakeRunMetrics) RunCancelled(d time.Duration) { m.cancelled = append(m.cancelled, d) }
+func (*fakeRunMetrics) LeaseWaiters(int)               {}
+func (*fakeRunMetrics) LeaseGranted(time.Duration)     {}
+func (*fakeRunMetrics) LeaseRepaired()                 {}
 
 type fixedClock struct{ t time.Time }
 

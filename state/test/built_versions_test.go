@@ -36,7 +36,7 @@ type builtHarness struct {
 func newBuiltHarness(db *sqlx.DB) *builtHarness {
 	logger := slog.New(slog.NewTextHandler(nopWriter{}, nil))
 	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
-	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
+	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, logger)
 	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
 	return &builtHarness{db: db, logger: logger, factory: func() uow.UnitOfWork {
 		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, catalogRepo, svcports.SystemClock{}, logger)
@@ -253,6 +253,7 @@ func TestBuiltVersions(t *testing.T) {
 		require.NoError(t, err)
 		_, err = db.Exec(`UPDATE scheduler_tracker SET status = 'failed', completed_at = now() WHERE schedule_id = $1`, sourceID)
 		require.NoError(t, err)
+		releaseLeasesOf(t, db, sourceID)
 		changed := scheduledNode("raw", "rerun_orders", "dbt-model", "built-rerun")
 		changed.ContentHash = "sha256:rerun_orders-changed"
 		promoteRelease(t, db, changed)
@@ -275,3 +276,6 @@ type noRunMetrics struct{}
 func (noRunMetrics) RunStalled()                {}
 func (noRunMetrics) RunsCancelling(_, _ int)    {}
 func (noRunMetrics) RunCancelled(time.Duration) {}
+func (noRunMetrics) LeaseWaiters(int)           {}
+func (noRunMetrics) LeaseGranted(time.Duration) {}
+func (noRunMetrics) LeaseRepaired()             {}

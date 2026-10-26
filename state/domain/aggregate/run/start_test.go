@@ -53,9 +53,10 @@ func newCronRun(t *testing.T, op model.Operation) *run.Run {
 	return r
 }
 
+// createdByKey returns each task tc stores, as it stands now, by its node.
 func createdByKey(tc *fakeTaskCollection) map[topology.NodeKey]run.Task {
-	out := make(map[topology.NodeKey]run.Task, len(tc.bulkCreated))
-	for _, task := range tc.bulkCreated {
+	out := make(map[topology.NodeKey]run.Task, len(tc.created))
+	for _, task := range tc.created {
 		out[task.NodeKey] = task
 	}
 	return out
@@ -108,6 +109,9 @@ func TestStart_StoresEveryTaskAndDispatchesTheReadyOnes(t *testing.T) {
 		{TaskID: a.TaskID, Number: 0, JobName: a.JobName, Status: run.AttemptDispatched, DispatchedAt: &at, NextCheckIn: 5 * time.Minute},
 		{TaskID: b.TaskID, Number: 0, JobName: b.JobName, Status: run.AttemptDispatched, DispatchedAt: &at, NextCheckIn: 5 * time.Minute},
 	}, tc.added, "each ready task's attempt 0 is stored dispatched, due for its first check in 5 minutes")
+	assert.Equal(t, [][]run.LeaseClaim{{claimOf(r, "ftable_a"), claimOf(r, "ftable_b")}}, tc.leaseTakes,
+		"a run writes its nodes: its ready tasks claim their nodes' leases in one call")
+	assert.Equal(t, map[topology.NodeKey]uuid.UUID{fkey("ftable_a"): a.TaskID, fkey("ftable_b"): b.TaskID}, tc.leases)
 
 	assert.Equal(t, run.SchedulerStatusRunning, r.Status())
 	assert.Equal(t, run.InitStatusCompleted, r.InitializationStatus())
@@ -123,6 +127,64 @@ func TestStart_StoresEveryTaskAndDispatchesTheReadyOnes(t *testing.T) {
 	ch := r.Changes()
 	assert.True(t, ch.IsPlannedDirty() && ch.IsStatusDirty() && ch.IsStartedDirty() && ch.IsInitStatusDirty() &&
 		ch.IsTotalTaskCountDirty() && ch.IsTerminalTaskCountDirty() && ch.IsHeartbeatDirty())
+}
+
+// A ready task of a writing run whose node another run's task holds is stored
+// pending, waiting for the node's lease, and is not dispatched: it has no
+// attempt and no dispatch. The other ready task takes its free node and is
+// dispatched.
+func TestStart_AWritingReadyTaskWithAHeldNodeWaits(t *testing.T) {
+	g := failureSchedule()
+	plan, err := runplan.WholeDAG{Operation: model.OperationRun}.Select(g)
+	require.NoError(t, err)
+	r := newCronRun(t, model.OperationRun)
+	tc := newFakeTaskCollection()
+	tc.leases[fkey("ftable_a")] = otherRunsTask
+
+	events, err := r.Start(context.Background(), tc, "default", plan, g, taskDefaults, startNow)
+	require.NoError(t, err)
+
+	a, b := taskOf(r, "ftable_a"), taskOf(r, "ftable_b")
+	assert.Equal(t, [][]run.LeaseClaim{{claimOf(r, "ftable_a"), claimOf(r, "ftable_b")}}, tc.leaseTakes)
+	assert.Equal(t, map[topology.NodeKey]uuid.UUID{fkey("ftable_a"): otherRunsTask, fkey("ftable_b"): b}, tc.leases,
+		"ftable_a stays with the run that holds it")
+	assert.Equal(t, map[uuid.UUID]run.WaitReason{a: run.WaitReasonNodeLease}, tc.waits)
+	assert.Equal(t, run.TaskStatusPending, tc.statuses[a])
+	assert.Nil(t, createdByKey(tc)[fkey("ftable_a")].DispatchedAt)
+	_, issued := attemptOf(t, tc, r, "ftable_a", 0)
+	assert.False(t, issued, "a task waiting for its node has no attempt")
+
+	require.Len(t, events, 1, "only ftable_b is dispatched")
+	assert.Equal(t, b, events[0].(run.TaskDispatched).TaskID)
+	assert.Equal(t, run.TaskStatusDispatched, tc.statuses[b])
+	assert.Equal(t, run.SchedulerStatusRunning, r.Status())
+	assert.Equal(t, int32(0), r.TerminalTaskCount())
+}
+
+// A test run writes no node: its ready tasks claim no lease, and a task whose
+// node another run's task holds is dispatched all the same.
+func TestStart_ATestRunTakesNoLease(t *testing.T) {
+	g := failureSchedule()
+	plan := runplan.Plan{
+		Tasks: []runplan.PlannedTask{{Key: fkey("ftable_a")}, {Key: fkey("ftable_b")}},
+		Ready: []topology.NodeKey{fkey("ftable_a"), fkey("ftable_b")},
+	}
+	r := newCronRun(t, model.OperationTest)
+	tc := newFakeTaskCollection()
+	tc.leases[fkey("ftable_a")] = otherRunsTask
+
+	events, err := r.Start(context.Background(), tc, "default", plan, g, taskDefaults, startNow)
+	require.NoError(t, err)
+
+	assert.Empty(t, tc.leaseTakes)
+	assert.Empty(t, tc.waits)
+	assert.Equal(t, map[topology.NodeKey]uuid.UUID{fkey("ftable_a"): otherRunsTask}, tc.leases)
+	require.Len(t, events, 2)
+	for _, table := range []string{"ftable_a", "ftable_b"} {
+		assert.Equal(t, run.TaskStatusDispatched, tc.statuses[taskOf(r, table)], table)
+		_, issued := attemptOf(t, tc, r, table, 0)
+		assert.True(t, issued, table)
+	}
 }
 
 // A rerun of the e2e-schedule-failure run: the carried-over successes are stored
@@ -160,6 +222,8 @@ func TestStart_InheritedTasksAreSucceededAndNeverDispatched(t *testing.T) {
 		dispatched = append(dispatched, e.(run.TaskDispatched).Node.Key)
 	}
 	assert.Equal(t, []topology.NodeKey{fkey("ftable_e"), fkey("ftable_g")}, dispatched)
+	assert.Equal(t, [][]run.LeaseClaim{{claimOf(r, "ftable_e"), claimOf(r, "ftable_g")}}, tc.leaseTakes,
+		"an inherited task is never dispatched, so it claims no lease")
 	assert.Equal(t, int32(8), *r.TotalTaskCount())
 	assert.Equal(t, int32(4), r.TerminalTaskCount(), "the four inherited tasks are terminal")
 	assert.Equal(t, run.SchedulerStatusRunning, r.Status())

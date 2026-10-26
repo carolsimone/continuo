@@ -64,7 +64,7 @@ func (h *TriggerSingleNodeRunHandler) Handle(ctx context.Context, u uow.UnitOfWo
 		if !src.IsTerminal() {
 			return uuid.Nil, "", ErrSourceRunNotTerminal
 		}
-		ok, err := src.HasTaskAt(ctx, u.TaskCollection(), in.Target)
+		ok, err := src.HasTaskAt(ctx, u.TaskCollection(h.planner.TenantID), in.Target)
 		if err != nil {
 			return uuid.Nil, "", err
 		}

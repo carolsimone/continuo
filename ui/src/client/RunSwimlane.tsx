@@ -1,8 +1,9 @@
-import { useMemo } from 'react';
+import { Fragment, useMemo } from 'react';
 import type { GraphNode, GraphEdge, Task } from './types';
 import { buildSwimlaneLayout, laneLabelColumnWidth } from './run-graph-helpers';
 import { serviceOfNode, buildServiceColors, rollupStatus } from './service-helpers';
-import { resolveNodeStatus, parseNodeId } from './detail-page-helpers';
+import { resolveNodeStatus, resolveNodeWait, leaseWaitTitle, parseNodeId, tasksByNodeId, type LeaseWait } from './detail-page-helpers';
+import LeaseWaitPill from './LeaseWaitPill';
 
 const CLS: Record<string, string> = {
   succeeded: 'ok', dispatched: 'disp', queued: 'queue', stopping: 'stop', running: 'run', failed: 'fail', skipped: 'skip', cancelled: 'cancel', pending: 'pend',
@@ -20,6 +21,8 @@ const LEGEND: [string, string][] = [
 const NODE_W = 134;
 const NODE_H = 30;
 const CELL_SIZE = 14;
+// How far in from a node's right edge a "waiting for node" pill ends.
+const WAIT_PILL_INSET = 8;
 
 // Status graph as swimlanes: one horizontal lane per service, columns are
 // dependency depth. Node placement and lane sizing come from
@@ -42,9 +45,16 @@ export default function RunSwimlane({
   const colors = buildServiceColors(serviceOrder);
   // Status, lane roll-ups and the whole layout depend only on the graph, the
   // tasks, the service order and the collapse state; they are memoised so a
-  // large DAG is laid out once per poll rather than on every render.
-  const { statusById, rollups, layout, pos } = useMemo(() => {
-    const statusById = new Map(graph.nodes.map((n) => [n.node_id, resolveNodeStatus(n, tasks)]));
+  // large DAG is laid out once per poll rather than on every render. Each
+  // node's status and wait are read through one index of the tasks by node.
+  const { statusById, waitById, rollups, layout, pos } = useMemo(() => {
+    const taskByNode = tasksByNodeId(tasks);
+    const statusById = new Map(graph.nodes.map((n) => [n.node_id, resolveNodeStatus(n, taskByNode)]));
+    const waitById = new Map<string, LeaseWait>();
+    for (const n of graph.nodes) {
+      const wait = resolveNodeWait(n, taskByNode);
+      if (wait) waitById.set(n.node_id, wait);
+    }
     const laneRollup = (service: string) => {
       const statuses = graph.nodes
         .filter((n) => serviceOfNode(n.node_id) === service)
@@ -61,7 +71,7 @@ export default function RunSwimlane({
     const nodeIds = graph.nodes.map((n) => n.node_id);
     const layout = buildSwimlaneLayout(nodeIds, graph.edges, serviceOrder, collapsed, { laneLeft });
     const pos = new Map(layout.nodes.map((n) => [n.nodeId, n]));
-    return { statusById, rollups, layout, pos };
+    return { statusById, waitById, rollups, layout, pos };
   }, [graph, tasks, serviceOrder, collapsed]);
 
   return (
@@ -123,26 +133,38 @@ export default function RunSwimlane({
         })}
         {layout.nodes.map((n) => {
           const status = clsOf(statusById.get(n.nodeId)!);
+          const wait = waitById.get(n.nodeId);
           if (collapsed.has(n.service)) {
             return (
               <div
                 key={n.nodeId}
                 className={`swim-cell ${status}`}
-                title={n.nodeId}
+                title={wait ? `${n.nodeId} — ${leaseWaitTitle(wait)}` : n.nodeId}
                 style={{ position: 'absolute', left: n.x, top: n.y }}
               />
             );
           }
           return (
-            <div
-              key={n.nodeId}
-              className={`swim-node ${status}`}
-              title={n.nodeId}
-              style={{ position: 'absolute', left: n.x, top: n.y, width: NODE_W }}
-            >
-              <span className={`swim-sd ${status}`} />
-              {parseNodeId(n.nodeId).table_name}
-            </div>
+            <Fragment key={n.nodeId}>
+              <div
+                className={`swim-node ${status}`}
+                title={n.nodeId}
+                style={{ position: 'absolute', left: n.x, top: n.y, width: NODE_W }}
+              >
+                <span className={`swim-sd ${status}`} />
+                {parseNodeId(n.nodeId).table_name}
+              </div>
+              {/* A node waiting for its lease carries the pill on its top
+                  border, right-aligned: .swim-wait shifts it left by its own
+                  width and up by half its height from this anchor. */}
+              {wait && (
+                <LeaseWaitPill
+                  wait={wait}
+                  className="swim-wait"
+                  style={{ position: 'absolute', left: n.x + NODE_W - WAIT_PILL_INSET, top: n.y }}
+                />
+              )}
+            </Fragment>
           );
         })}
       </div>

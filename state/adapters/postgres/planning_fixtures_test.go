@@ -144,7 +144,7 @@ func startScheduleRun(tb testing.TB, db *sqlx.DB, tenant, schedule string, op mo
 	plan, err := runplan.WholeDAG{Operation: op}.Select(g)
 	require.NoError(tb, err)
 	require.NoError(tb, u.Run().SaveRun(ctx, r))
-	events, err := r.Start(ctx, u.TaskCollection(), tenant, plan, g, testTaskDefaults, now)
+	events, err := r.Start(ctx, u.TaskCollection(tenant), tenant, plan, g, testTaskDefaults, now)
 	require.NoError(tb, err)
 	require.NoError(tb, u.Run().SaveRun(ctx, r))
 	require.NoError(tb, u.Outbox().Append(ctx, events, uuid.Nil))

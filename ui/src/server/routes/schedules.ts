@@ -140,6 +140,9 @@ export function createRunsRouter(stateClient: GrpcClient) {
         node_type: n.node_type,
         schedule_name: n.schedule_name,
         status: typeof n.status === 'string' ? n.status.toLowerCase() : null,
+        wait_reason: n.wait_reason || null,
+        waiting_on_run_id: n.waiting_on_run_id || null,
+        waiting_since: n.waiting_since || null,
       }));
       const edges = executionOrderEdges(resp.edges);
       res.json({

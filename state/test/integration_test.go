@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	grpcserver "github.com/carolsimone/continuo/state/internal/grpc"
 	"github.com/carolsimone/continuo/state/internal/grpc/handlers"
@@ -113,7 +114,7 @@ func TestMain(m *testing.M) {
 
 	// ---- Build repositories ----
 	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
-	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
+	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, logger)
 	attemptRepo := postgres.NewTaskAttemptReadRepository(db)
 
 	// ---- Build handlers ----
@@ -134,7 +135,7 @@ func TestMain(m *testing.M) {
 	rebaseHandler := handlers.NewRebaseHandler(rebaseUC, integrationUoWFactory, logger)
 	runReadRepo := postgres.NewRunReadRepository(db)
 	previewRebaseHandler := handlers.NewPreviewRebaseHandler(runreads.NewRebasePreviewer(defaultPlanner, integrationUoWFactory, runReadRepo), logger)
-	nodeRunRepo := postgres.NewNodeRunRepository(db, logger)
+	nodeRunRepo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, logger)
 	nodeRunHandler := handlers.NewNodeRunHandler(nodeRunRepo, 24*time.Hour, logger)
 	runReadHandler := handlers.NewRunReadHandler(runreads.New(runReadRepo), logger)
 

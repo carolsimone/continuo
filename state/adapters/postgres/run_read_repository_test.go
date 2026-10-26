@@ -3,6 +3,7 @@ package postgres_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
@@ -41,6 +42,90 @@ func readTask(t *testing.T, db *sqlx.DB, runID uuid.UUID, table, status string) 
 		id, runID, table, "job-"+id.String()[:8], status)
 	require.NoError(t, err)
 	return id
+}
+
+// waitForLease makes a pending task wait for the write lease on its node since
+// the given instant, as a dispatch that finds its node held stores it.
+func waitForLease(t *testing.T, db *sqlx.DB, taskID uuid.UUID, since time.Time) {
+	t.Helper()
+	_, err := db.Exec(`UPDATE task_tracker SET wait_reason = 'node_lease', lease_wait_since = $2 WHERE task_id = $1`, taskID, since)
+	require.NoError(t, err)
+}
+
+// A pending task waiting for its node's lease carries the reason, when it began
+// waiting and the run whose task holds the node; the holder itself, a task
+// waiting for its upstreams and a waiter whose node no task holds name no
+// holder run.
+func TestGetRunGraph_ShowsALeaseWaitAndItsHolder(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	tenant := schemaTenant(t, db)
+	insertSchemaRelease(t, db, tenant, "rel-w", "raw.a", "raw.b", "raw.c")
+	rel, seq := "rel-w", int64(1)
+	holderRun := readRun(t, db, "cron-"+uuid.NewString()[:8], &rel, &seq, "running", false)
+	holder := readTask(t, db, holderRun, "a", "running")
+	require.NoError(t, insertLease(db, tenant, "raw.a", holder, holderRun))
+
+	waitingRun := readRun(t, db, "single-"+uuid.NewString()[:8], &rel, &seq, "running", false)
+	waiter := readTask(t, db, waitingRun, "a", "pending")
+	since := time.Date(2026, 10, 24, 10, 5, 0, 0, time.UTC)
+	waitForLease(t, db, waiter, since)
+	readTask(t, db, waitingRun, "b", "pending")
+	freedWaiter := readTask(t, db, waitingRun, "c", "pending")
+	waitForLease(t, db, freedWaiter, since)
+
+	g, err := postgres.NewRunReadRepository(db).GetRunGraph(ctx, tenant, waitingRun)
+	require.NoError(t, err)
+	require.Len(t, g.Nodes, 3)
+	node := g.Nodes[0]
+	assert.Equal(t, "a", node.TableName)
+	assert.Equal(t, run.WaitReasonNodeLease, node.WaitReason)
+	require.NotNil(t, node.WaitingOnRunID)
+	assert.Equal(t, holderRun, *node.WaitingOnRunID)
+	require.NotNil(t, node.WaitingSince)
+	assert.True(t, since.Equal(*node.WaitingSince), "waiting since %v, want %v", *node.WaitingSince, since)
+
+	upstreamWait := g.Nodes[1]
+	assert.Empty(t, upstreamWait.WaitReason, "a task waiting for its upstreams has no wait reason")
+	assert.Nil(t, upstreamWait.WaitingOnRunID)
+	assert.Nil(t, upstreamWait.WaitingSince)
+
+	freed := g.Nodes[2]
+	assert.Equal(t, run.WaitReasonNodeLease, freed.WaitReason, "a waiter whose node was freed still waits until it is granted")
+	assert.Nil(t, freed.WaitingOnRunID, "no task holds its node")
+	require.NotNil(t, freed.WaitingSince)
+
+	held, err := postgres.NewRunReadRepository(db).GetRunGraph(ctx, tenant, holderRun)
+	require.NoError(t, err)
+	require.Len(t, held.Nodes, 1)
+	assert.Empty(t, held.Nodes[0].WaitReason)
+	assert.Nil(t, held.Nodes[0].WaitingOnRunID, "the holder waits on no run")
+}
+
+// A task never reads its own lease as the lease it waits for, and a lease of
+// another tenant on the same node key is not the tenant's holder.
+func TestGetRunGraph_AWaiterIsNeverItsOwnHolder(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	tenant := schemaTenant(t, db)
+	insertSchemaRelease(t, db, tenant, "rel-s", "raw.a", "raw.b")
+	rel, seq := "rel-s", int64(1)
+	runID := readRun(t, db, "self-"+uuid.NewString()[:8], &rel, &seq, "running", false)
+	self := readTask(t, db, runID, "a", "pending")
+	waitForLease(t, db, self, time.Now())
+	require.NoError(t, insertLease(db, tenant, "raw.a", self, runID))
+
+	otherTenantRun := readRun(t, db, "other-"+uuid.NewString()[:8], nil, nil, "running", false)
+	otherTenantTask := readTask(t, db, otherTenantRun, "b", "running")
+	require.NoError(t, insertLease(db, "other-"+uuid.NewString(), "raw.b", otherTenantTask, otherTenantRun))
+	waiter := readTask(t, db, runID, "b", "pending")
+	waitForLease(t, db, waiter, time.Now())
+
+	g, err := postgres.NewRunReadRepository(db).GetRunGraph(ctx, tenant, runID)
+	require.NoError(t, err)
+	require.Len(t, g.Nodes, 2)
+	assert.Nil(t, g.Nodes[0].WaitingOnRunID, "the lease on its node is its own")
+	assert.Nil(t, g.Nodes[1].WaitingOnRunID, "the lease on its node key belongs to another tenant")
 }
 
 func TestRunReadRepository_GraphComesFromTheRunsOwnRelease(t *testing.T) {

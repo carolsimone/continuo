@@ -222,5 +222,15 @@ func domainToProtoTask(t *postgres.TaskTracker) *statev1.Task {
 		}
 	}
 
+	// A pending task waiting for its node's lease says so, since when, and,
+	// while another task holds the node, on which run.
+	if t.WaitReason != nil {
+		task.WaitReason = *t.WaitReason
+	}
+	if t.LeaseWaitSince != nil {
+		task.WaitingSince = timestamppb.New(*t.LeaseWaitSince)
+	}
+	task.WaitingOnRunId = uuidPtrOrEmpty(t.WaitingOnRunID)
+
 	return task
 }

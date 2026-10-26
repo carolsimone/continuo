@@ -10,6 +10,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/runplan"
+	"github.com/carolsimone/continuo/state/domain/topology"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -85,6 +86,37 @@ func TestRecordAttemptReport_ASuccessDispatchesAttemptZeroOfTheTasksItMakesReady
 	assert.Equal(t, run.TaskStatusDispatched, tc.statuses[created.TaskID])
 	assert.Equal(t, run.TaskStatusSucceeded, tc.statuses[taskOf(r, "ftable_a")])
 	assert.Equal(t, int32(1), r.TerminalTaskCount())
+	assert.Equal(t, []uuid.UUID{taskOf(r, "ftable_a")}, tc.releases, "the task that ended releases its lease")
+	assert.Equal(t, created.TaskID, tc.leases[fkey("ftable_g")], "the task dispatched holds its node's lease")
+}
+
+// A success claims the leases of the tasks it makes ready, in the transaction
+// that records it: a task whose node is free is dispatched holding the node's
+// lease; one whose node another run's task holds waits for it, undispatched.
+func TestDispatchReady_TakesTheLeasesOfTheTasksItMakesReady(t *testing.T) {
+	r, tc, g := startedFailureRun(t)
+	tc.leases[fkey("ftable_g")] = otherRunsTask
+
+	afterA := report(t, r, tc, g, "ftable_a", 0, run.AttemptSucceeded, "")
+	afterB := report(t, r, tc, g, "ftable_b", 0, run.AttemptSucceeded, "")
+
+	gTask, cTask := taskOf(r, "ftable_g"), taskOf(r, "ftable_c")
+	assert.Empty(t, afterA, "ftable_g waits for its node")
+	assert.Equal(t, run.TaskStatusPending, tc.statuses[gTask])
+	assert.Equal(t, map[uuid.UUID]run.WaitReason{gTask: run.WaitReasonNodeLease}, tc.waits)
+	_, issued := attemptOf(t, tc, r, "ftable_g", 0)
+	assert.False(t, issued, "a task waiting for its node has no attempt")
+
+	require.Len(t, afterB, 1)
+	assert.Equal(t, cTask, afterB[0].(run.TaskDispatched).TaskID)
+	assert.Equal(t, run.TaskStatusDispatched, tc.statuses[cTask])
+	assert.Equal(t, [][]run.LeaseClaim{
+		{claimOf(r, "ftable_a"), claimOf(r, "ftable_b")},
+		{claimOf(r, "ftable_g")},
+		{claimOf(r, "ftable_c")},
+	}, tc.leaseTakes)
+	assert.Equal(t, map[topology.NodeKey]uuid.UUID{fkey("ftable_g"): otherRunsTask, fkey("ftable_c"): cTask}, tc.leases,
+		"ftable_a and ftable_b released theirs as they ended")
 }
 
 // A retryable failure with budget left dispatches the next attempt in the
@@ -354,12 +386,13 @@ func TestFailStalled_FailsARunWithNothingInFlight(t *testing.T) {
 		tc.dispatched = removeID(tc.dispatched, taskOf(r, table))
 	}
 
-	events, stalled, err := r.FailStalled(context.Background(), tc, reportAt.Add(run.StallAfter))
+	check, err := r.FailStalled(context.Background(), tc, g, taskDefaults, reportAt.Add(run.StallAfter))
 
 	require.NoError(t, err)
-	assert.True(t, stalled)
-	require.Len(t, events, 1)
-	assert.Equal(t, run.SchedulerStatusFailed, events[0].(run.RunFinalized).Outcome)
+	assert.True(t, check.Stalled)
+	assert.Empty(t, check.Granted)
+	require.Len(t, check.Events, 1)
+	assert.Equal(t, run.SchedulerStatusFailed, check.Events[0].(run.RunFinalized).Outcome)
 	require.NotNil(t, r.FailureReason())
 	assert.Equal(t, run.RunFailureStalled, *r.FailureReason())
 	assert.Len(t, tc.skipped, 6, "every task left pending is skipped")
@@ -369,17 +402,20 @@ func TestFailStalled_FailsARunWithNothingInFlight(t *testing.T) {
 // A run with an attempt in flight, or that moved within five minutes, is
 // never stalled: every legitimate wait has its own clock.
 func TestFailStalled_LeavesARunWithWorkInFlightOrRecentProgress(t *testing.T) {
-	r, tc, _ := startedFailureRun(t)
-	_, stalled, err := r.FailStalled(context.Background(), tc, startNow.Add(time.Hour))
+	r, tc, g := startedFailureRun(t)
+	check, err := r.FailStalled(context.Background(), tc, g, taskDefaults, startNow.Add(time.Hour))
 	require.NoError(t, err)
-	assert.False(t, stalled, "ftable_a and ftable_b are dispatched")
+	assert.False(t, check.Stalled, "ftable_a and ftable_b are dispatched")
+	assert.Empty(t, check.Events)
 
 	for id := range tc.statuses {
 		tc.statuses[id] = run.TaskStatusPending
 	}
-	_, stalled, err = r.FailStalled(context.Background(), tc, startNow.Add(run.StallAfter-time.Second))
+	tc.grantableReads = nil
+	check, err = r.FailStalled(context.Background(), tc, g, taskDefaults, startNow.Add(run.StallAfter-time.Second))
 	require.NoError(t, err)
-	assert.False(t, stalled, "the run moved under five minutes ago")
+	assert.False(t, check.Stalled, "the run moved under five minutes ago")
+	assert.Empty(t, tc.grantableReads, "a run that moved within five minutes is not read")
 	assert.Equal(t, run.SchedulerStatusRunning, r.Status())
 }
 
@@ -546,24 +582,25 @@ func TestRecordAttemptReport_ARepeatedStoppedReportChangesNothing(t *testing.T) 
 // minutes ends cancelled, with no failure reason; one with a task stopping
 // waits for it.
 func TestFailStalled_EndsACancellingRunWithNothingInFlightCancelled(t *testing.T) {
-	r, tc, _ := cancellingFailureRun(t)
-	_, stalled, err := r.FailStalled(context.Background(), tc, reportAt.Add(time.Hour))
+	r, tc, g := cancellingFailureRun(t)
+	check, err := r.FailStalled(context.Background(), tc, g, taskDefaults, reportAt.Add(time.Hour))
 	require.NoError(t, err)
-	assert.False(t, stalled, "ftable_a and ftable_b are stopping")
+	assert.False(t, check.Stalled, "ftable_a and ftable_b are stopping")
 
 	// A defect ends both stopping tasks without moving the run.
 	tc.statuses[taskOf(r, "ftable_a")] = run.TaskStatusCancelled
 	tc.statuses[taskOf(r, "ftable_b")] = run.TaskStatusCancelled
-	_, stalled, err = r.FailStalled(context.Background(), tc, reportAt.Add(run.StallAfter-time.Second))
+	check, err = r.FailStalled(context.Background(), tc, g, taskDefaults, reportAt.Add(run.StallAfter-time.Second))
 	require.NoError(t, err)
-	assert.False(t, stalled, "the run moved under five minutes ago")
+	assert.False(t, check.Stalled, "the run moved under five minutes ago")
 
-	events, stalled, err := r.FailStalled(context.Background(), tc, reportAt.Add(run.StallAfter))
+	check, err = r.FailStalled(context.Background(), tc, g, taskDefaults, reportAt.Add(run.StallAfter))
 
 	require.NoError(t, err)
-	assert.True(t, stalled)
+	assert.True(t, check.Stalled)
 	assert.Equal(t, []run.DomainEvent{run.RunFinalized{ID: r.ScheduleID(), Name: "e2e-schedule-failure",
-		Outcome: run.SchedulerStatusCancelled}}, events)
+		Outcome: run.SchedulerStatusCancelled}}, check.Events)
+	assert.Empty(t, tc.grantableReads, "a cancelling run is granted nothing")
 	assert.Equal(t, run.SchedulerStatusCancelled, r.Status())
 	assert.Nil(t, r.FailureReason())
 }

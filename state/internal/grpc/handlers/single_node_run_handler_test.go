@@ -76,7 +76,7 @@ func setupSingleNodeRunFixture(t *testing.T) *singleNodeRunFixture {
 
 	logger := newTestLogger()
 	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
-	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
+	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, logger)
 	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
 	clk := ports.SystemClock{}
 	factory := func() uow.UnitOfWork {
@@ -397,16 +397,30 @@ func TestSingleNodeRunHandler_Errors(t *testing.T) {
 		{"stale src without a release", &statev1.TriggerSingleNodeRunRequest{ServiceName: "svcA", SchemaName: "public", TableName: "users", MetadataSource: "snapshot_of_run", SourceRunId: noReleaseID.String()}, codes.FailedPrecondition},
 	}
 
+	// runsOf counts the single-node runs holding a task at the node req names.
+	// A run is created and planned in one transaction, so a run a refused
+	// trigger committed would hold its task; other test packages create and
+	// delete single-node runs of their own nodes in the same database at the
+	// same time, so a count of every single-node run would race with them.
+	runsOf := func(t *testing.T, req *statev1.TriggerSingleNodeRunRequest) int {
+		t.Helper()
+		var n int
+		require.NoError(t, fx.DB.Get(&n, `
+			SELECT count(*) FROM scheduler_tracker s
+			WHERE s.kind = 'single_node_run' AND EXISTS (
+				SELECT 1 FROM task_tracker tt WHERE tt.schedule_id = s.schedule_id
+				  AND tt.service_name = $1 AND tt.schema_name = $2 AND tt.table_name = $3)`,
+			req.ServiceName, req.SchemaName, req.TableName))
+		return n
+	}
+
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			var before int
-			require.NoError(t, fx.DB.Get(&before, `SELECT count(*) FROM scheduler_tracker WHERE kind = 'single_node_run'`))
+			before := runsOf(t, tc.req)
 			_, err := fx.Handler.TriggerSingleNodeRun(context.Background(), tc.req)
 			require.Error(t, err)
 			require.Equal(t, tc.expect, status.Code(err), "wrong code for %s: %v", tc.name, err)
-			var after int
-			require.NoError(t, fx.DB.Get(&after, `SELECT count(*) FROM scheduler_tracker WHERE kind = 'single_node_run'`))
-			require.Equal(t, before, after, "a refused trigger creates no run")
+			require.Equal(t, before, runsOf(t, tc.req), "a refused trigger creates no run")
 		})
 	}
 }

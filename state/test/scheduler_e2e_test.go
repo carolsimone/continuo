@@ -110,7 +110,7 @@ func TestSchedulerActivation_E2E(t *testing.T) {
 
 	// Initialize repositories
 	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
-	taskRepo := postgres.NewTaskTrackerRepository(db, logger)
+	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, logger)
 	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
 
 	// Seed schedule_catalog rows so the activation policy can verify existence.

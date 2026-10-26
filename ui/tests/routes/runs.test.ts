@@ -53,6 +53,27 @@ describe('GET /api/runs/:run_id/graph', () => {
     expect(res.body.run_promotion_seq).toBe(0);
   });
 
+  it('carries a node\'s lease wait: its reason, the holder run and when it began', async () => {
+    mockGetRunGraph.mockImplementation((_req: any, cb: any) =>
+      cb(null, {
+        nodes: [
+          { service_name: 's', schema_name: 'sch', table_name: 'a', node_type: 'dbt-model', status: 'pending',
+            wait_reason: 'node_lease', waiting_on_run_id: 'run-9', waiting_since: '2026-10-24T10:05:00Z' },
+          { service_name: 's', schema_name: 'sch', table_name: 'b', node_type: 'dbt-model', status: 'pending',
+            wait_reason: '', waiting_on_run_id: '', waiting_since: '' },
+        ],
+        edges: [],
+      })
+    );
+
+    const res = await request(app).get('/api/runs/run-1/graph');
+
+    expect(res.body.nodes[0]).toMatchObject({
+      wait_reason: 'node_lease', waiting_on_run_id: 'run-9', waiting_since: '2026-10-24T10:05:00Z',
+    });
+    expect(res.body.nodes[1]).toMatchObject({ wait_reason: null, waiting_on_run_id: null, waiting_since: null });
+  });
+
   it('defaults missing promotion seq fields to 0', async () => {
     mockGetRunGraph.mockImplementation((_req: any, cb: any) =>
       cb(null, { nodes: [], edges: [] }) // no promotion seq fields at all

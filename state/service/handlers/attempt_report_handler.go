@@ -49,7 +49,7 @@ func (h *AttemptReportHandler) Handle(ctx context.Context, u uow.UnitOfWork, evt
 	if err != nil {
 		return fmt.Errorf("load run: %w", err)
 	}
-	domainEvents, succeeded, err := r.RecordAttemptReport(ctx, u.TaskCollection(), u.TaskGraph(h.tenantID), evt.Report, h.tasks, u.Clock().Now())
+	domainEvents, succeeded, err := r.RecordAttemptReport(ctx, u.TaskCollection(h.tenantID), u.TaskGraph(h.tenantID), evt.Report, h.tasks, u.Clock().Now())
 	if err != nil {
 		return fmt.Errorf("record attempt report: %w", err)
 	}

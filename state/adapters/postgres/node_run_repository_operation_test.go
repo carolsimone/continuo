@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/google/uuid"
 )
@@ -16,7 +17,7 @@ import (
 // slice.
 func TestListNodes_FiltersByOperation(t *testing.T) {
 	db := newTestDB(t)
-	repo := postgres.NewNodeRunRepository(db, discardLogger())
+	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 	ctx := context.Background()
 
 	seed := func(op, taskStatus string) {
@@ -60,7 +61,7 @@ func TestListNodes_FiltersByOperation(t *testing.T) {
 // nothing for the same node identity.
 func TestListNodeRuns_FiltersByOperation(t *testing.T) {
 	db := newTestDB(t)
-	repo := postgres.NewNodeRunRepository(db, discardLogger())
+	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 	ctx := context.Background()
 
 	sid, tid := uuid.New(), uuid.New()
@@ -98,7 +99,7 @@ func TestListNodeRuns_FiltersByOperation(t *testing.T) {
 // the node, whose stats span both and whose last status is the full refresh's.
 func TestListNodes_FoldsFullRefreshIntoRun(t *testing.T) {
 	db := newTestDB(t)
-	repo := postgres.NewNodeRunRepository(db, discardLogger())
+	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 	ctx := context.Background()
 
 	seed := func(op, taskStatus string) {
@@ -136,7 +137,7 @@ func TestListNodes_FoldsFullRefreshIntoRun(t *testing.T) {
 // node lists its full refreshes, each carrying its own operation.
 func TestListNodeRuns_RunIncludesFullRefresh(t *testing.T) {
 	db := newTestDB(t)
-	repo := postgres.NewNodeRunRepository(db, discardLogger())
+	repo := postgres.NewNodeRunRepository(db, pkgevents.DefaultTenantID, discardLogger())
 	ctx := context.Background()
 
 	sid, tid := uuid.New(), uuid.New()

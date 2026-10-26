@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/domain/runplan"
 	"github.com/carolsimone/continuo/state/domain/topology"
 
@@ -21,7 +22,7 @@ func TestStart_StampsTaskOperation(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	schedRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskTrackerRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, discardLogger())
 
 	r, err := run.NewSingleNodeRun("op-task", model.OperationTest, nil, "user-1", run.ReleaseStamp{}, time.Now())
 	require.NoError(t, err)
@@ -35,7 +36,7 @@ func TestStart_StampsTaskOperation(t *testing.T) {
 	defer tx.Rollback()
 
 	runRepo := postgres.NewRunRepository(tx, schedRepo)
-	tasks := postgres.NewTaskCollectionAdapter(taskRepo, tx)
+	tasks := postgres.NewTaskCollectionAdapter(taskRepo, tx, "default")
 
 	require.NoError(t, runRepo.SaveRun(ctx, r))
 
