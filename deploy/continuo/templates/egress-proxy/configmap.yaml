@@ -1,3 +1,9 @@
+{{- /* egress.directDestinations, and every URL the agents call whose host is
+       an IP address, are checked whenever egress is on, also when no proxy
+       renders and nothing else reads them. */}}
+{{- if eq (include "continuo.egress.enabled" .) "true" }}
+{{- $_ := include "continuo.egress.directDestinations" . }}
+{{- end }}
 {{- if eq (include "continuo.egress.proxyEnabled" .) "true" }}
 # The hosts and ports egress-proxy admits, read once at startup. The proxy's
 # pod template carries a digest of this file, so a changed list rolls it.

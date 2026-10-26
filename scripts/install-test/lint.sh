@@ -1,12 +1,23 @@
 #!/usr/bin/env bash
 # Chart lint gate for deploy/continuo: helm lint + helm template across every
 # supported values topology, then kube-linter over each rendered manifest, a
-# NetworkPolicy reachability check on the default render, plus a bash -n syntax
+# NetworkPolicy reachability check on each topology and on the egress
+# variants, plus a bash -n syntax
 # check on the release-flow scripts (they have no other CI gate). Runs
-# identically in CI (install-test.yml) and locally; needs helm, Go, and
-# Python 3 with PyYAML (both preinstalled on the CI runner).
+# identically in CI (install-test.yml) and locally; needs Helm 3.16 or newer
+# (the egress checks render with --skip-schema-validation), Go, and Python 3
+# with PyYAML (Helm and Python are preinstalled on the CI runner).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
+
+helm_version="$(helm version --template '{{.Version}}')"
+helm_major="$(sed -E 's/^v([0-9]+)\..*/\1/' <<<"$helm_version")"
+helm_minor="$(sed -E 's/^v[0-9]+\.([0-9]+).*/\1/' <<<"$helm_version")"
+if ! [[ "$helm_major" =~ ^[0-9]+$ && "$helm_minor" =~ ^[0-9]+$ ]] \
+  || [ "$helm_major" -lt 3 ] || { [ "$helm_major" -eq 3 ] && [ "$helm_minor" -lt 16 ]; }; then
+  echo "FAIL: lint.sh needs Helm 3.16 or newer (it renders with --skip-schema-validation); found '${helm_version}'"
+  exit 1
+fi
 
 CHART=deploy/continuo
 # The chart's kubeVersion gate (>=1.27.0-0) rejects helm's older client-default
@@ -46,11 +57,16 @@ done
 
 # The chart default-denies ingress and re-opens exactly the edges the service
 # graph needs. A service that starts calling another without its allow rule
-# ships a platform that is "up" but silently unreachable on that path. Assert
-# the required cross-service edges are present in the default render (which has
-# networkPolicy.enabled=true).
-echo "--- network policy reachability (defaults)"
-python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/defaults.yaml" continuo
+# ships a platform that is "up" but silently unreachable on that path. With
+# egress on, the agents reach the outside only through egress-proxy, and the
+# proxy only what its allowlist names. Assert both, in each topology (each has
+# networkPolicy.enabled=true); the checker reads what to expect from the
+# render's allowlist and datastores. The egress variants are checked with the
+# egress renders below.
+for f in defaults byo-example byo-inline byo-secret; do
+  echo "--- network policy reachability (${f})"
+  python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/${f}.yaml" continuo
+done
 
 # A service reads its HTTP port under one specific env name. The chart sets a
 # differently named variable that works only while the default happens to equal
@@ -164,8 +180,8 @@ grep -q '\\"audience\\":\\"http://localhost:8090\\"' "${tmp}/ciauth-probe.yaml" 
 
 # The ui's CI-auth env, mount and volume come from the template, not from its
 # `services` entry: Helm replaces lists wholesale, so an operator's own
-# `services` list must not silently disable CI auth. ciAuth itself is optional,
-# so `helm upgrade --reuse-values` from a chart without it still renders, with
+# `services` list must not silently disable CI auth. ciAuth itself is optional:
+# values without it (as `helm upgrade --reuse-values` can produce) render with
 # the GitHub issuer and no bindings (no CI access).
 echo "--- ciAuth: the ui gets CI auth from the template"
 python3 scripts/install-test/assert-ui-ci-auth.py "${tmp}/defaults.yaml" continuo
@@ -174,7 +190,7 @@ helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
 python3 scripts/install-test/assert-ui-ci-auth.py "${tmp}/ui-minimal-services.yaml" continuo
 echo "--- ciAuth: a release without ciAuth values renders the defaults"
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set ciAuth=null > "${tmp}/ciauth-null.yaml" \
-  || { echo "FAIL: rendering with ciAuth=null failed; helm upgrade --reuse-values from a chart without ciAuth would fail"; exit 1; }
+  || { echo "FAIL: rendering with ciAuth=null failed; values without a ciAuth block must render"; exit 1; }
 python3 scripts/install-test/assert-ui-ci-auth.py "${tmp}/ciauth-null.yaml" continuo --default-ci-auth
 
 # The "continuo-api-" Secret-name prefix is reserved for the operator-created
@@ -203,8 +219,8 @@ helm template continuo-apis "$CHART" --kube-version "$KUBE_VERSION" > /dev/null 
 # database.pool reaches every Go service through the shared ConfigMap only when
 # set (0 keeps each service's default). An idle limit above the open limit, or
 # an idle limit with no open limit, fails the render instead of producing a
-# release a service would refuse to boot with. A release without a database
-# block (helm upgrade --reuse-values from an older chart) renders the defaults.
+# release a service would refuse to boot with. Values without a database block
+# (as `helm upgrade --reuse-values` can produce) render the defaults.
 echo "--- database.pool reaches the ConfigMap only when set; idle above open and idle alone are refused"
 if grep -q 'DB_MAX_OPEN_CONNS\|DB_MAX_IDLE_CONNS\|DB_POOL_SIZE\|DB_MAX_OVERFLOW' "${tmp}/defaults.yaml"; then
   echo "FAIL: the default render sets a pool limit; every service must keep its own default"; exit 1
@@ -222,15 +238,14 @@ if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
   echo "FAIL: maxIdleConns without maxOpenConns must fail the render"; exit 1
 fi
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set database=null > "${tmp}/database-null.yaml" \
-  || { echo "FAIL: rendering with database=null failed; helm upgrade --reuse-values from a chart without database.pool would fail"; exit 1; }
+  || { echo "FAIL: rendering with database=null failed; values without a database block must render"; exit 1; }
 if grep -q 'DB_MAX_OPEN_CONNS\|DB_MAX_IDLE_CONNS' "${tmp}/database-null.yaml"; then
   echo "FAIL: a release without database values must leave every service on its default pool"; exit 1
 fi
 
 # execution.maxConcurrentJobs reaches execution-controller through the shared
-# ConfigMap; a value below 1 fails the render, and a release without an
-# execution block (helm upgrade --reuse-values from an older chart) renders the
-# default.
+# ConfigMap; a value below 1 fails the render, and values without an execution
+# block (as `helm upgrade --reuse-values` can produce) render the default.
 echo "--- execution.maxConcurrentJobs reaches the ConfigMap; values below 1 are refused"
 grep -q 'MAX_CONCURRENT_JOBS: "50"' "${tmp}/defaults.yaml" \
   || { echo "FAIL: the default render does not set MAX_CONCURRENT_JOBS to 50"; exit 1; }
@@ -241,7 +256,7 @@ if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set executio
   echo "FAIL: execution.maxConcurrentJobs=0 must fail the render"; exit 1
 fi
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set execution=null > "${tmp}/execution-null.yaml" \
-  || { echo "FAIL: rendering with execution=null failed; helm upgrade --reuse-values from a chart without execution would fail"; exit 1; }
+  || { echo "FAIL: rendering with execution=null failed; values without an execution block must render"; exit 1; }
 grep -q 'MAX_CONCURRENT_JOBS: "50"' "${tmp}/execution-null.yaml" \
   || { echo "FAIL: a release without execution values must get the default cap"; exit 1; }
 if grep -A40 'name: execution-controller' "${tmp}/defaults.yaml" | grep -q 'name: MAX_CONCURRENT_JOBS'; then
@@ -249,8 +264,8 @@ if grep -A40 'name: execution-controller' "${tmp}/defaults.yaml" | grep -q 'name
 fi
 
 # execution.startTimeoutMinutes reaches execution-controller through the shared
-# ConfigMap in seconds; a value outside 1-120 fails the render, and a release
-# without the key (helm upgrade --reuse-values from an older chart) renders the
+# ConfigMap in seconds; a value outside 1-120 fails the render, and values
+# without the key (as `helm upgrade --reuse-values` can produce) render the
 # 15-minute default.
 echo "--- execution.startTimeoutMinutes reaches the ConfigMap in seconds; values outside 1-120 are refused"
 grep -q 'JOB_START_TIMEOUT_SECONDS: "900"' "${tmp}/defaults.yaml" \
@@ -268,8 +283,8 @@ grep -q 'JOB_START_TIMEOUT_SECONDS: "900"' "${tmp}/execution-null.yaml" \
 
 # runs.taskMaxRetries and runs.taskTimeoutHours reach state and
 # execution-controller through the shared ConfigMap, the timeout in seconds; a
-# value outside its range fails the render, and a release without a runs block
-# (helm upgrade --reuse-values from an older chart) renders the defaults.
+# value outside its range fails the render, and values without a runs block
+# (as `helm upgrade --reuse-values` can produce) render the defaults.
 echo "--- runs.taskMaxRetries and runs.taskTimeoutHours reach the ConfigMap; values outside their ranges are refused"
 grep -q 'TASK_MAX_RETRIES: "2"' "${tmp}/defaults.yaml" \
   || { echo "FAIL: the default render does not set TASK_MAX_RETRIES to 2"; exit 1; }
@@ -286,7 +301,7 @@ for bad in "runs.taskMaxRetries=-1" "runs.taskMaxRetries=11" "runs.taskTimeoutHo
   fi
 done
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set runs=null > "${tmp}/runs-null.yaml" \
-  || { echo "FAIL: rendering with runs=null failed; helm upgrade --reuse-values from a chart without runs would fail"; exit 1; }
+  || { echo "FAIL: rendering with runs=null failed; values without a runs block must render"; exit 1; }
 grep -q 'TASK_MAX_RETRIES: "2"' "${tmp}/runs-null.yaml" && grep -q 'TASK_TIMEOUT_SECONDS: "86400"' "${tmp}/runs-null.yaml" \
   || { echo "FAIL: a release without runs values must get the default retry budget and task timeout"; exit 1; }
 # deployment_env_entries prints each env entry named like the ERE $3 in the
@@ -314,9 +329,9 @@ for svc in state execution-controller; do
 done
 
 # maintenance.enabled reaches every service through the shared ConfigMap as
-# exactly "true" or "false"; a non-boolean value fails the render, and a release
-# without a maintenance block (helm upgrade --reuse-values from an older chart)
-# renders "false".
+# exactly "true" or "false"; a non-boolean value fails the render, and values
+# without a maintenance block (as `helm upgrade --reuse-values` can produce)
+# render "false".
 echo "--- maintenance.enabled reaches the ConfigMap; non-booleans are refused"
 grep -q 'MAINTENANCE_ENABLED: "false"' "${tmp}/defaults.yaml" \
   || { echo "FAIL: the default render does not set MAINTENANCE_ENABLED to false"; exit 1; }
@@ -327,7 +342,7 @@ if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set-string m
   echo "FAIL: a non-boolean maintenance.enabled must fail the render"; exit 1
 fi
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set maintenance=null > "${tmp}/maintenance-null.yaml" \
-  || { echo "FAIL: rendering with maintenance=null failed; helm upgrade --reuse-values from a chart without maintenance would fail"; exit 1; }
+  || { echo "FAIL: rendering with maintenance=null failed; values without a maintenance block must render"; exit 1; }
 grep -q 'MAINTENANCE_ENABLED: "false"' "${tmp}/maintenance-null.yaml" \
   || { echo "FAIL: a release without maintenance values must render MAINTENANCE_ENABLED false"; exit 1; }
 
@@ -347,8 +362,9 @@ fi
 # operator's own `services` list cannot drop it. openai-compatible has no
 # public address and needs it; a root ending in /v1 would make every request
 # /v1/v1/...; a provider outside the three the agents accept fails the schema;
-# and a services entry setting LLM_BASE_URL itself, through env or secretEnv, is refused. A release
-# without llm.baseUrl (helm upgrade --reuse-values from an older chart) renders.
+# and a services entry setting LLM_BASE_URL itself, through env or secretEnv, is
+# refused. Values without llm.baseUrl (as `helm upgrade --reuse-values` can
+# produce) render.
 echo "--- llm: baseUrl reaches both agents; invalid LLM settings fail the render"
 if grep -q 'name: LLM_BASE_URL' "${tmp}/defaults.yaml"; then
   echo "FAIL: the default render sets LLM_BASE_URL; anthropic must use its public address"; exit 1
@@ -358,13 +374,13 @@ helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
 [ "$(grep -A1 'name: LLM_BASE_URL' "${tmp}/llm-base.yaml" | grep -c 'value: "http://vllm.ai.svc:8000"')" = 2 ] \
   || { echo "FAIL: llm.baseUrl must reach agent-chat and agent-remediation as LLM_BASE_URL, without the trailing slash"; exit 1; }
 # refuse_render WANT HELM_ARGS...: the render must fail, and the error must
-# contain WANT so the failure is the one under test.
+# contain WANT, as a fixed string, so the failure is the one under test.
 refuse_render() {
   local want="$1"; shift
   if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" "$@" > /dev/null 2> "${tmp}/refused.err"; then
     echo "FAIL: rendering with $* succeeded; it must fail"; exit 1
   fi
-  grep -q -- "$want" "${tmp}/refused.err" || { echo "FAIL: rendering with $* failed for another reason:"; cat "${tmp}/refused.err"; exit 1; }
+  grep -qF -- "$want" "${tmp}/refused.err" || { echo "FAIL: rendering with $* failed for another reason (want: ${want}):"; cat "${tmp}/refused.err"; exit 1; }
 }
 refuse_render 'llm.baseUrl' --set llm.provider=openai-compatible
 refuse_render 'ends in /v1' --set llm.provider=openai-compatible --set llm.baseUrl=https://api.mistral.ai/v1
@@ -385,6 +401,441 @@ fi
 # entry, and a release without an egress block renders the proxy with defaults.
 echo "--- egress-proxy: the allowlist follows the LLM, GitHub and S3 settings; bad entries fail the render"
 python3 scripts/install-test/assert-egress-allowlist.py "$CHART" "$KUBE_VERSION"
+
+# The agents reach the outside only through egress-proxy. While it renders they
+# carry HTTP_PROXY, HTTPS_PROXY and a NO_PROXY that covers every in-cluster
+# address they are given (or that call goes to the proxy and is refused) and no
+# host on the allowlist (or that call skips the proxy). Without the proxy
+# (egress.enabled=false, or an allowlist with nothing in it) they carry no
+# proxy variable. A release without an egress block runs with the proxy on.
+echo "--- egress: agents use the proxy; NO_PROXY covers every in-cluster address and no allowlisted host"
+for f in defaults byo-example byo-inline byo-secret; do
+  python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/${f}.yaml"
+done
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set egress=null > "${tmp}/egress-null.yaml" \
+  || { echo "FAIL: a release without egress values must render"; exit 1; }
+grep -q 'name: HTTPS_PROXY$' "${tmp}/egress-null.yaml" \
+  || { echo "FAIL: a release without egress values must run the agents through the proxy"; exit 1; }
+python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-null.yaml"
+python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/egress-null.yaml" continuo
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set egress.enabled=false > "${tmp}/egress-off.yaml"
+if grep -qE 'name: (HTTP_PROXY|HTTPS_PROXY|NO_PROXY)$|-agents-egress$|-egress-proxy-egress$|-allow-egress-proxy$' "${tmp}/egress-off.yaml"; then
+  echo "FAIL: egress.enabled=false must render no proxy variables and no egress policy"; exit 1
+fi
+python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-off.yaml"
+python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/egress-off.yaml" continuo
+# Every URL the agents call is at an IP address and no domain is listed: the
+# allowlist is empty, no proxy renders, and the agents get no proxy variables.
+# Their egress policy still renders, admitting those addresses directly, and
+# neither egress-proxy policy does: with no proxy pod they would select nothing.
+egress_all_ip=(--set llm.provider=openai-compatible --set llm.baseUrl=http://10.0.0.7:8000
+  --set-json 'services=[{"name":"agent-chat","enabled":true},{"name":"agent-remediation","enabled":true,"env":{"GITHUB_BASE_URL":"http://10.0.0.8:8080"}}]')
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" "${egress_all_ip[@]}" > "${tmp}/egress-no-proxy.yaml"
+if grep -q '^  name: continuo-egress-proxy$' "${tmp}/egress-no-proxy.yaml"; then
+  echo "FAIL: an install whose every destination is an IP address must render no egress-proxy"; exit 1
+fi
+python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-no-proxy.yaml"
+grep -q '^  name: continuo-agents-egress$' "${tmp}/egress-no-proxy.yaml" \
+  || { echo "FAIL: with egress on and no proxy, the agents' egress policy must still render"; exit 1; }
+if grep -qE -- '-egress-proxy-egress$|-allow-egress-proxy$' "${tmp}/egress-no-proxy.yaml"; then
+  echo "FAIL: with no proxy, neither egress-proxy NetworkPolicy may render"; exit 1
+fi
+python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/egress-no-proxy.yaml" continuo \
+  --direct 10.0.0.7/32=8000 --direct 10.0.0.8/32=8080
+# networkPolicy.enabled=false renders no NetworkPolicy, the egress ones
+# included, while the agents still use the proxy.
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set networkPolicy.enabled=false > "${tmp}/netpol-off.yaml"
+if grep -q '^kind: NetworkPolicy$' "${tmp}/netpol-off.yaml"; then
+  echo "FAIL: networkPolicy.enabled=false must render no NetworkPolicy"; exit 1
+fi
+python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/netpol-off.yaml"
+# The agents reach an external Postgres or Redis on its configured port, which
+# the checker reads from the shared ConfigMap; egress-proxy reaches private
+# addresses only on the ports of allowPrivate entries, here 8443 while public
+# addresses take 443, 8080 and 8443. A datastore port that is not one fails the
+# render while the agents' egress policy renders, and only then.
+echo "--- egress: the agents reach an external datastore on its port; the proxy reaches private addresses on allowPrivate ports"
+egress_byo=(--set postgresql.enabled=false --set externalDatabase.host=pg.example.internal
+  --set externalDatabase.password=probe --set redis.enabled=false
+  --set externalRedis.host=redis.example.internal --set externalRedis.password=probe)
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" "${egress_byo[@]}" \
+  --set externalDatabase.port=6543 --set-json 'externalRedis.port=6380' \
+  --set-json 'egress.privateDomains=["git.corp.example:8443"]' --set-json 'egress.allowedDomains=["api.example.com:8080"]' \
+  > "${tmp}/egress-ports.yaml"
+python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/egress-ports.yaml" continuo
+# An external Postgres running as a pod of another namespace: the agents reach
+# the pods of every namespace on its port, which a network plugin that matches
+# no pod by ipBlock still admits.
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set postgresql.enabled=false \
+  --set externalDatabase.host=pg-rw.databases.svc --set externalDatabase.password=probe > "${tmp}/egress-pg-pod.yaml"
+python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/egress-pg-pod.yaml" continuo
+# An external Postgres or Redis whose host is an IP address outside the private
+# ranges is a direct destination on its configured port: a /32 or /128 rule in
+# the agents' egress policy, and the address in NO_PROXY. One at a private
+# address is admitted by the private-range rule and gets no rule of its own;
+# one at a cloud metadata or link-local address fails the render. The checker
+# reads the host and port from the shared ConfigMap.
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set postgresql.enabled=false --set externalDatabase.host=203.0.113.5 --set externalDatabase.password=probe \
+  --set redis.enabled=false --set 'externalRedis.host=2001:db8::5' --set externalRedis.port=6380 \
+  --set externalRedis.password=probe > "${tmp}/egress-ds-public.yaml"
+grep -q '^            cidr: 203.0.113.5/32$' "${tmp}/egress-ds-public.yaml" \
+  || { echo "FAIL: an external Postgres at a public IP address must be a direct destination"; exit 1; }
+grep -q '^            cidr: "2001:db8::5/128"$' "${tmp}/egress-ds-public.yaml" \
+  || { echo "FAIL: an external Redis at a public IPv6 address must be a direct destination"; exit 1; }
+grep -A1 'name: NO_PROXY' "${tmp}/egress-ds-public.yaml" | grep -q ',203\.0\.113\.5,2001:db8::5"' \
+  || { echo "FAIL: an external datastore at a public IP address must be in NO_PROXY"; exit 1; }
+python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-ds-public.yaml"
+python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/egress-ds-public.yaml" continuo
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set postgresql.enabled=false --set externalDatabase.host=10.0.0.5 --set externalDatabase.password=probe \
+  > "${tmp}/egress-ds-private.yaml"
+if grep -q 'cidr: 10.0.0.5/32' "${tmp}/egress-ds-private.yaml"; then
+  echo "FAIL: an external Postgres at a private address is admitted by the private-range rule and needs no rule of its own"; exit 1
+fi
+python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/egress-ds-private.yaml" continuo
+refuse_render 'externalDatabase.host="100.100.100.200": its host 100.100.100.200 lies in' \
+  --set postgresql.enabled=false --set externalDatabase.host=100.100.100.200 --set externalDatabase.password=probe
+refuse_render 'externalRedis.host="169.254.169.254": its host 169.254.169.254 lies in' \
+  --set redis.enabled=false --set externalRedis.host=169.254.169.254 --set externalRedis.password=probe
+refuse_render 'externalDatabase.port=0 is not a port' "${egress_byo[@]}" --set externalDatabase.port=0
+refuse_render 'externalRedis.port=70000 is not a port' "${egress_byo[@]}" --set externalRedis.port=70000
+refuse_render 'externalDatabase.port="5432" is not a port' --skip-schema-validation "${egress_byo[@]}" \
+  --set-string externalDatabase.port=5432
+for off in networkPolicy.enabled=false egress.enabled=false; do
+  helm template continuo "$CHART" --kube-version "$KUBE_VERSION" "${egress_byo[@]}" --set externalDatabase.port=0 \
+    --set "${off}" > /dev/null \
+    || { echo "FAIL: with ${off} no egress policy renders and externalDatabase.port=0 must render as before"; exit 1; }
+done
+# NO_PROXY covers every in-cluster address the agents are given, however it is
+# written: a global.*GrpcAddr in another namespace, an agent env URL at a .svc
+# name, and the namespace-qualified forms of a release Service. Such an address
+# is listed with its port as written (08080 stays 08080, which is what Go
+# compares), so the same host on a port the allowlist admits (a GitHub
+# Enterprise on 443 here) still goes through the proxy. A name with a trailing
+# dot is no in-cluster name and goes through the proxy.
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set global.stateGrpcAddr=state.other.svc:50051 > "${tmp}/egress-np-global.yaml"
+python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-np-global.yaml"
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"FOO_URL":"http://foo.tools.svc:80","FOO_ALT_URL":"http://foo.tools.svc:08080","TRAILING_DOT_ADDR":"state.:50051"}},{"name":"foo","enabled":true,"httpPort":80},{"name":"agent-remediation","enabled":true,"env":{"GITHUB_BASE_URL":"https://foo.tools.svc/api/v3"}}]' \
+  > "${tmp}/egress-np-env.yaml"
+python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-np-env.yaml"
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"CONTINUO_STATE_ADDR":"state.default:50051","CONTINUO_ORCHESTRATOR_ADDR":"orchestrator.default.svc.cluster.local:50052"}},{"name":"state","enabled":true,"httpPort":8082},{"name":"orchestrator","enabled":true,"httpPort":8087},{"name":"agent-remediation","enabled":true}]' \
+  > "${tmp}/egress-np-forms.yaml"
+python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-np-forms.yaml"
+# An in-cluster address the allowlist admits on the port the agents use is left
+# out of NO_PROXY, so the call goes through the proxy: a GitHub Enterprise at a
+# namespace-local name (whose codeload.<name> a bare NO_PROXY name would also
+# cover). The release's own Services stay in NO_PROXY in every form, also when
+# a wildcard allowlist entry over the cluster domain matches them on another
+# port; an llm.baseUrl on localhost needs no allowlist entry.
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"CONTINUO_STATE_ADDR":"state:50051"}},{"name":"agent-remediation","enabled":true,"env":{"GITHUB_BASE_URL":"http://ghe:8080/api/v3","CONTINUO_ORCHESTRATOR_ADDR":"orchestrator:50052"}}]' \
+  > "${tmp}/egress-allowlisted-local.yaml"
+python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-allowlisted-local.yaml"
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set-json 'egress.privateDomains=["*.svc.cluster.local"]' \
+  --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"CONTINUO_STATE_ADDR":"state.default.svc.cluster.local:50051"}},{"name":"state","enabled":true,"httpPort":8082},{"name":"agent-remediation","enabled":true,"env":{"GITHUB_BASE_URL":"https://ghe.tools.svc/api/v3"}}]' \
+  > "${tmp}/egress-allowlisted-wildcard.yaml"
+python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-allowlisted-wildcard.yaml"
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set llm.provider=openai-compatible --set llm.baseUrl=http://localhost:8000 > "${tmp}/egress-llm-localhost.yaml"
+if grep -q 'host: "localhost"' "${tmp}/egress-llm-localhost.yaml"; then
+  echo "FAIL: an llm.baseUrl on localhost must not reach the allowlist; egress-proxy never connects to loopback"; exit 1
+fi
+python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-llm-localhost.yaml"
+# An egress.allowedDomains entry does not allow private addresses, so egress-proxy
+# would refuse the private address an in-cluster name resolves to: the name
+# stays in NO_PROXY.
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set-json 'egress.allowedDomains=["foo.tools.svc:80"]' \
+  --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"FOO_URL":"http://foo.tools.svc:80"}},{"name":"agent-remediation","enabled":true}]' \
+  > "${tmp}/egress-allowlisted-public.yaml"
+[ "$(grep -A1 'name: NO_PROXY' "${tmp}/egress-allowlisted-public.yaml" | grep -cF ',foo.tools.svc:80')" = 2 ] \
+  || { echo "FAIL: an in-cluster address on an allowlist entry without allowPrivate must stay in NO_PROXY"; exit 1; }
+python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-allowlisted-public.yaml"
+# An in-cluster address in another namespace that the agents reach without the
+# proxy (a global.*GrpcAddr or an agent env URL at <name>.<namespace>.svc) gets
+# a rule in their egress policy for that namespace and port; the checker reads
+# which from their NO_PROXY and env. A global.*GrpcAddr whose host is no
+# in-cluster name goes through the proxy, which logs its refusal, instead of
+# NO_PROXY sending it straight into the policy that drops it.
+echo "--- egress: the agents reach in-cluster addresses of other namespaces they are given; other hosts go through the proxy"
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set global.deadLetterControllerGrpcAddr=dead-letter-controller.ops.svc:50055 > "${tmp}/egress-np-dlc.yaml"
+python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-np-dlc.yaml"
+grep -q 'kubernetes.io/metadata.name: ops$' "${tmp}/egress-np-dlc.yaml" \
+  || { echo "FAIL: a global.*GrpcAddr in another namespace must reach the agents' egress policy"; exit 1; }
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set global.deadLetterControllerGrpcAddr=dlc.corp.example:50055 \
+  --set global.stateGrpcAddr=state.corp.example:50051 > "${tmp}/egress-np-fqdn.yaml"
+if grep -A1 'name: NO_PROXY' "${tmp}/egress-np-fqdn.yaml" | grep -qE 'dlc\.corp\.example|state\.corp\.example'; then
+  echo "FAIL: a global.*GrpcAddr whose host is no in-cluster name must go through the proxy, not NO_PROXY"; exit 1
+fi
+python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-np-fqdn.yaml"
+for f in egress-np-global egress-np-env egress-np-forms egress-np-dlc egress-np-fqdn egress-allowlisted-local \
+  egress-allowlisted-wildcard egress-allowlisted-public egress-llm-localhost; do
+  python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/${f}.yaml" continuo
+done
+# An address the agents are given whose host is an IP address (a URL or a
+# host:port in their env, IPv4 or IPv6, or a global.*GrpcAddr) is a direct
+# destination, because egress-proxy admits host names only: it is in NO_PROXY
+# and gets a rule on its port. Loopback and a listen address (0.0.0.0) need
+# nothing; an address in link-local or a cloud metadata range, one that is no
+# valid address and a port outside 1-65535 fail the render naming the key.
+echo "--- egress: an IP address in the agents' env or a global.*GrpcAddr is a direct destination"
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set global.stateGrpcAddr=10.0.0.5:50051 \
+  --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"FOO_URL":"http://10.0.0.9:8080/v1","LOCAL_ADDR":"127.0.0.1:9000","LISTEN_ADDR":"0.0.0.0:8081"}},{"name":"agent-remediation","enabled":true,"env":{"BAR_ADDR":"[fd00::9]:50051"}}]' \
+  > "${tmp}/egress-np-ip.yaml"
+for cidr in 10.0.0.5/32 10.0.0.9/32 '"fd00::9/128"'; do
+  grep -qF "cidr: ${cidr}" "${tmp}/egress-np-ip.yaml" \
+    || { echo "FAIL: an IP address the agents are given must get a rule in their egress policy (${cidr})"; exit 1; }
+done
+if grep -qE 'cidr: "?(127\.0\.0\.1|0\.0\.0\.0)/32' "${tmp}/egress-np-ip.yaml"; then
+  echo "FAIL: a loopback or listen address the agents are given needs no rule"; exit 1
+fi
+python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-np-ip.yaml"
+python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/egress-np-ip.yaml" continuo \
+  --direct 10.0.0.5/32=50051 --direct 10.0.0.9/32=8080 --direct fd00::9/128=50051
+refuse_render 'services[name=agent-chat].env.META_URL="http://169.254.169.254/latest": its host 169.254.169.254 lies in' \
+  --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"META_URL":"http://169.254.169.254/latest"}}]'
+refuse_render 'global.stateGrpcAddr="[fd00:ec2::254]:50051": its host fd00:ec2::254 lies in' \
+  --set 'global.stateGrpcAddr=[fd00:ec2::254]:50051'
+refuse_render 'services[name=agent-remediation].env.BAD_ADDR="999.0.0.1:80": its host 999.0.0.1 has the octet "999"' \
+  --set-json 'services=[{"name":"agent-remediation","enabled":true,"env":{"BAD_ADDR":"999.0.0.1:80"}}]'
+refuse_render 'services[name=agent-chat].env.FOO_ADDR="10.0.0.9:70000" has a port outside 1-65535' \
+  --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"FOO_ADDR":"10.0.0.9:70000"}}]'
+
+# While egress is on, an agent's own proxy variable, through env or secretEnv,
+# fails the render, as do an S3_ENDPOINT_URL of its own, which would replace the
+# s3.endpointUrl the allowlist is built from, and a GITHUB_BASE_URL in
+# secretEnv, which the allowlist cannot read; LLM_BASE_URL fails it either way.
+# With egress off the proxy variables, S3_ENDPOINT_URL, LLM_PROVIDER and a
+# GITHUB_BASE_URL in secretEnv render.
+echo "--- egress: an agent's own proxy variables, S3_ENDPOINT_URL, and GITHUB_BASE_URL in secretEnv, fail the render while egress is on"
+i=0
+for var in HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy; do
+  agents=(agent-chat agent-remediation)
+  a="${agents[$((i % 2))]}"; b="${agents[$(((i + 1) % 2))]}"; i=$((i + 1))
+  refuse_render "services[name=${a}].env sets ${var}" \
+    --set-json "services=[{\"name\":\"${a}\",\"enabled\":true,\"env\":{\"${var}\":\"http://corp-proxy:8080\"}}]"
+  refuse_render "services[name=${b}].secretEnv sets ${var}" \
+    --set-json "services=[{\"name\":\"${b}\",\"enabled\":true,\"secretEnv\":[{\"name\":\"${var}\",\"ref\":\"llm\"}]}]"
+done
+refuse_render 'services[name=agent-chat].env sets HTTPS_PROXY' "${egress_all_ip[@]:0:4}" \
+  --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"HTTPS_PROXY":"http://corp-proxy:8080"}},{"name":"agent-remediation","enabled":true,"env":{"GITHUB_BASE_URL":"http://10.0.0.8:8080"}}]'
+refuse_render 'services[name=agent-remediation].secretEnv sets GITHUB_BASE_URL' \
+  --set-json 'services=[{"name":"agent-remediation","enabled":true,"secretEnv":[{"name":"GITHUB_BASE_URL","ref":"githubToken"}]}]'
+# The allowlist admits the provider of llm.provider, so an agent's LLM_PROVIDER
+# other than the __LLM_PROVIDER__ placeholder fails the render, as does one in
+# secretEnv; the placeholder renders.
+refuse_render 'services[name=agent-chat].env sets LLM_PROVIDER="openai": ' \
+  --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"LLM_PROVIDER":"openai"}},{"name":"agent-remediation","enabled":true}]'
+refuse_render 'services[name=agent-remediation].secretEnv sets LLM_PROVIDER: ' \
+  --set-json 'services=[{"name":"agent-remediation","enabled":true,"secretEnv":[{"name":"LLM_PROVIDER","ref":"llm"}]}]'
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"LLM_PROVIDER":"__LLM_PROVIDER__"}},{"name":"agent-remediation","enabled":true}]' > /dev/null \
+  || { echo "FAIL: an agent env LLM_PROVIDER of __LLM_PROVIDER__ must render"; exit 1; }
+refuse_render 'services[name=agent-remediation].env sets S3_ENDPOINT_URL: ' \
+  --set-json 'services=[{"name":"agent-chat","enabled":true},{"name":"agent-remediation","enabled":true,"env":{"S3_ENDPOINT_URL":"https://my_store.example.com"}}]'
+refuse_render 'services[name=agent-chat].secretEnv sets S3_ENDPOINT_URL: ' \
+  --set-json 'services=[{"name":"agent-chat","enabled":true,"secretEnv":[{"name":"S3_ENDPOINT_URL","ref":"llm"}]}]'
+refuse_render 'services[name=agent-chat].env sets LLM_BASE_URL' --set egress.enabled=false \
+  --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"LLM_BASE_URL":"http://x:1"}}]'
+refuse_render 'services[name=agent-remediation].secretEnv sets LLM_BASE_URL' --set egress.enabled=false \
+  --set-json 'services=[{"name":"agent-remediation","enabled":true,"secretEnv":[{"name":"LLM_BASE_URL","ref":"llm"}]}]'
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set egress.enabled=false \
+  --set-json 'services=[{"name":"agent-chat","enabled":true,"env":{"HTTP_PROXY":"http://corp-proxy:8080","no_proxy":"internal"},"secretEnv":[{"name":"HTTPS_PROXY","ref":"llm"}]},{"name":"agent-remediation","enabled":true,"env":{"NO_PROXY":"internal","https_proxy":"http://corp-proxy:8080","S3_ENDPOINT_URL":"https://store.example.com","LLM_PROVIDER":"openai"},"secretEnv":[{"name":"http_proxy","ref":"llm"},{"name":"GITHUB_BASE_URL","ref":"githubToken"}]}]' > /dev/null \
+  || { echo "FAIL: with egress off, an agent's own proxy variables, S3_ENDPOINT_URL and a GITHUB_BASE_URL in secretEnv must render"; exit 1; }
+
+# A URL the agents call (llm.baseUrl, agent-remediation's GITHUB_BASE_URL,
+# s3.endpointUrl with MinIO off) whose host is neither a host name the proxy
+# admits nor an IP address, or whose port is outside 1-65535, fails the render
+# naming the key and the value, rather than leaving the agent pointed at a proxy
+# that refuses it. With egress off the same values render.
+echo "--- egress: a URL host the proxy cannot admit fails the render"
+egress_s3=(--set minio.enabled=false --set s3.bucket=continuo --set s3.region=eu-central-1
+  --set s3.accessKeyId=probe --set s3.secretKey=probe)
+refuse_render 'llm.baseUrl="http://vllm_x:8000"' --set llm.provider=openai-compatible --set llm.baseUrl=http://vllm_x:8000
+refuse_render 'services[name=agent-remediation].env.GITHUB_BASE_URL="https://gh_e.example/api/v3"' \
+  --set-json 'services=[{"name":"agent-remediation","enabled":true,"env":{"GITHUB_BASE_URL":"https://gh_e.example/api/v3"}}]'
+refuse_render 's3.endpointUrl="http://my_minio:9000"' "${egress_s3[@]}" --set s3.endpointUrl=http://my_minio:9000
+refuse_render 'llm.baseUrl="http://gpu:70000" has a port outside 1-65535' --set llm.baseUrl=http://gpu:70000
+refuse_render 's3.endpointUrl="http://10.0.0.9:0" has a port outside 1-65535' "${egress_s3[@]}" --set s3.endpointUrl=http://10.0.0.9:0
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set egress.enabled=false \
+  --set llm.provider=openai-compatible --set llm.baseUrl=http://vllm_x:8000 > /dev/null \
+  || { echo "FAIL: with egress off, the allowlist is not built and llm.baseUrl must render"; exit 1; }
+
+# A URL host that is an IP address is reached directly: it stays out of the
+# allowlist, is in NO_PROXY and gets a rule on its port in the agents' egress
+# policy, like every egress.directDestinations entry. A loopback one needs
+# nothing; one in link-local or a cloud metadata range fails.
+echo "--- egress: an IP address the agents reach directly is in NO_PROXY and their egress policy; loopback needs nothing; metadata fails"
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set llm.provider=openai-compatible --set llm.baseUrl=http://10.0.0.7:8000 \
+  --set-json 'egress.directDestinations=[{"cidr":"203.0.113.10/32","ports":[5432]}]' > "${tmp}/egress-direct.yaml"
+grep -q 'cidr: 10.0.0.7/32' "${tmp}/egress-direct.yaml" \
+  || { echo "FAIL: an llm.baseUrl at an IP address must be a direct destination"; exit 1; }
+grep -q 'cidr: 203.0.113.10/32' "${tmp}/egress-direct.yaml" \
+  || { echo "FAIL: egress.directDestinations must reach the agents' egress policy"; exit 1; }
+grep -A1 'name: NO_PROXY' "${tmp}/egress-direct.yaml" | grep -q '10\.0\.0\.7' \
+  || { echo "FAIL: an IP the agents reach directly must be in NO_PROXY"; exit 1; }
+python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-direct.yaml"
+python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/egress-direct.yaml" continuo \
+  --direct 10.0.0.7/32=8000 --direct 203.0.113.10/32=5432
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set llm.provider=openai-compatible --set 'llm.baseUrl=http://[2001:DB8::1]:8000' > "${tmp}/egress-direct6.yaml"
+grep -A1 'name: NO_PROXY' "${tmp}/egress-direct6.yaml" | grep -q ',2001:db8::1[,"]' \
+  || { echo "FAIL: an IPv6 llm.baseUrl host must be in NO_PROXY, without brackets"; exit 1; }
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set llm.provider=openai-compatible --set llm.baseUrl=http://127.0.0.1:8000 > /dev/null \
+  || { echo "FAIL: an llm.baseUrl on loopback needs no direct destination and must render"; exit 1; }
+refuse_render 'llm.baseUrl="http://169.254.169.254"' --set llm.baseUrl=http://169.254.169.254
+refuse_render 'llm.baseUrl="http://[fd00:ec2::254]:80"' --set 'llm.baseUrl=http://[fd00:ec2::254]:80'
+refuse_render 'llm.baseUrl="http://999.0.0.1:8000"' --set llm.baseUrl=http://999.0.0.1:8000
+refuse_render 'llm.baseUrl="http://010.0.0.7:8000"' --set llm.baseUrl=http://010.0.0.7:8000
+refuse_render 'services[name=agent-remediation].env.GITHUB_BASE_URL="https://[fe80::1]/api/v3"' \
+  --set-json 'services=[{"name":"agent-remediation","enabled":true,"env":{"GITHUB_BASE_URL":"https://[fe80::1]/api/v3"}}]'
+
+# egress.directDestinations is checked as written: an object with exactly cidr
+# (an IPv4 or IPv6 CIDR with a prefix length of at least 1, no bit set past it,
+# outside loopback, link-local and cloud metadata ranges) and ports (whole
+# numbers 1-65535). The templates refuse a bad entry naming it; the schema
+# refuses most of them first.
+echo "--- egress.directDestinations: accepted entries reach NO_PROXY and the agents' egress policy; bad entries fail the render"
+direct_ok='[{"cidr":"203.0.113.10/32","ports":[5432]},{"cidr":"10.0.0.0/8","ports":[5432,6379]},{"cidr":"2001:db8::1/128","ports":[443]},{"cidr":"2001:DB8:0:0:0:0:0:0/32","ports":[1,65535]},{"cidr":"198.51.100.0/24","ports":[443.0]},{"cidr":"64:ff9b::cb00:710a/128","ports":[443]},{"cidr":"1.0.0.0/8","ports":[443]}]'
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set-json "egress.directDestinations=${direct_ok}" > "${tmp}/egress-direct-ok.yaml" \
+  || { echo "FAIL: accepted egress.directDestinations entries must render"; exit 1; }
+for cidr in 203.0.113.10/32 10.0.0.0/8 2001:db8::1/128 2001:db8:0:0:0:0:0:0/32 198.51.100.0/24 64:ff9b::cb00:710a/128 1.0.0.0/8; do
+  [ "$(grep -A1 'name: NO_PROXY' "${tmp}/egress-direct-ok.yaml" | grep -cF ",${cidr}")" = 2 ] \
+    || { echo "FAIL: egress.directDestinations entry ${cidr} must reach both agents' NO_PROXY"; exit 1; }
+done
+python3 scripts/install-test/assert-agent-egress-env.py "${tmp}/egress-direct-ok.yaml"
+python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/egress-direct-ok.yaml" continuo \
+  --direct 203.0.113.10/32=5432 --direct 10.0.0.0/8=5432,6379 --direct 2001:db8::1/128=443 \
+  --direct 2001:db8::/32=1,65535 --direct 198.51.100.0/24=443 --direct 64:ff9b::cb00:710a/128=443 \
+  --direct 1.0.0.0/8=443
+# S: the schema refuses the entry before any template runs, and the templates
+# refuse it too when the schema is skipped. T: the entry passes the schema and
+# the templates refuse it.
+while IFS='|' read -r by entry; do
+  [ -n "$entry" ] || continue
+  if [ "$by" = S ]; then
+    refuse_render "egress.directDestinations entry ${entry}" --skip-schema-validation --set-json "egress.directDestinations=[${entry}]"
+    refuse_render 'directDestinations' --set-json "egress.directDestinations=[${entry}]"
+    if grep -qF 'egress.directDestinations entry' "${tmp}/refused.err"; then
+      echo "FAIL: values.schema.json must refuse egress.directDestinations entry ${entry} before the templates do"; exit 1
+    fi
+  else
+    refuse_render "egress.directDestinations entry ${entry}" --set-json "egress.directDestinations=[${entry}]"
+  fi
+done <<'EOF'
+S|{"cidr":"0.0.0.0/0","ports":[443]}
+S|{"cidr":"::/0","ports":[443]}
+S|{"cidr":"203.0.113.10","ports":[443]}
+S|{"cidr":"203.0.113.10/","ports":[443]}
+S|{"cidr":"203.0.113.10/33","ports":[443]}
+S|{"cidr":"2001:db8::1/129","ports":[443]}
+S|{"cidr":"203.0.113.10/032","ports":[443]}
+S|{"cidr":"203.0.113.10/+32","ports":[443]}
+S|{"cidr":"203.0.113.010/32","ports":[443]}
+S|{"cidr":"256.0.0.1/32","ports":[443]}
+S|{"cidr":"10.0.0/24","ports":[443]}
+S|{"cidr":"10.0.0.0.0/24","ports":[443]}
+T|{"cidr":"10.0.0.1/8","ports":[443]}
+T|{"cidr":"2001:db8::1/64","ports":[443]}
+T|{"cidr":"127.0.0.1/32","ports":[443]}
+T|{"cidr":"126.0.0.0/7","ports":[443]}
+T|{"cidr":"0.0.0.0/8","ports":[443]}
+T|{"cidr":"169.254.169.254/32","ports":[80]}
+T|{"cidr":"169.254.0.0/15","ports":[80]}
+T|{"cidr":"100.64.0.0/10","ports":[80]}
+T|{"cidr":"168.63.129.16/32","ports":[80]}
+T|{"cidr":"::1/128","ports":[443]}
+T|{"cidr":"::/128","ports":[443]}
+T|{"cidr":"fe80::1/128","ports":[443]}
+T|{"cidr":"fe80::/9","ports":[443]}
+T|{"cidr":"fd00:ec2::254/128","ports":[443]}
+T|{"cidr":"fd00::/8","ports":[443]}
+T|{"cidr":"fd20:ce::254/128","ports":[443]}
+T|{"cidr":"::ffff:a00:1/128","ports":[443]}
+S|{"cidr":"::ffff:10.0.0.1/128","ports":[443]}
+T|{"cidr":"64:ff9b::7f00:1/128","ports":[443]}
+T|{"cidr":"64:ff9b::a9fe:a9fe/128","ports":[443]}
+T|{"cidr":"64:ff9b::/64","ports":[443]}
+S|{"cidr":"fe80::1%eth0/128","ports":[443]}
+T|{"cidr":"2001:db8::1::2/128","ports":[443]}
+T|{"cidr":"2001:db8:0:0:0:0:0:0:1/128","ports":[443]}
+T|{"cidr":"2001:db8::12345/128","ports":[443]}
+T|{"cidr":":2001:db8::1/128","ports":[443]}
+T|{"cidr":"2001:db8::1:/128","ports":[443]}
+S|{"cidr":"[2001:db8::1]/128","ports":[443]}
+S|{"cidr":"example.com/32","ports":[443]}
+S|{"cidr":" 10.0.0.0/8","ports":[443]}
+S|{"cidr":"10.0.0.0/8 ","ports":[443]}
+S|{"cidr":"","ports":[443]}
+S|{"cidr":10,"ports":[443]}
+S|{"cidr":["10.0.0.0/8"],"ports":[443]}
+S|{"cidr":"10.0.0.0/8"}
+S|{"ports":[443]}
+S|{"cidr":"10.0.0.0/8","host":"10.0.0.1","ports":[443]}
+S|{"cidr":"10.0.0.0/8","ports":[]}
+S|{"cidr":"10.0.0.0/8","ports":443}
+S|{"cidr":"10.0.0.0/8","ports":null}
+S|{"cidr":"10.0.0.0/8","ports":[0]}
+S|{"cidr":"10.0.0.0/8","ports":[65536]}
+S|{"cidr":"10.0.0.0/8","ports":[-1]}
+S|{"cidr":"10.0.0.0/8","ports":[443.5]}
+S|{"cidr":"10.0.0.0/8","ports":[1e+21]}
+S|{"cidr":"10.0.0.0/8","ports":["443"]}
+S|{"cidr":"10.0.0.0/8","ports":["0443"]}
+S|{"cidr":"10.0.0.0/8","ports":[true]}
+S|{"cidr":"10.0.0.0/8","ports":[null]}
+S|{"cidr":"10.0.0.0/8","ports":[[443]]}
+S|"10.0.0.0/8"
+S|null
+EOF
+# Each refusal says why: S|ENTRY|REASON or T|ENTRY|REASON, as above.
+while IFS='|' read -r by entry why; do
+  [ -n "$entry" ] || continue
+  if [ "$by" = S ]; then
+    refuse_render "$why" --skip-schema-validation --set-json "egress.directDestinations=[${entry}]"
+  else
+    refuse_render "$why" --set-json "egress.directDestinations=[${entry}]"
+  fi
+done <<'EOF'
+S|{"cidr":"0.0.0.0/0","ports":[443]}|has a prefix length of 0
+S|{"cidr":"::/0","ports":[443]}|has a prefix length of 0
+T|{"cidr":"10.0.0.1/8","ports":[443]}|has address bits set past its prefix length
+S|{"cidr":"203.0.113.010/32","ports":[443]}|has the octet "010"
+S|{"cidr":"2001:db8::1/129","ports":[443]}|has a prefix length above 128
+T|{"cidr":"126.0.0.0/7","ports":[443]}|overlaps 127.0.0.0/8 (loopback)
+T|{"cidr":"169.254.169.254/32","ports":[80]}|overlaps 169.254.0.0/16
+T|{"cidr":"fd00::/8","ports":[443]}|overlaps fd00:ec2::/32
+T|{"cidr":"::ffff:a00:1/128","ports":[443]}|overlaps ::ffff:0:0/96
+T|{"cidr":"64:ff9b::7f00:1/128","ports":[443]}|NAT64, here of 127.0.0.0/8
+S|{"cidr":"10.0.0.0/8","host":"10.0.0.1","ports":[443]}|must have exactly the keys cidr and ports
+S|{"cidr":10,"ports":[443]}|has a cidr that is not a string
+S|{"cidr":"10.0.0.0/8","ports":[]}|has an empty ports list
+S|{"cidr":"10.0.0.0/8","ports":443}|has ports that are not a list
+S|{"cidr":"10.0.0.0/8","ports":["443"]}|has the port "443", which is not a whole number from 1 to 65535
+S|{"cidr":"10.0.0.0/8","ports":[65536]}|has the port 65536, which is not a whole number from 1 to 65535
+EOF
+refuse_render 'egress.directDestinations must be a list' --skip-schema-validation \
+  --set-json 'egress.directDestinations={"cidr":"10.0.0.0/8","ports":[443]}'
+refuse_render 'directDestinations' --set-json 'egress.directDestinations={"cidr":"10.0.0.0/8","ports":[443]}'
+if grep -qF 'egress.directDestinations must be a list' "${tmp}/refused.err"; then
+  echo "FAIL: values.schema.json must refuse a non-list egress.directDestinations before the templates do"; exit 1
+fi
+# The check runs whenever egress is on, also when no proxy renders (every
+# destination an IP address); with egress off it does not run.
+refuse_render 'egress.directDestinations entry {"cidr":"0.0.0.0/0","ports":[443]}' --skip-schema-validation \
+  "${egress_all_ip[@]}" --set-json 'egress.directDestinations=[{"cidr":"0.0.0.0/0","ports":[443]}]'
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --skip-schema-validation --set egress.enabled=false \
+  --set-json 'egress.directDestinations=[{"cidr":"0.0.0.0/0","ports":[443]}]' > /dev/null \
+  || { echo "FAIL: with egress off, egress.directDestinations is not read and must render"; exit 1; }
 
 echo "--- bash -n (release scripts)"
 bash -n scripts/release/retag-images.sh

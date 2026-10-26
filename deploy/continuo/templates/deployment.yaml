@@ -249,7 +249,7 @@ spec:
               value: /app/ci-auth/ci-auth.json
             {{- end }}
             {{- if $isAgent }}
-            {{- with include "continuo.agent.env" $ }}
+            {{- with include "continuo.agent.env" $ | trim }}
             {{- . | nindent 12 }}
             {{- end }}
             {{- end }}

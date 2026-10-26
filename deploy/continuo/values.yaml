@@ -480,30 +480,52 @@ streamReaper:
 
 networkPolicy:
   # Default-deny ingress within the release plus allow rules derived from the
-  # real service graph. Inert on CNIs that do not enforce NetworkPolicy.
+  # real service graph. With egress.enabled it also restricts the egress of
+  # agent-chat, agent-remediation and egress-proxy (see egress). Inert on CNIs
+  # that do not enforce NetworkPolicy.
   enabled: true
 
 egress:
-  # egress-proxy: a forward proxy that admits a connection only to a host and
-  # port on its allowlist. The chart deploys it and renders the allowlist from
-  # llm.* (llm.baseUrl, else the provider's public API), the GITHUB_BASE_URL of
-  # agent-remediation's `services` entry (its `env` only), s3.endpointUrl when
-  # minio.enabled=false, and the two lists below. The chart does not point the
-  # agents at it: no traffic reaches it until a client is configured to use
-  # http://egress-proxy:3128 as its proxy.
-  # A URL whose host is an IP address or no valid host name, or whose port is
-  # outside 1-65535, is left out of the allowlist: the proxy admits host names
-  # only. When nothing is left to allow, no egress-proxy object renders, because
-  # the proxy refuses to start on an empty list. The rendered list is in the
-  # ConfigMap <release>-egress-proxy.
+  # agent-chat and agent-remediation send their outbound HTTP and gRPC calls
+  # through egress-proxy, a forward proxy that admits a connection only to a
+  # host and port on its allowlist. The chart renders the allowlist from llm.*
+  # (llm.baseUrl, else the provider's public API), the GITHUB_BASE_URL of
+  # agent-remediation's `services` entry (its `env`; while egress is on, one in
+  # either agent's `secretEnv` fails the render), s3.endpointUrl when
+  # minio.enabled=false, and the two lists below, and sets HTTP_PROXY,
+  # HTTPS_PROXY and NO_PROXY on both agents. NO_PROXY covers the release's own
+  # Services and the in-cluster addresses the agents are given (a host with no
+  # dot, or ending in .svc or .svc.cluster.local, in a global.*GrpcAddr or in
+  # their `services` env); any other host goes through the proxy. A services
+  # entry that sets a proxy variable for either agent fails the render.
+  # A URL whose host is an IP address stays out of the allowlist: the agents
+  # reach it directly (see directDestinations). A URL whose host is no DNS
+  # host name (an underscore, for one) or whose port is outside 1-65535 fails
+  # the render. When nothing is left to allow, no egress-proxy object renders,
+  # because the proxy refuses to start on an empty list, and the agents get no
+  # proxy variables. The rendered list is in the ConfigMap
+  # <release>-egress-proxy.
+  # With networkPolicy.enabled, the agents' NetworkPolicy drops every
+  # connection except DNS, the pods of the release namespace, an external
+  # Postgres or Redis on its configured port (on a private network, or a pod
+  # of any namespace), the pods of another namespace on the port of each
+  # <name>.<namespace>.svc address there in NO_PROXY, and the direct
+  # destinations (also when no proxy renders); egress-proxy reaches public
+  # addresses on its allowlisted ports, and private ones only on the ports of
+  # entries that allow them. A NetworkPolicy port is the pod's port, after a
+  # Service has translated the address. Without networkPolicy.enabled nothing
+  # stops a connection that skips the proxy.
+  # Setting it to false runs no proxy, sets no proxy variable and renders no
+  # egress NetworkPolicy, so the agents' egress is open; set HTTP_PROXY,
+  # HTTPS_PROXY and NO_PROXY in their `env` to route them through a proxy of
+  # your own.
   enabled: true
   # Extra hosts the proxy admits: "host" or "host:port" (port 443 when
   # omitted), or "*.example.com" for every name below example.com. An entry is
   # a DNS name, never an IP address, a URL or a bare "*", and a port has no
   # leading zero. Rendering fails on an entry that is not one. An
   # internationalised name is written in its punycode (xn--) form: a non-ASCII
-  # entry fails the render, and a non-ASCII URL host is left out of the
-  # allowlist.
+  # entry, or URL host, fails the render.
   allowedDomains: []
   # The same, for hosts that may resolve to private addresses, such as
   # 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10 and fc00::/7. The
@@ -512,6 +534,30 @@ egress:
   # link-local (169.254.0.0/16, fe80::/10) or cloud-metadata addresses, whatever
   # the entry says.
   privateDomains: []
+  # Addresses the agents reach directly, without the proxy, such as a Postgres
+  # or Redis on a public address:
+  #   - {cidr: 203.0.113.10/32, ports: [5432]}
+  # cidr is an IPv4 or IPv6 range with its prefix length (1 or more) and no
+  # address bit set past it; ports are whole numbers 1-65535, written without a
+  # leading zero (YAML reads an unquoted 0443 as the octal number 291, which
+  # the chart cannot detect). The render fails
+  # on a malformed entry and on a range that overlaps any of: 0.0.0.0/8 and
+  # ::/128 (unspecified), 127.0.0.0/8 and ::1 (loopback), 169.254.0.0/16 and
+  # fe80::/10 (link-local), the cloud metadata addresses 100.100.100.200,
+  # 168.63.129.16, fd00:ec2::/32 and fd20:ce::254, ::ffff:0:0/96 (IPv4-mapped:
+  # write the IPv4 address), and a NAT64 64:ff9b::/96 address standing for one
+  # of those IPv4 ranges. A whole private range can therefore fail:
+  # 100.64.0.0/10 contains 100.100.100.200 and fc00::/7 contains
+  # fd00:ec2::/32, so list the narrower ranges you need. Every IP address the
+  # agents are given (the host of llm.baseUrl, GITHUB_BASE_URL, s3.endpointUrl,
+  # or of a URL or host:port in their env or a global.*GrpcAddr), and an
+  # externalDatabase.host or externalRedis.host that is a public IP address,
+  # is added here for you, on its port, and both reach NO_PROXY and, on their
+  # ports, the agents' NetworkPolicy. An external Postgres or Redis on a private
+  # network, or running as a pod of another namespace, needs no entry: that
+  # policy admits the private ranges and the pods of every namespace on its
+  # configured port. One at a host name that resolves to a public address does.
+  directDestinations: []
   proxy:
     # Two replicas keep the proxy up while one pod restarts.
     replicas: 2
