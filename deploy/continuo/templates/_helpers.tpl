@@ -365,37 +365,76 @@ Tolerates a release whose values hold no llm block or no llm.baseUrl. */}}
 
 {{/* Environment the chart sets on agent-chat and agent-remediation from values.
 It is injected by deployment.yaml rather than carried by the `services` entries,
-so an overridden or reused `services` list cannot drop it. Emits YAML list
-items with no indentation; empty when nothing is set. */}}
+so an overridden or reused `services` list cannot drop it: LLM_BASE_URL from
+llm.baseUrl and, while egress-proxy renders ("continuo.egress.proxyEnabled"),
+HTTP_PROXY and HTTPS_PROXY naming it and the NO_PROXY of
+"continuo.egress.noProxy", which send the agents' outbound HTTP and gRPC calls
+through it. With egress.enabled=false, or with an allowlist that holds nothing
+(no proxy renders), the agents get no proxy variable. Emits YAML list items with
+no indentation; empty when nothing is set. */}}
 {{- define "continuo.agent.env" -}}
 {{- $baseUrl := include "continuo.llm.baseUrl" . -}}
-{{- if $baseUrl -}}
+{{- if $baseUrl }}
 - name: LLM_BASE_URL
   value: {{ $baseUrl | quote }}
-{{- end -}}
+{{- end }}
+{{- if eq (include "continuo.egress.proxyEnabled" .) "true" }}
+- name: HTTP_PROXY
+  value: {{ include "continuo.egress.proxyUrl" . | quote }}
+- name: HTTPS_PROXY
+  value: {{ include "continuo.egress.proxyUrl" . | quote }}
+- name: NO_PROXY
+  value: {{ include "continuo.egress.noProxy" . | quote }}
+{{- end }}
 {{- end -}}
 
 {{/* Fails the render when an agent's `services[].env` or `services[].secretEnv`
-names a variable the chart sets itself: either would render a second entry for
-the same variable and override the chart-managed one.
+names a variable the chart manages for it, which would render a second entry for
+the same variable or route the agent around the chart's settings: LLM_BASE_URL
+always; while egress.enabled is true the proxy variables HTTP_PROXY,
+HTTPS_PROXY and NO_PROXY in upper or lower case, and S3_ENDPOINT_URL, which
+would replace the shared ConfigMap's value that the egress-proxy allowlist and
+NO_PROXY are built from. While egress.enabled is true a GITHUB_BASE_URL in
+secretEnv fails it too: the allowlist is built from the `env` value
+("continuo.egress.githubBaseUrl") and cannot read a Secret. So does an
+LLM_PROVIDER in secretEnv, or in env with any value but the placeholder
+__LLM_PROVIDER__ (which deployment.yaml replaces with llm.provider): the
+allowlist admits the provider of llm.provider, so another one would be refused.
 Call: include "continuo.agent.assertEnv" (dict "root" $ "svc" $svc) */}}
 {{- define "continuo.agent.assertEnv" -}}
-{{- $reserved := dict "LLM_BASE_URL" "set llm.baseUrl instead" -}}
 {{- $svc := .svc -}}
+{{- $reserved := dict "LLM_BASE_URL" "the chart sets it from llm.baseUrl; set llm.baseUrl instead" -}}
+{{- $secretReserved := dict -}}
+{{- if eq (include "continuo.egress.enabled" .root) "true" -}}
+{{- range (list "HTTP_PROXY" "HTTPS_PROXY" "NO_PROXY" "http_proxy" "https_proxy" "no_proxy") -}}
+{{- $_ := set $reserved . "while egress.enabled is true the chart manages the agents' proxy variables and their outbound traffic goes through egress-proxy; remove it, or set egress.enabled=false to manage their proxy yourself" -}}
+{{- end -}}
+{{- $_ := set $reserved "S3_ENDPOINT_URL" "while egress.enabled is true the chart sets it for every service from s3.endpointUrl (or the bundled MinIO), and egress-proxy's allowlist is built from that value; set s3.endpointUrl instead" -}}
+{{- $_ := set $secretReserved "GITHUB_BASE_URL" "the egress-proxy allowlist is built from services[name=agent-remediation].env.GITHUB_BASE_URL and cannot read a Secret; set it in env instead, or set egress.enabled=false" -}}
+{{- $_ := set $secretReserved "LLM_PROVIDER" "while egress.enabled is true the egress-proxy allowlist admits the provider of llm.provider; set llm.provider instead" -}}
+{{- $env := $svc.env | default dict -}}
+{{- $llmProvider := get $env "LLM_PROVIDER" | toString -}}
+{{- if and (hasKey $env "LLM_PROVIDER") (ne $llmProvider "__LLM_PROVIDER__") -}}
+{{- fail (printf "services[name=%s].env sets LLM_PROVIDER=%q: while egress.enabled is true the egress-proxy allowlist admits the provider of llm.provider; set llm.provider instead, and leave LLM_PROVIDER at __LLM_PROVIDER__" $svc.name $llmProvider) -}}
+{{- end -}}
+{{- end -}}
 {{- range $key, $_ := ($svc.env | default dict) -}}
 {{- if hasKey $reserved $key -}}
-{{- fail (printf "services[name=%s].env sets %s, which the chart sets itself: %s" $svc.name $key (get $reserved $key)) -}}
+{{- fail (printf "services[name=%s].env sets %s: %s" $svc.name $key (get $reserved $key)) -}}
 {{- end -}}
 {{- end -}}
 {{- range $secret := ($svc.secretEnv | default (list)) -}}
-{{- if hasKey $reserved $secret.name -}}
-{{- fail (printf "services[name=%s].secretEnv sets %s, which the chart sets itself: %s" $svc.name $secret.name (get $reserved $secret.name)) -}}
+{{- $name := $secret.name | toString -}}
+{{- $why := get $reserved $name | default (get $secretReserved $name) -}}
+{{- if $why -}}
+{{- fail (printf "services[name=%s].secretEnv sets %s: %s" $svc.name $name $why) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
 
-{{/* "true" unless egress.enabled is false. A release installed before egress
-existed has no egress block and runs the proxy with its defaults. */}}
+{{/* "true" unless egress.enabled is false. A values file without an egress
+block (for example after helm upgrade --reuse-values) runs the proxy with its
+defaults. */}}
 {{- define "continuo.egress.enabled" -}}
 {{- $e := .Values.egress | default dict -}}
 {{- if and (hasKey $e "enabled") (kindIs "bool" $e.enabled) (not $e.enabled) -}}false{{- else -}}true{{- end -}}
@@ -424,8 +463,9 @@ Otherwise empty. Call: include "continuo.egress.numericHost" $host */}}
 {{- end -}}
 
 {{/* The GITHUB_BASE_URL of the agent-remediation entry in `services`, or the
-public GitHub API when there is none. It reads the entry's `env` only; a value
-supplied through `secretEnv` is not seen. */}}
+public GitHub API when there is none. It reads the entry's `env` only: while
+egress is on, a GITHUB_BASE_URL in `secretEnv` fails the render
+("continuo.agent.assertEnv"). */}}
 {{- define "continuo.egress.githubBaseUrl" -}}
 {{- $url := "https://api.github.com" -}}
 {{- range .Values.services -}}
@@ -440,8 +480,9 @@ supplied through `secretEnv` is not seen. */}}
 argument is a dict with "host" (lower- or mixed-case, one trailing dot already
 removed, no port) and "wildcard" (whether a "*" first label is allowed). The
 reason reads as the rest of a sentence that starts with the entry. It never
-fails the render: callers either fail with the reason (egress.allowedDomains,
-egress.privateDomains) or drop the entry (URLs). The rules are the proxy's: at
+fails the render: callers fail with the reason (egress.allowedDomains,
+egress.privateDomains, and the URLs of "continuo.egress.assertUrlHost") or leave
+out a codeload host derived from a GitHub Enterprise name. The rules are the proxy's: at
 most 253 characters in labels of 1-63 letters, digits and inner hyphens; a "*"
 first label needs at least two labels after it; no IP address and no name whose
 last label is all digits or "0x" and hex digits (127.1, 2130706433).
@@ -477,14 +518,15 @@ Call: include "continuo.egress.hostProblem" (dict "host" $h "wildcard" true) */}
 {{- end -}}
 
 {{/* One allowlist entry, as JSON, from a URL: the host lower-cased and without
-its brackets, port or one trailing dot; the URL's port, read in base 10 as
-written (443 for https and 80 for http when it names none); allowPrivate; and
-"usable", false for an entry the proxy would refuse: a host that is an IP address
-or no host name by the rules of "continuo.egress.hostProblem" (an underscore, a
-missing host as in a URL without a scheme, a wildcard), or a port outside
-1-65535. The URL itself is not checked here: the callers check what they read,
-and the allowlist leaves out an entry that is not usable. Call:
-include "continuo.egress.urlEntry" (dict "url" $u "allowPrivate" true) | fromJson */}}
+its port or one trailing dot (an IPv6 address keeps its brackets); the URL's
+port, read in base 10 as written (443 for https and 80 for http when it names
+none or an empty one); allowPrivate; "portOk", whether the port is in 1-65535;
+and "usable", false for an entry the proxy would refuse: a host that is an IP
+address or no host name by the rules of "continuo.egress.hostProblem" (an
+underscore, a missing host as in a URL without a scheme, a wildcard), or a port
+outside 1-65535. The URL itself is not checked here: "continuo.egress.assertUrlHost"
+and "continuo.egress.directDestinations" fail the render on what is not usable.
+Call: include "continuo.egress.urlEntry" (dict "url" $u "allowPrivate" true) | fromJson */}}
 {{- define "continuo.egress.urlEntry" -}}
 {{- $u := urlParse (.url | toString) -}}
 {{- $host := $u.host -}}
@@ -492,10 +534,52 @@ include "continuo.egress.urlEntry" (dict "url" $u "allowPrivate" true) | fromJso
 {{- if regexMatch ":[0-9]+$" $host -}}
 {{- $port = regexFind "[0-9]+$" $host | atoi -}}
 {{- $host = regexReplaceAll ":[0-9]+$" $host "" -}}
+{{- else -}}
+{{- $host = trimSuffix ":" $host -}}
 {{- end -}}
 {{- $host = lower $host | trimSuffix "." -}}
-{{- $usable := and (ge $port 1) (le $port 65535) (not (include "continuo.egress.hostProblem" (dict "host" $host "wildcard" false))) -}}
-{{- dict "host" $host "port" $port "allowPrivate" .allowPrivate "usable" $usable | toJson -}}
+{{- $portOk := and (ge $port 1) (le $port 65535) -}}
+{{- $usable := and $portOk (not (include "continuo.egress.hostProblem" (dict "host" $host "wildcard" false))) -}}
+{{- dict "host" $host "port" $port "allowPrivate" .allowPrivate "portOk" $portOk "usable" $usable | toJson -}}
+{{- end -}}
+
+{{/* The URLs the agents call whose address comes from values, as a JSON list of
+{key, url}: llm.baseUrl when set, the GITHUB_BASE_URL of agent-remediation's
+`services` entry (the public GitHub API when it has none), and s3.endpointUrl
+when minio.enabled=false. "key" names the setting in error messages. The
+allowlist admits the host of each one that is a host name; each one whose host
+is an IP address is a direct destination. */}}
+{{- define "continuo.egress.urlSources" -}}
+{{- $out := list -}}
+{{- with include "continuo.llm.baseUrl" . }}{{ $out = append $out (dict "key" "llm.baseUrl" "url" .) }}{{ end -}}
+{{- $out = append $out (dict "key" "services[name=agent-remediation].env.GITHUB_BASE_URL" "url" (include "continuo.egress.githubBaseUrl" .)) -}}
+{{- if not .Values.minio.enabled }}{{ $out = append $out (dict "key" "s3.endpointUrl" "url" (include "continuo.s3.endpointUrl" .)) }}{{ end -}}
+{{- $out | toJson -}}
+{{- end -}}
+
+{{/* Fails the render when a URL the agents call, one of
+"continuo.egress.urlSources", names a host egress-proxy cannot admit and that is
+no IP address (an underscore, a wildcard, a name that reads as a number, no
+host at all), or a port outside 1-65535: the agent would be sent to a proxy that
+refuses every call. The message names the setting, the value and the fix. A host
+that is an IP address passes here: the agents reach it directly, and
+"continuo.egress.directDestinations" checks it and its port.
+Call: include "continuo.egress.assertUrlHost" (dict "key" $key "url" $url "entry" $urlEntry) */}}
+{{- define "continuo.egress.assertUrlHost" -}}
+{{- $e := .entry -}}
+{{- $shown := printf "%s=%q" .key (.url | toString) -}}
+{{- if and (not $e.usable) (not (include "continuo.egress.isIP" $e.host)) -}}
+{{- $problem := include "continuo.egress.hostProblem" (dict "host" $e.host "wildcard" false) -}}
+{{- if not $e.host -}}
+{{- fail (printf "%s has no host. Give an http or https URL with a host name or an IP address, e.g. https://host.example.com" $shown) -}}
+{{- else if include "continuo.egress.numericHost" $e.host -}}
+{{- fail (printf "%s names the host %q, which reads as an IP address written in another form than four decimal octets (its last label is all digits or 0x and hex digits), which egress-proxy cannot admit. Write the IPv4 address as four decimal octets, e.g. 10.0.0.7, which the agents then reach directly, or use a host name" $shown $e.host) -}}
+{{- else if $problem -}}
+{{- fail (printf "%s names a host egress-proxy cannot admit: %q %s. Use a DNS host name of letters, digits and inner hyphens (no underscore), or an IP address, which the agents then reach directly" $shown $e.host $problem) -}}
+{{- else -}}
+{{- fail (printf "%s has a port outside 1-65535" $shown) -}}
+{{- end -}}
+{{- end -}}
 {{- end -}}
 
 {{/* One allowlist entry, as JSON, from an egress.allowedDomains or
@@ -526,7 +610,7 @@ Call: include "continuo.egress.domainEntry" (dict "value" . "key" "allowedDomain
 {{- fail (printf "%s entry %s holds a scheme, path, query, fragment or user:password@, which an entry names none of. %s" $key $shown $hint) -}}
 {{- end -}}
 {{- if or (hasPrefix "[" $raw) (gt (len (splitList ":" $raw)) 2) -}}
-{{- fail (printf "%s entry %s has more than one colon or is an IPv6 address; entries name hosts, not IP addresses. %s" $key $shown $hint) -}}
+{{- fail (printf "%s entry %s has more than one colon or is an IPv6 address; entries name hosts, not IP addresses. An IP address, which egress-proxy never admits, belongs in egress.directDestinations ({cidr, ports}). %s" $key $shown $hint) -}}
 {{- end -}}
 {{- $parts := splitList ":" $raw -}}
 {{- $host := first $parts -}}
@@ -546,7 +630,9 @@ Call: include "continuo.egress.domainEntry" (dict "value" . "key" "allowedDomain
 {{- end -}}
 {{- $host = $host | trimSuffix "." -}}
 {{- $problem := include "continuo.egress.hostProblem" (dict "host" $host "wildcard" true) -}}
-{{- if $problem -}}
+{{- if or (include "continuo.egress.isIP" $host) (include "continuo.egress.numericHost" $host) -}}
+{{- fail (printf "%s entry %s %s. An IP address, which egress-proxy never admits, belongs in egress.directDestinations ({cidr, ports}). %s" $key $shown $problem $hint) -}}
+{{- else if $problem -}}
 {{- fail (printf "%s entry %s %s. %s" $key $shown $problem $hint) -}}
 {{- end -}}
 {{- dict "host" (lower $host) "port" $port "allowPrivate" .allowPrivate | toJson -}}
@@ -560,38 +646,40 @@ GITHUB_BASE_URL of agent-remediation's `services` entry with the codeload host
 archive downloads redirect to, s3.endpointUrl when the bundled MinIO is off, and
 the entries of egress.allowedDomains and egress.privateDomains. The hosts an
 operator configured (llm.baseUrl, a GitHub Enterprise host, s3.endpointUrl) and
-egress.privateDomains may resolve to private addresses. An entry derived from a
-URL is left out when the proxy would refuse it: an IP address, a name that is no
-host name, or a port outside 1-65535. Two entries for one host and port merge,
-allowing private addresses if either does. The list is empty when nothing is
-left. */}}
+egress.privateDomains may resolve to private addresses. A URL whose host is an
+IP address is left out: the agents reach it directly. So is one on localhost,
+which is loopback: the agents never send it to a proxy, and egress-proxy never
+connects to loopback. A URL whose host the proxy
+would refuse as a name, or whose port is outside 1-65535, fails the render
+("continuo.egress.assertUrlHost"). A codeload host that is no valid name (the
+GitHub Enterprise name is too long to prefix) is left out. Two entries for one
+host and port merge, allowing private addresses if either does. The list is
+empty when nothing is left. */}}
 {{- define "continuo.egress.allowlist" -}}
 {{- $e := .Values.egress | default dict -}}
 {{- $entries := list -}}
 {{- $llm := .Values.llm | default dict -}}
-{{- $base := include "continuo.llm.baseUrl" . -}}
-{{- if $base -}}
-{{- $entry := include "continuo.egress.urlEntry" (dict "url" $base "allowPrivate" true) | fromJson -}}
-{{- if $entry.usable }}{{ $entries = append $entries $entry }}{{ end -}}
-{{- else if eq ($llm.provider | default "anthropic") "openai" -}}
+{{- if not (include "continuo.llm.baseUrl" .) -}}
+{{- if eq ($llm.provider | default "anthropic") "openai" -}}
 {{- $entries = append $entries (dict "host" "api.openai.com" "port" 443 "allowPrivate" false) -}}
 {{- else -}}
 {{- $entries = append $entries (dict "host" "api.anthropic.com" "port" 443 "allowPrivate" false) -}}
 {{- end -}}
-{{- $gh := include "continuo.egress.urlEntry" (dict "url" (include "continuo.egress.githubBaseUrl" .) "allowPrivate" true) | fromJson -}}
-{{- if and (eq $gh.host "api.github.com") (eq (int $gh.port) 443) -}}
+{{- end -}}
+{{- range $source := include "continuo.egress.urlSources" . | fromJsonArray -}}
+{{- $entry := include "continuo.egress.urlEntry" (dict "url" $source.url "allowPrivate" true) | fromJson -}}
+{{- $github := hasSuffix ".GITHUB_BASE_URL" $source.key -}}
+{{- if and $github (eq $entry.host "api.github.com") (eq (int $entry.port) 443) -}}
 {{- $entries = append $entries (dict "host" "api.github.com" "port" 443 "allowPrivate" false) -}}
 {{- $entries = append $entries (dict "host" "codeload.github.com" "port" 443 "allowPrivate" false) -}}
-{{- else -}}
-{{- if $gh.usable -}}
-{{- $entries = append $entries $gh -}}
-{{- $codeloadHost := printf "codeload.%s" $gh.host -}}
-{{- if not (include "continuo.egress.hostProblem" (dict "host" $codeloadHost "wildcard" false)) }}{{ $entries = append $entries (dict "host" $codeloadHost "port" $gh.port "allowPrivate" true) }}{{ end -}}
+{{- else if ne $entry.host "localhost" -}}
+{{- include "continuo.egress.assertUrlHost" (dict "key" $source.key "url" $source.url "entry" $entry) -}}
+{{- if $entry.usable -}}
+{{- $entries = append $entries (dict "host" $entry.host "port" (int $entry.port) "allowPrivate" true) -}}
+{{- $codeloadHost := printf "codeload.%s" $entry.host -}}
+{{- if and $github (not (include "continuo.egress.hostProblem" (dict "host" $codeloadHost "wildcard" false))) }}{{ $entries = append $entries (dict "host" $codeloadHost "port" (int $entry.port) "allowPrivate" true) }}{{ end -}}
 {{- end -}}
 {{- end -}}
-{{- if not .Values.minio.enabled -}}
-{{- $s3 := include "continuo.egress.urlEntry" (dict "url" (include "continuo.s3.endpointUrl" .) "allowPrivate" true) | fromJson -}}
-{{- if $s3.usable }}{{ $entries = append $entries $s3 }}{{ end -}}
 {{- end -}}
 {{- range ($e.allowedDomains | default list) -}}
 {{- $entries = append $entries (include "continuo.egress.domainEntry" (dict "value" . "key" "allowedDomains" "allowPrivate" false) | fromJson) -}}
@@ -619,6 +707,535 @@ allowlist holds at least one entry, because the proxy refuses to start on an
 empty one. The setting alone is "continuo.egress.enabled". */}}
 {{- define "continuo.egress.proxyEnabled" -}}
 {{- if and (eq (include "continuo.egress.enabled" .) "true") (include "continuo.egress.allowlist" . | fromJsonArray) -}}true{{- else -}}false{{- end -}}
+{{- end -}}
+
+{{/* The URL the agents name in HTTP_PROXY and HTTPS_PROXY: the egress-proxy
+Service and its proxy port. */}}
+{{- define "continuo.egress.proxyUrl" -}}http://egress-proxy:3128{{- end -}}
+
+{{/* A CIDR read as written, as JSON: "family" (4 or 6), "prefix" (its prefix
+length), "bits" (the address as 32 or 128 characters "0" and "1") and
+"problem", empty when the argument is a CIDR this chart takes and otherwise why
+not, as the rest of a sentence that starts with the CIDR. It takes an IPv4
+address of four decimal octets 0-255 without leading zeros, or an IPv6 address
+of eight groups of one to four hex digits in which one "::" may stand for groups
+of zeros (no brackets, embedded IPv4 address or zone), then "/" and a prefix
+length in decimal without a leading zero, at most 32 or 128, with no bit of the
+address set past it. Call: include "continuo.egress.parseCidr" $cidr | fromJson */}}
+{{- define "continuo.egress.parseCidr" -}}
+{{- $raw := . | toString -}}
+{{- $problem := "" -}}
+{{- $family := 0 -}}
+{{- $bits := "" -}}
+{{- $prefix := 0 -}}
+{{- $parts := splitList "/" $raw -}}
+{{- $addr := first $parts -}}
+{{- if not $raw -}}
+{{- $problem = "is empty" -}}
+{{- else if ne (len $parts) 2 -}}
+{{- $problem = "is not one address and one prefix length, as in 203.0.113.10/32" -}}
+{{- else if not (regexMatch "^(0|[1-9][0-9]{0,2})$" (last $parts)) -}}
+{{- $problem = "has a prefix length that is not a whole number written in decimal without a leading zero" -}}
+{{- else if regexMatch "^[0-9.]+$" $addr -}}
+{{- $family = 4 -}}
+{{- $octets := splitList "." $addr -}}
+{{- if ne (len $octets) 4 -}}
+{{- $problem = "is not an IPv4 address of four decimal octets" -}}
+{{- else -}}
+{{- range $octets -}}
+{{- if and (not $problem) (or (not (regexMatch "^(0|[1-9][0-9]{0,2})$" .)) (gt (atoi .) 255)) -}}
+{{- $problem = printf "has the octet %q, which is not a number from 0 to 255 written without a leading zero" . -}}
+{{- end -}}
+{{- if not $problem }}{{ $bits = printf "%s%08b" $bits (atoi .) }}{{ end -}}
+{{- end -}}
+{{- end -}}
+{{- else if and (contains ":" $addr) (regexMatch "^[0-9A-Fa-f:]+$" $addr) -}}
+{{- $family = 6 -}}
+{{- $halves := splitList "::" (lower $addr) -}}
+{{- $groups := list -}}
+{{- if gt (len $halves) 2 -}}
+{{- $problem = "has more than one \"::\"" -}}
+{{- else if eq (len $halves) 2 -}}
+{{- $left := list -}}
+{{- $right := list -}}
+{{- if first $halves }}{{ $left = splitList ":" (first $halves) }}{{ end -}}
+{{- if last $halves }}{{ $right = splitList ":" (last $halves) }}{{ end -}}
+{{- $given := add (len $left) (len $right) -}}
+{{- if gt $given 7 -}}
+{{- $problem = "has more than eight groups" -}}
+{{- else -}}
+{{- $groups = $left -}}
+{{- range until (int (sub 8 $given)) }}{{ $groups = append $groups "0" }}{{ end -}}
+{{- $groups = concat $groups $right -}}
+{{- end -}}
+{{- else -}}
+{{- $groups = splitList ":" (lower $addr) -}}
+{{- if ne (len $groups) 8 }}{{ $problem = "does not have eight groups and no \"::\" stands for missing ones" }}{{ end -}}
+{{- end -}}
+{{- range $groups -}}
+{{- if and (not $problem) (not (regexMatch "^[0-9a-f]{1,4}$" .)) -}}
+{{- $problem = printf "has the group %q, which is not one to four hex digits" . -}}
+{{- end -}}
+{{- end -}}
+{{- if not $problem -}}
+{{- $hex := dict "0" "0000" "1" "0001" "2" "0010" "3" "0011" "4" "0100" "5" "0101" "6" "0110" "7" "0111" "8" "1000" "9" "1001" "a" "1010" "b" "1011" "c" "1100" "d" "1101" "e" "1110" "f" "1111" -}}
+{{- range $groups -}}
+{{- range (printf "000%s" . | trunc -4 | splitList "") }}{{ $bits = printf "%s%s" $bits (get $hex .) }}{{ end -}}
+{{- end -}}
+{{- end -}}
+{{- else -}}
+{{- $problem = "is not an IPv4 or IPv6 address (IPv6 is written in hex groups, without brackets, an embedded IPv4 address or a zone)" -}}
+{{- end -}}
+{{- if not $problem -}}
+{{- $prefix = atoi (last $parts) -}}
+{{- $max := ternary 32 128 (eq $family 4) -}}
+{{- if gt $prefix $max -}}
+{{- $problem = printf "has a prefix length above %d" $max -}}
+{{- else if not (regexMatch "^0*$" (substr $prefix $max $bits)) -}}
+{{- $problem = "has address bits set past its prefix length; write the first address of the range" -}}
+{{- end -}}
+{{- end -}}
+{{- dict "family" $family "prefix" $prefix "bits" $bits "problem" $problem | toJson -}}
+{{- end -}}
+
+{{/* "true" when two CIDRs parsed by "continuo.egress.parseCidr" share an
+address: same family, and equal bits up to the shorter prefix length.
+Otherwise empty. Call: include "continuo.egress.cidrsOverlap" (dict "a" $a "b" $b) */}}
+{{- define "continuo.egress.cidrsOverlap" -}}
+{{- if eq (int .a.family) (int .b.family) -}}
+{{- $m := min (int .a.prefix) (int .b.prefix) | int -}}
+{{- if eq (substr 0 $m .a.bits) (substr 0 $m .b.bits) }}true{{ end -}}
+{{- end -}}
+{{- end -}}
+
+{{/* The address ranges no direct destination may overlap: the unspecified
+network, loopback, link-local (where cloud metadata services answer) and the
+other cloud metadata addresses, none of which egress-proxy connects to either;
+and IPv4-mapped IPv6 addresses, which stand for IPv4 ones and are written as
+those instead. A NAT64 address (64:ff9b::/96) stands for the IPv4 address in its
+last 32 bits and is judged by it ("continuo.egress.neverDirectHit"). A JSON list
+of {cidr, what}. */}}
+{{- define "continuo.egress.neverDirect" -}}
+{{- list
+    (dict "cidr" "0.0.0.0/8" "what" "the unspecified network")
+    (dict "cidr" "127.0.0.0/8" "what" "loopback")
+    (dict "cidr" "169.254.0.0/16" "what" "link-local, where cloud metadata services answer")
+    (dict "cidr" "100.100.100.200/32" "what" "a cloud metadata address")
+    (dict "cidr" "168.63.129.16/32" "what" "a cloud metadata address")
+    (dict "cidr" "::/128" "what" "the unspecified address")
+    (dict "cidr" "::1/128" "what" "loopback")
+    (dict "cidr" "fe80::/10" "what" "link-local")
+    (dict "cidr" "fd00:ec2::/32" "what" "a cloud metadata range")
+    (dict "cidr" "fd20:ce::254/128" "what" "a cloud metadata address")
+    (dict "cidr" "::ffff:0:0/96" "what" "IPv4-mapped IPv6, which stands for IPv4 addresses; write the IPv4 address itself")
+  | toJson -}}
+{{- end -}}
+
+{{/* The first range of "continuo.egress.neverDirect" a parsed CIDR overlaps,
+as JSON {cidr, what}, or {} when there is none. A CIDR that overlaps
+64:ff9b::/96 is judged by the IPv4 range its last 32 bits stand for, and one
+wider than that /96 always hits it. "never" is the neverDirect list with each
+entry's parsed CIDR in "parsed".
+Call: include "continuo.egress.neverDirectHit" (dict "c" $parsed "never" $never) | fromJson */}}
+{{- define "continuo.egress.neverDirectHit" -}}
+{{- $c := .c -}}
+{{- $hit := dict -}}
+{{- range .never -}}
+{{- if and (not $hit) (include "continuo.egress.cidrsOverlap" (dict "a" $c "b" .parsed)) -}}
+{{- $hit = dict "cidr" .cidr "what" .what -}}
+{{- end -}}
+{{- end -}}
+{{- $nat64 := include "continuo.egress.parseCidr" "64:ff9b::/96" | fromJson -}}
+{{- if and (not $hit) (include "continuo.egress.cidrsOverlap" (dict "a" $c "b" $nat64)) -}}
+{{- if lt (int $c.prefix) 96 -}}
+{{- $hit = dict "cidr" "64:ff9b::/96" "what" "NAT64, which stands for every IPv4 address, loopback and link-local ones among them" -}}
+{{- else -}}
+{{- $v4 := dict "family" 4 "prefix" (sub (int $c.prefix) 96) "bits" (substr 96 128 $c.bits) -}}
+{{- $inner := include "continuo.egress.neverDirectHit" (dict "c" $v4 "never" .never) | fromJson -}}
+{{- if $inner.cidr }}{{ $hit = dict "cidr" "64:ff9b::/96" "what" (printf "NAT64, here of %s: %s" $inner.cidr $inner.what) }}{{ end -}}
+{{- end -}}
+{{- end -}}
+{{- $hit | toJson -}}
+{{- end -}}
+
+{{/* Destinations the agents reach without the proxy, as a JSON list of
+{cidr, ports, host?}. The chart reads it only while egress.enabled is true
+(egress-proxy/configmap.yaml checks it then, whatever else renders). It holds:
+- each egress.directDestinations entry. It is checked as written and the render
+  fails naming the key and the entry unless it is an object with exactly "cidr"
+  and "ports"; cidr a string the rules of "continuo.egress.parseCidr" take,
+  with a prefix length of at least 1, overlapping no range of
+  "continuo.egress.neverDirect"; ports a non-empty list of whole numbers from 1
+  to 65535 (a number, not a string). cidr is lower-cased, ports deduplicated.
+- every IP address the agents are given, as a /32 or /128 on its port, with
+  "host" the address for NO_PROXY, because egress-proxy admits host names only:
+  the host of a URL of "continuo.egress.urlSources"; the host of an address
+  of "continuo.egress.givenAddresses" ("continuo.egress.addressIP"); and the
+  externalDatabase.host (with postgresql.enabled=false) or externalRedis.host
+  (with redis.enabled=false) that is an IP address outside the private ranges
+  ("continuo.egress.privateRanges"), on externalDatabase.port or
+  externalRedis.port. An external datastore at a private address needs no entry:
+  the agents' NetworkPolicy admits the private ranges on its port.
+  The render fails, naming the setting, on an address that is not one by those
+  rules, that lies in a range of "continuo.egress.neverDirect" other than
+  loopback, or whose port is outside 1-65535. A loopback address is left out:
+  the agents' own pod answers it and no proxy is ever used for it. So is the
+  unspecified address (0.0.0.0, ::) in a givenAddresses value, which names no
+  destination but a listen address.
+Call: include "continuo.egress.directDestinations" $ | fromJsonArray */}}
+{{- define "continuo.egress.directDestinations" -}}
+{{- $e := .Values.egress | default dict -}}
+{{- $listed := $e.directDestinations | default list -}}
+{{- if not (kindIs "slice" $listed) -}}
+{{- fail (printf "egress.directDestinations must be a list of {cidr, ports} entries, got %s" (toJson $listed)) -}}
+{{- end -}}
+{{- $never := list -}}
+{{- range include "continuo.egress.neverDirect" . | fromJsonArray -}}
+{{- $never = append $never (dict "cidr" .cidr "what" .what "parsed" (include "continuo.egress.parseCidr" .cidr | fromJson)) -}}
+{{- end -}}
+{{- $hint := "Write each entry as {cidr: <address>/<prefix length>, ports: [<port>, ...]}, e.g. {cidr: 203.0.113.10/32, ports: [5432]}" -}}
+{{- $out := list -}}
+{{- range $entry := $listed -}}
+{{- $shown := printf "egress.directDestinations entry %s" (toJson $entry) -}}
+{{- if not (kindIs "map" $entry) -}}
+{{- fail (printf "%s is not an object with cidr and ports. %s" $shown $hint) -}}
+{{- end -}}
+{{- if ne (keys $entry | sortAlpha | join ",") "cidr,ports" -}}
+{{- fail (printf "%s must have exactly the keys cidr and ports. %s" $shown $hint) -}}
+{{- end -}}
+{{- if not (kindIs "string" $entry.cidr) -}}
+{{- fail (printf "%s has a cidr that is not a string. %s" $shown $hint) -}}
+{{- end -}}
+{{- $c := include "continuo.egress.parseCidr" $entry.cidr | fromJson -}}
+{{- if $c.problem -}}
+{{- fail (printf "%s: its cidr %q %s. %s" $shown $entry.cidr $c.problem $hint) -}}
+{{- end -}}
+{{- if eq (int $c.prefix) 0 -}}
+{{- fail (printf "%s: its cidr %q has a prefix length of 0, which takes in every address; list the ranges the agents need" $shown $entry.cidr) -}}
+{{- end -}}
+{{- $hit := include "continuo.egress.neverDirectHit" (dict "c" $c "never" $never) | fromJson -}}
+{{- if $hit.cidr -}}
+{{- fail (printf "%s: its cidr %q overlaps %s (%s), which the agents never reach directly; list narrower ranges that leave it out" $shown $entry.cidr $hit.cidr $hit.what) -}}
+{{- end -}}
+{{- if not (kindIs "slice" $entry.ports) -}}
+{{- fail (printf "%s has ports that are not a list. %s" $shown $hint) -}}
+{{- end -}}
+{{- if not $entry.ports -}}
+{{- fail (printf "%s has an empty ports list; a NetworkPolicy rule without ports admits every port. %s" $shown $hint) -}}
+{{- end -}}
+{{- $ports := list -}}
+{{- range $p := $entry.ports -}}
+{{- if not (include "continuo.egress.isPort" $p) -}}
+{{- fail (printf "%s has the port %s, which is not a whole number from 1 to 65535. %s" $shown (toJson $p) $hint) -}}
+{{- end -}}
+{{- $ports = append $ports (atoi (toString $p)) -}}
+{{- end -}}
+{{- $out = append $out (dict "cidr" (lower $entry.cidr) "ports" (uniq $ports)) -}}
+{{- end -}}
+{{- $sources := list -}}
+{{- range $source := include "continuo.egress.urlSources" . | fromJsonArray -}}
+{{- $u := include "continuo.egress.urlEntry" (dict "url" $source.url "allowPrivate" true) | fromJson -}}
+{{- if include "continuo.egress.isIP" $u.host -}}
+{{- $shown := printf "%s=%q" $source.key $source.url -}}
+{{- $sources = append $sources (dict "shown" $shown "ip" (trimAll "[]" $u.host) "port" (int $u.port) "portOk" $u.portOk "portProblem" (printf "%s has a port outside 1-65535" $shown) "listen" false "datastore" false) -}}
+{{- end -}}
+{{- end -}}
+{{- range $given := include "continuo.egress.givenAddresses" . | fromJsonArray -}}
+{{- $a := include "continuo.egress.addressIP" $given.value | fromJson -}}
+{{- if $a.ip -}}
+{{- $shown := printf "%s=%q" $given.key (toString $given.value) -}}
+{{- $port := atoi $a.port -}}
+{{- $sources = append $sources (dict "shown" $shown "ip" $a.ip "port" $port "portOk" (and (ge $port 1) (le $port 65535)) "portProblem" (printf "%s has a port outside 1-65535" $shown) "listen" true "datastore" false) -}}
+{{- end -}}
+{{- end -}}
+{{- $datastores := list -}}
+{{- if not .Values.postgresql.enabled }}{{ $datastores = append $datastores (dict "key" "externalDatabase" "values" (.Values.externalDatabase | default dict)) }}{{ end -}}
+{{- if not .Values.redis.enabled }}{{ $datastores = append $datastores (dict "key" "externalRedis" "values" (.Values.externalRedis | default dict)) }}{{ end -}}
+{{- range $ds := $datastores -}}
+{{- $host := $ds.values.host | default "" | toString -}}
+{{- if include "continuo.egress.isIP" $host -}}
+{{- $portOk := include "continuo.egress.isPort" $ds.values.port -}}
+{{- $sources = append $sources (dict "shown" (printf "%s.host=%q" $ds.key $host) "ip" (trimAll "[]" $host | lower) "port" (atoi (toString $ds.values.port)) "portOk" (not (empty $portOk)) "portProblem" (printf "%s.port=%s is not a port: the agents reach %s.host=%q directly on it, so it must be a whole number from 1 to 65535" $ds.key (toJson $ds.values.port) $ds.key $host) "listen" false "datastore" true) -}}
+{{- end -}}
+{{- end -}}
+{{- $private := list -}}
+{{- range include "continuo.egress.privateRanges" . | fromJsonArray -}}
+{{- $private = append $private (include "continuo.egress.parseCidr" . | fromJson) -}}
+{{- end -}}
+{{- range $s := $sources -}}
+{{- $c := include "continuo.egress.parseCidr" (printf "%s/%s" $s.ip (ternary "128" "32" (contains ":" $s.ip))) | fromJson -}}
+{{- if $c.problem -}}
+{{- fail (printf "%s: its host %s %s. Write an IPv4 address as four decimal octets 0-255 without leading zeros, or use a DNS host name, which egress-proxy admits" $s.shown $s.ip $c.problem) -}}
+{{- end -}}
+{{- $hit := include "continuo.egress.neverDirectHit" (dict "c" $c "never" $never) | fromJson -}}
+{{- $listenAddress := and $s.listen (regexMatch "^0+$" $c.bits) -}}
+{{- if and $hit.cidr (ne $hit.what "loopback") (not $listenAddress) -}}
+{{- fail (printf "%s: its host %s lies in %s (%s), which the agents never reach" $s.shown $s.ip $hit.cidr $hit.what) -}}
+{{- end -}}
+{{- $privateDatastore := false -}}
+{{- if $s.datastore -}}
+{{- range $private }}{{ if include "continuo.egress.cidrsOverlap" (dict "a" $c "b" .) }}{{ $privateDatastore = true }}{{ end }}{{ end -}}
+{{- end -}}
+{{- if not (or $hit.cidr $privateDatastore) -}}
+{{- if not $s.portOk -}}
+{{- fail $s.portProblem -}}
+{{- end -}}
+{{- $out = append $out (dict "cidr" (printf "%s/%d" $s.ip (ternary 128 32 (contains ":" $s.ip))) "ports" (list (int $s.port)) "host" $s.ip) -}}
+{{- end -}}
+{{- end -}}
+{{- uniq $out | toJson -}}
+{{- end -}}
+
+{{/* The addresses the agents are given through values, as a JSON list of
+{key, value}, "key" the setting that gave it: the global.*GrpcAddr values, and
+every value in the `services` env of agent-chat and agent-remediation. */}}
+{{- define "continuo.egress.givenAddresses" -}}
+{{- $given := list -}}
+{{- $g := .Values.global | default dict -}}
+{{- range $key := list "stateGrpcAddr" "orchestratorGrpcAddr" "agentRemediationGrpcAddr" "agentChatGrpcAddr" "deadLetterControllerGrpcAddr" -}}
+{{- $given = append $given (dict "key" (printf "global.%s" $key) "value" (get $g $key)) -}}
+{{- end -}}
+{{- range $svc := .Values.services -}}
+{{- if has $svc.name (list "agent-chat" "agent-remediation") -}}
+{{- range $key, $val := ($svc.env | default dict) -}}
+{{- $given = append $given (dict "key" (printf "services[name=%s].env.%s" $svc.name $key) "value" $val) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $given | toJson -}}
+{{- end -}}
+
+{{/* The IP address and port of an address whose host is an IP address, as JSON
+{ip, port}, "port" the digits as written: an http or https URL (port 443 for
+https and 80 for http when it names none; a user:password@ is ignored) or a
+host:port value, an IPv6 address in brackets in either. An IPv4 address is four
+dot-separated runs of digits, checked further by "continuo.egress.parseCidr".
+{} for any other value. Call: include "continuo.egress.addressIP" $value | fromJson */}}
+{{- define "continuo.egress.addressIP" -}}
+{{- $v := . | toString -}}
+{{- $hostport := $v -}}
+{{- $default := "" -}}
+{{- if regexMatch "^https?://" $v -}}
+{{- $authority := regexReplaceAll "^https?://([^/?#]*).*$" $v "${1}" -}}
+{{- $hostport = regexReplaceAll "^.*@" $authority "" -}}
+{{- $default = ternary "443" "80" (hasPrefix "https:" $v) -}}
+{{- end -}}
+{{- $ip := "" -}}
+{{- $port := "" -}}
+{{- if regexMatch "^\\[[^\\]]*\\](:[0-9]+)?$" $hostport -}}
+{{- $ip = regexReplaceAll "^\\[([^\\]]*)\\].*$" $hostport "${1}" -}}
+{{- $port = regexFind "[0-9]+$" (regexFind "\\]:[0-9]+$" $hostport) -}}
+{{- else if regexMatch "^[0-9]+(\\.[0-9]+){3}(:[0-9]+)?$" $hostport -}}
+{{- $ip = regexReplaceAll ":[0-9]+$" $hostport "" -}}
+{{- $port = regexFind "[0-9]+$" (regexFind ":[0-9]+$" $hostport) -}}
+{{- end -}}
+{{- $port = $port | default $default -}}
+{{- if and $ip $port -}}{{ dict "ip" (lower $ip) "port" $port | toJson }}{{- else -}}{}{{- end -}}
+{{- end -}}
+
+{{/* The private address ranges, as a JSON list of CIDRs: the ranges
+"continuo.egress.privatePeers" admits an external datastore on. */}}
+{{- define "continuo.egress.privateRanges" -}}
+{{- list "10.0.0.0/8" "100.64.0.0/10" "172.16.0.0/12" "192.168.0.0/16" "fc00::/7" | toJson -}}
+{{- end -}}
+
+{{/* The lower-cased host and the port of an address an agent is given, as
+"host:port": an http or https URL (without its user:password@; port 443 for
+https and 80 for http when it names none) or a host:port value. Empty for any
+other value, and for a URL whose host is a bracketed IPv6 address.
+Call: include "continuo.egress.addressHostPort" $value */}}
+{{- define "continuo.egress.addressHostPort" -}}
+{{- $v := . | toString -}}
+{{- if regexMatch "^https?://" $v -}}
+{{- $authority := regexReplaceAll "^https?://([^/?#]*).*$" $v "${1}" -}}
+{{- $hostport := regexReplaceAll "^.*@" $authority "" -}}
+{{- $host := regexReplaceAll ":[0-9]*$" $hostport "" | lower -}}
+{{- $port := regexFind "[0-9]+$" (regexFind ":[0-9]+$" $hostport) | default (ternary "443" "80" (hasPrefix "https:" $v)) -}}
+{{- if and $host (not (hasPrefix "[" $host)) }}{{ printf "%s:%s" $host $port }}{{ end -}}
+{{- else if regexMatch "^[A-Za-z0-9.-]+:[0-9]+$" $v -}}
+{{- lower $v -}}
+{{- end -}}
+{{- end -}}
+
+{{/* "true" when the allowlist admits "host" on "port" with private addresses,
+as egress-proxy matches it: an entry that allows private addresses and names the
+host, or is a "*.d" entry for a host below d, on the same port. Otherwise empty.
+An in-cluster name resolves to a private address, which the proxy refuses for
+an entry that does not allow private addresses. The port is read in base 10.
+Call: include "continuo.egress.allowlistAdmits" (dict "host" $h "port" $p "allowlist" $allowlist) */}}
+{{- define "continuo.egress.allowlistAdmits" -}}
+{{- $host := lower .host -}}
+{{- $port := .port | toString | atoi -}}
+{{- $hit := false -}}
+{{- range .allowlist -}}
+{{- if and .allowPrivate (eq (int .port) $port) (or (eq .host $host) (and (hasPrefix "*." .host) (hasSuffix (trimPrefix "*" .host) $host))) }}{{ $hit = true }}{{ end -}}
+{{- end -}}
+{{- if $hit }}true{{ end -}}
+{{- end -}}
+
+{{/* The names of every Service the chart can render for a workload (each
+`services` entry, egress-proxy, and the bundled Postgres, Redis, Neo4j, MinIO
+and Dex) in the forms a client may use: <name>, <name>.<namespace>,
+<name>.<namespace>.svc and <name>.<namespace>.svc.cluster.local, as a JSON list.
+They are pods of the release's namespace. */}}
+{{- define "continuo.egress.releaseServiceHosts" -}}
+{{- $ns := .Release.Namespace -}}
+{{- $services := list "egress-proxy" -}}
+{{- range .Values.services }}{{ $services = append $services (.name | toString | lower) }}{{ end -}}
+{{- $services = concat $services (list (include "continuo.postgresql.fullname" .) (include "continuo.redis.fullname" .) (include "continuo.neo4j.fullname" .) (include "continuo.minio.fullname" .) (include "continuo.dex.fullname" .)) -}}
+{{- $local := list -}}
+{{- range uniq $services -}}
+{{- $local = concat $local (list . (printf "%s.%s" . $ns) (printf "%s.%s.svc" . $ns) (printf "%s.%s.svc.cluster.local" . $ns)) -}}
+{{- end -}}
+{{- $local | toJson -}}
+{{- end -}}
+
+{{/* The in-cluster addresses the agents are given and reach directly, other
+than the release's own Services ("continuo.egress.releaseServiceHosts"), as a
+JSON list of {key, host, port}, "port" the digits as written and "key" the
+setting that gave it. An address is in-cluster when its host has no dot or ends
+in .svc or .svc.cluster.local; it comes from a global.*GrpcAddr value, or from an
+http(s) URL or host:port value in the `services` env of agent-chat or
+agent-remediation. One the allowlist admits on that port
+("continuo.egress.allowlistAdmits") is left out: the proxy carries it. An
+address with another host goes through the proxy, which admits it only when the
+allowlist does. */}}
+{{- define "continuo.egress.inClusterDirect" -}}
+{{- $local := include "continuo.egress.releaseServiceHosts" . | fromJsonArray -}}
+{{- $allowlist := include "continuo.egress.allowlist" . | fromJsonArray -}}
+{{- $out := list -}}
+{{- $seen := dict -}}
+{{- range include "continuo.egress.givenAddresses" . | fromJsonArray -}}
+{{- $hostPort := include "continuo.egress.addressHostPort" .value -}}
+{{- $host := regexReplaceAll ":[0-9]+$" $hostPort "" -}}
+{{- $port := regexFind "[0-9]+$" $hostPort -}}
+{{- if and $hostPort (not (hasKey $seen $hostPort)) (or (not (contains "." $host)) (regexMatch "\\.svc(\\.cluster\\.local)?$" $host)) -}}
+{{- $_ := set $seen $hostPort true -}}
+{{- if not (or (has $host $local) (include "continuo.egress.allowlistAdmits" (dict "host" $host "port" $port "allowlist" $allowlist))) -}}
+{{- $out = append $out (dict "key" .key "host" $host "port" $port) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $out | toJson -}}
+{{- end -}}
+
+{{/* The namespaces other than the release's that hold an address of
+"continuo.egress.inClusterDirect" (a host <name>.<namespace>.svc, optionally
+followed by .cluster.local), as a JSON list of {namespace, ports} ordered by
+namespace, the ports numbers without duplicates. The agents' NetworkPolicy
+admits the pods of each such namespace on those ports. The render fails on a
+port that is not from 1 to 65535. */}}
+{{- define "continuo.egress.otherNamespaceDestinations" -}}
+{{- $byNamespace := dict -}}
+{{- range include "continuo.egress.inClusterDirect" . | fromJsonArray -}}
+{{- $name := trimSuffix ".cluster.local" .host -}}
+{{- $labels := splitList "." (trimSuffix ".svc" $name) -}}
+{{- $ns := last $labels -}}
+{{- if and (hasSuffix ".svc" $name) (ge (len $labels) 2) (ne $ns $.Release.Namespace) (regexMatch "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$" $ns) -}}
+{{- $port := atoi .port -}}
+{{- if or (lt $port 1) (gt $port 65535) -}}
+{{- fail (printf "%s gives the agents the in-cluster address %s:%s, whose port is not from 1 to 65535" .key .host .port) -}}
+{{- end -}}
+{{- $_ := set $byNamespace $ns (append (get $byNamespace $ns | default list) $port | uniq) -}}
+{{- end -}}
+{{- end -}}
+{{- $out := list -}}
+{{- range $ns := keys $byNamespace | sortAlpha -}}
+{{- $out = append $out (dict "namespace" $ns "ports" (get $byNamespace $ns)) -}}
+{{- end -}}
+{{- $out | toJson -}}
+{{- end -}}
+
+{{/* NO_PROXY for the agents while egress-proxy renders. Their Go HTTP and gRPC
+clients send every host and port it does not cover to egress-proxy, which admits
+only the hosts and ports on its allowlist, so it lists, comma-separated:
+- localhost, 127.0.0.1 and ::1;
+- the release's own Services in every form ("continuo.egress.releaseServiceHosts"),
+  on every port. These are in the release's namespace and a direct connection
+  reaches them on any port, so they stay here whatever the allowlist says;
+- every other in-cluster address the agents reach directly
+  ("continuo.egress.inClusterDirect"), as "host:port", which Go matches on that
+  port only;
+- the addresses they reach directly ("continuo.egress.directDestinations"):
+  every IP address they are given, and the CIDR of each
+  egress.directDestinations entry, which Go matches as a range. */}}
+{{- define "continuo.egress.noProxy" -}}
+{{- $entries := concat (list "localhost" "127.0.0.1" "::1") (include "continuo.egress.releaseServiceHosts" . | fromJsonArray) -}}
+{{- range include "continuo.egress.inClusterDirect" . | fromJsonArray -}}
+{{- $entries = append $entries (printf "%s:%s" .host .port) -}}
+{{- end -}}
+{{- range include "continuo.egress.directDestinations" . | fromJsonArray -}}
+{{- $entries = append $entries (.host | default .cidr) -}}
+{{- end -}}
+{{- uniq $entries | join "," -}}
+{{- end -}}
+
+{{/* "true" when the argument is a port as values hold one: a number (not a
+string) whose decimal text is a whole number from 1 to 65535 without a leading
+zero. Otherwise empty. Call: include "continuo.egress.isPort" $value */}}
+{{- define "continuo.egress.isPort" -}}
+{{- $text := toString . -}}
+{{- if and (has (kindOf .) (list "int" "int64" "float64")) (regexMatch "^[1-9][0-9]{0,4}$" $text) (le (atoi $text) 65535) -}}true{{- end -}}
+{{- end -}}
+
+{{/* NetworkPolicy egress rule for name resolution: port 53, UDP and TCP, to
+any pod in any namespace (the cluster DNS) and to link-local addresses (a
+node-local DNS cache, or a cloud resolver at 169.254.169.254). Emits one YAML
+list item with no indentation. */}}
+{{- define "continuo.egress.dnsRule" -}}
+- to:
+    - namespaceSelector: {}
+    - ipBlock:
+        cidr: 169.254.0.0/16
+  ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+{{- end -}}
+
+{{/* The private address ranges as NetworkPolicy peers (10.0.0.0/8,
+100.64.0.0/10, 172.16.0.0/12, 192.168.0.0/16 and fc00::/7), less the cloud
+metadata addresses inside them (100.100.100.200, fd00:ec2::/32 and
+fd20:ce::254), which egress-proxy refuses too. Emits YAML list items with no
+indentation. */}}
+{{- define "continuo.egress.privatePeers" -}}
+- ipBlock:
+    cidr: 10.0.0.0/8
+- ipBlock:
+    cidr: 100.64.0.0/10
+    except: [100.100.100.200/32]
+- ipBlock:
+    cidr: 172.16.0.0/12
+- ipBlock:
+    cidr: 192.168.0.0/16
+- ipBlock:
+    cidr: "fc00::/7"
+    except: ["fd00:ec2::/32", "fd20:ce::254/128"]
+{{- end -}}
+
+{{/* The ports of the external Postgres (externalDatabase.port, with
+postgresql.enabled=false) and the external Redis (externalRedis.port, with
+redis.enabled=false), as a JSON list of numbers without duplicates; empty while
+both are bundled, as pods of the release namespace. The agents' NetworkPolicy
+admits them to the private ranges and to the pods of every namespace. The
+render fails on a port that is not one by "continuo.egress.isPort". */}}
+{{- define "continuo.egress.externalDatastorePorts" -}}
+{{- $given := list -}}
+{{- if not .Values.postgresql.enabled -}}
+{{- $given = append $given (dict "key" "externalDatabase.port" "port" (.Values.externalDatabase | default dict).port) -}}
+{{- end -}}
+{{- if not .Values.redis.enabled -}}
+{{- $given = append $given (dict "key" "externalRedis.port" "port" (.Values.externalRedis | default dict).port) -}}
+{{- end -}}
+{{- $ports := list -}}
+{{- range $given -}}
+{{- if not (include "continuo.egress.isPort" .port) -}}
+{{- fail (printf "%s=%s is not a port: the agents' NetworkPolicy admits the external datastore on it, so it must be a whole number from 1 to 65535" .key (toJson .port)) -}}
+{{- end -}}
+{{- $ports = append $ports (atoi (toString .port)) -}}
+{{- end -}}
+{{- uniq $ports | toJson -}}
 {{- end -}}
 
 {{- define "continuo.redis.host" -}}
@@ -900,7 +1517,7 @@ the egress proxy rendered, the proxy's listen port (3128) or health port (8093).
 
 {{/*
 The admission cap execution-controller enforces. A release without an
-execution block (helm upgrade --reuse-values from an older chart) gets the
+execution block (for example after helm upgrade --reuse-values) gets the
 default; a value below 1 fails the render.
 */ -}}
 {{- define "continuo.execution.maxConcurrentJobs" -}}
@@ -916,7 +1533,7 @@ default; a value below 1 fails the render.
 {{/*
 JOB_START_TIMEOUT_SECONDS for the shared ConfigMap: execution.startTimeoutMinutes
 in seconds. A release without an execution block, or without the key (helm
-upgrade --reuse-values from an older chart), gets 15 minutes; a value outside
+upgrade --reuse-values), gets 15 minutes; a value outside
 1-120 fails the render.
 */ -}}
 {{- define "continuo.execution.startTimeoutSeconds" -}}
@@ -931,8 +1548,8 @@ upgrade --reuse-values from an older chart), gets 15 minutes; a value outside
 
 {{/*
 TASK_MAX_RETRIES for the shared ConfigMap: runs.taskMaxRetries. A release
-without a runs block, or without the key (helm upgrade --reuse-values from an
-older chart), gets 2; a value outside 0-10 fails the render.
+without a runs block, or without the key (for example after helm upgrade
+--reuse-values), gets 2; a value outside 0-10 fails the render.
 */ -}}
 {{- define "continuo.runs.taskMaxRetries" -}}
 {{- $r := .Values.runs | default dict -}}
@@ -961,7 +1578,7 @@ value outside 1-168 fails the render.
 
 {{/*
 MAINTENANCE_ENABLED for the shared ConfigMap: "true" or "false". A release
-without a maintenance block (helm upgrade --reuse-values from an older chart)
+without a maintenance block (for example after helm upgrade --reuse-values)
 renders "false"; the schema refuses a non-boolean value.
 */ -}}
 {{- define "continuo.maintenance.enabled" -}}

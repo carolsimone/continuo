@@ -9,8 +9,9 @@
 #
 # A real BYO datastore lives outside the cluster, so the chart's
 # default-deny-ingress NetworkPolicy (podSelector: {} — every pod in the
-# release namespace) never applies to it: egress from the release is left
-# open. This fixture simulates "external" infra by running it IN the same
+# release namespace) never applies to it. The agents' egress policy admits
+# every pod in the release namespace, so they reach these fixtures directly.
+# This fixture simulates "external" infra by running it IN the same
 # namespace instead, which puts it squarely inside that podSelector: {} with
 # no matching allow-rule (the chart only renders allow-redis/allow-neo4j when
 # the bundled instance is enabled, which it isn't here) — so each fixture
