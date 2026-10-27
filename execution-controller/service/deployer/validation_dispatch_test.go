@@ -743,7 +743,7 @@ func TestDispatcher_NormalProduction_NonDeployable_ReportsTheAttemptFailed(t *te
 
 	// Non-deployable: empty JobName, no Mode set (normal production).
 	cmd := command.DeployTask{
-		TaskID: uuid.New().String(), ScheduleID: uuid.New().String(),
+		TaskID: uuid.New().String(), RunID: uuid.New().String(),
 	}
 	dep := model.NewDeployment(cmd, nil, time.Now())
 	require.False(t, dep.IsDeployable())

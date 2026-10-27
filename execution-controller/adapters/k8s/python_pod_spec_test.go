@@ -17,7 +17,7 @@ func pythonParams() JobParams {
 	return JobParams{
 		JobName:     "run-py-probe",
 		TaskID:      "task-1",
-		ScheduleID:  "sched-1",
+		RunID:       "sched-1",
 		ServiceName: "svc-py",
 		SchemaName:  "analytics",
 		TableName:   "py_probe",

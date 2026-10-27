@@ -232,7 +232,7 @@ func TestTaskDispatch_ARefusedDispatchOfARunningJobsNameLeavesTheJobToItsOwner(t
 	f := newDispatchFlow(t, db)
 	name := jobNameOf(f.runID, 0)
 	repo := postgres.NewDeploymentsRepository(db, testDispatchLogger())
-	owner := model.NewDeployment(command.DeployTask{TaskID: uuid.NewString(), ScheduleID: uuid.NewString(),
+	owner := model.NewDeployment(command.DeployTask{TaskID: uuid.NewString(), RunID: uuid.NewString(),
 		ScheduleName: "daily", ServiceName: "dbt", SchemaName: "public", TableName: "orders", JobName: name,
 		NodeType: "dbt-model", Operation: "run", ImageTag: "sha-abc", TimeoutSeconds: 3600}, nil, time.Now().Add(-time.Minute))
 	require.NoError(t, repo.Add(ctx, owner))

@@ -92,7 +92,7 @@ func (h *RunCancelledHandler) Handle(ctx context.Context, u uow.UnitOfWork, evt 
 		if stopped[attemptOf{a.TaskID, a.Attempt}] {
 			continue
 		}
-		cmd := command.DeployTask{TaskID: a.TaskID, ScheduleID: evt.RunID.String(), JobName: a.JobName, Attempt: a.Attempt}
+		cmd := command.DeployTask{TaskID: a.TaskID, RunID: evt.RunID.String(), JobName: a.JobName, Attempt: a.Attempt}
 		job, err := h.stopNamed(ctx, u, snap, cmd, procID, now)
 		if err != nil {
 			return nil, err
@@ -193,7 +193,7 @@ func (h *RunCancelledHandler) stopRow(ctx context.Context, u uow.UnitOfWork, sna
 	case model.StopAwaitPod:
 		h.logger.Error("A row of a cancelled run awaits its launch and has no Job, but a pod of its attempt has not finished — "+
 			"nothing is reported until the pod is gone; state asks again",
-			"run_id", cmd.ScheduleID, "task_id", cmd.TaskID, "attempt", cmd.Attempt, "job_name", d.JobName(), "status", d.Status())
+			"run_id", cmd.RunID, "task_id", cmd.TaskID, "attempt", cmd.Attempt, "job_name", d.JobName(), "status", d.Status())
 		return "", nil
 	}
 	return job, u.DeploymentsRepo().Save(ctx, d)
@@ -231,7 +231,7 @@ func (h *RunCancelledHandler) stopNamed(ctx context.Context, u uow.UnitOfWork, s
 	case model.AwaitFencedPod:
 		h.logger.Error("A named attempt of a cancelled run has no record and no Job, but a pod of it has not finished — "+
 			"nothing is reported until the pod is gone; state asks again",
-			"run_id", cmd.ScheduleID, "task_id", cmd.TaskID, "attempt", cmd.Attempt, "job_name", cmd.JobName)
+			"run_id", cmd.RunID, "task_id", cmd.TaskID, "attempt", cmd.Attempt, "job_name", cmd.JobName)
 		return "", nil
 	case model.StoreStopped:
 		d = model.NewStoppedDeployment(cmd, procID, now)
@@ -255,7 +255,7 @@ func (h *RunCancelledHandler) stopNamed(ctx context.Context, u uow.UnitOfWork, s
 	}
 	if action == model.StopAdopted {
 		h.logger.Info("A named attempt of a cancelled run has no record but its Job exists — the Job is stopped",
-			"run_id", cmd.ScheduleID, "task_id", cmd.TaskID, "attempt", cmd.Attempt, "job_name", cmd.JobName)
+			"run_id", cmd.RunID, "task_id", cmd.TaskID, "attempt", cmd.Attempt, "job_name", cmd.JobName)
 		return cmd.JobName, nil
 	}
 	u.AfterCommit(h.metrics.AttemptStopped)

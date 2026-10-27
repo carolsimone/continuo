@@ -239,7 +239,7 @@ const (
 
 // reapUnowned judges a Job that no deployment created or adopted. A Job that
 // is present and not being deleted is deleted when its run is fenced (its
-// schedule-id label names a cancelled run), or when its deployment ended
+// run-id label names a cancelled run), or when its deployment ended
 // failed before deploying it, so Kubernetes created it after the create call
 // reported failure. A Job's deployment is the one of the attempt its labels
 // name, since two nodes of one run can share a truncated Job name; a Job with

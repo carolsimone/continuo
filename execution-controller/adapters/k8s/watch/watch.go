@@ -165,11 +165,11 @@ func (w *Watch) ObserveLive(ctx context.Context, jobName string) (model.JobObser
 
 // ObserveRun reads every Job and pod of runID from the API, past the cache:
 // one LIST of the Jobs and one LIST of the pods carrying the run's
-// schedule-id label, which a task's Job and its pod template both carry. Each
+// run-id label, which a task's Job and its pod template both carry. Each
 // pod is held under the Job its job-name label names (the current label, else
 // the legacy one), whether or not that Job is still present.
 func (w *Watch) ObserveRun(ctx context.Context, runID string) (model.RunObservation, error) {
-	selector := metav1.ListOptions{LabelSelector: labels.Set{k8s.LabelScheduleID: runID}.String()}
+	selector := metav1.ListOptions{LabelSelector: labels.Set{k8s.LabelRunID: runID}.String()}
 	jobList, err := w.cs.BatchV1().Jobs(w.namespace).List(ctx, selector)
 	if err != nil {
 		return model.RunObservation{}, fmt.Errorf("list the Jobs of run %s: %w", runID, err)

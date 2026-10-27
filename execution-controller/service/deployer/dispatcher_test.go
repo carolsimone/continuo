@@ -116,14 +116,14 @@ func seedJobNamed(t *testing.T, db *sqlx.DB, name string, maxRetries, retryCount
 	t.Helper()
 	id := uuid.New()
 	payload, err := json.Marshal(serialization.DeployTaskFromDomain(command.DeployTask{
-		TaskID: uuid.New().String(), ScheduleID: uuid.New().String(),
+		TaskID: uuid.New().String(), RunID: uuid.New().String(),
 		ScheduleName: "daily", ServiceName: "dbt", SchemaName: "public",
 		TableName: "orders", JobName: name, NodeType: "dbt-model",
 		ImageTag: "sha-abc", Attempt: 0,
 	}))
 	require.NoError(t, err)
 	_, err = db.Exec(
-		`INSERT INTO deployments (id, task_id, schedule_id, job_params, max_retries, retry_count, next_attempt_at)
+		`INSERT INTO deployments (id, task_id, run_id, job_params, max_retries, retry_count, next_attempt_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, NOW() - interval '1 minute')`,
 		id, uuid.New(), uuid.New(), payload, maxRetries, retryCount)
 	require.NoError(t, err)
@@ -304,12 +304,12 @@ func TestDispatcher_CorruptedJobParamsMarksFailedWithRowIdentity(t *testing.T) {
 	defer cleanup()
 
 	taskID := uuid.New()
-	scheduleID := uuid.New()
+	runID := uuid.New()
 	// Valid JSONB, but a JSON string — cannot unmarshal into DeployTask.
 	_, err := db.Exec(
-		`INSERT INTO deployments (id, task_id, schedule_id, job_params, max_retries, retry_count, next_attempt_at)
+		`INSERT INTO deployments (id, task_id, run_id, job_params, max_retries, retry_count, next_attempt_at)
 		 VALUES ($1, $2, $3, '"corrupt"'::jsonb, 3, 0, NOW() - interval '1 minute')`,
-		uuid.New(), taskID, scheduleID)
+		uuid.New(), taskID, runID)
 	require.NoError(t, err)
 
 	fk := &fakeDeployer{}
@@ -331,7 +331,7 @@ func TestDispatcher_CorruptedJobParamsMarksFailedWithRowIdentity(t *testing.T) {
 	// The report carries the row's task_id and run (identity fallback).
 	got := failedReport(t, db)
 	assert.Equal(t, taskID.String(), got.TaskID, "the report uses the row's task_id")
-	assert.Equal(t, scheduleID.String(), got.RunID)
+	assert.Equal(t, runID.String(), got.RunID)
 	assert.Equal(t, pkgmodel.AttemptStatusFailed, got.Status)
 	assert.Equal(t, "malformed_dispatch", got.FailureReason)
 }
@@ -348,14 +348,14 @@ func seedDeployableAt(t *testing.T, db *sqlx.DB, nextAttempt time.Time) uuid.UUI
 	t.Helper()
 	id := uuid.New()
 	payload, err := json.Marshal(serialization.DeployTaskFromDomain(command.DeployTask{
-		TaskID: uuid.New().String(), ScheduleID: uuid.New().String(),
+		TaskID: uuid.New().String(), RunID: uuid.New().String(),
 		ScheduleName: "daily", ServiceName: "dbt", SchemaName: "public",
 		TableName: "orders", JobName: "dbt-public-orders", NodeType: "dbt-model",
 		ImageTag: "sha-abc",
 	}))
 	require.NoError(t, err)
 	_, err = db.Exec(
-		`INSERT INTO deployments (id, task_id, schedule_id, job_params, max_retries, retry_count, next_attempt_at)
+		`INSERT INTO deployments (id, task_id, run_id, job_params, max_retries, retry_count, next_attempt_at)
 		 VALUES ($1, $2, $3, $4, 3, 0, $5)`,
 		id, uuid.New(), uuid.New(), payload, nextAttempt)
 	require.NoError(t, err)
@@ -665,7 +665,7 @@ func seedAttempt(t *testing.T, db *sqlx.DB, retryCount int) (uuid.UUID, command.
 	t.Helper()
 	id := uuid.New()
 	cmd := command.DeployTask{
-		TaskID: uuid.NewString(), ScheduleID: uuid.NewString(),
+		TaskID: uuid.NewString(), RunID: uuid.NewString(),
 		ScheduleName: "daily", ServiceName: "dbt", SchemaName: "public",
 		TableName: "orders", JobName: "dbt-public-orders-" + uuid.NewString()[:8] + "-r1", NodeType: "dbt-model",
 		ImageTag: "sha-abc", Operation: "run", Attempt: 1, TimeoutSeconds: 3600,
@@ -673,9 +673,9 @@ func seedAttempt(t *testing.T, db *sqlx.DB, retryCount int) (uuid.UUID, command.
 	payload, err := json.Marshal(serialization.DeployTaskFromDomain(cmd))
 	require.NoError(t, err)
 	_, err = db.Exec(
-		`INSERT INTO deployments (id, task_id, schedule_id, job_params, max_retries, retry_count, next_attempt_at)
+		`INSERT INTO deployments (id, task_id, run_id, job_params, max_retries, retry_count, next_attempt_at)
 		 VALUES ($1, $2, $3, $4, 3, $5, NOW() - interval '1 minute')`,
-		id, cmd.TaskID, cmd.ScheduleID, payload, retryCount)
+		id, cmd.TaskID, cmd.RunID, payload, retryCount)
 	require.NoError(t, err)
 	return id, cmd
 }
@@ -861,7 +861,7 @@ func TestLaunch_AFencedReservedRowEndsStoppedWithoutAJob(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 	runID := uuid.New()
-	cmd := command.DeployTask{TaskID: uuid.NewString(), ScheduleID: runID.String(), ScheduleName: "daily",
+	cmd := command.DeployTask{TaskID: uuid.NewString(), RunID: runID.String(), ScheduleName: "daily",
 		ServiceName: "dbt", SchemaName: "public", TableName: "orders", JobName: "dbt-public-orders-" + runID.String()[:8],
 		NodeType: "dbt-model", ImageTag: "sha-abc", Operation: "run", TimeoutSeconds: 3600}
 	dep := model.NewDeployment(cmd, nil, time.Now().Add(-time.Minute))
@@ -941,7 +941,7 @@ func newFencedLaunch(t *testing.T) *fencedLaunch {
 	db, cleanup := setupPostgres(t)
 	t.Cleanup(cleanup)
 	runID := uuid.New()
-	cmd := command.DeployTask{TaskID: uuid.NewString(), ScheduleID: runID.String(), ScheduleName: "daily",
+	cmd := command.DeployTask{TaskID: uuid.NewString(), RunID: runID.String(), ScheduleName: "daily",
 		ServiceName: "dbt", SchemaName: "public", TableName: "orders", JobName: "dbt-public-orders-" + runID.String()[:8],
 		NodeType: "dbt-model", ImageTag: "sha-abc", Operation: "run", TimeoutSeconds: 3600}
 	added, err := repoFactory(db).AddAttempt(context.Background(), model.NewDeployment(cmd, nil, time.Now().Add(-time.Minute)))
@@ -953,7 +953,7 @@ func newFencedLaunch(t *testing.T) *fencedLaunch {
 // run claims the attempt, fences its run before the claim commits, and
 // launches it, reading the attempt's Job from lookup.
 func (f *fencedLaunch) run(lookup *liveAPI) error {
-	runID := uuid.MustParse(f.cmd.ScheduleID)
+	runID := uuid.MustParse(f.cmd.RunID)
 	fencing := func(exec outbox.Executor) repository.AdmissionRepository {
 		return fencingAdmission{AdmissionRepository: admissionFactory(exec), db: f.db, run: runID}
 	}
@@ -978,7 +978,7 @@ func TestLaunch_AFencedReservedRowWhoseJobExistsIsAdoptedTerminating(t *testing.
 	f := newFencedLaunch(t)
 	started := time.Now().Add(-time.Minute)
 	lookup := &liveAPI{jobs: map[string]model.JobObservation{f.cmd.JobName: {JobPresent: true, JobTaskID: f.cmd.TaskID,
-		JobAttempt: "0", JobRunID: f.cmd.ScheduleID, Pods: []model.PodObservation{{Name: "pod-1", Phase: model.PodRunning,
+		JobAttempt: "0", JobRunID: f.cmd.RunID, Pods: []model.PodObservation{{Name: "pod-1", Phase: model.PodRunning,
 			Main: model.ContainerObservation{Name: "dbt-job", StartedAt: &started}}}}}}
 
 	require.NoError(t, f.run(lookup))

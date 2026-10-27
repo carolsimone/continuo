@@ -22,7 +22,7 @@ type AdmissionRepository interface {
 	CountInFlight(ctx context.Context) (int, error)
 	// ReserveNext moves up to limit due pending deployments to reserved and
 	// returns their ids. Production and candidate deployments alternate; within
-	// production, runs (schedule_id) take turns, and within candidates, releases
+	// production, runs (run_id) take turns, and within candidates, releases
 	// (release_id) take turns; within one run or release the earliest due goes
 	// first.
 	ReserveNext(ctx context.Context, limit int) ([]uuid.UUID, error)

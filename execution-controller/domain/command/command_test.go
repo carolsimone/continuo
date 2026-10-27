@@ -11,14 +11,14 @@ import (
 
 func TestDeployTask_ToJobSpec(t *testing.T) {
 	c := command.DeployTask{
-		TaskID: "t1", ScheduleID: "s1", ScheduleName: "daily", ServiceName: "dbt",
+		TaskID: "t1", RunID: "s1", ScheduleName: "daily", ServiceName: "dbt",
 		SchemaName: "public", TableName: "orders", JobName: "dbt-public-orders",
 		NodeType: "dbt-model", ImageTag: "sha-abc", Attempt: 2,
 	}
 	spec := c.ToJobSpec()
 	assert.Equal(t, "dbt-public-orders", spec.JobName)
 	assert.Equal(t, "t1", spec.TaskID)
-	assert.Equal(t, "s1", spec.ScheduleID)
+	assert.Equal(t, "s1", spec.RunID)
 	assert.Equal(t, "daily", spec.ScheduleName)
 	assert.Equal(t, "dbt", spec.ServiceName)
 	assert.Equal(t, "public", spec.SchemaName)

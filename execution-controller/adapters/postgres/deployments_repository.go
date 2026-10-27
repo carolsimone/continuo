@@ -40,7 +40,7 @@ type deploymentRow struct {
 	ID                  uuid.UUID  `db:"id"`
 	MessageProcessingID *uuid.UUID `db:"message_processing_id"`
 	TaskID              uuid.UUID  `db:"task_id"`
-	ScheduleID          uuid.UUID  `db:"schedule_id"`
+	RunID               uuid.UUID  `db:"run_id"`
 	JobParams           []byte     `db:"job_params"`
 	Status              string     `db:"status"`
 	RetryCount          int        `db:"retry_count"`
@@ -63,20 +63,20 @@ type deploymentRow struct {
 
 func (r *deploymentsRepository) Add(ctx context.Context, d *model.Deployment) error {
 	var (
-		jobParams          []byte
-		taskID, scheduleID uuid.UUID
-		releaseID, nodeID  *string
-		err                error
+		jobParams         []byte
+		taskID, runID     uuid.UUID
+		releaseID, nodeID *string
+		err               error
 	)
 	if d.Mode() == model.ModeValidation || d.Mode() == model.ModeSeedBuild || d.Mode() == model.ModeCompile {
 		vcmd := d.ValidationCommand()
 		if jobParams, err = json.Marshal(serialization.ValidationDeployTaskFromDomain(vcmd)); err != nil {
 			return fmt.Errorf("marshal validation deploy command: %w", err)
 		}
-		// task_id/schedule_id are NOT NULL but validation rows have no real
+		// task_id/run_id are NOT NULL but validation rows have no real
 		// task/schedule identity; derive stable synthetic UUIDs from (release_id,
 		// node_id) so re-adds map to the same row.
-		taskID, scheduleID = model.ValidationSyntheticIDs(vcmd.ReleaseID, vcmd.NodeID)
+		taskID, runID = model.ValidationSyntheticIDs(vcmd.ReleaseID, vcmd.NodeID)
 		rid, nid := vcmd.ReleaseID, vcmd.NodeID
 		releaseID, nodeID = &rid, &nid
 	} else {
@@ -84,19 +84,19 @@ func (r *deploymentsRepository) Add(ctx context.Context, d *model.Deployment) er
 		if jobParams, err = json.Marshal(serialization.DeployTaskFromDomain(cmd)); err != nil {
 			return fmt.Errorf("marshal deploy command: %w", err)
 		}
-		if taskID, scheduleID, err = commandIDs(cmd); err != nil {
+		if taskID, runID, err = commandIDs(cmd); err != nil {
 			return err
 		}
 	}
 
 	const query = `
 		INSERT INTO deployments (
-			id, message_processing_id, task_id, schedule_id, job_params,
+			id, message_processing_id, task_id, run_id, job_params,
 			status, retry_count, max_retries, next_attempt_at, created_at,
 			mode, release_id, node_id
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`
 	if _, err := r.exec.ExecContext(ctx, query,
-		d.ID(), d.MessageProcessingID(), taskID, scheduleID, jobParams,
+		d.ID(), d.MessageProcessingID(), taskID, runID, jobParams,
 		string(d.Status()), d.RetryCount(), d.MaxRetries(), d.NextAttemptAt(), d.CreatedAt(),
 		string(d.Mode()), releaseID, nodeID,
 	); err != nil {
@@ -138,7 +138,7 @@ func (r *deploymentsRepository) Save(ctx context.Context, d *model.Deployment) e
 // validationSelectColumns is the column list reconstituted into a Deployment by
 // the validation getters. Mirrors the order deploymentRow's db tags expect.
 const validationSelectColumns = `
-	id, message_processing_id, task_id, schedule_id, job_params,
+	id, message_processing_id, task_id, run_id, job_params,
 	status, retry_count, max_retries, next_attempt_at,
 	created_at, deployed_at, error_message,
 	mode, release_id, node_id, outcome, dbt_log_uri, outcome_at, run_results_uri, failed_container, facts, last_report`
@@ -150,7 +150,7 @@ func (r *deploymentsRepository) GetByReleaseNode(ctx context.Context, releaseID,
 		WHERE mode = $3 AND release_id = $1 AND node_id = $2`
 	var row deploymentRow
 	if err := r.exec.QueryRowContext(ctx, query, releaseID, nodeID, string(mode)).Scan(
-		&row.ID, &row.MessageProcessingID, &row.TaskID, &row.ScheduleID, &row.JobParams,
+		&row.ID, &row.MessageProcessingID, &row.TaskID, &row.RunID, &row.JobParams,
 		&row.Status, &row.RetryCount, &row.MaxRetries, &row.NextAttemptAt,
 		&row.CreatedAt, &row.DeployedAt, &row.ErrorMessage,
 		&row.Mode, &row.ReleaseID, &row.NodeID, &row.Outcome, &row.DBTLogURI, &row.OutcomeAt, &row.RunResultsURI,
@@ -288,7 +288,7 @@ func (r *deploymentsRepository) toAggregate(row *deploymentRow) *model.Deploymen
 	if err := json.Unmarshal(row.JobParams, &cmdDTO); err != nil {
 		r.logger.Error("deployment job_params unparseable — recovering identity from columns",
 			"deployment_id", row.ID, "error", err)
-		cmd = command.DeployTask{TaskID: row.TaskID.String(), ScheduleID: row.ScheduleID.String()}
+		cmd = command.DeployTask{TaskID: row.TaskID.String(), RunID: row.RunID.String()}
 	} else {
 		cmd = cmdDTO.ToDomain()
 	}
@@ -385,11 +385,11 @@ func commandIDs(cmd command.DeployTask) (uuid.UUID, uuid.UUID, error) {
 	if err != nil {
 		return uuid.Nil, uuid.Nil, fmt.Errorf("parse task_id %q: %w", cmd.TaskID, err)
 	}
-	scheduleID, err := uuid.Parse(cmd.ScheduleID)
+	runID, err := uuid.Parse(cmd.RunID)
 	if err != nil {
-		return uuid.Nil, uuid.Nil, fmt.Errorf("parse schedule_id %q: %w", cmd.ScheduleID, err)
+		return uuid.Nil, uuid.Nil, fmt.Errorf("parse run_id %q: %w", cmd.RunID, err)
 	}
-	return taskID, scheduleID, nil
+	return taskID, runID, nil
 }
 
 // AddAttempt inserts a production deployment unless its task already has a
@@ -403,7 +403,7 @@ func (r *deploymentsRepository) AddAttempt(ctx context.Context, d *model.Deploym
 	if err != nil {
 		return false, fmt.Errorf("marshal deploy command: %w", err)
 	}
-	taskID, scheduleID, err := commandIDs(d.Command())
+	taskID, runID, err := commandIDs(d.Command())
 	if err != nil {
 		return false, err
 	}
@@ -417,12 +417,12 @@ func (r *deploymentsRepository) AddAttempt(ctx context.Context, d *model.Deploym
 	}
 	res, err := r.exec.ExecContext(ctx, `
 		INSERT INTO deployments (
-			id, message_processing_id, task_id, schedule_id, job_params,
+			id, message_processing_id, task_id, run_id, job_params,
 			status, retry_count, max_retries, next_attempt_at, created_at,
 			mode, deployed_at, error_message, outcome, outcome_at, facts, last_report
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 		ON CONFLICT (task_id, attempt) WHERE mode = 'production' AND attempt IS NOT NULL DO NOTHING`,
-		d.ID(), d.MessageProcessingID(), taskID, scheduleID, jobParams,
+		d.ID(), d.MessageProcessingID(), taskID, runID, jobParams,
 		string(d.Status()), d.RetryCount(), d.MaxRetries(), d.NextAttemptAt(), d.CreatedAt(),
 		string(d.Mode()), d.DeployedAt(), d.ErrorMessage(), nullableStr(d.Outcome()), d.OutcomeAt(), facts, report)
 	if err != nil {
@@ -508,7 +508,7 @@ func (r *deploymentsRepository) LockOpenOfRun(ctx context.Context, runID string)
 	var rows []*deploymentRow
 	if err := r.exec.SelectContext(ctx, &rows, `SELECT`+validationSelectColumns+`
 		FROM deployments
-		WHERE schedule_id = $1 AND mode = $2 AND status IN (`+openStatusesSQL+`)
+		WHERE run_id = $1 AND mode = $2 AND status IN (`+openStatusesSQL+`)
 		ORDER BY id
 		FOR UPDATE`, id, string(model.ModeProduction)); err != nil {
 		return nil, fmt.Errorf("lock the open deployments of run %s: %w", runID, err)

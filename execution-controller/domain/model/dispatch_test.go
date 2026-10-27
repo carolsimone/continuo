@@ -72,7 +72,7 @@ func TestDecideFenced(t *testing.T) {
 }
 
 func validDispatch() command.DeployTask {
-	return command.DeployTask{TaskID: uuid.NewString(), ScheduleID: uuid.NewString(), NodeType: "dbt-model",
+	return command.DeployTask{TaskID: uuid.NewString(), RunID: uuid.NewString(), NodeType: "dbt-model",
 		JobName: "svc-sch-tbl-7f3e1a2b", ImageTag: "v1", Operation: "run", TimeoutSeconds: 3600}
 }
 
