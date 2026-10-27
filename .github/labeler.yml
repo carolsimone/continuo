@@ -1,0 +1,265 @@
+# Area labels for pull requests, applied by .github/workflows/pr-labels.yml.
+#
+# A service's `area/<name>` label goes on a pull request that changes a file
+# under that directory which defines behaviour: tests, Markdown and generated
+# code (stubs, the streams contract bindings) are excluded, so a pull request
+# that only regenerates stubs or adds a test does not claim the area.
+# `all-globs-to-any-file` reads as "at least one changed file matches every
+# glob below", and a `!` glob matches the files it does not name.
+#
+# area/e2e and area/docs go on a pull request whose every changed file is part
+# of the end-to-end harness (tests/) or documentation (docs/, README.md,
+# AGENTS.md, CONTRIBUTING.md). A pull request that also changes a service
+# carries that service's label instead, so these two do not mark every change
+# that ships with a test or a doc edit. Workflow and script changes carry no
+# area; their type label (ci/cd, chore) says what they are.
+
+area/state:
+  - changed-files:
+      - all-globs-to-any-file:
+          - 'state/**'
+          - '!**/*_test.go'
+          - '!**/test_*.py'
+          - '!**/tests/**'
+          - '!**/*.test.*'
+          - '!**/*.md'
+          - '!**/*.gen.go'
+          - '!**/*.pb.go'
+          - '!**/*_pb2*.py'
+          - '!**/streams_contract.py'
+          - '!**/contract_vocabulary.py'
+
+area/orchestrator:
+  - changed-files:
+      - all-globs-to-any-file:
+          - 'orchestrator/**'
+          - '!**/*_test.go'
+          - '!**/test_*.py'
+          - '!**/tests/**'
+          - '!**/*.test.*'
+          - '!**/*.md'
+          - '!**/*.gen.go'
+          - '!**/*.pb.go'
+          - '!**/*_pb2*.py'
+          - '!**/streams_contract.py'
+          - '!**/contract_vocabulary.py'
+
+area/execution-controller:
+  - changed-files:
+      - all-globs-to-any-file:
+          - 'execution-controller/**'
+          - '!**/*_test.go'
+          - '!**/test_*.py'
+          - '!**/tests/**'
+          - '!**/*.test.*'
+          - '!**/*.md'
+          - '!**/*.gen.go'
+          - '!**/*.pb.go'
+          - '!**/*_pb2*.py'
+          - '!**/streams_contract.py'
+          - '!**/contract_vocabulary.py'
+
+area/release-controller:
+  - changed-files:
+      - all-globs-to-any-file:
+          - 'release-controller/**'
+          - '!**/*_test.go'
+          - '!**/test_*.py'
+          - '!**/tests/**'
+          - '!**/*.test.*'
+          - '!**/*.md'
+          - '!**/*.gen.go'
+          - '!**/*.pb.go'
+          - '!**/*_pb2*.py'
+          - '!**/streams_contract.py'
+          - '!**/contract_vocabulary.py'
+
+area/remediation:
+  - changed-files:
+      - all-globs-to-any-file:
+          - 'remediation/**'
+          - '!**/*_test.go'
+          - '!**/test_*.py'
+          - '!**/tests/**'
+          - '!**/*.test.*'
+          - '!**/*.md'
+          - '!**/*.gen.go'
+          - '!**/*.pb.go'
+          - '!**/*_pb2*.py'
+          - '!**/streams_contract.py'
+          - '!**/contract_vocabulary.py'
+
+area/agent-remediation:
+  - changed-files:
+      - all-globs-to-any-file:
+          - 'agent-remediation/**'
+          - '!**/*_test.go'
+          - '!**/test_*.py'
+          - '!**/tests/**'
+          - '!**/*.test.*'
+          - '!**/*.md'
+          - '!**/*.gen.go'
+          - '!**/*.pb.go'
+          - '!**/*_pb2*.py'
+          - '!**/streams_contract.py'
+          - '!**/contract_vocabulary.py'
+
+area/agent-chat:
+  - changed-files:
+      - all-globs-to-any-file:
+          - 'agent-chat/**'
+          - '!**/*_test.go'
+          - '!**/test_*.py'
+          - '!**/tests/**'
+          - '!**/*.test.*'
+          - '!**/*.md'
+          - '!**/*.gen.go'
+          - '!**/*.pb.go'
+          - '!**/*_pb2*.py'
+          - '!**/streams_contract.py'
+          - '!**/contract_vocabulary.py'
+
+area/topology-controller:
+  - changed-files:
+      - all-globs-to-any-file:
+          - 'topology-controller/**'
+          - '!**/*_test.go'
+          - '!**/test_*.py'
+          - '!**/tests/**'
+          - '!**/*.test.*'
+          - '!**/*.md'
+          - '!**/*.gen.go'
+          - '!**/*.pb.go'
+          - '!**/*_pb2*.py'
+          - '!**/streams_contract.py'
+          - '!**/contract_vocabulary.py'
+
+area/dead-letter-controller:
+  - changed-files:
+      - all-globs-to-any-file:
+          - 'dead-letter-controller/**'
+          - '!**/*_test.go'
+          - '!**/test_*.py'
+          - '!**/tests/**'
+          - '!**/*.test.*'
+          - '!**/*.md'
+          - '!**/*.gen.go'
+          - '!**/*.pb.go'
+          - '!**/*_pb2*.py'
+          - '!**/streams_contract.py'
+          - '!**/contract_vocabulary.py'
+
+area/egress-proxy:
+  - changed-files:
+      - all-globs-to-any-file:
+          - 'egress-proxy/**'
+          - '!**/*_test.go'
+          - '!**/test_*.py'
+          - '!**/tests/**'
+          - '!**/*.test.*'
+          - '!**/*.md'
+          - '!**/*.gen.go'
+          - '!**/*.pb.go'
+          - '!**/*_pb2*.py'
+          - '!**/streams_contract.py'
+          - '!**/contract_vocabulary.py'
+
+area/ui:
+  - changed-files:
+      - all-globs-to-any-file:
+          - 'ui/**'
+          - '!**/*_test.go'
+          - '!**/test_*.py'
+          - '!**/tests/**'
+          - '!**/*.test.*'
+          - '!**/*.md'
+          - '!**/*.gen.go'
+          - '!**/*.pb.go'
+          - '!**/*_pb2*.py'
+          - '!**/streams_contract.py'
+          - '!**/contract_vocabulary.py'
+
+area/cli:
+  - changed-files:
+      - all-globs-to-any-file:
+          - 'cli/**'
+          - '!**/*_test.go'
+          - '!**/test_*.py'
+          - '!**/tests/**'
+          - '!**/*.test.*'
+          - '!**/*.md'
+          - '!**/*.gen.go'
+          - '!**/*.pb.go'
+          - '!**/*_pb2*.py'
+          - '!**/streams_contract.py'
+          - '!**/contract_vocabulary.py'
+
+area/pkg:
+  - changed-files:
+      - all-globs-to-any-file:
+          - 'pkg/**'
+          - '!**/*_test.go'
+          - '!**/test_*.py'
+          - '!**/tests/**'
+          - '!**/*.test.*'
+          - '!**/*.md'
+          - '!**/*.gen.go'
+          - '!**/*.pb.go'
+          - '!**/*_pb2*.py'
+          - '!**/streams_contract.py'
+          - '!**/contract_vocabulary.py'
+
+area/deploy:
+  - changed-files:
+      - all-globs-to-any-file:
+          - 'deploy/**'
+          - '!**/*_test.go'
+          - '!**/test_*.py'
+          - '!**/tests/**'
+          - '!**/*.test.*'
+          - '!**/*.md'
+          - '!**/*.gen.go'
+          - '!**/*.pb.go'
+          - '!**/*_pb2*.py'
+          - '!**/streams_contract.py'
+          - '!**/contract_vocabulary.py'
+
+area/db:
+  - changed-files:
+      - all-globs-to-any-file:
+          - 'db/**'
+          - '!**/*_test.go'
+          - '!**/test_*.py'
+          - '!**/tests/**'
+          - '!**/*.test.*'
+          - '!**/*.md'
+          - '!**/*.gen.go'
+          - '!**/*.pb.go'
+          - '!**/*_pb2*.py'
+          - '!**/streams_contract.py'
+          - '!**/contract_vocabulary.py'
+
+area/dbt:
+  - changed-files:
+      - all-globs-to-any-file:
+          - 'dbt/**'
+          - '!**/*_test.go'
+          - '!**/test_*.py'
+          - '!**/tests/**'
+          - '!**/*.test.*'
+          - '!**/*.md'
+          - '!**/*.gen.go'
+          - '!**/*.pb.go'
+          - '!**/*_pb2*.py'
+          - '!**/streams_contract.py'
+          - '!**/contract_vocabulary.py'
+
+area/e2e:
+  - changed-files:
+      - all-globs-to-all-files:
+          - 'tests/**'
+
+area/docs:
+  - changed-files:
+      - all-globs-to-all-files:
+          - '{docs/**,**/README.md,AGENTS.md,CONTRIBUTING.md}'

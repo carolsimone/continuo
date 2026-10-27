@@ -117,6 +117,30 @@ Whenever a PR changes `deploy/continuo/values.yaml`, `values.schema.json`, `Char
 
 After a release: once `release.yml` has succeeded for `vX.Y.Z` and the docs-pin PR (the one pinning this repository's install guides to `X.Y.Z` and adding its release notes) has merged, run `scripts/release/open-site-bump-pr.sh X.Y.Z`. It opens the pull request in `carolsimone/continuo-site` that moves the public site's quickstart `chartVersion` to `X.Y.Z`; nothing else bumps that pin. It runs with your own `gh` login, and `release.yml` does not call it, because it needs push access to that second repository.
 
+# Pull request titles and labels
+Every pull request title is a Conventional Commit title: `<type>[(<scope>)][!]: <summary>`, for example `fix(state): stop double-dispatching a retried task` or `feat(cli)!: rename node trigger to node run`. The repository squash-merges, so the title becomes the commit message on `main`. The `pr-title` check (`.github/workflows/pr-title.yml`, backed by `scripts/pr-title-type.sh`) fails any other title; a `Revert "…"` title that GitHub generates is accepted. `<type>` is one of the prefixes below, `<scope>` is optional and lowercase (`state`, `ui,cli`), and `!` marks a breaking change.
+
+The `pr-labels` workflow (`.github/workflows/pr-labels.yml`) labels every pull request except dependabot's. Labels are never set by hand: edit the title and the workflow rewrites the type labels. Every label name is lowercase.
+- **Type, exactly one, from the prefix:**
+
+  | Prefix | Label |
+  |---|---|
+  | `feat` | `enhancement` |
+  | `fix` | `bug` |
+  | `refactor` | `refactoring` |
+  | `docs` | `documentation` |
+  | `perf` | `performance` |
+  | `ci` | `ci/cd` |
+  | `test` | `test` |
+  | `chore`, `build` | `chore` |
+  | `security` | `security` |
+
+  `!` adds `breaking-change`.
+- **Area, one or more:** `area/<name>` for each of `state`, `orchestrator`, `execution-controller`, `release-controller`, `remediation`, `agent-remediation`, `agent-chat`, `topology-controller`, `dead-letter-controller`, `egress-proxy`, `ui`, `cli`, `pkg`, `deploy`, `db`, `dbt` whose directory holds a changed file that defines behaviour. Tests, Markdown and generated code (`*.gen.go`, `*.pb.go`, `*_pb2*.py`, the streams contract bindings) do not count, so a pull request that only regenerates stubs or adds a test does not claim the area. `area/e2e` marks a pull request whose every changed file is under `tests/`, and `area/docs` one whose every changed file is documentation. A workflow or script change carries no area; its type label says what it is. The rules are in `.github/labeler.yml`.
+- **Left alone:** `p1`–`p3`, `benchmark` and every other label are set by hand and never changed by the workflow.
+
+A new service needs its `area/<name>` label created in the repository and its rule added to `.github/labeler.yml`.
+
 # How to run it
 Everything needs to run against docker images within my host machine. I use MacOS M4 and colima to be precise.
 All should be added to the `docker-compose.yml` file at the root of the project.
