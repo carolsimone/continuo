@@ -24,8 +24,11 @@ RUN go work edit -dropuse=./state \
     && go work edit -dropuse=./egress-proxy \
     && go work edit -dropuse=./tests/e2e
 
-RUN --mount=type=cache,target=/go/pkg/mod \
-    go mod download
+# Download dependencies into an image layer keyed on the go.mod files.
+# A source change reuses the layer, and `go build` finds every module in the
+# image instead of fetching it again; only a changed go.mod or go.sum
+# downloads again.
+RUN go mod download
 
 COPY pkg/ ./pkg/
 COPY agent-remediation/ ./agent-remediation/
