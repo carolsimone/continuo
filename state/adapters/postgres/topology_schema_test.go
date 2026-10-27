@@ -140,12 +140,12 @@ func TestTopologySchema_RunReleaseIDIsOptional(t *testing.T) {
 		_, _ = db.Exec(`DELETE FROM runs WHERE run_id IN ($1, $2)`, without, with)
 	})
 	_, err := db.Exec(`
-		INSERT INTO runs (tenant_id, run_id, schedule_name, status, created_at, initialization_status)
-		VALUES ('default', $1, $2, 'succeeded', now(), 'completed')`, without, "rel-null-"+without.String()[:8])
+		INSERT INTO runs (tenant_id, run_id, schedule_name, status, created_at)
+		VALUES ('default', $1, $2, 'succeeded', now())`, without, "rel-null-"+without.String()[:8])
 	require.NoError(t, err)
 	_, err = db.Exec(`
-		INSERT INTO runs (tenant_id, run_id, schedule_name, status, created_at, initialization_status, release_id)
-		VALUES ('default', $1, $2, 'succeeded', now(), 'completed', 'rel-x')`, with, "rel-set-"+with.String()[:8])
+		INSERT INTO runs (tenant_id, run_id, schedule_name, status, created_at, release_id)
+		VALUES ('default', $1, $2, 'succeeded', now(), 'rel-x')`, with, "rel-set-"+with.String()[:8])
 	require.NoError(t, err)
 
 	var got []sql.NullString

@@ -136,7 +136,7 @@ func newRebaseFixture(t *testing.T) *rebaseFixture {
 func newRebaseFixtureOf(t *testing.T, tenantID string) *rebaseFixture {
 	t.Helper()
 	created := time.Date(2026, 10, 15, 6, 0, 0, 0, time.UTC)
-	source := run.HydrateRun(tenantID, uuid.New(), "daily", run.RunStatusFailed, run.InitStatusCompleted, run.KindCron, nil,
+	source := run.HydrateRun(tenantID, uuid.New(), "daily", run.RunStatusFailed, run.KindCron, nil,
 		identity.SystemUserID, model.OperationRun, created, nil, &created, nil, nil, nil, nil, nil, 0, nil)
 	source.HydrateRelease(run.ReleaseStamp{ReleaseID: "rel-3", PromotionSeq: 9})
 	f := &rebaseFixture{

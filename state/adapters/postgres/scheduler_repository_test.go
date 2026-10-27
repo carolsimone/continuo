@@ -35,36 +35,15 @@ func discardLogger() *slog.Logger {
 func createScheduler(t *testing.T, repo *postgres.RunRepository, scheduleName string) *postgres.RunRow {
 	t.Helper()
 	runRow := &postgres.RunRow{
-		TenantID:             pkgevents.DefaultTenantID,
-		ScheduleID:           uuid.New(),
-		ScheduleName:         scheduleName,
-		Status:               run.RunStatusRunning,
-		CreatedAt:            time.Now(),
-		InitializationStatus: "completed",
+		TenantID:     pkgevents.DefaultTenantID,
+		ScheduleID:   uuid.New(),
+		ScheduleName: scheduleName,
+		Status:       run.RunStatusRunning,
+		CreatedAt:    time.Now(),
 	}
 	err := repo.Create(context.Background(), runRow)
 	require.NoError(t, err)
 	return runRow
-}
-
-func TestSchedulerRepository_UpdateInitializationStatusTx_UpdatesStatus(t *testing.T) {
-	db := newTestDB(t)
-	repo := postgres.NewRunRepository(db, discardLogger())
-
-	runRow := createScheduler(t, repo, "test-schedule-"+uuid.New().String())
-	defer db.ExecContext(context.Background(), "DELETE FROM runs WHERE run_id = $1", runRow.ScheduleID)
-
-	tx, err := db.BeginTxx(context.Background(), nil)
-	require.NoError(t, err)
-	defer tx.Rollback()
-
-	err = repo.UpdateInitializationStatusTx(context.Background(), tx, pkgevents.DefaultTenantID, runRow.ScheduleID, "pending")
-	require.NoError(t, err)
-	require.NoError(t, tx.Commit())
-
-	updated, err := repo.GetByID(context.Background(), pkgevents.DefaultTenantID, runRow.ScheduleID)
-	require.NoError(t, err)
-	assert.Equal(t, "pending", updated.InitializationStatus)
 }
 
 func TestSchedulerRepository_CreateTx_InsertsRunRow(t *testing.T) {
@@ -73,13 +52,12 @@ func TestSchedulerRepository_CreateTx_InsertsRunRow(t *testing.T) {
 
 	scheduleID := uuid.New()
 	runRow := &postgres.RunRow{
-		TenantID:             pkgevents.DefaultTenantID,
-		ScheduleID:           scheduleID,
-		ScheduleName:         "test-schedule-" + uuid.New().String(),
-		Status:               run.RunStatusPending,
-		CreatedAt:            time.Now(),
-		InitializationStatus: "pending",
-		ServiceMetadataRaw:   []byte(`{"svc-a":{"image_tag":""}}`),
+		TenantID:           pkgevents.DefaultTenantID,
+		ScheduleID:         scheduleID,
+		ScheduleName:       "test-schedule-" + uuid.New().String(),
+		Status:             run.RunStatusPending,
+		CreatedAt:          time.Now(),
+		ServiceMetadataRaw: []byte(`{"svc-a":{"image_tag":""}}`),
 	}
 	defer db.ExecContext(context.Background(), "DELETE FROM runs WHERE run_id = $1", scheduleID)
 
@@ -94,7 +72,6 @@ func TestSchedulerRepository_CreateTx_InsertsRunRow(t *testing.T) {
 	got, err := repo.GetByID(context.Background(), pkgevents.DefaultTenantID, scheduleID)
 	require.NoError(t, err)
 	assert.Equal(t, run.RunStatusPending, got.Status)
-	assert.Equal(t, "pending", got.InitializationStatus)
 	gotMeta, metaErr := got.GetServiceMetadata()
 	require.NoError(t, metaErr)
 	assert.Equal(t, map[string]run.ServiceMetadata{"svc-a": {ImageTag: ""}}, gotMeta)
@@ -110,12 +87,11 @@ func TestSchedulerRepository_CreateTx_ExistingIDIsANoOp(t *testing.T) {
 
 	id := uuid.New()
 	runRow := &postgres.RunRow{
-		TenantID:             pkgevents.DefaultTenantID,
-		ScheduleID:           id,
-		ScheduleName:         "exists-" + id.String()[:8],
-		Status:               run.RunStatusRunning,
-		CreatedAt:            time.Now(),
-		InitializationStatus: "in_progress",
+		TenantID:     pkgevents.DefaultTenantID,
+		ScheduleID:   id,
+		ScheduleName: "exists-" + id.String()[:8],
+		Status:       run.RunStatusRunning,
+		CreatedAt:    time.Now(),
 	}
 	defer db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", id)
 
@@ -153,12 +129,11 @@ func TestSchedulerRepository_CreateTx_ActiveNameConflictStillRaises(t *testing.T
 	defer tx.Rollback()
 	newRunRow := func(id uuid.UUID) *postgres.RunRow {
 		return &postgres.RunRow{
-			TenantID:             pkgevents.DefaultTenantID,
-			ScheduleID:           id,
-			ScheduleName:         name,
-			Status:               run.RunStatusPending,
-			CreatedAt:            time.Now(),
-			InitializationStatus: "in_progress",
+			TenantID:     pkgevents.DefaultTenantID,
+			ScheduleID:   id,
+			ScheduleName: name,
+			Status:       run.RunStatusPending,
+			CreatedAt:    time.Now(),
 		}
 	}
 	require.NoError(t, repo.CreateTx(ctx, tx, newRunRow(first)))
@@ -170,12 +145,11 @@ func TestSchedulerRepository_SetTotalTaskCountTx(t *testing.T) {
 	repo := postgres.NewRunRepository(db, discardLogger())
 	id := uuid.New()
 	require.NoError(t, repo.Create(context.Background(), &postgres.RunRow{
-		TenantID:             pkgevents.DefaultTenantID,
-		ScheduleID:           id,
-		ScheduleName:         "s1-" + id.String(),
-		Status:               run.RunStatusPending,
-		InitializationStatus: "pending",
-		CreatedAt:            time.Now(),
+		TenantID:     pkgevents.DefaultTenantID,
+		ScheduleID:   id,
+		ScheduleName: "s1-" + id.String(),
+		Status:       run.RunStatusPending,
+		CreatedAt:    time.Now(),
 	}))
 	defer db.ExecContext(context.Background(), "DELETE FROM runs WHERE run_id = $1", id)
 
@@ -198,14 +172,13 @@ func TestSchedulerRepository_TaskCountColumns(t *testing.T) {
 
 	id := uuid.New()
 	runRow := &postgres.RunRow{
-		TenantID:             pkgevents.DefaultTenantID,
-		ScheduleID:           id,
-		ScheduleName:         "test_schedule",
-		Status:               run.RunStatusPending,
-		InitializationStatus: "pending",
-		TotalTaskCount:       sql.NullInt32{Int32: 5, Valid: true},
-		TerminalTaskCount:    2,
-		CreatedAt:            time.Now(),
+		TenantID:          pkgevents.DefaultTenantID,
+		ScheduleID:        id,
+		ScheduleName:      "test_schedule",
+		Status:            run.RunStatusPending,
+		TotalTaskCount:    sql.NullInt32{Int32: 5, Valid: true},
+		TerminalTaskCount: 2,
+		CreatedAt:         time.Now(),
 	}
 	defer db.ExecContext(context.Background(), "DELETE FROM runs WHERE run_id = $1", id)
 	require.NoError(t, repo.Create(context.Background(), runRow))
@@ -226,14 +199,13 @@ func TestSchedulerRepository_CreateAndGet_RoundTripsKindAndSourceRunID(t *testin
 	// Schedule names are varchar(50); keep prefix + 8-char suffix safely under limit.
 	shortSuffix := func() string { return uuid.New().String()[:8] }
 	runRow := &postgres.RunRow{
-		TenantID:             pkgevents.DefaultTenantID,
-		ScheduleID:           uuid.New(),
-		ScheduleName:         "krt-" + shortSuffix(),
-		Status:               run.RunStatusPending,
-		CreatedAt:            time.Now(),
-		InitializationStatus: "pending",
-		Kind:                 "rerun",
-		SourceRunID:          &sourceRunID,
+		TenantID:     pkgevents.DefaultTenantID,
+		ScheduleID:   uuid.New(),
+		ScheduleName: "krt-" + shortSuffix(),
+		Status:       run.RunStatusPending,
+		CreatedAt:    time.Now(),
+		Kind:         "rerun",
+		SourceRunID:  &sourceRunID,
 	}
 	defer db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", runRow.ScheduleID)
 	require.NoError(t, repo.Create(ctx, runRow))
@@ -246,13 +218,12 @@ func TestSchedulerRepository_CreateAndGet_RoundTripsKindAndSourceRunID(t *testin
 
 	// Default kind for a RunRow constructed without setting Kind.
 	defaultRun := &postgres.RunRow{
-		TenantID:             pkgevents.DefaultTenantID,
-		ScheduleID:           uuid.New(),
-		ScheduleName:         "kdf-" + shortSuffix(),
-		Status:               run.RunStatusPending,
-		CreatedAt:            time.Now(),
-		InitializationStatus: "pending",
-		Kind:                 "cron",
+		TenantID:     pkgevents.DefaultTenantID,
+		ScheduleID:   uuid.New(),
+		ScheduleName: "kdf-" + shortSuffix(),
+		Status:       run.RunStatusPending,
+		CreatedAt:    time.Now(),
+		Kind:         "cron",
 	}
 	defer db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", defaultRun.ScheduleID)
 	require.NoError(t, repo.Create(ctx, defaultRun))
@@ -269,12 +240,11 @@ func TestRunRepository_CancelTx(t *testing.T) {
 
 	id := uuid.New()
 	require.NoError(t, repo.Create(ctx, &postgres.RunRow{
-		TenantID:             pkgevents.DefaultTenantID,
-		ScheduleID:           id,
-		ScheduleName:         "test-cancel-" + id.String(),
-		Status:               run.RunStatusRunning,
-		CreatedAt:            time.Now(),
-		InitializationStatus: "completed",
+		TenantID:     pkgevents.DefaultTenantID,
+		ScheduleID:   id,
+		ScheduleName: "test-cancel-" + id.String(),
+		Status:       run.RunStatusRunning,
+		CreatedAt:    time.Now(),
 	}))
 	defer db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", id)
 
@@ -317,7 +287,7 @@ func TestRunRepository_CancelTx_CancellingLeavesCompletedAtNull(t *testing.T) {
 	require.NoError(t, repo.Create(ctx, &postgres.RunRow{
 		TenantID:   pkgevents.DefaultTenantID,
 		ScheduleID: id, ScheduleName: "cxl-cancelling-" + id.String()[:8], Status: run.RunStatusRunning,
-		CreatedAt: time.Now(), InitializationStatus: "completed",
+		CreatedAt: time.Now(),
 	}))
 	t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", id) })
 
@@ -360,12 +330,11 @@ func TestRunRepository_CancelTx_RefusesEveryTerminalStatus(t *testing.T) {
 		t.Run(string(status), func(t *testing.T) {
 			id := uuid.New()
 			require.NoError(t, repo.Create(ctx, &postgres.RunRow{
-				TenantID:             pkgevents.DefaultTenantID,
-				ScheduleID:           id,
-				ScheduleName:         "cxl-" + string(status) + "-" + id.String()[:8],
-				Status:               status,
-				CreatedAt:            time.Now(),
-				InitializationStatus: "completed",
+				TenantID:     pkgevents.DefaultTenantID,
+				ScheduleID:   id,
+				ScheduleName: "cxl-" + string(status) + "-" + id.String()[:8],
+				Status:       status,
+				CreatedAt:    time.Now(),
 			}))
 			t.Cleanup(func() {
 				db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", id)
@@ -409,13 +378,12 @@ func TestRunRepository_TerminalCountSurvivesRetryFlow(t *testing.T) {
 
 	id := uuid.New()
 	require.NoError(t, repo.Create(ctx, &postgres.RunRow{
-		TenantID:             pkgevents.DefaultTenantID,
-		ScheduleID:           id,
-		ScheduleName:         "retry-flow-" + id.String(),
-		Status:               run.RunStatusRunning,
-		CreatedAt:            time.Now(),
-		InitializationStatus: "completed",
-		TotalTaskCount:       sql.NullInt32{Int32: 1, Valid: true},
+		TenantID:       pkgevents.DefaultTenantID,
+		ScheduleID:     id,
+		ScheduleName:   "retry-flow-" + id.String(),
+		Status:         run.RunStatusRunning,
+		CreatedAt:      time.Now(),
+		TotalTaskCount: sql.NullInt32{Int32: 1, Valid: true},
 	}))
 	defer db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", id)
 
@@ -458,12 +426,11 @@ func TestRunRepository_SetTerminalTaskCountTx_AbsoluteWrite(t *testing.T) {
 
 	id := uuid.New()
 	require.NoError(t, repo.Create(ctx, &postgres.RunRow{
-		TenantID:             pkgevents.DefaultTenantID,
-		ScheduleID:           id,
-		ScheduleName:         "abs-" + id.String()[:8],
-		Status:               run.RunStatusRunning,
-		CreatedAt:            time.Now(),
-		InitializationStatus: "in_progress",
+		TenantID:     pkgevents.DefaultTenantID,
+		ScheduleID:   id,
+		ScheduleName: "abs-" + id.String()[:8],
+		Status:       run.RunStatusRunning,
+		CreatedAt:    time.Now(),
 	}))
 	defer db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", id)
 

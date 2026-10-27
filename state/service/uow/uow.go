@@ -49,6 +49,9 @@ type UnitOfWork interface {
 	// node can be granted to, the repair of leases whose holder task has
 	// ended, and the count of tasks waiting for a lease.
 	Leases() repository.LeaseRepository
+	// CommandRequests serves the records of the commands that create or
+	// cancel a run, inside the transaction.
+	CommandRequests() repository.CommandRequestRepository
 
 	Begin(ctx context.Context) error
 	Commit() error

@@ -14,30 +14,29 @@ import (
 // package by the repository implementations. Domain logic operates on
 // run.Run aggregates; hydrateRun / dehydrateRun translate between the two.
 type RunRow struct {
-	TenantID             string                         `json:"tenant_id" db:"tenant_id"`
-	ScheduleID           uuid.UUID                      `json:"schedule_id" db:"run_id"`
-	ScheduleName         string                         `json:"schedule_name" db:"schedule_name"`
-	Status               run.RunStatus                  `json:"status" db:"status"`
-	CreatedAt            time.Time                      `json:"created_at" db:"created_at"`
-	StartedAt            *time.Time                     `json:"started_at,omitempty" db:"started_at"`
-	CompletedAt          *time.Time                     `json:"completed_at,omitempty" db:"completed_at"`
-	LastProgressAt       *time.Time                     `json:"last_heartbeat_at,omitempty" db:"last_progress_at"`
-	CancelledAt          *time.Time                     `json:"cancelled_at,omitempty" db:"cancelled_at"`
-	CancelledBy          *string                        `json:"cancelled_by,omitempty" db:"cancelled_by"`
-	CancellationReason   *string                        `json:"cancellation_reason,omitempty" db:"cancellation_reason"`
-	InitializationStatus string                         `json:"initialization_status" db:"initialization_status"`
-	TotalTaskCount       sql.NullInt32                  `json:"total_task_count,omitempty" db:"total_task_count"`
-	TerminalTaskCount    int32                          `json:"terminal_task_count" db:"terminal_task_count"`
-	Kind                 string                         `json:"kind" db:"kind"`
-	SourceRunID          *uuid.UUID                     `json:"source_run_id,omitempty" db:"source_run_id"`
-	InitiatedBy          string                         `json:"initiated_by" db:"initiated_by"`
-	Operation            string                         `json:"operation" db:"operation"`
-	ReleaseID            *string                        `json:"release_id,omitempty" db:"release_id"`
-	PromotionSeq         *int64                         `json:"promotion_seq,omitempty" db:"promotion_seq"`
-	PlannedAt            *time.Time                     `json:"planned_at,omitempty" db:"planned_at"`
-	FailureReason        *string                        `json:"failure_reason,omitempty" db:"failure_reason"`
-	ServiceMetadata      map[string]run.ServiceMetadata `json:"service_metadata"`
-	ServiceMetadataRaw   []byte                         `json:"-" db:"service_metadata"`
+	TenantID           string                         `json:"tenant_id" db:"tenant_id"`
+	ScheduleID         uuid.UUID                      `json:"schedule_id" db:"run_id"`
+	ScheduleName       string                         `json:"schedule_name" db:"schedule_name"`
+	Status             run.RunStatus                  `json:"status" db:"status"`
+	CreatedAt          time.Time                      `json:"created_at" db:"created_at"`
+	StartedAt          *time.Time                     `json:"started_at,omitempty" db:"started_at"`
+	CompletedAt        *time.Time                     `json:"completed_at,omitempty" db:"completed_at"`
+	LastProgressAt     *time.Time                     `json:"last_heartbeat_at,omitempty" db:"last_progress_at"`
+	CancelledAt        *time.Time                     `json:"cancelled_at,omitempty" db:"cancelled_at"`
+	CancelledBy        *string                        `json:"cancelled_by,omitempty" db:"cancelled_by"`
+	CancellationReason *string                        `json:"cancellation_reason,omitempty" db:"cancellation_reason"`
+	TotalTaskCount     sql.NullInt32                  `json:"total_task_count,omitempty" db:"total_task_count"`
+	TerminalTaskCount  int32                          `json:"terminal_task_count" db:"terminal_task_count"`
+	Kind               string                         `json:"kind" db:"kind"`
+	SourceRunID        *uuid.UUID                     `json:"source_run_id,omitempty" db:"source_run_id"`
+	InitiatedBy        string                         `json:"initiated_by" db:"initiated_by"`
+	Operation          string                         `json:"operation" db:"operation"`
+	ReleaseID          *string                        `json:"release_id,omitempty" db:"release_id"`
+	PromotionSeq       *int64                         `json:"promotion_seq,omitempty" db:"promotion_seq"`
+	PlannedAt          *time.Time                     `json:"planned_at,omitempty" db:"planned_at"`
+	FailureReason      *string                        `json:"failure_reason,omitempty" db:"failure_reason"`
+	ServiceMetadata    map[string]run.ServiceMetadata `json:"service_metadata"`
+	ServiceMetadataRaw []byte                         `json:"-" db:"service_metadata"`
 }
 
 // GetServiceMetadata returns the decoded ServiceMetadata map. ServiceMetadata

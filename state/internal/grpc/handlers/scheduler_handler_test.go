@@ -907,7 +907,6 @@ func newPendingRunOf(tenantID string, scheduleID uuid.UUID, name string) *run.Ru
 	return run.HydrateRun(tenantID,
 		scheduleID, name,
 		run.RunStatusPending,
-		run.InitStatusCompleted,
 		run.Kind("cron"),
 		nil,
 		identity.SystemUserID,
@@ -990,7 +989,6 @@ func TestCancelScheduler_AlreadyTerminal(t *testing.T) {
 	cancelledRun := run.HydrateRun(pkgevents.DefaultTenantID,
 		id, "daily",
 		run.RunStatusCancelled,
-		run.InitStatusCompleted,
 		run.Kind("cron"),
 		nil,
 		identity.SystemUserID,
@@ -1163,7 +1161,6 @@ func TestCancelSchedule_AlreadyTerminal(t *testing.T) {
 	cancelledRun := run.HydrateRun(pkgevents.DefaultTenantID,
 		id, "daily",
 		run.RunStatusCancelled,
-		run.InitStatusCompleted,
 		run.Kind("cron"),
 		nil,
 		identity.SystemUserID,
@@ -1193,7 +1190,6 @@ func newCancellingRun(scheduleID uuid.UUID, name, by string, cancelledAt time.Ti
 	return run.HydrateRun(pkgevents.DefaultTenantID,
 		scheduleID, name,
 		run.RunStatusCancelling,
-		run.InitStatusCompleted,
 		run.Kind("cron"),
 		nil,
 		identity.SystemUserID,
@@ -1310,7 +1306,7 @@ func TestGetScheduler_ACancellingRunIsCancelling(t *testing.T) {
 	by := "alice"
 	repo := &stubSchedulerRepo{getByIDResult: &postgres.RunRow{
 		ScheduleID: id, ScheduleName: "daily", Status: run.RunStatusCancelling,
-		CreatedAt: at.Add(-time.Hour), CancelledAt: &at, CancelledBy: &by, InitializationStatus: "completed",
+		CreatedAt: at.Add(-time.Hour), CancelledAt: &at, CancelledBy: &by,
 	}}
 	h := NewSchedulerHandler(repo, nil, nil, nil, noopUoWFactory(), newTestLogger())
 
@@ -1371,11 +1367,12 @@ func TestCancelSchedule_OutboxError(t *testing.T) {
 
 // ---- GetSchedulerInitStatus tests ----
 
-func TestGetSchedulerInitStatus_ReturnsStatus(t *testing.T) {
+// A run has no initialization status, so the answer for a run that exists
+// carries an empty one.
+func TestGetSchedulerInitStatus_ReturnsAnEmptyStatus(t *testing.T) {
 	tracker := &postgres.RunRow{
-		ScheduleID:           uuid.New(),
-		ScheduleName:         "daily",
-		InitializationStatus: "completed",
+		ScheduleID:   uuid.New(),
+		ScheduleName: "daily",
 	}
 	repo := &stubSchedulerRepo{getByIDResult: tracker}
 	h := NewSchedulerHandler(repo, nil, nil, nil, noopUoWFactory(), newTestLogger())
@@ -1385,7 +1382,7 @@ func TestGetSchedulerInitStatus_ReturnsStatus(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	assert.Equal(t, "completed", resp.InitializationStatus)
+	assert.Empty(t, resp.InitializationStatus)
 }
 
 func TestGetSchedulerInitStatus_NotFound(t *testing.T) {

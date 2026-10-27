@@ -23,8 +23,8 @@ func TestListNodes_FiltersByOperation(t *testing.T) {
 	seed := func(op, taskStatus string) {
 		sid, tid := uuid.New(), uuid.New()
 		if _, err := db.Exec(`INSERT INTO runs
-			(tenant_id, run_id, schedule_name, status, created_at, initialization_status, operation)
-			VALUES ('default', $1,'op-node','succeeded',now(),'completed',$2)`, sid, op); err != nil {
+			(tenant_id, run_id, schedule_name, status, created_at, operation)
+			VALUES ('default', $1,'op-node','succeeded',now(),$2)`, sid, op); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := db.Exec(`INSERT INTO tasks
@@ -66,8 +66,8 @@ func TestListNodeRuns_FiltersByOperation(t *testing.T) {
 
 	sid, tid := uuid.New(), uuid.New()
 	if _, err := db.Exec(`INSERT INTO runs
-		(tenant_id, run_id, schedule_name, status, created_at, initialization_status, operation)
-		VALUES ('default', $1,'op-runs','succeeded',now(),'completed','test')`, sid); err != nil {
+		(tenant_id, run_id, schedule_name, status, created_at, operation)
+		VALUES ('default', $1,'op-runs','succeeded',now(),'test')`, sid); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`INSERT INTO tasks
@@ -105,8 +105,8 @@ func TestListNodes_FoldsFullRefreshIntoRun(t *testing.T) {
 	seed := func(op, taskStatus string) {
 		sid, tid := uuid.New(), uuid.New()
 		if _, err := db.Exec(`INSERT INTO runs
-			(tenant_id, run_id, schedule_name, status, created_at, initialization_status, operation)
-			VALUES ('default', $1,'fr-node','succeeded',now(),'completed',$2)`, sid, op); err != nil {
+			(tenant_id, run_id, schedule_name, status, created_at, operation)
+			VALUES ('default', $1,'fr-node','succeeded',now(),$2)`, sid, op); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := db.Exec(`INSERT INTO tasks
@@ -142,8 +142,8 @@ func TestListNodeRuns_RunIncludesFullRefresh(t *testing.T) {
 
 	sid, tid := uuid.New(), uuid.New()
 	if _, err := db.Exec(`INSERT INTO runs
-		(tenant_id, run_id, schedule_name, status, created_at, initialization_status, operation)
-		VALUES ('default', $1,'fr-runs','succeeded',now(),'completed','full_refresh')`, sid); err != nil {
+		(tenant_id, run_id, schedule_name, status, created_at, operation)
+		VALUES ('default', $1,'fr-runs','succeeded',now(),'full_refresh')`, sid); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`INSERT INTO tasks

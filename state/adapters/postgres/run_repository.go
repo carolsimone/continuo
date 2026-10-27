@@ -98,10 +98,6 @@ func (r *RunRepository) SaveRun(ctx context.Context, rn *run.Run) error {
 	// Every other dirty column is collected into a single UPDATE so SaveRun
 	// issues one round trip for the run row it already holds FOR UPDATE.
 	var fields RunRowUpdate
-	if ch.IsInitStatusDirty() {
-		v := string(rn.InitializationStatus())
-		fields.InitializationStatus = &v
-	}
 	if ch.IsTotalTaskCountDirty() {
 		if total := rn.TotalTaskCount(); total != nil {
 			v := *total
@@ -218,7 +214,6 @@ func hydrateRun(tr *RunRow) (*run.Run, error) {
 		tr.ScheduleID,
 		tr.ScheduleName,
 		tr.Status,
-		run.InitStatus(tr.InitializationStatus),
 		run.Kind(tr.Kind),
 		tr.SourceRunID,
 		tr.InitiatedBy,
@@ -308,28 +303,27 @@ func dehydrateRun(r *run.Run) (*RunRow, error) {
 		return nil, fmt.Errorf("marshal service_metadata: %w", err)
 	}
 	return &RunRow{
-		TenantID:             r.TenantID(),
-		ScheduleID:           r.RunID(),
-		ScheduleName:         r.ScheduleName(),
-		Status:               r.Status(),
-		CreatedAt:            r.CreatedAt(),
-		StartedAt:            r.StartedAt(),
-		CompletedAt:          r.CompletedAt(),
-		LastProgressAt:       r.LastProgressAt(),
-		CancelledAt:          r.CancelledAt(),
-		CancelledBy:          r.CancelledBy(),
-		CancellationReason:   r.CancellationReason(),
-		InitializationStatus: string(r.InitializationStatus()),
-		ServiceMetadataRaw:   metaJSON,
-		ServiceMetadata:      r.ServiceMetadata(),
-		TotalTaskCount:       ptrToNullInt32(r.TotalTaskCount()),
-		TerminalTaskCount:    r.TerminalTaskCount(),
-		Kind:                 string(r.Kind()),
-		SourceRunID:          r.SourceRunID(),
-		InitiatedBy:          r.InitiatedBy(),
-		Operation:            operationWithDefault(string(r.Operation())),
-		ReleaseID:            optionalString(r.Release().ReleaseID),
-		PromotionSeq:         optionalInt64(r.Release().PromotionSeq),
+		TenantID:           r.TenantID(),
+		ScheduleID:         r.RunID(),
+		ScheduleName:       r.ScheduleName(),
+		Status:             r.Status(),
+		CreatedAt:          r.CreatedAt(),
+		StartedAt:          r.StartedAt(),
+		CompletedAt:        r.CompletedAt(),
+		LastProgressAt:     r.LastProgressAt(),
+		CancelledAt:        r.CancelledAt(),
+		CancelledBy:        r.CancelledBy(),
+		CancellationReason: r.CancellationReason(),
+		ServiceMetadataRaw: metaJSON,
+		ServiceMetadata:    r.ServiceMetadata(),
+		TotalTaskCount:     ptrToNullInt32(r.TotalTaskCount()),
+		TerminalTaskCount:  r.TerminalTaskCount(),
+		Kind:               string(r.Kind()),
+		SourceRunID:        r.SourceRunID(),
+		InitiatedBy:        r.InitiatedBy(),
+		Operation:          operationWithDefault(string(r.Operation())),
+		ReleaseID:          optionalString(r.Release().ReleaseID),
+		PromotionSeq:       optionalInt64(r.Release().PromotionSeq),
 	}, nil
 }
 

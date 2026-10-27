@@ -47,13 +47,12 @@ func TestRunRepository_SaveRun_PersistsStartedAtOnStart(t *testing.T) {
 	scheduleID := uuid.New()
 	createdAt := time.Now().Add(-time.Minute)
 	require.NoError(t, schedRepo.Create(ctx, &postgres.RunRow{
-		TenantID:             pkgevents.DefaultTenantID,
-		ScheduleID:           scheduleID,
-		ScheduleName:         "started-" + scheduleID.String()[:8],
-		Status:               run.RunStatusPending,
-		CreatedAt:            createdAt,
-		InitializationStatus: "in_progress",
-		Kind:                 "cron",
+		TenantID:     pkgevents.DefaultTenantID,
+		ScheduleID:   scheduleID,
+		ScheduleName: "started-" + scheduleID.String()[:8],
+		Status:       run.RunStatusPending,
+		CreatedAt:    createdAt,
+		Kind:         "cron",
 	}))
 	defer db.ExecContext(ctx, "DELETE FROM tasks WHERE run_id = $1", scheduleID)
 	defer db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", scheduleID)
@@ -104,13 +103,12 @@ func TestRunRepository_SaveRun_SingleUpdateForDirtyColumns(t *testing.T) {
 
 	scheduleID := uuid.New()
 	require.NoError(t, schedRepo.Create(ctx, &postgres.RunRow{
-		TenantID:             pkgevents.DefaultTenantID,
-		ScheduleID:           scheduleID,
-		ScheduleName:         "multi-" + scheduleID.String()[:8],
-		Status:               run.RunStatusPending,
-		CreatedAt:            time.Now().Add(-time.Minute),
-		InitializationStatus: "in_progress",
-		Kind:                 "cron",
+		TenantID:     pkgevents.DefaultTenantID,
+		ScheduleID:   scheduleID,
+		ScheduleName: "multi-" + scheduleID.String()[:8],
+		Status:       run.RunStatusPending,
+		CreatedAt:    time.Now().Add(-time.Minute),
+		Kind:         "cron",
 	}))
 	defer db.ExecContext(ctx, "DELETE FROM tasks WHERE run_id = $1", scheduleID)
 	defer db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", scheduleID)
@@ -126,7 +124,7 @@ func TestRunRepository_SaveRun_SingleUpdateForDirtyColumns(t *testing.T) {
 	require.NoError(t, err)
 
 	// Two tasks, neither terminal: Start sets total_task_count=2,
-	// terminal_task_count=0, init_status=completed, status=running, started_at.
+	// terminal_task_count=0, status=running, started_at.
 	plan, g := independentNodes(t, "a", "b")
 	_, err = rn.Start(ctx, tasks, plan, g, testTaskDefaults, time.Now())
 	require.NoError(t, err)
@@ -137,7 +135,6 @@ func TestRunRepository_SaveRun_SingleUpdateForDirtyColumns(t *testing.T) {
 	got, err := schedRepo.GetByID(ctx, pkgevents.DefaultTenantID, scheduleID)
 	require.NoError(t, err)
 	assert.Equal(t, run.RunStatusRunning, got.Status)
-	assert.Equal(t, "completed", got.InitializationStatus)
 	require.True(t, got.TotalTaskCount.Valid)
 	assert.Equal(t, int32(2), got.TotalTaskCount.Int32)
 	assert.Equal(t, int32(0), got.TerminalTaskCount)
@@ -155,13 +152,12 @@ func TestSchedulerRepository_UpdateRunRowTx_StartedAt(t *testing.T) {
 	scheduleID := uuid.New()
 	createdAt := time.Now().Add(-time.Minute)
 	require.NoError(t, repo.Create(ctx, &postgres.RunRow{
-		TenantID:             pkgevents.DefaultTenantID,
-		ScheduleID:           scheduleID,
-		ScheduleName:         "urr-" + scheduleID.String()[:8],
-		Status:               run.RunStatusPending,
-		CreatedAt:            createdAt,
-		InitializationStatus: "in_progress",
-		Kind:                 "cron",
+		TenantID:     pkgevents.DefaultTenantID,
+		ScheduleID:   scheduleID,
+		ScheduleName: "urr-" + scheduleID.String()[:8],
+		Status:       run.RunStatusPending,
+		CreatedAt:    createdAt,
+		Kind:         "cron",
 	}))
 	defer db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", scheduleID)
 
@@ -181,8 +177,6 @@ func TestSchedulerRepository_UpdateRunRowTx_StartedAt(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, run.RunStatusRunning, got.Status)
 	require.NotNil(t, got.StartedAt)
-	// init_status was not in the update set — it must be unchanged.
-	assert.Equal(t, "in_progress", got.InitializationStatus)
 }
 
 // TestSchedulerRepository_UpdateRunRowTx_NoFieldsIsNoop asserts that an empty
@@ -195,13 +189,12 @@ func TestSchedulerRepository_UpdateRunRowTx_NoFieldsIsNoop(t *testing.T) {
 
 	scheduleID := uuid.New()
 	require.NoError(t, repo.Create(ctx, &postgres.RunRow{
-		TenantID:             pkgevents.DefaultTenantID,
-		ScheduleID:           scheduleID,
-		ScheduleName:         "noop-" + scheduleID.String()[:8],
-		Status:               run.RunStatusPending,
-		CreatedAt:            time.Now(),
-		InitializationStatus: "in_progress",
-		Kind:                 "cron",
+		TenantID:     pkgevents.DefaultTenantID,
+		ScheduleID:   scheduleID,
+		ScheduleName: "noop-" + scheduleID.String()[:8],
+		Status:       run.RunStatusPending,
+		CreatedAt:    time.Now(),
+		Kind:         "cron",
 	}))
 	defer db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", scheduleID)
 

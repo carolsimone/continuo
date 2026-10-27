@@ -99,7 +99,7 @@ func TestNewSingleNodeRun_KeepsItsTenant(t *testing.T) {
 
 // A rerun or rebase belongs to the tenant of the run it derives from.
 func TestNewDerivedRun_CarriesTheTenantOfItsSource(t *testing.T) {
-	source := run.HydrateRun("acme", uuid.New(), "daily", run.RunStatusFailed, run.InitStatusCompleted, run.KindCron, nil, "system", model.OperationRun,
+	source := run.HydrateRun("acme", uuid.New(), "daily", run.RunStatusFailed, run.KindCron, nil, "system", model.OperationRun,
 		time.Now(), nil, nil, nil, nil, nil, nil, nil, 0, nil)
 	for _, kind := range []run.Kind{run.KindRerun, run.KindRebase} {
 		derived, err := run.NewDerivedRun(source.TenantID(), source.ScheduleName(), kind, source.RunID(), source.Release(), "alice", source.Operation(), time.Now())
@@ -114,7 +114,7 @@ func TestNewPromotedSeedsRun_RefusesAnEmptyTenant(t *testing.T) {
 }
 
 func TestHydrateRun_KeepsItsTenant(t *testing.T) {
-	r := run.HydrateRun("acme", uuid.New(), "daily", run.RunStatusRunning, run.InitStatusCompleted, run.KindCron, nil, "system", model.OperationRun,
+	r := run.HydrateRun("acme", uuid.New(), "daily", run.RunStatusRunning, run.KindCron, nil, "system", model.OperationRun,
 		time.Now(), nil, nil, nil, nil, nil, nil, nil, 0, nil)
 	assert.Equal(t, "acme", r.TenantID())
 }
@@ -680,7 +680,7 @@ func TestComputeJobName_RejectsUnsanitizableIdentity(t *testing.T) {
 func dispatchedRun(t *testing.T, tc *fakeTaskCollection, dispatchedAt time.Time, ids ...uuid.UUID) *run.Run {
 	t.Helper()
 	total := int32(len(ids)) //nolint:gosec // G115: test fixture; a handful of ids.
-	r := run.HydrateRun(pkgevents.DefaultTenantID, uuid.New(), "daily", run.RunStatusRunning, run.InitStatusCompleted, run.KindCron, nil,
+	r := run.HydrateRun(pkgevents.DefaultTenantID, uuid.New(), "daily", run.RunStatusRunning, run.KindCron, nil,
 		identity.SystemUserID, model.OperationRun, dispatchedAt, &dispatchedAt, nil, &dispatchedAt, nil, nil, nil,
 		&total, 0, map[string]run.ServiceMetadata{})
 	tasks := make([]run.Task, 0, len(ids))
@@ -726,8 +726,7 @@ func TestNewPromotedSeedsRun_CarriesTheRelease(t *testing.T) {
 // A run rebuilt from its row gets its release back only through
 // HydrateReleaseID; a run that names none reports "".
 func TestHydrateReleaseID_RestoresTheStoredRelease(t *testing.T) {
-	r := run.HydrateRun(pkgevents.DefaultTenantID, uuid.New(), "promote-seed-abc12345", run.RunStatusRunning, run.InitStatusCompleted,
-		run.KindPromoteSeed, nil, identity.SystemUserID, model.OperationRun, time.Now(),
+	r := run.HydrateRun(pkgevents.DefaultTenantID, uuid.New(), "promote-seed-abc12345", run.RunStatusRunning, run.KindPromoteSeed, nil, identity.SystemUserID, model.OperationRun, time.Now(),
 		nil, nil, nil, nil, nil, nil, nil, 0, map[string]run.ServiceMetadata{})
 	if r.ReleaseID() != "" {
 		t.Fatalf("ReleaseID() = %q before hydration, want empty", r.ReleaseID())

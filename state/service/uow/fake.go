@@ -56,6 +56,9 @@ type FakeUnitOfWork struct {
 
 	// LeaseRepo backs Leases().
 	LeaseRepo repository.LeaseRepository
+
+	// CommandRequestRepo backs CommandRequests().
+	CommandRequestRepo repository.CommandRequestRepository
 }
 
 func (f *FakeUnitOfWork) MessageProcessingRepo() messageprocessing.Repository {
@@ -135,6 +138,12 @@ func (f *FakeUnitOfWork) Attempts() repository.AttemptRepository { return f.Atte
 
 // Leases returns the repository.LeaseRepository set via the LeaseRepo field.
 func (f *FakeUnitOfWork) Leases() repository.LeaseRepository { return f.LeaseRepo }
+
+// CommandRequests returns the repository.CommandRequestRepository set via the
+// CommandRequestRepo field.
+func (f *FakeUnitOfWork) CommandRequests() repository.CommandRequestRepository {
+	return f.CommandRequestRepo
+}
 
 // Clock returns the configured clock, falling back to ports.SystemClock{} when
 // no override has been set.

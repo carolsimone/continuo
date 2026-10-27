@@ -107,8 +107,8 @@ func seedTerminalRunWithFailedTask(t *testing.T, fx *rebaseFixture, scheduleName
 	releaseID := promoteNode(t, fx, scheduleName)
 	id := uuid.New()
 	_, err := fx.DB.ExecContext(context.Background(), `
-		INSERT INTO runs (tenant_id, run_id, schedule_name, status, created_at, completed_at, initialization_status, kind, release_id, promotion_seq)
-		VALUES ($5, $1, $2, $3, NOW(), NOW(), 'completed', 'cron', $4, 1)`,
+		INSERT INTO runs (tenant_id, run_id, schedule_name, status, created_at, completed_at, kind, release_id, promotion_seq)
+		VALUES ($5, $1, $2, $3, NOW(), NOW(), 'cron', $4, 1)`,
 		id, scheduleName, string(srcStatus), releaseID, fx.Tenant,
 	)
 	require.NoError(t, err)
@@ -213,7 +213,7 @@ func seedRunWithTaskStatus(t *testing.T, fx *rebaseFixture, scheduleName string,
 		completedClause = "NULL"
 	}
 	_, err := fx.DB.ExecContext(context.Background(),
-		"INSERT INTO runs (tenant_id, run_id, schedule_name, status, created_at, completed_at, initialization_status, kind) VALUES ($4, $1, $2, $3, NOW(), "+completedClause+", 'completed', 'cron')",
+		"INSERT INTO runs (tenant_id, run_id, schedule_name, status, created_at, completed_at, kind) VALUES ($4, $1, $2, $3, NOW(), "+completedClause+", 'cron')",
 		id, scheduleName, string(srcStatus), fx.Tenant,
 	)
 	require.NoError(t, err)
@@ -238,8 +238,8 @@ func seedRunningSchedulerOnSchedule(t *testing.T, fx *rebaseFixture, scheduleNam
 	t.Helper()
 	id := uuid.New()
 	_, err := fx.DB.ExecContext(context.Background(), `
-		INSERT INTO runs (tenant_id, run_id, schedule_name, status, created_at, initialization_status, kind)
-		VALUES ($3, $1, $2, 'running', NOW(), 'in_progress', 'cron')`,
+		INSERT INTO runs (tenant_id, run_id, schedule_name, status, created_at, kind)
+		VALUES ($3, $1, $2, 'running', NOW(), 'cron')`,
 		id, scheduleName, fx.Tenant,
 	)
 	require.NoError(t, err)

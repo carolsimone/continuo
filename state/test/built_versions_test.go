@@ -94,8 +94,8 @@ func (h *builtHarness) legacyRun(t *testing.T, releaseID, table string) (uuid.UU
 	t.Helper()
 	runID, taskID := uuid.New(), uuid.New()
 	_, err := h.db.Exec(`
-		INSERT INTO runs (tenant_id, run_id, schedule_name, status, initialization_status, total_task_count, release_id, promotion_seq)
-		VALUES ('default', $1, $2, 'running', 'completed', 1, $3, 1)`, runID, "legacy-"+runID.String()[:8], releaseID)
+		INSERT INTO runs (tenant_id, run_id, schedule_name, status, total_task_count, release_id, promotion_seq)
+		VALUES ('default', $1, $2, 'running', 1, $3, 1)`, runID, "legacy-"+runID.String()[:8], releaseID)
 	require.NoError(t, err)
 	_, err = h.db.Exec(`
 		INSERT INTO tasks (tenant_id, task_id, run_id, service_name, schema_name, table_name, job_name, status, max_retries, image_tag, node_key)
@@ -270,9 +270,10 @@ func TestBuiltVersions(t *testing.T) {
 // noRunMetrics counts nothing.
 type noRunMetrics struct{}
 
-func (noRunMetrics) RunStalled()                {}
-func (noRunMetrics) RunsCancelling(_, _ int)    {}
-func (noRunMetrics) RunCancelled(time.Duration) {}
-func (noRunMetrics) LeaseWaiters(int)           {}
-func (noRunMetrics) LeaseGranted(time.Duration) {}
-func (noRunMetrics) LeaseRepaired()             {}
+func (noRunMetrics) RunStalled()                   {}
+func (noRunMetrics) RunsCancelling(_, _ int)       {}
+func (noRunMetrics) RunCancelled(time.Duration)    {}
+func (noRunMetrics) LeaseWaiters(int)              {}
+func (noRunMetrics) LeaseGranted(time.Duration)    {}
+func (noRunMetrics) LeaseRepaired()                {}
+func (noRunMetrics) CommandRequest(string, string) {}

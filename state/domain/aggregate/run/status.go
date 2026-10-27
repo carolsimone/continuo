@@ -205,15 +205,6 @@ func (k Kind) IsValid() bool {
 	return false
 }
 
-// InitStatus is the lifecycle of run initialization (topology projection).
-type InitStatus string
-
-const (
-	InitStatusPending    InitStatus = "pending"
-	InitStatusInProgress InitStatus = "in_progress"
-	InitStatusCompleted  InitStatus = "completed"
-)
-
 // MetadataSource is the per-request choice between "latest" topology and the
 // pinned snapshot of a previous run. Used by SingleNodeRun.
 type MetadataSource string

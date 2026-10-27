@@ -275,13 +275,12 @@ func TestSingleNodeRunHandler_Stale_HappyPath(t *testing.T) {
 	// Seed a terminal source run with a matching task.
 	srcID := uuid.New()
 	srcTracker := &postgres.RunRow{
-		TenantID:             fx.Tenant,
-		ScheduleID:           srcID,
-		ScheduleName:         "src-schedule",
-		Status:               run.RunStatusSucceeded,
-		CreatedAt:            time.Now().Add(-time.Hour),
-		Kind:                 "cron",
-		InitializationStatus: "completed",
+		TenantID:     fx.Tenant,
+		ScheduleID:   srcID,
+		ScheduleName: "src-schedule",
+		Status:       run.RunStatusSucceeded,
+		CreatedAt:    time.Now().Add(-time.Hour),
+		Kind:         "cron",
 	}
 	require.NoError(t, fx.SchedulerRepo.Create(context.Background(), srcTracker))
 	_, err := fx.DB.ExecContext(context.Background(), `UPDATE runs SET release_id = 'rel-svca', promotion_seq = 1 WHERE run_id = $1`, srcID)
@@ -341,38 +340,35 @@ func TestSingleNodeRunHandler_Errors(t *testing.T) {
 	// Seed a non-terminal source run for FAILED_PRECONDITION coverage.
 	runningID := uuid.New()
 	require.NoError(t, fx.SchedulerRepo.Create(context.Background(), &postgres.RunRow{
-		TenantID:             fx.Tenant,
-		ScheduleID:           runningID,
-		ScheduleName:         "running-src",
-		Status:               run.RunStatusRunning,
-		CreatedAt:            time.Now(),
-		Kind:                 "cron",
-		InitializationStatus: "completed",
+		TenantID:     fx.Tenant,
+		ScheduleID:   runningID,
+		ScheduleName: "running-src",
+		Status:       run.RunStatusRunning,
+		CreatedAt:    time.Now(),
+		Kind:         "cron",
 	}))
 
 	// Seed a terminal source run with NO matching task for NOT_FOUND coverage.
 	terminalNoTaskID := uuid.New()
 	require.NoError(t, fx.SchedulerRepo.Create(context.Background(), &postgres.RunRow{
-		TenantID:             fx.Tenant,
-		ScheduleID:           terminalNoTaskID,
-		ScheduleName:         "terminal-no-task",
-		Status:               run.RunStatusSucceeded,
-		CreatedAt:            time.Now(),
-		Kind:                 "cron",
-		InitializationStatus: "completed",
+		TenantID:     fx.Tenant,
+		ScheduleID:   terminalNoTaskID,
+		ScheduleName: "terminal-no-task",
+		Status:       run.RunStatusSucceeded,
+		CreatedAt:    time.Now(),
+		Kind:         "cron",
 	}))
 
 	// Seed a terminal source run that names no release, with a task at
 	// svcA's public.users, for the FAILED_PRECONDITION of an unreadable source.
 	noReleaseID := uuid.New()
 	require.NoError(t, fx.SchedulerRepo.Create(context.Background(), &postgres.RunRow{
-		TenantID:             fx.Tenant,
-		ScheduleID:           noReleaseID,
-		ScheduleName:         "no-release",
-		Status:               run.RunStatusSucceeded,
-		CreatedAt:            time.Now(),
-		Kind:                 "cron",
-		InitializationStatus: "completed",
+		TenantID:     fx.Tenant,
+		ScheduleID:   noReleaseID,
+		ScheduleName: "no-release",
+		Status:       run.RunStatusSucceeded,
+		CreatedAt:    time.Now(),
+		Kind:         "cron",
 	}))
 	require.NoError(t, fx.TaskRepo.Create(context.Background(), &postgres.TaskRow{
 		TenantID: fx.Tenant,
@@ -456,13 +452,12 @@ func TestSingleNodeRunsOf_CountsARunWithoutTasks(t *testing.T) {
 		t.Helper()
 		id := uuid.New()
 		require.NoError(t, fx.SchedulerRepo.Create(ctx, &postgres.RunRow{
-			TenantID:             fx.Tenant,
-			ScheduleID:           id,
-			ScheduleName:         "single-node-run-" + id.String()[:8],
-			Status:               run.RunStatusRunning,
-			CreatedAt:            time.Now(),
-			Kind:                 string(run.KindSingleNodeRun),
-			InitializationStatus: "completed",
+			TenantID:     fx.Tenant,
+			ScheduleID:   id,
+			ScheduleName: "single-node-run-" + id.String()[:8],
+			Status:       run.RunStatusRunning,
+			CreatedAt:    time.Now(),
+			Kind:         string(run.KindSingleNodeRun),
 		}))
 		t.Cleanup(func() {
 			fx.DB.ExecContext(context.Background(), `DELETE FROM runs WHERE run_id = $1`, id)

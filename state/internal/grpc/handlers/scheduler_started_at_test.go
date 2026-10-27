@@ -20,12 +20,11 @@ import (
 func TestDomainToProtoScheduler_PopulatesStartedAt(t *testing.T) {
 	started := time.Now()
 	tracker := &postgres.RunRow{
-		ScheduleID:           uuid.New(),
-		ScheduleName:         "s",
-		Status:               run.RunStatusRunning,
-		CreatedAt:            started.Add(-time.Minute),
-		StartedAt:            &started,
-		InitializationStatus: "completed",
+		ScheduleID:   uuid.New(),
+		ScheduleName: "s",
+		Status:       run.RunStatusRunning,
+		CreatedAt:    started.Add(-time.Minute),
+		StartedAt:    &started,
 	}
 
 	got := domainToProtoScheduler(tracker)
@@ -43,7 +42,6 @@ func TestRunToProto_PopulatesStartedAt(t *testing.T) {
 		uuid.New(),
 		"s",
 		run.RunStatusRunning,
-		run.InitStatusCompleted,
 		run.KindCron,
 		nil,
 		identity.SystemUserID,
@@ -69,7 +67,7 @@ func TestSchedulerMappers_CarryTheRunFailureReason(t *testing.T) {
 	assert.Equal(t, "stalled", domainToProtoScheduler(tracker).GetFailureReason())
 
 	total := int32(1)
-	rn := run.HydrateRun(pkgevents.DefaultTenantID, uuid.New(), "s", run.RunStatusFailed, run.InitStatusCompleted, run.KindCron, nil,
+	rn := run.HydrateRun(pkgevents.DefaultTenantID, uuid.New(), "s", run.RunStatusFailed, run.KindCron, nil,
 		identity.SystemUserID, model.OperationRun, time.Now(), nil, nil, nil, nil, nil, nil, &total, 1,
 		map[string]run.ServiceMetadata{})
 	assert.Empty(t, runToProto(rn).GetFailureReason(), "a run whose task failed names no run failure reason")
