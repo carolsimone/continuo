@@ -65,11 +65,19 @@ Manually trigger a new run of a named schedule. Success prints a
 single JSON object to stdout:
 
 ```json
-{"schedule_id":"<uuid>","schedule_name":"<name>","triggered_at":"<RFC3339 UTC>"}
+{"run_id":"<uuid>","schedule_name":"<name>","triggered_at":"<RFC3339 UTC>"}
 ```
 
 `triggered_at` is the CLI's clock at the moment the request returned;
 the state service does not echo a server timestamp today.
+
+Every command that starts or cancels a run (`schedule trigger|test|build|cancel`
+and `node trigger|test|build|full-refresh`) sends one request id per invocation:
+`CONTINUO_REQUEST_ID` when it is set, otherwise a fresh UUID. The state service
+answers a repeat of the same id and arguments with the run the first call made
+and writes nothing. The client retries such a command up to three tries on
+UNAVAILABLE (100 ms, then 400 ms apart) with the same id; it never retries a
+read, and it does not retry a refusal for maintenance mode.
 
 With `--human`, stdout is empty and a single line is written to stderr:
 
@@ -79,33 +87,31 @@ Triggered run <uuid> for schedule '<name>'
 
 ### `schedule list`
 
-Lists all schedules. Calls StateService.ListAllSchedules. Success prints a
+Lists all schedules. Calls RunService.ListSchedules. Success prints a
 JSON object to stdout:
 
 ```json
-{"schedules":[{"schedule_name":"...","cron_expression":"..."}]}
+{"schedules":[{"schedule_name":"...","cron_expression":"...","has_active_run":false}]}
 ```
 
 ### `schedule graph <schedule-name>`
 
-Returns the dependency graph for a schedule. Calls OrchestratorQuery.GetScheduleGraph.
-Success prints a JSON object to stdout:
+Returns the dependency graph of a schedule in the live release. Calls
+RunService.GetScheduleGraph. Success prints a JSON object to stdout:
 
 ```json
-{"schedule_name":"...","nodes":[...],"edges":[...]}
+{"schedule_name":"...","nodes":[{"table_name":"...","schema_name":"...","service_name":"...","node_type":"..."}],"edges":[{"from_node_id":"...","to_node_id":"..."}]}
 ```
-
-Requires `--orchestrator-endpoint` or `CONTINUO_ORCHESTRATOR_ADDR` to be set correctly.
 
 ### `node list`
 
 Lists the node catalog with per-node run statistics, one page at a time.
-Calls StateService.ListNodes. This is the command that turns a bare table
+Calls RunService.ListNodes. This is the command that turns a bare table
 name into the `<service> <schema> <table>` triple every other `node`
 subcommand takes. Success prints a JSON object to stdout:
 
 ```json
-{"total_count":7,"nodes":[{"service_name":"finance","schema_name":"analytics","table_name":"orders","run_count":12,"success_rate_pct":92,"avg_duration_sec":34,"p95_duration_sec":80,"flaky_rate_pct":8,"last_status":"succeeded","last_run_at":"2026-09-18T10:00:00Z","operation":"run","timeout_seconds":7200,"timeout_declared":true}]}
+{"total_count":7,"nodes":[{"service_name":"finance","schema_name":"analytics","table_name":"orders","task_count":12,"success_rate_pct":92,"avg_duration_sec":34,"p95_duration_sec":80,"flaky_rate_pct":8,"last_status":"succeeded","last_run_at":"2026-09-18T10:00:00Z","operation":"run","timeout_seconds":7200,"timeout_declared":true}]}
 ```
 
 `timeout_seconds` is the task timeout the node's tasks get: its declared
@@ -157,7 +163,7 @@ Error [conflict]: schedule "daily_ingest" already has an active run
 ```bash
 # Happy path
 $ continuo schedule trigger daily_ingest
-{"schedule_id":"e61d…","schedule_name":"daily_ingest","triggered_at":"2026-04-20T20:25:02Z"}
+{"run_id":"e61d…","schedule_name":"daily_ingest","triggered_at":"2026-04-20T20:25:02Z"}
 $ echo $?
 0
 

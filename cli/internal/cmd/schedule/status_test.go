@@ -13,7 +13,7 @@ import (
 	"github.com/carolsimone/continuo/cli/internal/client"
 	"github.com/carolsimone/continuo/cli/internal/config"
 	"github.com/carolsimone/continuo/cli/internal/output"
-	statev1 "github.com/carolsimone/continuo/cli/proto/state/v1"
+	runv1 "github.com/carolsimone/continuo/cli/proto/run/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
@@ -21,11 +21,12 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// fakeStateStatus implements client.StateClient for status tests.
+// fakeStateStatus implements client.RunClient for status tests.
 type fakeStateStatus struct {
-	schedules     *statev1.ListAllSchedulesResponse
+	client.RunClient
+	schedules     *runv1.ListSchedulesResponse
 	schedulesErr  error
-	pages         []*statev1.ListTasksResponse // returned in order, one per ListTasks call
+	pages         []*runv1.ListTasksResponse // returned in order, one per ListTasks call
 	listErr       error
 	listTasksCall int
 
@@ -35,20 +36,12 @@ type fakeStateStatus struct {
 	listTasksDeadlines []bool
 }
 
-func (f *fakeStateStatus) TriggerSchedule(_ context.Context, _, _ string) (*statev1.TriggerScheduleResponse, error) {
-	panic("TriggerSchedule should not be called in status tests")
-}
-func (f *fakeStateStatus) TriggerScheduleTest(_ context.Context, _, _ string) (*statev1.TriggerScheduleResponse, error) {
-	panic("TriggerScheduleTest should not be called in status tests")
-}
-func (f *fakeStateStatus) TriggerScheduleBuild(_ context.Context, _, _ string) (*statev1.TriggerScheduleResponse, error) {
-	panic("TriggerScheduleBuild should not be called in status tests")
-}
-func (f *fakeStateStatus) ListAllSchedules(ctx context.Context) (*statev1.ListAllSchedulesResponse, error) {
+func (f *fakeStateStatus) ListAllSchedules(ctx context.Context) (*runv1.ListSchedulesResponse, error) {
 	_, f.listAllHadDeadline = ctx.Deadline()
 	return f.schedules, f.schedulesErr
 }
-func (f *fakeStateStatus) ListTasks(ctx context.Context, _ string, _ statev1.TaskStatus, _, _ int32) (*statev1.ListTasksResponse, error) {
+
+func (f *fakeStateStatus) ListTasks(ctx context.Context, _, _ string, _, _ int32) (*runv1.ListTasksResponse, error) {
 	_, hasDeadline := ctx.Deadline()
 	f.listTasksDeadlines = append(f.listTasksDeadlines, hasDeadline)
 	if f.listErr != nil {
@@ -58,40 +51,15 @@ func (f *fakeStateStatus) ListTasks(ctx context.Context, _ string, _ statev1.Tas
 	f.listTasksCall++
 	return resp, nil
 }
-func (f *fakeStateStatus) CancelSchedule(_ context.Context, _, _, _ string) (*statev1.CancelScheduleResponse, error) {
-	panic("CancelSchedule should not be called in status tests")
-}
-func (f *fakeStateStatus) ListNodeRuns(_ context.Context, _, _, _, _ string, _ int32) (*statev1.ListNodeRunsResponse, error) {
-	panic("ListNodeRuns should not be called in schedule tests")
-}
-func (f *fakeStateStatus) ListNodes(_ context.Context, _, _, _ string, _, _ int32) (*statev1.ListNodesResponse, error) {
-	panic("ListNodes should not be called in schedule tests")
-}
-
-func (f *fakeStateStatus) TriggerNodeRun(_ context.Context, _, _, _, _, _ string) (*statev1.TriggerSingleNodeRunResponse, error) {
-	panic("TriggerNodeRun should not be called in schedule tests")
-}
-
-func (f *fakeStateStatus) TriggerNodeTest(_ context.Context, _, _, _, _, _ string) (*statev1.TriggerSingleNodeRunResponse, error) {
-	panic("TriggerNodeTest should not be called in schedule tests")
-}
-
-func (f *fakeStateStatus) TriggerNodeBuild(_ context.Context, _, _, _, _, _ string) (*statev1.TriggerSingleNodeRunResponse, error) {
-	panic("TriggerNodeBuild should not be called in schedule tests")
-}
-
-func (f *fakeStateStatus) TriggerNodeFullRefresh(_ context.Context, _, _, _, _, _ string) (*statev1.TriggerSingleNodeRunResponse, error) {
-	panic("TriggerNodeFullRefresh should not be called in schedule tests")
-}
 
 func (f *fakeStateStatus) Close() error { return nil }
 
-func runStatus(t *testing.T, fake client.StateClient, args []string, human bool) (stdout, stderr string, exit int) {
+func runStatus(t *testing.T, fake client.RunClient, args []string, human bool) (stdout, stderr string, exit int) {
 	t.Helper()
 	var outBuf, errBuf bytes.Buffer
 	cfg := &config.Config{Timeout: 2 * time.Second, Human: human}
 	cmd := NewStatusCommand(
-		func(_ context.Context, _ string) (client.StateClient, error) { return fake, nil },
+		func(_ context.Context, _ string) (client.RunClient, error) { return fake, nil },
 		cfg, &outBuf, &errBuf,
 	)
 	cmd.SetArgs(args)
@@ -119,21 +87,21 @@ type statusNodeJSON struct {
 type statusPayloadJSON struct {
 	ScheduleName  string           `json:"schedule_name"`
 	RunId         string           `json:"run_id"`
-	IsRunning     bool             `json:"is_running"`
+	HasActiveRun  bool             `json:"has_active_run"`
 	LastRunStatus string           `json:"last_run_status"`
 	Nodes         []statusNodeJSON `json:"nodes"`
 }
 
 func TestStatus_SuccessEmitsNodesJSON(t *testing.T) {
 	fake := &fakeStateStatus{
-		schedules: &statev1.ListAllSchedulesResponse{Schedules: []*statev1.ScheduleSummary{
-			{ScheduleName: "daily", LastRunId: "run-1", IsRunning: true, LastRunStatus: ""},
+		schedules: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{
+			{ScheduleName: "daily", LastRunId: "run-1", HasActiveRun: true, LastRunStatus: ""},
 		}},
-		pages: []*statev1.ListTasksResponse{{
+		pages: []*runv1.ListTasksResponse{{
 			TotalCount: 2,
-			Tasks: []*statev1.Task{
-				{ServiceName: "svc", SchemaName: "analytics", TableName: "orders", Status: statev1.TaskStatus_TASK_STATUS_SUCCEEDED},
-				{ServiceName: "svc", SchemaName: "analytics", TableName: "revenue", Status: statev1.TaskStatus_TASK_STATUS_RUNNING},
+			Tasks: []*runv1.Task{
+				{ServiceName: "svc", SchemaName: "analytics", TableName: "orders", Status: "succeeded"},
+				{ServiceName: "svc", SchemaName: "analytics", TableName: "revenue", Status: "running"},
 			},
 		}},
 	}
@@ -146,7 +114,7 @@ func TestStatus_SuccessEmitsNodesJSON(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(stdout), &p))
 	assert.Equal(t, "daily", p.ScheduleName)
 	assert.Equal(t, "run-1", p.RunId)
-	assert.True(t, p.IsRunning)
+	assert.True(t, p.HasActiveRun)
 	require.Len(t, p.Nodes, 2)
 	assert.Equal(t, "succeeded", p.Nodes[0].Status)
 	assert.Equal(t, "running", p.Nodes[1].Status)
@@ -154,18 +122,18 @@ func TestStatus_SuccessEmitsNodesJSON(t *testing.T) {
 }
 
 func TestStatus_PagesThroughAllNodes(t *testing.T) {
-	page1 := &statev1.ListTasksResponse{TotalCount: 3, Tasks: []*statev1.Task{
-		{ServiceName: "s", SchemaName: "x", TableName: "a", Status: statev1.TaskStatus_TASK_STATUS_SUCCEEDED},
-		{ServiceName: "s", SchemaName: "x", TableName: "b", Status: statev1.TaskStatus_TASK_STATUS_FAILED},
+	page1 := &runv1.ListTasksResponse{TotalCount: 3, Tasks: []*runv1.Task{
+		{ServiceName: "s", SchemaName: "x", TableName: "a", Status: "succeeded"},
+		{ServiceName: "s", SchemaName: "x", TableName: "b", Status: "failed"},
 	}}
-	page2 := &statev1.ListTasksResponse{TotalCount: 3, Tasks: []*statev1.Task{
-		{ServiceName: "s", SchemaName: "x", TableName: "c", Status: statev1.TaskStatus_TASK_STATUS_SKIPPED},
+	page2 := &runv1.ListTasksResponse{TotalCount: 3, Tasks: []*runv1.Task{
+		{ServiceName: "s", SchemaName: "x", TableName: "c", Status: "skipped"},
 	}}
 	fake := &fakeStateStatus{
-		schedules: &statev1.ListAllSchedulesResponse{Schedules: []*statev1.ScheduleSummary{
+		schedules: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{
 			{ScheduleName: "daily", LastRunId: "run-1"},
 		}},
-		pages: []*statev1.ListTasksResponse{page1, page2},
+		pages: []*runv1.ListTasksResponse{page1, page2},
 	}
 
 	stdout, _, exit := runStatus(t, fake, []string{"daily"}, false)
@@ -179,7 +147,7 @@ func TestStatus_PagesThroughAllNodes(t *testing.T) {
 }
 
 func TestStatus_UnknownNameExits3(t *testing.T) {
-	fake := &fakeStateStatus{schedules: &statev1.ListAllSchedulesResponse{Schedules: []*statev1.ScheduleSummary{
+	fake := &fakeStateStatus{schedules: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{
 		{ScheduleName: "other", LastRunId: "run-9"},
 	}}}
 
@@ -192,8 +160,8 @@ func TestStatus_UnknownNameExits3(t *testing.T) {
 }
 
 func TestStatus_NeverRunReturnsEmptyNodesNoListCall(t *testing.T) {
-	fake := &fakeStateStatus{schedules: &statev1.ListAllSchedulesResponse{Schedules: []*statev1.ScheduleSummary{
-		{ScheduleName: "daily", LastRunId: "", IsRunning: false, LastRunStatus: ""},
+	fake := &fakeStateStatus{schedules: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{
+		{ScheduleName: "daily", LastRunId: "", HasActiveRun: false, LastRunStatus: ""},
 	}}}
 
 	stdout, _, exit := runStatus(t, fake, []string{"daily"}, false)
@@ -209,7 +177,7 @@ func TestStatus_NeverRunReturnsEmptyNodesNoListCall(t *testing.T) {
 
 func TestStatus_ListTasksRPCErrorExits5(t *testing.T) {
 	fake := &fakeStateStatus{
-		schedules: &statev1.ListAllSchedulesResponse{Schedules: []*statev1.ScheduleSummary{
+		schedules: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{
 			{ScheduleName: "daily", LastRunId: "run-1"},
 		}},
 		listErr: status.Error(codes.Unavailable, "down"),
@@ -233,18 +201,18 @@ func TestStatus_WrongArgCountExits2(t *testing.T) {
 }
 
 func TestStatus_AppliesPerCallDeadline(t *testing.T) {
-	page1 := &statev1.ListTasksResponse{TotalCount: 3, Tasks: []*statev1.Task{
-		{ServiceName: "s", SchemaName: "x", TableName: "a", Status: statev1.TaskStatus_TASK_STATUS_SUCCEEDED},
-		{ServiceName: "s", SchemaName: "x", TableName: "b", Status: statev1.TaskStatus_TASK_STATUS_FAILED},
+	page1 := &runv1.ListTasksResponse{TotalCount: 3, Tasks: []*runv1.Task{
+		{ServiceName: "s", SchemaName: "x", TableName: "a", Status: "succeeded"},
+		{ServiceName: "s", SchemaName: "x", TableName: "b", Status: "failed"},
 	}}
-	page2 := &statev1.ListTasksResponse{TotalCount: 3, Tasks: []*statev1.Task{
-		{ServiceName: "s", SchemaName: "x", TableName: "c", Status: statev1.TaskStatus_TASK_STATUS_SUCCEEDED},
+	page2 := &runv1.ListTasksResponse{TotalCount: 3, Tasks: []*runv1.Task{
+		{ServiceName: "s", SchemaName: "x", TableName: "c", Status: "succeeded"},
 	}}
 	fake := &fakeStateStatus{
-		schedules: &statev1.ListAllSchedulesResponse{Schedules: []*statev1.ScheduleSummary{
+		schedules: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{
 			{ScheduleName: "daily", LastRunId: "run-1"},
 		}},
-		pages: []*statev1.ListTasksResponse{page1, page2},
+		pages: []*runv1.ListTasksResponse{page1, page2},
 	}
 
 	_, _, exit := runStatus(t, fake, []string{"daily"}, false)
@@ -261,7 +229,7 @@ func TestStatus_AppliesPerCallDeadline(t *testing.T) {
 // TestStatus_OutputSchemaMatchesEmittedKeys is the drift control: the declared
 // output_schema annotation must list exactly the top-level keys the command emits.
 func TestStatus_OutputSchemaMatchesEmittedKeys(t *testing.T) {
-	fake := &fakeStateStatus{schedules: &statev1.ListAllSchedulesResponse{Schedules: []*statev1.ScheduleSummary{
+	fake := &fakeStateStatus{schedules: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{
 		{ScheduleName: "daily", LastRunId: ""},
 	}}}
 	stdout, _, _ := runStatus(t, fake, []string{"daily"}, false)
@@ -285,7 +253,7 @@ func keys(m map[string]json.RawMessage) []string {
 }
 
 // The help's list of the statuses a task can carry ("status is one of: ...")
-// is exactly the task statuses state serves.
+// is exactly the task_status values RunService documents on Task.status.
 func TestStatus_LongNamesEveryTaskStatus(t *testing.T) {
 	long := NewStatusCommand(nil, nil, io.Discard, io.Discard).Long
 	const prefix = "status is one of: "
@@ -296,12 +264,7 @@ func TestStatus_LongNamesEveryTaskStatus(t *testing.T) {
 		}
 	}
 	require.NotEmpty(t, listed, "the help has no %q line", prefix)
-	var served []string
-	for v := range statev1.TaskStatus_name {
-		if s := taskStatusString(statev1.TaskStatus(v)); s != "" {
-			served = append(served, s)
-		}
-	}
+	served := []string{"pending", "dispatched", "queued", "running", "stopping", "succeeded", "failed", "cancelled", "skipped"}
 	assert.ElementsMatch(t, served, listed)
 }
 
@@ -311,7 +274,7 @@ func TestStatus_LongNamesTheCancellingRunStatus(t *testing.T) {
 	long := NewStatusCommand(nil, nil, io.Discard, io.Discard).Long
 
 	assert.Contains(t, long, "last_run_status is one of pending|running|cancelling|succeeded|failed|cancelled|skipped.")
-	assert.Contains(t, long, "is_running is true while the run is pending, running or cancelling")
+	assert.Contains(t, long, "has_active_run is true while a pending, running or cancelling run holds the schedule")
 }
 
 // A node whose task waits for its node's lease says why, on which run and since
@@ -319,15 +282,15 @@ func TestStatus_LongNamesTheCancellingRunStatus(t *testing.T) {
 func TestStatus_ReportsALeaseWaitAndItsHolder(t *testing.T) {
 	since := time.Date(2026, 10, 24, 10, 5, 0, 0, time.UTC)
 	fake := &fakeStateStatus{
-		schedules: &statev1.ListAllSchedulesResponse{Schedules: []*statev1.ScheduleSummary{
-			{ScheduleName: "single", LastRunId: "run-2", IsRunning: true, LastRunStatus: "running"},
+		schedules: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{
+			{ScheduleName: "single", LastRunId: "run-2", HasActiveRun: true, LastRunStatus: "running"},
 		}},
-		pages: []*statev1.ListTasksResponse{{
+		pages: []*runv1.ListTasksResponse{{
 			TotalCount: 2,
-			Tasks: []*statev1.Task{
-				{ServiceName: "svc", SchemaName: "raw", TableName: "a", Status: statev1.TaskStatus_TASK_STATUS_PENDING,
+			Tasks: []*runv1.Task{
+				{ServiceName: "svc", SchemaName: "raw", TableName: "a", Status: "pending",
 					WaitReason: "node_lease", WaitingOnRunId: "run-1", WaitingSince: timestamppb.New(since)},
-				{ServiceName: "svc", SchemaName: "raw", TableName: "b", Status: statev1.TaskStatus_TASK_STATUS_PENDING},
+				{ServiceName: "svc", SchemaName: "raw", TableName: "b", Status: "pending"},
 			},
 		}},
 	}
@@ -352,13 +315,13 @@ func TestStatus_ReportsALeaseWaitAndItsHolder(t *testing.T) {
 // with every field set emits exactly the keys its nodes item declares.
 func TestStatus_OutputSchemaDeclaresEveryNodeField(t *testing.T) {
 	fake := &fakeStateStatus{
-		schedules: &statev1.ListAllSchedulesResponse{Schedules: []*statev1.ScheduleSummary{
-			{ScheduleName: "single", LastRunId: "run-2", IsRunning: true},
+		schedules: &runv1.ListSchedulesResponse{Schedules: []*runv1.ScheduleSummary{
+			{ScheduleName: "single", LastRunId: "run-2", HasActiveRun: true},
 		}},
-		pages: []*statev1.ListTasksResponse{{
+		pages: []*runv1.ListTasksResponse{{
 			TotalCount: 1,
-			Tasks: []*statev1.Task{{ServiceName: "svc", SchemaName: "raw", TableName: "a",
-				Status: statev1.TaskStatus_TASK_STATUS_PENDING, WaitReason: "node_lease", WaitingOnRunId: "run-1",
+			Tasks: []*runv1.Task{{ServiceName: "svc", SchemaName: "raw", TableName: "a",
+				Status: "pending", WaitReason: "node_lease", WaitingOnRunId: "run-1",
 				WaitingSince: timestamppb.New(time.Date(2026, 10, 24, 10, 5, 0, 0, time.UTC))}},
 		}},
 	}

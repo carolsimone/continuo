@@ -11,54 +11,37 @@ import (
 	"github.com/carolsimone/continuo/cli/internal/client"
 	"github.com/carolsimone/continuo/cli/internal/config"
 	"github.com/carolsimone/continuo/cli/internal/output"
-	orchestratorv1 "github.com/carolsimone/continuo/cli/proto/orchestrator/v1"
+	runv1 "github.com/carolsimone/continuo/cli/proto/run/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// fakeOrchestrator is an OrchestratorClient fake for graph_test.go.
-type fakeOrchestrator struct {
-	resp *orchestratorv1.GetScheduleGraphResponse
-	err  error
+// fakeGraphRun is a RunClient fake for graph_test.go: it answers
+// GetScheduleGraph and, embedding the interface, panics on any other call.
+type fakeGraphRun struct {
+	client.RunClient
+	resp    *runv1.GetScheduleGraphResponse
+	err     error
+	gotName string
 }
 
-func (f *fakeOrchestrator) GetScheduleGraph(_ context.Context, _ string) (*orchestratorv1.GetScheduleGraphResponse, error) {
+func (f *fakeGraphRun) GetScheduleGraph(_ context.Context, name string) (*runv1.GetScheduleGraphResponse, error) {
+	f.gotName = name
 	return f.resp, f.err
 }
 
-func (f *fakeOrchestrator) GetNodeVersions(context.Context, string, int32, bool) (*orchestratorv1.GetNodeVersionsResponse, error) {
-	panic("GetNodeVersions should not be called in graph tests")
-}
-
-func (f *fakeOrchestrator) GetNodeVersionDiff(context.Context, string, int64, int64) (*orchestratorv1.GetNodeVersionDiffResponse, error) {
-	panic("GetNodeVersionDiff should not be called in graph tests")
-}
-
-func (f *fakeOrchestrator) GetUpstreamChanges(context.Context, string, int32, string) (*orchestratorv1.GetUpstreamChangesResponse, error) {
-	panic("GetUpstreamChanges should not be called in graph tests")
-}
-
-func (f *fakeOrchestrator) GetCodeUnitVersions(context.Context, string, string, int32) (*orchestratorv1.GetCodeUnitVersionsResponse, error) {
-	panic("GetCodeUnitVersions should not be called in graph tests")
-}
-
-func (f *fakeOrchestrator) GetPrecedents(context.Context, string, string, string, int32, bool) (*orchestratorv1.GetPrecedentsResponse, error) {
-	panic("GetPrecedents should not be called in graph tests")
-}
-
-func (f *fakeOrchestrator) Close() error { return nil }
+func (f *fakeGraphRun) Close() error { return nil }
 
 // runGraph invokes the graph command end-to-end with the provided fake client.
 // It captures stdout/stderr and returns the exit code.
-func runGraph(t *testing.T, fake client.OrchestratorClient, args []string, human bool) (stdout, stderr string, exit int) {
+func runGraph(t *testing.T, fake client.RunClient, args []string, human bool) (stdout, stderr string, exit int) {
 	t.Helper()
 	var outBuf, errBuf bytes.Buffer
 	cfg := &config.Config{Timeout: 2 * time.Second, Human: human}
 	cmd := NewGraphCommand(
-		func(_ context.Context, _ string) (client.OrchestratorClient, error) { return fake, nil },
+		func(_ context.Context, _ string) (client.RunClient, error) { return fake, nil },
 		cfg,
 		&outBuf,
 		&errBuf,
@@ -79,17 +62,11 @@ func runGraph(t *testing.T, fake client.OrchestratorClient, args []string, human
 	return outBuf.String(), errBuf.String(), exit
 }
 
-// graphResponseJSON mirrors the expected JSON shape for assertions.
 type graphNodeJSON struct {
-	TableName     string `json:"table_name"`
-	SchemaName    string `json:"schema_name"`
-	ServiceName   string `json:"service_name"`
-	Owner         string `json:"owner,omitempty"`
-	Criticality   string `json:"criticality"`
-	NodeType      string `json:"node_type"`
-	Status        string `json:"status"`
-	LastUpdatedAt string `json:"last_updated_at,omitempty"`
-	CreatedAt     string `json:"created_at,omitempty"`
+	TableName   string `json:"table_name"`
+	SchemaName  string `json:"schema_name"`
+	ServiceName string `json:"service_name"`
+	NodeType    string `json:"node_type"`
 }
 
 type graphEdgeJSON struct {
@@ -103,38 +80,32 @@ type graphResponseJSON struct {
 	Edges        []graphEdgeJSON `json:"edges"`
 }
 
-func TestGraph_SuccessEmitsCorrectJSON(t *testing.T) {
-	lastUpdated := time.Date(2026, 4, 20, 3, 1, 0, 0, time.UTC)
-	createdAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-
-	fake := &fakeOrchestrator{
-		resp: &orchestratorv1.GetScheduleGraphResponse{
-			Nodes: []*orchestratorv1.TableNode{
-				{
-					TableName:     "orders",
-					SchemaName:    "public",
-					ServiceName:   "warehouse",
-					Owner:         "data-eng",
-					Criticality:   orchestratorv1.Criticality_CRITICALITY_CORE,
-					NodeType:      "table",
-					Status:        "success",
-					LastUpdatedAt: timestamppb.New(lastUpdated),
-					CreatedAt:     timestamppb.New(createdAt),
-				},
-			},
-			Edges: []*orchestratorv1.GraphEdge{
-				{
-					FromNodeId: "warehouse.public.orders",
-					ToNodeId:   "warehouse.public.revenue",
-				},
+func sampleGraph() *runv1.GetScheduleGraphResponse {
+	return &runv1.GetScheduleGraphResponse{
+		Nodes: []*runv1.ScheduleGraphNode{
+			{
+				TableName:    "orders",
+				SchemaName:   "public",
+				ServiceName:  "warehouse",
+				NodeType:     "table",
+				ScheduleName: "daily_ingest",
 			},
 		},
+		Edges: []*runv1.ScheduleGraphEdge{
+			{FromNodeId: "warehouse.public.orders", ToNodeId: "warehouse.public.revenue"},
+		},
+		PromotionSeq: 7,
 	}
+}
+
+func TestGraph_SuccessEmitsCorrectJSON(t *testing.T) {
+	fake := &fakeGraphRun{resp: sampleGraph()}
 
 	stdout, stderr, exit := runGraph(t, fake, []string{"daily_ingest"}, false)
 
 	assert.Equal(t, 0, exit)
 	assert.Empty(t, stderr)
+	assert.Equal(t, "daily_ingest", fake.gotName)
 
 	var payload graphResponseJSON
 	require.NoError(t, json.Unmarshal([]byte(stdout), &payload))
@@ -145,12 +116,7 @@ func TestGraph_SuccessEmitsCorrectJSON(t *testing.T) {
 	assert.Equal(t, "orders", n.TableName)
 	assert.Equal(t, "public", n.SchemaName)
 	assert.Equal(t, "warehouse", n.ServiceName)
-	assert.Equal(t, "data-eng", n.Owner)
-	assert.Equal(t, "core", n.Criticality)
 	assert.Equal(t, "table", n.NodeType)
-	assert.Equal(t, "success", n.Status)
-	assert.Equal(t, "2026-04-20T03:01:00Z", n.LastUpdatedAt)
-	assert.Equal(t, "2026-01-01T00:00:00Z", n.CreatedAt)
 
 	require.Len(t, payload.Edges, 1)
 	e := payload.Edges[0]
@@ -158,13 +124,61 @@ func TestGraph_SuccessEmitsCorrectJSON(t *testing.T) {
 	assert.Equal(t, "warehouse.public.revenue", e.ToNodeId)
 }
 
-func TestGraph_EmptyNodesAndEdgesAreArraysNotNull(t *testing.T) {
-	fake := &fakeOrchestrator{
-		resp: &orchestratorv1.GetScheduleGraphResponse{
-			Nodes: []*orchestratorv1.TableNode{},
-			Edges: []*orchestratorv1.GraphEdge{},
-		},
+// TestScheduleGraph_OutputMatchesItsSchema holds the output_schema annotation
+// to the JSON the command emits: the same keys at the top level and in every
+// node and edge, and none of the fields the topology no longer carries.
+func TestScheduleGraph_OutputMatchesItsSchema(t *testing.T) {
+	fake := &fakeGraphRun{resp: sampleGraph()}
+	stdout, _, exit := runGraph(t, fake, []string{"daily_ingest"}, false)
+	require.Equal(t, 0, exit)
+
+	cmd := NewGraphCommand(nil, &config.Config{}, &bytes.Buffer{}, &bytes.Buffer{})
+	var schema map[string]any
+	require.NoError(t, json.Unmarshal([]byte(cmd.Annotations["output_schema"]), &schema))
+	var emitted map[string]any
+	require.NoError(t, json.Unmarshal([]byte(stdout), &emitted))
+
+	assertSameKeys(t, "", schema, emitted)
+	for _, gone := range []string{"owner", "criticality", "created_at", "last_updated_at", "status"} {
+		assert.NotContains(t, cmd.Annotations["output_schema"], `"`+gone+`"`)
+		assert.NotContains(t, cmd.Long, `"`+gone+`"`)
+		assert.NotContains(t, stdout, `"`+gone+`"`)
 	}
+}
+
+// assertSameKeys walks a schema and a value together and fails where an
+// object has other keys than its schema. A schema leaf (a string) stands for
+// any scalar or array; a one-element schema array describes every element.
+func assertSameKeys(t *testing.T, path string, schema, value any) {
+	t.Helper()
+	switch sv := schema.(type) {
+	case map[string]any:
+		vv, ok := value.(map[string]any)
+		require.True(t, ok, "%s: schema has an object, output does not", path)
+		for k := range sv {
+			assert.Contains(t, vv, k, "%s: schema key missing from the output", path)
+		}
+		for k := range vv {
+			assert.Contains(t, sv, k, "%s: output key missing from the schema", path)
+		}
+		for k, child := range sv {
+			if cv, ok := vv[k]; ok {
+				assertSameKeys(t, path+"."+k, child, cv)
+			}
+		}
+	case []any:
+		vv, ok := value.([]any)
+		require.True(t, ok, "%s: schema has an array, output does not", path)
+		require.Len(t, sv, 1, "%s: an array schema describes one element", path)
+		require.NotEmpty(t, vv, "%s: the fixture must carry an element to compare", path)
+		for i, el := range vv {
+			assertSameKeys(t, path+"[]"+string(rune('0'+i)), sv[0], el)
+		}
+	}
+}
+
+func TestGraph_EmptyNodesAndEdgesAreArraysNotNull(t *testing.T) {
+	fake := &fakeGraphRun{resp: &runv1.GetScheduleGraphResponse{}}
 
 	stdout, _, exit := runGraph(t, fake, []string{"x"}, false)
 
@@ -185,10 +199,10 @@ func TestGraph_EmptyNodesAndEdgesAreArraysNotNull(t *testing.T) {
 }
 
 func TestGraph_HumanModeSummaryLine(t *testing.T) {
-	fake := &fakeOrchestrator{
-		resp: &orchestratorv1.GetScheduleGraphResponse{
-			Nodes: make([]*orchestratorv1.TableNode, 12),
-			Edges: make([]*orchestratorv1.GraphEdge, 9),
+	fake := &fakeGraphRun{
+		resp: &runv1.GetScheduleGraphResponse{
+			Nodes: make([]*runv1.ScheduleGraphNode, 12),
+			Edges: make([]*runv1.ScheduleGraphEdge, 9),
 		},
 	}
 
@@ -201,75 +215,8 @@ func TestGraph_HumanModeSummaryLine(t *testing.T) {
 	assert.Contains(t, stderr, "9 edges")
 }
 
-func TestGraph_ZeroTimestampsOmittedFromJSON(t *testing.T) {
-	fake := &fakeOrchestrator{
-		resp: &orchestratorv1.GetScheduleGraphResponse{
-			Nodes: []*orchestratorv1.TableNode{
-				{
-					TableName:     "orders",
-					SchemaName:    "public",
-					ServiceName:   "warehouse",
-					Criticality:   orchestratorv1.Criticality_CRITICALITY_UNSPECIFIED,
-					LastUpdatedAt: nil, // zero
-					CreatedAt:     nil, // zero
-				},
-			},
-			Edges: []*orchestratorv1.GraphEdge{},
-		},
-	}
-
-	stdout, _, exit := runGraph(t, fake, []string{"daily_ingest"}, false)
-
-	assert.Equal(t, 0, exit)
-
-	var payload struct {
-		Nodes []map[string]json.RawMessage `json:"nodes"`
-	}
-	require.NoError(t, json.Unmarshal([]byte(stdout), &payload))
-	require.Len(t, payload.Nodes, 1)
-
-	_, hasLastUpdatedAt := payload.Nodes[0]["last_updated_at"]
-	assert.False(t, hasLastUpdatedAt, "last_updated_at must be omitted when nil")
-
-	_, hasCreatedAt := payload.Nodes[0]["created_at"]
-	assert.False(t, hasCreatedAt, "created_at must be omitted when nil")
-}
-
-func TestGraph_CriticalityStripping(t *testing.T) {
-	cases := []struct {
-		proto    orchestratorv1.Criticality
-		expected string
-	}{
-		{orchestratorv1.Criticality_CRITICALITY_CORE, "core"},
-		{orchestratorv1.Criticality_CRITICALITY_REGULATORY, "regulatory"},
-		{orchestratorv1.Criticality_CRITICALITY_SECONDARY, "secondary"},
-		{orchestratorv1.Criticality_CRITICALITY_UNSPECIFIED, "unspecified"},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.expected, func(t *testing.T) {
-			fake := &fakeOrchestrator{
-				resp: &orchestratorv1.GetScheduleGraphResponse{
-					Nodes: []*orchestratorv1.TableNode{
-						{Criticality: tc.proto},
-					},
-					Edges: []*orchestratorv1.GraphEdge{},
-				},
-			}
-
-			stdout, _, exit := runGraph(t, fake, []string{"sched"}, false)
-			assert.Equal(t, 0, exit)
-
-			var payload graphResponseJSON
-			require.NoError(t, json.Unmarshal([]byte(stdout), &payload))
-			require.Len(t, payload.Nodes, 1)
-			assert.Equal(t, tc.expected, payload.Nodes[0].Criticality)
-		})
-	}
-}
-
 func TestGraph_MissingArgumentExits2(t *testing.T) {
-	fake := &fakeOrchestrator{}
+	fake := &fakeGraphRun{}
 
 	stdout, _, exit := runGraph(t, fake, []string{}, false)
 
@@ -279,22 +226,8 @@ func TestGraph_MissingArgumentExits2(t *testing.T) {
 	assert.Equal(t, output.CodeUsage, env["error"].Code)
 }
 
-func TestGraph_NotFoundExits3(t *testing.T) {
-	fake := &fakeOrchestrator{err: status.Error(codes.NotFound, "schedule not found")}
-
-	stdout, _, exit := runGraph(t, fake, []string{"missing"}, false)
-
-	assert.Equal(t, 3, exit)
-	var envelope struct {
-		Error output.CLIError `json:"error"`
-	}
-	require.NoError(t, json.Unmarshal([]byte(stdout), &envelope))
-	assert.Equal(t, output.CodeNotFound, envelope.Error.Code)
-	assert.False(t, envelope.Error.Retryable)
-}
-
 func TestGraph_UnavailableExits5(t *testing.T) {
-	fake := &fakeOrchestrator{err: status.Error(codes.Unavailable, "server down")}
+	fake := &fakeGraphRun{err: status.Error(codes.Unavailable, "server down")}
 
 	_, _, exit := runGraph(t, fake, []string{"daily_ingest"}, false)
 
@@ -305,7 +238,7 @@ func TestGraph_FactoryErrorExits5(t *testing.T) {
 	var outBuf, errBuf bytes.Buffer
 	cfg := &config.Config{Timeout: 2 * time.Second}
 	cmd := NewGraphCommand(
-		func(_ context.Context, _ string) (client.OrchestratorClient, error) {
+		func(_ context.Context, _ string) (client.RunClient, error) {
 			return nil, status.Error(codes.Unavailable, "dial failed")
 		},
 		cfg,

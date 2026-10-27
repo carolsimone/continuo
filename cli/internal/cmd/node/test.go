@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 
+	"github.com/carolsimone/continuo/cli/internal/client"
 	"github.com/carolsimone/continuo/cli/internal/config"
 	"github.com/carolsimone/continuo/cli/internal/output"
 	"github.com/spf13/cobra"
@@ -22,7 +23,7 @@ import (
 // The initiating identity is not an argument: it comes from cfg.Actor (the
 // CONTINUO_ACTOR env var) and is forwarded as gRPC metadata. When empty, the
 // state service records its own system identity.
-func NewTestCommand(factory StateClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
+func NewTestCommand(factory RunClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "test <service> <schema> <table> [source-run-id]",
 		Short: "Run a model node's dbt tests",
@@ -50,6 +51,8 @@ release does not hold is refused (not_found). A model with no data tests
 (in the live release, or in the source run's release when one is given) is
 refused (conflict). Neither refusal creates a run. Check the outcome of an
 accepted run with "node history".
+
+` + client.RequestIDHelp + `
 
 Output (stdout, JSON):
   {"run_id":string,"schedule_name":string}
@@ -79,7 +82,7 @@ Errors:
 			}
 			defer func() { _ = c.Close() }()
 
-			resp, err := c.TriggerNodeTest(ctx, target.service, target.schema, target.table, target.sourceRunID, cfg.Actor)
+			resp, err := c.TriggerNodeTest(ctx, client.RequestID(), target.service, target.schema, target.table, target.sourceRunID, cfg.Actor)
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}

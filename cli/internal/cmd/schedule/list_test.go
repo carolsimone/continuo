@@ -11,7 +11,7 @@ import (
 	"github.com/carolsimone/continuo/cli/internal/client"
 	"github.com/carolsimone/continuo/cli/internal/config"
 	"github.com/carolsimone/continuo/cli/internal/output"
-	statev1 "github.com/carolsimone/continuo/cli/proto/state/v1"
+	runv1 "github.com/carolsimone/continuo/cli/proto/run/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
@@ -19,70 +19,28 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// fakeStateList is a StateClient fake for list_test.go.
-// It implements only ListAllSchedules; TriggerSchedule panics if called.
+// fakeStateList is a RunClient fake for list_test.go. It answers
+// ListAllSchedules and, embedding the interface, panics on any other call.
 type fakeStateList struct {
-	resp *statev1.ListAllSchedulesResponse
+	client.RunClient
+	resp *runv1.ListSchedulesResponse
 	err  error
 }
 
-func (f *fakeStateList) TriggerSchedule(_ context.Context, _, _ string) (*statev1.TriggerScheduleResponse, error) {
-	panic("TriggerSchedule should not be called in list tests")
-}
-
-func (f *fakeStateList) TriggerScheduleTest(_ context.Context, _, _ string) (*statev1.TriggerScheduleResponse, error) {
-	panic("TriggerScheduleTest should not be called in list tests")
-}
-
-func (f *fakeStateList) TriggerScheduleBuild(_ context.Context, _, _ string) (*statev1.TriggerScheduleResponse, error) {
-	panic("TriggerScheduleBuild should not be called in list tests")
-}
-
-func (f *fakeStateList) ListAllSchedules(_ context.Context) (*statev1.ListAllSchedulesResponse, error) {
+func (f *fakeStateList) ListAllSchedules(_ context.Context) (*runv1.ListSchedulesResponse, error) {
 	return f.resp, f.err
-}
-
-func (f *fakeStateList) ListTasks(_ context.Context, _ string, _ statev1.TaskStatus, _, _ int32) (*statev1.ListTasksResponse, error) {
-	panic("ListTasks should not be called in list tests")
-}
-
-func (f *fakeStateList) CancelSchedule(_ context.Context, _, _, _ string) (*statev1.CancelScheduleResponse, error) {
-	panic("CancelSchedule should not be called in list tests")
-}
-
-func (f *fakeStateList) ListNodeRuns(_ context.Context, _, _, _, _ string, _ int32) (*statev1.ListNodeRunsResponse, error) {
-	panic("ListNodeRuns should not be called in schedule tests")
-}
-func (f *fakeStateList) ListNodes(_ context.Context, _, _, _ string, _, _ int32) (*statev1.ListNodesResponse, error) {
-	panic("ListNodes should not be called in schedule tests")
-}
-
-func (f *fakeStateList) TriggerNodeRun(_ context.Context, _, _, _, _, _ string) (*statev1.TriggerSingleNodeRunResponse, error) {
-	panic("TriggerNodeRun should not be called in schedule tests")
-}
-
-func (f *fakeStateList) TriggerNodeTest(_ context.Context, _, _, _, _, _ string) (*statev1.TriggerSingleNodeRunResponse, error) {
-	panic("TriggerNodeTest should not be called in schedule tests")
-}
-
-func (f *fakeStateList) TriggerNodeBuild(_ context.Context, _, _, _, _, _ string) (*statev1.TriggerSingleNodeRunResponse, error) {
-	panic("TriggerNodeBuild should not be called in schedule tests")
-}
-
-func (f *fakeStateList) TriggerNodeFullRefresh(_ context.Context, _, _, _, _, _ string) (*statev1.TriggerSingleNodeRunResponse, error) {
-	panic("TriggerNodeFullRefresh should not be called in schedule tests")
 }
 
 func (f *fakeStateList) Close() error { return nil }
 
 // runList invokes the list command end-to-end with the provided fake client.
 // It captures stdout/stderr and returns the exit code.
-func runList(t *testing.T, fake client.StateClient, args []string, human bool) (stdout, stderr string, exit int) {
+func runList(t *testing.T, fake client.RunClient, args []string, human bool) (stdout, stderr string, exit int) {
 	t.Helper()
 	var outBuf, errBuf bytes.Buffer
 	cfg := &config.Config{Timeout: 2 * time.Second, Human: human}
 	cmd := NewListCommand(
-		func(_ context.Context, _ string) (client.StateClient, error) { return fake, nil },
+		func(_ context.Context, _ string) (client.RunClient, error) { return fake, nil },
 		cfg,
 		&outBuf,
 		&errBuf,
@@ -109,7 +67,7 @@ type scheduleJSON struct {
 	CronExpression string `json:"cron_expression"`
 	Description    string `json:"description,omitempty"`
 	Timezone       string `json:"timezone"`
-	IsRunning      bool   `json:"is_running"`
+	HasActiveRun   bool   `json:"has_active_run"`
 	LastRunId      string `json:"last_run_id"`
 	LastRunStatus  string `json:"last_run_status"`
 	LastRunAt      string `json:"last_run_at,omitempty"`
@@ -122,13 +80,13 @@ type listResponseJSON struct {
 func TestList_SuccessEmitsJSONWithAllFields(t *testing.T) {
 	lastRunTime := time.Date(2026, 4, 20, 3, 0, 0, 0, time.UTC)
 	fake := &fakeStateList{
-		resp: &statev1.ListAllSchedulesResponse{
-			Schedules: []*statev1.ScheduleSummary{
+		resp: &runv1.ListSchedulesResponse{
+			Schedules: []*runv1.ScheduleSummary{
 				{
 					ScheduleName:   "daily_ingest",
 					CronExpression: "0 3 * * *",
 					Timezone:       "UTC",
-					IsRunning:      false,
+					HasActiveRun:   false,
 					LastRunId:      "sched_01HXYZ",
 					LastRunStatus:  "success",
 					LastRunAt:      timestamppb.New(lastRunTime),
@@ -150,7 +108,7 @@ func TestList_SuccessEmitsJSONWithAllFields(t *testing.T) {
 	assert.Equal(t, "daily_ingest", s.ScheduleName)
 	assert.Equal(t, "0 3 * * *", s.CronExpression)
 	assert.Equal(t, "UTC", s.Timezone)
-	assert.False(t, s.IsRunning)
+	assert.False(t, s.HasActiveRun)
 	assert.Equal(t, "sched_01HXYZ", s.LastRunId)
 	assert.Equal(t, "success", s.LastRunStatus)
 	assert.Equal(t, "2026-04-20T03:00:00Z", s.LastRunAt)
@@ -158,8 +116,8 @@ func TestList_SuccessEmitsJSONWithAllFields(t *testing.T) {
 
 func TestList_EmptySchedulesReturnsEmptyArray(t *testing.T) {
 	fake := &fakeStateList{
-		resp: &statev1.ListAllSchedulesResponse{
-			Schedules: []*statev1.ScheduleSummary{},
+		resp: &runv1.ListSchedulesResponse{
+			Schedules: []*runv1.ScheduleSummary{},
 		},
 	}
 
@@ -180,11 +138,11 @@ func TestList_EmptySchedulesReturnsEmptyArray(t *testing.T) {
 func TestList_HumanModeRunningSchedule(t *testing.T) {
 	lastRunTime := time.Date(2026, 4, 20, 3, 0, 0, 0, time.UTC)
 	fake := &fakeStateList{
-		resp: &statev1.ListAllSchedulesResponse{
-			Schedules: []*statev1.ScheduleSummary{
+		resp: &runv1.ListSchedulesResponse{
+			Schedules: []*runv1.ScheduleSummary{
 				{
 					ScheduleName:  "daily_ingest",
-					IsRunning:     true,
+					HasActiveRun:  true,
 					LastRunStatus: "success",
 					LastRunAt:     timestamppb.New(lastRunTime),
 				},
@@ -205,11 +163,11 @@ func TestList_HumanModeRunningSchedule(t *testing.T) {
 func TestList_HumanModeIdleScheduleWithLastRun(t *testing.T) {
 	lastRunTime := time.Date(2026, 4, 20, 3, 0, 0, 0, time.UTC)
 	fake := &fakeStateList{
-		resp: &statev1.ListAllSchedulesResponse{
-			Schedules: []*statev1.ScheduleSummary{
+		resp: &runv1.ListSchedulesResponse{
+			Schedules: []*runv1.ScheduleSummary{
 				{
 					ScheduleName:  "daily_ingest",
-					IsRunning:     false,
+					HasActiveRun:  false,
 					LastRunStatus: "success",
 					LastRunAt:     timestamppb.New(lastRunTime),
 				},
@@ -229,11 +187,11 @@ func TestList_HumanModeIdleScheduleWithLastRun(t *testing.T) {
 
 func TestList_HumanModeIdleScheduleNoLastRun(t *testing.T) {
 	fake := &fakeStateList{
-		resp: &statev1.ListAllSchedulesResponse{
-			Schedules: []*statev1.ScheduleSummary{
+		resp: &runv1.ListSchedulesResponse{
+			Schedules: []*runv1.ScheduleSummary{
 				{
 					ScheduleName: "daily_ingest",
-					IsRunning:    false,
+					HasActiveRun: false,
 				},
 			},
 		},
@@ -251,13 +209,13 @@ func TestList_HumanModeIdleScheduleNoLastRun(t *testing.T) {
 
 func TestList_ZeroLastRunAtOmittedFromJSON(t *testing.T) {
 	fake := &fakeStateList{
-		resp: &statev1.ListAllSchedulesResponse{
-			Schedules: []*statev1.ScheduleSummary{
+		resp: &runv1.ListSchedulesResponse{
+			Schedules: []*runv1.ScheduleSummary{
 				{
 					ScheduleName:   "daily_ingest",
 					CronExpression: "0 3 * * *",
 					Timezone:       "UTC",
-					IsRunning:      false,
+					HasActiveRun:   false,
 					LastRunId:      "",
 					LastRunStatus:  "",
 					LastRunAt:      nil, // zero / never run
@@ -282,8 +240,8 @@ func TestList_ZeroLastRunAtOmittedFromJSON(t *testing.T) {
 
 func TestList_DescriptionOmittedWhenEmpty(t *testing.T) {
 	fake := &fakeStateList{
-		resp: &statev1.ListAllSchedulesResponse{
-			Schedules: []*statev1.ScheduleSummary{
+		resp: &runv1.ListSchedulesResponse{
+			Schedules: []*runv1.ScheduleSummary{
 				{
 					ScheduleName:   "daily_ingest",
 					CronExpression: "0 3 * * *",
@@ -308,8 +266,8 @@ func TestList_DescriptionOmittedWhenEmpty(t *testing.T) {
 
 func TestList_DescriptionIncludedWhenNonEmpty(t *testing.T) {
 	fake := &fakeStateList{
-		resp: &statev1.ListAllSchedulesResponse{
-			Schedules: []*statev1.ScheduleSummary{
+		resp: &runv1.ListSchedulesResponse{
+			Schedules: []*runv1.ScheduleSummary{
 				{
 					ScheduleName:   "daily_ingest",
 					CronExpression: "0 3 * * *",
@@ -357,7 +315,7 @@ func TestList_FactoryErrorEmitsJSONAndExits(t *testing.T) {
 	var outBuf, errBuf bytes.Buffer
 	cfg := &config.Config{Timeout: 2 * time.Second}
 	cmd := NewListCommand(
-		func(_ context.Context, _ string) (client.StateClient, error) {
+		func(_ context.Context, _ string) (client.RunClient, error) {
 			return nil, status.Error(codes.Unavailable, "dial failed")
 		},
 		cfg,
@@ -375,7 +333,7 @@ func TestList_FactoryErrorEmitsJSONAndExits(t *testing.T) {
 }
 
 func TestList_ExtraArgEmitsUsageEnvelopeExits2(t *testing.T) {
-	fake := &fakeStateList{resp: &statev1.ListAllSchedulesResponse{}}
+	fake := &fakeStateList{resp: &runv1.ListSchedulesResponse{}}
 
 	stdout, _, exit := runList(t, fake, []string{"extra"}, false)
 

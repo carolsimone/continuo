@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 
+	"github.com/carolsimone/continuo/cli/internal/client"
 	"github.com/carolsimone/continuo/cli/internal/config"
 	"github.com/carolsimone/continuo/cli/internal/output"
 	"github.com/spf13/cobra"
@@ -20,7 +21,7 @@ import (
 // not hold is refused (not_found) and a node that is not a dbt model or seed is
 // refused (usage); neither creates a run. A task whose node another run is
 // writing waits for that run's write before it is dispatched.
-func NewFullRefreshCommand(factory StateClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
+func NewFullRefreshCommand(factory RunClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "full-refresh <service> <schema> <table> [source-run-id]",
 		Short: "Rebuild one dbt model or seed from scratch (dbt --full-refresh)",
@@ -58,6 +59,8 @@ the task pending, with wait_reason "node_lease" and the run it waits on
 (waiting_on_run_id).
 Check the outcome of an accepted run with "node history".
 
+` + client.RequestIDHelp + `
+
 Output (stdout, JSON):
   {"run_id":string,"schedule_name":string}
 
@@ -86,7 +89,7 @@ Errors:
 			}
 			defer func() { _ = c.Close() }()
 
-			resp, err := c.TriggerNodeFullRefresh(ctx, target.service, target.schema, target.table, target.sourceRunID, cfg.Actor)
+			resp, err := c.TriggerNodeFullRefresh(ctx, client.RequestID(), target.service, target.schema, target.table, target.sourceRunID, cfg.Actor)
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}

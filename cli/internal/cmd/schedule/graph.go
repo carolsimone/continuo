@@ -4,29 +4,19 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"strings"
 
 	"github.com/carolsimone/continuo/cli/internal/config"
 	"github.com/carolsimone/continuo/cli/internal/output"
-	orchestratorv1 "github.com/carolsimone/continuo/cli/proto/orchestrator/v1"
+	runv1 "github.com/carolsimone/continuo/cli/proto/run/v1"
 	"github.com/spf13/cobra"
 )
 
 // nodeEntry is the JSON-serialisable representation of a single graph node.
-// Fields with omitempty are conditionally omitted per the spec:
-//   - owner:          omit when empty
-//   - last_updated_at: omit when the proto Timestamp is nil (zero)
-//   - created_at:     omit when the proto Timestamp is nil (zero)
 type nodeEntry struct {
-	TableName     string `json:"table_name"`
-	SchemaName    string `json:"schema_name"`
-	ServiceName   string `json:"service_name"`
-	Owner         string `json:"owner,omitempty"`
-	Criticality   string `json:"criticality"`
-	NodeType      string `json:"node_type"`
-	Status        string `json:"status"`
-	LastUpdatedAt string `json:"last_updated_at,omitempty"`
-	CreatedAt     string `json:"created_at,omitempty"`
+	TableName   string `json:"table_name"`
+	SchemaName  string `json:"schema_name"`
+	ServiceName string `json:"service_name"`
+	NodeType    string `json:"node_type"`
 }
 
 // edgeEntry is the JSON-serialisable representation of a single graph edge.
@@ -49,13 +39,15 @@ type graphPayload struct {
 // flags have been parsed — the subcommand reads the up-to-date value at RunE.
 // stdout and stderr are injected so tests can capture them; in production
 // the root command wires os.Stdout / os.Stderr.
-func NewGraphCommand(factory OrchestratorClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
+func NewGraphCommand(factory RunClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "graph <schedule-name>",
 		Short: "Show the dependency graph for the named schedule",
 		Long: `Show the dependency graph for the named schedule.
 
-Use when the user wants the topology (nodes and edges) of a schedule.
+Use when the user wants the topology (nodes and edges) of a schedule: the nodes
+of the live release that belong to it, the nodes of other schedules that feed
+them one hop upstream, and the edges among them.
 
 Arguments:
   <schedule-name>  The schedule whose graph to fetch.
@@ -63,20 +55,22 @@ Arguments:
 Output (stdout, JSON):
   {"schedule_name":string,
    "nodes":[{"table_name":string,"schema_name":string,"service_name":string,
-             "owner":string,"criticality":string,"node_type":string,
-             "status":string,"last_updated_at":string,"created_at":string}],
+             "node_type":string}],
    "edges":[{"from_node_id":string,"to_node_id":string}]}
-  owner, last_updated_at, and created_at are omitted when empty.
+  A node id is "service.schema.table"; an edge runs from the dependent node to
+  its dependency.
+
+A schedule the live release does not hold returns {"nodes":[],"edges":[]}, not
+an error.
 
 Errors:
   usage      (exit 2)  wrong number of arguments
-  not_found  (exit 3)  no schedule/graph found for that name
-  unavailable(exit 5)  the orchestrator service is unreachable
+  unavailable(exit 5)  the state service is unreachable
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo schedule graph daily-revenue",
 		Annotations: map[string]string{
-			"output_schema": `{"schedule_name":"string","nodes":"array","edges":"array"}`,
-			"exit_codes":    `[0,2,3,5,6]`,
+			"output_schema": `{"schedule_name":"string","nodes":[{"table_name":"string","schema_name":"string","service_name":"string","node_type":"string"}],"edges":[{"from_node_id":"string","to_node_id":"string"}]}`,
+			"exit_codes":    `[0,2,5,6]`,
 		},
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
@@ -89,7 +83,7 @@ Errors:
 			ctx, cancel := context.WithTimeout(cmd.Context(), cfg.Timeout)
 			defer cancel()
 
-			c, err := factory(ctx, cfg.OrchestratorEndpoint)
+			c, err := factory(ctx, cfg.StateEndpoint)
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}
@@ -112,26 +106,17 @@ Errors:
 }
 
 // toGraphPayload converts the proto response into the JSON payload.
-func toGraphPayload(scheduleName string, resp *orchestratorv1.GetScheduleGraphResponse) graphPayload {
+func toGraphPayload(scheduleName string, resp *runv1.GetScheduleGraphResponse) graphPayload {
 	nodes := make([]nodeEntry, 0, len(resp.GetNodes()))
 	for _, n := range resp.GetNodes() {
-		e := nodeEntry{
+		// ScheduleGraphNode.ScheduleName is intentionally excluded: it names the
+		// schedule an upstream node belongs to, not part of the output contract.
+		nodes = append(nodes, nodeEntry{
 			TableName:   n.GetTableName(),
 			SchemaName:  n.GetSchemaName(),
 			ServiceName: n.GetServiceName(),
-			Owner:       n.GetOwner(),
-			Criticality: stripCriticalityPrefix(n.GetCriticality().String()),
 			NodeType:    n.GetNodeType(),
-			Status:      n.GetStatus(),
-		}
-		if ts := n.GetLastUpdatedAt(); ts != nil && ts.IsValid() {
-			e.LastUpdatedAt = ts.AsTime().UTC().Format("2006-01-02T15:04:05Z")
-		}
-		if ts := n.GetCreatedAt(); ts != nil && ts.IsValid() {
-			e.CreatedAt = ts.AsTime().UTC().Format("2006-01-02T15:04:05Z")
-		}
-		// TableNode.ScheduleName is intentionally excluded — it is internal denormalisation, not part of the output contract.
-		nodes = append(nodes, e)
+		})
 	}
 
 	edges := make([]edgeEntry, 0, len(resp.GetEdges()))
@@ -149,21 +134,10 @@ func toGraphPayload(scheduleName string, resp *orchestratorv1.GetScheduleGraphRe
 	}
 }
 
-// stripCriticalityPrefix converts a proto enum string like "CRITICALITY_CORE"
-// to its lowercase short form "core". The prefix "CRITICALITY_" is stripped
-// and the remainder is lowercased.
-func stripCriticalityPrefix(s string) string {
-	const prefix = "CRITICALITY_"
-	if strings.HasPrefix(s, prefix) {
-		return strings.ToLower(s[len(prefix):])
-	}
-	return strings.ToLower(s)
-}
-
 // humanGraph writes a summary line to stderr in the format:
 //
 //	<schedule-name>: <N> nodes, <M> edges
-func humanGraph(stderr io.Writer, scheduleName string, resp *orchestratorv1.GetScheduleGraphResponse) error {
+func humanGraph(stderr io.Writer, scheduleName string, resp *runv1.GetScheduleGraphResponse) error {
 	_, err := fmt.Fprintf(stderr, "%s: %d nodes, %d edges\n",
 		scheduleName,
 		len(resp.GetNodes()),

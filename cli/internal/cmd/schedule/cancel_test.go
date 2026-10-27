@@ -12,7 +12,7 @@ import (
 	"github.com/carolsimone/continuo/cli/internal/client"
 	"github.com/carolsimone/continuo/cli/internal/config"
 	"github.com/carolsimone/continuo/cli/internal/output"
-	statev1 "github.com/carolsimone/continuo/cli/proto/state/v1"
+	runv1 "github.com/carolsimone/continuo/cli/proto/run/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
@@ -22,11 +22,11 @@ import (
 // runCancel invokes the cancel command end-to-end with the provided fake client
 // and args, capturing stdout/stderr and returning the exit code. actor is the
 // resolved CONTINUO_ACTOR value (config.Config.Actor) forwarded as cancelled_by.
-func runCancel(t *testing.T, fake client.StateClient, args []string, human bool, actor string) (stdout, stderr string, exit int) {
+func runCancel(t *testing.T, fake client.RunClient, args []string, human bool, actor string) (stdout, stderr string, exit int) {
 	t.Helper()
 	var outBuf, errBuf bytes.Buffer
 	cfg := &config.Config{Timeout: 2 * time.Second, Human: human, Actor: actor}
-	cmd := NewCancelCommand(func(_ context.Context, _ string) (client.StateClient, error) { return fake, nil }, cfg, &outBuf, &errBuf)
+	cmd := NewCancelCommand(func(_ context.Context, _ string) (client.RunClient, error) { return fake, nil }, cfg, &outBuf, &errBuf)
 	cmd.SetArgs(args)
 	cmd.SilenceErrors = true
 	cmd.SilenceUsage = true
@@ -44,7 +44,7 @@ func runCancel(t *testing.T, fake client.StateClient, args []string, human bool,
 }
 
 func TestCancel_SuccessEmitsJSON(t *testing.T) {
-	fake := &fakeState{cancelResp: &statev1.CancelScheduleResponse{ScheduleId: "sched_123"}}
+	fake := &fakeState{cancelResp: &runv1.CancelActiveRunResponse{RunId: "sched_123"}}
 
 	stdout, stderr, exit := runCancel(t, fake, []string{"daily_ingest", "bad upstream data"}, false, "")
 
@@ -52,7 +52,7 @@ func TestCancel_SuccessEmitsJSON(t *testing.T) {
 	assert.Empty(t, stderr)
 	var payload map[string]string
 	require.NoError(t, json.Unmarshal([]byte(stdout), &payload))
-	assert.Equal(t, "sched_123", payload["schedule_id"])
+	assert.Equal(t, "sched_123", payload["run_id"])
 	assert.Equal(t, "daily_ingest", payload["schedule_name"])
 	_, err := time.Parse(time.RFC3339, payload["cancelled_at"])
 	assert.NoError(t, err, "cancelled_at must be RFC3339")
@@ -61,7 +61,7 @@ func TestCancel_SuccessEmitsJSON(t *testing.T) {
 }
 
 func TestCancel_ForwardsActorAsCancelledBy(t *testing.T) {
-	fake := &fakeState{cancelResp: &statev1.CancelScheduleResponse{ScheduleId: "sched_123"}}
+	fake := &fakeState{cancelResp: &runv1.CancelActiveRunResponse{RunId: "sched_123"}}
 
 	_, _, exit := runCancel(t, fake, []string{"daily_ingest", "cleanup"}, false, "agent-chat-llm")
 
@@ -70,7 +70,7 @@ func TestCancel_ForwardsActorAsCancelledBy(t *testing.T) {
 }
 
 func TestCancel_EmptyActorSendsEmptyCancelledBy(t *testing.T) {
-	fake := &fakeState{cancelResp: &statev1.CancelScheduleResponse{ScheduleId: "sched_123"}}
+	fake := &fakeState{cancelResp: &runv1.CancelActiveRunResponse{RunId: "sched_123"}}
 
 	_, _, exit := runCancel(t, fake, []string{"daily_ingest", "cleanup"}, false, "")
 
@@ -136,7 +136,7 @@ func TestCancel_UnavailableExits5(t *testing.T) {
 }
 
 func TestCancel_HumanModeUsesStderrAndEmptyStdout(t *testing.T) {
-	fake := &fakeState{cancelResp: &statev1.CancelScheduleResponse{ScheduleId: "sched_123"}}
+	fake := &fakeState{cancelResp: &runv1.CancelActiveRunResponse{RunId: "sched_123"}}
 
 	stdout, stderr, exit := runCancel(t, fake, []string{"daily_ingest", "x"}, true, "")
 

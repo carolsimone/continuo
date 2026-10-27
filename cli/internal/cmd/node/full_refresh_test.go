@@ -11,17 +11,17 @@ import (
 	"github.com/carolsimone/continuo/cli/internal/client"
 	"github.com/carolsimone/continuo/cli/internal/config"
 	"github.com/carolsimone/continuo/cli/internal/output"
-	statev1 "github.com/carolsimone/continuo/cli/proto/state/v1"
+	runv1 "github.com/carolsimone/continuo/cli/proto/run/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-func runFullRefresh(t *testing.T, fake client.StateClient, cfg *config.Config, args []string) (stdout, stderr string, exit int) {
+func runFullRefresh(t *testing.T, fake client.RunClient, cfg *config.Config, args []string) (stdout, stderr string, exit int) {
 	t.Helper()
 	var outBuf, errBuf bytes.Buffer
-	cmd := NewFullRefreshCommand(func(context.Context, string) (client.StateClient, error) { return fake, nil }, cfg, &outBuf, &errBuf)
+	cmd := NewFullRefreshCommand(func(context.Context, string) (client.RunClient, error) { return fake, nil }, cfg, &outBuf, &errBuf)
 	cmd.SetArgs(args)
 	err := cmd.Execute()
 	if err != nil {
@@ -35,7 +35,7 @@ func runFullRefresh(t *testing.T, fake client.StateClient, cfg *config.Config, a
 }
 
 func TestFullRefreshNode_SuccessEmitsJSON(t *testing.T) {
-	fake := &fakeNodeState{fullRefreshResp: &statev1.TriggerSingleNodeRunResponse{RunId: "run_fr", ScheduleName: "single-node-run-00ff00ff"}}
+	fake := &fakeNodeState{fullRefreshResp: &runv1.TriggerSingleNodeRunResponse{RunId: "run_fr", ScheduleName: "single-node-run-00ff00ff"}}
 	stdout, stderr, exit := runFullRefresh(t, fake, &config.Config{Timeout: 2 * time.Second, Actor: "agent-chat-llm"},
 		[]string{"finance", "analytics", "orders", "3f9e1c2a-7b4d-4e8f-9a1b-2c3d4e5f6a7b"})
 

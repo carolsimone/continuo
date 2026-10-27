@@ -83,7 +83,7 @@ func TestDescribe_CommandContentIsAccurate(t *testing.T) {
 	// output_schema is real nested JSON (not an escaped string) with the documented keys.
 	var schema map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(status.OutputSchema, &schema))
-	for _, k := range []string{"schedule_name", "run_id", "is_running", "last_run_status", "nodes"} {
+	for _, k := range []string{"schedule_name", "run_id", "has_active_run", "last_run_status", "nodes"} {
 		_, ok := schema[k]
 		assert.True(t, ok, "status output_schema missing key %q", k)
 	}
