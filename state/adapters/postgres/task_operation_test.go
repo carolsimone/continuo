@@ -26,8 +26,10 @@ func TestStart_StampsTaskOperation(t *testing.T) {
 
 	r, err := run.NewSingleNodeRun("op-task", model.OperationTest, nil, "user-1", run.ReleaseStamp{}, time.Now())
 	require.NoError(t, err)
+	// One statement deletes the run and, through task_tracker's ON DELETE
+	// CASCADE, its tasks, so no concurrent reader sees this single-node run
+	// without its tasks.
 	t.Cleanup(func() {
-		db.Exec(`DELETE FROM task_tracker WHERE schedule_id = $1`, r.ScheduleID())
 		db.Exec(`DELETE FROM scheduler_tracker WHERE schedule_id = $1`, r.ScheduleID())
 	})
 

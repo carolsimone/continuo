@@ -397,30 +397,74 @@ func TestSingleNodeRunHandler_Errors(t *testing.T) {
 		{"stale src without a release", &statev1.TriggerSingleNodeRunRequest{ServiceName: "svcA", SchemaName: "public", TableName: "users", MetadataSource: "snapshot_of_run", SourceRunId: noReleaseID.String()}, codes.FailedPrecondition},
 	}
 
-	// runsOf counts the single-node runs holding a task at the node req names.
-	// A run is created and planned in one transaction, so a run a refused
-	// trigger committed would hold its task; other test packages create and
-	// delete single-node runs of their own nodes in the same database at the
-	// same time, so a count of every single-node run would race with them.
-	runsOf := func(t *testing.T, req *statev1.TriggerSingleNodeRunRequest) int {
-		t.Helper()
-		var n int
-		require.NoError(t, fx.DB.Get(&n, `
-			SELECT count(*) FROM scheduler_tracker s
-			WHERE s.kind = 'single_node_run' AND EXISTS (
-				SELECT 1 FROM task_tracker tt WHERE tt.schedule_id = s.schedule_id
-				  AND tt.service_name = $1 AND tt.schema_name = $2 AND tt.table_name = $3)`,
-			req.ServiceName, req.SchemaName, req.TableName))
-		return n
-	}
-
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			before := runsOf(t, tc.req)
+			before := singleNodeRunsOf(t, fx.DB, tc.req)
 			_, err := fx.Handler.TriggerSingleNodeRun(context.Background(), tc.req)
 			require.Error(t, err)
 			require.Equal(t, tc.expect, status.Code(err), "wrong code for %s: %v", tc.name, err)
-			require.Equal(t, before, runsOf(t, tc.req), "a refused trigger creates no run")
+			require.Equal(t, before, singleNodeRunsOf(t, fx.DB, tc.req), "a refused trigger creates no run")
 		})
 	}
+}
+
+// singleNodeRunsOf counts the single-node runs a refused trigger of req could
+// have committed: those holding a task at the node req names, and those
+// holding no task at all, as a run committed without its plan would.
+//
+// Other test packages create and delete single-node runs of their own nodes
+// in the same database at the same time, and the count stays blind to them: a
+// run is created and planned in one transaction, and deleting a run deletes
+// its tasks in the same statement (task_tracker's foreign key to
+// scheduler_tracker is ON DELETE CASCADE), so the one snapshot this query
+// reads never holds another package's single-node run without its tasks.
+func singleNodeRunsOf(t *testing.T, db *sqlx.DB, req *statev1.TriggerSingleNodeRunRequest) int {
+	t.Helper()
+	var n int
+	require.NoError(t, db.Get(&n, `
+		SELECT count(*) FROM scheduler_tracker s
+		WHERE s.kind = 'single_node_run' AND (
+			NOT EXISTS (SELECT 1 FROM task_tracker tt WHERE tt.schedule_id = s.schedule_id)
+			OR EXISTS (
+				SELECT 1 FROM task_tracker tt WHERE tt.schedule_id = s.schedule_id
+				  AND tt.service_name = $1 AND tt.schema_name = $2 AND tt.table_name = $3))`,
+		req.ServiceName, req.SchemaName, req.TableName))
+	return n
+}
+
+// TestSingleNodeRunsOf_CountsARunWithoutTasks pins what the "a refused trigger
+// creates no run" check of TestSingleNodeRunHandler_Errors sees: a single-node
+// run that holds no task is counted, and one whose task is at another node is
+// not.
+func TestSingleNodeRunsOf_CountsARunWithoutTasks(t *testing.T) {
+	fx := setupSingleNodeRunFixture(t)
+	ctx := context.Background()
+	req := &statev1.TriggerSingleNodeRunRequest{ServiceName: "svcA", SchemaName: "public", TableName: "users", MetadataSource: "latest"}
+	createRun := func(t *testing.T) uuid.UUID {
+		t.Helper()
+		id := uuid.New()
+		require.NoError(t, fx.SchedulerRepo.Create(ctx, &postgres.SchedulerTracker{
+			ScheduleID:           id,
+			ScheduleName:         "single-node-run-" + id.String()[:8],
+			Status:               run.SchedulerStatusRunning,
+			CreatedAt:            time.Now(),
+			Kind:                 string(run.KindSingleNodeRun),
+			InitializationStatus: "completed",
+		}))
+		t.Cleanup(func() {
+			fx.DB.ExecContext(context.Background(), `DELETE FROM scheduler_tracker WHERE schedule_id = $1`, id)
+		})
+		return id
+	}
+
+	before := singleNodeRunsOf(t, fx.DB, req)
+	createRun(t)
+	require.Equal(t, before+1, singleNodeRunsOf(t, fx.DB, req), "a single-node run without tasks is counted")
+
+	elsewhere := createRun(t)
+	require.NoError(t, fx.TaskRepo.Create(ctx, &postgres.TaskTracker{
+		TaskID: uuid.New(), ScheduleID: elsewhere, ServiceName: "svcA", SchemaName: "public", TableName: "users_snap",
+		Status: run.TaskStatusPending, CreatedAt: time.Now(),
+	}))
+	require.Equal(t, before+1, singleNodeRunsOf(t, fx.DB, req), "a single-node run of another node is not counted")
 }
