@@ -42,7 +42,7 @@ type RunRepository interface {
 	HasActiveRun(ctx context.Context, tenantID, name string) (bool, error)
 
 	// GetActiveRun returns the tenant's active Run on `name`, or nil when
-	// none exists. Used by CancelSchedule to find which run to cancel.
+	// none exists. Used by CancelActiveRun to find which run to cancel.
 	GetActiveRun(ctx context.Context, tenantID, name string) (*run.Run, error)
 
 	// GetLastRunPerSchedule returns the tenant's most recent Run per schedule

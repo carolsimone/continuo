@@ -186,10 +186,10 @@ func NewPendingRun(
 }
 
 // NewDerivedRun creates the PENDING Run id for rerun/rebase; a nil id is
-// ErrRunIDRequired. The derived run inherits the source run's operation: rerun/rebase re-issue the source
-// run's dbt verb (run/build) against the derived task set; the planner refuses
-// a test source. Stamps last_progress_at so dashboards show the new run
-// immediately.
+// ErrRunIDRequired. The derived run inherits the source run's operation:
+// rerun/rebase re-issue the source run's dbt verb (run/build) against the
+// derived task set; the planner refuses a test source. Stamps last_progress_at
+// so dashboards show the new run immediately.
 //
 // stamp is the release the run runs on: the source run's for a rerun, the
 // live release for a rebase.
