@@ -12,10 +12,10 @@ import (
 )
 
 // TaskCollectionAdapter satisfies run.TaskCollection by composing the existing
-// TaskTrackerRepository methods and the active transaction. Construction is via
+// TaskRepository methods and the active transaction. Construction is via
 // NewTaskCollectionAdapter inside the UoW; never directly by handlers.
 type TaskCollectionAdapter struct {
-	repo TaskTrackerRepository
+	repo TaskRepository
 	tx   *sqlx.Tx
 	// tenantID is the tenant whose runs the tasks belong to: the node write
 	// leases the adapter takes are this tenant's.
@@ -24,7 +24,7 @@ type TaskCollectionAdapter struct {
 
 // NewTaskCollectionAdapter constructs the adapter bound to the given tx, for
 // the runs of tenantID.
-func NewTaskCollectionAdapter(repo TaskTrackerRepository, tx *sqlx.Tx, tenantID string) *TaskCollectionAdapter {
+func NewTaskCollectionAdapter(repo TaskRepository, tx *sqlx.Tx, tenantID string) *TaskCollectionAdapter {
 	return &TaskCollectionAdapter{repo: repo, tx: tx, tenantID: tenantID}
 }
 
@@ -84,7 +84,7 @@ func (a *TaskCollectionAdapter) HasNonSucceeded(ctx context.Context, runID uuid.
 }
 
 func (a *TaskCollectionAdapter) GetByNode(ctx context.Context, runID uuid.UUID, node run.NodeID) (run.Task, error) {
-	t, err := a.repo.GetByScheduleAndNode(ctx, runID, node.ServiceName, node.SchemaName, node.TableName)
+	t, err := a.repo.GetByRunAndNode(ctx, runID, node.ServiceName, node.SchemaName, node.TableName)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return run.Task{}, run.ErrTaskNotFound
@@ -129,7 +129,7 @@ func (a *TaskCollectionAdapter) GetByID(ctx context.Context, taskID uuid.UUID) (
 }
 
 // taskFromRow maps a task row onto the domain task.
-func taskFromRow(t *TaskTracker) run.Task {
+func taskFromRow(t *TaskRow) run.Task {
 	return run.Task{
 		TaskID:              t.TaskID,
 		ScheduleID:          t.ScheduleID,
@@ -157,9 +157,9 @@ func (a *TaskCollectionAdapter) SetStatusAndAttempt(ctx context.Context, taskID 
 }
 
 func (a *TaskCollectionAdapter) BulkCreate(ctx context.Context, tasks []run.Task) error {
-	rows := make([]*TaskTracker, 0, len(tasks))
+	rows := make([]*TaskRow, 0, len(tasks))
 	for _, t := range tasks {
-		rows = append(rows, &TaskTracker{
+		rows = append(rows, &TaskRow{
 			TaskID:              t.TaskID,
 			ScheduleID:          t.ScheduleID,
 			CreatedAt:           t.CreatedAt,

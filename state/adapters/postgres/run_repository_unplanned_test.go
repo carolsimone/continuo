@@ -34,7 +34,7 @@ func TestRunRepository_ListUnplannedActive(t *testing.T) {
 	tx, err := db.BeginTxx(ctx, nil)
 	require.NoError(t, err)
 	defer tx.Rollback()
-	got, err := postgres.NewRunRepository(tx, postgres.NewSchedulerTrackerRepository(db, discardLogger())).ListUnplannedActive(ctx)
+	got, err := postgres.NewRunRepository(tx, postgres.NewRunTableRepository(db, discardLogger())).ListUnplannedActive(ctx)
 	require.NoError(t, err)
 
 	assert.Subset(t, got, []uuid.UUID{pending, running})

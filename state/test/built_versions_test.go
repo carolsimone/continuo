@@ -35,8 +35,8 @@ type builtHarness struct {
 
 func newBuiltHarness(db *sqlx.DB) *builtHarness {
 	logger := slog.New(slog.NewTextHandler(nopWriter{}, nil))
-	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
-	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, logger)
+	schedulerRepo := postgres.NewRunTableRepository(db, logger)
+	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, logger)
 	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
 	return &builtHarness{db: db, logger: logger, factory: func() uow.UnitOfWork {
 		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, catalogRepo, svcports.SystemClock{}, logger)
@@ -73,7 +73,7 @@ func (h *builtHarness) storeRelease(t *testing.T, releaseID string, specs ...top
 func (h *builtHarness) saveRun(t *testing.T, rn *run.Run) uuid.UUID {
 	t.Helper()
 	h.inTx(t, func(ctx context.Context, u uow.UnitOfWork) error { return u.Run().SaveRun(ctx, rn) })
-	return rn.ScheduleID()
+	return rn.RunID()
 }
 
 // trigger triggers schedule with operation op on the live release, and
@@ -84,7 +84,7 @@ func (h *builtHarness) trigger(t *testing.T, schedule string, op model.Operation
 		INSERT INTO schedule_catalog (schedule_name, first_seen_at, last_seen_at) VALUES ($1, now(), now())
 		ON CONFLICT (schedule_name) DO UPDATE SET removed_at = NULL`, schedule)
 	require.NoError(t, err)
-	id, _, err := svchandlers.NewActivateScheduleHandler(defaultPlanner, h.logger).Handle(context.Background(), h.factory(),
+	id, _, err := svchandlers.NewStartRunHandler(defaultPlanner, h.logger).Handle(context.Background(), h.factory(),
 		schedule, run.KindTrigger, nil, identity.FromUserID("okta|alice"), op)
 	require.NoError(t, err)
 	return id

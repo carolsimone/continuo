@@ -56,11 +56,11 @@ func explainWithoutSeqScan(t *testing.T, db *sqlx.DB, q string) string {
 // newActivationStack wires the repositories, UoW factory, and activation handler
 // against the test database. removed_at IS NULL rows in schedule_catalog are the
 // activation precondition; the named schedules are seeded as active.
-func newActivationStack(t *testing.T, db *sqlx.DB, names ...string) (func() uow.UnitOfWork, *svchandlers.ActivateScheduleHandler) {
+func newActivationStack(t *testing.T, db *sqlx.DB, names ...string) (func() uow.UnitOfWork, *svchandlers.StartRunHandler) {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(nopWriter{}, nil))
-	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
-	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, logger)
+	schedulerRepo := postgres.NewRunTableRepository(db, logger)
+	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, logger)
 	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
 
 	for _, n := range names {
@@ -76,7 +76,7 @@ func newActivationStack(t *testing.T, db *sqlx.DB, names ...string) (func() uow.
 	factory := func() uow.UnitOfWork {
 		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, catalogRepo, clk, logger)
 	}
-	return factory, svchandlers.NewActivateScheduleHandler(defaultPlanner, logger)
+	return factory, svchandlers.NewStartRunHandler(defaultPlanner, logger)
 }
 
 // TestConcurrentActivation_OneWinnerOneActiveRunError fires two simultaneous
@@ -117,7 +117,7 @@ func TestConcurrentActivation_OneWinnerOneActiveRunError(t *testing.T) {
 	for i := 0; i < n; i++ {
 		require.NoError(t, errs[i], "neither concurrent activation should hard-error")
 		switch outcomes[i] {
-		case svchandlers.OutcomeActivated:
+		case svchandlers.OutcomeRunStarted:
 			activated++
 		case svchandlers.OutcomeSkippedActive:
 			skipped++
@@ -135,7 +135,7 @@ func TestConcurrentActivation_OneWinnerOneActiveRunError(t *testing.T) {
 	assert.Equal(t, 1, active, "the partial unique index allows only one active run")
 }
 
-// TestActivePerScheduleIndexUsedByHasActiveSchedule asserts the active-run
+// TestActivePerScheduleIndexUsedByHasActiveRun asserts the active-run
 // lookup uses an index scan over idx_runs_schedule_name_created
 // rather than a sequential scan.
 func TestActiveScheduleLookupUsesIndex(t *testing.T) {
@@ -161,7 +161,7 @@ func TestActiveScheduleLookupUsesIndex(t *testing.T) {
 		ORDER BY created_at DESC LIMIT 1
 	`)
 	assert.Contains(t, plan, "idx_runs_schedule_name_created",
-		"HasActiveSchedule must be able to use the schedule_name index; plan was:\n%s", plan)
+		"HasActiveRun must be able to use the schedule_name index; plan was:\n%s", plan)
 }
 
 // TestGetLastRunPerSchedule_UsesIndex asserts the DISTINCT ON last-run scan,

@@ -30,7 +30,7 @@ func recordLoadedVersion(ctx context.Context, u uow.UnitOfWork, tenantID string,
 	task, err := u.TaskCollection(tenantID).GetByID(ctx, taskID)
 	if errors.Is(err, run.ErrTaskNotFound) {
 		logger.Warn("task status: task row not found; no loaded version recorded",
-			"task_id", taskID, "schedule_id", r.ScheduleID(), "release_id", r.ReleaseID())
+			"task_id", taskID, "run_id", r.RunID(), "release_id", r.ReleaseID())
 		return nil
 	}
 	if err != nil {
@@ -51,7 +51,7 @@ func recordLoadedVersion(ctx context.Context, u uow.UnitOfWork, tenantID string,
 		ContentHash: hash,
 		ImageTag:    task.ImageTag,
 		ReleaseID:   r.ReleaseID(),
-		RunID:       r.ScheduleID(),
+		RunID:       r.RunID(),
 		TaskID:      taskID,
 		At:          u.Clock().Now(),
 		Source:      seeds.SourceBuild,

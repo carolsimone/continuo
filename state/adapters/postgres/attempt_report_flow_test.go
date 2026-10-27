@@ -21,7 +21,7 @@ import (
 func (f statusFlow) report(t *testing.T, key string, n int32, status run.AttemptStatus, reason model.FailureReason) {
 	t.Helper()
 	f.reportWith(t, run.AttemptReport{
-		TaskID: run.TaskIDFor(f.tenant, f.r.ScheduleID(), topology.NodeKey(key)), Attempt: n, Status: status, FailureReason: reason,
+		TaskID: run.TaskIDFor(f.tenant, f.r.RunID(), topology.NodeKey(key)), Attempt: n, Status: status, FailureReason: reason,
 	})
 }
 
@@ -32,7 +32,7 @@ func (f statusFlow) reportWith(t *testing.T, rep run.AttemptReport) {
 	require.NoError(t, u.Begin(ctx))
 	defer u.Rollback()
 	require.NoError(t, handlers.NewAttemptReportHandler(f.tenant, testTaskDefaults, noRunMetrics{}, discardLogger()).Handle(ctx, u,
-		events.AttemptReported{RunID: f.r.ScheduleID(), Report: rep}, uuid.Nil))
+		events.AttemptReported{RunID: f.r.RunID(), Report: rep}, uuid.Nil))
 	require.NoError(t, u.Commit())
 }
 
@@ -43,7 +43,7 @@ func (f statusFlow) dueIn(t *testing.T, key string, n int32) *time.Duration {
 	var secs *float64
 	require.NoError(t, f.db.Get(&secs, `
 		SELECT EXTRACT(EPOCH FROM next_check_at - now())::float8 FROM task_attempts WHERE task_id = $1 AND attempt = $2`,
-		run.TaskIDFor(f.tenant, f.r.ScheduleID(), topology.NodeKey(key)), n))
+		run.TaskIDFor(f.tenant, f.r.RunID(), topology.NodeKey(key)), n))
 	if secs == nil {
 		return nil
 	}
@@ -55,7 +55,7 @@ func (f statusFlow) dueIn(t *testing.T, key string, n int32) *time.Duration {
 func (f statusFlow) outboxRows(t *testing.T) int {
 	t.Helper()
 	var n int
-	require.NoError(t, f.db.Get(&n, `SELECT count(*) FROM state_outbox WHERE aggregate_id = $1`, f.r.ScheduleID()))
+	require.NoError(t, f.db.Get(&n, `SELECT count(*) FROM state_outbox WHERE aggregate_id = $1`, f.r.RunID()))
 	return n
 }
 
@@ -81,7 +81,7 @@ func TestStart_StoresAttemptZeroOfEveryReadyTaskDueInFiveMinutes(t *testing.T) {
 	u := newPlanningUoW(db)
 	require.NoError(t, u.Begin(ctx))
 	defer u.Rollback()
-	inFlight, err := u.TaskCollection(f.tenant).HasInFlight(ctx, f.r.ScheduleID())
+	inFlight, err := u.TaskCollection(f.tenant).HasInFlight(ctx, f.r.RunID())
 	require.NoError(t, err)
 	assert.True(t, inFlight, "the tasks the run dispatched when it was created are in flight")
 }
@@ -97,7 +97,7 @@ func TestAttemptReport_ARetryIsDispatchedInTheTransactionThatRecordsTheFailure(t
 	code, logKey := int32(137), "logs/a-0.log"
 
 	f.reportWith(t, run.AttemptReport{
-		TaskID: run.TaskIDFor(tenant, f.r.ScheduleID(), "e2e_schema.ftable_a"), Attempt: 0, Status: run.AttemptFailed,
+		TaskID: run.TaskIDFor(tenant, f.r.RunID(), "e2e_schema.ftable_a"), Attempt: 0, Status: run.AttemptFailed,
 		FailureReason: model.FailureReasonOOMKilled, ExitCode: &code, LogS3Key: &logKey,
 	})
 
@@ -115,7 +115,7 @@ func TestAttemptReport_ARetryIsDispatchedInTheTransactionThatRecordsTheFailure(t
 		Log    string `db:"log_s3_key"`
 	}
 	require.NoError(t, db.Get(&facts, `SELECT failure_class, failure_reason, exit_code, log_s3_key FROM task_attempts
-		WHERE task_id = $1 AND attempt = 0`, run.TaskIDFor(tenant, f.r.ScheduleID(), "e2e_schema.ftable_a")))
+		WHERE task_id = $1 AND attempt = 0`, run.TaskIDFor(tenant, f.r.RunID(), "e2e_schema.ftable_a")))
 	assert.Equal(t, "resource", facts.Class)
 	assert.Equal(t, "oom_killed", facts.Reason)
 	assert.Equal(t, int32(137), facts.Exit)
@@ -134,7 +134,7 @@ func TestAttemptReport_AnEqualRankReportMovesOnlyTheNextCheck(t *testing.T) {
 	f := statusFlow{db: db, tenant: tenant, r: startScheduleRun(t, db, tenant, "e2e-schedule-failure", model.OperationRun)}
 	f.report(t, "e2e_schema.ftable_a", 0, run.AttemptRunning, "")
 	_, err := db.Exec(`UPDATE task_attempts SET next_check_at = now() + interval '1 minute' WHERE task_id = $1`,
-		run.TaskIDFor(tenant, f.r.ScheduleID(), "e2e_schema.ftable_a"))
+		run.TaskIDFor(tenant, f.r.RunID(), "e2e_schema.ftable_a"))
 	require.NoError(t, err)
 
 	f.report(t, "e2e_schema.ftable_a", 0, run.AttemptRunning, "")
@@ -148,7 +148,7 @@ func TestAttemptReport_AnEqualRankReportMovesOnlyTheNextCheck(t *testing.T) {
 // flowSnapshot is what a run's reports write: its status and terminal count,
 // each task's status and attempt rows by node key, and its outbox rows.
 type flowSnapshot struct {
-	status   run.SchedulerStatus
+	status   run.RunStatus
 	terminal int32
 	statuses map[string]run.TaskStatus
 	attempts map[string][]attemptRow
@@ -181,8 +181,8 @@ func TestAttemptReport_AReportNamingAnotherRunIsRefused(t *testing.T) {
 	require.NoError(t, u.Begin(ctx))
 	defer u.Rollback()
 	err := handlers.NewAttemptReportHandler(tenantA, testTaskDefaults, noRunMetrics{}, discardLogger()).Handle(ctx, u,
-		events.AttemptReported{RunID: a.r.ScheduleID(), Report: run.AttemptReport{
-			TaskID:  run.TaskIDFor(tenantB, b.r.ScheduleID(), "e2e_schema.ftable_a"),
+		events.AttemptReported{RunID: a.r.RunID(), Report: run.AttemptReport{
+			TaskID:  run.TaskIDFor(tenantB, b.r.RunID(), "e2e_schema.ftable_a"),
 			Attempt: 0, Status: run.AttemptSucceeded,
 		}}, uuid.Nil)
 	require.ErrorIs(t, err, run.ErrTaskNotHeld)
@@ -218,7 +218,7 @@ func TestAttemptReport_TheExampleRunMovesInItsReportTransactions(t *testing.T) {
 	}, f.statuses(t))
 	assert.Len(t, f.attempts(t, "e2e_schema.ftable_e"), 3)
 	status, terminal := f.run(t)
-	assert.Equal(t, run.SchedulerStatusFailed, status)
+	assert.Equal(t, run.RunStatusFailed, status)
 	assert.Equal(t, int32(8), terminal)
 	assert.Equal(t, 2+2+2+4, f.outboxRows(t), "two roots, then ftable_g, ftable_c, ftable_d and ftable_e, then two retries each of ftable_e and ftable_g")
 }
@@ -234,13 +234,13 @@ func TestFailStalled_SavesTheRunFailedAsStalled(t *testing.T) {
 	f.report(t, "e2e_schema.ftable_b", 0, run.AttemptSucceeded, "")
 	// A defect leaves the tasks the two successes made ready undispatched.
 	_, err := db.Exec(`UPDATE tasks SET status = 'pending', dispatched_at = NULL WHERE run_id = $1 AND status = 'dispatched'`,
-		f.r.ScheduleID())
+		f.r.RunID())
 	require.NoError(t, err)
 
 	u := newPlanningUoW(db)
 	require.NoError(t, u.Begin(ctx))
 	defer u.Rollback()
-	r, err := u.Run().LoadRunForUpdate(ctx, f.r.ScheduleID())
+	r, err := u.Run().LoadRunForUpdate(ctx, f.r.RunID())
 	require.NoError(t, err)
 	check, err := r.FailStalled(ctx, u.TaskCollection(f.tenant), u.TaskGraph(f.tenant), testTaskDefaults,
 		time.Now().Add(run.StallAfter+time.Minute))
@@ -254,12 +254,12 @@ func TestFailStalled_SavesTheRunFailedAsStalled(t *testing.T) {
 		Reason   *string `db:"failure_reason"`
 		Terminal int32   `db:"terminal_task_count"`
 	}
-	require.NoError(t, db.Get(&row, `SELECT status, failure_reason, terminal_task_count FROM runs WHERE run_id = $1`, f.r.ScheduleID()))
+	require.NoError(t, db.Get(&row, `SELECT status, failure_reason, terminal_task_count FROM runs WHERE run_id = $1`, f.r.RunID()))
 	assert.Equal(t, "failed", row.Status)
 	require.NotNil(t, row.Reason)
 	assert.Equal(t, "stalled", *row.Reason)
 	assert.Equal(t, int32(8), row.Terminal)
-	reloaded, err := newPlanningUoW(db).Run().GetRun(ctx, f.r.ScheduleID())
+	reloaded, err := newPlanningUoW(db).Run().GetRun(ctx, f.r.RunID())
 	require.NoError(t, err)
 	require.NotNil(t, reloaded.FailureReason())
 	assert.Equal(t, run.RunFailureStalled, *reloaded.FailureReason())

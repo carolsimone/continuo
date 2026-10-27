@@ -18,11 +18,11 @@ import (
 // HydrateRun constructor to rebuild a Run from persisted rows; application
 // code never calls Hydrate.
 type Run struct {
-	scheduleID   uuid.UUID
+	runID        uuid.UUID
 	scheduleName string
 
 	// runs columns
-	status      SchedulerStatus
+	status      RunStatus
 	initStatus  InitStatus
 	kind        Kind
 	sourceRunID *uuid.UUID
@@ -40,7 +40,7 @@ type Run struct {
 	createdAt          time.Time
 	startedAt          *time.Time
 	completedAt        *time.Time
-	lastHeartbeatAt    *time.Time
+	lastProgressAt     *time.Time
 	cancelledAt        *time.Time
 	cancelledBy        *string
 	cancellationReason *string
@@ -81,23 +81,23 @@ type changeSet struct {
 // the postgres adapter inside LoadRunForUpdate / GetRun. Application code MUST
 // NOT call this — use one of the New* constructors instead.
 func HydrateRun(
-	scheduleID uuid.UUID,
+	runID uuid.UUID,
 	scheduleName string,
-	status SchedulerStatus,
+	status RunStatus,
 	initStatus InitStatus,
 	kind Kind,
 	sourceRunID *uuid.UUID,
 	initiatedBy string,
 	operation model.Operation,
 	createdAt time.Time,
-	startedAt, completedAt, lastHeartbeatAt, cancelledAt *time.Time,
+	startedAt, completedAt, lastProgressAt, cancelledAt *time.Time,
 	cancelledBy, cancellationReason *string,
 	total *int32,
 	terminal int32,
 	serviceMetadata map[string]ServiceMetadata,
 ) *Run {
 	return &Run{
-		scheduleID:         scheduleID,
+		runID:              runID,
 		scheduleName:       scheduleName,
 		status:             status,
 		initStatus:         initStatus,
@@ -108,7 +108,7 @@ func HydrateRun(
 		createdAt:          createdAt,
 		startedAt:          startedAt,
 		completedAt:        completedAt,
-		lastHeartbeatAt:    lastHeartbeatAt,
+		lastProgressAt:     lastProgressAt,
 		cancelledAt:        cancelledAt,
 		cancelledBy:        cancelledBy,
 		cancellationReason: cancellationReason,
@@ -132,7 +132,7 @@ func (r *Run) HydrateFailureReason(reason *RunFailureReason) { r.failureReason =
 
 // NewPendingRun creates a fresh PENDING Run of a schedule, fired by cron or
 // triggered. Caller flow: SchedulePolicy.ScheduleExistsInCatalog →
-// SchedulePolicy.IsScheduleAvailable → NewPendingRun → SaveRun → Start → SaveRun.
+// SchedulePolicy.EnsureNoActiveRun → NewPendingRun → SaveRun → Start → SaveRun.
 //
 // operation is the dbt verb (run/test/build) the run applies to every node it
 // executes. Callers other than a manual TriggerSchedule (cron, etc.) pass
@@ -159,9 +159,9 @@ func NewPendingRun(
 		metadata = map[string]ServiceMetadata{}
 	}
 	r := &Run{
-		scheduleID:      uuid.New(),
+		runID:           uuid.New(),
 		scheduleName:    scheduleName,
-		status:          SchedulerStatusPending,
+		status:          RunStatusPending,
 		initStatus:      InitStatusInProgress,
 		kind:            kind,
 		sourceRunID:     sourceRunID,
@@ -199,9 +199,9 @@ func NewDerivedRun(
 		return nil, ErrInvalidKind
 	}
 	r := &Run{
-		scheduleID:      uuid.New(),
+		runID:           uuid.New(),
 		scheduleName:    scheduleName,
-		status:          SchedulerStatusPending,
+		status:          RunStatusPending,
 		initStatus:      InitStatusInProgress,
 		kind:            kind,
 		sourceRunID:     &sourceRunID,
@@ -209,7 +209,7 @@ func NewDerivedRun(
 		operation:       operation,
 		release:         stamp,
 		createdAt:       now,
-		lastHeartbeatAt: &now,
+		lastProgressAt:  &now,
 		serviceMetadata: map[string]ServiceMetadata{},
 	}
 	r.changes.created = true
@@ -232,9 +232,9 @@ func NewSingleNodeRun(
 		return nil, ErrScheduleNameRequired
 	}
 	r := &Run{
-		scheduleID:      uuid.New(),
+		runID:           uuid.New(),
 		scheduleName:    scheduleName,
-		status:          SchedulerStatusRunning,
+		status:          RunStatusRunning,
 		initStatus:      InitStatusInProgress,
 		kind:            KindSingleNodeRun,
 		sourceRunID:     sourceRunID,
@@ -242,7 +242,7 @@ func NewSingleNodeRun(
 		operation:       operation,
 		release:         stamp,
 		createdAt:       now,
-		lastHeartbeatAt: &now,
+		lastProgressAt:  &now,
 		serviceMetadata: map[string]ServiceMetadata{},
 	}
 	r.changes.created = true
@@ -277,15 +277,15 @@ func NewPromotedSeedsRun(
 		return nil, ErrReleaseIDRequired
 	}
 	r := &Run{
-		scheduleID:      id,
+		runID:           id,
 		scheduleName:    scheduleName,
-		status:          SchedulerStatusRunning,
+		status:          RunStatusRunning,
 		initStatus:      InitStatusInProgress,
 		kind:            KindPromoteSeed,
 		release:         stamp,
 		initiatedBy:     "system",
 		createdAt:       now,
-		lastHeartbeatAt: &now,
+		lastProgressAt:  &now,
 		serviceMetadata: map[string]ServiceMetadata{},
 	}
 	r.changes.created = true
@@ -296,9 +296,9 @@ func NewPromotedSeedsRun(
 // Getters (read-only — adapters and gRPC mappers use these)
 // ============================================================================
 
-func (r *Run) ScheduleID() uuid.UUID            { return r.scheduleID }
+func (r *Run) RunID() uuid.UUID                 { return r.runID }
 func (r *Run) ScheduleName() string             { return r.scheduleName }
-func (r *Run) Status() SchedulerStatus          { return r.status }
+func (r *Run) Status() RunStatus                { return r.status }
 func (r *Run) Kind() Kind                       { return r.kind }
 func (r *Run) SourceRunID() *uuid.UUID          { return r.sourceRunID }
 func (r *Run) Release() ReleaseStamp            { return r.release }
@@ -309,7 +309,7 @@ func (r *Run) InitializationStatus() InitStatus { return r.initStatus }
 func (r *Run) CreatedAt() time.Time             { return r.createdAt }
 func (r *Run) StartedAt() *time.Time            { return r.startedAt }
 func (r *Run) CompletedAt() *time.Time          { return r.completedAt }
-func (r *Run) LastHeartbeatAt() *time.Time      { return r.lastHeartbeatAt }
+func (r *Run) LastProgressAt() *time.Time       { return r.lastProgressAt }
 func (r *Run) CancelledAt() *time.Time          { return r.cancelledAt }
 func (r *Run) CancelledBy() *string             { return r.cancelledBy }
 func (r *Run) CancellationReason() *string      { return r.cancellationReason }
@@ -416,13 +416,13 @@ func (r *Run) Start(
 		if !ok {
 			return nil, fmt.Errorf("%w: %s", ErrPlanNodeNotInGraph, p.Key)
 		}
-		jobName, err := domain.ComputeJobName(n.ServiceName, n.SchemaName, n.TableName, r.scheduleID.String(), 0)
+		jobName, err := domain.ComputeJobName(n.ServiceName, n.SchemaName, n.TableName, r.runID.String(), 0)
 		if err != nil {
 			return nil, fmt.Errorf("name the job of %s: %w", p.Key, err)
 		}
 		t := Task{
-			TaskID:      TaskIDFor(tenantID, r.scheduleID, p.Key),
-			ScheduleID:  r.scheduleID,
+			TaskID:      TaskIDFor(tenantID, r.runID, p.Key),
+			ScheduleID:  r.runID,
 			CreatedAt:   now,
 			ServiceName: n.ServiceName,
 			SchemaName:  n.SchemaName,
@@ -448,7 +448,7 @@ func (r *Run) Start(
 	}
 
 	if err := tasks.BulkCreate(ctx, built); err != nil {
-		return nil, fmt.Errorf("bulk create task: %w", err)
+		return nil, fmt.Errorf("bulk create tasks: %w", err)
 	}
 	events, err := r.dispatch(ctx, tasks, toDispatch, d, now)
 	if err != nil {
@@ -461,7 +461,7 @@ func (r *Run) Start(
 	r.initStatus = InitStatusCompleted
 	planned := now
 	r.plannedAt = &planned
-	r.status = SchedulerStatusRunning
+	r.status = RunStatusRunning
 	started := now
 	r.startedAt = &started
 	r.changes.totalTaskCountDirty = true
@@ -473,7 +473,7 @@ func (r *Run) Start(
 	r.recordProgress(now)
 
 	if !plan.HasPending() {
-		return append(events, r.finalize(SchedulerStatusSucceeded, now)...), nil
+		return append(events, r.finalize(RunStatusSucceeded, now)...), nil
 	}
 	return events, nil
 }
@@ -505,21 +505,21 @@ func (r *Run) Cancel(
 	if r.IsTerminal() {
 		return nil, ErrAlreadyTerminal
 	}
-	if r.status == SchedulerStatusCancelling {
+	if r.status == RunStatusCancelling {
 		return nil, ErrAlreadyCancelling
 	}
-	counts, err := tasks.BeginStop(ctx, r.scheduleID, by, now)
+	counts, err := tasks.BeginStop(ctx, r.runID, by, now)
 	if err != nil {
-		return nil, fmt.Errorf("stop the tasks of run %s: %w", r.scheduleID, err)
+		return nil, fmt.Errorf("stop the tasks of run %s: %w", r.runID, err)
 	}
 	if counts.Stopping > 0 {
-		targets, err := tasks.RequestStops(ctx, r.scheduleID)
+		targets, err := tasks.RequestStops(ctx, r.runID)
 		if err != nil {
-			return nil, fmt.Errorf("ask the attempts of run %s to stop: %w", r.scheduleID, err)
+			return nil, fmt.Errorf("ask the attempts of run %s to stop: %w", r.runID, err)
 		}
 		if len(targets) != counts.Stopping {
 			return nil, fmt.Errorf("run %s: %d tasks stopping, %d attempts asked to stop: %w",
-				r.scheduleID, counts.Stopping, len(targets), ErrStopUnanswerable)
+				r.runID, counts.Stopping, len(targets), ErrStopUnanswerable)
 		}
 	}
 	if counts.Cancelled > 0 {
@@ -539,26 +539,26 @@ func (r *Run) Cancel(
 	}
 	r.changes.cancelDirty = true
 	r.changes.statusDirty = true
-	events := []DomainEvent{RunCancelled{ID: r.scheduleID, Name: r.scheduleName, By: by, CancellationReason: reason}}
+	events := []DomainEvent{RunCancelled{ID: r.runID, Name: r.scheduleName, By: by, CancellationReason: reason}}
 
 	if counts.Stopping > 0 {
-		r.status = SchedulerStatusCancelling
+		r.status = RunStatusCancelling
 		r.recordProgress(now)
 		return events, nil
 	}
 	// The cancel path persists the run through cancelDirty (Changes), which
 	// writes completed_at with the status; completedDirty stays clear.
-	r.status = SchedulerStatusCancelled
+	r.status = RunStatusCancelled
 	completedAt := now
 	r.completedAt = &completedAt
-	return append(events, RunFinalized{ID: r.scheduleID, Name: r.scheduleName, Outcome: SchedulerStatusCancelled}), nil
+	return append(events, RunFinalized{ID: r.runID, Name: r.scheduleName, Outcome: RunStatusCancelled}), nil
 }
 
 // recordProgress stamps the run's progress clock with now. The clock reads the
 // last dispatch or move of a task; FailStalled measures StallAfter from it.
 func (r *Run) recordProgress(now time.Time) {
 	at := now
-	r.lastHeartbeatAt = &at
+	r.lastProgressAt = &at
 	r.changes.heartbeatDirty = true
 }
 
@@ -573,10 +573,10 @@ func (r *Run) fillSlot() {
 // upstream has succeeded, in key order (dispatch). Only a running run
 // dispatches: a cancelling one starts nothing.
 func (r *Run) dispatchReady(ctx context.Context, tasks TaskCollection, graph TaskGraph, key topology.NodeKey, d TaskDefaults, now time.Time) ([]DomainEvent, error) {
-	if r.status != SchedulerStatusRunning {
+	if r.status != RunStatusRunning {
 		return nil, nil
 	}
-	candidates, err := graph.ReadyCandidates(ctx, r.scheduleID, r.release.ReleaseID, key)
+	candidates, err := graph.ReadyCandidates(ctx, r.runID, r.release.ReleaseID, key)
 	if err != nil {
 		return nil, fmt.Errorf("read the tasks %s's success may make ready: %w", key, err)
 	}
@@ -666,7 +666,7 @@ func firstAttempt(taskID uuid.UUID, jobName string, at *time.Time) Attempt {
 // r's run, with its node's timeout (d's when the node declares none).
 func (r *Run) dispatchEvent(taskID uuid.UUID, n int32, node topology.Node, jobName string, d TaskDefaults) TaskDispatched {
 	return TaskDispatched{
-		ID:           r.scheduleID,
+		ID:           r.runID,
 		ScheduleName: r.scheduleName,
 		TaskID:       taskID,
 		Attempt:      n,
@@ -681,7 +681,7 @@ func (r *Run) dispatchEvent(taskID uuid.UUID, n int32, node topology.Node, jobNa
 // skipBlocked skips the pending, undispatched tasks of r below the task at
 // key, which has failed for good, and counts each one it skips as terminal.
 func (r *Run) skipBlocked(ctx context.Context, tasks TaskCollection, graph TaskGraph, key topology.NodeKey) error {
-	blocked, err := graph.PendingDescendants(ctx, r.scheduleID, r.release.ReleaseID, key)
+	blocked, err := graph.PendingDescendants(ctx, r.runID, r.release.ReleaseID, key)
 	if err != nil {
 		return fmt.Errorf("read the tasks %s's failure blocks: %w", key, err)
 	}
@@ -711,24 +711,24 @@ func (r *Run) MarkDispatchTerminal(benign bool, failure RunFailureReason, reason
 	if r.IsTerminal() {
 		return nil, nil
 	}
-	outcome := SchedulerStatusFailed
+	outcome := RunStatusFailed
 	if benign {
-		outcome = SchedulerStatusSkipped
+		outcome = RunStatusSkipped
 	} else {
 		r.failureReason = &failure
 	}
 	evts := r.finalize(outcome, now)
-	side := RunDispatchTerminal{ID: r.scheduleID, Name: r.scheduleName, Reason: reason}
+	side := RunDispatchTerminal{ID: r.runID, Name: r.scheduleName, Reason: reason}
 	return append(evts, side), nil
 }
 
-func (r *Run) finalize(outcome SchedulerStatus, now time.Time) []DomainEvent {
+func (r *Run) finalize(outcome RunStatus, now time.Time) []DomainEvent {
 	r.status = outcome
 	completedAt := now
 	r.completedAt = &completedAt
 	r.changes.statusDirty = true
 	r.changes.completedDirty = true
-	evt := RunFinalized{ID: r.scheduleID, Name: r.scheduleName, Outcome: outcome}
+	evt := RunFinalized{ID: r.runID, Name: r.scheduleName, Outcome: outcome}
 	return []DomainEvent{evt}
 }
 
@@ -754,10 +754,10 @@ func (r *Run) CanBeRebaseSource(ctx context.Context, tasks TaskCollection) error
 // returned when no non-SUCCEEDED task exists, so callers can tell the two
 // trigger paths apart.
 func (r *Run) canBeDerivedSource(ctx context.Context, tasks TaskCollection, nothingErr error) error {
-	if r.status != SchedulerStatusFailed && r.status != SchedulerStatusCancelled {
+	if r.status != RunStatusFailed && r.status != RunStatusCancelled {
 		return ErrSourceMustBeTerminallyFailedOrCancelled
 	}
-	has, err := tasks.HasNonSucceeded(ctx, r.scheduleID)
+	has, err := tasks.HasNonSucceeded(ctx, r.runID)
 	if err != nil {
 		return fmt.Errorf("has non-succeeded: %w", err)
 	}
@@ -770,7 +770,7 @@ func (r *Run) canBeDerivedSource(ctx context.Context, tasks TaskCollection, noth
 // HasTaskAt is used by TriggerSingleNodeRun's stale-mode precondition: the
 // source run must carry a task at the requested node.
 func (r *Run) HasTaskAt(ctx context.Context, tasks TaskCollection, node NodeID) (bool, error) {
-	_, err := tasks.GetByNode(ctx, r.scheduleID, node)
+	_, err := tasks.GetByNode(ctx, r.runID, node)
 	if err == ErrTaskNotFound {
 		return false, nil
 	}

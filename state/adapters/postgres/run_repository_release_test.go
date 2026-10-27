@@ -20,7 +20,7 @@ import (
 func newReleaseRunUoW(db *sqlx.DB) *postgres.PostgresUnitOfWork {
 	logger := discardLogger()
 	return postgres.NewPostgresUnitOfWork(db,
-		postgres.NewSchedulerTrackerRepository(db, logger), postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, logger),
+		postgres.NewRunTableRepository(db, logger), postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, logger),
 		postgres.NewScheduleCatalogRepository(db, logger),
 		ports.SystemClock{}, logger)
 }
@@ -74,14 +74,14 @@ func TestRunRepository_RunWithoutAReleaseStoresNull(t *testing.T) {
 	db := newTestDB(t)
 	rn, err := run.NewPendingRun("no-release-"+uuid.NewString()[:8], run.KindTrigger, nil, "", nil, model.OperationRun, run.ReleaseStamp{}, time.Now())
 	require.NoError(t, err)
-	t.Cleanup(func() { _, _ = db.Exec(`DELETE FROM runs WHERE run_id = $1`, rn.ScheduleID()) })
+	t.Cleanup(func() { _, _ = db.Exec(`DELETE FROM runs WHERE run_id = $1`, rn.RunID()) })
 	u := newReleaseRunUoW(db)
 	saveRuns(t, u, rn)
 
 	var stored sql.NullString
-	require.NoError(t, db.Get(&stored, `SELECT release_id FROM runs WHERE run_id = $1`, rn.ScheduleID()))
+	require.NoError(t, db.Get(&stored, `SELECT release_id FROM runs WHERE run_id = $1`, rn.RunID()))
 	assert.False(t, stored.Valid)
-	read, err := u.Run().GetRun(ctx, rn.ScheduleID())
+	read, err := u.Run().GetRun(ctx, rn.RunID())
 	require.NoError(t, err)
 	assert.Empty(t, read.ReleaseID())
 }
@@ -144,7 +144,7 @@ func TestRunRepository_RunKeepsItsReleaseStamp(t *testing.T) {
 	require.NoError(t, err)
 	withoutStamp, err := run.NewDerivedRun("stamp-"+unstamped.String()[:8], run.KindRerun, uuid.New(), run.ReleaseStamp{}, "alice", model.OperationRun, time.Now())
 	require.NoError(t, err)
-	stamped, unstamped = withStamp.ScheduleID(), withoutStamp.ScheduleID()
+	stamped, unstamped = withStamp.RunID(), withoutStamp.RunID()
 	saveRuns(t, u, withStamp, withoutStamp)
 
 	var seq sql.NullInt64

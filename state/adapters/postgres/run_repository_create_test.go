@@ -11,13 +11,13 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-// existingRunSchedRepo is a SchedulerTrackerRepository whose CreateTx reports
+// existingRunSchedRepo is a RunTableRepository whose CreateTx reports
 // that the row already exists. Only CreateTx is exercised.
 type existingRunSchedRepo struct {
-	SchedulerTrackerRepository
+	RunTableRepository
 }
 
-func (existingRunSchedRepo) CreateTx(_ context.Context, _ *sqlx.Tx, _ *SchedulerTracker) error {
+func (existingRunSchedRepo) CreateTx(_ context.Context, _ *sqlx.Tx, _ *RunRow) error {
 	return ErrRunExists
 }
 

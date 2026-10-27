@@ -1,5 +1,5 @@
 // Package runsettle cancels, when state starts, every active run whose tasks
-// state did not plan. Such a run's tasks record neither when they were
+// state did not plan. Such a run's task record neither when they were
 // dispatched nor which of them wait on which, so no status update can move it
 // on; cancelling it ends it, or stops the work it has in flight (Run.Cancel),
 // and run.cancelled:v1 tells execution-controller to fence the run and stop
@@ -39,7 +39,7 @@ func Settle(ctx context.Context, newUoW func() uow.UnitOfWork, logger *slog.Logg
 		}
 		if done {
 			cancelled++
-			logger.Warn("Cancelled a run whose tasks state did not plan", "schedule_id", id, "reason", Reason)
+			logger.Warn("Cancelled a run whose tasks state did not plan", "run_id", id, "reason", Reason)
 		}
 	}
 	return cancelled, nil

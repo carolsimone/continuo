@@ -100,20 +100,20 @@ func TestTaskGraph_ReadyCandidatesOfTheExampleRun(t *testing.T) {
 	setTaskStatus(t, db, r, "e2e_schema.ftable_a", run.TaskStatusSucceeded)
 
 	inGraphTx(t, db, tenant, func(g *postgres.TaskGraph) {
-		got, err := g.ReadyCandidates(ctx, r.ScheduleID(), "rel-1", "e2e_schema.ftable_a")
+		got, err := g.ReadyCandidates(ctx, r.RunID(), "rel-1", "e2e_schema.ftable_a")
 		require.NoError(t, err)
 		require.Len(t, got, 2)
 		assert.Equal(t, topology.NodeKey("e2e_schema.ftable_c"), got[0].Node.Key)
 		assert.Equal(t, []run.TaskStatus{run.TaskStatusSucceeded, run.TaskStatusDispatched}, got[0].UpstreamStatuses,
 			"ftable_b was dispatched with the run")
 		assert.False(t, got[0].Ready())
-		assert.Equal(t, run.TaskIDFor(tenant, r.ScheduleID(), "e2e_schema.ftable_g"), got[1].TaskID)
+		assert.Equal(t, run.TaskIDFor(tenant, r.RunID(), "e2e_schema.ftable_g"), got[1].TaskID)
 		assert.Equal(t, topology.Node{
 			Key: "e2e_schema.ftable_g", UniqueID: "e2e_schema.ftable_g", ServiceName: "service-1", SchemaName: "e2e_schema",
 			TableName: "ftable_g", NodeType: "dbt-model", ContentHash: "h-ftable_g", ImageTag: "service-1:5",
 			ScheduleName: "e2e-schedule-failure",
 		}, got[1].Node)
-		jobName, err := domain.ComputeJobName("service-1", "e2e_schema", "ftable_g", r.ScheduleID().String(), 0)
+		jobName, err := domain.ComputeJobName("service-1", "e2e_schema", "ftable_g", r.RunID().String(), 0)
 		require.NoError(t, err)
 		assert.Equal(t, jobName, got[1].JobName)
 		assert.Equal(t, []run.TaskStatus{run.TaskStatusSucceeded}, got[1].UpstreamStatuses)
@@ -122,7 +122,7 @@ func TestTaskGraph_ReadyCandidatesOfTheExampleRun(t *testing.T) {
 
 	setTaskStatus(t, db, r, "e2e_schema.ftable_b", run.TaskStatusSucceeded)
 	inGraphTx(t, db, tenant, func(g *postgres.TaskGraph) {
-		got, err := g.ReadyCandidates(ctx, r.ScheduleID(), "rel-1", "e2e_schema.ftable_b")
+		got, err := g.ReadyCandidates(ctx, r.RunID(), "rel-1", "e2e_schema.ftable_b")
 		require.NoError(t, err)
 		require.Len(t, got, 1)
 		assert.Equal(t, topology.NodeKey("e2e_schema.ftable_c"), got[0].Node.Key)
@@ -139,12 +139,12 @@ func TestTaskGraph_ReadyCandidatesLeaveOutDispatchedAndFinishedTasks(t *testing.
 	r := startScheduleRun(t, db, tenant, "e2e-schedule-failure", model.OperationRun)
 	setTaskStatus(t, db, r, "e2e_schema.ftable_a", run.TaskStatusSucceeded)
 	_, err := db.Exec(`UPDATE tasks SET dispatched_at = $3 WHERE run_id = $1 AND node_key = $2`,
-		r.ScheduleID(), "e2e_schema.ftable_g", time.Now())
+		r.RunID(), "e2e_schema.ftable_g", time.Now())
 	require.NoError(t, err)
 	setTaskStatus(t, db, r, "e2e_schema.ftable_c", run.TaskStatusSkipped)
 
 	inGraphTx(t, db, tenant, func(g *postgres.TaskGraph) {
-		got, err := g.ReadyCandidates(ctx, r.ScheduleID(), "rel-1", "e2e_schema.ftable_a")
+		got, err := g.ReadyCandidates(ctx, r.RunID(), "rel-1", "e2e_schema.ftable_a")
 		require.NoError(t, err)
 		assert.Empty(t, got)
 	})
@@ -244,7 +244,7 @@ func TestTaskGraph_PendingDescendantsOfTheCascadeRoot(t *testing.T) {
 
 	inGraphTx(t, db, tenant, func(g *postgres.TaskGraph) {
 		start := time.Now()
-		got, err := g.PendingDescendants(ctx, r.ScheduleID(), "rel-1", "bench.fail_root")
+		got, err := g.PendingDescendants(ctx, r.RunID(), "rel-1", "bench.fail_root")
 		require.NoError(t, err)
 		t.Logf("PendingDescendants of the cascade root: %d tasks in %s", len(got), time.Since(start))
 		assert.Len(t, got, 1999)
@@ -253,6 +253,6 @@ func TestTaskGraph_PendingDescendantsOfTheCascadeRoot(t *testing.T) {
 			distinct[id] = true
 		}
 		assert.Len(t, distinct, 1999)
-		assert.NotContains(t, distinct, run.TaskIDFor(tenant, r.ScheduleID(), "bench.fail_root"))
+		assert.NotContains(t, distinct, run.TaskIDFor(tenant, r.RunID(), "bench.fail_root"))
 	})
 }

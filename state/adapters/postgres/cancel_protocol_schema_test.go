@@ -11,7 +11,7 @@ import (
 )
 
 // runs accepts exactly the run statuses of the run aggregate.
-func TestSchedulerTrackerSchema_StatusIsOneOfTheRunStatuses(t *testing.T) {
+func TestRunsSchema_StatusIsOneOfTheRunStatuses(t *testing.T) {
 	db := newTestDB(t)
 	insert := func(status string) error {
 		id := uuid.New()
@@ -21,7 +21,7 @@ func TestSchedulerTrackerSchema_StatusIsOneOfTheRunStatuses(t *testing.T) {
 			VALUES ($1, $2, $3)`, id, "schema-"+id.String(), status)
 		return err
 	}
-	for _, s := range run.SchedulerStatuses() {
+	for _, s := range run.RunStatuses() {
 		assert.NoError(t, insert(string(s)), "status %s", s)
 	}
 	err := insert("waiting")
@@ -31,7 +31,7 @@ func TestSchedulerTrackerSchema_StatusIsOneOfTheRunStatuses(t *testing.T) {
 
 // A cancelling run still holds its schedule's single active slot: a second
 // run of the schedule cannot start until it has ended cancelled.
-func TestSchedulerTrackerSchema_OneActiveRunPerScheduleCoversCancelling(t *testing.T) {
+func TestRunsSchema_OneActiveRunPerScheduleCoversCancelling(t *testing.T) {
 	db := newTestDB(t)
 	name := "schema-" + uuid.NewString()
 	first, second := uuid.New(), uuid.New()

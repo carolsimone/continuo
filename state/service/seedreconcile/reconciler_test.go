@@ -188,10 +188,10 @@ func (f *fakeRuns) SaveRun(_ context.Context, r *run.Run) error {
 		r.ResetChanges()
 		return nil
 	}
-	if f.taken[r.ScheduleID()] {
+	if f.taken[r.RunID()] {
 		return run.ErrRunAlreadyExists
 	}
-	f.taken[r.ScheduleID()] = true
+	f.taken[r.RunID()] = true
 	f.saved = append(f.saved, r)
 	f.count++
 	r.ResetChanges()
@@ -219,12 +219,12 @@ func (f *fakeRuns) LoadRunForUpdate(context.Context, uuid.UUID) (*run.Run, error
 	panic("LoadRunForUpdate is not used by the seed reconcile")
 }
 
-func (f *fakeRuns) HasActiveSchedule(context.Context, string) (bool, error) {
-	panic("HasActiveSchedule is not used by the seed reconcile")
+func (f *fakeRuns) HasActiveRun(context.Context, string) (bool, error) {
+	panic("HasActiveRun is not used by the seed reconcile")
 }
 
-func (f *fakeRuns) GetActiveScheduler(context.Context, string) (*run.Run, error) {
-	panic("GetActiveScheduler is not used by the seed reconcile")
+func (f *fakeRuns) GetActiveRun(context.Context, string) (*run.Run, error) {
+	panic("GetActiveRun is not used by the seed reconcile")
 }
 
 func (f *fakeRuns) GetLastRunPerSchedule(context.Context) (map[string]repository.LastRunSummary, error) {
@@ -339,10 +339,10 @@ func TestAfterPromotion_MovedBuildsTheSeedsWhoseContentDiffers(t *testing.T) {
 	wantID := seeds.RunID("rel-2", 1)
 	require.Len(t, w.runs.saved, 1)
 	created := w.runs.saved[0]
-	assert.Equal(t, wantID, created.ScheduleID())
+	assert.Equal(t, wantID, created.RunID())
 	assert.Equal(t, scheduleNameOf(wantID), created.ScheduleName())
 	assert.Equal(t, run.KindPromoteSeed, created.Kind())
-	assert.Equal(t, run.SchedulerStatusRunning, created.Status())
+	assert.Equal(t, run.RunStatusRunning, created.Status())
 	assert.Equal(t, run.ReleaseStamp{ReleaseID: "rel-2", PromotionSeq: 7}, created.Release())
 	assert.NotNil(t, created.PlannedAt())
 	require.Len(t, w.outbox.appended, 1)
@@ -473,7 +473,7 @@ func TestPass_NumbersTheRunAfterTheReleasesRuns(t *testing.T) {
 	require.NoError(t, w.reconciler(false).AfterPromotion(context.Background(), w.newUoW(), moved("rel-2", 7)))
 
 	require.Len(t, w.runs.saved, 1)
-	assert.Equal(t, seeds.RunID("rel-2", 3), w.runs.saved[0].ScheduleID())
+	assert.Equal(t, seeds.RunID("rel-2", 3), w.runs.saved[0].RunID())
 }
 
 // A run that holds the next id without naming the release moves the pass on to
@@ -485,7 +485,7 @@ func TestPass_SkipsARunIDAlreadyTaken(t *testing.T) {
 	require.NoError(t, w.reconciler(false).AfterPromotion(context.Background(), w.newUoW(), moved("rel-2", 7)))
 
 	require.Len(t, w.runs.saved, 1)
-	assert.Equal(t, seeds.RunID("rel-2", 2), w.runs.saved[0].ScheduleID())
+	assert.Equal(t, seeds.RunID("rel-2", 2), w.runs.saved[0].RunID())
 	assert.Equal(t, seeds.RunID("rel-2", 2), w.mats.attempts[0].runID)
 }
 

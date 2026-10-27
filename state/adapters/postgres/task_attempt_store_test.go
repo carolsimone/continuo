@@ -28,7 +28,7 @@ func attemptTx(t *testing.T, db *sqlx.DB, fn func(ctx context.Context, tx *sqlx.
 	tx, err := db.BeginTxx(ctx, nil)
 	require.NoError(t, err)
 	defer tx.Rollback() //nolint:errcheck
-	fn(ctx, tx, postgres.NewTaskCollectionAdapter(postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, discardLogger()), tx, "default"))
+	fn(ctx, tx, postgres.NewTaskCollectionAdapter(postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, discardLogger()), tx, "default"))
 }
 
 // newRunWithTasks inserts one run and n tasks of it, and deletes the run (and

@@ -22,11 +22,11 @@ func TestActivateSchedule_SkippedDuringMaintenance(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(&buf, nil))
 	opened := 0
 	cfg := &SchedulesConfig{Timezone: "UTC", Schedules: []ScheduleEntry{{Name: "daily", Cron: "0 1 * * *"}}}
-	s, err := NewCronSchedulerWithConfig(svchandlers.NewActivateScheduleHandler(defaultPlanner, logger),
+	s, err := NewCronSchedulerWithConfig(svchandlers.NewStartRunHandler(defaultPlanner, logger),
 		func() uow.UnitOfWork { opened++; return nil }, logger, cfg, true)
 	require.NoError(t, err)
 
-	s.activateSchedule("daily")
+	s.startScheduledRun("daily")
 
 	require.Zero(t, opened, "a cron fire during maintenance must not open a unit of work")
 	require.Contains(t, buf.String(), "maintenance")

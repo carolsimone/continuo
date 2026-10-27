@@ -78,10 +78,10 @@ func attemptState(runID uuid.NullUUID, status sql.NullString) seeds.AttemptState
 	if !runID.Valid || !status.Valid {
 		return seeds.AttemptNone
 	}
-	switch run.SchedulerStatus(status.String) {
-	case run.SchedulerStatusSucceeded:
+	switch run.RunStatus(status.String) {
+	case run.RunStatusSucceeded:
 		return seeds.AttemptSucceeded
-	case run.SchedulerStatusFailed, run.SchedulerStatusCancelled, run.SchedulerStatusSkipped:
+	case run.RunStatusFailed, run.RunStatusCancelled, run.RunStatusSkipped:
 		return seeds.AttemptFailed
 	default:
 		return seeds.AttemptInFlight
@@ -129,7 +129,7 @@ func (r *MaterializationRepository) RecordBuilt(ctx context.Context, tenantID st
 // running or cancelling): that row is the only record of the load in flight, and a release
 // that brings the node back before the run ends must find it there.
 func (r *MaterializationRepository) DeleteAbsentFrom(ctx context.Context, tenantID, releaseID string) (int64, error) {
-	unfinished := pq.Array(activeSchedulerStatuses())
+	unfinished := pq.Array(activeRunStatuses())
 	res, err := r.conn().ExecContext(ctx, `
 		DELETE FROM node_materializations m
 		WHERE m.tenant_id = $1

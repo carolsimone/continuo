@@ -11,7 +11,7 @@ import (
 
 // tasks accepts exactly the task statuses of the run aggregate, the
 // two an attempt waits in before it runs (dispatched, queued) among them.
-func TestTaskTrackerSchema_StatusIsOneOfTheTaskStatuses(t *testing.T) {
+func TestTasksSchema_StatusIsOneOfTheTaskStatuses(t *testing.T) {
 	db := newTestDB(t)
 	taskID := newSchemaTask(t, db)
 	for _, s := range run.TaskStatuses() {
@@ -25,7 +25,7 @@ func TestTaskTrackerSchema_StatusIsOneOfTheTaskStatuses(t *testing.T) {
 
 // A run records why it failed when no task of it failed, with one of the
 // run aggregate's reasons; a run that did not fail that way records none.
-func TestSchedulerTrackerSchema_FailureReasonIsOneOfTheRunFailureReasons(t *testing.T) {
+func TestRunsSchema_FailureReasonIsOneOfTheRunFailureReasons(t *testing.T) {
 	db := newTestDB(t)
 	insert := func(reason any) error {
 		id := uuid.New()

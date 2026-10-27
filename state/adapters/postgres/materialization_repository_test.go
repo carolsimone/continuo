@@ -20,7 +20,7 @@ import (
 
 // insertSeedRun inserts a promote-seed run in status and removes it when the
 // test ends.
-func insertSeedRun(t *testing.T, db *sqlx.DB, status run.SchedulerStatus) uuid.UUID {
+func insertSeedRun(t *testing.T, db *sqlx.DB, status run.RunStatus) uuid.UUID {
 	t.Helper()
 	id := uuid.New()
 	_, err := db.Exec(`
@@ -41,17 +41,17 @@ func TestMaterializationRepository_ListDerivesTheAttemptStateFromTheRun(t *testi
 	tenant := newTopoTenant(t, db)
 	repo := postgres.NewMaterializationRepository(db, nil)
 	cases := []struct {
-		status run.SchedulerStatus
+		status run.RunStatus
 		want   seeds.AttemptState
 	}{
-		{run.SchedulerStatusPending, seeds.AttemptInFlight},
-		{run.SchedulerStatusRunning, seeds.AttemptInFlight},
-		{run.SchedulerStatusSucceeded, seeds.AttemptSucceeded},
-		{run.SchedulerStatusFailed, seeds.AttemptFailed},
-		{run.SchedulerStatusCancelled, seeds.AttemptFailed},
-		{run.SchedulerStatusSkipped, seeds.AttemptFailed},
+		{run.RunStatusPending, seeds.AttemptInFlight},
+		{run.RunStatusRunning, seeds.AttemptInFlight},
+		{run.RunStatusSucceeded, seeds.AttemptSucceeded},
+		{run.RunStatusFailed, seeds.AttemptFailed},
+		{run.RunStatusCancelled, seeds.AttemptFailed},
+		{run.RunStatusSkipped, seeds.AttemptFailed},
 	}
-	runs := map[run.SchedulerStatus]uuid.UUID{}
+	runs := map[run.RunStatus]uuid.UUID{}
 	for _, tc := range cases {
 		runs[tc.status] = insertSeedRun(t, db, tc.status)
 		key := topology.KeyOf("raw", string(tc.status))
@@ -93,7 +93,7 @@ func TestMaterializationRepository_RecordBuiltLeavesTheRequestAlone(t *testing.T
 	db := newTestDB(t)
 	tenant := newTopoTenant(t, db)
 	repo := postgres.NewMaterializationRepository(db, nil)
-	runID := insertSeedRun(t, db, run.SchedulerStatusRunning)
+	runID := insertSeedRun(t, db, run.RunStatusRunning)
 	taskID := uuid.New()
 	require.NoError(t, repo.RecordAttempt(ctx, tenant, "raw.orders", "h2", runID, materializedAt))
 	require.NoError(t, repo.RecordBuilt(ctx, tenant, seeds.Built{
@@ -138,7 +138,7 @@ func TestMaterializationRepository_RecordAttemptLeavesTheVersionAlone(t *testing
 		Key: "raw.orders", ServiceName: "svc", SchemaName: "raw", TableName: "orders", NodeType: "dbt-seed",
 		ContentHash: "h1", ImageTag: "svc:1",
 	}, "rel-1", materializedAt)))
-	runID := insertSeedRun(t, db, run.SchedulerStatusFailed)
+	runID := insertSeedRun(t, db, run.RunStatusFailed)
 	require.NoError(t, repo.RecordAttempt(ctx, tenant, "raw.orders", "h3", runID, materializedAt.Add(time.Hour)))
 
 	got, err := repo.List(ctx, tenant)
@@ -191,7 +191,7 @@ func TestMaterializationRepository_DeleteAbsentFromKeepsTheReleasesNodes(t *test
 // is deleted like any other absent node's.
 func TestMaterializationRepository_DeleteAbsentFromKeepsARowWhoseBuildIsInFlight(t *testing.T) {
 	ctx := context.Background()
-	for _, inFlight := range []run.SchedulerStatus{run.SchedulerStatusPending, run.SchedulerStatusRunning} {
+	for _, inFlight := range []run.RunStatus{run.RunStatusPending, run.RunStatusRunning} {
 		t.Run(string(inFlight), func(t *testing.T) {
 			db := newTestDB(t)
 			tenant := newTopoTenant(t, db)
@@ -205,7 +205,7 @@ func TestMaterializationRepository_DeleteAbsentFromKeepsARowWhoseBuildIsInFlight
 			require.NoError(t, repo.RecordBuilt(ctx, tenant, seeds.Built{
 				Key: "raw.adopted", ContentHash: "h", ImageTag: "svc:1", ReleaseID: "rel-1", At: materializedAt, Source: seeds.SourceAdopted,
 			}))
-			require.NoError(t, repo.RecordAttempt(ctx, tenant, "raw.failed", "h", insertSeedRun(t, db, run.SchedulerStatusFailed), materializedAt))
+			require.NoError(t, repo.RecordAttempt(ctx, tenant, "raw.failed", "h", insertSeedRun(t, db, run.RunStatusFailed), materializedAt))
 
 			deleted, err := repo.DeleteAbsentFrom(ctx, tenant, "rel-2")
 			require.NoError(t, err)
@@ -239,7 +239,7 @@ func TestMaterializations_DeleteAbsentFromKeepsACancellingRunsRequest(t *testing
 	_, err := saveTopoRelease(t, db, topoRelease(t, tenant, "rel-2", 2, "bb", topoSpec("raw", "users", "dbt-seed", "h2")))
 	require.NoError(t, err)
 	repo := postgres.NewMaterializationRepository(db, nil)
-	runID := insertSeedRun(t, db, run.SchedulerStatusCancelling)
+	runID := insertSeedRun(t, db, run.RunStatusCancelling)
 	require.NoError(t, repo.RecordAttempt(ctx, tenant, "raw.orders", "h1", runID, materializedAt))
 
 	deleted, err := repo.DeleteAbsentFrom(ctx, tenant, "rel-2")
@@ -263,7 +263,7 @@ func TestPostgresUnitOfWork_MaterializationWritesRollBackWithTheTransaction(t *t
 	tenant := newTopoTenant(t, db)
 	logger := discardLogger()
 	u := postgres.NewPostgresUnitOfWork(db,
-		postgres.NewSchedulerTrackerRepository(db, logger), postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, logger),
+		postgres.NewRunTableRepository(db, logger), postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, logger),
 		postgres.NewScheduleCatalogRepository(db, logger),
 		ports.SystemClock{}, logger)
 

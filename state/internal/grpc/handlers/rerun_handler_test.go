@@ -25,8 +25,8 @@ import (
 
 type rerunFixture struct {
 	Handler       *RerunHandler
-	SchedulerRepo postgres.SchedulerTrackerRepository
-	TaskRepo      postgres.TaskTrackerRepository
+	SchedulerRepo postgres.RunTableRepository
+	TaskRepo      postgres.TaskRepository
 	DB            *sqlx.DB
 	Tenant        string
 	Cleanup       func()
@@ -39,8 +39,8 @@ func setupRerunFixture(t *testing.T) *rerunFixture {
 		testdeps.Unavailable(t, "no test DB available: %v", err)
 	}
 	logger := newTestLogger()
-	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
-	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, logger)
+	schedulerRepo := postgres.NewRunTableRepository(db, logger)
+	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, logger)
 	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
 	clk := ports.SystemClock{}
 	factory := func() uow.UnitOfWork {
@@ -63,7 +63,7 @@ func TestRerunHandler_HappyPath_FailedSource(t *testing.T) {
 	}
 
 	scheduleName := "rerun-happy-" + uuid.New().String()[:8]
-	srcID := seedTerminalRunWithFailedTask(t, fx, scheduleName, run.SchedulerStatusFailed)
+	srcID := seedTerminalRunWithFailedTask(t, fx, scheduleName, run.RunStatusFailed)
 
 	resp, err := rfx.Handler.TriggerRerun(context.Background(), &statev1.TriggerRerunRequest{
 		SourceRunId: srcID.String(),
@@ -83,7 +83,7 @@ func TestRerunHandler_HappyPath_FailedSource(t *testing.T) {
 	require.Equal(t, "rerun", tracker.Kind)
 	require.NotNil(t, tracker.SourceRunID)
 	require.Equal(t, srcID, *tracker.SourceRunID)
-	require.Equal(t, run.SchedulerStatusRunning, tracker.Status)
+	require.Equal(t, run.RunStatusRunning, tracker.Status)
 
 	// The failed task is dispatched again on the source's release.
 	requireDispatched(t, rfx.DB, newID, run.TaskIDFor(rfx.Tenant, newID, "s.t"), scheduleName)
@@ -95,7 +95,7 @@ func TestRerunHandler_RejectsASourceWithoutARelease(t *testing.T) {
 	defer rfx.Cleanup()
 	fx := &rebaseFixture{SchedulerRepo: rfx.SchedulerRepo, TaskRepo: rfx.TaskRepo, DB: rfx.DB, Tenant: rfx.Tenant, Cleanup: func() {}}
 
-	srcID := seedRunWithTaskStatus(t, fx, "rerun-rej-norelease-"+uuid.New().String()[:8], run.SchedulerStatusFailed, run.TaskStatusFailed)
+	srcID := seedRunWithTaskStatus(t, fx, "rerun-rej-norelease-"+uuid.New().String()[:8], run.RunStatusFailed, run.TaskStatusFailed)
 	_, err := rfx.Handler.TriggerRerun(context.Background(), &statev1.TriggerRerunRequest{SourceRunId: srcID.String()})
 	requireGRPCCode(t, err, codes.FailedPrecondition)
 }

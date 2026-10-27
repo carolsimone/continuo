@@ -148,7 +148,7 @@ func (r *RunReadRepository) ListCompletedRuns(ctx context.Context, scheduleName 
 	for _, row := range rows {
 		s := projection.RunSummary{
 			RunID: row.RunID, ScheduleName: row.ScheduleName,
-			TerminalStatus: run.SchedulerStatus(row.Status),
+			TerminalStatus: run.RunStatus(row.Status),
 			CreatedAt:      row.CreatedAt, CompletedAt: row.CompletedAt,
 		}
 		if row.FailReason != nil {
@@ -176,7 +176,7 @@ func (r *RunReadRepository) ListActiveRunDrifts(ctx context.Context, tenantID st
 		SELECT DISTINCT ON (schedule_name) schedule_name, run_id, promotion_seq
 		FROM runs
 		WHERE status = ANY($1::text[])
-		ORDER BY schedule_name, created_at DESC`, pq.Array(activeSchedulerStatuses())); err != nil {
+		ORDER BY schedule_name, created_at DESC`, pq.Array(activeRunStatuses())); err != nil {
 		return 0, nil, fmt.Errorf("list active runs: %w", err)
 	}
 	drifts := make([]projection.ActiveRunDrift, 0, len(rows))

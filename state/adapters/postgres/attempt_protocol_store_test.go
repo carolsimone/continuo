@@ -239,7 +239,7 @@ func TestTaskGraph_ReadyCandidatesCarryTheNodesTimeout(t *testing.T) {
 	setTaskStatus(t, db, r, "e2e_schema.ftable_a", run.TaskStatusSucceeded)
 
 	inGraphTx(t, db, tenant, func(g *postgres.TaskGraph) {
-		got, err := g.ReadyCandidates(ctx, r.ScheduleID(), "rel-1", "e2e_schema.ftable_a")
+		got, err := g.ReadyCandidates(ctx, r.RunID(), "rel-1", "e2e_schema.ftable_a")
 		require.NoError(t, err)
 		require.Len(t, got, 2)
 		assert.Equal(t, topology.NodeKey("e2e_schema.ftable_g"), got[1].Node.Key)

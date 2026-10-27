@@ -21,8 +21,8 @@ import (
 func TestStart_StampsTaskOperation(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	schedRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, discardLogger())
+	schedRepo := postgres.NewRunTableRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, discardLogger())
 
 	r, err := run.NewSingleNodeRun("op-task", model.OperationTest, nil, "user-1", run.ReleaseStamp{}, time.Now())
 	require.NoError(t, err)
@@ -30,7 +30,7 @@ func TestStart_StampsTaskOperation(t *testing.T) {
 	// CASCADE, its tasks, so no concurrent reader sees this single-node run
 	// without its tasks.
 	t.Cleanup(func() {
-		db.Exec(`DELETE FROM runs WHERE run_id = $1`, r.ScheduleID())
+		db.Exec(`DELETE FROM runs WHERE run_id = $1`, r.RunID())
 	})
 
 	tx, err := db.BeginTxx(ctx, nil)
@@ -50,7 +50,7 @@ func TestStart_StampsTaskOperation(t *testing.T) {
 	require.NoError(t, err)
 	_, err = r.Start(ctx, tasks, "default", plan, g, testTaskDefaults, time.Now())
 	require.NoError(t, err)
-	taskID := run.TaskIDFor("default", r.ScheduleID(), "analytics.tbl_op")
+	taskID := run.TaskIDFor("default", r.RunID(), "analytics.tbl_op")
 
 	require.NoError(t, runRepo.SaveRun(ctx, r))
 	require.NoError(t, tx.Commit())

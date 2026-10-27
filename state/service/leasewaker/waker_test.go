@@ -101,7 +101,7 @@ func (fixedClock) Now() time.Time { return now }
 func discard() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
 // runIn returns a run of status that writes its nodes.
-func runIn(status run.SchedulerStatus) *run.Run {
+func runIn(status run.RunStatus) *run.Run {
 	started := now.Add(-time.Hour)
 	total := int32(1)
 	return run.HydrateRun(uuid.New(), "single-node-run-91c2ab07", status, run.InitStatusCompleted, run.KindSingleNodeRun, nil, "system",
@@ -152,11 +152,11 @@ func TestLeaseWaker_RunsOnANotification(t *testing.T) {
 // nothing is written to the outbox and no grant is observed. The pass asks for
 // at most GrantLimit waiters and still sets the waiter gauge.
 func TestLeaseWaker_LeavesAWaiterWhoseRunIsNoLongerRunning(t *testing.T) {
-	r := runIn(run.SchedulerStatusCancelling)
+	r := runIn(run.RunStatusCancelling)
 	leases := &fakeLeases{waiters: 1, grantable: []repository.LeaseWaiter{
-		{TaskID: uuid.New(), RunID: r.ScheduleID(), NodeKey: "e2e_schema.table_a", WaitingSince: now.Add(-4 * time.Minute)},
+		{TaskID: uuid.New(), RunID: r.RunID(), NodeKey: "e2e_schema.table_a", WaitingSince: now.Add(-4 * time.Minute)},
 	}}
-	held := &runs{held: map[uuid.UUID]*run.Run{r.ScheduleID(): r}}
+	held := &runs{held: map[uuid.UUID]*run.Run{r.RunID(): r}}
 	tasks := &unreadTasks{}
 	outbox := &recordingOutbox{}
 	f := &uow.FakeUnitOfWork{LeaseRepo: leases}
@@ -181,14 +181,14 @@ func TestLeaseWaker_LeavesAWaiterWhoseRunIsNoLongerRunning(t *testing.T) {
 // waiter gauge; the pass returns the failure.
 func TestLeaseWaker_AFailedGrantDoesNotStopThePass(t *testing.T) {
 	gone := uuid.New()
-	r := runIn(run.SchedulerStatusCancelling)
+	r := runIn(run.RunStatusCancelling)
 	leases := &fakeLeases{waiters: 2, grantable: []repository.LeaseWaiter{
 		{TaskID: uuid.New(), RunID: gone, NodeKey: "e2e_schema.table_a", WaitingSince: now.Add(-time.Minute)},
-		{TaskID: uuid.New(), RunID: r.ScheduleID(), NodeKey: "e2e_schema.table_b", WaitingSince: now.Add(-time.Minute)},
+		{TaskID: uuid.New(), RunID: r.RunID(), NodeKey: "e2e_schema.table_b", WaitingSince: now.Add(-time.Minute)},
 	}}
 	tasks := &unreadTasks{}
 	f := &uow.FakeUnitOfWork{LeaseRepo: leases}
-	f.SetRunRepo(&runs{held: map[uuid.UUID]*run.Run{r.ScheduleID(): r}})
+	f.SetRunRepo(&runs{held: map[uuid.UUID]*run.Run{r.RunID(): r}})
 	f.SetTaskCollection(tasks)
 	f.SetOutboxPublisher(&recordingOutbox{})
 	f.SetClock(fixedClock{})

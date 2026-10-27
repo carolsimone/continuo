@@ -34,8 +34,8 @@ import (
 
 type singleNodeRunFixture struct {
 	Handler       *SingleNodeRunHandler
-	SchedulerRepo postgres.SchedulerTrackerRepository
-	TaskRepo      postgres.TaskTrackerRepository
+	SchedulerRepo postgres.RunTableRepository
+	TaskRepo      postgres.TaskRepository
 	DB            *sqlx.DB
 	// Tenant is the tenant the fixture plans for; it holds release rel-svca
 	// as its live release, with svcA's public.users (one data test) and
@@ -75,8 +75,8 @@ func setupSingleNodeRunFixture(t *testing.T) *singleNodeRunFixture {
 	}
 
 	logger := newTestLogger()
-	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
-	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, logger)
+	schedulerRepo := postgres.NewRunTableRepository(db, logger)
+	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, logger)
 	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
 	clk := ports.SystemClock{}
 	factory := func() uow.UnitOfWork {
@@ -153,7 +153,7 @@ func TestSingleNodeRunHandler_Latest_HappyPath(t *testing.T) {
 	require.Nil(t, tracker.SourceRunID)
 	require.Equal(t, resp.ScheduleName, tracker.ScheduleName)
 
-	require.Equal(t, run.SchedulerStatusRunning, tracker.Status)
+	require.Equal(t, run.RunStatusRunning, tracker.Status)
 
 	// The run's one task is dispatched on the live release: the outbox row is
 	// its task.dispatch:v1 dispatch, read directly by aggregate_id rather than
@@ -268,10 +268,10 @@ func TestSingleNodeRunHandler_Stale_HappyPath(t *testing.T) {
 
 	// Seed a terminal source run with a matching task.
 	srcID := uuid.New()
-	srcTracker := &postgres.SchedulerTracker{
+	srcTracker := &postgres.RunRow{
 		ScheduleID:           srcID,
 		ScheduleName:         "src-schedule",
-		Status:               run.SchedulerStatusSucceeded,
+		Status:               run.RunStatusSucceeded,
 		CreatedAt:            time.Now().Add(-time.Hour),
 		Kind:                 "cron",
 		InitializationStatus: "completed",
@@ -281,7 +281,7 @@ func TestSingleNodeRunHandler_Stale_HappyPath(t *testing.T) {
 	require.NoError(t, err)
 
 	taskID := uuid.New()
-	srcTask := &postgres.TaskTracker{
+	srcTask := &postgres.TaskRow{
 		TaskID:      taskID,
 		ScheduleID:  srcID,
 		ServiceName: "svcA",
@@ -332,10 +332,10 @@ func TestSingleNodeRunHandler_Errors(t *testing.T) {
 
 	// Seed a non-terminal source run for FAILED_PRECONDITION coverage.
 	runningID := uuid.New()
-	require.NoError(t, fx.SchedulerRepo.Create(context.Background(), &postgres.SchedulerTracker{
+	require.NoError(t, fx.SchedulerRepo.Create(context.Background(), &postgres.RunRow{
 		ScheduleID:           runningID,
 		ScheduleName:         "running-src",
-		Status:               run.SchedulerStatusRunning,
+		Status:               run.RunStatusRunning,
 		CreatedAt:            time.Now(),
 		Kind:                 "cron",
 		InitializationStatus: "completed",
@@ -343,10 +343,10 @@ func TestSingleNodeRunHandler_Errors(t *testing.T) {
 
 	// Seed a terminal source run with NO matching task for NOT_FOUND coverage.
 	terminalNoTaskID := uuid.New()
-	require.NoError(t, fx.SchedulerRepo.Create(context.Background(), &postgres.SchedulerTracker{
+	require.NoError(t, fx.SchedulerRepo.Create(context.Background(), &postgres.RunRow{
 		ScheduleID:           terminalNoTaskID,
 		ScheduleName:         "terminal-no-task",
-		Status:               run.SchedulerStatusSucceeded,
+		Status:               run.RunStatusSucceeded,
 		CreatedAt:            time.Now(),
 		Kind:                 "cron",
 		InitializationStatus: "completed",
@@ -355,15 +355,15 @@ func TestSingleNodeRunHandler_Errors(t *testing.T) {
 	// Seed a terminal source run that names no release, with a task at
 	// svcA's public.users, for the FAILED_PRECONDITION of an unreadable source.
 	noReleaseID := uuid.New()
-	require.NoError(t, fx.SchedulerRepo.Create(context.Background(), &postgres.SchedulerTracker{
+	require.NoError(t, fx.SchedulerRepo.Create(context.Background(), &postgres.RunRow{
 		ScheduleID:           noReleaseID,
 		ScheduleName:         "no-release",
-		Status:               run.SchedulerStatusSucceeded,
+		Status:               run.RunStatusSucceeded,
 		CreatedAt:            time.Now(),
 		Kind:                 "cron",
 		InitializationStatus: "completed",
 	}))
-	require.NoError(t, fx.TaskRepo.Create(context.Background(), &postgres.TaskTracker{
+	require.NoError(t, fx.TaskRepo.Create(context.Background(), &postgres.TaskRow{
 		TaskID: uuid.New(), ScheduleID: noReleaseID, ServiceName: "svcA", SchemaName: "public", TableName: "users",
 		Status: run.TaskStatusSucceeded, CreatedAt: time.Now(),
 	}))
@@ -443,10 +443,10 @@ func TestSingleNodeRunsOf_CountsARunWithoutTasks(t *testing.T) {
 	createRun := func(t *testing.T) uuid.UUID {
 		t.Helper()
 		id := uuid.New()
-		require.NoError(t, fx.SchedulerRepo.Create(ctx, &postgres.SchedulerTracker{
+		require.NoError(t, fx.SchedulerRepo.Create(ctx, &postgres.RunRow{
 			ScheduleID:           id,
 			ScheduleName:         "single-node-run-" + id.String()[:8],
-			Status:               run.SchedulerStatusRunning,
+			Status:               run.RunStatusRunning,
 			CreatedAt:            time.Now(),
 			Kind:                 string(run.KindSingleNodeRun),
 			InitializationStatus: "completed",
@@ -462,7 +462,7 @@ func TestSingleNodeRunsOf_CountsARunWithoutTasks(t *testing.T) {
 	require.Equal(t, before+1, singleNodeRunsOf(t, fx.DB, req), "a single-node run without tasks is counted")
 
 	elsewhere := createRun(t)
-	require.NoError(t, fx.TaskRepo.Create(ctx, &postgres.TaskTracker{
+	require.NoError(t, fx.TaskRepo.Create(ctx, &postgres.TaskRow{
 		TaskID: uuid.New(), ScheduleID: elsewhere, ServiceName: "svcA", SchemaName: "public", TableName: "users_snap",
 		Status: run.TaskStatusPending, CreatedAt: time.Now(),
 	}))

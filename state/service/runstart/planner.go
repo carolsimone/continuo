@@ -76,7 +76,7 @@ func (p Planner) Rerun(ctx context.Context, u uow.UnitOfWork, source *run.Run) (
 	}
 	g, err := u.Topology().Graph(ctx, p.TenantID, source.ReleaseID(), keys)
 	if err != nil {
-		return Selection{}, fmt.Errorf("read the nodes of run %s in release %s: %w", source.ScheduleID(), source.ReleaseID(), err)
+		return Selection{}, fmt.Errorf("read the nodes of run %s in release %s: %w", source.RunID(), source.ReleaseID(), err)
 	}
 	plan, err := runplan.Rerun{Source: src}.Select(g)
 	return Selection{Stamp: source.Release(), Graph: g, Plan: plan}, err
@@ -88,7 +88,7 @@ func (p Planner) SingleNode(ctx context.Context, u uow.UnitOfWork, target run.No
 	var stamp run.ReleaseStamp
 	if source != nil {
 		if source.ReleaseID() == "" {
-			return Selection{}, fmt.Errorf("%w: run %s", ErrSourceHasNoRelease, source.ScheduleID())
+			return Selection{}, fmt.Errorf("%w: run %s", ErrSourceHasNoRelease, source.RunID())
 		}
 		stamp = source.Release()
 	} else {
@@ -128,13 +128,13 @@ func (p Planner) Seeds(ctx context.Context, u uow.UnitOfWork, live topology.Poin
 func (p Planner) Start(ctx context.Context, u uow.UnitOfWork, r *run.Run, sel Selection, msgProcID uuid.UUID) error {
 	events, err := r.Start(ctx, u.TaskCollection(p.TenantID), p.TenantID, sel.Plan, sel.Graph, p.Tasks, u.Clock().Now())
 	if err != nil {
-		return fmt.Errorf("start run %s: %w", r.ScheduleID(), err)
+		return fmt.Errorf("start run %s: %w", r.RunID(), err)
 	}
 	if err := u.Run().SaveRun(ctx, r); err != nil {
-		return fmt.Errorf("save started run %s: %w", r.ScheduleID(), err)
+		return fmt.Errorf("save started run %s: %w", r.RunID(), err)
 	}
 	if err := u.Outbox().Append(ctx, events, msgProcID); err != nil {
-		return fmt.Errorf("append the events of run %s: %w", r.ScheduleID(), err)
+		return fmt.Errorf("append the events of run %s: %w", r.RunID(), err)
 	}
 	return nil
 }
@@ -171,17 +171,17 @@ func (p Planner) scheduleGraph(ctx context.Context, u uow.UnitOfWork, stamp run.
 // the node.
 func (p Planner) source(ctx context.Context, u uow.UnitOfWork, source *run.Run) (runplan.Source, []topology.NodeKey, error) {
 	if source.ReleaseID() == "" {
-		return runplan.Source{}, nil, fmt.Errorf("%w: run %s", ErrSourceHasNoRelease, source.ScheduleID())
+		return runplan.Source{}, nil, fmt.Errorf("%w: run %s", ErrSourceHasNoRelease, source.RunID())
 	}
-	tasks, err := u.TaskCollection(p.TenantID).ListRunTasks(ctx, source.ScheduleID())
+	tasks, err := u.TaskCollection(p.TenantID).ListRunTasks(ctx, source.RunID())
 	if err != nil {
-		return runplan.Source{}, nil, fmt.Errorf("read the tasks of run %s: %w", source.ScheduleID(), err)
+		return runplan.Source{}, nil, fmt.Errorf("read the tasks of run %s: %w", source.RunID(), err)
 	}
 	src := runplan.Source{Operation: source.Operation(), Tasks: make([]runplan.SourceTask, 0, len(tasks))}
 	keys := make([]topology.NodeKey, 0, len(tasks))
 	for _, t := range tasks {
 		if t.NodeKey == "" {
-			return runplan.Source{}, nil, fmt.Errorf("%w: task %s of run %s names no node", ErrSourceHasNoRelease, t.TaskID, source.ScheduleID())
+			return runplan.Source{}, nil, fmt.Errorf("%w: task %s of run %s names no node", ErrSourceHasNoRelease, t.TaskID, source.RunID())
 		}
 		st := runplan.SourceTask{Key: t.NodeKey, TaskID: t.TaskID, Succeeded: t.Status == run.TaskStatusSucceeded, BuiltOn: source.ReleaseID()}
 		if t.InheritedFromTaskID != nil {

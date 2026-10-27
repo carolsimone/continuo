@@ -31,8 +31,8 @@ import (
 
 type rebaseFixture struct {
 	Handler       *RebaseHandler
-	SchedulerRepo postgres.SchedulerTrackerRepository
-	TaskRepo      postgres.TaskTrackerRepository
+	SchedulerRepo postgres.RunTableRepository
+	TaskRepo      postgres.TaskRepository
 	DB            *sqlx.DB
 	// Tenant is the tenant the fixture's planner plans for; its releases and
 	// live pointer are deleted when the test ends.
@@ -59,8 +59,8 @@ func setupRebaseFixture(t *testing.T) *rebaseFixture {
 		testdeps.Unavailable(t, "no test DB available: %v", err)
 	}
 	logger := newTestLogger()
-	schedulerRepo := postgres.NewSchedulerTrackerRepository(db, logger)
-	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, logger)
+	schedulerRepo := postgres.NewRunTableRepository(db, logger)
+	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, logger)
 	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
 	clk := ports.SystemClock{}
 	factory := func() uow.UnitOfWork {
@@ -102,7 +102,7 @@ func promoteNode(t *testing.T, fx *rebaseFixture, scheduleName string) string {
 // on a release of fx's tenant, the live one, with one task row in
 // 'failed' status at node s.t. Returns the run_id. Cleanup deletes both
 // rows.
-func seedTerminalRunWithFailedTask(t *testing.T, fx *rebaseFixture, scheduleName string, srcStatus run.SchedulerStatus) uuid.UUID {
+func seedTerminalRunWithFailedTask(t *testing.T, fx *rebaseFixture, scheduleName string, srcStatus run.RunStatus) uuid.UUID {
 	t.Helper()
 	releaseID := promoteNode(t, fx, scheduleName)
 	id := uuid.New()
@@ -132,7 +132,7 @@ func TestRebaseHandler_HappyPath_FailedSource(t *testing.T) {
 	defer fx.Cleanup()
 
 	scheduleName := "rebase-happy-" + uuid.New().String()[:8]
-	srcID := seedTerminalRunWithFailedTask(t, fx, scheduleName, run.SchedulerStatusFailed)
+	srcID := seedTerminalRunWithFailedTask(t, fx, scheduleName, run.RunStatusFailed)
 
 	resp, err := fx.Handler.TriggerRebase(context.Background(), &statev1.TriggerRebaseRequest{
 		SourceRunId: srcID.String(),
@@ -153,7 +153,7 @@ func TestRebaseHandler_HappyPath_FailedSource(t *testing.T) {
 	require.NotNil(t, tracker.SourceRunID)
 	require.Equal(t, srcID, *tracker.SourceRunID)
 	require.Equal(t, scheduleName, tracker.ScheduleName)
-	require.Equal(t, run.SchedulerStatusRunning, tracker.Status)
+	require.Equal(t, run.RunStatusRunning, tracker.Status)
 
 	// The failed task is dispatched again on the live release.
 	requireDispatched(t, fx.DB, newID, run.TaskIDFor(fx.Tenant, newID, "s.t"), scheduleName)
@@ -181,7 +181,7 @@ func TestRebaseHandler_HappyPath_CancelledSource(t *testing.T) {
 	defer fx.Cleanup()
 
 	scheduleName := "rebase-cancelled-" + uuid.New().String()[:8]
-	srcID := seedTerminalRunWithFailedTask(t, fx, scheduleName, run.SchedulerStatusCancelled)
+	srcID := seedTerminalRunWithFailedTask(t, fx, scheduleName, run.RunStatusCancelled)
 
 	resp, err := fx.Handler.TriggerRebase(context.Background(), &statev1.TriggerRebaseRequest{
 		SourceRunId: srcID.String(),
@@ -203,11 +203,11 @@ func TestRebaseHandler_HappyPath_CancelledSource(t *testing.T) {
 
 // seedRunWithTaskStatus creates a run with the given status and a single
 // task in the given status. Used for rejection-case fixtures.
-func seedRunWithTaskStatus(t *testing.T, fx *rebaseFixture, scheduleName string, srcStatus run.SchedulerStatus, taskStatus run.TaskStatus) uuid.UUID {
+func seedRunWithTaskStatus(t *testing.T, fx *rebaseFixture, scheduleName string, srcStatus run.RunStatus, taskStatus run.TaskStatus) uuid.UUID {
 	t.Helper()
 	id := uuid.New()
 	completedClause := "NOW()"
-	if srcStatus == run.SchedulerStatusRunning || srcStatus == run.SchedulerStatusPending {
+	if srcStatus == run.RunStatusRunning || srcStatus == run.RunStatusPending {
 		completedClause = "NULL"
 	}
 	_, err := fx.DB.ExecContext(context.Background(),
@@ -275,7 +275,7 @@ func TestRebaseHandler_RejectsRunningSource(t *testing.T) {
 	fx := setupRebaseFixture(t)
 	defer fx.Cleanup()
 
-	srcID := seedRunWithTaskStatus(t, fx, "rebase-rej-running-"+uuid.New().String()[:8], run.SchedulerStatusRunning, run.TaskStatusRunning)
+	srcID := seedRunWithTaskStatus(t, fx, "rebase-rej-running-"+uuid.New().String()[:8], run.RunStatusRunning, run.TaskStatusRunning)
 	_, err := fx.Handler.TriggerRebase(context.Background(), &statev1.TriggerRebaseRequest{SourceRunId: srcID.String()})
 	requireGRPCCode(t, err, codes.FailedPrecondition)
 }
@@ -284,7 +284,7 @@ func TestRebaseHandler_RejectsSucceededSource(t *testing.T) {
 	fx := setupRebaseFixture(t)
 	defer fx.Cleanup()
 
-	srcID := seedRunWithTaskStatus(t, fx, "rebase-rej-succ-"+uuid.New().String()[:8], run.SchedulerStatusSucceeded, run.TaskStatusSucceeded)
+	srcID := seedRunWithTaskStatus(t, fx, "rebase-rej-succ-"+uuid.New().String()[:8], run.RunStatusSucceeded, run.TaskStatusSucceeded)
 	_, err := fx.Handler.TriggerRebase(context.Background(), &statev1.TriggerRebaseRequest{SourceRunId: srcID.String()})
 	requireGRPCCode(t, err, codes.FailedPrecondition)
 }
@@ -295,7 +295,7 @@ func TestRebaseHandler_RejectsFailedSourceWithAllSucceededTasks(t *testing.T) {
 	fx := setupRebaseFixture(t)
 	defer fx.Cleanup()
 
-	srcID := seedRunWithTaskStatus(t, fx, "rebase-rej-failed-allsucc-"+uuid.New().String()[:8], run.SchedulerStatusFailed, run.TaskStatusSucceeded)
+	srcID := seedRunWithTaskStatus(t, fx, "rebase-rej-failed-allsucc-"+uuid.New().String()[:8], run.RunStatusFailed, run.TaskStatusSucceeded)
 	_, err := fx.Handler.TriggerRebase(context.Background(), &statev1.TriggerRebaseRequest{SourceRunId: srcID.String()})
 	requireGRPCCode(t, err, codes.FailedPrecondition)
 }
@@ -305,7 +305,7 @@ func TestRebaseHandler_RejectsASourceWithoutARelease(t *testing.T) {
 	fx := setupRebaseFixture(t)
 	defer fx.Cleanup()
 
-	srcID := seedRunWithTaskStatus(t, fx, "rebase-rej-norelease-"+uuid.New().String()[:8], run.SchedulerStatusFailed, run.TaskStatusFailed)
+	srcID := seedRunWithTaskStatus(t, fx, "rebase-rej-norelease-"+uuid.New().String()[:8], run.RunStatusFailed, run.TaskStatusFailed)
 	_, err := fx.Handler.TriggerRebase(context.Background(), &statev1.TriggerRebaseRequest{SourceRunId: srcID.String()})
 	requireGRPCCode(t, err, codes.FailedPrecondition)
 	assert.Contains(t, status.Convert(err).Message(), "names no release")
@@ -316,7 +316,7 @@ func TestRebaseHandler_RejectsActiveRunOnSameSchedule(t *testing.T) {
 	defer fx.Cleanup()
 
 	scheduleName := "rebase-rej-concurrent-" + uuid.New().String()[:8]
-	srcID := seedRunWithTaskStatus(t, fx, scheduleName, run.SchedulerStatusFailed, run.TaskStatusFailed)
+	srcID := seedRunWithTaskStatus(t, fx, scheduleName, run.RunStatusFailed, run.TaskStatusFailed)
 	_ = seedRunningSchedulerOnSchedule(t, fx, scheduleName)
 
 	_, err := fx.Handler.TriggerRebase(context.Background(), &statev1.TriggerRebaseRequest{SourceRunId: srcID.String()})

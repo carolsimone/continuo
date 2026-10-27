@@ -29,8 +29,8 @@ import (
 func newPlanningUoW(db *sqlx.DB) *postgres.PostgresUnitOfWork {
 	logger := discardLogger()
 	return postgres.NewPostgresUnitOfWork(db,
-		postgres.NewSchedulerTrackerRepository(db, logger),
-		postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, logger),
+		postgres.NewRunTableRepository(db, logger),
+		postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, logger),
 		postgres.NewScheduleCatalogRepository(db, logger),
 		ports.SystemClock{}, logger)
 }
@@ -66,8 +66,8 @@ func newStartRun(t *testing.T, db *sqlx.DB, now time.Time) *run.Run {
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		ctx := context.Background()
-		_, _ = db.ExecContext(ctx, `DELETE FROM state_outbox WHERE aggregate_id = $1`, r.ScheduleID())
-		_, _ = db.ExecContext(ctx, `DELETE FROM runs WHERE run_id = $1`, r.ScheduleID())
+		_, _ = db.ExecContext(ctx, `DELETE FROM state_outbox WHERE aggregate_id = $1`, r.RunID())
+		_, _ = db.ExecContext(ctx, `DELETE FROM runs WHERE run_id = $1`, r.RunID())
 	})
 	return r
 }
@@ -103,7 +103,7 @@ func TestStartedRun_StoresItsTasksPlanAndDispatches(t *testing.T) {
 	}
 	require.NoError(t, db.Get(&row, `
 		SELECT status, initialization_status, total_task_count, terminal_task_count, planned_at, started_at
-		FROM runs WHERE run_id = $1`, r.ScheduleID()))
+		FROM runs WHERE run_id = $1`, r.RunID()))
 	assert.Equal(t, "running", row.Status)
 	assert.Equal(t, "completed", row.Init)
 	assert.Equal(t, int32(8), row.Total)
@@ -116,20 +116,20 @@ func TestStartedRun_StoresItsTasksPlanAndDispatches(t *testing.T) {
 	var dispatched []string
 	require.NoError(t, db.Select(&dispatched, `
 		SELECT node_key FROM tasks
-		WHERE run_id = $1 AND dispatched_at IS NOT NULL ORDER BY node_key`, r.ScheduleID()))
+		WHERE run_id = $1 AND dispatched_at IS NOT NULL ORDER BY node_key`, r.RunID()))
 	assert.Equal(t, []string{"e2e_schema.ftable_a", "e2e_schema.ftable_b"}, dispatched)
 
 	var taskIDs []string
 	require.NoError(t, db.Select(&taskIDs, `
 		SELECT payload->>'task_id' FROM state_outbox
 		WHERE aggregate_id = $1 AND stream_name = $2 ORDER BY payload->>'table_name'`,
-		r.ScheduleID(), streams.TaskDispatchV1))
+		r.RunID(), streams.TaskDispatchV1))
 	assert.Equal(t, []string{
-		run.TaskIDFor(pkgevents.DefaultTenantID, r.ScheduleID(), "e2e_schema.ftable_a").String(),
-		run.TaskIDFor(pkgevents.DefaultTenantID, r.ScheduleID(), "e2e_schema.ftable_b").String(),
+		run.TaskIDFor(pkgevents.DefaultTenantID, r.RunID(), "e2e_schema.ftable_a").String(),
+		run.TaskIDFor(pkgevents.DefaultTenantID, r.RunID(), "e2e_schema.ftable_b").String(),
 	}, taskIDs)
 
-	loaded, err := newPlanningUoW(db).Run().GetRun(ctx, r.ScheduleID())
+	loaded, err := newPlanningUoW(db).Run().GetRun(ctx, r.RunID())
 	require.NoError(t, err)
 	require.NotNil(t, loaded.PlannedAt())
 	assert.True(t, now.Equal(*loaded.PlannedAt()))

@@ -26,7 +26,7 @@ import (
 
 // keyOf names attempt n of the run's task at key.
 func (f statusFlow) keyOf(key string, n int32) repository.AttemptKey {
-	return repository.AttemptKey{TaskID: run.TaskIDFor(f.tenant, f.r.ScheduleID(), topology.NodeKey(key)), Attempt: n}
+	return repository.AttemptKey{TaskID: run.TaskIDFor(f.tenant, f.r.RunID(), topology.NodeKey(key)), Attempt: n}
 }
 
 // makeDue moves the next check of every open attempt of the run into the past.
@@ -35,7 +35,7 @@ func (f statusFlow) makeDue(t *testing.T) {
 	_, err := f.db.Exec(`
 		UPDATE task_attempts a SET next_check_at = now() - interval '1 second'
 		FROM tasks t WHERE t.task_id = a.task_id AND t.run_id = $1
-		  AND a.status IN ('dispatched', 'queued', 'running')`, f.r.ScheduleID())
+		  AND a.status IN ('dispatched', 'queued', 'running')`, f.r.RunID())
 	require.NoError(t, err)
 }
 
@@ -77,7 +77,7 @@ func TestAttemptRepository_DueAttemptsAreTheTenantsOwn(t *testing.T) {
 	f := statusFlow{db: db, tenant: mine, r: startScheduleRun(t, db, mine, "e2e-schedule-failure", model.OperationRun)}
 	g := statusFlow{db: db, tenant: other, r: startScheduleRun(t, db, other, shape.schedule(), model.OperationRun)}
 	_, err := db.Exec(`UPDATE task_attempts a SET next_check_at = now() - interval '1 hour'
-		FROM tasks t WHERE t.task_id = a.task_id AND t.run_id = $1`, g.r.ScheduleID())
+		FROM tasks t WHERE t.task_id = a.task_id AND t.run_id = $1`, g.r.RunID())
 	require.NoError(t, err)
 	f.makeDue(t)
 
@@ -104,7 +104,7 @@ func TestAttemptRepository_LockQuestionCarriesTheAttemptsDispatch(t *testing.T) 
 		require.NoError(t, err)
 		require.True(t, found)
 		assert.Equal(t, run.Question{
-			RunID: f.r.ScheduleID(), ScheduleName: "e2e-schedule-failure", TaskID: f.keyOf("e2e_schema.ftable_a", 0).TaskID,
+			RunID: f.r.RunID(), ScheduleName: "e2e-schedule-failure", TaskID: f.keyOf("e2e_schema.ftable_a", 0).TaskID,
 			Attempt: 0, Status: run.AttemptQueued, JobName: jobName, Operation: model.OperationRun,
 			Node: topology.Node{Key: "e2e_schema.ftable_a", UniqueID: "e2e_schema.ftable_a", ServiceName: "service-1",
 				SchemaName: "e2e_schema", TableName: "ftable_a", NodeType: "dbt-model", ContentHash: "h-ftable_a",
@@ -165,22 +165,22 @@ func TestAttemptRepository_StalledRunsHaveNothingInFlightAndNoRecentProgress(t *
 	idleTenant := storeEdges(t, db, "e2e-schedule-idle", [][2]string{{"ftable_a", "ftable_b"}}, "ftable_a", "ftable_b")
 	idle := startScheduleRun(t, db, idleTenant, "e2e-schedule-idle", model.OperationRun)
 	waiting := statusFlow{db: db, tenant: tenant, r: startScheduleRun(t, db, tenant, "e2e-schedule-failure", model.OperationRun)}
-	_, err := db.Exec(`UPDATE tasks SET status = 'pending', dispatched_at = NULL WHERE run_id = $1`, idle.ScheduleID())
+	_, err := db.Exec(`UPDATE tasks SET status = 'pending', dispatched_at = NULL WHERE run_id = $1`, idle.RunID())
 	require.NoError(t, err)
 	waiting.report(t, "e2e_schema.ftable_a", 0, run.AttemptQueued, "")
 	_, err = db.Exec(`UPDATE runs SET last_progress_at = now() - interval '10 minutes' WHERE run_id = ANY($1)`,
-		pq.Array([]uuid.UUID{idle.ScheduleID(), waiting.r.ScheduleID()}))
+		pq.Array([]uuid.UUID{idle.RunID(), waiting.r.RunID()}))
 	require.NoError(t, err)
 
 	got, err := postgres.NewAttemptRepository(db, nil, tenant).StalledRuns(ctx, 5*time.Minute, 100)
 	require.NoError(t, err)
 
-	assert.Contains(t, got, idle.ScheduleID())
-	assert.NotContains(t, got, waiting.r.ScheduleID(), "a run waiting for a slot is never stalled")
+	assert.Contains(t, got, idle.RunID())
+	assert.NotContains(t, got, waiting.r.RunID(), "a run waiting for a slot is never stalled")
 
 	got, err = postgres.NewAttemptRepository(db, nil, tenant).StalledRuns(ctx, 15*time.Minute, 100)
 	require.NoError(t, err)
-	assert.NotContains(t, got, idle.ScheduleID(), "a run that moved within the idle time is not stalled")
+	assert.NotContains(t, got, idle.RunID(), "a run that moved within the idle time is not stalled")
 }
 
 // An attempt a stop was requested of is never asked about with a dispatch,
@@ -314,7 +314,7 @@ func TestStalledRuns_ALeaseWaitOnAFreeNodeIsListedAndGrantedUnderTheLock(t *test
 	assert.Equal(t, heldLease{TaskID: freeTask, RunID: waitingOnFree}, lease)
 	var status string
 	require.NoError(t, db.Get(&status, `SELECT status FROM runs WHERE run_id = $1`, waitingOnFree))
-	assert.Equal(t, string(run.SchedulerStatusRunning), status)
+	assert.Equal(t, string(run.RunStatusRunning), status)
 
 	assert.True(t, failStalledUnderLock(t, db, tenant, waitingOnEnded), "the re-check fails a wait behind a holder that has ended")
 }
@@ -325,7 +325,7 @@ func (f statusFlow) makeStopsDue(t *testing.T, ago time.Duration) {
 	_, err := f.db.Exec(`
 		UPDATE task_attempts a SET next_check_at = now() - make_interval(secs => $2::float8)
 		FROM tasks t WHERE t.task_id = a.task_id AND t.run_id = $1
-		  AND a.status IN ('dispatched', 'queued', 'running')`, f.r.ScheduleID(), ago.Seconds())
+		  AND a.status IN ('dispatched', 'queued', 'running')`, f.r.RunID(), ago.Seconds())
 	require.NoError(t, err)
 }
 
@@ -345,21 +345,21 @@ func TestAttemptRepository_DueStopsAreCancellingRunsWithAQuietStop(t *testing.T)
 	f.makeStopsDue(t, time.Minute)
 	got, err := repo.DueStops(ctx, 500)
 	require.NoError(t, err)
-	assert.NotContains(t, got, f.r.ScheduleID(), "a running run is asked about with dispatches, not a cancel")
+	assert.NotContains(t, got, f.r.RunID(), "a running run is asked about with dispatches, not a cancel")
 
 	cancelRun(t, db, f.r)
 	cancelRun(t, db, g.r)
 	got, err = repo.DueStops(ctx, 500)
 	require.NoError(t, err)
-	assert.NotContains(t, got, f.r.ScheduleID(), "the stops were requested just now: the first re-send is five minutes away")
-	assert.NotContains(t, got, g.r.ScheduleID())
+	assert.NotContains(t, got, f.r.RunID(), "the stops were requested just now: the first re-send is five minutes away")
+	assert.NotContains(t, got, g.r.RunID())
 
 	f.makeStopsDue(t, time.Hour)
 	g.makeStopsDue(t, 2*time.Hour)
 	got, err = repo.DueStops(ctx, 500)
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(got), 2)
-	assert.Less(t, indexOf(got, g.r.ScheduleID()), indexOf(got, f.r.ScheduleID()), "the longest due first, of every tenant")
+	assert.Less(t, indexOf(got, g.r.RunID()), indexOf(got, f.r.RunID()), "the longest due first, of every tenant")
 	assert.Len(t, uniqueIDs(got), len(got), "a run with several quiet stops is listed once")
 
 	only, err := repo.DueStops(ctx, 1)
@@ -395,7 +395,7 @@ func TestAttemptRepository_LockStopsCarriesTheRunsCancelAndItsOpenStops(t *testi
 	f.makeStopsDue(t, time.Minute)
 
 	inUoW(t, db, func(u *postgres.PostgresUnitOfWork) {
-		_, found, err := u.Attempts(tenant).LockStops(ctx, f.r.ScheduleID())
+		_, found, err := u.Attempts(tenant).LockStops(ctx, f.r.RunID())
 		require.NoError(t, err)
 		assert.False(t, found, "a running run has no stop to send again")
 	})
@@ -405,7 +405,7 @@ func TestAttemptRepository_LockStopsCarriesTheRunsCancelAndItsOpenStops(t *testi
 	jobA, _, _ := f.task(t, "e2e_schema.ftable_a")
 	jobB, _, _ := f.task(t, "e2e_schema.ftable_b")
 	inUoW(t, db, func(u *postgres.PostgresUnitOfWork) {
-		_, found, err := u.Attempts(tenant).LockStops(ctx, f.r.ScheduleID())
+		_, found, err := u.Attempts(tenant).LockStops(ctx, f.r.RunID())
 		require.NoError(t, err)
 		assert.False(t, found, "no stop is due yet")
 	})
@@ -416,10 +416,10 @@ func TestAttemptRepository_LockStopsCarriesTheRunsCancelAndItsOpenStops(t *testi
 	want := []run.StopTarget{{TaskID: a.TaskID, Attempt: 0, JobName: jobA}, {TaskID: b.TaskID, Attempt: 0, JobName: jobB, ChecksSent: 2}}
 	slices.SortFunc(want, func(x, y run.StopTarget) int { return strings.Compare(x.TaskID.String(), y.TaskID.String()) })
 	inUoW(t, db, func(u *postgres.PostgresUnitOfWork) {
-		q, found, err := u.Attempts(tenant).LockStops(ctx, f.r.ScheduleID())
+		q, found, err := u.Attempts(tenant).LockStops(ctx, f.r.RunID())
 		require.NoError(t, err)
 		require.True(t, found)
-		assert.Equal(t, f.r.ScheduleID(), q.RunID)
+		assert.Equal(t, f.r.RunID(), q.RunID)
 		assert.Equal(t, "e2e-schedule-failure", q.ScheduleName)
 		assert.Equal(t, "user", q.CancelledBy)
 		assert.Equal(t, want, q.Attempts)
@@ -429,7 +429,7 @@ func TestAttemptRepository_LockStopsCarriesTheRunsCancelAndItsOpenStops(t *testi
 	_, err = db.Exec(`UPDATE task_attempts SET status = 'stopped', next_check_at = NULL WHERE task_id = $1 AND attempt = 0`, a.TaskID)
 	require.NoError(t, err)
 	inUoW(t, db, func(u *postgres.PostgresUnitOfWork) {
-		q, found, err := u.Attempts(tenant).LockStops(ctx, f.r.ScheduleID())
+		q, found, err := u.Attempts(tenant).LockStops(ctx, f.r.RunID())
 		require.NoError(t, err)
 		require.True(t, found)
 		require.Len(t, q.Attempts, 1, "an attempt that answered is not named")
@@ -456,7 +456,7 @@ func TestAttemptRepository_LockStopsSkipsARunWhoseAttemptsAreHeld(t *testing.T) 
 
 	inUoW(t, db, func(u *postgres.PostgresUnitOfWork) {
 		start := time.Now()
-		q, found, err := u.Attempts(tenant).LockStops(ctx, f.r.ScheduleID())
+		q, found, err := u.Attempts(tenant).LockStops(ctx, f.r.RunID())
 		require.NoError(t, err)
 		require.True(t, found)
 		assert.Less(t, time.Since(start), 2*time.Second, "the lock is skipped, not waited for")
@@ -502,7 +502,7 @@ func TestAttemptReconcile_AResentCancelMovesEachStopToItsNextWindow(t *testing.T
 	loop := attemptreconcile.New(func() uow.UnitOfWork { return newPlanningUoW(db) }, tenant, testTaskDefaults, noRunMetrics{}, nil, discardLogger())
 	outboxRows := func() int {
 		var n int
-		require.NoError(t, db.Get(&n, `SELECT count(*) FROM state_outbox WHERE aggregate_id = $1`, f.r.ScheduleID()))
+		require.NoError(t, db.Get(&n, `SELECT count(*) FROM state_outbox WHERE aggregate_id = $1`, f.r.RunID()))
 		return n
 	}
 	before := outboxRows()
@@ -542,7 +542,7 @@ func TestAttemptReconcile_AResentCancelRowNamesTheUnansweredAttempts(t *testing.
 		SELECT a.task_id::text AS task_id, a.attempt, a.job_name FROM task_attempts a
 		JOIN tasks t ON t.task_id = a.task_id
 		WHERE t.run_id = $1 AND a.stop_requested_at IS NOT NULL
-		ORDER BY a.task_id::text`, f.r.ScheduleID()))
+		ORDER BY a.task_id::text`, f.r.RunID()))
 	require.Len(t, requested, 2, "both running attempts were asked to stop")
 	stops := make([]pkgevents.CancelledAttempt, 0, len(requested))
 	for _, a := range requested {
@@ -557,12 +557,12 @@ func TestAttemptReconcile_AResentCancelRowNamesTheUnansweredAttempts(t *testing.
 		Payload   []byte `db:"payload"`
 	}
 	require.NoError(t, db.Select(&rows, `SELECT event_type, payload FROM state_outbox WHERE aggregate_id = $1 AND stream_name = $2`,
-		f.r.ScheduleID(), streams.RunCancelledV1))
+		f.r.RunID(), streams.RunCancelledV1))
 	require.Len(t, rows, 1, "one re-sent cancel")
 	assert.Equal(t, streams.RunCancelledV1, rows[0].EventType)
 	var cancel pkgevents.RunCancelled
 	require.NoError(t, json.Unmarshal(rows[0].Payload, &cancel))
-	assert.Equal(t, f.r.ScheduleID().String(), cancel.RunID)
+	assert.Equal(t, f.r.RunID().String(), cancel.RunID)
 	assert.Equal(t, "user", cancel.CancelledBy)
 	assert.Equal(t, stops, cancel.Attempts)
 	for _, a := range cancel.Attempts {
@@ -585,7 +585,7 @@ func cancelRun(t *testing.T, db *sqlx.DB, r *run.Run) {
 	t.Helper()
 	ctx := context.Background()
 	inUoW(t, db, func(u *postgres.PostgresUnitOfWork) {
-		loaded, err := u.Run().LoadRunForUpdate(ctx, r.ScheduleID())
+		loaded, err := u.Run().LoadRunForUpdate(ctx, r.RunID())
 		require.NoError(t, err)
 		_, err = loaded.Cancel(ctx, u.TaskCollection(pkgevents.DefaultTenantID), "user", "", u.Clock().Now())
 		require.NoError(t, err)

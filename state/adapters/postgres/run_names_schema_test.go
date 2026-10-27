@@ -7,14 +7,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// oldRunNames matches every name the run tables carried before they were named
-// runs and tasks: the two table names, the run key column and the progress
+// oldRunNames matches the names that must not remain in the state schema: the
+// two retired table names, the retired run key column and the retired progress
 // clock column.
 const oldRunNames = `scheduler_tracker|task_tracker|schedule_id|last_heartbeat_at`
 
 // No constraint, index, trigger, function or column of the state schema is
-// named after the old run tables or their old columns, and none of their
-// definitions refers to them.
+// named after a retired run table or column, and none of their definitions
+// refers to one.
 func TestRunNamesSchema_NoObjectNamesTheOldTables(t *testing.T) {
 	db := newTestDB(t)
 

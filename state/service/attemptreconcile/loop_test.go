@@ -191,18 +191,18 @@ func TestPass_LeavesAnAttemptItCannotLock(t *testing.T) {
 func TestPass_FailsAStalledRunAndCountsIt(t *testing.T) {
 	stale := now.Add(-run.StallAfter - time.Minute)
 	total := int32(2)
-	r := run.HydrateRun(uuid.New(), "daily", run.SchedulerStatusRunning, run.InitStatusCompleted, run.KindCron, nil, "system",
+	r := run.HydrateRun(uuid.New(), "daily", run.RunStatusRunning, run.InitStatusCompleted, run.KindCron, nil, "system",
 		model.OperationRun, stale, &stale, nil, &stale, nil, nil, nil, &total, 1, nil)
 	runRepo := &runs{r: r}
 	outbox := &recordingOutbox{}
-	f := newFake(&fakeAttempts{stalled: []uuid.UUID{r.ScheduleID()}}, outbox)
+	f := newFake(&fakeAttempts{stalled: []uuid.UUID{r.RunID()}}, outbox)
 	f.SetRunRepo(runRepo)
 	f.SetTaskCollection(&idleTasks{})
 	metrics := &countingMetrics{}
 
 	require.NoError(t, newLoop(f, metrics).Pass(context.Background()))
 
-	assert.Equal(t, run.SchedulerStatusFailed, r.Status())
+	assert.Equal(t, run.RunStatusFailed, r.Status())
 	require.NotNil(t, r.FailureReason())
 	assert.Equal(t, run.RunFailureStalled, *r.FailureReason())
 	assert.Equal(t, 1, runRepo.saved)
@@ -322,9 +322,9 @@ func (failingCommit) Commit() error { return errors.New("commit failed") }
 func TestPass_DoesNotCountAStalledRunWhoseCommitFails(t *testing.T) {
 	stale := now.Add(-run.StallAfter - time.Minute)
 	total := int32(2)
-	r := run.HydrateRun(uuid.New(), "daily", run.SchedulerStatusRunning, run.InitStatusCompleted, run.KindCron, nil, "system",
+	r := run.HydrateRun(uuid.New(), "daily", run.RunStatusRunning, run.InitStatusCompleted, run.KindCron, nil, "system",
 		model.OperationRun, stale, &stale, nil, &stale, nil, nil, nil, &total, 1, nil)
-	f := newFake(&fakeAttempts{stalled: []uuid.UUID{r.ScheduleID()}}, &recordingOutbox{})
+	f := newFake(&fakeAttempts{stalled: []uuid.UUID{r.RunID()}}, &recordingOutbox{})
 	f.SetRunRepo(&runs{r: r})
 	f.SetTaskCollection(&idleTasks{})
 	metrics := &countingMetrics{}
@@ -341,17 +341,17 @@ func TestPass_DoesNotCountAStalledRunWhoseCommitFails(t *testing.T) {
 func TestPass_LeavesARunThatIsNoLongerStalled(t *testing.T) {
 	stale := now.Add(-run.StallAfter - time.Minute)
 	total := int32(2)
-	r := run.HydrateRun(uuid.New(), "daily", run.SchedulerStatusRunning, run.InitStatusCompleted, run.KindCron, nil, "system",
+	r := run.HydrateRun(uuid.New(), "daily", run.RunStatusRunning, run.InitStatusCompleted, run.KindCron, nil, "system",
 		model.OperationRun, stale, &stale, nil, &stale, nil, nil, nil, &total, 1, nil)
 	runRepo := &runs{r: r}
-	f := newFake(&fakeAttempts{stalled: []uuid.UUID{r.ScheduleID()}}, &recordingOutbox{})
+	f := newFake(&fakeAttempts{stalled: []uuid.UUID{r.RunID()}}, &recordingOutbox{})
 	f.SetRunRepo(runRepo)
 	f.SetTaskCollection(&idleTasks{inFlight: true})
 	metrics := &countingMetrics{}
 
 	require.NoError(t, newLoop(f, metrics).Pass(context.Background()))
 
-	assert.Equal(t, run.SchedulerStatusRunning, r.Status())
+	assert.Equal(t, run.RunStatusRunning, r.Status())
 	assert.Zero(t, runRepo.saved)
 	assert.Zero(t, metrics.stalled)
 }
@@ -363,7 +363,7 @@ func staleRun() *run.Run { return idleRun(run.StallAfter + time.Minute) }
 func idleRun(idle time.Duration) *run.Run {
 	stale := now.Add(-idle)
 	total := int32(2)
-	return run.HydrateRun(uuid.New(), "daily", run.SchedulerStatusRunning, run.InitStatusCompleted, run.KindCron, nil, "system",
+	return run.HydrateRun(uuid.New(), "daily", run.RunStatusRunning, run.InitStatusCompleted, run.KindCron, nil, "system",
 		model.OperationRun, stale, &stale, nil, &stale, nil, nil, nil, &total, 1, nil)
 }
 
@@ -384,7 +384,7 @@ func errorLines(logs *bytes.Buffer) []string {
 func TestPass_RetriesAFailedGrantOnceAtOnce(t *testing.T) {
 	r := staleRun()
 	tasks := &idleTasks{grantFailures: 1}
-	f := newFake(&fakeAttempts{stalled: []uuid.UUID{r.ScheduleID()}}, &recordingOutbox{})
+	f := newFake(&fakeAttempts{stalled: []uuid.UUID{r.RunID()}}, &recordingOutbox{})
 	f.SetRunRepo(&runs{r: r})
 	f.SetTaskCollection(tasks)
 	metrics := &countingMetrics{}
@@ -395,7 +395,7 @@ func TestPass_RetriesAFailedGrantOnceAtOnce(t *testing.T) {
 	require.NoError(t, loop.Pass(context.Background()))
 
 	assert.Equal(t, 2, tasks.grantReads, "the grant is tried twice")
-	assert.Equal(t, run.SchedulerStatusFailed, r.Status())
+	assert.Equal(t, run.RunStatusFailed, r.Status())
 	assert.Equal(t, 1, metrics.stalled)
 	lines := errorLines(&logs)
 	require.Len(t, lines, 1)
@@ -411,7 +411,7 @@ func TestPass_FailsARunWhoseGrantKeepsFailingOnceItIsIdleForTheBound(t *testing.
 	runRepo := &runs{r: r}
 	tasks := &idleTasks{grantFailures: 100}
 	outbox := &recordingOutbox{}
-	f := newFake(&fakeAttempts{stalled: []uuid.UUID{r.ScheduleID()}}, outbox)
+	f := newFake(&fakeAttempts{stalled: []uuid.UUID{r.RunID()}}, outbox)
 	f.SetRunRepo(runRepo)
 	f.SetTaskCollection(tasks)
 	metrics := &countingMetrics{}
@@ -422,7 +422,7 @@ func TestPass_FailsARunWhoseGrantKeepsFailingOnceItIsIdleForTheBound(t *testing.
 	require.NoError(t, loop.Pass(context.Background()))
 
 	assert.Equal(t, 2, tasks.grantReads, "the check without the grant reads no waits")
-	assert.Equal(t, run.SchedulerStatusFailed, r.Status())
+	assert.Equal(t, run.RunStatusFailed, r.Status())
 	require.NotNil(t, r.FailureReason())
 	assert.Equal(t, run.RunFailureStalled, *r.FailureReason())
 	assert.Equal(t, 1, runRepo.saved)
@@ -431,7 +431,7 @@ func TestPass_FailsARunWhoseGrantKeepsFailingOnceItIsIdleForTheBound(t *testing.
 	assert.IsType(t, run.RunFinalized{}, outbox.events[0])
 	lines := errorLines(&logs)
 	require.Len(t, lines, 1)
-	assert.Contains(t, lines[0], r.ScheduleID().String())
+	assert.Contains(t, lines[0], r.RunID().String())
 	assert.Contains(t, lines[0], "grant_error=")
 	assert.Contains(t, lines[0], "duplicate attempt")
 }
@@ -443,7 +443,7 @@ func TestPass_LeavesARunWhoseGrantFailsWhileItIsIdleForLessThanTheBound(t *testi
 	r := idleRun(run.StallAfterFailedGrant - time.Minute)
 	runRepo := &runs{r: r}
 	tasks := &idleTasks{grantFailures: 100}
-	f := newFake(&fakeAttempts{stalled: []uuid.UUID{r.ScheduleID()}}, &recordingOutbox{})
+	f := newFake(&fakeAttempts{stalled: []uuid.UUID{r.RunID()}}, &recordingOutbox{})
 	f.SetRunRepo(runRepo)
 	f.SetTaskCollection(tasks)
 	metrics := &countingMetrics{}
@@ -451,7 +451,7 @@ func TestPass_LeavesARunWhoseGrantFailsWhileItIsIdleForLessThanTheBound(t *testi
 	err := newLoop(f, metrics).Pass(context.Background())
 
 	require.ErrorIs(t, err, run.ErrGrantFailed)
-	assert.Equal(t, run.SchedulerStatusRunning, r.Status())
+	assert.Equal(t, run.RunStatusRunning, r.Status())
 	assert.Zero(t, runRepo.saved)
 	assert.Zero(t, metrics.stalled)
 	assert.Equal(t, 2, tasks.grantReads)
@@ -479,7 +479,7 @@ func TestPass_RunsItsHookBeforeItListsTheStalledRuns(t *testing.T) {
 func TestPass_ARunTheHookDispatchesIsNotFailed(t *testing.T) {
 	r := staleRun()
 	runRepo := &runs{r: r}
-	attempts := &fakeAttempts{stalled: []uuid.UUID{r.ScheduleID()}}
+	attempts := &fakeAttempts{stalled: []uuid.UUID{r.RunID()}}
 	f := newFake(attempts, &recordingOutbox{})
 	f.SetRunRepo(runRepo)
 	f.SetTaskCollection(&idleTasks{})
@@ -493,7 +493,7 @@ func TestPass_ARunTheHookDispatchesIsNotFailed(t *testing.T) {
 
 	require.NoError(t, loop.Pass(context.Background()))
 
-	assert.Equal(t, run.SchedulerStatusRunning, r.Status())
+	assert.Equal(t, run.RunStatusRunning, r.Status())
 	assert.Zero(t, runRepo.saved)
 	assert.Zero(t, metrics.stalled)
 }
@@ -502,7 +502,7 @@ func TestPass_ARunTheHookDispatchesIsNotFailed(t *testing.T) {
 // stalled runs are still listed and failed.
 func TestPass_AFailedHookIsLoggedAndTheStallScanStillRuns(t *testing.T) {
 	r := staleRun()
-	f := newFake(&fakeAttempts{stalled: []uuid.UUID{r.ScheduleID()}}, &recordingOutbox{})
+	f := newFake(&fakeAttempts{stalled: []uuid.UUID{r.RunID()}}, &recordingOutbox{})
 	f.SetRunRepo(&runs{r: r})
 	f.SetTaskCollection(&idleTasks{})
 	metrics := &countingMetrics{}
@@ -512,7 +512,7 @@ func TestPass_AFailedHookIsLoggedAndTheStallScanStillRuns(t *testing.T) {
 
 	require.NoError(t, loop.Pass(context.Background()))
 
-	assert.Equal(t, run.SchedulerStatusFailed, r.Status())
+	assert.Equal(t, run.RunStatusFailed, r.Status())
 	assert.Equal(t, 1, metrics.stalled)
 	var hookErrors []string
 	for _, line := range strings.Split(logs.String(), "\n") {

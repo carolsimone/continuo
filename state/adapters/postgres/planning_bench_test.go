@@ -46,7 +46,7 @@ func BenchmarkStartRun(b *testing.B) {
 			for range b.N {
 				r := startScheduleRun(b, db, tenant, shape.schedule(), op)
 				b.StopTimer()
-				deleteRun(b, db, r.ScheduleID())
+				deleteRun(b, db, r.RunID())
 				b.StartTimer()
 			}
 		})
@@ -104,7 +104,7 @@ func benchmarkReports(b *testing.B, shape releaseShape, next func(keys []string,
 	r := startScheduleRun(b, db, tenant, shape.schedule(), model.OperationRun)
 	var keys []string
 	require.NoError(b, db.Select(&keys,
-		`SELECT node_key FROM tasks WHERE run_id = $1 ORDER BY node_key COLLATE "C"`, r.ScheduleID()))
+		`SELECT node_key FROM tasks WHERE run_id = $1 ORDER BY node_key COLLATE "C"`, r.RunID()))
 	handler := handlers.NewAttemptReportHandler(tenant, testTaskDefaults, noRunMetrics{}, discardLogger())
 	u := newPlanningUoW(db)
 	reported := map[string]bool{}
@@ -114,14 +114,14 @@ func benchmarkReports(b *testing.B, shape releaseShape, next func(keys []string,
 		key, status, reason := next(keys, i)
 		if reported[key] {
 			b.StopTimer()
-			restoreRun(b, db, r.ScheduleID())
+			restoreRun(b, db, r.RunID())
 			clear(reported)
 			b.StartTimer()
 		}
 		reported[key] = true
 		require.NoError(b, u.Begin(ctx))
-		require.NoError(b, handler.Handle(ctx, u, events.AttemptReported{RunID: r.ScheduleID(), Report: run.AttemptReport{
-			TaskID:        run.TaskIDFor(tenant, r.ScheduleID(), topology.NodeKey(key)),
+		require.NoError(b, handler.Handle(ctx, u, events.AttemptReported{RunID: r.RunID(), Report: run.AttemptReport{
+			TaskID:        run.TaskIDFor(tenant, r.RunID(), topology.NodeKey(key)),
 			Attempt:       0,
 			Status:        status,
 			FailureReason: reason,
@@ -143,10 +143,10 @@ func BenchmarkReconcileDue(b *testing.B) {
 	_, err := db.Exec(`
 		INSERT INTO task_attempts (task_id, attempt, job_name, status, dispatched_at, next_check_at)
 		SELECT task_id, 0, job_name, 'dispatched', now(), now() FROM tasks WHERE run_id = $1
-		ON CONFLICT (task_id, attempt) DO NOTHING`, r.ScheduleID())
+		ON CONFLICT (task_id, attempt) DO NOTHING`, r.RunID())
 	require.NoError(b, err)
 	_, err = db.Exec(`UPDATE tasks SET status = 'dispatched', dispatched_at = coalesce(dispatched_at, now())
-		WHERE run_id = $1`, r.ScheduleID())
+		WHERE run_id = $1`, r.RunID())
 	require.NoError(b, err)
 	loop := attemptreconcile.New(func() uow.UnitOfWork { return newPlanningUoW(db) }, tenant, testTaskDefaults,
 		noRunMetrics{}, nil, discardLogger())
@@ -156,15 +156,15 @@ func BenchmarkReconcileDue(b *testing.B) {
 		b.StopTimer()
 		_, err := db.Exec(`
 			UPDATE task_attempts a SET next_check_at = now() - interval '1 second'
-			FROM tasks t WHERE a.task_id = t.task_id AND t.run_id = $1`, r.ScheduleID())
+			FROM tasks t WHERE a.task_id = t.task_id AND t.run_id = $1`, r.RunID())
 		require.NoError(b, err)
-		_, err = db.Exec(`DELETE FROM state_outbox WHERE aggregate_id = $1`, r.ScheduleID())
+		_, err = db.Exec(`DELETE FROM state_outbox WHERE aggregate_id = $1`, r.RunID())
 		require.NoError(b, err)
 		b.StartTimer()
 		require.NoError(b, loop.Pass(ctx))
 		b.StopTimer()
 		var asked int
-		require.NoError(b, db.Get(&asked, `SELECT count(*) FROM state_outbox WHERE aggregate_id = $1`, r.ScheduleID()))
+		require.NoError(b, db.Get(&asked, `SELECT count(*) FROM state_outbox WHERE aggregate_id = $1`, r.RunID()))
 		require.Equalf(b, attemptreconcile.DueLimit, asked,
 			"with %d attempts due, a pass must ask about exactly DueLimit (%d) of them, one dispatch each; it asked about %d",
 			dag2000.nodes, attemptreconcile.DueLimit, asked)

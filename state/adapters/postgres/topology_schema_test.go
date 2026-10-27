@@ -133,7 +133,7 @@ func TestTopologySchema_MaterializationSourceIsBuildOrAdopted(t *testing.T) {
 }
 
 // runs.release_id is optional: a run without a release stores NULL.
-func TestTopologySchema_SchedulerTrackerReleaseIDIsOptional(t *testing.T) {
+func TestTopologySchema_RunReleaseIDIsOptional(t *testing.T) {
 	db := newTestDB(t)
 	without, with := uuid.New(), uuid.New()
 	t.Cleanup(func() {

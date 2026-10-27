@@ -26,7 +26,7 @@ func TestOutboxPublisher_RunFinalizedWritesNoRow(t *testing.T) {
 	tx, err := db.BeginTxx(ctx, nil)
 	require.NoError(t, err)
 	require.NoError(t, postgres.NewOutboxPublisher(tx, discardLogger()).Append(ctx, []run.DomainEvent{
-		run.RunFinalized{ID: scheduleID, Name: "daily", Outcome: run.SchedulerStatusSucceeded},
+		run.RunFinalized{ID: scheduleID, Name: "daily", Outcome: run.RunStatusSucceeded},
 		run.RunDispatchTerminal{ID: scheduleID, Name: "daily", Reason: "runplan: the selection is empty"},
 	}, uuid.Nil))
 	require.NoError(t, tx.Commit())
@@ -49,7 +49,7 @@ func TestOutboxPublisher_RunCancelledPair(t *testing.T) {
 	id := uuid.New()
 	err = pub.Append(ctx, []run.DomainEvent{
 		run.RunCancelled{ID: id, Name: "e2e-schedule", By: "tester", CancellationReason: "drift"},
-		run.RunFinalized{ID: id, Name: "e2e-schedule", Outcome: run.SchedulerStatusCancelled},
+		run.RunFinalized{ID: id, Name: "e2e-schedule", Outcome: run.RunStatusCancelled},
 	}, uuid.Nil)
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
@@ -185,7 +185,7 @@ func TestOutboxPublisher_AllEventTypes(t *testing.T) {
 		},
 		{
 			name:     "RunFinalized produces no row",
-			event:    run.RunFinalized{ID: scheduleID, Name: "sched", Outcome: run.SchedulerStatusFailed},
+			event:    run.RunFinalized{ID: scheduleID, Name: "sched", Outcome: run.RunStatusFailed},
 			wantRows: 0,
 		},
 		{

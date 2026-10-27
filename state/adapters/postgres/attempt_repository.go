@@ -85,7 +85,7 @@ func (r *AttemptRepository) StalledRuns(ctx context.Context, idle time.Duration,
 		  AND NOT `+runWorkInFlight+`
 		ORDER BY s.last_progress_at, s.run_id
 		LIMIT $3`, pq.Array(inFlightTaskStatuses()), idle.Seconds(), limit,
-		pq.Array(activeSchedulerStatuses())); err != nil {
+		pq.Array(activeRunStatuses())); err != nil {
 		return nil, fmt.Errorf("read the stalled runs: %w", err)
 	}
 	return ids, nil

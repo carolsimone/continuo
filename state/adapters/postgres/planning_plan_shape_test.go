@@ -91,7 +91,7 @@ func TestPlanShape_TaskGraphQueriesReadThroughIndexes(t *testing.T) {
 	r := startScheduleRun(t, db, tenant, dag2000.schedule(), model.OperationRun)
 	_, err := db.ExecContext(context.Background(), `ANALYZE topology_nodes, topology_edges, tasks`)
 	require.NoError(t, err)
-	args := []any{tenant, r.ScheduleID(), "rel-1", "bench.n10_0000"}
+	args := []any{tenant, r.RunID(), "rel-1", "bench.n10_0000"}
 
 	ready := planScans(t, postgres.ReadyCandidatesQueryForTest, args...)
 	assert.Empty(t, seqScansOf(ready), "ready candidates: %v", ready)
@@ -116,7 +116,7 @@ func TestPlanShape_PendingDescendantsReadNoTableOutsideTheWalk(t *testing.T) {
 
 	var raw string
 	require.NoError(t, db.Get(&raw, `EXPLAIN (FORMAT JSON) `+postgres.PendingDescendantsQueryForTest,
-		tenant, r.ScheduleID(), "rel-1", "bench.fail_root"))
+		tenant, r.RunID(), "rel-1", "bench.fail_root"))
 	var plans []struct {
 		Plan map[string]any `json:"Plan"`
 	}
@@ -150,7 +150,7 @@ func TestPlanShape_LastSuccessDurationsProbesTheNodeIdentity(t *testing.T) {
 	db := newTestDB(t)
 	tenant := storeShape(t, db, dag2000)
 	r := startScheduleRun(t, db, tenant, dag2000.schedule(), model.OperationRun)
-	succeedWithAttempts(t, db, r.ScheduleID())
+	succeedWithAttempts(t, db, r.RunID())
 	_, err := db.ExecContext(context.Background(), `ANALYZE tasks, task_attempts`)
 	require.NoError(t, err)
 	services, schemas, tables := make([]string, 10), make([]string, 10), make([]string, 10)

@@ -20,7 +20,7 @@ import (
 
 // createdRun is a run as its creating transaction left it.
 type createdRun struct {
-	Status    run.SchedulerStatus
+	Status    run.RunStatus
 	Planned   bool
 	Tasks     int
 	Dispatch  []string
@@ -32,7 +32,7 @@ type createdRun struct {
 func (h *builtHarness) created(t *testing.T, id uuid.UUID) createdRun {
 	t.Helper()
 	var row struct {
-		Status        run.SchedulerStatus  `db:"status"`
+		Status        run.RunStatus        `db:"status"`
 		Planned       bool                 `db:"planned"`
 		Completed     bool                 `db:"completed"`
 		FailureReason run.RunFailureReason `db:"failure_reason"`
@@ -74,7 +74,7 @@ func TestRunCreation(t *testing.T) {
 	h := newBuiltHarness(db)
 	ctx := context.Background()
 	alice := identity.FromUserID("okta|alice")
-	activate := svchandlers.NewActivateScheduleHandler(defaultPlanner, h.logger)
+	activate := svchandlers.NewStartRunHandler(defaultPlanner, h.logger)
 
 	h.catalog(t, "creation-daily", "creation-empty")
 	promoteRelease(t, db,
@@ -85,10 +85,10 @@ func TestRunCreation(t *testing.T) {
 	t.Run("a triggered run is planned and dispatched in its creating transaction", func(t *testing.T) {
 		id, outcome, err := activate.Handle(ctx, h.factory(), "creation-daily", run.KindTrigger, nil, alice, model.OperationRun)
 		require.NoError(t, err)
-		require.Equal(t, svchandlers.OutcomeActivated, outcome)
+		require.Equal(t, svchandlers.OutcomeRunStarted, outcome)
 
 		assert.Equal(t, createdRun{
-			Status: run.SchedulerStatusRunning, Planned: true, Tasks: 3,
+			Status: run.RunStatusRunning, Planned: true, Tasks: 3,
 			Dispatch: []string{"mart.creation_c", "raw.creation_a"},
 		}, h.created(t, id))
 		_, err = db.Exec(`UPDATE runs SET status = 'succeeded' WHERE run_id = $1`, id)
@@ -99,14 +99,14 @@ func TestRunCreation(t *testing.T) {
 		id, _, err := activate.Handle(ctx, h.factory(), "creation-daily", run.KindTrigger, nil, alice, model.OperationTest)
 		require.NoError(t, err)
 
-		assert.Equal(t, createdRun{Status: run.SchedulerStatusSkipped, Completed: true}, h.created(t, id))
+		assert.Equal(t, createdRun{Status: run.RunStatusSkipped, Completed: true}, h.created(t, id))
 	})
 
 	t.Run("a cron fire on a schedule with no node in the live release records a failed run", func(t *testing.T) {
 		id, _, err := activate.Handle(ctx, h.factory(), "creation-empty", run.KindCron, nil, identity.System(), model.OperationRun)
 		require.NoError(t, err)
 
-		assert.Equal(t, createdRun{Status: run.SchedulerStatusFailed, Completed: true, FailureReason: run.RunFailureEmptySelection},
+		assert.Equal(t, createdRun{Status: run.RunStatusFailed, Completed: true, FailureReason: run.RunFailureEmptySelection},
 			h.created(t, id), "the run failed with no failed task, so it records why")
 	})
 
@@ -144,7 +144,7 @@ func TestRunCreation(t *testing.T) {
 		rerunID, _, err := svchandlers.NewTriggerRerunHandler(defaultPlanner, h.logger).Handle(ctx, h.factory(), srcID, alice)
 		require.NoError(t, err)
 		assert.Equal(t, source, h.stampOf(t, rerunID))
-		assert.Equal(t, createdRun{Status: run.SchedulerStatusRunning, Planned: true, Tasks: 2, Dispatch: []string{"mart.derived_b"}}, h.created(t, rerunID))
+		assert.Equal(t, createdRun{Status: run.RunStatusRunning, Planned: true, Tasks: 2, Dispatch: []string{"mart.derived_b"}}, h.created(t, rerunID))
 		_, err = db.Exec(`UPDATE runs SET status = 'failed', completed_at = now() WHERE run_id = $1`, rerunID)
 		require.NoError(t, err)
 		releaseLeasesOf(t, db, rerunID)
@@ -154,7 +154,7 @@ func TestRunCreation(t *testing.T) {
 		})
 		require.NoError(t, err)
 		assert.Equal(t, live, h.stampOf(t, rebaseID))
-		assert.Equal(t, createdRun{Status: run.SchedulerStatusRunning, Planned: true, Tasks: 3, Dispatch: []string{"mart.derived_b", "mart.derived_c"}}, h.created(t, rebaseID))
+		assert.Equal(t, createdRun{Status: run.RunStatusRunning, Planned: true, Tasks: 3, Dispatch: []string{"mart.derived_b", "mart.derived_c"}}, h.created(t, rebaseID))
 	})
 
 	t.Run("a rerun of a test run is refused and creates no run", func(t *testing.T) {
@@ -188,7 +188,7 @@ func TestRunCreation_DerivedRunsNeedOneConnection(t *testing.T) {
 	defer cleanup()
 	h := newBuiltHarness(db)
 	alice := identity.FromUserID("okta|alice")
-	activate := svchandlers.NewActivateScheduleHandler(defaultPlanner, h.logger)
+	activate := svchandlers.NewStartRunHandler(defaultPlanner, h.logger)
 
 	h.catalog(t, "pool-derived")
 	promoteRelease(t, db,

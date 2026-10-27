@@ -192,7 +192,7 @@ func assertNoNotificationFrom(t *testing.T, listener *pq.Listener, pid int, when
 }
 
 // A task waits for exactly one thing, a node lease, or for nothing.
-func TestTaskTrackerSchema_WaitReasonIsNodeLeaseOrNull(t *testing.T) {
+func TestTasksSchema_WaitReasonIsNodeLeaseOrNull(t *testing.T) {
 	db := newTestDB(t)
 	taskID := newSchemaTask(t, db)
 

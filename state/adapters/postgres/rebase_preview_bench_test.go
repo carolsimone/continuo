@@ -73,7 +73,7 @@ func failedRunWithChangedAncestors(tb testing.TB, db *sqlx.DB, shape releaseShap
 	ctx := context.Background()
 	tenant := storeShape(tb, db, shape)
 	r := startScheduleRun(tb, db, tenant, shape.schedule(), model.OperationRun)
-	succeedWithAttempts(tb, db, r.ScheduleID())
+	succeedWithAttempts(tb, db, r.RunID())
 
 	rel := shape.release(tb, tenant, "rel-2")
 	g := topology.NewGraph(rel.Nodes, rel.Edges)
@@ -88,15 +88,15 @@ func failedRunWithChangedAncestors(tb testing.TB, db *sqlx.DB, shape releaseShap
 	}
 	rel.PromotionSeq = 2
 
-	_, err := db.Exec(`UPDATE tasks SET status = 'failed' WHERE run_id = $1 AND node_key = $2`, r.ScheduleID(), string(failed))
+	_, err := db.Exec(`UPDATE tasks SET status = 'failed' WHERE run_id = $1 AND node_key = $2`, r.RunID(), string(failed))
 	require.NoError(tb, err)
 	skipped := make([]string, 0, len(descendants))
 	for _, k := range descendants {
 		skipped = append(skipped, string(k))
 	}
-	_, err = db.Exec(`UPDATE tasks SET status = 'skipped' WHERE run_id = $1 AND node_key = ANY($2)`, r.ScheduleID(), pq.Array(skipped))
+	_, err = db.Exec(`UPDATE tasks SET status = 'skipped' WHERE run_id = $1 AND node_key = ANY($2)`, r.RunID(), pq.Array(skipped))
 	require.NoError(tb, err)
-	_, err = db.Exec(`UPDATE runs SET status = 'failed', completed_at = now() WHERE run_id = $1`, r.ScheduleID())
+	_, err = db.Exec(`UPDATE runs SET status = 'failed', completed_at = now() WHERE run_id = $1`, r.RunID())
 	require.NoError(tb, err)
 
 	tx, err := db.BeginTxx(ctx, nil)
@@ -109,5 +109,5 @@ func failedRunWithChangedAncestors(tb testing.TB, db *sqlx.DB, shape releaseShap
 	require.NoError(tb, tx.Commit())
 	_, err = db.ExecContext(ctx, `ANALYZE topology_nodes, topology_edges, tasks, task_attempts`)
 	require.NoError(tb, err)
-	return tenant, r.ScheduleID(), len(changed)
+	return tenant, r.RunID(), len(changed)
 }

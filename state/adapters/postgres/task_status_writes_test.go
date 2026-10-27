@@ -22,7 +22,7 @@ func inTaskTx(t *testing.T, db *sqlx.DB, fn func(tasks run.TaskCollection)) {
 	tx, err := db.BeginTxx(context.Background(), nil)
 	require.NoError(t, err)
 	defer tx.Rollback()
-	fn(postgres.NewTaskCollectionAdapter(postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, discardLogger()), tx, "default"))
+	fn(postgres.NewTaskCollectionAdapter(postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, discardLogger()), tx, "default"))
 	require.NoError(t, tx.Commit())
 }
 
@@ -44,7 +44,7 @@ func TestTaskCollection_LoadAttemptStateReadsTheTask(t *testing.T) {
 	db := newTestDB(t)
 	tenant := storeFailureSchedule(t, db)
 	r := startScheduleRun(t, db, tenant, "e2e-schedule-failure", model.OperationRun)
-	id := run.TaskIDFor(tenant, r.ScheduleID(), "e2e_schema.ftable_e")
+	id := run.TaskIDFor(tenant, r.RunID(), "e2e_schema.ftable_e")
 	_, err := db.Exec(`UPDATE tasks SET status = 'failed', attempt = 1 WHERE task_id = $1`, id)
 	require.NoError(t, err)
 
@@ -74,8 +74,8 @@ func TestTaskCollection_LoadAttemptStateReadsTheLeaseWait(t *testing.T) {
 	db := newTestDB(t)
 	tenant := storeFailureSchedule(t, db)
 	r := startScheduleRun(t, db, tenant, "e2e-schedule-failure", model.OperationRun)
-	waiting := run.TaskIDFor(tenant, r.ScheduleID(), "e2e_schema.ftable_c")
-	upstreams := run.TaskIDFor(tenant, r.ScheduleID(), "e2e_schema.ftable_d")
+	waiting := run.TaskIDFor(tenant, r.RunID(), "e2e_schema.ftable_c")
+	upstreams := run.TaskIDFor(tenant, r.RunID(), "e2e_schema.ftable_d")
 	_, err := db.Exec(`UPDATE tasks SET wait_reason = 'node_lease', lease_wait_since = now() WHERE task_id = $1`, waiting)
 	require.NoError(t, err)
 
@@ -101,7 +101,7 @@ func TestTaskCollection_MarkDispatchedDispatchesOnlyPendingUndispatchedTasks(t *
 	tenant := storeFailureSchedule(t, db)
 	r := startScheduleRun(t, db, tenant, "e2e-schedule-failure", model.OperationRun)
 	id := func(table string) uuid.UUID {
-		return run.TaskIDFor(tenant, r.ScheduleID(), topology.NodeKey("e2e_schema."+table))
+		return run.TaskIDFor(tenant, r.RunID(), topology.NodeKey("e2e_schema."+table))
 	}
 	setTaskStatus(t, db, r, "e2e_schema.ftable_h", run.TaskStatusSkipped)
 	at := time.Date(2026, 10, 15, 9, 0, 0, 0, time.UTC)
@@ -133,7 +133,7 @@ func TestTaskCollection_MarkSkippedSkipsOnlyPendingUndispatchedTasks(t *testing.
 	tenant := storeFailureSchedule(t, db)
 	r := startScheduleRun(t, db, tenant, "e2e-schedule-failure", model.OperationRun)
 	id := func(table string) uuid.UUID {
-		return run.TaskIDFor(tenant, r.ScheduleID(), topology.NodeKey("e2e_schema."+table))
+		return run.TaskIDFor(tenant, r.RunID(), topology.NodeKey("e2e_schema."+table))
 	}
 	setTaskStatus(t, db, r, "e2e_schema.ftable_h", run.TaskStatusSucceeded)
 
@@ -161,7 +161,7 @@ func TestTaskCollection_ListRunTasksReadsEveryTaskInKeyOrder(t *testing.T) {
 	setTaskStatus(t, db, r, "e2e_schema.ftable_c", run.TaskStatusFailed)
 
 	inTaskTx(t, db, func(tasks run.TaskCollection) {
-		got, err := tasks.ListRunTasks(ctx, r.ScheduleID())
+		got, err := tasks.ListRunTasks(ctx, r.RunID())
 		require.NoError(t, err)
 		require.Len(t, got, 8)
 		keys := make([]topology.NodeKey, 0, len(got))
@@ -173,6 +173,6 @@ func TestTaskCollection_ListRunTasksReadsEveryTaskInKeyOrder(t *testing.T) {
 			"e2e_schema.ftable_e", "e2e_schema.ftable_f", "e2e_schema.ftable_g", "e2e_schema.ftable_h",
 		}, keys)
 		assert.Equal(t, run.TaskStatusFailed, got[2].Status)
-		assert.Equal(t, run.TaskIDFor(tenant, r.ScheduleID(), "e2e_schema.ftable_c"), got[2].TaskID)
+		assert.Equal(t, run.TaskIDFor(tenant, r.RunID(), "e2e_schema.ftable_c"), got[2].TaskID)
 	})
 }

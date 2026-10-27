@@ -22,14 +22,14 @@ import (
 func TestRunRepository_SaveRun_PersistsProgressClock(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	schedRepo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, discardLogger())
+	schedRepo := postgres.NewRunTableRepository(db, discardLogger())
+	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, discardLogger())
 
 	scheduleID := uuid.New()
-	require.NoError(t, schedRepo.Create(ctx, &postgres.SchedulerTracker{
+	require.NoError(t, schedRepo.Create(ctx, &postgres.RunRow{
 		ScheduleID:           scheduleID,
 		ScheduleName:         "progress-" + scheduleID.String()[:8],
-		Status:               run.SchedulerStatusPending,
+		Status:               run.RunStatusPending,
 		CreatedAt:            time.Now().Add(-time.Hour),
 		InitializationStatus: "in_progress",
 		Kind:                 "cron",
@@ -54,8 +54,8 @@ func TestRunRepository_SaveRun_PersistsProgressClock(t *testing.T) {
 		t.Helper()
 		got, err := schedRepo.GetByID(ctx, scheduleID)
 		require.NoError(t, err)
-		require.NotNil(t, got.LastHeartbeatAt, "last_progress_at must be persisted")
-		return *got.LastHeartbeatAt
+		require.NotNil(t, got.LastProgressAt, "last_progress_at must be persisted")
+		return *got.LastProgressAt
 	}
 
 	dispatchedAt := time.Now().Add(-30 * time.Minute).UTC().Truncate(time.Microsecond)

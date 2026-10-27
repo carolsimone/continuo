@@ -104,7 +104,7 @@ func TestTaskAttemptsSchema_DefaultsAndTheDueIndex(t *testing.T) {
 
 // tasks names its current attempt `attempt`, starting at 0; the old
 // column name is gone.
-func TestTaskTrackerSchema_AttemptReplacesRetryCount(t *testing.T) {
+func TestTasksSchema_AttemptReplacesRetryCount(t *testing.T) {
 	db := newTestDB(t)
 	taskID := newSchemaTask(t, db)
 

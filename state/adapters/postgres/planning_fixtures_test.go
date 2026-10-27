@@ -132,8 +132,8 @@ func startScheduleRun(tb testing.TB, db *sqlx.DB, tenant, schedule string, op mo
 		run.ReleaseStamp{ReleaseID: "rel-1", PromotionSeq: 1}, now)
 	require.NoError(tb, err)
 	tb.Cleanup(func() {
-		_, _ = db.ExecContext(context.Background(), `DELETE FROM state_outbox WHERE aggregate_id = $1`, r.ScheduleID())
-		_, _ = db.ExecContext(context.Background(), `DELETE FROM runs WHERE run_id = $1`, r.ScheduleID())
+		_, _ = db.ExecContext(context.Background(), `DELETE FROM state_outbox WHERE aggregate_id = $1`, r.RunID())
+		_, _ = db.ExecContext(context.Background(), `DELETE FROM runs WHERE run_id = $1`, r.RunID())
 	})
 
 	u := newPlanningUoW(db)
@@ -156,7 +156,7 @@ func startScheduleRun(tb testing.TB, db *sqlx.DB, tenant, schedule string, op mo
 func setTaskStatus(tb testing.TB, db *sqlx.DB, r *run.Run, nodeKey string, status run.TaskStatus) {
 	tb.Helper()
 	res, err := db.Exec(`UPDATE tasks SET status = $3 WHERE run_id = $1 AND node_key = $2`,
-		r.ScheduleID(), nodeKey, string(status))
+		r.RunID(), nodeKey, string(status))
 	require.NoError(tb, err)
 	n, err := res.RowsAffected()
 	require.NoError(tb, err)
