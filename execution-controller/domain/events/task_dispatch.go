@@ -9,8 +9,9 @@ import (
 // TaskDispatch is the parsed task.dispatch:v1 payload: one attempt of one
 // task as state decided it, with state's view of the attempt (KnownStatus).
 // Only RunID, TaskID and Attempt are known to be valid; the other fields are
-// as state wrote them.
+// as state wrote them. TenantID is the tenant of the dispatch's envelope.
 type TaskDispatch struct {
+	TenantID       string
 	RunID          uuid.UUID
 	TaskID         uuid.UUID
 	Attempt        int
@@ -30,7 +31,7 @@ type TaskDispatch struct {
 // Command is the deploy command of the dispatched attempt.
 func (d TaskDispatch) Command() command.DeployTask {
 	return command.DeployTask{
-		TaskID: d.TaskID.String(), RunID: d.RunID.String(), ScheduleName: d.ScheduleName,
+		TenantID: d.TenantID, TaskID: d.TaskID.String(), RunID: d.RunID.String(), ScheduleName: d.ScheduleName,
 		ServiceName: d.ServiceName, SchemaName: d.SchemaName, TableName: d.TableName, JobName: d.JobName,
 		NodeType: d.NodeType, ImageTag: d.ImageTag, SecretRef: d.SecretRef, Attempt: d.Attempt,
 		Operation: d.Operation, TimeoutSeconds: d.TimeoutSeconds,

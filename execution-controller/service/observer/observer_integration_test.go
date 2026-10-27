@@ -26,6 +26,7 @@ import (
 	executortest "github.com/carolsimone/continuo/execution-controller/test"
 	"github.com/carolsimone/continuo/pkg/domain"
 	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/outbox"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
@@ -82,7 +83,7 @@ func newHarness(t testing.TB) *harness {
 func (h *harness) started(t testing.TB, attempt int, deployedAt time.Time) *model.Deployment {
 	t.Helper()
 	runID := uuid.New().String()
-	cmd := command.DeployTask{TaskID: uuid.New().String(), RunID: runID, ScheduleName: "daily",
+	cmd := command.DeployTask{TenantID: "default", TaskID: uuid.New().String(), RunID: runID, ScheduleName: "daily",
 		ServiceName: "service-1", SchemaName: "e2e_schema", TableName: "ftable_e",
 		NodeType: "dbt-model", ImageTag: "v42", Operation: "run", Attempt: attempt}
 	name, err := domain.ComputeJobName(cmd.ServiceName, cmd.SchemaName, cmd.TableName, runID, attempt)
@@ -122,7 +123,19 @@ func (h *harness) outbox(t *testing.T, eventType string) []map[string]any {
 // first.
 func (h *harness) reports(t *testing.T) []map[string]any {
 	t.Helper()
-	return h.outbox(t, event.EventTypeTaskStatusReport)
+	stored := h.outbox(t, event.EventTypeTaskStatusReport)
+	out := make([]map[string]any, 0, len(stored))
+	for _, row := range stored {
+		raw, err := json.Marshal(row)
+		require.NoError(t, err)
+		tenantID, payload, err := outbox.UnwrapTenant(raw)
+		require.NoError(t, err)
+		assert.Equal(t, "default", tenantID, "a report row stores its deployment's tenant")
+		var report map[string]any
+		require.NoError(t, json.Unmarshal(payload, &report))
+		out = append(out, report)
+	}
+	return out
 }
 
 // attempts counts the deployments of taskID: execution-controller never
@@ -787,7 +800,7 @@ func liveJobOf(runID string, now time.Time) model.JobObservation {
 func (h *harness) unstartedRow(t *testing.T, runID, jobName string, failed bool) *model.Deployment {
 	t.Helper()
 	ctx := context.Background()
-	cmd := command.DeployTask{TaskID: uuid.NewString(), RunID: runID, ScheduleName: "daily",
+	cmd := command.DeployTask{TenantID: "default", TaskID: uuid.NewString(), RunID: runID, ScheduleName: "daily",
 		ServiceName: "service-1", SchemaName: "e2e_schema", TableName: "ftable_e", JobName: jobName,
 		NodeType: "dbt-model", ImageTag: "v42", Operation: "run"}
 	dep := model.NewDeployment(cmd, nil, h.now.Add(-time.Minute))

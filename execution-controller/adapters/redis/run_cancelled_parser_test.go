@@ -42,9 +42,9 @@ func fixtureCancel(t *testing.T, name string) goredis.XMessage {
 func TestParseRunCancelled_ReadsTheGoldenFixtures(t *testing.T) {
 	runID := uuid.MustParse("7f3e1a2b-4c5d-4e6f-8a9b-0c1d2e3f4a5b")
 	for name, want := range map[string]events.RunCancelled{
-		"run_cancelled_v1.json": {RunID: runID, CancelledBy: "alice@example.com", Reason: "bad upstream data",
+		"run_cancelled_v1.json": {TenantID: "default", RunID: runID, CancelledBy: "alice@example.com", Reason: "bad upstream data",
 			Attempts: []events.AttemptRef{}},
-		"run_cancelled_v1_attempts.json": {RunID: runID, CancelledBy: "alice@example.com", Reason: "bad upstream data",
+		"run_cancelled_v1_attempts.json": {TenantID: "default", RunID: runID, CancelledBy: "alice@example.com", Reason: "bad upstream data",
 			Attempts: []events.AttemptRef{
 				{TaskID: "3e41c7d2-5a98-4b36-8f10-2d7e9a4c6b15", Attempt: 0, JobName: "service-1-e2e-schema-table-a-7f3e1a2b"},
 				{TaskID: "9b07e5a3-1c64-4d82-b9f7-3a5c8e0d2f46", Attempt: 1, JobName: "service-1-e2e-schema-table-b-7f3e1a2b-r1"},
@@ -62,6 +62,17 @@ func TestParseRunCancelled_ReadsTheGoldenFixtures(t *testing.T) {
 func TestParseRunCancelled_AnEntryWithoutItsRunIsPermanent(t *testing.T) {
 	msg := fixtureCancel(t, "run_cancelled_v1.json")
 	msg.Values["payload"] = `{"cancelled_by":"alice@example.com","attempts":[]}`
+
+	_, err := ParseRunCancelled(msg)
+
+	require.ErrorIs(t, err, pkgevents.ErrPermanent)
+}
+
+// An entry that names no tenant is dead-lettered: the reports of the attempts
+// it names could not be published under one.
+func TestParseRunCancelled_AnEntryWithoutATenantIsPermanent(t *testing.T) {
+	msg := fixtureCancel(t, "run_cancelled_v1.json")
+	msg.Values["tenant_id"] = ""
 
 	_, err := ParseRunCancelled(msg)
 

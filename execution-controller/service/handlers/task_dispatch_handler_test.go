@@ -55,7 +55,7 @@ func (r *recordingOutbox) Create(_ context.Context, e *outbox.Entry) error {
 // that report, no queued report of its own, and stores no deployment of its
 // own, so the dispatcher requests no second Job.
 func TestTaskDispatch_ALostInsertRaceResendsTheStoredReport(t *testing.T) {
-	evt := events.TaskDispatch{RunID: uuid.New(), TaskID: uuid.New(), Attempt: 0,
+	evt := events.TaskDispatch{TenantID: "default", RunID: uuid.New(), TaskID: uuid.New(), Attempt: 0,
 		KnownStatus: pkgmodel.AttemptStatusDispatched, ScheduleName: "daily", ServiceName: "svc", SchemaName: "sch",
 		TableName: "tbl", NodeType: "dbt-model", Operation: "run", ImageTag: "svc:1",
 		JobName: "svc-sch-tbl-7f3e1a2b", TimeoutSeconds: 3600}
@@ -77,7 +77,9 @@ func TestTaskDispatch_ALostInsertRaceResendsTheStoredReport(t *testing.T) {
 	require.Len(t, out.created, 1, "exactly one report is written")
 	want, err := json.Marshal(serialization.ReportFromDomain(cmd, *winner.LastReport()))
 	require.NoError(t, err)
-	assert.JSONEq(t, string(want), string(out.created[0].Payload), "the report the winner stored")
+	_, report, err := outbox.UnwrapTenant(out.created[0].Payload)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(want), string(report), "the report the winner stored")
 	assert.Equal(t, 1, repo.addAttempts, "the attempt was offered once")
 	assert.Equal(t, map[string]*model.Deployment{key: winner}, repo.stored,
 		"only the winner's deployment is stored, so no second Job is requested")
@@ -100,7 +102,7 @@ func (l *liveJobs) ObserveLive(context.Context, string) (model.JobObservation, e
 // acknowledgedDispatch is a question from state about attempt 1 of a task it
 // knows as running.
 func acknowledgedDispatch() events.TaskDispatch {
-	return events.TaskDispatch{RunID: uuid.New(), TaskID: uuid.New(), Attempt: 1,
+	return events.TaskDispatch{TenantID: "default", RunID: uuid.New(), TaskID: uuid.New(), Attempt: 1,
 		KnownStatus: pkgmodel.AttemptStatusRunning, ScheduleName: "daily", ServiceName: "svc", SchemaName: "sch",
 		TableName: "tbl", NodeType: "dbt-model", Operation: "run", ImageTag: "svc:1",
 		JobName: "svc-sch-tbl-7f3e1a2b-r1", TimeoutSeconds: 3600}
@@ -109,8 +111,10 @@ func acknowledgedDispatch() events.TaskDispatch {
 // decodeReport decodes the task.status.updated:v2 payload of an outbox entry.
 func decodeReport(t *testing.T, e *outbox.Entry) map[string]any {
 	t.Helper()
+	_, payload, err := outbox.UnwrapTenant(e.Payload)
+	require.NoError(t, err)
 	var m map[string]any
-	require.NoError(t, json.Unmarshal(e.Payload, &m))
+	require.NoError(t, json.Unmarshal(payload, &m))
 	return m
 }
 
@@ -246,4 +250,28 @@ func TestTaskDispatch_AFencedRunsAttemptWithAnOrphanPodIsLeftUnanswered(t *testi
 	assert.Zero(t, repo.addAttempts, "nothing is stored")
 	assert.Empty(t, out.created, "nothing is reported")
 	assert.Equal(t, []string{"dispatch"}, cancelled.holds, "the dispatch held the run before it read the fence")
+}
+
+// The tenant of a dispatch is kept on the attempt's record, and the report
+// the dispatch is answered with is stored under it.
+func TestTaskDispatch_StoresTheDispatchsTenant(t *testing.T) {
+	evt := acknowledgedDispatch()
+	evt.KnownStatus = pkgmodel.AttemptStatusDispatched
+	evt.TenantID = "acme"
+	repo := &stubDeploymentsRepo{}
+	out := &recordingOutbox{}
+	u := newFakeUoW(repo, &recordingCancelledRepo{})
+	u.Outbox = out
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	require.NoError(t, handlers.NewTaskDispatchHandler(noJobs{}, noJobs{}, noStops{}, logger).Handle(context.Background(), u, evt, uuid.New()))
+
+	stored := repo.stored[attemptKey(evt.TaskID.String(), 1)]
+	require.NotNil(t, stored)
+	assert.Equal(t, "acme", stored.Command().TenantID)
+	assert.Equal(t, "acme", stored.TenantID())
+	require.Len(t, out.created, 1)
+	tenantID, _, err := outbox.UnwrapTenant(out.created[0].Payload)
+	require.NoError(t, err)
+	assert.Equal(t, "acme", tenantID, "the report is stored under the dispatch's tenant")
 }

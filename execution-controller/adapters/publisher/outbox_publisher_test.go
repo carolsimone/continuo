@@ -11,8 +11,12 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/carolsimone/continuo/execution-controller/adapters/publisher"
+	"github.com/carolsimone/continuo/execution-controller/domain/command"
 	"github.com/carolsimone/continuo/execution-controller/domain/event"
+	"github.com/carolsimone/continuo/execution-controller/domain/model"
+	"github.com/carolsimone/continuo/execution-controller/service/reports"
 	"github.com/carolsimone/continuo/execution-controller/service/validation"
+	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -48,14 +52,18 @@ func TestPublisher_TaskStatusReport(t *testing.T) {
 	payload, err := json.Marshal(pkgevents.TaskStatusReport{RunID: "s1", TaskID: "t1", Attempt: 1, Status: "running"})
 	require.NoError(t, err)
 
+	stored, err := outbox.WrapTenant("acme", payload)
+	require.NoError(t, err)
+
 	id := uuid.New()
 	require.NoError(t, pub.Publish(context.Background(), &outbox.Entry{
-		ID: id, EventType: event.EventTypeTaskStatusReport, StreamName: streams.TaskStatusUpdatedV2, Payload: payload,
+		ID: id, EventType: event.EventTypeTaskStatusReport, StreamName: streams.TaskStatusUpdatedV2, Payload: stored,
 		CreatedAt: time.Now(),
 	}))
 
 	v := lastEntryFields(t, r, streams.TaskStatusUpdatedV2)
 	assert.Equal(t, id.String(), v["event_id"])
+	assert.Equal(t, "acme", v["tenant_id"])
 	assert.Equal(t, "execution-controller", v["producer"])
 	assert.JSONEq(t, string(payload), v["payload"].(string))
 	assert.Equal(t, id.String(), v["outbox_entry_id"])
@@ -171,7 +179,7 @@ func TestPublisher_ContractAllHandledEventTypes(t *testing.T) {
 		{
 			eventType:  event.EventTypeTaskStatusReport,
 			streamName: streams.TaskStatusUpdatedV2,
-			payload:    mustMarshal(t, pkgevents.TaskStatusReport{RunID: "s1", TaskID: "t1", Status: "succeeded"}),
+			payload:    storedReport(t, "default", mustMarshal(t, pkgevents.TaskStatusReport{RunID: "s1", TaskID: "t1", Status: "succeeded"})),
 		},
 		{
 			// Uses the shared constant — the single source of truth for this wire string.
@@ -231,7 +239,7 @@ func TestPublisher_BadPayloadReturnsError(t *testing.T) {
 	pub := publisher.NewOutboxPublisher(r, logger)
 
 	err := pub.Publish(context.Background(), &outbox.Entry{
-		ID: uuid.New(), EventType: event.EventTypeTaskStatusReport, Payload: []byte(`not json`), StreamName: "x:v1",
+		ID: uuid.New(), EventType: event.EventTypeTaskStatusReport, Payload: storedReport(t, "default", []byte(`"not a report"`)), StreamName: "x:v1",
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "unmarshal task_status_report")
@@ -250,4 +258,69 @@ func TestPublisher_NodeUpdatedRowIsUnknown(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown event_type")
 	assert.False(t, errors.Is(err, pkgevents.ErrPermanent), "an unknown event_type is retried, not dead-lettered at once")
+}
+
+// recordedOutbox keeps every outbox entry written.
+type recordedOutbox struct {
+	outbox.Repository
+	created []*outbox.Entry
+}
+
+func (r *recordedOutbox) Create(_ context.Context, e *outbox.Entry) error {
+	r.created = append(r.created, e)
+	return nil
+}
+
+// A report of every status, stopped included, is published under the tenant of
+// the deployment it was written for: the report writer stores the tenant with
+// the row and the renderer puts it on the envelope.
+func TestReport_CarriesTheDeploymentsTenant(t *testing.T) {
+	for _, status := range []pkgmodel.AttemptStatus{
+		pkgmodel.AttemptStatusQueued, pkgmodel.AttemptStatusRunning, pkgmodel.AttemptStatusSucceeded,
+		pkgmodel.AttemptStatusFailed, pkgmodel.AttemptStatusStopped,
+	} {
+		t.Run(string(status), func(t *testing.T) {
+			cmd := command.DeployTask{TenantID: "acme", TaskID: uuid.NewString(), RunID: uuid.NewString(), Attempt: 1,
+				JobName: "svc-sch-tbl-7f3e1a2b-r1"}
+			d := model.NewDeployment(cmd, nil, time.Now())
+			message := ""
+			if status == pkgmodel.AttemptStatusFailed {
+				d.Observe(model.AttemptFacts{Reason: pkgmodel.FailureReasonExitCode, Message: "past its deadline"})
+				message = "past its deadline"
+			}
+			out := &recordedOutbox{}
+			require.NoError(t, reports.Write(context.Background(), out, d, status, message))
+			require.Len(t, out.created, 1)
+			entry := out.created[0]
+			entry.ID, entry.CreatedAt = uuid.New(), time.Now()
+
+			values, err := publisher.NewOutboxPublisher(nil, nil).Render(entry)
+
+			require.NoError(t, err)
+			assert.Equal(t, "acme", values["tenant_id"])
+			assert.Contains(t, values["payload"], cmd.TaskID, "the envelope's payload is the report itself")
+		})
+	}
+}
+
+// A report row that stores no tenant cannot be published under a guessed one:
+// it is a permanent error.
+func TestPublisher_AReportRowWithoutATenantIsPermanent(t *testing.T) {
+	entry := &outbox.Entry{ID: uuid.New(), EventType: event.EventTypeTaskStatusReport, StreamName: streams.TaskStatusUpdatedV2,
+		Payload: mustMarshal(t, pkgevents.TaskStatusReport{RunID: "s1", TaskID: "t1", Status: "running"})}
+
+	_, err := publisher.NewOutboxPublisher(nil, nil).Render(entry)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, pkgevents.ErrPermanent)
+	assert.ErrorIs(t, err, outbox.ErrNoTenant)
+}
+
+// storedReport is the payload of a report row of tenantID: the report stored
+// beside its tenant.
+func storedReport(t *testing.T, tenantID string, report []byte) []byte {
+	t.Helper()
+	stored, err := outbox.WrapTenant(tenantID, report)
+	require.NoError(t, err)
+	return stored
 }

@@ -33,7 +33,7 @@ func testLogger() *slog.Logger {
 }
 
 func validCmd() command.DeployTask {
-	return command.DeployTask{
+	return command.DeployTask{TenantID: "default",
 		TaskID: uuid.New().String(), RunID: uuid.New().String(),
 		ScheduleName: "daily", ServiceName: "dbt", SchemaName: "public", TableName: "orders",
 		JobName: "dbt-public-orders", NodeType: "dbt-model", ImageTag: "sha-abc",
@@ -55,8 +55,8 @@ func seedDue(t *testing.T, db *sqlx.DB, nextAttempt time.Time) uuid.UUID {
 	t.Helper()
 	id := uuid.New()
 	_, err := db.Exec(
-		`INSERT INTO deployments (id, task_id, run_id, job_params, next_attempt_at)
-		 VALUES ($1, $2, $3, '{}'::jsonb, $4)`,
+		`INSERT INTO deployments (id, task_id, run_id, job_params, next_attempt_at, tenant_id)
+		 VALUES ($1, $2, $3, '{}'::jsonb, $4, 'default')`,
 		id, uuid.New(), uuid.New(), nextAttempt)
 	require.NoError(t, err)
 	return id

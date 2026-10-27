@@ -30,15 +30,18 @@ func (r *recordingOutbox) Create(_ context.Context, e *outbox.Entry) error {
 
 func payloadOf(t *testing.T, e *outbox.Entry) pkgevents.TaskStatusReport {
 	t.Helper()
+	tenantID, payload, err := outbox.UnwrapTenant(e.Payload)
+	require.NoError(t, err)
+	assert.Equal(t, "acme", tenantID, "the row stores the deployment's tenant")
 	var p pkgevents.TaskStatusReport
-	require.NoError(t, json.Unmarshal(e.Payload, &p))
+	require.NoError(t, json.Unmarshal(payload, &p))
 	return p
 }
 
 // A report is kept as the attempt's last report and written to
 // task.status.updated:v2 as its payload.
 func TestWrite_KeepsTheReportAndWritesItsPayload(t *testing.T) {
-	cmd := command.DeployTask{TaskID: uuid.NewString(), RunID: uuid.NewString(), Attempt: 1, JobName: "svc-sch-tbl-7f3e1a2b-r1"}
+	cmd := command.DeployTask{TenantID: "acme", TaskID: uuid.NewString(), RunID: uuid.NewString(), Attempt: 1, JobName: "svc-sch-tbl-7f3e1a2b-r1"}
 	d := model.NewDeployment(cmd, nil, time.Now())
 	out := &recordingOutbox{}
 
@@ -59,7 +62,7 @@ func TestWrite_KeepsTheReportAndWritesItsPayload(t *testing.T) {
 
 // A repeated dispatch is answered with the attempt's last report, unchanged.
 func TestResend_WritesTheLastReportAgain(t *testing.T) {
-	cmd := command.DeployTask{TaskID: uuid.NewString(), RunID: uuid.NewString()}
+	cmd := command.DeployTask{TenantID: "acme", TaskID: uuid.NewString(), RunID: uuid.NewString()}
 	d := model.NewDeployment(cmd, nil, time.Now())
 	d.RecordReport(model.Report{Status: pkgmodel.AttemptStatusRunning})
 	out := &recordingOutbox{}

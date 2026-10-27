@@ -6,8 +6,11 @@ import "github.com/google/uuid"
 // run, and every attempt of it that has not ended is to be stopped.
 // CancelledBy and Reason are the operator's own words, only logged. Attempts
 // is empty on the first send; a re-send names each attempt state still waits
-// to hear has stopped.
+// to hear has stopped. TenantID is the tenant of the run's cancel; the report
+// of an attempt it names that execution-controller never received is published
+// under it.
 type RunCancelled struct {
+	TenantID    string
 	RunID       uuid.UUID
 	CancelledBy string
 	Reason      string
