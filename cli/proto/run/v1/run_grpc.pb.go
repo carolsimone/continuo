@@ -237,8 +237,9 @@ type RunServiceClient interface {
 	ListNodeTasks(ctx context.Context, in *ListNodeTasksRequest, opts ...grpc.CallOption) (*ListNodeTasksResponse, error)
 	// ListNodes returns the node catalog: one summary row per node that has run,
 	// with stats aggregated over the most recent 50 tasks of each node. Supports a
-	// case-insensitive substring search on "service.schema.table", an exact
-	// service_name filter, and limit/offset paging. total_count reports the full
+	// case-insensitive exact match on the table name (searching "table_2" returns
+	// only "table_2", never "ftable_2" or "table_2_v2"), an exact service_name
+	// filter, and limit/offset paging. total_count reports the full
 	// match count (before paging). A limit of 0 or less means 50 and a limit
 	// above 200 is 200; a negative offset is 0.
 	// Errors: none beyond the service-wide ones.
@@ -678,8 +679,9 @@ type RunServiceServer interface {
 	ListNodeTasks(context.Context, *ListNodeTasksRequest) (*ListNodeTasksResponse, error)
 	// ListNodes returns the node catalog: one summary row per node that has run,
 	// with stats aggregated over the most recent 50 tasks of each node. Supports a
-	// case-insensitive substring search on "service.schema.table", an exact
-	// service_name filter, and limit/offset paging. total_count reports the full
+	// case-insensitive exact match on the table name (searching "table_2" returns
+	// only "table_2", never "ftable_2" or "table_2_v2"), an exact service_name
+	// filter, and limit/offset paging. total_count reports the full
 	// match count (before paging). A limit of 0 or less means 50 and a limit
 	// above 200 is 200; a negative offset is 0.
 	// Errors: none beyond the service-wide ones.

@@ -2682,7 +2682,7 @@ func (x *NodeTask) GetWaitingSince() string {
 
 type ListNodesRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Search        string                 `protobuf:"bytes,1,opt,name=search,proto3" json:"search,omitempty"`                              // case-insensitive substring on "service.schema.table"; empty means no filter
+	Search        string                 `protobuf:"bytes,1,opt,name=search,proto3" json:"search,omitempty"`                              // case-insensitive exact match on the table name; empty means no filter
 	ServiceName   string                 `protobuf:"bytes,2,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"` // exact service filter; empty means all services
 	Limit         int32                  `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"`                               // page size; 0 means 50, clamped to at most 200
 	Offset        int32                  `protobuf:"varint,4,opt,name=offset,proto3" json:"offset,omitempty"`                             // page offset; default 0

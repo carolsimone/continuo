@@ -216,8 +216,9 @@ service RunService {
 
   // ListNodes returns the node catalog: one summary row per node that has run,
   // with stats aggregated over the most recent 50 tasks of each node. Supports a
-  // case-insensitive substring search on "service.schema.table", an exact
-  // service_name filter, and limit/offset paging. total_count reports the full
+  // case-insensitive exact match on the table name (searching "table_2" returns
+  // only "table_2", never "ftable_2" or "table_2_v2"), an exact service_name
+  // filter, and limit/offset paging. total_count reports the full
   // match count (before paging). A limit of 0 or less means 50 and a limit
   // above 200 is 200; a negative offset is 0.
   // Errors: none beyond the service-wide ones.
@@ -573,7 +574,7 @@ message NodeTask {
 }
 
 message ListNodesRequest {
-  string search = 1;        // case-insensitive substring on "service.schema.table"; empty means no filter
+  string search = 1;        // case-insensitive exact match on the table name; empty means no filter
   string service_name = 2;  // exact service filter; empty means all services
   int32 limit = 3;          // page size; 0 means 50, clamped to at most 200
   int32 offset = 4;         // page offset; default 0
