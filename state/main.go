@@ -297,8 +297,9 @@ func main() {
 	// are kept at least 30 days (the replay horizon), longer when
 	// RETENTION_DAYS is longer; a promoted release is kept RETENTION_DAYS after
 	// it was loaded, and for as long as it is live or a pending or running run
-	// names it; a command request is kept the replay horizon, the longest a
-	// caller can still retry. All are pruned on the same timer.
+	// names it; a command request, like a dedup row, is kept at least the
+	// replay horizon, the longest a caller can still retry, longer when
+	// RETENTION_DAYS is longer. All are pruned on the same timer.
 	mpPruner := pkgmessageprocessing.NewPruner(db, postgres.OutboxTable, logger)
 	topologyPruner := topologyretention.NewPruner(uowFactory, logger)
 	commandRequestPruner := commands.NewPruner(uowFactory)
