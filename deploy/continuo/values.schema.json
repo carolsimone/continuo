@@ -513,7 +513,7 @@
           },
           "replicas": {"type": "integer", "minimum": 0, "description": "Deployment replicas; omitted defaults to one and zero scales the service down."},
           "httpPort": {"type": "integer", "description": "Optional HTTP Service port, independent of grpcPort."},
-          "grpcPort": {"type": "integer", "description": "Optional gRPC Service port; no httpPort is required."},
+          "grpcPort": {"type": "integer", "description": "Optional gRPC Service port; no httpPort is required. Without httpPort, the probes connect to this port over TCP."},
           "readinessPath": {"type": "string"},
           "livenessPath": {"type": "string"},
           "probePath": {"type": "string"},

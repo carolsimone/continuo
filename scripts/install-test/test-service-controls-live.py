@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Optional Helm/Kubernetes E2E for the service templates in an isolated namespace.
 
-Requires helm, kubectl, a current test cluster, and an image serving a TCP echo
-on 50060 with Python available for the chart's process probe. Pass its image
-reference as the only argument. No full continuo dependency stack is started.
+Requires helm, kubectl, a current test cluster, and the image built from
+fixtures/service-controls: a Go TCP echo on 50060 on alpine without Python, as
+the shipped Go service images are, so the chart's probes must work without it.
+Pass its image reference as the only argument. No full continuo dependency
+stack is started.
 """
 import json
 from pathlib import Path
@@ -60,9 +62,12 @@ def main():
             endpoint = json.loads(run("kubectl", "get", "service/control-worker",
                                      "-n", NAMESPACE, "-o", "json"))
             assert [(p["name"], p["port"]) for p in endpoint["spec"]["ports"]] == [("grpc", 50060)]
-            code = ("import socket; s=socket.create_connection(('control-worker',50060),5); "
-                    "s.sendall(b'chart-service-ok'); assert s.recv(1024)==b'chart-service-ok'; s.close()")
-            run("kubectl", "exec", "deployment/control-worker", "-n", NAMESPACE, "--", "python", "-c", code)
+            python = subprocess.run(["kubectl", "exec", "deployment/control-worker", "-n", NAMESPACE,
+                                     "--", "sh", "-c", "command -v python3 || command -v python"],
+                                    text=True, capture_output=True)
+            assert python.returncode != 0, ("fixture image carries Python", python.stdout)
+            run("kubectl", "exec", "deployment/control-worker", "-n", NAMESPACE, "--",
+                "/echo", "-dial", "control-worker:50060")
             print("grpcPort only: Service routes TCP traffic to the ready workload", flush=True)
 
             service["enabled"] = False

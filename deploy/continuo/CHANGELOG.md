@@ -18,7 +18,7 @@ shipped in those.
 
 ### Fixed
 
-- Service entries honor `enabled: false` across Deployments, Services and RBAC, preserve an explicit `replicas: 0`, and expose a configured gRPC port without requiring an HTTP port. Existing values keys and accepted types are unchanged. PATCH.
+- Service entries honor `enabled: false` across Deployments, Services and RBAC, preserve an explicit `replicas: 0`, and expose a configured gRPC port without requiring an HTTP port. An entry with a gRPC port and no HTTP port is probed by a TCP connect to its gRPC port, which works in the Go service images (they carry no Python). Existing values keys and accepted types are unchanged. PATCH.
 
 ## [0.16.0] - 2026-10-26
 

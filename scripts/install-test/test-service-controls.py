@@ -61,6 +61,24 @@ class ServiceControlsTest(unittest.TestCase):
                 self.assertEqual({p["name"]: p["port"] for p in actual}, expected)
                 self.assertTrue(all(p["targetPort"] == p["port"] for p in actual))
 
+    def test_probes_use_a_configured_port_without_running_python(self):
+        # The Go service images carry no Python, so an entry with an
+        # application port is probed through that port by the kubelet.
+        for ports, handler, port in [
+            ({"httpPort": 8080}, "httpGet", 8080),
+            ({"httpPort": 8080, "grpcPort": 50060}, "httpGet", 8080),
+            ({"grpcPort": 50060}, "tcpSocket", 50060),
+        ]:
+            with self.subTest(ports=ports):
+                deployment = owned_resources(render({
+                    "name": "control-worker", "enabled": True, **ports,
+                }))["Deployment"]
+                container = next(c for c in deployment["spec"]["template"]["spec"]["containers"]
+                                 if c["name"] == "control-worker")
+                for probe in ["readinessProbe", "livenessProbe"]:
+                    self.assertNotIn("exec", container[probe])
+                    self.assertEqual(container[probe][handler]["port"], port)
+
     def test_enabled_service_retains_requested_rbac(self):
         resources = owned_resources(render({
             "name": "control-worker", "enabled": True,

@@ -1,3 +1,10 @@
-FROM python:3.14-alpine
+FROM golang:1.26-alpine AS build
+WORKDIR /src
+COPY echo.go .
+RUN CGO_ENABLED=0 go build -o /echo echo.go
+
+# alpine with no Python, like the runtime stage of the shipped Go service images.
+FROM alpine:3.22
+COPY --from=build /echo /echo
 USER 65532:65532
-CMD ["python", "-u", "-c", "import socket; s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1); s.bind(('0.0.0.0',50060)); s.listen(); exec('while True:\\n c,a=s.accept(); c.sendall(c.recv(1024)); c.close()')"]
+ENTRYPOINT ["/echo"]

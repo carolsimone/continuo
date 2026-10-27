@@ -347,6 +347,22 @@ spec:
             initialDelaySeconds: 15
             periodSeconds: 10
             failureThreshold: 3
+          {{- else if $svc.grpcPort }}
+          # No service registers the gRPC health service and the Go images carry
+          # no Python, so a gRPC-only entry is probed by a TCP connect to its
+          # gRPC port, which the kubelet makes without any binary in the image.
+          readinessProbe:
+            tcpSocket:
+              port: {{ $svc.grpcPort }}
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket:
+              port: {{ $svc.grpcPort }}
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 3
           {{- else }}
           readinessProbe:
             exec:

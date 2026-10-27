@@ -283,13 +283,21 @@ An enabled entry defaults to one replica when `replicas` is omitted; an explicit
 creates a Service exposing only the configured ports. An entry with neither
 port still creates its Deployment and requested RBAC, without a Service.
 
+Readiness and liveness probes follow the ports: an entry with `httpPort` is
+probed over HTTP on it (`readinessPath`, `livenessPath`, `probePath`), a
+gRPC-only entry by a TCP connect to its `grpcPort`, which works in the Go
+service images, and an entry with neither port by a Python process check, so
+its image must include Python.
+
 ### Validating service controls
 
 The standard `bash scripts/install-test/lint.sh` gate includes render regressions
 for enablement, replica counts, ports and RBAC. The optional live test uses the
 production service templates in an isolated Helm release, without starting the
-full continuo dependency stack. It checks scale-to-zero, TCP routing through a
-gRPC-only Service, and resource removal on disable. It deletes its test namespace.
+full continuo dependency stack. Its workload is a Go TCP echo on alpine
+without Python, as the shipped Go images are. It checks scale-to-zero, that a
+gRPC-only entry becomes ready, TCP routing through its Service, and resource
+removal on disable. It deletes its test namespace.
 
 With Helm, kubectl and a disposable current cluster configured, build the fixture
 and make the image available to the cluster (for kind, load it with `kind load
