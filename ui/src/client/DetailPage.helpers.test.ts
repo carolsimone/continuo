@@ -12,7 +12,7 @@ describe('isTerminalStatus', () => {
 
   it('treats a cancelling run as non-terminal: it is still being stopped', () => {
     expect(isTerminalStatus('cancelling')).toBe(false);
-    expect(isTerminalStatus('SCHEDULER_STATUS_CANCELLING')).toBe(false);
+    expect(isTerminalStatus('cancelling')).toBe(false);
     expect(isTerminalStatus('cancelled')).toBe(true);
   });
 });

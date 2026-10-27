@@ -25,14 +25,14 @@ describe('RunRedirect', () => {
 
   it('opens the run on its schedule\'s run page', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
-      ok: true, json: async () => ({ schedule_id: 'run-1', schedule_name: 'single-node-run-ab12cd34' }),
+      ok: true, json: async () => ({ run_id: 'run-1', schedule_name: 'single-node-run-ab12cd34' }),
     });
     vi.stubGlobal('fetch', fetchMock);
 
     renderAt('/run/run-1');
 
     const page = await screen.findByTestId('schedule');
-    expect(fetchMock).toHaveBeenCalledWith('/api/schedulers/run-1');
+    expect(fetchMock).toHaveBeenCalledWith('/api/runs/run-1');
     expect(page.textContent).toBe('/schedule/single-node-run-ab12cd34 {"last_run_id":"run-1"}');
   });
 

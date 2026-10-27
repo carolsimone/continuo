@@ -154,7 +154,7 @@ export default function NodesCatalogPanel() {
                         {' '}<span className="nodes-ts nodes-ts--dim">{formatRelative(n.last_run_at)}</span>
                       </td>
                       <td>{pct(n.success_rate_pct)}</td>
-                      <td>{n.run_count}</td>
+                      <td>{n.task_count}</td>
                       <td><code>{durPair(n.avg_duration_sec, n.p95_duration_sec)}</code></td>
                     </tr>
                   );

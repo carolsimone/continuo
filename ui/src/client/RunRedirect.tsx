@@ -13,7 +13,7 @@ export default function RunRedirect() {
   useEffect(() => {
     let cancelled = false;
     setError(null);
-    fetch(`/api/schedulers/${encodeURIComponent(id)}`)
+    fetch(`/api/runs/${encodeURIComponent(id)}`)
       .then((response) => (response.ok ? response.json() : Promise.reject(new Error(`HTTP ${response.status}`))))
       .then((run: { schedule_name?: string }) => {
         if (cancelled) return;

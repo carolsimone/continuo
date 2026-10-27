@@ -10,7 +10,7 @@ function node(over: Partial<NodeSummary> = {}): NodeSummary {
     service_name: 'svc',
     schema_name: 'schema',
     table_name: 'customers',
-    run_count: 3,
+    task_count: 3,
     success_rate_pct: 100,
     avg_duration_sec: 5,
     p95_duration_sec: 9,

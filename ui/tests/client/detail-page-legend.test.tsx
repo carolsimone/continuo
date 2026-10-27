@@ -47,11 +47,9 @@ const routes = {
     run_promotion_seq: 1,
     latest_promotion_seq: 1,
   }),
-  [`/api/schedulers/${RUN_ID}`]: async () => ({
-    scheduler: {
-      schedule_id: RUN_ID, schedule_name: SCHED, status: 'succeeded',
-      created_at: null, started_at: null, completed_at: null, cancelled_at: null, cancelled_by: '',
-    },
+  [`/api/runs/${RUN_ID}`]: async () => ({
+    run_id: RUN_ID, schedule_name: SCHED, status: 'succeeded',
+    created_at: null, started_at: null, completed_at: null, cancelled_at: null, cancelled_by: '',
   }),
 };
 

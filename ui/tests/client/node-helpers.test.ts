@@ -4,7 +4,7 @@ import type { NodeRun } from '../../src/client/types';
 
 const mkRun = (over: Partial<NodeRun>): NodeRun => ({
   run_id: 'r', schedule_name: 's', kind: 'cron',
-  terminal_status: 'succeeded', task_id: 't',
+  run_status: 'succeeded', task_id: 't',
   task_status: 'succeeded', attempt: 0, failure_class: null, failure_reason: null,
   image_tag: 'v1', operation: 'run',
   created_at: '2026-05-10T10:00:00Z',
@@ -94,7 +94,7 @@ describe('formatRelative', () => {
 
 describe('computeNodeStats — extended fields', () => {
   const mkRunExt = (over: Partial<NodeRun>): NodeRun => ({
-    run_id: 'r', schedule_name: 's', kind: 'cron', terminal_status: '',
+    run_id: 'r', schedule_name: 's', kind: 'cron', run_status: 'running',
     task_id: Math.random().toString(), task_status: 'succeeded', attempt: 0, failure_class: null, failure_reason: null,
     image_tag: '', operation: 'run', created_at: '2026-06-08T11:00:00Z',
     started_at: '2026-06-08T11:00:00Z', completed_at: '2026-06-08T11:00:10Z',
@@ -159,14 +159,14 @@ describe('groupRunsBySnapshot', () => {
 
   it('excludes runs whose source scheduler is not terminal', () => {
     const runs = [
-      mkRun({ run_id: 'inflight', terminal_status: '', image_tag: 'img' }),
+      mkRun({ run_id: 'inflight', run_status: 'running', image_tag: 'img' }),
     ];
     expect(groupRunsBySnapshot(runs)).toEqual([]);
   });
 
   it('includes a run whose source scheduler failed even if this node stayed pending', () => {
     const runs = [
-      mkRun({ run_id: 'src-failed', terminal_status: 'failed', task_status: 'pending',
+      mkRun({ run_id: 'src-failed', run_status: 'failed', task_status: 'pending',
               image_tag: 'img' }),
     ];
     const groups = groupRunsBySnapshot(runs);

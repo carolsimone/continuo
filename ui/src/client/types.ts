@@ -1,13 +1,16 @@
 import type { WireOperation } from '../server/shared/operation';
+import type { AttemptStatus, RunStatus, TaskStatus } from '../server/generated/vocabulary.gen';
 
 export interface ScheduleSummary {
   schedule_name: string;
   cron_expression: string;
   description: string;
   timezone: string;
-  is_running: boolean;
+  has_active_run: boolean;
   last_run_at: string | null;
-  last_run_status: string;  // "succeeded"/"failed"/"cancelling"/"cancelled"/""; with is_running, "cancelling" marks a run being stopped
+  // The status of the schedule's latest run, "" when it has never run. With
+  // has_active_run, "cancelling" marks a run being stopped.
+  last_run_status: RunStatus | '';
   last_run_id: string | null;  // null means never run
 }
 
@@ -15,10 +18,11 @@ export interface SchedulesResponse {
   schedules: ScheduleSummary[];
 }
 
+// One run, from GET /api/runs/:id.
 export interface Scheduler {
-  schedule_id: string;
+  run_id: string;
   schedule_name: string;
-  status: string;  // pending | running | cancelling | succeeded | failed | cancelled | skipped
+  status: RunStatus;
   created_at: string | null;
   started_at: string | null;
   completed_at: string | null;
@@ -35,7 +39,7 @@ export interface Task {
   schema_name: string;
   table_name: string;
   job_name: string;
-  status: string;  // pending | dispatched | queued | running | stopping | succeeded | failed | cancelled | skipped
+  status: TaskStatus;
   attempt: number;  // 0-based number of the task's current attempt
   max_retries: number;
   created_at: string | null;
@@ -52,7 +56,7 @@ export interface GraphNode {
   node_id: string;     // "{service}.{schema}.{table}"
   node_type: string;   // a NodeType from src/server/generated/vocabulary.gen.ts, or "" when unknown
   schedule_name: string;
-  status?: string | null;
+  status?: TaskStatus | null;
   // A run graph node's wait for its node's lease, as on Task; absent on a
   // schedule's topology graph.
   wait_reason?: string | null;
@@ -78,7 +82,7 @@ export interface ScheduleGraph {
 export interface RunSummary {
   run_id: string;
   schedule_name: string;
-  terminal_status: string;
+  status: RunStatus;
   created_at: string | null;
   completed_at: string | null;
   // Why the run failed when no task of it failed; null otherwise.
@@ -89,7 +93,7 @@ export interface RunGraphNode {
   node_id: string;
   node_type: string;
   schedule_name: string;
-  status: string | null;
+  status: TaskStatus | null;
   // The task's wait for its node's lease, as on Task.
   wait_reason?: string | null;
   waiting_on_run_id?: string | null;
@@ -105,13 +109,13 @@ export interface RunGraph {
   latest_promotion_seq: number;
 }
 
-// One attempt of one task, from /api/schedulers/:id/attempts. `attempt` is
+// One attempt of one task, from /api/runs/:id/attempts. `attempt` is
 // 0-based; a value state has not recorded yet is null.
 export interface TaskAttempt {
   task_id: string;
   attempt: number;
   job_name: string;
-  status: string;  // dispatched | queued | running | succeeded | failed | cancelled | stopped
+  status: AttemptStatus;
   failure_class: string | null;
   failure_reason: string | null;
   dispatched_at: string | null;
@@ -128,9 +132,9 @@ export interface NodeRun {
   run_id: string;
   schedule_name: string;
   kind: string;             // cron | trigger | rerun | rebase | single_node_run
-  terminal_status: string;  // "" if in flight
+  run_status: RunStatus;    // the status of the run the task belongs to
   task_id: string;
-  task_status: string;      // pending | dispatched | queued | running | stopping | succeeded | failed | cancelled | skipped
+  task_status: TaskStatus;
   attempt: number;          // 0-based number of the task's current attempt
   failure_class: string | null;   // why the latest attempt failed
   failure_reason: string | null;  // the specific failure within failure_class
@@ -144,8 +148,9 @@ export interface NodeRun {
   run_results_uri: string | null;
 }
 
+// A node's history: one row per task that ran the node, with its run.
 export interface NodeRunsResponse {
-  runs: NodeRun[];
+  tasks: NodeRun[];
 }
 
 export interface ScheduleTopologySummary {
@@ -248,7 +253,7 @@ export interface NodeSummary {
   service_name: string;
   schema_name: string;
   table_name: string;
-  run_count: number;
+  task_count: number;
   success_rate_pct: number | null;
   avg_duration_sec: number | null;
   p95_duration_sec: number | null;
@@ -473,7 +478,7 @@ export interface ChangedUpstreamNode {
 }
 
 // What a rebase of a failed or cancelled run would run on the live release
-// (GET /api/schedulers/:id/rebase-preview). will_run splits into
+// (GET /api/runs/:id/rebase-preview). will_run splits into
 // failed_or_skipped + new_nodes + changed_upstream + downstream, and
 // will_run + inherited = total_nodes. changed_nodes lists every changed
 // upstream node the include_changed_upstream option adds, whether or not the
