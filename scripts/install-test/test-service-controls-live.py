@@ -3,7 +3,7 @@
 
 Requires helm, kubectl, a current test cluster, and an image serving a TCP echo
 on 50060 with Python available for the chart's process probe. Pass its image
-reference as the only argument. No full Continuo dependency stack is started.
+reference as the only argument. No full continuo dependency stack is started.
 """
 import json
 from pathlib import Path

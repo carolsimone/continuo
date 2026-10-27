@@ -288,7 +288,7 @@ port still creates its Deployment and requested RBAC, without a Service.
 The standard `bash scripts/install-test/lint.sh` gate includes render regressions
 for enablement, replica counts, ports and RBAC. The optional live test uses the
 production service templates in an isolated Helm release, without starting the
-full Continuo dependency stack. It checks scale-to-zero, TCP routing through a
+full continuo dependency stack. It checks scale-to-zero, TCP routing through a
 gRPC-only Service, and resource removal on disable. It deletes its test namespace.
 
 With Helm, kubectl and a disposable current cluster configured, build the fixture
