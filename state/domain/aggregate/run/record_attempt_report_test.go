@@ -76,7 +76,7 @@ func TestRecordAttemptReport_ASuccessDispatchesAttemptZeroOfTheTasksItMakesReady
 	created := createdByKey(tc)[fkey("ftable_g")]
 	node, _ := failureSchedule().Node(fkey("ftable_g"))
 	assert.Equal(t, run.TaskDispatched{
-		ID: r.RunID(), ScheduleName: "e2e-schedule-failure", TaskID: created.TaskID, Attempt: 0,
+		ID: r.RunID(), TenantID: r.TenantID(), ScheduleName: "e2e-schedule-failure", TaskID: created.TaskID, Attempt: 0,
 		KnownStatus: run.AttemptDispatched, Node: node, JobName: created.JobName, Operation: model.OperationRun,
 		Timeout: 24 * time.Hour,
 	}, events[0])
@@ -133,7 +133,7 @@ func TestRecordAttemptReport_ARetryableFailureDispatchesTheNextAttempt(t *testin
 	require.NoError(t, err)
 	node, _ := failureSchedule().Node(fkey("ftable_a"))
 	assert.Equal(t, []run.DomainEvent{run.TaskDispatched{
-		ID: r.RunID(), ScheduleName: "e2e-schedule-failure", TaskID: id, Attempt: 1,
+		ID: r.RunID(), TenantID: r.TenantID(), ScheduleName: "e2e-schedule-failure", TaskID: id, Attempt: 1,
 		KnownStatus: run.AttemptDispatched, Node: node, JobName: jobName, Operation: model.OperationRun,
 		Timeout: 24 * time.Hour,
 	}}, events)

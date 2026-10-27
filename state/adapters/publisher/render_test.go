@@ -104,7 +104,7 @@ func TestRender_ADispatchThatDoesNotDecodeIsPermanent(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := NewOutboxPublisher(nil, nil).Render(&outbox.Entry{ID: uuid.New(), EventType: streams.TaskDispatchV1,
-				StreamName: streams.TaskDispatchV1, Payload: []byte(payload)})
+				StreamName: streams.TaskDispatchV1, Payload: wrapped(t, "default", []byte(payload))})
 			require.ErrorIs(t, err, pkgevents.ErrPermanent)
 		})
 	}
@@ -130,7 +130,8 @@ func TestRender_RunCancelledMatchesTheGoldenFixture(t *testing.T) {
 
 			rendered, err := NewOutboxPublisher(nil, nil).Render(&outbox.Entry{
 				ID: uuid.MustParse(fixture.Input.EventID), CreatedAt: fixture.Input.OccurredAt,
-				EventType: streams.RunCancelledV1, StreamName: streams.RunCancelledV1, Payload: fixture.Input.Payload,
+				EventType: streams.RunCancelledV1, StreamName: streams.RunCancelledV1,
+				Payload: wrapped(t, "default", fixture.Input.Payload),
 			})
 
 			require.NoError(t, err)
@@ -157,6 +158,77 @@ func TestRender_RunCancelledMatchesTheGoldenFixture(t *testing.T) {
 // publish: the error is permanent, so the relay dead-letters the row.
 func TestRender_ACancelThatDoesNotDecodeIsPermanent(t *testing.T) {
 	_, err := NewOutboxPublisher(nil, nil).Render(&outbox.Entry{ID: uuid.New(), EventType: streams.RunCancelledV1,
-		StreamName: streams.RunCancelledV1, Payload: []byte(`{"run_id":"r1","attempts":"none"}`)})
+		StreamName: streams.RunCancelledV1, Payload: wrapped(t, "default", []byte(`{"run_id":"r1","attempts":"none"}`))})
 	require.ErrorIs(t, err, pkgevents.ErrPermanent)
+}
+
+// wrapped stores payload as a state outbox row does: under its tenant.
+func wrapped(t *testing.T, tenantID string, payload []byte) []byte {
+	t.Helper()
+	stored, err := outbox.WrapTenant(tenantID, payload)
+	require.NoError(t, err)
+	return stored
+}
+
+// goldenInput reads the fixture's input: the event id, when it occurred and
+// the payload a row of that stream stores.
+func goldenInput(t *testing.T, name string) (uuid.UUID, time.Time, json.RawMessage) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "pkg", "events", "testdata", name)) //nolint:gosec // G304: a fixed fixture path
+	require.NoError(t, err)
+	var fixture struct {
+		Input struct {
+			EventID    string          `json:"event_id"`
+			OccurredAt time.Time       `json:"occurred_at"`
+			Payload    json.RawMessage `json:"payload"`
+		} `json:"input"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &fixture))
+	return uuid.MustParse(fixture.Input.EventID), fixture.Input.OccurredAt, fixture.Input.Payload
+}
+
+// The envelope of a task.dispatch:v1 row names the tenant the row stores, and
+// the rest of the entry is the golden fixture's.
+func TestRender_TaskDispatchCarriesTheRowsTenant(t *testing.T) {
+	id, at, payload := goldenInput(t, "task_dispatch_v1.json")
+
+	rendered, err := NewOutboxPublisher(nil, nil).Render(&outbox.Entry{ID: id, CreatedAt: at,
+		EventType: streams.TaskDispatchV1, StreamName: streams.TaskDispatchV1, Payload: wrapped(t, "acme", payload)})
+	require.NoError(t, err)
+
+	assert.Equal(t, "acme", rendered["tenant_id"])
+	assert.Equal(t, id.String(), rendered["event_id"])
+	assert.Equal(t, producer, rendered["producer"])
+	var got, want any
+	require.NoError(t, json.Unmarshal([]byte(rendered["payload"].(string)), &got))
+	require.NoError(t, json.Unmarshal(payload, &want))
+	assert.Equal(t, want, got, "the wire payload is the dispatch, without the tenant")
+}
+
+// The envelope of a run.cancelled:v1 row names the tenant the row stores.
+func TestRender_RunCancelledCarriesTheRowsTenant(t *testing.T) {
+	id, at, payload := goldenInput(t, "run_cancelled_v1_attempts.json")
+
+	rendered, err := NewOutboxPublisher(nil, nil).Render(&outbox.Entry{ID: id, CreatedAt: at,
+		EventType: streams.RunCancelledV1, StreamName: streams.RunCancelledV1, Payload: wrapped(t, "acme", payload)})
+	require.NoError(t, err)
+
+	assert.Equal(t, "acme", rendered["tenant_id"])
+	var got, want any
+	require.NoError(t, json.Unmarshal([]byte(rendered["payload"].(string)), &got))
+	require.NoError(t, json.Unmarshal(payload, &want))
+	assert.Equal(t, want, got, "the wire payload is the cancel, without the tenant")
+}
+
+// A dispatch or cancel row that stores no tenant can never publish: the error
+// is permanent, so the relay dead-letters the row.
+func TestRender_ARowWithoutATenantIsPermanent(t *testing.T) {
+	for _, stream := range []string{streams.TaskDispatchV1, streams.RunCancelledV1} {
+		t.Run(stream, func(t *testing.T) {
+			_, err := NewOutboxPublisher(nil, nil).Render(&outbox.Entry{ID: uuid.New(), EventType: stream,
+				StreamName: stream, Payload: []byte(`{"run_id":"r1"}`)})
+			require.ErrorIs(t, err, pkgevents.ErrPermanent)
+			require.ErrorIs(t, err, outbox.ErrNoTenant)
+		})
+	}
 }

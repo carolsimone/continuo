@@ -13,6 +13,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/identity"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
@@ -335,8 +336,10 @@ func (f statusFlow) dispatches(t *testing.T) []pkgevents.TaskDispatch {
 		f.r.RunID(), streams.TaskDispatchV1))
 	out := make([]pkgevents.TaskDispatch, 0, len(payloads))
 	for _, p := range payloads {
+		_, wire, err := pkgoutbox.UnwrapTenant(p)
+		require.NoError(t, err)
 		var d pkgevents.TaskDispatch
-		require.NoError(t, json.Unmarshal(p, &d))
+		require.NoError(t, json.Unmarshal(wire, &d))
 		out = append(out, d)
 	}
 	return out

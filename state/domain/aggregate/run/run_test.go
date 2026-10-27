@@ -767,7 +767,7 @@ func TestCancel_MovesTasksInFlightToStoppingAndTheRunToCancelling(t *testing.T) 
 
 	require.NoError(t, err)
 	assert.Equal(t, []run.DomainEvent{run.RunCancelled{
-		ID: r.RunID(), Name: "e2e-schedule-failure", By: "alice", CancellationReason: "bad data",
+		ID: r.RunID(), TenantID: r.TenantID(), Name: "e2e-schedule-failure", By: "alice", CancellationReason: "bad data",
 	}}, events)
 	assert.Equal(t, run.RunStatusCancelling, r.Status())
 	assert.True(t, r.IsActive())
@@ -802,7 +802,7 @@ func TestCancel_ARunWithNothingInFlightIsCancelledAtOnce(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, []run.DomainEvent{
-		run.RunCancelled{ID: r.RunID(), Name: "daily", By: "alice", CancellationReason: "bad data"},
+		run.RunCancelled{ID: r.RunID(), TenantID: r.TenantID(), Name: "daily", By: "alice", CancellationReason: "bad data"},
 		run.RunFinalized{ID: r.RunID(), Name: "daily", Outcome: run.RunStatusCancelled},
 	}, events)
 	assert.Equal(t, run.RunStatusCancelled, r.Status())

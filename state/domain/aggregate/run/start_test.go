@@ -95,10 +95,10 @@ func TestStart_StoresEveryTaskAndDispatchesTheReadyOnes(t *testing.T) {
 	nodeA, _ := g.Node(fkey("ftable_a"))
 	nodeB, _ := g.Node(fkey("ftable_b"))
 	assert.Equal(t, []run.DomainEvent{
-		run.TaskDispatched{ID: r.RunID(), ScheduleName: "e2e-schedule-failure", TaskID: a.TaskID, Attempt: 0,
+		run.TaskDispatched{ID: r.RunID(), TenantID: r.TenantID(), ScheduleName: "e2e-schedule-failure", TaskID: a.TaskID, Attempt: 0,
 			KnownStatus: run.AttemptDispatched, Node: nodeA, JobName: a.JobName, Operation: model.OperationRun,
 			Timeout: 24 * time.Hour},
-		run.TaskDispatched{ID: r.RunID(), ScheduleName: "e2e-schedule-failure", TaskID: b.TaskID, Attempt: 0,
+		run.TaskDispatched{ID: r.RunID(), TenantID: r.TenantID(), ScheduleName: "e2e-schedule-failure", TaskID: b.TaskID, Attempt: 0,
 			KnownStatus: run.AttemptDispatched, Node: nodeB, JobName: b.JobName, Operation: model.OperationRun,
 			Timeout: 24 * time.Hour},
 	}, events)
