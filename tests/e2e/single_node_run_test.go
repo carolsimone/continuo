@@ -143,7 +143,7 @@ func TestSingleNodeRunLatest(t *testing.T) {
 // TestSingleNodeRunStale verifies the single-node-run flow in "snapshot_of_run"
 // (stale) metadata mode:
 //
-//  1. Triggers a normal cron-style run on the "seed" schedule so that a real
+//  1. Starts a run of the "seed" schedule with StartRun so that a real
 //     source run exists with stamped image_tag.
 //  2. Waits for that source run to reach SUCCEEDED.
 //  3. Reads the source run's tasks row for the target node to capture
@@ -180,7 +180,7 @@ func TestSingleNodeRunStale(t *testing.T) {
 	defer cleanupTestData(t, ctx, clients, srcSchedule)
 	seedTopology(t, ctx, clients)
 
-	// ── Step 1: Trigger the source cron run ───────────────────────────────────
+	// ── Step 1: Start the source run ──────────────────────────────────────────
 	t.Log("=== Step 1: Triggering source seed run ===")
 	srcResp, err := clients.runClient.StartRun(ctx, &runv1.StartRunRequest{RequestId: uuid.NewString(),
 		ScheduleName: srcSchedule,

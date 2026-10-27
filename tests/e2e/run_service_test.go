@@ -23,15 +23,18 @@ import (
 //	→ StartRun with the same request id and another operation → ALREADY_EXISTS
 //	→ StartRun with a fresh request id while the first run is active →
 //	  FAILED_PRECONDITION, and still one run and one command record
+//	→ CancelRun of the run, which ends cancelled once execution-controller
+//	  has stopped its Jobs
 //
-// The run itself is not waited for: the idempotency is decided in the
-// transaction that creates the run, before any task runs.
+// The run's tasks are not waited for: the idempotency is decided in the
+// transaction that creates the run, before any task runs. The test cancels
+// the run and waits for it to end, so it leaves no Job running.
 func TestE2E_RunService_ARetriedStartRunReturnsTheSameRun(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
 	clients := setupClients(t, ctx)
@@ -74,6 +77,13 @@ func TestE2E_RunService_ARetriedStartRunReturnsTheSameRun(t *testing.T) {
 	assert.Equal(t, 1, runsOfSchedule(t, ctx, clients, testScheduleName), "a refused start creates no run")
 	assert.Zero(t, commandRecordsOf(t, ctx, clients, fresh), "a refused command stores no record, so its id may be sent again")
 	t.Logf("✅ a fresh request id while run %s is active was refused: %v", runID, err)
+
+	// ── The run is cancelled and ends before the test does ───────────────────
+	_, err = clients.runClient.CancelRun(ctx, &runv1.CancelRunRequest{
+		RunId: runID.String(), CancelledBy: "e2e", CancellationReason: "run service e2e test ends",
+	})
+	require.NoError(t, err, "CancelRun(%s)", runID)
+	verifySchedulerCancelled(t, ctx, clients, runID)
 }
 
 // runsOfSchedule counts the runs of one schedule in state's Postgres.
