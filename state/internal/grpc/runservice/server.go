@@ -29,6 +29,8 @@ type Reads struct {
 	Schedules *runreads.Schedules
 	// Graphs serves GetRunGraph, ListRuns and ListActiveRunDrifts.
 	Graphs *runreads.Service
+	// ScheduleGraphs serves GetScheduleGraph and ListScheduleTopologies.
+	ScheduleGraphs *runreads.ScheduleGraphs
 }
 
 // Server serves the read RPCs of RunService. Every other RPC answers

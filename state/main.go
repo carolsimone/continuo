@@ -482,6 +482,8 @@ func main() {
 		Nodes:     runreads.NewNodes(postgres.NewNodeReadRepository(nodeRunsOf), taskDefaults.Timeout),
 		Schedules: runreads.NewSchedules(catalogRepo, runRepo, schedulesconfig.New(schedulesConfig)),
 		Graphs:    runreads.New(runReadRepo),
+
+		ScheduleGraphs: runreads.NewScheduleGraphs(postgres.NewScheduleGraphRepository(db)),
 	}, logger)
 
 	// Create gRPC server

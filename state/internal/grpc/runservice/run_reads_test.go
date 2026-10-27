@@ -548,6 +548,14 @@ func TestRunReads_ARequestWithoutATenantIsInternal(t *testing.T) {
 		"ListRuns":            func() error { _, err := srv.ListRuns(ctx, &runv1.ListRunsRequest{ScheduleName: "daily"}); return err },
 		"ListActiveRunDrifts": func() error { _, err := srv.ListActiveRunDrifts(ctx, &runv1.ListActiveRunDriftsRequest{}); return err },
 		"ListSchedules":       func() error { _, err := srv.ListSchedules(ctx, &runv1.ListSchedulesRequest{}); return err },
+		"GetScheduleGraph": func() error {
+			_, err := srv.GetScheduleGraph(ctx, &runv1.GetScheduleGraphRequest{ScheduleName: "daily"})
+			return err
+		},
+		"ListScheduleTopologies": func() error {
+			_, err := srv.ListScheduleTopologies(ctx, &runv1.ListScheduleTopologiesRequest{})
+			return err
+		},
 	}
 	for name, call := range calls {
 		assert.Equal(t, codes.Internal, status.Code(call()), name)
@@ -575,13 +583,21 @@ func TestRunReads_AFailingReadIsInternal(t *testing.T) {
 		"ListRuns":            func() error { _, err := srv.ListRuns(ctx, &runv1.ListRunsRequest{ScheduleName: "daily"}); return err },
 		"ListActiveRunDrifts": func() error { _, err := srv.ListActiveRunDrifts(ctx, &runv1.ListActiveRunDriftsRequest{}); return err },
 		"ListSchedules":       func() error { _, err := srv.ListSchedules(ctx, &runv1.ListSchedulesRequest{}); return err },
+		"GetScheduleGraph": func() error {
+			_, err := srv.GetScheduleGraph(ctx, &runv1.GetScheduleGraphRequest{ScheduleName: "daily"})
+			return err
+		},
+		"ListScheduleTopologies": func() error {
+			_, err := srv.ListScheduleTopologies(ctx, &runv1.ListScheduleTopologiesRequest{})
+			return err
+		},
 	}
 	for name, call := range calls {
 		assert.Equal(t, codes.Internal, status.Code(call()), name)
 	}
 }
 
-// The server leaves the command and topology RPCs unimplemented.
+// The server leaves the command RPCs unimplemented.
 func TestServer_LeavesTheCommandRPCsUnimplemented(t *testing.T) {
 	srv := newServer(newStore(), nil)
 	_, err := srv.CancelRun(ctxOf(tenantA), &runv1.CancelRunRequest{RunId: uuid.NewString()})

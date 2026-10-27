@@ -14,6 +14,7 @@ import (
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/projection"
 	"github.com/carolsimone/continuo/state/domain/repository"
+	"github.com/carolsimone/continuo/state/domain/topology"
 	"github.com/carolsimone/continuo/state/internal/grpc/runservice"
 	"github.com/carolsimone/continuo/state/service/ports"
 	"github.com/carolsimone/continuo/state/service/runreads"
@@ -51,6 +52,11 @@ type fakeStore struct {
 	schedules    []string
 	lastRuns     map[string]repository.LastRunSummary
 
+	// The live release's schedule views, by tenant: the graph of each schedule
+	// and the summaries of all of them.
+	scheduleGraphs map[string]map[string]topology.ScheduleGraph
+	summaries      map[string][]topology.ScheduleSummary
+
 	failWith error
 
 	// Arguments of the last read.
@@ -79,7 +85,17 @@ func newStore() *fakeStore {
 		latest:    map[string]int64{},
 		completed: map[string][]projection.RunSummary{},
 		lastRuns:  map[string]repository.LastRunSummary{},
+
+		scheduleGraphs: map[string]map[string]topology.ScheduleGraph{},
+		summaries:      map[string][]topology.ScheduleSummary{},
 	}
+}
+
+func (s *fakeStore) putScheduleGraph(tenant, schedule string, g topology.ScheduleGraph) {
+	if s.scheduleGraphs[tenant] == nil {
+		s.scheduleGraphs[tenant] = map[string]topology.ScheduleGraph{}
+	}
+	s.scheduleGraphs[tenant][schedule] = g
 }
 
 func (s *fakeStore) putRun(tenant string, r projection.RunDetail) {
@@ -299,6 +315,24 @@ func (f fakeCrons) CronOf(name string) (ports.ScheduleCron, bool) {
 	return c, ok
 }
 
+type fakeScheduleGraphs struct{ *fakeStore }
+
+var _ repository.ScheduleGraphRepository = fakeScheduleGraphs{}
+
+func (f fakeScheduleGraphs) Graph(_ context.Context, tenantID, scheduleName string) (topology.ScheduleGraph, error) {
+	if f.failWith != nil {
+		return topology.ScheduleGraph{}, f.failWith
+	}
+	return f.scheduleGraphs[tenantID][scheduleName], nil
+}
+
+func (f fakeScheduleGraphs) Summaries(_ context.Context, tenantID string) ([]topology.ScheduleSummary, error) {
+	if f.failWith != nil {
+		return nil, f.failWith
+	}
+	return f.summaries[tenantID], nil
+}
+
 // newServer builds the RunService read server over the fakes of store.
 func newServer(store *fakeStore, crons ports.ScheduleCrons) *runservice.Server {
 	return runservice.NewServer(runservice.Reads{
@@ -307,5 +341,7 @@ func newServer(store *fakeStore, crons ports.ScheduleCrons) *runservice.Server {
 		Nodes:     runreads.NewNodes(fakeNodes{store}, 30*time.Minute),
 		Schedules: runreads.NewSchedules(fakeActiveSchedules{store}, fakeLastRuns{store}, crons),
 		Graphs:    runreads.New(fakeRunReads{store}),
+
+		ScheduleGraphs: runreads.NewScheduleGraphs(fakeScheduleGraphs{store}),
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
