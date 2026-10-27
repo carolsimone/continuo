@@ -3,6 +3,7 @@ package test
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
@@ -24,6 +25,12 @@ import (
 func commandRecords(t *testing.T, requestID string) int {
 	t.Helper()
 	return countOf(t, stateDB, `SELECT count(*) FROM command_requests WHERE request_id = $1`, requestID)
+}
+
+// outboxRowsOf counts the outbox rows runID's transactions wrote.
+func outboxRowsOf(t *testing.T, runID string) int {
+	t.Helper()
+	return countOf(t, stateDB, `SELECT count(*) FROM state_outbox WHERE aggregate_id = $1`, runID)
 }
 
 // runStatusOf reads the status of runID.
@@ -70,6 +77,8 @@ func TestStartRun_ARetryReturnsTheSameRun(t *testing.T) {
 	first, err := runClient.StartRun(ctx, &runv1.StartRunRequest{RequestId: requestID, ScheduleName: schedule})
 	require.NoError(t, err)
 	t.Cleanup(func() { finishRun(t, first.GetRunId()) })
+	dispatched := outboxRowsOf(t, first.GetRunId())
+	require.Equal(t, 1, dispatched, "the run dispatched the schedule's one node")
 	again, err := runClient.StartRun(ctx, &runv1.StartRunRequest{RequestId: requestID, ScheduleName: schedule})
 	require.NoError(t, err, "a retry answers with the first call's run, though the schedule now has an active run")
 	assert.Equal(t, first.GetRunId(), again.GetRunId())
@@ -79,10 +88,49 @@ func TestStartRun_ARetryReturnsTheSameRun(t *testing.T) {
 
 	assert.Equal(t, 1, countOf(t, stateDB, `SELECT count(*) FROM runs WHERE schedule_name = $1`, schedule))
 	assert.Equal(t, 1, commandRecords(t, requestID))
+	assert.Equal(t, dispatched, outboxRowsOf(t, first.GetRunId()), "a replay writes no outbox row")
 
 	_, err = runClient.StartRun(ctx, &runv1.StartRunRequest{RequestId: requestID, ScheduleName: schedule, Operation: "build"})
 	requireReused(t, err)
 	assert.Equal(t, 1, countOf(t, stateDB, `SELECT count(*) FROM runs WHERE schedule_name = $1`, schedule))
+	assert.Equal(t, dispatched, outboxRowsOf(t, first.GetRunId()), "a refused reuse writes no outbox row")
+}
+
+// Two identical StartRun calls sent at once serialise on their request id:
+// one creates the run and the other answers with it, so the run, its command
+// record and its dispatch exist once.
+func TestStartRun_TwoConcurrentIdenticalCallsStartOneRun(t *testing.T) {
+	ctx := context.Background()
+	const schedule = "rs-start-concurrent"
+	seedActiveSchedule(t, schedule)
+	promoteSchedules(t, stateDB, schedule)
+	req := &runv1.StartRunRequest{RequestId: uuid.NewString(), ScheduleName: schedule}
+
+	var (
+		wg    sync.WaitGroup
+		ids   [2]string
+		errs  [2]error
+		start = make(chan struct{})
+	)
+	for i := range ids {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			resp, err := runClient.StartRun(ctx, req)
+			ids[i], errs[i] = resp.GetRunId(), err
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	require.NoError(t, errs[0])
+	require.NoError(t, errs[1])
+	t.Cleanup(func() { finishRun(t, ids[0]) })
+	assert.Equal(t, ids[0], ids[1], "both calls answer with the one run")
+	assert.Equal(t, 1, countOf(t, stateDB, `SELECT count(*) FROM runs WHERE schedule_name = $1`, schedule))
+	assert.Equal(t, 1, commandRecords(t, req.GetRequestId()))
+	assert.Equal(t, 1, outboxRowsOf(t, ids[0]), "the run's one node is dispatched once")
 }
 
 // A refused call stores nothing: the same request id sent once the refusal
