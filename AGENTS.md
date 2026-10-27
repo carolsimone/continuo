@@ -107,7 +107,7 @@ It is append-only and historical: a design or plan describes the system **as of 
 
 Whenever a PR changes `deploy/continuo/values.yaml`, `values.schema.json`, `Chart.yaml`, or `templates/**`:
 - **Update `values.schema.json` to match.** `additionalProperties: false` is set throughout on purpose — adding, renaming, or removing a values key without updating the schema fails `helm lint` (`scripts/install-test/lint.sh`), which is the intended forcing function.
-- **Add an entry under `## [Unreleased]`** in `deploy/continuo/CHANGELOG.md` (Added/Changed/Removed/Breaking, [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format). CI (`scripts/install-test/changelog-check.sh`, wired into `install-test.yml`) fails a PR that touches the chart's user-facing surface without this.
+- **Add an entry under `## [Unreleased]`** in `deploy/continuo/CHANGELOG.md` (Added/Changed/Removed/Breaking, [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format). CI (`scripts/install-test/changelog-check.sh`, wired into `install-test.yml`) fails a PR that touches the chart's user-facing surface without this, and a PR whose diff adds a line under an already released `## [x.y.z]` section — which a merge of main after a release cut does without a conflict — unless the diff adds that version's heading (the release cut itself).
 - **Decide the semver bump** the change implies, scoped to the values contract rather than internal service APIs:
   - PATCH — template/default fixes, no values schema change.
   - MINOR — new values added with safe defaults; existing overrides keep working unmodified.

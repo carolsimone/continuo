@@ -61,7 +61,17 @@ jobs:
         if: github.event_name == 'pull_request'
         run: git fetch --depth=1 origin "${{ github.event.pull_request.base.sha }}"
 
+      - name: Test the changelog checks
+        # Runs changelog-check.sh and changelog-placement-check.sh against
+        # fixture repositories (an entry under Unreleased, one under a
+        # released version, a release cut, a merge of main after a cut).
+        if: github.event_name == 'pull_request'
+        run: bash scripts/install-test/changelog-check_test.sh
+
       - name: Require a CHANGELOG.md entry for chart changes
+        # Also fails a CHANGELOG.md change that adds a line under an already
+        # released version (changelog-placement-check.sh), which a merge of
+        # main after a release cut can do without a conflict.
         # Only meaningful on PRs — a release-tag-triggered workflow_call run
         # has no PR base to diff against, and the PR that shipped the change
         # was already gated on this.

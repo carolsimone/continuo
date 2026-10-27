@@ -288,6 +288,12 @@ bench-test:  ## Unit tests and shellcheck for the run-lifecycle benchmark harnes
 #   generator produces from the contract, so a contract edit cannot land
 #   without its regenerated bindings. It leaves the tree as it found it.
 #
+# install-test/changelog-check_test.sh runs the chart's CHANGELOG gate
+# (changelog-check.sh, which install-test.yml runs on every chart PR) against
+# fixture repositories: an entry belongs under [Unreleased], a line added
+# under a released version fails unless the diff is that version's release
+# cut, and a merge of main after a cut cannot slip a bullet under it.
+#
 # The tests cover the two Go modules no other test target reaches: pkg (the
 # cross-cutting static guards) and tests/e2e/stub-llm (the canned model the
 # remediation e2e scenarios read as an LLM's answers, whose tests run against
@@ -322,6 +328,7 @@ guards: bench-test
 	bash scripts/check-standalone-modules.sh
 	bash scripts/check-generated-streams.sh
 	bash scripts/deploy/last-deployed-commit_test.sh
+	bash scripts/install-test/changelog-check_test.sh
 	cd pkg && go test ./...
 	cd pkg && go test -race ./lifecycle/...
 	cd tests/e2e/stub-llm && GOWORK=off go test ./...
