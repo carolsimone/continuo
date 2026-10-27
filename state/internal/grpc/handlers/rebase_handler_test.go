@@ -98,31 +98,31 @@ func promoteNode(t *testing.T, fx *rebaseFixture, scheduleName string) string {
 	return releaseID
 }
 
-// seedTerminalRunWithFailedTask creates a scheduler_tracker (status=failed/cancelled)
-// on a release of fx's tenant, the live one, with one task_tracker row in
-// 'failed' status at node s.t. Returns the schedule_id. Cleanup deletes both
+// seedTerminalRunWithFailedTask creates a run (status=failed/cancelled)
+// on a release of fx's tenant, the live one, with one task row in
+// 'failed' status at node s.t. Returns the run_id. Cleanup deletes both
 // rows.
 func seedTerminalRunWithFailedTask(t *testing.T, fx *rebaseFixture, scheduleName string, srcStatus run.SchedulerStatus) uuid.UUID {
 	t.Helper()
 	releaseID := promoteNode(t, fx, scheduleName)
 	id := uuid.New()
 	_, err := fx.DB.ExecContext(context.Background(), `
-		INSERT INTO scheduler_tracker (schedule_id, schedule_name, status, created_at, completed_at, initialization_status, kind, release_id, promotion_seq)
+		INSERT INTO runs (run_id, schedule_name, status, created_at, completed_at, initialization_status, kind, release_id, promotion_seq)
 		VALUES ($1, $2, $3, NOW(), NOW(), 'completed', 'cron', $4, 1)`,
 		id, scheduleName, string(srcStatus), releaseID,
 	)
 	require.NoError(t, err)
 
 	_, err = fx.DB.ExecContext(context.Background(), `
-		INSERT INTO task_tracker (task_id, schedule_id, created_at, service_name, schema_name, table_name, job_name, status, attempt, max_retries, image_tag, node_key)
+		INSERT INTO tasks (task_id, run_id, created_at, service_name, schema_name, table_name, job_name, status, attempt, max_retries, image_tag, node_key)
 		VALUES ($1, $2, NOW(), 'svc', 's', 't', 'job', 'failed', 0, 2, 'img:1', 's.t')`,
 		uuid.New(), id,
 	)
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
-		fx.DB.ExecContext(context.Background(), "DELETE FROM task_tracker WHERE schedule_id = $1", id)
-		fx.DB.ExecContext(context.Background(), "DELETE FROM scheduler_tracker WHERE schedule_id = $1", id)
+		fx.DB.ExecContext(context.Background(), "DELETE FROM tasks WHERE run_id = $1", id)
+		fx.DB.ExecContext(context.Background(), "DELETE FROM runs WHERE run_id = $1", id)
 	})
 	return id
 }
@@ -144,7 +144,7 @@ func TestRebaseHandler_HappyPath_FailedSource(t *testing.T) {
 	newID := uuid.MustParse(resp.RunId)
 	t.Cleanup(func() {
 		fx.DB.ExecContext(context.Background(), "DELETE FROM state_outbox WHERE aggregate_id = $1", newID)
-		fx.DB.ExecContext(context.Background(), "DELETE FROM scheduler_tracker WHERE schedule_id = $1", newID)
+		fx.DB.ExecContext(context.Background(), "DELETE FROM runs WHERE run_id = $1", newID)
 	})
 
 	tracker, err := fx.SchedulerRepo.GetByID(context.Background(), newID)
@@ -192,7 +192,7 @@ func TestRebaseHandler_HappyPath_CancelledSource(t *testing.T) {
 	newID := uuid.MustParse(resp.RunId)
 	t.Cleanup(func() {
 		fx.DB.ExecContext(context.Background(), "DELETE FROM state_outbox WHERE aggregate_id = $1", newID)
-		fx.DB.ExecContext(context.Background(), "DELETE FROM scheduler_tracker WHERE schedule_id = $1", newID)
+		fx.DB.ExecContext(context.Background(), "DELETE FROM runs WHERE run_id = $1", newID)
 	})
 
 	tracker, err := fx.SchedulerRepo.GetByID(context.Background(), newID)
@@ -201,7 +201,7 @@ func TestRebaseHandler_HappyPath_CancelledSource(t *testing.T) {
 	require.Equal(t, srcID, *tracker.SourceRunID)
 }
 
-// seedRunWithTaskStatus creates a scheduler_tracker with the given status and a single
+// seedRunWithTaskStatus creates a run with the given status and a single
 // task in the given status. Used for rejection-case fixtures.
 func seedRunWithTaskStatus(t *testing.T, fx *rebaseFixture, scheduleName string, srcStatus run.SchedulerStatus, taskStatus run.TaskStatus) uuid.UUID {
 	t.Helper()
@@ -211,38 +211,38 @@ func seedRunWithTaskStatus(t *testing.T, fx *rebaseFixture, scheduleName string,
 		completedClause = "NULL"
 	}
 	_, err := fx.DB.ExecContext(context.Background(),
-		"INSERT INTO scheduler_tracker (schedule_id, schedule_name, status, created_at, completed_at, initialization_status, kind) VALUES ($1, $2, $3, NOW(), "+completedClause+", 'completed', 'cron')",
+		"INSERT INTO runs (run_id, schedule_name, status, created_at, completed_at, initialization_status, kind) VALUES ($1, $2, $3, NOW(), "+completedClause+", 'completed', 'cron')",
 		id, scheduleName, string(srcStatus),
 	)
 	require.NoError(t, err)
 
 	_, err = fx.DB.ExecContext(context.Background(), `
-		INSERT INTO task_tracker (task_id, schedule_id, created_at, service_name, schema_name, table_name, job_name, status, attempt, max_retries, image_tag)
+		INSERT INTO tasks (task_id, run_id, created_at, service_name, schema_name, table_name, job_name, status, attempt, max_retries, image_tag)
 		VALUES ($1, $2, NOW(), 'svc', 's', 't', 'job', $3, 0, 2, 'img:1')`,
 		uuid.New(), id, string(taskStatus),
 	)
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
-		fx.DB.ExecContext(context.Background(), "DELETE FROM task_tracker WHERE schedule_id = $1", id)
-		fx.DB.ExecContext(context.Background(), "DELETE FROM scheduler_tracker WHERE schedule_id = $1", id)
+		fx.DB.ExecContext(context.Background(), "DELETE FROM tasks WHERE run_id = $1", id)
+		fx.DB.ExecContext(context.Background(), "DELETE FROM runs WHERE run_id = $1", id)
 	})
 	return id
 }
 
-// seedRunningSchedulerOnSchedule creates an additional RUNNING scheduler_tracker
+// seedRunningSchedulerOnSchedule creates an additional RUNNING runs
 // row on the given schedule_name (no tasks). Used to test the active-schedule guard.
 func seedRunningSchedulerOnSchedule(t *testing.T, fx *rebaseFixture, scheduleName string) uuid.UUID {
 	t.Helper()
 	id := uuid.New()
 	_, err := fx.DB.ExecContext(context.Background(), `
-		INSERT INTO scheduler_tracker (schedule_id, schedule_name, status, created_at, initialization_status, kind)
+		INSERT INTO runs (run_id, schedule_name, status, created_at, initialization_status, kind)
 		VALUES ($1, $2, 'running', NOW(), 'in_progress', 'cron')`,
 		id, scheduleName,
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		fx.DB.ExecContext(context.Background(), "DELETE FROM scheduler_tracker WHERE schedule_id = $1", id)
+		fx.DB.ExecContext(context.Background(), "DELETE FROM runs WHERE run_id = $1", id)
 	})
 	return id
 }

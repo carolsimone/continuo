@@ -62,17 +62,17 @@ func insertTasks(t *testing.T, db *sqlx.DB, statuses map[string]run.TaskStatus) 
 	t.Helper()
 	runID := uuid.New()
 	_, err := db.Exec(`
-		INSERT INTO scheduler_tracker (schedule_id, schedule_name, status, release_id, promotion_seq)
+		INSERT INTO runs (run_id, schedule_name, status, release_id, promotion_seq)
 		VALUES ($1, $2, 'running', 'rel-1', 1)`, runID, "graph-"+runID.String()[:8])
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		_, _ = db.ExecContext(context.Background(), `DELETE FROM scheduler_tracker WHERE schedule_id = $1`, runID)
+		_, _ = db.ExecContext(context.Background(), `DELETE FROM runs WHERE run_id = $1`, runID)
 	})
 	ids := make(map[string]uuid.UUID, len(statuses))
 	for table, status := range statuses {
 		ids[table] = uuid.New()
 		_, err := db.Exec(`
-			INSERT INTO task_tracker (task_id, schedule_id, service_name, schema_name, table_name, job_name, status, max_retries, node_key)
+			INSERT INTO tasks (task_id, run_id, service_name, schema_name, table_name, job_name, status, max_retries, node_key)
 			VALUES ($1, $2, 'service-1', 'e2e_schema', $3, $3, $4, 2, $5)`,
 			ids[table], runID, table, string(status), "e2e_schema."+table)
 		require.NoError(t, err)
@@ -138,7 +138,7 @@ func TestTaskGraph_ReadyCandidatesLeaveOutDispatchedAndFinishedTasks(t *testing.
 	tenant := storeFailureSchedule(t, db)
 	r := startScheduleRun(t, db, tenant, "e2e-schedule-failure", model.OperationRun)
 	setTaskStatus(t, db, r, "e2e_schema.ftable_a", run.TaskStatusSucceeded)
-	_, err := db.Exec(`UPDATE task_tracker SET dispatched_at = $3 WHERE schedule_id = $1 AND node_key = $2`,
+	_, err := db.Exec(`UPDATE tasks SET dispatched_at = $3 WHERE run_id = $1 AND node_key = $2`,
 		r.ScheduleID(), "e2e_schema.ftable_g", time.Now())
 	require.NoError(t, err)
 	setTaskStatus(t, db, r, "e2e_schema.ftable_c", run.TaskStatusSkipped)

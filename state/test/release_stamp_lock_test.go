@@ -110,7 +110,7 @@ func TestReleaseStamp_CreationSerialisesWithPromotionAndPruning(t *testing.T) {
 		// Put the live release back to rel-old, which is past retention and named
 		// by no run yet.
 		h.inTx(t, promote("rel-old", 4))
-		_, err := db.Exec(`DELETE FROM scheduler_tracker WHERE release_id = 'rel-new'`)
+		_, err := db.Exec(`DELETE FROM runs WHERE release_id = 'rel-new'`)
 		require.NoError(t, err)
 
 		creation := h.factory()

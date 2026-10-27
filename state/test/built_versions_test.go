@@ -97,11 +97,11 @@ func (h *builtHarness) legacyRun(t *testing.T, releaseID, table string) (uuid.UU
 	t.Helper()
 	runID, taskID := uuid.New(), uuid.New()
 	_, err := h.db.Exec(`
-		INSERT INTO scheduler_tracker (schedule_id, schedule_name, status, initialization_status, total_task_count, release_id, promotion_seq)
+		INSERT INTO runs (run_id, schedule_name, status, initialization_status, total_task_count, release_id, promotion_seq)
 		VALUES ($1, $2, 'running', 'completed', 1, $3, 1)`, runID, "legacy-"+runID.String()[:8], releaseID)
 	require.NoError(t, err)
 	_, err = h.db.Exec(`
-		INSERT INTO task_tracker (task_id, schedule_id, service_name, schema_name, table_name, job_name, status, max_retries, image_tag, node_key)
+		INSERT INTO tasks (task_id, run_id, service_name, schema_name, table_name, job_name, status, max_retries, image_tag, node_key)
 		VALUES ($1, $2, 'service-1', 'raw', $3, $3, 'pending', 2, 'service-1:v1', $4)`, taskID, runID, table, "raw."+table)
 	require.NoError(t, err)
 	return runID, taskID
@@ -249,9 +249,9 @@ func TestBuiltVersions(t *testing.T) {
 	t.Run("a rerun records the content hash of its source's release", func(t *testing.T) {
 		source := promoteRelease(t, db, scheduledNode("raw", "rerun_orders", "dbt-model", "built-rerun"))
 		sourceID := h.trigger(t, "built-rerun", model.OperationRun)
-		_, err := db.Exec(`UPDATE task_tracker SET status = 'failed', attempt = 2 WHERE schedule_id = $1`, sourceID)
+		_, err := db.Exec(`UPDATE tasks SET status = 'failed', attempt = 2 WHERE run_id = $1`, sourceID)
 		require.NoError(t, err)
-		_, err = db.Exec(`UPDATE scheduler_tracker SET status = 'failed', completed_at = now() WHERE schedule_id = $1`, sourceID)
+		_, err = db.Exec(`UPDATE runs SET status = 'failed', completed_at = now() WHERE run_id = $1`, sourceID)
 		require.NoError(t, err)
 		releaseLeasesOf(t, db, sourceID)
 		changed := scheduledNode("raw", "rerun_orders", "dbt-model", "built-rerun")

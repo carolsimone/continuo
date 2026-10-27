@@ -113,7 +113,7 @@ func leaseOf(t *testing.T, db *sqlx.DB, taskID uuid.UUID) bool {
 	return held
 }
 
-// leaseWait is what a task_tracker row says a task waits for.
+// leaseWait is what a task row says a task waits for.
 type leaseWait struct {
 	Status run.TaskStatus `db:"status"`
 	Reason *string        `db:"wait_reason"`
@@ -123,7 +123,7 @@ type leaseWait struct {
 func waitOf(t *testing.T, db *sqlx.DB, taskID uuid.UUID) leaseWait {
 	t.Helper()
 	var w leaseWait
-	require.NoError(t, db.Get(&w, `SELECT status, wait_reason, lease_wait_since FROM task_tracker WHERE task_id = $1`, taskID))
+	require.NoError(t, db.Get(&w, `SELECT status, wait_reason, lease_wait_since FROM tasks WHERE task_id = $1`, taskID))
 	return w
 }
 
@@ -214,7 +214,7 @@ func TestNodeLeases_ANewlyReadyTaskWaitsBehindAnOlderWaiter(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, heldLease{TaskID: waiter[x], RunID: waiterRun}, lx)
 
-	_, err := db.Exec(`UPDATE task_tracker SET status = 'succeeded', wait_reason = NULL, lease_wait_since = NULL WHERE task_id = $1`, waiter[x])
+	_, err := db.Exec(`UPDATE tasks SET status = 'succeeded', wait_reason = NULL, lease_wait_since = NULL WHERE task_id = $1`, waiter[x])
 	require.NoError(t, err)
 	inLeaseTx(t, db, tenant, func(tasks run.TaskCollection) {
 		require.NoError(t, tasks.ReleaseLease(ctx, waiter[x]))

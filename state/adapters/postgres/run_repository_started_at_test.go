@@ -37,7 +37,7 @@ func independentNodes(t *testing.T, tables ...string) (runplan.Plan, topology.Gr
 // PENDING→RUNNING production path: a PENDING run is created, loaded FOR UPDATE,
 // then started with a plan holding a pending task (so the run transitions to
 // RUNNING and stamps started_at). SaveRun must persist that started_at to
-// scheduler_tracker.
+// runs.
 func TestRunRepository_SaveRun_PersistsStartedAtOnStart(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
@@ -54,8 +54,8 @@ func TestRunRepository_SaveRun_PersistsStartedAtOnStart(t *testing.T) {
 		InitializationStatus: "in_progress",
 		Kind:                 "cron",
 	}))
-	defer db.ExecContext(ctx, "DELETE FROM task_tracker WHERE schedule_id = $1", scheduleID)
-	defer db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", scheduleID)
+	defer db.ExecContext(ctx, "DELETE FROM tasks WHERE run_id = $1", scheduleID)
+	defer db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", scheduleID)
 
 	// Before: started_at is NULL on a freshly created PENDING row.
 	before, err := schedRepo.GetByID(ctx, scheduleID)
@@ -110,8 +110,8 @@ func TestRunRepository_SaveRun_SingleUpdateForDirtyColumns(t *testing.T) {
 		InitializationStatus: "in_progress",
 		Kind:                 "cron",
 	}))
-	defer db.ExecContext(ctx, "DELETE FROM task_tracker WHERE schedule_id = $1", scheduleID)
-	defer db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", scheduleID)
+	defer db.ExecContext(ctx, "DELETE FROM tasks WHERE run_id = $1", scheduleID)
+	defer db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", scheduleID)
 
 	tx, err := db.BeginTxx(ctx, nil)
 	require.NoError(t, err)
@@ -160,7 +160,7 @@ func TestSchedulerRepository_UpdateRunRowTx_StartedAt(t *testing.T) {
 		InitializationStatus: "in_progress",
 		Kind:                 "cron",
 	}))
-	defer db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", scheduleID)
+	defer db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", scheduleID)
 
 	tx, err := db.BeginTxx(ctx, nil)
 	require.NoError(t, err)
@@ -199,7 +199,7 @@ func TestSchedulerRepository_UpdateRunRowTx_NoFieldsIsNoop(t *testing.T) {
 		InitializationStatus: "in_progress",
 		Kind:                 "cron",
 	}))
-	defer db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", scheduleID)
+	defer db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", scheduleID)
 
 	tx, err := db.BeginTxx(ctx, nil)
 	require.NoError(t, err)

@@ -21,7 +21,7 @@ type Run struct {
 	scheduleID   uuid.UUID
 	scheduleName string
 
-	// scheduler_tracker columns
+	// runs columns
 	status      SchedulerStatus
 	initStatus  InitStatus
 	kind        Kind
@@ -61,7 +61,7 @@ type Run struct {
 	changes changeSet
 }
 
-// changeSet records which scheduler_tracker columns were mutated since the
+// changeSet records which runs columns were mutated since the
 // aggregate was loaded. The repository adapter consults it on SaveRun to
 // dispatch to the correct tuned SQL method.
 type changeSet struct {
@@ -77,7 +77,7 @@ type changeSet struct {
 	plannedDirty           bool
 }
 
-// HydrateRun rebuilds a Run from persisted scheduler_tracker columns. Used by
+// HydrateRun rebuilds a Run from persisted runs columns. Used by
 // the postgres adapter inside LoadRunForUpdate / GetRun. Application code MUST
 // NOT call this — use one of the New* constructors instead.
 func HydrateRun(
@@ -118,15 +118,15 @@ func HydrateRun(
 	}
 }
 
-// HydrateRelease restores the release stamp read from scheduler_tracker.
+// HydrateRelease restores the release stamp read from runs.
 // Adapter-only: domain code receives the stamp through a constructor.
 func (r *Run) HydrateRelease(s ReleaseStamp) { r.release = s }
 
-// HydratePlannedAt restores planned_at read from scheduler_tracker.
+// HydratePlannedAt restores planned_at read from runs.
 // Adapter-only: domain code plans a run through Start.
 func (r *Run) HydratePlannedAt(at *time.Time) { r.plannedAt = at }
 
-// HydrateFailureReason restores failure_reason read from scheduler_tracker.
+// HydrateFailureReason restores failure_reason read from runs.
 // Adapter-only: domain code sets it when the run fails without a failed task.
 func (r *Run) HydrateFailureReason(reason *RunFailureReason) { r.failureReason = reason }
 
@@ -178,7 +178,7 @@ func NewPendingRun(
 // NewDerivedRun creates a PENDING Run for rerun/rebase. The derived run
 // inherits the source run's operation: rerun/rebase re-issue the source
 // run's dbt verb (run/build) against the derived task set; the planner refuses
-// a test source. Stamps last_heartbeat_at so dashboards show the new run
+// a test source. Stamps last_progress_at so dashboards show the new run
 // immediately.
 //
 // stamp is the release the run runs on: the source run's for a rerun, the
@@ -448,7 +448,7 @@ func (r *Run) Start(
 	}
 
 	if err := tasks.BulkCreate(ctx, built); err != nil {
-		return nil, fmt.Errorf("bulk create tasks: %w", err)
+		return nil, fmt.Errorf("bulk create task: %w", err)
 	}
 	events, err := r.dispatch(ctx, tasks, toDispatch, d, now)
 	if err != nil {

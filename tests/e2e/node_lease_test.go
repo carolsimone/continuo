@@ -233,10 +233,10 @@ func waitForNodeUnleased(t *testing.T, ctx context.Context, clients *testClients
 	})
 }
 
-// taskStatus reads taskID's task_tracker status.
+// taskStatus reads taskID's tasks status.
 func taskStatus(ctx context.Context, clients *testClients, taskID uuid.UUID) (string, error) {
 	var status string
-	err := clients.stateDB.GetContext(ctx, &status, `SELECT status FROM task_tracker WHERE task_id = $1`, taskID)
+	err := clients.stateDB.GetContext(ctx, &status, `SELECT status FROM tasks WHERE task_id = $1`, taskID)
 	return status, err
 }
 
@@ -256,7 +256,7 @@ func waitForLeaseHeldBy(t *testing.T, ctx context.Context, clients *testClients,
 		}
 		if err := clients.stateDB.GetContext(ctx, &row, `
 			SELECT t.status, COALESCE(l.task_id::text, '') AS holder
-			  FROM task_tracker t
+			  FROM tasks t
 			  LEFT JOIN node_leases l ON l.tenant_id = $2 AND l.node_key = $3
 			 WHERE t.task_id = $1`, taskID, events.DefaultTenantID, nodeKey); err != nil {
 			return false, err

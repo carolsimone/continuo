@@ -45,7 +45,7 @@ func TestNodeRunRepository_List(t *testing.T) {
 		InitializationStatus: "completed",
 	}
 	require.NoError(t, schedRepo.Create(ctx, sched1))
-	defer db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", sched1ID)
+	defer db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", sched1ID)
 
 	// task1: on the target node
 	task1ID := uuid.New()
@@ -63,7 +63,7 @@ func TestNodeRunRepository_List(t *testing.T) {
 		CreatedAt:   time.Now().Add(-2 * time.Minute),
 	}
 	require.NoError(t, taskRepo.Create(ctx, task1))
-	defer db.ExecContext(ctx, "DELETE FROM task_tracker WHERE task_id = $1", task1ID)
+	defer db.ExecContext(ctx, "DELETE FROM tasks WHERE task_id = $1", task1ID)
 
 	// attempt 0 of task1
 	insertAttemptRow(t, db, storedAttempt{
@@ -89,7 +89,7 @@ func TestNodeRunRepository_List(t *testing.T) {
 		CreatedAt:   time.Now().Add(-2 * time.Minute),
 	}
 	require.NoError(t, taskRepo.Create(ctx, taskExtra))
-	defer db.ExecContext(ctx, "DELETE FROM task_tracker WHERE task_id = $1", taskExtraID)
+	defer db.ExecContext(ctx, "DELETE FROM tasks WHERE task_id = $1", taskExtraID)
 
 	// --- scheduler 2: rerun (source = sched1), failed — created more recently ---
 	sched2ID := uuid.New()
@@ -103,7 +103,7 @@ func TestNodeRunRepository_List(t *testing.T) {
 		InitializationStatus: "completed",
 	}
 	require.NoError(t, schedRepo.Create(ctx, sched2))
-	defer db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", sched2ID)
+	defer db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", sched2ID)
 
 	// task2: on the target node, rerun
 	task2ID := uuid.New()
@@ -122,7 +122,7 @@ func TestNodeRunRepository_List(t *testing.T) {
 		CreatedAt:   time.Now().Add(-1 * time.Minute),
 	}
 	require.NoError(t, taskRepo.Create(ctx, task2))
-	defer db.ExecContext(ctx, "DELETE FROM task_tracker WHERE task_id = $1", task2ID)
+	defer db.ExecContext(ctx, "DELETE FROM tasks WHERE task_id = $1", task2ID)
 
 	// attempt 1 of task2 (with error_message)
 	insertAttemptRow(t, db, storedAttempt{
@@ -139,7 +139,7 @@ func TestNodeRunRepository_List(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, rows, 2, "expected exactly 2 rows for (svc, sch, tbl)")
 
-	// ordered by scheduler_tracker.created_at DESC: sched2 (rerun) first
+	// ordered by runs.created_at DESC: sched2 (rerun) first
 	assert.Equal(t, sched2ID, rows[0].ScheduleID)
 	assert.Equal(t, "rerun", rows[0].Kind)
 	assert.Equal(t, "v2", rows[0].ImageTag)
@@ -178,7 +178,7 @@ func TestNodeRunRepository_List_TaskWithoutExecution(t *testing.T) {
 		InitializationStatus: "completed",
 	}
 	require.NoError(t, schedRepo.Create(ctx, sched))
-	defer db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", schedID)
+	defer db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", schedID)
 
 	taskID := uuid.New()
 	task := &postgres.TaskTracker{
@@ -195,7 +195,7 @@ func TestNodeRunRepository_List_TaskWithoutExecution(t *testing.T) {
 		CreatedAt:   time.Now(),
 	}
 	require.NoError(t, taskRepo.Create(ctx, task))
-	defer db.ExecContext(ctx, "DELETE FROM task_tracker WHERE task_id = $1", taskID)
+	defer db.ExecContext(ctx, "DELETE FROM tasks WHERE task_id = $1", taskID)
 
 	// No task_attempts row inserted.
 
@@ -263,7 +263,7 @@ func nodeRunTask(t *testing.T, db *sqlx.DB, svc, sch, tbl string, status run.Tas
 		ScheduleID: sid, ScheduleName: sch, Status: run.SchedulerStatusSucceeded, Kind: "cron",
 		CreatedAt: at, InitializationStatus: "completed",
 	}))
-	t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", sid) })
+	t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", sid) })
 	require.NoError(t, postgres.NewTaskTrackerRepository(db, pkgevents.DefaultTenantID, discardLogger()).Create(ctx, &postgres.TaskTracker{
 		TaskID: tid, ScheduleID: sid, ServiceName: svc, SchemaName: sch, TableName: tbl,
 		JobName: "j", Status: status, Attempt: attempt, MaxRetries: 3, ImageTag: "v1", CreatedAt: at,
@@ -408,7 +408,7 @@ func TestNodeRunRepository_ListNodes_AggregatesAndFilters(t *testing.T) {
 			CreatedAt:            time.Now().Add(-time.Duration(ageMin) * time.Minute),
 			InitializationStatus: "completed",
 		}))
-		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", sid) })
+		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", sid) })
 		tid := uuid.New()
 		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskTracker{
 			TaskID: tid, ScheduleID: sid, ServiceName: svc, SchemaName: sch, TableName: table,
@@ -459,7 +459,7 @@ func TestNodeRunRepository_ListNodes_AggregatesAndFilters(t *testing.T) {
 }
 
 // TestNodeRunRepository_ListNodes_PerNodeStatusIsolation verifies the aggregate
-// keys off task_tracker.status, NOT scheduler_tracker.status.
+// keys off tasks.status, NOT runs.status.
 func TestNodeRunRepository_ListNodes_PerNodeStatusIsolation(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
@@ -473,7 +473,7 @@ func TestNodeRunRepository_ListNodes_PerNodeStatusIsolation(t *testing.T) {
 		ScheduleID: sid, ScheduleName: "s", Status: run.SchedulerStatusFailed, Kind: "cron",
 		CreatedAt: time.Now().Add(-time.Minute), InitializationStatus: "completed",
 	}))
-	t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", sid) })
+	t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", sid) })
 	require.NoError(t, taskRepo.Create(ctx, &postgres.TaskTracker{
 		TaskID: uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: "an", TableName: "ok_node",
 		JobName: "j", Status: run.TaskStatusSucceeded, MaxRetries: 3, ImageTag: "v",
@@ -503,7 +503,7 @@ func TestNodeRunRepository_ListNodes_Paging(t *testing.T) {
 			ScheduleID: sid, ScheduleName: "s", Status: run.SchedulerStatusSucceeded, Kind: "cron",
 			CreatedAt: time.Now().Add(-time.Duration(i) * time.Minute), InitializationStatus: "completed",
 		}))
-		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", sid) })
+		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", sid) })
 		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskTracker{
 			TaskID: uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: "an",
 			TableName: "t" + uuid.New().String()[:4], JobName: "j", Status: run.TaskStatusSucceeded,
@@ -529,7 +529,7 @@ func TestNodeRunRepository_ListNodes_Paging(t *testing.T) {
 }
 
 // TestNodeRunRepository_ListNodes_StablePagingOnTiedLastRun seeds many nodes
-// under one scheduler so they share scheduler_tracker.created_at (identical
+// under one scheduler so they share runs.created_at (identical
 // last_run_at). Paging must stay disjoint and complete.
 func TestNodeRunRepository_ListNodes_StablePagingOnTiedLastRun(t *testing.T) {
 	db := newTestDB(t)
@@ -544,7 +544,7 @@ func TestNodeRunRepository_ListNodes_StablePagingOnTiedLastRun(t *testing.T) {
 		ScheduleID: sid, ScheduleName: "s", Status: run.SchedulerStatusSucceeded, Kind: "cron",
 		CreatedAt: time.Now().Add(-time.Minute), InitializationStatus: "completed",
 	}))
-	t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", sid) })
+	t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", sid) })
 	// 5 distinct nodes all under the SAME scheduler => identical last_run_at
 	for i := 0; i < 5; i++ {
 		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskTracker{
@@ -583,7 +583,7 @@ func TestNodeRunRepository_ListNodes_SkippedCountsTerminal(t *testing.T) {
 			ScheduleID: sid, ScheduleName: "s", Status: run.SchedulerStatusSucceeded, Kind: "cron",
 			CreatedAt: time.Now().Add(-time.Duration(ageMin) * time.Minute), InitializationStatus: "completed",
 		}))
-		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", sid) })
+		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", sid) })
 		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskTracker{
 			TaskID: uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: "an", TableName: "n",
 			JobName: "j", Status: taskStatus, MaxRetries: 3, ImageTag: "v",
@@ -615,7 +615,7 @@ func TestNodeRunRepository_ListNodes_ExactTableMatch(t *testing.T) {
 			ScheduleID: sid, ScheduleName: "s", Status: run.SchedulerStatusSucceeded, Kind: "cron",
 			CreatedAt: time.Now().Add(-time.Minute), InitializationStatus: "completed",
 		}))
-		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", sid) })
+		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", sid) })
 		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskTracker{
 			TaskID: uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: "an", TableName: table,
 			JobName: "j", Status: run.TaskStatusSucceeded, MaxRetries: 3, ImageTag: "v",
@@ -657,7 +657,7 @@ func TestNodeRunRepository_ListNodeNames(t *testing.T) {
 			ScheduleID: sid, ScheduleName: "s", Status: run.SchedulerStatusSucceeded, Kind: "cron",
 			CreatedAt: time.Now().Add(-time.Minute), InitializationStatus: "completed",
 		}))
-		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", sid) })
+		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", sid) })
 		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskTracker{
 			TaskID: uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: schema, TableName: table,
 			JobName: "j", Status: run.TaskStatusSucceeded, MaxRetries: 3, ImageTag: "v",
@@ -701,7 +701,7 @@ func TestNodeRunRepository_ListNodeServices(t *testing.T) {
 			ScheduleID: sid, ScheduleName: "s", Status: run.SchedulerStatusSucceeded, Kind: "cron",
 			CreatedAt: time.Now().Add(-time.Minute), InitializationStatus: "completed",
 		}))
-		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", sid) })
+		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", sid) })
 		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskTracker{
 			TaskID: uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: schema, TableName: table,
 			JobName: "j", Status: run.TaskStatusSucceeded, MaxRetries: 3, ImageTag: "v",
@@ -750,7 +750,7 @@ func TestNodeRunRepository_ListNodeServices_ByteOrderRegardlessOfLocale(t *testi
 			ScheduleID: sid, ScheduleName: "s", Status: run.SchedulerStatusSucceeded, Kind: "cron",
 			CreatedAt: time.Now().Add(-time.Minute), InitializationStatus: "completed",
 		}))
-		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", sid) })
+		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", sid) })
 		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskTracker{
 			TaskID: uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: "an", TableName: "t",
 			JobName: "j", Status: run.TaskStatusSucceeded, MaxRetries: 3, ImageTag: "v",
@@ -786,7 +786,7 @@ func TestNodeRunRepository_ListNodes_EmptyPageKeepsTotal(t *testing.T) {
 			ScheduleID: sid, ScheduleName: "s", Status: run.SchedulerStatusSucceeded, Kind: "cron",
 			CreatedAt: time.Now().Add(-time.Duration(i) * time.Minute), InitializationStatus: "completed",
 		}))
-		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", sid) })
+		t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", sid) })
 		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskTracker{
 			TaskID: uuid.New(), ScheduleID: sid, ServiceName: svc, SchemaName: "an",
 			TableName: "t" + uuid.New().String()[:6], JobName: "j", Status: run.TaskStatusSucceeded,

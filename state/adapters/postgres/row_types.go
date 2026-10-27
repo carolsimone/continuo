@@ -9,18 +9,18 @@ import (
 	"github.com/google/uuid"
 )
 
-// SchedulerTracker is the storage row carrier for the scheduler_tracker table.
+// SchedulerTracker is the storage row carrier for the runs table.
 // It mirrors the table schema one-to-one and is used exclusively within this
 // package by the repository implementations. Domain logic operates on
 // run.Run aggregates; hydrateRun / dehydrateRun translate between the two.
 type SchedulerTracker struct {
-	ScheduleID           uuid.UUID                      `json:"schedule_id" db:"schedule_id"`
+	ScheduleID           uuid.UUID                      `json:"schedule_id" db:"run_id"`
 	ScheduleName         string                         `json:"schedule_name" db:"schedule_name"`
 	Status               run.SchedulerStatus            `json:"status" db:"status"`
 	CreatedAt            time.Time                      `json:"created_at" db:"created_at"`
 	StartedAt            *time.Time                     `json:"started_at,omitempty" db:"started_at"`
 	CompletedAt          *time.Time                     `json:"completed_at,omitempty" db:"completed_at"`
-	LastHeartbeatAt      *time.Time                     `json:"last_heartbeat_at,omitempty" db:"last_heartbeat_at"`
+	LastHeartbeatAt      *time.Time                     `json:"last_heartbeat_at,omitempty" db:"last_progress_at"`
 	CancelledAt          *time.Time                     `json:"cancelled_at,omitempty" db:"cancelled_at"`
 	CancelledBy          *string                        `json:"cancelled_by,omitempty" db:"cancelled_by"`
 	CancellationReason   *string                        `json:"cancellation_reason,omitempty" db:"cancellation_reason"`
@@ -51,12 +51,12 @@ func (s *SchedulerTracker) GetServiceMetadata() (map[string]run.ServiceMetadata,
 	}
 	meta, err := unmarshalServiceMetadata(s.ServiceMetadataRaw)
 	if err != nil {
-		return nil, fmt.Errorf("decode service_metadata for schedule_id %s: %w", s.ScheduleID, err)
+		return nil, fmt.Errorf("decode service_metadata for run_id %s: %w", s.ScheduleID, err)
 	}
 	return meta, nil
 }
 
-// TaskTracker is the storage row carrier for the task_tracker table.
+// TaskTracker is the storage row carrier for the tasks table.
 // It mirrors the table schema one-to-one, plus WaitingOnRunID, which the task
 // reads join from node_leases. The repository implementations read and write
 // it, and the gRPC task handler maps the rows the task reads return; domain
@@ -64,7 +64,7 @@ func (s *SchedulerTracker) GetServiceMetadata() (map[string]run.ServiceMetadata,
 // two.
 type TaskTracker struct {
 	TaskID              uuid.UUID      `json:"task_id" db:"task_id"`
-	ScheduleID          uuid.UUID      `json:"schedule_id" db:"schedule_id"`
+	ScheduleID          uuid.UUID      `json:"schedule_id" db:"run_id"`
 	CreatedAt           time.Time      `json:"created_at" db:"created_at"`
 	ServiceName         string         `json:"service_name" db:"service_name"`
 	SchemaName          string         `json:"schema_name" db:"schema_name"`

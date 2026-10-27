@@ -37,7 +37,7 @@ func leaseKey(table string) topology.NodeKey { return topology.NodeKey("e2e_sche
 // since.
 func waitSince(t *testing.T, db *sqlx.DB, taskID uuid.UUID, since time.Time) {
 	t.Helper()
-	_, err := db.Exec(`UPDATE task_tracker SET wait_reason = 'node_lease', lease_wait_since = $2 WHERE task_id = $1 AND status = 'pending'`,
+	_, err := db.Exec(`UPDATE tasks SET wait_reason = 'node_lease', lease_wait_since = $2 WHERE task_id = $1 AND status = 'pending'`,
 		taskID, since)
 	require.NoError(t, err)
 }
@@ -79,7 +79,7 @@ func TestLeaseRepository_GrantableIsTheOldestWaiterOfEachFreeNode(t *testing.T) 
 
 	zStuckRun, zStuck := pendingTasks(t, db, z)
 	waitSince(t, db, zStuck[z], base.Add(time.Minute))
-	_, err := db.Exec(`UPDATE scheduler_tracker SET status = 'cancelling' WHERE schedule_id = $1`, zStuckRun)
+	_, err := db.Exec(`UPDATE runs SET status = 'cancelling' WHERE run_id = $1`, zStuckRun)
 	require.NoError(t, err)
 	zRun, zNext := pendingTasks(t, db, z)
 	waitSince(t, db, zNext[z], base.Add(3*time.Minute))
@@ -150,7 +150,7 @@ func TestTaskCollection_GrantableWaitsAreTheRunsWaitsNextInLine(t *testing.T) {
 	waitSince(t, db, zOlder[z], base.Add(-time.Minute))
 	vOlderRun, vOlder := pendingTasks(t, db, v)
 	waitSince(t, db, vOlder[v], base.Add(-time.Minute))
-	_, err := db.Exec(`UPDATE scheduler_tracker SET status = 'cancelling' WHERE schedule_id = $1`, vOlderRun)
+	_, err := db.Exec(`UPDATE runs SET status = 'cancelling' WHERE run_id = $1`, vOlderRun)
 	require.NoError(t, err)
 
 	var got []run.LeaseWait
@@ -300,7 +300,7 @@ func (lf leaseFlow) triggerSingleNode(t *testing.T, table string) statusFlow {
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		_, _ = lf.db.ExecContext(context.Background(), `DELETE FROM state_outbox WHERE aggregate_id = $1`, id)
-		_, _ = lf.db.ExecContext(context.Background(), `DELETE FROM scheduler_tracker WHERE schedule_id = $1`, id)
+		_, _ = lf.db.ExecContext(context.Background(), `DELETE FROM runs WHERE run_id = $1`, id)
 	})
 	r, err := newPlanningUoW(lf.db).Run().GetRun(ctx, id)
 	require.NoError(t, err)
@@ -430,7 +430,7 @@ func TestLeaseWaker_SkipsARunThatIsNotRunning(t *testing.T) {
 	cancelByID(t, db, cancelled.r.ScheduleID(), "alice", "not needed")
 	// A cancel ends a run's pending tasks, so only a defect leaves a cancelling
 	// run with a task still waiting.
-	_, err := db.Exec(`UPDATE scheduler_tracker SET status = 'cancelling', cancelled_at = now() WHERE schedule_id = $1`, stuck.r.ScheduleID())
+	_, err := db.Exec(`UPDATE runs SET status = 'cancelling', cancelled_at = now() WHERE run_id = $1`, stuck.r.ScheduleID())
 	require.NoError(t, err)
 	cron.report(t, keyA, 0, run.AttemptSucceeded, "")
 	metrics := &leaseMetrics{}
@@ -489,7 +489,7 @@ func TestFailStalled_AWaitBehindAnOlderWaiterGrantedTheNodeIsNotFailed(t *testin
 	cron := lf.cronHoldingTableA(t)
 	older := lf.triggerSingleNode(t, lf.tableA)
 	younger := lf.triggerSingleNode(t, lf.tableA)
-	_, err := db.Exec(`UPDATE scheduler_tracker SET last_heartbeat_at = now() - interval '10 minutes' WHERE schedule_id = $1`,
+	_, err := db.Exec(`UPDATE runs SET last_progress_at = now() - interval '10 minutes' WHERE run_id = $1`,
 		younger.r.ScheduleID())
 	require.NoError(t, err)
 	attempts := postgres.NewAttemptRepository(db, nil, lf.tenant)
@@ -564,9 +564,9 @@ func TestAttemptReconcile_GrantsAFreedNodeBeforeItLooksForStalledRuns(t *testing
 // run.StallAfter.
 func waitedTenMinutes(t *testing.T, db *sqlx.DB, runID, taskID uuid.UUID) {
 	t.Helper()
-	_, err := db.Exec(`UPDATE scheduler_tracker SET last_heartbeat_at = now() - interval '10 minutes' WHERE schedule_id = $1`, runID)
+	_, err := db.Exec(`UPDATE runs SET last_progress_at = now() - interval '10 minutes' WHERE run_id = $1`, runID)
 	require.NoError(t, err)
-	_, err = db.Exec(`UPDATE task_tracker SET lease_wait_since = now() - interval '10 minutes' WHERE task_id = $1`, taskID)
+	_, err = db.Exec(`UPDATE tasks SET lease_wait_since = now() - interval '10 minutes' WHERE task_id = $1`, taskID)
 	require.NoError(t, err)
 }
 
@@ -651,7 +651,7 @@ func TestAttemptReconcile_GrantsTheWaiterBeyondTheWakersLimitInsteadOfFailingIt(
 		_, _ = db.ExecContext(context.Background(), `DELETE FROM node_leases WHERE tenant_id = $1`, tenant)
 		_, _ = db.ExecContext(context.Background(), `DELETE FROM state_outbox WHERE aggregate_id = ANY($1)`, pq.Array(runIDs))
 	})
-	_, err := db.Exec(`UPDATE scheduler_tracker SET last_heartbeat_at = now() - interval '10 minutes' WHERE schedule_id = ANY($1)`,
+	_, err := db.Exec(`UPDATE runs SET last_progress_at = now() - interval '10 minutes' WHERE run_id = ANY($1)`,
 		pq.Array(runIDs))
 	require.NoError(t, err)
 	metrics := &leaseMetrics{}
@@ -662,11 +662,11 @@ func TestAttemptReconcile_GrantsTheWaiterBeyondTheWakersLimitInsteadOfFailingIt(
 	require.NoError(t, loop.Pass(ctx))
 
 	var runStatuses []string
-	require.NoError(t, db.Select(&runStatuses, `SELECT DISTINCT status FROM scheduler_tracker WHERE schedule_id = ANY($1)`,
+	require.NoError(t, db.Select(&runStatuses, `SELECT DISTINCT status FROM runs WHERE run_id = ANY($1)`,
 		pq.Array(runIDs)))
 	assert.Equal(t, []string{string(run.SchedulerStatusRunning)}, runStatuses, "no waiting run is failed as stalled")
 	var dispatched, leases, rows int
-	require.NoError(t, db.Get(&dispatched, `SELECT count(*) FROM task_tracker WHERE task_id = ANY($1) AND status = 'dispatched'
+	require.NoError(t, db.Get(&dispatched, `SELECT count(*) FROM tasks WHERE task_id = ANY($1) AND status = 'dispatched'
 		AND wait_reason IS NULL`, pq.Array(taskIDs)))
 	require.NoError(t, db.Get(&leases, `SELECT count(*) FROM node_leases WHERE tenant_id = $1 AND task_id = ANY($2)`,
 		tenant, pq.Array(taskIDs)))
@@ -687,7 +687,7 @@ func staleWaitOn(t *testing.T, db *sqlx.DB, table string, since time.Time) (uuid
 	t.Helper()
 	runID, ids := pendingTasks(t, db, table)
 	waitSince(t, db, ids[table], since)
-	_, err := db.Exec(`UPDATE scheduler_tracker SET last_heartbeat_at = now() - interval '10 minutes' WHERE schedule_id = $1`, runID)
+	_, err := db.Exec(`UPDATE runs SET last_progress_at = now() - interval '10 minutes' WHERE run_id = $1`, runID)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		_, _ = db.ExecContext(context.Background(), `DELETE FROM state_outbox WHERE aggregate_id = $1`, runID)
@@ -755,8 +755,8 @@ func TestFailStalled_AWaitBehindAnOlderWaiterOfACancellingRunIsGranted(t *testin
 	cancellingRun, cancellingTask := staleWaitOn(t, db, table, since)
 	// A cancel ends a run's pending tasks, so only a defect leaves a cancelling
 	// run with a task still waiting.
-	_, err := db.Exec(`UPDATE scheduler_tracker SET status = 'cancelling', cancelled_at = now(), last_heartbeat_at = now()
-		WHERE schedule_id = $1`, cancellingRun)
+	_, err := db.Exec(`UPDATE runs SET status = 'cancelling', cancelled_at = now(), last_progress_at = now()
+		WHERE run_id = $1`, cancellingRun)
 	require.NoError(t, err)
 	waitingRun, waitingTask := staleWaitOn(t, db, table, since.Add(time.Minute))
 
@@ -809,7 +809,7 @@ func newGrantFailingQueue(t *testing.T, db *sqlx.DB, idle time.Duration) grantFa
 	q.headRun, q.headTask = staleWaitOn(t, db, q.table, since)
 	_, err := db.Exec(`INSERT INTO task_attempts (task_id, attempt, job_name, status) VALUES ($1, 0, $2, 'failed')`, q.headTask, q.table)
 	require.NoError(t, err)
-	_, err = db.Exec(`UPDATE scheduler_tracker SET last_heartbeat_at = now() - make_interval(secs => $2::float8) WHERE schedule_id = $1`,
+	_, err = db.Exec(`UPDATE runs SET last_progress_at = now() - make_interval(secs => $2::float8) WHERE run_id = $1`,
 		q.headRun, idle.Seconds())
 	require.NoError(t, err)
 	q.nextRun, q.nextTask = staleWaitOn(t, db, q.table, since.Add(time.Minute))
@@ -823,7 +823,7 @@ func runStatusOf(t *testing.T, db *sqlx.DB, runID uuid.UUID) (string, *string) {
 		Status string  `db:"status"`
 		Reason *string `db:"failure_reason"`
 	}
-	require.NoError(t, db.Get(&row, `SELECT status, failure_reason FROM scheduler_tracker WHERE schedule_id = $1`, runID))
+	require.NoError(t, db.Get(&row, `SELECT status, failure_reason FROM runs WHERE run_id = $1`, runID))
 	return row.Status, row.Reason
 }
 
@@ -913,7 +913,7 @@ func TestLeaseWaker_RepairsAndCounts(t *testing.T) {
 	first := lf.triggerSingleNode(t, lf.tableA)
 	second := lf.triggerSingleNode(t, lf.tableA)
 	// A defect ends the cron task without the report that releases its lease.
-	_, err := db.Exec(`UPDATE task_tracker SET status = 'succeeded' WHERE task_id = $1`, cronTask)
+	_, err := db.Exec(`UPDATE tasks SET status = 'succeeded' WHERE task_id = $1`, cronTask)
 	require.NoError(t, err)
 	require.True(t, leaseOf(t, db, cronTask))
 	var logs bytes.Buffer

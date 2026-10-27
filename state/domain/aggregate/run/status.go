@@ -58,7 +58,7 @@ var schedulerStatuses = []SchedulerStatus{
 }
 
 // SchedulerStatuses returns every SchedulerStatus. The CHECK constraint on
-// scheduler_tracker.status lists exactly these.
+// runs.status lists exactly these.
 func SchedulerStatuses() []SchedulerStatus { return slices.Clone(schedulerStatuses) }
 
 // TerminalSchedulerStatuses returns every SchedulerStatus for which IsTerminal
@@ -109,7 +109,7 @@ const (
 )
 
 // TaskStatuses lists every TaskStatus. The CHECK constraint on
-// task_tracker.status lists exactly these.
+// tasks.status lists exactly these.
 func TaskStatuses() []TaskStatus {
 	return []TaskStatus{TaskStatusPending, TaskStatusDispatched, TaskStatusQueued, TaskStatusRunning,
 		TaskStatusStopping, TaskStatusSucceeded, TaskStatusFailed, TaskStatusCancelled, TaskStatusSkipped}
@@ -165,7 +165,7 @@ const (
 )
 
 // WaitReasons lists every WaitReason. The CHECK constraint on
-// task_tracker.wait_reason lists exactly these.
+// tasks.wait_reason lists exactly these.
 func WaitReasons() []WaitReason { return []WaitReason{WaitReasonNodeLease} }
 
 func (w WaitReason) IsValid() bool { return slices.Contains(WaitReasons(), w) }
@@ -181,7 +181,7 @@ func ParseTaskStatus(s string) (TaskStatus, error) {
 }
 
 // Kind discriminates run kinds. Wire-stable string values, matches the CHECK
-// constraint on scheduler_tracker.kind.
+// constraint on runs.kind.
 type Kind string
 
 const (

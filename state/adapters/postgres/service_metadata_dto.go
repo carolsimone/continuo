@@ -10,7 +10,7 @@ import (
 // serviceMetadataDTO is the adapter-side serialization carrier for
 // run.ServiceMetadata. The JSON field names live here, keeping the domain value
 // object free of encoding tags. It mirrors the shape stored in the
-// scheduler_tracker.service_metadata and schedule_catalog.service_metadata
+// runs.service_metadata and schedule_catalog.service_metadata
 // JSONB columns.
 type serviceMetadataDTO struct {
 	ImageTag string `json:"image_tag"`
@@ -18,7 +18,7 @@ type serviceMetadataDTO struct {
 
 // toServiceMetadataDTOs converts a domain service-metadata map into the
 // snake_case serialization carrier used everywhere this value crosses a wire or
-// storage boundary (the scheduler_tracker/schedule_catalog JSONB columns). A
+// storage boundary (the runs/schedule_catalog JSONB columns). A
 // nil map yields an empty (non-nil) map so it encodes as `{}` rather than
 // `null`.
 func toServiceMetadataDTOs(meta map[string]run.ServiceMetadata) map[string]serviceMetadataDTO {

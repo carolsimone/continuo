@@ -67,8 +67,8 @@ func verifyJobsCompleted(
 			var status string
 			err := clients.stateDB.QueryRowContext(ctx, `
 				SELECT tt.status
-				FROM task_tracker tt
-				JOIN scheduler_tracker st ON tt.schedule_id = st.schedule_id
+				FROM tasks tt
+				JOIN runs st ON tt.run_id = st.run_id
 				WHERE st.schedule_name = $1 AND tt.table_name = $2
 			`, scheduleName, table).Scan(&status)
 			if err != nil {
@@ -241,8 +241,8 @@ func verifyTasksSkipped(t *testing.T, ctx context.Context, clients *testClients,
 	pollUntil(t, ctx, 2*time.Minute, time.Second, func() (bool, error) {
 		var skipped int
 		err := clients.stateDB.GetContext(ctx, &skipped, `
-			SELECT count(*) FROM task_tracker
-			WHERE schedule_id = $1 AND table_name = ANY($2) AND status = 'skipped'`,
+			SELECT count(*) FROM tasks
+			WHERE run_id = $1 AND table_name = ANY($2) AND status = 'skipped'`,
 			schedulerID, pq.Array(tables))
 		if err != nil {
 			return false, err
@@ -272,8 +272,8 @@ func verifyNodeExhaustedRetries(
 		var status string
 		err := clients.stateDB.QueryRowContext(ctx, `
 			SELECT task_id, attempt, max_retries, status
-			FROM task_tracker
-			WHERE schedule_id = $1 AND table_name = $2
+			FROM tasks
+			WHERE run_id = $1 AND table_name = $2
 		`, schedulerID, tableName).Scan(&taskID, &attempt, &maxRetries, &status)
 		if err != nil {
 			return false, err
@@ -291,7 +291,7 @@ func verifyNodeExhaustedRetries(
 		for n := 0; n <= maxRetries; n++ {
 			want = append(want, fmt.Sprintf("%d:failed:task", n))
 		}
-		seen := fmt.Sprintf("task_tracker attempt=%d max_retries=%d status=%s; task_attempts [%s]",
+		seen := fmt.Sprintf("tasks attempt=%d max_retries=%d status=%s; task_attempts [%s]",
 			attempt, maxRetries, status, strings.Join(rows, ","))
 		if seen != lastSeen {
 			t.Logf("%s attempts: %s", tableName, seen)
@@ -310,7 +310,7 @@ func taskOfRun(t *testing.T, ctx context.Context, clients *testClients, runID uu
 	t.Helper()
 	var taskID uuid.UUID
 	require.NoError(t, clients.stateDB.GetContext(ctx, &taskID,
-		`SELECT task_id FROM task_tracker WHERE schedule_id = $1 AND table_name = $2`, runID, tableName),
+		`SELECT task_id FROM tasks WHERE run_id = $1 AND table_name = $2`, runID, tableName),
 		"run %s holds no task at %s", runID, tableName)
 	return taskID
 }
@@ -342,7 +342,7 @@ type endedTask struct {
 func taskEnded(ctx context.Context, clients *testClients, taskID uuid.UUID) (bool, error) {
 	var status string
 	if err := clients.stateDB.GetContext(ctx, &status,
-		`SELECT status FROM task_tracker WHERE task_id = $1`, taskID); err != nil {
+		`SELECT status FROM tasks WHERE task_id = $1`, taskID); err != nil {
 		return false, err
 	}
 	switch status {
@@ -364,7 +364,7 @@ func waitForTaskEnded(t *testing.T, ctx context.Context, clients *testClients, t
 	pollUntil(t, ctx, timeout, 2*time.Second, func() (bool, error) {
 		var cur endedTask
 		if err := clients.stateDB.QueryRowContext(ctx,
-			`SELECT status, attempt, max_retries FROM task_tracker WHERE task_id = $1`, taskID).
+			`SELECT status, attempt, max_retries FROM tasks WHERE task_id = $1`, taskID).
 			Scan(&cur.status, &cur.attempt, &cur.maxRetries); err != nil {
 			return false, err
 		}
@@ -373,7 +373,7 @@ func waitForTaskEnded(t *testing.T, ctx context.Context, clients *testClients, t
 			return false, err
 		}
 		cur.attempts = rows
-		seen := fmt.Sprintf("task_tracker status=%s attempt=%d max_retries=%d; task_attempts [%s]",
+		seen := fmt.Sprintf("tasks status=%s attempt=%d max_retries=%d; task_attempts [%s]",
 			cur.status, cur.attempt, cur.maxRetries, strings.Join(rows, ","))
 		if seen != lastSeen {
 			t.Logf("%s: %s", label, seen)
@@ -417,7 +417,7 @@ func verifyNoJobsDeployed(
 	t.Logf("✅ Confirmed no K8s jobs deployed for: %v", tables)
 }
 
-// verifySchedulerSucceeded polls scheduler_tracker until the schedule reaches
+// verifySchedulerSucceeded polls runs until the schedule reaches
 // 'succeeded' status, confirming state finalised the run correctly.
 func verifySchedulerSucceeded(
 	t *testing.T,
@@ -429,7 +429,7 @@ func verifySchedulerSucceeded(
 	pollUntil(t, ctx, 2*time.Minute, 3*time.Second, func() (bool, error) {
 		var status string
 		err := clients.stateDB.Get(&status, `
-			SELECT status FROM scheduler_tracker WHERE schedule_id = $1
+			SELECT status FROM runs WHERE run_id = $1
 		`, schedulerID)
 		if err != nil {
 			return false, err
@@ -440,7 +440,7 @@ func verifySchedulerSucceeded(
 	t.Log("✅ Scheduler reached 'succeeded' status")
 }
 
-// verifySchedulerFailed polls scheduler_tracker until the schedule reaches
+// verifySchedulerFailed polls runs until the schedule reaches
 // 'failed' status.
 func verifySchedulerFailed(
 	t *testing.T,
@@ -452,7 +452,7 @@ func verifySchedulerFailed(
 	pollUntil(t, ctx, 5*time.Minute, 3*time.Second, func() (bool, error) {
 		var status string
 		err := clients.stateDB.Get(&status, `
-			SELECT status FROM scheduler_tracker WHERE schedule_id = $1
+			SELECT status FROM runs WHERE run_id = $1
 		`, schedulerID)
 		if err != nil {
 			return false, err
@@ -463,7 +463,7 @@ func verifySchedulerFailed(
 	t.Log("✅ Scheduler reached 'failed' status")
 }
 
-// verifySchedulerSkipped polls scheduler_tracker until the schedule reaches
+// verifySchedulerSkipped polls runs until the schedule reaches
 // 'skipped' status — the benign terminal for a Test run with no tests to run.
 func verifySchedulerSkipped(
 	t *testing.T,
@@ -475,7 +475,7 @@ func verifySchedulerSkipped(
 	pollUntil(t, ctx, 5*time.Minute, 3*time.Second, func() (bool, error) {
 		var status string
 		err := clients.stateDB.Get(&status, `
-			SELECT status FROM scheduler_tracker WHERE schedule_id = $1
+			SELECT status FROM runs WHERE run_id = $1
 		`, schedulerID)
 		if err != nil {
 			return false, err

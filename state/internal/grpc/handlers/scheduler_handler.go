@@ -110,7 +110,7 @@ func (h *SchedulerHandler) CancelScheduler(ctx context.Context, req *statev1.Can
 // request's cancelled_by so internal callers that supply their own label keep
 // recording it. When neither is present — a platform cancel with no metadata
 // and no request label — it resolves to the system sentinel so the
-// authoritative scheduler_tracker.cancelled_by row keeps provenance rather
+// authoritative runs.cancelled_by row keeps provenance rather
 // than going blank.
 func effectiveCancelledBy(ctx context.Context, requestCancelledBy string) string {
 	id := identity.FromContext(ctx)

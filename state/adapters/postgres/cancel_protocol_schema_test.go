@@ -10,14 +10,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// scheduler_tracker accepts exactly the run statuses of the run aggregate.
+// runs accepts exactly the run statuses of the run aggregate.
 func TestSchedulerTrackerSchema_StatusIsOneOfTheRunStatuses(t *testing.T) {
 	db := newTestDB(t)
 	insert := func(status string) error {
 		id := uuid.New()
-		t.Cleanup(func() { _, _ = db.Exec(`DELETE FROM scheduler_tracker WHERE schedule_id = $1`, id) })
+		t.Cleanup(func() { _, _ = db.Exec(`DELETE FROM runs WHERE run_id = $1`, id) })
 		_, err := db.Exec(`
-			INSERT INTO scheduler_tracker (schedule_id, schedule_name, status)
+			INSERT INTO runs (run_id, schedule_name, status)
 			VALUES ($1, $2, $3)`, id, "schema-"+id.String(), status)
 		return err
 	}
@@ -36,11 +36,11 @@ func TestSchedulerTrackerSchema_OneActiveRunPerScheduleCoversCancelling(t *testi
 	name := "schema-" + uuid.NewString()
 	first, second := uuid.New(), uuid.New()
 	t.Cleanup(func() {
-		_, _ = db.Exec(`DELETE FROM scheduler_tracker WHERE schedule_id IN ($1, $2)`, first, second)
+		_, _ = db.Exec(`DELETE FROM runs WHERE run_id IN ($1, $2)`, first, second)
 	})
 	insert := func(id uuid.UUID, status string) error {
 		_, err := db.Exec(`
-			INSERT INTO scheduler_tracker (schedule_id, schedule_name, status)
+			INSERT INTO runs (run_id, schedule_name, status)
 			VALUES ($1, $2, $3)`, id, name, status)
 		return err
 	}
@@ -50,7 +50,7 @@ func TestSchedulerTrackerSchema_OneActiveRunPerScheduleCoversCancelling(t *testi
 	require.Error(t, err)
 	assert.Equal(t, "23505", pqCode(t, err))
 
-	_, err = db.Exec(`UPDATE scheduler_tracker SET status = 'cancelled' WHERE schedule_id = $1`, first)
+	_, err = db.Exec(`UPDATE runs SET status = 'cancelled' WHERE run_id = $1`, first)
 	require.NoError(t, err)
 	assert.NoError(t, insert(second, "pending"), "the slot frees once the run has ended")
 }

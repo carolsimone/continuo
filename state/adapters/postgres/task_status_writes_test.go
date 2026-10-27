@@ -33,7 +33,7 @@ func taskState(t *testing.T, db *sqlx.DB, id uuid.UUID) (run.TaskStatus, *time.T
 		Status       run.TaskStatus `db:"status"`
 		DispatchedAt *time.Time     `db:"dispatched_at"`
 	}
-	require.NoError(t, db.Get(&row, `SELECT status, dispatched_at FROM task_tracker WHERE task_id = $1`, id))
+	require.NoError(t, db.Get(&row, `SELECT status, dispatched_at FROM tasks WHERE task_id = $1`, id))
 	return row.Status, row.DispatchedAt
 }
 
@@ -45,7 +45,7 @@ func TestTaskCollection_LoadAttemptStateReadsTheTask(t *testing.T) {
 	tenant := storeFailureSchedule(t, db)
 	r := startScheduleRun(t, db, tenant, "e2e-schedule-failure", model.OperationRun)
 	id := run.TaskIDFor(tenant, r.ScheduleID(), "e2e_schema.ftable_e")
-	_, err := db.Exec(`UPDATE task_tracker SET status = 'failed', attempt = 1 WHERE task_id = $1`, id)
+	_, err := db.Exec(`UPDATE tasks SET status = 'failed', attempt = 1 WHERE task_id = $1`, id)
 	require.NoError(t, err)
 
 	inTaskTx(t, db, func(tasks run.TaskCollection) {
@@ -76,7 +76,7 @@ func TestTaskCollection_LoadAttemptStateReadsTheLeaseWait(t *testing.T) {
 	r := startScheduleRun(t, db, tenant, "e2e-schedule-failure", model.OperationRun)
 	waiting := run.TaskIDFor(tenant, r.ScheduleID(), "e2e_schema.ftable_c")
 	upstreams := run.TaskIDFor(tenant, r.ScheduleID(), "e2e_schema.ftable_d")
-	_, err := db.Exec(`UPDATE task_tracker SET wait_reason = 'node_lease', lease_wait_since = now() WHERE task_id = $1`, waiting)
+	_, err := db.Exec(`UPDATE tasks SET wait_reason = 'node_lease', lease_wait_since = now() WHERE task_id = $1`, waiting)
 	require.NoError(t, err)
 
 	inTaskTx(t, db, func(tasks run.TaskCollection) {

@@ -176,7 +176,7 @@ func TestSingleNodeRunHandler_Latest_HappyPath(t *testing.T) {
 	// Cleanup seeded rows.
 	t.Cleanup(func() {
 		fx.DB.ExecContext(context.Background(), `DELETE FROM state_outbox WHERE aggregate_id = $1`, scheduleID)
-		fx.DB.ExecContext(context.Background(), `DELETE FROM scheduler_tracker WHERE schedule_id = $1`, scheduleID)
+		fx.DB.ExecContext(context.Background(), `DELETE FROM runs WHERE run_id = $1`, scheduleID)
 	})
 }
 
@@ -202,7 +202,7 @@ func TestSingleNodeRunHandler_Operation_HappyPath(t *testing.T) {
 
 	t.Cleanup(func() {
 		fx.DB.ExecContext(context.Background(), `DELETE FROM state_outbox WHERE aggregate_id = $1`, scheduleID)
-		fx.DB.ExecContext(context.Background(), `DELETE FROM scheduler_tracker WHERE schedule_id = $1`, scheduleID)
+		fx.DB.ExecContext(context.Background(), `DELETE FROM runs WHERE run_id = $1`, scheduleID)
 	})
 }
 
@@ -228,7 +228,7 @@ func TestSingleNodeRunHandler_Operation_Build(t *testing.T) {
 
 	t.Cleanup(func() {
 		fx.DB.ExecContext(context.Background(), `DELETE FROM state_outbox WHERE aggregate_id = $1`, scheduleID)
-		fx.DB.ExecContext(context.Background(), `DELETE FROM scheduler_tracker WHERE schedule_id = $1`, scheduleID)
+		fx.DB.ExecContext(context.Background(), `DELETE FROM runs WHERE run_id = $1`, scheduleID)
 	})
 }
 
@@ -254,12 +254,12 @@ func TestSingleNodeRunHandler_Operation_FullRefresh(t *testing.T) {
 
 	var stored string
 	require.NoError(t, fx.DB.QueryRowContext(context.Background(),
-		`SELECT operation FROM scheduler_tracker WHERE schedule_id = $1`, scheduleID).Scan(&stored))
+		`SELECT operation FROM runs WHERE run_id = $1`, scheduleID).Scan(&stored))
 	require.Equal(t, "full_refresh", stored)
 
 	t.Cleanup(func() {
 		fx.DB.ExecContext(context.Background(), `DELETE FROM state_outbox WHERE aggregate_id = $1`, scheduleID)
-		fx.DB.ExecContext(context.Background(), `DELETE FROM scheduler_tracker WHERE schedule_id = $1`, scheduleID)
+		fx.DB.ExecContext(context.Background(), `DELETE FROM runs WHERE run_id = $1`, scheduleID)
 	})
 }
 
@@ -277,7 +277,7 @@ func TestSingleNodeRunHandler_Stale_HappyPath(t *testing.T) {
 		InitializationStatus: "completed",
 	}
 	require.NoError(t, fx.SchedulerRepo.Create(context.Background(), srcTracker))
-	_, err := fx.DB.ExecContext(context.Background(), `UPDATE scheduler_tracker SET release_id = 'rel-svca', promotion_seq = 1 WHERE schedule_id = $1`, srcID)
+	_, err := fx.DB.ExecContext(context.Background(), `UPDATE runs SET release_id = 'rel-svca', promotion_seq = 1 WHERE run_id = $1`, srcID)
 	require.NoError(t, err)
 
 	taskID := uuid.New()
@@ -292,7 +292,7 @@ func TestSingleNodeRunHandler_Stale_HappyPath(t *testing.T) {
 		CreatedAt:   time.Now().Add(-time.Hour),
 	}
 	require.NoError(t, fx.TaskRepo.Create(context.Background(), srcTask))
-	_, err = fx.DB.ExecContext(context.Background(), `UPDATE task_tracker SET node_key = 'public.users' WHERE task_id = $1`, taskID)
+	_, err = fx.DB.ExecContext(context.Background(), `UPDATE tasks SET node_key = 'public.users' WHERE task_id = $1`, taskID)
 	require.NoError(t, err)
 
 	resp, err := fx.Handler.TriggerSingleNodeRun(context.Background(), &statev1.TriggerSingleNodeRunRequest{
@@ -321,9 +321,9 @@ func TestSingleNodeRunHandler_Stale_HappyPath(t *testing.T) {
 	// Cleanup seeded rows.
 	t.Cleanup(func() {
 		fx.DB.ExecContext(context.Background(), `DELETE FROM state_outbox WHERE aggregate_id = $1`, scheduleID)
-		fx.DB.ExecContext(context.Background(), `DELETE FROM task_tracker WHERE task_id = $1`, taskID)
-		fx.DB.ExecContext(context.Background(), `DELETE FROM scheduler_tracker WHERE schedule_id = $1`, scheduleID)
-		fx.DB.ExecContext(context.Background(), `DELETE FROM scheduler_tracker WHERE schedule_id = $1`, srcID)
+		fx.DB.ExecContext(context.Background(), `DELETE FROM tasks WHERE task_id = $1`, taskID)
+		fx.DB.ExecContext(context.Background(), `DELETE FROM runs WHERE run_id = $1`, scheduleID)
+		fx.DB.ExecContext(context.Background(), `DELETE FROM runs WHERE run_id = $1`, srcID)
 	})
 }
 
@@ -369,9 +369,9 @@ func TestSingleNodeRunHandler_Errors(t *testing.T) {
 	}))
 
 	t.Cleanup(func() {
-		fx.DB.ExecContext(context.Background(), `DELETE FROM scheduler_tracker WHERE schedule_id = $1`, runningID)
-		fx.DB.ExecContext(context.Background(), `DELETE FROM scheduler_tracker WHERE schedule_id = $1`, terminalNoTaskID)
-		fx.DB.ExecContext(context.Background(), `DELETE FROM scheduler_tracker WHERE schedule_id = $1`, noReleaseID)
+		fx.DB.ExecContext(context.Background(), `DELETE FROM runs WHERE run_id = $1`, runningID)
+		fx.DB.ExecContext(context.Background(), `DELETE FROM runs WHERE run_id = $1`, terminalNoTaskID)
+		fx.DB.ExecContext(context.Background(), `DELETE FROM runs WHERE run_id = $1`, noReleaseID)
 	})
 
 	cases := []struct {
@@ -415,18 +415,18 @@ func TestSingleNodeRunHandler_Errors(t *testing.T) {
 // Other test packages create and delete single-node runs of their own nodes
 // in the same database at the same time, and the count stays blind to them: a
 // run is created and planned in one transaction, and deleting a run deletes
-// its tasks in the same statement (task_tracker's foreign key to
-// scheduler_tracker is ON DELETE CASCADE), so the one snapshot this query
+// its tasks in the same statement (tasks's foreign key to
+// runs is ON DELETE CASCADE), so the one snapshot this query
 // reads never holds another package's single-node run without its tasks.
 func singleNodeRunsOf(t *testing.T, db *sqlx.DB, req *statev1.TriggerSingleNodeRunRequest) int {
 	t.Helper()
 	var n int
 	require.NoError(t, db.Get(&n, `
-		SELECT count(*) FROM scheduler_tracker s
+		SELECT count(*) FROM runs s
 		WHERE s.kind = 'single_node_run' AND (
-			NOT EXISTS (SELECT 1 FROM task_tracker tt WHERE tt.schedule_id = s.schedule_id)
+			NOT EXISTS (SELECT 1 FROM tasks tt WHERE tt.run_id = s.run_id)
 			OR EXISTS (
-				SELECT 1 FROM task_tracker tt WHERE tt.schedule_id = s.schedule_id
+				SELECT 1 FROM tasks tt WHERE tt.run_id = s.run_id
 				  AND tt.service_name = $1 AND tt.schema_name = $2 AND tt.table_name = $3))`,
 		req.ServiceName, req.SchemaName, req.TableName))
 	return n
@@ -452,7 +452,7 @@ func TestSingleNodeRunsOf_CountsARunWithoutTasks(t *testing.T) {
 			InitializationStatus: "completed",
 		}))
 		t.Cleanup(func() {
-			fx.DB.ExecContext(context.Background(), `DELETE FROM scheduler_tracker WHERE schedule_id = $1`, id)
+			fx.DB.ExecContext(context.Background(), `DELETE FROM runs WHERE run_id = $1`, id)
 		})
 		return id
 	}

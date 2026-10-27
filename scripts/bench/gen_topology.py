@@ -19,7 +19,7 @@ log = logging.getLogger(__name__)
 
 LABEL_SAFE = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
 MAX_JOB_NAME_PREFIX = 54  # pkg/domain/naming.go: 63 - "-" - 8-character run-id suffix
-MAX_SCHEDULE_NAME = 50  # scheduler_tracker.schedule_name varchar(50)
+MAX_SCHEDULE_NAME = 50  # runs.schedule_name varchar(50)
 FAIL_ROOT = "fail_root"
 FAIL_ONCE_PREFIX = "once_"
 

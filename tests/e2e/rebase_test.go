@@ -74,31 +74,31 @@ func TestRebaseFromFailedRun(t *testing.T) {
 
 	var newSourceRunID *uuid.UUID
 	err = clients.stateDB.QueryRowContext(ctx,
-		`SELECT source_run_id FROM scheduler_tracker WHERE schedule_id = $1`, newRunID,
+		`SELECT source_run_id FROM runs WHERE run_id = $1`, newRunID,
 	).Scan(&newSourceRunID)
 	require.NoError(t, err)
 	require.NotNil(t, newSourceRunID, "rebase run must have source_run_id set")
 	assert.Equal(t, srcID, *newSourceRunID, "source_run_id must point to the source")
 
-	// ── Wait for the rebase run's task_tracker rows to materialise ──────────
+	// ── Wait for the rebase run's tasks rows to materialise ──────────
 	// state stores the rebase run's tasks in the transaction that creates it.
-	t.Log("Waiting for rebase task_tracker rows to land...")
+	t.Log("Waiting for rebase tasks rows to land...")
 	pollUntil(t, ctx, 60*time.Second, 1*time.Second, func() (bool, error) {
 		var count int
 		qErr := clients.stateDB.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM task_tracker WHERE schedule_id = $1`, newRunID,
+			`SELECT COUNT(*) FROM tasks WHERE run_id = $1`, newRunID,
 		).Scan(&count)
 		if qErr != nil {
 			return false, qErr
 		}
 		return count >= 8, nil // 8 ftable_* nodes in the failure topology (a-h)
-	}, "task_tracker rows for rebase run did not materialise")
+	}, "tasks rows for rebase run did not materialise")
 
 	// ── Assert partition shape ──────────────────────────────────────────────
 	rows, err := clients.stateDB.QueryContext(ctx, `
 		SELECT table_name, status, inherited_from_task_id IS NULL AS is_real
-		FROM task_tracker
-		WHERE schedule_id = $1
+		FROM tasks
+		WHERE run_id = $1
 		ORDER BY table_name`, newRunID)
 	require.NoError(t, err)
 	defer rows.Close()
@@ -131,7 +131,7 @@ func TestRebaseFromFailedRun(t *testing.T) {
 			assert.True(t, r.isReal, "%s should be rebased (inherited_from_task_id NULL)", r.tableName)
 			// Status may be 'pending', 'running', or terminal — don't pin it here.
 		default:
-			t.Errorf("unexpected table_name in rebase task_tracker: %s", r.tableName)
+			t.Errorf("unexpected table_name in rebase tasks: %s", r.tableName)
 		}
 	}
 	t.Log("Rebase partition shape verified")
@@ -210,12 +210,12 @@ func TestRebaseAllInheritedFinalizes(t *testing.T) {
 	// The rebased ftable_e will fail again under the same fixture, so the
 	// rebase run lands in FAILED. The critical check: terminal_task_count
 	// must close (B1's fix). Without it, this poll hangs.
-	t.Log("Waiting for rebase scheduler_tracker to reach terminal status...")
+	t.Log("Waiting for rebase runs to reach terminal status...")
 	pollUntil(t, ctx, 10*time.Minute, 5*time.Second, func() (bool, error) {
 		var status string
 		var completedAt *time.Time
 		qErr := clients.stateDB.QueryRowContext(ctx,
-			`SELECT status, completed_at FROM scheduler_tracker WHERE schedule_id = $1`,
+			`SELECT status, completed_at FROM runs WHERE run_id = $1`,
 			rebaseRunID,
 		).Scan(&status, &completedAt)
 		if qErr != nil {
@@ -224,14 +224,14 @@ func TestRebaseAllInheritedFinalizes(t *testing.T) {
 		// Terminal = succeeded | failed | cancelled, plus completed_at set.
 		isTerminal := status == "failed" || status == "succeeded" || status == "cancelled"
 		return isTerminal && completedAt != nil, nil
-	}, "rebase scheduler_tracker did not reach terminal status — likely B1 regression "+
+	}, "rebase runs did not reach terminal status — likely B1 regression "+
 		"(terminal_task_count not seeded for inherited rows; rollup never closes)")
 
 	// Read the final state for assertions.
 	var finalStatus string
 	var finalCompletedAt *time.Time
 	require.NoError(t, clients.stateDB.QueryRowContext(ctx,
-		`SELECT status, completed_at FROM scheduler_tracker WHERE schedule_id = $1`,
+		`SELECT status, completed_at FROM runs WHERE run_id = $1`,
 		rebaseRunID,
 	).Scan(&finalStatus, &finalCompletedAt))
 
@@ -248,7 +248,7 @@ func TestRebaseAllInheritedFinalizes(t *testing.T) {
 	var terminalCount, totalCount int32
 	require.NoError(t, clients.stateDB.QueryRowContext(ctx,
 		`SELECT terminal_task_count, total_task_count
-		   FROM scheduler_tracker WHERE schedule_id = $1`,
+		   FROM runs WHERE run_id = $1`,
 		rebaseRunID,
 	).Scan(&terminalCount, &totalCount))
 	if totalCount != 8 {
@@ -262,7 +262,7 @@ func TestRebaseAllInheritedFinalizes(t *testing.T) {
 	t.Log("Rebase run finalized end-to-end")
 }
 
-// dumpRebaseRowsForDebug logs every task_tracker row attached to a rebase
+// dumpRebaseRowsForDebug logs every tasks row attached to a rebase
 // run so an unexpected row count on CI surfaces the offending row's identity
 // (table_name + service + schema + image_tag). Called only
 // on assertion mismatch — no-op when counts match.
@@ -272,8 +272,8 @@ func dumpRebaseRowsForDebug(t *testing.T, ctx context.Context, clients *testClie
 		SELECT table_name, service_name, schema_name, status,
 		       inherited_from_task_id IS NULL AS is_real,
 		       COALESCE(image_tag, '') AS image_tag
-		  FROM task_tracker
-		 WHERE schedule_id = $1
+		  FROM tasks
+		 WHERE run_id = $1
 		 ORDER BY table_name, service_name`, runID)
 	if err != nil {
 		t.Logf("dumpRebaseRowsForDebug: query failed: %v", err)

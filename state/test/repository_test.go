@@ -85,7 +85,7 @@ func setupPostgres(t *testing.T) (*sqlx.DB, func()) {
 	return db, cleanup
 }
 
-// TestSchedulerTrackerRepository_Create tests creating a scheduler_tracker record
+// TestSchedulerTrackerRepository_Create tests creating a run record
 func TestSchedulerTrackerRepository_Create(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
@@ -107,11 +107,11 @@ func TestSchedulerTrackerRepository_Create(t *testing.T) {
 	err := repo.Create(context.Background(), tracker)
 
 	// Assert
-	require.NoError(t, err, "Failed to create scheduler_tracker")
+	require.NoError(t, err, "Failed to create run")
 
 	// Verify the record exists in the database
 	var count int
-	err = db.Get(&count, "SELECT COUNT(*) FROM scheduler_tracker WHERE schedule_id = $1", scheduleID)
+	err = db.Get(&count, "SELECT COUNT(*) FROM runs WHERE run_id = $1", scheduleID)
 	require.NoError(t, err)
 	assert.Equal(t, 1, count, "Expected 1 record in database")
 }
@@ -136,7 +136,7 @@ func TestSchedulerTrackerRepository_Create_DuplicateKey(t *testing.T) {
 
 	// Create first record
 	err := repo.Create(context.Background(), tracker)
-	require.NoError(t, err, "Failed to create first scheduler_tracker")
+	require.NoError(t, err, "Failed to create first run")
 
 	// Try to create duplicate
 	err = repo.Create(context.Background(), tracker)
@@ -145,7 +145,7 @@ func TestSchedulerTrackerRepository_Create_DuplicateKey(t *testing.T) {
 	assert.ErrorIs(t, err, postgres.ErrDuplicateKey, "Expected ErrDuplicateKey")
 }
 
-// TestSchedulerTrackerRepository_GetByID tests retrieving a scheduler_tracker by ID
+// TestSchedulerTrackerRepository_GetByID tests retrieving a run by ID
 func TestSchedulerTrackerRepository_GetByID(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
@@ -167,13 +167,13 @@ func TestSchedulerTrackerRepository_GetByID(t *testing.T) {
 
 	// Create record
 	err := repo.Create(context.Background(), tracker)
-	require.NoError(t, err, "Failed to create scheduler_tracker")
+	require.NoError(t, err, "Failed to create run")
 
 	// Execute GetByID
 	retrieved, err := repo.GetByID(context.Background(), scheduleID)
 
 	// Assert
-	require.NoError(t, err, "Failed to get scheduler_tracker")
+	require.NoError(t, err, "Failed to get run")
 	require.NotNil(t, retrieved, "Retrieved tracker is nil")
 	assert.Equal(t, scheduleID, retrieved.ScheduleID)
 	assert.Equal(t, "test-schedule-get", retrieved.ScheduleName)
@@ -225,11 +225,11 @@ func TestSchedulerTrackerRepository_Create_WithNullableFields(t *testing.T) {
 
 	// Execute
 	err := repo.Create(context.Background(), tracker)
-	require.NoError(t, err, "Failed to create scheduler_tracker")
+	require.NoError(t, err, "Failed to create run")
 
 	// Retrieve and verify
 	retrieved, err := repo.GetByID(context.Background(), scheduleID)
-	require.NoError(t, err, "Failed to get scheduler_tracker")
+	require.NoError(t, err, "Failed to get run")
 	assert.NotNil(t, retrieved.CancelledBy)
 	assert.Equal(t, "test-user", *retrieved.CancelledBy)
 	assert.NotNil(t, retrieved.CancellationReason)

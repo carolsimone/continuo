@@ -22,12 +22,12 @@ func readRun(t *testing.T, db *sqlx.DB, scheduleName string, releaseID *string, 
 	t.Helper()
 	runID := uuid.New()
 	_, err := db.Exec(`
-		INSERT INTO scheduler_tracker (schedule_id, schedule_name, status, release_id, promotion_seq, completed_at)
+		INSERT INTO runs (run_id, schedule_name, status, release_id, promotion_seq, completed_at)
 		VALUES ($1, $2, $3, $4, $5, CASE WHEN $6 THEN now() END)`,
 		runID, scheduleName, status, releaseID, promotionSeq, completed)
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		_, _ = db.Exec(`DELETE FROM scheduler_tracker WHERE schedule_id = $1`, runID)
+		_, _ = db.Exec(`DELETE FROM runs WHERE run_id = $1`, runID)
 	})
 	return runID
 }
@@ -37,7 +37,7 @@ func readTask(t *testing.T, db *sqlx.DB, runID uuid.UUID, table, status string) 
 	t.Helper()
 	id := uuid.New()
 	_, err := db.Exec(`
-		INSERT INTO task_tracker (task_id, schedule_id, service_name, schema_name, table_name, job_name, status, max_retries, node_key)
+		INSERT INTO tasks (task_id, run_id, service_name, schema_name, table_name, job_name, status, max_retries, node_key)
 		VALUES ($1, $2, 'svc', 'raw', $3::text, $4, $5, 2, 'raw.' || $3::text)`,
 		id, runID, table, "job-"+id.String()[:8], status)
 	require.NoError(t, err)
@@ -48,7 +48,7 @@ func readTask(t *testing.T, db *sqlx.DB, runID uuid.UUID, table, status string) 
 // the given instant, as a dispatch that finds its node held stores it.
 func waitForLease(t *testing.T, db *sqlx.DB, taskID uuid.UUID, since time.Time) {
 	t.Helper()
-	_, err := db.Exec(`UPDATE task_tracker SET wait_reason = 'node_lease', lease_wait_since = $2 WHERE task_id = $1`, taskID, since)
+	_, err := db.Exec(`UPDATE tasks SET wait_reason = 'node_lease', lease_wait_since = $2 WHERE task_id = $1`, taskID, since)
 	require.NoError(t, err)
 }
 
@@ -188,10 +188,10 @@ func TestRunReadRepository_ListsCompletedRunsNewestFirst(t *testing.T) {
 	db := newTestDB(t)
 	schedule := "list-" + uuid.NewString()[:8]
 	first := readRun(t, db, schedule, nil, nil, "succeeded", true)
-	_, err := db.Exec(`UPDATE scheduler_tracker SET created_at = created_at - interval '1 hour' WHERE schedule_id = $1`, first)
+	_, err := db.Exec(`UPDATE runs SET created_at = created_at - interval '1 hour' WHERE run_id = $1`, first)
 	require.NoError(t, err)
 	second := readRun(t, db, schedule, nil, nil, "failed", true)
-	_, err = db.Exec(`UPDATE scheduler_tracker SET failure_reason = 'stalled' WHERE schedule_id = $1`, second)
+	_, err = db.Exec(`UPDATE runs SET failure_reason = 'stalled' WHERE run_id = $1`, second)
 	require.NoError(t, err)
 	readRun(t, db, schedule, nil, nil, "running", false)
 

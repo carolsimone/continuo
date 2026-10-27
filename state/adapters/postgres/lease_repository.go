@@ -43,13 +43,13 @@ func (r *LeaseRepository) conn() sqlx.ExtContext {
 }
 
 // tenantWaitersFrom names the pending tasks waiting for a node lease whose node
-// the tenant ($1) holds in their run's release: task_tracker has no tenant
+// the tenant ($1) holds in their run's release: tasks has no tenant
 // column, so the topology row of the task's node is what makes a waiter the
 // tenant's, as it is what a grant reads to dispatch it. The waiters of a node
-// are read through idx_task_tracker_lease_waiters.
+// are read through idx_tasks_lease_waiters.
 const tenantWaitersFrom = `
-	FROM task_tracker w
-	JOIN scheduler_tracker s ON s.schedule_id = w.schedule_id
+	FROM tasks w
+	JOIN runs s ON s.run_id = w.run_id
 	JOIN topology_nodes n ON n.tenant_id = $1 AND n.release_id = s.release_id AND n.node_key = w.node_key
 	WHERE w.wait_reason = 'node_lease' AND w.status = 'pending'`
 
@@ -59,7 +59,7 @@ const tenantWaitersFrom = `
 // grant serves; runWorkInFlight queues a node's waiters in the same order. A
 // query may add a condition on w between the two.
 const nextWaiters = `
-	SELECT DISTINCT ON (w.node_key) w.task_id, w.schedule_id AS run_id, w.node_key, w.lease_wait_since AS waiting_since` +
+	SELECT DISTINCT ON (w.node_key) w.task_id, w.run_id, w.node_key, w.lease_wait_since AS waiting_since` +
 	tenantWaitersFrom + `
 	  AND s.status = 'running'
 	  AND NOT EXISTS (SELECT 1 FROM node_leases l WHERE l.tenant_id = $1 AND l.node_key = w.node_key)`
@@ -115,7 +115,7 @@ func (r *LeaseRepository) RepairEnded(ctx context.Context) ([]repository.Repaire
 	var rows []repairedLeaseRow
 	if err := sqlx.SelectContext(ctx, r.conn(), &rows, `
 		DELETE FROM node_leases l
-		USING task_tracker t
+		USING tasks t
 		WHERE l.tenant_id = $1 AND t.task_id = l.task_id AND t.status = ANY($2::text[])
 		RETURNING l.task_id, l.run_id, l.node_key, t.status AS task_status, l.acquired_at`,
 		r.tenantID, pq.Array(endedTaskStatuses())); err != nil {

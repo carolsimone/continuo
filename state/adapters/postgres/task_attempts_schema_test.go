@@ -16,14 +16,14 @@ func newSchemaTask(t *testing.T, db *sqlx.DB) uuid.UUID {
 	t.Helper()
 	scheduleID, taskID := uuid.New(), uuid.New()
 	_, err := db.Exec(`
-		INSERT INTO scheduler_tracker (schedule_id, schedule_name, status)
+		INSERT INTO runs (run_id, schedule_name, status)
 		VALUES ($1, $2, 'running')`, scheduleID, "schema-"+scheduleID.String())
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		_, _ = db.Exec(`DELETE FROM scheduler_tracker WHERE schedule_id = $1`, scheduleID)
+		_, _ = db.Exec(`DELETE FROM runs WHERE run_id = $1`, scheduleID)
 	})
 	_, err = db.Exec(`
-		INSERT INTO task_tracker (task_id, schedule_id, service_name, schema_name, table_name, job_name, status, max_retries)
+		INSERT INTO tasks (task_id, run_id, service_name, schema_name, table_name, job_name, status, max_retries)
 		VALUES ($1, $2, 'svc', 'sch', 'tbl', 'job-0', 'pending', 2)`, taskID, scheduleID)
 	require.NoError(t, err)
 	return taskID
@@ -43,7 +43,7 @@ func TestTaskAttemptsSchema_DeletingATaskDeletesItsAttempts(t *testing.T) {
 	require.NoError(t, insertAttempt(db, taskID, 0, "failed"))
 	require.NoError(t, insertAttempt(db, taskID, 1, "running"))
 
-	_, err := db.Exec(`DELETE FROM task_tracker WHERE task_id = $1`, taskID)
+	_, err := db.Exec(`DELETE FROM tasks WHERE task_id = $1`, taskID)
 	require.NoError(t, err)
 
 	var n int
@@ -102,19 +102,19 @@ func TestTaskAttemptsSchema_DefaultsAndTheDueIndex(t *testing.T) {
 	}
 }
 
-// task_tracker names its current attempt `attempt`, starting at 0; the old
+// tasks names its current attempt `attempt`, starting at 0; the old
 // column name is gone.
 func TestTaskTrackerSchema_AttemptReplacesRetryCount(t *testing.T) {
 	db := newTestDB(t)
 	taskID := newSchemaTask(t, db)
 
 	var attempt int
-	require.NoError(t, db.Get(&attempt, `SELECT attempt FROM task_tracker WHERE task_id = $1`, taskID))
+	require.NoError(t, db.Get(&attempt, `SELECT attempt FROM tasks WHERE task_id = $1`, taskID))
 	assert.Zero(t, attempt)
 
 	var old int
 	require.NoError(t, db.Get(&old, `
 		SELECT count(*) FROM information_schema.columns
-		WHERE table_name = 'task_tracker' AND column_name = 'retry_count'`))
+		WHERE table_name = 'tasks' AND column_name = 'retry_count'`))
 	assert.Zero(t, old)
 }

@@ -24,7 +24,7 @@ var defaultPlanner = runstart.Planner{TenantID: pkgevents.DefaultTenantID, Tasks
 // tasks by SQL calls it, so a later run of the same nodes can take them.
 func releaseLeasesOf(t *testing.T, db *sqlx.DB, runID uuid.UUID) {
 	t.Helper()
-	_, err := db.Exec(`DELETE FROM node_leases WHERE task_id IN (SELECT task_id FROM task_tracker WHERE schedule_id = $1)`, runID)
+	_, err := db.Exec(`DELETE FROM node_leases WHERE task_id IN (SELECT task_id FROM tasks WHERE run_id = $1)`, runID)
 	require.NoError(t, err)
 }
 

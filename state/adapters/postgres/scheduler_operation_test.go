@@ -56,7 +56,7 @@ func TestSchedulerTracker_OperationRoundTrip(t *testing.T) {
 	if err := repo.Create(context.Background(), tr); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	t.Cleanup(func() { db.Exec(`DELETE FROM scheduler_tracker WHERE schedule_id = $1`, r.ScheduleID()) })
+	t.Cleanup(func() { db.Exec(`DELETE FROM runs WHERE run_id = $1`, r.ScheduleID()) })
 
 	got, err := repo.GetByID(context.Background(), r.ScheduleID())
 	if err != nil {

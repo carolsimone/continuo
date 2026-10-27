@@ -67,7 +67,7 @@ func newStartRun(t *testing.T, db *sqlx.DB, now time.Time) *run.Run {
 	t.Cleanup(func() {
 		ctx := context.Background()
 		_, _ = db.ExecContext(ctx, `DELETE FROM state_outbox WHERE aggregate_id = $1`, r.ScheduleID())
-		_, _ = db.ExecContext(ctx, `DELETE FROM scheduler_tracker WHERE schedule_id = $1`, r.ScheduleID())
+		_, _ = db.ExecContext(ctx, `DELETE FROM runs WHERE run_id = $1`, r.ScheduleID())
 	})
 	return r
 }
@@ -103,7 +103,7 @@ func TestStartedRun_StoresItsTasksPlanAndDispatches(t *testing.T) {
 	}
 	require.NoError(t, db.Get(&row, `
 		SELECT status, initialization_status, total_task_count, terminal_task_count, planned_at, started_at
-		FROM scheduler_tracker WHERE schedule_id = $1`, r.ScheduleID()))
+		FROM runs WHERE run_id = $1`, r.ScheduleID()))
 	assert.Equal(t, "running", row.Status)
 	assert.Equal(t, "completed", row.Init)
 	assert.Equal(t, int32(8), row.Total)
@@ -115,8 +115,8 @@ func TestStartedRun_StoresItsTasksPlanAndDispatches(t *testing.T) {
 
 	var dispatched []string
 	require.NoError(t, db.Select(&dispatched, `
-		SELECT node_key FROM task_tracker
-		WHERE schedule_id = $1 AND dispatched_at IS NOT NULL ORDER BY node_key`, r.ScheduleID()))
+		SELECT node_key FROM tasks
+		WHERE run_id = $1 AND dispatched_at IS NOT NULL ORDER BY node_key`, r.ScheduleID()))
 	assert.Equal(t, []string{"e2e_schema.ftable_a", "e2e_schema.ftable_b"}, dispatched)
 
 	var taskIDs []string

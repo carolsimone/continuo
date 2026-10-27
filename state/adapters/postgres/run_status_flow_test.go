@@ -25,7 +25,7 @@ func (f statusFlow) statuses(t *testing.T) map[string]run.TaskStatus {
 		Key    string         `db:"node_key"`
 		Status run.TaskStatus `db:"status"`
 	}
-	require.NoError(t, f.db.Select(&rows, `SELECT node_key, status FROM task_tracker WHERE schedule_id = $1`, f.r.ScheduleID()))
+	require.NoError(t, f.db.Select(&rows, `SELECT node_key, status FROM tasks WHERE run_id = $1`, f.r.ScheduleID()))
 	out := make(map[string]run.TaskStatus, len(rows))
 	for _, row := range rows {
 		out[row.Key] = row.Status
@@ -39,7 +39,7 @@ func (f statusFlow) run(t *testing.T) (run.SchedulerStatus, int32) {
 		Status   run.SchedulerStatus `db:"status"`
 		Terminal int32               `db:"terminal_task_count"`
 	}
-	require.NoError(t, f.db.Get(&row, `SELECT status, terminal_task_count FROM scheduler_tracker WHERE schedule_id = $1`, f.r.ScheduleID()))
+	require.NoError(t, f.db.Get(&row, `SELECT status, terminal_task_count FROM runs WHERE run_id = $1`, f.r.ScheduleID()))
 	return row.Status, row.Terminal
 }
 
@@ -54,7 +54,7 @@ func TestAttemptReport_TheCascadeRootsFailureFinishesTheRun(t *testing.T) {
 	f.report(t, "bench.fail_root", 0, run.AttemptFailed, model.FailureReasonDeadlineExceeded)
 
 	var skipped int
-	require.NoError(t, db.Get(&skipped, `SELECT count(*) FROM task_tracker WHERE schedule_id = $1 AND status = 'skipped'`, f.r.ScheduleID()))
+	require.NoError(t, db.Get(&skipped, `SELECT count(*) FROM tasks WHERE run_id = $1 AND status = 'skipped'`, f.r.ScheduleID()))
 	assert.Equal(t, 1999, skipped)
 	status, terminal := f.run(t)
 	assert.Equal(t, run.SchedulerStatusFailed, status)
@@ -79,7 +79,7 @@ func (f statusFlow) attempts(t *testing.T, key string) []attemptRow {
 	return rows
 }
 
-// task returns the job name, status and attempt task_tracker holds for the
+// task returns the job name, status and attempt tasks holds for the
 // run's task at key.
 func (f statusFlow) task(t *testing.T, key string) (string, run.TaskStatus, int32) {
 	t.Helper()
@@ -88,7 +88,7 @@ func (f statusFlow) task(t *testing.T, key string) (string, run.TaskStatus, int3
 		Status  run.TaskStatus `db:"status"`
 		Attempt int32          `db:"attempt"`
 	}
-	require.NoError(t, f.db.Get(&row, `SELECT job_name, status, attempt FROM task_tracker WHERE task_id = $1`,
+	require.NoError(t, f.db.Get(&row, `SELECT job_name, status, attempt FROM tasks WHERE task_id = $1`,
 		run.TaskIDFor(f.tenant, f.r.ScheduleID(), topology.NodeKey(key))))
 	return row.JobName, row.Status, row.Attempt
 }

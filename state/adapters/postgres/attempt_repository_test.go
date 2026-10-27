@@ -34,7 +34,7 @@ func (f statusFlow) makeDue(t *testing.T) {
 	t.Helper()
 	_, err := f.db.Exec(`
 		UPDATE task_attempts a SET next_check_at = now() - interval '1 second'
-		FROM task_tracker t WHERE t.task_id = a.task_id AND t.schedule_id = $1
+		FROM tasks t WHERE t.task_id = a.task_id AND t.run_id = $1
 		  AND a.status IN ('dispatched', 'queued', 'running')`, f.r.ScheduleID())
 	require.NoError(t, err)
 }
@@ -77,7 +77,7 @@ func TestAttemptRepository_DueAttemptsAreTheTenantsOwn(t *testing.T) {
 	f := statusFlow{db: db, tenant: mine, r: startScheduleRun(t, db, mine, "e2e-schedule-failure", model.OperationRun)}
 	g := statusFlow{db: db, tenant: other, r: startScheduleRun(t, db, other, shape.schedule(), model.OperationRun)}
 	_, err := db.Exec(`UPDATE task_attempts a SET next_check_at = now() - interval '1 hour'
-		FROM task_tracker t WHERE t.task_id = a.task_id AND t.schedule_id = $1`, g.r.ScheduleID())
+		FROM tasks t WHERE t.task_id = a.task_id AND t.run_id = $1`, g.r.ScheduleID())
 	require.NoError(t, err)
 	f.makeDue(t)
 
@@ -165,10 +165,10 @@ func TestAttemptRepository_StalledRunsHaveNothingInFlightAndNoRecentProgress(t *
 	idleTenant := storeEdges(t, db, "e2e-schedule-idle", [][2]string{{"ftable_a", "ftable_b"}}, "ftable_a", "ftable_b")
 	idle := startScheduleRun(t, db, idleTenant, "e2e-schedule-idle", model.OperationRun)
 	waiting := statusFlow{db: db, tenant: tenant, r: startScheduleRun(t, db, tenant, "e2e-schedule-failure", model.OperationRun)}
-	_, err := db.Exec(`UPDATE task_tracker SET status = 'pending', dispatched_at = NULL WHERE schedule_id = $1`, idle.ScheduleID())
+	_, err := db.Exec(`UPDATE tasks SET status = 'pending', dispatched_at = NULL WHERE run_id = $1`, idle.ScheduleID())
 	require.NoError(t, err)
 	waiting.report(t, "e2e_schema.ftable_a", 0, run.AttemptQueued, "")
-	_, err = db.Exec(`UPDATE scheduler_tracker SET last_heartbeat_at = now() - interval '10 minutes' WHERE schedule_id = ANY($1)`,
+	_, err = db.Exec(`UPDATE runs SET last_progress_at = now() - interval '10 minutes' WHERE run_id = ANY($1)`,
 		pq.Array([]uuid.UUID{idle.ScheduleID(), waiting.r.ScheduleID()}))
 	require.NoError(t, err)
 
@@ -219,8 +219,8 @@ func TestAttemptRepository_StalledRunsCoverACancellingRunWithNothingStopping(t *
 	tenant := storeFailureSchedule(t, db)
 	nothingStopping, _ := insertTasks(t, db, map[string]run.TaskStatus{"ftable_a": run.TaskStatusCancelled, "ftable_b": run.TaskStatusSucceeded})
 	stillStopping, _ := insertTasks(t, db, map[string]run.TaskStatus{"ftable_a": run.TaskStatusStopping, "ftable_b": run.TaskStatusCancelled})
-	_, err := db.Exec(`UPDATE scheduler_tracker SET status = 'cancelling', last_heartbeat_at = now() - interval '10 minutes'
-		WHERE schedule_id = ANY($1)`, pq.Array([]uuid.UUID{nothingStopping, stillStopping}))
+	_, err := db.Exec(`UPDATE runs SET status = 'cancelling', last_progress_at = now() - interval '10 minutes'
+		WHERE run_id = ANY($1)`, pq.Array([]uuid.UUID{nothingStopping, stillStopping}))
 	require.NoError(t, err)
 
 	got, err := postgres.NewAttemptRepository(db, nil, tenant).StalledRuns(ctx, 5*time.Minute, 500)
@@ -236,10 +236,10 @@ func TestAttemptRepository_StalledRunsCoverACancellingRunWithNothingStopping(t *
 func leaseWaitRun(t *testing.T, db *sqlx.DB, table string) uuid.UUID {
 	t.Helper()
 	runID, ids := pendingTasks(t, db, table)
-	_, err := db.Exec(`UPDATE task_tracker SET wait_reason = 'node_lease', lease_wait_since = now() - interval '10 minutes'
+	_, err := db.Exec(`UPDATE tasks SET wait_reason = 'node_lease', lease_wait_since = now() - interval '10 minutes'
 		WHERE task_id = $1`, ids[table])
 	require.NoError(t, err)
-	_, err = db.Exec(`UPDATE scheduler_tracker SET last_heartbeat_at = now() - interval '10 minutes' WHERE schedule_id = $1`, runID)
+	_, err = db.Exec(`UPDATE runs SET last_progress_at = now() - interval '10 minutes' WHERE run_id = $1`, runID)
 	require.NoError(t, err)
 	return runID
 }
@@ -275,7 +275,7 @@ func TestStalledRuns_ALeaseWaitBehindAnInFlightHolderIsNotStalled(t *testing.T) 
 func onlyTask(t *testing.T, db *sqlx.DB, runID uuid.UUID) uuid.UUID {
 	t.Helper()
 	var id uuid.UUID
-	require.NoError(t, db.Get(&id, `SELECT task_id FROM task_tracker WHERE schedule_id = $1`, runID))
+	require.NoError(t, db.Get(&id, `SELECT task_id FROM tasks WHERE run_id = $1`, runID))
 	return id
 }
 
@@ -313,7 +313,7 @@ func TestStalledRuns_ALeaseWaitOnAFreeNodeIsListedAndGrantedUnderTheLock(t *test
 	require.True(t, held)
 	assert.Equal(t, heldLease{TaskID: freeTask, RunID: waitingOnFree}, lease)
 	var status string
-	require.NoError(t, db.Get(&status, `SELECT status FROM scheduler_tracker WHERE schedule_id = $1`, waitingOnFree))
+	require.NoError(t, db.Get(&status, `SELECT status FROM runs WHERE run_id = $1`, waitingOnFree))
 	assert.Equal(t, string(run.SchedulerStatusRunning), status)
 
 	assert.True(t, failStalledUnderLock(t, db, tenant, waitingOnEnded), "the re-check fails a wait behind a holder that has ended")
@@ -324,7 +324,7 @@ func (f statusFlow) makeStopsDue(t *testing.T, ago time.Duration) {
 	t.Helper()
 	_, err := f.db.Exec(`
 		UPDATE task_attempts a SET next_check_at = now() - make_interval(secs => $2::float8)
-		FROM task_tracker t WHERE t.task_id = a.task_id AND t.schedule_id = $1
+		FROM tasks t WHERE t.task_id = a.task_id AND t.run_id = $1
 		  AND a.status IN ('dispatched', 'queued', 'running')`, f.r.ScheduleID(), ago.Seconds())
 	require.NoError(t, err)
 }
@@ -478,9 +478,9 @@ func TestAttemptRepository_CountCancellingCountsTheOverdue(t *testing.T) {
 
 	fresh, _ := insertTasks(t, db, map[string]run.TaskStatus{"ftable_a": run.TaskStatusStopping})
 	old, _ := insertTasks(t, db, map[string]run.TaskStatus{"ftable_a": run.TaskStatusStopping})
-	_, err = db.Exec(`UPDATE scheduler_tracker SET status = 'cancelling', cancelled_at = now() WHERE schedule_id = $1`, fresh)
+	_, err = db.Exec(`UPDATE runs SET status = 'cancelling', cancelled_at = now() WHERE run_id = $1`, fresh)
 	require.NoError(t, err)
-	_, err = db.Exec(`UPDATE scheduler_tracker SET status = 'cancelling', cancelled_at = now() - interval '16 minutes' WHERE schedule_id = $1`, old)
+	_, err = db.Exec(`UPDATE runs SET status = 'cancelling', cancelled_at = now() - interval '16 minutes' WHERE run_id = $1`, old)
 	require.NoError(t, err)
 
 	total, overdue, err := repo.CountCancelling(ctx, 15*time.Minute)
@@ -540,8 +540,8 @@ func TestAttemptReconcile_AResentCancelRowNamesTheUnansweredAttempts(t *testing.
 	}
 	require.NoError(t, db.Select(&requested, `
 		SELECT a.task_id::text AS task_id, a.attempt, a.job_name FROM task_attempts a
-		JOIN task_tracker t ON t.task_id = a.task_id
-		WHERE t.schedule_id = $1 AND a.stop_requested_at IS NOT NULL
+		JOIN tasks t ON t.task_id = a.task_id
+		WHERE t.run_id = $1 AND a.stop_requested_at IS NOT NULL
 		ORDER BY a.task_id::text`, f.r.ScheduleID()))
 	require.Len(t, requested, 2, "both running attempts were asked to stop")
 	stops := make([]pkgevents.CancelledAttempt, 0, len(requested))

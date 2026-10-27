@@ -233,7 +233,7 @@ func TestFailStalled_SavesTheRunFailedAsStalled(t *testing.T) {
 	f.report(t, "e2e_schema.ftable_a", 0, run.AttemptSucceeded, "")
 	f.report(t, "e2e_schema.ftable_b", 0, run.AttemptSucceeded, "")
 	// A defect leaves the tasks the two successes made ready undispatched.
-	_, err := db.Exec(`UPDATE task_tracker SET status = 'pending', dispatched_at = NULL WHERE schedule_id = $1 AND status = 'dispatched'`,
+	_, err := db.Exec(`UPDATE tasks SET status = 'pending', dispatched_at = NULL WHERE run_id = $1 AND status = 'dispatched'`,
 		f.r.ScheduleID())
 	require.NoError(t, err)
 
@@ -254,7 +254,7 @@ func TestFailStalled_SavesTheRunFailedAsStalled(t *testing.T) {
 		Reason   *string `db:"failure_reason"`
 		Terminal int32   `db:"terminal_task_count"`
 	}
-	require.NoError(t, db.Get(&row, `SELECT status, failure_reason, terminal_task_count FROM scheduler_tracker WHERE schedule_id = $1`, f.r.ScheduleID()))
+	require.NoError(t, db.Get(&row, `SELECT status, failure_reason, terminal_task_count FROM runs WHERE run_id = $1`, f.r.ScheduleID()))
 	assert.Equal(t, "failed", row.Status)
 	require.NotNil(t, row.Reason)
 	assert.Equal(t, "stalled", *row.Reason)

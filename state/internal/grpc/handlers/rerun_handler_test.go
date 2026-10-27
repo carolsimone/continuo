@@ -75,7 +75,7 @@ func TestRerunHandler_HappyPath_FailedSource(t *testing.T) {
 	newID := uuid.MustParse(resp.RunId)
 	t.Cleanup(func() {
 		rfx.DB.ExecContext(context.Background(), "DELETE FROM state_outbox WHERE aggregate_id = $1", newID)
-		rfx.DB.ExecContext(context.Background(), "DELETE FROM scheduler_tracker WHERE schedule_id = $1", newID)
+		rfx.DB.ExecContext(context.Background(), "DELETE FROM runs WHERE run_id = $1", newID)
 	})
 
 	tracker, err := rfx.SchedulerRepo.GetByID(context.Background(), newID)

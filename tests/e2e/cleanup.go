@@ -33,7 +33,7 @@ func cleanupPostgres(t *testing.T, ctx context.Context, clients *testClients, sc
 	// Get scheduler ID first (needed for outbox cleanup)
 	var schedulerID string
 	_ = clients.stateDB.Get(&schedulerID, `
-		SELECT schedule_id FROM scheduler_tracker WHERE schedule_name = $1
+		SELECT run_id FROM runs WHERE schedule_name = $1
 	`, scheduleName)
 
 	// Clean the execution database. Order matters: execution_outbox carries a
@@ -54,8 +54,8 @@ func cleanupPostgres(t *testing.T, ctx context.Context, clients *testClients, sc
 	}
 
 	// Clean state tables (do last to preserve scheduler_id)
-	_, _ = clients.stateDB.Exec("DELETE FROM task_tracker WHERE schedule_id = $1", schedulerID)
-	_, _ = clients.stateDB.Exec("DELETE FROM scheduler_tracker WHERE schedule_name = $1", scheduleName)
+	_, _ = clients.stateDB.Exec("DELETE FROM tasks WHERE run_id = $1", schedulerID)
+	_, _ = clients.stateDB.Exec("DELETE FROM runs WHERE schedule_name = $1", scheduleName)
 }
 
 // cleanupRedis removes test streams from Redis

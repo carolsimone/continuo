@@ -128,7 +128,7 @@ func (a *TaskCollectionAdapter) GetByID(ctx context.Context, taskID uuid.UUID) (
 	return taskFromRow(t), nil
 }
 
-// taskFromRow maps a task_tracker row onto the domain task.
+// taskFromRow maps a task row onto the domain task.
 func taskFromRow(t *TaskTracker) run.Task {
 	return run.Task{
 		TaskID:              t.TaskID,

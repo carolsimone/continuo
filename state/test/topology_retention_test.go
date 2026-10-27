@@ -55,7 +55,7 @@ func TestTopologyRetention_PrunesOnlyOldUnreferencedReleases(t *testing.T) {
 	_, err = db.Exec(`INSERT INTO live_release (tenant_id, release_id, promotion_seq, updated_at) VALUES ($1, 'rel-live', 1, now())`, tenant)
 	require.NoError(t, err)
 	_, err = db.Exec(`
-		INSERT INTO scheduler_tracker (schedule_id, schedule_name, status, created_at, initialization_status, kind, release_id)
+		INSERT INTO runs (run_id, schedule_name, status, created_at, initialization_status, kind, release_id)
 		VALUES ($1, 'promote-seed-retained', 'running', now(), 'completed', 'promote_seed', 'rel-referenced')`, uuid.New())
 	require.NoError(t, err)
 

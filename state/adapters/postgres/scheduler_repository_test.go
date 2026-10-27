@@ -50,7 +50,7 @@ func TestSchedulerRepository_UpdateInitializationStatusTx_UpdatesStatus(t *testi
 	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
 
 	tracker := createScheduler(t, repo, "test-schedule-"+uuid.New().String())
-	defer db.ExecContext(context.Background(), "DELETE FROM scheduler_tracker WHERE schedule_id = $1", tracker.ScheduleID)
+	defer db.ExecContext(context.Background(), "DELETE FROM runs WHERE run_id = $1", tracker.ScheduleID)
 
 	tx, err := db.BeginTxx(context.Background(), nil)
 	require.NoError(t, err)
@@ -78,7 +78,7 @@ func TestSchedulerRepository_CreateTx_InsertsTracker(t *testing.T) {
 		InitializationStatus: "pending",
 		ServiceMetadataRaw:   []byte(`{"svc-a":{"image_tag":""}}`),
 	}
-	defer db.ExecContext(context.Background(), "DELETE FROM scheduler_tracker WHERE schedule_id = $1", scheduleID)
+	defer db.ExecContext(context.Background(), "DELETE FROM runs WHERE run_id = $1", scheduleID)
 
 	tx, err := db.BeginTxx(context.Background(), nil)
 	require.NoError(t, err)
@@ -113,7 +113,7 @@ func TestSchedulerRepository_CreateTx_ExistingIDIsANoOp(t *testing.T) {
 		CreatedAt:            time.Now(),
 		InitializationStatus: "in_progress",
 	}
-	defer db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", id)
+	defer db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", id)
 
 	tx, err := db.BeginTxx(ctx, nil)
 	require.NoError(t, err)
@@ -128,12 +128,12 @@ func TestSchedulerRepository_CreateTx_ExistingIDIsANoOp(t *testing.T) {
 	require.NoError(t, tx.Commit())
 
 	var rows int
-	require.NoError(t, db.GetContext(ctx, &rows, "SELECT count(*) FROM scheduler_tracker WHERE schedule_id = $1", id))
+	require.NoError(t, db.GetContext(ctx, &rows, "SELECT count(*) FROM runs WHERE run_id = $1", id))
 	assert.Equal(t, 1, rows)
 }
 
 // TestSchedulerRepository_CreateTx_ActiveNameConflictStillRaises confirms the
-// schedule_id conflict target does not swallow the one-active-run-per-schedule
+// run_id conflict target does not swallow the one-active-run-per-schedule
 // index: a different id with the same active schedule_name still fails.
 func TestSchedulerRepository_CreateTx_ActiveNameConflictStillRaises(t *testing.T) {
 	db := newTestDB(t)
@@ -142,7 +142,7 @@ func TestSchedulerRepository_CreateTx_ActiveNameConflictStillRaises(t *testing.T
 
 	name := "active-" + uuid.New().String()[:8]
 	first, second := uuid.New(), uuid.New()
-	defer db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id IN ($1, $2)", first, second)
+	defer db.ExecContext(ctx, "DELETE FROM runs WHERE run_id IN ($1, $2)", first, second)
 
 	tx, err := db.BeginTxx(ctx, nil)
 	require.NoError(t, err)
@@ -171,7 +171,7 @@ func TestSchedulerRepository_SetTotalTaskCountTx(t *testing.T) {
 		InitializationStatus: "pending",
 		CreatedAt:            time.Now(),
 	}))
-	defer db.ExecContext(context.Background(), "DELETE FROM scheduler_tracker WHERE schedule_id = $1", id)
+	defer db.ExecContext(context.Background(), "DELETE FROM runs WHERE run_id = $1", id)
 
 	tx, err := db.BeginTxx(context.Background(), nil)
 	require.NoError(t, err)
@@ -200,7 +200,7 @@ func TestSchedulerRepository_TaskCountColumns(t *testing.T) {
 		TerminalTaskCount:    2,
 		CreatedAt:            time.Now(),
 	}
-	defer db.ExecContext(context.Background(), "DELETE FROM scheduler_tracker WHERE schedule_id = $1", id)
+	defer db.ExecContext(context.Background(), "DELETE FROM runs WHERE run_id = $1", id)
 	require.NoError(t, repo.Create(context.Background(), tracker))
 
 	got, err := repo.GetByID(context.Background(), id)
@@ -227,7 +227,7 @@ func TestSchedulerRepository_CreateAndGet_RoundTripsKindAndSourceRunID(t *testin
 		Kind:                 "rerun",
 		SourceRunID:          &sourceRunID,
 	}
-	defer db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", tracker.ScheduleID)
+	defer db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", tracker.ScheduleID)
 	require.NoError(t, repo.Create(ctx, tracker))
 
 	got, err := repo.GetByID(ctx, tracker.ScheduleID)
@@ -245,7 +245,7 @@ func TestSchedulerRepository_CreateAndGet_RoundTripsKindAndSourceRunID(t *testin
 		InitializationStatus: "pending",
 		Kind:                 "cron",
 	}
-	defer db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", defaultTracker.ScheduleID)
+	defer db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", defaultTracker.ScheduleID)
 	require.NoError(t, repo.Create(ctx, defaultTracker))
 	gotDefault, err := repo.GetByID(ctx, defaultTracker.ScheduleID)
 	require.NoError(t, err)
@@ -266,7 +266,7 @@ func TestSchedulerTrackerRepository_CancelTx(t *testing.T) {
 		CreatedAt:            time.Now(),
 		InitializationStatus: "completed",
 	}))
-	defer db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", id)
+	defer db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", id)
 
 	tx, err := db.BeginTxx(ctx, nil)
 	require.NoError(t, err)
@@ -308,7 +308,7 @@ func TestSchedulerTrackerRepository_CancelTx_CancellingLeavesCompletedAtNull(t *
 		ScheduleID: id, ScheduleName: "cxl-cancelling-" + id.String()[:8], Status: run.SchedulerStatusRunning,
 		CreatedAt: time.Now(), InitializationStatus: "completed",
 	}))
-	t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", id) })
+	t.Cleanup(func() { db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", id) })
 
 	tx, err := db.BeginTxx(ctx, nil)
 	require.NoError(t, err)
@@ -356,7 +356,7 @@ func TestSchedulerTrackerRepository_CancelTx_RefusesEveryTerminalStatus(t *testi
 				InitializationStatus: "completed",
 			}))
 			t.Cleanup(func() {
-				db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", id)
+				db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", id)
 			})
 
 			tx, err := db.BeginTxx(ctx, nil)
@@ -404,7 +404,7 @@ func TestSchedulerTrackerRepository_TerminalCountSurvivesRetryFlow(t *testing.T)
 		InitializationStatus: "completed",
 		TotalTaskCount:       sql.NullInt32{Int32: 1, Valid: true},
 	}))
-	defer db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", id)
+	defer db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", id)
 
 	// Each row models one SaveRun call from the aggregate after a task event.
 	// The "want" column is what terminal_task_count must equal in the DB
@@ -451,7 +451,7 @@ func TestSchedulerTrackerRepository_SetTerminalTaskCountTx_AbsoluteWrite(t *test
 		CreatedAt:            time.Now(),
 		InitializationStatus: "in_progress",
 	}))
-	defer db.ExecContext(ctx, "DELETE FROM scheduler_tracker WHERE schedule_id = $1", id)
+	defer db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", id)
 
 	// Set to 5, then 3 (decrease), then 7 (increase). Each must land verbatim.
 	for _, want := range []int32{5, 3, 7} {

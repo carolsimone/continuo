@@ -23,7 +23,7 @@ func (f RunFailureReason) IsValid() bool {
 }
 
 // RunFailureReasons lists every RunFailureReason. The CHECK constraint on
-// scheduler_tracker.failure_reason lists exactly these.
+// runs.failure_reason lists exactly these.
 func RunFailureReasons() []RunFailureReason {
 	return []RunFailureReason{RunFailureStalled, RunFailureEmptySelection, RunFailureInvalidNodeType}
 }

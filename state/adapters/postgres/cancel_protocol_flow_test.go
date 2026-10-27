@@ -32,7 +32,7 @@ func cancelByID(t *testing.T, db *sqlx.DB, id uuid.UUID, by, reason string) {
 	})
 }
 
-// cancelRow is the cancel columns of one scheduler_tracker row.
+// cancelRow is the cancel columns of one run row.
 type cancelRow struct {
 	Status      run.SchedulerStatus `db:"status"`
 	CancelledAt *time.Time          `db:"cancelled_at"`
@@ -47,7 +47,7 @@ func readCancelRow(t *testing.T, db *sqlx.DB, id uuid.UUID) cancelRow {
 	var row cancelRow
 	require.NoError(t, db.Get(&row, `
 		SELECT status, cancelled_at, completed_at, cancelled_by, cancellation_reason, terminal_task_count
-		FROM scheduler_tracker WHERE schedule_id = $1`, id))
+		FROM runs WHERE run_id = $1`, id))
 	return row
 }
 
@@ -127,7 +127,7 @@ func TestCancel_SavesARunWithNothingInFlightCancelled(t *testing.T) {
 		"ftable_a": run.TaskStatusSucceeded, "ftable_c": run.TaskStatusCancelled, "ftable_d": run.TaskStatusCancelled,
 	} {
 		var got run.TaskStatus
-		require.NoError(t, db.Get(&got, `SELECT status FROM task_tracker WHERE task_id = $1`, ids[table]))
+		require.NoError(t, db.Get(&got, `SELECT status FROM tasks WHERE task_id = $1`, ids[table]))
 		assert.Equal(t, want, got, table)
 	}
 	var outbox int
@@ -220,7 +220,7 @@ func TestActiveRunQueriesCoverCancelling(t *testing.T) {
 	tenant := newTopoTenant(t, db)
 	id := insertSeedRun(t, db, run.SchedulerStatusCancelling)
 	var schedule string
-	require.NoError(t, db.Get(&schedule, `SELECT schedule_name FROM scheduler_tracker WHERE schedule_id = $1`, id))
+	require.NoError(t, db.Get(&schedule, `SELECT schedule_name FROM runs WHERE run_id = $1`, id))
 	repo := postgres.NewSchedulerTrackerRepository(db, discardLogger())
 
 	blocked, err := repo.HasActiveSchedule(ctx, schedule)

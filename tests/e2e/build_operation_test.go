@@ -208,17 +208,17 @@ func TestBuildOperationRerun(t *testing.T) {
 	newKind := queryPostgresTrackerKind(t, clients.stateDB, newRunID)
 	assert.Equal(t, "rerun", newKind, "new run must have kind='rerun'")
 
-	t.Log("Waiting for rerun task_tracker rows to materialise...")
+	t.Log("Waiting for rerun tasks rows to materialise...")
 	pollUntil(t, ctx, 60*time.Second, 1*time.Second, func() (bool, error) {
 		var count int
 		qErr := clients.stateDB.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM task_tracker WHERE schedule_id = $1`, newRunID,
+			`SELECT COUNT(*) FROM tasks WHERE run_id = $1`, newRunID,
 		).Scan(&count)
 		if qErr != nil {
 			return false, qErr
 		}
 		return count >= 8, nil // 8 ftable_* nodes in the failure topology (a-h)
-	}, "task_tracker rows for rerun run did not materialise (expected 8)")
+	}, "tasks rows for rerun run did not materialise (expected 8)")
 
 	// Operation inheritance: the rerun run must itself be recorded as build.
 	assert.Equal(t, "build", queryRunOperation(t, clients, newRunID),

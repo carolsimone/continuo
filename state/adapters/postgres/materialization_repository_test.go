@@ -24,10 +24,10 @@ func insertSeedRun(t *testing.T, db *sqlx.DB, status run.SchedulerStatus) uuid.U
 	t.Helper()
 	id := uuid.New()
 	_, err := db.Exec(`
-		INSERT INTO scheduler_tracker (schedule_id, schedule_name, status, created_at, initialization_status, kind)
+		INSERT INTO runs (run_id, schedule_name, status, created_at, initialization_status, kind)
 		VALUES ($1, $2, $3, now(), 'completed', 'promote_seed')`, id, "promote-seed-"+id.String()[:8], string(status))
 	require.NoError(t, err)
-	t.Cleanup(func() { _, _ = db.Exec(`DELETE FROM scheduler_tracker WHERE schedule_id = $1`, id) })
+	t.Cleanup(func() { _, _ = db.Exec(`DELETE FROM runs WHERE run_id = $1`, id) })
 	return id
 }
 
@@ -217,7 +217,7 @@ func TestMaterializationRepository_DeleteAbsentFromKeepsARowWhoseBuildIsInFlight
 				Key: "raw.orders", AttemptContentHash: "h1", AttemptRunID: runID, AttemptState: seeds.AttemptInFlight,
 			}, got["raw.orders"], "the build request of the absent node survives")
 
-			_, err = db.Exec(`UPDATE scheduler_tracker SET status = 'succeeded', completed_at = now() WHERE schedule_id = $1`, runID)
+			_, err = db.Exec(`UPDATE runs SET status = 'succeeded', completed_at = now() WHERE run_id = $1`, runID)
 			require.NoError(t, err)
 			deleted, err = repo.DeleteAbsentFrom(ctx, tenant, "rel-2")
 			require.NoError(t, err)
@@ -249,7 +249,7 @@ func TestMaterializations_DeleteAbsentFromKeepsACancellingRunsRequest(t *testing
 	require.NoError(t, err)
 	assert.Contains(t, got, topology.NodeKey("raw.orders"))
 
-	_, err = db.Exec(`UPDATE scheduler_tracker SET status = 'cancelled', completed_at = now() WHERE schedule_id = $1`, runID)
+	_, err = db.Exec(`UPDATE runs SET status = 'cancelled', completed_at = now() WHERE run_id = $1`, runID)
 	require.NoError(t, err)
 	deleted, err = repo.DeleteAbsentFrom(ctx, tenant, "rel-2")
 	require.NoError(t, err)

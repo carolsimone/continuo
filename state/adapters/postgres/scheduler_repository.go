@@ -23,12 +23,12 @@ var (
 	ErrDuplicateKey = errors.New("duplicate key violation")
 	// ErrNotCancellable is returned when Cancel affects zero rows (not found or already terminal)
 	ErrNotCancellable = errors.New("scheduler not found or already in terminal state")
-	// ErrRunExists is returned by CreateTx when a scheduler_tracker row with the
-	// same schedule_id already exists. The INSERT does nothing, so the
+	// ErrRunExists is returned by CreateTx when a run row with the
+	// same run_id already exists. The INSERT does nothing, so the
 	// transaction stays usable.
-	ErrRunExists = errors.New("scheduler_tracker row already exists")
+	ErrRunExists = errors.New("run row already exists")
 	// ErrActiveScheduleConflict is returned when an INSERT violates the partial
-	// unique index uq_scheduler_tracker_active_per_schedule — another active
+	// unique index uq_runs_active_per_schedule — another active
 	// (pending|running) run already exists for the same schedule_name. This is the
 	// concurrent-activation loser; SaveRun maps it to run.ErrScheduleHasActiveRun.
 	ErrActiveScheduleConflict = errors.New("schedule already has an active run")
@@ -36,15 +36,15 @@ var (
 
 // activeScheduleConstraint is the name of the partial unique index that enforces
 // one active run per schedule. A 23505 mentioning it means a concurrent activation
-// won the race, as opposed to a primary-key (schedule_id) collision.
-const activeScheduleConstraint = "uq_scheduler_tracker_active_per_schedule"
+// won the race, as opposed to a primary-key (run_id) collision.
+const activeScheduleConstraint = "uq_runs_active_per_schedule"
 
 // isUniqueViolation reports whether err is a PostgreSQL unique_violation (23505).
 func isUniqueViolation(err error) bool {
 	return strings.Contains(err.Error(), "duplicate key") || strings.Contains(err.Error(), "23505")
 }
 
-// SchedulerTrackerRepository defines all operations for scheduler_tracker table
+// SchedulerTrackerRepository defines all operations for runs table
 type SchedulerTrackerRepository interface {
 	Create(ctx context.Context, tracker *SchedulerTracker) error
 	GetByID(ctx context.Context, scheduleID uuid.UUID) (*SchedulerTracker, error)
@@ -55,7 +55,7 @@ type SchedulerTrackerRepository interface {
 	// the row matches the value the gRPC response reports.
 	CancelTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID, status run.SchedulerStatus, cancelledBy, reason string, cancelledAt time.Time) error
 	HasActiveSchedule(ctx context.Context, scheduleName string) (bool, error)
-	// GetLastRunPerSchedule returns the most recent scheduler_tracker row per schedule name.
+	// GetLastRunPerSchedule returns the most recent run row per schedule name.
 	// Only returns schedules that have at least one run.
 	GetLastRunPerSchedule(ctx context.Context) (map[string]LastRunData, error)
 	// GetActiveScheduler returns the most recently created PENDING or RUNNING run for a schedule.
@@ -71,11 +71,11 @@ type SchedulerTrackerRepository interface {
 	UpdateStatusTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, status string) error
 	// FinalizeRunTx sets status and completed_at = NOW() for terminal-state transitions.
 	FinalizeRunTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, status string) error
-	// UpdateRunRowTx applies every dirty scheduler_tracker column named in fields
+	// UpdateRunRowTx applies every dirty runs column named in fields
 	// as a single UPDATE statement within an existing transaction. Callers must
 	// hold a SELECT ... FOR UPDATE lock on the row (LoadRunForUpdate provides it).
 	UpdateRunRowTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, fields RunRowUpdate) error
-	// GetByIDForUpdateTx retrieves and row-locks the scheduler_tracker row for the given id
+	// GetByIDForUpdateTx retrieves and row-locks the run row for the given id
 	// using SELECT ... FOR UPDATE. Must be called within a transaction.
 	GetByIDForUpdateTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID) (*SchedulerTracker, error)
 }
@@ -102,7 +102,7 @@ func NewSchedulerTrackerRepository(db *sqlx.DB, logger *slog.Logger) SchedulerTr
 	}
 }
 
-// Create inserts a new scheduler_tracker record into the database
+// Create inserts a new runs record into the database
 func (r *schedulerTrackerRepository) Create(ctx context.Context, tracker *SchedulerTracker) error {
 	meta, err := tracker.GetServiceMetadata()
 	if err != nil {
@@ -114,9 +114,9 @@ func (r *schedulerTrackerRepository) Create(ctx context.Context, tracker *Schedu
 	}
 
 	query := `
-		INSERT INTO scheduler_tracker (
-			schedule_id, schedule_name, status, created_at,
-			started_at, completed_at, last_heartbeat_at,
+		INSERT INTO runs (
+			run_id, schedule_name, status, created_at,
+			started_at, completed_at, last_progress_at,
 			cancelled_at, cancelled_by, cancellation_reason,
 			initialization_status, service_metadata,
 			total_task_count, terminal_task_count,
@@ -144,26 +144,26 @@ func (r *schedulerTrackerRepository) Create(ctx context.Context, tracker *Schedu
 		// Check for duplicate key error (PostgreSQL error code 23505)
 		if isUniqueViolation(err) {
 			if strings.Contains(err.Error(), activeScheduleConstraint) {
-				r.logger.Warn("Active-run conflict creating scheduler_tracker",
+				r.logger.Warn("Active-run conflict creating run",
 					"schedule_name", tracker.ScheduleName,
 				)
 				return ErrActiveScheduleConflict
 			}
-			r.logger.Warn("Duplicate key violation when creating scheduler_tracker",
+			r.logger.Warn("Duplicate key violation when creating run",
 				"schedule_id", tracker.ScheduleID,
 				"schedule_name", tracker.ScheduleName,
 			)
 			return ErrDuplicateKey
 		}
-		r.logger.Error("Failed to create scheduler_tracker",
+		r.logger.Error("Failed to create run",
 			"schedule_id", tracker.ScheduleID,
 			"schedule_name", tracker.ScheduleName,
 			"error", err,
 		)
-		return fmt.Errorf("failed to create scheduler_tracker: %w", err)
+		return fmt.Errorf("failed to create run: %w", err)
 	}
 
-	r.logger.Info("Created scheduler_tracker",
+	r.logger.Info("Created run",
 		"schedule_id", tracker.ScheduleID,
 		"schedule_name", tracker.ScheduleName,
 		"status", tracker.Status,
@@ -172,8 +172,8 @@ func (r *schedulerTrackerRepository) Create(ctx context.Context, tracker *Schedu
 	return nil
 }
 
-// CreateTx inserts a new scheduler_tracker record within an existing transaction.
-// The insert names schedule_id as its conflict target: a row with the same id
+// CreateTx inserts a new runs record within an existing transaction.
+// The insert names run_id as its conflict target: a row with the same id
 // makes it a no-op reported as ErrRunExists, without aborting the transaction.
 // The one-active-run-per-schedule index is not a conflict target, so a
 // different id with the same active schedule_name still fails, as
@@ -189,9 +189,9 @@ func (r *schedulerTrackerRepository) CreateTx(ctx context.Context, tx *sqlx.Tx, 
 	}
 
 	res, err := tx.ExecContext(ctx, `
-		INSERT INTO scheduler_tracker (
-			schedule_id, schedule_name, status, created_at,
-			started_at, completed_at, last_heartbeat_at,
+		INSERT INTO runs (
+			run_id, schedule_name, status, created_at,
+			started_at, completed_at, last_progress_at,
 			cancelled_at, cancelled_by, cancellation_reason,
 			initialization_status, service_metadata,
 			total_task_count, terminal_task_count,
@@ -204,7 +204,7 @@ func (r *schedulerTrackerRepository) CreateTx(ctx context.Context, tx *sqlx.Tx, 
 			$13, $14,
 			$15, $16, $17, $18, $19, $20
 		)
-		ON CONFLICT (schedule_id) DO NOTHING
+		ON CONFLICT (run_id) DO NOTHING
 	`,
 		tracker.ScheduleID, tracker.ScheduleName, tracker.Status, tracker.CreatedAt,
 		tracker.StartedAt, tracker.CompletedAt, tracker.LastHeartbeatAt,
@@ -221,11 +221,11 @@ func (r *schedulerTrackerRepository) CreateTx(ctx context.Context, tx *sqlx.Tx, 
 			}
 			return ErrDuplicateKey
 		}
-		return fmt.Errorf("failed to create scheduler_tracker: %w", err)
+		return fmt.Errorf("failed to create run: %w", err)
 	}
 	rows, err := res.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("failed to create scheduler_tracker: %w", err)
+		return fmt.Errorf("failed to create run: %w", err)
 	}
 	if rows == 0 {
 		return ErrRunExists
@@ -233,18 +233,18 @@ func (r *schedulerTrackerRepository) CreateTx(ctx context.Context, tx *sqlx.Tx, 
 	return nil
 }
 
-// GetByID retrieves a scheduler_tracker by schedule_id
+// GetByID retrieves a run by run_id
 func (r *schedulerTrackerRepository) GetByID(ctx context.Context, scheduleID uuid.UUID) (*SchedulerTracker, error) {
 	query := `
 		SELECT
-			schedule_id, schedule_name, status, created_at,
-			started_at, completed_at, last_heartbeat_at,
+			run_id, schedule_name, status, created_at,
+			started_at, completed_at, last_progress_at,
 			cancelled_at, cancelled_by, cancellation_reason,
 			initialization_status, service_metadata,
 			total_task_count, terminal_task_count,
 			kind, source_run_id, initiated_by, operation, release_id, promotion_seq, planned_at, failure_reason
-		FROM scheduler_tracker
-		WHERE schedule_id = $1
+		FROM runs
+		WHERE run_id = $1
 	`
 
 	var tracker SchedulerTracker
@@ -256,11 +256,11 @@ func (r *schedulerTrackerRepository) GetByID(ctx context.Context, scheduleID uui
 			)
 			return nil, ErrNotFound
 		}
-		r.logger.Error("Failed to get scheduler_tracker",
+		r.logger.Error("Failed to get run",
 			"schedule_id", scheduleID,
 			"error", err,
 		)
-		return nil, fmt.Errorf("failed to get scheduler_tracker: %w", err)
+		return nil, fmt.Errorf("failed to get run: %w", err)
 	}
 	meta, metaErr := tracker.GetServiceMetadata()
 	if metaErr != nil {
@@ -268,7 +268,7 @@ func (r *schedulerTrackerRepository) GetByID(ctx context.Context, scheduleID uui
 	}
 	tracker.ServiceMetadata = meta
 
-	r.logger.Debug("Retrieved scheduler_tracker",
+	r.logger.Debug("Retrieved run",
 		"schedule_id", scheduleID,
 		"schedule_name", tracker.ScheduleName,
 		"status", tracker.Status,
@@ -295,13 +295,13 @@ func (r *schedulerTrackerRepository) CancelTx(ctx context.Context, tx *sqlx.Tx, 
 		return fmt.Errorf("cancel run %s: status %q is not a cancel", scheduleID, status)
 	}
 	result, err := tx.ExecContext(ctx, `
-		UPDATE scheduler_tracker
+		UPDATE runs
 		SET status              = $1,
 		    cancelled_at        = $2,
 		    completed_at        = $3,
 		    cancelled_by        = $4,
 		    cancellation_reason = $5
-		WHERE schedule_id = $6
+		WHERE run_id = $6
 		  AND NOT (status = ANY($7::text[]))
 	`, status, cancelledAt, completedAt, cancelledBy, reason, scheduleID, pq.Array(terminalSchedulerStatuses()))
 	if err != nil {
@@ -347,7 +347,7 @@ func columnValues[S ~string](statuses []S) []string {
 func (r *schedulerTrackerRepository) HasActiveSchedule(ctx context.Context, scheduleName string) (bool, error) {
 	query := `
 		SELECT EXISTS(
-			SELECT 1 FROM scheduler_tracker
+			SELECT 1 FROM runs
 			WHERE schedule_name = $1
 			  AND status = ANY($2::text[])
 			ORDER BY created_at DESC
@@ -378,13 +378,13 @@ func (r *schedulerTrackerRepository) HasActiveSchedule(ctx context.Context, sche
 func (r *schedulerTrackerRepository) GetActiveScheduler(ctx context.Context, scheduleName string) (*SchedulerTracker, error) {
 	query := `
 		SELECT
-			schedule_id, schedule_name, status, created_at,
-			started_at, completed_at, last_heartbeat_at,
+			run_id, schedule_name, status, created_at,
+			started_at, completed_at, last_progress_at,
 			cancelled_at, cancelled_by, cancellation_reason,
 			initialization_status, service_metadata,
 			total_task_count, terminal_task_count,
 			kind, source_run_id, initiated_by, operation, release_id, promotion_seq, planned_at, failure_reason
-		FROM scheduler_tracker
+		FROM runs
 		WHERE schedule_name = $1
 		  AND status = ANY($2::text[])
 		ORDER BY created_at DESC
@@ -422,7 +422,7 @@ func (r *schedulerTrackerRepository) GetActiveScheduler(ctx context.Context, sch
 // UpdateInitializationStatusTx updates initialization_status within an existing transaction.
 func (r *schedulerTrackerRepository) UpdateInitializationStatusTx(ctx context.Context, tx *sqlx.Tx, scheduleID uuid.UUID, status string) error {
 	result, err := tx.ExecContext(ctx,
-		`UPDATE scheduler_tracker SET initialization_status = $1 WHERE schedule_id = $2`,
+		`UPDATE runs SET initialization_status = $1 WHERE run_id = $2`,
 		status, scheduleID,
 	)
 	if err != nil {
@@ -438,9 +438,9 @@ func (r *schedulerTrackerRepository) UpdateInitializationStatusTx(ctx context.Co
 // SetTotalTaskCountTx sets total_task_count for the given schedule.
 func (r *schedulerTrackerRepository) SetTotalTaskCountTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, total int32) error {
 	res, err := tx.ExecContext(ctx, `
-		UPDATE scheduler_tracker
+		UPDATE runs
 		SET total_task_count = $2
-		WHERE schedule_id = $1
+		WHERE run_id = $1
 	`, id, total)
 	if err != nil {
 		return err
@@ -450,23 +450,23 @@ func (r *schedulerTrackerRepository) SetTotalTaskCountTx(ctx context.Context, tx
 		return err
 	}
 	if rows == 0 {
-		return fmt.Errorf("scheduler_tracker row not found for id %s: %w", id, ErrNotFound)
+		return fmt.Errorf("run row not found for id %s: %w", id, ErrNotFound)
 	}
 	return nil
 }
 
 // SetTerminalTaskCountTx writes terminal_task_count absolutely (overwriting
 // any prior value) inside the caller's transaction. Callers must hold a
-// SELECT ... FOR UPDATE lock on the scheduler_tracker row before invoking;
+// SELECT ... FOR UPDATE lock on the run row before invoking;
 // the aggregate's LoadRunForUpdate provides this. Decreasing writes succeed
 // — the GREATEST monotonic-MAX semantics that lived here pre-aggregate
 // existed only to guard against unsynchronised writers, which no longer
 // exist after the load-mutate-save refactor.
 func (r *schedulerTrackerRepository) SetTerminalTaskCountTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, terminal int32) error {
 	res, err := tx.ExecContext(ctx, `
-		UPDATE scheduler_tracker
+		UPDATE runs
 		SET terminal_task_count = $2
-		WHERE schedule_id = $1
+		WHERE run_id = $1
 	`, id, terminal)
 	if err != nil {
 		return fmt.Errorf("set terminal_task_count: %w", err)
@@ -476,32 +476,32 @@ func (r *schedulerTrackerRepository) SetTerminalTaskCountTx(ctx context.Context,
 		return err
 	}
 	if rows == 0 {
-		return fmt.Errorf("scheduler_tracker row not found for id %s: %w", id, ErrNotFound)
+		return fmt.Errorf("run row not found for id %s: %w", id, ErrNotFound)
 	}
 	return nil
 }
 
-// GetByIDForUpdateTx retrieves and row-locks the scheduler_tracker row using SELECT ... FOR UPDATE.
+// GetByIDForUpdateTx retrieves and row-locks the run row using SELECT ... FOR UPDATE.
 // Returns ErrNotFound when no row exists for the given id.
 func (r *schedulerTrackerRepository) GetByIDForUpdateTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID) (*SchedulerTracker, error) {
 	var tracker SchedulerTracker
 	err := tx.QueryRowxContext(ctx, `
 		SELECT
-			schedule_id, schedule_name, status, created_at,
-			started_at, completed_at, last_heartbeat_at,
+			run_id, schedule_name, status, created_at,
+			started_at, completed_at, last_progress_at,
 			cancelled_at, cancelled_by, cancellation_reason,
 			initialization_status, service_metadata,
 			total_task_count, terminal_task_count,
 			kind, source_run_id, initiated_by, operation, release_id, promotion_seq, planned_at, failure_reason
-		FROM scheduler_tracker
-		WHERE schedule_id = $1
+		FROM runs
+		WHERE run_id = $1
 		FOR UPDATE
 	`, id).StructScan(&tracker)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
-		return nil, fmt.Errorf("get scheduler_tracker for update: %w", err)
+		return nil, fmt.Errorf("get run for update: %w", err)
 	}
 	meta, metaErr := tracker.GetServiceMetadata()
 	if metaErr != nil {
@@ -514,18 +514,18 @@ func (r *schedulerTrackerRepository) GetByIDForUpdateTx(ctx context.Context, tx 
 // UpdateStatusTx updates the status column for the given schedule within a transaction.
 func (r *schedulerTrackerRepository) UpdateStatusTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, status string) error {
 	res, err := tx.ExecContext(ctx,
-		`UPDATE scheduler_tracker SET status = $2 WHERE schedule_id = $1`,
+		`UPDATE runs SET status = $2 WHERE run_id = $1`,
 		id, status,
 	)
 	if err != nil {
-		return fmt.Errorf("update scheduler_tracker status: %w", err)
+		return fmt.Errorf("update run status: %w", err)
 	}
 	rows, err := res.RowsAffected()
 	if err != nil {
 		return err
 	}
 	if rows == 0 {
-		return fmt.Errorf("scheduler_tracker row not found for id %s: %w", id, ErrNotFound)
+		return fmt.Errorf("run row not found for id %s: %w", id, ErrNotFound)
 	}
 	return nil
 }
@@ -533,23 +533,23 @@ func (r *schedulerTrackerRepository) UpdateStatusTx(ctx context.Context, tx *sql
 // FinalizeRunTx sets status and completed_at for a terminal-state transition.
 func (r *schedulerTrackerRepository) FinalizeRunTx(ctx context.Context, tx *sqlx.Tx, id uuid.UUID, status string) error {
 	res, err := tx.ExecContext(ctx,
-		`UPDATE scheduler_tracker SET status = $2, completed_at = NOW() WHERE schedule_id = $1`,
+		`UPDATE runs SET status = $2, completed_at = NOW() WHERE run_id = $1`,
 		id, status,
 	)
 	if err != nil {
-		return fmt.Errorf("finalize scheduler_tracker status: %w", err)
+		return fmt.Errorf("finalize run status: %w", err)
 	}
 	rows, err := res.RowsAffected()
 	if err != nil {
 		return err
 	}
 	if rows == 0 {
-		return fmt.Errorf("scheduler_tracker row not found for id %s: %w", id, ErrNotFound)
+		return fmt.Errorf("run row not found for id %s: %w", id, ErrNotFound)
 	}
 	return nil
 }
 
-// RunRowUpdate carries the scheduler_tracker columns a SaveRun must persist in
+// RunRowUpdate carries the runs columns a SaveRun must persist in
 // one statement. Each pointer field is nil when the corresponding column is not
 // dirty; a non-nil pointer means "write this value". This lets the repository
 // build a single UPDATE over a fixed column allowlist while keeping the dirty
@@ -600,7 +600,7 @@ func (r *schedulerTrackerRepository) UpdateRunRowTx(ctx context.Context, tx *sql
 		add("started_at", *fields.StartedAt)
 	}
 	if fields.LastHeartbeatAt != nil {
-		add("last_heartbeat_at", *fields.LastHeartbeatAt)
+		add("last_progress_at", *fields.LastHeartbeatAt)
 	}
 	if fields.PlannedAt != nil {
 		add("planned_at", *fields.PlannedAt)
@@ -618,20 +618,20 @@ func (r *schedulerTrackerRepository) UpdateRunRowTx(ctx context.Context, tx *sql
 
 	args = append(args, id)
 	query := fmt.Sprintf(
-		`UPDATE scheduler_tracker SET %s WHERE schedule_id = $%d`,
+		`UPDATE runs SET %s WHERE run_id = $%d`,
 		strings.Join(setClauses, ", "), len(args),
 	)
 
 	res, err := tx.ExecContext(ctx, query, args...)
 	if err != nil {
-		return fmt.Errorf("update scheduler_tracker run row: %w", err)
+		return fmt.Errorf("update run row: %w", err)
 	}
 	rows, err := res.RowsAffected()
 	if err != nil {
 		return err
 	}
 	if rows == 0 {
-		return fmt.Errorf("scheduler_tracker row not found for id %s: %w", id, ErrNotFound)
+		return fmt.Errorf("run row not found for id %s: %w", id, ErrNotFound)
 	}
 	return nil
 }
@@ -646,7 +646,7 @@ func kindWithDefault(kind string) string {
 }
 
 // operationWithDefault returns 'run' for the empty model.OperationRun value,
-// else the operation as-is — the scheduler_tracker.operation column is a
+// else the operation as-is — the runs.operation column is a
 // non-empty 4-value domain.
 func operationWithDefault(op string) string {
 	if op == "" {
@@ -661,11 +661,11 @@ func (r *schedulerTrackerRepository) GetLastRunPerSchedule(ctx context.Context) 
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT DISTINCT ON (schedule_name)
 		  schedule_name,
-		  schedule_id,
+		  run_id,
 		  status,
 		  created_at,
 		  (status = ANY($1::text[])) AS is_running
-		FROM scheduler_tracker
+		FROM runs
 		ORDER BY schedule_name, created_at DESC
 	`, pq.Array(activeSchedulerStatuses()))
 	if err != nil {

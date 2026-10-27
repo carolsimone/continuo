@@ -23,7 +23,7 @@ import (
 // first node they share, before it holds any node the earlier one still
 // needs, and skips each node the earlier one committed.
 //
-// The waiter check spans tenants: task_tracker has no tenant column, so a
+// The waiter check spans tenants: tasks has no tenant column, so a
 // pending task of any tenant waiting on the same node key leaves the node to
 // that waiter. On an install with one tenant this is the node's own queue;
 // with several, another tenant's waiter can leave a claiming task waiting
@@ -34,7 +34,7 @@ WITH taken AS (
 	INSERT INTO node_leases (tenant_id, node_key, task_id, run_id)
 	SELECT $1, k, t, r FROM unnest($2::text[], $3::uuid[], $4::uuid[]) AS c(k, t, r)
 	WHERE NOT EXISTS (
-		SELECT 1 FROM task_tracker w
+		SELECT 1 FROM tasks w
 		WHERE w.node_key = c.k AND w.wait_reason = 'node_lease' AND w.status = 'pending' AND w.task_id <> c.t)
 	ORDER BY k
 	ON CONFLICT (tenant_id, node_key) DO NOTHING
@@ -103,8 +103,8 @@ func takeLeaseForWaiter(ctx context.Context, tx *sqlx.Tx, tenantID string, c run
 const runGrantableWaitsQuery = `
 SELECT task_id, run_id, node_key, waiting_since FROM (` + nextWaiters + `
 	  AND w.node_key IN (
-		SELECT m.node_key FROM task_tracker m
-		WHERE m.schedule_id = $2 AND m.status = 'pending' AND m.wait_reason = 'node_lease')` + nextWaitersOrder + `
+		SELECT m.node_key FROM tasks m
+		WHERE m.run_id = $2 AND m.status = 'pending' AND m.wait_reason = 'node_lease')` + nextWaitersOrder + `
 ) oldest
 WHERE run_id = $2
 ORDER BY node_key`
@@ -132,7 +132,7 @@ func waitForLeases(ctx context.Context, tx *sqlx.Tx, taskIDs []uuid.UUID) error 
 		return nil
 	}
 	if _, err := tx.ExecContext(ctx, `
-		UPDATE task_tracker
+		UPDATE tasks
 		SET wait_reason = 'node_lease', lease_wait_since = COALESCE(lease_wait_since, now())
 		WHERE task_id = ANY($1) AND status = 'pending'`,
 		pq.Array(taskIDs)); err != nil {

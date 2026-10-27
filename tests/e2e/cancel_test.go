@@ -148,7 +148,7 @@ func callCancelEndpoint(t *testing.T, ctx context.Context, scheduleName, cancell
 	t.Logf("POST /api/schedules/%s/cancel → 200 OK", scheduleName)
 }
 
-// verifySchedulerCancelled polls scheduler_tracker until status = 'cancelled'.
+// verifySchedulerCancelled polls runs until status = 'cancelled'.
 // A cancel first moves the run to 'cancelling'; it ends 'cancelled' once
 // execution-controller has deleted the run's Jobs and reported every attempt
 // stopped, which takes up to 3 minutes.
@@ -161,7 +161,7 @@ func verifySchedulerCancelled(t *testing.T, ctx context.Context, clients *testCl
 	pollUntilDescribed(t, ctx, 3*time.Minute, 500*time.Millisecond, func() (bool, error) {
 		var status string
 		err := clients.stateDB.Get(&status, `
-			SELECT status FROM scheduler_tracker WHERE schedule_id = $1
+			SELECT status FROM runs WHERE run_id = $1
 		`, schedulerID)
 		if err != nil {
 			return false, err
@@ -172,7 +172,7 @@ func verifySchedulerCancelled(t *testing.T, ctx context.Context, clients *testCl
 		return fmt.Sprintf("run %s did not reach 'cancelled' within 3m; last status %q", schedulerID, lastStatus)
 	})
 
-	t.Log("✅ scheduler_tracker.status = 'cancelled'")
+	t.Log("✅ runs.status = 'cancelled'")
 }
 
 // verifyTasksCancelled asserts that at least some non-seed tasks were cancelled.
@@ -184,8 +184,8 @@ func verifyTasksCancelled(t *testing.T, ctx context.Context, clients *testClient
 	var count int
 	err := clients.stateDB.QueryRowContext(ctx, `
 		SELECT COUNT(*)
-		FROM task_tracker
-		WHERE schedule_id = $1 AND status = 'cancelled'
+		FROM tasks
+		WHERE run_id = $1 AND status = 'cancelled'
 	`, schedulerID).Scan(&count)
 	require.NoError(t, err)
 	assert.Greater(t, count, 0,

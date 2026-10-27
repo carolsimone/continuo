@@ -37,17 +37,17 @@ func newRunWithTasks(t *testing.T, db *sqlx.DB, n int) (uuid.UUID, []uuid.UUID) 
 	t.Helper()
 	scheduleID := uuid.New()
 	_, err := db.Exec(`
-		INSERT INTO scheduler_tracker (schedule_id, schedule_name, status)
+		INSERT INTO runs (run_id, schedule_name, status)
 		VALUES ($1, $2, 'running')`, scheduleID, "attempts-"+scheduleID.String())
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		_, _ = db.Exec(`DELETE FROM scheduler_tracker WHERE schedule_id = $1`, scheduleID)
+		_, _ = db.Exec(`DELETE FROM runs WHERE run_id = $1`, scheduleID)
 	})
 	ids := make([]uuid.UUID, 0, n)
 	for i := range n {
 		id := uuid.New()
 		_, err = db.Exec(`
-			INSERT INTO task_tracker (task_id, schedule_id, service_name, schema_name, table_name, job_name, status, max_retries)
+			INSERT INTO tasks (task_id, run_id, service_name, schema_name, table_name, job_name, status, max_retries)
 			VALUES ($1, $2, 'svc', 'sch', $3, 'job-0', 'running', 2)`, id, scheduleID, "tbl"+string(rune('a'+i)))
 		require.NoError(t, err)
 		ids = append(ids, id)
@@ -224,10 +224,10 @@ func TestTaskAttempts_RequestStopsAsksTheCurrentOpenAttemptOfEachStoppingTask(t 
 	conn := newTestDB(t)
 	runID, ids := newRunWithTasks(t, conn, 4)
 	_, others := newRunWithTasks(t, conn, 1)
-	_, err := conn.Exec(`UPDATE task_tracker SET status = 'stopping' WHERE task_id = ANY($1)`,
+	_, err := conn.Exec(`UPDATE tasks SET status = 'stopping' WHERE task_id = ANY($1)`,
 		pq.Array([]uuid.UUID{ids[0], ids[1], ids[3], others[0]}))
 	require.NoError(t, err)
-	_, err = conn.Exec(`UPDATE task_tracker SET attempt = 1 WHERE task_id = $1`, ids[0])
+	_, err = conn.Exec(`UPDATE tasks SET attempt = 1 WHERE task_id = $1`, ids[0])
 	require.NoError(t, err)
 
 	attemptTx(t, conn, func(ctx context.Context, tx *sqlx.Tx, tasks run.TaskCollection) {
@@ -295,7 +295,7 @@ func TestTaskAttempts_LoadAttemptStateCarriesTheTasksIdentity(t *testing.T) {
 	db := newTestDB(t)
 	_, ids := newRunWithTasks(t, db, 1)
 	dispatched := time.Date(2026, 10, 21, 7, 30, 0, 0, time.UTC)
-	_, err := db.Exec(`UPDATE task_tracker SET dispatched_at = $2, attempt = 1 WHERE task_id = $1`, ids[0], dispatched)
+	_, err := db.Exec(`UPDATE tasks SET dispatched_at = $2, attempt = 1 WHERE task_id = $1`, ids[0], dispatched)
 	require.NoError(t, err)
 
 	attemptTx(t, db, func(ctx context.Context, _ *sqlx.Tx, tasks run.TaskCollection) {

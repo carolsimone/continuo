@@ -286,9 +286,9 @@ The failure model `ftable_e` runs in the `service-2` Docker image but JOINs `pub
 3. **Trigger** - `ActivateSchedule` gRPC call
 4. **Verify Level 0** - Root nodes (`ftable_a`, `ftable_b`) complete successfully
 5. **Verify Level 1** - `ftable_c` executes; `ftable_d` and `ftable_e` are deployed
-6. **Wait for ftable_e failure** - Poll until `task_tracker` holds `attempt = max_retries` and `status = 'failed'` and `task_attempts` holds one failed row of class `task` for each attempt from 0 to `max_retries`; `ftable_d` succeeds
+6. **Wait for ftable_e failure** - Poll until `tasks` holds `attempt = max_retries` and `status = 'failed'` and `task_attempts` holds one failed row of class `task` for each attempt from 0 to `max_retries`; `ftable_d` succeeds
 7. **Verify the cascade** - Confirm `ftable_f` is never deployed and is recorded `skipped`
-8. **Verify scheduler FAILED** - Poll `scheduler_tracker` until `status = 'failed'`
+8. **Verify scheduler FAILED** - Poll `runs` until `status = 'failed'`
 9. **Cleanup** - Remove all test data
 
 ## Expected Duration

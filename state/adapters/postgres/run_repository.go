@@ -70,7 +70,7 @@ func (r *RunRepositoryAdapter) SaveRun(ctx context.Context, rn *run.Run) error {
 			return fmt.Errorf("dehydrate run: %w", err)
 		}
 		if err := r.schedRepo.CreateTx(ctx, r.tx, tr); err != nil {
-			// The partial unique index uq_scheduler_tracker_active_per_schedule is
+			// The partial unique index uq_runs_active_per_schedule is
 			// the DB-level backstop for the activation TOCTOU: a concurrent
 			// activation that passed the HasActiveSchedule pre-check loses the
 			// INSERT race here and gets the same domain error as the check-first path.
@@ -80,7 +80,7 @@ func (r *RunRepositoryAdapter) SaveRun(ctx context.Context, rn *run.Run) error {
 			if errors.Is(err, ErrRunExists) {
 				return run.ErrRunAlreadyExists
 			}
-			return fmt.Errorf("create scheduler_tracker: %w", err)
+			return fmt.Errorf("create run: %w", err)
 		}
 		rn.ResetChanges()
 		return nil
@@ -185,7 +185,7 @@ func (r *RunRepositoryAdapter) GetActiveScheduler(ctx context.Context, name stri
 	return hydrateRun(tr)
 }
 
-// RunExists reports whether a scheduler_tracker row with id exists, reading
+// RunExists reports whether a run row with id exists, reading
 // inside the bound transaction.
 func (r *RunRepositoryAdapter) RunExists(ctx context.Context, id uuid.UUID) (bool, error) {
 	if r.tx == nil {
@@ -193,29 +193,29 @@ func (r *RunRepositoryAdapter) RunExists(ctx context.Context, id uuid.UUID) (boo
 	}
 	var exists bool
 	if err := r.tx.GetContext(ctx, &exists,
-		`SELECT EXISTS (SELECT 1 FROM scheduler_tracker WHERE schedule_id = $1)`, id); err != nil {
+		`SELECT EXISTS (SELECT 1 FROM runs WHERE run_id = $1)`, id); err != nil {
 		return false, fmt.Errorf("check run %s exists: %w", id, err)
 	}
 	return exists, nil
 }
 
 // ListUnplannedActive reads the pending, running and cancelling
-// scheduler_tracker rows whose planned_at is NULL, oldest first, inside the bound transaction.
+// run rows whose planned_at is NULL, oldest first, inside the bound transaction.
 func (r *RunRepositoryAdapter) ListUnplannedActive(ctx context.Context) ([]uuid.UUID, error) {
 	if r.tx == nil {
 		return nil, fmt.Errorf("ListUnplannedActive requires an active transaction")
 	}
 	var ids []uuid.UUID
 	if err := r.tx.SelectContext(ctx, &ids, `
-		SELECT schedule_id FROM scheduler_tracker
+		SELECT run_id FROM runs
 		WHERE status = ANY($1::text[]) AND planned_at IS NULL
-		ORDER BY created_at, schedule_id`, pq.Array(activeSchedulerStatuses())); err != nil {
+		ORDER BY created_at, run_id`, pq.Array(activeSchedulerStatuses())); err != nil {
 		return nil, fmt.Errorf("list the active runs state did not plan: %w", err)
 	}
 	return ids, nil
 }
 
-// CountReleaseRuns counts the scheduler_tracker rows of kind that name
+// CountReleaseRuns counts the run rows of kind that name
 // releaseID, reading inside the bound transaction.
 func (r *RunRepositoryAdapter) CountReleaseRuns(ctx context.Context, releaseID string, kind run.Kind) (int, error) {
 	if r.tx == nil {
@@ -223,7 +223,7 @@ func (r *RunRepositoryAdapter) CountReleaseRuns(ctx context.Context, releaseID s
 	}
 	var n int
 	if err := r.tx.GetContext(ctx, &n,
-		`SELECT count(*) FROM scheduler_tracker WHERE release_id = $1 AND kind = $2`, releaseID, string(kind)); err != nil {
+		`SELECT count(*) FROM runs WHERE release_id = $1 AND kind = $2`, releaseID, string(kind)); err != nil {
 		return 0, fmt.Errorf("count the %s runs of release %s: %w", kind, releaseID, err)
 	}
 	return n, nil

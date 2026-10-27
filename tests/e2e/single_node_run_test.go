@@ -18,8 +18,8 @@ import (
 // metadata mode:
 //
 //  1. Calls TriggerSingleNodeRun (gRPC) for a known seed node.
-//  2. Waits for the synthesised run to reach 'succeeded' in scheduler_tracker.
-//  3. Asserts exactly ONE task_tracker row exists with non-empty image_tag.
+//  2. Waits for the synthesised run to reach 'succeeded' in runs.
+//  3. Asserts exactly ONE tasks row exists with non-empty image_tag.
 //  4. Asserts the run is stored with kind = "single_node_run" and no
 //     source_run_id.
 func TestSingleNodeRunLatest(t *testing.T) {
@@ -76,23 +76,23 @@ func TestSingleNodeRunLatest(t *testing.T) {
 	t.Log("Single-node run reached 'succeeded'")
 
 	// Assert exactly one task was dispatched.
-	t.Log("Verifying task_tracker has exactly 1 row...")
+	t.Log("Verifying tasks has exactly 1 row...")
 	var taskCount int
 	err = clients.stateDB.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM task_tracker WHERE schedule_id = $1`,
+		`SELECT COUNT(*) FROM tasks WHERE run_id = $1`,
 		runID,
 	).Scan(&taskCount)
-	require.NoError(t, err, "failed to count task_tracker rows")
+	require.NoError(t, err, "failed to count tasks rows")
 	require.Equal(t, 1, taskCount, "expected exactly 1 task for a single-node run")
 
 	// Assert image_tag is populated.
 	imageTag := queryFirstTaskTrackerImageTag(t, clients.stateDB, runID)
-	assert.NotEmpty(t, imageTag, "task_tracker.image_tag must be non-empty")
-	t.Logf("task_tracker image_tag=%s", imageTag)
+	assert.NotEmpty(t, imageTag, "tasks.image_tag must be non-empty")
+	t.Logf("tasks image_tag=%s", imageTag)
 
 	// Assert the run's kind is "single_node_run".
 	runKind := queryPostgresTrackerKind(t, clients.stateDB, runID)
-	assert.Equal(t, "single_node_run", runKind, "scheduler_tracker.kind must be 'single_node_run'")
+	assert.Equal(t, "single_node_run", runKind, "runs.kind must be 'single_node_run'")
 
 	// Assert the run has no source run (latest mode has none).
 	assert.Empty(t, queryRunSourceRunID(t, clients, runID),
@@ -146,7 +146,7 @@ func TestSingleNodeRunLatest(t *testing.T) {
 //  1. Triggers a normal cron-style run on the "seed" schedule so that a real
 //     source run exists with stamped image_tag.
 //  2. Waits for that source run to reach SUCCEEDED.
-//  3. Reads the source run's task_tracker row for the target node to capture
+//  3. Reads the source run's tasks row for the target node to capture
 //     the "old" image_tag.
 //  4. Calls TriggerSingleNodeRun with metadata_source="snapshot_of_run" and
 //     source_run_id = the source schedule_id.
@@ -200,7 +200,7 @@ func TestSingleNodeRunStale(t *testing.T) {
 	// ── Step 3: Read source's image_tag for the target ────────────────────────
 	t.Log("=== Step 3: Reading source task metadata ===")
 	srcImage := readTaskImageTag(t, clients, srcID, targetService, targetSchema, targetTable)
-	require.NotEmpty(t, srcImage, "source task_tracker.image_tag must be non-empty")
+	require.NotEmpty(t, srcImage, "source tasks.image_tag must be non-empty")
 	t.Logf("Source metadata: image_tag=%s", srcImage)
 
 	// ── Step 4: Trigger single-node run in stale mode ─────────────────────────
@@ -240,7 +240,7 @@ func TestSingleNodeRunStale(t *testing.T) {
 	// Assert the run's source_run_id equals the source schedule_id string.
 	sourceRunID := queryRunSourceRunID(t, clients, runID)
 	require.Equal(t, srcResp.ScheduleId, sourceRunID,
-		"source_run_id must equal source schedule_id: got %q, want %q", sourceRunID, srcResp.ScheduleId)
+		"source_run_id must equal source run_id: got %q, want %q", sourceRunID, srcResp.ScheduleId)
 	t.Logf("source_run_id correctly set to %s", sourceRunID)
 
 	t.Log("TestSingleNodeRunStale passed")
@@ -297,10 +297,10 @@ func cleanupSingleNodeRun(t *testing.T, ctx context.Context, clients *testClient
 	t.Helper()
 	t.Logf("Cleaning up single-node run: run_id=%s schedule_name=%s", runID, scheduleName)
 
-	// Postgres: remove task_tracker (its task_attempts go with it through the
-	// foreign key's cascade) → scheduler_tracker.
-	_, _ = clients.stateDB.Exec(`DELETE FROM task_tracker WHERE schedule_id = $1`, runID)
-	_, _ = clients.stateDB.Exec(`DELETE FROM scheduler_tracker WHERE schedule_id = $1`, runID)
+	// Postgres: remove tasks (its task_attempts go with it through the
+	// foreign key's cascade) → runs.
+	_, _ = clients.stateDB.Exec(`DELETE FROM tasks WHERE run_id = $1`, runID)
+	_, _ = clients.stateDB.Exec(`DELETE FROM runs WHERE run_id = $1`, runID)
 
 	// The run's outbox rows. A failed delete leaves rows for later tests to trip
 	// over, so it is logged rather than discarded.
@@ -314,7 +314,7 @@ func cleanupSingleNodeRun(t *testing.T, ctx context.Context, clients *testClient
 	t.Log("Single-node run cleanup complete")
 }
 
-// readTaskImageTag returns the image_tag from the task_tracker row that matches
+// readTaskImageTag returns the image_tag from the tasks row that matches
 // the given schedule_id and target identity (service_name, schema_name,
 // table_name). Fails the test if no row is found.
 func readTaskImageTag(
@@ -327,8 +327,8 @@ func readTaskImageTag(
 	var imageTag string
 	err := clients.stateDB.GetContext(context.Background(), &imageTag,
 		`SELECT image_tag
-		   FROM task_tracker
-		  WHERE schedule_id   = $1
+		   FROM tasks
+		  WHERE run_id   = $1
 		    AND service_name  = $2
 		    AND schema_name   = $3
 		    AND table_name    = $4
@@ -336,7 +336,7 @@ func readTaskImageTag(
 		scheduleID, serviceName, schemaName, tableName,
 	)
 	require.NoError(t, err,
-		"readTaskImageTag: no task_tracker row for schedule_id=%s service=%s schema=%s table=%s",
+		"readTaskImageTag: no tasks row for run_id=%s service=%s schema=%s table=%s",
 		scheduleID, serviceName, schemaName, tableName,
 	)
 	return imageTag

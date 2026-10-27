@@ -49,12 +49,12 @@ func TestRunRepository_PromoteSeedRunKeepsItsRelease(t *testing.T) {
 	db := newTestDB(t)
 	releaseID := "rel-" + uuid.NewString()
 	id := uuid.New()
-	t.Cleanup(func() { _, _ = db.Exec(`DELETE FROM scheduler_tracker WHERE schedule_id = $1`, id) })
+	t.Cleanup(func() { _, _ = db.Exec(`DELETE FROM runs WHERE run_id = $1`, id) })
 	u := newReleaseRunUoW(db)
 	saveRuns(t, u, promoteSeedRun(t, id, releaseID))
 
 	var stored sql.NullString
-	require.NoError(t, db.Get(&stored, `SELECT release_id FROM scheduler_tracker WHERE schedule_id = $1`, id))
+	require.NoError(t, db.Get(&stored, `SELECT release_id FROM runs WHERE run_id = $1`, id))
 	assert.Equal(t, sql.NullString{String: releaseID, Valid: true}, stored)
 
 	read, err := u.Run().GetRun(ctx, id)
@@ -74,12 +74,12 @@ func TestRunRepository_RunWithoutAReleaseStoresNull(t *testing.T) {
 	db := newTestDB(t)
 	rn, err := run.NewPendingRun("no-release-"+uuid.NewString()[:8], run.KindTrigger, nil, "", nil, model.OperationRun, run.ReleaseStamp{}, time.Now())
 	require.NoError(t, err)
-	t.Cleanup(func() { _, _ = db.Exec(`DELETE FROM scheduler_tracker WHERE schedule_id = $1`, rn.ScheduleID()) })
+	t.Cleanup(func() { _, _ = db.Exec(`DELETE FROM runs WHERE run_id = $1`, rn.ScheduleID()) })
 	u := newReleaseRunUoW(db)
 	saveRuns(t, u, rn)
 
 	var stored sql.NullString
-	require.NoError(t, db.Get(&stored, `SELECT release_id FROM scheduler_tracker WHERE schedule_id = $1`, rn.ScheduleID()))
+	require.NoError(t, db.Get(&stored, `SELECT release_id FROM runs WHERE run_id = $1`, rn.ScheduleID()))
 	assert.False(t, stored.Valid)
 	read, err := u.Run().GetRun(ctx, rn.ScheduleID())
 	require.NoError(t, err)
@@ -95,7 +95,7 @@ func TestRunRepository_RunExistsAndCountReleaseRuns(t *testing.T) {
 	other := "rel-" + uuid.NewString()
 	first, second, third, elsewhere := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	t.Cleanup(func() {
-		_, _ = db.Exec(`DELETE FROM scheduler_tracker WHERE release_id IN ($1, $2)`, releaseID, other)
+		_, _ = db.Exec(`DELETE FROM runs WHERE release_id IN ($1, $2)`, releaseID, other)
 	})
 	u := newReleaseRunUoW(db)
 	saveRuns(t, u, promoteSeedRun(t, first, releaseID), promoteSeedRun(t, second, releaseID), promoteSeedRun(t, elsewhere, other))
@@ -135,7 +135,7 @@ func TestRunRepository_RunKeepsItsReleaseStamp(t *testing.T) {
 	db := newTestDB(t)
 	stamped, unstamped := uuid.New(), uuid.New()
 	t.Cleanup(func() {
-		_, _ = db.Exec(`DELETE FROM scheduler_tracker WHERE schedule_id IN ($1, $2)`, stamped, unstamped)
+		_, _ = db.Exec(`DELETE FROM runs WHERE run_id IN ($1, $2)`, stamped, unstamped)
 	})
 	u := newReleaseRunUoW(db)
 
@@ -148,9 +148,9 @@ func TestRunRepository_RunKeepsItsReleaseStamp(t *testing.T) {
 	saveRuns(t, u, withStamp, withoutStamp)
 
 	var seq sql.NullInt64
-	require.NoError(t, db.Get(&seq, `SELECT promotion_seq FROM scheduler_tracker WHERE schedule_id = $1`, stamped))
+	require.NoError(t, db.Get(&seq, `SELECT promotion_seq FROM runs WHERE run_id = $1`, stamped))
 	assert.Equal(t, sql.NullInt64{Int64: 12, Valid: true}, seq)
-	require.NoError(t, db.Get(&seq, `SELECT promotion_seq FROM scheduler_tracker WHERE schedule_id = $1`, unstamped))
+	require.NoError(t, db.Get(&seq, `SELECT promotion_seq FROM runs WHERE run_id = $1`, unstamped))
 	assert.False(t, seq.Valid)
 
 	read, err := u.Run().GetRun(ctx, stamped)

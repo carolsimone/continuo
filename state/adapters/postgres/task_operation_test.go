@@ -17,7 +17,7 @@ import (
 )
 
 // TestStart_StampsTaskOperation starts a single-node test run and asserts the
-// created task_tracker row carries operation='test'.
+// created task row carries operation='test'.
 func TestStart_StampsTaskOperation(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
@@ -26,11 +26,11 @@ func TestStart_StampsTaskOperation(t *testing.T) {
 
 	r, err := run.NewSingleNodeRun("op-task", model.OperationTest, nil, "user-1", run.ReleaseStamp{}, time.Now())
 	require.NoError(t, err)
-	// One statement deletes the run and, through task_tracker's ON DELETE
+	// One statement deletes the run and, through the tasks table's ON DELETE
 	// CASCADE, its tasks, so no concurrent reader sees this single-node run
 	// without its tasks.
 	t.Cleanup(func() {
-		db.Exec(`DELETE FROM scheduler_tracker WHERE schedule_id = $1`, r.ScheduleID())
+		db.Exec(`DELETE FROM runs WHERE run_id = $1`, r.ScheduleID())
 	})
 
 	tx, err := db.BeginTxx(ctx, nil)
@@ -56,6 +56,6 @@ func TestStart_StampsTaskOperation(t *testing.T) {
 	require.NoError(t, tx.Commit())
 
 	var op string
-	require.NoError(t, db.Get(&op, `SELECT operation FROM task_tracker WHERE task_id = $1`, taskID))
+	require.NoError(t, db.Get(&op, `SELECT operation FROM tasks WHERE task_id = $1`, taskID))
 	assert.Equal(t, "test", op)
 }

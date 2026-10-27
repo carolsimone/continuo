@@ -9,16 +9,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// task_tracker accepts exactly the task statuses of the run aggregate, the
+// tasks accepts exactly the task statuses of the run aggregate, the
 // two an attempt waits in before it runs (dispatched, queued) among them.
 func TestTaskTrackerSchema_StatusIsOneOfTheTaskStatuses(t *testing.T) {
 	db := newTestDB(t)
 	taskID := newSchemaTask(t, db)
 	for _, s := range run.TaskStatuses() {
-		_, err := db.Exec(`UPDATE task_tracker SET status = $2 WHERE task_id = $1`, taskID, string(s))
+		_, err := db.Exec(`UPDATE tasks SET status = $2 WHERE task_id = $1`, taskID, string(s))
 		assert.NoError(t, err, "status %s", s)
 	}
-	_, err := db.Exec(`UPDATE task_tracker SET status = 'waiting' WHERE task_id = $1`, taskID)
+	_, err := db.Exec(`UPDATE tasks SET status = 'waiting' WHERE task_id = $1`, taskID)
 	require.Error(t, err)
 	assert.Equal(t, "23514", pqCode(t, err))
 }
@@ -29,9 +29,9 @@ func TestSchedulerTrackerSchema_FailureReasonIsOneOfTheRunFailureReasons(t *test
 	db := newTestDB(t)
 	insert := func(reason any) error {
 		id := uuid.New()
-		t.Cleanup(func() { _, _ = db.Exec(`DELETE FROM scheduler_tracker WHERE schedule_id = $1`, id) })
+		t.Cleanup(func() { _, _ = db.Exec(`DELETE FROM runs WHERE run_id = $1`, id) })
 		_, err := db.Exec(`
-			INSERT INTO scheduler_tracker (schedule_id, schedule_name, status, failure_reason)
+			INSERT INTO runs (run_id, schedule_name, status, failure_reason)
 			VALUES ($1, $2, 'failed', $3)`, id, "schema-"+id.String(), reason)
 		return err
 	}
