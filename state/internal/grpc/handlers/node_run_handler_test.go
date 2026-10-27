@@ -285,3 +285,21 @@ func TestNodeRunHandler_ListNodeRuns_ReportsALeaseWaitAndItsHolder(t *testing.T)
 	assert.Empty(t, resp.Runs[1].GetWaitingOnRunId())
 	assert.Empty(t, resp.Runs[1].GetWaitingSince())
 }
+
+// Every node-run read a request makes reads the request's tenant's rows.
+func TestNodeRunHandler_ReadsTheRequestsTenant(t *testing.T) {
+	repo := &fakeNodeRunRepo{}
+	h := NewNodeRunHandler(repo.of, 24*time.Hour, nil)
+	ctx := tenantCtx("acme")
+
+	_, err := h.ListNodeRuns(ctx, &statev1.ListNodeRunsRequest{ServiceName: "svc", SchemaName: "sch", TableName: "tbl"})
+	require.NoError(t, err)
+	_, err = h.ListNodes(ctx, &statev1.ListNodesRequest{})
+	require.NoError(t, err)
+	_, err = h.ListNodeNames(ctx, &statev1.ListNodeNamesRequest{ServiceName: "svc"})
+	require.NoError(t, err)
+	_, err = h.ListNodeServices(ctx, &statev1.ListNodeServicesRequest{})
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"acme", "acme", "acme", "acme"}, repo.tenants)
+}

@@ -142,12 +142,15 @@ func TestUnaryServerInterceptor_NoMetadata_SystemOnContext(t *testing.T) {
 }
 
 // Every request a gRPC server serves acts for the default tenant: the
-// interceptor stores it beside the identity, whatever the metadata carries.
+// interceptor stores it beside the identity, whatever the metadata carries,
+// a tenant a caller names included.
 func TestUnaryServerInterceptor_StoresTheDefaultTenant(t *testing.T) {
 	for name, ctx := range map[string]context.Context{
 		"no metadata": context.Background(),
 		"a user": metadata.NewIncomingContext(context.Background(),
 			metadata.New(map[string]string{identity.MetadataKey: "okta|alice"})),
+		"a tenant named in the metadata": metadata.NewIncomingContext(context.Background(),
+			metadata.New(map[string]string{"tenant_id": "acme", "x-continuo-tenant-id": "acme"})),
 	} {
 		t.Run(name, func(t *testing.T) {
 			var seen string

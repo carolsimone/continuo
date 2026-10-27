@@ -80,7 +80,8 @@ func newEdgeTenant(t *testing.T, db *sqlx.DB) *edgeTenant {
 func (e *edgeTenant) cleanup(db *sqlx.DB) {
 	ctx := context.Background()
 	_, _ = db.ExecContext(ctx, `DELETE FROM state_outbox WHERE aggregate_id = $1`, e.runID)
-	_, _ = db.ExecContext(ctx, `DELETE FROM message_processing WHERE message_id = ANY($1)`, pq.Array(e.messages))
+	_, _ = db.ExecContext(ctx, `DELETE FROM message_processing WHERE message_id = ANY($1) AND stream_name = $2`,
+		pq.Array(e.messages), streams.TaskStatusUpdatedV2)
 	for _, table := range []string{
 		"runs", "node_leases", "node_materializations", "schedule_catalog", "schedule_catalog_state",
 		"live_release", "topology_releases",
@@ -173,6 +174,7 @@ func TestTenantEdges(t *testing.T) {
 		graph, err := stateClient.GetRunGraph(ctx, &statev1.GetRunGraphRequest{RunId: runID})
 		require.NoError(t, err)
 		assert.Empty(t, graph.Nodes, "another tenant's run has no graph")
+		assert.Zero(t, graph.RunPromotionSeq, "another tenant's run names no release")
 
 		drifts, err := stateClient.ListActiveRunDrifts(ctx, &statev1.ListActiveRunDriftsRequest{})
 		require.NoError(t, err)

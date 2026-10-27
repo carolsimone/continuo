@@ -583,6 +583,7 @@ func TestAttemptReport_LoadsTheRunUnderTheReportsTenant(t *testing.T) {
 	require.NoError(t, newAttemptReportHandler().Handle(context.Background(), u, rep, uuid.New()))
 	assert.Equal(t, []string{"acme", pkgevents.DefaultTenantID}, runRepo.loadTenants)
 	assert.True(t, runRepo.saveCalled)
+	require.NotEmpty(t, u.TaskCollectionTenants)
 	for _, tenant := range u.TaskCollectionTenants {
 		assert.Equal(t, pkgevents.DefaultTenantID, tenant, "the report applies under the run's tenant")
 	}

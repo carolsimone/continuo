@@ -11,6 +11,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // TestTaskStatusConversion_SkippedRoundTrips guards the regression where a
@@ -170,4 +172,23 @@ func TestTaskHandler_ReportsALeaseWaitAndItsHolder(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "node_lease", got.Task.WaitReason)
 	assert.Equal(t, holderRun.String(), got.Task.WaitingOnRunId)
+}
+
+// Every task read a request makes reads the request's tenant's tasks.
+func TestTaskHandler_ReadsTheRequestsTenant(t *testing.T) {
+	task := stampedTask(run.TaskStatusRunning)
+	repo := &fakeTaskRepo{tasks: []*postgres.TaskRow{task}}
+	h := NewTaskHandler(repo.of, newTestLogger())
+	ctx := tenantCtx("acme")
+
+	_, err := h.GetTask(ctx, &statev1.GetTaskRequest{TaskId: task.TaskID.String()})
+	require.NoError(t, err)
+	_, err = h.GetTaskByScheduleAndNode(ctx, &statev1.GetTaskByScheduleAndNodeRequest{
+		ScheduleId: task.ScheduleID.String(), ServiceName: "svc", SchemaName: "raw", TableName: "a",
+	})
+	assert.Equal(t, codes.NotFound, status.Code(err), "the fake holds no task at that node")
+	_, err = h.ListTasks(ctx, &statev1.ListTasksRequest{ScheduleId: task.ScheduleID.String()})
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"acme", "acme", "acme"}, repo.tenants)
 }
