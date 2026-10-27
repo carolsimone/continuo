@@ -294,11 +294,10 @@ func domainToProtoSchedulerStatus(s run.RunStatus) statev1.SchedulerStatus {
 // tracker repo rather than the Run aggregate.
 func domainToProtoScheduler(t *postgres.RunRow) *statev1.Scheduler {
 	s := &statev1.Scheduler{
-		ScheduleId:           t.ScheduleID.String(),
-		ScheduleName:         t.ScheduleName,
-		Status:               domainToProtoSchedulerStatus(t.Status),
-		CreatedAt:            timestamppb.New(t.CreatedAt),
-		InitializationStatus: t.InitializationStatus,
+		ScheduleId:   t.ScheduleID.String(),
+		ScheduleName: t.ScheduleName,
+		Status:       domainToProtoSchedulerStatus(t.Status),
+		CreatedAt:    timestamppb.New(t.CreatedAt),
 	}
 
 	if t.StartedAt != nil {
@@ -330,11 +329,10 @@ func domainToProtoScheduler(t *postgres.RunRow) *statev1.Scheduler {
 // Used by cancel methods that operate on the Run aggregate directly.
 func runToProto(r *run.Run) *statev1.Scheduler {
 	s := &statev1.Scheduler{
-		ScheduleId:           r.RunID().String(),
-		ScheduleName:         r.ScheduleName(),
-		Status:               domainToProtoSchedulerStatus(r.Status()),
-		CreatedAt:            timestamppb.New(r.CreatedAt()),
-		InitializationStatus: string(r.InitializationStatus()),
+		ScheduleId:   r.RunID().String(),
+		ScheduleName: r.ScheduleName(),
+		Status:       domainToProtoSchedulerStatus(r.Status()),
+		CreatedAt:    timestamppb.New(r.CreatedAt()),
 	}
 	if r.StartedAt() != nil {
 		s.StartedAt = timestamppb.New(*r.StartedAt())
@@ -485,8 +483,9 @@ func (h *SchedulerHandler) TriggerSchedule(
 	return &statev1.TriggerScheduleResponse{ScheduleId: id.String()}, nil
 }
 
-// GetSchedulerInitStatus returns the initialization_status of a run of the
-// request's tenant; another tenant's run is NotFound.
+// GetSchedulerInitStatus answers for a run of the request's tenant; another
+// tenant's run is NotFound. A run has no initialization status, so the answer's
+// status is empty.
 func (h *SchedulerHandler) GetSchedulerInitStatus(ctx context.Context, req *statev1.GetSchedulerInitStatusRequest) (*statev1.GetSchedulerInitStatusResponse, error) {
 	tenantID, err := requestTenant(ctx)
 	if err != nil {
@@ -501,7 +500,7 @@ func (h *SchedulerHandler) GetSchedulerInitStatus(ctx context.Context, req *stat
 		return nil, status.Errorf(codes.InvalidArgument, "invalid schedule_id format")
 	}
 
-	tracker, err := h.repo.GetByID(ctx, tenantID, scheduleID)
+	_, err = h.repo.GetByID(ctx, tenantID, scheduleID)
 	if err != nil {
 		if errors.Is(err, postgres.ErrNotFound) {
 			return nil, status.Errorf(codes.NotFound, "scheduler not found")
@@ -510,7 +509,5 @@ func (h *SchedulerHandler) GetSchedulerInitStatus(ctx context.Context, req *stat
 		return nil, status.Errorf(codes.Internal, "failed to get scheduler")
 	}
 
-	return &statev1.GetSchedulerInitStatusResponse{
-		InitializationStatus: tracker.InitializationStatus,
-	}, nil
+	return &statev1.GetSchedulerInitStatusResponse{}, nil
 }

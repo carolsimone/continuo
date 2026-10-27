@@ -12,7 +12,8 @@ import (
 // RunMetrics counts the runs state's reconcile loop failed as stalled, gauges
 // the runs that are cancelling, times how long a cancel takes, and records
 // the node write leases state grants: the tasks waiting, how long each
-// granted task waited, and the leases the lease waker repaired.
+// granted task waited, the leases the lease waker repaired, and how each call
+// of a command that creates or cancels a run ended.
 type RunMetrics struct {
 	stalled           prometheus.Counter
 	cancelling        prometheus.Gauge
@@ -21,14 +22,16 @@ type RunMetrics struct {
 	leaseWaiters      prometheus.Gauge
 	leaseWaitSeconds  prometheus.Histogram
 	leasesRepaired    prometheus.Counter
+	commandRequests   *prometheus.CounterVec
 }
 
 var _ ports.RunMetrics = (*RunMetrics)(nil)
 
 // NewRunMetrics registers continuo_runs_stalled_total, continuo_runs_cancelling,
 // continuo_runs_cancelling_overdue, continuo_run_cancel_seconds,
-// continuo_node_lease_waiters, continuo_node_lease_wait_seconds and
-// continuo_node_leases_repaired_total on reg.
+// continuo_node_lease_waiters, continuo_node_lease_wait_seconds,
+// continuo_node_leases_repaired_total and continuo_command_requests_total on
+// reg.
 func NewRunMetrics(reg *pkgmetrics.Registry) *RunMetrics {
 	m := &RunMetrics{
 		stalled: prometheus.NewCounter(prometheus.CounterOpts{
@@ -61,8 +64,12 @@ func NewRunMetrics(reg *pkgmetrics.Registry) *RunMetrics {
 			Name: "continuo_node_leases_repaired_total",
 			Help: "Node write leases the lease waker deleted because their task had ended without releasing them, which only a defect in state causes.",
 		}),
+		commandRequests: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "continuo_command_requests_total",
+			Help: "Calls of the commands that create or cancel a run, by command and outcome: created, replayed (a repeat of a request id answered from the first call), conflict (a request id reused with other parameters) or no_run (the command acted on no run).",
+		}, []string{"command", "outcome"}),
 	}
-	reg.Register(m.stalled, m.cancelling, m.cancellingOverdue, m.cancelSeconds, m.leaseWaiters, m.leaseWaitSeconds, m.leasesRepaired)
+	reg.Register(m.stalled, m.cancelling, m.cancellingOverdue, m.cancelSeconds, m.leaseWaiters, m.leaseWaitSeconds, m.leasesRepaired, m.commandRequests)
 	return m
 }
 
@@ -86,3 +93,8 @@ func (m *RunMetrics) LeaseGranted(waited time.Duration) { m.leaseWaitSeconds.Obs
 
 // LeaseRepaired counts one repaired lease.
 func (m *RunMetrics) LeaseRepaired() { m.leasesRepaired.Inc() }
+
+// CommandRequest counts one call of command under its outcome.
+func (m *RunMetrics) CommandRequest(command, outcome string) {
+	m.commandRequests.WithLabelValues(command, outcome).Inc()
+}

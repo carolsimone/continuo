@@ -14,8 +14,8 @@ func TestOperationColumns_DefaultAndCheck(t *testing.T) {
 
 	id := uuid.New()
 	_, err := db.Exec(`
-		INSERT INTO runs (tenant_id, run_id, schedule_name, status, created_at, initialization_status)
-		VALUES ('default', $1, 'op-default', 'pending', now(), 'in_progress')`, id)
+		INSERT INTO runs (tenant_id, run_id, schedule_name, status, created_at)
+		VALUES ('default', $1, 'op-default', 'pending', now())`, id)
 	if err != nil {
 		t.Fatalf("insert: %v", err)
 	}
@@ -31,8 +31,8 @@ func TestOperationColumns_DefaultAndCheck(t *testing.T) {
 
 	bad := uuid.New()
 	_, err = db.Exec(`
-		INSERT INTO runs (tenant_id, run_id, schedule_name, status, created_at, initialization_status, operation)
-		VALUES ('default', $1, 'op-bad', 'pending', now(), 'in_progress', 'nonsense')`, bad)
+		INSERT INTO runs (tenant_id, run_id, schedule_name, status, created_at, operation)
+		VALUES ('default', $1, 'op-bad', 'pending', now(), 'nonsense')`, bad)
 	if err == nil {
 		db.Exec(`DELETE FROM runs WHERE run_id = $1`, bad)
 		t.Fatal("expected CHECK violation for operation='nonsense', got nil")

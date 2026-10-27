@@ -414,8 +414,8 @@ func TestTopologyRepository_PruneReleases(t *testing.T) {
 	for name, status := range map[string]string{"running-run": "running", "finished-run": "succeeded"} {
 		runID := uuid.New()
 		_, err := db.Exec(`
-			INSERT INTO runs (tenant_id, run_id, schedule_name, status, created_at, initialization_status, release_id)
-			VALUES ($5, $1, $2, $3, now(), 'completed', $4)`, runID, "prune-"+runID.String()[:8], status, id(name), tenant)
+			INSERT INTO runs (tenant_id, run_id, schedule_name, status, created_at, release_id)
+			VALUES ($5, $1, $2, $3, now(), $4)`, runID, "prune-"+runID.String()[:8], status, id(name), tenant)
 		require.NoError(t, err)
 		t.Cleanup(func() { _, _ = db.Exec(`DELETE FROM runs WHERE run_id = $1`, runID) })
 	}

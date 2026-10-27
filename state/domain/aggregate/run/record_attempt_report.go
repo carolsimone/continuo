@@ -211,7 +211,7 @@ func (r *Run) dispatchNextAttempt(ctx context.Context, tasks TaskCollection, gra
 // is stored and r has not ended: a cancelling run cancelled; a running one
 // failed when any task failed or was cancelled, succeeded otherwise.
 func (r *Run) finalizeWhenEveryTaskEnded(ctx context.Context, tasks TaskCollection, now time.Time) ([]DomainEvent, error) {
-	if r.totalTaskCount == nil || r.terminalTaskCount != *r.totalTaskCount || r.initStatus != InitStatusCompleted {
+	if r.totalTaskCount == nil || r.terminalTaskCount != *r.totalTaskCount {
 		return nil, nil
 	}
 	if r.status == RunStatusCancelling {

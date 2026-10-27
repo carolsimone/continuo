@@ -25,7 +25,6 @@ type Run struct {
 
 	// runs columns
 	status      RunStatus
-	initStatus  InitStatus
 	kind        Kind
 	sourceRunID *uuid.UUID
 	// release is the release this run runs on; the zero stamp when the run
@@ -69,7 +68,6 @@ type Run struct {
 type changeSet struct {
 	created                bool
 	statusDirty            bool
-	initStatusDirty        bool
 	totalTaskCountDirty    bool
 	terminalTaskCountDirty bool
 	cancelDirty            bool
@@ -87,7 +85,6 @@ func HydrateRun(
 	runID uuid.UUID,
 	scheduleName string,
 	status RunStatus,
-	initStatus InitStatus,
 	kind Kind,
 	sourceRunID *uuid.UUID,
 	initiatedBy string,
@@ -104,7 +101,6 @@ func HydrateRun(
 		runID:              runID,
 		scheduleName:       scheduleName,
 		status:             status,
-		initStatus:         initStatus,
 		kind:               kind,
 		sourceRunID:        sourceRunID,
 		initiatedBy:        initiatedBy,
@@ -171,7 +167,6 @@ func NewPendingRun(
 		runID:           uuid.New(),
 		scheduleName:    scheduleName,
 		status:          RunStatusPending,
-		initStatus:      InitStatusInProgress,
 		kind:            kind,
 		sourceRunID:     sourceRunID,
 		initiatedBy:     initiatedBy,
@@ -216,7 +211,6 @@ func NewDerivedRun(
 		runID:           uuid.New(),
 		scheduleName:    scheduleName,
 		status:          RunStatusPending,
-		initStatus:      InitStatusInProgress,
 		kind:            kind,
 		sourceRunID:     &sourceRunID,
 		initiatedBy:     initiatedBy,
@@ -254,7 +248,6 @@ func NewSingleNodeRun(
 		runID:           uuid.New(),
 		scheduleName:    scheduleName,
 		status:          RunStatusRunning,
-		initStatus:      InitStatusInProgress,
 		kind:            KindSingleNodeRun,
 		sourceRunID:     sourceRunID,
 		initiatedBy:     initiatedBy,
@@ -304,7 +297,6 @@ func NewPromotedSeedsRun(
 		runID:           id,
 		scheduleName:    scheduleName,
 		status:          RunStatusRunning,
-		initStatus:      InitStatusInProgress,
 		kind:            KindPromoteSeed,
 		release:         stamp,
 		initiatedBy:     "system",
@@ -330,7 +322,6 @@ func (r *Run) Release() ReleaseStamp            { return r.release }
 func (r *Run) ReleaseID() string                { return r.release.ReleaseID }
 func (r *Run) InitiatedBy() string              { return r.initiatedBy }
 func (r *Run) Operation() model.Operation       { return r.operation }
-func (r *Run) InitializationStatus() InitStatus { return r.initStatus }
 func (r *Run) CreatedAt() time.Time             { return r.createdAt }
 func (r *Run) StartedAt() *time.Time            { return r.startedAt }
 func (r *Run) CompletedAt() *time.Time          { return r.completedAt }
@@ -367,7 +358,6 @@ func (r *Run) ResetChanges()      { r.changes = changeSet{} }
 // were mutated without coupling to the unexported struct fields.
 func (c changeSet) IsCreated() bool                { return c.created }
 func (c changeSet) IsStatusDirty() bool            { return c.statusDirty }
-func (c changeSet) IsInitStatusDirty() bool        { return c.initStatusDirty }
 func (c changeSet) IsTotalTaskCountDirty() bool    { return c.totalTaskCountDirty }
 func (c changeSet) IsTerminalTaskCountDirty() bool { return c.terminalTaskCountDirty }
 func (c changeSet) IsCancelDirty() bool            { return c.cancelDirty }
@@ -412,7 +402,7 @@ func (r *Run) Start(
 	if r.IsTerminal() {
 		return nil, ErrAlreadyTerminal
 	}
-	if r.plannedAt != nil || r.initStatus == InitStatusCompleted {
+	if r.plannedAt != nil {
 		return nil, ErrAlreadyPlanned
 	}
 	if len(plan.Tasks) == 0 {
@@ -482,7 +472,6 @@ func (r *Run) Start(
 	total := num.ClampInt32(len(built))
 	r.totalTaskCount = &total
 	r.terminalTaskCount = inherited
-	r.initStatus = InitStatusCompleted
 	planned := now
 	r.plannedAt = &planned
 	r.status = RunStatusRunning
@@ -490,7 +479,6 @@ func (r *Run) Start(
 	r.startedAt = &started
 	r.changes.totalTaskCountDirty = true
 	r.changes.terminalTaskCountDirty = true
-	r.changes.initStatusDirty = true
 	r.changes.plannedDirty = true
 	r.changes.statusDirty = true
 	r.changes.startedDirty = true

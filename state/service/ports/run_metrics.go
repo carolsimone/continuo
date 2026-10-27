@@ -27,4 +27,10 @@ type RunMetrics interface {
 	// LeaseRepaired counts one lease deleted because the task that held it had
 	// ended without releasing it.
 	LeaseRepaired()
+
+	// CommandRequest counts one call of command by its outcome: created (it ran
+	// and stored its request), replayed (a repeat answered from the stored
+	// request), conflict (a request id reused with other parameters) or no_run
+	// (it ran but acted on no run, so nothing was stored).
+	CommandRequest(command, outcome string)
 }

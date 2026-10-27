@@ -105,9 +105,10 @@ func (m *countingMetrics) RunsCancelling(total, overdue int) {
 func (m *countingMetrics) RunCancelled(after time.Duration) {
 	m.cancelDurations = append(m.cancelDurations, after)
 }
-func (*countingMetrics) LeaseWaiters(int)           {}
-func (*countingMetrics) LeaseGranted(time.Duration) {}
-func (*countingMetrics) LeaseRepaired()             {}
+func (*countingMetrics) LeaseWaiters(int)              {}
+func (*countingMetrics) LeaseGranted(time.Duration)    {}
+func (*countingMetrics) LeaseRepaired()                {}
+func (*countingMetrics) CommandRequest(string, string) {}
 
 // runs serves the runs it holds for update, each only under its own tenant,
 // and records every load and save.
@@ -448,7 +449,7 @@ func idleRun(idle time.Duration) *run.Run { return idleRunOf(pkgevents.DefaultTe
 func idleRunOf(tenantID string, idle time.Duration) *run.Run {
 	stale := now.Add(-idle)
 	total := int32(2)
-	return run.HydrateRun(tenantID, uuid.New(), "daily", run.RunStatusRunning, run.InitStatusCompleted, run.KindCron, nil, "system",
+	return run.HydrateRun(tenantID, uuid.New(), "daily", run.RunStatusRunning, run.KindCron, nil, "system",
 		model.OperationRun, stale, &stale, nil, &stale, nil, nil, nil, &total, 1, nil)
 }
 

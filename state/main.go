@@ -33,6 +33,7 @@ import (
 	"github.com/carolsimone/continuo/state/internal/grpc/handlers"
 	"github.com/carolsimone/continuo/state/internal/scheduler"
 	"github.com/carolsimone/continuo/state/service/attemptreconcile"
+	"github.com/carolsimone/continuo/state/service/commands"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 	"github.com/carolsimone/continuo/state/service/leasewaker"
 	ports "github.com/carolsimone/continuo/state/service/ports"
@@ -295,9 +296,11 @@ func main() {
 	// are kept at least 30 days (the replay horizon), longer when
 	// RETENTION_DAYS is longer; a promoted release is kept RETENTION_DAYS after
 	// it was loaded, and for as long as it is live or a pending or running run
-	// names it. All are pruned on the same timer.
+	// names it; a command request is kept the replay horizon, the longest a
+	// caller can still retry. All are pruned on the same timer.
 	mpPruner := pkgmessageprocessing.NewPruner(db, postgres.OutboxTable, logger)
 	topologyPruner := topologyretention.NewPruner(uowFactory, logger)
+	commandRequestPruner := commands.NewPruner(uowFactory)
 	retentionSweeper := pkgoutbox.NewRetentionSweeper(
 		[]pkgoutbox.RetentionTarget{
 			pkgoutbox.OutboxRetentionTarget(db, postgres.OutboxTable, logger),
@@ -309,6 +312,11 @@ func main() {
 			{
 				Name:  "topology_releases",
 				Prune: topologyPruner.Prune,
+			},
+			{
+				Name:         "command_requests",
+				Prune:        commandRequestPruner.Prune,
+				MinRetention: model.ReplayHorizon,
 			},
 		},
 		pkgoutbox.RetentionConfig{

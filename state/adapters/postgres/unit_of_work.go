@@ -161,5 +161,11 @@ func (u *PostgresUnitOfWork) Leases() repository.LeaseRepository {
 	return NewLeaseRepository(u.db, u.tx)
 }
 
+// CommandRequests returns the command request repository, bound to the current
+// transaction.
+func (u *PostgresUnitOfWork) CommandRequests() repository.CommandRequestRepository {
+	return NewCommandRequestRepository(u.db, u.tx)
+}
+
 // Compile-time interface assertion.
 var _ uow.UnitOfWork = (*PostgresUnitOfWork)(nil)

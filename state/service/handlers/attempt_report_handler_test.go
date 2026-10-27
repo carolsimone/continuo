@@ -294,7 +294,6 @@ func newRunningTaskStatusRunOfKind(kind run.Kind, id uuid.UUID, name string, tot
 	return run.HydrateRun(pkgevents.DefaultTenantID,
 		id, name,
 		run.RunStatusRunning,
-		run.InitStatusCompleted,
 		kind,
 		nil,
 		identity.SystemUserID,
@@ -319,7 +318,6 @@ func newTerminalTaskStatusRunOfKind(kind run.Kind, id uuid.UUID, name string, st
 	return run.HydrateRun(pkgevents.DefaultTenantID,
 		id, name,
 		status,
-		run.InitStatusCompleted,
 		kind,
 		nil,
 		identity.SystemUserID,
@@ -369,6 +367,7 @@ func (m *fakeRunMetrics) RunCancelled(d time.Duration) { m.cancelled = append(m.
 func (*fakeRunMetrics) LeaseWaiters(int)               {}
 func (*fakeRunMetrics) LeaseGranted(time.Duration)     {}
 func (*fakeRunMetrics) LeaseRepaired()                 {}
+func (*fakeRunMetrics) CommandRequest(string, string)  {}
 
 type fixedClock struct{ t time.Time }
 
@@ -380,7 +379,7 @@ func (c fixedClock) Now() time.Time { return c.t }
 func cancellingRunReport(cancelledAt time.Time) (*fakeTaskStatusRunRepo, *uow.FakeUnitOfWork, events.AttemptReported) {
 	scheduleID, taskID := uuid.New(), uuid.New()
 	total, by := int32(1), "alice"
-	cancelling := run.HydrateRun(pkgevents.DefaultTenantID, scheduleID, "daily", run.RunStatusCancelling, run.InitStatusCompleted, run.KindCron, nil,
+	cancelling := run.HydrateRun(pkgevents.DefaultTenantID, scheduleID, "daily", run.RunStatusCancelling, run.KindCron, nil,
 		identity.SystemUserID, model.OperationRun, cancelledAt.Add(-time.Hour), nil, nil, &cancelledAt, &cancelledAt, &by, nil,
 		&total, 0, map[string]run.ServiceMetadata{})
 	runRepo := &fakeTaskStatusRunRepo{stored: cancelling}
@@ -678,7 +677,6 @@ func plannedRun(id uuid.UUID, releaseID string, op model.Operation, total int32)
 	r := run.HydrateRun(pkgevents.DefaultTenantID,
 		id, "daily",
 		run.RunStatusRunning,
-		run.InitStatusCompleted,
 		run.KindCron,
 		nil,
 		identity.SystemUserID,

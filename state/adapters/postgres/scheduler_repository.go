@@ -55,7 +55,7 @@ const runColumns = `
 			tenant_id, run_id, schedule_name, status, created_at,
 			started_at, completed_at, last_progress_at,
 			cancelled_at, cancelled_by, cancellation_reason,
-			initialization_status, service_metadata,
+			service_metadata,
 			total_task_count, terminal_task_count,
 			kind, source_run_id, initiated_by, operation, release_id, promotion_seq, planned_at, failure_reason`
 
@@ -105,16 +105,16 @@ func (r *RunRepository) Create(ctx context.Context, row *RunRow) error {
 			tenant_id, run_id, schedule_name, status, created_at,
 			started_at, completed_at, last_progress_at,
 			cancelled_at, cancelled_by, cancellation_reason,
-			initialization_status, service_metadata,
+			service_metadata,
 			total_task_count, terminal_task_count,
 			kind, source_run_id, initiated_by, operation, release_id, promotion_seq
 		) VALUES (
-			$21, $1, $2, $3, $4,
+			$20, $1, $2, $3, $4,
 			$5, $6, $7,
 			$8, $9, $10,
-			$11, $12,
-			$13, $14,
-			$15, $16, $17, $18, $19, $20
+			$11,
+			$12, $13,
+			$14, $15, $16, $17, $18, $19
 		)
 	`
 
@@ -122,7 +122,7 @@ func (r *RunRepository) Create(ctx context.Context, row *RunRow) error {
 		row.ScheduleID, row.ScheduleName, row.Status, row.CreatedAt,
 		row.StartedAt, row.CompletedAt, row.LastProgressAt,
 		row.CancelledAt, row.CancelledBy, row.CancellationReason,
-		row.InitializationStatus, metaJSON,
+		metaJSON,
 		row.TotalTaskCount, row.TerminalTaskCount,
 		kindWithDefault(row.Kind), row.SourceRunID, identity.OrSystem(row.InitiatedBy),
 		operationWithDefault(row.Operation), row.ReleaseID, row.PromotionSeq, row.TenantID,
@@ -183,23 +183,23 @@ func (r *RunRepository) CreateTx(ctx context.Context, tx *sqlx.Tx, row *RunRow) 
 			tenant_id, run_id, schedule_name, status, created_at,
 			started_at, completed_at, last_progress_at,
 			cancelled_at, cancelled_by, cancellation_reason,
-			initialization_status, service_metadata,
+			service_metadata,
 			total_task_count, terminal_task_count,
 			kind, source_run_id, initiated_by, operation, release_id, promotion_seq
 		) VALUES (
-			$21, $1, $2, $3, $4,
+			$20, $1, $2, $3, $4,
 			$5, $6, $7,
 			$8, $9, $10,
-			$11, $12,
-			$13, $14,
-			$15, $16, $17, $18, $19, $20
+			$11,
+			$12, $13,
+			$14, $15, $16, $17, $18, $19
 		)
 		ON CONFLICT (tenant_id, run_id) DO NOTHING
 	`,
 		row.ScheduleID, row.ScheduleName, row.Status, row.CreatedAt,
 		row.StartedAt, row.CompletedAt, row.LastProgressAt,
 		row.CancelledAt, row.CancelledBy, row.CancellationReason,
-		row.InitializationStatus, metaJSON,
+		metaJSON,
 		row.TotalTaskCount, row.TerminalTaskCount,
 		kindWithDefault(row.Kind), row.SourceRunID, identity.OrSystem(row.InitiatedBy),
 		operationWithDefault(row.Operation), row.ReleaseID, row.PromotionSeq, row.TenantID,
@@ -395,22 +395,6 @@ func (r *RunRepository) getActiveRunRow(ctx context.Context, tenantID, scheduleN
 	return &row, nil
 }
 
-// UpdateInitializationStatusTx updates initialization_status within an existing transaction.
-func (r *RunRepository) UpdateInitializationStatusTx(ctx context.Context, tx *sqlx.Tx, tenantID string, runID uuid.UUID, status string) error {
-	result, err := tx.ExecContext(ctx,
-		`UPDATE runs SET initialization_status = $1 WHERE tenant_id = $3 AND run_id = $2`,
-		status, runID, tenantID,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to update initialization_status: %w", err)
-	}
-	rows, _ := result.RowsAffected()
-	if rows == 0 {
-		return ErrNotFound
-	}
-	return nil
-}
-
 // SetTotalTaskCountTx sets total_task_count for the given run.
 func (r *RunRepository) SetTotalTaskCountTx(ctx context.Context, tx *sqlx.Tx, tenantID string, id uuid.UUID, total int32) error {
 	res, err := tx.ExecContext(ctx, `
@@ -525,11 +509,10 @@ func (r *RunRepository) FinalizeRunTx(ctx context.Context, tx *sqlx.Tx, tenantID
 // build a single UPDATE over a fixed column allowlist while keeping the dirty
 // decision in the calling adapter.
 type RunRowUpdate struct {
-	Status               *string
-	InitializationStatus *string
-	TotalTaskCount       *int32
-	TerminalTaskCount    *int32
-	StartedAt            *time.Time
+	Status            *string
+	TotalTaskCount    *int32
+	TerminalTaskCount *int32
+	StartedAt         *time.Time
 	// LastProgressAt is the run's progress clock: the last dispatch or applied
 	// task status change.
 	LastProgressAt *time.Time
@@ -556,9 +539,6 @@ func (r *RunRepository) UpdateRunRowTx(ctx context.Context, tx *sqlx.Tx, tenantI
 
 	if fields.Status != nil {
 		add("status", *fields.Status)
-	}
-	if fields.InitializationStatus != nil {
-		add("initialization_status", *fields.InitializationStatus)
 	}
 	if fields.TotalTaskCount != nil {
 		add("total_task_count", *fields.TotalTaskCount)

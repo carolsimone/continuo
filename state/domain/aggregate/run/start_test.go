@@ -115,7 +115,6 @@ func TestStart_StoresEveryTaskAndDispatchesTheReadyOnes(t *testing.T) {
 	assert.Equal(t, map[topology.NodeKey]uuid.UUID{fkey("ftable_a"): a.TaskID, fkey("ftable_b"): b.TaskID}, tc.leases)
 
 	assert.Equal(t, run.RunStatusRunning, r.Status())
-	assert.Equal(t, run.InitStatusCompleted, r.InitializationStatus())
 	require.NotNil(t, r.TotalTaskCount())
 	assert.Equal(t, int32(8), *r.TotalTaskCount())
 	assert.Equal(t, int32(0), r.TerminalTaskCount())
@@ -126,7 +125,7 @@ func TestStart_StoresEveryTaskAndDispatchesTheReadyOnes(t *testing.T) {
 	require.NotNil(t, r.LastProgressAt())
 	assert.Nil(t, r.CompletedAt())
 	ch := r.Changes()
-	assert.True(t, ch.IsPlannedDirty() && ch.IsStatusDirty() && ch.IsStartedDirty() && ch.IsInitStatusDirty() &&
+	assert.True(t, ch.IsPlannedDirty() && ch.IsStatusDirty() && ch.IsStartedDirty() &&
 		ch.IsTotalTaskCountDirty() && ch.IsTerminalTaskCountDirty() && ch.IsHeartbeatDirty())
 }
 

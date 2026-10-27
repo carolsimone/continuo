@@ -255,6 +255,7 @@ type leaseMetrics struct {
 func (m *leaseMetrics) LeaseWaiters(n int)              { m.waiters = append(m.waiters, n) }
 func (m *leaseMetrics) LeaseGranted(wait time.Duration) { m.granted = append(m.granted, wait) }
 func (m *leaseMetrics) LeaseRepaired()                  { m.repaired++ }
+func (m *leaseMetrics) CommandRequest(string, string)   {}
 
 // leaseFlow is a tenant whose live release rel-1 holds one schedule, in which
 // seed_table_1 feeds table_a, under table names no other test uses.

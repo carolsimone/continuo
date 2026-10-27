@@ -27,13 +27,12 @@ func TestRunRepository_SaveRun_PersistsProgressClock(t *testing.T) {
 
 	scheduleID := uuid.New()
 	require.NoError(t, schedRepo.Create(ctx, &postgres.RunRow{
-		TenantID:             pkgevents.DefaultTenantID,
-		ScheduleID:           scheduleID,
-		ScheduleName:         "progress-" + scheduleID.String()[:8],
-		Status:               run.RunStatusPending,
-		CreatedAt:            time.Now().Add(-time.Hour),
-		InitializationStatus: "in_progress",
-		Kind:                 "cron",
+		TenantID:     pkgevents.DefaultTenantID,
+		ScheduleID:   scheduleID,
+		ScheduleName: "progress-" + scheduleID.String()[:8],
+		Status:       run.RunStatusPending,
+		CreatedAt:    time.Now().Add(-time.Hour),
+		Kind:         "cron",
 	}))
 	defer db.ExecContext(ctx, "DELETE FROM tasks WHERE run_id = $1", scheduleID)
 	defer db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", scheduleID)

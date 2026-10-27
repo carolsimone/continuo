@@ -110,7 +110,7 @@ type previewFixture struct {
 func newPreviewFixture(t *testing.T, status run.RunStatus) *previewFixture {
 	t.Helper()
 	created := time.Date(2026, 10, 15, 6, 0, 0, 0, time.UTC)
-	source := run.HydrateRun(pkgevents.DefaultTenantID, uuid.New(), "daily", status, run.InitStatusCompleted, run.KindCron, nil,
+	source := run.HydrateRun(pkgevents.DefaultTenantID, uuid.New(), "daily", status, run.KindCron, nil,
 		identity.SystemUserID, model.OperationRun, created, nil, &created, nil, nil, nil, nil, nil, 0, nil)
 	source.HydrateRelease(run.ReleaseStamp{ReleaseID: "rel-3", PromotionSeq: 9})
 	f := &previewFixture{

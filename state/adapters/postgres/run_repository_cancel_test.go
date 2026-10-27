@@ -37,7 +37,6 @@ func TestRunRepository_SaveRun_CancelPersistsAggregateInstant(t *testing.T) {
 	r := run.HydrateRun(pkgevents.DefaultTenantID,
 		uuid.New(), "daily",
 		run.RunStatusRunning,
-		run.InitStatusCompleted,
 		run.KindCron,
 		nil,
 		identity.SystemUserID,
