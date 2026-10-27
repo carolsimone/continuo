@@ -87,6 +87,21 @@ edit_changelog -e "$CUT" -e "$ADD_RELEASED"
 commit pr >/dev/null; check "$base"
 assert "a release cut that also edits an older release fails" "[ $rc -ne 0 ] && grep -qF '\"## [0.2.0] - 2026-10-26\"' \"$out\""
 
+# Editing a released heading is no release cut: the version already exists at
+# the base, so a bullet added under its re-dated heading still fails.
+new_repo redated
+touch_chart
+edit_changelog -e 's/^## \[0\.2\.0\] - 2026-10-26$/## [0.2.0] - 2026-10-27/' -e "$ADD_RELEASED"
+commit pr >/dev/null; check "$base"
+assert "a bullet under a re-dated released heading fails" "[ $rc -ne 0 ] && grep -qF 'adds \"- bar value.\" under the released section \"## [0.2.0] - 2026-10-27\"' \"$out\""
+
+# A cut whose new version's entries also land under it passes: only versions
+# absent from the base CHANGELOG open a section.
+new_repo cut-with-entry
+edit_changelog -e "$CUT" -e 's/^- pending value\.$/&\n- bar value./'
+commit pr >/dev/null; check "$base"
+assert "a release cut that also adds an entry under its new version passes" "[ $rc -eq 0 ]"
+
 # Lines before the first section and blank lines anywhere are not entries.
 new_repo docs
 edit_changelog -e 's/^Notes on how this file is kept\.$/&\nEach PR adds its entry under Unreleased./' \

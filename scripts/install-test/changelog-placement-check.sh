@@ -7,11 +7,13 @@
 # entries under the new version's heading, and git places the branch's own
 # bullet next to them, under the released heading, without a conflict.
 #
-# A release cut adds its version's heading, so a section whose heading line
-# the diff adds takes added lines (the heading, its intro paragraph and the
-# entries moved under it). Lines under `## [Unreleased]`, under any `## `
-# heading that names no version, and before the first `## ` heading are
-# always allowed. Blank lines are never counted.
+# A released section is one whose version the base CHANGELOG already has a
+# heading for. A release cut adds the section of a version the base does not
+# have, so that section takes added lines (the heading, its intro paragraph
+# and the entries moved under it); editing an existing version's heading, its
+# date say, opens nothing. Lines under `## [Unreleased]`, under any `## `
+# heading that names no version, and before the first `## ` heading are always
+# allowed. Blank lines are never counted.
 #
 # Needs BASE_SHA (the PR's base commit) and compares it with HEAD, as
 # changelog-check.sh (which calls this) does. CHANGELOG overrides the file.
@@ -28,17 +30,26 @@ if [ -z "$diff" ]; then
   exit 0
 fi
 
+# The versions the base CHANGELOG already has a `## [x.y.z]` section for. A
+# version heading whose version is not among them is a release cut; editing
+# the heading of a version the base already has (its date, say) is not.
+base_versions="$(git show "${BASE_SHA}:${changelog}" 2>/dev/null \
+  | sed -nE 's/^## \[([0-9]+\.[0-9]+\.[0-9]+[^]]*)\].*/\1/p' | tr '\n' ' ' || true)"
+
 # Prints "<line>\t<text>\t<section heading>" for each offending line.
-violations="$(awk '
+violations="$(awk -v base_versions="$base_versions" '
+  # The version a `## [x.y.z] ...` heading names; empty for any other line.
+  function version_of(text,    v) {
+    if (text !~ /^## \[[0-9]+\.[0-9]+\.[0-9]+[^]]*\]/) return ""
+    v = text
+    sub(/^## \[/, "", v)
+    sub(/\].*$/, "", v)
+    return v
+  }
   { lines[NR] = $0 }
   END {
-    # The version headings this diff adds: the sections a release cut opens.
-    in_hunk = 0
-    for (i = 1; i <= NR; i++) {
-      l = lines[i]
-      if (l ~ /^@@ /) { in_hunk = 1; continue }
-      if (in_hunk && l ~ /^\+## \[/) opened[substr(l, 2)] = 1
-    }
+    n = split(base_versions, known, " ")
+    for (i = 1; i <= n; i++) at_base[known[i]] = 1
     in_hunk = 0; line = 0; section = ""; released = 0
     for (i = 1; i <= NR; i++) {
       l = lines[i]
@@ -58,7 +69,8 @@ violations="$(awk '
       line++
       if (text ~ /^## /) {
         section = text
-        released = (text ~ /^## \[[0-9]+\.[0-9]+\.[0-9]+[^]]*\]/) && !(text in opened)
+        v = version_of(text)
+        released = (v != "" && (v in at_base))
       }
       if (kind == "+" && released && text !~ /^[[:space:]]*$/) {
         printf "%d\t%s\t%s\n", line, text, section
