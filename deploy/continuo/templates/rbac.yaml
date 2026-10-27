@@ -1,5 +1,5 @@
 {{- range $svc := .Values.services }}
-{{- if and ($svc.enabled | default true) $svc.rbac $svc.rbac.enabled }}
+{{- if and $svc.enabled $svc.rbac $svc.rbac.enabled }}
 ---
 apiVersion: v1
 kind: ServiceAccount
