@@ -36,7 +36,7 @@ type builtHarness struct {
 func newBuiltHarness(db *sqlx.DB) *builtHarness {
 	logger := slog.New(slog.NewTextHandler(nopWriter{}, nil))
 	schedulerRepo := postgres.NewRunTableRepository(db, logger)
-	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, logger)
+	taskRepo := postgres.NewTaskRepository(db, logger)
 	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
 	return &builtHarness{db: db, logger: logger, factory: func() uow.UnitOfWork {
 		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, catalogRepo, svcports.SystemClock{}, logger)
@@ -81,8 +81,8 @@ func (h *builtHarness) saveRun(t *testing.T, rn *run.Run) uuid.UUID {
 func (h *builtHarness) trigger(t *testing.T, schedule string, op model.Operation) uuid.UUID {
 	t.Helper()
 	_, err := h.db.Exec(`
-		INSERT INTO schedule_catalog (schedule_name, first_seen_at, last_seen_at) VALUES ($1, now(), now())
-		ON CONFLICT (schedule_name) DO UPDATE SET removed_at = NULL`, schedule)
+		INSERT INTO schedule_catalog (tenant_id, schedule_name, first_seen_at, last_seen_at) VALUES ('default', $1, now(), now())
+		ON CONFLICT (tenant_id, schedule_name) DO UPDATE SET removed_at = NULL`, schedule)
 	require.NoError(t, err)
 	id, _, err := svchandlers.NewStartRunHandler(defaultPlanner, h.logger).Handle(context.Background(), h.factory(),
 		schedule, run.KindTrigger, nil, identity.FromUserID("okta|alice"), op)
@@ -97,12 +97,12 @@ func (h *builtHarness) legacyRun(t *testing.T, releaseID, table string) (uuid.UU
 	t.Helper()
 	runID, taskID := uuid.New(), uuid.New()
 	_, err := h.db.Exec(`
-		INSERT INTO runs (run_id, schedule_name, status, initialization_status, total_task_count, release_id, promotion_seq)
-		VALUES ($1, $2, 'running', 'completed', 1, $3, 1)`, runID, "legacy-"+runID.String()[:8], releaseID)
+		INSERT INTO runs (tenant_id, run_id, schedule_name, status, initialization_status, total_task_count, release_id, promotion_seq)
+		VALUES ('default', $1, $2, 'running', 'completed', 1, $3, 1)`, runID, "legacy-"+runID.String()[:8], releaseID)
 	require.NoError(t, err)
 	_, err = h.db.Exec(`
-		INSERT INTO tasks (task_id, run_id, service_name, schema_name, table_name, job_name, status, max_retries, image_tag, node_key)
-		VALUES ($1, $2, 'service-1', 'raw', $3, $3, 'pending', 2, 'service-1:v1', $4)`, taskID, runID, table, "raw."+table)
+		INSERT INTO tasks (tenant_id, task_id, run_id, service_name, schema_name, table_name, job_name, status, max_retries, image_tag, node_key)
+		VALUES ((SELECT tenant_id FROM runs WHERE run_id = $2), $1, $2, 'service-1', 'raw', $3, $3, 'pending', 2, 'service-1:v1', $4)`, taskID, runID, table, "raw."+table)
 	require.NoError(t, err)
 	return runID, taskID
 }

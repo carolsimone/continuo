@@ -35,7 +35,7 @@ type fakeTaskStatusRunRepo struct {
 	saveCalled bool
 }
 
-func (f *fakeTaskStatusRunRepo) LoadRunForUpdate(_ context.Context, _ uuid.UUID) (*run.Run, error) {
+func (f *fakeTaskStatusRunRepo) LoadRunForUpdate(_ context.Context, _ string, _ uuid.UUID) (*run.Run, error) {
 	if f.loadErr != nil {
 		return nil, f.loadErr
 	}
@@ -51,26 +51,26 @@ func (f *fakeTaskStatusRunRepo) SaveRun(_ context.Context, r *run.Run) error {
 	return nil
 }
 
-func (f *fakeTaskStatusRunRepo) GetRun(_ context.Context, _ uuid.UUID) (*run.Run, error) {
+func (f *fakeTaskStatusRunRepo) GetRun(_ context.Context, _ string, _ uuid.UUID) (*run.Run, error) {
 	panic("GetRun not implemented in fake")
 }
-func (f *fakeTaskStatusRunRepo) HasActiveRun(_ context.Context, _ string) (bool, error) {
+func (f *fakeTaskStatusRunRepo) HasActiveRun(_ context.Context, _, _ string) (bool, error) {
 	panic("HasActiveRun not implemented in fake")
 }
-func (f *fakeTaskStatusRunRepo) GetActiveRun(_ context.Context, _ string) (*run.Run, error) {
+func (f *fakeTaskStatusRunRepo) GetActiveRun(_ context.Context, _, _ string) (*run.Run, error) {
 	panic("GetActiveRun not implemented in fake")
 }
-func (f *fakeTaskStatusRunRepo) GetLastRunPerSchedule(_ context.Context) (map[string]repository.LastRunSummary, error) {
+func (f *fakeTaskStatusRunRepo) GetLastRunPerSchedule(_ context.Context, _ string) (map[string]repository.LastRunSummary, error) {
 	panic("GetLastRunPerSchedule not implemented in fake")
 }
-func (f *fakeTaskStatusRunRepo) RunExists(_ context.Context, _ uuid.UUID) (bool, error) {
+func (f *fakeTaskStatusRunRepo) RunExists(_ context.Context, _ string, _ uuid.UUID) (bool, error) {
 	panic("RunExists not implemented in fake")
 }
-func (f *fakeTaskStatusRunRepo) ListUnplannedActive(context.Context) ([]uuid.UUID, error) {
+func (f *fakeTaskStatusRunRepo) ListUnplannedActive(context.Context, string) ([]uuid.UUID, error) {
 	panic("ListUnplannedActive is not used here")
 }
 
-func (f *fakeTaskStatusRunRepo) CountReleaseRuns(_ context.Context, _ string, _ run.Kind) (int, error) {
+func (f *fakeTaskStatusRunRepo) CountReleaseRuns(_ context.Context, _, _ string, _ run.Kind) (int, error) {
 	panic("CountReleaseRuns not implemented in fake")
 }
 

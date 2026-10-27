@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"testing"
 	"time"
 
@@ -28,7 +29,7 @@ func TestCatalogRepositoryAdapter_LoadForUpdate_SerialisesOnEmptyCatalog(t *test
 	defer tx1.Rollback()
 
 	// First reconciler takes the advisory lock.
-	_, err = postgres.NewCatalogRepositoryAdapter(db, tx1, repo, discardLogger()).LoadCatalogForUpdate(ctx)
+	_, err = postgres.NewCatalogRepositoryAdapter(db, tx1, repo, discardLogger()).LoadCatalogForUpdate(ctx, pkgevents.DefaultTenantID)
 	require.NoError(t, err)
 
 	// Second reconciler should block on LoadCatalogForUpdate until tx1 ends.
@@ -40,7 +41,7 @@ func TestCatalogRepositoryAdapter_LoadForUpdate_SerialisesOnEmptyCatalog(t *test
 			return
 		}
 		defer tx2.Rollback()
-		_, err = postgres.NewCatalogRepositoryAdapter(db, tx2, repo, discardLogger()).LoadCatalogForUpdate(ctx)
+		_, err = postgres.NewCatalogRepositoryAdapter(db, tx2, repo, discardLogger()).LoadCatalogForUpdate(ctx, pkgevents.DefaultTenantID)
 		done <- err
 	}()
 

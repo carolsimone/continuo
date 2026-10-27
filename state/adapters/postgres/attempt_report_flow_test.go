@@ -240,7 +240,7 @@ func TestFailStalled_SavesTheRunFailedAsStalled(t *testing.T) {
 	u := newPlanningUoW(db)
 	require.NoError(t, u.Begin(ctx))
 	defer u.Rollback()
-	r, err := u.Run().LoadRunForUpdate(ctx, f.r.RunID())
+	r, err := u.Run().LoadRunForUpdate(ctx, f.tenant, f.r.RunID())
 	require.NoError(t, err)
 	check, err := r.FailStalled(ctx, u.TaskCollection(f.tenant), u.TaskGraph(f.tenant), testTaskDefaults,
 		time.Now().Add(run.StallAfter+time.Minute))
@@ -259,7 +259,7 @@ func TestFailStalled_SavesTheRunFailedAsStalled(t *testing.T) {
 	require.NotNil(t, row.Reason)
 	assert.Equal(t, "stalled", *row.Reason)
 	assert.Equal(t, int32(8), row.Terminal)
-	reloaded, err := newPlanningUoW(db).Run().GetRun(ctx, f.r.RunID())
+	reloaded, err := newPlanningUoW(db).Run().GetRun(ctx, f.tenant, f.r.RunID())
 	require.NoError(t, err)
 	require.NotNil(t, reloaded.FailureReason())
 	assert.Equal(t, run.RunFailureStalled, *reloaded.FailureReason())

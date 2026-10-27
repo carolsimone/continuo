@@ -32,8 +32,8 @@ type ownRunList struct {
 	ids []uuid.UUID
 }
 
-func (o ownRunList) ListUnplannedActive(ctx context.Context) ([]uuid.UUID, error) {
-	all, err := o.RunRepository.ListUnplannedActive(ctx)
+func (o ownRunList) ListUnplannedActive(ctx context.Context, tenantID string) ([]uuid.UUID, error) {
+	all, err := o.RunRepository.ListUnplannedActive(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}

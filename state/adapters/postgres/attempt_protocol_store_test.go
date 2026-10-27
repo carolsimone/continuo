@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/topology"
@@ -123,10 +124,11 @@ func TestTaskAttempts_AFinalAttemptHasNoNextCheck(t *testing.T) {
 func TestTaskCollection_SkipPendingSkipsOnlyTheRunsPendingTasks(t *testing.T) {
 	db := newTestDB(t)
 	storeFailureSchedule(t, db)
-	runID, _ := insertTasks(t, db, map[string]run.TaskStatus{
+	tenant := pkgevents.DefaultTenantID
+	runID, _ := insertTasks(t, db, tenant, map[string]run.TaskStatus{
 		"ftable_a": run.TaskStatusSucceeded, "ftable_c": run.TaskStatusPending, "ftable_d": run.TaskStatusPending,
 	})
-	otherRun, _ := insertTasks(t, db, map[string]run.TaskStatus{"ftable_c": run.TaskStatusPending})
+	otherRun, _ := insertTasks(t, db, tenant, map[string]run.TaskStatus{"ftable_c": run.TaskStatusPending})
 
 	attemptTx(t, db, func(ctx context.Context, tx *sqlx.Tx, tasks run.TaskCollection) {
 		n, err := tasks.SkipPending(ctx, runID)
@@ -145,13 +147,14 @@ func TestTaskCollection_SkipPendingSkipsOnlyTheRunsPendingTasks(t *testing.T) {
 func TestTaskCollection_HasInFlight(t *testing.T) {
 	db := newTestDB(t)
 	storeFailureSchedule(t, db)
+	tenant := pkgevents.DefaultTenantID
 	for status, want := range map[run.TaskStatus]bool{
 		run.TaskStatusDispatched: true, run.TaskStatusQueued: true, run.TaskStatusRunning: true,
 		run.TaskStatusStopping: true,
 		run.TaskStatusPending:  false, run.TaskStatusSucceeded: false, run.TaskStatusFailed: false,
 		run.TaskStatusCancelled: false, run.TaskStatusSkipped: false,
 	} {
-		runID, _ := insertTasks(t, db, map[string]run.TaskStatus{"ftable_a": run.TaskStatusSucceeded, "ftable_c": status})
+		runID, _ := insertTasks(t, db, tenant, map[string]run.TaskStatus{"ftable_a": run.TaskStatusSucceeded, "ftable_c": status})
 		attemptTx(t, db, func(ctx context.Context, tx *sqlx.Tx, tasks run.TaskCollection) {
 			got, err := tasks.HasInFlight(ctx, runID)
 			require.NoError(t, err)
@@ -168,12 +171,13 @@ func TestTaskCollection_HasInFlight(t *testing.T) {
 func TestTaskCollection_BeginStopCancelsPendingTasksAndStopsTasksInFlight(t *testing.T) {
 	db := newTestDB(t)
 	storeFailureSchedule(t, db)
-	runID, ids := insertTasks(t, db, map[string]run.TaskStatus{
+	tenant := pkgevents.DefaultTenantID
+	runID, ids := insertTasks(t, db, tenant, map[string]run.TaskStatus{
 		"ftable_a": run.TaskStatusDispatched, "ftable_b": run.TaskStatusQueued, "ftable_c": run.TaskStatusPending,
 		"ftable_d": run.TaskStatusSucceeded, "ftable_e": run.TaskStatusRunning,
 		"ftable_f": run.TaskStatusRunning, "ftable_g": run.TaskStatusQueued,
 	})
-	_, others := insertTasks(t, db, map[string]run.TaskStatus{"ftable_a": run.TaskStatusRunning})
+	_, others := insertTasks(t, db, tenant, map[string]run.TaskStatus{"ftable_a": run.TaskStatusRunning})
 	require.NoError(t, insertAttempt(db, ids["ftable_a"], 0, "dispatched"))
 	require.NoError(t, insertAttempt(db, ids["ftable_b"], 0, "queued"))
 	require.NoError(t, insertAttempt(db, ids["ftable_e"], 0, "running"))

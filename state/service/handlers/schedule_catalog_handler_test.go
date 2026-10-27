@@ -30,11 +30,11 @@ type fakeCatalogPortRepo struct {
 	loadErr      error
 }
 
-func (f *fakeCatalogPortRepo) LoadCatalogForUpdate(_ context.Context) (*catalog.ScheduleCatalog, error) {
+func (f *fakeCatalogPortRepo) LoadCatalogForUpdate(_ context.Context, tenantID string) (*catalog.ScheduleCatalog, error) {
 	if f.loadErr != nil {
 		return nil, f.loadErr
 	}
-	return catalog.Hydrate(pkgevents.DefaultTenantID, f.initial, f.promotionSeq), nil
+	return catalog.Hydrate(tenantID, f.initial, f.promotionSeq), nil
 }
 
 func (f *fakeCatalogPortRepo) SaveCatalog(_ context.Context, c *catalog.ScheduleCatalog) error {
@@ -45,17 +45,19 @@ func (f *fakeCatalogPortRepo) SaveCatalog(_ context.Context, c *catalog.Schedule
 	return nil
 }
 
-func (f *fakeCatalogPortRepo) GetCatalog(_ context.Context) (*catalog.ScheduleCatalog, error) {
-	return catalog.Hydrate(pkgevents.DefaultTenantID, f.initial, f.promotionSeq), nil
+func (f *fakeCatalogPortRepo) GetCatalog(_ context.Context, tenantID string) (*catalog.ScheduleCatalog, error) {
+	return catalog.Hydrate(tenantID, f.initial, f.promotionSeq), nil
 }
 
-func (f *fakeCatalogPortRepo) ExistsActive(_ context.Context, _ string) (bool, error) {
+func (f *fakeCatalogPortRepo) ExistsActive(_ context.Context, _, _ string) (bool, error) {
 	return false, nil
 }
 
-func (f *fakeCatalogPortRepo) ListActive(_ context.Context) ([]string, error) { return nil, nil }
+func (f *fakeCatalogPortRepo) ListActive(_ context.Context, _ string) ([]string, error) {
+	return nil, nil
+}
 
-func (f *fakeCatalogPortRepo) GetServiceMetadata(_ context.Context, _ string) (map[string]run.ServiceMetadata, error) {
+func (f *fakeCatalogPortRepo) GetServiceMetadata(_ context.Context, _, _ string) (map[string]run.ServiceMetadata, error) {
 	return map[string]run.ServiceMetadata{}, nil
 }
 

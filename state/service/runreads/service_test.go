@@ -28,7 +28,8 @@ func (f *fakeReads) GetRunGraph(_ context.Context, tenantID string, _ uuid.UUID)
 	return projection.RunGraph{RunPromotionSeq: 4, LatestPromotionSeq: 7}, nil
 }
 
-func (f *fakeReads) ListCompletedRuns(_ context.Context, _ string, limit, offset int) ([]projection.RunSummary, int, error) {
+func (f *fakeReads) ListCompletedRuns(_ context.Context, tenantID, _ string, limit, offset int) ([]projection.RunSummary, int, error) {
+	f.tenants = append(f.tenants, tenantID)
 	f.limit, f.offset = limit, offset
 	return nil, 0, nil
 }
@@ -38,7 +39,7 @@ func (f *fakeReads) ListActiveRunDrifts(_ context.Context, tenantID string) (int
 	return 7, nil, nil
 }
 
-func (f *fakeReads) LastSuccessDurations(context.Context, []run.NodeID) (map[run.NodeID]time.Duration, error) {
+func (f *fakeReads) LastSuccessDurations(context.Context, string, []run.NodeID) (map[run.NodeID]time.Duration, error) {
 	return nil, nil
 }
 
@@ -51,8 +52,10 @@ func TestService_ReadsTheDefaultTenant(t *testing.T) {
 	assert.Equal(t, int64(4), g.RunPromotionSeq)
 	_, _, err = s.ListActiveRunDrifts(context.Background())
 	require.NoError(t, err)
+	_, _, err = s.ListRuns(context.Background(), "daily", 10, 0)
+	require.NoError(t, err)
 
-	assert.Equal(t, []string{pkgevents.DefaultTenantID, pkgevents.DefaultTenantID}, f.tenants)
+	assert.Equal(t, []string{pkgevents.DefaultTenantID, pkgevents.DefaultTenantID, pkgevents.DefaultTenantID}, f.tenants)
 }
 
 func TestService_ClampsThePage(t *testing.T) {

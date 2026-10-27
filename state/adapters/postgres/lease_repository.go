@@ -42,16 +42,13 @@ func (r *LeaseRepository) conn() sqlx.ExtContext {
 	return r.db
 }
 
-// tenantWaitersFrom names the pending tasks waiting for a node lease whose node
-// the tenant ($1) holds in their run's release: tasks has no tenant
-// column, so the topology row of the task's node is what makes a waiter the
-// tenant's, as it is what a grant reads to dispatch it. The waiters of a node
-// are read through idx_tasks_lease_waiters.
+// tenantWaitersFrom names the tenant's ($1) pending tasks waiting for a node
+// lease, each with its run. The waiters of a node are read through
+// idx_tasks_lease_waiters.
 const tenantWaitersFrom = `
 	FROM tasks w
-	JOIN runs s ON s.run_id = w.run_id
-	JOIN topology_nodes n ON n.tenant_id = $1 AND n.release_id = s.release_id AND n.node_key = w.node_key
-	WHERE w.wait_reason = 'node_lease' AND w.status = 'pending'`
+	JOIN runs s ON s.tenant_id = w.tenant_id AND s.run_id = w.run_id
+	WHERE w.tenant_id = $1 AND w.wait_reason = 'node_lease' AND w.status = 'pending'`
 
 // nextWaiters selects, with nextWaitersOrder closing it, for each node of the
 // tenant ($1) no task holds, its oldest waiter whose run is running: the
@@ -116,7 +113,8 @@ func (r *LeaseRepository) RepairEnded(ctx context.Context) ([]repository.Repaire
 	if err := sqlx.SelectContext(ctx, r.conn(), &rows, `
 		DELETE FROM node_leases l
 		USING tasks t
-		WHERE l.tenant_id = $1 AND t.task_id = l.task_id AND t.status = ANY($2::text[])
+		WHERE l.tenant_id = $1 AND t.tenant_id = l.tenant_id AND t.task_id = l.task_id
+		  AND t.status = ANY($2::text[])
 		RETURNING l.task_id, l.run_id, l.node_key, t.status AS task_status, l.acquired_at`,
 		r.tenantID, pq.Array(endedTaskStatuses())); err != nil {
 		return nil, fmt.Errorf("delete the leases of ended tasks: %w", err)

@@ -55,8 +55,8 @@ func (h *builtHarness) catalog(t *testing.T, schedules ...string) {
 	t.Helper()
 	for _, s := range schedules {
 		_, err := h.db.Exec(`
-			INSERT INTO schedule_catalog (schedule_name, first_seen_at, last_seen_at) VALUES ($1, now(), now())
-			ON CONFLICT (schedule_name) DO UPDATE SET removed_at = NULL`, s)
+			INSERT INTO schedule_catalog (tenant_id, schedule_name, first_seen_at, last_seen_at) VALUES ('default', $1, now(), now())
+			ON CONFLICT (tenant_id, schedule_name) DO UPDATE SET removed_at = NULL`, s)
 		require.NoError(t, err)
 	}
 }

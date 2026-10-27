@@ -44,7 +44,7 @@ func (s *Service) ListRuns(ctx context.Context, scheduleName string, pageSize, p
 	}
 	pageSize = min(pageSize, MaxPageSize)
 	pageOffset = max(pageOffset, 0)
-	return s.repo.ListCompletedRuns(ctx, scheduleName, pageSize, pageOffset)
+	return s.repo.ListCompletedRuns(ctx, pkgevents.DefaultTenantID, scheduleName, pageSize, pageOffset)
 }
 
 // ListActiveRunDrifts returns the live promotion seq and every schedule's

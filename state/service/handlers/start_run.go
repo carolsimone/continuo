@@ -69,16 +69,16 @@ func (h *StartRunHandler) Handle(
 	initiator identity.Identity,
 	operation model.Operation,
 ) (uuid.UUID, ActivationOutcome, error) {
-	if err := h.policy.ScheduleExistsInCatalog(ctx, u.Catalog(), name); err != nil {
+	if err := h.policy.ScheduleExistsInCatalog(ctx, u.Catalog(), h.planner.TenantID, name); err != nil {
 		return uuid.Nil, 0, err
 	}
-	if err := h.policy.EnsureNoActiveRun(ctx, u.Run(), name); err != nil {
+	if err := h.policy.EnsureNoActiveRun(ctx, u.Run(), h.planner.TenantID, name); err != nil {
 		if errors.Is(err, run.ErrScheduleHasActiveRun) {
 			return uuid.Nil, OutcomeSkippedActive, nil
 		}
 		return uuid.Nil, 0, err
 	}
-	metadata, err := u.Catalog().GetServiceMetadata(ctx, name)
+	metadata, err := u.Catalog().GetServiceMetadata(ctx, h.planner.TenantID, name)
 	if err != nil {
 		return uuid.Nil, 0, fmt.Errorf("get metadata: %w", err)
 	}

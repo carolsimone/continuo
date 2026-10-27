@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"testing"
 	"time"
 
@@ -18,13 +19,13 @@ import (
 // readRun inserts a run of scheduleName on releaseID (nil when it names none)
 // and deletes it, with its tasks, when the test ends. A completed run gets a
 // completion time.
-func readRun(t *testing.T, db *sqlx.DB, scheduleName string, releaseID *string, promotionSeq *int64, status string, completed bool) uuid.UUID {
+func readRun(t *testing.T, db *sqlx.DB, tenant, scheduleName string, releaseID *string, promotionSeq *int64, status string, completed bool) uuid.UUID {
 	t.Helper()
 	runID := uuid.New()
 	_, err := db.Exec(`
-		INSERT INTO runs (run_id, schedule_name, status, release_id, promotion_seq, completed_at)
-		VALUES ($1, $2, $3, $4, $5, CASE WHEN $6 THEN now() END)`,
-		runID, scheduleName, status, releaseID, promotionSeq, completed)
+		INSERT INTO runs (tenant_id, run_id, schedule_name, status, release_id, promotion_seq, completed_at)
+		VALUES ($7, $1, $2, $3, $4, $5, CASE WHEN $6 THEN now() END)`,
+		runID, scheduleName, status, releaseID, promotionSeq, completed, tenant)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		_, _ = db.Exec(`DELETE FROM runs WHERE run_id = $1`, runID)
@@ -37,8 +38,8 @@ func readTask(t *testing.T, db *sqlx.DB, runID uuid.UUID, table, status string) 
 	t.Helper()
 	id := uuid.New()
 	_, err := db.Exec(`
-		INSERT INTO tasks (task_id, run_id, service_name, schema_name, table_name, job_name, status, max_retries, node_key)
-		VALUES ($1, $2, 'svc', 'raw', $3::text, $4, $5, 2, 'raw.' || $3::text)`,
+		INSERT INTO tasks (tenant_id, task_id, run_id, service_name, schema_name, table_name, job_name, status, max_retries, node_key)
+		VALUES ((SELECT tenant_id FROM runs WHERE run_id = $2), $1, $2, 'svc', 'raw', $3::text, $4, $5, 2, 'raw.' || $3::text)`,
 		id, runID, table, "job-"+id.String()[:8], status)
 	require.NoError(t, err)
 	return id
@@ -62,11 +63,11 @@ func TestGetRunGraph_ShowsALeaseWaitAndItsHolder(t *testing.T) {
 	tenant := schemaTenant(t, db)
 	insertSchemaRelease(t, db, tenant, "rel-w", "raw.a", "raw.b", "raw.c")
 	rel, seq := "rel-w", int64(1)
-	holderRun := readRun(t, db, "cron-"+uuid.NewString()[:8], &rel, &seq, "running", false)
+	holderRun := readRun(t, db, tenant, "cron-"+uuid.NewString()[:8], &rel, &seq, "running", false)
 	holder := readTask(t, db, holderRun, "a", "running")
 	require.NoError(t, insertLease(db, tenant, "raw.a", holder, holderRun))
 
-	waitingRun := readRun(t, db, "single-"+uuid.NewString()[:8], &rel, &seq, "running", false)
+	waitingRun := readRun(t, db, tenant, "single-"+uuid.NewString()[:8], &rel, &seq, "running", false)
 	waiter := readTask(t, db, waitingRun, "a", "pending")
 	since := time.Date(2026, 10, 24, 10, 5, 0, 0, time.UTC)
 	waitForLease(t, db, waiter, since)
@@ -110,14 +111,15 @@ func TestGetRunGraph_AWaiterIsNeverItsOwnHolder(t *testing.T) {
 	tenant := schemaTenant(t, db)
 	insertSchemaRelease(t, db, tenant, "rel-s", "raw.a", "raw.b")
 	rel, seq := "rel-s", int64(1)
-	runID := readRun(t, db, "self-"+uuid.NewString()[:8], &rel, &seq, "running", false)
+	runID := readRun(t, db, tenant, "self-"+uuid.NewString()[:8], &rel, &seq, "running", false)
 	self := readTask(t, db, runID, "a", "pending")
 	waitForLease(t, db, self, time.Now())
 	require.NoError(t, insertLease(db, tenant, "raw.a", self, runID))
 
-	otherTenantRun := readRun(t, db, "other-"+uuid.NewString()[:8], nil, nil, "running", false)
+	otherTenant := "other-" + uuid.NewString()
+	otherTenantRun := readRun(t, db, otherTenant, "other-"+uuid.NewString()[:8], nil, nil, "running", false)
 	otherTenantTask := readTask(t, db, otherTenantRun, "b", "running")
-	require.NoError(t, insertLease(db, "other-"+uuid.NewString(), "raw.b", otherTenantTask, otherTenantRun))
+	require.NoError(t, insertLease(db, otherTenant, "raw.b", otherTenantTask, otherTenantRun))
 	waiter := readTask(t, db, runID, "b", "pending")
 	waitForLease(t, db, waiter, time.Now())
 
@@ -142,7 +144,7 @@ func TestRunReadRepository_GraphComesFromTheRunsOwnRelease(t *testing.T) {
 	_, err = db.Exec(`INSERT INTO live_release (tenant_id, release_id, promotion_seq, updated_at) VALUES ($1, 'rel-6', 6, now())`, tenant)
 	require.NoError(t, err)
 	rel, seq := "rel-5", int64(5)
-	runID := readRun(t, db, "graph-"+uuid.NewString()[:8], &rel, &seq, "running", false)
+	runID := readRun(t, db, tenant, "graph-"+uuid.NewString()[:8], &rel, &seq, "running", false)
 	readTask(t, db, runID, "a", "succeeded")
 	readTask(t, db, runID, "b", "running")
 	readTask(t, db, runID, "c", "pending")
@@ -163,7 +165,7 @@ func TestRunReadRepository_GraphComesFromTheRunsOwnRelease(t *testing.T) {
 
 func TestRunReadRepository_RunWithoutAReleaseHasNoEdges(t *testing.T) {
 	db := newTestDB(t)
-	runID := readRun(t, db, "legacy-"+uuid.NewString()[:8], nil, nil, "running", false)
+	runID := readRun(t, db, pkgevents.DefaultTenantID, "legacy-"+uuid.NewString()[:8], nil, nil, "running", false)
 	readTask(t, db, runID, "a", "running")
 
 	g, err := postgres.NewRunReadRepository(db).GetRunGraph(context.Background(), "default", runID)
@@ -187,15 +189,15 @@ func TestRunReadRepository_UnknownRunHasAnEmptyGraph(t *testing.T) {
 func TestRunReadRepository_ListsCompletedRunsNewestFirst(t *testing.T) {
 	db := newTestDB(t)
 	schedule := "list-" + uuid.NewString()[:8]
-	first := readRun(t, db, schedule, nil, nil, "succeeded", true)
+	first := readRun(t, db, pkgevents.DefaultTenantID, schedule, nil, nil, "succeeded", true)
 	_, err := db.Exec(`UPDATE runs SET created_at = created_at - interval '1 hour' WHERE run_id = $1`, first)
 	require.NoError(t, err)
-	second := readRun(t, db, schedule, nil, nil, "failed", true)
+	second := readRun(t, db, pkgevents.DefaultTenantID, schedule, nil, nil, "failed", true)
 	_, err = db.Exec(`UPDATE runs SET failure_reason = 'stalled' WHERE run_id = $1`, second)
 	require.NoError(t, err)
-	readRun(t, db, schedule, nil, nil, "running", false)
+	readRun(t, db, pkgevents.DefaultTenantID, schedule, nil, nil, "running", false)
 
-	runs, total, err := postgres.NewRunReadRepository(db).ListCompletedRuns(context.Background(), schedule, 2, 0)
+	runs, total, err := postgres.NewRunReadRepository(db).ListCompletedRuns(context.Background(), pkgevents.DefaultTenantID, schedule, 2, 0)
 	require.NoError(t, err)
 	assert.Equal(t, 2, total)
 	require.Len(t, runs, 2)
@@ -214,8 +216,8 @@ func TestRunReadRepository_DriftsAreTheNewestActiveRunPerSchedule(t *testing.T) 
 	require.NoError(t, err)
 	schedule := "drift-" + uuid.NewString()[:8]
 	rel, seq := "rel-9", int64(7)
-	newest := readRun(t, db, schedule, &rel, &seq, "running", false)
-	readRun(t, db, schedule, nil, nil, "succeeded", true)
+	newest := readRun(t, db, tenant, schedule, &rel, &seq, "running", false)
+	readRun(t, db, tenant, schedule, nil, nil, "succeeded", true)
 
 	latest, drifts, err := postgres.NewRunReadRepository(db).ListActiveRunDrifts(context.Background(), tenant)
 	require.NoError(t, err)

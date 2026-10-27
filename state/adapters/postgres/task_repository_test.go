@@ -17,6 +17,7 @@ import (
 func createTask(t *testing.T, repo postgres.TaskRepository, scheduleID uuid.UUID) *postgres.TaskRow {
 	t.Helper()
 	task := &postgres.TaskRow{
+		TenantID:    pkgevents.DefaultTenantID,
 		TaskID:      uuid.New(),
 		ScheduleID:  scheduleID,
 		ServiceName: "svc",
@@ -39,7 +40,7 @@ func createTask(t *testing.T, repo postgres.TaskRepository, scheduleID uuid.UUID
 func TestTaskRepository_HasFailedTaskTx_CountsCancelledTasks(t *testing.T) {
 	db := newTestDB(t)
 	schedulerRepo := postgres.NewRunTableRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, discardLogger())
+	taskRepo := postgres.NewTaskRepository(db, discardLogger())
 	ctx := context.Background()
 
 	cases := []struct {
@@ -60,6 +61,7 @@ func TestTaskRepository_HasFailedTaskTx_CountsCancelledTasks(t *testing.T) {
 			})
 			for _, status := range c.statuses {
 				require.NoError(t, taskRepo.Create(ctx, &postgres.TaskRow{
+					TenantID:    pkgevents.DefaultTenantID,
 					TaskID:      uuid.New(),
 					ScheduleID:  s.ScheduleID,
 					ServiceName: "svc",
@@ -75,7 +77,7 @@ func TestTaskRepository_HasFailedTaskTx_CountsCancelledTasks(t *testing.T) {
 			tx, err := db.BeginTxx(ctx, nil)
 			require.NoError(t, err)
 			defer tx.Rollback()
-			got, err := taskRepo.HasFailedTaskTx(ctx, tx, s.ScheduleID)
+			got, err := taskRepo.HasFailedTaskTx(ctx, tx, pkgevents.DefaultTenantID, s.ScheduleID)
 			require.NoError(t, err)
 			assert.Equal(t, c.want, got)
 		})
@@ -85,11 +87,12 @@ func TestTaskRepository_HasFailedTaskTx_CountsCancelledTasks(t *testing.T) {
 func TestTaskRepository_BeginStopTx(t *testing.T) {
 	db := newTestDB(t)
 	schedRepo := postgres.NewRunTableRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, discardLogger())
+	taskRepo := postgres.NewTaskRepository(db, discardLogger())
 	ctx := context.Background()
 
 	schedID := uuid.New()
 	require.NoError(t, schedRepo.Create(ctx, &postgres.RunRow{
+		TenantID:             pkgevents.DefaultTenantID,
 		ScheduleID:           schedID,
 		ScheduleName:         "begin-stop-" + schedID.String(),
 		Status:               run.RunStatusRunning,
@@ -130,6 +133,7 @@ func TestTaskRepository_BeginStopTx(t *testing.T) {
 		{staleAttemptID, run.TaskStatusDispatched, 1, 2},
 	} {
 		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskRow{
+			TenantID:    pkgevents.DefaultTenantID,
 			TaskID:      tt.id,
 			ScheduleID:  schedID,
 			ServiceName: "svc",
@@ -154,7 +158,7 @@ func TestTaskRepository_BeginStopTx(t *testing.T) {
 	require.NoError(t, err)
 	defer tx.Rollback()
 
-	counts, err := taskRepo.BeginStopTx(ctx, tx, schedID, "user1", time.Now().UTC())
+	counts, err := taskRepo.BeginStopTx(ctx, tx, pkgevents.DefaultTenantID, schedID, "user1", time.Now().UTC())
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 	assert.Equal(t, run.StopCounts{Cancelled: 3, Stopping: 3}, counts)
@@ -171,7 +175,7 @@ func TestTaskRepository_BeginStopTx(t *testing.T) {
 		noAttemptID:    run.TaskStatusCancelled,
 		staleAttemptID: run.TaskStatusCancelled,
 	} {
-		got, err := taskRepo.GetByID(ctx, id)
+		got, err := taskRepo.GetByID(ctx, pkgevents.DefaultTenantID, id)
 		require.NoError(t, err)
 		assert.Equal(t, want, got.Status)
 		assert.NotNil(t, got.CancelledAt)
@@ -187,7 +191,7 @@ func TestTaskRepository_BeginStopTx(t *testing.T) {
 		succeededID:  run.TaskStatusSucceeded,
 		skippedID:    run.TaskStatusSkipped,
 	} {
-		got, err := taskRepo.GetByID(ctx, id)
+		got, err := taskRepo.GetByID(ctx, pkgevents.DefaultTenantID, id)
 		require.NoError(t, err)
 		assert.Equal(t, want, got.Status)
 		assert.Nil(t, got.CancelledAt)
@@ -198,10 +202,11 @@ func TestTaskRepository_BeginStopTx(t *testing.T) {
 func TestTaskRepository_CreateAndGet_RoundTripsImageTag(t *testing.T) {
 	db := newTestDB(t)
 	schedulerRepo := postgres.NewRunTableRepository(db, discardLogger())
-	repo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, discardLogger())
+	repo := postgres.NewTaskRepository(db, discardLogger())
 
 	ctx := context.Background()
 	parent := &postgres.RunRow{
+		TenantID:             pkgevents.DefaultTenantID,
 		ScheduleID:           uuid.New(),
 		ScheduleName:         "tt-" + uuid.New().String()[:8],
 		Status:               run.RunStatusPending,
@@ -213,6 +218,7 @@ func TestTaskRepository_CreateAndGet_RoundTripsImageTag(t *testing.T) {
 	defer db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", parent.ScheduleID)
 
 	task := &postgres.TaskRow{
+		TenantID:    pkgevents.DefaultTenantID,
 		TaskID:      uuid.New(),
 		ScheduleID:  parent.ScheduleID,
 		CreatedAt:   time.Now(),
@@ -228,7 +234,7 @@ func TestTaskRepository_CreateAndGet_RoundTripsImageTag(t *testing.T) {
 	require.NoError(t, repo.Create(ctx, task))
 	defer db.ExecContext(ctx, "DELETE FROM tasks WHERE task_id = $1", task.TaskID)
 
-	got, err := repo.GetByID(ctx, task.TaskID)
+	got, err := repo.GetByID(ctx, pkgevents.DefaultTenantID, task.TaskID)
 	require.NoError(t, err)
 	assert.Equal(t, "registry/img:abcdef", got.ImageTag)
 }
@@ -248,10 +254,11 @@ func TestTaskRow_ManifestVersionColumnIsDropped(t *testing.T) {
 func TestTaskRepository_CreateAndGet_RoundTripsInheritedFromTaskID(t *testing.T) {
 	db := newTestDB(t)
 	schedulerRepo := postgres.NewRunTableRepository(db, discardLogger())
-	repo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, discardLogger())
+	repo := postgres.NewTaskRepository(db, discardLogger())
 
 	ctx := context.Background()
 	parent := &postgres.RunRow{
+		TenantID:             pkgevents.DefaultTenantID,
 		ScheduleID:           uuid.New(),
 		ScheduleName:         "tt-inh-" + uuid.New().String()[:8],
 		Status:               run.RunStatusPending,
@@ -265,6 +272,7 @@ func TestTaskRepository_CreateAndGet_RoundTripsInheritedFromTaskID(t *testing.T)
 	// Inherited row: non-NULL pointer.
 	rootTaskID := uuid.New()
 	inherited := &postgres.TaskRow{
+		TenantID:            pkgevents.DefaultTenantID,
 		TaskID:              uuid.New(),
 		ScheduleID:          parent.ScheduleID,
 		CreatedAt:           time.Now(),
@@ -281,13 +289,14 @@ func TestTaskRepository_CreateAndGet_RoundTripsInheritedFromTaskID(t *testing.T)
 	require.NoError(t, repo.Create(ctx, inherited))
 	defer db.ExecContext(ctx, "DELETE FROM tasks WHERE task_id = $1", inherited.TaskID)
 
-	gotInherited, err := repo.GetByID(ctx, inherited.TaskID)
+	gotInherited, err := repo.GetByID(ctx, pkgevents.DefaultTenantID, inherited.TaskID)
 	require.NoError(t, err)
 	require.NotNil(t, gotInherited.InheritedFromTaskID, "InheritedFromTaskID round-trip lost the pointer")
 	assert.Equal(t, rootTaskID, *gotInherited.InheritedFromTaskID)
 
 	// Real-execution row: NULL pointer should round-trip as nil.
 	real := &postgres.TaskRow{
+		TenantID:    pkgevents.DefaultTenantID,
 		TaskID:      uuid.New(),
 		ScheduleID:  parent.ScheduleID,
 		CreatedAt:   time.Now(),
@@ -304,7 +313,7 @@ func TestTaskRepository_CreateAndGet_RoundTripsInheritedFromTaskID(t *testing.T)
 	require.NoError(t, repo.Create(ctx, real))
 	defer db.ExecContext(ctx, "DELETE FROM tasks WHERE task_id = $1", real.TaskID)
 
-	gotReal, err := repo.GetByID(ctx, real.TaskID)
+	gotReal, err := repo.GetByID(ctx, pkgevents.DefaultTenantID, real.TaskID)
 	require.NoError(t, err)
 	assert.Nil(t, gotReal.InheritedFromTaskID, "real-execution row should round-trip InheritedFromTaskID as nil")
 }
@@ -315,7 +324,7 @@ func TestTaskRepository_SetStatusAndAttemptTx_DoesNotReviveCancelledTask(t *test
 	scheduler := createScheduler(t, schedulerRepo, "test-schedule-"+uuid.New().String())
 	defer db.ExecContext(context.Background(), "DELETE FROM runs WHERE run_id = $1", scheduler.ScheduleID)
 
-	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, discardLogger())
+	taskRepo := postgres.NewTaskRepository(db, discardLogger())
 	task := createTask(t, taskRepo, scheduler.ScheduleID)
 	defer db.ExecContext(context.Background(), "DELETE FROM tasks WHERE task_id = $1", task.TaskID)
 
@@ -331,13 +340,13 @@ func TestTaskRepository_SetStatusAndAttemptTx_DoesNotReviveCancelledTask(t *test
 	require.NoError(t, err)
 	defer tx.Rollback()
 
-	affected, err := taskRepo.SetStatusAndAttemptTx(context.Background(), tx, task.TaskID, "succeeded", 0)
+	affected, err := taskRepo.SetStatusAndAttemptTx(context.Background(), tx, pkgevents.DefaultTenantID, task.TaskID, "succeeded", 0)
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 
 	assert.Equal(t, int32(0), affected, "cancelled task must not be revived")
 
-	got, err := taskRepo.GetByID(context.Background(), task.TaskID)
+	got, err := taskRepo.GetByID(context.Background(), pkgevents.DefaultTenantID, task.TaskID)
 	require.NoError(t, err)
 	assert.Equal(t, run.TaskStatusCancelled, got.Status, "status must remain cancelled")
 }
@@ -352,7 +361,7 @@ func TestTaskRepository_SetStatusAndAttemptTx_AdvancesAttemptOnSameStatus(t *tes
 	scheduler := createScheduler(t, schedulerRepo, "test-schedule-"+uuid.New().String())
 	defer db.ExecContext(context.Background(), "DELETE FROM runs WHERE run_id = $1", scheduler.ScheduleID)
 
-	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, discardLogger())
+	taskRepo := postgres.NewTaskRepository(db, discardLogger())
 	task := createTask(t, taskRepo, scheduler.ScheduleID)
 	defer db.ExecContext(context.Background(), "DELETE FROM tasks WHERE task_id = $1", task.TaskID)
 
@@ -361,9 +370,9 @@ func TestTaskRepository_SetStatusAndAttemptTx_AdvancesAttemptOnSameStatus(t *tes
 	require.NoError(t, err)
 	defer tx.Rollback()
 
-	_, err = taskRepo.SetStatusAndAttemptTx(ctx, tx, task.TaskID, "failed", 1)
+	_, err = taskRepo.SetStatusAndAttemptTx(ctx, tx, pkgevents.DefaultTenantID, task.TaskID, "failed", 1)
 	require.NoError(t, err)
-	affected, err := taskRepo.SetStatusAndAttemptTx(ctx, tx, task.TaskID, "failed", 2)
+	affected, err := taskRepo.SetStatusAndAttemptTx(ctx, tx, pkgevents.DefaultTenantID, task.TaskID, "failed", 2)
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 
@@ -375,7 +384,7 @@ func TestTaskRepository_SetStatusAndAttemptTx_AdvancesAttemptOnSameStatus(t *tes
 			return postgres.TaskAttemptRow{}, false, err
 		}
 		defer tx2.Rollback()
-		return taskRepo.LoadAttemptStateTx(ctx, tx2, task.TaskID)
+		return taskRepo.LoadAttemptStateTx(ctx, tx2, pkgevents.DefaultTenantID, task.TaskID)
 	}()
 	require.NoError(t, err)
 	require.True(t, found)
@@ -390,7 +399,7 @@ func TestTaskRepository_SetStatusAndAttemptTx_AdvancesAttemptOnSameStatus(t *tes
 func TestTaskRepository_BulkCreateTx_CopiesTenThousandTasks(t *testing.T) {
 	db := newTestDB(t)
 	schedRepo := postgres.NewRunTableRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, discardLogger())
+	taskRepo := postgres.NewTaskRepository(db, discardLogger())
 	ctx := context.Background()
 
 	sched := createScheduler(t, schedRepo, "bulk-create-"+uuid.New().String())
@@ -404,6 +413,7 @@ func TestTaskRepository_BulkCreateTx_CopiesTenThousandTasks(t *testing.T) {
 	for i := range tasks {
 		key := fmt.Sprintf("sch.t_%05d", i)
 		tasks[i] = &postgres.TaskRow{
+			TenantID:    pkgevents.DefaultTenantID,
 			TaskID:      uuid.New(),
 			ScheduleID:  sched.ScheduleID,
 			CreatedAt:   time.Now(),
@@ -449,7 +459,7 @@ func TestTaskRepository_DispatchedAtRoundTrips(t *testing.T) {
 	db := newTestDB(t)
 	logger := discardLogger()
 	runs := postgres.NewRunTableRepository(db, logger)
-	tasks := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, logger)
+	tasks := postgres.NewTaskRepository(db, logger)
 	runRow := createScheduler(t, runs, "dispatched-"+uuid.NewString()[:8])
 	t.Cleanup(func() { _, _ = db.Exec(`DELETE FROM runs WHERE run_id = $1`, runRow.ScheduleID) })
 
@@ -457,12 +467,14 @@ func TestTaskRepository_DispatchedAtRoundTrips(t *testing.T) {
 	root := uuid.New()
 	dispatchedKey, inheritedKey := "raw.orders", "raw.customers"
 	dispatched := &postgres.TaskRow{
-		TaskID: uuid.New(), ScheduleID: runRow.ScheduleID, CreatedAt: time.Now(),
+		TenantID: pkgevents.DefaultTenantID,
+		TaskID:   uuid.New(), ScheduleID: runRow.ScheduleID, CreatedAt: time.Now(),
 		ServiceName: "svc", SchemaName: "raw", TableName: "orders", JobName: "job-orders",
 		Status: run.TaskStatusPending, MaxRetries: 2, NodeKey: &dispatchedKey, DispatchedAt: &at,
 	}
 	inherited := &postgres.TaskRow{
-		TaskID: uuid.New(), ScheduleID: runRow.ScheduleID, CreatedAt: time.Now(),
+		TenantID: pkgevents.DefaultTenantID,
+		TaskID:   uuid.New(), ScheduleID: runRow.ScheduleID, CreatedAt: time.Now(),
 		ServiceName: "svc", SchemaName: "raw", TableName: "customers", JobName: "job-customers",
 		Status: run.TaskStatusSucceeded, NodeKey: &inheritedKey, InheritedFromTaskID: &root,
 	}
@@ -472,14 +484,14 @@ func TestTaskRepository_DispatchedAtRoundTrips(t *testing.T) {
 	require.NoError(t, tasks.BulkCreateTx(ctx, tx, []*postgres.TaskRow{dispatched, inherited}))
 	require.NoError(t, tx.Commit())
 
-	read, err := tasks.GetByID(ctx, dispatched.TaskID)
+	read, err := tasks.GetByID(ctx, pkgevents.DefaultTenantID, dispatched.TaskID)
 	require.NoError(t, err)
 	require.NotNil(t, read.DispatchedAt)
 	assert.True(t, at.Equal(*read.DispatchedAt))
 	assert.Nil(t, read.InheritedFromTaskID)
 	assert.Equal(t, "run", read.Operation, "an empty operation is stored as run")
 
-	read, err = tasks.GetByID(ctx, inherited.TaskID)
+	read, err = tasks.GetByID(ctx, pkgevents.DefaultTenantID, inherited.TaskID)
 	require.NoError(t, err)
 	assert.Nil(t, read.DispatchedAt)
 	require.NotNil(t, read.InheritedFromTaskID)
@@ -493,12 +505,13 @@ func TestTaskRepository_NodeKeyRoundTrips(t *testing.T) {
 	db := newTestDB(t)
 	logger := discardLogger()
 	runs := postgres.NewRunTableRepository(db, logger)
-	tasks := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, logger)
+	tasks := postgres.NewTaskRepository(db, logger)
 	runRow := createScheduler(t, runs, "nodekey-"+uuid.NewString()[:8])
 	t.Cleanup(func() { _, _ = db.Exec(`DELETE FROM runs WHERE run_id = $1`, runRow.ScheduleID) })
 	key := "raw.orders"
 	row := &postgres.TaskRow{
-		TaskID: uuid.New(), ScheduleID: runRow.ScheduleID, CreatedAt: time.Now(),
+		TenantID: pkgevents.DefaultTenantID,
+		TaskID:   uuid.New(), ScheduleID: runRow.ScheduleID, CreatedAt: time.Now(),
 		ServiceName: "svc", SchemaName: "raw", TableName: "orders", JobName: "job",
 		Status: run.TaskStatusPending, MaxRetries: 2, NodeKey: &key,
 	}
@@ -508,7 +521,7 @@ func TestTaskRepository_NodeKeyRoundTrips(t *testing.T) {
 	require.NoError(t, tasks.BulkCreateTx(ctx, tx, []*postgres.TaskRow{row}))
 	require.NoError(t, tx.Commit())
 
-	read, err := tasks.GetByID(ctx, row.TaskID)
+	read, err := tasks.GetByID(ctx, pkgevents.DefaultTenantID, row.TaskID)
 	require.NoError(t, err)
 	require.NotNil(t, read.NodeKey)
 	assert.Equal(t, key, *read.NodeKey)
@@ -523,23 +536,23 @@ func TestListByRunID_ShowsALeaseWaitAndItsHolder(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	tenant, otherTenant := leaseTenant(t, db), leaseTenant(t, db)
-	tasks := postgres.NewTaskRepository(db, tenant, discardLogger())
+	tasks := postgres.NewTaskRepository(db, discardLogger())
 	held, free := "w"+uuid.NewString()[:8], "f"+uuid.NewString()[:8]
-	holderRun := readRun(t, db, "cron-"+uuid.NewString()[:8], nil, nil, "running", false)
+	holderRun := readRun(t, db, tenant, "cron-"+uuid.NewString()[:8], nil, nil, "running", false)
 	holder := readTask(t, db, holderRun, held, "running")
 	require.NoError(t, insertLease(db, tenant, "raw."+held, holder, holderRun))
-	otherRun := readRun(t, db, "other-"+uuid.NewString()[:8], nil, nil, "running", false)
+	otherRun := readRun(t, db, otherTenant, "other-"+uuid.NewString()[:8], nil, nil, "running", false)
 	otherHolder := readTask(t, db, otherRun, free, "running")
 	require.NoError(t, insertLease(db, otherTenant, "raw."+free, otherHolder, otherRun))
 
-	waitingRun := readRun(t, db, "single-"+uuid.NewString()[:8], nil, nil, "running", false)
+	waitingRun := readRun(t, db, tenant, "single-"+uuid.NewString()[:8], nil, nil, "running", false)
 	waiter := readTask(t, db, waitingRun, held, "pending")
 	since := time.Date(2026, 10, 24, 10, 5, 0, 0, time.UTC)
 	waitForLease(t, db, waiter, since)
 	freed := readTask(t, db, waitingRun, free, "pending")
 	waitForLease(t, db, freed, since)
 
-	list, total, err := tasks.ListByRunID(ctx, waitingRun, nil, 10, 0)
+	list, total, err := tasks.ListByRunID(ctx, tenant, waitingRun, nil, 10, 0)
 	require.NoError(t, err)
 	require.Equal(t, 2, total)
 	byID := map[uuid.UUID]*postgres.TaskRow{}
@@ -557,14 +570,14 @@ func TestListByRunID_ShowsALeaseWaitAndItsHolder(t *testing.T) {
 	assertWaitsOn(t, byID[waiter], &holderRun)
 	assertWaitsOn(t, byID[freed], nil)
 
-	got, err := tasks.GetByID(ctx, waiter)
+	got, err := tasks.GetByID(ctx, tenant, waiter)
 	require.NoError(t, err)
 	assertWaitsOn(t, got, &holderRun)
-	got, err = tasks.GetByRunAndNode(ctx, waitingRun, "svc", "raw", held)
+	got, err = tasks.GetByRunAndNode(ctx, tenant, waitingRun, "svc", "raw", held)
 	require.NoError(t, err)
 	assertWaitsOn(t, got, &holderRun)
 
-	got, err = tasks.GetByID(ctx, holder)
+	got, err = tasks.GetByID(ctx, tenant, holder)
 	require.NoError(t, err)
 	assert.Nil(t, got.WaitReason)
 	assert.Nil(t, got.LeaseWaitSince)
@@ -576,8 +589,8 @@ func TestListByRunID_ShowsALeaseWaitAndItsHolder(t *testing.T) {
 func TestListByRunID_FiltersByStatusAndPages(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
-	tasks := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, discardLogger())
-	runID := readRun(t, db, "list-"+uuid.NewString()[:8], nil, nil, "running", false)
+	tasks := postgres.NewTaskRepository(db, discardLogger())
+	runID := readRun(t, db, pkgevents.DefaultTenantID, "list-"+uuid.NewString()[:8], nil, nil, "running", false)
 	oldest := readTask(t, db, runID, "a", "pending")
 	middle := readTask(t, db, runID, "b", "running")
 	newest := readTask(t, db, runID, "c", "pending")
@@ -586,14 +599,14 @@ func TestListByRunID_FiltersByStatusAndPages(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	all, total, err := tasks.ListByRunID(ctx, runID, nil, 10, 0)
+	all, total, err := tasks.ListByRunID(ctx, pkgevents.DefaultTenantID, runID, nil, 10, 0)
 	require.NoError(t, err)
 	assert.Equal(t, 3, total)
 	require.Len(t, all, 3)
 	assert.Equal(t, []uuid.UUID{newest, middle, oldest}, []uuid.UUID{all[0].TaskID, all[1].TaskID, all[2].TaskID})
 
 	pending := run.TaskStatusPending
-	page, total, err := tasks.ListByRunID(ctx, runID, &pending, 1, 1)
+	page, total, err := tasks.ListByRunID(ctx, pkgevents.DefaultTenantID, runID, &pending, 1, 1)
 	require.NoError(t, err)
 	assert.Equal(t, 2, total, "the count is of the filter's matches, not of the page")
 	require.Len(t, page, 1)

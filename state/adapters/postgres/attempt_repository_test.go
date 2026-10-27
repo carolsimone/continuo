@@ -158,6 +158,7 @@ func TestAttemptRepository_MarkQuestionedCountsTheQuestionAndMovesTheNextCheck(t
 
 // A run is stalled when it is active, has no task in flight and its progress
 // clock is older than the idle time; a run with a queued attempt never is.
+// Each tenant's repository lists its own runs only.
 func TestAttemptRepository_StalledRunsHaveNothingInFlightAndNoRecentProgress(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
@@ -172,13 +173,16 @@ func TestAttemptRepository_StalledRunsHaveNothingInFlightAndNoRecentProgress(t *
 		pq.Array([]uuid.UUID{idle.RunID(), waiting.r.RunID()}))
 	require.NoError(t, err)
 
-	got, err := postgres.NewAttemptRepository(db, nil, tenant).StalledRuns(ctx, 5*time.Minute, 100)
+	got, err := postgres.NewAttemptRepository(db, nil, idleTenant).StalledRuns(ctx, 5*time.Minute, 100)
 	require.NoError(t, err)
-
 	assert.Contains(t, got, idle.RunID())
-	assert.NotContains(t, got, waiting.r.RunID(), "a run waiting for a slot is never stalled")
 
-	got, err = postgres.NewAttemptRepository(db, nil, tenant).StalledRuns(ctx, 15*time.Minute, 100)
+	got, err = postgres.NewAttemptRepository(db, nil, tenant).StalledRuns(ctx, 5*time.Minute, 100)
+	require.NoError(t, err)
+	assert.NotContains(t, got, waiting.r.RunID(), "a run waiting for a slot is never stalled")
+	assert.NotContains(t, got, idle.RunID(), "another tenant's stalled run is not the tenant's")
+
+	got, err = postgres.NewAttemptRepository(db, nil, idleTenant).StalledRuns(ctx, 15*time.Minute, 100)
 	require.NoError(t, err)
 	assert.NotContains(t, got, idle.RunID(), "a run that moved within the idle time is not stalled")
 }
@@ -217,8 +221,8 @@ func TestAttemptRepository_StalledRunsCoverACancellingRunWithNothingStopping(t *
 	ctx := context.Background()
 	db := newTestDB(t)
 	tenant := storeFailureSchedule(t, db)
-	nothingStopping, _ := insertTasks(t, db, map[string]run.TaskStatus{"ftable_a": run.TaskStatusCancelled, "ftable_b": run.TaskStatusSucceeded})
-	stillStopping, _ := insertTasks(t, db, map[string]run.TaskStatus{"ftable_a": run.TaskStatusStopping, "ftable_b": run.TaskStatusCancelled})
+	nothingStopping, _ := insertTasks(t, db, tenant, map[string]run.TaskStatus{"ftable_a": run.TaskStatusCancelled, "ftable_b": run.TaskStatusSucceeded})
+	stillStopping, _ := insertTasks(t, db, tenant, map[string]run.TaskStatus{"ftable_a": run.TaskStatusStopping, "ftable_b": run.TaskStatusCancelled})
 	_, err := db.Exec(`UPDATE runs SET status = 'cancelling', last_progress_at = now() - interval '10 minutes'
 		WHERE run_id = ANY($1)`, pq.Array([]uuid.UUID{nothingStopping, stillStopping}))
 	require.NoError(t, err)
@@ -230,12 +234,12 @@ func TestAttemptRepository_StalledRunsCoverACancellingRunWithNothingStopping(t *
 	assert.NotContains(t, got, stillStopping, "a stopping task is in flight until its attempt reports")
 }
 
-// leaseWaitRun stores a running run whose only task, at table, is pending and
-// waits for its node's write lease, with a progress clock ten minutes old, and
-// returns the run id.
-func leaseWaitRun(t *testing.T, db *sqlx.DB, table string) uuid.UUID {
+// leaseWaitRun stores a running run of tenant whose only task, at table, is
+// pending and waits for its node's write lease, with a progress clock ten
+// minutes old, and returns the run id.
+func leaseWaitRun(t *testing.T, db *sqlx.DB, tenant, table string) uuid.UUID {
 	t.Helper()
-	runID, ids := pendingTasks(t, db, table)
+	runID, ids := pendingTasks(t, db, tenant, table)
 	_, err := db.Exec(`UPDATE tasks SET wait_reason = 'node_lease', lease_wait_since = now() - interval '10 minutes'
 		WHERE task_id = $1`, ids[table])
 	require.NoError(t, err)
@@ -256,12 +260,12 @@ func TestStalledRuns_ALeaseWaitBehindAnInFlightHolderIsNotStalled(t *testing.T) 
 	for _, status := range run.InFlightTaskStatuses() {
 		t.Run(string(status), func(t *testing.T) {
 			table := leaseTables("held")[0]
-			waiting := leaseWaitRun(t, db, table)
+			waiting := leaseWaitRun(t, db, tenant, table)
 			got, err := repo.StalledRuns(ctx, 5*time.Minute, 500)
 			require.NoError(t, err)
 			require.Contains(t, got, waiting, "no task holds the node yet")
 
-			holderRun, holder := insertTasks(t, db, map[string]run.TaskStatus{table: status})
+			holderRun, holder := insertTasks(t, db, tenant, map[string]run.TaskStatus{table: status})
 			require.NoError(t, insertLease(db, tenant, "e2e_schema."+table, holder[table], holderRun))
 
 			got, err = repo.StalledRuns(ctx, 5*time.Minute, 500)
@@ -295,10 +299,10 @@ func TestStalledRuns_ALeaseWaitOnAFreeNodeIsListedAndGrantedUnderTheLock(t *test
 	t.Cleanup(func() {
 		_, _ = db.ExecContext(context.Background(), `DELETE FROM node_leases WHERE tenant_id = $1`, tenant)
 	})
-	waitingOnFree := leaseWaitRun(t, db, free)
-	holderRun, holder := insertTasks(t, db, map[string]run.TaskStatus{ended: run.TaskStatusSucceeded})
+	waitingOnFree := leaseWaitRun(t, db, tenant, free)
+	holderRun, holder := insertTasks(t, db, tenant, map[string]run.TaskStatus{ended: run.TaskStatusSucceeded})
 	require.NoError(t, insertLease(db, tenant, "e2e_schema."+ended, holder[ended], holderRun))
-	waitingOnEnded := leaseWaitRun(t, db, ended)
+	waitingOnEnded := leaseWaitRun(t, db, tenant, ended)
 
 	got, err := postgres.NewAttemptRepository(db, nil, tenant).StalledRuns(ctx, 5*time.Minute, 500)
 	require.NoError(t, err)
@@ -331,7 +335,8 @@ func (f statusFlow) makeStopsDue(t *testing.T, ago time.Duration) {
 
 // A run is due a re-sent cancel once it is cancelling and an attempt asked to
 // stop has a next check that has passed, the longest due first; a running run
-// and a cancelling run whose stops are not yet due are not.
+// and a cancelling run whose stops are not yet due are not. Each tenant's
+// repository lists its own runs only.
 func TestAttemptRepository_DueStopsAreCancellingRunsWithAQuietStop(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
@@ -358,22 +363,54 @@ func TestAttemptRepository_DueStopsAreCancellingRunsWithAQuietStop(t *testing.T)
 	g.makeStopsDue(t, 2*time.Hour)
 	got, err = repo.DueStops(ctx, 500)
 	require.NoError(t, err)
-	require.GreaterOrEqual(t, len(got), 2)
-	assert.Less(t, indexOf(got, g.r.RunID()), indexOf(got, f.r.RunID()), "the longest due first, of every tenant")
+	assert.Contains(t, got, f.r.RunID())
+	assert.NotContains(t, got, g.r.RunID(), "another tenant's cancelling run is not the tenant's")
 	assert.Len(t, uniqueIDs(got), len(got), "a run with several quiet stops is listed once")
-
-	only, err := repo.DueStops(ctx, 1)
+	theirs, err := postgres.NewAttemptRepository(db, nil, other).DueStops(ctx, 500)
 	require.NoError(t, err)
-	assert.Len(t, only, 1)
+	assert.Equal(t, []uuid.UUID{g.r.RunID()}, theirs)
+
+	pair := leaseTables("first", "second")
+	pairTenant := storeSchedules(t, db, pair...)
+	first := statusFlow{db: db, tenant: pairTenant, r: startScheduleRun(t, db, pairTenant, pair[0], model.OperationRun)}
+	second := statusFlow{db: db, tenant: pairTenant, r: startScheduleRun(t, db, pairTenant, pair[1], model.OperationRun)}
+	cancelRun(t, db, first.r)
+	cancelRun(t, db, second.r)
+	first.makeStopsDue(t, time.Hour)
+	second.makeStopsDue(t, 2*time.Hour)
+	pairRepo := postgres.NewAttemptRepository(db, nil, pairTenant)
+	got, err = pairRepo.DueStops(ctx, 500)
+	require.NoError(t, err)
+	assert.Equal(t, []uuid.UUID{second.r.RunID(), first.r.RunID()}, got, "the longest due first")
+
+	only, err := pairRepo.DueStops(ctx, 1)
+	require.NoError(t, err)
+	assert.Equal(t, []uuid.UUID{second.r.RunID()}, only)
 }
 
-func indexOf(ids []uuid.UUID, id uuid.UUID) int {
-	for i, x := range ids {
-		if x == id {
-			return i
-		}
+// storeSchedules stores release rel-1 of a new tenant holding one dbt model of
+// schema e2e_schema per table, each in a schedule named after its table, and
+// returns the tenant.
+func storeSchedules(t *testing.T, db *sqlx.DB, tables ...string) string {
+	t.Helper()
+	specs := make([]topology.NodeSpec, 0, len(tables))
+	for _, table := range tables {
+		specs = append(specs, topology.NodeSpec{
+			UniqueID: "e2e_schema." + table, ServiceName: "service-1", SchemaName: "e2e_schema", TableName: table,
+			NodeType: "dbt-model", ContentHash: "h-" + table, ImageTag: "service-1:5", ScheduleName: table,
+		})
 	}
-	return len(ids)
+	tenant := planningTenant(t, db)
+	rel, err := topology.NewRelease(tenant, "rel-1", 1, "s3://continuo/k", "sha", specs)
+	require.NoError(t, err)
+	ctx := context.Background()
+	tx, err := db.BeginTxx(ctx, nil)
+	require.NoError(t, err)
+	defer tx.Rollback()
+	_, err = postgres.NewTopologyRepository(db, tx).SaveRelease(ctx, rel)
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
+	return tenant
 }
 
 func uniqueIDs(ids []uuid.UUID) map[uuid.UUID]struct{} {
@@ -476,8 +513,8 @@ func TestAttemptRepository_CountCancellingCountsTheOverdue(t *testing.T) {
 	total0, overdue0, err := repo.CountCancelling(ctx, 15*time.Minute)
 	require.NoError(t, err)
 
-	fresh, _ := insertTasks(t, db, map[string]run.TaskStatus{"ftable_a": run.TaskStatusStopping})
-	old, _ := insertTasks(t, db, map[string]run.TaskStatus{"ftable_a": run.TaskStatusStopping})
+	fresh, _ := insertTasks(t, db, tenant, map[string]run.TaskStatus{"ftable_a": run.TaskStatusStopping})
+	old, _ := insertTasks(t, db, tenant, map[string]run.TaskStatus{"ftable_a": run.TaskStatusStopping})
 	_, err = db.Exec(`UPDATE runs SET status = 'cancelling', cancelled_at = now() WHERE run_id = $1`, fresh)
 	require.NoError(t, err)
 	_, err = db.Exec(`UPDATE runs SET status = 'cancelling', cancelled_at = now() - interval '16 minutes' WHERE run_id = $1`, old)
@@ -585,9 +622,9 @@ func cancelRun(t *testing.T, db *sqlx.DB, r *run.Run) {
 	t.Helper()
 	ctx := context.Background()
 	inUoW(t, db, func(u *postgres.PostgresUnitOfWork) {
-		loaded, err := u.Run().LoadRunForUpdate(ctx, r.RunID())
+		loaded, err := u.Run().LoadRunForUpdate(ctx, r.TenantID(), r.RunID())
 		require.NoError(t, err)
-		_, err = loaded.Cancel(ctx, u.TaskCollection(pkgevents.DefaultTenantID), "user", "", u.Clock().Now())
+		_, err = loaded.Cancel(ctx, u.TaskCollection(loaded.TenantID()), "user", "", u.Clock().Now())
 		require.NoError(t, err)
 		require.NoError(t, u.Run().SaveRun(ctx, loaded))
 	})

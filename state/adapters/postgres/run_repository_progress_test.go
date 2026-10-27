@@ -23,10 +23,11 @@ func TestRunRepository_SaveRun_PersistsProgressClock(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	schedRepo := postgres.NewRunTableRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, discardLogger())
+	taskRepo := postgres.NewTaskRepository(db, discardLogger())
 
 	scheduleID := uuid.New()
 	require.NoError(t, schedRepo.Create(ctx, &postgres.RunRow{
+		TenantID:             pkgevents.DefaultTenantID,
 		ScheduleID:           scheduleID,
 		ScheduleName:         "progress-" + scheduleID.String()[:8],
 		Status:               run.RunStatusPending,
@@ -44,7 +45,7 @@ func TestRunRepository_SaveRun_PersistsProgressClock(t *testing.T) {
 		require.NoError(t, err)
 		defer tx.Rollback()
 		runRepo := postgres.NewRunRepository(tx, schedRepo)
-		rn, err := runRepo.LoadRunForUpdate(ctx, scheduleID)
+		rn, err := runRepo.LoadRunForUpdate(ctx, pkgevents.DefaultTenantID, scheduleID)
 		require.NoError(t, err)
 		mutate(rn, postgres.NewTaskCollectionAdapter(taskRepo, tx, "default"))
 		require.NoError(t, runRepo.SaveRun(ctx, rn))
@@ -52,7 +53,7 @@ func TestRunRepository_SaveRun_PersistsProgressClock(t *testing.T) {
 	}
 	heartbeat := func() time.Time {
 		t.Helper()
-		got, err := schedRepo.GetByID(ctx, scheduleID)
+		got, err := schedRepo.GetByID(ctx, pkgevents.DefaultTenantID, scheduleID)
 		require.NoError(t, err)
 		require.NotNil(t, got.LastProgressAt, "last_progress_at must be persisted")
 		return *got.LastProgressAt

@@ -30,8 +30,10 @@ type rebaseRuns struct {
 	saved  []*run.Run
 }
 
-func (r *rebaseRuns) GetRun(context.Context, uuid.UUID) (*run.Run, error) { return r.source, nil }
-func (r *rebaseRuns) HasActiveRun(context.Context, string) (bool, error) {
+func (r *rebaseRuns) GetRun(context.Context, string, uuid.UUID) (*run.Run, error) {
+	return r.source, nil
+}
+func (r *rebaseRuns) HasActiveRun(context.Context, string, string) (bool, error) {
 	return r.active, nil
 }
 func (r *rebaseRuns) SaveRun(_ context.Context, rn *run.Run) error {

@@ -65,7 +65,7 @@ func TestReleaseStamp_CreationSerialisesWithPromotionAndPruning(t *testing.T) {
 	h.storeRelease(t, "rel-new", promotedNode("raw", "stamp_orders", "dbt-model"), scheduledNode("mart", "stamp_lock", "dbt-model", "stamp-lock"))
 	_, err := db.Exec(`UPDATE topology_releases SET loaded_at = now() - interval '30 days' WHERE release_id = 'rel-old'`)
 	require.NoError(t, err)
-	_, err = db.Exec(`INSERT INTO schedule_catalog (schedule_name, first_seen_at, last_seen_at) VALUES ('stamp-lock', now(), now())`)
+	_, err = db.Exec(`INSERT INTO schedule_catalog (tenant_id, schedule_name, first_seen_at, last_seen_at) VALUES ('default', 'stamp-lock', now(), now())`)
 	require.NoError(t, err)
 
 	promote := func(releaseID string, seq int64) func(context.Context, uow.UnitOfWork) error {

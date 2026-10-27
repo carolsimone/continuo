@@ -145,7 +145,7 @@ func (r *Reconciler) adopt(ctx context.Context, u uow.UnitOfWork, t ports.Promot
 	if err != nil {
 		return fmt.Errorf("read the seeds of release %s: %w", t.ReleaseID, err)
 	}
-	firstRunExists, err := u.Run().RunExists(ctx, seeds.RunID(t.TenantID, t.ReleaseID, 1))
+	firstRunExists, err := u.Run().RunExists(ctx, t.TenantID, seeds.RunID(t.TenantID, t.ReleaseID, 1))
 	if err != nil {
 		return fmt.Errorf("look up the first promote-seed run of release %s: %w", t.ReleaseID, err)
 	}
@@ -225,7 +225,7 @@ func (r *Reconciler) pass(ctx context.Context, u uow.UnitOfWork, tenantID string
 // id is the release's run id numbered one past the runs that already name the
 // release; an id another run holds moves it to the next number.
 func createRun(ctx context.Context, u uow.UnitOfWork, tenantID string, live topology.Pointer, now time.Time) (*run.Run, error) {
-	existing, err := u.Run().CountReleaseRuns(ctx, live.ReleaseID, run.KindPromoteSeed)
+	existing, err := u.Run().CountReleaseRuns(ctx, tenantID, live.ReleaseID, run.KindPromoteSeed)
 	if err != nil {
 		return nil, fmt.Errorf("count the promote-seed runs of release %s: %w", live.ReleaseID, err)
 	}

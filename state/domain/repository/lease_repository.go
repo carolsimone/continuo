@@ -32,8 +32,8 @@ type RepairedLease struct {
 // LeaseRepository answers, for the tenant it is bound to, which waiting tasks
 // a free node's write lease can be granted to, which leases outlived the task
 // that held them (and deletes them), and how many tasks wait for a lease. A
-// waiter belongs to the tenant whose topology holds its node in its run's
-// release, which assumes release ids are unique across tenants.
+// waiter, a lease and the task that holds it are the tenant's when their row
+// names the tenant.
 type LeaseRepository interface {
 	// Grantable returns, for each of the tenant's nodes no task holds, its
 	// oldest waiter (the earliest lease_wait_since, then the lowest task id)

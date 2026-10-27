@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/repository"
 	"github.com/carolsimone/continuo/state/domain/topology"
@@ -382,8 +381,8 @@ func TestTopologyRepository_PruneReleases(t *testing.T) {
 	for name, status := range map[string]string{"running-run": "running", "finished-run": "succeeded"} {
 		runID := uuid.New()
 		_, err := db.Exec(`
-			INSERT INTO runs (run_id, schedule_name, status, created_at, initialization_status, release_id)
-			VALUES ($1, $2, $3, now(), 'completed', $4)`, runID, "prune-"+runID.String()[:8], status, id(name))
+			INSERT INTO runs (tenant_id, run_id, schedule_name, status, created_at, initialization_status, release_id)
+			VALUES ($5, $1, $2, $3, now(), 'completed', $4)`, runID, "prune-"+runID.String()[:8], status, id(name), tenant)
 		require.NoError(t, err)
 		t.Cleanup(func() { _, _ = db.Exec(`DELETE FROM runs WHERE run_id = $1`, runID) })
 	}
@@ -409,7 +408,7 @@ func TestPostgresUnitOfWork_TopologyWritesRollBackWithTheTransaction(t *testing.
 	tenant := newTopoTenant(t, db)
 	logger := discardLogger()
 	u := postgres.NewPostgresUnitOfWork(db,
-		postgres.NewRunTableRepository(db, logger), postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, logger),
+		postgres.NewRunTableRepository(db, logger), postgres.NewTaskRepository(db, logger),
 		postgres.NewScheduleCatalogRepository(db, logger),
 		ports.SystemClock{}, logger)
 

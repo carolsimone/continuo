@@ -41,14 +41,14 @@ type selectDerived func(ctx context.Context, u uow.UnitOfWork, src *run.Run) (ru
 // chooses, and returns its id and schedule name. A selection the planner
 // refuses is returned as is, and nothing is written.
 func (c derivedRunCreation) create(ctx context.Context, u uow.UnitOfWork, sourceID uuid.UUID, initiator identity.Identity, selectRun selectDerived) (uuid.UUID, string, error) {
-	src, err := u.Run().GetRun(ctx, sourceID)
+	src, err := u.Run().GetRun(ctx, c.planner.TenantID, sourceID)
 	if err != nil {
 		return uuid.Nil, "", fmt.Errorf("get source: %w", err)
 	}
 	if err := c.eligible(ctx, src, u.TaskCollection(c.planner.TenantID)); err != nil {
 		return uuid.Nil, "", err
 	}
-	if err := c.policy.EnsureNoActiveRun(ctx, u.Run(), src.ScheduleName()); err != nil {
+	if err := c.policy.EnsureNoActiveRun(ctx, u.Run(), src.TenantID(), src.ScheduleName()); err != nil {
 		return uuid.Nil, "", err
 	}
 

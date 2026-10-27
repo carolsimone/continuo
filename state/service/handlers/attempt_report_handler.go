@@ -45,7 +45,7 @@ func NewAttemptReportHandler(tenantID string, tasks run.TaskDefaults, metrics po
 // stream binding marks them permanent (permanentWhenNeverValid) and the
 // consumer dead-letters the report at once.
 func (h *AttemptReportHandler) Handle(ctx context.Context, u uow.UnitOfWork, evt events.AttemptReported, msgProcID uuid.UUID) error {
-	r, err := u.Run().LoadRunForUpdate(ctx, evt.RunID)
+	r, err := u.Run().LoadRunForUpdate(ctx, h.tenantID, evt.RunID)
 	if err != nil {
 		return fmt.Errorf("load run: %w", err)
 	}

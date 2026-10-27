@@ -112,8 +112,10 @@ type runs struct {
 	saved int
 }
 
-func (s *runs) LoadRunForUpdate(context.Context, uuid.UUID) (*run.Run, error) { return s.r, nil }
-func (s *runs) SaveRun(context.Context, *run.Run) error                       { s.saved++; return nil }
+func (s *runs) LoadRunForUpdate(context.Context, string, uuid.UUID) (*run.Run, error) {
+	return s.r, nil
+}
+func (s *runs) SaveRun(context.Context, *run.Run) error { s.saved++; return nil }
 
 // idleTasks is a run with no task in flight and one pending task. The first
 // grantFailures reads of the waits next in line fail; grantReads counts the

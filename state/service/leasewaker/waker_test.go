@@ -68,7 +68,7 @@ type runs struct {
 	saved int
 }
 
-func (s *runs) LoadRunForUpdate(_ context.Context, id uuid.UUID) (*run.Run, error) {
+func (s *runs) LoadRunForUpdate(_ context.Context, _ string, id uuid.UUID) (*run.Run, error) {
 	r, ok := s.held[id]
 	if !ok {
 		return nil, errors.New("run not found")

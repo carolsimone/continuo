@@ -42,11 +42,12 @@ func TestRunRepository_SaveRun_PersistsStartedAtOnStart(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	schedRepo := postgres.NewRunTableRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, discardLogger())
+	taskRepo := postgres.NewTaskRepository(db, discardLogger())
 
 	scheduleID := uuid.New()
 	createdAt := time.Now().Add(-time.Minute)
 	require.NoError(t, schedRepo.Create(ctx, &postgres.RunRow{
+		TenantID:             pkgevents.DefaultTenantID,
 		ScheduleID:           scheduleID,
 		ScheduleName:         "started-" + scheduleID.String()[:8],
 		Status:               run.RunStatusPending,
@@ -58,7 +59,7 @@ func TestRunRepository_SaveRun_PersistsStartedAtOnStart(t *testing.T) {
 	defer db.ExecContext(ctx, "DELETE FROM runs WHERE run_id = $1", scheduleID)
 
 	// Before: started_at is NULL on a freshly created PENDING row.
-	before, err := schedRepo.GetByID(ctx, scheduleID)
+	before, err := schedRepo.GetByID(ctx, pkgevents.DefaultTenantID, scheduleID)
 	require.NoError(t, err)
 	require.Nil(t, before.StartedAt, "freshly created run has no started_at")
 
@@ -69,7 +70,7 @@ func TestRunRepository_SaveRun_PersistsStartedAtOnStart(t *testing.T) {
 	runRepo := postgres.NewRunRepository(tx, schedRepo)
 	tasks := postgres.NewTaskCollectionAdapter(taskRepo, tx, "default")
 
-	rn, err := runRepo.LoadRunForUpdate(ctx, scheduleID)
+	rn, err := runRepo.LoadRunForUpdate(ctx, pkgevents.DefaultTenantID, scheduleID)
 	require.NoError(t, err)
 
 	// A pending task keeps the run RUNNING (not finalized), so Start stamps
@@ -82,7 +83,7 @@ func TestRunRepository_SaveRun_PersistsStartedAtOnStart(t *testing.T) {
 	require.NoError(t, runRepo.SaveRun(ctx, rn))
 	require.NoError(t, tx.Commit())
 
-	got, err := schedRepo.GetByID(ctx, scheduleID)
+	got, err := schedRepo.GetByID(ctx, pkgevents.DefaultTenantID, scheduleID)
 	require.NoError(t, err)
 	require.NotNil(t, got.StartedAt, "started_at must be persisted on PENDING→RUNNING")
 	assert.False(t, got.StartedAt.Before(got.CreatedAt),
@@ -99,10 +100,11 @@ func TestRunRepository_SaveRun_SingleUpdateForDirtyColumns(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	schedRepo := postgres.NewRunTableRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, discardLogger())
+	taskRepo := postgres.NewTaskRepository(db, discardLogger())
 
 	scheduleID := uuid.New()
 	require.NoError(t, schedRepo.Create(ctx, &postgres.RunRow{
+		TenantID:             pkgevents.DefaultTenantID,
 		ScheduleID:           scheduleID,
 		ScheduleName:         "multi-" + scheduleID.String()[:8],
 		Status:               run.RunStatusPending,
@@ -120,7 +122,7 @@ func TestRunRepository_SaveRun_SingleUpdateForDirtyColumns(t *testing.T) {
 	runRepo := postgres.NewRunRepository(tx, schedRepo)
 	tasks := postgres.NewTaskCollectionAdapter(taskRepo, tx, "default")
 
-	rn, err := runRepo.LoadRunForUpdate(ctx, scheduleID)
+	rn, err := runRepo.LoadRunForUpdate(ctx, pkgevents.DefaultTenantID, scheduleID)
 	require.NoError(t, err)
 
 	// Two tasks, neither terminal: Start sets total_task_count=2,
@@ -132,7 +134,7 @@ func TestRunRepository_SaveRun_SingleUpdateForDirtyColumns(t *testing.T) {
 	require.NoError(t, runRepo.SaveRun(ctx, rn))
 	require.NoError(t, tx.Commit())
 
-	got, err := schedRepo.GetByID(ctx, scheduleID)
+	got, err := schedRepo.GetByID(ctx, pkgevents.DefaultTenantID, scheduleID)
 	require.NoError(t, err)
 	assert.Equal(t, run.RunStatusRunning, got.Status)
 	assert.Equal(t, "completed", got.InitializationStatus)
@@ -153,6 +155,7 @@ func TestSchedulerRepository_UpdateRunRowTx_StartedAt(t *testing.T) {
 	scheduleID := uuid.New()
 	createdAt := time.Now().Add(-time.Minute)
 	require.NoError(t, repo.Create(ctx, &postgres.RunRow{
+		TenantID:             pkgevents.DefaultTenantID,
 		ScheduleID:           scheduleID,
 		ScheduleName:         "urr-" + scheduleID.String()[:8],
 		Status:               run.RunStatusPending,
@@ -168,13 +171,13 @@ func TestSchedulerRepository_UpdateRunRowTx_StartedAt(t *testing.T) {
 
 	started := time.Now()
 	status := string(run.RunStatusRunning)
-	require.NoError(t, repo.UpdateRunRowTx(ctx, tx, scheduleID, postgres.RunRowUpdate{
+	require.NoError(t, repo.UpdateRunRowTx(ctx, tx, pkgevents.DefaultTenantID, scheduleID, postgres.RunRowUpdate{
 		Status:    &status,
 		StartedAt: &started,
 	}))
 	require.NoError(t, tx.Commit())
 
-	got, err := repo.GetByID(ctx, scheduleID)
+	got, err := repo.GetByID(ctx, pkgevents.DefaultTenantID, scheduleID)
 	require.NoError(t, err)
 	assert.Equal(t, run.RunStatusRunning, got.Status)
 	require.NotNil(t, got.StartedAt)
@@ -192,6 +195,7 @@ func TestSchedulerRepository_UpdateRunRowTx_NoFieldsIsNoop(t *testing.T) {
 
 	scheduleID := uuid.New()
 	require.NoError(t, repo.Create(ctx, &postgres.RunRow{
+		TenantID:             pkgevents.DefaultTenantID,
 		ScheduleID:           scheduleID,
 		ScheduleName:         "noop-" + scheduleID.String()[:8],
 		Status:               run.RunStatusPending,
@@ -206,6 +210,6 @@ func TestSchedulerRepository_UpdateRunRowTx_NoFieldsIsNoop(t *testing.T) {
 	defer tx.Rollback()
 
 	// A non-existent id with no fields must still be a no-op (no row check runs).
-	require.NoError(t, repo.UpdateRunRowTx(ctx, tx, uuid.New(), postgres.RunRowUpdate{}))
+	require.NoError(t, repo.UpdateRunRowTx(ctx, tx, pkgevents.DefaultTenantID, uuid.New(), postgres.RunRowUpdate{}))
 	require.NoError(t, tx.Commit())
 }

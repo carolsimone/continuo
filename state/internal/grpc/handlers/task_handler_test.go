@@ -56,7 +56,7 @@ type fakeTaskRepo struct {
 	tasks []*postgres.TaskRow
 }
 
-func (f *fakeTaskRepo) GetByID(_ context.Context, id uuid.UUID) (*postgres.TaskRow, error) {
+func (f *fakeTaskRepo) GetByID(_ context.Context, _ string, id uuid.UUID) (*postgres.TaskRow, error) {
 	for _, t := range f.tasks {
 		if t.TaskID == id {
 			return t, nil
@@ -65,7 +65,7 @@ func (f *fakeTaskRepo) GetByID(_ context.Context, id uuid.UUID) (*postgres.TaskR
 	return nil, postgres.ErrNotFound
 }
 
-func (f *fakeTaskRepo) ListByRunID(_ context.Context, _ uuid.UUID, _ *run.TaskStatus, _, _ int) ([]*postgres.TaskRow, int, error) {
+func (f *fakeTaskRepo) ListByRunID(_ context.Context, _ string, _ uuid.UUID, _ *run.TaskStatus, _, _ int) ([]*postgres.TaskRow, int, error) {
 	return f.tasks, len(f.tasks), nil
 }
 

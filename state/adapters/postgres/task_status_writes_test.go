@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
-	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/topology"
@@ -16,13 +15,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// inTaskTx runs fn with a TaskCollection bound to a transaction it commits.
-func inTaskTx(t *testing.T, db *sqlx.DB, fn func(tasks run.TaskCollection)) {
+// inTaskTx runs fn with a TaskCollection of tenant bound to a transaction it
+// commits.
+func inTaskTx(t *testing.T, db *sqlx.DB, tenant string, fn func(tasks run.TaskCollection)) {
 	t.Helper()
 	tx, err := db.BeginTxx(context.Background(), nil)
 	require.NoError(t, err)
 	defer tx.Rollback()
-	fn(postgres.NewTaskCollectionAdapter(postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, discardLogger()), tx, "default"))
+	fn(postgres.NewTaskCollectionAdapter(postgres.NewTaskRepository(db, discardLogger()), tx, tenant))
 	require.NoError(t, tx.Commit())
 }
 
@@ -48,7 +48,7 @@ func TestTaskCollection_LoadAttemptStateReadsTheTask(t *testing.T) {
 	_, err := db.Exec(`UPDATE tasks SET status = 'failed', attempt = 1 WHERE task_id = $1`, id)
 	require.NoError(t, err)
 
-	inTaskTx(t, db, func(tasks run.TaskCollection) {
+	inTaskTx(t, db, tenant, func(tasks run.TaskCollection) {
 		got, found, err := tasks.LoadAttemptState(ctx, id)
 		require.NoError(t, err)
 		require.True(t, found)
@@ -79,7 +79,7 @@ func TestTaskCollection_LoadAttemptStateReadsTheLeaseWait(t *testing.T) {
 	_, err := db.Exec(`UPDATE tasks SET wait_reason = 'node_lease', lease_wait_since = now() WHERE task_id = $1`, waiting)
 	require.NoError(t, err)
 
-	inTaskTx(t, db, func(tasks run.TaskCollection) {
+	inTaskTx(t, db, tenant, func(tasks run.TaskCollection) {
 		got, found, err := tasks.LoadAttemptState(ctx, waiting)
 		require.NoError(t, err)
 		require.True(t, found)
@@ -106,7 +106,7 @@ func TestTaskCollection_MarkDispatchedDispatchesOnlyPendingUndispatchedTasks(t *
 	setTaskStatus(t, db, r, "e2e_schema.ftable_h", run.TaskStatusSkipped)
 	at := time.Date(2026, 10, 15, 9, 0, 0, 0, time.UTC)
 
-	inTaskTx(t, db, func(tasks run.TaskCollection) {
+	inTaskTx(t, db, tenant, func(tasks run.TaskCollection) {
 		stamped, err := tasks.MarkDispatched(ctx, []uuid.UUID{id("ftable_a"), id("ftable_c"), id("ftable_g"), id("ftable_h")}, at)
 		require.NoError(t, err)
 		assert.ElementsMatch(t, []uuid.UUID{id("ftable_c"), id("ftable_g")}, stamped)
@@ -137,7 +137,7 @@ func TestTaskCollection_MarkSkippedSkipsOnlyPendingUndispatchedTasks(t *testing.
 	}
 	setTaskStatus(t, db, r, "e2e_schema.ftable_h", run.TaskStatusSucceeded)
 
-	inTaskTx(t, db, func(tasks run.TaskCollection) {
+	inTaskTx(t, db, tenant, func(tasks run.TaskCollection) {
 		n, err := tasks.MarkSkipped(ctx, []uuid.UUID{id("ftable_a"), id("ftable_d"), id("ftable_f"), id("ftable_h")})
 		require.NoError(t, err)
 		assert.Equal(t, 2, n)
@@ -160,7 +160,7 @@ func TestTaskCollection_ListRunTasksReadsEveryTaskInKeyOrder(t *testing.T) {
 	r := startScheduleRun(t, db, tenant, "e2e-schedule-failure", model.OperationRun)
 	setTaskStatus(t, db, r, "e2e_schema.ftable_c", run.TaskStatusFailed)
 
-	inTaskTx(t, db, func(tasks run.TaskCollection) {
+	inTaskTx(t, db, tenant, func(tasks run.TaskCollection) {
 		got, err := tasks.ListRunTasks(ctx, r.RunID())
 		require.NoError(t, err)
 		require.Len(t, got, 8)

@@ -406,8 +406,9 @@ func (r *TopologyRepository) NodeContentHash(ctx context.Context, tenantID, rele
 }
 
 // PruneReleases deletes old releases that are neither live nor named by any
-// run; the foreign keys cascade to their nodes and edges. A run reads its own
-// release for its whole life, so a release stays while any run names it.
+// run of their tenant; the foreign keys cascade to their nodes and edges. A
+// run reads its own release for its whole life, so a release stays while any
+// run names it.
 func (r *TopologyRepository) PruneReleases(ctx context.Context, loadedBefore time.Time) (int64, error) {
 	res, err := r.conn().ExecContext(ctx, `
 		DELETE FROM topology_releases rel
@@ -417,7 +418,7 @@ func (r *TopologyRepository) PruneReleases(ctx context.Context, loadedBefore tim
 		      WHERE live.tenant_id = rel.tenant_id AND live.release_id = rel.release_id)
 		  AND NOT EXISTS (
 		      SELECT 1 FROM runs s
-		      WHERE s.release_id = rel.release_id)`,
+		      WHERE s.tenant_id = rel.tenant_id AND s.release_id = rel.release_id)`,
 		loadedBefore)
 	if err != nil {
 		return 0, fmt.Errorf("prune topology releases: %w", err)

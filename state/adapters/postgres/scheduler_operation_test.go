@@ -59,7 +59,7 @@ func TestRunRow_OperationRoundTrip(t *testing.T) {
 	}
 	t.Cleanup(func() { db.Exec(`DELETE FROM runs WHERE run_id = $1`, r.RunID()) })
 
-	got, err := repo.GetByID(context.Background(), r.RunID())
+	got, err := repo.GetByID(context.Background(), r.TenantID(), r.RunID())
 	if err != nil {
 		t.Fatalf("GetByID: %v", err)
 	}

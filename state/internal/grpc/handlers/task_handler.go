@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/num"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
@@ -41,7 +42,7 @@ func (h *TaskHandler) GetTask(ctx context.Context, req *statev1.GetTaskRequest) 
 		return nil, status.Errorf(codes.InvalidArgument, "invalid task_id format")
 	}
 
-	task, err := h.repo.GetByID(ctx, taskID)
+	task, err := h.repo.GetByID(ctx, pkgevents.DefaultTenantID, taskID)
 	if err != nil {
 		if err == postgres.ErrNotFound {
 			return nil, status.Errorf(codes.NotFound, "task not found")
@@ -78,7 +79,7 @@ func (h *TaskHandler) GetTaskByScheduleAndNode(ctx context.Context, req *statev1
 		return nil, status.Errorf(codes.InvalidArgument, "invalid schedule_id format")
 	}
 
-	task, err := h.repo.GetByRunAndNode(ctx, scheduleID, req.ServiceName, req.SchemaName, req.TableName)
+	task, err := h.repo.GetByRunAndNode(ctx, pkgevents.DefaultTenantID, scheduleID, req.ServiceName, req.SchemaName, req.TableName)
 	if err != nil {
 		if err == postgres.ErrNotFound {
 			return nil, status.Errorf(codes.NotFound, "task not found")
@@ -123,7 +124,7 @@ func (h *TaskHandler) ListTasks(ctx context.Context, req *statev1.ListTasksReque
 		statusFilter = &s
 	}
 
-	tasks, total, err := h.repo.ListByRunID(ctx, scheduleID, statusFilter, limit, offset)
+	tasks, total, err := h.repo.ListByRunID(ctx, pkgevents.DefaultTenantID, scheduleID, statusFilter, limit, offset)
 	if err != nil {
 		h.logger.Error("Failed to list tasks", "error", err)
 		return nil, status.Errorf(codes.Internal, "failed to list tasks")

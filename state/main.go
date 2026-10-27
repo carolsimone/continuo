@@ -186,7 +186,7 @@ func main() {
 	schedulerRepo := postgres.NewRunTableRepository(db, logger)
 	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
 	logger.Info("Schedule catalog repository initialized")
-	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, logger)
+	taskRepo := postgres.NewTaskRepository(db, logger)
 	taskAttemptReadRepo := postgres.NewTaskAttemptReadRepository(db)
 
 	// Initialize Redis client

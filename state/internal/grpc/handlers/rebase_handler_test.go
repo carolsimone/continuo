@@ -60,7 +60,7 @@ func setupRebaseFixture(t *testing.T) *rebaseFixture {
 	}
 	logger := newTestLogger()
 	schedulerRepo := postgres.NewRunTableRepository(db, logger)
-	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, logger)
+	taskRepo := postgres.NewTaskRepository(db, logger)
 	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
 	clk := ports.SystemClock{}
 	factory := func() uow.UnitOfWork {
@@ -107,16 +107,16 @@ func seedTerminalRunWithFailedTask(t *testing.T, fx *rebaseFixture, scheduleName
 	releaseID := promoteNode(t, fx, scheduleName)
 	id := uuid.New()
 	_, err := fx.DB.ExecContext(context.Background(), `
-		INSERT INTO runs (run_id, schedule_name, status, created_at, completed_at, initialization_status, kind, release_id, promotion_seq)
-		VALUES ($1, $2, $3, NOW(), NOW(), 'completed', 'cron', $4, 1)`,
-		id, scheduleName, string(srcStatus), releaseID,
+		INSERT INTO runs (tenant_id, run_id, schedule_name, status, created_at, completed_at, initialization_status, kind, release_id, promotion_seq)
+		VALUES ($5, $1, $2, $3, NOW(), NOW(), 'completed', 'cron', $4, 1)`,
+		id, scheduleName, string(srcStatus), releaseID, fx.Tenant,
 	)
 	require.NoError(t, err)
 
 	_, err = fx.DB.ExecContext(context.Background(), `
-		INSERT INTO tasks (task_id, run_id, created_at, service_name, schema_name, table_name, job_name, status, attempt, max_retries, image_tag, node_key)
-		VALUES ($1, $2, NOW(), 'svc', 's', 't', 'job', 'failed', 0, 2, 'img:1', 's.t')`,
-		uuid.New(), id,
+		INSERT INTO tasks (tenant_id, task_id, run_id, created_at, service_name, schema_name, table_name, job_name, status, attempt, max_retries, image_tag, node_key)
+		VALUES ($3, $1, $2, NOW(), 'svc', 's', 't', 'job', 'failed', 0, 2, 'img:1', 's.t')`,
+		uuid.New(), id, fx.Tenant,
 	)
 	require.NoError(t, err)
 
@@ -147,7 +147,7 @@ func TestRebaseHandler_HappyPath_FailedSource(t *testing.T) {
 		fx.DB.ExecContext(context.Background(), "DELETE FROM runs WHERE run_id = $1", newID)
 	})
 
-	tracker, err := fx.SchedulerRepo.GetByID(context.Background(), newID)
+	tracker, err := fx.SchedulerRepo.GetByID(context.Background(), fx.Tenant, newID)
 	require.NoError(t, err)
 	require.Equal(t, "rebase", tracker.Kind)
 	require.NotNil(t, tracker.SourceRunID)
@@ -195,7 +195,7 @@ func TestRebaseHandler_HappyPath_CancelledSource(t *testing.T) {
 		fx.DB.ExecContext(context.Background(), "DELETE FROM runs WHERE run_id = $1", newID)
 	})
 
-	tracker, err := fx.SchedulerRepo.GetByID(context.Background(), newID)
+	tracker, err := fx.SchedulerRepo.GetByID(context.Background(), fx.Tenant, newID)
 	require.NoError(t, err)
 	require.Equal(t, "rebase", tracker.Kind)
 	require.Equal(t, srcID, *tracker.SourceRunID)
@@ -211,15 +211,15 @@ func seedRunWithTaskStatus(t *testing.T, fx *rebaseFixture, scheduleName string,
 		completedClause = "NULL"
 	}
 	_, err := fx.DB.ExecContext(context.Background(),
-		"INSERT INTO runs (run_id, schedule_name, status, created_at, completed_at, initialization_status, kind) VALUES ($1, $2, $3, NOW(), "+completedClause+", 'completed', 'cron')",
-		id, scheduleName, string(srcStatus),
+		"INSERT INTO runs (tenant_id, run_id, schedule_name, status, created_at, completed_at, initialization_status, kind) VALUES ($4, $1, $2, $3, NOW(), "+completedClause+", 'completed', 'cron')",
+		id, scheduleName, string(srcStatus), fx.Tenant,
 	)
 	require.NoError(t, err)
 
 	_, err = fx.DB.ExecContext(context.Background(), `
-		INSERT INTO tasks (task_id, run_id, created_at, service_name, schema_name, table_name, job_name, status, attempt, max_retries, image_tag)
-		VALUES ($1, $2, NOW(), 'svc', 's', 't', 'job', $3, 0, 2, 'img:1')`,
-		uuid.New(), id, string(taskStatus),
+		INSERT INTO tasks (tenant_id, task_id, run_id, created_at, service_name, schema_name, table_name, job_name, status, attempt, max_retries, image_tag)
+		VALUES ($4, $1, $2, NOW(), 'svc', 's', 't', 'job', $3, 0, 2, 'img:1')`,
+		uuid.New(), id, string(taskStatus), fx.Tenant,
 	)
 	require.NoError(t, err)
 
@@ -236,9 +236,9 @@ func seedRunningSchedulerOnSchedule(t *testing.T, fx *rebaseFixture, scheduleNam
 	t.Helper()
 	id := uuid.New()
 	_, err := fx.DB.ExecContext(context.Background(), `
-		INSERT INTO runs (run_id, schedule_name, status, created_at, initialization_status, kind)
-		VALUES ($1, $2, 'running', NOW(), 'in_progress', 'cron')`,
-		id, scheduleName,
+		INSERT INTO runs (tenant_id, run_id, schedule_name, status, created_at, initialization_status, kind)
+		VALUES ($3, $1, $2, 'running', NOW(), 'in_progress', 'cron')`,
+		id, scheduleName, fx.Tenant,
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() {

@@ -58,7 +58,7 @@ func (r *RunReadRepository) GetRunGraph(ctx context.Context, tenantID string, ru
 	g := projection.RunGraph{LatestPromotionSeq: latest}
 
 	var seq sql.NullInt64
-	err = r.db.GetContext(ctx, &seq, `SELECT promotion_seq FROM runs WHERE run_id = $1`, runID)
+	err = r.db.GetContext(ctx, &seq, `SELECT promotion_seq FROM runs WHERE tenant_id = $1 AND run_id = $2`, tenantID, runID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return g, nil
 	}
@@ -71,6 +71,7 @@ func (r *RunReadRepository) GetRunGraph(ctx context.Context, tenantID string, ru
 	// of the tenant holds on that node, which names the holder's run. A node
 	// has at most one lease per tenant, so the join adds at most one row to a
 	// task, and a task never reads its own lease as the one it waits for.
+	// Every row joined is the tenant's.
 	var nodes []runGraphNodeRow
 	if err := r.db.SelectContext(ctx, &nodes, `
 		SELECT t.task_id, t.service_name, t.schema_name, t.table_name, t.status,
@@ -80,13 +81,13 @@ func (r *RunReadRepository) GetRunGraph(ctx context.Context, tenantID string, ru
 		       t.lease_wait_since,
 		       l.run_id                      AS waiting_on_run_id
 		FROM tasks t
-		JOIN runs s ON s.run_id = t.run_id
+		JOIN runs s ON s.tenant_id = t.tenant_id AND s.run_id = t.run_id
 		LEFT JOIN topology_nodes n
-		  ON n.tenant_id = $2 AND n.release_id = s.release_id AND n.node_key = t.node_key
+		  ON n.tenant_id = t.tenant_id AND n.release_id = s.release_id AND n.node_key = t.node_key
 		LEFT JOIN node_leases l
-		  ON t.wait_reason = 'node_lease' AND l.tenant_id = $2
+		  ON t.wait_reason = 'node_lease' AND l.tenant_id = t.tenant_id
 		 AND l.node_key = t.node_key AND l.task_id <> t.task_id
-		WHERE t.run_id = $1
+		WHERE t.tenant_id = $2 AND t.run_id = $1
 		ORDER BY t.service_name, t.schema_name, t.table_name`, runID, tenantID); err != nil {
 		return projection.RunGraph{}, fmt.Errorf("read tasks of run %s: %w", runID, err)
 	}
@@ -105,10 +106,10 @@ func (r *RunReadRepository) GetRunGraph(ctx context.Context, tenantID string, ru
 		SELECT d.service_name || '.' || d.schema_name || '.' || d.table_name AS from_node_id,
 		       u.service_name || '.' || u.schema_name || '.' || u.table_name AS to_node_id
 		FROM runs s
-		JOIN topology_edges e ON e.tenant_id = $2 AND e.release_id = s.release_id
-		JOIN tasks u ON u.run_id = s.run_id AND u.node_key = e.upstream_key
-		JOIN tasks d ON d.run_id = s.run_id AND d.node_key = e.downstream_key
-		WHERE s.run_id = $1
+		JOIN topology_edges e ON e.tenant_id = s.tenant_id AND e.release_id = s.release_id
+		JOIN tasks u ON u.tenant_id = s.tenant_id AND u.run_id = s.run_id AND u.node_key = e.upstream_key
+		JOIN tasks d ON d.tenant_id = s.tenant_id AND d.run_id = s.run_id AND d.node_key = e.downstream_key
+		WHERE s.tenant_id = $2 AND s.run_id = $1
 		ORDER BY from_node_id, to_node_id`, runID, tenantID); err != nil {
 		return projection.RunGraph{}, fmt.Errorf("read edges of run %s: %w", runID, err)
 	}
@@ -128,20 +129,20 @@ type runSummaryRow struct {
 }
 
 // ListCompletedRuns implements repository.RunReadRepository.
-func (r *RunReadRepository) ListCompletedRuns(ctx context.Context, scheduleName string, limit, offset int) ([]projection.RunSummary, int, error) {
+func (r *RunReadRepository) ListCompletedRuns(ctx context.Context, tenantID, scheduleName string, limit, offset int) ([]projection.RunSummary, int, error) {
 	var total int
 	if err := r.db.GetContext(ctx, &total, `
 		SELECT count(*) FROM runs
-		WHERE schedule_name = $1 AND completed_at IS NOT NULL`, scheduleName); err != nil {
+		WHERE tenant_id = $2 AND schedule_name = $1 AND completed_at IS NOT NULL`, scheduleName, tenantID); err != nil {
 		return nil, 0, fmt.Errorf("count completed runs of %s: %w", scheduleName, err)
 	}
 	var rows []runSummaryRow
 	if err := r.db.SelectContext(ctx, &rows, `
 		SELECT run_id, schedule_name, status, failure_reason, created_at, completed_at
 		FROM runs
-		WHERE schedule_name = $1 AND completed_at IS NOT NULL
+		WHERE tenant_id = $4 AND schedule_name = $1 AND completed_at IS NOT NULL
 		ORDER BY created_at DESC, run_id
-		LIMIT $2 OFFSET $3`, scheduleName, limit, offset); err != nil {
+		LIMIT $2 OFFSET $3`, scheduleName, limit, offset, tenantID); err != nil {
 		return nil, 0, fmt.Errorf("list completed runs of %s: %w", scheduleName, err)
 	}
 	runs := make([]projection.RunSummary, 0, len(rows))
@@ -175,8 +176,8 @@ func (r *RunReadRepository) ListActiveRunDrifts(ctx context.Context, tenantID st
 	if err := r.db.SelectContext(ctx, &rows, `
 		SELECT DISTINCT ON (schedule_name) schedule_name, run_id, promotion_seq
 		FROM runs
-		WHERE status = ANY($1::text[])
-		ORDER BY schedule_name, created_at DESC`, pq.Array(activeRunStatuses())); err != nil {
+		WHERE tenant_id = $2 AND status = ANY($1::text[])
+		ORDER BY schedule_name, created_at DESC`, pq.Array(activeRunStatuses()), tenantID); err != nil {
 		return 0, nil, fmt.Errorf("list active runs: %w", err)
 	}
 	drifts := make([]projection.ActiveRunDrift, 0, len(rows))

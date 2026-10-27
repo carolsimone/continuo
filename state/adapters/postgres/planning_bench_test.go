@@ -141,9 +141,9 @@ func BenchmarkReconcileDue(b *testing.B) {
 	tenant := storeShape(b, db, dag2000)
 	r := startScheduleRun(b, db, tenant, dag2000.schedule(), model.OperationRun)
 	_, err := db.Exec(`
-		INSERT INTO task_attempts (task_id, attempt, job_name, status, dispatched_at, next_check_at)
-		SELECT task_id, 0, job_name, 'dispatched', now(), now() FROM tasks WHERE run_id = $1
-		ON CONFLICT (task_id, attempt) DO NOTHING`, r.RunID())
+		INSERT INTO task_attempts (tenant_id, task_id, attempt, job_name, status, dispatched_at, next_check_at)
+		SELECT tenant_id, task_id, 0, job_name, 'dispatched', now(), now() FROM tasks WHERE run_id = $1
+		ON CONFLICT (tenant_id, task_id, attempt) DO NOTHING`, r.RunID())
 	require.NoError(b, err)
 	_, err = db.Exec(`UPDATE tasks SET status = 'dispatched', dispatched_at = coalesce(dispatched_at, now())
 		WHERE run_id = $1`, r.RunID())

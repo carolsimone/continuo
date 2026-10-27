@@ -16,8 +16,8 @@ func stampRun(t *testing.T, db *sqlx.DB, seq any) uuid.UUID {
 	t.Helper()
 	id := uuid.New()
 	_, err := db.Exec(`
-		INSERT INTO runs (run_id, schedule_name, status, promotion_seq)
-		VALUES ($1, $2, 'running', $3)`, id, "stamp-"+id.String()[:8], seq)
+		INSERT INTO runs (tenant_id, run_id, schedule_name, status, promotion_seq)
+		VALUES ('default', $1, $2, 'running', $3)`, id, "stamp-"+id.String()[:8], seq)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		_, _ = db.ExecContext(context.Background(), `DELETE FROM runs WHERE run_id = $1`, id)
@@ -28,8 +28,8 @@ func stampRun(t *testing.T, db *sqlx.DB, seq any) uuid.UUID {
 // stampTask inserts one task of runID at nodeKey (nil for none).
 func stampTask(db *sqlx.DB, runID uuid.UUID, nodeKey any) error {
 	_, err := db.Exec(`
-		INSERT INTO tasks (task_id, run_id, service_name, schema_name, table_name, job_name, status, max_retries, node_key)
-		VALUES ($1, $2, 'svc', 'raw', 'orders', 'job', 'pending', 2, $3)`, uuid.New(), runID, nodeKey)
+		INSERT INTO tasks (tenant_id, task_id, run_id, service_name, schema_name, table_name, job_name, status, max_retries, node_key)
+		VALUES ((SELECT tenant_id FROM runs WHERE run_id = $2), $1, $2, 'svc', 'raw', 'orders', 'job', 'pending', 2, $3)`, uuid.New(), runID, nodeKey)
 	return err
 }
 

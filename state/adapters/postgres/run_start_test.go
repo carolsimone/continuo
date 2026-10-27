@@ -30,7 +30,7 @@ func newPlanningUoW(db *sqlx.DB) *postgres.PostgresUnitOfWork {
 	logger := discardLogger()
 	return postgres.NewPostgresUnitOfWork(db,
 		postgres.NewRunTableRepository(db, logger),
-		postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, logger),
+		postgres.NewTaskRepository(db, logger),
 		postgres.NewScheduleCatalogRepository(db, logger),
 		ports.SystemClock{}, logger)
 }
@@ -129,7 +129,7 @@ func TestStartedRun_StoresItsTasksPlanAndDispatches(t *testing.T) {
 		run.TaskIDFor(pkgevents.DefaultTenantID, r.RunID(), "e2e_schema.ftable_b").String(),
 	}, taskIDs)
 
-	loaded, err := newPlanningUoW(db).Run().GetRun(ctx, r.RunID())
+	loaded, err := newPlanningUoW(db).Run().GetRun(ctx, pkgevents.DefaultTenantID, r.RunID())
 	require.NoError(t, err)
 	require.NotNil(t, loaded.PlannedAt())
 	assert.True(t, now.Equal(*loaded.PlannedAt()))

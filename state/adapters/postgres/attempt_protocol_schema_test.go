@@ -31,8 +31,8 @@ func TestRunsSchema_FailureReasonIsOneOfTheRunFailureReasons(t *testing.T) {
 		id := uuid.New()
 		t.Cleanup(func() { _, _ = db.Exec(`DELETE FROM runs WHERE run_id = $1`, id) })
 		_, err := db.Exec(`
-			INSERT INTO runs (run_id, schedule_name, status, failure_reason)
-			VALUES ($1, $2, 'failed', $3)`, id, "schema-"+id.String(), reason)
+			INSERT INTO runs (tenant_id, run_id, schedule_name, status, failure_reason)
+			VALUES ('default', $1, $2, 'failed', $3)`, id, "schema-"+id.String(), reason)
 		return err
 	}
 	for _, r := range run.RunFailureReasons() {

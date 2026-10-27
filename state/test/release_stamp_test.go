@@ -58,8 +58,8 @@ func (h *builtHarness) finished(t *testing.T, name string, stamp run.ReleaseStam
 	_, err = h.db.Exec(`UPDATE runs SET status = 'failed', completed_at = now() WHERE run_id = $1`, id)
 	require.NoError(t, err)
 	_, err = h.db.Exec(`
-		INSERT INTO tasks (task_id, run_id, service_name, schema_name, table_name, job_name, status, max_retries, node_key)
-		VALUES ($1, $2, 'service-1', 'raw', 'stamp_orders', 'job', 'failed', 2, 'raw.stamp_orders')`, uuid.New(), id)
+		INSERT INTO tasks (tenant_id, task_id, run_id, service_name, schema_name, table_name, job_name, status, max_retries, node_key)
+		VALUES ((SELECT tenant_id FROM runs WHERE run_id = $2), $1, $2, 'service-1', 'raw', 'stamp_orders', 'job', 'failed', 2, 'raw.stamp_orders')`, uuid.New(), id)
 	require.NoError(t, err)
 	return id
 }
@@ -82,7 +82,7 @@ func TestReleaseStamp(t *testing.T) {
 	h.goLive(t, "rel-live", 7)
 	live := run.ReleaseStamp{ReleaseID: "rel-live", PromotionSeq: 7}
 	old := run.ReleaseStamp{ReleaseID: "rel-old", PromotionSeq: 4}
-	_, err := db.Exec(`INSERT INTO schedule_catalog (schedule_name, first_seen_at, last_seen_at) VALUES ('stamp-trigger', now(), now())`)
+	_, err := db.Exec(`INSERT INTO schedule_catalog (tenant_id, schedule_name, first_seen_at, last_seen_at) VALUES ('default', 'stamp-trigger', now(), now())`)
 	require.NoError(t, err)
 
 	t.Run("a triggered run names the live release", func(t *testing.T) {

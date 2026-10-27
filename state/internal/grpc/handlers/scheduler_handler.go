@@ -62,7 +62,7 @@ func (h *SchedulerHandler) GetScheduler(ctx context.Context, req *statev1.GetSch
 		return nil, status.Errorf(codes.InvalidArgument, "invalid schedule_id format")
 	}
 
-	tracker, err := h.repo.GetByID(ctx, scheduleID)
+	tracker, err := h.repo.GetByID(ctx, pkgevents.DefaultTenantID, scheduleID)
 	if err != nil {
 		if err == postgres.ErrNotFound {
 			return nil, status.Errorf(codes.NotFound, "scheduler not found")
@@ -158,16 +158,14 @@ func (h *SchedulerHandler) cancelRunTx(ctx context.Context, p cancelParams) (*ru
 		}
 	}()
 
-	r, err := u.Run().LoadRunForUpdate(ctx, p.scheduleID)
+	r, err := u.Run().LoadRunForUpdate(ctx, pkgevents.DefaultTenantID, p.scheduleID)
 	if err != nil {
 		if errors.Is(err, postgres.ErrNotFound) {
 			return nil, false, status.Errorf(p.loadNotFoundCode, "%s", p.loadNotFoundMsg)
 		}
 		return nil, false, status.Errorf(codes.Internal, "load: %v", err)
 	}
-	// The cancel takes no node lease, so the tenant its tasks are bound to,
-	// the install's single tenant, changes nothing it writes.
-	domainEvents, err := r.Cancel(ctx, u.TaskCollection(pkgevents.DefaultTenantID), p.cancelledBy, p.cancellationReason, u.Clock().Now())
+	domainEvents, err := r.Cancel(ctx, u.TaskCollection(r.TenantID()), p.cancelledBy, p.cancellationReason, u.Clock().Now())
 	if err != nil {
 		if errors.Is(err, run.ErrAlreadyTerminal) {
 			return nil, false, status.Errorf(codes.FailedPrecondition, "%s", p.terminalMsg)
@@ -204,7 +202,7 @@ func (h *SchedulerHandler) CancelSchedule(
 	// Look up the active run for the named schedule via a separate UoW
 	// (read-only path, no transaction needed).
 	lookup := h.uowFactory()
-	active, err := lookup.Run().GetActiveRun(ctx, req.ScheduleName)
+	active, err := lookup.Run().GetActiveRun(ctx, pkgevents.DefaultTenantID, req.ScheduleName)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "get active: %v", err)
 	}
@@ -361,12 +359,12 @@ func (h *SchedulerHandler) ListAllSchedules(
 	ctx context.Context,
 	req *statev1.ListAllSchedulesRequest,
 ) (*statev1.ListAllSchedulesResponse, error) {
-	names, err := h.catalogRepo.ListActive(ctx)
+	names, err := h.catalogRepo.ListActive(ctx, pkgevents.DefaultTenantID)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list active schedules: %v", err)
 	}
 
-	lastRuns, err := h.repo.GetLastRunPerSchedule(ctx)
+	lastRuns, err := h.repo.GetLastRunPerSchedule(ctx, pkgevents.DefaultTenantID)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "get last runs: %v", err)
 	}
@@ -452,7 +450,7 @@ func (h *SchedulerHandler) GetSchedulerInitStatus(ctx context.Context, req *stat
 		return nil, status.Errorf(codes.InvalidArgument, "invalid schedule_id format")
 	}
 
-	tracker, err := h.repo.GetByID(ctx, scheduleID)
+	tracker, err := h.repo.GetByID(ctx, pkgevents.DefaultTenantID, scheduleID)
 	if err != nil {
 		if errors.Is(err, postgres.ErrNotFound) {
 			return nil, status.Errorf(codes.NotFound, "scheduler not found")

@@ -55,15 +55,15 @@ func storeFailureSchedule(t *testing.T, db *sqlx.DB) string {
 	}, "ftable_a", "ftable_b", "ftable_c", "ftable_d", "ftable_e", "ftable_f", "ftable_g", "ftable_h")
 }
 
-// insertTasks stores a run on rel-1 holding one undispatched task per entry of
-// statuses, keyed by e2e_schema table, and returns the run id and each task's
-// id. The run and its tasks are deleted when the test ends.
-func insertTasks(t *testing.T, db *sqlx.DB, statuses map[string]run.TaskStatus) (uuid.UUID, map[string]uuid.UUID) {
+// insertTasks stores a run of tenant on rel-1 holding one undispatched task per
+// entry of statuses, keyed by e2e_schema table, and returns the run id and each
+// task's id. The run and its tasks are deleted when the test ends.
+func insertTasks(t *testing.T, db *sqlx.DB, tenant string, statuses map[string]run.TaskStatus) (uuid.UUID, map[string]uuid.UUID) {
 	t.Helper()
 	runID := uuid.New()
 	_, err := db.Exec(`
-		INSERT INTO runs (run_id, schedule_name, status, release_id, promotion_seq)
-		VALUES ($1, $2, 'running', 'rel-1', 1)`, runID, "graph-"+runID.String()[:8])
+		INSERT INTO runs (tenant_id, run_id, schedule_name, status, release_id, promotion_seq)
+		VALUES ($3, $1, $2, 'running', 'rel-1', 1)`, runID, "graph-"+runID.String()[:8], tenant)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		_, _ = db.ExecContext(context.Background(), `DELETE FROM runs WHERE run_id = $1`, runID)
@@ -72,8 +72,8 @@ func insertTasks(t *testing.T, db *sqlx.DB, statuses map[string]run.TaskStatus) 
 	for table, status := range statuses {
 		ids[table] = uuid.New()
 		_, err := db.Exec(`
-			INSERT INTO tasks (task_id, run_id, service_name, schema_name, table_name, job_name, status, max_retries, node_key)
-			VALUES ($1, $2, 'service-1', 'e2e_schema', $3, $3, $4, 2, $5)`,
+			INSERT INTO tasks (tenant_id, task_id, run_id, service_name, schema_name, table_name, job_name, status, max_retries, node_key)
+			VALUES ((SELECT tenant_id FROM runs WHERE run_id = $2), $1, $2, 'service-1', 'e2e_schema', $3, $3, $4, 2, $5)`,
 			ids[table], runID, table, string(status), "e2e_schema."+table)
 		require.NoError(t, err)
 	}
@@ -158,10 +158,10 @@ func TestTaskGraph_AnEdgeCountsOnlyBetweenTasksOfTheRun(t *testing.T) {
 	db := newTestDB(t)
 	tenant := storeFailureSchedule(t, db)
 
-	succeeded, ids := insertTasks(t, db, map[string]run.TaskStatus{
+	succeeded, ids := insertTasks(t, db, tenant, map[string]run.TaskStatus{
 		"ftable_c": run.TaskStatusSucceeded, "ftable_e": run.TaskStatusSucceeded, "ftable_f": run.TaskStatusPending,
 	})
-	failed, failedIDs := insertTasks(t, db, map[string]run.TaskStatus{
+	failed, failedIDs := insertTasks(t, db, tenant, map[string]run.TaskStatus{
 		"ftable_c": run.TaskStatusFailed, "ftable_e": run.TaskStatusPending, "ftable_f": run.TaskStatusPending,
 	})
 
@@ -186,12 +186,12 @@ func TestTaskGraph_PendingDescendantsOfTheExampleRunsFailures(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	tenant := storeFailureSchedule(t, db)
-	late, lateIDs := insertTasks(t, db, map[string]run.TaskStatus{
+	late, lateIDs := insertTasks(t, db, tenant, map[string]run.TaskStatus{
 		"ftable_a": run.TaskStatusSucceeded, "ftable_b": run.TaskStatusSucceeded, "ftable_c": run.TaskStatusSucceeded,
 		"ftable_d": run.TaskStatusSucceeded, "ftable_e": run.TaskStatusFailed, "ftable_f": run.TaskStatusPending,
 		"ftable_g": run.TaskStatusFailed, "ftable_h": run.TaskStatusPending,
 	})
-	early, earlyIDs := insertTasks(t, db, map[string]run.TaskStatus{
+	early, earlyIDs := insertTasks(t, db, tenant, map[string]run.TaskStatus{
 		"ftable_a": run.TaskStatusSucceeded, "ftable_b": run.TaskStatusSucceeded, "ftable_c": run.TaskStatusFailed,
 		"ftable_d": run.TaskStatusPending, "ftable_e": run.TaskStatusPending, "ftable_f": run.TaskStatusPending,
 		"ftable_g": run.TaskStatusSucceeded, "ftable_h": run.TaskStatusSucceeded,
@@ -219,7 +219,7 @@ func TestTaskGraph_PendingDescendantsStopAtASucceededTask(t *testing.T) {
 	tenant := storeEdges(t, db, "rebase", [][2]string{
 		{"x", "ftable_d"}, {"ftable_d", "ftable_f"}, {"ftable_e", "ftable_f"},
 	}, "x", "ftable_d", "ftable_e", "ftable_f")
-	runID, ids := insertTasks(t, db, map[string]run.TaskStatus{
+	runID, ids := insertTasks(t, db, tenant, map[string]run.TaskStatus{
 		"x": run.TaskStatusFailed, "ftable_d": run.TaskStatusSucceeded,
 		"ftable_e": run.TaskStatusFailed, "ftable_f": run.TaskStatusPending,
 	})

@@ -50,7 +50,7 @@ type reconcileHarness struct {
 func newReconcileHarness(db *sqlx.DB) *reconcileHarness {
 	logger := slog.New(slog.NewTextHandler(nopWriter{}, nil))
 	schedulerRepo := postgres.NewRunTableRepository(db, logger)
-	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, logger)
+	taskRepo := postgres.NewTaskRepository(db, logger)
 	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
 	factory := func() uow.UnitOfWork {
 		return postgres.NewPostgresUnitOfWork(db, schedulerRepo, taskRepo, catalogRepo, svcports.SystemClock{}, logger)
@@ -239,9 +239,9 @@ func TestSeedReconcile(t *testing.T) {
 		releaseID := "rel-" + uuid.NewString()[:8]
 		existing := h.firstPromoteSeedRunID(releaseID)
 		_, err := db.Exec(`
-			INSERT INTO runs (run_id, schedule_name, status, created_at, initialization_status, kind)
-			VALUES ($1, $2, 'succeeded', now(), 'completed', 'promote_seed')`,
-			existing, "promote-seed-"+strings.ReplaceAll(existing.String(), "-", "")[:8])
+			INSERT INTO runs (tenant_id, run_id, schedule_name, status, created_at, initialization_status, kind)
+			VALUES ($3, $1, $2, 'succeeded', now(), 'completed', 'promote_seed')`,
+			existing, "promote-seed-"+strings.ReplaceAll(existing.String(), "-", "")[:8], h.tenant)
 		require.NoError(t, err)
 
 		h.promote(t, releaseID, 2, false, []string{"raw.orders"},

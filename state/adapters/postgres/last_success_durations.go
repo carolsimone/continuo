@@ -12,7 +12,8 @@ import (
 
 // lastSuccessDurationsQuery reads, for each node identity of the arrays $1
 // (service), $2 (schema) and $3 (table), the duration of the latest succeeded
-// attempt with a positive duration, of a succeeded task that is not a test.
+// attempt with a positive duration, of a succeeded task of the tenant $4 that
+// is not a test.
 // Each identity is one probe of idx_tasks_node_identity and its tasks'
 // attempts one probe each of task_attempts_pkey; a node without such an
 // attempt yields no row. An inherited task records no attempt, so it never
@@ -23,8 +24,9 @@ const lastSuccessDurationsQuery = `
 	CROSS JOIN LATERAL (
 		SELECT a.execution_seconds
 		FROM tasks t
-		JOIN task_attempts a ON a.task_id = t.task_id
-		WHERE t.service_name = n.service_name
+		JOIN task_attempts a ON a.tenant_id = t.tenant_id AND a.task_id = t.task_id
+		WHERE t.tenant_id = $4
+		  AND t.service_name = n.service_name
 		  AND t.schema_name = n.schema_name
 		  AND t.table_name = n.table_name
 		  AND t.status = 'succeeded'
@@ -44,7 +46,7 @@ type lastSuccessRow struct {
 
 // LastSuccessDurations implements repository.RunReadRepository in one round
 // trip.
-func (r *RunReadRepository) LastSuccessDurations(ctx context.Context, nodes []run.NodeID) (map[run.NodeID]time.Duration, error) {
+func (r *RunReadRepository) LastSuccessDurations(ctx context.Context, tenantID string, nodes []run.NodeID) (map[run.NodeID]time.Duration, error) {
 	out := make(map[run.NodeID]time.Duration, len(nodes))
 	if len(nodes) == 0 {
 		return out, nil
@@ -59,7 +61,7 @@ func (r *RunReadRepository) LastSuccessDurations(ctx context.Context, nodes []ru
 	}
 	var rows []lastSuccessRow
 	if err := r.db.SelectContext(ctx, &rows, lastSuccessDurationsQuery,
-		pq.Array(services), pq.Array(schemas), pq.Array(tables)); err != nil {
+		pq.Array(services), pq.Array(schemas), pq.Array(tables), tenantID); err != nil {
 		return nil, fmt.Errorf("read the last successful durations of %d nodes: %w", len(nodes), err)
 	}
 	for _, row := range rows {

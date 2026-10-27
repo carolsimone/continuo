@@ -17,8 +17,8 @@ func TestRunsSchema_StatusIsOneOfTheRunStatuses(t *testing.T) {
 		id := uuid.New()
 		t.Cleanup(func() { _, _ = db.Exec(`DELETE FROM runs WHERE run_id = $1`, id) })
 		_, err := db.Exec(`
-			INSERT INTO runs (run_id, schedule_name, status)
-			VALUES ($1, $2, $3)`, id, "schema-"+id.String(), status)
+			INSERT INTO runs (tenant_id, run_id, schedule_name, status)
+			VALUES ('default', $1, $2, $3)`, id, "schema-"+id.String(), status)
 		return err
 	}
 	for _, s := range run.RunStatuses() {
@@ -40,8 +40,8 @@ func TestRunsSchema_OneActiveRunPerScheduleCoversCancelling(t *testing.T) {
 	})
 	insert := func(id uuid.UUID, status string) error {
 		_, err := db.Exec(`
-			INSERT INTO runs (run_id, schedule_name, status)
-			VALUES ($1, $2, $3)`, id, name, status)
+			INSERT INTO runs (tenant_id, run_id, schedule_name, status)
+			VALUES ('default', $1, $2, $3)`, id, name, status)
 		return err
 	}
 	require.NoError(t, insert(first, "cancelling"))

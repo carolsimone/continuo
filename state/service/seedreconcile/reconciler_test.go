@@ -199,36 +199,36 @@ func (f *fakeRuns) SaveRun(_ context.Context, r *run.Run) error {
 	return nil
 }
 
-func (f *fakeRuns) RunExists(_ context.Context, id uuid.UUID) (bool, error) {
+func (f *fakeRuns) RunExists(_ context.Context, _ string, id uuid.UUID) (bool, error) {
 	f.existsAsk = append(f.existsAsk, id)
 	return f.taken[id], nil
 }
 
-func (f *fakeRuns) ListUnplannedActive(context.Context) ([]uuid.UUID, error) {
+func (f *fakeRuns) ListUnplannedActive(context.Context, string) ([]uuid.UUID, error) {
 	panic("ListUnplannedActive is not used here")
 }
 
-func (f *fakeRuns) CountReleaseRuns(context.Context, string, run.Kind) (int, error) {
+func (f *fakeRuns) CountReleaseRuns(context.Context, string, string, run.Kind) (int, error) {
 	return f.count, nil
 }
 
-func (f *fakeRuns) GetRun(context.Context, uuid.UUID) (*run.Run, error) {
+func (f *fakeRuns) GetRun(context.Context, string, uuid.UUID) (*run.Run, error) {
 	panic("GetRun is not used by the seed reconcile")
 }
 
-func (f *fakeRuns) LoadRunForUpdate(context.Context, uuid.UUID) (*run.Run, error) {
+func (f *fakeRuns) LoadRunForUpdate(context.Context, string, uuid.UUID) (*run.Run, error) {
 	panic("LoadRunForUpdate is not used by the seed reconcile")
 }
 
-func (f *fakeRuns) HasActiveRun(context.Context, string) (bool, error) {
+func (f *fakeRuns) HasActiveRun(context.Context, string, string) (bool, error) {
 	panic("HasActiveRun is not used by the seed reconcile")
 }
 
-func (f *fakeRuns) GetActiveRun(context.Context, string) (*run.Run, error) {
+func (f *fakeRuns) GetActiveRun(context.Context, string, string) (*run.Run, error) {
 	panic("GetActiveRun is not used by the seed reconcile")
 }
 
-func (f *fakeRuns) GetLastRunPerSchedule(context.Context) (map[string]repository.LastRunSummary, error) {
+func (f *fakeRuns) GetLastRunPerSchedule(context.Context, string) (map[string]repository.LastRunSummary, error) {
 	panic("GetLastRunPerSchedule is not used by the seed reconcile")
 }
 

@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
-	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/carolsimone/continuo/state/domain/topology"
@@ -19,13 +18,13 @@ import (
 // cancelByID cancels run id by by for reason the way the cancel RPCs do: it
 // locks the run, cancels it, saves it and writes its events to the outbox, in
 // one transaction it commits.
-func cancelByID(t *testing.T, db *sqlx.DB, id uuid.UUID, by, reason string) {
+func cancelByID(t *testing.T, db *sqlx.DB, tenant string, id uuid.UUID, by, reason string) {
 	t.Helper()
 	ctx := context.Background()
 	inUoW(t, db, func(u *postgres.PostgresUnitOfWork) {
-		r, err := u.Run().LoadRunForUpdate(ctx, id)
+		r, err := u.Run().LoadRunForUpdate(ctx, tenant, id)
 		require.NoError(t, err)
-		events, err := r.Cancel(ctx, u.TaskCollection(pkgevents.DefaultTenantID), by, reason, u.Clock().Now())
+		events, err := r.Cancel(ctx, u.TaskCollection(r.TenantID()), by, reason, u.Clock().Now())
 		require.NoError(t, err)
 		require.NoError(t, u.Run().SaveRun(ctx, r))
 		require.NoError(t, u.Outbox().Append(ctx, events, uuid.Nil))
@@ -74,7 +73,7 @@ func TestCancel_SavesTheRunCancellingWithItsStoppingTasksAndRequestedStops(t *te
 	f.report(t, "e2e_schema.ftable_b", 0, run.AttemptSucceeded, "")
 	before := f.outboxRows(t)
 
-	cancelByID(t, db, f.r.RunID(), "alice", "bad data")
+	cancelByID(t, db, f.tenant, f.r.RunID(), "alice", "bad data")
 
 	row := readCancelRow(t, db, f.r.RunID())
 	assert.Equal(t, run.RunStatusCancelling, row.Status)
@@ -107,15 +106,15 @@ func TestCancel_SavesTheRunCancellingWithItsStoppingTasksAndRequestedStops(t *te
 // terminal; no stop is requested.
 func TestCancel_SavesARunWithNothingInFlightCancelled(t *testing.T) {
 	db := newTestDB(t)
-	storeFailureSchedule(t, db)
-	runID, ids := insertTasks(t, db, map[string]run.TaskStatus{
+	tenant := storeFailureSchedule(t, db)
+	runID, ids := insertTasks(t, db, tenant, map[string]run.TaskStatus{
 		"ftable_a": run.TaskStatusSucceeded, "ftable_c": run.TaskStatusPending, "ftable_d": run.TaskStatusPending,
 	})
 	t.Cleanup(func() {
 		_, _ = db.ExecContext(context.Background(), `DELETE FROM state_outbox WHERE aggregate_id = $1`, runID)
 	})
 
-	cancelByID(t, db, runID, "alice", "bad data")
+	cancelByID(t, db, tenant, runID, "alice", "bad data")
 
 	row := readCancelRow(t, db, runID)
 	assert.Equal(t, run.RunStatusCancelled, row.Status)
@@ -143,7 +142,7 @@ func TestAttemptReport_AStoppedReportCancelsTheTaskAndTheLastEndsTheRun(t *testi
 	db := newTestDB(t)
 	tenant := storeFailureSchedule(t, db)
 	f := statusFlow{db: db, tenant: tenant, r: startScheduleRun(t, db, tenant, "e2e-schedule-failure", model.OperationRun)}
-	cancelByID(t, db, f.r.RunID(), "alice", "bad data")
+	cancelByID(t, db, f.tenant, f.r.RunID(), "alice", "bad data")
 	outbox := f.outboxRows(t)
 
 	f.report(t, "e2e_schema.ftable_a", 0, run.AttemptStopped, "")
@@ -186,7 +185,7 @@ func TestAttemptReport_AStoppingSuccessRecordsTheLoadedVersion(t *testing.T) {
 	})
 	f := statusFlow{db: db, tenant: tenant, r: startScheduleRun(t, db, tenant, "e2e-schedule-failure", model.OperationRun)}
 	f.report(t, "e2e_schema.ftable_a", 0, run.AttemptRunning, "")
-	cancelByID(t, db, f.r.RunID(), "alice", "bad data")
+	cancelByID(t, db, f.tenant, f.r.RunID(), "alice", "bad data")
 
 	f.report(t, "e2e_schema.ftable_a", 0, run.AttemptSucceeded, "")
 
@@ -218,22 +217,22 @@ func TestActiveRunQueriesCoverCancelling(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	tenant := newTopoTenant(t, db)
-	id := insertSeedRun(t, db, run.RunStatusCancelling)
+	id := insertSeedRun(t, db, tenant, run.RunStatusCancelling)
 	var schedule string
 	require.NoError(t, db.Get(&schedule, `SELECT schedule_name FROM runs WHERE run_id = $1`, id))
 	repo := postgres.NewRunTableRepository(db, discardLogger())
 
-	blocked, err := repo.HasActiveRun(ctx, schedule)
+	blocked, err := repo.HasActiveRun(ctx, tenant, schedule)
 	require.NoError(t, err)
 	assert.True(t, blocked, "a cancelling run blocks its schedule")
 
-	active, err := repo.GetActiveRun(ctx, schedule)
+	active, err := repo.GetActiveRun(ctx, tenant, schedule)
 	require.NoError(t, err)
 	require.NotNil(t, active)
 	assert.Equal(t, id, active.ScheduleID)
 	assert.Equal(t, run.RunStatusCancelling, active.Status)
 
-	last, err := repo.GetLastRunPerSchedule(ctx)
+	last, err := repo.GetLastRunPerSchedule(ctx, tenant)
 	require.NoError(t, err)
 	require.Contains(t, last, schedule)
 	assert.True(t, last[schedule].IsActive, "a cancelling run is still running")
@@ -247,7 +246,7 @@ func TestActiveRunQueriesCoverCancelling(t *testing.T) {
 	assert.Contains(t, driftRuns, id)
 
 	inUoW(t, db, func(u *postgres.PostgresUnitOfWork) {
-		unplanned, err := u.Run().ListUnplannedActive(ctx)
+		unplanned, err := u.Run().ListUnplannedActive(ctx, tenant)
 		require.NoError(t, err)
 		assert.Contains(t, unplanned, id)
 	})

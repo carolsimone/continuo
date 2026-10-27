@@ -57,7 +57,7 @@ func (h *TriggerSingleNodeRunHandler) Handle(ctx context.Context, u uow.UnitOfWo
 			return uuid.Nil, "", fmt.Errorf("source_run_id required when metadata_source=snapshot_of_run")
 		}
 		var err error
-		src, err = u.Run().GetRun(ctx, *in.SourceRunID)
+		src, err = u.Run().GetRun(ctx, h.planner.TenantID, *in.SourceRunID)
 		if err != nil {
 			return uuid.Nil, "", fmt.Errorf("get source: %w", err)
 		}

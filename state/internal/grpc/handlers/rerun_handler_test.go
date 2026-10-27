@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/testdeps"
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
@@ -40,7 +39,7 @@ func setupRerunFixture(t *testing.T) *rerunFixture {
 	}
 	logger := newTestLogger()
 	schedulerRepo := postgres.NewRunTableRepository(db, logger)
-	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, logger)
+	taskRepo := postgres.NewTaskRepository(db, logger)
 	catalogRepo := postgres.NewScheduleCatalogRepository(db, logger)
 	clk := ports.SystemClock{}
 	factory := func() uow.UnitOfWork {
@@ -78,7 +77,7 @@ func TestRerunHandler_HappyPath_FailedSource(t *testing.T) {
 		rfx.DB.ExecContext(context.Background(), "DELETE FROM runs WHERE run_id = $1", newID)
 	})
 
-	tracker, err := rfx.SchedulerRepo.GetByID(context.Background(), newID)
+	tracker, err := rfx.SchedulerRepo.GetByID(context.Background(), rfx.Tenant, newID)
 	require.NoError(t, err)
 	require.Equal(t, "rerun", tracker.Kind)
 	require.NotNil(t, tracker.SourceRunID)

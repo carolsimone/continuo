@@ -27,8 +27,10 @@ type sourceRuns struct {
 	source *run.Run
 }
 
-func (r *sourceRuns) GetRun(context.Context, uuid.UUID) (*run.Run, error) { return r.source, nil }
-func (r *sourceRuns) HasActiveRun(context.Context, string) (bool, error) {
+func (r *sourceRuns) GetRun(context.Context, string, uuid.UUID) (*run.Run, error) {
+	return r.source, nil
+}
+func (r *sourceRuns) HasActiveRun(context.Context, string, string) (bool, error) {
 	return true, nil
 }
 
@@ -64,7 +66,7 @@ type durations struct {
 	asked [][]run.NodeID
 }
 
-func (d *durations) LastSuccessDurations(_ context.Context, nodes []run.NodeID) (map[run.NodeID]time.Duration, error) {
+func (d *durations) LastSuccessDurations(_ context.Context, _ string, nodes []run.NodeID) (map[run.NodeID]time.Duration, error) {
 	d.asked = append(d.asked, nodes)
 	out := map[run.NodeID]time.Duration{}
 	for _, n := range nodes {

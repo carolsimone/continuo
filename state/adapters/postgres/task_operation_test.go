@@ -22,7 +22,7 @@ func TestStart_StampsTaskOperation(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	schedRepo := postgres.NewRunTableRepository(db, discardLogger())
-	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, discardLogger())
+	taskRepo := postgres.NewTaskRepository(db, discardLogger())
 
 	r, err := run.NewSingleNodeRun(pkgevents.DefaultTenantID, "op-task", model.OperationTest, nil, "user-1", run.ReleaseStamp{}, time.Now())
 	require.NoError(t, err)

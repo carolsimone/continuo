@@ -260,7 +260,7 @@ func (l *Loop) checkStall(ctx context.Context, runID uuid.UUID, grant bool) (sta
 	var c stallCheck
 	err := l.inTx(ctx, func(u uow.UnitOfWork) error {
 		var err error
-		if c.r, err = u.Run().LoadRunForUpdate(ctx, runID); err != nil {
+		if c.r, err = u.Run().LoadRunForUpdate(ctx, l.tenantID, runID); err != nil {
 			return fmt.Errorf("load run %s: %w", runID, err)
 		}
 		c.now = u.Clock().Now()

@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// AttemptKey names one attempt of one task.
+// AttemptKey names one attempt of one task of the repository's tenant.
 type AttemptKey struct {
 	TaskID  uuid.UUID
 	Attempt int32
@@ -17,9 +17,9 @@ type AttemptKey struct {
 // AttemptRepository serves state's attempt reconcile: the attempts due to be
 // asked about, the runs that stalled, and, inside the unit of work's
 // transaction, the lock and the record of one question. Due times compare
-// against the database clock. The attempt questions (DueAttempts,
-// LockQuestion) belong to the tenant the repository is bound to; StalledRuns
-// reads every run of the install.
+// against the database clock. Every attempt and run it lists, locks or writes
+// belongs to the tenant the repository is bound to; CountCancelling counts the
+// runs of every tenant.
 type AttemptRepository interface {
 	// DueAttempts returns up to limit attempts that are dispatched, queued
 	// or running, whose next check is due and whose run has not ended, the
@@ -30,9 +30,8 @@ type AttemptRepository interface {
 	// that have no task dispatched, queued, running or stopping, no task
 	// waiting for a node lease whose holder is one of those, and whose
 	// progress clock is older than idle, the oldest first: a task waiting
-	// behind another run's task in flight counts as in flight. It reads the
-	// runs of every tenant: a run names no tenant, and failing a stalled run
-	// reads no tenant's topology.
+	// behind another run's task in flight counts as in flight. A lease, a
+	// holder and an older waiter count only within the run's tenant.
 	StalledRuns(ctx context.Context, idle time.Duration, limit int) ([]uuid.UUID, error)
 
 	// LockQuestion locks the attempt FOR UPDATE SKIP LOCKED and returns what
@@ -48,8 +47,7 @@ type AttemptRepository interface {
 	MarkQuestioned(ctx context.Context, key AttemptKey, next time.Duration) error
 
 	// DueStops returns up to limit cancelling runs that have an open attempt
-	// state asked to stop whose next check is due, the longest due first. It
-	// reads the runs of every tenant: a cancel names no tenant.
+	// state asked to stop whose next check is due, the longest due first.
 	DueStops(ctx context.Context, limit int) ([]uuid.UUID, error)
 
 	// LockStops locks, FOR UPDATE SKIP LOCKED, every open attempt of the

@@ -91,7 +91,7 @@ func (s *stubCatalogRepo) UpsertAll(_ context.Context, _ []string, _ map[string]
 	return nil
 }
 func (s *stubCatalogRepo) SoftDeleteAbsent(_ context.Context, _ []string) error { return nil }
-func (s *stubCatalogRepo) ListActive(_ context.Context) ([]string, error) {
+func (s *stubCatalogRepo) ListActive(_ context.Context, _ string) ([]string, error) {
 	names := make([]string, 0)
 	for k, v := range s.existsActive {
 		if v {
@@ -100,28 +100,28 @@ func (s *stubCatalogRepo) ListActive(_ context.Context) ([]string, error) {
 	}
 	return names, nil
 }
-func (s *stubCatalogRepo) ExistsActive(_ context.Context, name string) (bool, error) {
+func (s *stubCatalogRepo) ExistsActive(_ context.Context, _, name string) (bool, error) {
 	return s.existsActive[name], nil
 }
-func (s *stubCatalogRepo) GetServiceMetadata(_ context.Context, _ string) (map[string]run.ServiceMetadata, error) {
+func (s *stubCatalogRepo) GetServiceMetadata(_ context.Context, _, _ string) (map[string]run.ServiceMetadata, error) {
 	return map[string]run.ServiceMetadata{}, nil
 }
-func (s *stubCatalogRepo) UpsertAllTx(_ context.Context, _ *sqlx.Tx, _ []string, _ map[string]map[string]run.ServiceMetadata) error {
+func (s *stubCatalogRepo) UpsertAllTx(_ context.Context, _ *sqlx.Tx, _ string, _ []string, _ map[string]map[string]run.ServiceMetadata) error {
 	return nil
 }
-func (s *stubCatalogRepo) SoftDeleteAbsentTx(_ context.Context, _ *sqlx.Tx, _ []string) error {
+func (s *stubCatalogRepo) SoftDeleteAbsentTx(_ context.Context, _ *sqlx.Tx, _ string, _ []string) error {
 	return nil
 }
-func (s *stubCatalogRepo) ListAll(_ context.Context) ([]postgres.ScheduleCatalogRow, error) {
+func (s *stubCatalogRepo) ListAll(_ context.Context, _ string) ([]postgres.ScheduleCatalogRow, error) {
 	return nil, nil
 }
-func (s *stubCatalogRepo) ListAllForUpdateTx(_ context.Context, _ *sqlx.Tx) ([]postgres.ScheduleCatalogRow, error) {
+func (s *stubCatalogRepo) ListAllForUpdateTx(_ context.Context, _ *sqlx.Tx, _ string) ([]postgres.ScheduleCatalogRow, error) {
 	return nil, nil
 }
-func (s *stubCatalogRepo) GetCatalog(_ context.Context) (*catalog.ScheduleCatalog, error) {
+func (s *stubCatalogRepo) GetCatalog(_ context.Context, _ string) (*catalog.ScheduleCatalog, error) {
 	return nil, nil
 }
-func (s *stubCatalogRepo) LoadCatalogForUpdate(_ context.Context) (*catalog.ScheduleCatalog, error) {
+func (s *stubCatalogRepo) LoadCatalogForUpdate(_ context.Context, _ string) (*catalog.ScheduleCatalog, error) {
 	return nil, nil
 }
 func (s *stubCatalogRepo) SaveCatalog(_ context.Context, _ *catalog.ScheduleCatalog) error {
@@ -139,46 +139,46 @@ type stubSchedulerRepo struct {
 }
 
 func (s *stubSchedulerRepo) Create(_ context.Context, _ *postgres.RunRow) error { return nil }
-func (s *stubSchedulerRepo) GetByID(_ context.Context, _ uuid.UUID) (*postgres.RunRow, error) {
+func (s *stubSchedulerRepo) GetByID(_ context.Context, _ string, _ uuid.UUID) (*postgres.RunRow, error) {
 	return s.getByIDResult, s.getByIDErr
 }
-func (s *stubSchedulerRepo) GetActiveRun(_ context.Context, _ string) (*postgres.RunRow, error) {
+func (s *stubSchedulerRepo) GetActiveRun(_ context.Context, _, _ string) (*postgres.RunRow, error) {
 	return s.getActiveResult, s.getActiveErr
 }
-func (s *stubSchedulerRepo) HasActiveRun(_ context.Context, _ string) (bool, error) {
+func (s *stubSchedulerRepo) HasActiveRun(_ context.Context, _, _ string) (bool, error) {
 	return s.hasActive, nil
 }
-func (s *stubSchedulerRepo) GetLastRunPerSchedule(_ context.Context) (map[string]postgres.LastRunData, error) {
+func (s *stubSchedulerRepo) GetLastRunPerSchedule(_ context.Context, _ string) (map[string]postgres.LastRunData, error) {
 	if s.lastRunData != nil {
 		return s.lastRunData, nil
 	}
 	return map[string]postgres.LastRunData{}, nil
 }
-func (s *stubSchedulerRepo) UpdateInitializationStatusTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string) error {
+func (s *stubSchedulerRepo) UpdateInitializationStatusTx(_ context.Context, _ *sqlx.Tx, _ string, _ uuid.UUID, _ string) error {
 	return nil
 }
 func (s *stubSchedulerRepo) CreateTx(_ context.Context, _ *sqlx.Tx, _ *postgres.RunRow) error {
 	return nil
 }
-func (s *stubSchedulerRepo) SetTotalTaskCountTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ int32) error {
+func (s *stubSchedulerRepo) SetTotalTaskCountTx(_ context.Context, _ *sqlx.Tx, _ string, _ uuid.UUID, _ int32) error {
 	return nil
 }
-func (s *stubSchedulerRepo) SetTerminalTaskCountTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ int32) error {
+func (s *stubSchedulerRepo) SetTerminalTaskCountTx(_ context.Context, _ *sqlx.Tx, _ string, _ uuid.UUID, _ int32) error {
 	return nil
 }
-func (s *stubSchedulerRepo) UpdateStatusTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string) error {
+func (s *stubSchedulerRepo) UpdateStatusTx(_ context.Context, _ *sqlx.Tx, _ string, _ uuid.UUID, _ string) error {
 	return nil
 }
-func (s *stubSchedulerRepo) LoadByIDForUpdateTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID) (*postgres.RunRow, error) {
+func (s *stubSchedulerRepo) LoadByIDForUpdateTx(_ context.Context, _ *sqlx.Tx, _ string, _ uuid.UUID) (*postgres.RunRow, error) {
 	return s.getByIDResult, s.getByIDErr
 }
-func (s *stubSchedulerRepo) FinalizeRunTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ string) error {
+func (s *stubSchedulerRepo) FinalizeRunTx(_ context.Context, _ *sqlx.Tx, _ string, _ uuid.UUID, _ string) error {
 	return nil
 }
-func (s *stubSchedulerRepo) UpdateRunRowTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ postgres.RunRowUpdate) error {
+func (s *stubSchedulerRepo) UpdateRunRowTx(_ context.Context, _ *sqlx.Tx, _ string, _ uuid.UUID, _ postgres.RunRowUpdate) error {
 	return nil
 }
-func (s *stubSchedulerRepo) CancelTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, _ run.RunStatus, _, _ string, _ time.Time) error {
+func (s *stubSchedulerRepo) CancelTx(_ context.Context, _ *sqlx.Tx, _ string, _ uuid.UUID, _ run.RunStatus, _, _ string, _ time.Time) error {
 	return s.cancelErr
 }
 
@@ -196,10 +196,10 @@ type activateFakeRunRepo struct {
 	saveErr   error
 }
 
-func (f *activateFakeRunRepo) GetRun(_ context.Context, _ uuid.UUID) (*run.Run, error) {
+func (f *activateFakeRunRepo) GetRun(_ context.Context, _ string, _ uuid.UUID) (*run.Run, error) {
 	panic("GetRun not used in activate tests")
 }
-func (f *activateFakeRunRepo) LoadRunForUpdate(_ context.Context, _ uuid.UUID) (*run.Run, error) {
+func (f *activateFakeRunRepo) LoadRunForUpdate(_ context.Context, _ string, _ uuid.UUID) (*run.Run, error) {
 	panic("LoadRunForUpdate not used in activate tests")
 }
 func (f *activateFakeRunRepo) SaveRun(_ context.Context, r *run.Run) error {
@@ -209,23 +209,23 @@ func (f *activateFakeRunRepo) SaveRun(_ context.Context, r *run.Run) error {
 	f.savedRun = r
 	return nil
 }
-func (f *activateFakeRunRepo) HasActiveRun(_ context.Context, _ string) (bool, error) {
+func (f *activateFakeRunRepo) HasActiveRun(_ context.Context, _, _ string) (bool, error) {
 	return f.hasActive, nil
 }
-func (f *activateFakeRunRepo) GetActiveRun(_ context.Context, _ string) (*run.Run, error) {
+func (f *activateFakeRunRepo) GetActiveRun(_ context.Context, _, _ string) (*run.Run, error) {
 	panic("GetActiveRun not used in activate tests")
 }
-func (f *activateFakeRunRepo) GetLastRunPerSchedule(_ context.Context) (map[string]repository.LastRunSummary, error) {
+func (f *activateFakeRunRepo) GetLastRunPerSchedule(_ context.Context, _ string) (map[string]repository.LastRunSummary, error) {
 	panic("GetLastRunPerSchedule not used in activate tests")
 }
-func (f *activateFakeRunRepo) RunExists(_ context.Context, _ uuid.UUID) (bool, error) {
+func (f *activateFakeRunRepo) RunExists(_ context.Context, _ string, _ uuid.UUID) (bool, error) {
 	panic("RunExists not used in activate tests")
 }
-func (f *activateFakeRunRepo) ListUnplannedActive(context.Context) ([]uuid.UUID, error) {
+func (f *activateFakeRunRepo) ListUnplannedActive(context.Context, string) ([]uuid.UUID, error) {
 	panic("ListUnplannedActive is not used here")
 }
 
-func (f *activateFakeRunRepo) CountReleaseRuns(_ context.Context, _ string, _ run.Kind) (int, error) {
+func (f *activateFakeRunRepo) CountReleaseRuns(_ context.Context, _, _ string, _ run.Kind) (int, error) {
 	panic("CountReleaseRuns not used in activate tests")
 }
 
@@ -652,11 +652,11 @@ type cancelFakeRunRepo struct {
 	saveCalled bool
 }
 
-func (f *cancelFakeRunRepo) GetRun(_ context.Context, _ uuid.UUID) (*run.Run, error) {
+func (f *cancelFakeRunRepo) GetRun(_ context.Context, _ string, _ uuid.UUID) (*run.Run, error) {
 	panic("GetRun not used in cancel tests")
 }
 
-func (f *cancelFakeRunRepo) LoadRunForUpdate(_ context.Context, _ uuid.UUID) (*run.Run, error) {
+func (f *cancelFakeRunRepo) LoadRunForUpdate(_ context.Context, _ string, _ uuid.UUID) (*run.Run, error) {
 	if f.loadErr != nil {
 		return nil, f.loadErr
 	}
@@ -672,28 +672,28 @@ func (f *cancelFakeRunRepo) SaveRun(_ context.Context, r *run.Run) error {
 	return nil
 }
 
-func (f *cancelFakeRunRepo) HasActiveRun(_ context.Context, _ string) (bool, error) {
+func (f *cancelFakeRunRepo) HasActiveRun(_ context.Context, _, _ string) (bool, error) {
 	panic("HasActiveRun not used in cancel tests")
 }
 
-func (f *cancelFakeRunRepo) GetActiveRun(_ context.Context, _ string) (*run.Run, error) {
+func (f *cancelFakeRunRepo) GetActiveRun(_ context.Context, _, _ string) (*run.Run, error) {
 	if f.getActiveErr != nil {
 		return nil, f.getActiveErr
 	}
 	return f.stored, nil
 }
 
-func (f *cancelFakeRunRepo) GetLastRunPerSchedule(_ context.Context) (map[string]repository.LastRunSummary, error) {
+func (f *cancelFakeRunRepo) GetLastRunPerSchedule(_ context.Context, _ string) (map[string]repository.LastRunSummary, error) {
 	panic("GetLastRunPerSchedule not used in cancel tests")
 }
-func (f *cancelFakeRunRepo) RunExists(_ context.Context, _ uuid.UUID) (bool, error) {
+func (f *cancelFakeRunRepo) RunExists(_ context.Context, _ string, _ uuid.UUID) (bool, error) {
 	panic("RunExists not used in cancel tests")
 }
-func (f *cancelFakeRunRepo) ListUnplannedActive(context.Context) ([]uuid.UUID, error) {
+func (f *cancelFakeRunRepo) ListUnplannedActive(context.Context, string) ([]uuid.UUID, error) {
 	panic("ListUnplannedActive is not used here")
 }
 
-func (f *cancelFakeRunRepo) CountReleaseRuns(_ context.Context, _ string, _ run.Kind) (int, error) {
+func (f *cancelFakeRunRepo) CountReleaseRuns(_ context.Context, _, _ string, _ run.Kind) (int, error) {
 	panic("CountReleaseRuns not used in cancel tests")
 }
 

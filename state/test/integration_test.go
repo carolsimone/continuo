@@ -114,7 +114,7 @@ func TestMain(m *testing.M) {
 
 	// ---- Build repositories ----
 	schedulerRepo := postgres.NewRunTableRepository(db, logger)
-	taskRepo := postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, logger)
+	taskRepo := postgres.NewTaskRepository(db, logger)
 	attemptRepo := postgres.NewTaskAttemptReadRepository(db)
 
 	// ---- Build handlers ----
@@ -293,9 +293,9 @@ func TestStateService(t *testing.T) {
 func seedActiveSchedule(t *testing.T, scheduleName string) {
 	t.Helper()
 	_, err := stateDB.ExecContext(context.Background(), `
-		INSERT INTO schedule_catalog (schedule_name, first_seen_at, last_seen_at, removed_at, service_metadata)
-		VALUES ($1, now(), now(), NULL, '{}'::jsonb)
-		ON CONFLICT (schedule_name) DO UPDATE SET removed_at = NULL, last_seen_at = now()
+		INSERT INTO schedule_catalog (tenant_id, schedule_name, first_seen_at, last_seen_at, removed_at, service_metadata)
+		VALUES ('default', $1, now(), now(), NULL, '{}'::jsonb)
+		ON CONFLICT (tenant_id, schedule_name) DO UPDATE SET removed_at = NULL, last_seen_at = now()
 	`, scheduleName)
 	require.NoError(t, err)
 }

@@ -56,7 +56,7 @@ func NewRebasePreviewer(planner runstart.Planner, newUoW func() uow.UnitOfWork, 
 // durations are read after the rollback.
 func (p *RebasePreviewer) Preview(ctx context.Context, sourceID uuid.UUID, includeChangedUpstream bool) (RebasePreview, error) {
 	u := p.newUoW()
-	src, err := u.Run().GetRun(ctx, sourceID)
+	src, err := u.Run().GetRun(ctx, p.planner.TenantID, sourceID)
 	if err != nil {
 		return RebasePreview{}, fmt.Errorf("get source: %w", err)
 	}
@@ -72,7 +72,7 @@ func (p *RebasePreviewer) Preview(ctx context.Context, sourceID uuid.UUID, inclu
 	for _, c := range pv.Changed {
 		nodes = append(nodes, run.NodeID{ServiceName: c.ServiceName, SchemaName: c.SchemaName, TableName: c.TableName})
 	}
-	last, err := p.reads.LastSuccessDurations(ctx, nodes)
+	last, err := p.reads.LastSuccessDurations(ctx, src.TenantID(), nodes)
 	if err != nil {
 		return RebasePreview{}, fmt.Errorf("read the last successful durations: %w", err)
 	}

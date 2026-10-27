@@ -26,14 +26,14 @@ type cancelCapturingSchedRepo struct {
 	gotFields      RunRowUpdate
 }
 
-func (r *cancelCapturingSchedRepo) CancelTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, status run.RunStatus, _, _ string, cancelledAt time.Time) error {
+func (r *cancelCapturingSchedRepo) CancelTx(_ context.Context, _ *sqlx.Tx, _ string, _ uuid.UUID, status run.RunStatus, _, _ string, cancelledAt time.Time) error {
 	r.called = true
 	r.gotStatus = status
 	r.gotCancelledAt = cancelledAt
 	return nil
 }
 
-func (r *cancelCapturingSchedRepo) UpdateRunRowTx(_ context.Context, _ *sqlx.Tx, _ uuid.UUID, fields RunRowUpdate) error {
+func (r *cancelCapturingSchedRepo) UpdateRunRowTx(_ context.Context, _ *sqlx.Tx, _ string, _ uuid.UUID, fields RunRowUpdate) error {
 	r.gotFields = fields
 	return nil
 }

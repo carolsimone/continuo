@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	"github.com/carolsimone/continuo/state/domain/aggregate/run"
 	"github.com/google/uuid"
@@ -28,7 +27,7 @@ func attemptTx(t *testing.T, db *sqlx.DB, fn func(ctx context.Context, tx *sqlx.
 	tx, err := db.BeginTxx(ctx, nil)
 	require.NoError(t, err)
 	defer tx.Rollback() //nolint:errcheck
-	fn(ctx, tx, postgres.NewTaskCollectionAdapter(postgres.NewTaskRepository(db, pkgevents.DefaultTenantID, discardLogger()), tx, "default"))
+	fn(ctx, tx, postgres.NewTaskCollectionAdapter(postgres.NewTaskRepository(db, discardLogger()), tx, "default"))
 }
 
 // newRunWithTasks inserts one run and n tasks of it, and deletes the run (and
@@ -37,8 +36,8 @@ func newRunWithTasks(t *testing.T, db *sqlx.DB, n int) (uuid.UUID, []uuid.UUID) 
 	t.Helper()
 	scheduleID := uuid.New()
 	_, err := db.Exec(`
-		INSERT INTO runs (run_id, schedule_name, status)
-		VALUES ($1, $2, 'running')`, scheduleID, "attempts-"+scheduleID.String())
+		INSERT INTO runs (tenant_id, run_id, schedule_name, status)
+		VALUES ('default', $1, $2, 'running')`, scheduleID, "attempts-"+scheduleID.String())
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		_, _ = db.Exec(`DELETE FROM runs WHERE run_id = $1`, scheduleID)
@@ -47,8 +46,8 @@ func newRunWithTasks(t *testing.T, db *sqlx.DB, n int) (uuid.UUID, []uuid.UUID) 
 	for i := range n {
 		id := uuid.New()
 		_, err = db.Exec(`
-			INSERT INTO tasks (task_id, run_id, service_name, schema_name, table_name, job_name, status, max_retries)
-			VALUES ($1, $2, 'svc', 'sch', $3, 'job-0', 'running', 2)`, id, scheduleID, "tbl"+string(rune('a'+i)))
+			INSERT INTO tasks (tenant_id, task_id, run_id, service_name, schema_name, table_name, job_name, status, max_retries)
+			VALUES ((SELECT tenant_id FROM runs WHERE run_id = $2), $1, $2, 'svc', 'sch', $3, 'job-0', 'running', 2)`, id, scheduleID, "tbl"+string(rune('a'+i)))
 		require.NoError(t, err)
 		ids = append(ids, id)
 	}

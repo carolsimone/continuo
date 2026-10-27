@@ -56,7 +56,7 @@ func BenchmarkPreviewRebase(b *testing.B) {
 		repo := postgres.NewRunReadRepository(db)
 		b.ResetTimer()
 		for range b.N {
-			got, err := repo.LastSuccessDurations(ctx, nodes)
+			got, err := repo.LastSuccessDurations(ctx, tenant, nodes)
 			require.NoError(b, err)
 			require.Len(b, got, succeeded)
 		}

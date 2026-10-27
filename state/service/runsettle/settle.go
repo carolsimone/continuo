@@ -50,7 +50,7 @@ func listUnplanned(ctx context.Context, u uow.UnitOfWork) ([]uuid.UUID, error) {
 		return nil, fmt.Errorf("begin the list of unplanned runs: %w", err)
 	}
 	defer func() { _ = u.Rollback() }()
-	ids, err := u.Run().ListUnplannedActive(ctx)
+	ids, err := u.Run().ListUnplannedActive(ctx, pkgevents.DefaultTenantID)
 	if err != nil {
 		return nil, fmt.Errorf("list the active runs state did not plan: %w", err)
 	}
@@ -70,16 +70,14 @@ func cancel(ctx context.Context, u uow.UnitOfWork, id uuid.UUID) (bool, error) {
 			_ = u.Rollback()
 		}
 	}()
-	r, err := u.Run().LoadRunForUpdate(ctx, id)
+	r, err := u.Run().LoadRunForUpdate(ctx, pkgevents.DefaultTenantID, id)
 	if err != nil {
 		return false, fmt.Errorf("load run %s: %w", id, err)
 	}
 	if !r.IsActive() || r.PlannedAt() != nil {
 		return false, nil
 	}
-	// The cancel takes no node lease, so the tenant its tasks are bound to,
-	// the install's single tenant, changes nothing it writes.
-	events, err := r.Cancel(ctx, u.TaskCollection(pkgevents.DefaultTenantID), identity.SystemUserID, Reason, u.Clock().Now())
+	events, err := r.Cancel(ctx, u.TaskCollection(r.TenantID()), identity.SystemUserID, Reason, u.Clock().Now())
 	if errors.Is(err, run.ErrAlreadyCancelling) {
 		return false, nil
 	}

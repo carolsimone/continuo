@@ -75,8 +75,8 @@ func TestRebaseFromFailure(t *testing.T) {
 	finishRun(t, srcID)
 	at := time.Now().UTC().Add(-time.Hour)
 	_, err = stateDB.Exec(`
-		INSERT INTO task_attempts (task_id, attempt, job_name, status, started_at, finished_at, execution_seconds)
-		SELECT task_id, 0, job_name, 'succeeded', $2, $2, 42.5 FROM tasks WHERE run_id = $1 AND node_key = 'mart.rff_y'`, srcID, at)
+		INSERT INTO task_attempts (tenant_id, task_id, attempt, job_name, status, started_at, finished_at, execution_seconds)
+		SELECT tenant_id, task_id, 0, job_name, 'succeeded', $2, $2, 42.5 FROM tasks WHERE run_id = $1 AND node_key = 'mart.rff_y'`, srcID, at)
 	require.NoError(t, err)
 
 	live := promoteRelease(t, stateDB, nodes("sha256:rff_y-fixed", "sha256:rff_q-changed")...)

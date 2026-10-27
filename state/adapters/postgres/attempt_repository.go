@@ -16,10 +16,11 @@ import (
 	"github.com/lib/pq"
 )
 
-// AttemptRepository implements repository.AttemptRepository: the attempt
-// questions for one tenant, the stalled runs for the whole install. Its lists
-// read through the autocommit db, its lock and write through the unit of
-// work's transaction.
+// AttemptRepository implements repository.AttemptRepository for one tenant:
+// every attempt, task and run it lists, locks or writes is the tenant's, which
+// the attempt reconcile bound to the tenant then loads and acts on; only
+// CountCancelling counts the whole install. Its lists read through the
+// autocommit db, its lock and write through the unit of work's transaction.
 type AttemptRepository struct {
 	db       *sqlx.DB
 	tx       *sqlx.Tx
@@ -29,16 +30,17 @@ type AttemptRepository struct {
 var _ repository.AttemptRepository = (*AttemptRepository)(nil)
 
 // NewAttemptRepository binds the repository to db, tx (nil outside a
-// transaction) and tenantID, whose topology the questions read.
+// transaction) and tenantID, whose attempts, tasks, runs and topology it
+// reads.
 func NewAttemptRepository(db *sqlx.DB, tx *sqlx.Tx, tenantID string) *AttemptRepository {
 	return &AttemptRepository{db: db, tx: tx, tenantID: tenantID}
 }
 
-// DueAttempts reads the open attempts whose next check is due, through
-// idx_task_attempts_due, keeping those that no stop was requested of, whose run
-// is pending or running and whose task's node the run's release holds for the
-// tenant: exactly the attempts LockQuestion can lock, so one it never could cannot hold the head of the
-// due order.
+// DueAttempts reads the tenant's open attempts whose next check is due,
+// through idx_task_attempts_due, keeping those that no stop was requested of,
+// whose run is pending or running and whose task's node the run's release
+// holds: exactly the attempts LockQuestion can lock, so one it never could
+// cannot hold the head of the due order.
 func (r *AttemptRepository) DueAttempts(ctx context.Context, limit int) ([]repository.AttemptKey, error) {
 	var rows []struct {
 		TaskID  uuid.UUID `db:"task_id"`
@@ -47,10 +49,11 @@ func (r *AttemptRepository) DueAttempts(ctx context.Context, limit int) ([]repos
 	if err := r.db.SelectContext(ctx, &rows, `
 		SELECT a.task_id, a.attempt
 		FROM task_attempts a
-		JOIN tasks t ON t.task_id = a.task_id
-		JOIN runs s ON s.run_id = t.run_id
-		JOIN topology_nodes n ON n.tenant_id = $2 AND n.release_id = s.release_id AND n.node_key = t.node_key
-		WHERE a.status IN ('dispatched', 'queued', 'running') AND a.next_check_at <= now()
+		JOIN tasks t ON t.tenant_id = a.tenant_id AND t.task_id = a.task_id
+		JOIN runs s ON s.tenant_id = t.tenant_id AND s.run_id = t.run_id
+		JOIN topology_nodes n ON n.tenant_id = s.tenant_id AND n.release_id = s.release_id AND n.node_key = t.node_key
+		WHERE a.tenant_id = $2
+		  AND a.status IN ('dispatched', 'queued', 'running') AND a.next_check_at <= now()
 		  AND a.stop_requested_at IS NULL
 		  AND s.status IN ('pending', 'running')
 		ORDER BY a.next_check_at, a.task_id, a.attempt
@@ -64,28 +67,25 @@ func (r *AttemptRepository) DueAttempts(ctx context.Context, limit int) ([]repos
 	return out, nil
 }
 
-// StalledRuns reads the active runs (pending, running or cancelling) with an
-// old progress clock and no work in flight (runWorkInFlight: no task
+// StalledRuns reads the tenant's active runs (pending, running or cancelling)
+// with an old progress clock and no work in flight (runWorkInFlight: no task
 // dispatched, queued, running or stopping, no task waiting for a node lease
-// whose holder is, and none waiting behind an older waiter of a running run),
-// of every tenant: runs has no tenant column. A lease or an older
-// waiter in another tenant on the waiting task's node key also counts, which
-// can delay noticing a stalled run but never fails a waiting one. A run it
-// lists may hold the oldest waiter of a free node; the attempt reconcile
-// grants that node under the run's lock (run.Run.FailStalled) rather than
-// failing the run. The run scan filters runs by status, which
-// holds few active rows.
+// whose holder is, and none waiting behind an older waiter of a running run,
+// each within the run's tenant). A run it lists may hold the oldest waiter of
+// a free node; the attempt reconcile grants that node under the run's lock
+// (run.Run.FailStalled) rather than failing the run. The run scan filters
+// runs by status, which holds few active rows.
 func (r *AttemptRepository) StalledRuns(ctx context.Context, idle time.Duration, limit int) ([]uuid.UUID, error) {
 	var ids []uuid.UUID
 	if err := r.db.SelectContext(ctx, &ids, `
 		SELECT s.run_id
 		FROM runs s
-		WHERE s.status = ANY($4::text[])
+		WHERE s.tenant_id = $5 AND s.status = ANY($4::text[])
 		  AND s.last_progress_at < now() - make_interval(secs => $2::float8)
 		  AND NOT `+runWorkInFlight+`
 		ORDER BY s.last_progress_at, s.run_id
 		LIMIT $3`, pq.Array(inFlightTaskStatuses()), idle.Seconds(), limit,
-		pq.Array(activeRunStatuses())); err != nil {
+		pq.Array(activeRunStatuses()), r.tenantID); err != nil {
 		return nil, fmt.Errorf("read the stalled runs: %w", err)
 	}
 	return ids, nil
@@ -118,10 +118,10 @@ func (r *AttemptRepository) LockQuestion(ctx context.Context, key repository.Att
 		       n.node_key, n.unique_id, n.service_name, n.schema_name, n.table_name, n.node_type, n.test_count,
 		       n.content_hash, n.image_tag, n.secret_ref, n.schedule_name, n.timeout_seconds
 		FROM task_attempts a
-		JOIN tasks t ON t.task_id = a.task_id
-		JOIN runs s ON s.run_id = t.run_id
-		JOIN topology_nodes n ON n.tenant_id = $3 AND n.release_id = s.release_id AND n.node_key = t.node_key
-		WHERE a.task_id = $1 AND a.attempt = $2
+		JOIN tasks t ON t.tenant_id = a.tenant_id AND t.task_id = a.task_id
+		JOIN runs s ON s.tenant_id = t.tenant_id AND s.run_id = t.run_id
+		JOIN topology_nodes n ON n.tenant_id = s.tenant_id AND n.release_id = s.release_id AND n.node_key = t.node_key
+		WHERE a.tenant_id = $3 AND a.task_id = $1 AND a.attempt = $2
 		  AND a.status IN ('dispatched', 'queued', 'running') AND a.next_check_at <= now()
 		  AND a.stop_requested_at IS NULL
 		  AND s.status IN ('pending', 'running')
@@ -145,7 +145,8 @@ func (r *AttemptRepository) LockQuestion(ctx context.Context, key repository.Att
 	}, true, nil
 }
 
-// MarkQuestioned counts the question and moves the attempt's next check.
+// MarkQuestioned counts the question about the tenant's attempt and moves its
+// next check.
 func (r *AttemptRepository) MarkQuestioned(ctx context.Context, key repository.AttemptKey, next time.Duration) error {
 	if r.tx == nil {
 		return errors.New("MarkQuestioned requires an active transaction")
@@ -153,28 +154,29 @@ func (r *AttemptRepository) MarkQuestioned(ctx context.Context, key repository.A
 	if _, err := r.tx.ExecContext(ctx, `
 		UPDATE task_attempts
 		SET checks_sent = checks_sent + 1, next_check_at = now() + make_interval(secs => $3::float8)
-		WHERE task_id = $1 AND attempt = $2`, key.TaskID, key.Attempt, next.Seconds()); err != nil {
+		WHERE tenant_id = $4 AND task_id = $1 AND attempt = $2`, key.TaskID, key.Attempt, next.Seconds(), r.tenantID); err != nil {
 		return fmt.Errorf("record a question about attempt %d of task %s: %w", key.Attempt, key.TaskID, err)
 	}
 	return nil
 }
 
-// DueStops reads the cancelling runs that have an open attempt asked to stop
-// whose next check is due, through idx_task_attempts_due, the longest due
-// first.
+// DueStops reads the tenant's cancelling runs that have an open attempt asked
+// to stop whose next check is due, through idx_task_attempts_due, the longest
+// due first.
 func (r *AttemptRepository) DueStops(ctx context.Context, limit int) ([]uuid.UUID, error) {
 	var ids []uuid.UUID
 	if err := r.db.SelectContext(ctx, &ids, `
 		SELECT s.run_id
 		FROM task_attempts a
-		JOIN tasks t ON t.task_id = a.task_id
-		JOIN runs s ON s.run_id = t.run_id
-		WHERE a.status IN ('dispatched', 'queued', 'running') AND a.next_check_at <= now()
+		JOIN tasks t ON t.tenant_id = a.tenant_id AND t.task_id = a.task_id
+		JOIN runs s ON s.tenant_id = t.tenant_id AND s.run_id = t.run_id
+		WHERE a.tenant_id = $2
+		  AND a.status IN ('dispatched', 'queued', 'running') AND a.next_check_at <= now()
 		  AND a.stop_requested_at IS NOT NULL
 		  AND s.status = 'cancelling'
 		GROUP BY s.run_id
 		ORDER BY min(a.next_check_at), s.run_id
-		LIMIT $1`, limit); err != nil {
+		LIMIT $1`, limit, r.tenantID); err != nil {
 		return nil, fmt.Errorf("read the cancelling runs with a quiet stop: %w", err)
 	}
 	return ids, nil
@@ -193,9 +195,10 @@ type stopRow struct {
 	Due          bool       `db:"due"`
 }
 
-// LockStops locks every open attempt of the cancelling run that was asked to
-// stop, skipping one another transaction holds, and reads the run's cancel
-// with them. It finds nothing when none of the attempts it locked is due.
+// LockStops locks every open attempt of the tenant's cancelling run that was
+// asked to stop, skipping one another transaction holds, and reads the run's
+// cancel with them. It finds nothing when none of the attempts it locked is
+// due.
 func (r *AttemptRepository) LockStops(ctx context.Context, runID uuid.UUID) (run.StopQuestion, bool, error) {
 	if r.tx == nil {
 		return run.StopQuestion{}, false, errors.New("LockStops requires an active transaction")
@@ -205,12 +208,12 @@ func (r *AttemptRepository) LockStops(ctx context.Context, runID uuid.UUID) (run
 		SELECT s.run_id, s.schedule_name, s.cancelled_by, s.cancellation_reason, s.cancelled_at,
 		       a.task_id, a.attempt, a.job_name, a.checks_sent, a.next_check_at <= now() AS due
 		FROM task_attempts a
-		JOIN tasks t ON t.task_id = a.task_id
-		JOIN runs s ON s.run_id = t.run_id
-		WHERE s.run_id = $1 AND s.status = 'cancelling'
+		JOIN tasks t ON t.tenant_id = a.tenant_id AND t.task_id = a.task_id
+		JOIN runs s ON s.tenant_id = t.tenant_id AND s.run_id = t.run_id
+		WHERE s.tenant_id = $2 AND s.run_id = $1 AND s.status = 'cancelling'
 		  AND a.status IN ('dispatched', 'queued', 'running')
 		  AND a.stop_requested_at IS NOT NULL
-		FOR UPDATE OF a SKIP LOCKED`, runID); err != nil {
+		FOR UPDATE OF a SKIP LOCKED`, runID, r.tenantID); err != nil {
 		return run.StopQuestion{}, false, fmt.Errorf("lock the stops of run %s: %w", runID, err)
 	}
 	anyDue := false

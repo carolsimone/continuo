@@ -11,7 +11,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/adapters/postgres"
 	stateredis "github.com/carolsimone/continuo/state/adapters/redis"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
@@ -34,7 +33,7 @@ func TestScheduleCatalogBinding_OlderPromotionLeavesTheCatalogUnchanged(t *testi
 	logger := slog.New(slog.NewTextHandler(nopWriter{}, nil))
 
 	schedulerRepo := postgres.NewRunTableRepository(rawDB, logger)
-	taskRepo := postgres.NewTaskRepository(rawDB, pkgevents.DefaultTenantID, logger)
+	taskRepo := postgres.NewTaskRepository(rawDB, logger)
 	catalogRepo := postgres.NewScheduleCatalogRepository(rawDB, logger)
 	factory := func() uow.UnitOfWork {
 		return postgres.NewPostgresUnitOfWork(rawDB, schedulerRepo, taskRepo, catalogRepo, svcports.SystemClock{}, logger)
@@ -66,7 +65,7 @@ func TestScheduleCatalogBinding_OlderPromotionLeavesTheCatalogUnchanged(t *testi
 	}
 	recordedSeq := func() int64 {
 		var seq int64
-		require.NoError(t, rawDB.Get(&seq, `SELECT promotion_seq FROM schedule_catalog_state WHERE id = TRUE`))
+		require.NoError(t, rawDB.Get(&seq, `SELECT promotion_seq FROM schedule_catalog_state WHERE tenant_id = 'default'`))
 		return seq
 	}
 

@@ -100,7 +100,7 @@ func (w *Waker) grant(ctx context.Context, waiter repository.LeaseWaiter) error 
 	var waited time.Duration
 	granted := false
 	if err := w.inTx(ctx, func(u uow.UnitOfWork) error {
-		r, err := u.Run().LoadRunForUpdate(ctx, waiter.RunID)
+		r, err := u.Run().LoadRunForUpdate(ctx, w.tenantID, waiter.RunID)
 		if err != nil {
 			return fmt.Errorf("load run %s: %w", waiter.RunID, err)
 		}

@@ -20,29 +20,30 @@ type ScheduleCatalogRow struct {
 	ServiceMetadata map[string]run.ServiceMetadata
 }
 
-// ScheduleCatalogRepository manages the schedule_catalog table.
+// ScheduleCatalogRepository manages the schedule_catalog table. Every method
+// reads or writes the rows of one tenant, the catalog of that tenant.
 type ScheduleCatalogRepository interface {
 	// UpsertAllTx inserts or reactivates all names in the list within the
 	// caller's transaction. On conflict: sets last_seen_at=now(),
 	// removed_at=NULL. serviceMetadata is keyed by schedule_name; each inner map
 	// holds service_name → ServiceMetadata for that schedule.
-	UpsertAllTx(ctx context.Context, tx *sqlx.Tx, names []string, serviceMetadata map[string]map[string]run.ServiceMetadata) error
+	UpsertAllTx(ctx context.Context, tx *sqlx.Tx, tenantID string, names []string, serviceMetadata map[string]map[string]run.ServiceMetadata) error
 	// SoftDeleteAbsentTx soft-deletes any active row whose name is not in names,
 	// within the caller's transaction.
-	SoftDeleteAbsentTx(ctx context.Context, tx *sqlx.Tx, names []string) error
+	SoftDeleteAbsentTx(ctx context.Context, tx *sqlx.Tx, tenantID string, names []string) error
 	// ListActive returns all schedule_names with removed_at IS NULL.
-	ListActive(ctx context.Context) ([]string, error)
+	ListActive(ctx context.Context, tenantID string) ([]string, error)
 	// ExistsActive returns true if schedule_name is active in the catalog.
-	ExistsActive(ctx context.Context, scheduleName string) (bool, error)
-	GetServiceMetadata(ctx context.Context, scheduleName string) (map[string]run.ServiceMetadata, error)
-	// ListAll returns every row in schedule_catalog, including soft-deleted
-	// rows, for aggregate hydration.
-	ListAll(ctx context.Context) ([]ScheduleCatalogRow, error)
-	// ListAllForUpdateTx returns every row in schedule_catalog within the
+	ExistsActive(ctx context.Context, tenantID, scheduleName string) (bool, error)
+	GetServiceMetadata(ctx context.Context, tenantID, scheduleName string) (map[string]run.ServiceMetadata, error)
+	// ListAll returns every row of the tenant's catalog, including
+	// soft-deleted rows, for aggregate hydration.
+	ListAll(ctx context.Context, tenantID string) ([]ScheduleCatalogRow, error)
+	// ListAllForUpdateTx returns every row of the tenant's catalog within the
 	// caller's transaction, taking a SELECT ... FOR UPDATE row lock so a
 	// reconcile cycle's read-modify-write is serialised against concurrent
 	// reconcilers. Like ListAll it includes soft-deleted rows.
-	ListAllForUpdateTx(ctx context.Context, tx *sqlx.Tx) ([]ScheduleCatalogRow, error)
+	ListAllForUpdateTx(ctx context.Context, tx *sqlx.Tx, tenantID string) ([]ScheduleCatalogRow, error)
 }
 
 type scheduleCatalogRepository struct {
@@ -55,10 +56,11 @@ func NewScheduleCatalogRepository(db *sqlx.DB, logger *slog.Logger) ScheduleCata
 	return &scheduleCatalogRepository{db: db, logger: logger}
 }
 
-func (r *scheduleCatalogRepository) ListActive(ctx context.Context) ([]string, error) {
+func (r *scheduleCatalogRepository) ListActive(ctx context.Context, tenantID string) ([]string, error) {
 	var names []string
 	err := r.db.SelectContext(ctx, &names,
-		`SELECT schedule_name FROM schedule_catalog WHERE removed_at IS NULL ORDER BY schedule_name`,
+		`SELECT schedule_name FROM schedule_catalog WHERE tenant_id = $1 AND removed_at IS NULL ORDER BY schedule_name`,
+		tenantID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list active schedules: %w", err)
@@ -66,11 +68,11 @@ func (r *scheduleCatalogRepository) ListActive(ctx context.Context) ([]string, e
 	return names, nil
 }
 
-func (r *scheduleCatalogRepository) ExistsActive(ctx context.Context, scheduleName string) (bool, error) {
+func (r *scheduleCatalogRepository) ExistsActive(ctx context.Context, tenantID, scheduleName string) (bool, error) {
 	var exists bool
 	err := r.db.QueryRowContext(ctx,
-		`SELECT EXISTS(SELECT 1 FROM schedule_catalog WHERE schedule_name = $1 AND removed_at IS NULL)`,
-		scheduleName,
+		`SELECT EXISTS(SELECT 1 FROM schedule_catalog WHERE tenant_id = $2 AND schedule_name = $1 AND removed_at IS NULL)`,
+		scheduleName, tenantID,
 	).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("exists active schedule %q: %w", scheduleName, err)
@@ -78,11 +80,11 @@ func (r *scheduleCatalogRepository) ExistsActive(ctx context.Context, scheduleNa
 	return exists, nil
 }
 
-func (r *scheduleCatalogRepository) GetServiceMetadata(ctx context.Context, scheduleName string) (map[string]run.ServiceMetadata, error) {
+func (r *scheduleCatalogRepository) GetServiceMetadata(ctx context.Context, tenantID, scheduleName string) (map[string]run.ServiceMetadata, error) {
 	var raw []byte
 	err := r.db.QueryRowContext(ctx,
-		`SELECT service_metadata FROM schedule_catalog WHERE schedule_name = $1`,
-		scheduleName,
+		`SELECT service_metadata FROM schedule_catalog WHERE tenant_id = $2 AND schedule_name = $1`,
+		scheduleName, tenantID,
 	).Scan(&raw)
 	if err != nil {
 		return nil, fmt.Errorf("get service_metadata for %q: %w", scheduleName, err)
@@ -98,7 +100,7 @@ func (r *scheduleCatalogRepository) GetServiceMetadata(ctx context.Context, sche
 // UpsertAllTx is the tx-bound variant of UpsertAll. Each schedule in names
 // is upserted with its own per-schedule service metadata from the
 // serviceMetadata map (keyed by schedule_name).
-func (r *scheduleCatalogRepository) UpsertAllTx(ctx context.Context, tx *sqlx.Tx, names []string, serviceMetadata map[string]map[string]run.ServiceMetadata) error {
+func (r *scheduleCatalogRepository) UpsertAllTx(ctx context.Context, tx *sqlx.Tx, tenantID string, names []string, serviceMetadata map[string]map[string]run.ServiceMetadata) error {
 	if len(names) == 0 {
 		return nil
 	}
@@ -112,13 +114,13 @@ func (r *scheduleCatalogRepository) UpsertAllTx(ctx context.Context, tx *sqlx.Tx
 		// Go wall-clock value, keeping persisted catalog timestamps on a single
 		// authority and immune to host/DB clock skew.
 		_, err = tx.ExecContext(ctx, `
-			INSERT INTO schedule_catalog (schedule_name, first_seen_at, last_seen_at, removed_at, service_metadata)
-			VALUES ($1, NOW(), NOW(), NULL, $2)
-			ON CONFLICT (schedule_name) DO UPDATE
+			INSERT INTO schedule_catalog (tenant_id, schedule_name, first_seen_at, last_seen_at, removed_at, service_metadata)
+			VALUES ($3, $1, NOW(), NOW(), NULL, $2)
+			ON CONFLICT (tenant_id, schedule_name) DO UPDATE
 			  SET last_seen_at = NOW(),
 			      removed_at = NULL,
 			      service_metadata = $2
-		`, name, metaJSON)
+		`, name, metaJSON, tenantID)
 		if err != nil {
 			return fmt.Errorf("upsert schedule_catalog %q: %w", name, err)
 		}
@@ -127,12 +129,13 @@ func (r *scheduleCatalogRepository) UpsertAllTx(ctx context.Context, tx *sqlx.Tx
 }
 
 // SoftDeleteAbsentTx is the tx-bound variant of SoftDeleteAbsent.
-func (r *scheduleCatalogRepository) SoftDeleteAbsentTx(ctx context.Context, tx *sqlx.Tx, names []string) error {
+func (r *scheduleCatalogRepository) SoftDeleteAbsentTx(ctx context.Context, tx *sqlx.Tx, tenantID string, names []string) error {
 	// removed_at uses the DB clock (NOW()) so the soft-delete stamp shares the
 	// same time authority as the rest of the reconcile cycle.
 	if len(names) == 0 {
 		_, err := tx.ExecContext(ctx,
-			`UPDATE schedule_catalog SET removed_at = NOW() WHERE removed_at IS NULL`,
+			`UPDATE schedule_catalog SET removed_at = NOW() WHERE tenant_id = $1 AND removed_at IS NULL`,
+			tenantID,
 		)
 		if err != nil {
 			return fmt.Errorf("soft-delete all active schedules: %w", err)
@@ -140,8 +143,8 @@ func (r *scheduleCatalogRepository) SoftDeleteAbsentTx(ctx context.Context, tx *
 		return nil
 	}
 	query, args, err := sqlx.In(
-		`UPDATE schedule_catalog SET removed_at = NOW() WHERE removed_at IS NULL AND schedule_name NOT IN (?)`,
-		names,
+		`UPDATE schedule_catalog SET removed_at = NOW() WHERE tenant_id = ? AND removed_at IS NULL AND schedule_name NOT IN (?)`,
+		tenantID, names,
 	)
 	if err != nil {
 		return fmt.Errorf("build SoftDeleteAbsentTx query: %w", err)
@@ -151,11 +154,12 @@ func (r *scheduleCatalogRepository) SoftDeleteAbsentTx(ctx context.Context, tx *
 	return err
 }
 
-// ListAll returns every row in schedule_catalog, including soft-deleted rows.
-// Used to hydrate the ScheduleCatalog aggregate.
-func (r *scheduleCatalogRepository) ListAll(ctx context.Context) ([]ScheduleCatalogRow, error) {
+// ListAll returns every row of the tenant's catalog, including soft-deleted
+// rows. Used to hydrate the ScheduleCatalog aggregate.
+func (r *scheduleCatalogRepository) ListAll(ctx context.Context, tenantID string) ([]ScheduleCatalogRow, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT schedule_name, removed_at, service_metadata FROM schedule_catalog ORDER BY schedule_name`,
+		`SELECT schedule_name, removed_at, service_metadata FROM schedule_catalog WHERE tenant_id = $1 ORDER BY schedule_name`,
+		tenantID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list all schedule_catalog rows: %w", err)
@@ -164,12 +168,13 @@ func (r *scheduleCatalogRepository) ListAll(ctx context.Context) ([]ScheduleCata
 	return scanScheduleCatalogRows(rows)
 }
 
-// ListAllForUpdateTx returns every schedule_catalog row within tx, locking the
-// scanned rows with FOR UPDATE so a reconcile cycle's read-modify-write is
-// serialised against any concurrent reconciler.
-func (r *scheduleCatalogRepository) ListAllForUpdateTx(ctx context.Context, tx *sqlx.Tx) ([]ScheduleCatalogRow, error) {
+// ListAllForUpdateTx returns every row of the tenant's catalog within tx,
+// locking the scanned rows with FOR UPDATE so a reconcile cycle's
+// read-modify-write is serialised against any concurrent reconciler.
+func (r *scheduleCatalogRepository) ListAllForUpdateTx(ctx context.Context, tx *sqlx.Tx, tenantID string) ([]ScheduleCatalogRow, error) {
 	rows, err := tx.QueryContext(ctx,
-		`SELECT schedule_name, removed_at, service_metadata FROM schedule_catalog ORDER BY schedule_name FOR UPDATE`,
+		`SELECT schedule_name, removed_at, service_metadata FROM schedule_catalog WHERE tenant_id = $1 ORDER BY schedule_name FOR UPDATE`,
+		tenantID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list all schedule_catalog rows for update: %w", err)

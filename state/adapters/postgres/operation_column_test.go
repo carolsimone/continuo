@@ -14,8 +14,8 @@ func TestOperationColumns_DefaultAndCheck(t *testing.T) {
 
 	id := uuid.New()
 	_, err := db.Exec(`
-		INSERT INTO runs (run_id, schedule_name, status, created_at, initialization_status)
-		VALUES ($1, 'op-default', 'pending', now(), 'in_progress')`, id)
+		INSERT INTO runs (tenant_id, run_id, schedule_name, status, created_at, initialization_status)
+		VALUES ('default', $1, 'op-default', 'pending', now(), 'in_progress')`, id)
 	if err != nil {
 		t.Fatalf("insert: %v", err)
 	}
@@ -31,8 +31,8 @@ func TestOperationColumns_DefaultAndCheck(t *testing.T) {
 
 	bad := uuid.New()
 	_, err = db.Exec(`
-		INSERT INTO runs (run_id, schedule_name, status, created_at, initialization_status, operation)
-		VALUES ($1, 'op-bad', 'pending', now(), 'in_progress', 'nonsense')`, bad)
+		INSERT INTO runs (tenant_id, run_id, schedule_name, status, created_at, initialization_status, operation)
+		VALUES ('default', $1, 'op-bad', 'pending', now(), 'in_progress', 'nonsense')`, bad)
 	if err == nil {
 		db.Exec(`DELETE FROM runs WHERE run_id = $1`, bad)
 		t.Fatal("expected CHECK violation for operation='nonsense', got nil")
@@ -45,8 +45,8 @@ func TestOperationColumns_DefaultAndCheck(t *testing.T) {
 	// row inserted above.
 	taskDefault := uuid.New()
 	_, err = db.Exec(`
-		INSERT INTO tasks (task_id, run_id, created_at, service_name, schema_name, table_name, job_name, status, max_retries)
-		VALUES ($1, $2, now(), 'svc', 'schema', 'tbl', 'job-op-default', 'pending', 3)`, taskDefault, id)
+		INSERT INTO tasks (tenant_id, task_id, run_id, created_at, service_name, schema_name, table_name, job_name, status, max_retries)
+		VALUES ((SELECT tenant_id FROM runs WHERE run_id = $2), $1, $2, now(), 'svc', 'schema', 'tbl', 'job-op-default', 'pending', 3)`, taskDefault, id)
 	if err != nil {
 		t.Fatalf("insert tasks: %v", err)
 	}
@@ -61,8 +61,8 @@ func TestOperationColumns_DefaultAndCheck(t *testing.T) {
 
 	badTask := uuid.New()
 	_, err = db.Exec(`
-		INSERT INTO tasks (task_id, run_id, created_at, service_name, schema_name, table_name, job_name, status, max_retries, operation)
-		VALUES ($1, $2, now(), 'svc', 'schema', 'tbl', 'job-op-bad', 'pending', 3, 'nonsense')`, badTask, id)
+		INSERT INTO tasks (tenant_id, task_id, run_id, created_at, service_name, schema_name, table_name, job_name, status, max_retries, operation)
+		VALUES ((SELECT tenant_id FROM runs WHERE run_id = $2), $1, $2, now(), 'svc', 'schema', 'tbl', 'job-op-bad', 'pending', 3, 'nonsense')`, badTask, id)
 	if err == nil {
 		db.Exec(`DELETE FROM tasks WHERE task_id = $1`, badTask)
 		t.Fatal("expected CHECK violation for tasks operation='nonsense', got nil")

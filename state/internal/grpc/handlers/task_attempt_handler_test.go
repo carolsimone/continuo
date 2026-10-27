@@ -29,7 +29,7 @@ type fakeAttemptReader struct {
 	totalCount int
 }
 
-func (f *fakeAttemptReader) ListRunAttempts(_ context.Context, runID uuid.UUID, taskID *uuid.UUID, pageSize, pageOffset int) ([]projection.TaskAttempt, int, error) {
+func (f *fakeAttemptReader) ListRunAttempts(_ context.Context, _ string, runID uuid.UUID, taskID *uuid.UUID, pageSize, pageOffset int) ([]projection.TaskAttempt, int, error) {
 	f.calls++
 	f.gotRunID, f.gotTaskID, f.gotSize, f.gotOffset = runID, taskID, pageSize, pageOffset
 	return f.rows, f.totalCount, nil

@@ -11,31 +11,29 @@ import (
 	"github.com/lib/pq"
 )
 
-// takeLeasesQuery inserts the lease of each claim ($2 node keys, $3 tasks, $4
-// runs, element by element) whose node is free and waited for by no task but
-// the claiming one, in node-key order, and returns the claiming tasks that
-// hold their node's lease: those it inserted, then those that held it before
-// the statement (the outer SELECT reads node_leases as it was when the
-// statement began, so the two sets never overlap).
+// takeLeasesQuery inserts the tenant's ($1) lease of each claim ($2 node keys,
+// $3 tasks, $4 runs, element by element) whose node is free and waited for by
+// no task of the tenant but the claiming one, in node-key order, and returns
+// the claiming tasks that hold their node's lease: those it inserted, then
+// those that held it before the statement (the outer SELECT reads node_leases
+// as it was when the statement began, so the two sets never overlap).
 //
 // Inserting in node-key order keeps two transactions that take overlapping
 // nodes from deadlocking: the later one waits for the earlier one on the
 // first node they share, before it holds any node the earlier one still
 // needs, and skips each node the earlier one committed.
 //
-// The waiter check spans tenants: tasks has no tenant column, so a
-// pending task of any tenant waiting on the same node key leaves the node to
-// that waiter. On an install with one tenant this is the node's own queue;
-// with several, another tenant's waiter can leave a claiming task waiting
-// until the lease waker's next pass, which grants each free node of a tenant
-// to that tenant's oldest waiter.
+// The waiter check reads the tenant's own queue for the node: a pending task
+// of another tenant waiting on a node of the same key waits for that tenant's
+// lease, and leaves this tenant's node to the claim.
 const takeLeasesQuery = `
 WITH taken AS (
 	INSERT INTO node_leases (tenant_id, node_key, task_id, run_id)
 	SELECT $1, k, t, r FROM unnest($2::text[], $3::uuid[], $4::uuid[]) AS c(k, t, r)
 	WHERE NOT EXISTS (
 		SELECT 1 FROM tasks w
-		WHERE w.node_key = c.k AND w.wait_reason = 'node_lease' AND w.status = 'pending' AND w.task_id <> c.t)
+		WHERE w.tenant_id = $1 AND w.node_key = c.k
+		  AND w.wait_reason = 'node_lease' AND w.status = 'pending' AND w.task_id <> c.t)
 	ORDER BY k
 	ON CONFLICT (tenant_id, node_key) DO NOTHING
 	RETURNING task_id
@@ -48,7 +46,7 @@ JOIN unnest($2::text[], $3::uuid[]) AS c(k, t) ON l.node_key = c.k AND l.task_id
 WHERE l.tenant_id = $1`
 
 // takeLeases takes tenantID's write lease on the node of each claim that no
-// task holds and no other pending task waits for, and returns the claiming
+// task holds and no other pending task of the tenant waits for, and returns the claiming
 // tasks that hold their node's lease once it has run, a task that already
 // held it included. A node another task waits for is left to that waiter, so
 // a newly ready task never goes ahead of it.
@@ -95,16 +93,16 @@ func takeLeaseForWaiter(ctx context.Context, tx *sqlx.Tx, tenantID string, c run
 	return holds, nil
 }
 
-// runGrantableWaitsQuery keeps, among the nodes the run $2's waiting tasks
-// wait for, the next waiter of each free one (nextWaiters) when it is a task
-// of the run, in node-key order: the order takeLeasesQuery inserts in, so a
-// transaction that grants several of them takes their leases in that order
-// too.
+// runGrantableWaitsQuery keeps, among the nodes the waiting tasks of the
+// tenant's ($1) run $2 wait for, the next waiter of each free one
+// (nextWaiters) when it is a task of the run, in node-key order: the order
+// takeLeasesQuery inserts in, so a transaction that grants several of them
+// takes their leases in that order too.
 const runGrantableWaitsQuery = `
 SELECT task_id, run_id, node_key, waiting_since FROM (` + nextWaiters + `
 	  AND w.node_key IN (
 		SELECT m.node_key FROM tasks m
-		WHERE m.run_id = $2 AND m.status = 'pending' AND m.wait_reason = 'node_lease')` + nextWaitersOrder + `
+		WHERE m.tenant_id = $1 AND m.run_id = $2 AND m.status = 'pending' AND m.wait_reason = 'node_lease')` + nextWaitersOrder + `
 ) oldest
 WHERE run_id = $2
 ORDER BY node_key`
@@ -123,32 +121,33 @@ func grantableWaitsOf(ctx context.Context, tx *sqlx.Tx, tenantID string, runID u
 	return out, nil
 }
 
-// waitForLeases makes each pending task of taskIDs wait for its node's write
-// lease: wait_reason node_lease and lease_wait_since the database clock. A
-// task already waiting keeps the time it began to wait, and with it its place
-// among the node's waiters.
-func waitForLeases(ctx context.Context, tx *sqlx.Tx, taskIDs []uuid.UUID) error {
+// waitForLeases makes each of the tenant's pending tasks of taskIDs wait for
+// its node's write lease: wait_reason node_lease and lease_wait_since the
+// database clock. A task already waiting keeps the time it began to wait, and
+// with it its place among the node's waiters.
+func waitForLeases(ctx context.Context, tx *sqlx.Tx, tenantID string, taskIDs []uuid.UUID) error {
 	if len(taskIDs) == 0 {
 		return nil
 	}
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE tasks
 		SET wait_reason = 'node_lease', lease_wait_since = COALESCE(lease_wait_since, now())
-		WHERE task_id = ANY($1) AND status = 'pending'`,
-		pq.Array(taskIDs)); err != nil {
+		WHERE tenant_id = $2 AND task_id = ANY($1) AND status = 'pending'`,
+		pq.Array(taskIDs), tenantID); err != nil {
 		return fmt.Errorf("make %d tasks wait for their node leases: %w", len(taskIDs), err)
 	}
 	return nil
 }
 
-// releaseLeases deletes the write leases the tasks of taskIDs hold; a task
-// that holds none is left as it is. A delete that releases a lease notifies
-// the node_leases channel when its transaction commits.
-func releaseLeases(ctx context.Context, tx *sqlx.Tx, taskIDs []uuid.UUID) error {
+// releaseLeases deletes the write leases the tenant's tasks of taskIDs hold; a
+// task that holds none is left as it is. A delete that releases a lease
+// notifies the node_leases channel when its transaction commits.
+func releaseLeases(ctx context.Context, tx *sqlx.Tx, tenantID string, taskIDs []uuid.UUID) error {
 	if len(taskIDs) == 0 {
 		return nil
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM node_leases WHERE task_id = ANY($1)`, pq.Array(taskIDs)); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM node_leases WHERE tenant_id = $2 AND task_id = ANY($1)`,
+		pq.Array(taskIDs), tenantID); err != nil {
 		return fmt.Errorf("release the leases of %d tasks: %w", len(taskIDs), err)
 	}
 	return nil

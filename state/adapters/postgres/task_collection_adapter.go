@@ -17,8 +17,9 @@ import (
 type TaskCollectionAdapter struct {
 	repo TaskRepository
 	tx   *sqlx.Tx
-	// tenantID is the tenant whose runs the tasks belong to: the node write
-	// leases the adapter takes are this tenant's.
+	// tenantID is the tenant whose runs the tasks belong to: every task,
+	// attempt and node write lease the adapter reads or writes is this
+	// tenant's.
 	tenantID string
 }
 
@@ -29,7 +30,7 @@ func NewTaskCollectionAdapter(repo TaskRepository, tx *sqlx.Tx, tenantID string)
 }
 
 func (a *TaskCollectionAdapter) LoadAttemptState(ctx context.Context, taskID uuid.UUID) (run.TaskAttemptState, bool, error) {
-	row, found, err := a.repo.LoadAttemptStateTx(ctx, a.tx, taskID)
+	row, found, err := a.repo.LoadAttemptStateTx(ctx, a.tx, a.tenantID, taskID)
 	if err != nil || !found {
 		return run.TaskAttemptState{}, false, err
 	}
@@ -56,35 +57,35 @@ func (a *TaskCollectionAdapter) LoadAttemptState(ctx context.Context, taskID uui
 // transaction: the attempt row is locked after the task row and written in
 // the same commit.
 func (a *TaskCollectionAdapter) LoadAttempt(ctx context.Context, taskID uuid.UUID, attempt int32) (run.Attempt, bool, error) {
-	return loadAttempt(ctx, a.tx, taskID, attempt)
+	return loadAttempt(ctx, a.tx, a.tenantID, taskID, attempt)
 }
 
 func (a *TaskCollectionAdapter) SaveAttempt(ctx context.Context, at run.Attempt) error {
-	return saveAttempt(ctx, a.tx, at)
+	return saveAttempt(ctx, a.tx, a.tenantID, at)
 }
 
 func (a *TaskCollectionAdapter) AddAttempts(ctx context.Context, attempts []run.Attempt) error {
-	return addAttempts(ctx, a.tx, attempts)
+	return addAttempts(ctx, a.tx, a.tenantID, attempts)
 }
 
 func (a *TaskCollectionAdapter) RequestStops(ctx context.Context, runID uuid.UUID) ([]run.StopTarget, error) {
-	return requestStops(ctx, a.tx, runID)
+	return requestStops(ctx, a.tx, a.tenantID, runID)
 }
 
 func (a *TaskCollectionAdapter) HasFailed(ctx context.Context, runID uuid.UUID) (bool, error) {
-	return a.repo.HasFailedTaskTx(ctx, a.tx, runID)
+	return a.repo.HasFailedTaskTx(ctx, a.tx, a.tenantID, runID)
 }
 
 func (a *TaskCollectionAdapter) HasInFlight(ctx context.Context, runID uuid.UUID) (bool, error) {
-	return a.repo.HasInFlightTaskTx(ctx, a.tx, runID)
+	return a.repo.HasInFlightTaskTx(ctx, a.tx, a.tenantID, runID)
 }
 
 func (a *TaskCollectionAdapter) HasNonSucceeded(ctx context.Context, runID uuid.UUID) (bool, error) {
-	return a.repo.HasNonSucceededTask(ctx, runID)
+	return a.repo.HasNonSucceededTask(ctx, a.tenantID, runID)
 }
 
 func (a *TaskCollectionAdapter) GetByNode(ctx context.Context, runID uuid.UUID, node run.NodeID) (run.Task, error) {
-	t, err := a.repo.GetByRunAndNode(ctx, runID, node.ServiceName, node.SchemaName, node.TableName)
+	t, err := a.repo.GetByRunAndNode(ctx, a.tenantID, runID, node.ServiceName, node.SchemaName, node.TableName)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return run.Task{}, run.ErrTaskNotFound
@@ -98,7 +99,7 @@ func (a *TaskCollectionAdapter) GetByNode(ctx context.Context, runID uuid.UUID, 
 // transaction: a derived run plans while its creating transaction holds a
 // connection, and a read on a second one would wait for it under a small pool.
 func (a *TaskCollectionAdapter) ListRunTasks(ctx context.Context, runID uuid.UUID) ([]run.Task, error) {
-	rows, err := a.repo.ListByRunTx(ctx, a.tx, runID)
+	rows, err := a.repo.ListByRunTx(ctx, a.tx, a.tenantID, runID)
 	if err != nil {
 		return nil, err
 	}
@@ -112,13 +113,13 @@ func (a *TaskCollectionAdapter) ListRunTasks(ctx context.Context, runID uuid.UUI
 // RunReleasesOf reads the release of each task's run through the unit of
 // work's transaction, which a rebase plans in.
 func (a *TaskCollectionAdapter) RunReleasesOf(ctx context.Context, taskIDs []uuid.UUID) (map[uuid.UUID]string, error) {
-	return a.repo.RunReleasesTx(ctx, a.tx, taskIDs)
+	return a.repo.RunReleasesTx(ctx, a.tx, a.tenantID, taskIDs)
 }
 
 // GetByID reads one task by id. A task's node and image never change once its
 // row is written, so the read uses the autocommit db.
 func (a *TaskCollectionAdapter) GetByID(ctx context.Context, taskID uuid.UUID) (run.Task, error) {
-	t, err := a.repo.GetByID(ctx, taskID)
+	t, err := a.repo.GetByID(ctx, a.tenantID, taskID)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return run.Task{}, run.ErrTaskNotFound
@@ -152,7 +153,7 @@ func taskFromRow(t *TaskRow) run.Task {
 }
 
 func (a *TaskCollectionAdapter) SetStatusAndAttempt(ctx context.Context, taskID uuid.UUID, status run.TaskStatus, attempt int32) (int, error) {
-	n, err := a.repo.SetStatusAndAttemptTx(ctx, a.tx, taskID, string(status), attempt)
+	n, err := a.repo.SetStatusAndAttemptTx(ctx, a.tx, a.tenantID, taskID, string(status), attempt)
 	return int(n), err
 }
 
@@ -160,6 +161,7 @@ func (a *TaskCollectionAdapter) BulkCreate(ctx context.Context, tasks []run.Task
 	rows := make([]*TaskRow, 0, len(tasks))
 	for _, t := range tasks {
 		rows = append(rows, &TaskRow{
+			TenantID:            a.tenantID,
 			TaskID:              t.TaskID,
 			ScheduleID:          t.ScheduleID,
 			CreatedAt:           t.CreatedAt,
@@ -183,21 +185,21 @@ func (a *TaskCollectionAdapter) BulkCreate(ctx context.Context, tasks []run.Task
 }
 
 func (a *TaskCollectionAdapter) MarkDispatched(ctx context.Context, taskIDs []uuid.UUID, at time.Time) ([]uuid.UUID, error) {
-	return a.repo.MarkDispatchedTx(ctx, a.tx, taskIDs, at)
+	return a.repo.MarkDispatchedTx(ctx, a.tx, a.tenantID, taskIDs, at)
 }
 
 func (a *TaskCollectionAdapter) MarkSkipped(ctx context.Context, taskIDs []uuid.UUID) (int, error) {
-	n, err := a.repo.MarkSkippedTx(ctx, a.tx, taskIDs)
+	n, err := a.repo.MarkSkippedTx(ctx, a.tx, a.tenantID, taskIDs)
 	return int(n), err
 }
 
 func (a *TaskCollectionAdapter) SkipPending(ctx context.Context, runID uuid.UUID) (int, error) {
-	n, err := a.repo.SkipPendingTx(ctx, a.tx, runID)
+	n, err := a.repo.SkipPendingTx(ctx, a.tx, a.tenantID, runID)
 	return int(n), err
 }
 
 func (a *TaskCollectionAdapter) BeginStop(ctx context.Context, runID uuid.UUID, cancelledBy string, cancelledAt time.Time) (run.StopCounts, error) {
-	return a.repo.BeginStopTx(ctx, a.tx, runID, cancelledBy, cancelledAt)
+	return a.repo.BeginStopTx(ctx, a.tx, a.tenantID, runID, cancelledBy, cancelledAt)
 }
 
 // TakeLeases, WaitForLeases, ReleaseLease, TakeLeaseForWaiter and
@@ -210,11 +212,11 @@ func (a *TaskCollectionAdapter) TakeLeases(ctx context.Context, claims []run.Lea
 }
 
 func (a *TaskCollectionAdapter) WaitForLeases(ctx context.Context, taskIDs []uuid.UUID) error {
-	return waitForLeases(ctx, a.tx, taskIDs)
+	return waitForLeases(ctx, a.tx, a.tenantID, taskIDs)
 }
 
 func (a *TaskCollectionAdapter) ReleaseLease(ctx context.Context, taskID uuid.UUID) error {
-	return releaseLeases(ctx, a.tx, []uuid.UUID{taskID})
+	return releaseLeases(ctx, a.tx, a.tenantID, []uuid.UUID{taskID})
 }
 
 func (a *TaskCollectionAdapter) TakeLeaseForWaiter(ctx context.Context, claim run.LeaseClaim) (bool, error) {
