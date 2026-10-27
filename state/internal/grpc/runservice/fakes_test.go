@@ -42,6 +42,8 @@ type fakeStore struct {
 	latest    map[string]int64
 	completed map[string][]projection.RunSummary
 
+	// The node and schedule rows below belong to tenantA; a read for another
+	// tenant sees none of them.
 	nodeTasks    []*projection.NodeRun
 	nodes        []*projection.NodeSummary
 	nodeNames    []string
@@ -65,7 +67,6 @@ type fakeStore struct {
 	nodesLimit            int
 	nodesOffset           int
 	nodeNamesService      string
-	tenantsRead           []string
 }
 
 func newStore() *fakeStore {
@@ -116,7 +117,6 @@ type fakeRunDetails struct{ *fakeStore }
 var _ repository.RunDetailReader = fakeRunDetails{}
 
 func (f fakeRunDetails) GetRunDetail(_ context.Context, tenantID string, runID uuid.UUID) (projection.RunDetail, error) {
-	f.tenantsRead = append(f.tenantsRead, tenantID)
 	if f.failWith != nil {
 		return projection.RunDetail{}, f.failWith
 	}
@@ -212,33 +212,45 @@ type fakeNodes struct{ *fakeStore }
 
 var _ repository.NodeReader = fakeNodes{}
 
-func (f fakeNodes) ListNodeTasks(_ context.Context, _, _, _, _, operation string, limit int) ([]*projection.NodeRun, error) {
+func (f fakeNodes) ListNodeTasks(_ context.Context, tenantID, _, _, _, operation string, limit int) ([]*projection.NodeRun, error) {
 	f.nodeTasksOperation, f.nodeTasksLimit = operation, limit
 	if f.failWith != nil {
 		return nil, f.failWith
 	}
+	if tenantID != tenantA {
+		return nil, nil
+	}
 	return f.nodeTasks, nil
 }
 
-func (f fakeNodes) ListNodes(_ context.Context, _, search, serviceName, _ string, limit, offset int) ([]*projection.NodeSummary, int, error) {
+func (f fakeNodes) ListNodes(_ context.Context, tenantID, search, serviceName, _ string, limit, offset int) ([]*projection.NodeSummary, int, error) {
 	f.nodesSearch, f.nodesService, f.nodesLimit, f.nodesOffset = search, serviceName, limit, offset
 	if f.failWith != nil {
 		return nil, 0, f.failWith
 	}
+	if tenantID != tenantA {
+		return nil, 0, nil
+	}
 	return f.nodes, len(f.nodes), nil
 }
 
-func (f fakeNodes) ListNodeNames(_ context.Context, _, serviceName string) ([]string, error) {
+func (f fakeNodes) ListNodeNames(_ context.Context, tenantID, serviceName string) ([]string, error) {
 	f.nodeNamesService = serviceName
 	if f.failWith != nil {
 		return nil, f.failWith
 	}
+	if tenantID != tenantA {
+		return nil, nil
+	}
 	return f.nodeNames, nil
 }
 
-func (f fakeNodes) ListNodeServices(context.Context, string) ([]string, error) {
+func (f fakeNodes) ListNodeServices(_ context.Context, tenantID string) ([]string, error) {
 	if f.failWith != nil {
 		return nil, f.failWith
+	}
+	if tenantID != tenantA {
+		return nil, nil
 	}
 	return f.nodeServices, nil
 }
@@ -247,9 +259,12 @@ type fakeActiveSchedules struct{ *fakeStore }
 
 var _ repository.ActiveScheduleReader = fakeActiveSchedules{}
 
-func (f fakeActiveSchedules) ListActive(context.Context, string) ([]string, error) {
+func (f fakeActiveSchedules) ListActive(_ context.Context, tenantID string) ([]string, error) {
 	if f.failWith != nil {
 		return nil, f.failWith
+	}
+	if tenantID != tenantA {
+		return nil, nil
 	}
 	names := append([]string(nil), f.schedules...)
 	sort.Strings(names)
@@ -260,9 +275,12 @@ type fakeLastRuns struct{ *fakeStore }
 
 var _ repository.LastRunReader = fakeLastRuns{}
 
-func (f fakeLastRuns) GetLastRunPerSchedule(context.Context, string) (map[string]repository.LastRunSummary, error) {
+func (f fakeLastRuns) GetLastRunPerSchedule(_ context.Context, tenantID string) (map[string]repository.LastRunSummary, error) {
 	if f.failWith != nil {
 		return nil, f.failWith
+	}
+	if tenantID != tenantA {
+		return nil, nil
 	}
 	return f.lastRuns, nil
 }

@@ -581,8 +581,7 @@ func TestRunReads_AFailingReadIsInternal(t *testing.T) {
 	}
 }
 
-// Commands and the topology reads are served by later work; the server leaves
-// them unimplemented.
+// The server leaves the command and topology RPCs unimplemented.
 func TestServer_LeavesTheCommandRPCsUnimplemented(t *testing.T) {
 	srv := newServer(newStore(), nil)
 	_, err := srv.CancelRun(ctxOf(tenantA), &runv1.CancelRunRequest{RunId: uuid.NewString()})
@@ -611,4 +610,53 @@ func TestListRunAttempts_ClampsPaging(t *testing.T) {
 			assert.Equal(t, c.wantOffset, store.attemptOffset)
 		})
 	}
+}
+
+// The node and schedule reads read the tenant of the request: another tenant
+// sees none of the rows the default tenant holds.
+func TestRunReads_NodeAndScheduleReadsAreOfTheRequestsTenant(t *testing.T) {
+	store := newStore()
+	store.nodeTasks = []*projection.NodeRun{{ScheduleID: uuid.New(), TaskID: uuid.New(), CreatedAt: base}}
+	store.nodes = []*projection.NodeSummary{{ServiceName: "svc", TableName: "orders", LastRunAt: base}}
+	store.nodeNames = []string{"orders"}
+	store.nodeServices = []string{"svc"}
+	store.schedules = []string{"daily"}
+	srv := newServer(store, nil)
+	node := &runv1.ListNodeTasksRequest{ServiceName: "svc", SchemaName: "sch", TableName: "orders"}
+
+	// The default tenant sees the rows, so an empty answer below is the
+	// tenant's doing.
+	own, err := srv.ListNodeTasks(ctxOf(tenantA), node)
+	require.NoError(t, err)
+	require.Len(t, own.GetTasks(), 1)
+	ownNodes, err := srv.ListNodes(ctxOf(tenantA), &runv1.ListNodesRequest{})
+	require.NoError(t, err)
+	require.Len(t, ownNodes.GetNodes(), 1)
+	ownNames, err := srv.ListNodeNames(ctxOf(tenantA), &runv1.ListNodeNamesRequest{})
+	require.NoError(t, err)
+	require.Len(t, ownNames.GetTableNames(), 1)
+	ownServices, err := srv.ListNodeServices(ctxOf(tenantA), &runv1.ListNodeServicesRequest{})
+	require.NoError(t, err)
+	require.Len(t, ownServices.GetServiceNames(), 1)
+	ownSchedules, err := srv.ListSchedules(ctxOf(tenantA), &runv1.ListSchedulesRequest{})
+	require.NoError(t, err)
+	require.Len(t, ownSchedules.GetSchedules(), 1)
+
+	ctx := ctxOf(tenantB)
+	tasks, err := srv.ListNodeTasks(ctx, node)
+	require.NoError(t, err)
+	assert.Empty(t, tasks.GetTasks())
+	nodes, err := srv.ListNodes(ctx, &runv1.ListNodesRequest{})
+	require.NoError(t, err)
+	assert.Empty(t, nodes.GetNodes())
+	assert.Zero(t, nodes.GetTotalCount())
+	names, err := srv.ListNodeNames(ctx, &runv1.ListNodeNamesRequest{})
+	require.NoError(t, err)
+	assert.Empty(t, names.GetTableNames())
+	services, err := srv.ListNodeServices(ctx, &runv1.ListNodeServicesRequest{})
+	require.NoError(t, err)
+	assert.Empty(t, services.GetServiceNames())
+	schedules, err := srv.ListSchedules(ctx, &runv1.ListSchedulesRequest{})
+	require.NoError(t, err)
+	assert.Empty(t, schedules.GetSchedules())
 }
