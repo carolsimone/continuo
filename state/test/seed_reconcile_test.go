@@ -30,11 +30,10 @@ import (
 	"github.com/carolsimone/continuo/state/service/uow"
 )
 
-// firstPromoteSeedRunID is the id a release's first promote-seed run has
-// always carried: UUIDv5 of the release under the fixed promote-seed
-// namespace.
-func firstPromoteSeedRunID(releaseID string) uuid.UUID {
-	return uuid.NewSHA1(uuid.MustParse("3e7b1a2f-8c4d-4e9a-b5f0-1d2c3a4e5f60"), []byte("schedule:"+releaseID))
+// firstPromoteSeedRunID is the id of the first promote-seed run of a release
+// of the harness's tenant.
+func (h *reconcileHarness) firstPromoteSeedRunID(releaseID string) uuid.UUID {
+	return seeds.RunID(h.tenant, releaseID, 1)
 }
 
 // reconcileHarness runs the seed reconcile, alone and inside state's
@@ -156,7 +155,7 @@ func TestSeedReconcile(t *testing.T) {
 
 		require.NoError(t, h.reconciler.RunOnce(ctx))
 
-		runID := firstPromoteSeedRunID(releaseID)
+		runID := h.firstPromoteSeedRunID(releaseID)
 		require.Equal(t, []uuid.UUID{runID}, h.promoteSeedRuns(t, releaseID), "the release's first run keeps its id")
 		var runRow struct {
 			Name   string `db:"schedule_name"`
@@ -213,7 +212,7 @@ func TestSeedReconcile(t *testing.T) {
 
 		require.NoError(t, errs[0])
 		require.NoError(t, errs[1])
-		assert.Equal(t, []uuid.UUID{firstPromoteSeedRunID(releaseID)}, h.promoteSeedRuns(t, releaseID))
+		assert.Equal(t, []uuid.UUID{h.firstPromoteSeedRunID(releaseID)}, h.promoteSeedRuns(t, releaseID))
 		assert.Equal(t, 2, h.seedDispatches(t, releaseID), "the one run dispatches each seed once")
 	})
 
@@ -232,13 +231,13 @@ func TestSeedReconcile(t *testing.T) {
 		orders := h.materialization(t, "raw.orders")
 		assert.Empty(t, orders.ContentHash)
 		assert.Equal(t, "sha256:orders", orders.AttemptContentHash)
-		assert.Equal(t, []uuid.UUID{firstPromoteSeedRunID(releaseID)}, h.promoteSeedRuns(t, releaseID))
+		assert.Equal(t, []uuid.UUID{h.firstPromoteSeedRunID(releaseID)}, h.promoteSeedRuns(t, releaseID))
 	})
 
 	t.Run("a first promotion whose release already has its first run adopts every seed", func(t *testing.T) {
 		h := newReconcileHarness(db)
 		releaseID := "rel-" + uuid.NewString()[:8]
-		existing := firstPromoteSeedRunID(releaseID)
+		existing := h.firstPromoteSeedRunID(releaseID)
 		_, err := db.Exec(`
 			INSERT INTO runs (run_id, schedule_name, status, created_at, initialization_status, kind)
 			VALUES ($1, $2, 'succeeded', now(), 'completed', 'promote_seed')`,
@@ -256,7 +255,7 @@ func TestSeedReconcile(t *testing.T) {
 	t.Run("a seed that leaves the release and returns while its build runs is not built a second time", func(t *testing.T) {
 		h := newReconcileHarness(db)
 		rel1, rel2, rel3 := "rel-1-"+uuid.NewString()[:8], "rel-2-"+uuid.NewString()[:8], "rel-3-"+uuid.NewString()[:8]
-		run1 := firstPromoteSeedRunID(rel1)
+		run1 := h.firstPromoteSeedRunID(rel1)
 
 		h.promote(t, rel1, 1, false, []string{"raw.orders"}, seedAt("orders", "sha256:orders-1"), seedAt("users", "sha256:users-1"))
 		require.Equal(t, []uuid.UUID{run1}, h.promoteSeedRuns(t, rel1), "the first release builds orders")
@@ -349,7 +348,7 @@ func TestSeedReconcile_ReplayOfSeveralRetainedPromotions(t *testing.T) {
 	h.promote(t, relC, 3, false, []string{"raw.orders", "raw.users"}, seedAt("orders", "sha256:orders-c"), seedAt("users", "sha256:users-c"))
 
 	require.Equal(t, topology.Pointer{ReleaseID: relC, PromotionSeq: 3}, livePointerOf(t, db, h.tenant))
-	runA, runC := firstPromoteSeedRunID(relA), firstPromoteSeedRunID(relC)
+	runA, runC := h.firstPromoteSeedRunID(relA), h.firstPromoteSeedRunID(relC)
 	assert.Equal(t, []uuid.UUID{runA}, h.promoteSeedRuns(t, relA), "the first release builds orders")
 	assert.Empty(t, h.promoteSeedRuns(t, relB), "orders is already being built and users is as loaded")
 	assert.Equal(t, []uuid.UUID{runC}, h.promoteSeedRuns(t, relC), "the third release builds users")
@@ -384,7 +383,7 @@ func TestSeedReconcile_ReplayOfSeveralRetainedPromotions(t *testing.T) {
 
 	require.NoError(t, h.reconciler.RunOnce(ctx))
 
-	followUp := seeds.RunID(pkgevents.DefaultTenantID, relC, 2)
+	followUp := seeds.RunID(h.tenant, relC, 2)
 	assert.Equal(t, []uuid.UUID{runC, followUp}, h.promoteSeedRuns(t, relC), "the live release's second run loads the content orders is missing")
 	assert.Equal(t, []string{"orders"}, h.promotedSeedNodes(t, followUp))
 	orders = h.materialization(t, "raw.orders")

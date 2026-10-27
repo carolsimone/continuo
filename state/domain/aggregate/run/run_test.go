@@ -91,6 +91,23 @@ func TestNewSingleNodeRun_RefusesAnEmptyTenant(t *testing.T) {
 	assert.ErrorIs(t, err, run.ErrNoTenant)
 }
 
+func TestNewSingleNodeRun_KeepsItsTenant(t *testing.T) {
+	r, err := run.NewSingleNodeRun("acme", "single-node-run-ab12cd34", model.OperationRun, nil, "alice", run.ReleaseStamp{}, time.Now())
+	require.NoError(t, err)
+	assert.Equal(t, "acme", r.TenantID())
+}
+
+// A rerun or rebase belongs to the tenant of the run it derives from.
+func TestNewDerivedRun_CarriesTheTenantOfItsSource(t *testing.T) {
+	source := run.HydrateRun("acme", uuid.New(), "daily", run.RunStatusFailed, run.InitStatusCompleted, run.KindCron, nil, "system", model.OperationRun,
+		time.Now(), nil, nil, nil, nil, nil, nil, nil, 0, nil)
+	for _, kind := range []run.Kind{run.KindRerun, run.KindRebase} {
+		derived, err := run.NewDerivedRun(source.TenantID(), source.ScheduleName(), kind, source.RunID(), source.Release(), "alice", source.Operation(), time.Now())
+		require.NoError(t, err)
+		assert.Equal(t, "acme", derived.TenantID(), string(kind))
+	}
+}
+
 func TestNewPromotedSeedsRun_RefusesAnEmptyTenant(t *testing.T) {
 	_, err := run.NewPromotedSeedsRun("", uuid.New(), "promote-seed-ab12cd34", run.ReleaseStamp{ReleaseID: "rel-1"}, time.Now())
 	assert.ErrorIs(t, err, run.ErrNoTenant)
@@ -729,7 +746,7 @@ func TestHydrateReleaseID_RestoresTheStoredRelease(t *testing.T) {
 func TestNewDerivedRun_RerunCarriesItsSourceRelease(t *testing.T) {
 	rerun, err := run.NewDerivedRun(pkgevents.DefaultTenantID, "promote-seed-abc12345", run.KindRerun, uuid.New(), run.ReleaseStamp{ReleaseID: "rel-1", PromotionSeq: 3}, "okta|alice", model.OperationRun, time.Now())
 	if err != nil {
-		t.Fatalf("NewDerivedRun(pkgevents.DefaultTenantID, rerun): %v", err)
+		t.Fatalf("NewDerivedRun(rerun): %v", err)
 	}
 	if rerun.ReleaseID() != "rel-1" || rerun.Release().PromotionSeq != 3 {
 		t.Fatalf("rerun Release() = %+v, want rel-1 / 3", rerun.Release())
