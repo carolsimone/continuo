@@ -613,8 +613,8 @@ func (r *TaskCollection) RequestStops(ctx context.Context, runID uuid.UUID) ([]r
 	return requestStops(ctx, r.tx, r.tenantID, runID)
 }
 
-// GetByNode reads the task of run runID that runs node, through the autocommit
-// db.
+// GetByNode reads the task of run runID that runs node, in the bound
+// transaction when there is one, else on the pool.
 func (r *TaskCollection) GetByNode(ctx context.Context, runID uuid.UUID, node run.NodeID) (run.Task, error) {
 	t, err := r.GetRowByNode(ctx, runID, node.ServiceName, node.SchemaName, node.TableName)
 	if err != nil {
@@ -626,8 +626,8 @@ func (r *TaskCollection) GetByNode(ctx context.Context, runID uuid.UUID, node ru
 	return taskFromRow(t), nil
 }
 
-// GetByID reads one task by id. A task's node and image never change once its
-// row is written, so the read uses the autocommit db.
+// GetByID reads one task by id, in the bound transaction when there is one,
+// else on the pool.
 func (r *TaskCollection) GetByID(ctx context.Context, taskID uuid.UUID) (run.Task, error) {
 	t, err := r.GetRow(ctx, taskID)
 	if err != nil {

@@ -17,7 +17,9 @@ import (
 
 // PostgresUnitOfWork implements uow.UnitOfWork against a *sqlx.DB. Each
 // accessor builds the repository of its port bound to the current transaction,
-// so write methods run inside the active tx while reads use the autocommit db.
+// so write methods run inside the active tx. A repository's reads run in that
+// tx too when it is bound (each repository's conn helper) and on the pool
+// otherwise; the reads that never take conn always run on the pool.
 type PostgresUnitOfWork struct {
 	db     *sqlx.DB
 	tx     *sqlx.Tx
@@ -108,8 +110,9 @@ func (u *PostgresUnitOfWork) Rollback() error {
 	return nil
 }
 
-// Run returns a RunRepository bound to the current transaction. Read methods
-// use the autocommit db; LoadRunForUpdate/SaveRun run inside u.tx.
+// Run returns a RunRepository bound to the current transaction. GetRun, GetActiveRun and HasActiveRun run in u.tx when one is open and on the
+// pool otherwise; the other reads run on the pool; LoadRunForUpdate/SaveRun run
+// inside u.tx.
 func (u *PostgresUnitOfWork) Run() repository.RunRepository {
 	return NewRunRepository(u.db, u.logger).WithTx(u.tx)
 }

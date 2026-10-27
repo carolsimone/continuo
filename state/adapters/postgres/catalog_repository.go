@@ -25,9 +25,11 @@ type ScheduleCatalogRow struct {
 
 // CatalogRepository implements repository.ScheduleCatalogRepository over the
 // schedule_catalog and schedule_catalog_state tables. Every method reads or
-// writes the rows of one tenant, the catalog of that tenant. Reads use the
-// autocommit db; SaveCatalog and LoadCatalogForUpdate run inside the
-// transaction bound by WithTx, and return an error when none is bound.
+// writes the rows of one tenant, the catalog of that tenant. ExistsActive and
+// GetServiceMetadata read in the transaction bound by WithTx when there is one,
+// else on the pool; the other reads run on the pool. SaveCatalog and
+// LoadCatalogForUpdate run inside the bound transaction, and return an error
+// when none is bound.
 type CatalogRepository struct {
 	db     *sqlx.DB
 	tx     *sqlx.Tx
