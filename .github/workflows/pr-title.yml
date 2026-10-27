@@ -1,0 +1,39 @@
+name: pr-title
+
+# Fails a pull request whose title is not a Conventional Commit title
+# (`<type>[(<scope>)][!]: <summary>`). The repository squash-merges, so the
+# title becomes the commit message on main, and pr-labels.yml reads the type
+# label from it. scripts/pr-title-type.sh holds the accepted prefixes and
+# explains a rejection in the job log.
+#
+# Runs on GitHub-hosted runners only: it executes for pull requests from forks,
+# which are untrusted by definition. synchronize is listed because a required
+# check must report on every head commit, not only when the title changes.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  # Job name becomes the check-run name, which is what a branch ruleset requires
+  # by string. Keep it "pr-title" so the required check is unambiguous.
+  pr-title:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Cone mode treats every entry as a directory, so a file needs it off.
+          sparse-checkout: scripts/pr-title-type.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Check the title
+        env:
+          # The title is chosen by the pull request's author: it reaches the
+          # shell through env and is quoted, never written into the script.
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: bash scripts/pr-title-type.sh "$PR_TITLE" >/dev/null
